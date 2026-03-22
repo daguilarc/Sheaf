@@ -14,6 +14,7 @@ Sheaf is a local-first chat server with a queue-backed worker, websocket streami
 ## Core APIs
 
 - `GET /health`
+- `POST /debug/log`
 - `GET /models`
 - `POST /models/updateLocalModelList`
 - `POST /threads`
@@ -21,7 +22,11 @@ Sheaf is a local-first chat server with a queue-backed worker, websocket streami
 - `POST /threads/{thread_id}/archive`
 - `POST /threads/{thread_id}/unarchive`
 - `POST /threads/{thread_id}/enter-chat`
+- `POST /vaults`
+- `POST /vaults/repair`
+- `POST /replica/sessions`
 - `WS /ws/chat/{session_id}`
+- `WS /ws/replica/{session_id}`
 
 ## Websocket Protocol
 
@@ -74,9 +79,13 @@ Tools are agent-internal and not exposed via public server endpoints.
 
 Current agent tools:
 
-- `write_note`
-- `list_notes`
-- `read_note`
+- `list_directory`
+- `read_file`
+- `create_file`
+- `create_directory`
+- `apply_patch`
+- `move_path`
+- `delete_path`
 - `list_sqlite_databases`
 - `create_sqlite_database`
 - `run_sql`

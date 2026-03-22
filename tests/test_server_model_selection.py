@@ -6,6 +6,7 @@ import types
 from fastapi.testclient import TestClient
 
 import sheaf.server.app as server_app
+from sheaf.tools import build_agent_tools
 
 
 def test_create_and_list_threads_round_trip() -> None:
@@ -90,6 +91,32 @@ def test_list_threads_endpoint_calls_runtime_once(monkeypatch) -> None:
     assert calls["count"] == 1
     assert payload["threads"] == [{"thread_id": "t1", "name": "Thread 1"}]
     assert "chats" not in payload
+
+
+def test_repair_vault_route_returns_success_shape(monkeypatch) -> None:
+    client = TestClient(server_app.app)
+
+    calls: list[tuple[str | None, int | None]] = []
+
+    def _fake_repair_vault_state(*, root_path: str | None = None, vault_id: int | None = None) -> str:
+        calls.append((root_path, vault_id))
+        return "repaired 3 files"
+
+    monkeypatch.setattr(server_app, "repair_vault_state", _fake_repair_vault_state)
+
+    response = client.post("/vaults/repair", json={"root_path": "/tmp/test-vault", "vault_id": 7})
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok", "result": "repaired 3 files"}
+    assert calls == [("/tmp/test-vault", 7)]
+
+
+def test_build_agent_tools_excludes_repair_vault() -> None:
+    tool_names = [tool.name for tool in build_agent_tools()]
+
+    assert "repair_vault" not in tool_names
+    assert "list_directory" in tool_names
+    assert "run_sql" in tool_names
 
 
 def test_app_main_uses_configured_host_and_port(monkeypatch) -> None:

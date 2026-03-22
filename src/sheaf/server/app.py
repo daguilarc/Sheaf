@@ -23,6 +23,7 @@ from sheaf.server.replica import (
     ReplicaService,
 )
 from sheaf.config.settings import load_server_config
+from sheaf.vaults.logging import repair_vault_state
 
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
@@ -99,6 +100,11 @@ class ClientDebugPayload(BaseModel):
     message: str
 
 
+class RepairVaultRequest(BaseModel):
+    root_path: Optional[str] = None
+    vault_id: Optional[int] = None
+
+
 @app.post("/debug/log")
 def client_debug_log(payload: ClientDebugPayload) -> dict[str, str]:
     print(f"\n{'='*60}\n[CLIENT DEBUG]\n{'='*60}\n{payload.message}\n{'='*60}", flush=True)
@@ -142,6 +148,15 @@ def create_vault_endpoint(payload: CreateVaultRequest) -> dict[str, object]:
         return runtime.create_vault(root_path=payload.root_path, metadata_json=payload.metadata_json)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/vaults/repair")
+def repair_vault_endpoint(payload: RepairVaultRequest) -> dict[str, str]:
+    try:
+        result = repair_vault_state(root_path=payload.root_path, vault_id=payload.vault_id)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"status": "ok", "result": result}
 
 
 @app.post("/replica/sessions", response_model=StartReplicaSessionResponse)

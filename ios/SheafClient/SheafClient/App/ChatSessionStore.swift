@@ -4,7 +4,6 @@ import Foundation
 final class ChatSessionStore {
     struct Session {
         var messages: [RenderedMessage]
-        var metadata: ChatMetadata?
         var oldestLoadedIndex: Int
         var newestLoadedExclusiveIndex: Int
         var hasMoreOlder: Bool

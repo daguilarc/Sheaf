@@ -6,7 +6,6 @@ final class ChatViewModel: ObservableObject {
     private static let streamFlushIntervalNS: UInt64 = 75_000_000
 
     @Published private(set) var messages: [RenderedMessage] = []
-    @Published private(set) var metadata: ChatMetadata?
     @Published private(set) var isLoading = false
     @Published private(set) var isLoadingOlder = false
     @Published private(set) var errorMessage: String?
@@ -307,7 +306,6 @@ final class ChatViewModel: ObservableObject {
     private func persistSession() {
         let session = ChatSessionStore.Session(
             messages: messages,
-            metadata: metadata,
             oldestLoadedIndex: 0,
             newestLoadedExclusiveIndex: messages.count,
             hasMoreOlder: false
@@ -398,21 +396,21 @@ final class ChatViewModel: ObservableObject {
         let prefix = call.isError ? "Tool call failed" : "Sheaf"
 
         switch call.name {
-        case "list_notes":
+        case "list_directory":
             if let directory, !directory.isEmpty {
                 return "\(prefix) listed this directory: \(directory)"
             }
             return "\(prefix) listed a directory"
-        case "read_note":
+        case "read_file":
             if let path, !path.isEmpty {
                 return "\(prefix) read this file: \(path)"
             }
             return "\(prefix) read a file"
-        case "write_note":
+        case "create_file":
             if let path, !path.isEmpty {
-                return "\(prefix) wrote this file: \(path)"
+                return "\(prefix) created this file: \(path)"
             }
-            return "\(prefix) wrote a file"
+            return "\(prefix) created a file"
         default:
             let details = args.isEmpty
                 ? ""

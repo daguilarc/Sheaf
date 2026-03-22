@@ -35,5 +35,5 @@ Current OpenAI streaming path does not set an explicit per-stream timeout in dis
 
 Current tool implementation intentionally does not yet include the full filesystem surface described in `09_tooling_surface.md`.
 
-- Implemented now: `list_notes`, `read_note`, `write_note`, and SQLite tools.
-- Deferred: patch application, move/rename, delete, and regex search (`rgrep`) tooling.
+- Implemented now: `list_directory`, `read_file`, `create_file`, `create_directory`, `apply_patch`, `move_path`, `delete_path`, and SQLite tools.
+- Deferred: regex search (`rgrep`) plus any future tools not yet in the live registry.

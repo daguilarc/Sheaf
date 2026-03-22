@@ -1,5 +1,5 @@
 # Status
 
-- Stage: `planning`
+- Stage: `complete`
 - Updated: `2026-03-21`
-- Summary: Decide whether the live chat contract should remain websocket-replay-only or regain legacy REST metadata and message endpoints for older clients.
+- Summary: Legacy chat REST and tool-call cleanup is complete. Chainlit, `/chats`, REST history helpers, legacy iOS aliases, historical tool-name mappings, and stale Chainlit config were removed; `repair_vault` now exists only as `POST /vaults/repair`, and generated Obsidian `.test-dist` output is no longer tracked.

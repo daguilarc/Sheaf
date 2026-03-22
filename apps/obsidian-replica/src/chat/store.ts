@@ -17,7 +17,7 @@ function buildTranscriptItems(session: ChatThreadSessionState): ChatTranscriptIt
         items.push({
           kind: "tool_call",
           id: `tool-${turn.id}-${call.id}`,
-          text: summarizeToolCall(call),
+          text: summarizeToolCall(call, session.currentVaultName ?? undefined),
           tone: call.isError ? "error" : "normal",
         });
       }
@@ -53,9 +53,10 @@ function buildTranscriptItems(session: ChatThreadSessionState): ChatTranscriptIt
   return items;
 }
 
-export function createChatSession(thread: ChatThreadSummary): ChatThreadSessionState {
+export function createChatSession(thread: ChatThreadSummary, currentVaultName: string | null = null): ChatThreadSessionState {
   return {
     thread,
+    currentVaultName,
     committedHistory: {
       turns: [],
       lastTurnID: null,
@@ -137,6 +138,8 @@ export function applyCommittedTurn(session: ChatThreadSessionState, turn: ChatCo
 export class ChatStore {
   private readonly listeners = new Set<() => void>();
   private readonly sessions = new Map<string, ChatThreadSessionState>();
+  constructor(private readonly getCurrentVaultName: () => string | null = () => null) {}
+
   private state: ChatViewState = {
     screen: "threads",
     threadList: {
@@ -205,9 +208,13 @@ export class ChatStore {
 
   setThreads(threads: ChatThreadSummary[]): void {
     const existingSessions = new Map<string, ChatThreadSessionState>();
+    const currentVaultName = this.getCurrentVaultName();
     for (const thread of threads) {
       const current = this.sessions.get(thread.thread_id);
-      existingSessions.set(thread.thread_id, rebuildTranscript({ ...(current ?? createChatSession(thread)), thread }));
+      existingSessions.set(
+        thread.thread_id,
+        rebuildTranscript({ ...(current ?? createChatSession(thread, currentVaultName)), thread, currentVaultName }),
+      );
     }
     for (const [threadID, session] of this.sessions.entries()) {
       if (!existingSessions.has(threadID)) {
@@ -243,7 +250,8 @@ export class ChatStore {
 
   openConversation(thread: ChatThreadSummary): ChatThreadSessionState {
     const current = this.sessions.get(thread.thread_id);
-    const session = rebuildTranscript({ ...(current ?? createChatSession(thread)), thread });
+    const currentVaultName = this.getCurrentVaultName();
+    const session = rebuildTranscript({ ...(current ?? createChatSession(thread, currentVaultName)), thread, currentVaultName });
     this.sessions.set(thread.thread_id, session);
     this.state = {
       ...this.state,
@@ -273,6 +281,7 @@ export class ChatStore {
   }
 
   replaceSession(threadID: string, session: ChatThreadSessionState): void {
+    session.currentVaultName = this.getCurrentVaultName();
     this.sessions.set(threadID, rebuildTranscript(session));
     if (this.state.activeThreadId === threadID) {
       this.state = {

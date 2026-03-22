@@ -59,27 +59,6 @@ actor SheafAPIClient {
         return response.chats
     }
 
-    func getMetadata(chatID: String) async throws -> ChatMetadata {
-        try await request(
-            path: "/threads/\(chatID)/metadata",
-            method: "GET",
-            body: Optional<Data>.none,
-            retryable: true,
-            idempotencyKey: nil
-        )
-    }
-
-    func getMessages(chatID: String, start: Int, end: Int) async throws -> [ChatMessage] {
-        let response: MessageEnvelope = try await request(
-            path: "/threads/\(chatID)/messages?start=\(start)&end=\(end)",
-            method: "GET",
-            body: Optional<Data>.none,
-            retryable: true,
-            idempotencyKey: nil
-        )
-        return response.messages
-    }
-
     func listAvailableModels() async throws -> [ClientModel] {
         let response: ModelListResponse = try await request(
             path: "/models",
@@ -281,7 +260,6 @@ actor SheafAPIClient {
         return formatter
     }()
 }
-import Foundation
 
 struct ChatTransportFrame {
     let type: String

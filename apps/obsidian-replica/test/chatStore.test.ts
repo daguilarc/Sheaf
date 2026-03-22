@@ -1,7 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { ChatStore, applyCommittedTurn, createChatSession, dropQueueArtifacts, dropUncommittedArtifacts } from "../src/chat/store.js";
+import {
+  ChatStore,
+  applyCommittedTurn,
+  createChatSession,
+  dropQueueArtifacts,
+  dropUncommittedArtifacts,
+  getLastCommittedTurnID,
+} from "../src/chat/store.js";
 import { summarizeToolCall } from "../src/chat/toolSummary.js";
 
 import type { ChatCommittedTurn, ChatThreadSummary } from "../src/types.js";
@@ -31,7 +38,7 @@ function assistantTurn(): ChatCommittedTurn {
     tool_calls: [
       {
         id: "tool-1",
-        name: "read_note",
+        name: "read_file",
         args: { relative_path: "folder/note.md" },
         result: "note text",
         isError: false,
@@ -42,7 +49,7 @@ function assistantTurn(): ChatCommittedTurn {
 
 test("transcript ordering is committed then pending then streaming", () => {
   const session = createChatSession(threadSummary());
-  session.committedTurns.push({
+  session.committedHistory.turns.push({
     id: "user-1",
     thread_id: "thread-1",
     prev_turn_id: null,
@@ -79,7 +86,7 @@ test("fresh sessions do not treat thread summary tail as a known committed tail"
     tail_turn_id: "server-tail-1",
   });
 
-  assert.equal(session.lastCommittedTurnID, null);
+  assert.equal(getLastCommittedTurnID(session), null);
 });
 
 test("committed user turn consumes matching pending send", () => {
@@ -162,16 +169,16 @@ test("tool summary keeps only file-safe label", () => {
   assert.equal(
     summarizeToolCall({
       id: "tool-1",
-      name: "write_note",
+      name: "create_file",
       args: { relative_path: "daily/tasks.md", content: "do not show this" },
       result: "ignored",
       isError: false,
-    }),
-    "Wrote daily/tasks.md",
+    }, "test"),
+    "Created daily/tasks.md",
   );
 });
 
-test("tool summary strips server vault root and recognizes create_file", () => {
+test("tool summary strips current vault root and recognizes create_file", () => {
   assert.equal(
     summarizeToolCall({
       id: "tool-2",
@@ -179,12 +186,12 @@ test("tool summary strips server vault root and recognizes create_file", () => {
       args: { path: "data/vaults/test/toaster.md", content: "do not show this" },
       result: "ignored",
       isError: false,
-    }),
+    }, "test"),
     "Created toaster.md",
   );
 });
 
-test("tool summary strips server vault root for patches", () => {
+test("tool summary strips current vault root for patches", () => {
   assert.equal(
     summarizeToolCall({
       id: "tool-3",
@@ -192,8 +199,77 @@ test("tool summary strips server vault root for patches", () => {
       args: { path: "data/vaults/test/toaster.md", patch: "do not show this" },
       result: "ignored",
       isError: false,
-    }),
+    }, "test"),
     "Applied patch to toaster.md",
+  );
+});
+
+test("tool summary shows current vault root as slash", () => {
+  assert.equal(
+    summarizeToolCall({
+      id: "tool-4",
+      name: "list_directory",
+      args: { path: "data/vaults/test" },
+      result: "ignored",
+      isError: false,
+    }, "test"),
+    "Listed /",
+  );
+});
+
+test("tool summary keeps non-current-vault absolute paths at basename only", () => {
+  assert.equal(
+    summarizeToolCall({
+      id: "tool-5",
+      name: "create_file",
+      args: { path: "/Users/joyo/Other Vault/project/toaster.md", content: "do not show this" },
+      result: "ignored",
+      isError: false,
+    }, "test"),
+    "Created toaster.md",
+  );
+});
+
+test("tool summary does not strip other vault roots", () => {
+  assert.equal(
+    summarizeToolCall({
+      id: "tool-6",
+      name: "create_file",
+      args: { path: "data/vaults/other/toaster.md", content: "do not show this" },
+      result: "ignored",
+      isError: false,
+    }, "test"),
+    "Created toaster.md",
+  );
+});
+
+test("tool summary keeps list_directory argument-safe", () => {
+  assert.equal(
+    summarizeToolCall({
+      id: "tool-7",
+      name: "list_directory",
+      args: { path: "data/vaults/test/projects", data: "do not show this" },
+      result: "ignored",
+      isError: false,
+    }, "test"),
+    "Listed projects",
+  );
+});
+
+test("tool summary shows both move_path endpoints", () => {
+  assert.equal(
+    summarizeToolCall({
+      id: "tool-8",
+      name: "move_path",
+      args: {
+        source_path: "data/vaults/test/drafts/todo.md",
+        destination_path: "data/vaults/test/archive/todo.md",
+        data: "do not show this",
+      },
+      result: "ignored",
+      isError: false,
+    }, "test"),
+    "Moved drafts/todo.md to archive/todo.md",
   );
 });
 

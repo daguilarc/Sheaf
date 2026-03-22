@@ -294,6 +294,7 @@ export type ChatTranscriptItem =
 
 export interface ChatThreadSessionState {
   thread: ChatThreadSummary;
+  currentVaultName: string | null;
   committedHistory: {
     turns: ChatCommittedTurn[];
     lastTurnID: string | null;

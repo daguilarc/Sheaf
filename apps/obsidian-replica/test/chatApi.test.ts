@@ -46,7 +46,7 @@ test("decodeCommittedTurn keeps tool call metadata", () => {
     tool_calls: [
       {
         id: "tool-1",
-        name: "read_note",
+        name: "read_file",
         args: { relative_path: "notes/today.md" },
         result: "ignored",
         is_error: false,
@@ -54,6 +54,6 @@ test("decodeCommittedTurn keeps tool call metadata", () => {
     ],
   });
 
-  assert.equal(turn.tool_calls[0]?.name, "read_note");
+  assert.equal(turn.tool_calls[0]?.name, "read_file");
   assert.deepEqual(turn.tool_calls[0]?.args, { relative_path: "notes/today.md" });
 });

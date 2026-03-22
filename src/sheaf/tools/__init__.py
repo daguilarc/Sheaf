@@ -10,7 +10,6 @@ from sheaf.tools.filesystem import (
     list_directory_tool,
     move_path_tool,
     read_file_tool,
-    repair_vault_tool,
 )
 from sheaf.tools.simple_tool import SimpleTool
 from sheaf.tools.sqlite_query import (
@@ -29,7 +28,6 @@ def build_agent_tools() -> list[SimpleTool]:
         apply_patch_tool,
         move_path_tool,
         delete_path_tool,
-        repair_vault_tool,
         list_sqlite_databases_tool,
         create_sqlite_database_tool,
         run_sql_tool,
@@ -45,7 +43,6 @@ __all__ = [
     "apply_patch_tool",
     "move_path_tool",
     "delete_path_tool",
-    "repair_vault_tool",
     "list_sqlite_databases_tool",
     "create_sqlite_database_tool",
     "run_sql_tool",

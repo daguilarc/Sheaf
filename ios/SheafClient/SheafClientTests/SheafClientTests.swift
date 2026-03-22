@@ -332,7 +332,7 @@ struct SheafClientTests {
                 "tool_calls": [
                     [
                         "id": "call-1",
-                        "name": "read_note",
+                        "name": "read_file",
                         "args": ["relative_path": "a.txt"],
                         "result": "ok",
                         "is_error": false,
@@ -348,7 +348,7 @@ struct SheafClientTests {
         #expect(turn.id == "t-1")
         #expect(turn.threadID == "th-1")
         #expect(turn.toolCalls.count == 1)
-        #expect(turn.toolCalls[0].name == "read_note")
+        #expect(turn.toolCalls[0].name == "read_file")
         #expect(turn.toolCalls[0].args["relative_path"]?.stringValue == "a.txt")
     }
 

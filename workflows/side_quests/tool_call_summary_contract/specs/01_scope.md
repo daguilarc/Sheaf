@@ -8,32 +8,70 @@
 
 ## Summary
 
-Define a stable user-facing summary contract for file-oriented tool calls so the
-chat transcript can show helpful file labels without leaking file contents, raw
-payloads, or unstable path details.
+Define a narrow, stable transcript-summary contract for file-oriented tool calls
+in the Obsidian replica chat UI. The goal is to show concise path labels without
+showing file contents, patch bodies, or other raw payload data.
+
+This side quest is documentation-first. The expected implementation delta is
+small because the current Obsidian summary helper already does most of the
+required privacy shaping.
+
+## Confirmed Current Implementation
+
+- The canonical directory-listing tool name is `list_directory`.
+- `list_directory` is implemented in the live file-system tool registry and
+  should be treated as file-oriented for summary purposes.
+- The live file-system tool family is:
+  - `list_directory`
+  - `read_file`
+  - `create_file`
+  - `create_directory`
+  - `apply_patch`
+  - `move_path`
+  - `delete_path`
+- The server transports raw `tool_calls` with full `args`; privacy-safe
+  transcript summaries are a client concern.
+- The current Obsidian summary helper already suppresses content-bearing
+  arguments for `create_file`, `apply_patch`, and `list_directory`.
+- The current Obsidian helper does not yet fully enforce the desired path
+  normalization contract for current-vault stripping and basename fallback.
 
 ## Goals
 
-- Specify which tool families count as file-oriented for transcript rendering.
-- Define the preferred path extraction order for tool payloads such as
-  `relative_path`, `relative_dir`, `path`, and other tool-specific fields.
-- Decide when the UI should show a vault-relative path versus only a basename,
-  and document safe fallbacks when no trustworthy path can be derived.
-- Capture validation examples so implementations can share one summary helper
-  and tests can assert the same output across clients.
+- Document the authoritative list of file-oriented tools used by transcript
+  summaries.
+- Explicitly classify `list_directory` as file-oriented.
+- Remove legacy `list_notes` language from this side quest.
+- Define the path display contract for file-oriented summaries.
+- Define the summary contract for `move_path`, including both source and
+  destination paths.
+- Keep the scope limited to the Obsidian replica chat summary helper for now.
+
+## Path Display Contract
+
+- If a displayed path starts with `data/vaults/<current-vault>/`, strip that
+  prefix and show the vault-relative remainder.
+- If a displayed path is exactly the current vault root, show `/`.
+- If a path does not belong to the current vault, show only its basename rather
+  than the absolute path.
+- Relative paths may be shown as-is.
+- Path normalization should continue to accept the existing path-like argument
+  keys already recognized by the helper.
+
+## Summary Contract
+
+- File-oriented transcript summaries must never show file contents, patch text,
+  or other raw payload bodies.
+- `list_directory` summaries should show only the directory label derived from
+  its path argument and should not surface unrelated arguments.
+- `move_path` summaries should show both the source path label and the
+  destination path label.
+- When no trustworthy path label can be derived, summaries should fall back to a
+  generic action label instead of exposing raw arguments.
 
 ## Non-Goals
 
-- Redesign the full chat bubble layout.
-- Expose raw tool payloads or file contents in the UI.
-- Solve the separate patch-dialect mismatch already tracked in
-  `chat_patch_tool_contract`.
-
-## Open Questions
-
-- Should vault-local files display as vault-relative paths or basename-only
-  labels in v1?
-- Which tool argument keys are authoritative when multiple path-like values are
-  present?
-- Should directory-oriented tools such as `list_notes` follow the same privacy
-  rules as single-file tools, or a narrower directory-summary variant?
+- Redesign the chat transcript UI.
+- Change server-side tool transport payloads.
+- Harmonize iOS transcript summaries in this side quest.
+- Redesign the separate patch payload contract tracked elsewhere.

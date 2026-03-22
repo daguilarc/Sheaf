@@ -25,7 +25,7 @@ type ChatServiceOptions = {
 export class ChatService {
   private readonly api: ChatApiClient;
   private readonly transport: ChatTransportClient;
-  private readonly store = new ChatStore();
+  private readonly store: ChatStore;
   private readonly getNow: () => number;
 
   private activeThreadID: string | null = null;
@@ -37,6 +37,10 @@ export class ChatService {
   constructor(private readonly options: ChatServiceOptions) {
     this.api = new ChatApiClient(options.settings);
     this.transport = new ChatTransportClient(options.settings);
+    this.store = new ChatStore(() => {
+      const vaultName = options.settings().vaultName.trim();
+      return vaultName || null;
+    });
     this.getNow = options.getNow ?? (() => Date.now());
   }
 

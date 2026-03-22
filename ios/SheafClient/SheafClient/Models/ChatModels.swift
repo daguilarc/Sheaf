@@ -87,9 +87,7 @@ struct ChatSummary: Decodable, Identifiable, Hashable {
     var id: String { chatID }
 
     enum CodingKeys: String, CodingKey {
-        case chatID = "chat_id"
         case threadID = "thread_id"
-        case id
         case name
         case createdAt = "created_at"
         case updatedAt = "updated_at"
@@ -97,13 +95,7 @@ struct ChatSummary: Decodable, Identifiable, Hashable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        if let chatID = try container.decodeIfPresent(String.self, forKey: .chatID) {
-            self.chatID = chatID
-        } else if let threadID = try container.decodeIfPresent(String.self, forKey: .threadID) {
-            self.chatID = threadID
-        } else {
-            self.chatID = try container.decode(String.self, forKey: .id)
-        }
+        self.chatID = try container.decode(String.self, forKey: .threadID)
         self.name = try container.decodeIfPresent(String.self, forKey: .name) ?? self.chatID
         self.createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt)
         self.updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt)
@@ -114,15 +106,12 @@ struct ChatListResponse: Decodable {
     let chats: [ChatSummary]
 
     enum CodingKeys: String, CodingKey {
-        case chats
         case threads
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        chats = try container.decodeIfPresent([ChatSummary].self, forKey: .threads)
-            ?? container.decodeIfPresent([ChatSummary].self, forKey: .chats)
-            ?? []
+        chats = try container.decodeIfPresent([ChatSummary].self, forKey: .threads) ?? []
     }
 }
 
@@ -134,35 +123,17 @@ struct CreateChatResponse: Decodable {
     let chatID: String
 
     enum CodingKeys: String, CodingKey {
-        case chatID = "chat_id"
         case threadID = "thread_id"
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        chatID = try container.decodeIfPresent(String.self, forKey: .threadID)
-            ?? container.decode(String.self, forKey: .chatID)
+        chatID = try container.decode(String.self, forKey: .threadID)
     }
 }
 
 struct CreateChatRequest: Encodable {
     let name: String
-}
-
-struct ChatMetadata: Decodable {
-    let chatID: String
-    let messageCount: Int
-    let latestCheckpointID: String?
-
-    enum CodingKeys: String, CodingKey {
-        case chatID = "chat_id"
-        case messageCount = "message_count"
-        case latestCheckpointID = "latest_checkpoint_id"
-    }
-}
-
-struct MessageEnvelope: Decodable {
-    let messages: [ChatMessage]
 }
 
 struct ChatMessage: Decodable, Identifiable, Hashable {
@@ -261,26 +232,4 @@ struct PendingSend: Hashable {
 struct StreamingAssistantTurn: Hashable {
     let queueID: Int
     var text: String
-}
-
-struct SendMessageResponse: Decodable {
-    let chatID: String
-    let response: String
-    let checkpointID: String?
-    let toolCalls: [ToolCallPayload]
-
-    enum CodingKeys: String, CodingKey {
-        case chatID = "chat_id"
-        case response
-        case checkpointID = "checkpoint_id"
-        case toolCalls = "tool_calls"
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        chatID = try container.decode(String.self, forKey: .chatID)
-        response = try container.decode(String.self, forKey: .response)
-        checkpointID = try container.decodeIfPresent(String.self, forKey: .checkpointID)
-        toolCalls = try container.decodeIfPresent([ToolCallPayload].self, forKey: .toolCalls) ?? []
-    }
 }

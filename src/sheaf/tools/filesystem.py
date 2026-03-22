@@ -6,7 +6,7 @@ from pathlib import Path
 
 from sheaf.tools.simple_tool import tool
 from sheaf.tools.visibility import ensure_visible, resolve_input_path
-from sheaf.vaults.logging import WriteOperation, record_filesystem_write, repair_vault_state
+from sheaf.vaults.logging import WriteOperation, record_filesystem_write
 
 
 def _display(path: Path) -> str:
@@ -123,12 +123,3 @@ def delete_path_tool(path: str) -> str:
 
     result = record_filesystem_write(WriteOperation(kind="delete_path", path=resolve_input_path(path)))
     return result.message
-
-
-@tool("repair_vault")
-def repair_vault_tool(root_path: str = "", vault_id: int = 0) -> str:
-    """Repair a vault by reconciling on-disk state against the vault log."""
-
-    resolved_root = None if not root_path.strip() else str(resolve_input_path(root_path))
-    resolved_vault_id = None if vault_id <= 0 else vault_id
-    return repair_vault_state(root_path=resolved_root, vault_id=resolved_vault_id)

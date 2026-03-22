@@ -60,6 +60,22 @@ Behavior:
 - Idempotent if thread is already unarchived.
 - Thread appears again in `GET /threads` results.
 
+## `POST /vaults`
+
+Creates or registers a vault root for replica-aware operations.
+
+Behavior:
+- Accepts a `root_path` plus optional `metadata_json`.
+- Returns the created or existing vault record.
+
+## `POST /vaults/repair`
+
+Repairs a vault by reconciling on-disk state against the vault log.
+
+Behavior:
+- Accepts either `root_path` or `vault_id`.
+- Returns an `ok` status plus the repair summary text.
+
 ## Notes
 
 - Includes read-only listing endpoints plus archive state mutation endpoints.
