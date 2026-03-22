@@ -196,11 +196,44 @@ test("tool summary strips current vault root for patches", () => {
     summarizeToolCall({
       id: "tool-3",
       name: "apply_patch",
-      args: { path: "data/vaults/test/toaster.md", patch: "do not show this" },
+      args: {
+        patch: [
+          "*** Begin Patch",
+          "*** Update File: data/vaults/test/toaster.md",
+          "@@",
+          "-old",
+          "+new",
+          "*** End Patch",
+        ].join("\n"),
+      },
       result: "ignored",
       isError: false,
     }, "test"),
     "Applied patch to toaster.md",
+  );
+});
+
+test("tool summary keeps patch bodies hidden when multiple files are touched", () => {
+  assert.equal(
+    summarizeToolCall({
+      id: "tool-3b",
+      name: "apply_patch",
+      args: {
+        patch: [
+          "*** Begin Patch",
+          "*** Update File: data/vaults/test/toaster.md",
+          "@@",
+          "-old",
+          "+new",
+          "*** Add File: data/vaults/test/notes.md",
+          "+secret body",
+          "*** End Patch",
+        ].join("\n"),
+      },
+      result: "ignored",
+      isError: false,
+    }, "test"),
+    "Applied patch to toaster.md (+1 more)",
   );
 });
 

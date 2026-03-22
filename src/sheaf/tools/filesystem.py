@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from sheaf.tools.patching import apply_patch_envelope_update, parse_patch_envelope
 from sheaf.tools.simple_tool import tool
 from sheaf.tools.visibility import ensure_visible, resolve_input_path
 from sheaf.vaults.logging import WriteOperation, record_filesystem_write
@@ -96,14 +97,39 @@ def create_directory_tool(path: str) -> str:
     return result.message
 
 
-@tool("apply_patch")
-def apply_patch_tool(path: str, patch: str) -> str:
-    """Apply a unified diff patch to a UTF-8 file and record the write in the vault log."""
+@tool(
+    "apply_patch",
+    description=(
+        "Apply the OpenAI/Codex patch envelope to visible UTF-8 files. "
+        "Send one string in `patch` using `*** Begin Patch`, one or more file sections "
+        "like `*** Update File:`, `*** Add File:`, or `*** Delete File:`, and finish with "
+        "`*** End Patch`. Do not send raw unified diff hunks."
+    ),
+)
+def apply_patch_tool(patch: str) -> str:
+    """Apply the OpenAI/Codex patch envelope to visible UTF-8 files."""
 
-    result = record_filesystem_write(
-        WriteOperation(kind="patch_file", path=resolve_input_path(path), patch=patch)
-    )
-    return result.message
+    operations = parse_patch_envelope(patch)
+    messages: list[str] = []
+    for operation in operations:
+        path = resolve_input_path(operation.path)
+        if operation.kind == "update":
+            ensure_visible(path)
+            if not path.exists() or not path.is_file():
+                raise ValueError(f"File does not exist: {path}")
+            original = path.read_text(encoding="utf-8")
+            patch_text = apply_patch_envelope_update(original, str(path), operation.hunk_lines or [])
+            result = record_filesystem_write(
+                WriteOperation(kind="patch_file", path=path, patch=patch_text)
+            )
+        elif operation.kind == "add":
+            result = record_filesystem_write(
+                WriteOperation(kind="create_file", path=path, content=operation.content or "", overwrite=False)
+            )
+        else:
+            result = record_filesystem_write(WriteOperation(kind="delete_path", path=path))
+        messages.append(result.message)
+    return "\n".join(messages)
 
 
 @tool("move_path")

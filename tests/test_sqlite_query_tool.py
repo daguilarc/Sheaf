@@ -185,3 +185,12 @@ def test_openai_tool_definitions_are_derived_from_tool_metadata() -> None:
     assert create_tool["parameters"]["properties"]["content"]["type"] == "string"
     assert create_tool["parameters"]["properties"]["overwrite"]["type"] == "boolean"
     assert create_tool["parameters"]["required"] == ["path", "content"]
+
+    assert "apply_patch" in by_name
+    patch_tool = by_name["apply_patch"]["function"]
+    assert "OpenAI/Codex patch envelope" in patch_tool["description"]
+    assert "*** Begin Patch" in patch_tool["description"]
+    assert "*** End Patch" in patch_tool["description"]
+    assert set(patch_tool["parameters"]["properties"].keys()) == {"patch"}
+    assert patch_tool["parameters"]["properties"]["patch"]["type"] == "string"
+    assert patch_tool["parameters"]["required"] == ["patch"]

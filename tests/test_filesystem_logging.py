@@ -55,8 +55,17 @@ def test_create_patch_move_delete_file_are_logged(filesystem_env: dict[str, Path
     file_path = vault_root / "note.txt"
 
     assert "Wrote" in create_file_tool.invoke({"path": str(file_path), "content": "one\n"})
-    patch = "--- note.txt\n+++ note.txt\n@@ -1,1 +1,1 @@\n-one\n+two"
-    assert "Patched" in apply_patch_tool.invoke({"path": str(file_path), "patch": patch})
+    patch = "\n".join(
+        [
+            "*** Begin Patch",
+            f"*** Update File: {file_path}",
+            "@@",
+            "-one",
+            "+two",
+            "*** End Patch",
+        ]
+    )
+    assert "Patched" in apply_patch_tool.invoke({"patch": patch})
     moved = vault_root / "renamed.txt"
     assert "Moved" in move_path_tool.invoke({"source_path": str(file_path), "destination_path": str(moved)})
     assert "Deleted" in delete_path_tool.invoke({"path": str(moved)})
@@ -77,6 +86,49 @@ def test_create_patch_move_delete_file_are_logged(filesystem_env: dict[str, Path
         assert rows[3]["name"] == "note.txt"
         count = conn.execute("SELECT COUNT(*) FROM files").fetchone()[0]
         assert count == 0
+
+
+def test_apply_patch_supports_add_update_and_delete_in_one_envelope(filesystem_env: dict[str, Path]) -> None:
+    vault_root = filesystem_env["vault_root"]
+    existing = vault_root / "existing.txt"
+    removed = vault_root / "remove.txt"
+
+    create_file_tool.invoke({"path": str(existing), "content": "one\n"})
+    create_file_tool.invoke({"path": str(removed), "content": "bye\n"})
+
+    patch = "\n".join(
+        [
+            "*** Begin Patch",
+            f"*** Update File: {existing}",
+            "@@",
+            "-one",
+            "+two",
+            f"*** Add File: {vault_root / 'added.txt'}",
+            "+hello",
+            "+world",
+            f"*** Delete File: {removed}",
+            "*** End Patch",
+        ]
+    )
+
+    result = apply_patch_tool.invoke({"patch": patch})
+
+    assert "Patched" in result
+    assert "Wrote" in result
+    assert "Deleted" in result
+    assert existing.read_text(encoding="utf-8") == "two\n"
+    assert (vault_root / "added.txt").read_text(encoding="utf-8") == "hello\nworld\n"
+    assert not removed.exists()
+
+
+def test_apply_patch_rejects_legacy_raw_unified_diff(filesystem_env: dict[str, Path]) -> None:
+    vault_root = filesystem_env["vault_root"]
+    file_path = vault_root / "note.txt"
+
+    create_file_tool.invoke({"path": str(file_path), "content": "one\n"})
+
+    with pytest.raises(ValueError, match="expected '\\*\\*\\* Begin Patch'"):
+        apply_patch_tool.invoke({"patch": "--- note.txt\n+++ note.txt\n@@ -1,1 +1,1 @@\n-one\n+two"})
 
 
 def test_directory_operations_and_rebuild(filesystem_env: dict[str, Path]) -> None:

@@ -1,5 +1,7 @@
 # Status
 
-- Stage: `planning`
+- Stage: `complete`
 - Updated: `2026-03-21`
-- Summary: Clarify and possibly redesign the chat editing tool contract so agents stop sending incompatible patch formats and tool-event UX can rely on consistent file-operation behavior.
+- Summary: Completed the server-side `apply_patch` migration to the
+  OpenAI/Codex patch protocol, exposed the patch-only tool contract to agents,
+  and kept unified diff as an internal representation for replica-safe logging.
