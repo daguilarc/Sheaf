@@ -1,9 +1,7 @@
 "use strict";
-var __create = Object.create;
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
-var __getProtoOf = Object.getPrototypeOf;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
 var __export = (target, all) => {
   for (var name in all)
@@ -17,14 +15,6 @@ var __copyProps = (to, from, except, desc) => {
   }
   return to;
 };
-var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
-  // If the importer is in node compatibility mode or this is not an ESM
-  // file that has been converted to a CommonJS file using a Babel-
-  // compatible transform (i.e. "__esModule" has not been set), then set
-  // "default" to the CommonJS "module.exports" for node compatibility.
-  isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
-  mod
-));
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
 // src/main.ts
@@ -33,7 +23,10 @@ __export(main_exports, {
   default: () => SheafObsidianReplicaPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian6 = require("obsidian");
+var import_obsidian7 = require("obsidian");
+
+// src/chat/api.ts
+var import_obsidian = require("obsidian");
 
 // src/chat/protocol.ts
 var CHAT_PROTOCOL_VERSION = 1;
@@ -135,23 +128,19 @@ function decodeModelListResponse(value) {
 }
 
 // src/chat/api.ts
-async function requestUrlCompat(args) {
-  const obsidianModule = await import("obsidian");
-  return obsidianModule.requestUrl(args);
-}
 var ChatApiClient = class {
   constructor(settings) {
     this.settings = settings;
   }
   async listThreads() {
-    const response = await requestUrlCompat({
+    const response = await (0, import_obsidian.requestUrl)({
       url: `${this.settings().serverBaseUrl}/threads`,
       method: "GET"
     });
     return decodeThreadsResponse(response.json);
   }
   async createThread(name) {
-    const response = await requestUrlCompat({
+    const response = await (0, import_obsidian.requestUrl)({
       url: `${this.settings().serverBaseUrl}/threads`,
       method: "POST",
       contentType: "application/json",
@@ -160,14 +149,14 @@ var ChatApiClient = class {
     return decodeCreateThreadResponse(response.json);
   }
   async listModels() {
-    const response = await requestUrlCompat({
+    const response = await (0, import_obsidian.requestUrl)({
       url: `${this.settings().serverBaseUrl}/models`,
       method: "GET"
     });
     return decodeModelListResponse(response.json);
   }
   async enterThread(threadID, knownTailTurnID) {
-    const response = await requestUrlCompat({
+    const response = await (0, import_obsidian.requestUrl)({
       url: `${this.settings().serverBaseUrl}/threads/${encodeURIComponent(threadID)}/enter-chat`,
       method: "POST",
       contentType: "application/json",
@@ -1092,15 +1081,15 @@ var ChatService = class {
 };
 
 // src/chat/view.ts
-var import_obsidian4 = require("obsidian");
+var import_obsidian5 = require("obsidian");
 
 // src/chat/components/threadList.ts
-var import_obsidian2 = require("obsidian");
+var import_obsidian3 = require("obsidian");
 
 // src/chat/modals.ts
-var import_obsidian = require("obsidian");
+var import_obsidian2 = require("obsidian");
 var DEFAULT_NEW_THREAD_NAME = "New thread";
-var NewThreadModal = class extends import_obsidian.Modal {
+var NewThreadModal = class extends import_obsidian2.Modal {
   constructor(app, onSubmit) {
     super(app);
     this.onSubmit = onSubmit;
@@ -1111,7 +1100,7 @@ var NewThreadModal = class extends import_obsidian.Modal {
     contentEl.empty();
     this.titleEl.setText("New thread");
     let inputEl = null;
-    new import_obsidian.Setting(contentEl).setName("Thread name").addText((text) => {
+    new import_obsidian2.Setting(contentEl).setName("Thread name").addText((text) => {
       inputEl = text.inputEl;
       text.setValue(this.name).onChange((value) => {
         this.name = value;
@@ -1161,27 +1150,27 @@ var ThreadListComponent = class {
     header.createDiv({ text: "Sheaf Chat", cls: "sheaf-header-title" });
     const actions = header.createDiv({ cls: "sheaf-header-actions" });
     const refreshBtn = actions.createEl("button", { cls: "sheaf-icon-btn" });
-    (0, import_obsidian2.setIcon)(refreshBtn, "refresh-cw");
+    (0, import_obsidian3.setIcon)(refreshBtn, "refresh-cw");
     refreshBtn.setAttribute("aria-label", "Refresh threads");
     refreshBtn.addEventListener("click", () => {
       void service.refreshThreads();
     });
     const settingsBtn = actions.createEl("button", { cls: "sheaf-icon-btn" });
-    (0, import_obsidian2.setIcon)(settingsBtn, "settings");
+    (0, import_obsidian3.setIcon)(settingsBtn, "settings");
     settingsBtn.setAttribute("aria-label", "Open settings");
     settingsBtn.addEventListener("click", () => {
       service.openSettings();
     });
     const newBtn = this.container.createEl("button", { cls: "sheaf-new-thread-btn" });
     const plusIcon = newBtn.createSpan();
-    (0, import_obsidian2.setIcon)(plusIcon, "plus");
+    (0, import_obsidian3.setIcon)(plusIcon, "plus");
     newBtn.createSpan({ text: "New thread" });
     newBtn.disabled = state.threadList.creating;
     newBtn.setAttribute("aria-label", "Create a new thread");
     newBtn.addEventListener("click", () => {
       new NewThreadModal(app, (name) => {
         void service.createThread(name).catch((error) => {
-          new import_obsidian2.Notice(error instanceof Error ? error.message : String(error));
+          new import_obsidian3.Notice(error instanceof Error ? error.message : String(error));
         });
       }).open();
     });
@@ -1212,7 +1201,7 @@ var ThreadListComponent = class {
       }
       card.addEventListener("click", () => {
         void service.openThread(thread.thread_id).catch((error) => {
-          new import_obsidian2.Notice(error instanceof Error ? error.message : String(error));
+          new import_obsidian3.Notice(error instanceof Error ? error.message : String(error));
         });
       });
     }
@@ -1223,7 +1212,7 @@ var ThreadListComponent = class {
 };
 
 // src/chat/components/conversation.ts
-var import_obsidian3 = require("obsidian");
+var import_obsidian4 = require("obsidian");
 
 // src/chat/components/messageRenderer.ts
 function itemSignature(item) {
@@ -1312,7 +1301,7 @@ var ConversationComponent = class {
     const conversation = this.container.createDiv({ cls: "sheaf-conversation" });
     const header = conversation.createDiv({ cls: "sheaf-conv-header" });
     const backBtn = header.createEl("button", { cls: "sheaf-icon-btn" });
-    (0, import_obsidian3.setIcon)(backBtn, "arrow-left");
+    (0, import_obsidian4.setIcon)(backBtn, "arrow-left");
     backBtn.setAttribute("aria-label", "Back to threads");
     backBtn.addEventListener("click", () => {
       void service.showThreadList();
@@ -1321,7 +1310,7 @@ var ConversationComponent = class {
     this.titleEl = info.createDiv({ cls: "sheaf-conv-title" });
     this.subtitleEl = info.createDiv({ cls: "sheaf-conv-subtitle" });
     const settingsBtn = header.createEl("button", { cls: "sheaf-icon-btn" });
-    (0, import_obsidian3.setIcon)(settingsBtn, "settings");
+    (0, import_obsidian4.setIcon)(settingsBtn, "settings");
     settingsBtn.setAttribute("aria-label", "Open settings");
     settingsBtn.addEventListener("click", () => {
       service.openSettings();
@@ -1346,7 +1335,7 @@ var ConversationComponent = class {
     this.sendBtn = field.createEl("button", { cls: "sheaf-send-btn" });
     this.sendBtn.type = "button";
     this.sendBtn.setAttribute("aria-label", "Send message");
-    (0, import_obsidian3.setIcon)(this.sendBtn, "arrow-right");
+    (0, import_obsidian4.setIcon)(this.sendBtn, "arrow-right");
     this.sendBtn.addEventListener("click", () => {
       void this.submitComposer(service);
     });
@@ -1507,7 +1496,7 @@ var ConversationComponent = class {
 
 // src/chat/view.ts
 var SHEAF_CHAT_VIEW_TYPE = "sheaf-chat-view";
-var SheafChatView = class extends import_obsidian4.ItemView {
+var SheafChatView = class extends import_obsidian5.ItemView {
   constructor(leaf, chatService) {
     super(leaf);
     this.chatService = chatService;
@@ -1982,7 +1971,7 @@ var ReplicaStateRepository = class {
 };
 
 // src/syncClient.ts
-var import_obsidian5 = require("obsidian");
+var import_obsidian6 = require("obsidian");
 
 // src/replayQueue.ts
 var ReplayQueue = class {
@@ -2065,7 +2054,7 @@ var ReplicaSyncService = class {
     return this.sendRequest("query_path_state", path, this.pendingPathState);
   }
   async startSession(settings, nextLsn) {
-    const response = await (0, import_obsidian5.requestUrl)({
+    const response = await (0, import_obsidian6.requestUrl)({
       url: `${settings.serverBaseUrl}/replica/sessions`,
       method: "POST",
       contentType: "application/json",
@@ -2097,7 +2086,7 @@ var ReplicaSyncService = class {
         void this.scheduleReconnect();
       });
       socket.addEventListener("error", () => {
-        new import_obsidian5.Notice("Replica sync socket error");
+        new import_obsidian6.Notice("Replica sync socket error");
       });
     });
   }
@@ -2212,7 +2201,7 @@ var ReplicaSyncService = class {
         }
       };
       await this.persistState();
-      new import_obsidian5.Notice(`Replica sync requires attention: ${this.state.health.lastError}`);
+      new import_obsidian6.Notice(`Replica sync requires attention: ${this.state.health.lastError}`);
     }
   }
   async persistState() {
@@ -2273,16 +2262,16 @@ var ObsidianVaultAdapter = class {
     this.app = app;
   }
   async read(path) {
-    const file = this.app.vault.getAbstractFileByPath((0, import_obsidian6.normalizePath)(path));
-    if (!(file instanceof import_obsidian6.TFile)) {
+    const file = this.app.vault.getAbstractFileByPath((0, import_obsidian7.normalizePath)(path));
+    if (!(file instanceof import_obsidian7.TFile)) {
       return null;
     }
     return this.app.vault.cachedRead(file);
   }
   async write(path, content) {
-    const normalized = (0, import_obsidian6.normalizePath)(path);
+    const normalized = (0, import_obsidian7.normalizePath)(path);
     const existing = this.app.vault.getAbstractFileByPath(normalized);
-    if (existing instanceof import_obsidian6.TFile) {
+    if (existing instanceof import_obsidian7.TFile) {
       await this.app.vault.modify(existing, content);
       await this.refreshOpenLeaves(existing, content);
       this.app.vault.trigger("modify", existing);
@@ -2294,8 +2283,8 @@ var ObsidianVaultAdapter = class {
     this.app.vault.trigger("modify", created);
   }
   async delete(path) {
-    const file = this.app.vault.getAbstractFileByPath((0, import_obsidian6.normalizePath)(path));
-    if (file instanceof import_obsidian6.TFile) {
+    const file = this.app.vault.getAbstractFileByPath((0, import_obsidian7.normalizePath)(path));
+    if (file instanceof import_obsidian7.TFile) {
       await this.closeOpenLeaves(file);
       await this.app.vault.delete(file, true);
       this.app.workspace.trigger("layout-change");
@@ -2306,7 +2295,7 @@ var ObsidianVaultAdapter = class {
     }
   }
   async stat(path) {
-    const stat = await this.app.vault.adapter.stat((0, import_obsidian6.normalizePath)(path));
+    const stat = await this.app.vault.adapter.stat((0, import_obsidian7.normalizePath)(path));
     if (!stat) {
       return null;
     }
@@ -2316,7 +2305,7 @@ var ObsidianVaultAdapter = class {
     return this.app.vault.getFiles().map((file) => file.path);
   }
   async ensureFolders(path) {
-    const parts = (0, import_obsidian6.normalizePath)(path).split("/").slice(0, -1);
+    const parts = (0, import_obsidian7.normalizePath)(path).split("/").slice(0, -1);
     let current = "";
     for (const part of parts) {
       current = current ? `${current}/${part}` : part;
@@ -2327,10 +2316,10 @@ var ObsidianVaultAdapter = class {
     }
   }
   async refreshOpenLeaves(file, content) {
-    const matchingLeaves = this.app.workspace.getLeavesOfType("markdown").filter((leaf) => leaf.view instanceof import_obsidian6.MarkdownView && leaf.view.file?.path === file.path);
+    const matchingLeaves = this.app.workspace.getLeavesOfType("markdown").filter((leaf) => leaf.view instanceof import_obsidian7.MarkdownView && leaf.view.file?.path === file.path);
     for (const leaf of matchingLeaves) {
       const view = leaf.view;
-      if (!(view instanceof import_obsidian6.MarkdownView)) {
+      if (!(view instanceof import_obsidian7.MarkdownView)) {
         continue;
       }
       const scroll = view.currentMode.getScroll();
@@ -2342,18 +2331,18 @@ var ObsidianVaultAdapter = class {
       view.previewMode?.rerender(true);
     }
     if (matchingLeaves.length > 0) {
-      new import_obsidian6.Notice(`Replica refreshed ${file.path}`, 2e3);
+      new import_obsidian7.Notice(`Replica refreshed ${file.path}`, 2e3);
       this.app.workspace.trigger("layout-change");
     }
   }
   async closeOpenLeaves(file) {
-    const matchingLeaves = this.app.workspace.getLeavesOfType("markdown").filter((leaf) => leaf.view instanceof import_obsidian6.MarkdownView && leaf.view.file?.path === file.path);
+    const matchingLeaves = this.app.workspace.getLeavesOfType("markdown").filter((leaf) => leaf.view instanceof import_obsidian7.MarkdownView && leaf.view.file?.path === file.path);
     for (const leaf of matchingLeaves) {
       await leaf.setViewState({ type: "empty" });
     }
   }
 };
-var ReplicaSettingTab = class extends import_obsidian6.PluginSettingTab {
+var ReplicaSettingTab = class extends import_obsidian7.PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
     this.plugin = plugin;
@@ -2361,37 +2350,37 @@ var ReplicaSettingTab = class extends import_obsidian6.PluginSettingTab {
   display() {
     const { containerEl } = this;
     containerEl.empty();
-    new import_obsidian6.Setting(containerEl).setName("Server base URL").setDesc("Replica session endpoint for the Sheaf server.").addText(
+    new import_obsidian7.Setting(containerEl).setName("Server base URL").setDesc("Replica session endpoint for the Sheaf server.").addText(
       (text) => text.setValue(this.plugin.settings.serverBaseUrl).onChange(async (value) => {
         this.plugin.settings.serverBaseUrl = value.trim() || DEFAULT_SETTINGS.serverBaseUrl;
         await this.plugin.persistSettings();
       })
     );
-    new import_obsidian6.Setting(containerEl).setName("Vault name").setDesc("Logical server-side vault name used by replica sync.").addText(
+    new import_obsidian7.Setting(containerEl).setName("Vault name").setDesc("Logical server-side vault name used by replica sync.").addText(
       (text) => text.setValue(this.plugin.settings.vaultName).onChange(async (value) => {
         this.plugin.settings.vaultName = value.trim() || this.app.vault.getName();
         await this.plugin.persistSettings();
       })
     );
-    new import_obsidian6.Setting(containerEl).setName("Server root path").setDesc("Required when the server must create the replica vault on first sync.").addText(
+    new import_obsidian7.Setting(containerEl).setName("Server root path").setDesc("Required when the server must create the replica vault on first sync.").addText(
       (text) => text.setValue(this.plugin.settings.serverRootPath).onChange(async (value) => {
         this.plugin.settings.serverRootPath = value.trim();
         await this.plugin.persistSettings();
       })
     );
-    new import_obsidian6.Setting(containerEl).setName("Create missing vault automatically").addToggle(
+    new import_obsidian7.Setting(containerEl).setName("Create missing vault automatically").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.createIfMissing).onChange(async (value) => {
         this.plugin.settings.createIfMissing = value;
         await this.plugin.persistSettings();
       })
     );
-    new import_obsidian6.Setting(containerEl).setName("Block local edits").setDesc("Reject typing, paste, undo, and redo in replicated notes.").addToggle(
+    new import_obsidian7.Setting(containerEl).setName("Block local edits").setDesc("Reject typing, paste, undo, and redo in replicated notes.").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.blockLocalEdits).onChange(async (value) => {
         this.plugin.settings.blockLocalEdits = value;
         await this.plugin.persistSettings();
       })
     );
-    new import_obsidian6.Setting(containerEl).setName("Chat default model").setDesc("Choose which model new chat messages should use.").addDropdown((dropdown) => {
+    new import_obsidian7.Setting(containerEl).setName("Chat default model").setDesc("Choose which model new chat messages should use.").addDropdown((dropdown) => {
       dropdown.addOption("", "Server default");
       const models = this.plugin.availableChatModels;
       for (const model of models) {
@@ -2411,14 +2400,14 @@ var ReplicaSettingTab = class extends import_obsidian6.PluginSettingTab {
         this.display();
       });
     });
-    new import_obsidian6.Setting(containerEl).setName("Chat reconnect delay (ms)").setDesc("Delay before retrying after a chat disconnect or conflict.").addText(
+    new import_obsidian7.Setting(containerEl).setName("Chat reconnect delay (ms)").setDesc("Delay before retrying after a chat disconnect or conflict.").addText(
       (text) => text.setValue(String(this.plugin.settings.chatReconnectDelayMs)).onChange(async (value) => {
         const parsed = Number.parseInt(value, 10);
         this.plugin.settings.chatReconnectDelayMs = Number.isFinite(parsed) ? Math.max(parsed, 250) : DEFAULT_SETTINGS.chatReconnectDelayMs;
         await this.plugin.persistSettings();
       })
     );
-    new import_obsidian6.Setting(containerEl).setName("Chat watchdog timeout (ms)").setDesc("Reconnect the chat pane if no websocket frames arrive within this window.").addText(
+    new import_obsidian7.Setting(containerEl).setName("Chat watchdog timeout (ms)").setDesc("Reconnect the chat pane if no websocket frames arrive within this window.").addText(
       (text) => text.setValue(String(this.plugin.settings.chatWatchdogMs)).onChange(async (value) => {
         const parsed = Number.parseInt(value, 10);
         this.plugin.settings.chatWatchdogMs = Number.isFinite(parsed) ? Math.max(parsed, 5e3) : DEFAULT_SETTINGS.chatWatchdogMs;
@@ -2427,7 +2416,7 @@ var ReplicaSettingTab = class extends import_obsidian6.PluginSettingTab {
     );
   }
 };
-var SheafObsidianReplicaPlugin = class extends import_obsidian6.Plugin {
+var SheafObsidianReplicaPlugin = class extends import_obsidian7.Plugin {
   settings = { ...DEFAULT_SETTINGS };
   availableChatModels = [];
   stateRepository;
@@ -2469,11 +2458,11 @@ var SheafObsidianReplicaPlugin = class extends import_obsidian6.Plugin {
         if (!this.settings.blockLocalEdits) {
           return false;
         }
-        const activeFile = this.app.workspace.getActiveViewOfType(import_obsidian6.MarkdownView)?.file;
-        if (!(activeFile instanceof import_obsidian6.TFile)) {
+        const activeFile = this.app.workspace.getActiveViewOfType(import_obsidian7.MarkdownView)?.file;
+        if (!(activeFile instanceof import_obsidian7.TFile)) {
           return false;
         }
-        return Boolean(this.latestState?.files[(0, import_obsidian6.normalizePath)(activeFile.path)]);
+        return Boolean(this.latestState?.files[(0, import_obsidian7.normalizePath)(activeFile.path)]);
       })
     );
     this.chatService = new ChatService({
@@ -2490,9 +2479,9 @@ var SheafObsidianReplicaPlugin = class extends import_obsidian6.Plugin {
       callback: async () => {
         try {
           await this.syncService?.start();
-          new import_obsidian6.Notice("Replica sync started");
+          new import_obsidian7.Notice("Replica sync started");
         } catch (error) {
-          new import_obsidian6.Notice(`Replica sync failed: ${error instanceof Error ? error.message : String(error)}`);
+          new import_obsidian7.Notice(`Replica sync failed: ${error instanceof Error ? error.message : String(error)}`);
         }
       }
     });
@@ -2502,9 +2491,9 @@ var SheafObsidianReplicaPlugin = class extends import_obsidian6.Plugin {
       callback: async () => {
         try {
           await this.syncService?.repairNow();
-          new import_obsidian6.Notice("Replica repair complete");
+          new import_obsidian7.Notice("Replica repair complete");
         } catch (error) {
-          new import_obsidian6.Notice(`Replica repair failed: ${error instanceof Error ? error.message : String(error)}`);
+          new import_obsidian7.Notice(`Replica repair failed: ${error instanceof Error ? error.message : String(error)}`);
         }
       }
     });
@@ -2514,7 +2503,7 @@ var SheafObsidianReplicaPlugin = class extends import_obsidian6.Plugin {
       callback: async () => {
         const state = this.latestState ?? await this.stateRepository.loadState(this.settings.vaultName);
         const health = state.health;
-        new import_obsidian6.Notice(
+        new import_obsidian7.Notice(
           `Replica ${health.connectionState}; next LSN ${state.nextLsn}; last good ${health.lastSuccessfulLsn ?? "none"}`,
           6e3
         );
@@ -2530,7 +2519,7 @@ var SheafObsidianReplicaPlugin = class extends import_obsidian6.Plugin {
     try {
       await this.syncService.start();
     } catch (error) {
-      new import_obsidian6.Notice(`Replica sync failed to start: ${error instanceof Error ? error.message : String(error)}`);
+      new import_obsidian7.Notice(`Replica sync failed to start: ${error instanceof Error ? error.message : String(error)}`);
     }
     this.repairTimer = window.setInterval(() => {
       void this.syncService?.repairNow();
@@ -2556,7 +2545,7 @@ var SheafObsidianReplicaPlugin = class extends import_obsidian6.Plugin {
   }
   async refreshAvailableChatModels(showFailureNotice) {
     try {
-      const response = await (0, import_obsidian6.requestUrl)({
+      const response = await (0, import_obsidian7.requestUrl)({
         url: `${this.settings.serverBaseUrl}/models`,
         method: "GET"
       });
@@ -2570,7 +2559,7 @@ var SheafObsidianReplicaPlugin = class extends import_obsidian6.Plugin {
       this.settingTab?.display();
     } catch (error) {
       if (showFailureNotice) {
-        new import_obsidian6.Notice(`Failed to load models: ${error instanceof Error ? error.message : String(error)}`);
+        new import_obsidian7.Notice(`Failed to load models: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
   }

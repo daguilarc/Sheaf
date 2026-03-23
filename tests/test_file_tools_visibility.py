@@ -48,10 +48,12 @@ def test_read_and_list_respect_visible_directories_read_only(visible_env: dict[s
     note.write_text("line1\nline2\n", encoding="utf-8")
 
     listing = list_directory_tool.invoke({"path": ".", "recursive": False})
-    assert "hello.txt" in listing
+    assert "Directory context opened for" in listing
+    assert "1 visible entry" in listing
 
     text = read_file_tool.invoke({"path": "hello.txt"})
-    assert "line1" in text
+    assert "File context opened for" in text
+    assert "2 lines" in text
 
 
 def test_write_blocked_when_only_read_only_visible(visible_env: dict[str, Path]) -> None:

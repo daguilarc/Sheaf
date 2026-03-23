@@ -27,6 +27,8 @@ from sheaf.tools.simple_tool import SimpleTool
 class Message:
     role: str
     content: str
+    tool_call_id: str | None = None
+    tool_calls: list[dict[str, Any]] | None = None
 
 
 @dataclass
@@ -115,166 +117,108 @@ class OpenAIDispatcher(LLMDispatcher):
         on_thinking: Callable[[str], None] | None = None,
         enable_tools: bool = True,
     ) -> GenerationResult:
-        payload: list[dict[str, Any]] = [
-            {
+        payload: list[dict[str, Any]] = []
+        for item in messages:
+            message_payload: dict[str, Any] = {
                 "role": item.role,
-                "content": item.content,
+                "content": item.content or None,
             }
-            for item in messages
-        ]
-        collected_calls: list[ToolCall] = []
-        max_rounds = 8
+            if item.tool_call_id is not None:
+                message_payload["tool_call_id"] = item.tool_call_id
+            if item.tool_calls:
+                message_payload["tool_calls"] = item.tool_calls
+            payload.append(message_payload)
 
-        for round_no in range(max_rounds):
-            if on_thinking is not None:
-                on_thinking(f"openai_request_started_round_{round_no + 1}")
+        if on_thinking is not None:
+            on_thinking("openai_request_started_round_1")
 
-            stream = self._client.chat.completions.create(
-                model=self._model,
-                messages=payload,
-                tools=self._openai_tool_definitions() if enable_tools else None,
-                stream=True,
-            )
-            chunks: list[str] = []
-            finish_reason = None
-            raw_calls: dict[int, dict[str, Any]] = {}
+        stream = self._client.chat.completions.create(
+            model=self._model,
+            messages=payload,
+            tools=self._openai_tool_definitions() if enable_tools else None,
+            stream=True,
+        )
+        chunks: list[str] = []
+        finish_reason = None
+        raw_calls: dict[int, dict[str, Any]] = {}
 
-            for event in stream:
-                choice = event.choices[0] if event.choices else None
-                if choice is None:
-                    continue
-                if getattr(choice, "finish_reason", None) is not None:
-                    finish_reason = choice.finish_reason
+        for event in stream:
+            choice = event.choices[0] if event.choices else None
+            if choice is None:
+                continue
+            if getattr(choice, "finish_reason", None) is not None:
+                finish_reason = choice.finish_reason
 
-                delta = getattr(choice, "delta", None)
-                if delta is None:
-                    continue
-
-                token = getattr(delta, "content", None)
-                if isinstance(token, str) and token:
-                    chunks.append(token)
-                    on_token(token)
-
-                tool_call_deltas = getattr(delta, "tool_calls", None)
-                if tool_call_deltas:
-                    for item in tool_call_deltas:
-                        idx = int(getattr(item, "index", 0) or 0)
-                        slot = raw_calls.setdefault(
-                            idx,
-                            {
-                                "id": "",
-                                "type": "function",
-                                "name": "",
-                                "arguments": "",
-                            },
-                        )
-                        call_id = getattr(item, "id", None)
-                        if isinstance(call_id, str) and call_id:
-                            slot["id"] = call_id
-
-                        fn = getattr(item, "function", None)
-                        if fn is not None:
-                            name = getattr(fn, "name", None)
-                            if isinstance(name, str) and name:
-                                slot["name"] = name
-                            arguments = getattr(fn, "arguments", None)
-                            if isinstance(arguments, str) and arguments:
-                                slot["arguments"] += arguments
-
-            if on_thinking is not None:
-                on_thinking(f"openai_request_completed_round_{round_no + 1}")
-
-            if enable_tools and raw_calls and finish_reason == "tool_calls":
-                assistant_tool_calls: list[dict[str, Any]] = []
-                for idx in sorted(raw_calls.keys()):
-                    call = raw_calls[idx]
-                    call_id = call["id"] or f"tool-call-{uuid.uuid4().hex[:8]}"
-                    assistant_tool_calls.append(
-                        {
-                            "id": call_id,
-                            "type": "function",
-                            "function": {
-                                "name": call["name"],
-                                "arguments": call["arguments"],
-                            },
-                        }
-                    )
-
-                payload.append(
-                    {
-                        "role": "assistant",
-                        "content": "".join(chunks) or None,
-                        "tool_calls": assistant_tool_calls,
-                    }
-                )
-
-                for call in assistant_tool_calls:
-                    executed = self._execute_tool_call(
-                        name=str(call["function"]["name"]),
-                        raw_arguments=str(call["function"]["arguments"]),
-                    )
-                    collected_calls.append(executed)
-                    payload.append(
-                        {
-                            "role": "tool",
-                            "tool_call_id": call["id"],
-                            "content": executed.result,
-                        }
-                    )
-                    if on_thinking is not None:
-                        on_thinking(f"tool_call_{executed.name}")
+            delta = getattr(choice, "delta", None)
+            if delta is None:
                 continue
 
-            text = "".join(chunks).strip()
-            if not text:
-                raise RuntimeError("OpenAI returned an empty response")
-            return GenerationResult(response=text, tool_calls=collected_calls)
+            token = getattr(delta, "content", None)
+            if isinstance(token, str) and token:
+                chunks.append(token)
+                on_token(token)
 
-        raise RuntimeError("OpenAI tool loop exceeded max rounds")
+            tool_call_deltas = getattr(delta, "tool_calls", None)
+            if tool_call_deltas:
+                for item in tool_call_deltas:
+                    idx = int(getattr(item, "index", 0) or 0)
+                    slot = raw_calls.setdefault(
+                        idx,
+                        {
+                            "id": "",
+                            "name": "",
+                            "arguments": "",
+                        },
+                    )
+                    call_id = getattr(item, "id", None)
+                    if isinstance(call_id, str) and call_id:
+                        slot["id"] = call_id
 
-    def _execute_tool_call(self, *, name: str, raw_arguments: str) -> ToolCall:
-        tool = self._tools.get(name)
-        if tool is None:
-            return ToolCall(
-                id=f"tool-{uuid.uuid4().hex[:8]}",
-                name=name,
-                args={},
-                result=f"Tool error: unknown tool '{name}'",
-                is_error=True,
-            )
+                    fn = getattr(item, "function", None)
+                    if fn is not None:
+                        name = getattr(fn, "name", None)
+                        if isinstance(name, str) and name:
+                            slot["name"] = name
+                        arguments = getattr(fn, "arguments", None)
+                        if isinstance(arguments, str) and arguments:
+                            slot["arguments"] += arguments
 
-        args: dict[str, Any] = {}
-        if raw_arguments.strip():
-            try:
-                parsed = json.loads(raw_arguments)
-                if isinstance(parsed, dict):
-                    args = parsed
-            except json.JSONDecodeError:
-                return ToolCall(
-                    id=f"tool-{uuid.uuid4().hex[:8]}",
-                    name=name,
-                    args={},
-                    result=f"Tool error: invalid arguments JSON for '{name}'",
-                    is_error=True,
-                )
+        if on_thinking is not None:
+            on_thinking("openai_request_completed_round_1")
 
-        try:
-            result = str(tool.invoke(args))
-            return ToolCall(
-                id=f"tool-{uuid.uuid4().hex[:8]}",
-                name=name,
-                args=args,
-                result=result,
-                is_error=False,
-            )
-        except Exception as exc:  # noqa: BLE001
-            return ToolCall(
-                id=f"tool-{uuid.uuid4().hex[:8]}",
-                name=name,
-                args=args,
-                result=f"Tool error: {exc}",
-                is_error=True,
-            )
+        if enable_tools and raw_calls and finish_reason == "tool_calls":
+            tool_calls: list[ToolCall] = []
+            for idx in sorted(raw_calls.keys()):
+                call = raw_calls[idx]
+                call_id = str(call["id"] or f"tool-call-{uuid.uuid4().hex[:8]}")
+                try:
+                    parsed_args = json.loads(str(call["arguments"] or "{}"))
+                    args = parsed_args if isinstance(parsed_args, dict) else {}
+                    tool_calls.append(
+                        ToolCall(
+                            id=call_id,
+                            name=str(call["name"]),
+                            args=args,
+                            result="",
+                            is_error=False,
+                        )
+                    )
+                except json.JSONDecodeError:
+                    tool_calls.append(
+                        ToolCall(
+                            id=call_id,
+                            name=str(call["name"]),
+                            args={},
+                            result=f"Tool error: invalid arguments JSON for '{call['name']}'",
+                            is_error=True,
+                        )
+                    )
+            return GenerationResult(response="".join(chunks).strip(), tool_calls=tool_calls)
+
+        text = "".join(chunks).strip()
+        if not text:
+            raise RuntimeError("OpenAI returned an empty response")
+        return GenerationResult(response=text, tool_calls=[])
 
     def _openai_tool_definitions(self) -> list[dict[str, Any]]:
         return [self._tool_definition_from_instance(tool) for tool in self._tools.values()]

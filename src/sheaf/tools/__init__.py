@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from sheaf.tools.filesystem import (
     apply_patch_tool,
+    close_directory_context_tool,
+    close_file_context_tool,
     create_directory_tool,
     create_file_tool,
     delete_path_tool,
@@ -28,6 +30,8 @@ def build_agent_tools() -> list[SimpleTool]:
         apply_patch_tool,
         move_path_tool,
         delete_path_tool,
+        close_file_context_tool,
+        close_directory_context_tool,
         list_sqlite_databases_tool,
         create_sqlite_database_tool,
         run_sql_tool,
@@ -43,6 +47,8 @@ __all__ = [
     "apply_patch_tool",
     "move_path_tool",
     "delete_path_tool",
+    "close_file_context_tool",
+    "close_directory_context_tool",
     "list_sqlite_databases_tool",
     "create_sqlite_database_tool",
     "run_sql_tool",

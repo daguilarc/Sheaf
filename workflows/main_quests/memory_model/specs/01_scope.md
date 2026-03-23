@@ -29,6 +29,9 @@ history, old chat tables, and old chat execution assumptions are disposable.
   - assistant tool call turns
   - tool response turns
   - compaction turns
+- Allow one assistant generation step to request an ordered batch of one or more
+  tool calls, represented on a single `tool_call` turn as a JSON list of tool
+  call records.
 - Remove dedicated tool call/result tables and move their durable fields onto
   `turns`.
 - Remove stored `turn_context` from `turns`; rebuild context by linked-list walk
@@ -42,9 +45,16 @@ history, old chat tables, and old chat execution assumptions are disposable.
 ## Required Outcomes
 
 - A new `turn_type` field exists on `turns` and is used by execution logic.
-- Tool call arguments are persisted in `turns` on tool-call turns.
+- Tool requests are persisted in `turns` on `tool_call` turns as ordered JSON
+  lists of tool call records.
 - Tool response identity uses tool name as the actor for tool-response turns.
-- Turns can record state context operations with type/key/operation semantics.
+- One generation transition may append one `tool_call` turn containing multiple
+  requested tool calls as one ordered JSON list.
+- One tool-execution transition executes the full requested tool-call list
+  sequentially and appends all resulting `tool_response` turns together in one
+  atomic transaction.
+- Tool responses persist their own state-context metadata directly on the same
+  row as an ordered JSON list of context operations.
 - File/directory tool responses return compact state metadata instead of raw
   file contents or full directory listings.
 - New close-context tool calls are available to explicitly close file/directory
@@ -57,6 +67,13 @@ history, old chat tables, and old chat execution assumptions are disposable.
   turns for keys that remain open.
 - Runner logic no longer treats tool calls as out-of-band metadata detached from
   turn history.
+- Provider-facing assistant tool requests are reconstructed from one
+  `tool_call` turn as one ordered JSON list of tool calls, and transport
+  delivery preserves that same single visible assistant turn instead of
+  repeating the batch on the later final assistant reply.
+- Provider-facing prompt reconstruction must keep the `tool` messages for one
+  assistant tool-call batch contiguous before any derived state-context
+  injection blocks are appended.
 - Legacy tool call tables and legacy chat model code paths are deleted.
 
 ## Non-Goals
@@ -70,5 +87,10 @@ history, old chat tables, and old chat execution assumptions are disposable.
 
 - Tail terminology: `threads.tail_turn_id` is the canonical pointer to the
   newest committed turn. No `head` terminology should be used in this model.
-- Tool calls and tool responses are persisted as separate turns.
+- A single model generation may request multiple tool calls as one ordered JSON
+  list.
+- One assistant tool-request move appends exactly one `tool_call` turn, and that
+  turn contains the full ordered JSON list of requested tool calls.
+- Each resulting tool response is still persisted as its own turn, and the
+  multiple `tool_response` turns for one requested batch commit atomically.
 - Compaction is represented as its own turn type, not as a tool call.

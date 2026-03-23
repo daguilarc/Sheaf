@@ -19,16 +19,45 @@ CREATE TABLE IF NOT EXISTS turns (
     id TEXT PRIMARY KEY,
     thread_id TEXT NOT NULL,
     prev_turn_id TEXT NULL,
-    speaker TEXT NOT NULL,
+    turn_type TEXT NOT NULL,
+    actor_name TEXT NOT NULL,
     message_text TEXT NOT NULL,
-    turn_context TEXT NULL,
+    tool_call_id TEXT NULL,
+    tool_name TEXT NULL,
+    tool_calls_json TEXT NULL,
+    state_context_json TEXT NULL,
     stats_json TEXT NULL,
     model_name TEXT NULL,
     created_at TEXT NOT NULL,
     FOREIGN KEY (thread_id) REFERENCES threads(id) ON DELETE CASCADE,
     FOREIGN KEY (prev_turn_id) REFERENCES turns(id),
     FOREIGN KEY (model_name) REFERENCES models(name),
-    CHECK (prev_turn_id IS NULL OR prev_turn_id <> id)
+    CHECK (prev_turn_id IS NULL OR prev_turn_id <> id),
+    CHECK (
+        turn_type IN (
+            'user_message',
+            'assistant_message',
+            'tool_call',
+            'tool_response',
+            'compaction'
+        )
+    ),
+    CHECK (
+        (turn_type = 'tool_response' AND tool_name IS NOT NULL)
+        OR (turn_type <> 'tool_response' AND tool_name IS NULL)
+    ),
+    CHECK (
+        (turn_type = 'tool_call' AND tool_calls_json IS NOT NULL)
+        OR (turn_type <> 'tool_call' AND tool_calls_json IS NULL)
+    ),
+    CHECK (
+        (turn_type = 'tool_response' AND tool_call_id IS NOT NULL)
+        OR (turn_type <> 'tool_response' AND tool_call_id IS NULL)
+    ),
+    CHECK (
+        state_context_json IS NULL
+        OR turn_type = 'tool_response'
+    )
 );
 
 CREATE TABLE IF NOT EXISTS message_queue (
@@ -122,6 +151,8 @@ CREATE TABLE IF NOT EXISTS visible_directories (
 
 CREATE INDEX IF NOT EXISTS idx_turns_thread_created ON turns(thread_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_turns_prev_turn ON turns(prev_turn_id);
+CREATE INDEX IF NOT EXISTS idx_turns_thread_type_created ON turns(thread_id, turn_type, created_at);
+CREATE INDEX IF NOT EXISTS idx_turns_tool_call_id ON turns(tool_call_id);
 CREATE INDEX IF NOT EXISTS idx_threads_is_archived ON threads(is_archived, updated_at);
 CREATE INDEX IF NOT EXISTS idx_queue_thread_enqueued ON message_queue(thread_id, enqueued_at);
 CREATE INDEX IF NOT EXISTS idx_queue_available ON message_queue(available_at, locked_by);

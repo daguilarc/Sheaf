@@ -5,59 +5,109 @@
 Define how `DoWork` executes queued user requests when tool calls and tool
 responses are persisted as turns in the same thread ledger.
 
-## Core Behavior Change
+## State Machine Contract
 
-`DoWork` no longer treats tool activity as side-band metadata inside one
-assistant turn. Instead, each tool step mutates the thread tail with committed
-turn rows:
+`DoWork` no longer drains an entire request in one invocation. One `DoWork`
+call equals exactly one state-machine transition for one queued row.
 
-1. `tool_call` turn appended.
-2. Tool executes.
-3. `tool_response` turn appended.
-4. Loop continues until assistant emits `assistant_message`.
+Allowed transitions:
 
-The final assistant message ends the queued user request.
+1. Tail is empty and queue row is fresh:
+   - append `user_message`
+   - reconstruct context
+   - optionally plan compaction
+   - call model
+   - atomically append either one assistant-requested `tool_call` turn
+     containing an ordered JSON list of one or more tool calls, or one
+     `assistant_message` turn
+2. Tail is `user_message`:
+   - reconstruct context
+   - optionally plan compaction
+   - call model
+   - atomically append either one assistant-requested `tool_call` turn
+     containing an ordered JSON list of one or more tool calls, or one
+     `assistant_message` turn
+3. Tail is `tool_call`:
+   - load the ordered JSON list from the pending `tool_call` turn at thread tail
+   - execute those tool calls sequentially in stored order
+   - append the resulting `tool_response` turns together in one transaction
+4. Tail is `tool_response`:
+   - reconstruct context
+   - optionally plan compaction
+   - call model
+   - atomically append either one assistant-requested `tool_call` turn
+     containing an ordered JSON list of one or more tool calls, or one
+     `assistant_message` turn
+
+Queue completion happens only when the transition appends an
+`assistant_message`.
+
+Protocol requirement:
+- One assistant tool-request move must append exactly one `tool_call` turn, even
+  when that turn requests multiple tool calls.
+- If a generation requests tools, the request payload is an ordered JSON list of
+  tool call objects.
+- A single requested tool call is represented as a JSON list with one element,
+  not as a bare object.
+- Runtime must preserve the list order when persisting and executing tool calls.
+- An empty tool-call list is invalid; a generation either emits a non-empty list
+  of tool calls or emits an `assistant_message`.
 
 ## Processing Gate For Queued User Requests
 
-If a thread tail is `tool_call` or `tool_response`, new queued user requests for
-that thread are not runnable yet. Runner must continue the in-flight assistant
-execution for that same thread until an `assistant_message` turn is committed.
+If a thread tail is `user_message`, `tool_call`, or `tool_response`, only the
+queue row that originated that in-flight request is runnable for that thread.
+New queued user requests for the same thread must wait until an
+`assistant_message` turn is committed.
 
-This prevents interleaving fresh user prompts into an unfinished tool loop.
+This prevents interleaving fresh user prompts into an unfinished tool loop
+without globally blocking unrelated threads.
 
-## Runnable Work Selection Priority
-
-`DoWork` selection order:
-
-1. Continuation work (threads with in-flight tool loop state).
-2. Fresh queued user requests whose `response_to_turn_id` matches current
-   thread tail and whose thread is not in tool-loop continuation state.
+## Runnable Work Selection
 
 Implementation requirement:
 - Keep `message_queue` shape and derive continuation state from tail turn type.
 - Do not introduce queue row kinds (for example `user_request` /
   `continuation`) for this quest.
+- Continuation is a per-thread gate, not a global worker monopoly. A thread in
+  tool-loop continuation blocks only newer queued rows for that same thread.
+  Other threads may still run between continuation steps.
 
-## Canonical Per-Request Execution Loop
+## Canonical Per-Request Flow
 
-For one claimed queued user request:
+Across repeated `DoWork` calls for one queued request:
 
-1. Append committed `user_message` turn.
-2. Set local execution cursor to current tail.
-3. Reconstruct context by walking turns backwards to nearest compaction.
-4. Call model.
-5. Branch:
-   - If model emits tool call:
-     - append `tool_call` turn with `tool_name` and `tool_arguments_json`
-     - execute tool
-     - append `tool_response` turn with `actor_name = tool_name`
-     - go back to step 3
-   - If model emits assistant text for user:
-     - append `assistant_message` turn
-     - finalize request (delete queue row, send completion event)
+1. First transition appends `user_message` if the request is fresh.
+2. Every generation transition rebuilds context by walking turns backward to
+   the nearest compaction boundary.
+3. If compaction is needed, runtime must compute the compaction summary and
+   reopen set before the model call, but persist them only in the same atomic
+   transaction as the model output for that transition.
+4. A generation transition appends either:
+   - one `tool_call` turn containing an ordered JSON list of requested tool
+     calls, or
+   - one `assistant_message` turn
+5. A tool transition executes the requested tool-call list from the pending
+   `tool_call` turn sequentially and appends all resulting `tool_response`
+   turns in one transaction. For each requested tool call, runtime appends
+   exactly one `tool_response` row, and that row carries the full ordered
+   state-context metadata list for that tool invocation.
+6. The queue row remains in `message_queue` between transitions and is merely
+   unlocked after non-final steps.
+7. The queue row is deleted only when an `assistant_message` turn is committed.
 
-The loop only exits when an `assistant_message` turn is committed.
+Atomicity requirement:
+- If compaction triggers before a generation step, the `compaction` turn,
+  synthetic reopen turns, and the resulting `tool_call` turn or
+  `assistant_message` must commit in one transaction.
+
+Tool-batch execution requirement:
+- The tool-execution transition must execute the pending calls from the
+  `tool_call` turn in stored order.
+- All resulting `tool_response` rows for that batch must commit together in one
+  transaction.
+- If any tool execution or response persistence in the batch fails, rollback the
+  whole response batch for that transition.
 
 ## Tool Response Payload Contract For State Context
 
@@ -67,37 +117,28 @@ raw file/directory payloads in the tool result text.
 Required mapping to actual tool names:
 
 - `read_file`:
-  - emits `state_context_type = file`
-  - emits `state_context_operation = read`
-  - emits `state_context_key = <file path>`
+  - emits `state_context_json = [{"context_type":"file","key":<file path>,"operation":"read"}]`
   - always reads full file content (no partial line-range mode)
   - does not return full file body in the tool result text
 - `list_directory`:
-  - emits `state_context_type = directory`
-  - emits `state_context_operation = read`
-  - emits `state_context_key = <directory path>`
+  - emits `state_context_json = [{"context_type":"directory","key":<directory path>,"operation":"read"}]`
   - does not return full directory listing in the tool result text
 - `create_file` and `apply_patch`:
-  - emit `state_context_type = file`
-  - emit `state_context_operation = read`
-  - emit `state_context_key = <target file path>`
-  - this represents that latest file state should be context-available
+  - emit one `state_context_json` list on the same `tool_response` row
+  - each affected target file contributes its own `read` or `close` operation record
+  - this represents that latest file state should be context-available without synthetic extra turns
 - `move_path`:
-  - emits `state_context_operation = rename`
-  - emits `state_context_type = file` for file moves, `directory` for directory
-    moves
-  - emits `state_context_key = <source path>`
-  - emits `state_context_target_key = <destination path>`
+  - emits one `rename` record inside `state_context_json`
+  - record uses `context_type = file` for file moves, `directory` for directory moves
+  - record includes `key = <source path>` and `target_key = <destination path>`
 - `delete_path`:
-  - emits `state_context_operation = close`
-  - emits matching `state_context_type` (`file` or `directory`)
-  - emits `state_context_key = <deleted path>`
+  - emits one `close` record inside `state_context_json`
+  - record uses matching `context_type` (`file` or `directory`) and `key = <deleted path>`
   - ensures deleted contexts do not remain injected as open state
 
 New close tools:
 - Add `close_file_context` and `close_directory_context` as first-class tools.
-- These tools emit `state_context_operation = close` with matching
-  `state_context_type` and `state_context_key`.
+- These tools emit one `close` record inside `state_context_json`.
 - Close tools should not delete filesystem data; they only mutate chat context
   state.
 
@@ -194,47 +235,53 @@ function BuildContext(thread_id, tail_turn_id):
         return (context_type, ResolveFileKey(context_key))
 
     for turn in rows_rev:
-        if turn.state_context_operation is null:
+        mutations = ParseStateContextJson(turn.state_context_json)
+        if mutations is empty:
             continue
 
-        context_type = turn.state_context_type
-        context_key = turn.state_context_key
-        operation = turn.state_context_operation
+        for mutation in Reverse(mutations):
+            context_type = mutation.context_type
+            context_key = mutation.key
+            operation = mutation.operation
 
-        if operation == "rename":
-            if context_type == "directory":
-                from_dir = ResolveDirectoryKey(context_key)
-                to_dir = ResolveDirectoryKey(turn.state_context_target_key)
-                if from_dir != to_dir:
-                    dir_alias_map[from_dir] = to_dir
-            else:
-                from_file = ResolveFileKey(context_key)
-                to_file = ResolveFileKey(turn.state_context_target_key)
-                if from_file != to_file:
-                    file_alias_map[from_file] = to_file
-            continue
+            if operation == "rename":
+                if context_type == "directory":
+                    from_dir = ResolveDirectoryKey(context_key)
+                    to_dir = ResolveDirectoryKey(mutation.target_key)
+                    if from_dir != to_dir:
+                        dir_alias_map[from_dir] = to_dir
+                else:
+                    from_file = ResolveFileKey(context_key)
+                    to_file = ResolveFileKey(mutation.target_key)
+                    if from_file != to_file:
+                        file_alias_map[from_file] = to_file
+                continue
 
-        canonical_key = ResolveKey(context_type, context_key)
-        if canonical_key in state_map:
-            continue
+            canonical_key = ResolveKey(context_type, context_key)
+            if canonical_key in state_map:
+                continue
 
-        if operation == "close":
-            state_map[canonical_key] = "close"
-            continue
+            if operation == "close":
+                state_map[canonical_key] = "close"
+                continue
 
-        if operation == "read":
-            state_map[canonical_key] = "read"
-            if canonical_key not in injections_by_turn_id.get(turn.id, []):
-                injections_by_turn_id.setdefault(turn.id, []).append(canonical_key)
+            if operation == "read":
+                state_map[canonical_key] = "read"
+                if canonical_key not in injections_by_turn_id.get(turn.id, []):
+                    injections_by_turn_id.setdefault(turn.id, []).append(canonical_key)
 
     # Build final context in chronological order with explicit interleaving.
     rows = Reverse(rows_rev)
     context = []
+    pending_injections = []
     for turn in rows:
         context.append(BasicContext(turn))
+        pending_injections.extend(injections_by_turn_id.get(turn.id, []))
+        if turn.turn_type == "tool_response" and NextTurnType(rows, turn) == "tool_response":
+            continue
 
-        # Inject blocks tied to this turn directly after the turn's message.
-        for canonical_key in injections_by_turn_id.get(turn.id, []):
+        # Flush injections only after a complete contiguous tool-response batch.
+        for canonical_key in pending_injections:
             if state_map.get(canonical_key) != "read":
                 continue
             (injection_type, injection_key) = canonical_key
@@ -242,15 +289,14 @@ function BuildContext(thread_id, tail_turn_id):
                 context.append(
                     ReadFileOrDirectoryWithMetadata(
                         injection_type,
-                        injection_key,
-                        # Include natural language framing in injected blocks.
-                        # Example: "File: /repo/a.py. This is the contents of this file: ..."
+                        injection_key
                     )
                 )
             else:
                 context.append(
                     "Cannot read " + injection_key + ", it may have been moved or deleted"
                 )
+        pending_injections = []
 
     return context
 ```
@@ -301,8 +347,7 @@ Persist a `compaction` turn with this summary text.
 
 In the same database transaction as compaction, append synthetic
 `tool_response` turns with:
-- `state_context_operation = read`
-- `state_context_type` and `state_context_key` from `remain_open`
+- `state_context_json` contains one `read` operation record for the reopened key
 - actor set to synthetic context restorer identity
 
 Transactional requirement:
@@ -337,16 +382,20 @@ After restart:
 
 ## Commit And CAS Rules
 
-For each appended turn in loop:
+For each state-machine transition:
 
 - Read `threads.tail_turn_id` in transaction.
 - Require expected tail match (CAS).
-- Insert new turn with `prev_turn_id = current_tail`.
-- Update `threads.tail_turn_id` to new turn ID.
-- Commit.
+- If the transition appends one turn, insert that turn with
+  `prev_turn_id = current_tail`.
+- If the transition appends a batch, insert each new turn in order, chaining
+  each `prev_turn_id` to the previously inserted turn.
+- Update `threads.tail_turn_id` to the last inserted turn ID for that
+  transition.
+- Commit once for the whole transition.
 
 If CAS fails:
-- abort that append
+- abort that transition append
 - reload tail/context
 - continue safely from authoritative ledger state
 
@@ -365,5 +414,13 @@ Even with internal loop changes:
 - client contract remains unchanged
 - handshake/sync still rehydrates from committed turns
 
-Any existing API field like `tool_calls` can be derived from contiguous
-`tool_call`/`tool_response` turn segments rather than old side tables.
+Provider-facing reconstruction rule:
+- Any assistant tool-request payload like `tool_calls` is derived from the
+  `tool_call` turn's stored JSON list rather than from old side tables.
+
+Transport replay rule:
+- Live websocket delivery and handshake replay both expose the persisted
+  `tool_call` turn itself as one assistant visible turn carrying the full
+  ordered `tool_calls` list.
+- The later final `assistant_message` must not repeat the same `tool_calls`
+  batch.

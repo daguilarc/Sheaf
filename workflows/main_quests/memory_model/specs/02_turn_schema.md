@@ -22,13 +22,10 @@ CREATE TABLE turns (
     turn_type TEXT NOT NULL,                      -- user_message, assistant_message, tool_call, tool_response, compaction
     actor_name TEXT NOT NULL,                     -- user/assistant/tool-name/compactor identity
     message_text TEXT NOT NULL,                   -- visible text or structured result text
-    tool_call_id TEXT NULL,                       -- correlates tool_call <-> tool_response
-    tool_name TEXT NULL,                          -- set for tool_call and tool_response turns
-    tool_arguments_json TEXT NULL,                -- serialized tool args on tool_call turns
-    state_context_type TEXT NULL,                 -- file | directory for state-context operations
-    state_context_key TEXT NULL,                  -- canonical path key being operated on
-    state_context_operation TEXT NULL,            -- read | close | rename
-    state_context_target_key TEXT NULL,           -- rename destination key
+    tool_call_id TEXT NULL,                       -- correlates one tool_response to one requested call inside prior tool_calls_json
+    tool_name TEXT NULL,                          -- set for tool_response turns
+    tool_calls_json TEXT NULL,                    -- serialized ordered tool-call list on tool_call turns
+    state_context_json TEXT NULL,                 -- serialized ordered state-context operation list on tool_response turns
     stats_json TEXT NULL,                         -- optional usage and metadata payload
     model_name TEXT NULL,                         -- model used for assistant/tool planning turns
     created_at TEXT NOT NULL,                     -- ISO-8601 UTC timestamp
@@ -46,36 +43,20 @@ CREATE TABLE turns (
         )
     ),
     CHECK (
-        (turn_type IN ('tool_call', 'tool_response') AND tool_name IS NOT NULL)
-        OR (turn_type NOT IN ('tool_call', 'tool_response') AND tool_name IS NULL)
+        (turn_type = 'tool_response' AND tool_name IS NOT NULL)
+        OR (turn_type <> 'tool_response' AND tool_name IS NULL)
     ),
     CHECK (
-        (turn_type = 'tool_call' AND tool_arguments_json IS NOT NULL)
-        OR (turn_type <> 'tool_call' AND tool_arguments_json IS NULL)
+        (turn_type = 'tool_call' AND tool_calls_json IS NOT NULL)
+        OR (turn_type <> 'tool_call' AND tool_calls_json IS NULL)
     ),
     CHECK (
-        (turn_type IN ('tool_call', 'tool_response') AND tool_call_id IS NOT NULL)
-        OR (turn_type NOT IN ('tool_call', 'tool_response') AND tool_call_id IS NULL)
+        (turn_type = 'tool_response' AND tool_call_id IS NOT NULL)
+        OR (turn_type <> 'tool_response' AND tool_call_id IS NULL)
     ),
     CHECK (
-        state_context_type IS NULL
-        OR state_context_type IN ('file', 'directory')
-    ),
-    CHECK (
-        state_context_operation IS NULL
-        OR state_context_operation IN ('read', 'close', 'rename')
-    ),
-    CHECK (
-        (state_context_operation IS NULL AND state_context_type IS NULL AND state_context_key IS NULL AND state_context_target_key IS NULL)
-        OR (state_context_operation IS NOT NULL AND state_context_type IS NOT NULL AND state_context_key IS NOT NULL)
-    ),
-    CHECK (
-        (state_context_operation = 'rename' AND state_context_target_key IS NOT NULL)
-        OR (state_context_operation <> 'rename' AND state_context_target_key IS NULL)
-    ),
-    CHECK (
-        state_context_operation IS NULL
-        OR (state_context_operation IS NOT NULL AND turn_type = 'tool_response')
+        state_context_json IS NULL
+        OR turn_type = 'tool_response'
     )
 );
 ```
@@ -86,17 +67,26 @@ CREATE TABLE turns (
 - `actor_name` replaces speaker-only assumptions:
   - `user_message`: end-user identifier (existing logical user identity)
   - `assistant_message`: assistant identity
-  - `tool_call`: assistant identity (the agent requested the call)
+  - `tool_call`: assistant identity (the agent requested the call batch)
   - `tool_response`: tool name (per user requirement)
   - `compaction`: compaction subsystem identity (for example `compactor`)
-- `tool_arguments_json` stores the exact tool-call arguments payload that was
-  executed.
+- `tool_calls_json` stores the exact ordered JSON list of requested tool calls
+  for that `tool_call` turn.
+- Each element of `tool_calls_json` includes the requested tool-call identity,
+  tool name, and arguments for one requested call.
+- At the model/protocol boundary, assistant tool requests are represented as an
+  ordered JSON list of tool call records. Persistence stores that list on one
+  `tool_call` turn rather than fanning it out into multiple request turns.
 - `message_text` on tool-response turns stores tool result text (or serialized
   response text) that should become available to context reconstruction.
-- `state_context_*` columns are set only for turns that represent a context
-  state operation and are allowed only on `tool_response` turns.
-- `state_context_key` stores the operated file/directory key.
-- `state_context_target_key` is used only for rename operations.
+- `state_context_json` stores the exact ordered JSON list of state-context
+  operations emitted by that `tool_response` turn.
+- Each state-context operation record includes:
+  - `context_type`: `file` or `directory`
+  - `key`: canonical operated path
+  - `operation`: `read`, `close`, or `rename`
+  - `target_key`: rename destination when `operation = rename`
+- `state_context_json` is allowed only on `tool_response` turns.
 
 ## Removed Fields
 
@@ -105,8 +95,8 @@ CREATE TABLE turns (
 
 ## State Context Operations In Turns
 
-Each relevant tool response records one normalized state context operation in
-the `turns` row:
+Each relevant tool response records an ordered JSON list of normalized
+state-context operations in `state_context_json`:
 
 - `read`: marks a file or directory state as active for context injection.
 - `close`: marks a file or directory state as closed so context builder excludes
@@ -115,7 +105,22 @@ the `turns` row:
   latest key during backward walk.
 - `delete_path` should emit `close` so deleted contexts are not retained as open.
 
-This makes context-state evolution durable and replayable from the turn chain.
+One requested tool call still yields exactly one `tool_response` turn. If a
+single tool call affects multiple state keys, that single response row carries
+multiple state-context operation records in `state_context_json` rather than
+emitting synthetic extra tool-response rows.
+
+## Tool Call Batch Semantics
+
+One generation step may request one or more tool calls.
+
+- The request payload is an ordered JSON list of tool call records.
+- The runtime persists that list on exactly one `tool_call` turn.
+- The next tool-execution step executes the requested calls sequentially in list
+  order and appends exactly one `tool_response` turn for each requested call in
+  order.
+- No unrelated turn types may interleave inside the immediately-following
+  `tool_response` batch for that request turn.
 
 ## Removed Tables
 
@@ -142,8 +147,6 @@ CREATE INDEX idx_turns_thread_type_created
 CREATE INDEX idx_turns_tool_call_id
     ON turns(tool_call_id);
 
-CREATE INDEX idx_turns_state_context
-    ON turns(thread_id, state_context_type, state_context_key, created_at);
 ```
 
 ## Context Reconstruction Contract
@@ -158,18 +161,22 @@ When building model context for a thread:
 
 This makes compaction turns durable context boundaries.
 
-Context reconstruction also applies `state_context_*` operation semantics while
+Context reconstruction also applies `state_context_json` operation semantics while
 walking turns so file/directory context snapshots are derived at runtime.
 
 Compaction-specific expectation:
 - A compaction pass appends one `compaction` summary turn followed by synthetic
-  `tool_response` reopen turns (`state_context_operation = read`) for contexts
+  `tool_response` reopen turns (`state_context_json` contains `read`) for contexts
   that remain open.
 
 ## Invariants
 
 - `threads.tail_turn_id` always points to the latest committed turn.
 - `prev_turn_id` chain always stays within the same `thread_id`.
-- `tool_response` turn for a `tool_call_id` must reference a prior
-  `tool_call` turn in same thread.
+- One `tool_call` turn represents one ordered tool-request batch from one
+  assistant move.
+- A contiguous run of `tool_response` turns committed by the next tool-execution
+  transition represents the ordered results for that pending request batch.
+- `tool_response.tool_call_id` must reference one requested call entry from a
+  prior `tool_calls_json` payload in the same thread.
 - No mixed old/new schema runtime behavior is supported.

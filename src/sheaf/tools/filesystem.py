@@ -43,18 +43,20 @@ def list_directory_tool(path: str = ".", recursive: bool = False) -> str:
     """List entries under a visible directory path."""
 
     target = _resolve_visible_directory("" if path == "." else path)
-    if recursive:
-        entries = sorted(_display(item) for item in target.rglob("*") if _is_visible_entry(item))
-    else:
-        entries = sorted(_display(item) for item in target.iterdir() if _is_visible_entry(item))
-    if not entries:
-        return f"No entries under {_display(target)}"
-    return "\n".join([f"Directory: {_display(target)}", *entries])
+    visible_entries = (
+        sorted(_display(item) for item in target.rglob("*") if _is_visible_entry(item))
+        if recursive
+        else sorted(_display(item) for item in target.iterdir() if _is_visible_entry(item))
+    )
+    return (
+        f"Directory context opened for {_display(target)}"
+        f" ({len(visible_entries)} visible entr{'y' if len(visible_entries) == 1 else 'ies'})."
+    )
 
 
 @tool("read_file")
-def read_file_tool(path: str, start_line: int = 0, end_line: int = 0) -> str:
-    """Read a visible UTF-8 file, optionally by line range."""
+def read_file_tool(path: str) -> str:
+    """Read a visible UTF-8 file and open it for future context injection."""
 
     target = resolve_input_path(path)
     ensure_visible(target)
@@ -63,15 +65,8 @@ def read_file_tool(path: str, start_line: int = 0, end_line: int = 0) -> str:
     if not target.is_file():
         raise ValueError(f"Path is not a file: {target}")
     text = target.read_text(encoding="utf-8")
-    if start_line <= 0 and end_line <= 0:
-        return text
-    lines = text.splitlines()
-    total = len(lines)
-    start_idx = max(0, start_line - 1)
-    end_idx = total if end_line <= 0 else min(total, end_line - 1)
-    if end_idx < start_idx:
-        raise ValueError("end_line must be greater than or equal to start_line")
-    return "\n".join(lines[start_idx:end_idx])
+    line_count = len(text.splitlines())
+    return f"File context opened for {_display(target)} ({line_count} lines)."
 
 
 @tool("create_file")
@@ -149,3 +144,21 @@ def delete_path_tool(path: str) -> str:
 
     result = record_filesystem_write(WriteOperation(kind="delete_path", path=resolve_input_path(path)))
     return result.message
+
+
+@tool("close_file_context")
+def close_file_context_tool(path: str) -> str:
+    """Close file context without modifying filesystem data."""
+
+    target = resolve_input_path(path)
+    ensure_visible(target)
+    return f"Closed file context for {_display(target)}."
+
+
+@tool("close_directory_context")
+def close_directory_context_tool(path: str) -> str:
+    """Close directory context without modifying filesystem data."""
+
+    target = resolve_input_path(path, default_to_repo_root=True)
+    ensure_visible(target)
+    return f"Closed directory context for {_display(target)}."
