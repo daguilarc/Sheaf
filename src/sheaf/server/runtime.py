@@ -36,6 +36,7 @@ from sheaf.llm.model_properties import resolve_model_properties
 from sheaf.llm.model_registry import get_model_registry
 from sheaf.tools import build_agent_tools
 from sheaf.tools.patching import parse_patch_envelope
+from sheaf.sqlite_migrations import BackupPolicy, apply_migrations
 from sheaf.vaults.paths import canonicalize_path, validate_distinct_root
 from sheaf.vaults.runtime import db as vault_db
 from sheaf.vaults.runtime import initialize as initialize_vault_db
@@ -57,7 +58,8 @@ _WORKER_POLL_SECONDS = 0.25
 _RETRY_BASE_SECONDS = 0.5
 _RETRY_MAX_SECONDS = 10.0
 logger = logging.getLogger(__name__)
-_BOOTSTRAP_SQL_PATH = REPO_ROOT / "src" / "sheaf" / "server" / "migrations" / "001_bootstrap.sql"
+_SERVER_MIGRATIONS_DIR = REPO_ROOT / "src" / "sheaf" / "server" / "migrations"
+_SERVER_SCHEMA_BACKUP_DIR = DATA_DIR / "backups" / "schema" / "server"
 _STREAM_PROGRESS_TRACE = re.compile(r"^streamed_\d+_chunks$")
 _DEFAULT_SYSTEM_PROMPT = """You are Sheaf, a local-first assistant.
 
@@ -68,7 +70,6 @@ Follow these rules:
 - Keep responses actionable; avoid unnecessary filler.
 - Preserve user intent and constraints exactly.
 """
-
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -239,12 +240,23 @@ class RewriteRuntime:
         self._apply_connection_pragmas(conn)
 
     def _bootstrap_schema(self, conn: sqlite3.Connection) -> None:
-        try:
-            bootstrap_sql = _BOOTSTRAP_SQL_PATH.read_text(encoding="utf-8")
-        except OSError as exc:
-            raise RuntimeError(f"Failed to read bootstrap schema file: {_BOOTSTRAP_SQL_PATH}") from exc
-        conn.executescript(bootstrap_sql)
-        conn.commit()
+        result = apply_migrations(
+            conn,
+            migrations_dir=_SERVER_MIGRATIONS_DIR,
+            applied_at=utc_now(),
+            backup_policy=BackupPolicy(
+                directory=_SERVER_SCHEMA_BACKUP_DIR,
+                database_name=SERVER_DB_PATH.stem,
+            ),
+        )
+        if result.backup_path is not None:
+            logger.info(
+                "Applied server schema migrations %s with backup %s",
+                list(result.applied_versions),
+                result.backup_path,
+            )
+        elif result.applied_versions:
+            logger.info("Applied server schema migrations %s", list(result.applied_versions))
 
     def _reset_queue_locks(self, conn: sqlite3.Connection) -> None:
         conn.execute("UPDATE message_queue SET locked_by = NULL, locked_at = NULL")

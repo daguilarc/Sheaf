@@ -1,6 +1,11 @@
 -- Bootstrap schema for rewritten server runtime.
 -- This is the single schema source-of-truth for now.
 
+CREATE TABLE IF NOT EXISTS schema_migrations (
+    version TEXT PRIMARY KEY,
+    applied_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS threads (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
