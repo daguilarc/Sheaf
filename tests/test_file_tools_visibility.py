@@ -121,3 +121,35 @@ def test_visibility_can_be_resolved_with_explicit_db_path(tmp_path: Path) -> Non
     conn.close()
 
     ensure_visible(target, db_path=db_path)
+
+
+def test_visibility_matching_is_case_insensitive(tmp_path: Path) -> None:
+    from sheaf.tools.visibility import ensure_writable
+
+    repo = tmp_path / "repo"
+    repo.mkdir(parents=True, exist_ok=True)
+    actual_root = repo / "Sheaf"
+    actual_root.mkdir(parents=True, exist_ok=True)
+    db_path = tmp_path / "server.sqlite3"
+
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        """
+        CREATE TABLE visible_directories (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            path TEXT NOT NULL UNIQUE,
+            access_mode TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        "INSERT INTO visible_directories(path, access_mode, created_at, updated_at) VALUES (?, 'read_write', 't', 't')",
+        (str(actual_root.resolve()),),
+    )
+    conn.commit()
+    conn.close()
+
+    lowercased_target = repo / "sheaf" / "syllabus" / "finite_galois_theory.md"
+    ensure_writable(lowercased_target, db_path=db_path)

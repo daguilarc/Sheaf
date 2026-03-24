@@ -44,19 +44,27 @@ def _load_visible_directories(*, db_path: Path | None = None) -> list[tuple[Path
     return out
 
 
+def _normalized_policy_key(path: Path) -> str:
+    return path.resolve().as_posix().casefold()
+
+
+def _path_matches_base(path: Path, base: Path) -> bool:
+    normalized_path = _normalized_policy_key(path)
+    normalized_base = _normalized_policy_key(base)
+    return normalized_path == normalized_base or normalized_path.startswith(f"{normalized_base}/")
+
+
 def _effective_access(path: Path, *, db_path: Path | None = None) -> Optional[str]:
     resolved = path.resolve()
     best_mode: Optional[str] = None
     best_len = -1
     for base, mode in _load_visible_directories(db_path=db_path):
-        try:
-            resolved.relative_to(base)
-            candidate_len = len(str(base))
-            if candidate_len > best_len:
-                best_len = candidate_len
-                best_mode = mode
-        except ValueError:
+        if not _path_matches_base(resolved, base):
             continue
+        candidate_len = len(_normalized_policy_key(base))
+        if candidate_len > best_len:
+            best_len = candidate_len
+            best_mode = mode
     return best_mode
 
 
