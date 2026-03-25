@@ -119,6 +119,14 @@ class StateContextMutation:
     key: str
     operation: str
     target_key: str | None = None
+    action: str | None = None
+
+
+@dataclass(frozen=True)
+class StateContextInjection:
+    state_key: StateContextKey
+    action: str | None = None
+    deferred: bool = False
 
 
 @dataclass(frozen=True)
@@ -735,6 +743,7 @@ class RewriteRuntime:
                     "key": mutation.key,
                     "operation": mutation.operation,
                     "target_key": mutation.target_key,
+                    **({"action": mutation.action} if mutation.action is not None else {}),
                 }
                 for mutation in mutations
             ]
@@ -759,9 +768,13 @@ class RewriteRuntime:
             operation = str(item.get("operation") or "").strip()
             target_key_raw = item.get("target_key")
             target_key = str(target_key_raw).strip() if isinstance(target_key_raw, str) and target_key_raw.strip() else None
+            action_raw = item.get("action")
+            action = str(action_raw).strip() if isinstance(action_raw, str) and action_raw.strip() else None
             if context_type not in {"file", "directory"}:
                 continue
             if operation not in {"read", "close", "rename"}:
+                continue
+            if action not in {None, "read", "write", "patch"}:
                 continue
             if not key:
                 continue
@@ -769,7 +782,11 @@ class RewriteRuntime:
                 continue
             if operation != "rename":
                 target_key = None
-            mutations.append(StateContextMutation(context_type, key, operation, target_key))
+            if operation != "read":
+                action = None
+            elif context_type != "file":
+                action = None
+            mutations.append(StateContextMutation(context_type, key, operation, target_key, action))
         return mutations
 
     def _parse_json_string_list(self, raw: Any) -> list[str]:
@@ -1616,13 +1633,13 @@ class RewriteRuntime:
         args: dict[str, Any],
     ) -> list[StateContextMutation]:
         if tool_name == "read_file":
-            return [StateContextMutation("file", canonicalize_path(args.get("path", "")).as_posix(), "read")]
+            return [StateContextMutation("file", canonicalize_path(args.get("path", "")).as_posix(), "read", action="read")]
         if tool_name == "list_directory":
             path = args.get("path", ".")
             canonical = canonicalize_path(path if path != "." else REPO_ROOT)
             return [StateContextMutation("directory", canonical.as_posix(), "read")]
         if tool_name == "create_file":
-            return [StateContextMutation("file", canonicalize_path(args.get("path", "")).as_posix(), "read")]
+            return [StateContextMutation("file", canonicalize_path(args.get("path", "")).as_posix(), "read", action="write")]
         if tool_name == "apply_patch":
             return self._state_context_mutations_for_patch(args.get("patch"))
         if tool_name == "move_path":
@@ -1653,7 +1670,7 @@ class RewriteRuntime:
             if operation.kind == "delete":
                 mutations.append(StateContextMutation("file", target.as_posix(), "close"))
                 continue
-            mutations.append(StateContextMutation("file", target.as_posix(), "read"))
+            mutations.append(StateContextMutation("file", target.as_posix(), "read", action="patch"))
         return mutations
 
     def _messages_to_payload(self, messages: list[Message]) -> list[dict[str, Any]]:
@@ -1943,7 +1960,7 @@ class RewriteRuntime:
         file_alias_map: dict[str, str] = {}
         dir_alias_map: dict[str, str] = {}
         state_map: dict[StateContextKey, str] = {}
-        injections_by_turn_id: dict[str, list[StateContextKey]] = {}
+        injections_by_turn_id: dict[str, list[StateContextInjection]] = {}
 
         def resolve_directory_key(dir_key: str) -> str:
             node = canonicalize_path(dir_key).as_posix()
@@ -2011,12 +2028,30 @@ class RewriteRuntime:
 
                 canonical_key = resolve_key(context_type, context_key)
                 if canonical_key in state_map:
+                    if (
+                        context_type == "file"
+                        and operation == "read"
+                        and state_map[canonical_key] == "read"
+                    ):
+                        injections_by_turn_id.setdefault(str(turn["id"]), []).append(
+                            StateContextInjection(
+                                canonical_key,
+                                action=mutation.action,
+                                deferred=True,
+                            )
+                        )
                     continue
                 if operation == "close":
                     state_map[canonical_key] = "close"
                     continue
                 state_map[canonical_key] = "read"
-                injections_by_turn_id.setdefault(str(turn["id"]), []).append(canonical_key)
+                injections_by_turn_id.setdefault(str(turn["id"]), []).append(
+                    StateContextInjection(
+                        canonical_key,
+                        action=mutation.action,
+                        deferred=False,
+                    )
+                )
 
         rows = list(reversed(rows_rev))
         messages: list[Message] = []
@@ -2024,7 +2059,7 @@ class RewriteRuntime:
         if system_prompt:
             messages.append(Message(role="system", content=system_prompt))
 
-        pending_injections: list[StateContextKey] = []
+        pending_injections: list[StateContextInjection] = []
         for index, turn in enumerate(rows):
             turn_message = self._message_from_turn(turn)
             if turn_message is not None:
@@ -2038,10 +2073,10 @@ class RewriteRuntime:
             )
             if not should_flush_injections:
                 continue
-            for state_key in pending_injections:
-                if state_map.get(state_key) != "read":
+            for injection in pending_injections:
+                if state_map.get(injection.state_key) != "read":
                     continue
-                messages.append(Message(role="system", content=self._render_state_injection(state_key)))
+                messages.append(Message(role="system", content=self._render_state_injection(injection)))
             pending_injections = []
 
         open_keys = self._sort_state_keys([key for key, state in state_map.items() if state == "read"])
@@ -2077,22 +2112,46 @@ class RewriteRuntime:
             return Message(role="system", content=str(row["message_text"]))
         return None
 
-    def _render_state_injection(self, state_key: StateContextKey) -> str:
+    def _render_state_injection(self, injection: StateContextInjection) -> str:
+        state_key = injection.state_key
         path = Path(state_key.key)
-        if not path.exists():
-            return f"Cannot read {state_key.key}, it may have been moved or deleted."
         if state_key.context_type == "file":
+            action = self._normalize_file_action(injection.action)
+            if injection.deferred:
+                return (
+                    f"You just {self._past_tense_file_action(action)} this file; "
+                    "its contents will appear later in your context."
+                )
+            if not path.exists():
+                return f"Cannot read {state_key.key}, it may have been moved or deleted."
             try:
                 content = path.read_text(encoding="utf-8")
             except Exception as exc:  # noqa: BLE001
                 return f"Cannot read {state_key.key}: {exc}"
-            return f"File: {state_key.key}. This is the contents of this file:\n{content}"
+            return (
+                f"You just {self._past_tense_file_action(action)} this file.\n"
+                f"File: {state_key.key}. This is the contents of this file:\n{content}"
+            )
+        if not path.exists():
+            return f"Cannot read {state_key.key}, it may have been moved or deleted."
         try:
             entries = sorted(item.name for item in path.iterdir())
         except Exception as exc:  # noqa: BLE001
             return f"Cannot read {state_key.key}: {exc}"
         listing = "\n".join(entries) if entries else "(empty)"
         return f"Directory: {state_key.key}. This is the current visible listing of this directory:\n{listing}"
+
+    def _normalize_file_action(self, action: str | None) -> str:
+        if action in {"read", "write", "patch"}:
+            return action
+        return "read"
+
+    def _past_tense_file_action(self, action: str) -> str:
+        if action == "write":
+            return "wrote"
+        if action == "patch":
+            return "patched"
+        return "read"
 
     def _ensure_default_system_prompt(self) -> None:
         default_path = SYSTEM_PROMPTS_DIR / "sheaf_default.md"
@@ -2348,7 +2407,16 @@ class RewriteRuntime:
                     prev_turn_id,
                     f"Reopened {state_key.context_type} context for {state_key.key} after compaction.",
                     tool_call_id,
-                    self._serialize_state_context_mutations([StateContextMutation(state_key.context_type, state_key.key, "read")]),
+                    self._serialize_state_context_mutations(
+                        [
+                            StateContextMutation(
+                                state_key.context_type,
+                                state_key.key,
+                                "read",
+                                action="read" if state_key.context_type == "file" else None,
+                            )
+                        ]
+                    ),
                     _json({"synthetic": True}),
                     model_name,
                     now,

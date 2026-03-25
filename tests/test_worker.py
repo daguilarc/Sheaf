@@ -262,9 +262,16 @@ def _drain_thread(runtime: rr.RewriteRuntime, thread_id: str) -> None:
     asyncio.run(runtime.drain_thread_outstanding(thread_id))
 
 
-def _state_ops_json(*ops: tuple[str, str, str, str | None]) -> str:
+def _state_ops_json(
+    *ops: tuple[str, str, str, str | None] | tuple[str, str, str, str | None, str | None]
+) -> str:
     payload = []
-    for context_type, key, operation, target_key in ops:
+    for op in ops:
+        if len(op) == 4:
+            context_type, key, operation, target_key = op
+            action = None
+        else:
+            context_type, key, operation, target_key, action = op
         item = {
             "context_type": context_type,
             "key": key,
@@ -272,6 +279,8 @@ def _state_ops_json(*ops: tuple[str, str, str, str | None]) -> str:
         }
         if target_key is not None:
             item["target_key"] = target_key
+        if action is not None:
+            item["action"] = action
         payload.append(item)
     return rr.json.dumps(payload)
 
@@ -1535,7 +1544,10 @@ def test_context_builder_applies_directory_rename_and_close(monkeypatch, tmp_pat
 
     with runtime._db() as conn:
         messages = runtime._build_context_messages(conn, thread_id).messages
-    assert any("File: " + str(file_path.resolve()) in message.content for message in messages)
+    assert any(
+        f"You just read this file.\nFile: {file_path.resolve()}." in message.content
+        for message in messages
+    )
 
     with sqlite3.connect(rr.SERVER_DB_PATH) as conn:
         _insert_turn(
@@ -1607,6 +1619,383 @@ def test_state_context_mutations_use_preexecution_path_types(tmp_path: Path) -> 
     ]
 
 
+def test_state_context_mutations_capture_file_actions(tmp_path: Path) -> None:
+    runtime = _new_runtime(tmp_path)
+    file_path = tmp_path / "note.txt"
+    patch = "\n".join(
+        [
+            "*** Begin Patch",
+            f"*** Add File: {file_path}",
+            "+hello",
+            "*** End Patch",
+        ]
+    )
+
+    read_mutations = runtime._state_context_mutations_for_tool_invocation(
+        "read_file",
+        {"path": str(file_path)},
+    )
+    write_mutations = runtime._state_context_mutations_for_tool_invocation(
+        "create_file",
+        {"path": str(file_path)},
+    )
+    patch_mutations = runtime._state_context_mutations_for_tool_invocation(
+        "apply_patch",
+        {"patch": patch},
+    )
+
+    assert read_mutations == [
+        rr.StateContextMutation("file", str(file_path.resolve()), "read", action="read")
+    ]
+    assert write_mutations == [
+        rr.StateContextMutation("file", str(file_path.resolve()), "read", action="write")
+    ]
+    assert patch_mutations == [
+        rr.StateContextMutation("file", str(file_path.resolve()), "read", action="patch")
+    ]
+
+
+def test_context_builder_uses_operation_aware_file_messages_and_deferred_notes(tmp_path: Path) -> None:
+    runtime = _new_runtime(tmp_path)
+    thread_id = runtime.create_thread()
+    file_path = tmp_path / "note.txt"
+    file_path.write_text("updated\n", encoding="utf-8")
+    now = rr.utc_now()
+
+    with sqlite3.connect(rr.SERVER_DB_PATH) as conn:
+        _insert_turn(
+            conn,
+            turn_id="call-read",
+            thread_id=thread_id,
+            prev_turn_id=None,
+            turn_type="tool_call",
+            actor_name="assistant",
+            message_text="",
+            tool_calls_json=rr.json.dumps(
+                [{"id": "tool-read", "name": "read_file", "args": {"path": str(file_path.resolve())}}]
+            ),
+            model_name="gpt-5-mini",
+            created_at=now,
+        )
+        _insert_turn(
+            conn,
+            turn_id="resp-read",
+            thread_id=thread_id,
+            prev_turn_id="call-read",
+            turn_type="tool_response",
+            actor_name="read_file",
+            message_text="Opened note.",
+            tool_call_id="tool-read",
+            tool_name="read_file",
+            state_context_json=_state_ops_json(("file", str(file_path.resolve()), "read", None, "read")),
+            stats_json=rr.json.dumps({"is_error": False}),
+            model_name="gpt-5-mini",
+            created_at=now,
+        )
+        _insert_turn(
+            conn,
+            turn_id="call-write",
+            thread_id=thread_id,
+            prev_turn_id="resp-read",
+            turn_type="tool_call",
+            actor_name="assistant",
+            message_text="",
+            tool_calls_json=rr.json.dumps(
+                [
+                    {
+                        "id": "tool-write",
+                        "name": "create_file",
+                        "args": {"path": str(file_path.resolve()), "content": "updated\n", "overwrite": True},
+                    }
+                ]
+            ),
+            model_name="gpt-5-mini",
+            created_at=now,
+        )
+        _insert_turn(
+            conn,
+            turn_id="resp-write",
+            thread_id=thread_id,
+            prev_turn_id="call-write",
+            turn_type="tool_response",
+            actor_name="create_file",
+            message_text="Wrote note.",
+            tool_call_id="tool-write",
+            tool_name="create_file",
+            state_context_json=_state_ops_json(("file", str(file_path.resolve()), "read", None, "write")),
+            stats_json=rr.json.dumps({"is_error": False}),
+            model_name="gpt-5-mini",
+            created_at=now,
+        )
+        _insert_turn(
+            conn,
+            turn_id="u1",
+            thread_id=thread_id,
+            prev_turn_id="resp-write",
+            turn_type="user_message",
+            actor_name="user",
+            message_text="what changed?",
+            created_at=now,
+        )
+        conn.execute("UPDATE threads SET tail_turn_id = 'u1', updated_at = ? WHERE id = ?", (now, thread_id))
+        conn.commit()
+
+    with runtime._db() as conn:
+        messages = runtime._build_context_messages(conn, thread_id).messages
+
+    system_messages = [message.content for message in messages if message.role == "system"]
+    assert any(
+        content == "You just read this file; its contents will appear later in your context."
+        for content in system_messages
+    )
+    assert any(
+        content.startswith(f"You just wrote this file.\nFile: {file_path.resolve()}.")
+        and "updated\n" in content
+        for content in system_messages
+    )
+
+
+def test_context_builder_keeps_duplicate_directory_reads_silently_skipped(tmp_path: Path) -> None:
+    runtime = _new_runtime(tmp_path)
+    thread_id = runtime.create_thread()
+    docs_dir = tmp_path / "docs"
+    docs_dir.mkdir()
+    (docs_dir / "a.txt").write_text("a\n", encoding="utf-8")
+    now = rr.utc_now()
+
+    with sqlite3.connect(rr.SERVER_DB_PATH) as conn:
+        _insert_turn(
+            conn,
+            turn_id="call-dir-1",
+            thread_id=thread_id,
+            prev_turn_id=None,
+            turn_type="tool_call",
+            actor_name="assistant",
+            message_text="",
+            tool_calls_json=rr.json.dumps(
+                [{"id": "tool-dir-1", "name": "list_directory", "args": {"path": str(docs_dir.resolve())}}]
+            ),
+            model_name="gpt-5-mini",
+            created_at=now,
+        )
+        _insert_turn(
+            conn,
+            turn_id="resp-dir-1",
+            thread_id=thread_id,
+            prev_turn_id="call-dir-1",
+            turn_type="tool_response",
+            actor_name="list_directory",
+            message_text="Listed docs.",
+            tool_call_id="tool-dir-1",
+            tool_name="list_directory",
+            state_context_json=_state_ops_json(("directory", str(docs_dir.resolve()), "read", None)),
+            stats_json=rr.json.dumps({"is_error": False}),
+            model_name="gpt-5-mini",
+            created_at=now,
+        )
+        _insert_turn(
+            conn,
+            turn_id="call-dir-2",
+            thread_id=thread_id,
+            prev_turn_id="resp-dir-1",
+            turn_type="tool_call",
+            actor_name="assistant",
+            message_text="",
+            tool_calls_json=rr.json.dumps(
+                [{"id": "tool-dir-2", "name": "list_directory", "args": {"path": str(docs_dir.resolve())}}]
+            ),
+            model_name="gpt-5-mini",
+            created_at=now,
+        )
+        _insert_turn(
+            conn,
+            turn_id="resp-dir-2",
+            thread_id=thread_id,
+            prev_turn_id="call-dir-2",
+            turn_type="tool_response",
+            actor_name="list_directory",
+            message_text="Listed docs again.",
+            tool_call_id="tool-dir-2",
+            tool_name="list_directory",
+            state_context_json=_state_ops_json(("directory", str(docs_dir.resolve()), "read", None)),
+            stats_json=rr.json.dumps({"is_error": False}),
+            model_name="gpt-5-mini",
+            created_at=now,
+        )
+        _insert_turn(
+            conn,
+            turn_id="user-1",
+            thread_id=thread_id,
+            prev_turn_id="resp-dir-2",
+            turn_type="user_message",
+            actor_name="user",
+            message_text="show open context",
+            created_at=now,
+        )
+        conn.execute("UPDATE threads SET tail_turn_id = 'user-1', updated_at = ? WHERE id = ?", (now, thread_id))
+        conn.commit()
+
+    with runtime._db() as conn:
+        messages = runtime._build_context_messages(conn, thread_id).messages
+
+    directory_messages = [
+        message.content for message in messages if message.role == "system" and message.content.startswith("Directory: ")
+    ]
+    assert len(directory_messages) == 1
+    assert directory_messages[0].startswith(f"Directory: {docs_dir.resolve()}.")
+
+
+def test_context_builder_keeps_deferred_file_note_when_file_is_deleted(tmp_path: Path) -> None:
+    runtime = _new_runtime(tmp_path)
+    thread_id = runtime.create_thread()
+    file_path = tmp_path / "note.txt"
+    file_path.write_text("updated\n", encoding="utf-8")
+    now = rr.utc_now()
+
+    with sqlite3.connect(rr.SERVER_DB_PATH) as conn:
+        _insert_turn(
+            conn,
+            turn_id="call-read",
+            thread_id=thread_id,
+            prev_turn_id=None,
+            turn_type="tool_call",
+            actor_name="assistant",
+            message_text="",
+            tool_calls_json=rr.json.dumps(
+                [{"id": "tool-read", "name": "read_file", "args": {"path": str(file_path.resolve())}}]
+            ),
+            model_name="gpt-5-mini",
+            created_at=now,
+        )
+        _insert_turn(
+            conn,
+            turn_id="resp-read",
+            thread_id=thread_id,
+            prev_turn_id="call-read",
+            turn_type="tool_response",
+            actor_name="read_file",
+            message_text="Opened note.",
+            tool_call_id="tool-read",
+            tool_name="read_file",
+            state_context_json=_state_ops_json(("file", str(file_path.resolve()), "read", None, "read")),
+            stats_json=rr.json.dumps({"is_error": False}),
+            model_name="gpt-5-mini",
+            created_at=now,
+        )
+        _insert_turn(
+            conn,
+            turn_id="call-write",
+            thread_id=thread_id,
+            prev_turn_id="resp-read",
+            turn_type="tool_call",
+            actor_name="assistant",
+            message_text="",
+            tool_calls_json=rr.json.dumps(
+                [
+                    {
+                        "id": "tool-write",
+                        "name": "create_file",
+                        "args": {"path": str(file_path.resolve()), "content": "updated\n", "overwrite": True},
+                    }
+                ]
+            ),
+            model_name="gpt-5-mini",
+            created_at=now,
+        )
+        _insert_turn(
+            conn,
+            turn_id="resp-write",
+            thread_id=thread_id,
+            prev_turn_id="call-write",
+            turn_type="tool_response",
+            actor_name="create_file",
+            message_text="Wrote note.",
+            tool_call_id="tool-write",
+            tool_name="create_file",
+            state_context_json=_state_ops_json(("file", str(file_path.resolve()), "read", None, "write")),
+            stats_json=rr.json.dumps({"is_error": False}),
+            model_name="gpt-5-mini",
+            created_at=now,
+        )
+        _insert_turn(
+            conn,
+            turn_id="u1",
+            thread_id=thread_id,
+            prev_turn_id="resp-write",
+            turn_type="user_message",
+            actor_name="user",
+            message_text="what changed?",
+            created_at=now,
+        )
+        conn.execute("UPDATE threads SET tail_turn_id = 'u1', updated_at = ? WHERE id = ?", (now, thread_id))
+        conn.commit()
+
+    file_path.unlink()
+
+    with runtime._db() as conn:
+        messages = runtime._build_context_messages(conn, thread_id).messages
+
+    system_messages = [message.content for message in messages if message.role == "system"]
+    assert any(
+        content == "You just read this file; its contents will appear later in your context."
+        for content in system_messages
+    )
+    assert any(
+        content == f"Cannot read {file_path.resolve()}, it may have been moved or deleted."
+        for content in system_messages
+    )
+
+
+def test_context_builder_defaults_legacy_file_entries_to_read_presentation(tmp_path: Path) -> None:
+    runtime = _new_runtime(tmp_path)
+    thread_id = runtime.create_thread()
+    file_path = tmp_path / "legacy.txt"
+    file_path.write_text("legacy\n", encoding="utf-8")
+    now = rr.utc_now()
+
+    with sqlite3.connect(rr.SERVER_DB_PATH) as conn:
+        _insert_turn(
+            conn,
+            turn_id="tc1",
+            thread_id=thread_id,
+            prev_turn_id=None,
+            turn_type="tool_call",
+            actor_name="assistant",
+            message_text="",
+            tool_calls_json=rr.json.dumps(
+                [{"id": "tool-1", "name": "read_file", "args": {"path": str(file_path.resolve())}}]
+            ),
+            model_name="gpt-5-mini",
+            created_at=now,
+        )
+        _insert_turn(
+            conn,
+            turn_id="tr1",
+            thread_id=thread_id,
+            prev_turn_id="tc1",
+            turn_type="tool_response",
+            actor_name="read_file",
+            message_text="Opened legacy file.",
+            tool_call_id="tool-1",
+            tool_name="read_file",
+            state_context_json=_state_ops_json(("file", str(file_path.resolve()), "read", None)),
+            stats_json=rr.json.dumps({"is_error": False}),
+            model_name="gpt-5-mini",
+            created_at=now,
+        )
+        conn.execute("UPDATE threads SET tail_turn_id = 'tr1', updated_at = ? WHERE id = ?", (now, thread_id))
+        conn.commit()
+
+    with runtime._db() as conn:
+        messages = runtime._build_context_messages(conn, thread_id).messages
+
+    assert any(
+        message.role == "system"
+        and message.content.startswith(f"You just read this file.\nFile: {file_path.resolve()}.")
+        for message in messages
+    )
+
+
 def test_apply_patch_tool_loop_tracks_all_targets(monkeypatch, tmp_path: Path) -> None:
     _configure_paths(tmp_path)
     repo_root = tmp_path / "repo"
@@ -1667,10 +2056,10 @@ def test_apply_patch_tool_loop_tracks_all_targets(monkeypatch, tmp_path: Path) -
         ).fetchall()
 
     parsed_ops = [rr.json.loads(str(row["state_context_json"])) for row in rows]
-    assert [(item["operation"], item["key"]) for item in parsed_ops[0]] == [
-        ("read", str(existing.resolve())),
-        ("read", str((vault_root / "added.txt").resolve())),
-        ("close", str(removed.resolve())),
+    assert [(item["operation"], item.get("action"), item["key"]) for item in parsed_ops[0]] == [
+        ("read", "patch", str(existing.resolve())),
+        ("read", "patch", str((vault_root / "added.txt").resolve())),
+        ("close", None, str(removed.resolve())),
     ]
     assert rows[0]["tool_call_id"] == "tool-1"
     assert len(rows) == 1
@@ -1678,8 +2067,15 @@ def test_apply_patch_tool_loop_tracks_all_targets(monkeypatch, tmp_path: Path) -
     with runtime._db() as conn:
         messages = runtime._build_context_messages(conn, thread_id).messages
     contents = [message.content for message in messages]
-    assert any(f"File: {existing.resolve()}" in content and "two" in content for content in contents)
-    assert any(f"File: {(vault_root / 'added.txt').resolve()}" in content and "hello" in content for content in contents)
+    assert any(
+        content.startswith(f"You just patched this file.\nFile: {existing.resolve()}.") and "two" in content
+        for content in contents
+    )
+    assert any(
+        content.startswith(f"You just patched this file.\nFile: {(vault_root / 'added.txt').resolve()}.")
+        and "hello" in content
+        for content in contents
+    )
     assert not any(f"File: {removed.resolve()}" in content for content in contents)
 
 
