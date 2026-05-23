@@ -1,6 +1,6 @@
 # State
 
-- global_step: 31
+- global_step: 32
 - machine_name: quest
 - machine_path: quests/main/0001_vs_code_plugin
 - state: ExecuteSlice
