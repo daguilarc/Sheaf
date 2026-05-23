@@ -39,8 +39,10 @@ export function CreateReadVisibleRangeTool(
 
       const cursor0 = editor.getActivePosition0();
       const cursor1 = FromVscodePosition0(cursor0.line, cursor0.character);
-      services.freshness.markCursorObserved(editor.document.relativePosix);
-      services.freshness.markViewportObserved(editor.document.relativePosix);
+      const rel = editor.document.relativePosix;
+      services.freshness.markFileObserved(rel);
+      services.freshness.markViewportObserved(rel);
+      services.freshness.markCursorObserved(rel);
 
       const visible = BuildWindowAroundLine1(
         editor.document,

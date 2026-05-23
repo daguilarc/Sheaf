@@ -87,8 +87,6 @@ export function CreateListFilesTool(services: ToolServices): ToolDefinition<List
       const maxEntries = maxEntriesRaw;
       const baseDirPosix = resolved.relativePosix === "" ? "." : resolved.relativePosix.split("\\").join("/");
 
-      services.freshness.markFileObserved(baseDirPosix);
-
       const collected: FileEntry[] = [];
       let truncated = false;
 

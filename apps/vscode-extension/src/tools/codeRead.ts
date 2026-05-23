@@ -84,8 +84,6 @@ export function CreateCodeReadTool(services: ToolServices): ToolDefinition<CodeR
         return { code: "binary_file", message: "File contains NUL bytes in the first 8 KiB." };
       }
 
-      services.freshness.markFileObserved(doc.relativePosix);
-
       const lineCount = doc.lineCount;
       const fullText = doc.getText();
       // VS Code reports empty text documents as `lineCount: 1` with a single empty
@@ -94,6 +92,7 @@ export function CreateCodeReadTool(services: ToolServices): ToolDefinition<CodeR
       //
       if (lineCount === 0 || fullText.length === 0)
       {
+        services.freshness.markFileObserved(doc.relativePosix);
         return {
           file: doc.relativePosix,
           lineCount: 0,
@@ -146,6 +145,8 @@ export function CreateCodeReadTool(services: ToolServices): ToolDefinition<CodeR
       {
         lines.push({ line: line1, text: doc.lineTextAt0(line1 - 1) });
       }
+
+      services.freshness.markFileObserved(doc.relativePosix);
 
       return {
         file: doc.relativePosix,

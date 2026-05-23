@@ -56,6 +56,9 @@ function PosixRelativeFromRoots(absPath: string, roots: string[]): string | unde
   return undefined;
 }
 
+// Freshness: rgrep scans text but does not count as a full-file read for
+// invalidation; only read tools establish per-file observation (slice 0006).
+//
 export function CreateRgrepTool(services: ToolServices): ToolDefinition<RgrepArgs, RgrepResult | ToolError>
 {
   return {
@@ -123,7 +126,6 @@ export function CreateRgrepTool(services: ToolServices): ToolDefinition<RgrepArg
 
         dirRel = resolved.relativePosix === "" ? "." : resolved.relativePosix.split("\\").join("/");
         dirRoot = resolved.rootFsPath;
-        services.freshness.markFileObserved(dirRel);
       }
 
       const globPart = args.fileGlob === undefined || args.fileGlob.length === 0 ? "**/*" : args.fileGlob;
@@ -176,8 +178,6 @@ export function CreateRgrepTool(services: ToolServices): ToolDefinition<RgrepArg
         {
           continue;
         }
-
-        services.freshness.markFileObserved(doc.relativePosix);
 
         for (let line0 = 0; line0 < doc.lineCount; line0++)
         {

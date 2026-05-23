@@ -3,6 +3,7 @@ import * as vscode from "vscode";
 import { RegisterRealtimeCommands } from "./commands.js";
 import { ChatModel } from "./chat/chatModel.js";
 import { ChatViewProvider } from "./chat/chatViewProvider.js";
+import { FreshnessCoordinator } from "./freshness/freshnessCoordinator.js";
 import { Log } from "./log.js";
 import { SessionController } from "./sessionController.js";
 import {
@@ -12,6 +13,8 @@ import {
   CreateWorkspaceSessionPreferences,
 } from "./sessionWiring.js";
 import { CreateSheafRealtimeStatusBar, UpdateSheafRealtimeStatusBar } from "./statusBar.js";
+import { BuildVscodeToolCallSet } from "./tools/callSetBuilder.js";
+import { CreateVscodeEditorAccess } from "./tools/editorAccess.js";
 
 export { CMD_COMMIT_AND_RESPOND, CMD_TOGGLE_SESSION } from "./commands.js";
 
@@ -34,13 +37,24 @@ export function activate(context: vscode.ExtensionContext): void
   const ui = CreateVscodeSessionUi();
 
   const chatModel = new ChatModel();
+  const freshnessCoordinator = new FreshnessCoordinator();
+  const editorAccess = CreateVscodeEditorAccess();
+  const vscodeToolCallSet = BuildVscodeToolCallSet({
+    editorAccess,
+    freshness: freshnessCoordinator.hooks,
+  });
+
   const session = new SessionController(
     host,
     log,
     secrets,
     prefs,
     ui,
-    { chatModel },
+    {
+      chatModel,
+      freshnessCoordinator,
+      buildVscodeToolCallSet: () => vscodeToolCallSet,
+    },
     (state) =>
     {
       UpdateSheafRealtimeStatusBar(statusBar, state);

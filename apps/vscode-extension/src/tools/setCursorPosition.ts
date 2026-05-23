@@ -94,6 +94,32 @@ function ParseReturnVisible(req: unknown): VisibleRangeRequest | ToolError
   return r;
 }
 
+function RecordFreshnessAfterSetCursor(
+  services: ToolServices,
+  relativePosix: string,
+  returnReq: VisibleRangeRequest | undefined,
+  result: SetCursorPositionResult,
+): void
+{
+  services.freshness.markCursorObserved(relativePosix);
+  if (returnReq !== undefined)
+  {
+    services.freshness.markViewportObserved(relativePosix);
+    if (result.visibleRange !== undefined && result.visibleRange.lines.length > 0)
+    {
+      services.freshness.markFileObserved(relativePosix);
+    }
+  }
+}
+
+function EndAgentMutationDeferred(guard: { end: () => void }): void
+{
+  setImmediate(() =>
+  {
+    guard.end();
+  });
+}
+
 export function CreateSetCursorPositionTool(
   services: ToolServices,
 ): ToolDefinition<SetCursorPositionArgs, SetCursorPositionResult | ToolError>
@@ -118,8 +144,6 @@ export function CreateSetCursorPositionTool(
         returnReq = parsed;
       }
 
-      services.freshness.beginAgentMutation();
-
       if (args.target.mode === "absolute")
       {
         if (!Number.isInteger(args.target.line))
@@ -133,51 +157,69 @@ export function CreateSetCursorPositionTool(
           return resolved;
         }
 
-        const editor = await services.editorAccess.OpenEditorAndFocus(resolved.absPath, resolved.relativePosix, false);
-        if (IsToolError(editor))
+        const guard = services.freshness.beginAgentMutation();
+        try
         {
-          return editor;
-        }
+          const editor = await services.editorAccess.OpenEditorAndFocus(resolved.absPath, resolved.relativePosix, false);
+          if (IsToolError(editor))
+          {
+            return editor;
+          }
 
-        const doc = editor.document;
-        const lineCount = doc.lineCount;
-        if (lineCount === 0)
-        {
-          editor.revealCursorAfterMove(0, 0, revealKind);
-          const cursor1 = FromVscodePosition0(0, 0);
-          services.freshness.markCursorObserved(doc.relativePosix);
-          services.freshness.markViewportObserved(doc.relativePosix);
+          const doc = editor.document;
+          const lineCount = doc.lineCount;
+          if (lineCount === 0)
+          {
+            editor.revealCursorAfterMove(0, 0, revealKind);
+            const cursor1 = FromVscodePosition0(0, 0);
+            const result: SetCursorPositionResult = {
+              cursor: { file: doc.relativePosix, line: cursor1.line, character: cursor1.character },
+            };
+            if (returnReq !== undefined)
+            {
+              result.visibleRange = BuildWindowAroundLine1(
+                doc,
+                cursor1.line,
+                cursor1.character,
+                returnReq.linesAbove,
+                returnReq.linesBelow,
+              );
+            }
+
+            RecordFreshnessAfterSetCursor(services, doc.relativePosix, returnReq, result);
+            return result;
+          }
+
+          const line1 = Math.min(Math.max(1, args.target.line), lineCount);
+          const line0 = line1 - 1;
+          const defaultChar = args.target.character ?? 0;
+          const char0 = Math.min(Math.max(0, defaultChar), doc.lineTextAt0(line0).length);
+
+          editor.revealCursorAfterMove(line0, char0, revealKind);
+          const cursor1 = FromVscodePosition0(line0, char0);
+
           const result: SetCursorPositionResult = {
             cursor: { file: doc.relativePosix, line: cursor1.line, character: cursor1.character },
           };
+
           if (returnReq !== undefined)
           {
-            result.visibleRange = BuildWindowAroundLine1(doc, cursor1.line, cursor1.character, returnReq.linesAbove, returnReq.linesBelow);
+            result.visibleRange = BuildWindowAroundLine1(
+              doc,
+              cursor1.line,
+              cursor1.character,
+              returnReq.linesAbove,
+              returnReq.linesBelow,
+            );
           }
 
+          RecordFreshnessAfterSetCursor(services, doc.relativePosix, returnReq, result);
           return result;
         }
-
-        const line1 = Math.min(Math.max(1, args.target.line), lineCount);
-        const line0 = line1 - 1;
-        const defaultChar = args.target.character ?? 0;
-        const char0 = Math.min(Math.max(0, defaultChar), doc.lineTextAt0(line0).length);
-
-        editor.revealCursorAfterMove(line0, char0, revealKind);
-        const cursor1 = FromVscodePosition0(line0, char0);
-        services.freshness.markCursorObserved(doc.relativePosix);
-        services.freshness.markViewportObserved(doc.relativePosix);
-
-        const result: SetCursorPositionResult = {
-          cursor: { file: doc.relativePosix, line: cursor1.line, character: cursor1.character },
-        };
-
-        if (returnReq !== undefined)
+        finally
         {
-          result.visibleRange = BuildWindowAroundLine1(doc, cursor1.line, cursor1.character, returnReq.linesAbove, returnReq.linesBelow);
+          EndAgentMutationDeferred(guard);
         }
-
-        return result;
       }
 
       const active = services.editorAccess.GetActiveEditor();
@@ -191,17 +233,45 @@ export function CreateSetCursorPositionTool(
         return { code: "invalid_range", message: "`lineDelta` must be an integer." };
       }
 
-      const cur0 = active.getActivePosition0();
-      const lineCount = active.document.lineCount;
-      if (lineCount === 0)
+      const guard = services.freshness.beginAgentMutation();
+      try
       {
-        active.revealCursorAfterMove(0, 0, revealKind);
-        const cursor1 = FromVscodePosition0(0, 0);
-        services.freshness.markCursorObserved(active.document.relativePosix);
-        services.freshness.markViewportObserved(active.document.relativePosix);
+        const cur0 = active.getActivePosition0();
+        const lineCount = active.document.lineCount;
+        if (lineCount === 0)
+        {
+          active.revealCursorAfterMove(0, 0, revealKind);
+          const cursor1 = FromVscodePosition0(0, 0);
+          const result: SetCursorPositionResult = {
+            cursor: { file: active.document.relativePosix, line: cursor1.line, character: cursor1.character },
+          };
+          if (returnReq !== undefined)
+          {
+            result.visibleRange = BuildWindowAroundLine1(
+              active.document,
+              cursor1.line,
+              cursor1.character,
+              returnReq.linesAbove,
+              returnReq.linesBelow,
+            );
+          }
+
+          RecordFreshnessAfterSetCursor(services, active.document.relativePosix, returnReq, result);
+          return result;
+        }
+
+        const newLine0 = cur0.line + args.target.lineDelta;
+        const clampedLine0 = Math.min(Math.max(0, newLine0), lineCount - 1);
+        const defaultCharRel = args.target.character ?? cur0.character;
+        const char0 = Math.min(Math.max(0, defaultCharRel), active.document.lineTextAt0(clampedLine0).length);
+
+        active.revealCursorAfterMove(clampedLine0, char0, revealKind);
+        const cursor1 = FromVscodePosition0(clampedLine0, char0);
+
         const result: SetCursorPositionResult = {
           cursor: { file: active.document.relativePosix, line: cursor1.line, character: cursor1.character },
         };
+
         if (returnReq !== undefined)
         {
           result.visibleRange = BuildWindowAroundLine1(
@@ -213,35 +283,13 @@ export function CreateSetCursorPositionTool(
           );
         }
 
+        RecordFreshnessAfterSetCursor(services, active.document.relativePosix, returnReq, result);
         return result;
       }
-
-      const newLine0 = cur0.line + args.target.lineDelta;
-      const clampedLine0 = Math.min(Math.max(0, newLine0), lineCount - 1);
-      const defaultCharRel = args.target.character ?? cur0.character;
-      const char0 = Math.min(Math.max(0, defaultCharRel), active.document.lineTextAt0(clampedLine0).length);
-
-      active.revealCursorAfterMove(clampedLine0, char0, revealKind);
-      const cursor1 = FromVscodePosition0(clampedLine0, char0);
-      services.freshness.markCursorObserved(active.document.relativePosix);
-      services.freshness.markViewportObserved(active.document.relativePosix);
-
-      const result: SetCursorPositionResult = {
-        cursor: { file: active.document.relativePosix, line: cursor1.line, character: cursor1.character },
-      };
-
-      if (returnReq !== undefined)
+      finally
       {
-        result.visibleRange = BuildWindowAroundLine1(
-          active.document,
-          cursor1.line,
-          cursor1.character,
-          returnReq.linesAbove,
-          returnReq.linesBelow,
-        );
+        EndAgentMutationDeferred(guard);
       }
-
-      return result;
     },
   };
 }

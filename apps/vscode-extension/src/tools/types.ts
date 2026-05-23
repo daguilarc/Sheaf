@@ -5,6 +5,10 @@
 // realtime-agent `callback_failed` payloads and lose structured `code` values.
 //
 
+import type { AgentMutationGuard, FreshnessHooks } from "../freshness/types.js";
+
+export type { AgentMutationGuard, FreshnessHooks };
+
 export interface CodePosition
 {
   file: string;
@@ -203,19 +207,9 @@ export interface MoveVisibleRangeResult
   visibleRange?: VisibleRangeResult;
 }
 
-// Placeholder until slice 0006 owns the real FreshnessHooks coordinator.
-//
-export interface FreshnessHooks
-{
-  markFileObserved(path: string): void;
-  markViewportObserved(path: string): void;
-  markCursorObserved(path: string): void;
-  beginAgentMutation(): void;
-}
-
 export const NoOpFreshnessHooks: FreshnessHooks = {
   markFileObserved() {},
   markViewportObserved() {},
   markCursorObserved() {},
-  beginAgentMutation() {},
+  beginAgentMutation: () => ({ end: () => {} }),
 };

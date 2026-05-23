@@ -14,6 +14,7 @@ import {
 } from "realtime-agent-lib";
 
 import type { ChatModel } from "./chat/chatModel.js";
+import type { FreshnessCoordinator } from "./freshness/freshnessCoordinator.js";
 import type { LogSink } from "./log.js";
 import type {
   SessionControllerHost,
@@ -33,6 +34,7 @@ export interface SessionControllerDeps
   createMicrophoneCapture?: typeof CreateMicrophoneCapture;
   buildVscodeToolCallSet?: () => ToolCallSet | Promise<ToolCallSet>;
   chatModel?: ChatModel;
+  freshnessCoordinator?: FreshnessCoordinator;
 }
 
 export interface SessionStateListenerDisposable
@@ -48,7 +50,10 @@ export class SessionController
   private m_database: RealtimeAgentDb | undefined;
   private m_onStateChange: (state: SessionControllerState) => void;
   private readonly m_chatModel: ChatModel | undefined;
+  private readonly m_freshnessCoordinator: FreshnessCoordinator | undefined;
   private readonly m_stateListeners = new Set<(state: SessionControllerState) => void>();
+  private readonly m_sessionStartedListeners = new Set<(session: RealtimeAgentSession) => void>();
+  private readonly m_sessionStoppedListeners = new Set<() => void>();
 
   constructor(
     private readonly m_host: SessionControllerHost,
@@ -62,6 +67,7 @@ export class SessionController
   {
     this.m_onStateChange = onStateChange;
     this.m_chatModel = this.m_deps.chatModel;
+    this.m_freshnessCoordinator = this.m_deps.freshnessCoordinator;
   }
 
   GetState(): SessionControllerState
@@ -81,6 +87,28 @@ export class SessionController
       dispose: () =>
       {
         this.m_stateListeners.delete(listener);
+      },
+    };
+  }
+
+  OnSessionStarted(listener: (session: RealtimeAgentSession) => void): SessionStateListenerDisposable
+  {
+    this.m_sessionStartedListeners.add(listener);
+    return {
+      dispose: () =>
+      {
+        this.m_sessionStartedListeners.delete(listener);
+      },
+    };
+  }
+
+  OnSessionStopped(listener: () => void): SessionStateListenerDisposable
+  {
+    this.m_sessionStoppedListeners.add(listener);
+    return {
+      dispose: () =>
+      {
+        this.m_sessionStoppedListeners.delete(listener);
       },
     };
   }
@@ -263,12 +291,34 @@ export class SessionController
       this.m_database = database;
       this.m_session = session;
       this.m_audioCapture = audioCapture;
+
+      if (this.m_freshnessCoordinator !== undefined && this.m_chatModel !== undefined)
+      {
+        const { FreshnessService } = await import("./freshness/freshnessService.js");
+        const { CreateDefaultVscodeFreshnessHost } = await import("./freshness/vscodeFreshnessHost.js");
+        const freshness = new FreshnessService(
+          session,
+          this.m_chatModel,
+          this.m_log,
+          CreateDefaultVscodeFreshnessHost(),
+        );
+        freshness.attachListeners();
+        this.m_freshnessCoordinator.attach(freshness);
+      }
+
+      for (const listener of this.m_sessionStartedListeners)
+      {
+        listener(session);
+      }
+
       this.m_chatModel?.clear();
       this.SetState("active");
     }
     catch (error)
     {
       this.m_log.Error("Failed to start realtime session", error);
+
+      this.m_freshnessCoordinator?.detach();
 
       audioCapture?.stop();
 
@@ -313,6 +363,13 @@ export class SessionController
     this.m_chatModel?.recordError("Connection to OpenAI was lost.");
     void this.m_ui.showErrorMessage("Sheaf realtime: connection to OpenAI was lost.");
 
+    for (const listener of this.m_sessionStoppedListeners)
+    {
+      listener();
+    }
+
+    this.m_freshnessCoordinator?.detach();
+
     this.m_audioCapture?.stop();
     this.m_audioCapture = undefined;
     this.m_session = undefined;
@@ -333,6 +390,13 @@ export class SessionController
     }
 
     this.SetState("stopping");
+
+    for (const listener of this.m_sessionStoppedListeners)
+    {
+      listener();
+    }
+
+    this.m_freshnessCoordinator?.detach();
 
     this.m_audioCapture?.stop();
     this.m_audioCapture = undefined;
