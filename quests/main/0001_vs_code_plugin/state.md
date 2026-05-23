@@ -1,5 +1,13 @@
-# Quest State
+# State
 
-state: PhysicalPlanning
-current_slice: null
-updated_at: 2026-05-23T19:04:22Z
+- global_step: 1
+- machine_name: quest
+- machine_path: quests/main/0001_vs_code_plugin
+- state: ReviewPhysicalPlan
+- updated_at: 2026-05-23T19:15:14Z
+
+## Tags
+
+- quest_number: 1
+- quest_slug: vs_code_plugin
+- quest_type: main
