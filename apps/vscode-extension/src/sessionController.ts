@@ -9,6 +9,7 @@ import {
   type AgentSessionDeps,
   type MicrophoneCapture,
   type RealtimeAgentSession,
+  type ToolCallSet,
 } from "realtime-agent-lib";
 
 import type { LogSink } from "./log.js";
@@ -18,6 +19,7 @@ import type {
   SessionSecrets,
   SessionUi,
 } from "./sessionTypes.js";
+import { BuildVscodeToolCallSet } from "./tools/callSetBuilder.js";
 
 export type SessionControllerState = "idle" | "starting" | "active" | "stopping";
 
@@ -27,6 +29,7 @@ export interface SessionControllerDeps
 {
   startSession?: typeof startAgentSession;
   createMicrophoneCapture?: typeof CreateMicrophoneCapture;
+  buildVscodeToolCallSet?: () => ToolCallSet | Promise<ToolCallSet>;
 }
 
 export class SessionController
@@ -150,10 +153,19 @@ export class SessionController
     let session: RealtimeAgentSession | undefined;
     let audioCapture: MicrophoneCapture | undefined;
 
+    const toolCallSet =
+      this.m_deps.buildVscodeToolCallSet !== undefined
+        ? await Promise.resolve(this.m_deps.buildVscodeToolCallSet())
+        : await (async () =>
+          {
+            const { CreateVscodeEditorAccess } = await import("./tools/editorAccess.js");
+            return BuildVscodeToolCallSet({ editorAccess: CreateVscodeEditorAccess() });
+          })();
+
     const agentConfig: AgentStartConfig = {
       systemPrompt: this.m_prefs.getSystemPrompt(),
       initialContext: "",
-      toolCallSet: { tools: [] },
+      toolCallSet,
       model: this.m_prefs.getModel(),
       turnMode: { type: "manual" },
       responseAfterToolOutput: true,
