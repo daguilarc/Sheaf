@@ -52,5 +52,14 @@
     "round_count": 1,
     "created_at": "2026-05-23T19:38:09Z",
     "last_used_at": "2026-05-23T19:40:01Z"
+  },
+  "slice_2_polisher": {
+    "thread_name": "Sheaf_quest_0001_slice_0002_polisher",
+    "harness_kind": "cursor",
+    "provider_thread_id": "8daff55b-0ab4-4fbf-9f8c-0d96f66b9b22",
+    "pass_id": 0,
+    "round_count": 1,
+    "created_at": "2026-05-23T21:16:00Z",
+    "last_used_at": "2026-05-23T21:19:02Z"
   }
 }

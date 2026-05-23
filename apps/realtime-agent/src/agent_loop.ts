@@ -517,8 +517,38 @@ class RealtimeAgentSessionImpl implements RealtimeAgentSession
   private HandleIncomingEvent(event: RealtimeEvent): void
   {
     this.m_router.routeIncomingEvent(event);
+
+    // Reserve pending tool-output holds on the queue BEFORE letting it observe
+    // a terminal `response.done`. Otherwise the queue would clear active state
+    // and drain externally queued response-affecting units ahead of the
+    // `function_call_output` events the model is waiting for.
+    //
+    this.ReserveToolOutputHolds(event);
+
     this.m_responseQueue.OnIncomingEvent(event);
     this.HandleToolCallExtraction(event);
+  }
+
+  private ReserveToolOutputHolds(event: RealtimeEvent): void
+  {
+    if (event.type !== "response.done")
+    {
+      return;
+    }
+
+    // Only the terminal `response.done` clears the active response and triggers
+    // a drain of externally queued response-affecting units; per-call argument
+    // events do not drain, so reserving holds there is unnecessary. Reserving
+    // here also avoids stuck holds when a `response.function_call_arguments.done`
+    // event lacks the metadata needed to dispatch.
+    //
+    for (const extracted of ExtractFunctionCallsFromResponseDone(event))
+    {
+      if (!this.m_dispatchedCallIds.has(extracted.callId))
+      {
+        this.m_responseQueue.RegisterPendingToolOutput(extracted.callId);
+      }
+    }
   }
 
   private HandleToolCallExtraction(event: RealtimeEvent): void
@@ -561,9 +591,9 @@ class RealtimeAgentSessionImpl implements RealtimeAgentSession
 
   TransmitOutgoing(event: RealtimeEvent): void
   {
-    this.m_responseQueue.NotifyOutgoingTransmitted(event);
     this.m_client.send(event);
     this.m_router.routeOutgoingEvent(event);
+    this.m_responseQueue.NotifyOutgoingTransmitted(event);
   }
 
   private async FinalizeSession(reason: string): Promise<SessionRow>

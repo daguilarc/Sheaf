@@ -65,6 +65,7 @@ export class ResponseQueue
   private m_activeResponseId: string | undefined;
   private m_fifo: QueuedResponseUnit[] = [];
   private m_draining = false;
+  private m_pendingToolOutputCallIds = new Set<string>();
 
   constructor(options: ResponseQueueOptions)
   {
@@ -73,7 +74,21 @@ export class ResponseQueue
 
   IsBusy(): boolean
   {
-    return this.m_serverResponseActive || this.m_outboundCreatePending;
+    return (
+      this.m_serverResponseActive ||
+      this.m_outboundCreatePending ||
+      this.m_pendingToolOutputCallIds.size > 0
+    );
+  }
+
+  // Reserve a slot for an in-flight tool output whose `function_call_output`
+  // has not yet been transmitted. While at least one such reservation exists,
+  // the queue treats itself as busy so that externally queued response-affecting
+  // units cannot drain ahead of the tool result the model is waiting for.
+  //
+  RegisterPendingToolOutput(callId: string): void
+  {
+    this.m_pendingToolOutputCallIds.add(callId);
   }
 
   NotifyOutgoingTransmitted(event: RealtimeEvent): void
@@ -81,6 +96,23 @@ export class ResponseQueue
     if (event.type === "response.create")
     {
       this.m_outboundCreatePending = true;
+      return;
+    }
+
+    if (event.type === "conversation.item.create")
+    {
+      const item = event.item;
+      if (typeof item === "object" && item !== null)
+      {
+        const record = item as { type?: unknown; call_id?: unknown };
+        if (record.type === "function_call_output" && typeof record.call_id === "string")
+        {
+          if (this.m_pendingToolOutputCallIds.delete(record.call_id))
+          {
+            this.TryDrain();
+          }
+        }
+      }
     }
   }
 
