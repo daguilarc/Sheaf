@@ -270,8 +270,7 @@ test("StartCliRuntime shutdown stops audio capture and finalizes session", async
       const session = await startPromise;
 
       return {
-        sessionId: session.sessionId,
-        sendAudioFrame: session.sendAudioFrame.bind(session),
+        ...session,
         stop: async (reason: string) =>
         {
           stopReason = reason;

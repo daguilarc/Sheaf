@@ -16,10 +16,16 @@ import {
   type AgentStartConfig,
   type ConversationEventCallback,
   type ConversationEventInfo,
+  type CreateResponseOptions,
+  type QueuedEventResult,
+  type QueueRequestOptions,
   type RealtimeAgentSession,
+  type RealtimeAgentTurnMode,
   type RealtimeEvent,
+  type SendMessageOptions,
   type SessionEndedCallback,
   type SessionRow,
+  type StructuredContextMessage,
 } from "./types.js";
 
 export { DuplicateToolNameError } from "./tooling.js";
@@ -87,6 +93,65 @@ function BuildInitialResponseCreateEvent(): RealtimeEvent
   return {
     type: "response.create",
   };
+}
+
+function ResolveAgentStartTurnMode(configured?: RealtimeAgentTurnMode): RealtimeAgentTurnMode
+{
+  if (configured !== undefined)
+  {
+    return configured;
+  }
+
+  return {
+    type: "server_vad",
+    silenceDurationMs: 500,
+    createResponse: true,
+    interruptResponse: true,
+  };
+}
+
+function ApplyOptionalPreviousItemId(event: RealtimeEvent, previousItemId: string | undefined): void
+{
+  if (previousItemId === undefined || previousItemId.length === 0)
+  {
+    return;
+  }
+
+  event.previous_item_id = previousItemId;
+}
+
+function BuildUserInputTextConversationItem(text: string, previousItemId?: string): RealtimeEvent
+{
+  const event: RealtimeEvent = {
+    type: "conversation.item.create",
+    item: {
+      type: "message",
+      role: "user",
+      content: [
+        {
+          type: "input_text",
+          text,
+        },
+      ],
+    },
+  };
+
+  ApplyOptionalPreviousItemId(event, previousItemId);
+  return event;
+}
+
+function BuildResponseCreateEvent(options?: CreateResponseOptions): RealtimeEvent
+{
+  const event: RealtimeEvent = {
+    type: "response.create",
+  };
+
+  if (options?.response !== undefined)
+  {
+    event.response = options.response;
+  }
+
+  return event;
 }
 
 function ReadStringField(event: RealtimeEvent, field: string): string | undefined
@@ -284,6 +349,92 @@ class RealtimeAgentSessionImpl implements RealtimeAgentSession
     });
   }
 
+  async commitAudio(_options?: QueueRequestOptions): Promise<QueuedEventResult>
+  {
+    this.SendOutgoing({
+      type: "input_audio_buffer.commit",
+    });
+    return { status: "sent" };
+  }
+
+  async createResponse(options?: CreateResponseOptions): Promise<QueuedEventResult>
+  {
+    this.SendOutgoing(BuildResponseCreateEvent(options));
+    return { status: "sent" };
+  }
+
+  async commitAudioAndCreateResponse(options?: CreateResponseOptions): Promise<QueuedEventResult>
+  {
+    this.SendOutgoing({
+      type: "input_audio_buffer.commit",
+    });
+    this.SendOutgoing(BuildResponseCreateEvent(options));
+    return { status: "sent" };
+  }
+
+  async sendTextMessage(text: string, options?: SendMessageOptions): Promise<QueuedEventResult>
+  {
+    if (text.length === 0)
+    {
+      throw new TypeError("sendTextMessage requires non-empty text");
+    }
+
+    this.SendOutgoing(BuildUserInputTextConversationItem(text, options?.previousItemId));
+
+    if (options?.createResponse === true)
+    {
+      this.SendOutgoing(BuildResponseCreateEvent(options));
+    }
+
+    return { status: "sent" };
+  }
+
+  async sendStructuredContext(
+    message: StructuredContextMessage,
+    options?: SendMessageOptions,
+  ): Promise<QueuedEventResult>
+  {
+    const envelope: Record<string, unknown> = {
+      kind: message.kind,
+      source: message.source,
+      payload: message.payload,
+    };
+
+    if (message.summary !== undefined)
+    {
+      envelope.summary = message.summary;
+    }
+
+    const text = JSON.stringify(envelope);
+    this.SendOutgoing(BuildUserInputTextConversationItem(text, options?.previousItemId));
+
+    if (options?.createResponse === true)
+    {
+      this.SendOutgoing(BuildResponseCreateEvent(options));
+    }
+
+    return { status: "sent" };
+  }
+
+  async sendRealtimeEvent(event: RealtimeEvent, _options?: QueueRequestOptions): Promise<QueuedEventResult>
+  {
+    if (typeof event.type !== "string" || event.type.length === 0)
+    {
+      throw new TypeError("sendRealtimeEvent requires event.type to be a non-empty string");
+    }
+
+    this.SendOutgoing(event);
+    return { status: "sent" };
+  }
+
+  async clearAudioBuffer(_options?: QueueRequestOptions): Promise<QueuedEventResult>
+  {
+    this.SendOutgoing({
+      type: "input_audio_buffer.clear",
+    });
+    return { status: "sent" };
+  }
+
   async stop(reason: string): Promise<SessionRow>
   {
     this.m_gracefulStop = true;
@@ -372,7 +523,8 @@ export async function startAgentSession(
 {
   const registry = ToolRegistry.FromToolCallSet(config.toolCallSet);
   const model = config.model ?? DEFAULT_REALTIME_MODEL;
-  const sessionUpdateEvent = buildSessionUpdateEvent(config.toolCallSet);
+  const resolvedTurnMode = ResolveAgentStartTurnMode(config.turnMode);
+  const sessionUpdateEvent = buildSessionUpdateEvent(config.toolCallSet, resolvedTurnMode);
   const sessionConfig = sessionUpdateEvent.session as Record<string, unknown>;
 
   if (deps.database === undefined)
@@ -444,7 +596,10 @@ export async function startAgentSession(
     impl.SendOutgoing(startupEvent);
   }
 
-  impl.SendOutgoing(BuildInitialResponseCreateEvent());
+  if (resolvedTurnMode.type === "server_vad")
+  {
+    impl.SendOutgoing(BuildInitialResponseCreateEvent());
+  }
 
   return agentSession;
 }

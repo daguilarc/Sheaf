@@ -5,7 +5,12 @@ import test from "node:test";
 import {
   DEFAULT_REALTIME_MODEL,
   type AgentStartConfig,
+  type CreateResponseOptions,
+  type QueuedEventResult,
+  type RealtimeAgentTurnMode,
   type RealtimeEvent,
+  type SendMessageOptions,
+  type StructuredContextMessage,
   type ToolCallSet,
   type ToolDefinition,
 } from "../src/index.js";
@@ -37,6 +42,37 @@ test("exports public contracts from the library entry point", () =>
 
   assert.equal(config.model, undefined);
   assert.equal(config.toolCallSet.tools[0]?.name, "echo");
+
+  const turnMode: RealtimeAgentTurnMode = {
+    type: "server_vad",
+    silenceDurationMs: 500,
+    createResponse: true,
+    interruptResponse: true,
+  };
+  assert.equal(turnMode.type, "server_vad");
+
+  const sendOpts: SendMessageOptions = {
+    createResponse: true,
+    queuePolicy: "enqueue",
+    previousItemId: "item_1",
+  };
+  assert.equal(sendOpts.createResponse, true);
+
+  const createOpts: CreateResponseOptions = {
+    response: { instructions: "hi" },
+  };
+  assert.deepEqual(createOpts.response, { instructions: "hi" });
+
+  const structured: StructuredContextMessage = {
+    kind: "k",
+    source: "vscode",
+    payload: { a: 1 },
+    summary: "s",
+  };
+  assert.equal(structured.summary, "s");
+
+  const sent: QueuedEventResult = { status: "sent" };
+  assert.deepEqual(sent, { status: "sent" });
 
   const event: RealtimeEvent = {
     type: "session.created",

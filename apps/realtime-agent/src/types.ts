@@ -65,12 +65,58 @@ export type SessionEndedCallback = (info: {
   session: SessionRow;
 }) => void;
 
+export type RealtimeAgentTurnMode =
+  | {
+      type: "server_vad";
+      silenceDurationMs?: number;
+      threshold?: number;
+      prefixPaddingMs?: number;
+      createResponse?: boolean;
+      interruptResponse?: boolean;
+    }
+  | {
+      type: "manual";
+    };
+
+export type ResponseQueuePolicy = "enqueue" | "reject" | "cancel_current";
+
+export interface QueueRequestOptions
+{
+  queuePolicy?: ResponseQueuePolicy;
+}
+
+export interface CreateResponseOptions extends QueueRequestOptions
+{
+  response?: Record<string, unknown>;
+}
+
+export interface SendMessageOptions extends QueueRequestOptions
+{
+  createResponse?: boolean;
+  previousItemId?: string;
+}
+
+export interface QueuedEventResult
+{
+  status: "sent" | "queued" | "rejected" | "cancelled";
+  reason?: string;
+}
+
+export interface StructuredContextMessage
+{
+  kind: string;
+  source: "vscode" | "language_server" | "tool" | "system";
+  payload: Record<string, unknown>;
+  summary?: string;
+}
+
 export interface AgentStartConfig
 {
   systemPrompt: string;
   initialContext: string;
   toolCallSet: ToolCallSet;
   model?: string;
+  turnMode?: RealtimeAgentTurnMode;
   onConversationEvent?: ConversationEventCallback;
   onEvent?: AgentEventCallback;
   onToolLifecycle?: ToolLifecycleCallback;
@@ -90,6 +136,16 @@ export interface RealtimeAgentSession
 {
   readonly sessionId: string;
   sendAudioFrame(pcmBase64OrBuffer: string | Buffer): void;
+  commitAudio(options?: QueueRequestOptions): Promise<QueuedEventResult>;
+  createResponse(options?: CreateResponseOptions): Promise<QueuedEventResult>;
+  commitAudioAndCreateResponse(options?: CreateResponseOptions): Promise<QueuedEventResult>;
+  sendTextMessage(text: string, options?: SendMessageOptions): Promise<QueuedEventResult>;
+  sendStructuredContext(
+    message: StructuredContextMessage,
+    options?: SendMessageOptions,
+  ): Promise<QueuedEventResult>;
+  sendRealtimeEvent(event: RealtimeEvent, options?: QueueRequestOptions): Promise<QueuedEventResult>;
+  clearAudioBuffer(options?: QueueRequestOptions): Promise<QueuedEventResult>;
   stop(reason: string): Promise<SessionRow>;
 }
 

@@ -57,3 +57,59 @@ test("buildSessionUpdateEvent configures text-only realtime session with VAD and
     },
   });
 });
+
+test("buildSessionUpdateEvent sets turn_detection to null for manual turn mode", () =>
+{
+  const event = buildSessionUpdateEvent(
+    {
+      tools: [
+        {
+          name: "echo",
+          inputSchema: {},
+          callback: () => ({}),
+        },
+      ],
+    },
+    { type: "manual" },
+  );
+
+  const session = event.session as Record<string, unknown>;
+  const audio = session.audio as Record<string, unknown>;
+  const input = audio.input as Record<string, unknown>;
+  assert.equal(input.turn_detection, null);
+});
+
+test("buildSessionUpdateEvent applies custom server_vad turn fields", () =>
+{
+  const event = buildSessionUpdateEvent(
+    {
+      tools: [
+        {
+          name: "echo",
+          inputSchema: {},
+          callback: () => ({}),
+        },
+      ],
+    },
+    {
+      type: "server_vad",
+      silenceDurationMs: 800,
+      threshold: 0.42,
+      prefixPaddingMs: 120,
+      createResponse: false,
+      interruptResponse: false,
+    },
+  );
+
+  const session = event.session as Record<string, unknown>;
+  const audio = session.audio as Record<string, unknown>;
+  const input = audio.input as Record<string, unknown>;
+  const turnDetection = input.turn_detection as Record<string, unknown>;
+
+  assert.equal(turnDetection.type, "server_vad");
+  assert.equal(turnDetection.silence_duration_ms, 800);
+  assert.equal(turnDetection.threshold, 0.42);
+  assert.equal(turnDetection.prefix_padding_ms, 120);
+  assert.equal(turnDetection.create_response, false);
+  assert.equal(turnDetection.interrupt_response, false);
+});

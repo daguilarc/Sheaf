@@ -1,10 +1,54 @@
-import type { RealtimeEvent, ToolCallSet } from "./types.js";
+import type { RealtimeAgentTurnMode, RealtimeEvent, ToolCallSet } from "./types.js";
 
 const x_pcmSampleRate = 24000;
 const x_serverVadSilenceDurationMs = 500;
 
-export function buildSessionUpdateEvent(toolCallSet: ToolCallSet): RealtimeEvent
+export function BuildAudioTurnDetectionConfig(
+  turnMode: RealtimeAgentTurnMode,
+): Record<string, unknown> | null
 {
+  if (turnMode.type === "manual")
+  {
+    return null;
+  }
+
+  const detection: Record<string, unknown> = {
+    type: "server_vad",
+    silence_duration_ms: turnMode.silenceDurationMs ?? x_serverVadSilenceDurationMs,
+    create_response: turnMode.createResponse ?? true,
+    interrupt_response: turnMode.interruptResponse ?? true,
+  };
+
+  if (turnMode.threshold !== undefined)
+  {
+    detection.threshold = turnMode.threshold;
+  }
+
+  if (turnMode.prefixPaddingMs !== undefined)
+  {
+    detection.prefix_padding_ms = turnMode.prefixPaddingMs;
+  }
+
+  return detection;
+}
+
+function DefaultServerVadTurnMode(): RealtimeAgentTurnMode
+{
+  return {
+    type: "server_vad",
+    silenceDurationMs: x_serverVadSilenceDurationMs,
+    createResponse: true,
+    interruptResponse: true,
+  };
+}
+
+export function buildSessionUpdateEvent(
+  toolCallSet: ToolCallSet,
+  turnMode: RealtimeAgentTurnMode = DefaultServerVadTurnMode(),
+): RealtimeEvent
+{
+  const turnDetection = BuildAudioTurnDetectionConfig(turnMode);
+
   return {
     type: "session.update",
     session: {
@@ -19,12 +63,7 @@ export function buildSessionUpdateEvent(toolCallSet: ToolCallSet): RealtimeEvent
           transcription: {
             model: "gpt-4o-mini-transcribe",
           },
-          turn_detection: {
-            type: "server_vad",
-            silence_duration_ms: x_serverVadSilenceDurationMs,
-            create_response: true,
-            interrupt_response: true,
-          },
+          turn_detection: turnDetection,
         },
       },
       tools: toolCallSet.tools.map((tool) => ({
