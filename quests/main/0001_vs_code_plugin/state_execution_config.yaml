@@ -1,0 +1,66 @@
+version: 2
+harnesses:
+  claude_code:
+    cli_path: /Users/joyo/.local/bin/claude
+  cursor:
+    cli_path: /Users/joyo/.local/bin/cursor-agent
+profiles:
+  physical_planner:
+    harness: claude_code
+    model: claude-opus-4-7
+    idle_timeout_seconds: 1800
+    modify_allow:
+      - "$currentQuest/slices/**"
+      - "$currentQuest/human_intervention_request.md"
+      - "$currentQuest/physicalplan_issue_responses.md"
+    modify_block:
+      - "**"
+  physical_plan_reviewer:
+    harness: codex
+    model: gpt-5.5
+    idle_timeout_seconds: 1800
+    modify_allow:
+      - "$currentQuest/physicalplan_issues.md"
+      - "$currentQuest/physicalplan_accepted.md"
+      - "$currentQuest/human_intervention_request.md"
+    modify_block:
+      - "**"
+  implementer:
+    harness: cursor
+    model: composer-2
+    idle_timeout_seconds: 3600
+    modify_allow:
+      - "$currentQuest/human_intervention_request.md"
+      - "$currentSlice/implementation_done.md"
+      - "$currentSlice/notes/**"
+    modify_block:
+      - "quests/**"
+  polisher_reviewer:
+    harness: codex
+    model: gpt-5.5
+    idle_timeout_seconds: 1800
+    modify_allow:
+      - "$currentSlice/polishing_issues.md"
+      - "$currentSlice/implementation_accepted.md"
+      - "$currentQuest/human_intervention_request.md"
+    modify_block:
+      - "**"
+  polisher:
+    harness: claude_code
+    model: claude-opus-4-7
+    idle_timeout_seconds: 3600
+    modify_allow:
+      - "$currentQuest/human_intervention_request.md"
+      - "$currentSlice/polishing_issue_responses.md"
+      - "$currentSlice/notes/**"
+    modify_block:
+      - "quests/**"
+  documenter:
+    harness: codex
+    model: gpt-5.4
+    idle_timeout_seconds: 1800
+    modify_allow:
+      - "docs/**"
+      - "$currentQuest/human_intervention_request.md"
+    modify_block:
+      - "**"
