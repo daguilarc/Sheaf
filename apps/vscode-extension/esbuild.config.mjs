@@ -1,8 +1,14 @@
+import { copyFileSync, mkdirSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { build, context } from "esbuild";
 
 const watch = process.argv.includes("--watch");
 
-const options = {
+const rootDir = dirname(fileURLToPath(import.meta.url));
+
+const extensionOptions = {
   entryPoints: ["src/extension.ts"],
   bundle: true,
   format: "cjs",
@@ -14,12 +20,32 @@ const options = {
   logLevel: "info",
 };
 
+const webviewOptions = {
+  entryPoints: ["src/chat/webview/index.ts"],
+  bundle: true,
+  format: "iife",
+  platform: "browser",
+  target: "es2022",
+  sourcemap: watch ? "inline" : false,
+  outfile: "out/webview/index.js",
+  logLevel: "info",
+};
+
+function CopyWebviewStyles()
+{
+  mkdirSync(join(rootDir, "out", "webview"), { recursive: true });
+  copyFileSync(join(rootDir, "src", "chat", "webview", "index.css"), join(rootDir, "out", "webview", "index.css"));
+}
+
 if (watch)
 {
-  const ctx = await context(options);
-  await ctx.watch();
+  const ctxExt = await context(extensionOptions);
+  const ctxWeb = await context(webviewOptions);
+  CopyWebviewStyles();
+  await Promise.all([ctxExt.watch(), ctxWeb.watch()]);
 }
 else
 {
-  await build(options);
+  await Promise.all([build(extensionOptions), build(webviewOptions)]);
+  CopyWebviewStyles();
 }

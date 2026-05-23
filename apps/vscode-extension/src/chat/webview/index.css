@@ -1,0 +1,138 @@
+:root
+{
+  color-scheme: light dark;
+  font-family: var(--vscode-font-family);
+  font-size: var(--vscode-font-size);
+  color: var(--vscode-foreground);
+  background: var(--vscode-sideBar-background);
+}
+
+body
+{
+  margin: 0;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  box-sizing: border-box;
+}
+
+.sheaf-chat-header
+{
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--vscode-widget-border);
+}
+
+.sheaf-session-label
+{
+  font-size: 11px;
+  opacity: 0.85;
+}
+
+.sheaf-actions
+{
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+button
+{
+  cursor: pointer;
+  padding: 4px 10px;
+  border-radius: 2px;
+  border: 1px solid var(--vscode-button-border, transparent);
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  font: inherit;
+}
+
+button.secondary
+{
+  background: var(--vscode-button-secondaryBackground);
+  color: var(--vscode-button-secondaryForeground);
+}
+
+button:disabled
+{
+  opacity: 0.45;
+  cursor: default;
+}
+
+.sheaf-inactive
+{
+  padding: 12px 4px;
+  line-height: 1.5;
+}
+
+.sheaf-bubble-list
+{
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sheaf-bubble
+{
+  border-radius: 6px;
+  padding: 8px 10px;
+  max-width: 100%;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+.sheaf-bubble-user
+{
+  align-self: flex-end;
+  background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-input-border, transparent);
+}
+
+.sheaf-bubble-assistant
+{
+  align-self: flex-start;
+  background: var(--vscode-editor-inactiveSelectionBackground);
+}
+
+.sheaf-bubble-tool
+{
+  align-self: stretch;
+  font-size: 12px;
+  background: var(--vscode-textBlockQuote-background);
+  border-left: 3px solid var(--vscode-textLink-foreground);
+}
+
+.sheaf-bubble-context
+{
+  align-self: stretch;
+  font-size: 12px;
+  font-style: italic;
+  opacity: 0.95;
+}
+
+.sheaf-bubble-error
+{
+  align-self: stretch;
+  background: var(--vscode-inputValidation-errorBackground);
+  color: var(--vscode-errorForeground);
+}
+
+.sheaf-meta
+{
+  font-size: 10px;
+  opacity: 0.7;
+  margin-top: 4px;
+}
+
+.sheaf-incomplete::after
+{
+  content: "…";
+  opacity: 0.6;
+}

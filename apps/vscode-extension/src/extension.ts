@@ -1,6 +1,8 @@
 import * as vscode from "vscode";
 
 import { RegisterRealtimeCommands } from "./commands.js";
+import { ChatModel } from "./chat/chatModel.js";
+import { ChatViewProvider } from "./chat/chatViewProvider.js";
 import { Log } from "./log.js";
 import { SessionController } from "./sessionController.js";
 import {
@@ -31,12 +33,28 @@ export function activate(context: vscode.ExtensionContext): void
   const prefs = CreateWorkspaceSessionPreferences();
   const ui = CreateVscodeSessionUi();
 
-  const session = new SessionController(host, log, secrets, prefs, ui, {}, (state) =>
-  {
-    UpdateSheafRealtimeStatusBar(statusBar, state);
-  });
+  const chatModel = new ChatModel();
+  const session = new SessionController(
+    host,
+    log,
+    secrets,
+    prefs,
+    ui,
+    { chatModel },
+    (state) =>
+    {
+      UpdateSheafRealtimeStatusBar(statusBar, state);
+    },
+  );
   g_session = session;
   UpdateSheafRealtimeStatusBar(statusBar, session.GetState());
+
+  context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider(
+      ChatViewProvider.viewType,
+      new ChatViewProvider(context.extensionUri, session, chatModel),
+    ),
+  );
 
   RegisterRealtimeCommands(context, {
     toggleSession: () => session.ToggleSession(),

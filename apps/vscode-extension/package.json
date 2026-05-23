@@ -13,10 +13,29 @@
   ],
   "activationEvents": [
     "onCommand:sheaf.realtime.toggleSession",
-    "onCommand:sheaf.realtime.commitAndRespond"
+    "onCommand:sheaf.realtime.commitAndRespond",
+    "onView:sheaf.chatView"
   ],
   "main": "./out/extension.js",
   "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "sheafContainer",
+          "title": "Sheaf",
+          "icon": "media/sheaf.svg"
+        }
+      ]
+    },
+    "views": {
+      "sheafContainer": [
+        {
+          "id": "sheaf.chatView",
+          "name": "Realtime Chat",
+          "type": "webview"
+        }
+      ]
+    },
     "commands": [
       {
         "command": "sheaf.realtime.toggleSession",

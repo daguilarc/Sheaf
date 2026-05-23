@@ -9,9 +9,11 @@ import {
   type AgentSessionDeps,
   type MicrophoneCapture,
   type RealtimeAgentSession,
+  type StructuredContextMessage,
   type ToolCallSet,
 } from "realtime-agent-lib";
 
+import type { ChatModel } from "./chat/chatModel.js";
 import type { LogSink } from "./log.js";
 import type {
   SessionControllerHost,
@@ -30,6 +32,12 @@ export interface SessionControllerDeps
   startSession?: typeof startAgentSession;
   createMicrophoneCapture?: typeof CreateMicrophoneCapture;
   buildVscodeToolCallSet?: () => ToolCallSet | Promise<ToolCallSet>;
+  chatModel?: ChatModel;
+}
+
+export interface SessionStateListenerDisposable
+{
+  dispose(): void;
 }
 
 export class SessionController
@@ -39,6 +47,8 @@ export class SessionController
   private m_audioCapture: MicrophoneCapture | undefined;
   private m_database: RealtimeAgentDb | undefined;
   private m_onStateChange: (state: SessionControllerState) => void;
+  private readonly m_chatModel: ChatModel | undefined;
+  private readonly m_stateListeners = new Set<(state: SessionControllerState) => void>();
 
   constructor(
     private readonly m_host: SessionControllerHost,
@@ -51,6 +61,7 @@ export class SessionController
   )
   {
     this.m_onStateChange = onStateChange;
+    this.m_chatModel = this.m_deps.chatModel;
   }
 
   GetState(): SessionControllerState
@@ -58,10 +69,35 @@ export class SessionController
     return this.m_state;
   }
 
+  GetActiveSessionId(): string | undefined
+  {
+    return this.m_session?.sessionId;
+  }
+
+  OnStateChanged(listener: (state: SessionControllerState) => void): SessionStateListenerDisposable
+  {
+    this.m_stateListeners.add(listener);
+    return {
+      dispose: () =>
+      {
+        this.m_stateListeners.delete(listener);
+      },
+    };
+  }
+
+  RecordStructuredContextForChat(message: StructuredContextMessage): void
+  {
+    this.m_chatModel?.recordContextPush(message);
+  }
+
   private SetState(next: SessionControllerState): void
   {
     this.m_state = next;
     this.m_onStateChange(next);
+    for (const listener of this.m_stateListeners)
+    {
+      listener(next);
+    }
   }
 
   async ToggleSession(): Promise<void>
@@ -171,7 +207,16 @@ export class SessionController
       responseAfterToolOutput: true,
       onSessionEnded: (info) =>
       {
+        this.m_chatModel?.reset(info.reason);
         void this.HandleSessionEndedUnexpectedly(info.reason);
+      },
+      onConversationEvent: (event, info) =>
+      {
+        this.m_chatModel?.ingestEvent(event, info);
+      },
+      onToolLifecycle: (notification) =>
+      {
+        this.m_chatModel?.ingestToolLifecycle(notification);
       },
       onEvent: (event, info) =>
       {
@@ -213,6 +258,7 @@ export class SessionController
       this.m_database = database;
       this.m_session = session;
       this.m_audioCapture = audioCapture;
+      this.m_chatModel?.clear();
       this.SetState("active");
     }
     catch (error)
@@ -246,6 +292,7 @@ export class SessionController
           : error instanceof Error
             ? error.message
             : String(error);
+      this.m_chatModel?.recordError(`Session start failed: ${message}`);
       void this.m_ui.showErrorMessage(`Sheaf realtime: ${message}`);
     }
   }
