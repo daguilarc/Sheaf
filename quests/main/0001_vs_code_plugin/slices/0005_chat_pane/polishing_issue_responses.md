@@ -1,5 +1,44 @@
 # Issue responses
 
+## Response POL-0001 2026-05-23T22:30:00Z
+
+- issue_id: POL-0001
+- outcome: Fixed
+- explanation: Addressed the reviewer follow-up that the microphone failure path
+  still loses its `error` bubble because the real
+  `RealtimeAgentSession.stop()` invokes `onSessionEnded`, which calls
+  `ChatModel.reset(reason)` and clears all prior bubbles, including the
+  pre-stop microphone error bubble.
+
+  Code change in `apps/vscode-extension/src/sessionController.ts`:
+
+  - The microphone capture `onError` callback now records the
+    `Microphone error: <message>` chat error **after**
+    `StopSession("audio_error")` completes, by chaining the `recordError(...)`
+    call into the `StopSession` promise via `.then(...)`. This way the
+    reset-triggered context bubble (`Session ended: audio_error`) is pushed
+    first by `onSessionEnded`, and the microphone error bubble is appended
+    afterward so both survive the stop sequence. The log line and VS Code
+    error message are kept in their original order.
+
+  Test change in `apps/vscode-extension/test/sessionController.test.ts`:
+
+  - The microphone test now models the real `stop()` -> `onSessionEnded`
+    ordering by capturing the `AgentStartConfig.onSessionEnded` callback
+    passed by `SessionController` and invoking it from the fake session's
+    `stop(reason)` implementation with the matching reason. After triggering
+    the captured `onError`, the test waits for the controller to settle to
+    `idle` and yields a couple of microtask turns so the `StopSession.then`
+    continuation runs. It then asserts on the **final** `ChatModel` snapshot:
+    exactly one `error` bubble whose message contains both `Microphone` and
+    the underlying message, plus a `context_push` bubble whose summary
+    contains `audio_error`. This is the snapshot the reviewer asked to
+    assert.
+
+  All 47 `apps/vscode-extension` tests pass and the build still succeeds. The
+  commit-failure and connection-lost paths from the previous round remain
+  fixed and covered by their existing tests.
+
 ## Response POL-0001 2026-05-23T22:25:00Z
 
 - issue_id: POL-0001

@@ -250,9 +250,11 @@ export class SessionController
         onError: (captureError) =>
         {
           this.m_log.Error("Microphone capture failed", captureError);
-          this.m_chatModel?.recordError(`Microphone error: ${captureError.message}`);
           void this.m_ui.showErrorMessage(`Sheaf realtime: microphone error — ${captureError.message}`);
-          void this.StopSession("audio_error");
+          void this.StopSession("audio_error").then(() =>
+          {
+            this.m_chatModel?.recordError(`Microphone error: ${captureError.message}`);
+          });
         },
       });
 

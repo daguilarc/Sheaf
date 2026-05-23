@@ -390,8 +390,34 @@ test("SessionController microphone capture failure records error bubble in chat 
 
   try
   {
-    const fakeSession = CreateFakeSession(() => {});
-    const startSession = async (): Promise<RealtimeAgentSession> => fakeSession;
+    let capturedConfig: AgentStartConfig | undefined;
+
+    const fakeSession: RealtimeAgentSession = {
+      sessionId: "test-session",
+      sendAudioFrame: () => {},
+      commitAudio: async () => ({ status: "sent" as const }),
+      createResponse: async () => ({ status: "sent" as const }),
+      commitAudioAndCreateResponse: async () => ({ status: "sent" as const }),
+      sendTextMessage: async () => ({ status: "sent" as const }),
+      sendStructuredContext: async () => ({ status: "sent" as const }),
+      sendRealtimeEvent: async () => ({ status: "sent" as const }),
+      clearAudioBuffer: async () => ({ status: "sent" as const }),
+      stop: async (reason) =>
+      {
+        capturedConfig?.onSessionEnded?.({
+          sessionId: "test-session",
+          reason,
+          session: {} as SessionRow,
+        });
+        return {} as SessionRow;
+      },
+    };
+
+    const startSession = async (config: AgentStartConfig): Promise<RealtimeAgentSession> =>
+    {
+      capturedConfig = config;
+      return fakeSession;
+    };
 
     let triggerCaptureError: ((err: Error) => void) | undefined;
 
@@ -428,13 +454,31 @@ test("SessionController microphone capture failure records error bubble in chat 
 
     triggerCaptureError?.(new Error("mic dead"));
 
-    const errorBubbles = chatModel.getSnapshot().filter((b) => b.kind === "error");
+    const deadline = Date.now() + 1000;
+    while (controller.GetState() !== "idle" && Date.now() < deadline)
+    {
+      await new Promise((r) => setImmediate(r));
+    }
+
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+
+    const finalBubbles = chatModel.getSnapshot();
+    const errorBubbles = finalBubbles.filter((b) => b.kind === "error");
+    const contextBubbles = finalBubbles.filter((b) => b.kind === "context_push");
+
     assert.equal(errorBubbles.length, 1);
+    assert.ok(contextBubbles.length >= 1);
     if (errorBubbles[0]?.kind === "error")
     {
       assert.ok(errorBubbles[0].message.toLowerCase().includes("microphone"));
       assert.ok(errorBubbles[0].message.includes("mic dead"));
     }
+
+    const ctxHasAudioError = contextBubbles.some(
+      (b) => b.kind === "context_push" && b.summary.includes("audio_error"),
+    );
+    assert.ok(ctxHasAudioError);
   }
   finally
   {
