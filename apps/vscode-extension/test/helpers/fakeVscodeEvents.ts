@@ -15,11 +15,6 @@ export interface FakeTextEditorLike
   document: FakeTextDocumentLike;
 }
 
-function ToPosix(p: string): string
-{
-  return p.split(nodePath.sep).join("/");
-}
-
 export class FakeVscodeFreshnessHost implements VscodeFreshnessHost
 {
   private readonly m_workspaceRootFs: string;
@@ -28,10 +23,42 @@ export class FakeVscodeFreshnessHost implements VscodeFreshnessHost
   private readonly m_active = new Set<(e: vscode.TextEditor | undefined) => void>();
   private readonly m_visible = new Set<(e: vscode.TextEditorVisibleRangesChangeEvent) => void>();
   private readonly m_selection = new Set<(e: vscode.TextEditorSelectionChangeEvent) => void>();
+  private m_workspaceRoots: string[];
 
   constructor(workspaceRootFs: string)
   {
     this.m_workspaceRootFs = workspaceRootFs;
+    this.m_workspaceRoots = [workspaceRootFs];
+  }
+
+  setWorkspaceRoots(roots: string[]): void
+  {
+    this.m_workspaceRoots = roots.slice();
+  }
+
+  clearWorkspaceRoots(): void
+  {
+    this.m_workspaceRoots = [];
+  }
+
+  makeOutsideFileUri(absolutePath: string): vscode.Uri
+  {
+    return { scheme: "file", fsPath: absolutePath, path: absolutePath } as vscode.Uri;
+  }
+
+  makeOutsideDocument(absolutePath: string, languageId: string): FakeTextDocumentLike
+  {
+    return {
+      uri: this.makeOutsideFileUri(absolutePath),
+      languageId,
+    };
+  }
+
+  makeOutsideEditor(absolutePath: string, languageId = "typescript"): FakeTextEditorLike
+  {
+    return {
+      document: this.makeOutsideDocument(absolutePath, languageId),
+    };
   }
 
   setActiveEditor(editor: FakeTextEditorLike | undefined): void
@@ -116,22 +143,9 @@ export class FakeVscodeFreshnessHost implements VscodeFreshnessHost
     return this.m_activeEditor as vscode.TextEditor | undefined;
   }
 
-  asRelativePath(uri: vscode.Uri): string
+  getWorkspaceRoots(): string[]
   {
-    const abs = ToPosix(uri.fsPath);
-    const root = ToPosix(this.m_workspaceRootFs);
-    if (abs === root)
-    {
-      return ".";
-    }
-
-    const prefix = root.endsWith("/") ? root : `${root}/`;
-    if (!abs.startsWith(prefix))
-    {
-      return "";
-    }
-
-    return abs.slice(prefix.length);
+    return this.m_workspaceRoots.slice();
   }
 
   fireDidChangeTextDocument(doc: FakeTextDocumentLike): void

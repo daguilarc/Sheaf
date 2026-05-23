@@ -1,3 +1,5 @@
+import * as nodePath from "node:path";
+
 import * as vscode from "vscode";
 import type { RealtimeAgentSession, StructuredContextMessage } from "realtime-agent-lib";
 
@@ -158,19 +160,42 @@ export class FreshnessService
       return undefined;
     }
 
-    const rel = this.m_host.asRelativePath(doc.uri);
-    if (rel.length === 0)
+    // Explicit workspace containment check. `vscode.workspace.asRelativePath`
+    // is a display helper that can return a non-empty absolute path for files
+    // opened outside the workspace, which would leak local absolute paths into
+    // freshness pushes. We resolve relativity ourselves against the known
+    // workspace roots so outside-workspace URIs are dropped before any push.
+    //
+    const roots = this.m_host.getWorkspaceRoots();
+    if (roots.length === 0)
     {
       return undefined;
     }
 
-    const posix = rel.split("\\").join("/");
-    if (posix.split("/").includes(".."))
+    const candidateAbs = doc.uri.fsPath;
+    for (const root of roots)
     {
-      return undefined;
+      const rel = nodePath.relative(root, candidateAbs);
+      if (rel.length === 0)
+      {
+        return ".";
+      }
+
+      if (rel.startsWith("..") || nodePath.isAbsolute(rel))
+      {
+        continue;
+      }
+
+      const posix = rel.split(nodePath.sep).join("/");
+      if (posix.split("/").includes(".."))
+      {
+        continue;
+      }
+
+      return posix;
     }
 
-    return posix;
+    return undefined;
   }
 
   private OnDidChangeTextDocument(e: vscode.TextDocumentChangeEvent): void
@@ -198,7 +223,26 @@ export class FreshnessService
 
   private OnDidChangeActiveTextEditor(editor: vscode.TextEditor | undefined): void
   {
-    const newFile = editor === undefined ? null : this.WorkspaceFileRelative(editor.document) ?? null;
+    // Three distinct cases:
+    //   editor === undefined        -> no active editor (all tabs closed)
+    //   editor present, in-ws       -> normal in-workspace switch
+    //   editor present, outside-ws  -> ignore entirely; treat as a non-event
+    //
+    let newFile: string | null;
+    if (editor === undefined)
+    {
+      newFile = null;
+    }
+    else
+    {
+      const rel = this.WorkspaceFileRelative(editor.document);
+      if (rel === undefined)
+      {
+        return;
+      }
+
+      newFile = rel;
+    }
 
     if (this.m_agentMutationDepth > 0)
     {

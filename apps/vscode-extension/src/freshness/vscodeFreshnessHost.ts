@@ -9,7 +9,7 @@ export interface VscodeFreshnessHost
   ): vscode.Disposable;
   onDidChangeTextEditorSelection(listener: (e: vscode.TextEditorSelectionChangeEvent) => void): vscode.Disposable;
   getActiveTextEditor(): vscode.TextEditor | undefined;
-  asRelativePath(uri: vscode.Uri): string;
+  getWorkspaceRoots(): string[];
 }
 
 export function CreateDefaultVscodeFreshnessHost(): VscodeFreshnessHost
@@ -20,6 +20,15 @@ export function CreateDefaultVscodeFreshnessHost(): VscodeFreshnessHost
     onDidChangeTextEditorVisibleRanges: (listener) => vscode.window.onDidChangeTextEditorVisibleRanges(listener),
     onDidChangeTextEditorSelection: (listener) => vscode.window.onDidChangeTextEditorSelection(listener),
     getActiveTextEditor: () => vscode.window.activeTextEditor,
-    asRelativePath: (uri) => vscode.workspace.asRelativePath(uri, false).split("\\").join("/"),
+    getWorkspaceRoots: () =>
+    {
+      const folders = vscode.workspace.workspaceFolders;
+      if (folders === undefined || folders.length === 0)
+      {
+        return [];
+      }
+
+      return folders.map((f) => f.uri.fsPath);
+    },
   };
 }
