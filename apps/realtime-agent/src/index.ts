@@ -4,6 +4,14 @@ export {
 } from "./agent_loop.js";
 
 export {
+  CreateMicrophoneCapture,
+  CreateSoxMicrophoneCapture,
+  REALTIME_PCM_SAMPLE_RATE,
+  type MicrophoneCapture,
+  type MicrophoneCaptureOptions,
+} from "./audio_input.js";
+
+export {
   DEFAULT_REALTIME_MODEL,
   type AgentEventCallback,
   type AgentSessionDeps,

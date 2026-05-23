@@ -39,6 +39,11 @@ DerivedData/
 !default.pbxuser
 apps/obsidian-replica/.test-dist/
 
+# VS Code extension
+apps/vscode-extension/node_modules/
+apps/vscode-extension/out/
+apps/vscode-extension/.test-dist/
+
 # Node realtime agent
 apps/realtime-agent/node_modules/
 apps/realtime-agent/dist/
