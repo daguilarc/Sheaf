@@ -181,10 +181,29 @@ least one observation, since the spec rule is "changed since last
 read". Untracked files are not pushed when they change.
 
 Viewport and cursor freshness are single-instance because the spec
-ties them to the active editor. If the active editor changes, both
-flags reset to `{ changedSinceLastCheck: false, notificationSent:
-false }` and the `currentFile` reference updates. The current active
-file is used when building the structured-context payload.
+ties them to the active editor. Each carries an additional
+`everObserved: boolean` flag (default `false`) that flips to `true` the
+first time `markViewportObserved` / `markCursorObserved` is called.
+This distinguishes "the agent has never asked about viewport/cursor"
+from "the agent did ask, but state may now be stale", which is the
+distinction the tab-switch case requires.
+
+`ViewportFreshnessState`:
+
+```ts
+{
+  currentFile: string | null;
+  everObserved: boolean;
+  changedSinceLastCheck: boolean;
+  notificationSent: boolean;
+}
+```
+
+`CursorFreshnessState` is structurally identical.
+
+The `currentFile` reference updates whenever the active editor
+changes. Whether the active-editor change also triggers a push is
+governed by the rules in "Active-editor changes" below.
 
 ### Agent mutation marker
 
@@ -219,8 +238,9 @@ looking events. This is documented inline.
 
 For each kind:
 
-1. `markObserved*(file)` sets `changedSinceLastCheck = false` and
-   `notificationSent = false`, and updates `lastKnown*` snapshot.
+1. `markObserved*(file)` sets `changedSinceLastCheck = false`,
+   `notificationSent = false`, `everObserved = true` (for viewport and
+   cursor), and updates `currentFile` / `lastKnown*` snapshot.
 2. A non-agent change handler sets `changedSinceLastCheck = true`.
 3. After every state mutation, the service calls
    `maybeNotify*(state)`. If `changedSinceLastCheck` and
@@ -293,13 +313,58 @@ export function buildCursorChangedMessage(file: string): StructuredContextMessag
   inside the workspace. Ignore events where the document language is
   `git` or `vscode-scm` (these are pseudo-documents). Apply per the
   observed-file map.
-- `onDidChangeActiveTextEditor`: when the active file changes, treat
-  the new file as unobserved (no notification), reset viewport/cursor
-  states, but do not push notifications.
+- `onDidChangeActiveTextEditor`: see "Active-editor changes" below.
 - `onDidChangeTextEditorVisibleRanges`: tied to the current active
-  editor's file.
+  editor's file. Ignored while an agent-mutation guard is active.
 - `onDidChangeTextEditorSelection`: tied to the current active
   editor's file. Multi-cursor changes count as cursor changes.
+  Ignored while an agent-mutation guard is active.
+
+### Active-editor changes (tab switches)
+
+Spec 03 lists "tab switch" as a non-agent viewport change. The handler
+for `onDidChangeActiveTextEditor` must therefore treat a user tab
+switch as a viewport change (and a cursor change), not as a silent
+reset.
+
+Behavior, in order, when `onDidChangeActiveTextEditor` fires:
+
+1. If an agent-mutation guard is active (counter > 0), skip the
+   change-event logic and update `viewport.currentFile` and
+   `cursor.currentFile` directly to the new editor's file without
+   raising any flags. This covers `set_cursor_position` in absolute
+   mode opening a different file, where the active-editor change is
+   agent-originated.
+2. Otherwise (user-driven tab switch, sidebar/Explorer click,
+   `workbench.action.nextEditor`, etc.):
+   - Update `viewport.currentFile` and `cursor.currentFile` to the new
+     editor's file (or `null` if no editor is active, e.g. all tabs
+     closed).
+   - If `viewport.everObserved` is `true`, set
+     `viewport.changedSinceLastCheck = true` and call
+     `maybeNotifyViewport()`. The push uses the new active file path
+     in `payload.file` so the agent sees which file is now visible.
+     If the new editor is `undefined` (no active editor), set
+     `payload.file` to the *previously observed* file so the agent
+     learns its last-known viewport file is no longer visible.
+   - If `cursor.everObserved` is `true`, mirror the same logic for
+     cursor freshness, including the same payload-file rule.
+   - If neither has been observed, do not push.
+3. After any push, the existing gating (`notificationSent = true`)
+   prevents duplicates. A subsequent user action (scroll, second tab
+   switch, cursor move) before the agent re-observes does not push
+   again.
+
+Per-file file freshness (`FileFreshnessState`) is unaffected by tab
+switches: tab switches do not modify file contents, so the per-file
+"changed since last read" state is independent.
+
+### File-set side effects of tab switches
+
+When the new active editor's file has its own `FileFreshnessState`
+entry with a pending change, that file's `maybeNotifyFile()` is still
+governed by `onDidChangeTextDocument`, not by tab switches. No extra
+file-level push is generated by the act of switching tabs.
 
 ### Lifecycle
 
@@ -330,6 +395,26 @@ export function buildCursorChangedMessage(file: string): StructuredContextMessag
     change events.
   - `serviceLifecycle.test.ts` — service detaches listeners on
     session stop; no pushes after detach.
+  - `tabSwitch.test.ts` (QP-0004 coverage):
+    - Pre-observation tab switch: no viewport or cursor push (the
+      agent has never asked, so nothing is stale).
+    - Post-observation user tab switch: after a simulated
+      `read_visible_range` on file A, switching to file B fires
+      exactly one viewport push and one cursor push, each carrying
+      `payload.file = "B"`.
+    - Duplicate suppression: a second tab switch (B → C) before the
+      agent re-observes does not produce a second push for viewport
+      or cursor.
+    - Re-observation reopens the gate: after the agent calls
+      `read_visible_range` on the new active file, a subsequent user
+      tab switch produces a fresh push.
+    - Agent-originated tab switch suppression: when a
+      `set_cursor_position` absolute-mode call (wrapped in
+      `beginAgentMutation`) opens a different file, the resulting
+      `onDidChangeActiveTextEditor` does not push.
+    - No active editor: closing all tabs after observation fires one
+      viewport/cursor push using the previously observed file in
+      `payload.file`, then suppresses further pushes until re-observed.
   - `coordinator.test.ts` — hook calls before any session attaches
     no-op safely (no throws, no recorded state). After
     `coordinator.attach(service)`, hook calls route to the service.

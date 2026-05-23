@@ -1,10 +1,10 @@
 # State
 
-- global_step: 4
+- global_step: 5
 - machine_name: quest
 - machine_path: quests/main/0001_vs_code_plugin
-- state: PhysicalPlanning
-- updated_at: 2026-05-23T19:23:30Z
+- state: ReviewPhysicalPlan
+- updated_at: 2026-05-23T19:25:15Z
 
 ## Tags
 

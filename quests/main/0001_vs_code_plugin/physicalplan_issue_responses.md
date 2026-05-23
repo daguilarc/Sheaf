@@ -129,3 +129,59 @@
   `freshness/types.ts`, so the tools can be built and unit-tested
   before slice 0006 lands and the extension can supply the real hooks
   once the coordinator exists.
+
+## Response to QP-0004
+
+- issue_id: QP-0004
+- outcome: Fixed
+- updated_at: 2026-05-23T19:45:00Z
+- explanation: |
+  Updated slice 0006
+  (`slices/0006_context_freshness/physicalplan/plan.md`) so user tab
+  switches generate viewport and cursor freshness pushes instead of
+  being silently reset.
+
+  Specifically:
+  - `ViewportFreshnessState` and `CursorFreshnessState` gain an
+    `everObserved: boolean` flag (default `false`, flips `true` on the
+    first `markViewportObserved` / `markCursorObserved`). This
+    distinguishes "agent has never asked" from "agent did ask, state
+    now stale", which is the discrimination needed for tab switches.
+  - The old "State storage" paragraph that said active-editor changes
+    silently reset both flags is rewritten; the new wording defers
+    push decisions to a new "Active-editor changes (tab switches)"
+    subsection.
+  - The new "Active-editor changes (tab switches)" subsection defines
+    the full handler for `onDidChangeActiveTextEditor`:
+    1. If an agent-mutation guard is active, update
+       `currentFile` references silently — this covers
+       `set_cursor_position` opening a new file.
+    2. Otherwise, update `currentFile` to the new editor's file, and
+       for each of viewport and cursor that has `everObserved`,
+       set `changedSinceLastCheck = true` and run the usual
+       `maybeNotify*` gating. `payload.file` carries the **new active
+       file path** so the agent learns which file is now visible.
+    3. When the new editor is `undefined` (all tabs closed),
+       `payload.file` falls back to the previously observed file so
+       the agent learns its last-known viewport file is no longer
+       visible.
+    4. The existing `notificationSent` gating prevents duplicate
+       pushes from subsequent tab switches; re-observation reopens
+       the gate.
+  - The "Notification gating" section updated to flip `everObserved
+    = true` inside `markObserved*`.
+  - "Change-event filtering" cross-references the new subsection
+    instead of restating the (now incorrect) reset behavior, and
+    explicitly notes that visible-range and selection listeners are
+    ignored while an agent-mutation guard is active.
+  - Cursor freshness behavior on active-editor changes is symmetric
+    with viewport (the spec ties cursor staleness to non-agent action
+    too).
+  - File freshness (`FileFreshnessState`) is explicitly unaffected by
+    tab switches because contents do not change on switch.
+  - A new `tabSwitch.test.ts` covers pre-observation no-push,
+    post-observation single push (viewport + cursor) with
+    `payload.file` set to the new file, duplicate suppression across a
+    second tab switch, re-observation reopening the gate,
+    agent-originated tab-switch suppression via the mutation guard,
+    and the all-tabs-closed payload fallback.
