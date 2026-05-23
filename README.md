@@ -8,6 +8,12 @@ Sheaf is a local-first chat server with a queue-backed worker, websocket streami
 - `apps/obsidian-replica`: Obsidian plugin client for the Sheaf replica workflow
 - `apps/realtime-agent`: Node TypeScript library (`realtime-agent-lib`) and `realtime-agent` CLI for OpenAI Realtime experimentation
 
+## Project Process
+
+Active project work is tracked in `quests/` and run through Conductor. The quest
+directory is the official planning, implementation, review, and history surface
+for the repository.
+
 ## Current Architecture
 
 - FastAPI API + websocket transport
