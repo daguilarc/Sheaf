@@ -1,4 +1,6 @@
 import type {
+  CreateResponseOptions,
+  QueuedEventResult,
   RealtimeEvent,
   ToolCallSet,
   ToolDefinition,
@@ -79,7 +81,10 @@ export interface ExtractedToolCall
 export interface ToolDispatcherSendContext
 {
   sendOutgoingEvent: (event: RealtimeEvent) => void;
+  enqueueResponseCreate: (options?: CreateResponseOptions) => Promise<QueuedEventResult>;
 }
+
+export type ToolDispatcherResponseAfterOutput = "never" | "always";
 
 export interface ToolDispatcherOptions
 {
@@ -87,6 +92,7 @@ export interface ToolDispatcherOptions
   registry: ToolRegistry;
   sendContext: ToolDispatcherSendContext;
   onToolLifecycle?: ToolLifecycleCallback;
+  responseAfterOutput?: ToolDispatcherResponseAfterOutput;
 }
 
 interface QueuedToolCall
@@ -134,6 +140,7 @@ export class ToolDispatcher
   private m_registry: ToolRegistry;
   private m_sendContext: ToolDispatcherSendContext;
   private m_onToolLifecycle?: ToolLifecycleCallback;
+  private m_responseAfterOutput: ToolDispatcherResponseAfterOutput;
   private m_queue: QueuedToolCall[] = [];
   private m_processing = false;
 
@@ -143,6 +150,7 @@ export class ToolDispatcher
     this.m_registry = options.registry;
     this.m_sendContext = options.sendContext;
     this.m_onToolLifecycle = options.onToolLifecycle;
+    this.m_responseAfterOutput = options.responseAfterOutput ?? "never";
   }
 
   Enqueue(extracted: ExtractedToolCall): void
@@ -207,6 +215,7 @@ export class ToolDispatcher
         phase: "failed",
         error: payload.error,
       });
+      await this.MaybeEnqueueFollowUpResponse();
       return;
     }
 
@@ -232,6 +241,7 @@ export class ToolDispatcher
         phase: "failed",
         error: payload.error,
       });
+      await this.MaybeEnqueueFollowUpResponse();
       return;
     }
 
@@ -251,6 +261,7 @@ export class ToolDispatcher
         toolName: extracted.name,
         phase: "succeeded",
       });
+      await this.MaybeEnqueueFollowUpResponse();
     }
     catch (error)
     {
@@ -266,6 +277,7 @@ export class ToolDispatcher
         phase: "failed",
         error: payload.error,
       });
+      await this.MaybeEnqueueFollowUpResponse();
     }
   }
 
@@ -273,6 +285,16 @@ export class ToolDispatcher
   {
     const event = buildFunctionCallOutputEvent(callId, outputPayload);
     this.m_sendContext.sendOutgoingEvent(event);
+  }
+
+  private async MaybeEnqueueFollowUpResponse(): Promise<void>
+  {
+    if (this.m_responseAfterOutput !== "always")
+    {
+      return;
+    }
+
+    await this.m_sendContext.enqueueResponseCreate({ queuePolicy: "enqueue" });
   }
 
   private EmitLifecycle(notification: ToolLifecycleNotification): void

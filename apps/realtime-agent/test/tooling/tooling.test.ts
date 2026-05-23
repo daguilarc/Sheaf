@@ -92,6 +92,7 @@ test("ToolDispatcher returns structured errors for missing tools and malformed J
       {
         outgoing.push(event);
       },
+      enqueueResponseCreate: async () => ({ status: "sent" as const }),
     },
     onToolLifecycle: (notification) =>
     {
@@ -169,6 +170,7 @@ test("ToolDispatcher executes callbacks in FIFO order", async () =>
       {
         outgoing.push(event);
       },
+      enqueueResponseCreate: async () => ({ status: "sent" as const }),
     },
   });
 
@@ -215,6 +217,7 @@ test("ToolDispatcher emits structured error when callback throws", async () =>
       {
         outgoing.push(event);
       },
+      enqueueResponseCreate: async () => ({ status: "sent" as const }),
     },
   });
 

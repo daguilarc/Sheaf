@@ -63,3 +63,22 @@ export async function OpenConnectedSocket(sockets: FakeWebSocket[]): Promise<Fak
   await new Promise((resolve) => setTimeout(resolve, 0));
   return socket;
 }
+
+export function SimulateResponseCreatedAndDone(
+  socket: FakeWebSocket,
+  responseId = "resp_test_fixture",
+): void
+{
+  socket.receiveMessage(
+    JSON.stringify({
+      type: "response.created",
+      response: { id: responseId },
+    }),
+  );
+  socket.receiveMessage(
+    JSON.stringify({
+      type: "response.done",
+      response: { id: responseId },
+    }),
+  );
+}

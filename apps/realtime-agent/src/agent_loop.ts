@@ -3,12 +3,14 @@ import type { RealtimeAgentDb } from "./persistence/db.js";
 import { EventsRepo } from "./persistence/events_repo.js";
 import { SessionsRepo } from "./persistence/sessions_repo.js";
 import { RealtimeClient } from "./realtime_client.js";
+import { ResponseQueue } from "./response_queue.js";
 import { buildSessionUpdateEvent } from "./session_config.js";
 import {
   DuplicateToolNameError,
   ExtractedToolCall,
   ToolDispatcher,
   ToolRegistry,
+  type ToolDispatcherSendContext,
 } from "./tooling.js";
 import {
   DEFAULT_REALTIME_MODEL,
@@ -291,7 +293,8 @@ class RealtimeAgentSessionImpl implements RealtimeAgentSession
   private m_sessionId: string;
   private m_client: RealtimeClient;
   private m_router: EventRouter;
-  private m_dispatcher: ToolDispatcher;
+  private m_responseQueue: ResponseQueue;
+  private m_dispatcher!: ToolDispatcher;
   private m_sessionsRepo: SessionsRepo;
   private m_onSessionEnded?: SessionEndedCallback;
   private m_argumentAccumulator = new FunctionCallArgumentAccumulator();
@@ -303,7 +306,6 @@ class RealtimeAgentSessionImpl implements RealtimeAgentSession
     sessionId: string,
     client: RealtimeClient,
     router: EventRouter,
-    dispatcher: ToolDispatcher,
     sessionsRepo: SessionsRepo,
     onSessionEnded?: SessionEndedCallback,
   )
@@ -311,9 +313,15 @@ class RealtimeAgentSessionImpl implements RealtimeAgentSession
     this.m_sessionId = sessionId;
     this.m_client = client;
     this.m_router = router;
-    this.m_dispatcher = dispatcher;
     this.m_sessionsRepo = sessionsRepo;
     this.m_onSessionEnded = onSessionEnded;
+
+    this.m_responseQueue = new ResponseQueue({
+      transmit: (event) =>
+      {
+        this.TransmitOutgoing(event);
+      },
+    });
 
     this.m_client.onEvent((event) =>
     {
@@ -331,6 +339,28 @@ class RealtimeAgentSessionImpl implements RealtimeAgentSession
     });
   }
 
+  WireToolDispatcher(dispatcher: ToolDispatcher): void
+  {
+    this.m_dispatcher = dispatcher;
+  }
+
+  BuildToolDispatcherSendContext(): ToolDispatcherSendContext
+  {
+    return {
+      sendOutgoingEvent: (event) =>
+      {
+        this.TransmitOutgoing(event);
+      },
+      enqueueResponseCreate: (options) =>
+      {
+        return this.m_responseQueue.EnqueueToolFollowUpResponseCreate(() =>
+        {
+          this.TransmitOutgoing(BuildResponseCreateEvent(options));
+        });
+      },
+    };
+  }
+
   get sessionId(): string
   {
     return this.m_sessionId;
@@ -343,7 +373,7 @@ class RealtimeAgentSessionImpl implements RealtimeAgentSession
         ? pcmBase64OrBuffer
         : pcmBase64OrBuffer.toString("base64");
 
-    this.SendOutgoing({
+    this.TransmitOutgoing({
       type: "input_audio_buffer.append",
       audio,
     });
@@ -351,7 +381,7 @@ class RealtimeAgentSessionImpl implements RealtimeAgentSession
 
   async commitAudio(_options?: QueueRequestOptions): Promise<QueuedEventResult>
   {
-    this.SendOutgoing({
+    this.TransmitOutgoing({
       type: "input_audio_buffer.commit",
     });
     return { status: "sent" };
@@ -359,17 +389,29 @@ class RealtimeAgentSessionImpl implements RealtimeAgentSession
 
   async createResponse(options?: CreateResponseOptions): Promise<QueuedEventResult>
   {
-    this.SendOutgoing(BuildResponseCreateEvent(options));
-    return { status: "sent" };
+    return this.m_responseQueue.SubmitResponseAffectingUnit(
+      () =>
+      {
+        this.TransmitOutgoing(BuildResponseCreateEvent(options));
+      },
+      options,
+    );
   }
 
+  // If the audio buffer is empty since the last commit, the server rejects the commit; that surfaces as a Realtime `error` via onEvent (not swallowed here).
+  //
   async commitAudioAndCreateResponse(options?: CreateResponseOptions): Promise<QueuedEventResult>
   {
-    this.SendOutgoing({
-      type: "input_audio_buffer.commit",
-    });
-    this.SendOutgoing(BuildResponseCreateEvent(options));
-    return { status: "sent" };
+    return this.m_responseQueue.SubmitResponseAffectingUnit(
+      () =>
+      {
+        this.TransmitOutgoing({
+          type: "input_audio_buffer.commit",
+        });
+        this.TransmitOutgoing(BuildResponseCreateEvent(options));
+      },
+      options,
+    );
   }
 
   async sendTextMessage(text: string, options?: SendMessageOptions): Promise<QueuedEventResult>
@@ -379,13 +421,19 @@ class RealtimeAgentSessionImpl implements RealtimeAgentSession
       throw new TypeError("sendTextMessage requires non-empty text");
     }
 
-    this.SendOutgoing(BuildUserInputTextConversationItem(text, options?.previousItemId));
-
     if (options?.createResponse === true)
     {
-      this.SendOutgoing(BuildResponseCreateEvent(options));
+      return this.m_responseQueue.SubmitResponseAffectingUnit(
+        () =>
+        {
+          this.TransmitOutgoing(BuildUserInputTextConversationItem(text, options?.previousItemId));
+          this.TransmitOutgoing(BuildResponseCreateEvent(options));
+        },
+        options,
+      );
     }
 
+    this.TransmitOutgoing(BuildUserInputTextConversationItem(text, options?.previousItemId));
     return { status: "sent" };
   }
 
@@ -406,30 +454,54 @@ class RealtimeAgentSessionImpl implements RealtimeAgentSession
     }
 
     const text = JSON.stringify(envelope);
-    this.SendOutgoing(BuildUserInputTextConversationItem(text, options?.previousItemId));
 
     if (options?.createResponse === true)
     {
-      this.SendOutgoing(BuildResponseCreateEvent(options));
+      return this.m_responseQueue.SubmitResponseAffectingUnit(
+        () =>
+        {
+          this.TransmitOutgoing(BuildUserInputTextConversationItem(text, options?.previousItemId));
+          this.TransmitOutgoing(BuildResponseCreateEvent(options));
+        },
+        options,
+      );
     }
 
+    this.TransmitOutgoing(BuildUserInputTextConversationItem(text, options?.previousItemId));
     return { status: "sent" };
   }
 
-  async sendRealtimeEvent(event: RealtimeEvent, _options?: QueueRequestOptions): Promise<QueuedEventResult>
+  async sendRealtimeEvent(event: RealtimeEvent, options?: QueueRequestOptions): Promise<QueuedEventResult>
   {
     if (typeof event.type !== "string" || event.type.length === 0)
     {
       throw new TypeError("sendRealtimeEvent requires event.type to be a non-empty string");
     }
 
-    this.SendOutgoing(event);
+    if (event.type === "response.cancel")
+    {
+      this.TransmitOutgoing(event);
+      return { status: "sent" };
+    }
+
+    if (event.type === "response.create")
+    {
+      return this.m_responseQueue.SubmitResponseAffectingUnit(
+        () =>
+        {
+          this.TransmitOutgoing(event);
+        },
+        options,
+      );
+    }
+
+    this.TransmitOutgoing(event);
     return { status: "sent" };
   }
 
   async clearAudioBuffer(_options?: QueueRequestOptions): Promise<QueuedEventResult>
   {
-    this.SendOutgoing({
+    this.TransmitOutgoing({
       type: "input_audio_buffer.clear",
     });
     return { status: "sent" };
@@ -445,6 +517,7 @@ class RealtimeAgentSessionImpl implements RealtimeAgentSession
   private HandleIncomingEvent(event: RealtimeEvent): void
   {
     this.m_router.routeIncomingEvent(event);
+    this.m_responseQueue.OnIncomingEvent(event);
     this.HandleToolCallExtraction(event);
   }
 
@@ -486,8 +559,9 @@ class RealtimeAgentSessionImpl implements RealtimeAgentSession
     this.m_dispatcher.Enqueue(extracted);
   }
 
-  SendOutgoing(event: RealtimeEvent): void
+  TransmitOutgoing(event: RealtimeEvent): void
   {
+    this.m_responseQueue.NotifyOutgoingTransmitted(event);
     this.m_client.send(event);
     this.m_router.routeOutgoingEvent(event);
   }
@@ -561,44 +635,41 @@ export async function startAgentSession(
     webSocketFactory: deps.webSocketFactory,
   });
 
-  const dispatcher = new ToolDispatcher({
-    sessionId: session.id,
-    registry,
-    sendContext: {
-      sendOutgoingEvent: (event) =>
-      {
-        client.send(event);
-        router.routeOutgoingEvent(event);
-      },
-    },
-    onToolLifecycle: config.onToolLifecycle,
-  });
-
   const agentSession = new RealtimeAgentSessionImpl(
     session.id,
     client,
     router,
-    dispatcher,
     sessionsRepo,
     config.onSessionEnded,
   );
 
+  const impl = agentSession as RealtimeAgentSessionImpl;
+
+  const dispatcher = new ToolDispatcher({
+    sessionId: session.id,
+    registry,
+    sendContext: impl.BuildToolDispatcherSendContext(),
+    onToolLifecycle: config.onToolLifecycle,
+    responseAfterOutput: config.responseAfterToolOutput === true ? "always" : "never",
+  });
+
+  impl.WireToolDispatcher(dispatcher);
+
   await client.connect();
 
-  const impl = agentSession as RealtimeAgentSessionImpl;
-  impl.SendOutgoing(sessionUpdateEvent);
+  impl.TransmitOutgoing(sessionUpdateEvent);
 
   for (const startupEvent of BuildStartupConversationEvents(
     config.systemPrompt,
     config.initialContext,
   ))
   {
-    impl.SendOutgoing(startupEvent);
+    impl.TransmitOutgoing(startupEvent);
   }
 
   if (resolvedTurnMode.type === "server_vad")
   {
-    impl.SendOutgoing(BuildInitialResponseCreateEvent());
+    impl.TransmitOutgoing(BuildInitialResponseCreateEvent());
   }
 
   return agentSession;

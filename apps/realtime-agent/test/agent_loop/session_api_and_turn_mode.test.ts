@@ -8,6 +8,7 @@ import {
   CreateAgentLoopTestContext,
   OpenConnectedSocket,
   ParseSentEvents,
+  SimulateResponseCreatedAndDone,
 } from "./helpers.js";
 import { CleanupPersistenceTestContext } from "../persistence/helpers.js";
 
@@ -141,13 +142,16 @@ test("session API methods emit expected events and return sent status", async ()
     assert.deepEqual(await session.commitAudio(), { status: "sent" });
     assert.deepEqual(await session.clearAudioBuffer(), { status: "sent" });
     assert.deepEqual(await session.createResponse(), { status: "sent" });
+    SimulateResponseCreatedAndDone(socket, "r1");
     assert.deepEqual(
       await session.createResponse({
         response: { instructions: "think briefly" },
       }),
       { status: "sent" },
     );
+    SimulateResponseCreatedAndDone(socket, "r2");
     assert.deepEqual(await session.commitAudioAndCreateResponse(), { status: "sent" });
+    SimulateResponseCreatedAndDone(socket, "r3");
     assert.deepEqual(
       await session.commitAudioAndCreateResponse({
         response: { instructions: "after commit" },

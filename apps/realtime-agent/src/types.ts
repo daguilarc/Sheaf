@@ -117,6 +117,7 @@ export interface AgentStartConfig
   toolCallSet: ToolCallSet;
   model?: string;
   turnMode?: RealtimeAgentTurnMode;
+  responseAfterToolOutput?: boolean;
   onConversationEvent?: ConversationEventCallback;
   onEvent?: AgentEventCallback;
   onToolLifecycle?: ToolLifecycleCallback;
