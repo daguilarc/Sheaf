@@ -169,5 +169,14 @@
     "round_count": 1,
     "created_at": "2026-05-23T22:23:56Z",
     "last_used_at": "2026-05-23T22:28:01Z"
+  },
+  "documenter": {
+    "thread_name": "Sheaf_quest_0001_documenter",
+    "harness_kind": "codex",
+    "provider_thread_id": "019e56f4-adfe-73e1-8f05-b1329a89afee",
+    "pass_id": 0,
+    "round_count": 1,
+    "created_at": "2026-05-23T22:28:56Z",
+    "last_used_at": "2026-05-23T22:33:11Z"
   }
 }

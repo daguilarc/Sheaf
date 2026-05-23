@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The realtime agent is a Node 20 TypeScript library and CLI for experimenting with OpenAI Realtime sessions. It takes local microphone input, requests text output only, supports model tool calls, prints non-audio events to stdout, and stores durable session/event records in SQLite.
+The realtime agent is a Node 20 TypeScript library and CLI for OpenAI Realtime sessions. It takes local microphone input, requests text output only, supports model tool calls, prints non-audio events to stdout, stores durable session/event records in SQLite, and exposes a manual-turn session API that the VS Code extension uses.
 
 ## Build
 
@@ -83,7 +83,7 @@ If no device is supplied, the PortAudio default input device is used. If the sel
 
 ## Runtime Behavior
 
-On startup the agent:
+On startup the CLI agent:
 
 1. Creates a session row in SQLite.
 2. Opens a WebSocket Realtime connection using bearer authentication.
@@ -92,7 +92,9 @@ On startup the agent:
 5. Sends `response.create`.
 6. Starts local microphone capture and forwards frames as `input_audio_buffer.append`.
 
-The session configuration uses server VAD with a 500 ms silence threshold and automatic response creation. Audio output is not configured.
+The CLI session configuration uses server VAD with a 500 ms silence threshold and automatic response creation. Audio output is not configured.
+
+The library also supports manual turn mode. In manual mode, `session.update` sets `audio.input.turn_detection` to `null`, startup does not send an initial `response.create`, and callers explicitly commit audio and request responses.
 
 ## Stdout
 
@@ -126,6 +128,8 @@ Tools are TypeScript definitions with a unique name, optional description, JSON 
 
 Tool calls are processed asynchronously through a per-session FIFO queue with default concurrency of one. While a callback is running, incoming realtime events continue to route and persist.
 
+When `responseAfterToolOutput` is enabled for a session, successful tool calls and structured tool errors both schedule a follow-up `response.create`. If a response is already active, that follow-up is queued instead of interrupting the active response.
+
 Tool failures are returned to the model as structured output payloads:
 
 - `tool_not_found`
@@ -133,6 +137,47 @@ Tool failures are returned to the model as structured output payloads:
 - `callback_failed`
 
 These failures do not end the session.
+
+## Response Queue
+
+Response-affecting operations use a dedicated queue. This includes explicit `createResponse()`, `commitAudio()`, `commitAudioAndCreateResponse()`, and tool-triggered follow-up responses.
+
+Queue policies:
+
+- `enqueue`: default behavior; wait for the active response to finish
+- `reject`: return `{ status: "rejected", reason: "response_active" }`
+- `cancel_current`: emit `response.cancel`, queue the new unit, and return `{ status: "queued", reason: "cancelling_active" }`
+
+`commitAudioAndCreateResponse()` sends `input_audio_buffer.commit` and `response.create` as one atomic queued unit so they cannot be interleaved with another queued response-affecting action.
+
+## Library Session API
+
+Consumers import `startAgentSession` from `realtime-agent-lib` and receive a `RealtimeAgentSession` with these primary controls:
+
+- `sendAudioFrame()`
+- `commitAudio()`
+- `createResponse()`
+- `commitAudioAndCreateResponse()`
+- `sendTextMessage()`
+- `sendStructuredContext()`
+- `sendRealtimeEvent()`
+- `clearAudioBuffer()`
+- `stop()`
+
+`sendStructuredContext()` serializes a stable JSON envelope into a user `input_text` conversation item:
+
+```json
+{
+  "kind": "file_changed_since_last_read",
+  "source": "vscode",
+  "payload": {
+    "file": "src/example.ts"
+  },
+  "summary": "src/example.ts changed since last read"
+}
+```
+
+The `summary` field is included in that envelope only when the caller provides one.
 
 ## Shutdown And Failures
 
