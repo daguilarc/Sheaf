@@ -97,5 +97,14 @@
     "round_count": 1,
     "created_at": "2026-05-23T21:36:21Z",
     "last_used_at": "2026-05-23T21:52:58Z"
+  },
+  "slice_4_polisher_reviewer": {
+    "thread_name": "Sheaf_quest_0001_slice_0004_polisher_reviewer",
+    "harness_kind": "codex",
+    "provider_thread_id": "019e56d3-c1d2-7ca2-aef4-2bbeee69fe22",
+    "pass_id": 0,
+    "round_count": 1,
+    "created_at": "2026-05-23T21:52:58Z",
+    "last_used_at": "2026-05-23T21:56:18Z"
   }
 }
