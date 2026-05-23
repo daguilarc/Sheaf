@@ -75,6 +75,8 @@
     "prebuild": "npm run build --prefix ../realtime-agent"
   },
   "dependencies": {
+    "better-sqlite3": "^12.10.0",
+    "naudiodon": "^2.3.6",
     "realtime-agent-lib": "file:../realtime-agent"
   },
   "devDependencies": {

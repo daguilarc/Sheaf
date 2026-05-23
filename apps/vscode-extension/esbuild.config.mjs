@@ -1,8 +1,8 @@
-import { build } from "esbuild";
+import { build, context } from "esbuild";
 
 const watch = process.argv.includes("--watch");
 
-await build({
+const options = {
   entryPoints: ["src/extension.ts"],
   bundle: true,
   format: "cjs",
@@ -12,5 +12,14 @@ await build({
   outfile: "out/extension.js",
   external: ["vscode", "better-sqlite3", "naudiodon"],
   logLevel: "info",
-  ...(watch ? { watch: true } : {}),
-});
+};
+
+if (watch)
+{
+  const ctx = await context(options);
+  await ctx.watch();
+}
+else
+{
+  await build(options);
+}
