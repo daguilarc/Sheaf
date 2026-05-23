@@ -299,6 +299,7 @@ class RealtimeAgentSessionImpl implements RealtimeAgentSession
   private m_onSessionEnded?: SessionEndedCallback;
   private m_argumentAccumulator = new FunctionCallArgumentAccumulator();
   private m_dispatchedCallIds = new Set<string>();
+  private m_emittedToolOutputCallIds = new Set<string>();
   private m_ended = false;
   private m_gracefulStop = false;
 
@@ -531,22 +532,36 @@ class RealtimeAgentSessionImpl implements RealtimeAgentSession
 
   private ReserveToolOutputHolds(event: RealtimeEvent): void
   {
-    if (event.type !== "response.done")
+    // Reserve a tool-output hold as soon as we know a tool call exists, so the
+    // hold is in place before the terminal `response.done` lets the queue clear
+    // active state and drain externally queued response-affecting units.
+    //
+    // Streaming model paths surface a tool call via
+    // `response.function_call_arguments.done`, dispatch it immediately, and only
+    // then deliver `response.done`. By the time `response.done` arrives, the
+    // call is already in `m_dispatchedCallIds` and would be skipped if we only
+    // reserved here. Reserve in both event paths; the set keyed by callId makes
+    // double-registration a no-op.
+    //
+    if (event.type === "response.function_call_arguments.done")
     {
+      const callId = ReadStringField(event, "call_id");
+      if (callId !== undefined && !this.m_emittedToolOutputCallIds.has(callId))
+      {
+        this.m_responseQueue.RegisterPendingToolOutput(callId);
+      }
+
       return;
     }
 
-    // Only the terminal `response.done` clears the active response and triggers
-    // a drain of externally queued response-affecting units; per-call argument
-    // events do not drain, so reserving holds there is unnecessary. Reserving
-    // here also avoids stuck holds when a `response.function_call_arguments.done`
-    // event lacks the metadata needed to dispatch.
-    //
-    for (const extracted of ExtractFunctionCallsFromResponseDone(event))
+    if (event.type === "response.done")
     {
-      if (!this.m_dispatchedCallIds.has(extracted.callId))
+      for (const extracted of ExtractFunctionCallsFromResponseDone(event))
       {
-        this.m_responseQueue.RegisterPendingToolOutput(extracted.callId);
+        if (!this.m_emittedToolOutputCallIds.has(extracted.callId))
+        {
+          this.m_responseQueue.RegisterPendingToolOutput(extracted.callId);
+        }
       }
     }
   }
@@ -591,9 +606,30 @@ class RealtimeAgentSessionImpl implements RealtimeAgentSession
 
   TransmitOutgoing(event: RealtimeEvent): void
   {
+    this.RecordEmittedToolOutput(event);
     this.m_client.send(event);
     this.m_router.routeOutgoingEvent(event);
     this.m_responseQueue.NotifyOutgoingTransmitted(event);
+  }
+
+  private RecordEmittedToolOutput(event: RealtimeEvent): void
+  {
+    if (event.type !== "conversation.item.create")
+    {
+      return;
+    }
+
+    const item = event.item;
+    if (typeof item !== "object" || item === null)
+    {
+      return;
+    }
+
+    const record = item as { type?: unknown; call_id?: unknown };
+    if (record.type === "function_call_output" && typeof record.call_id === "string")
+    {
+      this.m_emittedToolOutputCallIds.add(record.call_id);
+    }
   }
 
   private async FinalizeSession(reason: string): Promise<SessionRow>

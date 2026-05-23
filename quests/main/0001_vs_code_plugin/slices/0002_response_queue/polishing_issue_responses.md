@@ -49,3 +49,50 @@
   Verification: `npm test` in `apps/realtime-agent` passes (88 tests, 0
   failures), including all pre-existing response queue, tool follow-up, and
   session API tests.
+
+## Response PR-0001 2026-05-23T21:21:15Z
+
+- issue_id: PR-0001
+- outcome: Fixed
+- explanation: Addresses the reviewer's follow-up gap that the previous fix only
+  covered tool calls first surfaced via the terminal `response.done`. Streaming
+  paths that dispatch a tool call from `response.function_call_arguments.done`
+  before the terminal `response.done` arrives now also register and honor a
+  pending tool-output hold.
+
+  Changes:
+
+  - `apps/realtime-agent/src/agent_loop.ts`:
+    - `ReserveToolOutputHolds(event)` now also handles
+      `response.function_call_arguments.done`: it reads `call_id` and calls
+      `m_responseQueue.RegisterPendingToolOutput(callId)` so that any
+      subsequent `response.done` cannot drain externally queued
+      response-affecting units until the streamed tool call's
+      `function_call_output` actually goes out on the wire.
+    - Added `m_emittedToolOutputCallIds` plus a new
+      `RecordEmittedToolOutput(event)` invoked at the top of `TransmitOutgoing`
+      that records every outgoing `conversation.item.create` whose
+      `item.type === "function_call_output"`. `ReserveToolOutputHolds` checks
+      this set instead of `m_dispatchedCallIds`, so:
+      - We do not skip registering a hold for a call that has already been
+        dispatched (e.g. from a streaming-args event) but whose output is
+        still in flight.
+      - We do skip registering a hold for a call whose output already left
+        the session, avoiding stuck holds when `response.done` reiterates a
+        completed function call.
+  - `apps/realtime-agent/test/agent_loop/response_queue.test.ts`: new test
+    `streaming tool dispatch holds external queued unit until
+    function_call_output is sent even after response.done`. It enables
+    `responseAfterToolOutput: true`, registers a deliberately slow async tool
+    callback (30 ms), queues `session.sendTextMessage("post_stream_tool",
+    { createResponse: true })` while a response is active, then receives
+    `response.function_call_arguments.done` (which dispatches the slow
+    callback) immediately followed by the terminal `response.done` while the
+    callback is still running. The test asserts the outgoing
+    `function_call_output` precedes both the externally queued user message
+    item and any subsequent `response.create`, exactly the scenario the
+    reviewer called out.
+
+  Verification: `npm test` in `apps/realtime-agent` passes (89 tests, 0
+  failures), including both the new streaming-path test and the earlier
+  `response.done`-bundled-function-call test.

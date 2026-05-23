@@ -733,6 +733,104 @@ test("queued external response.create waits for function_call_output from termin
   }
 });
 
+test("streaming tool dispatch holds external queued unit until function_call_output is sent even after response.done", async () =>
+{
+  const context = CreateAgentLoopTestContext();
+
+  try
+  {
+    const startPromise = startAgentSession(
+      BuildTestAgentConfig({
+        turnMode: { type: "manual" },
+        responseAfterToolOutput: true,
+        toolCallSet: {
+          name: "slow_streaming_tools",
+          tools: [
+            {
+              name: "slow_echo",
+              inputSchema: { type: "object" },
+              callback: async (args) =>
+              {
+                await new Promise((resolve) => setTimeout(resolve, 30));
+                return args;
+              },
+            },
+          ],
+        },
+      }),
+      context.deps,
+    );
+    const socket = await OpenConnectedSocket(context.sockets);
+    const session = await startPromise;
+
+    await session.createResponse();
+    socket.receiveMessage(
+      JSON.stringify({
+        type: "response.created",
+        response: { id: "resp_stream_tool" },
+      }),
+    );
+
+    const baseline = socket.sentMessages.length;
+
+    const externalQueued = await session.sendTextMessage("post_stream_tool", {
+      createResponse: true,
+    });
+    assert.deepEqual(externalQueued, { status: "queued" });
+
+    // Model streams the tool call via the per-call done event; the dispatcher
+    // starts the slow callback. The terminal response.done arrives BEFORE the
+    // tool callback finishes and the function_call_output is sent.
+    //
+    socket.receiveMessage(
+      JSON.stringify({
+        type: "response.function_call_arguments.done",
+        call_id: "call_stream",
+        name: "slow_echo",
+        arguments: JSON.stringify({ k: 1 }),
+      }),
+    );
+
+    socket.receiveMessage(
+      JSON.stringify({
+        type: "response.done",
+        response: { id: "resp_stream_tool" },
+      }),
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 60));
+
+    const tail = ParseSentEvents(socket).slice(baseline);
+
+    const idxToolOutput = tail.findIndex(
+      (e) => e.type === "conversation.item.create"
+        && (e.item as { type?: string } | undefined)?.type === "function_call_output",
+    );
+    assert.ok(idxToolOutput >= 0, "function_call_output must be sent");
+
+    const idxExternalText = tail.findIndex(
+      (e) => e.type === "conversation.item.create"
+        && (e.item as { type?: string } | undefined)?.type === "message",
+    );
+    assert.ok(idxExternalText >= 0, "external sendTextMessage user item must be sent");
+    assert.ok(
+      idxToolOutput < idxExternalText,
+      `function_call_output (idx ${idxToolOutput}) must precede external message (idx ${idxExternalText})`,
+    );
+
+    const idxFirstCreate = tail.findIndex((e) => e.type === "response.create");
+    assert.ok(idxFirstCreate >= 0, "at least one response.create must follow");
+    assert.ok(
+      idxToolOutput < idxFirstCreate,
+      `function_call_output (idx ${idxToolOutput}) must precede any response.create (idx ${idxFirstCreate})`,
+    );
+  }
+  finally
+  {
+    CleanupPersistenceTestContext(context);
+  }
+});
+
 test("two rapid tool calls with responseAfterToolOutput true produce two follow-up creates in order", async () =>
 {
   const context = CreateAgentLoopTestContext();
