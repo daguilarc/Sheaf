@@ -38,12 +38,12 @@
 
 ## Issue QP-0004
 
-- status: open
+- status: completed
 - owner_role: physical_plan_reviewer
 - created_at: 2026-05-23T19:23:03Z
-- updated_at: 2026-05-23T19:23:03Z
+- updated_at: 2026-05-23T19:25:43Z
 - title: Tab switches are incorrectly reset instead of notified as viewport changes
 - details: Slice 0006 conflicts with Spec 03's viewport freshness behavior. The spec says that when the visible viewport changes due to user scrolling, editor reveal, **tab switch**, or another non-agent action, the extension must set `changedSinceLastCheck` and send one structured-context notification when `notificationSent` is false. The current physical plan says `onDidChangeActiveTextEditor` treats the new file as unobserved, resets viewport and cursor state, and does not push notifications. That means a user tab switch after the agent last checked visible-range context will be silently discarded rather than reported as `viewport_changed_since_last_check`.
 
   This is a functional gap because the agent can retain stale assumptions about which file/range is visible after a tab switch, exactly the case the spec calls out. To resolve this, the physical plan must define active-editor changes as non-agent viewport changes when the agent has previously observed viewport context, unless the change is covered by an agent-mutation guard. The updated plan should state what file is included in the structured-context payload for a tab switch, how cursor freshness is handled on active-editor changes, and include validation that a user-driven tab switch after `read_visible_range` produces one viewport freshness push without duplicate notifications.
-- resolution_notes: none
+- resolution_notes: Verified in the updated slice 0006 plan. The freshness state now tracks `everObserved` for viewport and cursor, treats user-driven active-editor changes/tab switches as stale viewport and cursor transitions after observation, preserves agent-originated tab-switch suppression through the mutation guard, defines payload-file behavior, and adds `tabSwitch.test.ts` coverage for pre-observation, post-observation, duplicate suppression, re-observation, agent-originated suppression, and no-active-editor cases.
