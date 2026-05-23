@@ -46,8 +46,8 @@ profiles:
     modify_block:
       - "**"
   polisher:
-    harness: claude_code
-    model: claude-opus-4-7
+    harness: cursor
+    model: claude-opus-4-7-high
     idle_timeout_seconds: 3600
     modify_allow:
       - "$currentQuest/human_intervention_request.md"
