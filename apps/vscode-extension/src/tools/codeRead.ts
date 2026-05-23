@@ -87,7 +87,12 @@ export function CreateCodeReadTool(services: ToolServices): ToolDefinition<CodeR
       services.freshness.markFileObserved(doc.relativePosix);
 
       const lineCount = doc.lineCount;
-      if (lineCount === 0)
+      const fullText = doc.getText();
+      // VS Code reports empty text documents as `lineCount: 1` with a single empty
+      // line. Treat any document whose full text is empty as the spec's degenerate
+      // empty-file case so callers see a consistent shape.
+      //
+      if (lineCount === 0 || fullText.length === 0)
       {
         return {
           file: doc.relativePosix,

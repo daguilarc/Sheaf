@@ -63,6 +63,39 @@ test("rgrep invalid pattern", async () =>
   }
 });
 
+test("rgrep truncated is false when match count equals maxMatches", async () =>
+{
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "sheaf-rg-bound-"));
+  try
+  {
+    const mem = new MemoryEditorAccess(tmp);
+    mem.SeedFile("a.ts", ["x", "x", "x"]);
+    const tool = BuildVscodeToolCallSet({ editorAccess: mem, freshness: NoOpFreshnessHooks }).tools.find(
+      (t) => t.name === "rgrep",
+    )!;
+
+    const exactRaw = (await tool.callback({ pattern: "x", maxMatches: 3 }, { sessionId: "s", toolCallId: "c" })) as
+      | RgrepResult
+      | ToolError;
+    assert.ok(!IsToolError(exactRaw));
+    const exact = exactRaw as RgrepResult;
+    assert.equal(exact.matches.length, 3);
+    assert.equal(exact.truncated, false);
+
+    const overRaw = (await tool.callback({ pattern: "x", maxMatches: 2 }, { sessionId: "s", toolCallId: "c" })) as
+      | RgrepResult
+      | ToolError;
+    assert.ok(!IsToolError(overRaw));
+    const over = overRaw as RgrepResult;
+    assert.equal(over.matches.length, 2);
+    assert.equal(over.truncated, true);
+  }
+  finally
+  {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
 test("rgrep case sensitivity", async () =>
 {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "sheaf-rg3-"));

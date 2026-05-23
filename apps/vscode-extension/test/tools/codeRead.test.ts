@@ -97,12 +97,24 @@ test("code_read empty file", async () =>
     mem.SeedFile("empty.txt", []);
     const set = BuildVscodeToolCallSet({ editorAccess: mem, freshness: NoOpFreshnessHooks });
     const tool = set.tools.find((t) => t.name === "code_read")!;
+
+    // The fake editor mirrors real VS Code: an empty document reports
+    // `lineCount: 1` with one empty line and `getText() === ""`.
+    //
+    const opened = await mem.OpenTextDocument(path.join(tmp, "empty.txt"), "empty.txt");
+    assert.ok(!("code" in opened));
+    assert.equal(opened.lineCount, 1);
+    assert.equal(opened.lineTextAt0(0), "");
+    assert.equal(opened.getText(), "");
+
     const rRaw = (await tool.callback({ file: "empty.txt" }, { sessionId: "s", toolCallId: "c" })) as
       | CodeReadResult
       | ToolError;
     assert.ok(!IsToolError(rRaw));
     const r = rRaw as CodeReadResult;
     assert.equal(r.lineCount, 0);
+    assert.equal(r.startLine, 0);
+    assert.equal(r.endLine, 0);
     assert.deepEqual(r.lines, []);
   }
   finally

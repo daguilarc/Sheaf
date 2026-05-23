@@ -17,18 +17,25 @@ function ToAbs(root: string, relPosix: string): string
 
 function OpenedFromLines(absPath: string, relativePosix: string, lines: string[]): OpenedTextDocument
 {
+  // Mirror VS Code's real `TextDocument` shape: an empty file is reported as
+  // `lineCount: 1` with a single empty line and `getText() === ""`, not as zero
+  // lines. Production tools must handle this case from on-disk empty files.
+  //
+  const effectiveLines = lines.length === 0 ? [""] : lines;
+  const fullText = lines.join("\n");
+
   return {
     absPath,
     relativePosix,
     languageId: "plaintext",
-    lineCount: lines.length,
+    lineCount: effectiveLines.length,
     lineTextAt0(lineIndex0: number): string
     {
-      return lines[lineIndex0] ?? "";
+      return effectiveLines[lineIndex0] ?? "";
     },
     getText(): string
     {
-      return lines.join("\n");
+      return fullText;
     },
   };
 }

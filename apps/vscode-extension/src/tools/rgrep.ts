@@ -206,6 +206,17 @@ export function CreateRgrepTool(services: ToolServices): ToolDefinition<RgrepArg
               }
             }
 
+            // `truncated` must signal that at least one additional match was
+            // omitted, not merely that the bound was reached. Detect the
+            // overflow case before pushing so an exact-bound result still
+            // reports `truncated: false`.
+            //
+            if (matches.length >= maxMatches)
+            {
+              truncated = true;
+              break outer;
+            }
+
             const entry: RgrepMatch = {
               file: doc.relativePosix,
               line: line0 + 1,
@@ -224,11 +235,6 @@ export function CreateRgrepTool(services: ToolServices): ToolDefinition<RgrepArg
             }
 
             matches.push(entry);
-            if (matches.length >= maxMatches)
-            {
-              truncated = true;
-              break outer;
-            }
 
             if (matchText.length === 0)
             {
