@@ -136,6 +136,8 @@ export class SessionController
     catch (error)
     {
       this.m_log.Error("commitAudioAndCreateResponse failed", error);
+      const message = error instanceof Error ? error.message : String(error);
+      this.m_chatModel?.recordError(`Commit failed: ${message}`);
     }
   }
 
@@ -248,6 +250,7 @@ export class SessionController
         onError: (captureError) =>
         {
           this.m_log.Error("Microphone capture failed", captureError);
+          this.m_chatModel?.recordError(`Microphone error: ${captureError.message}`);
           void this.m_ui.showErrorMessage(`Sheaf realtime: microphone error — ${captureError.message}`);
           void this.StopSession("audio_error");
         },
@@ -305,6 +308,7 @@ export class SessionController
     }
 
     this.m_log.Line(`Session ended unexpectedly: ${reason}`);
+    this.m_chatModel?.recordError("Connection to OpenAI was lost.");
     void this.m_ui.showErrorMessage("Sheaf realtime: connection to OpenAI was lost.");
 
     this.m_audioCapture?.stop();

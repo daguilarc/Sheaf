@@ -11,6 +11,7 @@ import type {
   SessionRow,
 } from "realtime-agent-lib";
 
+import { ChatModel } from "../src/chat/chatModel.js";
 import { SessionController } from "../src/sessionController.js";
 import { BuildVscodeToolCallSet } from "../src/tools/callSetBuilder.js";
 import { NoOpFreshnessHooks } from "../src/tools/types.js";
@@ -280,4 +281,221 @@ test("SessionController commit when idle surfaces status message only", async ()
   const controller = new SessionController(host, CreateTestLog(), secrets, prefs, ui, {});
   await controller.CommitAndRespond();
   assert.ok(ui.statusMessages.length > 0);
+});
+
+test("SessionController start failure records error bubble in chat model", async () =>
+{
+  const tmp = mkdtempSync(join(tmpdir(), "sheaf-vsc-test-"));
+  mkdirSync(tmp, { recursive: true });
+
+  try
+  {
+    const startSession = async (): Promise<RealtimeAgentSession> =>
+    {
+      throw new Error("ws boom");
+    };
+
+    const host: SessionControllerHost = { globalStoragePath: tmp };
+    const secrets: SessionSecrets = { getOpenAiApiKey: async () => "sk" };
+    const prefs: SessionPreferences = {
+      getModel: () => "m",
+      getSystemPrompt: () => "s",
+      getInputDevice: () => undefined,
+      getSafetyIdentifier: () => undefined,
+    };
+    const ui = CreateTestUi();
+    const chatModel = new ChatModel();
+
+    const controller = new SessionController(host, CreateTestLog(), secrets, prefs, ui, {
+      startSession,
+      createMicrophoneCapture: () => ({ start: () => {}, stop: () => {} }),
+      buildVscodeToolCallSet: () => CreateHarnessToolCallSet(tmp),
+      chatModel,
+    });
+
+    await controller.ToggleSession();
+
+    const bubbles = chatModel.getSnapshot();
+    const errorBubbles = bubbles.filter((b) => b.kind === "error");
+    assert.equal(errorBubbles.length, 1);
+    if (errorBubbles[0]?.kind === "error")
+    {
+      assert.ok(errorBubbles[0].message.includes("ws boom"));
+    }
+  }
+  finally
+  {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("SessionController commit failure records error bubble in chat model", async () =>
+{
+  const tmp = mkdtempSync(join(tmpdir(), "sheaf-vsc-test-"));
+  mkdirSync(tmp, { recursive: true });
+
+  try
+  {
+    const fakeSession: RealtimeAgentSession = {
+      ...CreateFakeSession(() => {}),
+      commitAudioAndCreateResponse: async () =>
+      {
+        throw new Error("commit boom");
+      },
+    };
+
+    const startSession = async (): Promise<RealtimeAgentSession> => fakeSession;
+
+    const host: SessionControllerHost = { globalStoragePath: tmp };
+    const secrets: SessionSecrets = { getOpenAiApiKey: async () => "sk" };
+    const prefs: SessionPreferences = {
+      getModel: () => "m",
+      getSystemPrompt: () => "s",
+      getInputDevice: () => undefined,
+      getSafetyIdentifier: () => undefined,
+    };
+    const ui = CreateTestUi();
+    const chatModel = new ChatModel();
+
+    const controller = new SessionController(host, CreateTestLog(), secrets, prefs, ui, {
+      startSession,
+      createMicrophoneCapture: () => ({ start: () => {}, stop: () => {} }),
+      buildVscodeToolCallSet: () => CreateHarnessToolCallSet(tmp),
+      chatModel,
+    });
+
+    await controller.ToggleSession();
+    assert.equal(controller.GetState(), "active");
+
+    await controller.CommitAndRespond();
+
+    const errorBubbles = chatModel.getSnapshot().filter((b) => b.kind === "error");
+    assert.equal(errorBubbles.length, 1);
+    if (errorBubbles[0]?.kind === "error")
+    {
+      assert.ok(errorBubbles[0].message.toLowerCase().includes("commit"));
+      assert.ok(errorBubbles[0].message.includes("commit boom"));
+    }
+  }
+  finally
+  {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("SessionController microphone capture failure records error bubble in chat model", async () =>
+{
+  const tmp = mkdtempSync(join(tmpdir(), "sheaf-vsc-test-"));
+  mkdirSync(tmp, { recursive: true });
+
+  try
+  {
+    const fakeSession = CreateFakeSession(() => {});
+    const startSession = async (): Promise<RealtimeAgentSession> => fakeSession;
+
+    let triggerCaptureError: ((err: Error) => void) | undefined;
+
+    const createMicrophoneCapture = (config: { onError: (err: Error) => void }) =>
+    {
+      triggerCaptureError = config.onError;
+      return {
+        start: () => {},
+        stop: () => {},
+      };
+    };
+
+    const host: SessionControllerHost = { globalStoragePath: tmp };
+    const secrets: SessionSecrets = { getOpenAiApiKey: async () => "sk" };
+    const prefs: SessionPreferences = {
+      getModel: () => "m",
+      getSystemPrompt: () => "s",
+      getInputDevice: () => undefined,
+      getSafetyIdentifier: () => undefined,
+    };
+    const ui = CreateTestUi();
+    const chatModel = new ChatModel();
+
+    const controller = new SessionController(host, CreateTestLog(), secrets, prefs, ui, {
+      startSession,
+      createMicrophoneCapture: createMicrophoneCapture as never,
+      buildVscodeToolCallSet: () => CreateHarnessToolCallSet(tmp),
+      chatModel,
+    });
+
+    await controller.ToggleSession();
+    assert.equal(controller.GetState(), "active");
+    assert.ok(triggerCaptureError !== undefined);
+
+    triggerCaptureError?.(new Error("mic dead"));
+
+    const errorBubbles = chatModel.getSnapshot().filter((b) => b.kind === "error");
+    assert.equal(errorBubbles.length, 1);
+    if (errorBubbles[0]?.kind === "error")
+    {
+      assert.ok(errorBubbles[0].message.toLowerCase().includes("microphone"));
+      assert.ok(errorBubbles[0].message.includes("mic dead"));
+    }
+  }
+  finally
+  {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("SessionController connection lost records error bubble alongside session ended context", async () =>
+{
+  const tmp = mkdtempSync(join(tmpdir(), "sheaf-vsc-test-"));
+  mkdirSync(tmp, { recursive: true });
+
+  try
+  {
+    let capturedConfig: AgentStartConfig | undefined;
+    const fakeSession = CreateFakeSession(() => {});
+    const startSession = async (config: AgentStartConfig): Promise<RealtimeAgentSession> =>
+    {
+      capturedConfig = config;
+      return fakeSession;
+    };
+
+    const host: SessionControllerHost = { globalStoragePath: tmp };
+    const secrets: SessionSecrets = { getOpenAiApiKey: async () => "sk" };
+    const prefs: SessionPreferences = {
+      getModel: () => "m",
+      getSystemPrompt: () => "s",
+      getInputDevice: () => undefined,
+      getSafetyIdentifier: () => undefined,
+    };
+    const ui = CreateTestUi();
+    const chatModel = new ChatModel();
+
+    const controller = new SessionController(host, CreateTestLog(), secrets, prefs, ui, {
+      startSession,
+      createMicrophoneCapture: () => ({ start: () => {}, stop: () => {} }),
+      buildVscodeToolCallSet: () => CreateHarnessToolCallSet(tmp),
+      chatModel,
+    });
+
+    await controller.ToggleSession();
+    assert.equal(controller.GetState(), "active");
+    assert.ok(capturedConfig !== undefined);
+
+    capturedConfig?.onSessionEnded?.({ reason: "connection_lost" } as never);
+
+    await new Promise((r) => setImmediate(r));
+
+    const bubbles = chatModel.getSnapshot();
+    const errorBubbles = bubbles.filter((b) => b.kind === "error");
+    const contextBubbles = bubbles.filter((b) => b.kind === "context_push");
+
+    assert.equal(errorBubbles.length, 1);
+    assert.ok(contextBubbles.length >= 1);
+    if (errorBubbles[0]?.kind === "error")
+    {
+      assert.ok(errorBubbles[0].message.toLowerCase().includes("connection"));
+    }
+  }
+  finally
+  {
+    rmSync(tmp, { recursive: true, force: true });
+  }
 });
