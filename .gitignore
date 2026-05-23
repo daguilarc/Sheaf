@@ -18,6 +18,7 @@ zulip_bot.config.json
 data/*
 !data/.gitkeep
 !data/README.md
+!data/initial-context.md
 data_archive/
 
 # iOS SwiftPM build artifacts
@@ -37,3 +38,10 @@ DerivedData/
 *.pbxuser
 !default.pbxuser
 apps/obsidian-replica/.test-dist/
+
+# Node realtime agent
+apps/realtime-agent/node_modules/
+apps/realtime-agent/dist/
+apps/realtime-agent/data/*.sqlite
+apps/realtime-agent/data/*.sqlite-shm
+apps/realtime-agent/data/*.sqlite-wal

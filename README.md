@@ -2,6 +2,12 @@
 
 Sheaf is a local-first chat server with a queue-backed worker, websocket streaming, and a turn-ledger database.
 
+## Project Surfaces
+
+- `src/sheaf`: FastAPI chat server, websocket runtime, ledger, vault, and agent tool implementation
+- `apps/obsidian-replica`: Obsidian plugin client for the Sheaf replica workflow
+- `apps/realtime-agent`: Node TypeScript library (`realtime-agent-lib`) and `realtime-agent` CLI for OpenAI Realtime experimentation
+
 ## Current Architecture
 
 - FastAPI API + websocket transport
@@ -111,6 +117,20 @@ Run tests:
 
 ```bash
 PYTHONPATH=src .venv/bin/python -m pytest -q
+```
+
+Build/test realtime agent:
+
+```bash
+make build-realtime-agent
+make test-realtime-agent
+```
+
+Run realtime agent CLI after build:
+
+```bash
+export OPENAI_API_KEY="your-key"
+realtime-agent --prompt-file prompts/system-prompts/basic_realtime_conversation_v1.md --context-file data/initial-context.md --model gpt-realtime-2
 ```
 
 Install the Obsidian mobile plugin into a vault:

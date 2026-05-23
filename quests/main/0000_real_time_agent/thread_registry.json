@@ -1,0 +1,137 @@
+{
+  "physical_planner": {
+    "thread_name": "sheaf_quest_0000_physical_planner",
+    "harness_kind": "codex",
+    "provider_thread_id": "019e51c6-442c-7e10-8df4-41caa2411edb",
+    "pass_id": 0,
+    "round_count": 1,
+    "created_at": "2026-05-22T22:20:08Z",
+    "last_used_at": "2026-05-22T22:24:00Z"
+  },
+  "physical_plan_reviewer": {
+    "thread_name": "sheaf_quest_0000_physical_plan_reviewer",
+    "harness_kind": "claude_code",
+    "provider_thread_id": "b48da1e3-b60b-48fb-996f-e6166b7c9973",
+    "pass_id": 0,
+    "round_count": 1,
+    "created_at": "2026-05-22T23:05:09Z",
+    "last_used_at": "2026-05-22T23:07:41Z"
+  },
+  "slice_1_implementer": {
+    "thread_name": "sheaf_quest_0000_slice_0001_implementer",
+    "harness_kind": "cursor",
+    "provider_thread_id": "13e971fd-5107-409f-ae1b-678396ef51fe",
+    "pass_id": 0,
+    "round_count": 1,
+    "created_at": "2026-05-22T23:07:42Z",
+    "last_used_at": "2026-05-23T01:17:10Z"
+  },
+  "slice_1_polisher_reviewer": {
+    "thread_name": "sheaf_quest_0000_slice_0001_polisher_reviewer",
+    "harness_kind": "claude_code",
+    "provider_thread_id": "93bf33c8-b56f-400f-957a-dceac770345b",
+    "pass_id": 0,
+    "round_count": 2,
+    "created_at": "2026-05-23T01:42:31Z",
+    "last_used_at": "2026-05-23T01:49:27Z"
+  },
+  "slice_1_polisher": {
+    "thread_name": "sheaf_quest_0000_slice_0001_polisher",
+    "harness_kind": "codex",
+    "provider_thread_id": "019e5283-ecab-70b3-bd30-0cf8ac319237",
+    "pass_id": 0,
+    "round_count": 1,
+    "created_at": "2026-05-23T01:47:17Z",
+    "last_used_at": "2026-05-23T01:48:43Z"
+  },
+  "slice_2_implementer": {
+    "thread_name": "sheaf_quest_0000_slice_0002_implementer",
+    "harness_kind": "cursor",
+    "provider_thread_id": "4af626c3-cbff-467c-9f23-f7ed652ecb9b",
+    "pass_id": 0,
+    "round_count": 1,
+    "created_at": "2026-05-23T01:49:28Z",
+    "last_used_at": "2026-05-23T01:53:39Z"
+  },
+  "slice_2_polisher_reviewer": {
+    "thread_name": "sheaf_quest_0000_slice_0002_polisher_reviewer",
+    "harness_kind": "claude_code",
+    "provider_thread_id": "803b047d-ac5f-422e-baf3-d5402ae528b9",
+    "pass_id": 0,
+    "round_count": 1,
+    "created_at": "2026-05-23T01:53:40Z",
+    "last_used_at": "2026-05-23T01:57:05Z"
+  },
+  "slice_3_implementer": {
+    "thread_name": "sheaf_quest_0000_slice_0003_implementer",
+    "harness_kind": "cursor",
+    "provider_thread_id": "4ee954ee-13e4-401f-b89a-0bf681cc935f",
+    "pass_id": 0,
+    "round_count": 1,
+    "created_at": "2026-05-23T01:57:07Z",
+    "last_used_at": "2026-05-23T02:01:50Z"
+  },
+  "slice_3_polisher_reviewer": {
+    "thread_name": "sheaf_quest_0000_slice_0003_polisher_reviewer",
+    "harness_kind": "claude_code",
+    "provider_thread_id": "56a445a4-c25c-4301-ba6d-50f8456cda3b",
+    "pass_id": 0,
+    "round_count": 2,
+    "created_at": "2026-05-23T04:00:59Z",
+    "last_used_at": "2026-05-23T04:07:07Z"
+  },
+  "slice_3_polisher": {
+    "thread_name": "sheaf_quest_0000_slice_0003_polisher",
+    "harness_kind": "codex",
+    "provider_thread_id": "019e5301-ce8a-7562-8657-b10631a51738",
+    "pass_id": 0,
+    "round_count": 1,
+    "created_at": "2026-05-23T04:04:47Z",
+    "last_used_at": "2026-05-23T04:06:19Z"
+  },
+  "slice_4_implementer": {
+    "thread_name": "sheaf_quest_0000_slice_0004_implementer",
+    "harness_kind": "cursor",
+    "provider_thread_id": "f4586566-e117-4738-bd80-9c63569e34be",
+    "pass_id": 0,
+    "round_count": 1,
+    "created_at": "2026-05-23T04:07:08Z",
+    "last_used_at": "2026-05-23T04:17:24Z"
+  },
+  "slice_4_polisher_reviewer": {
+    "thread_name": "sheaf_quest_0000_slice_0004_polisher_reviewer",
+    "harness_kind": "claude_code",
+    "provider_thread_id": "697fa729-0129-4672-897f-2b5f6a17415d",
+    "pass_id": 0,
+    "round_count": 2,
+    "created_at": "2026-05-23T04:17:25Z",
+    "last_used_at": "2026-05-23T04:20:54Z"
+  },
+  "slice_5_implementer": {
+    "thread_name": "sheaf_quest_0000_slice_0005_implementer",
+    "harness_kind": "cursor",
+    "provider_thread_id": "1443198f-262c-4e82-9394-f170c56393e3",
+    "pass_id": 0,
+    "round_count": 1,
+    "created_at": "2026-05-23T04:20:55Z",
+    "last_used_at": "2026-05-23T04:33:54Z"
+  },
+  "slice_5_polisher_reviewer": {
+    "thread_name": "sheaf_quest_0000_slice_0005_polisher_reviewer",
+    "harness_kind": "claude_code",
+    "provider_thread_id": "71122149-607c-4da9-97f9-b457f0b25c2f",
+    "pass_id": 0,
+    "round_count": 1,
+    "created_at": "2026-05-23T04:33:54Z",
+    "last_used_at": "2026-05-23T04:35:50Z"
+  },
+  "documenter": {
+    "thread_name": "sheaf_quest_0000_documenter",
+    "harness_kind": "codex",
+    "provider_thread_id": "019e531e-3e7e-7ff1-b4c2-f4121cb658a3",
+    "pass_id": 0,
+    "round_count": 1,
+    "created_at": "2026-05-23T04:35:51Z",
+    "last_used_at": "2026-05-23T04:40:24Z"
+  }
+}
