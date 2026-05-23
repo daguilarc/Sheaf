@@ -14,6 +14,13 @@ This completes Spec 03's freshness behavior.
 
 In scope:
 
+- A new `FreshnessCoordinator` (stable, owned by `SessionController`,
+  exists for the extension's whole lifetime) that exposes a fixed
+  `FreshnessHooks` reference. Tools always receive this reference at
+  tool-set construction time and can call it before, during, or after
+  any session. The coordinator delegates calls to whichever
+  `FreshnessService` is attached to the currently active session — or
+  no-ops when no session is active.
 - A new `FreshnessService` in `apps/vscode-extension/src/freshness/`
   that owns:
   - Per-file `FileFreshnessState` map.
@@ -48,26 +55,36 @@ New files:
 
 ```
 apps/vscode-extension/src/freshness/
+  freshnessCoordinator.ts # stable façade owned by SessionController;
+                          # holds the active FreshnessService (or none)
+                          # and exposes the FreshnessHooks proxy
   freshnessService.ts     # state + subscriptions + push gating
   types.ts                # FileFreshnessState, ViewportFreshnessState,
-                          # CursorFreshnessState
+                          # CursorFreshnessState, FreshnessHooks
   contextBuilders.ts      # build StructuredContextMessage for each kind
 ```
 
 Updates:
 
-- `src/extension.ts` — instantiate `FreshnessService` after the session
-  starts and dispose it on session stop. The service needs the active
-  `RealtimeAgentSession` and `ChatModel`.
-- `src/sessionController.ts` — expose a `getActiveSession()` accessor
-  and a state listener so the freshness service can attach/detach with
-  the session lifecycle. Pass `{ markAgentOriginated }` into the tool
-  set so navigation tools can flag their own mutations.
-- `src/tools/index.ts` — `BuildVscodeToolCallSet` accepts a
-  `freshness` dependency. Each relevant tool calls
+- `src/extension.ts` — construct one `FreshnessCoordinator` at
+  activation, before any session, and pass `coordinator.hooks` into
+  `BuildVscodeToolCallSet(...)`. The coordinator persists for the
+  extension's lifetime.
+- `src/sessionController.ts` — owns the coordinator. On
+  `onSessionStarted`, instantiate a new `FreshnessService(session,
+  chatModel)`, attach VS Code listeners inside the service, and call
+  `coordinator.attach(service)`. On `onSessionStopped`, call
+  `coordinator.detach()` which disposes the service's listeners and
+  clears state. The coordinator continues to exist; the hooks
+  reference held by the tool set is unchanged.
+- `src/tools/index.ts` — `BuildVscodeToolCallSet` accepts a required
+  `freshness: FreshnessHooks` dependency (slice 0004 already designed
+  this dependency as optional; slice 0006 makes it required for the
+  extension's tool set assembly). Each relevant tool calls
   `freshness.markObserved*` (read tools) or
   `freshness.beginAgentMutation()` / `endAgentMutation()` (movement
-  tools).
+  tools). Tools never see the coordinator or the service; they only
+  see the stable `FreshnessHooks` interface.
 
 ## APIs To Reuse As-Is
 
@@ -100,6 +117,60 @@ The hooks are optional so tools remain testable in isolation without
 the service.
 
 ## Design Notes
+
+### Coordinator lifecycle and tool-set ordering
+
+The tool call set must be built before `startAgentSession` is called,
+because tools are part of the session configuration. The
+`FreshnessService` cannot exist until a session exists. To resolve this
+ordering, the slice introduces a `FreshnessCoordinator`:
+
+```ts
+export class FreshnessCoordinator {
+  private current: FreshnessService | null = null;
+
+  // Stable reference — handed to BuildVscodeToolCallSet at activation
+  // time, reused across many sessions.
+  readonly hooks: FreshnessHooks = {
+    markFileObserved: (file) => this.current?.markFileObserved(file),
+    markViewportObserved: (file) => this.current?.markViewportObserved(file),
+    markCursorObserved: (file) => this.current?.markCursorObserved(file),
+    beginAgentMutation: () => this.current
+      ? this.current.beginAgentMutation()
+      : { end: () => {} },
+  };
+
+  attach(service: FreshnessService): void { this.current = service; }
+  detach(): void { this.current?.dispose(); this.current = null; }
+}
+```
+
+Ordering during extension activation:
+
+1. `activate()` constructs `FreshnessCoordinator` and `SessionController`.
+2. `activate()` calls `BuildVscodeToolCallSet({ editorAccess,
+   freshness: coordinator.hooks })`. The returned set is cached on the
+   `SessionController`.
+3. When the user toggles a session on, `SessionController.start()`
+   calls `startAgentSession({ ..., toolCallSet: cachedSet, ... })`.
+4. After the session resolves, `SessionController` builds
+   `new FreshnessService(session, chatModel)`, calls
+   `service.attachListeners()`, and `coordinator.attach(service)`. The
+   tool hooks the model already holds now route to real state.
+5. When the session stops, `coordinator.detach()` runs and the hooks
+   silently no-op until the next session attaches.
+
+While no session is attached, tools can still call the hooks. They
+no-op safely:
+
+- `markObserved*` is a state mutation; with no service, there is no
+  state to mutate.
+- `beginAgentMutation` returns an inert handle (`{ end: () => {} }`)
+  so tools that wrap with try/finally still work.
+
+This eliminates the circular dependency: hooks are constructed first,
+the service is constructed last, and the proxy bridges the lifecycle
+gap.
 
 ### State storage
 
@@ -232,10 +303,17 @@ export function buildCursorChangedMessage(file: string): StructuredContextMessag
 
 ### Lifecycle
 
-- On `SessionController.onSessionStarted`, the freshness service
-  attaches its VS Code listeners and resets all state.
-- On `SessionController.onSessionStopped`, it disposes listeners and
-  clears state.
+- On `SessionController.onSessionStarted`, the controller constructs a
+  fresh `FreshnessService`, calls `service.attachListeners()` (which
+  subscribes to the VS Code change events listed above and resets all
+  state), then `coordinator.attach(service)`.
+- On `SessionController.onSessionStopped`, the controller calls
+  `coordinator.detach()`. The coordinator calls `service.dispose()`
+  which removes all listeners and clears state. The coordinator and
+  its `hooks` reference survive; the tool set continues to hold them
+  unchanged across many session start/stop cycles.
+- During extension deactivation, the coordinator is detached as part
+  of normal disposal.
 
 ## Validation
 
@@ -252,6 +330,16 @@ export function buildCursorChangedMessage(file: string): StructuredContextMessag
     change events.
   - `serviceLifecycle.test.ts` — service detaches listeners on
     session stop; no pushes after detach.
+  - `coordinator.test.ts` — hook calls before any session attaches
+    no-op safely (no throws, no recorded state). After
+    `coordinator.attach(service)`, hook calls route to the service.
+    After `coordinator.detach()`, subsequent hook calls no-op again.
+    The same `coordinator.hooks` reference is used across
+    attach/detach cycles, proving the tool-set ordering is sound.
+  - `toolObservationsDuringSession.test.ts` — with a tool set built
+    against `coordinator.hooks` and a single session attached, a
+    simulated `code_read` call updates `FileFreshnessState` and a
+    subsequent non-agent file change triggers exactly one push.
 - All tests run against a fake `vscode` event emitter rig defined in
   `test/helpers/fakeVscodeEvents.ts`.
 

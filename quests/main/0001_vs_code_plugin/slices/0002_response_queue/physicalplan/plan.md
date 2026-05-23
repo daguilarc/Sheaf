@@ -1,4 +1,4 @@
-# Slice 0002 — Response Queue
+# Slice 0002 — Response Queue and Tool Follow-up Responses
 
 ## Objective
 
@@ -10,8 +10,14 @@ configurable policy. After this slice, callers can issue
 })` while a response is already running, and the agent will enqueue, reject,
 or cancel-current per their `queuePolicy`.
 
+This slice also gives `ToolDispatcher` a configurable follow-up policy so it
+can request a model response after sending a tool's `function_call_output`.
+That follow-up `response.create` flows through the same queue, so tool-driven
+turns coexist cleanly with caller-driven turns.
+
 This completes Spec 01's queue semantics so the VS Code extension never has
-to think about whether the model is busy.
+to think about whether the model is busy, and it satisfies Spec 02's "send
+result, then request another response" rule for navigation/read tools.
 
 ## Scope
 
@@ -25,6 +31,13 @@ In scope:
 - Optional `queuePolicy` defaulting to `enqueue`.
 - Behavior for `response.cancel` issued explicitly via `sendRealtimeEvent`
   remains a transparent pass-through (per spec).
+- A new `ToolDispatcher` option `responseAfterOutput` (default `"never"`,
+  opt-in `"always"`) that, when set, queues a `response.create` after each
+  successful or error tool output. Routed through the queue introduced in
+  this slice.
+- A new `AgentStartConfig.responseAfterToolOutput` flag that
+  `startAgentSession` plumbs into `ToolDispatcher`. Default preserves
+  today's "no follow-up" behavior so the existing CLI is unaffected.
 
 Out of scope:
 
@@ -128,15 +141,47 @@ immediately and resolves with `{ status: "sent" }`.
 `m_processing` guard like `ToolDispatcher` to prevent reentrancy when an
 incoming event triggers draining the queue.
 
-### Tool-call interaction
+### Tool-call interaction and follow-up responses
 
-Tool dispatch already sends `conversation.item.create` (function_call_output)
-followed implicitly by the server creating a new response. The dispatcher
-does not call `response.create`; the model continues from tool output via its
-own response cycle. Tool output sends are not response-affecting from the
-queue's perspective and should continue to flow through `SendOutgoing`
-unchanged. Document this explicitly in code comments so the dispatcher and
-queue do not fight each other.
+Spec 02 requires that after a model tool call, the extension sends the
+`function_call_output` and then asks the model for another response so the
+loop continues (call another tool, answer the user, or stop). The
+realtime-agent today sends only the `function_call_output`; the server does
+not automatically continue when `turn_detection` is `null` (manual mode), so
+voice-driven tool calls would stall without an explicit follow-up.
+
+Implementation in this slice:
+
+- `ToolDispatcherOptions` gains `responseAfterOutput?: "never" | "always"`.
+  Default `"never"` preserves today's behavior so the existing CLI and
+  tests stay green. `"always"` makes the dispatcher emit one
+  `response.create` after every tool output (success or structured error).
+- The follow-up `response.create` is queued through the response queue
+  defined in this slice with `queuePolicy: "enqueue"`. This guarantees:
+  - The follow-up never overlaps an already-active response.
+  - If multiple tool calls arrive in quick succession, each appends one
+    follow-up and the queue drains them in FIFO order.
+  - Tool error payloads (`tool_not_found`, `invalid_arguments`,
+    `callback_failed`) also generate a follow-up so the model can recover
+    instead of hanging.
+- The `function_call_output` event itself remains routed through
+  `SendOutgoing` as today and is not queued — it is not response-affecting
+  on its own.
+- `AgentStartConfig.responseAfterToolOutput?: boolean` (default `false`)
+  is forwarded by `startAgentSession` to `ToolDispatcher` as
+  `responseAfterOutput: "always"` when true. The VS Code extension
+  (slice 0003) sets this to `true`; the CLI keeps the default `false`.
+- The dispatcher must avoid issuing a follow-up when the tool output is
+  itself the result of a model turn that the queue knows is about to be
+  cancelled. Practically this is not a real conflict because tool dispatch
+  runs in response to a model emitting a function call, so a follow-up
+  always belongs to a fresh logical turn. The queue handles ordering.
+
+Plumbing note: `ToolDispatcher` already receives a `sendContext` with
+`sendOutgoingEvent`. Extend `ToolDispatcherSendContext` with a second
+method `enqueueResponseCreate(): Promise<QueuedEventResult>` that the
+session implementation backs with `responseQueue.enqueueResponseCreate()`.
+This keeps the dispatcher unaware of the queue internals.
 
 ### Idempotency of `commitAudioAndCreateResponse`
 
@@ -164,6 +209,21 @@ comments; do not silently swallow.
   - FIFO order across multiple queued requests.
   - Terminal-by-error: a Realtime `error` referencing the active response
     drains the queue.
+  - **Tool follow-up tests** (QP-0002 coverage):
+    - Default `responseAfterToolOutput: false` (or omitted): dispatcher
+      emits only `function_call_output` after a successful tool call;
+      no `response.create` is sent. Existing CLI behavior preserved.
+    - `responseAfterToolOutput: true` + successful tool callback:
+      dispatcher emits `function_call_output` immediately followed by a
+      queued `response.create`. Sent immediately when no response is
+      active; deferred behind an active response when one is in flight.
+    - `responseAfterToolOutput: true` + `tool_not_found`,
+      `invalid_arguments`, and `callback_failed` paths each emit
+      `function_call_output` (carrying the structured error) followed
+      by a queued `response.create`.
+    - Two rapid tool calls with `responseAfterToolOutput: true` produce
+      two outputs and exactly two follow-up `response.create` events in
+      FIFO order.
 - `npm test` in `apps/realtime-agent` passes.
 
 ## Risks / Open Concerns

@@ -134,8 +134,17 @@ Cross-package:
    `path.join(context.globalStorageUri.fsPath, "realtime-agent.sqlite3")`.
 3. Build `AgentStartConfig` with
    `turnMode: { type: "manual" }`,
-   `systemPrompt`, `initialContext`, and an empty `toolCallSet`
-   (`{ tools: [] }` — populated by slice 0004).
+   `systemPrompt`, `initialContext`, an empty `toolCallSet`
+   (`{ tools: [] }` — populated by slice 0004), and
+   `responseAfterToolOutput: true` (added in slice 0002). The flag
+   makes the dispatcher request a follow-up model response after each
+   tool output so navigation/read tool calls can chain to the next
+   tool or final answer. Because `turnMode.type === "manual"`, the
+   realtime-agent library (per slice 0001) skips the initial
+   `response.create`. The extension does not request a response on
+   startup; the first model response is triggered only when the user
+   presses F19 (or the chat-pane button bound to
+   `sheaf.realtime.commitAndRespond`).
 4. `await startAgentSession(config, deps)`.
 5. `CreateMicrophoneCapture` with `onFrame: session.sendAudioFrame`.
 6. `audioCapture.start()`.
@@ -245,6 +254,10 @@ This mirrors `apps/obsidian-replica`.
     duplicate commands no-op.
   - `config` tests verify API key resolution precedence
     (SecretStorage > setting > env var).
+  - `SessionController` start test asserts that the underlying
+    `startAgentSession` is invoked with `turnMode: { type: "manual" }`
+    and that no `response.create` event is sent during startup
+    (paired with the manual-mode regression test in slice 0001).
 - `npm run build` produces `out/extension.js`.
 - Manual smoke (documented in slice notes): launching the Extension
   Development Host, pressing F15 starts a session, status bar reflects

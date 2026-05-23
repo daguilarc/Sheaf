@@ -20,7 +20,13 @@ In scope:
 
 - A new `src/tools/` directory in `apps/vscode-extension` with:
   - `types.ts` — `CodePosition`, `CodeRange`, `CodeLine`,
-    `VisibleRangeResult`, `ToolError`, and per-tool arg/result types.
+    `VisibleRangeResult`, `ToolError`, per-tool arg/result types, and
+    a minimal `FreshnessHooks` placeholder interface (four no-op
+    method signatures: `markFileObserved`, `markViewportObserved`,
+    `markCursorObserved`, `beginAgentMutation`). Slice 0006 takes
+    ownership of the real interface and re-exports it from
+    `apps/vscode-extension/src/freshness/types.ts`; until then this
+    placeholder is the canonical definition.
   - `pathPolicy.ts` — workspace-relative validation, "is inside
     workspace" check, structured `ToolError` builders.
   - `editorAccess.ts` — small helpers around `vscode.window`,
@@ -30,10 +36,20 @@ In scope:
     `setCursorPosition.ts`, `moveVisibleRange.ts` — one file per tool,
     each exporting a `ToolDefinition` compatible with
     `realtime-agent-lib`.
-  - `index.ts` — `BuildVscodeToolCallSet()` returning a `ToolCallSet`
-    containing all six tools in declaration order.
+  - `index.ts` — `BuildVscodeToolCallSet(deps)` returning a
+    `ToolCallSet` containing all six tools in declaration order. `deps`
+    is `{ editorAccess: EditorAccess; freshness?: FreshnessHooks }`.
+    The `freshness` parameter is optional in this slice (defaults to a
+    no-op hooks object) so the tools work in isolation. Slice 0006
+    will introduce `FreshnessHooks` proper and require the extension
+    to supply a real coordinator-backed hooks object. Tool internals
+    call the hooks freely; the no-op default keeps slice 0004 tests
+    independent.
 - `SessionController` from slice 0003 wires
   `toolCallSet: BuildVscodeToolCallSet()` into `AgentStartConfig`.
+  `responseAfterToolOutput: true` is already set by slice 0003, so each
+  tool result automatically chains a queued follow-up `response.create`
+  through the realtime-agent dispatcher.
 - Tool callbacks return JSON-serializable results that match the spec
   exactly. Errors return a `ToolError` payload (not a thrown exception)
   so the model receives a structured failure rather than a generic
@@ -255,6 +271,12 @@ matching the spec's TypeScript shapes (`type: "object"`, `properties`,
 - Manual smoke: in Extension Development Host, ask the agent (after
   slice 0005 chat pane lands, or temporarily via output channel logs)
   to call each tool and confirm the model receives results.
+- An integration test (using a fake realtime-agent socket plus the real
+  `BuildVscodeToolCallSet` against a fake editor seam) confirms a
+  successful tool call produces `function_call_output` followed by a
+  queued `response.create`, and a structured tool error produces the
+  same two-event sequence. This guards the slice 0003/0004 wiring
+  against regressing the QP-0002 contract.
 
 ## Risks / Open Concerns
 

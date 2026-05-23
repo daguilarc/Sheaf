@@ -16,6 +16,8 @@ In scope:
 
 - `RealtimeAgentTurnMode` type and `AgentStartConfig.turnMode` field.
 - Session config branching for `server_vad` vs `manual` modes.
+- Startup `response.create` suppression in manual mode (see "Startup
+  response behavior" below).
 - New `RealtimeAgentSession` methods:
   - `commitAudio()`
   - `createResponse()`
@@ -127,6 +129,32 @@ export interface QueuedEventResult {
 Slice 0001 always returns `{ status: "sent" }`. Slice 0002 introduces the
 other statuses without changing the type signature.
 
+### Startup response behavior
+
+`startAgentSession` currently sends `session.update`, the startup
+conversation items, and then an unconditional `response.create`. That
+auto-response is correct for the existing server-VAD CLI use case, but
+manual mode exists precisely so the caller controls when the model
+responds. If the unconditional `response.create` were preserved for
+manual mode, the model would begin responding before the user has
+committed any audio, and the response queue (slice 0002) would start
+the session with an active response.
+
+Rule for this slice:
+
+- When `turnMode.type === "server_vad"`, the startup sequence is
+  unchanged: `session.update`, startup conversation items, then
+  `response.create`. Default callers see no behavior change.
+- When `turnMode.type === "manual"`, the startup sequence omits the
+  initial `response.create`. The session is ready to accept audio
+  appends, commits, and explicit `createResponse()` calls.
+
+Implementation: in `startAgentSession`, gate the
+`BuildInitialResponseCreateEvent()` send on the resolved turn mode. The
+two startup conversation items (system prompt and initial context) are
+sent in both modes; manual mode callers may still want the model to
+have those items available when they later trigger a response.
+
 ### Persistence behavior
 
 No schema changes. All new events (other than `input_audio_buffer.append`,
@@ -146,7 +174,12 @@ this slice.
 
 - New unit tests under `test/agent_loop/` for:
   - Default `server_vad` session.update matches today's snapshot (no change).
+  - Default `server_vad` startup sequence still emits the trailing
+    `response.create` exactly as today (regression guard for QP-0001).
   - `turnMode: { type: "manual" }` produces `turn_detection: null`.
+  - `turnMode: { type: "manual" }` startup sequence emits
+    `session.update` and the two startup conversation items, and does
+    **not** emit a trailing `response.create`.
   - Custom `server_vad` overrides (`silenceDurationMs`, `threshold`,
     `prefixPaddingMs`, `createResponse`, `interruptResponse`) flow into the
     session.update payload.
