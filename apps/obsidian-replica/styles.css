@@ -272,9 +272,34 @@ body.keyboard-animating .sheaf-root,
   padding: var(--sheaf-sm) var(--sheaf-md);
   border-radius: var(--sheaf-radius-lg);
   line-height: 1.5;
-  white-space: pre-wrap;
   word-break: break-word;
   font-size: var(--sheaf-text-sm);
+}
+
+.sheaf-message__content {
+  min-width: 0;
+}
+
+.sheaf-message__content--plaintext {
+  white-space: pre-wrap;
+}
+
+.sheaf-message__content--markdown > :first-child {
+  margin-top: 0;
+}
+
+.sheaf-message__content--markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.sheaf-message__content--markdown pre {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.sheaf-message__content--markdown .math {
+  max-width: 100%;
+  overflow-x: auto;
 }
 
 .sheaf-message--user {

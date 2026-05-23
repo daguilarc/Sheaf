@@ -1,8 +1,17 @@
+import { Component, MarkdownRenderer, type App } from "obsidian";
 import { setIcon } from "obsidian";
 
 import type { ChatService } from "../service.js";
 import type { ChatThreadSessionState } from "../../types.js";
-import { itemSignature, renderTranscriptItem, updateTranscriptItem } from "./messageRenderer.js";
+import {
+  itemSignature,
+  renderTranscriptItem,
+  type RenderedTranscriptItem,
+  type TranscriptRenderContext,
+  updateTranscriptItem,
+} from "./messageRenderer.js";
+
+const CHAT_RENDER_SOURCE_PATH = ".sheaf/chat-transcript.md";
 
 function formatWhen(value: string | null): string | null {
   if (!value) {
@@ -16,6 +25,7 @@ function formatWhen(value: string | null): string | null {
 }
 
 export class ConversationComponent {
+  private readonly renderContext: TranscriptRenderContext;
   private container: HTMLElement | null = null;
   private titleEl: HTMLElement | null = null;
   private subtitleEl: HTMLElement | null = null;
@@ -24,10 +34,36 @@ export class ConversationComponent {
   private composerEl: HTMLTextAreaElement | null = null;
   private sendBtn: HTMLButtonElement | null = null;
   private composerValue = "";
-  private transcriptRowMap = new Map<string, HTMLElement>();
+  private transcriptRowMap = new Map<string, RenderedTranscriptItem>();
   private lastTranscriptSnapshot = new Map<string, string>();
   private lastStatusText = "";
   private mountedThreadID: string | null = null;
+
+  constructor(
+    app: App,
+    parentComponent: Component,
+  ) {
+    this.renderContext = {
+      sourcePath: CHAT_RENDER_SOURCE_PATH,
+      createMarkdownRenderSession: () => {
+        const component = new Component();
+        parentComponent.addChild(component);
+        let released = false;
+        return {
+          handle: component,
+          release: () => {
+            if (released) {
+              return;
+            }
+            released = true;
+            parentComponent.removeChild(component);
+          },
+        };
+      },
+      renderMarkdown: (markdown, container, sourcePath, handle) =>
+        MarkdownRenderer.render(app, markdown, container, sourcePath, handle as Component),
+    };
+  }
 
   mount(parent: HTMLElement, service: ChatService): void {
     parent.empty();
@@ -166,9 +202,10 @@ export class ConversationComponent {
     const wasNearBottom = this.isNearBottom(this.transcriptEl);
 
     const nextIds = new Set(session.transcriptItems.map((item) => item.id));
-    for (const [id, node] of this.transcriptRowMap.entries()) {
+    for (const [id, rendered] of this.transcriptRowMap.entries()) {
       if (!nextIds.has(id)) {
-        node.remove();
+        rendered.release();
+        rendered.element.remove();
         this.transcriptRowMap.delete(id);
       }
     }
@@ -176,13 +213,18 @@ export class ConversationComponent {
     for (const item of session.transcriptItems) {
       const existing = this.transcriptRowMap.get(item.id);
       if (existing) {
-        updateTranscriptItem(existing, item);
-        this.transcriptEl.appendChild(existing);
+        const updated = updateTranscriptItem(this.renderContext, existing, item);
+        if (updated !== existing) {
+          existing.release();
+          existing.element.replaceWith(updated.element);
+          this.transcriptRowMap.set(item.id, updated);
+        }
+        this.transcriptEl.appendChild(updated.element);
         continue;
       }
-      const node = renderTranscriptItem(item);
-      this.transcriptRowMap.set(item.id, node);
-      this.transcriptEl.appendChild(node);
+      const rendered = renderTranscriptItem(this.renderContext, item);
+      this.transcriptRowMap.set(item.id, rendered);
+      this.transcriptEl.appendChild(rendered.element);
     }
 
     this.lastTranscriptSnapshot = visibleSnapshot;
@@ -269,6 +311,9 @@ export class ConversationComponent {
   }
 
   private resetTranscript(): void {
+    for (const rendered of this.transcriptRowMap.values()) {
+      rendered.release();
+    }
     this.transcriptEl?.empty();
     this.transcriptRowMap.clear();
     this.lastTranscriptSnapshot.clear();

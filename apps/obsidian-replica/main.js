@@ -25,9 +25,6 @@ __export(main_exports, {
 module.exports = __toCommonJS(main_exports);
 var import_obsidian7 = require("obsidian");
 
-// src/chat/api.ts
-var import_obsidian = require("obsidian");
-
 // src/chat/protocol.ts
 var CHAT_PROTOCOL_VERSION = 1;
 function isObject(value) {
@@ -129,18 +126,19 @@ function decodeModelListResponse(value) {
 
 // src/chat/api.ts
 var ChatApiClient = class {
-  constructor(settings) {
+  constructor(settings, requestUrl3) {
     this.settings = settings;
+    this.requestUrl = requestUrl3;
   }
   async listThreads() {
-    const response = await (0, import_obsidian.requestUrl)({
+    const response = await this.requestUrl({
       url: `${this.settings().serverBaseUrl}/threads`,
       method: "GET"
     });
     return decodeThreadsResponse(response.json);
   }
   async createThread(name) {
-    const response = await (0, import_obsidian.requestUrl)({
+    const response = await this.requestUrl({
       url: `${this.settings().serverBaseUrl}/threads`,
       method: "POST",
       contentType: "application/json",
@@ -149,14 +147,14 @@ var ChatApiClient = class {
     return decodeCreateThreadResponse(response.json);
   }
   async listModels() {
-    const response = await (0, import_obsidian.requestUrl)({
+    const response = await this.requestUrl({
       url: `${this.settings().serverBaseUrl}/models`,
       method: "GET"
     });
     return decodeModelListResponse(response.json);
   }
   async enterThread(threadID, knownTailTurnID) {
-    const response = await (0, import_obsidian.requestUrl)({
+    const response = await this.requestUrl({
       url: `${this.settings().serverBaseUrl}/threads/${encodeURIComponent(threadID)}/enter-chat`,
       method: "POST",
       contentType: "application/json",
@@ -724,7 +722,7 @@ var ChatTransportClient = class {
 var ChatService = class {
   constructor(options) {
     this.options = options;
-    this.api = new ChatApiClient(options.settings);
+    this.api = new ChatApiClient(options.settings, options.requestUrl);
     this.transport = new ChatTransportClient(options.settings);
     this.store = new ChatStore(() => {
       const vaultName = options.settings().vaultName.trim();
@@ -1084,12 +1082,12 @@ var ChatService = class {
 var import_obsidian5 = require("obsidian");
 
 // src/chat/components/threadList.ts
-var import_obsidian3 = require("obsidian");
+var import_obsidian2 = require("obsidian");
 
 // src/chat/modals.ts
-var import_obsidian2 = require("obsidian");
+var import_obsidian = require("obsidian");
 var DEFAULT_NEW_THREAD_NAME = "New thread";
-var NewThreadModal = class extends import_obsidian2.Modal {
+var NewThreadModal = class extends import_obsidian.Modal {
   constructor(app, onSubmit) {
     super(app);
     this.onSubmit = onSubmit;
@@ -1100,7 +1098,7 @@ var NewThreadModal = class extends import_obsidian2.Modal {
     contentEl.empty();
     this.titleEl.setText("New thread");
     let inputEl = null;
-    new import_obsidian2.Setting(contentEl).setName("Thread name").addText((text) => {
+    new import_obsidian.Setting(contentEl).setName("Thread name").addText((text) => {
       inputEl = text.inputEl;
       text.setValue(this.name).onChange((value) => {
         this.name = value;
@@ -1150,27 +1148,27 @@ var ThreadListComponent = class {
     header.createDiv({ text: "Sheaf Chat", cls: "sheaf-header-title" });
     const actions = header.createDiv({ cls: "sheaf-header-actions" });
     const refreshBtn = actions.createEl("button", { cls: "sheaf-icon-btn" });
-    (0, import_obsidian3.setIcon)(refreshBtn, "refresh-cw");
+    (0, import_obsidian2.setIcon)(refreshBtn, "refresh-cw");
     refreshBtn.setAttribute("aria-label", "Refresh threads");
     refreshBtn.addEventListener("click", () => {
       void service.refreshThreads();
     });
     const settingsBtn = actions.createEl("button", { cls: "sheaf-icon-btn" });
-    (0, import_obsidian3.setIcon)(settingsBtn, "settings");
+    (0, import_obsidian2.setIcon)(settingsBtn, "settings");
     settingsBtn.setAttribute("aria-label", "Open settings");
     settingsBtn.addEventListener("click", () => {
       service.openSettings();
     });
     const newBtn = this.container.createEl("button", { cls: "sheaf-new-thread-btn" });
     const plusIcon = newBtn.createSpan();
-    (0, import_obsidian3.setIcon)(plusIcon, "plus");
+    (0, import_obsidian2.setIcon)(plusIcon, "plus");
     newBtn.createSpan({ text: "New thread" });
     newBtn.disabled = state.threadList.creating;
     newBtn.setAttribute("aria-label", "Create a new thread");
     newBtn.addEventListener("click", () => {
       new NewThreadModal(app, (name) => {
         void service.createThread(name).catch((error) => {
-          new import_obsidian3.Notice(error instanceof Error ? error.message : String(error));
+          new import_obsidian2.Notice(error instanceof Error ? error.message : String(error));
         });
       }).open();
     });
@@ -1201,7 +1199,7 @@ var ThreadListComponent = class {
       }
       card.addEventListener("click", () => {
         void service.openThread(thread.thread_id).catch((error) => {
-          new import_obsidian3.Notice(error instanceof Error ? error.message : String(error));
+          new import_obsidian2.Notice(error instanceof Error ? error.message : String(error));
         });
       });
     }
@@ -1212,6 +1210,7 @@ var ThreadListComponent = class {
 };
 
 // src/chat/components/conversation.ts
+var import_obsidian3 = require("obsidian");
 var import_obsidian4 = require("obsidian");
 
 // src/chat/components/messageRenderer.ts
@@ -1225,52 +1224,88 @@ function itemSignature(item) {
       return `${item.kind}:${item.role}:${item.text}`;
   }
 }
-function renderTranscriptItem(item) {
+function isMarkdownItem(item) {
+  return item.kind === "committed";
+}
+function createMessageElement(item) {
   const element = document.createElement("div");
-  element.dataset.signature = itemSignature(item);
+  const signature = itemSignature(item);
+  element.dataset.signature = signature;
+  element.dataset.kind = item.kind;
   element.setAttribute("role", "listitem");
   if (item.kind === "tool_call") {
-    element.addClasses(["sheaf-message", "sheaf-message--tool"]);
+    element.classList.add("sheaf-message", "sheaf-message--tool");
     if (item.tone === "error") {
-      element.addClass("sheaf-message--tool-error");
+      element.classList.add("sheaf-message--tool-error");
     }
-    element.setText(item.text);
     return element;
   }
-  element.addClass("sheaf-message");
+  element.classList.add("sheaf-message");
   if (item.role === "user") {
-    element.addClass("sheaf-message--user");
+    element.classList.add("sheaf-message--user");
   } else if (item.role === "assistant") {
-    element.addClass("sheaf-message--assistant");
+    element.classList.add("sheaf-message--assistant");
   } else {
-    element.addClass("sheaf-message--system");
+    element.classList.add("sheaf-message--system");
   }
   if (item.kind === "pending") {
-    element.addClass("sheaf-message--pending");
+    element.classList.add("sheaf-message--pending");
   }
   if (item.kind === "streaming") {
-    element.addClass("sheaf-message--streaming");
+    element.classList.add("sheaf-message--streaming");
   }
-  element.setText(item.text);
   return element;
 }
-function updateTranscriptItem(element, item) {
+function createContentElement(markdown) {
+  const content = document.createElement("div");
+  content.classList.add("sheaf-message__content");
+  content.classList.add(markdown ? "sheaf-message__content--markdown" : "sheaf-message__content--plaintext");
+  return content;
+}
+function setPlaintextContent(content, text) {
+  content.textContent = text;
+}
+function beginMarkdownRender(context, item, content) {
+  const session = context.createMarkdownRenderSession();
+  void context.renderMarkdown(item.text, content, context.sourcePath, session.handle);
+  return session.release;
+}
+function renderTranscriptItem(context, item) {
+  const element = createMessageElement(item);
+  const markdown = isMarkdownItem(item);
+  const content = createContentElement(markdown);
+  element.appendChild(content);
+  if (markdown) {
+    return {
+      element,
+      release: beginMarkdownRender(context, item, content)
+    };
+  }
+  setPlaintextContent(content, item.text);
+  return {
+    element,
+    release: () => {
+    }
+  };
+}
+function updateTranscriptItem(context, rendered, item) {
   const newSig = itemSignature(item);
-  if (element.dataset.signature === newSig) {
-    return;
+  if (rendered.element.dataset.signature === newSig) {
+    return rendered;
   }
-  if (item.kind === "streaming" && element.hasClass("sheaf-message--streaming")) {
-    element.textContent = item.text;
-    element.dataset.signature = newSig;
-    return;
+  if (item.kind === "streaming" && rendered.element.dataset.kind === "streaming") {
+    const content = rendered.element.querySelector(".sheaf-message__content");
+    if (content instanceof HTMLElement) {
+      setPlaintextContent(content, item.text);
+    }
+    rendered.element.dataset.signature = newSig;
+    return rendered;
   }
-  const replacement = renderTranscriptItem(item);
-  element.className = replacement.className;
-  element.textContent = replacement.textContent;
-  element.dataset.signature = replacement.dataset.signature;
+  return renderTranscriptItem(context, item);
 }
 
 // src/chat/components/conversation.ts
+var CHAT_RENDER_SOURCE_PATH = ".sheaf/chat-transcript.md";
 function formatWhen2(value) {
   if (!value) {
     return null;
@@ -1282,6 +1317,7 @@ function formatWhen2(value) {
   return parsed.toLocaleString();
 }
 var ConversationComponent = class {
+  renderContext;
   container = null;
   titleEl = null;
   subtitleEl = null;
@@ -1294,6 +1330,27 @@ var ConversationComponent = class {
   lastTranscriptSnapshot = /* @__PURE__ */ new Map();
   lastStatusText = "";
   mountedThreadID = null;
+  constructor(app, parentComponent) {
+    this.renderContext = {
+      sourcePath: CHAT_RENDER_SOURCE_PATH,
+      createMarkdownRenderSession: () => {
+        const component = new import_obsidian3.Component();
+        parentComponent.addChild(component);
+        let released = false;
+        return {
+          handle: component,
+          release: () => {
+            if (released) {
+              return;
+            }
+            released = true;
+            parentComponent.removeChild(component);
+          }
+        };
+      },
+      renderMarkdown: (markdown, container, sourcePath, handle) => import_obsidian3.MarkdownRenderer.render(app, markdown, container, sourcePath, handle)
+    };
+  }
   mount(parent, service) {
     parent.empty();
     parent.addClass("sheaf-root");
@@ -1406,22 +1463,28 @@ var ConversationComponent = class {
     }
     const wasNearBottom = this.isNearBottom(this.transcriptEl);
     const nextIds = new Set(session.transcriptItems.map((item) => item.id));
-    for (const [id, node] of this.transcriptRowMap.entries()) {
+    for (const [id, rendered] of this.transcriptRowMap.entries()) {
       if (!nextIds.has(id)) {
-        node.remove();
+        rendered.release();
+        rendered.element.remove();
         this.transcriptRowMap.delete(id);
       }
     }
     for (const item of session.transcriptItems) {
       const existing = this.transcriptRowMap.get(item.id);
       if (existing) {
-        updateTranscriptItem(existing, item);
-        this.transcriptEl.appendChild(existing);
+        const updated = updateTranscriptItem(this.renderContext, existing, item);
+        if (updated !== existing) {
+          existing.release();
+          existing.element.replaceWith(updated.element);
+          this.transcriptRowMap.set(item.id, updated);
+        }
+        this.transcriptEl.appendChild(updated.element);
         continue;
       }
-      const node = renderTranscriptItem(item);
-      this.transcriptRowMap.set(item.id, node);
-      this.transcriptEl.appendChild(node);
+      const rendered = renderTranscriptItem(this.renderContext, item);
+      this.transcriptRowMap.set(item.id, rendered);
+      this.transcriptEl.appendChild(rendered.element);
     }
     this.lastTranscriptSnapshot = visibleSnapshot;
     if (wasNearBottom) {
@@ -1484,6 +1547,9 @@ var ConversationComponent = class {
     this.composerEl.style.overflowY = scrollH > maxHeight ? "auto" : "hidden";
   }
   resetTranscript() {
+    for (const rendered of this.transcriptRowMap.values()) {
+      rendered.release();
+    }
     this.transcriptEl?.empty();
     this.transcriptRowMap.clear();
     this.lastTranscriptSnapshot.clear();
@@ -1500,12 +1566,13 @@ var SheafChatView = class extends import_obsidian5.ItemView {
   constructor(leaf, chatService) {
     super(leaf);
     this.chatService = chatService;
+    this.conversation = new ConversationComponent(this.app, this);
   }
   unsubscribe = null;
   resizeObserver = null;
   mountedScreen = null;
   threadList = new ThreadListComponent();
-  conversation = new ConversationComponent();
+  conversation;
   getViewType() {
     return SHEAF_CHAT_VIEW_TYPE;
   }
@@ -2467,7 +2534,8 @@ var SheafObsidianReplicaPlugin = class extends import_obsidian7.Plugin {
     );
     this.chatService = new ChatService({
       settings: () => this.settings,
-      openSettings: () => this.openPluginSettings()
+      openSettings: () => this.openPluginSettings(),
+      requestUrl: import_obsidian7.requestUrl
     });
     this.registerView(SHEAF_CHAT_VIEW_TYPE, (leaf) => new SheafChatView(leaf, this.chatService));
     this.settingTab = new ReplicaSettingTab(this.app, this);

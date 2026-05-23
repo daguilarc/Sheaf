@@ -12,13 +12,14 @@ export class SheafChatView extends ItemView {
   private resizeObserver: ResizeObserver | null = null;
   private mountedScreen: ChatViewState["screen"] | null = null;
   private threadList = new ThreadListComponent();
-  private conversation = new ConversationComponent();
+  private conversation: ConversationComponent;
 
   constructor(
     leaf: WorkspaceLeaf,
     private readonly chatService: ChatService,
   ) {
     super(leaf);
+    this.conversation = new ConversationComponent(this.app, this);
   }
 
   getViewType(): string {

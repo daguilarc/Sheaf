@@ -1,4 +1,4 @@
-import { ChatApiClient } from "./api.js";
+import { ChatApiClient, type RequestUrl } from "./api.js";
 import {
   ChatStore,
   applyCommittedTurn,
@@ -19,6 +19,7 @@ import type {
 type ChatServiceOptions = {
   settings: () => ReplicaPluginSettings;
   openSettings: () => void;
+  requestUrl: RequestUrl;
   getNow?: () => number;
 };
 
@@ -35,7 +36,7 @@ export class ChatService {
   private thinkingQuietHandle: number | null = null;
 
   constructor(private readonly options: ChatServiceOptions) {
-    this.api = new ChatApiClient(options.settings);
+    this.api = new ChatApiClient(options.settings, options.requestUrl);
     this.transport = new ChatTransportClient(options.settings);
     this.store = new ChatStore(() => {
       const vaultName = options.settings().vaultName.trim();

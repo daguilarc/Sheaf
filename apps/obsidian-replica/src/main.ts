@@ -289,6 +289,7 @@ export default class SheafObsidianReplicaPlugin extends Plugin {
     this.chatService = new ChatService({
       settings: () => this.settings,
       openSettings: () => this.openPluginSettings(),
+      requestUrl,
     });
 
     this.registerView(SHEAF_CHAT_VIEW_TYPE, (leaf) => new SheafChatView(leaf, this.chatService));

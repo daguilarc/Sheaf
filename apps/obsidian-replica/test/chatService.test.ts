@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 
 import { ChatService } from "../src/chat/service.js";
 
+import type { RequestUrl } from "../src/chat/api.js";
+import type { RequestUrlResponse, RequestUrlResponsePromise } from "obsidian";
 import type { ChatThreadSummary } from "../src/types.js";
 
 const thread: ChatThreadSummary = {
@@ -17,6 +19,20 @@ const thread: ChatThreadSummary = {
 };
 
 function createService(): ChatService {
+  const requestUrl: RequestUrl = () => {
+    const response: RequestUrlResponse = {
+      status: 200,
+      headers: {},
+      arrayBuffer: new ArrayBuffer(0),
+      json: {},
+      text: "",
+    };
+    const promise = Promise.resolve(response) as RequestUrlResponsePromise;
+    promise.arrayBuffer = Promise.resolve(response.arrayBuffer);
+    promise.json = Promise.resolve(response.json);
+    promise.text = Promise.resolve(response.text);
+    return promise;
+  };
   return new ChatService({
     settings: () => ({
       serverBaseUrl: "http://127.0.0.1:2731",
@@ -31,6 +47,7 @@ function createService(): ChatService {
       chatReconnectDelayMs: 25,
     }),
     openSettings: () => {},
+    requestUrl,
     getNow: () => 1000,
   });
 }
