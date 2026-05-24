@@ -71,7 +71,7 @@
         "sheaf.realtime.systemPrompt": {
           "type": "string",
           "default": "",
-          "description": "Overrides the built-in voice-navigation system prompt when non-empty."
+          "description": "Overrides the built-in sheaf VS Code system prompt when non-empty."
         },
         "sheaf.realtime.inputDevice": {
           "type": "string",

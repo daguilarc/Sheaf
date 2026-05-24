@@ -1,3 +1,16 @@
+import { BASELINE_VOICE_NAV_SYSTEM_PROMPT } from "./prompts.js";
+
+export function ResolveSystemPrompt(configured: string | undefined): string
+{
+  const trimmed = configured?.trim();
+  if (trimmed !== undefined && trimmed.length > 0)
+  {
+    return trimmed;
+  }
+
+  return BASELINE_VOICE_NAV_SYSTEM_PROMPT;
+}
+
 export function ResolveOpenAiApiKey(
   secretValue: string | undefined,
   settingValue: string | undefined,

@@ -1,12 +1,11 @@
 import * as vscode from "vscode";
 
-import { ResolveOpenAiApiKey } from "./configCore.js";
-import { BASELINE_VOICE_NAV_SYSTEM_PROMPT } from "./prompts.js";
+import { ResolveOpenAiApiKey, ResolveSystemPrompt } from "./configCore.js";
+
+export { ResolveOpenAiApiKey, ResolveSystemPrompt } from "./configCore.js";
 
 const x_configSection = "sheaf.realtime";
 const x_secretKeyOpenAiApiKey = "sheaf.realtime.openAiApiKey";
-
-export { ResolveOpenAiApiKey } from "./configCore.js";
 
 export async function getOpenAiApiKey(context: vscode.ExtensionContext): Promise<string | undefined>
 {
@@ -24,13 +23,7 @@ export function getModel(): string
 export function getSystemPrompt(): string
 {
   const value = vscode.workspace.getConfiguration(x_configSection).get<string>("systemPrompt");
-  const trimmed = value?.trim();
-  if (trimmed !== undefined && trimmed.length > 0)
-  {
-    return trimmed;
-  }
-
-  return BASELINE_VOICE_NAV_SYSTEM_PROMPT;
+  return ResolveSystemPrompt(value);
 }
 
 export function getInputDevice(): string | undefined

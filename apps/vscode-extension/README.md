@@ -1,6 +1,6 @@
 # Sheaf VS Code extension
 
-Voice-driven OpenAI Realtime session inside VS Code using the shared `realtime-agent-lib` package (no duplicated websocket client).
+Voice-driven OpenAI Realtime session inside VS Code using the shared `realtime-agent-lib` package (no duplicated websocket client). The built-in system prompt (when `sheaf.realtime.systemPrompt` is empty) describes the `sheaf VS Code` read/navigation tools plus validated `modifyFile` buffer edits.
 
 ## Develop
 
@@ -32,7 +32,7 @@ Voice-driven OpenAI Realtime session inside VS Code using the shared `realtime-a
 | Setting `sheaf.realtime.openAiApiKey` | Fallback key (less secure) |
 | Env `OPENAI_API_KEY` | Last-resort fallback |
 | `sheaf.realtime.model` | Defaults to `gpt-realtime-2` |
-| `sheaf.realtime.systemPrompt` | Non-empty overrides the built-in voice-navigation prompt |
+| `sheaf.realtime.systemPrompt` | Non-empty overrides the built-in `sheaf VS Code` prompt |
 | `sheaf.realtime.inputDevice` | Optional device id or name substring |
 | `sheaf.realtime.safetyIdentifier` | Optional Realtime safety header |
 

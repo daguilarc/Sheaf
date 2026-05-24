@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The VS Code extension in `apps/vscode-extension` provides a voice-driven editor workflow on top of `realtime-agent-lib`. It starts a manual-turn OpenAI Realtime session, captures microphone audio in the extension host, exposes VS Code-native read/navigation tools, shows a focused chat pane, and pushes structured context when observed editor state becomes stale.
+The VS Code extension in `apps/vscode-extension` provides a voice-driven editor workflow on top of `realtime-agent-lib`. It starts a manual-turn OpenAI Realtime session, captures microphone audio in the extension host, exposes the VS Code-native `sheaf VS Code` tool set (read, navigation, and validated buffer edits), shows a focused chat pane, and pushes structured context when observed editor state becomes stale.
 
 ## User-Facing Surface
 
@@ -30,7 +30,7 @@ When a session starts, the extension:
 3. Starts `realtime-agent-lib` with:
    - model `gpt-realtime-2` by default
    - manual turn mode
-   - the built-in VS Code read/navigation tool set
+   - the built-in `sheaf VS Code` tool set
    - `responseAfterToolOutput: true`
 4. Starts microphone capture and forwards 24 kHz mono 16-bit PCM frames through `sendAudioFrame()`.
 5. Attaches chat event listeners and freshness listeners.
@@ -72,7 +72,7 @@ Tool bubbles summarize the operation, such as reading a file or moving the viewp
 
 ## Tool Surface
 
-The extension registers one tool call set named `sheaf_vscode_read_nav` with six tools:
+The extension registers one tool call set named `sheaf VS Code` with seven tools:
 
 - `code_read`
 - `list_files`
@@ -80,8 +80,11 @@ The extension registers one tool call set named `sheaf_vscode_read_nav` with six
 - `read_visible_range`
 - `set_cursor_position`
 - `move_visible_range`
+- `modifyFile`
 
-These tools use VS Code APIs and editor buffers rather than shell commands or direct filesystem traversal. That keeps results aligned with open editors, unsaved buffers, workspace roots, and VS Code search behavior.
+Read and navigation tools use VS Code APIs and editor buffers rather than shell commands or direct filesystem traversal. That keeps results aligned with open editors, unsaved buffers, workspace roots, and VS Code search behavior.
+
+`modifyFile` applies replacements through the VS Code text document API on the current buffer (not via shell or direct filesystem writes). Before any edit, it validates that the inclusive `start` and exclusive `end` range still contains `exactText`, and that up to three full lines of `contextBeforeText` and `contextAfterText` still match the buffer (fewer lines are valid only at file boundaries). Any mismatch returns a structured error and leaves the buffer unchanged. Successful `modifyFile` calls run under the same agent-mutation freshness guard as navigation tools so the extension does not notify the model about its own write side effects.
 
 ### Path and Workspace Rules
 
@@ -122,7 +125,7 @@ Rules:
 - Viewport freshness is cleared when the agent requests visible-range context or receives a returned visible range from a navigation tool.
 - Cursor freshness is cleared when the agent reads visible-range context or moves the cursor.
 - User-driven edits, scrolling, tab switches, and selection changes can trigger one notification per stale state until the agent observes that state again.
-- Agent-caused editor mutations are suppressed so the extension does not notify the model about its own tool side effects.
+- Agent-caused editor mutations (including `modifyFile` and navigation tools) are suppressed so the extension does not notify the model about its own tool side effects.
 - Outside-workspace documents are ignored for freshness pushes.
 
 Freshness messages are serialized as structured JSON text through `sendStructuredContext()` and also appear as summarized context bubbles in the chat pane.
@@ -137,7 +140,7 @@ The extension reads these workspace settings:
 - `sheaf.realtime.inputDevice`
 - `sheaf.realtime.safetyIdentifier`
 
-If `sheaf.realtime.systemPrompt` is empty, the extension uses a built-in prompt that frames the model as a concise voice-driven coding assistant for navigation and code reading.
+If `sheaf.realtime.systemPrompt` is empty, the extension uses a built-in prompt that frames the model as a concise voice-driven coding assistant for the `sheaf VS Code` toolset: read/navigation, validated `modifyFile` buffer edits, mismatch recovery, freshness notifications for non-agent buffer changes, and spoken-code insertion at the cursor when no target range is given.
 
 ## Build and Run
 

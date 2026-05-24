@@ -17,7 +17,7 @@ This repository contains four active execution surfaces:
   - CLI binary name `realtime-agent`.
 - VS Code extension:
   - TypeScript extension in `apps/vscode-extension`.
-  - Manual-turn voice session controller, VS Code-native read/navigation tools, chat pane, status bar controls, and context freshness pushes.
+  - Manual-turn voice session controller, VS Code-native `sheaf VS Code` tools (read, navigation, and `modifyFile` buffer edits), chat pane, status bar controls, and context freshness pushes.
 
 The Sheaf server remains the primary local-first chat runtime. The realtime agent is a separate experimentation surface for OpenAI Realtime sessions with microphone input, text output, tool calls, stdout observability, and SQLite persistence.
 
@@ -56,7 +56,7 @@ The VS Code extension is the editor-facing voice workflow built on top of the re
 - `extension.ts`: activation wiring for the session controller, chat pane, status bar, tool set, and freshness coordinator.
 - `sessionController.ts`: session lifecycle, microphone startup/shutdown, API key validation, realtime-agent startup, error handling, and manual commit/respond behavior.
 - `chat/*`: bubble model, tool/context summaries, and the `sheaf.chatView` Activity Bar webview.
-- `tools/*`: VS Code-native read/navigation tools backed by editor and workspace APIs rather than direct shell or filesystem access.
+- `tools/*`: VS Code-native read, navigation, and `modifyFile` tools backed by editor and workspace APIs rather than direct shell or filesystem access.
 - `freshness/*`: change tracking for file reads, viewport observations, cursor observations, and suppression of agent-caused mutation notifications.
 - `statusBar.ts` and `commands.ts`: global VS Code command surface and stateful status bar UX.
 
