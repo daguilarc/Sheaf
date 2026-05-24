@@ -153,10 +153,19 @@ test("SessionController start passes manual turnMode and navigation tools", asyn
     assert.ok(capturedConfig !== undefined);
     assert.equal(capturedConfig.turnMode?.type, "manual");
     assert.equal(capturedConfig.responseAfterToolOutput, true);
-    assert.equal(capturedConfig.toolCallSet.tools.length, 6);
+    assert.equal(capturedConfig.toolCallSet.name, "sheaf VS Code");
+    assert.equal(capturedConfig.toolCallSet.tools.length, 7);
     assert.deepEqual(
       capturedConfig.toolCallSet.tools.map((t) => t.name),
-      ["code_read", "list_files", "rgrep", "read_visible_range", "set_cursor_position", "move_visible_range"],
+      [
+        "code_read",
+        "list_files",
+        "rgrep",
+        "read_visible_range",
+        "set_cursor_position",
+        "move_visible_range",
+        "modifyFile",
+      ],
     );
     assert.equal(capturedConfig.initialContext, "");
     assert.ok(capturedDeps?.database !== undefined);

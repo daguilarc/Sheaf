@@ -2,6 +2,7 @@ import type { ToolCallSet, ToolDefinition } from "realtime-agent-lib";
 
 import { CreateCodeReadTool } from "./codeRead.js";
 import { CreateListFilesTool } from "./listFiles.js";
+import { CreateModifyFileTool } from "./modifyFile.js";
 import { CreateMoveVisibleRangeTool } from "./moveVisibleRange.js";
 import { CreateReadVisibleRangeTool } from "./readVisibleRange.js";
 import { CreateRgrepTool } from "./rgrep.js";
@@ -26,7 +27,7 @@ export function BuildVscodeToolCallSet(deps: BuildVscodeToolCallSetDeps): ToolCa
   };
 
   return {
-    name: "sheaf_vscode_read_nav",
+    name: "sheaf VS Code",
     tools: [
       CreateCodeReadTool(services),
       CreateListFilesTool(services),
@@ -34,6 +35,7 @@ export function BuildVscodeToolCallSet(deps: BuildVscodeToolCallSetDeps): ToolCa
       CreateReadVisibleRangeTool(services),
       CreateSetCursorPositionTool(services),
       CreateMoveVisibleRangeTool(services),
+      CreateModifyFileTool(services),
     ] as ToolDefinition[],
   };
 }

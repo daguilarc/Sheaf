@@ -101,6 +101,25 @@ function SummarizeMoveVisibleRange(args: Record<string, unknown>): string
   return `Viewport move in ${file}`;
 }
 
+function SummarizeModifyFile(args: Record<string, unknown>): string
+{
+  const start = args.start;
+  if (typeof start === "object" && start !== null && !Array.isArray(start))
+  {
+    const startRecord = start as Record<string, unknown>;
+    const file = ReadOptionalString(startRecord, "file") ?? "(file)";
+    const line = ReadOptionalNumber(startRecord, "line");
+    if (line !== undefined)
+    {
+      return `Editing ${file} at line ${line}`;
+    }
+
+    return `Editing ${file}`;
+  }
+
+  return "Editing file";
+}
+
 export function FormatToolCallSummary(toolName: string, argsJson: string | undefined): string
 {
   const args = ParseArgsRecord(argsJson);
@@ -119,6 +138,8 @@ export function FormatToolCallSummary(toolName: string, argsJson: string | undef
       return SummarizeSetCursorPosition(args);
     case "move_visible_range":
       return SummarizeMoveVisibleRange(args);
+    case "modifyFile":
+      return SummarizeModifyFile(args);
     default:
       return toolName;
   }

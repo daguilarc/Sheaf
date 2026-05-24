@@ -38,6 +38,17 @@ test("rgrep includes path when present", () =>
   );
 });
 
+test("modifyFile includes file and line", () =>
+{
+  assert.equal(
+    FormatToolCallSummary(
+      "modifyFile",
+      JSON.stringify({ start: { file: "lib/util.ts", line: 3, character: 0 } }),
+    ),
+    "Editing lib/util.ts at line 3",
+  );
+});
+
 test("unknown tool falls back to name", () =>
 {
   assert.equal(FormatToolCallSummary("future_tool", "{}"), "future_tool");
