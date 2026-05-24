@@ -86,6 +86,43 @@ Read and navigation tools use VS Code APIs and editor buffers rather than shell 
 
 `modifyFile` applies replacements through the VS Code text document API on the current buffer (not via shell or direct filesystem writes). Before any edit, it validates that the inclusive `start` and exclusive `end` range still contains `exactText`, and that up to three full lines of `contextBeforeText` and `contextAfterText` still match the buffer (fewer lines are valid only at file boundaries). Any mismatch returns a structured error and leaves the buffer unchanged. Successful `modifyFile` calls run under the same agent-mutation freshness guard as navigation tools so the extension does not notify the model about its own write side effects.
 
+### `modifyFile` Contract
+
+`modifyFile` is the only write tool in the `sheaf VS Code` tool call set. It replaces one range in one workspace text document.
+
+Arguments:
+
+- `start`: inclusive position with `file`, 1-based `line`, and 0-based `character`.
+- `end`: exclusive position with `file`, 1-based `line`, and 0-based `character`.
+- `exactText`: exact text currently expected between `start` and `end`; use an empty string for insertion.
+- `replacementText`: text to insert in place of `exactText`.
+- `contextBeforeText`: exact buffer text from up to three full lines before `start` through `start`.
+- `contextAfterText`: exact buffer text from `end` through up to three full lines after `end`.
+
+Result:
+
+- `file`: normalized workspace-relative POSIX path.
+- `start` and `end`: normalized positions for the replaced range.
+- `insertedText`: the replacement text that was submitted.
+- `replacedText`: the exact text that was replaced.
+
+The start and end positions must name the same file. The file must resolve inside an open workspace folder, must exist, must be a file rather than a directory, must be at most 2 MiB, and must not look binary. The tool opens the document through VS Code, validates the current buffer, then applies a `WorkspaceEdit`.
+
+The validation window is exact. Whitespace, indentation, and line breaks in `exactText`, `contextBeforeText`, and `contextAfterText` must match the current buffer. If the edit is near the beginning or end of a file, the context naturally contains fewer than three lines because the computed context range is clamped to the file boundary. If the edit is not near a boundary, omitting surrounding lines causes a context mismatch.
+
+Structured write errors use the normal tool error shape with a stable `code`, a human-readable `message`, and optional compact `details`. Write-specific codes are:
+
+- `invalid_position`
+- `file_mismatch`
+- `expected_text_mismatch`
+- `context_before_mismatch`
+- `context_after_mismatch`
+- `edit_rejected`
+
+The tool can also return existing path/document errors such as `file_not_found`, `path_outside_workspace`, `path_is_directory`, `binary_file`, and `unsupported_document`. Mismatch details include the file, requested positions, mismatch category, expected and actual lengths, and a short actual-text preview rather than dumping large buffer contents.
+
+For spoken code with no explicit target, the built-in prompt directs the agent to insert at the current cursor. The agent should first read or infer cursor context, then call `modifyFile` with `start` equal to `end`, `exactText: ""`, and the spoken code as `replacementText`.
+
 ### Path and Workspace Rules
 
 - Tool paths are workspace-relative by default.

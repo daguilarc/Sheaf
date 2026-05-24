@@ -1,10 +1,10 @@
 # State
 
-- global_step: 15
+- global_step: 16
 - machine_name: quest
 - machine_path: quests/main/0002_write_tools
-- state: QuestDocumenting
-- updated_at: 2026-05-24T20:19:13Z
+- state: Completed
+- updated_at: 2026-05-24T20:21:55Z
 
 ## Tags
 
