@@ -1,6 +1,6 @@
 # State
 
-- global_step: 11
+- global_step: 12
 - machine_name: quest
 - machine_path: quests/main/0002_write_tools
 - state: ExecuteSlice
