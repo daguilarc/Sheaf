@@ -12,8 +12,8 @@ The VS Code extension in `apps/vscode-extension` provides a voice-driven editor 
   - `Sheaf: Toggle Realtime Session`
   - `Sheaf: Commit Audio And Request Response`
 - Default keybindings:
-  - `F15`: start or stop the realtime session
-  - `F19`: commit buffered audio and request a response
+  - `F16`: start or stop the realtime session
+  - `F20`: commit buffered audio and request a response
 - Status bar:
   - Idle: `Sheaf`
   - Active: `Sheaf Listening`
@@ -47,7 +47,7 @@ The extension always starts the realtime agent in manual turn mode.
 
 - Audio frames stream continuously while the session is active.
 - The model does not answer from raw audio append events alone.
-- `F19` calls `commitAudioAndCreateResponse()`, which sends `input_audio_buffer.commit` and `response.create` as one ordered queued unit.
+- `F20` calls `commitAudioAndCreateResponse()`, which sends `input_audio_buffer.commit` and `response.create` as one ordered queued unit.
 
 This avoids server-VAD auto-response behavior inside the editor and makes turn boundaries explicit.
 

@@ -24,7 +24,7 @@
   (`slices/0003_vscode_extension_scaffold/physicalplan/plan.md`) was
   updated in the manual-mode session-start steps to call out explicitly
   that the extension does not request a response on startup; the first
-  model response is triggered only when the user presses F19 (or the
+  model response is triggered only when the user presses F20 (or the
   chat-pane Commit/Respond button). The slice 0003 validation list now
   includes a `SessionController` test that asserts no `response.create`
   is sent during startup, paired with the slice 0001 regression test.

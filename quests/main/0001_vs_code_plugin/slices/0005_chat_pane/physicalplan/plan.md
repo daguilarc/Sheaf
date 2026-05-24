@@ -39,7 +39,7 @@ In scope:
   `"Context: <kind>"` line.
 - Error bubble for incoming `error` events and session-fatal failures.
 - Inactive-state UI: when no session is active, the pane shows a clear
-  "Session inactive — press F15 to start" message and a button bound to
+  "Session inactive — press F16 to start" message and a button bound to
   the toggle command.
 - Active-state UI: header shows session id (truncated) and an inline
   Commit/Respond button bound to the existing

@@ -4,9 +4,9 @@
 
 Create the new `apps/vscode-extension` package that hosts the VS Code
 extension. After this slice, a developer can launch the extension in a
-VS Code Extension Development Host, press F15 to start a manual-mode
-realtime-agent session with microphone capture, press F19 to commit and
-request a response, and press F15 again to stop. The extension uses the
+VS Code Extension Development Host, press F16 to start a manual-mode
+realtime-agent session with microphone capture, press F20 to commit and
+request a response, and press F16 again to stop. The extension uses the
 new realtime-agent Session API (slices 0001 and 0002) — it does not
 duplicate Realtime websocket handling.
 
@@ -23,7 +23,7 @@ In scope:
 - `package.json` extension manifest with:
   - `contributes.commands` for `sheaf.realtime.toggleSession` and
     `sheaf.realtime.commitAndRespond`.
-  - `contributes.keybindings` mapping `F15` and `F19` to those commands.
+  - `contributes.keybindings` mapping `F16` and `F20` to those commands.
   - `engines.vscode` and `activationEvents` covering the two commands.
 - `src/extension.ts` activation entry exporting `activate(context)` and
   `deactivate()`.
@@ -43,7 +43,7 @@ In scope:
 - A status-bar item that mirrors session state and acts as the toggle's
   visual surface (the spec calls for a button; in VS Code, a status-bar
   item is the idiomatic always-visible toggle and can be clicked to
-  invoke the same command as F15).
+  invoke the same command as F16).
 - Configuration surface (`contributes.configuration`) for:
   - `sheaf.realtime.openAiApiKey` (string, secret-friendly via
     SecretStorage if available).
@@ -143,7 +143,7 @@ Cross-package:
    realtime-agent library (per slice 0001) skips the initial
    `response.create`. The extension does not request a response on
    startup; the first model response is triggered only when the user
-   presses F19 (or the chat-pane button bound to
+   presses F20 (or the chat-pane button bound to
    `sheaf.realtime.commitAndRespond`).
 4. `await startAgentSession(config, deps)`.
 5. `CreateMicrophoneCapture` with `onFrame: session.sendAudioFrame`.
@@ -169,8 +169,8 @@ restate inside the extension.
         "title": "Sheaf: Commit Audio And Request Response" }
     ],
     "keybindings": [
-      { "command": "sheaf.realtime.toggleSession", "key": "f15" },
-      { "command": "sheaf.realtime.commitAndRespond", "key": "f19" }
+      { "command": "sheaf.realtime.toggleSession", "key": "f16" },
+      { "command": "sheaf.realtime.commitAndRespond", "key": "f20" }
     ]
   }
 }
@@ -260,8 +260,8 @@ This mirrors `apps/obsidian-replica`.
     (paired with the manual-mode regression test in slice 0001).
 - `npm run build` produces `out/extension.js`.
 - Manual smoke (documented in slice notes): launching the Extension
-  Development Host, pressing F15 starts a session, status bar reflects
-  state, F19 commits and requests a response, F15 stops it.
+  Development Host, pressing F16 starts a session, status bar reflects
+  state, F20 commits and requests a response, F16 stops it.
 
 ## Risks / Open Concerns
 

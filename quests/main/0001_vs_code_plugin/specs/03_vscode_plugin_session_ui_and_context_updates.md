@@ -101,8 +101,8 @@ Behavior:
 
 The extension must contribute default keybindings for both controls:
 
-- `F15`: start/stop session toggle.
-- `F19`: commit audio and create a response.
+- `F16`: start/stop session toggle.
+- `F20`: commit audio and create a response.
 
 The keybindings should invoke VS Code commands contributed by the extension, not
 depend on focus inside a specific webview or panel. They must be usable whenever
@@ -111,8 +111,8 @@ terminal, chat pane, quick pick, or other VS Code surface.
 
 The commands should handle state internally:
 
-- The `F15` command starts a session when inactive and stops it when active.
-- The `F19` command commits/responds when a session is active and should no-op or
+- The `F16` command starts a session when inactive and stops it when active.
+- The `F20` command commits/responds when a session is active and should no-op or
   show a brief status message when no session is active.
 - Both commands must ignore duplicate invocations during transient startup,
   shutdown, or pending commit/respond transitions.

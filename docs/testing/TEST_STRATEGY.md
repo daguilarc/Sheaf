@@ -65,7 +65,7 @@ The extension test command compiles tests into `.test-dist` and runs them with N
   - build `apps/realtime-agent` and `apps/vscode-extension`
   - start the extension with `F5`
   - verify idle status bar state
-  - press `F15` to start listening
-  - speak, then press `F19` to commit audio and request a response
+  - press `F16` to start listening
+  - speak, then press `F20` to commit audio and request a response
   - verify chat pane bubbles for transcript, assistant output, and tool/context activity
-  - press `F15` again to stop and confirm return to idle
+  - press `F16` again to stop and confirm return to idle

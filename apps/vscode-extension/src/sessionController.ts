@@ -154,7 +154,7 @@ export class SessionController
   {
     if (this.m_state !== "active" || this.m_session === undefined)
     {
-      void this.m_ui.setStatusBarMessage("Sheaf: start a realtime session first (F15).", 3000);
+      void this.m_ui.setStatusBarMessage("Sheaf: start a realtime session first (F16).", 3000);
       return;
     }
 

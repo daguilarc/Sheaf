@@ -125,7 +125,7 @@ function Render(root: HTMLElement, message: SnapshotMessage): void
   }
   else
   {
-    sessionLabel.textContent = "Session inactive — press F15 to start";
+    sessionLabel.textContent = "Session inactive — press F16 to start";
   }
 
   header.appendChild(sessionLabel);
@@ -166,7 +166,7 @@ function Render(root: HTMLElement, message: SnapshotMessage): void
   {
     const inactive = document.createElement("div");
     inactive.className = "sheaf-inactive";
-    inactive.textContent = "Session inactive — press F15 to start.";
+    inactive.textContent = "Session inactive — press F16 to start.";
     root.appendChild(inactive);
     return;
   }

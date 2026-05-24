@@ -44,9 +44,9 @@ The VS Code extension is the editor-facing voice workflow built on top of the re
 ## VS Code Extension Flow
 
 1. Activation constructs the session controller, chat model, freshness coordinator, status bar item, webview chat provider, and VS Code tool call set.
-2. `F15`, the status bar item, or the `Sheaf: Toggle Realtime Session` command starts a realtime-agent session in manual turn mode.
+2. `F16`, the status bar item, or the `Sheaf: Toggle Realtime Session` command starts a realtime-agent session in manual turn mode.
 3. The extension host opens microphone capture, streams 24 kHz PCM frames through `sendAudioFrame()`, and stores session data in a per-extension SQLite database under the extension global storage directory.
-4. `F19`, the chat pane button, or the `Sheaf: Commit Audio And Request Response` command calls `commitAudioAndCreateResponse()` on the active session.
+4. `F20`, the chat pane button, or the `Sheaf: Commit Audio And Request Response` command calls `commitAudioAndCreateResponse()` on the active session.
 5. The shared realtime-agent library handles WebSocket traffic, response queueing, tool dispatch, persistence, and tool-follow-up `response.create` scheduling.
 6. Incoming transcription, assistant text, tool lifecycle, and error events are reduced into a focused chat-bubble model for the `sheaf.chatView` webview instead of exposing raw Realtime protocol events.
 7. VS Code document, editor, viewport, and selection changes feed the freshness service, which sends structured context messages when previously observed file, viewport, or cursor state becomes stale.

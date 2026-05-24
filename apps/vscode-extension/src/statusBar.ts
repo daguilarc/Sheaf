@@ -19,12 +19,12 @@ export function UpdateSheafRealtimeStatusBar(
   if (state === "idle")
   {
     item.text = "$(circle-large-outline) Sheaf";
-    item.tooltip = "Sheaf realtime: idle. Click or press F15 to start.";
+    item.tooltip = "Sheaf realtime: idle. Click or press F16 to start.";
   }
   else if (state === "active")
   {
     item.text = "$(record) Sheaf Listening";
-    item.tooltip = "Sheaf realtime: listening. Click or F15 to stop. F19 to commit audio and request a response.";
+    item.tooltip = "Sheaf realtime: listening. Click or F16 to stop. F20 to commit audio and request a response.";
   }
   else
   {

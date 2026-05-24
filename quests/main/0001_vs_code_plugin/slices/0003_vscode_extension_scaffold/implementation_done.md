@@ -2,7 +2,7 @@
 
 ## Summary
 
-Delivered the `apps/vscode-extension` VS Code extension scaffold per `physicalplan/plan.md`: commands and **F15** / **F19** keybindings, manual-mode `startAgentSession` wiring with SQLite under global storage, microphone capture via `CreateMicrophoneCapture` from `realtime-agent-lib`, status-bar toggle, configuration and SecretStorage-style API key resolution, output-channel logging, and esbuild bundling to `out/extension.js`.
+Delivered the `apps/vscode-extension` VS Code extension scaffold per `physicalplan/plan.md`: commands and **F16** / **F20** keybindings, manual-mode `startAgentSession` wiring with SQLite under global storage, microphone capture via `CreateMicrophoneCapture` from `realtime-agent-lib`, status-bar toggle, configuration and SecretStorage-style API key resolution, output-channel logging, and esbuild bundling to `out/extension.js`.
 
 ## Cross-repo adjustments
 

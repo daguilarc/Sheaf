@@ -20,9 +20,9 @@ Voice-driven OpenAI Realtime session inside VS Code using the shared `realtime-a
 
 ## Controls
 
-- **F15** — toggle realtime session (manual turn mode): start microphone streaming, then stop and tear down.
-- **F19** — commit buffered audio and request a model response (only while a session is active).
-- **Status bar** — shows session state; click to run the same toggle as F15.
+- **F16** — toggle realtime session (manual turn mode): start microphone streaming, then stop and tear down.
+- **F20** — commit buffered audio and request a model response (only while a session is active).
+- **Status bar** — shows session state; click to run the same toggle as F16.
 
 ## Configuration
 

@@ -49,11 +49,11 @@
     "keybindings": [
       {
         "command": "sheaf.realtime.toggleSession",
-        "key": "f15"
+        "key": "f16"
       },
       {
         "command": "sheaf.realtime.commitAndRespond",
-        "key": "f19"
+        "key": "f20"
       }
     ],
     "configuration": {
