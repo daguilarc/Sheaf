@@ -1,6 +1,14 @@
 import type { ResolveWorkspacePathResult } from "./pathPolicy.js";
 import type { ToolError } from "./types.js";
 
+export interface TextRange0
+{
+  startLine0: number;
+  startCharacter0: number;
+  endLine0: number;
+  endCharacter0: number;
+}
+
 export interface OpenedTextDocument
 {
   absPath: string;
@@ -9,6 +17,15 @@ export interface OpenedTextDocument
   lineCount: number;
   lineTextAt0(lineIndex0: number): string;
   getText(): string;
+  positionIsValid0(line0: number, character0: number): boolean;
+  offsetAt0(line0: number, character0: number): number;
+  lineEndCharacter0(line0: number): number;
+  getTextRange0(
+    startLine0: number,
+    startCharacter0: number,
+    endLine0: number,
+    endCharacter0: number,
+  ): string;
 }
 
 export type CursorRevealKind = "default" | "center" | "top" | "bottom" | "nearest";
@@ -42,4 +59,10 @@ export interface EditorAccess
     relativePosix: string,
     preserveFocus: boolean,
   ): Promise<ActiveEditorHandle | ToolError>;
+  ReplaceTextRange(
+    absPath: string,
+    relativePosix: string,
+    range: TextRange0,
+    replacementText: string,
+  ): Promise<{ accepted: true } | ToolError>;
 }

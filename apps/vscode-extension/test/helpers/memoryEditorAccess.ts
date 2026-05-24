@@ -15,14 +15,90 @@ function ToAbs(root: string, relPosix: string): string
   return nodePath.normalize(nodePath.join(root, ...relPosix.split("/")));
 }
 
-function OpenedFromLines(absPath: string, relativePosix: string, lines: string[]): OpenedTextDocument
+function EffectiveLines(lines: string[]): string[]
 {
   // Mirror VS Code's real `TextDocument` shape: an empty file is reported as
   // `lineCount: 1` with a single empty line and `getText() === ""`, not as zero
   // lines. Production tools must handle this case from on-disk empty files.
   //
-  const effectiveLines = lines.length === 0 ? [""] : lines;
-  const fullText = lines.join("\n");
+  return lines.length === 0 ? [""] : lines;
+}
+
+function BufferTextFromLines(lines: string[]): string
+{
+  return EffectiveLines(lines).join("\n");
+}
+
+function PositionIsValid0(effectiveLines: string[], line0: number, character0: number): boolean
+{
+  if (line0 < 0 || line0 >= effectiveLines.length)
+  {
+    return false;
+  }
+
+  if (character0 < 0)
+  {
+    return false;
+  }
+
+  const lineEnd = effectiveLines[line0]?.length ?? 0;
+  return character0 <= lineEnd;
+}
+
+function OffsetAt0(effectiveLines: string[], line0: number, character0: number): number
+{
+  let offset = 0;
+  for (let i = 0; i < line0; i++)
+  {
+    offset += effectiveLines[i]!.length + 1;
+  }
+
+  return offset + character0;
+}
+
+function LineEndCharacter0(effectiveLines: string[], line0: number): number
+{
+  return effectiveLines[line0]?.length ?? 0;
+}
+
+function GetTextRange0(
+  effectiveLines: string[],
+  startLine0: number,
+  startCharacter0: number,
+  endLine0: number,
+  endCharacter0: number,
+): string
+{
+  if (startLine0 === endLine0)
+  {
+    return effectiveLines[startLine0]!.slice(startCharacter0, endCharacter0);
+  }
+
+  const parts: string[] = [];
+  parts.push(effectiveLines[startLine0]!.slice(startCharacter0));
+  for (let line = startLine0 + 1; line < endLine0; line++)
+  {
+    parts.push(effectiveLines[line]!);
+  }
+
+  parts.push(effectiveLines[endLine0]!.slice(0, endCharacter0));
+  return parts.join("\n");
+}
+
+function LinesFromBufferText(text: string): string[]
+{
+  if (text.length === 0)
+  {
+    return [""];
+  }
+
+  return text.split("\n");
+}
+
+function OpenedFromLines(absPath: string, relativePosix: string, lines: string[]): OpenedTextDocument
+{
+  const effectiveLines = EffectiveLines(lines);
+  const fullText = BufferTextFromLines(lines);
 
   return {
     absPath,
@@ -36,6 +112,27 @@ function OpenedFromLines(absPath: string, relativePosix: string, lines: string[]
     getText(): string
     {
       return fullText;
+    },
+    positionIsValid0(line0: number, character0: number): boolean
+    {
+      return PositionIsValid0(effectiveLines, line0, character0);
+    },
+    offsetAt0(line0: number, character0: number): number
+    {
+      return OffsetAt0(effectiveLines, line0, character0);
+    },
+    lineEndCharacter0(line0: number): number
+    {
+      return LineEndCharacter0(effectiveLines, line0);
+    },
+    getTextRange0(
+      startLine0: number,
+      startCharacter0: number,
+      endLine0: number,
+      endCharacter0: number,
+    ): string
+    {
+      return GetTextRange0(effectiveLines, startLine0, startCharacter0, endLine0, endCharacter0);
     },
   };
 }
@@ -263,6 +360,70 @@ export class MemoryEditorAccess implements EditorAccess
 
     this.m_activeAbs = absPath;
     return this.BuildHandleForAbsWithDoc(absPath, relativePosix, lines);
+  }
+
+  async ReplaceTextRange(
+    absPath: string,
+    relativePosix: string,
+    range: {
+      startLine0: number;
+      startCharacter0: number;
+      endLine0: number;
+      endCharacter0: number;
+    },
+    replacementText: string,
+  ): Promise<{ accepted: true } | ToolError>
+  {
+    const lines = this.m_files.get(absPath);
+    if (lines === undefined)
+    {
+      return { code: "file_not_found", message: "missing" };
+    }
+
+    const opened = OpenedFromLines(absPath, relativePosix, lines);
+
+    if (
+      !opened.positionIsValid0(range.startLine0, range.startCharacter0)
+      || !opened.positionIsValid0(range.endLine0, range.endCharacter0)
+    )
+    {
+      return {
+        code: "invalid_position",
+        message: "Start or end position is outside the document buffer.",
+        details: {
+          file: relativePosix,
+          startLine0: range.startLine0,
+          startCharacter0: range.startCharacter0,
+          endLine0: range.endLine0,
+          endCharacter0: range.endCharacter0,
+        },
+      };
+    }
+
+    const startOffset = opened.offsetAt0(range.startLine0, range.startCharacter0);
+    const endOffset = opened.offsetAt0(range.endLine0, range.endCharacter0);
+    if (startOffset > endOffset)
+    {
+      return {
+        code: "invalid_position",
+        message: "Start position must be before or equal to the end position.",
+        details: {
+          file: relativePosix,
+          startLine0: range.startLine0,
+          startCharacter0: range.startCharacter0,
+          endLine0: range.endLine0,
+          endCharacter0: range.endCharacter0,
+        },
+      };
+    }
+
+    const before = BufferTextFromLines(lines).slice(0, startOffset);
+    const after = BufferTextFromLines(lines).slice(endOffset);
+    const newText = before + replacementText + after;
+    const newLines = LinesFromBufferText(newText);
+    this.m_files.set(absPath, newLines);
+
+    return { accepted: true };
   }
 
   private BuildHandleForAbs(abs: string): ActiveEditorHandle | undefined

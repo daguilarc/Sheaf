@@ -13,7 +13,7 @@ export interface CodePosition
 {
   file: string;
   line: number;
-  character?: number;
+  character: number;
 }
 
 export interface CodeRange
@@ -49,7 +49,13 @@ export interface ToolError
     | "invalid_pattern"
     | "invalid_range"
     | "too_many_results"
-    | "unsupported_document";
+    | "unsupported_document"
+    | "invalid_position"
+    | "file_mismatch"
+    | "expected_text_mismatch"
+    | "context_before_mismatch"
+    | "context_after_mismatch"
+    | "edit_rejected";
   message: string;
   details?: Record<string, unknown>;
 }
@@ -205,6 +211,25 @@ export interface MoveVisibleRangeResult
 {
   cursor: CodePosition;
   visibleRange?: VisibleRangeResult;
+}
+
+export interface ModifyFileArgs
+{
+  start: CodePosition;
+  end: CodePosition;
+  exactText: string;
+  replacementText: string;
+  contextBeforeText: string;
+  contextAfterText: string;
+}
+
+export interface ModifyFileResult
+{
+  file: string;
+  start: CodePosition;
+  end: CodePosition;
+  insertedText: string;
+  replacedText: string;
 }
 
 export const NoOpFreshnessHooks: FreshnessHooks = {

@@ -64,6 +64,40 @@ function WrapDocument(doc: vscode.TextDocument, relativePosix: string): OpenedTe
     {
       return doc.getText();
     },
+    positionIsValid0(line0: number, character0: number): boolean
+    {
+      if (line0 < 0 || line0 >= doc.lineCount)
+      {
+        return false;
+      }
+
+      if (character0 < 0)
+      {
+        return false;
+      }
+
+      const validated = doc.validatePosition(new vscode.Position(line0, character0));
+      return validated.line === line0 && validated.character === character0;
+    },
+    offsetAt0(line0: number, character0: number): number
+    {
+      return doc.offsetAt(new vscode.Position(line0, character0));
+    },
+    lineEndCharacter0(line0: number): number
+    {
+      return doc.lineAt(line0).range.end.character;
+    },
+    getTextRange0(
+      startLine0: number,
+      startCharacter0: number,
+      endLine0: number,
+      endCharacter0: number,
+    ): string
+    {
+      const start = new vscode.Position(startLine0, startCharacter0);
+      const end = new vscode.Position(endLine0, endCharacter0);
+      return doc.getText(new vscode.Range(start, end));
+    },
   };
 }
 
@@ -236,6 +270,85 @@ export function CreateVscodeEditorAccess(): EditorAccess
         const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(absPath));
         const editor = await vscode.window.showTextDocument(doc, { preview: false, preserveFocus });
         return WrapEditor(editor, relativePosix);
+      }
+      catch (error)
+      {
+        return {
+          code: "unsupported_document",
+          message: error instanceof Error ? error.message : String(error),
+        };
+      }
+    },
+
+    async ReplaceTextRange(
+      absPath: string,
+      relativePosix: string,
+      range: {
+        startLine0: number;
+        startCharacter0: number;
+        endLine0: number;
+        endCharacter0: number;
+      },
+      replacementText: string,
+    ): Promise<{ accepted: true } | ToolError>
+    {
+      void relativePosix;
+
+      try
+      {
+        const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(absPath));
+        const opened = WrapDocument(doc, relativePosix);
+
+        if (
+          !opened.positionIsValid0(range.startLine0, range.startCharacter0)
+          || !opened.positionIsValid0(range.endLine0, range.endCharacter0)
+        )
+        {
+          return {
+            code: "invalid_position",
+            message: "Start or end position is outside the document buffer.",
+            details: {
+              file: relativePosix,
+              startLine0: range.startLine0,
+              startCharacter0: range.startCharacter0,
+              endLine0: range.endLine0,
+              endCharacter0: range.endCharacter0,
+            },
+          };
+        }
+
+        const startOffset = opened.offsetAt0(range.startLine0, range.startCharacter0);
+        const endOffset = opened.offsetAt0(range.endLine0, range.endCharacter0);
+        if (startOffset > endOffset)
+        {
+          return {
+            code: "invalid_position",
+            message: "Start position must be before or equal to the end position.",
+            details: {
+              file: relativePosix,
+              startLine0: range.startLine0,
+              startCharacter0: range.startCharacter0,
+              endLine0: range.endLine0,
+              endCharacter0: range.endCharacter0,
+            },
+          };
+        }
+
+        const edit = new vscode.WorkspaceEdit();
+        const start = new vscode.Position(range.startLine0, range.startCharacter0);
+        const end = new vscode.Position(range.endLine0, range.endCharacter0);
+        edit.replace(doc.uri, new vscode.Range(start, end), replacementText);
+        const accepted = await vscode.workspace.applyEdit(edit);
+        if (!accepted)
+        {
+          return {
+            code: "edit_rejected",
+            message: "VS Code rejected the buffer edit.",
+            details: { file: relativePosix },
+          };
+        }
+
+        return { accepted: true };
       }
       catch (error)
       {
