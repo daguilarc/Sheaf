@@ -43,6 +43,7 @@ apps/obsidian-replica/.test-dist/
 apps/vscode-extension/node_modules/
 apps/vscode-extension/out/
 apps/vscode-extension/.test-dist/
+apps/vscode-extension/*.vsix
 
 # Node realtime agent
 apps/realtime-agent/node_modules/
