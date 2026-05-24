@@ -1,10 +1,10 @@
 # State
 
-- global_step: 1
+- global_step: 2
 - machine_name: quest
 - machine_path: quests/main/0002_write_tools
-- state: ReviewPhysicalPlan
-- updated_at: 2026-05-24T20:00:54Z
+- state: PrepareNextSlice
+- updated_at: 2026-05-24T20:04:07Z
 
 ## Tags
 
