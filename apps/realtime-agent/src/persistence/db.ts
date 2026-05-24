@@ -1,16 +1,24 @@
 import { mkdirSync } from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import Database from "better-sqlite3";
+import type Database from "better-sqlite3";
 
 import type { DatabaseConfig } from "../types.js";
 
-const x_packageRoot = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  "..",
-  "..",
+type DatabaseConstructor = typeof Database;
+
+const x_moduleDir =
+  typeof __dirname === "string"
+    ? __dirname
+    : path.dirname(fileURLToPath(import.meta.url));
+const x_require = createRequire(
+  typeof __filename === "string" ? __filename : import.meta.url,
 );
+let x_databaseConstructor: DatabaseConstructor | undefined;
+
+const x_packageRoot = path.resolve(x_moduleDir, "..", "..");
 
 export const DEFAULT_DATABASE_PATH = path.join(
   x_packageRoot,
@@ -84,7 +92,7 @@ export class RealtimeAgentDb
       mkdirSync(path.dirname(databasePath), { recursive: true });
     }
 
-    const connection = new Database(databasePath);
+    const connection = new (GetDatabaseConstructor())(databasePath);
     return new RealtimeAgentDb(connection);
   }
 
@@ -97,4 +105,10 @@ export class RealtimeAgentDb
   {
     this.m_connection.close();
   }
+}
+
+function GetDatabaseConstructor(): DatabaseConstructor
+{
+  x_databaseConstructor ??= x_require("better-sqlite3") as DatabaseConstructor;
+  return x_databaseConstructor;
 }

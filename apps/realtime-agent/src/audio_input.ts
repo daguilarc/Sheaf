@@ -1,12 +1,20 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync } from "node:fs";
+import { createRequire } from "node:module";
 import { Readable } from "node:stream";
 
-import portAudio, { type DeviceInfo } from "naudiodon";
+import type { DeviceInfo } from "naudiodon";
+
+type PortAudioModule = typeof import("naudiodon");
 
 export const REALTIME_PCM_SAMPLE_RATE = 24000;
 
-const x_pcmSampleFormat = portAudio.SampleFormat16Bit;
+const x_require = createRequire(
+  typeof __filename === "string" ? __filename : import.meta.url,
+);
+let x_portAudio: PortAudioModule | undefined;
+
+const x_pcmSampleFormat = 16;
 const x_channelCount = 1;
 const x_frameDurationMs = 100;
 const x_frameBytes =
@@ -43,7 +51,7 @@ export interface FakeMicrophoneCaptureOptions
 
 export function ListInputDevices(): AudioInputDevice[]
 {
-  return portAudio
+  return GetPortAudio()
     .getDevices()
     .filter((device) => device.maxInputChannels > 0)
     .map((device) => MapDeviceInfo(device));
@@ -115,7 +123,7 @@ export function ResolveInputDeviceId(
 
 export function ResolveRequestedInputDeviceId(
   inputDevice: string | undefined,
-  getDevices: () => DeviceInfo[] = () => portAudio.getDevices(),
+  getDevices: () => DeviceInfo[] = () => GetPortAudio().getDevices(),
 ): number
 {
   if (inputDevice === undefined || inputDevice.trim().length === 0)
@@ -138,7 +146,11 @@ export function CreateMicrophoneCapture(
     return CreateSoxMicrophoneCapture(options);
   }
 
-  const deviceId = ResolveRequestedInputDeviceId(options.inputDevice);
+  const portAudio = GetPortAudio();
+  const deviceId = ResolveRequestedInputDeviceId(
+    options.inputDevice,
+    () => portAudio.getDevices(),
+  );
   const processor = new PcmFrameProcessor(options.onFrame);
   let stream: Readable & { start?: () => void; quit?: (mode: string) => void };
   let stopped = false;
@@ -349,6 +361,12 @@ function ResolveRecPath(): string
   }
 
   return "rec";
+}
+
+function GetPortAudio(): PortAudioModule
+{
+  x_portAudio ??= x_require("naudiodon") as PortAudioModule;
+  return x_portAudio;
 }
 
 export function ResampleInt16Mono(

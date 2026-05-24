@@ -1,0 +1,16 @@
+src/**
+test/**
+.test-dist/**
+*.vsix
+package-lock.json
+tsconfig.json
+tsconfig.test.json
+esbuild.config.mjs
+
+node_modules/**
+!node_modules/better-sqlite3/**
+!node_modules/naudiodon/**
+!node_modules/bindings/**
+!node_modules/file-uri-to-path/**
+!node_modules/segfault-handler/**
+!node_modules/nan/**

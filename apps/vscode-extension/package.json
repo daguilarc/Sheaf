@@ -95,13 +95,13 @@
   },
   "dependencies": {
     "better-sqlite3": "^12.10.0",
-    "naudiodon": "^2.3.6",
-    "realtime-agent-lib": "file:../realtime-agent"
+    "naudiodon": "^2.3.6"
   },
   "devDependencies": {
     "@types/node": "^22.10.1",
     "@types/vscode": "^1.85.0",
     "esbuild": "^0.24.0",
+    "realtime-agent-lib": "file:../realtime-agent",
     "typescript": "^5.7.2"
   }
 }

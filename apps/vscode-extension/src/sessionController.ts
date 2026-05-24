@@ -31,6 +31,7 @@ const x_connectionLostReason = "connection_lost";
 export interface SessionControllerDeps
 {
   startSession?: typeof startAgentSession;
+  createDatabase?: (path: string) => RealtimeAgentDb;
   createMicrophoneCapture?: typeof CreateMicrophoneCapture;
   buildVscodeToolCallSet?: () => ToolCallSet | Promise<ToolCallSet>;
   chatModel?: ChatModel;
@@ -213,6 +214,13 @@ export class SessionController
 
     const dbPath = path.join(this.m_host.globalStoragePath, "realtime-agent.sqlite3");
     const startSession = this.m_deps.startSession ?? startAgentSession;
+    const createDatabase =
+      this.m_deps.createDatabase ??
+      ((databasePath: string) =>
+        RealtimeAgentDb.open({
+          path: databasePath,
+          ensureDirectory: true,
+        }));
     const createCapture = this.m_deps.createMicrophoneCapture ?? CreateMicrophoneCapture;
 
     let database: RealtimeAgentDb | undefined;
@@ -256,10 +264,7 @@ export class SessionController
 
     try
     {
-      database = RealtimeAgentDb.open({
-        path: dbPath,
-        ensureDirectory: true,
-      });
+      database = createDatabase(dbPath);
 
       const sessionDeps: AgentSessionDeps = {
         apiKey,

@@ -7,6 +7,7 @@ import { join } from "node:path";
 import type {
   AgentSessionDeps,
   AgentStartConfig,
+  RealtimeAgentDb,
   RealtimeAgentSession,
   SessionRow,
 } from "realtime-agent-lib";
@@ -75,6 +76,13 @@ function CreateFakeSession(
   };
 }
 
+function CreateFakeDatabase(): RealtimeAgentDb
+{
+  return {
+    close: () => {},
+  } as unknown as RealtimeAgentDb;
+}
+
 test("SessionController start passes manual turnMode and navigation tools", async () =>
 {
   const tmp = mkdtempSync(join(tmpdir(), "sheaf-vsc-test-"));
@@ -130,7 +138,12 @@ test("SessionController start passes manual turnMode and navigation tools", asyn
       secrets,
       prefs,
       ui,
-      { startSession, createMicrophoneCapture, buildVscodeToolCallSet: () => CreateHarnessToolCallSet(tmp) },
+      {
+        startSession,
+        createDatabase: CreateFakeDatabase,
+        createMicrophoneCapture,
+        buildVscodeToolCallSet: () => CreateHarnessToolCallSet(tmp),
+      },
       () => {},
     );
 
@@ -191,6 +204,7 @@ test("SessionController maps start failure back to idle and records error", asyn
 
     const controller = new SessionController(host, CreateTestLog(), secrets, prefs, ui, {
       startSession,
+      createDatabase: CreateFakeDatabase,
       createMicrophoneCapture: () => ({
         start: () => {},
         stop: () => {},
@@ -242,6 +256,7 @@ test("SessionController ignores duplicate toggle while starting", async () =>
 
     const controller = new SessionController(host, CreateTestLog(), secrets, prefs, ui, {
       startSession,
+      createDatabase: CreateFakeDatabase,
       createMicrophoneCapture: () => ({
         start: () => {},
         stop: () => {},
@@ -308,6 +323,7 @@ test("SessionController start failure records error bubble in chat model", async
 
     const controller = new SessionController(host, CreateTestLog(), secrets, prefs, ui, {
       startSession,
+      createDatabase: CreateFakeDatabase,
       createMicrophoneCapture: () => ({ start: () => {}, stop: () => {} }),
       buildVscodeToolCallSet: () => CreateHarnessToolCallSet(tmp),
       chatModel,
@@ -359,6 +375,7 @@ test("SessionController commit failure records error bubble in chat model", asyn
 
     const controller = new SessionController(host, CreateTestLog(), secrets, prefs, ui, {
       startSession,
+      createDatabase: CreateFakeDatabase,
       createMicrophoneCapture: () => ({ start: () => {}, stop: () => {} }),
       buildVscodeToolCallSet: () => CreateHarnessToolCallSet(tmp),
       chatModel,
@@ -443,6 +460,7 @@ test("SessionController microphone capture failure records error bubble in chat 
 
     const controller = new SessionController(host, CreateTestLog(), secrets, prefs, ui, {
       startSession,
+      createDatabase: CreateFakeDatabase,
       createMicrophoneCapture: createMicrophoneCapture as never,
       buildVscodeToolCallSet: () => CreateHarnessToolCallSet(tmp),
       chatModel,
@@ -514,6 +532,7 @@ test("SessionController connection lost records error bubble alongside session e
 
     const controller = new SessionController(host, CreateTestLog(), secrets, prefs, ui, {
       startSession,
+      createDatabase: CreateFakeDatabase,
       createMicrophoneCapture: () => ({ start: () => {}, stop: () => {} }),
       buildVscodeToolCallSet: () => CreateHarnessToolCallSet(tmp),
       chatModel,
