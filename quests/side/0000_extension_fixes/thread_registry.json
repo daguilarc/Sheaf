@@ -1,1 +1,11 @@
-{}
+{
+  "physical_planner": {
+    "thread_name": "Sheaf_quest_0000_physical_planner",
+    "harness_kind": "codex",
+    "provider_thread_id": "019e6146-e875-7cb2-b9f9-12ce5726afe0",
+    "pass_id": 0,
+    "round_count": 1,
+    "created_at": "2026-05-25T22:34:57Z",
+    "last_used_at": "2026-05-25T22:39:05Z"
+  }
+}
