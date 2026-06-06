@@ -1,4 +1,4 @@
-import { readdir, stat } from "node:fs/promises";
+import { readdir, realpath, stat } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
 
 export type LogFileEntry =
@@ -122,6 +122,60 @@ async function collectLogFiles(
       modified_at: fileStat.mtime.toISOString(),
     });
   }
+}
+
+export type LogFileValidationResult =
+  | { ok: true; absolutePath: string }
+  | { ok: false; error: string };
+
+export async function validateLogFileForReading(
+  logRoot: string,
+  relativePath: string,
+): Promise<LogFileValidationResult>
+{
+  const resolvedPath = resolveLogFilePath(logRoot, relativePath);
+
+  if (resolvedPath === null)
+  {
+    return { ok: false, error: "invalid log file path" };
+  }
+
+  let fileStat;
+
+  try
+  {
+    fileStat = await stat(resolvedPath);
+  }
+  catch (error: unknown)
+  {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT")
+    {
+      return { ok: false, error: "log file not found" };
+    }
+
+    throw error;
+  }
+
+  if (fileStat.isDirectory())
+  {
+    return { ok: false, error: "log path is a directory" };
+  }
+
+  if (!fileStat.isFile())
+  {
+    return { ok: false, error: "log path is not a file" };
+  }
+
+  const resolvedRoot = resolve(logRoot);
+  const canonicalRoot = await realpath(resolvedRoot);
+  const canonicalPath = await realpath(resolvedPath);
+
+  if (!isPathInsideRoot(canonicalPath, canonicalRoot))
+  {
+    return { ok: false, error: "invalid log file path" };
+  }
+
+  return { ok: true, absolutePath: resolvedPath };
 }
 
 export async function listServiceLogs(

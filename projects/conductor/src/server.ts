@@ -3,6 +3,12 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 
 import { HealthPoller } from "./health_poller.js";
 import {
+  attachLogStreamConnection,
+  createLogStreamWebSocketServer,
+  rejectUpgradeWithHttpStatus,
+  resolveLogStreamUpgrade,
+} from "./websocket.js";
+import {
   decodePathSegment,
   parseRequestPath,
   sendJson,
@@ -31,6 +37,7 @@ export type ConductorServerOptions =
   lifecycleManager?: LifecycleManager;
   serverStartTime?: number;
   warning?: string;
+  logStreamFollowPollIntervalMs?: number;
 };
 
 export type ConductorServer =
@@ -75,6 +82,8 @@ export function createConductorServer(options: ConductorServerOptions): Conducto
     getHeartbeat: (serviceName) => options.healthPoller.getHeartbeat(serviceName),
   });
 
+  const logStreamWebSocketServer = createLogStreamWebSocketServer();
+
   const httpServer = createServer((request: IncomingMessage, response: ServerResponse) =>
   {
     if (!acceptingConnections)
@@ -84,6 +93,45 @@ export function createConductorServer(options: ConductorServerOptions): Conducto
     }
 
     void handleRequest(request, response);
+  });
+
+  httpServer.on("upgrade", (request, socket, head) =>
+  {
+    if (!acceptingConnections)
+    {
+      rejectUpgradeWithHttpStatus(socket, 404, "Not Found");
+      return;
+    }
+
+    const upgrade = resolveLogStreamUpgrade(request, {
+      services: options.services,
+      serviceLogRoot: (serviceName) => repoPaths.serviceLogRoot(serviceName),
+    });
+
+    if (!upgrade)
+    {
+      const path = parseRequestPath(request);
+      const isLogStreamPath = /^\/api\/services\/[^/]+\/logs\/stream$/.test(path);
+
+      if (isLogStreamPath)
+      {
+        rejectUpgradeWithHttpStatus(socket, 404, "Not Found");
+        return;
+      }
+
+      socket.destroy();
+      return;
+    }
+
+    logStreamWebSocketServer.handleUpgrade(request, socket, head, (webSocket) =>
+    {
+      logStreamWebSocketServer.emit("connection", webSocket, request);
+      attachLogStreamConnection(
+        webSocket,
+        upgrade.logRoot,
+        options.logStreamFollowPollIntervalMs,
+      );
+    });
   });
 
   async function handleRequest(
@@ -261,21 +309,24 @@ export function createConductorServer(options: ConductorServerOptions): Conducto
     {
       return new Promise((resolve, reject) =>
       {
-        httpServer.close((error) =>
+        logStreamWebSocketServer.close(() =>
         {
-          if (error && (error as NodeJS.ErrnoException).code === "ERR_SERVER_NOT_RUNNING")
+          httpServer.close((error) =>
           {
+            if (error && (error as NodeJS.ErrnoException).code === "ERR_SERVER_NOT_RUNNING")
+            {
+              resolve();
+              return;
+            }
+
+            if (error)
+            {
+              reject(error);
+              return;
+            }
+
             resolve();
-            return;
-          }
-
-          if (error)
-          {
-            reject(error);
-            return;
-          }
-
-          resolve();
+          });
         });
       });
     },

@@ -66,6 +66,31 @@ export {
   listServiceLogs,
   normalizeRelativeLogPath,
   resolveLogFilePath,
+  validateLogFileForReading,
   type LogFileEntry,
+  type LogFileValidationResult,
   type LogListResult,
 } from "./logs.js";
+export {
+  DEFAULT_MAX_READ_BYTES,
+  LogStreamSession,
+  TRUNCATION_ERROR_MESSAGE,
+  computeReadBeforeRange,
+  computeTailRange,
+  getFileSize,
+  readByteRange,
+  type AppendMessage,
+  type ChunkMessage,
+  type ErrorMessage,
+  type LogStreamSessionOptions,
+  type ServerMessage,
+} from "./log_stream.js";
+export {
+  attachLogStreamConnection,
+  createLogStreamWebSocketServer,
+  matchLogStreamUpgradePath,
+  rejectUpgradeWithHttpStatus,
+  resolveLogStreamUpgrade,
+  type LogStreamWebSocketOptions,
+  type LogStreamWebSocketUpgrade,
+} from "./websocket.js";
