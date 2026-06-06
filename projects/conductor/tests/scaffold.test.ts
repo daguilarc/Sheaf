@@ -39,7 +39,7 @@ test("loadServiceRegistry reads the conductor service entry", async () =>
     host: "0.0.0.0",
     port: 9001,
     home_path: "/",
-    command: "npm --prefix projects/conductor start",
+    command: "make conductor-run",
   };
 
   assert.deepEqual(conductor, expected);

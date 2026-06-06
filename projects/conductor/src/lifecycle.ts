@@ -230,7 +230,11 @@ export class LifecycleManager
 
     try
     {
-      const process = this.m_processRunner.spawn(service.command, this.m_repoRoot);
+      const process = this.m_processRunner.spawn(
+        service.command,
+        this.m_repoRoot,
+        service.name,
+      );
       this.m_startedProcesses.set(service.name, process);
 
       return {

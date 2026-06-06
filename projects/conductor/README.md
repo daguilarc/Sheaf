@@ -10,8 +10,14 @@ From the repository root:
 
 ```bash
 npm --prefix projects/conductor install
-npm --prefix projects/conductor start
+npm --prefix projects/conductor run build
+make conductor-run
 ```
+
+`make conductor-run` delegates to `start_conductor.sh`, which appends process output to
+`logs/conductor/conductor_stdout.log` and
+`logs/conductor/conductor_stderr.log`. Services started through Conductor use the same
+pattern under `logs/<service_name>/`.
 
 Open [http://127.0.0.1:9001/](http://127.0.0.1:9001/) for the service list. Log files
 are available at `/services/{service_name}/logs`.

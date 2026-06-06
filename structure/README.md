@@ -11,6 +11,7 @@ Start here:
 - [Logs And Data](logs-and-data.md): required runtime output locations.
 - [Web UI](webui.md): shared web UI utilities and project home page links.
 - [Docs Structure](docs-structure.md): how project and repository documentation should be organized.
+- [Makefiles](makefile.md): root and per-project Make targets and command conventions.
 - [Glossary](glossary.md): shared terms used across the repo.
 
 The existing code has not been migrated into `projects/`. Until migration happens, the current top-level `apps/`, `docs/`, `quests/`, and `prompts/` directories remain part of the repo as-is.

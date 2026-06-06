@@ -1,4 +1,7 @@
+import { closeSync, mkdirSync, openSync } from "node:fs";
 import { spawn as nodeSpawn } from "node:child_process";
+
+import { serviceLogStreamPaths } from "./paths.js";
 
 export type SpawnedProcess =
 {
@@ -17,7 +20,7 @@ export type SpawnFailure =
 
 export type ProcessRunner =
 {
-  spawn: (command: string, cwd: string) => SpawnedProcess;
+  spawn: (command: string, cwd: string, serviceName: string) => SpawnedProcess;
 };
 
 export function parseCommand(command: string): string[]
@@ -70,24 +73,71 @@ export function needsShellExecution(command: string): boolean
   return /[|&;<>]/.test(command);
 }
 
+function openServiceLogStreams(repoRoot: string, serviceName: string): {
+  stdoutFd: number;
+  stderrFd: number;
+}
+{
+  const logPaths = serviceLogStreamPaths(repoRoot, serviceName);
+  mkdirSync(logPaths.logDir, { recursive: true });
+
+  return {
+    stdoutFd: openSync(logPaths.stdoutPath, "a"),
+    stderrFd: openSync(logPaths.stderrPath, "a"),
+  };
+}
+
 export function spawnCommand(
   command: string,
   cwd: string,
+  serviceName: string,
+  repoRoot: string,
   spawnFn: typeof nodeSpawn = nodeSpawn,
 ): SpawnedProcess
 {
-  if (needsShellExecution(command))
+  const { stdoutFd, stderrFd } = openServiceLogStreams(repoRoot, serviceName);
+
+  try
   {
-    const child = spawnFn(command, {
+    if (needsShellExecution(command))
+    {
+      const child = spawnFn(command, {
+        cwd,
+        shell: true,
+        detached: true,
+        stdio: ["ignore", stdoutFd, stderrFd],
+      });
+
+      if (child.pid === undefined)
+      {
+        throw createSpawnFailure(command, [command], "spawn returned no pid");
+      }
+
+      child.unref();
+
+      return {
+        pid: child.pid,
+        command,
+        argv: [command],
+      };
+    }
+
+    const argv = parseCommand(command);
+
+    if (argv.length === 0)
+    {
+      throw createSpawnFailure(command, argv, "empty command");
+    }
+
+    const child = spawnFn(argv[0]!, argv.slice(1), {
       cwd,
-      shell: true,
       detached: true,
-      stdio: "ignore",
+      stdio: ["ignore", stdoutFd, stderrFd],
     });
 
     if (child.pid === undefined)
     {
-      throw createSpawnFailure(command, [command], "spawn returned no pid");
+      throw createSpawnFailure(command, argv, "spawn returned no pid");
     }
 
     child.unref();
@@ -95,35 +145,14 @@ export function spawnCommand(
     return {
       pid: child.pid,
       command,
-      argv: [command],
+      argv,
     };
   }
-
-  const argv = parseCommand(command);
-
-  if (argv.length === 0)
+  finally
   {
-    throw createSpawnFailure(command, argv, "empty command");
+    closeSync(stdoutFd);
+    closeSync(stderrFd);
   }
-
-  const child = spawnFn(argv[0]!, argv.slice(1), {
-    cwd,
-    detached: true,
-    stdio: "ignore",
-  });
-
-  if (child.pid === undefined)
-  {
-    throw createSpawnFailure(command, argv, "spawn returned no pid");
-  }
-
-  child.unref();
-
-  return {
-    pid: child.pid,
-    command,
-    argv,
-  };
 }
 
 function createSpawnFailure(command: string, argv: string[], message: string): Error
@@ -141,11 +170,11 @@ function createSpawnFailure(command: string, argv: string[], message: string): E
 export function createProcessRunner(spawnFn: typeof nodeSpawn = nodeSpawn): ProcessRunner
 {
   return {
-    spawn(command: string, cwd: string): SpawnedProcess
+    spawn(command: string, cwd: string, serviceName: string): SpawnedProcess
     {
       try
       {
-        return spawnCommand(command, cwd, spawnFn);
+        return spawnCommand(command, cwd, serviceName, cwd, spawnFn);
       }
       catch (error: unknown)
       {

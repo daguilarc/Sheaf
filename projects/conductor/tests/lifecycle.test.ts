@@ -37,7 +37,7 @@ const testServices: ServiceDefinition[] = [
     name: "conductor",
     host: "0.0.0.0",
     port: 9103,
-    command: "npm --prefix projects/conductor start",
+    command: "make conductor-run",
     home_path: "/",
   },
   {
@@ -89,13 +89,13 @@ function createCapturedResponse(): {
 }
 
 function createFakeProcessRunner(
-  behavior: (command: string, cwd: string) => SpawnedProcess | Error,
+  behavior: (command: string, cwd: string, serviceName: string) => SpawnedProcess | Error,
 ): ProcessRunner
 {
   return {
-    spawn(command: string, cwd: string): SpawnedProcess
+    spawn(command: string, cwd: string, serviceName: string): SpawnedProcess
     {
-      const result = behavior(command, cwd);
+      const result = behavior(command, cwd, serviceName);
 
       if (result instanceof Error)
       {
@@ -210,7 +210,7 @@ test("POST /api/services/{service_name}/start returns process info and heartbeat
   const spawned: Array<{ command: string; cwd: string }> = [];
 
   await withLifecycleServer({
-    processRunner: createFakeProcessRunner((command, cwd) =>
+    processRunner: createFakeProcessRunner((command, cwd, _serviceName) =>
     {
       spawned.push({ command, cwd });
       return { pid: 4242, command, argv: parseCommand(command) };
@@ -254,7 +254,7 @@ test("POST /api/services/{service_name}/start rejects invalid commands", async (
 test("POST /api/services/{service_name}/start reports spawn failures", async () =>
 {
   await withLifecycleServer({
-    processRunner: createFakeProcessRunner(() =>
+    processRunner: createFakeProcessRunner((_command, _cwd, _serviceName) =>
     {
       const error = Object.assign(new Error("spawn ENOENT"), {
         message: "spawn ENOENT",
@@ -323,7 +323,7 @@ test("POST /api/services/{service_name}/stop reports unreachable /exit", async (
 test("POST /api/services/{service_name}/stop kills only owned process handles", async () =>
 {
   const killed: number[] = [];
-  const processRunner = createFakeProcessRunner((command) => ({
+  const processRunner = createFakeProcessRunner((command, _cwd, _serviceName) => ({
     pid: 5151,
     command,
     argv: parseCommand(command),
@@ -375,7 +375,7 @@ test("POST /api/services/{service_name}/restart stops before start", async () =>
   const events: string[] = [];
 
   await withLifecycleServer({
-    processRunner: createFakeProcessRunner((command) =>
+    processRunner: createFakeProcessRunner((command, _cwd, _serviceName) =>
     {
       events.push(`start:${command}`);
       return { pid: 6060, command, argv: parseCommand(command) };
@@ -412,7 +412,7 @@ test("POST /api/services/{service_name}/restart succeeds when stop is unreachabl
   });
   const lifecycleManager = new LifecycleManager({
     repoRoot: process.cwd(),
-    processRunner: createFakeProcessRunner((command) =>
+    processRunner: createFakeProcessRunner((command, _cwd, _serviceName) =>
     {
       events.push(`start:${command}`);
       return { pid: 6161, command, argv: parseCommand(command) };
@@ -480,7 +480,7 @@ test("POST /api/services/conductor/restart uses injected exit and start fakes", 
   const events: string[] = [];
 
   await withLifecycleServer({
-    processRunner: createFakeProcessRunner((command) =>
+    processRunner: createFakeProcessRunner((command, _cwd, _serviceName) =>
     {
       events.push(`start:${command}`);
       return { pid: 7070, command, argv: parseCommand(command) };
@@ -503,12 +503,12 @@ test("POST /api/services/conductor/restart uses injected exit and start fakes", 
     assert.equal(body.started, true);
     assert.deepEqual(body.process, {
       pid: 7070,
-      command: "npm --prefix projects/conductor start",
-      argv: ["npm", "--prefix", "projects/conductor", "start"],
+      command: "make conductor-run",
+      argv: ["make", "conductor-run"],
     });
     assert.deepEqual(events, [
       "stop:http://127.0.0.1:9103/exit",
-      "start:npm --prefix projects/conductor start",
+      "start:make conductor-run",
     ]);
   });
 });
@@ -538,7 +538,7 @@ test("LifecycleManager StartService runs from provided repo root", async () =>
     const healthPoller = new HealthPoller({ services: [testServices[0]!] });
     const lifecycleManager = new LifecycleManager({
       repoRoot: tempRoot,
-      processRunner: createFakeProcessRunner((command, cwd) =>
+      processRunner: createFakeProcessRunner((command, cwd, _serviceName) =>
       {
         spawned.push(cwd);
         return { pid: 1, command, argv: parseCommand(command) };

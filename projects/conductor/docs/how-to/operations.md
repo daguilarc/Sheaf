@@ -14,8 +14,13 @@ Conductor itself is registered as the `conductor` service on `0.0.0.0:9001` with
 ```bash
 npm --prefix projects/conductor install
 npm --prefix projects/conductor run build
-npm --prefix projects/conductor start
+make conductor-run
 ```
+
+`make conductor-run` delegates to `start_conductor.sh`, which appends Conductor output to:
+
+- `logs/conductor/conductor_stdout.log`
+- `logs/conductor/conductor_stderr.log`
 
 The registered command in `config/services.json` is also repository-root relative:
 
@@ -25,9 +30,13 @@ The registered command in `config/services.json` is also repository-root relativ
   "host": "0.0.0.0",
   "port": 9001,
   "home_path": "/",
-  "command": "npm --prefix projects/conductor start"
+  "command": "make conductor-run"
 }
 ```
+
+When Conductor starts another registered service, it appends that service's stdout and
+stderr to `logs/<service_name>/<service_name>_stdout.log` and
+`logs/<service_name>/<service_name>_stderr.log`.
 
 ## Health Polling
 

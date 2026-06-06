@@ -23,7 +23,7 @@ steps:
 7. Start the health poller.
 
 The current `conductor` registry entry binds to `0.0.0.0:9001`, uses `/` as its
-`home_path`, and starts with `npm --prefix projects/conductor start`.
+`home_path`, and starts with `make conductor-run`.
 
 ## Service Registry
 
@@ -83,7 +83,10 @@ Lifecycle APIs are explicit user actions. Conductor does not implement desired-s
 reconciliation.
 
 `LifecycleManager` starts services by parsing and spawning the configured command from
-the repository root. Stop requests prefer the target service's `POST /exit` endpoint.
+the repository root. Child stdout and stderr append to
+`logs/<service_name>/<service_name>_stdout.log` and
+`logs/<service_name>/<service_name>_stderr.log`. Stop requests prefer the target
+service's `POST /exit` endpoint.
 When Conductor started a process directly, it can also stop that owned process. Restart
 requests stop first, then start from the same configured command.
 

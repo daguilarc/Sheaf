@@ -1,10 +1,10 @@
 # State
 
-- global_step: 38
+- global_step: 39
 - machine_name: quest
 - machine_path: quests/main/0003_conductor
-- state: QuestDocumenting
-- updated_at: 2026-06-06T22:00:10Z
+- state: Completed
+- updated_at: 2026-06-06T22:07:10Z
 
 ## Tags
 

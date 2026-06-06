@@ -10,6 +10,24 @@ export type RepoPaths =
   serviceLogRoot: (serviceName: string) => string;
 };
 
+export type ServiceLogStreamPaths =
+{
+  logDir: string;
+  stdoutPath: string;
+  stderrPath: string;
+};
+
+export function serviceLogStreamPaths(repoRoot: string, serviceName: string): ServiceLogStreamPaths
+{
+  const logDir = join(repoRoot, "logs", serviceName);
+
+  return {
+    logDir,
+    stdoutPath: join(logDir, `${serviceName}_stdout.log`),
+    stderrPath: join(logDir, `${serviceName}_stderr.log`),
+  };
+}
+
 function findRepoRoot(startDir: string): string
 {
   let current = startDir;

@@ -1,4 +1,10 @@
-export { createRepoPaths, createRepoPathsForRoot, type RepoPaths } from "./paths.js";
+export {
+  createRepoPaths,
+  createRepoPathsForRoot,
+  serviceLogStreamPaths,
+  type RepoPaths,
+  type ServiceLogStreamPaths,
+} from "./paths.js";
 export { type ServiceDefinition } from "./service_definition.js";
 export {
   findServiceByName,
