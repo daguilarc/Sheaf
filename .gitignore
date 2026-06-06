@@ -1,6 +1,7 @@
 .DS_Store
 .env
 .secrets.json
+config/api_keys.json
 
 # Node packages and build/test output
 node_modules/
@@ -13,6 +14,10 @@ apps/vscode-extension/*.vsix
 
 # Runtime data
 apps/realtime-agent/data/
+data/**
+!data/.gitkeep
+logs/**
+!logs/.gitkeep
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
