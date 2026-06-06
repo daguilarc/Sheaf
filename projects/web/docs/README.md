@@ -3,7 +3,8 @@
 ## Overview
 
 The `web` project provides shared presentation assets for command hub browser
-interfaces. It does not own service logic, REST APIs, or quest work.
+interfaces. It does not own service logic, REST APIs, lifecycle behavior, or
+project-specific browser JavaScript.
 
 ## Shared CSS
 
@@ -35,4 +36,5 @@ Conductor uses.
 ## Adding Shared Assets
 
 Place new shared static files under `src/`. Document new surfaces here when they are
-added. Keep project-specific UI logic in the consuming project, not in `projects/web/`.
+added. Keep project-specific UI logic, API calls, and service controls in the consuming
+project, not in `projects/web/`.

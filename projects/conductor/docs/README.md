@@ -9,6 +9,8 @@ a browser UI for observing and controlling services.
 Start Conductor from the repository root:
 
 ```bash
+npm --prefix projects/conductor install
+npm --prefix projects/conductor run build
 npm --prefix projects/conductor start
 ```
 
@@ -39,6 +41,33 @@ projects/conductor/
 Shared presentation assets come from `projects/web/`; see
 [projects/web/docs/README.md](../../web/docs/README.md).
 
+## Runtime Model
+
+`config/services.json` is the service registry. Conductor reads it at startup and does
+not maintain a separate service database. Each service entry includes `name`, `host`,
+`port`, `command`, and optional `home_path`.
+
+The health poller stores heartbeat state in memory. It polls every registered service's
+`GET /health` endpoint every 30 seconds and treats network errors, timeouts, invalid
+JSON, missing required fields, non-2xx responses, and `healthy: false` responses as
+unhealthy. Polling is observational only; lifecycle actions happen only through UI or
+API requests.
+
+Service logs are read from `logs/<service_name>/` under the repository root. Log APIs
+validate paths before reading and never use log file paths from URL query strings.
+
+## Build And Test
+
+From the repository root:
+
+```bash
+npm --prefix projects/conductor install
+npm --prefix projects/conductor test
+```
+
+The test command builds TypeScript and runs Node's built-in test runner against the
+compiled backend, log streaming, lifecycle, registry, REST, and UI route tests.
+
 ## Documentation
 
 - [REST and WebSocket API reference](reference/api.md)
@@ -47,4 +76,5 @@ Shared presentation assets come from `projects/web/`; see
 ## Related Structure Docs
 
 Repository-wide rules for services, logging, and project layout live under `structure/`.
-This project docs directory describes Conductor behavior implemented in this quest.
+This project docs directory describes the Conductor service manager as it exists in this
+repository.

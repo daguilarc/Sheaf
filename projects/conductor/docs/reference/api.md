@@ -141,7 +141,7 @@ Response:
 ```json
 {
   "name": "alpha",
-  "log_root": "/absolute/path/to/logs/alpha",
+  "log_root": "logs/alpha/",
   "files": [
     {
       "path": "server.log",
@@ -156,6 +156,8 @@ Path safety rules:
 
 - Only files inside the resolved service log root are listed.
 - Absolute paths, `..` segments, and other traversal attempts are rejected.
+- Missing log directories return an empty `files` array.
+- Non-files are ignored.
 
 Unknown services return `404`.
 
@@ -241,6 +243,7 @@ Behavior:
 - `follow` polls for appended file bytes while enabled.
 - Truncation or rotation produces an `error` message; clients should reopen the file.
 - Unknown services, unknown files, absolute paths, and traversal attempts are rejected.
+- Reads are capped at 65536 bytes per request.
 
 ## Browser UI Routes
 

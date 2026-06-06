@@ -12,7 +12,21 @@ Conductor itself is registered as the `conductor` service on `0.0.0.0:9001` with
 `home_path` set to `/`. Start it from the repository root:
 
 ```bash
+npm --prefix projects/conductor install
+npm --prefix projects/conductor run build
 npm --prefix projects/conductor start
+```
+
+The registered command in `config/services.json` is also repository-root relative:
+
+```json
+{
+  "name": "conductor",
+  "host": "0.0.0.0",
+  "port": 9001,
+  "home_path": "/",
+  "command": "npm --prefix projects/conductor start"
+}
 ```
 
 ## Health Polling
@@ -24,8 +38,8 @@ to disk.
 Polling behavior:
 
 - Successful responses with `healthy: true` mark the service healthy.
-- Network errors, timeouts, invalid JSON, missing fields, and non-2xx responses mark
-  the service unhealthy.
+- Network errors, timeouts, invalid JSON, missing required fields, `healthy: false`, and
+  non-2xx responses mark the service unhealthy.
 - The latest `last_checked_at`, `last_error`, `uptime`, and `warning` values are kept
   per service.
 - Polling never auto-starts, stops, or restarts services.
@@ -42,6 +56,9 @@ Start, stop, and restart are user-initiated through the UI or REST APIs:
 
 Conductor does not enforce desired state or supervise processes beyond these explicit
 requests.
+
+Services with a missing or empty command cannot be started or restarted and return a
+structured error. Unknown service names return `404`.
 
 ### Stopping Conductor
 
@@ -66,6 +83,21 @@ The logs UI at `/services/{service_name}/logs`:
 
 If a file is truncated or rotated, the stream sends an error message and the UI allows
 reopening the file.
+
+Log paths must stay inside the service log root. Absolute paths, `..` traversal,
+directories, non-files, and symlinks that resolve outside `logs/<service_name>/` are
+rejected.
+
+## Testing
+
+Run the Conductor test suite from the repository root:
+
+```bash
+npm --prefix projects/conductor test
+```
+
+The suite covers service registry loading, health polling, service REST APIs, lifecycle
+controls with fakes, log listing, WebSocket log streaming, static assets, and UI routes.
 
 ## Shared UI Assets
 
