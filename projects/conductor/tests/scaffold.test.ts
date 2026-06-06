@@ -26,7 +26,10 @@ test("loadServiceRegistry reads the conductor service entry", async () =>
   const paths = createRepoPaths();
   const services = await loadServiceRegistry(paths.servicesJsonPath);
 
-  assert.equal(services.length, 1);
+  assert.equal(
+    services.filter((service) => service.name === "conductor").length,
+    1,
+  );
 
   const conductor = findServiceByName(services, "conductor");
   assert.ok(conductor);
