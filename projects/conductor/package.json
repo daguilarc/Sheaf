@@ -1,0 +1,30 @@
+{
+  "name": "conductor",
+  "version": "0.1.0",
+  "description": "Command hub service manager and web UI",
+  "type": "module",
+  "main": "./dist/src/index.js",
+  "types": "./dist/src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "import": "./dist/src/index.js"
+    }
+  },
+  "bin": {
+    "conductor": "./dist/src/main.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/src/main.js",
+    "test": "npm run build && node --test dist/tests/*.test.js",
+    "prepack": "npm run build"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.21",
+    "typescript": "^5.8.3"
+  }
+}

@@ -7,6 +7,8 @@ config/api_keys.json
 node_modules/
 apps/realtime-agent/node_modules/
 apps/realtime-agent/dist/
+projects/conductor/node_modules/
+projects/conductor/dist/
 apps/vscode-extension/node_modules/
 apps/vscode-extension/out/
 apps/vscode-extension/.test-dist/

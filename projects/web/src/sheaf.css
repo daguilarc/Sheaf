@@ -1,0 +1,179 @@
+:root
+{
+  --sheaf-bg: #0f1419;
+  --sheaf-surface: #1a2332;
+  --sheaf-border: #2d3a4f;
+  --sheaf-text: #e6edf3;
+  --sheaf-text-muted: #8b9cb3;
+  --sheaf-accent: #3d8bfd;
+  --sheaf-accent-hover: #5ca0ff;
+  --sheaf-healthy: #3fb950;
+  --sheaf-unhealthy: #f85149;
+  --sheaf-warning: #d29922;
+  --sheaf-font: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --sheaf-mono: ui-monospace, "SF Mono", Menlo, monospace;
+  --sheaf-radius: 6px;
+  --sheaf-space: 1rem;
+}
+
+*
+{
+  box-sizing: border-box;
+}
+
+body
+{
+  margin: 0;
+  font-family: var(--sheaf-font);
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--sheaf-text);
+  background: var(--sheaf-bg);
+}
+
+a
+{
+  color: var(--sheaf-accent);
+  text-decoration: none;
+}
+
+a:hover
+{
+  color: var(--sheaf-accent-hover);
+  text-decoration: underline;
+}
+
+.sheaf-page
+{
+  max-width: 72rem;
+  margin: 0 auto;
+  padding: calc(var(--sheaf-space) * 1.5);
+}
+
+.sheaf-header
+{
+  margin-bottom: calc(var(--sheaf-space) * 1.5);
+}
+
+.sheaf-header h1
+{
+  margin: 0 0 0.25rem;
+  font-size: 1.5rem;
+  font-weight: 600;
+}
+
+.sheaf-header p
+{
+  margin: 0;
+  color: var(--sheaf-text-muted);
+}
+
+.sheaf-card
+{
+  background: var(--sheaf-surface);
+  border: 1px solid var(--sheaf-border);
+  border-radius: var(--sheaf-radius);
+  padding: var(--sheaf-space);
+}
+
+.sheaf-table
+{
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.sheaf-table th,
+.sheaf-table td
+{
+  padding: 0.625rem 0.75rem;
+  text-align: left;
+  border-bottom: 1px solid var(--sheaf-border);
+}
+
+.sheaf-table th
+{
+  color: var(--sheaf-text-muted);
+  font-weight: 500;
+  font-size: 0.875rem;
+}
+
+.sheaf-status
+{
+  display: inline-block;
+  padding: 0.125rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.8125rem;
+  font-weight: 500;
+}
+
+.sheaf-status--healthy
+{
+  color: var(--sheaf-healthy);
+  background: color-mix(in srgb, var(--sheaf-healthy) 15%, transparent);
+}
+
+.sheaf-status--unhealthy
+{
+  color: var(--sheaf-unhealthy);
+  background: color-mix(in srgb, var(--sheaf-unhealthy) 15%, transparent);
+}
+
+.sheaf-status--unknown
+{
+  color: var(--sheaf-text-muted);
+  background: color-mix(in srgb, var(--sheaf-text-muted) 15%, transparent);
+}
+
+.sheaf-button
+{
+  display: inline-block;
+  padding: 0.375rem 0.75rem;
+  font: inherit;
+  font-size: 0.875rem;
+  color: var(--sheaf-text);
+  background: var(--sheaf-surface);
+  border: 1px solid var(--sheaf-border);
+  border-radius: var(--sheaf-radius);
+  cursor: pointer;
+}
+
+.sheaf-button:hover
+{
+  border-color: var(--sheaf-accent);
+}
+
+.sheaf-button--primary
+{
+  color: #fff;
+  background: var(--sheaf-accent);
+  border-color: var(--sheaf-accent);
+}
+
+.sheaf-button--primary:hover
+{
+  background: var(--sheaf-accent-hover);
+  border-color: var(--sheaf-accent-hover);
+}
+
+.sheaf-log-view
+{
+  font-family: var(--sheaf-mono);
+  font-size: 0.8125rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: #0a0e14;
+  border: 1px solid var(--sheaf-border);
+  border-radius: var(--sheaf-radius);
+  padding: var(--sheaf-space);
+  overflow: auto;
+}
+
+.sheaf-muted
+{
+  color: var(--sheaf-text-muted);
+}
+
+.sheaf-warning
+{
+  color: var(--sheaf-warning);
+}
