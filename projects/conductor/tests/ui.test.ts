@@ -71,6 +71,20 @@ test("resolveStaticFile serves known asset roots and rejects traversal", () =>
   assert.equal(resolveStaticFile("/assets/unknown/file.txt", roots), undefined);
 });
 
+test("shared log view CSS keeps scrollback loading reachable", async () =>
+{
+  const paths = createRepoPaths();
+  const css = await readFile(
+    `${paths.repoRoot}/projects/web/src/sheaf.css`,
+    "utf8",
+  );
+  const logViewBlock = css.match(/\.sheaf-log-view\s*\{(?<rules>[^}]*)\}/);
+
+  assert.ok(logViewBlock?.groups?.rules);
+  assert.match(logViewBlock.groups.rules, /max-height:\s*[^;]+;/);
+  assert.match(logViewBlock.groups.rules, /overflow:\s*auto;/);
+});
+
 test("browser JavaScript uses API and WebSocket paths without query-string file paths", async () =>
 {
   const paths = createRepoPaths();
