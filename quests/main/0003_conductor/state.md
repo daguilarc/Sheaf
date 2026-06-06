@@ -1,10 +1,10 @@
 # State
 
-- global_step: 4
+- global_step: 5
 - machine_name: quest
 - machine_path: quests/main/0003_conductor
-- state: ReviewPhysicalPlan
-- updated_at: 2026-06-06T19:33:55Z
+- state: PrepareNextSlice
+- updated_at: 2026-06-06T19:35:21Z
 
 ## Tags
 

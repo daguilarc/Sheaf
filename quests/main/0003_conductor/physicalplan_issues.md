@@ -2,10 +2,10 @@
 
 ## Issue QP-0001
 
-- status: open
+- status: completed
 - owner_role: physical_plan_reviewer
 - created_at: 2026-06-06T19:32:12Z
-- updated_at: 2026-06-06T19:32:12Z
+- updated_at: 2026-06-06T19:34:30Z
 - title: Conductor backend does not plan its own POST /exit lifecycle endpoint
 - details: |
     `structure/services.md` (which spec section "Quest Overview" line 16 declares
@@ -34,14 +34,22 @@
     oversight. The plan should make that decision explicit rather than leaving it
     implicit.
 - resolution_notes: |
-    To resolve, the physical plan for the appropriate slice (most naturally slice
-    0002, where Conductor's own server and `GET /health` are built, or slice 0003
-    where lifecycle is added) must either:
-    (a) add a `POST /exit` endpoint to the Conductor backend so Conductor honors
-        the same registered-service lifecycle contract it enforces, and ensure the
-        stop/restart-of-self path is covered; or
-    (b) explicitly document in the relevant slice plan that Conductor's own
-        `POST /exit` is intentionally out of scope for this quest per the spec's
-        explicit endpoint enumeration, and describe the expected behavior when a
-        user issues stop/restart against the `conductor` service so it is a
-        deliberate, tested outcome rather than an accidental gap.
+    Resolved via option (a). Verified against the updated slice plans and
+    `physicalplan_issue_responses.md` (planner outcome: Fixed):
+    - Slice 0002 now plans Conductor's own `POST /exit` endpoint backed by an
+      injectable shutdown controller (`shutdown.ts`), with validation covering the
+      response shape, shutdown-controller invocation, poller-stop behavior, and the
+      response being flushed before shutdown runs.
+    - Slice 0003 now explicitly covers the registered `conductor` stop/restart path
+      through the same injectable exit requester, with tests asserting the self-stop
+      URL/result without terminating the test runner.
+    - Slice 0005 documents `POST /exit` in `docs/reference/api.md` and explains in
+      the operations doc that stopping/restarting Conductor interrupts its own
+      process after the response is acknowledged.
+    Conductor now honors the registered-service lifecycle contract it enforces, and
+    the self-stop timing risk is consciously acknowledged in the UI/ops docs. The
+    injected-fake test design appropriately avoids killing the test process.
+    Resolution criteria (for reference): (a) add a `POST /exit` endpoint so
+    Conductor honors the same registered-service lifecycle contract and cover the
+    stop/restart-of-self path; or (b) explicitly scope it out with defined, tested
+    stop/restart-of-self behavior.
