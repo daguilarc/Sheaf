@@ -1,6 +1,6 @@
 # State
 
-- global_step: 6
+- global_step: 7
 - machine_name: quest
 - machine_path: quests/main/0003_conductor
 - state: ExecuteSlice
