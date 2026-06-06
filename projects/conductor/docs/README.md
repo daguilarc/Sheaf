@@ -70,6 +70,7 @@ compiled backend, log streaming, lifecycle, registry, REST, and UI route tests.
 
 ## Documentation
 
+- [Runtime architecture](reference/runtime.md)
 - [REST and WebSocket API reference](reference/api.md)
 - [Operations guide](how-to/operations.md)
 
