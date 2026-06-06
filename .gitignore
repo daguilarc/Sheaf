@@ -1,53 +1,21 @@
-__pycache__/
-*.py[cod]
-*.so
-.Python
-.venv/
-venv/
+.DS_Store
 .env
 .secrets.json
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-.DS_Store
-.chainlit/*
 
-.pycache/
-.runtime/
-zulip_bot.config.json
-data/*
-!data/.gitkeep
-!data/README.md
-!data/initial-context.md
-data_archive/
-
-# iOS SwiftPM build artifacts
-ios/SheafIOS/.build/
-
-# Xcode user-specific state
-*.xcuserstate
-xcuserdata/
-.swiftpm/xcode/
-**/xcuserdata/
-**/*.xcuserstate
-**/.swiftpm/xcode/
-
-# Xcode build/runtime artifacts
-DerivedData/
-*.moved-aside
-*.pbxuser
-!default.pbxuser
-apps/obsidian-replica/.test-dist/
-
-# VS Code extension
+# Node packages and build/test output
+node_modules/
+apps/realtime-agent/node_modules/
+apps/realtime-agent/dist/
 apps/vscode-extension/node_modules/
 apps/vscode-extension/out/
 apps/vscode-extension/.test-dist/
 apps/vscode-extension/*.vsix
 
-# Node realtime agent
-apps/realtime-agent/node_modules/
-apps/realtime-agent/dist/
-apps/realtime-agent/data/*.sqlite
-apps/realtime-agent/data/*.sqlite-shm
-apps/realtime-agent/data/*.sqlite-wal
+# Runtime data
+apps/realtime-agent/data/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+
+# Local tool state
+.claude/settings.local.json

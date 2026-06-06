@@ -2,10 +2,8 @@
 
 ## Current Foundation
 
-The repository supports four tracks:
+The repository supports two tracks:
 
-- Sheaf server for local-first chat workflows.
-- Obsidian replica tooling for vault/client workflows.
 - Node TypeScript realtime-agent tooling for OpenAI Realtime experimentation.
 - VS Code extension tooling for voice-driven editor workflows.
 
@@ -57,16 +55,10 @@ The VS Code extension foundation embeds the realtime-agent library in the extens
 - Continue hardening tool summaries and context bubbles so the chat pane stays useful without exposing raw protocol events.
 - Evaluate additional editor tools only when they preserve the VS Code-buffer-first contract.
 
-## Sheaf Server: Ongoing Work
-
-- Continue hardening queue recovery, websocket reconnect behavior, and turn-ledger invariants.
-- Keep runtime configuration and prompt selection documented against current server config files.
-- Preserve unit coverage around model dispatch, tool execution, vault repair, and replica workflows.
-
 ## Engineering Constraints
 
 - Keep behavior documented in present tense and tied to code in the repository.
-- Preserve clear boundaries between Sheaf server behavior, Obsidian replica behavior, and realtime-agent behavior.
+- Preserve clear boundaries between the realtime-agent library and the VS Code extension host integration.
 - Preserve clear boundaries between VS Code buffer tools and direct filesystem/shell mutation paths.
 - Prefer focused vertical changes with corresponding tests.
 - Do not persist or print raw outgoing realtime audio append payloads.

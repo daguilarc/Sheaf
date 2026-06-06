@@ -1,152 +1,44 @@
-# sheaf
+# Sheaf
 
-Sheaf is a local-first chat server with a queue-backed worker, websocket streaming, and a turn-ledger database.
+Sheaf now contains the realtime voice workflow pieces:
 
-## Project Surfaces
+- `apps/realtime-agent`: Node TypeScript library (`realtime-agent-lib`) and `realtime-agent` CLI for OpenAI Realtime sessions.
+- `apps/vscode-extension`: VS Code extension that embeds `realtime-agent-lib` and exposes the `sheaf VS Code` editor tool set.
+- `prompts/system-prompts`: reusable prompt files for realtime sessions.
+- `docs`: architecture, operations, product, and testing notes for the remaining realtime and VS Code surfaces.
+- `quests`: historical planning/spec records for the realtime agent and VS Code extension work.
 
-- `src/sheaf`: FastAPI chat server, websocket runtime, ledger, vault, and agent tool implementation
-- `apps/obsidian-replica`: Obsidian plugin client for the Sheaf replica workflow
-- `apps/realtime-agent`: Node TypeScript library (`realtime-agent-lib`) and `realtime-agent` CLI for OpenAI Realtime experimentation
-
-## Project Process
-
-Active project work is tracked in `quests/` and run through Conductor. The quest
-directory is the official planning, implementation, review, and history surface
-for the repository.
-
-## Current Architecture
-
-- FastAPI API + websocket transport
-- SQLite ledger for threads, turns, queue, request logs, events, and errors
-- Single background worker loop (no worker concurrency)
-- Exponential retry with no max attempts for non-fatal failures
-- Fatal queue failures moved to `queue_errors`
-- Client reconnect model: ledger is source of truth
-
-## Core APIs
-
-- `GET /health`
-- `POST /debug/log`
-- `GET /models`
-- `POST /models/updateLocalModelList`
-- `POST /threads`
-- `GET /threads`
-- `POST /threads/{thread_id}/archive`
-- `POST /threads/{thread_id}/unarchive`
-- `POST /threads/{thread_id}/enter-chat`
-- `POST /vaults`
-- `POST /vaults/repair`
-- `POST /replica/sessions`
-- `WS /ws/chat/{session_id}`
-- `WS /ws/replica/{session_id}`
-
-## Websocket Protocol
-
-All frames include:
-
-- `protocol_version`
-- `type`
-- `session_id`
-- `server_time`
-
-Client -> server:
-
-- `submit_message`
-
-Server -> client:
-
-- `handshake_snapshot_begin`
-- `committed_turn`
-- `message_durable_ack`
-- `assistant_token`
-- `turn_event`
-- `context_budget`
-- `heartbeat`
-- `turn_finalized`
-- `execution_conflict`
-- `error`
-
-## Worker and Queue Semantics
-
-- Worker claims one runnable queue row at a time (`locked_by/locked_at`)
-- Non-fatal errors:
-  - `attempts += 1`
-  - exponential backoff
-  - capped at 10 seconds
-  - retried indefinitely
-- Fatal errors:
-  - moved to `queue_errors`
-  - removed from live queue
-
-## Data Layout
-
-- `data/server.sqlite3` primary server DB
-- `data/user_dbs/` user SQLite databases
-- `data/system_prompts/` prompt files
-- `data_archive/` archived legacy data snapshots
-
-## Agent Tool Calls
-
-Tools are agent-internal and not exposed via public server endpoints.
-
-Current agent tools:
-
-- `list_directory`
-- `read_file`
-- `create_file`
-- `create_directory`
-- `apply_patch`
-- `move_path`
-- `delete_path`
-- `list_sqlite_databases`
-- `create_sqlite_database`
-- `run_sql`
-
-When the model emits function/tool calls, the dispatcher executes these tools
-and feeds tool results back into the model loop before final assistant output.
-
-## Local Setup
-
-```bash
-python3 -m venv .venv
-. .venv/bin/activate
-.venv/bin/python -m pip install -e .[dev]
-```
-
-Run server:
-
-```bash
-.venv/bin/python run_server.py
-```
-
-Run tests:
-
-```bash
-PYTHONPATH=src .venv/bin/python -m pytest -q
-```
-
-Build/test realtime agent:
+## Build And Test
 
 ```bash
 make build-realtime-agent
 make test-realtime-agent
+make build-vscode-extension
+make test-vscode-extension
 ```
 
-Run realtime agent CLI after build:
+The VS Code extension depends on the realtime-agent package, so build the realtime agent first when running extension builds manually.
+
+## Realtime CLI
 
 ```bash
 export OPENAI_API_KEY="your-key"
-realtime-agent --prompt-file prompts/system-prompts/basic_realtime_conversation_v1.md --context-file data/initial-context.md --model gpt-realtime-2
+cd apps/realtime-agent
+npm install
+npm run build
+node dist/src/cli.js \
+  --prompt-file ../../prompts/system-prompts/basic_realtime_conversation_v1.md \
+  --context-file /path/to/context.md \
+  --model gpt-realtime-2
 ```
 
-Install the Obsidian mobile plugin into a vault:
+Runtime SQLite data is generated under `apps/realtime-agent/data/` by default and is intentionally not kept in the repository.
+
+## VS Code Extension
 
 ```bash
-./scripts/install_obsidian_plugin.sh --vault "/path/to/vault"
+cd apps/realtime-agent && npm install && npm run build
+cd ../vscode-extension && npm install && npm run build
 ```
 
-Update every iCloud Obsidian vault that already has the plugin installed:
-
-```bash
-./scripts/deploy_obsidian_plugin.sh
-```
+Open `apps/vscode-extension` in VS Code and start an Extension Development Host with `F5`.

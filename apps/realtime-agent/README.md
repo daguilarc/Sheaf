@@ -11,7 +11,7 @@ export OPENAI_API_KEY="your-key"
 make build-realtime-agent
 realtime-agent \
   --prompt-file prompts/system-prompts/basic_realtime_conversation_v1.md \
-  --context-file data/initial-context.md \
+  --context-file /path/to/context.md \
   --model gpt-realtime-2
 ```
 
@@ -23,7 +23,7 @@ npm run build
 export OPENAI_API_KEY="your-key"
 node dist/src/cli.js \
   --prompt-file ../../prompts/system-prompts/basic_realtime_conversation_v1.md \
-  --context-file ../../data/initial-context.md
+  --context-file /path/to/context.md
 ```
 
 List local microphone input devices:
@@ -37,7 +37,7 @@ Select a device by numeric id or name substring:
 ```bash
 realtime-agent \
   --prompt-file prompts/system-prompts/basic_realtime_conversation_v1.md \
-  --context-file data/initial-context.md \
+  --context-file /path/to/context.md \
   --input-device 2
 ```
 
@@ -61,7 +61,7 @@ Non-audio realtime events are printed as one JSON object per line with `session_
 
 ## Persistence
 
-Session metadata and events are stored in `apps/realtime-agent/data/realtime-agent.sqlite` by default. Outgoing audio append events are forwarded to the API but not persisted.
+Session metadata and events are stored in `apps/realtime-agent/data/realtime-agent.sqlite` by default. Runtime data is generated locally and is not kept in the repository. Outgoing audio append events are forwarded to the API but not persisted.
 
 ## Library
 

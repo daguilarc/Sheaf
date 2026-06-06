@@ -28,7 +28,7 @@ The CLI requires `OPENAI_API_KEY`, a system prompt file, and an initial context 
 export OPENAI_API_KEY="your-key"
 realtime-agent \
   --prompt-file prompts/system-prompts/basic_realtime_conversation_v1.md \
-  --context-file data/initial-context.md \
+  --context-file /path/to/context.md \
   --model gpt-realtime-2
 ```
 
@@ -38,7 +38,7 @@ When running the built CLI directly from the package directory:
 cd apps/realtime-agent
 node dist/src/cli.js \
   --prompt-file ../../prompts/system-prompts/basic_realtime_conversation_v1.md \
-  --context-file ../../data/initial-context.md
+  --context-file /path/to/context.md
 ```
 
 ## CLI Options
@@ -66,7 +66,7 @@ Select a device by numeric id:
 ```bash
 realtime-agent \
   --prompt-file prompts/system-prompts/basic_realtime_conversation_v1.md \
-  --context-file data/initial-context.md \
+  --context-file /path/to/context.md \
   --input-device 2
 ```
 
@@ -75,7 +75,7 @@ Select a device by a unique case-insensitive name substring:
 ```bash
 realtime-agent \
   --prompt-file prompts/system-prompts/basic_realtime_conversation_v1.md \
-  --context-file data/initial-context.md \
+  --context-file /path/to/context.md \
   --input-device "Studio"
 ```
 
@@ -108,7 +108,7 @@ Outgoing `input_audio_buffer.append` events are intentionally omitted from stdou
 
 ## Persistence
 
-SQLite migrations run when the database opens. The default database path is computed relative to the built package and ends in `data/realtime-agent.sqlite`.
+SQLite migrations run when the database opens. The default database path is computed relative to the built package and ends in `data/realtime-agent.sqlite`. Runtime SQLite files are generated locally and are not kept in the repository.
 
 Tables:
 
