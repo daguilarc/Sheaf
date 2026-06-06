@@ -1,10 +1,10 @@
 # State
 
-- global_step: 24
+- global_step: 25
 - machine_name: quest
 - machine_path: quests/main/0003_conductor
-- state: ExecuteSlice
-- updated_at: 2026-06-06T21:27:26Z
+- state: PrepareNextSlice
+- updated_at: 2026-06-06T21:33:47Z
 
 ## Tags
 
