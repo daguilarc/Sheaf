@@ -1,10 +1,30 @@
 # Conductor
 
 Conductor is the command hub service manager. It reads registered services from
-`config/services.json`, polls their health, exposes lifecycle and log APIs, and
-serves a browser UI for observing and controlling services.
+`config/services.json`, polls their health every 30 seconds, exposes lifecycle and log
+APIs, and serves a browser UI for observing and controlling services.
 
-Current state: project scaffold only. The HTTP server and UI land in later quest
-slices.
+## Quick Start
 
-See [docs/README.md](docs/README.md) for package layout and foundational APIs.
+From the repository root:
+
+```bash
+npm --prefix projects/conductor install
+npm --prefix projects/conductor start
+```
+
+Open [http://127.0.0.1:9001/](http://127.0.0.1:9001/) for the service list. Log files
+are available at `/services/{service_name}/logs`.
+
+## Features
+
+- REST APIs for service health, details, lifecycle actions, and log file listing
+- WebSocket log streaming with tail, follow, and scrollback
+- Browser UI with service health, uptime, warnings, home links, and start/stop/restart
+  controls
+- Shared CSS from `projects/web/`
+
+## Documentation
+
+See [docs/README.md](docs/README.md) for package layout and links to the API reference
+and operations guide.

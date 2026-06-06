@@ -14,6 +14,9 @@ import {
   sendJson,
   sendJsonAfterFlush,
 } from "./http_json.js";
+import { readStaticFile, sendStaticResult } from "./static.js";
+import { sendLogsPage, sendMainPage } from "./ui.js";
+import { buildConductorStaticRoots, matchLogsPagePath } from "./ui_helpers.js";
 import { LifecycleManager } from "./lifecycle.js";
 import { listServiceLogs } from "./logs.js";
 import { createRepoPaths, createRepoPathsForRoot } from "./paths.js";
@@ -82,6 +85,7 @@ export function createConductorServer(options: ConductorServerOptions): Conducto
     getHeartbeat: (serviceName) => options.healthPoller.getHeartbeat(serviceName),
   });
 
+  const staticAssetRoots = buildConductorStaticRoots(repoPaths.repoRoot);
   const logStreamWebSocketServer = createLogStreamWebSocketServer();
 
   const httpServer = createServer((request: IncomingMessage, response: ServerResponse) =>
@@ -141,6 +145,42 @@ export function createConductorServer(options: ConductorServerOptions): Conducto
   {
     const path = parseRequestPath(request);
     const method = request.method ?? "GET";
+
+    if (method === "GET" && path === "/")
+    {
+      sendMainPage(response);
+      return;
+    }
+
+    const logsPageServiceName = matchLogsPagePath(path);
+
+    if (method === "GET" && logsPageServiceName !== null)
+    {
+      const service = findRegisteredService(options.services, logsPageServiceName);
+
+      if (!service)
+      {
+        handleServiceNotFound(response);
+        return;
+      }
+
+      sendLogsPage(response, logsPageServiceName);
+      return;
+    }
+
+    if (method === "GET" && path.startsWith("/assets/"))
+    {
+      const staticFile = await readStaticFile(path, staticAssetRoots);
+
+      if (!staticFile)
+      {
+        handleNotFound(response);
+        return;
+      }
+
+      sendStaticResult(response, staticFile);
+      return;
+    }
 
     if (method === "GET" && path === "/health")
     {
