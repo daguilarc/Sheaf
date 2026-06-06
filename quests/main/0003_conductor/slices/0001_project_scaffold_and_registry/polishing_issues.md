@@ -2,10 +2,10 @@
 
 ## Issue PR-0001
 
-- status: open
+- status: completed
 - owner_role: polisher_reviewer
 - created_at: 2026-06-06T20:20:00Z
-- updated_at: 2026-06-06T20:20:00Z
+- updated_at: 2026-06-06T20:25:00Z
 - title: Registry test asserts exact service count, will break when more services register
 - details: >
     `tests/scaffold.test.ts` (test "loadServiceRegistry reads the conductor
@@ -21,7 +21,13 @@
     the exact expected shape — is already fully covered by
     `findServiceByName(...)` plus the `assert.deepEqual(conductor, expected)`
     check, so the exact-length assertion adds brittleness without adding coverage.
-- resolution_notes: none
+- resolution_notes: >
+    Verified fixed. `tests/scaffold.test.ts` now asserts
+    `services.filter((service) => service.name === "conductor").length === 1`
+    instead of `services.length === 1`. This no longer fails when additional
+    unrelated services are registered in `config/services.json`, while the
+    `findServiceByName` + `assert.deepEqual(conductor, expected)` checks still
+    verify the conductor entry shape. Completion criteria met.
 
   To mark completed: the test must no longer fail when additional, unrelated
   service entries exist in `config/services.json`. Acceptable fixes include
