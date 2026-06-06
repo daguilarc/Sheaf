@@ -19,6 +19,7 @@ Use `structure/` for repository-wide rules and shared vocabulary:
 - project rules
 - configuration rules
 - service rules
+- web UI rules
 - logging and data rules
 - glossary terms
 

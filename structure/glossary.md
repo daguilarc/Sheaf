@@ -24,6 +24,10 @@ A long-running process registered in [`config/services.json`](../config/services
 
 An optional service registry field for the service's main human-facing page. See [Services](services.md#registry-file).
 
+## Web UI
+
+An optional browser interface for a project service. Shared web UI utilities live in the [`web` project](webui.md).
+
 ## Conductor
 
 The future project responsible for managing [services](services.md) registered in [`config/services.json`](../config/services.json).
