@@ -1,4 +1,4 @@
-export { createRepoPaths, type RepoPaths } from "./paths.js";
+export { createRepoPaths, createRepoPathsForRoot, type RepoPaths } from "./paths.js";
 export { type ServiceDefinition } from "./service_definition.js";
 export {
   findServiceByName,
@@ -38,3 +38,34 @@ export {
   type ConductorServer,
   type ConductorServerOptions,
 } from "./server.js";
+export {
+  LifecycleManager,
+  buildExitUrl,
+  createExitRequester,
+  validateServiceCommand,
+  type CommandValidationError,
+  type ExitRequester,
+  type ExitRequestResult,
+  type LifecycleManagerOptions,
+  type ProcessInfo,
+  type RestartServiceResult,
+  type StartServiceResult,
+  type StopServiceResult,
+} from "./lifecycle.js";
+export {
+  createProcessRunner,
+  needsShellExecution,
+  parseCommand,
+  spawnCommand,
+  type ProcessRunner,
+  type SpawnedProcess,
+  type SpawnFailure,
+} from "./process_runner.js";
+export {
+  isPathInsideRoot,
+  listServiceLogs,
+  normalizeRelativeLogPath,
+  resolveLogFilePath,
+  type LogFileEntry,
+  type LogListResult,
+} from "./logs.js";

@@ -35,6 +35,7 @@ async function main(): Promise<void>
     bindPort: conductor.port,
     healthPoller,
     shutdownController,
+    repoRoot: paths.repoRoot,
   });
 
   const port = await conductorServer.listen();

@@ -30,20 +30,28 @@ function findRepoRoot(startDir: string): string
   throw new Error("repository root not found");
 }
 
-export function createRepoPaths(startDir?: string): RepoPaths
+function buildRepoPaths(repoRoot: string): RepoPaths
 {
-  const resolvedStartDir = startDir ?? dirname(fileURLToPath(import.meta.url));
-  const repoRoot = findRepoRoot(resolvedStartDir);
-  const servicesJsonPath = join(repoRoot, "config", "services.json");
-  const sharedCssPath = join(repoRoot, "projects", "web", "src", "sheaf.css");
-
   return {
     repoRoot,
-    servicesJsonPath,
-    sharedCssPath,
+    servicesJsonPath: join(repoRoot, "config", "services.json"),
+    sharedCssPath: join(repoRoot, "projects", "web", "src", "sheaf.css"),
     serviceLogRoot(serviceName: string)
     {
       return join(repoRoot, "logs", serviceName);
     },
   };
+}
+
+export function createRepoPathsForRoot(repoRoot: string): RepoPaths
+{
+  return buildRepoPaths(repoRoot);
+}
+
+export function createRepoPaths(startDir?: string): RepoPaths
+{
+  const resolvedStartDir = startDir ?? dirname(fileURLToPath(import.meta.url));
+  const repoRoot = findRepoRoot(resolvedStartDir);
+
+  return buildRepoPaths(repoRoot);
 }

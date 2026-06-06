@@ -8,6 +8,9 @@ import {
   sendJson,
   sendJsonAfterFlush,
 } from "./http_json.js";
+import { LifecycleManager } from "./lifecycle.js";
+import { listServiceLogs } from "./logs.js";
+import { createRepoPaths, createRepoPathsForRoot } from "./paths.js";
 import { findServiceByName } from "./service_registry.js";
 import {
   presentAllServices,
@@ -24,6 +27,8 @@ export type ConductorServerOptions =
   bindPort: number;
   healthPoller: HealthPoller;
   shutdownController: ShutdownController;
+  repoRoot?: string;
+  lifecycleManager?: LifecycleManager;
   serverStartTime?: number;
   warning?: string;
 };
@@ -45,10 +50,30 @@ function handleNotFound(response: ServerResponse): void
   sendJson(response, 404, { error: "not found" });
 }
 
+function handleServiceNotFound(response: ServerResponse): void
+{
+  sendJson(response, 404, { error: "service not found" });
+}
+
+function findRegisteredService(
+  services: ServiceDefinition[],
+  serviceName: string,
+): ServiceDefinition | undefined
+{
+  return findServiceByName(services, serviceName);
+}
+
 export function createConductorServer(options: ConductorServerOptions): ConductorServer
 {
   const serverStartTime = options.serverStartTime ?? Date.now();
   let acceptingConnections = true;
+  const repoPaths = options.repoRoot
+    ? createRepoPathsForRoot(options.repoRoot)
+    : createRepoPaths();
+  const lifecycleManager = options.lifecycleManager ?? new LifecycleManager({
+    repoRoot: repoPaths.repoRoot,
+    getHeartbeat: (serviceName) => options.healthPoller.getHeartbeat(serviceName),
+  });
 
   const httpServer = createServer((request: IncomingMessage, response: ServerResponse) =>
   {
@@ -67,8 +92,9 @@ export function createConductorServer(options: ConductorServerOptions): Conducto
   ): Promise<void>
   {
     const path = parseRequestPath(request);
+    const method = request.method ?? "GET";
 
-    if (request.method === "GET" && path === "/health")
+    if (method === "GET" && path === "/health")
     {
       const body: Record<string, unknown> =
       {
@@ -85,7 +111,7 @@ export function createConductorServer(options: ConductorServerOptions): Conducto
       return;
     }
 
-    if (request.method === "POST" && path === "/exit")
+    if (method === "POST" && path === "/exit")
     {
       sendJsonAfterFlush(response, 200, { exiting: true }, () =>
       {
@@ -95,7 +121,7 @@ export function createConductorServer(options: ConductorServerOptions): Conducto
       return;
     }
 
-    if (request.method === "GET" && path === "/api/services")
+    if (method === "GET" && path === "/api/services")
     {
       const services = presentAllServices(
         options.services,
@@ -105,41 +131,90 @@ export function createConductorServer(options: ConductorServerOptions): Conducto
       return;
     }
 
-    const healthMatch = path.match(/^\/api\/services\/([^/]+)\/health$/);
+    const serviceActionMatch = path.match(/^\/api\/services\/([^/]+)\/(start|stop|restart|logs|health)$/);
 
-    if (request.method === "GET" && healthMatch)
+    if (serviceActionMatch)
     {
-      const serviceName = decodePathSegment(healthMatch[1]);
-      const service = findServiceByName(options.services, serviceName);
+      const serviceName = decodePathSegment(serviceActionMatch[1]!);
+      const action = serviceActionMatch[2]!;
+      const service = findRegisteredService(options.services, serviceName);
 
       if (!service)
       {
-        sendJson(response, 404, { error: "service not found" });
+        handleServiceNotFound(response);
         return;
       }
 
-      const heartbeat = options.healthPoller.getHeartbeat(serviceName);
-
-      if (!heartbeat)
+      if (action === "health" && method === "GET")
       {
-        sendJson(response, 404, { error: "service not found" });
+        const heartbeat = options.healthPoller.getHeartbeat(serviceName);
+
+        if (!heartbeat)
+        {
+          handleServiceNotFound(response);
+          return;
+        }
+
+        sendJson(response, 200, presentServiceHealth(serviceName, heartbeat));
         return;
       }
 
-      sendJson(response, 200, presentServiceHealth(serviceName, heartbeat));
-      return;
+      if (action === "logs" && method === "GET")
+      {
+        const logRoot = repoPaths.serviceLogRoot(serviceName);
+        const listing = await listServiceLogs(serviceName, logRoot);
+        sendJson(response, 200, listing);
+        return;
+      }
+
+      if (action === "start" && method === "POST")
+      {
+        const result = lifecycleManager.StartService(service);
+
+        if (result.error && !result.started)
+        {
+          const statusCode = result.error.includes("missing or empty") ? 400 : 500;
+          sendJson(response, statusCode, result);
+          return;
+        }
+
+        sendJson(response, 200, result);
+        return;
+      }
+
+      if (action === "stop" && method === "POST")
+      {
+        const result = await lifecycleManager.StopService(service);
+        sendJson(response, 200, result);
+        return;
+      }
+
+      if (action === "restart" && method === "POST")
+      {
+        const result = await lifecycleManager.RestartService(service);
+
+        if (result.error && !result.restart_requested)
+        {
+          const statusCode = result.error.includes("missing or empty") ? 400 : 500;
+          sendJson(response, statusCode, result);
+          return;
+        }
+
+        sendJson(response, 200, result);
+        return;
+      }
     }
 
     const serviceMatch = path.match(/^\/api\/services\/([^/]+)$/);
 
-    if (request.method === "GET" && serviceMatch)
+    if (method === "GET" && serviceMatch)
     {
-      const serviceName = decodePathSegment(serviceMatch[1]);
-      const service = findServiceByName(options.services, serviceName);
+      const serviceName = decodePathSegment(serviceMatch[1]!);
+      const service = findRegisteredService(options.services, serviceName);
 
       if (!service)
       {
-        sendJson(response, 404, { error: "service not found" });
+        handleServiceNotFound(response);
         return;
       }
 
@@ -147,7 +222,7 @@ export function createConductorServer(options: ConductorServerOptions): Conducto
 
       if (!heartbeat)
       {
-        sendJson(response, 404, { error: "service not found" });
+        handleServiceNotFound(response);
         return;
       }
 
