@@ -310,8 +310,8 @@ export class LifecycleManager
     const stopResult = await this.StopService(service);
     const startResult = this.StartService(service);
 
-    const restartRequested = stopResult.stop_requested && startResult.started;
-    const error = startResult.error ?? stopResult.error;
+    const restartRequested = startResult.started;
+    const error = startResult.error ?? (startResult.started ? undefined : stopResult.error);
 
     return {
       name: service.name,

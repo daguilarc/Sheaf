@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
+import type { IncomingMessage, ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -56,6 +57,35 @@ async function requestJson(
   const response = await fetch(`http://127.0.0.1:${port}${path}`, { method });
   const body = await response.json() as unknown;
   return { status: response.status, body };
+}
+
+function createCapturedResponse(): {
+  response: ServerResponse;
+  done: Promise<{ status: number; body: unknown }>;
+}
+{
+  let resolveDone: (result: { status: number; body: unknown }) => void = () => undefined;
+  const done = new Promise<{ status: number; body: unknown }>((resolve) =>
+  {
+    resolveDone = resolve;
+  });
+
+  const response = {
+    statusCode: 200,
+    setHeader: () => response,
+    end: (payload?: string | Buffer, callback?: () => void) =>
+    {
+      const text = Buffer.isBuffer(payload) ? payload.toString("utf8") : (payload ?? "");
+      resolveDone({
+        status: response.statusCode,
+        body: text.length > 0 ? JSON.parse(text) as unknown : undefined,
+      });
+      callback?.();
+      return response;
+    },
+  } as unknown as ServerResponse;
+
+  return { response, done };
 }
 
 function createFakeProcessRunner(
@@ -371,6 +401,78 @@ test("POST /api/services/{service_name}/restart stops before start", async () =>
       "start:echo alpha",
     ]);
   });
+});
+
+test("POST /api/services/{service_name}/restart succeeds when stop is unreachable and start succeeds", async () =>
+{
+  const events: string[] = [];
+  const healthPoller = new HealthPoller({
+    services: testServices,
+    fetchFn: async () => new Response(JSON.stringify({ healthy: true, uptime: 9 }), { status: 200 }),
+  });
+  const lifecycleManager = new LifecycleManager({
+    repoRoot: process.cwd(),
+    processRunner: createFakeProcessRunner((command) =>
+    {
+      events.push(`start:${command}`);
+      return { pid: 6161, command, argv: parseCommand(command) };
+    }),
+    exitRequester: createExitRequester({
+      fetchFn: async (input) =>
+      {
+        events.push(`stop:${String(input)}`);
+        throw new Error("connection refused");
+      },
+    }),
+    getHeartbeat: (serviceName) => healthPoller.getHeartbeat(serviceName),
+  });
+  const shutdownController = createShutdownController({
+    stopPoller: () => healthPoller.stop(),
+    closeServer: async () => undefined,
+  });
+  const server = createConductorServer({
+    services: testServices,
+    bindHost: "127.0.0.1",
+    bindPort: 0,
+    healthPoller,
+    shutdownController,
+    repoRoot: process.cwd(),
+    lifecycleManager,
+  });
+
+  try
+  {
+    await healthPoller.runPollCycle();
+    const captured = createCapturedResponse();
+    server.httpServer.emit(
+      "request",
+      { method: "POST", url: "/api/services/alpha/restart" } as IncomingMessage,
+      captured.response,
+    );
+    const response = await captured.done;
+
+    assert.equal(response.status, 200);
+
+    const body = response.body as Record<string, unknown>;
+    assert.equal(body.restart_requested, true);
+    assert.equal(body.stop_requested, false);
+    assert.equal(body.started, true);
+    assert.equal(body.error, undefined);
+    assert.deepEqual(body.process, {
+      pid: 6161,
+      command: "echo alpha",
+      argv: ["echo", "alpha"],
+    });
+    assert.deepEqual(events, [
+      "stop:http://127.0.0.1:9101/exit",
+      "start:echo alpha",
+    ]);
+  }
+  finally
+  {
+    healthPoller.stop();
+    await server.close();
+  }
 });
 
 test("POST /api/services/conductor/restart uses injected exit and start fakes", async () =>
