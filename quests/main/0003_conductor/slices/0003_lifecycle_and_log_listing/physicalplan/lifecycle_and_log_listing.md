@@ -9,6 +9,7 @@ Expected outcome:
 - `POST /api/services/{service_name}/start` runs the service's configured command from the repository root and returns structured process/start information plus current heartbeat state.
 - `POST /api/services/{service_name}/stop` prefers the service's `POST /exit` lifecycle endpoint and returns structured stop request information plus current heartbeat state.
 - `POST /api/services/{service_name}/restart` requests a clean stop and then starts the configured command.
+- Stop and restart work for the registered `conductor` service by calling Conductor's own `POST /exit` endpoint from slice 0002; tests cover this self-management path with injected fakes so the test process is not terminated.
 - `GET /api/services/{service_name}/logs` lists files under `logs/<service_name>/` only, with path, size, and modified timestamp.
 - Lifecycle APIs return `404` for unknown services and structured errors for invalid or unusable commands.
 - Log listing rejects path traversal and never exposes files outside the resolved service log root.
@@ -29,6 +30,7 @@ Expected outcome:
 - Reuse repo-root path helpers from slice 0001 for command working directory and log root resolution.
 - Reuse Node's `child_process.spawn` through an injectable process runner for production, and fake process runners in tests.
 - Reuse Node `fetch` with timeout for `POST /exit`.
+- Reuse Conductor's own `POST /exit` endpoint from slice 0002 for `POST /api/services/conductor/stop` and as the stop phase of `POST /api/services/conductor/restart`.
 
 ## APIs To Define Or Extend
 
@@ -43,9 +45,11 @@ Define lifecycle service:
 - `StopService(service)`:
   - Send `POST /exit` to the service origin, using `127.0.0.1` or `localhost` for outbound requests when the configured host is `0.0.0.0`.
   - Return `{ name, action: "stop", stop_requested, heartbeat }`.
+  - For `service.name === "conductor"`, this request targets the same running server's `/exit` route. Implement it through the same injectable exit requester used for other services so tests can verify the self-stop URL and result without terminating Conductor.
   - If `/exit` is unreachable, return a structured error or `stop_requested: false`; do not silently kill arbitrary processes unless an in-memory process handle from a prior Conductor start is available and the implementation documents that fallback.
 - `RestartService(service)`:
   - Request stop first, then start with the configured command.
+  - For `service.name === "conductor"`, make the response explicit that restart was requested after self-stop and that the new process start uses the registry command. Because the current HTTP process may exit after `/exit`, tests should use injected exit/start fakes rather than relying on a live in-process restart.
   - Return `{ name, action: "restart", restart_requested, process, heartbeat }`.
   - Keep behavior user-initiated; do not add automatic retries or desired-state reconciliation.
 
@@ -75,8 +79,8 @@ If route matching from slice 0002 is becoming repetitive, introduce a small expl
 
 - Lifecycle tests use fake process runners and fake exit fetchers rather than launching arbitrary long-running processes.
 - Tests cover start success, invalid command, spawn failure, unknown service `404`, and response heartbeat inclusion.
-- Tests cover stop success through `POST /exit`, unreachable `/exit`, unknown service `404`, and no automatic process killing unless the implementation explicitly owns a process handle.
-- Tests cover restart ordering: stop is attempted before start.
+- Tests cover stop success through `POST /exit`, unreachable `/exit`, unknown service `404`, the `conductor` self-stop URL/path, and no automatic process killing unless the implementation explicitly owns a process handle.
+- Tests cover restart ordering: stop is attempted before start, including the registered `conductor` service path with injected fakes.
 - Log listing tests cover missing log directory, normal file listing, nested file relative paths if recursive listing is implemented, file size and modified timestamp, and unknown service `404`.
 - Path traversal tests verify helpers reject absolute paths and `..` segments for any reusable log path resolver.
 - `npm run build` and `npm test` pass in `projects/conductor`.

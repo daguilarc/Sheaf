@@ -2,12 +2,13 @@
 
 ## Objective
 
-Implement the Conductor backend service core: read registered services from `config/services.json`, expose Conductor's own `GET /health`, poll every registered service's `GET /health` endpoint every 30 seconds, maintain in-memory heartbeat state, and expose read-only service REST APIs.
+Implement the Conductor backend service core: read registered services from `config/services.json`, expose Conductor's own registered-service lifecycle endpoints (`GET /health` and `POST /exit`), poll every registered service's `GET /health` endpoint every 30 seconds, maintain in-memory heartbeat state, and expose read-only service REST APIs.
 
 Expected outcome:
 
 - `npm --prefix projects/conductor start` starts a server bound to the `conductor` entry's configured host and port, currently `0.0.0.0:9001`.
 - `GET /health` returns Conductor's own standard health shape.
+- `POST /exit` returns a clean shutdown acknowledgement and then stops the Conductor HTTP server so Conductor satisfies the same registered-service lifecycle contract it expects from other services.
 - The polling loop polls every service in `config/services.json`, including Conductor itself when registered, without starting/stopping/restarting anything.
 - Latest heartbeat state is kept only in memory.
 - `GET /api/services`, `GET /api/services/{service_name}`, and `GET /api/services/{service_name}/health` return the specified shapes and `404` unknown services.
@@ -18,6 +19,7 @@ Expected outcome:
 - Add `projects/conductor/src/server.ts` for server construction with injectable dependencies for tests.
 - Add `projects/conductor/src/service_registry.ts` for loading and validating `config/services.json`.
 - Add `projects/conductor/src/health_poller.ts` for heartbeat polling and in-memory state.
+- Add `projects/conductor/src/shutdown.ts` or an equivalent injectable shutdown controller for `POST /exit`.
 - Add `projects/conductor/src/http_json.ts` or equivalent small HTTP helpers for JSON responses and request routing.
 - Add `projects/conductor/src/service_presenter.ts` or equivalent mapping from registry plus heartbeat state to API response shapes.
 - Add tests under `projects/conductor/tests/registry*.ts`, `health*.ts`, and `service_rest*.ts`.
@@ -62,6 +64,7 @@ Define health polling:
 Define REST APIs:
 
 - `GET /health` returns `{ healthy: true, uptime: <seconds> }` plus optional `warning` when the service wants to report one.
+- `POST /exit` returns a JSON acknowledgement such as `{ exiting: true }`, stops accepting new HTTP requests after the response is flushed, stops the health polling loop, closes the HTTP server, and exits the process in the CLI entry point. In tests, inject a shutdown controller so assertions can verify shutdown was requested without terminating the test process.
 - `GET /api/services` returns every registry service merged with heartbeat state, latest `uptime`/`warning` when available, and derived `home_url` when `home_path` exists.
 - `GET /api/services/{service_name}` returns one merged service object or `404`.
 - `GET /api/services/{service_name}/health` returns `name`, `healthy`, `last_checked_at`, `last_error`, `uptime`, and `warning` from heartbeat data only; it must not perform a synchronous live check.
@@ -71,12 +74,13 @@ For `home_url`, derive `http://<host>:<port><home_path>` from the registry. Use 
 
 ## Enabling Refactor
 
-If the initial scaffold's config/path helpers are too narrow, extend them here rather than duplicating repo-root resolution in each module. Keep the server factory dependency-injectable so lifecycle and log tests in later slices can reuse it without binding real port `9001`.
+If the initial scaffold's config/path helpers are too narrow, extend them here rather than duplicating repo-root resolution in each module. Keep the server factory dependency-injectable so lifecycle and log tests in later slices can reuse it without binding real port `9001`. The shutdown controller must also be injectable so later lifecycle tests can exercise `POST /api/services/conductor/stop` without killing the test runner.
 
 ## Validation
 
 - Unit tests cover service registry loading from `config/services.json`, malformed JSON, invalid entries, and duplicate names.
 - Unit tests cover Conductor's own `GET /health` response shape and uptime increasing from the injected start time.
+- Unit tests cover Conductor's own `POST /exit` response shape, shutdown-controller invocation, poller stop behavior, and that the response is sent before shutdown work runs.
 - Health poller tests cover:
   - healthy 2xx JSON with `healthy: true`
   - explicit unhealthy health response

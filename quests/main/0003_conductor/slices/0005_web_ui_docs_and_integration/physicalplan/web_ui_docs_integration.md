@@ -11,6 +11,7 @@ Expected outcome:
 - The logs UI lists available log files, opens a selected file without downloading the whole file, tails appended data while follow is enabled, loads earlier ranges as the user scrolls upward, and clearly handles services with no logs.
 - The UI uses shared CSS/static assets from `projects/web/`; project-specific behavior remains in `projects/conductor/`.
 - Project-local docs describe the Conductor REST/WebSocket APIs, operations behavior, and Web shared CSS/assets.
+- Docs and UI behavior account for Conductor's own registered-service `POST /exit` lifecycle endpoint, including the fact that stopping Conductor will stop the UI serving the request.
 - Final tests/checks cover the full backend/UI integration path required by the spec.
 
 ## Key Files And Systems
@@ -69,6 +70,7 @@ Define documentation:
 
 - `projects/conductor/docs/reference/api.md` is the canonical REST and WebSocket API reference and documents:
   - `GET /health`
+  - `POST /exit`
   - `GET /api/services`
   - `GET /api/services/{service_name}`
   - `GET /api/services/{service_name}/health`
@@ -82,6 +84,7 @@ Define documentation:
   - heartbeat state is in memory only
   - polling does not auto-start services
   - start/stop/restart are user-initiated
+  - Conductor itself is a registered service and exposes `POST /exit`; stopping or restarting it interrupts the Conductor UI/backend process after the response is acknowledged
   - log listing and log viewing behavior
 - `projects/web/docs/README.md` describes the shared CSS/static asset surface and how Conductor consumes it.
 
