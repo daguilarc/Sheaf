@@ -2,10 +2,10 @@
 
 ## Issue PI-0001
 
-- status: open
+- status: completed
 - owner_role: polisher_reviewer
 - created_at: 2026-06-06T00:00:00Z
-- updated_at: 2026-06-06T00:00:00Z
+- updated_at: 2026-06-06T20:30:00Z
 - title: Restart of a stopped service reports HTTP 500 despite a successful start
 - details: |
   `RestartService` (`projects/conductor/src/lifecycle.ts:307-326`) defines
@@ -39,4 +39,16 @@
     not returned while `started: true` and a valid `process` are present), AND
   - A test covers restarting a service whose `/exit` is unreachable but whose start
     succeeds, asserting the chosen status code and response shape.
-- resolution_notes: none
+- resolution_notes: |
+  Verified fixed. `RestartService` (`projects/conductor/src/lifecycle.ts:313-314`)
+  now sets `restart_requested = startResult.started` and
+  `error = startResult.error ?? (startResult.started ? undefined : stopResult.error)`,
+  so a successful start yields `restart_requested: true` with no error even when the
+  stop phase could not reach `/exit`. The restart route in
+  `projects/conductor/src/server.ts:192-205` consequently skips the 500 branch and
+  returns 200 with the populated `process`. Regression test
+  `projects/conductor/tests/lifecycle.test.ts:376-446` covers the unreachable-stop /
+  successful-start path and asserts HTTP 200, `restart_requested: true`,
+  `stop_requested: false`, `started: true`, `error: undefined`, process details, and
+  stop-before-start ordering. When start itself fails, `started: false` and the start
+  error are still surfaced with the appropriate 4xx/5xx status.
