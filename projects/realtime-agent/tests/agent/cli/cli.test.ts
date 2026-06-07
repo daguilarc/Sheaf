@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -7,38 +7,74 @@ import test from "node:test";
 
 import { DEFAULT_REALTIME_MODEL, type AgentStartConfig } from "../../../src/agent/src/index.js";
 import {
+  LoadRealtimeAgentConfig,
+} from "../../../src/agent/src/config.js";
+import {
   ParseCliArgs,
+  ResolveCliRunOptions,
   RunCli,
   StartCliRuntime,
   type CliRunDeps,
 } from "../../../src/agent/src/cli.js";
 import { CreateFakeMicrophoneCapture } from "../../../src/agent/src/audio_input.js";
+import { CreateRuntimeLogger } from "../../../src/agent/src/runtime_log.js";
 import { buildRealtimeConnectionHeaders } from "../../../src/agent/src/realtime_client.js";
 import {
   CreateAgentLoopTestContext,
   OpenConnectedSocket,
 } from "../agent_loop/helpers.js";
 
-test("ParseCliArgs requires prompt and context files", () =>
+function CreateFakeRepoRoot(): string
+{
+  const repoRoot = mkdtempSync(path.join(os.tmpdir(), "realtime-agent-repo-"));
+  mkdirSync(path.join(repoRoot, "config"), { recursive: true });
+  mkdirSync(path.join(repoRoot, "structure"), { recursive: true });
+  mkdirSync(
+    path.join(
+      repoRoot,
+      "projects/realtime-agent/prompts/system-prompts",
+    ),
+    { recursive: true },
+  );
+  writeFileSync(path.join(repoRoot, "config", "services.json"), "{}");
+  return repoRoot;
+}
+
+async function WriteApiKey(repoRoot: string, apiKey: string): Promise<void>
+{
+  await writeFile(
+    path.join(repoRoot, "config", "api_keys.json"),
+    JSON.stringify({ openai_api_key: apiKey }),
+  );
+}
+
+test("ParseCliArgs requires context file", () =>
 {
   assert.throws(
     () => ParseCliArgs(["node", "realtime-agent"]),
-    (error: Error) => error.message.includes("--prompt-file"),
-  );
-
-  assert.throws(
-    () =>
-      ParseCliArgs([
-        "node",
-        "realtime-agent",
-        "--prompt-file",
-        "prompt.md",
-      ]),
     (error: Error) => error.message.includes("--context-file"),
   );
 });
 
-test("ParseCliArgs defaults model to gpt-realtime-2 and parses tool flags", () =>
+test("ParseCliArgs accepts optional prompt file", () =>
+{
+  const parsed = ParseCliArgs([
+    "node",
+    "realtime-agent",
+    "--context-file",
+    "context.md",
+  ]);
+
+  assert.equal(parsed.action, "run");
+  if (parsed.action !== "run")
+  {
+    return;
+  }
+
+  assert.equal(parsed.options.promptFile, undefined);
+});
+
+test("ParseCliArgs parses tool flags and explicit model", () =>
 {
   const parsed = ParseCliArgs([
     "node",
@@ -71,24 +107,39 @@ test("ParseCliArgs defaults model to gpt-realtime-2 and parses tool flags", () =
   assert.equal(parsed.options.inputDevice, "15");
 });
 
-test("ParseCliArgs uses default model when omitted", () =>
+test("ResolveCliRunOptions uses configured default prompt and model", async () =>
 {
-  const parsed = ParseCliArgs([
-    "node",
-    "realtime-agent",
-    "--prompt-file",
-    "prompt.md",
-    "--context-file",
-    "context.md",
-  ]);
+  const repoRoot = CreateFakeRepoRoot();
+  const promptPath = path.join(
+    repoRoot,
+    "projects/realtime-agent/prompts/system-prompts/basic_realtime_conversation_v1.md",
+  );
 
-  assert.equal(parsed.action, "run");
-  if (parsed.action !== "run")
+  try
   {
-    return;
-  }
+    await writeFile(promptPath, "default prompt");
+    const config = await LoadRealtimeAgentConfig({ repoRoot });
+    const parsed = ParseCliArgs([
+      "node",
+      "realtime-agent",
+      "--context-file",
+      "context.md",
+    ]);
 
-  assert.equal(parsed.options.model, DEFAULT_REALTIME_MODEL);
+    assert.equal(parsed.action, "run");
+    if (parsed.action !== "run")
+    {
+      return;
+    }
+
+    const resolved = ResolveCliRunOptions(parsed.options, config);
+    assert.equal(resolved.promptFile, promptPath);
+    assert.equal(resolved.model, DEFAULT_REALTIME_MODEL);
+  }
+  finally
+  {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
 });
 
 test("ParseCliArgs supports list-input-devices action", () =>
@@ -102,59 +153,160 @@ test("ParseCliArgs supports list-input-devices action", () =>
   assert.equal(parsed.action, "list_input_devices");
 });
 
-test("RunCli reports missing OPENAI_API_KEY", async () =>
+test("RunCli list-input-devices does not require config or API key", async () =>
 {
+  let configLoaded = false;
+  let apiKeyLoaded = false;
+
+  const exitCode = await RunCli(
+    ["node", "realtime-agent", "--list-input-devices"],
+    {
+      loadConfig: async () =>
+      {
+        configLoaded = true;
+        throw new Error("config should not load");
+      },
+      loadApiKey: async () =>
+      {
+        apiKeyLoaded = true;
+        throw new Error("api key should not load");
+      },
+      listInputDevices: () => [],
+      formatInputDeviceList: () => "no input devices",
+    },
+  );
+
+  assert.equal(exitCode, 0);
+  assert.equal(configLoaded, false);
+  assert.equal(apiKeyLoaded, false);
+});
+
+test("RunCli loads API key from config/api_keys.json without OPENAI_API_KEY", async () =>
+{
+  const repoRoot = CreateFakeRepoRoot();
   const dir = await mkdtemp(path.join(os.tmpdir(), "realtime-agent-cli-"));
   const promptFile = path.join(dir, "prompt.md");
   const contextFile = path.join(dir, "context.md");
   await writeFile(promptFile, "system prompt");
   await writeFile(contextFile, "initial context");
+  await WriteApiKey(repoRoot, "repo-config-key");
 
-  const exitCode = await RunCli(
-    [
-      "node",
-      "realtime-agent",
-      "--prompt-file",
-      promptFile,
-      "--context-file",
-      contextFile,
-    ],
-    { env: {}, registerSignalHandlers: false },
-  );
+  const context = CreateAgentLoopTestContext();
 
-  assert.equal(exitCode, 1);
+  try
+  {
+    const exitCode = await RunCli(
+      [
+        "node",
+        "realtime-agent",
+        "--prompt-file",
+        promptFile,
+        "--context-file",
+        contextFile,
+      ],
+      {
+        repoRoot,
+        registerSignalHandlers: false,
+        createDatabase: () => context.database,
+        sessionDeps: {
+          webSocketFactory: context.deps.webSocketFactory,
+        },
+        createMicrophoneCapture: (options) =>
+          CreateFakeMicrophoneCapture({
+            frames: [],
+            onFrame: options.onFrame,
+            onError: options.onError,
+          }),
+        startSession: async (config, sessionDeps) =>
+        {
+          const { startAgentSession } = await import("../../../src/agent/src/agent_loop.js");
+          const startPromise = startAgentSession(config, sessionDeps);
+          await OpenConnectedSocket(context.sockets);
+          const session = await startPromise;
+          await session.stop("test");
+          return session;
+        },
+      },
+    );
+
+    assert.equal(exitCode, 0);
+  }
+  finally
+  {
+    rmSync(path.dirname(context.databasePath), { recursive: true, force: true });
+    rmSync(repoRoot, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("RunCli reports missing API key from config/api_keys.json", async () =>
+{
+  const repoRoot = CreateFakeRepoRoot();
+  const dir = await mkdtemp(path.join(os.tmpdir(), "realtime-agent-cli-"));
+  const contextFile = path.join(dir, "context.md");
+  await writeFile(contextFile, "initial context");
+
+  try
+  {
+    const exitCode = await RunCli(
+      [
+        "node",
+        "realtime-agent",
+        "--prompt-file",
+        path.join(dir, "prompt.md"),
+        "--context-file",
+        contextFile,
+      ],
+      { repoRoot, registerSignalHandlers: false },
+    );
+
+    assert.equal(exitCode, 1);
+  }
+  finally
+  {
+    rmSync(repoRoot, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("RunCli reports unknown tools before connecting", async () =>
 {
+  const repoRoot = CreateFakeRepoRoot();
   const dir = await mkdtemp(path.join(os.tmpdir(), "realtime-agent-cli-"));
   const promptFile = path.join(dir, "prompt.md");
   const contextFile = path.join(dir, "context.md");
   await writeFile(promptFile, "system prompt");
   await writeFile(contextFile, "initial context");
+  await WriteApiKey(repoRoot, "test-key");
 
-  const exitCode = await RunCli(
-    [
-      "node",
-      "realtime-agent",
-      "--prompt-file",
-      promptFile,
-      "--context-file",
-      contextFile,
-      "--tool",
-      "missing_tool",
-    ],
-    {
-      env: { OPENAI_API_KEY: "test-key" },
-      registerSignalHandlers: false,
-    },
-  );
+  try
+  {
+    const exitCode = await RunCli(
+      [
+        "node",
+        "realtime-agent",
+        "--prompt-file",
+        promptFile,
+        "--context-file",
+        contextFile,
+        "--tool",
+        "missing_tool",
+      ],
+      { repoRoot, registerSignalHandlers: false },
+    );
 
-  assert.equal(exitCode, 1);
+    assert.equal(exitCode, 1);
+  }
+  finally
+  {
+    rmSync(repoRoot, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("StartCliRuntime passes prompt and context file contents to agent config", async () =>
 {
+  const repoRoot = CreateFakeRepoRoot();
   const dir = await mkdtemp(path.join(os.tmpdir(), "realtime-agent-cli-"));
   const promptFile = path.join(dir, "prompt.md");
   const contextFile = path.join(dir, "context.md");
@@ -163,10 +315,21 @@ test("StartCliRuntime passes prompt and context file contents to agent config", 
 
   const context = CreateAgentLoopTestContext();
   let capturedConfig: AgentStartConfig | undefined;
-  const frames: string[] = [];
 
-  const deps: CliRunDeps = {
-    env: { OPENAI_API_KEY: "test-key" },
+  const agentConfig = await LoadRealtimeAgentConfig({ repoRoot });
+  const runtimeLogger = CreateRuntimeLogger({
+    logPath: path.join(dir, "runtime.jsonl"),
+    repoRoot,
+  });
+
+  const deps: CliRunDeps & {
+    apiKey: string;
+    agentConfig: Awaited<ReturnType<typeof LoadRealtimeAgentConfig>>;
+    runtimeLogger: ReturnType<typeof CreateRuntimeLogger>;
+  } = {
+    apiKey: "test-key",
+    agentConfig,
+    runtimeLogger,
     createDatabase: () => context.database,
     sessionDeps: {
       webSocketFactory: context.deps.webSocketFactory,
@@ -207,7 +370,8 @@ test("StartCliRuntime passes prompt and context file contents to agent config", 
 
   try
   {
-    const runtime = await StartCliRuntime(parsed.options, deps);
+    const resolved = ResolveCliRunOptions(parsed.options, agentConfig);
+    const runtime = await StartCliRuntime(resolved, deps);
 
     assert.equal(capturedConfig?.systemPrompt, "Prompt body from file.");
     assert.equal(capturedConfig?.initialContext, "Context body from file.");
@@ -221,11 +385,14 @@ test("StartCliRuntime passes prompt and context file contents to agent config", 
   finally
   {
     rmSync(path.dirname(context.databasePath), { recursive: true, force: true });
+    rmSync(repoRoot, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
   }
 });
 
 test("StartCliRuntime shutdown stops audio capture and finalizes session", async () =>
 {
+  const repoRoot = CreateFakeRepoRoot();
   const dir = await mkdtemp(path.join(os.tmpdir(), "realtime-agent-cli-"));
   const promptFile = path.join(dir, "prompt.md");
   const contextFile = path.join(dir, "context.md");
@@ -237,8 +404,20 @@ test("StartCliRuntime shutdown stops audio capture and finalizes session", async
   let endedReason: string | null | undefined;
   let audioStopped = false;
 
-  const deps: CliRunDeps = {
-    env: { OPENAI_API_KEY: "test-key" },
+  const agentConfig = await LoadRealtimeAgentConfig({ repoRoot });
+  const runtimeLogger = CreateRuntimeLogger({
+    logPath: path.join(dir, "runtime.jsonl"),
+    repoRoot,
+  });
+
+  const deps: CliRunDeps & {
+    apiKey: string;
+    agentConfig: Awaited<ReturnType<typeof LoadRealtimeAgentConfig>>;
+    runtimeLogger: ReturnType<typeof CreateRuntimeLogger>;
+  } = {
+    apiKey: "test-key",
+    agentConfig,
+    runtimeLogger,
     createDatabase: () => context.database,
     sessionDeps: {
       webSocketFactory: context.deps.webSocketFactory,
@@ -299,7 +478,8 @@ test("StartCliRuntime shutdown stops audio capture and finalizes session", async
 
   try
   {
-    const runtime = await StartCliRuntime(parsed.options, deps);
+    const resolved = ResolveCliRunOptions(parsed.options, agentConfig);
+    const runtime = await StartCliRuntime(resolved, deps);
     await runtime.shutdown("sigint", 0);
 
     assert.equal(audioStopped, true);
@@ -309,5 +489,7 @@ test("StartCliRuntime shutdown stops audio capture and finalizes session", async
   finally
   {
     rmSync(path.dirname(context.databasePath), { recursive: true, force: true });
+    rmSync(repoRoot, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
   }
 });

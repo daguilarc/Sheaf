@@ -5,6 +5,10 @@ import { fileURLToPath } from "node:url";
 
 import type Database from "better-sqlite3";
 
+import {
+  FindRepositoryRoot,
+  GetDefaultRealtimeAgentPaths,
+} from "../repo_paths.js";
 import type { DatabaseConfig } from "../types.js";
 
 type DatabaseConstructor = typeof Database;
@@ -18,13 +22,18 @@ const x_require = createRequire(
 );
 let x_databaseConstructor: DatabaseConstructor | undefined;
 
-const x_packageRoot = path.resolve(x_moduleDir, "..", "..");
+function ResolveDefaultDatabasePath(): string
+{
+  const repoRoot = FindRepositoryRoot(x_moduleDir) ?? FindRepositoryRoot();
+  if (repoRoot === undefined)
+  {
+    throw new Error("repository root not found");
+  }
 
-export const DEFAULT_DATABASE_PATH = path.join(
-  x_packageRoot,
-  "data",
-  "realtime-agent.sqlite",
-);
+  return GetDefaultRealtimeAgentPaths(repoRoot).databasePath;
+}
+
+export const DEFAULT_DATABASE_PATH = ResolveDefaultDatabasePath();
 
 const x_sessionsTableSql = `
 CREATE TABLE IF NOT EXISTS sessions (

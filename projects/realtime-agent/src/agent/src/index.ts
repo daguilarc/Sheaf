@@ -56,6 +56,30 @@ export {
 } from "./types.js";
 
 export {
+  ConfigLoadError,
+  LoadOpenAiApiKey,
+  LoadRealtimeAgentConfig,
+  type LoadOpenAiApiKeyOptions,
+  type LoadRealtimeAgentConfigOptions,
+  type RealtimeAgentConfig,
+  type ResolvedRealtimeAgentConfig,
+} from "./config.js";
+
+export {
+  FindRepositoryRoot,
+  GetDefaultRealtimeAgentPaths,
+  ResolveRepositoryPath,
+  type RealtimeAgentPaths,
+} from "./repo_paths.js";
+
+export {
+  CreateRuntimeLogger,
+  type RuntimeLogEntry,
+  type RuntimeLogger,
+  type RuntimeLoggerOptions,
+} from "./runtime_log.js";
+
+export {
   DEFAULT_DATABASE_PATH,
   RealtimeAgentDb,
   resolveDatabasePath,

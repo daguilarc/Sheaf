@@ -1,0 +1,9 @@
+{
+  "model": "gpt-realtime-2",
+  "data_dir": "data/realtime-agent",
+  "database_path": "data/realtime-agent/realtime-agent.sqlite",
+  "logs_dir": "logs/realtime-agent",
+  "default_prompt_file": "projects/realtime-agent/prompts/system-prompts/basic_realtime_conversation_v1.md",
+  "updated_at": "2026-06-07T00:00:00Z",
+  "version": 1
+}

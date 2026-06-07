@@ -6,14 +6,26 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
 import {
-  DEFAULT_REALTIME_MODEL,
-  RealtimeAgentDb,
-  RealtimeTransportError,
+  ConfigLoadError,
+  LoadOpenAiApiKey,
+  LoadRealtimeAgentConfig,
+  type ResolvedRealtimeAgentConfig,
+} from "./config.js";
+import {
   startAgentSession,
+} from "./agent_loop.js";
+import {
+  RealtimeAgentDb,
+} from "./persistence/db.js";
+import {
+  RealtimeTransportError,
+} from "./realtime_client.js";
+import {
   type AgentSessionDeps,
   type AgentStartConfig,
   type RealtimeAgentSession,
-} from "./index.js";
+  type RealtimeAgentTurnMode,
+} from "./types.js";
 import {
   CreateFakeMicrophoneCapture,
   CreateMicrophoneCapture,
@@ -21,6 +33,10 @@ import {
   ListInputDevices,
   type MicrophoneCapture,
 } from "./audio_input.js";
+import {
+  CreateRuntimeLogger,
+  type RuntimeLogger,
+} from "./runtime_log.js";
 import { logEventLine } from "./stdout_logger.js";
 import {
   BuildToolCallSet,
@@ -29,8 +45,24 @@ import {
 } from "./tool_sets.js";
 
 const x_connectionLostReason = "connection_lost";
+const x_defaultTurnMode: RealtimeAgentTurnMode = {
+  type: "server_vad",
+  silenceDurationMs: 500,
+  createResponse: true,
+  interruptResponse: true,
+};
 
 export interface ParsedCliRunOptions
+{
+  promptFile?: string;
+  contextFile: string;
+  model?: string;
+  toolNames: string[];
+  inputDevice?: string;
+  safetyIdentifier?: string;
+}
+
+export interface ResolvedCliRunOptions
 {
   promptFile: string;
   contextFile: string;
@@ -46,8 +78,13 @@ export type ParseCliResult =
 
 export interface CliRunDeps
 {
-  env?: NodeJS.ProcessEnv;
-  createDatabase?: () => RealtimeAgentDb;
+  repoRoot?: string;
+  loadConfig?: typeof LoadRealtimeAgentConfig;
+  loadApiKey?: typeof LoadOpenAiApiKey;
+  createRuntimeLogger?: typeof CreateRuntimeLogger;
+  listInputDevices?: typeof ListInputDevices;
+  formatInputDeviceList?: typeof FormatInputDeviceList;
+  createDatabase?: (config: ResolvedRealtimeAgentConfig) => RealtimeAgentDb;
   sessionDeps?: Partial<AgentSessionDeps>;
   startSession?: typeof startAgentSession;
   createMicrophoneCapture?: (options: {
@@ -63,6 +100,7 @@ export interface CliRuntime
   session: RealtimeAgentSession;
   audioCapture: MicrophoneCapture;
   database: RealtimeAgentDb;
+  runtimeLogger: RuntimeLogger;
   shutdown(reason: string, code: number): Promise<number>;
 }
 
@@ -87,12 +125,6 @@ export function ParseCliArgs(argv: string[]): ParseCliResult
     return { action: "list_input_devices" };
   }
 
-  const promptFile = values["prompt-file"];
-  if (promptFile === undefined || promptFile.trim().length === 0)
-  {
-    throw new CliUsageError("--prompt-file is required.");
-  }
-
   const contextFile = values["context-file"];
   if (contextFile === undefined || contextFile.trim().length === 0)
   {
@@ -101,17 +133,35 @@ export function ParseCliArgs(argv: string[]): ParseCliResult
 
   const rawTools = values.tool;
   const toolValues = rawTools === undefined ? [] : Array.isArray(rawTools) ? rawTools : [rawTools];
+  const promptFile = values["prompt-file"];
+  const trimmedPrompt =
+    promptFile !== undefined && promptFile.trim().length > 0 ? promptFile : undefined;
 
   return {
     action: "run",
     options: {
-      promptFile,
+      promptFile: trimmedPrompt,
       contextFile,
-      model: values.model ?? DEFAULT_REALTIME_MODEL,
+      model: values.model,
       toolNames: ParseToolNameArguments(toolValues),
       inputDevice: values["input-device"],
       safetyIdentifier: values["safety-identifier"],
     },
+  };
+}
+
+export function ResolveCliRunOptions(
+  options: ParsedCliRunOptions,
+  config: ResolvedRealtimeAgentConfig,
+): ResolvedCliRunOptions
+{
+  return {
+    promptFile: options.promptFile ?? config.defaultPromptPath,
+    contextFile: options.contextFile,
+    model: options.model ?? config.model,
+    toolNames: options.toolNames,
+    inputDevice: options.inputDevice,
+    safetyIdentifier: options.safetyIdentifier,
   };
 }
 
@@ -125,16 +175,24 @@ export class CliUsageError extends Error
 }
 
 export async function StartCliRuntime(
-  options: ParsedCliRunOptions,
-  deps: CliRunDeps = {},
+  options: ResolvedCliRunOptions,
+  deps: CliRunDeps & {
+    apiKey: string;
+    agentConfig: ResolvedRealtimeAgentConfig;
+    runtimeLogger: RuntimeLogger;
+  },
 ): Promise<CliRuntime>
 {
-  const env = deps.env ?? process.env;
-  const apiKey = env.OPENAI_API_KEY;
-  if (apiKey === undefined || apiKey.trim().length === 0)
-  {
-    throw new CliUsageError("OPENAI_API_KEY is required to connect to the OpenAI Realtime API.");
-  }
+  const apiKey = deps.apiKey;
+  const runtimeLogger = deps.runtimeLogger;
+  const agentConfig = deps.agentConfig;
+
+  runtimeLogger.Log("cli_startup", {
+    model: options.model,
+    turn_mode: x_defaultTurnMode.type,
+    prompt_file: options.promptFile,
+    context_file: options.contextFile,
+  });
 
   const unknownTools = FindUnknownToolNames(options.toolNames);
   if (unknownTools.length > 0)
@@ -142,10 +200,53 @@ export async function StartCliRuntime(
     throw new CliUsageError(`Unknown tool(s): ${unknownTools.join(", ")}`);
   }
 
-  const systemPrompt = await readFile(options.promptFile, "utf8");
-  const initialContext = await readFile(options.contextFile, "utf8");
+  let systemPrompt: string;
+  let initialContext: string;
 
-  const database = (deps.createDatabase ?? (() => RealtimeAgentDb.open()))();
+  try
+  {
+    systemPrompt = await readFile(options.promptFile, "utf8");
+  }
+  catch (error)
+  {
+    const message = error instanceof Error ? error.message : String(error);
+    runtimeLogger.LogError("prompt_load_failed", {
+      prompt_file: options.promptFile,
+      error: message,
+    });
+    throw error;
+  }
+
+  try
+  {
+    initialContext = await readFile(options.contextFile, "utf8");
+  }
+  catch (error)
+  {
+    const message = error instanceof Error ? error.message : String(error);
+    runtimeLogger.LogError("context_load_failed", {
+      context_file: options.contextFile,
+      error: message,
+    });
+    throw error;
+  }
+
+  let database: RealtimeAgentDb;
+  try
+  {
+    database = (deps.createDatabase ?? ((config) =>
+      RealtimeAgentDb.open({ path: config.databasePath })))(agentConfig);
+  }
+  catch (error)
+  {
+    const message = error instanceof Error ? error.message : String(error);
+    runtimeLogger.LogError("persistence_init_failed", {
+      database_path: agentConfig.databasePath,
+      error: message,
+    });
+    throw error;
+  }
+
   const startSession = deps.startSession ?? startAgentSession;
   const createCapture = deps.createMicrophoneCapture ?? CreateMicrophoneCapture;
 
@@ -174,18 +275,22 @@ export async function StartCliRuntime(
         const message =
           stopError instanceof Error ? stopError.message : String(stopError);
         console.error(`Failed to stop session: ${message}`);
+        runtimeLogger.LogError("session_stop_failed", { reason, error: message });
       }
     }
 
     database.close();
+    runtimeLogger.Log("cli_shutdown", { reason, exit_code: code });
+    runtimeLogger.Close();
     return code;
   };
 
-  const agentConfig: AgentStartConfig = {
+  const agentStartConfig: AgentStartConfig = {
     systemPrompt,
     initialContext,
     toolCallSet: BuildToolCallSet(options.toolNames),
     model: options.model,
+    turnMode: x_defaultTurnMode,
     onEvent: (event, info) =>
     {
       logEventLine({
@@ -196,15 +301,35 @@ export async function StartCliRuntime(
     },
     onSessionEnded: (info) =>
     {
+      runtimeLogger.Log("realtime_session_ended", {
+        session_id: info.sessionId,
+        reason: info.reason,
+      });
+
       if (info.reason === x_connectionLostReason)
       {
         console.error("Realtime connection lost; session ended.");
+        runtimeLogger.LogError("realtime_connection_lost", {
+          session_id: info.sessionId,
+        });
         void shutdown(info.reason, 1).then((exitCode) =>
         {
           if (deps.registerSignalHandlers !== false)
           {
             process.exit(exitCode);
           }
+        });
+      }
+    },
+    onToolLifecycle: (notification) =>
+    {
+      if (notification.phase === "failed")
+      {
+        runtimeLogger.LogError("tool_dispatch_failed", {
+          session_id: notification.sessionId,
+          tool_call_id: notification.toolCallId,
+          tool_name: notification.toolName,
+          error: notification.error,
         });
       }
     },
@@ -219,7 +344,9 @@ export async function StartCliRuntime(
       ...deps.sessionDeps,
     };
 
-    session = await startSession(agentConfig, sessionDeps);
+    runtimeLogger.Log("realtime_connecting", { model: options.model });
+    session = await startSession(agentStartConfig, sessionDeps);
+    runtimeLogger.Log("realtime_connected", { session_id: session.sessionId });
   }
   catch (error)
   {
@@ -227,10 +354,16 @@ export async function StartCliRuntime(
 
     if (error instanceof RealtimeTransportError)
     {
+      runtimeLogger.LogError("realtime_connection_failed", {
+        error: error.message,
+      });
+      runtimeLogger.Close();
       throw error;
     }
 
     const message = error instanceof Error ? error.message : String(error);
+    runtimeLogger.LogError("realtime_session_start_failed", { error: message });
+    runtimeLogger.Close();
     throw new Error(`Failed to start realtime session: ${message}`);
   }
 
@@ -245,6 +378,9 @@ export async function StartCliRuntime(
       onError: (captureError) =>
       {
         console.error(`Microphone capture failed: ${captureError.message}`);
+        runtimeLogger.LogError("microphone_capture_failed", {
+          error: captureError.message,
+        });
         void shutdown("audio_error", 1).then((exitCode) =>
         {
           if (deps.registerSignalHandlers !== false)
@@ -255,9 +391,14 @@ export async function StartCliRuntime(
       },
     });
     audioCapture.start();
+    runtimeLogger.Log("microphone_started", {
+      input_device: options.inputDevice,
+    });
   }
   catch (error)
   {
+    const message = error instanceof Error ? error.message : String(error);
+    runtimeLogger.LogError("microphone_setup_failed", { error: message });
     await shutdown("audio_setup_error", 1);
     throw error;
   }
@@ -266,6 +407,7 @@ export async function StartCliRuntime(
     session,
     audioCapture,
     database,
+    runtimeLogger,
     shutdown,
   };
 }
@@ -290,13 +432,50 @@ export async function RunCli(argv: string[], deps: CliRunDeps = {}): Promise<num
 
   if (parsed.action === "list_input_devices")
   {
-    console.log(FormatInputDeviceList(ListInputDevices()));
+    const listDevices = deps.listInputDevices ?? ListInputDevices;
+    const formatDevices = deps.formatInputDeviceList ?? FormatInputDeviceList;
+    console.log(formatDevices(listDevices()));
     return 0;
   }
 
+  const loadConfig = deps.loadConfig ?? LoadRealtimeAgentConfig;
+  const loadApiKey = deps.loadApiKey ?? LoadOpenAiApiKey;
+  const createRuntimeLogger = deps.createRuntimeLogger ?? CreateRuntimeLogger;
+
+  let agentConfig: ResolvedRealtimeAgentConfig;
+  let apiKey: string;
+  let runtimeLogger: RuntimeLogger;
+
   try
   {
-    const runtime = await StartCliRuntime(parsed.options, deps);
+    agentConfig = await loadConfig({ repoRoot: deps.repoRoot });
+    apiKey = await loadApiKey({ repoRoot: deps.repoRoot });
+    runtimeLogger = createRuntimeLogger({
+      logPath: agentConfig.runtimeLogPath,
+      repoRoot: deps.repoRoot,
+    });
+  }
+  catch (error)
+  {
+    if (error instanceof ConfigLoadError)
+    {
+      console.error(error.message);
+      return 1;
+    }
+
+    throw error;
+  }
+
+  const resolvedOptions = ResolveCliRunOptions(parsed.options, agentConfig);
+
+  try
+  {
+    const runtime = await StartCliRuntime(resolvedOptions, {
+      ...deps,
+      apiKey,
+      agentConfig,
+      runtimeLogger,
+    });
 
     if (deps.registerSignalHandlers === false)
     {

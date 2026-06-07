@@ -12,9 +12,9 @@ import {
   CreatePersistenceTestContext,
 } from "./helpers.js";
 
-test("DEFAULT_DATABASE_PATH points at apps/realtime-agent/data/realtime-agent.sqlite", () =>
+test("DEFAULT_DATABASE_PATH points under data/realtime-agent/", () =>
 {
-  assert.match(DEFAULT_DATABASE_PATH, /data[\\/]realtime-agent\.sqlite$/);
+  assert.match(DEFAULT_DATABASE_PATH, /data[\\/]realtime-agent[\\/]realtime-agent\.sqlite$/);
 });
 
 test("resolveDatabasePath uses configured path when provided", () =>
