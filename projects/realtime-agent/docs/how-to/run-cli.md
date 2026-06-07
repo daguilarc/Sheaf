@@ -26,7 +26,13 @@ Override with `--prompt-file` or change `default_prompt_file` in
 
 ## Basic run
 
-From the repository root after building:
+From the repository root after building, use the project target:
+
+```bash
+make realtime-agent-run-cli CONTEXT_FILE=/path/to/context.md
+```
+
+Or invoke the built CLI directly:
 
 ```bash
 node projects/realtime-agent/src/agent/dist/src/agent/src/cli.js \

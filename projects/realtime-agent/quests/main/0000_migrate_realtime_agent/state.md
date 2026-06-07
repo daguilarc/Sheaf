@@ -1,10 +1,10 @@
 # State
 
-- global_step: 30
+- global_step: 31
 - machine_name: quest
 - machine_path: projects/realtime-agent/quests/main/0000_migrate_realtime_agent
-- state: QuestDocumenting
-- updated_at: 2026-06-07T21:19:10Z
+- state: Completed
+- updated_at: 2026-06-07T21:21:36Z
 
 ## Tags
 

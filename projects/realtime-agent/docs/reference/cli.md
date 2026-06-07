@@ -12,6 +12,18 @@ node projects/realtime-agent/src/agent/dist/src/agent/src/cli.js --help
 
 Or install the workspace package and invoke `realtime-agent` from `PATH`.
 
+The project Makefile also exposes a thin run target:
+
+```bash
+make -C projects/realtime-agent run-cli CONTEXT_FILE=/path/to/context.md
+```
+
+From the repository root, the forwarding target is:
+
+```bash
+make realtime-agent-run-cli CONTEXT_FILE=/path/to/context.md
+```
+
 ## Arguments
 
 | Argument | Required | Description |

@@ -3,6 +3,18 @@
 Human-facing documentation for the realtime-agent project: the `realtime-agent-lib`
 library, `realtime-agent` CLI, and Sheaf VS Code extension.
 
+## Project scope
+
+`projects/realtime-agent/` contains the full realtime-agent implementation:
+
+- the Node 20 `realtime-agent-lib` library and `realtime-agent` CLI
+- the `sheaf-vscode-extension` package
+- project-local prompts, tests, package metadata, and Makefile targets
+
+Implementation assets are project-local under `projects/realtime-agent/`. Runtime
+configuration lives under `config/`, CLI data lives under `data/realtime-agent/`,
+and runtime logs live under `logs/realtime-agent/`.
+
 ## Reference
 
 Exact APIs, commands, configuration, data paths, logs, and test commands:

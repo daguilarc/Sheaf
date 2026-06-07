@@ -9,6 +9,16 @@ make -C projects/realtime-agent test
 make -C projects/realtime-agent build
 ```
 
+Repository-root forwarding targets:
+
+```bash
+make realtime-agent
+make realtime-agent-build
+make realtime-agent-test
+make realtime-agent-clean
+make realtime-agent-run-cli CONTEXT_FILE=/path/to/context.md
+```
+
 From `projects/realtime-agent/`:
 
 ```bash
@@ -24,12 +34,19 @@ Project targets:
 | `test-agent` | `npm run test:agent` |
 | `test-vscode-extension` | `npm run test:vscode-extension` |
 | `build` | `build-agent` then `build-vscode-extension` |
+| `build-agent` | `npm run build:agent` |
+| `build-vscode-extension` | `npm run build:vscode-extension` |
+| `install` | `npm install` |
+| `run-cli` | Runs the built CLI with `CONTEXT_FILE` |
+| `clean` | `npm run clean` |
 
 ## npm workspace scripts
 
 From `projects/realtime-agent/`:
 
 ```bash
+npm run build:agent
+npm run build:vscode-extension
 npm run test:agent
 npm run test:vscode-extension
 npm test

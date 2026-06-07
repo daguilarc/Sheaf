@@ -30,6 +30,7 @@ From the repository root:
 
 ```bash
 make -C projects/realtime-agent build
+make realtime-agent-build
 ```
 
 Or:
@@ -55,6 +56,7 @@ From the repository root:
 
 ```bash
 make -C projects/realtime-agent test
+make realtime-agent-test
 ```
 
 Or:
@@ -75,6 +77,7 @@ make -C projects/realtime-agent test-vscode-extension
 
 ```bash
 make -C projects/realtime-agent clean
+make realtime-agent-clean
 ```
 
 ## Related docs

@@ -23,6 +23,7 @@ projects/realtime-agent/
   README.md
   Makefile
   package.json
+  package-lock.json
   prompts/
   src/
     agent/           # realtime-agent-lib and CLI
@@ -37,6 +38,26 @@ Shared repository paths used at runtime:
 - `config/api_keys.json` — OpenAI API key
 - `data/realtime-agent/` — CLI SQLite data
 - `logs/realtime-agent/` — structured JSONL runtime logs
+
+## Package layout
+
+The project uses one npm workspace rooted at `projects/realtime-agent/package.json`
+with two nested packages:
+
+| Workspace | Package | Build output |
+|---|---|---|
+| `src/agent` | `realtime-agent-lib` | TypeScript output under `src/agent/dist/`; package `bin` publishes `realtime-agent`. |
+| `src/vscode-extension` | `sheaf-vscode-extension` | Bundled VS Code extension output under `src/vscode-extension/out/`. |
+
+The extension depends on `realtime-agent-lib` through the project-local npm
+workspace. Native runtime dependencies (`better-sqlite3` and `naudiodon`) are
+declared where they are loaded so the CLI can run under Node and the extension can
+be rebuilt for the VS Code Electron host.
+
+`projects/realtime-agent/Makefile` is the project entry point for install, build,
+test, clean, and CLI runs. The repository root Makefile delegates to it through
+targets such as `make realtime-agent-build`, `make realtime-agent-test`, and
+`make realtime-agent-run-cli`.
 
 ## Realtime agent flow
 
