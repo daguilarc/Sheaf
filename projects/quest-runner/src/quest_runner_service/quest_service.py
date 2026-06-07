@@ -22,11 +22,13 @@ from .worktrees import (
     assert_source_checkout_clean,
     create_quest_scaffold_commit,
     create_quest_worktree,
+    is_git_worktree,
     quest_worktree_branch,
     quest_worktree_name,
     quest_worktree_path,
     remove_partial_worktree,
     validate_project_name,
+    worktree_exists,
 )
 
 
@@ -94,6 +96,26 @@ class QuestNotFound(Exception):
         )
 
 
+class MissingQuestWorktree(Exception):
+    """Expected quest worktree is missing or is not a git working tree."""
+
+    def __init__(
+        self,
+        project: str,
+        quest_type: str,
+        quest_number: int,
+        worktree_path: Path,
+    ) -> None:
+        self.project = project
+        self.quest_type = quest_type
+        self.quest_number = quest_number
+        self.worktree_path = worktree_path
+        super().__init__(
+            f"Quest worktree missing or invalid for project={project!r} "
+            f"type={quest_type!r} number={quest_number}: {worktree_path}"
+        )
+
+
 class InvalidProject(QuestCreationError):
     """Project name is invalid or missing under projects/."""
 
@@ -146,6 +168,18 @@ def _next_quest_number(repo_path: Path, project: str, quest_type: str) -> int:
     if not dirs:
         return 0
     return max(int(p.name[:4]) for p in dirs) + 1
+
+
+def _build_run_lock_key(
+    worktree_path: Path,
+    project: str,
+    quest_type: str,
+    quest_number: int,
+) -> str:
+    return (
+        f"{worktree_path.resolve()}::"
+        f"{project}/{quest_type}/{quest_number:04d}"
+    )
 
 
 def _validate_project(repo_root: Path, project: str) -> None:
@@ -385,8 +419,8 @@ class QuestService:
         quest_type: str,
         quest_number: int,
     ) -> tuple[Path, Path, str]:
-        root = _resolve_repo(repo_path)
-        if not _is_git_repo(root):
+        source_root = _resolve_repo(repo_path)
+        if not _is_git_repo(source_root):
             raise NotAGitRepo(repo_path)
         if quest_type not in ("main", "side"):
             raise InvalidQuestInput(
@@ -394,13 +428,34 @@ class QuestService:
             )
         if quest_number < 0:
             raise InvalidQuestInput("quest_number must be non-negative")
+        _validate_project(source_root, project)
 
-        qdir = quest_fs.find_quest_dir(root, project, quest_type, quest_number)
-        if qdir is None:
+        source_qdir = quest_fs.find_quest_dir(
+            source_root, project, quest_type, quest_number
+        )
+        if source_qdir is None:
             raise QuestNotFound(project, quest_type, quest_number)
 
-        key = str(root.resolve())
-        return root, qdir, key
+        meta = quest_fs.read_quest_meta(source_qdir)
+        worktree_path = quest_worktree_path(source_root, meta)
+        if not worktree_exists(source_root, meta) or not is_git_worktree(worktree_path):
+            raise MissingQuestWorktree(
+                project, quest_type, quest_number, worktree_path
+            )
+
+        worktree_root = worktree_path.resolve()
+        worktree_qdir = quest_fs.find_quest_dir(
+            worktree_root, project, quest_type, quest_number
+        )
+        if worktree_qdir is None:
+            raise MissingQuestWorktree(
+                project, quest_type, quest_number, worktree_path
+            )
+
+        key = _build_run_lock_key(
+            worktree_root, project, quest_type, quest_number
+        )
+        return worktree_root, worktree_qdir, key
 
     def _run_quest_locked(
         self,

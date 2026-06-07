@@ -14,7 +14,8 @@ TEST_MODULES := \
 	tests.test_harness_quest_thread_core \
 	tests.test_project_quest_model \
 	tests.test_quest_creation \
-	tests.test_worktrees
+	tests.test_worktrees \
+	tests.test_worktree_execution_path
 
 all: test
 

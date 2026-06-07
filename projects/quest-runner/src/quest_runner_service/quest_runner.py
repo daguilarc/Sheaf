@@ -49,6 +49,11 @@ _PHYSICAL_PLAN_ACCEPTED_FILE = "physicalplan_accepted.md"
 _IMPLEMENTATION_ACCEPTED_FILE = "implementation_accepted.md"
 _STEP_LOG_RE = re.compile(r"^step_(\d+)_.*\.jsonl$")
 
+
+def runtime_quest_docs_dir() -> Path:
+    return (Path(__file__).resolve().parent / "quest_docs").resolve()
+
+
 _ROLE_MAP: dict[tuple[QuestState, SliceState | None], str] = {
     (QuestState.PhysicalPlanning, None): "physical_planner",
     (QuestState.ReviewPhysicalPlan, None): "physical_plan_reviewer",
@@ -105,6 +110,7 @@ def perform_role_harness_sequence(
         quest_dir=quest_dir,
         slice_dir=slice_dir,
         quest_docs_dir=quest_docs_dir,
+        repo_path=repo_path,
     )
     message_body = f"{runtime_context}\n\nTask:\n{task_instruction}"
     thread = thread_box[0]

@@ -13,6 +13,7 @@ from .quest_runner import (
     build_v2_transition_plan,
     git_rev_parse_head,
     next_log_step_number,
+    runtime_quest_docs_dir,
 )
 from .quest_types import QuestState, StateMachineId
 from .state_machine.adapters import QuestRootRoleProfileResolver, SubprocessGitOps
@@ -43,8 +44,7 @@ def run_quest_v2(
 ) -> dict:
     meta = quest_fs.read_quest_meta(quest_dir)
     quest_key = _quest_key(meta)
-    del conductor_repo_path
-    quest_docs_dir = (Path(__file__).resolve().parent / "quest_docs").resolve()
+    quest_docs_dir = runtime_quest_docs_dir()
     rel = quest_dir.resolve().relative_to(repo_path.resolve()).as_posix()
     sm_id = StateMachineId(
         root_machine_id=rel, machine_path=rel, machine_name="quest"

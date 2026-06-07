@@ -270,17 +270,30 @@ def build_runtime_context(
     quest_dir: Path,
     slice_dir: Path | None,
     quest_docs_dir: Path,
+    repo_path: Path | None = None,
 ) -> str:
     slice_label = slice_dir.name if slice_dir is not None else "none (quest-scoped pass)"
-    slice_path = str(slice_dir) if slice_dir is not None else "none"
+    if repo_path is not None:
+        quest_path_label = quest_dir.resolve().relative_to(
+            repo_path.resolve()
+        ).as_posix()
+        if slice_dir is not None:
+            slice_path_label = slice_dir.resolve().relative_to(
+                repo_path.resolve()
+            ).as_posix()
+        else:
+            slice_path_label = "none"
+    else:
+        quest_path_label = str(quest_dir)
+        slice_path_label = str(slice_dir) if slice_dir is not None else "none"
     schemas_reference = _load_quest_schemas_reference(quest_docs_dir)
     return (
         "Quest Runtime Context\n"
         f"- Quest: {meta.quest_type}/{meta.quest_number:04d}_{meta.quest_slug} ({meta.quest_name})\n"
-        f"- Quest directory: {quest_dir}\n"
+        f"- Quest directory: {quest_path_label}\n"
         f"- Role: {role_name}\n"
         f"- Current slice: {slice_label}\n"
-        f"- Current slice directory: {slice_path}\n"
+        f"- Current slice directory: {slice_path_label}\n"
         f"- Quest documentation directory: {quest_docs_dir}\n\n"
         "Use the quest's `specs/` directory as the implementation specification for this quest. "
         "Use the quest documentation directory above as the stable reference for quest schemas, "

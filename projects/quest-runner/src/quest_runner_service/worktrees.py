@@ -134,10 +134,7 @@ def assert_source_checkout_clean(source_repo_root: Path) -> str:
     return branch
 
 
-def worktree_exists(source_repo_root: Path, meta: QuestMeta) -> bool:
-    path = quest_worktree_path(source_repo_root, meta)
-    if not path.is_dir():
-        return False
+def is_git_worktree(path: Path) -> bool:
     r = subprocess.run(
         ["git", "-C", str(path), "rev-parse", "--is-inside-work-tree"],
         check=False,
@@ -145,6 +142,13 @@ def worktree_exists(source_repo_root: Path, meta: QuestMeta) -> bool:
         text=True,
     )
     return r.returncode == 0 and r.stdout.strip().lower() == "true"
+
+
+def worktree_exists(source_repo_root: Path, meta: QuestMeta) -> bool:
+    path = quest_worktree_path(source_repo_root, meta)
+    if not path.is_dir():
+        return False
+    return is_git_worktree(path)
 
 
 def create_quest_scaffold_commit(
