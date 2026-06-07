@@ -60,7 +60,7 @@ profiles:
     model: gpt-5.5
     idle_timeout_seconds: 1800
     modify_allow:
-      - "projects/quest_runner/docs/**"
+      - "projects/quest-runner/docs/**"
       - "$currentQuest/human_intervention_request.md"
     modify_block:
       - "**"
