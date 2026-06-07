@@ -1,16 +1,30 @@
 # Realtime Agent
 
-Realtime Agent is the project home for the realtime agent migration.
+Realtime Agent is a Sheaf project that contains:
 
-This project currently contains the required repository structure. Implementation,
-tests, and detailed current-state documentation will be added as the migration work
-lands.
+- **realtime-agent-lib** — Node 20 TypeScript library and `realtime-agent` CLI for OpenAI Realtime sessions.
+- **sheaf-vscode-extension** — Sheaf VS Code extension for voice-driven editor workflows on top of the library.
 
-## Layout
+The CLI and extension are not registered as long-running Sheaf services in `config/services.json`.
 
-- `src/` - implementation code
-- `tests/` - automated tests and fixtures
-- `quests/` - planned or active work
-- `docs/` - current-state documentation
+## Quick commands
 
-See [docs/README.md](docs/README.md) for the project documentation index.
+From the project directory:
+
+```bash
+make -C projects/realtime-agent install
+make -C projects/realtime-agent build
+make -C projects/realtime-agent test
+```
+
+Or from `projects/realtime-agent/`:
+
+```bash
+make install
+make build
+make test
+```
+
+## Documentation
+
+See [docs/README.md](docs/README.md) for reference, how-to, and explanation docs.
