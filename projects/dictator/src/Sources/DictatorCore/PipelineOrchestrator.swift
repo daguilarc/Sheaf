@@ -65,7 +65,8 @@ public final class PipelineOrchestrator: DictatorCoreClient {
                 uncertainty_flags: refined.uncertainty_flags
             ),
             transcribeMs: transcribeMs,
-            refineMs: refineStart.durationMs
+            refineMs: refineStart.durationMs,
+            providerMetadata: refined.providerMetadata
         )
     }
 

@@ -69,11 +69,43 @@ public struct RefineResponse: Codable, Sendable {
     public let revised_text: String
     public let edit_summary: String
     public let uncertainty_flags: [String]
+    public let providerMetadata: RefinementProviderMetadata?
 
-    public init(revised_text: String, edit_summary: String, uncertainty_flags: [String]) {
+    public init(
+        revised_text: String,
+        edit_summary: String,
+        uncertainty_flags: [String],
+        providerMetadata: RefinementProviderMetadata? = nil
+    ) {
         self.revised_text = revised_text
         self.edit_summary = edit_summary
         self.uncertainty_flags = uncertainty_flags
+        self.providerMetadata = providerMetadata
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case revised_text
+        case edit_summary
+        case uncertainty_flags
+        case providerMetadata = "provider_metadata"
+    }
+}
+
+public struct RefinementProviderMetadata: Codable, Sendable, Equatable {
+    public let provider: String
+    public let model: String
+    public let fallbackUsed: Bool
+
+    public init(provider: LLMRuntimeConfiguration.Provider, model: String, fallbackUsed: Bool) {
+        self.provider = provider.rawValue
+        self.model = model
+        self.fallbackUsed = fallbackUsed
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case provider
+        case model
+        case fallbackUsed = "fallback_used"
     }
 }
 
@@ -120,10 +152,17 @@ public struct DictateCallResult: Sendable {
     public let response: DictateResponse
     public let transcribeMs: Int
     public let refineMs: Int
+    public let providerMetadata: RefinementProviderMetadata?
 
-    public init(response: DictateResponse, transcribeMs: Int, refineMs: Int) {
+    public init(
+        response: DictateResponse,
+        transcribeMs: Int,
+        refineMs: Int,
+        providerMetadata: RefinementProviderMetadata? = nil
+    ) {
         self.response = response
         self.transcribeMs = transcribeMs
         self.refineMs = refineMs
+        self.providerMetadata = providerMetadata
     }
 }

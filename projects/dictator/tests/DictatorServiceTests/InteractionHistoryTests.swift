@@ -1,3 +1,4 @@
+import DictatorCore
 import XCTest
 @testable import DictatorService
 
@@ -114,10 +115,117 @@ final class InteractionHistoryTests: XCTestCase {
         XCTAssertEqual(reloadedBuffer.snapshot().first?.errorMessage, failed.errorMessage)
     }
 
+    func testPersistenceRoundTripsFallbackUsedField() async throws {
+        let tempDir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let buffer = DictationInteractionBuffer(maxBytes: 1024 * 1024)
+        let store = InteractionHistoryStore(
+            buffer: buffer,
+            dataDirectoryURL: tempDir,
+            initialLoadBytes: 1024 * 1024,
+            onChanged: nil
+        )
+        await store.startInitialLoadIfNeeded()
+        await store.waitUntilReady()
+
+        let interaction = makeInteraction(
+            occurredAt: isoDate("2026-02-24T12:10:00Z"),
+            whisperOutput: "hello",
+            finalOutput: "Hello.",
+            provider: "openai",
+            model: "gpt-4.1-mini",
+            fallbackUsed: true
+        )
+        await store.append(interaction)
+
+        let reloadedBuffer = DictationInteractionBuffer(maxBytes: 1024 * 1024)
+        let reloadedStore = InteractionHistoryStore(
+            buffer: reloadedBuffer,
+            dataDirectoryURL: tempDir,
+            initialLoadBytes: 1024 * 1024,
+            onChanged: nil
+        )
+        await reloadedStore.startInitialLoadIfNeeded()
+        await reloadedStore.waitUntilReady()
+
+        let reloaded = reloadedBuffer.snapshot().first
+        XCTAssertEqual(reloaded?.provider, "openai")
+        XCTAssertEqual(reloaded?.model, "gpt-4.1-mini")
+        XCTAssertEqual(reloaded?.fallbackUsed, true)
+    }
+
+    func testHTTPSuccessRecorderUsesAuthoritativeProviderMetadata() async throws {
+        let tempDir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let runtimeConfig = RuntimeConfigFile(
+            cloudModel: "gpt-4.1-mini",
+            localModel: "qwen2.5:7b-instruct",
+            useCloud: false,
+            fallbackMode: "openai",
+            dataDir: tempDir.path,
+            systemPromptsDir: tempDir.path,
+            updatedAt: "2026-02-24T12:00:00Z"
+        )
+        let configURL = tempDir.appendingPathComponent("dictator.json")
+        try RuntimeConfigStore(fileURL: configURL).save(runtimeConfig)
+        let provider = RuntimeConfigProvider(
+            store: RuntimeConfigStore(fileURL: configURL),
+            defaultStore: nil
+        )
+        let buffer = DictationInteractionBuffer(maxBytes: 1024 * 1024)
+        let store = InteractionHistoryStore(
+            buffer: buffer,
+            dataDirectoryURL: tempDir,
+            initialLoadBytes: 1024 * 1024,
+            onChanged: nil
+        )
+        await store.startInitialLoadIfNeeded()
+        await store.waitUntilReady()
+        let handler = HTTPInteractionRecorder.MakeSuccessHandler(
+            interactionStore: store,
+            runtimeConfigProvider: provider
+        )
+
+        await handler(
+            DictationHTTPSuccessRecord(
+                response: DictateResponse(
+                    raw_transcript: "hello",
+                    revised_text: "Hello.",
+                    edit_summary: "capitalized without provider words",
+                    uncertainty_flags: []
+                ),
+                transcribeMs: 10,
+                refineMs: 20,
+                providerMetadata: RefinementProviderMetadata(
+                    provider: .openai,
+                    model: "gpt-4.1-mini",
+                    fallbackUsed: true
+                ),
+                totalPipelineMs: 35,
+                optionalContext: nil,
+                sessionID: "session-1",
+                requestID: "request-1",
+                sampleRate: 16000,
+                locale: "en-US"
+            )
+        )
+
+        let recorded = buffer.snapshot().first
+        XCTAssertEqual(recorded?.provider, "openai")
+        XCTAssertEqual(recorded?.model, "gpt-4.1-mini")
+        XCTAssertEqual(recorded?.fallbackUsed, true)
+        XCTAssertEqual(recorded?.editSummary, "capitalized without provider words")
+    }
+
     private func makeInteraction(
         occurredAt: Date,
         whisperOutput: String,
         finalOutput: String,
+        provider: String = "ollama",
+        model: String = "qwen2.5:7b-instruct",
+        fallbackUsed: Bool? = nil,
         errorMessage: String? = nil
     ) -> DictationInteraction {
         DictationInteraction(
@@ -128,11 +236,12 @@ final class InteractionHistoryTests: XCTestCase {
             mode: .revision,
             systemPromptPath: "intent_refiner_v1.md",
             systemPromptBody: "prompt",
-            model: "qwen2.5:7b-instruct",
-            provider: "ollama",
+            model: model,
+            provider: provider,
             optionalContext: [:],
             editSummary: "summary",
             uncertaintyFlags: [],
+            fallbackUsed: fallbackUsed,
             errorMessage: errorMessage,
             timings: DictationInteractionTimings(transcribeMs: 1, refineMs: 2, insertMs: 3, totalPipelineMs: 6)
         )

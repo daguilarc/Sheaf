@@ -23,13 +23,10 @@ enum HTTPInteractionRecorder
             context["sample_rate"] = String(record.sampleRate)
             context["locale"] = record.locale
 
-            let effectiveProvider = EffectiveProvider(
-                editSummary: record.response.edit_summary,
-                runtimeConfiguration: runtimeConfiguration
-            )
-            let effectiveModel = effectiveProvider == LLMRuntimeConfiguration.Provider.openai.rawValue
-                ? runtimeConfiguration.openAIModel
-                : runtimeConfiguration.ollamaModel
+            let effectiveProvider = record.providerMetadata?.provider
+                ?? runtimeConfiguration.provider.rawValue
+            let effectiveModel = record.providerMetadata?.model
+                ?? Model(forProvider: effectiveProvider, runtimeConfiguration: runtimeConfiguration)
 
             let interaction = DictationInteraction(
                 whisperOutput: record.response.raw_transcript,
@@ -42,6 +39,7 @@ enum HTTPInteractionRecorder
                 optionalContext: context,
                 editSummary: record.response.edit_summary,
                 uncertaintyFlags: record.response.uncertainty_flags,
+                fallbackUsed: record.providerMetadata?.fallbackUsed,
                 timings: DictationInteractionTimings(
                     transcribeMs: record.transcribeMs,
                     refineMs: record.refineMs,
@@ -110,19 +108,13 @@ enum HTTPInteractionRecorder
         ).resolvePrompt(named: promptPath)
     }
 
-    private static func EffectiveProvider(
-        editSummary: String,
+    private static func Model(
+        forProvider provider: String,
         runtimeConfiguration: LLMRuntimeConfiguration
     ) -> String
     {
-        if editSummary.localizedCaseInsensitiveContains("OpenAI")
-        {
-            return "openai"
-        }
-        if editSummary.localizedCaseInsensitiveContains("Ollama")
-        {
-            return "ollama"
-        }
-        return runtimeConfiguration.provider.rawValue
+        provider == LLMRuntimeConfiguration.Provider.openai.rawValue
+            ? runtimeConfiguration.openAIModel
+            : runtimeConfiguration.ollamaModel
     }
 }

@@ -67,6 +67,38 @@ final class PipelineTests: XCTestCase {
         XCTAssertEqual(openAICalls, 0)
     }
 
+    func testDictatePropagatesProviderRouterFallbackMetadata() async throws {
+        let ollama = CountingRefinementEngine(result: .failure(DictatorError.networkUnavailable))
+        let openAI = CountingRefinementEngine(result: .success(.init(revised_text: "remote", edit_summary: "capitalized", uncertainty_flags: [])))
+        let router = ProviderRoutingRefinementEngine(
+            configuration: .init(
+                provider: .ollama,
+                ollamaHost: "http://127.0.0.1:11434",
+                ollamaModel: "qwen2.5:7b-instruct",
+                fallback: .openai,
+                openAIModel: "gpt-4.1-mini"
+            ),
+            ollamaEngine: ollama,
+            openAIEngine: openAI,
+            canUseOpenAI: { true }
+        )
+        let client = PipelineOrchestrator(
+            sttEngine: StubSTTEngine(response: TranscribeResponse(raw_transcript: "hello", segments: [], confidence: 1.0, duration_ms: 10)),
+            refinementEngine: router
+        )
+
+        let output = try await client.dictate(
+            DictateRequest(audio_b64: Data("audio".utf8).base64EncodedString(), sample_rate: 16000, locale: "en-US", session_id: "s")
+        )
+
+        XCTAssertEqual(output.response.edit_summary, "capitalized")
+        XCTAssertEqual(output.providerMetadata, RefinementProviderMetadata(
+            provider: .openai,
+            model: "gpt-4.1-mini",
+            fallbackUsed: true
+        ))
+    }
+
     func testOpenAIInputBuildsSelectedTextMode() {
         let built = OpenAIRefinementEngine.buildInput(
             rawTranscript: "make it friendlier",

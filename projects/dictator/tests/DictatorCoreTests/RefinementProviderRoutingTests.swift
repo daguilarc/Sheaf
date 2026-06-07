@@ -23,6 +23,11 @@ final class RefinementProviderRoutingTests: XCTestCase {
         let openAICalls = await openAI.calls()
 
         XCTAssertEqual(output.revised_text, "local")
+        XCTAssertEqual(output.providerMetadata, RefinementProviderMetadata(
+            provider: .ollama,
+            model: "qwen2.5:7b-instruct",
+            fallbackUsed: false
+        ))
         XCTAssertEqual(ollamaCalls, 1)
         XCTAssertEqual(openAICalls, 0)
     }
@@ -47,6 +52,11 @@ final class RefinementProviderRoutingTests: XCTestCase {
         let openAICalls = await openAI.calls()
 
         XCTAssertEqual(output.revised_text, "remote")
+        XCTAssertEqual(output.providerMetadata, RefinementProviderMetadata(
+            provider: .openai,
+            model: "gpt-4.1-mini",
+            fallbackUsed: true
+        ))
         XCTAssertEqual(openAICalls, 1)
     }
 
@@ -102,6 +112,11 @@ final class RefinementProviderRoutingTests: XCTestCase {
         let openAICalls = await openAI.calls()
 
         XCTAssertEqual(output.revised_text, "remote")
+        XCTAssertEqual(output.providerMetadata, RefinementProviderMetadata(
+            provider: .openai,
+            model: "gpt-4.1-mini",
+            fallbackUsed: false
+        ))
         XCTAssertEqual(ollamaCalls, 0)
         XCTAssertEqual(openAICalls, 1)
     }

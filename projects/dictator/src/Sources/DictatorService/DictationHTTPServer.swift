@@ -8,6 +8,7 @@ struct DictationHTTPSuccessRecord: Sendable
     let response: DictateResponse
     let transcribeMs: Int
     let refineMs: Int
+    let providerMetadata: RefinementProviderMetadata?
     let totalPipelineMs: Int
     let optionalContext: [String: String]?
     let sessionID: String
@@ -568,6 +569,7 @@ private final class DictationHTTPHandler: ChannelInboundHandler
                         response: result.response,
                         transcribeMs: result.transcribeMs,
                         refineMs: result.refineMs,
+                        providerMetadata: result.providerMetadata,
                         totalPipelineMs: Int(elapsed * 1000),
                         optionalContext: optionalContext,
                         sessionID: sessionID,
