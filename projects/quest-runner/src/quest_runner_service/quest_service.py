@@ -576,13 +576,13 @@ class QuestService:
         base = public_base_url.rstrip("/")
         quest_url = dashboard_data.canonical_quest_dashboard_url(
             base_url=base,
-            repo_path=key,
+            project=project,
             quest_type=quest_type,
             quest_number=quest_number,
         )
         status_url = (
             f"{base}/api/dashboard/run_status"
-            f"?repo_path={dashboard_data.quote_query_param(key)}"
+            f"?project={dashboard_data.quote_query_param(project)}"
             f"&quest_type={dashboard_data.quote_query_param(quest_type)}"
             f"&quest_number={quest_number}"
         )

@@ -6,17 +6,13 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Protocol
 from urllib.parse import quote, urlencode
 
 from . import quest_fs
 from .dashboard_runs import ActiveRunTracker
 from .quest_lock import QuestLock
 from .quest_types import IssueEntry, QuestMeta, QuestState, slice_index_from_dirname
-
-
-class ManagedServiceLister(Protocol):
-    def list_managed_services(self) -> list[dict]: ...
+from .worktrees import quest_worktree_path, validate_project_name, worktree_exists
 
 _RESPONSE_SECTION_RE = re.compile(
     r"^## Response\s+(\S+)\s+(.+)\s*$",
@@ -48,18 +44,100 @@ def quote_query_param(value: str) -> str:
 def canonical_quest_dashboard_url(
     *,
     base_url: str,
-    repo_path: str,
+    project: str,
     quest_type: str,
     quest_number: int,
 ) -> str:
     q = urlencode(
         {
-            "repo_path": repo_path,
+            "project": project,
             "quest_type": quest_type,
             "quest_number": str(quest_number),
         }
     )
     return f"{base_url.rstrip('/')}/dashboard?{q}"
+
+
+def parse_project(
+    raw: str | None,
+    *,
+    source_repo_root: Path | None = None,
+) -> str:
+    if raw is None or not str(raw).strip():
+        raise DashboardBadRequest(
+            "Missing required query parameter: project",
+            fields={"project": "required"},
+        )
+    project = str(raw).strip()
+    try:
+        validate_project_name(project)
+    except ValueError as e:
+        raise DashboardBadRequest(str(e), fields={"project": "invalid"}) from e
+    if source_repo_root is not None:
+        project_dir = source_repo_root / "projects" / project
+        if not project_dir.is_dir():
+            raise DashboardNotFound(f"Project not found: {project!r}")
+    return project
+
+
+def parse_max_steps(raw: object | None, *, default: int = 500) -> int:
+    if raw is None:
+        return default
+    if not isinstance(raw, int) or raw < 1:
+        raise DashboardBadRequest(
+            "max_steps must be a positive integer",
+            fields={"max_steps": "invalid"},
+        )
+    return raw
+
+
+def lock_key_for_quest(source_repo_root: Path, meta: QuestMeta) -> str:
+    from .quest_service import _build_run_lock_key
+
+    worktree_path = quest_worktree_path(source_repo_root, meta).resolve()
+    return _build_run_lock_key(
+        worktree_path,
+        meta.project,
+        meta.quest_type,
+        meta.quest_number,
+    )
+
+
+def resolve_quest_checkout_root(source_repo_root: Path, quest_dir: Path) -> Path:
+    meta = quest_fs.read_quest_meta(quest_dir)
+    if worktree_exists(source_repo_root, meta):
+        return quest_worktree_path(source_repo_root, meta).resolve()
+    return source_repo_root.resolve()
+
+
+def resolve_quest_dirs(
+    source_repo_root: Path,
+    project: str,
+    quest_type: str,
+    quest_number: int,
+) -> tuple[Path, Path]:
+    source_qdir = resolve_quest_dir(
+        source_repo_root, project, quest_type, quest_number
+    )
+    checkout_root = resolve_quest_checkout_root(source_repo_root, source_qdir)
+    quest_dir = source_qdir
+    if checkout_root != source_repo_root.resolve():
+        worktree_qdir = quest_fs.find_quest_dir(
+            checkout_root, project, quest_type, quest_number
+        )
+        if worktree_qdir is not None:
+            quest_dir = worktree_qdir
+    return checkout_root, quest_dir
+
+
+def projects_payload(source_repo_root: Path) -> dict:
+    roots = quest_fs.iter_project_quest_roots(source_repo_root)
+    projects = [{"project": root.project} for root in roots]
+    default_project = roots[0].project if roots else None
+    return {
+        "projects": projects,
+        "default_project": default_project,
+    }
 
 
 @dataclass
@@ -95,7 +173,7 @@ def read_paused_until_state(quest_dir: Path) -> PauseUntilState:
 def execution_overlay_status(
     *,
     quest_dir: Path,
-    repo_path_key: str,
+    lock_key: str,
     quest_type: str,
     quest_number: int,
     lock: QuestLock,
@@ -107,7 +185,7 @@ def execution_overlay_status(
         return "human_intervention"
     if pause.kind == "active":
         return "paused"
-    info = lock.get_lock_info(repo_path_key)
+    info = lock.get_lock_info(lock_key)
     if (
         info is not None
         and info.quest_type == quest_type
@@ -142,94 +220,19 @@ def find_slice_dir(quest_dir: Path, slice_number: int) -> Path | None:
     return None
 
 
-def _normalize_repo_path_arg(raw: str | None) -> Path:
-    if raw is None or not str(raw).strip():
-        raise DashboardBadRequest(
-            "Missing required query parameter: repo_path",
-            fields={"repo_path": "required"},
+def resolve_quest_dir(
+    source_repo_root: Path,
+    project: str,
+    quest_type: str,
+    quest_number: int,
+) -> Path:
+    qdir = quest_fs.find_quest_dir(source_repo_root, project, quest_type, quest_number)
+    if qdir is None:
+        raise DashboardNotFound(
+            f"No quest found for project={project!r} type={quest_type!r} "
+            f"number={quest_number}"
         )
-    p = Path(raw).expanduser()
-    if not p.is_absolute():
-        raise DashboardBadRequest(
-            "repo_path must be an absolute path",
-            fields={"repo_path": "must_be_absolute"},
-        )
-    return p.resolve()
-
-
-def resolve_tracked_repo_path(
-    manager: ManagedServiceLister,
-    raw_repo_path: str | None,
-) -> tuple[Path, dict]:
-    path = _normalize_repo_path_arg(raw_repo_path)
-    if not path.is_dir():
-        raise DashboardNotFound(f"Repository path does not exist: {path}")
-    entries = tracked_git_repository_entries(manager)
-    resolved_str = str(path)
-    for entry in entries:
-        if entry["repo_path"] == resolved_str:
-            return path, entry
-    raise DashboardNotFound(
-        f"Repository is not tracked by Conductor: {resolved_str}"
-    )
-
-
-def tracked_git_repository_entries(manager: ManagedServiceLister) -> list[dict]:
-    services = manager.list_managed_services()
-    by_path: dict[str, dict] = {}
-    for svc in services:
-        if svc.get("kind") != "service":
-            continue
-        raw_git = svc.get("git_repo")
-        if not raw_git:
-            continue
-        repo_path = str(Path(raw_git).expanduser().resolve())
-        if repo_path in by_path:
-            existing = by_path[repo_path]
-            names = existing.setdefault("_service_names", [existing["service_name"]])
-            if svc["name"] not in names:
-                names.append(svc["name"])
-            continue
-        by_path[repo_path] = {
-            "repo_path": repo_path,
-            "label": f"{svc['name']} ({Path(repo_path).name})",
-            "service_name": svc["name"],
-            "tracked_by_conductor": True,
-            "_service_names": [svc["name"]],
-        }
-    out: list[dict] = []
-    for row in sorted(by_path.values(), key=lambda r: r["repo_path"]):
-        names = row.pop("_service_names", [row["service_name"]])
-        if len(names) > 1:
-            row["label"] = f"{', '.join(sorted(names))} ({Path(row['repo_path']).name})"
-        out.append(row)
-    return out
-
-
-def default_tracked_repository(
-    manager: ManagedServiceLister,
-    conductor_workspace: Path,
-) -> str | None:
-    entries = tracked_git_repository_entries(manager)
-    if not entries:
-        return None
-    ws = str(conductor_workspace.resolve())
-    for e in entries:
-        if e["repo_path"] == ws:
-            return e["repo_path"]
-    return None
-
-
-def repositories_payload(
-    manager: ManagedServiceLister,
-    conductor_workspace: Path,
-) -> dict:
-    repos = tracked_git_repository_entries(manager)
-    default_repo = default_tracked_repository(manager, conductor_workspace)
-    return {
-        "repositories": repos,
-        "default_repository": default_repo,
-    }
+    return qdir
 
 
 def parse_quest_type(raw: str | None) -> str:
@@ -265,21 +268,6 @@ def parse_quest_number(raw: str | None) -> int:
             fields={"quest_number": "invalid"},
         )
     return n
-
-
-def resolve_quest_dir(
-    repo_root: Path,
-    project: str,
-    quest_type: str,
-    quest_number: int,
-) -> Path:
-    qdir = quest_fs.find_quest_dir(repo_root, project, quest_type, quest_number)
-    if qdir is None:
-        raise DashboardNotFound(
-            f"No quest found for project={project!r} type={quest_type!r} "
-            f"number={quest_number}"
-        )
-    return qdir
 
 
 @dataclass
@@ -409,20 +397,22 @@ def physicalplan_issues_payload(quest_dir: Path) -> dict:
 def quest_summary_row(
     *,
     quest_dir: Path,
-    repo_path_key: str,
+    source_repo_root: Path,
     lock: QuestLock,
     meta: QuestMeta,
 ) -> dict:
+    lock_key = lock_key_for_quest(source_repo_root, meta)
     state_info = quest_fs.read_quest_state(quest_dir)
     pause = read_paused_until_state(quest_dir)
     overlay = execution_overlay_status(
         quest_dir=quest_dir,
-        repo_path_key=repo_path_key,
+        lock_key=lock_key,
         quest_type=meta.quest_type,
         quest_number=meta.quest_number,
         lock=lock,
     )
     return {
+        "project": meta.project,
         "number": meta.quest_number,
         "slug": meta.quest_slug,
         "name": meta.quest_name,
@@ -437,46 +427,38 @@ def quest_summary_row(
     }
 
 
-def repository_snapshot_payload(
+def project_snapshot_payload(
     *,
-    manager: ManagedServiceLister,
-    repo_path: Path,
-    repo_entry: dict,
+    source_repo_root: Path,
+    project: str,
     lock: QuestLock,
 ) -> dict:
-    key = str(repo_path)
     main_rows: list[dict] = []
     side_rows: list[dict] = []
-    for root in quest_fs.iter_project_quest_roots(repo_path):
-        for qdir in quest_fs.list_quest_dirs(repo_path, root.project, "main"):
-            meta = quest_fs.read_quest_meta(qdir)
-            main_rows.append(
-                quest_summary_row(
-                    quest_dir=qdir,
-                    repo_path_key=key,
-                    lock=lock,
-                    meta=meta,
-                )
+    for qdir in quest_fs.list_quest_dirs(source_repo_root, project, "main"):
+        meta = quest_fs.read_quest_meta(qdir)
+        main_rows.append(
+            quest_summary_row(
+                quest_dir=qdir,
+                source_repo_root=source_repo_root,
+                lock=lock,
+                meta=meta,
             )
-        for qdir in quest_fs.list_quest_dirs(repo_path, root.project, "side"):
-            meta = quest_fs.read_quest_meta(qdir)
-            side_rows.append(
-                quest_summary_row(
-                    quest_dir=qdir,
-                    repo_path_key=key,
-                    lock=lock,
-                    meta=meta,
-                )
+        )
+    for qdir in quest_fs.list_quest_dirs(source_repo_root, project, "side"):
+        meta = quest_fs.read_quest_meta(qdir)
+        side_rows.append(
+            quest_summary_row(
+                quest_dir=qdir,
+                source_repo_root=source_repo_root,
+                lock=lock,
+                meta=meta,
             )
+        )
     main_rows.sort(key=lambda r: r["number"], reverse=True)
     side_rows.sort(key=lambda r: r["number"], reverse=True)
     return {
-        "repository": {
-            "repo_path": repo_entry["repo_path"],
-            "label": repo_entry["label"],
-            "service_name": repo_entry["service_name"],
-            "tracked_by_conductor": True,
-        },
+        "project": project,
         "main": main_rows,
         "side": side_rows,
     }
@@ -584,17 +566,19 @@ def last_transition_from_step_history(step_history: list[dict]) -> dict | None:
 def quest_overview_payload(
     *,
     quest_dir: Path,
-    repo_root: Path,
-    repo_path_key: str,
+    source_repo_root: Path,
+    checkout_root: Path,
+    project: str,
     lock: QuestLock,
     public_base_url: str,
 ) -> dict:
     meta = quest_fs.read_quest_meta(quest_dir)
+    lock_key = lock_key_for_quest(source_repo_root, meta)
     state_info = quest_fs.read_quest_state(quest_dir)
     pause = read_paused_until_state(quest_dir)
     overlay = execution_overlay_status(
         quest_dir=quest_dir,
-        repo_path_key=repo_path_key,
+        lock_key=lock_key,
         quest_type=meta.quest_type,
         quest_number=meta.quest_number,
         lock=lock,
@@ -627,10 +611,11 @@ def quest_overview_payload(
             continue
         slice_nav.append({"slice_number": idx, "directory_name": p.name})
 
-    step_history = build_quest_step_history(repo_root, quest_dir)
+    step_history = build_quest_step_history(checkout_root, quest_dir)
 
     return {
         "quest": {
+            "project": meta.project,
             "type": meta.quest_type,
             "number": meta.quest_number,
             "slug": meta.quest_slug,
@@ -653,7 +638,7 @@ def quest_overview_payload(
         "open_issues_active_slice": slice_open,
         "quest_dashboard_url": canonical_quest_dashboard_url(
             base_url=public_base_url,
-            repo_path=repo_path_key,
+            project=project,
             quest_type=meta.quest_type,
             quest_number=meta.quest_number,
         ),
@@ -669,17 +654,20 @@ def _iso_from_epoch(ts: float) -> str:
 def run_status_payload(
     *,
     quest_dir: Path,
-    repo_path_key: str,
+    source_repo_root: Path,
+    project: str,
     quest_type: str,
     quest_number: int,
     lock: QuestLock,
     run_tracker: ActiveRunTracker,
 ) -> dict:
+    meta = quest_fs.read_quest_meta(quest_dir)
+    lock_key = lock_key_for_quest(source_repo_root, meta)
     state_info = quest_fs.read_quest_state(quest_dir)
     pause = read_paused_until_state(quest_dir)
     overlay = execution_overlay_status(
         quest_dir=quest_dir,
-        repo_path_key=repo_path_key,
+        lock_key=lock_key,
         quest_type=quest_type,
         quest_number=quest_number,
         lock=lock,
@@ -695,7 +683,7 @@ def run_status_payload(
                 "updated_at": sst.updated_at,
             }
 
-    active = run_tracker.get_for_quest(repo_path_key, quest_type, quest_number)
+    active = run_tracker.get_for_quest(lock_key, quest_type, quest_number)
     heartbeat_candidates: list[str] = [state_info.updated_at]
     if slice_state_payload:
         heartbeat_candidates.append(slice_state_payload["updated_at"])

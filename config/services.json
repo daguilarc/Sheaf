@@ -5,5 +5,12 @@
     "port": 9001,
     "home_path": "/",
     "command": "make conductor-run"
+  },
+  {
+    "name": "quest-runner",
+    "host": "0.0.0.0",
+    "port": 9002,
+    "home_path": "/dashboard",
+    "command": "make quest-runner-run"
   }
 ]

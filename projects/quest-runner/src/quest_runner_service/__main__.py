@@ -9,10 +9,12 @@ import threading
 import time
 from pathlib import Path
 
-from flask import Flask, jsonify
+from .api import create_app
+from .logging_config import configure_service_logging
+from .quest_lock import QuestLock
+from .quest_service import QuestService
 
 log = logging.getLogger("quest_runner")
-_started_at = time.time()
 _EXIT_DELAY_SECONDS = 0.1
 
 
@@ -26,26 +28,12 @@ def _schedule_process_exit(delay: float = _EXIT_DELAY_SECONDS) -> None:
     timer.start()
 
 
-def create_app() -> Flask:
-    app = Flask(__name__)
-
-    @app.route("/health", methods=["GET"])
-    def health() -> tuple[object, int]:
-        return jsonify({
-            "healthy": True,
-            "uptime": round(time.time() - _started_at, 2),
-        }), 200
-
-    @app.route("/exit", methods=["POST"])
-    def exit_service() -> tuple[object, int]:
-        _schedule_process_exit()
-        return jsonify({"status": "exiting"}), 200
-
-    return app
+def _resolve_source_repo_root() -> Path:
+    package_dir = Path(__file__).resolve().parent
+    return package_dir.parents[3]
 
 
 def main() -> None:
-    global _started_at
     parser = argparse.ArgumentParser(description="Quest Runner service")
     parser.add_argument("--port", type=int, default=9002, help="HTTP server port")
     parser.add_argument(
@@ -55,16 +43,26 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(name)s] %(levelname)s %(message)s",
-    )
-    _started_at = time.time()
+    source_repo_root = _resolve_source_repo_root()
+    log_dir = source_repo_root / "logs" / "quest-runner"
+    configure_service_logging(log_dir)
 
-    package_dir = Path(__file__).resolve().parent
-    app = create_app()
+    started_at = time.time()
+    quest_service = QuestService(QuestLock(), source_repo_root)
+    app = create_app(
+        quest_service=quest_service,
+        source_repo_root=source_repo_root,
+        started_at=started_at,
+        shutdown_callback=_schedule_process_exit,
+    )
+
     endpoint = f"http://{args.host}:{args.port}"
-    log.info("Quest Runner ready on %s (package=%s)", endpoint, package_dir)
+    log.info(
+        "Quest Runner ready on %s (source_repo=%s, log_dir=%s)",
+        endpoint,
+        source_repo_root,
+        log_dir,
+    )
     app.run(host=args.host, port=args.port)
 
 
