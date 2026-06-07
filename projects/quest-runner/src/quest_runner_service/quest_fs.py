@@ -13,6 +13,7 @@ from .quest_types import (
     ExecutionProfile,
     HarnessKind,
     IssueEntry,
+    IssueResponseEntry,
     ProjectQuestRoot,
     QuestMeta,
     QuestState,
@@ -26,6 +27,10 @@ from .quest_types import (
 
 _HISTORY_HEADING_RE = re.compile(r"^## (\d{4}-\d{2}-\d{2}T\S+)\s*$", re.MULTILINE)
 _ISSUE_HEADING_RE = re.compile(r"^## Issue\s+(\S+)\s*$", re.MULTILINE)
+_RESPONSE_SECTION_RE = re.compile(
+    r"^## Response\s+(\S+)\s+(.+)\s*$",
+    re.MULTILINE,
+)
 _DOLLAR_TOKEN_RE = re.compile(r"\$[a-zA-Z_][a-zA-Z0-9_]*")
 _ALLOWED_MODIFY_PATH_PLACEHOLDERS: frozenset[str] = frozenset(
     {"$currentQuest", "$currentSlice", "$currentProject"}
@@ -865,6 +870,13 @@ def read_issues(filepath: Path) -> list[IssueEntry]:
     return entries
 
 
+def atomic_write_text(filepath: Path, text: str) -> None:
+    filepath.parent.mkdir(parents=True, exist_ok=True)
+    tmp = filepath.with_name(f"{filepath.name}.tmp")
+    tmp.write_text(text, encoding="utf-8")
+    tmp.replace(filepath)
+
+
 def _write_issue_field(lines: list[str], key: str, value: str) -> None:
     """Write a field, putting multi-line values on continuation lines."""
     if "\n" not in value:
@@ -874,6 +886,73 @@ def _write_issue_field(lines: list[str], key: str, value: str) -> None:
         lines.append(f"- {key}: {first}")
         for cont in rest.split("\n"):
             lines.append(cont)
+
+
+def _parse_response_body(
+    issue_id_heading: str,
+    timestamp: str,
+    body: str,
+) -> IssueResponseEntry:
+    fields: dict[str, str] = {}
+    current: str | None = None
+    for raw_line in body.split("\n"):
+        line = raw_line.strip()
+        if line.startswith("- ") and ":" in line:
+            rest = line[2:].strip()
+            key, _, val = rest.partition(":")
+            current = key.strip()
+            fields[current] = val.strip()
+        elif current == "explanation" and line:
+            fields[current] = fields.get(current, "") + "\n" + raw_line.rstrip("\n")
+        elif current == "explanation" and not line:
+            fields[current] = fields.get(current, "") + "\n"
+    return IssueResponseEntry(
+        issue_id=fields.get("issue_id", issue_id_heading),
+        response_timestamp=timestamp,
+        outcome=fields.get("outcome", ""),
+        explanation=fields.get("explanation", "").strip(),
+    )
+
+
+def read_issue_responses(filepath: Path) -> list[IssueResponseEntry]:
+    if not filepath.is_file():
+        return []
+    text = filepath.read_text(encoding="utf-8")
+    matches = list(_RESPONSE_SECTION_RE.finditer(text))
+    if not matches:
+        return []
+    out: list[IssueResponseEntry] = []
+    for i, m in enumerate(matches):
+        issue_id_heading = m.group(1)
+        ts = m.group(2).strip()
+        start = m.end()
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+        body = text[start:end]
+        out.append(_parse_response_body(issue_id_heading, ts, body))
+    return out
+
+
+def _format_response_section(entry: IssueResponseEntry) -> list[str]:
+    lines = [
+        f"## Response {entry.issue_id} {entry.response_timestamp}",
+        "",
+        f"- issue_id: {entry.issue_id}",
+        f"- outcome: {entry.outcome}",
+    ]
+    _write_issue_field(lines, "explanation", entry.explanation)
+    lines.append("")
+    return lines
+
+
+def append_issue_response(filepath: Path, entry: IssueResponseEntry) -> None:
+    if filepath.is_file():
+        text = filepath.read_text(encoding="utf-8")
+        if not text.endswith("\n"):
+            text += "\n"
+        text += "\n" + "\n".join(_format_response_section(entry))
+    else:
+        text = "# Issue responses\n\n" + "\n".join(_format_response_section(entry))
+    atomic_write_text(filepath, text.rstrip() + "\n")
 
 
 def write_issues(filepath: Path, issues: list[IssueEntry]) -> None:
@@ -892,8 +971,7 @@ def write_issues(filepath: Path, issues: list[IssueEntry]) -> None:
         else:
             _write_issue_field(lines, "resolution_notes", issue.resolution_notes)
         lines.append("")
-    filepath.parent.mkdir(parents=True, exist_ok=True)
-    filepath.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+    atomic_write_text(filepath, "\n".join(lines).rstrip() + "\n")
 
 
 def _parse_history_block(timestamp: str, body: str) -> TransitionRecord:

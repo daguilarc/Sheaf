@@ -10,6 +10,7 @@ import uuid
 import logging
 from pathlib import Path
 
+from . import issue_service
 from . import quest_fs
 from .dashboard_runs import ActiveRunTracker
 from .deferred_tasks import DeferredTaskScheduler
@@ -943,3 +944,210 @@ class QuestService:
             )
         finally:
             self.lock.release(key)
+
+    def _acquire_issue_mutation_lock(
+        self,
+        ctx: issue_service.IssueContext,
+        quest_type: str,
+        quest_number: int,
+    ) -> bool:
+        if ctx.lock_key is None:
+            return False
+        req_id = str(uuid.uuid4())
+        if not self.lock.acquire(ctx.lock_key, quest_type, quest_number, req_id):
+            info = self.lock.get_lock_info(ctx.lock_key)
+            assert info is not None
+            raise QuestLockContention(
+                "Repository is locked by another quest run",
+                repo_path=ctx.lock_key,
+                lock_info=info,
+            )
+        return True
+
+    def _resolve_issue_context(
+        self,
+        repo_path: str,
+        *,
+        project: str,
+        quest_type: str,
+        quest_number: int,
+        scope_raw: object,
+        slice_raw: object | None,
+    ) -> issue_service.IssueContext:
+        source_root = Path(repo_path).resolve()
+        _validate_project(source_root, project)
+        scope = issue_service.parse_scope(scope_raw)
+        slice_number = issue_service.parse_optional_slice(slice_raw)
+        return issue_service.resolve_issue_context(
+            source_root,
+            project=project,
+            quest_type=quest_type,
+            quest_number=quest_number,
+            scope=scope,
+            slice_number=slice_number,
+        )
+
+    def list_issues(
+        self,
+        repo_path: str,
+        *,
+        project: str,
+        quest_type: str,
+        quest_number: int,
+        scope_raw: object,
+        slice_raw: object | None = None,
+        status_filter: str = "all",
+    ) -> dict:
+        ctx = self._resolve_issue_context(
+            repo_path,
+            project=project,
+            quest_type=quest_type,
+            quest_number=quest_number,
+            scope_raw=scope_raw,
+            slice_raw=slice_raw,
+        )
+        issues = issue_service.list_issues(
+            ctx, status_filter=issue_service.parse_status_filter(status_filter)
+        )
+        return {"issues": issues}
+
+    def get_issue(
+        self,
+        repo_path: str,
+        issue_id: str,
+        *,
+        project: str,
+        quest_type: str,
+        quest_number: int,
+        scope_raw: object,
+        slice_raw: object | None = None,
+    ) -> dict:
+        ctx = self._resolve_issue_context(
+            repo_path,
+            project=project,
+            quest_type=quest_type,
+            quest_number=quest_number,
+            scope_raw=scope_raw,
+            slice_raw=slice_raw,
+        )
+        return issue_service.get_issue(ctx, issue_id)
+
+    def create_issue(
+        self,
+        repo_path: str,
+        *,
+        project: str,
+        quest_type: str,
+        quest_number: int,
+        scope_raw: object,
+        slice_raw: object | None = None,
+        title: str,
+        body: str,
+        status: str = "open",
+    ) -> dict:
+        ctx = self._resolve_issue_context(
+            repo_path,
+            project=project,
+            quest_type=quest_type,
+            quest_number=quest_number,
+            scope_raw=scope_raw,
+            slice_raw=slice_raw,
+        )
+        acquired = self._acquire_issue_mutation_lock(ctx, quest_type, quest_number)
+        try:
+            return issue_service.create_issue(
+                ctx, title=title, body=body, status=status
+            )
+        finally:
+            if acquired:
+                self.lock.release(ctx.lock_key)
+
+    def edit_issue(
+        self,
+        repo_path: str,
+        issue_id: str,
+        *,
+        project: str,
+        quest_type: str,
+        quest_number: int,
+        scope_raw: object,
+        slice_raw: object | None = None,
+        status: str | None = None,
+        title: str | None = None,
+        body: str | None = None,
+    ) -> dict:
+        ctx = self._resolve_issue_context(
+            repo_path,
+            project=project,
+            quest_type=quest_type,
+            quest_number=quest_number,
+            scope_raw=scope_raw,
+            slice_raw=slice_raw,
+        )
+        acquired = self._acquire_issue_mutation_lock(ctx, quest_type, quest_number)
+        try:
+            return issue_service.edit_issue(
+                ctx,
+                issue_id,
+                status=status,
+                title=title,
+                body=body,
+            )
+        finally:
+            if acquired:
+                self.lock.release(ctx.lock_key)
+
+    def respond_to_issue(
+        self,
+        repo_path: str,
+        issue_id: str,
+        *,
+        project: str,
+        quest_type: str,
+        quest_number: int,
+        scope_raw: object,
+        slice_raw: object | None = None,
+        outcome: str,
+        explanation: str,
+    ) -> dict:
+        ctx = self._resolve_issue_context(
+            repo_path,
+            project=project,
+            quest_type=quest_type,
+            quest_number=quest_number,
+            scope_raw=scope_raw,
+            slice_raw=slice_raw,
+        )
+        acquired = self._acquire_issue_mutation_lock(ctx, quest_type, quest_number)
+        try:
+            return issue_service.respond_to_issue(
+                ctx,
+                issue_id,
+                outcome=outcome,
+                explanation=explanation,
+            )
+        finally:
+            if acquired:
+                self.lock.release(ctx.lock_key)
+
+    def list_issue_responses(
+        self,
+        repo_path: str,
+        issue_id: str,
+        *,
+        project: str,
+        quest_type: str,
+        quest_number: int,
+        scope_raw: object,
+        slice_raw: object | None = None,
+    ) -> dict:
+        ctx = self._resolve_issue_context(
+            repo_path,
+            project=project,
+            quest_type=quest_type,
+            quest_number=quest_number,
+            scope_raw=scope_raw,
+            slice_raw=slice_raw,
+        )
+        responses = issue_service.list_responses(ctx, issue_id)
+        return {"responses": responses}

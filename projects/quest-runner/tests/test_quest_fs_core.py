@@ -9,10 +9,12 @@ from pathlib import Path
 from quest_runner_service.quest_fs import (
     QuestStateParseError,
     append_history,
+    append_issue_response,
     list_slice_dirs,
     read_execution_config,
     read_harness_configs,
     read_history,
+    read_issue_responses,
     read_issues,
     read_quest_state,
     read_state_execution_config_version,
@@ -23,6 +25,7 @@ from quest_runner_service.quest_types import (
     ExecutionProfile,
     HarnessKind,
     IssueEntry,
+    IssueResponseEntry,
     QuestState,
     QuestStateInfo,
     TransitionRecord,
@@ -371,6 +374,39 @@ class IssueMarkdownRoundTripTests(unittest.TestCase):
             write_issues(p, [a, b])
             loaded = read_issues(p)
             self.assertEqual(loaded, [a, b])
+
+
+class IssueResponseTests(unittest.TestCase):
+    def test_read_empty_when_absent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / "responses.md"
+            self.assertEqual(read_issue_responses(p), [])
+
+    def test_append_and_round_trip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / "responses.md"
+            entry = IssueResponseEntry(
+                issue_id="QP-0001",
+                response_timestamp="2026-01-02T00:00:00Z",
+                outcome="Fixed",
+                explanation="Line one.\nLine two.",
+            )
+            append_issue_response(p, entry)
+            loaded = read_issue_responses(p)
+            self.assertEqual(len(loaded), 1)
+            self.assertEqual(loaded[0].issue_id, "QP-0001")
+            self.assertEqual(loaded[0].outcome, "Fixed")
+            self.assertEqual(loaded[0].explanation, "Line one.\nLine two.")
+            second = IssueResponseEntry(
+                issue_id="QP-0001",
+                response_timestamp="2026-01-03T00:00:00Z",
+                outcome="NotFixed",
+                explanation="Still blocked.",
+            )
+            append_issue_response(p, second)
+            loaded2 = read_issue_responses(p)
+            self.assertEqual(len(loaded2), 2)
+            self.assertEqual(loaded2[1].outcome, "NotFixed")
 
 
 class ListSliceDirsTests(unittest.TestCase):

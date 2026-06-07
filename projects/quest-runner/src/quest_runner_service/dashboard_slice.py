@@ -19,12 +19,9 @@ from .dashboard_data import (
     issues_latest_updated_at,
 )
 from .quest_runner import role_thread_key
+from .quest_types import IssueResponseEntry
 
 _STEP_LOG_RE = re.compile(r"^step_(\d+)_(.+)\.jsonl$")
-_RESPONSE_SECTION_RE = re.compile(
-    r"^## Response\s+(\S+)\s+(.+)\s*$",
-    re.MULTILINE,
-)
 
 SLICE_SCOPED_ROLES: tuple[str, ...] = (
     "implementer",
@@ -203,54 +200,11 @@ def physicalplan_subpage_payload(quest_dir: Path, slice_dir: Path) -> dict:
     return {"files": files_out}
 
 
-@dataclass
-class PolishingResponseEntry:
-    issue_id: str
-    response_timestamp: str
-    outcome: str
-    explanation: str
+PolishingResponseEntry = IssueResponseEntry
 
 
-def read_polishing_issue_responses(slice_dir: Path) -> list[PolishingResponseEntry]:
-    path = slice_dir / "polishing_issue_responses.md"
-    if not path.is_file():
-        return []
-    text = path.read_text(encoding="utf-8")
-    matches = list(_RESPONSE_SECTION_RE.finditer(text))
-    if not matches:
-        return []
-    out: list[PolishingResponseEntry] = []
-    for i, m in enumerate(matches):
-        issue_id_heading = m.group(1)
-        ts = m.group(2).strip()
-        start = m.end()
-        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
-        body = text[start:end]
-        fields: dict[str, str] = {}
-        current: str | None = None
-        for raw_line in body.split("\n"):
-            line = raw_line.strip()
-            if line.startswith("- ") and ":" in line:
-                rest = line[2:].strip()
-                key, _, val = rest.partition(":")
-                key = key.strip()
-                val = val.strip()
-                current = key
-                fields[current] = val
-            elif current == "explanation" and line:
-                fields[current] = fields.get(current, "") + "\n" + raw_line.rstrip("\n")
-            elif current == "explanation" and not line:
-                fields[current] = fields.get(current, "") + "\n"
-        expl = fields.get("explanation", "").strip()
-        out.append(
-            PolishingResponseEntry(
-                issue_id=fields.get("issue_id", issue_id_heading),
-                response_timestamp=ts,
-                outcome=fields.get("outcome", ""),
-                explanation=expl,
-            )
-        )
-    return out
+def read_polishing_issue_responses(slice_dir: Path) -> list[IssueResponseEntry]:
+    return quest_fs.read_issue_responses(slice_dir / "polishing_issue_responses.md")
 
 
 def issues_subpage_payload(quest_dir: Path, slice_dir: Path) -> dict:

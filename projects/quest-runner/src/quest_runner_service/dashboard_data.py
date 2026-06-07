@@ -11,13 +11,8 @@ from urllib.parse import quote, urlencode
 from . import quest_fs
 from .dashboard_runs import ActiveRunTracker
 from .quest_lock import QuestLock
-from .quest_types import IssueEntry, QuestMeta, QuestState, slice_index_from_dirname
+from .quest_types import IssueEntry, IssueResponseEntry, QuestMeta, QuestState, slice_index_from_dirname
 from .worktrees import quest_worktree_path, validate_project_name, worktree_exists
-
-_RESPONSE_SECTION_RE = re.compile(
-    r"^## Response\s+(\S+)\s+(.+)\s*$",
-    re.MULTILINE,
-)
 _PAUSED_UNTIL_LINE_RE = re.compile(
     r"^\s*Paused\s+until\s+(.+?)\s*$",
     re.IGNORECASE | re.MULTILINE,
@@ -325,54 +320,13 @@ def parse_quest_number(raw: str | None) -> int:
     return n
 
 
-@dataclass
-class PhysicalPlanResponseEntry:
-    issue_id: str
-    response_timestamp: str
-    outcome: str
-    explanation: str
+PhysicalPlanResponseEntry = IssueResponseEntry
 
 
-def read_physicalplan_issue_responses(quest_dir: Path) -> list[PhysicalPlanResponseEntry]:
-    path = quest_dir / "physicalplan_issue_responses.md"
-    if not path.is_file():
-        return []
-    text = path.read_text(encoding="utf-8")
-    matches = list(_RESPONSE_SECTION_RE.finditer(text))
-    if not matches:
-        return []
-    out: list[PhysicalPlanResponseEntry] = []
-    for i, m in enumerate(matches):
-        issue_id_heading = m.group(1)
-        ts = m.group(2).strip()
-        start = m.end()
-        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
-        body = text[start:end]
-        fields: dict[str, str] = {}
-        current: str | None = None
-        for raw_line in body.split("\n"):
-            line = raw_line.strip()
-            if line.startswith("- ") and ":" in line:
-                rest = line[2:].strip()
-                key, _, val = rest.partition(":")
-                key = key.strip()
-                val = val.strip()
-                current = key
-                fields[current] = val
-            elif current == "explanation" and line:
-                fields[current] = fields.get(current, "") + "\n" + raw_line.rstrip("\n")
-            elif current == "explanation" and not line:
-                fields[current] = fields.get(current, "") + "\n"
-        expl = fields.get("explanation", "").strip()
-        out.append(
-            PhysicalPlanResponseEntry(
-                issue_id=fields.get("issue_id", issue_id_heading),
-                response_timestamp=ts,
-                outcome=fields.get("outcome", ""),
-                explanation=expl,
-            )
-        )
-    return out
+def read_physicalplan_issue_responses(quest_dir: Path) -> list[IssueResponseEntry]:
+    return quest_fs.read_issue_responses(
+        quest_dir / "physicalplan_issue_responses.md"
+    )
 
 
 def issue_entry_to_card(entry: IssueEntry) -> dict:
@@ -390,7 +344,7 @@ def issue_entry_to_card(entry: IssueEntry) -> dict:
 
 def summarize_responses_for_issues(
     issues: list[IssueEntry],
-    responses: list[PhysicalPlanResponseEntry],
+    responses: list[IssueResponseEntry],
 ) -> list[dict]:
     ids = {i.issue_id for i in issues}
     matched = [r for r in responses if r.issue_id in ids]

@@ -13,6 +13,7 @@ from . import dashboard_git
 from . import dashboard_slice
 from .harness import HarnessNotAvailable
 from .quest_fs import QuestStateParseError
+from .issue_service import IssueNotFound
 from .quest_service import (
     AdvanceQuestConflict,
     AdvanceQuestValidationError,
@@ -134,6 +135,10 @@ def create_app(
     @app.errorhandler(dashboard_data.DashboardNotFound)
     def handle_dashboard_not_found(exc):
         return jsonify({"error": exc.message}), 404
+
+    @app.errorhandler(IssueNotFound)
+    def handle_issue_not_found(exc):
+        return jsonify({"error": str(exc)}), 404
 
     @app.before_request
     def log_request() -> None:
@@ -415,6 +420,149 @@ def create_app(
             checkout, limit=limit, skip=skip
         )
         return jsonify(payload)
+
+    def _issue_quest_params_from_query() -> dict:
+        project = dashboard_data.parse_project(
+            request.args.get("project"),
+            source_repo_root=source_root,
+        )
+        quest_type = dashboard_data.parse_quest_type(request.args.get("quest_type"))
+        quest_number = dashboard_data.parse_quest_number(
+            request.args.get("quest_number")
+        )
+        return {
+            "project": project,
+            "quest_type": quest_type,
+            "quest_number": quest_number,
+        }
+
+    def _issue_quest_params_from_body(data: dict) -> dict:
+        required = ["project", "quest_type", "quest_number", "scope"]
+        missing = [f for f in required if f not in data]
+        if missing:
+            raise dashboard_data.DashboardBadRequest(
+                f"Missing required fields: {missing}",
+                fields={f: "required" for f in missing},
+            )
+        project = dashboard_data.parse_project(
+            data["project"],
+            source_repo_root=source_root,
+        )
+        quest_type = dashboard_data.parse_quest_type(data["quest_type"])
+        if not isinstance(data["quest_number"], int) or data["quest_number"] < 0:
+            raise dashboard_data.DashboardBadRequest(
+                "quest_number must be a non-negative integer",
+                fields={"quest_number": "invalid"},
+            )
+        return {
+            "project": project,
+            "quest_type": quest_type,
+            "quest_number": data["quest_number"],
+            "scope_raw": data["scope"],
+            "slice_raw": data.get("slice"),
+        }
+
+    @app.route("/api/issues", methods=["GET"])
+    def list_issues_route():
+        params = _issue_quest_params_from_query()
+        scope_raw = request.args.get("scope")
+        slice_raw = request.args.get("slice")
+        status_filter = request.args.get("status")
+        result = quest_service.list_issues(
+            repo_path=str(source_root),
+            project=params["project"],
+            quest_type=params["quest_type"],
+            quest_number=params["quest_number"],
+            scope_raw=scope_raw,
+            slice_raw=slice_raw,
+            status_filter=status_filter or "all",
+        )
+        return jsonify(result), 200
+
+    @app.route("/api/issues/<issue_id>", methods=["GET"])
+    def get_issue_route(issue_id: str):
+        params = _issue_quest_params_from_query()
+        result = quest_service.get_issue(
+            repo_path=str(source_root),
+            issue_id=issue_id,
+            project=params["project"],
+            quest_type=params["quest_type"],
+            quest_number=params["quest_number"],
+            scope_raw=request.args.get("scope"),
+            slice_raw=request.args.get("slice"),
+        )
+        return jsonify(result), 200
+
+    @app.route("/api/issues", methods=["POST"])
+    def create_issue_route():
+        data = request.get_json(force=True)
+        params = _issue_quest_params_from_body(data)
+        title = data.get("title", "")
+        body = data.get("body", data.get("details", ""))
+        status = data.get("status", "open")
+        result = quest_service.create_issue(
+            repo_path=str(source_root),
+            project=params["project"],
+            quest_type=params["quest_type"],
+            quest_number=params["quest_number"],
+            scope_raw=params["scope_raw"],
+            slice_raw=params["slice_raw"],
+            title=title,
+            body=body,
+            status=status,
+        )
+        return jsonify(result), 201
+
+    @app.route("/api/issues/<issue_id>", methods=["PATCH"])
+    def edit_issue_route(issue_id: str):
+        data = request.get_json(force=True)
+        params = _issue_quest_params_from_body(data)
+        result = quest_service.edit_issue(
+            repo_path=str(source_root),
+            issue_id=issue_id,
+            project=params["project"],
+            quest_type=params["quest_type"],
+            quest_number=params["quest_number"],
+            scope_raw=params["scope_raw"],
+            slice_raw=params["slice_raw"],
+            status=data.get("status"),
+            title=data.get("title"),
+            body=data.get("body", data.get("details")),
+        )
+        return jsonify(result), 200
+
+    @app.route("/api/issues/<issue_id>/responses", methods=["POST"])
+    def respond_to_issue_route(issue_id: str):
+        data = request.get_json(force=True)
+        params = _issue_quest_params_from_body(data)
+        outcome = data.get("outcome", "")
+        explanation = data.get("explanation", "")
+        result = quest_service.respond_to_issue(
+            repo_path=str(source_root),
+            issue_id=issue_id,
+            project=params["project"],
+            quest_type=params["quest_type"],
+            quest_number=params["quest_number"],
+            scope_raw=params["scope_raw"],
+            slice_raw=params["slice_raw"],
+            outcome=outcome,
+            explanation=explanation,
+        )
+        return jsonify(result), 201
+
+    @app.route("/api/issues/<issue_id>/responses", methods=["GET"])
+    def list_issue_responses_route(issue_id: str):
+        params = _issue_quest_params_from_query()
+        result = quest_service.list_issue_responses(
+            repo_path=str(source_root),
+            issue_id=issue_id,
+            project=params["project"],
+            quest_type=params["quest_type"],
+            quest_number=params["quest_number"],
+            scope_raw=request.args.get("scope"),
+            slice_raw=request.args.get("slice"),
+        )
+        return jsonify(result), 200
 
     @app.route("/api/dashboard/git_diff", methods=["GET"])
     def dashboard_git_diff():

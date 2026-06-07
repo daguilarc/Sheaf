@@ -102,6 +102,14 @@ class IssueEntry:
 
 
 @dataclass
+class IssueResponseEntry:
+    issue_id: str
+    response_timestamp: str
+    outcome: str
+    explanation: str
+
+
+@dataclass
 class TransitionRecord:
     timestamp: str
     previous_state: str
