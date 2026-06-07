@@ -62,7 +62,7 @@
         "sheaf.realtime.openAiApiKey": {
           "type": "string",
           "default": "",
-          "description": "OpenAI API key (optional if stored in Secret Storage or OPENAI_API_KEY)."
+          "description": "OpenAI API key (optional if stored in VS Code Secret Storage or config/api_keys.json)."
         },
         "sheaf.realtime.model": {
           "type": "string",

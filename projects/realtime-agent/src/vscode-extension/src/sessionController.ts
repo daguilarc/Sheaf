@@ -15,6 +15,7 @@ import {
 
 import type { ChatModel } from "./chat/chatModel.js";
 import type { FreshnessCoordinator } from "./freshness/freshnessCoordinator.js";
+import { x_missingOpenAiApiKeyMessage } from "./configCore.js";
 import type { LogSink } from "./log.js";
 import type {
   SessionControllerHost,
@@ -206,9 +207,8 @@ export class SessionController
     if (apiKey === undefined || apiKey.length === 0)
     {
       this.SetState("idle");
-      void this.m_ui.showErrorMessage(
-        "Sheaf realtime: set an OpenAI API key (Secret Storage, sheaf.realtime.openAiApiKey setting, or OPENAI_API_KEY).",
-      );
+      this.m_log.LogEventError("config_lookup_failed", { reason: "missing_openai_api_key" });
+      void this.m_ui.showErrorMessage(x_missingOpenAiApiKeyMessage);
       return;
     }
 
@@ -255,6 +255,15 @@ export class SessionController
       onToolLifecycle: (notification) =>
       {
         this.m_chatModel?.ingestToolLifecycle(notification);
+        if (notification.phase === "failed")
+        {
+          this.m_log.LogEventError("tool_dispatch_failed", {
+            session_id: notification.sessionId,
+            tool_call_id: notification.toolCallId,
+            tool_name: notification.toolName,
+            error: notification.error,
+          });
+        }
       },
       onEvent: (event, info) =>
       {
@@ -264,7 +273,15 @@ export class SessionController
 
     try
     {
-      database = createDatabase(dbPath);
+      try
+      {
+        database = createDatabase(dbPath);
+      }
+      catch (dbError)
+      {
+        this.m_log.LogEventError("persistence_init_failed", { database_path: dbPath }, dbError);
+        throw dbError;
+      }
 
       const sessionDeps: AgentSessionDeps = {
         apiKey,
@@ -318,9 +335,11 @@ export class SessionController
 
       this.m_chatModel?.clear();
       this.SetState("active");
+      this.m_log.LogEvent("extension_session_started", { session_id: session.sessionId });
     }
     catch (error)
     {
+      this.m_log.LogEventError("extension_session_start_failed", undefined, error);
       this.m_log.Error("Failed to start realtime session", error);
 
       this.m_freshnessCoordinator?.detach();
@@ -364,6 +383,7 @@ export class SessionController
       return;
     }
 
+    this.m_log.LogEventError("extension_session_ended_unexpectedly", { reason });
     this.m_log.Line(`Session ended unexpectedly: ${reason}`);
     this.m_chatModel?.recordError("Connection to OpenAI was lost.");
     void this.m_ui.showErrorMessage("Sheaf realtime: connection to OpenAI was lost.");
@@ -423,6 +443,7 @@ export class SessionController
 
     this.CloseDatabaseIfOpen();
     this.SetState("idle");
+    this.m_log.LogEvent("extension_session_stopped", { reason });
   }
 
   private CloseDatabaseIfOpen(): void

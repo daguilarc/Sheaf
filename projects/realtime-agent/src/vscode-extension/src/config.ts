@@ -1,17 +1,62 @@
 import * as vscode from "vscode";
 
-import { ResolveOpenAiApiKey, ResolveSystemPrompt } from "./configCore.js";
+import {
+  ResolveOpenAiApiKey,
+  ResolveSystemPrompt,
+  x_missingOpenAiApiKeyMessage,
+} from "./configCore.js";
+import {
+  FindSheafRepositoryRootFromWorkspaceFolders,
+  LoadOpenAiApiKeyFromRepoConfig,
+} from "./repoConfig.js";
 
-export { ResolveOpenAiApiKey, ResolveSystemPrompt } from "./configCore.js";
+export {
+  ResolveOpenAiApiKey,
+  ResolveSystemPrompt,
+  x_missingOpenAiApiKeyMessage,
+} from "./configCore.js";
+export {
+  FindSheafRepositoryRoot,
+  FindSheafRepositoryRootFromWorkspaceFolders,
+  LoadOpenAiApiKeyFromRepoConfig,
+  ResolveExtensionRuntimeLogPath,
+} from "./repoConfig.js";
 
 const x_configSection = "sheaf.realtime";
 const x_secretKeyOpenAiApiKey = "sheaf.realtime.openAiApiKey";
+
+export type ConfigLookupFailureHandler = (message: string) => void;
+
+let g_onConfigLookupFailure: ConfigLookupFailureHandler | undefined;
+
+export function SetConfigLookupFailureHandler(handler: ConfigLookupFailureHandler | undefined): void
+{
+  g_onConfigLookupFailure = handler;
+}
 
 export async function getOpenAiApiKey(context: vscode.ExtensionContext): Promise<string | undefined>
 {
   const secret = await context.secrets.get(x_secretKeyOpenAiApiKey);
   const setting = vscode.workspace.getConfiguration(x_configSection).get<string>("openAiApiKey");
-  return ResolveOpenAiApiKey(secret ?? undefined, setting, process.env.OPENAI_API_KEY);
+
+  let repoConfigValue: string | undefined;
+  const folders = vscode.workspace.workspaceFolders ?? [];
+  const repoRoot = FindSheafRepositoryRootFromWorkspaceFolders(folders);
+  if (repoRoot !== undefined)
+  {
+    const loaded = await LoadOpenAiApiKeyFromRepoConfig(repoRoot);
+    if (loaded.error !== undefined)
+    {
+      g_onConfigLookupFailure?.(loaded.error);
+    }
+    repoConfigValue = loaded.apiKey;
+  }
+
+  return ResolveOpenAiApiKey({
+    secretValue: secret ?? undefined,
+    repoConfigValue,
+    settingValue: setting,
+  });
 }
 
 export function getModel(): string

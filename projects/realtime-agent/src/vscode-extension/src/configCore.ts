@@ -11,29 +11,35 @@ export function ResolveSystemPrompt(configured: string | undefined): string
   return BASELINE_VOICE_NAV_SYSTEM_PROMPT;
 }
 
-export function ResolveOpenAiApiKey(
-  secretValue: string | undefined,
-  settingValue: string | undefined,
-  envValue: string | undefined,
-): string | undefined
+export interface ResolveOpenAiApiKeyInput
 {
-  const fromSecret = secretValue?.trim();
+  secretValue?: string;
+  repoConfigValue?: string;
+  settingValue?: string;
+}
+
+export function ResolveOpenAiApiKey(input: ResolveOpenAiApiKeyInput): string | undefined
+{
+  const fromSecret = input.secretValue?.trim();
   if (fromSecret !== undefined && fromSecret.length > 0)
   {
     return fromSecret;
   }
 
-  const fromSetting = settingValue?.trim();
+  const fromRepo = input.repoConfigValue?.trim();
+  if (fromRepo !== undefined && fromRepo.length > 0)
+  {
+    return fromRepo;
+  }
+
+  const fromSetting = input.settingValue?.trim();
   if (fromSetting !== undefined && fromSetting.length > 0)
   {
     return fromSetting;
   }
 
-  const fromEnv = envValue?.trim();
-  if (fromEnv !== undefined && fromEnv.length > 0)
-  {
-    return fromEnv;
-  }
-
   return undefined;
 }
+
+export const x_missingOpenAiApiKeyMessage =
+  "Sheaf realtime: set an OpenAI API key (VS Code Secret Storage, config/api_keys.json, or sheaf.realtime.openAiApiKey setting).";

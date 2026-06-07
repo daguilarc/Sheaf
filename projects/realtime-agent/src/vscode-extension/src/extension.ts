@@ -4,7 +4,11 @@ import { RegisterRealtimeCommands } from "./commands.js";
 import { ChatModel } from "./chat/chatModel.js";
 import { ChatViewProvider } from "./chat/chatViewProvider.js";
 import { FreshnessCoordinator } from "./freshness/freshnessCoordinator.js";
-import { Log } from "./log.js";
+import {
+  FindSheafRepositoryRootFromWorkspaceFolders,
+  SetConfigLookupFailureHandler,
+} from "./config.js";
+import { CreateExtensionLog } from "./log.js";
 import { SessionController } from "./sessionController.js";
 import {
   CreateSessionHostFromExtensionContext,
@@ -24,8 +28,16 @@ let g_statusBar: vscode.StatusBarItem | undefined;
 export function activate(context: vscode.ExtensionContext): void
 {
   const channel = vscode.window.createOutputChannel("Sheaf Realtime");
-  const log = new Log(channel);
+  const repoRoot = FindSheafRepositoryRootFromWorkspaceFolders(
+    vscode.workspace.workspaceFolders ?? [],
+  );
+  const log = CreateExtensionLog({ channel, repoRoot });
   context.subscriptions.push(channel);
+
+  SetConfigLookupFailureHandler((message) =>
+  {
+    log.LogEventError("config_lookup_failed", { source: "api_keys.json" }, message);
+  });
 
   const statusBar = CreateSheafRealtimeStatusBar();
   g_statusBar = statusBar;

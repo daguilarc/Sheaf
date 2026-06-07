@@ -16,6 +16,7 @@ import { ChatModel } from "../../src/vscode-extension/src/chat/chatModel.js";
 import { SessionController } from "../../src/vscode-extension/src/sessionController.js";
 import { BuildVscodeToolCallSet } from "../../src/vscode-extension/src/tools/callSetBuilder.js";
 import { NoOpFreshnessHooks } from "../../src/vscode-extension/src/tools/types.js";
+import { x_missingOpenAiApiKeyMessage } from "../../src/vscode-extension/src/configCore.js";
 import type { LogSink } from "../../src/vscode-extension/src/log.js";
 import type { SessionControllerHost, SessionPreferences, SessionSecrets, SessionUi } from "../../src/vscode-extension/src/sessionTypes.js";
 import { MemoryEditorAccess } from "./helpers/memoryEditorAccess.js";
@@ -33,6 +34,8 @@ function CreateTestLog(): LogSink
   return {
     Line: () => {},
     Error: () => {},
+    LogEvent: () => {},
+    LogEventError: () => {},
   };
 }
 
@@ -82,6 +85,114 @@ function CreateFakeDatabase(): RealtimeAgentDb
     close: () => {},
   } as unknown as RealtimeAgentDb;
 }
+
+test("SessionController stores session database under global storage path", async () =>
+{
+  const globalStoragePath = mkdtempSync(join(tmpdir(), "sheaf-vsc-global-"));
+  const repoRoot = mkdtempSync(join(tmpdir(), "sheaf-vsc-repo-"));
+  let capturedDbPath: string | undefined;
+
+  try
+  {
+    const startSession = async (): Promise<RealtimeAgentSession> => CreateFakeSession(() => {});
+
+    const host: SessionControllerHost = { globalStoragePath };
+    const secrets: SessionSecrets = { getOpenAiApiKey: async () => "sk-test-key" };
+    const prefs: SessionPreferences = {
+      getModel: () => "gpt-realtime-2",
+      getSystemPrompt: () => "system",
+      getInputDevice: () => undefined,
+      getSafetyIdentifier: () => undefined,
+    };
+    const ui = CreateTestUi();
+
+    const controller = new SessionController(host, CreateTestLog(), secrets, prefs, ui, {
+      startSession,
+      createDatabase: (databasePath: string) =>
+      {
+        capturedDbPath = databasePath;
+        return CreateFakeDatabase();
+      },
+      createMicrophoneCapture: () => ({ start: () => {}, stop: () => {} }),
+      buildVscodeToolCallSet: () => CreateHarnessToolCallSet(repoRoot),
+    });
+
+    await controller.ToggleSession();
+
+    assert.equal(capturedDbPath, join(globalStoragePath, "realtime-agent.sqlite3"));
+    await controller.ToggleSession();
+  }
+  finally
+  {
+    rmSync(globalStoragePath, { recursive: true, force: true });
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("SessionController commit uses commitAudioAndCreateResponse", async () =>
+{
+  const tmp = mkdtempSync(join(tmpdir(), "sheaf-vsc-test-"));
+  let commitCalled = false;
+
+  try
+  {
+    const fakeSession: RealtimeAgentSession = {
+      ...CreateFakeSession(() => {}),
+      commitAudioAndCreateResponse: async () =>
+      {
+        commitCalled = true;
+        return { status: "sent" as const };
+      },
+    };
+
+    const startSession = async (): Promise<RealtimeAgentSession> => fakeSession;
+    const host: SessionControllerHost = { globalStoragePath: tmp };
+    const secrets: SessionSecrets = { getOpenAiApiKey: async () => "sk" };
+    const prefs: SessionPreferences = {
+      getModel: () => "m",
+      getSystemPrompt: () => "s",
+      getInputDevice: () => undefined,
+      getSafetyIdentifier: () => undefined,
+    };
+    const ui = CreateTestUi();
+
+    const controller = new SessionController(host, CreateTestLog(), secrets, prefs, ui, {
+      startSession,
+      createDatabase: CreateFakeDatabase,
+      createMicrophoneCapture: () => ({ start: () => {}, stop: () => {} }),
+      buildVscodeToolCallSet: () => CreateHarnessToolCallSet(tmp),
+    });
+
+    await controller.ToggleSession();
+    await controller.CommitAndRespond();
+    assert.equal(commitCalled, true);
+    await controller.ToggleSession();
+  }
+  finally
+  {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("SessionController missing API key reports configured sources", async () =>
+{
+  const tmp = mkdtempSync(join(tmpdir(), "sheaf-vsc-test-"));
+  const host: SessionControllerHost = { globalStoragePath: tmp };
+  const secrets: SessionSecrets = { getOpenAiApiKey: async () => undefined };
+  const prefs: SessionPreferences = {
+    getModel: () => "m",
+    getSystemPrompt: () => "s",
+    getInputDevice: () => undefined,
+    getSafetyIdentifier: () => undefined,
+  };
+  const ui = CreateTestUi();
+
+  const controller = new SessionController(host, CreateTestLog(), secrets, prefs, ui, {});
+  await controller.ToggleSession();
+
+  assert.equal(controller.GetState(), "idle");
+  assert.ok(ui.errors.includes(x_missingOpenAiApiKeyMessage));
+});
 
 test("SessionController start passes manual turnMode and navigation tools", async () =>
 {
