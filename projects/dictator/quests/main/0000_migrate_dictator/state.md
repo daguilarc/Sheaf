@@ -1,5 +1,13 @@
-# Quest State
+# State
 
-state: PhysicalPlanning
-current_slice: null
-updated_at: 2026-06-07T06:29:09Z
+- global_step: 2
+- machine_name: quest
+- machine_path: projects/dictator/quests/main/0000_migrate_dictator
+- state: ReviewPhysicalPlan
+- updated_at: 2026-06-07T15:01:24Z
+
+## Tags
+
+- quest_number: 0
+- quest_slug: migrate_dictator
+- quest_type: main
