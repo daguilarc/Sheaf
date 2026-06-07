@@ -99,7 +99,7 @@ class CreateQuestTests(unittest.TestCase):
             )
             self.assertEqual(
                 exec_cfg["profiles"]["implementer"]["modify_block"],
-                ["projects/**"],
+                ["$currentProject/quests/**"],
             )
             meta = quest_fs.read_quest_meta(qdir)
             self.assertEqual(meta.project, "example")

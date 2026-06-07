@@ -15,6 +15,7 @@ from quest_runner_service.quest_runner import (
     current_project_rel_for_quest,
     docs_updated_for_quest,
     expand_modify_allow_patterns,
+    expand_modify_path_patterns,
     path_is_legal_under_profile,
     run_quest,
     runtime_quest_docs_dir,
@@ -253,6 +254,9 @@ class ProjectLocalPathRuleTests(unittest.TestCase):
         exp = expand_modify_allow_patterns(
             prof.modify_allow, qrel, srel, "projects/example"
         )
+        block_exp = expand_modify_path_patterns(
+            prof.modify_block, qrel, srel, "projects/example"
+        )
         self.assertEqual(
             exp,
             [
@@ -263,17 +267,57 @@ class ProjectLocalPathRuleTests(unittest.TestCase):
         )
         self.assertTrue(
             path_is_legal_under_profile(
-                f"{qrel}/human_intervention_request.md", prof, exp
+                f"{qrel}/human_intervention_request.md", prof, exp, block_exp
             )
         )
         self.assertTrue(
-            path_is_legal_under_profile(f"{srel}/notes/x.md", prof, exp)
+            path_is_legal_under_profile(f"{srel}/notes/x.md", prof, exp, block_exp)
         )
         self.assertTrue(
-            path_is_legal_under_profile("projects/example/docs/index.md", prof, exp)
+            path_is_legal_under_profile(
+                "projects/example/docs/index.md", prof, exp, block_exp
+            )
         )
         self.assertFalse(
-            path_is_legal_under_profile("docs/index.md", prof, exp)
+            path_is_legal_under_profile("docs/index.md", prof, exp, block_exp)
+        )
+
+    def test_current_project_quest_block_is_expanded(self) -> None:
+        prof = ExecutionProfile(
+            harness=HarnessKind.Cursor,
+            model="m",
+            reasoning_effort=None,
+            idle_timeout_seconds=1,
+            modify_allow=[
+                "$currentQuest/human_intervention_request.md",
+                "$currentSlice/implementation_done.md",
+            ],
+            modify_block=["$currentProject/quests/**"],
+            config_version=2,
+        )
+        qrel = "projects/example/quests/main/0000_x"
+        srel = f"{qrel}/slices/0000_sl"
+        exp = expand_modify_allow_patterns(
+            prof.modify_allow, qrel, srel, "projects/example"
+        )
+        block_exp = expand_modify_path_patterns(
+            prof.modify_block, qrel, srel, "projects/example"
+        )
+        self.assertEqual(block_exp, ["projects/example/quests/**"])
+        self.assertTrue(
+            path_is_legal_under_profile(
+                f"{qrel}/human_intervention_request.md", prof, exp, block_exp
+            )
+        )
+        self.assertFalse(
+            path_is_legal_under_profile(
+                "projects/example/quests/main/0001_y/state.md", prof, exp, block_exp
+            )
+        )
+        self.assertTrue(
+            path_is_legal_under_profile(
+                "projects/example/src/app.py", prof, exp, block_exp
+            )
         )
 
     def test_documenter_completion_checks_project_docs_only(self) -> None:

@@ -407,7 +407,7 @@ class ExecutionConfigTests(unittest.TestCase):
             self.assertIsNone(impl.reasoning_effort)
             self.assertEqual(impl.idle_timeout_seconds, 3600)
             self.assertEqual(impl.config_version, 2)
-            self.assertEqual(impl.modify_block, ["projects/**"])
+            self.assertEqual(impl.modify_block, ["$currentProject/quests/**"])
             self.assertIn("$currentSlice/implementation_done.md", impl.modify_allow)
             self.assertIn("$currentQuest/human_intervention_request.md", impl.modify_allow)
             plan_reviewer = profiles["physical_plan_reviewer"]
@@ -495,7 +495,7 @@ class ExecutionConfigTests(unittest.TestCase):
                 read_execution_config(q)
             self.assertIn("standalone", str(ctx.exception).lower())
 
-    def test_read_execution_config_v2_rejects_dollar_in_block(self) -> None:
+    def test_read_execution_config_v2_accepts_known_placeholder_in_block(self) -> None:
         cfg = textwrap.dedent(
             """\
             version: 2
@@ -514,10 +514,8 @@ class ExecutionConfigTests(unittest.TestCase):
             q = Path(tmp) / "quest"
             q.mkdir()
             (q / "state_execution_config.yaml").write_text(cfg, encoding="utf-8")
-            with self.assertRaises(ValueError) as ctx:
-                read_execution_config(q)
-            self.assertIn("modify_block", str(ctx.exception))
-            self.assertIn("$", str(ctx.exception))
+            profiles = read_execution_config(q)
+            self.assertEqual(profiles["implementer"].modify_block, ["$currentQuest/**"])
 
     def test_read_execution_config_v2_rejects_unknown_placeholder(self) -> None:
         cfg = textwrap.dedent(
@@ -531,7 +529,7 @@ class ExecutionConfigTests(unittest.TestCase):
                 modify_allow:
                   - "$currentRepo/foo"
                 modify_block:
-                  - "**"
+                  - "$currentRepo/**"
             """
         )
         with tempfile.TemporaryDirectory() as tmp:

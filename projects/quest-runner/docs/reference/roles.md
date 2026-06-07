@@ -168,7 +168,7 @@ Version `2` execution configs enforce per-role `modify_allow` and `modify_block`
 glob lists after each harness turn. Illegal edits are reverted and the role
 receives a follow-up to continue within allowed paths.
 
-Placeholder tokens in `modify_allow`:
+Placeholder tokens in `modify_allow` and `modify_block`:
 
 - `$currentQuest` — repo-relative quest directory
 - `$currentSlice` — repo-relative active slice directory

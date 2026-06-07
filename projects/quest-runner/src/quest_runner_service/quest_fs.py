@@ -27,7 +27,7 @@ from .quest_types import (
 _HISTORY_HEADING_RE = re.compile(r"^## (\d{4}-\d{2}-\d{2}T\S+)\s*$", re.MULTILINE)
 _ISSUE_HEADING_RE = re.compile(r"^## Issue\s+(\S+)\s*$", re.MULTILINE)
 _DOLLAR_TOKEN_RE = re.compile(r"\$[a-zA-Z_][a-zA-Z0-9_]*")
-_ALLOWED_MODIFY_ALLOW_PLACEHOLDERS: frozenset[str] = frozenset(
+_ALLOWED_MODIFY_PATH_PLACEHOLDERS: frozenset[str] = frozenset(
     {"$currentQuest", "$currentSlice", "$currentProject"}
 )
 
@@ -629,7 +629,7 @@ def _validate_modify_allow_patterns(
                 "'**' (it would match all paths and defeat modify_block)"
             )
         for token in _DOLLAR_TOKEN_RE.findall(p):
-            if token not in _ALLOWED_MODIFY_ALLOW_PLACEHOLDERS:
+            if token not in _ALLOWED_MODIFY_PATH_PLACEHOLDERS:
                 raise ValueError(
                     f"Profile {role!r} modify_allow[{i}] in {path} uses unknown placeholder "
                     f"{token!r} (only $currentQuest, $currentSlice, and "
@@ -643,11 +643,13 @@ def _validate_modify_block_patterns(
     role: str,
 ) -> None:
     for i, p in enumerate(patterns):
-        if "$" in p:
-            raise ValueError(
-                f"Profile {role!r} modify_block[{i}] in {path} must not contain '$' "
-                "(use glob * and ** only; placeholders belong in modify_allow)"
-            )
+        for token in _DOLLAR_TOKEN_RE.findall(p):
+            if token not in _ALLOWED_MODIFY_PATH_PLACEHOLDERS:
+                raise ValueError(
+                    f"Profile {role!r} modify_block[{i}] in {path} uses unknown placeholder "
+                    f"{token!r} (only $currentQuest, $currentSlice, and "
+                    "$currentProject are allowed)"
+                )
 
 
 def _parse_profile_maps_to_execution_profile(

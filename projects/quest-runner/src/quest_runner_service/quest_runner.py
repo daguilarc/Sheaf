@@ -322,6 +322,17 @@ def expand_modify_allow_patterns(
     slice_rel: str | None,
     current_project_rel: str | None = None,
 ) -> list[str]:
+    return expand_modify_path_patterns(
+        patterns, quest_rel, slice_rel, current_project_rel
+    )
+
+
+def expand_modify_path_patterns(
+    patterns: list[str],
+    quest_rel: str,
+    slice_rel: str | None,
+    current_project_rel: str | None = None,
+) -> list[str]:
     out: list[str] = []
     for raw in patterns:
         if slice_rel is None and "$currentSlice" in raw:
@@ -353,6 +364,7 @@ def path_is_legal_under_profile(
     path: str,
     profile: ExecutionProfile,
     expanded_allows: list[str],
+    expanded_blocks: list[str],
 ) -> bool:
     if profile.config_version == 1:
         return True
@@ -360,7 +372,7 @@ def path_is_legal_under_profile(
     has_allow = bool(profile.modify_allow)
     has_block = bool(profile.modify_block)
     allow_hit = any(path_matches_glob(p, norm) for p in expanded_allows)
-    block_hit = any(path_matches_glob(p, norm) for p in profile.modify_block)
+    block_hit = any(path_matches_glob(p, norm) for p in expanded_blocks)
     if has_allow and has_block:
         if allow_hit:
             return True
@@ -477,11 +489,14 @@ def _validate_pre_harness_workspace(
     expanded = expand_modify_allow_patterns(
         profile.modify_allow, quest_rel, slice_rel, current_project_rel
     )
+    expanded_blocks = expand_modify_path_patterns(
+        profile.modify_block, quest_rel, slice_rel, current_project_rel
+    )
     for p in changed:
-        if not path_is_legal_under_profile(p, profile, expanded):
+        if not path_is_legal_under_profile(p, profile, expanded, expanded_blocks):
             raise DirtyWorkspaceError(
                 f"Working tree has disallowed pending changes before harness "
-                f"(path {p!r} is outside this role's modify_allow rules)."
+                f"(path {p!r} is outside this role's path rules)."
             )
 
 
@@ -607,8 +622,15 @@ def enforce_profile_modify_rules_after_harness(
     expanded = expand_modify_allow_patterns(
         profile.modify_allow, quest_rel, slice_rel, current_project_rel
     )
+    expanded_blocks = expand_modify_path_patterns(
+        profile.modify_block, quest_rel, slice_rel, current_project_rel
+    )
     illegal = sorted(
-        {p for p in changed if not path_is_legal_under_profile(p, profile, expanded)}
+        {
+            p
+            for p in changed
+            if not path_is_legal_under_profile(p, profile, expanded, expanded_blocks)
+        }
     )
     if not illegal:
         return []

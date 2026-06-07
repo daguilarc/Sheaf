@@ -34,7 +34,7 @@ profiles:
       - "$currentSlice/implementation_done.md"
       - "$currentSlice/notes/**"
     modify_block:
-      - "projects/**"
+      - "$currentProject/quests/**"
   polisher_reviewer:
     harness: claude_code
     model: claude-opus-4-8
@@ -54,7 +54,7 @@ profiles:
       - "$currentSlice/polishing_issue_responses.md"
       - "$currentSlice/notes/**"
     modify_block:
-      - "projects/**"
+      - "$currentProject/quests/**"
   documenter:
     harness: codex
     model: gpt-5.5

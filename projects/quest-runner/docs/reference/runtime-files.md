@@ -182,9 +182,8 @@ enforcement. Allowed harness values are:
 - `claude_code`
 
 Version `2` configs support per-profile `modify_allow` and `modify_block` glob
-lists. `modify_allow` can use `$currentQuest` and `$currentSlice` placeholders.
-`modify_block` must be repo-root-relative and must not use placeholders. When
-both lists match a path, allow wins.
+lists. Both lists can use `$currentQuest`, `$currentSlice`, and
+`$currentProject` placeholders. When both lists match a path, allow wins.
 
 The runner refuses to invoke a harness when the target repository working tree
 is not fully clean, including untracked files. After each harness turn, it
