@@ -36,6 +36,17 @@ The future project responsible for managing [services](services.md) registered i
 
 The future migrated project responsible for managing project [quests](project-rules.md#quests-versus-docs).
 
+## Land
+
+`land <branch>` means rebase `<branch>` onto `main`, then fast-forward `main` to
+`<branch>`:
+
+```bash
+git rebase main <branch>
+git checkout main
+git merge --ff-only <branch>
+```
+
 ## Global Config
 
 Shared repository-wide settings stored in [`config/global_config.json`](../config/global_config.json). See [Configuration](configuration.md).
