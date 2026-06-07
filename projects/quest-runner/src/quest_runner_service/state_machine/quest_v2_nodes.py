@@ -9,18 +9,18 @@ from .. import quest_fs
 from ..harness import create_harness
 from ..quest_runner import (
     _get_slice_dir,
-    all_required_slice_plan_files_exist,
-    current_project_rel_for_quest,
-    docs_updated_for_quest,
     git_rev_parse_head,
-    implementer_done_signal,
-    implementation_review_done_signal,
     perform_role_harness_sequence,
-    physical_plan_review_done_signal,
-    quest_has_open_physicalplan_issues,
     role_thread_key,
     scaffold_slice_dir,
-    slice_has_open_polishing_issues,
+)
+from .quest_v2_predicates import (
+    physical_planning_next_state,
+    prepare_next_slice_transition,
+    quest_documenting_next_state,
+    review_physical_plan_next_state,
+    slice_implementing_next_state,
+    slice_polishing_review_next_state,
 )
 from ..quest_thread import load_thread, resolve_or_create_thread_spec
 from ..quest_types import QuestState, RecursiveSnapshot, SliceState
@@ -128,23 +128,20 @@ class PhysicalPlanningNode(_ThreadLlmNode):
     m_role = "physical_planner"
 
     def NextState(self, ctx: RunContext, machine: StateMachine) -> str:
-        quest_dir = ctx.machine_root_dir
-        slice_dirs = quest_fs.list_slice_dirs(quest_dir)
-        if slice_dirs and all_required_slice_plan_files_exist(quest_dir):
-            return "ReviewPhysicalPlan"
-        return "PhysicalPlanning"
+        try:
+            return physical_planning_next_state(ctx.machine_root_dir)
+        except Exception:
+            return "PhysicalPlanning"
 
 
 class ReviewPhysicalPlanNode(_ThreadLlmNode):
     m_role = "physical_plan_reviewer"
 
     def NextState(self, ctx: RunContext, machine: StateMachine) -> str:
-        quest_dir = ctx.machine_root_dir
-        if quest_has_open_physicalplan_issues(quest_dir):
-            return "PhysicalPlanning"
-        if physical_plan_review_done_signal(quest_dir):
-            return "PrepareNextSlice"
-        return "ReviewPhysicalPlan"
+        try:
+            return review_physical_plan_next_state(ctx.machine_root_dir)
+        except Exception:
+            return "ReviewPhysicalPlan"
 
 
 class PrepareNextSliceNode(BaseNode):
@@ -155,32 +152,9 @@ class PrepareNextSliceNode(BaseNode):
         return None
 
     def NextState(self, ctx: RunContext, machine: StateMachine) -> str:
-        quest_dir = ctx.machine_root_dir
-        dirs = quest_fs.list_slice_dirs(quest_dir)
-        unfinished = [
-            d
-            for d in dirs
-            if quest_fs.read_slice_state(d).state != SliceState.Done
-        ]
-        self._picked = ""
-        if not unfinished:
-            return "QuestDocumenting"
-        top = quest_fs.read_quest_state(quest_dir)
-        cur = top.active_slice
-        order = [d.name for d in dirs]
-        if not cur:
-            self._picked = unfinished[0].name
-            return "ExecuteSlice"
-        try:
-            i = order.index(cur)
-        except ValueError:
-            self._picked = unfinished[0].name
-            return "ExecuteSlice"
-        for d in unfinished:
-            if order.index(d.name) > i:
-                self._picked = d.name
-                return "ExecuteSlice"
-        return "QuestDocumenting"
+        nxt, tags = prepare_next_slice_transition(ctx.machine_root_dir)
+        self._picked = tags.get("active_slice", "")
+        return nxt
 
     def NodeTags(self, ctx: RunContext, machine: StateMachine) -> dict[str, str]:
         if self._picked:
@@ -229,14 +203,17 @@ class QuestDocumentingNode(_ThreadLlmNode):
         if box is None:
             return "QuestDocumenting"
         ref = box[0]
-        quest_dir = ctx.machine_root_dir
-        meta = quest_fs.read_quest_meta(quest_dir)
-        quest_rel = quest_dir.resolve().relative_to(ctx.repo_root.resolve()).as_posix()
-        project_rel = current_project_rel_for_quest(meta, quest_rel)
-        docs_rel = f"{project_rel}/docs" if project_rel else "docs"
-        if ref and docs_updated_for_quest(ctx.repo_root, ref, docs_rel):
-            return "Completed"
-        return "QuestDocumenting"
+        if not ref:
+            return "QuestDocumenting"
+        try:
+            return quest_documenting_next_state(
+                repo_path=ctx.repo_root,
+                quest_dir=ctx.machine_root_dir,
+                meta=quest_fs.read_quest_meta(ctx.machine_root_dir),
+                documenter_base_ref=ref,
+            )
+        except Exception:
+            return "QuestDocumenting"
 
 
 class SliceSetupNode(BaseNode):
@@ -255,23 +232,20 @@ class SliceImplementingNode(_ThreadLlmNode):
         super().Execute(ctx, machine)
 
     def NextState(self, ctx: RunContext, machine: StateMachine) -> str:
-        if implementer_done_signal(
-            machine.StateMachineDir(), ctx.repo_root, self._step_base
-        ):
-            return "PolishingReview"
-        return "Implementing"
+        try:
+            return slice_implementing_next_state(machine.StateMachineDir())
+        except Exception:
+            return "Implementing"
 
 
 class SlicePolishingReviewNode(_ThreadLlmNode):
     m_role = "polisher_reviewer"
 
     def NextState(self, ctx: RunContext, machine: StateMachine) -> str:
-        sd = machine.StateMachineDir()
-        if slice_has_open_polishing_issues(sd):
-            return "PolishingFix"
-        if implementation_review_done_signal(sd):
-            return "Completed"
-        return "PolishingReview"
+        try:
+            return slice_polishing_review_next_state(machine.StateMachineDir())
+        except Exception:
+            return "PolishingReview"
 
 
 class SlicePolishingFixNode(_ThreadLlmNode):

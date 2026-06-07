@@ -9,6 +9,8 @@ TEST_MODULES := \
 	tests.test_commit_metadata \
 	tests.test_service_entrypoint \
 	tests.test_quest_service_api \
+	tests.test_advance_quest_api \
+	tests.test_quest_v2_predicates \
 	tests.test_dashboard_api \
 	tests.test_dashboard_shell \
 	tests.test_dashboard_git \

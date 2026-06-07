@@ -96,6 +96,23 @@ class QuestNotFound(Exception):
         )
 
 
+class AdvanceQuestValidationError(Exception):
+    """Manual quest advance blocked by unmet predicates."""
+
+    def __init__(self, message: str, *, reason: str) -> None:
+        self.message = message
+        self.reason = reason
+        super().__init__(message)
+
+
+class AdvanceQuestConflict(Exception):
+    """Manual quest advance blocked by runtime conflict."""
+
+    def __init__(self, message: str) -> None:
+        self.message = message
+        super().__init__(message)
+
+
 class MissingQuestWorktree(Exception):
     """Expected quest worktree is missing or is not a git working tree."""
 
@@ -626,3 +643,84 @@ class QuestService:
             "quest_url": quest_url,
             "status_url": status_url,
         }
+
+    def advance_quest(
+        self,
+        repo_path: str,
+        project: str,
+        quest_type: str,
+        quest_number: int,
+    ) -> dict:
+        from .quest_runner import _quest_key
+        from .state_machine.v2_quest_state_io import V2QuestStateIo
+        from .state_machine.v2_step_executor import (
+            AdvanceValidationError,
+            HumanInterventionConflict,
+            advance_v2_top_level_step_without_harness,
+        )
+        from .state_machine.adapters import SubprocessGitOps
+        from .quest_types import StateMachineId
+
+        root, qdir, key = self._prepare_run(
+            repo_path, project, quest_type, quest_number
+        )
+        req_id = str(uuid.uuid4())
+        if not self.lock.acquire(key, quest_type, quest_number, req_id):
+            info = self.lock.get_lock_info(key)
+            assert info is not None
+            raise QuestLockContention(
+                "Repository is locked by another quest run",
+                repo_path=key,
+                lock_info=info,
+            )
+        try:
+            meta = quest_fs.read_quest_meta(qdir)
+            quest_key = _quest_key(meta)
+            rel = qdir.resolve().relative_to(root.resolve()).as_posix()
+            sm_id = StateMachineId(
+                root_machine_id=rel, machine_path=rel, machine_name="quest"
+            )
+            io_v2 = V2QuestStateIo(root, qdir, meta)
+            git_ops = SubprocessGitOps()
+            try:
+                result = advance_v2_top_level_step_without_harness(
+                    repo_path=root,
+                    quest_dir=qdir,
+                    quest_key=quest_key,
+                    meta=meta,
+                    state_io=io_v2,
+                    git_ops=git_ops,
+                    sm_id=sm_id,
+                )
+            except AdvanceValidationError as exc:
+                raise AdvanceQuestValidationError(
+                    exc.message, reason=exc.reason
+                ) from exc
+            except HumanInterventionConflict as exc:
+                raise AdvanceQuestConflict(exc.message) from exc
+
+            body: dict = {
+                "project": project,
+                "quest_type": quest_type,
+                "quest_number": quest_number,
+            }
+            if result.kind == "completed":
+                body["status"] = "completed"
+                body["advanced"] = False
+                return body
+
+            body["status"] = "advanced"
+            body["previous_state"] = result.previous_quest_state
+            body["next_state"] = result.next_quest_state
+            if result.previous_slice_state is not None:
+                body["previous_slice_state"] = result.previous_slice_state
+            if result.next_slice_state is not None:
+                body["next_slice_state"] = result.next_slice_state
+            if result.active_slice is not None:
+                body["active_slice"] = result.active_slice
+            if result.commit is not None:
+                body["commit"] = result.commit
+            body["message"] = result.message
+            return body
+        finally:
+            self.lock.release(key)

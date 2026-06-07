@@ -31,7 +31,32 @@ def _sample_snapshot() -> RecursiveSnapshot:
     )
 
 
+def _manual_preplanning_snapshot() -> RecursiveSnapshot:
+    return RecursiveSnapshot(
+        machine_path="projects/example/quests/main/0000_advance",
+        machine_name="quest",
+        node_name="PrePlanningGateNode",
+        state_before="PrePlanning",
+        state_after="PhysicalPlanning",
+        tags={
+            "quest_slug": "advance",
+            "quest_type": "main",
+            "quest_number": "0",
+        },
+        child=None,
+    )
+
+
 class CommitMetadataGoldenTests(unittest.TestCase):
+    def test_manual_advance_snapshot_round_trip(self) -> None:
+        snap = _manual_preplanning_snapshot()
+        meta = StepCommitMetadata(global_step=1, snapshot=snap)
+        msg = render_step_commit_message(meta)
+        parsed = parse_step_commit_message(msg)
+        self.assertIsNotNone(parsed)
+        assert parsed is not None
+        validate_parsed_step_commit(parsed)
+
     def test_render_parse_validate_round_trip(self) -> None:
         snap = _sample_snapshot()
         meta = StepCommitMetadata(global_step=1, snapshot=snap)

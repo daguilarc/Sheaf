@@ -14,6 +14,8 @@ from . import dashboard_slice
 from .harness import HarnessNotAvailable
 from .quest_fs import QuestStateParseError
 from .quest_service import (
+    AdvanceQuestConflict,
+    AdvanceQuestValidationError,
     FatalInvariantError,
     InvalidProject,
     InvalidQuestInput,
@@ -108,6 +110,14 @@ def create_app(
     @app.errorhandler(QuestStateParseError)
     def handle_quest_state_parse_error(exc):
         return jsonify({"error": str(exc)}), 422
+
+    @app.errorhandler(AdvanceQuestValidationError)
+    def handle_advance_quest_validation(exc):
+        return jsonify({"error": exc.message, "reason": exc.reason}), 422
+
+    @app.errorhandler(AdvanceQuestConflict)
+    def handle_advance_quest_conflict(exc):
+        return jsonify({"error": exc.message}), 409
 
     @app.errorhandler(dashboard_data.DashboardBadRequest)
     def handle_dashboard_bad_request(exc):
@@ -212,6 +222,34 @@ def create_app(
             result.get("status"),
         )
         return jsonify(result), 202
+
+    @app.route("/advance_quest", methods=["POST"])
+    def advance_quest_route():
+        data = request.get_json(force=True)
+        required = ["project", "quest_type", "quest_number"]
+        missing = [f for f in required if f not in data]
+        if missing:
+            return jsonify({"error": f"Missing required fields: {missing}"}), 400
+        log.info(
+            "advance_quest project=%s type=%s number=%s",
+            data["project"],
+            data["quest_type"],
+            data["quest_number"],
+        )
+        result = quest_service.advance_quest(
+            repo_path=str(source_root),
+            project=data["project"],
+            quest_type=data["quest_type"],
+            quest_number=data["quest_number"],
+        )
+        log.info(
+            "advance_quest ok project=%s type=%s number=%s status=%s",
+            data["project"],
+            data["quest_type"],
+            data["quest_number"],
+            result.get("status"),
+        )
+        return jsonify(result), 200
 
     @app.route("/dashboard", methods=["GET"])
     def dashboard_shell():
