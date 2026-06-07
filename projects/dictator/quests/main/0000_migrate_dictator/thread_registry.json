@@ -151,5 +151,14 @@
     "round_count": 3,
     "created_at": "2026-06-07T16:07:23Z",
     "last_used_at": "2026-06-07T16:12:40Z"
+  },
+  "slice_6_polisher": {
+    "thread_name": "dictator_main_0000_migrate_dictator_quest_0000_slice_0006_polisher",
+    "harness_kind": "codex",
+    "provider_thread_id": "019ea2db-984c-7930-a027-31d0116681af",
+    "pass_id": 0,
+    "round_count": 1,
+    "created_at": "2026-06-07T16:12:40Z",
+    "last_used_at": "2026-06-07T16:15:20Z"
   }
 }

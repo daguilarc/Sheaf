@@ -7,10 +7,13 @@ Runtime data lives at the Sheaf repository root under `data/dictator/`. It is gi
 ```text
 data/dictator/
   interactions/
-    YYYY-MM-DD-HH.jsonl
+    YYYY-MM-DDTHHZ.jsonl
 ```
 
-Each hourly file contains newline-delimited JSON envelopes. The service appends one envelope per dictation interaction.
+Interaction filenames are hourly UTC buckets, for example
+`2026-06-07T16Z.jsonl` (`yyyy-MM-dd'T'HH'Z'.jsonl`). Each hourly file
+contains newline-delimited JSON envelopes. The service appends one envelope per
+dictation interaction.
 
 ## Interaction record shape
 
