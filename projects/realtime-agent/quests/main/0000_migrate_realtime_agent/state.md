@@ -1,10 +1,10 @@
 # State
 
-- global_step: 1
+- global_step: 2
 - machine_name: quest
 - machine_path: projects/realtime-agent/quests/main/0000_migrate_realtime_agent
-- state: PhysicalPlanning
-- updated_at: 2026-06-07T19:13:33Z
+- state: ReviewPhysicalPlan
+- updated_at: 2026-06-07T20:03:30Z
 
 ## Tags
 
