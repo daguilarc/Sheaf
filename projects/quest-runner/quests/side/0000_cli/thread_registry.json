@@ -7,5 +7,14 @@
     "round_count": 1,
     "created_at": "2026-06-07T07:10:58Z",
     "last_used_at": "2026-06-07T07:17:48Z"
+  },
+  "physical_plan_reviewer": {
+    "thread_name": "quest-runner_side_0000_cli_quest_0000_physical_plan_reviewer",
+    "harness_kind": "claude_code",
+    "provider_thread_id": "b233a63d-84a3-4d3d-92a2-a92b23d20952",
+    "pass_id": 0,
+    "round_count": 1,
+    "created_at": "2026-06-07T07:17:49Z",
+    "last_used_at": "2026-06-07T07:20:09Z"
   }
 }
