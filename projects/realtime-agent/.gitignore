@@ -8,3 +8,4 @@ src/vscode-extension/*.vsix
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
+crash.log
