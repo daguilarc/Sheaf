@@ -19,13 +19,6 @@ export function StorageProjectKey() {
 }
 
 /**
- * @deprecated Use StorageProjectKey.
- */
-export function StorageRepoKey() {
-  return StorageProjectKey();
-}
-
-/**
  * Resolve which project name to use.
  * Precedence: valid query > valid stored > valid default > first listed.
  * If query names a project that is not listed, surface invalidQueryProject and fall back.
@@ -55,24 +48,6 @@ export function ResolveProjectSelection(
   }
   const first = listedProjects.length ? listedProjects[0] : null;
   return { project: first, invalidQueryProject };
-}
-
-/**
- * @deprecated Use ResolveProjectSelection.
- */
-export function ResolveRepositorySelection(
-  queryRepoPath,
-  storedRepoPath,
-  defaultRepoPath,
-  trackedPaths
-) {
-  const r = ResolveProjectSelection(
-    queryRepoPath,
-    storedRepoPath,
-    defaultRepoPath,
-    trackedPaths
-  );
-  return { repoPath: r.project, invalidQueryPath: r.invalidQueryProject };
 }
 
 export function BuildQuestApiQuery(project, questType, questNumber) {
@@ -111,17 +86,6 @@ export function BuildDashboardSearchParams({
     }
   }
   return p;
-}
-
-export function CanonicalQuestDashboardUrl(basePath, project, questType, questNumber) {
-  const p = BuildDashboardSearchParams({
-    project,
-    questType,
-    questNumber,
-  });
-  const qs = p.toString();
-  const path = basePath || "/dashboard";
-  return qs ? `${path}?${qs}` : path;
 }
 
 export function BuildRunQuestPayload(project, questType, questNumber, maxSteps) {

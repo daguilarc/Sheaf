@@ -339,6 +339,42 @@ class DashboardCheckoutResolutionTests(unittest.TestCase):
         self.assertTrue(checkout.worktree_missing)
         self.assertEqual(Path(checkout.checkout_path), self.temp.root.resolve())
 
+    def test_resolve_dashboard_checkout_source_fallback_when_worktree_quest_missing(
+        self,
+    ) -> None:
+        ensure_project(self.temp.root, "example")
+        client, svc = make_app_client(self.temp.root, self.repo_root)
+        out = svc.create_quest(str(self.temp.root), "example", "main", "NoQuest")
+        qdir = quest_dir_on_checkout(self.temp.root, out)
+        meta = quest_fs.read_quest_meta(qdir)
+
+        real_find_quest_dir = quest_fs.find_quest_dir
+
+        def missing_in_worktree(
+            root: Path,
+            project: str,
+            quest_type: str,
+            quest_number: int,
+        ) -> Path | None:
+            if root.resolve() == quest_worktree_path(self.temp.root, meta).resolve():
+                return None
+            return real_find_quest_dir(root, project, quest_type, quest_number)
+
+        with patch(
+            "quest_runner_service.dashboard_data.quest_fs.find_quest_dir",
+            side_effect=missing_in_worktree,
+        ):
+            checkout = resolve_dashboard_checkout(self.temp.root, meta)
+
+        self.assertEqual(checkout.checkout_kind, "source")
+        self.assertTrue(checkout.worktree_missing)
+        self.assertEqual(checkout.checkout_root, self.temp.root.resolve())
+        self.assertEqual(Path(checkout.checkout_path), self.temp.root.resolve())
+        expected_rel = checkout.quest_dir.resolve().relative_to(
+            self.temp.root.resolve()
+        )
+        self.assertEqual(checkout.quest_dir_rel, expected_rel.as_posix())
+
     def test_git_commits_use_worktree_when_present(self) -> None:
         ensure_project(self.temp.root, "example")
         client, svc = make_app_client(self.temp.root, self.repo_root)

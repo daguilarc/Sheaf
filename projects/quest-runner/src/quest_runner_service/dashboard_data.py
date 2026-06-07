@@ -126,7 +126,6 @@ def resolve_dashboard_checkout(
     source_root = source_repo_root.resolve()
     if worktree_exists(source_repo_root, meta):
         checkout_root = quest_worktree_path(source_repo_root, meta).resolve()
-        quest_dir = source_qdir
         worktree_qdir = quest_fs.find_quest_dir(
             checkout_root,
             meta.project,
@@ -134,16 +133,17 @@ def resolve_dashboard_checkout(
             meta.quest_number,
         )
         if worktree_qdir is not None:
-            quest_dir = worktree_qdir
-        quest_dir_rel = quest_dir.resolve().relative_to(checkout_root).as_posix()
-        return DashboardCheckout(
-            checkout_kind="worktree",
-            checkout_path=str(checkout_root),
-            worktree_missing=False,
-            checkout_root=checkout_root,
-            quest_dir=quest_dir,
-            quest_dir_rel=quest_dir_rel,
-        )
+            quest_dir_rel = (
+                worktree_qdir.resolve().relative_to(checkout_root).as_posix()
+            )
+            return DashboardCheckout(
+                checkout_kind="worktree",
+                checkout_path=str(checkout_root),
+                worktree_missing=False,
+                checkout_root=checkout_root,
+                quest_dir=worktree_qdir,
+                quest_dir_rel=quest_dir_rel,
+            )
     quest_dir_rel = source_qdir.resolve().relative_to(source_root).as_posix()
     return DashboardCheckout(
         checkout_kind="source",

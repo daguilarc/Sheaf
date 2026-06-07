@@ -4,7 +4,6 @@ import {
   BuildDashboardSearchParams,
   BuildQuestApiQuery,
   BuildRunQuestPayload,
-  CanonicalQuestDashboardUrl,
   MergeRunBadge,
   RefreshScheduler,
   ResolveProjectSelection,
@@ -58,13 +57,6 @@ test("BuildDashboardSearchParams encodes project and quest", () => {
   assert.equal(p.get("quest_type"), "main");
   assert.equal(p.get("quest_number"), "2");
   assert.equal(p.get("page"), "overview");
-});
-
-test("CanonicalQuestDashboardUrl uses project query params", () => {
-  const url = CanonicalQuestDashboardUrl("/dashboard", "web", "side", 7);
-  assert.ok(url.includes("project=web"));
-  assert.ok(url.includes("quest_type=side"));
-  assert.ok(url.includes("quest_number=7"));
 });
 
 test("BuildRunQuestPayload includes project identity", () => {
