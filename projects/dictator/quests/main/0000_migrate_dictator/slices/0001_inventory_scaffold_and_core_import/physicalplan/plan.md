@@ -85,6 +85,7 @@ Likely new or replaced files:
 
 - `projects/dictator/Package.swift`
 - `projects/dictator/Package.resolved`
+- `projects/dictator/.gitignore`
 - `projects/dictator/Makefile`
 - `projects/dictator/src/Sources/DictatorCore/**`
 - `projects/dictator/src/Sources/CWhisper/**`
@@ -141,6 +142,33 @@ projects/dictator/
 
 `Package.swift` at the project root is intentional: SwiftPM packages are rooted where `Package.swift` lives, so this lets `testTarget` paths remain under `projects/dictator/tests/` while production source remains under `projects/dictator/src/`.
 
+Create `projects/dictator/.gitignore` before running any SwiftPM or Xcode validation. It must ignore generated artifacts that implementation will produce during every slice:
+
+```gitignore
+.build/
+.swiftpm/
+.swiftpm-module-cache/
+DerivedData/
+build/
+*.app
+*.appex
+*.xctest
+*.swiftmodule
+*.swiftdoc
+*.swiftsourceinfo
+*.abi.json
+*.o
+*.d
+*.dia
+*.swiftdeps
+*.swiftdeps~
+*.hmap
+*.xcbuilddata/
+XCBuildData/
+```
+
+This project-local ignore file is part of the migration foundation, not final cleanup. It prevents `swift build`, `swift test`, and later `xcodebuild` commands from leaving untracked build output that blocks the quest runner's clean-worktree checks or gets committed accidentally.
+
 The initial `DictatorService` target should contain the migrated NIO server/domain files and a compileable executable entry point. It should compile without AppKit UI files. AppKit-only files such as `MenuBarController.swift`, `LaunchpadFullscreenOverlay.swift`, `LaunchpadOverlayConfigTab.swift`, `LaunchpadSystemPromptsOverlayTab.swift`, and `LaunchpadInteractionsOverlayTab.swift` should not be active product source; slice 4 replaces their capabilities with web UI APIs.
 
 Keep CWhisper as a `systemLibrary` target. Do not vendor model binaries or whisper libraries. Keep linker settings from the external package only if needed for local compatibility, and isolate them in the project package so repository root files are not polluted.
@@ -159,6 +187,8 @@ Initial `Makefile` targets:
 - `swift package --package-path projects/dictator describe`
 - `make -C projects/dictator build`
 - `make -C projects/dictator test-core`
+- `git check-ignore projects/dictator/.build/debug projects/dictator/.swiftpm-module-cache/cache projects/dictator/src/ios-keyboard/DictatorKeyboardHost/build/example.o`
+- `git status --short projects/dictator` after build/test should show no generated SwiftPM artifacts.
 - Focused migrated Swift tests for:
   - Talon Lite parser/recovery/rendering behavior
   - pipeline success/failure with fake STT/refinement engines
@@ -168,5 +198,5 @@ Initial `Makefile` targets:
   - runtime config decoding of old shapes
   - interaction history read/write using temporary directories.
 - Static exclusion checks:
-  - `rg "apps/realtime-agent|quests/main|DictatorKeyboardHost/build|\\.swiftpm-module-cache|node_modules|crash\\.log|secrets\\.json|A Document Being Saved" projects/dictator`
-  - `find projects/dictator -path '*/build/*' -o -path '*/.build/*' -o -path '*/node_modules/*'`
+  - `git ls-files projects/dictator | rg "apps/realtime-agent|quests/main|DictatorKeyboardHost/build|\\.build/|\\.swiftpm-module-cache|node_modules|crash\\.log|secrets\\.json|A Document Being Saved"`
+  - `git status --short projects/dictator` should not show untracked generated artifacts because `.gitignore` covers them.

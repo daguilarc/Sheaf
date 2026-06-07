@@ -29,6 +29,7 @@ Likely new files:
 
 Likely files to update:
 
+- `projects/dictator/.gitignore`
 - `projects/dictator/Makefile`
 - `projects/dictator/docs/reference/api.md`
 - `projects/dictator/docs/reference/testing.md`
@@ -100,6 +101,8 @@ Project Makefile additions:
 
 Use `.build/xcode` or another project-local generated path for DerivedData and remove it in `clean`.
 
+Before running `xcodebuild`, verify `projects/dictator/.gitignore` from slice 1 covers the actual Xcode output path selected by this slice. If the chosen DerivedData/build path differs from `.build/xcode` or emits additional file classes, extend the project-local `.gitignore` in this slice before running the build. The expected ignored Xcode outputs include `.build/xcode/**`, any nested `build/**`, `.app`, `.appex`, `.xctest`, `.swiftmodule`, `.swiftdoc`, `.swiftsourceinfo`, `.abi.json`, object files, dependency files, hmaps, and `XCBuildData`.
+
 Docs should make clear that an iPhone device cannot reach `127.0.0.1` on the Mac; users must set the host app endpoint to the Mac LAN address with port `9003`.
 
 ## Validation
@@ -107,6 +110,8 @@ Docs should make clear that an iPhone device cannot reach `127.0.0.1` on the Mac
 - `make -C projects/dictator ios-build`
 - `make -C projects/dictator ios-test` when simulator support is available
 - `make -C projects/dictator test`
+- `git check-ignore projects/dictator/.build/xcode projects/dictator/src/ios-keyboard/DictatorKeyboardHost/build/Debug-iphonesimulator/example.app projects/dictator/src/ios-keyboard/DictatorKeyboardHost/build/Debug-iphonesimulator/example.xctest`
+- `git status --short projects/dictator` after iOS build/test should show no generated Xcode artifacts.
 - Focused iOS tests for:
   - default server URL uses port `9003`
   - configured server URL overrides default
@@ -119,5 +124,5 @@ Docs should make clear that an iPhone device cannot reach `127.0.0.1` on the Mac
   - Darwin notification state transitions
   - local diagnostics behavior.
 - Static checks:
-  - `find projects/dictator -path '*/build/*' -o -name '*.swiftdeps~' -o -name '*.app' -o -name '*.appex'`
+  - `git ls-files projects/dictator | rg "(/build/|\\.swiftdeps~$|\\.app/|\\.appex/|\\.xctest/|\\.swiftmodule$|\\.swiftdoc$|\\.swiftsourceinfo$|\\.abi\\.json$)"`
   - `rg "8787|192\\.168\\.1\\.56|/v1/transcribe|/v1/refine|conductorPort = 9000|/services\\?name=dictator|/trace" projects/dictator/src/ios-keyboard projects/dictator/tests/ios-keyboard`

@@ -149,6 +149,7 @@ Docs must describe the migrated current state only. They can mention the externa
   - runtime `data/` contents
   - external quest records
   - temporary save files.
+- Keep the project-local `projects/dictator/.gitignore` installed by slice 1 and extended by slice 5. Cleanup removes accidental generated artifacts; ignore coverage prevents new SwiftPM/Xcode artifacts from dirtying the worktree during validation.
 - Remove duplicate README/docs that conflict with the new docs hierarchy. Preserve useful content by rewriting it into canonical docs rather than copying verbatim.
 
 ## Validation
@@ -161,6 +162,7 @@ Required automated checks:
 - `make -C projects/dictator test`
 - `make -C projects/dictator ios-build`
 - `make -C projects/dictator ios-test` when the local simulator environment is available.
+- `git status --short projects/dictator` after the full build/test sequence should show only intended source/doc/config changes and no generated SwiftPM or Xcode outputs.
 
 Required focused tests:
 
@@ -197,5 +199,6 @@ Required manual/runtime checks:
 Static checks:
 
 - `rg "/Users/joyo/dictator|apps/dictator-main|apps/realtime-agent|quests/main|apps/vscode-extension|Config/runtime-config|Config/secrets|/tmp/dictator-trace|8787|192\\.168\\.1\\.56|/v1/transcribe|/v1/refine|ProcessInfo\\.processInfo\\.environment" projects/dictator`
-- `find projects/dictator -path '*/.build/*' -o -path '*/build/*' -o -path '*/node_modules/*' -o -path '*/dist/*' -o -name 'crash.log' -o -name 'secrets.json' -o -name '.secrets.json' -o -name '.env'`
+- `git ls-files projects/dictator | rg "(/\\.build/|/build/|/node_modules/|/dist/|crash\\.log$|secrets\\.json$|\\.secrets\\.json$|\\.env$|\\.swiftpm-module-cache|\\.xctest/|\\.swiftmodule$|\\.appex/|\\.app/)"`
+- `git check-ignore projects/dictator/.build/debug projects/dictator/.build/xcode projects/dictator/.swiftpm-module-cache/cache projects/dictator/src/ios-keyboard/DictatorKeyboardHost/build/Debug-iphonesimulator/example.app projects/dictator/src/ios-keyboard/DictatorKeyboardHost/build/Debug-iphonesimulator/example.xctest`
 - `rg "openai_api_key\"\\s*:\\s*\"[^\"[:space:]]" config projects/dictator` should only match templates with blank values or docs examples.
