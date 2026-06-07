@@ -43,7 +43,7 @@ function ParseUrl() {
   const u = new URL(window.location.href);
   const p = u.searchParams;
   return {
-    project: p.get("project") || p.get("repo_path"),
+    project: p.get("project"),
     quest_type: p.get("quest_type"),
     quest_number: p.get("quest_number"),
     page: p.get("page") || "overview",

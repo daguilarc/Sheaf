@@ -20,7 +20,7 @@ class DashboardShellRouteTests(unittest.TestCase):
         client, _svc = make_app_client(self.temp.root, self.repo_root)
         r = client.get("/dashboard")
         self.assertEqual(r.status_code, 200)
-        self.assertIn(b"Conductor Quest Dashboard", r.data)
+        self.assertIn(b"Quest Runner Dashboard", r.data)
         self.assertIn(b"/dashboard/assets/app.js", r.data)
         css = client.get("/dashboard/assets/styles.css")
         self.assertEqual(css.status_code, 200)

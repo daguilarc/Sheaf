@@ -32,7 +32,7 @@ from .worktrees import (
 )
 
 
-log = logging.getLogger("conductor")
+log = logging.getLogger("quest_runner")
 _DEFAULT_SCHEDULER = DeferredTaskScheduler()
 
 
@@ -196,7 +196,7 @@ def _validate_project(repo_root: Path, project: str) -> None:
 
 
 class QuestService:
-    """Holds quest-related dependencies. One instance per conductor process."""
+    """Holds quest-related dependencies. One instance per service process."""
 
     def __init__(
         self,

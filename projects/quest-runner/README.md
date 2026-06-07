@@ -1,12 +1,11 @@
 # Quest Runner
 
-Sheaf project for the migrated quest runner service.
+Sheaf project for the migrated Quest Runner service.
 
-This project hosts quest creation, execution, role harnesses, recursive state
-machines, dashboard data, and the web dashboard UI. Service orchestration,
-SQLite, and MCP remain in other projects.
-
-See `docs/` for project documentation (expanded in later migration slices).
+Quest Runner creates and executes quests under `projects/<project>/quests/`, runs
+role harnesses through a recursive state machine, and serves a web dashboard for
+monitoring and control. Service orchestration, SQLite, and MCP remain in
+`projects/conductor/`.
 
 ## Quick start
 
@@ -15,4 +14,16 @@ make -C projects/quest-runner test
 make -C projects/quest-runner run
 ```
 
-The service listens on port `9002` by default.
+From the repository root:
+
+```bash
+make quest-runner-test
+make quest-runner-run
+```
+
+The service listens on port `9002`. Open the dashboard at
+`http://localhost:9002/dashboard`.
+
+## Documentation
+
+See [docs/README.md](docs/README.md) for the full documentation index.

@@ -49,10 +49,10 @@ def cleanup_worktrees(source_root: Path) -> None:
 
 
 class TempRepo:
-    def __init__(self, conductor_root: Path) -> None:
+    def __init__(self, source_repo_root: Path) -> None:
         self._tmpdir = tempfile.TemporaryDirectory()
         self.root = Path(self._tmpdir.name)
-        self.conductor_root = conductor_root
+        self.source_repo_root = source_repo_root
         git_init(self.root)
 
     def cleanup(self) -> None:

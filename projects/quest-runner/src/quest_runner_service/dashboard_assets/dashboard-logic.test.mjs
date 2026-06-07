@@ -8,8 +8,13 @@ import {
   RefreshScheduler,
   ResolveProjectSelection,
   ShouldShowRunButton,
+  StorageProjectKey,
   x_SERVICE_CONTROL_LABELS,
 } from "./dashboard-logic.mjs";
+
+test("StorageProjectKey uses quest runner namespace", () => {
+  assert.equal(StorageProjectKey(), "quest_runner_dashboard.project");
+});
 
 test("ResolveProjectSelection prefers valid query over stored", () => {
   const listed = ["alpha", "beta"];

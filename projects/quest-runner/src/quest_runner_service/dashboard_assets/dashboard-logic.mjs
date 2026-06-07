@@ -2,7 +2,7 @@
  * Pure helpers for dashboard shell (unit-tested with Node).
  */
 
-const x_STORAGE_KEY = "conductor_dashboard.project";
+const x_STORAGE_KEY = "quest_runner_dashboard.project";
 
 export const x_SERVICE_CONTROL_LABELS = [
   "Register service",

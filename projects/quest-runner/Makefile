@@ -20,7 +20,8 @@ TEST_MODULES := \
 	tests.test_project_quest_model \
 	tests.test_quest_creation \
 	tests.test_worktrees \
-	tests.test_worktree_execution_path
+	tests.test_worktree_execution_path \
+	tests.test_migration_validation
 
 all: test
 

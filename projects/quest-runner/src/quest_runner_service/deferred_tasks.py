@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
 
-log = logging.getLogger("conductor")
+log = logging.getLogger("quest_runner")
 
 
 def _utc_iso_after(delay_seconds: float) -> str:
@@ -41,7 +41,7 @@ class DeferredTaskScheduler:
         self._stopped = False
         self._worker = threading.Thread(
             target=self._run,
-            name="conductor-deferred-tasks",
+            name="quest-runner-deferred-tasks",
             daemon=True,
         )
         self._worker.start()

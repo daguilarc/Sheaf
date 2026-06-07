@@ -71,7 +71,7 @@ class QuestRootRoleProfileResolver:
 
 
 class FileStateIo:
-    """Reads and writes normalized ``state.md`` using :mod:`conductor.quest_fs`."""
+    """Reads and writes normalized ``state.md`` using :mod:`quest_runner_service.quest_fs`."""
 
     def __init__(self, top_level_machine_dir: Path) -> None:
         self._top = top_level_machine_dir.resolve()
