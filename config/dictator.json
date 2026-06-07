@@ -1,0 +1,21 @@
+{
+  "auxiliary_system_prompt_1": "intent_refiner_v1.md",
+  "auxiliary_system_prompt_2": "intent_refiner_v1.md",
+  "cloud_model": "gpt-4.1-mini",
+  "data_dir": "data/dictator",
+  "dictator_server_enabled": true,
+  "dictator_server_host": "0.0.0.0",
+  "dictator_server_port": 9003,
+  "fallback_mode": "openai",
+  "interactions_buffer_bytes": 104857600,
+  "local_model": "qwen2.5:7b-instruct",
+  "ollama_bin_path": "/opt/homebrew/bin/ollama",
+  "ollama_host": "http://127.0.0.1:11434",
+  "stt_language": "en",
+  "stt_model_path": "models/ggml-base.en.bin",
+  "system_prompt": "intent_refiner_v1.md",
+  "system_prompts_dir": "projects/dictator/src/prompts/system-prompts",
+  "updated_at": "2026-06-07T00:00:00Z",
+  "use_cloud": false,
+  "version": 2
+}

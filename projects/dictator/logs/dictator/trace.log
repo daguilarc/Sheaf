@@ -1,0 +1,34 @@
+[2026-06-07T15:17:07.610Z] interaction startup load complete (count=0, maxBytes=1048576)
+[2026-06-07T15:17:07.613Z] interaction startup load complete (count=3, maxBytes=1048576)
+[2026-06-07T15:17:07.615Z] interaction startup load complete (count=0, maxBytes=1048576)
+[2026-06-07T15:17:07.616Z] interaction startup load complete (count=1, maxBytes=1048576)
+[2026-06-07T15:17:07.617Z] interaction startup load complete (count=0, maxBytes=1048576)
+[2026-06-07T15:17:07.619Z] interaction startup load complete (count=1, maxBytes=64)
+[2026-06-07T15:17:07.625Z] launchpad render dirty (reason=pad_press, generation=1)
+[2026-06-07T15:17:07.665Z] launchpad render dirty (reason=pad_release, generation=2)
+[2026-06-07T15:17:07.746Z] launchpad page=test dispatch x=1 y=2 phase=press
+[2026-06-07T15:17:07.746Z] launchpad render dirty (reason=pad_press, generation=1)
+[2026-06-07T15:17:07.746Z] launchpad page=test dispatch x=1 y=2 phase=release
+[2026-06-07T15:17:07.746Z] launchpad render dirty (reason=pad_release, generation=2)
+[2026-06-07T15:17:07.749Z] launchpad render dirty (reason=control_layer_set, generation=1)
+[2026-06-07T15:17:07.749Z] launchpad render dirty (reason=control_layer_removed, generation=2)
+[2026-06-07T15:17:07.749Z] launchpad render dirty (reason=pages_set, generation=1)
+[2026-06-07T15:17:07.749Z] launchpad page=control dispatch x=0 y=5 phase=press
+[2026-06-07T15:17:07.749Z] launchpad render dirty (reason=pad_press, generation=2)
+[2026-06-07T15:17:07.749Z] launchpad action auxiliary_dictation page=control x=0 y=5 command=toggle prompt_slot=2
+[2026-06-07T15:17:07.749Z] launchpad render dirty (reason=pages_set, generation=1)
+[2026-06-07T15:17:07.749Z] launchpad page=control dispatch x=0 y=4 phase=press
+[2026-06-07T15:17:07.749Z] launchpad render dirty (reason=pad_press, generation=2)
+[2026-06-07T15:17:07.749Z] launchpad action next_window_press page=control x=0 y=4
+[2026-06-07T15:17:07.749Z] launchpad page=control dispatch x=0 y=4 phase=release
+[2026-06-07T15:17:07.749Z] launchpad render dirty (reason=pad_release, generation=3)
+[2026-06-07T15:17:07.749Z] launchpad action next_window_release page=control x=0 y=4
+[2026-06-07T15:17:07.750Z] launchpad render dirty (reason=pages_set, generation=1)
+[2026-06-07T15:17:07.750Z] launchpad page=control dispatch x=1 y=7 phase=press
+[2026-06-07T15:17:07.750Z] launchpad render dirty (reason=pad_press, generation=2)
+[2026-06-07T15:17:07.750Z] launchpad action talon_lite_dictation page=control x=1 y=7 command=toggle
+[2026-06-07T15:17:07.750Z] launchpad render dirty (reason=pages_set, generation=1)
+[2026-06-07T15:17:07.750Z] launchpad page=control dispatch x=7 y=8 phase=press
+[2026-06-07T15:17:07.750Z] launchpad render dirty (reason=pad_press, generation=2)
+[2026-06-07T15:17:07.750Z] launchpad action toggle_fullscreen_overlay page=control x=7 y=8
+[2026-06-07T15:17:07.807Z] launchpad render dirty (reason=test, generation=1)

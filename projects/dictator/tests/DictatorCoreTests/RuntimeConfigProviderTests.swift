@@ -227,25 +227,10 @@ final class RuntimeConfigProviderTests: XCTestCase {
         XCTAssertEqual(updated.interactionsBufferBytes, 25 * 1024 * 1024)
     }
 
-    func testResolvedSystemPromptsDirectoryUsesRepoRootWhenCurrentDirectoryIsNested() {
-        let runtime = RuntimeConfigFile(
-            version: 2,
-            cloudModel: "gpt-4.1-mini",
-            localModel: "qwen2.5:7b-instruct",
-            systemPrompt: "intent_refiner_v1.md",
-            useCloud: false,
-            systemPromptsDir: "prompts/system-prompts",
-            updatedAt: "2026-03-03T00:00:00Z"
-        )
+    func testResolvedDataDirectoryUsesRepoRootForLegacyAppsPrefixedPath() throws {
+        let repoRoot = try makeSheafRepoRoot()
+        defer { try? FileManager.default.removeItem(at: repoRoot) }
 
-        let resolved = runtime.resolvedSystemPromptsDirectoryURL(
-            currentDirectoryPath: "/Users/joyo/dictator/apps/dictator-main"
-        )
-
-        XCTAssertEqual(resolved.path, "/Users/joyo/dictator/prompts/system-prompts")
-    }
-
-    func testResolvedDataDirectoryUsesRepoRootForAppsPrefixedPath() {
         let runtime = RuntimeConfigFile(
             version: 2,
             cloudModel: "gpt-4.1-mini",
@@ -255,11 +240,33 @@ final class RuntimeConfigProviderTests: XCTestCase {
             updatedAt: "2026-03-03T00:00:00Z"
         )
 
-        let resolved = runtime.resolvedDataDirectoryURL(
-            currentDirectoryPath: "/Users/joyo/dictator/apps/dictator-main"
-        )
+        let nested = repoRoot.appendingPathComponent("projects/dictator", isDirectory: true).path
+        let resolved = runtime.resolvedDataDirectoryURL(currentDirectoryPath: nested)
 
-        XCTAssertEqual(resolved.path, "/Users/joyo/dictator/apps/dictator-main/Data")
+        XCTAssertEqual(
+            resolved.standardizedFileURL.path,
+            repoRoot.appendingPathComponent("apps/dictator-main/Data", isDirectory: true).standardizedFileURL.path
+        )
+    }
+
+    private func makeSheafRepoRoot() throws -> URL {
+        let repoRoot = try makeTempDir()
+        try FileManager.default.createDirectory(
+            at: repoRoot.appendingPathComponent("config", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createDirectory(
+            at: repoRoot.appendingPathComponent("projects/dictator", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+        try """
+        []
+        """.write(
+            to: repoRoot.appendingPathComponent("config/services.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+        return repoRoot
     }
 
     private func makeTempDir() throws -> URL {

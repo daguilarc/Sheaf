@@ -31,21 +31,28 @@ public struct SystemPromptCatalog {
         self.fileManager = fileManager
     }
 
+    public static let defaultRelativeDirectory = "projects/dictator/src/prompts/system-prompts"
+
     public static func defaultDirectoryURL(
         currentDirectoryPath: String = FileManager.default.currentDirectoryPath,
         fileManager: FileManager = .default
     ) -> URL {
         let cwd = URL(fileURLWithPath: currentDirectoryPath, isDirectory: true)
-        let direct = cwd.appendingPathComponent("prompts/system-prompts", isDirectory: true)
+        if let repoRoot = SheafRootDiscovery.findRepoRoot(startingAt: cwd, fileManager: fileManager) {
+            let repoCandidate = repoRoot.appendingPathComponent(defaultRelativeDirectory, isDirectory: true)
+            if fileManager.fileExists(atPath: repoCandidate.path) {
+                return repoCandidate
+            }
+        }
+
+        let direct = cwd.appendingPathComponent(defaultRelativeDirectory, isDirectory: true)
         if fileManager.fileExists(atPath: direct.path) {
             return direct
         }
 
-        let nested = cwd
-            .appendingPathComponent("../../prompts/system-prompts", isDirectory: true)
-            .standardizedFileURL
-        if fileManager.fileExists(atPath: nested.path) {
-            return nested
+        let legacy = cwd.appendingPathComponent("prompts/system-prompts", isDirectory: true)
+        if fileManager.fileExists(atPath: legacy.path) {
+            return legacy
         }
 
         return direct

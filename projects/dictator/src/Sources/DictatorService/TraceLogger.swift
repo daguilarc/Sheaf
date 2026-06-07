@@ -1,14 +1,15 @@
+import DictatorCore
 import Foundation
 
 enum TraceLogger {
-    private static let defaultLogURL = URL(fileURLWithPath: "/tmp/dictator-trace.log")
+    private static let fallbackLogURL = URL(fileURLWithPath: "logs/dictator/trace.log", isDirectory: false)
     private static let formatter: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return formatter
     }()
     private static let lock = NSLock()
-    private static var configuredLogURL: URL = defaultLogURL
+    private static var configuredLogURL: URL = fallbackLogURL
 
     static func configure(logDirectoryPath: String?) {
         lock.lock()
@@ -16,7 +17,7 @@ enum TraceLogger {
 
         guard let logDirectoryPath = logDirectoryPath?.trimmingCharacters(in: .whitespacesAndNewlines),
               !logDirectoryPath.isEmpty else {
-            configuredLogURL = defaultLogURL
+            configuredLogURL = resolvedDefaultLogURL()
             ensureLogFileExists(at: configuredLogURL)
             return
         }
@@ -24,6 +25,21 @@ enum TraceLogger {
         let directoryURL = URL(fileURLWithPath: logDirectoryPath, isDirectory: true)
         configuredLogURL = directoryURL.appendingPathComponent("trace.log", isDirectory: false)
         ensureLogFileExists(at: configuredLogURL)
+    }
+
+    static func configureForRepoRoot(_ repoRoot: URL) {
+        let logDirectory = repoRoot.appendingPathComponent("logs/dictator", isDirectory: true).path
+        configure(logDirectoryPath: logDirectory)
+    }
+
+    private static func resolvedDefaultLogURL() -> URL {
+        if let repoRoot = SheafRootDiscovery.findRepoRoot() {
+            return repoRoot
+                .appendingPathComponent("logs/dictator", isDirectory: true)
+                .appendingPathComponent("trace.log", isDirectory: false)
+        }
+
+        return fallbackLogURL
     }
 
     static func reset() {

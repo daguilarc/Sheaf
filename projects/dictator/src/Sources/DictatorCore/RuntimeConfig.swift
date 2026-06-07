@@ -9,10 +9,10 @@ public struct RuntimeConfigFile: Codable, Sendable, Equatable {
     public static let defaultSTTModelPath = "models/ggml-base.en.bin"
     public static let defaultSTTLanguage = "en"
     public static let defaultOllamaBinPath = "/opt/homebrew/bin/ollama"
-    public static let defaultDataDir = "apps/dictator-main/Data"
-    public static let defaultSystemPromptsDir = "prompts/system-prompts"
+    public static let defaultDataDir = "data/dictator"
+    public static let defaultSystemPromptsDir = "projects/dictator/src/prompts/system-prompts"
     public static let defaultDictatorServerHost = "0.0.0.0"
-    public static let defaultDictatorServerPort = 8787
+    public static let defaultDictatorServerPort = 9003
     public static let defaultDictatorServerEnabled = true
 
     public let version: Int
@@ -211,6 +211,8 @@ public struct RuntimeConfigFile: Codable, Sendable, Equatable {
             auxiliarySystemPrompt1: SystemPromptCatalog.defaultPromptFile,
             auxiliarySystemPrompt2: SystemPromptCatalog.defaultPromptFile,
             useCloud: false,
+            dataDir: Self.defaultDataDir,
+            systemPromptsDir: Self.defaultSystemPromptsDir,
             dictatorServerHost: Self.defaultDictatorServerHost,
             dictatorServerPort: Self.defaultDictatorServerPort,
             dictatorServerEnabled: Self.defaultDictatorServerEnabled,
@@ -265,7 +267,7 @@ public struct RuntimeConfigFile: Codable, Sendable, Equatable {
 
         let cwdURL = URL(fileURLWithPath: currentDirectoryPath, isDirectory: true)
         let cwdCandidate = cwdURL.appendingPathComponent(trimmed, isDirectory: isDirectory)
-        let repoRoot = repoRootURL(startingAt: cwdURL)
+        let repoRoot = SheafRootDiscovery.findRepoRoot(startingAt: cwdURL)
         let repoCandidate = repoRoot?.appendingPathComponent(trimmed, isDirectory: isDirectory)
 
         if shouldPreferRepoRoot(forRelativePath: trimmed), let repoCandidate {
@@ -284,28 +286,17 @@ public struct RuntimeConfigFile: Codable, Sendable, Equatable {
     }
 
     private static func shouldPreferRepoRoot(forRelativePath relativePath: String) -> Bool {
-        relativePath.hasPrefix("apps/")
+        relativePath.hasPrefix("projects/dictator/")
+            || relativePath.hasPrefix("config/")
+            || relativePath == "config"
+            || relativePath.hasPrefix("data/dictator")
+            || relativePath == "data/dictator"
+            || relativePath.hasPrefix("logs/dictator")
+            || relativePath == "logs/dictator"
+            || relativePath.hasPrefix("apps/")
             || relativePath.hasPrefix("prompts/")
             || relativePath.hasPrefix("contracts/")
             || relativePath.hasPrefix("skills/")
-    }
-
-    private static func repoRootURL(startingAt url: URL, maxDepth: Int = 8) -> URL? {
-        let fm = FileManager.default
-        var current = url.standardizedFileURL
-        for _ in 0..<maxDepth {
-            let gitPath = current.appendingPathComponent(".git", isDirectory: true).path
-            if fm.fileExists(atPath: gitPath) {
-                return current
-            }
-
-            let parent = current.deletingLastPathComponent()
-            if parent.path == current.path {
-                break
-            }
-            current = parent
-        }
-        return nil
     }
 }
 
@@ -365,17 +356,11 @@ public struct RuntimeConfigStore {
         fileManager: FileManager = .default
     ) -> URL {
         let cwd = URL(fileURLWithPath: currentDirectoryPath, isDirectory: true)
-        let direct = cwd.appendingPathComponent("Config/runtime-config.json")
-        if fileManager.fileExists(atPath: direct.deletingLastPathComponent().path) {
-            return direct
+        if let repoRoot = SheafRootDiscovery.findRepoRoot(startingAt: cwd, fileManager: fileManager) {
+            return repoRoot.appendingPathComponent("config/dictator.json", isDirectory: false)
         }
 
-        let nested = cwd.appendingPathComponent("apps/dictator-main/Config/runtime-config.json")
-        if fileManager.fileExists(atPath: nested.deletingLastPathComponent().path) {
-            return nested
-        }
-
-        return direct
+        return cwd.appendingPathComponent("config/dictator.json", isDirectory: false)
     }
 
     public static func defaultSafeFileURL(
@@ -383,17 +368,11 @@ public struct RuntimeConfigStore {
         fileManager: FileManager = .default
     ) -> URL {
         let cwd = URL(fileURLWithPath: currentDirectoryPath, isDirectory: true)
-        let direct = cwd.appendingPathComponent("Config/runtime-config.safe")
-        if fileManager.fileExists(atPath: direct.deletingLastPathComponent().path) {
-            return direct
+        if let repoRoot = SheafRootDiscovery.findRepoRoot(startingAt: cwd, fileManager: fileManager) {
+            return repoRoot.appendingPathComponent("config/dictator.safe", isDirectory: false)
         }
 
-        let nested = cwd.appendingPathComponent("apps/dictator-main/Config/runtime-config.safe")
-        if fileManager.fileExists(atPath: nested.deletingLastPathComponent().path) {
-            return nested
-        }
-
-        return direct
+        return cwd.appendingPathComponent("config/dictator.safe", isDirectory: false)
     }
 
     public func load() throws -> RuntimeConfigFile? {

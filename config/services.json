@@ -12,5 +12,12 @@
     "port": 9002,
     "home_path": "/dashboard",
     "command": "make quest-runner-run"
+  },
+  {
+    "name": "dictator",
+    "host": "0.0.0.0",
+    "port": 9003,
+    "home_path": "/",
+    "command": "make dictator-run"
   }
 ]

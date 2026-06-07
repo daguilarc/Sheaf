@@ -1,12 +1,13 @@
 MAKEFLAGS += --warn-undefined-variables
 
-PROJECTS := conductor web quest-runner
+PROJECTS := conductor web quest-runner dictator
 
 .PHONY: all clean test help
 .PHONY: $(PROJECTS)
 .PHONY: conductor-build conductor-test conductor-run conductor-clean
 .PHONY: web-build web-test web-clean
 .PHONY: quest-runner-build quest-runner-test quest-runner-run quest-runner-clean
+.PHONY: dictator-build dictator-test dictator-run dictator-clean
 
 .DEFAULT_GOAL := all
 
@@ -57,6 +58,18 @@ quest-runner-run:
 
 quest-runner-clean:
 	$(MAKE) -C projects/quest-runner clean
+
+dictator-build:
+	$(MAKE) -C projects/dictator build
+
+dictator-test:
+	$(MAKE) -C projects/dictator test
+
+dictator-run:
+	$(MAKE) -C projects/dictator run
+
+dictator-clean:
+	$(MAKE) -C projects/dictator clean
 
 help:
 	@echo "Repository targets:"
