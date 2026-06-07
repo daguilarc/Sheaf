@@ -12,6 +12,7 @@ TEST_MODULES := \
 	tests.test_advance_quest_api \
 	tests.test_land_api \
 	tests.test_issue_api \
+	tests.test_cli \
 	tests.test_quest_v2_predicates \
 	tests.test_dashboard_api \
 	tests.test_dashboard_shell \
