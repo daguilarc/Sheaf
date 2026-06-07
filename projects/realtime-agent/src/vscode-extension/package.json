@@ -1,0 +1,107 @@
+{
+  "name": "sheaf-vscode-extension",
+  "displayName": "Sheaf",
+  "description": "Voice-driven realtime agent for VS Code (Sheaf)",
+  "version": "0.0.1",
+  "publisher": "sheaf",
+  "private": true,
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onCommand:sheaf.realtime.toggleSession",
+    "onCommand:sheaf.realtime.commitAndRespond",
+    "onView:sheaf.chatView"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "sheafContainer",
+          "title": "Sheaf",
+          "icon": "media/sheaf.svg"
+        }
+      ]
+    },
+    "views": {
+      "sheafContainer": [
+        {
+          "id": "sheaf.chatView",
+          "name": "Realtime Chat",
+          "type": "webview"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "sheaf.realtime.toggleSession",
+        "title": "Sheaf: Toggle Realtime Session"
+      },
+      {
+        "command": "sheaf.realtime.commitAndRespond",
+        "title": "Sheaf: Commit Audio And Request Response"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "sheaf.realtime.toggleSession",
+        "key": "f16"
+      },
+      {
+        "command": "sheaf.realtime.commitAndRespond",
+        "key": "f20"
+      }
+    ],
+    "configuration": {
+      "title": "Sheaf Realtime",
+      "properties": {
+        "sheaf.realtime.openAiApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "OpenAI API key (optional if stored in Secret Storage or OPENAI_API_KEY)."
+        },
+        "sheaf.realtime.model": {
+          "type": "string",
+          "default": "gpt-realtime-2"
+        },
+        "sheaf.realtime.systemPrompt": {
+          "type": "string",
+          "default": "",
+          "description": "Overrides the built-in sheaf VS Code system prompt when non-empty."
+        },
+        "sheaf.realtime.inputDevice": {
+          "type": "string",
+          "default": "",
+          "description": "Optional microphone device id or substring (see realtime-agent list-input-devices)."
+        },
+        "sheaf.realtime.safetyIdentifier": {
+          "type": "string",
+          "default": "",
+          "description": "Optional safety identifier header for OpenAI Realtime."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node esbuild.config.mjs",
+    "dev": "node esbuild.config.mjs --watch",
+    "lint": "tsc -p tsconfig.json --noEmit",
+    "test": "rm -rf .test-dist && tsc -p tsconfig.test.json && node scripts/run-vscode-extension-tests.mjs",
+    "clean": "rm -rf out .test-dist node_modules *.vsix"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.10.0",
+    "naudiodon": "^2.3.6",
+    "realtime-agent-lib": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.1",
+    "@types/vscode": "^1.85.0",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.7.2"
+  }
+}

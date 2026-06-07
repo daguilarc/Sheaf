@@ -1,0 +1,22 @@
+{
+  "name": "realtime-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "src/agent",
+    "src/vscode-extension"
+  ],
+  "scripts": {
+    "build": "npm run build:agent && npm run build:vscode-extension",
+    "test": "npm run test:agent && npm run test:vscode-extension",
+    "build:agent": "npm run build --workspace realtime-agent-lib",
+    "test:agent": "npm run test --workspace realtime-agent-lib",
+    "build:vscode-extension": "npm run build --workspace sheaf-vscode-extension",
+    "test:vscode-extension": "npm run test --workspace sheaf-vscode-extension",
+    "clean": "npm run clean --workspace realtime-agent-lib && npm run clean --workspace sheaf-vscode-extension && rm -rf node_modules"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

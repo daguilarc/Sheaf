@@ -1,0 +1,41 @@
+{
+  "name": "realtime-agent-lib",
+  "version": "0.1.0",
+  "description": "Realtime agent library and CLI for OpenAI Realtime API experimentation",
+  "type": "module",
+  "main": "./dist/src/agent/src/index.js",
+  "types": "./dist/src/agent/src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/src/agent/src/index.d.ts",
+      "import": "./dist/src/agent/src/index.js",
+      "require": "./dist/src/agent/src/index.js"
+    }
+  },
+  "bin": {
+    "realtime-agent": "./dist/src/agent/src/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node scripts/run-agent-tests.mjs",
+    "clean": "rm -rf dist node_modules",
+    "prepack": "npm run build"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22.15.21",
+    "@types/ws": "^8.18.1",
+    "typescript": "^5.8.3"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.10.0",
+    "naudiodon": "^2.3.6",
+    "ws": "^8.21.0"
+  }
+}

@@ -1,0 +1,10 @@
+node_modules/
+src/agent/dist/
+src/agent/node_modules/
+src/vscode-extension/out/
+src/vscode-extension/.test-dist/
+src/vscode-extension/node_modules/
+src/vscode-extension/*.vsix
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal

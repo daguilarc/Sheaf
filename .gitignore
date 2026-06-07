@@ -5,17 +5,17 @@ config/api_keys.json
 
 # Node packages and build/test output
 node_modules/
-apps/realtime-agent/node_modules/
-apps/realtime-agent/dist/
 projects/conductor/node_modules/
 projects/conductor/dist/
-apps/vscode-extension/node_modules/
-apps/vscode-extension/out/
-apps/vscode-extension/.test-dist/
-apps/vscode-extension/*.vsix
+projects/realtime-agent/node_modules/
+projects/realtime-agent/src/agent/dist/
+projects/realtime-agent/src/agent/node_modules/
+projects/realtime-agent/src/vscode-extension/node_modules/
+projects/realtime-agent/src/vscode-extension/out/
+projects/realtime-agent/src/vscode-extension/.test-dist/
+projects/realtime-agent/src/vscode-extension/*.vsix
 
 # Runtime data
-apps/realtime-agent/data/
 data/**
 !data/.gitkeep
 logs/**
