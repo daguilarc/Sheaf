@@ -1,6 +1,57 @@
 import DictatorCore
 import Foundation
 
+private final class ShutdownCoordinator: @unchecked Sendable
+{
+    private let lock = NSLock()
+    private var didShutdown = false
+    private var server: DictationHTTPServer?
+    private var continuation: CheckedContinuation<Void, Never>?
+
+    func SetServer(_ server: DictationHTTPServer)
+    {
+        lock.lock()
+        self.server = server
+        lock.unlock()
+    }
+
+    func SetContinuation(_ continuation: CheckedContinuation<Void, Never>)
+    {
+        lock.lock()
+        self.continuation = continuation
+        lock.unlock()
+    }
+
+    func RequestShutdown(via: String) async
+    {
+        let snapshot = ClaimShutdown()
+        guard snapshot.shouldProceed else
+        {
+            return
+        }
+
+        TraceLogger.log("shutting down (\(via))")
+        await snapshot.server?.stop()
+        snapshot.continuation?.resume()
+    }
+
+    private func ClaimShutdown() -> (
+        shouldProceed: Bool,
+        server: DictationHTTPServer?,
+        continuation: CheckedContinuation<Void, Never>?
+    )
+    {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !didShutdown else
+        {
+            return (false, nil, nil)
+        }
+        didShutdown = true
+        return (true, server, continuation)
+    }
+}
+
 @main
 struct DictatorServiceMain
 {
@@ -69,23 +120,49 @@ struct DictatorServiceMain
             fileURL: repoRoot.appendingPathComponent("config/api_keys.json", isDirectory: false)
         )
 
+        let hasOpenAIKey: Bool
         do
         {
-            if try secretStore.getOpenAIKey() == nil
+            hasOpenAIKey = try secretStore.getOpenAIKey() != nil
+            if !hasOpenAIKey
             {
                 TraceLogger.log("warning: OpenAI API key is not configured in config/api_keys.json")
             }
         }
         catch
         {
+            hasOpenAIKey = false
             TraceLogger.log("warning: could not read API keys file: \(error)")
         }
 
         TraceLogger.log("loaded runtime config from \(configStore.fileURL.path)")
 
+        let sttModelPath = config.resolvedSTTModelPath(currentDirectoryPath: repoRoot.path)
+        if !FileManager.default.fileExists(atPath: sttModelPath)
+        {
+            TraceLogger.log("warning: STT model not found at \(sttModelPath)")
+        }
+
+        let healthWarning = BuildHealthWarning(
+            hasOpenAIKey: hasOpenAIKey,
+            sttModelPath: sttModelPath
+        )
+
+        let interactionBuffer = DictationInteractionBuffer(maxBytes: config.interactionsBufferBytes)
+        let dataDirectoryURL = InteractionDataPathResolver.defaultDataDirectory(
+            runtimeConfig: config,
+            currentDirectoryPath: repoRoot.path
+        )
+        let interactionStore = InteractionHistoryStore(
+            buffer: interactionBuffer,
+            dataDirectoryURL: dataDirectoryURL,
+            initialLoadBytes: config.interactionsBufferBytes
+        )
+        await interactionStore.startInitialLoadIfNeeded()
+
         let sttEngine = WhisperCPPBridgeSTTEngine(
             configuration: .init(
-                modelPath: config.resolvedSTTModelPath(currentDirectoryPath: repoRoot.path),
+                modelPath: sttModelPath,
                 language: config.sttLanguage
             )
         )
@@ -93,7 +170,7 @@ struct DictatorServiceMain
         let refinementEngine = RuntimeConfigRefinementEngine(
             runtimeConfigProvider: runtimeConfigProvider,
             secretStore: secretStore,
-            canUseOpenAI: { false }
+            canUseOpenAI: { hasOpenAIKey }
         )
 
         let coreClient = PipelineOrchestrator(
@@ -101,11 +178,33 @@ struct DictatorServiceMain
             refinementEngine: refinementEngine
         )
 
+        let onSuccessRecord = HTTPInteractionRecorder.MakeSuccessHandler(
+            interactionStore: interactionStore,
+            runtimeConfigProvider: runtimeConfigProvider
+        )
+        let onFailureRecord = HTTPInteractionRecorder.MakeFailureHandler(
+            interactionStore: interactionStore,
+            runtimeConfigProvider: runtimeConfigProvider
+        )
+
+        let shutdown = ShutdownCoordinator()
+        let lifecycle = ServiceLifecycle(
+            healthWarning: healthWarning,
+            onShutdown:
+            {
+                await shutdown.RequestShutdown(via: "POST /exit")
+            }
+        )
+
         let server = DictationHTTPServer(
             host: endpoint.host,
             port: endpoint.port,
-            coreClient: coreClient
+            lifecycle: lifecycle,
+            coreClient: coreClient,
+            onSuccessRecord: onSuccessRecord,
+            onFailureRecord: onFailureRecord
         )
+        shutdown.SetServer(server)
 
         do
         {
@@ -121,17 +220,34 @@ struct DictatorServiceMain
         let signalSource = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
         await withCheckedContinuation
         { (continuation: CheckedContinuation<Void, Never>) in
+            shutdown.SetContinuation(continuation)
             signalSource.setEventHandler
             {
                 Task
                 {
-                    TraceLogger.log("shutting down")
-                    await server.stop()
-                    continuation.resume()
+                    await shutdown.RequestShutdown(via: "SIGINT")
                 }
             }
             signal(SIGINT, SIG_IGN)
             signalSource.resume()
         }
+    }
+
+    private static func BuildHealthWarning(hasOpenAIKey: Bool, sttModelPath: String) -> String?
+    {
+        var warnings: [String] = []
+        if !hasOpenAIKey
+        {
+            warnings.append("OpenAI API key is not configured")
+        }
+        if !FileManager.default.fileExists(atPath: sttModelPath)
+        {
+            warnings.append("STT model not found")
+        }
+        guard !warnings.isEmpty else
+        {
+            return nil
+        }
+        return warnings.joined(separator: "; ")
     }
 }
