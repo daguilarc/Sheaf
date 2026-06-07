@@ -704,14 +704,20 @@ class ValidationTests(unittest.TestCase):
             )
 
 
-class SymlinkTests(unittest.TestCase):
-    def test_root_symlink_resolves_to_bin_script(self) -> None:
+class RootEntrypointTests(unittest.TestCase):
+    def test_root_script_delegates_to_project_cli(self) -> None:
         repo_root = Path(__file__).resolve().parents[3]
-        link = repo_root / "scripts" / "quest-runner"
-        self.assertTrue(link.is_symlink())
-        target = link.resolve()
-        expected = (repo_root / "projects" / "quest-runner" / "bin" / "quest-runner").resolve()
-        self.assertEqual(target, expected)
+        entrypoint = repo_root / "scripts" / "quest-runner"
+        project_cli = repo_root / "projects" / "quest-runner" / "bin" / "quest-runner"
+
+        self.assertTrue(entrypoint.is_file())
+        self.assertFalse(entrypoint.is_symlink())
+        self.assertTrue(entrypoint.stat().st_mode & 0o111)
+
+        text = entrypoint.read_text(encoding="utf-8")
+        self.assertIn('project_dir="$repo_root/projects/quest-runner"', text)
+        self.assertIn('exec "$python" "$project_dir/bin/quest-runner" "$@"', text)
+        self.assertTrue(project_cli.is_file())
 
 
 if __name__ == "__main__":

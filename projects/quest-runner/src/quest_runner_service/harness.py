@@ -240,7 +240,7 @@ def _run_cli_streaming(
     if log_sink is not None:
         log_sink.flush_stdout()
         log_sink.write_control(
-            "conductor.run_completed",
+            "sheaf.run_completed",
             exit_code=exit_code,
             elapsed_seconds=elapsed,
             idle_timeout=idle_timed_out,
@@ -342,7 +342,7 @@ def _raise_for_harness_failure(
     if error_detail is not None:
         if log_sink is not None:
             log_sink.write_control(
-                "conductor.run_failed",
+                "sheaf.run_failed",
                 reason="structured_error",
                 detail=error_detail,
             )
@@ -360,7 +360,7 @@ def _raise_for_harness_failure(
             detail = f"{detail}\n{output_text}"
         if log_sink is not None:
             log_sink.write_control(
-                "conductor.run_failed",
+                "sheaf.run_failed",
                 reason="nonzero_exit",
                 detail=detail,
                 exit_code=exit_code,

@@ -24,6 +24,7 @@ Exact APIs, layout, configuration, and test commands:
 - [REST API](reference/api.md)
 - [CLI](reference/cli.md)
 - [Dashboard](reference/dashboard.md)
+- [AGUI event mapping](reference/agui-mapping.md)
 - [Quest directory layout](reference/layout.md)
 - [Runtime files](reference/runtime-files.md)
 - [Configuration](reference/config.md)

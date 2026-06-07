@@ -46,6 +46,7 @@ Useful modules for the project-local quest model:
 | `tests.test_state_machine_core` | Recursive state machine behavior |
 | `tests.test_commit_metadata` | Git step commit metadata |
 | `tests.test_migration_validation` | Migration hardening checks |
+| `tests.test_agui_mapper` | JSONL harness log replay into AGUI events |
 
 ## Focused JavaScript commands
 
@@ -68,6 +69,18 @@ tests build Flask test clients via `make_app_client(repo_root, source_repo_root)
 
 Worktree execution tests verify that `run_quest` uses the worktree checkout as
 the git and command boundary and refuses when the expected worktree is missing.
+
+## AGUI Mapper Replay
+
+`tests.test_agui_mapper` gathers current quest `logs/*.jsonl` files from the
+top-level `quests/` tree and every `projects/*/quests/` tree. It feeds every
+source event through `QuestLogToAguiMapper`, validates emitted AGUI events
+against `structure/schemas/ag_ui_events.schema.json`, checks lifecycle balance
+after `flush()`, and asserts that `mapper.errors()` is empty.
+
+The empty-errors assertion is a harness compatibility guard. If a harness starts
+emitting a new event shape and the mapper has to use its AGUI `RAW` fallback, the
+test fails until the new source event is mapped explicitly.
 
 ## Static exclusion checks
 

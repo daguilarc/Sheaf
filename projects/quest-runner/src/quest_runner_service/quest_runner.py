@@ -140,7 +140,7 @@ def perform_role_harness_sequence(
             provider_thread_id=active_thread.provider_thread_id,
         )
         sink.write_control(
-            "conductor.run_started",
+            "sheaf.run_started",
             model=profile.model,
             reasoning_effort=profile.reasoning_effort,
             stream=True,
@@ -149,7 +149,7 @@ def perform_role_harness_sequence(
             slice_rel=slice_rel,
         )
         sink.write_control(
-            "conductor.prompt",
+            "sheaf.prompt",
             text=body,
         )
         captured_outputs.append(
@@ -523,7 +523,7 @@ def _append_enforcement_note(
         "thread": "",
         "harness": "",
         "provider_thread_id": "",
-        "event_kind": "conductor.path_enforcement",
+        "event_kind": "sheaf.path_enforcement",
         "snapshot": snapshot_sha,
         "reverted_paths": reverted_paths,
         "followup_sent": True,
@@ -1057,7 +1057,7 @@ def send_with_retry(
             last_exc = e
             if log_sink is not None:
                 log_sink.write_control(
-                    "conductor.run_failed",
+                    "sheaf.run_failed",
                     reason="exception",
                     detail=repr(e),
                     attempt=attempt + 1,

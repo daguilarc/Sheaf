@@ -1,0 +1,1679 @@
+{
+  "$defs": {
+    "ActivityDeltaEvent": {
+      "additionalProperties": true,
+      "properties": {
+        "activityType": {
+          "type": "string"
+        },
+        "messageId": {
+          "type": "string"
+        },
+        "patch": {
+          "items": {},
+          "type": "array"
+        },
+        "rawEvent": {},
+        "timestamp": {
+          "type": "number"
+        },
+        "type": {
+          "const": "ACTIVITY_DELTA"
+        }
+      },
+      "required": [
+        "type",
+        "messageId",
+        "activityType",
+        "patch"
+      ],
+      "title": "ActivityDeltaEvent",
+      "type": "object"
+    },
+    "ActivityMessage": {
+      "additionalProperties": true,
+      "properties": {
+        "activityType": {
+          "type": "string"
+        },
+        "content": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "id": {
+          "type": "string"
+        },
+        "role": {
+          "const": "activity"
+        }
+      },
+      "required": [
+        "id",
+        "role",
+        "activityType",
+        "content"
+      ],
+      "title": "ActivityMessage",
+      "type": "object"
+    },
+    "ActivitySnapshotEvent": {
+      "additionalProperties": true,
+      "properties": {
+        "activityType": {
+          "type": "string"
+        },
+        "content": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "messageId": {
+          "type": "string"
+        },
+        "rawEvent": {},
+        "replace": {
+          "default": true,
+          "type": "boolean"
+        },
+        "timestamp": {
+          "type": "number"
+        },
+        "type": {
+          "const": "ACTIVITY_SNAPSHOT"
+        }
+      },
+      "required": [
+        "type",
+        "messageId",
+        "activityType",
+        "content"
+      ],
+      "title": "ActivitySnapshotEvent",
+      "type": "object"
+    },
+    "AssistantMessage": {
+      "additionalProperties": true,
+      "properties": {
+        "content": {
+          "type": "string"
+        },
+        "encryptedValue": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "role": {
+          "const": "assistant"
+        },
+        "toolCalls": {
+          "items": {
+            "$ref": "#/$defs/ToolCall"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "role"
+      ],
+      "title": "AssistantMessage",
+      "type": "object"
+    },
+    "AudioInputContent": {
+      "additionalProperties": true,
+      "properties": {
+        "metadata": {},
+        "source": {
+          "$ref": "#/$defs/InputContentSource"
+        },
+        "type": {
+          "const": "audio"
+        }
+      },
+      "required": [
+        "type",
+        "source"
+      ],
+      "title": "AudioInputContent",
+      "type": "object"
+    },
+    "BinaryInputContent": {
+      "additionalProperties": true,
+      "anyOf": [
+        {
+          "required": [
+            "id"
+          ]
+        },
+        {
+          "required": [
+            "url"
+          ]
+        },
+        {
+          "required": [
+            "data"
+          ]
+        }
+      ],
+      "description": "Deprecated AGUI binary input content. At least one of id, url, or data must be present.",
+      "properties": {
+        "data": {
+          "type": "string"
+        },
+        "filename": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "mimeType": {
+          "type": "string"
+        },
+        "type": {
+          "const": "binary"
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "mimeType"
+      ],
+      "title": "BinaryInputContent",
+      "type": "object"
+    },
+    "Context": {
+      "additionalProperties": true,
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "description",
+        "value"
+      ],
+      "title": "Context",
+      "type": "object"
+    },
+    "CustomEvent": {
+      "additionalProperties": true,
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "rawEvent": {},
+        "timestamp": {
+          "type": "number"
+        },
+        "type": {
+          "const": "CUSTOM"
+        },
+        "value": {}
+      },
+      "required": [
+        "type",
+        "name",
+        "value"
+      ],
+      "title": "CustomEvent",
+      "type": "object"
+    },
+    "DeveloperMessage": {
+      "additionalProperties": true,
+      "properties": {
+        "content": {
+          "type": "string"
+        },
+        "encryptedValue": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "role": {
+          "const": "developer"
+        }
+      },
+      "required": [
+        "id",
+        "role",
+        "content"
+      ],
+      "title": "DeveloperMessage",
+      "type": "object"
+    },
+    "DocumentInputContent": {
+      "additionalProperties": true,
+      "properties": {
+        "metadata": {},
+        "source": {
+          "$ref": "#/$defs/InputContentSource"
+        },
+        "type": {
+          "const": "document"
+        }
+      },
+      "required": [
+        "type",
+        "source"
+      ],
+      "title": "DocumentInputContent",
+      "type": "object"
+    },
+    "EventType": {
+      "enum": [
+        "TEXT_MESSAGE_START",
+        "TEXT_MESSAGE_CONTENT",
+        "TEXT_MESSAGE_END",
+        "TEXT_MESSAGE_CHUNK",
+        "TOOL_CALL_START",
+        "TOOL_CALL_ARGS",
+        "TOOL_CALL_END",
+        "TOOL_CALL_CHUNK",
+        "TOOL_CALL_RESULT",
+        "THINKING_START",
+        "THINKING_END",
+        "THINKING_TEXT_MESSAGE_START",
+        "THINKING_TEXT_MESSAGE_CONTENT",
+        "THINKING_TEXT_MESSAGE_END",
+        "STATE_SNAPSHOT",
+        "STATE_DELTA",
+        "MESSAGES_SNAPSHOT",
+        "ACTIVITY_SNAPSHOT",
+        "ACTIVITY_DELTA",
+        "RAW",
+        "CUSTOM",
+        "RUN_STARTED",
+        "RUN_FINISHED",
+        "RUN_ERROR",
+        "STEP_STARTED",
+        "STEP_FINISHED",
+        "REASONING_START",
+        "REASONING_MESSAGE_START",
+        "REASONING_MESSAGE_CONTENT",
+        "REASONING_MESSAGE_END",
+        "REASONING_MESSAGE_CHUNK",
+        "REASONING_END",
+        "REASONING_ENCRYPTED_VALUE"
+      ],
+      "type": "string"
+    },
+    "FunctionCall": {
+      "additionalProperties": true,
+      "properties": {
+        "arguments": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "arguments"
+      ],
+      "title": "FunctionCall",
+      "type": "object"
+    },
+    "ImageInputContent": {
+      "additionalProperties": true,
+      "properties": {
+        "metadata": {},
+        "source": {
+          "$ref": "#/$defs/InputContentSource"
+        },
+        "type": {
+          "const": "image"
+        }
+      },
+      "required": [
+        "type",
+        "source"
+      ],
+      "title": "ImageInputContent",
+      "type": "object"
+    },
+    "InputContent": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/TextInputContent"
+        },
+        {
+          "$ref": "#/$defs/ImageInputContent"
+        },
+        {
+          "$ref": "#/$defs/AudioInputContent"
+        },
+        {
+          "$ref": "#/$defs/VideoInputContent"
+        },
+        {
+          "$ref": "#/$defs/DocumentInputContent"
+        },
+        {
+          "$ref": "#/$defs/BinaryInputContent"
+        }
+      ],
+      "title": "InputContent",
+      "x-discriminatorProperties": [
+        "type"
+      ]
+    },
+    "InputContentDataSource": {
+      "additionalProperties": true,
+      "properties": {
+        "mimeType": {
+          "type": "string"
+        },
+        "type": {
+          "const": "data"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "value",
+        "mimeType"
+      ],
+      "title": "InputContentDataSource",
+      "type": "object"
+    },
+    "InputContentSource": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/InputContentDataSource"
+        },
+        {
+          "$ref": "#/$defs/InputContentUrlSource"
+        }
+      ],
+      "title": "InputContentSource",
+      "x-discriminatorProperties": [
+        "type"
+      ]
+    },
+    "InputContentUrlSource": {
+      "additionalProperties": true,
+      "properties": {
+        "mimeType": {
+          "type": "string"
+        },
+        "type": {
+          "const": "url"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "value"
+      ],
+      "title": "InputContentUrlSource",
+      "type": "object"
+    },
+    "Interrupt": {
+      "additionalProperties": true,
+      "properties": {
+        "expiresAt": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "metadata": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "responseSchema": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "toolCallId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "reason"
+      ],
+      "title": "Interrupt",
+      "type": "object"
+    },
+    "Message": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/DeveloperMessage"
+        },
+        {
+          "$ref": "#/$defs/SystemMessage"
+        },
+        {
+          "$ref": "#/$defs/AssistantMessage"
+        },
+        {
+          "$ref": "#/$defs/UserMessage"
+        },
+        {
+          "$ref": "#/$defs/ToolMessage"
+        },
+        {
+          "$ref": "#/$defs/ActivityMessage"
+        },
+        {
+          "$ref": "#/$defs/ReasoningMessage"
+        }
+      ],
+      "title": "Message",
+      "x-discriminatorProperties": [
+        "role"
+      ]
+    },
+    "MessagesSnapshotEvent": {
+      "additionalProperties": true,
+      "properties": {
+        "messages": {
+          "items": {
+            "$ref": "#/$defs/Message"
+          },
+          "type": "array"
+        },
+        "rawEvent": {},
+        "timestamp": {
+          "type": "number"
+        },
+        "type": {
+          "const": "MESSAGES_SNAPSHOT"
+        }
+      },
+      "required": [
+        "type",
+        "messages"
+      ],
+      "title": "MessagesSnapshotEvent",
+      "type": "object"
+    },
+    "RawEvent": {
+      "additionalProperties": true,
+      "properties": {
+        "event": {},
+        "rawEvent": {},
+        "source": {
+          "type": "string"
+        },
+        "timestamp": {
+          "type": "number"
+        },
+        "type": {
+          "const": "RAW"
+        }
+      },
+      "required": [
+        "type",
+        "event"
+      ],
+      "title": "RawEvent",
+      "type": "object"
+    },
+    "ReasoningEncryptedValueEvent": {
+      "additionalProperties": true,
+      "properties": {
+        "encryptedValue": {
+          "type": "string"
+        },
+        "entityId": {
+          "type": "string"
+        },
+        "rawEvent": {},
+        "subtype": {
+          "enum": [
+            "tool-call",
+            "message"
+          ],
+          "type": "string"
+        },
+        "timestamp": {
+          "type": "number"
+        },
+        "type": {
+          "const": "REASONING_ENCRYPTED_VALUE"
+        }
+      },
+      "required": [
+        "type",
+        "subtype",
+        "entityId",
+        "encryptedValue"
+      ],
+      "title": "ReasoningEncryptedValueEvent",
+      "type": "object"
+    },
+    "ReasoningEndEvent": {
+      "additionalProperties": true,
+      "properties": {
+        "messageId": {
+          "type": "string"
+        },
+        "rawEvent": {},
+        "timestamp": {
+          "type": "number"
+        },
+        "type": {
+          "const": "REASONING_END"
+        }
+      },
+      "required": [
+        "type",
+        "messageId"
+      ],
+      "title": "ReasoningEndEvent",
+      "type": "object"
+    },
+    "ReasoningMessage": {
+      "additionalProperties": true,
+      "properties": {
+        "content": {
+          "type": "string"
+        },
+        "encryptedValue": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "role": {
+          "const": "reasoning"
+        }
+      },
+      "required": [
+        "id",
+        "role",
+        "content"
+      ],
+      "title": "ReasoningMessage",
+      "type": "object"
+    },
+    "ReasoningMessageChunkEvent": {
+      "additionalProperties": true,
+      "properties": {
+        "delta": {
+          "type": "string"
+        },
+        "messageId": {
+          "type": "string"
+        },
+        "rawEvent": {},
+        "timestamp": {
+          "type": "number"
+        },
+        "type": {
+          "const": "REASONING_MESSAGE_CHUNK"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "ReasoningMessageChunkEvent",
+      "type": "object"
+    },
+    "ReasoningMessageContentEvent": {
+      "additionalProperties": true,
+      "properties": {
+        "delta": {
+          "type": "string"
+        },
+        "messageId": {
+          "type": "string"
+        },
+        "rawEvent": {},
+        "timestamp": {
+          "type": "number"
+        },
+        "type": {
+          "const": "REASONING_MESSAGE_CONTENT"
+        }
+      },
+      "required": [
+        "type",
+        "messageId",
+        "delta"
+      ],
+      "title": "ReasoningMessageContentEvent",
+      "type": "object"
+    },
+    "ReasoningMessageEndEvent": {
+      "additionalProperties": true,
+      "properties": {
+        "messageId": {
+          "type": "string"
+        },
+        "rawEvent": {},
+        "timestamp": {
+          "type": "number"
+        },
+        "type": {
+          "const": "REASONING_MESSAGE_END"
+        }
+      },
+      "required": [
+        "type",
+        "messageId"
+      ],
+      "title": "ReasoningMessageEndEvent",
+      "type": "object"
+    },
+    "ReasoningMessageStartEvent": {
+      "additionalProperties": true,
+      "properties": {
+        "messageId": {
+          "type": "string"
+        },
+        "rawEvent": {},
+        "role": {
+          "const": "reasoning"
+        },
+        "timestamp": {
+          "type": "number"
+        },
+        "type": {
+          "const": "REASONING_MESSAGE_START"
+        }
+      },
+      "required": [
+        "type",
+        "messageId",
+        "role"
+      ],
+      "title": "ReasoningMessageStartEvent",
+      "type": "object"
+    },
+    "ReasoningStartEvent": {
+      "additionalProperties": true,
+      "properties": {
+        "messageId": {
+          "type": "string"
+        },
+        "rawEvent": {},
+        "timestamp": {
+          "type": "number"
+        },
+        "type": {
+          "const": "REASONING_START"
+        }
+      },
+      "required": [
+        "type",
+        "messageId"
+      ],
+      "title": "ReasoningStartEvent",
+      "type": "object"
+    },
+    "ResumeEntry": {
+      "additionalProperties": true,
+      "properties": {
+        "interruptId": {
+          "type": "string"
+        },
+        "payload": {},
+        "status": {
+          "enum": [
+            "resolved",
+            "cancelled"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "interruptId",
+        "status"
+      ],
+      "title": "ResumeEntry",
+      "type": "object"
+    },
+    "RunAgentInput": {
+      "additionalProperties": true,
+      "properties": {
+        "context": {
+          "items": {
+            "$ref": "#/$defs/Context"
+          },
+          "type": "array"
+        },
+        "forwardedProps": {},
+        "messages": {
+          "items": {
+            "$ref": "#/$defs/Message"
+          },
+          "type": "array"
+        },
+        "parentRunId": {
+          "type": "string"
+        },
+        "resume": {
+          "items": {
+            "$ref": "#/$defs/ResumeEntry"
+          },
+          "type": "array"
+        },
+        "runId": {
+          "type": "string"
+        },
+        "state": {},
+        "threadId": {
+          "type": "string"
+        },
+        "tools": {
+          "items": {
+            "$ref": "#/$defs/Tool"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "threadId",
+        "runId",
+        "state",
+        "messages",
+        "tools",
+        "context",
+        "forwardedProps"
+      ],
+      "title": "RunAgentInput",
+      "type": "object"
+    },
+    "RunErrorEvent": {
+      "additionalProperties": true,
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "rawEvent": {},
+        "timestamp": {
+          "type": "number"
+        },
+        "type": {
+          "const": "RUN_ERROR"
+        }
+      },
+      "required": [
+        "type",
+        "message"
+      ],
+      "title": "RunErrorEvent",
+      "type": "object"
+    },
+    "RunFinishedEvent": {
+      "additionalProperties": true,
+      "properties": {
+        "outcome": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RunFinishedOutcome"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "rawEvent": {},
+        "result": {},
+        "runId": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "timestamp": {
+          "type": "number"
+        },
+        "type": {
+          "const": "RUN_FINISHED"
+        }
+      },
+      "required": [
+        "type",
+        "threadId",
+        "runId"
+      ],
+      "title": "RunFinishedEvent",
+      "type": "object"
+    },
+    "RunFinishedInterruptOutcome": {
+      "additionalProperties": false,
+      "properties": {
+        "interrupts": {
+          "items": {
+            "$ref": "#/$defs/Interrupt"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "type": {
+          "const": "interrupt"
+        }
+      },
+      "required": [
+        "type",
+        "interrupts"
+      ],
+      "title": "RunFinishedInterruptOutcome",
+      "type": "object"
+    },
+    "RunFinishedOutcome": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/RunFinishedSuccessOutcome"
+        },
+        {
+          "$ref": "#/$defs/RunFinishedInterruptOutcome"
+        }
+      ],
+      "title": "RunFinishedOutcome",
+      "x-discriminatorProperties": [
+        "type"
+      ]
+    },
+    "RunFinishedSuccessOutcome": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "success"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "RunFinishedSuccessOutcome",
+      "type": "object"
+    },
+    "RunStartedEvent": {
+      "additionalProperties": true,
+      "properties": {
+        "input": {
+          "$ref": "#/$defs/RunAgentInput"
+        },
+        "parentRunId": {
+          "type": "string"
+        },
+        "rawEvent": {},
+        "runId": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "timestamp": {
+          "type": "number"
+        },
+        "type": {
+          "const": "RUN_STARTED"
+        }
+      },
+      "required": [
+        "type",
+        "threadId",
+        "runId"
+      ],
+      "title": "RunStartedEvent",
+      "type": "object"
+    },
+    "StateDeltaEvent": {
+      "additionalProperties": true,
+      "description": "delta is a JSON Patch (RFC 6902) array.",
+      "properties": {
+        "delta": {
+          "items": {},
+          "type": "array"
+        },
+        "rawEvent": {},
+        "timestamp": {
+          "type": "number"
+        },
+        "type": {
+          "const": "STATE_DELTA"
+        }
+      },
+      "required": [
+        "type",
+        "delta"
+      ],
+      "title": "StateDeltaEvent",
+      "type": "object"
+    },
+    "StateSnapshotEvent": {
+      "additionalProperties": true,
+      "properties": {
+        "rawEvent": {},
+        "snapshot": {},
+        "timestamp": {
+          "type": "number"
+        },
+        "type": {
+          "const": "STATE_SNAPSHOT"
+        }
+      },
+      "required": [
+        "type",
+        "snapshot"
+      ],
+      "title": "StateSnapshotEvent",
+      "type": "object"
+    },
+    "StepFinishedEvent": {
+      "additionalProperties": true,
+      "properties": {
+        "rawEvent": {},
+        "stepName": {
+          "type": "string"
+        },
+        "timestamp": {
+          "type": "number"
+        },
+        "type": {
+          "const": "STEP_FINISHED"
+        }
+      },
+      "required": [
+        "type",
+        "stepName"
+      ],
+      "title": "StepFinishedEvent",
+      "type": "object"
+    },
+    "StepStartedEvent": {
+      "additionalProperties": true,
+      "properties": {
+        "rawEvent": {},
+        "stepName": {
+          "type": "string"
+        },
+        "timestamp": {
+          "type": "number"
+        },
+        "type": {
+          "const": "STEP_STARTED"
+        }
+      },
+      "required": [
+        "type",
+        "stepName"
+      ],
+      "title": "StepStartedEvent",
+      "type": "object"
+    },
+    "SystemMessage": {
+      "additionalProperties": true,
+      "properties": {
+        "content": {
+          "type": "string"
+        },
+        "encryptedValue": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "role": {
+          "const": "system"
+        }
+      },
+      "required": [
+        "id",
+        "role",
+        "content"
+      ],
+      "title": "SystemMessage",
+      "type": "object"
+    },
+    "TextInputContent": {
+      "additionalProperties": true,
+      "properties": {
+        "text": {
+          "type": "string"
+        },
+        "type": {
+          "const": "text"
+        }
+      },
+      "required": [
+        "type",
+        "text"
+      ],
+      "title": "TextInputContent",
+      "type": "object"
+    },
+    "TextMessageChunkEvent": {
+      "additionalProperties": true,
+      "properties": {
+        "delta": {
+          "type": "string"
+        },
+        "messageId": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "rawEvent": {},
+        "role": {
+          "enum": [
+            "developer",
+            "system",
+            "assistant",
+            "user"
+          ],
+          "type": "string"
+        },
+        "timestamp": {
+          "type": "number"
+        },
+        "type": {
+          "const": "TEXT_MESSAGE_CHUNK"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "TextMessageChunkEvent",
+      "type": "object"
+    },
+    "TextMessageContentEvent": {
+      "additionalProperties": true,
+      "properties": {
+        "delta": {
+          "type": "string"
+        },
+        "messageId": {
+          "type": "string"
+        },
+        "rawEvent": {},
+        "timestamp": {
+          "type": "number"
+        },
+        "type": {
+          "const": "TEXT_MESSAGE_CONTENT"
+        }
+      },
+      "required": [
+        "type",
+        "messageId",
+        "delta"
+      ],
+      "title": "TextMessageContentEvent",
+      "type": "object"
+    },
+    "TextMessageEndEvent": {
+      "additionalProperties": true,
+      "properties": {
+        "messageId": {
+          "type": "string"
+        },
+        "rawEvent": {},
+        "timestamp": {
+          "type": "number"
+        },
+        "type": {
+          "const": "TEXT_MESSAGE_END"
+        }
+      },
+      "required": [
+        "type",
+        "messageId"
+      ],
+      "title": "TextMessageEndEvent",
+      "type": "object"
+    },
+    "TextMessageRole": {
+      "enum": [
+        "developer",
+        "system",
+        "assistant",
+        "user"
+      ],
+      "type": "string"
+    },
+    "TextMessageStartEvent": {
+      "additionalProperties": true,
+      "properties": {
+        "messageId": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "rawEvent": {},
+        "role": {
+          "default": "assistant",
+          "enum": [
+            "developer",
+            "system",
+            "assistant",
+            "user"
+          ],
+          "type": "string"
+        },
+        "timestamp": {
+          "type": "number"
+        },
+        "type": {
+          "const": "TEXT_MESSAGE_START"
+        }
+      },
+      "required": [
+        "type",
+        "messageId"
+      ],
+      "title": "TextMessageStartEvent",
+      "type": "object"
+    },
+    "ThinkingEndEvent": {
+      "additionalProperties": true,
+      "description": "Deprecated. Use ReasoningEndEvent.",
+      "properties": {
+        "rawEvent": {},
+        "timestamp": {
+          "type": "number"
+        },
+        "type": {
+          "const": "THINKING_END"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "ThinkingEndEvent",
+      "type": "object"
+    },
+    "ThinkingStartEvent": {
+      "additionalProperties": true,
+      "description": "Deprecated. Use ReasoningStartEvent.",
+      "properties": {
+        "rawEvent": {},
+        "timestamp": {
+          "type": "number"
+        },
+        "title": {
+          "type": "string"
+        },
+        "type": {
+          "const": "THINKING_START"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "ThinkingStartEvent",
+      "type": "object"
+    },
+    "ThinkingTextMessageContentEvent": {
+      "additionalProperties": true,
+      "description": "Deprecated. Use ReasoningMessageContentEvent.",
+      "properties": {
+        "delta": {
+          "type": "string"
+        },
+        "rawEvent": {},
+        "timestamp": {
+          "type": "number"
+        },
+        "type": {
+          "const": "THINKING_TEXT_MESSAGE_CONTENT"
+        }
+      },
+      "required": [
+        "type",
+        "delta"
+      ],
+      "title": "ThinkingTextMessageContentEvent",
+      "type": "object"
+    },
+    "ThinkingTextMessageEndEvent": {
+      "additionalProperties": true,
+      "description": "Deprecated. Use ReasoningMessageEndEvent.",
+      "properties": {
+        "rawEvent": {},
+        "timestamp": {
+          "type": "number"
+        },
+        "type": {
+          "const": "THINKING_TEXT_MESSAGE_END"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "ThinkingTextMessageEndEvent",
+      "type": "object"
+    },
+    "ThinkingTextMessageStartEvent": {
+      "additionalProperties": true,
+      "description": "Deprecated. Use ReasoningMessageStartEvent.",
+      "properties": {
+        "rawEvent": {},
+        "timestamp": {
+          "type": "number"
+        },
+        "type": {
+          "const": "THINKING_TEXT_MESSAGE_START"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "ThinkingTextMessageStartEvent",
+      "type": "object"
+    },
+    "Tool": {
+      "additionalProperties": true,
+      "description": "parameters is a JSON Schema for the tool parameters; metadata is arbitrary tool metadata.",
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "metadata": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "name": {
+          "type": "string"
+        },
+        "parameters": {}
+      },
+      "required": [
+        "name",
+        "description",
+        "parameters"
+      ],
+      "title": "Tool",
+      "type": "object"
+    },
+    "ToolCall": {
+      "additionalProperties": true,
+      "properties": {
+        "encryptedValue": {
+          "type": "string"
+        },
+        "function": {
+          "$ref": "#/$defs/FunctionCall"
+        },
+        "id": {
+          "type": "string"
+        },
+        "type": {
+          "const": "function"
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "function"
+      ],
+      "title": "ToolCall",
+      "type": "object"
+    },
+    "ToolCallArgsEvent": {
+      "additionalProperties": true,
+      "properties": {
+        "delta": {
+          "type": "string"
+        },
+        "rawEvent": {},
+        "timestamp": {
+          "type": "number"
+        },
+        "toolCallId": {
+          "type": "string"
+        },
+        "type": {
+          "const": "TOOL_CALL_ARGS"
+        }
+      },
+      "required": [
+        "type",
+        "toolCallId",
+        "delta"
+      ],
+      "title": "ToolCallArgsEvent",
+      "type": "object"
+    },
+    "ToolCallChunkEvent": {
+      "additionalProperties": true,
+      "properties": {
+        "delta": {
+          "type": "string"
+        },
+        "parentMessageId": {
+          "type": "string"
+        },
+        "rawEvent": {},
+        "timestamp": {
+          "type": "number"
+        },
+        "toolCallId": {
+          "type": "string"
+        },
+        "toolCallName": {
+          "type": "string"
+        },
+        "type": {
+          "const": "TOOL_CALL_CHUNK"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "ToolCallChunkEvent",
+      "type": "object"
+    },
+    "ToolCallEndEvent": {
+      "additionalProperties": true,
+      "properties": {
+        "rawEvent": {},
+        "timestamp": {
+          "type": "number"
+        },
+        "toolCallId": {
+          "type": "string"
+        },
+        "type": {
+          "const": "TOOL_CALL_END"
+        }
+      },
+      "required": [
+        "type",
+        "toolCallId"
+      ],
+      "title": "ToolCallEndEvent",
+      "type": "object"
+    },
+    "ToolCallResultEvent": {
+      "additionalProperties": true,
+      "properties": {
+        "content": {
+          "type": "string"
+        },
+        "messageId": {
+          "type": "string"
+        },
+        "rawEvent": {},
+        "role": {
+          "const": "tool"
+        },
+        "timestamp": {
+          "type": "number"
+        },
+        "toolCallId": {
+          "type": "string"
+        },
+        "type": {
+          "const": "TOOL_CALL_RESULT"
+        }
+      },
+      "required": [
+        "type",
+        "messageId",
+        "toolCallId",
+        "content"
+      ],
+      "title": "ToolCallResultEvent",
+      "type": "object"
+    },
+    "ToolCallStartEvent": {
+      "additionalProperties": true,
+      "properties": {
+        "parentMessageId": {
+          "type": "string"
+        },
+        "rawEvent": {},
+        "timestamp": {
+          "type": "number"
+        },
+        "toolCallId": {
+          "type": "string"
+        },
+        "toolCallName": {
+          "type": "string"
+        },
+        "type": {
+          "const": "TOOL_CALL_START"
+        }
+      },
+      "required": [
+        "type",
+        "toolCallId",
+        "toolCallName"
+      ],
+      "title": "ToolCallStartEvent",
+      "type": "object"
+    },
+    "ToolMessage": {
+      "additionalProperties": true,
+      "properties": {
+        "content": {
+          "type": "string"
+        },
+        "encryptedValue": {
+          "type": "string"
+        },
+        "error": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "role": {
+          "const": "tool"
+        },
+        "toolCallId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "role",
+        "content",
+        "toolCallId"
+      ],
+      "title": "ToolMessage",
+      "type": "object"
+    },
+    "UserMessage": {
+      "additionalProperties": true,
+      "properties": {
+        "content": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "items": {
+                "$ref": "#/$defs/InputContent"
+              },
+              "type": "array"
+            }
+          ]
+        },
+        "encryptedValue": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "role": {
+          "const": "user"
+        }
+      },
+      "required": [
+        "id",
+        "role",
+        "content"
+      ],
+      "title": "UserMessage",
+      "type": "object"
+    },
+    "VideoInputContent": {
+      "additionalProperties": true,
+      "properties": {
+        "metadata": {},
+        "source": {
+          "$ref": "#/$defs/InputContentSource"
+        },
+        "type": {
+          "const": "video"
+        }
+      },
+      "required": [
+        "type",
+        "source"
+      ],
+      "title": "VideoInputContent",
+      "type": "object"
+    }
+  },
+  "$id": "https://schemas.local/sheaf/ag-ui-events.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "JSON Schema representation of the AGUI TypeScript/Zod event format from @ag-ui/core. The top-level event is a tagged union discriminated by the type property.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/TextMessageStartEvent"
+    },
+    {
+      "$ref": "#/$defs/TextMessageContentEvent"
+    },
+    {
+      "$ref": "#/$defs/TextMessageEndEvent"
+    },
+    {
+      "$ref": "#/$defs/TextMessageChunkEvent"
+    },
+    {
+      "$ref": "#/$defs/ThinkingStartEvent"
+    },
+    {
+      "$ref": "#/$defs/ThinkingEndEvent"
+    },
+    {
+      "$ref": "#/$defs/ThinkingTextMessageStartEvent"
+    },
+    {
+      "$ref": "#/$defs/ThinkingTextMessageContentEvent"
+    },
+    {
+      "$ref": "#/$defs/ThinkingTextMessageEndEvent"
+    },
+    {
+      "$ref": "#/$defs/ToolCallStartEvent"
+    },
+    {
+      "$ref": "#/$defs/ToolCallArgsEvent"
+    },
+    {
+      "$ref": "#/$defs/ToolCallEndEvent"
+    },
+    {
+      "$ref": "#/$defs/ToolCallChunkEvent"
+    },
+    {
+      "$ref": "#/$defs/ToolCallResultEvent"
+    },
+    {
+      "$ref": "#/$defs/StateSnapshotEvent"
+    },
+    {
+      "$ref": "#/$defs/StateDeltaEvent"
+    },
+    {
+      "$ref": "#/$defs/MessagesSnapshotEvent"
+    },
+    {
+      "$ref": "#/$defs/ActivitySnapshotEvent"
+    },
+    {
+      "$ref": "#/$defs/ActivityDeltaEvent"
+    },
+    {
+      "$ref": "#/$defs/RawEvent"
+    },
+    {
+      "$ref": "#/$defs/CustomEvent"
+    },
+    {
+      "$ref": "#/$defs/RunStartedEvent"
+    },
+    {
+      "$ref": "#/$defs/RunFinishedEvent"
+    },
+    {
+      "$ref": "#/$defs/RunErrorEvent"
+    },
+    {
+      "$ref": "#/$defs/StepStartedEvent"
+    },
+    {
+      "$ref": "#/$defs/StepFinishedEvent"
+    },
+    {
+      "$ref": "#/$defs/ReasoningStartEvent"
+    },
+    {
+      "$ref": "#/$defs/ReasoningMessageStartEvent"
+    },
+    {
+      "$ref": "#/$defs/ReasoningMessageContentEvent"
+    },
+    {
+      "$ref": "#/$defs/ReasoningMessageEndEvent"
+    },
+    {
+      "$ref": "#/$defs/ReasoningMessageChunkEvent"
+    },
+    {
+      "$ref": "#/$defs/ReasoningEndEvent"
+    },
+    {
+      "$ref": "#/$defs/ReasoningEncryptedValueEvent"
+    }
+  ],
+  "title": "AGUI Event",
+  "x-discriminatorProperties": [
+    "type"
+  ],
+  "x-source": {
+    "package": "@ag-ui/core",
+    "packageVersion": "0.0.55",
+    "repository": "/Users/joyo/ag-ui",
+    "sourceFiles": [
+      "sdks/typescript/packages/core/src/events.ts",
+      "sdks/typescript/packages/core/src/types.ts"
+    ]
+  }
+}

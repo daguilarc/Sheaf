@@ -9,6 +9,7 @@ Start here:
 - [Configuration](configuration.md): shared config files, project config files, and key handling.
 - [Services](services.md): service registry format and service lifecycle expectations.
 - [Logs And Data](logs-and-data.md): required runtime output locations.
+- [Agent Harness Event Schema](agent-harness-event-schema.md): unified tagged-union schema for quest runner agent harness events.
 - [Web UI](webui.md): shared web UI utilities and project home page links.
 - [Docs Structure](docs-structure.md): how project and repository documentation should be organized.
 - [Makefiles](makefile.md): root and per-project Make targets and command conventions.

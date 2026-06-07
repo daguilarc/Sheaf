@@ -22,6 +22,7 @@ projects/quest-runner/src/quest_runner_service/
   quest_runner_v2.py       V2 recursive state machine runner entry
   quest_thread.py          Role thread registry and runtime prompt context
   harness.py               Cursor/Codex/Claude harness adapters
+  agui_mapper.py           Quest JSONL log to AGUI UI event mapper
   dashboard_data.py        Dashboard query parsing and JSON payloads
   dashboard_git.py         Git commit/diff payloads for dashboard
   dashboard_slice.py       Slice page and agent log payloads
