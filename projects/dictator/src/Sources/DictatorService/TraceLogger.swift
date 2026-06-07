@@ -9,7 +9,7 @@ enum TraceLogger {
         return formatter
     }()
     private static let lock = NSLock()
-    private static var configuredLogURL: URL = fallbackLogURL
+    private static var configuredLogURL: URL = resolvedDefaultLogURL()
 
     static func configure(logDirectoryPath: String?) {
         lock.lock()

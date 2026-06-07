@@ -3,6 +3,7 @@
 .swiftpm-module-cache/
 DerivedData/
 build/
+logs/
 *.app
 *.appex
 *.xctest
