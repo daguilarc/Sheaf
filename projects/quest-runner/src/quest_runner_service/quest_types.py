@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
+from pathlib import Path
 import re
 from typing import Dict, Optional
 
@@ -62,12 +63,19 @@ class SliceStateInfo:
 
 @dataclass
 class QuestMeta:
+    project: str
     quest_type: str
     quest_number: int
     quest_slug: str
     quest_name: str
     created_at: str
     created_by: str | None = None
+
+
+@dataclass(frozen=True)
+class ProjectQuestRoot:
+    project: str
+    path: Path
 
 
 @dataclass

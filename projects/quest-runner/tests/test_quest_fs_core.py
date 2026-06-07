@@ -407,7 +407,7 @@ class ExecutionConfigTests(unittest.TestCase):
             self.assertIsNone(impl.reasoning_effort)
             self.assertEqual(impl.idle_timeout_seconds, 3600)
             self.assertEqual(impl.config_version, 2)
-            self.assertEqual(impl.modify_block, ["quests/**"])
+            self.assertEqual(impl.modify_block, ["projects/**"])
             self.assertIn("$currentSlice/implementation_done.md", impl.modify_allow)
             self.assertIn("$currentQuest/human_intervention_request.md", impl.modify_allow)
             plan_reviewer = profiles["physical_plan_reviewer"]

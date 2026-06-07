@@ -269,13 +269,15 @@ def parse_quest_number(raw: str | None) -> int:
 
 def resolve_quest_dir(
     repo_root: Path,
+    project: str,
     quest_type: str,
     quest_number: int,
 ) -> Path:
-    qdir = quest_fs.find_quest_dir(repo_root, quest_type, quest_number)
+    qdir = quest_fs.find_quest_dir(repo_root, project, quest_type, quest_number)
     if qdir is None:
         raise DashboardNotFound(
-            f"No quest found for type={quest_type!r} number={quest_number}"
+            f"No quest found for project={project!r} type={quest_type!r} "
+            f"number={quest_number}"
         )
     return qdir
 
@@ -445,26 +447,27 @@ def repository_snapshot_payload(
     key = str(repo_path)
     main_rows: list[dict] = []
     side_rows: list[dict] = []
-    for qdir in quest_fs.list_quest_dirs(repo_path, "main"):
-        meta = quest_fs.read_quest_meta(qdir)
-        main_rows.append(
-            quest_summary_row(
-                quest_dir=qdir,
-                repo_path_key=key,
-                lock=lock,
-                meta=meta,
+    for root in quest_fs.iter_project_quest_roots(repo_path):
+        for qdir in quest_fs.list_quest_dirs(repo_path, root.project, "main"):
+            meta = quest_fs.read_quest_meta(qdir)
+            main_rows.append(
+                quest_summary_row(
+                    quest_dir=qdir,
+                    repo_path_key=key,
+                    lock=lock,
+                    meta=meta,
+                )
             )
-        )
-    for qdir in quest_fs.list_quest_dirs(repo_path, "side"):
-        meta = quest_fs.read_quest_meta(qdir)
-        side_rows.append(
-            quest_summary_row(
-                quest_dir=qdir,
-                repo_path_key=key,
-                lock=lock,
-                meta=meta,
+        for qdir in quest_fs.list_quest_dirs(repo_path, root.project, "side"):
+            meta = quest_fs.read_quest_meta(qdir)
+            side_rows.append(
+                quest_summary_row(
+                    quest_dir=qdir,
+                    repo_path_key=key,
+                    lock=lock,
+                    meta=meta,
+                )
             )
-        )
     main_rows.sort(key=lambda r: r["number"], reverse=True)
     side_rows.sort(key=lambda r: r["number"], reverse=True)
     return {

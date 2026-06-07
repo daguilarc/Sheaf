@@ -11,7 +11,10 @@ TEST_MODULES := \
 	tests.test_normalized_state_md \
 	tests.test_state_machine_core \
 	tests.test_quest_fs_core \
-	tests.test_harness_quest_thread_core
+	tests.test_harness_quest_thread_core \
+	tests.test_project_quest_model \
+	tests.test_quest_creation \
+	tests.test_worktrees
 
 all: test
 

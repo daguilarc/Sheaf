@@ -15,6 +15,19 @@ from .dashboard_runs import ActiveRunTracker
 from .deferred_tasks import DeferredTaskScheduler
 from .quest_lock import LockInfo, QuestLock
 from .quest_types import QuestMeta, QuestState, QuestStateInfo, utc_now_iso
+from .worktrees import (
+    SourceCheckoutDetached,
+    SourceCheckoutNotClean,
+    WorktreeCreationError,
+    assert_source_checkout_clean,
+    create_quest_scaffold_commit,
+    create_quest_worktree,
+    quest_worktree_branch,
+    quest_worktree_name,
+    quest_worktree_path,
+    remove_partial_worktree,
+    validate_project_name,
+)
 
 
 log = logging.getLogger("conductor")
@@ -69,14 +82,25 @@ class QuestLockContention(Exception):
 
 
 class QuestNotFound(Exception):
-    """No quest directory matches the given type and number."""
+    """No quest directory matches the given project, type, and number."""
 
-    def __init__(self, quest_type: str, quest_number: int) -> None:
+    def __init__(self, project: str, quest_type: str, quest_number: int) -> None:
+        self.project = project
         self.quest_type = quest_type
         self.quest_number = quest_number
         super().__init__(
-            f"No quest found for type={quest_type!r} number={quest_number}"
+            f"No quest found for project={project!r} type={quest_type!r} "
+            f"number={quest_number}"
         )
+
+
+class InvalidProject(QuestCreationError):
+    """Project name is invalid or missing under projects/."""
+
+    def __init__(self, project: str, reason: str) -> None:
+        self.project = project
+        self.reason = reason
+        super().__init__(reason)
 
 
 class FatalInvariantError(Exception):
@@ -117,11 +141,24 @@ def _is_git_repo(path: Path) -> bool:
         return False
 
 
-def _next_quest_number(repo_path: Path, quest_type: str) -> int:
-    dirs = quest_fs.list_quest_dirs(repo_path, quest_type)
+def _next_quest_number(repo_path: Path, project: str, quest_type: str) -> int:
+    dirs = quest_fs.list_quest_dirs(repo_path, project, quest_type)
     if not dirs:
         return 0
     return max(int(p.name[:4]) for p in dirs) + 1
+
+
+def _validate_project(repo_root: Path, project: str) -> None:
+    try:
+        validate_project_name(project)
+    except ValueError as e:
+        raise InvalidProject(project, str(e)) from e
+    project_dir = repo_root / "projects" / project
+    if not project_dir.is_dir():
+        raise InvalidProject(
+            project,
+            f"Project directory does not exist: {project_dir}",
+        )
 
 
 class QuestService:
@@ -190,6 +227,7 @@ class QuestService:
     def create_quest(
         self,
         repo_path: str,
+        project: str,
         quest_type: str,
         name: str,
         slug: str | None = None,
@@ -198,6 +236,13 @@ class QuestService:
         root = _resolve_repo(repo_path)
         if not _is_git_repo(root):
             raise NotAGitRepo(repo_path)
+        _validate_project(root, project)
+        try:
+            assert_source_checkout_clean(root)
+        except SourceCheckoutDetached as e:
+            raise InvalidQuestInput(str(e)) from e
+        except SourceCheckoutNotClean as e:
+            raise InvalidQuestInput(str(e)) from e
         if quest_type not in ("main", "side"):
             raise InvalidQuestInput(
                 f"quest_type must be 'main' or 'side', got {quest_type!r}"
@@ -210,9 +255,11 @@ class QuestService:
         if not norm_slug:
             raise InvalidQuestInput("slug is empty after normalization")
 
-        number = _next_quest_number(root, quest_type)
+        number = _next_quest_number(root, project, quest_type)
         prefix = f"{number:04d}"
-        quest_dir = root / "quests" / quest_type / f"{prefix}_{norm_slug}"
+        quest_type_dir = quest_fs.project_quest_root(root, project) / quest_type
+        quest_type_dir.mkdir(parents=True, exist_ok=True)
+        quest_dir = quest_type_dir / f"{prefix}_{norm_slug}"
 
         default_cfg = (
             Path(__file__).resolve().parent / "default_state_execution_config.yaml"
@@ -222,6 +269,7 @@ class QuestService:
 
         created: list[str] = []
         created_root = False
+        meta: QuestMeta | None = None
         try:
             quest_dir.mkdir(parents=True, exist_ok=False)
             created_root = True
@@ -242,6 +290,7 @@ class QuestService:
             created.append("state_history.md")
 
             meta = QuestMeta(
+                project=project,
                 quest_type=quest_type,
                 quest_number=number,
                 quest_slug=norm_slug,
@@ -279,18 +328,57 @@ class QuestService:
                 shutil.rmtree(quest_dir, ignore_errors=True)
             raise
 
+        assert meta is not None
+        worktree_name = quest_worktree_name(
+            project, quest_type, number, norm_slug
+        )
+        worktree_branch = quest_worktree_branch(worktree_name)
+        worktree_path = quest_worktree_path(root, meta)
+        quest_create_commit: str | None = None
+        try:
+            quest_create_commit = create_quest_scaffold_commit(
+                root,
+                quest_dir,
+                project=project,
+                quest_type=quest_type,
+                quest_number=number,
+                quest_slug=norm_slug,
+            )
+            create_quest_worktree(root, meta)
+        except Exception as exc:
+            if quest_create_commit is not None:
+                remove_partial_worktree(root, meta)
+                rel = quest_dir.resolve().relative_to(root.resolve()).as_posix()
+                raise WorktreeCreationError(
+                    "Quest record was committed on the source branch but worktree "
+                    f"creation failed; manual cleanup may be required for "
+                    f"{rel} (commit {quest_create_commit}).",
+                    quest_dir=quest_dir,
+                    quest_create_commit=quest_create_commit,
+                ) from exc
+            if created_root and quest_dir.exists():
+                shutil.rmtree(quest_dir, ignore_errors=True)
+            remove_partial_worktree(root, meta)
+            raise
+
         return {
+            "project": project,
             "quest_type": quest_type,
             "quest_number": number,
             "quest_slug": norm_slug,
             "quest_dir": str(quest_dir),
             "state": QuestState.PrePlanning.value,
             "created_files": created,
+            "worktree_name": worktree_name,
+            "worktree_branch": worktree_branch,
+            "worktree_path": str(worktree_path),
+            "quest_create_commit": quest_create_commit,
         }
 
     def _prepare_run(
         self,
         repo_path: str,
+        project: str,
         quest_type: str,
         quest_number: int,
     ) -> tuple[Path, Path, str]:
@@ -304,9 +392,9 @@ class QuestService:
         if quest_number < 0:
             raise InvalidQuestInput("quest_number must be non-negative")
 
-        qdir = quest_fs.find_quest_dir(root, quest_type, quest_number)
+        qdir = quest_fs.find_quest_dir(root, project, quest_type, quest_number)
         if qdir is None:
-            raise QuestNotFound(quest_type, quest_number)
+            raise QuestNotFound(project, quest_type, quest_number)
 
         key = str(root.resolve())
         return root, qdir, key
@@ -368,11 +456,14 @@ class QuestService:
     def run_quest(
         self,
         repo_path: str,
+        project: str,
         quest_type: str,
         quest_number: int,
         max_steps: int = 500,
     ) -> dict:
-        root, qdir, key = self._prepare_run(repo_path, quest_type, quest_number)
+        root, qdir, key = self._prepare_run(
+            repo_path, project, quest_type, quest_number
+        )
         req_id = str(uuid.uuid4())
         if not self.lock.acquire(key, quest_type, quest_number, req_id):
             info = self.lock.get_lock_info(key)
@@ -392,6 +483,7 @@ class QuestService:
     def schedule_run_quest(
         self,
         repo_path: str,
+        project: str,
         quest_type: str,
         quest_number: int,
         max_steps: int = 500,
@@ -401,7 +493,9 @@ class QuestService:
         """Start the runner on a background thread and return immediately (HTTP)."""
         from . import dashboard_data
 
-        root, qdir, key = self._prepare_run(repo_path, quest_type, quest_number)
+        root, qdir, key = self._prepare_run(
+            repo_path, project, quest_type, quest_number
+        )
         req_id = str(uuid.uuid4())
         if not self.lock.acquire(key, quest_type, quest_number, req_id):
             info = self.lock.get_lock_info(key)

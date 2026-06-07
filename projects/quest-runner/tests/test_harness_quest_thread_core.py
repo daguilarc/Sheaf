@@ -50,6 +50,7 @@ class BuildRolePromptTests(unittest.TestCase):
 class BuildRuntimeContextTests(unittest.TestCase):
     def test_includes_quest_role_slice_docs_dir_and_schema_reference(self) -> None:
         meta = QuestMeta(
+            project="example",
             quest_type="main",
             quest_number=7,
             quest_slug="ship_it",

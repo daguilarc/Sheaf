@@ -13,6 +13,7 @@ from .quest_types import (
     ExecutionProfile,
     HarnessKind,
     IssueEntry,
+    ProjectQuestRoot,
     QuestMeta,
     QuestState,
     QuestStateInfo,
@@ -39,8 +40,47 @@ class QuestStateParseError(ValueError):
         super().__init__(detail)
 
 
-def find_quest_dir(repo_path: Path, quest_type: str, quest_number: int) -> Path | None:
-    base = repo_path / "quests" / quest_type
+def project_quest_root(repo_root: Path, project: str) -> Path:
+    return repo_root / "projects" / project / "quests"
+
+
+def iter_project_quest_roots(repo_root: Path) -> list[ProjectQuestRoot]:
+    projects_dir = repo_root / "projects"
+    if not projects_dir.is_dir():
+        return []
+    found: list[ProjectQuestRoot] = []
+    for entry in sorted(projects_dir.iterdir(), key=lambda p: p.name):
+        if not entry.is_dir():
+            continue
+        quests = entry / "quests"
+        if quests.is_dir():
+            found.append(ProjectQuestRoot(project=entry.name, path=quests))
+    return found
+
+
+def _project_from_quest_dir_path(quest_dir: Path) -> str | None:
+    parts = quest_dir.resolve().parts
+    for i, part in enumerate(parts):
+        if (
+            part == "projects"
+            and i + 3 < len(parts)
+            and parts[i + 2] == "quests"
+        ):
+            return parts[i + 1]
+    return None
+
+
+def _is_project_local_quest_dir(quest_dir: Path) -> bool:
+    return _project_from_quest_dir_path(quest_dir) is not None
+
+
+def find_quest_dir(
+    repo_root: Path,
+    project: str,
+    quest_type: str,
+    quest_number: int,
+) -> Path | None:
+    base = project_quest_root(repo_root, project) / quest_type
     if not base.is_dir():
         return None
     for p in sorted(base.iterdir(), key=lambda x: x.name):
@@ -52,8 +92,12 @@ def find_quest_dir(repo_path: Path, quest_type: str, quest_number: int) -> Path 
     return None
 
 
-def list_quest_dirs(repo_path: Path, quest_type: str) -> list[Path]:
-    base = repo_path / "quests" / quest_type
+def list_quest_dirs(
+    repo_root: Path,
+    project: str,
+    quest_type: str,
+) -> list[Path]:
+    base = project_quest_root(repo_root, project) / quest_type
     if not base.is_dir():
         return []
     found: list[tuple[int, Path]] = []
@@ -482,7 +526,21 @@ def read_quest_meta(quest_dir: Path) -> QuestMeta:
         raise FileNotFoundError(f"Missing quest meta file: {path}")
     data = json.loads(path.read_text(encoding="utf-8"))
     created_by = data.get("created_by")
+    project_raw = data.get("project")
+    project: str | None
+    if isinstance(project_raw, str) and project_raw.strip():
+        project = project_raw.strip()
+    else:
+        project = _project_from_quest_dir_path(quest_dir)
+    if project is None and _is_project_local_quest_dir(quest_dir):
+        raise ValueError(
+            f"Quest meta file {path} is missing required 'project' and the quest "
+            "path does not identify a project under projects/<project>/quests/"
+        )
+    if project is None:
+        project = ""
     return QuestMeta(
+        project=project,
         quest_type=data["quest_type"],
         quest_number=int(data["quest_number"]),
         quest_slug=data["quest_slug"],
@@ -495,6 +553,7 @@ def read_quest_meta(quest_dir: Path) -> QuestMeta:
 def write_quest_meta(quest_dir: Path, meta: QuestMeta) -> None:
     path = quest_dir / "meta.json"
     payload = {
+        "project": meta.project,
         "quest_type": meta.quest_type,
         "quest_number": meta.quest_number,
         "quest_slug": meta.quest_slug,
