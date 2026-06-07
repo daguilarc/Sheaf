@@ -2,10 +2,10 @@
 
 ## Issue PR-0001
 
-- status: open
+- status: completed
 - owner_role: polisher_reviewer
 - created_at: 2026-06-07T00:00:00Z
-- updated_at: 2026-06-07T00:00:00Z
+- updated_at: 2026-06-07T15:30:00Z
 - title: Runtime trace.log artifact committed under projects/dictator/logs/
 - details: |
   Commit 96423a3 (quest-step 12) added a tracked runtime log file
@@ -46,4 +46,16 @@
     `TraceLogger`'s default resolves to a location outside the tracked tree (and is
     ignored). After a full `make dictator-test`, `git status` shows no new/modified
     files under `projects/dictator/logs/`.
-- resolution_notes: none
+- resolution_notes: |
+  Verified fixed.
+  - `git ls-files 'projects/dictator/logs/**'` returns nothing; the tracked
+    `projects/dictator/logs/dictator/trace.log` artifact has been removed.
+  - `projects/dictator/.gitignore` now contains `logs/`, so any project-local
+    `logs/` directory is ignored. The repo-root `.gitignore` `logs/**` rule covers
+    the repo-root path.
+  - `TraceLogger.swift:12` now initializes the default `configuredLogURL` via
+    `resolvedDefaultLogURL()`, which uses `SheafRootDiscovery.findRepoRoot()` to
+    resolve to repo-root `logs/dictator/trace.log` (gitignored). Even the relative
+    fallback path is now covered by the project `.gitignore`, so test runs cannot
+    pollute the tracked tree regardless of working directory.
+  - `git status --short` is clean.
