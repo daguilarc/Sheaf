@@ -2,16 +2,63 @@
  * Pure helpers for dashboard shell (unit-tested with Node).
  */
 
-const x_STORAGE_KEY = "conductor_dashboard.repo_path";
+const x_STORAGE_KEY = "conductor_dashboard.project";
 
-export function StorageRepoKey() {
+export const x_SERVICE_CONTROL_LABELS = [
+  "Register service",
+  "Restart service",
+  "Stop service",
+  "Start service",
+  "Service logs",
+  "MCP configuration",
+  "Services",
+];
+
+export function StorageProjectKey() {
   return x_STORAGE_KEY;
 }
 
 /**
- * Resolve which tracked repository path to use.
- * Precedence: valid query > valid stored > valid default > first tracked.
- * If query names a path that is not tracked, surface invalidQueryPath and fall back.
+ * @deprecated Use StorageProjectKey.
+ */
+export function StorageRepoKey() {
+  return StorageProjectKey();
+}
+
+/**
+ * Resolve which project name to use.
+ * Precedence: valid query > valid stored > valid default > first listed.
+ * If query names a project that is not listed, surface invalidQueryProject and fall back.
+ */
+export function ResolveProjectSelection(
+  queryProject,
+  storedProject,
+  defaultProject,
+  listedProjects
+) {
+  const valid = new Set(listedProjects);
+  const isValid = (p) => p != null && String(p).length > 0 && valid.has(String(p));
+
+  let invalidQueryProject = null;
+  if (queryProject != null && String(queryProject).length > 0 && !isValid(queryProject)) {
+    invalidQueryProject = String(queryProject);
+  }
+
+  if (isValid(queryProject)) {
+    return { project: String(queryProject), invalidQueryProject: null };
+  }
+  if (isValid(storedProject)) {
+    return { project: String(storedProject), invalidQueryProject };
+  }
+  if (isValid(defaultProject)) {
+    return { project: String(defaultProject), invalidQueryProject };
+  }
+  const first = listedProjects.length ? listedProjects[0] : null;
+  return { project: first, invalidQueryProject };
+}
+
+/**
+ * @deprecated Use ResolveProjectSelection.
  */
 export function ResolveRepositorySelection(
   queryRepoPath,
@@ -19,25 +66,97 @@ export function ResolveRepositorySelection(
   defaultRepoPath,
   trackedPaths
 ) {
-  const valid = new Set(trackedPaths);
-  const isValid = (p) => p != null && String(p).length > 0 && valid.has(String(p));
+  const r = ResolveProjectSelection(
+    queryRepoPath,
+    storedRepoPath,
+    defaultRepoPath,
+    trackedPaths
+  );
+  return { repoPath: r.project, invalidQueryPath: r.invalidQueryProject };
+}
 
-  let invalidQueryPath = null;
-  if (queryRepoPath != null && String(queryRepoPath).length > 0 && !isValid(queryRepoPath)) {
-    invalidQueryPath = String(queryRepoPath);
-  }
+export function BuildQuestApiQuery(project, questType, questNumber) {
+  return {
+    project,
+    quest_type: questType,
+    quest_number: questNumber,
+  };
+}
 
-  if (isValid(queryRepoPath)) {
-    return { repoPath: String(queryRepoPath), invalidQueryPath: null };
+export function BuildDashboardSearchParams({
+  project,
+  questType,
+  questNumber,
+  page,
+  sliceNumber,
+  subpage,
+}) {
+  const p = new URLSearchParams();
+  if (project) {
+    p.set("project", project);
   }
-  if (isValid(storedRepoPath)) {
-    return { repoPath: String(storedRepoPath), invalidQueryPath };
+  if (questType != null && questNumber != null) {
+    p.set("quest_type", questType);
+    p.set("quest_number", String(questNumber));
+    if (page) {
+      p.set("page", page);
+    }
+    if (page === "slice") {
+      if (sliceNumber != null) {
+        p.set("slice_number", String(sliceNumber));
+      }
+      if (subpage) {
+        p.set("subpage", subpage);
+      }
+    }
   }
-  if (isValid(defaultRepoPath)) {
-    return { repoPath: String(defaultRepoPath), invalidQueryPath };
+  return p;
+}
+
+export function CanonicalQuestDashboardUrl(basePath, project, questType, questNumber) {
+  const p = BuildDashboardSearchParams({
+    project,
+    questType,
+    questNumber,
+  });
+  const qs = p.toString();
+  const path = basePath || "/dashboard";
+  return qs ? `${path}?${qs}` : path;
+}
+
+export function BuildRunQuestPayload(project, questType, questNumber, maxSteps) {
+  const body = {
+    project,
+    quest_type: questType,
+    quest_number: questNumber,
+  };
+  if (maxSteps != null) {
+    body.max_steps = maxSteps;
   }
-  const first = trackedPaths.length ? trackedPaths[0] : null;
-  return { repoPath: first, invalidQueryPath };
+  return body;
+}
+
+export function ShouldShowRunButton(overview, runStatus) {
+  if (!overview) {
+    return false;
+  }
+  if (overview.quest_state === "Completed") {
+    return false;
+  }
+  if (overview.worktree_missing) {
+    return false;
+  }
+  const overlay =
+    overview.execution_overlay_status ??
+    runStatus?.execution_overlay_status ??
+    "none";
+  if (overlay === "human_intervention" || overlay === "paused" || overlay === "running") {
+    return false;
+  }
+  if (runStatus?.active_run != null) {
+    return false;
+  }
+  return true;
 }
 
 /**

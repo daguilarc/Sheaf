@@ -119,8 +119,8 @@ export function MarkdownToSafeHtml(markdown) {
   return `<div class="dashboard-markdown">${html}</div>`;
 }
 
-export function PlanFileStorageKey(repoPath, questType, questNumber, sliceNumber) {
-  return `dash.planFile:v1|${repoPath}|${questType}|${questNumber}|${sliceNumber}`;
+export function PlanFileStorageKey(project, questType, questNumber, sliceNumber) {
+  return `dash.planFile:v1|${project}|${questType}|${questNumber}|${sliceNumber}`;
 }
 
 export function SelectPlanFile(filenames, storedName) {

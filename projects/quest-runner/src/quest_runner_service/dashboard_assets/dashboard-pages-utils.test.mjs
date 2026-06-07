@@ -23,8 +23,10 @@ test("SelectPlanFile empty", () => {
   assert.equal(SelectPlanFile(null, null), null);
 });
 
-test("PlanFileStorageKey is stable", () => {
-  assert.match(PlanFileStorageKey("/r", "main", 1, 2), /^dash\.planFile:v1\|/);
+test("PlanFileStorageKey is stable and uses project", () => {
+  const key = PlanFileStorageKey("web", "main", 1, 2);
+  assert.match(key, /^dash\.planFile:v1\|/);
+  assert.ok(key.includes("web"));
 });
 
 test("MarkdownToSafeHtml escapes", () => {

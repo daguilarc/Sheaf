@@ -103,11 +103,61 @@ def lock_key_for_quest(source_repo_root: Path, meta: QuestMeta) -> str:
     )
 
 
+@dataclass
+class DashboardCheckout:
+    checkout_kind: str
+    checkout_path: str
+    worktree_missing: bool
+    checkout_root: Path
+    quest_dir: Path
+    quest_dir_rel: str
+
+
+def resolve_dashboard_checkout(
+    source_repo_root: Path,
+    meta: QuestMeta,
+) -> DashboardCheckout:
+    source_qdir = resolve_quest_dir(
+        source_repo_root,
+        meta.project,
+        meta.quest_type,
+        meta.quest_number,
+    )
+    source_root = source_repo_root.resolve()
+    if worktree_exists(source_repo_root, meta):
+        checkout_root = quest_worktree_path(source_repo_root, meta).resolve()
+        quest_dir = source_qdir
+        worktree_qdir = quest_fs.find_quest_dir(
+            checkout_root,
+            meta.project,
+            meta.quest_type,
+            meta.quest_number,
+        )
+        if worktree_qdir is not None:
+            quest_dir = worktree_qdir
+        quest_dir_rel = quest_dir.resolve().relative_to(checkout_root).as_posix()
+        return DashboardCheckout(
+            checkout_kind="worktree",
+            checkout_path=str(checkout_root),
+            worktree_missing=False,
+            checkout_root=checkout_root,
+            quest_dir=quest_dir,
+            quest_dir_rel=quest_dir_rel,
+        )
+    quest_dir_rel = source_qdir.resolve().relative_to(source_root).as_posix()
+    return DashboardCheckout(
+        checkout_kind="source",
+        checkout_path=str(source_root),
+        worktree_missing=True,
+        checkout_root=source_root,
+        quest_dir=source_qdir,
+        quest_dir_rel=quest_dir_rel,
+    )
+
+
 def resolve_quest_checkout_root(source_repo_root: Path, quest_dir: Path) -> Path:
     meta = quest_fs.read_quest_meta(quest_dir)
-    if worktree_exists(source_repo_root, meta):
-        return quest_worktree_path(source_repo_root, meta).resolve()
-    return source_repo_root.resolve()
+    return resolve_dashboard_checkout(source_repo_root, meta).checkout_root
 
 
 def resolve_quest_dirs(
@@ -119,21 +169,26 @@ def resolve_quest_dirs(
     source_qdir = resolve_quest_dir(
         source_repo_root, project, quest_type, quest_number
     )
-    checkout_root = resolve_quest_checkout_root(source_repo_root, source_qdir)
-    quest_dir = source_qdir
-    if checkout_root != source_repo_root.resolve():
-        worktree_qdir = quest_fs.find_quest_dir(
-            checkout_root, project, quest_type, quest_number
-        )
-        if worktree_qdir is not None:
-            quest_dir = worktree_qdir
-    return checkout_root, quest_dir
+    meta = quest_fs.read_quest_meta(source_qdir)
+    checkout = resolve_dashboard_checkout(source_repo_root, meta)
+    return checkout.checkout_root, checkout.quest_dir
+
+
+def _project_has_quests(source_repo_root: Path, project: str) -> bool:
+    for qt in ("main", "side"):
+        if quest_fs.list_quest_dirs(source_repo_root, project, qt):
+            return True
+    return False
 
 
 def projects_payload(source_repo_root: Path) -> dict:
     roots = quest_fs.iter_project_quest_roots(source_repo_root)
-    projects = [{"project": root.project} for root in roots]
-    default_project = roots[0].project if roots else None
+    projects = [
+        {"project": root.project}
+        for root in roots
+        if _project_has_quests(source_repo_root, root.project)
+    ]
+    default_project = projects[0]["project"] if projects else None
     return {
         "projects": projects,
         "default_project": default_project,
@@ -612,8 +667,17 @@ def quest_overview_payload(
         slice_nav.append({"slice_number": idx, "directory_name": p.name})
 
     step_history = build_quest_step_history(checkout_root, quest_dir)
+    checkout = resolve_dashboard_checkout(source_repo_root, meta)
 
     return {
+        "project": meta.project,
+        "quest_type": meta.quest_type,
+        "quest_number": meta.quest_number,
+        "quest_slug": meta.quest_slug,
+        "quest_dir_rel": checkout.quest_dir_rel,
+        "checkout_kind": checkout.checkout_kind,
+        "checkout_path": checkout.checkout_path,
+        "worktree_missing": checkout.worktree_missing,
         "quest": {
             "project": meta.project,
             "type": meta.quest_type,
@@ -691,7 +755,17 @@ def run_status_payload(
         heartbeat_candidates.append(_iso_from_epoch(active.last_heartbeat))
     latest_hb = max(heartbeat_candidates)
 
+    checkout = resolve_dashboard_checkout(source_repo_root, meta)
+
     return {
+        "project": project,
+        "quest_type": quest_type,
+        "quest_number": quest_number,
+        "quest_slug": meta.quest_slug,
+        "quest_dir_rel": checkout.quest_dir_rel,
+        "checkout_kind": checkout.checkout_kind,
+        "checkout_path": checkout.checkout_path,
+        "worktree_missing": checkout.worktree_missing,
         "quest_state": state_info.state.value,
         "current_slice": state_info.current_slice,
         "current_slice_state": slice_state_payload,

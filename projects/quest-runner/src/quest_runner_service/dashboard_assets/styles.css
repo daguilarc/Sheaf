@@ -98,6 +98,28 @@ body {
   cursor: not-allowed;
 }
 
+.dash-btn--primary {
+  background: var(--dash-accent);
+  border-color: var(--dash-accent-dim);
+  color: #fff;
+  font-weight: 600;
+}
+
+.dash-btn--primary:hover:not(:disabled) {
+  background: var(--dash-accent-dim);
+  color: #fff;
+}
+
+.dash-run-row {
+  margin: 12px 0 16px;
+}
+
+.dash-run-error {
+  color: var(--dash-danger);
+  margin: 0 0 12px;
+  font-size: 13px;
+}
+
 .dash-status {
   margin-left: auto;
   font-size: 12px;

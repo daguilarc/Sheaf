@@ -1,8 +1,12 @@
 import {
+  BuildQuestApiQuery,
+  BuildDashboardSearchParams,
+  BuildRunQuestPayload,
   MergeRunBadge,
   RefreshScheduler,
-  ResolveRepositorySelection,
-  StorageRepoKey,
+  ResolveProjectSelection,
+  ShouldShowRunButton,
+  StorageProjectKey,
 } from "./dashboard-logic.mjs";
 import {
   EscapeHtml,
@@ -39,7 +43,7 @@ function ParseUrl() {
   const u = new URL(window.location.href);
   const p = u.searchParams;
   return {
-    repo_path: p.get("repo_path"),
+    project: p.get("project") || p.get("repo_path"),
     quest_type: p.get("quest_type"),
     quest_number: p.get("quest_number"),
     page: p.get("page") || "overview",
@@ -49,9 +53,9 @@ function ParseUrl() {
 }
 
 const state = {
-  reposPayload: null,
-  repoPath: null,
-  invalidRepoQuery: null,
+  projectsPayload: null,
+  project: null,
+  invalidProjectQuery: null,
   snapshot: null,
   questType: null,
   questNumber: null,
@@ -60,6 +64,8 @@ const state = {
   subpage: "physicalplan",
   overview: null,
   runStatus: null,
+  runActionError: null,
+  runActionPending: false,
   lastError: null,
   lastOkAt: null,
   contentCache: {},
@@ -84,27 +90,20 @@ function WriteBoolLs(key, val) {
 }
 
 function PushUrl() {
-  const p = new URLSearchParams();
-  if (state.repoPath) p.set("repo_path", state.repoPath);
-  if (state.questType != null) {
-    p.set("quest_type", state.questType);
-    p.set("quest_number", String(state.questNumber));
-    p.set("page", state.page);
-    if (state.page === "slice") {
-      p.set("slice_number", String(state.sliceNumber));
-      p.set("subpage", state.subpage);
-    }
-  }
+  const p = BuildDashboardSearchParams({
+    project: state.project,
+    questType: state.questType,
+    questNumber: state.questNumber,
+    page: state.page,
+    sliceNumber: state.sliceNumber,
+    subpage: state.subpage,
+  });
   const path = `${window.location.pathname}?${p.toString()}`;
   history.replaceState(null, "", path);
 }
 
 function QuestBase() {
-  return {
-    repo_path: state.repoPath,
-    quest_type: state.questType,
-    quest_number: state.questNumber,
-  };
+  return BuildQuestApiQuery(state.project, state.questType, state.questNumber);
 }
 
 function ActiveInteractiveElement() {
@@ -136,22 +135,22 @@ function SyncDiffSelectionFromDom() {
   }
 }
 
-async function LoadRepositories() {
-  const j = await FetchJson("/api/dashboard/repositories");
-  state.reposPayload = j;
-  const tracked = j.repositories.map((r) => r.repo_path);
-  const stored = localStorage.getItem(StorageRepoKey());
+async function LoadProjects() {
+  const j = await FetchJson("/api/dashboard/projects");
+  state.projectsPayload = j;
+  const listed = (j.projects || []).map((r) => r.project);
+  const stored = localStorage.getItem(StorageProjectKey());
   const parsed = ParseUrl();
-  const sel = ResolveRepositorySelection(
-    parsed.repo_path,
+  const sel = ResolveProjectSelection(
+    parsed.project,
     stored,
-    j.default_repository,
-    tracked
+    j.default_project,
+    listed
   );
-  state.repoPath = sel.repoPath;
-  state.invalidRepoQuery = sel.invalidQueryPath;
-  if (state.repoPath) {
-    localStorage.setItem(StorageRepoKey(), state.repoPath);
+  state.project = sel.project;
+  state.invalidProjectQuery = sel.invalidQueryProject;
+  if (state.project) {
+    localStorage.setItem(StorageProjectKey(), state.project);
   }
   if (parsed.quest_type && parsed.quest_number != null) {
     const qn = parseInt(parsed.quest_number, 10);
@@ -171,14 +170,14 @@ async function LoadRepositories() {
 }
 
 async function LoadSnapshot() {
-  if (!state.repoPath) {
+  if (!state.project) {
     state.snapshot = null;
     return;
   }
   try {
-    const q = Qs({ repo_path: state.repoPath });
-    state.snapshot = await FetchJson(`/api/dashboard/repository_snapshot?${q}`);
-    if (state.lastError && state.lastError.includes("repository")) {
+    const q = Qs({ project: state.project });
+    state.snapshot = await FetchJson(`/api/dashboard/project_snapshot?${q}`);
+    if (state.lastError && state.lastError.includes("project")) {
       state.lastError = null;
     }
     state.lastOkAt = new Date().toISOString();
@@ -338,7 +337,7 @@ async function RefreshSlicePage() {
   if (state.subpage === "physicalplan") {
     const files = (j.payload?.files || []).map((f) => f.name);
     const lsKey = PlanFileStorageKey(
-      state.repoPath,
+      state.project,
       state.questType,
       state.questNumber,
       state.sliceNumber
@@ -412,8 +411,51 @@ async function LoadDiffFileDetailOnly() {
   }
 }
 
+async function PostRunQuest() {
+  const body = BuildRunQuestPayload(state.project, state.questType, state.questNumber);
+  const r = await fetch("/run_quest", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) {
+    const t = await r.text();
+    let msg = t.slice(0, 200) || r.statusText;
+    try {
+      const j = JSON.parse(t);
+      if (j.error) {
+        msg = j.error;
+      } else if (j.message) {
+        msg = j.message;
+      }
+    } catch (_e) {
+      // keep raw text
+    }
+    throw new Error(`${r.status} ${msg}`);
+  }
+  return r.json();
+}
+
+async function HandleRunQuestClick() {
+  if (state.runActionPending) {
+    return;
+  }
+  state.runActionPending = true;
+  state.runActionError = null;
+  render();
+  try {
+    await PostRunQuest();
+    await RefreshActivePage();
+  } catch (e) {
+    state.runActionError = String(e.message || e);
+    render();
+  } finally {
+    state.runActionPending = false;
+  }
+}
+
 async function RefreshActivePage() {
-  if (!state.repoPath || state.questType == null) {
+  if (!state.project || state.questType == null) {
     render();
     return;
   }
@@ -486,14 +528,35 @@ function RenderOverview(main) {
   const badge = MergeRunBadge(ov, rs);
   const bcls = "dash-badge dash-badge--" + badge.variant;
   const ltHtml = FormatQuestLastTransitionHtml(ov.last_transition);
+  const showRun = ShouldShowRunButton(ov, rs);
+  const runDisabled = state.runActionPending || !showRun;
+  const runLabel = state.runActionPending ? "Starting run…" : "Run quest";
+  const runBlock = showRun || state.runActionPending
+    ? `<div class="dash-run-row">
+        <button type="button" id="dash-run-quest" class="dash-btn dash-btn--primary" ${
+          runDisabled ? "disabled" : ""
+        }>${EscapeHtml(runLabel)}</button>
+      </div>`
+    : "";
+  const runErr = state.runActionError
+    ? `<p class="dash-run-error">${EscapeHtml(state.runActionError)}</p>`
+    : "";
+  const checkoutNote = ov.worktree_missing
+    ? `<p class="dash-banner">Quest worktree is missing; run is unavailable until the worktree exists.</p>`
+    : "";
   main.innerHTML = `
     <h1>Overview</h1>
     <p><span class="${bcls}">${EscapeHtml(badge.label)}</span></p>
+    ${runBlock}
+    ${runErr}
+    ${checkoutNote}
     <h2>Quest</h2>
     <dl class="dash-kv">
+      <dt>Project</dt><dd>${EscapeHtml(ov.project || ov.quest.project || "")}</dd>
       <dt>Key</dt><dd>${EscapeHtml(ov.quest.type + "/" + String(ov.quest.number).padStart(4, "0"))}</dd>
       <dt>Name</dt><dd>${EscapeHtml(ov.quest.name)}</dd>
       <dt>Slug</dt><dd>${EscapeHtml(ov.quest.slug)}</dd>
+      <dt>Checkout</dt><dd>${EscapeHtml(ov.checkout_kind || "—")} · ${EscapeHtml(ov.checkout_path || "")}</dd>
       <dt>Path</dt><dd>${EscapeHtml(ov.quest.path)}</dd>
     </dl>
     <h2>State</h2>
@@ -520,6 +583,10 @@ function RenderOverview(main) {
         : ""
     }
   `;
+  const runBtn = main.querySelector("#dash-run-quest");
+  if (runBtn) {
+    runBtn.addEventListener("click", () => void HandleRunQuestClick());
+  }
 }
 
 function RenderHuman(main) {
@@ -785,7 +852,7 @@ function RenderSlice(main) {
       pf.addEventListener("change", () => {
         state.contentCache.planSelectedFile = pf.value;
         const lsKey = PlanFileStorageKey(
-          state.repoPath,
+          state.project,
           state.questType,
           state.questNumber,
           state.sliceNumber
@@ -954,10 +1021,10 @@ function render() {
   const root = document.getElementById("app");
   if (!root) return;
   root.textContent = "";
-  if (state.invalidRepoQuery) {
+  if (state.invalidProjectQuery) {
     const b = document.createElement("div");
     b.className = "dash-banner";
-    b.textContent = `The repository from the URL is not tracked: ${state.invalidRepoQuery}. Showing another selection.`;
+    b.textContent = `The project from the URL is not listed: ${state.invalidProjectQuery}. Showing another selection.`;
     root.appendChild(b);
   }
   if (state.lastError) {
@@ -969,20 +1036,20 @@ function render() {
   const top = document.createElement("div");
   top.className = "dash-topbar";
   const lab = document.createElement("label");
-  lab.textContent = "Repository";
+  lab.textContent = "Project";
   const sel = document.createElement("select");
-  sel.setAttribute("aria-label", "Repository");
-  const repos = state.reposPayload?.repositories || [];
-  for (const r of repos) {
+  sel.setAttribute("aria-label", "Project");
+  const projects = state.projectsPayload?.projects || [];
+  for (const r of projects) {
     const o = document.createElement("option");
-    o.value = r.repo_path;
-    o.textContent = r.label || r.repo_path;
-    if (r.repo_path === state.repoPath) o.selected = true;
+    o.value = r.project;
+    o.textContent = r.project;
+    if (r.project === state.project) o.selected = true;
     sel.appendChild(o);
   }
   sel.addEventListener("change", async () => {
-    state.repoPath = sel.value;
-    localStorage.setItem(StorageRepoKey(), state.repoPath);
+    state.project = sel.value;
+    localStorage.setItem(StorageProjectKey(), state.project);
     state.snapshot = null;
     state.overview = null;
     state.contentCache = {};
@@ -1005,10 +1072,11 @@ function render() {
   st.textContent = state.lastOkAt ? `Last OK: ${state.lastOkAt}` : "";
   top.appendChild(st);
   root.appendChild(top);
-  if (!state.repoPath || repos.length === 0) {
+  if (!state.project || projects.length === 0) {
     const empty = document.createElement("div");
     empty.className = "dash-main";
-    empty.innerHTML = "<p class=\"dash-empty\">No tracked repositories. Register a service with a git repo in Conductor.</p>";
+    empty.innerHTML =
+      '<p class="dash-empty">No projects with quests found under projects/*/quests/.</p>';
     root.appendChild(empty);
     return;
   }
@@ -1236,7 +1304,7 @@ async function Init() {
     true
   );
   try {
-    await LoadRepositories();
+    await LoadProjects();
   } catch (e) {
     state.lastError = String(e.message || e);
     render();

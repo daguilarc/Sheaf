@@ -17,7 +17,9 @@ from quest_runner_service.dashboard_data import (
     issue_status_counts,
     parse_project,
     projects_payload,
+    resolve_dashboard_checkout,
 )
+from quest_runner_service.worktrees import quest_worktree_path, remove_partial_worktree
 from quest_runner_service.dashboard_runs import ActiveRunTracker
 from quest_runner_service.quest_lock import QuestLock
 from quest_runner_service.quest_types import IssueEntry, RecursiveSnapshot, StepCommitMetadata, TransitionRecord
@@ -121,6 +123,35 @@ class DashboardHttpTests(unittest.TestCase):
         self.assertEqual(payload["projects"][0]["project"], "example")
         self.assertEqual(payload["default_project"], "example")
 
+    def test_projects_omits_empty_project_dirs(self) -> None:
+        ensure_project(self.temp.root, "empty")
+        ensure_project(self.temp.root, "with-quests")
+        client, svc = make_app_client(self.temp.root, self.repo_root)
+        svc.create_quest(str(self.temp.root), "with-quests", "main", "Q")
+        payload = client.get("/api/dashboard/projects").get_json()
+        names = {p["project"] for p in payload["projects"]}
+        self.assertIn("with-quests", names)
+        self.assertNotIn("empty", names)
+
+    def test_legacy_top_level_quests_excluded_from_snapshot(self) -> None:
+        ensure_project(self.temp.root, "example")
+        client, svc = make_app_client(self.temp.root, self.repo_root)
+        svc.create_quest(str(self.temp.root), "example", "main", "Real")
+        legacy = self.temp.root / "quests" / "main" / "0000_legacy"
+        legacy.mkdir(parents=True)
+        (legacy / "state.md").write_text(
+            "# Quest State\n\nstate: PrePlanning\ncurrent_slice: 0\n"
+            "updated_at: 2026-01-01T00:00:00Z\n",
+            encoding="utf-8",
+        )
+        snap = client.get(
+            "/api/dashboard/project_snapshot",
+            query_string={"project": "example"},
+        ).get_json()
+        slugs = {r["slug"] for r in snap["main"]}
+        self.assertIn("real", slugs)
+        self.assertNotIn("legacy", slugs)
+
     def test_project_snapshot_groups(self) -> None:
         ensure_project(self.temp.root, "example")
         client, svc = make_app_client(self.temp.root, self.repo_root)
@@ -156,6 +187,13 @@ class DashboardHttpTests(unittest.TestCase):
         j = ov.get_json()
         self.assertEqual(j["quest_state"], "PrePlanning")
         self.assertEqual(j["quest"]["project"], "example")
+        self.assertEqual(j["project"], "example")
+        self.assertEqual(j["quest_type"], "main")
+        self.assertEqual(j["quest_number"], 0)
+        self.assertEqual(j["checkout_kind"], "worktree")
+        self.assertFalse(j["worktree_missing"])
+        self.assertIn("checkout_path", j)
+        self.assertIn("quest_dir_rel", j)
         self.assertIn("quest_dashboard_url", j)
         self.assertIn("project=example", j["quest_dashboard_url"])
         rs = client.get(
@@ -167,7 +205,11 @@ class DashboardHttpTests(unittest.TestCase):
             },
         )
         self.assertEqual(rs.status_code, 200)
-        self.assertEqual(rs.get_json()["quest_state"], "PrePlanning")
+        rs_body = rs.get_json()
+        self.assertEqual(rs_body["quest_state"], "PrePlanning")
+        self.assertEqual(rs_body["project"], "example")
+        self.assertEqual(rs_body["checkout_kind"], "worktree")
+        self.assertFalse(rs_body["worktree_missing"])
 
     def test_missing_query_params_400(self) -> None:
         client, _svc = make_app_client(self.temp.root, self.repo_root)
@@ -261,6 +303,96 @@ class DashboardHttpTests(unittest.TestCase):
             self.assertEqual(rs.status_code, 200)
             self.assertEqual(rs.get_json()["execution_overlay_status"], "running")
             self.assertIsNotNone(rs.get_json()["active_run"])
+
+
+class DashboardCheckoutResolutionTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.repo_root = Path(__file__).resolve().parents[1]
+        self.temp = TempRepo(self.repo_root)
+        self.addCleanup(self.temp.cleanup)
+
+    def test_resolve_dashboard_checkout_prefers_worktree(self) -> None:
+        ensure_project(self.temp.root, "example")
+        client, svc = make_app_client(self.temp.root, self.repo_root)
+        out = svc.create_quest(str(self.temp.root), "example", "main", "Wt")
+        qdir = quest_dir_on_checkout(self.temp.root, out)
+        meta = quest_fs.read_quest_meta(qdir)
+        checkout = resolve_dashboard_checkout(self.temp.root, meta)
+        self.assertEqual(checkout.checkout_kind, "worktree")
+        self.assertFalse(checkout.worktree_missing)
+        self.assertEqual(
+            Path(checkout.checkout_path),
+            quest_worktree_path(self.temp.root, meta).resolve(),
+        )
+
+    def test_resolve_dashboard_checkout_source_fallback_when_worktree_missing(
+        self,
+    ) -> None:
+        ensure_project(self.temp.root, "example")
+        client, svc = make_app_client(self.temp.root, self.repo_root)
+        out = svc.create_quest(str(self.temp.root), "example", "main", "Missing")
+        qdir = quest_dir_on_checkout(self.temp.root, out)
+        meta = quest_fs.read_quest_meta(qdir)
+        remove_partial_worktree(self.temp.root, meta)
+        checkout = resolve_dashboard_checkout(self.temp.root, meta)
+        self.assertEqual(checkout.checkout_kind, "source")
+        self.assertTrue(checkout.worktree_missing)
+        self.assertEqual(Path(checkout.checkout_path), self.temp.root.resolve())
+
+    def test_git_commits_use_worktree_when_present(self) -> None:
+        ensure_project(self.temp.root, "example")
+        client, svc = make_app_client(self.temp.root, self.repo_root)
+        out = svc.create_quest(str(self.temp.root), "example", "main", "Git")
+        qdir = quest_dir_on_checkout(self.temp.root, out)
+        meta = quest_fs.read_quest_meta(qdir)
+        checkout = resolve_dashboard_checkout(self.temp.root, meta)
+        marker = checkout.checkout_root / "worktree-marker.txt"
+        marker.write_text("wt\n", encoding="utf-8")
+        subprocess.run(
+            ["git", "add", "worktree-marker.txt"],
+            cwd=str(checkout.checkout_root),
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "commit", "-m", "worktree-only"],
+            cwd=str(checkout.checkout_root),
+            check=True,
+            capture_output=True,
+        )
+        r = client.get(
+            "/api/dashboard/git_commits",
+            query_string={
+                "project": "example",
+                "quest_type": "main",
+                "quest_number": str(out["quest_number"]),
+                "limit": "5",
+                "skip": "0",
+            },
+        )
+        self.assertEqual(r.status_code, 200)
+        titles = [c.get("title") or "" for c in r.get_json()["commits"]]
+        self.assertIn("worktree-only", titles)
+
+    def test_overview_reports_source_fallback_when_worktree_missing(self) -> None:
+        ensure_project(self.temp.root, "example")
+        client, svc = make_app_client(self.temp.root, self.repo_root)
+        out = svc.create_quest(str(self.temp.root), "example", "main", "NoWt")
+        qdir = quest_dir_on_checkout(self.temp.root, out)
+        meta = quest_fs.read_quest_meta(qdir)
+        remove_partial_worktree(self.temp.root, meta)
+        ov = client.get(
+            "/api/dashboard/quest_overview",
+            query_string={
+                "project": "example",
+                "quest_type": "main",
+                "quest_number": str(out["quest_number"]),
+            },
+        )
+        self.assertEqual(ov.status_code, 200)
+        body = ov.get_json()
+        self.assertEqual(body["checkout_kind"], "source")
+        self.assertTrue(body["worktree_missing"])
 
 
 class DashboardQuestStepHistoryTests(unittest.TestCase):

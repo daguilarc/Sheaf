@@ -1,35 +1,143 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  BuildDashboardSearchParams,
+  BuildQuestApiQuery,
+  BuildRunQuestPayload,
+  CanonicalQuestDashboardUrl,
   MergeRunBadge,
   RefreshScheduler,
-  ResolveRepositorySelection,
+  ResolveProjectSelection,
+  ShouldShowRunButton,
+  x_SERVICE_CONTROL_LABELS,
 } from "./dashboard-logic.mjs";
 
-test("ResolveRepositorySelection prefers valid query over stored", () => {
-  const tracked = ["/a", "/b"];
-  const r = ResolveRepositorySelection("/b", "/a", "/a", tracked);
-  assert.equal(r.repoPath, "/b");
-  assert.equal(r.invalidQueryPath, null);
+test("ResolveProjectSelection prefers valid query over stored", () => {
+  const listed = ["alpha", "beta"];
+  const r = ResolveProjectSelection("beta", "alpha", "alpha", listed);
+  assert.equal(r.project, "beta");
+  assert.equal(r.invalidQueryProject, null);
 });
 
-test("ResolveRepositorySelection falls back when query untracked", () => {
-  const tracked = ["/a"];
-  const r = ResolveRepositorySelection("/nope", "/a", null, tracked);
-  assert.equal(r.repoPath, "/a");
-  assert.equal(r.invalidQueryPath, "/nope");
+test("ResolveProjectSelection falls back when query not listed", () => {
+  const listed = ["alpha"];
+  const r = ResolveProjectSelection("nope", "alpha", null, listed);
+  assert.equal(r.project, "alpha");
+  assert.equal(r.invalidQueryProject, "nope");
 });
 
-test("ResolveRepositorySelection uses default when query missing", () => {
-  const tracked = ["/x", "/y"];
-  const r = ResolveRepositorySelection(null, null, "/y", tracked);
-  assert.equal(r.repoPath, "/y");
+test("ResolveProjectSelection uses default when query missing", () => {
+  const listed = ["x", "y"];
+  const r = ResolveProjectSelection(null, null, "y", listed);
+  assert.equal(r.project, "y");
 });
 
-test("ResolveRepositorySelection uses first tracked as last resort", () => {
-  const tracked = ["/first", "/second"];
-  const r = ResolveRepositorySelection(null, null, null, tracked);
-  assert.equal(r.repoPath, "/first");
+test("ResolveProjectSelection uses first listed as last resort", () => {
+  const listed = ["first", "second"];
+  const r = ResolveProjectSelection(null, null, null, listed);
+  assert.equal(r.project, "first");
+});
+
+test("BuildQuestApiQuery includes project identity", () => {
+  const q = BuildQuestApiQuery("web", "main", 4);
+  assert.deepEqual(q, {
+    project: "web",
+    quest_type: "main",
+    quest_number: 4,
+  });
+});
+
+test("BuildDashboardSearchParams encodes project and quest", () => {
+  const p = BuildDashboardSearchParams({
+    project: "web",
+    questType: "main",
+    questNumber: 2,
+    page: "overview",
+  });
+  assert.equal(p.get("project"), "web");
+  assert.equal(p.get("quest_type"), "main");
+  assert.equal(p.get("quest_number"), "2");
+  assert.equal(p.get("page"), "overview");
+});
+
+test("CanonicalQuestDashboardUrl uses project query params", () => {
+  const url = CanonicalQuestDashboardUrl("/dashboard", "web", "side", 7);
+  assert.ok(url.includes("project=web"));
+  assert.ok(url.includes("quest_type=side"));
+  assert.ok(url.includes("quest_number=7"));
+});
+
+test("BuildRunQuestPayload includes project identity", () => {
+  const body = BuildRunQuestPayload("web", "main", 1, 3);
+  assert.deepEqual(body, {
+    project: "web",
+    quest_type: "main",
+    quest_number: 1,
+    max_steps: 3,
+  });
+});
+
+test("ShouldShowRunButton true for open idle quest with worktree", () => {
+  assert.equal(
+    ShouldShowRunButton(
+      {
+        quest_state: "ExecuteSlice",
+        worktree_missing: false,
+        execution_overlay_status: "none",
+      },
+      { execution_overlay_status: "none", active_run: null }
+    ),
+    true
+  );
+});
+
+test("ShouldShowRunButton false when completed", () => {
+  assert.equal(
+    ShouldShowRunButton({ quest_state: "Completed", worktree_missing: false }, null),
+    false
+  );
+});
+
+test("ShouldShowRunButton false when running", () => {
+  assert.equal(
+    ShouldShowRunButton(
+      {
+        quest_state: "ExecuteSlice",
+        worktree_missing: false,
+        execution_overlay_status: "running",
+      },
+      { active_run: { run_id: "r1" } }
+    ),
+    false
+  );
+});
+
+test("ShouldShowRunButton false for human intervention", () => {
+  assert.equal(
+    ShouldShowRunButton(
+      {
+        quest_state: "ExecuteSlice",
+        worktree_missing: false,
+        execution_overlay_status: "human_intervention",
+      },
+      null
+    ),
+    false
+  );
+});
+
+test("ShouldShowRunButton false when worktree missing", () => {
+  assert.equal(
+    ShouldShowRunButton(
+      {
+        quest_state: "ExecuteSlice",
+        worktree_missing: true,
+        execution_overlay_status: "none",
+      },
+      null
+    ),
+    false
+  );
 });
 
 test("MergeRunBadge human intervention wins", () => {
@@ -46,6 +154,23 @@ test("MergeRunBadge running when active_run set", () => {
     { active_run: { run_id: "r1" } }
   );
   assert.equal(b.variant, "running");
+});
+
+test("service control labels are not part of dashboard navigation copy", () => {
+  const navCopy = [
+    "Overview",
+    "Human intervention",
+    "Diffs",
+    "Agents",
+    "Physical plan issues",
+    "Quests",
+    "Pages",
+    "Project",
+    "Run quest",
+  ].join(" ");
+  for (const label of x_SERVICE_CONTROL_LABELS) {
+    assert.ok(!navCopy.includes(label), `unexpected service label: ${label}`);
+  }
 });
 
 test("RefreshScheduler does not tick while hidden", async () => {
