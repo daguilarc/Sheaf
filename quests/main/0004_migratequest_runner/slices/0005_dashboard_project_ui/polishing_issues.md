@@ -2,10 +2,10 @@
 
 ## Issue PR-0001
 
-- status: open
+- status: completed
 - owner_role: polisher_reviewer
 - created_at: 2026-06-07T03:12:00Z
-- updated_at: 2026-06-07T03:12:00Z
+- updated_at: 2026-06-07T03:15:00Z
 - title: resolve_dashboard_checkout crashes when worktree exists but quest dir is not found inside it
 - details: |
   In `projects/quest-runner/src/quest_runner_service/dashboard_data.py`,
@@ -50,14 +50,23 @@
   a test exercising the worktree-exists-but-quest-dir-missing path or a clear,
   reviewed rationale (in the implementer's response) explaining why the branch is
   unreachable.
-- resolution_notes: none
+- resolution_notes: |
+  Verified fixed. `resolve_dashboard_checkout` (dashboard_data.py:127-155) now
+  computes `relative_to(checkout_root)` only inside the `if worktree_qdir is not
+  None` branch and returns from there; when `find_quest_dir` returns `None` for
+  the worktree, control falls through to the source-checkout return (lines
+  147-155), so the `ValueError` is no longer reachable. Test
+  `test_resolve_dashboard_checkout_source_fallback_when_worktree_quest_missing`
+  (test_dashboard_api.py:342) patches `find_quest_dir` to return `None` for the
+  worktree root and asserts graceful source fallback (no exception; correct
+  `checkout_kind="source"`, `worktree_missing=True`, and `quest_dir_rel`).
 
 ## Issue PR-0002
 
-- status: open
+- status: completed
 - owner_role: polisher_reviewer
 - created_at: 2026-06-07T03:12:00Z
-- updated_at: 2026-06-07T03:12:00Z
+- updated_at: 2026-06-07T03:15:00Z
 - title: Dead/unwired JS helpers introduced in dashboard-logic.mjs
 - details: |
   This slice adds three exported helpers in
@@ -90,4 +99,10 @@
   exports are actually exercised by production code. The implementer should also
   justify, in the response file, retaining any deprecated shim if there is a
   concrete consumer that needs it.
-- resolution_notes: none
+- resolution_notes: |
+  Verified fixed. A project-wide grep for `StorageRepoKey`,
+  `ResolveRepositorySelection`, and `CanonicalQuestDashboardUrl` under
+  `projects/quest-runner` returns no matches: all three exports were removed from
+  `dashboard-logic.mjs`, and the orphan import plus unit test for
+  `CanonicalQuestDashboardUrl` were removed from `dashboard-logic.test.mjs`. No
+  dead/unwired helpers remain.
