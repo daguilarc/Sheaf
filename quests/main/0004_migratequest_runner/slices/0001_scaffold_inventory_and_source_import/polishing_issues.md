@@ -2,10 +2,10 @@
 
 ## Issue PI-0001
 
-- status: open
+- status: completed
 - owner_role: polisher_reviewer
 - created_at: 2026-06-06T19:35:00Z
-- updated_at: 2026-06-06T19:35:00Z
+- updated_at: 2026-06-07T03:10:00Z
 - title: Compiled Python bytecode (__pycache__/*.pyc) committed into the repo
 - details: |
   Commit 1b0b5f1 adds 33 tracked `.pyc` files under
@@ -35,12 +35,21 @@
   - `projects/quest-runner/.gitignore` (or the root `.gitignore`) ignores
     `__pycache__/` and `*.pyc` so the artifacts cannot be re-added.
 
+  Verification 2026-06-07: Both criteria now met in the committed state.
+  `git ls-files projects/quest-runner | grep -E 'pyc|__pycache__'` returns 0, the
+  working tree is clean (only the reviewer log is untracked) so HEAD carries no
+  bytecode, and `projects/quest-runner/.gitignore` now contains `__pycache__/`
+  and `*.pyc`. Note: `polishing_issue_responses.md` reported PI-0001 as
+  `NotFixed` due to an inability to write `.git/index` in the polisher's sandbox;
+  that limitation was subsequently overcome (the tracked bytecode deletions were
+  committed), so the end state is fully resolved. Closing on observed repo state.
+
 ## Issue PI-0002
 
-- status: open
+- status: completed
 - owner_role: polisher_reviewer
 - created_at: 2026-06-06T19:35:00Z
-- updated_at: 2026-06-06T19:35:00Z
+- updated_at: 2026-06-07T03:10:00Z
 - title: POST /exit is non-functional under the pinned Flask 3.x
 - details: |
   `projects/quest-runner/src/quest_runner_service/__main__.py:26-32` implements
@@ -71,3 +80,11 @@
     endpoint is shipped.
   - The behavior is verifiable without depending on a Werkzeug API that does not
     exist in the pinned version.
+
+  Verification 2026-06-07: Resolved. `__main__.py` now schedules a daemon
+  `threading.Timer` that calls `os._exit(0)` and returns
+  `{"status": "exiting"}` (HTTP 200) with no reference to the removed
+  `werkzeug.server.shutdown` hook, so `/exit` works under the pinned Flask 3.x.
+  `tests/test_service_entrypoint.py` covers `/health`, the `/exit` response
+  shape, and the daemon-timer scheduling, and it is wired into the Makefile
+  `TEST_MODULES`. Both criteria met.
