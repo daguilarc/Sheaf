@@ -2,10 +2,10 @@
 
 ## Issue QP-0001
 
-- status: open
+- status: completed
 - owner_role: physical_plan_reviewer
 - created_at: 2026-06-07T00:00:00Z
-- updated_at: 2026-06-07T00:00:00Z
+- updated_at: 2026-06-07T16:00:00Z
 - title: No plan to gitignore Swift/Xcode build artifacts; conflicts with clean-tree runner requirement
 - details: |
     None of the six slice plans add or update `.gitignore` to exclude the
@@ -47,3 +47,19 @@
     `swift build`, `swift test`, and `xcodebuild` leaves the working tree
     clean. The issue stays open until a plan keeps these outputs out of source
     control *during* implementation, not only removed at the end.
+
+    Resolved 2026-06-07: Verified against the revised plans. Slice 1
+    Implementation Notes now create `projects/dictator/.gitignore` before any
+    SwiftPM/Xcode validation, with patterns covering `.build/`,
+    `.swiftpm-module-cache/`, `.swiftpm/`, `DerivedData/`, `build/`, `*.app`,
+    `*.appex`, `*.xctest`, `*.swiftmodule/.swiftdoc/.swiftsourceinfo/.abi.json`,
+    object/dependency files, `*.hmap`, and `XCBuildData`. Slice 5 lists the
+    project-local `.gitignore` as a file to update and requires verifying/
+    extending Xcode-output coverage before `xcodebuild`. Slice 6 documents that
+    this ignore coverage (created in slice 1, extended in slice 5) prevents
+    artifacts from dirtying the worktree during validation, separate from
+    end-of-quest cleanup. All three slices add `git check-ignore` and
+    `git status --short projects/dictator` validation, and the
+    generated-artifact static checks now use `git ls-files` so locally present
+    but ignored build outputs are not falsely treated as migrated source. This
+    fully addresses the clean-tree/accidental-commit risk during slices 1-5.
