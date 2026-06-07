@@ -1,16 +1,26 @@
 # Dictator
 
-Dictator is the project home for the dictator migration.
+Dictator is the Sheaf project home for the migrated dictation service, core library,
+prompts, and contracts.
 
-This project currently contains the required repository structure. Implementation,
-tests, and detailed current-state documentation will be added as the migration work
-lands.
+## Build and test
+
+From this directory:
+
+- `make build` — compile the Swift package (`DictatorCore` + `DictatorService`)
+- `make test-core` — run `DictatorCore` unit tests
+- `make test` — run all migrated tests
+- `make run` — start the `DictatorService` executable (endpoint wiring completes in slice 2)
+- `make clean` — remove local SwiftPM build artifacts
 
 ## Layout
 
-- `src/` - implementation code
-- `tests/` - automated tests and fixtures
-- `quests/` - planned or active work
-- `docs/` - current-state documentation
+- `Package.swift` — Swift package root (sources under `src/`, tests under `tests/`)
+- `src/Sources/` — `DictatorCore`, `CWhisper`, and `DictatorService` targets
+- `src/prompts/` — refinement and system prompt catalogs
+- `src/contracts/` — API contract source material
+- `tests/` — `DictatorCoreTests`, `DictatorServiceTests`, and fixtures
+- `quests/` — migration quest artifacts
+- `docs/` — current-state documentation
 
 See [docs/README.md](docs/README.md) for the project documentation index.

@@ -1,0 +1,129 @@
+import Foundation
+
+public enum TranscriptionDecodeMode: String, Codable, Sendable {
+    case standard
+    case talonLite = "talon_lite"
+}
+
+public struct TranscribeRequest: Codable, Sendable {
+    public let audio_b64: String
+    public let sample_rate: Int
+    public let locale: String
+    public let session_id: String
+    public let decode_mode: TranscriptionDecodeMode
+
+    public init(
+        audio_b64: String,
+        sample_rate: Int,
+        locale: String,
+        session_id: String,
+        decode_mode: TranscriptionDecodeMode = .standard
+    ) {
+        self.audio_b64 = audio_b64
+        self.sample_rate = sample_rate
+        self.locale = locale
+        self.session_id = session_id
+        self.decode_mode = decode_mode
+    }
+}
+
+public struct TranscribeSegment: Codable, Sendable {
+    public let start_ms: Int
+    public let end_ms: Int
+    public let text: String
+
+    public init(start_ms: Int, end_ms: Int, text: String) {
+        self.start_ms = start_ms
+        self.end_ms = end_ms
+        self.text = text
+    }
+}
+
+public struct TranscribeResponse: Codable, Sendable {
+    public let raw_transcript: String
+    public let segments: [TranscribeSegment]
+    public let confidence: Double
+    public let duration_ms: Int
+
+    public init(raw_transcript: String, segments: [TranscribeSegment], confidence: Double, duration_ms: Int) {
+        self.raw_transcript = raw_transcript
+        self.segments = segments
+        self.confidence = confidence
+        self.duration_ms = duration_ms
+    }
+}
+
+public struct RefineRequest: Codable, Sendable {
+    public let raw_transcript: String
+    public let optional_context: [String: String]?
+    public let style_prefs: [String: String]?
+
+    public init(raw_transcript: String, optional_context: [String: String]? = nil, style_prefs: [String: String]? = nil) {
+        self.raw_transcript = raw_transcript
+        self.optional_context = optional_context
+        self.style_prefs = style_prefs
+    }
+}
+
+public struct RefineResponse: Codable, Sendable {
+    public let revised_text: String
+    public let edit_summary: String
+    public let uncertainty_flags: [String]
+
+    public init(revised_text: String, edit_summary: String, uncertainty_flags: [String]) {
+        self.revised_text = revised_text
+        self.edit_summary = edit_summary
+        self.uncertainty_flags = uncertainty_flags
+    }
+}
+
+public struct DictateRequest: Codable, Sendable {
+    public let audio_b64: String
+    public let sample_rate: Int
+    public let locale: String
+    public let session_id: String
+    public let optional_context: [String: String]?
+    public let style_prefs: [String: String]?
+
+    public init(
+        audio_b64: String,
+        sample_rate: Int,
+        locale: String,
+        session_id: String,
+        optional_context: [String: String]? = nil,
+        style_prefs: [String: String]? = nil
+    ) {
+        self.audio_b64 = audio_b64
+        self.sample_rate = sample_rate
+        self.locale = locale
+        self.session_id = session_id
+        self.optional_context = optional_context
+        self.style_prefs = style_prefs
+    }
+}
+
+public struct DictateResponse: Codable, Sendable {
+    public let raw_transcript: String
+    public let revised_text: String
+    public let edit_summary: String
+    public let uncertainty_flags: [String]
+
+    public init(raw_transcript: String, revised_text: String, edit_summary: String, uncertainty_flags: [String]) {
+        self.raw_transcript = raw_transcript
+        self.revised_text = revised_text
+        self.edit_summary = edit_summary
+        self.uncertainty_flags = uncertainty_flags
+    }
+}
+
+public struct DictateCallResult: Sendable {
+    public let response: DictateResponse
+    public let transcribeMs: Int
+    public let refineMs: Int
+
+    public init(response: DictateResponse, transcribeMs: Int, refineMs: Int) {
+        self.response = response
+        self.transcribeMs = transcribeMs
+        self.refineMs = refineMs
+    }
+}
