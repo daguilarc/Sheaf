@@ -196,13 +196,31 @@ struct DictatorServiceMain
             }
         )
 
+        let activityTracker = DictationActivityTracker()
+        let endpointDescription = "http://127.0.0.1:\(endpoint.port)"
+        let webContext = WebServiceContext(
+            repoRoot: repoRoot,
+            runtimeConfigProvider: runtimeConfigProvider,
+            secretStore: secretStore,
+            interactionStore: interactionStore,
+            lifecycle: lifecycle,
+            activityTracker: activityTracker,
+            endpointDescription: endpointDescription,
+            logPath: repoRoot.appendingPathComponent("logs/dictator", isDirectory: true).path,
+            dataPath: dataDirectoryURL.path
+        )
+        let webAPIService = WebAPIService(context: webContext)
+        await webAPIService.prepare()
+
         let server = DictationHTTPServer(
             host: endpoint.host,
             port: endpoint.port,
             lifecycle: lifecycle,
             coreClient: coreClient,
             onSuccessRecord: onSuccessRecord,
-            onFailureRecord: onFailureRecord
+            onFailureRecord: onFailureRecord,
+            webAPIService: webAPIService,
+            activityTracker: activityTracker
         )
         shutdown.SetServer(server)
 

@@ -180,6 +180,16 @@ actor InteractionHistoryStore {
         await notifyChanged()
     }
 
+    func listInteractionsNewestFirst() async -> [DictationInteraction] {
+        await waitUntilReady()
+        return buffer.snapshot().reversed()
+    }
+
+    func interaction(id: UUID) async -> DictationInteraction? {
+        await waitUntilReady()
+        return buffer.snapshot().first { $0.id == id }
+    }
+
     private func loadInitialInteractions() async {
         do {
             let loaded = try persistence.loadRecent(maxBytes: initialLoadBytes)

@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dictator</title>
+  <link rel="stylesheet" href="/assets/styles.css">
+</head>
+<body>
+  <div class="page">
+    <header class="header">
+      <h1>Dictator</h1>
+      <p class="subtitle">Operational dashboard — dictation service on port 9003</p>
+    </header>
+
+    <section id="status-strip" class="status-strip card" aria-live="polite">
+      <div class="status-loading">Loading service status…</div>
+    </section>
+
+    <div class="grid">
+      <section class="card" id="config-panel">
+        <div class="card-header">
+          <h2>Runtime configuration</h2>
+          <div class="card-actions">
+            <button type="button" id="config-reset-btn" class="btn btn-secondary">Reset defaults</button>
+            <button type="button" id="config-save-btn" class="btn btn-primary">Save changes</button>
+          </div>
+        </div>
+        <div id="config-error" class="inline-error hidden" role="alert"></div>
+        <form id="config-form" class="config-form"></form>
+      </section>
+
+      <section class="card" id="prompt-panel">
+        <div class="card-header">
+          <h2>System prompts</h2>
+        </div>
+        <div id="prompt-error" class="inline-error hidden" role="alert"></div>
+        <div class="prompt-layout">
+          <div class="prompt-browser">
+            <div class="prompt-path" id="prompt-current-dir">/</div>
+            <ul id="prompt-entries" class="prompt-entries"></ul>
+          </div>
+          <div class="prompt-detail">
+            <div class="prompt-selection">
+              <label>Assign previewed prompt to
+                <select id="prompt-target">
+                  <option value="primary">Primary</option>
+                  <option value="auxiliary1">Auxiliary 1</option>
+                  <option value="auxiliary2">Auxiliary 2</option>
+                </select>
+              </label>
+              <button type="button" id="prompt-select-btn" class="btn btn-primary">Select prompt</button>
+            </div>
+            <pre id="prompt-preview" class="prompt-preview">Select a prompt file to preview.</pre>
+          </div>
+        </div>
+      </section>
+
+      <section class="card" id="history-panel">
+        <div class="card-header">
+          <h2>Interaction history</h2>
+        </div>
+        <div class="history-layout">
+          <ul id="interaction-list" class="interaction-list"></ul>
+          <div id="interaction-detail" class="interaction-detail">
+            <p class="muted">Select an interaction to inspect details.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="card" id="dictate-panel">
+        <div class="card-header">
+          <h2>Dictation API workflow</h2>
+        </div>
+        <div id="dictate-endpoint" class="endpoint-box"></div>
+        <p class="muted">Upload a mono WAV fixture to verify <code>POST /v1/dictate-audio</code> locally.</p>
+        <form id="dictate-form" class="dictate-form">
+          <label>WAV file <input type="file" id="dictate-file" accept="audio/wav,.wav"></label>
+          <label>Sample rate <input type="number" id="dictate-sample-rate" value="16000" min="8000" step="1000"></label>
+          <label>Locale <input type="text" id="dictate-locale" value="en-US"></label>
+          <label>Session ID <input type="text" id="dictate-session" value="web-ui-test"></label>
+          <button type="submit" class="btn btn-primary">Submit dictation</button>
+        </form>
+        <pre id="dictate-result" class="dictate-result"></pre>
+      </section>
+    </div>
+  </div>
+  <script src="/assets/app.js"></script>
+</body>
+</html>

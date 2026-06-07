@@ -37,6 +37,8 @@ final class DictationHTTPServer
     private let coreClient: any DictatorCoreClient
     private let onSuccessRecord: (@Sendable (DictationHTTPSuccessRecord) async -> Void)?
     private let onFailureRecord: (@Sendable (DictationHTTPFailureRecord) async -> Void)?
+    private let webAPIService: WebAPIService?
+    private let activityTracker: DictationActivityTracker?
     private let group: MultiThreadedEventLoopGroup
     private var channel: Channel?
 
@@ -47,7 +49,9 @@ final class DictationHTTPServer
         lifecycle: ServiceLifecycle,
         coreClient: any DictatorCoreClient,
         onSuccessRecord: (@Sendable (DictationHTTPSuccessRecord) async -> Void)? = nil,
-        onFailureRecord: (@Sendable (DictationHTTPFailureRecord) async -> Void)? = nil
+        onFailureRecord: (@Sendable (DictationHTTPFailureRecord) async -> Void)? = nil,
+        webAPIService: WebAPIService? = nil,
+        activityTracker: DictationActivityTracker? = nil
     )
     {
         self.host = host
@@ -57,6 +61,8 @@ final class DictationHTTPServer
         self.coreClient = coreClient
         self.onSuccessRecord = onSuccessRecord
         self.onFailureRecord = onFailureRecord
+        self.webAPIService = webAPIService
+        self.activityTracker = activityTracker
         self.group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
     }
 
@@ -71,7 +77,7 @@ final class DictationHTTPServer
             .serverChannelOption(ChannelOptions.backlog, value: 256)
             .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
             .childChannelInitializer
-            { [lifecycle, coreClient, maxBodyBytes, onSuccessRecord, onFailureRecord] channel in
+            { [lifecycle, coreClient, maxBodyBytes, onSuccessRecord, onFailureRecord, webAPIService, activityTracker] channel in
                 channel.pipeline.configureHTTPServerPipeline().flatMap
                 {
                     channel.pipeline.addHandler(
@@ -80,7 +86,9 @@ final class DictationHTTPServer
                             coreClient: coreClient,
                             maxBodyBytes: maxBodyBytes,
                             onSuccessRecord: onSuccessRecord,
-                            onFailureRecord: onFailureRecord
+                            onFailureRecord: onFailureRecord,
+                            webAPIService: webAPIService,
+                            activityTracker: activityTracker
                         )
                     )
                 }
@@ -331,6 +339,8 @@ private final class DictationHTTPHandler: ChannelInboundHandler
     private let maxBodyBytes: Int
     private let onSuccessRecord: (@Sendable (DictationHTTPSuccessRecord) async -> Void)?
     private let onFailureRecord: (@Sendable (DictationHTTPFailureRecord) async -> Void)?
+    private let webAPIService: WebAPIService?
+    private let activityTracker: DictationActivityTracker?
     private let encoder = JSONEncoder()
     private var pendingRequest: PendingRequest?
     private var activeTask: Task<Void, Never>?
@@ -340,7 +350,9 @@ private final class DictationHTTPHandler: ChannelInboundHandler
         coreClient: any DictatorCoreClient,
         maxBodyBytes: Int,
         onSuccessRecord: (@Sendable (DictationHTTPSuccessRecord) async -> Void)?,
-        onFailureRecord: (@Sendable (DictationHTTPFailureRecord) async -> Void)?
+        onFailureRecord: (@Sendable (DictationHTTPFailureRecord) async -> Void)?,
+        webAPIService: WebAPIService?,
+        activityTracker: DictationActivityTracker?
     )
     {
         self.lifecycle = lifecycle
@@ -348,6 +360,8 @@ private final class DictationHTTPHandler: ChannelInboundHandler
         self.maxBodyBytes = maxBodyBytes
         self.onSuccessRecord = onSuccessRecord
         self.onFailureRecord = onFailureRecord
+        self.webAPIService = webAPIService
+        self.activityTracker = activityTracker
     }
 
     func channelRead(context: ChannelHandlerContext, data: NIOAny)
@@ -407,6 +421,19 @@ private final class DictationHTTPHandler: ChannelInboundHandler
         let requestStart = Date()
         do
         {
+            if let webAPIService,
+               let webRoute = try WebRouter.route(for: pending.head)
+            {
+                handleWebRoute(
+                    webRoute,
+                    pending: pending,
+                    context: context,
+                    webAPIService: webAPIService,
+                    requestID: requestID
+                )
+                return
+            }
+
             let route = try DictationHTTPRouter.route(for: pending.head)
             switch route
             {
@@ -422,6 +449,16 @@ private final class DictationHTTPHandler: ChannelInboundHandler
                     requestStart: requestStart
                 )
             }
+        }
+        catch let webError as WebRouterError
+        {
+            TraceLogger.log("[\(requestID)] web request rejected: \(webError.status.code) \(webError.message)")
+            writeJSONResponse(
+                DictationHTTPJSON.ErrorResponse(error: webError.message),
+                status: webError.status,
+                context: context,
+                closeAfterResponse: !pending.head.isKeepAlive
+            )
         }
         catch let requestError as DictationHTTPRequestError
         {
@@ -440,6 +477,102 @@ private final class DictationHTTPHandler: ChannelInboundHandler
                 context: context,
                 closeAfterResponse: !pending.head.isKeepAlive
             )
+        }
+    }
+
+    private func handleWebRoute(
+        _ route: WebRoute,
+        pending: PendingRequest,
+        context: ChannelHandlerContext,
+        webAPIService: WebAPIService,
+        requestID: String
+    )
+    {
+        var body = pending.body
+        let bodyBytes = body.readBytes(length: body.readableBytes) ?? []
+        let bodyData = Data(bodyBytes)
+
+        activeTask = Task
+        { [weak self, weak context] in
+            guard let self, let context else
+            {
+                return
+            }
+
+            do
+            {
+                let result = try await webAPIService.handle(route: route, body: bodyData)
+                context.eventLoop.execute
+                {
+                    switch result
+                    {
+                    case let .jsonPayload(payload):
+                        self.writeJSONResponse(
+                            payload,
+                            status: .ok,
+                            context: context,
+                            closeAfterResponse: !pending.head.isKeepAlive
+                        )
+                    case let .bytes(contentType, data):
+                        self.writeBytesResponse(
+                            data,
+                            contentType: contentType,
+                            status: .ok,
+                            context: context,
+                            closeAfterResponse: !pending.head.isKeepAlive
+                        )
+                    }
+                }
+            }
+            catch let webError as WebRouterError
+            {
+                context.eventLoop.execute
+                {
+                    self.writeJSONResponse(
+                        DictationHTTPJSON.ErrorResponse(error: webError.message),
+                        status: webError.status,
+                        context: context,
+                        closeAfterResponse: !pending.head.isKeepAlive
+                    )
+                }
+            }
+            catch let dictatorError as DictatorError
+            {
+                context.eventLoop.execute
+                {
+                    self.writeJSONResponse(
+                        DictationHTTPJSON.ErrorResponse(error: dictatorError.localizedDescription),
+                        status: .badRequest,
+                        context: context,
+                        closeAfterResponse: !pending.head.isKeepAlive
+                    )
+                }
+            }
+            catch StaticAssetError.notFound
+            {
+                context.eventLoop.execute
+                {
+                    self.writeJSONResponse(
+                        DictationHTTPJSON.ErrorResponse(error: "Not found."),
+                        status: .notFound,
+                        context: context,
+                        closeAfterResponse: !pending.head.isKeepAlive
+                    )
+                }
+            }
+            catch
+            {
+                TraceLogger.log("[\(requestID)] web route failed: \(error)")
+                context.eventLoop.execute
+                {
+                    self.writeJSONResponse(
+                        DictationHTTPJSON.ErrorResponse(error: error.localizedDescription),
+                        status: .internalServerError,
+                        context: context,
+                        closeAfterResponse: !pending.head.isKeepAlive
+                    )
+                }
+            }
         }
     }
 
@@ -543,6 +676,20 @@ private final class DictationHTTPHandler: ChannelInboundHandler
             guard let self, let context else
             {
                 return
+            }
+            if let activityTracker = self.activityTracker
+            {
+                await activityTracker.beginProcessing()
+            }
+            defer
+            {
+                if let activityTracker = self.activityTracker
+                {
+                    Task
+                    {
+                        await activityTracker.endProcessing()
+                    }
+                }
             }
             do
             {
@@ -671,6 +818,36 @@ private final class DictationHTTPHandler: ChannelInboundHandler
             context: context,
             closeAfterResponse: closeAfterResponse
         )
+    }
+
+    private func writeBytesResponse(
+        _ data: Data,
+        contentType: String,
+        status: HTTPResponseStatus,
+        context: ChannelHandlerContext,
+        closeAfterResponse: Bool,
+        onComplete: (() -> Void)? = nil
+    )
+    {
+        var buffer = context.channel.allocator.buffer(capacity: data.count)
+        buffer.writeBytes(data)
+
+        var headers = HTTPHeaders()
+        headers.add(name: "Content-Type", value: contentType)
+        headers.add(name: "Content-Length", value: "\(data.count)")
+        headers.add(name: "Connection", value: closeAfterResponse ? "close" : "keep-alive")
+
+        let head = HTTPResponseHead(version: .http1_1, status: status, headers: headers)
+        context.write(wrapOutboundOut(.head(head)), promise: nil)
+        context.write(wrapOutboundOut(.body(.byteBuffer(buffer))), promise: nil)
+        context.writeAndFlush(wrapOutboundOut(.end(nil))).whenComplete
+        { _ in
+            onComplete?()
+            if closeAfterResponse
+            {
+                context.close(promise: nil)
+            }
+        }
     }
 
     private func writeJSONResponse<T: Encodable>(

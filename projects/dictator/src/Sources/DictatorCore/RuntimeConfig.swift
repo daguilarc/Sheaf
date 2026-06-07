@@ -528,6 +528,48 @@ public actor RuntimeConfigProvider {
         runtimeConfig = loaded
     }
 
+    public func persistCurrentToDisk() throws {
+        do {
+            try store.save(runtimeConfig)
+        } catch {
+            throw DictatorError.configUpdateFailed("failed to persist runtime config: \(error)")
+        }
+    }
+
+    @discardableResult
+    public func restoreDefaultsToDisk(now: Date = Date()) throws -> RuntimeConfigFile {
+        let restored = RuntimeConfigFile(
+            version: defaultConfig.version,
+            cloudModel: defaultConfig.cloudModel,
+            localModel: defaultConfig.localModel,
+            systemPrompt: defaultConfig.systemPrompt,
+            auxiliarySystemPrompt1: defaultConfig.auxiliarySystemPrompt1,
+            auxiliarySystemPrompt2: defaultConfig.auxiliarySystemPrompt2,
+            interactionsBufferBytes: defaultConfig.interactionsBufferBytes,
+            useCloud: defaultConfig.useCloud,
+            fallbackMode: defaultConfig.fallbackMode,
+            ollamaHost: defaultConfig.ollamaHost,
+            sttModelPath: defaultConfig.sttModelPath,
+            sttLanguage: defaultConfig.sttLanguage,
+            ollamaBinPath: defaultConfig.ollamaBinPath,
+            dataDir: defaultConfig.dataDir,
+            systemPromptsDir: defaultConfig.systemPromptsDir,
+            dictatorServerHost: defaultConfig.dictatorServerHost,
+            dictatorServerPort: defaultConfig.dictatorServerPort,
+            dictatorServerEnabled: defaultConfig.dictatorServerEnabled,
+            updatedAt: RuntimeConfigFile.timestamp(from: now)
+        )
+
+        do {
+            try store.save(restored)
+        } catch {
+            throw DictatorError.configUpdateFailed("failed to restore runtime config defaults: \(error)")
+        }
+
+        runtimeConfig = restored
+        return restored
+    }
+
     @discardableResult
     public func loadFromStoreIntoMemory(_ sourceStore: RuntimeConfigStore) throws -> RuntimeConfigFile {
         guard let loaded = try sourceStore.load() else {
