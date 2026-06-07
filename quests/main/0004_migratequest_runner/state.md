@@ -1,14 +1,14 @@
 # State
 
-- global_step: 31
+- global_step: 32
 - machine_name: quest
 - machine_path: quests/main/0004_migratequest_runner
-- state: PrepareNextSlice
-- updated_at: 2026-06-07T03:15:33Z
+- state: ExecuteSlice
+- updated_at: 2026-06-07T03:15:34Z
 
 ## Tags
 
-- active_slice: 0005_dashboard_project_ui
+- active_slice: 0006_validation_docs_and_cleanup
 - quest_number: 4
 - quest_slug: migratequest_runner
 - quest_type: main
