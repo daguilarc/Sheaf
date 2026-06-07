@@ -30,7 +30,13 @@ Likely affected files:
 - `projects/quest-runner/Makefile`
 - Root `Makefile`
 - `config/services.json`
-- REST/dashboard tests migrated from `test_dashboard_api.py`, `test_dashboard_shell.py`, `test_dashboard_git.py`, `test_dashboard_slice.py`, and `test_quest_service.py`
+- REST/dashboard tests under names such as `test_quest_service_api.py`, `test_dashboard_api.py`, `test_dashboard_shell.py`, `test_dashboard_git.py`, and `test_dashboard_slice.py`, migrated from the corresponding external tests.
+
+Slice-owned tests:
+
+- Own REST route tests from external `test_quest_service.py` that need `api.create_app`, including `/create_quest` and `/run_quest` request validation and response status behavior.
+- Own Python dashboard API, shell/static, git, and slice payload tests from `test_dashboard_api.py`, `test_dashboard_shell.py`, `test_dashboard_git.py`, and `test_dashboard_slice.py` after replacing repository/service-manager fixtures with project-local fixtures.
+- Do not own dashboard asset JS rendering/action tests; those are slice 5.
 
 ## Existing APIs To Reuse As-Is
 

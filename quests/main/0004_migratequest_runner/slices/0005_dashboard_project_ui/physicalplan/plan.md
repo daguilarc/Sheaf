@@ -30,6 +30,12 @@ Likely affected files:
 - JS tests migrated from `dashboard-logic.test.mjs` and `dashboard-pages-utils.test.mjs`
 - Python dashboard tests covering payload shape and checkout resolution
 
+Slice-owned tests:
+
+- Own dashboard asset JS tests from external `dashboard-logic.test.mjs` and `dashboard-pages-utils.test.mjs`, adapted for project identity, run-button behavior, and absence of service controls.
+- Own narrowly focused Python checkout-resolution helper tests introduced by this slice, especially cases that decide whether UI-facing payloads report `checkout_kind`, `checkout_path`, and `worktree_missing` correctly.
+- Do not own REST route or dashboard shell/static tests; those are slice 4.
+
 ## Existing APIs To Reuse As-Is
 
 - Reuse the existing dashboard card/overview/detail rendering structure where it still maps to quests.

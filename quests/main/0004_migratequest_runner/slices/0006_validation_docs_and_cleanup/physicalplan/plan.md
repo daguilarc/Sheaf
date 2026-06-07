@@ -34,7 +34,8 @@ Likely affected files:
 ## Existing APIs To Reuse As-Is
 
 - Reuse the final public REST APIs from slice 4 and final UI behavior from slice 5 in integration tests.
-- Reuse migrated source docs from `/Users/joyo/conductor/docs/quest/**`, `dashboard.md`, and `quest-harness.md` only as source material; rewrite to describe current Sheaf/project-local behavior.
+- Reuse `dashboard.md` and `quest-harness.md` only as source material for human-facing project docs; rewrite to describe current Sheaf/project-local behavior.
+- Treat `projects/quest-runner/src/quest_runner_service/quest_docs/**` as bundled runtime schema/workflow reference content for prompt injection, not as human-facing docs to rewrite.
 - Reuse Sheaf docs structure and service/config/logging conventions from `structure/`.
 
 ## APIs To Extend Or Modify
@@ -64,6 +65,8 @@ Create or update:
 
 Docs must describe the migrated current state only. Mention top-level `quests/` only as legacy data that is intentionally hidden and not migrated.
 
+This documentation rewrite targets only `projects/quest-runner/docs/**` and `projects/quest-runner/README.md`. It must not rewrite, reorganize, or Diataxis-convert `projects/quest-runner/src/quest_runner_service/quest_docs/**`, because that package directory is the runtime `quest_docs_dir` consumed by role prompts and state-machine context. Human-facing docs may link to the runtime schema docs or summarize them, but the runtime content stays structurally compatible with `/Users/joyo/conductor/docs/quest/**`.
+
 ## Cleanup Plan
 
 - Delete or stop exporting any service-manager, DB, MCP, trace, and log-stream compatibility modules copied accidentally during migration.
@@ -71,6 +74,7 @@ Docs must describe the migrated current state only. Mention top-level `quests/` 
 - Remove unused imports, dead tests, and stale Conductor-specific names where they are public-facing.
 - Keep internal module names pragmatic; public docs and APIs should consistently say Quest Runner, not Conductor, except when describing migration provenance.
 - Verify no product code relies on `/Users/joyo/conductor`.
+- Verify runtime prompt/context code resolves quest schema docs from `projects/quest-runner/src/quest_runner_service/quest_docs/**`, not from human-facing `projects/quest-runner/docs/**`.
 
 ## Validation
 

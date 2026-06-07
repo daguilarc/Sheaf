@@ -41,9 +41,15 @@ Likely affected files:
 - `projects/quest-runner/src/quest_runner_service/quest_service.py`
 - `projects/quest-runner/src/quest_runner_service/worktrees.py` or equivalent new helper module
 - `projects/quest-runner/src/quest_runner_service/default_state_execution_config.yaml`
-- `projects/quest-runner/tests/test_quest_fs.py`
-- `projects/quest-runner/tests/test_quest_service.py`
-- New focused tests such as `test_project_quest_model.py` and `test_worktrees.py`
+- `projects/quest-runner/tests/test_project_quest_model.py`
+- `projects/quest-runner/tests/test_quest_creation.py`
+- `projects/quest-runner/tests/test_worktrees.py`
+
+Slice-owned tests:
+
+- Own creation and project-local filesystem tests adapted from the non-REST portions of external `test_quest_service.py` and `test_quest_fs.py`.
+- Own tests for `normalize_slug`, per-project/per-type numbering, `QuestMeta.project`, worktree naming/path helpers, source checkout cleanliness validation, quest-create commits, and worktree creation rollback.
+- Do not collect or adapt REST route tests from `test_quest_service.py` in this slice; those depend on the quest-runner-only `api.create_app` introduced in slice 4.
 
 ## Existing APIs To Reuse As-Is
 
