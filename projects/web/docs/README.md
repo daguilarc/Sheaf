@@ -6,6 +6,11 @@ The `web` project provides shared presentation assets for command hub browser
 interfaces. It does not own service logic, REST APIs, lifecycle behavior, or
 project-specific browser JavaScript.
 
+## Reference
+
+- [Renderer constraints](reference/renderer-constraints.md) — client-owned markdown
+  rendering and server streaming responsibilities
+
 ## Shared CSS
 
 `src/sheaf.css` is the shared stylesheet for command hub UIs. It defines:

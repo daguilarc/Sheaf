@@ -1,4 +1,6 @@
-.PHONY: all install build test clean build-agent test-agent build-vscode-extension test-vscode-extension
+.PHONY: all install build test clean build-agent test-agent build-vscode-extension test-vscode-extension run-cli
+
+CLI := src/agent/dist/src/agent/src/cli.js
 
 all: install test
 
@@ -20,6 +22,12 @@ build-vscode-extension:
 
 test-vscode-extension:
 	npm run test:vscode-extension
+
+run-cli:
+ifndef CONTEXT_FILE
+	$(error CONTEXT_FILE is required, e.g. make run-cli CONTEXT_FILE=/path/to/context.md)
+endif
+	node $(CLI) --context-file $(CONTEXT_FILE)
 
 clean:
 	npm run clean

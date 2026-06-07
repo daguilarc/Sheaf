@@ -1,6 +1,6 @@
 MAKEFLAGS += --warn-undefined-variables
 
-PROJECTS := conductor web quest-runner dictator
+PROJECTS := conductor web quest-runner dictator realtime-agent
 
 .PHONY: all clean test help
 .PHONY: $(PROJECTS)
@@ -8,6 +8,7 @@ PROJECTS := conductor web quest-runner dictator
 .PHONY: web-build web-test web-clean
 .PHONY: quest-runner-build quest-runner-test quest-runner-run quest-runner-clean
 .PHONY: dictator-build dictator-test dictator-run dictator-clean
+.PHONY: realtime-agent-build realtime-agent-test realtime-agent-clean realtime-agent-run-cli
 
 .DEFAULT_GOAL := all
 
@@ -71,6 +72,18 @@ dictator-run:
 dictator-clean:
 	$(MAKE) -C projects/dictator clean
 
+realtime-agent-build:
+	$(MAKE) -C projects/realtime-agent build
+
+realtime-agent-test:
+	$(MAKE) -C projects/realtime-agent test
+
+realtime-agent-clean:
+	$(MAKE) -C projects/realtime-agent clean
+
+realtime-agent-run-cli:
+	$(MAKE) -C projects/realtime-agent run-cli
+
 help:
 	@echo "Repository targets:"
 	@echo "  make all              Build and test every project under projects/"
@@ -93,21 +106,3 @@ help:
 	@echo "  make conductor-clean"
 	@echo ""
 	@echo "See structure/makefile.md for the full Makefile layout."
-
-# Legacy apps/ targets retained until migration into projects/ is complete.
-.PHONY: build-realtime-agent test-realtime-agent build-vscode-extension test-vscode-extension ci
-
-build-realtime-agent:
-	cd apps/realtime-agent && npm install && npm run build
-
-test-realtime-agent:
-	cd apps/realtime-agent && npm install && npm test
-
-build-vscode-extension:
-	cd apps/realtime-agent && npm install && npm run build
-	cd apps/vscode-extension && npm install && npm run build
-
-test-vscode-extension:
-	cd apps/vscode-extension && npm install && npm test
-
-ci: test-realtime-agent test-vscode-extension

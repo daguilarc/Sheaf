@@ -80,6 +80,9 @@ Current projects:
 
 - `conductor`
 - `web`
+- `quest-runner`
+- `dictator`
+- `realtime-agent`
 
 Examples:
 
@@ -140,20 +143,6 @@ make conductor-run
 ```
 
 That root target delegates to `projects/conductor/run`, which wraps `start_conductor.sh`.
-
-## Legacy Targets
-
-The root `Makefile` still contains legacy targets for pre-migration code under
-`apps/`:
-
-- `build-realtime-agent`
-- `test-realtime-agent`
-- `build-vscode-extension`
-- `test-vscode-extension`
-- `ci`
-
-Those targets are separate from the `projects/` workflow and remain until that code
-is migrated into `projects/`.
 
 ## Conventions
 
