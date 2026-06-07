@@ -2,10 +2,10 @@
 
 ## Issue PR-0001
 
-- status: open
+- status: completed
 - owner_role: polisher_reviewer
 - created_at: 2026-06-07T00:00:00Z
-- updated_at: 2026-06-07T00:00:00Z
+- updated_at: 2026-06-07T16:00:00Z
 - title: Interaction history records unreliable provider/model and omits fallback info
 - details: |
   In `projects/dictator/src/Sources/DictatorService/HTTPInteractionRecorder.swift`,
@@ -49,4 +49,26 @@
     `edit_summary` text matching.
   - Test coverage exercises the fallback scenario and asserts the recorded
     provider/model/fallback metadata.
-- resolution_notes: none
+- resolution_notes: |
+  Verified fixed by reading the changed code and tests (reviewer does not run tests).
+  - `RefineResponse` now carries `RefinementProviderMetadata?` (provider, model,
+    fallback_used) with snake_case Codable keys (`Contracts.swift:68-110`).
+  - `ProviderRoutingRefinementEngine.refine()` attaches authoritative metadata for
+    every path: ollama (fallback_used=false), ollama->openai fallback
+    (fallback_used=true), and openai direct (fallback_used=false)
+    (`ProviderRoutingRefinementEngine.swift:21-47`).
+  - Metadata is plumbed through `DictateCallResult.providerMetadata`
+    (`Contracts.swift:151-168`), `PipelineOrchestrator.dictate`
+    (`PipelineOrchestrator.swift:60-70`), and `DictationHTTPSuccessRecord`
+    (`DictationHTTPServer.swift:6-18`, set at 567-578).
+  - `HTTPInteractionRecorder` no longer infers provider from `edit_summary`; it uses
+    `record.providerMetadata?.provider/model` with a configured-provider fallback and
+    persists `fallbackUsed` (`HTTPInteractionRecorder.swift:26-42`).
+  - `DictationInteraction`/stored model persist `fallback_used` and round-trip it on
+    reload (`InteractionHistory.swift:31,49,65,245,262,280,302`).
+  - Test coverage: routing fallback/non-fallback metadata
+    (RefinementProviderRoutingTests), pipeline propagation (PipelineTests:95-99),
+    recorder uses authoritative metadata even when edit_summary lacks provider words
+    (InteractionHistoryTests testHTTPSuccessRecorderUsesAuthoritativeProviderMetadata),
+    and persistence round-trip of fallback_used (InteractionHistoryTests).
+  All completion criteria met.
