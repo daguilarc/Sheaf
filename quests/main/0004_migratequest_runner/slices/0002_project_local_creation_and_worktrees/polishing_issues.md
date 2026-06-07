@@ -2,10 +2,10 @@
 
 ## Issue PR-0001
 
-- status: open
+- status: completed
 - owner_role: polisher_reviewer
 - created_at: 2026-06-07T02:44:14Z
-- updated_at: 2026-06-07T02:44:14Z
+- updated_at: 2026-06-07T02:50:00Z
 - title: Deferred rate-limit/billing retry path does not pass new required `project` arg to `run_quest`
 - details: |
   This slice added a required positional `project` parameter to
@@ -51,4 +51,16 @@
     `QuestHarnessError` with detail `rate_limit`/`billing_error` and assert the
     scheduled callback calls `run_quest` with the right `project`), so the
     regression cannot recur.
-- resolution_notes: none
+- resolution_notes: |
+  Verified fixed in quest_service.py. `_run_quest_locked` now takes `project`
+  (line 405) and both callers pass it: `run_quest` (line 482) and the
+  `schedule_run_quest` background `worker()` (line 551). `_run_quest_locked`
+  forwards `project` into `_schedule_deferred_quest_run` (line 429), which
+  accepts it (line 183), records it in the scheduled task `description`
+  (line 215), and the deferred `_callback` invokes
+  `self.run_quest(..., project=project, ...)` (line 194). The new test
+  `test_deferred_retry_preserves_project` (test_quest_creation.py:280)
+  simulates a `rate_limit` `QuestHarnessError`, asserts
+  `scheduler.description["project"] == "example"`, and asserts the captured
+  callback calls `run_quest` with `project="example"`. The TypeError on the
+  deferred retry path is resolved.

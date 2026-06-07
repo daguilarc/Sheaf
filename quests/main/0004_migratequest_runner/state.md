@@ -1,10 +1,10 @@
 # State
 
-- global_step: 16
+- global_step: 17
 - machine_name: quest
 - machine_path: quests/main/0004_migratequest_runner
-- state: ExecuteSlice
-- updated_at: 2026-06-07T02:47:57Z
+- state: PrepareNextSlice
+- updated_at: 2026-06-07T02:49:03Z
 
 ## Tags
 
