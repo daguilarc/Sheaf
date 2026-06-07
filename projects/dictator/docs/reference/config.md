@@ -23,8 +23,8 @@ Project-specific runtime settings. Fields:
 | `ollama_bin_path` | string | Path to the `ollama` executable for local bootstrap |
 | `data_dir` | string | Repo-relative data directory (default `data/dictator`) |
 | `system_prompts_dir` | string | Repo-relative prompt catalog directory |
-| `dictator_server_host` | string | Bind host when not overridden by the service registry |
-| `dictator_server_port` | int | Bind port when not overridden (default `9003`) |
+| `dictator_server_host` | string | Compatibility/display field for the service host default |
+| `dictator_server_port` | int | Compatibility/display field for the service port default (`9003`) |
 | `dictator_server_enabled` | bool | When false, logs a warning but still starts using the registered endpoint |
 | `updated_at` | string | ISO-8601 timestamp of the last config write |
 
@@ -60,7 +60,9 @@ Copy to `config/api_keys.json` and fill in the key locally. Never commit real ke
 
 ## Service endpoint
 
-The bind host and port come from `config/services.json` for service name `dictator`. Dictator loads the registry entry on startup and uses port **9003** unless a deliberate CLI override is supplied.
+The bind host and port come from `config/services.json` for service name `dictator`. Dictator loads the registry entry on startup and uses port **9003** unless a deliberate CLI override is supplied with `--host` or `--port`.
+
+The `dictator_server_host`, `dictator_server_port`, and `dictator_server_enabled` fields remain in `config/dictator.json` for compatibility and dashboard display. They do not silently override the Sheaf service registry during normal service startup.
 
 See [Services](services.md) for registry and shutdown rules.
 

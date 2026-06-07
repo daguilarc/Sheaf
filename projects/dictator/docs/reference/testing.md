@@ -24,6 +24,8 @@ From the Sheaf root:
 make dictator-test
 ```
 
+`make dictator-test` delegates to the project `test` target, so it includes iOS testing as well as Swift package tests.
+
 ## iOS keyboard tests
 
 iOS unit and UI tests live under `tests/ios-keyboard/` and are referenced by the Xcode project at `src/ios-keyboard/DictatorKeyboardHost/DictatorKeyboardHost.xcodeproj`.
@@ -57,7 +59,7 @@ Focused tests under `DictatorKeyboardHostTests` cover:
 make test
 ```
 
-Runs Swift package tests and iOS tests when the local environment supports them.
+Runs Swift package tests and then `ios-test`. This target requires Xcode and the configured simulator destination. Use `make swift-test` for service/core-only validation on machines without iOS simulator support.
 
 ## HTTP and web smoke tests
 
@@ -77,7 +79,7 @@ Manual static checks from the repository root:
 
 ```bash
 rg "/Users/joyo/dictator|apps/dictator-main|apps/realtime-agent|apps/vscode-extension|Config/runtime-config|Config/secrets|/tmp/dictator-trace|8787|192\.168\.1\.56|ProcessInfo\.processInfo\.environment" \
-  projects/dictator/src projects/dictator/tests projects/dictator/docs
+  projects/dictator/src projects/dictator/tests
 
 git ls-files projects/dictator | rg "(/\.build/|/build/|/node_modules/|/dist/|crash\.log$|secrets\.json$|\.secrets\.json$|\.env$|\.swiftpm-module-cache|\.xctest/|\.swiftmodule$|\.appex/|\.app/)"
 

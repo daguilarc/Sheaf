@@ -26,7 +26,8 @@ Requests a clean service shutdown.
 
 | Status | Body |
 |--------|------|
-| `200` | Empty or minimal acknowledgment |
+| `200` | `{ "exiting": true }` |
+| `405` | Known route with the wrong method |
 | `404` | Unknown route |
 
 ## Dictation endpoint
@@ -39,12 +40,13 @@ Accepts WAV audio and returns transcription plus refinement results.
 
 | Header | Required | Description |
 |--------|----------|-------------|
-| `Content-Type` | yes | Must be `audio/wav` |
-| `X-Sample-Rate` | yes | Sample rate in Hz (for example `16000`) |
+| `Content-Type` | yes | Must be `audio/wav`; `audio/x-wav` is also accepted |
+| `X-Sample-Rate` | yes | Sample rate in Hz. Supported values: `8000`, `16000`, `22050`, `24000`, `32000`, `44100`, `48000` |
 | `X-Locale` | yes | BCP-47 locale (for example `en-US`) |
 | `X-Session-Id` | yes | Client session identifier |
-| `X-Request-Id` | yes | Per-request trace identifier |
-| Context/style headers | no | Optional pipeline context when available |
+| `X-Request-Id` | no | Per-request trace identifier. The service generates a short ID when omitted |
+| `X-Context-Json` | no | JSON object copied into interaction context |
+| `X-Style-Prefs-Json` | no | JSON object copied into style preferences |
 
 **Success response (`200`)**
 
@@ -70,6 +72,9 @@ Accepts WAV audio and returns transcription plus refinement results.
 | Status | When |
 |--------|------|
 | `400` | Missing or invalid headers, unsupported content type |
+| `405` | Known route with the wrong method |
+| `413` | Audio payload exceeds the configured request size limit |
+| `422` | WAV bytes are invalid, sample rate is unsupported, or the header rate does not match the WAV header |
 | `500` | Pipeline or internal failure |
 | `404` | Unknown route |
 
@@ -79,11 +84,11 @@ Accepts WAV audio and returns transcription plus refinement results.
 
 ## Web UI static routes
 
-| Route | Content type | Description |
-|-------|--------------|-------------|
-| `GET /` | `text/html` | Operational dashboard shell |
-| `GET /assets/app.js` | `application/javascript` | UI logic |
-| `GET /assets/styles.css` | `text/css` | UI styles |
+| Route | Source file | Content type | Description |
+|-------|-------------|--------------|-------------|
+| `GET /` | `src/web/index.html` | `text/html; charset=utf-8` | Operational dashboard shell |
+| `GET /assets/app.js` | `src/web/app.js` | `application/javascript; charset=utf-8` | UI logic |
+| `GET /assets/styles.css` | `src/web/styles.css` | `text/css; charset=utf-8` | UI styles |
 
 ## Web operational JSON APIs
 
@@ -99,9 +104,29 @@ Never returns raw API key material.
 
 Lists editable runtime fields with current and default values.
 
+Response shape:
+
+```json
+{
+  "fields": [
+    {
+      "name": "use_cloud",
+      "label": "Use cloud provider",
+      "type": "bool",
+      "editable": true,
+      "current": { "kind": "bool", "value": "false" },
+      "default": { "kind": "bool", "value": "false" }
+    }
+  ],
+  "updated_at": "2026-06-07T00:00:00Z"
+}
+```
+
 ### `PATCH /api/config`
 
 Partial update. Accepted JSON fields: `use_cloud`, `cloud_model`, `local_model`, `system_prompt`, `auxiliary_system_prompt_1`, `auxiliary_system_prompt_2`, `interactions_buffer_bytes`.
+
+`interactions_buffer_bytes` is accepted as bytes in the patch body and is displayed by `GET /api/config` as a megabyte string such as `100 MB`.
 
 | Status | When |
 |--------|------|
@@ -131,6 +156,8 @@ Body: `{ "target": "primary|auxiliary1|auxiliary2", "path": "filename.md" }`. Pe
 ### `GET /api/interactions`
 
 Returns newest-first interaction summaries.
+
+Response shape: `{ "interactions": [ ... ] }`. Each summary includes `id`, `occurred_at`, `source`, `status`, `provider`, `model`, `transcribe_ms`, `refine_ms`, `total_pipeline_ms`, `output_preview`, and optional `error_preview`.
 
 ### `GET /api/interactions/{id}`
 

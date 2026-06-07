@@ -7,8 +7,8 @@ The migrated Dictator service serves a browser-based operational dashboard at `h
 | Asset | Purpose |
 |-------|---------|
 | `src/web/index.html` | Page layout and panels |
-| `src/web/assets/app.js` | Fetches JSON APIs and renders state |
-| `src/web/assets/styles.css` | Dashboard styling |
+| `src/web/app.js` | Fetches JSON APIs and renders state |
+| `src/web/styles.css` | Dashboard styling |
 
 The server maps `GET /` and `GET /assets/*` through `WebRouter` and `StaticAssets`.
 
