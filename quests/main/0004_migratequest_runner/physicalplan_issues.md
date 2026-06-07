@@ -2,10 +2,10 @@
 
 ## Issue QP-0001
 
-- status: open
+- status: completed
 - owner_role: physical_plan_reviewer
 - created_at: 2026-06-06T00:00:00Z
-- updated_at: 2026-06-06T00:00:00Z
+- updated_at: 2026-06-07T00:00:00Z
 - title: Test-migration ownership and slice-0001 validation gate conflict
 - details: |
   Slice 0001 ("Scaffold Inventory And Source Import") lists "Quest-runner tests
@@ -41,12 +41,21 @@
   The slice plans must not both assign the same test file to slice 0001 and to a
   later slice without stating the adaptation hand-off.
 
+  VERIFIED 2026-06-07 (resolved): Slice 0001 now restricts scope to a named
+  runnable core test subset and adds a "Test Migration Ownership" section
+  assigning each remaining test group to its dependency-introducing slice. The
+  slice-0001 `make test` gate is now defined to collect only the slice-1 subset
+  and to not collect REST/API/dashboard tests. Slices 0002-0005 each add a
+  "Slice-owned tests" section naming the modules/portions they own (REST route
+  tests -> slice 0004, dashboard asset JS tests -> slice 0005), removing the
+  double-ownership ambiguity and the broken validation gate.
+
 ## Issue QP-0002
 
-- status: open
+- status: completed
 - owner_role: physical_plan_reviewer
 - created_at: 2026-06-06T00:00:00Z
-- updated_at: 2026-06-06T00:00:00Z
+- updated_at: 2026-06-07T00:00:00Z
 - title: Runtime quest-schema docs (quest_docs_dir) have no concrete project-local home and conflict with slice-0006 docs rewrite
 - details: |
   The runner injects the quest documentation directory (currently
@@ -80,3 +89,14 @@
   slice-0006 rewrite cannot alter the prompt-injected schema content the runner
   relies on. State which slice bundles the runtime schema docs and confirm
   slice 0006's doc rewrite targets only the human docs tree.
+
+  VERIFIED 2026-06-07 (resolved): Slice 0001 now bundles
+  /Users/joyo/conductor/docs/quest/** unchanged into the concrete package path
+  projects/quest-runner/src/quest_runner_service/quest_docs/ and lists the
+  specific files, explicitly stating not to rewrite them to Sheaf human-doc
+  style. Slice 0003 resolves quest_docs_dir from that package location
+  (runtime_quest_docs_dir() -> Path(__file__).resolve().parent / "quest_docs")
+  and passes it to the v2 runner. Slice 0006 limits the Diataxis/Sheaf doc
+  rewrite to projects/quest-runner/docs/** and README.md, explicitly excludes
+  the quest_docs package, and adds a static check that runtime code resolves
+  schema docs from quest_docs/, not from human-facing docs/.
