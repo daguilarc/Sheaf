@@ -141,7 +141,8 @@ exist; `run_quest` does not recreate missing worktrees.
 
 Runs the same end-of-turn advancement logic the runner uses after a role finishes,
 without starting a harness turn. Intended for manual recovery after a human fixes
-files while the quest is stopped.
+files while the quest is stopped. The dashboard and CLI expose this as an
+operator workflow; agents do not use it for normal issue handling.
 
 **Request body (JSON):**
 
@@ -161,6 +162,9 @@ files while the quest is stopped.
   "quest_number": 0,
   "previous_state": "Implementing",
   "next_state": "PolishingReview",
+  "active_slice": "0001_example_slice",
+  "previous_slice_state": "Implementing",
+  "next_slice_state": "PolishingReview",
   "commit": "<sha>",
   "message": "Advanced quest main/0000_my_quest"
 }
@@ -188,7 +192,7 @@ files while the quest is stopped.
 
 Lands a quest worktree branch onto the repository target branch using a linear git
 workflow: rebase the quest branch onto target, fast-forward target, then delete the
-worktree.
+worktree. The quest branch remains in place after a successful landing.
 
 **Request body (JSON):**
 
@@ -224,6 +228,11 @@ worktree.
 | `404` | Quest not found |
 | `409` | Quest is running, lock contention, missing worktree, dirty target branch, rebase conflict, or fast-forward failure |
 
+Conflict responses include a `status` field such as `target_dirty`,
+`worktree_dirty`, `rebase_failed`, or `fast_forward_failed`. Failures that need
+manual cleanup include the `worktree_path` and a `next_step` message when
+available. The service keeps the worktree checkout when landing does not finish.
+
 ## Issue APIs
 
 Issue endpoints are the supported interface for agents and automation. They read and
@@ -244,9 +253,31 @@ Query parameters: `project`, `quest_type`, `quest_number`, `scope`, optional `sl
 (required for `polishing`), optional `status` (`open`, `completed`, or `all`; default
 `all`).
 
+**Response `200`:**
+
+```json
+{
+  "issues": [
+    {
+      "issue_id": "QP-0001",
+      "status": "open",
+      "owner_role": "physical_plan_reviewer",
+      "created_at": "2026-01-01T00:00:00Z",
+      "updated_at": "2026-01-01T00:00:00Z",
+      "title": "Missing acceptance marker",
+      "body": "Details",
+      "details": "Details",
+      "resolution_notes": "none"
+    }
+  ]
+}
+```
+
 ### `GET /api/issues/<issue_id>`
 
 Read one issue and any matching responses. Same query parameters as list.
+
+Physical-plan issue IDs use `QP-NNNN`; polishing issue IDs use `PL-NNNN`.
 
 ### `POST /api/issues`
 
@@ -269,7 +300,11 @@ Append a responder note. Requires `outcome` (`Fixed` or `NotFixed`) and non-empt
 
 List responses for an issue in chronological order.
 
-Issue mutation endpoints return `409 Conflict` while the quest is actively running.
+Issue mutation endpoints serialize with quest execution and return
+`409 Conflict` while the quest is actively running.
+
+The issue CLI is the supported operator and agent interface for these endpoints;
+see [CLI reference](cli.md).
 
 ## Dashboard shell
 

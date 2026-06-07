@@ -22,6 +22,7 @@ directory is not part of this docs tree; see
 Exact APIs, layout, configuration, and test commands:
 
 - [REST API](reference/api.md)
+- [CLI](reference/cli.md)
 - [Dashboard](reference/dashboard.md)
 - [Quest directory layout](reference/layout.md)
 - [Runtime files](reference/runtime-files.md)

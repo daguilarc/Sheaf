@@ -27,6 +27,22 @@ Quest Runner is registered in `config/services.json`:
 Service orchestration for other processes remains in `projects/conductor/`.
 Quest Runner does not register or manage other services.
 
+## CLI service discovery
+
+The repository-root CLI at `scripts/quest-runner` uses `config/services.json` to
+discover the Quest Runner service URL. It looks for the service entry named
+`quest-runner`, converts host `0.0.0.0` to `localhost` for client connections,
+and combines that host with the configured port.
+
+CLI URL precedence:
+
+1. `--base-url <url>`
+2. `QUEST_RUNNER_URL`
+3. `config/services.json`
+4. fallback `http://localhost:9002`
+
+See [CLI reference](cli.md).
+
 ## Project-level config file
 
 There is no `config/quest-runner.json` today. The service resolves the source

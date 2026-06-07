@@ -79,8 +79,8 @@ scripts/quest-runner issues respond QP-0001 --project quest-runner --type side -
 scripts/quest-runner issues list --project quest-runner --type side --number 0 --scope polishing --slice 1
 ```
 
-Run `scripts/quest-runner issues --help` for the full command surface. Use `--json`
-for automation.
+Run `scripts/quest-runner --help` or see the [CLI reference](../reference/cli.md)
+for the full command surface. Use `--json` for automation.
 
 ## Service logs
 
