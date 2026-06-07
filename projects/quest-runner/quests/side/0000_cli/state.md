@@ -1,5 +1,5 @@
 # Quest State
 
-state: PrePlanning
+state: PhysicalPlanning
 current_slice: null
-updated_at: 2026-06-07T04:13:19Z
+updated_at: 2026-06-07T05:22:37Z
