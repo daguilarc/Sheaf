@@ -180,6 +180,7 @@ class QuestService:
         self,
         *,
         repo_path: Path,
+        project: str,
         quest_type: str,
         quest_number: int,
         max_steps: int,
@@ -192,6 +193,7 @@ class QuestService:
             try:
                 self.run_quest(
                     repo_path=repo_path_str,
+                    project=project,
                     quest_type=quest_type,
                     quest_number=quest_number,
                     max_steps=max_steps,
@@ -210,6 +212,7 @@ class QuestService:
             description={
                 "kind": "quest_run",
                 "repo_path": repo_path_str,
+                "project": project,
                 "quest_type": quest_type,
                 "quest_number": quest_number,
                 "max_steps": max_steps,
@@ -403,6 +406,7 @@ class QuestService:
         self,
         root: Path,
         qdir: Path,
+        project: str,
         quest_type: str,
         quest_number: int,
         max_steps: int,
@@ -424,6 +428,7 @@ class QuestService:
             if exc.detail.strip() in {"billing_error", "rate_limit"}:
                 result = self._schedule_deferred_quest_run(
                     repo_path=root,
+                    project=project,
                     quest_type=quest_type,
                     quest_number=quest_number,
                     max_steps=max_steps,
@@ -475,7 +480,7 @@ class QuestService:
             )
         try:
             return self._run_quest_locked(
-                root, qdir, quest_type, quest_number, max_steps
+                root, qdir, project, quest_type, quest_number, max_steps
             )
         finally:
             self.lock.release(key)
@@ -544,7 +549,7 @@ class QuestService:
             hb_thread.start()
             try:
                 svc._run_quest_locked(
-                    root, qdir, quest_type, quest_number, max_steps
+                    root, qdir, project, quest_type, quest_number, max_steps
                 )
             except Exception:
                 log.exception(

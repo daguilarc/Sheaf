@@ -277,6 +277,66 @@ class CreateQuestTests(unittest.TestCase):
                 ),
             )
 
+    def test_deferred_retry_preserves_project(self) -> None:
+        from quest_runner_service.quest_runner import QuestHarnessError
+
+        class CapturingScheduler:
+            def __init__(self) -> None:
+                self.callback = None
+                self.description = None
+
+            def schedule(self, *, delay_seconds, callback, description):
+                self.callback = callback
+                self.description = dict(description)
+                return {
+                    "task_id": "task-1",
+                    "scheduled_for": "2026-06-07T03:00:00Z",
+                    "delay_seconds": delay_seconds,
+                    "description": dict(description),
+                }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            qdir = root / "projects" / "example" / "quests" / "main" / "0007_retry"
+            qdir.mkdir(parents=True)
+            scheduler = CapturingScheduler()
+            svc = QuestService(QuestLock(), self.repo_root, scheduler=scheduler)
+
+            with patch(
+                "quest_runner_service.quest_runner.run_quest",
+                side_effect=QuestHarnessError(
+                    detail="rate_limit",
+                    raw_output="rate limited",
+                    steps_executed=3,
+                    last_commit="abc123",
+                    captured_outputs=[{"role": "polisher", "text": "blocked"}],
+                ),
+            ):
+                result = svc._run_quest_locked(
+                    root,
+                    qdir,
+                    "example",
+                    "main",
+                    7,
+                    12,
+                )
+
+            self.assertEqual(result["status"], "deferred")
+            self.assertEqual(result["steps_executed"], 3)
+            self.assertEqual(scheduler.description["project"], "example")
+            self.assertIsNotNone(scheduler.callback)
+
+            with patch.object(svc, "run_quest") as run_quest:
+                scheduler.callback()
+
+            run_quest.assert_called_once_with(
+                repo_path=str(root),
+                project="example",
+                quest_type="main",
+                quest_number=7,
+                max_steps=12,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
