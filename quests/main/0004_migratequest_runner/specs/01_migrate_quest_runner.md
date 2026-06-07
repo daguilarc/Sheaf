@@ -83,9 +83,12 @@ complete.
   the legacy top-level `quests/` directory.
 - Change quest creation so a new quest is created under the selected project,
   for example `projects/example/quests/main/0000_example_quest/`.
+- Change quest creation so it creates the quest record on the currently checked-out
+  branch, then immediately creates a git worktree off that branch for the new
+  quest.
 - Change quest execution so `run_quest` runs the quest from its project-local
-  quest directory while using the Sheaf repository root as the git and command
-  boundary.
+  quest directory in the quest worktree while using that worktree as the git and
+  command boundary.
 - Direct runtime logging for the Quest Runner service to `logs/quest-runner/`.
 - Keep quest step logs inside the project-local quest directory, matching the
   existing quest artifact model.
@@ -175,10 +178,48 @@ the owning project. The physical planner should decide whether this is stored in
 `meta.json`, derived from the path, or both. The behavior must be deterministic
 and test-covered.
 
-The runner must use Sheaf's repository root for git operations and command
-execution. Project-local quest paths must be used for quest artifacts,
-`$currentQuest`, `$currentSlice`, thread transcripts, role logs, and dashboard
-links.
+The runner must use the active Sheaf checkout root for git operations and command
+execution. Before a quest worktree exists, that checkout is the source Sheaf
+repository. After a quest worktree exists, that checkout is the quest worktree.
+Project-local quest paths must be used for quest artifacts, `$currentQuest`,
+`$currentSlice`, thread transcripts, role logs, and dashboard links.
+
+## Quest Worktree Model
+
+When creating a new quest, the migrated runner must:
+
+- create the project-local quest record on the branch that is currently checked
+  out in the source Sheaf repository
+- immediately create a git worktree off that branch for the new quest
+- name the worktree after the project and quest
+- derive the expected worktree identity deterministically so every
+  runner component can find the same worktree
+
+The physical planner should define the exact worktree name and path convention,
+but the name must include the owning project and the quest identity. For example,
+a valid convention would be a worktree basename like:
+
+```text
+<project>_<quest_type>_<quest_number>_<quest_slug>
+```
+
+All runner components must expect to operate against the matching quest worktree,
+not the source checkout, once the worktree exists. `run_quest` must check for the
+expected quest worktree before executing. If the expected worktree does not
+exist, the quest must not run and the API should return a clear error.
+
+The web UI must resolve the active checkout for each quest as follows:
+
+1. Check for the expected quest worktree by its deterministic project-and-quest
+   name.
+2. If the worktree exists, use that worktree for quest details, run actions, git
+   metadata, and dashboard links.
+3. If the worktree does not exist, use the currently checked-out branch in the
+   source Sheaf repository for read-only discovery and creation flows.
+
+Quest creation is the only path that should automatically create the quest
+worktree. Missing worktrees for existing quests should be surfaced as operational
+errors instead of silently recreated by `run_quest`.
 
 ## REST API Requirements
 
@@ -189,7 +230,10 @@ Required behavior:
 
 - `GET /health` returns the standard Sheaf service health shape.
 - `POST /create_quest` creates a quest under a selected project.
+- `POST /create_quest` creates the quest on the currently checked-out branch and
+  immediately creates the matching quest worktree.
 - `POST /run_quest` runs a selected project-local quest.
+- `POST /run_quest` refuses to run when the expected quest worktree is missing.
 - Dashboard read APIs list, inspect, and monitor only project-local quests.
 - The dashboard shell serves the migrated web UI.
 
@@ -216,6 +260,9 @@ The migrated UI must:
   and relevant git-backed metadata as the existing dashboard does
 - create and run quests through the migrated REST API
 - include project identity in dashboard URLs and API calls
+- prefer the matching quest worktree for existing quests when it exists
+- fall back to the currently checked-out branch only when the matching quest
+  worktree does not exist
 
 The UI must not show or control registered services. It must not include service
 orchestrator pages, service log streaming pages, service restart controls, or MCP
@@ -286,12 +333,18 @@ Tests should be migrated or rewritten under `projects/quest-runner/tests/`.
 Coverage must include:
 
 - quest creation under `projects/<project>/quests/`
+- quest creation on the currently checked-out branch with immediate worktree
+  creation
+- deterministic worktree naming from project and quest identity
 - quest numbering scoped by project and quest type
 - quest discovery across multiple project directories
 - legacy top-level `quests/` exclusion
 - dashboard API responses with project identity
 - dashboard UI logic that preserves project identity in links and actions
 - `run_quest` lookup and execution using project-local quest directories
+- `run_quest` refusal when the expected quest worktree is missing
+- dashboard checkout resolution that prefers an existing quest worktree and falls
+  back to the currently checked-out branch otherwise
 - state-machine behavior preserved from the existing runner
 - git step metadata preserved for project-local quests
 - no SQLite/database usage in the migrated quest-runner path
@@ -330,8 +383,14 @@ old top-level quest layout as active behavior except as legacy background.
 - `projects/quest-runner/` exists and follows the required project layout.
 - The Quest Runner service runs on port `9002`.
 - Quest creation writes new quests under `projects/<project>/quests/`.
-- Quest execution reads and writes project-local quest artifacts.
+- Quest creation immediately creates a deterministic project-and-quest worktree
+  from the currently checked-out branch.
+- Quest execution reads and writes project-local quest artifacts in the expected
+  quest worktree.
+- Quest execution refuses to run when the expected quest worktree is missing.
 - The web UI lists and opens only project-local quests.
+- The web UI prefers the matching quest worktree when present and otherwise uses
+  the currently checked-out branch.
 - Top-level legacy quests remain untouched and hidden from the new UI.
 - No MCP server or MCP route is present in the migrated service.
 - No SQLite database or service-manager database behavior is used by the
