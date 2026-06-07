@@ -1,0 +1,796 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		AFB2675B2F4AA22900C3C72A /* DictatorKeyboardExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = AFB267542F4AA22800C3C72A /* DictatorKeyboardExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		AFB2677A2F4AA38400C3C72A /* SharedConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = AFB267782F4AA38400C3C72A /* SharedConfig.swift */; };
+		AFB2677B2F4AA38400C3C72A /* SharedConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = AFB267782F4AA38400C3C72A /* SharedConfig.swift */; };
+		AFB2677F2F4AA51C00C3C72A /* DictatorKeyboardExtension.txt in Resources */ = {isa = PBXBuildFile; fileRef = AFB2677E2F4AA51C00C3C72A /* DictatorKeyboardExtension.txt */; };
+		AFB267802F4AA51C00C3C72A /* DictatorKeyboardExtension.txt in Resources */ = {isa = PBXBuildFile; fileRef = AFB2677E2F4AA51C00C3C72A /* DictatorKeyboardExtension.txt */; };
+		AFB267822F4AA52000C3C72A /* DarwinNotificationCenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = AFB267812F4AA52000C3C72A /* DarwinNotificationCenter.swift */; };
+		AFB267832F4AA52000C3C72A /* DarwinNotificationCenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = AFB267812F4AA52000C3C72A /* DarwinNotificationCenter.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		AFB267342F4AA19800C3C72A /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = AFB2671E2F4AA19600C3C72A /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = AFB267252F4AA19600C3C72A;
+			remoteInfo = DictatorKeyboardHost;
+		};
+		AFB2673E2F4AA19800C3C72A /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = AFB2671E2F4AA19600C3C72A /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = AFB267252F4AA19600C3C72A;
+			remoteInfo = DictatorKeyboardHost;
+		};
+		AFB267592F4AA22900C3C72A /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = AFB2671E2F4AA19600C3C72A /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = AFB267532F4AA22800C3C72A;
+			remoteInfo = DictatorKeyboardExtension;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		AFB267602F4AA22900C3C72A /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				AFB2675B2F4AA22900C3C72A /* DictatorKeyboardExtension.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		AFB267262F4AA19600C3C72A /* DictatorKeyboardHost.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = DictatorKeyboardHost.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		AFB267332F4AA19800C3C72A /* DictatorKeyboardHostTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = DictatorKeyboardHostTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		AFB2673D2F4AA19800C3C72A /* DictatorKeyboardHostUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = DictatorKeyboardHostUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		AFB267542F4AA22800C3C72A /* DictatorKeyboardExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = DictatorKeyboardExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		AFB267782F4AA38400C3C72A /* SharedConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedConfig.swift; sourceTree = "<group>"; };
+		AFB2677E2F4AA51C00C3C72A /* DictatorKeyboardExtension.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = DictatorKeyboardExtension.txt; sourceTree = "<group>"; };
+		AFB267812F4AA52000C3C72A /* DarwinNotificationCenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DarwinNotificationCenter.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		AFB2675C2F4AA22900C3C72A /* Exceptions for "DictatorKeyboardExtension" folder in "DictatorKeyboardExtension" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = AFB267532F4AA22800C3C72A /* DictatorKeyboardExtension */;
+		};
+		AFB267762F4AA35400C3C72A /* Exceptions for "HostApp" folder in "DictatorKeyboardHost" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				DictatorKeyboardHostApp.swift,
+				HostAppRootView.swift,
+			);
+			target = AFB267252F4AA19600C3C72A /* DictatorKeyboardHost */;
+		};
+		AFB267772F4AA35400C3C72A /* Exceptions for "HostApp" folder in "DictatorKeyboardExtension" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				DictatorKeyboardHostApp.swift,
+				HostAppRootView.swift,
+			);
+			target = AFB267532F4AA22800C3C72A /* DictatorKeyboardExtension */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		AFB267282F4AA19600C3C72A /* DictatorKeyboardHost */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = DictatorKeyboardHost;
+			sourceTree = "<group>";
+		};
+		AFB267362F4AA19800C3C72A /* DictatorKeyboardHostTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = ../../../../tests/ios-keyboard/DictatorKeyboardHostTests;
+			sourceTree = "<group>";
+		};
+		AFB267402F4AA19800C3C72A /* DictatorKeyboardHostUITests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = ../../../../tests/ios-keyboard/DictatorKeyboardHostUITests;
+			sourceTree = "<group>";
+		};
+		AFB267552F4AA22800C3C72A /* DictatorKeyboardExtension */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				AFB2675C2F4AA22900C3C72A /* Exceptions for "DictatorKeyboardExtension" folder in "DictatorKeyboardExtension" target */,
+			);
+			path = DictatorKeyboardExtension;
+			sourceTree = "<group>";
+		};
+		AFB267712F4AA35400C3C72A /* HostApp */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				AFB267762F4AA35400C3C72A /* Exceptions for "HostApp" folder in "DictatorKeyboardHost" target */,
+				AFB267772F4AA35400C3C72A /* Exceptions for "HostApp" folder in "DictatorKeyboardExtension" target */,
+			);
+			path = HostApp;
+			sourceTree = "<group>";
+		};
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		AFB267232F4AA19600C3C72A /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AFB267302F4AA19800C3C72A /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AFB2673A2F4AA19800C3C72A /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AFB267512F4AA22800C3C72A /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		AFB2671D2F4AA19600C3C72A = {
+			isa = PBXGroup;
+			children = (
+				AFB267282F4AA19600C3C72A /* DictatorKeyboardHost */,
+				AFB267362F4AA19800C3C72A /* DictatorKeyboardHostTests */,
+				AFB267402F4AA19800C3C72A /* DictatorKeyboardHostUITests */,
+				AFB267552F4AA22800C3C72A /* DictatorKeyboardExtension */,
+				AFB267272F4AA19600C3C72A /* Products */,
+				AFB267712F4AA35400C3C72A /* HostApp */,
+				AFB267792F4AA38400C3C72A /* Shared */,
+			);
+			sourceTree = "<group>";
+		};
+		AFB267272F4AA19600C3C72A /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				AFB267262F4AA19600C3C72A /* DictatorKeyboardHost.app */,
+				AFB267332F4AA19800C3C72A /* DictatorKeyboardHostTests.xctest */,
+				AFB2673D2F4AA19800C3C72A /* DictatorKeyboardHostUITests.xctest */,
+				AFB267542F4AA22800C3C72A /* DictatorKeyboardExtension.appex */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		AFB267792F4AA38400C3C72A /* Shared */ = {
+			isa = PBXGroup;
+			children = (
+				AFB267812F4AA52000C3C72A /* DarwinNotificationCenter.swift */,
+				AFB267782F4AA38400C3C72A /* SharedConfig.swift */,
+				AFB2677E2F4AA51C00C3C72A /* DictatorKeyboardExtension.txt */,
+			);
+			name = Shared;
+			path = ../Shared;
+			sourceTree = SOURCE_ROOT;
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		AFB267252F4AA19600C3C72A /* DictatorKeyboardHost */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = AFB267472F4AA19800C3C72A /* Build configuration list for PBXNativeTarget "DictatorKeyboardHost" */;
+			buildPhases = (
+				AFB267222F4AA19600C3C72A /* Sources */,
+				AFB267232F4AA19600C3C72A /* Frameworks */,
+				AFB267242F4AA19600C3C72A /* Resources */,
+				AFB267602F4AA22900C3C72A /* Embed Foundation Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				AFB2675A2F4AA22900C3C72A /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				AFB267282F4AA19600C3C72A /* DictatorKeyboardHost */,
+			);
+			name = DictatorKeyboardHost;
+			packageProductDependencies = (
+			);
+			productName = DictatorKeyboardHost;
+			productReference = AFB267262F4AA19600C3C72A /* DictatorKeyboardHost.app */;
+			productType = "com.apple.product-type.application";
+		};
+		AFB267322F4AA19800C3C72A /* DictatorKeyboardHostTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = AFB2674A2F4AA19800C3C72A /* Build configuration list for PBXNativeTarget "DictatorKeyboardHostTests" */;
+			buildPhases = (
+				AFB2672F2F4AA19800C3C72A /* Sources */,
+				AFB267302F4AA19800C3C72A /* Frameworks */,
+				AFB267312F4AA19800C3C72A /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				AFB267352F4AA19800C3C72A /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				AFB267362F4AA19800C3C72A /* DictatorKeyboardHostTests */,
+			);
+			name = DictatorKeyboardHostTests;
+			packageProductDependencies = (
+			);
+			productName = DictatorKeyboardHostTests;
+			productReference = AFB267332F4AA19800C3C72A /* DictatorKeyboardHostTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		AFB2673C2F4AA19800C3C72A /* DictatorKeyboardHostUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = AFB2674D2F4AA19800C3C72A /* Build configuration list for PBXNativeTarget "DictatorKeyboardHostUITests" */;
+			buildPhases = (
+				AFB267392F4AA19800C3C72A /* Sources */,
+				AFB2673A2F4AA19800C3C72A /* Frameworks */,
+				AFB2673B2F4AA19800C3C72A /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				AFB2673F2F4AA19800C3C72A /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				AFB267402F4AA19800C3C72A /* DictatorKeyboardHostUITests */,
+			);
+			name = DictatorKeyboardHostUITests;
+			packageProductDependencies = (
+			);
+			productName = DictatorKeyboardHostUITests;
+			productReference = AFB2673D2F4AA19800C3C72A /* DictatorKeyboardHostUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+		AFB267532F4AA22800C3C72A /* DictatorKeyboardExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = AFB2675D2F4AA22900C3C72A /* Build configuration list for PBXNativeTarget "DictatorKeyboardExtension" */;
+			buildPhases = (
+				AFB267502F4AA22800C3C72A /* Sources */,
+				AFB267512F4AA22800C3C72A /* Frameworks */,
+				AFB267522F4AA22800C3C72A /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				AFB267552F4AA22800C3C72A /* DictatorKeyboardExtension */,
+				AFB267712F4AA35400C3C72A /* HostApp */,
+			);
+			name = DictatorKeyboardExtension;
+			packageProductDependencies = (
+			);
+			productName = DictatorKeyboardExtension;
+			productReference = AFB267542F4AA22800C3C72A /* DictatorKeyboardExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		AFB2671E2F4AA19600C3C72A /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1640;
+				LastUpgradeCheck = 1640;
+				TargetAttributes = {
+					AFB267252F4AA19600C3C72A = {
+						CreatedOnToolsVersion = 16.4;
+					};
+					AFB267322F4AA19800C3C72A = {
+						CreatedOnToolsVersion = 16.4;
+						TestTargetID = AFB267252F4AA19600C3C72A;
+					};
+					AFB2673C2F4AA19800C3C72A = {
+						CreatedOnToolsVersion = 16.4;
+						TestTargetID = AFB267252F4AA19600C3C72A;
+					};
+					AFB267532F4AA22800C3C72A = {
+						CreatedOnToolsVersion = 16.4;
+					};
+				};
+			};
+			buildConfigurationList = AFB267212F4AA19600C3C72A /* Build configuration list for PBXProject "DictatorKeyboardHost" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = AFB2671D2F4AA19600C3C72A;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = AFB267272F4AA19600C3C72A /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				AFB267252F4AA19600C3C72A /* DictatorKeyboardHost */,
+				AFB267322F4AA19800C3C72A /* DictatorKeyboardHostTests */,
+				AFB2673C2F4AA19800C3C72A /* DictatorKeyboardHostUITests */,
+				AFB267532F4AA22800C3C72A /* DictatorKeyboardExtension */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		AFB267242F4AA19600C3C72A /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AFB2677F2F4AA51C00C3C72A /* DictatorKeyboardExtension.txt in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AFB267312F4AA19800C3C72A /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AFB2673B2F4AA19800C3C72A /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AFB267522F4AA22800C3C72A /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AFB267802F4AA51C00C3C72A /* DictatorKeyboardExtension.txt in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		AFB267222F4AA19600C3C72A /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AFB267822F4AA52000C3C72A /* DarwinNotificationCenter.swift in Sources */,
+				AFB2677A2F4AA38400C3C72A /* SharedConfig.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AFB2672F2F4AA19800C3C72A /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AFB267392F4AA19800C3C72A /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AFB267502F4AA22800C3C72A /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AFB267832F4AA52000C3C72A /* DarwinNotificationCenter.swift in Sources */,
+				AFB2677B2F4AA38400C3C72A /* SharedConfig.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		AFB267352F4AA19800C3C72A /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = AFB267252F4AA19600C3C72A /* DictatorKeyboardHost */;
+			targetProxy = AFB267342F4AA19800C3C72A /* PBXContainerItemProxy */;
+		};
+		AFB2673F2F4AA19800C3C72A /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = AFB267252F4AA19600C3C72A /* DictatorKeyboardHost */;
+			targetProxy = AFB2673E2F4AA19800C3C72A /* PBXContainerItemProxy */;
+		};
+		AFB2675A2F4AA22900C3C72A /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = AFB267532F4AA22800C3C72A /* DictatorKeyboardExtension */;
+			targetProxy = AFB267592F4AA22900C3C72A /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		AFB267452F4AA19800C3C72A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = 84DCGNY7JA;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.5;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		AFB267462F4AA19800C3C72A /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = 84DCGNY7JA;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.5;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		AFB267482F4AA19800C3C72A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = HostApp/HostApp.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 84DCGNY7JA;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = HostInfo.plist;
+				INFOPLIST_KEY_CFBundleURLTypes_0_CFBundleTypeRole = Editor;
+				INFOPLIST_KEY_CFBundleURLTypes_0_CFBundleURLName = com.joyo.dictator.host;
+				INFOPLIST_KEY_CFBundleURLTypes_0_CFBundleURLSchemes_0 = dictatorkeyboardhost;
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Dictator connects to your local Dictator server to transcribe recordings.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Dictator records short audio snippets for dictation.";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_ios_client_host_url = "http://127.0.0.1:9003";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = TheAllElectricSmartGrid.DictatorKeyboardHost;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		AFB267492F4AA19800C3C72A /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = HostApp/HostApp.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 84DCGNY7JA;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = HostInfo.plist;
+				INFOPLIST_KEY_CFBundleURLTypes_0_CFBundleTypeRole = Editor;
+				INFOPLIST_KEY_CFBundleURLTypes_0_CFBundleURLName = com.joyo.dictator.host;
+				INFOPLIST_KEY_CFBundleURLTypes_0_CFBundleURLSchemes_0 = dictatorkeyboardhost;
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Dictator connects to your local Dictator server to transcribe recordings.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Dictator records short audio snippets for dictation.";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_ios_client_host_url = "http://127.0.0.1:9003";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = TheAllElectricSmartGrid.DictatorKeyboardHost;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		AFB2674B2F4AA19800C3C72A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 84DCGNY7JA;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.5;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = TheAllElectricSmartGrid.DictatorKeyboardHostTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/DictatorKeyboardHost.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/DictatorKeyboardHost";
+			};
+			name = Debug;
+		};
+		AFB2674C2F4AA19800C3C72A /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 84DCGNY7JA;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.5;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = TheAllElectricSmartGrid.DictatorKeyboardHostTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/DictatorKeyboardHost.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/DictatorKeyboardHost";
+			};
+			name = Release;
+		};
+		AFB2674E2F4AA19800C3C72A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 84DCGNY7JA;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = TheAllElectricSmartGrid.DictatorKeyboardHostUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = DictatorKeyboardHost;
+			};
+			name = Debug;
+		};
+		AFB2674F2F4AA19800C3C72A /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 84DCGNY7JA;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = TheAllElectricSmartGrid.DictatorKeyboardHostUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = DictatorKeyboardHost;
+			};
+			name = Release;
+		};
+		AFB2675E2F4AA22900C3C72A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = DictatorKeyboardExtension/KeyboardExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 84DCGNY7JA;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = DictatorKeyboardExtension/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = DictatorKeyboardExtension;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_ios_client_host_url = "http://127.0.0.1:9003";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = TheAllElectricSmartGrid.DictatorKeyboardHost.DictatorKeyboardExtension;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		AFB2675F2F4AA22900C3C72A /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = DictatorKeyboardExtension/KeyboardExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 84DCGNY7JA;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = DictatorKeyboardExtension/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = DictatorKeyboardExtension;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_ios_client_host_url = "http://127.0.0.1:9003";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = TheAllElectricSmartGrid.DictatorKeyboardHost.DictatorKeyboardExtension;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		AFB267212F4AA19600C3C72A /* Build configuration list for PBXProject "DictatorKeyboardHost" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AFB267452F4AA19800C3C72A /* Debug */,
+				AFB267462F4AA19800C3C72A /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		AFB267472F4AA19800C3C72A /* Build configuration list for PBXNativeTarget "DictatorKeyboardHost" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AFB267482F4AA19800C3C72A /* Debug */,
+				AFB267492F4AA19800C3C72A /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		AFB2674A2F4AA19800C3C72A /* Build configuration list for PBXNativeTarget "DictatorKeyboardHostTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AFB2674B2F4AA19800C3C72A /* Debug */,
+				AFB2674C2F4AA19800C3C72A /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		AFB2674D2F4AA19800C3C72A /* Build configuration list for PBXNativeTarget "DictatorKeyboardHostUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AFB2674E2F4AA19800C3C72A /* Debug */,
+				AFB2674F2F4AA19800C3C72A /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		AFB2675D2F4AA22900C3C72A /* Build configuration list for PBXNativeTarget "DictatorKeyboardExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AFB2675E2F4AA22900C3C72A /* Debug */,
+				AFB2675F2F4AA22900C3C72A /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = AFB2671E2F4AA19600C3C72A /* Project object */;
+}

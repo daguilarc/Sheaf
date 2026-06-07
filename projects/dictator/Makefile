@@ -1,12 +1,27 @@
-.PHONY: all build test test-core run clean
+.PHONY: all build test test-core run clean ios-build ios-test
+
+IOS_XCODEPROJ := src/ios-keyboard/DictatorKeyboardHost/DictatorKeyboardHost.xcodeproj
+IOS_SCHEME := DictatorKeyboardHost
+IOS_SDK := iphonesimulator
+IOS_DERIVED_DATA := .build/xcode
 
 all: build test
 
-build:
+build: swift-build ios-build
+
+swift-build:
 	swift build
 
-test:
+ios-build:
+	xcodebuild -project $(IOS_XCODEPROJ) -scheme $(IOS_SCHEME) -sdk $(IOS_SDK) -derivedDataPath $(IOS_DERIVED_DATA) CODE_SIGNING_ALLOWED=NO build
+
+test: swift-test ios-test
+
+swift-test:
 	swift test
+
+ios-test:
+	xcodebuild -project $(IOS_XCODEPROJ) -scheme $(IOS_SCHEME) -sdk $(IOS_SDK) -derivedDataPath $(IOS_DERIVED_DATA) CODE_SIGNING_ALLOWED=NO -destination 'platform=iOS Simulator,name=iPhone 16' test
 
 test-core:
 	swift test --filter DictatorCoreTests
