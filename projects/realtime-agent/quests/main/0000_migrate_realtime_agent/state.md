@@ -1,10 +1,10 @@
 # State
 
-- global_step: 6
+- global_step: 7
 - machine_name: quest
 - machine_path: projects/realtime-agent/quests/main/0000_migrate_realtime_agent
-- state: ExecuteSlice
-- updated_at: 2026-06-07T20:47:47Z
+- state: PrepareNextSlice
+- updated_at: 2026-06-07T20:51:49Z
 
 ## Tags
 
