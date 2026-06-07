@@ -227,28 +227,6 @@ final class RuntimeConfigProviderTests: XCTestCase {
         XCTAssertEqual(updated.interactionsBufferBytes, 25 * 1024 * 1024)
     }
 
-    func testResolvedDataDirectoryUsesRepoRootForLegacyAppsPrefixedPath() throws {
-        let repoRoot = try makeSheafRepoRoot()
-        defer { try? FileManager.default.removeItem(at: repoRoot) }
-
-        let runtime = RuntimeConfigFile(
-            version: 2,
-            cloudModel: "gpt-4.1-mini",
-            localModel: "qwen2.5:7b-instruct",
-            useCloud: false,
-            dataDir: "apps/dictator-main/Data",
-            updatedAt: "2026-03-03T00:00:00Z"
-        )
-
-        let nested = repoRoot.appendingPathComponent("projects/dictator", isDirectory: true).path
-        let resolved = runtime.resolvedDataDirectoryURL(currentDirectoryPath: nested)
-
-        XCTAssertEqual(
-            resolved.standardizedFileURL.path,
-            repoRoot.appendingPathComponent("apps/dictator-main/Data", isDirectory: true).standardizedFileURL.path
-        )
-    }
-
     private func makeSheafRepoRoot() throws -> URL {
         let repoRoot = try makeTempDir()
         try FileManager.default.createDirectory(

@@ -1,3 +1,4 @@
+import DictatorCore
 import Foundation
 
 struct LaunchpadLayoutConfig: Decodable {
@@ -82,17 +83,20 @@ struct LaunchpadActionConfig: Decodable {
 
 enum LaunchpadLayoutLoader {
     static let defaultSearchPaths: [String] = {
-        let current = FileManager.default.currentDirectoryPath
-        let sourceDirectory = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .path
+        if let repoRoot = SheafRootDiscovery.findRepoRoot() {
+            return [
+                repoRoot
+                    .appendingPathComponent(
+                        "projects/dictator/tests/fixtures/launchpad-layout.json",
+                        isDirectory: false
+                    )
+                    .path
+            ]
+        }
 
+        let current = FileManager.default.currentDirectoryPath
         return [
-            "\(current)/Config/launchpad-layout.json",
-            "\(current)/apps/dictator-main/Config/launchpad-layout.json",
-            "\(sourceDirectory)/Config/launchpad-layout.json"
+            "\(current)/tests/fixtures/launchpad-layout.json"
         ]
     }()
 

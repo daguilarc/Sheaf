@@ -1,26 +1,47 @@
 # Dictator
 
-Dictator is the Sheaf project home for the migrated dictation service, core library,
-prompts, and contracts.
+Dictator is a Sheaf dictation service: it transcribes WAV audio, refines text through configurable LLM providers, and exposes an operational web UI plus an iOS keyboard client.
+
+## Run the service
+
+From the Sheaf repository root:
+
+```bash
+make dictator-run
+```
+
+The service registers on port **9003** in `config/services.json`. Health check:
+
+```bash
+curl http://127.0.0.1:9003/health
+```
+
+## Entry points
+
+| Surface | URL or command |
+|---------|----------------|
+| Web UI | `http://127.0.0.1:9003/` |
+| Dictation API | `POST http://127.0.0.1:9003/v1/dictate-audio` |
+| Shutdown | `POST http://127.0.0.1:9003/exit` |
 
 ## Build and test
 
 From this directory:
 
-- `make build` — compile the Swift package (`DictatorCore` + `DictatorService`)
-- `make test-core` — run `DictatorCore` unit tests
-- `make test` — run all migrated tests
-- `make run` — start the `DictatorService` executable (endpoint wiring completes in slice 2)
-- `make clean` — remove local SwiftPM build artifacts
+```bash
+make build      # Swift package + iOS keyboard Xcode build
+make test       # Swift package tests + iOS simulator tests
+make test-core  # DictatorCore unit tests only
+make run        # start DictatorService locally
+```
 
-## Layout
+From the Sheaf root:
 
-- `Package.swift` — Swift package root (sources under `src/`, tests under `tests/`)
-- `src/Sources/` — `DictatorCore`, `CWhisper`, and `DictatorService` targets
-- `src/prompts/` — refinement and system prompt catalogs
-- `src/contracts/` — API contract source material
-- `tests/` — `DictatorCoreTests`, `DictatorServiceTests`, and fixtures
-- `quests/` — migration quest artifacts
-- `docs/` — current-state documentation
+```bash
+make dictator-build
+make dictator-test
+```
 
-See [docs/README.md](docs/README.md) for the project documentation index.
+## Documentation
+
+See [docs/README.md](docs/README.md) for the full documentation index.

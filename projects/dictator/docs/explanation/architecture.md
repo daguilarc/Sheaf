@@ -11,23 +11,54 @@ The migrated Dictator project under `projects/dictator/` contains:
 
 Dictator is registered in Sheaf `config/services.json` as service `dictator` on port **9003**.
 
-## Service layer
+## Project layout
 
-The Dictator service exposes:
+```text
+projects/dictator/
+  Package.swift
+  Makefile
+  src/
+    Sources/DictatorCore/     # pipeline, config, STT, refinement, Talon Lite
+    Sources/DictatorService/  # HTTP server, web APIs, interaction history
+    Sources/CWhisper/         # whisper.cpp module map
+    web/                      # static operational UI
+    prompts/                  # system prompt catalogs
+    contracts/                # API contract source material
+    ios-keyboard/             # Xcode host app + keyboard extension
+  tests/
+    DictatorCoreTests/
+    DictatorServiceTests/
+    ios-keyboard/
+    fixtures/
+  docs/                       # current-state documentation
+```
 
-- standard Sheaf endpoints (`GET /health`, `POST /exit`)
-- the dictation API (`POST /v1/dictate-audio`)
-- web UI static assets and operational JSON APIs
+Configuration, secrets, logs, and data use Sheaf repository-root paths (`config/`, `logs/dictator/`, `data/dictator/`).
 
-Configuration is read from `config/dictator.json`. Secrets are read from `config/api_keys.json`. Logs write to `logs/dictator/` and runtime data to `data/dictator/`.
+## Service composition
+
+`DictatorServiceMain` wires:
+
+1. Sheaf repo-root discovery
+2. `config/services.json` endpoint resolution
+3. `config/dictator.json` runtime config and `config/api_keys.json` secrets
+4. `WhisperCPPBridgeSTTEngine` for local STT
+5. `RuntimeConfigRefinementEngine` for cloud/local LLM refinement with fallback
+6. `PipelineOrchestrator` as the shared dictation client
+7. `DictationHTTPServer` for health, exit, dictate-audio, and web routes
+8. `InteractionHistoryStore` for in-memory plus on-disk interaction history
 
 ## Dictation pipeline
 
-Audio enters through `POST /v1/dictate-audio`, is transcribed and refined through the shared `DictatorCore` pipeline, and returns raw transcript, revised text, edit summary, uncertainty flags, and timing fields.
+Audio enters through `POST /v1/dictate-audio`, is transcribed and refined through `DictatorCore`, and returns transcript, revised text, edit summary, uncertainty flags, and timing fields. See [Dictation pipeline](dictation-pipeline.md).
 
-## iOS keyboard integration
+## Web UI and service APIs
 
-The iOS surface is split into:
+The legacy macOS AppKit menu-bar UI was not migrated. Operational workflows (status, config edit/reset, prompt selection, interaction history, API key status) are served by static assets at `/` and JSON routes under `/api/*`. See [Web UI](web-ui.md).
+
+## iOS keyboard relationship
+
+The host app records audio and uploads WAV payloads to the Dictator service. The keyboard extension inserts completed transcripts via app-group session state and Darwin notifications. The iOS client targets port `9003` and does not call Conductor trace or service-manager APIs.
 
 | Component | Path | Role |
 |-----------|------|------|
@@ -43,15 +74,24 @@ The iOS surface is split into:
 - Darwin notifications: `dictation.start`, `dictation.stop`, `dictation.cancel-take`, `session-updated`
 - Shared session state tracks launch, recording, processing, completion, failure, and cancellation phases
 
-### Network model
-
-The host app uploads WAV audio to `POST /v1/dictate-audio` on the configured Dictator base URL (default `http://127.0.0.1:9003`). Physical devices must use the Mac LAN address with port `9003`.
-
-Diagnostics are persisted locally in the app group (`host_diagnostics.log`). The migrated iOS client does not post diagnostics to a separate Conductor trace API.
-
 ## Build layout
 
 - Swift package build output: `.build/`
 - Xcode DerivedData for iOS builds: `.build/xcode/`
 
 Both paths are git-ignored. Only source and project metadata are tracked under `src/ios-keyboard/`.
+
+## Intentionally not migrated
+
+The following external Dictator repository surfaces were left behind:
+
+- realtime-agent app (`apps/realtime-agent/`)
+- VS Code extension
+- external quest records from the standalone repository
+- AppKit menu-bar UI and fullscreen overlays
+- legacy public `POST /v1/transcribe` and `POST /v1/refine` routes
+- app-local `Config/` and `Data/` trees
+- Conductor service-manager trace/restart integration
+- generated build output, caches, local secrets, crash logs, and runtime data copied during the external repo's development history
+
+The migration quest under `projects/dictator/quests/` is Sheaf quest-runner scaffolding for this migration, not imported external quest debris.

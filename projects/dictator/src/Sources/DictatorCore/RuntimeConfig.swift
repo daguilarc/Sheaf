@@ -293,7 +293,6 @@ public struct RuntimeConfigFile: Codable, Sendable, Equatable {
             || relativePath == "data/dictator"
             || relativePath.hasPrefix("logs/dictator")
             || relativePath == "logs/dictator"
-            || relativePath.hasPrefix("apps/")
             || relativePath.hasPrefix("prompts/")
             || relativePath.hasPrefix("contracts/")
             || relativePath.hasPrefix("skills/")
