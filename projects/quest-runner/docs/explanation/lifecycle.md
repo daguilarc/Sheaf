@@ -89,6 +89,9 @@ payload.
 Quest step history readers merge commit metadata with optional legacy
 `state_history.md` rows.
 
+Runtime file schemas and marker files are summarized in
+[Runtime files](../reference/runtime-files.md).
+
 ## Logging summary
 
 | Log type | Location |
