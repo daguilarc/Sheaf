@@ -95,18 +95,26 @@ def _git_env() -> dict[str, str]:
     return env
 
 
-def _git(
-    source_repo_root: Path,
+def run_git(
+    git_dir: Path,
     *args: str,
     check: bool = True,
 ) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        ["git", "-C", str(source_repo_root), *args],
+        ["git", "-C", str(git_dir), *args],
         check=check,
         capture_output=True,
         text=True,
         env=_git_env(),
     )
+
+
+def _git(
+    source_repo_root: Path,
+    *args: str,
+    check: bool = True,
+) -> subprocess.CompletedProcess[str]:
+    return run_git(source_repo_root, *args, check=check)
 
 
 def current_branch(source_repo_root: Path) -> str:
@@ -222,12 +230,53 @@ def remove_partial_worktree(
 
 
 def is_worktree_clean(worktree_path: Path) -> bool:
-    status = subprocess.run(
-        ["git", "-C", str(worktree_path), "status", "--porcelain"],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
+    clean, _dirty = porcelain_status(worktree_path)
+    return clean
+
+
+def porcelain_status(git_dir: Path) -> tuple[bool, str]:
+    status = run_git(git_dir, "status", "--porcelain", check=False)
     if status.returncode != 0:
-        return False
-    return not status.stdout.strip()
+        raise SourceCheckoutError(
+            f"Failed to read git status in {git_dir}: {status.stderr.strip()}"
+        )
+    output = status.stdout.strip()
+    return (not output, output)
+
+
+def branch_exists(git_dir: Path, branch: str) -> bool:
+    result = run_git(
+        git_dir,
+        "show-ref",
+        "--verify",
+        f"refs/heads/{branch}",
+        check=False,
+    )
+    return result.returncode == 0
+
+
+def checkout_branch(git_dir: Path, branch: str) -> None:
+    run_git(git_dir, "checkout", branch)
+
+
+def rebase_onto(worktree_path: Path, onto_branch: str) -> subprocess.CompletedProcess[str]:
+    return run_git(worktree_path, "rebase", onto_branch, check=False)
+
+
+def merge_ff_only(git_dir: Path, branch: str) -> subprocess.CompletedProcess[str]:
+    return run_git(git_dir, "merge", "--ff-only", branch, check=False)
+
+
+def remove_worktree(source_repo_root: Path, worktree_path: Path) -> subprocess.CompletedProcess[str]:
+    return run_git(
+        source_repo_root,
+        "worktree",
+        "remove",
+        str(worktree_path),
+        check=False,
+    )
+
+
+def rev_parse_head(git_dir: Path) -> str:
+    result = run_git(git_dir, "rev-parse", "HEAD")
+    return result.stdout.strip()

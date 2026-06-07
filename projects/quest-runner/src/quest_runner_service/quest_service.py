@@ -20,13 +20,22 @@ from .worktrees import (
     SourceCheckoutNotClean,
     WorktreeCreationError,
     assert_source_checkout_clean,
+    branch_exists,
+    checkout_branch,
     create_quest_scaffold_commit,
     create_quest_worktree,
+    current_branch,
     is_git_worktree,
+    is_worktree_clean,
+    merge_ff_only,
+    porcelain_status,
     quest_worktree_branch,
     quest_worktree_name,
     quest_worktree_path,
+    rebase_onto,
     remove_partial_worktree,
+    remove_worktree,
+    rev_parse_head,
     validate_project_name,
     worktree_exists,
 )
@@ -111,6 +120,14 @@ class AdvanceQuestConflict(Exception):
     def __init__(self, message: str) -> None:
         self.message = message
         super().__init__(message)
+
+
+class LandQuestConflict(Exception):
+    """Quest land blocked by git state requiring operator action."""
+
+    def __init__(self, body: dict) -> None:
+        self.body = body
+        super().__init__(body.get("error", "land conflict"))
 
 
 class MissingQuestWorktree(Exception):
@@ -722,5 +739,207 @@ class QuestService:
                 body["commit"] = result.commit
             body["message"] = result.message
             return body
+        finally:
+            self.lock.release(key)
+
+    def _land_quest_body(
+        self,
+        *,
+        project: str,
+        quest_type: str,
+        quest_number: int,
+        target_branch: str,
+        worktree_branch: str,
+    ) -> dict:
+        return {
+            "project": project,
+            "quest_type": quest_type,
+            "quest_number": quest_number,
+            "target_branch": target_branch,
+            "worktree_branch": worktree_branch,
+        }
+
+    def _land_quest_locked(
+        self,
+        source_root: Path,
+        meta: QuestMeta,
+        worktree_path: Path,
+        worktree_branch: str,
+        *,
+        project: str,
+        quest_type: str,
+        quest_number: int,
+        target_branch: str,
+    ) -> dict:
+        base = self._land_quest_body(
+            project=project,
+            quest_type=quest_type,
+            quest_number=quest_number,
+            target_branch=target_branch,
+            worktree_branch=worktree_branch,
+        )
+
+        clean, dirty = porcelain_status(source_root)
+        if not clean:
+            raise LandQuestConflict({
+                "status": "target_dirty",
+                "error": (
+                    "Source checkout has uncommitted changes; commit or discard "
+                    "them before landing"
+                ),
+                **base,
+                "status_output": dirty,
+            })
+
+        if not branch_exists(source_root, target_branch):
+            raise InvalidQuestInput(
+                f"Target branch {target_branch!r} does not exist"
+            )
+
+        try:
+            on_branch = current_branch(source_root)
+        except SourceCheckoutDetached as exc:
+            raise InvalidQuestInput(str(exc)) from exc
+
+        if on_branch != target_branch:
+            checkout_branch(source_root, target_branch)
+            clean, dirty = porcelain_status(source_root)
+            if not clean:
+                raise LandQuestConflict({
+                    "status": "target_dirty",
+                    "error": (
+                        "Source checkout has uncommitted changes after checking out "
+                        f"{target_branch!r}"
+                    ),
+                    **base,
+                    "status_output": dirty,
+                })
+
+        if not is_worktree_clean(worktree_path):
+            raise LandQuestConflict({
+                "status": "worktree_dirty",
+                "error": "Quest worktree has uncommitted changes",
+                **base,
+                "worktree_path": str(worktree_path),
+                "next_step": (
+                    "Clean the quest worktree, then run land again."
+                ),
+            })
+
+        rebase_result = rebase_onto(worktree_path, target_branch)
+        if rebase_result.returncode != 0 or not is_worktree_clean(worktree_path):
+            detail = rebase_result.stderr.strip() or rebase_result.stdout.strip()
+            error = "Rebase stopped with conflicts"
+            if detail:
+                error = f"{error}: {detail}"
+            raise LandQuestConflict({
+                "status": "rebase_failed",
+                "error": error,
+                **base,
+                "worktree_path": str(worktree_path),
+                "next_step": (
+                    "Resolve conflicts in the quest worktree, leave it clean, "
+                    "then run land again."
+                ),
+            })
+
+        ff_result = merge_ff_only(source_root, worktree_branch)
+        if ff_result.returncode != 0:
+            detail = ff_result.stderr.strip() or ff_result.stdout.strip()
+            raise LandQuestConflict({
+                "status": "fast_forward_failed",
+                "error": detail or "Fast-forward merge failed",
+                **base,
+                "worktree_path": str(worktree_path),
+            })
+
+        remove_result = remove_worktree(source_root, worktree_path)
+        if remove_result.returncode != 0:
+            detail = remove_result.stderr.strip() or remove_result.stdout.strip()
+            raise LandQuestConflict({
+                "status": "worktree_delete_failed",
+                "error": detail or "Failed to remove quest worktree",
+                **base,
+                "worktree_path": str(worktree_path),
+                "rebased": True,
+                "fast_forwarded": True,
+                "target_head": rev_parse_head(source_root),
+            })
+
+        return {
+            "status": "landed",
+            **base,
+            "rebased": True,
+            "fast_forwarded": True,
+            "worktree_deleted": True,
+            "target_head": rev_parse_head(source_root),
+        }
+
+    def land_quest(
+        self,
+        repo_path: str,
+        project: str,
+        quest_type: str,
+        quest_number: int,
+        target_branch: str = "main",
+    ) -> dict:
+        source_root = _resolve_repo(repo_path)
+        if not _is_git_repo(source_root):
+            raise NotAGitRepo(repo_path)
+        if quest_type not in ("main", "side"):
+            raise InvalidQuestInput(
+                f"quest_type must be 'main' or 'side', got {quest_type!r}"
+            )
+        if quest_number < 0:
+            raise InvalidQuestInput("quest_number must be non-negative")
+        if not target_branch.strip():
+            raise InvalidQuestInput("target_branch must be non-empty")
+        _validate_project(source_root, project)
+
+        source_qdir = quest_fs.find_quest_dir(
+            source_root, project, quest_type, quest_number
+        )
+        if source_qdir is None:
+            raise QuestNotFound(project, quest_type, quest_number)
+
+        meta = quest_fs.read_quest_meta(source_qdir)
+        worktree_path = quest_worktree_path(source_root, meta)
+        worktree_branch = quest_worktree_branch(
+            quest_worktree_name(
+                meta.project,
+                meta.quest_type,
+                meta.quest_number,
+                meta.quest_slug,
+            )
+        )
+        if not worktree_exists(source_root, meta) or not is_git_worktree(worktree_path):
+            raise MissingQuestWorktree(
+                project, quest_type, quest_number, worktree_path
+            )
+
+        worktree_root = worktree_path.resolve()
+        key = _build_run_lock_key(
+            worktree_root, project, quest_type, quest_number
+        )
+        req_id = str(uuid.uuid4())
+        if not self.lock.acquire(key, quest_type, quest_number, req_id):
+            info = self.lock.get_lock_info(key)
+            assert info is not None
+            raise QuestLockContention(
+                "Repository is locked by another quest run",
+                repo_path=key,
+                lock_info=info,
+            )
+        try:
+            return self._land_quest_locked(
+                source_root,
+                meta,
+                worktree_path,
+                worktree_branch,
+                project=project,
+                quest_type=quest_type,
+                quest_number=quest_number,
+                target_branch=target_branch.strip(),
+            )
         finally:
             self.lock.release(key)

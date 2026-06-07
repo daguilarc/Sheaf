@@ -7,9 +7,12 @@ from pathlib import Path
 
 from quest_runner_service.quest_types import QuestMeta
 from quest_runner_service.worktrees import (
+    branch_exists,
+    porcelain_status,
     quest_worktree_branch,
     quest_worktree_name,
     quest_worktree_path,
+    run_git,
     validate_project_name,
 )
 
@@ -55,6 +58,29 @@ class ProjectNameValidationTests(unittest.TestCase):
             validate_project_name("-bad")
         with self.assertRaises(ValueError):
             validate_project_name("has space")
+
+
+class GitHelperTests(unittest.TestCase):
+    def setUp(self) -> None:
+        from .test_helpers import TempRepo
+
+        self.repo_root = Path(__file__).resolve().parents[1]
+        self.temp = TempRepo(self.repo_root)
+        self.addCleanup(self.temp.cleanup)
+
+    def test_porcelain_status_clean_and_dirty(self) -> None:
+        clean, output = porcelain_status(self.temp.root)
+        self.assertTrue(clean)
+        self.assertEqual(output, "")
+        dirty_file = self.temp.root / "dirty.txt"
+        dirty_file.write_text("x", encoding="utf-8")
+        clean, output = porcelain_status(self.temp.root)
+        self.assertFalse(clean)
+        self.assertIn("dirty.txt", output)
+
+    def test_branch_exists_and_run_git(self) -> None:
+        branch = run_git(self.temp.root, "branch", "--show-current").stdout.strip()
+        self.assertTrue(branch_exists(self.temp.root, branch))
 
 
 if __name__ == "__main__":

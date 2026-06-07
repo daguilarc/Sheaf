@@ -43,5 +43,14 @@
     "round_count": 1,
     "created_at": "2026-06-07T07:50:08Z",
     "last_used_at": "2026-06-07T07:53:36Z"
+  },
+  "slice_2_implementer": {
+    "thread_name": "quest-runner_side_0000_cli_quest_0000_slice_0002_implementer",
+    "harness_kind": "cursor",
+    "provider_thread_id": "a523f469-b7da-48a4-944c-9ec692a1219a",
+    "pass_id": 0,
+    "round_count": 1,
+    "created_at": "2026-06-07T07:55:16Z",
+    "last_used_at": "2026-06-07T07:58:03Z"
   }
 }

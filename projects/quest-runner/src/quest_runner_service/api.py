@@ -19,6 +19,7 @@ from .quest_service import (
     FatalInvariantError,
     InvalidProject,
     InvalidQuestInput,
+    LandQuestConflict,
     MissingDefaultExecutionConfig,
     MissingQuestWorktree,
     NotAGitRepo,
@@ -118,6 +119,10 @@ def create_app(
     @app.errorhandler(AdvanceQuestConflict)
     def handle_advance_quest_conflict(exc):
         return jsonify({"error": exc.message}), 409
+
+    @app.errorhandler(LandQuestConflict)
+    def handle_land_quest_conflict(exc):
+        return jsonify(exc.body), 409
 
     @app.errorhandler(dashboard_data.DashboardBadRequest)
     def handle_dashboard_bad_request(exc):
@@ -244,6 +249,37 @@ def create_app(
         )
         log.info(
             "advance_quest ok project=%s type=%s number=%s status=%s",
+            data["project"],
+            data["quest_type"],
+            data["quest_number"],
+            result.get("status"),
+        )
+        return jsonify(result), 200
+
+    @app.route("/land", methods=["POST"])
+    def land_route():
+        data = request.get_json(force=True)
+        required = ["project", "quest_type", "quest_number"]
+        missing = [f for f in required if f not in data]
+        if missing:
+            return jsonify({"error": f"Missing required fields: {missing}"}), 400
+        target_branch = data.get("target_branch", "main")
+        log.info(
+            "land project=%s type=%s number=%s target_branch=%s",
+            data["project"],
+            data["quest_type"],
+            data["quest_number"],
+            target_branch,
+        )
+        result = quest_service.land_quest(
+            repo_path=str(source_root),
+            project=data["project"],
+            quest_type=data["quest_type"],
+            quest_number=data["quest_number"],
+            target_branch=target_branch,
+        )
+        log.info(
+            "land ok project=%s type=%s number=%s status=%s",
             data["project"],
             data["quest_type"],
             data["quest_number"],
