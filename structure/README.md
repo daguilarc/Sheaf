@@ -12,7 +12,7 @@ Start here:
 - [Web UI](webui.md): shared web UI utilities and project home page links.
 - [Docs Structure](docs-structure.md): how project and repository documentation should be organized.
 - [Makefiles](makefile.md): root and per-project Make targets and command conventions.
-- [Scripts](scripts.md): shared script symlink conventions.
+- [Scripts](scripts.md): shared root script and symlink conventions.
 - [Glossary](glossary.md): shared terms used across the repo.
 
 The existing code has not been migrated into `projects/`. Until migration happens, the current top-level `apps/`, `docs/`, `quests/`, and `prompts/` directories remain part of the repo as-is.

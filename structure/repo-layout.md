@@ -8,7 +8,8 @@ Sheaf is intended to be a command hub containing many projects under one reposit
 - `config/`: shared and project-specific JSON configuration.
 - `logs/`: runtime logs, grouped by project.
 - `data/`: runtime data, grouped by project.
-- `scripts/`: useful project scripts exposed at the repository root via symlink.
+- `scripts/`: useful project commands exposed at the repository root as short
+  bash dispatch scripts or symlinks.
 - `structure/`: repository layout, rules, and shared vocabulary.
 
 The repository currently also contains pre-existing top-level directories that have not been migrated:

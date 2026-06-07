@@ -6,20 +6,18 @@ Quest Runner provides a repository-root CLI at:
 scripts/quest-runner
 ```
 
-The root command is a symlink to
-`projects/quest-runner/bin/quest-runner`, which loads
-`quest_runner_service.cli` from the project source tree. The CLI wraps the
-Quest Runner REST service; it does not edit quest files or git history directly.
+The root command is a short bash dispatcher that uses the project virtualenv to
+run `projects/quest-runner/bin/quest-runner`, which loads
+`quest_runner_service.cli` from the project source tree. The CLI wraps the Quest
+Runner REST service; it does not edit quest files or git history directly.
 
 Implementation:
 
 - `bin/quest-runner`
 - `src/quest_runner_service/cli.py`
 
-The executable uses `/usr/bin/env python3` and imports the service source
-directly. It requires Python 3.10 or newer. In development, either ensure
-`python3` resolves to the project virtualenv interpreter or put
-`projects/quest-runner/.venv/bin` first on `PATH`.
+The repository-root dispatcher uses `projects/quest-runner/.venv/bin/python`.
+Run `make -C projects/quest-runner test` if the virtualenv is missing.
 
 ## Service URL Resolution
 
