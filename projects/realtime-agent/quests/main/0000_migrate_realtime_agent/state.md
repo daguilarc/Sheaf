@@ -1,13 +1,14 @@
 # State
 
-- global_step: 3
+- global_step: 4
 - machine_name: quest
 - machine_path: projects/realtime-agent/quests/main/0000_migrate_realtime_agent
-- state: PrepareNextSlice
-- updated_at: 2026-06-07T20:08:05Z
+- state: ExecuteSlice
+- updated_at: 2026-06-07T20:44:52Z
 
 ## Tags
 
+- active_slice: 0001_workspace_scaffold_and_package_strategy
 - quest_number: 0
 - quest_slug: migrate_realtime_agent
 - quest_type: main
