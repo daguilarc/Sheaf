@@ -5,10 +5,12 @@
   const state = {
     status: null,
     configFields: [],
+    configOptions: {},
     promptDir: "",
     selectedPromptPath: null,
     selectedInteractionId: null
   };
+  let configControlCounter = 0;
 
   async function api(path, options)
   {
@@ -121,8 +123,119 @@
 
   async function loadConfigOptions(fieldName)
   {
+    if (Object.prototype.hasOwnProperty.call(state.configOptions, fieldName))
+    {
+      return state.configOptions[fieldName];
+    }
     const data = await api("/api/config/options?name=" + encodeURIComponent(fieldName));
-    return data.options || [];
+    state.configOptions[fieldName] = data.options || [];
+    return state.configOptions[fieldName];
+  }
+
+  function fieldByName(name)
+  {
+    return state.configFields.find(function (field)
+    {
+      return field.name === name;
+    });
+  }
+
+  function optionDatalistId(fieldName)
+  {
+    configControlCounter += 1;
+    return "config-options-" + fieldName + "-" + configControlCounter;
+  }
+
+  function createFallbackInput(field)
+  {
+    const input = document.createElement(field.name === "interactions_buffer_bytes" ? "input" : "input");
+    input.name = field.name;
+    input.value = field.current.value;
+
+    if (field.name === "interactions_buffer_bytes")
+    {
+      input.type = "number";
+      input.min = "1";
+      input.step = "1";
+      input.value = String(Math.max(1, parseInt(field.current.value.replace(/[^0-9]/g, ""), 10) || 100));
+      input.dataset.unit = "mb";
+      return input;
+    }
+
+    input.type = "text";
+    input.autocomplete = "off";
+    return input;
+  }
+
+  function createBoolInput(field)
+  {
+    const input = document.createElement("select");
+    input.innerHTML = '<option value="true">true</option><option value="false">false</option>';
+    input.value = field.current.value;
+    input.name = field.name;
+    return input;
+  }
+
+  function createInputWithOptions(field, options)
+  {
+    const input = createFallbackInput(field);
+    if (!options.length || field.name === "interactions_buffer_bytes")
+    {
+      return input;
+    }
+
+    const list = document.createElement("datalist");
+    list.id = optionDatalistId(field.name);
+    list.innerHTML = options.map(function (opt)
+    {
+      return '<option value="' + escapeHtml(opt.value) + '"></option>';
+    }).join("");
+    input.setAttribute("list", list.id);
+
+    const fragment = document.createDocumentFragment();
+    fragment.appendChild(input);
+    fragment.appendChild(list);
+    return fragment;
+  }
+
+  async function createConfigInput(field)
+  {
+    if (field.type === "bool")
+    {
+      return createBoolInput(field);
+    }
+
+    try
+    {
+      return createInputWithOptions(field, await loadConfigOptions(field.name));
+    }
+    catch (err)
+    {
+      showError("config-error", "Some setting options could not be loaded: " + err.message);
+      return createFallbackInput(field);
+    }
+  }
+
+  function appendConfigControl(container, field, inputNode)
+  {
+    const wrapper = document.createElement("div");
+    wrapper.className = "config-field";
+    wrapper.dataset.fieldName = field.name;
+
+    const label = document.createElement("label");
+    label.textContent = field.label;
+    wrapper.appendChild(label);
+    wrapper.appendChild(inputNode);
+    container.appendChild(wrapper);
+  }
+
+  function normalizedFieldValue(field, value)
+  {
+    if (field.name === "interactions_buffer_bytes")
+    {
+      return String(Math.max(1, parseInt(String(value).replace(/[^0-9]/g, ""), 10) || 100));
+    }
+    return String(value);
   }
 
   async function renderConfigForm()
@@ -144,37 +257,10 @@
         continue;
       }
 
-      const wrapper = document.createElement("div");
-      wrapper.className = "config-field";
-      wrapper.dataset.fieldName = field.name;
-
-      const label = document.createElement("label");
-      label.textContent = field.label;
-      wrapper.appendChild(label);
-
-      let input;
-      if (field.type === "bool")
-      {
-        input = document.createElement("select");
-        input.innerHTML = '<option value="true">true</option><option value="false">false</option>';
-        input.value = field.current.value;
-      }
-      else
-      {
-        input = document.createElement("select");
-        const options = await loadConfigOptions(field.name);
-        input.innerHTML = options.map(function (opt)
-        {
-          return '<option value="' + escapeHtml(opt.value) + '">' + escapeHtml(opt.value) + "</option>";
-        }).join("");
-        input.value = field.current.value;
-      }
-
-      input.name = field.name;
-      input.id = "config-" + field.name;
-      wrapper.appendChild(input);
-      form.appendChild(wrapper);
+      appendConfigControl(form, field, await createConfigInput(field));
     }
+
+    await renderTopSettingsForm();
   }
 
   function collectConfigPatch()
@@ -195,7 +281,7 @@
       }
       const original = field.current.value;
       const next = input.value;
-      if (next === original)
+      if (normalizedFieldValue(field, next) === normalizedFieldValue(field, original))
       {
         continue;
       }
@@ -231,13 +317,119 @@
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(patch)
     });
+    state.selectedPromptPath = null;
     await refresh();
   }
 
   async function resetConfig()
   {
     showError("config-error", null);
+    showError("top-settings-error", null);
     await api("/api/config/reset", { method: "POST" });
+    state.selectedPromptPath = null;
+    await refresh();
+  }
+
+  async function renderTopSettingsForm()
+  {
+    const form = document.getElementById("top-settings-form");
+    if (!form || !state.configFields.length)
+    {
+      return;
+    }
+
+    const topFields = [
+      "use_cloud",
+      "cloud_model",
+      "local_model",
+      "system_prompt",
+      "interactions_buffer_bytes"
+    ];
+
+    form.innerHTML = '<div class="top-settings-title">Settings</div>';
+    for (const name of topFields)
+    {
+      const field = fieldByName(name);
+      if (!field)
+      {
+        continue;
+      }
+      appendConfigControl(form, field, await createConfigInput(field));
+    }
+
+    const actions = document.createElement("div");
+    actions.className = "top-settings-actions";
+    actions.innerHTML = '<button type="submit" class="btn btn-primary">Save</button>' +
+      '<button type="button" id="top-settings-reset-btn" class="btn btn-secondary">Reset</button>';
+    form.appendChild(actions);
+
+    const reset = document.getElementById("top-settings-reset-btn");
+    if (reset)
+    {
+      reset.addEventListener("click", function ()
+      {
+        resetConfig().catch(function (err)
+        {
+          showError("top-settings-error", err.message);
+        });
+      });
+    }
+  }
+
+  function collectTopSettingsPatch()
+  {
+    const patch = {};
+    const form = document.getElementById("top-settings-form");
+    if (!form)
+    {
+      return patch;
+    }
+
+    for (const field of state.configFields)
+    {
+      const input = form.querySelector('[name="' + field.name + '"]');
+      if (!input)
+      {
+        continue;
+      }
+      const original = field.current.value;
+      const next = input.value;
+      if (normalizedFieldValue(field, next) === normalizedFieldValue(field, original))
+      {
+        continue;
+      }
+      if (field.type === "bool")
+      {
+        patch[field.name] = next === "true";
+      }
+      else if (field.name === "interactions_buffer_bytes")
+      {
+        const mb = Math.max(1, parseInt(next.replace(/[^0-9]/g, ""), 10) || 100);
+        patch[field.name] = mb * 1024 * 1024;
+      }
+      else
+      {
+        patch[field.name] = next;
+      }
+    }
+    return patch;
+  }
+
+  async function saveTopSettings()
+  {
+    showError("top-settings-error", null);
+    const patch = collectTopSettingsPatch();
+    if (Object.keys(patch).length === 0)
+    {
+      showError("top-settings-error", "No configuration changes to save.");
+      return;
+    }
+    await api("/api/config", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch)
+    });
+    state.selectedPromptPath = null;
     await refresh();
   }
 
@@ -300,10 +492,50 @@
     showError("prompt-error", null);
     state.selectedPromptPath = path;
     const data = await api("/api/prompts/preview?path=" + encodeURIComponent(path));
+    const heading = document.getElementById("prompt-preview-heading");
+    if (heading)
+    {
+      heading.textContent = path;
+    }
     const preview = document.getElementById("prompt-preview");
     if (preview)
     {
       preview.textContent = data.body;
+    }
+  }
+
+  async function previewCurrentSystemPrompt()
+  {
+    const field = fieldByName("system_prompt");
+    if (!field || state.selectedPromptPath)
+    {
+      return;
+    }
+
+    const preview = document.getElementById("prompt-preview");
+    const heading = document.getElementById("prompt-preview-heading");
+    if (heading)
+    {
+      heading.textContent = "Current primary prompt: " + field.current.value;
+    }
+    if (preview)
+    {
+      preview.textContent = "Loading current prompt: " + field.current.value;
+    }
+
+    try
+    {
+      await previewPrompt(field.current.value);
+      state.selectedPromptPath = field.current.value;
+      const target = document.getElementById("prompt-target");
+      if (target)
+      {
+        target.value = "primary";
+      }
+    }
+    catch (err)
+    {
+      showError("prompt-error", "Current prompt could not be loaded: " + err.message);
     }
   }
 
@@ -324,6 +556,10 @@
         path: state.selectedPromptPath
       })
     });
+    if (!target || target.value === "primary")
+    {
+      state.selectedPromptPath = null;
+    }
     await refresh();
   }
 
@@ -431,6 +667,7 @@
     await loadStatus();
     await renderConfigForm();
     await loadPromptDirectory(state.promptDir);
+    await previewCurrentSystemPrompt();
     await loadInteractions();
     if (state.selectedInteractionId)
     {
@@ -444,6 +681,7 @@
     const resetBtn = document.getElementById("config-reset-btn");
     const promptBtn = document.getElementById("prompt-select-btn");
     const dictateForm = document.getElementById("dictate-form");
+    const topSettingsForm = document.getElementById("top-settings-form");
 
     if (saveBtn)
     {
@@ -478,6 +716,17 @@
     if (dictateForm)
     {
       dictateForm.addEventListener("submit", submitDictation);
+    }
+    if (topSettingsForm)
+    {
+      topSettingsForm.addEventListener("submit", function (event)
+      {
+        event.preventDefault();
+        saveTopSettings().catch(function (err)
+        {
+          showError("top-settings-error", err.message);
+        });
+      });
     }
   }
 

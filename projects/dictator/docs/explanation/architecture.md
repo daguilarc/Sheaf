@@ -19,9 +19,10 @@ projects/dictator/
   Makefile
   src/
     Sources/DictatorCore/     # pipeline, config, STT, refinement, Talon Lite
-    Sources/DictatorService/  # HTTP server, web APIs, interaction history
+    Sources/DictatorService/  # HTTP server, web APIs, Launchpad MIDI, interaction history
     Sources/CWhisper/         # whisper.cpp module map
     web/                      # static operational UI
+    launchpad/                # product Launchpad Pro MIDI layout
     prompts/                  # system prompt catalogs
     contracts/                # API contract source material
     ios-keyboard/             # Xcode host app + keyboard extension
@@ -47,10 +48,17 @@ Configuration, secrets, logs, and data use Sheaf repository-root paths (`config/
 6. `PipelineOrchestrator` as the shared dictation client
 7. `DictationHTTPServer` for health, exit, dictate-audio, and web routes
 8. `InteractionHistoryStore` for in-memory plus on-disk interaction history
+9. `LaunchpadServiceController` for Launchpad Pro MIDI controls, keystroke injection, and service-side dictation commands
 
 ## Dictation pipeline
 
 Audio enters through `POST /v1/dictate-audio`, is transcribed and refined through `DictatorCore`, and returns transcript, revised text, edit summary, uncertainty flags, and timing fields. See [Dictation pipeline](dictation-pipeline.md).
+
+## Launchpad MIDI controller
+
+The legacy AppKit Launchpad overlay and native navigation UI were not migrated. The hardware controller path was migrated into the service: `LaunchpadServiceController` starts with `DictatorServiceMain`, loads `src/launchpad/launchpad-layout.json`, connects to a Launchpad Pro MIDI device, renders pad colors, and dispatches service actions.
+
+Active Launchpad actions include primary dictation, auxiliary prompt dictation, Talon Lite dictation, contextual backspace/cancel, safe-config reload, shift latch, and keystroke injection through macOS Accessibility APIs. See [Launchpad](../reference/launchpad.md).
 
 ## Web UI and service APIs
 
@@ -88,7 +96,7 @@ The following external Dictator repository surfaces were left behind:
 - realtime-agent app (`apps/realtime-agent/`)
 - VS Code extension
 - external quest records from the standalone repository
-- AppKit menu-bar UI and fullscreen overlays
+- AppKit menu-bar UI, fullscreen overlays, and old native Launchpad navigation UI
 - legacy public `POST /v1/transcribe` and `POST /v1/refine` routes
 - app-local `Config/` and `Data/` trees
 - Conductor service-manager trace/restart integration

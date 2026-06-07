@@ -8,6 +8,7 @@ Exact APIs, configuration, commands, and data shapes:
 
 - [API](reference/api.md) — HTTP endpoints for health, dictation, web UI, and operational JSON APIs
 - [Configuration](reference/config.md) — `config/dictator.json`, `config/api_keys.json`, and service endpoint rules
+- [Launchpad](reference/launchpad.md) — Launchpad Pro MIDI controls for dictation and keystroke injection
 - [Services](reference/services.md) — Sheaf service registration, port `9003`, logs, and shutdown
 - [Data](reference/data.md) — `data/dictator/` layout, interaction records, and model binary policy
 - [Testing](reference/testing.md) — build, test, and migration validation commands

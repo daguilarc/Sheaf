@@ -18,6 +18,8 @@ The server maps `GET /` and `GET /assets/*` through `WebRouter` and `StaticAsset
 
 The status strip calls `GET /api/status` on load and after config changes. It shows dictation state, provider mode, model names, STT model presence, Ollama reachability, log/data paths, and whether the OpenAI key is configured (without revealing key material).
 
+The top pane also exposes the primary runtime settings for quick edits: `use_cloud`, `cloud_model`, `local_model`, `system_prompt`, and `interactions_buffer_bytes`. Saving from the top pane uses the same `PATCH /api/config` endpoint as the full configuration panel.
+
 ### Runtime configuration
 
 The config panel loads `GET /api/config`, populates editable fields, and saves with `PATCH /api/config`. Field-specific pickers use `GET /api/config/options?name=...`. **Reset defaults** calls `POST /api/config/reset`, restoring `config/dictator.safe` or bootstrap values.
@@ -26,7 +28,7 @@ Editable fields: `use_cloud`, `cloud_model`, `local_model`, `system_prompt`, `au
 
 ### System prompts
 
-The prompt browser lists files with `GET /api/prompts`, previews content with `GET /api/prompts/preview`, and persists selection with `POST /api/prompts/selection` for primary or auxiliary slots.
+The prompt browser lists files with `GET /api/prompts`, previews content with `GET /api/prompts/preview`, and persists selection with `POST /api/prompts/selection` for primary or auxiliary slots. On dashboard load, the prompt preview automatically shows the currently configured primary `system_prompt`.
 
 ### Interaction history
 
@@ -47,8 +49,10 @@ Validation errors from config patches return `400` with `{ "error": "..." }` dis
 The web UI is operational, not a full replacement for every legacy native control:
 
 - No menu-bar presence or global hotkey overlay
-- No Launchpad hardware MIDI overlay (launchpad domain code remains in the service for tests and future integration, but the migrated UI does not drive it)
+- No native Launchpad overlay or AppKit navigation surface
 - No OS-wide text insertion from the browser; clients must paste or use platform-specific insertion paths
 - Cloud model listing returns presets; live OpenAI model discovery is not exposed in the UI
+
+The Launchpad Pro hardware path is service-side, not web-UI-driven. When the Dictator service starts, it loads the MIDI layout and uses the hardware pads for dictation commands and macOS keystroke injection. See [Launchpad](../reference/launchpad.md).
 
 For dictation from mobile, use the iOS keyboard host app documented in [Architecture](architecture.md).

@@ -13,8 +13,12 @@
       <p class="subtitle">Operational dashboard — dictation service on port 9003</p>
     </header>
 
-    <section id="status-strip" class="status-strip card" aria-live="polite">
-      <div class="status-loading">Loading service status…</div>
+    <section id="status-pane" class="status-pane card">
+      <div id="status-strip" class="status-strip" aria-live="polite">
+        <div class="status-loading">Loading service status…</div>
+      </div>
+      <form id="top-settings-form" class="top-settings-form" aria-label="Runtime settings"></form>
+      <div id="top-settings-error" class="inline-error hidden" role="alert"></div>
     </section>
 
     <div class="grid">
@@ -51,6 +55,7 @@
               </label>
               <button type="button" id="prompt-select-btn" class="btn btn-primary">Select prompt</button>
             </div>
+            <div id="prompt-preview-heading" class="prompt-preview-heading">Current primary prompt</div>
             <pre id="prompt-preview" class="prompt-preview">Select a prompt file to preview.</pre>
           </div>
         </div>

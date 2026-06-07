@@ -64,6 +64,14 @@ The `dictator_server_host`, `dictator_server_port`, and `dictator_server_enabled
 
 See [Services](services.md) for registry and shutdown rules.
 
+## Launchpad layout
+
+The service-owned Launchpad Pro layout lives at `projects/dictator/src/launchpad/launchpad-layout.json`. It is not stored in the old app-local `Config/` tree.
+
+The active layout maps hardware pads to dictation commands, Talon Lite dictation, auxiliary prompt dictation, contextual backspace, safe-config reload, shift latch, and keystroke injection. Old AppKit overlay/navigation actions are intentionally not present in the product layout.
+
+See [Launchpad](launchpad.md) for the action map and runtime behavior.
+
 ## What is not used
 
 - Environment variables for persistent configuration

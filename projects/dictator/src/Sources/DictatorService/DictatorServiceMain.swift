@@ -212,6 +212,20 @@ struct DictatorServiceMain
         let webAPIService = WebAPIService(context: webContext)
         await webAPIService.prepare()
 
+        let launchpadController = LaunchpadServiceController(
+            repoRoot: repoRoot,
+            runtimeConfigProvider: runtimeConfigProvider,
+            secretStore: secretStore,
+            sttEngine: sttEngine,
+            coreClient: coreClient,
+            interactionStore: interactionStore,
+            activityTracker: activityTracker
+        )
+        await MainActor.run
+        {
+            launchpadController.start()
+        }
+
         let server = DictationHTTPServer(
             host: endpoint.host,
             port: endpoint.port,
@@ -248,6 +262,11 @@ struct DictatorServiceMain
             }
             signal(SIGINT, SIG_IGN)
             signalSource.resume()
+        }
+
+        await MainActor.run
+        {
+            launchpadController.stop()
         }
     }
 

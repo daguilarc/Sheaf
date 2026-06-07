@@ -84,24 +84,44 @@ struct LaunchpadActionConfig: Decodable {
 enum LaunchpadLayoutLoader {
     static let defaultSearchPaths: [String] = {
         if let repoRoot = SheafRootDiscovery.findRepoRoot() {
-            return [
-                repoRoot
-                    .appendingPathComponent(
-                        "projects/dictator/tests/fixtures/launchpad-layout.json",
-                        isDirectory: false
-                    )
-                    .path
-            ]
+            return defaultSearchPaths(repoRoot: repoRoot)
         }
 
         let current = FileManager.default.currentDirectoryPath
         return [
+            "\(current)/src/launchpad/launchpad-layout.json",
+            "\(current)/projects/dictator/src/launchpad/launchpad-layout.json",
             "\(current)/tests/fixtures/launchpad-layout.json"
         ]
     }()
 
+    static func defaultSearchPaths(repoRoot: URL) -> [String] {
+        [
+            repoRoot
+                .appendingPathComponent(
+                    "projects/dictator/src/launchpad/launchpad-layout.json",
+                    isDirectory: false
+                )
+                .path,
+            repoRoot
+                .appendingPathComponent(
+                    "projects/dictator/tests/fixtures/launchpad-layout.json",
+                    isDirectory: false
+                )
+                .path
+        ]
+    }
+
     static func loadDefault() throws -> LaunchpadLayoutConfig {
-        for path in defaultSearchPaths {
+        try loadDefault(searchPaths: defaultSearchPaths)
+    }
+
+    static func loadDefault(repoRoot: URL) throws -> LaunchpadLayoutConfig {
+        try loadDefault(searchPaths: defaultSearchPaths(repoRoot: repoRoot))
+    }
+
+    private static func loadDefault(searchPaths: [String]) throws -> LaunchpadLayoutConfig {
+        for path in searchPaths {
             if FileManager.default.fileExists(atPath: path) {
                 let data = try Data(contentsOf: URL(fileURLWithPath: path))
                 return try decode(data)

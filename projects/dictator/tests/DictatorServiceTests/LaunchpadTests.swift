@@ -12,6 +12,16 @@ private func loadFixtureLayout() throws -> LaunchpadLayoutConfig {
     return try LaunchpadLayoutLoader.decode(data)
 }
 
+private func loadProductLayout() throws -> LaunchpadLayoutConfig {
+    let repoRoot = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    return try LaunchpadLayoutLoader.loadDefault(repoRoot: repoRoot)
+}
+
 final class LaunchpadTests: XCTestCase {
     func testLaunchpadNoteCoordinateMappingRoundTrip() {
         let samples = [
@@ -374,6 +384,25 @@ final class LaunchpadTests: XCTestCase {
             XCTAssertEqual(pad.action.key, key)
             XCTAssertEqual(pad.color.color, color)
         }
+    }
+
+    func testProductLayoutKeepsServiceActionsAndOmitsNativeUIActions() throws {
+        let config = try loadProductLayout()
+        guard let arrowsPage = config.pages.first(where: { $0.id == "arrows" }) else {
+            XCTFail("Expected arrows page in product layout")
+            return
+        }
+
+        let actionTypes = arrowsPage.pads.map(\.action.type)
+        XCTAssertTrue(actionTypes.contains(.dictation))
+        XCTAssertTrue(actionTypes.contains(.auxiliaryDictation))
+        XCTAssertTrue(actionTypes.contains(.talonLiteDictation))
+        XCTAssertTrue(actionTypes.contains(.keystroke))
+        XCTAssertTrue(actionTypes.contains(.contextualBackspace))
+        XCTAssertTrue(actionTypes.contains(.loadSafeRuntimeConfig))
+        XCTAssertFalse(actionTypes.contains(.toggleFullscreenOverlay))
+        XCTAssertFalse(actionTypes.contains(.nextWindow))
+        XCTAssertFalse(actionTypes.contains(.appReload))
     }
 
     func testSingleColorSysExUpdateExpandsToAllAddressableCoordinates() {

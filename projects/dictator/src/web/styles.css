@@ -92,6 +92,12 @@ code
   gap: var(--space);
 }
 
+.status-pane
+{
+  display: grid;
+  gap: var(--space);
+}
+
 .status-strip
 {
   display: grid;
@@ -166,6 +172,32 @@ code
 {
   display: grid;
   gap: 0.75rem;
+}
+
+.top-settings-form
+{
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: 0.75rem;
+  align-items: end;
+  padding-top: var(--space);
+  border-top: 1px solid var(--border);
+}
+
+.top-settings-title
+{
+  align-self: center;
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.top-settings-actions
+{
+  display: flex;
+  gap: 0.5rem;
 }
 
 .config-field label
@@ -263,6 +295,14 @@ code
   gap: 0.5rem;
   align-items: center;
   margin-bottom: 0.5rem;
+}
+
+.prompt-preview-heading
+{
+  margin-bottom: 0.35rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-family: var(--mono);
 }
 
 .endpoint-box

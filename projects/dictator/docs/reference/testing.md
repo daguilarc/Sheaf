@@ -16,7 +16,7 @@ Core-only tests:
 make test-core
 ```
 
-These cover configuration loading, API key loading, service registration, health and exit endpoints, dictation HTTP behavior, web UI APIs, pipeline logic, and migration exclusion checks under `tests/`.
+These cover configuration loading, API key loading, service registration, health and exit endpoints, dictation HTTP behavior, web UI APIs, Launchpad layout/action behavior, pipeline logic, and migration exclusion checks under `tests/`.
 
 From the Sheaf root:
 
@@ -66,6 +66,14 @@ Runs Swift package tests and then `ios-test`. This target requires Xcode and the
 `DictationHTTPServerTests` exercises `GET /health`, `POST /exit`, and `POST /v1/dictate-audio` including validation and success/failure paths. It also verifies `/v1/transcribe` and `/v1/refine` return `404`.
 
 `WebAPITests` covers static shell delivery, status/config/prompt/interaction/model/API-key endpoints, and confirms the web UI does not reference retired AppKit controls.
+
+`LaunchpadTests` covers MIDI note mapping, layout decoding, page dispatch, render diffs, and the service-owned product layout. The product-layout guard confirms dictation, auxiliary dictation, Talon Lite, keystrokes, contextual backspace, and safe-config reload remain bound while old AppKit overlay/navigation actions stay absent.
+
+Focused Launchpad validation:
+
+```bash
+swift test --filter LaunchpadTests
+```
 
 ## Static exclusion checks
 
