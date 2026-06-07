@@ -259,6 +259,9 @@ The migrated UI must:
 - show quest state, active slice state, issue counts, run status, step history,
   and relevant git-backed metadata as the existing dashboard does
 - create and run quests through the migrated REST API
+- show a run button on the overview page when a quest is open and not currently
+  running; clicking it executes the quest through the REST API so users do not
+  need to use `curl` for normal operation
 - include project identity in dashboard URLs and API calls
 - prefer the matching quest worktree for existing quests when it exists
 - fall back to the currently checked-out branch only when the matching quest
@@ -341,6 +344,10 @@ Coverage must include:
 - legacy top-level `quests/` exclusion
 - dashboard API responses with project identity
 - dashboard UI logic that preserves project identity in links and actions
+- dashboard overview run-button visibility for open quests that are not
+  currently running
+- dashboard overview run-button behavior that executes the selected quest
+  through the REST API
 - `run_quest` lookup and execution using project-local quest directories
 - `run_quest` refusal when the expected quest worktree is missing
 - dashboard checkout resolution that prefers an existing quest worktree and falls
@@ -389,6 +396,8 @@ old top-level quest layout as active behavior except as legacy background.
   quest worktree.
 - Quest execution refuses to run when the expected quest worktree is missing.
 - The web UI lists and opens only project-local quests.
+- The overview page shows a run button for an open quest when it is not currently
+  running, and that button executes the quest through the REST API.
 - The web UI prefers the matching quest worktree when present and otherwise uses
   the currently checked-out branch.
 - Top-level legacy quests remain untouched and hidden from the new UI.
