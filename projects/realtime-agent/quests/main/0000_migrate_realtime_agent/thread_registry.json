@@ -88,5 +88,14 @@
     "round_count": 1,
     "created_at": "2026-06-07T21:08:46Z",
     "last_used_at": "2026-06-07T21:10:44Z"
+  },
+  "slice_4_polisher_reviewer": {
+    "thread_name": "realtime-agent_main_0000_migrate_realtime_agent_quest_0000_slice_0004_polisher_reviewer",
+    "harness_kind": "claude_code",
+    "provider_thread_id": "ca6a038f-2f84-43ad-997c-0edb6a27240f",
+    "pass_id": 0,
+    "round_count": 1,
+    "created_at": "2026-06-07T21:10:44Z",
+    "last_used_at": "2026-06-07T21:13:34Z"
   }
 }
