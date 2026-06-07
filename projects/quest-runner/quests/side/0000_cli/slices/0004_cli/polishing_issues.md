@@ -2,10 +2,10 @@
 
 ## Issue PR-0001
 
-- status: open
+- status: completed
 - owner_role: polisher_reviewer
 - created_at: 2026-06-07T08:15:33Z
-- updated_at: 2026-06-07T08:15:33Z
+- updated_at: 2026-06-07T08:20:02Z
 - title: Transport/connection errors omit target base URL and endpoint
 - details: |
   Both the slice spec and the physical plan require that on connection/transport
@@ -33,12 +33,21 @@ endpoint on a connection/transport failure (in addition to the underlying
 reason) and exit non-zero, and a test must assert that both the base URL and the
 endpoint appear in stderr for a transport failure.
 
+Verification (2026-06-07T08:20:02Z): Fixed. `TransportError` now carries
+`base_url`/`endpoint` (cli.py:30-40); `_send_request` enriches the exception with
+the resolved base URL and endpoint when not already set (cli.py:160-174); all
+command dispatch paths route through `_send_request`; and `main` prints
+`base_url:` and `endpoint:` lines alongside the reason before exiting non-zero
+(cli.py:986-992). `test_transport_error_exits_nonzero` now asserts the base URL
+(`http://test.local`) and `/advance_quest` endpoint appear in stderr
+(tests/test_cli.py:558-562). Closed.
+
 ## Issue PR-0002
 
-- status: open
+- status: completed
 - owner_role: polisher_reviewer
 - created_at: 2026-06-07T08:15:33Z
-- updated_at: 2026-06-07T08:15:33Z
+- updated_at: 2026-06-07T08:20:02Z
 - title: `issues edit --body-file` raises uncaught OSError on unreadable file
 - details: |
   In the `issues_edit` handler, the body file is read directly without error
@@ -66,3 +75,12 @@ To mark completed: `issues edit --body-file <path>` for a missing/unreadable
 file must fail with a clean validation-style error message and a non-zero exit
 (no traceback), consistent with the create path; and a test must cover the
 `issues edit --body-file` path (at minimum the unreadable-file failure).
+
+Verification (2026-06-07T08:20:02Z): Fixed. The `issues_edit` handler now reads
+the body file via `_read_text_source(args.body, args.body_file, "body")`
+(cli.py:865-866), which wraps `OSError` in a `CliValidationError`
+("Could not read --body-file: ...", cli.py:175-181); `main` catches that and
+exits 2 (cli.py:983-985). New test
+`test_issues_edit_body_file_read_error_is_validation_error` asserts the
+"Could not read --body-file" message, exit code 2, and that no request was sent
+(tests/test_cli.py:634-654). Closed.
