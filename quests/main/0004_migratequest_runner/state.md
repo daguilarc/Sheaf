@@ -1,10 +1,10 @@
 # State
 
-- global_step: 2
+- global_step: 3
 - machine_name: quest
 - machine_path: quests/main/0004_migratequest_runner
-- state: ReviewPhysicalPlan
-- updated_at: 2026-06-07T02:13:53Z
+- state: PhysicalPlanning
+- updated_at: 2026-06-07T02:17:26Z
 
 ## Tags
 
