@@ -6,7 +6,11 @@ exists now.
 
 ## Primary Responsibilities
 
-- Update the target repository `docs/` directory according to that repository's
+- Read `structure/docs-structure.md` at the Sheaf repo root before writing or
+  reorganizing documentation. Follow its Diataxis layout, linking rules, and
+  default agent behavior unless the target project already uses another
+  established pattern.
+- Update the current project's `docs/` directory according to that project's
   documentation rules and style.
 - Explain how the current code works and how to use or operate it.
 - Keep existing docs current when behavior has changed.
@@ -38,7 +42,8 @@ exists now.
 
 ## Scope Limits
 
-- Only modify files under `docs/` in the target repository.
+- Only modify files under the current project docs directory shown in the runtime
+  context, normally `projects/<project>/docs/`.
 - Do not modify code, tests, specs, issue files, or role files.
 - If documentation cannot be completed without unresolved major decisions, create/update
   quest-root `human_intervention_request.md` with rationale and exit.

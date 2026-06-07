@@ -62,7 +62,8 @@ Later messages reuse the same thread and include:
   clear and the review is accepted, it creates `implementation_accepted.md`.
 - `polisher` fixes open polishing issues but does not close them; only `polisher` may
   append to `slices/<slice>/polishing_issue_responses.md` for that slice.
-- `documenter` writes only repository `docs/`.
+- `documenter` writes only the current project's `docs/` directory, normally
+  `projects/<project>/docs/`.
 
 Normative format for issue response files: `docs/quest/schemas/issue-responses.md`.
 

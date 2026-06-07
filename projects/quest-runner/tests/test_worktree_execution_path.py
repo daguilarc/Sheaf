@@ -12,6 +12,8 @@ from unittest.mock import MagicMock, patch
 from quest_runner_service import quest_fs
 from quest_runner_service.quest_lock import QuestLock
 from quest_runner_service.quest_runner import (
+    current_project_rel_for_quest,
+    docs_updated_for_quest,
     expand_modify_allow_patterns,
     path_is_legal_under_profile,
     run_quest,
@@ -204,6 +206,34 @@ class PrepareRunTests(unittest.TestCase):
 
 
 class ProjectLocalPathRuleTests(unittest.TestCase):
+    def test_current_project_placeholder_resolves_from_quest_path(self) -> None:
+        meta = QuestMeta(
+            project="example",
+            quest_type="main",
+            quest_number=0,
+            quest_slug="x",
+            quest_name="X",
+            created_at="2026-03-29T00:00:00Z",
+        )
+        self.assertEqual(
+            current_project_rel_for_quest(
+                meta, "projects/example/quests/main/0000_x"
+            ),
+            "projects/example",
+        )
+        legacy = QuestMeta(
+            project="",
+            quest_type="main",
+            quest_number=0,
+            quest_slug="legacy",
+            quest_name="Legacy",
+            created_at="2026-03-29T00:00:00Z",
+        )
+        self.assertEqual(
+            current_project_rel_for_quest(legacy, "quests/main/0000_legacy"),
+            "",
+        )
+
     def test_expand_current_quest_and_slice_project_local(self) -> None:
         prof = ExecutionProfile(
             harness=HarnessKind.Cursor,
@@ -213,18 +243,22 @@ class ProjectLocalPathRuleTests(unittest.TestCase):
             modify_allow=[
                 "$currentQuest/human_intervention_request.md",
                 "$currentSlice/notes/x.md",
+                "$currentProject/docs/**",
             ],
             modify_block=["**"],
             config_version=2,
         )
         qrel = "projects/example/quests/main/0000_x"
         srel = f"{qrel}/slices/0000_sl"
-        exp = expand_modify_allow_patterns(prof.modify_allow, qrel, srel)
+        exp = expand_modify_allow_patterns(
+            prof.modify_allow, qrel, srel, "projects/example"
+        )
         self.assertEqual(
             exp,
             [
                 f"{qrel}/human_intervention_request.md",
                 f"{srel}/notes/x.md",
+                "projects/example/docs/**",
             ],
         )
         self.assertTrue(
@@ -235,6 +269,37 @@ class ProjectLocalPathRuleTests(unittest.TestCase):
         self.assertTrue(
             path_is_legal_under_profile(f"{srel}/notes/x.md", prof, exp)
         )
+        self.assertTrue(
+            path_is_legal_under_profile("projects/example/docs/index.md", prof, exp)
+        )
+        self.assertFalse(
+            path_is_legal_under_profile("docs/index.md", prof, exp)
+        )
+
+    def test_documenter_completion_checks_project_docs_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            _git_init(repo)
+            base = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=str(repo),
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+
+            (repo / "docs").mkdir()
+            (repo / "docs" / "index.md").write_text("global\n", encoding="utf-8")
+            self.assertFalse(
+                docs_updated_for_quest(repo, base, "projects/example/docs")
+            )
+
+            project_docs = repo / "projects" / "example" / "docs"
+            project_docs.mkdir(parents=True)
+            (project_docs / "index.md").write_text("project\n", encoding="utf-8")
+            self.assertTrue(
+                docs_updated_for_quest(repo, base, "projects/example/docs")
+            )
 
 
 class BuildRuntimeContextProjectLocalTests(unittest.TestCase):
@@ -270,6 +335,11 @@ class BuildRuntimeContextProjectLocalTests(unittest.TestCase):
             "projects/example/quests/main/0007_ship_it/slices/0002_api",
             out,
         )
+        self.assertIn(
+            "- Current project docs directory: projects/example/docs",
+            out,
+        )
+        self.assertIn("- Quest runner reference directory:", out)
         self.assertNotIn(str(qdir), out)
 
 

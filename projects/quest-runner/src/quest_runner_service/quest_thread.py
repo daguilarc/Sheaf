@@ -277,6 +277,10 @@ def build_runtime_context(
         quest_path_label = quest_dir.resolve().relative_to(
             repo_path.resolve()
         ).as_posix()
+        project_path_label = f"projects/{meta.project}" if meta.project else ""
+        marker = "/quests/"
+        if marker in quest_path_label:
+            project_path_label = quest_path_label.split(marker, 1)[0]
         if slice_dir is not None:
             slice_path_label = slice_dir.resolve().relative_to(
                 repo_path.resolve()
@@ -285,8 +289,16 @@ def build_runtime_context(
             slice_path_label = "none"
     else:
         quest_path_label = str(quest_dir)
+        project_path_label = (
+            str(quest_dir.parents[2])
+            if len(quest_dir.parents) >= 3
+            else (f"projects/{meta.project}" if meta.project else "")
+        )
         slice_path_label = str(slice_dir) if slice_dir is not None else "none"
     schemas_reference = _load_quest_schemas_reference(quest_docs_dir)
+    project_docs_label = (
+        f"{project_path_label}/docs" if project_path_label else "docs"
+    )
     return (
         "Quest Runtime Context\n"
         f"- Quest: {meta.quest_type}/{meta.quest_number:04d}_{meta.quest_slug} ({meta.quest_name})\n"
@@ -294,9 +306,10 @@ def build_runtime_context(
         f"- Role: {role_name}\n"
         f"- Current slice: {slice_label}\n"
         f"- Current slice directory: {slice_path_label}\n"
-        f"- Quest documentation directory: {quest_docs_dir}\n\n"
+        f"- Current project docs directory: {project_docs_label}\n"
+        f"- Quest runner reference directory: {quest_docs_dir}\n\n"
         "Use the quest's `specs/` directory as the implementation specification for this quest. "
-        "Use the quest documentation directory above as the stable reference for quest schemas, "
+        "Use the quest runner reference directory above as the stable reference for quest schemas, "
         "file formats, and workflow rules.\n\n"
         "Quest Schemas Reference (`schemas.md`)\n"
         "```markdown\n"

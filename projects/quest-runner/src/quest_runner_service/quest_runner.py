@@ -91,11 +91,14 @@ def perform_role_harness_sequence(
     Mutates ``thread_box[0]`` and ``role_step_seq[0]`` like the legacy runner loop.
     """
 
+    current_project_rel = current_project_rel_for_quest(meta, quest_rel)
+    project_docs_rel = f"{current_project_rel}/docs" if current_project_rel else "docs"
     task_instruction = build_task_instruction(
         quest_state_info.state,
         slice_state,
         quest_dir,
         slice_dir,
+        project_docs_rel,
     )
     task_instruction += reviewer_commit_context(
         repo_path=repo_path,
@@ -188,6 +191,7 @@ def perform_role_harness_sequence(
                 profile,
                 quest_rel,
                 slice_rel,
+                current_project_rel,
                 step_base_commit,
                 fully_clean,
             )
@@ -210,6 +214,7 @@ def perform_role_harness_sequence(
                 profile,
                 quest_rel,
                 slice_rel,
+                current_project_rel,
                 role_name,
                 log_p,
             )
@@ -315,17 +320,33 @@ def expand_modify_allow_patterns(
     patterns: list[str],
     quest_rel: str,
     slice_rel: str | None,
+    current_project_rel: str | None = None,
 ) -> list[str]:
     out: list[str] = []
     for raw in patterns:
         if slice_rel is None and "$currentSlice" in raw:
             continue
+        if current_project_rel is None and "$currentProject" in raw:
+            continue
         exp = raw.replace("$currentQuest", quest_rel)
         exp = exp.replace("$currentSlice", slice_rel if slice_rel is not None else "")
+        exp = exp.replace(
+            "$currentProject",
+            current_project_rel if current_project_rel is not None else "",
+        )
         if "$" in exp:
             continue
         out.append(_normalize_repo_relative_path(exp))
     return out
+
+
+def current_project_rel_for_quest(meta: QuestMeta, quest_rel: str) -> str:
+    marker = "/quests/"
+    if marker in quest_rel:
+        return _normalize_repo_relative_path(quest_rel.split(marker, 1)[0])
+    if meta.project:
+        return _normalize_repo_relative_path(f"projects/{meta.project}")
+    return ""
 
 
 def path_is_legal_under_profile(
@@ -436,6 +457,7 @@ def _validate_pre_harness_workspace(
     profile: ExecutionProfile,
     quest_rel: str,
     slice_rel: str | None,
+    current_project_rel: str,
     step_base_commit: str,
     require_fully_clean: bool,
 ) -> None:
@@ -453,7 +475,7 @@ def _validate_pre_harness_workspace(
         collect_changed_paths_since(repo_path, step_base_commit), quest_rel
     )
     expanded = expand_modify_allow_patterns(
-        profile.modify_allow, quest_rel, slice_rel
+        profile.modify_allow, quest_rel, slice_rel, current_project_rel
     )
     for p in changed:
         if not path_is_legal_under_profile(p, profile, expanded):
@@ -572,6 +594,7 @@ def enforce_profile_modify_rules_after_harness(
     profile: ExecutionProfile,
     quest_rel: str,
     slice_rel: str | None,
+    current_project_rel: str,
     role_name: str,
     step_log_path: Path | None,
 ) -> list[str]:
@@ -582,7 +605,7 @@ def enforce_profile_modify_rules_after_harness(
         collect_changed_paths_since(repo_path, snapshot_sha), quest_rel
     )
     expanded = expand_modify_allow_patterns(
-        profile.modify_allow, quest_rel, slice_rel
+        profile.modify_allow, quest_rel, slice_rel, current_project_rel
     )
     illegal = sorted(
         {p for p in changed if not path_is_legal_under_profile(p, profile, expanded)}
@@ -658,13 +681,14 @@ def implementation_review_done_signal(slice_dir: Path) -> bool:
     ).is_file()
 
 
-def docs_updated_for_quest(repo_path: Path, base_ref: str) -> bool:
+def docs_updated_for_quest(repo_path: Path, base_ref: str, project_docs_rel: str) -> bool:
     if not base_ref:
         return False
+    docs_rel = _normalize_repo_relative_path(project_docs_rel)
     checks: list[list[str]] = [
-        ["diff", "--name-only", base_ref, "HEAD", "--", "docs"],
-        ["diff", "--name-only", base_ref, "--", "docs"],
-        ["ls-files", "--others", "--exclude-standard", "--", "docs"],
+        ["diff", "--name-only", base_ref, "HEAD", "--", docs_rel],
+        ["diff", "--name-only", base_ref, "--", docs_rel],
+        ["ls-files", "--others", "--exclude-standard", "--", docs_rel],
     ]
     for args in checks:
         proc = subprocess.run(
@@ -682,6 +706,7 @@ def build_task_instruction(
     slice_state: SliceState | None,
     quest_dir: Path,
     slice_dir: Path | None,
+    project_docs_rel: str | None = None,
 ) -> str:
     if quest_state == QuestState.PhysicalPlanning:
         if quest_has_open_physicalplan_issues(quest_dir):
@@ -726,9 +751,11 @@ def build_task_instruction(
             "notes but do not close issues yourself."
         )
     if quest_state == QuestState.QuestDocumenting:
+        docs_rel = project_docs_rel or "$currentProject/docs"
         return (
-            "Write documentation in `docs/` describing what was built "
-            "across the full quest."
+            f"Write documentation in `{docs_rel}/` describing what was built "
+            "across the full quest. Do not modify repo-root `docs/` unless it "
+            "is the current project's docs directory."
         )
     fatal_invariant(
         f"build_task_instruction: unsupported state {quest_state!r} / {slice_state!r}"

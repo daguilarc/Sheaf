@@ -10,6 +10,7 @@ from ..harness import create_harness
 from ..quest_runner import (
     _get_slice_dir,
     all_required_slice_plan_files_exist,
+    current_project_rel_for_quest,
     docs_updated_for_quest,
     git_rev_parse_head,
     implementer_done_signal,
@@ -228,7 +229,12 @@ class QuestDocumentingNode(_ThreadLlmNode):
         if box is None:
             return "QuestDocumenting"
         ref = box[0]
-        if ref and docs_updated_for_quest(ctx.repo_root, ref):
+        quest_dir = ctx.machine_root_dir
+        meta = quest_fs.read_quest_meta(quest_dir)
+        quest_rel = quest_dir.resolve().relative_to(ctx.repo_root.resolve()).as_posix()
+        project_rel = current_project_rel_for_quest(meta, quest_rel)
+        docs_rel = f"{project_rel}/docs" if project_rel else "docs"
+        if ref and docs_updated_for_quest(ctx.repo_root, ref, docs_rel):
             return "Completed"
         return "QuestDocumenting"
 

@@ -10,4 +10,6 @@ Use this directory for reusable quest mechanics and schemas that apply across qu
 - [schemas.md](schemas.md): file formats and field schemas
 - [workflow.md](workflow.md): role routing, slice flow, and ownership rules
 
-When a prompt references the "Quest documentation directory", it means this directory.
+When a prompt references the "Quest runner reference directory", it means this
+directory. This is reference material for harness prompts, not the target project
+documentation directory.

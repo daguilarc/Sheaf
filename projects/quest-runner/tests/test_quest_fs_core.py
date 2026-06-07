@@ -403,7 +403,7 @@ class ExecutionConfigTests(unittest.TestCase):
             impl = profiles["implementer"]
             self.assertIsInstance(impl, ExecutionProfile)
             self.assertEqual(impl.harness, HarnessKind.Cursor)
-            self.assertEqual(impl.model, "composer-2")
+            self.assertEqual(impl.model, "composer-2.5")
             self.assertIsNone(impl.reasoning_effort)
             self.assertEqual(impl.idle_timeout_seconds, 3600)
             self.assertEqual(impl.config_version, 2)
@@ -422,7 +422,7 @@ class ExecutionConfigTests(unittest.TestCase):
             )
             doc = profiles["documenter"]
             self.assertEqual(doc.config_version, 2)
-            self.assertIn("docs/**", doc.modify_allow)
+            self.assertIn("$currentProject/docs/**", doc.modify_allow)
             self.assertEqual(read_state_execution_config_version(q), 2)
 
     def test_read_execution_config_version_1_empty_path_rules(self) -> None:

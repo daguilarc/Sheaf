@@ -316,7 +316,7 @@ harnesses:
 profiles:
   implementer:
     harness: cursor
-    model: composer-2
+    model: composer-2.5
     reasoning_effort: high
     idle_timeout_seconds: 3600
     modify_allow:
@@ -334,7 +334,10 @@ Rules:
 - `reasoning_effort` is optional. When present, it must be a string.
 - `version: 2` adds optional per-profile `modify_allow` and `modify_block`
   repo-root-relative glob lists.
-- `modify_allow` may use only `$currentQuest` and `$currentSlice`.
+- `modify_allow` may use only `$currentQuest`, `$currentSlice`, and
+  `$currentProject`.
+- `$currentProject` resolves to the repo-relative project directory for the
+  current quest, such as `projects/example`.
 - `modify_block` must not contain `$` placeholders.
 - When both lists match the same path, allow wins.
 - The runner refuses to invoke a harness when the target repository working tree is

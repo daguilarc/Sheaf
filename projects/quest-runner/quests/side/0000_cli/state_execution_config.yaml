@@ -7,7 +7,7 @@ harnesses:
 profiles:
   physical_planner:
     harness: codex
-    model: gpt-5.4
+    model: gpt-5.5
     idle_timeout_seconds: 1800
     modify_allow:
       - "$currentQuest/slices/**"
@@ -17,7 +17,7 @@ profiles:
       - "**"
   physical_plan_reviewer:
     harness: claude_code
-    model: claude-opus-4-6
+    model: claude-opus-4-8
     idle_timeout_seconds: 1800
     modify_allow:
       - "$currentQuest/physicalplan_issues.md"
@@ -27,7 +27,7 @@ profiles:
       - "**"
   implementer:
     harness: cursor
-    model: composer-2
+    model: composer-2.5
     idle_timeout_seconds: 3600
     modify_allow:
       - "$currentQuest/human_intervention_request.md"
@@ -37,7 +37,7 @@ profiles:
       - "projects/**"
   polisher_reviewer:
     harness: claude_code
-    model: claude-opus-4-6
+    model: claude-opus-4-8
     idle_timeout_seconds: 1800
     modify_allow:
       - "$currentSlice/polishing_issues.md"
@@ -47,7 +47,7 @@ profiles:
       - "**"
   polisher:
     harness: codex
-    model: gpt-5.4
+    model: gpt-5.5
     idle_timeout_seconds: 3600
     modify_allow:
       - "$currentQuest/human_intervention_request.md"
@@ -57,10 +57,10 @@ profiles:
       - "projects/**"
   documenter:
     harness: codex
-    model: gpt-5.4
+    model: gpt-5.5
     idle_timeout_seconds: 1800
     modify_allow:
-      - "docs/**"
+      - "$currentProject/docs/**"
       - "$currentQuest/human_intervention_request.md"
     modify_block:
       - "**"

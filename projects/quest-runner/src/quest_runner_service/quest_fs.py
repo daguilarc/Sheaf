@@ -28,7 +28,7 @@ _HISTORY_HEADING_RE = re.compile(r"^## (\d{4}-\d{2}-\d{2}T\S+)\s*$", re.MULTILIN
 _ISSUE_HEADING_RE = re.compile(r"^## Issue\s+(\S+)\s*$", re.MULTILINE)
 _DOLLAR_TOKEN_RE = re.compile(r"\$[a-zA-Z_][a-zA-Z0-9_]*")
 _ALLOWED_MODIFY_ALLOW_PLACEHOLDERS: frozenset[str] = frozenset(
-    {"$currentQuest", "$currentSlice"}
+    {"$currentQuest", "$currentSlice", "$currentProject"}
 )
 
 
@@ -632,7 +632,8 @@ def _validate_modify_allow_patterns(
             if token not in _ALLOWED_MODIFY_ALLOW_PLACEHOLDERS:
                 raise ValueError(
                     f"Profile {role!r} modify_allow[{i}] in {path} uses unknown placeholder "
-                    f"{token!r} (only $currentQuest and $currentSlice are allowed)"
+                    f"{token!r} (only $currentQuest, $currentSlice, and "
+                    "$currentProject are allowed)"
                 )
 
 
