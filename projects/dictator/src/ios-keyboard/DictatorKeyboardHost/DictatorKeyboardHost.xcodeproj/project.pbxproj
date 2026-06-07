@@ -98,12 +98,12 @@
 		};
 		AFB267362F4AA19800C3C72A /* DictatorKeyboardHostTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			path = ../../../../tests/ios-keyboard/DictatorKeyboardHostTests;
+			path = ../../../tests/ios-keyboard/DictatorKeyboardHostTests;
 			sourceTree = "<group>";
 		};
 		AFB267402F4AA19800C3C72A /* DictatorKeyboardHostUITests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			path = ../../../../tests/ios-keyboard/DictatorKeyboardHostUITests;
+			path = ../../../tests/ios-keyboard/DictatorKeyboardHostUITests;
 			sourceTree = "<group>";
 		};
 		AFB267552F4AA22800C3C72A /* DictatorKeyboardExtension */ = {
