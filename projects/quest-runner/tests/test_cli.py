@@ -556,7 +556,10 @@ class HttpErrorTests(unittest.TestCase):
             stderr=err,
         )
         self.assertEqual(code, 1)
-        self.assertIn("connection refused", err.getvalue())
+        message = err.getvalue()
+        self.assertIn("connection refused", message)
+        self.assertIn("http://test.local", message)
+        self.assertIn("/advance_quest", message)
 
 
 class ValidationTests(unittest.TestCase):
@@ -630,6 +633,28 @@ class ValidationTests(unittest.TestCase):
             ]
         )
         self.assertIn("mutually exclusive", msg)
+
+    def test_issues_edit_body_file_read_error_is_validation_error(self) -> None:
+        missing_path = Path(__file__).with_name("__missing_body_file__.md")
+        self.assertFalse(missing_path.exists())
+        msg = self._expect_validation_error(
+            [
+                "issues",
+                "edit",
+                "QP-0001",
+                "--project",
+                "p",
+                "--type",
+                "side",
+                "--number",
+                "0",
+                "--scope",
+                "physicalplan",
+                "--body-file",
+                str(missing_path),
+            ]
+        )
+        self.assertIn("Could not read --body-file", msg)
 
     def test_conflicting_explanation_sources(self) -> None:
         msg = self._expect_validation_error(

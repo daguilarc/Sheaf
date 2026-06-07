@@ -28,7 +28,16 @@ class CliValidationError(Exception):
 
 
 class TransportError(Exception):
-    pass
+    def __init__(
+        self,
+        message: str,
+        *,
+        base_url: str | None = None,
+        endpoint: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.base_url = base_url
+        self.endpoint = endpoint
 
 
 @dataclass(frozen=True)
@@ -155,6 +164,23 @@ def _join_url(base_url: str, path: str, query: dict[str, Any] | None = None) -> 
         if filtered:
             url = f"{url}?{urlencode(filtered, doseq=True)}"
     return url
+
+
+def _send_request(
+    request_fn: RequestFn,
+    method: str,
+    *,
+    base_url: str,
+    endpoint: str,
+    body: dict[str, Any] | None,
+    query: dict[str, Any] | None = None,
+) -> tuple[int, dict[str, Any]]:
+    try:
+        return request_fn(method, _join_url(base_url, endpoint, query), body)
+    except TransportError as exc:
+        if exc.base_url is not None and exc.endpoint is not None:
+            raise
+        raise TransportError(str(exc), base_url=base_url, endpoint=endpoint) from exc
 
 
 def _quest_dashboard_url(base_url: str, project: str, quest_type: str, quest_number: int) -> str:
@@ -619,7 +645,9 @@ def _dispatch_command(
         if args.slug is not None:
             body["slug"] = args.slug
         endpoint = "/create_quest"
-        status, data = request_fn("POST", _join_url(base_url, endpoint), body)
+        status, data = _send_request(
+            request_fn, "POST", base_url=base_url, endpoint=endpoint, body=body
+        )
         if 200 <= status < 300:
             if json_output:
                 _print_json(data, out)
@@ -644,7 +672,9 @@ def _dispatch_command(
         if args.max_steps is not None:
             body["max_steps"] = args.max_steps
         endpoint = "/run_quest"
-        status, data = request_fn("POST", _join_url(base_url, endpoint), body)
+        status, data = _send_request(
+            request_fn, "POST", base_url=base_url, endpoint=endpoint, body=body
+        )
         if 200 <= status < 300:
             if json_output:
                 _print_json(data, out)
@@ -667,7 +697,9 @@ def _dispatch_command(
             "quest_number": args.number,
         }
         endpoint = "/advance_quest"
-        status, data = request_fn("POST", _join_url(base_url, endpoint), body)
+        status, data = _send_request(
+            request_fn, "POST", base_url=base_url, endpoint=endpoint, body=body
+        )
         if 200 <= status < 300:
             if json_output:
                 _print_json(data, out)
@@ -691,7 +723,9 @@ def _dispatch_command(
             "target_branch": args.target_branch,
         }
         endpoint = "/land"
-        status, data = request_fn("POST", _join_url(base_url, endpoint), body)
+        status, data = _send_request(
+            request_fn, "POST", base_url=base_url, endpoint=endpoint, body=body
+        )
         if 200 <= status < 300:
             if json_output:
                 _print_json(data, out)
@@ -730,7 +764,14 @@ def _dispatch_command(
                 slice_number,
                 {"status": args.status},
             )
-            status, data = request_fn("GET", _join_url(base_url, endpoint, query), None)
+            status, data = _send_request(
+                request_fn,
+                "GET",
+                base_url=base_url,
+                endpoint=endpoint,
+                query=query,
+                body=None,
+            )
             if 200 <= status < 300:
                 if json_output:
                     _print_json(data, out)
@@ -749,7 +790,14 @@ def _dispatch_command(
         if handler == "issues_read":
             endpoint = f"/api/issues/{args.issue_id}"
             query = _issue_query(project, quest_type, quest_number, scope, slice_number)
-            status, data = request_fn("GET", _join_url(base_url, endpoint, query), None)
+            status, data = _send_request(
+                request_fn,
+                "GET",
+                base_url=base_url,
+                endpoint=endpoint,
+                query=query,
+                body=None,
+            )
             if 200 <= status < 300:
                 if json_output:
                     _print_json(data, out)
@@ -781,7 +829,9 @@ def _dispatch_command(
                 slice_number,
                 {"title": args.title, "body": body_text, "status": args.status},
             )
-            status, data = request_fn("POST", _join_url(base_url, endpoint), body)
+            status, data = _send_request(
+                request_fn, "POST", base_url=base_url, endpoint=endpoint, body=body
+            )
             if 200 <= status < 300:
                 if json_output:
                     _print_json(data, out)
@@ -812,12 +862,12 @@ def _dispatch_command(
                 extra["status"] = args.status
             if args.title is not None:
                 extra["title"] = args.title
-            if args.body is not None:
-                extra["body"] = args.body
-            if args.body_file is not None:
-                extra["body"] = Path(args.body_file).read_text(encoding="utf-8")
+            if args.body is not None or args.body_file is not None:
+                extra["body"] = _read_text_source(args.body, args.body_file, "body")
             body = _issue_body(project, quest_type, quest_number, scope, slice_number, extra)
-            status, data = request_fn("PATCH", _join_url(base_url, endpoint), body)
+            status, data = _send_request(
+                request_fn, "PATCH", base_url=base_url, endpoint=endpoint, body=body
+            )
             if 200 <= status < 300:
                 if json_output:
                     _print_json(data, out)
@@ -845,7 +895,9 @@ def _dispatch_command(
                 slice_number,
                 {"outcome": args.outcome, "explanation": explanation},
             )
-            status, data = request_fn("POST", _join_url(base_url, endpoint), body)
+            status, data = _send_request(
+                request_fn, "POST", base_url=base_url, endpoint=endpoint, body=body
+            )
             if 200 <= status < 300:
                 if json_output:
                     _print_json(data, out)
@@ -864,7 +916,14 @@ def _dispatch_command(
         if handler == "issues_responses":
             endpoint = f"/api/issues/{args.issue_id}/responses"
             query = _issue_query(project, quest_type, quest_number, scope, slice_number)
-            status, data = request_fn("GET", _join_url(base_url, endpoint, query), None)
+            status, data = _send_request(
+                request_fn,
+                "GET",
+                base_url=base_url,
+                endpoint=endpoint,
+                query=query,
+                body=None,
+            )
             if 200 <= status < 300:
                 if json_output:
                     _print_json(data, out)
@@ -926,6 +985,10 @@ def main(
         return 2
     except TransportError as exc:
         err.write(f"transport error: {exc}\n")
+        if exc.base_url is not None:
+            err.write(f"base_url: {exc.base_url}\n")
+        if exc.endpoint is not None:
+            err.write(f"endpoint: {exc.endpoint}\n")
         return 1
 
 
