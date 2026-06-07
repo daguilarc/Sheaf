@@ -4,13 +4,26 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
+import threading
 import time
 from pathlib import Path
 
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify
 
 log = logging.getLogger("quest_runner")
 _started_at = time.time()
+_EXIT_DELAY_SECONDS = 0.1
+
+
+def _exit_process() -> None:
+    os._exit(0)
+
+
+def _schedule_process_exit(delay: float = _EXIT_DELAY_SECONDS) -> None:
+    timer = threading.Timer(delay, _exit_process)
+    timer.daemon = True
+    timer.start()
 
 
 def create_app() -> Flask:
@@ -25,10 +38,7 @@ def create_app() -> Flask:
 
     @app.route("/exit", methods=["POST"])
     def exit_service() -> tuple[object, int]:
-        func = request.environ.get("werkzeug.server.shutdown")
-        if func is None:
-            return jsonify({"error": "shutdown not available"}), 500
-        func()
+        _schedule_process_exit()
         return jsonify({"status": "exiting"}), 200
 
     return app

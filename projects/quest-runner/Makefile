@@ -7,6 +7,7 @@ PIP := $(VENV_DIR)/bin/pip
 SRC_DIR := src
 TEST_MODULES := \
 	tests.test_commit_metadata \
+	tests.test_service_entrypoint \
 	tests.test_normalized_state_md \
 	tests.test_state_machine_core \
 	tests.test_quest_fs_core \
