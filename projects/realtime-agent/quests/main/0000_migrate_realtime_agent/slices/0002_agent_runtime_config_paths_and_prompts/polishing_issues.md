@@ -2,10 +2,10 @@
 
 ## Issue PI-0001
 
-- status: open
+- status: completed
 - owner_role: polisher_reviewer
 - created_at: 2026-06-07T00:00:00Z
-- updated_at: 2026-06-07T00:00:00Z
+- updated_at: 2026-06-07T21:30:00Z
 - title: Committed crash.log artifact in agent source tree
 - details: |
   A native crash dump is committed to the repository at
@@ -28,3 +28,12 @@
     nothing).
   - A `.gitignore` rule (e.g. `crash.log`) prevents future accidental commits of
     segfault dumps in the agent tree.
+
+  Verification 2026-06-07: Both criteria met in the observed repo state.
+  `git ls-files projects/realtime-agent/src/agent/crash.log` returns nothing,
+  `git status --short` for the path is clean, and the file is absent from disk,
+  so it is neither tracked nor pending. `projects/realtime-agent/.gitignore`
+  now contains a `crash.log` rule (line 11) preventing recurrence. Note: the
+  polisher's response reported `git rm --cached` was blocked by a sandbox
+  worktree-index limitation, but the deletion has since been completed, so the
+  end state is fully resolved. Closing on observed repo state.
