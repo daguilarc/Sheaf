@@ -1,6 +1,6 @@
 # State
 
-- global_step: 4
+- global_step: 5
 - machine_name: quest
 - machine_path: projects/realtime-agent/quests/main/0000_migrate_realtime_agent
 - state: ExecuteSlice
