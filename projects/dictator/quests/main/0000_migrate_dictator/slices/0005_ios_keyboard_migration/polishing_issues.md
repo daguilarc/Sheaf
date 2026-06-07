@@ -2,10 +2,10 @@
 
 ## Issue PR-0001
 
-- status: open
+- status: completed
 - owner_role: polisher_reviewer
 - created_at: 2026-06-07T00:00:00Z
-- updated_at: 2026-06-07T00:00:00Z
+- updated_at: 2026-06-07T16:30:00Z
 - title: Xcode test folder references use wrong relative path (off by one ../)
 - details: |
   The Xcode project at
@@ -55,4 +55,19 @@
     `../../../tests/ios-keyboard/DictatorKeyboardHostUITests`), resolving to the
     existing `projects/dictator/tests/ios-keyboard/...` directories.
   - The resolved paths exist relative to the `.xcodeproj` directory.
-- resolution_notes: none
+- resolution_notes: |
+  Verified fixed by reading the changed `.pbxproj` (reviewer does not run tests).
+  - Both test `PBXFileSystemSynchronizedRootGroup` entries now use three `../`:
+    `path = ../../../tests/ios-keyboard/DictatorKeyboardHostTests` (project.pbxproj:101)
+    and `path = ../../../tests/ios-keyboard/DictatorKeyboardHostUITests`
+    (project.pbxproj:106).
+  - Resolved from the project source root
+    (`projects/dictator/src/ios-keyboard/DictatorKeyboardHost/`) these point to
+    `projects/dictator/tests/ios-keyboard/DictatorKeyboardHostTests` and
+    `.../DictatorKeyboardHostUITests`, both confirmed to exist on disk.
+  - The polisher response (polishing_issue_responses.md, Response PR-0001,
+    outcome Fixed) reports `make ios-test` reached xcodebuild destination selection
+    with no missing project-file/test-source path error before failing only on the
+    unavailable `iPhone 16` simulator, which is an environmental blocker the spec
+    explicitly tolerates.
+  Completion criteria met.
