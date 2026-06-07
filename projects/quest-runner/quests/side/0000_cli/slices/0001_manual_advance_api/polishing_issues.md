@@ -2,10 +2,10 @@
 
 ## Issue PL-0001
 
-- status: open
+- status: completed
 - owner_role: polisher_reviewer
 - created_at: 2026-06-07T07:49:35Z
-- updated_at: 2026-06-07T07:49:35Z
+- updated_at: 2026-06-07T07:54:37Z
 - title: Manual ExecuteSlice child snapshot uses machine_name "slice", drifting from the harness path
 - details: In `state_machine/v2_step_executor.py`, `_evaluate_quest_advance(...)`
   builds the child `RecursiveSnapshot` for the `ExecuteSlice` branch with a
@@ -30,13 +30,19 @@
   test must assert that a manual ExecuteSlice advancement produces a child
   snapshot/commit whose `machine_name` matches the harness convention
   (`slice_<dir>`).
+- resolution_notes (verified 2026-06-07T07:54:37Z): Confirmed
+  `v2_step_executor.py` now builds the manual ExecuteSlice child snapshot with
+  `machine_name=slice_before.machine_name`, matching the harness convention.
+  `test_execute_slice_setup_advances_with_slice_machine_name_in_commit` drives the
+  real `/advance_quest` route through `commit_v2_snapshot_step` and asserts the
+  committed child snapshot `machine_name == "slice_0001_manual"`. Drift resolved.
 
 ## Issue PL-0002
 
-- status: open
+- status: completed
 - owner_role: polisher_reviewer
 - created_at: 2026-06-07T07:49:35Z
-- updated_at: 2026-06-07T07:49:35Z
+- updated_at: 2026-06-07T07:54:37Z
 - title: Positive manual ExecuteSlice and QuestDocumenting advance paths are untested
 - details: The new tests cover PrePlanning->PhysicalPlanning, Completed no-op,
   missing-worktree, lock contention, missing-project, missing
@@ -57,3 +63,12 @@
   for `quest_documenting_next_state(...)` (both the docs-changed -> Completed case
   and the docs-unchanged -> validation-failure case, the latter asserting no state
   change and a non-2xx response).
+- resolution_notes (verified 2026-06-07T07:54:37Z): Confirmed the following real
+  (non-mocked) tests exist and assert the expected behavior:
+  `test_execute_slice_setup_advances_with_slice_machine_name_in_commit`
+  (SliceSetup->Implementing through the route + commit),
+  `test_quest_documenting_advances_when_project_docs_changed`
+  (QuestDocumenting->Completed with untracked project docs, asserting commit
+  metadata), and `test_quest_documenting_without_doc_changes_returns_422_without_state_change`
+  (docs-unchanged 422 asserting quest state, global_step, and HEAD all unchanged).
+  Coverage gap resolved.
