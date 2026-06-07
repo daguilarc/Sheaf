@@ -7,5 +7,14 @@
     "round_count": 1,
     "created_at": "2026-06-07T19:56:42Z",
     "last_used_at": "2026-06-07T20:03:30Z"
+  },
+  "physical_plan_reviewer": {
+    "thread_name": "realtime-agent_main_0000_migrate_realtime_agent_quest_0000_physical_plan_reviewer",
+    "harness_kind": "claude_code",
+    "provider_thread_id": "4697045a-3495-43fa-9725-92a4adc5aabf",
+    "pass_id": 0,
+    "round_count": 1,
+    "created_at": "2026-06-07T20:03:31Z",
+    "last_used_at": "2026-06-07T20:08:05Z"
   }
 }
