@@ -67,6 +67,13 @@ class DashboardCompatibilityCleanupTests(unittest.TestCase):
         self.assertIn("Quest Runner Dashboard", html)
         self.assertNotIn("Conductor Quest Dashboard", html)
 
+    def test_app_js_includes_advance_quest_action(self) -> None:
+        app_js = (_DASHBOARD_ASSETS / "app.js").read_text(encoding="utf-8")
+        self.assertIn("PostAdvanceQuest", app_js)
+        self.assertIn("/advance_quest", app_js)
+        self.assertIn("ShouldShowAdvanceButton", app_js)
+        self.assertIn("RefreshAfterQuestAction", app_js)
+
 
 if __name__ == "__main__":
     unittest.main()

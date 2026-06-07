@@ -111,7 +111,17 @@ body {
 }
 
 .dash-run-row {
-  margin: 12px 0 16px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0 8px;
+}
+
+.dash-advance-hint {
+  margin: 0 0 16px;
+  font-size: 13px;
+  color: var(--dash-muted);
 }
 
 .dash-run-error {

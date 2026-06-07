@@ -113,6 +113,10 @@ Paths:
 <slice_dir>/polishing_issues.md
 ```
 
+These files are the internal storage format. Agents normally use
+`scripts/quest-runner issues ...` or the issue REST APIs instead of editing the
+markdown directly.
+
 Issue entries use `open` or `completed` status. Reviewer roles own completion:
 
 - `physical_plan_reviewer` owns physical-plan issue completion.
@@ -130,15 +134,18 @@ Paths:
 ```
 
 Issue response files record how open reviewer issues were handled. They are
-separate from reviewer-owned issue lists.
+separate from reviewer-owned issue lists. Responders append through
+`scripts/quest-runner issues respond`; reviewers read responses with
+`scripts/quest-runner issues responses`.
 
 Write authority:
 
-- `physical_planner` writes physical-plan issue responses.
-- `polisher` writes polishing issue responses for the current slice.
+- `physical_planner` records physical-plan issue responses through the CLI/API.
+- `polisher` records polishing issue responses for the current slice through the
+  CLI/API.
 
-Reviewers read these files when verifying open issues, but reviewers do not
-create, edit, or delete response entries.
+Reviewers read responses when verifying open issues, but reviewers do not
+record responses themselves.
 
 ## Thread Registry
 

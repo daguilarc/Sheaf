@@ -42,10 +42,22 @@ The overview page is the primary quest detail view. It shows:
 - recent step history
 - git-backed commit metadata from the resolved checkout
 
-The page shows a run control when the selected quest is idle and runnable. The
-control calls `POST /run_quest` with project, type, number, and optional step
+The page shows a **Run quest** control when the selected quest is idle and runnable.
+The control calls `POST /run_quest` with project, type, number, and optional step
 limit. The run control is hidden or disabled when the quest is already running,
 blocked by human intervention, or missing its expected worktree.
+
+The page also shows an **Advance** secondary control when the quest is stopped,
+incomplete, and has its worktree. Unlike **Run quest**, **Advance** remains available
+during human-intervention recovery states. It is hidden or disabled while the quest is
+running, paused, completed, or missing its worktree.
+
+**Advance** calls `POST /advance_quest` with the selected project, type, and number.
+On success the dashboard refreshes the project snapshot, quest overview, run status,
+current page content, issue counts, and git history views. On failure the API error
+message appears on the overview page without clearing the current project or quest
+selection. Short copy on the overview page explains that **Advance** is for manual
+recovery after fix-ups and does not start an agent turn.
 
 ## Checkout Resolution
 

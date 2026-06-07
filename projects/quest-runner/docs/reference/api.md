@@ -137,6 +137,140 @@ exist; `run_quest` does not recreate missing worktrees.
 }
 ```
 
+### `POST /advance_quest`
+
+Runs the same end-of-turn advancement logic the runner uses after a role finishes,
+without starting a harness turn. Intended for manual recovery after a human fixes
+files while the quest is stopped.
+
+**Request body (JSON):**
+
+| Field | Required | Description |
+| --- | --- | --- |
+| `project` | yes | Owning project |
+| `quest_type` | yes | `main` or `side` |
+| `quest_number` | yes | Zero-based quest number |
+
+**Response `200` (advanced):**
+
+```json
+{
+  "status": "advanced",
+  "project": "example",
+  "quest_type": "main",
+  "quest_number": 0,
+  "previous_state": "Implementing",
+  "next_state": "PolishingReview",
+  "commit": "<sha>",
+  "message": "Advanced quest main/0000_my_quest"
+}
+```
+
+**Response `200` (completed no-op):**
+
+```json
+{
+  "status": "completed",
+  "advanced": false
+}
+```
+
+**Error responses:**
+
+| Status | Condition |
+| --- | --- |
+| `400` | Missing required fields |
+| `404` | Quest not found |
+| `409` | Quest is running, lock contention, or expected worktree missing |
+| `422` | Validation failure, dirty tree, or human-intervention block |
+
+### `POST /land`
+
+Lands a quest worktree branch onto the repository target branch using a linear git
+workflow: rebase the quest branch onto target, fast-forward target, then delete the
+worktree.
+
+**Request body (JSON):**
+
+| Field | Required | Description |
+| --- | --- | --- |
+| `project` | yes | Owning project |
+| `quest_type` | yes | `main` or `side` |
+| `quest_number` | yes | Zero-based quest number |
+| `target_branch` | no | Target branch (default `main`) |
+
+**Response `200` (landed):**
+
+```json
+{
+  "status": "landed",
+  "project": "example",
+  "quest_type": "main",
+  "quest_number": 0,
+  "target_branch": "main",
+  "worktree_branch": "quest/example_main_0000_my_quest",
+  "rebased": true,
+  "fast_forwarded": true,
+  "worktree_deleted": true,
+  "target_head": "<sha>"
+}
+```
+
+**Error responses:**
+
+| Status | Condition |
+| --- | --- |
+| `400` | Missing required fields |
+| `404` | Quest not found |
+| `409` | Quest is running, lock contention, missing worktree, dirty target branch, rebase conflict, or fast-forward failure |
+
+## Issue APIs
+
+Issue endpoints are the supported interface for agents and automation. They read and
+write the same markdown issue files the runner uses internally.
+
+Scopes:
+
+- `physicalplan` — quest-level `physicalplan_issues.md` and
+  `physicalplan_issue_responses.md`
+- `polishing` — slice-level `polishing_issues.md` and
+  `polishing_issue_responses.md` (requires `slice`)
+
+### `GET /api/issues`
+
+List issues.
+
+Query parameters: `project`, `quest_type`, `quest_number`, `scope`, optional `slice`
+(required for `polishing`), optional `status` (`open`, `completed`, or `all`; default
+`all`).
+
+### `GET /api/issues/<issue_id>`
+
+Read one issue and any matching responses. Same query parameters as list.
+
+### `POST /api/issues`
+
+Create an issue.
+
+**Request body (JSON):** `project`, `quest_type`, `quest_number`, `scope`, optional
+`slice`, `title`, `body` (or `details`), optional `status` (default `open`).
+
+### `PATCH /api/issues/<issue_id>`
+
+Edit an issue. Supports `status`, `title`, and `body` (or `details`). Reviewers close
+issues with `status: completed`.
+
+### `POST /api/issues/<issue_id>/responses`
+
+Append a responder note. Requires `outcome` (`Fixed` or `NotFixed`) and non-empty
+`explanation`. Does not change issue status.
+
+### `GET /api/issues/<issue_id>/responses`
+
+List responses for an issue in chronological order.
+
+Issue mutation endpoints return `409 Conflict` while the quest is actively running.
+
 ## Dashboard shell
 
 ### `GET /dashboard`

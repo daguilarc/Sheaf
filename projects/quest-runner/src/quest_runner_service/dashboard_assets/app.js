@@ -1,10 +1,12 @@
 import {
+  BuildAdvanceQuestPayload,
   BuildQuestApiQuery,
   BuildDashboardSearchParams,
   BuildRunQuestPayload,
   MergeRunBadge,
   RefreshScheduler,
   ResolveProjectSelection,
+  ShouldShowAdvanceButton,
   ShouldShowRunButton,
   StorageProjectKey,
 } from "./dashboard-logic.mjs";
@@ -66,6 +68,8 @@ const state = {
   runStatus: null,
   runActionError: null,
   runActionPending: false,
+  advanceActionError: null,
+  advanceActionPending: false,
   lastError: null,
   lastOkAt: null,
   contentCache: {},
@@ -454,7 +458,55 @@ async function HandleRunQuestClick() {
   }
 }
 
-async function RefreshActivePage() {
+async function PostAdvanceQuest() {
+  const body = BuildAdvanceQuestPayload(state.project, state.questType, state.questNumber);
+  const r = await fetch("/advance_quest", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) {
+    const t = await r.text();
+    let msg = t.slice(0, 200) || r.statusText;
+    try {
+      const j = JSON.parse(t);
+      if (j.error) {
+        msg = j.error;
+      } else if (j.message) {
+        msg = j.message;
+      }
+    } catch (_e) {
+      // keep raw text
+    }
+    throw new Error(`${r.status} ${msg}`);
+  }
+  return r.json();
+}
+
+async function RefreshAfterQuestAction() {
+  await LoadSnapshot();
+  await RefreshActivePage({ includeRunStatus: true });
+}
+
+async function HandleAdvanceQuestClick() {
+  if (state.advanceActionPending) {
+    return;
+  }
+  state.advanceActionPending = true;
+  state.advanceActionError = null;
+  render();
+  try {
+    await PostAdvanceQuest();
+    await RefreshAfterQuestAction();
+  } catch (e) {
+    state.advanceActionError = String(e.message || e);
+    render();
+  } finally {
+    state.advanceActionPending = false;
+  }
+}
+
+async function RefreshActivePage(options = {}) {
   if (!state.project || state.questType == null) {
     render();
     return;
@@ -463,7 +515,7 @@ async function RefreshActivePage() {
     const b = QuestBase();
     const ov = await FetchJson(`/api/dashboard/quest_overview?${Qs(b)}`);
     state.overview = ov;
-    if (state.page === "overview") {
+    if (state.page === "overview" || options.includeRunStatus) {
       state.runStatus = await FetchJson(`/api/dashboard/run_status?${Qs(b)}`);
     }
     switch (state.page) {
@@ -529,17 +581,41 @@ function RenderOverview(main) {
   const bcls = "dash-badge dash-badge--" + badge.variant;
   const ltHtml = FormatQuestLastTransitionHtml(ov.last_transition);
   const showRun = ShouldShowRunButton(ov, rs);
+  const showAdvance = ShouldShowAdvanceButton(ov, rs);
   const runDisabled = state.runActionPending || !showRun;
   const runLabel = state.runActionPending ? "Starting run…" : "Run quest";
-  const runBlock = showRun || state.runActionPending
+  const advanceDisabled = state.advanceActionPending || !showAdvance;
+  const advanceLabel = state.advanceActionPending ? "Advancing…" : "Advance";
+  const showActionRow =
+    showRun || state.runActionPending || showAdvance || state.advanceActionPending;
+  const runBlock = showActionRow
     ? `<div class="dash-run-row">
-        <button type="button" id="dash-run-quest" class="dash-btn dash-btn--primary" ${
-          runDisabled ? "disabled" : ""
-        }>${EscapeHtml(runLabel)}</button>
-      </div>`
+        ${
+          showRun || state.runActionPending
+            ? `<button type="button" id="dash-run-quest" class="dash-btn dash-btn--primary" ${
+                runDisabled ? "disabled" : ""
+              }>${EscapeHtml(runLabel)}</button>`
+            : ""
+        }
+        ${
+          showAdvance || state.advanceActionPending
+            ? `<button type="button" id="dash-advance-quest" class="dash-btn" ${
+                advanceDisabled ? "disabled" : ""
+              }>${EscapeHtml(advanceLabel)}</button>`
+            : ""
+        }
+      </div>
+      ${
+        showAdvance || state.advanceActionPending
+          ? `<p class="dash-advance-hint">Advance applies manual recovery after fix-ups while the quest is stopped. It does not start an agent turn.</p>`
+          : ""
+      }`
     : "";
   const runErr = state.runActionError
     ? `<p class="dash-run-error">${EscapeHtml(state.runActionError)}</p>`
+    : "";
+  const advanceErr = state.advanceActionError
+    ? `<p class="dash-run-error">${EscapeHtml(state.advanceActionError)}</p>`
     : "";
   const checkoutNote = ov.worktree_missing
     ? `<p class="dash-banner">Quest worktree is missing; run is unavailable until the worktree exists.</p>`
@@ -549,6 +625,7 @@ function RenderOverview(main) {
     <p><span class="${bcls}">${EscapeHtml(badge.label)}</span></p>
     ${runBlock}
     ${runErr}
+    ${advanceErr}
     ${checkoutNote}
     <h2>Quest</h2>
     <dl class="dash-kv">
@@ -586,6 +663,10 @@ function RenderOverview(main) {
   const runBtn = main.querySelector("#dash-run-quest");
   if (runBtn) {
     runBtn.addEventListener("click", () => void HandleRunQuestClick());
+  }
+  const advanceBtn = main.querySelector("#dash-advance-quest");
+  if (advanceBtn) {
+    advanceBtn.addEventListener("click", () => void HandleAdvanceQuestClick());
   }
 }
 

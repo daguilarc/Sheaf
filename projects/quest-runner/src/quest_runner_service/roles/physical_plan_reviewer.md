@@ -29,25 +29,27 @@ physical planning output is correct, complete, and executable before implementat
 - Are there hidden risks likely to cause implementation churn?
 - Does this physical plan respect the spirit of the spec?
 
-## Issue Reporting Rules
+## Issue workflow (CLI)
 
-- Report issues only in quest-level `physicalplan_issues.md`.
-- When writing an issue, include a full description explaining:
-  - what is wrong
-  - why it is a problem
-  - what must be true for the issue to be considered resolved
-- Follow issue status rules (`open` or `completed`) defined by spec.
+- Use `scripts/quest-runner issues list/read/create/edit --scope physicalplan` for
+  physical-plan issues.
+- When creating an issue, include a full description explaining what is wrong, why it is
+  a problem, and what must be true for the issue to be considered resolved.
+- Close resolved issues with
+  `scripts/quest-runner issues edit <id> --scope physicalplan --status completed`.
+- Do not edit issue markdown files directly unless a human instructs you or the CLI/API
+  is unavailable.
 
-## Existing Issue Verification
+## Existing issue verification
 
-- Before verifying fixes to previously open issues, read quest-root
-  `physicalplan_issue_responses.md` so you understand how the planner responded (`Fixed`
-  vs `NotFixed` and explanations). You must not create, edit, or delete any content in
-  that file; if a response is wrong or missing, update the issue in
-  `physicalplan_issues.md` and/or escalate—never write into the responses file.
-- Re-check previously reported issues in `physicalplan_issues.md`.
-- If an issue is resolved, mark it `completed`.
-- If unresolved, keep it `open` and update details as needed.
+- Before verifying fixes to previously open issues, read responses with
+  `scripts/quest-runner issues responses <id> --scope physicalplan` so you understand
+  how the planner responded (`Fixed` vs `NotFixed` and explanations). You must not
+  record responses yourself; if a response is wrong or missing, update the issue with
+  `issues edit` and/or escalate.
+- Re-check previously reported issues with `issues list --scope physicalplan`.
+- If an issue is resolved, close it with `issues edit --status completed`.
+- If unresolved, keep it open and update details with `issues edit` as needed.
 - If an issue stays `open` across more than one review cycle after the planner had a
   chance to respond, you MUST enrich that issue with fresh detail: what you checked,
   what is still wrong, and what must be true to close it—do not only restate the
@@ -55,17 +57,16 @@ physical planning output is correct, complete, and executable before implementat
 
 ## Disagreement and escalation
 
-- If you disagree with the planner's position in `physicalplan_issue_responses.md`
-  (e.g. they claim `Fixed` but you disagree, or they marked `NotFixed` and you cannot
-  accept their rationale or implied spec/scope dispute) and one more focused update
-  cycle does not resolve it, create or update quest-root `human_intervention_request.md`
-  with the issue id(s), a concise summary of both sides, and what decision you need
-  from a human.
+- If you disagree with the planner's response (e.g. they claim `Fixed` but you disagree,
+  or they marked `NotFixed` and you cannot accept their rationale) and one more focused
+  update cycle does not resolve it, create or update quest-root
+  `human_intervention_request.md` with the issue id(s), a concise summary of both sides,
+  and what decision you need from a human.
 
 ## Major Change Escalation
 
-- If an issue implies redesign, rethink, or another major change, document the issue in
-  `physicalplan_issues.md` and create/update quest-root
+- If an issue implies redesign, rethink, or another major change, create the issue with
+  `issues create --scope physicalplan` and create/update quest-root
   `human_intervention_request.md` with escalation rationale.
 
 ## Scope Limits
@@ -73,8 +74,7 @@ physical planning output is correct, complete, and executable before implementat
 - Do not modify the spec.
 - Do not modify code.
 - Do not modify slice physical plan files directly.
-- Do not create, edit, or delete `physicalplan_issue_responses.md`.
-- Only modify:
-  - `physicalplan_issues.md`
-  - quest-root `human_intervention_request.md` when escalation is required
+- Do not record issue responses (`issues respond` is responder-only).
+- Only modify quest-root `human_intervention_request.md` when escalation is required.
+  Use the issue CLI for all issue list/create/edit actions.
 

@@ -733,10 +733,12 @@ def build_task_instruction(
     if quest_state == QuestState.PhysicalPlanning:
         if quest_has_open_physicalplan_issues(quest_dir):
             return (
-                "Address the open issues in `physicalplan_issues.md`. Update the physical "
-                "plans and related slice scaffolding as needed, then append per-issue "
-                "responses to `physicalplan_issue_responses.md` explaining what you fixed "
-                "or why an item is not fixed."
+                "Address the open physical-plan issues. Use "
+                "`scripts/quest-runner issues list --scope physicalplan` to read them. "
+                "Update the physical plans and related slice scaffolding as needed, then "
+                "record per-issue responses with "
+                "`scripts/quest-runner issues respond <id> --scope physicalplan "
+                "--outcome Fixed|NotFixed --explanation \"...\"`."
             )
         return (
             "Read the specs in `specs/` and create slice directories under "
@@ -746,8 +748,10 @@ def build_task_instruction(
         )
     if quest_state == QuestState.ReviewPhysicalPlan:
         return (
-            "Review the physical plans in all slices. Update "
-            "`physicalplan_issues.md` with any issues found. Close resolved issues. "
+            "Review the physical plans in all slices. Use "
+            "`scripts/quest-runner issues create` and `issues edit` with "
+            "`--scope physicalplan` to report or close issues. Reviewers close resolved "
+            "issues with `issues edit <id> --status completed`. "
             "If you finish with no open issues, create `physicalplan_accepted.md` "
             "with a brief acceptance summary."
         )
@@ -762,15 +766,20 @@ def build_task_instruction(
         )
     if quest_state == QuestState.ExecuteSlice and slice_state == SliceState.PolishingReview:
         return (
-            "Review the implementation in this slice. Update "
-            "`polishing_issues.md` with issues or close resolved ones. "
+            "Review the implementation in this slice. Use "
+            "`scripts/quest-runner issues create` and `issues edit` with "
+            "`--scope polishing --slice <n>` to report or close issues. Reviewers close "
+            "resolved issues with `issues edit <id> --status completed`. "
             "If you finish with no open issues, create `implementation_accepted.md` "
             "in this slice with a brief acceptance summary."
         )
     if quest_state == QuestState.ExecuteSlice and slice_state == SliceState.PolishingFix:
         return (
-            "Fix the open issues in `polishing_issues.md`. Add resolution "
-            "notes but do not close issues yourself."
+            "Fix the open polishing issues for this slice. Use "
+            "`scripts/quest-runner issues list --scope polishing --slice <n>` to read them. "
+            "Record responses with `scripts/quest-runner issues respond <id> "
+            "--scope polishing --slice <n> --outcome Fixed|NotFixed --explanation \"...\"`. "
+            "Do not close issues yourself."
         )
     if quest_state == QuestState.QuestDocumenting:
         docs_rel = project_docs_rel or "$currentProject/docs"

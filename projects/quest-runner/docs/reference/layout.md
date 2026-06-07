@@ -88,6 +88,10 @@ layout.
 
 ## Runtime schema docs
 
-Bundled quest runtime schema reference for role prompts lives at
+Bundled quest runtime schema reference for maintainers lives at
 `src/quest_runner_service/quest_docs/`. Human-facing project docs link here but
 do not duplicate that content.
+
+Issue markdown files under each quest directory remain the storage format. Agents
+normally use `scripts/quest-runner issues ...` instead of editing those files
+directly.

@@ -73,20 +73,20 @@ Cleanup should be planned at the right time (not too early, not forgotten).
   the disagreement through normal planning iteration, document that disagreement in the
   quest-root `human_intervention_request.md` file and exit.
 
-## Physical plan issue responses
+## Physical plan issue workflow (CLI)
 
-- When you address open entries in quest-level `physicalplan_issues.md` during a pass,
-  you MUST append a response section to quest-root `physicalplan_issue_responses.md` for
-  **each** such issue you touch in that cycle, following the normative format in
-  conductor `docs/quest/schemas/issue-responses.md`.
-- Each response MUST set `outcome` to `Fixed` or `NotFixed` and include a non-empty
-  `explanation` (for `Fixed`, what changed and where; for `NotFixed`, why it was not
-  addressed).
-- If you disagree with reviewer expectations and will not implement the requested
-  change, record `outcome: NotFixed` with your reasoning in the responses file and, when
-  the disagreement remains unresolved after normal iteration, escalate via quest-root
-  `human_intervention_request.md`.
+- Use `scripts/quest-runner issues list --scope physicalplan` to read open issues.
+- When you address open physical-plan issues during a pass, record a response for
+  **each** issue you touch with
+  `scripts/quest-runner issues respond <id> --scope physicalplan --outcome Fixed|NotFixed --explanation "..."`.
+- Responders must not close issues; use `Fixed` or `NotFixed` with a non-empty explanation.
 - Do not create, edit, or delete entries in `physicalplan_issues.md` (reviewer-owned).
+- Do not edit issue markdown files directly unless a human instructs you or the CLI/API
+  is unavailable.
+- If you disagree with reviewer expectations and will not implement the requested
+  change, record `NotFixed` with your reasoning and, when the disagreement remains
+  unresolved after normal iteration, escalate via quest-root
+  `human_intervention_request.md`.
 
 ## Scope Limits
 
@@ -96,7 +96,6 @@ Cleanup should be planned at the right time (not too early, not forgotten).
 - Only change slices and physical plans:
   - `slices/`
   - `slices/<slice>/physicalplan/*.md`
-  - quest-root `physicalplan_issue_responses.md`
   - quest-root `human_intervention_request.md` when escalation is required
 
 ## Deliverable

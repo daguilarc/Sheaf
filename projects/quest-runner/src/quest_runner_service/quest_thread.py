@@ -259,8 +259,23 @@ def build_role_prompt(
     return f"{role_text}\n\n---\n\n{task_instruction}"
 
 
-def _load_quest_schemas_reference(quest_docs_dir: Path) -> str:
-    return (quest_docs_dir / "schemas.md").read_text(encoding="utf-8")
+def _issue_workflow_cli_summary() -> str:
+    return (
+        "## Issue workflow (CLI)\n\n"
+        "Use `scripts/quest-runner issues ...` for issue operations. "
+        "Run `scripts/quest-runner issues --help` for command details.\n\n"
+        "- List/read: `issues list`, `issues read <id>`\n"
+        "- Create/edit: `issues create`, `issues edit` "
+        "(reviewers close with `--status completed`)\n"
+        "- Respond: `issues respond` with `--outcome Fixed|NotFixed` and "
+        "`--explanation` (responders only; do not close issues)\n"
+        "- Response history: `issues responses <id>`\n"
+        "- Use `--scope physicalplan` for quest-level issues; use "
+        "`--scope polishing --slice <n>` for slice issues\n\n"
+        "Do not edit `physicalplan_issues.md`, `physicalplan_issue_responses.md`, "
+        "`polishing_issues.md`, or `polishing_issue_responses.md` directly unless "
+        "a human instructs you or the CLI/API is unavailable.\n"
+    )
 
 
 def build_runtime_context(
@@ -295,10 +310,10 @@ def build_runtime_context(
             else (f"projects/{meta.project}" if meta.project else "")
         )
         slice_path_label = str(slice_dir) if slice_dir is not None else "none"
-    schemas_reference = _load_quest_schemas_reference(quest_docs_dir)
     project_docs_label = (
         f"{project_path_label}/docs" if project_path_label else "docs"
     )
+    issue_summary = _issue_workflow_cli_summary()
     return (
         "Quest Runtime Context\n"
         f"- Quest: {meta.quest_type}/{meta.quest_number:04d}_{meta.quest_slug} ({meta.quest_name})\n"
@@ -309,12 +324,9 @@ def build_runtime_context(
         f"- Current project docs directory: {project_docs_label}\n"
         f"- Quest runner reference directory: {quest_docs_dir}\n\n"
         "Use the quest's `specs/` directory as the implementation specification for this quest. "
-        "Use the quest runner reference directory above as the stable reference for quest schemas, "
-        "file formats, and workflow rules.\n\n"
-        "Quest Schemas Reference (`schemas.md`)\n"
-        "```markdown\n"
-        f"{schemas_reference.rstrip()}\n"
-        "```"
+        "Use the quest runner reference directory above for internal storage schemas and "
+        "maintainer workflow rules.\n\n"
+        f"{issue_summary}"
     )
 
 

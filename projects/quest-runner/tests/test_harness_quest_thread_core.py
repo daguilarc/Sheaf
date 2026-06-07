@@ -48,7 +48,7 @@ class BuildRolePromptTests(unittest.TestCase):
 
 
 class BuildRuntimeContextTests(unittest.TestCase):
-    def test_includes_quest_role_slice_docs_dir_and_schema_reference(self) -> None:
+    def test_includes_quest_role_slice_docs_dir_and_issue_cli_guidance(self) -> None:
         meta = QuestMeta(
             project="example",
             quest_type="main",
@@ -80,9 +80,31 @@ class BuildRuntimeContextTests(unittest.TestCase):
         self.assertIn("- Role: implementer", out)
         self.assertIn("- Current slice: 0002_api", out)
         self.assertIn(str(docs), out)
-        self.assertIn("Quest Schemas Reference (`schemas.md`)", out)
-        self.assertIn("## Issue QP-0001", out)
-        self.assertIn("- status: open|completed", out)
+        self.assertIn("## Issue workflow (CLI)", out)
+        self.assertIn("scripts/quest-runner issues", out)
+        self.assertIn("issues --help", out)
+        self.assertNotIn("Quest Schemas Reference (`schemas.md`)", out)
+        self.assertNotIn("## Issue QP-0001", out)
+        self.assertNotIn("- status: open|completed", out)
+
+
+class RolePromptIssueCliTests(unittest.TestCase):
+    def test_issue_roles_mention_cli_commands_and_ownership_rules(self) -> None:
+        roles_dir = Path(__file__).resolve().parents[1] / "src" / "quest_runner_service" / "roles"
+        for name in (
+            "physical_planner",
+            "physical_plan_reviewer",
+            "polisher",
+            "polisher_reviewer",
+        ):
+            text = (roles_dir / f"{name}.md").read_text(encoding="utf-8")
+            self.assertIn("scripts/quest-runner issues", text, msg=name)
+            self.assertIn("issues respond", text, msg=name)
+        reviewer_text = (roles_dir / "physical_plan_reviewer.md").read_text(encoding="utf-8")
+        self.assertIn("--status completed", reviewer_text)
+        self.assertIn("issues respond", reviewer_text)
+        planner_text = (roles_dir / "physical_planner.md").read_text(encoding="utf-8")
+        self.assertIn("must not close issues", planner_text)
 
 
 class ResolveOrCreateThreadTests(unittest.TestCase):

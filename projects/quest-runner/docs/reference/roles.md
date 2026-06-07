@@ -95,22 +95,35 @@ The runner prompts reviewers to create acceptance markers only when their issue
 list has no open entries. The runner prompts the implementer to create
 `implementation_done.md` when the slice plan appears complete.
 
-## Issue file ownership
+## Issue workflow (CLI)
 
-Reviewer roles own issue lists. Responder roles append to issue response files
-but do not mark issues `completed`.
+Agents normally work with issues through the CLI, not by editing markdown issue
+files directly:
 
-| Role | May write | Must not write |
+```bash
+scripts/quest-runner issues list/read/create/edit/respond/responses
+```
+
+- Responders record notes with `issues respond --outcome Fixed|NotFixed`.
+- Reviewers close resolved issues with `issues edit --status completed`.
+- Responders must not close issues.
+- Direct edits to issue files are allowed only when a human instructs it or the
+  CLI/API is unavailable.
+
+Reviewer roles own issue lists. Responder roles record responses but do not mark
+issues `completed`.
+
+| Role | Issue CLI actions | Must not |
 | --- | --- | --- |
-| `physical_planner` | `physicalplan_issue_responses.md`, slice plans | `physicalplan_issues.md` |
-| `physical_plan_reviewer` | `physicalplan_issues.md`, `physicalplan_accepted.md` | `physicalplan_issue_responses.md` |
-| `implementer` | code, tests, `implementation_done.md` | reviewer issue files |
-| `polisher_reviewer` | `polishing_issues.md`, `implementation_accepted.md` | `polishing_issue_responses.md` |
-| `polisher` | code, tests, `polishing_issue_responses.md` | `polishing_issues.md` |
-| `documenter` | `projects/<project>/docs/**` | code, tests, specs, issue files, role files |
+| `physical_planner` | `issues respond` for physical-plan issues | create/close issues |
+| `physical_plan_reviewer` | `issues create/edit` for physical-plan issues | `issues respond` |
+| `implementer` | — | issue mutation |
+| `polisher_reviewer` | `issues create/edit` for polishing issues | `issues respond` |
+| `polisher` | `issues respond` for polishing issues | create/close issues |
+| `documenter` | — | issue mutation |
 
-Normative issue-response format:
-`src/quest_runner_service/quest_docs/schemas/issue-responses.md`.
+Internal storage schemas remain in
+`src/quest_runner_service/quest_docs/schemas/` for maintainers.
 
 Any role may create or update `human_intervention_request.md` at the quest root
 when blocked. That file stops automatic progress until a human resolves it.

@@ -1,12 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  BuildAdvanceQuestPayload,
   BuildDashboardSearchParams,
   BuildQuestApiQuery,
   BuildRunQuestPayload,
   MergeRunBadge,
   RefreshScheduler,
   ResolveProjectSelection,
+  ShouldShowAdvanceButton,
   ShouldShowRunButton,
   StorageProjectKey,
   x_SERVICE_CONTROL_LABELS,
@@ -74,6 +76,15 @@ test("BuildRunQuestPayload includes project identity", () => {
   });
 });
 
+test("BuildAdvanceQuestPayload includes project identity", () => {
+  const body = BuildAdvanceQuestPayload("web", "side", 2);
+  assert.deepEqual(body, {
+    project: "web",
+    quest_type: "side",
+    quest_number: 2,
+  });
+});
+
 test("ShouldShowRunButton true for open idle quest with worktree", () => {
   assert.equal(
     ShouldShowRunButton(
@@ -135,6 +146,87 @@ test("ShouldShowRunButton false when worktree missing", () => {
     ),
     false
   );
+});
+
+test("ShouldShowAdvanceButton true for stopped incomplete quest with worktree", () => {
+  assert.equal(
+    ShouldShowAdvanceButton(
+      {
+        quest_state: "ExecuteSlice",
+        worktree_missing: false,
+        execution_overlay_status: "none",
+      },
+      { execution_overlay_status: "none", active_run: null }
+    ),
+    true
+  );
+});
+
+test("ShouldShowAdvanceButton true during human intervention recovery", () => {
+  assert.equal(
+    ShouldShowAdvanceButton(
+      {
+        quest_state: "ExecuteSlice",
+        worktree_missing: false,
+        execution_overlay_status: "human_intervention",
+      },
+      null
+    ),
+    true
+  );
+});
+
+test("ShouldShowAdvanceButton false when completed", () => {
+  assert.equal(
+    ShouldShowAdvanceButton({ quest_state: "Completed", worktree_missing: false }, null),
+    false
+  );
+});
+
+test("ShouldShowAdvanceButton false when running", () => {
+  assert.equal(
+    ShouldShowAdvanceButton(
+      {
+        quest_state: "ExecuteSlice",
+        worktree_missing: false,
+        execution_overlay_status: "running",
+      },
+      { active_run: { run_id: "r1" } }
+    ),
+    false
+  );
+});
+
+test("ShouldShowAdvanceButton false when paused", () => {
+  assert.equal(
+    ShouldShowAdvanceButton(
+      {
+        quest_state: "ExecuteSlice",
+        worktree_missing: false,
+        execution_overlay_status: "paused",
+      },
+      null
+    ),
+    false
+  );
+});
+
+test("ShouldShowAdvanceButton false when worktree missing", () => {
+  assert.equal(
+    ShouldShowAdvanceButton(
+      {
+        quest_state: "ExecuteSlice",
+        worktree_missing: true,
+        execution_overlay_status: "none",
+      },
+      null
+    ),
+    false
+  );
+});
+
+test("ShouldShowAdvanceButton false without overview", () => {
+  assert.equal(ShouldShowAdvanceButton(null, null), false);
 });
 
 test("MergeRunBadge human intervention wins", () => {

@@ -100,6 +100,14 @@ export function BuildRunQuestPayload(project, questType, questNumber, maxSteps) 
   return body;
 }
 
+export function BuildAdvanceQuestPayload(project, questType, questNumber) {
+  return {
+    project,
+    quest_type: questType,
+    quest_number: questNumber,
+  };
+}
+
 export function ShouldShowRunButton(overview, runStatus) {
   if (!overview) {
     return false;
@@ -115,6 +123,29 @@ export function ShouldShowRunButton(overview, runStatus) {
     runStatus?.execution_overlay_status ??
     "none";
   if (overlay === "human_intervention" || overlay === "paused" || overlay === "running") {
+    return false;
+  }
+  if (runStatus?.active_run != null) {
+    return false;
+  }
+  return true;
+}
+
+export function ShouldShowAdvanceButton(overview, runStatus) {
+  if (!overview) {
+    return false;
+  }
+  if (overview.quest_state === "Completed") {
+    return false;
+  }
+  if (overview.worktree_missing) {
+    return false;
+  }
+  const overlay =
+    overview.execution_overlay_status ??
+    runStatus?.execution_overlay_status ??
+    "none";
+  if (overlay === "paused" || overlay === "running") {
     return false;
   }
   if (runStatus?.active_run != null) {
