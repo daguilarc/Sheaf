@@ -1,9 +1,13 @@
 # Architecture
 
-Quest Runner is a Sheaf project service that migrated from the external Conductor
-repository's quest-runner components. It preserves quest lifecycle, harness
-execution, recursive state machines, per-step git commits, and the web dashboard
-while adopting Sheaf's project-local quest directory model.
+Quest Runner is a Sheaf project service for project-local quest automation. It
+creates quests, creates deterministic quest worktrees, runs configured role
+harnesses, advances recursive quest and slice state machines, records per-step
+git metadata, and serves a web dashboard for monitoring and control.
+
+The canonical quest storage model is `projects/<project>/quests/`. The
+top-level `quests/` tree is a legacy record area and is not scanned by Quest
+Runner discovery, dashboard listing, or execution.
 
 ## Module map
 
@@ -32,6 +36,15 @@ projects/quest-runner/src/quest_runner_service/
 ```
 
 Tests mirror these modules under `projects/quest-runner/tests/`.
+
+## Public surfaces
+
+- Flask service on port `9002`
+- `GET /health` and `POST /exit` for service integration
+- `POST /create_quest` and `POST /run_quest` for quest lifecycle control
+- `/dashboard` and `/dashboard/assets/*` for the web UI
+- `/api/dashboard/*` for project, quest, slice, run, agent, and git data
+- Root Makefile targets `quest-runner-run` and `quest-runner-test`
 
 ## Data flow
 
@@ -90,7 +103,7 @@ stdout/stderr capture from `start_quest_runner.sh`.
 Quest step logs remain under each quest directory, for example
 `logs/step_<n>_<role>.jsonl`.
 
-See [Configuration](reference/config.md) and
+See [Configuration](../reference/config.md) and
 [Logs and data](../../../structure/logs-and-data.md).
 
 ## Legacy quest exclusion
@@ -98,7 +111,7 @@ See [Configuration](reference/config.md) and
 Discovery functions in `quest_fs.py` iterate `projects/*/quests/` only. The
 top-level `quests/` tree is never scanned for dashboard or runner operations.
 
-## Migration provenance
+## Naming notes
 
 Internal parameter names such as `conductor_repo_path` refer to the Sheaf source
 checkout where the Quest Runner package is installed. Public APIs and dashboard

@@ -9,7 +9,8 @@ modules include Node built-in tests under
 From the project directory:
 
 ```bash
-make -C projects/quest-runner test
+cd projects/quest-runner
+make test
 ```
 
 From the repository root:
@@ -87,3 +88,26 @@ rg "repo_path" projects/quest-runner/src/quest_runner_service/dashboard_assets p
 
 Matches should be limited to internal checkout paths in tests and lock error
 details, not dashboard URL or selection state.
+
+## Manual smoke checks
+
+Run the service and verify health:
+
+```bash
+make quest-runner-run
+curl -s http://localhost:9002/health
+```
+
+Open the dashboard:
+
+```text
+http://localhost:9002/dashboard
+```
+
+Confirm the dashboard lists only project-local quests under
+`projects/*/quests/`. Create or open a quest, verify its dashboard URL includes
+`project`, `quest_type`, and `quest_number`, and run an idle quest through the
+overview run control.
+
+After a run, confirm service logs are under `logs/quest-runner/` and step logs
+are under the selected quest directory.

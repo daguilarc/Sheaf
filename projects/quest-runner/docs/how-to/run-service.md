@@ -5,7 +5,8 @@
 From the project directory:
 
 ```bash
-make -C projects/quest-runner run
+cd projects/quest-runner
+make run
 ```
 
 From the repository root:
