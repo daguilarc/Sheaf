@@ -15,6 +15,7 @@ from quest_runner_service.quest_types import (
     SliceState,
     SliceStateInfo,
 )
+from quest_runner_service.state_machine.commit_metadata import parse_step_commit_message
 from quest_runner_service.worktrees import quest_worktree_path
 
 from .test_helpers import TempRepo, cleanup_worktrees, ensure_project, make_app_client
@@ -40,6 +41,24 @@ def _commit_all(repo: Path, message: str) -> None:
         check=True,
         capture_output=True,
     )
+
+
+def _head_commit_message(repo: Path) -> str:
+    return subprocess.run(
+        ["git", "-C", str(repo), "log", "-1", "--format=%B"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+
+
+def _head_commit(repo: Path) -> str:
+    return subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
 
 
 class AdvanceQuestApiTests(unittest.TestCase):
@@ -240,6 +259,67 @@ class AdvanceQuestApiTests(unittest.TestCase):
         self.assertEqual(after.state, before.state)
         self.assertEqual(after.active_slice, before.active_slice)
 
+    def test_execute_slice_setup_advances_with_slice_machine_name_in_commit(self) -> None:
+        ensure_project(self.temp.root, "example")
+        client, svc = make_app_client(self.temp.root, self.repo_root)
+        out = svc.create_quest(
+            repo_path=str(self.temp.root),
+            project="example",
+            quest_type="main",
+            name="Execute Slice",
+        )
+        wt_qdir = _worktree_quest_dir(self.temp.root, out)
+        meta = quest_fs.read_quest_meta(wt_qdir)
+        worktree = quest_worktree_path(self.temp.root, meta)
+        sl = wt_qdir / "slices" / "0001_manual"
+        sl.mkdir(parents=True)
+        quest_fs.write_slice_state(
+            sl,
+            SliceStateInfo(
+                state=SliceState.NotStarted,
+                updated_at="2026-01-01T00:00:00Z",
+            ),
+        )
+        quest_fs.write_quest_state(
+            wt_qdir,
+            QuestStateInfo(
+                state=QuestState.ExecuteSlice,
+                current_slice=1,
+                updated_at="2026-01-01T00:00:00Z",
+                active_slice="0001_manual",
+                global_step=4,
+            ),
+        )
+        _commit_all(worktree, "execute slice setup")
+
+        resp = client.post(
+            "/advance_quest",
+            json={
+                "project": "example",
+                "quest_type": "main",
+                "quest_number": out["quest_number"],
+            },
+        )
+
+        self.assertEqual(resp.status_code, 200)
+        body = resp.get_json()
+        self.assertEqual(body["previous_state"], "ExecuteSlice")
+        self.assertEqual(body["next_state"], "ExecuteSlice")
+        self.assertEqual(body["previous_slice_state"], "NotStarted")
+        self.assertEqual(body["next_slice_state"], "Implementing")
+        self.assertEqual(quest_fs.read_slice_state(sl).state, SliceState.Implementing)
+        self.assertEqual(body["commit"], _head_commit(worktree))
+        parsed = parse_step_commit_message(_head_commit_message(worktree))
+        self.assertIsNotNone(parsed)
+        assert parsed is not None
+        snap = parsed.metadata.snapshot
+        self.assertEqual(snap.node_name, "ExecuteActiveSliceNode")
+        self.assertIsNotNone(snap.child)
+        assert snap.child is not None
+        self.assertEqual(snap.child.machine_name, "slice_0001_manual")
+        self.assertEqual(snap.child.state_before, "SliceSetup")
+        self.assertEqual(snap.child.state_after, "Implementing")
+
     def test_physical_plan_acceptance_uses_shared_commit_helper(self) -> None:
         ensure_project(self.temp.root, "example")
         client, svc = make_app_client(self.temp.root, self.repo_root)
@@ -301,6 +381,94 @@ class AdvanceQuestApiTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 200)
         mock_commit.assert_called_once()
         self.assertEqual(resp.get_json()["next_state"], "PrepareNextSlice")
+
+    def test_quest_documenting_advances_when_project_docs_changed(self) -> None:
+        ensure_project(self.temp.root, "example")
+        client, svc = make_app_client(self.temp.root, self.repo_root)
+        out = svc.create_quest(
+            repo_path=str(self.temp.root),
+            project="example",
+            quest_type="main",
+            name="Docs Done",
+        )
+        wt_qdir = _worktree_quest_dir(self.temp.root, out)
+        meta = quest_fs.read_quest_meta(wt_qdir)
+        worktree = quest_worktree_path(self.temp.root, meta)
+        quest_fs.write_quest_state(
+            wt_qdir,
+            QuestStateInfo(
+                state=QuestState.QuestDocumenting,
+                current_slice=None,
+                updated_at="2026-01-01T00:00:00Z",
+                global_step=6,
+            ),
+        )
+        _commit_all(worktree, "documenting ready")
+        docs_dir = worktree / "projects" / "example" / "docs"
+        docs_dir.mkdir(parents=True, exist_ok=True)
+        (docs_dir / "manual.md").write_text("# Manual\n", encoding="utf-8")
+
+        resp = client.post(
+            "/advance_quest",
+            json={
+                "project": "example",
+                "quest_type": "main",
+                "quest_number": out["quest_number"],
+            },
+        )
+
+        self.assertEqual(resp.status_code, 200)
+        body = resp.get_json()
+        self.assertEqual(body["previous_state"], "QuestDocumenting")
+        self.assertEqual(body["next_state"], "Completed")
+        self.assertEqual(body["commit"], _head_commit(worktree))
+        self.assertEqual(quest_fs.read_quest_state(wt_qdir).state, QuestState.Completed)
+        parsed = parse_step_commit_message(_head_commit_message(worktree))
+        self.assertIsNotNone(parsed)
+        assert parsed is not None
+        self.assertEqual(parsed.metadata.snapshot.node_name, "QuestDocumentingNode")
+        self.assertEqual(parsed.metadata.snapshot.state_after, "Completed")
+
+    def test_quest_documenting_without_doc_changes_returns_422_without_state_change(self) -> None:
+        ensure_project(self.temp.root, "example")
+        client, svc = make_app_client(self.temp.root, self.repo_root)
+        out = svc.create_quest(
+            repo_path=str(self.temp.root),
+            project="example",
+            quest_type="main",
+            name="Docs Missing",
+        )
+        wt_qdir = _worktree_quest_dir(self.temp.root, out)
+        meta = quest_fs.read_quest_meta(wt_qdir)
+        worktree = quest_worktree_path(self.temp.root, meta)
+        quest_fs.write_quest_state(
+            wt_qdir,
+            QuestStateInfo(
+                state=QuestState.QuestDocumenting,
+                current_slice=None,
+                updated_at="2026-01-01T00:00:00Z",
+                global_step=6,
+            ),
+        )
+        _commit_all(worktree, "documenting ready")
+        before = quest_fs.read_quest_state(wt_qdir)
+        before_head = _head_commit(worktree)
+
+        resp = client.post(
+            "/advance_quest",
+            json={
+                "project": "example",
+                "quest_type": "main",
+                "quest_number": out["quest_number"],
+            },
+        )
+
+        self.assertEqual(resp.status_code, 422)
+        self.assertEqual(resp.get_json()["reason"], "docs_unchanged")
+        after = quest_fs.read_quest_state(wt_qdir)
+        self.assertEqual(after.state, before.state)
+        self.assertEqual(after.global_step, before.global_step)
+        self.assertEqual(_head_commit(worktree), before_head)
 
 
 if __name__ == "__main__":

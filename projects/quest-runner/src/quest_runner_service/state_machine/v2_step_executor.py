@@ -202,7 +202,7 @@ def _evaluate_quest_advance(
         )
         child = RecursiveSnapshot(
             machine_path=slice_before.machine_path,
-            machine_name="slice",
+            machine_name=slice_before.machine_name,
             node_name=child_node,
             state_before=slice_before.state,
             state_after=child_after,
