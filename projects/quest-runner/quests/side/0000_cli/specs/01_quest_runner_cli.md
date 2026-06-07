@@ -3,14 +3,15 @@
 ## Overview
 
 Build a small Quest Runner CLI that wraps the Quest Runner REST service. Its
-manual recovery commands are primarily for human operators who need to inspect,
-repair, and advance a stopped quest without hand-crafting REST payloads. Its
-issue commands are intentionally for both agents and humans, so agents can work
-with quest issues without learning or editing the underlying markdown schemas.
+operator commands, including manual recovery and landing, are primarily for
+human operators who need to inspect, repair, advance, and land quests without
+hand-crafting REST payloads. Its issue commands are intentionally for both
+agents and humans, so agents can work with quest issues without learning or
+editing the underlying markdown schemas.
 
 This quest adds:
 
-- REST APIs for manual quest advancement and issue operations.
+- REST APIs for manual quest advancement, landing, and issue operations.
 - A CLI command surface that calls those REST APIs.
 - A comprehensive CLI help page that is useful to human operators and clear
   enough for agents to follow for issue workflows.
@@ -90,11 +91,11 @@ The top-level help page must include:
   and override mechanisms.
 - The required quest identity fields: `project`, `quest_type`, and
   `quest_number`.
-- Examples for creating a quest, running a quest, advancing a quest, listing
-  issues, reading one issue, creating an issue, editing an issue, responding to
-  an issue, and producing JSON output.
-- A short note that recovery/advance commands are for human-operated manual
-  recovery.
+- Examples for creating a quest, running a quest, advancing a quest, landing a
+  quest worktree, listing issues, reading one issue, creating an issue, editing
+  an issue, responding to an issue, and producing JSON output.
+- A short note that recovery/advance and landing commands are human-operated
+  workflows.
 - A short note that agents should use the issue CLI for issue work instead of
   editing issue files directly.
 
@@ -127,6 +128,118 @@ Behavior:
 - Failed commands print the HTTP status, endpoint, and API error message, then
   exit non-zero.
 - `--json` prints the raw response body as formatted JSON.
+
+## Land Quest REST API
+
+Add:
+
+```text
+POST /land
+```
+
+Request body:
+
+```json
+{
+  "project": "quest-runner",
+  "quest_type": "side",
+  "quest_number": 0,
+  "target_branch": "main"
+}
+```
+
+Purpose:
+
+Land a quest worktree branch back onto the repository's main branch using a
+classic linear git workflow. This is an operator action for after quest work is
+ready to integrate.
+
+Required behavior:
+
+- Default `target_branch` to `main`.
+- Resolve the quest's worktree path and worktree branch from quest metadata.
+- Fail if the quest is currently running.
+- Fail if the target branch checkout is not clean before any rebase or merge
+  operation begins.
+- Fail if the quest worktree is missing.
+- Rebase the quest worktree branch onto the current target branch.
+- If the rebase fails or leaves the worktree in a conflicted or dirty state,
+  stop and return a clear error. A human or agent may then clean up the worktree
+  manually and call `land` again.
+- After the worktree branch is cleanly rebased, fast-forward the target branch
+  to the rebased worktree branch. Do not create a merge commit.
+- If the target branch cannot be fast-forwarded, fail with a clear error and do
+  not delete the worktree.
+- After the fast-forward succeeds, delete the quest worktree checkout.
+- Do not delete the quest branch unless this is explicitly added as a separate
+  option. This quest only requires deleting the worktree.
+- Return JSON describing each completed step and any remaining manual cleanup
+  instructions.
+
+Suggested successful response:
+
+```json
+{
+  "status": "landed",
+  "project": "quest-runner",
+  "quest_type": "side",
+  "quest_number": 0,
+  "target_branch": "main",
+  "worktree_branch": "quest/quest-runner_side_0000_cli",
+  "rebased": true,
+  "fast_forwarded": true,
+  "worktree_deleted": true,
+  "target_head": "<sha>"
+}
+```
+
+Suggested failure response when rebase needs manual cleanup:
+
+```json
+{
+  "status": "rebase_failed",
+  "error": "Rebase stopped with conflicts",
+  "project": "quest-runner",
+  "quest_type": "side",
+  "quest_number": 0,
+  "worktree_path": "/path/to/.quest-worktrees/quest-runner_side_0000_cli",
+  "worktree_branch": "quest/quest-runner_side_0000_cli",
+  "next_step": "Resolve conflicts in the quest worktree, leave it clean, then run land again."
+}
+```
+
+Implementation notes:
+
+- Reuse existing worktree metadata and git helper patterns rather than shelling
+  out ad hoc from the Flask route.
+- The service should serialize `land` with quest execution using the same lock
+  family as `run_quest` and `advance_quest`.
+- The endpoint should not run tests itself unless a later option explicitly asks
+  for pre-land validation.
+
+## Land Quest CLI Command
+
+Add:
+
+```text
+scripts/quest-runner land \
+  --project quest-runner \
+  --type side \
+  --number 0
+```
+
+Behavior:
+
+- Calls `POST /land`.
+- Supports `--target-branch <branch>`, defaulting to `main`.
+- Prints the target branch, worktree branch, rebase result, fast-forward result,
+  and worktree deletion result.
+- On rebase failure, prints the worktree path and the manual cleanup instruction.
+- Exits non-zero on API failure.
+- Supports `--json`.
+- Help text must explain the linear workflow: clean target branch, rebase the
+  worktree branch onto target, fast-forward target to the worktree branch, delete
+  the worktree.
 
 ## Advance Quest REST API
 
@@ -513,7 +626,7 @@ agents to do.
 
 Update Quest Runner docs:
 
-- REST API reference documents `/advance_quest` and the issue APIs.
+- REST API reference documents `/advance_quest`, `/land`, and the issue APIs.
 - How-to docs show common CLI usage.
 - Runtime role docs explain that issue actions go through the CLI.
 - Dashboard docs mention the manual `Advance` button and when it is available.
@@ -530,13 +643,23 @@ Automated tests should cover:
 - `POST /advance_quest` uses the same transition and commit path as normal
   runner end-of-turn processing.
 - `POST /advance_quest` returns validation failures without advancing state.
+- `POST /land` refuses to run while the quest is active.
+- `POST /land` fails before mutation when the target branch checkout is dirty.
+- `POST /land` fails clearly when the quest worktree is missing.
+- `POST /land` rebases the quest worktree branch onto `main`.
+- `POST /land` returns a manual cleanup error when rebase conflicts or dirty
+  worktree state remain.
+- `POST /land` fast-forwards `main` to the rebased quest branch and does not
+  create a merge commit.
+- `POST /land` deletes the quest worktree only after the fast-forward succeeds.
 - Issue list/read/create/edit/respond/response-list APIs for physical plan
   issues.
 - Issue list/read/create/edit/respond/response-list APIs for polishing issues.
 - Polishing issue APIs require `slice`.
 - Issue mutation APIs refuse active-running quests.
 - CLI commands call the expected endpoints and handle success/error responses.
-- CLI `--help` includes examples for lifecycle, advancement, and issue commands.
+- CLI `--help` includes examples for lifecycle, advancement, landing, and issue
+  commands.
 - Dashboard tests or UI smoke coverage verify the `Advance` button appears when
   the quest is stopped and incomplete, is unavailable while running or completed,
   calls `/advance_quest`, refreshes quest data on success, and displays API
@@ -549,6 +672,7 @@ Manual smoke:
 ```text
 scripts/quest-runner --help
 scripts/quest-runner advance --project quest-runner --type side --number 0
+scripts/quest-runner land --project quest-runner --type side --number 0
 scripts/quest-runner issues list --project quest-runner --type side --number 0 --scope physicalplan
 ```
 
@@ -563,13 +687,17 @@ make -C projects/quest-runner test
 - The repository-root `scripts/quest-runner` symlink invokes the Quest Runner CLI.
 - The CLI has comprehensive top-level and subcommand help suitable for human
   operators, with issue-command guidance clear enough for agents to use.
-- The CLI wraps `create_quest`, `run_quest`, `advance_quest`, and all issue APIs.
+- The CLI wraps `create_quest`, `run_quest`, `advance_quest`, `land`, and all
+  issue APIs.
 - The dashboard shows an `Advance` button next to the run control when the quest
   is stopped and incomplete, and that button calls `/advance_quest`.
 - `advance_quest` refuses active-running quests and missing worktrees.
 - `advance_quest` performs normal runner end-of-turn checks, commits, and state
   advancement using shared runner code.
 - `advance_quest` automatically moves `PrePlanning` to `PhysicalPlanning`.
+- `land` performs the linear git workflow: clean target branch check, rebase
+  quest worktree branch onto target, fast-forward target, and delete the quest
+  worktree after success.
 - Issue APIs support listing, reading, creating, editing, responding, and listing
   responses for both physical plan and polishing scopes.
 - Agents are instructed to use the CLI for issue actions instead of learning or
