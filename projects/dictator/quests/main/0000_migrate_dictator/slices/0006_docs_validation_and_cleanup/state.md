@@ -1,4 +1,4 @@
 # Slice State
 
-state: PolishingReview
-updated_at: 2026-06-07T16:16:35Z
+state: Done
+updated_at: 2026-06-07T16:17:18Z

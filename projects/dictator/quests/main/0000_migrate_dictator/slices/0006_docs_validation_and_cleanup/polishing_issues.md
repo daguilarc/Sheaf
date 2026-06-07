@@ -2,10 +2,10 @@
 
 ## Issue PI-0001
 
-- status: open
+- status: completed
 - owner_role: polisher_reviewer
 - created_at: 2026-06-07T16:12:14Z
-- updated_at: 2026-06-07T16:12:14Z
+- updated_at: 2026-06-07T16:17:00Z
 - title: data.md interaction filename pattern does not match implementation
 - details: `projects/dictator/docs/reference/data.md` documents the on-disk
   interaction layout as files named `YYYY-MM-DD-HH.jsonl` under
@@ -23,7 +23,10 @@
   To mark completed: update `data.md` so the documented interaction filename
   pattern matches the implementation, e.g. an hourly UTC file named like
   `2026-06-07T16Z.jsonl` (format `yyyy-MM-dd'T'HH'Z'.jsonl`).
-- resolution_notes: none
+- resolution_notes: Verified fixed. `projects/dictator/docs/reference/data.md`
+  now documents the interaction layout as `YYYY-MM-DDTHHZ.jsonl` with example
+  `2026-06-07T16Z.jsonl` and format `yyyy-MM-dd'T'HH'Z'.jsonl`, matching
+  `InteractionHistory.hourlyFileName`.
 
 Note: recorded by direct markdown edit because `scripts/quest-runner` is not
 present in this worktree (CLI unavailable). Migrate to CLI-managed entries if the
