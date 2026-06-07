@@ -1,10 +1,10 @@
 # State
 
-- global_step: 37
+- global_step: 38
 - machine_name: quest
 - machine_path: projects/dictator/quests/main/0000_migrate_dictator
 - state: ExecuteSlice
-- updated_at: 2026-06-07T16:07:22Z
+- updated_at: 2026-06-07T16:10:48Z
 
 ## Tags
 
