@@ -36,13 +36,12 @@ Git-ignored secrets file. Shape:
 
 ```json
 {
-  "dictator": {
-    "openai_api_key": "sk-..."
-  }
+  "openai_api_key": "sk-...",
+  "omlx_api_key": "..."
 }
 ```
 
-Only the `dictator.openai_api_key` field is read. Empty or missing keys disable cloud refinement and surface warnings in the web UI status strip.
+Dictator reads the top-level `openai_api_key` field. Other top-level keys may be present so multiple Sheaf apps can share the same secrets file. Empty or missing keys disable cloud refinement and surface warnings in the web UI status strip.
 
 ## `config/api_keys.example.json`
 
@@ -50,9 +49,8 @@ Committed template with a blank key:
 
 ```json
 {
-  "dictator": {
-    "openai_api_key": ""
-  }
+  "openai_api_key": "",
+  "omlx_api_key": ""
 }
 ```
 

@@ -18,7 +18,7 @@ final class APIKeysStoreTests: XCTestCase
         defer { try? FileManager.default.removeItem(at: tempDir) }
         let fileURL = tempDir.appendingPathComponent("api_keys.json")
         try """
-        {"dictator":{"openai_api_key":"   "}}
+        {"openai_api_key":"   "}
         """.write(to: fileURL, atomically: true, encoding: .utf8)
 
         let store = APIKeysStore(fileURL: fileURL)
@@ -31,7 +31,7 @@ final class APIKeysStoreTests: XCTestCase
         defer { try? FileManager.default.removeItem(at: tempDir) }
         let fileURL = tempDir.appendingPathComponent("api_keys.json")
         try """
-        {"dictator":{"openai_api_key":"  sk-test-key  "}}
+        {"openai_api_key":"  sk-test-key  ","omlx_api_key":"shared-test-key"}
         """.write(to: fileURL, atomically: true, encoding: .utf8)
 
         let store = APIKeysStore(fileURL: fileURL)

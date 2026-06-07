@@ -1,22 +1,12 @@
 import Foundation
 
-public struct APIKeysDictatorSection: Codable, Sendable, Equatable
-{
-    public let openai_api_key: String
-
-    public init(openai_api_key: String = "")
-    {
-        self.openai_api_key = openai_api_key
-    }
-}
-
 public struct APIKeysFile: Codable, Sendable, Equatable
 {
-    public let dictator: APIKeysDictatorSection?
+    public let openai_api_key: String?
 
-    public init(dictator: APIKeysDictatorSection? = nil)
+    public init(openai_api_key: String? = nil)
     {
-        self.dictator = dictator
+        self.openai_api_key = openai_api_key
     }
 }
 
@@ -84,7 +74,7 @@ public struct APIKeysStore: SecretStore, Sendable
 
         return APIKeyResolver.resolve
         {
-            loaded.dictator?.openai_api_key
+            loaded.openai_api_key
         }
     }
 

@@ -290,7 +290,7 @@ final class WebAPITests: XCTestCase
         self.apiKeysURL = apiKeysURL
         if hasOpenAIKey
         {
-            let payload = #"{"dictator":{"openai_api_key":"sk-test-not-real"}}"#
+            let payload = #"{"openai_api_key":"sk-test-not-real","omlx_api_key":"shared-test-key"}"#
             try payload.write(to: apiKeysURL, atomically: true, encoding: .utf8)
         }
 
