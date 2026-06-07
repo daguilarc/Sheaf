@@ -9,5 +9,10 @@ STDERR_LOG="${LOG_DIR}/conductor_stderr.log"
 
 mkdir -p "${LOG_DIR}"
 
-npm --prefix "${REPO_ROOT}/projects/conductor" start \
+if ! command -v node >/dev/null 2>&1; then
+  echo "Unable to start Conductor: node is not available on PATH." >&2
+  exit 127
+fi
+
+node "${REPO_ROOT}/projects/conductor/dist/src/main.js" \
   >>"${STDOUT_LOG}" 2>>"${STDERR_LOG}"
