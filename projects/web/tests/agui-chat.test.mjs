@@ -8,40 +8,207 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const aguiChatPath = path.resolve(__dirname, "../src/agui-chat.js");
 
-function LoadChatView(WebSocketClass) {
+function CreateFakeDom() {
+  class FakeElement {
+    constructor(tag) {
+      this.tagName = tag.toUpperCase();
+      this.nodeName = this.tagName;
+      this.className = "";
+      this.classList = {
+        add: (...names) => {
+          const existing = this.className ? this.className.split(/\s+/) : [];
+          for (const name of names) {
+            if (!existing.includes(name)) {
+              existing.push(name);
+            }
+          }
+          this.className = existing.join(" ");
+        },
+        remove: (...names) => {
+          const existing = this.className ? this.className.split(/\s+/) : [];
+          this.className = existing.filter((name) => !names.includes(name)).join(" ");
+        },
+        contains: (name) => {
+          const existing = this.className ? this.className.split(/\s+/) : [];
+          return existing.includes(name);
+        },
+      };
+      this.dataset = {};
+      this.style = {};
+      this.children = [];
+      this.childNodes = this.children;
+      this.parentNode = null;
+      this._textContent = "";
+      this.innerHTML = "";
+      this.type = "";
+      this.scrollHeight = 0;
+      this.scrollTop = 0;
+      this.clientHeight = 0;
+      this._listeners = {};
+    }
+
+    get textContent() {
+      if (this.children.length === 0) {
+        return this._textContent;
+      }
+      return this.children.map((child) => child.textContent).join("");
+    }
+
+    set textContent(value) {
+      this._textContent = value != null ? String(value) : "";
+      this.children = [];
+      this.innerHTML = "";
+    }
+
+    appendChild(child) {
+      if (child.parentNode) {
+        child.parentNode.removeChild(child);
+      }
+      child.parentNode = this;
+      this.children.push(child);
+      if (
+        this.className &&
+        this.className.includes("agui-chat-transcript")
+      ) {
+        this.scrollHeight = Math.max(this.scrollHeight, this.children.length * 500);
+      }
+      return child;
+    }
+
+    removeChild(child) {
+      const index = this.children.indexOf(child);
+      if (index >= 0) {
+        this.children.splice(index, 1);
+        child.parentNode = null;
+      }
+      return child;
+    }
+
+    addEventListener(type, handler) {
+      this._listeners[type] = handler;
+    }
+
+    removeEventListener(type) {
+      delete this._listeners[type];
+    }
+
+    click() {
+      if (this._listeners.click) {
+        this._listeners.click();
+      }
+    }
+
+    querySelector(selector) {
+      if (selector.startsWith(".")) {
+        const className = selector.slice(1);
+        const stack = [...this.children];
+        while (stack.length) {
+          const node = stack.shift();
+          if (node.className && node.className.split(/\s+/).includes(className)) {
+            return node;
+          }
+          stack.push(...node.children);
+        }
+      }
+      return null;
+    }
+
+    querySelectorAll(selector) {
+      const results = [];
+      if (selector.startsWith(".")) {
+        const className = selector.slice(1);
+        const stack = [...this.children];
+        while (stack.length) {
+          const node = stack.shift();
+          if (node.className && node.className.split(/\s+/).includes(className)) {
+            results.push(node);
+          }
+          stack.push(...node.children);
+        }
+      }
+      return results;
+    }
+  }
+
+  function createElement(tag) {
+    return new FakeElement(tag);
+  }
+
+  return { createElement, FakeElement };
+}
+
+const moduleDom = CreateFakeDom();
+const document = { createElement: moduleDom.createElement };
+
+function LoadChatView(options) {
+  const opts = options || {};
+  const fakeDom = CreateFakeDom();
+  const pendingFrames = [];
+
   const source = fs.readFileSync(aguiChatPath, "utf8");
   const context = {
     console,
     setTimeout,
     clearTimeout,
-    WebSocket: WebSocketClass || class FakeWebSocket {
-      constructor(url) {
-        this.url = url;
-        this.readyState = 0;
-        this.CONNECTING = 0;
-        this.OPEN = 1;
-        this.CLOSING = 2;
-        this.CLOSED = 3;
-      }
-
-      addEventListener() {}
-
-      removeEventListener() {}
-
-      close() {
-        this.readyState = 3;
+    document: {
+      createElement: fakeDom.createElement,
+    },
+    requestAnimationFrame(callback) {
+      pendingFrames.push(callback);
+      return pendingFrames.length;
+    },
+    cancelAnimationFrame(id) {
+      pendingFrames[id - 1] = null;
+    },
+    flushAnimationFrames() {
+      while (pendingFrames.length) {
+        const callback = pendingFrames.shift();
+        if (callback) {
+          callback();
+        }
       }
     },
+    WebSocket:
+      opts.WebSocket ||
+      class FakeWebSocket {
+        constructor(url) {
+          this.url = url;
+          this.readyState = 0;
+          this.CONNECTING = 0;
+          this.OPEN = 1;
+          this.CLOSING = 2;
+          this.CLOSED = 3;
+        }
+
+        addEventListener() {}
+
+        removeEventListener() {}
+
+        close() {
+          this.readyState = 3;
+        }
+      },
   };
   context.globalThis = context;
   context.window = context;
   vm.createContext(context);
   vm.runInContext(source, context);
+  context.ChatView._flushFrames = context.flushAnimationFrames;
+  context.ChatView._FakeElement = fakeDom.FakeElement;
   return context.ChatView;
 }
 
 const ChatView = LoadChatView();
-const { createChatState, reduceAguiEvent, applyServerMessage } = ChatView._test;
+const {
+  createChatState,
+  reduceAguiEvent,
+  applyServerMessage,
+  escapeHtml,
+  formatMarkdown,
+  isAtBottom,
+  renderChat,
+  x_AutoScrollThreshold,
+} = ChatView._test;
 
 function ReduceAll(state, events) {
   for (const event of events) {
@@ -460,8 +627,8 @@ test("golden reducer replay from representative converted JSONL sequence", () =>
   );
 });
 
-test("ChatView.create and destroy manage websocket lifecycle", () => {
-  const container = { textContent: "" };
+test("ChatView.create and destroy manage websocket lifecycle and DOM structure", () => {
+  const container = document.createElement("div");
   let closed = false;
 
   class RecordingWebSocket {
@@ -489,10 +656,20 @@ test("ChatView.create and destroy manage websocket lifecycle", () => {
     }
   }
 
-  const LiveChatView = LoadChatView(RecordingWebSocket);
+  const LiveChatView = LoadChatView({ WebSocket: RecordingWebSocket });
   const handle = LiveChatView.create(container, "ws://example.test/stream");
+
   assert.ok(handle.state);
-  assert.equal(container.textContent.includes("status=loading"), true);
+  assert.ok(handle.root);
+  assert.ok(handle.statusBar);
+  assert.ok(handle.transcript);
+  assert.equal(container.children.length, 1);
+  assert.equal(container.children[0], handle.root);
+  assert.equal(handle.statusBar.className.includes("agui-chat-status"), true);
+  assert.equal(handle.transcript.className.includes("agui-chat-transcript"), true);
+
+  LiveChatView._flushFrames();
+  assert.equal(handle.statusBar.textContent.includes("Loading history"), true);
 
   handle._owned.socket.listeners.message({
     data: JSON.stringify({
@@ -504,11 +681,193 @@ test("ChatView.create and destroy manage websocket lifecycle", () => {
       ],
     }),
   });
+  LiveChatView._flushFrames();
+
   assert.equal(handle.state.messages.get("live")?.content, "ok");
+  assert.equal(handle.messageNodes.has("live"), true);
 
   LiveChatView.destroy(handle);
   assert.equal(closed, true);
   assert.equal(container.textContent, "");
+});
+
+test("text streaming reuses the same message DOM node", () => {
+  const container = document.createElement("div");
+  const LiveChatView = LoadChatView();
+  const handle = LiveChatView.create(container, null);
+  LiveChatView._flushFrames();
+
+  applyServerMessage(handle.state, {
+    type: "events",
+    events: [
+      { type: "TEXT_MESSAGE_START", messageId: "stream-1", role: "assistant" },
+      { type: "TEXT_MESSAGE_CONTENT", messageId: "stream-1", delta: "part" },
+    ],
+  });
+  renderChat(handle);
+
+  const firstNode = handle.messageNodes.get("stream-1")?.root;
+  assert.ok(firstNode);
+
+  applyServerMessage(handle.state, {
+    type: "events",
+    events: [
+      { type: "TEXT_MESSAGE_CONTENT", messageId: "stream-1", delta: " two" },
+    ],
+  });
+  renderChat(handle);
+
+  const secondNode = handle.messageNodes.get("stream-1")?.root;
+  assert.equal(firstNode, secondNode);
+  assert.equal(handle.transcript.children.length, 1);
+  assert.equal(
+    handle.messageNodes.get("stream-1").content.innerHTML.includes("part two"),
+    true
+  );
+});
+
+test("tool and reasoning panels toggle expanded state", () => {
+  const container = document.createElement("div");
+  const LiveChatView = LoadChatView();
+  const handle = LiveChatView.create(container, null);
+  LiveChatView._flushFrames();
+
+  applyServerMessage(handle.state, {
+    type: "events",
+    events: [
+      {
+        type: "TEXT_MESSAGE_START",
+        messageId: "asst",
+        role: "assistant",
+      },
+      { type: "TEXT_MESSAGE_END", messageId: "asst" },
+      {
+        type: "TOOL_CALL_START",
+        toolCallId: "tc-1",
+        toolCallName: "grep",
+        parentMessageId: "asst",
+      },
+      {
+        type: "TOOL_CALL_RESULT",
+        toolCallId: "tc-1",
+        messageId: "tool-msg",
+        content: "found it",
+      },
+      { type: "TOOL_CALL_END", toolCallId: "tc-1" },
+      { type: "REASONING_MESSAGE_START", messageId: "reason-1" },
+      { type: "REASONING_MESSAGE_CONTENT", messageId: "reason-1", delta: "hmm" },
+      { type: "REASONING_MESSAGE_END", messageId: "reason-1" },
+    ],
+  });
+  renderChat(handle);
+
+  const toolBubble = handle.messageNodes.get("tool-msg")?.root;
+  const reasonBubble = handle.messageNodes.get("reason-1")?.root;
+  assert.ok(toolBubble);
+  assert.ok(reasonBubble);
+  assert.equal(toolBubble.classList.contains("agui-chat-bubble--expanded"), false);
+  assert.equal(reasonBubble.classList.contains("agui-chat-bubble--expanded"), false);
+
+  const toolHeader = toolBubble.children[0];
+  toolHeader.click();
+  assert.equal(toolBubble.classList.contains("agui-chat-bubble--expanded"), true);
+  toolHeader.click();
+  assert.equal(toolBubble.classList.contains("agui-chat-bubble--expanded"), false);
+
+  const reasonHeader = reasonBubble.children[0];
+  reasonHeader.click();
+  assert.equal(reasonBubble.classList.contains("agui-chat-bubble--expanded"), true);
+});
+
+test("auto-scroll stays at bottom when near bottom and skips when scrolled up", () => {
+  const transcript = document.createElement("div");
+  transcript.scrollHeight = 1000;
+  transcript.clientHeight = 200;
+
+  transcript.scrollTop = 800;
+  assert.equal(isAtBottom(transcript, x_AutoScrollThreshold), true);
+
+  transcript.scrollTop = 500;
+  assert.equal(isAtBottom(transcript, x_AutoScrollThreshold), false);
+
+  const container = document.createElement("div");
+  const LiveChatView = LoadChatView();
+  const handle = LiveChatView.create(container, null);
+  LiveChatView._flushFrames();
+
+  handle.transcript.scrollHeight = 1000;
+  handle.transcript.clientHeight = 200;
+  handle.transcript.scrollTop = 800;
+
+  applyServerMessage(handle.state, {
+    type: "events",
+    events: [
+      { type: "TEXT_MESSAGE_START", messageId: "scroll-1", role: "assistant" },
+      { type: "TEXT_MESSAGE_CONTENT", messageId: "scroll-1", delta: "grow" },
+    ],
+  });
+  renderChat(handle);
+  assert.equal(handle.transcript.scrollTop, handle.transcript.scrollHeight);
+
+  handle.transcript.scrollTop = 400;
+  handle.transcript.scrollHeight = 2000;
+  applyServerMessage(handle.state, {
+    type: "events",
+    events: [
+      { type: "TEXT_MESSAGE_CONTENT", messageId: "scroll-1", delta: " more" },
+    ],
+  });
+  handle.transcript.scrollHeight = 2000;
+  renderChat(handle);
+  assert.equal(handle.transcript.scrollTop, 400);
+});
+
+test("markdown rendering escapes HTML and formats basic syntax", () => {
+  assert.equal(escapeHtml("<script>"), "&lt;script&gt;");
+
+  const html = formatMarkdown(
+    "**bold** and *italic* with `inline` and:\n\n```\n<code>\n```\n\n<script>alert(1)</script>"
+  );
+  assert.equal(html.includes("<script>"), false);
+  assert.equal(html.includes("&lt;script&gt;"), true);
+  assert.equal(html.includes("<strong>bold</strong>"), true);
+  assert.equal(html.includes("<em>italic</em>"), true);
+  assert.equal(html.includes('class="agui-chat-inline-code"'), true);
+  assert.equal(html.includes('class="agui-chat-code-block"'), true);
+  assert.equal(html.includes("<code>"), true);
+});
+
+test("MESSAGES_SNAPSHOT removes stale DOM nodes", () => {
+  const container = document.createElement("div");
+  const LiveChatView = LoadChatView();
+  const handle = LiveChatView.create(container, null);
+  LiveChatView._flushFrames();
+
+  applyServerMessage(handle.state, {
+    type: "events",
+    events: [
+      { type: "TEXT_MESSAGE_START", messageId: "old-msg", role: "user" },
+      { type: "TEXT_MESSAGE_CONTENT", messageId: "old-msg", delta: "gone" },
+      { type: "TEXT_MESSAGE_END", messageId: "old-msg" },
+    ],
+  });
+  renderChat(handle);
+  assert.equal(handle.messageNodes.has("old-msg"), true);
+  assert.equal(handle.transcript.children.length, 1);
+
+  applyServerMessage(handle.state, {
+    type: "events",
+    events: [
+      {
+        type: "MESSAGES_SNAPSHOT",
+        messages: [{ id: "new-msg", role: "assistant", content: "fresh" }],
+      },
+    ],
+  });
+  renderChat(handle);
+  assert.equal(handle.messageNodes.has("old-msg"), false);
+  assert.equal(handle.messageNodes.has("new-msg"), true);
+  assert.equal(handle.transcript.children.length, 1);
 });
 
 test("STEP_STARTED and STEP_FINISHED track active steps", () => {

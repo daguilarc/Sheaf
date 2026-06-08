@@ -1,0 +1,338 @@
+.agui-chat-root
+{
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--agui-chat-bg, #0f1419);
+  color: var(--agui-chat-text, #e6edf3);
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.agui-chat-status
+{
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--agui-chat-border, #2d3a4d);
+  background: var(--agui-chat-surface, #1a2332);
+  flex-shrink: 0;
+}
+
+.agui-chat-status-main
+{
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.agui-chat-status-dot
+{
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--agui-chat-muted, #8b9cb3);
+  flex-shrink: 0;
+}
+
+.agui-chat-status-dot--live
+{
+  background: var(--agui-chat-live, #22c55e);
+}
+
+.agui-chat-status-dot--warning
+{
+  background: var(--agui-chat-warning, #f59e0b);
+}
+
+.agui-chat-status-label
+{
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.agui-chat-status-label--warning
+{
+  color: var(--agui-chat-warning, #f59e0b);
+}
+
+.agui-chat-status-count
+{
+  color: var(--agui-chat-muted, #8b9cb3);
+  font-size: 12px;
+}
+
+.agui-chat-status-steps
+{
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.agui-chat-step-chip
+{
+  font-size: 11px;
+  color: var(--agui-chat-muted, #8b9cb3);
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: var(--agui-chat-surface-muted, #232f3e);
+  border: 1px solid var(--agui-chat-border, #2d3a4d);
+}
+
+.agui-chat-transcript
+{
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+}
+
+.agui-chat-bubble
+{
+  border-radius: 8px;
+  padding: 10px 12px;
+  max-width: 100%;
+  word-break: break-word;
+}
+
+.agui-chat-bubble--user
+{
+  align-self: flex-start;
+  background: var(--agui-chat-surface-muted, #232f3e);
+  border: 1px solid var(--agui-chat-border, #2d3a4d);
+}
+
+.agui-chat-bubble--assistant
+{
+  align-self: flex-start;
+  background: var(--agui-chat-surface, #1a2332);
+  border: 1px solid var(--agui-chat-border, #2d3a4d);
+}
+
+.agui-chat-bubble--tool,
+.agui-chat-bubble--reasoning
+{
+  align-self: stretch;
+  background: var(--agui-chat-surface-muted, #232f3e);
+  border: 1px solid var(--agui-chat-border, #2d3a4d);
+  padding: 0;
+  overflow: hidden;
+}
+
+.agui-chat-role
+{
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--agui-chat-muted, #8b9cb3);
+  margin-bottom: 6px;
+}
+
+.agui-chat-content
+{
+  white-space: pre-wrap;
+}
+
+.agui-chat-bubble--assistant .agui-chat-content
+{
+  white-space: normal;
+}
+
+.agui-chat-bubble--assistant .agui-chat-content p
+{
+  margin: 0 0 8px;
+}
+
+.agui-chat-bubble--assistant .agui-chat-content p:last-child
+{
+  margin-bottom: 0;
+}
+
+.agui-chat-bubble--user .agui-chat-content
+{
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 13px;
+}
+
+.agui-chat-inline-code
+{
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.9em;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--agui-chat-surface-muted, #232f3e);
+  border: 1px solid var(--agui-chat-border, #2d3a4d);
+}
+
+.agui-chat-code-block
+{
+  margin: 8px 0;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: var(--agui-chat-bg, #0f1419);
+  border: 1px solid var(--agui-chat-border, #2d3a4d);
+  overflow-x: auto;
+}
+
+.agui-chat-code-block code
+{
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  white-space: pre;
+}
+
+.agui-chat-streaming
+{
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  background: var(--agui-chat-accent, #3b82f6);
+  animation: agui-chat-blink 1s step-end infinite;
+}
+
+@keyframes agui-chat-blink
+{
+  0%, 100%
+  {
+    opacity: 1;
+  }
+
+  50%
+  {
+    opacity: 0;
+  }
+}
+
+.agui-chat-activity
+{
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 12px;
+  color: var(--agui-chat-muted, #8b9cb3);
+}
+
+.agui-chat-activity-label
+{
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.agui-chat-activity-content
+{
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agui-chat-tool-header
+{
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.agui-chat-tool-header:hover
+{
+  background: var(--agui-chat-bg, #0f1419);
+}
+
+.agui-chat-chevron
+{
+  display: inline-block;
+  width: 0;
+  height: 0;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-left: 5px solid var(--agui-chat-muted, #8b9cb3);
+  transition: transform 0.15s ease;
+  flex-shrink: 0;
+}
+
+.agui-chat-bubble--expanded .agui-chat-chevron
+{
+  transform: rotate(90deg);
+}
+
+.agui-chat-tool-name
+{
+  font-weight: 600;
+  font-size: 13px;
+  flex: 1;
+}
+
+.agui-chat-spinner
+{
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--agui-chat-border, #2d3a4d);
+  border-top-color: var(--agui-chat-accent, #3b82f6);
+  border-radius: 50%;
+  animation: agui-chat-spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes agui-chat-spin
+{
+  to
+  {
+    transform: rotate(360deg);
+  }
+}
+
+.agui-chat-tool-body
+{
+  display: none;
+  padding: 0 12px 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  color: var(--agui-chat-muted, #8b9cb3);
+  white-space: pre-wrap;
+  border-top: 1px solid var(--agui-chat-border, #2d3a4d);
+}
+
+.agui-chat-bubble--expanded .agui-chat-tool-body
+{
+  display: block;
+  padding-top: 10px;
+}
+
+.agui-chat-tool-section
+{
+  margin-bottom: 8px;
+}
+
+.agui-chat-tool-section:last-child
+{
+  margin-bottom: 0;
+}
+
+.agui-chat-tool-section-label
+{
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 4px;
+  color: var(--agui-chat-muted, #8b9cb3);
+}
