@@ -926,3 +926,76 @@ test("STEP_STARTED and STEP_FINISHED track active steps", () => {
   assert.ok(state.activeSteps.has("cursor.tool"));
   assert.equal(state.activeSteps.get("cursor.tool").startTimestamp, 200);
 });
+
+test("prependHistory preserves scroll position and deduplicates ids", () => {
+  const container = document.createElement("div");
+  const LiveChatView = LoadChatView();
+  const handle = LiveChatView.create(container, {});
+  const { prependSnapshotMessages } = LiveChatView._test;
+
+  applyServerMessage(handle.state, {
+    type: "events",
+    events: [
+      { type: "TEXT_MESSAGE_START", messageId: "newer", role: "user" },
+      { type: "TEXT_MESSAGE_CONTENT", messageId: "newer", delta: "bottom" },
+      { type: "TEXT_MESSAGE_END", messageId: "newer" },
+    ],
+  });
+  renderChat(handle);
+  handle.transcript.scrollTop = 120;
+  handle.transcript.scrollHeight = 500;
+
+  const added = prependSnapshotMessages(handle.state, [
+    { id: "older", role: "user", content: "top" },
+    { id: "newer", role: "user", content: "duplicate" },
+  ]);
+  assert.equal(added, 1);
+
+  const previousScrollHeight = handle.transcript.scrollHeight;
+  const previousScrollTop = handle.transcript.scrollTop;
+  LiveChatView.prependHistory(handle, [{ id: "older-2", role: "user", content: "older" }]);
+  const delta = handle.transcript.scrollHeight - previousScrollHeight;
+  assert.equal(handle.transcript.scrollTop, previousScrollTop + delta);
+  assert.equal(handle.state.messageOrder[0], "older-2");
+});
+
+test("interactive APIs expose connection and caught-up state", () => {
+  const container = document.createElement("div");
+  const LiveChatView = LoadChatView();
+  const handle = LiveChatView.create(container, {});
+
+  LiveChatView.setConnectionState(handle, {
+    connected: false,
+    queuedCount: 2,
+    label: "Disconnected",
+  });
+  LiveChatView._flushFrames();
+  assert.match(handle.statusBar.textContent, /Disconnected/);
+  assert.match(handle.statusBar.textContent, /2 queued/);
+
+  LiveChatView.setCaughtUp(handle, true);
+  assert.equal(LiveChatView.getUiState(handle).caughtUp, true);
+  assert.equal(LiveChatView.getUiState(handle).queuedCount, 2);
+});
+
+test("legacy create(container, wsUrl) still works for read-only consumers", () => {
+  const container = document.createElement("div");
+  const LiveChatView = LoadChatView({
+    WebSocket: class FakeWebSocket {
+      constructor(url) {
+        this.url = url;
+        this.readyState = 0;
+      }
+
+      addEventListener() {}
+
+      removeEventListener() {}
+
+      close() {}
+    },
+  });
+  const handle = LiveChatView.create(container, "/ws/chat?p=default&session=abc");
+  assert.equal(handle.wsUrl, "/ws/chat?p=default&session=abc");
+  assert.ok(handle.root.className.includes("agui-chat-root"));
+  LiveChatView.destroy(handle);
+});

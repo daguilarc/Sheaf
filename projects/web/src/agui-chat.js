@@ -1049,14 +1049,65 @@
     }
   }
 
-  function RenderStatusBar(statusBar, state) {
+  function PrependSnapshotMessages(state, snapshotMessages) {
+    const newIds = [];
+    const messages = Array.isArray(snapshotMessages) ? snapshotMessages : [];
+
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const snapshotMessage = messages[index];
+      if (!snapshotMessage || snapshotMessage.id == null) {
+        continue;
+      }
+
+      const messageId = String(snapshotMessage.id);
+      if (state.messages.has(messageId)) {
+        continue;
+      }
+
+      const message = SnapshotMessageToChatMessage(snapshotMessage);
+      state.messages.set(messageId, message);
+      newIds.unshift(messageId);
+    }
+
+    if (newIds.length > 0) {
+      state.messageOrder = newIds.concat(state.messageOrder);
+    }
+
+    return newIds.length;
+  }
+
+  function NormalizeCreateOptions(wsUrlOrOptions) {
+    if (typeof wsUrlOrOptions === "string") {
+      return { wsUrl: wsUrlOrOptions };
+    }
+
+    if (wsUrlOrOptions && typeof wsUrlOrOptions === "object") {
+      return wsUrlOrOptions;
+    }
+
+    return {};
+  }
+
+  function RenderStatusBar(statusBar, state, connectionState) {
     statusBar.textContent = "";
 
     const main = CreateElement("div", "agui-chat-status-main");
     const dot = CreateElement("span", "agui-chat-status-dot");
     const label = CreateElement("span", "agui-chat-status-label");
 
-    if (state.status.kind === "loading") {
+    if (connectionState && connectionState.connected === false) {
+      dot.classList.add("agui-chat-status-dot--warning");
+      label.classList.add("agui-chat-status-label--warning");
+      label.textContent = connectionState.label || "Disconnected";
+      main.appendChild(dot);
+      main.appendChild(label);
+
+      if (connectionState.queuedCount > 0) {
+        const queued = CreateElement("span", "agui-chat-status-count");
+        queued.textContent = connectionState.queuedCount + " queued";
+        main.appendChild(queued);
+      }
+    } else if (state.status.kind === "loading") {
       label.textContent = "Loading history...";
       const count = CreateElement("span", "agui-chat-status-count");
       count.textContent = state.eventCount + " events";
@@ -1151,9 +1202,83 @@
       return;
     }
     if (handle.statusBar) {
-      RenderStatusBar(handle.statusBar, handle.state);
+      RenderStatusBar(handle.statusBar, handle.state, handle.connectionState);
     }
     RenderTranscript(handle);
+  }
+
+  function AppendAguiEvent(handle, event) {
+    if (!handle || handle._owned.destroyed) {
+      return;
+    }
+
+    ReduceAguiEvent(handle.state, event);
+    ScheduleRender(handle);
+  }
+
+  function PrependHistory(handle, snapshotMessages) {
+    if (!handle || handle._owned.destroyed) {
+      return 0;
+    }
+
+    const transcript = handle.transcript;
+    const previousScrollHeight = transcript ? transcript.scrollHeight : 0;
+    const previousScrollTop = transcript ? transcript.scrollTop : 0;
+    const added = PrependSnapshotMessages(handle.state, snapshotMessages);
+
+    if (added > 0) {
+      RenderChat(handle);
+
+      if (transcript) {
+        const delta = transcript.scrollHeight - previousScrollHeight;
+        transcript.scrollTop = previousScrollTop + delta;
+      }
+    }
+
+    return added;
+  }
+
+  function SetCaughtUp(handle, caughtUp) {
+    if (!handle || handle._owned.destroyed) {
+      return;
+    }
+
+    handle.state.caughtUp = caughtUp === true;
+    RecomputeStatus(handle.state);
+    ScheduleRender(handle);
+  }
+
+  function SetConnectionState(handle, connectionState) {
+    if (!handle || handle._owned.destroyed) {
+      return;
+    }
+
+    handle.connectionState = connectionState || null;
+    ScheduleRender(handle);
+  }
+
+  function GetUiState(handle) {
+    if (!handle) {
+      return {
+        connected: false,
+        queuedCount: 0,
+        caughtUp: false,
+        messageCount: 0,
+      };
+    }
+
+    return {
+      connected:
+        handle.connectionState == null
+          ? true
+          : handle.connectionState.connected === true,
+      queuedCount:
+        handle.connectionState && handle.connectionState.queuedCount != null
+          ? handle.connectionState.queuedCount
+          : 0,
+      caughtUp: handle.state.caughtUp === true,
+      messageCount: handle.state.messageOrder.length,
+    };
   }
 
   function ScheduleRender(handle) {
@@ -1175,13 +1300,16 @@
     });
   }
 
-  function Create(container, wsUrl) {
+  function Create(container, wsUrlOrOptions) {
+    const options = NormalizeCreateOptions(wsUrlOrOptions);
+    const wsUrl = options.wsUrl;
     const state = CreateChatState();
     const owned = {
       socket: null,
       reconnectTimer: null,
       listeners: [],
       destroyed: false,
+      scrollNearTopPending: false,
     };
 
     if (container) {
@@ -1208,6 +1336,7 @@
       messageNodes: new Map(),
       panelExpanded: new Map(),
       pendingFrame: null,
+      connectionState: null,
       _owned: owned,
     };
 
@@ -1246,6 +1375,24 @@
       const errorText = "WebSocket closed";
       ApplyServerMessage(state, { type: "error", message: errorText });
       ScheduleRender(handle);
+    }
+
+    if (typeof options.onScrollNearTop === "function") {
+      TrackListener(transcript, "scroll", function () {
+        if (owned.destroyed || owned.scrollNearTopPending) {
+          return;
+        }
+
+        if (transcript.scrollTop > 80) {
+          return;
+        }
+
+        owned.scrollNearTopPending = true;
+        options.onScrollNearTop();
+        setTimeout(function () {
+          owned.scrollNearTopPending = false;
+        }, 500);
+      });
     }
 
     if (typeof WebSocket !== "undefined" && wsUrl) {
@@ -1316,12 +1463,18 @@
   const ChatView = {
     create: Create,
     destroy: Destroy,
+    appendAguiEvent: AppendAguiEvent,
+    prependHistory: PrependHistory,
+    setCaughtUp: SetCaughtUp,
+    setConnectionState: SetConnectionState,
+    getUiState: GetUiState,
     _test: {
       createChatState: CreateChatState,
       reduceAguiEvent: ReduceAguiEvent,
       applyServerMessage: ApplyServerMessage,
       applyJsonPatch: ApplyJsonPatch,
       parseActivityContent: ParseActivityContent,
+      prependSnapshotMessages: PrependSnapshotMessages,
       escapeHtml: EscapeHtml,
       formatMarkdown: FormatMarkdown,
       isAtBottom: IsAtBottom,

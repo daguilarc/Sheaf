@@ -309,6 +309,9 @@
   font-size: 12px;
   color: var(--agui-chat-muted, #8b9cb3);
   white-space: pre-wrap;
+  overflow-x: auto;
+  max-width: 100%;
+  word-break: break-word;
   border-top: 1px solid var(--agui-chat-border, #2d3a4d);
 }
 

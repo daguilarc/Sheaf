@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
@@ -12,6 +13,13 @@ import { x_serviceName, x_serviceVersion } from "./constants.js";
 import { SendJson } from "./http.js";
 import { DispatchApiRoute } from "./router.js";
 import type { RouteContext } from "./routes/context.js";
+import {
+  BuildSheafChatStaticRoots,
+  ReadStaticFile,
+  ResolveSheafChatIndexPath,
+  SendHtml,
+  SendStaticResult,
+} from "./static.js";
 import {
   AttachChatWebSocketConnection,
   CreateChatWebSocketServer,
@@ -44,6 +52,39 @@ function HandleNotFound(response: ServerResponse): void
   SendJson(response, 404, FormatRestError("not_found", "route not found"));
 }
 
+async function HandleStaticRequest(
+  config: SheafChatConfig,
+  pathname: string,
+  response: ServerResponse,
+): Promise<void>
+{
+  const staticRoots = BuildSheafChatStaticRoots(config.repoRoot);
+
+  if (pathname === "/" || pathname === "/index.html")
+  {
+    try
+    {
+      const html = await readFile(ResolveSheafChatIndexPath(config.repoRoot), "utf8");
+      SendHtml(response, html);
+    }
+    catch
+    {
+      HandleNotFound(response);
+    }
+    return;
+  }
+
+  const staticFile = await ReadStaticFile(pathname, staticRoots);
+
+  if (!staticFile)
+  {
+    HandleNotFound(response);
+    return;
+  }
+
+  SendStaticResult(response, staticFile);
+}
+
 export function CreateSheafChatServer(options: SheafChatServerOptions): SheafChatServer
 {
   const routeContext: RouteContext = {
@@ -60,15 +101,18 @@ export function CreateSheafChatServer(options: SheafChatServerOptions): SheafCha
 
   const httpServer = createServer((request: IncomingMessage, response: ServerResponse) =>
   {
-    const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
-
-    if (url.pathname.startsWith("/api/"))
+    void (async () =>
     {
-      void DispatchApiRoute(routeContext, request, response, url);
-      return;
-    }
+      const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
 
-    HandleNotFound(response);
+      if (url.pathname.startsWith("/api/"))
+      {
+        await DispatchApiRoute(routeContext, request, response, url);
+        return;
+      }
+
+      await HandleStaticRequest(options.config, url.pathname, response);
+    })();
   });
 
   httpServer.on("upgrade", (request, socket, head) =>
