@@ -95,6 +95,7 @@ class HelpTests(unittest.TestCase):
         self.assertIn("scripts/quest-runner run", help_text)
         self.assertIn("scripts/quest-runner advance", help_text)
         self.assertIn("scripts/quest-runner land", help_text)
+        self.assertIn("scripts/quest-runner slices init", help_text)
         self.assertIn("scripts/quest-runner issues list", help_text)
         self.assertIn("scripts/quest-runner issues read", help_text)
         self.assertIn("scripts/quest-runner issues create", help_text)
@@ -116,6 +117,7 @@ class HelpTests(unittest.TestCase):
             ["run", "--help"],
             ["advance", "--help"],
             ["land", "--help"],
+            ["slices", "init", "--help"],
             ["issues", "list", "--help"],
             ["issues", "read", "--help"],
             ["issues", "create", "--help"],
@@ -252,6 +254,7 @@ class CommandRequestTests(unittest.TestCase):
                     "rebased": True,
                     "fast_forwarded": True,
                     "worktree_deleted": True,
+                    "branch_deleted": True,
                     "target_head": "deadbeef",
                 },
             ),
@@ -261,6 +264,7 @@ class CommandRequestTests(unittest.TestCase):
         self.assertEqual(req.method, "POST")
         self.assertTrue(req.url.endswith("/land"))
         self.assertEqual(req.body["target_branch"], "main")
+        self.assertIn("branch_deleted: True", out)
         self.assertIn("target_head: deadbeef", out)
 
     def test_issues_list_calls_endpoint(self) -> None:
@@ -288,6 +292,63 @@ class CommandRequestTests(unittest.TestCase):
         self.assertIn("scope=physicalplan", req.url)
         self.assertIn("status=open", req.url)
         self.assertIn("QP-0001", out)
+
+    def test_slices_init_calls_endpoint(self) -> None:
+        code, transport, out, _err = self._run(
+            [
+                "slices",
+                "init",
+                "--project",
+                "quest-runner",
+                "--type",
+                "side",
+                "--number",
+                "0",
+                "--count",
+                "2",
+                "--slug",
+                "api",
+                "--slug",
+                "cli",
+            ],
+            (
+                201,
+                {
+                    "project": "quest-runner",
+                    "quest_type": "side",
+                    "quest_number": 0,
+                    "quest_dir": "/tmp/q",
+                    "created_slices": [
+                        {
+                            "slice_number": 1,
+                            "directory_name": "0001_api",
+                            "slice_dir": "/tmp/q/slices/0001_api",
+                        },
+                        {
+                            "slice_number": 2,
+                            "directory_name": "0002_cli",
+                            "slice_dir": "/tmp/q/slices/0002_cli",
+                        },
+                    ],
+                },
+            ),
+        )
+        self.assertEqual(code, 0)
+        req = transport.requests[0]
+        self.assertEqual(req.method, "POST")
+        self.assertTrue(req.url.endswith("/api/slices/init"))
+        self.assertEqual(
+            req.body,
+            {
+                "project": "quest-runner",
+                "quest_type": "side",
+                "quest_number": 0,
+                "count": 2,
+                "slugs": ["api", "cli"],
+            },
+        )
+        self.assertIn("0001_api", out)
+        self.assertIn("0002_cli", out)
 
     def test_issues_read_calls_endpoint(self) -> None:
         code, transport, _out, _err = self._run(
@@ -702,6 +763,42 @@ class ValidationTests(unittest.TestCase):
                     "x",
                 ]
             )
+
+    def test_slices_init_requires_positive_count(self) -> None:
+        msg = self._expect_validation_error(
+            [
+                "slices",
+                "init",
+                "--project",
+                "p",
+                "--type",
+                "side",
+                "--number",
+                "0",
+                "--count",
+                "0",
+            ]
+        )
+        self.assertIn("--count must be a positive integer", msg)
+
+    def test_slices_init_requires_matching_slugs(self) -> None:
+        msg = self._expect_validation_error(
+            [
+                "slices",
+                "init",
+                "--project",
+                "p",
+                "--type",
+                "side",
+                "--number",
+                "0",
+                "--count",
+                "2",
+                "--slug",
+                "only-one",
+            ]
+        )
+        self.assertIn("--slug must be provided exactly --count times", msg)
 
 
 class RootEntrypointTests(unittest.TestCase):

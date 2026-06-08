@@ -277,6 +277,10 @@ def remove_worktree(source_repo_root: Path, worktree_path: Path) -> subprocess.C
     )
 
 
+def delete_branch(git_dir: Path, branch: str) -> subprocess.CompletedProcess[str]:
+    return run_git(git_dir, "branch", "-d", branch, check=False)
+
+
 def rev_parse_head(git_dir: Path) -> str:
     result = run_git(git_dir, "rev-parse", "HEAD")
     return result.stdout.strip()

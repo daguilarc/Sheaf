@@ -303,6 +303,162 @@ class QuestServiceApiTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 202)
         self.assertEqual(resp.get_json()["run_id"], "rid-1")
 
+    def test_initialize_slices_creates_scaffold_in_worktree(self) -> None:
+        ensure_project(self.temp.root, "example")
+        client, svc = make_app_client(self.temp.root, self.repo_root)
+        out = svc.create_quest(
+            repo_path=str(self.temp.root),
+            project="example",
+            quest_type="main",
+            name="Slice Init",
+        )
+        resp = client.post(
+            "/api/slices/init",
+            json={
+                "project": "example",
+                "quest_type": "main",
+                "quest_number": out["quest_number"],
+                "count": 2,
+                "slugs": ["REST API", "CLI wiring"],
+            },
+        )
+        self.assertEqual(resp.status_code, 201)
+        body = resp.get_json()
+        self.assertEqual(body["checkout_kind"], "worktree")
+        self.assertEqual(
+            [s["directory_name"] for s in body["created_slices"]],
+            ["0001_rest_api", "0002_cli_wiring"],
+        )
+        qdir = quest_dir_on_checkout(self.temp.root, out)
+        first = qdir / "slices" / "0001_rest_api"
+        self.assertTrue((first / "physicalplan").is_dir())
+        self.assertEqual(
+            quest_fs.read_slice_state(first).state.value,
+            "NotStarted",
+        )
+        self.assertEqual(
+            (first / "state_history.md").read_text(encoding="utf-8"),
+            "# State Transition History\n\n",
+        )
+        self.assertEqual(
+            (first / "polishing_issues.md").read_text(encoding="utf-8"),
+            "# Issues\n",
+        )
+
+    def test_initialize_slices_appends_after_existing_slices(self) -> None:
+        ensure_project(self.temp.root, "example")
+        client, svc = make_app_client(self.temp.root, self.repo_root)
+        out = svc.create_quest(
+            repo_path=str(self.temp.root),
+            project="example",
+            quest_type="main",
+            name="Slice Append",
+        )
+        first = client.post(
+            "/api/slices/init",
+            json={
+                "project": "example",
+                "quest_type": "main",
+                "quest_number": out["quest_number"],
+                "count": 1,
+                "slugs": ["first"],
+            },
+        )
+        self.assertEqual(first.status_code, 201)
+        second = client.post(
+            "/api/slices/init",
+            json={
+                "project": "example",
+                "quest_type": "main",
+                "quest_number": out["quest_number"],
+                "count": 1,
+                "slugs": ["second"],
+            },
+        )
+        self.assertEqual(second.status_code, 201)
+        self.assertEqual(
+            second.get_json()["created_slices"][0]["directory_name"],
+            "0002_second",
+        )
+
+    def test_initialize_slices_rejects_invalid_payloads(self) -> None:
+        ensure_project(self.temp.root, "example")
+        client, svc = make_app_client(self.temp.root, self.repo_root)
+        out = svc.create_quest(
+            repo_path=str(self.temp.root),
+            project="example",
+            quest_type="main",
+            name="Slice Invalid",
+        )
+        cases = [
+            {"count": 0, "slugs": []},
+            {"count": 2, "slugs": ["one"]},
+            {"count": 2, "slugs": ["same", "same"]},
+            {"count": 1, "slugs": ["!!!"]},
+        ]
+        for payload in cases:
+            with self.subTest(payload=payload):
+                resp = client.post(
+                    "/api/slices/init",
+                    json={
+                        "project": "example",
+                        "quest_type": "main",
+                        "quest_number": out["quest_number"],
+                        **payload,
+                    },
+                )
+                self.assertEqual(resp.status_code, 400)
+
+    def test_initialize_slices_not_found(self) -> None:
+        ensure_project(self.temp.root, "example")
+        client, _svc = make_app_client(self.temp.root, self.repo_root)
+        resp = client.post(
+            "/api/slices/init",
+            json={
+                "project": "example",
+                "quest_type": "main",
+                "quest_number": 999,
+                "count": 1,
+                "slugs": ["missing"],
+            },
+        )
+        self.assertEqual(resp.status_code, 404)
+
+    def test_initialize_slices_lock_contention(self) -> None:
+        ensure_project(self.temp.root, "example")
+        lock = QuestLock()
+        client, svc = make_app_client(self.temp.root, self.repo_root, lock=lock)
+        out = svc.create_quest(
+            repo_path=str(self.temp.root),
+            project="example",
+            quest_type="main",
+            name="Slice Lock",
+        )
+        from quest_runner_service import dashboard_data
+        from quest_runner_service import quest_fs as qfs
+
+        qdir = qfs.find_quest_dir(
+            self.temp.root, "example", "main", out["quest_number"]
+        )
+        assert qdir is not None
+        meta = qfs.read_quest_meta(qdir)
+        lock_key = dashboard_data.lock_key_for_quest(self.temp.root, meta)
+        self.assertTrue(lock.acquire(lock_key, "main", out["quest_number"], "holding"))
+        try:
+            resp = client.post(
+                "/api/slices/init",
+                json={
+                    "project": "example",
+                    "quest_type": "main",
+                    "quest_number": out["quest_number"],
+                    "count": 1,
+                    "slugs": ["blocked"],
+                },
+            )
+            self.assertEqual(resp.status_code, 409)
+        finally:
+            lock.release(lock_key)
+
 
 if __name__ == "__main__":
     unittest.main()

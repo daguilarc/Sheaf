@@ -191,8 +191,8 @@ operator workflow; agents do not use it for normal issue handling.
 ### `POST /land`
 
 Lands a quest worktree branch onto the repository target branch using a linear git
-workflow: rebase the quest branch onto target, fast-forward target, then delete the
-worktree. The quest branch remains in place after a successful landing.
+workflow: rebase the quest branch onto target, fast-forward target, delete the
+worktree, then delete the quest branch.
 
 **Request body (JSON):**
 
@@ -216,6 +216,7 @@ worktree. The quest branch remains in place after a successful landing.
   "rebased": true,
   "fast_forwarded": true,
   "worktree_deleted": true,
+  "branch_deleted": true,
   "target_head": "<sha>"
 }
 ```
@@ -226,12 +227,70 @@ worktree. The quest branch remains in place after a successful landing.
 | --- | --- |
 | `400` | Missing required fields |
 | `404` | Quest not found |
-| `409` | Quest is running, lock contention, missing worktree, dirty target branch, rebase conflict, or fast-forward failure |
+| `409` | Quest is running, lock contention, missing worktree, dirty target branch, rebase conflict, fast-forward failure, or branch deletion failure |
 
 Conflict responses include a `status` field such as `target_dirty`,
-`worktree_dirty`, `rebase_failed`, or `fast_forward_failed`. Failures that need
-manual cleanup include the `worktree_path` and a `next_step` message when
-available. The service keeps the worktree checkout when landing does not finish.
+`worktree_dirty`, `rebase_failed`, `fast_forward_failed`, or
+`branch_delete_failed`. Failures that need manual cleanup include the
+`worktree_path` and a `next_step` message when available. The service keeps the
+worktree checkout when landing does not finish before worktree deletion.
+
+## Slice APIs
+
+### `POST /api/slices/init`
+
+Initializes new slice directories for an existing quest. The service writes to
+the quest worktree when it exists, matching dashboard and issue API behavior.
+
+**Request body (JSON):**
+
+| Field | Required | Description |
+| --- | --- | --- |
+| `project` | yes | Owning project |
+| `quest_type` | yes | `main` or `side` |
+| `quest_number` | yes | Zero-based quest number |
+| `count` | yes | Number of slices to create |
+| `slugs` | yes | Array of exactly `count` slice slugs, in execution order |
+
+**Response `201`:**
+
+```json
+{
+  "project": "example",
+  "quest_type": "main",
+  "quest_number": 0,
+  "quest_slug": "my_quest",
+  "quest_dir": "/path/to/projects/example/quests/main/0000_my_quest",
+  "checkout_kind": "worktree",
+  "checkout_path": "/path/to/.quest-worktrees/example_main_0000_my_quest",
+  "created_slices": [
+    {
+      "slice_number": 1,
+      "slice_slug": "rest_api",
+      "directory_name": "0001_rest_api",
+      "slice_dir": "/path/to/.../slices/0001_rest_api",
+      "created_files": [
+        "physicalplan",
+        "state.md",
+        "state_history.md",
+        "polishing_issues.md"
+      ]
+    }
+  ]
+}
+```
+
+Slice numbers append after the highest existing slice number. Slugs are
+normalized with the same rules as quest slugs and must be unique after
+normalization.
+
+**Error responses:**
+
+| Status | Condition |
+| --- | --- |
+| `400` | Missing fields, invalid count, invalid quest identity, or invalid slugs |
+| `404` | Quest not found |
+| `409` | Quest lock contention or target slice directory conflict |
 
 ## Issue APIs
 

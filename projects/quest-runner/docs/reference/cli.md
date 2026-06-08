@@ -102,6 +102,37 @@ Options:
 The human-readable output includes `run_id`, `status`, `quest_url`, and
 `status_url`.
 
+## Slice Commands
+
+### `slices init`
+
+Initializes slice scaffolds through `POST /api/slices/init`. Physical planners
+use this after deciding the complete ordered slice list and before writing plan
+docs.
+
+```bash
+scripts/quest-runner slices init \
+  --project quest-runner \
+  --type side \
+  --number 0 \
+  --count 3 \
+  --slug rest_api \
+  --slug cli \
+  --slug docs_and_prompts
+```
+
+Options:
+
+| Option | Description |
+| --- | --- |
+| `--count <n>` | Number of slices to create. Must be positive. |
+| `--slug <slug>` | Slice slug. Repeat exactly `--count` times, in execution order. |
+
+The service appends after the highest existing slice number, normalizes slugs,
+and creates each slice directory with `physicalplan/`, `state.md`,
+`state_history.md`, and `polishing_issues.md`. The planner then writes one or
+more `.md` files under each created `physicalplan/` directory.
+
 ## Operator Commands
 
 `advance` and `land` are human-operated workflows. They are intended for manual
@@ -152,10 +183,10 @@ The service performs a linear git workflow:
 3. rebase the quest worktree branch onto the target branch
 4. fast-forward the target branch to the rebased quest branch
 5. delete the quest worktree checkout
+6. delete the local quest branch
 
-The quest branch is not deleted. On rebase, dirty-worktree, or fast-forward
-failure, the CLI prints the worktree path and next manual cleanup step when the
-service returns one.
+On rebase, dirty-worktree, fast-forward, or cleanup failure, the CLI prints the
+worktree path and next manual cleanup step when the service returns one.
 
 ## Issue Commands
 

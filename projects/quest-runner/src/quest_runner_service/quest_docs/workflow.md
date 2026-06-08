@@ -36,14 +36,15 @@ Later messages reuse the same thread and include:
 
 ## Ownership Rules
 
-- `physical_planner` writes slice plans and slice scaffolding, not code.
+- `physical_planner` writes slice plans, not code.
 - `physical_planner` must fully plan all work explicitly required by the quest spec.
 - `physical_planner` must not leave stubs or placeholder planning for
   spec-defined work.
 - `physical_planner` must escalate to a human if further research is required to
   complete the plan.
-- On the initial `PhysicalPlanning` pass, `physical_planner` creates the slice plans
-  and scaffolding from the quest specs.
+- On the initial `PhysicalPlanning` pass, `physical_planner` decides the full ordered
+  slice list, initializes slice scaffolding with `scripts/quest-runner slices init`,
+  then writes the slice plans from the quest specs.
 - `physical_planner` appends to quest-root `physicalplan_issue_responses.md` when
   addressing open physical plan issues; only `physical_planner` may write that file.
 - When `ReviewPhysicalPlan` sends the quest back to `PhysicalPlanning`, the planner

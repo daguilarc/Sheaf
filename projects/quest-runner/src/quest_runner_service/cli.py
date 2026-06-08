@@ -360,12 +360,34 @@ def _format_land(data: dict[str, Any], out: TextIO) -> None:
     _print_field("rebased", data.get("rebased"), out)
     _print_field("fast_forwarded", data.get("fast_forwarded"), out)
     _print_field("worktree_deleted", data.get("worktree_deleted"), out)
+    _print_field("branch_deleted", data.get("branch_deleted"), out)
     _print_field("target_head", data.get("target_head"), out)
     if data.get("status") == "rebase_failed":
         _print_field("worktree_path", data.get("worktree_path"), out)
         _print_field("next_step", data.get("next_step"), out)
     if data.get("error"):
         _print_field("error", data.get("error"), out)
+
+
+def _format_slices_init(data: dict[str, Any], out: TextIO) -> None:
+    _print_field("project", data.get("project"), out)
+    _print_field("quest_type", data.get("quest_type"), out)
+    _print_field("quest_number", data.get("quest_number"), out)
+    _print_field("quest_dir", data.get("quest_dir"), out)
+    slices = data.get("created_slices", [])
+    if not isinstance(slices, list):
+        return
+    rows = [
+        [
+            str(item.get("slice_number", "")),
+            str(item.get("directory_name", "")),
+            str(item.get("slice_dir", "")),
+        ]
+        for item in slices
+        if isinstance(item, dict)
+    ]
+    out.write("created_slices:\n")
+    _print_table(["NUMBER", "DIRECTORY", "PATH"], rows, out)
 
 
 def _format_issue(data: dict[str, Any], out: TextIO) -> None:
@@ -497,6 +519,7 @@ def build_parser() -> argparse.ArgumentParser:
           scripts/quest-runner run --project quest-runner --type side --number 0 --max-steps 25
           scripts/quest-runner advance --project quest-runner --type side --number 0
           scripts/quest-runner land --project quest-runner --type side --number 0
+          scripts/quest-runner slices init --project quest-runner --type side --number 0 --count 2 --slug api --slug cli
           scripts/quest-runner issues list --project quest-runner --type side --number 0 --scope physicalplan
           scripts/quest-runner issues read QP-0001 --project quest-runner --type side --number 0 --scope physicalplan
           scripts/quest-runner issues create --project quest-runner --type side --number 0 --scope physicalplan --title "Title" --body "Details"
@@ -560,6 +583,23 @@ def build_parser() -> argparse.ArgumentParser:
     _add_quest_identity_args(land_parser)
     land_parser.add_argument("--target-branch", default="main")
     land_parser.set_defaults(handler="land")
+
+    slices_parser = subparsers.add_parser("slices", help="Slice commands")
+    slices_sub = slices_parser.add_subparsers(dest="slices_command")
+
+    slices_init = slices_sub.add_parser(
+        "init",
+        help="Initialize physically-plannable quest slice directories",
+    )
+    _add_quest_identity_args(slices_init)
+    slices_init.add_argument("--count", required=True, type=int)
+    slices_init.add_argument(
+        "--slug",
+        action="append",
+        default=[],
+        help="Slice slug. Repeat exactly --count times.",
+    )
+    slices_init.set_defaults(handler="slices_init")
 
     issues_parser = subparsers.add_parser("issues", help="Issue commands")
     issues_sub = issues_parser.add_subparsers(dest="issues_command")
@@ -734,6 +774,37 @@ def _dispatch_command(
             return 0
         if not json_output:
             _format_land(data, err)
+        return _handle_http_result(
+            status=status,
+            endpoint=endpoint,
+            data=data,
+            json_output=json_output,
+            out=out,
+            err=err,
+        )
+
+    if handler == "slices_init":
+        if args.count < 1:
+            raise CliValidationError("--count must be a positive integer")
+        if len(args.slug) != args.count:
+            raise CliValidationError("--slug must be provided exactly --count times")
+        body = {
+            "project": args.project,
+            "quest_type": args.type,
+            "quest_number": args.number,
+            "count": args.count,
+            "slugs": args.slug,
+        }
+        endpoint = "/api/slices/init"
+        status, data = _send_request(
+            request_fn, "POST", base_url=base_url, endpoint=endpoint, body=body
+        )
+        if 200 <= status < 300:
+            if json_output:
+                _print_json(data, out)
+            else:
+                _format_slices_init(data, out)
+            return 0
         return _handle_http_result(
             status=status,
             endpoint=endpoint,

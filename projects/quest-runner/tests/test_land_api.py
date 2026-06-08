@@ -9,7 +9,11 @@ from unittest.mock import patch
 
 from quest_runner_service import quest_fs
 from quest_runner_service.quest_lock import QuestLock
-from quest_runner_service.worktrees import quest_worktree_path, worktree_exists
+from quest_runner_service.worktrees import (
+    delete_branch,
+    quest_worktree_path,
+    worktree_exists,
+)
 
 from .test_helpers import TempRepo, cleanup_worktrees, ensure_project, make_app_client
 
@@ -218,9 +222,10 @@ class LandApiTests(unittest.TestCase):
         self.assertTrue(body["rebased"])
         self.assertTrue(body["fast_forwarded"])
         self.assertTrue(body["worktree_deleted"])
+        self.assertTrue(body["branch_deleted"])
         self.assertEqual(body["target_head"], quest_commit)
         self.assertFalse(worktree.is_dir())
-        self.assertTrue(_branch_exists(self.temp.root, wt_branch))
+        self.assertFalse(_branch_exists(self.temp.root, wt_branch))
         self.assertFalse(_is_merge_commit(self.temp.root, body["target_head"]))
 
     def test_land_rebase_conflict(self) -> None:
@@ -291,6 +296,47 @@ class LandApiTests(unittest.TestCase):
         body = resp.get_json()
         self.assertEqual(body["status"], "fast_forward_failed")
         self.assertTrue(worktree.is_dir())
+
+    def test_land_branch_delete_failure_reports_partial_cleanup(self) -> None:
+        ensure_project(self.temp.root, "example")
+        client, svc = make_app_client(self.temp.root, self.repo_root)
+        out = svc.create_quest(
+            repo_path=str(self.temp.root),
+            project="example",
+            quest_type="main",
+            name="Branch Delete Fail",
+        )
+        worktree = _worktree_path(self.temp.root, out)
+        wt_branch = _worktree_branch(out)
+        (worktree / "quest-work.txt").write_text("done\n", encoding="utf-8")
+        _commit_all(worktree, "quest work")
+
+        with patch(
+            "quest_runner_service.quest_service.delete_branch",
+            return_value=type(
+                "R",
+                (),
+                {"returncode": 1, "stderr": "cannot delete branch", "stdout": ""},
+            )(),
+        ):
+            resp = client.post(
+                "/land",
+                json={
+                    "project": "example",
+                    "quest_type": "main",
+                    "quest_number": out["quest_number"],
+                },
+            )
+
+        self.assertEqual(resp.status_code, 409)
+        body = resp.get_json()
+        self.assertEqual(body["status"], "branch_delete_failed")
+        self.assertTrue(body["worktree_deleted"])
+        self.assertFalse(body["branch_deleted"])
+        self.assertFalse(worktree.is_dir())
+        self.assertTrue(_branch_exists(self.temp.root, wt_branch))
+
+        delete_branch(self.temp.root, wt_branch)
 
 
 if __name__ == "__main__":

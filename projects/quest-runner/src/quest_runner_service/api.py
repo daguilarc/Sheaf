@@ -28,6 +28,7 @@ from .quest_service import (
     QuestNotFound,
     QuestService,
     RepoNotFound,
+    SliceInitializationConflict,
 )
 from .worktrees import WorktreeCreationError
 
@@ -124,6 +125,10 @@ def create_app(
     @app.errorhandler(LandQuestConflict)
     def handle_land_quest_conflict(exc):
         return jsonify(exc.body), 409
+
+    @app.errorhandler(SliceInitializationConflict)
+    def handle_slice_initialization_conflict(exc):
+        return jsonify({"error": str(exc)}), 409
 
     @app.errorhandler(dashboard_data.DashboardBadRequest)
     def handle_dashboard_bad_request(exc):
@@ -291,6 +296,37 @@ def create_app(
             result.get("status"),
         )
         return jsonify(result), 200
+
+    @app.route("/api/slices/init", methods=["POST"])
+    def initialize_slices_route():
+        data = request.get_json(force=True)
+        required = ["project", "quest_type", "quest_number", "count", "slugs"]
+        missing = [f for f in required if f not in data]
+        if missing:
+            return jsonify({"error": f"Missing required fields: {missing}"}), 400
+        log.info(
+            "initialize_slices project=%s type=%s number=%s count=%s",
+            data["project"],
+            data["quest_type"],
+            data["quest_number"],
+            data["count"],
+        )
+        result = quest_service.initialize_slices(
+            repo_path=str(source_root),
+            project=data["project"],
+            quest_type=data["quest_type"],
+            quest_number=data["quest_number"],
+            count=data["count"],
+            slugs=data["slugs"],
+        )
+        log.info(
+            "initialize_slices ok project=%s type=%s number=%s created=%s",
+            data["project"],
+            data["quest_type"],
+            data["quest_number"],
+            len(result.get("created_slices", [])),
+        )
+        return jsonify(result), 201
 
     @app.route("/dashboard", methods=["GET"])
     def dashboard_shell():

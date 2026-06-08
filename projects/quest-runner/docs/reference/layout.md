@@ -23,6 +23,28 @@ projects/<project>/quests/
       threads/
 ```
 
+## Slice scaffold
+
+Physical planners initialize slices through:
+
+```bash
+scripts/quest-runner slices init --project <project> --type <main|side> --number <n> --count <count> --slug <slug> ...
+```
+
+Each initialized slice directory is named `<number>_<slug>` and contains:
+
+```text
+slices/
+  0001_example/
+    physicalplan/
+    state.md
+    state_history.md
+    polishing_issues.md
+```
+
+The initializer leaves `physicalplan/` empty. The physical planner writes the
+actual plan markdown files after the scaffold exists.
+
 ## Project identity
 
 Each quest record includes a `project` field in `meta.json`. When the field is

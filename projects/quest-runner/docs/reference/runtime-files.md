@@ -65,6 +65,11 @@ The recursive slice machine can use internal logical nodes such as `SliceSetup`
 and `Completed`, but those nodes map onto the persisted slice states rather than
 changing the file schema.
 
+New slice scaffolds are initialized through `scripts/quest-runner slices init`.
+The initializer creates `physicalplan/`, writes `state.md` as `NotStarted`, and
+creates empty `state_history.md` and `polishing_issues.md` files. The physical
+planner owns the plan markdown files under `physicalplan/`.
+
 ## Step Commit Metadata
 
 Each successful top-level v2 runner step creates one git commit when filesystem

@@ -3,12 +3,15 @@ import assert from "node:assert/strict";
 import {
   BuildAdvanceQuestPayload,
   BuildDashboardSearchParams,
+  BuildLandQuestPayload,
   BuildQuestApiQuery,
   BuildRunQuestPayload,
+  InferQuestDisplayStatus,
   MergeRunBadge,
   RefreshScheduler,
   ResolveProjectSelection,
   ShouldShowAdvanceButton,
+  ShouldShowLandButton,
   ShouldShowRunButton,
   StorageProjectKey,
   x_SERVICE_CONTROL_LABELS,
@@ -82,6 +85,15 @@ test("BuildAdvanceQuestPayload includes project identity", () => {
     project: "web",
     quest_type: "side",
     quest_number: 2,
+  });
+});
+
+test("BuildLandQuestPayload includes project identity", () => {
+  const body = BuildLandQuestPayload("web", "main", 3);
+  assert.deepEqual(body, {
+    project: "web",
+    quest_type: "main",
+    quest_number: 3,
   });
 });
 
@@ -229,6 +241,117 @@ test("ShouldShowAdvanceButton false without overview", () => {
   assert.equal(ShouldShowAdvanceButton(null, null), false);
 });
 
+test("ShouldShowLandButton true only for completed quest with worktree", () => {
+  assert.equal(
+    ShouldShowLandButton(
+      {
+        quest_state: "Completed",
+        worktree_missing: false,
+        execution_overlay_status: "none",
+      },
+      { active_run: null }
+    ),
+    true
+  );
+  assert.equal(
+    ShouldShowLandButton(
+      {
+        quest_state: "Completed",
+        worktree_missing: true,
+        execution_overlay_status: "none",
+      },
+      null
+    ),
+    false
+  );
+  assert.equal(
+    ShouldShowLandButton(
+      {
+        quest_state: "ExecuteSlice",
+        worktree_missing: false,
+        execution_overlay_status: "none",
+      },
+      null
+    ),
+    false
+  );
+});
+
+test("ShouldShowLandButton false while completed quest is busy", () => {
+  assert.equal(
+    ShouldShowLandButton(
+      {
+        quest_state: "Completed",
+        worktree_missing: false,
+        execution_overlay_status: "running",
+      },
+      { active_run: { run_id: "r1" } }
+    ),
+    false
+  );
+});
+
+test("InferQuestDisplayStatus distinguishes completed and landed", () => {
+  assert.equal(
+    InferQuestDisplayStatus(
+      {
+        quest_state: "Completed",
+        worktree_missing: false,
+        execution_overlay_status: "none",
+      },
+      null
+    ),
+    "completed"
+  );
+  assert.equal(
+    InferQuestDisplayStatus(
+      {
+        quest_state: "Completed",
+        worktree_missing: true,
+        execution_overlay_status: "none",
+      },
+      null
+    ),
+    "landed"
+  );
+});
+
+test("InferQuestDisplayStatus keeps intervention and running precedence", () => {
+  assert.equal(
+    InferQuestDisplayStatus(
+      {
+        quest_state: "Completed",
+        worktree_missing: false,
+        execution_overlay_status: "human_intervention",
+      },
+      { active_run: { run_id: "r1" } }
+    ),
+    "human_intervention"
+  );
+  assert.equal(
+    InferQuestDisplayStatus(
+      {
+        quest_state: "Completed",
+        worktree_missing: false,
+        execution_overlay_status: "paused",
+      },
+      null
+    ),
+    "paused"
+  );
+  assert.equal(
+    InferQuestDisplayStatus(
+      {
+        quest_state: "Completed",
+        worktree_missing: false,
+        execution_overlay_status: "none",
+      },
+      { active_run: { run_id: "r1" } }
+    ),
+    "running"
+  );
+});
+
 test("MergeRunBadge human intervention wins", () => {
   const b = MergeRunBadge(
     { execution_overlay_status: "human_intervention" },
@@ -243,6 +366,30 @@ test("MergeRunBadge running when active_run set", () => {
     { active_run: { run_id: "r1" } }
   );
   assert.equal(b.variant, "running");
+});
+
+test("MergeRunBadge reports completed and landed", () => {
+  const completed = MergeRunBadge(
+    {
+      quest_state: "Completed",
+      worktree_missing: false,
+      execution_overlay_status: "none",
+    },
+    null
+  );
+  assert.equal(completed.label, "Completed");
+  assert.equal(completed.variant, "completed");
+
+  const landed = MergeRunBadge(
+    {
+      quest_state: "Completed",
+      worktree_missing: true,
+      execution_overlay_status: "none",
+    },
+    null
+  );
+  assert.equal(landed.label, "Landed");
+  assert.equal(landed.variant, "landed");
 });
 
 test("service control labels are not part of dashboard navigation copy", () => {

@@ -741,10 +741,12 @@ def build_task_instruction(
                 "--outcome Fixed|NotFixed --explanation \"...\"`."
             )
         return (
-            "Read the specs in `specs/` and create slice directories under "
-            "`slices/`. Each slice directory must contain: `physicalplan/` with at least one `.md` "
-            "plan file, `state.md` initialized to `NotStarted`, empty `state_history.md`, and "
-            "empty `polishing_issues.md`."
+            "Read the specs in `specs/`, decide the full ordered slice list and "
+            "slugs, then initialize slice directories with "
+            "`scripts/quest-runner slices init --project <project> --type <main|side> "
+            "--number <n> --count <count> --slug <slug> ...`. After initialization, "
+            "write at least one `.md` plan file under each slice's `physicalplan/` "
+            "directory."
         )
     if quest_state == QuestState.ReviewPhysicalPlan:
         return (

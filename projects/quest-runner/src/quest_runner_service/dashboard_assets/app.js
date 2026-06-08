@@ -1,5 +1,6 @@
 import {
   BuildAdvanceQuestPayload,
+  BuildLandQuestPayload,
   BuildQuestApiQuery,
   BuildDashboardSearchParams,
   BuildRunQuestPayload,
@@ -7,6 +8,7 @@ import {
   RefreshScheduler,
   ResolveProjectSelection,
   ShouldShowAdvanceButton,
+  ShouldShowLandButton,
   ShouldShowRunButton,
   StorageProjectKey,
 } from "./dashboard-logic.mjs";
@@ -70,6 +72,8 @@ const state = {
   runActionPending: false,
   advanceActionError: null,
   advanceActionPending: false,
+  landActionError: null,
+  landActionPending: false,
   lastError: null,
   lastOkAt: null,
   contentCache: {},
@@ -483,6 +487,31 @@ async function PostAdvanceQuest() {
   return r.json();
 }
 
+async function PostLandQuest() {
+  const body = BuildLandQuestPayload(state.project, state.questType, state.questNumber);
+  const r = await fetch("/land", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) {
+    const t = await r.text();
+    let msg = t.slice(0, 200) || r.statusText;
+    try {
+      const j = JSON.parse(t);
+      if (j.error) {
+        msg = j.error;
+      } else if (j.message) {
+        msg = j.message;
+      }
+    } catch (_e) {
+      // keep raw text
+    }
+    throw new Error(`${r.status} ${msg}`);
+  }
+  return r.json();
+}
+
 async function RefreshAfterQuestAction() {
   await LoadSnapshot();
   await RefreshActivePage({ includeRunStatus: true });
@@ -503,6 +532,25 @@ async function HandleAdvanceQuestClick() {
     render();
   } finally {
     state.advanceActionPending = false;
+  }
+}
+
+async function HandleLandQuestClick() {
+  if (state.landActionPending) {
+    return;
+  }
+  state.landActionPending = true;
+  state.landActionError = null;
+  render();
+  try {
+    await PostLandQuest();
+    await RefreshAfterQuestAction();
+  } catch (e) {
+    state.landActionError = String(e.message || e);
+    render();
+  } finally {
+    state.landActionPending = false;
+    render();
   }
 }
 
@@ -582,12 +630,20 @@ function RenderOverview(main) {
   const ltHtml = FormatQuestLastTransitionHtml(ov.last_transition);
   const showRun = ShouldShowRunButton(ov, rs);
   const showAdvance = ShouldShowAdvanceButton(ov, rs);
+  const showLand = ShouldShowLandButton(ov, rs);
   const runDisabled = state.runActionPending || !showRun;
   const runLabel = state.runActionPending ? "Starting run…" : "Run quest";
   const advanceDisabled = state.advanceActionPending || !showAdvance;
   const advanceLabel = state.advanceActionPending ? "Advancing…" : "Advance";
+  const landDisabled = state.landActionPending || !showLand;
+  const landLabel = state.landActionPending ? "Landing…" : "Land quest";
   const showActionRow =
-    showRun || state.runActionPending || showAdvance || state.advanceActionPending;
+    showRun ||
+    state.runActionPending ||
+    showAdvance ||
+    state.advanceActionPending ||
+    showLand ||
+    state.landActionPending;
   const runBlock = showActionRow
     ? `<div class="dash-run-row">
         ${
@@ -604,6 +660,13 @@ function RenderOverview(main) {
               }>${EscapeHtml(advanceLabel)}</button>`
             : ""
         }
+        ${
+          showLand || state.landActionPending
+            ? `<button type="button" id="dash-land-quest" class="dash-btn dash-btn--primary" ${
+                landDisabled ? "disabled" : ""
+              }>${EscapeHtml(landLabel)}</button>`
+            : ""
+        }
       </div>
       ${
         showAdvance || state.advanceActionPending
@@ -617,8 +680,13 @@ function RenderOverview(main) {
   const advanceErr = state.advanceActionError
     ? `<p class="dash-run-error">${EscapeHtml(state.advanceActionError)}</p>`
     : "";
+  const landErr = state.landActionError
+    ? `<p class="dash-run-error">${EscapeHtml(state.landActionError)}</p>`
+    : "";
   const checkoutNote = ov.worktree_missing
-    ? `<p class="dash-banner">Quest worktree is missing; run is unavailable until the worktree exists.</p>`
+    ? badge.variant === "landed"
+      ? `<p class="dash-banner dash-banner--success">Quest landed; the worktree has been removed.</p>`
+      : `<p class="dash-banner">Quest worktree is missing; run is unavailable until the worktree exists.</p>`
     : "";
   main.innerHTML = `
     <h1>Overview</h1>
@@ -626,6 +694,7 @@ function RenderOverview(main) {
     ${runBlock}
     ${runErr}
     ${advanceErr}
+    ${landErr}
     ${checkoutNote}
     <h2>Quest</h2>
     <dl class="dash-kv">
@@ -667,6 +736,10 @@ function RenderOverview(main) {
   const advanceBtn = main.querySelector("#dash-advance-quest");
   if (advanceBtn) {
     advanceBtn.addEventListener("click", () => void HandleAdvanceQuestClick());
+  }
+  const landBtn = main.querySelector("#dash-land-quest");
+  if (landBtn) {
+    landBtn.addEventListener("click", () => void HandleLandQuestClick());
   }
 }
 

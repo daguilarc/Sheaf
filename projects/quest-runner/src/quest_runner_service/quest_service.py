@@ -15,7 +15,14 @@ from . import quest_fs
 from .dashboard_runs import ActiveRunTracker
 from .deferred_tasks import DeferredTaskScheduler
 from .quest_lock import LockInfo, QuestLock
-from .quest_types import QuestMeta, QuestState, QuestStateInfo, utc_now_iso
+from .quest_types import (
+    QuestMeta,
+    QuestState,
+    QuestStateInfo,
+    SliceState,
+    SliceStateInfo,
+    utc_now_iso,
+)
 from .worktrees import (
     SourceCheckoutDetached,
     SourceCheckoutNotClean,
@@ -26,6 +33,7 @@ from .worktrees import (
     create_quest_scaffold_commit,
     create_quest_worktree,
     current_branch,
+    delete_branch,
     is_git_worktree,
     is_worktree_clean,
     merge_ff_only,
@@ -162,6 +170,14 @@ class InvalidProject(QuestCreationError):
 
 class FatalInvariantError(Exception):
     """Unrecoverable quest runner invariant violation."""
+
+    def __init__(self, detail: str) -> None:
+        self.detail = detail
+        super().__init__(detail)
+
+
+class SliceInitializationConflict(Exception):
+    """Slice initialization could not proceed because the target already exists."""
 
     def __init__(self, detail: str) -> None:
         self.detail = detail
@@ -867,12 +883,30 @@ class QuestService:
                 "target_head": rev_parse_head(source_root),
             })
 
+        delete_branch_result = delete_branch(source_root, worktree_branch)
+        if delete_branch_result.returncode != 0:
+            detail = (
+                delete_branch_result.stderr.strip()
+                or delete_branch_result.stdout.strip()
+            )
+            raise LandQuestConflict({
+                "status": "branch_delete_failed",
+                "error": detail or "Failed to delete quest branch",
+                **base,
+                "rebased": True,
+                "fast_forwarded": True,
+                "worktree_deleted": True,
+                "branch_deleted": False,
+                "target_head": rev_parse_head(source_root),
+            })
+
         return {
             "status": "landed",
             **base,
             "rebased": True,
             "fast_forwarded": True,
             "worktree_deleted": True,
+            "branch_deleted": True,
             "target_head": rev_parse_head(source_root),
         }
 
@@ -944,6 +978,147 @@ class QuestService:
             )
         finally:
             self.lock.release(key)
+
+    def initialize_slices(
+        self,
+        repo_path: str,
+        *,
+        project: str,
+        quest_type: str,
+        quest_number: int,
+        count: object,
+        slugs: object,
+    ) -> dict:
+        from . import dashboard_data
+
+        source_root = _resolve_repo(repo_path)
+        if not _is_git_repo(source_root):
+            raise NotAGitRepo(repo_path)
+        if quest_type not in ("main", "side"):
+            raise InvalidQuestInput(
+                f"quest_type must be 'main' or 'side', got {quest_type!r}"
+            )
+        if not isinstance(quest_number, int) or isinstance(quest_number, bool) or quest_number < 0:
+            raise InvalidQuestInput("quest_number must be a non-negative integer")
+        if not isinstance(count, int) or isinstance(count, bool) or count < 1:
+            raise InvalidQuestInput("count must be a positive integer")
+        if not isinstance(slugs, list):
+            raise InvalidQuestInput("slugs must be an array")
+        if len(slugs) != count:
+            raise InvalidQuestInput("count must match the number of slugs")
+
+        normalized_slugs: list[str] = []
+        seen: set[str] = set()
+        for i, raw in enumerate(slugs, start=1):
+            if not isinstance(raw, str) or not raw.strip():
+                raise InvalidQuestInput(f"slug {i} must be a non-empty string")
+            slug = normalize_slug(raw)
+            if not slug:
+                raise InvalidQuestInput(f"slug {i} is empty after normalization")
+            if slug in seen:
+                raise InvalidQuestInput(f"duplicate normalized slug: {slug}")
+            seen.add(slug)
+            normalized_slugs.append(slug)
+
+        _validate_project(source_root, project)
+        source_qdir = quest_fs.find_quest_dir(
+            source_root, project, quest_type, quest_number
+        )
+        if source_qdir is None:
+            raise QuestNotFound(project, quest_type, quest_number)
+        meta = quest_fs.read_quest_meta(source_qdir)
+        checkout = dashboard_data.resolve_dashboard_checkout(source_root, meta)
+        qdir = checkout.quest_dir
+
+        lock_acquired = False
+        lock_key = dashboard_data.lock_key_for_quest(source_root, meta)
+        if not checkout.worktree_missing:
+            req_id = str(uuid.uuid4())
+            if not self.lock.acquire(lock_key, quest_type, quest_number, req_id):
+                info = self.lock.get_lock_info(lock_key)
+                assert info is not None
+                raise QuestLockContention(
+                    "Repository is locked by another quest run",
+                    repo_path=lock_key,
+                    lock_info=info,
+                )
+            lock_acquired = True
+
+        try:
+            existing = quest_fs.list_slice_dirs(qdir)
+            existing_numbers = [
+                int(p.name[:4])
+                for p in existing
+                if len(p.name) >= 4 and p.name[:4].isdigit()
+            ]
+            next_number = (max(existing_numbers) + 1) if existing_numbers else 1
+            slice_root = qdir / "slices"
+            slice_root.mkdir(parents=True, exist_ok=True)
+
+            targets: list[tuple[int, str, Path]] = []
+            for offset, slug in enumerate(normalized_slugs):
+                number = next_number + offset
+                target = slice_root / f"{number:04d}_{slug}"
+                if target.exists():
+                    raise SliceInitializationConflict(
+                        f"Slice directory already exists: {target.name}"
+                    )
+                targets.append((number, slug, target))
+
+            created_dirs: list[Path] = []
+            created_slices: list[dict] = []
+            now = utc_now_iso()
+            try:
+                for number, slug, target in targets:
+                    target.mkdir()
+                    created_dirs.append(target)
+                    plan_dir = target / "physicalplan"
+                    plan_dir.mkdir()
+                    quest_fs.write_slice_state(
+                        target,
+                        SliceStateInfo(
+                            state=SliceState.NotStarted,
+                            updated_at=now,
+                        ),
+                    )
+                    (target / "state_history.md").write_text(
+                        "# State Transition History\n\n",
+                        encoding="utf-8",
+                    )
+                    (target / "polishing_issues.md").write_text(
+                        "# Issues\n",
+                        encoding="utf-8",
+                    )
+                    created_slices.append({
+                        "slice_number": number,
+                        "slice_slug": slug,
+                        "directory_name": target.name,
+                        "slice_dir": str(target),
+                        "created_files": [
+                            "physicalplan",
+                            "state.md",
+                            "state_history.md",
+                            "polishing_issues.md",
+                        ],
+                    })
+            except Exception:
+                for created in reversed(created_dirs):
+                    shutil.rmtree(created, ignore_errors=True)
+                raise
+        finally:
+            if lock_acquired:
+                self.lock.release(lock_key)
+
+        return {
+            "project": project,
+            "quest_type": quest_type,
+            "quest_number": quest_number,
+            "quest_slug": meta.quest_slug,
+            "quest_dir": str(qdir),
+            "checkout_kind": checkout.checkout_kind,
+            "checkout_path": str(checkout.checkout_root),
+            "created_slices": created_slices,
+        }
 
     def _acquire_issue_mutation_lock(
         self,

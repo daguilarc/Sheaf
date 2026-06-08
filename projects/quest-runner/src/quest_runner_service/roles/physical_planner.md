@@ -27,6 +27,17 @@ For each slice, identify:
 - Whether a small enabling refactor is needed before feature work (can be a slice in itself)
 - Validation expectations (tests, checks, verification notes).
 
+## Slice Initialization Workflow (CLI)
+
+- Decide the complete ordered slice list and semantic slug for each slice before
+  writing plan docs.
+- Initialize slice directories with
+  `scripts/quest-runner slices init --project <project> --type <main|side> --number <n> --count <count> --slug <slug> ...`.
+- Pass one `--slug` per slice, in the exact execution order.
+- After initialization, write the physical plan docs under
+  `slices/<slice>/physicalplan/*.md`.
+- Do not manually create slice scaffolding when the CLI/API is available.
+
 ## Completeness Rules
 
 - Plan all behavior, interfaces, data shapes, and validations that are explicitly

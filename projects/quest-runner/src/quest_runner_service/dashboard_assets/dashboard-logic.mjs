@@ -108,6 +108,37 @@ export function BuildAdvanceQuestPayload(project, questType, questNumber) {
   };
 }
 
+export function BuildLandQuestPayload(project, questType, questNumber) {
+  return {
+    project,
+    quest_type: questType,
+    quest_number: questNumber,
+  };
+}
+
+export function InferQuestDisplayStatus(overview, runStatus) {
+  if (!overview) {
+    return "idle";
+  }
+  const overlay =
+    overview.execution_overlay_status ??
+    runStatus?.execution_overlay_status ??
+    "none";
+  if (overlay === "human_intervention") {
+    return "human_intervention";
+  }
+  if (overlay === "paused") {
+    return "paused";
+  }
+  if (overlay === "running" || runStatus?.active_run != null) {
+    return "running";
+  }
+  if (overview.quest_state === "Completed") {
+    return overview.worktree_missing ? "landed" : "completed";
+  }
+  return "idle";
+}
+
 export function ShouldShowRunButton(overview, runStatus) {
   if (!overview) {
     return false;
@@ -154,6 +185,10 @@ export function ShouldShowAdvanceButton(overview, runStatus) {
   return true;
 }
 
+export function ShouldShowLandButton(overview, runStatus) {
+  return InferQuestDisplayStatus(overview, runStatus) === "completed";
+}
+
 /**
  * Polls only while getVisible() is true; fires immediately when tab becomes visible again.
  */
@@ -194,20 +229,25 @@ export class RefreshScheduler {
 }
 
 export function MergeRunBadge(overview, runStatus) {
-  const overlay = overview?.execution_overlay_status ?? "none";
-  const activeRun = runStatus?.active_run;
-  if (overlay === "human_intervention") {
+  const status = InferQuestDisplayStatus(overview, runStatus);
+  if (status === "human_intervention") {
     return { label: "Human intervention required", variant: "hi" };
   }
-  if (overlay === "paused") {
+  if (status === "paused") {
     const until = overview?.paused_until ?? runStatus?.paused_until;
     return {
       label: until ? `Paused until ${until}` : "Paused",
       variant: "paused",
     };
   }
-  if (overlay === "running" || activeRun != null) {
+  if (status === "running") {
     return { label: "Running", variant: "running" };
+  }
+  if (status === "completed") {
+    return { label: "Completed", variant: "completed" };
+  }
+  if (status === "landed") {
+    return { label: "Landed", variant: "landed" };
   }
   return { label: "Idle / Not running", variant: "idle" };
 }

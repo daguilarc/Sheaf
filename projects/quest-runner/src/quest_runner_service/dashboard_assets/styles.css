@@ -51,6 +51,11 @@ body {
   color: #fff;
 }
 
+.dash-banner--success {
+  background: var(--dash-success);
+  color: #06130a;
+}
+
 .dash-topbar {
   display: flex;
   flex-wrap: wrap;
@@ -349,6 +354,16 @@ body {
 .dash-badge--hi {
   background: rgba(239, 68, 68, 0.25);
   color: #fca5a5;
+}
+
+.dash-badge--completed {
+  background: rgba(34, 197, 94, 0.18);
+  color: #86efac;
+}
+
+.dash-badge--landed {
+  background: rgba(20, 184, 166, 0.18);
+  color: #5eead4;
 }
 
 .dash-pre {
