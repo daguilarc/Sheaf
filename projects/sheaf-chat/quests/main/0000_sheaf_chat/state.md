@@ -1,14 +1,14 @@
 # State
 
-- global_step: 21
+- global_step: 22
 - machine_name: quest
 - machine_path: projects/sheaf-chat/quests/main/0000_sheaf_chat
-- state: PrepareNextSlice
-- updated_at: 2026-06-08T21:08:44Z
+- state: ExecuteSlice
+- updated_at: 2026-06-08T21:19:09Z
 
 ## Tags
 
-- active_slice: 0001_foundation_config
+- active_slice: 0002_storage_history
 - quest_number: 0
 - quest_slug: sheaf_chat
 - quest_type: main
