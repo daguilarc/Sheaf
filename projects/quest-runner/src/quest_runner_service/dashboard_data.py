@@ -12,7 +12,7 @@ from . import quest_fs
 from .dashboard_runs import ActiveRunTracker
 from .quest_lock import QuestLock
 from .quest_types import IssueEntry, IssueResponseEntry, QuestMeta, QuestState, slice_index_from_dirname
-from .worktrees import quest_worktree_path, validate_project_name, worktree_exists
+from .worktrees import quest_worktree_path, validate_project_name
 _PAUSED_UNTIL_LINE_RE = re.compile(
     r"^\s*Paused\s+until\s+(.+?)\s*$",
     re.IGNORECASE | re.MULTILINE,
@@ -106,47 +106,21 @@ class DashboardCheckout:
     checkout_root: Path
     quest_dir: Path
     quest_dir_rel: str
+    experiment_id: str | None = None
+    experiment_number: int | None = None
+    parent_quest_dir: Path | None = None
 
 
 def resolve_dashboard_checkout(
     source_repo_root: Path,
     meta: QuestMeta,
 ) -> DashboardCheckout:
-    source_qdir = resolve_quest_dir(
+    from .experiments import resolve_quest_scope_checkout
+
+    return resolve_quest_scope_checkout(
         source_repo_root,
-        meta.project,
-        meta.quest_type,
-        meta.quest_number,
-    )
-    source_root = source_repo_root.resolve()
-    if worktree_exists(source_repo_root, meta):
-        checkout_root = quest_worktree_path(source_repo_root, meta).resolve()
-        worktree_qdir = quest_fs.find_quest_dir(
-            checkout_root,
-            meta.project,
-            meta.quest_type,
-            meta.quest_number,
-        )
-        if worktree_qdir is not None:
-            quest_dir_rel = (
-                worktree_qdir.resolve().relative_to(checkout_root).as_posix()
-            )
-            return DashboardCheckout(
-                checkout_kind="worktree",
-                checkout_path=str(checkout_root),
-                worktree_missing=False,
-                checkout_root=checkout_root,
-                quest_dir=worktree_qdir,
-                quest_dir_rel=quest_dir_rel,
-            )
-    quest_dir_rel = source_qdir.resolve().relative_to(source_root).as_posix()
-    return DashboardCheckout(
-        checkout_kind="source",
-        checkout_path=str(source_root),
-        worktree_missing=True,
-        checkout_root=source_root,
-        quest_dir=source_qdir,
-        quest_dir_rel=quest_dir_rel,
+        meta,
+        experiment_id=None,
     )
 
 

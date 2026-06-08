@@ -348,6 +348,74 @@ Rules:
 - `version: 1` configs keep legacy behavior: no path-rule enforcement and empty
   parsed allow/block lists.
 
+## Experiment Metadata
+
+Path:
+
+```text
+<quest_dir>/experiments/<number>/experiment.json
+```
+
+`<number>` is the zero-padded experiment number (`0000`, `0001`, …).
+
+Required fields:
+
+```json
+{
+  "experiment_id": "experiment_quest-runner_main_0_0",
+  "experiment_number": 0,
+  "project": "quest-runner",
+  "quest_type": "main",
+  "quest_number": 0,
+  "quest_slug": "experiments",
+  "description": "Try a different implementer model for slice execution.",
+  "start_step": {
+    "global_step": 5,
+    "role": "implementer",
+    "step_log": "logs/step_0005_implementer.jsonl",
+    "step_commit": "<commit-for-step-5>",
+    "base_commit": "<parent-of-step-5>"
+  },
+  "stop_condition": {
+    "machine_path": "root/slice",
+    "node_name": "slice_completed"
+  },
+  "worktree_name": "experiment_quest-runner_main_0_0",
+  "branch_name": "experiment/quest-runner/main/0000/0000",
+  "status": "created",
+  "created_at": "2026-06-08T00:00:00Z",
+  "created_by": "operator"
+}
+```
+
+Optional fields (typically present after landing):
+
+- `landed_at` — ISO-8601 UTC timestamp when the experiment was landed
+- `remote_branch` — pushed experiment branch name on the remote
+- `source_commit` — source-checkout commit hash recorded at landing
+
+Status values:
+
+- `created` — metadata written; worktree may not exist yet
+- `open` — experiment worktree exists and is runnable
+- `experiment_complete` — stop condition reached; ready to land
+- `landed` — artifacts archived on the source checkout; local worktree removed
+- `failed` — terminal failure state
+
+Naming conventions:
+
+- Experiment id / worktree basename:
+  `experiment_<project>_<quest_type>_<quest_number>_<experiment_number>`
+  (quest and experiment numbers are unpadded in the id)
+- Experiment directory name: four-digit padded experiment number
+- Branch name:
+  `experiment/<project>/<quest_type>/<quest_number:04d>/<experiment_number:04d>`
+- Worktree path:
+  `<repo-parent>/.quest-worktrees/<experiment_id>/`
+
+Path-like fields such as `start_step.step_log` and `stop_condition.machine_path`
+are stored as repo-relative strings.
+
 ## Human Intervention Request
 
 Path:
