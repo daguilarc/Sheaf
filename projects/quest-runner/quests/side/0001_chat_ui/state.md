@@ -1,6 +1,6 @@
 # State
 
-- global_step: 17
+- global_step: 18
 - machine_name: quest
 - machine_path: projects/quest-runner/quests/side/0001_chat_ui
 - state: ExecuteSlice
