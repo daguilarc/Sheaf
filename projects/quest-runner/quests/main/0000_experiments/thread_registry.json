@@ -25,5 +25,14 @@
     "round_count": 1,
     "created_at": "2026-06-08T23:06:58Z",
     "last_used_at": "2026-06-08T23:10:52Z"
+  },
+  "slice_1_polisher_reviewer": {
+    "thread_name": "quest-runner_main_0000_experiments_quest_0000_slice_0001_polisher_reviewer",
+    "harness_kind": "claude_code",
+    "provider_thread_id": "7f6f46af-65e9-4993-843c-e4d08733ec04",
+    "pass_id": 0,
+    "round_count": 1,
+    "created_at": "2026-06-08T23:10:52Z",
+    "last_used_at": "2026-06-08T23:12:57Z"
   }
 }
