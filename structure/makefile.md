@@ -83,6 +83,7 @@ Current projects:
 - `quest-runner`
 - `dictator`
 - `realtime-agent`
+- `sheaf-chat`
 
 Examples:
 

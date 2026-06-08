@@ -1,6 +1,6 @@
 MAKEFLAGS += --warn-undefined-variables
 
-PROJECTS := conductor web quest-runner dictator realtime-agent
+PROJECTS := conductor web quest-runner dictator realtime-agent sheaf-chat
 
 .PHONY: all clean test help
 .PHONY: $(PROJECTS)
@@ -9,6 +9,7 @@ PROJECTS := conductor web quest-runner dictator realtime-agent
 .PHONY: quest-runner-build quest-runner-test quest-runner-run quest-runner-clean
 .PHONY: dictator-build dictator-test dictator-run dictator-clean
 .PHONY: realtime-agent-build realtime-agent-test realtime-agent-clean realtime-agent-run-cli
+.PHONY: sheaf-chat-build sheaf-chat-test sheaf-chat-clean
 
 .DEFAULT_GOAL := all
 
@@ -83,6 +84,15 @@ realtime-agent-clean:
 
 realtime-agent-run-cli:
 	$(MAKE) -C projects/realtime-agent run-cli
+
+sheaf-chat-build:
+	$(MAKE) -C projects/sheaf-chat build
+
+sheaf-chat-test:
+	$(MAKE) -C projects/sheaf-chat test
+
+sheaf-chat-clean:
+	$(MAKE) -C projects/sheaf-chat clean
 
 help:
 	@echo "Repository targets:"
