@@ -42,6 +42,25 @@ test("LoadSheafChatConfig reads top-level global config keys", async () => {
         rmSync(repoRoot, { recursive: true, force: true });
     }
 });
+test("LoadSheafChatConfig ignores nested sheaf_chat global config", async () => {
+    const repoRoot = CreateFakeRepoRoot();
+    const globalConfigPath = path.join(repoRoot, "config", "global_config.json");
+    try {
+        await writeFile(globalConfigPath, JSON.stringify({
+            sheaf_chat: {
+                local_inference_url: "http://nested.local/v1/",
+                agent_idle_offload_seconds: 60,
+            },
+        }));
+        const config = await LoadSheafChatConfig({ repoRoot, globalConfigPath });
+        assert.equal(config.localInferenceUrl, null);
+        assert.equal(config.agentIdleOffloadSeconds, x_defaultAgentIdleOffloadSeconds);
+        assert.equal(config.localInferenceAvailable, false);
+    }
+    finally {
+        rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
 test("LoadSheafChatConfig tolerates missing local inference secret", async () => {
     const repoRoot = CreateFakeRepoRoot();
     const globalConfigPath = path.join(repoRoot, "config", "global_config.json");

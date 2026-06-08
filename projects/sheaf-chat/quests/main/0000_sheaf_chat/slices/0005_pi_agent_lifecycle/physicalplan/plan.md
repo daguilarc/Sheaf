@@ -50,7 +50,7 @@ Expected outcome:
 - User messages accepted during streaming should call `steer` when `steer: true` and Pi supports it; otherwise call `prompt(..., { streamingBehavior: "followUp" })` or queue internally as next input. Broadcast acceptance is handled by slice 8, but the manager must report acceptance before Pi failure can drop it.
 - Model switching validates through slice 4, updates future-turn model via `session.setModel`, updates manifest when present, and emits lifecycle/model events.
 - Track active run/tool-call count from Pi events so offload never runs mid-turn or mid-tool.
-- Offload timeout uses `sheaf_chat.agent_idle_offload_seconds`; tests should use short fake timers.
+- Offload timeout uses top-level `agent_idle_offload_seconds` from `global_config.json`; tests should use short fake timers.
 - Do not expose any unscoped Pi tool list. Pass the scoped tool names and extension resource loader when creating each agent.
 
 ## Validation

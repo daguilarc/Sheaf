@@ -8,7 +8,7 @@ Expected outcome:
 
 - Pi auth material for Sheaf Chat uses `data/sheaf-chat/auth/openai/` or a documented equivalent under `data/sheaf-chat/auth/`, never global `~/.pi`.
 - The model registry merges OpenAI subscription/OAuth-backed models and local inference models.
-- The local provider reads `sheaf_chat.local_inference_url` from `global_config.json` and `local_inference_api_key` from `api_keys.json`.
+- The local provider reads top-level `local_inference_url` from `global_config.json` and `local_inference_api_key` from `api_keys.json`; it must not read a nested `sheaf_chat` config object.
 - Model metadata exposes provider, id, display name, context capability when known, and availability.
 - Model validation is reusable by session creation and WebSocket model selection.
 

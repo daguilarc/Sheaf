@@ -32,16 +32,13 @@ function ParseOptionalString(value) {
     return trimmed.length > 0 ? trimmed : null;
 }
 function ResolveLocalInferenceUrl(globalConfig) {
-    const nested = globalConfig.sheaf_chat?.local_inference_url;
-    const topLevel = globalConfig.local_inference_url;
-    return ParseOptionalString(nested ?? topLevel);
+    return ParseOptionalString(globalConfig.local_inference_url);
 }
 function ResolveAgentIdleOffloadSeconds(globalConfig) {
-    const nested = globalConfig.sheaf_chat?.agent_idle_offload_seconds;
-    const topLevel = globalConfig.agent_idle_offload_seconds;
-    const value = nested ?? topLevel;
-    if (typeof value === "number" && Number.isFinite(value) && value > 0) {
-        return Math.floor(value);
+    if (typeof globalConfig.agent_idle_offload_seconds === "number" &&
+        Number.isFinite(globalConfig.agent_idle_offload_seconds) &&
+        globalConfig.agent_idle_offload_seconds > 0) {
+        return Math.floor(globalConfig.agent_idle_offload_seconds);
     }
     return x_defaultAgentIdleOffloadSeconds;
 }

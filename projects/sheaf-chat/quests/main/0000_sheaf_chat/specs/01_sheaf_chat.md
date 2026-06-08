@@ -290,8 +290,9 @@ Tool rules:
 Initial providers:
 
 1. OpenAI subscription/OAuth, with OAuth data stored under `data/sheaf-chat/`.
-2. Local inference, using `sheaf_chat.local_inference_url` from config and
-   `sheaf_chat.local_api_key` from `config/api_keys.json`.
+2. Local inference, using top-level `local_inference_url` from
+   `config/global_config.json` and top-level `local_inference_api_key` from
+   `config/api_keys.json`.
 
 The model list exposed to browsers must merge:
 

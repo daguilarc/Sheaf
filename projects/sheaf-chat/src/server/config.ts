@@ -14,10 +14,6 @@ export interface GlobalConfigFile
 {
   local_inference_url?: string;
   agent_idle_offload_seconds?: number;
-  sheaf_chat?: {
-    local_inference_url?: string;
-    agent_idle_offload_seconds?: number;
-  };
 }
 
 export interface ApiKeysFile
@@ -90,20 +86,18 @@ function ParseOptionalString(value: unknown): string | null
 
 function ResolveLocalInferenceUrl(globalConfig: GlobalConfigFile): string | null
 {
-  const nested = globalConfig.sheaf_chat?.local_inference_url;
-  const topLevel = globalConfig.local_inference_url;
-  return ParseOptionalString(nested ?? topLevel);
+  return ParseOptionalString(globalConfig.local_inference_url);
 }
 
 function ResolveAgentIdleOffloadSeconds(globalConfig: GlobalConfigFile): number
 {
-  const nested = globalConfig.sheaf_chat?.agent_idle_offload_seconds;
-  const topLevel = globalConfig.agent_idle_offload_seconds;
-  const value = nested ?? topLevel;
-
-  if (typeof value === "number" && Number.isFinite(value) && value > 0)
+  if (
+    typeof globalConfig.agent_idle_offload_seconds === "number" &&
+    Number.isFinite(globalConfig.agent_idle_offload_seconds) &&
+    globalConfig.agent_idle_offload_seconds > 0
+  )
   {
-    return Math.floor(value);
+    return Math.floor(globalConfig.agent_idle_offload_seconds);
   }
 
   return x_defaultAgentIdleOffloadSeconds;

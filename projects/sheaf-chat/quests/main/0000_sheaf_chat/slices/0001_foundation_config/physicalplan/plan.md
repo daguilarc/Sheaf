@@ -31,7 +31,7 @@ Expected outcome:
 ## APIs To Extend Or Modify
 
 - Extend root Makefile phony targets with `sheaf-chat-run`.
-- Extend config loading with a `sheaf_chat` section in `global_config.json` for at least `local_inference_url` and `agent_idle_offload_seconds`.
+- Extend config loading with top-level `global_config.json` keys for at least `local_inference_url` and `agent_idle_offload_seconds`; do not introduce or read a nested `sheaf_chat` config object.
 - Extend `api_keys.example.json` with `local_inference_api_key`; runtime code must tolerate missing real keys and return unavailable model metadata rather than crashing.
 
 ## Implementation Notes

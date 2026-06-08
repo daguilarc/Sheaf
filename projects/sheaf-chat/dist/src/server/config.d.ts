@@ -4,10 +4,6 @@ export declare const x_defaultAgentIdleOffloadSeconds = 300;
 export interface GlobalConfigFile {
     local_inference_url?: string;
     agent_idle_offload_seconds?: number;
-    sheaf_chat?: {
-        local_inference_url?: string;
-        agent_idle_offload_seconds?: number;
-    };
 }
 export interface ApiKeysFile {
     local_inference_api_key?: string;

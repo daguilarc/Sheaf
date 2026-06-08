@@ -42,17 +42,12 @@ stored under `data/sheaf-chat/`, `messageId` de-duplication, mobile UI
 requirements, documentation, and independence from global Pi configuration are
 each covered.
 
-## Non-blocking implementation note (config key path)
+## Config key path
 
-The committed `config/global_config.json` stores the local-inference URL at the
-top level as `local_inference_url`, while the Slice 1/4 plan prose phrases it as
-a nested `sheaf_chat.local_inference_url`. The spec is itself inconsistent on
-this (top-level in "Service Registration", `sheaf_chat.*` in "Providers And
-Models"). This is not a blocking defect because the committed config file is the
-authoritative ground truth and resolves trivially during implementation.
-Implementer guidance: use the already-committed shapes — top-level
-`local_inference_url` in `global_config.json` and `local_inference_api_key` in
-`api_keys.json` — and keep Slice 1 and Slice 4 consistent with each other.
+The physical plans use the committed config shape: top-level
+`local_inference_url` and `agent_idle_offload_seconds` in `global_config.json`,
+plus top-level `local_inference_api_key` in `api_keys.json`. Nested
+`sheaf_chat.*` config is intentionally not part of the plan or implementation.
 
 ## Process note
 
