@@ -49,7 +49,7 @@ export interface SessionRuntimeRecord
   rootDirectory: string;
   model: ModelReference;
   sessionFilePath: string;
-  clients: Set<string>;
+  clients: Map<string, number>;
   piSession?: PiSessionHandle;
   manifest?: SessionManifest;
   provisional?: ProvisionalSession;
@@ -89,6 +89,18 @@ export class SessionRuntime
     return this.m_record.key;
   }
 
+  get ConnectedClientCount(): number
+  {
+    let count = 0;
+
+    for (const references of this.m_record.clients.values())
+    {
+      count += references;
+    }
+
+    return count;
+  }
+
   TransitionState(nextState: AgentLifecycleState): void
   {
     const previousState = this.m_record.state;
@@ -119,7 +131,7 @@ export class SessionRuntime
   {
     if (clientId !== undefined && clientId.length > 0)
     {
-      this.m_record.clients.add(clientId);
+      this.m_record.clients.set(clientId, (this.m_record.clients.get(clientId) ?? 0) + 1);
     }
 
     this.ClearIdleTimer();
@@ -137,10 +149,19 @@ export class SessionRuntime
   {
     if (clientId !== undefined && clientId.length > 0)
     {
-      this.m_record.clients.delete(clientId);
+      const references = this.m_record.clients.get(clientId) ?? 0;
+
+      if (references <= 1)
+      {
+        this.m_record.clients.delete(clientId);
+      }
+      else
+      {
+        this.m_record.clients.set(clientId, references - 1);
+      }
     }
 
-    if (this.m_record.clients.size === 0)
+    if (this.ConnectedClientCount === 0)
     {
       this.ScheduleIdleOffload();
     }
@@ -266,7 +287,7 @@ export class SessionRuntime
   CanOffload(): boolean
   {
     return (
-      this.m_record.clients.size === 0 &&
+      this.ConnectedClientCount === 0 &&
       this.m_record.activeRunCount === 0 &&
       this.m_record.activeToolCount === 0 &&
       this.m_record.piSession !== undefined &&
@@ -309,7 +330,7 @@ export class SessionRuntime
 
   private ScheduleIdleOffload(): void
   {
-    if (this.m_record.clients.size > 0)
+    if (this.ConnectedClientCount > 0)
     {
       return;
     }
@@ -358,7 +379,7 @@ export class SessionRuntime
     {
       this.m_record.activeRunCount = Math.max(0, this.m_record.activeRunCount - 1);
 
-      if (this.m_record.clients.size === 0)
+      if (this.ConnectedClientCount === 0)
       {
         this.ScheduleIdleOffload();
       }
@@ -378,7 +399,7 @@ export class SessionRuntime
       this.m_record.activeToolCount = Math.max(0, this.m_record.activeToolCount - 1);
 
       if (
-        this.m_record.clients.size === 0 &&
+        this.ConnectedClientCount === 0 &&
         this.m_record.activeRunCount === 0 &&
         this.m_record.activeToolCount === 0
       )
@@ -533,7 +554,7 @@ export function CreateRuntimeRecordFromColdResume(
     rootDirectory: bootstrap.rootDirectory,
     model: bootstrap.model,
     sessionFilePath: bootstrap.sessionFilePath,
-    clients: new Set<string>(),
+    clients: new Map<string, number>(),
     manifest: bootstrap.manifest,
     provisional: bootstrap.provisional,
     manifestWritten: bootstrap.manifest !== undefined,

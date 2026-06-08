@@ -71,7 +71,28 @@ function SendEnvelope(socket: WebSocket, envelope: ChatEnvelope): void
 
 function ExtractAguiEvents(envelopes: ChatEnvelope[]): AguiEvent[]
 {
+  const messageIdsWithStoredAguiEvents = new Set<string>();
   const events: AguiEvent[] = [];
+
+  for (const envelope of envelopes)
+  {
+    if (envelope.kind !== x_aguiEventKind || envelope.payload === undefined)
+    {
+      continue;
+    }
+
+    if (typeof envelope.payload !== "object" || envelope.payload === null)
+    {
+      continue;
+    }
+
+    const messageId = (envelope.payload as { messageId?: unknown }).messageId;
+
+    if (typeof messageId === "string")
+    {
+      messageIdsWithStoredAguiEvents.add(messageId);
+    }
+  }
 
   for (const envelope of envelopes)
   {
@@ -91,6 +112,11 @@ function ExtractAguiEvents(envelopes: ChatEnvelope[]): AguiEvent[]
 
       if (typeof payload.messageId === "string" && typeof payload.text === "string")
       {
+        if (messageIdsWithStoredAguiEvents.has(payload.messageId))
+        {
+          continue;
+        }
+
         events.push(...mapUserMessageToAgui({
           messageId: payload.messageId,
           text: payload.text,
@@ -132,6 +158,11 @@ export class SessionBroadcaster
   get ClientCount(): number
   {
     return this.m_clients.size;
+  }
+
+  get LatestSequence(): number
+  {
+    return this.m_latestSequence;
   }
 
   async InitializeSequence(): Promise<void>
@@ -186,14 +217,17 @@ export class SessionBroadcaster
   RegisterClient(socket: WebSocket, clientId?: string): ConnectedClient
   {
     const connectionId = randomUUID();
-    const client: ConnectedClient = {
+
+    return {
       connectionId,
       socket,
       clientId,
     };
+  }
 
-    this.m_clients.set(connectionId, client);
-    return client;
+  ActivateClient(client: ConnectedClient): void
+  {
+    this.m_clients.set(client.connectionId, client);
   }
 
   RemoveClient(connectionId: string): void
@@ -221,7 +255,11 @@ export class SessionBroadcaster
     }
   }
 
-  async ReplayAfter(connectionId: string, after: number): Promise<void>
+  async ReplayAfter(
+    client: ConnectedClient,
+    after: number,
+    throughSequence = Number.MAX_SAFE_INTEGER,
+  ): Promise<void>
   {
     const entries = await CollectSessionLogEntries(
       this.m_storagePaths,
@@ -231,9 +269,9 @@ export class SessionBroadcaster
 
     for (const entry of entries)
     {
-      if (entry.sequence > after)
+      if (entry.sequence > after && entry.sequence <= throughSequence)
       {
-        this.SendDirect(connectionId, entry.envelope);
+        SendEnvelope(client.socket, entry.envelope);
       }
     }
   }
@@ -643,6 +681,18 @@ export class SessionBroadcasterRegistry
       broadcaster.Dispose();
       this.m_broadcasters.delete(encodedKey);
     }
+  }
+
+  ReleaseIfIdle(key: SessionKey): void
+  {
+    const broadcaster = this.Get(key);
+
+    if (broadcaster === undefined || broadcaster.ClientCount > 0)
+    {
+      return;
+    }
+
+    this.Remove(key);
   }
 
   Dispose(): void

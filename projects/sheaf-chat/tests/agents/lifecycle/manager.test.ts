@@ -434,6 +434,44 @@ test("idle offload disposes agents after timeout with no clients", async () =>
   });
 });
 
+test("idle offload waits for all references sharing a client id to detach", async () =>
+{
+  await WithFakeRepoAsync(async (repoRoot) =>
+  {
+    const timers = CreateFakeTimers();
+    const fakeSessions = new Map<string, FakePiSession>();
+    const manager = await CreateTestManager(repoRoot, {
+      fakeSessions,
+      idleOffloadSeconds: 1,
+      timers,
+    });
+    const storagePaths = CreateStorage(repoRoot);
+    await CreatePile(storagePaths, "default");
+    const model = ResolveOpenAiTestModel(CreateTestModelBundle());
+    const rootDirectory = path.join(repoRoot, "projects", "demo");
+    const created = await manager.createBlankSession("default", rootDirectory, model);
+    await manager.attachSession("default", created.key.sessionId, "shared-client");
+    await manager.attachSession("default", created.key.sessionId, "shared-client");
+    const fake = [...fakeSessions.values()][0];
+
+    manager.markClientDetached(created.key, "shared-client");
+    assert.equal(manager.getStatus(created.key)?.connectedClientCount, 1);
+
+    timers.Advance(1500);
+
+    assert.equal(manager.getStatus(created.key)?.state, AgentLifecycleState.Active);
+    assert.equal(fake?.disposed, false);
+
+    manager.markClientDetached(created.key, "shared-client");
+    assert.equal(manager.getStatus(created.key)?.connectedClientCount, 0);
+
+    timers.Advance(1500);
+
+    assert.equal(manager.getStatus(created.key)?.state, AgentLifecycleState.Cold);
+    assert.equal(fake?.disposed, true);
+  });
+});
+
 test("idle offload does not run during active runs or tool calls", async () =>
 {
   await WithFakeRepoAsync(async (repoRoot) =>

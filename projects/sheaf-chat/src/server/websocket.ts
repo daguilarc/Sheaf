@@ -188,13 +188,16 @@ async function SendHello(
   context: ChatWebSocketContext,
   params: ChatWebSocketConnectParams,
   broadcaster: Awaited<ReturnType<SessionBroadcasterRegistry["GetOrCreate"]>>,
+  onAttached: () => void,
 ): Promise<void>
 {
   const status = await context.agentManager.attachSession(
     params.pile,
     params.sessionId,
-    params.clientId,
+    client.connectionId,
   );
+  onAttached();
+
   const historyWindow = await broadcaster.HistoryWindow();
   const models = context.agentManager.listModels();
   const manifest = status.manifest;
@@ -234,11 +237,12 @@ async function SendReplayAndCaughtUp(
   client: ConnectedClient,
   params: ChatWebSocketConnectParams,
   broadcaster: Awaited<ReturnType<SessionBroadcasterRegistry["GetOrCreate"]>>,
+  replayThroughSequence: number,
 ): Promise<void>
 {
   if (params.after !== undefined)
   {
-    await broadcaster.ReplayAfter(client.connectionId, params.after);
+    await broadcaster.ReplayAfter(client, params.after, replayThroughSequence);
   }
 
   const caughtUp = CreateChatEnvelope({
@@ -250,6 +254,7 @@ async function SendReplayAndCaughtUp(
   });
 
   client.socket.send(JSON.stringify(caughtUp));
+  await broadcaster.ReplayAfter(client, replayThroughSequence);
 }
 
 export async function AttachChatWebSocketConnection(
@@ -271,11 +276,49 @@ export async function AttachChatWebSocketConnection(
   });
 
   const client = broadcaster.RegisterClient(socket, params.clientId);
+  const replayThroughSequence = broadcaster.LatestSequence;
+  let connectionEnded = false;
+  let runtimeAttached = false;
+  let runtimeDetached = false;
+
+  const cleanup = () =>
+  {
+    connectionEnded = true;
+    broadcaster.RemoveClient(client.connectionId);
+
+    if (runtimeAttached && !runtimeDetached)
+    {
+      runtimeDetached = true;
+      context.agentManager.markClientDetached(key, client.connectionId);
+    }
+
+    context.broadcasterRegistry.ReleaseIfIdle(key);
+  };
+
+  socket.on("close", cleanup);
 
   try
   {
-    await SendHello(client, context, params, broadcaster);
-    await SendReplayAndCaughtUp(client, params, broadcaster);
+    await SendHello(client, context, params, broadcaster, () =>
+    {
+      runtimeAttached = true;
+    });
+
+    if (connectionEnded || socket.readyState !== WebSocket.OPEN)
+    {
+      cleanup();
+      return;
+    }
+
+    await SendReplayAndCaughtUp(client, params, broadcaster, replayThroughSequence);
+
+    if (connectionEnded || socket.readyState !== WebSocket.OPEN)
+    {
+      cleanup();
+      return;
+    }
+
+    broadcaster.ActivateClient(client);
   }
   catch (error)
   {
@@ -283,8 +326,7 @@ export async function AttachChatWebSocketConnection(
     const code = error instanceof StorageError ? error.code : "connection_failed";
     SendErrorFrame(socket, params, code, message, true);
     socket.close();
-    broadcaster.RemoveClient(client.connectionId);
-    context.agentManager.markClientDetached(key, params.clientId);
+    cleanup();
     return;
   }
 
@@ -293,11 +335,6 @@ export async function AttachChatWebSocketConnection(
     void HandleClientMessage(socket, client, params, context, broadcaster, data);
   });
 
-  socket.on("close", () =>
-  {
-    broadcaster.RemoveClient(client.connectionId);
-    context.agentManager.markClientDetached(key, params.clientId);
-  });
 }
 
 async function HandleClientMessage(

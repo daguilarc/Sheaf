@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { ChatEnvelope } from "../../../src/shared/envelope.js";
+import { mapUserMessageToAgui } from "../../../src/agui/mapper.js";
 import { AgentLifecycleState } from "../../../src/shared/types.js";
 import { AppendEnvelope } from "../../../src/storage/sessionLog.js";
 import { CreateStoragePaths } from "../../../src/storage/paths.js";
@@ -30,6 +31,8 @@ test("WebSocket connection sends server.hello then server.caught_up", async () =
 
     await WithWebSocket(url, async (_socket, bootstrap) =>
     {
+      assert.equal(bootstrap[0]?.kind, "server.hello");
+
       const hello = bootstrap.find((entry) => entry.kind === "server.hello");
 
       assert.ok(hello);
@@ -53,6 +56,10 @@ test("WebSocket connection sends server.hello then server.caught_up", async () =
       assert.ok(Array.isArray(payload.models));
       assert.ok(payload.activeModel.provider.length > 0);
       assert.equal(bootstrap[bootstrap.length - 1]?.kind, "server.caught_up");
+      assert.equal(
+        bootstrap.some((entry) => entry.kind === "agent.status" || entry.kind === "agui.event"),
+        false,
+      );
     });
   });
 });
@@ -378,6 +385,70 @@ test("client.history_request returns history.page for before and after cursors",
   });
 });
 
+test("client.history_request events mode does not duplicate stored user AGUI events", async () =>
+{
+  await WithWebSocketTestServer(async (handle) =>
+  {
+    const session = await CreateBlankSessionViaApi(handle);
+    const storagePaths = CreateStoragePaths(handle.config.repoRoot);
+    const messageId = "stored-user-with-agui";
+
+    await AppendEnvelope(storagePaths, session.pile, session.sessionId, {
+      kind: "chat.user_message",
+      pile: session.pile,
+      sessionId: session.sessionId,
+      payload: {
+        messageId,
+        text: "stored user text",
+      },
+    });
+
+    for (const event of mapUserMessageToAgui({ messageId, text: "stored user text" }))
+    {
+      await AppendEnvelope(storagePaths, session.pile, session.sessionId, {
+        kind: "agui.event",
+        pile: session.pile,
+        sessionId: session.sessionId,
+        payload: event,
+      });
+    }
+
+    const url = BuildWsUrl(handle, session.pile, session.sessionId);
+
+    await WithWebSocket(url, async (socket) =>
+    {
+      SendClientFrame(
+        socket,
+        CreateClientEnvelope(
+          "client.history_request",
+          session.pile,
+          session.sessionId,
+          {
+            after: 0,
+            limit: 10,
+            prefer: "events",
+          },
+          "history-events-no-duplicates",
+        ),
+      );
+
+      const page = await WaitForEnvelope(
+        socket,
+        (envelope) =>
+          envelope.kind === "history.page" &&
+          (envelope.payload as { requestId?: string }).requestId === "history-events-no-duplicates",
+      );
+      const payload = page.payload as { events: Array<{ type?: string; messageId?: string }> };
+      const userTextEvents = payload.events.filter((event) => event.messageId === messageId);
+
+      assert.deepEqual(
+        userTextEvents.map((event) => event.type),
+        ["TEXT_MESSAGE_START", "TEXT_MESSAGE_CONTENT", "TEXT_MESSAGE_END"],
+      );
+    });
+  });
+});
+
 test("live broadcasts continue while history request is served", async () =>
 {
   await WithWebSocketTestServer(async (handle) =>
@@ -602,23 +673,32 @@ test("concurrent user messages are sequenced monotonically", async () =>
   });
 });
 
-test("disconnect triggers idle offload after timer elapses", async () =>
+test("socket liveness uses connection id and disconnect releases idle broadcaster", async () =>
 {
   const timers = CreateFakeTimers();
 
   await WithWebSocketTestServer(async (handle) =>
   {
     const session = await CreateBlankSessionViaApi(handle);
-    const url = BuildWsUrl(handle, session.pile, session.sessionId, { clientId: "idle-client" });
+    const key = { pile: session.pile, sessionId: session.sessionId };
+    const url = BuildWsUrl(handle, session.pile, session.sessionId);
     const connected = await ConnectWebSocket(url);
+
+    const statusOpen = handle.agentManager.getStatus(key);
+    assert.equal(statusOpen?.connectedClientCount, 1);
+    assert.ok(handle.broadcasterRegistry.Get(key));
+
+    timers.Advance(1500);
+
+    const fake = [...handle.fakeSessions.values()][0];
+    assert.equal(handle.agentManager.getStatus(key)?.state, AgentLifecycleState.Active);
+    assert.equal(fake?.disposed, false);
+
     connected.socket.close();
 
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await WaitForCondition(() => handle.broadcasterRegistry.Get(key) === undefined);
 
-    const statusBefore = handle.agentManager.getStatus({
-      pile: session.pile,
-      sessionId: session.sessionId,
-    });
+    const statusBefore = handle.agentManager.getStatus(key);
     assert.ok(statusBefore);
     assert.equal(statusBefore?.connectedClientCount, 0);
 
@@ -626,11 +706,7 @@ test("disconnect triggers idle offload after timer elapses", async () =>
 
     await new Promise((resolve) => setTimeout(resolve, 20));
 
-    const statusAfter = handle.agentManager.getStatus({
-      pile: session.pile,
-      sessionId: session.sessionId,
-    });
-    const fake = [...handle.fakeSessions.values()][0];
+    const statusAfter = handle.agentManager.getStatus(key);
 
     assert.equal(statusAfter?.state, AgentLifecycleState.Cold);
     assert.equal(fake?.disposed, true);

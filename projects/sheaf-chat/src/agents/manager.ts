@@ -403,7 +403,7 @@ export class AgentManager
       state: record.state,
       model: record.model,
       rootDirectory: record.rootDirectory,
-      connectedClientCount: record.clients.size,
+      connectedClientCount: runtime.ConnectedClientCount,
       manifestPresent: record.manifestWritten || record.manifest !== undefined,
       isStreaming: piSession?.isStreaming ?? false,
       activeRunCount: record.activeRunCount,
