@@ -262,6 +262,7 @@ class QuestService:
         self.scheduler = scheduler or _DEFAULT_SCHEDULER
         self.run_tracker = run_tracker or ActiveRunTracker()
         self.chat_event_bus = ChatEventBus()
+        self._metadata_mutation_lock = threading.Lock()
 
     def _schedule_deferred_quest_run(
         self,
@@ -1033,19 +1034,10 @@ class QuestService:
         checkout = dashboard_data.resolve_dashboard_checkout(source_root, meta)
         qdir = checkout.quest_dir
 
-        lock_acquired = False
-        lock_key = dashboard_data.lock_key_for_quest(source_root, meta)
+        mutation_lock_acquired = False
         if not checkout.worktree_missing:
-            req_id = str(uuid.uuid4())
-            if not self.lock.acquire(lock_key, quest_type, quest_number, req_id):
-                info = self.lock.get_lock_info(lock_key)
-                assert info is not None
-                raise QuestLockContention(
-                    "Repository is locked by another quest run",
-                    repo_path=lock_key,
-                    lock_info=info,
-                )
-            lock_acquired = True
+            self._metadata_mutation_lock.acquire()
+            mutation_lock_acquired = True
 
         try:
             existing = quest_fs.list_slice_dirs(qdir)
@@ -1109,8 +1101,8 @@ class QuestService:
                     shutil.rmtree(created, ignore_errors=True)
                 raise
         finally:
-            if lock_acquired:
-                self.lock.release(lock_key)
+            if mutation_lock_acquired:
+                self._metadata_mutation_lock.release()
 
         return {
             "project": project,
@@ -1129,17 +1121,10 @@ class QuestService:
         quest_type: str,
         quest_number: int,
     ) -> bool:
+        _ = quest_type, quest_number
         if ctx.lock_key is None:
             return False
-        req_id = str(uuid.uuid4())
-        if not self.lock.acquire(ctx.lock_key, quest_type, quest_number, req_id):
-            info = self.lock.get_lock_info(ctx.lock_key)
-            assert info is not None
-            raise QuestLockContention(
-                "Repository is locked by another quest run",
-                repo_path=ctx.lock_key,
-                lock_info=info,
-            )
+        self._metadata_mutation_lock.acquire()
         return True
 
     def _resolve_issue_context(
@@ -1238,7 +1223,7 @@ class QuestService:
             )
         finally:
             if acquired:
-                self.lock.release(ctx.lock_key)
+                self._metadata_mutation_lock.release()
 
     def edit_issue(
         self,
@@ -1273,7 +1258,7 @@ class QuestService:
             )
         finally:
             if acquired:
-                self.lock.release(ctx.lock_key)
+                self._metadata_mutation_lock.release()
 
     def respond_to_issue(
         self,
@@ -1306,7 +1291,7 @@ class QuestService:
             )
         finally:
             if acquired:
-                self.lock.release(ctx.lock_key)
+                self._metadata_mutation_lock.release()
 
     def list_issue_responses(
         self,

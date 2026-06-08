@@ -458,7 +458,7 @@ class IssueApiTests(unittest.TestCase):
         )
         self.assertEqual(len(list_resp.get_json()["issues"]), 1)
 
-    def test_mutation_returns_409_when_lock_held(self) -> None:
+    def test_mutation_succeeds_when_run_lock_held(self) -> None:
         lock = QuestLock()
         client, svc = make_app_client(self.temp.root, self.repo_root, lock=lock)
         out = self._create_quest(svc)
@@ -477,8 +477,8 @@ class IssueApiTests(unittest.TestCase):
                     body="Should fail",
                 ),
             )
-            self.assertEqual(resp.status_code, 409)
-            self.assertIn("lock_owner", resp.get_json())
+            self.assertEqual(resp.status_code, 201)
+            self.assertEqual(resp.get_json()["issue_id"], "QP-0001")
         finally:
             lock.release(lock_key)
 

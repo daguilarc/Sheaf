@@ -424,7 +424,7 @@ class QuestServiceApiTests(unittest.TestCase):
         )
         self.assertEqual(resp.status_code, 404)
 
-    def test_initialize_slices_lock_contention(self) -> None:
+    def test_initialize_slices_succeeds_when_run_lock_held(self) -> None:
         ensure_project(self.temp.root, "example")
         lock = QuestLock()
         client, svc = make_app_client(self.temp.root, self.repo_root, lock=lock)
@@ -455,7 +455,12 @@ class QuestServiceApiTests(unittest.TestCase):
                     "slugs": ["blocked"],
                 },
             )
-            self.assertEqual(resp.status_code, 409)
+            self.assertEqual(resp.status_code, 201)
+            body = resp.get_json()
+            self.assertEqual(
+                body["created_slices"][0]["directory_name"],
+                "0001_blocked",
+            )
         finally:
             lock.release(lock_key)
 
