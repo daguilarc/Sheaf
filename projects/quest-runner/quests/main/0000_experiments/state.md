@@ -1,14 +1,14 @@
 # State
 
-- global_step: 7
+- global_step: 8
 - machine_name: quest
 - machine_path: projects/quest-runner/quests/main/0000_experiments
-- state: PrepareNextSlice
+- state: ExecuteSlice
 - updated_at: 2026-06-08T23:12:57Z
 
 ## Tags
 
-- active_slice: 0001_experiment_foundation
+- active_slice: 0002_experiment_creation
 - quest_number: 0
 - quest_slug: experiments
 - quest_type: main
