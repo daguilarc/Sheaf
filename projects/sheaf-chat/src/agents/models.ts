@@ -39,6 +39,8 @@ export {
 
 type PiRegistryModel = ReturnType<ModelRegistry["getAll"]>[number];
 
+const x_supportedBuiltInProviders = new Set(["openai"]);
+
 export interface SheafModelRegistryBundle
 {
   authStorage: AuthStorage;
@@ -126,13 +128,19 @@ export function MapPiModelToMetadata(
   return metadata;
 }
 
+function IsSheafSupportedModel(model: PiRegistryModel): boolean
+{
+  return model.provider === x_localProviderName ||
+    x_supportedBuiltInProviders.has(model.provider);
+}
+
 export function ListModels(
   config: SheafChatConfig,
   modelRegistry: ModelRegistry,
   localProviderState: LocalProviderState,
 ): ModelMetadata[]
 {
-  const models = modelRegistry.getAll();
+  const models = modelRegistry.getAll().filter(IsSheafSupportedModel);
   const metadata = models.map((model) =>
     MapPiModelToMetadata(model, config, modelRegistry, localProviderState));
 
@@ -174,7 +182,7 @@ export function ValidateModelSelection(
 {
   const model = modelRegistry.find(selection.provider, selection.id);
 
-  if (model === undefined)
+  if (model === undefined || !IsSheafSupportedModel(model))
   {
     throw new ModelValidationError(
       "model_not_found",
