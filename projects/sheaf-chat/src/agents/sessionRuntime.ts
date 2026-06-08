@@ -256,6 +256,11 @@ export class SessionRuntime
     }
 
     await piSession.abort();
+    this.ReportError({
+      code: "cancelled",
+      message: "Turn cancelled",
+      fatal: false,
+    });
   }
 
   CanOffload(): boolean

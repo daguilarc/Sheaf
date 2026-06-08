@@ -1,13 +1,24 @@
 import { createServer, type Server } from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
+import type { WebSocketServer } from "ws";
+
 import type { AgentManager } from "../agents/manager.js";
+import { SessionBroadcasterRegistry } from "../protocol/sessionBroadcaster.js";
+import { StorageError } from "../storage/errors.js";
 import { FormatRestError } from "../shared/errors.js";
 import type { SheafChatConfig } from "./config.js";
 import { x_serviceName, x_serviceVersion } from "./constants.js";
 import { SendJson } from "./http.js";
 import { DispatchApiRoute } from "./router.js";
 import type { RouteContext } from "./routes/context.js";
+import {
+  AttachChatWebSocketConnection,
+  CreateChatWebSocketServer,
+  rejectUpgradeWithHttpStatus,
+  ResolveChatWebSocketUpgrade,
+  StorageErrorToHttpStatus,
+} from "./websocket.js";
 
 export { x_serviceName, x_serviceVersion };
 
@@ -22,6 +33,8 @@ export interface SheafChatServerOptions
 export interface SheafChatServer
 {
   httpServer: Server;
+  chatWebSocketServer: WebSocketServer;
+  broadcasterRegistry: SessionBroadcasterRegistry;
   listen: () => Promise<number>;
   close: () => Promise<void>;
 }
@@ -37,6 +50,13 @@ export function CreateSheafChatServer(options: SheafChatServerOptions): SheafCha
     config: options.config,
     agentManager: options.agentManager,
   };
+  const broadcasterRegistry = new SessionBroadcasterRegistry();
+  const chatWebSocketServer = CreateChatWebSocketServer();
+  const chatWebSocketContext = {
+    config: options.config,
+    agentManager: options.agentManager,
+    broadcasterRegistry,
+  };
 
   const httpServer = createServer((request: IncomingMessage, response: ServerResponse) =>
   {
@@ -51,8 +71,44 @@ export function CreateSheafChatServer(options: SheafChatServerOptions): SheafCha
     HandleNotFound(response);
   });
 
+  httpServer.on("upgrade", (request, socket, head) =>
+  {
+    void (async () =>
+    {
+      try
+      {
+        const params = await ResolveChatWebSocketUpgrade(chatWebSocketContext, request);
+
+        if (params === null)
+        {
+          socket.destroy();
+          return;
+        }
+
+        chatWebSocketServer.handleUpgrade(request, socket, head, (webSocket) =>
+        {
+          chatWebSocketServer.emit("connection", webSocket, request);
+          void AttachChatWebSocketConnection(webSocket, params, chatWebSocketContext);
+        });
+      }
+      catch (error)
+      {
+        if (error instanceof StorageError)
+        {
+          const status = StorageErrorToHttpStatus(error);
+          rejectUpgradeWithHttpStatus(socket, status, error.message);
+          return;
+        }
+
+        rejectUpgradeWithHttpStatus(socket, 400, "bad request");
+      }
+    })();
+  });
+
   return {
     httpServer,
+    chatWebSocketServer,
+    broadcasterRegistry,
     listen: () =>
       new Promise<number>((resolve, reject) =>
       {
@@ -74,15 +130,20 @@ export function CreateSheafChatServer(options: SheafChatServerOptions): SheafCha
     close: () =>
       new Promise<void>((resolve, reject) =>
       {
-        httpServer.close((error) =>
-        {
-          if (error)
-          {
-            reject(error);
-            return;
-          }
+        broadcasterRegistry.Dispose();
 
-          resolve();
+        chatWebSocketServer.close(() =>
+        {
+          httpServer.close((error) =>
+          {
+            if (error)
+            {
+              reject(error);
+              return;
+            }
+
+            resolve();
+          });
         });
       }),
   };
