@@ -1,5 +1,6 @@
 import { constants } from "node:fs";
-import { access, readdir, stat } from "node:fs/promises";
+import { access, lstat, readdir, stat } from "node:fs/promises";
+import path from "node:path";
 
 import { Type } from "typebox";
 
@@ -86,10 +87,10 @@ export function CreateListTool(context: ScopedToolContext): ScopedToolDefinition
           break;
         }
 
-        const entryAbsolute = `${absolutePath}/${entry.name}`;
+        const entryAbsolute = path.join(absolutePath, entry.name);
         context.policy.AssertWithinRoot(entryAbsolute);
         const entryRelative = RelativizeDisplayPath(context.policy, entryAbsolute);
-        const entryStat = await stat(entryAbsolute);
+        const entryStat = await lstat(entryAbsolute);
         const entryType = entryStat.isDirectory() ? "dir" : entryStat.isSymbolicLink() ? "symlink" : "file";
         const modifiedAt = entryStat.mtime.toISOString();
         lines.push(`${entryRelative}\t${entryType}\t${entryStat.size}\t${modifiedAt}`);

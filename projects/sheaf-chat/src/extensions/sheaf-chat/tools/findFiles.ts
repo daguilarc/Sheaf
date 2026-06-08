@@ -1,5 +1,5 @@
 import { constants } from "node:fs";
-import { access, readdir, stat } from "node:fs/promises";
+import { access, lstat, readdir, stat } from "node:fs/promises";
 import path from "node:path";
 
 import { Type } from "typebox";
@@ -120,8 +120,14 @@ async function WalkFind(
 
     const entryAbsolute = path.join(absoluteDirectory, entry.name);
     policy.AssertWithinRoot(entryAbsolute);
+    const entryStat = await lstat(entryAbsolute);
+
+    if (entryStat.isSymbolicLink())
+    {
+      continue;
+    }
+
     const entryRelative = RelativizeDisplayPath(policy, entryAbsolute);
-    const entryStat = await stat(entryAbsolute);
 
     if (entryStat.isFile() && MatchesFindFilters(entryRelative, options))
     {

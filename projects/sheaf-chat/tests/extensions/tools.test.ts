@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 
+import { MatchesGlob } from "../../src/extensions/sheaf-chat/glob.js";
 import { AssertNoParentLeak } from "../../src/extensions/sheaf-chat/results.js";
 import { x_scopedToolNames } from "../../src/extensions/sheaf-chat/tools/createScopedTools.js";
 import {
@@ -137,6 +138,52 @@ test("list reports metadata for directory entries", async () =>
   }
 });
 
+test("traversal tools do not follow symlink entries outside the root", async () =>
+{
+  const fixture = await CreateScopedTestFixture(async (rootDirectory, outsideDirectory) =>
+  {
+    await WriteRootFile(rootDirectory, "visible.txt", "inside hit\n");
+    await WriteRootFile(outsideDirectory, "secret.txt", "outside secret\n");
+    await WriteRootFile(outsideDirectory, "vault/hidden.txt", "outside secret\n");
+    await CreateOutsideSymlink(rootDirectory, outsideDirectory, "link-file.txt", "secret.txt");
+    await CreateOutsideSymlink(rootDirectory, outsideDirectory, "link-dir", "vault");
+  });
+
+  try
+  {
+    const search = await RunTool(fixture, "search_text", {
+      pattern: "outside secret",
+      literal: true,
+    });
+    const searchText = search.content[0]?.text ?? "";
+    AssertNoAbsoluteLeak(fixture, searchText);
+    assert.equal(searchText, "(no matches)");
+
+    const find = await RunTool(fixture, "find_files", { glob: "**/*.txt" });
+    const findText = find.content[0]?.text ?? "";
+    AssertNoAbsoluteLeak(fixture, findText);
+    assert.match(findText, /visible\.txt/);
+    assert.doesNotMatch(findText, /link-file|link-dir|hidden\.txt|secret\.txt/);
+
+    const tree = await RunTool(fixture, "tree", { maxDepth: 4 });
+    const treeText = tree.content[0]?.text ?? "";
+    AssertNoAbsoluteLeak(fixture, treeText);
+    assert.match(treeText, /visible\.txt/);
+    assert.doesNotMatch(treeText, /link-file|link-dir|hidden\.txt|secret\.txt/);
+
+    const list = await RunTool(fixture, "list", { path: "." });
+    const listText = list.content[0]?.text ?? "";
+    AssertNoAbsoluteLeak(fixture, listText);
+    assert.match(listText, /link-file\.txt\tsymlink\t/);
+    assert.match(listText, /link-dir\tsymlink\t/);
+    assert.doesNotMatch(listText, /hidden\.txt|secret\.txt/);
+  }
+  finally
+  {
+    await fixture.cleanup();
+  }
+});
+
 test("tree applies depth and ignore limits", async () =>
 {
   const fixture = await CreateScopedTestFixture(async (rootDirectory) =>
@@ -160,6 +207,17 @@ test("tree applies depth and ignore limits", async () =>
   }
 });
 
+test("globstar patterns match zero or more path segments", () =>
+{
+  assert.equal(MatchesGlob("c.json", "**/*.json"), true);
+  assert.equal(MatchesGlob("a/c.json", "**/*.json"), true);
+  assert.equal(MatchesGlob("a/b/c.json", "**/*.json"), true);
+  assert.equal(MatchesGlob("foo", "**/foo"), true);
+  assert.equal(MatchesGlob("a/b/foo", "**/foo"), true);
+  assert.equal(MatchesGlob("a/b", "a/**/b"), true);
+  assert.equal(MatchesGlob("a/x/y/b", "a/**/b"), true);
+});
+
 test("find_files supports filters and limits", async () =>
 {
   const fixture = await CreateScopedTestFixture(async (rootDirectory) =>
@@ -181,6 +239,45 @@ test("find_files supports filters and limits", async () =>
     assert.match(text, /src\/a\.ts/);
     assert.doesNotMatch(text, /src\/b\.js/);
     assert.doesNotMatch(text, /lib\/a\.ts/);
+  }
+  finally
+  {
+    await fixture.cleanup();
+  }
+});
+
+test("find_files supports globstar glob, include, and exclude filters", async () =>
+{
+  const fixture = await CreateScopedTestFixture(async (rootDirectory) =>
+  {
+    await WriteRootFile(rootDirectory, "c.json", "root");
+    await WriteRootFile(rootDirectory, "a/c.json", "nested");
+    await WriteRootFile(rootDirectory, "a/b/c.json", "deep");
+    await WriteRootFile(rootDirectory, "a/b/skip.json", "skip");
+    await WriteRootFile(rootDirectory, "a/b/c.ts", "ts");
+  });
+
+  try
+  {
+    const globResult = await RunTool(fixture, "find_files", { glob: "**/*.json" });
+    const globText = globResult.content[0]?.text ?? "";
+    AssertNoAbsoluteLeak(fixture, globText);
+    assert.match(globText, /^c\.json$/m);
+    assert.match(globText, /^a\/c\.json$/m);
+    assert.match(globText, /^a\/b\/c\.json$/m);
+    assert.match(globText, /^a\/b\/skip\.json$/m);
+    assert.doesNotMatch(globText, /c\.ts/);
+
+    const filtered = await RunTool(fixture, "find_files", {
+      include: ["a/**/*.json"],
+      exclude: ["**/skip.json"],
+    });
+    const filteredText = filtered.content[0]?.text ?? "";
+    AssertNoAbsoluteLeak(fixture, filteredText);
+    assert.match(filteredText, /^a\/c\.json$/m);
+    assert.match(filteredText, /^a\/b\/c\.json$/m);
+    assert.doesNotMatch(filteredText, /^c\.json$/m);
+    assert.doesNotMatch(filteredText, /skip\.json/);
   }
   finally
   {
@@ -218,6 +315,38 @@ test("search_text supports regex, context, binary skipping, and match limits", a
       limit: 2,
     });
     assert.match(regex.content[0]?.text ?? "", /src\/many\.txt:/);
+  }
+  finally
+  {
+    await fixture.cleanup();
+  }
+});
+
+test("search_text supports globstar include and exclude filters", async () =>
+{
+  const fixture = await CreateScopedTestFixture(async (rootDirectory) =>
+  {
+    await WriteRootFile(rootDirectory, "hit.txt", "needle root\n");
+    await WriteRootFile(rootDirectory, "src/hit.txt", "needle nested\n");
+    await WriteRootFile(rootDirectory, "src/deep/hit.txt", "needle deep\n");
+    await WriteRootFile(rootDirectory, "src/skip.txt", "needle skip\n");
+    await WriteRootFile(rootDirectory, "src/hit.log", "needle log\n");
+  });
+
+  try
+  {
+    const result = await RunTool(fixture, "search_text", {
+      pattern: "needle",
+      literal: true,
+      include: ["**/*.txt"],
+      exclude: ["**/skip.txt"],
+    });
+    const text = result.content[0]?.text ?? "";
+    AssertNoAbsoluteLeak(fixture, text);
+    assert.match(text, /hit\.txt:1:needle root/);
+    assert.match(text, /src\/hit\.txt:1:needle nested/);
+    assert.match(text, /src\/deep\/hit\.txt:1:needle deep/);
+    assert.doesNotMatch(text, /skip\.txt|hit\.log/);
   }
   finally
   {

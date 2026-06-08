@@ -42,7 +42,7 @@ export function GlobToRegExp(pattern: string): RegExp
 {
   const normalized = pattern.replace(/\\/g, "/");
   const segments = normalized.split("/");
-  const regexParts: string[] = [];
+  let regex = "^";
 
   for (let index = 0; index < segments.length; index++)
   {
@@ -50,21 +50,31 @@ export function GlobToRegExp(pattern: string): RegExp
 
     if (segment === "**")
     {
+      const first = index === 0;
       if (index === segments.length - 1)
       {
-        regexParts.push("(?:.*)");
+        regex += first ? ".*" : "(?:/.*)?";
       }
       else
       {
-        regexParts.push("(?:.*/)?");
+        regex += first ? "(?:[^/]+/)*" : "(?:/[^/]+)*";
       }
       continue;
     }
 
-    regexParts.push(GlobSegmentToRegex(segment));
+    if (index > 0)
+    {
+      const previous = segments[index - 1];
+      if (previous !== "**" || index > 1)
+      {
+        regex += "/";
+      }
+    }
+
+    regex += GlobSegmentToRegex(segment);
   }
 
-  return new RegExp(`^${regexParts.join("/")}$`);
+  return new RegExp(`${regex}$`);
 }
 
 export function MatchesGlob(relativePath: string, pattern: string): boolean

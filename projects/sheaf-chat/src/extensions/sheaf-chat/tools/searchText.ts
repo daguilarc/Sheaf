@@ -1,5 +1,5 @@
 import { constants } from "node:fs";
-import { access, readFile, readdir, stat } from "node:fs/promises";
+import { access, lstat, readFile, readdir, stat } from "node:fs/promises";
 import path from "node:path";
 
 import { Type } from "typebox";
@@ -198,8 +198,14 @@ async function WalkSearch(
 
     const entryAbsolute = path.join(absolutePath, entry.name);
     policy.AssertWithinRoot(entryAbsolute);
+    const entryStat = await lstat(entryAbsolute);
 
-    if (entry.isDirectory())
+    if (entryStat.isSymbolicLink())
+    {
+      continue;
+    }
+
+    if (entryStat.isDirectory())
     {
       if (!ShouldSkipDirectory(entry.name))
       {
