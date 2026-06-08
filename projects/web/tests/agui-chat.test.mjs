@@ -162,6 +162,51 @@ test("run lifecycle and caught_up status", () => {
   assert.equal(state.status.kind, "complete");
 });
 
+test("RUN_FINISHED closes open text, tool call, and reasoning streams", () => {
+  const state = createChatState();
+  const runId = "run-cleanup";
+  const messageId = "assistant-cleanup";
+  const toolCallId = "tool-cleanup";
+  const reasoningId = "reasoning-cleanup";
+
+  ReduceAll(state, [
+    { type: "RUN_STARTED", runId, threadId: "thread-1" },
+    { type: "TEXT_MESSAGE_START", messageId, role: "assistant" },
+    { type: "TEXT_MESSAGE_CONTENT", messageId, delta: "partial answer" },
+    {
+      type: "TOOL_CALL_START",
+      toolCallId,
+      toolCallName: "lookup",
+      parentMessageId: messageId,
+    },
+    { type: "TOOL_CALL_ARGS", toolCallId, delta: '{"query":"status"}' },
+    { type: "REASONING_MESSAGE_START", messageId: reasoningId },
+    { type: "REASONING_MESSAGE_CONTENT", messageId: reasoningId, delta: "checking" },
+  ]);
+
+  applyServerMessage(state, { type: "caught_up" });
+  assert.equal(state.status.kind, "live");
+  assert.equal(state.openTextMessages.has(messageId), true);
+  assert.equal(state.openToolCalls.has(toolCallId), true);
+  assert.equal(state.openReasoning.has(reasoningId), true);
+
+  reduceAguiEvent(state, { type: "RUN_FINISHED", runId, threadId: "thread-1" });
+
+  const message = state.messages.get(messageId);
+  assert.equal(message.isStreaming, false);
+  assert.equal(message.toolCalls.length, 1);
+  assert.equal(message.toolCalls[0].args, '{"query":"status"}');
+  assert.equal(message.toolCalls[0].isOpen, false);
+
+  const reasoning = state.messages.get(reasoningId);
+  assert.equal(reasoning.isStreaming, false);
+  assert.equal(state.runs.get(runId).status, "finished");
+  assert.equal(state.openTextMessages.size, 0);
+  assert.equal(state.openToolCalls.size, 0);
+  assert.equal(state.openReasoning.size, 0);
+  assert.equal(state.status.kind, "complete");
+});
+
 test("RUN_ERROR creates system message and error status", () => {
   const state = createChatState();
   ReduceAll(state, [
