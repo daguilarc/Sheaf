@@ -2,10 +2,10 @@
 
 ## Issue PL-0001
 
-- status: open
+- status: completed
 - owner_role: polisher_reviewer
 - created_at: 2026-06-08T22:58:10Z
-- updated_at: 2026-06-08T22:58:10Z
+- updated_at: 2026-06-08T23:09:16Z
 - title: Live frames can precede server.hello / interleave replay before server.caught_up
 - details: ## Problem
 
@@ -71,10 +71,10 @@ frame arriving before hello still passes.
 
 ## Issue PL-0002
 
-- status: open
+- status: completed
 - owner_role: polisher_reviewer
 - created_at: 2026-06-08T22:58:23Z
-- updated_at: 2026-06-08T22:58:23Z
+- updated_at: 2026-06-08T23:09:16Z
 - title: Idle-offload accounting keyed on optional client id can offload agent under a live socket
 - details: ## Problem
 
@@ -131,10 +131,10 @@ client that never disconnected.
 
 ## Issue PL-0003
 
-- status: open
+- status: completed
 - owner_role: polisher_reviewer
 - created_at: 2026-06-08T22:58:25Z
-- updated_at: 2026-06-08T22:58:25Z
+- updated_at: 2026-06-08T23:09:16Z
 - title: history.page events mode duplicates user messages (chat.user_message re-mapped on top of stored agui.event)
 - details: ## Problem
 
@@ -183,10 +183,10 @@ double-mapping path is never exercised against a realistic live-produced log.
 
 ## Issue PL-0004
 
-- status: open
+- status: completed
 - owner_role: polisher_reviewer
 - created_at: 2026-06-08T22:58:26Z
-- updated_at: 2026-06-08T22:58:26Z
+- updated_at: 2026-06-08T23:09:17Z
 - title: SessionBroadcasterRegistry never releases broadcasters/lifecycle subscriptions for idle sessions
 - details: ## Problem
 
