@@ -2,10 +2,10 @@
 
 ## Issue PL-0001
 
-- status: open
+- status: completed
 - owner_role: polisher_reviewer
 - created_at: 2026-06-07T00:00:00Z
-- updated_at: 2026-06-07T00:00:00Z
+- updated_at: 2026-06-08T06:05:00Z
 - title: Streaming cursor and reasoning spinner persist after stream end
 - details: In `RenderTranscript` (`projects/web/src/agui-chat.js:1120-1127`), an
   already-created message node is only re-rendered when `message.isStreaming ||
@@ -47,7 +47,26 @@
   the `END` event followed by `renderChat`, asserting the assistant content's
   `innerHTML` no longer includes `agui-chat-streaming` and the reasoning node's
   spinner is hidden (`display === "none"`).
-- note: Recorded directly in this file because the `scripts/quest-runner issues`
-  CLI was unavailable during this review (every invocation was blocked by the
-  permission system and could not be approved). Please re-key/normalize this entry
-  through the CLI if it becomes available.
+- resolution_notes (verified 2026-06-08T06:05:00Z): Confirmed fix. The polisher
+  responded `Fixed` (see `polishing_issue_responses.md`, Response PL-0001). The
+  node entry now records `renderedStreaming` whenever an assistant/reasoning node
+  is updated (`agui-chat.js:1010` and `:1047`), and the `RenderTranscript` update
+  gate (`agui-chat.js:1120-1128`) now also fires when
+  `nodeEntry.renderedStreaming === true`. This forces exactly one more
+  `UpdateMessageNode` call on the render pass where `isStreaming` has just flipped
+  to false: for assistant, `UpdateAssistantContent` re-renders without the
+  `agui-chat-streaming` cursor; for reasoning, the spinner is set to
+  `display:none`. `renderedStreaming` is then set false, so subsequent renders
+  skip the node and it stays stable. New regression test "stream end in a later
+  render removes transient streaming indicators"
+  (`projects/web/tests/agui-chat.test.mjs:729-771`) renders START+CONTENT for both
+  an assistant and a reasoning message in one frame (asserting the cursor is
+  present and the spinner visible), then sends both END events in a separate
+  `applyServerMessage`+`renderChat` and asserts the assistant `innerHTML` no
+  longer includes `agui-chat-streaming` and the reasoning spinner is
+  `display === "none"`. This exercises the previously-untested cross-frame END
+  transition for both roles and matches the close criteria. Resolved.
+- note: This issue was recorded and closed directly in this file because the
+  `scripts/quest-runner issues` CLI was unavailable during this review (every
+  invocation was blocked by the permission system and could not be approved).
+  Please re-key/normalize this entry through the CLI if it becomes available.
