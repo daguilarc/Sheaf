@@ -3,6 +3,7 @@ import { stat } from "node:fs/promises";
 import type { SheafChatConfig } from "../server/config.js";
 import {
   AgentLifecycleState,
+  type ModelMetadata,
   type ModelReference,
 } from "../shared/types.js";
 import {
@@ -25,6 +26,7 @@ import {
 } from "./lifecycle.js";
 import {
   CreateSheafModelRegistry,
+  ListModels,
   ModelValidationError,
   ValidateModelSelection,
   type SheafModelRegistryBundle,
@@ -146,6 +148,15 @@ export class AgentManager
   get storagePaths(): StoragePaths
   {
     return this.m_storagePaths;
+  }
+
+  listModels(): ModelMetadata[]
+  {
+    return ListModels(
+      this.m_config,
+      this.m_modelBundle.modelRegistry,
+      this.m_modelBundle.localProviderState,
+    );
   }
 
   async createBlankSession(

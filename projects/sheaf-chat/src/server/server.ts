@@ -1,17 +1,22 @@
 import { createServer, type Server } from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
+import type { AgentManager } from "../agents/manager.js";
 import { FormatRestError } from "../shared/errors.js";
 import type { SheafChatConfig } from "./config.js";
+import { x_serviceName, x_serviceVersion } from "./constants.js";
+import { SendJson } from "./http.js";
+import { DispatchApiRoute } from "./router.js";
+import type { RouteContext } from "./routes/context.js";
 
-export const x_serviceName = "sheaf-chat";
-export const x_serviceVersion = "0.1.0";
+export { x_serviceName, x_serviceVersion };
 
 export interface SheafChatServerOptions
 {
   config: SheafChatConfig;
   bindHost: string;
   bindPort: number;
+  agentManager: AgentManager;
 }
 
 export interface SheafChatServer
@@ -21,25 +26,6 @@ export interface SheafChatServer
   close: () => Promise<void>;
 }
 
-function SendJson(response: ServerResponse, statusCode: number, body: unknown): void
-{
-  const payload = JSON.stringify(body);
-  response.writeHead(statusCode, {
-    "content-type": "application/json; charset=utf-8",
-    "content-length": Buffer.byteLength(payload),
-  });
-  response.end(payload);
-}
-
-function HandleHealth(response: ServerResponse): void
-{
-  SendJson(response, 200, {
-    service: x_serviceName,
-    version: x_serviceVersion,
-    status: "ok",
-  });
-}
-
 function HandleNotFound(response: ServerResponse): void
 {
   SendJson(response, 404, FormatRestError("not_found", "route not found"));
@@ -47,13 +33,18 @@ function HandleNotFound(response: ServerResponse): void
 
 export function CreateSheafChatServer(options: SheafChatServerOptions): SheafChatServer
 {
+  const routeContext: RouteContext = {
+    config: options.config,
+    agentManager: options.agentManager,
+  };
+
   const httpServer = createServer((request: IncomingMessage, response: ServerResponse) =>
   {
     const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
 
-    if (request.method === "GET" && url.pathname === "/api/health")
+    if (url.pathname.startsWith("/api/"))
     {
-      HandleHealth(response);
+      void DispatchApiRoute(routeContext, request, response, url);
       return;
     }
 

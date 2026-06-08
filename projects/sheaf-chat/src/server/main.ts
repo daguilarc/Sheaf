@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { AgentManager } from "../agents/manager.js";
 import { LoadSheafChatConfig } from "./config.js";
 import { FindServiceByName, LoadServiceRegistry } from "./service_registry.js";
 import { CreateSheafChatServer, x_serviceName } from "./server.js";
@@ -15,10 +16,12 @@ async function main(): Promise<void>
     throw new Error(`${x_serviceName} is not registered in config/services.json`);
   }
 
+  const agentManager = await AgentManager.Create({ config });
   const server = CreateSheafChatServer({
     config,
     bindHost: service.host,
     bindPort: service.port,
+    agentManager,
   });
 
   const port = await server.listen();
