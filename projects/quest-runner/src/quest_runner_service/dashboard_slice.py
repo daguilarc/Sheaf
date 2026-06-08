@@ -416,12 +416,12 @@ def slice_page_payload(
     }
 
 
-def agent_log_payload(
+def resolve_agent_log_path(
     *,
     quest_dir: Path,
     agent_key: str,
     step: int | None,
-) -> dict:
+) -> tuple[int, Path]:
     scope, role = parse_agent_key(agent_key)
     validate_agent_role(scope, role)
     logs = collect_step_logs_for_role(quest_dir, role)
@@ -432,10 +432,23 @@ def agent_log_payload(
         selected = next((p for sn, p in logs if sn == step), None)
         if selected is None:
             raise DashboardNotFound(f"No log for role {role!r} with step={step}")
-        current_step = step
-        path = selected
-    else:
-        current_step, path = logs[-1]
+        return step, selected
+    return logs[-1]
+
+
+def agent_log_payload(
+    *,
+    quest_dir: Path,
+    agent_key: str,
+    step: int | None,
+) -> dict:
+    scope, role = parse_agent_key(agent_key)
+    current_step, path = resolve_agent_log_path(
+        quest_dir=quest_dir,
+        agent_key=agent_key,
+        step=step,
+    )
+    logs = collect_step_logs_for_role(quest_dir, role)
 
     raw = path.read_text(encoding="utf-8")
     st = path.stat()

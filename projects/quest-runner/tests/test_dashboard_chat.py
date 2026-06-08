@@ -1,0 +1,277 @@
+"""Tests for ChatStreamSession replay and live streaming."""
+
+from __future__ import annotations
+
+import json
+import tempfile
+import threading
+import time
+import unittest
+from pathlib import Path
+
+from quest_runner_service.chat_event_bus import ChatEventBus  # type: ignore[import-not-found]
+from quest_runner_service.dashboard_chat import ChatStreamSession  # type: ignore[import-not-found]
+
+
+def _base_event(*, sequence: int, event_kind: str, **fields: object) -> dict:
+    event = {
+        "schema_version": 1,
+        "timestamp": "2026-01-01T00:00:00Z",
+        "sequence": sequence,
+        "step": 1,
+        "role": "implementer",
+        "thread": "test-thread",
+        "harness": "cursor",
+        "provider_thread_id": "provider-1",
+        "event_kind": event_kind,
+    }
+    event.update(fields)
+    return event
+
+
+class FakeWebSocket:
+    def __init__(self, *, close_after_caught_up: bool = True) -> None:
+        self.messages: list[dict] = []
+        self.closed = False
+        self._send_raises = False
+        self._close_after_caught_up = close_after_caught_up
+
+    def send(self, data: str) -> None:
+        if self.closed or self._send_raises:
+            raise ConnectionError("send failed")
+        message = json.loads(data)
+        self.messages.append(message)
+        if self._close_after_caught_up and message.get("type") == "caught_up":
+            self.closed = True
+
+    def fail_sends(self) -> None:
+        self._send_raises = True
+
+
+class ChatStreamSessionTests(unittest.TestCase):
+    def _write_jsonl(self, path: Path, events: list[dict], *, extra_lines: list[str] | None = None) -> None:
+        lines: list[str] = []
+        for event in events:
+            lines.append(json.dumps(event, sort_keys=True))
+        if extra_lines:
+            lines.extend(extra_lines)
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    def _run_session(
+        self,
+        path: Path,
+        *,
+        ws: FakeWebSocket | None = None,
+        bus: ChatEventBus | None = None,
+        in_thread: bool = False,
+    ) -> tuple[FakeWebSocket, ChatEventBus, threading.Thread | None]:
+        websocket = ws or FakeWebSocket(close_after_caught_up=not in_thread)
+        event_bus = bus or ChatEventBus()
+        session = ChatStreamSession(path, websocket, event_bus)
+        thread: threading.Thread | None = None
+        if in_thread:
+            thread = threading.Thread(target=session.run, daemon=True)
+            thread.start()
+        else:
+            session.run()
+        return websocket, event_bus, thread
+
+    def _wait_for_message_type(self, ws: FakeWebSocket, message_type: str, timeout: float = 2.0) -> None:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if any(message.get("type") == message_type for message in ws.messages):
+                return
+            time.sleep(0.02)
+        self.fail(f"timed out waiting for {message_type!r}")
+
+    def test_replay_sends_events_and_caught_up(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "step_0001_implementer.jsonl"
+            self._write_jsonl(
+                path,
+                [
+                    _base_event(sequence=1, event_kind="sheaf.run_started", model="m"),
+                    _base_event(sequence=2, event_kind="sheaf.prompt", text="hello"),
+                    _base_event(sequence=3, event_kind="sheaf.run_completed"),
+                ],
+            )
+
+            ws, _, _ = self._run_session(path)
+
+        event_messages = [message for message in ws.messages if message["type"] == "events"]
+        self.assertGreaterEqual(len(event_messages), 1)
+        agui_types = [
+            event["type"]
+            for message in event_messages
+            for event in message["events"]
+        ]
+        self.assertIn("RUN_STARTED", agui_types)
+        self.assertIn("TEXT_MESSAGE_START", agui_types)
+        self.assertIn("RUN_FINISHED", agui_types)
+        self.assertEqual(ws.messages[-1], {"type": "caught_up"})
+
+    def test_replay_batches_at_one_hundred_events(self) -> None:
+        events = [_base_event(sequence=1, event_kind="sheaf.run_started", model="m")]
+        sequence = 2
+        while sequence < 36:
+            events.append(
+                _base_event(
+                    sequence=sequence,
+                    event_kind="sheaf.prompt",
+                    text=f"prompt-{sequence}",
+                )
+            )
+            sequence += 1
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "step_0001_implementer.jsonl"
+            self._write_jsonl(path, events)
+            ws, _, _ = self._run_session(path)
+
+        event_messages = [message for message in ws.messages if message["type"] == "events"]
+        batch_sizes = [len(message["events"]) for message in event_messages]
+        self.assertIn(100, batch_sizes)
+        self.assertGreater(sum(batch_sizes), 100)
+
+    def test_live_event_streams_after_replay(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "step_0001_implementer.jsonl"
+            self._write_jsonl(
+                path,
+                [
+                    _base_event(sequence=1, event_kind="sheaf.run_started", model="m"),
+                    _base_event(sequence=2, event_kind="sheaf.prompt", text="hello"),
+                    _base_event(sequence=3, event_kind="sheaf.run_completed"),
+                ],
+            )
+
+            ws = FakeWebSocket(close_after_caught_up=False)
+            ws, bus, thread = self._run_session(path, ws=ws, in_thread=True)
+            assert thread is not None
+            self._wait_for_message_type(ws, "caught_up")
+
+            replay_event_count = sum(
+                len(message["events"])
+                for message in ws.messages
+                if message["type"] == "events"
+            )
+
+            bus.publish(
+                path,
+                _base_event(sequence=4, event_kind="sheaf.prompt", text="live"),
+            )
+
+            deadline = time.monotonic() + 2.0
+            while time.monotonic() < deadline:
+                live_count = sum(
+                    len(message["events"])
+                    for message in ws.messages
+                    if message["type"] == "events"
+                )
+                if live_count > replay_event_count:
+                    break
+                time.sleep(0.02)
+            else:
+                self.fail("timed out waiting for live event")
+
+            ws.closed = True
+            thread.join(timeout=2.0)
+            self.assertFalse(thread.is_alive())
+
+    def test_live_event_skips_replayed_sequence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "step_0001_implementer.jsonl"
+            self._write_jsonl(
+                path,
+                [
+                    _base_event(sequence=1, event_kind="sheaf.run_started", model="m"),
+                    _base_event(sequence=2, event_kind="sheaf.prompt", text="hello"),
+                ],
+            )
+
+            ws = FakeWebSocket(close_after_caught_up=False)
+            ws, bus, thread = self._run_session(path, ws=ws, in_thread=True)
+            assert thread is not None
+            self._wait_for_message_type(ws, "caught_up")
+
+            replay_event_count = sum(
+                len(message["events"])
+                for message in ws.messages
+                if message["type"] == "events"
+            )
+
+            bus.publish(
+                path,
+                _base_event(sequence=2, event_kind="sheaf.prompt", text="duplicate"),
+            )
+            bus.publish(
+                path,
+                _base_event(sequence=3, event_kind="sheaf.prompt", text="new"),
+            )
+
+            deadline = time.monotonic() + 2.0
+            while time.monotonic() < deadline:
+                live_count = sum(
+                    len(message["events"])
+                    for message in ws.messages
+                    if message["type"] == "events"
+                )
+                if live_count > replay_event_count:
+                    break
+                time.sleep(0.02)
+            else:
+                self.fail("timed out waiting for deduplicated live event")
+
+            all_text_deltas = [
+                event.get("delta", "")
+                for message in ws.messages
+                if message.get("type") == "events"
+                for event in message["events"]
+                if event.get("type") == "TEXT_MESSAGE_CONTENT"
+            ]
+            self.assertIn("new", all_text_deltas)
+            self.assertNotIn("duplicate", all_text_deltas)
+
+            ws.closed = True
+            thread.join(timeout=2.0)
+
+    def test_malformed_json_sends_error_and_continues_replay(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "step_0001_implementer.jsonl"
+            self._write_jsonl(
+                path,
+                [
+                    _base_event(sequence=1, event_kind="sheaf.run_started", model="m"),
+                    _base_event(sequence=3, event_kind="sheaf.prompt", text="after error"),
+                ],
+                extra_lines=["not-json"],
+            )
+
+            ws, _, _ = self._run_session(path)
+
+        error_messages = [message for message in ws.messages if message["type"] == "error"]
+        self.assertEqual(len(error_messages), 1)
+        self.assertIn("invalid JSON", error_messages[0]["message"])
+        self.assertEqual(ws.messages[-1], {"type": "caught_up"})
+
+    def test_send_failure_exits_and_unsubscribes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "step_0001_implementer.jsonl"
+            self._write_jsonl(
+                path,
+                [
+                    _base_event(sequence=1, event_kind="sheaf.run_started", model="m"),
+                ],
+            )
+
+            ws = FakeWebSocket()
+            bus = ChatEventBus()
+            ws.fail_sends()
+            ChatStreamSession(path, ws, bus).run()
+
+            self.assertEqual(ws.messages, [])
+            self.assertEqual(bus._subscribers, {})
+
+
+if __name__ == "__main__":
+    unittest.main()
