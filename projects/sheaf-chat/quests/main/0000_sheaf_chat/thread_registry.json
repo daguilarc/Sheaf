@@ -79,5 +79,14 @@
     "round_count": 1,
     "created_at": "2026-06-08T21:28:09Z",
     "last_used_at": "2026-06-08T21:32:54Z"
+  },
+  "slice_3_polisher_reviewer": {
+    "thread_name": "sheaf-chat_main_0000_sheaf_chat_quest_0000_slice_0003_polisher_reviewer",
+    "harness_kind": "claude_code",
+    "provider_thread_id": "0d67bfad-5fc6-42c2-ac02-30f702e1803c",
+    "pass_id": 0,
+    "round_count": 1,
+    "created_at": "2026-06-08T21:32:55Z",
+    "last_used_at": "2026-06-08T21:37:42Z"
   }
 }
