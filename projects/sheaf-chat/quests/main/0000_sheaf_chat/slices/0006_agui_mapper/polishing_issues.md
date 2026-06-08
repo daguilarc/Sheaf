@@ -2,10 +2,10 @@
 
 ## Issue PL-0001
 
-- status: open
+- status: completed
 - owner_role: polisher_reviewer
 - created_at: 2026-06-08T22:31:52Z
-- updated_at: 2026-06-08T22:31:52Z
+- updated_at: 2026-06-08T22:35:09Z
 - title: Flush() emits RUN_FINISHED with threadId set to the run id instead of the thread id
 - details: ## Problem
 
@@ -42,10 +42,10 @@ This branch has zero coverage. Both `Flush` call sites in the tests (`tests/agui
 
 ## Issue PL-0002
 
-- status: open
+- status: completed
 - owner_role: polisher_reviewer
 - created_at: 2026-06-08T22:31:55Z
-- updated_at: 2026-06-08T22:31:55Z
+- updated_at: 2026-06-08T22:35:09Z
 - title: mapPiEventToAgui defaults to a shared stateful singleton mapper (cross-session state leak)
 - details: ## Problem
 
