@@ -109,11 +109,6 @@ export function ResolveApiEndpoint(pathname: string): string | null
 
   if (segments[1] === "piles")
   {
-    if (segments.length === 3)
-    {
-      return "pile";
-    }
-
     if (segments[3] === "sessions")
     {
       if (segments.length === 4)
@@ -266,7 +261,10 @@ export async function DispatchApiRoute(
         url.searchParams,
         response,
       );
+      return;
     }
+
+    SendRestError(response, 404, "not_found", "route not found");
   }
   catch (error)
   {

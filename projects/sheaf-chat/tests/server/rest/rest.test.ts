@@ -272,5 +272,19 @@ test("unsupported methods and routes return stable errors", async () =>
     const missing = await RequestJson(baseUrl, "GET", "/api/unknown");
     assert.equal(missing.status, 404);
     assert.equal(ErrorBody(missing.body).code, "not_found");
+
+    const barePile = await fetch(`${baseUrl}/api/piles/work`, {
+      method: "GET",
+      signal: AbortSignal.timeout(1000),
+    });
+    assert.equal(barePile.status, 404);
+    assert.equal(ErrorBody(await barePile.json()).code, "not_found");
+
+    const barePilePost = await fetch(`${baseUrl}/api/piles/work`, {
+      method: "POST",
+      signal: AbortSignal.timeout(1000),
+    });
+    assert.equal(barePilePost.status, 404);
+    assert.equal(ErrorBody(await barePilePost.json()).code, "not_found");
   });
 });
