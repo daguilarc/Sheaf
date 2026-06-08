@@ -10,10 +10,12 @@ Implementation files:
 - `src/quest_runner_service/dashboard_assets/app.js`
 - `src/quest_runner_service/dashboard_assets/dashboard-logic.mjs`
 - `src/quest_runner_service/dashboard_assets/dashboard-pages-utils.mjs`
+- `src/quest_runner_service/dashboard_assets/styles.css`
 - `src/quest_runner_service/dashboard_data.py`
 - `src/quest_runner_service/dashboard_git.py`
 - `src/quest_runner_service/dashboard_slice.py`
 - `src/quest_runner_service/dashboard_runs.py`
+- `src/quest_runner_service/dashboard_chat.py`
 
 ## Project And Quest Selection
 
@@ -88,15 +90,27 @@ rules.
 
 ## Agent Logs
 
-Agent summaries come from `/api/dashboard/quest_agents`. Individual logs load
-from `/api/dashboard/agent_log` by agent key and optional step. The log content
-is read from quest-local files such as:
+Agent summaries come from `/api/dashboard/quest_agents`. Agent log metadata and
+step selectors load from `/api/dashboard/agent_log` by agent key and optional
+step. The visible transcript is a read-only chat view backed by the WebSocket
+stream documented in [Agent chat UI](chat-ui.md).
+
+The dashboard renders the chat view on the quest-level agents page and on slice
+agents subpages. Selecting a different agent or step closes the current
+WebSocket and opens a new one for the selected log. If the shared chat asset does
+not load, the agent panel reports that the transcript is unavailable without
+opening a WebSocket.
+
+Agent log files remain quest-local JSONL files such as:
 
 ```text
 <quest_dir>/logs/step_<n>_<role>.jsonl
 ```
 
 Thread transcripts remain under `<quest_dir>/threads/`.
+
+Chat-specific browser assets are shared with other Sheaf web surfaces under
+`projects/web/src/` and are served by Quest Runner at `/assets/web/`.
 
 ## Git Views
 

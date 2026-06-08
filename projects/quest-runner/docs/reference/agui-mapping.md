@@ -7,7 +7,9 @@ AGUI (A-G-U-I) is the Agent User Interaction event protocol used as the common
 UI event target for agent activity. Quest Runner cares about AGUI because the
 runner talks to multiple harnesses (`cursor`, `codex`, and `claude_code`) whose
 native event shapes differ. Mapping those harness-specific events into AGUI lets
-UI code consume one normalized stream.
+UI code consume one normalized stream. The dashboard's read-only agent chat
+transcript consumes this mapped stream through
+[Agent chat UI](chat-ui.md).
 
 ## Mapper API
 
@@ -40,6 +42,14 @@ the final source event in a log stream.
 path. Fallback events are emitted as AGUI `RAW` events so data is not lost, but
 their presence means a harness produced an event shape that the mapper does not
 properly understand yet.
+
+## Dashboard Chat Usage
+
+`dashboard_chat.ChatStreamSession` creates a mapper per WebSocket connection. It
+replays the selected JSONL log into AGUI events, calls `flush()` when replay is
+complete, sends `caught_up`, and then maps live events delivered by the
+in-process chat event bus. The browser-side chat reducer expects AGUI events in
+the same shape validated by the mapper tests.
 
 ## Source And Target Schemas
 

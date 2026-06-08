@@ -42,6 +42,8 @@ Useful modules for the project-local quest model:
 | `tests.test_worktree_execution_path` | Run path, worktree resolution |
 | `tests.test_quest_service_api` | REST routes, forbidden imports, absent orchestrator routes |
 | `tests.test_dashboard_api` | Dashboard payloads, project identity |
+| `tests.test_chat_event_bus` | Chat event bus fan-out and unsubscribe behavior |
+| `tests.test_dashboard_chat` | Agent log WebSocket replay, live streaming, and route errors |
 | `tests.test_dashboard_shell` | HTML shell and JS unit tests |
 | `tests.test_state_machine_core` | Recursive state machine behavior |
 | `tests.test_commit_metadata` | Git step commit metadata |
@@ -53,6 +55,7 @@ Useful modules for the project-local quest model:
 ```bash
 node --test projects/quest-runner/src/quest_runner_service/dashboard_assets/dashboard-logic.test.mjs
 node --test projects/quest-runner/src/quest_runner_service/dashboard_assets/dashboard-pages-utils.test.mjs
+node --test projects/web/tests/agui-chat.test.mjs
 ```
 
 ## Temp git and worktree fixtures

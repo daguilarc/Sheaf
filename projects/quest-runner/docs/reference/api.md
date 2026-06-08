@@ -1,8 +1,9 @@
-# REST API reference
+# API Reference
 
-Quest Runner exposes a Flask REST service on port `9002` by default. The service
-provides quest lifecycle endpoints and dashboard read APIs. It does not expose
-service registration, service lifecycle, log streaming, database, or MCP routes.
+Quest Runner exposes a Flask service on port `9002` by default. The service
+provides quest lifecycle REST endpoints, dashboard read APIs, and a dashboard
+WebSocket stream for agent chat transcripts. It does not expose service
+registration, service lifecycle, service log streaming, database, or MCP routes.
 
 Implementation: `src/quest_runner_service/api.py`.
 
@@ -375,6 +376,11 @@ Serves the quest dashboard HTML shell.
 
 Serves static dashboard assets (`app.js`, `styles.css`, ES modules).
 
+### `GET /assets/web/<path>`
+
+Serves shared browser assets from `projects/web/src/`, including
+`agui-chat.js` and `agui-chat.css`.
+
 ## Dashboard read APIs
 
 All dashboard APIs that address a specific quest require query parameters
@@ -446,7 +452,11 @@ Agent/thread registry summary for the quest.
 
 ### `GET /api/dashboard/agent_log`
 
-Agent step log content. Query parameters: `agent_key`, optional `step`.
+Agent step log metadata and raw content. Query parameters: `agent_key`, optional
+`step`.
+
+The dashboard uses this endpoint to populate the selected agent, step selector,
+and log metadata before opening the WebSocket transcript stream.
 
 ### `GET /api/dashboard/git_commits`
 
@@ -456,6 +466,35 @@ Git commit history from the resolved checkout (worktree preferred). Optional
 ### `GET /api/dashboard/git_diff`
 
 Git diff for a commit. Required: `commit`. Optional: `path` for a single-file diff.
+
+## Dashboard WebSocket APIs
+
+### `WS /api/dashboard/agent_log/stream`
+
+Streams AGUI events for one agent step log. Query parameters are the same quest
+identity parameters used by the dashboard read APIs, plus:
+
+| Parameter | Required | Description |
+| --- | --- | --- |
+| `agent_key` | yes | Agent key such as `quest:physical_planner` or `slice:implementer` |
+| `step` | no | Step number to stream; defaults to the latest log for the role |
+
+On connection, Quest Runner resolves the selected quest and JSONL log file,
+subscribes to the in-process chat event bus for that file, replays existing log
+events through `QuestLogToAguiMapper`, then continues streaming live events that
+the harness publishes as it writes new JSONL lines.
+
+Server messages are JSON objects:
+
+| Message | Description |
+| --- | --- |
+| `{"type": "events", "events": [...]}` | Batch of AGUI events. Replay batches contain up to 100 events. Live batches contain the events produced by one source log event. |
+| `{"type": "caught_up"}` | Historical replay is complete and subsequent `events` messages are live. |
+| `{"type": "error", "message": "..."}` | Setup, JSONL parse, or stream error. |
+
+The client does not send application messages after connecting. Invalid quest
+parameters, unknown agent keys, and missing logs are reported as `error`
+messages on the WebSocket.
 
 ## Absent routes
 

@@ -4,9 +4,9 @@ Human-facing documentation for the Quest Runner service.
 
 Quest Runner is a Sheaf project service that creates, runs, and monitors
 filesystem-backed quests under `projects/<project>/quests/`. It exposes a Flask
-REST service on port `9002`, serves a project-aware dashboard at `/dashboard`,
-creates deterministic git worktrees for new quests, and executes quests through
-the recursive quest state machine.
+service on port `9002`, serves a project-aware dashboard at `/dashboard`, creates
+deterministic git worktrees for new quests, and executes quests through the
+recursive quest state machine.
 
 Quest Runner is separate from `projects/conductor/`. It does not manage other
 services, expose MCP routes, stream service logs, use SQLite, or maintain a
@@ -21,9 +21,10 @@ directory is not part of this docs tree; see
 
 Exact APIs, layout, configuration, and test commands:
 
-- [REST API](reference/api.md)
+- [API Reference](reference/api.md)
 - [CLI](reference/cli.md)
 - [Dashboard](reference/dashboard.md)
+- [Agent chat UI](reference/chat-ui.md)
 - [AGUI event mapping](reference/agui-mapping.md)
 - [Quest directory layout](reference/layout.md)
 - [Runtime files](reference/runtime-files.md)
