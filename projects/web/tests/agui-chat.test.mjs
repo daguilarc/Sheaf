@@ -726,6 +726,50 @@ test("text streaming reuses the same message DOM node", () => {
   );
 });
 
+test("stream end in a later render removes transient streaming indicators", () => {
+  const container = document.createElement("div");
+  const LiveChatView = LoadChatView();
+  const handle = LiveChatView.create(container, null);
+  LiveChatView._flushFrames();
+
+  applyServerMessage(handle.state, {
+    type: "events",
+    events: [
+      { type: "TEXT_MESSAGE_START", messageId: "stream-end", role: "assistant" },
+      { type: "TEXT_MESSAGE_CONTENT", messageId: "stream-end", delta: "done" },
+      { type: "REASONING_MESSAGE_START", messageId: "reason-end" },
+      { type: "REASONING_MESSAGE_CONTENT", messageId: "reason-end", delta: "thinking" },
+    ],
+  });
+  renderChat(handle);
+
+  const assistantEntry = handle.messageNodes.get("stream-end");
+  const reasoningEntry = handle.messageNodes.get("reason-end");
+  assert.ok(assistantEntry);
+  assert.ok(reasoningEntry);
+  assert.equal(
+    assistantEntry.content.innerHTML.includes("agui-chat-streaming"),
+    true
+  );
+  assert.ok(reasoningEntry.spinner);
+  assert.equal(reasoningEntry.spinner.style.display || "", "");
+
+  applyServerMessage(handle.state, {
+    type: "events",
+    events: [
+      { type: "TEXT_MESSAGE_END", messageId: "stream-end" },
+      { type: "REASONING_MESSAGE_END", messageId: "reason-end" },
+    ],
+  });
+  renderChat(handle);
+
+  assert.equal(
+    assistantEntry.content.innerHTML.includes("agui-chat-streaming"),
+    false
+  );
+  assert.equal(reasoningEntry.spinner.style.display, "none");
+});
+
 test("tool and reasoning panels toggle expanded state", () => {
   const container = document.createElement("div");
   const LiveChatView = LoadChatView();

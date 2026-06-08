@@ -1007,6 +1007,7 @@
   function UpdateMessageNode(handle, nodeEntry, message, state) {
     if (message.role === "assistant") {
       UpdateAssistantContent(nodeEntry.content, message);
+      nodeEntry.renderedStreaming = message.isStreaming === true;
       return;
     }
 
@@ -1044,6 +1045,7 @@
           nodeEntry.spinner.style.display = "none";
         }
       }
+      nodeEntry.renderedStreaming = message.isStreaming === true;
     }
   }
 
@@ -1119,6 +1121,7 @@
         UpdateMessageNode(handle, nodeEntry, message, state);
       } else if (
         message.isStreaming ||
+        nodeEntry.renderedStreaming === true ||
         state.openTextMessages.has(messageId) ||
         state.openReasoning.has(messageId) ||
         message.role === "tool"
