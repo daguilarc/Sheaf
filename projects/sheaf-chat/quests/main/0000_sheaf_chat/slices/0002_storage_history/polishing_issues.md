@@ -2,10 +2,10 @@
 
 ## Issue PL-0001
 
-- status: open
+- status: completed
 - owner_role: polisher_reviewer
 - created_at: 2026-06-08T21:25:30Z
-- updated_at: 2026-06-08T21:25:30Z
+- updated_at: 2026-06-08T21:27:47Z
 - title: WithSessionLock cleanup is dead code; x_sequenceLocks grows unbounded
 - details: ## Problem
 
