@@ -359,7 +359,7 @@ export class PiToAguiMapper
     {
       output.push(this.Agui({
         type: "RUN_FINISHED",
-        threadId: runId,
+        threadId: context.threadId,
         runId,
       }, context));
     }
@@ -706,9 +706,14 @@ const x_defaultMapper = new PiToAguiMapper();
 export function mapPiEventToAgui(
   event: PiMappableEvent,
   context: PiMapperContext,
-  mapper: PiToAguiMapper = x_defaultMapper,
+  mapper: PiToAguiMapper,
 ): AguiEvent[]
 {
+  if (mapper === undefined)
+  {
+    throw new TypeError("mapPiEventToAgui requires a PiToAguiMapper instance; create one with CreatePiToAguiMapper().");
+  }
+
   return mapper.MapEvent(event, context);
 }
 

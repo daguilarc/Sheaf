@@ -129,6 +129,42 @@ test("mapPiEventToAgui maps representative Pi streaming lifecycle", async () =>
   }
 });
 
+test("PiToAguiMapper.Flush finishes dangling runs with the original thread id", async () =>
+{
+  const mapper = CreatePiToAguiMapper();
+  const startEvents = mapPiEventToAgui({ type: "agent_start" }, x_context, mapper);
+  const runId = String(startEvents[0]?.runId);
+
+  assert.equal(startEvents[0]?.type, "RUN_STARTED");
+  assert.equal(startEvents[0]?.threadId, x_context.threadId);
+  assert.equal(runId, "pi-thread:step:7:run:1");
+
+  const flushEvents = mapper.Flush(x_context);
+  assert.deepEqual(
+    flushEvents.map((event) => event.type),
+    ["RUN_FINISHED"],
+  );
+  assert.equal(flushEvents[0]?.threadId, x_context.threadId);
+  assert.equal(flushEvents[0]?.runId, runId);
+
+  for (const event of flushEvents)
+  {
+    await ValidateAguiEvent(event);
+  }
+});
+
+test("mapPiEventToAgui requires a caller-owned mapper", () =>
+{
+  assert.throws(
+    () => mapPiEventToAgui(
+      { type: "agent_start" },
+      x_context,
+      undefined as unknown as ReturnType<typeof CreatePiToAguiMapper>,
+    ),
+    /requires a PiToAguiMapper instance/,
+  );
+});
+
 test("mapPiEventToAgui preserves persisted Pi session header events as CUSTOM", async () =>
 {
   const mapper = CreatePiToAguiMapper();
