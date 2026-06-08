@@ -39,6 +39,7 @@ class QuestLogToAguiMapper:
         self._open_reasoning_phases: set[str] = set()
         self._open_tools: dict[str, OpenToolCall] = {}
         self._seen_tools: set[str] = set()
+        self._tools_with_args: set[str] = set()
         self._claude_session_messages: dict[str, str] = {}
         self._claude_blocks: dict[tuple[str, int], ClaudeContentBlock] = {}
 
@@ -68,6 +69,8 @@ class QuestLogToAguiMapper:
                         return self._consume_codex_payload(event, payload)
                     if harness == "claude_code":
                         return self._consume_claude_payload(event, payload)
+                    if harness == "pi":
+                        return self._consume_pi_payload(event, payload)
                 return self._fallback(event)
         except Exception:
             return self._fallback(event)
@@ -164,6 +167,157 @@ class QuestLogToAguiMapper:
         )
         return out
 
+    def _consume_pi_payload(self, event: JsonObject, payload: JsonObject) -> list[JsonObject]:
+        """Map Pi JSON mode events to AGUI events."""
+        pi_type = payload.get("type")
+
+        if pi_type == "agent_start":
+            return []
+
+        if pi_type == "agent_end":
+            return []
+
+        if pi_type == "turn_start":
+            return [self._agui({"type": "STEP_STARTED", "stepName": "pi.turn", "rawEvent": event}, event)]
+
+        if pi_type == "turn_end":
+            return [self._agui({"type": "STEP_FINISHED", "stepName": "pi.turn", "rawEvent": event}, event)]
+
+        if pi_type == "message_start":
+            message = payload.get("message")
+            if not isinstance(message, dict):
+                return self._fallback(event)
+            message_id = self._pi_message_id(event, message)
+            if message_id in self._open_text_messages:
+                return []
+            self._open_text_messages.add(message_id)
+            return [
+                self._agui(
+                    {"type": "TEXT_MESSAGE_START", "messageId": message_id, "role": self._agui_text_role(message.get("role")), "rawEvent": event},
+                    event,
+                ),
+            ]
+
+        if pi_type == "message_update":
+            message = payload.get("message")
+            message_event = payload.get("assistantMessageEvent")
+            if not isinstance(message, dict) or not isinstance(message_event, dict):
+                return self._fallback(event)
+            message_id = self._pi_message_id(event, message)
+            delta_type = message_event.get("type")
+
+            if delta_type == "text_delta":
+                text = message_event.get("delta", "")
+                return self._append_text(event, message_id, str(text), role=self._agui_text_role(message.get("role")))
+
+            if delta_type == "thinking_delta":
+                text = message_event.get("delta", "")
+                return self._append_reasoning(event, f"{message_id}:thinking", str(text))
+
+            if delta_type == "tool_call_delta":
+                tool_call_id, tool_name = self._pi_tool_call_identity(event, message, message_event)
+                out = self._ensure_pi_tool_started(event, tool_call_id, tool_name, parent_message_id=message_id)
+                delta = message_event.get("delta", "")
+                out.append(self._tool_args(event, tool_call_id, str(delta)))
+                return out
+
+            return self._fallback(event)
+
+        if pi_type == "message_end":
+            message = payload.get("message")
+            if not isinstance(message, dict):
+                return self._fallback(event)
+            message_id = self._pi_message_id(event, message)
+            out = self._close_reasoning(event, f"{message_id}:thinking")
+            out.extend(self._close_text(event, message_id))
+            return out
+
+        if pi_type == "tool_execution_start":
+            tool_call_id = str(payload.get("toolCallId") or self._source_id(event, "pi-tool-exec"))
+            tool_name = str(payload.get("toolName", "pi_tool"))
+            out = self._ensure_pi_tool_started(event, tool_call_id, tool_name)
+            if tool_call_id not in self._tools_with_args and "args" in payload:
+                out.append(self._tool_args(event, tool_call_id, payload.get("args")))
+            return out
+
+        if pi_type == "tool_execution_update":
+            tool_call_id = str(payload.get("toolCallId") or self._source_id(event, "pi-tool-exec"))
+            tool_name = str(payload.get("toolName", "pi_tool"))
+            partial_result = payload.get("partialResult")
+            out = self._ensure_pi_tool_started(event, tool_call_id, tool_name)
+            if tool_call_id not in self._tools_with_args and "args" in payload:
+                out.append(self._tool_args(event, tool_call_id, payload.get("args")))
+            out.append(self._tool_result(event, tool_call_id, partial_result))
+            return out
+
+        if pi_type == "tool_execution_end":
+            tool_call_id = str(payload.get("toolCallId") or self._source_id(event, "pi-tool-exec"))
+            tool_name = str(payload.get("toolName", "pi_tool"))
+            result = {"result": payload.get("result"), "isError": payload.get("isError")} if "isError" in payload else payload.get("result")
+            out = self._ensure_pi_tool_started(event, tool_call_id, tool_name)
+            out.append(self._tool_result(event, tool_call_id, result))
+            if tool_call_id in self._open_tools:
+                out.append(self._agui({"type": "TOOL_CALL_END", "toolCallId": tool_call_id, "rawEvent": event}, event))
+                self._open_tools.pop(tool_call_id, None)
+            return out
+
+        if pi_type == "compaction_start":
+            return []
+
+        if pi_type == "compaction_end":
+            return []
+
+        if pi_type == "auto_retry_start":
+            return []
+
+        if pi_type == "auto_retry_end":
+            return []
+
+        if pi_type == "queue_update":
+            return []
+
+        return self._fallback(event)
+
+    def _pi_message_id(self, event: JsonObject, message: JsonObject) -> str:
+        timestamp = message.get("timestamp")
+        if timestamp is not None:
+            thread = event.get("thread") or event.get("provider_thread_id") or "pi"
+            step = event.get("step", "unknown")
+            role = message.get("role") or "message"
+            return f"{thread}:step:{step}:pi-message:{role}:{timestamp}"
+        return self._source_id(event, "pi-message")
+
+    def _pi_tool_call_identity(self, event: JsonObject, message: JsonObject, message_event: JsonObject) -> tuple[str, str]:
+        content = message.get("content")
+        if isinstance(content, list):
+            for block in reversed(content):
+                if isinstance(block, dict) and block.get("type") == "toolCall":
+                    tool_call_id = str(block.get("id") or f"{self._pi_message_id(event, message)}:tool")
+                    tool_name = str(message_event.get("name") or block.get("name") or "pi_tool")
+                    return tool_call_id, tool_name
+        return f"{self._pi_message_id(event, message)}:tool", str(message_event.get("name") or "pi_tool")
+
+    def _ensure_pi_tool_started(
+        self,
+        event: JsonObject,
+        tool_call_id: str,
+        tool_name: str,
+        parent_message_id: str | None = None,
+    ) -> list[JsonObject]:
+        if tool_call_id in self._open_tools:
+            return []
+        self._open_tools[tool_call_id] = OpenToolCall(tool_call_id, tool_name, parent_message_id)
+        self._seen_tools.add(tool_call_id)
+        fields: JsonObject = {
+            "type": "TOOL_CALL_START",
+            "toolCallId": tool_call_id,
+            "toolCallName": tool_name,
+            "rawEvent": event,
+        }
+        if parent_message_id is not None:
+            fields["parentMessageId"] = parent_message_id
+        return [self._agui(fields, event)]
+
     def _consume_cursor_payload(self, event: JsonObject, payload: JsonObject) -> list[JsonObject]:
         payload_type = payload.get("type")
         subtype = payload.get("subtype")
@@ -203,6 +357,9 @@ class QuestLogToAguiMapper:
 
         if payload_type == "system" or payload_type == "result":
             return [self._custom(event, f"cursor.{payload_type}", payload)]
+
+        if payload_type == "interaction_query":
+            return [self._custom(event, "cursor.interaction_query", payload)]
 
         return self._fallback(event)
 
@@ -542,6 +699,7 @@ class QuestLogToAguiMapper:
         ]
 
     def _tool_args(self, event: JsonObject, tool_call_id: str, args: Any) -> JsonObject:
+        self._tools_with_args.add(tool_call_id)
         return self._agui(
             {
                 "type": "TOOL_CALL_ARGS",
@@ -624,6 +782,12 @@ class QuestLogToAguiMapper:
     def _message_id_from_payload(self, payload: JsonObject) -> str | None:
         value = payload.get("model_call_id") or payload.get("session_id")
         return str(value) if value is not None else None
+
+    def _agui_text_role(self, role: Any) -> str:
+        role_value = str(role or "assistant")
+        if role_value in {"developer", "system", "assistant", "user"}:
+            return role_value
+        return "assistant"
 
     def _content_text(self, content: Any) -> str:
         if isinstance(content, str):

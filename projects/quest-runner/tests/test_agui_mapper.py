@@ -188,6 +188,94 @@ class AguiStreamVerifier:
 
 
 class QuestLogToAguiMapperTests(unittest.TestCase):
+    def test_maps_pi_stream_lifecycle_to_stable_agui_events(self) -> None:
+        mapper = QuestLogToAguiMapper()
+
+        def pi_event(sequence: int, payload: dict[str, Any]) -> dict[str, Any]:
+            return {
+                "event_kind": "provider.json",
+                "harness": "pi",
+                "payload": payload,
+                "provider_thread_id": "pi-provider-thread",
+                "role": "implementer",
+                "schema_version": 1,
+                "sequence": sequence,
+                "step": 7,
+                "thread": "pi-thread",
+                "timestamp": "2026-06-08T00:00:00Z",
+            }
+
+        message = {
+            "role": "assistant",
+            "content": [],
+            "api": "responses",
+            "provider": "openai",
+            "model": "gpt-test",
+            "usage": {
+                "input": 1,
+                "output": 1,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 2,
+                "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "total": 0},
+            },
+            "stopReason": "toolUse",
+            "timestamp": 123456,
+        }
+        tool_message = {
+            **message,
+            "content": [
+                {
+                    "type": "toolCall",
+                    "id": "pi-tool-1",
+                    "name": "search",
+                    "arguments": {"query": "hello"},
+                }
+            ],
+        }
+
+        events: list[dict[str, Any]] = []
+        for source in [
+            pi_event(1, {"type": "message_start", "message": message}),
+            pi_event(2, {"type": "message_update", "message": message, "assistantMessageEvent": {"type": "text_delta", "delta": "Hello"}}),
+            pi_event(3, {"type": "message_update", "message": message, "assistantMessageEvent": {"type": "thinking_delta", "delta": "Plan"}}),
+            pi_event(4, {"type": "message_update", "message": tool_message, "assistantMessageEvent": {"type": "tool_call_delta", "name": "search", "delta": '{"query":'}}),
+            pi_event(5, {"type": "tool_execution_start", "toolCallId": "pi-tool-1", "toolName": "search", "args": {"query": "hello"}}),
+            pi_event(6, {"type": "tool_execution_update", "toolCallId": "pi-tool-1", "toolName": "search", "args": {"query": "hello"}, "partialResult": "partial"}),
+            pi_event(7, {"type": "tool_execution_end", "toolCallId": "pi-tool-1", "toolName": "search", "result": "done", "isError": False}),
+            pi_event(8, {"type": "message_end", "message": tool_message}),
+        ]:
+            events.extend(mapper.consume(source))
+
+        message_id = "pi-thread:step:7:pi-message:assistant:123456"
+        self.assertEqual(
+            [event["type"] for event in events],
+            [
+                "TEXT_MESSAGE_START",
+                "TEXT_MESSAGE_CONTENT",
+                "REASONING_START",
+                "REASONING_MESSAGE_START",
+                "REASONING_MESSAGE_CONTENT",
+                "TOOL_CALL_START",
+                "TOOL_CALL_ARGS",
+                "TOOL_CALL_RESULT",
+                "TOOL_CALL_RESULT",
+                "TOOL_CALL_END",
+                "REASONING_MESSAGE_END",
+                "REASONING_END",
+                "TEXT_MESSAGE_END",
+            ],
+        )
+        self.assertEqual(events[0]["messageId"], message_id)
+        self.assertEqual(events[1]["messageId"], message_id)
+        self.assertEqual(events[3]["messageId"], f"{message_id}:thinking")
+        self.assertEqual(events[5]["toolCallId"], "pi-tool-1")
+        self.assertEqual(events[5]["parentMessageId"], message_id)
+        self.assertEqual(events[6]["delta"], '{"query":')
+        self.assertEqual(events[7]["content"], "partial")
+        self.assertEqual(json.loads(events[8]["content"]), {"result": "done", "isError": False})
+        self.assertEqual(mapper.errors(), [])
+
     def test_replays_current_quest_logs_as_valid_agui_events(self) -> None:
         repo_root = _repo_root()
         log_paths = iter_quest_log_paths(repo_root)

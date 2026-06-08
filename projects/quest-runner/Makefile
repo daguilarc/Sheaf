@@ -42,7 +42,7 @@ $(VENV_DIR)/bin/python: requirements.txt
 test: venv
 	PYTHONPATH=$(SRC_DIR) $(PYTHON) -m unittest $(TEST_MODULES)
 
-run:
+run: venv
 	bash start_quest_runner.sh
 
 clean:

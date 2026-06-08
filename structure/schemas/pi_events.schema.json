@@ -1,0 +1,2411 @@
+{
+  "$id": "https://schemas.local/sheaf/pi-events.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "JSON Schema for Pi's native JSON event stream format, as a harness within the Sheaf quest log envelope. Maps Pi's --mode JSON output (session header + agent/turn/message/tool events) to the same tagged-wrapper structure used by cursor, codex, and claude_code harnesses.",
+  "oneOf": [
+    {
+      "additionalProperties": true,
+      "properties": {
+        "event_kind": {
+          "const": "sheaf.run_started"
+        },
+        "harness": {
+          "const": "pi"
+        },
+        "model": {
+          "type": "string"
+        },
+        "provider_thread_id": {
+          "type": "string"
+        },
+        "role": {
+          "enum": [
+            "documenter",
+            "physical_planner",
+            "polisher",
+            "polisher_reviewer",
+            "physical_plan_reviewer",
+            "implementer"
+          ],
+          "type": "string"
+        },
+        "schema_version": {
+          "const": 1,
+          "type": "integer"
+        },
+        "sequence": {
+          "type": "integer"
+        },
+        "step": {
+          "type": "integer"
+        },
+        "stream": {
+          "type": "boolean"
+        },
+        "thread": {
+          "type": "string"
+        },
+        "thread_key": {
+          "type": "string"
+        },
+        "timestamp": {
+          "format": "date-time",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_kind",
+        "harness",
+        "provider_thread_id",
+        "role",
+        "schema_version",
+        "sequence",
+        "step",
+        "stream",
+        "thread",
+        "timestamp"
+      ],
+      "title": "SheafRunStartedPiEvent",
+      "type": "object"
+    },
+    {
+      "additionalProperties": true,
+      "properties": {
+        "exit_code": {
+          "type": "integer"
+        },
+        "messages": {
+          "description": "Final assistant messages at agent completion.",
+          "items": {
+            "$ref": "#/$defs/PiAgentMessage"
+          },
+          "type": "array"
+        },
+        "event_kind": {
+          "const": "sheaf.run_completed"
+        },
+        "harness": {
+          "const": "pi"
+        },
+        "idle_timeout": {
+          "type": "boolean"
+        },
+        "provider_thread_id": {
+          "type": "string"
+        },
+        "role": {
+          "enum": [
+            "documenter",
+            "physical_planner",
+            "polisher",
+            "polisher_reviewer",
+            "physical_plan_reviewer",
+            "implementer"
+          ],
+          "type": "string"
+        },
+        "schema_version": {
+          "const": 1,
+          "type": "integer"
+        },
+        "sequence": {
+          "type": "integer"
+        },
+        "step": {
+          "type": "integer"
+        },
+        "stream_events_count": {
+          "type": "integer"
+        },
+        "thread": {
+          "type": "string"
+        },
+        "timestamp": {
+          "format": "date-time",
+          "type": "string"
+        }
+      },
+      "required": [
+        "exit_code",
+        "event_kind",
+        "harness",
+        "idle_timeout",
+        "provider_thread_id",
+        "role",
+        "schema_version",
+        "sequence",
+        "step",
+        "stream_events_count",
+        "thread",
+        "timestamp"
+      ],
+      "title": "SheafRunCompletedPiEvent",
+      "type": "object"
+    },
+    {
+      "additionalProperties": true,
+      "properties": {
+        "detail": {
+          "type": "string"
+        },
+        "event_kind": {
+          "const": "sheaf.run_failed"
+        },
+        "harness": {
+          "const": "pi"
+        },
+        "provider_thread_id": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "role": {
+          "enum": [
+            "documenter",
+            "physical_planner",
+            "polisher",
+            "polisher_reviewer",
+            "physical_plan_reviewer",
+            "implementer"
+          ],
+          "type": "string"
+        },
+        "schema_version": {
+          "const": 1,
+          "type": "integer"
+        },
+        "sequence": {
+          "type": "integer"
+        },
+        "step": {
+          "type": "integer"
+        },
+        "thread": {
+          "type": "string"
+        },
+        "timestamp": {
+          "format": "date-time",
+          "type": "string"
+        }
+      },
+      "required": [
+        "detail",
+        "event_kind",
+        "harness",
+        "provider_thread_id",
+        "reason",
+        "role",
+        "schema_version",
+        "sequence",
+        "step",
+        "thread",
+        "timestamp"
+      ],
+      "title": "SheafRunFailedPiEvent",
+      "type": "object"
+    },
+    {
+      "additionalProperties": true,
+      "properties": {
+        "event_kind": {
+          "const": "sheaf.prompt"
+        },
+        "harness": {
+          "const": "pi"
+        },
+        "provider_thread_id": {
+          "type": "string"
+        },
+        "role": {
+          "enum": [
+            "documenter",
+            "physical_planner",
+            "polisher",
+            "polisher_reviewer",
+            "physical_plan_reviewer",
+            "implementer"
+          ],
+          "type": "string"
+        },
+        "schema_version": {
+          "const": 1,
+          "type": "integer"
+        },
+        "sequence": {
+          "type": "integer"
+        },
+        "step": {
+          "type": "integer"
+        },
+        "text": {
+          "type": "string"
+        },
+        "thread": {
+          "type": "string"
+        },
+        "timestamp": {
+          "format": "date-time",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_kind",
+        "harness",
+        "provider_thread_id",
+        "role",
+        "schema_version",
+        "sequence",
+        "step",
+        "text",
+        "thread",
+        "timestamp"
+      ],
+      "title": "SheafPromptPiEvent",
+      "type": "object"
+    },
+    {
+      "additionalProperties": true,
+      "properties": {
+        "event_kind": {
+          "const": "sheaf.path_enforcement"
+        },
+        "harness": {
+          "const": "pi"
+        },
+        "provider_thread_id": {
+          "type": "string"
+        },
+        "reverted_paths": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "role": {
+          "enum": [
+            "documenter",
+            "physical_planner",
+            "polisher",
+            "polisher_reviewer",
+            "physical_plan_reviewer",
+            "implementer"
+          ],
+          "type": "string"
+        },
+        "schema_version": {
+          "const": 1,
+          "type": "integer"
+        },
+        "sequence": {
+          "type": "integer"
+        },
+        "snapshot": {
+          "type": "string"
+        },
+        "step": {
+          "type": "integer"
+        },
+        "thread": {
+          "type": "string"
+        },
+        "timestamp": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "followup_sent": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "event_kind",
+        "harness",
+        "provider_thread_id",
+        "reverted_paths",
+        "role",
+        "schema_version",
+        "sequence",
+        "snapshot",
+        "step",
+        "thread",
+        "timestamp",
+        "followup_sent"
+      ],
+      "title": "SheafPathEnforcementPiEvent",
+      "type": "object"
+    },
+    {
+      "additionalProperties": true,
+      "properties": {
+        "event_kind": {
+          "const": "provider.json"
+        },
+        "harness": {
+          "const": "pi"
+        },
+        "payload": {
+          "$ref": "#/$defs/PiPayload"
+        },
+        "provider_thread_id": {
+          "type": "string"
+        },
+        "role": {
+          "enum": [
+            "documenter",
+            "physical_planner",
+            "polisher",
+            "polisher_reviewer",
+            "physical_plan_reviewer",
+            "implementer"
+          ],
+          "type": "string"
+        },
+        "schema_version": {
+          "const": 1,
+          "type": "integer"
+        },
+        "sequence": {
+          "type": "integer"
+        },
+        "step": {
+          "type": "integer"
+        },
+        "thread": {
+          "type": "string"
+        },
+        "timestamp": {
+          "format": "date-time",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_kind",
+        "harness",
+        "payload",
+        "provider_thread_id",
+        "role",
+        "schema_version",
+        "sequence",
+        "step",
+        "thread",
+        "timestamp"
+      ],
+      "title": "ProviderJsonPiEvent",
+      "type": "object"
+    },
+    {
+      "additionalProperties": true,
+      "properties": {
+        "event_kind": {
+          "const": "provider.text"
+        },
+        "harness": {
+          "const": "pi"
+        },
+        "provider_thread_id": {
+          "type": "string"
+        },
+        "role": {
+          "enum": [
+            "documenter",
+            "physical_planner",
+            "polisher",
+            "polisher_reviewer",
+            "physical_plan_reviewer",
+            "implementer"
+          ],
+          "type": "string"
+        },
+        "schema_version": {
+          "const": 1,
+          "type": "integer"
+        },
+        "sequence": {
+          "type": "integer"
+        },
+        "step": {
+          "type": "integer"
+        },
+        "text": {
+          "type": "string"
+        },
+        "thread": {
+          "type": "string"
+        },
+        "timestamp": {
+          "format": "date-time",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_kind",
+        "harness",
+        "provider_thread_id",
+        "role",
+        "schema_version",
+        "sequence",
+        "step",
+        "text",
+        "thread",
+        "timestamp"
+      ],
+      "title": "ProviderTextPiEvent",
+      "type": "object"
+    },
+    {
+      "additionalProperties": true,
+      "description": "Pi session header — emitted once as the first line of a --mode JSON output. Wraps Pi's version metadata in the standard quest log envelope.",
+      "properties": {
+        "cwd": {
+          "description": "Working directory from the Pi session header.",
+          "type": "string"
+        },
+        "event_kind": {
+          "const": "pi.session_header"
+        },
+        "harness": {
+          "const": "pi"
+        },
+        "provider_thread_id": {
+          "type": "string"
+        },
+        "role": {
+          "enum": [
+            "documenter",
+            "physical_planner",
+            "polisher",
+            "polisher_reviewer",
+            "physical_plan_reviewer",
+            "implementer"
+          ],
+          "type": "string"
+        },
+        "schema_version": {
+          "const": 1,
+          "type": "integer"
+        },
+        "sequence": {
+          "type": "integer"
+        },
+        "session_header": {
+          "$ref": "#/$defs/PiSessionHeader"
+        },
+        "step": {
+          "type": "integer"
+        },
+        "thread": {
+          "type": "string"
+        },
+        "timestamp": {
+          "format": "date-time",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_kind",
+        "harness",
+        "session_header",
+        "provider_thread_id",
+        "role",
+        "schema_version",
+        "sequence",
+        "step",
+        "thread",
+        "timestamp"
+      ],
+      "title": "PiSessionHeaderEvent",
+      "type": "object"
+    },
+    {
+      "additionalProperties": true,
+      "description": "Agent start event from Pi's JSON mode.",
+      "properties": {
+        "event_kind": {
+          "const": "provider.json"
+        },
+        "harness": {
+          "const": "pi"
+        },
+        "payload": {
+          "$ref": "#/$defs/PiAgentStart"
+        },
+        "provider_thread_id": {
+          "type": "string"
+        },
+        "role": {
+          "enum": [
+            "documenter",
+            "physical_planner",
+            "polisher",
+            "polisher_reviewer",
+            "physical_plan_reviewer",
+            "implementer"
+          ],
+          "type": "string"
+        },
+        "schema_version": {
+          "const": 1,
+          "type": "integer"
+        },
+        "sequence": {
+          "type": "integer"
+        },
+        "step": {
+          "type": "integer"
+        },
+        "thread": {
+          "type": "string"
+        },
+        "timestamp": {
+          "format": "date-time",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_kind",
+        "harness",
+        "payload",
+        "provider_thread_id",
+        "role",
+        "schema_version",
+        "sequence",
+        "step",
+        "thread",
+        "timestamp"
+      ],
+      "title": "PiAgentStartEvent",
+      "type": "object"
+    },
+    {
+      "additionalProperties": true,
+      "description": "Agent end event from Pi's JSON mode, wrapping final assistant messages.",
+      "properties": {
+        "event_kind": {
+          "const": "provider.json"
+        },
+        "harness": {
+          "const": "pi"
+        },
+        "messages": {
+          "description": "Final assistant messages at agent completion.",
+          "items": {
+            "$ref": "#/$defs/PiAgentMessage"
+          },
+          "type": "array"
+        },
+        "payload": {
+          "$ref": "#/$defs/PiAgentEnd"
+        },
+        "provider_thread_id": {
+          "type": "string"
+        },
+        "role": {
+          "enum": [
+            "documenter",
+            "physical_planner",
+            "polisher",
+            "polisher_reviewer",
+            "physical_plan_reviewer",
+            "implementer"
+          ],
+          "type": "string"
+        },
+        "schema_version": {
+          "const": 1,
+          "type": "integer"
+        },
+        "sequence": {
+          "type": "integer"
+        },
+        "step": {
+          "type": "integer"
+        },
+        "thread": {
+          "type": "string"
+        },
+        "timestamp": {
+          "format": "date-time",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_kind",
+        "harness",
+        "payload",
+        "provider_thread_id",
+        "role",
+        "schema_version",
+        "sequence",
+        "step",
+        "thread",
+        "timestamp"
+      ],
+      "title": "PiAgentEndEvent",
+      "type": "object"
+    },
+    {
+      "additionalProperties": true,
+      "description": "Turn start event from Pi's JSON mode.",
+      "properties": {
+        "event_kind": {
+          "const": "provider.json"
+        },
+        "harness": {
+          "const": "pi"
+        },
+        "payload": {
+          "$ref": "#/$defs/PiTurnStart"
+        },
+        "provider_thread_id": {
+          "type": "string"
+        },
+        "role": {
+          "enum": [
+            "documenter",
+            "physical_planner",
+            "polisher",
+            "polisher_reviewer",
+            "physical_plan_reviewer",
+            "implementer"
+          ],
+          "type": "string"
+        },
+        "schema_version": {
+          "const": 1,
+          "type": "integer"
+        },
+        "sequence": {
+          "type": "integer"
+        },
+        "step": {
+          "type": "integer"
+        },
+        "thread": {
+          "type": "string"
+        },
+        "timestamp": {
+          "format": "date-time",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_kind",
+        "harness",
+        "payload",
+        "provider_thread_id",
+        "role",
+        "schema_version",
+        "sequence",
+        "step",
+        "thread",
+        "timestamp"
+      ],
+      "title": "PiTurnStartEvent",
+      "type": "object"
+    },
+    {
+      "additionalProperties": true,
+      "description": "Turn end event from Pi's JSON mode, wrapping the assistant message and optional tool results.",
+      "properties": {
+        "event_kind": {
+          "const": "provider.json"
+        },
+        "harness": {
+          "const": "pi"
+        },
+        "message": {
+          "$ref": "#/$defs/PiAgentMessage"
+        },
+        "payload": {
+          "$ref": "#/$defs/PiTurnEnd"
+        },
+        "provider_thread_id": {
+          "type": "string"
+        },
+        "role": {
+          "enum": [
+            "documenter",
+            "physical_planner",
+            "polisher",
+            "polisher_reviewer",
+            "physical_plan_reviewer",
+            "implementer"
+          ],
+          "type": "string"
+        },
+        "schema_version": {
+          "const": 1,
+          "type": "integer"
+        },
+        "sequence": {
+          "type": "integer"
+        },
+        "step": {
+          "type": "integer"
+        },
+        "thread": {
+          "type": "string"
+        },
+        "timestamp": {
+          "format": "date-time",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_kind",
+        "harness",
+        "message",
+        "payload",
+        "provider_thread_id",
+        "role",
+        "schema_version",
+        "sequence",
+        "step",
+        "thread",
+        "timestamp"
+      ],
+      "title": "PiTurnEndEvent",
+      "type": "object"
+    },
+    {
+      "additionalProperties": true,
+      "description": "Message start event from Pi's JSON mode.",
+      "properties": {
+        "event_kind": {
+          "const": "provider.json"
+        },
+        "harness": {
+          "const": "pi"
+        },
+        "message": {
+          "$ref": "#/$defs/PiAgentMessage"
+        },
+        "payload": {
+          "$ref": "#/$defs/PiMessageStart"
+        },
+        "provider_thread_id": {
+          "type": "string"
+        },
+        "role": {
+          "enum": [
+            "documenter",
+            "physical_planner",
+            "polisher",
+            "polisher_reviewer",
+            "physical_plan_reviewer",
+            "implementer"
+          ],
+          "type": "string"
+        },
+        "schema_version": {
+          "const": 1,
+          "type": "integer"
+        },
+        "sequence": {
+          "type": "integer"
+        },
+        "step": {
+          "type": "integer"
+        },
+        "thread": {
+          "type": "string"
+        },
+        "timestamp": {
+          "format": "date-time",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_kind",
+        "harness",
+        "message",
+        "payload",
+        "provider_thread_id",
+        "role",
+        "schema_version",
+        "sequence",
+        "step",
+        "thread",
+        "timestamp"
+      ],
+      "title": "PiMessageStartEvent",
+      "type": "object"
+    },
+    {
+      "additionalProperties": true,
+      "description": "Message update event from Pi's JSON mode — carries a partial assistant message update (text delta, reasoning, or tool call delta).",
+      "properties": {
+        "event_kind": {
+          "const": "provider.json"
+        },
+        "harness": {
+          "const": "pi"
+        },
+        "message": {
+          "$ref": "#/$defs/PiAgentMessage"
+        },
+        "payload": {
+          "$ref": "#/$defs/PiMessageUpdate"
+        },
+        "provider_thread_id": {
+          "type": "string"
+        },
+        "role": {
+          "enum": [
+            "documenter",
+            "physical_planner",
+            "polisher",
+            "polisher_reviewer",
+            "physical_plan_reviewer",
+            "implementer"
+          ],
+          "type": "string"
+        },
+        "schema_version": {
+          "const": 1,
+          "type": "integer"
+        },
+        "sequence": {
+          "type": "integer"
+        },
+        "step": {
+          "type": "integer"
+        },
+        "thread": {
+          "type": "string"
+        },
+        "timestamp": {
+          "format": "date-time",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_kind",
+        "harness",
+        "message",
+        "payload",
+        "provider_thread_id",
+        "role",
+        "schema_version",
+        "sequence",
+        "step",
+        "thread",
+        "timestamp"
+      ],
+      "title": "PiMessageUpdateEvent",
+      "type": "object"
+    },
+    {
+      "additionalProperties": true,
+      "description": "Message end event from Pi's JSON mode.",
+      "properties": {
+        "event_kind": {
+          "const": "provider.json"
+        },
+        "harness": {
+          "const": "pi"
+        },
+        "message": {
+          "$ref": "#/$defs/PiAgentMessage"
+        },
+        "payload": {
+          "$ref": "#/$defs/PiMessageEnd"
+        },
+        "provider_thread_id": {
+          "type": "string"
+        },
+        "role": {
+          "enum": [
+            "documenter",
+            "physical_planner",
+            "polisher",
+            "polisher_reviewer",
+            "physical_plan_reviewer",
+            "implementer"
+          ],
+          "type": "string"
+        },
+        "schema_version": {
+          "const": 1,
+          "type": "integer"
+        },
+        "sequence": {
+          "type": "integer"
+        },
+        "step": {
+          "type": "integer"
+        },
+        "thread": {
+          "type": "string"
+        },
+        "timestamp": {
+          "format": "date-time",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_kind",
+        "harness",
+        "message",
+        "payload",
+        "provider_thread_id",
+        "role",
+        "schema_version",
+        "sequence",
+        "step",
+        "thread",
+        "timestamp"
+      ],
+      "title": "PiMessageEndEvent",
+      "type": "object"
+    },
+    {
+      "additionalProperties": true,
+      "description": "Tool execution start event from Pi's JSON mode.",
+      "properties": {
+        "event_kind": {
+          "const": "provider.json"
+        },
+        "harness": {
+          "const": "pi"
+        },
+        "payload": {
+          "$ref": "#/$defs/PiToolExecutionStart"
+        },
+        "provider_thread_id": {
+          "type": "string"
+        },
+        "role": {
+          "enum": [
+            "documenter",
+            "physical_planner",
+            "polisher",
+            "polisher_reviewer",
+            "physical_plan_reviewer",
+            "implementer"
+          ],
+          "type": "string"
+        },
+        "schema_version": {
+          "const": 1,
+          "type": "integer"
+        },
+        "sequence": {
+          "type": "integer"
+        },
+        "step": {
+          "type": "integer"
+        },
+        "thread": {
+          "type": "string"
+        },
+        "timestamp": {
+          "format": "date-time",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_kind",
+        "harness",
+        "payload",
+        "provider_thread_id",
+        "role",
+        "schema_version",
+        "sequence",
+        "step",
+        "thread",
+        "timestamp"
+      ],
+      "title": "PiToolExecutionStartEvent",
+      "type": "object"
+    },
+    {
+      "additionalProperties": true,
+      "description": "Tool execution update event from Pi's JSON mode.",
+      "properties": {
+        "event_kind": {
+          "const": "provider.json"
+        },
+        "harness": {
+          "const": "pi"
+        },
+        "payload": {
+          "$ref": "#/$defs/PiToolExecutionUpdate"
+        },
+        "provider_thread_id": {
+          "type": "string"
+        },
+        "role": {
+          "enum": [
+            "documenter",
+            "physical_planner",
+            "polisher",
+            "polisher_reviewer",
+            "physical_plan_reviewer",
+            "implementer"
+          ],
+          "type": "string"
+        },
+        "schema_version": {
+          "const": 1,
+          "type": "integer"
+        },
+        "sequence": {
+          "type": "integer"
+        },
+        "step": {
+          "type": "integer"
+        },
+        "thread": {
+          "type": "string"
+        },
+        "timestamp": {
+          "format": "date-time",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_kind",
+        "harness",
+        "payload",
+        "provider_thread_id",
+        "role",
+        "schema_version",
+        "sequence",
+        "step",
+        "thread",
+        "timestamp"
+      ],
+      "title": "PiToolExecutionUpdateEvent",
+      "type": "object"
+    },
+    {
+      "additionalProperties": true,
+      "description": "Tool execution end event from Pi's JSON mode.",
+      "properties": {
+        "event_kind": {
+          "const": "provider.json"
+        },
+        "harness": {
+          "const": "pi"
+        },
+        "payload": {
+          "$ref": "#/$defs/PiToolExecutionEnd"
+        },
+        "provider_thread_id": {
+          "type": "string"
+        },
+        "role": {
+          "enum": [
+            "documenter",
+            "physical_planner",
+            "polisher",
+            "polisher_reviewer",
+            "physical_plan_reviewer",
+            "implementer"
+          ],
+          "type": "string"
+        },
+        "schema_version": {
+          "const": 1,
+          "type": "integer"
+        },
+        "sequence": {
+          "type": "integer"
+        },
+        "step": {
+          "type": "integer"
+        },
+        "thread": {
+          "type": "string"
+        },
+        "timestamp": {
+          "format": "date-time",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_kind",
+        "harness",
+        "payload",
+        "provider_thread_id",
+        "role",
+        "schema_version",
+        "sequence",
+        "step",
+        "thread",
+        "timestamp"
+      ],
+      "title": "PiToolExecutionEndEvent",
+      "type": "object"
+    },
+    {
+      "additionalProperties": true,
+      "description": "Compaction start event from Pi's JSON mode.",
+      "properties": {
+        "event_kind": {
+          "const": "provider.json"
+        },
+        "harness": {
+          "const": "pi"
+        },
+        "payload": {
+          "$ref": "#/$defs/PiCompactionStart"
+        },
+        "provider_thread_id": {
+          "type": "string"
+        },
+        "role": {
+          "enum": [
+            "documenter",
+            "physical_planner",
+            "polisher",
+            "polisher_reviewer",
+            "physical_plan_reviewer",
+            "implementer"
+          ],
+          "type": "string"
+        },
+        "schema_version": {
+          "const": 1,
+          "type": "integer"
+        },
+        "sequence": {
+          "type": "integer"
+        },
+        "step": {
+          "type": "integer"
+        },
+        "thread": {
+          "type": "string"
+        },
+        "timestamp": {
+          "format": "date-time",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_kind",
+        "harness",
+        "payload",
+        "provider_thread_id",
+        "role",
+        "schema_version",
+        "sequence",
+        "step",
+        "thread",
+        "timestamp"
+      ],
+      "title": "PiCompactionStartEvent",
+      "type": "object"
+    },
+    {
+      "additionalProperties": true,
+      "description": "Compaction end event from Pi's JSON mode.",
+      "properties": {
+        "event_kind": {
+          "const": "provider.json"
+        },
+        "harness": {
+          "const": "pi"
+        },
+        "payload": {
+          "$ref": "#/$defs/PiCompactionEnd"
+        },
+        "provider_thread_id": {
+          "type": "string"
+        },
+        "role": {
+          "enum": [
+            "documenter",
+            "physical_planner",
+            "polisher",
+            "polisher_reviewer",
+            "physical_plan_reviewer",
+            "implementer"
+          ],
+          "type": "string"
+        },
+        "schema_version": {
+          "const": 1,
+          "type": "integer"
+        },
+        "sequence": {
+          "type": "integer"
+        },
+        "step": {
+          "type": "integer"
+        },
+        "thread": {
+          "type": "string"
+        },
+        "timestamp": {
+          "format": "date-time",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_kind",
+        "harness",
+        "payload",
+        "provider_thread_id",
+        "role",
+        "schema_version",
+        "sequence",
+        "step",
+        "thread",
+        "timestamp"
+      ],
+      "title": "PiCompactionEndEvent",
+      "type": "object"
+    },
+    {
+      "additionalProperties": true,
+      "description": "Auto retry start event from Pi's JSON mode.",
+      "properties": {
+        "event_kind": {
+          "const": "provider.json"
+        },
+        "harness": {
+          "const": "pi"
+        },
+        "payload": {
+          "$ref": "#/$defs/PiAutoRetryStart"
+        },
+        "provider_thread_id": {
+          "type": "string"
+        },
+        "role": {
+          "enum": [
+            "documenter",
+            "physical_planner",
+            "polisher",
+            "polisher_reviewer",
+            "physical_plan_reviewer",
+            "implementer"
+          ],
+          "type": "string"
+        },
+        "schema_version": {
+          "const": 1,
+          "type": "integer"
+        },
+        "sequence": {
+          "type": "integer"
+        },
+        "step": {
+          "type": "integer"
+        },
+        "thread": {
+          "type": "string"
+        },
+        "timestamp": {
+          "format": "date-time",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_kind",
+        "harness",
+        "payload",
+        "provider_thread_id",
+        "role",
+        "schema_version",
+        "sequence",
+        "step",
+        "thread",
+        "timestamp"
+      ],
+      "title": "PiAutoRetryStartEvent",
+      "type": "object"
+    },
+    {
+      "additionalProperties": true,
+      "description": "Auto retry end event from Pi's JSON mode.",
+      "properties": {
+        "event_kind": {
+          "const": "provider.json"
+        },
+        "harness": {
+          "const": "pi"
+        },
+        "payload": {
+          "$ref": "#/$defs/PiAutoRetryEnd"
+        },
+        "provider_thread_id": {
+          "type": "string"
+        },
+        "role": {
+          "enum": [
+            "documenter",
+            "physical_planner",
+            "polisher",
+            "polisher_reviewer",
+            "physical_plan_reviewer",
+            "implementer"
+          ],
+          "type": "string"
+        },
+        "schema_version": {
+          "const": 1,
+          "type": "integer"
+        },
+        "sequence": {
+          "type": "integer"
+        },
+        "step": {
+          "type": "integer"
+        },
+        "thread": {
+          "type": "string"
+        },
+        "timestamp": {
+          "format": "date-time",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_kind",
+        "harness",
+        "payload",
+        "provider_thread_id",
+        "role",
+        "schema_version",
+        "sequence",
+        "step",
+        "thread",
+        "timestamp"
+      ],
+      "title": "PiAutoRetryEndEvent",
+      "type": "object"
+    },
+    {
+      "additionalProperties": true,
+      "description": "Queue update event from Pi's JSON mode — emits the full pending steering and follow-up queues whenever they change.",
+      "properties": {
+        "event_kind": {
+          "const": "provider.json"
+        },
+        "harness": {
+          "const": "pi"
+        },
+        "payload": {
+          "$ref": "#/$defs/PiQueueUpdate"
+        },
+        "provider_thread_id": {
+          "type": "string"
+        },
+        "role": {
+          "enum": [
+            "documenter",
+            "physical_planner",
+            "polisher",
+            "polisher_reviewer",
+            "physical_plan_reviewer",
+            "implementer"
+          ],
+          "type": "string"
+        },
+        "schema_version": {
+          "const": 1,
+          "type": "integer"
+        },
+        "sequence": {
+          "type": "integer"
+        },
+        "step": {
+          "type": "integer"
+        },
+        "thread": {
+          "type": "string"
+        },
+        "timestamp": {
+          "format": "date-time",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_kind",
+        "harness",
+        "payload",
+        "provider_thread_id",
+        "role",
+        "schema_version",
+        "sequence",
+        "step",
+        "thread",
+        "timestamp"
+      ],
+      "title": "PiQueueUpdateEvent",
+      "type": "object"
+    }
+  ],
+  "$defs": {
+    "PiSessionHeader": {
+      "additionalProperties": true,
+      "description": "Session header emitted as the first line of Pi's --mode JSON output.",
+      "properties": {
+        "id": {
+          "description": "UUID of the session.",
+          "type": "string"
+        },
+        "timestamp": {
+          "description": "Session creation timestamp (ISO 8601).",
+          "format": "date-time",
+          "type": "string"
+        },
+        "version": {
+          "description": "Session format version (currently 3).",
+          "type": "integer"
+        },
+        "cwd": {
+          "description": "Working directory at session start.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "version",
+        "id",
+        "timestamp"
+      ],
+      "title": "PiSessionHeader"
+    },
+    "PiAgentStart": {
+      "additionalProperties": true,
+      "description": "Agent lifecycle event — marks the beginning of a full agent run (all turns).",
+      "properties": {
+        "type": {
+          "const": "agent_start"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "PiAgentStart"
+    },
+    "PiAgentEnd": {
+      "additionalProperties": true,
+      "description": "Agent lifecycle event — marks the end of a full agent run. Wraps final assistant messages.",
+      "properties": {
+        "messages": {
+          "description": "Final assistant messages at agent completion.",
+          "items": {
+            "$ref": "#/$defs/PiAgentMessage"
+          },
+          "type": "array"
+        },
+        "type": {
+          "const": "agent_end"
+        }
+      },
+      "required": [
+        "type",
+        "messages"
+      ],
+      "title": "PiAgentEnd"
+    },
+    "PiAgentMessage": {
+      "additionalProperties": true,
+      "description": "Base message type from pi-ai, used in agent_end and turn_end events.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/PiUserMessage"
+        },
+        {
+          "$ref": "#/$defs/PiAssistantMessage"
+        },
+        {
+          "$ref": "#/$defs/PiToolResultMessage"
+        },
+        {
+          "$ref": "#/$defs/PiBashExecutionMessage"
+        },
+        {
+          "$ref": "#/$defs/PiCustomMessage"
+        },
+        {
+          "$ref": "#/$defs/PiBranchSummaryMessage"
+        },
+        {
+          "$ref": "#/$defs/PiCompactionSummaryMessage"
+        }
+      ],
+      "title": "PiAgentMessage",
+      "x-discriminatorProperties": [
+        "role"
+      ]
+    },
+    "PiUserMessage": {
+      "additionalProperties": true,
+      "properties": {
+        "content": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "items": {
+                "$ref": "#/$defs/PiContentBlock"
+              },
+              "type": "array"
+            }
+          ]
+        },
+        "role": {
+          "const": "user"
+        },
+        "timestamp": {
+          "description": "Unix timestamp in milliseconds.",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "role",
+        "content",
+        "timestamp"
+      ],
+      "title": "PiUserMessage"
+    },
+    "PiAssistantMessage": {
+      "additionalProperties": true,
+      "properties": {
+        "api": {
+          "type": "string"
+        },
+        "content": {
+          "description": "Array of content blocks (text, thinking, or tool call).",
+          "items": {
+            "$ref": "#/$defs/PiContentBlock"
+          },
+          "type": "array"
+        },
+        "errorMessage": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "role": {
+          "const": "assistant"
+        },
+        "stopReason": {
+          "enum": [
+            "stop",
+            "length",
+            "toolUse",
+            "error",
+            "aborted"
+          ],
+          "type": "string"
+        },
+        "timestamp": {
+          "description": "Unix timestamp in milliseconds.",
+          "type": "integer"
+        },
+        "usage": {
+          "$ref": "#/$defs/PiUsage"
+        }
+      },
+      "required": [
+        "role",
+        "content",
+        "api",
+        "provider",
+        "model",
+        "usage",
+        "stopReason",
+        "timestamp"
+      ],
+      "title": "PiAssistantMessage"
+    },
+    "PiToolResultMessage": {
+      "additionalProperties": true,
+      "properties": {
+        "content": {
+          "items": {
+            "$ref": "#/$defs/PiContentBlock"
+          },
+          "type": "array"
+        },
+        "details": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "isError": {
+          "type": "boolean"
+        },
+        "role": {
+          "const": "toolResult"
+        },
+        "toolCallId": {
+          "type": "string"
+        },
+        "toolName": {
+          "type": "string"
+        },
+        "timestamp": {
+          "description": "Unix timestamp in milliseconds.",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "role",
+        "toolCallId",
+        "toolName",
+        "content",
+        "isError",
+        "timestamp"
+      ],
+      "title": "PiToolResultMessage"
+    },
+    "PiBashExecutionMessage": {
+      "additionalProperties": true,
+      "properties": {
+        "cancelled": {
+          "type": "boolean"
+        },
+        "command": {
+          "type": "string"
+        },
+        "exitCode": {
+          "type": "integer"
+        },
+        "excludeFromContext": {
+          "type": "boolean"
+        },
+        "fullOutputPath": {
+          "type": "string"
+        },
+        "output": {
+          "type": "string"
+        },
+        "role": {
+          "const": "bashExecution"
+        },
+        "truncated": {
+          "type": "boolean"
+        },
+        "timestamp": {
+          "description": "Unix timestamp in milliseconds.",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "role",
+        "command",
+        "output",
+        "exitCode",
+        "cancelled",
+        "truncated",
+        "timestamp"
+      ],
+      "title": "PiBashExecutionMessage"
+    },
+    "PiCustomMessage": {
+      "additionalProperties": true,
+      "properties": {
+        "content": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "items": {
+                "$ref": "#/$defs/PiContentBlock"
+              },
+              "type": "array"
+            }
+          ]
+        },
+        "customType": {
+          "type": "string"
+        },
+        "details": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "display": {
+          "type": "boolean"
+        },
+        "role": {
+          "const": "custom"
+        },
+        "timestamp": {
+          "description": "Unix timestamp in milliseconds.",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "role",
+        "customType",
+        "content",
+        "display",
+        "timestamp"
+      ],
+      "title": "PiCustomMessage"
+    },
+    "PiBranchSummaryMessage": {
+      "additionalProperties": true,
+      "properties": {
+        "fromId": {
+          "description": "Entry ID that this branch summary branched from.",
+          "type": "string"
+        },
+        "role": {
+          "const": "branchSummary"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "timestamp": {
+          "description": "Unix timestamp in milliseconds.",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "role",
+        "summary",
+        "fromId",
+        "timestamp"
+      ],
+      "title": "PiBranchSummaryMessage"
+    },
+    "PiCompactionSummaryMessage": {
+      "additionalProperties": true,
+      "properties": {
+        "role": {
+          "const": "compactionSummary"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "tokensBefore": {
+          "type": "integer"
+        },
+        "timestamp": {
+          "description": "Unix timestamp in milliseconds.",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "role",
+        "summary",
+        "tokensBefore",
+        "timestamp"
+      ],
+      "title": "PiCompactionSummaryMessage"
+    },
+    "PiContentBlock": {
+      "additionalProperties": true,
+      "description": "Content block from a Pi message — text, thinking, or tool call.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/PiTextContent"
+        },
+        {
+          "$ref": "#/$defs/PiImageContent"
+        },
+        {
+          "$ref": "#/$defs/PiThinkingContent"
+        },
+        {
+          "$ref": "#/$defs/PiToolCallContent"
+        }
+      ],
+      "title": "PiContentBlock",
+      "x-discriminatorProperties": [
+        "type"
+      ]
+    },
+    "PiTextContent": {
+      "additionalProperties": true,
+      "properties": {
+        "text": {
+          "type": "string"
+        },
+        "type": {
+          "const": "text"
+        }
+      },
+      "required": [
+        "type",
+        "text"
+      ],
+      "title": "PiTextContent"
+    },
+    "PiImageContent": {
+      "additionalProperties": true,
+      "properties": {
+        "data": {
+          "description": "Base64 encoded image data.",
+          "type": "string"
+        },
+        "mimeType": {
+          "type": "string"
+        },
+        "type": {
+          "const": "image"
+        }
+      },
+      "required": [
+        "type",
+        "data",
+        "mimeType"
+      ],
+      "title": "PiImageContent"
+    },
+    "PiThinkingContent": {
+      "additionalProperties": true,
+      "properties": {
+        "thinking": {
+          "type": "string"
+        },
+        "type": {
+          "const": "thinking"
+        }
+      },
+      "required": [
+        "type",
+        "thinking"
+      ],
+      "title": "PiThinkingContent"
+    },
+    "PiToolCallContent": {
+      "additionalProperties": true,
+      "properties": {
+        "arguments": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "type": {
+          "const": "toolCall"
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "name",
+        "arguments"
+      ],
+      "title": "PiToolCallContent"
+    },
+    "PiUsage": {
+      "additionalProperties": true,
+      "properties": {
+        "cacheRead": {
+          "type": "integer"
+        },
+        "cacheWrite": {
+          "type": "integer"
+        },
+        "cost": {
+          "$ref": "#/$defs/PiCost"
+        },
+        "input": {
+          "type": "integer"
+        },
+        "output": {
+          "type": "integer"
+        },
+        "totalTokens": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "input",
+        "output",
+        "cacheRead",
+        "cacheWrite",
+        "totalTokens",
+        "cost"
+      ],
+      "title": "PiUsage"
+    },
+    "PiCost": {
+      "additionalProperties": true,
+      "properties": {
+        "cacheRead": {
+          "type": "number"
+        },
+        "cacheWrite": {
+          "type": "number"
+        },
+        "input": {
+          "type": "number"
+        },
+        "output": {
+          "type": "number"
+        },
+        "total": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "input",
+        "output",
+        "cacheRead",
+        "cacheWrite",
+        "total"
+      ],
+      "title": "PiCost"
+    },
+    "PiTurnStart": {
+      "additionalProperties": true,
+      "description": "Turn lifecycle event — marks the beginning of a single assistant turn (one prompt → one assistant response).",
+      "properties": {
+        "type": {
+          "const": "turn_start"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "PiTurnStart"
+    },
+    "PiTurnEnd": {
+      "additionalProperties": true,
+      "description": "Turn lifecycle event — marks the end of a single assistant turn. Wraps the assistant message and tool results.",
+      "properties": {
+        "message": {
+          "$ref": "#/$defs/PiAgentMessage"
+        },
+        "toolResults": {
+          "description": "Tool result messages for this turn.",
+          "items": {
+            "$ref": "#/$defs/PiToolResultMessage"
+          },
+          "type": "array"
+        },
+        "type": {
+          "const": "turn_end"
+        }
+      },
+      "required": [
+        "type",
+        "message",
+        "toolResults"
+      ],
+      "title": "PiTurnEnd"
+    },
+    "PiMessageStart": {
+      "additionalProperties": true,
+      "description": "Message lifecycle event — marks the beginning of an assistant message (text, thinking, or tool call).",
+      "properties": {
+        "message": {
+          "$ref": "#/$defs/PiAgentMessage"
+        },
+        "type": {
+          "const": "message_start"
+        }
+      },
+      "required": [
+        "type",
+        "message"
+      ],
+      "title": "PiMessageStart"
+    },
+    "PiMessageUpdate": {
+      "additionalProperties": true,
+      "description": "Message lifecycle event — provides a partial update to an in-progress assistant message (text delta, reasoning delta, or tool call delta).",
+      "properties": {
+        "assistantMessageEvent": {
+          "description": "The streaming event payload — text_delta, thinking_delta, or input_json_delta.",
+          "$ref": "#/$defs/PiAssistantMessageEvent"
+        },
+        "message": {
+          "$ref": "#/$defs/PiAgentMessage"
+        },
+        "type": {
+          "const": "message_update"
+        }
+      },
+      "required": [
+        "type",
+        "message",
+        "assistantMessageEvent"
+      ],
+      "title": "PiMessageUpdate"
+    },
+    "PiAssistantMessageEvent": {
+      "additionalProperties": true,
+      "description": "Streaming event payload from an assistant message update.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/PiTextDeltaEvent"
+        },
+        {
+          "$ref": "#/$defs/PiThinkingDeltaEvent"
+        },
+        {
+          "$ref": "#/$defs/PiToolCallDeltaEvent"
+        }
+      ],
+      "title": "PiAssistantMessageEvent",
+      "x-discriminatorProperties": [
+        "type"
+      ]
+    },
+    "PiTextDeltaEvent": {
+      "additionalProperties": true,
+      "properties": {
+        "delta": {
+          "type": "string"
+        },
+        "type": {
+          "const": "text_delta"
+        }
+      },
+      "required": [
+        "type",
+        "delta"
+      ],
+      "title": "PiTextDeltaEvent"
+    },
+    "PiThinkingDeltaEvent": {
+      "additionalProperties": true,
+      "properties": {
+        "delta": {
+          "type": "string"
+        },
+        "type": {
+          "const": "thinking_delta"
+        }
+      },
+      "required": [
+        "type",
+        "delta"
+      ],
+      "title": "PiThinkingDeltaEvent"
+    },
+    "PiToolCallDeltaEvent": {
+      "additionalProperties": true,
+      "properties": {
+        "delta": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "type": {
+          "const": "tool_call_delta"
+        }
+      },
+      "required": [
+        "type",
+        "delta"
+      ],
+      "title": "PiToolCallDeltaEvent"
+    },
+    "PiMessageEnd": {
+      "additionalProperties": true,
+      "description": "Message lifecycle event — marks the end of an assistant message.",
+      "properties": {
+        "message": {
+          "$ref": "#/$defs/PiAgentMessage"
+        },
+        "type": {
+          "const": "message_end"
+        }
+      },
+      "required": [
+        "type",
+        "message"
+      ],
+      "title": "PiMessageEnd"
+    },
+    "PiToolExecutionStart": {
+      "additionalProperties": true,
+      "description": "Tool execution event — marks the beginning of a tool call execution.",
+      "properties": {
+        "args": {},
+        "toolCallId": {
+          "type": "string"
+        },
+        "toolName": {
+          "type": "string"
+        },
+        "type": {
+          "const": "tool_execution_start"
+        }
+      },
+      "required": [
+        "type",
+        "toolCallId",
+        "toolName",
+        "args"
+      ],
+      "title": "PiToolExecutionStart"
+    },
+    "PiToolExecutionUpdate": {
+      "additionalProperties": true,
+      "description": "Tool execution event — provides a partial result during a streaming tool execution.",
+      "properties": {
+        "args": {},
+        "partialResult": {},
+        "toolCallId": {
+          "type": "string"
+        },
+        "toolName": {
+          "type": "string"
+        },
+        "type": {
+          "const": "tool_execution_update"
+        }
+      },
+      "required": [
+        "type",
+        "toolCallId",
+        "toolName",
+        "args",
+        "partialResult"
+      ],
+      "title": "PiToolExecutionUpdate"
+    },
+    "PiToolExecutionEnd": {
+      "additionalProperties": true,
+      "description": "Tool execution event — marks the completion of a tool call. Includes the final result and error status.",
+      "properties": {
+        "isError": {
+          "type": "boolean"
+        },
+        "result": {},
+        "toolCallId": {
+          "type": "string"
+        },
+        "toolName": {
+          "type": "string"
+        },
+        "type": {
+          "const": "tool_execution_end"
+        }
+      },
+      "required": [
+        "type",
+        "toolCallId",
+        "toolName",
+        "result",
+        "isError"
+      ],
+      "title": "PiToolExecutionEnd"
+    },
+    "PiCompactionStart": {
+      "additionalProperties": true,
+      "description": "Compaction event — marks the beginning of context compaction.",
+      "properties": {
+        "reason": {
+          "enum": [
+            "manual",
+            "threshold",
+            "overflow"
+          ],
+          "type": "string"
+        },
+        "type": {
+          "const": "compaction_start"
+        }
+      },
+      "required": [
+        "type",
+        "reason"
+      ],
+      "title": "PiCompactionStart"
+    },
+    "PiCompactionEnd": {
+      "additionalProperties": true,
+      "description": "Compaction event — marks the end of context compaction. Includes the compaction result and whether it was aborted.",
+      "properties": {
+        "aborted": {
+          "type": "boolean"
+        },
+        "errorMessage": {
+          "type": "string"
+        },
+        "reason": {
+          "enum": [
+            "manual",
+            "threshold",
+            "overflow"
+          ],
+          "type": "string"
+        },
+        "result": {},
+        "type": {
+          "const": "compaction_end"
+        },
+        "willRetry": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "type",
+        "reason",
+        "result",
+        "aborted",
+        "willRetry"
+      ],
+      "title": "PiCompactionEnd"
+    },
+    "PiAutoRetryStart": {
+      "additionalProperties": true,
+      "description": "Auto retry event — marks the beginning of a retry attempt.",
+      "properties": {
+        "attempt": {
+          "type": "integer"
+        },
+        "delayMs": {
+          "type": "integer"
+        },
+        "errorMessage": {
+          "type": "string"
+        },
+        "maxAttempts": {
+          "type": "integer"
+        },
+        "type": {
+          "const": "auto_retry_start"
+        }
+      },
+      "required": [
+        "type",
+        "attempt",
+        "maxAttempts",
+        "delayMs",
+        "errorMessage"
+      ],
+      "title": "PiAutoRetryStart"
+    },
+    "PiAutoRetryEnd": {
+      "additionalProperties": true,
+      "description": "Auto retry event — marks the completion of a retry attempt.",
+      "properties": {
+        "attempt": {
+          "type": "integer"
+        },
+        "finalError": {
+          "type": "string"
+        },
+        "success": {
+          "type": "boolean"
+        },
+        "type": {
+          "const": "auto_retry_end"
+        }
+      },
+      "required": [
+        "type",
+        "attempt",
+        "success"
+      ],
+      "title": "PiAutoRetryEnd"
+    },
+    "PiQueueUpdate": {
+      "additionalProperties": true,
+      "description": "Queue update event — emits the full pending steering and follow-up queues whenever they change.",
+      "properties": {
+        "followUp": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "steering": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "type": {
+          "const": "queue_update"
+        }
+      },
+      "required": [
+        "type",
+        "steering",
+        "followUp"
+      ],
+      "title": "PiQueueUpdate"
+    },
+    "PiPayload": {
+      "additionalProperties": true,
+      "description": "Discriminated union over all Pi JSON mode event types. Matches the type field to determine the variant.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/PiSessionHeader"
+        },
+        {
+          "$ref": "#/$defs/PiAgentStart"
+        },
+        {
+          "$ref": "#/$defs/PiAgentEnd"
+        },
+        {
+          "$ref": "#/$defs/PiTurnStart"
+        },
+        {
+          "$ref": "#/$defs/PiTurnEnd"
+        },
+        {
+          "$ref": "#/$defs/PiMessageStart"
+        },
+        {
+          "$ref": "#/$defs/PiMessageUpdate"
+        },
+        {
+          "$ref": "#/$defs/PiMessageEnd"
+        },
+        {
+          "$ref": "#/$defs/PiToolExecutionStart"
+        },
+        {
+          "$ref": "#/$defs/PiToolExecutionUpdate"
+        },
+        {
+          "$ref": "#/$defs/PiToolExecutionEnd"
+        },
+        {
+          "$ref": "#/$defs/PiCompactionStart"
+        },
+        {
+          "$ref": "#/$defs/PiCompactionEnd"
+        },
+        {
+          "$ref": "#/$defs/PiAutoRetryStart"
+        },
+        {
+          "$ref": "#/$defs/PiAutoRetryEnd"
+        },
+        {
+          "$ref": "#/$defs/PiQueueUpdate"
+        }
+      ],
+      "x-discriminatorProperties": [
+        "type"
+      ],
+      "title": "PiPayload"
+    }
+  },
+  "title": "Pi Events (Quest Log Envelope)",
+  "x-discriminatorProperties": [
+    "type",
+    "harness"
+  ],
+  "x-source": {
+    "package": "@earendil-works/pi-coding-agent",
+    "description": "Schema derived from Pi's --mode JSON output specification and source types in packages/agent/src/types.ts, packages/coding-agent/src/core/agent-session.ts, packages/ai/src/types.ts, and packages/coding-agent/src/core/messages.ts.",
+    "sourceFiles": [
+      "packages/agent/src/types.ts",
+      "packages/coding-agent/src/core/agent-session.ts",
+      "packages/ai/src/types.ts",
+      "packages/coding-agent/src/core/messages.ts"
+    ]
+  }
+}

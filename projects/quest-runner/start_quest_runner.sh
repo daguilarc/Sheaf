@@ -12,8 +12,9 @@ mkdir -p "${LOG_DIR}"
 
 if [[ ! -d "${VENV_DIR}" ]]; then
   python3 -m venv "${VENV_DIR}"
-  "${VENV_DIR}/bin/pip" install -r "${SCRIPT_DIR}/requirements.txt"
 fi
+
+"${VENV_DIR}/bin/pip" install -r "${SCRIPT_DIR}/requirements.txt"
 
 export PYTHONPATH="${SCRIPT_DIR}/src"
 cd "${REPO_ROOT}"
