@@ -52,5 +52,14 @@
     "round_count": 1,
     "created_at": "2026-06-08T23:22:32Z",
     "last_used_at": "2026-06-08T23:27:18Z"
+  },
+  "slice_2_polisher": {
+    "thread_name": "quest-runner_main_0000_experiments_quest_0000_slice_0002_polisher",
+    "harness_kind": "codex",
+    "provider_thread_id": "019ea98f-ddc3-7373-a4e5-43ad28c7fbd9",
+    "pass_id": 0,
+    "round_count": 1,
+    "created_at": "2026-06-08T23:27:18Z",
+    "last_used_at": "2026-06-08T23:32:08Z"
   }
 }

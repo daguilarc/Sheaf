@@ -536,7 +536,14 @@ class ExperimentStopConditionTests(unittest.TestCase):
     def test_validate_slice_completed_alias(self) -> None:
         cond = validate_stop_condition(None, "slice_completed")
         self.assertEqual(cond.machine_path, "root/slice")
-        self.assertEqual(cond.node_name, "slice_completed")
+        self.assertEqual(cond.node_name, "Completed")
+
+    def test_validate_slice_completed_inputs_resolve_to_same_node(self) -> None:
+        resolved = [
+            validate_stop_condition(None, stop_node).node_name
+            for stop_node in ("slice_completed", "Completed", "SliceCompletedNode")
+        ]
+        self.assertEqual(resolved, ["Completed", "Completed", "Completed"])
 
     def test_validate_rejects_unknown_stop_node(self) -> None:
         with self.assertRaises(ExperimentValidationError):
@@ -600,6 +607,7 @@ class ExperimentCreationTests(unittest.TestCase):
         meta = read_experiment_meta(exp_dir)
         self.assertEqual(meta.status, "open")
         self.assertEqual(meta.start_step.base_commit, parent_sha)
+        self.assertEqual(meta.stop_condition.node_name, "Completed")
         self.assertEqual(result["experiment_number"], 0)
         self.assertEqual(
             result["experiment_id"],

@@ -287,7 +287,7 @@ _HISTORY_GLOBAL_STEP_RE = re.compile(r"global_step:\s*(\d+)", re.IGNORECASE)
 _HISTORY_ROLE_RE = re.compile(r"role:\s*(\S+)", re.IGNORECASE)
 
 _STOP_NODE_ALIASES: dict[str, str] = {
-    "slice_completed": "slice_completed",
+    "slice_completed": "SliceCompletedNode",
 }
 
 
@@ -442,13 +442,6 @@ def validate_stop_condition(
     raw_node = str(stop_node).strip()
     lower_node = raw_node.lower()
 
-    alias = _STOP_NODE_ALIASES.get(lower_node)
-    if alias is not None:
-        return ExperimentStopCondition(
-            machine_path=normalized_path,
-            node_name=alias,
-        )
-
     from .state_machine.quest_v2_definitions import (
         build_quest_machine_definition,
         build_slice_machine_definition,
@@ -459,19 +452,21 @@ def validate_stop_condition(
     else:
         node_map = build_quest_machine_definition().node_map
 
+    candidate_node = _STOP_NODE_ALIASES.get(lower_node, raw_node)
+    candidate_lower = candidate_node.lower()
     for key, node_cls in node_map.items():
-        if raw_node == key:
+        if candidate_node == key:
             return ExperimentStopCondition(
                 machine_path=normalized_path,
                 node_name=key,
             )
-        if lower_node == key.lower():
+        if candidate_lower == key.lower():
             return ExperimentStopCondition(
                 machine_path=normalized_path,
                 node_name=key,
             )
         class_name = _node_class_name(node_cls)
-        if raw_node == class_name or lower_node == class_name.lower():
+        if candidate_node == class_name or candidate_lower == class_name.lower():
             return ExperimentStopCondition(
                 machine_path=normalized_path,
                 node_name=key,

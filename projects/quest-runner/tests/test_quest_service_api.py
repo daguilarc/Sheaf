@@ -527,7 +527,7 @@ class CreateExperimentApiTests(unittest.TestCase):
         self.assertIn("branch_name", body)
         self.assertIn("base_commit", body)
         self.assertIn("dashboard_url", body)
-        self.assertEqual(body["stop_condition"]["node_name"], "slice_completed")
+        self.assertEqual(body["stop_condition"]["node_name"], "Completed")
 
 
 if __name__ == "__main__":
