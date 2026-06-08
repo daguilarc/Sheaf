@@ -2,10 +2,10 @@
 
 ## Issue PL-0001
 
-- status: open
+- status: completed
 - owner_role: polisher_reviewer
 - created_at: 2026-06-08T22:16:28Z
-- updated_at: 2026-06-08T22:16:28Z
+- updated_at: 2026-06-08T22:21:43Z
 - title: LifecycleEmitter emits on reserved "error" event; throws/crashes when no listener attached
 - details: ## Problem
 
@@ -81,10 +81,10 @@ regression test that calls a manager/runtime error path on an emitter with no
 
 ## Issue PL-0002
 
-- status: open
+- status: completed
 - owner_role: polisher_reviewer
 - created_at: 2026-06-08T22:16:35Z
-- updated_at: 2026-06-08T22:16:35Z
+- updated_at: 2026-06-08T22:21:44Z
 - title: AgentStatusSnapshot.error always undefined: lastError declared/surfaced but never assigned
 - details: ## Problem
 
