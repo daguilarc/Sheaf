@@ -23,6 +23,7 @@ export interface ModelMetadata extends ModelReference
   displayName?: string;
   contextTokens?: number;
   available: boolean;
+  unavailableReason?: string;
 }
 
 export interface SessionManifestHistory

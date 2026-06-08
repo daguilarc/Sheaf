@@ -28,6 +28,7 @@ export interface SheafChatConfig
   paths: SheafChatPaths;
   localInferenceUrl: string | null;
   localInferenceApiKey: string | null;
+  openAiApiKey: string | null;
   agentIdleOffloadSeconds: number;
   localInferenceAvailable: boolean;
 }
@@ -130,6 +131,7 @@ export async function LoadSheafChatConfig(
 
   const localInferenceUrl = ResolveLocalInferenceUrl(globalConfig);
   const localInferenceApiKey = ParseOptionalString(apiKeys.local_inference_api_key);
+  const openAiApiKey = ParseOptionalString(apiKeys.openai_api_key);
   const localInferenceAvailable =
     localInferenceUrl !== null && localInferenceApiKey !== null;
 
@@ -138,6 +140,7 @@ export async function LoadSheafChatConfig(
     paths,
     localInferenceUrl,
     localInferenceApiKey,
+    openAiApiKey,
     agentIdleOffloadSeconds: ResolveAgentIdleOffloadSeconds(globalConfig),
     localInferenceAvailable,
   };

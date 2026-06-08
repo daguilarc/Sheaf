@@ -15,10 +15,10 @@
     "node": ">=20"
   },
   "dependencies": {
+    "@earendil-works/pi-coding-agent": "^0.75.4",
     "typebox": "^1.1.38"
   },
   "devDependencies": {
-    "@earendil-works/pi-coding-agent": "^0.75.4",
     "@types/node": "^22.15.21",
     "typescript": "^5.8.3"
   }
