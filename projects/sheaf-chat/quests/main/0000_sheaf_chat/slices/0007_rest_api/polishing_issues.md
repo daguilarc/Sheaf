@@ -2,10 +2,10 @@
 
 ## Issue PL-0001
 
-- status: open
+- status: completed
 - owner_role: polisher_reviewer
 - created_at: 2026-06-08T22:40:48Z
-- updated_at: 2026-06-08T22:40:48Z
+- updated_at: 2026-06-08T22:43:22Z
 - title: Resolved-but-undispatched /api/piles/:pile route hangs the connection
 - details: In `src/server/router.ts`, `ResolveApiEndpoint()` returns the endpoint key `"pile"` for a 3-segment path `/api/piles/:pile` (lines 110-114), and `MatchApiRoute()` returns `{ pile }` for the same path (lines 66-69). However, `DispatchApiRoute()` has no branch that handles `endpoint === "pile"` — the only handled keys are `health`, `models`, `piles`, `pile_sessions`, `pile_session`, and `pile_session_history`.
 
