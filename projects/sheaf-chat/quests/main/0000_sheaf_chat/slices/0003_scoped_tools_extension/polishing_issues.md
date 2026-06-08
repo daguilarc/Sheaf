@@ -2,10 +2,10 @@
 
 ## Issue PL-0001
 
-- status: open
+- status: completed
 - owner_role: polisher_reviewer
 - created_at: 2026-06-08T21:37:20Z
-- updated_at: 2026-06-08T21:37:20Z
+- updated_at: 2026-06-08T21:42:53Z
 - title: Traversal tools follow symlinks out of session root (search_text reads outside contents)
 - details: ## What is wrong
 
@@ -68,10 +68,10 @@ so `isSymbolicLink()` is always false and that branch is dead code.
 
 ## Issue PL-0002
 
-- status: open
+- status: completed
 - owner_role: polisher_reviewer
 - created_at: 2026-06-08T21:37:24Z
-- updated_at: 2026-06-08T21:37:24Z
+- updated_at: 2026-06-08T21:42:57Z
 - title: Glob patterns with non-terminal ** (e.g. **/*.json) never match
 - details: ## What is wrong
 
