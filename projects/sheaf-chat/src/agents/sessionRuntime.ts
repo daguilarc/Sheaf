@@ -22,7 +22,12 @@ import {
 } from "../storage/paths.js";
 import { access, readFile } from "node:fs/promises";
 
-import type { LifecycleEmitter, SessionKey, UserMessageSubmission } from "./lifecycle.js";
+import type {
+  LifecycleEmitter,
+  LifecycleErrorEvent,
+  SessionKey,
+  UserMessageSubmission,
+} from "./lifecycle.js";
 import type { PiSessionHandle } from "./piAdapter.js";
 import { BuildDeterministicSummary, type SessionSummary, type SessionSummaryGenerator } from "./summarizer.js";
 
@@ -98,6 +103,15 @@ export class SessionRuntime
       key: this.m_record.key,
       state: nextState,
       previousState,
+    });
+  }
+
+  ReportError(error: Omit<LifecycleErrorEvent, "key">): void
+  {
+    this.m_record.lastError = error.message;
+    this.m_context.lifecycle.EmitError({
+      key: this.m_record.key,
+      ...error,
     });
   }
 
@@ -191,8 +205,7 @@ export class SessionRuntime
     catch (error)
     {
       const messageText = error instanceof Error ? error.message : String(error);
-      this.m_context.lifecycle.EmitError({
-        key: this.m_record.key,
+      this.ReportError({
         code: "user_message_delivery_failed",
         message: messageText,
         fatal: false,
@@ -429,8 +442,7 @@ export class SessionRuntime
     catch (error)
     {
       const message = error instanceof Error ? error.message : String(error);
-      this.m_context.lifecycle.EmitError({
-        key: this.m_record.key,
+      this.ReportError({
         code: "manifest_write_failed",
         message,
         fatal: false,

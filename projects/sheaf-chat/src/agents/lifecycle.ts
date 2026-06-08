@@ -149,6 +149,11 @@ export class LifecycleEmitter extends EventEmitter
 
   EmitError(event: LifecycleErrorEvent): void
   {
+    if (this.listenerCount("error") === 0)
+    {
+      return;
+    }
+
     this.emit("error", event);
   }
 

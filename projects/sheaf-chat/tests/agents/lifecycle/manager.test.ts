@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
+import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 
-import { AgentManager } from "../../../src/agents/manager.js";
+import { LifecycleEmitter, type SessionKey } from "../../../src/agents/lifecycle.js";
+import { AgentManager, AgentManagerError } from "../../../src/agents/manager.js";
 import { AgentLifecycleState } from "../../../src/shared/types.js";
 import { ReadManifest } from "../../../src/storage/manifests.js";
 import { CreatePile, ManifestExists } from "../../../src/storage/piles.js";
+import { ResolveManifestFilePath } from "../../../src/storage/paths.js";
 import {
   CreateFakeTimers,
   CreateStorage,
@@ -60,6 +63,54 @@ async function CreateTestManager(
     },
   });
 }
+
+async function WaitForStatusError(
+  manager: AgentManager,
+  key: SessionKey,
+): Promise<string | undefined>
+{
+  for (let attempt = 0; attempt < 20; attempt += 1)
+  {
+    const error = manager.getStatus(key)?.error;
+
+    if (error !== undefined)
+    {
+      return error;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+
+  return manager.getStatus(key)?.error;
+}
+
+test("LifecycleEmitter allows lifecycle errors with no subscriber", () =>
+{
+  const lifecycle = new LifecycleEmitter();
+
+  assert.doesNotThrow(() =>
+  {
+    lifecycle.EmitError({
+      key: { pile: "default", sessionId: "session-1" },
+      code: "test_error",
+      message: "test failure",
+      fatal: false,
+    });
+  });
+
+  const received: string[] = [];
+  lifecycle.On("error", (event) =>
+  {
+    received.push(event.code);
+  });
+  lifecycle.EmitError({
+    key: { pile: "default", sessionId: "session-1" },
+    code: "subscribed_error",
+    message: "subscribed failure",
+  });
+
+  assert.deepEqual(received, ["subscribed_error"]);
+});
 
 test("createBlankSession allocates a shell without writing a manifest", async () =>
 {
@@ -194,6 +245,39 @@ test("submitUserMessage uses deterministic summary fallback when summarization f
   });
 });
 
+test("assistant manifest write failures are recorded without an error listener", async () =>
+{
+  await WithFakeRepoAsync(async (repoRoot) =>
+  {
+    const fakeSessions = new Map<string, FakePiSession>();
+    const manager = await CreateTestManager(repoRoot, {
+      fakeSessions,
+      summarizer: async () => ({
+        chatName: "Generated title",
+        description: "Generated description",
+      }),
+    });
+    const storagePaths = CreateStorage(repoRoot);
+    await CreatePile(storagePaths, "default");
+    const model = ResolveOpenAiTestModel(CreateTestModelBundle());
+    const rootDirectory = path.join(repoRoot, "projects", "demo");
+    const created = await manager.createBlankSession("default", rootDirectory, model);
+    await manager.attachSession("default", created.key.sessionId);
+    await manager.submitUserMessage(created.key, {
+      messageId: "user-1",
+      text: "hello",
+    });
+    await mkdir(ResolveManifestFilePath(storagePaths, "default", created.key.sessionId));
+
+    const fake = [...fakeSessions.values()][0];
+    assert.ok(fake);
+    await fake.EmitAssistantTurn();
+
+    const error = await WaitForStatusError(manager, created.key);
+    assert.ok(error);
+  });
+});
+
 test("submitUserMessage steers or followUps while streaming", async () =>
 {
   await WithFakeRepoAsync(async (repoRoot) =>
@@ -223,6 +307,34 @@ test("submitUserMessage steers or followUps while streaming", async () =>
     assert.deepEqual(fake.steerCalls, ["change approach"]);
     assert.equal(fake.promptCalls.length, 1);
     assert.equal(fake.promptCalls[0]?.options?.streamingBehavior, "followUp");
+  });
+});
+
+test("submitUserMessage reports delivery failure without rejecting when no error listener exists", async () =>
+{
+  await WithFakeRepoAsync(async (repoRoot) =>
+  {
+    const fakeSessions = new Map<string, FakePiSession>();
+    const manager = await CreateTestManager(repoRoot, { fakeSessions });
+    const storagePaths = CreateStorage(repoRoot);
+    await CreatePile(storagePaths, "default");
+    const model = ResolveOpenAiTestModel(CreateTestModelBundle());
+    const rootDirectory = path.join(repoRoot, "projects", "demo");
+    const created = await manager.createBlankSession("default", rootDirectory, model);
+    await manager.attachSession("default", created.key.sessionId);
+    const fake = [...fakeSessions.values()][0];
+    assert.ok(fake);
+    fake.prompt = async () =>
+    {
+      throw new Error("delivery unavailable");
+    };
+
+    await manager.submitUserMessage(created.key, {
+      messageId: "user-1",
+      text: "hello",
+    });
+
+    assert.equal(manager.getStatus(created.key)?.error, "delivery unavailable");
   });
 });
 
@@ -393,5 +505,40 @@ test("concurrent attachSession callers share one startup", async () =>
     assert.equal(createCount, 1);
     assert.ok(results.every((status) => status.state === AgentLifecycleState.Active));
     assert.equal(results[2]?.connectedClientCount, 3);
+  });
+});
+
+test("attachSession records startup failure in status without an error listener", async () =>
+{
+  await WithFakeRepoAsync(async (repoRoot) =>
+  {
+    const config = CreateTestConfigWithRoot(repoRoot);
+    const storagePaths = CreateStorage(repoRoot);
+    const modelBundle = CreateTestModelBundle();
+    await CreatePile(storagePaths, "default");
+    const model = ResolveOpenAiTestModel(modelBundle);
+    const rootDirectory = path.join(repoRoot, "projects", "demo");
+    const manager = await AgentManager.Create({
+      config,
+      storagePaths,
+      modelBundle,
+      createPiSession: async () =>
+      {
+        throw new Error("pi start failed");
+      },
+    });
+    const created = await manager.createBlankSession("default", rootDirectory, model);
+
+    await assert.rejects(
+      () => manager.attachSession("default", created.key.sessionId),
+      (error) =>
+        error instanceof AgentManagerError &&
+        error.code === "session_start_failed" &&
+        error.message === "pi start failed",
+    );
+
+    const status = manager.getStatus(created.key);
+    assert.equal(status?.state, AgentLifecycleState.Failed);
+    assert.equal(status?.error, "pi start failed");
   });
 });

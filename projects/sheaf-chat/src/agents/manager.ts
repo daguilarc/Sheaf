@@ -320,6 +320,7 @@ export class AgentManager
     const record = CreateRuntimeRecordFromColdResume(key, bootstrap);
     const runtime = new SessionRuntime(this.m_runtimeContext, record);
 
+    this.m_runtimes.set(FormatSessionKey(key), runtime);
     runtime.TransitionState(AgentLifecycleState.Starting);
 
     try
@@ -342,8 +343,7 @@ export class AgentManager
     {
       const message = error instanceof Error ? error.message : String(error);
       runtime.TransitionState(AgentLifecycleState.Failed);
-      this.m_lifecycle.EmitError({
-        key,
+      runtime.ReportError({
         code: "session_start_failed",
         message,
         fatal: true,
