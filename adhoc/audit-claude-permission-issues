@@ -1,0 +1,444 @@
+#!/usr/bin/env python3
+"""Audit Claude quest logs for permission-gated issue filing attempts.
+
+The audit scans quest JSONL logs for Claude Code user/tool-result messages that
+complain about permissions, then classifies whether the same run worked around
+the blockage by editing issue files directly, opened a human intervention
+request, or gave up after intending to create/edit quest issues.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+
+PERMISSION_PATTERNS = (
+    "requires approval",
+    "permission system",
+    "requested permissions",
+    "haven't granted",
+    "permission_denials",
+    "approval-gated",
+    "blocked by the permission",
+    "could not be approved",
+)
+
+ISSUE_INTENT_RE = re.compile(
+    r"("
+    r"\b\d+\s+(?:open\s+)?issues?\s+to\s+file\b|"
+    r"\bone\s+(?:open\s+)?issue\s+to\s+file\b|"
+    r"\bfound\s+\*\*\d+\s+issues?\*\*\s+to\s+file\b|"
+    r"\bfound\s+\d+\s+issues?\s+to\s+file\b|"
+    r"\bi\s+found\s+(?:one|\d+)\s+issues?\b|"
+    r"\bdefects?\s+found\b|"
+    r"\bnot\s+yet\s+filed\b|"
+    r"\bneed\s+approval\s+to\s+file\s+findings\b|"
+    r"\bchoose\s+how\s+to\s+record\b"
+    r")",
+    re.IGNORECASE,
+)
+
+NEGATED_RESULT_RE = re.compile(
+    r"("
+    r"\bfound\s+(?:no|zero)\b|"
+    r"\bno\s+open\s+issues?\b|"
+    r"\bno\s+blocking\s+defects?\b|"
+    r"\baccepted\s+with\s+no\s+open\b|"
+    r"\baccepted\b.*\bno\s+open\s+issues?\b"
+    r")",
+    re.IGNORECASE,
+)
+
+ACCEPTED_RESULT_RE = re.compile(r"\b(?:accepted|acceptance)\b", re.IGNORECASE)
+
+ISSUE_COMMAND_PATTERNS = (
+    "scripts/quest-runner issues create",
+    "issues create",
+    "issue-create",
+)
+
+GAVE_UP_PATTERNS = (
+    "can't file",
+    "cannot file",
+    "can't open",
+    "cannot open",
+    "can't create",
+    "cannot create",
+    "can't record",
+    "cannot record",
+    "need your approval",
+    "needs your approval",
+    "please approve",
+    "requires approval",
+    "being gated",
+    "not going through",
+    "doesn't execute",
+    "don't execute",
+    "awaiting your approval",
+    "choose how to record",
+)
+
+ISSUE_FILE_RE = re.compile(
+    r"(physicalplan_issues|polishing_issues)\.md$"
+)
+
+
+@dataclass
+class RunAudit:
+    path: Path
+    harness: str | None = None
+    role: str | None = None
+    thread: str | None = None
+    provider_thread_id: str | None = None
+    step: int | None = None
+    timestamps: list[str] = field(default_factory=list)
+    permission_messages: list[str] = field(default_factory=list)
+    permission_denials: list[str] = field(default_factory=list)
+    issue_commands: list[str] = field(default_factory=list)
+    issue_query_commands: list[str] = field(default_factory=list)
+    issue_intent_messages: list[str] = field(default_factory=list)
+    final_result: str = ""
+    direct_issue_edits: list[str] = field(default_factory=list)
+    human_intervention_edits: list[str] = field(default_factory=list)
+    accepted_marker_edits: list[str] = field(default_factory=list)
+    parse_errors: int = 0
+
+    @property
+    def has_permission_complaint(self) -> bool:
+        return bool(self.permission_messages or self.permission_denials)
+
+    @property
+    def intended_to_file_issue(self) -> bool:
+        if self.issue_commands:
+            return True
+        haystack = "\n".join(self.issue_intent_messages + [self.final_result]).lower()
+        return bool(ISSUE_INTENT_RE.search(haystack))
+
+    @property
+    def implemented_workaround(self) -> bool:
+        return bool(self.direct_issue_edits)
+
+    @property
+    def opened_human_intervention(self) -> bool:
+        return bool(self.human_intervention_edits)
+
+    @property
+    def gave_up(self) -> bool:
+        if not (self.has_permission_complaint and self.intended_to_file_issue):
+            return False
+        if self.implemented_workaround or self.opened_human_intervention:
+            return False
+        status_text = "\n".join(self.issue_intent_messages + [self.final_result])
+        if ACCEPTED_RESULT_RE.search(self.final_result) and not ISSUE_INTENT_RE.search(
+            self.final_result
+        ):
+            return False
+        if NEGATED_RESULT_RE.search(self.final_result) and not ISSUE_INTENT_RE.search(
+            self.final_result
+        ):
+            return False
+        haystack = status_text.lower()
+        return any(pattern in haystack for pattern in GAVE_UP_PATTERNS)
+
+    @property
+    def classification(self) -> str:
+        if self.opened_human_intervention:
+            return "human_intervention"
+        if self.implemented_workaround:
+            return "direct_issue_file_workaround"
+        if self.gave_up:
+            return "gave_up"
+        if self.has_permission_complaint:
+            return "permission_complaint_only"
+        return "no_permission_complaint"
+
+
+def flatten_text(value: Any) -> list[str]:
+    texts: list[str] = []
+    if isinstance(value, str):
+        texts.append(value)
+    elif isinstance(value, list):
+        for item in value:
+            texts.extend(flatten_text(item))
+    elif isinstance(value, dict):
+        for key in ("text", "content", "tool_use_result"):
+            if key in value:
+                texts.extend(flatten_text(value[key]))
+    return texts
+
+
+def text_matches(text: str, patterns: tuple[str, ...]) -> bool:
+    lower = text.lower()
+    return any(pattern in lower for pattern in patterns)
+
+
+def short(text: str, limit: int = 420) -> str:
+    compact = re.sub(r"\s+", " ", text).strip()
+    if len(compact) <= limit:
+        return compact
+    return compact[: limit - 1] + "…"
+
+
+def record_tool_use(run: RunAudit, tool: dict[str, Any]) -> None:
+    name = str(tool.get("name") or "")
+    tool_input = tool.get("input")
+    if not isinstance(tool_input, dict):
+        return
+
+    command = str(tool_input.get("command") or "")
+    description = str(tool_input.get("description") or "")
+    if (
+        name == "Bash"
+        and "scripts/quest-runner issues create" in command
+        and "--help" not in command
+    ):
+        run.issue_commands.append(short(command))
+    elif name == "Bash" and "scripts/quest-runner issues" in command:
+        run.issue_query_commands.append(short(command))
+
+    file_path = str(tool_input.get("file_path") or tool_input.get("path") or "")
+    if name in {"Edit", "Write"} and file_path:
+        if file_path.endswith("human_intervention_request.md"):
+            run.human_intervention_edits.append(file_path)
+        elif ISSUE_FILE_RE.search(file_path):
+            run.direct_issue_edits.append(file_path)
+        elif "human_intervention_request.md" in str(tool_input.get("content") or ""):
+            run.human_intervention_edits.append(file_path)
+
+    combined = "\n".join([command, description, *flatten_text(tool_input)])
+    if text_matches(combined, ISSUE_COMMAND_PATTERNS) or ISSUE_INTENT_RE.search(combined):
+        run.issue_intent_messages.append(short(combined))
+
+
+def audit_file(path: Path) -> RunAudit | None:
+    run = RunAudit(path=path)
+    saw_claude = False
+    with path.open("r", encoding="utf-8", errors="replace") as handle:
+        for line in handle:
+            if not line.strip():
+                continue
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                run.parse_errors += 1
+                continue
+
+            harness = event.get("harness")
+            if harness:
+                run.harness = str(harness)
+            if event.get("role"):
+                run.role = str(event.get("role"))
+            if event.get("thread"):
+                run.thread = str(event.get("thread"))
+            if event.get("provider_thread_id"):
+                run.provider_thread_id = str(event.get("provider_thread_id"))
+            if isinstance(event.get("step"), int):
+                run.step = int(event["step"])
+            if event.get("timestamp"):
+                run.timestamps.append(str(event.get("timestamp")))
+
+            if run.harness != "claude_code":
+                continue
+            saw_claude = True
+
+            payload = event.get("payload")
+            if not isinstance(payload, dict):
+                continue
+
+            message = payload.get("message")
+            if isinstance(message, dict):
+                role = message.get("role")
+                content = message.get("content")
+                if role == "user":
+                    for text in flatten_text(content):
+                        if text_matches(text, PERMISSION_PATTERNS):
+                            run.permission_messages.append(short(text))
+                        if ISSUE_INTENT_RE.search(text):
+                            run.issue_intent_messages.append(short(text))
+                elif role == "assistant":
+                    for item in content if isinstance(content, list) else []:
+                        if isinstance(item, dict) and item.get("type") == "tool_use":
+                            record_tool_use(run, item)
+                    for text in flatten_text(content):
+                        if ISSUE_INTENT_RE.search(text):
+                            run.issue_intent_messages.append(short(text))
+                        if text_matches(text, GAVE_UP_PATTERNS):
+                            run.issue_intent_messages.append(short(text))
+
+            if payload.get("type") == "result":
+                result = str(payload.get("result") or "")
+                run.final_result = result
+                if text_matches(result, PERMISSION_PATTERNS):
+                    run.permission_messages.append(short(result))
+                if ISSUE_INTENT_RE.search(result) or text_matches(result, GAVE_UP_PATTERNS):
+                    run.issue_intent_messages.append(short(result))
+                denials = payload.get("permission_denials")
+                if isinstance(denials, list):
+                    for denial in denials:
+                        if isinstance(denial, dict):
+                            tool_input = denial.get("tool_input")
+                            if isinstance(tool_input, dict):
+                                command = str(tool_input.get("command") or "")
+                                if command:
+                                    run.permission_denials.append(short(command))
+                                    if (
+                                        "scripts/quest-runner issues create" in command
+                                        and "--help" not in command
+                                    ):
+                                        run.issue_commands.append(short(command))
+                                    elif "scripts/quest-runner issues" in command:
+                                        run.issue_query_commands.append(short(command))
+                            run.permission_messages.append(short(json.dumps(denial)))
+
+    if not saw_claude:
+        return None
+    return run
+
+
+def find_logs(roots: list[Path]) -> list[Path]:
+    seen: set[Path] = set()
+    logs: list[Path] = []
+    for root in roots:
+        if not root.exists():
+            continue
+        for path in root.rglob("*.jsonl"):
+            path_text = path.as_posix()
+            if "/logs/" not in path_text or ".git/" in path_text:
+                continue
+            resolved = path.resolve()
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            logs.append(path)
+    return sorted(logs)
+
+
+def run_audit(roots: list[Path]) -> list[RunAudit]:
+    audits: list[RunAudit] = []
+    for path in find_logs(roots):
+        audit = audit_file(path)
+        if audit and audit.has_permission_complaint:
+            audits.append(audit)
+    return dedupe_audits(audits)
+
+
+def audit_key(audit: RunAudit) -> tuple[str, str, str, str, str]:
+    return (
+        audit.thread or "",
+        audit.role or "",
+        str(audit.step or ""),
+        audit.timestamps[0] if audit.timestamps else "",
+        audit.timestamps[-1] if audit.timestamps else "",
+    )
+
+
+def preferred_audit(existing: RunAudit, candidate: RunAudit) -> RunAudit:
+    existing_path = existing.path.as_posix()
+    candidate_path = candidate.path.as_posix()
+    existing_worktree = "/.quest-worktrees/" in existing_path
+    candidate_worktree = "/.quest-worktrees/" in candidate_path
+    if existing_worktree != candidate_worktree:
+        return existing if not existing_worktree else candidate
+    return existing if len(existing_path) <= len(candidate_path) else candidate
+
+
+def dedupe_audits(audits: list[RunAudit]) -> list[RunAudit]:
+    deduped: dict[tuple[str, str, str, str, str], RunAudit] = {}
+    for audit in audits:
+        key = audit_key(audit)
+        if not any(key):
+            deduped[(str(audit.path), "", "", "", "")] = audit
+            continue
+        if key in deduped:
+            deduped[key] = preferred_audit(deduped[key], audit)
+        else:
+            deduped[key] = audit
+    return sorted(deduped.values(), key=lambda audit: audit.path.as_posix())
+
+
+def print_text_report(audits: list[RunAudit]) -> None:
+    gave_up = [a for a in audits if a.gave_up]
+    workaround = [a for a in audits if a.implemented_workaround]
+    human = [a for a in audits if a.opened_human_intervention]
+
+    print(f"Claude permission-related runs: {len(audits)}")
+    print(f"Direct issue-file workaround runs: {len(workaround)}")
+    print(f"Human intervention runs: {len(human)}")
+    print(f"Gave-up issue-filing runs: {len(gave_up)}")
+    print()
+
+    if gave_up:
+        print("Runs where Claude intended to file an issue but gave up:")
+        for audit in gave_up:
+            print(f"- {audit.path}")
+            print(f"  role/thread: {audit.role or '?'} / {audit.thread or '?'}")
+            if audit.timestamps:
+                print(f"  first/last timestamp: {audit.timestamps[0]} / {audit.timestamps[-1]}")
+            if audit.issue_commands:
+                print(f"  issue command: {audit.issue_commands[0]}")
+            elif audit.issue_intent_messages:
+                print(f"  intent: {audit.issue_intent_messages[0]}")
+            if audit.permission_messages:
+                print(f"  permission complaint: {audit.permission_messages[0]}")
+            if audit.final_result:
+                print(f"  final result: {short(audit.final_result)}")
+    else:
+        print("No gave-up issue-filing runs found.")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Audit Claude quest logs for permission-gated issue filing attempts."
+    )
+    parser.add_argument(
+        "--root",
+        type=Path,
+        action="append",
+        default=None,
+        help="Root to scan; may be passed more than once (default: current directory).",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit machine-readable JSON instead of a text report.",
+    )
+    args = parser.parse_args()
+
+    roots = args.root or [Path.cwd()]
+    audits = run_audit(roots)
+    if args.json:
+        print(
+            json.dumps(
+                [
+                    {
+                        "path": str(a.path),
+                        "classification": a.classification,
+                        "role": a.role,
+                        "thread": a.thread,
+                        "step": a.step,
+                        "timestamps": a.timestamps,
+                        "issue_commands": a.issue_commands,
+                        "issue_query_commands": a.issue_query_commands,
+                        "permission_messages": a.permission_messages,
+                        "permission_denials": a.permission_denials,
+                        "direct_issue_edits": a.direct_issue_edits,
+                        "human_intervention_edits": a.human_intervention_edits,
+                        "final_result": a.final_result,
+                    }
+                    for a in audits
+                ],
+                indent=2,
+            )
+        )
+    else:
+        print_text_report(audits)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

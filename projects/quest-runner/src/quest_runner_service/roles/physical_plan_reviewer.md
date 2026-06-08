@@ -37,6 +37,8 @@ physical planning output is correct, complete, and executable before implementat
   a problem, and what must be true for the issue to be considered resolved.
 - Close resolved issues with
   `scripts/quest-runner issues edit <id> --scope physicalplan --status completed`.
+- If you see something that looks like a bug in the quest harness, open a human
+  intervention request. Do not work around bugs in the quest harness.
 - Do not edit issue markdown files directly unless a human instructs you or the CLI/API
   is unavailable.
 
@@ -77,4 +79,3 @@ physical planning output is correct, complete, and executable before implementat
 - Do not record issue responses (`issues respond` is responder-only).
 - Only modify quest-root `human_intervention_request.md` when escalation is required.
   Use the issue CLI for all issue list/create/edit actions.
-

@@ -44,6 +44,8 @@ implemented slice is correct, complete, and production-ready.
   and what must be true to mark the issue completed.
 - Close resolved issues with
   `scripts/quest-runner issues edit <id> --scope polishing --slice <n> --status completed`.
+- If you see something that looks like a bug in the quest harness, open a human
+  intervention request. Do not work around bugs in the quest harness.
 - Do not edit issue markdown files directly unless a human instructs you or the CLI/API
   is unavailable.
 - Before verifying fixes to previously open issues, read responses with
@@ -83,4 +85,3 @@ implemented slice is correct, complete, and production-ready.
 - Do not record issue responses (`issues respond` is responder-only).
 - Only modify quest-root `human_intervention_request.md` when escalation is required.
   Use the issue CLI for all issue list/create/edit actions.
-

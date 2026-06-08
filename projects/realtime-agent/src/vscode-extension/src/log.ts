@@ -76,32 +76,3 @@ export function CreateExtensionLog(options: CreateExtensionLogOptions): LogSink
     },
   };
 }
-
-export class Log implements LogSink
-{
-  constructor(private readonly m_channel: vscode.OutputChannel) {}
-
-  Line(message: string): void
-  {
-    this.m_channel.appendLine(message);
-  }
-
-  Error(message: string, err?: unknown): void
-  {
-    const detail = FormatErrorDetail(err);
-    this.m_channel.appendLine(`${message}${detail ? `: ${detail}` : ""}`);
-  }
-
-  LogEvent(_event: string, _fields?: Record<string, unknown>): void
-  {
-  }
-
-  LogEventError(_event: string, _fields?: Record<string, unknown>, _err?: unknown): void
-  {
-  }
-
-  Show(): void
-  {
-    this.m_channel.show(true);
-  }
-}

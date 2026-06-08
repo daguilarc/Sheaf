@@ -555,6 +555,13 @@ class ClaudeCodeHarness(Harness):
     kind = HarnessKind.ClaudeCode
     display_name = "Claude Code"
     permission_mode = "acceptEdits"
+    allowed_tools = ("Bash(scripts/quest-runner:*)",)
+
+    def _permission_args(self) -> list[str]:
+        args = ["--permission-mode", self.permission_mode]
+        if self.allowed_tools:
+            args.extend(["--allowedTools", *self.allowed_tools])
+        return args
 
     def _resolved_reasoning_effort(self, reasoning_effort: str | None) -> str:
         return reasoning_effort or "high"
@@ -592,8 +599,7 @@ class ClaudeCodeHarness(Harness):
             model,
             "--effort",
             self._resolved_reasoning_effort(reasoning_effort),
-            "--permission-mode",
-            self.permission_mode,
+            *self._permission_args(),
             "--output-format",
             "stream-json",
             "--verbose",
@@ -635,8 +641,7 @@ class ClaudeCodeHarness(Harness):
             model,
             "--effort",
             self._resolved_reasoning_effort(reasoning_effort),
-            "--permission-mode",
-            self.permission_mode,
+            *self._permission_args(),
             "--output-format",
             "stream-json",
             "--verbose",
