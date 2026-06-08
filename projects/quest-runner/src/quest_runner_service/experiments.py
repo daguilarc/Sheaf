@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
 from . import quest_fs
 from .dashboard_data import DashboardCheckout, DashboardBadRequest, DashboardNotFound
 from .quest_types import QuestMeta
-from .worktrees import is_git_worktree, quest_worktree_base_dir
+from .worktrees import is_git_worktree, quest_worktree_base_dir, run_git
 
 _EXPERIMENT_DIR_RE = re.compile(r"^\d{4}$")
 
@@ -32,6 +33,25 @@ class ExperimentNotFound(ExperimentError):
 class ExperimentValidationError(ExperimentError):
     def __init__(self, message: str) -> None:
         self.message = message
+        super().__init__(message)
+
+
+class ExperimentWorktreeCreationError(ExperimentError):
+    """Experiment metadata was committed but worktree creation failed."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        metadata_commit: str,
+        branch_name: str,
+        worktree_path: Path,
+        experiment_dir: Path,
+    ) -> None:
+        self.metadata_commit = metadata_commit
+        self.branch_name = branch_name
+        self.worktree_path = worktree_path
+        self.experiment_dir = experiment_dir
         super().__init__(message)
 
 
@@ -261,6 +281,284 @@ def update_experiment_status(
         meta.source_commit = source_commit
     write_experiment_meta(path_or_dir, meta)
     return meta
+
+
+_HISTORY_GLOBAL_STEP_RE = re.compile(r"global_step:\s*(\d+)", re.IGNORECASE)
+_HISTORY_ROLE_RE = re.compile(r"role:\s*(\S+)", re.IGNORECASE)
+
+_STOP_NODE_ALIASES: dict[str, str] = {
+    "slice_completed": "slice_completed",
+}
+
+
+def _quest_machine_path(source_repo_root: Path, quest_dir: Path) -> str:
+    return quest_dir.resolve().relative_to(source_repo_root.resolve()).as_posix()
+
+
+def _rev_parse_parent(source_repo_root: Path, commit: str) -> str:
+    result = run_git(
+        source_repo_root,
+        "rev-parse",
+        f"{commit}^",
+        check=False,
+    )
+    if result.returncode != 0:
+        raise ExperimentValidationError(
+            f"Start step commit {commit!r} has no parent (root commit)"
+        )
+    return result.stdout.strip()
+
+
+def _role_from_metadata_row(row: dict) -> str | None:
+    role = row.get("role")
+    if isinstance(role, str) and role.strip():
+        return role.strip()
+    chain = row.get("child_chain")
+    if isinstance(chain, list):
+        for item in chain:
+            if not isinstance(item, dict):
+                continue
+            child_role = item.get("role")
+            if isinstance(child_role, str) and child_role.strip():
+                return child_role.strip()
+    return None
+
+
+def _step_log_for_role(quest_dir: Path, global_step: int, role: str | None) -> str | None:
+    if role is None:
+        return None
+    rel = f"logs/step_{global_step:04d}_{role}.jsonl"
+    if (quest_dir / rel).is_file():
+        return rel
+    return None
+
+
+def _history_record_global_step(record: quest_fs.TransitionRecord) -> int | None:
+    match = _HISTORY_GLOBAL_STEP_RE.search(record.notes)
+    if match is None:
+        return None
+    return int(match.group(1))
+
+
+def _history_record_role(record: quest_fs.TransitionRecord) -> str | None:
+    match = _HISTORY_ROLE_RE.search(record.notes)
+    if match is None:
+        return None
+    return match.group(1)
+
+
+def resolve_start_step(
+    source_repo_root: Path,
+    quest_dir: Path,
+    start_step: int,
+) -> ExperimentStartStep:
+    if start_step < 1:
+        raise ExperimentValidationError(
+            f"start_step must be a positive integer, got {start_step}"
+        )
+    from .dashboard_git import scan_quest_metadata_step_commits
+
+    quest_machine_path = _quest_machine_path(source_repo_root, quest_dir)
+    rows = scan_quest_metadata_step_commits(source_repo_root, quest_machine_path)
+    matching = [row for row in rows if int(row["global_step"]) == start_step]
+    seen: set[int] = set()
+    deduped: list[dict] = []
+    for row in matching:
+        gs = int(row["global_step"])
+        if gs in seen:
+            raise ExperimentValidationError(
+                f"Duplicate metadata rows for global_step {start_step}"
+            )
+        seen.add(gs)
+        deduped.append(row)
+    if len(deduped) == 1:
+        row = deduped[0]
+        step_commit = str(row["sha"])
+        role = _role_from_metadata_row(row)
+        base_commit = _rev_parse_parent(source_repo_root, step_commit)
+        return ExperimentStartStep(
+            global_step=start_step,
+            step_commit=step_commit,
+            base_commit=base_commit,
+            role=role,
+            step_log=_step_log_for_role(quest_dir, start_step, role),
+        )
+
+    history = quest_fs.read_history(quest_dir / "state_history.md")
+    if not history:
+        raise ExperimentValidationError(
+            f"No start step metadata found for global_step {start_step}"
+        )
+    by_global_step = [
+        record
+        for record in history
+        if _history_record_global_step(record) == start_step
+    ]
+    if len(by_global_step) > 1:
+        raise ExperimentValidationError(
+            f"Duplicate state_history records for global_step {start_step}"
+        )
+    if len(by_global_step) == 1:
+        record = by_global_step[0]
+    else:
+        if start_step > len(history):
+            raise ExperimentValidationError(
+                f"No state_history record for start_step {start_step}"
+            )
+        record = history[start_step - 1]
+    step_commit = record.commit.strip()
+    if not step_commit:
+        raise ExperimentValidationError(
+            f"state_history record for start_step {start_step} has no commit"
+        )
+    role = _history_record_role(record)
+    base_commit = _rev_parse_parent(source_repo_root, step_commit)
+    return ExperimentStartStep(
+        global_step=start_step,
+        step_commit=step_commit,
+        base_commit=base_commit,
+        role=role,
+        step_log=_step_log_for_role(quest_dir, start_step, role),
+    )
+
+
+def _normalize_machine_path(machine_path: str | None) -> str:
+    if machine_path is None or not str(machine_path).strip():
+        return "root/slice"
+    return str(machine_path).strip().replace("\\", "/")
+
+
+def _node_class_name(node_cls: type) -> str:
+    return node_cls.__name__
+
+
+def validate_stop_condition(
+    machine_path: str | None,
+    stop_node: str,
+) -> ExperimentStopCondition:
+    normalized_path = _normalize_machine_path(machine_path)
+    if not stop_node or not str(stop_node).strip():
+        raise ExperimentValidationError("stop_node must be non-empty")
+    raw_node = str(stop_node).strip()
+    lower_node = raw_node.lower()
+
+    alias = _STOP_NODE_ALIASES.get(lower_node)
+    if alias is not None:
+        return ExperimentStopCondition(
+            machine_path=normalized_path,
+            node_name=alias,
+        )
+
+    from .state_machine.quest_v2_definitions import (
+        build_quest_machine_definition,
+        build_slice_machine_definition,
+    )
+
+    if normalized_path in ("root/slice", "slice"):
+        node_map = build_slice_machine_definition().node_map
+    else:
+        node_map = build_quest_machine_definition().node_map
+
+    for key, node_cls in node_map.items():
+        if raw_node == key:
+            return ExperimentStopCondition(
+                machine_path=normalized_path,
+                node_name=key,
+            )
+        if lower_node == key.lower():
+            return ExperimentStopCondition(
+                machine_path=normalized_path,
+                node_name=key,
+            )
+        class_name = _node_class_name(node_cls)
+        if raw_node == class_name or lower_node == class_name.lower():
+            return ExperimentStopCondition(
+                machine_path=normalized_path,
+                node_name=key,
+            )
+
+    raise ExperimentValidationError(
+        f"Unknown stop node {raw_node!r} for machine_path {normalized_path!r}"
+    )
+
+
+def create_experiment_branch_and_worktree(
+    source_repo_root: Path,
+    branch_name: str,
+    worktree_path: Path,
+    base_commit: str,
+) -> Path:
+    worktree_path.parent.mkdir(parents=True, exist_ok=True)
+    run_git(
+        source_repo_root,
+        "worktree",
+        "add",
+        "-b",
+        branch_name,
+        str(worktree_path),
+        base_commit,
+    )
+    return worktree_path
+
+
+def remove_partial_experiment_worktree(
+    source_repo_root: Path,
+    branch_name: str,
+    worktree_path: Path,
+) -> None:
+    if worktree_path.is_dir():
+        run_git(
+            source_repo_root,
+            "worktree",
+            "remove",
+            "--force",
+            str(worktree_path),
+            check=False,
+        )
+        if worktree_path.exists():
+            shutil.rmtree(worktree_path, ignore_errors=True)
+    run_git(source_repo_root, "branch", "-D", branch_name, check=False)
+
+
+def commit_experiment_metadata(
+    source_repo_root: Path,
+    experiment_dir: Path,
+    project: str,
+    quest_type: str,
+    quest_number: int,
+    experiment_number: int,
+) -> str:
+    rel = experiment_dir.resolve().relative_to(source_repo_root.resolve()).as_posix()
+    run_git(source_repo_root, "add", "--", rel)
+    message = (
+        f"experiment-create: {project}/{quest_type}/"
+        f"{quest_number:04d}/{experiment_number:04d}"
+    )
+    run_git(source_repo_root, "commit", "-m", message)
+    rev = run_git(source_repo_root, "rev-parse", "HEAD")
+    return rev.stdout.strip()
+
+
+def format_experiment_notes(
+    *,
+    description: str,
+    start_step: ExperimentStartStep,
+    stop_condition: ExperimentStopCondition,
+) -> str:
+    role_label = start_step.role or "unknown role"
+    lines = [
+        "# Experiment Notes",
+        "",
+        description.strip(),
+        "",
+        f"Start step: {start_step.global_step} ({role_label})",
+        (
+            f"Stop condition: {stop_condition.node_name} "
+            f"({stop_condition.machine_path})"
+        ),
+        "",
+    ]
+    return "\n".join(lines)
 
 
 def validate_experiment_belongs_to_quest(

@@ -24,6 +24,7 @@ from .quest_types import (
     SliceStateInfo,
     utc_now_iso,
 )
+from . import experiments as experiment_ops
 from .worktrees import (
     SourceCheckoutDetached,
     SourceCheckoutNotClean,
@@ -464,6 +465,199 @@ class QuestService:
             "worktree_branch": worktree_branch,
             "worktree_path": str(worktree_path),
             "quest_create_commit": quest_create_commit,
+        }
+
+    def create_experiment(
+        self,
+        repo_path: str,
+        project: str,
+        quest_type: str,
+        quest_number: int,
+        start_step: int,
+        stop_node: str,
+        notes: str,
+        config: str,
+        *,
+        stop_machine_path: str | None = None,
+        requested_by: str | None = None,
+        public_base_url: str | None = None,
+    ) -> dict:
+        root = _resolve_repo(repo_path)
+        if not _is_git_repo(root):
+            raise NotAGitRepo(repo_path)
+        _validate_project(root, project)
+        try:
+            assert_source_checkout_clean(root)
+        except SourceCheckoutDetached as e:
+            raise InvalidQuestInput(str(e)) from e
+        except SourceCheckoutNotClean as e:
+            raise InvalidQuestInput(str(e)) from e
+        if quest_type not in ("main", "side"):
+            raise InvalidQuestInput(
+                f"quest_type must be 'main' or 'side', got {quest_type!r}"
+            )
+        if quest_number < 0:
+            raise InvalidQuestInput("quest_number must be non-negative")
+        if not notes.strip():
+            raise InvalidQuestInput("notes must be non-empty")
+        if not config.strip():
+            raise InvalidQuestInput("config must be non-empty")
+
+        source_qdir = quest_fs.find_quest_dir(root, project, quest_type, quest_number)
+        if source_qdir is None:
+            raise QuestNotFound(project, quest_type, quest_number)
+
+        quest_meta = quest_fs.read_quest_meta(source_qdir)
+
+        try:
+            stop_condition = experiment_ops.validate_stop_condition(
+                stop_machine_path, stop_node
+            )
+        except experiment_ops.ExperimentValidationError as e:
+            raise InvalidQuestInput(e.message) from e
+
+        try:
+            quest_fs.validate_state_execution_config_text(config)
+        except ValueError as e:
+            raise InvalidQuestInput(str(e)) from e
+
+        try:
+            resolved_start = experiment_ops.resolve_start_step(
+                root, source_qdir, start_step
+            )
+        except experiment_ops.ExperimentValidationError as e:
+            raise InvalidQuestInput(e.message) from e
+
+        experiment_number = experiment_ops.next_experiment_number(source_qdir)
+        exp_id = experiment_ops.experiment_id(
+            project, quest_type, quest_number, experiment_number
+        )
+        branch_name = experiment_ops.experiment_branch_name(
+            project, quest_type, quest_number, experiment_number
+        )
+        exp_dir = (
+            experiment_ops.experiments_root(source_qdir)
+            / experiment_ops.experiment_dir_name(experiment_number)
+        )
+        worktree_path = experiment_ops.experiment_worktree_path(root, exp_id)
+
+        exp_meta = experiment_ops.ExperimentMeta(
+            experiment_id=exp_id,
+            experiment_number=experiment_number,
+            project=project,
+            quest_type=quest_type,
+            quest_number=quest_number,
+            quest_slug=quest_meta.quest_slug,
+            description=notes.strip(),
+            start_step=resolved_start,
+            stop_condition=stop_condition,
+            worktree_name=exp_id,
+            branch_name=branch_name,
+            status="open",
+            created_at=utc_now_iso(),
+            created_by=requested_by,
+        )
+
+        metadata_commit: str | None = None
+        try:
+            exp_dir.mkdir(parents=True, exist_ok=False)
+            experiment_ops.write_experiment_meta(exp_dir, exp_meta)
+            notes_path = exp_dir / "notes.md"
+            notes_path.write_text(
+                experiment_ops.format_experiment_notes(
+                    description=notes,
+                    start_step=resolved_start,
+                    stop_condition=stop_condition,
+                ),
+                encoding="utf-8",
+            )
+            config_path = exp_dir / "state_execution_config.yaml"
+            config_path.write_text(config if config.endswith("\n") else config + "\n", encoding="utf-8")
+
+            metadata_commit = experiment_ops.commit_experiment_metadata(
+                root,
+                exp_dir,
+                project,
+                quest_type,
+                quest_number,
+                experiment_number,
+            )
+            experiment_ops.create_experiment_branch_and_worktree(
+                root,
+                branch_name,
+                worktree_path,
+                resolved_start.base_commit,
+            )
+        except Exception as exc:
+            if metadata_commit is None:
+                experiment_ops.remove_partial_experiment_worktree(
+                    root, branch_name, worktree_path
+                )
+                if exp_dir.exists():
+                    shutil.rmtree(exp_dir, ignore_errors=True)
+                raise
+            raise experiment_ops.ExperimentWorktreeCreationError(
+                "Experiment metadata was committed on the source branch but "
+                f"worktree creation failed; manual cleanup may be required for "
+                f"{exp_dir.relative_to(root).as_posix()} "
+                f"(commit {metadata_commit}, branch {branch_name!r}, "
+                f"worktree {worktree_path}).",
+                metadata_commit=metadata_commit,
+                branch_name=branch_name,
+                worktree_path=worktree_path,
+                experiment_dir=exp_dir,
+            ) from exc
+
+        exp_quest_dir = quest_fs.find_quest_dir(
+            worktree_path, project, quest_type, quest_number
+        )
+        if exp_quest_dir is None:
+            raise experiment_ops.ExperimentWorktreeCreationError(
+                "Experiment worktree was created but quest directory was not found",
+                metadata_commit=metadata_commit,
+                branch_name=branch_name,
+                worktree_path=worktree_path,
+                experiment_dir=exp_dir,
+            )
+        exp_config_path = exp_quest_dir / "state_execution_config.yaml"
+        exp_config_path.write_text(
+            config if config.endswith("\n") else config + "\n",
+            encoding="utf-8",
+        )
+
+        dashboard_url: str | None = None
+        if public_base_url is not None:
+            from . import dashboard_data
+
+            dashboard_url = dashboard_data.canonical_quest_dashboard_url(
+                base_url=public_base_url.rstrip("/"),
+                project=project,
+                quest_type=quest_type,
+                quest_number=quest_number,
+            )
+
+        return {
+            "experiment_id": exp_id,
+            "experiment_number": experiment_number,
+            "project": project,
+            "quest_type": quest_type,
+            "quest_number": quest_number,
+            "worktree_path": str(worktree_path.resolve()),
+            "branch_name": branch_name,
+            "base_commit": resolved_start.base_commit,
+            "start_step": {
+                "global_step": resolved_start.global_step,
+                "role": resolved_start.role,
+                "step_log": resolved_start.step_log,
+                "step_commit": resolved_start.step_commit,
+                "base_commit": resolved_start.base_commit,
+            },
+            "stop_condition": {
+                "machine_path": stop_condition.machine_path,
+                "node_name": stop_condition.node_name,
+            },
+            "metadata_commit": metadata_commit,
+            "dashboard_url": dashboard_url,
         }
 
     def _prepare_run(

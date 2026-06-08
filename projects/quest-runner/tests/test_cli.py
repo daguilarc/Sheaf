@@ -102,6 +102,7 @@ class HelpTests(unittest.TestCase):
         self.assertIn("scripts/quest-runner issues edit", help_text)
         self.assertIn("scripts/quest-runner issues respond", help_text)
         self.assertIn("scripts/quest-runner issues responses", help_text)
+        self.assertIn("scripts/quest-runner experiments create", help_text)
         self.assertIn("human-operated", help_text)
         self.assertIn("issues ...", help_text)
 
@@ -124,6 +125,7 @@ class HelpTests(unittest.TestCase):
             ["issues", "edit", "--help"],
             ["issues", "respond", "--help"],
             ["issues", "responses", "--help"],
+            ["experiments", "create", "--help"],
         ]
         for argv in commands:
             with self.subTest(argv=argv):
@@ -172,6 +174,74 @@ class CommandRequestTests(unittest.TestCase):
             {"project": "quest-runner", "quest_type": "side", "name": "CLI"},
         )
         self.assertIn("quest_number: 0", out)
+        self.assertIn("dashboard_url:", out)
+
+    def test_experiments_create_calls_endpoint(self) -> None:
+        import tempfile
+
+        notes_file = tempfile.NamedTemporaryFile(
+            mode="w", suffix=".md", delete=False, encoding="utf-8"
+        )
+        config_file = tempfile.NamedTemporaryFile(
+            mode="w", suffix=".yaml", delete=False, encoding="utf-8"
+        )
+        try:
+            notes_file.write("experiment notes")
+            notes_file.close()
+            config_file.write("version: 2\nprofiles: {}\n")
+            config_file.close()
+            code, transport, out, _err = self._run(
+                [
+                    "experiments",
+                    "create",
+                    "--project",
+                    "quest-runner",
+                    "--type",
+                    "main",
+                    "--number",
+                    "0",
+                    "--start-step",
+                    "5",
+                    "--stop-node",
+                    "slice_completed",
+                    "--notes-file",
+                    notes_file.name,
+                    "--config-file",
+                    config_file.name,
+                ],
+                (
+                    201,
+                    {
+                        "experiment_id": "experiment_quest-runner_main_0_0",
+                        "experiment_number": 0,
+                        "branch_name": "experiment/quest-runner/main/0000/0000",
+                        "worktree_path": "/tmp/wt",
+                        "base_commit": "deadbeef",
+                        "dashboard_url": "http://test.local/dashboard",
+                    },
+                ),
+            )
+        finally:
+            Path(notes_file.name).unlink(missing_ok=True)
+            Path(config_file.name).unlink(missing_ok=True)
+        self.assertEqual(code, 0)
+        req = transport.requests[0]
+        self.assertEqual(req.method, "POST")
+        self.assertTrue(req.url.endswith("/experiments/create"))
+        self.assertEqual(
+            req.body,
+            {
+                "project": "quest-runner",
+                "quest_type": "main",
+                "quest_number": 0,
+                "start_step": 5,
+                "stop_node": "slice_completed",
+                "notes": "experiment notes",
+                "config": "version: 2\nprofiles: {}\n",
+            },
+        )
+        self.assertIn("experiment_id:", out)
+        self.assertIn("worktree_path:", out)
         self.assertIn("dashboard_url:", out)
 
     def test_run_calls_endpoint(self) -> None:

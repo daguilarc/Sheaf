@@ -311,6 +311,15 @@ def _print_table(headers: list[str], rows: list[list[str]], out: TextIO) -> None
         )
 
 
+def _format_create_experiment(data: dict[str, Any], out: TextIO) -> None:
+    _print_field("experiment_id", data.get("experiment_id"), out)
+    _print_field("experiment_number", data.get("experiment_number"), out)
+    _print_field("branch_name", data.get("branch_name"), out)
+    _print_field("worktree_path", data.get("worktree_path"), out)
+    _print_field("base_commit", data.get("base_commit"), out)
+    _print_field("dashboard_url", data.get("dashboard_url"), out)
+
+
 def _format_create(data: dict[str, Any], base_url: str, out: TextIO) -> None:
     _print_field("project", data.get("project"), out)
     _print_field("quest_type", data.get("quest_type"), out)
@@ -528,6 +537,7 @@ def build_parser() -> argparse.ArgumentParser:
           scripts/quest-runner issues responses QP-0001 --project quest-runner --type side --number 0 --scope physicalplan
           scripts/quest-runner issues list --project quest-runner --type side --number 0 --scope polishing --slice 1
           scripts/quest-runner --json advance --project quest-runner --type side --number 0
+          scripts/quest-runner experiments create --project quest-runner --type main --number 0 --start-step 5 --stop-node slice_completed --notes-file /tmp/notes.md --config-file /tmp/config.yaml
 
         Notes:
           - advance and land are human-operated recovery and integration workflows.
@@ -658,6 +668,24 @@ def build_parser() -> argparse.ArgumentParser:
     _add_issue_scope_args(issues_responses)
     issues_responses.set_defaults(handler="issues_responses")
 
+    experiments_parser = subparsers.add_parser(
+        "experiments",
+        help="Experiment commands",
+    )
+    experiments_sub = experiments_parser.add_subparsers(dest="experiments_command")
+
+    experiments_create = experiments_sub.add_parser(
+        "create",
+        help="Create a quest experiment from an earlier step",
+    )
+    _add_quest_identity_args(experiments_create)
+    experiments_create.add_argument("--start-step", required=True, type=int)
+    experiments_create.add_argument("--stop-node", required=True)
+    experiments_create.add_argument("--stop-machine-path", default=None)
+    experiments_create.add_argument("--notes-file", required=True)
+    experiments_create.add_argument("--config-file", required=True)
+    experiments_create.set_defaults(handler="experiments_create")
+
     return parser
 
 
@@ -675,6 +703,39 @@ def _dispatch_command(
     if handler == "help":
         build_parser().print_help(out)
         return 0
+
+    if handler == "experiments_create":
+        notes = Path(args.notes_file).read_text(encoding="utf-8")
+        config = Path(args.config_file).read_text(encoding="utf-8")
+        body = {
+            "project": args.project,
+            "quest_type": args.type,
+            "quest_number": args.number,
+            "start_step": args.start_step,
+            "stop_node": args.stop_node,
+            "notes": notes,
+            "config": config,
+        }
+        if args.stop_machine_path is not None:
+            body["stop_machine_path"] = args.stop_machine_path
+        endpoint = "/experiments/create"
+        status, data = _send_request(
+            request_fn, "POST", base_url=base_url, endpoint=endpoint, body=body
+        )
+        if 200 <= status < 300:
+            if json_output:
+                _print_json(data, out)
+            else:
+                _format_create_experiment(data, out)
+            return 0
+        return _handle_http_result(
+            status=status,
+            endpoint=endpoint,
+            data=data,
+            json_output=json_output,
+            out=out,
+            err=err,
+        )
 
     if handler == "create":
         body: dict[str, Any] = {

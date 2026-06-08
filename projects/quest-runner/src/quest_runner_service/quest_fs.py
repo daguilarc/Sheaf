@@ -729,6 +729,39 @@ def read_state_execution_config_version(config_dir: Path) -> int:
     return _coerce_config_version(raw["version"], path)
 
 
+def validate_state_execution_config_text(config_text: str) -> None:
+    """Parse and validate arbitrary state execution config YAML text."""
+    raw_any = yaml.safe_load(config_text)
+    if not isinstance(raw_any, dict):
+        raise ValueError("Execution config must be a mapping")
+    raw: dict[str, Any] = raw_any
+    virtual_path = Path("<config>")
+    if "version" not in raw:
+        raise ValueError("Execution config missing required 'version' key")
+    config_version = _coerce_config_version(raw["version"], virtual_path)
+    profiles = raw.get("profiles")
+    if not isinstance(profiles, dict):
+        raise ValueError("Execution config missing 'profiles' mapping")
+    for role, prof in profiles.items():
+        _parse_profile_maps_to_execution_profile(
+            str(role), prof, virtual_path, config_version
+        )
+    harnesses = raw.get("harnesses", {})
+    if harnesses is None:
+        return
+    if not isinstance(harnesses, dict):
+        raise ValueError("Execution config 'harnesses' must be a mapping")
+    for harness_name, config in harnesses.items():
+        if not isinstance(harness_name, str):
+            raise ValueError("Harness config keys must be strings")
+        try:
+            HarnessKind(harness_name)
+        except ValueError as e:
+            raise ValueError(f"Unknown harness config {harness_name!r}") from e
+        if not isinstance(config, dict):
+            raise ValueError(f"Harness config {harness_name!r} must be a mapping")
+
+
 def read_execution_config(quest_dir: Path) -> dict[str, ExecutionProfile]:
     path = quest_dir / "state_execution_config.yaml"
     if not path.is_file():

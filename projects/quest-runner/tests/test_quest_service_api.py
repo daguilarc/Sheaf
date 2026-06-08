@@ -465,5 +465,70 @@ class QuestServiceApiTests(unittest.TestCase):
             lock.release(lock_key)
 
 
+class CreateExperimentApiTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.repo_root = Path(__file__).resolve().parents[1]
+        self.temp = TempRepo(self.repo_root)
+        self.addCleanup(self.temp.cleanup)
+
+    def _prepare(self) -> tuple[object, dict]:
+        from .test_experiments import _git_commit, _step_commit_message
+
+        ensure_project(self.temp.root, "example")
+        client, svc = make_app_client(self.temp.root, self.repo_root)
+        out = svc.create_quest(
+            str(self.temp.root), "example", "main", "API Experiment"
+        )
+        source_qdir = quest_fs.find_quest_dir(
+            self.temp.root, "example", "main", out["quest_number"]
+        )
+        assert source_qdir is not None
+        qrel = source_qdir.resolve().relative_to(self.temp.root.resolve()).as_posix()
+        _git_commit(
+            self.temp.root,
+            _step_commit_message(qrel, 5, role="implementer"),
+            allow_empty=True,
+        )
+        return client, out
+
+    def test_create_experiment_requires_fields(self) -> None:
+        client, _out = self._prepare()
+        resp = client.post(
+            "/experiments/create",
+            json={
+                "project": "example",
+                "quest_type": "main",
+            },
+        )
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("Missing required fields", resp.get_json()["error"])
+
+    def test_create_experiment_returns_payload(self) -> None:
+        from .test_experiments import _SAMPLE_CONFIG
+
+        client, out = self._prepare()
+        resp = client.post(
+            "/experiments/create",
+            json={
+                "project": "example",
+                "quest_type": "main",
+                "quest_number": out["quest_number"],
+                "start_step": 5,
+                "stop_node": "slice_completed",
+                "notes": "API experiment",
+                "config": _SAMPLE_CONFIG,
+            },
+        )
+        self.assertEqual(resp.status_code, 201)
+        body = resp.get_json()
+        self.assertEqual(body["experiment_number"], 0)
+        self.assertIn("experiment_id", body)
+        self.assertIn("worktree_path", body)
+        self.assertIn("branch_name", body)
+        self.assertIn("base_commit", body)
+        self.assertIn("dashboard_url", body)
+        self.assertEqual(body["stop_condition"]["node_name"], "slice_completed")
+
+
 if __name__ == "__main__":
     unittest.main()

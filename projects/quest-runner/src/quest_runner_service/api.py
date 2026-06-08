@@ -34,6 +34,7 @@ from .quest_service import (
     RepoNotFound,
     SliceInitializationConflict,
 )
+from .experiments import ExperimentWorktreeCreationError
 from .worktrees import WorktreeCreationError
 
 log = logging.getLogger("quest_runner")
@@ -112,6 +113,16 @@ def create_app(
     def handle_worktree_creation_error(exc):
         return jsonify({"error": str(exc)}), 500
 
+    @app.errorhandler(ExperimentWorktreeCreationError)
+    def handle_experiment_worktree_creation_error(exc):
+        return jsonify({
+            "error": str(exc),
+            "metadata_commit": exc.metadata_commit,
+            "branch_name": exc.branch_name,
+            "worktree_path": str(exc.worktree_path),
+            "experiment_dir": str(exc.experiment_dir),
+        }), 500
+
     @app.errorhandler(HarnessNotAvailable)
     def handle_harness_not_available(exc):
         return jsonify({"error": str(exc)}), 503
@@ -179,6 +190,52 @@ def create_app(
             timer.daemon = True
             timer.start()
         return jsonify({"status": "exiting"}), 200
+
+    @app.route("/experiments/create", methods=["POST"])
+    def create_experiment_route():
+        data = request.get_json(force=True)
+        required = [
+            "project",
+            "quest_type",
+            "quest_number",
+            "start_step",
+            "stop_node",
+            "notes",
+            "config",
+        ]
+        missing = [f for f in required if f not in data]
+        if missing:
+            return jsonify({"error": f"Missing required fields: {missing}"}), 400
+        if not isinstance(data["quest_number"], int):
+            return jsonify({"error": "quest_number must be an integer"}), 400
+        if not isinstance(data["start_step"], int):
+            return jsonify({"error": "start_step must be an integer"}), 400
+        log.info(
+            "create_experiment project=%s type=%s number=%s start_step=%s",
+            data["project"],
+            data["quest_type"],
+            data["quest_number"],
+            data["start_step"],
+        )
+        result = quest_service.create_experiment(
+            repo_path=str(source_root),
+            project=data["project"],
+            quest_type=data["quest_type"],
+            quest_number=data["quest_number"],
+            start_step=data["start_step"],
+            stop_node=data["stop_node"],
+            notes=data["notes"],
+            config=data["config"],
+            stop_machine_path=data.get("stop_machine_path"),
+            requested_by=data.get("requested_by"),
+            public_base_url=request.url_root,
+        )
+        log.info(
+            "create_experiment ok experiment_id=%s worktree=%s",
+            result.get("experiment_id"),
+            result.get("worktree_path"),
+        )
+        return jsonify(result), 201
 
     @app.route("/create_quest", methods=["POST"])
     def create_quest_route():
