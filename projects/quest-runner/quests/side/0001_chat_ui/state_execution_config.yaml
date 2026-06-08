@@ -61,6 +61,7 @@ profiles:
     idle_timeout_seconds: 1800
     modify_allow:
       - "$currentProject/docs/**"
+      - "projects/web/docs/**"
       - "$currentQuest/human_intervention_request.md"
     modify_block:
       - "**"
