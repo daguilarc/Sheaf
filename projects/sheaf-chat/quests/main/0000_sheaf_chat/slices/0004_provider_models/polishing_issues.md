@@ -2,10 +2,10 @@
 
 ## Issue PL-0001
 
-- status: open
+- status: completed
 - owner_role: polisher_reviewer
 - created_at: 2026-06-08T21:52:03Z
-- updated_at: 2026-06-08T21:52:03Z
+- updated_at: 2026-06-08T22:04:56Z
 - title: Slice test suite is gitignored and not version-controlled
 - details: Problem: The slice test suite under projects/sheaf-chat/tests/agents/models/ (helpers.ts, auth.test.ts, models.test.ts) is matched by the repo-root .gitignore rule "models/" (intended for ML model binaries), so the files are silently ignored by git.
 
@@ -28,10 +28,10 @@ What must be true to close:
 
 ## Issue PL-0002
 
-- status: open
+- status: completed
 - owner_role: polisher_reviewer
 - created_at: 2026-06-08T21:52:15Z
-- updated_at: 2026-06-08T21:52:15Z
+- updated_at: 2026-06-08T22:04:56Z
 - title: OpenAI/subscription model availability path is untested
 - details: Problem: A primary slice objective is "The model registry merges OpenAI subscription/OAuth-backed models and local inference models." The OpenAI/built-in availability path is implemented but has zero test coverage.
 
@@ -54,10 +54,10 @@ What must be true to close:
 
 ## Issue PL-0003
 
-- status: open
+- status: completed
 - owner_role: polisher_reviewer
 - created_at: 2026-06-08T21:52:27Z
-- updated_at: 2026-06-08T21:52:27Z
+- updated_at: 2026-06-08T22:04:57Z
 - title: ListModels surfaces all built-in providers, not just OpenAI + local
 - details: Problem: ListModels (models.ts:129) maps modelRegistry.getAll(). Pi ModelRegistry.loadBuiltInModels uses getProviders().flatMap(getModels) (verified in node_modules/@earendil-works/pi-coding-agent/dist/core/model-registry.js:298-320), so getAll() returns every built-in provider (anthropic, google, xai, etc.), not just OpenAI. ListModels therefore returns metadata for all of those providers, each marked available=false because no auth is configured for them.
 
