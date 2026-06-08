@@ -3,11 +3,50 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 project_dir="$repo_root/projects/quest-runner"
-python="$project_dir/.venv/bin/python"
+python=""
 
-if [[ ! -x "$python" ]]; then
-  echo "Missing quest-runner virtualenv at $python" >&2
-  echo "Run: make -C projects/quest-runner test" >&2
+python_is_compatible() {
+  local candidate="$1"
+  [[ -x "$candidate" ]] || return 1
+  "$candidate" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)' >/dev/null 2>&1
+}
+
+try_python() {
+  local candidate="$1"
+  if python_is_compatible "$candidate"; then
+    python="$candidate"
+    return 0
+  fi
+  return 1
+}
+
+if [[ -n "${QUEST_RUNNER_PYTHON:-}" ]]; then
+  try_python "$QUEST_RUNNER_PYTHON" || true
+fi
+
+if [[ -z "$python" ]]; then
+  try_python "$project_dir/.venv/bin/python" || true
+fi
+
+if [[ -z "$python" ]]; then
+  git_common_dir="$(git -C "$repo_root" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+  if [[ -n "$git_common_dir" && "$(basename "$git_common_dir")" == ".git" ]]; then
+    main_repo_root="$(dirname "$git_common_dir")"
+    if [[ "$main_repo_root" != "$repo_root" ]]; then
+      try_python "$main_repo_root/projects/quest-runner/.venv/bin/python" || true
+    fi
+  fi
+fi
+
+if [[ -z "$python" ]]; then
+  echo "Missing compatible quest-runner Python (requires Python >= 3.10)." >&2
+  echo "Tried:" >&2
+  [[ -n "${QUEST_RUNNER_PYTHON:-}" ]] && echo "  QUEST_RUNNER_PYTHON=$QUEST_RUNNER_PYTHON" >&2
+  echo "  $project_dir/.venv/bin/python" >&2
+  if [[ -n "${main_repo_root:-}" && "$main_repo_root" != "$repo_root" ]]; then
+    echo "  $main_repo_root/projects/quest-runner/.venv/bin/python" >&2
+  fi
+  echo "Run in the main checkout: make -C projects/quest-runner test" >&2
   exit 1
 fi
 

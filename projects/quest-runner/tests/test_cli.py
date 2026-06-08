@@ -813,6 +813,9 @@ class RootEntrypointTests(unittest.TestCase):
 
         text = entrypoint.read_text(encoding="utf-8")
         self.assertIn('project_dir="$repo_root/projects/quest-runner"', text)
+        self.assertIn("QUEST_RUNNER_PYTHON", text)
+        self.assertIn("rev-parse --path-format=absolute --git-common-dir", text)
+        self.assertIn("requires Python >= 3.10", text)
         self.assertIn('exec "$python" "$project_dir/bin/quest-runner" "$@"', text)
         self.assertTrue(project_cli.is_file())
 
