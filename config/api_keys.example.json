@@ -1,4 +1,4 @@
 {
      "openai_api_key": "xxx",
-     "omlx_api_key": "xxx"
+     "local_inference_api_key": "xxx"
 }
