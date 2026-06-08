@@ -17,3 +17,9 @@
 - issue_id: PL-0003
 - outcome: Fixed
 - explanation: Filtered Sheaf model metadata to supported providers only: local plus OpenAI. ListModels now filters registry entries before mapping metadata, and ValidateModelSelection applies the same support boundary so unsupported built-ins are treated as not found. Added a test asserting anthropic built-ins are excluded and not selectable. make sheaf-chat-test passes.
+
+## Response PL-0001 2026-06-08T21:59:46Z
+
+- issue_id: PL-0001
+- outcome: Fixed
+- explanation: Human-side staging blocker is resolved: git ls-files now lists projects/sheaf-chat/tests/agents/modelRegistry/auth.test.ts, helpers.ts, and models.test.ts. The tests live under the non-ignored modelRegistry path, preserving the intended models/ ignore behavior.
