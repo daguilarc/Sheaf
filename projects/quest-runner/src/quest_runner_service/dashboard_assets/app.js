@@ -114,6 +114,70 @@ function QuestBase() {
   return BuildQuestApiQuery(state.project, state.questType, state.questNumber);
 }
 
+function IsAgentsChatViewActive() {
+  return state.page === "agents" || (state.page === "slice" && state.subpage === "agents");
+}
+
+function BuildAgentLogWsUrl(agentKey, step) {
+  const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+  const params = { ...QuestBase(), agent_key: agentKey };
+  if (step != null) {
+    params.step = String(step);
+  }
+  return `${proto}//${window.location.host}/api/dashboard/agent_log/stream?${Qs(params)}`;
+}
+
+function BuildAgentChatSessionKey(agentKey, step) {
+  const base = QuestBase();
+  return [
+    base.project,
+    base.quest_type,
+    base.quest_number,
+    agentKey,
+    step != null ? String(step) : "",
+  ].join("|");
+}
+
+function DestroyActiveChat() {
+  if (state.contentCache.chatHandle && window.ChatView) {
+    window.ChatView.destroy(state.contentCache.chatHandle);
+  }
+  state.contentCache.chatHandle = null;
+  state.contentCache.chatSessionKey = null;
+}
+
+function DetachActiveChatForReparent() {
+  const handle = state.contentCache.chatHandle;
+  if (!handle?.root?.parentNode) {
+    return null;
+  }
+  handle.root.parentNode.removeChild(handle.root);
+  return handle;
+}
+
+function AttachReparentedChat(handle, container) {
+  if (!handle || !container) {
+    return;
+  }
+  container.appendChild(handle.root);
+  handle.container = container;
+}
+
+function MountAgentChatTranscript(main, agentKey, log) {
+  const step = state.contentCache.agentLogStep ?? log.step;
+  const sessionKey = BuildAgentChatSessionKey(agentKey, step);
+  const chatContainer = main.querySelector("#dash-agent-chat");
+  if (!chatContainer) {
+    return;
+  }
+  if (!window.ChatView) {
+    return;
+  }
+  const wsUrl = BuildAgentLogWsUrl(agentKey, step);
+  state.contentCache.chatHandle = window.ChatView.create(chatContainer, wsUrl);
+  state.contentCache.chatSessionKey = sessionKey;
+}
+
 function ActiveInteractiveElement() {
   if (typeof document === "undefined") {
     return null;
@@ -305,6 +369,7 @@ async function RefreshAgentLog() {
   const reqSeq = ++state.agentLogRequestSeq;
   const key = state.contentCache.selectedAgentKey;
   if (!key) {
+    DestroyActiveChat();
     state.contentCache.agentLog = null;
     state.contentCache.agentLogError = null;
     return;
@@ -1093,10 +1158,21 @@ function RenderSlice(main) {
 
 function RenderAgentsPanel({ main, head, agents, emptyText }) {
   if (agents.length === 0) {
+    DestroyActiveChat();
     main.innerHTML = `${head}<p class="dash-empty">${EscapeHtml(emptyText)}</p>`;
     return;
   }
   const selKey = state.contentCache.selectedAgentKey;
+  const log = state.contentCache.agentLog;
+  const logErr = state.contentCache.agentLogError;
+  const step = state.contentCache.agentLogStep ?? log?.step;
+  const sessionKey = log && selKey ? BuildAgentChatSessionKey(selKey, step) : null;
+  let reparentHandle = null;
+  if (sessionKey && sessionKey === state.contentCache.chatSessionKey && state.contentCache.chatHandle) {
+    reparentHandle = DetachActiveChatForReparent();
+  } else {
+    DestroyActiveChat();
+  }
   const list = `<ul class="dash-agent-list" aria-label="Agents">${agents
     .map((a) => {
       const active = a.agent_key === selKey ? " dash-agent-pill--active" : "";
@@ -1116,8 +1192,6 @@ function RenderAgentsPanel({ main, head, agents, emptyText }) {
       </button></li>`;
     })
     .join("")}</ul>`;
-  const log = state.contentCache.agentLog;
-  const logErr = state.contentCache.agentLogError;
   let logPanel = "";
   if (logErr) {
     logPanel = `<p class="dash-empty">Could not load log: ${EscapeHtml(logErr)}</p>`;
@@ -1133,7 +1207,9 @@ function RenderAgentsPanel({ main, head, agents, emptyText }) {
           )} — ${EscapeHtml(s.filename)}</option>`
       )
       .join("");
-    const logBody = `<pre class="dash-pre dash-pre--raw">${EscapeHtml(log.jsonl_raw || "")}</pre>`;
+    const chatBody = window.ChatView
+      ? `<div id="dash-agent-chat" class="dash-agent-chat"></div>`
+      : `<p class="dash-empty">Chat transcript unavailable: agui-chat.js failed to load.</p>`;
     logPanel = `
       <div class="dash-agent-log-head">
         <h2>Log — ${EscapeHtml(log.role)} <code>${EscapeHtml(log.agent_key)}</code></h2>
@@ -1144,7 +1220,7 @@ function RenderAgentsPanel({ main, head, agents, emptyText }) {
           <select id="dash-agent-step" aria-label="Log step">${stepOpts}</select>
         </label>
       </div>
-      ${logBody}`;
+      ${chatBody}`;
   }
   main.innerHTML = `
     ${head}
@@ -1153,8 +1229,16 @@ function RenderAgentsPanel({ main, head, agents, emptyText }) {
       <section class="dash-agent-main">${logPanel}</section>
     </div>
   `;
+  if (reparentHandle) {
+    const chatContainer = main.querySelector("#dash-agent-chat");
+    AttachReparentedChat(reparentHandle, chatContainer);
+    state.contentCache.chatHandle = reparentHandle;
+  } else if (log && selKey && window.ChatView) {
+    MountAgentChatTranscript(main, selKey, log);
+  }
   main.querySelectorAll("[data-agent-key]").forEach((btn) => {
     btn.addEventListener("click", async () => {
+      DestroyActiveChat();
       state.contentCache.selectedAgentKey = btn.getAttribute("data-agent-key");
       state.contentCache.agentLogStep = null;
       await RefreshAgentLog();
@@ -1164,6 +1248,7 @@ function RenderAgentsPanel({ main, head, agents, emptyText }) {
   const stepEl = main.querySelector("#dash-agent-step");
   if (stepEl) {
     stepEl.addEventListener("change", async () => {
+      DestroyActiveChat();
       state.contentCache.agentLogStep = parseInt(stepEl.value, 10);
       await RefreshAgentLog();
       render();
@@ -1174,6 +1259,9 @@ function RenderAgentsPanel({ main, head, agents, emptyText }) {
 function render() {
   const root = document.getElementById("app");
   if (!root) return;
+  if (!IsAgentsChatViewActive()) {
+    DestroyActiveChat();
+  }
   root.textContent = "";
   if (state.invalidProjectQuery) {
     const b = document.createElement("div");
@@ -1206,6 +1294,7 @@ function render() {
     localStorage.setItem(StorageProjectKey(), state.project);
     state.snapshot = null;
     state.overview = null;
+    DestroyActiveChat();
     state.contentCache = {};
     await LoadSnapshot();
     EnsureQuestSelected();

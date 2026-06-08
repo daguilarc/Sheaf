@@ -37,6 +37,15 @@ body {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
+  --agui-chat-bg: var(--dash-bg);
+  --agui-chat-surface: var(--dash-surface);
+  --agui-chat-surface-muted: var(--dash-elevated);
+  --agui-chat-text: var(--dash-text);
+  --agui-chat-muted: var(--dash-muted);
+  --agui-chat-border: var(--dash-border);
+  --agui-chat-accent: var(--dash-accent);
+  --agui-chat-live: var(--dash-success);
+  --agui-chat-warning: var(--dash-warn);
 }
 
 .dash-banner {
@@ -804,4 +813,13 @@ body {
 
 .dash-agent-log-head .dash-field {
   max-width: 24rem;
+}
+
+.dash-agent-chat {
+  min-height: 420px;
+  margin-top: 12px;
+}
+
+.dash-agent-chat .agui-chat-root {
+  min-height: 420px;
 }

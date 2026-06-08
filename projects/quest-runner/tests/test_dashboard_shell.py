@@ -22,6 +22,8 @@ class DashboardShellRouteTests(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         self.assertIn(b"Quest Runner Dashboard", r.data)
         self.assertIn(b"/dashboard/assets/app.js", r.data)
+        self.assertIn(b"/assets/web/agui-chat.css", r.data)
+        self.assertIn(b"/assets/web/agui-chat.js", r.data)
         css = client.get("/dashboard/assets/styles.css")
         self.assertEqual(css.status_code, 200)
         self.assertIn(b"--dash-bg", css.data)
@@ -39,10 +41,16 @@ class DashboardShellRouteTests(unittest.TestCase):
         web_src.mkdir(parents=True, exist_ok=True)
         css_path = web_src / "agui-chat.css"
         css_path.write_text(".agui-chat-transcript {}", encoding="utf-8")
-        r = client.get("/assets/web/agui-chat.css")
-        self.assertEqual(r.status_code, 200)
-        self.assertIn(b"agui-chat-transcript", r.data)
-        self.assertIn("no-store", r.headers.get("Cache-Control", ""))
+        js_path = web_src / "agui-chat.js"
+        js_path.write_text("window.ChatView = {};", encoding="utf-8")
+        css = client.get("/assets/web/agui-chat.css")
+        self.assertEqual(css.status_code, 200)
+        self.assertIn(b"agui-chat-transcript", css.data)
+        self.assertIn("no-store", css.headers.get("Cache-Control", ""))
+        js = client.get("/assets/web/agui-chat.js")
+        self.assertEqual(js.status_code, 200)
+        self.assertIn(b"window.ChatView", js.data)
+        self.assertIn("no-store", js.headers.get("Cache-Control", ""))
 
 
 class DashboardJsUnitTests(unittest.TestCase):
