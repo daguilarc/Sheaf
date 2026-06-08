@@ -1,0 +1,8 @@
+{
+  "project": "quest-runner",
+  "quest_type": "side",
+  "quest_number": 1,
+  "quest_slug": "chat_ui",
+  "quest_name": "Chat UI",
+  "created_at": "2026-06-08T04:12:43Z"
+}
