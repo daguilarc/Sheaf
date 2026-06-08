@@ -1,10 +1,10 @@
 # State
 
-- global_step: 1
+- global_step: 2
 - machine_name: quest
 - machine_path: projects/quest-runner/quests/main/0000_experiments
-- state: PhysicalPlanning
-- updated_at: 2026-06-08T22:57:24Z
+- state: ReviewPhysicalPlan
+- updated_at: 2026-06-08T23:04:05Z
 
 ## Tags
 
