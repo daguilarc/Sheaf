@@ -12,6 +12,7 @@ from pathlib import Path
 
 from . import issue_service
 from . import quest_fs
+from .chat_event_bus import ChatEventBus
 from .dashboard_runs import ActiveRunTracker
 from .deferred_tasks import DeferredTaskScheduler
 from .quest_lock import LockInfo, QuestLock
@@ -260,6 +261,7 @@ class QuestService:
         self.conductor_repo_path = conductor_repo_path.resolve()
         self.scheduler = scheduler or _DEFAULT_SCHEDULER
         self.run_tracker = run_tracker or ActiveRunTracker()
+        self.chat_event_bus = ChatEventBus()
 
     def _schedule_deferred_quest_run(
         self,
@@ -529,6 +531,7 @@ class QuestService:
                 quest_dir=qdir,
                 conductor_repo_path=self.conductor_repo_path,
                 max_steps=max_steps,
+                event_bus=self.chat_event_bus,
             )
         except QuestHarnessError as exc:
             if exc.detail.strip() in {"billing_error", "rate_limit"}:

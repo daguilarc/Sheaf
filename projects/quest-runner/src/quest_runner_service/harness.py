@@ -10,7 +10,10 @@ import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .chat_event_bus import ChatEventBus
 
 from .quest_types import HarnessKind, utc_now_iso
 
@@ -56,6 +59,7 @@ class HarnessJsonlLogSink:
         thread: str,
         harness: str,
         provider_thread_id: str,
+        event_bus: ChatEventBus | None = None,
     ) -> None:
         self.path = path
         self.step = step
@@ -63,6 +67,7 @@ class HarnessJsonlLogSink:
         self.thread = thread
         self.harness = harness
         self.provider_thread_id = provider_thread_id
+        self._event_bus = event_bus
         self._sequence = 0
         self._line_buffer = ""
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -115,6 +120,8 @@ class HarnessJsonlLogSink:
             fh.write(json.dumps(event, sort_keys=True, ensure_ascii=False))
             fh.write("\n")
             fh.flush()
+        if self._event_bus is not None:
+            self._event_bus.publish(self.path, event)
 
 
 def _run_cli_streaming(

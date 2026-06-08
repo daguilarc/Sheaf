@@ -12,6 +12,8 @@ from pathlib import Path
 from quest_runner_service.chat_event_bus import ChatEventBus  # type: ignore[import-not-found]
 from quest_runner_service.dashboard_chat import ChatStreamSession  # type: ignore[import-not-found]
 
+from .test_helpers import TempRepo, ensure_project, make_app_client, quest_dir_on_checkout
+
 
 def _base_event(*, sequence: int, event_kind: str, **fields: object) -> dict:
     event = {
@@ -271,6 +273,123 @@ class ChatStreamSessionTests(unittest.TestCase):
 
             self.assertEqual(ws.messages, [])
             self.assertEqual(bus._subscribers, {})
+
+
+class AgentLogStreamRouteTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.repo_root = Path(__file__).resolve().parents[1]
+        self.temp = TempRepo(self.repo_root)
+        self.addCleanup(self.temp.cleanup)
+
+    def _stream_handler(self, client_app):
+        handler = client_app.view_functions["dashboard_agent_log_stream"]
+        return handler.__wrapped__
+
+    def _invoke_stream(self, app, ws, query_string: dict) -> None:
+        with app.test_request_context(
+            "/api/dashboard/agent_log/stream",
+            query_string=query_string,
+        ):
+            self._stream_handler(app)(ws)
+
+    def test_stream_route_replays_log_and_sends_caught_up(self) -> None:
+        ensure_project(self.temp.root, "example")
+        client, svc = make_app_client(self.temp.root, self.repo_root)
+        out = svc.create_quest(
+            str(self.temp.root), "example", "main", "Streamy"
+        )
+        qdir = quest_dir_on_checkout(self.temp.root, out)
+        logs = qdir / "logs"
+        logs.mkdir()
+        log_path = logs / "step_0001_implementer.jsonl"
+        log_path.write_text(
+            "\n".join(
+                [
+                    json.dumps(
+                        _base_event(sequence=1, event_kind="sheaf.run_started", model="m"),
+                        sort_keys=True,
+                    ),
+                    json.dumps(
+                        _base_event(sequence=2, event_kind="sheaf.prompt", text="hello"),
+                        sort_keys=True,
+                    ),
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        ws = FakeWebSocket()
+        self._invoke_stream(
+            client.application,
+            ws,
+            {
+                "project": "example",
+                "quest_type": "main",
+                "quest_number": str(out["quest_number"]),
+                "agent_key": "slice:implementer",
+            },
+        )
+
+        self.assertTrue(any(message["type"] == "events" for message in ws.messages))
+        self.assertEqual(ws.messages[-1], {"type": "caught_up"})
+
+    def test_stream_route_invalid_agent_key_sends_error(self) -> None:
+        ensure_project(self.temp.root, "example")
+        client, svc = make_app_client(self.temp.root, self.repo_root)
+        out = svc.create_quest(
+            str(self.temp.root), "example", "main", "Streamy"
+        )
+
+        ws = FakeWebSocket()
+        self._invoke_stream(
+            client.application,
+            ws,
+            {
+                "project": "example",
+                "quest_type": "main",
+                "quest_number": str(out["quest_number"]),
+                "agent_key": "slice:not_a_real_role",
+            },
+        )
+
+        self.assertEqual(
+            ws.messages,
+            [{"type": "error", "message": "Unknown slice-scoped role: 'not_a_real_role'"}],
+        )
+
+    def test_stream_route_missing_log_sends_error(self) -> None:
+        ensure_project(self.temp.root, "example")
+        client, svc = make_app_client(self.temp.root, self.repo_root)
+        out = svc.create_quest(
+            str(self.temp.root), "example", "main", "Streamy"
+        )
+
+        ws = FakeWebSocket()
+        self._invoke_stream(
+            client.application,
+            ws,
+            {
+                "project": "example",
+                "quest_type": "main",
+                "quest_number": str(out["quest_number"]),
+                "agent_key": "slice:implementer",
+            },
+        )
+
+        self.assertEqual(
+            ws.messages,
+            [{"type": "error", "message": "No log artifacts for role 'implementer'"}],
+        )
+
+
+class QuestServiceChatBusTests(unittest.TestCase):
+    def test_quest_service_has_chat_event_bus(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        temp = TempRepo(repo_root)
+        self.addCleanup(temp.cleanup)
+        _client, svc = make_app_client(temp.root, repo_root)
+        self.assertIsInstance(svc.chat_event_bus, ChatEventBus)
 
 
 if __name__ == "__main__":

@@ -33,6 +33,17 @@ class DashboardShellRouteTests(unittest.TestCase):
         utils = client.get("/dashboard/assets/dashboard-pages-utils.mjs")
         self.assertEqual(utils.status_code, 200)
 
+    def test_web_assets_route_serves_projects_web_src(self) -> None:
+        client, _svc = make_app_client(self.temp.root, self.repo_root)
+        web_src = self.temp.root / "projects" / "web" / "src"
+        web_src.mkdir(parents=True, exist_ok=True)
+        css_path = web_src / "agui-chat.css"
+        css_path.write_text(".agui-chat-transcript {}", encoding="utf-8")
+        r = client.get("/assets/web/agui-chat.css")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn(b"agui-chat-transcript", r.data)
+        self.assertIn("no-store", r.headers.get("Cache-Control", ""))
+
 
 class DashboardJsUnitTests(unittest.TestCase):
     def _node_bin(self) -> str:

@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from ..chat_event_bus import ChatEventBus
 from ..quest_types import StateMachineId
 from .protocols import (
     GitOps,
@@ -33,3 +34,4 @@ class RunContext:
     documenter_base_ref_box: list[str | None] | None = None
     role_step_seq_box: list[int] | None = None
     captured_outputs_list: list | None = None
+    event_bus: ChatEventBus | None = None

@@ -9,6 +9,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import queue
+
+from quest_runner_service.chat_event_bus import ChatEventBus  # type: ignore[import-not-found]
 from quest_runner_service.harness import (
     ClaudeCodeHarness,
     CodexHarness,
@@ -241,6 +244,61 @@ class RunCliStreamingTests(unittest.TestCase):
         self.assertEqual(rows[2]["payload"]["text"], "ok")
         self.assertEqual(rows[3]["event_kind"], "provider.text")
         self.assertEqual(rows[3]["text"], "warning")
+
+    def test_jsonl_log_sink_without_bus_keeps_old_behavior(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "logs" / "step_0001_implementer.jsonl"
+            sink = HarnessJsonlLogSink(
+                path=path,
+                step=1,
+                role="implementer",
+                thread="thread-name",
+                harness="cursor",
+                provider_thread_id="provider-id",
+            )
+            sink.write_control("quest_runner_service.run_started", model="m")
+
+            rows = [
+                json.loads(line)
+                for line in path.read_text(encoding="utf-8").splitlines()
+            ]
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["sequence"], 1)
+
+    def test_jsonl_log_sink_publishes_event_after_disk_write(self) -> None:
+        bus = ChatEventBus()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "logs" / "step_0001_implementer.jsonl"
+            subscription = bus.subscribe(path)
+            sink = HarnessJsonlLogSink(
+                path=path,
+                step=1,
+                role="implementer",
+                thread="thread-name",
+                harness="cursor",
+                provider_thread_id="provider-id",
+                event_bus=bus,
+            )
+            sink.write_control("quest_runner_service.run_started", model="m")
+            sink.write_control("quest_runner_service.prompt", text="hi")
+
+            rows = [
+                json.loads(line)
+                for line in path.read_text(encoding="utf-8").splitlines()
+            ]
+
+            published: list[dict] = []
+            while True:
+                try:
+                    published.append(subscription.queue.get_nowait())
+                except queue.Empty:
+                    break
+
+        self.assertEqual([row["sequence"] for row in rows], [1, 2])
+        self.assertEqual([event["sequence"] for event in published], [1, 2])
+        self.assertEqual(published[0]["event_kind"], "quest_runner_service.run_started")
+        self.assertEqual(published[1]["text"], "hi")
 
     def test_captures_full_output_on_completion(self) -> None:
         proc = MagicMock()

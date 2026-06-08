@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Callable
 from pathlib import Path
 
 from flask import Flask, jsonify, request, send_from_directory
+from flask_sock import Sock
 
 from . import dashboard_data
 from . import dashboard_git
 from . import dashboard_slice
+from .dashboard_chat import ChatStreamSession
+from .dashboard_data import DashboardBadRequest, DashboardNotFound
 from .harness import HarnessNotAvailable
 from .quest_fs import QuestStateParseError
 from .issue_service import IssueNotFound
@@ -51,6 +55,8 @@ def create_app(
 ) -> Flask:
     app = Flask(__name__)
     source_root = source_repo_root.resolve()
+    sock = Sock(app)
+    web_src_dir = source_root / "projects" / "web" / "src"
 
     @app.errorhandler(RepoNotFound)
     def handle_repo_not_found(exc):
@@ -350,6 +356,17 @@ def create_app(
             )
         )
 
+    @app.route("/assets/web/<path:filename>", methods=["GET"])
+    def web_static(filename: str):
+        return _no_cache(
+            send_from_directory(
+                web_src_dir,
+                filename,
+                conditional=False,
+                max_age=0,
+            )
+        )
+
     def _quest_context():
         project = dashboard_data.parse_project(
             request.args.get("project"),
@@ -446,6 +463,31 @@ def create_app(
             step=step,
         )
         return jsonify(payload)
+
+    @sock.route("/api/dashboard/agent_log/stream")
+    def dashboard_agent_log_stream(ws):
+        try:
+            _project, _qt, _qn, qdir, _checkout = _quest_context()
+            agent_key = request.args.get("agent_key") or ""
+            step = dashboard_slice.parse_optional_step(request.args.get("step"))
+            _step_num, log_path = dashboard_slice.resolve_agent_log_path(
+                quest_dir=qdir,
+                agent_key=agent_key,
+                step=step,
+            )
+        except (DashboardBadRequest, DashboardNotFound) as exc:
+            ws.send(json.dumps({"type": "error", "message": str(exc)}))
+            return
+        except Exception:
+            log.exception("agent_log stream setup failed")
+            ws.send(json.dumps({"type": "error", "message": "Internal server error"}))
+            return
+
+        ChatStreamSession(
+            log_path=log_path,
+            ws=ws,
+            event_bus=quest_service.chat_event_bus,
+        ).run()
 
     @app.route("/api/dashboard/git_commits", methods=["GET"])
     def dashboard_git_commits():

@@ -15,6 +15,7 @@ from collections.abc import Callable
 from typing import NoReturn
 
 from . import quest_fs
+from .chat_event_bus import ChatEventBus
 from .harness import (
     Harness,
     HarnessJsonlLogSink,
@@ -85,6 +86,7 @@ def perform_role_harness_sequence(
     role_step_seq: list[int],
     captured_outputs: list[dict],
     create_thread_if_missing: Callable[[], QuestThread],
+    event_bus: ChatEventBus | None = None,
 ) -> HarnessResponse:
     """Run primary (and optional follow-up) harness sends for one role step.
 
@@ -138,6 +140,7 @@ def perform_role_harness_sequence(
             thread=active_thread.thread_name,
             harness=profile.harness.value,
             provider_thread_id=active_thread.provider_thread_id,
+            event_bus=event_bus,
         )
         sink.write_control(
             "sheaf.run_started",
@@ -1102,8 +1105,9 @@ def run_quest(
     quest_dir: Path,
     conductor_repo_path: Path,
     max_steps: int = 500,
+    event_bus: ChatEventBus | None = None,
 ) -> HarnessResponse:
     from . import quest_runner_v2
     return quest_runner_v2.run_quest_v2(
-        repo_path, quest_dir, conductor_repo_path, max_steps
+        repo_path, quest_dir, conductor_repo_path, max_steps, event_bus=event_bus
     )

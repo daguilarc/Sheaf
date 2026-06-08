@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from . import quest_fs
+from .chat_event_bus import ChatEventBus
 from .harness import HarnessMessageError
 from .quest_runner import (
     DirtyWorkspaceError,
@@ -41,6 +42,7 @@ def run_quest_v2(
     quest_dir: Path,
     conductor_repo_path: Path,
     max_steps: int = 500,
+    event_bus: ChatEventBus | None = None,
 ) -> dict:
     meta = quest_fs.read_quest_meta(quest_dir)
     quest_key = _quest_key(meta)
@@ -119,6 +121,7 @@ def run_quest_v2(
             documenter_base_ref_box=documenter_base_ref_box,
             role_step_seq_box=role_step_seq_box,
             captured_outputs_list=captured_outputs,
+            event_bus=event_bus,
         )
 
         try:
