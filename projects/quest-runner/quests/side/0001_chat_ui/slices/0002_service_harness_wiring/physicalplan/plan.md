@@ -18,6 +18,8 @@ This slice depends on slice 1 for `ChatEventBus`, `ChatStreamSession`, and log p
 - `projects/quest-runner/src/quest_runner_service/quest_service.py`
 - `projects/quest-runner/src/quest_runner_service/quest_runner.py`
 - `projects/quest-runner/src/quest_runner_service/quest_runner_v2.py`
+- `projects/quest-runner/src/quest_runner_service/state_machine/context.py`
+- `projects/quest-runner/src/quest_runner_service/state_machine/quest_v2_nodes.py`
 - `projects/quest-runner/src/quest_runner_service/harness.py`
 - `projects/quest-runner/tests/test_dashboard_chat.py`
 - `projects/quest-runner/tests/test_dashboard_shell.py`
@@ -66,8 +68,12 @@ Modify `HarnessJsonlLogSink`:
 
 Thread the bus into the runner:
 
-- Add optional `event_bus` parameters from `QuestService._run_quest_locked(...)` into `quest_runner.run_quest(...)`, `quest_runner_v2.run_quest_v2(...)`, and the `perform_role_harness_sequence(...)` call path that constructs `HarnessJsonlLogSink`.
-- Pass `event_bus=self.chat_event_bus` from `QuestService`.
+- Add optional `event_bus` parameters from `QuestService._run_quest_locked(...)` into `quest_runner.run_quest(...)` and `quest_runner_v2.run_quest_v2(...)`.
+- Pass `event_bus=self.chat_event_bus` from `QuestService._run_quest_locked(...)`. Because `schedule_run_quest(...)` calls the same `_run_quest_locked(...)` method on the same `QuestService` instance, scheduled background runs must use the exact same `quest_service.chat_event_bus` instance that WebSocket subscribers use.
+- Add `event_bus: ChatEventBus | None = None` to `RunContext` in `state_machine/context.py`.
+- When `quest_runner_v2.run_quest_v2(...)` constructs `RunContext`, set `event_bus=event_bus` alongside existing carried fields such as `conductor_repo_path`, `quest_docs_dir`, and `role_step_seq_box`.
+- In `state_machine/quest_v2_nodes.py`, update the node that invokes `perform_role_harness_sequence(...)` to pass `event_bus=ctx.event_bus`.
+- Add `event_bus: ChatEventBus | None = None` to `perform_role_harness_sequence(...)`, and pass it into the `HarnessJsonlLogSink(...)` constructor in `_begin_harness_round(...)`.
 - Keep all default values as `None` so direct runner tests do not need updates unless they assert constructor calls.
 
 ### WebSocket route
