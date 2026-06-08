@@ -1,3 +1,4 @@
 {
-    "local_inference_url": "http://studio.local:8000/v1/"
+    "local_inference_url": "http://studio.local:8000/v1/",
+    "agent_idle_offload_seconds": 300
 }

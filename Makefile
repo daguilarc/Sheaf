@@ -9,7 +9,7 @@ PROJECTS := conductor web quest-runner dictator realtime-agent sheaf-chat
 .PHONY: quest-runner-build quest-runner-test quest-runner-run quest-runner-clean
 .PHONY: dictator-build dictator-test dictator-run dictator-clean
 .PHONY: realtime-agent-build realtime-agent-test realtime-agent-clean realtime-agent-run-cli
-.PHONY: sheaf-chat-build sheaf-chat-test sheaf-chat-clean
+.PHONY: sheaf-chat-build sheaf-chat-test sheaf-chat-run sheaf-chat-clean
 
 .DEFAULT_GOAL := all
 
@@ -90,6 +90,9 @@ sheaf-chat-build:
 
 sheaf-chat-test:
 	$(MAKE) -C projects/sheaf-chat test
+
+sheaf-chat-run:
+	$(MAKE) -C projects/sheaf-chat run
 
 sheaf-chat-clean:
 	$(MAKE) -C projects/sheaf-chat clean

@@ -1,0 +1,21 @@
+{
+  "name": "sheaf-chat",
+  "version": "0.1.0",
+  "description": "Sheaf Chat service for browser-based Pi agent conversations",
+  "type": "module",
+  "main": "./dist/src/server/main.js",
+  "types": "./dist/src/server/main.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/src/server/main.js",
+    "test": "npm run build && node --test dist/tests/**/*.test.js",
+    "clean": "rm -rf dist node_modules"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.21",
+    "typescript": "^5.8.3"
+  }
+}

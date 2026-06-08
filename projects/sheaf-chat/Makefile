@@ -1,13 +1,18 @@
-.PHONY: all build test clean
+.PHONY: all install build test run clean
 
-all: build test
+all: install test
+
+install:
+	npm install
 
 build:
-	@test -f README.md
+	npm run build
 
 test:
-	@test -d src
-	@test -d tests
+	npm test
+
+run:
+	npm run start
 
 clean:
-	@:
+	npm run clean
