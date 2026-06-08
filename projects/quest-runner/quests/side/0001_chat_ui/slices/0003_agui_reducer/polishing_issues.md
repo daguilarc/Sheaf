@@ -2,10 +2,10 @@
 
 ## Issue PL-0001
 
-- status: open
+- status: completed
 - owner_role: polisher_reviewer
 - created_at: 2026-06-08T05:41:23Z
-- updated_at: 2026-06-08T05:41:23Z
+- updated_at: 2026-06-08T05:45:04Z
 - title: Missing test coverage for RUN_FINISHED closing open tool calls and reasoning
 - details: The reducer's `CloseOpenStreams` (`projects/web/src/agui-chat.js:94-122`),
   invoked on `RUN_FINISHED` (`agui-chat.js:322-331`), closes any still-open text
@@ -31,3 +31,14 @@
   `openToolCalls`, and `openReasoning` are all empty; the attached
   `ToolCallInfo.isOpen === false`; and the open text and reasoning messages have
   `isStreaming === false`.
+- resolution_notes (verified 2026-06-08T05:45:04Z): Confirmed the new test
+  "RUN_FINISHED closes open text, tool call, and reasoning streams" in
+  `projects/web/tests/agui-chat.test.mjs` opens a text message, a tool call (with
+  `parentMessageId` so a `ToolCallInfo` is attached), and a reasoning message,
+  leaves all three open through `caught_up` (asserting `openTextMessages`,
+  `openToolCalls`, `openReasoning` each contain the entry), then fires
+  `RUN_FINISHED` with no prior END events. It asserts `message.isStreaming` and
+  `reasoning.isStreaming` are false, `toolCalls[0].isOpen` is false (with args
+  preserved), the run is `finished`, all three open-tracking collections are size
+  0, and status recomputes to `complete`. This exercises the previously-untested
+  `CloseOpenStreams` branch and matches the resolution criteria. Resolved.
