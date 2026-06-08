@@ -47,7 +47,8 @@ async function WithSessionLock<T>(
   {
     release = resolve;
   });
-  x_sequenceLocks.set(key, previous.then(() => current));
+  const tail = previous.then(() => current);
+  x_sequenceLocks.set(key, tail);
 
   await previous;
 
@@ -58,7 +59,7 @@ async function WithSessionLock<T>(
   finally
   {
     release();
-    if (x_sequenceLocks.get(key) === current)
+    if (x_sequenceLocks.get(key) === tail)
     {
       x_sequenceLocks.delete(key);
     }
