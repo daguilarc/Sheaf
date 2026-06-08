@@ -2,10 +2,10 @@
 
 ## Issue PL-0001
 
-- status: open
+- status: completed
 - owner_role: polisher_reviewer
 - created_at: 2026-06-08T23:21:41Z
-- updated_at: 2026-06-08T23:21:41Z
+- updated_at: 2026-06-08T23:28:06Z
 - title: Chat screen interactive logic (sheaf-chat.js) has no behavioral test coverage
 - details: ## What is wrong
 
