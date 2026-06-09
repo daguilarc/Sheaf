@@ -9,23 +9,10 @@ from pathlib import Path
 from ..quest_service import FatalInvariantError
 from ..quest_types import QuestMeta, utc_now_iso
 from ..workflow_config import WorkflowCollection, WorkflowDefinition
-from .workflow_state_io import WorkflowStateIo
+from .workflow_state_io import WorkflowStateIo, path_matches_collection_pattern
 
 _PATH_VARS = ("quest", "project", "machine", "active_child")
 _BRACE_RE = re.compile(r"\{([a-zA-Z_][a-zA-Z0-9_]*)\}")
-
-
-def path_matches_collection_pattern(rel_path: str, pattern: str) -> bool:
-    pattern_parts = pattern.split("/")
-    path_parts = rel_path.split("/")
-    if len(pattern_parts) != len(path_parts):
-        return False
-    for pattern_part, path_part in zip(pattern_parts, path_parts):
-        if pattern_part == "*":
-            continue
-        if pattern_part != path_part:
-            return False
-    return True
 
 
 def list_collection_children(

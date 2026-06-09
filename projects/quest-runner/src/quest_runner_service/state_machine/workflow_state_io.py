@@ -20,7 +20,7 @@ _RESERVED_TOP_LEVEL_PERSISTED = frozenset({"ExperimentComplete"})
 _NORMALIZED_STATE_HEADING = "# State"
 
 
-def _path_matches_collection_pattern(rel_path: str, pattern: str) -> bool:
+def path_matches_collection_pattern(rel_path: str, pattern: str) -> bool:
     pattern_parts = pattern.split("/")
     path_parts = rel_path.split("/")
     if len(pattern_parts) != len(path_parts):
@@ -128,7 +128,7 @@ class WorkflowStateIo:
             return None
         rel = machine_dir.resolve().relative_to(self.quest_dir).as_posix()
         for collection in self.workflow.collections.values():
-            if _path_matches_collection_pattern(rel, collection.path):
+            if path_matches_collection_pattern(rel, collection.path):
                 return collection
         return None
 
