@@ -26,10 +26,6 @@ from .harness import (
 from .quest_service import FatalInvariantError
 from .quest_thread import (
     QuestThread,
-    build_role_prompt,
-    build_runtime_context,
-    create_thread,
-    load_thread,
     persist_thread_last_used,
     persist_thread_round_count,
     persist_thread_provider_id,
@@ -43,6 +39,13 @@ from .quest_types import (
     SliceStateInfo,
     slice_index_from_dirname,
     utc_now_iso,
+)
+from .workflow_config import WorkflowDefinition, WorkflowProfile
+from .workflow_profile_execution import (
+    build_profile_execution_context,
+    build_workflow_first_round_message,
+    build_workflow_message_body,
+    workflow_profile_to_execution_profile,
 )
 
 _IMPLEMENTATION_DONE_FILE = "implementation_done.md"
@@ -69,18 +72,17 @@ def perform_role_harness_sequence(
     *,
     repo_path: Path,
     quest_dir: Path,
-    conductor_repo_path: Path,
     meta: QuestMeta,
     quest_docs_dir: Path,
-    quest_state_info: QuestStateInfo,
-    slice_dir: Path | None,
-    slice_state: SliceState | None,
-    profile: ExecutionProfile,
+    machine_dir: Path,
+    workflow: WorkflowDefinition,
+    profile: WorkflowProfile,
+    profile_name: str,
+    task_text: str,
     harness: Harness,
-    role_name: str,
     thread_key: str,
     quest_rel: str,
-    slice_rel: str | None,
+    active_child_rel: str | None,
     step_base_commit: str,
     thread_box: list[QuestThread | None],
     role_step_seq: list[int],
@@ -88,70 +90,60 @@ def perform_role_harness_sequence(
     create_thread_if_missing: Callable[[], QuestThread],
     event_bus: ChatEventBus | None = None,
     experiment_id: str | None = None,
+    active_child_dir: Path | None = None,
+    collection_name: str | None = None,
 ) -> HarnessResponse:
-    """Run primary (and optional follow-up) harness sends for one role step.
+    """Run primary (and optional follow-up) harness sends for one workflow profile.
 
     Mutates ``thread_box[0]`` and ``role_step_seq[0]`` like the legacy runner loop.
     """
 
-    current_project_rel = current_project_rel_for_quest(meta, quest_rel)
-    project_docs_rel = f"{current_project_rel}/docs" if current_project_rel else "docs"
-    task_instruction = build_task_instruction(
-        quest_state_info.state,
-        slice_state,
-        quest_dir,
-        slice_dir,
-        project_docs_rel,
-    )
-    task_instruction += reviewer_commit_context(
+    exec_profile = workflow_profile_to_execution_profile(profile)
+    exec_ctx = build_profile_execution_context(
         repo_path=repo_path,
         quest_dir=quest_dir,
-        role_name=role_name,
-        thread_key=thread_key,
-        slice_dir=slice_dir,
-    )
-    runtime_context = build_runtime_context(
-        role_name=role_name,
+        machine_dir=machine_dir,
         meta=meta,
-        quest_dir=quest_dir,
-        slice_dir=slice_dir,
+        workflow=workflow,
+        profile=profile,
+        profile_name=profile_name,
         quest_docs_dir=quest_docs_dir,
-        repo_path=repo_path,
+        active_child_dir=active_child_dir,
+        collection_name=collection_name,
         experiment_id=experiment_id,
     )
-    message_body = f"{runtime_context}\n\nTask:\n{task_instruction}"
+    message_body = build_workflow_message_body(exec_ctx, task_text)
     thread = thread_box[0]
     is_first_message = thread is None or thread.round_count == 0
     if is_first_message:
-        message = build_role_prompt(
-            role_name, message_body, conductor_repo_path
-        )
+        message = build_workflow_first_round_message(exec_ctx, message_body)
     else:
         message = message_body
+    current_project_rel = current_project_rel_for_quest(meta, quest_rel)
 
     def _begin_harness_round(
         active_thread: QuestThread,
         body: str,
     ) -> tuple[Path, HarnessJsonlLogSink]:
         role_step_seq[0] += 1
-        log_p = agent_log_path(quest_dir, role_step_seq[0], role_name)
+        log_p = agent_log_path(quest_dir, role_step_seq[0], profile_name)
         sink = HarnessJsonlLogSink(
             path=log_p,
             step=role_step_seq[0],
-            role=role_name,
+            role=profile_name,
             thread=active_thread.thread_name,
-            harness=profile.harness.value,
+            harness=exec_profile.harness.value,
             provider_thread_id=active_thread.provider_thread_id,
             event_bus=event_bus,
         )
         sink.write_control(
             "sheaf.run_started",
-            model=profile.model,
-            reasoning_effort=profile.reasoning_effort,
+            model=exec_profile.model,
+            reasoning_effort=exec_profile.reasoning_effort,
             stream=True,
             thread_key=thread_key,
             quest_rel=quest_rel,
-            slice_rel=slice_rel,
+            slice_rel=active_child_rel,
         )
         sink.write_control(
             "sheaf.prompt",
@@ -160,7 +152,7 @@ def perform_role_harness_sequence(
         captured_outputs.append(
             {
                 "step": role_step_seq[0],
-                "role": role_name,
+                "role": profile_name,
                 "thread": active_thread.thread_name,
                 "path": str(log_p),
             }
@@ -193,9 +185,9 @@ def perform_role_harness_sequence(
         for _ in range(40):
             _validate_pre_harness_workspace(
                 repo_path,
-                profile,
+                exec_profile,
                 quest_rel,
-                slice_rel,
+                active_child_rel,
                 current_project_rel,
                 step_base_commit,
                 fully_clean,
@@ -207,7 +199,7 @@ def perform_role_harness_sequence(
                 harness,
                 active_thread,
                 current_body,
-                profile,
+                exec_profile,
                 log_sink=sink,
             )
             _sync_thread_id(res)
@@ -216,26 +208,23 @@ def perform_role_harness_sequence(
             illegal = enforce_profile_modify_rules_after_harness(
                 repo_path,
                 snapshot,
-                profile,
+                exec_profile,
                 quest_rel,
-                slice_rel,
+                active_child_rel,
                 current_project_rel,
-                role_name,
+                profile_name,
                 log_p,
             )
             if not illegal:
                 return res
             _write_human_intervention_for_illegal_reverts(
-                quest_dir, role_name, illegal
+                quest_dir, profile_name, illegal
             )
             current_body = _build_enforcement_followup_message(illegal)
             fully_clean = False
         fatal_invariant("path enforcement follow-up limit exceeded")
 
-    result = _one_send_with_enforcement(message, True)
-    if role_name == "implementer":
-        assert slice_dir is not None
-    return result
+    return _one_send_with_enforcement(message, True)
 
 
 def fatal_invariant(msg: str) -> NoReturn:
@@ -340,14 +329,24 @@ def expand_modify_path_patterns(
 ) -> list[str]:
     out: list[str] = []
     for raw in patterns:
-        if slice_rel is None and "$currentSlice" in raw:
+        if slice_rel is None and (
+            "$currentSlice" in raw or "$active_child" in raw
+        ):
             continue
-        if current_project_rel is None and "$currentProject" in raw:
+        if current_project_rel is None and (
+            "$currentProject" in raw or "$project" in raw
+        ):
             continue
         exp = raw.replace("$currentQuest", quest_rel)
+        exp = exp.replace("$quest", quest_rel)
         exp = exp.replace("$currentSlice", slice_rel if slice_rel is not None else "")
+        exp = exp.replace("$active_child", slice_rel if slice_rel is not None else "")
         exp = exp.replace(
             "$currentProject",
+            current_project_rel if current_project_rel is not None else "",
+        )
+        exp = exp.replace(
+            "$project",
             current_project_rel if current_project_rel is not None else "",
         )
         if "$" in exp:
@@ -800,16 +799,55 @@ def build_task_instruction(
     )
 
 
-_SLICE_SCOPED_THREAD_ROLES = {"implementer", "polisher", "polisher_reviewer"}
+def _repo_root_for_quest_dir(quest_dir: Path) -> Path:
+    cur = quest_dir.resolve()
+    for _ in range(30):
+        if (cur / ".git").exists():
+            return cur
+        parent = cur.parent
+        if parent == cur:
+            break
+        cur = parent
+    return quest_dir.resolve()
 
 
 def role_thread_key(role_name: str, slice_dir: Path | None) -> str:
-    if role_name in _SLICE_SCOPED_THREAD_ROLES and slice_dir is not None:
-        idx = slice_index_from_dirname(slice_dir.name)
-        if idx is None:
-            fatal_invariant(f"invalid slice directory name for thread key: {slice_dir.name}")
-        return f"slice_{idx}_{role_name}"
-    return role_name
+    from .workflow_profile_execution import (
+        build_profile_execution_context,
+        render_thread_registry_key,
+        resolve_quest_workflow,
+    )
+
+    if slice_dir is None:
+        from .workflow_config import load_packaged_default_workflow
+
+        workflow = load_packaged_default_workflow()
+        try:
+            profile = workflow.get_profile(role_name)
+        except KeyError:
+            return role_name
+        if profile.thread_scope == "quest":
+            return role_name
+        fatal_invariant(f"role_thread_key requires slice_dir for profile {role_name!r}")
+
+    quest_dir = slice_dir.parents[1]
+    workflow = resolve_quest_workflow(quest_dir)
+    profile = workflow.get_profile(role_name)
+    repo_path = _repo_root_for_quest_dir(quest_dir)
+    meta = quest_fs.read_quest_meta(quest_dir)
+    exec_ctx = build_profile_execution_context(
+        repo_path=repo_path,
+        quest_dir=quest_dir,
+        machine_dir=slice_dir,
+        meta=meta,
+        workflow=workflow,
+        profile=profile,
+        profile_name=role_name,
+        quest_docs_dir=runtime_quest_docs_dir(),
+        active_child_dir=slice_dir,
+        collection_name="slices",
+    )
+    return render_thread_registry_key(exec_ctx)
 
 
 def _parse_iso(ts: str | None) -> datetime | None:

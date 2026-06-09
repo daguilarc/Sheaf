@@ -24,6 +24,7 @@ TEST_MODULES := \
 	tests.test_workflow_config \
 	tests.test_workflow_state_io \
 	tests.test_workflow_interpreter \
+	tests.test_workflow_profile_execution \
 	tests.test_harness_quest_thread_core \
 	tests.test_project_quest_model \
 	tests.test_quest_creation \

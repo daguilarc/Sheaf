@@ -802,9 +802,21 @@ def read_execution_config(quest_dir: Path) -> dict[str, ExecutionProfile]:
     return out
 
 
-def read_harness_configs(quest_dir: Path) -> dict[str, dict[str, object]]:
+def read_harness_configs(
+    quest_dir: Path,
+    repo_path: Path | None = None,
+) -> dict[str, dict[str, object]]:
+    """Load harness provider config from service config, with quest-file fallback."""
+    from .harness_config import read_service_harness_configs
+
+    if repo_path is not None:
+        service = read_service_harness_configs(repo_path)
+        if service:
+            return service
     path = quest_dir / "state_execution_config.yaml"
     if not path.is_file():
+        if repo_path is not None:
+            return read_service_harness_configs(repo_path)
         raise FileNotFoundError(f"Missing execution config: {path}")
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
     if not isinstance(raw, dict):

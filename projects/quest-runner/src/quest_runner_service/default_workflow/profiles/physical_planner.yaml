@@ -4,6 +4,7 @@ reasoning_effort: null
 idle_timeout_seconds: 1800
 prompt: ../prompts/physical_planner.md
 runtime_context:
+  include_current_child_path: true
   include_reference_docs_path: true
 modify:
   allow:

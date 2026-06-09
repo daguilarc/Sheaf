@@ -1,9 +1,4 @@
 version: 2
-harnesses:
-  claude_code:
-    cli_path: /Users/joyo/.local/bin/claude
-  cursor:
-    cli_path: /Users/joyo/.local/bin/cursor-agent
 profiles:
   physical_planner:
     harness: codex

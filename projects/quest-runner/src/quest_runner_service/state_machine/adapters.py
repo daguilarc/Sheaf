@@ -9,6 +9,7 @@ from typing import Callable
 from .. import quest_fs
 from ..quest_service import FatalInvariantError
 from ..quest_types import RoleProfile, StateMachineId, StateMachineState
+from ..workflow_profile_execution import resolve_quest_workflow
 from .commit_metadata import (
     CommitMetadataValidationError,
     parse_step_commit_message,
@@ -30,8 +31,8 @@ def find_quest_root_for_machine_dir(state_machine_dir: Path) -> Path | None:
         cur = parent
 
 
-class QuestRootRoleProfileResolver:
-    """Resolves role profiles from quest-root ``state_execution_config.yaml`` (version 2 only)."""
+class WorkflowProfileResolver:
+    """Resolves profiles from quest-local or packaged default ``workflow/`` data."""
 
     def ResolveRoleProfile(self, state_machine_dir: Path, role: str) -> RoleProfile:
         root = find_quest_root_for_machine_dir(state_machine_dir)
@@ -41,33 +42,26 @@ class QuestRootRoleProfileResolver:
                 f"at or above {state_machine_dir}"
             )
         try:
-            version = quest_fs.read_state_execution_config_version(root)
-        except (FileNotFoundError, ValueError) as e:
+            workflow = resolve_quest_workflow(root)
+        except Exception as e:
             raise FatalInvariantError(
-                f"Cannot read execution config version for quest root {root}: {e}"
+                f"Cannot load workflow for quest root {root}: {e}"
             ) from e
-        if version != 2:
-            raise FatalInvariantError(
-                f"state_execution_config.yaml at {root} must be version 2 "
-                f"for state machine role resolution (got {version})"
-            )
         try:
-            profiles = quest_fs.read_execution_config(root)
-        except (FileNotFoundError, ValueError) as e:
-            raise FatalInvariantError(
-                f"Cannot read execution config at {root}: {e}"
-            ) from e
-        if role not in profiles:
-            raise FatalInvariantError(f"Unknown role profile {role!r} in {root}")
-        ep = profiles[role]
+            profile = workflow.get_profile(role)
+        except KeyError as e:
+            raise FatalInvariantError(f"Unknown workflow profile {role!r} in {root}") from e
         return RoleProfile(
-            harness=ep.harness.value,
-            model=ep.model,
-            reasoning_effort=ep.reasoning_effort,
-            idle_timeout_seconds=ep.idle_timeout_seconds,
-            modify_allow=tuple(ep.modify_allow),
-            modify_block=tuple(ep.modify_block),
+            harness=profile.harness,
+            model=profile.model,
+            reasoning_effort=profile.reasoning_effort,
+            idle_timeout_seconds=profile.idle_timeout_seconds,
+            modify_allow=tuple(profile.modify_allow),
+            modify_block=tuple(profile.modify_block),
         )
+
+
+QuestRootRoleProfileResolver = WorkflowProfileResolver
 
 
 class FileStateIo:

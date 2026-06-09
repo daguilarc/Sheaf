@@ -37,22 +37,46 @@ def build_spec_thread_name(
     role_name: str,
     slice_number: int | None,
 ) -> str:
-    """Deterministic thread id from ``node_catalog_and_transition_tables`` (v2 runner)."""
-    repo = repo_path.name
-    if slice_number is not None and role_name in (
-        "implementer",
-        "polisher_reviewer",
-        "polisher",
-    ):
-        return (
-            f"{repo}_quest_{quest_number:04d}_slice_{slice_number:04d}_{role_name}"
-        )
-    suffix = {
-        "physical_planner": "physical_planner",
-        "physical_plan_reviewer": "physical_plan_reviewer",
-        "documenter": "documenter",
-    }.get(role_name, role_name)
-    return f"{repo}_quest_{quest_number:04d}_{suffix}"
+    """Deterministic thread name from workflow profile ``thread.name_template``."""
+    from .workflow_config import load_packaged_default_workflow
+    from .workflow_profile_execution import ProfileExecutionContext, render_thread_name
+    from .quest_types import QuestMeta
+
+    workflow = load_packaged_default_workflow()
+    profile = workflow.get_profile(role_name)
+    meta = QuestMeta(
+        project="",
+        quest_type="main",
+        quest_number=quest_number,
+        quest_slug="",
+        quest_name="",
+        created_at="2026-01-01T00:00:00Z",
+    )
+    repo = repo_path.resolve()
+    placeholder_quest = "quests/main/0000_placeholder"
+    active_slice = f"{slice_number:04d}_placeholder" if slice_number is not None else ""
+    exec_ctx = ProfileExecutionContext(
+        repo_path=repo,
+        quest_dir=repo,
+        machine_dir=repo,
+        meta=meta,
+        workflow=workflow,
+        profile=profile,
+        profile_name=role_name,
+        quest_docs_dir=repo,
+        quest_rel=placeholder_quest,
+        machine_rel=placeholder_quest,
+        project_rel="projects/placeholder",
+        active_child_dir=None,
+        active_child_rel=(
+            f"{placeholder_quest}/slices/{active_slice}" if slice_number is not None else None
+        ),
+        active_slice=active_slice,
+        collection_name="slices" if slice_number is not None else None,
+        child_number=slice_number,
+        experiment_id=None,
+    )
+    return render_thread_name(exec_ctx)
 
 
 def create_thread_with_provider_name(

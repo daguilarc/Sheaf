@@ -608,22 +608,28 @@ class ExecutionConfigTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 read_execution_config(q)
 
-    def test_read_harness_configs(self) -> None:
-        root = Path(__file__).resolve().parents[1]
-        default_cfg = (
-            root / "src" / "quest_runner_service" / "default_state_execution_config.yaml"
-        )
+    def test_read_harness_configs_prefers_service_config(self) -> None:
+        repo_root = Path(__file__).resolve().parents[3]
         with tempfile.TemporaryDirectory() as tmp:
             q = Path(tmp) / "quest"
             q.mkdir()
-            dest = q / "state_execution_config.yaml"
-            shutil.copy(default_cfg, dest)
-            harnesses = read_harness_configs(q)
+            harnesses = read_harness_configs(q, repo_path=repo_root)
             self.assertIn("claude_code", harnesses)
             self.assertEqual(
                 harnesses["claude_code"]["cli_path"],
                 "/Users/joyo/.local/bin/claude",
             )
+
+    def test_read_harness_configs_falls_back_to_quest_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            q = Path(tmp) / "quest"
+            q.mkdir()
+            (q / "state_execution_config.yaml").write_text(
+                "version: 2\nharnesses:\n  codex: {}\nprofiles: {}\n",
+                encoding="utf-8",
+            )
+            harnesses = read_harness_configs(q)
+            self.assertIn("codex", harnesses)
 
 
 class MalformedStateTests(unittest.TestCase):

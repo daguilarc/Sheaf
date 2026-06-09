@@ -7,12 +7,22 @@ from typing import TYPE_CHECKING
 
 from .. import quest_fs
 from ..harness import create_harness
+from ..harness_config import read_service_harness_configs
 from ..quest_runner import (
     _get_slice_dir,
     git_rev_parse_head,
     perform_role_harness_sequence,
-    role_thread_key,
     scaffold_slice_dir,
+)
+from ..quest_thread import create_thread_with_provider_name, load_thread
+from ..quest_types import QuestState, RecursiveSnapshot
+from ..workflow_profile_execution import (
+    build_profile_execution_context,
+    find_run_for_node,
+    render_thread_name,
+    render_thread_registry_key,
+    resolve_quest_workflow,
+    workflow_profile_to_execution_profile,
 )
 from .quest_v2_predicates import (
     physical_planning_next_state,
@@ -22,8 +32,6 @@ from .quest_v2_predicates import (
     slice_implementing_next_state,
     slice_polishing_review_next_state,
 )
-from ..quest_thread import load_thread, resolve_or_create_thread_spec
-from ..quest_types import QuestState, RecursiveSnapshot, SliceState
 from .base_node import BaseNode
 from .context import RunContext
 from .machine import ConcreteStateMachine
@@ -50,6 +58,8 @@ class CompletedGateNode(BaseNode):
 
 class _ThreadLlmNode(BaseNode):
     m_role: str
+    m_machine_key: str
+    m_node_name: str
 
     def Execute(self, ctx: RunContext, machine: StateMachine) -> None:
         assert ctx.captured_outputs_list is not None
@@ -58,61 +68,89 @@ class _ThreadLlmNode(BaseNode):
             ctx.harness_steps_acc[0] += 1
         quest_dir = ctx.machine_root_dir
         qsi = quest_fs.read_quest_state(quest_dir)
-        slice_dir: Path | None = None
-        slice_state: SliceState | None = None
-        if qsi.state == QuestState.ExecuteSlice and qsi.current_slice is not None:
-            slice_dir = _get_slice_dir(quest_dir, qsi.current_slice)
-            slice_state = quest_fs.read_slice_state(slice_dir).state
+        if self.m_machine_key == "slice":
+            slice_dir = machine.StateMachineDir()
+            machine_dir = slice_dir
+        else:
+            slice_dir = None
+            machine_dir = quest_dir
+            if qsi.state == QuestState.ExecuteSlice and qsi.current_slice is not None:
+                slice_dir = _get_slice_dir(quest_dir, qsi.current_slice)
         meta = quest_fs.read_quest_meta(quest_dir)
-        profiles = quest_fs.read_execution_config(quest_dir)
-        harness_configs = quest_fs.read_harness_configs(quest_dir)
-        profile = profiles[self.m_role]
+        workflow = resolve_quest_workflow(quest_dir)
+        profile_name, task_text = find_run_for_node(
+            workflow, self.m_machine_key, self.m_node_name
+        )
+        if profile_name != self.m_role:
+            raise RuntimeError(
+                f"Workflow run.profile {profile_name!r} does not match node role "
+                f"{self.m_role!r} for {self.m_node_name}"
+            )
+        profile = workflow.get_profile(profile_name)
+        exec_profile = workflow_profile_to_execution_profile(profile)
+        harness_configs = read_service_harness_configs(ctx.repo_root)
         harness = create_harness(
-            profile.harness, harness_configs.get(profile.harness.value)
+            exec_profile.harness, harness_configs.get(exec_profile.harness.value)
+        )
+        active_child_dir = slice_dir
+        collection_name = "slices" if slice_dir is not None else None
+        exec_ctx = build_profile_execution_context(
+            repo_path=ctx.repo_root,
+            quest_dir=quest_dir,
+            machine_dir=machine_dir,
+            meta=meta,
+            workflow=workflow,
+            profile=profile,
+            profile_name=profile_name,
+            quest_docs_dir=ctx.quest_docs_dir or quest_dir,
+            active_child_dir=active_child_dir,
+            collection_name=collection_name,
+            experiment_id=ctx.experiment_id,
         )
         quest_rel = quest_dir.resolve().relative_to(ctx.repo_root.resolve()).as_posix()
-        slice_rel: str | None = None
-        if slice_dir is not None:
-            slice_rel = slice_dir.resolve().relative_to(ctx.repo_root.resolve()).as_posix()
+        active_child_rel: str | None = None
+        if active_child_dir is not None:
+            active_child_rel = (
+                active_child_dir.resolve().relative_to(ctx.repo_root.resolve()).as_posix()
+            )
         step_base = git_rev_parse_head(ctx.repo_root)
-        thread_key = role_thread_key(self.m_role, slice_dir)
+        thread_key = render_thread_registry_key(exec_ctx)
         thread_box: list = [
-            load_thread(quest_dir, ctx.repo_root, self.m_role, registry_key=thread_key)
+            load_thread(
+                quest_dir, ctx.repo_root, profile_name, registry_key=thread_key
+            )
         ]
-        assert ctx.conductor_repo_path is not None
         assert ctx.quest_docs_dir is not None
         assert ctx.role_step_seq_box is not None
-        snum = qsi.current_slice if qsi.state == QuestState.ExecuteSlice else None
 
         def _create() -> object:
-            return resolve_or_create_thread_spec(
+            thread_name = render_thread_name(exec_ctx)
+            return create_thread_with_provider_name(
                 quest_dir,
                 ctx.repo_root,
-                self.m_role,
+                profile_name,
                 harness,
-                meta.quest_number,
-                profile.model,
-                profile.reasoning_effort,
-                profile.idle_timeout_seconds,
-                snum,
+                thread_name,
+                exec_profile.model,
+                exec_profile.reasoning_effort,
+                exec_profile.idle_timeout_seconds,
                 registry_key=thread_key,
             )
 
         perform_role_harness_sequence(
             repo_path=ctx.repo_root,
             quest_dir=quest_dir,
-            conductor_repo_path=ctx.conductor_repo_path,
             meta=meta,
             quest_docs_dir=ctx.quest_docs_dir,
-            quest_state_info=qsi,
-            slice_dir=slice_dir,
-            slice_state=slice_state,
+            machine_dir=machine_dir,
+            workflow=workflow,
             profile=profile,
+            profile_name=profile_name,
+            task_text=task_text,
             harness=harness,
-            role_name=self.m_role,
             thread_key=thread_key,
             quest_rel=quest_rel,
-            slice_rel=slice_rel,
+            active_child_rel=active_child_rel,
             step_base_commit=step_base,
             thread_box=thread_box,
             role_step_seq=ctx.role_step_seq_box,
@@ -120,6 +158,8 @@ class _ThreadLlmNode(BaseNode):
             create_thread_if_missing=_create,
             event_bus=ctx.event_bus,
             experiment_id=ctx.experiment_id,
+            active_child_dir=active_child_dir,
+            collection_name=collection_name,
         )
 
     def NextState(self, ctx: RunContext, machine: StateMachine) -> str:
@@ -128,6 +168,8 @@ class _ThreadLlmNode(BaseNode):
 
 class PhysicalPlanningNode(_ThreadLlmNode):
     m_role = "physical_planner"
+    m_machine_key = "quest"
+    m_node_name = "PhysicalPlanningNode"
 
     def NextState(self, ctx: RunContext, machine: StateMachine) -> str:
         try:
@@ -138,6 +180,8 @@ class PhysicalPlanningNode(_ThreadLlmNode):
 
 class ReviewPhysicalPlanNode(_ThreadLlmNode):
     m_role = "physical_plan_reviewer"
+    m_machine_key = "quest"
+    m_node_name = "ReviewPhysicalPlanNode"
 
     def NextState(self, ctx: RunContext, machine: StateMachine) -> str:
         try:
@@ -199,6 +243,8 @@ class ExecuteActiveSliceNode(BaseNode):
 
 class QuestDocumentingNode(_ThreadLlmNode):
     m_role = "documenter"
+    m_machine_key = "quest"
+    m_node_name = "QuestDocumentingNode"
 
     def NextState(self, ctx: RunContext, machine: StateMachine) -> str:
         box = ctx.documenter_base_ref_box
@@ -228,6 +274,8 @@ class SliceSetupNode(BaseNode):
 
 class SliceImplementingNode(_ThreadLlmNode):
     m_role = "implementer"
+    m_machine_key = "slice"
+    m_node_name = "SliceImplementingNode"
 
     def Execute(self, ctx: RunContext, machine: StateMachine) -> None:
         self._step_base = git_rev_parse_head(ctx.repo_root)
@@ -242,6 +290,8 @@ class SliceImplementingNode(_ThreadLlmNode):
 
 class SlicePolishingReviewNode(_ThreadLlmNode):
     m_role = "polisher_reviewer"
+    m_machine_key = "slice"
+    m_node_name = "SlicePolishingReviewNode"
 
     def NextState(self, ctx: RunContext, machine: StateMachine) -> str:
         try:
@@ -252,6 +302,8 @@ class SlicePolishingReviewNode(_ThreadLlmNode):
 
 class SlicePolishingFixNode(_ThreadLlmNode):
     m_role = "polisher"
+    m_machine_key = "slice"
+    m_node_name = "SlicePolishingFixNode"
 
     def NextState(self, ctx: RunContext, machine: StateMachine) -> str:
         return "PolishingReview"
