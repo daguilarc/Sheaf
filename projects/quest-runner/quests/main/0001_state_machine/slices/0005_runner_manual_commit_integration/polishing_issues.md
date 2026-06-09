@@ -2,10 +2,10 @@
 
 ## Issue PL-0001
 
-- status: open
+- status: completed
 - owner_role: polisher_reviewer
 - created_at: 2026-06-09T22:33:08Z
-- updated_at: 2026-06-09T22:33:08Z
+- updated_at: 2026-06-09T22:36:31Z
 - title: Missing automated-run test for a committed step (global_step increment + metadata)
 - details: ## What is wrong
 
