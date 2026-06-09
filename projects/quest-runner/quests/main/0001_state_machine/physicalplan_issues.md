@@ -2,10 +2,10 @@
 
 ## Issue QP-0001
 
-- status: open
+- status: completed
 - owner_role: physical_plan_reviewer
 - created_at: 2026-06-09T21:23:36Z
-- updated_at: 2026-06-09T21:23:36Z
+- updated_at: 2026-06-09T21:26:13Z
 - title: Unified collection scaffold must pin exact byte content and file set to preserve slice-init compatibility
 - details: WHAT IS WRONG
 
