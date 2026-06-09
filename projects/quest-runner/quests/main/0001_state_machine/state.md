@@ -1,5 +1,13 @@
-# Quest State
+# State
 
-state: PrePlanning
-current_slice: null
-updated_at: 2026-06-09T17:15:08Z
+- global_step: 1
+- machine_name: quest
+- machine_path: projects/quest-runner/quests/main/0001_state_machine
+- state: PhysicalPlanning
+- updated_at: 2026-06-09T21:09:59Z
+
+## Tags
+
+- quest_number: 1
+- quest_slug: state_machine
+- quest_type: main
