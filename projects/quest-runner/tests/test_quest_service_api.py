@@ -344,6 +344,18 @@ class QuestServiceApiTests(unittest.TestCase):
             (first / "polishing_issues.md").read_text(encoding="utf-8"),
             "# Issues\n",
         )
+        self.assertTrue((first / "notes").is_dir())
+        self.assertEqual(body["collection"], "slices")
+        self.assertEqual(
+            body["created_slices"][0]["created_files"],
+            [
+                "physicalplan",
+                "state.md",
+                "state_history.md",
+                "polishing_issues.md",
+                "notes",
+            ],
+        )
 
     def test_initialize_slices_appends_after_existing_slices(self) -> None:
         ensure_project(self.temp.root, "example")

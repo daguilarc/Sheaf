@@ -93,18 +93,20 @@ class CreateQuestTests(unittest.TestCase):
                 (root / "projects" / "example" / "quests" / "main" / "0000_my_quest").resolve(),
             )
             self.assertTrue((qdir / "meta.json").is_file())
-            self.assertTrue((qdir / "state_execution_config.yaml").is_file())
-            exec_cfg = yaml.safe_load(
-                (qdir / "state_execution_config.yaml").read_text(encoding="utf-8")
+            self.assertTrue((qdir / "workflow" / "workflow.yaml").is_file())
+            self.assertFalse((qdir / "state_execution_config.yaml").is_file())
+            workflow = yaml.safe_load(
+                (qdir / "workflow" / "workflow.yaml").read_text(encoding="utf-8")
             )
-            self.assertEqual(
-                exec_cfg["profiles"]["implementer"]["modify_block"],
-                ["$currentProject/quests/**"],
-            )
+            self.assertEqual(workflow["entry_machine"], "quest")
+            state_text = (qdir / "state.md").read_text(encoding="utf-8")
+            self.assertTrue(state_text.startswith("# State\n"))
+            self.assertIn("global_step: 0\n", state_text)
             meta = quest_fs.read_quest_meta(qdir)
             self.assertEqual(meta.project, "example")
             st = quest_fs.read_quest_state(qdir)
             self.assertEqual(st.state, QuestState.PrePlanning)
+            self.assertEqual(st.global_step, 0)
             self.assertEqual(out["project"], "example")
             self.assertEqual(out["worktree_name"], "example_main_0000_my_quest")
             self.assertEqual(

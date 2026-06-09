@@ -368,6 +368,20 @@ def _format_advance(data: dict[str, Any], out: TextIO) -> None:
     _print_field("message", data.get("message"), out)
 
 
+def _format_upgrade(data: dict[str, Any], out: TextIO) -> None:
+    _print_field("status", data.get("status"), out)
+    _print_field("quest_dir", data.get("quest_dir"), out)
+    _print_field("workflow_dir", data.get("workflow_dir"), out)
+    _print_field("deleted_config", data.get("deleted_config"), out)
+    _print_field("normalized_state_rewrite", data.get("normalized_state_rewrite"), out)
+    for key in ("ported_profiles", "merged_harnesses", "skipped_harnesses"):
+        values = data.get(key)
+        if isinstance(values, list) and values:
+            out.write(f"{key}:\n")
+            for item in values:
+                out.write(f"  - {item}\n")
+
+
 def _format_land(data: dict[str, Any], out: TextIO) -> None:
     if data.get("experiment_id") is not None:
         _format_land_experiment(data, out)
@@ -622,6 +636,14 @@ def build_parser() -> argparse.ArgumentParser:
     _add_experiment_id_arg(advance_parser)
     advance_parser.set_defaults(handler="advance")
 
+    upgrade_parser = subparsers.add_parser(
+        "upgrade",
+        help="Upgrade a writable quest from legacy execution config to workflow/",
+    )
+    _add_quest_identity_args(upgrade_parser)
+    _add_experiment_id_arg(upgrade_parser)
+    upgrade_parser.set_defaults(handler="upgrade")
+
     land_parser = subparsers.add_parser(
         "land",
         help="Land a quest worktree branch onto the target branch",
@@ -646,6 +668,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         default=[],
         help="Slice slug. Repeat exactly --count times.",
+    )
+    slices_init.add_argument(
+        "--collection",
+        default=None,
+        help="Workflow collection name (required when workflow declares several).",
     )
     slices_init.set_defaults(handler="slices_init")
 
@@ -873,6 +900,33 @@ def _dispatch_command(
             err=err,
         )
 
+    if handler == "upgrade":
+        body = {
+            "project": args.project,
+            "quest_type": args.type,
+            "quest_number": args.number,
+        }
+        if args.experiment_id is not None:
+            body["experiment_id"] = args.experiment_id
+        endpoint = "/upgrade_quest"
+        status, data = _send_request(
+            request_fn, "POST", base_url=base_url, endpoint=endpoint, body=body
+        )
+        if 200 <= status < 300:
+            if json_output:
+                _print_json(data, out)
+            else:
+                _format_upgrade(data, out)
+            return 0
+        return _handle_http_result(
+            status=status,
+            endpoint=endpoint,
+            data=data,
+            json_output=json_output,
+            out=out,
+            err=err,
+        )
+
     if handler == "advance":
         body = {
             "project": args.project,
@@ -967,6 +1021,8 @@ def _dispatch_command(
             "count": args.count,
             "slugs": args.slug,
         }
+        if args.collection is not None:
+            body["collection"] = args.collection
         if args.experiment_id is not None:
             body["experiment_id"] = args.experiment_id
         endpoint = "/api/slices/init"

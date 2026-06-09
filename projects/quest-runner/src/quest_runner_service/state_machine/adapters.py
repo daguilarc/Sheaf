@@ -19,11 +19,21 @@ from .machine import ConcreteStateMachine
 from .protocols import StateIo, StateMachineDefinition
 
 
+def _is_quest_root_dir(path: Path) -> bool:
+    if not (path / "meta.json").is_file():
+        return False
+    if (path / "workflow" / "workflow.yaml").is_file():
+        return True
+    if (path / "state_execution_config.yaml").is_file():
+        return True
+    return False
+
+
 def find_quest_root_for_machine_dir(state_machine_dir: Path) -> Path | None:
-    """Walk parents until a directory contains both ``meta.json`` and ``state_execution_config.yaml``."""
+    """Walk parents until a directory contains ``meta.json`` and quest config."""
     cur = state_machine_dir.resolve()
     while True:
-        if (cur / "state_execution_config.yaml").is_file() and (cur / "meta.json").is_file():
+        if _is_quest_root_dir(cur):
             return cur
         parent = cur.parent
         if parent == cur:
@@ -38,8 +48,8 @@ class WorkflowProfileResolver:
         root = find_quest_root_for_machine_dir(state_machine_dir)
         if root is None:
             raise FatalInvariantError(
-                f"No quest root (meta.json + state_execution_config.yaml) found "
-                f"at or above {state_machine_dir}"
+                f"No quest root (meta.json + workflow/ or state_execution_config.yaml) "
+                f"found at or above {state_machine_dir}"
             )
         try:
             workflow = resolve_quest_workflow(root)

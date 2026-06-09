@@ -151,10 +151,8 @@ class ExperimentLifecycleIntegrationTests(unittest.TestCase):
         assert wt_qdir is not None
         wt_config = (wt_qdir / "state_execution_config.yaml").read_text(encoding="utf-8")
         self.assertIn("test-model", wt_config)
-        self.assertNotEqual(
-            wt_config,
-            (source_qdir / "state_execution_config.yaml").read_text(encoding="utf-8"),
-        )
+        self.assertFalse((source_qdir / "state_execution_config.yaml").is_file())
+        self.assertTrue((source_qdir / "workflow" / "workflow.yaml").is_file())
 
         self._prepare_experiment_slice_for_stop(wt_qdir, wt_path)
         (wt_qdir / "logs").mkdir(exist_ok=True)

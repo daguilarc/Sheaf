@@ -21,8 +21,6 @@ from .quest_types import (
     QuestMeta,
     QuestState,
     QuestStateInfo,
-    SliceState,
-    SliceStateInfo,
     utc_now_iso,
 )
 from . import experiments as experiment_ops
@@ -87,12 +85,15 @@ class InvalidQuestInput(QuestCreationError):
         super().__init__(reason)
 
 
-class MissingDefaultExecutionConfig(QuestCreationError):
-    """Bundled default `state_execution_config.yaml` is missing."""
+class MissingDefaultWorkflow(QuestCreationError):
+    """Bundled default ``workflow/`` directory is missing."""
 
     def __init__(self, path: Path) -> None:
         self.path = path
-        super().__init__(f"Missing default execution config: {path}")
+        super().__init__(f"Missing default workflow directory: {path}")
+
+
+MissingDefaultExecutionConfig = MissingDefaultWorkflow
 
 
 class QuestLockContention(Exception):
@@ -435,11 +436,18 @@ class QuestService:
         quest_type_dir.mkdir(parents=True, exist_ok=True)
         quest_dir = quest_type_dir / f"{prefix}_{norm_slug}"
 
-        default_cfg = (
-            Path(__file__).resolve().parent / "default_state_execution_config.yaml"
+        from .workflow_scaffold import (
+            MissingDefaultWorkflow,
+            build_quest_scaffold_context,
+            copy_packaged_default_workflow,
+            execute_scaffold_actions,
+            load_quest_workflow,
         )
-        if not default_cfg.is_file():
-            raise MissingDefaultExecutionConfig(default_cfg)
+        from .workflow_config import packaged_default_workflow_dir
+
+        default_workflow = packaged_default_workflow_dir()
+        if not default_workflow.is_dir():
+            raise MissingDefaultWorkflow(default_workflow)
 
         created: list[str] = []
         created_root = False
@@ -449,20 +457,6 @@ class QuestService:
             created_root = True
 
             now = utc_now_iso()
-            quest_fs.write_quest_state(
-                quest_dir,
-                QuestStateInfo(
-                    state=QuestState.PrePlanning,
-                    current_slice=None,
-                    updated_at=now,
-                ),
-            )
-            created.append("state.md")
-
-            history_path = quest_dir / "state_history.md"
-            history_path.write_text("# State Transition History\n\n", encoding="utf-8")
-            created.append("state_history.md")
-
             meta = QuestMeta(
                 project=project,
                 quest_type=quest_type,
@@ -472,19 +466,41 @@ class QuestService:
                 created_at=now,
                 created_by=requested_by,
             )
+
+            workflow_dir = quest_dir / "workflow"
+            created.extend(copy_packaged_default_workflow(workflow_dir))
+            workflow = load_quest_workflow(quest_dir)
+
+            quest_fs.write_quest_normalized_machine_state(
+                quest_dir,
+                QuestStateInfo(
+                    state=QuestState.PrePlanning,
+                    current_slice=None,
+                    updated_at=now,
+                    global_step=0,
+                ),
+                meta,
+                root,
+            )
+            created.append("state.md")
+
+            history_path = quest_dir / "state_history.md"
+            history_path.write_text("# State Transition History\n\n", encoding="utf-8")
+            created.append("state_history.md")
+
             quest_fs.write_quest_meta(quest_dir, meta)
             created.append("meta.json")
 
             quest_fs.write_thread_registry(quest_dir, {})
             created.append("thread_registry.json")
 
-            issues_path = quest_dir / "physicalplan_issues.md"
-            issues_path.write_text("# Issues\n", encoding="utf-8")
-            created.append("physicalplan_issues.md")
-
-            dest_cfg = quest_dir / "state_execution_config.yaml"
-            shutil.copy2(default_cfg, dest_cfg)
-            created.append("state_execution_config.yaml")
+            scaffold_ctx = build_quest_scaffold_context(
+                repo_path=root,
+                quest_dir=quest_dir,
+                meta=meta,
+                workflow=workflow,
+            )
+            created.extend(execute_scaffold_actions(workflow.scaffold, scaffold_ctx))
 
             specs = quest_dir / "specs"
             specs.mkdir()
@@ -852,7 +868,63 @@ class QuestService:
             quest_number,
             experiment_id,
         )
+        self._ensure_quest_workflow_upgraded(worktree_root, worktree_qdir)
         return worktree_root, worktree_qdir, key, exp_meta
+
+    def _ensure_quest_workflow_upgraded(self, repo_root: Path, quest_dir: Path) -> None:
+        from .workflow_upgrade import upgrade_quest_if_needed
+
+        upgrade_quest_if_needed(repo_root, quest_dir)
+
+    def upgrade_quest(
+        self,
+        repo_path: str,
+        project: str,
+        quest_type: str,
+        quest_number: int,
+        experiment_id: str | None = None,
+    ) -> dict:
+        from .workflow_upgrade import QuestNotUpgradeable, upgrade_quest_workflow
+
+        checkout_root, qdir, checkout, _exp_meta = (
+            self._resolve_mutable_quest_scope(
+                repo_path,
+                project,
+                quest_type,
+                quest_number,
+                experiment_id=experiment_id,
+                require_open_experiment=experiment_id is not None,
+            )
+        )
+        if checkout.worktree_missing:
+            source_root = _resolve_repo(repo_path)
+            if experiment_id is None:
+                source_qdir = quest_fs.find_quest_dir(
+                    source_root, project, quest_type, quest_number
+                )
+                assert source_qdir is not None
+                meta = quest_fs.read_quest_meta(source_qdir)
+                expected = quest_worktree_path(source_root, meta)
+            else:
+                expected = experiment_ops.experiment_worktree_path(
+                    source_root, experiment_id
+                )
+            raise MissingQuestWorktree(
+                project, quest_type, quest_number, expected
+            )
+        try:
+            result = upgrade_quest_workflow(checkout_root, qdir)
+        except QuestNotUpgradeable as exc:
+            raise InvalidQuestInput(exc.reason) from exc
+        result["project"] = project
+        result["quest_type"] = quest_type
+        result["quest_number"] = quest_number
+        result["quest_dir"] = str(qdir)
+        result["checkout_kind"] = checkout.checkout_kind
+        result["checkout_path"] = str(checkout.checkout_root)
+        if checkout.experiment_id is not None:
+            result["experiment_id"] = checkout.experiment_id
+        return result
 
     def _run_quest_locked(
         self,
@@ -1767,6 +1839,7 @@ class QuestService:
         count: object,
         slugs: object,
         experiment_id: str | None = None,
+        collection: str | None = None,
     ) -> dict:
         source_root = _resolve_repo(repo_path)
         if not _is_git_repo(source_root):
@@ -1824,7 +1897,22 @@ class QuestService:
                 project, quest_type, quest_number, expected
             )
 
+        self._ensure_quest_workflow_upgraded(checkout.checkout_root, qdir)
         meta = quest_fs.read_quest_meta(qdir)
+
+        from .workflow_profile_execution import resolve_quest_workflow
+        from .workflow_scaffold import (
+            build_child_scaffold_context,
+            collection_parent_dir,
+            execute_scaffold_actions,
+            resolve_workflow_collection,
+        )
+
+        workflow = resolve_quest_workflow(qdir)
+        try:
+            selected_collection = resolve_workflow_collection(workflow, collection)
+        except ValueError as exc:
+            raise InvalidQuestInput(str(exc)) from exc
 
         mutation_lock_acquired = False
         if not checkout.worktree_missing:
@@ -1832,15 +1920,21 @@ class QuestService:
             mutation_lock_acquired = True
 
         try:
-            existing = quest_fs.list_slice_dirs(qdir)
+            slice_root = collection_parent_dir(selected_collection, qdir)
+            slice_root.mkdir(parents=True, exist_ok=True)
+            existing = [
+                p
+                for p in slice_root.iterdir()
+                if p.is_dir()
+                and len(p.name) >= 4
+                and p.name[:4].isdigit()
+            ]
             existing_numbers = [
                 int(p.name[:4])
                 for p in existing
-                if len(p.name) >= 4 and p.name[:4].isdigit()
+                if p.name[:4].isdigit()
             ]
             next_number = (max(existing_numbers) + 1) if existing_numbers else 1
-            slice_root = qdir / "slices"
-            slice_root.mkdir(parents=True, exist_ok=True)
 
             targets: list[tuple[int, str, Path]] = []
             for offset, slug in enumerate(normalized_slugs):
@@ -1854,39 +1948,28 @@ class QuestService:
 
             created_dirs: list[Path] = []
             created_slices: list[dict] = []
-            now = utc_now_iso()
             try:
                 for number, slug, target in targets:
                     target.mkdir()
                     created_dirs.append(target)
-                    plan_dir = target / "physicalplan"
-                    plan_dir.mkdir()
-                    quest_fs.write_slice_state(
-                        target,
-                        SliceStateInfo(
-                            state=SliceState.NotStarted,
-                            updated_at=now,
-                        ),
+                    child_ctx = build_child_scaffold_context(
+                        repo_path=checkout.checkout_root,
+                        quest_dir=qdir,
+                        child_dir=target,
+                        meta=meta,
+                        workflow=workflow,
+                        collection=selected_collection,
                     )
-                    (target / "state_history.md").write_text(
-                        "# State Transition History\n\n",
-                        encoding="utf-8",
-                    )
-                    (target / "polishing_issues.md").write_text(
-                        "# Issues\n",
-                        encoding="utf-8",
+                    created_files = execute_scaffold_actions(
+                        selected_collection.scaffold,
+                        child_ctx,
                     )
                     created_slices.append({
                         "slice_number": number,
                         "slice_slug": slug,
                         "directory_name": target.name,
                         "slice_dir": str(target),
-                        "created_files": [
-                            "physicalplan",
-                            "state.md",
-                            "state_history.md",
-                            "polishing_issues.md",
-                        ],
+                        "created_files": created_files,
                     })
             except Exception:
                 for created in reversed(created_dirs):
@@ -1904,6 +1987,7 @@ class QuestService:
             "quest_dir": str(qdir),
             "checkout_kind": checkout.checkout_kind,
             "checkout_path": str(checkout.checkout_root),
+            "collection": selected_collection.name,
             "created_slices": created_slices,
         }
         if checkout.experiment_id is not None:

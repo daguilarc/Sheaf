@@ -575,7 +575,7 @@ class ExperimentCreationTests(unittest.TestCase):
         self.temp = TempRepo(self.repo_root)
         self.addCleanup(self.temp.cleanup)
 
-    def _prepare_quest_with_step(self) -> tuple[QuestService, dict, Path, str, str]:
+    def _prepare_quest_with_step(self) -> tuple[QuestService, dict, Path, str]:
         ensure_project(self.temp.root, "example")
         svc = QuestService(QuestLock(), self.repo_root)
         out = svc.create_quest(str(self.temp.root), "example", "main", "Exp Create")
@@ -587,13 +587,10 @@ class ExperimentCreationTests(unittest.TestCase):
         msg = _step_commit_message(qrel, 5, role="implementer")
         step_sha = _git_commit(self.temp.root, msg, allow_empty=True)
         parent_sha = run_git(self.temp.root, "rev-parse", f"{step_sha}^").stdout.strip()
-        source_config = (source_qdir / "state_execution_config.yaml").read_text(
-            encoding="utf-8"
-        )
-        return svc, out, source_qdir, parent_sha, source_config
+        return svc, out, source_qdir, parent_sha
 
     def test_next_experiment_number_after_create(self) -> None:
-        svc, out, source_qdir, _parent, _source_config = self._prepare_quest_with_step()
+        svc, out, source_qdir, _parent = self._prepare_quest_with_step()
         svc.create_experiment(
             repo_path=str(self.temp.root),
             project="example",
@@ -607,7 +604,7 @@ class ExperimentCreationTests(unittest.TestCase):
         self.assertEqual(next_experiment_number(source_qdir), 1)
 
     def test_create_writes_metadata_files_and_commits(self) -> None:
-        svc, out, source_qdir, parent_sha, source_config = self._prepare_quest_with_step()
+        svc, out, source_qdir, parent_sha = self._prepare_quest_with_step()
         result = svc.create_experiment(
             repo_path=str(self.temp.root),
             project="example",
@@ -642,13 +639,11 @@ class ExperimentCreationTests(unittest.TestCase):
             log.stdout.strip(),
             f"experiment-create: example/main/{out['quest_number']:04d}/0000",
         )
-        self.assertEqual(
-            (source_qdir / "state_execution_config.yaml").read_text(encoding="utf-8"),
-            source_config,
-        )
+        self.assertFalse((source_qdir / "state_execution_config.yaml").is_file())
+        self.assertTrue((source_qdir / "workflow" / "workflow.yaml").is_file())
 
     def test_create_worktree_and_replaces_experiment_config(self) -> None:
-        svc, out, source_qdir, parent_sha, _source_config = self._prepare_quest_with_step()
+        svc, out, source_qdir, parent_sha = self._prepare_quest_with_step()
         result = svc.create_experiment(
             repo_path=str(self.temp.root),
             project="example",
@@ -678,7 +673,7 @@ class ExperimentCreationTests(unittest.TestCase):
         self.assertEqual(head, parent_sha)
 
     def test_create_rejects_unknown_stop_node_before_worktree(self) -> None:
-        svc, out, source_qdir, _parent, _source_config = self._prepare_quest_with_step()
+        svc, out, source_qdir, _parent = self._prepare_quest_with_step()
         with self.assertRaises(InvalidQuestInput):
             svc.create_experiment(
                 repo_path=str(self.temp.root),
@@ -693,7 +688,7 @@ class ExperimentCreationTests(unittest.TestCase):
         self.assertFalse(experiments_root(source_qdir).exists())
 
     def test_partial_cleanup_when_metadata_commit_fails(self) -> None:
-        svc, out, source_qdir, _parent, _source_config = self._prepare_quest_with_step()
+        svc, out, source_qdir, _parent = self._prepare_quest_with_step()
         branch = experiment_branch_name(
             "example", "main", out["quest_number"], 0
         )
@@ -722,7 +717,7 @@ class ExperimentCreationTests(unittest.TestCase):
         self.assertFalse(wt_path.exists())
 
     def test_committed_metadata_failure_includes_retry_details(self) -> None:
-        svc, out, source_qdir, _parent, _source_config = self._prepare_quest_with_step()
+        svc, out, source_qdir, _parent = self._prepare_quest_with_step()
         with patch(
             "quest_runner_service.experiments.create_experiment_branch_and_worktree",
             side_effect=RuntimeError("worktree boom"),

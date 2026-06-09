@@ -14,6 +14,11 @@ _PACKAGED_DEFAULT_WORKFLOW_DIR = (
     Path(__file__).resolve().parent / "default_workflow"
 )
 
+
+def packaged_default_workflow_dir() -> Path:
+    """Return the packaged default workflow directory shipped with quest-runner."""
+    return _PACKAGED_DEFAULT_WORKFLOW_DIR
+
 _THREAD_SCOPES = frozenset({"quest", "child", "machine", "node"})
 _CHILD_RUN_MODES = frozenset({"one_step"})
 _COLLECTION_ORDERS = frozenset({"lexical"})

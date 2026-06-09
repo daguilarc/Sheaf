@@ -399,6 +399,35 @@ def create_app(
         )
         return jsonify(result), 200
 
+    @app.route("/upgrade_quest", methods=["POST"])
+    def upgrade_quest_route():
+        data = request.get_json(force=True)
+        required = ["project", "quest_type", "quest_number"]
+        missing = [f for f in required if f not in data]
+        if missing:
+            return jsonify({"error": f"Missing required fields: {missing}"}), 400
+        log.info(
+            "upgrade_quest project=%s type=%s number=%s",
+            data["project"],
+            data["quest_type"],
+            data["quest_number"],
+        )
+        result = quest_service.upgrade_quest(
+            repo_path=str(source_root),
+            project=data["project"],
+            quest_type=data["quest_type"],
+            quest_number=data["quest_number"],
+            experiment_id=data.get("experiment_id"),
+        )
+        log.info(
+            "upgrade_quest ok project=%s type=%s number=%s status=%s",
+            data["project"],
+            data["quest_type"],
+            data["quest_number"],
+            result.get("status"),
+        )
+        return jsonify(result), 200
+
     @app.route("/api/slices/init", methods=["POST"])
     def initialize_slices_route():
         data = request.get_json(force=True)
@@ -421,6 +450,7 @@ def create_app(
             count=data["count"],
             slugs=data["slugs"],
             experiment_id=data.get("experiment_id"),
+            collection=data.get("collection"),
         )
         log.info(
             "initialize_slices ok project=%s type=%s number=%s created=%s",

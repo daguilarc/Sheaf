@@ -79,6 +79,16 @@ def _is_project_local_quest_dir(quest_dir: Path) -> bool:
     return _project_from_quest_dir_path(quest_dir) is not None
 
 
+def is_project_local_quest_dir(quest_dir: Path) -> bool:
+    """Return whether ``quest_dir`` lives under ``projects/<project>/quests/``."""
+    return _is_project_local_quest_dir(quest_dir)
+
+
+def quest_has_workflow(quest_dir: Path) -> bool:
+    """Return whether the quest has a local ``workflow/workflow.yaml``."""
+    return (quest_dir / "workflow" / "workflow.yaml").is_file()
+
+
 def find_quest_dir(
     repo_root: Path,
     project: str,
@@ -734,7 +744,17 @@ def _parse_profile_maps_to_execution_profile(
 
 
 def read_state_execution_config_version(config_dir: Path) -> int:
-    """Return the integer ``version`` field from ``state_execution_config.yaml``."""
+    """Return the workflow or legacy execution config version for a quest."""
+    workflow_path = config_dir / "workflow" / "workflow.yaml"
+    if workflow_path.is_file():
+        raw_any = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
+        if not isinstance(raw_any, dict):
+            raise ValueError(f"workflow.yaml must be a mapping: {workflow_path}")
+        if "version" not in raw_any:
+            raise ValueError(
+                f"workflow.yaml missing required 'version' key: {workflow_path}"
+            )
+        return _coerce_config_version(raw_any["version"], workflow_path)
     path = config_dir / "state_execution_config.yaml"
     if not path.is_file():
         raise FileNotFoundError(f"Missing execution config: {path}")
@@ -781,6 +801,15 @@ def validate_state_execution_config_text(config_text: str) -> None:
 
 
 def read_execution_config(quest_dir: Path) -> dict[str, ExecutionProfile]:
+    if quest_has_workflow(quest_dir):
+        from .workflow_config import load_workflow
+        from .workflow_profile_execution import workflow_profile_to_execution_profile
+
+        workflow = load_workflow(quest_dir / "workflow")
+        return {
+            name: workflow_profile_to_execution_profile(profile)
+            for name, profile in workflow.profiles.items()
+        }
     path = quest_dir / "state_execution_config.yaml"
     if not path.is_file():
         raise FileNotFoundError(f"Missing execution config: {path}")
