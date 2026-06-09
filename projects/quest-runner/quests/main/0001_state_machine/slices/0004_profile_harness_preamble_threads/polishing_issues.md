@@ -2,10 +2,10 @@
 
 ## Issue PL-0001
 
-- status: open
+- status: completed
 - owner_role: polisher_reviewer
 - created_at: 2026-06-09T22:12:46Z
-- updated_at: 2026-06-09T22:12:46Z
+- updated_at: 2026-06-09T22:22:10Z
 - title: Remove superseded role-name execution helpers (spec-08 'must not survive as runner code')
 - details: ## What is wrong
 
@@ -74,10 +74,10 @@ alive:
 
 ## Issue PL-0002
 
-- status: open
+- status: completed
 - owner_role: polisher_reviewer
 - created_at: 2026-06-09T22:12:50Z
-- updated_at: 2026-06-09T22:12:50Z
+- updated_at: 2026-06-09T22:22:11Z
 - title: Harness-config test asserts machine-specific absolute cli_path from live repo config
 - details: ## What is wrong
 
