@@ -2,10 +2,10 @@
 
 ## Issue PL-0001
 
-- status: open
+- status: completed
 - owner_role: polisher_reviewer
 - created_at: 2026-06-09T00:48:59Z
-- updated_at: 2026-06-09T00:48:59Z
+- updated_at: 2026-06-09T00:55:34Z
 - title: Unused QuestScope dataclass introduced in experiments.py
 - details: What is wrong:
 The physical plan asked for a 'QuestScope(project, quest_type, quest_number, experiment_id=None)' request model in experiments.py. Commit 5c2051b added the dataclass (experiments.py:58-64) but it is never referenced anywhere in src/ or tests/ (verified via grep -rn 'QuestScope'). Scope resolution is instead threaded through individual parameters on QuestService._resolve_mutable_quest_scope / _prepare_run.
@@ -19,10 +19,10 @@ Either (a) QuestScope is actually used to carry scope through the resolution pat
 
 ## Issue PL-0002
 
-- status: open
+- status: completed
 - owner_role: polisher_reviewer
 - created_at: 2026-06-09T00:49:10Z
-- updated_at: 2026-06-09T00:49:10Z
+- updated_at: 2026-06-09T00:55:35Z
 - title: Incomplete test coverage for experiment-scoped dashboard and CLI surfaces
 - details: What is wrong:
 The plan's Validation Expectations explicitly list tests for: 'Dashboard agent log, git history, and quest overview endpoints read from the experiment worktree when experiment_id is present' and 'CLI request bodies/queries include experiment_id for run, advance, slices, and every issue command'.
