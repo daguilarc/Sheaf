@@ -268,8 +268,36 @@ experiment worktree with the supplied transition config.
 | `config` | yes | Alternate `state_execution_config.yaml` body |
 | `requested_by` | no | Stored as `created_by` in metadata |
 
-**Response `201`:** includes `experiment_id`, `experiment_number`, `worktree_path`,
-`branch_name`, `base_commit`, `start_step`, and `dashboard_url`.
+**Response `201`:**
+
+```json
+{
+  "experiment_id": "experiment_quest-runner_main_0_0",
+  "experiment_number": 0,
+  "project": "quest-runner",
+  "quest_type": "main",
+  "quest_number": 0,
+  "worktree_path": "/path/to/.quest-worktrees/experiment_quest-runner_main_0_0",
+  "branch_name": "experiment/quest-runner/main/0000/0000",
+  "base_commit": "<parent-of-selected-step>",
+  "start_step": {
+    "global_step": 5,
+    "role": "implementer",
+    "step_log": "logs/step_0005_implementer.jsonl",
+    "step_commit": "<selected-step-commit>",
+    "base_commit": "<parent-of-selected-step>"
+  },
+  "stop_condition": {
+    "machine_path": "root/slice",
+    "node_name": "Completed"
+  },
+  "metadata_commit": "<source-checkout-commit>",
+  "dashboard_url": "http://localhost:9002/dashboard?project=quest-runner&quest_type=main&quest_number=0"
+}
+```
+
+The dashboard URL points at the parent quest. Select the open experiment row, or
+add `experiment_id=<id>` to the query string, to view the experiment worktree.
 
 **Error responses:**
 
@@ -294,8 +322,27 @@ branch, removes the local worktree and branch, and commits landed metadata.
 | `quest_number` | yes | Zero-based quest number |
 | `experiment_id` | yes | Experiment id to land |
 
-**Response `200`:** includes `status: landed`, copied file counts,
-`remote_branch`, `worktree_deleted`, `branch_deleted`, and `dashboard_url`.
+**Response `200`:**
+
+```json
+{
+  "status": "landed",
+  "project": "quest-runner",
+  "quest_type": "main",
+  "quest_number": 0,
+  "experiment_id": "experiment_quest-runner_main_0_0",
+  "experiment_number": 0,
+  "logs_copied": 3,
+  "issues_copied": 2,
+  "issue_responses_copied": 2,
+  "skipped_missing": 0,
+  "remote_branch": "experiment/quest-runner/main/0000/0000",
+  "worktree_deleted": true,
+  "branch_deleted": true,
+  "landed_at": "2026-06-08T00:00:00Z",
+  "dashboard_url": "http://localhost:9002/dashboard?project=quest-runner&quest_type=main&quest_number=0"
+}
+```
 
 **Error responses:**
 
@@ -303,7 +350,12 @@ branch, removes the local worktree and branch, and commits landed metadata.
 | --- | --- |
 | `400` | Invalid input or experiment/quest identity mismatch |
 | `404` | Experiment not found |
-| `409` | Worktree missing, not `ExperimentComplete`, push failed, or archive copy failed |
+| `409` | Source checkout dirty, lock contention, worktree missing, not `ExperimentComplete`, metadata not `experiment_complete`, push failed, archive copy failed, worktree deletion failed, or branch deletion failed |
+
+Landing conflict responses include a `status` field such as `target_dirty`,
+`worktree_missing`, `not_complete`, `artifact_copy_failed`, `push_failed`,
+`worktree_delete_failed`, or `branch_delete_failed`. Push failures preserve the
+local experiment worktree and branch for retry.
 
 ## Slice APIs
 

@@ -141,6 +141,15 @@ Options:
 | `--notes-file <path>` | Experiment description and operator notes (required). |
 | `--config-file <path>` | Alternate `state_execution_config.yaml` (required). |
 
+The source checkout must be clean. On success, the CLI prints the experiment id,
+experiment number, branch, worktree path, base commit, and dashboard URL when the
+service returns one.
+
+The experiment worktree receives the supplied config at the quest's normal
+`state_execution_config.yaml` path. The source checkout stores the same config
+under `experiments/<number>/state_execution_config.yaml` as the permanent
+experiment record.
+
 ### `experiments land`
 
 Lands a completed experiment by archiving artifacts, pushing the experiment
@@ -156,6 +165,10 @@ scripts/quest-runner experiments land \
 
 When `--experiment-id` is passed to `scripts/quest-runner land`, the CLI routes
 to `POST /experiments/land` instead of normal quest landing.
+
+The experiment must have reached `ExperimentComplete`. If branch push fails, the
+service preserves the local worktree and branch so the operator can fix the
+remote or credentials and retry.
 
 ## Slice Commands
 

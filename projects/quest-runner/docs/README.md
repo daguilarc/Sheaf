@@ -34,6 +34,7 @@ Exact APIs, layout, configuration, and test commands:
 ## How-to
 
 - [Run the service](how-to/run-service.md)
+- [Replay a quest as an experiment](how-to/replay-experiment.md)
 
 ## Explanation
 

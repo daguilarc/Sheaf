@@ -93,6 +93,53 @@ checkout.
 
 See [Quest lifecycle](../explanation/lifecycle.md) for creation and execution flow.
 
+## Experiment layout
+
+Experiments are child records of an existing main or side quest. The source
+checkout owns experiment metadata and archives:
+
+```text
+projects/<project>/quests/<type>/<number>_<slug>/
+  experiments/
+    0000/
+      experiment.json
+      notes.md
+      state_execution_config.yaml
+      logs/
+      issues/
+      issue_responses/
+```
+
+The numeric experiment directory is zero-padded. `experiment.json`, `notes.md`,
+and the alternate `state_execution_config.yaml` are committed on the source
+checkout when the experiment is created. `logs/`, `issues/`, and
+`issue_responses/` are populated when the experiment is landed.
+
+The experiment worktree uses a deterministic basename:
+
+```text
+experiment_<project>_<type>_<questNumber>_<experimentNumber>
+```
+
+It lives beside other Quest Runner worktrees:
+
+```text
+<repo-parent>/.quest-worktrees/<experiment_id>/
+```
+
+The branch name is:
+
+```text
+experiment/<project>/<type>/<questNumber:04d>/<experimentNumber:04d>
+```
+
+The worktree contains the normal quest directory layout and is the git,
+command, issue, and log boundary while the experiment is open. The source
+checkout remains the permanent metadata and archive boundary. See
+[Runtime files](runtime-files.md#experiment-metadata) for the metadata schema
+and [Replay a quest as an experiment](../how-to/replay-experiment.md) for the
+operator workflow.
+
 ## Legacy top-level quests
 
 The repository may still contain legacy records at:
@@ -105,8 +152,7 @@ quests/
 
 These paths remain on disk but are intentionally excluded from Quest Runner
 discovery, dashboard listing, and execution. They are not migrated by this
-service. A future quest may migrate individual legacy records into project-local
-layout.
+service.
 
 ## Runtime schema docs
 

@@ -140,3 +140,9 @@ overview run control.
 
 After a run, confirm service logs are under `logs/quest-runner/` and step logs
 are under the selected quest directory.
+
+For experiment smoke checks, create an experiment from a known v2 step, open the
+dashboard row for the experiment, run with `--experiment-id`, and verify the URL
+includes `experiment_id`. After the experiment reaches `ExperimentComplete`,
+land it and confirm the source quest contains copied files under
+`experiments/<number>/logs/`, `issues/`, and `issue_responses/`.

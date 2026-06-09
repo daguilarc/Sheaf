@@ -65,6 +65,34 @@ scripts/quest-runner land --project quest-runner --type side --number 0
 `advance` after manual fix-ups while the quest is stopped; use `land` when quest work
 is ready to integrate back onto the target branch.
 
+Experiment replay uses the same service and CLI with an experiment scope:
+
+```bash
+scripts/quest-runner experiments create \
+  --project quest-runner \
+  --type main \
+  --number 0 \
+  --start-step 5 \
+  --stop-node slice_completed \
+  --notes-file /tmp/experiment-notes.md \
+  --config-file /tmp/state_execution_config.yaml
+
+scripts/quest-runner run \
+  --project quest-runner \
+  --type main \
+  --number 0 \
+  --experiment-id experiment_quest-runner_main_0_0
+
+scripts/quest-runner experiments land \
+  --project quest-runner \
+  --type main \
+  --number 0 \
+  --experiment-id experiment_quest-runner_main_0_0
+```
+
+See [Replay a quest as an experiment](replay-experiment.md) for the complete
+operator workflow and recovery notes.
+
 ## Issue CLI
 
 Agents and humans should use the issue CLI instead of editing issue markdown files

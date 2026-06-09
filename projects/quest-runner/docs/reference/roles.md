@@ -214,6 +214,5 @@ The dashboard agent log API reads these files. Service process logs remain under
 
 - [Quest lifecycle](../explanation/lifecycle.md)
 - [Architecture](../explanation/architecture.md)
-- [Role workflow concepts](../explanation/roles.md)
 - [Runtime files](runtime-files.md)
 - [Docs structure](../../../../structure/docs-structure.md)
