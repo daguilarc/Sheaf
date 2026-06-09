@@ -1,6 +1,6 @@
 # State
 
-- global_step: 44
+- global_step: 45
 - machine_name: quest
 - machine_path: projects/quest-runner/quests/main/0001_state_machine
 - state: ExecuteSlice
