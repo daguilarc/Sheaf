@@ -392,7 +392,6 @@ Optional fields (typically present after landing):
 
 - `landed_at` — ISO-8601 UTC timestamp when the experiment was landed
 - `remote_branch` — pushed experiment branch name on the remote
-- `source_commit` — source-checkout commit hash recorded at landing
 
 Status values:
 

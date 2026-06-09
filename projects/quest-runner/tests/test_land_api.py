@@ -431,7 +431,7 @@ class ExperimentLandApiTests(unittest.TestCase):
         self.assertEqual(body["logs_copied"], 1)
         self.assertTrue(body["worktree_deleted"])
         self.assertTrue(body["branch_deleted"])
-        self.assertTrue(body["source_commit"])
+        self.assertNotIn("source_commit", body)
 
     def test_experiment_land_push_failure_returns_409(self) -> None:
         client, out, exp_id = self._setup_completed_experiment()

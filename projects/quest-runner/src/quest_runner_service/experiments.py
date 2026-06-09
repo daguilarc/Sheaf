@@ -119,7 +119,6 @@ class ExperimentMeta:
     completed_at: str | None = None
     landed_at: str | None = None
     remote_branch: str | None = None
-    source_commit: str | None = None
 
 
 def experiment_dir_name(number: int) -> str:
@@ -241,7 +240,6 @@ def read_experiment_meta(path_or_dir: Path) -> ExperimentMeta:
         completed_at=data.get("completed_at"),
         landed_at=data.get("landed_at"),
         remote_branch=data.get("remote_branch"),
-        source_commit=data.get("source_commit"),
     )
 
 
@@ -280,8 +278,6 @@ def _meta_to_json(meta: ExperimentMeta) -> dict:
         payload["landed_at"] = meta.landed_at
     if meta.remote_branch is not None:
         payload["remote_branch"] = meta.remote_branch
-    if meta.source_commit is not None:
-        payload["source_commit"] = meta.source_commit
     return payload
 
 
@@ -302,7 +298,6 @@ def update_experiment_status(
     completed_at: str | None = None,
     landed_at: str | None = None,
     remote_branch: str | None = None,
-    source_commit: str | None = None,
 ) -> ExperimentMeta:
     if status not in _EXPERIMENT_STATUSES:
         raise ExperimentValidationError(f"Invalid experiment status: {status!r}")
@@ -314,8 +309,6 @@ def update_experiment_status(
         meta.landed_at = landed_at
     if remote_branch is not None:
         meta.remote_branch = remote_branch
-    if source_commit is not None:
-        meta.source_commit = source_commit
     write_experiment_meta(path_or_dir, meta)
     return meta
 
@@ -829,13 +822,7 @@ def commit_experiment_land(
         f"{quest_number:04d}/{experiment_number:04d}"
     )
     run_git(source_repo_root, "commit", "-m", message)
-    land_commit = run_git(source_repo_root, "rev-parse", "HEAD").stdout.strip()
-    meta = read_experiment_meta(experiment_dir)
-    meta.source_commit = land_commit
-    write_experiment_meta(experiment_dir, meta)
-    run_git(source_repo_root, "add", "--", f"{rel}/experiment.json")
-    run_git(source_repo_root, "commit", "--amend", "--no-edit")
-    return land_commit
+    return run_git(source_repo_root, "rev-parse", "HEAD").stdout.strip()
 
 
 def commit_experiment_metadata(

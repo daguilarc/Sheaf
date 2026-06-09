@@ -245,14 +245,12 @@ class ExperimentMetaIoTests(unittest.TestCase):
         meta = _sample_meta(status="landed")
         meta.landed_at = "2026-06-08T12:00:00Z"
         meta.remote_branch = "experiment/quest-runner/main/0000/0000"
-        meta.source_commit = "deadbeef"
         write_experiment_meta(self.exp_dir, meta)
         loaded = read_experiment_meta(self.exp_dir)
         self.assertEqual(loaded.landed_at, "2026-06-08T12:00:00Z")
         self.assertEqual(
             loaded.remote_branch, "experiment/quest-runner/main/0000/0000"
         )
-        self.assertEqual(loaded.source_commit, "deadbeef")
 
     def test_read_permissive_without_landed_fields(self) -> None:
         meta = _sample_meta()
@@ -260,14 +258,23 @@ class ExperimentMetaIoTests(unittest.TestCase):
         raw = json.loads((self.exp_dir / "experiment.json").read_text())
         raw.pop("landed_at", None)
         raw.pop("remote_branch", None)
-        raw.pop("source_commit", None)
         (self.exp_dir / "experiment.json").write_text(
             json.dumps(raw, indent=2) + "\n", encoding="utf-8"
         )
         loaded = read_experiment_meta(self.exp_dir)
         self.assertIsNone(loaded.landed_at)
         self.assertIsNone(loaded.remote_branch)
-        self.assertIsNone(loaded.source_commit)
+
+    def test_read_ignores_legacy_source_commit_field(self) -> None:
+        meta = _sample_meta(status="landed")
+        write_experiment_meta(self.exp_dir, meta)
+        raw = json.loads((self.exp_dir / "experiment.json").read_text())
+        raw["source_commit"] = "deadbeef"
+        (self.exp_dir / "experiment.json").write_text(
+            json.dumps(raw, indent=2) + "\n", encoding="utf-8"
+        )
+        loaded = read_experiment_meta(self.exp_dir)
+        self.assertFalse(hasattr(loaded, "source_commit"))
 
     def test_json_has_trailing_newline(self) -> None:
         write_experiment_meta(self.exp_dir, _sample_meta())
@@ -956,14 +963,14 @@ class ExperimentLandServiceTests(unittest.TestCase):
         self.assertEqual(result["worktree_deleted"], True)
         self.assertEqual(result["branch_deleted"], True)
         self.assertEqual(result["remote_branch"], exp_meta.branch_name)
-        self.assertTrue(result["source_commit"])
+        self.assertNotIn("source_commit", result)
 
         exp_dir = experiments_root(source_qdir) / experiment_dir_name(0)
         loaded = read_experiment_meta(exp_dir)
         self.assertEqual(loaded.status, "landed")
         self.assertIsNotNone(loaded.landed_at)
         self.assertEqual(loaded.remote_branch, exp_meta.branch_name)
-        self.assertEqual(loaded.source_commit, result["source_commit"])
+        self.assertFalse(hasattr(loaded, "source_commit"))
         self.assertTrue((exp_dir / "logs" / "step_0005_run.jsonl").is_file())
         self.assertTrue(
             (exp_dir / "issues" / "quest" / "physicalplan_issues.md").is_file()

@@ -453,7 +453,6 @@ class ExperimentScopedCliTests(unittest.TestCase):
                     "remote_branch": "experiment/example/main/0000/0000",
                     "worktree_deleted": True,
                     "branch_deleted": True,
-                    "source_commit": "abc123",
                     "dashboard_url": "http://localhost/dashboard",
                 },
             )

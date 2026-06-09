@@ -397,7 +397,6 @@ def _format_land_experiment(data: dict[str, Any], out: TextIO) -> None:
     _print_field("remote_branch", data.get("remote_branch"), out)
     _print_field("worktree_deleted", data.get("worktree_deleted"), out)
     _print_field("branch_deleted", data.get("branch_deleted"), out)
-    _print_field("source_commit", data.get("source_commit"), out)
     _print_field("dashboard_url", data.get("dashboard_url"), out)
     if data.get("error"):
         _print_field("error", data.get("error"), out)

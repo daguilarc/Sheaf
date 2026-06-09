@@ -362,7 +362,6 @@ class CommandRequestTests(unittest.TestCase):
                     "remote_branch": "experiment/quest-runner/main/0000/0000",
                     "worktree_deleted": True,
                     "branch_deleted": True,
-                    "source_commit": "cafebabe",
                     "dashboard_url": "http://localhost/dashboard",
                 },
             ),
@@ -372,7 +371,7 @@ class CommandRequestTests(unittest.TestCase):
         self.assertEqual(req.method, "POST")
         self.assertTrue(req.url.endswith("/experiments/land"))
         self.assertEqual(req.body["experiment_id"], "experiment_quest-runner_main_0_0")
-        self.assertIn("source_commit: cafebabe", out)
+        self.assertNotIn("source_commit:", out)
         self.assertIn("dashboard_url:", out)
 
     def test_land_with_experiment_id_calls_experiments_land(self) -> None:
@@ -399,7 +398,6 @@ class CommandRequestTests(unittest.TestCase):
                     "remote_branch": "experiment/quest-runner/main/0000/0000",
                     "worktree_deleted": True,
                     "branch_deleted": True,
-                    "source_commit": "deadbeef",
                 },
             ),
         )

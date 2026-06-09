@@ -245,7 +245,7 @@ def _apply_experiment_source_completion(
 
     em = experiment_run.experiment_meta
     try:
-        source_commit = experiment_ops.complete_experiment_source_metadata(
+        source_metadata_commit = experiment_ops.complete_experiment_source_metadata(
             experiment_run.source_repo_root,
             experiment_run.source_experiment_dir,
             project=em.project,
@@ -269,7 +269,7 @@ def _apply_experiment_source_completion(
             "captured_outputs": run_result.get("captured_outputs", []),
             "experiment_id": em.experiment_id,
         }
-    run_result["source_metadata_commit"] = source_commit
+    run_result["source_metadata_commit"] = source_metadata_commit
     return run_result
 
 
@@ -1624,7 +1624,7 @@ class QuestService:
             remote_branch=exp_meta.branch_name,
         )
 
-        source_commit = experiment_ops.commit_experiment_land(
+        experiment_ops.commit_experiment_land(
             source_root,
             source_experiment_dir,
             project,
@@ -1655,7 +1655,6 @@ class QuestService:
             "remote_branch": exp_meta.branch_name,
             "worktree_deleted": worktree_deleted,
             "branch_deleted": branch_deleted,
-            "source_commit": source_commit,
             "landed_at": landed_at,
             "dashboard_url": dashboard_url,
         }
