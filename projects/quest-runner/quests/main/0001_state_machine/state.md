@@ -1,14 +1,14 @@
 # State
 
-- global_step: 9
+- global_step: 10
 - machine_name: quest
 - machine_path: projects/quest-runner/quests/main/0001_state_machine
-- state: PrepareNextSlice
+- state: ExecuteSlice
 - updated_at: 2026-06-09T21:32:55Z
 
 ## Tags
 
-- active_slice: 0001_workflow_config_assets_loader
+- active_slice: 0002_workflow_state_io_snapshots
 - quest_number: 1
 - quest_slug: state_machine
 - quest_type: main
