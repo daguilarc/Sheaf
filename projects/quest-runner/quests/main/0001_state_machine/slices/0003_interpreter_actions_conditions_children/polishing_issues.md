@@ -2,10 +2,10 @@
 
 ## Issue PL-0001
 
-- status: open
+- status: completed
 - owner_role: polisher_reviewer
 - created_at: 2026-06-09T21:52:01Z
-- updated_at: 2026-06-09T21:52:01Z
+- updated_at: 2026-06-09T22:00:04Z
 - title: Duplicated collection-pattern matcher across workflow_paths and workflow_state_io
 - details: ## What is wrong
 
@@ -24,10 +24,10 @@ A single canonical implementation of the collection-pattern matcher exists, and 
 
 ## Issue PL-0002
 
-- status: open
+- status: completed
 - owner_role: polisher_reviewer
 - created_at: 2026-06-09T21:52:05Z
-- updated_at: 2026-06-09T21:52:05Z
+- updated_at: 2026-06-09T22:00:04Z
 - title: Genericity not proven by interpreter tests (spec validation bullet)
 - details: ## What is wrong
 
