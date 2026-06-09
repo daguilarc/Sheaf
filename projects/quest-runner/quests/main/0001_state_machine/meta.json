@@ -1,0 +1,8 @@
+{
+  "project": "quest-runner",
+  "quest_type": "main",
+  "quest_number": 1,
+  "quest_slug": "state_machine",
+  "quest_name": "State Machine",
+  "created_at": "2026-06-09T17:15:08Z"
+}
