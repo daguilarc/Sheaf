@@ -76,6 +76,7 @@ Add focused tests or golden fixtures proving the default workflow preserves:
 - Quest root `state.md` normalized format and tags.
 - Slice `state.md` legacy persisted values.
 - `state_history.md` creation behavior.
+- Default slice scaffold tracked-file bytes, especially `state_history.md` as `"# State Transition History\n\n"`.
 - Issue file markdown fields, including `owner_role`.
 - Issue response file deterministic naming.
 - `thread_registry.json` shape and default registry keys.

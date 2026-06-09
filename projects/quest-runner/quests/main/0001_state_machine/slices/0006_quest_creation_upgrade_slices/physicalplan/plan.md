@@ -106,13 +106,21 @@ Rules:
 - Directory names keep current `NNNN_slug` convention.
 - Existing numbering and slug normalization behavior stays the same.
 - Scaffold files come from collection `scaffold` actions, not Python hard-coded file writes.
-- For default workflow, created files are exactly:
+- For default workflow, collection scaffold actions are exactly:
   - `physicalplan/`
-  - `state.md` with `NotStarted`
-  - `state_history.md`
-  - `polishing_issues.md`
+  - `state.md` with exact content `"# Slice State\n\nstate: NotStarted\nupdated_at: {now}\n"` after `{now}` interpolation
+  - `state_history.md` with exact content `"# State Transition History\n\n"`
+  - `polishing_issues.md` with exact content `"# Issues\n"`
   - `notes/`
 - Return payload keeps existing fields (`slice_number`, `slice_slug`, `directory_name`, `slice_dir`, `created_files`) and may include `collection`.
+- For the default workflow, `created_files` is intentionally updated to report every created scaffold entry in order:
+  - `physicalplan`
+  - `state.md`
+  - `state_history.md`
+  - `polishing_issues.md`
+  - `notes`
+
+This unifies the two current divergent scaffold paths. It preserves current committed slice-init bytes for tracked files, including the two trailing newlines in `state_history.md`; it intentionally adds empty `notes/` to `slices init` and lets `SliceSetup` repair a missing `physicalplan/`.
 
 ## Existing APIs To Reuse
 
@@ -148,4 +156,4 @@ Rules:
   - harness config merge to `config/quest-runner.json`
   - pre-normalized root state rewrite
   - legacy top-level quest is not modified
-- Slice init tests cover default collection, explicit collection, multiple-collection error, exact default scaffold files, rollback on failure, and experiment worktree operation.
+- Slice init tests cover default collection, explicit collection, multiple-collection error, exact default scaffold files and byte content, `created_files` order including `notes`, rollback on failure, and experiment worktree operation.

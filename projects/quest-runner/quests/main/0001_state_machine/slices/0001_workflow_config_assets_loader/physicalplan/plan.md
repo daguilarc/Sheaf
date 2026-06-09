@@ -37,7 +37,15 @@ Expected outcome: code can load `workflow/workflow.yaml`, machine YAML, profile 
   - `order: lexical`
   - `id_from: directory_name`
   - `active_var: active_slice`
-  - `scaffold` actions for `physicalplan/`, `state.md`, `state_history.md`, `polishing_issues.md`, and `notes/`
+  - `scaffold` actions, in this exact order and with this exact byte content:
+    - `ensure_dir: physicalplan`
+    - `ensure_file.path: state.md`
+    - `ensure_file.content: "# Slice State\n\nstate: NotStarted\nupdated_at: {now}\n"`
+    - `ensure_file.path: state_history.md`
+    - `ensure_file.content: "# State Transition History\n\n"`
+    - `ensure_file.path: polishing_issues.md`
+    - `ensure_file.content: "# Issues\n"`
+    - `ensure_dir: notes`
 - `issues.physical_plan` maps to `physicalplan_issues.md` with owner `physical_plan_reviewer`
 - `issues.polishing` maps to `$active_child/polishing_issues.md` with owner `polisher_reviewer`
 - Add `id_prefix` to each default issue declaration because issue ids are part of the unchanged issue file format but the new file-based CLI no longer has scope names from which to derive prefixes:
@@ -87,7 +95,7 @@ Quest machine behavior encoded in YAML:
 
 Slice machine behavior encoded in YAML:
 
-- `SliceSetup` runs defensive scaffold actions matching the collection scaffold and transitions to `Implementing`.
+- `SliceSetup` runs defensive scaffold actions matching the collection scaffold and transitions to `Implementing`. This intentionally means the repair path now creates `physicalplan/` if it is missing, while `slices init` now creates an empty `notes/` directory. The unified list is the source of truth for both paths.
 - `Implementing` runs `implementer`, then transitions to `PolishingReview` only when `implementation_done.md` exists; otherwise stays with reason `missing_implementation_done`.
 - `PolishingReview` runs `polisher_reviewer`, transitions to `PolishingFix` with action `remove_file: implementation_accepted.md` when `polishing_issues.md` has open issues, transitions to `Completed` when `implementation_accepted.md` exists and no polishing issues are open, otherwise stays with reason `polishing_review_incomplete`.
 - `PolishingFix` runs `polisher` and transitions unconditionally to `PolishingReview`.
@@ -128,6 +136,7 @@ Default profile values should match the current `default_state_execution_config.
 ## Validation Expectations
 
 - Unit tests load the packaged default workflow and assert all states, profiles, issue declarations, collection scaffold actions, `persisted_as`, and `node_name` overrides match the spec.
+- Unit tests assert default collection scaffold action content byte-for-byte, especially `state_history.md` content `"# State Transition History\n\n"`.
 - Validation rejects:
   - missing `entry_machine`
   - machine file whose `machine` field does not match its key

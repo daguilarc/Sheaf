@@ -163,7 +163,7 @@ Reject absolute paths for workflow-owned actions and issue declarations unless a
   - `PrepareNextSlice -> QuestDocumenting` with no unfinished children and `active_slice` cleared
   - `ExecuteSlice` stays while child is not complete
   - `ExecuteSlice -> PrepareNextSlice` when child result is `Completed`
-  - `SliceSetup -> Implementing` with scaffold repair
+  - `SliceSetup -> Implementing` with scaffold repair, including creation of missing `physicalplan/`, `state.md`, `state_history.md`, `polishing_issues.md`, and `notes/`
   - `Implementing -> PolishingReview` only with `implementation_done.md`
   - `PolishingReview -> PolishingFix` with open issues and `implementation_accepted.md` removal
   - `PolishingReview -> Completed` with acceptance marker and no open issues
