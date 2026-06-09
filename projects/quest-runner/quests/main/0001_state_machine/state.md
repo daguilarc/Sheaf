@@ -1,14 +1,14 @@
 # State
 
-- global_step: 33
+- global_step: 34
 - machine_name: quest
 - machine_path: projects/quest-runner/quests/main/0001_state_machine
-- state: PrepareNextSlice
+- state: ExecuteSlice
 - updated_at: 2026-06-09T22:36:53Z
 
 ## Tags
 
-- active_slice: 0005_runner_manual_commit_integration
+- active_slice: 0006_quest_creation_upgrade_slices
 - quest_number: 1
 - quest_slug: state_machine
 - quest_type: main
