@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -268,9 +269,80 @@ class ExperimentScopedApiTests(unittest.TestCase):
         self.assertEqual(body["checkout_kind"], "experiment")
         self.assertEqual(body["experiment_id"], exp_meta.experiment_id)
 
+    def test_dashboard_agent_log_reads_experiment_worktree(self) -> None:
+        client, _svc, exp_meta, out = self._setup_experiment()
+        exp_qdir = (
+            experiment_worktree_path(self.temp.root, exp_meta)
+            / "projects"
+            / "example"
+            / "quests"
+            / "main"
+            / f"{out['quest_number']:04d}_{out['quest_slug']}"
+        )
+        logs = exp_qdir / "logs"
+        logs.mkdir()
+        (logs / "step_0004_polisher.jsonl").write_text(
+            '{"event_kind":"experiment-only"}\n', encoding="utf-8"
+        )
+
+        resp = client.get(
+            "/api/dashboard/agent_log",
+            query_string={
+                "project": "example",
+                "quest_type": "main",
+                "quest_number": out["quest_number"],
+                "experiment_id": exp_meta.experiment_id,
+                "agent_key": "slice:polisher",
+            },
+        )
+
+        self.assertEqual(resp.status_code, 200)
+        body = resp.get_json()
+        self.assertEqual(body["metadata"]["step"], 4)
+        self.assertIn("experiment-only", body["jsonl_raw"])
+
+    def test_dashboard_git_commits_reads_experiment_worktree(self) -> None:
+        client, _svc, exp_meta, out = self._setup_experiment()
+        exp_root = experiment_worktree_path(self.temp.root, exp_meta)
+        (exp_root / "experiment-note.txt").write_text(
+            "experiment-only\n", encoding="utf-8"
+        )
+        subprocess.run(
+            ["git", "add", "experiment-note.txt"],
+            cwd=str(exp_root),
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "commit", "-m", "experiment-only commit"],
+            cwd=str(exp_root),
+            check=True,
+            capture_output=True,
+        )
+
+        resp = client.get(
+            "/api/dashboard/git_commits",
+            query_string={
+                "project": "example",
+                "quest_type": "main",
+                "quest_number": out["quest_number"],
+                "experiment_id": exp_meta.experiment_id,
+                "limit": "5",
+            },
+        )
+
+        self.assertEqual(resp.status_code, 200)
+        titles = [entry["title"] for entry in resp.get_json()["commits"]]
+        self.assertIn("experiment-only commit", titles)
+
 
 class ExperimentScopedCliTests(unittest.TestCase):
-    def test_run_cli_includes_experiment_id_in_body(self) -> None:
+    def _record_cli_request(
+        self,
+        argv: list[str],
+        *,
+        response: tuple[int, dict],
+    ):
         import io
 
         from quest_runner_service.cli import RecordedRequest, main
@@ -279,12 +351,19 @@ class ExperimentScopedCliTests(unittest.TestCase):
 
         def _fn(method: str, url: str, body: dict | None) -> tuple[int, dict]:
             requests.append(RecordedRequest(method=method, url=url, body=body))
-            return 202, {"run_id": "r1", "status": "running"}
+            return response
 
         code = main(
+            ["--base-url", "http://test.local", *argv],
+            request_fn=_fn,
+            stdout=io.StringIO(),
+            stderr=io.StringIO(),
+        )
+        return code, requests
+
+    def test_run_cli_includes_experiment_id_in_body(self) -> None:
+        code, requests = self._record_cli_request(
             [
-                "--base-url",
-                "http://test.local",
                 "run",
                 "--project",
                 "example",
@@ -295,9 +374,7 @@ class ExperimentScopedCliTests(unittest.TestCase):
                 "--experiment-id",
                 "experiment_example_main_0_0",
             ],
-            request_fn=_fn,
-            stdout=io.StringIO(),
-            stderr=io.StringIO(),
+            response=(202, {"run_id": "r1", "status": "running"}),
         )
         self.assertEqual(code, 0)
         self.assertEqual(len(requests), 1)
@@ -306,6 +383,57 @@ class ExperimentScopedCliTests(unittest.TestCase):
             requests[0].body["experiment_id"],
             "experiment_example_main_0_0",
         )
+
+    def test_advance_cli_includes_experiment_id_in_body(self) -> None:
+        code, requests = self._record_cli_request(
+            [
+                "advance",
+                "--project",
+                "example",
+                "--type",
+                "main",
+                "--number",
+                "0",
+                "--experiment-id",
+                "experiment_example_main_0_0",
+            ],
+            response=(200, {"status": "completed", "advanced": False}),
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(requests[0].method, "POST")
+        self.assertIn("/advance_quest", requests[0].url)
+        assert requests[0].body is not None
+        self.assertEqual(
+            requests[0].body["experiment_id"],
+            "experiment_example_main_0_0",
+        )
+
+    def test_issues_list_cli_includes_experiment_id_in_query(self) -> None:
+        code, requests = self._record_cli_request(
+            [
+                "issues",
+                "list",
+                "--project",
+                "example",
+                "--type",
+                "main",
+                "--number",
+                "0",
+                "--scope",
+                "polishing",
+                "--slice",
+                "3",
+                "--experiment-id",
+                "experiment_example_main_0_0",
+            ],
+            response=(200, {"issues": []}),
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(requests[0].method, "GET")
+        self.assertIn("experiment_id=experiment_example_main_0_0", requests[0].url)
+        self.assertIsNone(requests[0].body)
 
     def test_land_cli_rejects_experiment_id(self) -> None:
         from quest_runner_service.cli import main
