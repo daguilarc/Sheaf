@@ -1079,14 +1079,12 @@ class QuestService:
         experiment_id: str | None = None,
     ) -> dict:
         from .quest_runner import _quest_key
-        from .state_machine.v2_quest_state_io import V2QuestStateIo
+        from .state_machine.quest_v2_predicates import AdvanceValidationError
         from .state_machine.v2_step_executor import (
-            AdvanceValidationError,
             HumanInterventionConflict,
             advance_v2_top_level_step_without_harness,
         )
         from .state_machine.adapters import SubprocessGitOps
-        from .quest_types import StateMachineId
 
         root, qdir, key, exp_meta = self._prepare_run(
             repo_path,
@@ -1110,11 +1108,6 @@ class QuestService:
         try:
             meta = quest_fs.read_quest_meta(qdir)
             quest_key = _quest_key(meta)
-            rel = qdir.resolve().relative_to(root.resolve()).as_posix()
-            sm_id = StateMachineId(
-                root_machine_id=rel, machine_path=rel, machine_name="quest"
-            )
-            io_v2 = V2QuestStateIo(root, qdir, meta)
             git_ops = SubprocessGitOps()
             try:
                 result = advance_v2_top_level_step_without_harness(
@@ -1122,9 +1115,7 @@ class QuestService:
                     quest_dir=qdir,
                     quest_key=quest_key,
                     meta=meta,
-                    state_io=io_v2,
                     git_ops=git_ops,
-                    sm_id=sm_id,
                 )
             except AdvanceValidationError as exc:
                 raise AdvanceQuestValidationError(

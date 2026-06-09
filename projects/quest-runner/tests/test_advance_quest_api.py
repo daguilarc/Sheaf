@@ -429,7 +429,7 @@ class AdvanceQuestApiTests(unittest.TestCase):
         self.assertEqual(parsed.metadata.snapshot.node_name, "QuestDocumentingNode")
         self.assertEqual(parsed.metadata.snapshot.state_after, "Completed")
 
-    def test_quest_documenting_without_doc_changes_returns_422_without_state_change(self) -> None:
+    def test_quest_documenting_advances_without_doc_changes(self) -> None:
         ensure_project(self.temp.root, "example")
         client, svc = make_app_client(self.temp.root, self.repo_root)
         out = svc.create_quest(
@@ -451,8 +451,6 @@ class AdvanceQuestApiTests(unittest.TestCase):
             ),
         )
         _commit_all(worktree, "documenting ready")
-        before = quest_fs.read_quest_state(wt_qdir)
-        before_head = _head_commit(worktree)
 
         resp = client.post(
             "/advance_quest",
@@ -463,12 +461,12 @@ class AdvanceQuestApiTests(unittest.TestCase):
             },
         )
 
-        self.assertEqual(resp.status_code, 422)
-        self.assertEqual(resp.get_json()["reason"], "docs_unchanged")
-        after = quest_fs.read_quest_state(wt_qdir)
-        self.assertEqual(after.state, before.state)
-        self.assertEqual(after.global_step, before.global_step)
-        self.assertEqual(_head_commit(worktree), before_head)
+        self.assertEqual(resp.status_code, 200)
+        body = resp.get_json()
+        self.assertEqual(body["previous_state"], "QuestDocumenting")
+        self.assertEqual(body["next_state"], "Completed")
+        self.assertEqual(quest_fs.read_quest_state(wt_qdir).state, QuestState.Completed)
+        self.assertEqual(body["commit"], _head_commit(worktree))
 
 
 if __name__ == "__main__":

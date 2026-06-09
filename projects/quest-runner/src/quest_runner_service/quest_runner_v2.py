@@ -11,8 +11,6 @@ from .quest_runner import (
     DirtyWorkspaceError,
     QuestHarnessError,
     _quest_key,
-    build_v2_transition_plan,
-    git_rev_parse_head,
     next_log_step_number,
     runtime_quest_docs_dir,
 )
@@ -22,13 +20,15 @@ from .experiments import (
     mark_quest_experiment_complete,
     snapshot_matches_stop_condition,
 )
-from .quest_types import QuestState, RecursiveSnapshot, StateMachineId
+from .quest_types import QuestState, RecursiveSnapshot
 from .state_machine.adapters import QuestRootRoleProfileResolver, SubprocessGitOps
 from .state_machine.context import RunContext
-from .state_machine.machine import ConcreteStateMachine
-from .state_machine.quest_v2_definitions import QuestV2MachineLoader, build_quest_machine_definition
-from .state_machine.v2_quest_state_io import V2QuestStateIo
 from .state_machine.v2_step_executor import execute_v2_top_level_step
+from .state_machine.workflow_runner_helpers import (
+    build_workflow_runner_bundle,
+    has_workflow_human_intervention,
+    is_top_level_workflow_complete,
+)
 
 
 class _NoopThreadRegistry:
@@ -108,23 +108,13 @@ def run_quest_v2(
     meta = quest_fs.read_quest_meta(quest_dir)
     quest_key = _quest_key(meta)
     quest_docs_dir = runtime_quest_docs_dir()
-    rel = quest_dir.resolve().relative_to(repo_path.resolve()).as_posix()
-    sm_id = StateMachineId(
-        root_machine_id=rel, machine_path=rel, machine_name="quest"
-    )
-    io_v2 = V2QuestStateIo(repo_path, quest_dir, meta)
-    loader = QuestV2MachineLoader(io_v2)
-    top = ConcreteStateMachine(
-        quest_dir.resolve(), build_quest_machine_definition(), io_v2
-    )
+    bundle = build_workflow_runner_bundle(repo_path, quest_dir, meta)
 
     captured_outputs: list[dict] = []
     steps_executed = 0
     last_commit: str | None = None
-    documenter_base_ref: str | None = None
     role_step_seq = next_log_step_number(quest_dir) - 1
     role_step_seq_box = [role_step_seq]
-    documenter_base_ref_box: list[str | None] = [None]
 
     git_ops = SubprocessGitOps()
     noop_tr = _NoopThreadRegistry()
@@ -135,7 +125,7 @@ def run_quest_v2(
 
     for _ in range(max_steps):
         harness_steps_acc[0] = 0
-        if quest_fs.has_human_intervention_request(quest_dir):
+        if has_workflow_human_intervention(quest_dir, bundle.workflow):
             return {
                 "status": "human_intervention",
                 "steps_executed": steps_executed,
@@ -143,10 +133,10 @@ def run_quest_v2(
                 "captured_outputs": captured_outputs,
             }
 
-        qsi = quest_fs.read_quest_state(quest_dir)
+        sm = bundle.workflow_io.ReadStateMachineState(quest_dir)
         if (
             experiment_run is not None
-            and qsi.state == QuestState.ExperimentComplete
+            and sm.state == QuestState.ExperimentComplete.value
         ):
             return _experiment_complete_payload(
                 steps_executed=steps_executed,
@@ -154,14 +144,9 @@ def run_quest_v2(
                 captured_outputs=captured_outputs,
                 experiment_run=experiment_run,
             )
-        if qsi.state == QuestState.PrePlanning:
-            return {
-                "status": "pre_planning",
-                "steps_executed": steps_executed,
-                "last_commit": last_commit,
-                "captured_outputs": captured_outputs,
-            }
-        if qsi.state == QuestState.Completed:
+        if is_top_level_workflow_complete(
+            bundle.workflow, bundle.workflow_io, quest_dir
+        ):
             return {
                 "status": "completed",
                 "steps_executed": steps_executed,
@@ -169,27 +154,20 @@ def run_quest_v2(
                 "captured_outputs": captured_outputs,
             }
 
-        if (
-            qsi.state == QuestState.QuestDocumenting
-            and documenter_base_ref is None
-        ):
-            documenter_base_ref = git_rev_parse_head(repo_path)
-        documenter_base_ref_box[0] = documenter_base_ref
-
         ctx = RunContext(
             repo_root=repo_path,
             machine_root_dir=quest_dir,
-            state_machine_id=sm_id,
+            state_machine_id=bundle.sm_id,
             git_ops=git_ops,
             thread_registry_ops=noop_tr,
             harness_ops=noop_h,
             role_profile_resolver=resolver,
-            state_io=io_v2,
-            state_machine_loader=loader,
+            state_io=bundle.workflow_io,
+            state_machine_loader=bundle.loader,
             harness_steps_acc=harness_steps_acc,
             conductor_repo_path=conductor_repo_path,
             quest_docs_dir=quest_docs_dir,
-            documenter_base_ref_box=documenter_base_ref_box,
+            documenter_base_ref_box=None,
             role_step_seq_box=role_step_seq_box,
             captured_outputs_list=captured_outputs,
             event_bus=event_bus,
@@ -202,10 +180,11 @@ def run_quest_v2(
                 quest_dir=quest_dir,
                 quest_key=quest_key,
                 meta=meta,
-                top=top,
+                top=bundle.top,
                 ctx=ctx,
                 git_ops=git_ops,
-                sm_id=sm_id,
+                sm_id=bundle.sm_id,
+                workflow=bundle.workflow,
             )
         except HarnessMessageError as exc:
             raise QuestHarnessError(
@@ -227,7 +206,7 @@ def run_quest_v2(
         role_step_seq = role_step_seq_box[0]
         steps_executed += harness_steps_acc[0]
 
-        if quest_fs.has_human_intervention_request(quest_dir):
+        if has_workflow_human_intervention(quest_dir, bundle.workflow):
             return {
                 "status": "human_intervention",
                 "steps_executed": steps_executed,
@@ -238,6 +217,14 @@ def run_quest_v2(
         if step_out.kind == "human_intervention":
             return {
                 "status": "human_intervention",
+                "steps_executed": steps_executed,
+                "last_commit": last_commit,
+                "captured_outputs": captured_outputs,
+            }
+
+        if step_out.kind == "stop":
+            return {
+                "status": step_out.stop_status or "stop",
                 "steps_executed": steps_executed,
                 "last_commit": last_commit,
                 "captured_outputs": captured_outputs,

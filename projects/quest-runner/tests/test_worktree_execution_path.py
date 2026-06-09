@@ -400,7 +400,7 @@ class WorktreeDirtyWorkspaceTests(unittest.TestCase):
         self._active_roots.append(root)
         return root
 
-    @patch("quest_runner_service.state_machine.quest_v2_nodes.create_harness")
+    @patch("quest_runner_service.state_machine.workflow_harness_callback.create_harness")
     def test_dirty_worktree_blocks_harness(self, mock_create: MagicMock) -> None:
         class FH:
             kind = HarnessKind.ClaudeCode
