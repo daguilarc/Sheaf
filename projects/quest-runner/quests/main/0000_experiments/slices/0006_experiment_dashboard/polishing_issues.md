@@ -2,10 +2,10 @@
 
 ## Issue PL-0001
 
-- status: open
+- status: completed
 - owner_role: polisher_reviewer
 - created_at: 2026-06-09T03:37:52Z
-- updated_at: 2026-06-09T03:37:52Z
+- updated_at: 2026-06-09T03:41:35Z
 - title: Dead/duplicated archived_experiments_payload and minor DRY cleanups in dashboard_data
 - details: ## What is wrong
 
