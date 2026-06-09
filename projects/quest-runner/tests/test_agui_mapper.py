@@ -283,12 +283,13 @@ class QuestLogToAguiMapperTests(unittest.TestCase):
 
         schema = _load_agui_schema()
         branches = _branch_by_type(schema)
-        mapper = QuestLogToAguiMapper()
-        verifier = AguiStreamVerifier()
         source_count = 0
         agui_count = 0
+        fallback_events: list[dict[str, Any]] = []
 
         for path in log_paths:
+            mapper = QuestLogToAguiMapper()
+            verifier = AguiStreamVerifier()
             for source_event in iter_jsonl_events(path):
                 source_count += 1
                 for agui_event in mapper.consume(source_event):
@@ -298,17 +299,18 @@ class QuestLogToAguiMapperTests(unittest.TestCase):
                     verifier.consume(agui_event)
                     agui_count += 1
 
-        for agui_event in mapper.flush():
-            branch = branches.get(agui_event.get("type"))
-            self.assertIsNotNone(branch, agui_event)
-            _validate_against_schema(agui_event, branch or {}, schema)
-            verifier.consume(agui_event)
-            agui_count += 1
+            for agui_event in mapper.flush():
+                branch = branches.get(agui_event.get("type"))
+                self.assertIsNotNone(branch, agui_event)
+                _validate_against_schema(agui_event, branch or {}, schema)
+                verifier.consume(agui_event)
+                agui_count += 1
 
-        verifier.assert_balanced()
+            verifier.assert_balanced()
+            fallback_events.extend(mapper.errors())
+
         self.assertGreaterEqual(source_count, 43966)
         self.assertGreater(agui_count, source_count)
-        fallback_events = mapper.errors()
         fallback_counts = Counter(
             (
                 event.get("harness"),
