@@ -435,10 +435,30 @@ class ExperimentScopedCliTests(unittest.TestCase):
         self.assertIn("experiment_id=experiment_example_main_0_0", requests[0].url)
         self.assertIsNone(requests[0].body)
 
-    def test_land_cli_rejects_experiment_id(self) -> None:
+    def test_land_cli_with_experiment_id_calls_experiments_land(self) -> None:
         from quest_runner_service.cli import main
 
-        err = __import__("io").StringIO()
+        requests: list = []
+
+        def capture_request(method, url, body=None, **_kwargs):
+            requests.append(type("Req", (), {"method": method, "url": url, "body": body})())
+            return (
+                200,
+                {
+                    "status": "landed",
+                    "experiment_id": "experiment_example_main_0_0",
+                    "logs_copied": 1,
+                    "issues_copied": 2,
+                    "issue_responses_copied": 0,
+                    "remote_branch": "experiment/example/main/0000/0000",
+                    "worktree_deleted": True,
+                    "branch_deleted": True,
+                    "source_commit": "abc123",
+                    "dashboard_url": "http://localhost/dashboard",
+                },
+            )
+
+        out = __import__("io").StringIO()
         code = main(
             [
                 "land",
@@ -451,12 +471,19 @@ class ExperimentScopedCliTests(unittest.TestCase):
                 "--experiment-id",
                 "experiment_example_main_0_0",
             ],
-            request_fn=MagicMock(),
-            stdout=__import__("io").StringIO(),
-            stderr=err,
+            request_fn=capture_request,
+            stdout=out,
+            stderr=__import__("io").StringIO(),
         )
-        self.assertEqual(code, 2)
-        self.assertIn("experiments land", err.getvalue())
+        self.assertEqual(code, 0)
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(requests[0].method, "POST")
+        self.assertTrue(requests[0].url.endswith("/experiments/land"))
+        self.assertEqual(
+            requests[0].body["experiment_id"],
+            "experiment_example_main_0_0",
+        )
+        self.assertIn("branch_deleted: True", out.getvalue())
 
 
 class ExperimentRuntimeContextTests(unittest.TestCase):

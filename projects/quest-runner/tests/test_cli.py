@@ -337,6 +337,77 @@ class CommandRequestTests(unittest.TestCase):
         self.assertIn("branch_deleted: True", out)
         self.assertIn("target_head: deadbeef", out)
 
+    def test_experiments_land_calls_endpoint(self) -> None:
+        code, transport, out, _err = self._run(
+            [
+                "experiments",
+                "land",
+                "--project",
+                "quest-runner",
+                "--type",
+                "main",
+                "--number",
+                "0",
+                "--experiment-id",
+                "experiment_quest-runner_main_0_0",
+            ],
+            (
+                200,
+                {
+                    "status": "landed",
+                    "experiment_id": "experiment_quest-runner_main_0_0",
+                    "logs_copied": 2,
+                    "issues_copied": 1,
+                    "issue_responses_copied": 0,
+                    "remote_branch": "experiment/quest-runner/main/0000/0000",
+                    "worktree_deleted": True,
+                    "branch_deleted": True,
+                    "source_commit": "cafebabe",
+                    "dashboard_url": "http://localhost/dashboard",
+                },
+            ),
+        )
+        self.assertEqual(code, 0)
+        req = transport.requests[0]
+        self.assertEqual(req.method, "POST")
+        self.assertTrue(req.url.endswith("/experiments/land"))
+        self.assertEqual(req.body["experiment_id"], "experiment_quest-runner_main_0_0")
+        self.assertIn("source_commit: cafebabe", out)
+        self.assertIn("dashboard_url:", out)
+
+    def test_land_with_experiment_id_calls_experiments_land(self) -> None:
+        code, transport, out, _err = self._run(
+            [
+                "land",
+                "--project",
+                "quest-runner",
+                "--type",
+                "main",
+                "--number",
+                "0",
+                "--experiment-id",
+                "experiment_quest-runner_main_0_0",
+            ],
+            (
+                200,
+                {
+                    "status": "landed",
+                    "experiment_id": "experiment_quest-runner_main_0_0",
+                    "logs_copied": 1,
+                    "issues_copied": 0,
+                    "issue_responses_copied": 0,
+                    "remote_branch": "experiment/quest-runner/main/0000/0000",
+                    "worktree_deleted": True,
+                    "branch_deleted": True,
+                    "source_commit": "deadbeef",
+                },
+            ),
+        )
+        self.assertEqual(code, 0)
+        req = transport.requests[0]
+        self.assertTrue(req.url.endswith("/experiments/land"))
+        self.assertIn("experiment_id: experiment_quest-runner_main_0_0", out)
+
     def test_issues_list_calls_endpoint(self) -> None:
         code, transport, out, _err = self._run(
             [

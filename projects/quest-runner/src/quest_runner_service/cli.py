@@ -369,6 +369,9 @@ def _format_advance(data: dict[str, Any], out: TextIO) -> None:
 
 
 def _format_land(data: dict[str, Any], out: TextIO) -> None:
+    if data.get("experiment_id") is not None:
+        _format_land_experiment(data, out)
+        return
     _print_field("status", data.get("status"), out)
     _print_field("target_branch", data.get("target_branch"), out)
     _print_field("worktree_branch", data.get("worktree_branch"), out)
@@ -380,6 +383,22 @@ def _format_land(data: dict[str, Any], out: TextIO) -> None:
     if data.get("status") == "rebase_failed":
         _print_field("worktree_path", data.get("worktree_path"), out)
         _print_field("next_step", data.get("next_step"), out)
+    if data.get("error"):
+        _print_field("error", data.get("error"), out)
+
+
+def _format_land_experiment(data: dict[str, Any], out: TextIO) -> None:
+    _print_field("status", data.get("status"), out)
+    _print_field("experiment_id", data.get("experiment_id"), out)
+    _print_field("logs_copied", data.get("logs_copied"), out)
+    _print_field("issues_copied", data.get("issues_copied"), out)
+    _print_field("issue_responses_copied", data.get("issue_responses_copied"), out)
+    _print_field("skipped_missing", data.get("skipped_missing"), out)
+    _print_field("remote_branch", data.get("remote_branch"), out)
+    _print_field("worktree_deleted", data.get("worktree_deleted"), out)
+    _print_field("branch_deleted", data.get("branch_deleted"), out)
+    _print_field("source_commit", data.get("source_commit"), out)
+    _print_field("dashboard_url", data.get("dashboard_url"), out)
     if data.get("error"):
         _print_field("error", data.get("error"), out)
 
@@ -712,6 +731,14 @@ def build_parser() -> argparse.ArgumentParser:
     experiments_create.add_argument("--config-file", required=True)
     experiments_create.set_defaults(handler="experiments_create")
 
+    experiments_land = experiments_sub.add_parser(
+        "land",
+        help="Land a completed experiment by archiving artifacts",
+    )
+    _add_quest_identity_args(experiments_land)
+    experiments_land.add_argument("--experiment-id", required=True)
+    experiments_land.set_defaults(handler="experiments_land")
+
     return parser
 
 
@@ -754,6 +781,34 @@ def _dispatch_command(
             else:
                 _format_create_experiment(data, out)
             return 0
+        return _handle_http_result(
+            status=status,
+            endpoint=endpoint,
+            data=data,
+            json_output=json_output,
+            out=out,
+            err=err,
+        )
+
+    if handler == "experiments_land":
+        body = {
+            "project": args.project,
+            "quest_type": args.type,
+            "quest_number": args.number,
+            "experiment_id": args.experiment_id,
+        }
+        endpoint = "/experiments/land"
+        status, data = _send_request(
+            request_fn, "POST", base_url=base_url, endpoint=endpoint, body=body
+        )
+        if 200 <= status < 300:
+            if json_output:
+                _print_json(data, out)
+            else:
+                _format_land_experiment(data, out)
+            return 0
+        if not json_output:
+            _format_land_experiment(data, err)
         return _handle_http_result(
             status=status,
             endpoint=endpoint,
@@ -848,9 +903,31 @@ def _dispatch_command(
 
     if handler == "land":
         if args.experiment_id is not None:
-            raise CliValidationError(
-                "Experiment landing is implemented by `experiments land` in slice 5; "
-                "do not use `land --experiment-id`."
+            body = {
+                "project": args.project,
+                "quest_type": args.type,
+                "quest_number": args.number,
+                "experiment_id": args.experiment_id,
+            }
+            endpoint = "/experiments/land"
+            status, data = _send_request(
+                request_fn, "POST", base_url=base_url, endpoint=endpoint, body=body
+            )
+            if 200 <= status < 300:
+                if json_output:
+                    _print_json(data, out)
+                else:
+                    _format_land_experiment(data, out)
+                return 0
+            if not json_output:
+                _format_land_experiment(data, err)
+            return _handle_http_result(
+                status=status,
+                endpoint=endpoint,
+                data=data,
+                json_output=json_output,
+                out=out,
+                err=err,
             )
         body = {
             "project": args.project,

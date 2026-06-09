@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -15,12 +17,15 @@ from quest_runner_service.dashboard_data import (
     resolve_dashboard_checkout,
 )
 from quest_runner_service.experiments import (
+    ArtifactCopySummary,
+    ExperimentLandError,
     ExperimentMeta,
     ExperimentNotFound,
     ExperimentStartStep,
     ExperimentStopCondition,
     ExperimentValidationError,
     ExperimentWorktreeCreationError,
+    archive_experiment_artifacts,
     experiment_branch_name,
     experiment_dir_name,
     experiment_id,
@@ -29,6 +34,7 @@ from quest_runner_service.experiments import (
     find_experiment_by_id,
     list_experiment_dirs,
     next_experiment_number,
+    push_experiment_branch,
     read_experiment_meta,
     resolve_quest_scope_checkout,
     resolve_start_step,
@@ -37,9 +43,15 @@ from quest_runner_service.experiments import (
     validate_stop_condition,
     write_experiment_meta,
 )
-from quest_runner_service.quest_service import InvalidQuestInput, QuestService
+from quest_runner_service.quest_service import (
+    ExperimentLandConflict,
+    InvalidQuestInput,
+    QuestService,
+)
 from quest_runner_service.quest_types import (
     QuestMeta,
+    QuestState,
+    QuestStateInfo,
     RecursiveSnapshot,
     StepCommitMetadata,
     TransitionRecord,
@@ -729,3 +741,362 @@ class ExperimentCreationTests(unittest.TestCase):
         self.assertTrue(str(err.worktree_path).endswith(
             experiment_id("example", "main", out["quest_number"], 0)
         ))
+
+
+def _git_commit_all(repo: Path, message: str) -> str:
+    run_git(repo, "add", "-A")
+    run_git(repo, "commit", "-m", message)
+    return run_git(repo, "rev-parse", "HEAD").stdout.strip()
+
+
+def _add_bare_remote(repo: Path) -> Path:
+    bare = repo.parent / f"{repo.name}_remote.git"
+    subprocess.run(
+        ["git", "init", "--bare", str(bare)],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(repo), "remote", "add", "origin", str(bare)],
+        check=True,
+        capture_output=True,
+    )
+    branch = subprocess.run(
+        ["git", "-C", str(repo), "branch", "--show-current"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    if branch != "main":
+        subprocess.run(
+            ["git", "-C", str(repo), "branch", "-M", "main"],
+            check=True,
+            capture_output=True,
+        )
+        branch = "main"
+    subprocess.run(
+        ["git", "-C", str(repo), "push", "-u", "origin", branch],
+        check=True,
+        capture_output=True,
+    )
+    return bare
+
+
+def _write_experiment_on_quest(
+    source_qdir: Path,
+    meta: QuestMeta,
+    *,
+    experiment_number: int = 0,
+    status: str = "experiment_complete",
+) -> ExperimentMeta:
+    exp_meta = _sample_meta(
+        project=meta.project,
+        quest_type=meta.quest_type,
+        quest_number=meta.quest_number,
+        quest_slug=meta.quest_slug,
+        experiment_number=experiment_number,
+        status=status,
+    )
+    exp_dir = experiments_root(source_qdir) / experiment_dir_name(experiment_number)
+    write_experiment_meta(exp_dir, exp_meta)
+    return exp_meta
+
+
+def _add_experiment_worktree(source_root: Path, exp_meta: ExperimentMeta) -> Path:
+    from .test_experiment_scoped_operations import _add_experiment_worktree as add_wt
+
+    return add_wt(source_root, exp_meta)
+
+
+class ArchiveExperimentArtifactsTests(unittest.TestCase):
+    def test_copies_logs_issues_and_responses(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            quest = root / "quest"
+            archive = root / "archive"
+            quest.mkdir()
+            archive.mkdir()
+            (quest / "logs").mkdir()
+            (quest / "logs" / "step_0001_run.jsonl").write_text("{}\n", encoding="utf-8")
+            (quest / "physicalplan_issues.md").write_text("# Issues\n", encoding="utf-8")
+            (quest / "physicalplan_issue_responses.md").write_text(
+                "# Responses\n", encoding="utf-8"
+            )
+            sl = quest / "slices" / "0000_a"
+            sl.mkdir(parents=True)
+            (sl / "polishing_issues.md").write_text("# Slice issues\n", encoding="utf-8")
+            (sl / "polishing_issue_responses.md").write_text(
+                "# Slice responses\n", encoding="utf-8"
+            )
+
+            summary = archive_experiment_artifacts(archive, quest)
+            self.assertIsInstance(summary, ArtifactCopySummary)
+            self.assertEqual(summary.logs_copied, 1)
+            self.assertEqual(summary.issues_copied, 2)
+            self.assertEqual(summary.issue_responses_copied, 2)
+            self.assertEqual(summary.skipped_missing, 0)
+            self.assertTrue(
+                (archive / "logs" / "step_0001_run.jsonl").is_file()
+            )
+            self.assertTrue(
+                (archive / "issues" / "quest" / "physicalplan_issues.md").is_file()
+            )
+            self.assertTrue(
+                (
+                    archive
+                    / "issues"
+                    / "slices"
+                    / "0000_a"
+                    / "polishing_issues.md"
+                ).is_file()
+            )
+            self.assertTrue(
+                (
+                    archive
+                    / "issue_responses"
+                    / "quest"
+                    / "physicalplan_issue_responses.md"
+                ).is_file()
+            )
+            self.assertTrue(
+                (
+                    archive
+                    / "issue_responses"
+                    / "slices"
+                    / "0000_a"
+                    / "polishing_issue_responses.md"
+                ).is_file()
+            )
+
+    def test_skips_missing_optional_response_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            quest = root / "quest"
+            archive = root / "archive"
+            quest.mkdir()
+            archive.mkdir()
+            sl = quest / "slices" / "0000_a"
+            sl.mkdir(parents=True)
+            (sl / "polishing_issues.md").write_text("# Slice issues\n", encoding="utf-8")
+
+            summary = archive_experiment_artifacts(archive, quest)
+            self.assertEqual(summary.issues_copied, 1)
+            self.assertEqual(summary.issue_responses_copied, 0)
+            self.assertEqual(summary.skipped_missing, 2)
+
+
+class ExperimentLandServiceTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.repo_root = Path(__file__).resolve().parents[1]
+        self.temp = TempRepo(self.repo_root)
+        self.addCleanup(self.temp.cleanup)
+        bare = _add_bare_remote(self.temp.root)
+        self.addCleanup(lambda: shutil.rmtree(bare, ignore_errors=True))
+
+    def _service(self) -> QuestService:
+        return QuestService(QuestLock(), self.repo_root)
+
+    def _setup_completed_experiment(
+        self,
+    ) -> tuple[QuestService, dict, ExperimentMeta, Path, Path]:
+        ensure_project(self.temp.root, "example")
+        svc = self._service()
+        out = svc.create_quest(
+            str(self.temp.root), "example", "main", "Land Test"
+        )
+        source_qdir = quest_fs.find_quest_dir(
+            self.temp.root, "example", "main", out["quest_number"]
+        )
+        assert source_qdir is not None
+        quest_meta = quest_fs.read_quest_meta(source_qdir)
+        exp_meta = _write_experiment_on_quest(source_qdir, quest_meta)
+        _git_commit_all(self.temp.root, "experiment metadata")
+        _add_experiment_worktree(self.temp.root, exp_meta)
+        remove_partial_worktree = __import__(
+            "quest_runner_service.worktrees", fromlist=["remove_partial_worktree"]
+        ).remove_partial_worktree
+        remove_partial_worktree(self.temp.root, quest_meta)
+
+        wt_path = experiment_worktree_path(self.temp.root, exp_meta)
+        wt_qdir = quest_fs.find_quest_dir(
+            wt_path, "example", "main", out["quest_number"]
+        )
+        assert wt_qdir is not None
+        (wt_qdir / "logs").mkdir(exist_ok=True)
+        (wt_qdir / "logs" / "step_0005_run.jsonl").write_text("{}\n", encoding="utf-8")
+        (wt_qdir / "physicalplan_issues.md").write_text("# Issues\n", encoding="utf-8")
+        sl = wt_qdir / "slices" / "0000_done"
+        sl.mkdir(parents=True)
+        (sl / "polishing_issues.md").write_text("# Slice\n", encoding="utf-8")
+        quest_fs.write_quest_state(
+            wt_qdir,
+            QuestStateInfo(
+                state=QuestState.ExperimentComplete,
+                current_slice=None,
+                updated_at="2026-06-08T00:00:00Z",
+                global_step=6,
+            ),
+        )
+        _git_commit_all(wt_path, "experiment complete artifacts")
+        return svc, out, exp_meta, source_qdir, wt_path
+
+    def test_land_success_archives_and_cleans_up(self) -> None:
+        svc, out, exp_meta, source_qdir, wt_path = self._setup_completed_experiment()
+        result = svc.land_experiment(
+            str(self.temp.root),
+            "example",
+            "main",
+            out["quest_number"],
+            exp_meta.experiment_id,
+            public_base_url="http://localhost:5000/",
+        )
+        self.assertEqual(result["status"], "landed")
+        self.assertEqual(result["logs_copied"], 1)
+        self.assertEqual(result["issues_copied"], 2)
+        self.assertEqual(result["worktree_deleted"], True)
+        self.assertEqual(result["branch_deleted"], True)
+        self.assertEqual(result["remote_branch"], exp_meta.branch_name)
+        self.assertTrue(result["source_commit"])
+
+        exp_dir = experiments_root(source_qdir) / experiment_dir_name(0)
+        loaded = read_experiment_meta(exp_dir)
+        self.assertEqual(loaded.status, "landed")
+        self.assertIsNotNone(loaded.landed_at)
+        self.assertEqual(loaded.remote_branch, exp_meta.branch_name)
+        self.assertEqual(loaded.source_commit, result["source_commit"])
+        self.assertTrue((exp_dir / "logs" / "step_0005_run.jsonl").is_file())
+        self.assertTrue(
+            (exp_dir / "issues" / "quest" / "physicalplan_issues.md").is_file()
+        )
+        self.assertFalse(wt_path.exists())
+        self.assertFalse(branch_exists(self.temp.root, exp_meta.branch_name))
+        log = subprocess.run(
+            ["git", "-C", str(self.temp.root), "log", "-1", "--format=%s"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        self.assertEqual(
+            log.stdout.strip(),
+            f"experiment-land: example/main/{out['quest_number']:04d}/0000",
+        )
+
+    def test_land_rejects_unknown_experiment_id(self) -> None:
+        svc, out, _exp_meta, _source_qdir, _wt_path = self._setup_completed_experiment()
+        with self.assertRaises(InvalidQuestInput):
+            svc.land_experiment(
+                str(self.temp.root),
+                "example",
+                "main",
+                out["quest_number"],
+                "experiment_example_main_0_99",
+            )
+
+    def test_land_rejects_mismatched_quest_identity(self) -> None:
+        svc, out, exp_meta, source_qdir, _wt_path = self._setup_completed_experiment()
+        exp_dir = experiments_root(source_qdir) / experiment_dir_name(0)
+        loaded = read_experiment_meta(exp_dir)
+        loaded.project = "wrong-project"
+        write_experiment_meta(exp_dir, loaded)
+        with self.assertRaises(InvalidQuestInput):
+            svc.land_experiment(
+                str(self.temp.root),
+                "example",
+                "main",
+                out["quest_number"],
+                exp_meta.experiment_id,
+            )
+
+    def test_land_rejects_missing_worktree(self) -> None:
+        svc, out, exp_meta, _source_qdir, wt_path = self._setup_completed_experiment()
+        shutil.rmtree(wt_path)
+        with self.assertRaises(ExperimentLandConflict) as ctx:
+            svc.land_experiment(
+                str(self.temp.root),
+                "example",
+                "main",
+                out["quest_number"],
+                exp_meta.experiment_id,
+            )
+        self.assertEqual(ctx.exception.body["status"], "worktree_missing")
+
+    def test_land_rejects_non_complete_state(self) -> None:
+        svc, out, exp_meta, _source_qdir, wt_path = self._setup_completed_experiment()
+        wt_qdir = quest_fs.find_quest_dir(
+            wt_path, "example", "main", out["quest_number"]
+        )
+        assert wt_qdir is not None
+        quest_fs.write_quest_state(
+            wt_qdir,
+            QuestStateInfo(
+                state=QuestState.ExecuteSlice,
+                current_slice=0,
+                updated_at="2026-06-08T00:00:00Z",
+                active_slice="0000_done",
+                global_step=5,
+            ),
+        )
+        with self.assertRaises(ExperimentLandConflict) as ctx:
+            svc.land_experiment(
+                str(self.temp.root),
+                "example",
+                "main",
+                out["quest_number"],
+                exp_meta.experiment_id,
+            )
+        self.assertEqual(ctx.exception.body["status"], "not_complete")
+
+    def test_land_push_failure_preserves_local_state(self) -> None:
+        svc, out, exp_meta, source_qdir, wt_path = self._setup_completed_experiment()
+        with patch(
+            "quest_runner_service.experiments.push_experiment_branch",
+            side_effect=ExperimentLandError("push failed"),
+        ):
+            with self.assertRaises(ExperimentLandConflict) as ctx:
+                svc.land_experiment(
+                    str(self.temp.root),
+                    "example",
+                    "main",
+                    out["quest_number"],
+                    exp_meta.experiment_id,
+                )
+        self.assertEqual(ctx.exception.body["status"], "push_failed")
+        self.assertTrue(wt_path.is_dir())
+        self.assertTrue(branch_exists(self.temp.root, exp_meta.branch_name))
+        loaded = read_experiment_meta(experiments_root(source_qdir) / "0000")
+        self.assertEqual(loaded.status, "experiment_complete")
+
+    def test_land_artifact_copy_failure_does_not_mark_landed(self) -> None:
+        svc, out, exp_meta, source_qdir, wt_path = self._setup_completed_experiment()
+        with patch(
+            "quest_runner_service.experiments.archive_experiment_artifacts",
+            side_effect=OSError("copy failed"),
+        ):
+            with self.assertRaises(ExperimentLandConflict) as ctx:
+                svc.land_experiment(
+                    str(self.temp.root),
+                    "example",
+                    "main",
+                    out["quest_number"],
+                    exp_meta.experiment_id,
+                )
+        self.assertEqual(ctx.exception.body["status"], "artifact_copy_failed")
+        loaded = read_experiment_meta(experiments_root(source_qdir) / "0000")
+        self.assertEqual(loaded.status, "experiment_complete")
+        self.assertTrue(wt_path.is_dir())
+
+    def test_push_experiment_branch_uses_unique_branch_ref(self) -> None:
+        svc, out, exp_meta, _source_qdir, _wt_path = self._setup_completed_experiment()
+        push_experiment_branch(self.temp.root, exp_meta.branch_name)
+        show = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(self.temp.root.parent / f"{self.temp.root.name}_remote.git"),
+                "show-ref",
+                "--verify",
+                f"refs/heads/{exp_meta.branch_name}",
+            ],
+            capture_output=True,
+        )
+        self.assertEqual(show.returncode, 0)

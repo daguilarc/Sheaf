@@ -22,6 +22,7 @@ from .issue_service import IssueNotFound
 from .quest_service import (
     AdvanceQuestConflict,
     AdvanceQuestValidationError,
+    ExperimentLandConflict,
     FatalInvariantError,
     InvalidProject,
     InvalidQuestInput,
@@ -144,6 +145,10 @@ def create_app(
     def handle_land_quest_conflict(exc):
         return jsonify(exc.body), 409
 
+    @app.errorhandler(ExperimentLandConflict)
+    def handle_experiment_land_conflict(exc):
+        return jsonify(exc.body), 409
+
     @app.errorhandler(SliceInitializationConflict)
     def handle_slice_initialization_conflict(exc):
         return jsonify({"error": str(exc)}), 409
@@ -237,6 +242,37 @@ def create_app(
             result.get("worktree_path"),
         )
         return jsonify(result), 201
+
+    @app.route("/experiments/land", methods=["POST"])
+    def land_experiment_route():
+        data = request.get_json(force=True)
+        required = ["project", "quest_type", "quest_number", "experiment_id"]
+        missing = [f for f in required if f not in data]
+        if missing:
+            return jsonify({"error": f"Missing required fields: {missing}"}), 400
+        if not isinstance(data["quest_number"], int):
+            return jsonify({"error": "quest_number must be an integer"}), 400
+        log.info(
+            "land_experiment project=%s type=%s number=%s experiment_id=%s",
+            data["project"],
+            data["quest_type"],
+            data["quest_number"],
+            data["experiment_id"],
+        )
+        result = quest_service.land_experiment(
+            repo_path=str(source_root),
+            project=data["project"],
+            quest_type=data["quest_type"],
+            quest_number=data["quest_number"],
+            experiment_id_value=data["experiment_id"],
+            public_base_url=request.url_root,
+        )
+        log.info(
+            "land_experiment ok experiment_id=%s status=%s",
+            data["experiment_id"],
+            result.get("status"),
+        )
+        return jsonify(result), 200
 
     @app.route("/create_quest", methods=["POST"])
     def create_quest_route():

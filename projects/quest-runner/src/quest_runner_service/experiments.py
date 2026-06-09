@@ -86,6 +86,20 @@ class ExperimentSourceCheckoutDirty(ExperimentError):
         )
 
 
+class ExperimentLandError(ExperimentError):
+    def __init__(self, message: str) -> None:
+        self.message = message
+        super().__init__(message)
+
+
+@dataclass
+class ArtifactCopySummary:
+    logs_copied: int
+    issues_copied: int
+    issue_responses_copied: int
+    skipped_missing: int
+
+
 @dataclass
 class ExperimentMeta:
     experiment_id: str
@@ -696,6 +710,132 @@ def remove_partial_experiment_worktree(
         if worktree_path.exists():
             shutil.rmtree(worktree_path, ignore_errors=True)
     run_git(source_repo_root, "branch", "-D", branch_name, check=False)
+
+
+def archive_experiment_artifacts(
+    source_experiment_dir: Path,
+    experiment_quest_dir: Path,
+) -> ArtifactCopySummary:
+    logs_copied = 0
+    issues_copied = 0
+    issue_responses_copied = 0
+    skipped_missing = 0
+
+    src_logs = experiment_quest_dir / "logs"
+    if src_logs.is_dir():
+        dst_logs = source_experiment_dir / "logs"
+        for src in sorted(src_logs.glob("*.jsonl")):
+            dst_logs.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst_logs / src.name)
+            logs_copied += 1
+
+    dst_issues = source_experiment_dir / "issues"
+    quest_issue = experiment_quest_dir / "physicalplan_issues.md"
+    if quest_issue.is_file():
+        dst = dst_issues / "quest" / "physicalplan_issues.md"
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(quest_issue, dst)
+        issues_copied += 1
+
+    for slice_dir in quest_fs.list_slice_dirs(experiment_quest_dir):
+        src = slice_dir / "polishing_issues.md"
+        if src.is_file():
+            rel = Path("slices") / slice_dir.name / "polishing_issues.md"
+            dst = dst_issues / rel
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst)
+            issues_copied += 1
+
+    dst_responses = source_experiment_dir / "issue_responses"
+    quest_responses = experiment_quest_dir / "physicalplan_issue_responses.md"
+    if quest_responses.is_file():
+        dst = dst_responses / "quest" / "physicalplan_issue_responses.md"
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(quest_responses, dst)
+        issue_responses_copied += 1
+    else:
+        skipped_missing += 1
+
+    for slice_dir in quest_fs.list_slice_dirs(experiment_quest_dir):
+        src = slice_dir / "polishing_issue_responses.md"
+        if src.is_file():
+            rel = Path("slices") / slice_dir.name / "polishing_issue_responses.md"
+            dst = dst_responses / rel
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst)
+            issue_responses_copied += 1
+        else:
+            skipped_missing += 1
+
+    return ArtifactCopySummary(
+        logs_copied=logs_copied,
+        issues_copied=issues_copied,
+        issue_responses_copied=issue_responses_copied,
+        skipped_missing=skipped_missing,
+    )
+
+
+def push_experiment_branch(
+    source_repo_root: Path,
+    branch_name: str,
+    remote: str = "origin",
+) -> None:
+    result = run_git(
+        source_repo_root,
+        "push",
+        remote,
+        f"refs/heads/{branch_name}:refs/heads/{branch_name}",
+        check=False,
+    )
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip()
+        raise ExperimentLandError(
+            f"Failed to push experiment branch {branch_name!r} to {remote!r}"
+            + (f": {detail}" if detail else "")
+        )
+
+
+def delete_local_experiment_branch(
+    source_repo_root: Path,
+    branch_name: str,
+) -> None:
+    result = run_git(
+        source_repo_root,
+        "branch",
+        "-D",
+        branch_name,
+        check=False,
+    )
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip()
+        raise ExperimentLandError(
+            f"Failed to delete local experiment branch {branch_name!r}"
+            + (f": {detail}" if detail else "")
+        )
+
+
+def commit_experiment_land(
+    source_repo_root: Path,
+    experiment_dir: Path,
+    project: str,
+    quest_type: str,
+    quest_number: int,
+    experiment_number: int,
+) -> str:
+    rel = experiment_dir.resolve().relative_to(source_repo_root.resolve()).as_posix()
+    run_git(source_repo_root, "add", "--", rel)
+    message = (
+        f"experiment-land: {project}/{quest_type}/"
+        f"{quest_number:04d}/{experiment_number:04d}"
+    )
+    run_git(source_repo_root, "commit", "-m", message)
+    land_commit = run_git(source_repo_root, "rev-parse", "HEAD").stdout.strip()
+    meta = read_experiment_meta(experiment_dir)
+    meta.source_commit = land_commit
+    write_experiment_meta(experiment_dir, meta)
+    run_git(source_repo_root, "add", "--", f"{rel}/experiment.json")
+    run_git(source_repo_root, "commit", "--amend", "--no-edit")
+    return land_commit
 
 
 def commit_experiment_metadata(

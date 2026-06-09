@@ -142,6 +142,14 @@ class LandQuestConflict(Exception):
         super().__init__(body.get("error", "land conflict"))
 
 
+class ExperimentLandConflict(Exception):
+    """Experiment land blocked by validation or git state."""
+
+    def __init__(self, body: dict) -> None:
+        self.body = body
+        super().__init__(body.get("error", "experiment land conflict"))
+
+
 class MissingQuestWorktree(Exception):
     """Expected quest worktree is missing or is not a git working tree."""
 
@@ -1223,6 +1231,39 @@ class QuestService:
             "worktree_branch": worktree_branch,
         }
 
+    def _land_experiment_body(
+        self,
+        *,
+        project: str,
+        quest_type: str,
+        quest_number: int,
+        experiment_id_value: str,
+    ) -> dict:
+        return {
+            "project": project,
+            "quest_type": quest_type,
+            "quest_number": quest_number,
+            "experiment_id": experiment_id_value,
+        }
+
+    def _raise_source_checkout_dirty_for_land(
+        self,
+        source_root: Path,
+        *,
+        base: dict,
+    ) -> None:
+        clean, dirty = porcelain_status(source_root)
+        if not clean:
+            raise LandQuestConflict({
+                "status": "target_dirty",
+                "error": (
+                    "Source checkout has uncommitted changes; commit or discard "
+                    "them before landing"
+                ),
+                **base,
+                "status_output": dirty,
+            })
+
     def _land_quest_locked(
         self,
         source_root: Path,
@@ -1243,17 +1284,7 @@ class QuestService:
             worktree_branch=worktree_branch,
         )
 
-        clean, dirty = porcelain_status(source_root)
-        if not clean:
-            raise LandQuestConflict({
-                "status": "target_dirty",
-                "error": (
-                    "Source checkout has uncommitted changes; commit or discard "
-                    "them before landing"
-                ),
-                **base,
-                "status_output": dirty,
-            })
+        self._raise_source_checkout_dirty_for_land(source_root, base=base)
 
         if not branch_exists(source_root, target_branch):
             raise InvalidQuestInput(
@@ -1422,6 +1453,286 @@ class QuestService:
                 quest_type=quest_type,
                 quest_number=quest_number,
                 target_branch=target_branch.strip(),
+            )
+        finally:
+            self.lock.release(key)
+
+    def _land_experiment_locked(
+        self,
+        source_root: Path,
+        *,
+        project: str,
+        quest_type: str,
+        quest_number: int,
+        experiment_id_value: str,
+        exp_meta: experiment_ops.ExperimentMeta,
+        source_experiment_dir: Path,
+        worktree_path: Path,
+        remote: str = "origin",
+        public_base_url: str | None = None,
+    ) -> dict:
+        base = self._land_experiment_body(
+            project=project,
+            quest_type=quest_type,
+            quest_number=quest_number,
+            experiment_id_value=experiment_id_value,
+        )
+
+        self._raise_source_checkout_dirty_for_land(source_root, base=base)
+
+        exp_quest_dir = quest_fs.find_quest_dir(
+            worktree_path,
+            project,
+            quest_type,
+            quest_number,
+        )
+        if exp_quest_dir is None:
+            raise ExperimentLandConflict({
+                "status": "quest_dir_missing",
+                "error": (
+                    f"Quest directory not found in experiment worktree: "
+                    f"{worktree_path}"
+                ),
+                **base,
+            })
+
+        quest_state = quest_fs.read_quest_state(exp_quest_dir)
+        if quest_state.state != QuestState.ExperimentComplete:
+            raise ExperimentLandConflict({
+                "status": "not_complete",
+                "error": (
+                    f"Experiment worktree quest state is {quest_state.state.value!r}, "
+                    f"expected {QuestState.ExperimentComplete.value!r}"
+                ),
+                **base,
+                "quest_state": quest_state.state.value,
+            })
+
+        if exp_meta.status != "experiment_complete":
+            raise ExperimentLandConflict({
+                "status": "not_complete",
+                "error": (
+                    f"Experiment metadata status is {exp_meta.status!r}, "
+                    "expected 'experiment_complete'"
+                ),
+                **base,
+                "experiment_status": exp_meta.status,
+            })
+
+        try:
+            copy_summary = experiment_ops.archive_experiment_artifacts(
+                source_experiment_dir,
+                exp_quest_dir,
+            )
+        except OSError as exc:
+            raise ExperimentLandConflict({
+                "status": "artifact_copy_failed",
+                "error": f"Failed to copy experiment artifacts: {exc}",
+                **base,
+            }) from exc
+
+        try:
+            experiment_ops.push_experiment_branch(
+                source_root,
+                exp_meta.branch_name,
+                remote=remote,
+            )
+        except experiment_ops.ExperimentLandError as exc:
+            raise ExperimentLandConflict({
+                "status": "push_failed",
+                "error": exc.message,
+                **base,
+                "worktree_deleted": False,
+                "branch_deleted": False,
+            }) from exc
+
+        remove_result = remove_worktree(source_root, worktree_path)
+        worktree_deleted = remove_result.returncode == 0
+        if not worktree_deleted:
+            run_git_result = experiment_ops.run_git(
+                source_root,
+                "worktree",
+                "remove",
+                "--force",
+                str(worktree_path),
+                check=False,
+            )
+            worktree_deleted = run_git_result.returncode == 0
+        if not worktree_deleted:
+            detail = remove_result.stderr.strip() or remove_result.stdout.strip()
+            raise ExperimentLandConflict({
+                "status": "worktree_delete_failed",
+                "error": detail or "Failed to remove experiment worktree",
+                **base,
+                "pushed": True,
+                "worktree_deleted": False,
+                "branch_deleted": False,
+            })
+
+        branch_deleted = False
+        try:
+            experiment_ops.delete_local_experiment_branch(
+                source_root,
+                exp_meta.branch_name,
+            )
+            branch_deleted = True
+        except experiment_ops.ExperimentLandError as exc:
+            raise ExperimentLandConflict({
+                "status": "branch_delete_failed",
+                "error": exc.message,
+                **base,
+                "pushed": True,
+                "worktree_deleted": True,
+                "branch_deleted": False,
+            }) from exc
+
+        landed_at = utc_now_iso()
+        experiment_ops.update_experiment_status(
+            source_experiment_dir,
+            "landed",
+            landed_at=landed_at,
+            remote_branch=exp_meta.branch_name,
+        )
+
+        source_commit = experiment_ops.commit_experiment_land(
+            source_root,
+            source_experiment_dir,
+            project,
+            quest_type,
+            quest_number,
+            exp_meta.experiment_number,
+        )
+
+        dashboard_url: str | None = None
+        if public_base_url is not None:
+            from . import dashboard_data
+
+            dashboard_url = dashboard_data.canonical_quest_dashboard_url(
+                base_url=public_base_url.rstrip("/"),
+                project=project,
+                quest_type=quest_type,
+                quest_number=quest_number,
+            )
+
+        return {
+            "status": "landed",
+            **base,
+            "experiment_number": exp_meta.experiment_number,
+            "logs_copied": copy_summary.logs_copied,
+            "issues_copied": copy_summary.issues_copied,
+            "issue_responses_copied": copy_summary.issue_responses_copied,
+            "skipped_missing": copy_summary.skipped_missing,
+            "remote_branch": exp_meta.branch_name,
+            "worktree_deleted": worktree_deleted,
+            "branch_deleted": branch_deleted,
+            "source_commit": source_commit,
+            "landed_at": landed_at,
+            "dashboard_url": dashboard_url,
+        }
+
+    def land_experiment(
+        self,
+        repo_path: str,
+        project: str,
+        quest_type: str,
+        quest_number: int,
+        experiment_id_value: str,
+        *,
+        remote: str = "origin",
+        public_base_url: str | None = None,
+    ) -> dict:
+        source_root = _resolve_repo(repo_path)
+        if not _is_git_repo(source_root):
+            raise NotAGitRepo(repo_path)
+        if quest_type not in ("main", "side"):
+            raise InvalidQuestInput(
+                f"quest_type must be 'main' or 'side', got {quest_type!r}"
+            )
+        if quest_number < 0:
+            raise InvalidQuestInput("quest_number must be non-negative")
+        if not experiment_id_value.strip():
+            raise InvalidQuestInput("experiment_id must be non-empty")
+        _validate_project(source_root, project)
+
+        source_qdir = quest_fs.find_quest_dir(
+            source_root, project, quest_type, quest_number
+        )
+        if source_qdir is None:
+            raise QuestNotFound(project, quest_type, quest_number)
+
+        try:
+            exp_meta = experiment_ops.find_experiment_by_id(
+                source_root,
+                project,
+                quest_type,
+                quest_number,
+                experiment_id_value,
+            )
+        except experiment_ops.ExperimentNotFound as exc:
+            raise InvalidQuestInput(exc.message) from exc
+
+        try:
+            experiment_ops.validate_experiment_belongs_to_quest(
+                exp_meta,
+                project,
+                quest_type,
+                quest_number,
+            )
+        except experiment_ops.ExperimentValidationError as exc:
+            raise InvalidQuestInput(exc.message) from exc
+
+        worktree_path = experiment_ops.experiment_worktree_path(
+            source_root, exp_meta
+        )
+        if not worktree_path.is_dir() or not is_git_worktree(worktree_path):
+            raise ExperimentLandConflict({
+                "status": "worktree_missing",
+                "error": (
+                    f"Experiment worktree is missing or invalid: {worktree_path}"
+                ),
+                **self._land_experiment_body(
+                    project=project,
+                    quest_type=quest_type,
+                    quest_number=quest_number,
+                    experiment_id_value=experiment_id_value,
+                ),
+                "worktree_path": str(worktree_path),
+            })
+
+        source_experiment_dir = (
+            experiment_ops.experiments_root(source_qdir)
+            / experiment_ops.experiment_dir_name(exp_meta.experiment_number)
+        )
+
+        worktree_root = worktree_path.resolve()
+        key = _build_run_lock_key(
+            worktree_root,
+            project,
+            quest_type,
+            quest_number,
+            experiment_id_value,
+        )
+        req_id = str(uuid.uuid4())
+        if not self.lock.acquire(key, quest_type, quest_number, req_id):
+            info = self.lock.get_lock_info(key)
+            assert info is not None
+            raise QuestLockContention(
+                "Repository is locked by another quest run",
+                repo_path=key,
+                lock_info=info,
+            )
+        try:
+            return self._land_experiment_locked(
+                source_root,
+                project=project,
+                quest_type=quest_type,
+                quest_number=quest_number,
+                experiment_id_value=experiment_id_value,
+                exp_meta=exp_meta,
+                source_experiment_dir=source_experiment_dir,
+                worktree_path=worktree_path,
+                remote=remote,
+                public_base_url=public_base_url,
             )
         finally:
             self.lock.release(key)
