@@ -2,10 +2,10 @@
 
 ## Issue PL-0001
 
-- status: open
+- status: completed
 - owner_role: polisher_reviewer
 - created_at: 2026-06-09T03:56:54Z
-- updated_at: 2026-06-09T03:56:54Z
+- updated_at: 2026-06-09T03:59:12Z
 - title: api.md: /experiments/create error table maps dirty/detached source checkout to 422 instead of 400
 - details: WHAT IS WRONG
 In docs/reference/api.md, the POST /experiments/create error-response table states:
