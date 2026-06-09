@@ -86,3 +86,52 @@ def quest_dir_on_checkout(source_root: Path, create_out: dict) -> Path:
         create_out["quest_number"],
     )
     return qdir
+
+
+def commit_v2_quest_step(
+    repo: Path,
+    quest_dir: Path,
+    *,
+    global_step: int,
+    role: str | None = None,
+    allow_empty: bool = True,
+) -> str:
+    """Create a v2 quest-step commit on repo and return its SHA."""
+    from quest_runner_service.quest_types import RecursiveSnapshot, StepCommitMetadata
+    from quest_runner_service.state_machine.commit_metadata import (
+        render_step_commit_message,
+    )
+    from quest_runner_service.worktrees import run_git
+
+    qrel = quest_dir.resolve().relative_to(repo.resolve()).as_posix()
+    child = None
+    if role is not None:
+        child = RecursiveSnapshot(
+            machine_path=f"{qrel}/slices/0000_test",
+            machine_name="slice",
+            node_name="SliceImplementingNode",
+            state_before="Implementing",
+            state_after="Implementing",
+            tags={},
+            child=None,
+            role=role,
+            thread_name=f"thread_{role}",
+        )
+    snap = RecursiveSnapshot(
+        machine_path=qrel,
+        machine_name="quest",
+        node_name="ExecuteActiveSliceNode",
+        state_before="ExecuteSlice",
+        state_after="ExecuteSlice",
+        tags={},
+        child=child,
+    )
+    message = render_step_commit_message(
+        StepCommitMetadata(global_step=global_step, snapshot=snap)
+    )
+    run_git(repo, "add", "-A")
+    args = ["commit", "-m", message]
+    if allow_empty:
+        args.insert(1, "--allow-empty")
+    run_git(repo, *args)
+    return run_git(repo, "rev-parse", "HEAD").stdout.strip()

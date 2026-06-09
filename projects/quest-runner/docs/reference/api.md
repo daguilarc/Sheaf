@@ -95,6 +95,9 @@ Creation refuses detached HEAD or dirty source checkouts.
 Schedules quest execution from the quest worktree. The expected worktree must
 exist; `run_quest` does not recreate missing worktrees.
 
+When `experiment_id` is set, execution uses the experiment worktree for the
+parent quest. The experiment must belong to the supplied quest identity.
+
 **Request body (JSON):**
 
 | Field | Required | Description |
@@ -103,6 +106,7 @@ exist; `run_quest` does not recreate missing worktrees.
 | `quest_type` | yes | `main` or `side` |
 | `quest_number` | yes | Zero-based quest number |
 | `max_steps` | no | Maximum runner steps (default `500`) |
+| `experiment_id` | no | Experiment id when running in an experiment worktree |
 
 **Response `202`:**
 
@@ -145,6 +149,8 @@ without starting a harness turn. Intended for manual recovery after a human fixe
 files while the quest is stopped. The dashboard and CLI expose this as an
 operator workflow; agents do not use it for normal issue handling.
 
+Accepts optional `experiment_id` to advance an experiment worktree.
+
 **Request body (JSON):**
 
 | Field | Required | Description |
@@ -152,6 +158,7 @@ operator workflow; agents do not use it for normal issue handling.
 | `project` | yes | Owning project |
 | `quest_type` | yes | `main` or `side` |
 | `quest_number` | yes | Zero-based quest number |
+| `experiment_id` | no | Experiment id when advancing in an experiment worktree |
 
 **Response `200` (advanced):**
 
@@ -236,6 +243,68 @@ Conflict responses include a `status` field such as `target_dirty`,
 `worktree_path` and a `next_step` message when available. The service keeps the
 worktree checkout when landing does not finish before worktree deletion.
 
+`POST /land` does not accept `experiment_id`. Use `POST /experiments/land` for
+experiment landing.
+
+## Experiment endpoints
+
+### `POST /experiments/create`
+
+Creates experiment metadata on the source checkout, commits it, creates an
+experiment branch at the parent of the selected start-step commit, and adds an
+experiment worktree with the supplied transition config.
+
+**Request body (JSON):**
+
+| Field | Required | Description |
+| --- | --- | --- |
+| `project` | yes | Owning project |
+| `quest_type` | yes | `main` or `side` |
+| `quest_number` | yes | Zero-based quest number |
+| `start_step` | yes | Global step number to replay from |
+| `stop_node` | yes | Stop condition node name or alias (for example `slice_completed`) |
+| `stop_machine_path` | no | Machine path for stop condition (default `root/slice`) |
+| `notes` | yes | Human-readable experiment description |
+| `config` | yes | Alternate `state_execution_config.yaml` body |
+| `requested_by` | no | Stored as `created_by` in metadata |
+
+**Response `201`:** includes `experiment_id`, `experiment_number`, `worktree_path`,
+`branch_name`, `base_commit`, `start_step`, and `dashboard_url`.
+
+**Error responses:**
+
+| Status | Condition |
+| --- | --- |
+| `400` | Invalid input, unknown start step, or unknown stop node |
+| `404` | Quest not found |
+| `422` | Source checkout not a git repo or not clean |
+| `500` | Metadata committed but worktree creation failed (response includes recovery fields) |
+
+### `POST /experiments/land`
+
+Archives experiment artifacts to the source checkout, pushes the experiment
+branch, removes the local worktree and branch, and commits landed metadata.
+
+**Request body (JSON):**
+
+| Field | Required | Description |
+| --- | --- | --- |
+| `project` | yes | Owning project |
+| `quest_type` | yes | `main` or `side` |
+| `quest_number` | yes | Zero-based quest number |
+| `experiment_id` | yes | Experiment id to land |
+
+**Response `200`:** includes `status: landed`, copied file counts,
+`remote_branch`, `worktree_deleted`, `branch_deleted`, and `dashboard_url`.
+
+**Error responses:**
+
+| Status | Condition |
+| --- | --- |
+| `400` | Invalid input or experiment/quest identity mismatch |
+| `404` | Experiment not found |
+| `409` | Worktree missing, not `ExperimentComplete`, push failed, or archive copy failed |
+
 ## Slice APIs
 
 ### `POST /api/slices/init`
@@ -252,6 +321,7 @@ the quest worktree when it exists, matching dashboard and issue API behavior.
 | `quest_number` | yes | Zero-based quest number |
 | `count` | yes | Number of slices to create |
 | `slugs` | yes | Array of exactly `count` slice slugs, in execution order |
+| `experiment_id` | no | Experiment id when initializing slices in an experiment worktree |
 
 **Response `201`:**
 
@@ -311,7 +381,7 @@ List issues.
 
 Query parameters: `project`, `quest_type`, `quest_number`, `scope`, optional `slice`
 (required for `polishing`), optional `status` (`open`, `completed`, or `all`; default
-`all`).
+`all`), optional `experiment_id`.
 
 **Response `200`:**
 
@@ -344,7 +414,8 @@ Physical-plan issue IDs use `QP-NNNN`; polishing issue IDs use `PL-NNNN`.
 Create an issue.
 
 **Request body (JSON):** `project`, `quest_type`, `quest_number`, `scope`, optional
-`slice`, `title`, `body` (or `details`), optional `status` (default `open`).
+`slice`, `title`, `body` (or `details`), optional `status` (default `open`),
+optional `experiment_id`.
 
 ### `PATCH /api/issues/<issue_id>`
 
@@ -411,22 +482,36 @@ Legacy top-level `quests/` records are not included.
 
 Returns quest rows grouped by type for one project.
 
-**Response `200`:** includes `project`, `main`, and `side` arrays. Each quest
-row includes `project`, `number`, `slug`, `name`, and state summary fields.
+**Response `200`:** includes `project`, `main`, `side`, and `experiments` arrays.
+Each quest row includes `project`, `number`, `slug`, `name`, and state summary
+fields. Open experiment rows use `kind: experiment` and include `experiment_id`,
+parent quest identity, `start_step`, `stop_condition`, `can_land`, `worktree_path`,
+and `branch_name`.
 
 ### `GET /api/dashboard/quest_overview`
 
 Quest detail for the overview page. Resolves checkout from the quest worktree
-when present, otherwise from the source Sheaf checkout.
+when present, otherwise from the source Sheaf checkout. Pass optional
+`experiment_id` to view an open experiment worktree (`checkout_kind: experiment`).
 
 Notable response fields:
 
 - `project`, `quest_type`, `quest_number`
 - `quest_state`, `active_slice`, issue counts
-- `checkout_kind` (`worktree` or `source`)
+- `checkout_kind` (`worktree`, `source`, or `experiment`)
 - `checkout_path`, `worktree_missing`, `quest_dir_rel`
 - `execution_overlay_status` (`none`, `running`, `paused`, `human_intervention`)
 - `quest_dashboard_url`
+- `experiment` — present when `experiment_id` is set; includes `can_land` for
+  `ExperimentComplete` experiments
+- `archived_experiments` — landed experiments from `experiments/` on the source
+  checkout (omitted when empty)
+
+### `GET /api/dashboard/experiments`
+
+Archived experiment detail for a landed experiment. Requires `project`,
+`quest_type`, `quest_number`, and `experiment_id`. Returns metadata, archived
+logs, issues, issue responses, and `remote_branch` when recorded.
 
 ### `GET /api/dashboard/run_status`
 

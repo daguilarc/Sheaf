@@ -64,6 +64,14 @@ The first message in a role thread includes:
 Later turns in the same thread include runtime context and the task instruction
 only. Thread reuse is keyed by role scope; see thread naming below.
 
+## Experiment context in prompts
+
+When a harness runs inside an experiment worktree, `build_runtime_context`
+includes the current `experiment_id` and instructs the agent to pass
+`--experiment-id <id>` on every `scripts/quest-runner` call. Agents must not
+omit the experiment id; the original quest worktree may no longer exist after the
+parent quest was completed and landed.
+
 ## Thread naming
 
 V2 quests use deterministic thread names from `quest_thread.build_spec_thread_name`:

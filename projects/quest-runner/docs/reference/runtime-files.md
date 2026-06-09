@@ -42,6 +42,7 @@ Supported persisted quest states:
 - `ExecuteSlice`
 - `QuestDocumenting`
 - `Completed`
+- `ExperimentComplete` (experiments only; stop condition reached, ready to land)
 
 `PrepareNextSlice` is an internal logical state and is not persisted as a
 quest-root filesystem state.
@@ -220,3 +221,65 @@ Completion and acceptance markers:
 
 The recursive state machine advances only when the relevant marker exists and
 the corresponding issue file has no open entries.
+
+## Experiment metadata
+
+Path on the source checkout:
+
+```text
+<quest_dir>/experiments/<number>/experiment.json
+```
+
+`<number>` is the zero-padded experiment number (`0000`, `0001`, …). Companion
+files in the same directory:
+
+```text
+experiments/<number>/notes.md
+experiments/<number>/state_execution_config.yaml
+```
+
+Required `experiment.json` fields include `experiment_id`, `experiment_number`,
+parent quest identity, `description`, `start_step` (with `global_step`, `role`,
+`step_log`, `step_commit`, `base_commit`), `stop_condition`, `worktree_name`,
+`branch_name`, `status`, `created_at`, and `created_by`.
+
+Status values:
+
+- `created` — metadata written; worktree may not exist yet
+- `open` — experiment worktree exists and is runnable
+- `experiment_complete` — stop condition reached; ready to land
+- `landed` — artifacts archived; local worktree removed
+- `failed` — terminal failure
+
+Optional fields after completion or landing: `completed_at`, `landed_at`,
+`remote_branch`.
+
+Naming:
+
+- Experiment id / worktree basename:
+  `experiment_<project>_<type>_<questNumber>_<experimentNumber>`
+- Branch: `experiment/<project>/<type>/<questNumber:04d>/<experimentNumber:04d>`
+- Worktree: `<repo-parent>/.quest-worktrees/<experiment_id>/`
+
+Creation sets the experiment branch and worktree at `start_step.base_commit`,
+which is the parent of the selected step commit (`<step_commit>^`).
+
+## ExperimentComplete state
+
+When an experiment reaches its stop condition, quest-root `state.md` persists
+`ExperimentComplete`. This is distinct from normal quest `Completed` and from
+experiment metadata status `experiment_complete` on the source checkout.
+
+## Archived experiment artifacts
+
+After landing, copied artifacts live under the source checkout:
+
+```text
+experiments/<number>/logs/
+experiments/<number>/issues/
+experiments/<number>/issue_responses/
+```
+
+Issue and response paths preserve quest-relative layout (for example
+`issues/quest/physicalplan_issues.md` and
+`issues/slices/<slice>/polishing_issues.md`).

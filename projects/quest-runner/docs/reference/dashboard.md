@@ -32,6 +32,11 @@ Quest selection and detail URLs include:
 This keeps navigation, run actions, git views, and slice views scoped to the
 owning Sheaf project. Legacy top-level `quests/` records are not listed.
 
+Open experiments appear in the project snapshot `experiments` array alongside main
+and side quest rows. Each experiment row is labeled as an experiment and includes
+`experiment_id`, parent quest identity, description, current state, start step,
+stop condition, worktree path, and branch name.
+
 ## Overview Page
 
 The overview page is the primary quest detail view. It shows:
@@ -61,13 +66,29 @@ message appears on the overview page without clearing the current project or que
 selection. Short copy on the overview page explains that **Advance** is for manual
 recovery after fix-ups and does not start an agent turn.
 
+### Experiments on the overview page
+
+When `experiment_id` is present in the URL, the overview resolves the experiment
+worktree (`checkout_kind: experiment`) and shows experiment metadata including
+whether the experiment can be landed.
+
+When viewing a normal quest (no `experiment_id`), the overview may include an
+`archived_experiments` section listing landed experiments from
+`experiments/<number>/` on the source checkout. Use
+`/api/dashboard/experiments` for archived logs, issues, and issue responses.
+
+Open experiments in `ExperimentComplete` state show a **Land experiment** control
+that calls `POST /experiments/land`. Normal quest rows do not show this control;
+their **Land** action (when present) uses normal quest rebasing via `POST /land`.
+
 ## Checkout Resolution
 
 Dashboard data resolves checkout context with the same worktree convention used
 by the runner:
 
-1. Use the deterministic quest worktree when it exists.
-2. Fall back to the source Sheaf checkout for read-only discovery when the
+1. Use the experiment worktree when `experiment_id` is set and the worktree exists.
+2. Use the deterministic quest worktree when it exists.
+3. Fall back to the source Sheaf checkout for read-only discovery when the
    worktree is absent.
 
 Responses expose checkout status through fields such as `checkout_kind`,

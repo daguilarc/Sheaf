@@ -76,6 +76,7 @@ Supported quest filesystem states:
 - `ExecuteSlice`
 - `QuestDocumenting`
 - `Completed`
+- `ExperimentComplete` (experiments only)
 
 The quest machine also uses `PrepareNextSlice` internally, but that logical node
 does not persist as a distinct quest filesystem state.
@@ -388,10 +389,19 @@ Required fields:
 }
 ```
 
-Optional fields (typically present after landing):
+Optional fields:
 
+- `completed_at` — ISO-8601 UTC timestamp when the stop condition was reached
 - `landed_at` — ISO-8601 UTC timestamp when the experiment was landed
 - `remote_branch` — pushed experiment branch name on the remote
+
+Archived artifact paths (populated on the source checkout after landing):
+
+```text
+<quest_dir>/experiments/<number>/logs/
+<quest_dir>/experiments/<number>/issues/
+<quest_dir>/experiments/<number>/issue_responses/
+```
 
 Status values:
 
@@ -414,6 +424,12 @@ Naming conventions:
 
 Path-like fields such as `start_step.step_log` and `stop_condition.machine_path`
 are stored as repo-relative strings.
+
+## ExperimentComplete Quest State
+
+When an experiment reaches its stop condition, quest-root `state.md` persists
+`ExperimentComplete`. This is separate from normal quest `Completed` and from
+metadata status `experiment_complete` on the source checkout.
 
 ## Human Intervention Request
 

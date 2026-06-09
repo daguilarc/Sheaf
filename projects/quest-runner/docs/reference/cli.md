@@ -53,6 +53,7 @@ Most quest commands require:
 | `--project <name>` | Owning Sheaf project under `projects/<project>/`. |
 | `--type main|side` | Quest type. |
 | `--number <n>` | Zero-based quest number. |
+| `--experiment-id <id>` | Experiment id when operating in an experiment worktree. |
 
 `scripts/quest-runner --help`, `scripts/quest-runner help`, and every
 subcommand's `--help` print copy-pasteable examples.
@@ -98,9 +99,63 @@ Options:
 | Option | Description |
 | --- | --- |
 | `--max-steps <n>` | Optional maximum runner steps for this run. |
+| `--experiment-id <id>` | Experiment id when running in an experiment worktree. |
 
 The human-readable output includes `run_id`, `status`, `quest_url`, and
 `status_url`.
+
+```bash
+scripts/quest-runner run \
+  --project quest-runner \
+  --type main \
+  --number 0 \
+  --experiment-id experiment_quest-runner_main_0_0
+```
+
+## Experiment Commands
+
+### `experiments create`
+
+Creates an experiment from an earlier quest step with an alternate transition
+config. Commits metadata on the source checkout and creates the experiment
+worktree at `<step_commit>^`.
+
+```bash
+scripts/quest-runner experiments create \
+  --project quest-runner \
+  --type main \
+  --number 0 \
+  --start-step 5 \
+  --stop-node slice_completed \
+  --notes-file /tmp/experiment-notes.md \
+  --config-file /tmp/state_execution_config.yaml
+```
+
+Options:
+
+| Option | Description |
+| --- | --- |
+| `--start-step <n>` | Global step to replay (required). |
+| `--stop-node <name>` | Stop condition node or alias such as `slice_completed` (required). |
+| `--stop-machine-path <path>` | Optional machine path (default `root/slice`). |
+| `--notes-file <path>` | Experiment description and operator notes (required). |
+| `--config-file <path>` | Alternate `state_execution_config.yaml` (required). |
+
+### `experiments land`
+
+Lands a completed experiment by archiving artifacts, pushing the experiment
+branch, and removing the local worktree.
+
+```bash
+scripts/quest-runner experiments land \
+  --project quest-runner \
+  --type main \
+  --number 0 \
+  --experiment-id experiment_quest-runner_main_0_0
+```
+
+When `--experiment-id` is passed to `scripts/quest-runner land`, the CLI routes
+to `POST /experiments/land` instead of normal quest landing.
 
 ## Slice Commands
 
@@ -149,6 +204,8 @@ scripts/quest-runner advance \
   --type side \
   --number 0
 ```
+
+Accepts `--experiment-id` for experiment worktrees.
 
 Use `advance` after a quest is stopped and a human has repaired files,
 acceptance markers, issue state, or a human-intervention block. The command
@@ -213,8 +270,11 @@ scripts/quest-runner issues list \
   --type side \
   --number 0 \
   --scope physicalplan \
-  --status open
+  --status open \
+  --experiment-id experiment_quest-runner_main_0_0
 ```
+
+Issue commands accept `--experiment-id` for experiment worktrees.
 
 Options:
 

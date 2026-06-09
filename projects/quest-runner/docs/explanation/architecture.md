@@ -18,6 +18,7 @@ projects/quest-runner/src/quest_runner_service/
   quest_service.py         create_quest, run_quest, scheduling, locks
   quest_fs.py              Project-local quest discovery and state files
   worktrees.py             Deterministic worktree create/locate helpers
+  experiments.py           Experiment metadata, scoped checkout, create/land
   quest_runner.py          Legacy runner path and harness orchestration
   quest_runner_v2.py       V2 recursive state machine runner entry
   quest_thread.py          Role thread registry and runtime prompt context
@@ -42,7 +43,8 @@ Tests mirror these modules under `projects/quest-runner/tests/`.
 
 - Flask service on port `9002`
 - `GET /health` and `POST /exit` for service integration
-- `POST /create_quest` and `POST /run_quest` for quest lifecycle control
+- `POST /create_quest`, `POST /run_quest`, `POST /experiments/create`, and
+  `POST /experiments/land` for quest and experiment lifecycle control
 - `/dashboard` and `/dashboard/assets/*` for the web UI
 - `/api/dashboard/*` for project, quest, slice, run, agent, and git data
 - Root Makefile targets `quest-runner-run` and `quest-runner-test`
@@ -70,6 +72,20 @@ flowchart LR
 3. `POST /run_quest` schedules background execution through `QuestService`.
 4. The v2 runner executes state-machine nodes, invokes harnesses for agent roles,
    enforces path rules, and commits step metadata to git in the quest worktree.
+
+## Experiments
+
+Experiments replay a completed quest from an earlier v2 step commit using a
+separate git worktree and branch. Metadata and landed artifacts live under
+`experiments/<number>/` on the source checkout; execution uses the experiment
+worktree at `<repo-parent>/.quest-worktrees/<experiment_id>/`.
+
+`experiments.py` centralizes naming, metadata I/O, scoped checkout resolution,
+stop-condition validation, artifact archival, and branch push during landing.
+Quest-scoped CLI commands and REST endpoints accept an optional `experiment_id`
+to target the experiment worktree instead of the normal quest worktree.
+
+See [Quest lifecycle](lifecycle.md) for create, run, complete, and land flows.
 
 ## State machine
 

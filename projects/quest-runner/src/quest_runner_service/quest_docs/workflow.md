@@ -22,6 +22,7 @@ Every role message should make the following explicit:
 - current role
 - current slice, or that the pass is quest-scoped
 - absolute path to this quest reference directory
+- current experiment id when running in an experiment worktree
 
 The first message in a role thread includes:
 
@@ -102,3 +103,29 @@ Normative format for issue response files: `docs/quest/schemas/issue-responses.m
    recursive metadata in the commit message). Legacy quests may still have
    `state_history.md` entries from older runners, and dashboard readers merge both
    history sources.
+
+## Experiment workflow
+
+Experiments replay a completed quest from an earlier step using a separate
+worktree. Metadata and landed archives live under
+`<quest_dir>/experiments/<number>/` on the source checkout.
+
+### Agent CLI requirement
+
+When runtime context includes an experiment id, every Quest Runner CLI call from
+that agent must pass `--experiment-id <id>`. The original quest worktree may not
+exist. Commands that omit the experiment id fail when only the experiment worktree
+is available.
+
+### Experiment completion
+
+When the configured stop condition is reached, the quest filesystem state becomes
+`ExperimentComplete` and source metadata status becomes `experiment_complete`.
+This is not normal quest landing. Operators land experiments with
+`scripts/quest-runner experiments land` or `POST /experiments/land` after review.
+
+### Archived experiment artifacts
+
+After landing, JSONL logs copy to `experiments/<number>/logs/`. Issues and issue
+responses copy to `experiments/<number>/issues/` and
+`experiments/<number>/issue_responses/` with quest-relative paths preserved.

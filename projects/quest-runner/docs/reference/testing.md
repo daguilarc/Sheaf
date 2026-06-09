@@ -49,6 +49,17 @@ Useful modules for the project-local quest model:
 | `tests.test_commit_metadata` | Git step commit metadata |
 | `tests.test_migration_validation` | Migration hardening checks |
 | `tests.test_agui_mapper` | JSONL harness log replay into AGUI events |
+| `tests.test_experiments` | Experiment naming, metadata, create, and land helpers |
+| `tests.test_experiment_scoped_operations` | Experiment-scoped run, API, and prompt context |
+| `tests.test_experiment_stop_conditions` | Stop conditions and `ExperimentComplete` transitions |
+| `tests.test_experiment_lifecycle` | End-to-end create, advance, dashboard, and land flow |
+
+Run the lifecycle integration test:
+
+```bash
+cd projects/quest-runner
+PYTHONPATH=src .venv/bin/python -m unittest tests.test_experiment_lifecycle
+```
 
 ## Focused JavaScript commands
 
@@ -66,6 +77,8 @@ Integration tests use temporary git repositories created by helpers in
 - `TempRepo` initializes a clean git repo with an initial commit
 - `ensure_project(root, name)` creates `projects/<name>/`
 - `cleanup_worktrees(root)` removes `<parent>/.quest-worktrees/` after tests
+- `commit_v2_quest_step(repo, quest_dir, global_step=..., role=...)` creates v2
+  step-commit metadata on a temp repo
 
 Quest creation tests call `QuestService.create_quest` against temp repos. REST
 tests build Flask test clients via `make_app_client(repo_root, source_repo_root)`.

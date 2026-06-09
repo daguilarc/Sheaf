@@ -38,7 +38,7 @@ Exact APIs, layout, configuration, and test commands:
 ## Explanation
 
 - [Architecture](explanation/architecture.md)
-- [Quest lifecycle](explanation/lifecycle.md)
+- [Quest lifecycle](explanation/lifecycle.md) — create, run, worktree, and experiment replay
 
 ## Related repository docs
 
