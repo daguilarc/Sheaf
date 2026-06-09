@@ -80,7 +80,7 @@ class FakeElement
   public get textContent(): string
   {
     if (this.children.length > 0) {
-      return this.children.map((child) => child.textContent).join("");
+      return this.x_textContent + this.children.map((child) => child.textContent).join("");
     }
     return this.x_textContent;
   }
@@ -308,18 +308,42 @@ class FakeWebSocket
 interface ChatHarness
 {
   app: FakeElement;
+  location: { hash: string; protocol: string; host: string };
   sockets: FakeWebSocket[];
   handles: any[];
   flushAnimationFrames: () => void;
   runTimers: () => void;
 }
 
-function LoadChatHarness(options?: { touch?: boolean }): ChatHarness
+interface FakeFetchResponse
+{
+  ok: boolean;
+  json: () => Promise<unknown>;
+}
+
+function JsonResponse(body: unknown, ok = true): FakeFetchResponse
+{
+  return {
+    ok,
+    json: async () => body,
+  };
+}
+
+function LoadChatHarness(options?: {
+  fetch?: (path: string, request?: Record<string, unknown>) => Promise<FakeFetchResponse>;
+  hash?: string;
+  touch?: boolean;
+}): ChatHarness
 {
   const document = new FakeDocument();
   const pendingFrames: Array<(() => void) | null> = [];
   const pendingTimers: Array<(() => void) | null> = [];
   const windowListeners: Record<string, Listener[]> = {};
+  const location = {
+    hash: options?.hash || "#/piles/default/sessions/sess-1",
+    protocol: "http:",
+    host: "127.0.0.1:9004",
+  };
   let idCounter = 0;
 
   FakeWebSocket.instances = [];
@@ -329,11 +353,8 @@ function LoadChatHarness(options?: { touch?: boolean }): ChatHarness
     URLSearchParams,
     WebSocket: FakeWebSocket,
     document,
-    location: {
-      hash: "#/piles/default/sessions/sess-1",
-      protocol: "http:",
-      host: "127.0.0.1:9004",
-    },
+    location,
+    fetch: options?.fetch || (async () => JsonResponse({})),
     localStorage: {
       getItem: () => null,
       setItem: () => undefined,
@@ -390,6 +411,7 @@ function LoadChatHarness(options?: { touch?: boolean }): ChatHarness
 
   return {
     app: document.app,
+    location,
     sockets: FakeWebSocket.instances,
     handles,
     flushAnimationFrames: () => {
@@ -466,6 +488,76 @@ function KeyDown(element: FakeElement, key: string, shiftKey = false): Record<st
   element.dispatchEvent(event);
   return event;
 }
+
+async function FlushPromises(): Promise<void>
+{
+  for (let index = 0; index < 5; index += 1) {
+    await Promise.resolve();
+  }
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+test("piles screen renders backend pile summaries and navigates by pile name", async () =>
+{
+  const requests: Array<{ path: string; request?: Record<string, unknown> }> = [];
+  let piles: Array<{ pile: string; sessionCount: number; latestUpdatedAt: string | null }> = [
+    {
+      pile: "work",
+      sessionCount: 2,
+      latestUpdatedAt: "2026-06-08T18:00:00.000Z",
+    },
+  ];
+  const harness = LoadChatHarness({
+    hash: "#/",
+    fetch: async (path, request) => {
+      requests.push({ path, request });
+
+      if (path === "/api/piles" && request?.method === "POST") {
+        const body = JSON.parse(String(request.body));
+        piles = [
+          ...piles,
+          {
+            pile: body.pile,
+            sessionCount: 0,
+            latestUpdatedAt: null,
+          },
+        ];
+        return JsonResponse({ pile: body.pile, sessionCount: 0, latestUpdatedAt: null }, true);
+      }
+
+      if (path === "/api/piles") {
+        return JsonResponse({ piles }, true);
+      }
+
+      return JsonResponse({ error: { message: "unexpected request" } }, false);
+    },
+  });
+
+  await FlushPromises();
+
+  const firstPileButton = RequiredElement(harness.app, ".sheaf-chat-list-button");
+  assert.match(firstPileButton.textContent, /^work/);
+  assert.doesNotMatch(firstPileButton.textContent, /undefined/);
+
+  firstPileButton.click();
+  assert.equal(harness.location.hash, "#/piles/work");
+
+  const input = RequiredElement(harness.app, ".sheaf-chat-input");
+  const form = RequiredElement(harness.app, "form");
+  input.value = "research";
+  form.dispatchEvent({
+    type: "submit",
+    preventDefault: () => undefined,
+  });
+
+  await FlushPromises();
+
+  const postRequest = requests.find((request) => request.request?.method === "POST");
+  assert.ok(postRequest);
+  assert.equal(JSON.parse(String(postRequest.request?.body)).pile, "research");
+  assert.doesNotMatch(harness.app.textContent, /undefined/);
+  assert.match(harness.app.textContent, /research/);
+});
 
 test("chat send waits for server broadcast and dual user paths render once", () =>
 {

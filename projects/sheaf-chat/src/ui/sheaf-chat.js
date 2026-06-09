@@ -194,18 +194,20 @@
       }
 
       for (const pile of piles) {
+        const pileName = pile.pile || pile.name;
+        const latestUpdatedAt = pile.latestUpdatedAt || pile.updatedAt;
         const item = CreateElement("li", "sheaf-chat-list-item");
         const button = CreateElement("button", "sheaf-chat-list-button");
         button.type = "button";
-        button.textContent = pile.name;
+        button.textContent = pileName;
         const meta = CreateElement("span", "sheaf-chat-list-meta");
         meta.textContent =
           (pile.sessionCount != null ? pile.sessionCount : 0) +
           " sessions" +
-          (pile.updatedAt ? " · " + FormatTimestamp(pile.updatedAt) : "");
+          (latestUpdatedAt ? " · " + FormatTimestamp(latestUpdatedAt) : "");
         button.appendChild(meta);
         button.addEventListener("click", function () {
-          NavigateTo({ screen: "sessions", pile: pile.name });
+          NavigateTo({ screen: "sessions", pile: pileName });
         });
         item.appendChild(button);
         list.appendChild(item);
