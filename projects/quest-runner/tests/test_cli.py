@@ -134,6 +134,34 @@ class HelpTests(unittest.TestCase):
                     parser.parse_args(argv)
                 self.assertEqual(ctx.exception.code, 0)
 
+    def test_issue_subcommand_help_uses_file_not_scope(self) -> None:
+        issue_commands = [
+            ["issues", "list", "--help"],
+            ["issues", "read", "--help"],
+            ["issues", "create", "--help"],
+            ["issues", "edit", "--help"],
+            ["issues", "respond", "--help"],
+            ["issues", "responses", "--help"],
+        ]
+        for argv in issue_commands:
+            with self.subTest(argv=argv):
+                parser = build_parser()
+                out = io.StringIO()
+                with patch("argparse.ArgumentParser.print_help", lambda self, file=None: out.write(self.format_help())):
+                    with self.assertRaises(SystemExit):
+                        parser.parse_args(argv)
+                help_text = out.getvalue()
+                self.assertIn("--file", help_text)
+                self.assertNotIn("--scope", help_text)
+                self.assertNotIn("--slice", help_text)
+
+    def test_top_level_help_uses_issue_file_examples(self) -> None:
+        parser = build_parser()
+        help_text = parser.format_help()
+        self.assertIn("--file physicalplan_issues.md", help_text)
+        self.assertNotIn("--scope physicalplan", help_text)
+        self.assertNotIn("--scope polishing", help_text)
+
 
 class CommandRequestTests(unittest.TestCase):
     def _run(self, argv: list[str], response: tuple[int, dict]) -> tuple[int, FakeTransport, str, str]:
@@ -417,8 +445,8 @@ class CommandRequestTests(unittest.TestCase):
                 "side",
                 "--number",
                 "0",
-                "--scope",
-                "physicalplan",
+                "--file",
+                "physicalplan_issues.md",
                 "--status",
                 "open",
             ],
@@ -428,7 +456,7 @@ class CommandRequestTests(unittest.TestCase):
         req = transport.requests[0]
         self.assertEqual(req.method, "GET")
         self.assertIn("/api/issues?", req.url)
-        self.assertIn("scope=physicalplan", req.url)
+        self.assertIn("issue_file=physicalplan_issues.md", req.url)
         self.assertIn("status=open", req.url)
         self.assertIn("QP-0001", out)
 
@@ -544,8 +572,8 @@ class CommandRequestTests(unittest.TestCase):
                 "side",
                 "--number",
                 "0",
-                "--scope",
-                "physicalplan",
+                "--file",
+                "physicalplan_issues.md",
             ],
             (200, {"issue_id": "QP-0001", "title": "T", "status": "open", "body": "D"}),
         )
@@ -565,8 +593,8 @@ class CommandRequestTests(unittest.TestCase):
                 "side",
                 "--number",
                 "0",
-                "--scope",
-                "physicalplan",
+                "--file",
+                "physicalplan_issues.md",
                 "--title",
                 "Title",
                 "--body",
@@ -578,6 +606,7 @@ class CommandRequestTests(unittest.TestCase):
         req = transport.requests[0]
         self.assertEqual(req.method, "POST")
         self.assertTrue(req.url.endswith("/api/issues"))
+        self.assertEqual(req.body["issue_file"], "physicalplan_issues.md")
         self.assertEqual(req.body["title"], "Title")
         self.assertEqual(req.body["body"], "Body")
 
@@ -593,8 +622,8 @@ class CommandRequestTests(unittest.TestCase):
                 "side",
                 "--number",
                 "0",
-                "--scope",
-                "physicalplan",
+                "--file",
+                "physicalplan_issues.md",
                 "--status",
                 "completed",
             ],
@@ -618,8 +647,8 @@ class CommandRequestTests(unittest.TestCase):
                 "side",
                 "--number",
                 "0",
-                "--scope",
-                "physicalplan",
+                "--file",
+                "physicalplan_issues.md",
                 "--outcome",
                 "Fixed",
                 "--explanation",
@@ -654,8 +683,8 @@ class CommandRequestTests(unittest.TestCase):
                 "side",
                 "--number",
                 "0",
-                "--scope",
-                "physicalplan",
+                "--file",
+                "physicalplan_issues.md",
             ],
             (
                 200,
@@ -676,7 +705,7 @@ class CommandRequestTests(unittest.TestCase):
         self.assertIn("/api/issues/QP-0001/responses?", req.url)
         self.assertIn("Fixed", out)
 
-    def test_polishing_includes_slice(self) -> None:
+    def test_polishing_issue_file_in_query(self) -> None:
         _code, transport, _out, _err = self._run(
             [
                 "issues",
@@ -687,14 +716,15 @@ class CommandRequestTests(unittest.TestCase):
                 "side",
                 "--number",
                 "0",
-                "--scope",
-                "polishing",
-                "--slice",
-                "1",
+                "--file",
+                "slices/0001_api/polishing_issues.md",
             ],
             (200, {"issues": []}),
         )
-        self.assertIn("slice=1", transport.requests[0].url)
+        self.assertIn(
+            "issue_file=slices%2F0001_api%2Fpolishing_issues.md",
+            transport.requests[0].url,
+        )
 
 
 class JsonOutputTests(unittest.TestCase):
@@ -740,8 +770,8 @@ class JsonOutputTests(unittest.TestCase):
                     "side",
                     "--number",
                     "0",
-                    "--scope",
-                    "physicalplan",
+                    "--file",
+                    "physicalplan_issues.md",
                 ],
                 request_fn=transport,
                 stdout=out,
@@ -818,42 +848,6 @@ class ValidationTests(unittest.TestCase):
         self.assertEqual(transport.requests, [])
         return err.getvalue()
 
-    def test_polishing_requires_slice(self) -> None:
-        msg = self._expect_validation_error(
-            [
-                "issues",
-                "list",
-                "--project",
-                "p",
-                "--type",
-                "side",
-                "--number",
-                "0",
-                "--scope",
-                "polishing",
-            ]
-        )
-        self.assertIn("--slice is required", msg)
-
-    def test_physicalplan_rejects_slice(self) -> None:
-        msg = self._expect_validation_error(
-            [
-                "issues",
-                "list",
-                "--project",
-                "p",
-                "--type",
-                "side",
-                "--number",
-                "0",
-                "--scope",
-                "physicalplan",
-                "--slice",
-                "1",
-            ]
-        )
-        self.assertIn("must not be used", msg)
-
     def test_conflicting_body_sources(self) -> None:
         msg = self._expect_validation_error(
             [
@@ -865,8 +859,8 @@ class ValidationTests(unittest.TestCase):
                 "side",
                 "--number",
                 "0",
-                "--scope",
-                "physicalplan",
+                "--file",
+                "physicalplan_issues.md",
                 "--title",
                 "T",
                 "--body",
@@ -891,8 +885,8 @@ class ValidationTests(unittest.TestCase):
                 "side",
                 "--number",
                 "0",
-                "--scope",
-                "physicalplan",
+                "--file",
+                "physicalplan_issues.md",
                 "--body-file",
                 str(missing_path),
             ]
@@ -911,8 +905,8 @@ class ValidationTests(unittest.TestCase):
                 "side",
                 "--number",
                 "0",
-                "--scope",
-                "physicalplan",
+                "--file",
+                "physicalplan_issues.md",
                 "--outcome",
                 "Fixed",
                 "--explanation",
@@ -937,8 +931,8 @@ class ValidationTests(unittest.TestCase):
                     "side",
                     "--number",
                     "0",
-                    "--scope",
-                    "physicalplan",
+                    "--file",
+                    "physicalplan_issues.md",
                     "--outcome",
                     "Maybe",
                     "--explanation",

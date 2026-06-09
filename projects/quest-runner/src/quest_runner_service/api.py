@@ -681,7 +681,7 @@ def create_app(
         }
 
     def _issue_quest_params_from_body(data: dict) -> dict:
-        required = ["project", "quest_type", "quest_number", "scope"]
+        required = ["project", "quest_type", "quest_number", "issue_file"]
         missing = [f for f in required if f not in data]
         if missing:
             raise dashboard_data.DashboardBadRequest(
@@ -702,24 +702,21 @@ def create_app(
             "project": project,
             "quest_type": quest_type,
             "quest_number": data["quest_number"],
-            "scope_raw": data["scope"],
-            "slice_raw": data.get("slice"),
+            "issue_file_raw": data["issue_file"],
+            "owner_role_raw": data.get("owner_role"),
             "experiment_id": data.get("experiment_id"),
         }
 
     @app.route("/api/issues", methods=["GET"])
     def list_issues_route():
         params = _issue_quest_params_from_query()
-        scope_raw = request.args.get("scope")
-        slice_raw = request.args.get("slice")
         status_filter = request.args.get("status")
         result = quest_service.list_issues(
             repo_path=str(source_root),
             project=params["project"],
             quest_type=params["quest_type"],
             quest_number=params["quest_number"],
-            scope_raw=scope_raw,
-            slice_raw=slice_raw,
+            issue_file_raw=request.args.get("issue_file"),
             status_filter=status_filter or "all",
             experiment_id=params.get("experiment_id"),
         )
@@ -734,8 +731,7 @@ def create_app(
             project=params["project"],
             quest_type=params["quest_type"],
             quest_number=params["quest_number"],
-            scope_raw=request.args.get("scope"),
-            slice_raw=request.args.get("slice"),
+            issue_file_raw=request.args.get("issue_file"),
             experiment_id=params.get("experiment_id"),
         )
         return jsonify(result), 200
@@ -752,11 +748,11 @@ def create_app(
             project=params["project"],
             quest_type=params["quest_type"],
             quest_number=params["quest_number"],
-            scope_raw=params["scope_raw"],
-            slice_raw=params["slice_raw"],
+            issue_file_raw=params["issue_file_raw"],
             title=title,
             body=body,
             status=status,
+            owner_role_raw=params.get("owner_role_raw"),
             experiment_id=params.get("experiment_id"),
         )
         return jsonify(result), 201
@@ -771,8 +767,7 @@ def create_app(
             project=params["project"],
             quest_type=params["quest_type"],
             quest_number=params["quest_number"],
-            scope_raw=params["scope_raw"],
-            slice_raw=params["slice_raw"],
+            issue_file_raw=params["issue_file_raw"],
             status=data.get("status"),
             title=data.get("title"),
             body=data.get("body", data.get("details")),
@@ -792,8 +787,7 @@ def create_app(
             project=params["project"],
             quest_type=params["quest_type"],
             quest_number=params["quest_number"],
-            scope_raw=params["scope_raw"],
-            slice_raw=params["slice_raw"],
+            issue_file_raw=params["issue_file_raw"],
             outcome=outcome,
             explanation=explanation,
             experiment_id=params.get("experiment_id"),
@@ -809,8 +803,7 @@ def create_app(
             project=params["project"],
             quest_type=params["quest_type"],
             quest_number=params["quest_number"],
-            scope_raw=request.args.get("scope"),
-            slice_raw=request.args.get("slice"),
+            issue_file_raw=request.args.get("issue_file"),
             experiment_id=params.get("experiment_id"),
         )
         return jsonify(result), 200

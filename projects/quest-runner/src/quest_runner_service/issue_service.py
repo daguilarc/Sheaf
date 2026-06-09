@@ -1,32 +1,26 @@
-"""Issue scope resolution, validation, and markdown-backed mutations."""
+"""Issue file resolution, validation, and markdown-backed mutations."""
 
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from enum import Enum
 from pathlib import Path
 
 from . import quest_fs
 from .dashboard_data import (
     DashboardBadRequest,
     DashboardCheckout,
-    DashboardNotFound,
-    find_slice_dir,
     lock_key_for_checkout,
     resolve_dashboard_checkout,
     resolve_quest_dir,
 )
 from .quest_types import IssueEntry, IssueResponseEntry, utc_now_iso
+from .state_machine.workflow_state_io import path_matches_collection_pattern
+from .workflow_config import WorkflowDefinition, WorkflowIssueDeclaration
+from .workflow_profile_execution import resolve_quest_workflow
 
-_ISSUE_ID_RE = re.compile(r"^(QP|PL)-\d{4}$")
 _VALID_STATUSES = frozenset({"open", "completed"})
 _VALID_OUTCOMES = frozenset({"Fixed", "NotFixed"})
-
-
-class IssueScope(str, Enum):
-    PhysicalPlan = "physicalplan"
-    Polishing = "polishing"
 
 
 class IssueNotFound(Exception):
@@ -41,8 +35,8 @@ class IssueContext:
     project: str
     quest_type: str
     quest_number: int
-    scope: IssueScope
-    slice_number: int | None
+    issue_file: str
+    workflow_issue_alias: str | None
     checkout_root: Path
     quest_dir: Path
     slice_dir: Path | None
@@ -53,49 +47,37 @@ class IssueContext:
     lock_key: str | None
 
 
-def parse_scope(raw: object | None) -> IssueScope:
+def parse_issue_file(raw: object | None) -> str:
     if raw is None or not str(raw).strip():
         raise DashboardBadRequest(
-            "Missing required parameter: scope",
-            fields={"scope": "required"},
+            "Missing required parameter: issue_file",
+            fields={"issue_file": "required"},
         )
-    value = str(raw).strip().lower()
-    if value == IssueScope.PhysicalPlan.value:
-        return IssueScope.PhysicalPlan
-    if value == IssueScope.Polishing.value:
-        return IssueScope.Polishing
-    raise DashboardBadRequest(
-        "scope must be 'physicalplan' or 'polishing'",
-        fields={"scope": "invalid"},
-    )
+    value = str(raw).strip().replace("\\", "/")
+    if Path(value).is_absolute():
+        raise DashboardBadRequest(
+            "issue_file must be quest-relative",
+            fields={"issue_file": "invalid"},
+        )
+    if ".." in Path(value).parts:
+        raise DashboardBadRequest(
+            "issue_file must not escape quest root",
+            fields={"issue_file": "invalid"},
+        )
+    if not value.endswith("_issues.md"):
+        raise DashboardBadRequest(
+            "issue_file must end with _issues.md",
+            fields={"issue_file": "invalid"},
+        )
+    return value
 
 
-def parse_optional_slice(raw: object | None) -> int | None:
+def parse_optional_owner_role(raw: object | None) -> str | None:
     if raw is None:
         return None
     if isinstance(raw, str) and not raw.strip():
         return None
-    if isinstance(raw, bool):
-        raise DashboardBadRequest(
-            "slice must be an integer",
-            fields={"slice": "invalid"},
-        )
-    if isinstance(raw, int):
-        n = raw
-    else:
-        try:
-            n = int(str(raw).strip(), 10)
-        except (TypeError, ValueError) as e:
-            raise DashboardBadRequest(
-                "slice must be an integer",
-                fields={"slice": "invalid"},
-            ) from e
-    if n < 0:
-        raise DashboardBadRequest(
-            "slice must be non-negative",
-            fields={"slice": "invalid"},
-        )
-    return n
+    return str(raw).strip()
 
 
 def parse_status_filter(raw: str | None) -> str:
@@ -111,39 +93,72 @@ def parse_status_filter(raw: str | None) -> str:
 
 
 def validate_issue_id(issue_id: str, *, id_prefix: str) -> None:
-    if not _ISSUE_ID_RE.match(issue_id):
+    pattern = re.compile(rf"^{re.escape(id_prefix)}-\d{{4}}$")
+    if not pattern.match(issue_id):
         raise DashboardBadRequest(
             f"issue_id must match {id_prefix}-NNNN",
             fields={"issue_id": "invalid"},
         )
-    if not issue_id.startswith(f"{id_prefix}-"):
+
+
+def _responses_path_for_issue_file(issue_file: str) -> str:
+    if not issue_file.endswith("_issues.md"):
         raise DashboardBadRequest(
-            f"issue_id must use prefix {id_prefix}",
-            fields={"issue_id": "invalid"},
+            "issue_file must end with _issues.md",
+            fields={"issue_file": "invalid"},
         )
+    return issue_file[: -len("_issues.md")] + "_issue_responses.md"
 
 
-def resolve_issue_context(
+def _match_issue_declaration(
+    issue_file: str,
+    declaration: WorkflowIssueDeclaration,
+    workflow: WorkflowDefinition,
+) -> bool:
+    decl_path = declaration.path.replace("\\", "/")
+    if "$active_child" not in decl_path:
+        return issue_file == decl_path
+    if not decl_path.startswith("$active_child/"):
+        return False
+    suffix = decl_path[len("$active_child/") :]
+    if "/" in issue_file:
+        parent_rel, file_name = issue_file.rsplit("/", 1)
+    else:
+        parent_rel, file_name = "", issue_file
+    if file_name != suffix:
+        return False
+    if not parent_rel:
+        return False
+    for collection in workflow.collections.values():
+        prefix = collection.path.split("*")[0].rstrip("/")
+        pattern = f"{prefix}/*" if prefix else "*"
+        if path_matches_collection_pattern(parent_rel, pattern):
+            return True
+    return False
+
+
+def _find_matching_declaration(
+    issue_file: str,
+    workflow: WorkflowDefinition,
+) -> WorkflowIssueDeclaration | None:
+    for declaration in workflow.issue_declarations():
+        if _match_issue_declaration(issue_file, declaration, workflow):
+            return declaration
+    return None
+
+
+def resolve_issue_context_by_file(
     source_root: Path,
     *,
     project: str,
     quest_type: str,
     quest_number: int,
-    scope: IssueScope,
-    slice_number: int | None,
+    issue_file: str,
     experiment_id: str | None = None,
     checkout: DashboardCheckout | None = None,
+    owner_role_override: str | None = None,
 ) -> IssueContext:
-    if scope == IssueScope.PhysicalPlan and slice_number is not None:
-        raise DashboardBadRequest(
-            "slice must not be provided for scope=physicalplan",
-            fields={"slice": "unexpected"},
-        )
-    if scope == IssueScope.Polishing and slice_number is None:
-        raise DashboardBadRequest(
-            "slice is required for scope=polishing",
-            fields={"slice": "required"},
-        )
+    issue_file = parse_issue_file(issue_file)
 
     if checkout is None:
         source_qdir = resolve_quest_dir(
@@ -158,23 +173,35 @@ def resolve_issue_context(
     else:
         meta = quest_fs.read_quest_meta(checkout.quest_dir)
 
+    workflow = resolve_quest_workflow(checkout.quest_dir)
+    declaration = _find_matching_declaration(issue_file, workflow)
+    if declaration is None:
+        raise DashboardBadRequest(
+            f"issue_file is not declared by workflow: {issue_file}",
+            fields={"issue_file": "undeclared"},
+        )
+
+    id_prefix = declaration.id_prefix
+    if not id_prefix:
+        raise DashboardBadRequest(
+            "workflow issue declaration missing id_prefix",
+            fields={"issue_file": "invalid"},
+        )
+
+    issues_path = checkout.quest_dir / issue_file
+    responses_path = checkout.quest_dir / _responses_path_for_issue_file(issue_file)
+    owner_role = (
+        owner_role_override
+        if owner_role_override is not None
+        else declaration.owner
+    )
+
     slice_dir: Path | None = None
-    if scope == IssueScope.PhysicalPlan:
-        issues_path = checkout.quest_dir / "physicalplan_issues.md"
-        responses_path = checkout.quest_dir / "physicalplan_issue_responses.md"
-        id_prefix = "QP"
-        owner_role = "physical_plan_reviewer"
-    else:
-        assert slice_number is not None
-        slice_dir = find_slice_dir(checkout.quest_dir, slice_number)
-        if slice_dir is None:
-            raise DashboardNotFound(
-                f"No slice directory for slice={slice_number} in quest"
-            )
-        issues_path = slice_dir / "polishing_issues.md"
-        responses_path = slice_dir / "polishing_issue_responses.md"
-        id_prefix = "PL"
-        owner_role = "polisher_reviewer"
+    if "/" in issue_file:
+        parent_rel = issue_file.rsplit("/", 1)[0]
+        candidate = checkout.quest_dir / parent_rel
+        if candidate.is_dir():
+            slice_dir = candidate
 
     lock_key: str | None = None
     if not checkout.worktree_missing:
@@ -185,8 +212,8 @@ def resolve_issue_context(
         project=project,
         quest_type=quest_type,
         quest_number=quest_number,
-        scope=scope,
-        slice_number=slice_number,
+        issue_file=issue_file,
+        workflow_issue_alias=declaration.alias,
         checkout_root=checkout.checkout_root,
         quest_dir=checkout.quest_dir,
         slice_dir=slice_dir,
@@ -271,6 +298,7 @@ def create_issue(
     title: str,
     body: str,
     status: str = "open",
+    owner_role: str | None = None,
 ) -> dict:
     title = (title or "").strip()
     body = (body or "").strip()
@@ -290,12 +318,13 @@ def create_issue(
             fields={"status": "invalid"},
         )
 
+    effective_owner = owner_role if owner_role is not None else ctx.owner_role
     issues = _read_issues(ctx)
     now = utc_now_iso()
     issue = IssueEntry(
         issue_id=_next_issue_id(issues, ctx.id_prefix),
         status=status,
-        owner_role=ctx.owner_role,
+        owner_role=effective_owner,
         created_at=now,
         updated_at=now,
         title=title,

@@ -17,7 +17,6 @@ from urllib.request import Request, urlopen
 _DEFAULT_BASE_URL = "http://localhost:9002"
 _SERVICE_NAME = "quest-runner"
 _VALID_QUEST_TYPES = frozenset({"main", "side"})
-_VALID_SCOPES = frozenset({"physicalplan", "polishing"})
 _VALID_STATUSES = frozenset({"open", "completed", "all"})
 _VALID_ISSUE_STATUSES = frozenset({"open", "completed"})
 _VALID_OUTCOMES = frozenset({"Fixed", "NotFixed"})
@@ -212,11 +211,6 @@ def _validate_quest_type(quest_type: str) -> None:
         raise CliValidationError("--type must be 'main' or 'side'")
 
 
-def _validate_scope(scope: str) -> None:
-    if scope not in _VALID_SCOPES:
-        raise CliValidationError("--scope must be 'physicalplan' or 'polishing'")
-
-
 def _validate_list_status(status: str) -> None:
     if status not in _VALID_STATUSES:
         raise CliValidationError("--status must be 'open', 'completed', or 'all'")
@@ -232,19 +226,11 @@ def _validate_outcome(outcome: str) -> None:
         raise CliValidationError("--outcome must be 'Fixed' or 'NotFixed'")
 
 
-def _validate_slice_for_scope(scope: str, slice_number: int | None) -> None:
-    if scope == "physicalplan" and slice_number is not None:
-        raise CliValidationError("--slice must not be used with --scope physicalplan")
-    if scope == "polishing" and slice_number is None:
-        raise CliValidationError("--slice is required for --scope polishing")
-
-
 def _issue_query(
     project: str,
     quest_type: str,
     quest_number: int,
-    scope: str,
-    slice_number: int | None,
+    issue_file: str,
     experiment_id: str | None = None,
     extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -252,10 +238,8 @@ def _issue_query(
         "project": project,
         "quest_type": quest_type,
         "quest_number": quest_number,
-        "scope": scope,
+        "issue_file": issue_file,
     }
-    if slice_number is not None:
-        query["slice"] = slice_number
     if experiment_id is not None:
         query["experiment_id"] = experiment_id
     if extra:
@@ -267,8 +251,7 @@ def _issue_body(
     project: str,
     quest_type: str,
     quest_number: int,
-    scope: str,
-    slice_number: int | None,
+    issue_file: str,
     experiment_id: str | None = None,
     extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -276,8 +259,7 @@ def _issue_body(
         "project": project,
         "quest_type": quest_type,
         "quest_number": quest_number,
-        "scope": scope,
-        "slice": slice_number,
+        "issue_file": issue_file,
     }
     if experiment_id is not None:
         body["experiment_id"] = experiment_id
@@ -542,18 +524,12 @@ def _add_experiment_id_arg(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def _add_issue_scope_args(parser: argparse.ArgumentParser) -> None:
+def _add_issue_file_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
-        "--scope",
+        "--file",
         required=True,
-        choices=sorted(_VALID_SCOPES),
-        help="Issue scope (physicalplan or polishing)",
-    )
-    parser.add_argument(
-        "--slice",
-        type=int,
-        default=None,
-        help="Slice number (required for polishing scope)",
+        dest="issue_file",
+        help="Quest-relative issue file path declared by the workflow",
     )
 
 
@@ -576,14 +552,14 @@ def build_parser() -> argparse.ArgumentParser:
           scripts/quest-runner advance --project quest-runner --type side --number 0
           scripts/quest-runner land --project quest-runner --type side --number 0
           scripts/quest-runner slices init --project quest-runner --type side --number 0 --count 2 --slug api --slug cli
-          scripts/quest-runner issues list --project quest-runner --type side --number 0 --scope physicalplan
-          scripts/quest-runner issues list --project quest-runner --type main --number 0 --scope physicalplan --experiment-id experiment_quest-runner_main_0_0
-          scripts/quest-runner issues read QP-0001 --project quest-runner --type side --number 0 --scope physicalplan
-          scripts/quest-runner issues create --project quest-runner --type side --number 0 --scope physicalplan --title "Title" --body "Details"
-          scripts/quest-runner issues edit QP-0001 --project quest-runner --type side --number 0 --scope physicalplan --status completed
-          scripts/quest-runner issues respond QP-0001 --project quest-runner --type side --number 0 --scope physicalplan --outcome Fixed --explanation "Done"
-          scripts/quest-runner issues responses QP-0001 --project quest-runner --type side --number 0 --scope physicalplan
-          scripts/quest-runner issues list --project quest-runner --type side --number 0 --scope polishing --slice 1
+          scripts/quest-runner issues list --project quest-runner --type side --number 0 --file physicalplan_issues.md
+          scripts/quest-runner issues list --project quest-runner --type main --number 0 --file physicalplan_issues.md --experiment-id experiment_quest-runner_main_0_0
+          scripts/quest-runner issues read QP-0001 --project quest-runner --type side --number 0 --file physicalplan_issues.md
+          scripts/quest-runner issues create --project quest-runner --type side --number 0 --file physicalplan_issues.md --title "Title" --body "Details"
+          scripts/quest-runner issues edit QP-0001 --project quest-runner --type side --number 0 --file physicalplan_issues.md --status completed
+          scripts/quest-runner issues respond QP-0001 --project quest-runner --type side --number 0 --file physicalplan_issues.md --outcome Fixed --explanation "Done"
+          scripts/quest-runner issues responses QP-0001 --project quest-runner --type side --number 0 --file physicalplan_issues.md
+          scripts/quest-runner issues list --project quest-runner --type side --number 0 --file slices/0001_api/polishing_issues.md
           scripts/quest-runner --json advance --project quest-runner --type side --number 0
           scripts/quest-runner experiments create --project quest-runner --type main --number 0 --start-step 5 --stop-node slice_completed --notes-file /tmp/notes.md --config-file /tmp/config.yaml
 
@@ -682,7 +658,7 @@ def build_parser() -> argparse.ArgumentParser:
     issues_list = issues_sub.add_parser("list", help="List issues")
     _add_quest_identity_args(issues_list)
     _add_experiment_id_arg(issues_list)
-    _add_issue_scope_args(issues_list)
+    _add_issue_file_args(issues_list)
     issues_list.add_argument(
         "--status",
         default="all",
@@ -694,13 +670,18 @@ def build_parser() -> argparse.ArgumentParser:
     issues_read.add_argument("issue_id")
     _add_quest_identity_args(issues_read)
     _add_experiment_id_arg(issues_read)
-    _add_issue_scope_args(issues_read)
+    _add_issue_file_args(issues_read)
     issues_read.set_defaults(handler="issues_read")
 
     issues_create = issues_sub.add_parser("create", help="Create an issue")
     _add_quest_identity_args(issues_create)
     _add_experiment_id_arg(issues_create)
-    _add_issue_scope_args(issues_create)
+    _add_issue_file_args(issues_create)
+    issues_create.add_argument(
+        "--owner",
+        default=None,
+        help="Owner role attribution for the new issue (defaults from workflow)",
+    )
     issues_create.add_argument("--title", required=True)
     issues_create.add_argument("--body", default=None)
     issues_create.add_argument("--body-file", default=None)
@@ -715,7 +696,7 @@ def build_parser() -> argparse.ArgumentParser:
     issues_edit.add_argument("issue_id")
     _add_quest_identity_args(issues_edit)
     _add_experiment_id_arg(issues_edit)
-    _add_issue_scope_args(issues_edit)
+    _add_issue_file_args(issues_edit)
     issues_edit.add_argument("--status", default=None, choices=sorted(_VALID_ISSUE_STATUSES))
     issues_edit.add_argument("--title", default=None)
     issues_edit.add_argument("--body", default=None)
@@ -726,7 +707,7 @@ def build_parser() -> argparse.ArgumentParser:
     issues_respond.add_argument("issue_id")
     _add_quest_identity_args(issues_respond)
     _add_experiment_id_arg(issues_respond)
-    _add_issue_scope_args(issues_respond)
+    _add_issue_file_args(issues_respond)
     issues_respond.add_argument("--outcome", required=True, choices=sorted(_VALID_OUTCOMES))
     issues_respond.add_argument("--explanation", default=None)
     issues_respond.add_argument("--explanation-file", default=None)
@@ -736,7 +717,7 @@ def build_parser() -> argparse.ArgumentParser:
     issues_responses.add_argument("issue_id")
     _add_quest_identity_args(issues_responses)
     _add_experiment_id_arg(issues_responses)
-    _add_issue_scope_args(issues_responses)
+    _add_issue_file_args(issues_responses)
     issues_responses.set_defaults(handler="issues_responses")
 
     experiments_parser = subparsers.add_parser(
@@ -1045,14 +1026,10 @@ def _dispatch_command(
         )
 
     if handler and handler.startswith("issues_"):
-        _validate_scope(args.scope)
-        _validate_slice_for_scope(args.scope, args.slice)
-
         project = args.project
         quest_type = args.type
         quest_number = args.number
-        scope = args.scope
-        slice_number = args.slice
+        issue_file = args.issue_file
         experiment_id = args.experiment_id
 
         if handler == "issues_list":
@@ -1062,8 +1039,7 @@ def _dispatch_command(
                 project,
                 quest_type,
                 quest_number,
-                scope,
-                slice_number,
+                issue_file,
                 experiment_id,
                 {"status": args.status},
             )
@@ -1096,8 +1072,7 @@ def _dispatch_command(
                 project,
                 quest_type,
                 quest_number,
-                scope,
-                slice_number,
+                issue_file,
                 experiment_id,
             )
             status, data = _send_request(
@@ -1131,14 +1106,20 @@ def _dispatch_command(
             body_text = _read_text_source(args.body, args.body_file, "body")
             _validate_issue_status(args.status)
             endpoint = "/api/issues"
+            create_extra: dict[str, Any] = {
+                "title": args.title,
+                "body": body_text,
+                "status": args.status,
+            }
+            if args.owner is not None:
+                create_extra["owner_role"] = args.owner
             body = _issue_body(
                 project,
                 quest_type,
                 quest_number,
-                scope,
-                slice_number,
+                issue_file,
                 experiment_id,
-                {"title": args.title, "body": body_text, "status": args.status},
+                create_extra,
             )
             status, data = _send_request(
                 request_fn, "POST", base_url=base_url, endpoint=endpoint, body=body
@@ -1179,8 +1160,7 @@ def _dispatch_command(
                 project,
                 quest_type,
                 quest_number,
-                scope,
-                slice_number,
+                issue_file,
                 experiment_id,
                 extra,
             )
@@ -1210,8 +1190,7 @@ def _dispatch_command(
                 project,
                 quest_type,
                 quest_number,
-                scope,
-                slice_number,
+                issue_file,
                 experiment_id,
                 {"outcome": args.outcome, "explanation": explanation},
             )
@@ -1239,8 +1218,7 @@ def _dispatch_command(
                 project,
                 quest_type,
                 quest_number,
-                scope,
-                slice_number,
+                issue_file,
                 experiment_id,
             )
             status, data = _send_request(

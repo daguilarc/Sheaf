@@ -2013,22 +2013,21 @@ class QuestService:
         project: str,
         quest_type: str,
         quest_number: int,
-        scope_raw: object,
-        slice_raw: object | None,
+        issue_file_raw: object,
+        owner_role_raw: object | None = None,
         experiment_id: str | None = None,
     ) -> issue_service.IssueContext:
         source_root = Path(repo_path).resolve()
         _validate_project(source_root, project)
-        scope = issue_service.parse_scope(scope_raw)
-        slice_number = issue_service.parse_optional_slice(slice_raw)
-        return issue_service.resolve_issue_context(
+        owner_role = issue_service.parse_optional_owner_role(owner_role_raw)
+        return issue_service.resolve_issue_context_by_file(
             source_root,
             project=project,
             quest_type=quest_type,
             quest_number=quest_number,
-            scope=scope,
-            slice_number=slice_number,
+            issue_file=str(issue_file_raw),
             experiment_id=experiment_id,
+            owner_role_override=owner_role,
         )
 
     def list_issues(
@@ -2038,8 +2037,7 @@ class QuestService:
         project: str,
         quest_type: str,
         quest_number: int,
-        scope_raw: object,
-        slice_raw: object | None = None,
+        issue_file_raw: object,
         status_filter: str = "all",
         experiment_id: str | None = None,
     ) -> dict:
@@ -2048,8 +2046,7 @@ class QuestService:
             project=project,
             quest_type=quest_type,
             quest_number=quest_number,
-            scope_raw=scope_raw,
-            slice_raw=slice_raw,
+            issue_file_raw=issue_file_raw,
             experiment_id=experiment_id,
         )
         issues = issue_service.list_issues(
@@ -2065,8 +2062,7 @@ class QuestService:
         project: str,
         quest_type: str,
         quest_number: int,
-        scope_raw: object,
-        slice_raw: object | None = None,
+        issue_file_raw: object,
         experiment_id: str | None = None,
     ) -> dict:
         ctx = self._resolve_issue_context(
@@ -2074,8 +2070,7 @@ class QuestService:
             project=project,
             quest_type=quest_type,
             quest_number=quest_number,
-            scope_raw=scope_raw,
-            slice_raw=slice_raw,
+            issue_file_raw=issue_file_raw,
             experiment_id=experiment_id,
         )
         return issue_service.get_issue(ctx, issue_id)
@@ -2087,26 +2082,31 @@ class QuestService:
         project: str,
         quest_type: str,
         quest_number: int,
-        scope_raw: object,
-        slice_raw: object | None = None,
+        issue_file_raw: object,
         title: str,
         body: str,
         status: str = "open",
+        owner_role_raw: object | None = None,
         experiment_id: str | None = None,
     ) -> dict:
+        owner_role = issue_service.parse_optional_owner_role(owner_role_raw)
         ctx = self._resolve_issue_context(
             repo_path,
             project=project,
             quest_type=quest_type,
             quest_number=quest_number,
-            scope_raw=scope_raw,
-            slice_raw=slice_raw,
+            issue_file_raw=issue_file_raw,
+            owner_role_raw=owner_role,
             experiment_id=experiment_id,
         )
         acquired = self._acquire_issue_mutation_lock(ctx, quest_type, quest_number)
         try:
             return issue_service.create_issue(
-                ctx, title=title, body=body, status=status
+                ctx,
+                title=title,
+                body=body,
+                status=status,
+                owner_role=owner_role,
             )
         finally:
             if acquired:
@@ -2120,8 +2120,7 @@ class QuestService:
         project: str,
         quest_type: str,
         quest_number: int,
-        scope_raw: object,
-        slice_raw: object | None = None,
+        issue_file_raw: object,
         status: str | None = None,
         title: str | None = None,
         body: str | None = None,
@@ -2132,8 +2131,7 @@ class QuestService:
             project=project,
             quest_type=quest_type,
             quest_number=quest_number,
-            scope_raw=scope_raw,
-            slice_raw=slice_raw,
+            issue_file_raw=issue_file_raw,
             experiment_id=experiment_id,
         )
         acquired = self._acquire_issue_mutation_lock(ctx, quest_type, quest_number)
@@ -2157,8 +2155,7 @@ class QuestService:
         project: str,
         quest_type: str,
         quest_number: int,
-        scope_raw: object,
-        slice_raw: object | None = None,
+        issue_file_raw: object,
         outcome: str,
         explanation: str,
         experiment_id: str | None = None,
@@ -2168,8 +2165,7 @@ class QuestService:
             project=project,
             quest_type=quest_type,
             quest_number=quest_number,
-            scope_raw=scope_raw,
-            slice_raw=slice_raw,
+            issue_file_raw=issue_file_raw,
             experiment_id=experiment_id,
         )
         acquired = self._acquire_issue_mutation_lock(ctx, quest_type, quest_number)
@@ -2192,8 +2188,7 @@ class QuestService:
         project: str,
         quest_type: str,
         quest_number: int,
-        scope_raw: object,
-        slice_raw: object | None = None,
+        issue_file_raw: object,
         experiment_id: str | None = None,
     ) -> dict:
         ctx = self._resolve_issue_context(
@@ -2201,8 +2196,7 @@ class QuestService:
             project=project,
             quest_type=quest_type,
             quest_number=quest_number,
-            scope_raw=scope_raw,
-            slice_raw=slice_raw,
+            issue_file_raw=issue_file_raw,
             experiment_id=experiment_id,
         )
         responses = issue_service.list_responses(ctx, issue_id)

@@ -34,14 +34,14 @@ def _body(
     project: str,
     quest_type: str,
     quest_number: int,
-    scope: str,
+    issue_file: str,
     **extra: object,
 ) -> dict:
     payload: dict = {
         "project": project,
         "quest_type": quest_type,
         "quest_number": quest_number,
-        "scope": scope,
+        "issue_file": issue_file,
     }
     payload.update(extra)
     return payload
@@ -67,7 +67,12 @@ class IssueApiTests(unittest.TestCase):
         out = self._create_quest(svc)
         resp = client.get(
             "/api/issues",
-            query_string=_query("example", "main", out["quest_number"], scope="physicalplan"),
+            query_string=_query(
+                "example",
+                "main",
+                out["quest_number"],
+                issue_file="physicalplan_issues.md",
+            ),
         )
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.get_json()["issues"], [])
@@ -99,7 +104,12 @@ class IssueApiTests(unittest.TestCase):
                 ),
             ],
         )
-        base = _query("example", "main", out["quest_number"], scope="physicalplan")
+        base = _query(
+            "example",
+            "main",
+            out["quest_number"],
+            issue_file="physicalplan_issues.md",
+        )
         all_resp = client.get("/api/issues", query_string=base)
         self.assertEqual(len(all_resp.get_json()["issues"]), 2)
         open_resp = client.get(
@@ -143,7 +153,12 @@ class IssueApiTests(unittest.TestCase):
         )
         resp = client.get(
             "/api/issues/QP-0001",
-            query_string=_query("example", "main", out["quest_number"], scope="physicalplan"),
+            query_string=_query(
+                "example",
+                "main",
+                out["quest_number"],
+                issue_file="physicalplan_issues.md",
+            ),
         )
         self.assertEqual(resp.status_code, 200)
         body = resp.get_json()
@@ -157,7 +172,12 @@ class IssueApiTests(unittest.TestCase):
         out = self._create_quest(svc)
         resp = client.get(
             "/api/issues/QP-0099",
-            query_string=_query("example", "main", out["quest_number"], scope="physicalplan"),
+            query_string=_query(
+                "example",
+                "main",
+                out["quest_number"],
+                issue_file="physicalplan_issues.md",
+            ),
         )
         self.assertEqual(resp.status_code, 404)
 
@@ -170,7 +190,7 @@ class IssueApiTests(unittest.TestCase):
                 "example",
                 "main",
                 out["quest_number"],
-                "physicalplan",
+                "physicalplan_issues.md",
                 title="New issue",
                 body="Issue details here.",
             ),
@@ -201,7 +221,7 @@ class IssueApiTests(unittest.TestCase):
                     "example",
                     "main",
                     out["quest_number"],
-                    "physicalplan",
+                    "physicalplan_issues.md",
                     title="Original",
                     body="Original body",
                 ),
@@ -212,7 +232,7 @@ class IssueApiTests(unittest.TestCase):
                     "example",
                     "main",
                     out["quest_number"],
-                    "physicalplan",
+                    "physicalplan_issues.md",
                     status="completed",
                 ),
             )
@@ -233,7 +253,7 @@ class IssueApiTests(unittest.TestCase):
                 "example",
                 "main",
                 out["quest_number"],
-                "physicalplan",
+                "physicalplan_issues.md",
                 title="T",
                 body="B",
             ),
@@ -244,7 +264,7 @@ class IssueApiTests(unittest.TestCase):
                 "example",
                 "main",
                 out["quest_number"],
-                "physicalplan",
+                "physicalplan_issues.md",
                 status="invalid",
             ),
         )
@@ -259,7 +279,7 @@ class IssueApiTests(unittest.TestCase):
                 "example",
                 "main",
                 out["quest_number"],
-                "physicalplan",
+                "physicalplan_issues.md",
                 title="T",
                 body="B",
             ),
@@ -270,7 +290,7 @@ class IssueApiTests(unittest.TestCase):
                 "example",
                 "main",
                 out["quest_number"],
-                "physicalplan",
+                "physicalplan_issues.md",
                 outcome="Fixed",
                 explanation="Resolved in tests.",
             ),
@@ -295,7 +315,7 @@ class IssueApiTests(unittest.TestCase):
                 "example",
                 "main",
                 out["quest_number"],
-                "physicalplan",
+                "physicalplan_issues.md",
                 title="T",
                 body="B",
             ),
@@ -306,7 +326,7 @@ class IssueApiTests(unittest.TestCase):
                 "example",
                 "main",
                 out["quest_number"],
-                "physicalplan",
+                "physicalplan_issues.md",
                 outcome="Maybe",
                 explanation="Nope",
             ),
@@ -322,7 +342,7 @@ class IssueApiTests(unittest.TestCase):
                 "example",
                 "main",
                 out["quest_number"],
-                "physicalplan",
+                "physicalplan_issues.md",
                 title="T",
                 body="B",
             ),
@@ -333,7 +353,7 @@ class IssueApiTests(unittest.TestCase):
                 "example",
                 "main",
                 out["quest_number"],
-                "physicalplan",
+                "physicalplan_issues.md",
                 outcome="Fixed",
                 explanation="   ",
             ),
@@ -385,7 +405,12 @@ class IssueApiTests(unittest.TestCase):
         )
         resp = client.get(
             "/api/issues/QP-0001/responses",
-            query_string=_query("example", "main", out["quest_number"], scope="physicalplan"),
+            query_string=_query(
+                "example",
+                "main",
+                out["quest_number"],
+                issue_file="physicalplan_issues.md",
+            ),
         )
         self.assertEqual(resp.status_code, 200)
         responses = resp.get_json()["responses"]
@@ -393,7 +418,7 @@ class IssueApiTests(unittest.TestCase):
         self.assertEqual(responses[0]["explanation"], "First.")
         self.assertEqual(responses[1]["explanation"], "Second.")
 
-    def test_physicalplan_rejects_slice(self) -> None:
+    def test_rejects_undeclared_issue_file(self) -> None:
         client, svc = make_app_client(self.temp.root, self.repo_root)
         out = self._create_quest(svc)
         resp = client.get(
@@ -402,22 +427,12 @@ class IssueApiTests(unittest.TestCase):
                 "example",
                 "main",
                 out["quest_number"],
-                scope="physicalplan",
-                slice="1",
+                issue_file="notes/other_issues.md",
             ),
         )
         self.assertEqual(resp.status_code, 400)
 
-    def test_polishing_requires_slice(self) -> None:
-        client, svc = make_app_client(self.temp.root, self.repo_root)
-        out = self._create_quest(svc)
-        resp = client.get(
-            "/api/issues",
-            query_string=_query("example", "main", out["quest_number"], scope="polishing"),
-        )
-        self.assertEqual(resp.status_code, 400)
-
-    def test_polishing_scope_crud(self) -> None:
+    def test_polishing_issue_file_crud(self) -> None:
         client, svc = make_app_client(self.temp.root, self.repo_root)
         out = self._create_quest(svc)
         qdir = quest_dir_on_checkout(self.temp.root, out)
@@ -427,7 +442,7 @@ class IssueApiTests(unittest.TestCase):
             "# Slice State\n\nstate: NotStarted\nupdated_at: 2026-01-01T00:00:00Z\n",
             encoding="utf-8",
         )
-        slice_number = 1
+        issue_file = "slices/0001_polish_test/polishing_issues.md"
 
         create_resp = client.post(
             "/api/issues",
@@ -435,8 +450,7 @@ class IssueApiTests(unittest.TestCase):
                 "example",
                 "main",
                 out["quest_number"],
-                "polishing",
-                slice=slice_number,
+                issue_file,
                 title="Polish issue",
                 body="Polish body",
             ),
@@ -452,8 +466,7 @@ class IssueApiTests(unittest.TestCase):
                 "example",
                 "main",
                 out["quest_number"],
-                scope="polishing",
-                slice=str(slice_number),
+                issue_file=issue_file,
             ),
         )
         self.assertEqual(len(list_resp.get_json()["issues"]), 1)
@@ -472,7 +485,7 @@ class IssueApiTests(unittest.TestCase):
                     "example",
                     "main",
                     out["quest_number"],
-                    "physicalplan",
+                    "physicalplan_issues.md",
                     title="Blocked",
                     body="Should fail",
                 ),
@@ -492,7 +505,7 @@ class IssueApiTests(unittest.TestCase):
                 "example",
                 "main",
                 out["quest_number"],
-                "physicalplan",
+                "physicalplan_issues.md",
                 title="Pre-worktree",
                 body="Created before worktree exists.",
             ),

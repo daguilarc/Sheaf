@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator
@@ -824,6 +825,19 @@ def _parse_workflow(
                 file=workflow_path,
                 field_path=f"issues.{issue_alias}.id_prefix",
             )
+        if version == 1:
+            if id_prefix is None:
+                raise _validation_error(
+                    "id_prefix is required for workflow version 1",
+                    file=workflow_path,
+                    field_path=f"issues.{issue_alias}.id_prefix",
+                )
+            if not re.fullmatch(r"[A-Z]{2}", id_prefix):
+                raise _validation_error(
+                    "id_prefix must be two uppercase ASCII letters",
+                    file=workflow_path,
+                    field_path=f"issues.{issue_alias}.id_prefix",
+                )
         issues[str(issue_alias)] = WorkflowIssueDeclaration(
             alias=str(issue_alias),
             path=issue_path,
