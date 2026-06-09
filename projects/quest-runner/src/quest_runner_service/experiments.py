@@ -56,6 +56,14 @@ class ExperimentWorktreeCreationError(ExperimentError):
 
 
 @dataclass
+class QuestScope:
+    project: str
+    quest_type: str
+    quest_number: int
+    experiment_id: str | None = None
+
+
+@dataclass
 class ExperimentStartStep:
     global_step: int
     step_commit: str

@@ -289,6 +289,7 @@ def build_runtime_context(
     slice_dir: Path | None,
     quest_docs_dir: Path,
     repo_path: Path | None = None,
+    experiment_id: str | None = None,
 ) -> str:
     slice_label = slice_dir.name if slice_dir is not None else "none (quest-scoped pass)"
     if repo_path is not None:
@@ -317,6 +318,13 @@ def build_runtime_context(
         f"{project_path_label}/docs" if project_path_label else "docs"
     )
     issue_summary = _issue_workflow_cli_summary()
+    experiment_block = ""
+    if experiment_id is not None:
+        experiment_block = (
+            f"Experiment: {experiment_id}\n"
+            f"When using scripts/quest-runner, pass --experiment-id {experiment_id}.\n"
+            "Do not omit the experiment id; the original quest worktree may not exist.\n\n"
+        )
     return (
         "Quest Runtime Context\n"
         f"- Quest: {meta.quest_type}/{meta.quest_number:04d}_{meta.quest_slug} ({meta.quest_name})\n"
@@ -326,6 +334,7 @@ def build_runtime_context(
         f"- Current slice directory: {slice_path_label}\n"
         f"- Current project docs directory: {project_docs_label}\n"
         f"- Quest runner reference directory: {quest_docs_dir}\n\n"
+        f"{experiment_block}"
         "Use the quest's `specs/` directory as the implementation specification for this quest. "
         "Use the quest runner reference directory above for internal storage schemas and "
         "maintainer workflow rules.\n\n"

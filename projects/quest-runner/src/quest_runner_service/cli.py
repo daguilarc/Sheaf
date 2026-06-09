@@ -245,6 +245,7 @@ def _issue_query(
     quest_number: int,
     scope: str,
     slice_number: int | None,
+    experiment_id: str | None = None,
     extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     query: dict[str, Any] = {
@@ -255,6 +256,8 @@ def _issue_query(
     }
     if slice_number is not None:
         query["slice"] = slice_number
+    if experiment_id is not None:
+        query["experiment_id"] = experiment_id
     if extra:
         query.update(extra)
     return query
@@ -266,6 +269,7 @@ def _issue_body(
     quest_number: int,
     scope: str,
     slice_number: int | None,
+    experiment_id: str | None = None,
     extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     body: dict[str, Any] = {
@@ -275,6 +279,8 @@ def _issue_body(
         "scope": scope,
         "slice": slice_number,
     }
+    if experiment_id is not None:
+        body["experiment_id"] = experiment_id
     if extra:
         body.update(extra)
     return body
@@ -496,6 +502,14 @@ def _add_quest_identity_args(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_experiment_id_arg(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--experiment-id",
+        default=None,
+        help="Experiment id when operating in an experiment worktree",
+    )
+
+
 def _add_issue_scope_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--scope",
@@ -526,10 +540,12 @@ def build_parser() -> argparse.ArgumentParser:
         Examples:
           scripts/quest-runner create --project quest-runner --type side --name "CLI"
           scripts/quest-runner run --project quest-runner --type side --number 0 --max-steps 25
+          scripts/quest-runner run --project quest-runner --type main --number 0 --experiment-id experiment_quest-runner_main_0_0
           scripts/quest-runner advance --project quest-runner --type side --number 0
           scripts/quest-runner land --project quest-runner --type side --number 0
           scripts/quest-runner slices init --project quest-runner --type side --number 0 --count 2 --slug api --slug cli
           scripts/quest-runner issues list --project quest-runner --type side --number 0 --scope physicalplan
+          scripts/quest-runner issues list --project quest-runner --type main --number 0 --scope physicalplan --experiment-id experiment_quest-runner_main_0_0
           scripts/quest-runner issues read QP-0001 --project quest-runner --type side --number 0 --scope physicalplan
           scripts/quest-runner issues create --project quest-runner --type side --number 0 --scope physicalplan --title "Title" --body "Details"
           scripts/quest-runner issues edit QP-0001 --project quest-runner --type side --number 0 --scope physicalplan --status completed
@@ -576,6 +592,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     run_parser = subparsers.add_parser("run", help="Run a quest")
     _add_quest_identity_args(run_parser)
+    _add_experiment_id_arg(run_parser)
     run_parser.add_argument("--max-steps", type=int, default=None)
     run_parser.set_defaults(handler="run")
 
@@ -584,6 +601,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Manually advance a stopped quest after fix-ups",
     )
     _add_quest_identity_args(advance_parser)
+    _add_experiment_id_arg(advance_parser)
     advance_parser.set_defaults(handler="advance")
 
     land_parser = subparsers.add_parser(
@@ -591,6 +609,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Land a quest worktree branch onto the target branch",
     )
     _add_quest_identity_args(land_parser)
+    _add_experiment_id_arg(land_parser)
     land_parser.add_argument("--target-branch", default="main")
     land_parser.set_defaults(handler="land")
 
@@ -602,6 +621,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Initialize physically-plannable quest slice directories",
     )
     _add_quest_identity_args(slices_init)
+    _add_experiment_id_arg(slices_init)
     slices_init.add_argument("--count", required=True, type=int)
     slices_init.add_argument(
         "--slug",
@@ -616,6 +636,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     issues_list = issues_sub.add_parser("list", help="List issues")
     _add_quest_identity_args(issues_list)
+    _add_experiment_id_arg(issues_list)
     _add_issue_scope_args(issues_list)
     issues_list.add_argument(
         "--status",
@@ -627,11 +648,13 @@ def build_parser() -> argparse.ArgumentParser:
     issues_read = issues_sub.add_parser("read", help="Read one issue")
     issues_read.add_argument("issue_id")
     _add_quest_identity_args(issues_read)
+    _add_experiment_id_arg(issues_read)
     _add_issue_scope_args(issues_read)
     issues_read.set_defaults(handler="issues_read")
 
     issues_create = issues_sub.add_parser("create", help="Create an issue")
     _add_quest_identity_args(issues_create)
+    _add_experiment_id_arg(issues_create)
     _add_issue_scope_args(issues_create)
     issues_create.add_argument("--title", required=True)
     issues_create.add_argument("--body", default=None)
@@ -646,6 +669,7 @@ def build_parser() -> argparse.ArgumentParser:
     issues_edit = issues_sub.add_parser("edit", help="Edit an issue")
     issues_edit.add_argument("issue_id")
     _add_quest_identity_args(issues_edit)
+    _add_experiment_id_arg(issues_edit)
     _add_issue_scope_args(issues_edit)
     issues_edit.add_argument("--status", default=None, choices=sorted(_VALID_ISSUE_STATUSES))
     issues_edit.add_argument("--title", default=None)
@@ -656,6 +680,7 @@ def build_parser() -> argparse.ArgumentParser:
     issues_respond = issues_sub.add_parser("respond", help="Respond to an issue")
     issues_respond.add_argument("issue_id")
     _add_quest_identity_args(issues_respond)
+    _add_experiment_id_arg(issues_respond)
     _add_issue_scope_args(issues_respond)
     issues_respond.add_argument("--outcome", required=True, choices=sorted(_VALID_OUTCOMES))
     issues_respond.add_argument("--explanation", default=None)
@@ -665,6 +690,7 @@ def build_parser() -> argparse.ArgumentParser:
     issues_responses = issues_sub.add_parser("responses", help="List issue responses")
     issues_responses.add_argument("issue_id")
     _add_quest_identity_args(issues_responses)
+    _add_experiment_id_arg(issues_responses)
     _add_issue_scope_args(issues_responses)
     issues_responses.set_defaults(handler="issues_responses")
 
@@ -770,6 +796,8 @@ def _dispatch_command(
             "quest_type": args.type,
             "quest_number": args.number,
         }
+        if args.experiment_id is not None:
+            body["experiment_id"] = args.experiment_id
         if args.max_steps is not None:
             body["max_steps"] = args.max_steps
         endpoint = "/run_quest"
@@ -797,6 +825,8 @@ def _dispatch_command(
             "quest_type": args.type,
             "quest_number": args.number,
         }
+        if args.experiment_id is not None:
+            body["experiment_id"] = args.experiment_id
         endpoint = "/advance_quest"
         status, data = _send_request(
             request_fn, "POST", base_url=base_url, endpoint=endpoint, body=body
@@ -817,6 +847,11 @@ def _dispatch_command(
         )
 
     if handler == "land":
+        if args.experiment_id is not None:
+            raise CliValidationError(
+                "Experiment landing is implemented by `experiments land` in slice 5; "
+                "do not use `land --experiment-id`."
+            )
         body = {
             "project": args.project,
             "quest_type": args.type,
@@ -856,6 +891,8 @@ def _dispatch_command(
             "count": args.count,
             "slugs": args.slug,
         }
+        if args.experiment_id is not None:
+            body["experiment_id"] = args.experiment_id
         endpoint = "/api/slices/init"
         status, data = _send_request(
             request_fn, "POST", base_url=base_url, endpoint=endpoint, body=body
@@ -884,6 +921,7 @@ def _dispatch_command(
         quest_number = args.number
         scope = args.scope
         slice_number = args.slice
+        experiment_id = args.experiment_id
 
         if handler == "issues_list":
             _validate_list_status(args.status)
@@ -894,6 +932,7 @@ def _dispatch_command(
                 quest_number,
                 scope,
                 slice_number,
+                experiment_id,
                 {"status": args.status},
             )
             status, data = _send_request(
@@ -921,7 +960,14 @@ def _dispatch_command(
 
         if handler == "issues_read":
             endpoint = f"/api/issues/{args.issue_id}"
-            query = _issue_query(project, quest_type, quest_number, scope, slice_number)
+            query = _issue_query(
+                project,
+                quest_type,
+                quest_number,
+                scope,
+                slice_number,
+                experiment_id,
+            )
             status, data = _send_request(
                 request_fn,
                 "GET",
@@ -959,6 +1005,7 @@ def _dispatch_command(
                 quest_number,
                 scope,
                 slice_number,
+                experiment_id,
                 {"title": args.title, "body": body_text, "status": args.status},
             )
             status, data = _send_request(
@@ -996,7 +1043,15 @@ def _dispatch_command(
                 extra["title"] = args.title
             if args.body is not None or args.body_file is not None:
                 extra["body"] = _read_text_source(args.body, args.body_file, "body")
-            body = _issue_body(project, quest_type, quest_number, scope, slice_number, extra)
+            body = _issue_body(
+                project,
+                quest_type,
+                quest_number,
+                scope,
+                slice_number,
+                experiment_id,
+                extra,
+            )
             status, data = _send_request(
                 request_fn, "PATCH", base_url=base_url, endpoint=endpoint, body=body
             )
@@ -1025,6 +1080,7 @@ def _dispatch_command(
                 quest_number,
                 scope,
                 slice_number,
+                experiment_id,
                 {"outcome": args.outcome, "explanation": explanation},
             )
             status, data = _send_request(
@@ -1047,7 +1103,14 @@ def _dispatch_command(
 
         if handler == "issues_responses":
             endpoint = f"/api/issues/{args.issue_id}/responses"
-            query = _issue_query(project, quest_type, quest_number, scope, slice_number)
+            query = _issue_query(
+                project,
+                quest_type,
+                quest_number,
+                scope,
+                slice_number,
+                experiment_id,
+            )
             status, data = _send_request(
                 request_fn,
                 "GET",

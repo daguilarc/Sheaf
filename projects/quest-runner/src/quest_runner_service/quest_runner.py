@@ -87,6 +87,7 @@ def perform_role_harness_sequence(
     captured_outputs: list[dict],
     create_thread_if_missing: Callable[[], QuestThread],
     event_bus: ChatEventBus | None = None,
+    experiment_id: str | None = None,
 ) -> HarnessResponse:
     """Run primary (and optional follow-up) harness sends for one role step.
 
@@ -116,6 +117,7 @@ def perform_role_harness_sequence(
         slice_dir=slice_dir,
         quest_docs_dir=quest_docs_dir,
         repo_path=repo_path,
+        experiment_id=experiment_id,
     )
     message_body = f"{runtime_context}\n\nTask:\n{task_instruction}"
     thread = thread_box[0]
@@ -1106,8 +1108,14 @@ def run_quest(
     conductor_repo_path: Path,
     max_steps: int = 500,
     event_bus: ChatEventBus | None = None,
+    experiment_id: str | None = None,
 ) -> HarnessResponse:
     from . import quest_runner_v2
     return quest_runner_v2.run_quest_v2(
-        repo_path, quest_dir, conductor_repo_path, max_steps, event_bus=event_bus
+        repo_path,
+        quest_dir,
+        conductor_repo_path,
+        max_steps,
+        event_bus=event_bus,
+        experiment_id=experiment_id,
     )

@@ -119,6 +119,7 @@ class _ThreadLlmNode(BaseNode):
             captured_outputs=ctx.captured_outputs_list,
             create_thread_if_missing=_create,
             event_bus=ctx.event_bus,
+            experiment_id=ctx.experiment_id,
         )
 
     def NextState(self, ctx: RunContext, machine: StateMachine) -> str:

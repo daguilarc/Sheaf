@@ -10,9 +10,10 @@ from pathlib import Path
 from . import quest_fs
 from .dashboard_data import (
     DashboardBadRequest,
+    DashboardCheckout,
     DashboardNotFound,
     find_slice_dir,
-    lock_key_for_quest,
+    lock_key_for_checkout,
     resolve_dashboard_checkout,
     resolve_quest_dir,
 )
@@ -130,6 +131,8 @@ def resolve_issue_context(
     quest_number: int,
     scope: IssueScope,
     slice_number: int | None,
+    experiment_id: str | None = None,
+    checkout: DashboardCheckout | None = None,
 ) -> IssueContext:
     if scope == IssueScope.PhysicalPlan and slice_number is not None:
         raise DashboardBadRequest(
@@ -142,9 +145,18 @@ def resolve_issue_context(
             fields={"slice": "required"},
         )
 
-    source_qdir = resolve_quest_dir(source_root, project, quest_type, quest_number)
-    meta = quest_fs.read_quest_meta(source_qdir)
-    checkout = resolve_dashboard_checkout(source_root, meta)
+    if checkout is None:
+        source_qdir = resolve_quest_dir(
+            source_root, project, quest_type, quest_number
+        )
+        meta = quest_fs.read_quest_meta(source_qdir)
+        checkout = resolve_dashboard_checkout(
+            source_root,
+            meta,
+            experiment_id=experiment_id,
+        )
+    else:
+        meta = quest_fs.read_quest_meta(checkout.quest_dir)
 
     slice_dir: Path | None = None
     if scope == IssueScope.PhysicalPlan:
@@ -166,7 +178,7 @@ def resolve_issue_context(
 
     lock_key: str | None = None
     if not checkout.worktree_missing:
-        lock_key = lock_key_for_quest(source_root, meta)
+        lock_key = lock_key_for_checkout(source_root, meta, checkout)
 
     return IssueContext(
         source_root=source_root.resolve(),

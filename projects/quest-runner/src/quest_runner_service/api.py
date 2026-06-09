@@ -16,6 +16,7 @@ from . import dashboard_slice
 from .dashboard_chat import ChatStreamSession
 from .dashboard_data import DashboardBadRequest, DashboardNotFound
 from .harness import HarnessNotAvailable
+from . import quest_fs
 from .quest_fs import QuestStateParseError
 from .issue_service import IssueNotFound
 from .quest_service import (
@@ -293,6 +294,7 @@ def create_app(
             quest_number=data["quest_number"],
             max_steps=max_steps,
             public_base_url=base,
+            experiment_id=data.get("experiment_id"),
         )
         log.info(
             "run_quest scheduled run_id=%s status=%s",
@@ -319,6 +321,7 @@ def create_app(
             project=data["project"],
             quest_type=data["quest_type"],
             quest_number=data["quest_number"],
+            experiment_id=data.get("experiment_id"),
         )
         log.info(
             "advance_quest ok project=%s type=%s number=%s status=%s",
@@ -381,6 +384,7 @@ def create_app(
             quest_number=data["quest_number"],
             count=data["count"],
             slugs=data["slugs"],
+            experiment_id=data.get("experiment_id"),
         )
         log.info(
             "initialize_slices ok project=%s type=%s number=%s created=%s",
@@ -431,10 +435,23 @@ def create_app(
         )
         qt = dashboard_data.parse_quest_type(request.args.get("quest_type"))
         qn = dashboard_data.parse_quest_number(request.args.get("quest_number"))
-        checkout, qdir = dashboard_data.resolve_quest_dirs(
-            source_root, project, qt, qn
+        experiment_id = dashboard_data.parse_experiment_id(
+            request.args.get("experiment_id")
         )
-        return project, qt, qn, qdir, checkout
+        checkout_root, qdir = dashboard_data.resolve_quest_dirs(
+            source_root,
+            project,
+            qt,
+            qn,
+            experiment_id=experiment_id,
+        )
+        meta = quest_fs.read_quest_meta(qdir)
+        checkout = dashboard_data.resolve_dashboard_checkout(
+            source_root,
+            meta,
+            experiment_id=experiment_id,
+        )
+        return project, qt, qn, qdir, checkout.checkout_root, experiment_id
 
     @app.route("/api/dashboard/projects", methods=["GET"])
     def dashboard_projects():
@@ -456,31 +473,32 @@ def create_app(
 
     @app.route("/api/dashboard/quest_overview", methods=["GET"])
     def dashboard_quest_overview():
-        project, _qt, _qn, qdir, checkout = _quest_context()
+        project, _qt, _qn, qdir, checkout_root, experiment_id = _quest_context()
         base = request.url_root
         payload = dashboard_data.quest_overview_payload(
             quest_dir=qdir,
             source_repo_root=source_root,
-            checkout_root=checkout,
+            checkout_root=checkout_root,
             project=project,
             lock=quest_service.lock,
             public_base_url=base,
+            experiment_id=experiment_id,
         )
         return jsonify(payload)
 
     @app.route("/api/dashboard/physicalplan_issues", methods=["GET"])
     def dashboard_physicalplan_issues():
-        _project, _qt, _qn, qdir, _checkout = _quest_context()
+        _project, _qt, _qn, qdir, _checkout_root, _experiment_id = _quest_context()
         return jsonify(dashboard_data.physicalplan_issues_payload(qdir))
 
     @app.route("/api/dashboard/human_intervention", methods=["GET"])
     def dashboard_human_intervention():
-        _project, _qt, _qn, qdir, _checkout = _quest_context()
+        _project, _qt, _qn, qdir, _checkout_root, _experiment_id = _quest_context()
         return jsonify(dashboard_data.human_intervention_payload(qdir))
 
     @app.route("/api/dashboard/run_status", methods=["GET"])
     def dashboard_run_status():
-        project, qt, qn, qdir, _checkout = _quest_context()
+        project, qt, qn, qdir, _checkout_root, experiment_id = _quest_context()
         payload = dashboard_data.run_status_payload(
             quest_dir=qdir,
             source_repo_root=source_root,
@@ -489,12 +507,13 @@ def create_app(
             quest_number=qn,
             lock=quest_service.lock,
             run_tracker=quest_service.run_tracker,
+            experiment_id=experiment_id,
         )
         return jsonify(payload)
 
     @app.route("/api/dashboard/slice_page", methods=["GET"])
     def dashboard_slice_page():
-        _project, _qt, _qn, qdir, _checkout = _quest_context()
+        _project, _qt, _qn, qdir, _checkout_root, _experiment_id = _quest_context()
         sn = dashboard_slice.parse_slice_number(request.args.get("slice_number"))
         sub = dashboard_slice.parse_subpage(request.args.get("subpage"))
         payload = dashboard_slice.slice_page_payload(
@@ -506,12 +525,12 @@ def create_app(
 
     @app.route("/api/dashboard/quest_agents", methods=["GET"])
     def dashboard_quest_agents():
-        _project, _qt, _qn, qdir, _checkout = _quest_context()
+        _project, _qt, _qn, qdir, _checkout_root, _experiment_id = _quest_context()
         return jsonify(dashboard_slice.quest_agents_payload(qdir))
 
     @app.route("/api/dashboard/agent_log", methods=["GET"])
     def dashboard_agent_log():
-        _project, _qt, _qn, qdir, _checkout = _quest_context()
+        _project, _qt, _qn, qdir, _checkout_root, _experiment_id = _quest_context()
         ak = request.args.get("agent_key")
         step = dashboard_slice.parse_optional_step(request.args.get("step"))
         payload = dashboard_slice.agent_log_payload(
@@ -524,7 +543,7 @@ def create_app(
     @sock.route("/api/dashboard/agent_log/stream")
     def dashboard_agent_log_stream(ws):
         try:
-            _project, _qt, _qn, qdir, _checkout = _quest_context()
+            _project, _qt, _qn, qdir, _checkout_root, _experiment_id = _quest_context()
             agent_key = request.args.get("agent_key") or ""
             step = dashboard_slice.parse_optional_step(request.args.get("step"))
             _step_num, log_path = dashboard_slice.resolve_agent_log_path(
@@ -548,11 +567,11 @@ def create_app(
 
     @app.route("/api/dashboard/git_commits", methods=["GET"])
     def dashboard_git_commits():
-        _project, _qt, _qn, _qdir, checkout = _quest_context()
+        _project, _qt, _qn, _qdir, checkout_root, _experiment_id = _quest_context()
         limit = dashboard_git.parse_limit(request.args.get("limit"))
         skip = dashboard_git.parse_skip(request.args.get("skip"))
         payload = dashboard_git.git_commits_payload(
-            checkout, limit=limit, skip=skip
+            checkout_root, limit=limit, skip=skip
         )
         return jsonify(payload)
 
@@ -569,6 +588,9 @@ def create_app(
             "project": project,
             "quest_type": quest_type,
             "quest_number": quest_number,
+            "experiment_id": dashboard_data.parse_experiment_id(
+                request.args.get("experiment_id")
+            ),
         }
 
     def _issue_quest_params_from_body(data: dict) -> dict:
@@ -595,6 +617,7 @@ def create_app(
             "quest_number": data["quest_number"],
             "scope_raw": data["scope"],
             "slice_raw": data.get("slice"),
+            "experiment_id": data.get("experiment_id"),
         }
 
     @app.route("/api/issues", methods=["GET"])
@@ -611,6 +634,7 @@ def create_app(
             scope_raw=scope_raw,
             slice_raw=slice_raw,
             status_filter=status_filter or "all",
+            experiment_id=params.get("experiment_id"),
         )
         return jsonify(result), 200
 
@@ -625,6 +649,7 @@ def create_app(
             quest_number=params["quest_number"],
             scope_raw=request.args.get("scope"),
             slice_raw=request.args.get("slice"),
+            experiment_id=params.get("experiment_id"),
         )
         return jsonify(result), 200
 
@@ -645,6 +670,7 @@ def create_app(
             title=title,
             body=body,
             status=status,
+            experiment_id=params.get("experiment_id"),
         )
         return jsonify(result), 201
 
@@ -663,6 +689,7 @@ def create_app(
             status=data.get("status"),
             title=data.get("title"),
             body=data.get("body", data.get("details")),
+            experiment_id=params.get("experiment_id"),
         )
         return jsonify(result), 200
 
@@ -682,6 +709,7 @@ def create_app(
             slice_raw=params["slice_raw"],
             outcome=outcome,
             explanation=explanation,
+            experiment_id=params.get("experiment_id"),
         )
         return jsonify(result), 201
 
@@ -696,12 +724,13 @@ def create_app(
             quest_number=params["quest_number"],
             scope_raw=request.args.get("scope"),
             slice_raw=request.args.get("slice"),
+            experiment_id=params.get("experiment_id"),
         )
         return jsonify(result), 200
 
     @app.route("/api/dashboard/git_diff", methods=["GET"])
     def dashboard_git_diff():
-        _project, _qt, _qn, _qdir, checkout = _quest_context()
+        _project, _qt, _qn, _qdir, checkout_root, _experiment_id = _quest_context()
         commit = request.args.get("commit")
         if commit is None or not str(commit).strip():
             raise dashboard_data.DashboardBadRequest(
@@ -711,11 +740,11 @@ def create_app(
         path = request.args.get("path")
         if path is not None and str(path).strip():
             payload = dashboard_git.git_diff_file_payload(
-                checkout, commit.strip(), str(path).strip()
+                checkout_root, commit.strip(), str(path).strip()
             )
         else:
             payload = dashboard_git.git_diff_summary_payload(
-                checkout, commit.strip()
+                checkout_root, commit.strip()
             )
         return jsonify(payload)
 

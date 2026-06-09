@@ -43,6 +43,7 @@ def run_quest_v2(
     conductor_repo_path: Path,
     max_steps: int = 500,
     event_bus: ChatEventBus | None = None,
+    experiment_id: str | None = None,
 ) -> dict:
     meta = quest_fs.read_quest_meta(quest_dir)
     quest_key = _quest_key(meta)
@@ -122,6 +123,7 @@ def run_quest_v2(
             role_step_seq_box=role_step_seq_box,
             captured_outputs_list=captured_outputs,
             event_bus=event_bus,
+            experiment_id=experiment_id,
         )
 
         try:

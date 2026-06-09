@@ -35,3 +35,4 @@ class RunContext:
     role_step_seq_box: list[int] | None = None
     captured_outputs_list: list | None = None
     event_bus: ChatEventBus | None = None
+    experiment_id: str | None = None

@@ -13,6 +13,7 @@ from pathlib import Path
 from . import issue_service
 from . import quest_fs
 from .chat_event_bus import ChatEventBus
+from .dashboard_data import DashboardBadRequest, DashboardCheckout, DashboardNotFound
 from .dashboard_runs import ActiveRunTracker
 from .deferred_tasks import DeferredTaskScheduler
 from .quest_lock import LockInfo, QuestLock
@@ -157,7 +158,9 @@ class MissingQuestWorktree(Exception):
         self.worktree_path = worktree_path
         super().__init__(
             f"Quest worktree missing or invalid for project={project!r} "
-            f"type={quest_type!r} number={quest_number}: {worktree_path}"
+            f"type={quest_type!r} number={quest_number}: {worktree_path}. "
+            "If you are working on an experiment, pass "
+            "--experiment-id <id> (or experiment_id in the API request)."
         )
 
 
@@ -228,11 +231,15 @@ def _build_run_lock_key(
     project: str,
     quest_type: str,
     quest_number: int,
+    experiment_id: str | None = None,
 ) -> str:
-    return (
+    key = (
         f"{worktree_path.resolve()}::"
         f"{project}/{quest_type}/{quest_number:04d}"
     )
+    if experiment_id is not None:
+        key = f"{key}::{experiment_id}"
+    return key
 
 
 def _validate_project(repo_root: Path, project: str) -> None:
@@ -275,18 +282,22 @@ class QuestService:
         max_steps: int,
         reason: str,
         delay_seconds: int,
+        experiment_id: str | None = None,
     ) -> dict:
         repo_path_str = str(repo_path)
 
         def _callback() -> None:
             try:
-                self.run_quest(
-                    repo_path=repo_path_str,
-                    project=project,
-                    quest_type=quest_type,
-                    quest_number=quest_number,
-                    max_steps=max_steps,
-                )
+                run_kwargs: dict = {
+                    "repo_path": repo_path_str,
+                    "project": project,
+                    "quest_type": quest_type,
+                    "quest_number": quest_number,
+                    "max_steps": max_steps,
+                }
+                if experiment_id is not None:
+                    run_kwargs["experiment_id"] = experiment_id
+                self.run_quest(**run_kwargs)
             except Exception:
                 log.exception(
                     "Deferred quest run failed for %s/%s #%s",
@@ -295,18 +306,22 @@ class QuestService:
                     quest_number,
                 )
 
+        description: dict = {
+            "kind": "quest_run",
+            "repo_path": repo_path_str,
+            "project": project,
+            "quest_type": quest_type,
+            "quest_number": quest_number,
+            "max_steps": max_steps,
+            "reason": reason,
+        }
+        if experiment_id is not None:
+            description["experiment_id"] = experiment_id
+
         scheduled = self.scheduler.schedule(
             delay_seconds=delay_seconds,
             callback=_callback,
-            description={
-                "kind": "quest_run",
-                "repo_path": repo_path_str,
-                "project": project,
-                "quest_type": quest_type,
-                "quest_number": quest_number,
-                "max_steps": max_steps,
-                "reason": reason,
-            },
+            description=description,
         )
         return {
             "status": "deferred",
@@ -660,13 +675,16 @@ class QuestService:
             "dashboard_url": dashboard_url,
         }
 
-    def _prepare_run(
+    def _resolve_mutable_quest_scope(
         self,
         repo_path: str,
         project: str,
         quest_type: str,
         quest_number: int,
-    ) -> tuple[Path, Path, str]:
+        *,
+        experiment_id: str | None = None,
+        require_open_experiment: bool = False,
+    ) -> tuple[Path, Path, DashboardCheckout, experiment_ops.ExperimentMeta | None]:
         source_root = _resolve_repo(repo_path)
         if not _is_git_repo(source_root):
             raise NotAGitRepo(repo_path)
@@ -685,25 +703,89 @@ class QuestService:
             raise QuestNotFound(project, quest_type, quest_number)
 
         meta = quest_fs.read_quest_meta(source_qdir)
-        worktree_path = quest_worktree_path(source_root, meta)
-        if not worktree_exists(source_root, meta) or not is_git_worktree(worktree_path):
+        try:
+            checkout = experiment_ops.resolve_quest_scope_checkout(
+                source_root,
+                meta,
+                experiment_id=experiment_id,
+                require_open_experiment=require_open_experiment,
+            )
+        except DashboardNotFound as exc:
+            if experiment_id is None:
+                worktree_path = quest_worktree_path(source_root, meta)
+                raise MissingQuestWorktree(
+                    project, quest_type, quest_number, worktree_path
+                ) from exc
             raise MissingQuestWorktree(
-                project, quest_type, quest_number, worktree_path
+                project,
+                quest_type,
+                quest_number,
+                experiment_ops.experiment_worktree_path(source_root, experiment_id),
+            ) from exc
+        except DashboardBadRequest as exc:
+            raise InvalidQuestInput(exc.message) from exc
+
+        exp_meta: experiment_ops.ExperimentMeta | None = None
+        if experiment_id is not None:
+            exp_meta = experiment_ops.find_experiment_by_id(
+                source_root,
+                project,
+                quest_type,
+                quest_number,
+                experiment_id,
             )
 
-        worktree_root = worktree_path.resolve()
-        worktree_qdir = quest_fs.find_quest_dir(
-            worktree_root, project, quest_type, quest_number
+        return (
+            checkout.checkout_root,
+            checkout.quest_dir,
+            checkout,
+            exp_meta,
         )
-        if worktree_qdir is None:
+
+    def _prepare_run(
+        self,
+        repo_path: str,
+        project: str,
+        quest_type: str,
+        quest_number: int,
+        experiment_id: str | None = None,
+    ) -> tuple[Path, Path, str, experiment_ops.ExperimentMeta | None]:
+        worktree_root, worktree_qdir, checkout, exp_meta = (
+            self._resolve_mutable_quest_scope(
+                repo_path,
+                project,
+                quest_type,
+                quest_number,
+                experiment_id=experiment_id,
+                require_open_experiment=experiment_id is not None,
+            )
+        )
+
+        if checkout.worktree_missing:
+            source_root = _resolve_repo(repo_path)
+            if experiment_id is None:
+                source_qdir = quest_fs.find_quest_dir(
+                    source_root, project, quest_type, quest_number
+                )
+                assert source_qdir is not None
+                meta = quest_fs.read_quest_meta(source_qdir)
+                expected = quest_worktree_path(source_root, meta)
+            else:
+                expected = experiment_ops.experiment_worktree_path(
+                    source_root, experiment_id
+                )
             raise MissingQuestWorktree(
-                project, quest_type, quest_number, worktree_path
+                project, quest_type, quest_number, expected
             )
 
         key = _build_run_lock_key(
-            worktree_root, project, quest_type, quest_number
+            worktree_root,
+            project,
+            quest_type,
+            quest_number,
+            experiment_id,
         )
-        return worktree_root, worktree_qdir, key
+        return worktree_root, worktree_qdir, key, exp_meta
 
     def _run_quest_locked(
         self,
@@ -713,6 +795,7 @@ class QuestService:
         quest_type: str,
         quest_number: int,
         max_steps: int,
+        experiment_id: str | None = None,
     ) -> dict:
         from .quest_runner import (
             QuestHarnessError,
@@ -727,6 +810,7 @@ class QuestService:
                 conductor_repo_path=self.conductor_repo_path,
                 max_steps=max_steps,
                 event_bus=self.chat_event_bus,
+                experiment_id=experiment_id,
             )
         except QuestHarnessError as exc:
             if exc.detail.strip() in {"billing_error", "rate_limit"}:
@@ -738,6 +822,7 @@ class QuestService:
                     max_steps=max_steps,
                     reason=exc.detail.strip(),
                     delay_seconds=3600,
+                    experiment_id=experiment_id,
                 )
                 result["steps_executed"] = exc.steps_executed
                 result["last_commit"] = exc.last_commit
@@ -769,9 +854,14 @@ class QuestService:
         quest_type: str,
         quest_number: int,
         max_steps: int = 500,
+        experiment_id: str | None = None,
     ) -> dict:
-        root, qdir, key = self._prepare_run(
-            repo_path, project, quest_type, quest_number
+        root, qdir, key, _exp_meta = self._prepare_run(
+            repo_path,
+            project,
+            quest_type,
+            quest_number,
+            experiment_id=experiment_id,
         )
         req_id = str(uuid.uuid4())
         if not self.lock.acquire(key, quest_type, quest_number, req_id):
@@ -784,7 +874,13 @@ class QuestService:
             )
         try:
             return self._run_quest_locked(
-                root, qdir, project, quest_type, quest_number, max_steps
+                root,
+                qdir,
+                project,
+                quest_type,
+                quest_number,
+                max_steps,
+                experiment_id=experiment_id,
             )
         finally:
             self.lock.release(key)
@@ -798,12 +894,17 @@ class QuestService:
         max_steps: int = 500,
         *,
         public_base_url: str,
+        experiment_id: str | None = None,
     ) -> dict:
         """Start the runner on a background thread and return immediately (HTTP)."""
         from . import dashboard_data
 
-        root, qdir, key = self._prepare_run(
-            repo_path, project, quest_type, quest_number
+        root, qdir, key, _exp_meta = self._prepare_run(
+            repo_path,
+            project,
+            quest_type,
+            quest_number,
+            experiment_id=experiment_id,
         )
         req_id = str(uuid.uuid4())
         if not self.lock.acquire(key, quest_type, quest_number, req_id):
@@ -835,6 +936,11 @@ class QuestService:
             f"&quest_type={dashboard_data.quote_query_param(quest_type)}"
             f"&quest_number={quest_number}"
         )
+        if experiment_id is not None:
+            status_url = (
+                f"{status_url}"
+                f"&experiment_id={dashboard_data.quote_query_param(experiment_id)}"
+            )
 
         pause = dashboard_data.read_paused_until_state(qdir)
         initial_status = "paused" if pause.kind == "active" else "running"
@@ -853,7 +959,13 @@ class QuestService:
             hb_thread.start()
             try:
                 svc._run_quest_locked(
-                    root, qdir, project, quest_type, quest_number, max_steps
+                    root,
+                    qdir,
+                    project,
+                    quest_type,
+                    quest_number,
+                    max_steps,
+                    experiment_id=experiment_id,
                 )
             except Exception:
                 log.exception(
@@ -882,6 +994,7 @@ class QuestService:
         project: str,
         quest_type: str,
         quest_number: int,
+        experiment_id: str | None = None,
     ) -> dict:
         from .quest_runner import _quest_key
         from .state_machine.v2_quest_state_io import V2QuestStateIo
@@ -893,8 +1006,12 @@ class QuestService:
         from .state_machine.adapters import SubprocessGitOps
         from .quest_types import StateMachineId
 
-        root, qdir, key = self._prepare_run(
-            repo_path, project, quest_type, quest_number
+        root, qdir, key, _exp_meta = self._prepare_run(
+            repo_path,
+            project,
+            quest_type,
+            quest_number,
+            experiment_id=experiment_id,
         )
         req_id = str(uuid.uuid4())
         if not self.lock.acquire(key, quest_type, quest_number, req_id):
@@ -1186,9 +1303,8 @@ class QuestService:
         quest_number: int,
         count: object,
         slugs: object,
+        experiment_id: str | None = None,
     ) -> dict:
-        from . import dashboard_data
-
         source_root = _resolve_repo(repo_path)
         if not _is_git_repo(source_root):
             raise NotAGitRepo(repo_path)
@@ -1219,14 +1335,33 @@ class QuestService:
             normalized_slugs.append(slug)
 
         _validate_project(source_root, project)
-        source_qdir = quest_fs.find_quest_dir(
-            source_root, project, quest_type, quest_number
+        _checkout_root, qdir, checkout, _exp_meta = (
+            self._resolve_mutable_quest_scope(
+                repo_path,
+                project,
+                quest_type,
+                quest_number,
+                experiment_id=experiment_id,
+                require_open_experiment=experiment_id is not None,
+            )
         )
-        if source_qdir is None:
-            raise QuestNotFound(project, quest_type, quest_number)
-        meta = quest_fs.read_quest_meta(source_qdir)
-        checkout = dashboard_data.resolve_dashboard_checkout(source_root, meta)
-        qdir = checkout.quest_dir
+        if checkout.worktree_missing:
+            if experiment_id is None:
+                source_qdir = quest_fs.find_quest_dir(
+                    source_root, project, quest_type, quest_number
+                )
+                assert source_qdir is not None
+                meta = quest_fs.read_quest_meta(source_qdir)
+                expected = quest_worktree_path(source_root, meta)
+            else:
+                expected = experiment_ops.experiment_worktree_path(
+                    source_root, experiment_id
+                )
+            raise MissingQuestWorktree(
+                project, quest_type, quest_number, expected
+            )
+
+        meta = quest_fs.read_quest_meta(qdir)
 
         mutation_lock_acquired = False
         if not checkout.worktree_missing:
@@ -1298,7 +1433,7 @@ class QuestService:
             if mutation_lock_acquired:
                 self._metadata_mutation_lock.release()
 
-        return {
+        result: dict = {
             "project": project,
             "quest_type": quest_type,
             "quest_number": quest_number,
@@ -1308,6 +1443,9 @@ class QuestService:
             "checkout_path": str(checkout.checkout_root),
             "created_slices": created_slices,
         }
+        if checkout.experiment_id is not None:
+            result["experiment_id"] = checkout.experiment_id
+        return result
 
     def _acquire_issue_mutation_lock(
         self,
@@ -1330,6 +1468,7 @@ class QuestService:
         quest_number: int,
         scope_raw: object,
         slice_raw: object | None,
+        experiment_id: str | None = None,
     ) -> issue_service.IssueContext:
         source_root = Path(repo_path).resolve()
         _validate_project(source_root, project)
@@ -1342,6 +1481,7 @@ class QuestService:
             quest_number=quest_number,
             scope=scope,
             slice_number=slice_number,
+            experiment_id=experiment_id,
         )
 
     def list_issues(
@@ -1354,6 +1494,7 @@ class QuestService:
         scope_raw: object,
         slice_raw: object | None = None,
         status_filter: str = "all",
+        experiment_id: str | None = None,
     ) -> dict:
         ctx = self._resolve_issue_context(
             repo_path,
@@ -1362,6 +1503,7 @@ class QuestService:
             quest_number=quest_number,
             scope_raw=scope_raw,
             slice_raw=slice_raw,
+            experiment_id=experiment_id,
         )
         issues = issue_service.list_issues(
             ctx, status_filter=issue_service.parse_status_filter(status_filter)
@@ -1378,6 +1520,7 @@ class QuestService:
         quest_number: int,
         scope_raw: object,
         slice_raw: object | None = None,
+        experiment_id: str | None = None,
     ) -> dict:
         ctx = self._resolve_issue_context(
             repo_path,
@@ -1386,6 +1529,7 @@ class QuestService:
             quest_number=quest_number,
             scope_raw=scope_raw,
             slice_raw=slice_raw,
+            experiment_id=experiment_id,
         )
         return issue_service.get_issue(ctx, issue_id)
 
@@ -1401,6 +1545,7 @@ class QuestService:
         title: str,
         body: str,
         status: str = "open",
+        experiment_id: str | None = None,
     ) -> dict:
         ctx = self._resolve_issue_context(
             repo_path,
@@ -1409,6 +1554,7 @@ class QuestService:
             quest_number=quest_number,
             scope_raw=scope_raw,
             slice_raw=slice_raw,
+            experiment_id=experiment_id,
         )
         acquired = self._acquire_issue_mutation_lock(ctx, quest_type, quest_number)
         try:
@@ -1432,6 +1578,7 @@ class QuestService:
         status: str | None = None,
         title: str | None = None,
         body: str | None = None,
+        experiment_id: str | None = None,
     ) -> dict:
         ctx = self._resolve_issue_context(
             repo_path,
@@ -1440,6 +1587,7 @@ class QuestService:
             quest_number=quest_number,
             scope_raw=scope_raw,
             slice_raw=slice_raw,
+            experiment_id=experiment_id,
         )
         acquired = self._acquire_issue_mutation_lock(ctx, quest_type, quest_number)
         try:
@@ -1466,6 +1614,7 @@ class QuestService:
         slice_raw: object | None = None,
         outcome: str,
         explanation: str,
+        experiment_id: str | None = None,
     ) -> dict:
         ctx = self._resolve_issue_context(
             repo_path,
@@ -1474,6 +1623,7 @@ class QuestService:
             quest_number=quest_number,
             scope_raw=scope_raw,
             slice_raw=slice_raw,
+            experiment_id=experiment_id,
         )
         acquired = self._acquire_issue_mutation_lock(ctx, quest_type, quest_number)
         try:
@@ -1497,6 +1647,7 @@ class QuestService:
         quest_number: int,
         scope_raw: object,
         slice_raw: object | None = None,
+        experiment_id: str | None = None,
     ) -> dict:
         ctx = self._resolve_issue_context(
             repo_path,
@@ -1505,6 +1656,7 @@ class QuestService:
             quest_number=quest_number,
             scope_raw=scope_raw,
             slice_raw=slice_raw,
+            experiment_id=experiment_id,
         )
         responses = issue_service.list_responses(ctx, issue_id)
         return {"responses": responses}

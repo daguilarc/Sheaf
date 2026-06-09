@@ -86,16 +86,40 @@ def parse_max_steps(raw: object | None, *, default: int = 500) -> int:
     return raw
 
 
-def lock_key_for_quest(source_repo_root: Path, meta: QuestMeta) -> str:
+def parse_experiment_id(raw: str | None) -> str | None:
+    if raw is None or not str(raw).strip():
+        return None
+    return str(raw).strip()
+
+
+def lock_key_for_checkout(
+    source_repo_root: Path,
+    meta: QuestMeta,
+    checkout: DashboardCheckout,
+) -> str:
     from .quest_service import _build_run_lock_key
 
-    worktree_path = quest_worktree_path(source_repo_root, meta).resolve()
     return _build_run_lock_key(
-        worktree_path,
+        checkout.checkout_root,
         meta.project,
         meta.quest_type,
         meta.quest_number,
+        checkout.experiment_id,
     )
+
+
+def lock_key_for_quest(
+    source_repo_root: Path,
+    meta: QuestMeta,
+    *,
+    experiment_id: str | None = None,
+) -> str:
+    checkout = resolve_dashboard_checkout(
+        source_repo_root,
+        meta,
+        experiment_id=experiment_id,
+    )
+    return lock_key_for_checkout(source_repo_root, meta, checkout)
 
 
 @dataclass
@@ -114,13 +138,15 @@ class DashboardCheckout:
 def resolve_dashboard_checkout(
     source_repo_root: Path,
     meta: QuestMeta,
+    *,
+    experiment_id: str | None = None,
 ) -> DashboardCheckout:
     from .experiments import resolve_quest_scope_checkout
 
     return resolve_quest_scope_checkout(
         source_repo_root,
         meta,
-        experiment_id=None,
+        experiment_id=experiment_id,
     )
 
 
@@ -134,12 +160,18 @@ def resolve_quest_dirs(
     project: str,
     quest_type: str,
     quest_number: int,
+    *,
+    experiment_id: str | None = None,
 ) -> tuple[Path, Path]:
     source_qdir = resolve_quest_dir(
         source_repo_root, project, quest_type, quest_number
     )
     meta = quest_fs.read_quest_meta(source_qdir)
-    checkout = resolve_dashboard_checkout(source_repo_root, meta)
+    checkout = resolve_dashboard_checkout(
+        source_repo_root,
+        meta,
+        experiment_id=experiment_id,
+    )
     return checkout.checkout_root, checkout.quest_dir
 
 
@@ -554,9 +586,14 @@ def quest_overview_payload(
     project: str,
     lock: QuestLock,
     public_base_url: str,
+    experiment_id: str | None = None,
 ) -> dict:
     meta = quest_fs.read_quest_meta(quest_dir)
-    lock_key = lock_key_for_quest(source_repo_root, meta)
+    lock_key = lock_key_for_quest(
+        source_repo_root,
+        meta,
+        experiment_id=experiment_id,
+    )
     state_info = quest_fs.read_quest_state(quest_dir)
     pause = read_paused_until_state(quest_dir)
     overlay = execution_overlay_status(
@@ -595,9 +632,13 @@ def quest_overview_payload(
         slice_nav.append({"slice_number": idx, "directory_name": p.name})
 
     step_history = build_quest_step_history(checkout_root, quest_dir)
-    checkout = resolve_dashboard_checkout(source_repo_root, meta)
+    checkout = resolve_dashboard_checkout(
+        source_repo_root,
+        meta,
+        experiment_id=experiment_id,
+    )
 
-    return {
+    payload: dict = {
         "project": meta.project,
         "quest_type": meta.quest_type,
         "quest_number": meta.quest_number,
@@ -637,6 +678,9 @@ def quest_overview_payload(
         "execution_overlay_status": overlay,
         "slices": slice_nav,
     }
+    if checkout.experiment_id is not None:
+        payload["experiment_id"] = checkout.experiment_id
+    return payload
 
 
 def _iso_from_epoch(ts: float) -> str:
@@ -652,9 +696,14 @@ def run_status_payload(
     quest_number: int,
     lock: QuestLock,
     run_tracker: ActiveRunTracker,
+    experiment_id: str | None = None,
 ) -> dict:
     meta = quest_fs.read_quest_meta(quest_dir)
-    lock_key = lock_key_for_quest(source_repo_root, meta)
+    lock_key = lock_key_for_quest(
+        source_repo_root,
+        meta,
+        experiment_id=experiment_id,
+    )
     state_info = quest_fs.read_quest_state(quest_dir)
     pause = read_paused_until_state(quest_dir)
     overlay = execution_overlay_status(
@@ -683,9 +732,13 @@ def run_status_payload(
         heartbeat_candidates.append(_iso_from_epoch(active.last_heartbeat))
     latest_hb = max(heartbeat_candidates)
 
-    checkout = resolve_dashboard_checkout(source_repo_root, meta)
+    checkout = resolve_dashboard_checkout(
+        source_repo_root,
+        meta,
+        experiment_id=experiment_id,
+    )
 
-    return {
+    status_payload: dict = {
         "project": project,
         "quest_type": quest_type,
         "quest_number": quest_number,
@@ -709,3 +762,6 @@ def run_status_payload(
             "last_heartbeat_at": _iso_from_epoch(active.last_heartbeat),
         },
     }
+    if checkout.experiment_id is not None:
+        status_payload["experiment_id"] = checkout.experiment_id
+    return status_payload
