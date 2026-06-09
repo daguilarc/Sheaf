@@ -52,6 +52,11 @@ function HandleNotFound(response: ServerResponse): void
   SendJson(response, 404, FormatRestError("not_found", "route not found"));
 }
 
+function ComputeUptimeSeconds(serverStartTime: number): number
+{
+  return Math.max(0, (Date.now() - serverStartTime) / 1000);
+}
+
 async function HandleStaticRequest(
   config: SheafChatConfig,
   pathname: string,
@@ -87,6 +92,7 @@ async function HandleStaticRequest(
 
 export function CreateSheafChatServer(options: SheafChatServerOptions): SheafChatServer
 {
+  const serverStartTime = Date.now();
   const routeContext: RouteContext = {
     config: options.config,
     agentManager: options.agentManager,
@@ -104,6 +110,21 @@ export function CreateSheafChatServer(options: SheafChatServerOptions): SheafCha
     void (async () =>
     {
       const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
+
+      if (url.pathname === "/health")
+      {
+        if (request.method !== "GET")
+        {
+          SendJson(response, 405, FormatRestError("method_not_allowed", "method not allowed"));
+          return;
+        }
+
+        SendJson(response, 200, {
+          healthy: true,
+          uptime: ComputeUptimeSeconds(serverStartTime),
+        });
+        return;
+      }
 
       if (url.pathname.startsWith("/api/"))
       {

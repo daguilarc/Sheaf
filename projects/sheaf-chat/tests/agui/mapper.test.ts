@@ -129,6 +129,76 @@ test("mapPiEventToAgui maps representative Pi streaming lifecycle", async () =>
   }
 });
 
+test("mapPiEventToAgui consumes Pi content lifecycle updates without RAW rows", async () =>
+{
+  const mapper = CreatePiToAguiMapper();
+  const message = {
+    role: "assistant",
+    content: [],
+    timestamp: 42,
+  };
+  const events = [
+    { type: "message_start", message },
+    {
+      type: "message_update",
+      message,
+      assistantMessageEvent: { type: "thinking_start", contentIndex: 0 },
+    },
+    {
+      type: "message_update",
+      message,
+      assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "Plan" },
+    },
+    {
+      type: "message_update",
+      message,
+      assistantMessageEvent: { type: "thinking_end", contentIndex: 0, content: "Plan" },
+    },
+    {
+      type: "message_update",
+      message,
+      assistantMessageEvent: { type: "text_start", contentIndex: 1 },
+    },
+    {
+      type: "message_update",
+      message,
+      assistantMessageEvent: { type: "text_delta", contentIndex: 1, delta: "Answer" },
+    },
+    {
+      type: "message_update",
+      message,
+      assistantMessageEvent: { type: "text_end", contentIndex: 1, content: "Answer" },
+    },
+    { type: "message_end", message },
+  ].flatMap((event, index) => mapper.Consume(event, {
+    ...x_context,
+    sequence: index + 1,
+  }));
+
+  assert.deepEqual(
+    events.map((event) => event.type),
+    [
+      "TEXT_MESSAGE_START",
+      "REASONING_START",
+      "REASONING_MESSAGE_START",
+      "REASONING_MESSAGE_CONTENT",
+      "REASONING_MESSAGE_END",
+      "REASONING_END",
+      "TEXT_MESSAGE_CONTENT",
+      "TEXT_MESSAGE_END",
+    ],
+  );
+  assert.equal(events.some((event) => event.type === "RAW"), false);
+  assert.equal(events.find((event) => event.type === "REASONING_MESSAGE_CONTENT")?.delta, "Plan");
+  assert.equal(events.find((event) => event.type === "TEXT_MESSAGE_CONTENT")?.delta, "Answer");
+  assert.equal(mapper.Errors().length, 0);
+
+  for (const event of events)
+  {
+    await ValidateAguiEvent(event);
+  }
+});
+
 test("PiToAguiMapper.Flush finishes dangling runs with the original thread id", async () =>
 {
   const mapper = CreatePiToAguiMapper();

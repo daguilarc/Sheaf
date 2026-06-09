@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { performance } from "node:perf_hooks";
 
 import type { WebSocket } from "ws";
 import { WebSocket as WebSocketStatic } from "ws";
@@ -20,6 +21,13 @@ import {
 import type { AguiEvent, PiMappableEvent } from "../agui/types.js";
 import { RelativizeAbsolutePath } from "../agui/sanitizer.js";
 import type { SheafChatConfig } from "../server/config.js";
+import {
+  IsStreamProfilerEnabled,
+  ProfileAguiEvent,
+  ProfileEnvelope,
+  ProfilePiEvent,
+  ProfileStreamPoint,
+} from "../server/streamProfiler.js";
 import type { ChatEnvelope } from "../shared/envelope.js";
 import type { HistoryPageRequest, ModelReference } from "../shared/types.js";
 import { AgentLifecycleState } from "../shared/types.js";
@@ -65,7 +73,18 @@ function SendEnvelope(socket: WebSocket, envelope: ChatEnvelope): void
 {
   if (socket.readyState === WebSocketStatic.OPEN)
   {
+    const startedAt = performance.now();
     socket.send(JSON.stringify(envelope));
+
+    if (IsStreamProfilerEnabled())
+    {
+      ProfileStreamPoint("websocket_send_called", {
+        kind: envelope.kind,
+        sequence: envelope.sequence,
+        bufferedAmount: socket.bufferedAmount,
+        sendCallMs: Math.round((performance.now() - startedAt) * 1000) / 1000,
+      });
+    }
   }
 }
 
@@ -458,6 +477,14 @@ export class SessionBroadcaster
     clientId?: string;
   }): Promise<ChatEnvelope>
   {
+    const appendStartedAt = performance.now();
+    ProfileStreamPoint("append_start", {
+      kind: input.kind,
+      ...(typeof input.payload === "object" && input.payload !== null
+        ? { aguiType: (input.payload as { type?: unknown }).type }
+        : {}),
+    });
+
     const envelope = await AppendEnvelope(
       this.m_storagePaths,
       this.m_key.pile,
@@ -470,9 +497,17 @@ export class SessionBroadcaster
         payload: input.payload,
       },
     );
+    const appendMs = performance.now() - appendStartedAt;
 
     this.m_latestSequence = envelope.sequence ?? this.m_latestSequence;
+    ProfileEnvelope("append_end", envelope);
+    ProfileStreamPoint("append_duration", {
+      kind: envelope.kind,
+      sequence: envelope.sequence,
+      appendMs: Math.round(appendMs * 1000) / 1000,
+    });
     this.Broadcast(envelope);
+    ProfileEnvelope("broadcast_end", envelope);
     return envelope;
   }
 
@@ -532,16 +567,23 @@ export class SessionBroadcaster
 
   private async HandleAgentEvent(event: PiMappableEvent): Promise<void>
   {
+    ProfilePiEvent("broadcaster_agent_event_start", event);
     const context = this.MapperContext();
     const aguiEvents = mapPiEventToAgui(event, context, this.m_mapper);
+    ProfileStreamPoint("broadcaster_mapped", {
+      aguiEventCount: aguiEvents.length,
+    });
 
     for (const aguiEvent of aguiEvents)
     {
+      ProfileAguiEvent("broadcaster_agui_event_start", aguiEvent);
       await this.AppendAndBroadcast({
         kind: x_aguiEventKind,
         payload: aguiEvent,
       });
+      ProfileAguiEvent("broadcaster_agui_event_done", aguiEvent);
     }
+    ProfilePiEvent("broadcaster_agent_event_done", event);
   }
 
   private async HandleModelChanged(

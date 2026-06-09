@@ -1,4 +1,4 @@
-import { appendFile, access, readFile, writeFile } from "node:fs/promises";
+import { appendFile, access, open, readFile, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
 import readline from "node:readline";
@@ -7,7 +7,7 @@ import type { AllocatedSessionShell, ModelReference, SessionLogEntry } from "../
 import type { ChatEnvelope, CreateChatEnvelopeInput } from "../shared/envelope.js";
 import { CreateChatEnvelope } from "../shared/envelope.js";
 import { StorageError } from "./errors.js";
-import { UpdateManifest } from "./manifests.js";
+import { ReadManifest, UpdateManifest } from "./manifests.js";
 import { EnsurePileExists } from "./piles.js";
 import {
   ResolveHistoryFilePath,
@@ -28,6 +28,8 @@ interface ProvisionalSessionRecord
 }
 
 const x_sequenceLocks = new Map<string, Promise<void>>();
+const x_latestSequences = new Map<string, number>();
+const x_tailReadChunkBytes = 64 * 1024;
 
 function SessionKey(pile: string, sessionId: string): string
 {
@@ -136,6 +138,121 @@ export async function ReadLatestSequence(
   return entries[entries.length - 1].sequence;
 }
 
+function LastLine(raw: string): string | null
+{
+  const trimmedEnd = raw.replace(/\n+$/, "");
+
+  if (trimmedEnd.length === 0)
+  {
+    return null;
+  }
+
+  const newlineIndex = trimmedEnd.lastIndexOf("\n");
+  return newlineIndex === -1 ? trimmedEnd : trimmedEnd.slice(newlineIndex + 1);
+}
+
+async function ReadLatestSequenceFromHistoryTail(historyPath: string): Promise<number>
+{
+  let file;
+
+  try
+  {
+    file = await open(historyPath, "r");
+  }
+  catch
+  {
+    return 0;
+  }
+
+  try
+  {
+    const stats = await file.stat();
+
+    if (stats.size === 0)
+    {
+      return 0;
+    }
+
+    let bytesToRead = Math.min(x_tailReadChunkBytes, stats.size);
+
+    while (bytesToRead <= stats.size)
+    {
+      const buffer = Buffer.alloc(bytesToRead);
+      await file.read(buffer, 0, bytesToRead, stats.size - bytesToRead);
+      const latestLine = LastLine(buffer.toString("utf8"));
+
+      if (latestLine !== null)
+      {
+        const entry = ParseSessionLogEntry(latestLine);
+
+        if (entry !== null)
+        {
+          return entry.sequence;
+        }
+      }
+
+      if (bytesToRead === stats.size)
+      {
+        break;
+      }
+
+      bytesToRead = Math.min(bytesToRead * 2, stats.size);
+    }
+  }
+  finally
+  {
+    await file.close();
+  }
+
+  return 0;
+}
+
+async function ReadLatestSequenceFromManifest(
+  paths: StoragePaths,
+  pile: string,
+  sessionId: string,
+): Promise<number>
+{
+  try
+  {
+    const manifest = await ReadManifest(paths, pile, sessionId);
+    return manifest.history.lastSequence;
+  }
+  catch (error)
+  {
+    if (error instanceof StorageError && error.code === "manifest_not_found")
+    {
+      return 0;
+    }
+
+    throw error;
+  }
+}
+
+async function InitializeLatestSequence(
+  paths: StoragePaths,
+  pile: string,
+  sessionId: string,
+): Promise<number>
+{
+  const key = SessionKey(pile, sessionId);
+  const cached = x_latestSequences.get(key);
+
+  if (cached !== undefined)
+  {
+    return cached;
+  }
+
+  const historyPath = ResolveHistoryFilePath(paths, pile, sessionId);
+  const [manifestSequence, tailSequence] = await Promise.all([
+    ReadLatestSequenceFromManifest(paths, pile, sessionId),
+    ReadLatestSequenceFromHistoryTail(historyPath),
+  ]);
+  const latestSequence = Math.max(manifestSequence, tailSequence);
+  x_latestSequences.set(key, latestSequence);
+  return latestSequence;
+}
+
 async function StreamSessionLogEntries(
   historyPath: string,
   onEntry: (entry: SessionLogEntry) => void | Promise<void>,
@@ -231,7 +348,7 @@ export async function AppendEnvelope(
   return WithSessionLock(pile, validatedSessionId, async () =>
   {
     const historyPath = ResolveHistoryFilePath(paths, pile, validatedSessionId);
-    const latestSequence = await ReadLatestSequence(paths, pile, validatedSessionId);
+    const latestSequence = await InitializeLatestSequence(paths, pile, validatedSessionId);
     const sequence = input.sequence ?? latestSequence + 1;
 
     if (sequence <= latestSequence)
@@ -254,6 +371,7 @@ export async function AppendEnvelope(
     };
 
     await appendFile(historyPath, `${JSON.stringify(entry)}\n`, "utf8");
+    x_latestSequences.set(SessionKey(pile, validatedSessionId), sequence);
 
     try
     {

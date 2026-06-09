@@ -26,6 +26,24 @@ function ErrorBody(body: unknown): { code: string; message: string }
   };
 }
 
+test("GET /health returns conductor-compatible service health", async () =>
+{
+  await WithTestServer(async ({ baseUrl }) =>
+  {
+    const response = await RequestJson(baseUrl, "GET", "/health");
+    assert.equal(response.status, 200);
+
+    const body = response.body as {
+      healthy: boolean;
+      uptime: number;
+    };
+
+    assert.equal(body.healthy, true);
+    assert.equal(typeof body.uptime, "number");
+    assert.ok(body.uptime >= 0);
+  });
+});
+
 test("GET /api/health returns service metadata without secrets", async () =>
 {
   await WithTestServer(async ({ baseUrl, config }) =>

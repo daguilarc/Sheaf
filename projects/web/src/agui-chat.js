@@ -10,6 +10,7 @@
       messages: new Map(),
       messageOrder: [],
       openTextMessages: new Set(),
+      ignoredTextMessages: new Set(),
       openToolCalls: new Map(),
       openReasoning: new Set(),
       runs: new Map(),
@@ -44,6 +45,34 @@
     }
     state.messages.set(message.id, message);
     return message;
+  }
+
+  function AddMessageBefore(state, message, beforeMessageId) {
+    if (!state.messages.has(message.id)) {
+      const beforeIndex = state.messageOrder.indexOf(beforeMessageId);
+      if (beforeIndex >= 0) {
+        state.messageOrder.splice(beforeIndex, 0, message.id);
+      } else {
+        state.messageOrder.push(message.id);
+      }
+    }
+    state.messages.set(message.id, message);
+    return message;
+  }
+
+  function ReasoningParentMessageId(messageId) {
+    const suffix = ":thinking";
+    return messageId.endsWith(suffix)
+      ? messageId.slice(0, -suffix.length)
+      : null;
+  }
+
+  function AddReasoningMessage(state, message) {
+    const parentMessageId = ReasoningParentMessageId(message.id);
+    if (parentMessageId && state.messages.has(parentMessageId)) {
+      return AddMessageBefore(state, message, parentMessageId);
+    }
+    return AddMessage(state, message);
   }
 
   function AppendSystemMessage(state, content, id) {
@@ -119,6 +148,48 @@
       }
       state.openReasoning.delete(messageId);
     }
+  }
+
+  function IsHiddenActivityType(activityType) {
+    return activityType === "sheaf.lifecycle_status";
+  }
+
+  function IsHiddenAguiEvent(event) {
+    return (
+      event &&
+      event.type === "CUSTOM" &&
+      IsHiddenActivityType(event.name)
+    );
+  }
+
+  function IsHiddenSnapshotMessage(snapshotMessage) {
+    return (
+      snapshotMessage &&
+      snapshotMessage.role === "activity" &&
+      IsHiddenActivityType(snapshotMessage.activityType)
+    );
+  }
+
+  function IsDisplayEmptyMessage(message) {
+    if (!message || message.isStreaming) {
+      return false;
+    }
+
+    if (message.role === "assistant" && message.toolCalls && message.toolCalls.length > 0) {
+      return false;
+    }
+
+    if (
+      message.role === "user" ||
+      message.role === "assistant" ||
+      message.role === "reasoning" ||
+      message.role === "activity" ||
+      message.role === "system"
+    ) {
+      return String(message.content || "").trim().length === 0;
+    }
+
+    return false;
   }
 
   function SnapshotMessageToChatMessage(snapshotMessage) {
@@ -304,6 +375,10 @@
       return state;
     }
 
+    if (IsHiddenAguiEvent(event)) {
+      return state;
+    }
+
     state.eventCount += 1;
     const eventType = event.type;
 
@@ -368,13 +443,28 @@
           ? String(event.messageId)
           : SynthesizeId(state, "TEXT_MESSAGE_START");
         const role = event.role ? String(event.role) : "assistant";
-        AddMessage(
-          state,
-          CreateChatMessage(messageId, role, {
-            isStreaming: true,
-            timestamp: event.timestamp != null ? event.timestamp : null,
-          })
-        );
+        let message = state.messages.get(messageId);
+        if (!message) {
+          message = AddMessage(
+            state,
+            CreateChatMessage(messageId, role, {
+              isStreaming: true,
+              timestamp: event.timestamp != null ? event.timestamp : null,
+            })
+          );
+        } else if (
+          !state.openTextMessages.has(messageId) &&
+          String(message.content || "").trim().length > 0
+        ) {
+          state.ignoredTextMessages.add(messageId);
+          break;
+        } else {
+          message.role = role;
+          message.isStreaming = true;
+          if (event.timestamp != null) {
+            message.timestamp = event.timestamp;
+          }
+        }
         state.openTextMessages.add(messageId);
         break;
       }
@@ -382,6 +472,9 @@
       case "TEXT_MESSAGE_CONTENT": {
         const messageId = event.messageId ? String(event.messageId) : null;
         if (!messageId) {
+          break;
+        }
+        if (state.ignoredTextMessages.has(messageId)) {
           break;
         }
         let message = state.messages.get(messageId);
@@ -399,6 +492,9 @@
       case "TEXT_MESSAGE_END": {
         const messageId = event.messageId ? String(event.messageId) : null;
         if (!messageId) {
+          break;
+        }
+        if (state.ignoredTextMessages.delete(messageId)) {
           break;
         }
         const message = state.messages.get(messageId);
@@ -511,7 +607,7 @@
         const messageId = event.messageId
           ? String(event.messageId)
           : SynthesizeId(state, "REASONING_MESSAGE_START");
-        AddMessage(
+        AddReasoningMessage(
           state,
           CreateChatMessage(messageId, "reasoning", {
             isStreaming: true,
@@ -529,7 +625,7 @@
         }
         let message = state.messages.get(messageId);
         if (!message) {
-          message = AddMessage(
+          message = AddReasoningMessage(
             state,
             CreateChatMessage(messageId, "reasoning", { isStreaming: true })
           );
@@ -648,12 +744,16 @@
         state.messages.clear();
         state.messageOrder = [];
         state.openTextMessages.clear();
+        state.ignoredTextMessages.clear();
         state.openToolCalls.clear();
         state.openReasoning.clear();
 
         const snapshotMessages = Array.isArray(event.messages) ? event.messages : [];
         for (const snapshotMessage of snapshotMessages) {
           if (!snapshotMessage || snapshotMessage.id == null) {
+            continue;
+          }
+          if (IsHiddenSnapshotMessage(snapshotMessage)) {
             continue;
           }
           AddMessage(state, SnapshotMessageToChatMessage(snapshotMessage));
@@ -1058,6 +1158,9 @@
       if (!snapshotMessage || snapshotMessage.id == null) {
         continue;
       }
+      if (IsHiddenSnapshotMessage(snapshotMessage)) {
+        continue;
+      }
 
       const messageId = String(snapshotMessage.id);
       if (state.messages.has(messageId)) {
@@ -1156,7 +1259,9 @@
     }
 
     const wasAtBottom = IsAtBottom(transcript, x_AutoScrollThreshold);
-    const liveIds = new Set(state.messageOrder);
+    const liveIds = new Set();
+
+    let domIndex = 0;
 
     for (const messageId of state.messageOrder) {
       const message = state.messages.get(messageId);
@@ -1164,11 +1269,16 @@
         continue;
       }
 
+      if (IsDisplayEmptyMessage(message)) {
+        continue;
+      }
+
+      liveIds.add(messageId);
+
       let nodeEntry = handle.messageNodes.get(messageId);
       if (!nodeEntry) {
         nodeEntry = CreateMessageNode(handle, message, state);
         handle.messageNodes.set(messageId, nodeEntry);
-        transcript.appendChild(nodeEntry.root);
         UpdateMessageNode(handle, nodeEntry, message, state);
       } else if (
         message.isStreaming ||
@@ -1179,6 +1289,12 @@
       ) {
         UpdateMessageNode(handle, nodeEntry, message, state);
       }
+
+      const currentNode = transcript.childNodes[domIndex] || null;
+      if (nodeEntry.root !== currentNode) {
+        transcript.insertBefore(nodeEntry.root, currentNode);
+      }
+      domIndex += 1;
     }
 
     for (const messageId of Array.from(handle.messageNodes.keys())) {

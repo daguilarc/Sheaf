@@ -2,6 +2,10 @@ import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 
 import type { SheafChatConfig } from "../server/config.js";
 import {
+  ProfileEventLoopDelay,
+  ProfilePiEvent,
+} from "../server/streamProfiler.js";
+import {
   AgentLifecycleState,
   type ModelReference,
   type ProvisionalSession,
@@ -363,13 +367,16 @@ export class SessionRuntime
 
   private HandlePiEvent(event: AgentSessionEvent): void
   {
+    ProfilePiEvent("pi_event_received", event);
     this.m_context.lifecycle.EmitAgentEvent({
       key: this.m_record.key,
       event,
     });
+    ProfilePiEvent("pi_event_emitted", event);
 
     if (event.type === "agent_start")
     {
+      ProfileEventLoopDelay("agent_start_event_loop_delay");
       this.m_record.activeRunCount += 1;
       this.ClearIdleTimer();
       return;
@@ -377,6 +384,7 @@ export class SessionRuntime
 
     if (event.type === "agent_end")
     {
+      ProfileEventLoopDelay("agent_end_event_loop_delay");
       this.m_record.activeRunCount = Math.max(0, this.m_record.activeRunCount - 1);
 
       if (this.ConnectedClientCount === 0)

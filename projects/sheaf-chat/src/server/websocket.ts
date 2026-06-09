@@ -30,6 +30,7 @@ import {
   type ConnectedClient,
 } from "../protocol/sessionBroadcaster.js";
 import type { SheafChatConfig } from "./config.js";
+import { ProfileStreamPoint } from "./streamProfiler.js";
 import { ParseOptionalInteger } from "./http.js";
 import { ResolveSessionFilePath } from "../storage/paths.js";
 import { StorageError } from "../storage/errors.js";
@@ -280,6 +281,8 @@ export async function AttachChatWebSocketConnection(
   let connectionEnded = false;
   let runtimeAttached = false;
   let runtimeDetached = false;
+  let clientFramesReady = false;
+  const queuedClientFrames: WebSocket.RawData[] = [];
 
   const cleanup = () =>
   {
@@ -296,6 +299,21 @@ export async function AttachChatWebSocketConnection(
   };
 
   socket.on("close", cleanup);
+  socket.on("message", (data) =>
+  {
+    ProfileStreamPoint("client_frame_received", {
+      bytes: data.toString().length,
+      queued: !clientFramesReady,
+    });
+
+    if (!clientFramesReady)
+    {
+      queuedClientFrames.push(data);
+      return;
+    }
+
+    void HandleClientMessage(socket, client, params, context, broadcaster, data);
+  });
 
   try
   {
@@ -319,6 +337,24 @@ export async function AttachChatWebSocketConnection(
     }
 
     broadcaster.ActivateClient(client);
+
+    while (queuedClientFrames.length > 0)
+    {
+      if (connectionEnded || socket.readyState !== WebSocket.OPEN)
+      {
+        cleanup();
+        return;
+      }
+
+      const data = queuedClientFrames.shift();
+
+      if (data !== undefined)
+      {
+        await HandleClientMessage(socket, client, params, context, broadcaster, data);
+      }
+    }
+
+    clientFramesReady = true;
   }
   catch (error)
   {
@@ -329,12 +365,6 @@ export async function AttachChatWebSocketConnection(
     cleanup();
     return;
   }
-
-  socket.on("message", (data) =>
-  {
-    void HandleClientMessage(socket, client, params, context, broadcaster, data);
-  });
-
 }
 
 async function HandleClientMessage(
@@ -395,9 +425,13 @@ async function HandleClientMessage(
     switch (frame.kind)
     {
       case x_clientHelloKind:
+        ProfileStreamPoint("client_hello_received");
         break;
 
       case x_clientUserMessageKind:
+        ProfileStreamPoint("client_user_message_received", {
+          textChars: frame.payload.text.length,
+        });
         await broadcaster.HandleUserMessage(client.connectionId, frame.payload);
         break;
 

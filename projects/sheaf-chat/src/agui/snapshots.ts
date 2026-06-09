@@ -42,11 +42,83 @@ function TrackFirstSeen(state: SnapshotBuilderState, messageId: string): void
   }
 }
 
+function TrackFirstSeenBefore(
+  state: SnapshotBuilderState,
+  messageId: string,
+  beforeMessageId: string,
+): void
+{
+  if (state.order.includes(messageId))
+  {
+    return;
+  }
+
+  const beforeIndex = state.order.indexOf(beforeMessageId);
+  if (beforeIndex >= 0)
+  {
+    state.order.splice(beforeIndex, 0, messageId);
+    return;
+  }
+
+  state.order.push(messageId);
+}
+
+function ReasoningParentMessageId(messageId: string): string | null
+{
+  const suffix = ":thinking";
+  return messageId.endsWith(suffix)
+    ? messageId.slice(0, -suffix.length)
+    : null;
+}
+
+function TrackReasoningFirstSeen(state: SnapshotBuilderState, messageId: string): void
+{
+  const parentMessageId = ReasoningParentMessageId(messageId);
+  if (parentMessageId !== null)
+  {
+    TrackFirstSeenBefore(state, messageId, parentMessageId);
+    return;
+  }
+
+  TrackFirstSeen(state, messageId);
+}
+
 function UpsertMessage(state: SnapshotBuilderState, message: AguiSnapshotMessage): void
 {
   const messageId = String(message.id);
   TrackFirstSeen(state, messageId);
   state.messages.set(messageId, message);
+}
+
+function IsRecord(value: unknown): value is Record<string, unknown>
+{
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function IsPiMessageContentLifecycleRaw(event: AguiEvent): boolean
+{
+  if (event.source !== "message_update")
+  {
+    return false;
+  }
+
+  const rawEvent = event.event;
+  if (!IsRecord(rawEvent))
+  {
+    return false;
+  }
+
+  const messageEvent = rawEvent.assistantMessageEvent;
+  if (!IsRecord(messageEvent))
+  {
+    return false;
+  }
+
+  const messageEventType = messageEvent.type;
+  return messageEventType === "thinking_start" ||
+    messageEventType === "thinking_end" ||
+    messageEventType === "text_start" ||
+    messageEventType === "text_end";
 }
 
 function FinalizeAssistantToolCalls(state: SnapshotBuilderState, parentMessageId: string): ToolCallSnapshot[]
@@ -69,6 +141,97 @@ function FinalizeAssistantToolCalls(state: SnapshotBuilderState, parentMessageId
   }
 
   return toolCalls;
+}
+
+function IsEmptyContent(content: string): boolean
+{
+  return content.trim().length === 0;
+}
+
+function UpsertTextSnapshot(
+  state: SnapshotBuilderState,
+  messageId: string,
+  open: { role: string; content: string; timestamp?: number },
+): void
+{
+  const snapshot: AguiSnapshotMessage = {
+    id: messageId,
+    role: open.role,
+    content: open.content,
+  };
+
+  if (open.timestamp !== undefined)
+  {
+    snapshot.timestamp = open.timestamp;
+  }
+
+  if (open.role === "assistant")
+  {
+    const toolCalls = FinalizeAssistantToolCalls(state, messageId);
+
+    if (toolCalls.length > 0)
+    {
+      snapshot.toolCalls = toolCalls.map((toolCall) => ({
+        id: toolCall.id,
+        name: toolCall.name,
+        args: toolCall.args,
+        result: toolCall.result,
+      }));
+    }
+  }
+
+  const toolCallCount = Array.isArray(snapshot.toolCalls) ? snapshot.toolCalls.length : 0;
+
+  if (IsEmptyContent(String(snapshot.content ?? "")) && toolCallCount === 0)
+  {
+    return;
+  }
+
+  UpsertMessage(state, snapshot);
+}
+
+function UpsertReasoningSnapshot(
+  state: SnapshotBuilderState,
+  messageId: string,
+  open: { content: string; timestamp?: number },
+): void
+{
+  if (IsEmptyContent(open.content))
+  {
+    return;
+  }
+
+  const snapshot: AguiSnapshotMessage = {
+    id: messageId,
+    role: "reasoning",
+    content: open.content,
+  };
+
+  if (open.timestamp !== undefined)
+  {
+    snapshot.timestamp = open.timestamp;
+  }
+
+  UpsertMessage(state, snapshot);
+}
+
+function MaterializeOpenSnapshots(state: SnapshotBuilderState): void
+{
+  for (const [messageId, open] of state.openText.entries())
+  {
+    if (!state.finalizedIds.has(messageId))
+    {
+      UpsertTextSnapshot(state, messageId, open);
+    }
+  }
+
+  for (const [messageId, open] of state.openReasoning.entries())
+  {
+    if (!state.finalizedIds.has(messageId))
+    {
+      UpsertReasoningSnapshot(state, messageId, open);
+    }
+  }
 }
 
 function ApplyAguiEvent(state: SnapshotBuilderState, event: AguiEvent): void
@@ -127,33 +290,7 @@ function ApplyAguiEvent(state: SnapshotBuilderState, event: AguiEvent): void
       return;
     }
 
-    const snapshot: AguiSnapshotMessage = {
-      id: messageId,
-      role: open.role,
-      content: open.content,
-    };
-
-    if (open.timestamp !== undefined)
-    {
-      snapshot.timestamp = open.timestamp;
-    }
-
-    if (open.role === "assistant")
-    {
-      const toolCalls = FinalizeAssistantToolCalls(state, messageId);
-
-      if (toolCalls.length > 0)
-      {
-        snapshot.toolCalls = toolCalls.map((toolCall) => ({
-          id: toolCall.id,
-          name: toolCall.name,
-          args: toolCall.args,
-          result: toolCall.result,
-        }));
-      }
-    }
-
-    UpsertMessage(state, snapshot);
+    UpsertTextSnapshot(state, messageId, open);
     state.finalizedIds.add(messageId);
     state.openText.delete(messageId);
     return;
@@ -168,7 +305,7 @@ function ApplyAguiEvent(state: SnapshotBuilderState, event: AguiEvent): void
       return;
     }
 
-    TrackFirstSeen(state, messageId);
+    TrackReasoningFirstSeen(state, messageId);
     state.openReasoning.set(messageId, {
       content: "",
       timestamp: typeof event.timestamp === "number" ? event.timestamp : undefined,
@@ -180,6 +317,7 @@ function ApplyAguiEvent(state: SnapshotBuilderState, event: AguiEvent): void
   {
     const messageId = String(event.messageId);
     const open = state.openReasoning.get(messageId) ?? { content: "" };
+    TrackReasoningFirstSeen(state, messageId);
     open.content += String(event.delta ?? "");
     state.openReasoning.set(messageId, open);
     return;
@@ -195,18 +333,7 @@ function ApplyAguiEvent(state: SnapshotBuilderState, event: AguiEvent): void
       return;
     }
 
-    const snapshot: AguiSnapshotMessage = {
-      id: messageId,
-      role: "reasoning",
-      content: open.content,
-    };
-
-    if (open.timestamp !== undefined)
-    {
-      snapshot.timestamp = open.timestamp;
-    }
-
-    UpsertMessage(state, snapshot);
+    UpsertReasoningSnapshot(state, messageId, open);
     state.finalizedIds.add(messageId);
     state.openReasoning.delete(messageId);
     return;
@@ -286,6 +413,11 @@ function ApplyAguiEvent(state: SnapshotBuilderState, event: AguiEvent): void
 
   if (eventType === "RAW")
   {
+    if (IsPiMessageContentLifecycleRaw(event))
+    {
+      return;
+    }
+
     const messageId = String(event.messageId ?? `raw:${state.order.length + 1}`);
     UpsertMessage(state, {
       id: messageId,
@@ -316,6 +448,8 @@ export function eventsToSnapshots(events: AguiEvent[]): AguiSnapshotMessage[]
   {
     ApplyAguiEvent(state, event);
   }
+
+  MaterializeOpenSnapshots(state);
 
   const dedupedOrder: string[] = [];
   const seen = new Set<string>();

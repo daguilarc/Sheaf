@@ -6,8 +6,9 @@
 
   const x_ClientIdKey = "sheaf-chat-client-id";
   const x_DefaultRootDirectory = "projects";
-  const x_HistoryPageLimit = 50;
-  const x_InitialHistoryLimit = 80;
+  const x_HistoryPageLimit = 5000;
+  const x_InitialHistoryLimit = 5000;
+  const x_NearTopHistoryThreshold = 80;
   const x_ReconnectDelayMs = 1500;
 
   function CreateElement(tag, className) {
@@ -469,7 +470,7 @@
     screen.appendChild(statusRow);
 
     const chatMain = CreateElement("div", "sheaf-chat-chat-main");
-    const chatContainer = CreateElement("div");
+    const chatContainer = CreateElement("div", "sheaf-chat-chat-view");
     chatMain.appendChild(chatContainer);
     screen.appendChild(chatMain);
 
@@ -596,6 +597,10 @@
     }
 
     function RequestHistory(options) {
+      if (historyLoading && options.before != null) {
+        return;
+      }
+
       const payload = {
         limit: options.limit || x_HistoryPageLimit,
         prefer: "snapshots",
@@ -616,6 +621,33 @@
         historyLoading = true;
       }
       QueueOrSend(envelope);
+    }
+
+    function TranscriptIsNearTop() {
+      return (
+        chatHandle &&
+        chatHandle.transcript &&
+        chatHandle.transcript.scrollTop <= x_NearTopHistoryThreshold
+      );
+    }
+
+    function ContinueHistoryIfPinnedNearTop() {
+      if (historyLoading || !hasMoreBefore || oldestSequence == null) {
+        return;
+      }
+
+      if (!TranscriptIsNearTop()) {
+        return;
+      }
+
+      window.setTimeout(function () {
+        if (historyLoading || !hasMoreBefore || oldestSequence == null) {
+          return;
+        }
+        if (TranscriptIsNearTop()) {
+          RequestHistory({ before: oldestSequence, limit: x_HistoryPageLimit });
+        }
+      }, 0);
     }
 
     function HandleHistoryPage(payload) {
@@ -642,6 +674,8 @@
           window.ChatView.appendAguiEvent(chatHandle, event);
         }
       }
+
+      ContinueHistoryIfPinnedNearTop();
     }
 
     function HandleServerEnvelope(envelope) {

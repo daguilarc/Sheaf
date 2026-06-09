@@ -131,6 +131,30 @@ class FakeElement
     return child;
   }
 
+  public insertBefore(child: FakeElement, referenceNode: FakeElement | null): FakeElement
+  {
+    if (referenceNode === null) {
+      return this.appendChild(child);
+    }
+
+    const referenceIndex = this.children.indexOf(referenceNode);
+    if (referenceIndex < 0) {
+      return this.appendChild(child);
+    }
+
+    if (child.parentNode) {
+      child.parentNode.removeChild(child);
+    }
+    child.parentNode = this;
+    this.children.splice(referenceIndex, 0, child);
+
+    if (this.classList.contains("agui-chat-transcript")) {
+      this.scrollHeight = Math.max(this.scrollHeight, this.children.length * 500);
+    }
+
+    return child;
+  }
+
   public removeChild(child: FakeElement): FakeElement
   {
     const index = this.children.indexOf(child);
@@ -704,6 +728,9 @@ test("near-top scroll requests older history only when available and idle", () =
   const harness = LoadChatHarness();
   const socket = harness.sockets[0];
   const transcript = harness.handles[0].transcript as FakeElement;
+  const chatView = RequiredElement(harness.app, ".sheaf-chat-chat-view");
+
+  assert.ok(chatView);
 
   socket.open();
   transcript.scrollTop = 0;
@@ -723,13 +750,14 @@ test("near-top scroll requests older history only when available and idle", () =
   const afterHello = Frames(socket, "client.history_request").length;
   assert.equal(afterHello, 1);
   assert.equal(LastFrame(socket, "client.history_request").payload.before, undefined);
+  assert.equal(LastFrame(socket, "client.history_request").payload.limit, 5000);
 
   harness.runTimers();
   transcript.dispatchEvent({ type: "scroll" });
 
   assert.equal(Frames(socket, "client.history_request").length, afterHello + 1);
   assert.equal(LastFrame(socket, "client.history_request").payload.before, 25);
-  assert.equal(LastFrame(socket, "client.history_request").payload.limit, 50);
+  assert.equal(LastFrame(socket, "client.history_request").payload.limit, 5000);
 
   harness.runTimers();
   transcript.dispatchEvent({ type: "scroll" });
@@ -738,6 +766,19 @@ test("near-top scroll requests older history only when available and idle", () =
   socket.receive(
     ServerEnvelope("history.page", {
       oldestSequence: 10,
+      hasMoreBefore: true,
+      messages: [],
+      events: [],
+    }),
+  );
+  harness.runTimers();
+  assert.equal(Frames(socket, "client.history_request").length, afterHello + 2);
+  assert.equal(LastFrame(socket, "client.history_request").payload.before, 10);
+  assert.equal(LastFrame(socket, "client.history_request").payload.limit, 5000);
+
+  socket.receive(
+    ServerEnvelope("history.page", {
+      oldestSequence: 1,
       hasMoreBefore: false,
       messages: [],
       events: [],
@@ -745,7 +786,7 @@ test("near-top scroll requests older history only when available and idle", () =
   );
   harness.runTimers();
   transcript.dispatchEvent({ type: "scroll" });
-  assert.equal(Frames(socket, "client.history_request").length, afterHello + 1);
+  assert.equal(Frames(socket, "client.history_request").length, afterHello + 2);
 });
 
 test("touch and desktop layout classes drive enter-key send behavior", () =>

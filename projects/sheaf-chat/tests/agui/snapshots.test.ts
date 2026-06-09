@@ -86,6 +86,182 @@ test("eventsToSnapshots deduplicates by id and preserves sequence order", () =>
   assert.equal(snapshots[1]?.content, "world");
 });
 
+test("eventsToSnapshots places derived reasoning before assistant parent", () =>
+{
+  const assistantId = "assistant-turn";
+  const reasoningId = `${assistantId}:thinking`;
+  const snapshots = eventsToSnapshots([
+    {
+      type: "TEXT_MESSAGE_START",
+      messageId: assistantId,
+      role: "assistant",
+    },
+    {
+      type: "REASONING_MESSAGE_START",
+      messageId: reasoningId,
+      role: "reasoning",
+    },
+    {
+      type: "REASONING_MESSAGE_CONTENT",
+      messageId: reasoningId,
+      delta: "Thinking",
+    },
+    {
+      type: "REASONING_MESSAGE_END",
+      messageId: reasoningId,
+    },
+    {
+      type: "TEXT_MESSAGE_CONTENT",
+      messageId: assistantId,
+      delta: "Answer",
+    },
+    {
+      type: "TEXT_MESSAGE_END",
+      messageId: assistantId,
+    },
+  ]);
+
+  assert.deepEqual(snapshots.map((message) => message.id), [reasoningId, assistantId]);
+  assert.equal(snapshots[0]?.content, "Thinking");
+  assert.equal(snapshots[1]?.content, "Answer");
+});
+
+test("eventsToSnapshots places implicit derived reasoning before assistant parent", () =>
+{
+  const assistantId = "assistant-turn";
+  const reasoningId = `${assistantId}:thinking`;
+  const snapshots = eventsToSnapshots([
+    {
+      type: "TEXT_MESSAGE_START",
+      messageId: assistantId,
+      role: "assistant",
+    },
+    {
+      type: "REASONING_MESSAGE_CONTENT",
+      messageId: reasoningId,
+      delta: "Thinking without explicit start",
+    },
+    {
+      type: "REASONING_MESSAGE_END",
+      messageId: reasoningId,
+    },
+    {
+      type: "TEXT_MESSAGE_CONTENT",
+      messageId: assistantId,
+      delta: "Answer",
+    },
+    {
+      type: "TEXT_MESSAGE_END",
+      messageId: assistantId,
+    },
+  ]);
+
+  assert.deepEqual(snapshots.map((message) => message.id), [reasoningId, assistantId]);
+  assert.equal(snapshots[0]?.content, "Thinking without explicit start");
+  assert.equal(snapshots[1]?.content, "Answer");
+});
+
+test("eventsToSnapshots materializes non-empty open spans at page boundaries", () =>
+{
+  const assistantId = "assistant-turn";
+  const reasoningId = `${assistantId}:thinking`;
+  const snapshots = eventsToSnapshots([
+    {
+      type: "TEXT_MESSAGE_START",
+      messageId: assistantId,
+      role: "assistant",
+    },
+    {
+      type: "REASONING_MESSAGE_START",
+      messageId: reasoningId,
+    },
+    {
+      type: "REASONING_MESSAGE_CONTENT",
+      messageId: reasoningId,
+      delta: "Still thinking when this page ends",
+    },
+    {
+      type: "TEXT_MESSAGE_CONTENT",
+      messageId: assistantId,
+      delta: "Partial answer",
+    },
+  ]);
+
+  assert.deepEqual(snapshots.map((message) => message.id), [reasoningId, assistantId]);
+  assert.equal(snapshots[0]?.role, "reasoning");
+  assert.equal(snapshots[0]?.content, "Still thinking when this page ends");
+  assert.equal(snapshots[1]?.role, "assistant");
+  assert.equal(snapshots[1]?.content, "Partial answer");
+});
+
+test("eventsToSnapshots drops empty completed text and reasoning spans", () =>
+{
+  const snapshots = eventsToSnapshots([
+    {
+      type: "TEXT_MESSAGE_START",
+      messageId: "empty-user",
+      role: "user",
+    },
+    {
+      type: "TEXT_MESSAGE_END",
+      messageId: "empty-user",
+    },
+    {
+      type: "REASONING_MESSAGE_START",
+      messageId: "empty-thinking",
+    },
+    {
+      type: "REASONING_MESSAGE_END",
+      messageId: "empty-thinking",
+    },
+    {
+      type: "TEXT_MESSAGE_START",
+      messageId: "visible",
+      role: "assistant",
+    },
+    {
+      type: "TEXT_MESSAGE_CONTENT",
+      messageId: "visible",
+      delta: "hello",
+    },
+    {
+      type: "TEXT_MESSAGE_END",
+      messageId: "visible",
+    },
+  ]);
+
+  assert.deepEqual(snapshots.map((message) => message.id), ["visible"]);
+});
+
+test("eventsToSnapshots ignores persisted RAW Pi content lifecycle markers", () =>
+{
+  const snapshots = eventsToSnapshots([
+    {
+      type: "RAW",
+      source: "message_update",
+      event: {
+        type: "message_update",
+        assistantMessageEvent: {
+          type: "thinking_start",
+          contentIndex: 0,
+        },
+      },
+    },
+    {
+      type: "RAW",
+      source: "future_pi_event",
+      event: {
+        type: "future_pi_event",
+        value: true,
+      },
+    },
+  ]);
+
+  assert.equal(snapshots.length, 1);
+  assert.equal(snapshots[0]?.role, "activity");
+  assert.equal(snapshots[0]?.activityType, "future_pi_event");
+});
+
 test("eventsToSnapshots produces shapes accepted by agui-chat.js", async () =>
 {
   const mapper = CreatePiToAguiMapper();

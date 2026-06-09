@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import WebSocket from "ws";
 
 import type { ChatEnvelope } from "../../../src/shared/envelope.js";
 import { mapUserMessageToAgui } from "../../../src/agui/mapper.js";
@@ -295,6 +296,112 @@ test("reconnect with after replays missed envelopes before server.caught_up", as
       assert.equal(replayed[0]?.sequence, 2);
       assert.equal(replayed[0]?.kind, "agui.event");
     });
+  });
+});
+
+test("client.history_request sent immediately after server.hello is handled", async () =>
+{
+  await WithWebSocketTestServer(async (handle) =>
+  {
+    const session = await CreateBlankSessionViaApi(handle);
+    const storagePaths = CreateStoragePaths(handle.config.repoRoot);
+
+    await AppendEnvelope(storagePaths, session.pile, session.sessionId, {
+      kind: "agui.event",
+      pile: session.pile,
+      sessionId: session.sessionId,
+      payload: {
+        type: "TEXT_MESSAGE_START",
+        messageId: "stored-1",
+        role: "user",
+      },
+    });
+    await AppendEnvelope(storagePaths, session.pile, session.sessionId, {
+      kind: "agui.event",
+      pile: session.pile,
+      sessionId: session.sessionId,
+      payload: {
+        type: "TEXT_MESSAGE_CONTENT",
+        messageId: "stored-1",
+        delta: "stored message",
+      },
+    });
+    await AppendEnvelope(storagePaths, session.pile, session.sessionId, {
+      kind: "agui.event",
+      pile: session.pile,
+      sessionId: session.sessionId,
+      payload: {
+        type: "TEXT_MESSAGE_END",
+        messageId: "stored-1",
+      },
+    });
+
+    const url = BuildWsUrl(handle, session.pile, session.sessionId);
+    const socket = new WebSocket(url);
+
+    try
+    {
+      const page = await new Promise<ChatEnvelope>((resolve, reject) =>
+      {
+        const timeout = setTimeout(() =>
+        {
+          cleanup();
+          reject(new Error("timed out waiting for early history page"));
+        }, 3000);
+
+        const cleanup = () =>
+        {
+          clearTimeout(timeout);
+          socket.off("message", onMessage);
+          socket.off("error", onError);
+        };
+        const onError = (error: Error) =>
+        {
+          cleanup();
+          reject(error);
+        };
+        const onMessage = (data: WebSocket.RawData) =>
+        {
+          const envelope = JSON.parse(data.toString()) as ChatEnvelope;
+
+          if (envelope.kind === "server.hello")
+          {
+            SendClientFrame(
+              socket,
+              CreateClientEnvelope(
+                "client.history_request",
+                session.pile,
+                session.sessionId,
+                {
+                  limit: 80,
+                  prefer: "snapshots",
+                },
+                "early-history",
+              ),
+            );
+          }
+
+          if (
+            envelope.kind === "history.page" &&
+            (envelope.payload as { requestId?: string }).requestId === "early-history"
+          )
+          {
+            cleanup();
+            resolve(envelope);
+          }
+        };
+
+        socket.on("message", onMessage);
+        socket.on("error", onError);
+      });
+
+      const payload = page.payload as { messages: unknown[] };
+      assert.ok(payload.messages.length >= 1);
+    }
+    finally
+    {
+      socket.close();
+    }
   });
 });
 

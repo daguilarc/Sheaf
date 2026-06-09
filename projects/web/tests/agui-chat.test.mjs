@@ -75,6 +75,30 @@ function CreateFakeDom() {
       return child;
     }
 
+    insertBefore(child, referenceNode) {
+      if (referenceNode == null) {
+        return this.appendChild(child);
+      }
+
+      const referenceIndex = this.children.indexOf(referenceNode);
+      if (referenceIndex < 0) {
+        return this.appendChild(child);
+      }
+
+      if (child.parentNode) {
+        child.parentNode.removeChild(child);
+      }
+      child.parentNode = this;
+      this.children.splice(referenceIndex, 0, child);
+      if (
+        this.className &&
+        this.className.includes("agui-chat-transcript")
+      ) {
+        this.scrollHeight = Math.max(this.scrollHeight, this.children.length * 500);
+      }
+      return child;
+    }
+
     removeChild(child) {
       const index = this.children.indexOf(child);
       if (index >= 0) {
@@ -301,6 +325,86 @@ test("reasoning lifecycle", () => {
   assert.equal(state.openReasoning.size, 0);
 });
 
+test("reasoning derived from an assistant message renders before its parent", () => {
+  const state = createChatState();
+  const assistantId = "assistant-turn";
+  const reasoningId = `${assistantId}:thinking`;
+
+  ReduceAll(state, [
+    { type: "TEXT_MESSAGE_START", messageId: assistantId, role: "assistant" },
+    { type: "REASONING_MESSAGE_START", messageId: reasoningId, role: "reasoning" },
+    { type: "REASONING_MESSAGE_CONTENT", messageId: reasoningId, delta: "Thinking" },
+    { type: "TEXT_MESSAGE_CONTENT", messageId: assistantId, delta: "Answer" },
+    { type: "REASONING_MESSAGE_END", messageId: reasoningId },
+    { type: "TEXT_MESSAGE_END", messageId: assistantId },
+  ]);
+
+  assert.deepEqual(Array.from(state.messageOrder), [reasoningId, assistantId]);
+  assert.equal(state.messages.get(reasoningId).content, "Thinking");
+  assert.equal(state.messages.get(assistantId).content, "Answer");
+});
+
+test("render moves late reasoning before an already-rendered assistant", () => {
+  const container = document.createElement("div");
+  const handle = ChatView.create(container, { wsUrl: "ws://example.test/chat" });
+  const assistantId = "assistant-turn";
+  const reasoningId = `${assistantId}:thinking`;
+
+  ChatView.appendAguiEvent(handle, {
+    type: "TEXT_MESSAGE_START",
+    messageId: assistantId,
+    role: "assistant",
+  });
+  ChatView.appendAguiEvent(handle, {
+    type: "TEXT_MESSAGE_CONTENT",
+    messageId: assistantId,
+    delta: "Answer",
+  });
+  ChatView._flushFrames();
+
+  assert.equal(handle.transcript.children.length, 1);
+  assert.equal(
+    handle.transcript.children[0].dataset.messageId,
+    assistantId
+  );
+
+  ChatView.appendAguiEvent(handle, {
+    type: "REASONING_MESSAGE_CONTENT",
+    messageId: reasoningId,
+    delta: "Thinking",
+  });
+  ChatView._flushFrames();
+
+  assert.deepEqual(Array.from(handle.state.messageOrder), [reasoningId, assistantId]);
+  assert.equal(handle.transcript.children.length, 2);
+  assert.equal(
+    handle.transcript.children[0].dataset.messageId,
+    reasoningId
+  );
+  assert.equal(
+    handle.transcript.children[1].dataset.messageId,
+    assistantId
+  );
+
+  ChatView.destroy(handle);
+});
+
+test("duplicate text starts preserve existing message content", () => {
+  const state = createChatState();
+  const messageId = "user-duplicate";
+
+  ReduceAll(state, [
+    { type: "TEXT_MESSAGE_START", messageId, role: "user" },
+    { type: "TEXT_MESSAGE_CONTENT", messageId, delta: "visible text" },
+    { type: "TEXT_MESSAGE_END", messageId },
+    { type: "TEXT_MESSAGE_START", messageId, role: "user" },
+    { type: "TEXT_MESSAGE_CONTENT", messageId, delta: "visible text" },
+    { type: "TEXT_MESSAGE_END", messageId },
+  ]);
+
+  assert.equal(state.messages.get(messageId).content, "visible text");
+});
+
 test("run lifecycle and caught_up status", () => {
   const state = createChatState();
   const runId = "run-1";
@@ -425,6 +529,44 @@ test("CUSTOM provider text, generic CUSTOM, and RAW", () => {
     .map((id) => state.messages.get(id))
     .find((message) => message.activityType === "cursor");
   assert.equal(rawMessage.content, "unrecognized event");
+});
+
+test("sheaf lifecycle status activity is hidden", () => {
+  const state = createChatState();
+
+  ReduceAll(state, [
+    {
+      type: "CUSTOM",
+      name: "sheaf.lifecycle_status",
+      value: { state: "idle", previousState: "active" },
+    },
+    {
+      type: "CUSTOM",
+      name: "provider.text",
+      value: { text: "still visible" },
+    },
+  ]);
+
+  assert.equal(state.messageOrder.length, 1);
+  assert.equal(state.messages.get(state.messageOrder[0]).activityType, "provider.text");
+
+  ReduceAll(state, [
+    {
+      type: "MESSAGES_SNAPSHOT",
+      messages: [
+        {
+          id: "lifecycle-1",
+          role: "activity",
+          content: "{\"state\":\"idle\"}",
+          activityType: "sheaf.lifecycle_status",
+        },
+        { id: "assistant-1", role: "assistant", content: "hello" },
+      ],
+    },
+  ]);
+
+  assert.equal(state.messageOrder.length, 1);
+  assert.equal(state.messageOrder[0], "assistant-1");
 });
 
 test("ACTIVITY_SNAPSHOT replacement and ACTIVITY_DELTA patching", () => {
@@ -914,6 +1056,42 @@ test("MESSAGES_SNAPSHOT removes stale DOM nodes", () => {
   assert.equal(handle.transcript.children.length, 1);
 });
 
+test("empty completed messages do not render transcript artifacts", () => {
+  const container = document.createElement("div");
+  const LiveChatView = LoadChatView();
+  const handle = LiveChatView.create(container, null);
+
+  applyServerMessage(handle.state, {
+    type: "events",
+    events: [
+      { type: "TEXT_MESSAGE_START", messageId: "empty-user", role: "user" },
+      { type: "TEXT_MESSAGE_END", messageId: "empty-user" },
+      { type: "TEXT_MESSAGE_START", messageId: "empty-assistant", role: "assistant" },
+      { type: "TEXT_MESSAGE_END", messageId: "empty-assistant" },
+      { type: "REASONING_MESSAGE_START", messageId: "empty-reasoning" },
+      { type: "REASONING_MESSAGE_END", messageId: "empty-reasoning" },
+      { type: "TEXT_MESSAGE_START", messageId: "visible", role: "assistant" },
+      { type: "TEXT_MESSAGE_CONTENT", messageId: "visible", delta: "hello" },
+      { type: "TEXT_MESSAGE_END", messageId: "visible" },
+    ],
+  });
+
+  renderChat(handle);
+
+  assert.equal(handle.transcript.children.length, 1);
+  assert.equal(handle.transcript.children[0].dataset.messageId, "visible");
+  assert.equal(handle.messageNodes.has("empty-user"), false);
+  assert.equal(handle.messageNodes.has("empty-assistant"), false);
+  assert.equal(handle.messageNodes.has("empty-reasoning"), false);
+
+  LiveChatView.prependHistory(handle, [
+    { id: "empty-activity", role: "activity", activityType: "debug.empty", content: "" },
+  ]);
+
+  assert.equal(handle.transcript.children.length, 1);
+  assert.equal(handle.messageNodes.has("empty-activity"), false);
+});
+
 test("STEP_STARTED and STEP_FINISHED track active steps", () => {
   const state = createChatState();
   ReduceAll(state, [
@@ -947,6 +1125,12 @@ test("prependHistory preserves scroll position and deduplicates ids", () => {
 
   const added = prependSnapshotMessages(handle.state, [
     { id: "older", role: "user", content: "top" },
+    {
+      id: "lifecycle-older",
+      role: "activity",
+      content: "{\"state\":\"idle\"}",
+      activityType: "sheaf.lifecycle_status",
+    },
     { id: "newer", role: "user", content: "duplicate" },
   ]);
   assert.equal(added, 1);

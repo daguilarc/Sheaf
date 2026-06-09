@@ -6,7 +6,7 @@ import type { StoragePaths } from "./paths.js";
 import { ValidateSessionId } from "./validation.js";
 
 export const x_defaultHistoryLimit = 50;
-export const x_maxHistoryLimit = 200;
+export const x_maxHistoryLimit = 5000;
 
 function ClampHistoryLimit(limit: number | undefined): number
 {

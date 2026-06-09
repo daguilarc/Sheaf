@@ -50,6 +50,8 @@ export class PiToAguiMapper
   private m_openTextMessages = new Set<string>();
   private m_openReasoningMessages = new Set<string>();
   private m_openReasoningPhases = new Set<string>();
+  private m_textBuffers = new Map<string, string>();
+  private m_reasoningBuffers = new Map<string, string>();
   private m_openTools = new Map<string, OpenToolCall>();
   private m_seenTools = new Set<string>();
   private m_toolsWithArgs = new Set<string>();
@@ -62,6 +64,8 @@ export class PiToAguiMapper
     this.m_openTextMessages.clear();
     this.m_openReasoningMessages.clear();
     this.m_openReasoningPhases.clear();
+    this.m_textBuffers.clear();
+    this.m_reasoningBuffers.clear();
     this.m_openTools.clear();
     this.m_seenTools.clear();
     this.m_toolsWithArgs.clear();
@@ -180,6 +184,29 @@ export class PiToAguiMapper
         );
       }
 
+      if (deltaType === "text_start")
+      {
+        return [];
+      }
+
+      if (deltaType === "text_end")
+      {
+        const output = this.AppendMissingTextFromFinal(
+          context,
+          messageId,
+          typeof messageEvent.content === "string" ? messageEvent.content : "",
+          this.AguiTextRole(message.role),
+          source,
+        );
+        output.push(...this.CloseText(context, messageId, source));
+        return output;
+      }
+
+      if (deltaType === "thinking_start")
+      {
+        return [];
+      }
+
       if (deltaType === "thinking_delta")
       {
         return this.AppendReasoning(
@@ -188,6 +215,19 @@ export class PiToAguiMapper
           String(messageEvent.delta ?? ""),
           source,
         );
+      }
+
+      if (deltaType === "thinking_end")
+      {
+        const reasoningMessageId = `${messageId}:thinking`;
+        const output = this.AppendMissingReasoningFromFinal(
+          context,
+          reasoningMessageId,
+          typeof messageEvent.content === "string" ? messageEvent.content : "",
+          source,
+        );
+        output.push(...this.CloseReasoning(context, reasoningMessageId, source));
+        return output;
       }
 
       if (deltaType === "tool_call_delta")
@@ -494,8 +534,37 @@ export class PiToAguiMapper
       messageId,
       delta: text,
     }, context, sourceEvent));
+    this.m_textBuffers.set(messageId, (this.m_textBuffers.get(messageId) ?? "") + text);
 
     return output;
+  }
+
+  AppendMissingTextFromFinal(
+    context: PiMapperContext,
+    messageId: string,
+    finalText: string,
+    role: string,
+    sourceEvent: PiMappableEvent,
+  ): AguiEvent[]
+  {
+    if (finalText.length === 0)
+    {
+      return [];
+    }
+
+    const buffered = this.m_textBuffers.get(messageId) ?? "";
+
+    if (buffered.length === 0)
+    {
+      return this.AppendText(context, messageId, finalText, role, sourceEvent);
+    }
+
+    if (finalText.startsWith(buffered) && finalText.length > buffered.length)
+    {
+      return this.AppendText(context, messageId, finalText.slice(buffered.length), role, sourceEvent);
+    }
+
+    return [];
   }
 
   CloseText(context: PiMapperContext, messageId: string, sourceEvent: PiMappableEvent): AguiEvent[]
@@ -506,6 +575,7 @@ export class PiToAguiMapper
     }
 
     this.m_openTextMessages.delete(messageId);
+    this.m_textBuffers.delete(messageId);
 
     return [this.Agui({ type: "TEXT_MESSAGE_END", messageId }, context, sourceEvent)];
   }
@@ -545,8 +615,36 @@ export class PiToAguiMapper
       messageId,
       delta: text,
     }, context, sourceEvent));
+    this.m_reasoningBuffers.set(messageId, (this.m_reasoningBuffers.get(messageId) ?? "") + text);
 
     return output;
+  }
+
+  AppendMissingReasoningFromFinal(
+    context: PiMapperContext,
+    messageId: string,
+    finalText: string,
+    sourceEvent: PiMappableEvent,
+  ): AguiEvent[]
+  {
+    if (finalText.length === 0)
+    {
+      return [];
+    }
+
+    const buffered = this.m_reasoningBuffers.get(messageId) ?? "";
+
+    if (buffered.length === 0)
+    {
+      return this.AppendReasoning(context, messageId, finalText, sourceEvent);
+    }
+
+    if (finalText.startsWith(buffered) && finalText.length > buffered.length)
+    {
+      return this.AppendReasoning(context, messageId, finalText.slice(buffered.length), sourceEvent);
+    }
+
+    return [];
   }
 
   CloseReasoning(context: PiMapperContext, messageId: string, sourceEvent: PiMappableEvent): AguiEvent[]
@@ -564,6 +662,8 @@ export class PiToAguiMapper
       this.m_openReasoningPhases.delete(messageId);
       output.push(this.Agui({ type: "REASONING_END", messageId }, context, sourceEvent));
     }
+
+    this.m_reasoningBuffers.delete(messageId);
 
     return output;
   }

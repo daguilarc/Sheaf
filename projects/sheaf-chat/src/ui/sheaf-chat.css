@@ -41,10 +41,11 @@ body
 
 .sheaf-chat-app
 {
-  min-height: 100%;
-  min-height: 100dvh;
+  height: 100%;
+  height: 100dvh;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 .sheaf-chat-screen
@@ -230,7 +231,10 @@ body
   display: flex;
   flex-direction: column;
   flex: 1;
+  height: 100%;
+  height: 100dvh;
   min-height: 0;
+  overflow: hidden;
 }
 
 .sheaf-chat-chat-main
@@ -239,12 +243,17 @@ body
   min-height: 0;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
+.sheaf-chat-chat-view,
 .sheaf-chat-chat-main .agui-chat-root
 {
   flex: 1;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .sheaf-chat-chat-status
