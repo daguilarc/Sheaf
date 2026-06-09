@@ -2,10 +2,10 @@
 
 ## Issue PL-0001
 
-- status: open
+- status: completed
 - owner_role: polisher_reviewer
 - created_at: 2026-06-09T22:47:40Z
-- updated_at: 2026-06-09T22:47:40Z
+- updated_at: 2026-06-09T22:53:12Z
 - title: Slice-init collection selection paths (explicit/multiple) are untested
 - details: ## What is wrong
 
