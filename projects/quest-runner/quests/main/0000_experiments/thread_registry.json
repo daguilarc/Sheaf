@@ -151,5 +151,14 @@
     "round_count": 1,
     "created_at": "2026-06-09T03:23:47Z",
     "last_used_at": "2026-06-09T03:33:24Z"
+  },
+  "slice_6_polisher_reviewer": {
+    "thread_name": "quest-runner_main_0000_experiments_quest_0000_slice_0006_polisher_reviewer",
+    "harness_kind": "claude_code",
+    "provider_thread_id": "2a72e731-76e2-40e5-8f83-e08cedadcf46",
+    "pass_id": 0,
+    "round_count": 1,
+    "created_at": "2026-06-09T03:33:25Z",
+    "last_used_at": "2026-06-09T03:38:08Z"
   }
 }
