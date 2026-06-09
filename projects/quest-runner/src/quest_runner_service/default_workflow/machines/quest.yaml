@@ -1,0 +1,113 @@
+machine: quest
+initial: PrePlanning
+terminal: [Completed]
+
+states:
+  PrePlanning:
+    node_name: PrePlanningGateNode
+    transitions:
+      - to: PhysicalPlanning
+        mode: manual_only
+      - stop:
+          status: pre_planning
+
+  PhysicalPlanning:
+    node_name: PhysicalPlanningNode
+    run:
+      profile: physical_planner
+      task: |
+        If open physical-plan issues exist, address them using the issue CLI with
+        issue file `physicalplan_issues.md`.
+
+        Otherwise read `specs/`, decide the full ordered slice list, initialize
+        slices with the slice CLI, and write at least one plan markdown file under
+        each slice's `physicalplan/` directory.
+    transitions:
+      - if:
+          all:
+            - child_dirs_exist:
+                collection: slices
+            - all_children:
+                collection: slices
+                require:
+                  - dir_exists: physicalplan
+                  - file_count_at_least:
+                      glob: physicalplan/*.md
+                      count: 1
+                  - file_exists: state.md
+                  - file_exists: state_history.md
+                  - file_exists: polishing_issues.md
+        to: ReviewPhysicalPlan
+      - stay:
+          reason: incomplete_physical_plan
+
+  ReviewPhysicalPlan:
+    node_name: ReviewPhysicalPlanNode
+    run:
+      profile: physical_plan_reviewer
+      task: |
+        Review all slice physical plans. Use the issue CLI with issue file
+        `physicalplan_issues.md` to create, edit, or close issues. If no open
+        issues remain, create `physicalplan_accepted.md` with an acceptance
+        summary.
+    transitions:
+      - if:
+          has_open_issues:
+            file: physicalplan_issues.md
+        to: PhysicalPlanning
+        actions:
+          - remove_file: physicalplan_accepted.md
+      - if:
+          all:
+            - no_open_issues:
+                file: physicalplan_issues.md
+            - file_exists: physicalplan_accepted.md
+        to: PrepareNextSlice
+      - stay:
+          reason: physical_plan_review_incomplete
+
+  PrepareNextSlice:
+    node_name: PrepareNextSliceNode
+    actions:
+      - select_child:
+          collection: slices
+          where:
+            state_not: Completed
+          after: active_slice
+          set: active_slice
+          result: next_slice
+    transitions:
+      - if:
+          var_exists: next_slice
+        to: ExecuteSlice
+      - to: QuestDocumenting
+        actions:
+          - clear_var: active_slice
+
+  ExecuteSlice:
+    node_name: ExecuteActiveSliceNode
+    child:
+      collection: slices
+      active: active_slice
+      run: one_step
+    transitions:
+      - if:
+          child_result:
+            state_after: Completed
+        to: PrepareNextSlice
+      - to: ExecuteSlice
+
+  QuestDocumenting:
+    node_name: QuestDocumentingNode
+    run:
+      profile: documenter
+      task: |
+        Write documentation in the current project's docs directory describing
+        what was built across the full quest. Do not modify repo-root `docs/`
+        unless it is the current project's docs directory.
+    transitions:
+      - to: Completed
+
+  Completed:
+    node_name: CompletedGateNode
+    terminal: true

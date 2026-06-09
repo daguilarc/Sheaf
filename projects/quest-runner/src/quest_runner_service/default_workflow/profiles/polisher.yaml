@@ -1,0 +1,18 @@
+harness: codex
+model: gpt-5.5
+reasoning_effort: null
+idle_timeout_seconds: 3600
+prompt: ../prompts/polisher.md
+runtime_context:
+  include_reference_docs_path: true
+modify:
+  allow:
+    - "$quest/human_intervention_request.md"
+    - "$active_child/polishing_issue_responses.md"
+    - "$active_child/notes/**"
+  block:
+    - "$project/quests/**"
+thread:
+  scope: child
+  name_template: "{repo}_quest_{quest_number:04d}_slice_{child_number:04d}_{profile}"
+  registry_key_template: "slice_{child_number}_{profile}"
