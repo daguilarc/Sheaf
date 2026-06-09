@@ -18,7 +18,6 @@ from quest_runner_service.quest_runner import (
     expand_modify_path_patterns,
     path_is_legal_under_profile,
     run_quest,
-    runtime_quest_docs_dir,
 )
 from quest_runner_service.quest_service import (
     InvalidQuestInput,
@@ -27,7 +26,6 @@ from quest_runner_service.quest_service import (
     QuestService,
     _build_run_lock_key,
 )
-from quest_runner_service.quest_thread import build_runtime_context, build_spec_thread_name
 from quest_runner_service.quest_types import (
     ExecutionProfile,
     HarnessKind,
@@ -344,56 +342,6 @@ class ProjectLocalPathRuleTests(unittest.TestCase):
             self.assertTrue(
                 docs_updated_for_quest(repo, base, "projects/example/docs")
             )
-
-
-class BuildRuntimeContextProjectLocalTests(unittest.TestCase):
-    def test_shows_repo_relative_quest_and_slice_paths(self) -> None:
-        meta = QuestMeta(
-            project="example",
-            quest_type="main",
-            quest_number=7,
-            quest_slug="ship_it",
-            quest_name="Ship It",
-            created_at="2026-03-29T00:00:00Z",
-        )
-        with tempfile.TemporaryDirectory() as tmp:
-            repo = Path(tmp)
-            qdir = repo / "projects" / "example" / "quests" / "main" / "0007_ship_it"
-            sdir = qdir / "slices" / "0002_api"
-            sdir.mkdir(parents=True)
-            docs = runtime_quest_docs_dir()
-            out = build_runtime_context(
-                role_name="implementer",
-                meta=meta,
-                quest_dir=qdir,
-                slice_dir=sdir,
-                quest_docs_dir=docs,
-                repo_path=repo,
-            )
-        self.assertIn(
-            "- Quest directory: projects/example/quests/main/0007_ship_it",
-            out,
-        )
-        self.assertIn(
-            "- Current slice directory: "
-            "projects/example/quests/main/0007_ship_it/slices/0002_api",
-            out,
-        )
-        self.assertIn(
-            "- Current project docs directory: projects/example/docs",
-            out,
-        )
-        self.assertIn("- Quest runner reference directory:", out)
-        self.assertNotIn(str(qdir), out)
-
-
-class WorktreeThreadNameTests(unittest.TestCase):
-    def test_spec_thread_name_uses_worktree_basename(self) -> None:
-        repo = Path("/data/.quest-worktrees/example_main_0012_ship_it")
-        self.assertEqual(
-            build_spec_thread_name(repo, 12, "implementer", 0),
-            "example_main_0012_ship_it_quest_0012_slice_0000_implementer",
-        )
 
 
 class ProjectLocalCommitMetadataTests(unittest.TestCase):

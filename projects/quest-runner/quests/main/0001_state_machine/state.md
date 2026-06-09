@@ -1,10 +1,10 @@
 # State
 
-- global_step: 25
+- global_step: 26
 - machine_name: quest
 - machine_path: projects/quest-runner/quests/main/0001_state_machine
 - state: ExecuteSlice
-- updated_at: 2026-06-09T22:13:06Z
+- updated_at: 2026-06-09T22:20:54Z
 
 ## Tags
 

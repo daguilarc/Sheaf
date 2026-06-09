@@ -137,6 +137,22 @@ class PreambleRenderingTests(unittest.TestCase):
         self.assertNotIn("--scope physicalplan", preamble)
         self.assertNotIn("--scope polishing", preamble)
 
+    def test_experiment_guidance_renders_from_workflow_preamble(self) -> None:
+        ctx = _exec_ctx(
+            profile_name="implementer",
+            repo=self.repo,
+            quest_dir=self.quest_dir,
+            active_child_dir=self.slice_dir,
+            experiment_id="experiment_quest_runner_main_1_0",
+        )
+        body = build_workflow_message_body(ctx, "Do the work.")
+        self.assertIn("Experiment: experiment_quest_runner_main_1_0", body)
+        self.assertIn(
+            "--experiment-id experiment_quest_runner_main_1_0",
+            body,
+        )
+        self.assertIn("original quest worktree may not exist", body)
+
     def test_reference_docs_only_when_enabled(self) -> None:
         ctx = _exec_ctx(
             profile_name="implementer",
@@ -252,14 +268,29 @@ class ModifyPathInterpolationTests(unittest.TestCase):
 
 
 class HarnessConfigTests(unittest.TestCase):
-    def test_service_harness_config_loads_from_repo_root(self) -> None:
-        root = Path(__file__).resolve().parents[3]
-        harnesses = read_service_harness_configs(root)
+    def test_service_harness_config_loads_from_fixture_repo_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cfg = root / "config"
+            cfg.mkdir()
+            (cfg / "quest-runner.json").write_text(
+                json.dumps(
+                    {
+                        "harnesses": {
+                            "claude_code": {"cli_path": "/opt/bin/claude"},
+                            "cursor": {"cli_path": "/opt/bin/cursor-agent"},
+                            "codex": {},
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            harnesses = read_service_harness_configs(root)
         self.assertIn("cursor", harnesses)
         self.assertIn("claude_code", harnesses)
         self.assertEqual(
             harnesses["cursor"]["cli_path"],
-            "/Users/joyo/.local/bin/cursor-agent",
+            "/opt/bin/cursor-agent",
         )
 
     def test_missing_service_config_returns_empty_mapping(self) -> None:

@@ -1,4 +1,4 @@
-"""Quest thread naming, registry resolution, and role prompt assembly."""
+"""Quest thread registry resolution and persistence."""
 
 from __future__ import annotations
 
@@ -29,54 +29,6 @@ def build_thread_name(
 ) -> str:
     repo_name = repo_path.name
     return f"{repo_name}_quest_{quest_slug}_{role_name}_{pass_id}"
-
-
-def build_spec_thread_name(
-    repo_path: Path,
-    quest_number: int,
-    role_name: str,
-    slice_number: int | None,
-) -> str:
-    """Deterministic thread name from workflow profile ``thread.name_template``."""
-    from .workflow_config import load_packaged_default_workflow
-    from .workflow_profile_execution import ProfileExecutionContext, render_thread_name
-    from .quest_types import QuestMeta
-
-    workflow = load_packaged_default_workflow()
-    profile = workflow.get_profile(role_name)
-    meta = QuestMeta(
-        project="",
-        quest_type="main",
-        quest_number=quest_number,
-        quest_slug="",
-        quest_name="",
-        created_at="2026-01-01T00:00:00Z",
-    )
-    repo = repo_path.resolve()
-    placeholder_quest = "quests/main/0000_placeholder"
-    active_slice = f"{slice_number:04d}_placeholder" if slice_number is not None else ""
-    exec_ctx = ProfileExecutionContext(
-        repo_path=repo,
-        quest_dir=repo,
-        machine_dir=repo,
-        meta=meta,
-        workflow=workflow,
-        profile=profile,
-        profile_name=role_name,
-        quest_docs_dir=repo,
-        quest_rel=placeholder_quest,
-        machine_rel=placeholder_quest,
-        project_rel="projects/placeholder",
-        active_child_dir=None,
-        active_child_rel=(
-            f"{placeholder_quest}/slices/{active_slice}" if slice_number is not None else None
-        ),
-        active_slice=active_slice,
-        collection_name="slices" if slice_number is not None else None,
-        child_number=slice_number,
-        experiment_id=None,
-    )
-    return render_thread_name(exec_ctx)
 
 
 def create_thread_with_provider_name(
@@ -118,37 +70,6 @@ def create_thread_with_provider_name(
         harness_kind=harness.kind,
         thread_name=thread_name,
         provider_thread_id=provider_thread_id,
-    )
-
-
-def resolve_or_create_thread_spec(
-    quest_dir: Path,
-    repo_path: Path,
-    role_name: str,
-    harness: Harness,
-    quest_number: int,
-    model: str,
-    reasoning_effort: str | None,
-    idle_timeout_seconds: int,
-    slice_number: int | None,
-    registry_key: str | None = None,
-) -> QuestThread:
-    key = registry_key or role_name
-    thread = load_thread(quest_dir, repo_path, role_name, registry_key=key)
-    if thread is not None:
-        persist_thread_last_used(quest_dir, key)
-        return thread
-    name = build_spec_thread_name(repo_path, quest_number, role_name, slice_number)
-    return create_thread_with_provider_name(
-        quest_dir,
-        repo_path,
-        role_name,
-        harness,
-        name,
-        model,
-        reasoning_effort,
-        idle_timeout_seconds,
-        registry_key=key,
     )
 
 
@@ -267,102 +188,6 @@ def resolve_or_create_thread(
         reasoning_effort,
         idle_timeout_seconds,
         registry_key=key,
-    )
-
-
-def _package_dir() -> Path:
-    return Path(__file__).resolve().parent
-
-
-def build_role_prompt(
-    role_name: str, task_instruction: str, conductor_repo_path: Path
-) -> str:
-    del conductor_repo_path
-    role_path = _package_dir() / "roles" / f"{role_name}.md"
-    role_text = role_path.read_text(encoding="utf-8")
-    return f"{role_text}\n\n---\n\n{task_instruction}"
-
-
-def _issue_workflow_cli_summary() -> str:
-    return (
-        "## Issue workflow (CLI)\n\n"
-        "Use `scripts/quest-runner issues ...` for issue operations. "
-        "Run `scripts/quest-runner issues --help` for command details.\n\n"
-        "- List/read: `issues list`, `issues read <id>`\n"
-        "- Create/edit: `issues create`, `issues edit` "
-        "(reviewers close with `--status completed`)\n"
-        "- Respond: `issues respond` with `--outcome Fixed|NotFixed` and "
-        "`--explanation` (responders only; do not close issues)\n"
-        "- Response history: `issues responses <id>`\n"
-        "- Use `--scope physicalplan` for quest-level issues; use "
-        "`--scope polishing --slice <n>` for slice issues\n\n"
-        "If you see something that looks like a bug in the quest harness, open "
-        "a human intervention request. Do not work around bugs in the quest "
-        "harness.\n\n"
-        "Do not edit `physicalplan_issues.md`, `physicalplan_issue_responses.md`, "
-        "`polishing_issues.md`, or `polishing_issue_responses.md` directly unless "
-        "a human instructs you or the CLI/API is unavailable.\n"
-    )
-
-
-def build_runtime_context(
-    *,
-    role_name: str,
-    meta: QuestMeta,
-    quest_dir: Path,
-    slice_dir: Path | None,
-    quest_docs_dir: Path,
-    repo_path: Path | None = None,
-    experiment_id: str | None = None,
-) -> str:
-    slice_label = slice_dir.name if slice_dir is not None else "none (quest-scoped pass)"
-    if repo_path is not None:
-        quest_path_label = quest_dir.resolve().relative_to(
-            repo_path.resolve()
-        ).as_posix()
-        project_path_label = f"projects/{meta.project}" if meta.project else ""
-        marker = "/quests/"
-        if marker in quest_path_label:
-            project_path_label = quest_path_label.split(marker, 1)[0]
-        if slice_dir is not None:
-            slice_path_label = slice_dir.resolve().relative_to(
-                repo_path.resolve()
-            ).as_posix()
-        else:
-            slice_path_label = "none"
-    else:
-        quest_path_label = str(quest_dir)
-        project_path_label = (
-            str(quest_dir.parents[2])
-            if len(quest_dir.parents) >= 3
-            else (f"projects/{meta.project}" if meta.project else "")
-        )
-        slice_path_label = str(slice_dir) if slice_dir is not None else "none"
-    project_docs_label = (
-        f"{project_path_label}/docs" if project_path_label else "docs"
-    )
-    issue_summary = _issue_workflow_cli_summary()
-    experiment_block = ""
-    if experiment_id is not None:
-        experiment_block = (
-            f"Experiment: {experiment_id}\n"
-            f"When using scripts/quest-runner, pass --experiment-id {experiment_id}.\n"
-            "Do not omit the experiment id; the original quest worktree may not exist.\n\n"
-        )
-    return (
-        "Quest Runtime Context\n"
-        f"- Quest: {meta.quest_type}/{meta.quest_number:04d}_{meta.quest_slug} ({meta.quest_name})\n"
-        f"- Quest directory: {quest_path_label}\n"
-        f"- Role: {role_name}\n"
-        f"- Current slice: {slice_label}\n"
-        f"- Current slice directory: {slice_path_label}\n"
-        f"- Current project docs directory: {project_docs_label}\n"
-        f"- Quest runner reference directory: {quest_docs_dir}\n\n"
-        f"{experiment_block}"
-        "Use the quest's `specs/` directory as the implementation specification for this quest. "
-        "Use the quest runner reference directory above for internal storage schemas and "
-        "maintainer workflow rules.\n\n"
-        f"{issue_summary}"
     )
 
 

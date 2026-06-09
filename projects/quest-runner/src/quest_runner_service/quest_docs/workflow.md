@@ -1,38 +1,36 @@
 # Quest Workflow Reference
 
-## Role Routing
+## Workflow Routing
 
-- `PhysicalPlanning` -> `physical_planner`
-- `ReviewPhysicalPlan` -> `physical_plan_reviewer`
-- `ExecuteSlice` + `Implementing` -> `implementer`
-- `ExecuteSlice` + `PolishingReview` -> `polisher_reviewer`
-- `ExecuteSlice` + `PolishingFix` -> `polisher`
-- `QuestDocumenting` -> `documenter`
+The canonical recursive runner resolves runnable work from the active workflow
+definition. Machine states declare `run.profile`, and the selected profile supplies
+the harness, prompt, runtime-context toggles, task template, modify rules, and thread
+templates. The packaged default workflow lives under `default_workflow/`.
 
-The canonical recursive runner reuses one thread per role scope:
+The runner reuses one thread per profile scope:
 
-- quest-scoped roles: `<repo>_quest_<quest_number:04d>_<role>`
-- slice-scoped roles: `<repo>_quest_<quest_number:04d>_slice_<slice_number:04d>_<role>`
+- quest-scoped profiles: `{repo}_quest_{quest_number:04d}_{profile}`
+- child-scoped profiles: `{repo}_quest_{quest_number:04d}_slice_{child_number:04d}_{profile}`
 
 ## Prompt Contract
 
-Every role message should make the following explicit:
+Every profile message should make the following explicit:
 
 - current quest
-- current role
-- current slice, or that the pass is quest-scoped
-- absolute path to this quest reference directory
+- current profile
+- active child path when the profile exposes one
+- path to this quest reference directory when the profile exposes one
 - current experiment id when running in an experiment worktree
 
-The first message in a role thread includes:
+The first message in a profile thread includes:
 
-1. the full role file from `roles/<role>.md`
-2. runtime context
+1. the profile prompt from the workflow profile
+2. workflow-rendered runtime context
 3. the current task instruction
 
 Later messages reuse the same thread and include:
 
-1. runtime context
+1. workflow-rendered runtime context
 2. the current task instruction
 
 ## Ownership Rules

@@ -9,7 +9,6 @@ import re
 import json
 from fnmatch import fnmatchcase
 from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
 from collections.abc import Callable
 from typing import NoReturn
@@ -56,16 +55,6 @@ _STEP_LOG_RE = re.compile(r"^step_(\d+)_.*\.jsonl$")
 
 def runtime_quest_docs_dir() -> Path:
     return (Path(__file__).resolve().parent / "quest_docs").resolve()
-
-
-_ROLE_MAP: dict[tuple[QuestState, SliceState | None], str] = {
-    (QuestState.PhysicalPlanning, None): "physical_planner",
-    (QuestState.ReviewPhysicalPlan, None): "physical_plan_reviewer",
-    (QuestState.ExecuteSlice, SliceState.Implementing): "implementer",
-    (QuestState.ExecuteSlice, SliceState.PolishingReview): "polisher_reviewer",
-    (QuestState.ExecuteSlice, SliceState.PolishingFix): "polisher",
-    (QuestState.QuestDocumenting, None): "documenter",
-}
 
 
 def perform_role_harness_sequence(
@@ -644,21 +633,6 @@ def enforce_profile_modify_rules_after_harness(
     return illegal
 
 
-def resolve_role(quest_state: QuestState, slice_state: SliceState | None) -> str:
-    if quest_state == QuestState.ExecuteSlice:
-        if slice_state is None:
-            fatal_invariant("ExecuteSlice requires a slice_state for role resolution")
-        key: tuple[QuestState, SliceState | None] = (quest_state, slice_state)
-    else:
-        key = (quest_state, None)
-    role = _ROLE_MAP.get(key)
-    if role is None:
-        fatal_invariant(
-            f"No role mapping for quest_state={quest_state!r} slice_state={slice_state!r}"
-        )
-    return role
-
-
 def _quest_key(meta: QuestMeta) -> str:
     return f"{meta.quest_type}/{meta.quest_number:04d}_{meta.quest_slug}"
 
@@ -727,78 +701,6 @@ def docs_updated_for_quest(repo_path: Path, base_ref: str, project_docs_rel: str
     return False
 
 
-def build_task_instruction(
-    quest_state: QuestState,
-    slice_state: SliceState | None,
-    quest_dir: Path,
-    slice_dir: Path | None,
-    project_docs_rel: str | None = None,
-) -> str:
-    if quest_state == QuestState.PhysicalPlanning:
-        if quest_has_open_physicalplan_issues(quest_dir):
-            return (
-                "Address the open physical-plan issues. Use "
-                "`scripts/quest-runner issues list --scope physicalplan` to read them. "
-                "Update the physical plans and related slice scaffolding as needed, then "
-                "record per-issue responses with "
-                "`scripts/quest-runner issues respond <id> --scope physicalplan "
-                "--outcome Fixed|NotFixed --explanation \"...\"`."
-            )
-        return (
-            "Read the specs in `specs/`, decide the full ordered slice list and "
-            "slugs, then initialize slice directories with "
-            "`scripts/quest-runner slices init --project <project> --type <main|side> "
-            "--number <n> --count <count> --slug <slug> ...`. After initialization, "
-            "write at least one `.md` plan file under each slice's `physicalplan/` "
-            "directory."
-        )
-    if quest_state == QuestState.ReviewPhysicalPlan:
-        return (
-            "Review the physical plans in all slices. Use "
-            "`scripts/quest-runner issues create` and `issues edit` with "
-            "`--scope physicalplan` to report or close issues. Reviewers close resolved "
-            "issues with `issues edit <id> --status completed`. "
-            "If you finish with no open issues, create `physicalplan_accepted.md` "
-            "with a brief acceptance summary."
-        )
-    if quest_state == QuestState.ExecuteSlice and slice_state == SliceState.Implementing:
-        assert slice_dir is not None
-        rel = slice_dir.name
-        return (
-            f"Implement the plan described in `{rel}/physicalplan/`. Keep "
-            "working until the full plan is complete. "
-            f"When the full plan is complete, create `{_IMPLEMENTATION_DONE_FILE}` "
-            "in this slice with a brief completion summary."
-        )
-    if quest_state == QuestState.ExecuteSlice and slice_state == SliceState.PolishingReview:
-        return (
-            "Review the implementation in this slice. Use "
-            "`scripts/quest-runner issues create` and `issues edit` with "
-            "`--scope polishing --slice <n>` to report or close issues. Reviewers close "
-            "resolved issues with `issues edit <id> --status completed`. "
-            "If you finish with no open issues, create `implementation_accepted.md` "
-            "in this slice with a brief acceptance summary."
-        )
-    if quest_state == QuestState.ExecuteSlice and slice_state == SliceState.PolishingFix:
-        return (
-            "Fix the open polishing issues for this slice. Use "
-            "`scripts/quest-runner issues list --scope polishing --slice <n>` to read them. "
-            "Record responses with `scripts/quest-runner issues respond <id> "
-            "--scope polishing --slice <n> --outcome Fixed|NotFixed --explanation \"...\"`. "
-            "Do not close issues yourself."
-        )
-    if quest_state == QuestState.QuestDocumenting:
-        docs_rel = project_docs_rel or "$currentProject/docs"
-        return (
-            f"Write documentation in `{docs_rel}/` describing what was built "
-            "across the full quest. Do not modify repo-root `docs/` unless it "
-            "is the current project's docs directory."
-        )
-    fatal_invariant(
-        f"build_task_instruction: unsupported state {quest_state!r} / {slice_state!r}"
-    )
-
-
 def _repo_root_for_quest_dir(quest_dir: Path) -> Path:
     cur = quest_dir.resolve()
     for _ in range(30):
@@ -848,82 +750,6 @@ def role_thread_key(role_name: str, slice_dir: Path | None) -> str:
         collection_name="slices",
     )
     return render_thread_registry_key(exec_ctx)
-
-
-def _parse_iso(ts: str | None) -> datetime | None:
-    if not ts:
-        return None
-    try:
-        return datetime.fromisoformat(ts.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-
-
-def _hashes_for_threads_since(
-    repo_path: Path, thread_names: set[str], since_ts: str | None
-) -> list[str]:
-    if not thread_names:
-        return []
-    cmd = ["git", "-C", str(repo_path), "log", "--pretty=%H%x09%s"]
-    if since_ts:
-        cmd.extend(["--since", since_ts])
-    proc = subprocess.run(cmd, capture_output=True, text=True)
-    if proc.returncode != 0:
-        return []
-    out: list[str] = []
-    for line in proc.stdout.splitlines():
-        commit, _, subject = line.partition("\t")
-        if not commit:
-            continue
-        for tn in thread_names:
-            if f" via {tn}" in subject:
-                out.append(commit)
-                break
-    return out
-
-
-def reviewer_commit_context(
-    *,
-    repo_path: Path,
-    quest_dir: Path,
-    role_name: str,
-    thread_key: str,
-    slice_dir: Path | None,
-) -> str:
-    if role_name not in {"physical_plan_reviewer", "polisher_reviewer"}:
-        return ""
-    registry = quest_fs.read_thread_registry(quest_dir)
-    reviewer_entry = registry.get(thread_key)
-    reviewer_last_used = None
-    reviewer_round_count = 0
-    if isinstance(reviewer_entry, dict):
-        reviewer_last_used = str(reviewer_entry.get("last_used_at") or "").strip() or None
-        try:
-            reviewer_round_count = int(reviewer_entry.get("round_count", 0))
-        except (TypeError, ValueError):
-            reviewer_round_count = 0
-    source_keys: list[str]
-    if role_name == "physical_plan_reviewer":
-        source_keys = ["physical_planner"]
-    else:
-        if reviewer_round_count <= 0:
-            source_keys = [role_thread_key("implementer", slice_dir)]
-        else:
-            source_keys = [role_thread_key("polisher", slice_dir)]
-
-    thread_names: set[str] = set()
-    for k in source_keys:
-        entry = registry.get(k)
-        if isinstance(entry, dict):
-            tn = str(entry.get("thread_name") or "").strip()
-            if tn:
-                thread_names.add(tn)
-    hashes = _hashes_for_threads_since(repo_path, thread_names, reviewer_last_used)
-    if hashes:
-        lines = "\n".join(f"- `{h}`" for h in hashes)
-    else:
-        lines = "- (none found)"
-    return f"\n\nRelevant commit hashes for this review:\n{lines}"
 
 
 @dataclass

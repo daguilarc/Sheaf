@@ -22,7 +22,6 @@ from quest_runner_service.quest_service import (
     MissingQuestWorktree,
     QuestService,
 )
-from quest_runner_service.quest_thread import build_runtime_context
 from quest_runner_service.quest_types import QuestMeta
 from quest_runner_service.worktrees import remove_partial_worktree, run_git
 
@@ -483,30 +482,6 @@ class ExperimentScopedCliTests(unittest.TestCase):
             "experiment_example_main_0_0",
         )
         self.assertIn("branch_deleted: True", out.getvalue())
-
-
-class ExperimentRuntimeContextTests(unittest.TestCase):
-    def test_build_runtime_context_includes_experiment_instructions(self) -> None:
-        meta = QuestMeta(
-            project="example",
-            quest_type="main",
-            quest_number=0,
-            quest_slug="x",
-            quest_name="X",
-            created_at="2026-01-01T00:00:00Z",
-        )
-        exp = experiment_id("example", "main", 0, 0)
-        text = build_runtime_context(
-            role_name="implementer",
-            meta=meta,
-            quest_dir=Path("/tmp/q"),
-            slice_dir=None,
-            quest_docs_dir=Path("/tmp/docs"),
-            experiment_id=exp,
-        )
-        self.assertIn(f"Experiment: {exp}", text)
-        self.assertIn(f"--experiment-id {exp}", text)
-        self.assertIn("original quest worktree may not exist", text)
 
 
 class DeferredExperimentRunTests(unittest.TestCase):

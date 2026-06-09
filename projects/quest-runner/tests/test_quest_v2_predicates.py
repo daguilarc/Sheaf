@@ -7,7 +7,6 @@ import unittest
 from pathlib import Path
 
 from quest_runner_service import quest_fs
-from quest_runner_service.quest_runner import build_task_instruction
 from quest_runner_service.quest_types import QuestState, QuestStateInfo, SliceState, SliceStateInfo
 from quest_runner_service.state_machine.quest_v2_predicates import (
     AdvanceValidationError,
@@ -26,19 +25,6 @@ class QuestV2PredicateTests(unittest.TestCase):
             quest_dir.mkdir(parents=True)
             with self.assertRaises(AdvanceValidationError):
                 physical_planning_next_state(quest_dir)
-
-    def test_physical_planning_task_uses_slice_init_cli(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            quest_dir = Path(tmp) / "quests" / "main" / "0000_x"
-            quest_dir.mkdir(parents=True)
-            instruction = build_task_instruction(
-                QuestState.PhysicalPlanning,
-                None,
-                quest_dir,
-                None,
-            )
-            self.assertIn("scripts/quest-runner slices init", instruction)
-            self.assertIn("--slug <slug>", instruction)
 
     def test_physical_planning_advances_when_slices_ready(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
