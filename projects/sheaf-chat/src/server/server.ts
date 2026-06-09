@@ -6,6 +6,7 @@ import type { WebSocketServer } from "ws";
 
 import type { AgentManager } from "../agents/manager.js";
 import { SessionBroadcasterRegistry } from "../protocol/sessionBroadcaster.js";
+import { SessionPersistenceHubRegistry } from "../protocol/sessionPersistenceHub.js";
 import { StorageError } from "../storage/errors.js";
 import { FormatRestError } from "../shared/errors.js";
 import type { SheafChatConfig } from "./config.js";
@@ -43,6 +44,7 @@ export interface SheafChatServer
   httpServer: Server;
   chatWebSocketServer: WebSocketServer;
   broadcasterRegistry: SessionBroadcasterRegistry;
+  persistenceHubRegistry: SessionPersistenceHubRegistry;
   listen: () => Promise<number>;
   close: () => Promise<void>;
 }
@@ -97,11 +99,13 @@ export function CreateSheafChatServer(options: SheafChatServerOptions): SheafCha
     config: options.config,
     agentManager: options.agentManager,
   };
+  const persistenceHubRegistry = new SessionPersistenceHubRegistry();
   const broadcasterRegistry = new SessionBroadcasterRegistry();
   const chatWebSocketServer = CreateChatWebSocketServer();
   const chatWebSocketContext = {
     config: options.config,
     agentManager: options.agentManager,
+    persistenceHubRegistry,
     broadcasterRegistry,
   };
 
@@ -174,6 +178,7 @@ export function CreateSheafChatServer(options: SheafChatServerOptions): SheafCha
     httpServer,
     chatWebSocketServer,
     broadcasterRegistry,
+    persistenceHubRegistry,
     listen: () =>
       new Promise<number>((resolve, reject) =>
       {
@@ -196,6 +201,7 @@ export function CreateSheafChatServer(options: SheafChatServerOptions): SheafCha
       new Promise<void>((resolve, reject) =>
       {
         broadcasterRegistry.Dispose();
+        persistenceHubRegistry.Dispose();
 
         chatWebSocketServer.close(() =>
         {

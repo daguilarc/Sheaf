@@ -8,44 +8,30 @@ import type { AgentManager } from "../agents/manager.js";
 import {
   FormatSessionKey,
   type SessionKey,
-  type UserMessageSubmission,
 } from "../agents/lifecycle.js";
 import {
-  CreatePiToAguiMapper,
   eventsToSnapshots,
-  mapPiEventToAgui,
-  mapSheafActivityToAgui,
   mapUserMessageToAgui,
-  type PiToAguiMapper,
 } from "../agui/index.js";
-import type { AguiEvent, PiMappableEvent } from "../agui/types.js";
-import { RelativizeAbsolutePath } from "../agui/sanitizer.js";
-import type { SheafChatConfig } from "../server/config.js";
+import type { AguiEvent } from "../agui/types.js";
 import {
   IsStreamProfilerEnabled,
-  ProfileAguiEvent,
-  ProfileEnvelope,
-  ProfilePiEvent,
   ProfileStreamPoint,
 } from "../server/streamProfiler.js";
 import type { ChatEnvelope } from "../shared/envelope.js";
-import type { HistoryPageRequest, ModelReference } from "../shared/types.js";
-import { AgentLifecycleState } from "../shared/types.js";
+import type { HistoryPageRequest } from "../shared/types.js";
 import { ReadHistoryPage } from "../storage/history.js";
 import type { StoragePaths } from "../storage/paths.js";
-import { AppendEnvelope, CollectSessionLogEntries } from "../storage/sessionLog.js";
+import { CollectSessionLogEntries } from "../storage/sessionLog.js";
 
 import {
   CreateChatEnvelope,
   x_aguiEventKind,
-  x_agentStatusKind,
   x_chatUserMessageKind,
   x_historyPageKind,
-  x_modelChangedKind,
-  x_serverErrorKind,
-  x_sessionUpdatedKind,
 } from "./envelopes.js";
 import type { ClientHistoryRequestPayload, ClientUserMessagePayload } from "./clientFrames.js";
+import type { HistoryWindow, SessionPersistenceHub } from "./sessionPersistenceHub.js";
 
 export interface ConnectedClient
 {
@@ -58,15 +44,9 @@ export interface ConnectedClient
 export interface SessionBroadcasterOptions
 {
   key: SessionKey;
-  config: SheafChatConfig;
   storagePaths: StoragePaths;
   agentManager: AgentManager;
-}
-
-export interface HistoryWindow
-{
-  oldestSequence: number | null;
-  newestSequence: number | null;
+  persistenceHub: SessionPersistenceHub;
 }
 
 function SendEnvelope(socket: WebSocket, envelope: ChatEnvelope): void
@@ -150,23 +130,20 @@ function ExtractAguiEvents(envelopes: ChatEnvelope[]): AguiEvent[]
 export class SessionBroadcaster
 {
   private readonly m_key: SessionKey;
-  private readonly m_config: SheafChatConfig;
   private readonly m_storagePaths: StoragePaths;
-  private readonly m_agentManager: AgentManager;
+  private readonly m_persistenceHub: SessionPersistenceHub;
   private readonly m_clients = new Map<string, ConnectedClient>();
-  private readonly m_acceptedMessageIds = new Set<string>();
-  private readonly m_mapper: PiToAguiMapper = CreatePiToAguiMapper();
-  private m_userMessageChain: Promise<void> = Promise.resolve();
-  private m_latestSequence = 0;
-  private m_unsubscribeLifecycle: (() => void)[] = [];
+  private readonly m_unsubscribePersistedEnvelope: () => void;
 
   constructor(options: SessionBroadcasterOptions)
   {
     this.m_key = options.key;
-    this.m_config = options.config;
     this.m_storagePaths = options.storagePaths;
-    this.m_agentManager = options.agentManager;
-    this.SubscribeLifecycle();
+    this.m_persistenceHub = options.persistenceHub;
+    this.m_unsubscribePersistedEnvelope = this.m_persistenceHub.Subscribe((envelope) =>
+    {
+      this.Broadcast(envelope);
+    });
   }
 
   get Key(): SessionKey
@@ -181,56 +158,12 @@ export class SessionBroadcaster
 
   get LatestSequence(): number
   {
-    return this.m_latestSequence;
-  }
-
-  async InitializeSequence(): Promise<void>
-  {
-    const entries = await CollectSessionLogEntries(
-      this.m_storagePaths,
-      this.m_key.pile,
-      this.m_key.sessionId,
-    );
-
-    if (entries.length > 0)
-    {
-      this.m_latestSequence = entries[entries.length - 1].sequence;
-    }
-
-    for (const entry of entries)
-    {
-      if (entry.envelope.kind === x_chatUserMessageKind && entry.envelope.payload !== undefined)
-      {
-        const payload = entry.envelope.payload as { messageId?: string };
-
-        if (typeof payload.messageId === "string")
-        {
-          this.m_acceptedMessageIds.add(payload.messageId);
-        }
-      }
-    }
+    return this.m_persistenceHub.LatestSequence;
   }
 
   async HistoryWindow(): Promise<HistoryWindow>
   {
-    const entries = await CollectSessionLogEntries(
-      this.m_storagePaths,
-      this.m_key.pile,
-      this.m_key.sessionId,
-    );
-
-    if (entries.length === 0)
-    {
-      return {
-        oldestSequence: null,
-        newestSequence: null,
-      };
-    }
-
-    return {
-      oldestSequence: entries[0].sequence,
-      newestSequence: entries[entries.length - 1].sequence,
-    };
+    return this.m_persistenceHub.HistoryWindow();
   }
 
   RegisterClient(socket: WebSocket, clientId?: string): ConnectedClient
@@ -300,16 +233,7 @@ export class SessionBroadcaster
     payload: ClientUserMessagePayload,
   ): Promise<void>
   {
-    if (this.m_acceptedMessageIds.has(payload.messageId))
-    {
-      return;
-    }
-
-    this.m_userMessageChain = this.m_userMessageChain
-      .then(() => this.ProcessUserMessage(connectionId, payload))
-      .catch(() => undefined);
-
-    await this.m_userMessageChain;
+    await this.m_persistenceHub.HandleUserMessage(payload);
   }
 
   async HandleHistoryRequest(
@@ -372,320 +296,8 @@ export class SessionBroadcaster
 
   Dispose(): void
   {
-    for (const unsubscribe of this.m_unsubscribeLifecycle)
-    {
-      unsubscribe();
-    }
-
-    this.m_unsubscribeLifecycle = [];
+    this.m_unsubscribePersistedEnvelope();
     this.m_clients.clear();
-  }
-
-  private async SafeAsync(operation: () => Promise<void>): Promise<void>
-  {
-    try
-    {
-      await operation();
-    }
-    catch
-    {
-      //
-    }
-  }
-
-  private MapperContext(): {
-    threadId: string;
-    canonicalRoot?: string;
-    rootDirectory?: string;
-  }
-  {
-    const status = this.m_agentManager.getStatus(this.m_key);
-    const rootDirectory = status?.rootDirectory ?? status?.provisionalRootDirectory;
-
-    return {
-      threadId: this.m_key.sessionId,
-      canonicalRoot: rootDirectory,
-      rootDirectory,
-    };
-  }
-
-  private async ProcessUserMessage(
-    _connectionId: string,
-    payload: ClientUserMessagePayload,
-  ): Promise<void>
-  {
-    if (this.m_acceptedMessageIds.has(payload.messageId))
-    {
-      return;
-    }
-
-    this.m_acceptedMessageIds.add(payload.messageId);
-
-    const userPayload = {
-      messageId: payload.messageId,
-      text: payload.text,
-      attachments: payload.attachments ?? [],
-      steer: payload.steer ?? true,
-    };
-
-    await this.AppendAndBroadcast({
-      kind: x_chatUserMessageKind,
-      payload: userPayload,
-    });
-
-    const aguiEvents = mapUserMessageToAgui({
-      messageId: payload.messageId,
-      text: payload.text,
-    });
-
-    for (const event of aguiEvents)
-    {
-      await this.AppendAndBroadcast({
-        kind: x_aguiEventKind,
-        payload: event,
-      });
-    }
-
-    const submission: UserMessageSubmission = {
-      messageId: payload.messageId,
-      text: payload.text,
-      attachments: payload.attachments,
-      steer: payload.steer,
-    };
-
-    try
-    {
-      await this.m_agentManager.submitUserMessage(this.m_key, submission);
-    }
-    catch (error)
-    {
-      const message = error instanceof Error ? error.message : String(error);
-      await this.AppendAndBroadcast({
-        kind: x_serverErrorKind,
-        payload: {
-          code: "user_message_delivery_failed",
-          message,
-          fatal: false,
-        },
-      });
-    }
-  }
-
-  private async AppendAndBroadcast(input: {
-    kind: string;
-    payload?: unknown;
-    clientId?: string;
-  }): Promise<ChatEnvelope>
-  {
-    const appendStartedAt = performance.now();
-    ProfileStreamPoint("append_start", {
-      kind: input.kind,
-      ...(typeof input.payload === "object" && input.payload !== null
-        ? { aguiType: (input.payload as { type?: unknown }).type }
-        : {}),
-    });
-
-    const envelope = await AppendEnvelope(
-      this.m_storagePaths,
-      this.m_key.pile,
-      this.m_key.sessionId,
-      {
-        kind: input.kind,
-        pile: this.m_key.pile,
-        sessionId: this.m_key.sessionId,
-        clientId: input.clientId,
-        payload: input.payload,
-      },
-    );
-    const appendMs = performance.now() - appendStartedAt;
-
-    this.m_latestSequence = envelope.sequence ?? this.m_latestSequence;
-    ProfileEnvelope("append_end", envelope);
-    ProfileStreamPoint("append_duration", {
-      kind: envelope.kind,
-      sequence: envelope.sequence,
-      appendMs: Math.round(appendMs * 1000) / 1000,
-    });
-    this.Broadcast(envelope);
-    ProfileEnvelope("broadcast_end", envelope);
-    return envelope;
-  }
-
-  private SubscribeLifecycle(): void
-  {
-    const encodedKey = FormatSessionKey(this.m_key);
-    const lifecycle = this.m_agentManager.lifecycle;
-
-    this.m_unsubscribeLifecycle.push(
-      lifecycle.On("agentEvent", (event) =>
-      {
-        if (FormatSessionKey(event.key) !== encodedKey)
-        {
-          return;
-        }
-
-        void this.SafeAsync(() => this.HandleAgentEvent(event.event));
-      }),
-      lifecycle.On("model", (event) =>
-      {
-        if (FormatSessionKey(event.key) !== encodedKey)
-        {
-          return;
-        }
-
-        void this.SafeAsync(() => this.HandleModelChanged(event.model, event.applyTo));
-      }),
-      lifecycle.On("status", (event) =>
-      {
-        if (FormatSessionKey(event.key) !== encodedKey)
-        {
-          return;
-        }
-
-        void this.SafeAsync(() => this.HandleStatusChanged(event.state, event.previousState));
-      }),
-      lifecycle.On("manifestUpdated", (event) =>
-      {
-        if (FormatSessionKey(event.key) !== encodedKey)
-        {
-          return;
-        }
-
-        void this.SafeAsync(() => this.HandleManifestUpdated(event.manifest));
-      }),
-      lifecycle.On("error", (event) =>
-      {
-        if (FormatSessionKey(event.key) !== encodedKey)
-        {
-          return;
-        }
-
-        void this.SafeAsync(() => this.HandleLifecycleError(event.code, event.message, event.fatal));
-      }),
-    );
-  }
-
-  private async HandleAgentEvent(event: PiMappableEvent): Promise<void>
-  {
-    ProfilePiEvent("broadcaster_agent_event_start", event);
-    const context = this.MapperContext();
-    const aguiEvents = mapPiEventToAgui(event, context, this.m_mapper);
-    ProfileStreamPoint("broadcaster_mapped", {
-      aguiEventCount: aguiEvents.length,
-    });
-
-    for (const aguiEvent of aguiEvents)
-    {
-      ProfileAguiEvent("broadcaster_agui_event_start", aguiEvent);
-      await this.AppendAndBroadcast({
-        kind: x_aguiEventKind,
-        payload: aguiEvent,
-      });
-      ProfileAguiEvent("broadcaster_agui_event_done", aguiEvent);
-    }
-    ProfilePiEvent("broadcaster_agent_event_done", event);
-  }
-
-  private async HandleModelChanged(
-    model: ModelReference,
-    applyTo: string,
-  ): Promise<void>
-  {
-    await this.AppendAndBroadcast({
-      kind: x_modelChangedKind,
-      payload: {
-        model,
-        applyTo,
-      },
-    });
-
-    const aguiEvent = mapSheafActivityToAgui(
-      {
-        kind: "model_changed",
-        model,
-        applyTo,
-      },
-      this.MapperContext(),
-    );
-
-    await this.AppendAndBroadcast({
-      kind: x_aguiEventKind,
-      payload: aguiEvent,
-    });
-  }
-
-  private async HandleStatusChanged(
-    state: AgentLifecycleState,
-    previousState?: AgentLifecycleState,
-  ): Promise<void>
-  {
-    await this.AppendAndBroadcast({
-      kind: x_agentStatusKind,
-      payload: {
-        state,
-        previousState,
-      },
-    });
-
-    const aguiEvent = mapSheafActivityToAgui(
-      {
-        kind: "lifecycle_status",
-        state,
-        previousState,
-      },
-      this.MapperContext(),
-    );
-
-    await this.AppendAndBroadcast({
-      kind: x_aguiEventKind,
-      payload: aguiEvent,
-    });
-  }
-
-  private async HandleManifestUpdated(manifest: import("../shared/types.js").SessionManifest): Promise<void>
-  {
-    const relativeRoot = RelativizeAbsolutePath(manifest.rootDirectory, this.m_config.repoRoot);
-
-    await this.AppendAndBroadcast({
-      kind: x_sessionUpdatedKind,
-      payload: {
-        manifest: {
-          ...manifest,
-          rootDirectory: relativeRoot,
-        },
-      },
-    });
-  }
-
-  private async HandleLifecycleError(
-    code: string,
-    message: string,
-    fatal?: boolean,
-  ): Promise<void>
-  {
-    await this.AppendAndBroadcast({
-      kind: x_serverErrorKind,
-      payload: {
-        code,
-        message,
-        fatal: fatal === true,
-      },
-    });
-
-    const aguiEvent = mapSheafActivityToAgui(
-      {
-        kind: "error",
-        code,
-        message,
-        fatal,
-      },
-      this.MapperContext(),
-    );
-
-    await this.AppendAndBroadcast({
-      kind: x_aguiEventKind,
-      payload: aguiEvent,
-    });
   }
 }
 
@@ -701,7 +313,6 @@ export class SessionBroadcasterRegistry
     if (broadcaster === undefined)
     {
       broadcaster = new SessionBroadcaster(options);
-      await broadcaster.InitializeSequence();
       this.m_broadcasters.set(encodedKey, broadcaster);
     }
 

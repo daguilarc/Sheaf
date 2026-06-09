@@ -29,6 +29,7 @@ import {
   SessionBroadcasterRegistry,
   type ConnectedClient,
 } from "../protocol/sessionBroadcaster.js";
+import type { SessionPersistenceHubRegistry } from "../protocol/sessionPersistenceHub.js";
 import type { SheafChatConfig } from "./config.js";
 import { ProfileStreamPoint } from "./streamProfiler.js";
 import { ParseOptionalInteger } from "./http.js";
@@ -40,6 +41,7 @@ export interface ChatWebSocketContext
 {
   config: SheafChatConfig;
   agentManager: AgentManager;
+  persistenceHubRegistry: SessionPersistenceHubRegistry;
   broadcasterRegistry: SessionBroadcasterRegistry;
 }
 
@@ -269,11 +271,17 @@ export async function AttachChatWebSocketConnection(
     sessionId: params.sessionId,
   };
 
-  const broadcaster = await context.broadcasterRegistry.GetOrCreate({
+  const persistenceHub = await context.persistenceHubRegistry.GetOrCreate({
     key,
     config: context.config,
     storagePaths: context.agentManager.storagePaths,
     agentManager: context.agentManager,
+  });
+  const broadcaster = await context.broadcasterRegistry.GetOrCreate({
+    key,
+    storagePaths: context.agentManager.storagePaths,
+    agentManager: context.agentManager,
+    persistenceHub,
   });
 
   const client = broadcaster.RegisterClient(socket, params.clientId);

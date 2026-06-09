@@ -6,6 +6,7 @@ import WebSocket from "ws";
 import type { PiSessionHandle } from "../../../src/agents/piAdapter.js";
 import { AgentManager } from "../../../src/agents/manager.js";
 import type { SessionBroadcasterRegistry } from "../../../src/protocol/sessionBroadcaster.js";
+import type { SessionPersistenceHubRegistry } from "../../../src/protocol/sessionPersistenceHub.js";
 import type { ChatEnvelope } from "../../../src/shared/envelope.js";
 import { CreateChatEnvelope } from "../../../src/shared/envelope.js";
 import type { SheafChatConfig } from "../../../src/server/config.js";
@@ -30,6 +31,7 @@ export interface WebSocketTestHandle
   config: SheafChatConfig;
   agentManager: AgentManager;
   broadcasterRegistry: SessionBroadcasterRegistry;
+  persistenceHubRegistry: SessionPersistenceHubRegistry;
   fakeSessions: Map<string, FakePiSession>;
   timers?: ReturnType<typeof CreateFakeTimers>;
   close: () => Promise<void>;
@@ -86,6 +88,7 @@ export async function StartWebSocketTestServer(
     config,
     agentManager,
     broadcasterRegistry: server.broadcasterRegistry,
+    persistenceHubRegistry: server.persistenceHubRegistry,
     fakeSessions,
     timers: options.timers,
     close: async () =>

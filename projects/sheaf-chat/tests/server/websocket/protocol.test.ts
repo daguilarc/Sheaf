@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import WebSocket from "ws";
 
 import type { ChatEnvelope } from "../../../src/shared/envelope.js";
 import { mapUserMessageToAgui } from "../../../src/agui/mapper.js";
 import { AgentLifecycleState } from "../../../src/shared/types.js";
-import { AppendEnvelope } from "../../../src/storage/sessionLog.js";
+import { AppendEnvelope, CollectSessionLogEntries } from "../../../src/storage/sessionLog.js";
 import { CreateStoragePaths } from "../../../src/storage/paths.js";
 import {
   BuildWsUrl,
@@ -208,6 +209,87 @@ test("two clients on the same session receive identical broadcasts", async () =>
     finally
     {
       socketA.close();
+      socketB.close();
+    }
+  });
+});
+
+test("sequential broadcasters do not duplicate persisted agent events", async () =>
+{
+  await WithWebSocketTestServer(async (handle) =>
+  {
+    const session = await CreateBlankSessionViaApi(handle);
+    const key = { pile: session.pile, sessionId: session.sessionId };
+    const urlA = BuildWsUrl(handle, session.pile, session.sessionId, { clientId: "client-a" });
+    const connectedA = await ConnectWebSocket(urlA);
+
+    connectedA.socket.close();
+    await WaitForCondition(() => handle.broadcasterRegistry.Get(key) === undefined);
+
+    const urlB = BuildWsUrl(handle, session.pile, session.sessionId, { clientId: "client-b" });
+    const connectedB = await ConnectWebSocket(urlB);
+    const socketB = connectedB.socket;
+    const collectedB: ChatEnvelope[] = [];
+    const collectorB = (data: Buffer) =>
+    {
+      collectedB.push(JSON.parse(data.toString()) as ChatEnvelope);
+    };
+
+    try
+    {
+      socketB.on("message", collectorB);
+
+      const fake = [...handle.fakeSessions.values()][0];
+      assert.ok(fake);
+      const message = {
+        role: "assistant",
+        content: [],
+        timestamp: 12345,
+      } as unknown as AgentSession["messages"][number];
+      fake.Emit({ type: "message_start", message });
+      fake.Emit({
+        type: "message_update",
+        message,
+        assistantMessageEvent: { type: "text_start", contentIndex: 0, partial: message } as never,
+      });
+      fake.Emit({
+        type: "message_update",
+        message,
+        assistantMessageEvent: {
+          type: "text_delta",
+          contentIndex: 0,
+          delta: "dedupe from pi",
+          partial: message,
+        } as never,
+      });
+
+      await WaitForCondition(() =>
+        collectedB.some((envelope) =>
+          envelope.kind === "agui.event" &&
+          (envelope.payload as { type?: string; delta?: string }).type === "TEXT_MESSAGE_CONTENT" &&
+          (envelope.payload as { type?: string; delta?: string }).delta === "dedupe from pi",
+        ),
+      );
+
+      const storagePaths = CreateStoragePaths(handle.config.repoRoot);
+      const entries = await CollectSessionLogEntries(storagePaths, session.pile, session.sessionId);
+      const persistedTextEvents = entries.filter((entry) =>
+        entry.envelope.kind === "agui.event" &&
+        (entry.envelope.payload as { type?: string; delta?: string }).type === "TEXT_MESSAGE_CONTENT" &&
+        (entry.envelope.payload as { type?: string; delta?: string }).delta === "dedupe from pi",
+      );
+      assert.equal(persistedTextEvents.length, 1);
+
+      const liveTextEvents = collectedB.filter((envelope) =>
+        envelope.kind === "agui.event" &&
+        (envelope.payload as { type?: string; delta?: string }).type === "TEXT_MESSAGE_CONTENT" &&
+        (envelope.payload as { type?: string; delta?: string }).delta === "dedupe from pi",
+      );
+      assert.equal(liveTextEvents.length, 1);
+    }
+    finally
+    {
+      socketB.off("message", collectorB);
       socketB.close();
     }
   });
