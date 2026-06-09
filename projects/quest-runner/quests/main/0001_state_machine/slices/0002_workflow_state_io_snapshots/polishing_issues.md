@@ -2,10 +2,10 @@
 
 ## Issue PL-0001
 
-- status: open
+- status: completed
 - owner_role: polisher_reviewer
 - created_at: 2026-06-09T21:41:09Z
-- updated_at: 2026-06-09T21:41:09Z
+- updated_at: 2026-06-09T21:43:20Z
 - title: Remove dead/duplicated _collection_for_dir helper in workflow_state_io.py
 - details: ## What is wrong
 `WorkflowStateIo._collection_for_dir` (projects/quest-runner/src/quest_runner_service/state_machine/workflow_state_io.py, lines 124-131) is defined but never called anywhere in src/ or tests/ (verified by grep across the repo). It also duplicates the collection-pattern matching logic already implemented inline in `_machine_key_for_dir` (lines 113-122) via `_path_matches_collection_pattern`.
