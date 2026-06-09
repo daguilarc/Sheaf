@@ -523,7 +523,6 @@ def _archived_experiment_summary(exp_meta) -> dict:
 def open_experiment_summary_row(
     *,
     source_repo_root: Path,
-    source_qdir: Path,
     meta: QuestMeta,
     exp_meta,
     lock: QuestLock,
@@ -604,7 +603,6 @@ def open_experiment_summary_rows(
                     continue
                 row = open_experiment_summary_row(
                     source_repo_root=source_repo_root,
-                    source_qdir=qdir,
                     meta=meta,
                     exp_meta=exp_meta,
                     lock=lock,
@@ -622,48 +620,6 @@ def open_experiment_summary_rows(
     return rows
 
 
-def archived_experiments_payload(
-    source_repo_root: Path,
-    project: str,
-    quest_type: str,
-    quest_number: int,
-) -> dict:
-    from .experiments import experiments_root, list_experiment_dirs, read_experiment_meta
-
-    source_qdir = resolve_quest_dir(
-        source_repo_root, project, quest_type, quest_number
-    )
-    root = experiments_root(source_qdir)
-    experiments: list[dict] = []
-    if root.is_dir():
-        for exp_dir in list_experiment_dirs(source_qdir):
-            meta_path = exp_dir / "experiment.json"
-            if not meta_path.is_file():
-                continue
-            try:
-                exp_meta = read_experiment_meta(meta_path)
-            except (OSError, ValueError):
-                continue
-            if exp_meta.status != "landed":
-                continue
-            item = _archived_experiment_summary(exp_meta)
-            logs_dir = exp_dir / "logs"
-            item["log_count"] = len(_summarize_archived_logs(logs_dir))
-            item["issue_file_count"] = len(
-                list((exp_dir / "issues").rglob("*.md"))
-                if (exp_dir / "issues").is_dir()
-                else []
-            )
-            experiments.append(item)
-    experiments.sort(key=lambda e: e["experiment_number"], reverse=True)
-    return {
-        "project": project,
-        "quest_type": quest_type,
-        "quest_number": quest_number,
-        "experiments": experiments,
-    }
-
-
 def experiment_archive_detail_payload(
     source_repo_root: Path,
     project: str,
@@ -673,6 +629,7 @@ def experiment_archive_detail_payload(
 ) -> dict:
     from .experiments import (
         ExperimentNotFound,
+        experiment_dir_name,
         find_experiment_by_id,
     )
 
@@ -690,7 +647,11 @@ def experiment_archive_detail_payload(
     except ExperimentNotFound as e:
         raise DashboardNotFound(e.message) from e
 
-    exp_dir = source_qdir / "experiments" / f"{exp_meta.experiment_number:04d}"
+    exp_dir = (
+        source_qdir
+        / "experiments"
+        / experiment_dir_name(exp_meta.experiment_number)
+    )
     payload = _archived_experiment_summary(exp_meta)
     payload.update(
         {
