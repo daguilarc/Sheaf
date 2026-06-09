@@ -2,10 +2,10 @@
 
 ## Issue PL-0001
 
-- status: open
+- status: completed
 - owner_role: polisher_reviewer
 - created_at: 2026-06-09T01:29:06Z
-- updated_at: 2026-06-09T01:29:06Z
+- updated_at: 2026-06-09T03:23:22Z
 - title: land_experiment records a dangling/stale source_commit due to git commit --amend
 - details: WHAT IS WRONG:
 commit_experiment_land in experiments.py records/returns a source_commit that does NOT identify the actual landing commit on the source branch.
@@ -31,10 +31,10 @@ WHAT MUST BE TRUE TO MARK COMPLETED:
 
 ## Issue PL-0002
 
-- status: open
+- status: completed
 - owner_role: polisher_reviewer
 - created_at: 2026-06-09T01:29:19Z
-- updated_at: 2026-06-09T01:29:19Z
+- updated_at: 2026-06-09T03:23:22Z
 - title: Failed push (or mid-copy artifact failure) leaves source checkout dirty and blocks retry
 - details: WHAT IS WRONG:
 In _land_experiment_locked, archive_experiment_artifacts copies log/issue/response files into source_experiment_dir (inside the SOURCE checkout) BEFORE push_experiment_branch runs. These copied files are new untracked files, so the source checkout becomes dirty at that point.
