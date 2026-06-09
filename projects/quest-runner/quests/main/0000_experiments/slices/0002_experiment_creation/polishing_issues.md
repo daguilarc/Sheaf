@@ -2,10 +2,10 @@
 
 ## Issue PL-0001
 
-- status: open
+- status: completed
 - owner_role: polisher_reviewer
 - created_at: 2026-06-08T23:27:06Z
-- updated_at: 2026-06-08T23:27:06Z
+- updated_at: 2026-06-09T00:32:20Z
 - title: Stop-node canonicalization is inconsistent (alias vs node_map produce different stored node_name)
 - details: ## Problem
 
