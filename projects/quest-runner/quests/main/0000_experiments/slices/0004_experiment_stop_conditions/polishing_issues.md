@@ -2,10 +2,10 @@
 
 ## Issue PL-0001
 
-- status: open
+- status: completed
 - owner_role: polisher_reviewer
 - created_at: 2026-06-09T01:09:06Z
-- updated_at: 2026-06-09T01:09:06Z
+- updated_at: 2026-06-09T01:17:08Z
 - title: Run path (run_quest_v2) experiment stop/finalization is untested
 - details: ## Problem
 
@@ -41,10 +41,10 @@ Plus coverage of the early-return: invoking the run path again on a worktree alr
 
 ## Issue PL-0002
 
-- status: open
+- status: completed
 - owner_role: polisher_reviewer
 - created_at: 2026-06-09T01:09:06Z
-- updated_at: 2026-06-09T01:09:06Z
+- updated_at: 2026-06-09T01:17:08Z
 - title: Dirty source-checkout human-intervention path is untested
 - details: ## Problem
 
@@ -73,10 +73,10 @@ A direct unit test asserting `complete_experiment_source_metadata` raises `Exper
 
 ## Issue PL-0003
 
-- status: open
+- status: completed
 - owner_role: polisher_reviewer
 - created_at: 2026-06-09T01:09:06Z
-- updated_at: 2026-06-09T01:09:06Z
+- updated_at: 2026-06-09T01:17:09Z
 - title: complete_experiment_source_metadata is not idempotent on re-completion
 - details: ## Problem
 
