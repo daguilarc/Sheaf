@@ -14,7 +14,11 @@ import yaml
 from quest_runner_service import quest_fs
 from quest_runner_service.harness_config import read_service_harness_configs
 from quest_runner_service.quest_lock import QuestLock
-from quest_runner_service.quest_service import MissingQuestWorktree, QuestService
+from quest_runner_service.quest_service import (
+    InvalidQuestInput,
+    MissingQuestWorktree,
+    QuestService,
+)
 from quest_runner_service.quest_types import (
     QuestMeta,
     QuestState,
@@ -24,6 +28,8 @@ from quest_runner_service.quest_types import (
     utc_now_iso,
 )
 from quest_runner_service.worktrees import create_quest_scaffold_commit, create_quest_worktree
+from quest_runner_service.workflow_config import WorkflowDefinition, WorkflowSpecial
+from quest_runner_service.workflow_scaffold import resolve_workflow_collection
 from quest_runner_service.workflow_upgrade import (
     QuestNotUpgradeable,
     quest_needs_workflow_upgrade,
@@ -92,6 +98,30 @@ class WorkflowQuestCreationTests(unittest.TestCase):
         self._active_roots.append(root)
         return root
 
+    def _checkout_qdir(self, out: dict) -> Path:
+        qdir = quest_fs.find_quest_dir(
+            Path(out["worktree_path"]),
+            out["project"],
+            out["quest_type"],
+            out["quest_number"],
+        )
+        assert qdir is not None
+        return qdir
+
+    def _replace_workflow_collections(self, qdir: Path, collections: dict) -> None:
+        workflow_path = qdir / "workflow" / "workflow.yaml"
+        raw = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
+        raw["collections"] = collections
+        workflow_path.write_text(
+            yaml.safe_dump(raw, sort_keys=False),
+            encoding="utf-8",
+        )
+
+    def _workflow_collections(self, qdir: Path) -> dict:
+        workflow_path = qdir / "workflow" / "workflow.yaml"
+        raw = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
+        return raw["collections"]
+
     def test_create_quest_scaffolds_workflow_not_legacy_config(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = self._track_root(Path(tmp))
@@ -154,6 +184,130 @@ class WorkflowQuestCreationTests(unittest.TestCase):
                 "# State Transition History\n\n",
             )
             self.assertTrue((slice_dir / "notes").is_dir())
+
+    def test_initialize_slices_uses_explicit_collection(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._track_root(Path(tmp))
+            _git_init(root)
+            _ensure_project(root, "example")
+            svc = self._service()
+            out = svc.create_quest(str(root), "example", "main", "Explicit Collection")
+            qdir = self._checkout_qdir(out)
+            collections = self._workflow_collections(qdir)
+            collections["chapters"] = {
+                "path": "chapters/*",
+                "machine": "slice",
+                "order": "lexical",
+                "id_from": "directory_name",
+                "active_var": "active_chapter",
+                "scaffold": [
+                    {"ensure_dir": "drafts"},
+                    {"ensure_file": {"path": "summary.md", "content": "# Summary\n"}},
+                ],
+            }
+            self._replace_workflow_collections(qdir, collections)
+
+            result = svc.initialize_slices(
+                repo_path=str(root),
+                project="example",
+                quest_type="main",
+                quest_number=out["quest_number"],
+                count=1,
+                slugs=["chapter one"],
+                collection="chapters",
+            )
+
+            self.assertEqual(result["collection"], "chapters")
+            created = result["created_slices"][0]
+            self.assertEqual(created["directory_name"], "0001_chapter_one")
+            self.assertEqual(created["created_files"], ["drafts", "summary.md"])
+            child_dir = Path(created["slice_dir"])
+            self.assertEqual(child_dir.parent.name, "chapters")
+            self.assertTrue((child_dir / "drafts").is_dir())
+            self.assertEqual(
+                (child_dir / "summary.md").read_text(encoding="utf-8"),
+                "# Summary\n",
+            )
+
+    def test_initialize_slices_rejects_unknown_collection(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._track_root(Path(tmp))
+            _git_init(root)
+            _ensure_project(root, "example")
+            svc = self._service()
+            out = svc.create_quest(str(root), "example", "main", "Unknown Collection")
+
+            with self.assertRaises(InvalidQuestInput) as ctx:
+                svc.initialize_slices(
+                    repo_path=str(root),
+                    project="example",
+                    quest_type="main",
+                    quest_number=out["quest_number"],
+                    count=1,
+                    slugs=["alpha"],
+                    collection="missing",
+                )
+
+            self.assertIn("Unknown workflow collection 'missing'", str(ctx.exception))
+
+    def test_initialize_slices_requires_collection_when_workflow_has_many(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._track_root(Path(tmp))
+            _git_init(root)
+            _ensure_project(root, "example")
+            svc = self._service()
+            out = svc.create_quest(str(root), "example", "main", "Many Collections")
+            qdir = self._checkout_qdir(out)
+            collections = self._workflow_collections(qdir)
+            collections["chapters"] = {
+                "path": "chapters/*",
+                "machine": "slice",
+                "order": "lexical",
+                "id_from": "directory_name",
+                "active_var": "active_chapter",
+                "scaffold": [],
+            }
+            self._replace_workflow_collections(qdir, collections)
+
+            with self.assertRaises(InvalidQuestInput) as ctx:
+                svc.initialize_slices(
+                    repo_path=str(root),
+                    project="example",
+                    quest_type="main",
+                    quest_number=out["quest_number"],
+                    count=1,
+                    slugs=["alpha"],
+                )
+
+            message = str(ctx.exception)
+            self.assertIn("workflow declares multiple collections", message)
+            self.assertIn("pass --collection", message)
+            self.assertIn("slices", message)
+            self.assertIn("chapters", message)
+
+    def test_resolve_workflow_collection_rejects_empty_collections(self) -> None:
+        workflow = WorkflowDefinition(
+            workflow_dir=Path("workflow"),
+            version=1,
+            name="empty",
+            entry_machine="quest",
+            special=WorkflowSpecial(
+                completed_state="Completed",
+                human_intervention_file="human_intervention_request.md",
+            ),
+            preamble=None,
+            variables={},
+            scaffold=[],
+            collections={},
+            issues={},
+            machines={},
+            profiles={},
+        )
+
+        with self.assertRaises(ValueError) as ctx:
+            resolve_workflow_collection(workflow, None)
+
+        self.assertIn("workflow declares no collections", str(ctx.exception))
 
 
 class WorkflowUpgradeTests(unittest.TestCase):

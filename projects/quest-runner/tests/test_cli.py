@@ -489,6 +489,49 @@ class CommandRequestTests(unittest.TestCase):
         self.assertIn("0001_api", out)
         self.assertIn("0002_cli", out)
 
+    def test_slices_init_sends_collection(self) -> None:
+        code, transport, _out, _err = self._run(
+            [
+                "slices",
+                "init",
+                "--project",
+                "quest-runner",
+                "--type",
+                "side",
+                "--number",
+                "0",
+                "--count",
+                "1",
+                "--slug",
+                "chapter",
+                "--collection",
+                "chapters",
+            ],
+            (
+                201,
+                {
+                    "project": "quest-runner",
+                    "quest_type": "side",
+                    "quest_number": 0,
+                    "quest_dir": "/tmp/q",
+                    "collection": "chapters",
+                    "created_slices": [],
+                },
+            ),
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            transport.requests[0].body,
+            {
+                "project": "quest-runner",
+                "quest_type": "side",
+                "quest_number": 0,
+                "count": 1,
+                "slugs": ["chapter"],
+                "collection": "chapters",
+            },
+        )
+
     def test_issues_read_calls_endpoint(self) -> None:
         code, transport, _out, _err = self._run(
             [
