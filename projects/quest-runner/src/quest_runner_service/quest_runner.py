@@ -1109,6 +1109,7 @@ def run_quest(
     max_steps: int = 500,
     event_bus: ChatEventBus | None = None,
     experiment_id: str | None = None,
+    experiment_run: object | None = None,
 ) -> HarnessResponse:
     from . import quest_runner_v2
     return quest_runner_v2.run_quest_v2(
@@ -1118,4 +1119,5 @@ def run_quest(
         max_steps,
         event_bus=event_bus,
         experiment_id=experiment_id,
+        experiment_run=experiment_run,
     )

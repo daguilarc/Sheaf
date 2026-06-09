@@ -10,8 +10,8 @@ from pathlib import Path
 
 from . import quest_fs
 from .dashboard_data import DashboardCheckout, DashboardBadRequest, DashboardNotFound
-from .quest_types import QuestMeta
-from .worktrees import is_git_worktree, quest_worktree_base_dir, run_git
+from .quest_types import QuestMeta, QuestState, QuestStateInfo, RecursiveSnapshot, utc_now_iso
+from .worktrees import is_git_worktree, porcelain_status, quest_worktree_base_dir, run_git
 
 _EXPERIMENT_DIR_RE = re.compile(r"^\d{4}$")
 
@@ -71,6 +71,22 @@ class ExperimentStopCondition:
 
 
 @dataclass
+class ExperimentRunContext:
+    experiment_meta: ExperimentMeta
+    source_repo_root: Path
+    source_experiment_dir: Path
+
+
+class ExperimentSourceCheckoutDirty(ExperimentError):
+    def __init__(self, status_output: str) -> None:
+        self.status_output = status_output
+        super().__init__(
+            "Source checkout has uncommitted changes; commit or discard them "
+            "before updating experiment metadata"
+        )
+
+
+@dataclass
 class ExperimentMeta:
     experiment_id: str
     experiment_number: int
@@ -86,6 +102,7 @@ class ExperimentMeta:
     status: str
     created_at: str
     created_by: str | None = None
+    completed_at: str | None = None
     landed_at: str | None = None
     remote_branch: str | None = None
     source_commit: str | None = None
@@ -207,6 +224,7 @@ def read_experiment_meta(path_or_dir: Path) -> ExperimentMeta:
         status=status,
         created_at=str(data["created_at"]),
         created_by=data.get("created_by"),
+        completed_at=data.get("completed_at"),
         landed_at=data.get("landed_at"),
         remote_branch=data.get("remote_branch"),
         source_commit=data.get("source_commit"),
@@ -242,6 +260,8 @@ def _meta_to_json(meta: ExperimentMeta) -> dict:
         payload["start_step"]["step_log"] = meta.start_step.step_log
     if meta.created_by is not None:
         payload["created_by"] = meta.created_by
+    if meta.completed_at is not None:
+        payload["completed_at"] = meta.completed_at
     if meta.landed_at is not None:
         payload["landed_at"] = meta.landed_at
     if meta.remote_branch is not None:
@@ -265,6 +285,7 @@ def update_experiment_status(
     path_or_dir: Path,
     status: str,
     *,
+    completed_at: str | None = None,
     landed_at: str | None = None,
     remote_branch: str | None = None,
     source_commit: str | None = None,
@@ -273,6 +294,8 @@ def update_experiment_status(
         raise ExperimentValidationError(f"Invalid experiment status: {status!r}")
     meta = read_experiment_meta(path_or_dir)
     meta.status = status
+    if completed_at is not None:
+        meta.completed_at = completed_at
     if landed_at is not None:
         meta.landed_at = landed_at
     if remote_branch is not None:
@@ -474,6 +497,162 @@ def validate_stop_condition(
 
     raise ExperimentValidationError(
         f"Unknown stop node {raw_node!r} for machine_path {normalized_path!r}"
+    )
+
+
+def _node_map_for_stop_path(machine_path: str) -> dict[str, type]:
+    from .state_machine.quest_v2_definitions import (
+        build_quest_machine_definition,
+        build_slice_machine_definition,
+    )
+
+    normalized_path = _normalize_machine_path(machine_path)
+    if normalized_path in ("root/slice", "slice"):
+        return build_slice_machine_definition().node_map
+    if "/slices/" in normalized_path:
+        return build_slice_machine_definition().node_map
+    return build_quest_machine_definition().node_map
+
+
+def _stop_node_match_names(stop: ExperimentStopCondition) -> frozenset[str]:
+    node_map = _node_map_for_stop_path(stop.machine_path)
+    names = {stop.node_name}
+    node_cls = node_map.get(stop.node_name)
+    if node_cls is not None:
+        names.add(_node_class_name(node_cls))
+    return frozenset(names)
+
+
+def _snapshot_node_matches(snap: RecursiveSnapshot, stop: ExperimentStopCondition) -> bool:
+    acceptable_nodes = _stop_node_match_names(stop)
+    if snap.node_name in acceptable_nodes:
+        return True
+    lower_names = {name.lower() for name in acceptable_nodes}
+    if snap.node_name.lower() in lower_names:
+        return True
+    return snap.state_after == stop.node_name
+
+
+def _snapshot_path_matches(
+    snap: RecursiveSnapshot,
+    stop_path: str,
+    *,
+    is_root: bool,
+) -> bool:
+    normalized = _normalize_machine_path(stop_path)
+    if normalized == "root/quest":
+        return is_root
+    if normalized in ("root/slice", "slice"):
+        return not is_root
+    target = normalized.replace("\\", "/")
+    return snap.machine_path.replace("\\", "/") == target
+
+
+def _iter_recursive_snapshots(snapshot: RecursiveSnapshot):
+    yield snapshot, True
+    child = snapshot.child
+    if child is not None:
+        for item, _is_root in _iter_recursive_snapshots(child):
+            yield item, False
+
+
+def snapshot_matches_stop_condition(
+    snapshot: RecursiveSnapshot,
+    stop: ExperimentStopCondition,
+) -> bool:
+    for snap, is_root in _iter_recursive_snapshots(snapshot):
+        if not _snapshot_node_matches(snap, stop):
+            continue
+        if _snapshot_path_matches(snap, stop.machine_path, is_root=is_root):
+            return True
+    return False
+
+
+def mark_quest_experiment_complete(
+    quest_dir: Path,
+    meta: QuestMeta,
+    repo_path: Path,
+) -> bool:
+    cur = quest_fs.read_quest_state(quest_dir)
+    if cur.state == QuestState.ExperimentComplete:
+        return False
+    quest_fs.write_quest_normalized_machine_state(
+        quest_dir,
+        QuestStateInfo(
+            state=QuestState.ExperimentComplete,
+            current_slice=None,
+            updated_at=utc_now_iso(),
+            active_slice=cur.active_slice,
+            global_step=cur.global_step,
+        ),
+        meta,
+        repo_path,
+    )
+    return True
+
+
+def commit_experiment_complete_state(
+    repo_path: Path,
+    quest_dir: Path,
+    experiment_id: str,
+) -> str | None:
+    rel = quest_dir.resolve().relative_to(repo_path.resolve()).as_posix()
+    run_git(repo_path, "add", "--", f"{rel}/state.md")
+    staged = run_git(
+        repo_path,
+        "diff",
+        "--cached",
+        "--name-only",
+        check=False,
+    )
+    if not staged.stdout.strip():
+        return None
+    run_git(repo_path, "commit", "-m", f"experiment-complete-state: {experiment_id}")
+    return run_git(repo_path, "rev-parse", "HEAD").stdout.strip()
+
+
+def complete_experiment_source_metadata(
+    source_repo_root: Path,
+    source_experiment_dir: Path,
+    *,
+    project: str,
+    quest_type: str,
+    quest_number: int,
+    experiment_number: int,
+) -> str:
+    clean, dirty = porcelain_status(source_repo_root)
+    if not clean:
+        raise ExperimentSourceCheckoutDirty(dirty)
+    completed_at = utc_now_iso()
+    update_experiment_status(
+        source_experiment_dir,
+        "experiment_complete",
+        completed_at=completed_at,
+    )
+    rel = source_experiment_dir.resolve().relative_to(
+        source_repo_root.resolve()
+    ).as_posix()
+    run_git(source_repo_root, "add", "--", rel)
+    message = (
+        f"experiment-complete: {project}/{quest_type}/"
+        f"{quest_number:04d}/{experiment_number:04d}"
+    )
+    run_git(source_repo_root, "commit", "-m", message)
+    return run_git(source_repo_root, "rev-parse", "HEAD").stdout.strip()
+
+
+def build_experiment_run_context(
+    source_repo_root: Path,
+    source_quest_dir: Path,
+    experiment_meta: ExperimentMeta,
+) -> ExperimentRunContext:
+    return ExperimentRunContext(
+        experiment_meta=experiment_meta,
+        source_repo_root=source_repo_root.resolve(),
+        source_experiment_dir=(
+            experiments_root(source_quest_dir)
+            / experiment_dir_name(experiment_meta.experiment_number)
+        ),
     )
 
 

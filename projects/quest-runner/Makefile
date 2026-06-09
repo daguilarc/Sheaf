@@ -28,6 +28,7 @@ TEST_MODULES := \
 	tests.test_worktrees \
 	tests.test_worktree_execution_path \
 	tests.test_experiment_scoped_operations \
+	tests.test_experiment_stop_conditions \
 	tests.test_migration_validation \
 	tests.test_agui_mapper \
 	tests.test_chat_event_bus \

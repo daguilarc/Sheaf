@@ -16,7 +16,13 @@ from .quest_runner import (
     next_log_step_number,
     runtime_quest_docs_dir,
 )
-from .quest_types import QuestState, StateMachineId
+from .experiments import (
+    ExperimentRunContext,
+    commit_experiment_complete_state,
+    mark_quest_experiment_complete,
+    snapshot_matches_stop_condition,
+)
+from .quest_types import QuestState, RecursiveSnapshot, StateMachineId
 from .state_machine.adapters import QuestRootRoleProfileResolver, SubprocessGitOps
 from .state_machine.context import RunContext
 from .state_machine.machine import ConcreteStateMachine
@@ -37,6 +43,59 @@ class _NoopHarnessOps:
         raise NotImplementedError
 
 
+def _experiment_complete_payload(
+    *,
+    steps_executed: int,
+    last_commit: str | None,
+    captured_outputs: list[dict],
+    experiment_run: ExperimentRunContext,
+) -> dict:
+    return {
+        "status": "experiment_complete",
+        "steps_executed": steps_executed,
+        "last_commit": last_commit,
+        "captured_outputs": captured_outputs,
+        "experiment_id": experiment_run.experiment_meta.experiment_id,
+        "experiment_status": "experiment_complete",
+        "quest_state": QuestState.ExperimentComplete.value,
+    }
+
+
+def _maybe_finalize_experiment_after_step(
+    *,
+    repo_path: Path,
+    quest_dir: Path,
+    meta: object,
+    experiment_run: ExperimentRunContext,
+    snapshot: RecursiveSnapshot | None,
+    last_commit: str | None,
+    steps_executed: int,
+    captured_outputs: list[dict],
+) -> dict | None:
+    if snapshot is None:
+        return None
+    if not snapshot_matches_stop_condition(
+        snapshot, experiment_run.experiment_meta.stop_condition
+    ):
+        return None
+    changed = mark_quest_experiment_complete(quest_dir, meta, repo_path)
+    commit_sha = last_commit
+    if changed:
+        extra = commit_experiment_complete_state(
+            repo_path,
+            quest_dir,
+            experiment_run.experiment_meta.experiment_id,
+        )
+        if extra is not None:
+            commit_sha = extra
+    return _experiment_complete_payload(
+        steps_executed=steps_executed,
+        last_commit=commit_sha,
+        captured_outputs=captured_outputs,
+        experiment_run=experiment_run,
+    )
+
+
 def run_quest_v2(
     repo_path: Path,
     quest_dir: Path,
@@ -44,6 +103,7 @@ def run_quest_v2(
     max_steps: int = 500,
     event_bus: ChatEventBus | None = None,
     experiment_id: str | None = None,
+    experiment_run: ExperimentRunContext | None = None,
 ) -> dict:
     meta = quest_fs.read_quest_meta(quest_dir)
     quest_key = _quest_key(meta)
@@ -84,6 +144,16 @@ def run_quest_v2(
             }
 
         qsi = quest_fs.read_quest_state(quest_dir)
+        if (
+            experiment_run is not None
+            and qsi.state == QuestState.ExperimentComplete
+        ):
+            return _experiment_complete_payload(
+                steps_executed=steps_executed,
+                last_commit=last_commit,
+                captured_outputs=captured_outputs,
+                experiment_run=experiment_run,
+            )
         if qsi.state == QuestState.PrePlanning:
             return {
                 "status": "pre_planning",
@@ -175,6 +245,20 @@ def run_quest_v2(
 
         if step_out.kind == "committed" and step_out.last_commit is not None:
             last_commit = step_out.last_commit
+
+        if experiment_run is not None and step_out.kind == "committed":
+            finalized = _maybe_finalize_experiment_after_step(
+                repo_path=repo_path,
+                quest_dir=quest_dir,
+                meta=meta,
+                experiment_run=experiment_run,
+                snapshot=step_out.snapshot,
+                last_commit=last_commit,
+                steps_executed=steps_executed,
+                captured_outputs=captured_outputs,
+            )
+            if finalized is not None:
+                return finalized
 
     return {
         "status": "max_steps",

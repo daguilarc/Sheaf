@@ -206,6 +206,65 @@ def _resolve_repo(repo_path: str) -> Path:
     return p
 
 
+def _build_experiment_run_context(
+    repo_path: str,
+    project: str,
+    quest_type: str,
+    quest_number: int,
+    exp_meta: experiment_ops.ExperimentMeta | None,
+) -> experiment_ops.ExperimentRunContext | None:
+    if exp_meta is None:
+        return None
+    source_root = _resolve_repo(repo_path)
+    source_qdir = quest_fs.find_quest_dir(
+        source_root, project, quest_type, quest_number
+    )
+    if source_qdir is None:
+        return None
+    return experiment_ops.build_experiment_run_context(
+        source_root, source_qdir, exp_meta
+    )
+
+
+def _apply_experiment_source_completion(
+    qdir: Path,
+    experiment_run: experiment_ops.ExperimentRunContext,
+    run_result: dict,
+) -> dict:
+    if run_result.get("status") != "experiment_complete":
+        return run_result
+    from .quest_runner import _write_human_intervention
+
+    em = experiment_run.experiment_meta
+    try:
+        source_commit = experiment_ops.complete_experiment_source_metadata(
+            experiment_run.source_repo_root,
+            experiment_run.source_experiment_dir,
+            project=em.project,
+            quest_type=em.quest_type,
+            quest_number=em.quest_number,
+            experiment_number=em.experiment_number,
+        )
+    except experiment_ops.ExperimentSourceCheckoutDirty as exc:
+        detail = (
+            "Experiment reached its stop condition in the worktree, but updating "
+            "source-checkout experiment metadata failed because the source checkout "
+            "is dirty.\n\n"
+            f"git status --porcelain:\n\n```text\n{exc.status_output}\n```"
+        )
+        _write_human_intervention(qdir, "experiment metadata update failed", detail)
+        return {
+            "status": "human_intervention",
+            "reason": "experiment_metadata_update_failed",
+            "steps_executed": run_result.get("steps_executed", 0),
+            "last_commit": run_result.get("last_commit"),
+            "captured_outputs": run_result.get("captured_outputs", []),
+            "experiment_id": em.experiment_id,
+        }
+    run_result["source_metadata_commit"] = source_commit
+    return run_result
+
+
 def _is_git_repo(path: Path) -> bool:
     try:
         r = subprocess.run(
@@ -796,6 +855,7 @@ class QuestService:
         quest_number: int,
         max_steps: int,
         experiment_id: str | None = None,
+        experiment_run: experiment_ops.ExperimentRunContext | None = None,
     ) -> dict:
         from .quest_runner import (
             QuestHarnessError,
@@ -804,14 +864,20 @@ class QuestService:
         )
 
         try:
-            return runner_run_quest(
+            result = runner_run_quest(
                 repo_path=root,
                 quest_dir=qdir,
                 conductor_repo_path=self.conductor_repo_path,
                 max_steps=max_steps,
                 event_bus=self.chat_event_bus,
                 experiment_id=experiment_id,
+                experiment_run=experiment_run,
             )
+            if experiment_run is not None:
+                return _apply_experiment_source_completion(
+                    qdir, experiment_run, result
+                )
+            return result
         except QuestHarnessError as exc:
             if exc.detail.strip() in {"billing_error", "rate_limit"}:
                 result = self._schedule_deferred_quest_run(
@@ -856,12 +922,15 @@ class QuestService:
         max_steps: int = 500,
         experiment_id: str | None = None,
     ) -> dict:
-        root, qdir, key, _exp_meta = self._prepare_run(
+        root, qdir, key, exp_meta = self._prepare_run(
             repo_path,
             project,
             quest_type,
             quest_number,
             experiment_id=experiment_id,
+        )
+        experiment_run = _build_experiment_run_context(
+            repo_path, project, quest_type, quest_number, exp_meta
         )
         req_id = str(uuid.uuid4())
         if not self.lock.acquire(key, quest_type, quest_number, req_id):
@@ -881,6 +950,7 @@ class QuestService:
                 quest_number,
                 max_steps,
                 experiment_id=experiment_id,
+                experiment_run=experiment_run,
             )
         finally:
             self.lock.release(key)
@@ -899,12 +969,15 @@ class QuestService:
         """Start the runner on a background thread and return immediately (HTTP)."""
         from . import dashboard_data
 
-        root, qdir, key, _exp_meta = self._prepare_run(
+        root, qdir, key, exp_meta = self._prepare_run(
             repo_path,
             project,
             quest_type,
             quest_number,
             experiment_id=experiment_id,
+        )
+        experiment_run = _build_experiment_run_context(
+            repo_path, project, quest_type, quest_number, exp_meta
         )
         req_id = str(uuid.uuid4())
         if not self.lock.acquire(key, quest_type, quest_number, req_id):
@@ -966,6 +1039,7 @@ class QuestService:
                     quest_number,
                     max_steps,
                     experiment_id=experiment_id,
+                    experiment_run=experiment_run,
                 )
             except Exception:
                 log.exception(
@@ -1006,12 +1080,15 @@ class QuestService:
         from .state_machine.adapters import SubprocessGitOps
         from .quest_types import StateMachineId
 
-        root, qdir, key, _exp_meta = self._prepare_run(
+        root, qdir, key, exp_meta = self._prepare_run(
             repo_path,
             project,
             quest_type,
             quest_number,
             experiment_id=experiment_id,
+        )
+        experiment_run = _build_experiment_run_context(
+            repo_path, project, quest_type, quest_number, exp_meta
         )
         req_id = str(uuid.uuid4())
         if not self.lock.acquire(key, quest_type, quest_number, req_id):
@@ -1053,10 +1130,65 @@ class QuestService:
                 "quest_type": quest_type,
                 "quest_number": quest_number,
             }
+            if experiment_id is not None:
+                body["experiment_id"] = experiment_id
             if result.kind == "completed":
+                if (
+                    experiment_run is not None
+                    and result.next_quest_state == QuestState.ExperimentComplete.value
+                ):
+                    body["status"] = "experiment_complete"
+                    body["advanced"] = False
+                    body["quest_state"] = QuestState.ExperimentComplete.value
+                    return _apply_experiment_source_completion(
+                        qdir,
+                        experiment_run,
+                        body,
+                    )
                 body["status"] = "completed"
                 body["advanced"] = False
                 return body
+
+            if (
+                experiment_run is not None
+                and result.snapshot is not None
+                and experiment_ops.snapshot_matches_stop_condition(
+                    result.snapshot,
+                    experiment_run.experiment_meta.stop_condition,
+                )
+            ):
+                changed = experiment_ops.mark_quest_experiment_complete(
+                    qdir, meta, root
+                )
+                commit_sha = result.commit
+                if changed:
+                    extra = experiment_ops.commit_experiment_complete_state(
+                        root,
+                        qdir,
+                        experiment_run.experiment_meta.experiment_id,
+                    )
+                    if extra is not None:
+                        commit_sha = extra
+                body["status"] = "experiment_complete"
+                body["advanced"] = True
+                body["quest_state"] = QuestState.ExperimentComplete.value
+                body["previous_state"] = result.previous_quest_state
+                body["next_state"] = QuestState.ExperimentComplete.value
+                if result.previous_slice_state is not None:
+                    body["previous_slice_state"] = result.previous_slice_state
+                if result.next_slice_state is not None:
+                    body["next_slice_state"] = result.next_slice_state
+                if result.active_slice is not None:
+                    body["active_slice"] = result.active_slice
+                if commit_sha is not None:
+                    body["commit"] = commit_sha
+                body["message"] = (
+                    f"Experiment {experiment_run.experiment_meta.experiment_id} "
+                    "reached its stop condition"
+                )
+                return _apply_experiment_source_completion(
+                    qdir, experiment_run, body
+                )
 
             body["status"] = "advanced"
             body["previous_state"] = result.previous_quest_state

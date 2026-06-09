@@ -30,6 +30,7 @@ class QuestState(Enum):
     ExecuteSlice = "ExecuteSlice"
     QuestDocumenting = "QuestDocumenting"
     Completed = "Completed"
+    ExperimentComplete = "ExperimentComplete"
 
 
 class SliceState(Enum):

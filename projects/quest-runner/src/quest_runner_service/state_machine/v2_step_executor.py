@@ -50,6 +50,7 @@ from .quest_v2_predicates import (
 class V2StepResult:
     kind: str
     last_commit: str | None = None
+    snapshot: RecursiveSnapshot | None = None
 
 
 @dataclass
@@ -62,6 +63,7 @@ class ManualAdvanceResult:
     active_slice: str | None = None
     commit: str | None = None
     message: str = ""
+    snapshot: RecursiveSnapshot | None = None
 
 
 class HumanInterventionConflict(Exception):
@@ -304,7 +306,7 @@ def commit_v2_snapshot_step(
     plan = build_v2_transition_plan(quest_dir, before_quest, aq, before_slice, asi)
     changed = collect_changed_paths_since(repo_path, step_base)
     if plan.is_noop and not changed:
-        return V2StepResult(kind="noop")
+        return V2StepResult(kind="noop", snapshot=snapshot)
 
     apply_transition_filesystem_side_effects(quest_dir, plan)
 
@@ -325,7 +327,7 @@ def commit_v2_snapshot_step(
             "commit metadata validation failed",
             "Rendered step metadata did not round-trip parse. See logs/commit_metadata_validation_*.md.",
         )
-        return V2StepResult(kind="human_intervention")
+        return V2StepResult(kind="human_intervention", snapshot=snapshot)
 
     try:
         validate_parsed_step_commit(
@@ -340,7 +342,7 @@ def commit_v2_snapshot_step(
             "commit metadata validation failed",
             f"{exc}\n\nSee logs/commit_metadata_validation_*.md.",
         )
-        return V2StepResult(kind="human_intervention")
+        return V2StepResult(kind="human_intervention", snapshot=snapshot)
 
     quest_fs.write_quest_normalized_machine_state(
         quest_dir,
@@ -362,7 +364,7 @@ def commit_v2_snapshot_step(
             "v2 commit staging empty",
             "Expected staged changes after a v2 top-level step but index was empty.",
         )
-        return V2StepResult(kind="human_intervention")
+        return V2StepResult(kind="human_intervention", snapshot=snapshot)
 
     try:
         sha = git_ops.Commit(repo_path, msg)
@@ -372,9 +374,9 @@ def commit_v2_snapshot_step(
             "v2 git commit failed",
             str(exc),
         )
-        return V2StepResult(kind="human_intervention")
+        return V2StepResult(kind="human_intervention", snapshot=snapshot)
 
-    return V2StepResult(kind="committed", last_commit=sha)
+    return V2StepResult(kind="committed", last_commit=sha, snapshot=snapshot)
 
 
 def execute_v2_top_level_step(
@@ -430,7 +432,7 @@ def advance_v2_top_level_step_without_harness(
     prev_quest = bq.state.value
     prev_slice = bsi.state.value if bsi is not None else None
 
-    if bq.state == QuestState.Completed:
+    if bq.state in (QuestState.Completed, QuestState.ExperimentComplete):
         return ManualAdvanceResult(
             kind="completed",
             previous_quest_state=prev_quest,
@@ -488,4 +490,5 @@ def advance_v2_top_level_step_without_harness(
         active_slice=aq.active_slice,
         commit=commit_sha,
         message=f"Advanced quest {quest_key}",
+        snapshot=snap,
     )
