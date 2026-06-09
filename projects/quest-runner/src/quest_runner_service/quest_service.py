@@ -1457,6 +1457,28 @@ class QuestService:
         finally:
             self.lock.release(key)
 
+    def _restore_source_experiment_dir_for_retry(
+        self,
+        source_root: Path,
+        source_experiment_dir: Path,
+    ) -> None:
+        rel = source_experiment_dir.resolve().relative_to(
+            source_root.resolve()
+        ).as_posix()
+        experiment_ops.run_git(source_root, "reset", "--quiet", "--", rel)
+        for archive_dir in ("logs", "issues", "issue_responses"):
+            shutil.rmtree(source_experiment_dir / archive_dir, ignore_errors=True)
+        experiment_ops.run_git(source_root, "checkout", "--", rel)
+        experiment_ops.run_git(
+            source_root,
+            "clean",
+            "-fd",
+            "--",
+            f"{rel}/logs",
+            f"{rel}/issues",
+            f"{rel}/issue_responses",
+        )
+
     def _land_experiment_locked(
         self,
         source_root: Path,
@@ -1525,6 +1547,10 @@ class QuestService:
                 exp_quest_dir,
             )
         except OSError as exc:
+            self._restore_source_experiment_dir_for_retry(
+                source_root,
+                source_experiment_dir,
+            )
             raise ExperimentLandConflict({
                 "status": "artifact_copy_failed",
                 "error": f"Failed to copy experiment artifacts: {exc}",
@@ -1538,6 +1564,10 @@ class QuestService:
                 remote=remote,
             )
         except experiment_ops.ExperimentLandError as exc:
+            self._restore_source_experiment_dir_for_retry(
+                source_root,
+                source_experiment_dir,
+            )
             raise ExperimentLandConflict({
                 "status": "push_failed",
                 "error": exc.message,

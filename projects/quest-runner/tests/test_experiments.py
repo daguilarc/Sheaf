@@ -1065,12 +1065,32 @@ class ExperimentLandServiceTests(unittest.TestCase):
         self.assertTrue(branch_exists(self.temp.root, exp_meta.branch_name))
         loaded = read_experiment_meta(experiments_root(source_qdir) / "0000")
         self.assertEqual(loaded.status, "experiment_complete")
+        self.assertEqual(
+            run_git(self.temp.root, "status", "--porcelain").stdout.strip(),
+            "",
+        )
+
+        retry = svc.land_experiment(
+            str(self.temp.root),
+            "example",
+            "main",
+            out["quest_number"],
+            exp_meta.experiment_id,
+        )
+        self.assertEqual(retry["status"], "landed")
 
     def test_land_artifact_copy_failure_does_not_mark_landed(self) -> None:
         svc, out, exp_meta, source_qdir, wt_path = self._setup_completed_experiment()
+
+        def fail_after_partial_copy(source_experiment_dir: Path, _quest_dir: Path):
+            partial = source_experiment_dir / "logs" / "partial.jsonl"
+            partial.parent.mkdir(parents=True, exist_ok=True)
+            partial.write_text("{}\n", encoding="utf-8")
+            raise OSError("copy failed")
+
         with patch(
             "quest_runner_service.experiments.archive_experiment_artifacts",
-            side_effect=OSError("copy failed"),
+            side_effect=fail_after_partial_copy,
         ):
             with self.assertRaises(ExperimentLandConflict) as ctx:
                 svc.land_experiment(
@@ -1084,6 +1104,13 @@ class ExperimentLandServiceTests(unittest.TestCase):
         loaded = read_experiment_meta(experiments_root(source_qdir) / "0000")
         self.assertEqual(loaded.status, "experiment_complete")
         self.assertTrue(wt_path.is_dir())
+        self.assertFalse(
+            (experiments_root(source_qdir) / "0000" / "logs" / "partial.jsonl").exists()
+        )
+        self.assertEqual(
+            run_git(self.temp.root, "status", "--porcelain").stdout.strip(),
+            "",
+        )
 
     def test_push_experiment_branch_uses_unique_branch_ref(self) -> None:
         svc, out, exp_meta, _source_qdir, _wt_path = self._setup_completed_experiment()
