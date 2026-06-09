@@ -13,6 +13,11 @@ from quest_runner_service.state_machine.commit_metadata import (
     validate_parsed_step_commit,
 )
 from quest_runner_service.quest_types import RecursiveSnapshot, StepCommitMetadata
+from quest_runner_service.state_machine.workflow_state_io import (
+    WorkflowStateIo,
+    build_workflow_step_snapshot,
+)
+from quest_runner_service.workflow_config import load_packaged_default_workflow
 
 
 def _sample_snapshot() -> RecursiveSnapshot:
@@ -136,3 +141,54 @@ class CommitMetadataGoldenTests(unittest.TestCase):
             assert bad_parsed is not None
             with self.assertRaises(CommitMetadataValidationError):
                 validate_parsed_step_commit(bad_parsed, repo_root=root)
+
+    def test_workflow_generated_snapshot_round_trip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            quest_dir = root / "quests" / "main" / "0001_demo"
+            slice_dir = quest_dir / "slices" / "0001_foundation"
+            quest_dir.mkdir(parents=True)
+            slice_dir.mkdir(parents=True)
+            workflow = load_packaged_default_workflow()
+            from quest_runner_service.quest_types import QuestMeta
+
+            io = WorkflowStateIo(
+                root,
+                quest_dir,
+                QuestMeta(
+                    project="example",
+                    quest_type="main",
+                    quest_number=1,
+                    quest_slug="demo",
+                    quest_name="Demo",
+                    created_at="2026-01-01T00:00:00Z",
+                ),
+                workflow,
+            )
+            child_state = workflow.get_machine("slice").states["Implementing"]
+            child_snap = build_workflow_step_snapshot(
+                workflow_io=io,
+                machine_key="slice",
+                machine_dir=slice_dir,
+                workflow_state=child_state,
+                state_before="Implementing",
+                state_after="PolishingReview",
+                tags={},
+            )
+            quest_state = workflow.get_machine("quest").states["ExecuteSlice"]
+            snap = build_workflow_step_snapshot(
+                workflow_io=io,
+                machine_key="quest",
+                machine_dir=quest_dir,
+                workflow_state=quest_state,
+                state_before="ExecuteSlice",
+                state_after="ExecuteSlice",
+                tags={"active_slice": "0001_foundation"},
+                child=child_snap,
+            )
+            meta = StepCommitMetadata(global_step=3, snapshot=snap)
+            msg = render_step_commit_message(meta)
+            parsed = parse_step_commit_message(msg)
+            self.assertIsNotNone(parsed)
+            assert parsed is not None
+            validate_parsed_step_commit(parsed, repo_root=root)

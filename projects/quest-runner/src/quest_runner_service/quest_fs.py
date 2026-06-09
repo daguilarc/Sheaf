@@ -322,36 +322,37 @@ def write_normalized_machine_state(state_machine_dir: Path, state: StateMachineS
     path.write_text(format_normalized_state_md(state), encoding="utf-8")
 
 
+def _derive_current_slice_from_active_slice(active_slice: str | None) -> int | None:
+    if active_slice is None:
+        return None
+    active_slice = active_slice.strip()
+    if not active_slice:
+        return None
+    return slice_index_from_dirname(active_slice)
+
+
+def _coerce_quest_state_for_info(raw: str, path: Path) -> QuestState:
+    try:
+        return QuestState(raw)
+    except ValueError as e:
+        raise QuestStateParseError(
+            f"Invalid quest state value {raw!r} in {path}"
+        ) from e
+
+
 def _read_quest_state_normalized(path: Path, text: str) -> QuestStateInfo:
     sm = parse_normalized_state_md_text(
         text,
         require_global_step=False,
         label=f"normalized quest state file {path}",
     )
-    try:
-        state = QuestState(sm.state)
-    except ValueError as e:
-        raise QuestStateParseError(
-            f"Invalid quest state value {sm.state!r} in {path}"
-        ) from e
+    state = _coerce_quest_state_for_info(sm.state, path)
     active_slice = sm.tags.get("active_slice")
     if active_slice is not None:
         active_slice = active_slice.strip()
         if not active_slice:
             active_slice = None
-    current_slice: int | None = None
-    if state == QuestState.ExecuteSlice:
-        if not active_slice:
-            raise QuestStateParseError(
-                f"Quest state {path}: normalized ExecuteSlice requires tags.active_slice"
-            )
-        idx = slice_index_from_dirname(active_slice)
-        if idx is None:
-            raise QuestStateParseError(
-                f"Quest state {path}: active_slice {active_slice!r} must start "
-                "with a four-digit slice index prefix"
-            )
-        current_slice = idx
+    current_slice = _derive_current_slice_from_active_slice(active_slice)
     return QuestStateInfo(
         state=state,
         current_slice=current_slice,
@@ -438,7 +439,8 @@ def read_quest_state(quest_dir: Path) -> QuestStateInfo:
     )
 
 
-def read_slice_state(slice_dir: Path) -> SliceStateInfo:
+def read_slice_persisted_state(slice_dir: Path) -> tuple[str, str]:
+    """Read legacy slice ``state.md`` persisted state value without enum validation."""
     path = slice_dir / "state.md"
     if not path.is_file():
         raise FileNotFoundError(f"Missing slice state file: {path}")
@@ -460,13 +462,31 @@ def read_slice_state(slice_dir: Path) -> SliceStateInfo:
         {"state", "updated_at"},
         f"slice state file {path}",
     )
+    return kv["state"], kv["updated_at"]
+
+
+def write_slice_persisted_state(
+    slice_dir: Path, *, persisted_state: str, updated_at: str
+) -> None:
+    """Write legacy slice ``state.md`` with a persisted state string."""
+    path = slice_dir / "state.md"
+    body = (
+        "# Slice State\n\n"
+        f"state: {persisted_state}\n"
+        f"updated_at: {updated_at}\n"
+    )
+    path.write_text(body, encoding="utf-8")
+
+
+def read_slice_state(slice_dir: Path) -> SliceStateInfo:
+    persisted, updated_at = read_slice_persisted_state(slice_dir)
     try:
-        state = SliceState(kv["state"])
+        state = SliceState(persisted)
     except ValueError as e:
         raise QuestStateParseError(
-            f"Invalid slice state value {kv['state']!r} in {path}"
+            f"Invalid slice state value {persisted!r} in {slice_dir / 'state.md'}"
         ) from e
-    return SliceStateInfo(state=state, updated_at=kv["updated_at"])
+    return SliceStateInfo(state=state, updated_at=updated_at)
 
 
 def write_quest_state(quest_dir: Path, state: QuestStateInfo) -> None:
@@ -516,13 +536,11 @@ def write_quest_normalized_machine_state(
 
 
 def write_slice_state(slice_dir: Path, state: SliceStateInfo) -> None:
-    path = slice_dir / "state.md"
-    body = (
-        "# Slice State\n\n"
-        f"state: {state.state.value}\n"
-        f"updated_at: {state.updated_at}\n"
+    write_slice_persisted_state(
+        slice_dir,
+        persisted_state=state.state.value,
+        updated_at=state.updated_at,
     )
-    path.write_text(body, encoding="utf-8")
 
 
 def read_quest_meta(quest_dir: Path) -> QuestMeta:

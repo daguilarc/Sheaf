@@ -151,7 +151,7 @@ class QuestStateValidationTests(unittest.TestCase):
             self.assertEqual(info.state, QuestState.ExecuteSlice)
             self.assertEqual(info.current_slice, 0)
 
-    def test_normalized_execute_slice_without_active_slice_rejected(self) -> None:
+    def test_normalized_execute_slice_without_active_slice_accepted(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             q = Path(tmp) / "quest"
             q.mkdir()
@@ -175,9 +175,10 @@ class QuestStateValidationTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            with self.assertRaises(QuestStateParseError) as cx:
-                read_quest_state(q)
-            self.assertIn("active_slice", str(cx.exception).lower())
+            info = read_quest_state(q)
+            self.assertEqual(info.state, QuestState.ExecuteSlice)
+            self.assertIsNone(info.current_slice)
+            self.assertIsNone(info.active_slice)
 
 
 class IssueFileTests(unittest.TestCase):
