@@ -19,6 +19,13 @@ from .commit_metadata import (
 )
 from .context import RunContext
 from .machine import ConcreteStateMachine
+from .workflow_interpreter import (
+    ExecutionMode,
+    RunProfileCallback,
+    WorkflowExecutionResult,
+    WorkflowMachineLoader,
+    WorkflowStateMachine,
+)
 from .protocols import (
     GitOps,
     HarnessOps,
@@ -37,6 +44,11 @@ __all__ = [
     "BaseNode",
     "CommitMetadataValidationError",
     "ConcreteStateMachine",
+    "ExecutionMode",
+    "RunProfileCallback",
+    "WorkflowExecutionResult",
+    "WorkflowMachineLoader",
+    "WorkflowStateMachine",
     "FileStateIo",
     "GitOps",
     "HarnessOps",

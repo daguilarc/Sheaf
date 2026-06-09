@@ -110,6 +110,9 @@ class WorkflowStateIo:
     def machine_path_for_instance(self, machine_dir: Path) -> str:
         return machine_dir.resolve().relative_to(self.repo_path).as_posix()
 
+    def machine_key_for_dir(self, machine_dir: Path) -> str:
+        return self._machine_key_for_dir(machine_dir)
+
     def _machine_key_for_dir(self, machine_dir: Path) -> str:
         if machine_dir.resolve() == self.quest_dir:
             return self.workflow.entry_machine
