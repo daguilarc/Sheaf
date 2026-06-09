@@ -275,9 +275,9 @@ experiment worktree with the supplied transition config.
 
 | Status | Condition |
 | --- | --- |
-| `400` | Invalid input, unknown start step, or unknown stop node |
+| `400` | Invalid input, unknown start step, unknown stop node, detached source checkout, or dirty source checkout |
 | `404` | Quest not found |
-| `422` | Source checkout not a git repo or not clean |
+| `422` | Source checkout is not a git repository |
 | `500` | Metadata committed but worktree creation failed (response includes recovery fields) |
 
 ### `POST /experiments/land`
