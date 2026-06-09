@@ -149,6 +149,74 @@ class AutomatedRunTests(WorkflowRunnerIntegrationFixture):
         self.assertEqual(out["status"], "human_intervention")
 
     @patch("quest_runner_service.state_machine.workflow_harness_callback.create_harness")
+    @patch(
+        "quest_runner_service.state_machine.workflow_harness_callback.perform_role_harness_sequence"
+    )
+    def test_implementing_commit_records_automated_step_metadata(
+        self, mock_harness_sequence: MagicMock, mock_create: MagicMock
+    ) -> None:
+        mock_create.return_value = MagicMock()
+
+        sl = self.wt_qdir / "slices" / "0000_impl"
+        _scaffold_slice(sl)
+        quest_fs.write_slice_state(
+            sl,
+            SliceStateInfo(
+                state=SliceState.Implementing,
+                updated_at="2026-01-01T00:00:00Z",
+            ),
+        )
+        quest_fs.write_quest_state(
+            self.wt_qdir,
+            QuestStateInfo(
+                state=QuestState.ExecuteSlice,
+                current_slice=0,
+                updated_at="2026-01-01T00:00:00Z",
+                active_slice="0000_impl",
+                global_step=5,
+            ),
+        )
+        _commit_all(self.worktree, "implementing setup")
+
+        def complete_implementation(**_: object) -> None:
+            (sl / "implementation_done.md").write_text("done\n", encoding="utf-8")
+
+        mock_harness_sequence.side_effect = complete_implementation
+        before_head = _git_head(self.worktree)
+        before_gs = quest_fs.read_quest_state(self.wt_qdir).global_step
+
+        out = run_quest_v2(
+            repo_path=self.worktree,
+            quest_dir=self.wt_qdir,
+            conductor_repo_path=self.repo_root,
+            max_steps=1,
+        )
+
+        after_head = _git_head(self.worktree)
+        self.assertNotEqual(after_head, before_head)
+        self.assertEqual(out["status"], "max_steps")
+        self.assertEqual(out["steps_executed"], 1)
+        self.assertEqual(out["last_commit"], after_head)
+        self.assertEqual(
+            quest_fs.read_quest_state(self.wt_qdir).global_step,
+            before_gs + 1,
+        )
+
+        parsed = parse_step_commit_message(_git_head_message(self.worktree))
+        self.assertIsNotNone(parsed)
+        assert parsed is not None
+        self.assertEqual(parsed.metadata.global_step, before_gs + 1)
+        snap = parsed.metadata.snapshot
+        self.assertEqual(snap.node_name, "ExecuteActiveSliceNode")
+        self.assertEqual(snap.state_before, "ExecuteSlice")
+        self.assertEqual(snap.state_after, "ExecuteSlice")
+        self.assertIsNotNone(snap.child)
+        assert snap.child is not None
+        self.assertEqual(snap.child.node_name, "SliceImplementingNode")
+        self.assertEqual(snap.child.state_before, "Implementing")
+        self.assertEqual(snap.child.state_after, "PolishingReview")
+
+    @patch("quest_runner_service.state_machine.workflow_harness_callback.create_harness")
     def test_manual_advance_commits_and_increments_global_step(
         self, mock_create: MagicMock
     ) -> None:
