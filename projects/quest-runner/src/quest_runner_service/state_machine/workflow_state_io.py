@@ -113,10 +113,9 @@ class WorkflowStateIo:
     def _machine_key_for_dir(self, machine_dir: Path) -> str:
         if machine_dir.resolve() == self.quest_dir:
             return self.workflow.entry_machine
-        rel = machine_dir.resolve().relative_to(self.quest_dir).as_posix()
-        for collection in self.workflow.collections.values():
-            if _path_matches_collection_pattern(rel, collection.path):
-                return collection.machine
+        collection = self._collection_for_dir(machine_dir)
+        if collection is not None:
+            return collection.machine
         raise FatalInvariantError(
             f"Directory {machine_dir} does not match any workflow collection"
         )
