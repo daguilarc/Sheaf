@@ -50,12 +50,16 @@ export function ResolveProjectSelection(
   return { project: first, invalidQueryProject };
 }
 
-export function BuildQuestApiQuery(project, questType, questNumber) {
-  return {
+export function BuildQuestApiQuery(project, questType, questNumber, experimentId) {
+  const query = {
     project,
     quest_type: questType,
     quest_number: questNumber,
   };
+  if (experimentId != null && String(experimentId).length > 0) {
+    query.experiment_id = String(experimentId);
+  }
+  return query;
 }
 
 export function BuildDashboardSearchParams({
@@ -65,6 +69,8 @@ export function BuildDashboardSearchParams({
   page,
   sliceNumber,
   subpage,
+  selectedKind,
+  experimentId,
 }) {
   const p = new URLSearchParams();
   if (project) {
@@ -73,6 +79,9 @@ export function BuildDashboardSearchParams({
   if (questType != null && questNumber != null) {
     p.set("quest_type", questType);
     p.set("quest_number", String(questNumber));
+    if (selectedKind === "experiment" && experimentId) {
+      p.set("experiment_id", String(experimentId));
+    }
     if (page) {
       p.set("page", page);
     }
@@ -114,6 +123,28 @@ export function BuildLandQuestPayload(project, questType, questNumber) {
     quest_type: questType,
     quest_number: questNumber,
   };
+}
+
+export function BuildLandExperimentPayload(
+  project,
+  questType,
+  questNumber,
+  experimentId
+) {
+  return {
+    project,
+    quest_type: questType,
+    quest_number: questNumber,
+    experiment_id: experimentId,
+  };
+}
+
+export function IsExperimentSelection(selectedKind) {
+  return selectedKind === "experiment";
+}
+
+export function ShouldShowExperimentLandButton(overview) {
+  return overview?.experiment?.can_land === true;
 }
 
 export function InferQuestDisplayStatus(overview, runStatus) {

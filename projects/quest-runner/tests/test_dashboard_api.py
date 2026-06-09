@@ -22,6 +22,7 @@ from quest_runner_service.dashboard_data import (
 from quest_runner_service.worktrees import quest_worktree_path, remove_partial_worktree
 from quest_runner_service.dashboard_runs import ActiveRunTracker
 from quest_runner_service.quest_lock import QuestLock
+from quest_runner_service.quest_service import QuestService
 from quest_runner_service.quest_types import IssueEntry, RecursiveSnapshot, StepCommitMetadata, TransitionRecord
 from quest_runner_service.state_machine.commit_metadata import render_step_commit_message
 
@@ -510,6 +511,261 @@ class DashboardQuestStepHistoryTests(unittest.TestCase):
         j = ov.get_json()
         self.assertIn("step_history", j)
         self.assertGreaterEqual(len(j["step_history"]), 1)
+
+
+class DashboardExperimentTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.repo_root = Path(__file__).resolve().parents[1]
+        self.temp = TempRepo(self.repo_root)
+        self.addCleanup(self.temp.cleanup)
+
+    def _setup_open_experiment(
+        self,
+        *,
+        complete: bool = False,
+    ) -> tuple[object, QuestService, dict, object, str]:
+        from quest_runner_service.experiments import experiment_worktree_path
+        from quest_runner_service.quest_types import QuestState, QuestStateInfo
+        from quest_runner_service.worktrees import remove_partial_worktree
+
+        from .test_experiment_scoped_operations import _add_experiment_worktree
+        from .test_experiments import (
+            _git_commit_all,
+            _sample_meta,
+            _write_experiment_on_quest,
+        )
+
+        ensure_project(self.temp.root, "example")
+        client, svc = make_app_client(self.temp.root, self.repo_root)
+        out = svc.create_quest(str(self.temp.root), "example", "main", "Exp Dash")
+        source_qdir = quest_fs.find_quest_dir(
+            self.temp.root, "example", "main", out["quest_number"]
+        )
+        assert source_qdir is not None
+        quest_meta = quest_fs.read_quest_meta(source_qdir)
+        exp_meta = _write_experiment_on_quest(
+            source_qdir,
+            quest_meta,
+            status="open",
+        )
+        _git_commit_all(self.temp.root, "experiment metadata")
+        _add_experiment_worktree(self.temp.root, exp_meta)
+        remove_partial_worktree(self.temp.root, quest_meta)
+
+        if complete:
+            wt_path = experiment_worktree_path(self.temp.root, exp_meta)
+            wt_qdir = quest_fs.find_quest_dir(
+                wt_path, "example", "main", out["quest_number"]
+            )
+            assert wt_qdir is not None
+            quest_fs.write_quest_state(
+                wt_qdir,
+                QuestStateInfo(
+                    state=QuestState.ExperimentComplete,
+                    current_slice=None,
+                    updated_at="2026-06-08T00:00:00Z",
+                    global_step=5,
+                ),
+            )
+            _git_commit_all(wt_path, "experiment complete")
+
+        return client, svc, out, exp_meta, quest_meta
+
+    def test_project_snapshot_includes_open_experiments(self) -> None:
+        client, _svc, out, exp_meta, _quest_meta = self._setup_open_experiment()
+        snap = client.get(
+            "/api/dashboard/project_snapshot",
+            query_string={"project": "example"},
+        ).get_json()
+        self.assertIn("experiments", snap)
+        self.assertEqual(len(snap["experiments"]), 1)
+        row = snap["experiments"][0]
+        self.assertEqual(row["kind"], "experiment")
+        self.assertEqual(row["experiment_id"], exp_meta.experiment_id)
+        self.assertEqual(row["quest_type"], "main")
+        self.assertEqual(row["quest_number"], out["quest_number"])
+        self.assertIn("state", row)
+        self.assertIn("start_step", row)
+        self.assertIn("stop_condition", row)
+        self.assertIn("can_land", row)
+        self.assertIn("worktree_path", row)
+        self.assertIn("branch_name", row)
+
+    def test_open_experiment_can_land_when_complete(self) -> None:
+        client, _svc, out, exp_meta, _quest_meta = self._setup_open_experiment(
+            complete=True
+        )
+        snap = client.get(
+            "/api/dashboard/project_snapshot",
+            query_string={"project": "example"},
+        ).get_json()
+        row = snap["experiments"][0]
+        self.assertTrue(row["can_land"])
+        self.assertEqual(row["state"], "ExperimentComplete")
+
+        ov = client.get(
+            "/api/dashboard/quest_overview",
+            query_string={
+                "project": "example",
+                "quest_type": "main",
+                "quest_number": str(out["quest_number"]),
+                "experiment_id": exp_meta.experiment_id,
+            },
+        ).get_json()
+        self.assertIn("experiment", ov)
+        self.assertTrue(ov["experiment"]["can_land"])
+        self.assertEqual(ov["checkout_kind"], "experiment")
+
+    def test_quest_overview_includes_archived_experiments(self) -> None:
+        from quest_runner_service.experiments import (
+            experiment_dir_name,
+            experiments_root,
+            update_experiment_status,
+            write_experiment_meta,
+        )
+
+        from .test_experiments import _sample_meta
+
+        client, _svc, out, _exp_meta, quest_meta = self._setup_open_experiment()
+        source_qdir = quest_fs.find_quest_dir(
+            self.temp.root, "example", "main", out["quest_number"]
+        )
+        assert source_qdir is not None
+        landed_meta = _sample_meta(
+            project=quest_meta.project,
+            quest_type=quest_meta.quest_type,
+            quest_number=quest_meta.quest_number,
+            quest_slug=quest_meta.quest_slug,
+            experiment_number=1,
+            status="landed",
+        )
+        landed_meta.landed_at = "2026-06-08T12:00:00Z"
+        landed_meta.remote_branch = "origin/experiment/example/main/0000/0001"
+        landed_dir = experiments_root(source_qdir) / experiment_dir_name(1)
+        write_experiment_meta(landed_dir, landed_meta)
+        (landed_dir / "logs").mkdir(parents=True)
+        (landed_dir / "logs" / "step_0001_run.jsonl").write_text(
+            "{}\n", encoding="utf-8"
+        )
+        update_experiment_status(landed_dir, "landed", landed_at=landed_meta.landed_at)
+
+        ov = client.get(
+            "/api/dashboard/quest_overview",
+            query_string={
+                "project": "example",
+                "quest_type": "main",
+                "quest_number": str(out["quest_number"]),
+            },
+        ).get_json()
+        self.assertIn("archived_experiments", ov)
+        self.assertEqual(len(ov["archived_experiments"]), 1)
+        archived = ov["archived_experiments"][0]
+        self.assertEqual(archived["experiment_id"], landed_meta.experiment_id)
+        self.assertEqual(archived["status"], "landed")
+        self.assertEqual(archived["remote_branch"], landed_meta.remote_branch)
+
+    def test_archived_experiment_detail_payload(self) -> None:
+        from quest_runner_service.experiments import (
+            experiment_dir_name,
+            experiments_root,
+            write_experiment_meta,
+        )
+
+        from .test_experiments import _sample_meta
+
+        client, _svc, out, _exp_meta, quest_meta = self._setup_open_experiment()
+        source_qdir = quest_fs.find_quest_dir(
+            self.temp.root, "example", "main", out["quest_number"]
+        )
+        assert source_qdir is not None
+        landed_meta = _sample_meta(
+            project=quest_meta.project,
+            quest_type=quest_meta.quest_type,
+            quest_number=quest_meta.quest_number,
+            quest_slug=quest_meta.quest_slug,
+            experiment_number=2,
+            status="landed",
+        )
+        landed_meta.landed_at = "2026-06-09T00:00:00Z"
+        landed_meta.remote_branch = "origin/experiment/example/main/0000/0002"
+        landed_dir = experiments_root(source_qdir) / experiment_dir_name(2)
+        write_experiment_meta(landed_dir, landed_meta)
+        logs = landed_dir / "logs"
+        logs.mkdir(parents=True)
+        (logs / "step_0001_run.jsonl").write_text('{"x":1}\n', encoding="utf-8")
+        issues = landed_dir / "issues" / "quest"
+        issues.mkdir(parents=True)
+        quest_fs.write_issues(
+            issues / "physicalplan_issues.md",
+            [
+                IssueEntry(
+                    issue_id="E-1",
+                    status="open",
+                    owner_role="physical_plan_reviewer",
+                    created_at="2026-01-01T00:00:00Z",
+                    updated_at="2026-01-01T00:00:00Z",
+                    title="Archived",
+                    details="D",
+                ),
+            ],
+        )
+        responses = landed_dir / "issue_responses" / "quest"
+        responses.mkdir(parents=True)
+        (responses / "physicalplan_issue_responses.md").write_text(
+            "# Responses\n", encoding="utf-8"
+        )
+
+        detail = client.get(
+            "/api/dashboard/experiments",
+            query_string={
+                "project": "example",
+                "quest_type": "main",
+                "quest_number": str(out["quest_number"]),
+                "experiment_id": landed_meta.experiment_id,
+            },
+        ).get_json()
+        self.assertEqual(detail["experiment_id"], landed_meta.experiment_id)
+        self.assertEqual(detail["status"], "landed")
+        self.assertEqual(len(detail["logs"]), 1)
+        self.assertEqual(detail["logs"][0]["filename"], "step_0001_run.jsonl")
+        self.assertEqual(len(detail["issues"]), 1)
+        self.assertEqual(detail["issues"][0]["open_count"], 1)
+        self.assertEqual(len(detail["issue_responses"]), 1)
+        self.assertEqual(detail["remote_branch"], landed_meta.remote_branch)
+
+    def test_experiment_scoped_git_commits_use_worktree(self) -> None:
+        from quest_runner_service.experiments import experiment_worktree_path
+
+        client, _svc, out, exp_meta, _quest_meta = self._setup_open_experiment()
+        wt_path = experiment_worktree_path(self.temp.root, exp_meta)
+        marker = wt_path / "experiment-marker.txt"
+        marker.write_text("exp\n", encoding="utf-8")
+        subprocess.run(
+            ["git", "add", "experiment-marker.txt"],
+            cwd=str(wt_path),
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "commit", "-m", "experiment-only"],
+            cwd=str(wt_path),
+            check=True,
+            capture_output=True,
+        )
+        r = client.get(
+            "/api/dashboard/git_commits",
+            query_string={
+                "project": "example",
+                "quest_type": "main",
+                "quest_number": str(out["quest_number"]),
+                "experiment_id": exp_meta.experiment_id,
+                "limit": "5",
+                "skip": "0",
+            },
+        )
+        self.assertEqual(r.status_code, 200)
+        titles = [c.get("title") or "" for c in r.get_json()["commits"]]
+        self.assertIn("experiment-only", titles)
 
 
 if __name__ == "__main__":

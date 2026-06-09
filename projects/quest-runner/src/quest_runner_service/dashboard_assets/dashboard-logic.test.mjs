@@ -3,14 +3,17 @@ import assert from "node:assert/strict";
 import {
   BuildAdvanceQuestPayload,
   BuildDashboardSearchParams,
+  BuildLandExperimentPayload,
   BuildLandQuestPayload,
   BuildQuestApiQuery,
   BuildRunQuestPayload,
   InferQuestDisplayStatus,
+  IsExperimentSelection,
   MergeRunBadge,
   RefreshScheduler,
   ResolveProjectSelection,
   ShouldShowAdvanceButton,
+  ShouldShowExperimentLandButton,
   ShouldShowLandButton,
   ShouldShowRunButton,
   StorageProjectKey,
@@ -56,6 +59,16 @@ test("BuildQuestApiQuery includes project identity", () => {
   });
 });
 
+test("BuildQuestApiQuery includes experiment_id when provided", () => {
+  const q = BuildQuestApiQuery("web", "main", 4, "experiment_web_main_4_0");
+  assert.equal(q.experiment_id, "experiment_web_main_4_0");
+});
+
+test("BuildQuestApiQuery omits experiment_id when absent", () => {
+  const q = BuildQuestApiQuery("web", "main", 4, null);
+  assert.equal(q.experiment_id, undefined);
+});
+
 test("BuildDashboardSearchParams encodes project and quest", () => {
   const p = BuildDashboardSearchParams({
     project: "web",
@@ -67,6 +80,29 @@ test("BuildDashboardSearchParams encodes project and quest", () => {
   assert.equal(p.get("quest_type"), "main");
   assert.equal(p.get("quest_number"), "2");
   assert.equal(p.get("page"), "overview");
+});
+
+test("BuildDashboardSearchParams preserves experiment_id for experiment selection", () => {
+  const p = BuildDashboardSearchParams({
+    project: "web",
+    questType: "main",
+    questNumber: 2,
+    page: "overview",
+    selectedKind: "experiment",
+    experimentId: "experiment_web_main_2_0",
+  });
+  assert.equal(p.get("experiment_id"), "experiment_web_main_2_0");
+});
+
+test("BuildDashboardSearchParams omits experiment_id for quest selection", () => {
+  const p = BuildDashboardSearchParams({
+    project: "web",
+    questType: "main",
+    questNumber: 2,
+    selectedKind: "quest",
+    experimentId: "experiment_web_main_2_0",
+  });
+  assert.equal(p.get("experiment_id"), null);
 });
 
 test("BuildRunQuestPayload includes project identity", () => {
@@ -95,6 +131,41 @@ test("BuildLandQuestPayload includes project identity", () => {
     quest_type: "main",
     quest_number: 3,
   });
+});
+
+test("BuildLandExperimentPayload includes experiment_id", () => {
+  const body = BuildLandExperimentPayload("web", "main", 3, "experiment_web_main_3_0");
+  assert.deepEqual(body, {
+    project: "web",
+    quest_type: "main",
+    quest_number: 3,
+    experiment_id: "experiment_web_main_3_0",
+  });
+});
+
+test("BuildLandQuestPayload does not include experiment_id", () => {
+  const body = BuildLandQuestPayload("web", "main", 3);
+  assert.equal(body.experiment_id, undefined);
+});
+
+test("IsExperimentSelection identifies experiment rows", () => {
+  assert.equal(IsExperimentSelection("experiment"), true);
+  assert.equal(IsExperimentSelection("quest"), false);
+});
+
+test("ShouldShowExperimentLandButton true when experiment can land", () => {
+  assert.equal(
+    ShouldShowExperimentLandButton({
+      experiment: { can_land: true },
+    }),
+    true
+  );
+  assert.equal(
+    ShouldShowExperimentLandButton({
+      experiment: { can_land: false },
+    }),
+    false
+  );
 });
 
 test("ShouldShowRunButton true for open idle quest with worktree", () => {

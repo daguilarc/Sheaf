@@ -1,13 +1,16 @@
 import {
   BuildAdvanceQuestPayload,
+  BuildLandExperimentPayload,
   BuildLandQuestPayload,
   BuildQuestApiQuery,
   BuildDashboardSearchParams,
   BuildRunQuestPayload,
+  IsExperimentSelection,
   MergeRunBadge,
   RefreshScheduler,
   ResolveProjectSelection,
   ShouldShowAdvanceButton,
+  ShouldShowExperimentLandButton,
   ShouldShowLandButton,
   ShouldShowRunButton,
   StorageProjectKey,
@@ -46,10 +49,13 @@ function Qs(obj) {
 function ParseUrl() {
   const u = new URL(window.location.href);
   const p = u.searchParams;
+  const experimentId = p.get("experiment_id");
   return {
     project: p.get("project"),
     quest_type: p.get("quest_type"),
     quest_number: p.get("quest_number"),
+    experiment_id: experimentId,
+    selectedKind: experimentId ? "experiment" : "quest",
     page: p.get("page") || "overview",
     slice_number: p.get("slice_number"),
     subpage: p.get("subpage") || "physicalplan",
@@ -63,6 +69,8 @@ const state = {
   snapshot: null,
   questType: null,
   questNumber: null,
+  selectedKind: "quest",
+  experimentId: null,
   page: "overview",
   sliceNumber: 0,
   subpage: "physicalplan",
@@ -74,6 +82,10 @@ const state = {
   advanceActionPending: false,
   landActionError: null,
   landActionPending: false,
+  experimentLandActionError: null,
+  experimentLandActionPending: false,
+  archivedExperimentDetail: null,
+  archivedExperimentDetailId: null,
   lastError: null,
   lastOkAt: null,
   contentCache: {},
@@ -105,13 +117,23 @@ function PushUrl() {
     page: state.page,
     sliceNumber: state.sliceNumber,
     subpage: state.subpage,
+    selectedKind: state.selectedKind,
+    experimentId: state.experimentId,
   });
   const path = `${window.location.pathname}?${p.toString()}`;
   history.replaceState(null, "", path);
 }
 
 function QuestBase() {
-  return BuildQuestApiQuery(state.project, state.questType, state.questNumber);
+  const experimentId = IsExperimentSelection(state.selectedKind)
+    ? state.experimentId
+    : null;
+  return BuildQuestApiQuery(
+    state.project,
+    state.questType,
+    state.questNumber,
+    experimentId
+  );
 }
 
 function IsAgentsChatViewActive() {
@@ -229,6 +251,9 @@ async function LoadProjects() {
     if (!Number.isNaN(qn) && (parsed.quest_type === "main" || parsed.quest_type === "side")) {
       state.questType = parsed.quest_type;
       state.questNumber = qn;
+      state.selectedKind = parsed.selectedKind || "quest";
+      state.experimentId =
+        parsed.selectedKind === "experiment" ? parsed.experiment_id : null;
       const pages = new Set(["overview", "human", "diffs", "agents", "physicalplan", "slice"]);
       state.page = pages.has(parsed.page) ? parsed.page : "overview";
       if (state.page === "slice") {
@@ -264,9 +289,30 @@ function RowForQuest(qt, n) {
   return rows.find((r) => r.number === n);
 }
 
+function RowForExperiment(experimentId) {
+  const rows = state.snapshot?.experiments || [];
+  return rows.find((r) => r.experiment_id === experimentId);
+}
+
 function EnsureQuestSelected() {
   if (state.snapshot == null) return;
-  if (state.questType != null) {
+  if (
+    IsExperimentSelection(state.selectedKind) &&
+    state.experimentId &&
+    state.questType != null
+  ) {
+    const exp = RowForExperiment(state.experimentId);
+    if (
+      exp &&
+      exp.quest_type === state.questType &&
+      exp.quest_number === state.questNumber
+    ) {
+      return;
+    }
+    state.selectedKind = "quest";
+    state.experimentId = null;
+  }
+  if (state.questType != null && !IsExperimentSelection(state.selectedKind)) {
     const row = RowForQuest(state.questType, state.questNumber);
     if (row) return;
   }
@@ -274,6 +320,8 @@ function EnsureQuestSelected() {
   if (main.length) {
     state.questType = "main";
     state.questNumber = main[0].number;
+    state.selectedKind = "quest";
+    state.experimentId = null;
     state.page = "overview";
     return;
   }
@@ -281,10 +329,14 @@ function EnsureQuestSelected() {
   if (side.length) {
     state.questType = "side";
     state.questNumber = side[0].number;
+    state.selectedKind = "quest";
+    state.experimentId = null;
     state.page = "overview";
   } else {
     state.questType = null;
     state.questNumber = null;
+    state.selectedKind = "quest";
+    state.experimentId = null;
   }
 }
 
@@ -552,6 +604,36 @@ async function PostAdvanceQuest() {
   return r.json();
 }
 
+async function PostLandExperiment() {
+  const body = BuildLandExperimentPayload(
+    state.project,
+    state.questType,
+    state.questNumber,
+    state.experimentId
+  );
+  const r = await fetch("/experiments/land", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) {
+    const t = await r.text();
+    let msg = t.slice(0, 200) || r.statusText;
+    try {
+      const j = JSON.parse(t);
+      if (j.error) {
+        msg = j.error;
+      } else if (j.message) {
+        msg = j.message;
+      }
+    } catch (_e) {
+      // keep raw text
+    }
+    throw new Error(`${r.status} ${msg}`);
+  }
+  return r.json();
+}
+
 async function PostLandQuest() {
   const body = BuildLandQuestPayload(state.project, state.questType, state.questNumber);
   const r = await fetch("/land", {
@@ -619,6 +701,40 @@ async function HandleLandQuestClick() {
   }
 }
 
+async function HandleLandExperimentClick() {
+  if (state.experimentLandActionPending) {
+    return;
+  }
+  state.experimentLandActionPending = true;
+  state.experimentLandActionError = null;
+  render();
+  try {
+    await PostLandExperiment();
+    state.selectedKind = "quest";
+    state.experimentId = null;
+    await RefreshAfterQuestAction();
+  } catch (e) {
+    state.experimentLandActionError = String(e.message || e);
+    render();
+  } finally {
+    state.experimentLandActionPending = false;
+    render();
+  }
+}
+
+async function LoadArchivedExperimentDetail(experimentId) {
+  const params = {
+    project: state.project,
+    quest_type: state.questType,
+    quest_number: state.questNumber,
+    experiment_id: experimentId,
+  };
+  state.archivedExperimentDetailId = experimentId;
+  state.archivedExperimentDetail = await FetchJson(
+    `/api/dashboard/experiments?${Qs(params)}`
+  );
+}
+
 async function RefreshActivePage(options = {}) {
   if (!state.project || state.questType == null) {
     render();
@@ -683,6 +799,97 @@ function NavClass(page, extra) {
   return c;
 }
 
+function FormatArchivedExperimentsHtml(ov) {
+  const archived = ov.archived_experiments || [];
+  if (!archived.length) {
+    return "";
+  }
+  const rows = archived
+    .map((exp) => {
+      const num = String(exp.experiment_number).padStart(4, "0");
+      const landed = exp.landed_at ? ` · landed ${EscapeHtml(exp.landed_at)}` : "";
+      const logs =
+        exp.log_count != null
+          ? ` · ${EscapeHtml(String(exp.log_count))} log file(s)`
+          : "";
+      return `<li class="dash-archived-exp">
+        <button type="button" class="dash-archived-exp__btn" data-experiment-id="${EscapeHtml(
+          exp.experiment_id
+        )}">
+          <span class="dash-archived-exp__key">exp/${num}</span>
+          <span class="dash-archived-exp__desc">${EscapeHtml(
+            exp.description || exp.experiment_id
+          )}</span>
+          <span class="dash-archived-exp__meta">${EscapeHtml(exp.status)}${landed}${logs}</span>
+        </button>
+      </li>`;
+    })
+    .join("");
+  const detail = state.archivedExperimentDetail;
+  let detailHtml = "";
+  if (detail && state.archivedExperimentDetailId) {
+    const logItems = (detail.logs || [])
+      .map(
+        (l) =>
+          `<li><code>${EscapeHtml(l.path)}</code> (${EscapeHtml(String(l.line_count))} lines)</li>`
+      )
+      .join("");
+    const issueItems = (detail.issues || [])
+      .map((i) => {
+        const counts =
+          i.open_count != null
+            ? ` — ${EscapeHtml(String(i.open_count))} open, ${EscapeHtml(
+                String(i.completed_count)
+              )} completed`
+            : "";
+        return `<li><code>${EscapeHtml(i.path)}</code>${counts}</li>`;
+      })
+      .join("");
+    const responseItems = (detail.issue_responses || [])
+      .map(
+        (r) =>
+          `<li><code>${EscapeHtml(r.path)}</code>${
+            r.response_count != null
+              ? ` (${EscapeHtml(String(r.response_count))} responses)`
+              : ""
+          }</li>`
+      )
+      .join("");
+    const remote = detail.remote_branch
+      ? `<dt>Remote branch</dt><dd><code>${EscapeHtml(detail.remote_branch)}</code></dd>`
+      : "";
+    detailHtml = `
+      <div class="dash-archived-detail">
+        <h3>Archive detail: ${EscapeHtml(detail.experiment_id)}</h3>
+        <dl class="dash-kv">
+          <dt>Status</dt><dd>${EscapeHtml(detail.status)}</dd>
+          <dt>Created</dt><dd>${EscapeHtml(detail.created_at || "—")}</dd>
+          <dt>Landed</dt><dd>${EscapeHtml(detail.landed_at || "—")}</dd>
+          ${remote}
+        </dl>
+        ${
+          logItems
+            ? `<h4>Logs</h4><ul class="dash-list">${logItems}</ul>`
+            : "<p class=\"dash-muted\">No archived logs.</p>"
+        }
+        ${
+          issueItems
+            ? `<h4>Issues</h4><ul class="dash-list">${issueItems}</ul>`
+            : ""
+        }
+        ${
+          responseItems
+            ? `<h4>Issue responses</h4><ul class="dash-list">${responseItems}</ul>`
+            : ""
+        }
+      </div>`;
+  }
+  return `
+    <h2>Landed experiments</h2>
+    <ul class="dash-archived-list">${rows}</ul>
+    ${detailHtml}`;
+}
+
 function RenderOverview(main) {
   const ov = state.overview;
   const rs = state.runStatus;
@@ -690,25 +897,35 @@ function RenderOverview(main) {
     main.innerHTML = `<p class="dash-empty">Loading overview…</p>`;
     return;
   }
+  const isExperiment = IsExperimentSelection(state.selectedKind) && ov.experiment;
   const badge = MergeRunBadge(ov, rs);
   const bcls = "dash-badge dash-badge--" + badge.variant;
   const ltHtml = FormatQuestLastTransitionHtml(ov.last_transition);
-  const showRun = ShouldShowRunButton(ov, rs);
-  const showAdvance = ShouldShowAdvanceButton(ov, rs);
-  const showLand = ShouldShowLandButton(ov, rs);
+  const showRun = !isExperiment && ShouldShowRunButton(ov, rs);
+  const showAdvance = !isExperiment && ShouldShowAdvanceButton(ov, rs);
+  const showLand = !isExperiment && ShouldShowLandButton(ov, rs);
+  const showExperimentLand =
+    isExperiment && ShouldShowExperimentLandButton(ov);
   const runDisabled = state.runActionPending || !showRun;
   const runLabel = state.runActionPending ? "Starting run…" : "Run quest";
   const advanceDisabled = state.advanceActionPending || !showAdvance;
   const advanceLabel = state.advanceActionPending ? "Advancing…" : "Advance";
   const landDisabled = state.landActionPending || !showLand;
   const landLabel = state.landActionPending ? "Landing…" : "Land quest";
+  const experimentLandDisabled =
+    state.experimentLandActionPending || !showExperimentLand;
+  const experimentLandLabel = state.experimentLandActionPending
+    ? "Landing…"
+    : "Land experiment";
   const showActionRow =
     showRun ||
     state.runActionPending ||
     showAdvance ||
     state.advanceActionPending ||
     showLand ||
-    state.landActionPending;
+    state.landActionPending ||
+    showExperimentLand ||
+    state.experimentLandActionPending;
   const runBlock = showActionRow
     ? `<div class="dash-run-row">
         ${
@@ -732,6 +949,13 @@ function RenderOverview(main) {
               }>${EscapeHtml(landLabel)}</button>`
             : ""
         }
+        ${
+          showExperimentLand || state.experimentLandActionPending
+            ? `<button type="button" id="dash-land-experiment" class="dash-btn dash-btn--primary" ${
+                experimentLandDisabled ? "disabled" : ""
+              }>${EscapeHtml(experimentLandLabel)}</button>`
+            : ""
+        }
       </div>
       ${
         showAdvance || state.advanceActionPending
@@ -748,19 +972,57 @@ function RenderOverview(main) {
   const landErr = state.landActionError
     ? `<p class="dash-run-error">${EscapeHtml(state.landActionError)}</p>`
     : "";
+  const experimentLandErr = state.experimentLandActionError
+    ? `<p class="dash-run-error">${EscapeHtml(state.experimentLandActionError)}</p>`
+    : "";
   const checkoutNote = ov.worktree_missing
     ? badge.variant === "landed"
       ? `<p class="dash-banner dash-banner--success">Quest landed; the worktree has been removed.</p>`
       : `<p class="dash-banner">Quest worktree is missing; run is unavailable until the worktree exists.</p>`
     : "";
+  const experimentBanner = isExperiment
+    ? `<p class="dash-banner dash-banner--experiment">Experiment <code>${EscapeHtml(
+        ov.experiment.experiment_id
+      )}</code> on parent quest ${EscapeHtml(
+        ov.experiment.parent_quest.quest_type +
+          "/" +
+          String(ov.experiment.parent_quest.quest_number).padStart(4, "0")
+      )}</p>`
+    : "";
+  const experimentSection = isExperiment
+    ? `<h2>Experiment</h2>
+    <dl class="dash-kv">
+      <dt>Experiment id</dt><dd><code>${EscapeHtml(ov.experiment.experiment_id)}</code></dd>
+      <dt>Number</dt><dd>${EscapeHtml(String(ov.experiment.experiment_number).padStart(4, "0"))}</dd>
+      <dt>Description</dt><dd>${EscapeHtml(ov.experiment.description || "—")}</dd>
+      <dt>Status</dt><dd>${EscapeHtml(ov.experiment.status)}</dd>
+      <dt>Start step</dt><dd>${EscapeHtml(String(ov.experiment.start_step.global_step))}${
+        ov.experiment.start_step.role
+          ? ` (${EscapeHtml(ov.experiment.start_step.role)})`
+          : ""
+      }</dd>
+      <dt>Stop condition</dt><dd>${EscapeHtml(ov.experiment.stop_condition.node_name)} (${EscapeHtml(
+        ov.experiment.stop_condition.machine_path
+      )})</dd>
+      <dt>Branch</dt><dd><code>${EscapeHtml(ov.experiment.branch_name)}</code></dd>
+      <dt>Worktree</dt><dd>${EscapeHtml(ov.experiment.worktree_path || ov.checkout_path || "")}</dd>
+    </dl>`
+    : "";
+  const archivedHtml =
+    !isExperiment && ov.archived_experiments
+      ? FormatArchivedExperimentsHtml(ov)
+      : "";
   main.innerHTML = `
     <h1>Overview</h1>
+    ${experimentBanner}
     <p><span class="${bcls}">${EscapeHtml(badge.label)}</span></p>
     ${runBlock}
     ${runErr}
     ${advanceErr}
     ${landErr}
+    ${experimentLandErr}
     ${checkoutNote}
+    ${experimentSection}
     <h2>Quest</h2>
     <dl class="dash-kv">
       <dt>Project</dt><dd>${EscapeHtml(ov.project || ov.quest.project || "")}</dd>
@@ -793,6 +1055,7 @@ function RenderOverview(main) {
           )}</dd></dl>`
         : ""
     }
+    ${archivedHtml}
   `;
   const runBtn = main.querySelector("#dash-run-quest");
   if (runBtn) {
@@ -805,6 +1068,25 @@ function RenderOverview(main) {
   const landBtn = main.querySelector("#dash-land-quest");
   if (landBtn) {
     landBtn.addEventListener("click", () => void HandleLandQuestClick());
+  }
+  const experimentLandBtn = main.querySelector("#dash-land-experiment");
+  if (experimentLandBtn) {
+    experimentLandBtn.addEventListener("click", () => void HandleLandExperimentClick());
+  }
+  for (const btn of main.querySelectorAll(".dash-archived-exp__btn")) {
+    btn.addEventListener("click", async () => {
+      const id = btn.getAttribute("data-experiment-id");
+      if (!id) {
+        return;
+      }
+      try {
+        await LoadArchivedExperimentDetail(id);
+        render();
+      } catch (e) {
+        state.lastError = String(e.message || e);
+        render();
+      }
+    });
   }
 }
 
@@ -1353,7 +1635,11 @@ function render() {
       const btn = document.createElement("button");
       btn.type = "button";
       btn.className = "dash-quest-row";
-      if (state.questType === qt && state.questNumber === r.number) {
+      if (
+        !IsExperimentSelection(state.selectedKind) &&
+        state.questType === qt &&
+        state.questNumber === r.number
+      ) {
         btn.className += " dash-quest-row--active";
       }
       if (r.has_human_intervention_request) {
@@ -1368,8 +1654,59 @@ function render() {
       btn.appendChild(k);
       btn.appendChild(n);
       btn.addEventListener("click", async () => {
+        state.selectedKind = "quest";
+        state.experimentId = null;
+        state.archivedExperimentDetail = null;
+        state.archivedExperimentDetailId = null;
         state.questType = qt;
         state.questNumber = r.number;
+        state.page = "overview";
+        PushUrl();
+        await RefreshActivePage();
+        StartScheduler();
+      });
+      qb.appendChild(btn);
+    }
+  }
+  function addExperimentGroup() {
+    const experiments = state.snapshot?.experiments || [];
+    if (!experiments.length) {
+      return;
+    }
+    const gt = document.createElement("div");
+    gt.className = "dash-group-title";
+    gt.textContent = "Open experiments";
+    qb.appendChild(gt);
+    for (const r of experiments) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "dash-quest-row dash-quest-row--experiment";
+      if (
+        IsExperimentSelection(state.selectedKind) &&
+        state.experimentId === r.experiment_id
+      ) {
+        btn.className += " dash-quest-row--active";
+      }
+      const k = document.createElement("div");
+      k.className = "dash-quest-key";
+      k.textContent = `exp/${String(r.experiment_number).padStart(4, "0")}`;
+      const n = document.createElement("div");
+      n.className = "dash-quest-name";
+      const parent = `${r.quest_type}/${String(r.quest_number).padStart(4, "0")}`;
+      n.textContent = `${parent} · ${r.description || r.experiment_id}`;
+      const meta = document.createElement("div");
+      meta.className = "dash-quest-meta";
+      meta.textContent = `${r.state} · ${r.status}`;
+      btn.appendChild(k);
+      btn.appendChild(n);
+      btn.appendChild(meta);
+      btn.addEventListener("click", async () => {
+        state.selectedKind = "experiment";
+        state.experimentId = r.experiment_id;
+        state.questType = r.quest_type;
+        state.questNumber = r.quest_number;
+        state.archivedExperimentDetail = null;
+        state.archivedExperimentDetailId = null;
         state.page = "overview";
         PushUrl();
         await RefreshActivePage();
@@ -1381,6 +1718,7 @@ function render() {
   if (state.snapshot) {
     addQuestGroup("Main quests", "main");
     addQuestGroup("Side quests", "side");
+    addExperimentGroup();
   } else {
     const p = document.createElement("p");
     p.className = "dash-empty";

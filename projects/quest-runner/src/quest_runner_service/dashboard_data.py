@@ -409,6 +409,309 @@ def physicalplan_issues_payload(quest_dir: Path) -> dict:
     }
 
 
+def _experiment_start_step_public(start_step) -> dict:
+    payload: dict = {
+        "global_step": start_step.global_step,
+        "step_commit": start_step.step_commit,
+        "base_commit": start_step.base_commit,
+    }
+    if start_step.role is not None:
+        payload["role"] = start_step.role
+    if start_step.step_log is not None:
+        payload["step_log"] = start_step.step_log
+    return payload
+
+
+def _experiment_stop_condition_public(stop_condition) -> dict:
+    return {
+        "machine_path": stop_condition.machine_path,
+        "node_name": stop_condition.node_name,
+    }
+
+
+def _experiment_can_land(*, worktree_state: str, meta_status: str) -> bool:
+    return (
+        worktree_state == QuestState.ExperimentComplete.value
+        or meta_status == "experiment_complete"
+    )
+
+
+def _summarize_archived_logs(logs_dir: Path) -> list[dict]:
+    if not logs_dir.is_dir():
+        return []
+    summaries: list[dict] = []
+    for path in sorted(logs_dir.glob("*.jsonl")):
+        try:
+            with path.open(encoding="utf-8") as fh:
+                line_count = sum(1 for _ in fh)
+        except OSError:
+            line_count = 0
+        summaries.append(
+            {
+                "filename": path.name,
+                "path": f"logs/{path.name}",
+                "line_count": line_count,
+            }
+        )
+    return summaries
+
+
+def _archived_issue_entries(issues_dir: Path) -> list[dict]:
+    if not issues_dir.is_dir():
+        return []
+    entries: list[dict] = []
+    for path in sorted(issues_dir.rglob("*.md")):
+        rel = path.relative_to(issues_dir).as_posix()
+        item: dict = {"path": rel}
+        try:
+            issues = quest_fs.read_issues(path)
+            item["open_count"] = sum(1 for i in issues if i.status == "open")
+            item["completed_count"] = sum(
+                1 for i in issues if i.status == "completed"
+            )
+            item["issues"] = [issue_entry_to_card(i) for i in issues]
+        except (ValueError, OSError):
+            item["parse_error"] = True
+        entries.append(item)
+    return entries
+
+
+def _archived_response_entries(responses_dir: Path) -> list[dict]:
+    if not responses_dir.is_dir():
+        return []
+    entries: list[dict] = []
+    for path in sorted(responses_dir.rglob("*.md")):
+        rel = path.relative_to(responses_dir).as_posix()
+        item: dict = {"path": rel}
+        try:
+            responses = quest_fs.read_issue_responses(path)
+            item["response_count"] = len(responses)
+            item["responses"] = [
+                {
+                    "issue_id": r.issue_id,
+                    "response_timestamp": r.response_timestamp,
+                    "outcome": r.outcome,
+                    "explanation_preview": r.explanation[:500]
+                    + ("…" if len(r.explanation) > 500 else ""),
+                }
+                for r in responses
+            ]
+        except (ValueError, OSError):
+            item["parse_error"] = True
+        entries.append(item)
+    return entries
+
+
+def _archived_experiment_summary(exp_meta) -> dict:
+    summary: dict = {
+        "experiment_id": exp_meta.experiment_id,
+        "experiment_number": exp_meta.experiment_number,
+        "description": exp_meta.description,
+        "status": exp_meta.status,
+        "start_step": _experiment_start_step_public(exp_meta.start_step),
+        "stop_condition": _experiment_stop_condition_public(
+            exp_meta.stop_condition
+        ),
+        "created_at": exp_meta.created_at,
+        "landed_at": exp_meta.landed_at,
+    }
+    if exp_meta.remote_branch is not None:
+        summary["remote_branch"] = exp_meta.remote_branch
+    return summary
+
+
+def open_experiment_summary_row(
+    *,
+    source_repo_root: Path,
+    source_qdir: Path,
+    meta: QuestMeta,
+    exp_meta,
+    lock: QuestLock,
+) -> dict | None:
+    from .experiments import (
+        _experiment_worktree_exists,
+        experiment_worktree_path,
+    )
+
+    if not _experiment_worktree_exists(source_repo_root, exp_meta):
+        return None
+    checkout_root = experiment_worktree_path(source_repo_root, exp_meta)
+    worktree_qdir = quest_fs.find_quest_dir(
+        checkout_root,
+        meta.project,
+        meta.quest_type,
+        meta.quest_number,
+    )
+    if worktree_qdir is None:
+        return None
+    state_info = quest_fs.read_quest_state(worktree_qdir)
+    lock_key = lock_key_for_quest(
+        source_repo_root,
+        meta,
+        experiment_id=exp_meta.experiment_id,
+    )
+    overlay = execution_overlay_status(
+        quest_dir=worktree_qdir,
+        lock_key=lock_key,
+        quest_type=meta.quest_type,
+        quest_number=meta.quest_number,
+        lock=lock,
+    )
+    return {
+        "kind": "experiment",
+        "experiment_id": exp_meta.experiment_id,
+        "experiment_number": exp_meta.experiment_number,
+        "project": meta.project,
+        "quest_type": meta.quest_type,
+        "quest_number": meta.quest_number,
+        "quest_slug": meta.quest_slug,
+        "description": exp_meta.description,
+        "status": exp_meta.status,
+        "state": state_info.state.value,
+        "start_step": _experiment_start_step_public(exp_meta.start_step),
+        "stop_condition": _experiment_stop_condition_public(
+            exp_meta.stop_condition
+        ),
+        "worktree_path": str(checkout_root),
+        "branch_name": exp_meta.branch_name,
+        "can_land": _experiment_can_land(
+            worktree_state=state_info.state.value,
+            meta_status=exp_meta.status,
+        ),
+        "execution_overlay_status": overlay,
+        "updated_at": state_info.updated_at,
+    }
+
+
+def open_experiment_summary_rows(
+    source_repo_root: Path,
+    project: str,
+    lock: QuestLock,
+) -> list[dict]:
+    from .experiments import list_experiment_dirs, read_experiment_meta
+
+    rows: list[dict] = []
+    for quest_type in ("main", "side"):
+        for qdir in quest_fs.list_quest_dirs(source_repo_root, project, quest_type):
+            meta = quest_fs.read_quest_meta(qdir)
+            for exp_dir in list_experiment_dirs(qdir):
+                meta_path = exp_dir / "experiment.json"
+                if not meta_path.is_file():
+                    continue
+                try:
+                    exp_meta = read_experiment_meta(meta_path)
+                except (OSError, ValueError):
+                    continue
+                row = open_experiment_summary_row(
+                    source_repo_root=source_repo_root,
+                    source_qdir=qdir,
+                    meta=meta,
+                    exp_meta=exp_meta,
+                    lock=lock,
+                )
+                if row is not None:
+                    rows.append(row)
+    rows.sort(
+        key=lambda r: (
+            r["quest_type"],
+            r["quest_number"],
+            r["experiment_number"],
+        ),
+        reverse=True,
+    )
+    return rows
+
+
+def archived_experiments_payload(
+    source_repo_root: Path,
+    project: str,
+    quest_type: str,
+    quest_number: int,
+) -> dict:
+    from .experiments import experiments_root, list_experiment_dirs, read_experiment_meta
+
+    source_qdir = resolve_quest_dir(
+        source_repo_root, project, quest_type, quest_number
+    )
+    root = experiments_root(source_qdir)
+    experiments: list[dict] = []
+    if root.is_dir():
+        for exp_dir in list_experiment_dirs(source_qdir):
+            meta_path = exp_dir / "experiment.json"
+            if not meta_path.is_file():
+                continue
+            try:
+                exp_meta = read_experiment_meta(meta_path)
+            except (OSError, ValueError):
+                continue
+            if exp_meta.status != "landed":
+                continue
+            item = _archived_experiment_summary(exp_meta)
+            logs_dir = exp_dir / "logs"
+            item["log_count"] = len(_summarize_archived_logs(logs_dir))
+            item["issue_file_count"] = len(
+                list((exp_dir / "issues").rglob("*.md"))
+                if (exp_dir / "issues").is_dir()
+                else []
+            )
+            experiments.append(item)
+    experiments.sort(key=lambda e: e["experiment_number"], reverse=True)
+    return {
+        "project": project,
+        "quest_type": quest_type,
+        "quest_number": quest_number,
+        "experiments": experiments,
+    }
+
+
+def experiment_archive_detail_payload(
+    source_repo_root: Path,
+    project: str,
+    quest_type: str,
+    quest_number: int,
+    experiment_id: str,
+) -> dict:
+    from .experiments import (
+        ExperimentNotFound,
+        find_experiment_by_id,
+    )
+
+    source_qdir = resolve_quest_dir(
+        source_repo_root, project, quest_type, quest_number
+    )
+    try:
+        exp_meta = find_experiment_by_id(
+            source_repo_root,
+            project,
+            quest_type,
+            quest_number,
+            experiment_id,
+        )
+    except ExperimentNotFound as e:
+        raise DashboardNotFound(e.message) from e
+
+    exp_dir = source_qdir / "experiments" / f"{exp_meta.experiment_number:04d}"
+    payload = _archived_experiment_summary(exp_meta)
+    payload.update(
+        {
+            "project": project,
+            "quest_type": quest_type,
+            "quest_number": quest_number,
+            "quest_slug": exp_meta.quest_slug,
+            "branch_name": exp_meta.branch_name,
+            "completed_at": exp_meta.completed_at,
+            "logs": _summarize_archived_logs(exp_dir / "logs"),
+            "issues": _archived_issue_entries(exp_dir / "issues"),
+            "issue_responses": _archived_response_entries(
+                exp_dir / "issue_responses"
+            ),
+        }
+    )
+    if exp_meta.remote_branch is not None:
+        payload["remote_branch_url"] = exp_meta.remote_branch
+    return payload
+
+
 def quest_summary_row(
     *,
     quest_dir: Path,
@@ -472,10 +775,14 @@ def project_snapshot_payload(
         )
     main_rows.sort(key=lambda r: r["number"], reverse=True)
     side_rows.sort(key=lambda r: r["number"], reverse=True)
+    experiment_rows = open_experiment_summary_rows(
+        source_repo_root, project, lock
+    )
     return {
         "project": project,
         "main": main_rows,
         "side": side_rows,
+        "experiments": experiment_rows,
     }
 
 
@@ -680,6 +987,63 @@ def quest_overview_payload(
     }
     if checkout.experiment_id is not None:
         payload["experiment_id"] = checkout.experiment_id
+        from .experiments import find_experiment_by_id
+
+        exp_meta = find_experiment_by_id(
+            source_repo_root,
+            meta.project,
+            meta.quest_type,
+            meta.quest_number,
+            checkout.experiment_id,
+        )
+        worktree_state = state_info.state.value
+        payload["experiment"] = {
+            "experiment_id": exp_meta.experiment_id,
+            "experiment_number": exp_meta.experiment_number,
+            "description": exp_meta.description,
+            "status": exp_meta.status,
+            "start_step": _experiment_start_step_public(exp_meta.start_step),
+            "stop_condition": _experiment_stop_condition_public(
+                exp_meta.stop_condition
+            ),
+            "branch_name": exp_meta.branch_name,
+            "worktree_path": checkout.checkout_path,
+            "can_land": _experiment_can_land(
+                worktree_state=worktree_state,
+                meta_status=exp_meta.status,
+            ),
+            "parent_quest": {
+                "project": meta.project,
+                "quest_type": meta.quest_type,
+                "quest_number": meta.quest_number,
+                "quest_slug": meta.quest_slug,
+            },
+        }
+    else:
+        from .experiments import experiments_root, list_experiment_dirs, read_experiment_meta
+
+        parent_qdir = resolve_quest_dir(
+            source_repo_root, project, meta.quest_type, meta.quest_number
+        )
+        archived: list[dict] = []
+        if experiments_root(parent_qdir).is_dir():
+            for exp_dir in list_experiment_dirs(parent_qdir):
+                meta_path = exp_dir / "experiment.json"
+                if not meta_path.is_file():
+                    continue
+                try:
+                    exp_meta = read_experiment_meta(meta_path)
+                except (OSError, ValueError):
+                    continue
+                if exp_meta.status != "landed":
+                    continue
+                item = _archived_experiment_summary(exp_meta)
+                item["log_count"] = len(
+                    _summarize_archived_logs(exp_dir / "logs")
+                )
+                archived.append(item)
+            archived.sort(key=lambda e: e["experiment_number"], reverse=True)
+        payload["archived_experiments"] = archived
     return payload
 
 

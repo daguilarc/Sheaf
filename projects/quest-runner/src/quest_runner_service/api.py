@@ -522,6 +522,31 @@ def create_app(
         )
         return jsonify(payload)
 
+    @app.route("/api/dashboard/experiments", methods=["GET"])
+    def dashboard_experiments():
+        project = dashboard_data.parse_project(
+            request.args.get("project"),
+            source_repo_root=source_root,
+        )
+        qt = dashboard_data.parse_quest_type(request.args.get("quest_type"))
+        qn = dashboard_data.parse_quest_number(request.args.get("quest_number"))
+        experiment_id = dashboard_data.parse_experiment_id(
+            request.args.get("experiment_id")
+        )
+        if experiment_id is None:
+            raise dashboard_data.DashboardBadRequest(
+                "Missing required query parameter: experiment_id",
+                fields={"experiment_id": "required"},
+            )
+        payload = dashboard_data.experiment_archive_detail_payload(
+            source_repo_root=source_root,
+            project=project,
+            quest_type=qt,
+            quest_number=qn,
+            experiment_id=experiment_id,
+        )
+        return jsonify(payload)
+
     @app.route("/api/dashboard/physicalplan_issues", methods=["GET"])
     def dashboard_physicalplan_issues():
         _project, _qt, _qn, qdir, _checkout_root, _experiment_id = _quest_context()
