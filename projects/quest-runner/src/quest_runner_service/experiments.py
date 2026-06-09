@@ -619,7 +619,11 @@ def complete_experiment_source_metadata(
     quest_type: str,
     quest_number: int,
     experiment_number: int,
-) -> str:
+) -> str | None:
+    existing = read_experiment_meta(source_experiment_dir)
+    if existing.status == "experiment_complete":
+        return None
+
     clean, dirty = porcelain_status(source_repo_root)
     if not clean:
         raise ExperimentSourceCheckoutDirty(dirty)

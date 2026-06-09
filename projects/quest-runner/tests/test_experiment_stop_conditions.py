@@ -41,6 +41,20 @@ def _commit_all(repo: Path, message: str) -> None:
     run_git(repo, "commit", "-m", message)
 
 
+def _git_subjects(repo: Path) -> list[str]:
+    log = subprocess.run(
+        ["git", "-C", str(repo), "log", "--format=%s"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return [line for line in log.stdout.splitlines() if line]
+
+
+def _count_subject_prefix(repo: Path, prefix: str) -> int:
+    return sum(1 for subject in _git_subjects(repo) if subject.startswith(prefix))
+
+
 class SnapshotStopConditionTests(unittest.TestCase):
     def test_matches_slice_completed_child(self) -> None:
         stop = ExperimentStopCondition(
@@ -246,6 +260,19 @@ class ExperimentAdvanceStopTests(unittest.TestCase):
         client, _svc = make_app_client(self.temp.root, self.repo_root)
         return client, svc, out, wt_qdir, wt_path, exp_meta.experiment_id
 
+    def _make_active_slice_completed(self, wt_qdir: Path, wt_path: Path) -> None:
+        qsi = quest_fs.read_quest_state(wt_qdir)
+        assert qsi.active_slice is not None
+        sl = wt_qdir / "slices" / qsi.active_slice
+        quest_fs.write_slice_state(
+            sl,
+            SliceStateInfo(
+                state=SliceState.Done,
+                updated_at="2026-01-01T00:00:00Z",
+            ),
+        )
+        _commit_all(wt_path, "slice already completed for run path")
+
     def test_advance_experiment_reaches_stop_condition(self) -> None:
         client, _svc, out, wt_qdir, wt_path, exp_id = (
             self._setup_slice_ready_to_complete()
@@ -312,6 +339,111 @@ class ExperimentAdvanceStopTests(unittest.TestCase):
         self.assertEqual(body["quest_state"], "ExperimentComplete")
         self.assertEqual(body["experiment_id"], exp_id)
 
+    def test_run_quest_experiment_reaches_stop_condition_and_reentry_noops(
+        self,
+    ) -> None:
+        _client, svc, out, wt_qdir, wt_path, exp_id = (
+            self._setup_slice_ready_to_complete()
+        )
+        self._make_active_slice_completed(wt_qdir, wt_path)
+
+        resp = svc.run_quest(
+            str(self.temp.root),
+            "example",
+            "main",
+            out["quest_number"],
+            experiment_id=exp_id,
+        )
+        self.assertEqual(resp["status"], "experiment_complete")
+        self.assertEqual(resp["quest_state"], "ExperimentComplete")
+        self.assertEqual(resp["experiment_status"], "experiment_complete")
+        self.assertTrue(resp["source_metadata_commit"])
+
+        wt_state = quest_fs.read_quest_state(wt_qdir)
+        self.assertEqual(wt_state.state, QuestState.ExperimentComplete)
+        self.assertEqual(wt_state.global_step, 6)
+
+        source_qdir = quest_fs.find_quest_dir(
+            self.temp.root, "example", "main", out["quest_number"]
+        )
+        assert source_qdir is not None
+        loaded = read_experiment_meta(experiments_root(source_qdir) / "0000")
+        self.assertEqual(loaded.status, "experiment_complete")
+        self.assertIsNotNone(loaded.completed_at)
+        completed_at = loaded.completed_at
+        self.assertEqual(
+            _count_subject_prefix(self.temp.root, "experiment-complete: "),
+            1,
+        )
+        source_head = run_git(self.temp.root, "rev-parse", "HEAD").stdout.strip()
+        worktree_head = run_git(wt_path, "rev-parse", "HEAD").stdout.strip()
+
+        again = svc.run_quest(
+            str(self.temp.root),
+            "example",
+            "main",
+            out["quest_number"],
+            experiment_id=exp_id,
+        )
+        self.assertEqual(again["status"], "experiment_complete")
+        self.assertEqual(again["quest_state"], "ExperimentComplete")
+        self.assertEqual(again["steps_executed"], 0)
+        self.assertIsNone(again["source_metadata_commit"])
+        self.assertEqual(
+            read_experiment_meta(experiments_root(source_qdir) / "0000").completed_at,
+            completed_at,
+        )
+        self.assertEqual(
+            _count_subject_prefix(self.temp.root, "experiment-complete: "),
+            1,
+        )
+        self.assertEqual(
+            run_git(self.temp.root, "rev-parse", "HEAD").stdout.strip(),
+            source_head,
+        )
+        self.assertEqual(
+            run_git(wt_path, "rev-parse", "HEAD").stdout.strip(),
+            worktree_head,
+        )
+
+    def test_run_quest_dirty_source_checkout_escalates_metadata_update(
+        self,
+    ) -> None:
+        _client, svc, out, wt_qdir, _wt_path, exp_id = (
+            self._setup_slice_ready_to_complete()
+        )
+        wt_path = experiment_worktree_path(self.temp.root, exp_id)
+        self._make_active_slice_completed(wt_qdir, wt_path)
+        (self.temp.root / "dirty-source.txt").write_text("dirty\n", encoding="utf-8")
+
+        resp = svc.run_quest(
+            str(self.temp.root),
+            "example",
+            "main",
+            out["quest_number"],
+            experiment_id=exp_id,
+        )
+
+        self.assertEqual(resp["status"], "human_intervention")
+        self.assertEqual(resp["reason"], "experiment_metadata_update_failed")
+        request_path = wt_qdir / "human_intervention_request.md"
+        self.assertTrue(request_path.is_file())
+        self.assertIn(
+            "experiment metadata update failed",
+            request_path.read_text(encoding="utf-8"),
+        )
+        source_qdir = quest_fs.find_quest_dir(
+            self.temp.root, "example", "main", out["quest_number"]
+        )
+        assert source_qdir is not None
+        loaded = read_experiment_meta(experiments_root(source_qdir) / "0000")
+        self.assertEqual(loaded.status, "open")
+        self.assertIsNone(loaded.completed_at)
+        self.assertEqual(
+            _count_subject_prefix(self.temp.root, "experiment-complete: "),
+            0,
+        )
+
 
 class ExperimentSourceMetadataTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -352,6 +484,57 @@ class ExperimentSourceMetadataTests(unittest.TestCase):
         loaded = read_experiment_meta(exp_dir)
         self.assertEqual(loaded.status, "experiment_complete")
         self.assertIsNotNone(loaded.completed_at)
+
+    def test_complete_experiment_source_metadata_is_idempotent(self) -> None:
+        ensure_project(self.temp.root, "example")
+        svc = QuestService(QuestLock(), self.repo_root)
+        out = svc.create_quest(
+            str(self.temp.root), "example", "main", "Meta Idempotent"
+        )
+        source_qdir = quest_fs.find_quest_dir(
+            self.temp.root, "example", "main", out["quest_number"]
+        )
+        assert source_qdir is not None
+        meta = quest_fs.read_quest_meta(source_qdir)
+        exp_meta = _sample_meta(
+            project="example",
+            quest_type="main",
+            quest_number=out["quest_number"],
+            quest_slug=meta.quest_slug,
+            status="open",
+        )
+        exp_dir = experiments_root(source_qdir) / experiment_dir_name(0)
+        write_experiment_meta(exp_dir, exp_meta)
+        _commit_all(self.temp.root, "seed experiment metadata")
+
+        first = complete_experiment_source_metadata(
+            self.temp.root,
+            exp_dir,
+            project="example",
+            quest_type="main",
+            quest_number=out["quest_number"],
+            experiment_number=0,
+        )
+        first_meta = read_experiment_meta(exp_dir)
+        second = complete_experiment_source_metadata(
+            self.temp.root,
+            exp_dir,
+            project="example",
+            quest_type="main",
+            quest_number=out["quest_number"],
+            experiment_number=0,
+        )
+        second_meta = read_experiment_meta(exp_dir)
+
+        self.assertTrue(first)
+        self.assertIsNone(second)
+        self.assertEqual(first_meta.status, "experiment_complete")
+        self.assertEqual(second_meta.status, "experiment_complete")
+        self.assertEqual(first_meta.completed_at, second_meta.completed_at)
+        self.assertEqual(
+            _count_subject_prefix(self.temp.root, "experiment-complete: "),
+            1,
+        )
 
 
 if __name__ == "__main__":
