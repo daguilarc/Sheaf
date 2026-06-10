@@ -11,8 +11,9 @@ directory is `projects/sheaf-chat/`.
 
 - Node.js >= 20 (`package.json` `engines`) with `npm` on `PATH`.
 - No other system dependencies. Runtime dependencies
-  (`@earendil-works/pi-coding-agent`, `typebox`, `ws`) and dev dependencies
-  (`typescript`, `ajv`, type packages) are installed by `npm install`.
+  (`@earendil-works/pi-coding-agent`, `typebox`, `ws`, `markdown-it`,
+  `katex`) and dev dependencies (`typescript`, `ajv`, type packages) are
+  installed by `npm install`.
 
 ## Make targets
 
@@ -67,6 +68,9 @@ Run a single compiled test file:
 cd projects/sheaf-chat
 npm run build
 node --test dist/tests/server/websocket/protocol.test.js
+node --test dist/tests/server/rest/files.test.js
+node --test dist/tests/ui/chatScreen.test.js
+node --test dist/tests/integration/fileServer.integration.test.js
 ```
 
 The shared AGUI renderer used by the chat screen is tested in

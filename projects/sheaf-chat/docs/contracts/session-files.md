@@ -3,9 +3,11 @@
 Shared by [piles-sessions](../capabilities/piles-sessions.md) (creates the
 files), [session-history](../capabilities/session-history.md) (appends and
 pages the envelope log), [chat-protocol](../capabilities/chat-protocol.md)
-(wire envelopes are the persisted envelopes), and
+(wire envelopes are the persisted envelopes),
 [agent-runtime](../capabilities/agent-runtime.md) (bootstraps from
-provisional/manifest, writes the manifest). Code:
+provisional/manifest and writes the manifest), and
+[file-browser](../capabilities/file-browser.md) (resolves the session root
+for read-only file access). Code:
 `src/storage/paths.ts`, `src/storage/validation.ts`,
 `src/shared/validation.ts`, `src/shared/envelope.ts`,
 `src/shared/types.ts`.

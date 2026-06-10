@@ -102,6 +102,10 @@ root policy; every result reports root-relative paths only.
 - **[st-17]** THE glob dialect SHALL support `*` (within a segment), `?`
   (single non-separator char), and `**` (any depth, including zero
   segments), matched against the full root-relative path.
+- **[st-18]** WHEN `edit` successfully writes the target file and a
+  file-change notifier is bound, THE tool SHALL notify after the write with
+  canonical absolute file path, root directory, and source `edit_tool`; IF
+  validation or writing fails, THEN it SHALL NOT notify.
 
 ## Contracts
 
@@ -149,6 +153,19 @@ Tool results are Pi tool results:
 { "type": "sheaf_chat.path_escape_denied", "inputPath": "../outside", "reason": "parent_traversal", "tool": "read" }
 ```
 
+### File-change notification
+
+The service binds this callback and converts it to
+[file-browser](file-browser.md) `file.changed` broadcasts:
+
+```json
+{
+  "absolutePath": "/abs/path/to/root/docs/readme.md",
+  "rootDirectory": "/abs/path/to/root",
+  "source": "edit_tool"
+}
+```
+
 ## Design
 
 - `src/extensions/sheaf-chat/pathPolicy.ts` — `CreateRootPolicy` (the
@@ -164,6 +181,9 @@ Tool results are Pi tool results:
   `glob.ts` — the glob-to-regex dialect; `results.ts` — display-path
   relativization and leak assertions (test support);
   `audit.ts` — `CreateAuditLogger` (in-memory entries + activity emission).
+- `src/extensions/sheaf-chat/tools/edit.ts` — writes edited content and
+  invokes the optional `notifyFileChanged` callback only after successful
+  write completion.
 - The service binds the extension with `CreateDefaultBindings()`, whose
   default `emitActivity` is a no-op — path-escape activity is therefore not
   forwarded into chat today, although [agui-mapping](agui-mapping.md)
@@ -176,3 +196,5 @@ Tool results are Pi tool results:
 - [agui-mapping](agui-mapping.md) — defines the AGUI form of path-escape
   activity; tool calls and results reach the browser through Pi tool events
   mapped there.
+- [file-browser](file-browser.md) — consumes successful edit notifications
+  as `file.changed` WebSocket events for matching roots.

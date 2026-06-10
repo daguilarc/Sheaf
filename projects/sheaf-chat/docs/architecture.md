@@ -10,11 +10,12 @@ schemas.
 
 ```text
 Browser UI (src/ui + shared projects/web/src/agui-chat.js)
-  |        REST discovery               WebSocket /ws/chat
+  |        REST discovery + file API    WebSocket /ws/chat
   v                                          v
 HTTP server (src/server)  ---------  per-session protocol pair (src/protocol)
-  routes/, static.ts, websocket.ts     SessionPersistenceHub  (persist + fan-out)
-  |                                    SessionBroadcaster     (socket fan-out)
+  routes/, files/, static.ts, websocket.ts
+                                       SessionPersistenceHub  (persist + fan-out)
+  |                                    SessionBroadcaster     (socket + file fan-out)
   v                                          |
 AgentManager (src/agents)  <-----------------+
   SessionRuntime (lifecycle, idle offload)
@@ -114,11 +115,32 @@ history loading. The event vocabulary is the repository schema
 ## Browser UI
 
 `src/ui/sheaf-chat.js` is a dependency-free IIFE with three hash-routed
-screens (piles, sessions, chat). Transcript rendering is delegated to the
-shared `projects/web/src/agui-chat.js` renderer (`window.ChatView`), which the
-server serves at `/assets/web/`. The chat screen reconnects automatically
-with the last processed sequence and queues outbound frames while
-disconnected.
+screens (piles, sessions, chat). The chat screen embeds a session-root file
+workspace: non-touch layouts render explorer/file/chat panes, touch layouts
+render the file view with pull-out explorer, tabs, and chat panels. Transcript
+rendering is delegated to the shared `projects/web/src/agui-chat.js` renderer
+(`window.ChatView`), which the server serves at `/assets/web/`. File and
+message Markdown rendering use `src/ui/sheaf-markdown.js` with Markdown-it
+and KaTeX assets served from `/assets/vendor/`. The chat screen reconnects
+automatically with the last processed sequence and queues outbound frames
+while disconnected.
+
+## Session file browser
+
+`src/server/files/sessionBrowser.ts` exposes read-only file browsing for the
+root directory recorded in a session's manifest or provisional record. It
+reuses the scoped-tools root policy, canonicalizes the root with `realpath`,
+rejects absolute paths, parent traversal, NUL bytes, and symlink escapes, and
+returns only root-relative paths. The REST router serves whole-file reads at
+`/api/piles/:pile/sessions/:sessionId/file` and directory listings at
+`/api/piles/:pile/sessions/:sessionId/files`.
+
+The scoped `edit` tool calls a file-change callback only after a successful
+write. `CreateSheafChatServer` wires that callback to
+`SessionBroadcasterRegistry.BroadcastFileChanged`, which canonicalizes the
+changed path once and asks each active broadcaster to emit a receiver-relative
+`file.changed` envelope when the changed path is inside that session's root.
+The event is live-only and is not appended to the history log.
 
 ## Security boundaries
 
@@ -127,5 +149,7 @@ disconnected.
   access; storage paths additionally asserted under the piles root.
 - Scoped tools resolve every path through a `RootPolicy` pinned to the
   canonical (realpath) session root; no shell or process execution tools.
+- File-browser REST paths use the same root-policy containment checks and do
+  not expose writes, diffs, partial reads, or absolute paths.
 - Tool results and AGUI payloads are sanitized (secret redaction, path
   relativization) before leaving the server.

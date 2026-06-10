@@ -5,8 +5,9 @@ ID prefix: `ui`
 ## Purpose
 
 The service-owned browser application (`src/ui/`): three hash-routed screens
-(piles, sessions, chat) over the REST API and the chat WebSocket. Transcript
-rendering is delegated to the shared AGUI renderer
+(piles, sessions, chat) over the REST API and the chat WebSocket, including
+the chat screen's session-root file workspace. Transcript rendering is
+delegated to the shared AGUI renderer
 (`projects/web/src/agui-chat.js`, exposed as `window.ChatView`), which is
 outside this project's spec. Repository web UI rules:
 [structure/webui.md](../../../../structure/webui.md).
@@ -15,9 +16,10 @@ outside this project's spec. Repository web UI rules:
 
 ### Shell and routing
 
-- **[ui-1]** THE UI SHALL be a dependency-free script that renders into
-  `#app` in `src/ui/index.html`, loading the shared renderer assets from
-  `/assets/web/` and its own from `/assets/sheaf-chat/`.
+- **[ui-1]** THE UI SHALL be dependency-free first-party scripts that render
+  into `#app` in `src/ui/index.html`, loading Markdown-it/KaTeX vendor
+  assets from `/assets/vendor/`, the shared renderer assets from
+  `/assets/web/`, and its own assets from `/assets/sheaf-chat/`.
 - **[ui-2]** THE UI SHALL hash-route: `#/` and `#/piles` → piles screen;
   `#/piles/<pile>` → sessions screen; `#/piles/<pile>/sessions/<id>` →
   chat screen; anything else falls back to the piles screen. Segments are
@@ -83,6 +85,14 @@ outside this project's spec. Repository web UI rules:
 - **[ui-14]** IF the shared renderer (`window.ChatView`) is missing, THEN
   THE chat screen SHALL render `Chat renderer failed to load.` instead of
   connecting.
+- **[ui-15]** WHEN the chat screen renders, THE UI SHALL include the
+  session-root file workspace specified by [file-browser](file-browser.md).
+- **[ui-16]** WHEN chat messages contain supported file links, THE UI SHALL
+  pass a file-link handler to the shared renderer so `sheaf-file:` and
+  root-relative Markdown file links open or focus workspace tabs.
+- **[ui-17]** IF `window.SheafMarkdown` is unavailable or cannot render a
+  Markdown file preview, THEN THE UI SHALL fall back to escaped plain-text
+  preview for the file content.
 
 ## Contracts
 
@@ -97,21 +107,36 @@ contracts of [chat-protocol](chat-protocol.md). UI-owned constants:
 | history page limit (initial and lazy) | 5000 |
 | near-top threshold | 80 px |
 | reconnect delay | 1500 ms |
+| explorer width storage key | `sheaf-chat-explorer-width` |
+| chat width storage key | `sheaf-chat-chat-width` |
+| default explorer width | 240 px |
+| default chat width | 360 px |
+| explorer width clamp | 160-480 px |
+| chat width clamp | 280-640 px |
 
 Shared renderer API used: `ChatView.create(container, {onScrollNearTop})`,
 `appendAguiEvent`, `prependHistory`, `setConnectionState`, `setCaughtUp`,
 `destroy`.
 
+Shared Markdown helper API used:
+`SheafMarkdown.renderMarkdown(markdown)`,
+`SheafMarkdown.enhanceRenderedLinks(container, {basePath, rootMode,
+onFileLink})`, and `SheafMarkdown.resolveFileLink(href, basePath, rootMode)`.
+
 ## Design
 
 - `src/ui/sheaf-chat.js` — single IIFE; route parsing, the three screen
-  renderers, the WebSocket client state machine, and the outbound queue.
+  renderers, the WebSocket client state machine, the outbound queue, and the
+  file workspace controller.
   Exposes `window.SheafChatApp._test` (parseRoute, buildWebSocketUrl,
   createEnvelope, isTouchLayout) for the DOM-less unit tests.
 - `src/ui/sheaf-chat.css` — screen layout, touch/desktop classes
   (`sheaf-chat-touch`/`sheaf-chat-desktop` from a coarse-pointer media
-  check).
-- `src/ui/index.html` — the shell served at `/`.
+  check), file workspace panes, tabs, and mobile panels.
+- `src/ui/sheaf-markdown.js` — Markdown-it/KaTeX rendering, math protection
+  outside code ranges, and safe file-link resolution/enhancement.
+- `src/ui/index.html` — the shell served at `/`, including vendor and shared
+  assets in load order.
 - Tests drive the script with a fake DOM and fake WebSocket
   (`tests/ui/chatScreen.test.ts`, `tests/ui/router.test.ts`).
 
@@ -121,5 +146,7 @@ Shared renderer API used: `ChatView.create(container, {onScrollNearTop})`,
 - [piles-sessions](piles-sessions.md), [models](models.md) — REST calls.
 - [chat-protocol](chat-protocol.md) — the WebSocket client behavior
   specified here is the counterpart of that capability.
+- [file-browser](file-browser.md) — file REST calls, workspace tab/panel
+  semantics, Markdown preview, file links, and `file.changed` handling.
 - Shared renderer: `projects/web/src/agui-chat.js` (specified, if at all,
   in the web project).

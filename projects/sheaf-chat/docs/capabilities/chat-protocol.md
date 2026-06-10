@@ -102,11 +102,11 @@ envelope ([session files](../contracts/session-files.md)).
 ### Server frames and persistence
 
 - **[chat-20]** THE service SHALL persist (with sequences) and broadcast to
-  all connected clients: `chat.user_message`, `agui.event`,
+  all connected clients of the session: `chat.user_message`, `agui.event`,
   `model.changed`, `agent.status`, `session.updated`, and lifecycle
   `server.error` envelopes. `server.hello`, `server.caught_up`,
-  `server.pong`, `history.page`, and frame-validation `server.error`s are
-  connection-local and never persisted.
+  `server.pong`, `history.page`, `file.changed`, and frame-validation
+  `server.error`s are never persisted.
 - **[chat-21]** WHEN a model change is applied, THE service SHALL persist
   and broadcast `model.changed` (`{"model": {...}, "applyTo": "..."}`)
   followed by a `CUSTOM`/`sheaf.model_changed` AGUI event envelope.
@@ -122,6 +122,11 @@ envelope ([session files](../contracts/session-files.md)).
   persist and broadcast `server.error`
   (`{"code", "message", "fatal": <bool>}`) followed by a `RUN_ERROR` AGUI
   event envelope.
+- **[chat-25]** WHEN the service receives a successful scoped edit-tool file
+  notification, THE service SHALL broadcast `file.changed` only to currently
+  connected sessions whose canonical root contains the changed file; the
+  envelope SHALL have no `sequence` and SHALL use a path relative to each
+  receiving session root.
 
 ## Contracts
 
@@ -185,6 +190,22 @@ In `snapshots` mode `messages` is populated and `events` is `[]`; in
 
 `requestId` is present when the error responds to an identifiable frame.
 
+### `file.changed` payload
+
+Live-only frame, not present in replay or history pages:
+
+```json
+{
+  "eventType": "fileChanged",
+  "path": "docs/readme.md",
+  "fileId": "docs/readme.md",
+  "changedAt": "2026-06-10T00:00:00.000Z",
+  "source": "edit_tool"
+}
+```
+
+The payload path and `fileId` are root-relative for the receiving session.
+
 ### Error catalogue
 
 | Condition | Surface | Code / message (exact) |
@@ -224,8 +245,9 @@ WebSocket close codes are not specified (library defaults).
 - `src/protocol/sessionBroadcaster.ts` — socket registry and fan-out;
   `RegisterClient` assigns a random `connectionId`; `ActivateClient` defers
   live delivery until after replay; `ReplayAfter` re-reads the log file;
-  `ReleaseIfIdle` disposes the broadcaster when the last client leaves
-  (hub remains).
+  `BroadcastFileChanged` emits live unsequenced file events for matching
+  roots; `ReleaseIfIdle` disposes the broadcaster when the last client
+  leaves (hub remains).
 - Replay reads the persisted log, so a reconnecting client receives exactly
   the persisted envelope kinds (chat-20), not connection-local frames.
 
@@ -237,3 +259,5 @@ WebSocket close codes are not specified (library defaults).
   model select, cancel.
 - [agui-mapping](agui-mapping.md) — payloads of `agui.event` envelopes.
 - [chat-ui](chat-ui.md) — the reference client.
+- [file-browser](file-browser.md) — source and client semantics for
+  `file.changed`.

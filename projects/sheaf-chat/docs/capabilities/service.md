@@ -5,8 +5,8 @@ ID prefix: `svc`
 ## Purpose
 
 The long-running Sheaf Chat process: configuration loading, service-registry
-boot, the two health endpoints, static asset serving for the browser UI, and
-the REST dispatch/error conventions every API route shares.
+boot, the two health endpoints, static and vendor asset serving for the
+browser UI, and the REST dispatch/error conventions every API route shares.
 
 ## Requirements
 
@@ -53,6 +53,9 @@ the REST dispatch/error conventions every API route shares.
   environment, THE service SHALL emit single-line JSON profiling records
   (`{"profile":"sheaf-stream","tMs":…,"point":…,…}`) to stderr at stream
   checkpoints; otherwise it SHALL emit none.
+- **[svc-13]** THE service SHALL serve vendor assets only from the explicit
+  allowlist for Markdown-it, KaTeX JavaScript/CSS, and KaTeX font files
+  under `/assets/vendor/`; any unlisted vendor path SHALL return 404.
 
 ## Contracts
 
@@ -115,15 +118,19 @@ the endpoint). `openAi.configured` is true when `openai_api_key` is set.
 |---|---|
 | `/`, `/index.html` | `projects/sheaf-chat/src/ui/index.html` |
 | `/assets/sheaf-chat/sheaf-chat.js`, `.css` | `projects/sheaf-chat/src/ui/` |
+| `/assets/sheaf-chat/sheaf-markdown.js` | `projects/sheaf-chat/src/ui/sheaf-markdown.js` |
 | `/assets/web/agui-chat.js`, `.css` | `projects/web/src/` |
+| `/assets/vendor/markdown-it.min.js` | `projects/sheaf-chat/node_modules/markdown-it/dist/markdown-it.min.js` |
+| `/assets/vendor/katex.min.js`, `/assets/vendor/katex.min.css` | `projects/sheaf-chat/node_modules/katex/dist/` |
+| `/assets/vendor/fonts/<font>.woff`, `.woff2`, `.ttf` | KaTeX font files discovered in `projects/sheaf-chat/node_modules/katex/dist/fonts/` |
 
 ### REST error catalogue (status mapping)
 
 | Code | Status |
 |---|---|
-| `invalid_request`, `invalid_json`, `invalid_pile`, `invalid_session_id`, `invalid_name`, `invalid_manifest`, `invalid_history_request`, `invalid_sequence`, `model_unavailable`, `invalid_root_directory` | 400 |
+| `invalid_request`, `invalid_json`, `invalid_pile`, `invalid_session_id`, `invalid_name`, `invalid_manifest`, `invalid_history_request`, `invalid_sequence`, `model_unavailable`, `invalid_root_directory`, `unsupported_file`, `not_a_file`, `not_a_directory` | 400 |
 | `path_escape` | 403 |
-| `not_found`, `pile_not_found`, `manifest_not_found`, `model_not_found` | 404 |
+| `not_found`, `pile_not_found`, `manifest_not_found`, `model_not_found`, `session_not_found`, `file_not_found` | 404 |
 | `method_not_allowed` | 405 |
 | `internal_error` (and any unmapped code) | 500 |
 
@@ -141,7 +148,7 @@ the endpoint). `openAi.configured` is true when `openai_api_key` is set.
 - `src/server/errors.ts` — error-code → status table and the
   `StorageError`/`ModelValidationError`/`AgentManagerError` → REST mapping.
 - `src/server/static.ts` — asset roots, traversal checks, content-type
-  whitelist.
+  whitelist, and vendor allowlist for Markdown-it/KaTeX assets.
 - `src/server/streamProfiler.ts` — profiling checkpoints; enabled once at
   module load from the environment.
 - No graceful-shutdown or exit endpoint exists; `server.close()` is used by
@@ -154,3 +161,5 @@ the endpoint). `openAi.configured` is true when `openai_api_key` is set.
 - [chat-protocol](chat-protocol.md) — WebSocket upgrades validated before
   `ws` handshake.
 - [chat-ui](chat-ui.md) — consumes the static assets and index shell.
+- [file-browser](file-browser.md) — adds session file REST routes and uses
+  the vendor Markdown/KaTeX assets.

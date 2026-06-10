@@ -1,11 +1,6 @@
 # Spec Coverage
 
-Last audit: living-spec migration (one-time rewrite from code), 2026-06-10
-
-> The **file-server** capability is being added by quest
-> `sheaf-chat/main/0001_file_server` (in flight, separate worktree) and is
-> intentionally not documented here: it has not landed in `src/`. Its delta
-> spec will be merged into these docs when the quest lands.
+Last audit: quest main/0001_file_server, 2026-06-10
 
 | Capability | Status | Gaps |
 |---|---|---|
@@ -18,6 +13,7 @@ Last audit: living-spec migration (one-time rewrite from code), 2026-06-10
 | agui-mapping | partial | events carry no timestamps in practice, schema validator off hot path |
 | scoped-tools | partial | path-escape activity wired to a no-op, audit log in-memory only |
 | chat-ui | partial | fixed reconnect delay, unbounded outbound queue, shared renderer out of scope |
+| file-browser | partial | chat-message Markdown delegated to shared renderer, no file/list size limits, fragment anchors limited |
 
 ## Known gaps
 
@@ -127,12 +123,25 @@ Last audit: living-spec migration (one-time rewrite from code), 2026-06-10
 - Reconnect is a fixed 1500 ms retry with no backoff or cap; the outbound
   queue is unbounded in memory.
 - The shared transcript renderer (`projects/web/src/agui-chat.js`) is
-  consumed via its API but specified outside this project.
+  consumed via its API but specified outside this project; that includes the
+  transcript-side Markdown/KaTeX rendering used by chat messages.
 - The history "limit 5000" initial load means very long sessions transfer
   their whole recent log on open; no incremental initial strategy is
   specified.
 - Browser support floor (e.g. `crypto.randomUUID` fallback path) is
   untested/unspecified.
+
+### file-browser
+- `GET /file` reads the entire file into memory and `GET /files` reads an
+  entire directory with no documented size, entry-count, or latency budget.
+- Chat-message Markdown/KaTeX rendering is delegated to the shared web
+  renderer; Sheaf Chat documents only the file-link handler it passes in.
+- Fragment navigation preserves `#fragment` and attempts to scroll to an
+  exact DOM id, but the current Markdown-it configuration does not generate
+  heading ids, so ordinary Markdown heading fragments usually have no target.
+- Permission-denied and other unexpected filesystem errors from file reads
+  or directory listings fall through the generic service `internal_error`
+  path with the thrown message; there is no file-browser-specific error code.
 
 ## Observed code/spec mismatches (candidate fixes, not spec gaps)
 

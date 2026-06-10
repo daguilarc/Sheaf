@@ -23,7 +23,7 @@ and known gaps are tracked in [coverage.md](coverage.md).
 
 | Capability | Prefix | What it specifies |
 |---|---|---|
-| [service](capabilities/service.md) | `svc` | Process boot, configuration keys, health endpoints, static asset serving, REST dispatch and error envelope |
+| [service](capabilities/service.md) | `svc` | Process boot, configuration keys, health endpoints, static/vendor asset serving, REST dispatch and error envelope |
 | [piles-sessions](capabilities/piles-sessions.md) | `ps` | Pile and session REST API: list/create piles, create blank session shells, read manifests |
 | [session-history](capabilities/session-history.md) | `hist` | The per-session envelope log: sequence allocation, paging semantics, the REST history endpoint |
 | [chat-protocol](capabilities/chat-protocol.md) | `chat` | The `/ws/chat` WebSocket: connect/replay handshake, client and server frame kinds, broadcast and persistence behavior |
@@ -31,7 +31,8 @@ and known gaps are tracked in [coverage.md](coverage.md).
 | [models](capabilities/models.md) | `mdl` | Provider/model registry, the local OpenAI-compatible provider, availability rules, `/api/models`, service-local Pi auth storage |
 | [agui-mapping](capabilities/agui-mapping.md) | `agui` | Pi event → AGUI event mapping, Sheaf activity mapping, sanitization, snapshot reduction |
 | [scoped-tools](capabilities/scoped-tools.md) | `st` | The Pi extension exposing eight root-scoped filesystem tools and the path policy behind them |
-| [chat-ui](capabilities/chat-ui.md) | `ui` | The hash-routed browser UI: piles/sessions/chat screens, reconnect, acks, lazy history |
+| [chat-ui](capabilities/chat-ui.md) | `ui` | The hash-routed browser UI: piles/sessions/chat screens, reconnect, acks, lazy history, and the file workspace host |
+| [file-browser](capabilities/file-browser.md) | `fb` | Session-root read-only file REST API, `file.changed` broadcasts, Markdown/KaTeX previews, file tabs and mobile/desktop workspace panels |
 
 ## Shared Contracts
 
