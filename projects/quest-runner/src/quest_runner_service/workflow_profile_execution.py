@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from .quest_service import FatalInvariantError
+from .errors import FatalInvariantError
 from .quest_types import ExecutionProfile, HarnessKind, QuestMeta, slice_index_from_dirname
 from .workflow_config import WorkflowDefinition, WorkflowProfile, load_packaged_default_workflow, load_workflow
 

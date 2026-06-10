@@ -7,12 +7,12 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from ..quest_service import FatalInvariantError
+from ..errors import FatalInvariantError
 from ..quest_types import QuestMeta, RecursiveSnapshot, StateMachineState, utc_now_iso
 from ..workflow_config import WorkflowDefinition, WorkflowState
 from .context import RunContext
 from .protocols import StateMachineDefinition
-from .quest_v2_predicates import AdvanceValidationError
+from ..errors import AdvanceValidationError
 from .workflow_actions import execute_actions
 from .workflow_conditions import ChildStepResult, evaluate_condition
 from .workflow_paths import WorkflowPathContext, collection_child_dir

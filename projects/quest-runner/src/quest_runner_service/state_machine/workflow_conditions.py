@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from .. import quest_fs
-from ..quest_service import FatalInvariantError
+from ..errors import FatalInvariantError
 from .workflow_paths import (
     WorkflowPathContext,
     list_collection_children,

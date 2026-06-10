@@ -13,6 +13,9 @@ from typing import Dict, Optional
 _SLICE_DIR_PREFIX_RE = re.compile(r"^(\d{4})_")
 
 
+EXPERIMENT_COMPLETE_STATE = "ExperimentComplete"
+
+
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 

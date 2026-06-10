@@ -128,7 +128,7 @@ scripts/quest-runner experiments create \
   --start-step 5 \
   --stop-node slice_completed \
   --notes-file /tmp/experiment-notes.md \
-  --config-file /tmp/state_execution_config.yaml
+  --config-file /path/to/alternate/workflow
 ```
 
 Options:
@@ -139,16 +139,15 @@ Options:
 | `--stop-node <name>` | Stop condition node or alias such as `slice_completed` (required). |
 | `--stop-machine-path <path>` | Optional machine path (default `root/slice`). |
 | `--notes-file <path>` | Experiment description and operator notes (required). |
-| `--config-file <path>` | Alternate `state_execution_config.yaml` (required). |
+| `--config-file <path>` | Alternate workflow directory containing `workflow.yaml` (required). |
 
 The source checkout must be clean. On success, the CLI prints the experiment id,
 experiment number, branch, worktree path, base commit, and dashboard URL when the
 service returns one.
 
-The experiment worktree receives the supplied config at the quest's normal
-`state_execution_config.yaml` path. The source checkout stores the same config
-under `experiments/<number>/state_execution_config.yaml` as the permanent
-experiment record.
+The experiment worktree replaces the quest-local `workflow/` directory with the
+supplied workflow. The source checkout stores a copy under
+`experiments/<number>/workflow/` as the permanent experiment record.
 
 ### `experiments land`
 
@@ -264,14 +263,13 @@ Agents and humans use `scripts/quest-runner issues ...` for quest issue work.
 Agents should not edit issue markdown files directly when the CLI/API is
 available.
 
-Issue scopes:
+Issue commands take `--file <quest-relative-path>` naming a workflow-declared
+issue file. For the default main-quest workflow:
 
-| Scope | Files | Slice option |
-| --- | --- | --- |
-| `physicalplan` | Quest-level physical plan issues and responses | `--slice` is not allowed |
-| `polishing` | Slice-level polishing issues and responses | `--slice <n>` is required |
-
-Physical-plan issue IDs use `QP-NNNN`; polishing issue IDs use `PL-NNNN`.
+| Issue file | ID prefix |
+| --- | --- |
+| `physicalplan_issues.md` | `QP-NNNN` |
+| `slices/<slice_dir>/polishing_issues.md` | `PL-NNNN` |
 
 ### `issues list`
 
@@ -282,7 +280,7 @@ scripts/quest-runner issues list \
   --project quest-runner \
   --type side \
   --number 0 \
-  --scope physicalplan \
+  --file physicalplan_issues.md \
   --status open \
   --experiment-id experiment_quest-runner_main_0_0
 ```
@@ -293,8 +291,7 @@ Options:
 
 | Option | Description |
 | --- | --- |
-| `--scope physicalplan|polishing` | Issue scope. |
-| `--slice <n>` | Required for polishing scope. |
+| `--file <path>` | Quest-relative issue file declared by the workflow. |
 | `--status open|completed|all` | Status filter. Defaults to `all`. |
 
 ### `issues read`
@@ -306,7 +303,7 @@ scripts/quest-runner issues read QP-0001 \
   --project quest-runner \
   --type side \
   --number 0 \
-  --scope physicalplan
+  --file physicalplan_issues.md
 ```
 
 ### `issues create`
@@ -319,7 +316,7 @@ scripts/quest-runner issues create \
   --project quest-runner \
   --type side \
   --number 0 \
-  --scope physicalplan \
+  --file physicalplan_issues.md \
   --title "Missing acceptance marker" \
   --body "The quest needs physicalplan_accepted.md."
 ```
@@ -342,7 +339,7 @@ scripts/quest-runner issues edit QP-0001 \
   --project quest-runner \
   --type side \
   --number 0 \
-  --scope physicalplan \
+  --file physicalplan_issues.md \
   --status completed
 ```
 
@@ -359,7 +356,7 @@ scripts/quest-runner issues respond QP-0001 \
   --project quest-runner \
   --type side \
   --number 0 \
-  --scope physicalplan \
+  --file physicalplan_issues.md \
   --outcome Fixed \
   --explanation "Created the missing marker."
 ```
@@ -381,7 +378,7 @@ scripts/quest-runner issues responses QP-0001 \
   --project quest-runner \
   --type side \
   --number 0 \
-  --scope physicalplan
+  --file physicalplan_issues.md
 ```
 
 ## JSON Output
@@ -393,8 +390,7 @@ scripts/quest-runner --json issues list \
   --project quest-runner \
   --type side \
   --number 0 \
-  --scope polishing \
-  --slice 1
+  --file slices/0001_api/polishing_issues.md
 ```
 
 Successful JSON output is the formatted REST response body. HTTP failures print

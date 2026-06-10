@@ -31,6 +31,8 @@ from quest_runner_service.quest_types import (
 )
 from quest_runner_service.worktrees import remove_partial_worktree, run_git
 
+from quest_runner_service.workflow_config import load_packaged_default_workflow
+
 from .test_experiment_scoped_operations import _add_experiment_worktree
 from .test_experiments import _sample_meta
 from .test_helpers import TempRepo, ensure_project, make_app_client
@@ -56,6 +58,9 @@ def _count_subject_prefix(repo: Path, prefix: str) -> int:
 
 
 class SnapshotStopConditionTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.workflow = load_packaged_default_workflow()
+
     def test_matches_slice_completed_child(self) -> None:
         stop = ExperimentStopCondition(
             machine_path="root/slice",
@@ -78,7 +83,7 @@ class SnapshotStopConditionTests(unittest.TestCase):
                 child=None,
             ),
         )
-        self.assertTrue(snapshot_matches_stop_condition(snap, stop))
+        self.assertTrue(snapshot_matches_stop_condition(snap, stop, self.workflow))
 
     def test_matches_quest_root_node(self) -> None:
         stop = ExperimentStopCondition(
@@ -94,7 +99,7 @@ class SnapshotStopConditionTests(unittest.TestCase):
             tags={},
             child=None,
         )
-        self.assertTrue(snapshot_matches_stop_condition(snap, stop))
+        self.assertTrue(snapshot_matches_stop_condition(snap, stop, self.workflow))
 
     def test_matches_concrete_machine_path(self) -> None:
         slice_path = "projects/example/quests/main/0000_x/slices/0001_b"
@@ -119,7 +124,7 @@ class SnapshotStopConditionTests(unittest.TestCase):
                 child=None,
             ),
         )
-        self.assertTrue(snapshot_matches_stop_condition(snap, stop))
+        self.assertTrue(snapshot_matches_stop_condition(snap, stop, self.workflow))
 
     def test_rejects_wrong_node(self) -> None:
         stop = ExperimentStopCondition(
@@ -143,7 +148,7 @@ class SnapshotStopConditionTests(unittest.TestCase):
                 child=None,
             ),
         )
-        self.assertFalse(snapshot_matches_stop_condition(snap, stop))
+        self.assertFalse(snapshot_matches_stop_condition(snap, stop, self.workflow))
 
 
 class ExperimentCompleteStateTests(unittest.TestCase):
@@ -220,7 +225,7 @@ class ExperimentAdvanceStopTests(unittest.TestCase):
             status="open",
         )
         exp_meta.stop_condition = validate_stop_condition(
-            None, "slice_completed"
+            None, "slice_completed", load_packaged_default_workflow()
         )
         exp_dir = experiments_root(source_qdir) / experiment_dir_name(0)
         write_experiment_meta(exp_dir, exp_meta)

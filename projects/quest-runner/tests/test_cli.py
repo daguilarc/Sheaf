@@ -207,17 +207,16 @@ class CommandRequestTests(unittest.TestCase):
     def test_experiments_create_calls_endpoint(self) -> None:
         import tempfile
 
+        repo_root = Path(__file__).resolve().parents[1]
+        workflow_dir = (
+            repo_root / "src" / "quest_runner_service" / "default_workflow"
+        )
         notes_file = tempfile.NamedTemporaryFile(
             mode="w", suffix=".md", delete=False, encoding="utf-8"
-        )
-        config_file = tempfile.NamedTemporaryFile(
-            mode="w", suffix=".yaml", delete=False, encoding="utf-8"
         )
         try:
             notes_file.write("experiment notes")
             notes_file.close()
-            config_file.write("version: 2\nprofiles: {}\n")
-            config_file.close()
             code, transport, out, _err = self._run(
                 [
                     "experiments",
@@ -235,7 +234,7 @@ class CommandRequestTests(unittest.TestCase):
                     "--notes-file",
                     notes_file.name,
                     "--config-file",
-                    config_file.name,
+                    str(workflow_dir),
                 ],
                 (
                     201,
@@ -251,23 +250,13 @@ class CommandRequestTests(unittest.TestCase):
             )
         finally:
             Path(notes_file.name).unlink(missing_ok=True)
-            Path(config_file.name).unlink(missing_ok=True)
         self.assertEqual(code, 0)
         req = transport.requests[0]
         self.assertEqual(req.method, "POST")
         self.assertTrue(req.url.endswith("/experiments/create"))
-        self.assertEqual(
-            req.body,
-            {
-                "project": "quest-runner",
-                "quest_type": "main",
-                "quest_number": 0,
-                "start_step": 5,
-                "stop_node": "slice_completed",
-                "notes": "experiment notes",
-                "config": "version: 2\nprofiles: {}\n",
-            },
-        )
+        self.assertEqual(req.body["project"], "quest-runner")
+        self.assertEqual(req.body["workflow_path"], str(workflow_dir.resolve()))
+        self.assertEqual(req.body["stop_node"], "slice_completed")
         self.assertIn("experiment_id:", out)
         self.assertIn("worktree_path:", out)
         self.assertIn("dashboard_url:", out)

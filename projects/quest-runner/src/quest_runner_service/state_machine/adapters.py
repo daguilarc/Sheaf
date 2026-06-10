@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Callable
 
 from .. import quest_fs
-from ..quest_service import FatalInvariantError
+from ..errors import FatalInvariantError
 from ..quest_types import RoleProfile, StateMachineId, StateMachineState
 from ..workflow_profile_execution import resolve_quest_workflow
 from .commit_metadata import (

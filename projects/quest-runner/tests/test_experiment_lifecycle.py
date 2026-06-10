@@ -23,7 +23,7 @@ from quest_runner_service.quest_types import (
 )
 from quest_runner_service.worktrees import branch_exists, remove_partial_worktree, run_git
 
-from .test_experiments import _SAMPLE_CONFIG, _add_bare_remote
+from .test_experiments import _add_bare_remote, _default_workflow_dir
 from .test_helpers import (
     TempRepo,
     commit_v2_quest_step,
@@ -120,7 +120,7 @@ class ExperimentLifecycleIntegrationTests(unittest.TestCase):
             start_step=5,
             stop_node="slice_completed",
             notes="lifecycle integration experiment",
-            config=_SAMPLE_CONFIG,
+            workflow_path=str(_default_workflow_dir(self.repo_root)),
             public_base_url="http://test.local/",
         )
         exp_id = experiment_id("example", "main", out["quest_number"], 0)
@@ -149,8 +149,7 @@ class ExperimentLifecycleIntegrationTests(unittest.TestCase):
             wt_path, "example", "main", out["quest_number"]
         )
         assert wt_qdir is not None
-        wt_config = (wt_qdir / "state_execution_config.yaml").read_text(encoding="utf-8")
-        self.assertIn("test-model", wt_config)
+        self.assertTrue((wt_qdir / "workflow" / "workflow.yaml").is_file())
         self.assertFalse((source_qdir / "state_execution_config.yaml").is_file())
         self.assertTrue((source_qdir / "workflow" / "workflow.yaml").is_file())
 

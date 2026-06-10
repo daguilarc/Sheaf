@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 
 from quest_runner_service import quest_fs
-from quest_runner_service.quest_service import FatalInvariantError
+from quest_runner_service.errors import FatalInvariantError
 from quest_runner_service.quest_types import (
     QuestMeta,
     QuestState,

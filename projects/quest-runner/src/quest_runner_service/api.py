@@ -207,7 +207,7 @@ def create_app(
             "start_step",
             "stop_node",
             "notes",
-            "config",
+            "workflow_path",
         ]
         missing = [f for f in required if f not in data]
         if missing:
@@ -231,7 +231,7 @@ def create_app(
             start_step=data["start_step"],
             stop_node=data["stop_node"],
             notes=data["notes"],
-            config=data["config"],
+            workflow_path=data["workflow_path"],
             stop_machine_path=data.get("stop_machine_path"),
             requested_by=data.get("requested_by"),
             public_base_url=request.url_root,

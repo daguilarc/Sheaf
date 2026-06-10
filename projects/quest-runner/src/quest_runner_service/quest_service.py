@@ -12,6 +12,7 @@ from pathlib import Path
 
 from . import issue_service
 from . import quest_fs
+from .errors import FatalInvariantError
 from .chat_event_bus import ChatEventBus
 from .dashboard_data import DashboardBadRequest, DashboardCheckout, DashboardNotFound
 from .dashboard_runs import ActiveRunTracker
@@ -180,14 +181,6 @@ class InvalidProject(QuestCreationError):
         self.project = project
         self.reason = reason
         super().__init__(reason)
-
-
-class FatalInvariantError(Exception):
-    """Unrecoverable quest runner invariant violation."""
-
-    def __init__(self, detail: str) -> None:
-        self.detail = detail
-        super().__init__(detail)
 
 
 class SliceInitializationConflict(Exception):
@@ -574,7 +567,7 @@ class QuestService:
         start_step: int,
         stop_node: str,
         notes: str,
-        config: str,
+        workflow_path: str,
         *,
         stop_machine_path: str | None = None,
         requested_by: str | None = None,
@@ -598,8 +591,8 @@ class QuestService:
             raise InvalidQuestInput("quest_number must be non-negative")
         if not notes.strip():
             raise InvalidQuestInput("notes must be non-empty")
-        if not config.strip():
-            raise InvalidQuestInput("config must be non-empty")
+        if not workflow_path.strip():
+            raise InvalidQuestInput("workflow_path must be non-empty")
 
         source_qdir = quest_fs.find_quest_dir(root, project, quest_type, quest_number)
         if source_qdir is None:
@@ -607,17 +600,25 @@ class QuestService:
 
         quest_meta = quest_fs.read_quest_meta(source_qdir)
 
+        resolved_workflow_path = Path(workflow_path).expanduser()
+        if not resolved_workflow_path.is_absolute():
+            resolved_workflow_path = (root / resolved_workflow_path).resolve()
+        else:
+            resolved_workflow_path = resolved_workflow_path.resolve()
+
         try:
-            stop_condition = experiment_ops.validate_stop_condition(
-                stop_machine_path, stop_node
+            workflow = experiment_ops.validate_workflow_directory(
+                resolved_workflow_path
             )
         except experiment_ops.ExperimentValidationError as e:
             raise InvalidQuestInput(e.message) from e
 
         try:
-            quest_fs.validate_state_execution_config_text(config)
-        except ValueError as e:
-            raise InvalidQuestInput(str(e)) from e
+            stop_condition = experiment_ops.validate_stop_condition(
+                stop_machine_path, stop_node, workflow
+            )
+        except experiment_ops.ExperimentValidationError as e:
+            raise InvalidQuestInput(e.message) from e
 
         try:
             resolved_start = experiment_ops.resolve_start_step(
@@ -669,8 +670,10 @@ class QuestService:
                 ),
                 encoding="utf-8",
             )
-            config_path = exp_dir / "state_execution_config.yaml"
-            config_path.write_text(config if config.endswith("\n") else config + "\n", encoding="utf-8")
+            experiment_ops.install_experiment_workflow(
+                exp_dir,
+                resolved_workflow_path,
+            )
 
             metadata_commit = experiment_ops.commit_experiment_metadata(
                 root,
@@ -717,10 +720,9 @@ class QuestService:
                 worktree_path=worktree_path,
                 experiment_dir=exp_dir,
             )
-        exp_config_path = exp_quest_dir / "state_execution_config.yaml"
-        exp_config_path.write_text(
-            config if config.endswith("\n") else config + "\n",
-            encoding="utf-8",
+        experiment_ops.install_experiment_workflow(
+            exp_quest_dir,
+            exp_dir / "workflow",
         )
 
         dashboard_url: str | None = None
@@ -1151,12 +1153,13 @@ class QuestService:
         experiment_id: str | None = None,
     ) -> dict:
         from .quest_runner import _quest_key
-        from .state_machine.quest_v2_predicates import AdvanceValidationError
+        from .errors import AdvanceValidationError
         from .state_machine.v2_step_executor import (
             HumanInterventionConflict,
             advance_v2_top_level_step_without_harness,
         )
         from .state_machine.adapters import SubprocessGitOps
+        from .workflow_scaffold import load_quest_workflow
 
         root, qdir, key, exp_meta = self._prepare_run(
             repo_path,
@@ -1220,46 +1223,45 @@ class QuestService:
                 body["advanced"] = False
                 return body
 
-            if (
-                experiment_run is not None
-                and result.snapshot is not None
-                and experiment_ops.snapshot_matches_stop_condition(
+            if experiment_run is not None and result.snapshot is not None:
+                workflow = load_quest_workflow(qdir)
+                if experiment_ops.snapshot_matches_stop_condition(
                     result.snapshot,
                     experiment_run.experiment_meta.stop_condition,
-                )
-            ):
-                changed = experiment_ops.mark_quest_experiment_complete(
-                    qdir, meta, root
-                )
-                commit_sha = result.commit
-                if changed:
-                    extra = experiment_ops.commit_experiment_complete_state(
-                        root,
-                        qdir,
-                        experiment_run.experiment_meta.experiment_id,
+                    workflow,
+                ):
+                    changed = experiment_ops.mark_quest_experiment_complete(
+                        qdir, meta, root
                     )
-                    if extra is not None:
-                        commit_sha = extra
-                body["status"] = "experiment_complete"
-                body["advanced"] = True
-                body["quest_state"] = QuestState.ExperimentComplete.value
-                body["previous_state"] = result.previous_quest_state
-                body["next_state"] = QuestState.ExperimentComplete.value
-                if result.previous_slice_state is not None:
-                    body["previous_slice_state"] = result.previous_slice_state
-                if result.next_slice_state is not None:
-                    body["next_slice_state"] = result.next_slice_state
-                if result.active_slice is not None:
-                    body["active_slice"] = result.active_slice
-                if commit_sha is not None:
-                    body["commit"] = commit_sha
-                body["message"] = (
-                    f"Experiment {experiment_run.experiment_meta.experiment_id} "
-                    "reached its stop condition"
-                )
-                return _apply_experiment_source_completion(
-                    qdir, experiment_run, body
-                )
+                    commit_sha = result.commit
+                    if changed:
+                        extra = experiment_ops.commit_experiment_complete_state(
+                            root,
+                            qdir,
+                            experiment_run.experiment_meta.experiment_id,
+                        )
+                        if extra is not None:
+                            commit_sha = extra
+                    body["status"] = "experiment_complete"
+                    body["advanced"] = True
+                    body["quest_state"] = QuestState.ExperimentComplete.value
+                    body["previous_state"] = result.previous_quest_state
+                    body["next_state"] = QuestState.ExperimentComplete.value
+                    if result.previous_slice_state is not None:
+                        body["previous_slice_state"] = result.previous_slice_state
+                    if result.next_slice_state is not None:
+                        body["next_slice_state"] = result.next_slice_state
+                    if result.active_slice is not None:
+                        body["active_slice"] = result.active_slice
+                    if commit_sha is not None:
+                        body["commit"] = commit_sha
+                    body["message"] = (
+                        f"Experiment {experiment_run.experiment_meta.experiment_id} "
+                        "reached its stop condition"
+                    )
+                    return _apply_experiment_source_completion(
+                        qdir, experiment_run, body
+                    )
 
             body["status"] = "advanced"
             body["previous_state"] = result.previous_quest_state

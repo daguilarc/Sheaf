@@ -516,7 +516,7 @@ class CreateExperimentApiTests(unittest.TestCase):
         self.assertIn("Missing required fields", resp.get_json()["error"])
 
     def test_create_experiment_returns_payload(self) -> None:
-        from .test_experiments import _SAMPLE_CONFIG
+        from .test_experiments import _default_workflow_dir
 
         client, out = self._prepare()
         resp = client.post(
@@ -528,7 +528,7 @@ class CreateExperimentApiTests(unittest.TestCase):
                 "start_step": 5,
                 "stop_node": "slice_completed",
                 "notes": "API experiment",
-                "config": _SAMPLE_CONFIG,
+                "workflow_path": str(_default_workflow_dir(self.repo_root)),
             },
         )
         self.assertEqual(resp.status_code, 201)

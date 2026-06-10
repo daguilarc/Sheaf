@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ..quest_service import FatalInvariantError
+from ..errors import FatalInvariantError
 from ..quest_types import QuestMeta, utc_now_iso
 from ..workflow_config import WorkflowCollection, WorkflowDefinition
 from .workflow_state_io import WorkflowStateIo, path_matches_collection_pattern

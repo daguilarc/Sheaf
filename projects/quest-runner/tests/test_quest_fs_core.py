@@ -427,14 +427,13 @@ class ListSliceDirsTests(unittest.TestCase):
 class ExecutionConfigTests(unittest.TestCase):
     def test_read_execution_config(self) -> None:
         root = Path(__file__).resolve().parents[1]
-        default_cfg = (
-            root / "src" / "quest_runner_service" / "default_state_execution_config.yaml"
+        default_workflow = (
+            root / "src" / "quest_runner_service" / "default_workflow"
         )
         with tempfile.TemporaryDirectory() as tmp:
             q = Path(tmp) / "quest"
             q.mkdir()
-            dest = q / "state_execution_config.yaml"
-            shutil.copy(default_cfg, dest)
+            shutil.copytree(default_workflow, q / "workflow")
             profiles = read_execution_config(q)
             self.assertIn("implementer", profiles)
             impl = profiles["implementer"]
@@ -444,23 +443,23 @@ class ExecutionConfigTests(unittest.TestCase):
             self.assertIsNone(impl.reasoning_effort)
             self.assertEqual(impl.idle_timeout_seconds, 3600)
             self.assertEqual(impl.config_version, 2)
-            self.assertEqual(impl.modify_block, ["$currentProject/quests/**"])
-            self.assertIn("$currentSlice/implementation_done.md", impl.modify_allow)
-            self.assertIn("$currentQuest/human_intervention_request.md", impl.modify_allow)
+            self.assertEqual(impl.modify_block, ["$project/quests/**"])
+            self.assertIn("$active_child/implementation_done.md", impl.modify_allow)
+            self.assertIn("$quest/human_intervention_request.md", impl.modify_allow)
             plan_reviewer = profiles["physical_plan_reviewer"]
             self.assertIn(
-                "$currentQuest/physicalplan_accepted.md",
+                "$quest/physicalplan_accepted.md",
                 plan_reviewer.modify_allow,
             )
             impl_reviewer = profiles["polisher_reviewer"]
             self.assertIn(
-                "$currentSlice/implementation_accepted.md",
+                "$active_child/implementation_accepted.md",
                 impl_reviewer.modify_allow,
             )
             doc = profiles["documenter"]
             self.assertEqual(doc.config_version, 2)
-            self.assertIn("$currentProject/docs/**", doc.modify_allow)
-            self.assertEqual(read_state_execution_config_version(q), 2)
+            self.assertIn("$project/docs/**", doc.modify_allow)
+            self.assertEqual(read_state_execution_config_version(q), 1)
 
     def test_read_execution_config_version_1_empty_path_rules(self) -> None:
         cfg = textwrap.dedent(

@@ -61,21 +61,17 @@ from quest_runner_service.quest_lock import QuestLock
 from quest_runner_service.state_machine.commit_metadata import render_step_commit_message
 from quest_runner_service.worktrees import branch_exists, run_git
 
+from quest_runner_service.workflow_config import load_packaged_default_workflow
+
 from .test_helpers import TempRepo, ensure_project, make_app_client
 
 
-_SAMPLE_CONFIG = """\
-version: 2
-profiles:
-  implementer:
-    harness: cursor
-    model: test-model
-    idle_timeout_seconds: 60
-    modify_allow:
-      - "$currentSlice/**"
-    modify_block:
-      - "**"
-"""
+def _default_workflow_dir(repo_root: Path) -> Path:
+    return repo_root / "src" / "quest_runner_service" / "default_workflow"
+
+
+def _default_workflow():
+    return load_packaged_default_workflow()
 
 
 def _git_commit(repo: Path, message: str, *, allow_empty: bool = False) -> str:
@@ -143,7 +139,7 @@ def _sample_meta(
         ),
         stop_condition=ExperimentStopCondition(
             machine_path="root/slice",
-            node_name="slice_completed",
+            node_name="Completed",
         ),
         worktree_name=exp_id,
         branch_name=experiment_branch_name(
@@ -239,7 +235,7 @@ class ExperimentMetaIoTests(unittest.TestCase):
         self.assertEqual(
             loaded.start_step.step_log, "logs/step_0005_implementer.jsonl"
         )
-        self.assertEqual(loaded.stop_condition.node_name, "slice_completed")
+        self.assertEqual(loaded.stop_condition.node_name, "Completed")
 
     def test_write_read_optional_landed_fields(self) -> None:
         meta = _sample_meta(status="landed")
@@ -552,21 +548,27 @@ class ExperimentStartStepResolutionTests(unittest.TestCase):
 
 
 class ExperimentStopConditionTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.workflow = _default_workflow()
+
     def test_validate_slice_completed_alias(self) -> None:
-        cond = validate_stop_condition(None, "slice_completed")
+        cond = validate_stop_condition(None, "slice_completed", self.workflow)
         self.assertEqual(cond.machine_path, "root/slice")
         self.assertEqual(cond.node_name, "Completed")
 
     def test_validate_slice_completed_inputs_resolve_to_same_node(self) -> None:
         resolved = [
-            validate_stop_condition(None, stop_node).node_name
+            validate_stop_condition(None, stop_node, self.workflow).node_name
             for stop_node in ("slice_completed", "Completed", "SliceCompletedNode")
         ]
-        self.assertEqual(resolved, ["Completed", "Completed", "Completed"])
+        self.assertEqual(
+            resolved,
+            ["Completed", "Completed", "Completed"],
+        )
 
     def test_validate_rejects_unknown_stop_node(self) -> None:
         with self.assertRaises(ExperimentValidationError):
-            validate_stop_condition("root/slice", "not_a_real_node")
+            validate_stop_condition("root/slice", "not_a_real_node", self.workflow)
 
 
 class ExperimentCreationTests(unittest.TestCase):
@@ -599,7 +601,7 @@ class ExperimentCreationTests(unittest.TestCase):
             start_step=5,
             stop_node="slice_completed",
             notes="first experiment",
-            config=_SAMPLE_CONFIG,
+            workflow_path=str(_default_workflow_dir(self.repo_root)),
         )
         self.assertEqual(next_experiment_number(source_qdir), 1)
 
@@ -613,13 +615,13 @@ class ExperimentCreationTests(unittest.TestCase):
             start_step=5,
             stop_node="slice_completed",
             notes="experiment notes body",
-            config=_SAMPLE_CONFIG,
+            workflow_path=str(_default_workflow_dir(self.repo_root)),
             public_base_url="http://test.local/",
         )
         exp_dir = experiments_root(source_qdir) / "0000"
         self.assertTrue((exp_dir / "experiment.json").is_file())
         self.assertTrue((exp_dir / "notes.md").is_file())
-        self.assertTrue((exp_dir / "state_execution_config.yaml").is_file())
+        self.assertTrue((exp_dir / "workflow" / "workflow.yaml").is_file())
         meta = read_experiment_meta(exp_dir)
         self.assertEqual(meta.status, "open")
         self.assertEqual(meta.start_step.base_commit, parent_sha)
@@ -642,7 +644,7 @@ class ExperimentCreationTests(unittest.TestCase):
         self.assertFalse((source_qdir / "state_execution_config.yaml").is_file())
         self.assertTrue((source_qdir / "workflow" / "workflow.yaml").is_file())
 
-    def test_create_worktree_and_replaces_experiment_config(self) -> None:
+    def test_create_worktree_and_replaces_experiment_workflow(self) -> None:
         svc, out, source_qdir, parent_sha = self._prepare_quest_with_step()
         result = svc.create_experiment(
             repo_path=str(self.temp.root),
@@ -652,7 +654,7 @@ class ExperimentCreationTests(unittest.TestCase):
             start_step=5,
             stop_node="slice_completed",
             notes="config swap test",
-            config=_SAMPLE_CONFIG,
+            workflow_path=str(_default_workflow_dir(self.repo_root)),
         )
         wt_path = Path(result["worktree_path"])
         self.assertTrue(wt_path.is_dir())
@@ -665,10 +667,8 @@ class ExperimentCreationTests(unittest.TestCase):
             wt_path, "example", "main", out["quest_number"]
         )
         assert wt_qdir is not None
-        self.assertEqual(
-            (wt_qdir / "state_execution_config.yaml").read_text(encoding="utf-8"),
-            _SAMPLE_CONFIG if _SAMPLE_CONFIG.endswith("\n") else _SAMPLE_CONFIG + "\n",
-        )
+        self.assertTrue((wt_qdir / "workflow" / "workflow.yaml").is_file())
+        self.assertFalse((wt_qdir / "state_execution_config.yaml").is_file())
         head = run_git(wt_path, "rev-parse", "HEAD").stdout.strip()
         self.assertEqual(head, parent_sha)
 
@@ -683,7 +683,7 @@ class ExperimentCreationTests(unittest.TestCase):
                 start_step=5,
                 stop_node="definitely_unknown",
                 notes="should fail",
-                config=_SAMPLE_CONFIG,
+                workflow_path=str(_default_workflow_dir(self.repo_root)),
             )
         self.assertFalse(experiments_root(source_qdir).exists())
 
@@ -709,7 +709,7 @@ class ExperimentCreationTests(unittest.TestCase):
                     start_step=5,
                     stop_node="slice_completed",
                     notes="cleanup test",
-                    config=_SAMPLE_CONFIG,
+                    workflow_path=str(_default_workflow_dir(self.repo_root)),
                 )
         exp_dir = experiments_root(source_qdir) / experiment_dir_name(0)
         self.assertFalse(exp_dir.exists())
@@ -731,7 +731,7 @@ class ExperimentCreationTests(unittest.TestCase):
                     start_step=5,
                     stop_node="slice_completed",
                     notes="retry details",
-                    config=_SAMPLE_CONFIG,
+                    workflow_path=str(_default_workflow_dir(self.repo_root)),
                 )
         err = ctx.exception
         self.assertTrue((experiments_root(source_qdir) / "0000").is_dir())
@@ -831,7 +831,11 @@ class ArchiveExperimentArtifactsTests(unittest.TestCase):
                 "# Slice responses\n", encoding="utf-8"
             )
 
-            summary = archive_experiment_artifacts(archive, quest)
+            summary = archive_experiment_artifacts(
+                archive,
+                quest,
+                workflow=_default_workflow(),
+            )
             self.assertIsInstance(summary, ArtifactCopySummary)
             self.assertEqual(summary.logs_copied, 1)
             self.assertEqual(summary.issues_copied, 2)
@@ -881,7 +885,11 @@ class ArchiveExperimentArtifactsTests(unittest.TestCase):
             sl.mkdir(parents=True)
             (sl / "polishing_issues.md").write_text("# Slice issues\n", encoding="utf-8")
 
-            summary = archive_experiment_artifacts(archive, quest)
+            summary = archive_experiment_artifacts(
+                archive,
+                quest,
+                workflow=_default_workflow(),
+            )
             self.assertEqual(summary.issues_copied, 1)
             self.assertEqual(summary.issue_responses_copied, 0)
             self.assertEqual(summary.skipped_missing, 2)

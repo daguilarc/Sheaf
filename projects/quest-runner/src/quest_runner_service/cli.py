@@ -561,7 +561,7 @@ def build_parser() -> argparse.ArgumentParser:
           scripts/quest-runner issues responses QP-0001 --project quest-runner --type side --number 0 --file physicalplan_issues.md
           scripts/quest-runner issues list --project quest-runner --type side --number 0 --file slices/0001_api/polishing_issues.md
           scripts/quest-runner --json advance --project quest-runner --type side --number 0
-          scripts/quest-runner experiments create --project quest-runner --type main --number 0 --start-step 5 --stop-node slice_completed --notes-file /tmp/notes.md --config-file /tmp/config.yaml
+          scripts/quest-runner experiments create --project quest-runner --type main --number 0 --start-step 5 --stop-node slice_completed --notes-file /tmp/notes.md --config-file /tmp/workflow
 
         Notes:
           - advance and land are human-operated recovery and integration workflows.
@@ -735,7 +735,11 @@ def build_parser() -> argparse.ArgumentParser:
     experiments_create.add_argument("--stop-node", required=True)
     experiments_create.add_argument("--stop-machine-path", default=None)
     experiments_create.add_argument("--notes-file", required=True)
-    experiments_create.add_argument("--config-file", required=True)
+    experiments_create.add_argument(
+        "--config-file",
+        required=True,
+        help="Path to alternate workflow directory (contains workflow.yaml)",
+    )
     experiments_create.set_defaults(handler="experiments_create")
 
     experiments_land = experiments_sub.add_parser(
@@ -766,7 +770,7 @@ def _dispatch_command(
 
     if handler == "experiments_create":
         notes = Path(args.notes_file).read_text(encoding="utf-8")
-        config = Path(args.config_file).read_text(encoding="utf-8")
+        workflow_path = str(Path(args.config_file).resolve())
         body = {
             "project": args.project,
             "quest_type": args.type,
@@ -774,7 +778,7 @@ def _dispatch_command(
             "start_step": args.start_step,
             "stop_node": args.stop_node,
             "notes": notes,
-            "config": config,
+            "workflow_path": workflow_path,
         }
         if args.stop_machine_path is not None:
             body["stop_machine_path"] = args.stop_machine_path

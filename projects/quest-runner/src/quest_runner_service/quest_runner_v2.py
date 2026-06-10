@@ -68,6 +68,7 @@ def _maybe_finalize_experiment_after_step(
     meta: object,
     experiment_run: ExperimentRunContext,
     snapshot: RecursiveSnapshot | None,
+    workflow: object,
     last_commit: str | None,
     steps_executed: int,
     captured_outputs: list[dict],
@@ -75,7 +76,9 @@ def _maybe_finalize_experiment_after_step(
     if snapshot is None:
         return None
     if not snapshot_matches_stop_condition(
-        snapshot, experiment_run.experiment_meta.stop_condition
+        snapshot,
+        experiment_run.experiment_meta.stop_condition,
+        workflow,
     ):
         return None
     changed = mark_quest_experiment_complete(quest_dir, meta, repo_path)
@@ -240,6 +243,7 @@ def run_quest_v2(
                 meta=meta,
                 experiment_run=experiment_run,
                 snapshot=step_out.snapshot,
+                workflow=bundle.workflow,
                 last_commit=last_commit,
                 steps_executed=steps_executed,
                 captured_outputs=captured_outputs,

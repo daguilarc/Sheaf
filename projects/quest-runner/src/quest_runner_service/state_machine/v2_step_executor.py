@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .. import quest_fs
-from ..quest_service import FatalInvariantError
+from ..errors import FatalInvariantError
 from ..quest_runner import (
     _slice_path_for_quest,
     _write_human_intervention,
@@ -30,7 +30,7 @@ from .commit_metadata import (
     validate_parsed_step_commit,
 )
 from .context import RunContext
-from .quest_v2_predicates import AdvanceValidationError
+from ..errors import AdvanceValidationError
 from .workflow_harness_callback import build_workflow_run_callback
 from ..workflow_config import WorkflowDefinition
 from .workflow_interpreter import ExecutionMode, WorkflowStateMachine

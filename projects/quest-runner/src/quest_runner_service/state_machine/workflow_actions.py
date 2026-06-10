@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from ..quest_service import FatalInvariantError
+from ..errors import FatalInvariantError
 from .workflow_paths import (
     WorkflowPathContext,
     collection_child_dir,

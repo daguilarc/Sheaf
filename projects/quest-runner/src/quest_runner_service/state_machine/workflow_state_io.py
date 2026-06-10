@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Mapping
 
 from .. import quest_fs
-from ..quest_service import FatalInvariantError
+from ..errors import FatalInvariantError
 from ..quest_types import (
     QuestMeta,
     RecursiveSnapshot,

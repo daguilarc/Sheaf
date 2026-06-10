@@ -13,7 +13,6 @@ TEST_MODULES := \
 	tests.test_land_api \
 	tests.test_issue_api \
 	tests.test_cli \
-	tests.test_quest_v2_predicates \
 	tests.test_dashboard_api \
 	tests.test_dashboard_shell \
 	tests.test_dashboard_git \
@@ -25,6 +24,7 @@ TEST_MODULES := \
 	tests.test_workflow_state_io \
 	tests.test_workflow_interpreter \
 	tests.test_workflow_runner_integration \
+	tests.test_workflow_compatibility \
 	tests.test_workflow_profile_execution \
 	tests.test_harness_quest_thread_core \
 	tests.test_project_quest_model \

@@ -8,7 +8,7 @@ from pathlib import Path
 
 from quest_runner_service import quest_fs
 from quest_runner_service.quest_types import QuestMeta, StateMachineState, utc_now_iso
-from quest_runner_service.state_machine.quest_v2_predicates import AdvanceValidationError
+from quest_runner_service.errors import AdvanceValidationError
 from quest_runner_service.state_machine.workflow_interpreter import (
     ExecutionMode,
     WorkflowMachineLoader,

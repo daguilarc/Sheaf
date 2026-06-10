@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Mapping
 
-from ..quest_service import FatalInvariantError
+from ..errors import FatalInvariantError
 from ..quest_types import RecursiveSnapshot, StateMachineState, utc_now_iso
 from .context import RunContext
 from .protocols import Node, StateMachineDefinition, StateIo

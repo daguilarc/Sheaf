@@ -26,6 +26,16 @@ class MissingDefaultWorkflow(Exception):
         super().__init__(f"Missing default workflow directory: {path}")
 
 
+def copy_workflow_directory(source: Path, dest: Path) -> None:
+    """Copy a validated workflow directory tree into ``dest``."""
+    src = source.resolve()
+    if not (src / "workflow.yaml").is_file():
+        raise ValueError(f"Missing workflow.yaml in {src}")
+    if dest.exists():
+        shutil.rmtree(dest)
+    shutil.copytree(src, dest)
+
+
 def copy_packaged_default_workflow(dest: Path) -> list[str]:
     """Copy packaged default workflow into ``dest`` and return created relative paths."""
     src = packaged_default_workflow_dir()

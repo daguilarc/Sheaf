@@ -10,7 +10,16 @@ from pathlib import Path
 
 from . import quest_fs
 from .dashboard_data import DashboardCheckout, DashboardBadRequest, DashboardNotFound
-from .quest_types import QuestMeta, QuestState, QuestStateInfo, RecursiveSnapshot, utc_now_iso
+from .quest_types import (
+    EXPERIMENT_COMPLETE_STATE,
+    QuestMeta,
+    QuestState,
+    QuestStateInfo,
+    RecursiveSnapshot,
+    utc_now_iso,
+)
+from .workflow_config import WorkflowDefinition, WorkflowMachine, load_workflow
+from .workflow_scaffold import copy_workflow_directory
 from .worktrees import is_git_worktree, porcelain_status, quest_worktree_base_dir, run_git
 
 _EXPERIMENT_DIR_RE = re.compile(r"^\d{4}$")
@@ -458,80 +467,120 @@ def _normalize_machine_path(machine_path: str | None) -> str:
     return str(machine_path).strip().replace("\\", "/")
 
 
-def _node_class_name(node_cls: type) -> str:
-    return node_cls.__name__
+def _slice_machine_key(workflow: WorkflowDefinition) -> str:
+    for collection in workflow.collections.values():
+        return collection.machine
+    raise ExperimentValidationError("workflow declares no child collections for stop validation")
+
+
+def _machine_for_stop_path(
+    workflow: WorkflowDefinition,
+    machine_path: str,
+) -> WorkflowMachine:
+    normalized_path = _normalize_machine_path(machine_path)
+    if normalized_path == "root/quest":
+        return workflow.get_machine(workflow.entry_machine)
+    if normalized_path in ("root/slice", "slice") or "/slices/" in normalized_path:
+        return workflow.get_machine(_slice_machine_key(workflow))
+    return workflow.get_machine(workflow.entry_machine)
+
+
+def _node_name_for_state(machine: WorkflowMachine, state_name: str) -> str:
+    state_def = machine.states.get(state_name)
+    if state_def is None:
+        return state_name
+    if state_def.node_name is not None:
+        return state_def.node_name
+    return state_name
+
+
+def _resolve_stop_node_name(
+    workflow: WorkflowDefinition,
+    machine_path: str,
+    stop_node: str,
+) -> str:
+    machine = _machine_for_stop_path(workflow, machine_path)
+    raw_node = str(stop_node).strip()
+    if not raw_node:
+        raise ExperimentValidationError("stop_node must be non-empty")
+    candidate = _STOP_NODE_ALIASES.get(raw_node.lower(), raw_node)
+    candidate_lower = candidate.lower()
+    for state_name, state_def in machine.states.items():
+        node_name = (
+            state_def.node_name if state_def.node_name is not None else state_name
+        )
+        if candidate == state_name or candidate_lower == state_name.lower():
+            return state_name
+        if candidate == node_name or candidate_lower == node_name.lower():
+            return state_name
+    raise ExperimentValidationError(
+        f"Unknown stop node {raw_node!r} for machine_path {machine_path!r}"
+    )
 
 
 def validate_stop_condition(
     machine_path: str | None,
     stop_node: str,
+    workflow: WorkflowDefinition,
 ) -> ExperimentStopCondition:
     normalized_path = _normalize_machine_path(machine_path)
     if not stop_node or not str(stop_node).strip():
         raise ExperimentValidationError("stop_node must be non-empty")
-    raw_node = str(stop_node).strip()
-    lower_node = raw_node.lower()
-
-    from .state_machine.quest_v2_definitions import (
-        build_quest_machine_definition,
-        build_slice_machine_definition,
-    )
-
-    if normalized_path in ("root/slice", "slice"):
-        node_map = build_slice_machine_definition().node_map
-    else:
-        node_map = build_quest_machine_definition().node_map
-
-    candidate_node = _STOP_NODE_ALIASES.get(lower_node, raw_node)
-    candidate_lower = candidate_node.lower()
-    for key, node_cls in node_map.items():
-        if candidate_node == key:
-            return ExperimentStopCondition(
-                machine_path=normalized_path,
-                node_name=key,
-            )
-        if candidate_lower == key.lower():
-            return ExperimentStopCondition(
-                machine_path=normalized_path,
-                node_name=key,
-            )
-        class_name = _node_class_name(node_cls)
-        if candidate_node == class_name or candidate_lower == class_name.lower():
-            return ExperimentStopCondition(
-                machine_path=normalized_path,
-                node_name=key,
-            )
-
-    raise ExperimentValidationError(
-        f"Unknown stop node {raw_node!r} for machine_path {normalized_path!r}"
+    node_name = _resolve_stop_node_name(workflow, normalized_path, stop_node)
+    return ExperimentStopCondition(
+        machine_path=normalized_path,
+        node_name=node_name,
     )
 
 
-def _node_map_for_stop_path(machine_path: str) -> dict[str, type]:
-    from .state_machine.quest_v2_definitions import (
-        build_quest_machine_definition,
-        build_slice_machine_definition,
-    )
+def validate_workflow_directory(workflow_dir: Path) -> WorkflowDefinition:
+    """Load and validate an alternate workflow directory for experiments."""
+    workflow_dir = workflow_dir.resolve()
+    if not workflow_dir.is_dir():
+        raise ExperimentValidationError(
+            f"Workflow path is not a directory: {workflow_dir}"
+        )
+    try:
+        return load_workflow(workflow_dir)
+    except Exception as exc:
+        raise ExperimentValidationError(
+            f"Invalid workflow directory {workflow_dir}: {exc}"
+        ) from exc
 
-    normalized_path = _normalize_machine_path(machine_path)
-    if normalized_path in ("root/slice", "slice"):
-        return build_slice_machine_definition().node_map
-    if "/slices/" in normalized_path:
-        return build_slice_machine_definition().node_map
-    return build_quest_machine_definition().node_map
+
+def install_experiment_workflow(
+    quest_dir: Path,
+    workflow_dir: Path,
+) -> None:
+    """Replace quest-local ``workflow/`` with the experiment workflow copy."""
+    copy_workflow_directory(workflow_dir, quest_dir / "workflow")
 
 
-def _stop_node_match_names(stop: ExperimentStopCondition) -> frozenset[str]:
-    node_map = _node_map_for_stop_path(stop.machine_path)
+def _stop_node_match_names(
+    stop: ExperimentStopCondition,
+    workflow: WorkflowDefinition,
+) -> frozenset[str]:
+    machine = _machine_for_stop_path(workflow, stop.machine_path)
     names = {stop.node_name}
-    node_cls = node_map.get(stop.node_name)
-    if node_cls is not None:
-        names.add(_node_class_name(node_cls))
+    alias = _STOP_NODE_ALIASES.get(stop.node_name.lower())
+    if alias is not None:
+        names.add(alias)
+    for state_name, state_def in machine.states.items():
+        node_name = (
+            state_def.node_name if state_def.node_name is not None else state_name
+        )
+        if node_name == stop.node_name or state_name == stop.node_name:
+            names.add(node_name)
+            names.add(state_name)
     return frozenset(names)
 
 
-def _snapshot_node_matches(snap: RecursiveSnapshot, stop: ExperimentStopCondition) -> bool:
-    acceptable_nodes = _stop_node_match_names(stop)
+def _snapshot_node_matches(
+    snap: RecursiveSnapshot,
+    stop: ExperimentStopCondition,
+    workflow: WorkflowDefinition,
+) -> bool:
+    acceptable_nodes = _stop_node_match_names(stop, workflow)
     if snap.node_name in acceptable_nodes:
         return True
     lower_names = {name.lower() for name in acceptable_nodes}
@@ -566,9 +615,10 @@ def _iter_recursive_snapshots(snapshot: RecursiveSnapshot):
 def snapshot_matches_stop_condition(
     snapshot: RecursiveSnapshot,
     stop: ExperimentStopCondition,
+    workflow: WorkflowDefinition,
 ) -> bool:
     for snap, is_root in _iter_recursive_snapshots(snapshot):
-        if not _snapshot_node_matches(snap, stop):
+        if not _snapshot_node_matches(snap, stop, workflow):
             continue
         if _snapshot_path_matches(snap, stop.machine_path, is_root=is_root):
             return True
@@ -581,7 +631,7 @@ def mark_quest_experiment_complete(
     repo_path: Path,
 ) -> bool:
     cur = quest_fs.read_quest_state(quest_dir)
-    if cur.state == QuestState.ExperimentComplete:
+    if cur.state.value == EXPERIMENT_COMPLETE_STATE:
         return False
     quest_fs.write_quest_normalized_machine_state(
         quest_dir,
@@ -705,9 +755,52 @@ def remove_partial_experiment_worktree(
     run_git(source_repo_root, "branch", "-D", branch_name, check=False)
 
 
+def _iter_workflow_issue_files(
+    workflow: WorkflowDefinition,
+    quest_dir: Path,
+) -> list[str]:
+    from .issue_service import _responses_path_for_issue_file
+
+    paths: list[str] = []
+    for declaration in workflow.issue_declarations():
+        decl_path = declaration.path.replace("\\", "/")
+        if "$active_child" not in decl_path:
+            paths.append(decl_path)
+            continue
+        if not decl_path.startswith("$active_child/"):
+            continue
+        suffix = decl_path[len("$active_child/") :]
+        for child_dir in quest_fs.list_slice_dirs(quest_dir):
+            rel = child_dir.relative_to(quest_dir).as_posix()
+            paths.append(f"{rel}/{suffix}" if suffix else rel)
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for issue_file in paths:
+        if issue_file in seen:
+            continue
+        seen.add(issue_file)
+        ordered.append(issue_file)
+        try:
+            response_file = _responses_path_for_issue_file(issue_file)
+        except Exception:
+            continue
+        if response_file not in seen:
+            seen.add(response_file)
+            ordered.append(response_file)
+    return ordered
+
+
+def _archive_issue_rel_path(issue_file: str) -> Path:
+    if "/" not in issue_file:
+        return Path("quest") / issue_file
+    return Path(issue_file)
+
+
 def archive_experiment_artifacts(
     source_experiment_dir: Path,
     experiment_quest_dir: Path,
+    *,
+    workflow: WorkflowDefinition | None = None,
 ) -> ArtifactCopySummary:
     logs_copied = 0
     issues_copied = 0
@@ -722,43 +815,31 @@ def archive_experiment_artifacts(
             shutil.copy2(src, dst_logs / src.name)
             logs_copied += 1
 
-    dst_issues = source_experiment_dir / "issues"
-    quest_issue = experiment_quest_dir / "physicalplan_issues.md"
-    if quest_issue.is_file():
-        dst = dst_issues / "quest" / "physicalplan_issues.md"
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(quest_issue, dst)
-        issues_copied += 1
+    if workflow is None:
+        from .workflow_scaffold import load_quest_workflow
 
-    for slice_dir in quest_fs.list_slice_dirs(experiment_quest_dir):
-        src = slice_dir / "polishing_issues.md"
-        if src.is_file():
-            rel = Path("slices") / slice_dir.name / "polishing_issues.md"
-            dst = dst_issues / rel
+        workflow = load_quest_workflow(experiment_quest_dir)
+
+    dst_issues = source_experiment_dir / "issues"
+    dst_responses = source_experiment_dir / "issue_responses"
+    for issue_file in _iter_workflow_issue_files(workflow, experiment_quest_dir):
+        src = experiment_quest_dir / issue_file
+        if issue_file.endswith("_issues.md"):
+            if not src.is_file():
+                continue
+            dst = dst_issues / _archive_issue_rel_path(issue_file)
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, dst)
             issues_copied += 1
-
-    dst_responses = source_experiment_dir / "issue_responses"
-    quest_responses = experiment_quest_dir / "physicalplan_issue_responses.md"
-    if quest_responses.is_file():
-        dst = dst_responses / "quest" / "physicalplan_issue_responses.md"
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(quest_responses, dst)
-        issue_responses_copied += 1
-    else:
-        skipped_missing += 1
-
-    for slice_dir in quest_fs.list_slice_dirs(experiment_quest_dir):
-        src = slice_dir / "polishing_issue_responses.md"
-        if src.is_file():
-            rel = Path("slices") / slice_dir.name / "polishing_issue_responses.md"
-            dst = dst_responses / rel
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src, dst)
-            issue_responses_copied += 1
-        else:
-            skipped_missing += 1
+            continue
+        if issue_file.endswith("_issue_responses.md"):
+            if src.is_file():
+                dst = dst_responses / _archive_issue_rel_path(issue_file)
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, dst)
+                issue_responses_copied += 1
+            else:
+                skipped_missing += 1
 
     return ArtifactCopySummary(
         logs_copied=logs_copied,

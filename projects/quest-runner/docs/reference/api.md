@@ -265,7 +265,7 @@ experiment worktree with the supplied transition config.
 | `stop_node` | yes | Stop condition node name or alias (for example `slice_completed`) |
 | `stop_machine_path` | no | Machine path for stop condition (default `root/slice`) |
 | `notes` | yes | Human-readable experiment description |
-| `config` | yes | Alternate `state_execution_config.yaml` body |
+| `workflow_path` | yes | Absolute or repo-relative path to alternate workflow directory |
 | `requested_by` | no | Stored as `created_by` in metadata |
 
 **Response `201`:**
@@ -420,20 +420,16 @@ normalization.
 Issue endpoints are the supported interface for agents and automation. They read and
 write the same markdown issue files the runner uses internally.
 
-Scopes:
-
-- `physicalplan` — quest-level `physicalplan_issues.md` and
-  `physicalplan_issue_responses.md`
-- `polishing` — slice-level `polishing_issues.md` and
-  `polishing_issue_responses.md` (requires `slice`)
+Each request names a workflow-declared issue file with `issue_file` (quest-relative
+path). For the default main-quest workflow, examples include
+`physicalplan_issues.md` and `slices/<slice_dir>/polishing_issues.md`.
 
 ### `GET /api/issues`
 
 List issues.
 
-Query parameters: `project`, `quest_type`, `quest_number`, `scope`, optional `slice`
-(required for `polishing`), optional `status` (`open`, `completed`, or `all`; default
-`all`), optional `experiment_id`.
+Query parameters: `project`, `quest_type`, `quest_number`, `issue_file`, optional
+`status` (`open`, `completed`, or `all`; default `all`), optional `experiment_id`.
 
 **Response `200`:**
 
@@ -465,9 +461,9 @@ Physical-plan issue IDs use `QP-NNNN`; polishing issue IDs use `PL-NNNN`.
 
 Create an issue.
 
-**Request body (JSON):** `project`, `quest_type`, `quest_number`, `scope`, optional
-`slice`, `title`, `body` (or `details`), optional `status` (default `open`),
-optional `experiment_id`.
+**Request body (JSON):** `project`, `quest_type`, `quest_number`, `issue_file`,
+`title`, `body` (or `details`), optional `status` (default `open`), optional
+`experiment_id`.
 
 ### `PATCH /api/issues/<issue_id>`
 

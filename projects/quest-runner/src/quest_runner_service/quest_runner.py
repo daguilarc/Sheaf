@@ -22,7 +22,7 @@ from .harness import (
     HarnessResponse,
     create_harness,
 )
-from .quest_service import FatalInvariantError
+from .errors import FatalInvariantError
 from .quest_thread import (
     QuestThread,
     persist_thread_last_used,
@@ -752,31 +752,6 @@ def role_thread_key(role_name: str, slice_dir: Path | None) -> str:
     return render_thread_registry_key(exec_ctx)
 
 
-@dataclass
-class TransitionPlan:
-    """Describes all state changes for a single runner step."""
-
-    quest_prev: QuestState | None = None
-    quest_next: QuestState | None = None
-    slice_dir: Path | None = None
-    slice_prev: SliceState | None = None
-    slice_next: SliceState | None = None
-    new_current_slice: int | None = None
-    scaffold_slice: bool = False
-
-    @property
-    def has_quest_transition(self) -> bool:
-        return self.quest_prev is not None and self.quest_next is not None
-
-    @property
-    def has_slice_transition(self) -> bool:
-        return self.slice_prev is not None and self.slice_next is not None
-
-    @property
-    def is_noop(self) -> bool:
-        return not self.has_quest_transition and not self.has_slice_transition
-
-
 def _get_slice_dir(quest_dir: Path, index: int) -> Path:
     prefix = f"{index:04d}_"
     for p in quest_fs.list_slice_dirs(quest_dir):
@@ -791,79 +766,12 @@ def _slice_path_for_quest(quest_dir: Path, q: QuestStateInfo) -> Path | None:
     return _get_slice_dir(quest_dir, q.current_slice)
 
 
-def build_v2_transition_plan(
-    quest_dir: Path,
-    bq: QuestStateInfo,
-    aq: QuestStateInfo,
-    bsi: SliceStateInfo | None,
-    asi: SliceStateInfo | None,
-) -> TransitionPlan:
-    """Diff before/after quest reads into a :class:`TransitionPlan` (v2 runner)."""
-    plan = TransitionPlan()
-    if (
-        bq.state != aq.state
-        or bq.current_slice != aq.current_slice
-        or (bq.active_slice or "") != (aq.active_slice or "")
-    ):
-        plan.quest_prev = bq.state
-        plan.quest_next = aq.state
-        plan.new_current_slice = aq.current_slice
-    bsp = _slice_path_for_quest(quest_dir, bq)
-    asp = _slice_path_for_quest(quest_dir, aq)
-    if bsi is not None and asi is not None:
-        if bsi.state != asi.state:
-            sd = asp or bsp
-            if sd is not None:
-                plan.slice_dir = sd
-                plan.slice_prev = bsi.state
-                plan.slice_next = asi.state
-    if plan.has_slice_transition:
-        if (
-            plan.slice_prev == SliceState.NotStarted
-            and plan.slice_next == SliceState.Implementing
-        ):
-            plan.scaffold_slice = True
-    return plan
-
-
-def find_next_slice(quest_dir: Path, current_slice: int) -> int | None:
-    indices: list[int] = []
-    for p in quest_fs.list_slice_dirs(quest_dir):
-        idx = slice_index_from_dirname(p.name)
-        if idx is not None:
-            indices.append(idx)
-    indices.sort()
-    larger = [i for i in indices if i > current_slice]
-    return larger[0] if larger else None
-
-
-def scaffold_slice_dir(slice_dir: Path) -> None:
-    state_path = slice_dir / "state.md"
-    if not state_path.exists():
-        quest_fs.write_slice_state(
-            slice_dir,
-            SliceStateInfo(state=SliceState.NotStarted, updated_at=utc_now_iso()),
-        )
-    history_path = slice_dir / "state_history.md"
-    if not history_path.exists():
-        history_path.write_text("# State Transition History\n", encoding="utf-8")
-    issues_path = slice_dir / "polishing_issues.md"
-    if not issues_path.exists():
-        issues_path.write_text("# Issues\n", encoding="utf-8")
-    (slice_dir / "notes").mkdir(exist_ok=True)
-
-
 def _write_human_intervention(quest_dir: Path, reason: str, detail: str = "") -> None:
     p = quest_dir / "human_intervention_request.md"
     p.write_text(
         f"# Human intervention requested\n\n**Reason:** {reason}\n\n{detail}\n",
         encoding="utf-8",
     )
-
-
-def _remove_file_if_exists(path: Path) -> None:
-    if path.exists():
-        path.unlink()
 
 
 def git_rev_parse_head(repo_path: Path) -> str:
@@ -875,28 +783,6 @@ def git_rev_parse_head(repo_path: Path) -> str:
     if r.returncode != 0:
         fatal_invariant(f"git rev-parse HEAD failed: {r.stderr}")
     return r.stdout.strip()
-
-
-def apply_transition_filesystem_side_effects(
-    quest_dir: Path,
-    plan: TransitionPlan,
-) -> None:
-    """Scaffold/removals for v2 single-commit steps (``execute_v2_top_level_step``)."""
-    if plan.scaffold_slice and plan.slice_dir is not None:
-        scaffold_slice_dir(plan.slice_dir)
-    if (
-        plan.has_quest_transition
-        and plan.quest_prev == QuestState.ReviewPhysicalPlan
-        and plan.quest_next == QuestState.PhysicalPlanning
-    ):
-        _remove_file_if_exists(quest_dir / _PHYSICAL_PLAN_ACCEPTED_FILE)
-    if (
-        plan.has_slice_transition
-        and plan.slice_dir is not None
-        and plan.slice_prev == SliceState.PolishingReview
-        and plan.slice_next == SliceState.PolishingFix
-    ):
-        _remove_file_if_exists(plan.slice_dir / _IMPLEMENTATION_ACCEPTED_FILE)
 
 
 def send_with_retry(
