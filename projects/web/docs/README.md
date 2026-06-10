@@ -1,45 +1,34 @@
-# Web Docs
+# Web — Living Spec
 
-## Overview
+The web project is the repository's shared browser-asset library: plain CSS
+and JavaScript files under `projects/web/src/` that other projects' service
+dashboards serve verbatim at `/assets/web/<filename>`. It owns the shared
+page stylesheet (`sheaf.css`) and the AGUI streaming-chat widget
+(`agui-chat.js` + `agui-chat.css`); it owns no service, API, or
+project-specific behavior.
 
-The `web` project provides shared presentation assets for command hub browser
-interfaces. It does not own service logic, REST APIs, lifecycle behavior, or
-project-specific browser JavaScript.
+This directory is the project's living spec under the rules in
+[Docs Structure](../../../structure/docs-structure.md): normative
+requirements with stable IDs, held to the rebuild-test standard. Spec status
+and known gaps are tracked in [coverage.md](coverage.md).
 
-## Reference
+- [Operations](operations.md) — build, test, and how consumers load the
+  assets.
+- [Coverage](coverage.md) — rebuild-test audit and gap register.
 
-- [Renderer constraints](reference/renderer-constraints.md) — client-owned markdown
-  rendering and server streaming responsibilities
+The project is small enough to be a single capability; there is no separate
+`architecture.md` (the Design section of the capability file covers it).
 
-## Shared CSS
+## Capability Map
 
-`src/sheaf.css` is the shared stylesheet for command hub UIs. It defines:
+| Capability | Prefix | What it specifies |
+|---|---|---|
+| [web-utilities](capabilities/web-utilities.md) | `web` | The shared asset surface (`sheaf.css`, `agui-chat.css`, `agui-chat.js`), the `ChatView` API, AGUI event reduction and rendering, theming contracts, browser constraints, and how consumers serve the files |
 
-- CSS custom properties for background, surface, text, accent, and status colors
-- Base page layout (`.sheaf-page`, `.sheaf-header`)
-- Cards and tables (`.sheaf-card`, `.sheaf-table`)
-- Health badges (`.sheaf-status--healthy`, `.sheaf-status--unhealthy`)
-- Buttons (`.sheaf-button`, `.sheaf-button--primary`)
-- Log viewer styling (`.sheaf-log-view`)
+## Shared Contracts
 
-## How Conductor Consumes Shared Assets
-
-Conductor serves shared CSS from the repository copy of this project:
-
-```text
-GET /assets/web/sheaf.css  →  projects/web/src/sheaf.css
-```
-
-Conductor HTML templates link that URL in `<link rel="stylesheet">` tags. Conductor
-browser JavaScript and page-specific markup live under `projects/conductor/src/ui/` and
-are served separately at `/assets/conductor/*`.
-
-Other service projects with browser UIs can link the same stylesheet path if their
-backend exposes the file from `projects/web/src/`, or copy the asset URL pattern
-Conductor uses.
-
-## Adding Shared Assets
-
-Place new shared static files under `src/`. Document new surfaces here when they are
-added. Keep project-specific UI logic, API calls, and service controls in the consuming
-project, not in `projects/web/`.
+- [AGUI event schema](../../../structure/schemas/ag_ui_events.schema.json) —
+  canonical (repo-level) definition of the event vocabulary the chat widget
+  consumes; the capability file links it rather than restating shapes.
+- [Web UI rules](../../../structure/webui.md) — repo-level rules for what
+  belongs in this project.

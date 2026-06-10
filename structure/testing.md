@@ -142,5 +142,6 @@ Project testing docs should describe:
 - expected runtime data, temp directories, or cleanup behavior
 - any smoke or manual checks that are intentionally outside integration tests
 
-Prefer `projects/<project>/docs/reference/testing.md` for exact commands and
-contracts.
+Exact commands and contracts belong in `projects/<project>/docs/operations.md`,
+the normative operations document of the project's living spec. See
+[Docs Structure](docs-structure.md).

@@ -16,14 +16,16 @@ The `README.md` should be a concise entry point. Detailed current-state document
 
 ## Quests Versus Docs
 
-Quests are things to be done. Docs describe the current repo or project state.
+Docs are the **living spec**: a normative description of the project's
+current behavior, held to the rebuild-test standard in
+[Docs Structure](docs-structure.md). Quests are **delta specs**: descriptions
+of changes to be made against that living spec.
 
 - Put planned work, specs for future work, task state, and execution records in `quests/`.
-- Put architecture, APIs, operational behavior, data models, and current workflows in `docs/`.
-- When a quest changes the current state, update the relevant docs as part of completing the quest.
-- Use the documentation layout and hygiene rules in [Docs Structure](docs-structure.md).
-
-Quests will be managed by the future `quest_runner` project after it is migrated into this repo.
+- Put requirements, contracts, architecture, and operational procedures in `docs/`.
+- Completing a quest means merging its delta into the living spec: the
+  documenter updates the affected capability files, contracts, and
+  `docs/coverage.md` as the final quest phase.
 
 ## Configuration
 

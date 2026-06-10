@@ -1,52 +1,41 @@
-# Quest Runner Documentation
+# Quest Runner — Living Spec
 
-Human-facing documentation for the Quest Runner service.
+The quest runner is a service that executes **quests** — units of feature work
+— through a YAML-defined state machine of LLM-agent roles operating in git
+worktrees. It exposes an HTTP API and CLI for quest lifecycle, issues, slices,
+and experiments, plus a web dashboard with live agent-log streaming.
 
-Quest Runner is a Sheaf project service that creates, runs, and monitors
-filesystem-backed quests under `projects/<project>/quests/`. It exposes a Flask
-service on port `9002`, serves a project-aware dashboard at `/dashboard`, creates
-deterministic git worktrees for new quests, and executes quests through the
-recursive quest state machine.
+This directory is the project's living spec under the rules in
+[Docs Structure](../../../structure/docs-structure.md): normative
+requirements with stable IDs, held to the rebuild-test standard. Spec status
+and known gaps are tracked in [coverage.md](coverage.md).
 
-Quest Runner is separate from `projects/conductor/`. It does not manage other
-services, expose MCP routes, stream service logs, use SQLite, or maintain a
-database-backed quest index.
+- [Architecture](architecture.md) — components, execution data flow, key
+  design decisions.
+- [Operations](operations.md) — build, run, test, and operate, from fresh
+  checkout.
+- [Coverage](coverage.md) — rebuild-test audit and gap register.
 
-Runtime quest schema and role prompt reference content is bundled under
-`src/quest_runner_service/quest_docs/` for harness prompt injection. That package
-directory is not part of this docs tree; see
-[src/quest_runner_service/quest_docs/README.md](../src/quest_runner_service/quest_docs/README.md).
+## Capability Map
 
-## Reference
+| Capability | Prefix | What it specifies |
+|---|---|---|
+| [quest-lifecycle](capabilities/quest-lifecycle.md) | `ql` | Create, run, advance, upgrade, and land quests; worktrees, branches, commit conventions, human-intervention pauses |
+| [service-lifecycle](capabilities/service-lifecycle.md) | `svc` | The long-running service process: health, exit, startup, registry entry, CLI base-URL resolution |
+| [state-machine-engine](capabilities/state-machine-engine.md) | `sm` | The workflow YAML language semantics: machines, transitions, conditions, actions, variables, collections, the step model |
+| [workflow-config](capabilities/workflow-config.md) | `wf` | The `workflow/` package format: workflow.yaml, profiles, prompts, preamble; the packaged default eight-role pipeline |
+| [agent-harness](capabilities/agent-harness.md) | `ah` | Harness adapters (codex, claude_code, cursor), thread registry, step logs, path enforcement, the agent VM |
+| [issues](capabilities/issues.md) | `iss` | Issue files, issue HTTP API, issue CLI, ownership and response semantics |
+| [slices](capabilities/slices.md) | `sl` | Slice initialization API/CLI, naming, numbering, scaffolding |
+| [experiments](capabilities/experiments.md) | `exp` | Replay experiments: create, scoped runs, stop conditions, landing/archival |
+| [dashboard](capabilities/dashboard.md) | `dash` | The dashboard SPA and `/api/dashboard/*` data endpoints, including git views |
+| [chat-stream](capabilities/chat-stream.md) | `chat` | WebSocket agent-log streaming and quest-event → AGUI mapping |
 
-Exact APIs, layout, configuration, and test commands:
+## Shared Contracts
 
-- [API Reference](reference/api.md)
-- [CLI](reference/cli.md)
-- [Dashboard](reference/dashboard.md)
-- [Agent chat UI](reference/chat-ui.md)
-- [AGUI event mapping](reference/agui-mapping.md)
-- [Quest directory layout](reference/layout.md)
-- [Runtime files](reference/runtime-files.md)
-- [Workflow](reference/workflow.md)
-- [Configuration](reference/config.md)
-- [Testing](reference/testing.md)
-
-## How-to
-
-- [Run the service](how-to/run-service.md)
-- [Replay a quest as an experiment](how-to/replay-experiment.md)
-
-## Explanation
-
-- [Architecture](explanation/architecture.md)
-- [Quest lifecycle](explanation/lifecycle.md) — create, run, worktree, and experiment replay
-
-## Related repository docs
-
-Repository-wide rules live under `structure/` at the repo root:
-
-- [Services](../../../structure/services.md)
-- [Configuration](../../../structure/configuration.md)
-- [Logs and data](../../../structure/logs-and-data.md)
-- [Docs structure](../../../structure/docs-structure.md)
+- [Runtime files](contracts/runtime-files.md) — the quest directory layout
+  and every persistent file format (meta.json, state.md, thread registry,
+  sentinels, step logs, issue files, experiments).
+- [Agent harness event schema](../../../structure/agent-harness-event-schema.md)
+  — the tagged-union schema for step-log events (repo-level, shared across
+  projects).

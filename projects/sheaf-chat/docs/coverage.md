@@ -1,0 +1,144 @@
+# Spec Coverage
+
+Last audit: living-spec migration (one-time rewrite from code), 2026-06-10
+
+> The **file-server** capability is being added by quest
+> `sheaf-chat/main/0001_file_server` (in flight, separate worktree) and is
+> intentionally not documented here: it has not landed in `src/`. Its delta
+> spec will be merged into these docs when the quest lands.
+
+| Capability | Status | Gaps |
+|---|---|---|
+| service | partial | no shutdown surface, profiling points unenumerated, registry fields unused |
+| piles-sessions | partial | provisional file never deleted, `lastOpenedAt` never refreshed, mtime-based pile freshness |
+| session-history | partial | external-writer cache staleness, no retention, `messageCount` unmaintained |
+| chat-protocol | partial | WS close codes, hub lifetime, `client.hello` unused, `clientId` echo semantics |
+| agent-runtime | partial | no LLM summarizer wired, `followUp` handle method unused, failed-state recovery loose |
+| models | partial | one-shot fetch, OpenAI OAuth dir unused, no refresh surface |
+| agui-mapping | partial | events carry no timestamps in practice, schema validator off hot path |
+| scoped-tools | partial | path-escape activity wired to a no-op, audit log in-memory only |
+| chat-ui | partial | fixed reconnect delay, unbounded outbound queue, shared renderer out of scope |
+
+## Known gaps
+
+### service
+- There is no shutdown/exit endpoint or graceful-close path in production;
+  `server.close()` exists for tests only. Recovery after a kill mid-append
+  relies on the history log's parse-skip behavior and is unspecified.
+- The `command` and `home_path` fields of the `services.json` entry are not
+  read by this service (boot uses only `host`/`port`).
+- The full set of `SHEAF_CHAT_PROFILE_STREAM` checkpoint names is not
+  enumerated (Design-level only; the format is specified in svc-12).
+- The service writes no log files; whether it should follow the
+  `logs/<service>/` convention in
+  [structure/logs-and-data.md](../../../structure/logs-and-data.md) is
+  unresolved.
+
+### piles-sessions
+- `<sessionId>.provisional.json` is never deleted after the manifest is
+  written; both files coexist and the manifest wins on resume.
+- `manifest.lastOpenedAt` is set at creation and never refreshed; no code
+  path passes `lastOpenedAt` to `UpdateManifest`.
+- `ListPiles.latestUpdatedAt` uses manifest file mtime, not the manifest's
+  `updatedAt` field; the two can diverge (e.g. after copying data dirs).
+- Pile deletion/rename and session deletion have no API — intentionally
+  absent.
+- Concurrent `POST /api/piles` for the same name is idempotent (mkdir
+  recursive), but no test pins it.
+
+### session-history
+- The in-process latest-sequence cache means envelopes appended to the log
+  file by an external writer during process lifetime are not seen by
+  sequence allocation; behavior is unspecified.
+- Paging loads the entire log per request; no size/retention/compaction
+  story exists for long sessions.
+- `manifest.history.messageCount` is written as 0 and never incremented
+  (also noted in the session-files contract).
+- Appends are not fsynced; durability on crash is OS-default.
+
+### chat-protocol
+- WebSocket close codes are unspecified (`ws` defaults; nothing pinned).
+- `SessionPersistenceHub`s are never released: after all clients detach,
+  the hub keeps subscribing and persisting agent events for the session
+  until process exit. Memory growth over many sessions is unaddressed.
+- `client.hello` capabilities (`supportsSnapshots`, `supportsLazyHistory`,
+  `lastSeenSequence`) are parsed and ignored; intended semantics
+  unspecified.
+- Which server frames carry `clientId` is inconsistent (connection-local
+  frames echo the connecting client's id; persisted broadcasts do not);
+  not specified beyond the envelope schema marking it optional.
+- The persisted `chat.user_message` payload records `steer: true` even when
+  the client omitted `steer` (the runtime delivery uses the raw value);
+  divergence is unspecified.
+
+### agent-runtime
+- No LLM-backed summarizer is wired; the `CreateSessionSummarizer.generate`
+  hook is test-only. Chat names are always the deterministic fallback.
+- `PiSessionHandle.followUp` exists but the runtime delivers non-steer
+  messages during streaming via `prompt(text, {streamingBehavior:
+  "followUp"})`; the unused method's purpose is unspecified.
+- A runtime in `failed` state stays in the registry; the next attach
+  retries startup, but there is no backoff or fail-fast policy.
+- `AgentStatusSnapshot` is only partially surfaced (`server.hello`); fields
+  like `isStreaming`, `activeRunCount`, `connectedClientCount` have no
+  external consumer and are unspecified beyond Design.
+- `lastOpenedAt` is never updated on attach (see piles-sessions).
+
+### models
+- The local model list is fetched once at process start; there is no
+  refresh endpoint, timer, or cache invalidation.
+- `data/sheaf-chat/auth/openai/` is resolved by `ResolveOpenAiAuthDir` and
+  asserted in tests, but no runtime path reads or writes it; the OpenAI
+  OAuth/subscription flow is not implemented in this service.
+- OpenAI availability delegates to Pi's `hasConfiguredAuth`; the exact
+  sources Pi consults (env vars, stored auth) are not specified here.
+- `BuildLocalProviderRegistration` falls back to base URL
+  `http://127.0.0.1/v1` when the config URL is null (registration always
+  happens); the fallback is effectively dead because such models are
+  unavailable, but it is unpinned.
+
+### agui-mapping
+- Mapped events carry `timestamp` only when the mapper context provides
+  `timestampMs`, and the persistence hub never does — so persisted AGUI
+  events have no timestamps and snapshot `timestamp` fields are absent in
+  practice.
+- `src/agui/schemaValidation.ts` (Ajv against the repository schema) is
+  exercised by tests only; runtime events are not schema-validated before
+  persistence.
+- `mapSheafActivityToAgui` uses a module-global mapper instance; its only
+  state use is event construction, but the sharing is unspecified.
+- The `rawEvent` echo on every mapped event roughly doubles persisted
+  payload size; intentionality is unspecified.
+
+### scoped-tools
+- The service binds the extension with a no-op `emitActivity`
+  (`CreateDefaultBindings()` in `src/agents/piAdapter.ts`), so
+  `sheaf_chat.path_escape_denied` activity never reaches the chat stream
+  even though [agui-mapping](capabilities/agui-mapping.md) defines the
+  mapping. Browser-visible escape reporting is currently aspirational.
+- The audit logger accumulates escape events in memory with no read
+  surface.
+- `find_files`/`search_text` with no `maxDepth` walk the full tree;
+  no time or size budget exists beyond match limits.
+- Binary detection is NUL-in-first-8KB only; UTF-8 validity is not
+  otherwise checked.
+
+### chat-ui
+- Reconnect is a fixed 1500 ms retry with no backoff or cap; the outbound
+  queue is unbounded in memory.
+- The shared transcript renderer (`projects/web/src/agui-chat.js`) is
+  consumed via its API but specified outside this project.
+- The history "limit 5000" initial load means very long sessions transfer
+  their whole recent log on open; no incremental initial strategy is
+  specified.
+- Browser support floor (e.g. `crypto.randomUUID` fallback path) is
+  untested/unspecified.
+
+## Observed code/spec mismatches (candidate fixes, not spec gaps)
+
+- The previous docs claimed the history page limit was capped at 200; the
+  code caps at 5000 (`x_maxHistoryLimit`). Docs now follow the code.
+- The previous docs claimed path-enforcement activity is visible to browser
+  clients; the wiring is a no-op (see scoped-tools gap).
+- The previous docs claimed session ids use the same pattern as pile names
+  (max 64 chars); session ids actually allow up to 128 chars.

@@ -10,11 +10,31 @@ A self-contained unit under [`projects/<project>/`](repo-layout.md#project-direc
 
 ## Quest
 
-A record of planned or active work. [Quests](project-rules.md#quests-versus-docs) describe things to be done, not the stable current state.
+A record of planned or active work. [Quests](project-rules.md#quests-versus-docs) describe things to be done, not the stable current state. A quest's `specs/` directory is a [delta spec](#delta-spec).
 
 ## Docs
 
-Current-state [documentation](docs-structure.md). Docs describe how the repo or project works now.
+A project's [living spec](#living-spec), kept under `projects/<project>/docs/`. See [Docs Structure](docs-structure.md).
+
+## Living Spec
+
+The normative description of a project's current behavior in its `docs/` directory, organized by [capability](#capability) and held to the [rebuild test](#rebuild-test) standard. See [Docs Structure](docs-structure.md).
+
+## Delta Spec
+
+A quest's `specs/` directory: requirements for a change, written against the [living spec](#living-spec). Completing a quest merges the delta into the living spec.
+
+## Capability
+
+A coherent externally visible behavior of a project, specified in one file under `docs/capabilities/`. See [Docs Structure](docs-structure.md#project-docs-layout).
+
+## Requirement ID
+
+A stable, append-only identifier (`<prefix>-<n>`) for one externally observable requirement in a capability file. Never renumbered or reused; retired requirements keep their ID with a `RETIRED` marker. See [Docs Structure](docs-structure.md#requirement-rules-ears).
+
+## Rebuild Test
+
+The living-spec quality bar: a fresh agent given only `docs/` and `tests/` could, in principle, reimplement the project and pass its tests. See [Docs Structure](docs-structure.md#the-rebuild-test).
 
 ## Service
 

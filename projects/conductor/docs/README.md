@@ -1,81 +1,33 @@
-# Conductor Docs
+# Conductor — Living Spec
 
-## Overview
+Conductor is the command hub service manager. It is a single Node.js process
+that reads the service registry (`config/services.json`, contract:
+[Services](../../../structure/services.md)), polls every registered service's
+`GET /health` on a fixed interval, exposes REST endpoints for service status
+and start/stop/restart, streams service log files over WebSocket, and serves a
+browser UI for observing and controlling services.
 
-Conductor is the command hub service manager. It reads `config/services.json`, polls
-registered service health every 30 seconds, exposes REST and WebSocket APIs, and serves
-a browser UI for observing and controlling services.
+This directory is the project's living spec under the rules in
+[Docs Structure](../../../structure/docs-structure.md): normative requirements
+with stable IDs, held to the rebuild-test standard. Spec status and known gaps
+are tracked in [coverage.md](coverage.md).
 
-Start Conductor from the repository root:
+- [Architecture](architecture.md) — process model, modules, data flow.
+- [Operations](operations.md) — build, run, test, and stop, from fresh
+  checkout.
+- [Coverage](coverage.md) — rebuild-test audit and gap register.
 
-```bash
-npm --prefix projects/conductor install
-npm --prefix projects/conductor run build
-npm --prefix projects/conductor start
-```
+## Capability Map
 
-The service binds to `0.0.0.0:9001` and serves the main UI at `/`.
+| Capability | Prefix | What it specifies |
+|---|---|---|
+| [service-management](capabilities/service-management.md) | `svc` | Startup and registry loading, health polling, conductor's own `/health` and `/exit`, the `/api/services` REST surface, start/stop/restart lifecycle actions, the npm package surface |
+| [log-access](capabilities/log-access.md) | `log` | Per-service log file listing and the WebSocket byte-range log streaming protocol (open/read_before/follow), including path-safety rules |
+| [web-ui](capabilities/web-ui.md) | `ui` | The browser UI: main service table page, per-service log viewer page, and constrained static asset serving |
 
-## Package Layout
+## Shared Contracts
 
-```text
-projects/conductor/
-  src/
-    main.ts               service entry point
-    server.ts             HTTP, WebSocket, and UI routes
-    health_poller.ts      30-second heartbeat polling
-    lifecycle.ts          start/stop/restart controls
-    logs.ts               log file listing and path validation
-    log_stream.ts         WebSocket log byte-range reads
-    websocket.ts          log stream WebSocket wiring
-    static.ts             constrained static asset serving
-    ui.ts                 HTML page templates
-    ui_helpers.ts         UI route helpers
-    ui/                   browser JavaScript (main.js, logs.js)
-  tests/                  automated backend and UI route tests
-  docs/
-    reference/api.md      REST and WebSocket API reference
-    how-to/operations.md  operator guide
-```
-
-Shared presentation assets come from `projects/web/`; see
-[projects/web/docs/README.md](../../web/docs/README.md).
-
-## Runtime Model
-
-`config/services.json` is the service registry. Conductor reads it at startup and does
-not maintain a separate service database. Each service entry includes `name`, `host`,
-`port`, `command`, and optional `home_path`.
-
-The health poller stores heartbeat state in memory. It polls every registered service's
-`GET /health` endpoint every 30 seconds and treats network errors, timeouts, invalid
-JSON, missing required fields, non-2xx responses, and `healthy: false` responses as
-unhealthy. Polling is observational only; lifecycle actions happen only through UI or
-API requests.
-
-Service logs are read from `logs/<service_name>/` under the repository root. Log APIs
-validate paths before reading and never use log file paths from URL query strings.
-
-## Build And Test
-
-From the repository root:
-
-```bash
-npm --prefix projects/conductor install
-npm --prefix projects/conductor test
-```
-
-The test command builds TypeScript and runs Node's built-in test runner against the
-compiled backend, log streaming, lifecycle, registry, REST, and UI route tests.
-
-## Documentation
-
-- [Runtime architecture](reference/runtime.md)
-- [REST and WebSocket API reference](reference/api.md)
-- [Operations guide](how-to/operations.md)
-
-## Related Structure Docs
-
-Repository-wide rules for services, logging, and project layout live under `structure/`.
-This project docs directory describes the Conductor service manager as it exists in this
-repository.
+None. Each schema is owned by exactly one capability and specified inline
+there. The service registry format is repository-level, owned by
+[structure/services.md](../../../structure/services.md), and is not restated
+here.

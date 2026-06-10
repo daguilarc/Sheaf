@@ -39,6 +39,7 @@ projects/<project>/
 - `src/` contains implementation code.
 - `tests/` contains automated tests and test fixtures. Integration tests, when
   present, belong under `tests/integration/`; see [Testing](testing.md).
-- `docs/` describes the current state of the project. See [Docs Structure](docs-structure.md).
+- `docs/` is the project's living spec: a normative description of current
+  behavior held to the rebuild-test standard. See [Docs Structure](docs-structure.md).
 
 Shared repo conventions are defined once in `structure/` and linked from project docs instead of being repeated.

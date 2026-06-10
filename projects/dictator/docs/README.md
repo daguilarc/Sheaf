@@ -1,26 +1,37 @@
-# Dictator Documentation
+# Dictator — Living Spec
 
-Current-state documentation for the migrated Dictator project under `projects/dictator/`.
+Dictator is the Sheaf dictation service: a macOS Swift service on port
+`9003` that transcribes WAV audio with local whisper.cpp, refines the
+transcript through a configurable LLM provider (Ollama or OpenAI with
+fallback), records every interaction, and exposes an operational web
+dashboard. A Launchpad Pro hardware controller drives the same pipeline
+in-process with OS-level text insertion, and an iOS keyboard host
+app/extension acts as a remote client.
 
-## Reference
+This directory is the project's living spec under the rules in
+[Docs Structure](../../../structure/docs-structure.md): normative
+requirements with stable IDs, held to the rebuild-test standard. Spec status
+and known gaps are tracked in [coverage.md](coverage.md).
 
-Exact APIs, configuration, commands, and data shapes:
+- [Architecture](architecture.md) — components, dictation data flow, key
+  design decisions.
+- [Operations](operations.md) — build, run, and test from a fresh checkout.
+- [Coverage](coverage.md) — rebuild-test audit and gap register.
 
-- [API](reference/api.md) — HTTP endpoints for health, dictation, web UI, and operational JSON APIs
-- [Configuration](reference/config.md) — `config/dictator.json`, `config/api_keys.json`, and service endpoint rules
-- [Launchpad](reference/launchpad.md) — Launchpad Pro MIDI controls for dictation and keystroke injection
-- [Services](reference/services.md) — Sheaf service registration, port `9003`, logs, and shutdown
-- [Data](reference/data.md) — `data/dictator/` layout, interaction records, and model binary policy
-- [Testing](reference/testing.md) — build, test, and migration validation commands
+## Capability Map
 
-## Explanation
+| Capability | Prefix | What it specifies |
+|---|---|---|
+| [dictation-pipeline](capabilities/dictation-pipeline.md) | `dp` | `POST /v1/dictate-audio`: headers, WAV validation, error catalogue; STT, prompt building, provider routing and fallback, interaction recording |
+| [service-lifecycle](capabilities/service-lifecycle.md) | `svc` | Startup (root discovery, registry, config/secrets, health warnings), CLI overrides, `/health`, `/exit`, SIGINT shutdown, 404/405 fallbacks, trace log |
+| [web-ui](capabilities/web-ui.md) | `web` | Static dashboard shell and all `/api/*` endpoints: status, config edit/options/reset, prompts, interaction history, models, key status |
+| [launchpad](capabilities/launchpad.md) | `lp` | Launchpad Pro layout JSON, dictation pads and states, Talon Lite mode, keystroke injection, shift latch, contextual backspace, safe-config restore, paste insertion |
+| [ios-keyboard](capabilities/ios-keyboard.md) | `ios` | iOS host app + keyboard extension: server URL resolution, upload contract usage, app-group session state machine, Darwin notifications, diagnostics |
 
-Architecture, pipeline behavior, and design rationale:
+## Shared Contracts
 
-- [Architecture](explanation/architecture.md) — project layout, service composition, and migration scope
-- [Dictation pipeline](explanation/dictation-pipeline.md) — STT, refinement, provider routing, and Talon Lite
-- [Web UI](explanation/web-ui.md) — browser-based operational dashboard replacing the legacy AppKit UI
-
-## Repository rules
-
-Sheaf-wide documentation rules live under `structure/` at the repository root. Dictator follows those conventions for configuration, services, logs, and data paths.
+- [Configuration files](contracts/config.md) — `config/dictator.json` keys
+  and defaults, `config/dictator.safe` semantics, `config/api_keys.json`.
+- [Interaction records](contracts/interactions.md) — the
+  `data/dictator/interactions/` hourly JSONL envelope, field meanings, and
+  buffer/startup-load policy.

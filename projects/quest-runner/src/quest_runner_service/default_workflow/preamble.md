@@ -7,8 +7,10 @@ Quest Runtime Context
 - Quest runner reference directory: $reference_docs
 
 {experiment_guidance}Use the quest's `specs/` directory as the implementation
-specification for this quest. Use the quest runner reference directory above for
-internal storage schemas and maintainer workflow rules.
+specification for this quest. The project docs directory above is the living
+spec of the project's current behavior; quest `specs/` are deltas against it.
+Use the quest runner reference directory above for internal storage schemas
+and maintainer workflow rules.
 
 ## Issue workflow (CLI)
 
