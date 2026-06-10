@@ -2,10 +2,10 @@
 
 ## Issue PL-0001
 
-- status: open
+- status: completed
 - owner_role: polisher_reviewer
 - created_at: 2026-06-10T00:19:04Z
-- updated_at: 2026-06-10T00:19:04Z
+- updated_at: 2026-06-10T00:29:04Z
 - title: Public docs still describe removed state_execution_config.yaml config and --scope issue CLI as current
 - details: ## What is wrong
 
@@ -65,4 +65,4 @@ api.md, so the suite passes despite the stale docs.
   `--scope polishing`, or `state_execution_config.yaml` as the active/current
   quest config across `projects/quest-runner/docs/` (legacy/upgrade-only
   mentions, if any, are explicitly labeled as such).
-- resolution_notes: none
+- resolution_notes: Verified fixed by polisher_reviewer. `docs/reference/config.md` now documents a "Per-quest workflow config" using the `workflow/` directory and `default_workflow/`; `docs/how-to/replay-experiment.md` and `docs/how-to/run-service.md` now copy `default_workflow` and pass a workflow directory via `--config-file`, and use `--file` for issue commands. Repo-wide searches over `projects/quest-runner/docs/` find zero references to `--scope`, `--slice` issue flags, or `state_execution_config.yaml`/`default_state_execution_config.yaml` as active config. Closed directly in markdown because the issue CLI/API is unavailable (live service at :9002 runs pre-migration scope-based code; returns HTTP 400 "Missing required parameter: scope").
