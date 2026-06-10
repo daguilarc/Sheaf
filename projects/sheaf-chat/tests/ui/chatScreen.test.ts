@@ -11,6 +11,7 @@ import markdownit from "markdown-it";
 const x_packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const x_sheafChatJsPath = path.join(x_packageRoot, "src", "ui", "sheaf-chat.js");
 const x_sheafMarkdownJsPath = path.join(x_packageRoot, "src", "ui", "sheaf-markdown.js");
+const x_sheafChatCssPath = path.join(x_packageRoot, "src", "ui", "sheaf-chat.css");
 const x_aguiChatJsPath = path.resolve(x_packageRoot, "..", "web", "src", "agui-chat.js");
 
 type Listener = (event: Record<string, unknown>) => void;
@@ -688,6 +689,14 @@ function RequiredElement(root: FakeElement, selector: string): FakeElement
   return element;
 }
 
+function CssRuleBody(cssText: string, selector: string): string
+{
+  const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = new RegExp("^" + escapedSelector + "\\s*\\n\\{\\n([\\s\\S]*?)\\n\\}", "m").exec(cssText);
+  assert.ok(match, "expected CSS rule for " + selector);
+  return match[1];
+}
+
 function ExplorerFileButton(root: FakeElement, name: string): FakeElement
 {
   const button = root
@@ -1285,6 +1294,27 @@ test("mobile tab panel opens from right with vertical tabs", async () =>
   assert.match(
     RequiredElement(harness.app, ".sheaf-chat-mobile-file-title").textContent,
     /readme\.md/,
+  );
+});
+
+test("mobile chat safe-area inset is applied once below composer", () =>
+{
+  const cssText = fs.readFileSync(x_sheafChatCssPath, "utf8");
+  const chatPanelRule = CssRuleBody(cssText, ".sheaf-chat-mobile-panel--chat");
+  const composerRule = CssRuleBody(
+    cssText,
+    ".sheaf-chat-mobile-panel--chat .sheaf-chat-composer",
+  );
+  const mobileBottomInsetRules = chatPanelRule + composerRule;
+
+  assert.doesNotMatch(chatPanelRule, /safe-area-inset-bottom/);
+  assert.match(
+    composerRule,
+    /padding-bottom:\s*calc\(10px \+ env\(safe-area-inset-bottom, 0px\)\)/,
+  );
+  assert.equal(
+    mobileBottomInsetRules.match(/safe-area-inset-bottom/g)?.length,
+    1,
   );
 });
 

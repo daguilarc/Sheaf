@@ -705,7 +705,6 @@ body
   transform: translateY(100%);
   border-top: 1px solid var(--sheaf-chat-border);
   border-radius: 12px 12px 0 0;
-  padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 .sheaf-chat-mobile-panel--chat.sheaf-chat-mobile-panel--open
