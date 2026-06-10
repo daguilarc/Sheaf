@@ -5,8 +5,12 @@ import test from "node:test";
 import vm from "node:vm";
 import { fileURLToPath } from "node:url";
 
+import katex from "katex";
+import markdownit from "markdown-it";
+
 const x_packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const x_sheafChatJsPath = path.join(x_packageRoot, "src", "ui", "sheaf-chat.js");
+const x_sheafMarkdownJsPath = path.join(x_packageRoot, "src", "ui", "sheaf-markdown.js");
 const x_aguiChatJsPath = path.resolve(x_packageRoot, "..", "web", "src", "agui-chat.js");
 
 type Listener = (event: Record<string, unknown>) => void;
@@ -17,7 +21,13 @@ class FakeElement
   public readonly nodeName: string;
   public className = "";
   public readonly dataset: Record<string, string> = {};
-  public readonly style: Record<string, string> = {};
+  public readonly style = {
+    setProperty(name: string, value: string): void {
+      (this as Record<string, string>)[name] = value;
+    },
+  } as Record<string, string> & {
+    setProperty: (name: string, value: string) => void;
+  };
   public readonly children: FakeElement[] = [];
   public parentNode: FakeElement | null = null;
   public type = "";
@@ -36,6 +46,7 @@ class FakeElement
   public clientHeight = 0;
   private x_textContent = "";
   private x_innerHTML = "";
+  private readonly x_attributes = new Map<string, string>();
   private readonly x_listeners: Record<string, Listener[]> = {};
 
   public readonly classList = {
@@ -108,6 +119,17 @@ class FakeElement
     this.children.length = 0;
     this.x_innerHTML = value != null ? String(value) : "";
     this.x_textContent = this.x_innerHTML.replace(/<[^>]*>/g, "");
+    this.x_ParseSimpleHtml(this.x_innerHTML);
+  }
+
+  public getAttribute(name: string): string | null
+  {
+    return this.x_attributes.has(name) ? this.x_attributes.get(name)! : null;
+  }
+
+  public setAttribute(name: string, value: string): void
+  {
+    this.x_attributes.set(name, value);
   }
 
   public appendChild(child: FakeElement): FakeElement
@@ -185,6 +207,12 @@ class FakeElement
   public dispatchEvent(event: Record<string, unknown>): boolean
   {
     const type = String(event.type || "");
+    if (typeof event.preventDefault !== "function") {
+      event.preventDefault = () => undefined;
+    }
+    if (typeof event.stopPropagation !== "function") {
+      event.stopPropagation = () => undefined;
+    }
     for (const handler of this.x_listeners[type] || []) {
       handler(event);
     }
@@ -203,20 +231,55 @@ class FakeElement
 
   public querySelectorAll(selector: string): FakeElement[]
   {
+    const parts = selector.trim().split(/\s+/).filter(Boolean);
     const results: FakeElement[] = [];
-    const matcher = this.x_CreateMatcher(selector);
-    const stack = [...this.children];
+    const stack: FakeElement[] = [this];
+
     while (stack.length > 0) {
       const node = stack.shift();
       if (!node) {
         continue;
       }
-      if (matcher(node)) {
+
+      if (parts.length === 1) {
+        if (this.x_MatchesSelector(node, parts[0])) {
+          results.push(node);
+        }
+      } else if (this.x_MatchesDescendantSelector(node, parts)) {
         results.push(node);
       }
+
       stack.push(...node.children);
     }
+
     return results;
+  }
+
+  private x_ParseSimpleHtml(html: string): void
+  {
+    const tagRegex = /<([a-zA-Z][\w-]*)\b([^>]*)>/g;
+    let match: RegExpExecArray | null = tagRegex.exec(html);
+
+    while (match) {
+      const tagName = match[1];
+      const attributes = match[2] || "";
+      const element = new FakeElement(tagName);
+      const classMatch = /\bclass="([^"]*)"/.exec(attributes);
+      if (classMatch) {
+        element.className = classMatch[1];
+      }
+      const hrefMatch = /\bhref="([^"]*)"/.exec(attributes);
+      if (hrefMatch) {
+        element.setAttribute("href", hrefMatch[1]);
+      }
+      const idMatch = /\bid="([^"]*)"/.exec(attributes);
+      if (idMatch) {
+        element.id = idMatch[1];
+      }
+      element.parentNode = this;
+      this.children.push(element);
+      match = tagRegex.exec(html);
+    }
   }
 
   private x_ClassNames(): string[]
@@ -224,14 +287,55 @@ class FakeElement
     return this.className.split(/\s+/).filter(Boolean);
   }
 
-  private x_CreateMatcher(selector: string): (node: FakeElement) => boolean
+  private x_MatchesSelector(node: FakeElement, selector: string): boolean
   {
     if (selector.startsWith(".")) {
       const className = selector.slice(1);
-      return (node: FakeElement) => node.x_ClassNames().includes(className);
+      return node.x_ClassNames().includes(className);
     }
-    const tagName = selector.toUpperCase();
-    return (node: FakeElement) => node.tagName === tagName;
+
+    if (selector.includes("[")) {
+      const tagMatch = /^([a-zA-Z][\w-]*)/.exec(selector);
+      const attrMatch = /\[([^\]=]+)(?:="([^"]*)")?\]/.exec(selector);
+      if (tagMatch && node.tagName !== tagMatch[1].toUpperCase()) {
+        return false;
+      }
+      if (attrMatch) {
+        const attrValue = node.getAttribute(attrMatch[1]);
+        if (attrMatch[2] != null) {
+          return attrValue === attrMatch[2];
+        }
+        return attrValue != null;
+      }
+    }
+
+    return node.tagName === selector.toUpperCase();
+  }
+
+  private x_MatchesDescendantSelector(node: FakeElement, parts: string[]): boolean
+  {
+    if (!this.x_MatchesSelector(node, parts[parts.length - 1])) {
+      return false;
+    }
+
+    let current: FakeElement | null = node;
+    for (let index = parts.length - 2; index >= 0; index -= 1) {
+      let found = false;
+      let parent: FakeElement | null = current ? current.parentNode : null;
+      while (parent) {
+        if (this.x_MatchesSelector(parent, parts[index])) {
+          found = true;
+          current = parent;
+          break;
+        }
+        parent = parent.parentNode;
+      }
+      if (!found) {
+        return false;
+      }
+    }
+
+    return true;
   }
 }
 
@@ -260,6 +364,21 @@ class FakeDocument
   {
     this.x_listeners[type] = this.x_listeners[type] || [];
     this.x_listeners[type].push(handler);
+  }
+
+  public removeEventListener(type: string, handler: Listener): void
+  {
+    this.x_listeners[type] = (this.x_listeners[type] || []).filter(
+      (entry) => entry !== handler,
+    );
+  }
+
+  public dispatchEvent(event: Record<string, unknown>): void
+  {
+    const type = String(event.type || "");
+    for (const handler of this.x_listeners[type] || []) {
+      handler(event);
+    }
   }
 }
 
@@ -332,6 +451,7 @@ class FakeWebSocket
 interface ChatHarness
 {
   app: FakeElement;
+  document: FakeDocument;
   location: { hash: string; protocol: string; host: string };
   sockets: FakeWebSocket[];
   handles: any[];
@@ -353,10 +473,72 @@ function JsonResponse(body: unknown, ok = true): FakeFetchResponse
   };
 }
 
+function DefaultFileFetch(path: string): FakeFetchResponse | null
+{
+  const filesMatch = path.match(
+    /\/api\/piles\/[^/]+\/sessions\/[^/]+\/files\?path=(.+)$/,
+  );
+  if (filesMatch) {
+    const directoryPath = decodeURIComponent(filesMatch[1]);
+    if (directoryPath === ".") {
+      return JsonResponse({
+        directory: { name: ".", path: ".", kind: "directory" },
+        entries: [
+          {
+            name: "readme.md",
+            path: "docs/readme.md",
+            kind: "file",
+            supported: true,
+            contentType: "text/markdown",
+          },
+          {
+            name: "other.md",
+            path: "docs/other.md",
+            kind: "file",
+            supported: true,
+            contentType: "text/markdown",
+          },
+        ],
+      });
+    }
+    return JsonResponse({
+      directory: { name: directoryPath, path: directoryPath, kind: "directory" },
+      entries: [],
+    });
+  }
+
+  const fileMatch = path.match(
+    /\/api\/piles\/[^/]+\/sessions\/[^/]+\/file\?path=(.+)$/,
+  );
+  if (fileMatch) {
+    const filePath = decodeURIComponent(fileMatch[1]);
+    const contents: Record<string, string> = {
+      "docs/readme.md": "# Readme\n\nSee [other](./other.md).\n",
+      "docs/other.md": "# Other\n\nBackground file.\n",
+    };
+    const content = contents[filePath] || "# Missing\n";
+    return JsonResponse({
+      file: {
+        name: filePath.split("/").pop(),
+        path: filePath,
+        kind: "file",
+        supported: true,
+        contentType: "text/markdown",
+        content,
+        size: content.length,
+        modifiedAt: "2026-06-08T00:00:00.000Z",
+      },
+    });
+  }
+
+  return null;
+}
+
 function LoadChatHarness(options?: {
   fetch?: (path: string, request?: Record<string, unknown>) => Promise<FakeFetchResponse>;
   hash?: string;
   touch?: boolean;
+  markdown?: boolean;
 }): ChatHarness
 {
   const document = new FakeDocument();
@@ -378,7 +560,9 @@ function LoadChatHarness(options?: {
     WebSocket: FakeWebSocket,
     document,
     location,
-    fetch: options?.fetch || (async () => JsonResponse({})),
+    fetch:
+      options?.fetch ||
+      (async (path: string) => DefaultFileFetch(path) || JsonResponse({})),
     localStorage: {
       getItem: () => null,
       setItem: () => undefined,
@@ -421,6 +605,11 @@ function LoadChatHarness(options?: {
   }
 
   vm.createContext(context);
+  if (options?.markdown !== false) {
+    context.markdownit = markdownit;
+    context.katex = katex;
+    vm.runInContext(fs.readFileSync(x_sheafMarkdownJsPath, "utf8"), context);
+  }
   vm.runInContext(fs.readFileSync(x_aguiChatJsPath, "utf8"), context);
 
   const handles: any[] = [];
@@ -435,6 +624,7 @@ function LoadChatHarness(options?: {
 
   return {
     app: document.app,
+    document,
     location,
     sockets: FakeWebSocket.instances,
     handles,
@@ -496,6 +686,15 @@ function RequiredElement(root: FakeElement, selector: string): FakeElement
   const element = root.querySelector(selector);
   assert.ok(element, "expected " + selector + " to exist");
   return element;
+}
+
+function ExplorerFileButton(root: FakeElement, name: string): FakeElement
+{
+  const button = root
+    .querySelectorAll(".sheaf-chat-explorer-file")
+    .find((entry) => entry.textContent.includes(name));
+  assert.ok(button, "expected explorer file button for " + name);
+  return button;
 }
 
 function KeyDown(element: FakeElement, key: string, shiftKey = false): Record<string, any>
@@ -824,4 +1023,227 @@ test("touch and desktop layout classes drive enter-key send behavior", () =>
   assert.equal(touchEnter.prevented, false);
   assert.equal(touchTextarea.value, "Enter inserts newline on touch");
   assert.equal(Frames(touchSocket, "client.user_message").length, 0);
+});
+
+test("desktop workspace renders explorer, file, and chat panes", async () =>
+{
+  const harness = LoadChatHarness();
+  await FlushPromises();
+
+  RequiredElement(harness.app, ".sheaf-chat-workspace");
+  RequiredElement(harness.app, ".sheaf-chat-explorer-pane");
+  RequiredElement(harness.app, ".sheaf-chat-file-pane");
+  RequiredElement(harness.app, ".sheaf-chat-chat-pane");
+  RequiredElement(harness.app, ".sheaf-chat-tab-bar");
+  RequiredElement(harness.app, ".sheaf-chat-file-view");
+});
+
+test("explorer file rows open tabs and switching updates selected content", async () =>
+{
+  const harness = LoadChatHarness();
+  await FlushPromises();
+
+  ExplorerFileButton(harness.app, "readme.md").click();
+  await FlushPromises();
+
+  const selectedTab = RequiredElement(harness.app, ".sheaf-chat-tab--selected");
+  assert.match(selectedTab.textContent, /readme\.md/);
+  assert.match(harness.app.textContent, /Readme/);
+
+  const tabs = harness.app.querySelectorAll(".sheaf-chat-tab");
+  assert.equal(tabs.length, 1);
+
+  ExplorerFileButton(harness.app, "other.md").click();
+  await FlushPromises();
+
+  assert.equal(harness.app.querySelectorAll(".sheaf-chat-tab").length, 2);
+  assert.match(RequiredElement(harness.app, ".sheaf-chat-tab--selected").textContent, /other\.md/);
+  assert.match(harness.app.textContent, /Other/);
+
+  tabs[0].click();
+  await FlushPromises();
+  assert.match(RequiredElement(harness.app, ".sheaf-chat-tab--selected").textContent, /readme\.md/);
+  assert.match(harness.app.textContent, /Readme/);
+});
+
+test("closing a tab updates the selected file content", async () =>
+{
+  const harness = LoadChatHarness();
+  await FlushPromises();
+
+  ExplorerFileButton(harness.app, "readme.md").click();
+  await FlushPromises();
+
+  ExplorerFileButton(harness.app, "other.md").click();
+  await FlushPromises();
+
+  const closeButtons = harness.app.querySelectorAll(".sheaf-chat-tab-close");
+  assert.equal(closeButtons.length, 2);
+  closeButtons[0].click();
+  await FlushPromises();
+
+  assert.equal(harness.app.querySelectorAll(".sheaf-chat-tab").length, 1);
+  assert.match(RequiredElement(harness.app, ".sheaf-chat-tab--selected").textContent, /other\.md/);
+});
+
+test("collapse controls and resize handles update desktop panel state", async () =>
+{
+  const harness = LoadChatHarness();
+  await FlushPromises();
+
+  const explorerPane = RequiredElement(harness.app, ".sheaf-chat-explorer-pane");
+  const chatPane = RequiredElement(harness.app, ".sheaf-chat-chat-pane");
+  const explorerCollapse = RequiredElement(
+    harness.app,
+    ".sheaf-chat-explorer-pane .sheaf-chat-pane-collapse",
+  );
+  const chatCollapse = RequiredElement(
+    harness.app,
+    ".sheaf-chat-chat-pane .sheaf-chat-pane-collapse",
+  );
+
+  explorerCollapse.click();
+  assert.equal(explorerPane.classList.contains("sheaf-chat-explorer-pane--collapsed"), true);
+  chatCollapse.click();
+  assert.equal(chatPane.classList.contains("sheaf-chat-chat-pane--collapsed"), true);
+
+  const explorerResize = RequiredElement(harness.app, ".sheaf-chat-resize-handle--explorer");
+  explorerResize.dispatchEvent({
+    type: "mousedown",
+    clientX: 100,
+    preventDefault: () => undefined,
+  });
+
+  harness.document.dispatchEvent({ type: "mousemove", clientX: 180 });
+  harness.document.dispatchEvent({ type: "mouseup" });
+
+  const workspace = RequiredElement(harness.app, ".sheaf-chat-workspace");
+  assert.equal(workspace.style["--sheaf-chat-explorer-width"], "320px");
+});
+
+test("markdown file links and assistant file links open or focus tabs", async () =>
+{
+  const harness = LoadChatHarness();
+  const socket = harness.sockets[0];
+  await FlushPromises();
+
+  const readmeButton = RequiredElement(harness.app, ".sheaf-chat-explorer-file");
+  readmeButton.click();
+  await FlushPromises();
+
+  const fileLink = harness.app.querySelector(".sheaf-markdown-file-link");
+  assert.ok(fileLink, "expected rendered markdown file link");
+  fileLink.click();
+  await FlushPromises();
+
+  assert.equal(harness.app.querySelectorAll(".sheaf-chat-tab").length, 2);
+  assert.match(RequiredElement(harness.app, ".sheaf-chat-tab--selected").textContent, /other\.md/);
+
+  socket.open();
+  socket.receive(
+    ServerEnvelope("agui.event", {
+      type: "TEXT_MESSAGE_START",
+      messageId: "assistant-link",
+      role: "assistant",
+    }, 1),
+  );
+  socket.receive(
+    ServerEnvelope("agui.event", {
+      type: "TEXT_MESSAGE_CONTENT",
+      messageId: "assistant-link",
+      delta: "Open [readme](sheaf-file:docs/readme.md).",
+    }, 2),
+  );
+  socket.receive(
+    ServerEnvelope("agui.event", {
+      type: "TEXT_MESSAGE_END",
+      messageId: "assistant-link",
+    }, 3),
+  );
+  harness.flushAnimationFrames();
+  await FlushPromises();
+
+  const assistantLink = harness.app.querySelectorAll(".sheaf-markdown-file-link").find(
+    (link) => link.getAttribute("href") === "sheaf-file:docs/readme.md",
+  );
+  assert.ok(assistantLink, "expected assistant file link");
+  assistantLink.click();
+  await FlushPromises();
+
+  assert.match(RequiredElement(harness.app, ".sheaf-chat-tab--selected").textContent, /readme\.md/);
+});
+
+test("file.changed refetches selected tab and defers stale background tabs", async () =>
+{
+  const fetchCalls: string[] = [];
+  const harness = LoadChatHarness({
+    fetch: async (path) => {
+      fetchCalls.push(path);
+      const response = DefaultFileFetch(path);
+      assert.ok(response);
+      return response;
+    },
+  });
+  await FlushPromises();
+
+  ExplorerFileButton(harness.app, "readme.md").click();
+  await FlushPromises();
+
+  ExplorerFileButton(harness.app, "other.md").click();
+  await FlushPromises();
+
+  const countFileFetches = (filePath: string): number =>
+    fetchCalls.filter((path) => path.includes("/file?path=" + encodeURIComponent(filePath))).length;
+
+  assert.equal(countFileFetches("docs/readme.md"), 1);
+  assert.equal(countFileFetches("docs/other.md"), 1);
+
+  const socket = harness.sockets[0];
+  socket.receive(
+    ServerEnvelope("file.changed", {
+      eventType: "fileChanged",
+      path: "docs/readme.md",
+      fileId: "docs/readme.md",
+      changedAt: "2026-06-09T00:00:00.000Z",
+      source: "edit_tool",
+    }, 10),
+  );
+  await FlushPromises();
+
+  const readmeTab = harness.app
+    .querySelectorAll(".sheaf-chat-tab")
+    .find((tab) => tab.textContent.includes("readme.md"));
+  assert.ok(readmeTab);
+  assert.equal(readmeTab.classList.contains("sheaf-chat-tab--stale"), true);
+  assert.equal(countFileFetches("docs/readme.md"), 1);
+
+  readmeTab.click();
+  await FlushPromises();
+
+  const refreshedReadmeTab = harness.app
+    .querySelectorAll(".sheaf-chat-tab")
+    .find((tab) => tab.textContent.includes("readme.md"));
+  assert.ok(refreshedReadmeTab);
+  assert.equal(refreshedReadmeTab.classList.contains("sheaf-chat-tab--stale"), false);
+  assert.equal(countFileFetches("docs/readme.md"), 2);
+
+  const otherTab = harness.app
+    .querySelectorAll(".sheaf-chat-tab")
+    .find((tab) => tab.textContent.includes("other.md"));
+  assert.ok(otherTab);
+  otherTab.click();
+  await FlushPromises();
+
+  socket.receive(
+    ServerEnvelope("file.changed", {
+      eventType: "fileChanged",
+      path: "docs/other.md",
+      fileId: "docs/other.md",
+      changedAt: "2026-06-09T00:00:01.000Z",
+      source: "edit_tool",
+    }, 11),
+  );
+  await FlushPromises();
+
+  assert.equal(countFileFetches("docs/other.md"), 2);
 });

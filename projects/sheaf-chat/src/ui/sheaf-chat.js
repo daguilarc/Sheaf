@@ -10,6 +10,14 @@
   const x_InitialHistoryLimit = 5000;
   const x_NearTopHistoryThreshold = 80;
   const x_ReconnectDelayMs = 1500;
+  const x_ExplorerWidthKey = "sheaf-chat-explorer-width";
+  const x_ChatWidthKey = "sheaf-chat-chat-width";
+  const x_DefaultExplorerWidth = 240;
+  const x_DefaultChatWidth = 360;
+  const x_MinExplorerWidth = 160;
+  const x_MaxExplorerWidth = 480;
+  const x_MinChatWidth = 280;
+  const x_MaxChatWidth = 640;
 
   function CreateElement(tag, className) {
     const element = document.createElement(tag);
@@ -432,62 +440,88 @@
     };
   }
 
-  function RenderChatScreen(app, route) {
-    app.textContent = "";
-    if (!window.ChatView) {
-      const missing = CreateElement("p", "sheaf-chat-error");
-      missing.textContent = "Chat renderer failed to load.";
-      app.appendChild(missing);
-      return;
+  function Clamp(value, min, max) {
+    return Math.min(max, Math.max(min, value));
+  }
+
+  function ReadStoredNumber(key, fallback) {
+    try {
+      const raw = localStorage.getItem(key);
+      if (raw == null) {
+        return fallback;
+      }
+      const parsed = Number(raw);
+      if (!Number.isFinite(parsed)) {
+        return fallback;
+      }
+      return parsed;
+    } catch (_error) {
+      return fallback;
+    }
+  }
+
+  function WriteStoredNumber(key, value) {
+    try {
+      localStorage.setItem(key, String(value));
+    } catch (_error) {
+    }
+  }
+
+  function NormalizeTabPath(pathValue) {
+    if (pathValue == null) {
+      return null;
     }
 
-    const touchLayout = IsTouchLayout();
-    app.classList.toggle("sheaf-chat-touch", touchLayout);
-    app.classList.toggle("sheaf-chat-desktop", !touchLayout);
-
-    const screen = CreateElement("div", "sheaf-chat-screen sheaf-chat-chat-layout");
-    const header = CreateElement("header", "sheaf-chat-header");
-    const back = CreateElement("button", "sheaf-chat-back");
-    back.type = "button";
-    back.textContent = "Back";
-    back.addEventListener("click", function () {
-      NavigateTo({ screen: "sessions", pile: route.pile });
+    const decoded = String(pathValue).replace(/\\/g, "/");
+    const segments = decoded.split("/").filter(function (segment) {
+      return segment.length > 0;
     });
-    header.appendChild(back);
+    const normalized = [];
 
-    const title = CreateElement("h1", "sheaf-chat-header-title");
-    title.textContent = route.sessionId;
-    header.appendChild(title);
-    screen.appendChild(header);
+    for (let index = 0; index < segments.length; index += 1) {
+      const segment = segments[index];
+      if (segment === ".") {
+        continue;
+      }
+      if (segment === "..") {
+        return null;
+      }
+      normalized.push(segment);
+    }
 
-    const statusRow = CreateElement("div", "sheaf-chat-chat-status");
-    const connectionLabel = CreateElement("span");
-    connectionLabel.textContent = "Connecting…";
-    statusRow.appendChild(connectionLabel);
+    return normalized.join("/");
+  }
 
-    const modelSelect = CreateElement("select", "sheaf-chat-model-select");
-    statusRow.appendChild(modelSelect);
-    screen.appendChild(statusRow);
+  function BaseName(pathValue) {
+    const parts = String(pathValue).split("/");
+    return parts[parts.length - 1] || String(pathValue);
+  }
 
-    const chatMain = CreateElement("div", "sheaf-chat-chat-main");
-    const chatContainer = CreateElement("div", "sheaf-chat-chat-view");
-    chatMain.appendChild(chatContainer);
-    screen.appendChild(chatMain);
+  function EscapeSelector(value) {
+    if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
+      return CSS.escape(value);
+    }
+    return String(value).replace(/[^a-zA-Z0-9_-]/g, "\\$&");
+  }
 
-    const composer = CreateElement("div", "sheaf-chat-composer");
-    const textarea = CreateElement("textarea", "sheaf-chat-textarea");
-    textarea.rows = 1;
-    textarea.placeholder = "Message the agent…";
-    const sendButton = CreateElement(
-      "button",
-      "sheaf-chat-button sheaf-chat-button--primary sheaf-chat-send"
-    );
-    sendButton.type = "button";
-    sendButton.textContent = "Send";
-    composer.appendChild(textarea);
-    composer.appendChild(sendButton);
-    screen.appendChild(composer);
-    app.appendChild(screen);
+  function IsMarkdownContentType(contentType, pathValue) {
+    if (contentType === "text/markdown") {
+      return true;
+    }
+    const lower = String(pathValue).toLowerCase();
+    return lower.endsWith(".md") || lower.endsWith(".markdown");
+  }
+
+  function CreateChatSessionController(config) {
+    const route = config.route;
+    const touchLayout = config.touchLayout === true;
+    const title = config.title;
+    const connectionLabel = config.connectionLabel;
+    const modelSelect = config.modelSelect;
+    const chatContainer = config.chatContainer;
+    const composer = config.composer;
+    const textarea = config.textarea;
+    const sendButton = config.sendButton;
 
     let socket = null;
     let chatHandle = null;
@@ -502,6 +536,7 @@
     let reconnectTimer = null;
     let intentionalClose = false;
     const outboundQueue = [];
+    let fileChangedHandler = null;
 
     function UpdateComposerState() {
       const queuedCount = outboundQueue.length;
@@ -779,6 +814,11 @@
         return;
       }
 
+      if (kind === "file.changed" && payload && fileChangedHandler) {
+        fileChangedHandler(payload);
+        return;
+      }
+
       if (kind === "server.error" && payload) {
         connectionLabel.textContent = String(payload.message || "Server error");
       }
@@ -856,30 +896,6 @@
       }
     }
 
-    chatHandle = window.ChatView.create(chatContainer, {
-      onScrollNearTop: function () {
-        if (historyLoading || !hasMoreBefore || oldestSequence == null) {
-          return;
-        }
-        RequestHistory({ before: oldestSequence, limit: x_HistoryPageLimit });
-      },
-    });
-    UpdateComposerState();
-
-    modelSelect.addEventListener("change", function () {
-      const parts = modelSelect.value.split(":");
-      if (parts.length !== 2) {
-        return;
-      }
-      QueueOrSend(
-        CreateEnvelope("client.model_select", route.pile, route.sessionId, {
-          provider: parts[0],
-          id: parts[1],
-          applyTo: "next_turn",
-        })
-      );
-    });
-
     function SubmitMessage() {
       const text = textarea.value.trim();
       if (!text) {
@@ -900,10 +916,37 @@
       UpdateComposerState();
     }
 
+    function SetFileChangedHandler(handler) {
+      fileChangedHandler = handler;
+    }
+
+    chatHandle = window.ChatView.create(chatContainer, {
+      onScrollNearTop: function () {
+        if (historyLoading || !hasMoreBefore || oldestSequence == null) {
+          return;
+        }
+        RequestHistory({ before: oldestSequence, limit: x_HistoryPageLimit });
+      },
+      linkContext: config.linkContext || null,
+    });
+    UpdateComposerState();
+
+    modelSelect.addEventListener("change", function () {
+      const parts = modelSelect.value.split(":");
+      if (parts.length !== 2) {
+        return;
+      }
+      QueueOrSend(
+        CreateEnvelope("client.model_select", route.pile, route.sessionId, {
+          provider: parts[0],
+          id: parts[1],
+          applyTo: "next_turn",
+        })
+      );
+    });
+
     sendButton.addEventListener("click", SubmitMessage);
-
     textarea.addEventListener("input", ResizeTextarea);
-
     textarea.addEventListener("keydown", function (event) {
       if (event.key !== "Enter") {
         return;
@@ -921,17 +964,822 @@
       SubmitMessage();
     });
 
+    Connect();
+
+    return {
+      destroy: DestroyChat,
+      setFileChangedHandler: SetFileChangedHandler,
+      getChatHandle: function () {
+        return chatHandle;
+      },
+    };
+  }
+
+  function CreateFileWorkspace(config) {
+    const route = config.route;
+    const explorerEl = config.explorerEl;
+    const tabBarEl = config.tabBarEl;
+    const fileViewEl = config.fileViewEl;
+    const workspaceEl = config.workspaceEl;
+    const explorerPane = config.explorerPane;
+    const chatPane = config.chatPane;
+    const onOpenFile = config.onOpenFile;
+
+    const state = {
+      tabs: [],
+      selectedPath: null,
+      directoryCache: {},
+      expandedDirectories: new Set(["."]),
+    };
+
+    const panelState = {
+      explorerWidth: Clamp(
+        ReadStoredNumber(x_ExplorerWidthKey, x_DefaultExplorerWidth),
+        x_MinExplorerWidth,
+        x_MaxExplorerWidth
+      ),
+      chatWidth: Clamp(
+        ReadStoredNumber(x_ChatWidthKey, x_DefaultChatWidth),
+        x_MinChatWidth,
+        x_MaxChatWidth
+      ),
+      explorerCollapsed: false,
+      chatCollapsed: false,
+    };
+
+    let activeResize = null;
+
+    function FilesApiBase() {
+      return (
+        "/api/piles/" +
+        encodeURIComponent(route.pile) +
+        "/sessions/" +
+        encodeURIComponent(route.sessionId)
+      );
+    }
+
+    function ApplyPanelLayout() {
+      const explorerWidth = panelState.explorerWidth + "px";
+      const chatWidth = panelState.chatWidth + "px";
+      if (
+        workspaceEl.style &&
+        typeof workspaceEl.style.setProperty === "function"
+      ) {
+        workspaceEl.style.setProperty("--sheaf-chat-explorer-width", explorerWidth);
+        workspaceEl.style.setProperty("--sheaf-chat-chat-width", chatWidth);
+      } else if (workspaceEl.style) {
+        workspaceEl.style["--sheaf-chat-explorer-width"] = explorerWidth;
+        workspaceEl.style["--sheaf-chat-chat-width"] = chatWidth;
+      }
+      explorerPane.classList.toggle(
+        "sheaf-chat-explorer-pane--collapsed",
+        panelState.explorerCollapsed
+      );
+      chatPane.classList.toggle(
+        "sheaf-chat-chat-pane--collapsed",
+        panelState.chatCollapsed
+      );
+    }
+
+    function FindTab(pathValue) {
+      return state.tabs.find(function (tab) {
+        return tab.path === pathValue;
+      });
+    }
+
+    function ScrollToFragment(fragment) {
+      if (!fragment) {
+        return;
+      }
+
+      window.requestAnimationFrame(function () {
+        const target = fileViewEl.querySelector(
+          "[id='" + EscapeSelector(fragment) + "']"
+        );
+        if (target && target.scrollIntoView) {
+          target.scrollIntoView();
+        }
+      });
+    }
+
+    function RenderExplorer() {
+      explorerEl.textContent = "";
+      const tree = CreateElement("ul", "sheaf-chat-explorer-list");
+      explorerEl.appendChild(tree);
+      RenderExplorerNode(tree, ".", 0);
+    }
+
+    function RenderExplorerNode(parent, directoryPath, depth) {
+      const normalized = NormalizeTabPath(directoryPath);
+      if (normalized == null && directoryPath !== ".") {
+        return;
+      }
+
+      const cacheKey = normalized === "" ? "." : normalized || ".";
+      const cached = state.directoryCache[cacheKey];
+      const isExpanded = state.expandedDirectories.has(cacheKey);
+      const item = CreateElement("li", "sheaf-chat-explorer-item");
+      item.style.paddingLeft = depth * 12 + "px";
+
+      const row = CreateElement("div", "sheaf-chat-explorer-row");
+      const toggle = CreateElement(
+        "button",
+        "sheaf-chat-icon-button sheaf-chat-explorer-toggle"
+      );
+      toggle.type = "button";
+      toggle.textContent = isExpanded ? "▾" : "▸";
+      toggle.addEventListener("click", function (event) {
+        event.stopPropagation();
+        ToggleDirectory(cacheKey);
+      });
+
+      const label = CreateElement(
+        "button",
+        "sheaf-chat-explorer-directory"
+      );
+      label.type = "button";
+      label.textContent = cacheKey === "." ? "." : BaseName(cacheKey);
+      label.addEventListener("click", function () {
+        ToggleDirectory(cacheKey);
+      });
+
+      row.appendChild(toggle);
+      row.appendChild(label);
+      item.appendChild(row);
+
+      if (cached && cached.error) {
+        const errorNode = CreateElement("div", "sheaf-chat-explorer-error");
+        errorNode.textContent = cached.error;
+        item.appendChild(errorNode);
+      }
+
+      parent.appendChild(item);
+
+      if (!isExpanded || !cached || !Array.isArray(cached.entries)) {
+        return;
+      }
+
+      const childList = CreateElement("ul", "sheaf-chat-explorer-list");
+      item.appendChild(childList);
+
+      for (const entry of cached.entries) {
+        if (entry.kind === "directory") {
+          RenderExplorerNode(childList, entry.path, depth + 1);
+          continue;
+        }
+
+        const fileItem = CreateElement("li", "sheaf-chat-explorer-item");
+        fileItem.style.paddingLeft = (depth + 1) * 12 + 12 + "px";
+        const fileButton = CreateElement(
+          "button",
+          "sheaf-chat-explorer-file"
+        );
+        fileButton.type = "button";
+        fileButton.textContent = entry.name;
+        if (entry.supported === false) {
+          fileButton.classList.add("sheaf-chat-explorer-file--unsupported");
+        }
+        fileButton.addEventListener("click", function () {
+          OpenFile(entry.path);
+        });
+        fileItem.appendChild(fileButton);
+        childList.appendChild(fileItem);
+      }
+    }
+
+    function ToggleDirectory(directoryPath) {
+      if (state.expandedDirectories.has(directoryPath)) {
+        state.expandedDirectories.delete(directoryPath);
+        RenderExplorer();
+        return;
+      }
+
+      state.expandedDirectories.add(directoryPath);
+      LoadDirectory(directoryPath).then(function () {
+        RenderExplorer();
+      });
+    }
+
+    function LoadDirectory(directoryPath) {
+      const cacheKey = directoryPath || ".";
+      const queryPath = cacheKey === "." ? "." : cacheKey;
+      const url =
+        FilesApiBase() +
+        "/files?path=" +
+        encodeURIComponent(queryPath);
+
+      return FetchJson(url)
+        .then(function (body) {
+          state.directoryCache[cacheKey] = {
+            entries: body.entries || [],
+          };
+        })
+        .catch(function (error) {
+          state.directoryCache[cacheKey] = {
+            entries: [],
+            error: error.message || "Failed to load directory",
+          };
+        });
+    }
+
+    function RenderTabs() {
+      tabBarEl.textContent = "";
+
+      for (const tab of state.tabs) {
+        const tabButton = CreateElement("button", "sheaf-chat-tab");
+        tabButton.type = "button";
+        if (tab.path === state.selectedPath) {
+          tabButton.classList.add("sheaf-chat-tab--selected");
+        }
+        if (tab.stale) {
+          tabButton.classList.add("sheaf-chat-tab--stale");
+        }
+
+        const label = CreateElement("span", "sheaf-chat-tab-label");
+        label.textContent = tab.name;
+        tabButton.appendChild(label);
+
+        const closeButton = CreateElement(
+          "button",
+          "sheaf-chat-tab-close"
+        );
+        closeButton.type = "button";
+        closeButton.textContent = "×";
+        closeButton.addEventListener("click", function (event) {
+          event.stopPropagation();
+          CloseTab(tab.path);
+        });
+        tabButton.appendChild(closeButton);
+
+        tabButton.addEventListener("click", function () {
+          SelectTab(tab.path);
+        });
+
+        tabBarEl.appendChild(tabButton);
+      }
+    }
+
+    function RenderSelectedFile() {
+      fileViewEl.textContent = "";
+      const selected = state.selectedPath
+        ? FindTab(state.selectedPath)
+        : null;
+
+      if (!selected) {
+        const empty = CreateElement("p", "sheaf-chat-file-empty");
+        empty.textContent = "Open a file from the explorer.";
+        fileViewEl.appendChild(empty);
+        return;
+      }
+
+      if (selected.isLoading) {
+        const loading = CreateElement("p", "sheaf-chat-file-loading");
+        loading.textContent = "Loading…";
+        fileViewEl.appendChild(loading);
+        return;
+      }
+
+      if (selected.error) {
+        const errorNode = CreateElement("div", "sheaf-chat-file-error");
+        errorNode.textContent = selected.error;
+        fileViewEl.appendChild(errorNode);
+        return;
+      }
+
+      const contentWrap = CreateElement("div", "sheaf-file-view-content");
+
+      if (IsMarkdownContentType(selected.contentType, selected.path)) {
+        if (
+          window.SheafMarkdown &&
+          typeof window.SheafMarkdown.renderMarkdown === "function"
+        ) {
+          const rendered = window.SheafMarkdown.renderMarkdown(selected.content);
+          if (rendered != null) {
+            contentWrap.innerHTML = rendered;
+            if (typeof window.SheafMarkdown.enhanceRenderedLinks === "function") {
+              window.SheafMarkdown.enhanceRenderedLinks(contentWrap, {
+                basePath: selected.path,
+                onFileLink: function (targetPath, fragment) {
+                  OpenFile(targetPath, { fragment: fragment });
+                },
+              });
+            }
+          } else {
+            const fallback = CreateElement("pre", "sheaf-chat-file-plain");
+            fallback.textContent = selected.content;
+            contentWrap.appendChild(fallback);
+          }
+        } else {
+          const fallback = CreateElement("pre", "sheaf-chat-file-plain");
+          fallback.textContent = selected.content;
+          contentWrap.appendChild(fallback);
+        }
+      } else if (
+        selected.contentType &&
+        selected.contentType.indexOf("text/") === 0
+      ) {
+        const plain = CreateElement("pre", "sheaf-chat-file-plain");
+        plain.textContent = selected.content;
+        contentWrap.appendChild(plain);
+      } else {
+        const unsupported = CreateElement("div", "sheaf-chat-file-unsupported");
+        unsupported.textContent = "This file type is not supported for preview.";
+        contentWrap.appendChild(unsupported);
+      }
+
+      fileViewEl.appendChild(contentWrap);
+
+      if (selected.fragment) {
+        ScrollToFragment(selected.fragment);
+        selected.fragment = null;
+      }
+    }
+
+    function FetchTabContent(tab, options) {
+      tab.isLoading = true;
+      tab.error = null;
+      RenderSelectedFile();
+
+      const url =
+        FilesApiBase() +
+        "/file?path=" +
+        encodeURIComponent(tab.path);
+
+      return FetchJson(url)
+        .then(function (body) {
+          const file = body.file || {};
+          tab.content = file.content != null ? String(file.content) : "";
+          tab.contentType = file.contentType || tab.contentType;
+          tab.name = file.name || tab.name;
+          tab.isLoading = false;
+          tab.error = null;
+          tab.stale = false;
+          if (options && options.fragment) {
+            tab.fragment = options.fragment;
+          }
+          RenderTabs();
+          if (state.selectedPath === tab.path) {
+            RenderSelectedFile();
+          }
+        })
+        .catch(function (error) {
+          tab.isLoading = false;
+          tab.error = error.message || "Failed to load file";
+          tab.stale = false;
+          RenderTabs();
+          if (state.selectedPath === tab.path) {
+            RenderSelectedFile();
+          }
+        });
+    }
+
+    function OpenFile(pathValue, options) {
+      const normalized = NormalizeTabPath(pathValue);
+      if (!normalized) {
+        return Promise.resolve();
+      }
+
+      const existing = FindTab(normalized);
+      if (existing) {
+        return SelectTab(normalized, options);
+      }
+
+      const tab = {
+        path: normalized,
+        name: BaseName(normalized),
+        content: "",
+        contentType: "text/markdown",
+        isLoading: true,
+        error: null,
+        stale: false,
+        fragment: options && options.fragment ? options.fragment : null,
+      };
+      state.tabs.push(tab);
+      state.selectedPath = normalized;
+      RenderTabs();
+      RenderSelectedFile();
+      return FetchTabContent(tab, options);
+    }
+
+    function SelectTab(pathValue, options) {
+      const normalized = NormalizeTabPath(pathValue);
+      if (!normalized) {
+        return Promise.resolve();
+      }
+
+      const tab = FindTab(normalized);
+      if (!tab) {
+        return OpenFile(normalized, options);
+      }
+
+      state.selectedPath = normalized;
+      if (options && options.fragment) {
+        tab.fragment = options.fragment;
+      }
+
+      RenderTabs();
+
+      if (tab.stale || tab.isLoading) {
+        return FetchTabContent(tab, options);
+      }
+
+      RenderSelectedFile();
+      return Promise.resolve();
+    }
+
+    function CloseTab(pathValue) {
+      const normalized = NormalizeTabPath(pathValue);
+      if (!normalized) {
+        return;
+      }
+
+      const index = state.tabs.findIndex(function (tab) {
+        return tab.path === normalized;
+      });
+      if (index < 0) {
+        return;
+      }
+
+      state.tabs.splice(index, 1);
+      if (state.selectedPath === normalized) {
+        state.selectedPath =
+          state.tabs.length > 0
+            ? state.tabs[Math.max(0, index - 1)].path
+            : null;
+      }
+      RenderTabs();
+      RenderSelectedFile();
+    }
+
+    function HandleFileChanged(payload) {
+      const changedPath = NormalizeTabPath(
+        payload && (payload.path || payload.fileId)
+      );
+      if (!changedPath) {
+        return;
+      }
+
+      const tab = FindTab(changedPath);
+      if (!tab) {
+        return;
+      }
+
+      if (state.selectedPath === changedPath) {
+        FetchTabContent(tab);
+        return;
+      }
+
+      tab.stale = true;
+      RenderTabs();
+    }
+
+    function StartResize(which, event) {
+      if (activeResize) {
+        return;
+      }
+
+      const startX =
+        event.clientX != null ? event.clientX : event.pageX != null ? event.pageX : 0;
+      const startExplorer = panelState.explorerWidth;
+      const startChat = panelState.chatWidth;
+
+      function OnMove(moveEvent) {
+        const currentX =
+          moveEvent.clientX != null
+            ? moveEvent.clientX
+            : moveEvent.pageX != null
+              ? moveEvent.pageX
+              : startX;
+        const delta = currentX - startX;
+
+        if (which === "explorer") {
+          panelState.explorerWidth = Clamp(
+            startExplorer + delta,
+            x_MinExplorerWidth,
+            x_MaxExplorerWidth
+          );
+        } else {
+          panelState.chatWidth = Clamp(
+            startChat - delta,
+            x_MinChatWidth,
+            x_MaxChatWidth
+          );
+        }
+        ApplyPanelLayout();
+      }
+
+      function OnUp() {
+        document.removeEventListener("mousemove", OnMove);
+        document.removeEventListener("mouseup", OnUp);
+        activeResize = null;
+        WriteStoredNumber(x_ExplorerWidthKey, panelState.explorerWidth);
+        WriteStoredNumber(x_ChatWidthKey, panelState.chatWidth);
+      }
+
+      activeResize = which;
+      document.addEventListener("mousemove", OnMove);
+      document.addEventListener("mouseup", OnUp);
+      event.preventDefault();
+    }
+
+    function ToggleExplorerCollapsed() {
+      panelState.explorerCollapsed = !panelState.explorerCollapsed;
+      ApplyPanelLayout();
+    }
+
+    function ToggleChatCollapsed() {
+      panelState.chatCollapsed = !panelState.chatCollapsed;
+      ApplyPanelLayout();
+    }
+
+    ApplyPanelLayout();
+    RenderExplorer();
+    RenderTabs();
+    RenderSelectedFile();
+    LoadDirectory(".").then(function () {
+      RenderExplorer();
+    });
+
+    if (typeof onOpenFile === "function") {
+      onOpenFile(OpenFile);
+    }
+
+    return {
+      OpenFile: OpenFile,
+      SelectTab: SelectTab,
+      CloseTab: CloseTab,
+      HandleFileChanged: HandleFileChanged,
+      StartResize: StartResize,
+      ToggleExplorerCollapsed: ToggleExplorerCollapsed,
+      ToggleChatCollapsed: ToggleChatCollapsed,
+      getPanelState: function () {
+        return panelState;
+      },
+      getState: function () {
+        return state;
+      },
+    };
+  }
+
+  function RenderTouchChatScreen(app, route) {
+    app.textContent = "";
+    if (!window.ChatView) {
+      const missing = CreateElement("p", "sheaf-chat-error");
+      missing.textContent = "Chat renderer failed to load.";
+      app.appendChild(missing);
+      return null;
+    }
+
+    app.classList.add("sheaf-chat-touch");
+    app.classList.remove("sheaf-chat-desktop");
+
+    const screen = CreateElement("div", "sheaf-chat-screen sheaf-chat-chat-layout");
+    const header = CreateElement("header", "sheaf-chat-header");
+    const back = CreateElement("button", "sheaf-chat-back");
+    back.type = "button";
+    back.textContent = "Back";
+    back.addEventListener("click", function () {
+      NavigateTo({ screen: "sessions", pile: route.pile });
+    });
+    header.appendChild(back);
+
+    const title = CreateElement("h1", "sheaf-chat-header-title");
+    title.textContent = route.sessionId;
+    header.appendChild(title);
+    screen.appendChild(header);
+
+    const statusRow = CreateElement("div", "sheaf-chat-chat-status");
+    const connectionLabel = CreateElement("span");
+    connectionLabel.textContent = "Connecting…";
+    statusRow.appendChild(connectionLabel);
+
+    const modelSelect = CreateElement("select", "sheaf-chat-model-select");
+    statusRow.appendChild(modelSelect);
+    screen.appendChild(statusRow);
+
+    const chatMain = CreateElement("div", "sheaf-chat-chat-main");
+    const chatContainer = CreateElement("div", "sheaf-chat-chat-view");
+    chatMain.appendChild(chatContainer);
+    screen.appendChild(chatMain);
+
+    const composer = CreateElement("div", "sheaf-chat-composer");
+    const textarea = CreateElement("textarea", "sheaf-chat-textarea");
+    textarea.rows = 1;
+    textarea.placeholder = "Message the agent…";
+    const sendButton = CreateElement(
+      "button",
+      "sheaf-chat-button sheaf-chat-button--primary sheaf-chat-send"
+    );
+    sendButton.type = "button";
+    sendButton.textContent = "Send";
+    composer.appendChild(textarea);
+    composer.appendChild(sendButton);
+    screen.appendChild(composer);
+    app.appendChild(screen);
+
+    const session = CreateChatSessionController({
+      route: route,
+      touchLayout: true,
+      title: title,
+      connectionLabel: connectionLabel,
+      modelSelect: modelSelect,
+      chatContainer: chatContainer,
+      composer: composer,
+      textarea: textarea,
+      sendButton: sendButton,
+    });
+
     window.addEventListener(
       "pagehide",
       function () {
-        DestroyChat();
+        session.destroy();
       },
       { once: true }
     );
 
-    Connect();
+    return session.destroy;
+  }
 
-    return DestroyChat;
+  function RenderDesktopChatScreen(app, route) {
+    app.textContent = "";
+    if (!window.ChatView) {
+      const missing = CreateElement("p", "sheaf-chat-error");
+      missing.textContent = "Chat renderer failed to load.";
+      app.appendChild(missing);
+      return null;
+    }
+
+    app.classList.add("sheaf-chat-desktop");
+    app.classList.remove("sheaf-chat-touch");
+
+    const screen = CreateElement("div", "sheaf-chat-screen sheaf-chat-chat-layout");
+    const header = CreateElement("header", "sheaf-chat-header");
+    const back = CreateElement("button", "sheaf-chat-back");
+    back.type = "button";
+    back.textContent = "Back";
+    back.addEventListener("click", function () {
+      NavigateTo({ screen: "sessions", pile: route.pile });
+    });
+    header.appendChild(back);
+
+    const title = CreateElement("h1", "sheaf-chat-header-title");
+    title.textContent = route.sessionId;
+    header.appendChild(title);
+    screen.appendChild(header);
+
+    const statusRow = CreateElement("div", "sheaf-chat-chat-status");
+    const connectionLabel = CreateElement("span");
+    connectionLabel.textContent = "Connecting…";
+    statusRow.appendChild(connectionLabel);
+
+    const modelSelect = CreateElement("select", "sheaf-chat-model-select");
+    statusRow.appendChild(modelSelect);
+    screen.appendChild(statusRow);
+
+    const workspace = CreateElement("div", "sheaf-chat-workspace");
+
+    const explorerPane = CreateElement("div", "sheaf-chat-explorer-pane");
+    const explorerHeader = CreateElement("div", "sheaf-chat-pane-header");
+    const explorerTitle = CreateElement("span", "sheaf-chat-pane-title");
+    explorerTitle.textContent = "Explorer";
+    const explorerCollapse = CreateElement(
+      "button",
+      "sheaf-chat-icon-button sheaf-chat-pane-collapse"
+    );
+    explorerCollapse.type = "button";
+    explorerCollapse.textContent = "⟨";
+    explorerHeader.appendChild(explorerTitle);
+    explorerHeader.appendChild(explorerCollapse);
+    const explorerEl = CreateElement("div", "sheaf-chat-explorer-tree");
+    explorerPane.appendChild(explorerHeader);
+    explorerPane.appendChild(explorerEl);
+
+    const explorerResize = CreateElement(
+      "div",
+      "sheaf-chat-resize-handle sheaf-chat-resize-handle--explorer"
+    );
+
+    const filePane = CreateElement("div", "sheaf-chat-file-pane");
+    const tabBarEl = CreateElement("div", "sheaf-chat-tab-bar");
+    const fileViewEl = CreateElement("div", "sheaf-chat-file-view");
+    filePane.appendChild(tabBarEl);
+    filePane.appendChild(fileViewEl);
+
+    const chatResize = CreateElement(
+      "div",
+      "sheaf-chat-resize-handle sheaf-chat-resize-handle--chat"
+    );
+
+    const chatPane = CreateElement("div", "sheaf-chat-chat-pane");
+    const chatHeader = CreateElement("div", "sheaf-chat-pane-header");
+    const chatTitle = CreateElement("span", "sheaf-chat-pane-title");
+    chatTitle.textContent = "Chat";
+    const chatCollapse = CreateElement(
+      "button",
+      "sheaf-chat-icon-button sheaf-chat-pane-collapse"
+    );
+    chatCollapse.type = "button";
+    chatCollapse.textContent = "⟩";
+    chatHeader.appendChild(chatTitle);
+    chatHeader.appendChild(chatCollapse);
+
+    const chatMain = CreateElement("div", "sheaf-chat-chat-main");
+    const chatContainer = CreateElement("div", "sheaf-chat-chat-view");
+    chatMain.appendChild(chatContainer);
+
+    const composer = CreateElement("div", "sheaf-chat-composer");
+    const textarea = CreateElement("textarea", "sheaf-chat-textarea");
+    textarea.rows = 1;
+    textarea.placeholder = "Message the agent…";
+    const sendButton = CreateElement(
+      "button",
+      "sheaf-chat-button sheaf-chat-button--primary sheaf-chat-send"
+    );
+    sendButton.type = "button";
+    sendButton.textContent = "Send";
+    composer.appendChild(textarea);
+    composer.appendChild(sendButton);
+
+    chatPane.appendChild(chatHeader);
+    chatPane.appendChild(chatMain);
+    chatPane.appendChild(composer);
+
+    workspace.appendChild(explorerPane);
+    workspace.appendChild(explorerResize);
+    workspace.appendChild(filePane);
+    workspace.appendChild(chatResize);
+    workspace.appendChild(chatPane);
+    screen.appendChild(workspace);
+    app.appendChild(screen);
+
+    let openFileFn = null;
+
+    const session = CreateChatSessionController({
+      route: route,
+      touchLayout: false,
+      title: title,
+      connectionLabel: connectionLabel,
+      modelSelect: modelSelect,
+      chatContainer: chatContainer,
+      composer: composer,
+      textarea: textarea,
+      sendButton: sendButton,
+      linkContext: {
+        rootMode: "root",
+        onFileLink: function (targetPath, fragment) {
+          if (openFileFn) {
+            openFileFn(targetPath, { fragment: fragment });
+          }
+        },
+      },
+    });
+
+    const workspaceController = CreateFileWorkspace({
+      route: route,
+      explorerEl: explorerEl,
+      tabBarEl: tabBarEl,
+      fileViewEl: fileViewEl,
+      workspaceEl: workspace,
+      explorerPane: explorerPane,
+      chatPane: chatPane,
+      onOpenFile: function (openFile) {
+        openFileFn = openFile;
+      },
+    });
+
+    session.setFileChangedHandler(workspaceController.HandleFileChanged);
+
+    explorerCollapse.addEventListener("click", function () {
+      workspaceController.ToggleExplorerCollapsed();
+    });
+    chatCollapse.addEventListener("click", function () {
+      workspaceController.ToggleChatCollapsed();
+    });
+
+    explorerResize.addEventListener("mousedown", function (event) {
+      workspaceController.StartResize("explorer", event);
+    });
+    chatResize.addEventListener("mousedown", function (event) {
+      workspaceController.StartResize("chat", event);
+    });
+
+    window.addEventListener(
+      "pagehide",
+      function () {
+        session.destroy();
+      },
+      { once: true }
+    );
+
+    return session.destroy;
+  }
+
+  function RenderChatScreen(app, route) {
+    if (IsTouchLayout()) {
+      return RenderTouchChatScreen(app, route);
+    }
+
+    return RenderDesktopChatScreen(app, route);
   }
 
   function Render(route) {

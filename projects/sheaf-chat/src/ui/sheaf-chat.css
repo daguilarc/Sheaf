@@ -338,6 +338,260 @@ body
   padding: 4px 0;
 }
 
+.sheaf-chat-workspace
+{
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: row;
+  overflow: hidden;
+  --sheaf-chat-explorer-width: 240px;
+  --sheaf-chat-chat-width: 360px;
+}
+
+.sheaf-chat-explorer-pane,
+.sheaf-chat-chat-pane
+{
+  flex: 0 0 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--sheaf-chat-surface);
+}
+
+.sheaf-chat-explorer-pane
+{
+  width: var(--sheaf-chat-explorer-width);
+  border-right: 1px solid var(--sheaf-chat-border);
+}
+
+.sheaf-chat-chat-pane
+{
+  width: var(--sheaf-chat-chat-width);
+  border-left: 1px solid var(--sheaf-chat-border);
+}
+
+.sheaf-chat-explorer-pane--collapsed
+{
+  width: 0;
+  min-width: 0;
+  border-right: none;
+  overflow: hidden;
+}
+
+.sheaf-chat-chat-pane--collapsed
+{
+  width: 0;
+  min-width: 0;
+  border-left: none;
+  overflow: hidden;
+}
+
+.sheaf-chat-pane-header
+{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--sheaf-chat-border);
+  background: var(--sheaf-chat-surface-muted);
+  flex-shrink: 0;
+}
+
+.sheaf-chat-pane-title
+{
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--sheaf-chat-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.sheaf-chat-resize-handle
+{
+  flex: 0 0 5px;
+  cursor: col-resize;
+  background: transparent;
+  touch-action: none;
+}
+
+.sheaf-chat-resize-handle:hover
+{
+  background: color-mix(in srgb, var(--sheaf-chat-accent) 25%, transparent);
+}
+
+.sheaf-chat-file-pane
+{
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.sheaf-chat-explorer-tree
+{
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px 0;
+}
+
+.sheaf-chat-explorer-list
+{
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.sheaf-chat-explorer-row
+{
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.sheaf-chat-explorer-directory,
+.sheaf-chat-explorer-file
+{
+  flex: 1;
+  min-height: 32px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  padding: 6px 8px;
+  cursor: pointer;
+  font: inherit;
+  border-radius: 6px;
+}
+
+.sheaf-chat-explorer-directory:hover,
+.sheaf-chat-explorer-file:hover
+{
+  background: var(--sheaf-chat-surface-muted);
+}
+
+.sheaf-chat-explorer-file--unsupported
+{
+  opacity: 0.55;
+}
+
+.sheaf-chat-explorer-error
+{
+  font-size: 12px;
+  color: var(--sheaf-chat-danger);
+  padding: 4px 8px 8px 36px;
+}
+
+.sheaf-chat-tab-bar
+{
+  display: flex;
+  flex-direction: row;
+  gap: 4px;
+  overflow-x: auto;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--sheaf-chat-border);
+  background: var(--sheaf-chat-surface-muted);
+  flex-shrink: 0;
+}
+
+.sheaf-chat-tab
+{
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  border: 1px solid var(--sheaf-chat-border);
+  border-radius: 8px;
+  background: var(--sheaf-chat-surface);
+  color: inherit;
+  padding: 0 8px 0 10px;
+  cursor: pointer;
+  font: inherit;
+  flex-shrink: 0;
+  max-width: 220px;
+}
+
+.sheaf-chat-tab--selected
+{
+  border-color: var(--sheaf-chat-accent);
+  background: color-mix(in srgb, var(--sheaf-chat-accent) 12%, var(--sheaf-chat-surface));
+}
+
+.sheaf-chat-tab--stale .sheaf-chat-tab-label::after
+{
+  content: " •";
+  color: var(--agui-chat-warning);
+}
+
+.sheaf-chat-tab-label
+{
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sheaf-chat-tab-close
+{
+  min-width: 24px;
+  min-height: 24px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--sheaf-chat-muted);
+  cursor: pointer;
+  font: inherit;
+  line-height: 1;
+  padding: 0;
+}
+
+.sheaf-chat-file-view
+{
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px;
+}
+
+.sheaf-chat-file-empty,
+.sheaf-chat-file-loading
+{
+  color: var(--sheaf-chat-muted);
+  font-size: 14px;
+}
+
+.sheaf-chat-file-error,
+.sheaf-chat-file-unsupported
+{
+  color: var(--sheaf-chat-danger);
+  font-size: 14px;
+}
+
+.sheaf-chat-file-plain
+{
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.sheaf-chat-desktop .sheaf-chat-chat-pane .sheaf-chat-chat-main
+{
+  flex: 1;
+  min-height: 0;
+}
+
+.sheaf-chat-desktop .sheaf-chat-chat-pane .sheaf-chat-composer
+{
+  position: static;
+}
+
 @media (max-width: 720px)
 {
   .sheaf-chat-header

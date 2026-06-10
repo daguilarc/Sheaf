@@ -1129,7 +1129,7 @@
 
   function UpdateMessageNode(handle, nodeEntry, message, state) {
     if (message.role === "assistant") {
-      UpdateAssistantContent(nodeEntry.content, message);
+      UpdateAssistantContent(nodeEntry.content, message, handle.linkContext);
       nodeEntry.renderedStreaming = message.isStreaming === true;
       return;
     }
@@ -1476,6 +1476,7 @@
       panelExpanded: new Map(),
       pendingFrame: null,
       connectionState: null,
+      linkContext: options.linkContext || null,
       _owned: owned,
     };
 
