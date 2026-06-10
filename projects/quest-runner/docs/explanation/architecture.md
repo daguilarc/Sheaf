@@ -22,6 +22,11 @@ projects/quest-runner/src/quest_runner_service/
   quest_runner.py          Legacy runner path and harness orchestration
   quest_runner_v2.py       V2 recursive state machine runner entry
   quest_thread.py          Role thread registry and runtime prompt context
+  workflow_config.py       Quest-local workflow YAML loading and validation
+  workflow_scaffold.py     Workflow copy and collection scaffold helpers
+  workflow_upgrade.py      Legacy config to workflow/ migration
+  workflow_profile_execution.py
+                           Profile prompt, preamble, path rule, and thread setup
   harness.py               Cursor/Codex/Claude harness adapters
   agui_mapper.py           Quest JSONL log to AGUI UI event mapper
   dashboard_data.py        Dashboard query parsing and JSON payloads
@@ -34,7 +39,7 @@ projects/quest-runner/src/quest_runner_service/
   state_machine/           Recursive quest and slice machines
   dashboard_assets/        Web dashboard (HTML, CSS, ES modules)
   quest_docs/              Bundled runtime schema docs for role prompts
-  roles/                   Role prompt templates
+  default_workflow/        Packaged quest workflow copied into new quests
 ```
 
 Tests mirror these modules under `projects/quest-runner/tests/`.
@@ -70,8 +75,9 @@ flowchart LR
 2. Quest detail pages resolve checkout via worktree-first rules in
    `dashboard_data.resolve_dashboard_checkout`.
 3. `POST /run_quest` schedules background execution through `QuestService`.
-4. The v2 runner executes state-machine nodes, invokes harnesses for agent roles,
-   enforces path rules, and commits step metadata to git in the quest worktree.
+4. The v2 runner loads the quest-local `workflow/` directory, interprets
+   state-machine nodes, invokes harnesses for workflow profiles, enforces path
+   rules, and commits step metadata to git in the quest worktree.
 
 ## Experiments
 
@@ -89,13 +95,16 @@ See [Quest lifecycle](lifecycle.md) for create, run, complete, and land flows.
 
 ## State machine
 
-The recursive quest machine lives under `state_machine/`. V2 quests use
-normalized `state.md` at the quest root and legacy key/value slice `state.md`
-files. Step commits carry `quest-step` metadata in commit messages; see
-`state_machine/commit_metadata.py`.
+The recursive quest machine is interpreted from each quest's `workflow/`
+directory. The generic interpreter lives under `state_machine/workflow_*.py`;
+the packaged default workflow lives under `default_workflow/` and is copied
+into new quests. V2 quests use normalized `state.md` at the quest root and
+legacy key/value slice `state.md` files. Step commits carry `quest-step`
+metadata in commit messages; see `state_machine/commit_metadata.py`.
 
 Runtime schema reference for prompts comes from `quest_docs/`, not from
-human-facing `projects/quest-runner/docs/`.
+human-facing `projects/quest-runner/docs/`. See
+[Workflow](../reference/workflow.md) for the YAML grammar and execution model.
 
 ## Exclusion boundaries
 

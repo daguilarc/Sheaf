@@ -246,6 +246,45 @@ worktree checkout when landing does not finish before worktree deletion.
 `POST /land` does not accept `experiment_id`. Use `POST /experiments/land` for
 experiment landing.
 
+### `POST /upgrade_quest`
+
+Upgrades a writable project-local quest from legacy `state_execution_config.yaml`
+to a quest-local `workflow/` directory. The service copies the packaged default
+workflow, ports legacy profile overrides, merges missing service-level harness
+provider settings into `config/quest-runner.json`, deletes the legacy config, and
+normalizes quest-root `state.md` when needed.
+
+Accepts optional `experiment_id` to operate in an experiment worktree.
+
+**Request body (JSON):**
+
+| Field | Required | Description |
+| --- | --- | --- |
+| `project` | yes | Owning project |
+| `quest_type` | yes | `main` or `side` |
+| `quest_number` | yes | Zero-based quest number |
+| `experiment_id` | no | Experiment id when upgrading in an experiment worktree |
+
+**Response `200`:**
+
+```json
+{
+  "status": "upgraded",
+  "quest_dir": "/path/to/projects/example/quests/main/0000_my_quest",
+  "workflow_dir": "/path/to/projects/example/quests/main/0000_my_quest/workflow",
+  "copied_workflow_files": ["workflow/workflow.yaml"],
+  "deleted_config": "state_execution_config.yaml",
+  "ported_profiles": ["workflow/profiles/implementer.yaml"],
+  "merged_harnesses": ["cursor"],
+  "skipped_harnesses": [],
+  "service_harness_config": "/path/to/config/quest-runner.json",
+  "normalized_state_rewrite": true
+}
+```
+
+If the quest is already upgraded, the response uses
+`"status": "already_upgraded"` and includes the quest and workflow paths.
+
 ## Experiment endpoints
 
 ### `POST /experiments/create`
@@ -374,6 +413,7 @@ the quest worktree when it exists, matching dashboard and issue API behavior.
 | `count` | yes | Number of slices to create |
 | `slugs` | yes | Array of exactly `count` slice slugs, in execution order |
 | `experiment_id` | no | Experiment id when initializing slices in an experiment worktree |
+| `collection` | no | Workflow collection name. Required only when the workflow declares multiple collections. |
 
 **Response `201`:**
 
@@ -405,7 +445,8 @@ the quest worktree when it exists, matching dashboard and issue API behavior.
 
 Slice numbers append after the highest existing slice number. Slugs are
 normalized with the same rules as quest slugs and must be unique after
-normalization.
+normalization. The file set comes from the selected workflow collection's
+`scaffold` actions; the response reports created paths.
 
 **Error responses:**
 
@@ -463,7 +504,10 @@ Create an issue.
 
 **Request body (JSON):** `project`, `quest_type`, `quest_number`, `issue_file`,
 `title`, `body` (or `details`), optional `status` (default `open`), optional
-`experiment_id`.
+`owner_role`, optional `experiment_id`.
+
+When `owner_role` is omitted, the service uses the matched workflow issue
+declaration's `owner` value.
 
 ### `PATCH /api/issues/<issue_id>`
 

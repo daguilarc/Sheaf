@@ -49,25 +49,27 @@ Completed            (slice done; quest machine advances)
 
 ## Prompt assembly
 
-The runner loads the role prompt from `workflow/prompts/<profile>.md` and
-appends the task instruction declared by the current workflow state.
+The runner loads the profile prompt from `workflow/prompts/<profile>.md`,
+renders the shared `workflow/preamble.md`, and appends the task instruction
+declared by the current workflow state.
 
 The first message in a role thread includes:
 
 1. the full role template
-2. runtime context from `quest_thread.build_runtime_context`
+2. the rendered workflow preamble
 3. the current task instruction
 
-Later turns in the same thread include runtime context and the task instruction
-only. Thread reuse is keyed by role scope; see thread naming below.
+Later turns in the same thread include the rendered workflow preamble and the
+task instruction only. Thread reuse is keyed by workflow profile thread scope;
+see thread naming below.
 
 ## Experiment context in prompts
 
-When a harness runs inside an experiment worktree, `build_runtime_context`
-includes the current `experiment_id` and instructs the agent to pass
-`--experiment-id <id>` on every `scripts/quest-runner` call. Agents must not
-omit the experiment id; the original quest worktree may no longer exist after the
-parent quest was completed and landed.
+When a harness runs inside an experiment worktree, the rendered preamble includes
+the current `experiment_id` and instructs the agent to pass `--experiment-id
+<id>` on every `scripts/quest-runner` call. Agents must not omit the experiment
+id; the original quest worktree may no longer exist after the parent quest was
+completed and landed.
 
 ## Thread naming
 
@@ -109,6 +111,8 @@ files directly:
 scripts/quest-runner issues list/read/create/edit/respond/responses
 ```
 
+- Every issue command names the workflow-declared issue file with
+  `--file <quest-relative-path>`.
 - Responders record notes with `issues respond --outcome Fixed|NotFixed`.
 - Reviewers close resolved issues with `issues edit --status completed`.
 - Responders must not close issues.
@@ -181,11 +185,11 @@ Default prompt template:
 
 ## Path enforcement
 
-Workflow profiles enforce per-role `modify_allow` and `modify_block` glob lists
+Workflow profiles enforce per-role `modify.allow` and `modify.block` glob lists
 after each harness turn. Illegal edits are reverted and the role receives a
 follow-up to continue within allowed paths.
 
-Placeholder tokens in `modify_allow` and `modify_block`:
+Placeholder tokens in `modify.allow` and `modify.block`:
 
 - `$quest` — repo-relative quest directory
 - `$active_child` — repo-relative active child directory
@@ -193,7 +197,8 @@ Placeholder tokens in `modify_allow` and `modify_block`:
 
 When both allow and block lists are present, an allow match permits the path; a
 block match denies it; paths matching neither are permitted. See
-[Runtime files](runtime-files.md) and [Configuration](config.md).
+[Runtime files](runtime-files.md), [Configuration](config.md), and
+[Workflow reference](workflow.md).
 
 ## Step logs
 

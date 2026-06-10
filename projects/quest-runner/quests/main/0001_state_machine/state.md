@@ -1,10 +1,10 @@
 # State
 
-- global_step: 50
+- global_step: 51
 - machine_name: quest
 - machine_path: projects/quest-runner/quests/main/0001_state_machine
-- state: QuestDocumenting
-- updated_at: 2026-06-10T00:29:48Z
+- state: Completed
+- updated_at: 2026-06-10T00:37:31Z
 
 ## Tags
 

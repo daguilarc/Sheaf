@@ -43,10 +43,11 @@ For execution:
 3. A per-worktree lock prevents concurrent runs of the same quest.
 4. Execution is scheduled on a background thread; the HTTP handler returns
    `202` with `run_id` and dashboard URLs.
-5. `quest_runner_v2.run_quest_v2` (or legacy path when applicable) executes
-   state-machine steps:
+5. `quest_runner_v2.run_quest_v2` loads the quest-local `workflow/` directory
+   and executes generic state-machine steps:
    - reads and writes quest/slice state files
-   - invokes role harnesses when agent nodes run
+   - invokes workflow profile harnesses when `run` blocks execute
+   - renders workflow prompts, preamble text, and state task text
    - enforces workflow profile path rules after harness turns
    - creates git commits with step metadata when filesystem changes occur
 6. On harness rate limits, deferred retry may schedule through
@@ -69,12 +70,14 @@ the file exists.
 
 ## Harness calls
 
-Role harnesses (`cursor`, `codex`, `claude_code`) receive runtime context built
-by `quest_thread.build_runtime_context`, including:
+Role harnesses (`cursor`, `codex`, `claude_code`) receive messages assembled
+from the quest workflow, including:
 
 - repo-relative quest and slice paths
 - bundled schema reference from `quest_docs/`
-- role-specific task instructions
+- profile prompt text
+- shared `workflow/preamble.md` runtime context
+- state-specific `run.task` instructions
 
 Harness stdout/stderr and structured events are logged verbosely. Step role logs
 are written under the quest directory.

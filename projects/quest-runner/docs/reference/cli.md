@@ -194,11 +194,41 @@ Options:
 | --- | --- |
 | `--count <n>` | Number of slices to create. Must be positive. |
 | `--slug <slug>` | Slice slug. Repeat exactly `--count` times, in execution order. |
+| `--collection <name>` | Workflow collection to initialize. Optional when there is exactly one collection. |
 
 The service appends after the highest existing slice number, normalizes slugs,
-and creates each slice directory with `physicalplan/`, `state.md`,
-`state_history.md`, and `polishing_issues.md`. The planner then writes one or
-more `.md` files under each created `physicalplan/` directory.
+and creates each child directory from the selected workflow collection's
+`scaffold` actions. In the default workflow this creates `physicalplan/`,
+`state.md`, `state_history.md`, `polishing_issues.md`, and `notes/`. The planner
+then writes one or more `.md` files under each created `physicalplan/`
+directory.
+
+## Upgrade Commands
+
+### `upgrade`
+
+Upgrades a writable project-local quest from legacy `state_execution_config.yaml`
+to a quest-local `workflow/` directory through `POST /upgrade_quest`.
+
+```bash
+scripts/quest-runner upgrade \
+  --project quest-runner \
+  --type side \
+  --number 0
+```
+
+Options:
+
+| Option | Description |
+| --- | --- |
+| `--experiment-id <id>` | Experiment id when upgrading an experiment worktree. |
+
+The upgrade copies the packaged default workflow, ports legacy profile
+customizations into `workflow/profiles/*.yaml`, merges legacy harness provider
+settings into `config/quest-runner.json` when needed, deletes
+`state_execution_config.yaml`, and rewrites pre-normalized quest-root
+`state.md` to the normalized format. It does not alter issue files, logs,
+slice state files, or `thread_registry.json`.
 
 ## Operator Commands
 
@@ -308,8 +338,9 @@ scripts/quest-runner issues read QP-0001 \
 
 ### `issues create`
 
-Creates an issue. The API assigns the next issue ID and owner role for the
-scope.
+Creates an issue. The API assigns the next issue ID from the matched workflow
+issue declaration. `owner_role` defaults from the workflow declaration unless
+`--owner` is supplied.
 
 ```bash
 scripts/quest-runner issues create \
@@ -329,6 +360,7 @@ Options:
 | `--body <text>` | Issue body. Mutually exclusive with `--body-file`. |
 | `--body-file <path>` | Read issue body from a file. |
 | `--status open|completed` | Initial status. Defaults to `open`. |
+| `--owner <name>` | Owner role attribution. Defaults from the workflow issue declaration. |
 
 ### `issues edit`
 

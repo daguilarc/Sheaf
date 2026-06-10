@@ -214,5 +214,14 @@
     "round_count": 1,
     "created_at": "2026-06-10T00:21:35Z",
     "last_used_at": "2026-06-10T00:28:03Z"
+  },
+  "documenter": {
+    "thread_name": "quest-runner_main_0001_state_machine_quest_0001_documenter",
+    "harness_kind": "codex",
+    "provider_thread_id": "019eaeef-7336-7a03-92f5-42aacc93a5eb",
+    "pass_id": 0,
+    "round_count": 1,
+    "created_at": "2026-06-10T00:29:48Z",
+    "last_used_at": "2026-06-10T00:37:31Z"
   }
 }

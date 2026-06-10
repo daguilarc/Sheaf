@@ -196,9 +196,14 @@ Allowed harness values are:
 - `cursor`
 - `claude_code`
 
-Profiles support `modify_allow` and `modify_block` glob lists. Both lists can
+Profiles support `modify.allow` and `modify.block` glob lists. Both lists can
 use `$quest`, `$active_child`, and `$project` placeholders. When both lists
 match a path, allow wins.
+
+Workflow prompts are assembled from `workflow/prompts/<profile>.md`,
+`workflow/preamble.md`, and the active state's `run.task` text. The workflow
+declares issue-file paths and owner/id defaults; issue response files are
+derived by replacing `_issues.md` with `_issue_responses.md`.
 
 The runner refuses to invoke a harness when the target repository working tree
 is not fully clean, including untracked files. After each harness turn, it
@@ -208,6 +213,8 @@ within its allowed paths.
 
 Harness provider CLI configuration lives at service level in
 `config/quest-runner.json`.
+
+See [Workflow reference](workflow.md) for the complete YAML surface.
 
 ## Blocking And Acceptance Markers
 

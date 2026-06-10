@@ -28,6 +28,7 @@ Exact APIs, layout, configuration, and test commands:
 - [AGUI event mapping](reference/agui-mapping.md)
 - [Quest directory layout](reference/layout.md)
 - [Runtime files](reference/runtime-files.md)
+- [Workflow](reference/workflow.md)
 - [Configuration](reference/config.md)
 - [Testing](reference/testing.md)
 

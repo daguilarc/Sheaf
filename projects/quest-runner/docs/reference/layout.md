@@ -163,3 +163,6 @@ do not duplicate that content.
 Issue markdown files under each quest directory remain the storage format. Agents
 normally use `scripts/quest-runner issues ...` instead of editing those files
 directly.
+
+The quest-local `workflow/` directory stores the executable state-machine
+configuration. See [Workflow reference](workflow.md) for its layout and grammar.

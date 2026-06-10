@@ -64,11 +64,14 @@ Workflow profile files under `workflow/profiles/` specify:
 
 - harness kind (`cursor`, `codex`, `claude_code`)
 - model and timeout settings
-- optional `modify_allow` / `modify_block` glob lists for path enforcement
+- optional `modify.allow` / `modify.block` glob lists for path enforcement
+- prompt template path, runtime context variables, and thread identity templates
 
 The runner reverts harness changes outside allowed paths after each turn.
 Harness provider CLI paths remain service-level configuration; experiments copy
 and replace `workflow/`, not machine-local provider settings.
+
+See [Workflow reference](workflow.md) for the YAML files and execution model.
 
 Legacy writable quests may still contain the old execution-config file before
 upgrade. The `scripts/quest-runner upgrade` command migrates those quests to the
@@ -77,10 +80,11 @@ needed.
 
 ## Runtime schema reference
 
-Role prompts load quest workflow and schema reference text from
+Harness runtime context can expose bundled maintainer reference text from
 `src/quest_runner_service/quest_docs/`, resolved by
 `runtime_quest_docs_dir()` in `src/quest_runner_service/quest_runner.py`.
-This is separate from human-facing docs under `projects/quest-runner/docs/`.
+Quest-local workflow prompts live under `<quest_dir>/workflow/prompts/`. Both
+are separate from human-facing docs under `projects/quest-runner/docs/`.
 
 ## Secrets
 
