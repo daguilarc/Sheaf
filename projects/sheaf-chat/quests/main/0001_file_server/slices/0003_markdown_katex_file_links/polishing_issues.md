@@ -2,10 +2,10 @@
 
 ## Issue PL-0001
 
-- status: open
+- status: completed
 - owner_role: polisher_reviewer
 - created_at: 2026-06-10T04:02:05Z
-- updated_at: 2026-06-10T04:02:05Z
+- updated_at: 2026-06-10T04:08:35Z
 - title: KaTeX fonts 404: served font path does not match katex.min.css url() references
 - details: ## What is wrong
 
@@ -57,10 +57,10 @@ URL the CSS actually references, so the mismatch is not caught.
 
 ## Issue PL-0002
 
-- status: open
+- status: completed
 - owner_role: polisher_reviewer
 - created_at: 2026-06-10T04:02:09Z
-- updated_at: 2026-06-10T04:02:09Z
+- updated_at: 2026-06-10T04:08:36Z
 - title: Math substitution leaks into code blocks/inline code and produces false positives
 - details: ## What is wrong
 
@@ -108,10 +108,10 @@ pre-tokenization regex approach bypasses that protection.
 
 ## Issue PL-0003
 
-- status: open
+- status: completed
 - owner_role: polisher_reviewer
 - created_at: 2026-06-10T04:02:09Z
-- updated_at: 2026-06-10T04:02:09Z
+- updated_at: 2026-06-10T04:08:36Z
 - title: KaTeX-unavailable fallback injects raw unescaped math source (XSS)
 - details: ## What is wrong
 
