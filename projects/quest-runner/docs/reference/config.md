@@ -45,28 +45,35 @@ See [CLI reference](cli.md).
 
 ## Project-level config file
 
-There is no `config/quest-runner.json` today. The service resolves the source
-Sheaf repository from the installed package location and binds to port `9002`
-via CLI defaults in `src/quest_runner_service/__main__.py`.
+Quest Runner can read service-level harness provider settings from
+`config/quest-runner.json`. The file is optional. When present, its `harnesses`
+mapping supplies provider CLI configuration for harness kinds such as `cursor`,
+`codex`, and `claude_code`.
 
-If project-wide Quest Runner settings are added later, they should live in
+Other persistent project-wide settings should also live in
 `config/quest-runner.json` per repository rules.
 
-## Per-quest execution config
+## Per-quest workflow config
 
-Each quest carries its own harness and path-enforcement settings in
-`state_execution_config.yaml` inside the quest directory. New quests receive a
-copy of `src/quest_runner_service/default_state_execution_config.yaml` at
-creation time.
+Each quest carries its state machine, role profiles, prompts, issue-file
+declarations, and path-enforcement rules in a quest-local `workflow/` directory.
+New quests receive a copy of
+`src/quest_runner_service/default_workflow/` at creation time.
 
-Role profiles in that file specify:
+Workflow profile files under `workflow/profiles/` specify:
 
 - harness kind (`cursor`, `codex`, `claude_code`)
 - model and timeout settings
 - optional `modify_allow` / `modify_block` glob lists for path enforcement
 
-Version `2` configs enable per-role path rules. The runner reverts harness
-changes outside allowed paths after each turn.
+The runner reverts harness changes outside allowed paths after each turn.
+Harness provider CLI paths remain service-level configuration; experiments copy
+and replace `workflow/`, not machine-local provider settings.
+
+Legacy writable quests may still contain the old execution-config file before
+upgrade. The `scripts/quest-runner upgrade` command migrates those quests to the
+`workflow/` directory and moves provider settings into service-level config when
+needed.
 
 ## Runtime schema reference
 

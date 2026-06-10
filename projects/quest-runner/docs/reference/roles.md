@@ -1,9 +1,8 @@
 # Quest roles
 
 Quest Runner executes quests through six harness-backed roles. Each role has a
-prompt template under `src/quest_runner_service/roles/`, a profile in the
-quest's `state_execution_config.yaml`, and a deterministic thread identity in
-`thread_registry.json`.
+prompt template and profile in the quest's `workflow/` directory, plus a
+deterministic thread identity in `thread_registry.json`.
 
 Runtime workflow rules for harness prompts live in
 `src/quest_runner_service/quest_docs/workflow.md`. This document is the
@@ -11,25 +10,23 @@ human-facing reference for role behavior, routing, and file ownership.
 
 ## Role catalog
 
-| Role | Scope | Quest state | Slice state | Prompt template |
+| Role | Scope | Quest state | Slice state | Default prompt template |
 | --- | --- | --- | --- | --- |
-| `physical_planner` | quest | `PhysicalPlanning` | — | [physical_planner.md](../../src/quest_runner_service/roles/physical_planner.md) |
-| `physical_plan_reviewer` | quest | `ReviewPhysicalPlan` | — | [physical_plan_reviewer.md](../../src/quest_runner_service/roles/physical_plan_reviewer.md) |
-| `implementer` | slice | `ExecuteSlice` | `Implementing` | [implementer.md](../../src/quest_runner_service/roles/implementer.md) |
-| `polisher_reviewer` | slice | `ExecuteSlice` | `PolishingReview` | [polisher_reviewer.md](../../src/quest_runner_service/roles/polisher_reviewer.md) |
-| `polisher` | slice | `ExecuteSlice` | `PolishingFix` | [polisher.md](../../src/quest_runner_service/roles/polisher.md) |
-| `documenter` | quest | `QuestDocumenting` | — | [documenter.md](../../src/quest_runner_service/roles/documenter.md) |
+| `physical_planner` | quest | `PhysicalPlanning` | — | [physical_planner.md](../../src/quest_runner_service/default_workflow/prompts/physical_planner.md) |
+| `physical_plan_reviewer` | quest | `ReviewPhysicalPlan` | — | [physical_plan_reviewer.md](../../src/quest_runner_service/default_workflow/prompts/physical_plan_reviewer.md) |
+| `implementer` | slice | `ExecuteSlice` | `Implementing` | [implementer.md](../../src/quest_runner_service/default_workflow/prompts/implementer.md) |
+| `polisher_reviewer` | slice | `ExecuteSlice` | `PolishingReview` | [polisher_reviewer.md](../../src/quest_runner_service/default_workflow/prompts/polisher_reviewer.md) |
+| `polisher` | slice | `ExecuteSlice` | `PolishingFix` | [polisher.md](../../src/quest_runner_service/default_workflow/prompts/polisher.md) |
+| `documenter` | quest | `QuestDocumenting` | — | [documenter.md](../../src/quest_runner_service/default_workflow/prompts/documenter.md) |
 
-New quests copy default harness and path profiles from
-`src/quest_runner_service/default_state_execution_config.yaml`. Per-quest
-overrides live in `<quest_dir>/state_execution_config.yaml`. See
-[Configuration](config.md).
+New quests copy default prompts, profiles, and state-machine routing from
+`src/quest_runner_service/default_workflow/`. Per-quest overrides live in
+`<quest_dir>/workflow/`. See [Configuration](config.md).
 
 ## State routing
 
-The v2 recursive state machine selects the active role from quest and slice
-state. Implementation: `state_machine/quest_v2_definitions.py` and
-`state_machine/quest_v2_nodes.py`.
+The recursive state machine selects the active role from the quest-local
+workflow's current state and child state.
 
 ```text
 PrePlanning          (no harness role; human/spec setup)
@@ -52,8 +49,8 @@ Completed            (slice done; quest machine advances)
 
 ## Prompt assembly
 
-`quest_thread.build_role_prompt` loads the role template from
-`roles/<role>.md` and appends the task instruction for the current step.
+The runner loads the role prompt from `workflow/prompts/<profile>.md` and
+appends the task instruction declared by the current workflow state.
 
 The first message in a role thread includes:
 
@@ -151,9 +148,8 @@ runtime context, normally:
 projects/<project>/docs/
 ```
 
-Path enforcement uses the `documenter` profile in
-`state_execution_config.yaml`. The default template allows
-`$currentProject/docs/**` and blocks all other paths.
+Path enforcement uses the `documenter` profile in `workflow/profiles/`. The
+default profile allows `$project/docs/**` and blocks all other paths.
 
 ### Documentation rules
 
@@ -180,20 +176,20 @@ documented.
 - Modify quest directories except `human_intervention_request.md` when
   escalation is required.
 
-Prompt template:
-[src/quest_runner_service/roles/documenter.md](../../src/quest_runner_service/roles/documenter.md).
+Default prompt template:
+[src/quest_runner_service/default_workflow/prompts/documenter.md](../../src/quest_runner_service/default_workflow/prompts/documenter.md).
 
 ## Path enforcement
 
-Version `2` execution configs enforce per-role `modify_allow` and `modify_block`
-glob lists after each harness turn. Illegal edits are reverted and the role
-receives a follow-up to continue within allowed paths.
+Workflow profiles enforce per-role `modify_allow` and `modify_block` glob lists
+after each harness turn. Illegal edits are reverted and the role receives a
+follow-up to continue within allowed paths.
 
 Placeholder tokens in `modify_allow` and `modify_block`:
 
-- `$currentQuest` — repo-relative quest directory
-- `$currentSlice` — repo-relative active slice directory
-- `$currentProject` — repo-relative `projects/<project>` directory
+- `$quest` — repo-relative quest directory
+- `$active_child` — repo-relative active child directory
+- `$project` — repo-relative `projects/<project>` directory
 
 When both allow and block lists are present, an allow match permits the path; a
 block match denies it; paths matching neither are permitted. See

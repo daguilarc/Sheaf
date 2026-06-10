@@ -16,7 +16,7 @@ projects/<project>/quests/
       state_history.md
       thread_registry.json
       physicalplan_issues.md
-      state_execution_config.yaml
+      workflow/
       specs/
       slices/
       logs/
@@ -104,16 +104,16 @@ projects/<project>/quests/<type>/<number>_<slug>/
     0000/
       experiment.json
       notes.md
-      state_execution_config.yaml
+      workflow/
       logs/
       issues/
       issue_responses/
 ```
 
 The numeric experiment directory is zero-padded. `experiment.json`, `notes.md`,
-and the alternate `state_execution_config.yaml` are committed on the source
-checkout when the experiment is created. `logs/`, `issues/`, and
-`issue_responses/` are populated when the experiment is landed.
+and the alternate `workflow/` directory are committed on the source checkout
+when the experiment is created. `logs/`, `issues/`, and `issue_responses/` are
+populated when the experiment is landed.
 
 The experiment worktree uses a deterministic basename:
 

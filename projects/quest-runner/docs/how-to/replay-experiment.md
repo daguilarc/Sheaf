@@ -1,10 +1,10 @@
 # Replay a quest as an experiment
 
 Experiments let an operator rerun an existing quest from an earlier v2
-state-machine step with a different `state_execution_config.yaml`. The replay
-runs in its own git worktree and branch. Landing an experiment archives its
-runtime artifacts under the parent quest; it does not merge or rebase experiment
-code onto `main`.
+state-machine step with a different workflow directory. The replay runs in its
+own git worktree and branch. Landing an experiment archives its runtime
+artifacts under the parent quest; it does not merge or rebase experiment code
+onto `main`.
 
 Use this workflow after the parent quest exists on the source checkout and the
 step you want to replay has a v2 step commit.
@@ -17,19 +17,19 @@ step you want to replay has a v2 step commit.
 - The parent quest exists under `projects/<project>/quests/<main|side>/`.
 - The selected start step can be resolved from v2 step commit metadata or
   compatible `state_history.md` data.
-- The alternate execution config is valid `state_execution_config.yaml` text.
+- The alternate workflow directory contains a valid `workflow.yaml`.
 
 ## Create the experiment
 
-Prepare a notes file and an alternate execution config:
+Prepare a notes file and an alternate workflow directory:
 
 ```bash
 cat > /tmp/experiment-notes.md <<'EOF'
 Try a different implementer profile for slice execution.
 EOF
 
-cp projects/quest-runner/src/quest_runner_service/default_state_execution_config.yaml \
-  /tmp/state_execution_config.yaml
+cp -R projects/quest-runner/src/quest_runner_service/default_workflow \
+  /tmp/experiment-workflow
 ```
 
 Create the experiment:
@@ -42,7 +42,7 @@ scripts/quest-runner experiments create \
   --start-step 5 \
   --stop-node slice_completed \
   --notes-file /tmp/experiment-notes.md \
-  --config-file /tmp/state_execution_config.yaml
+  --config-file /tmp/experiment-workflow
 ```
 
 Creation writes and commits:
@@ -50,7 +50,7 @@ Creation writes and commits:
 ```text
 projects/<project>/quests/<type>/<number>_<slug>/experiments/<experiment>/experiment.json
 projects/<project>/quests/<type>/<number>_<slug>/experiments/<experiment>/notes.md
-projects/<project>/quests/<type>/<number>_<slug>/experiments/<experiment>/state_execution_config.yaml
+projects/<project>/quests/<type>/<number>_<slug>/experiments/<experiment>/workflow/
 ```
 
 It also creates an experiment branch and worktree. The experiment id and
@@ -76,8 +76,8 @@ the experiment branch and worktree at the parent of that commit:
 ```
 
 Starting from the parent lets the experiment execute the selected step again
-with the alternate execution config. The source archive records both
-`step_commit` and `base_commit` in `experiment.json`.
+with the alternate workflow. The source archive records both `step_commit` and
+`base_commit` in `experiment.json`.
 
 ## Run experiment-scoped commands
 
@@ -105,7 +105,7 @@ scripts/quest-runner issues list \
   --project quest-runner \
   --type main \
   --number 0 \
-  --scope physicalplan \
+  --file physicalplan_issues.md \
   --experiment-id experiment_quest-runner_main_0_0
 ```
 

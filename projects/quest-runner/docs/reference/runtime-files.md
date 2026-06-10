@@ -179,24 +179,26 @@ Slice-scoped v2 role threads use:
 Older records may still use slug-based legacy thread names; readers retain
 compatibility with those records.
 
-## Execution Config
+## Workflow Config
 
 Path:
 
 ```text
-<quest_dir>/state_execution_config.yaml
+<quest_dir>/workflow/
 ```
 
-The config selects harness profiles for roles and can enable path-rule
-enforcement. Allowed harness values are:
+The workflow directory defines the quest state machines, role profiles, prompts,
+issue files, child collections, and scaffold actions. Profile files under
+`workflow/profiles/` select harnesses and can enable path-rule enforcement.
+Allowed harness values are:
 
 - `codex`
 - `cursor`
 - `claude_code`
 
-Version `2` configs support per-profile `modify_allow` and `modify_block` glob
-lists. Both lists can use `$currentQuest`, `$currentSlice`, and
-`$currentProject` placeholders. When both lists match a path, allow wins.
+Profiles support `modify_allow` and `modify_block` glob lists. Both lists can
+use `$quest`, `$active_child`, and `$project` placeholders. When both lists
+match a path, allow wins.
 
 The runner refuses to invoke a harness when the target repository working tree
 is not fully clean, including untracked files. After each harness turn, it
@@ -204,7 +206,8 @@ reverts changes outside the role's allowed paths, records the reverts in the
 step log, and sends a follow-up in the same thread telling the role to continue
 within its allowed paths.
 
-Version `1` configs keep legacy behavior with no path-rule enforcement.
+Harness provider CLI configuration lives at service level in
+`config/quest-runner.json`.
 
 ## Blocking And Acceptance Markers
 
@@ -235,7 +238,7 @@ files in the same directory:
 
 ```text
 experiments/<number>/notes.md
-experiments/<number>/state_execution_config.yaml
+experiments/<number>/workflow/
 ```
 
 Required `experiment.json` fields include `experiment_id`, `experiment_number`,

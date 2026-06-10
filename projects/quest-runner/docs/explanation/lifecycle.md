@@ -47,7 +47,7 @@ For execution:
    state-machine steps:
    - reads and writes quest/slice state files
    - invokes role harnesses when agent nodes run
-   - enforces `state_execution_config.yaml` path rules after harness turns
+   - enforces workflow profile path rules after harness turns
    - creates git commits with step metadata when filesystem changes occur
 6. On harness rate limits, deferred retry may schedule through
    `deferred_tasks.py` without a database.
@@ -111,8 +111,8 @@ nodes in `state_machine/`.
 ## Experiments
 
 Experiments let operators replay a completed quest from an earlier state-machine
-step with an alternate `state_execution_config.yaml`. An experiment is a child
-record of an existing main or side quest, not a third quest type.
+step with an alternate workflow directory. An experiment is a child record of an
+existing main or side quest, not a third quest type.
 
 ### Terminology
 
@@ -135,7 +135,7 @@ projects/<project>/quests/<type>/<number>_<slug>/
     0000/
       experiment.json
       notes.md
-      state_execution_config.yaml
+      workflow/
       logs/                 # populated after landing
       issues/               # populated after landing
       issue_responses/      # populated after landing
@@ -158,8 +158,8 @@ experiment can execute the selected step again.
 2. The service assigns the next experiment number under `experiments/`.
 3. Metadata files are written and committed on the source checkout.
 4. A branch is created at the base commit and an experiment worktree is added.
-5. The experimental `state_execution_config.yaml` replaces the quest config in
-   the worktree only.
+5. The experimental `workflow/` directory replaces the quest workflow in the
+   worktree only.
 6. Status becomes `open`.
 
 If metadata is committed but worktree creation fails, the API returns error

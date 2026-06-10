@@ -68,6 +68,9 @@ is ready to integrate back onto the target branch.
 Experiment replay uses the same service and CLI with an experiment scope:
 
 ```bash
+cp -R projects/quest-runner/src/quest_runner_service/default_workflow \
+  /tmp/experiment-workflow
+
 scripts/quest-runner experiments create \
   --project quest-runner \
   --type main \
@@ -75,7 +78,7 @@ scripts/quest-runner experiments create \
   --start-step 5 \
   --stop-node slice_completed \
   --notes-file /tmp/experiment-notes.md \
-  --config-file /tmp/state_execution_config.yaml
+  --config-file /tmp/experiment-workflow
 
 scripts/quest-runner run \
   --project quest-runner \
@@ -99,12 +102,12 @@ Agents and humans should use the issue CLI instead of editing issue markdown fil
 directly:
 
 ```bash
-scripts/quest-runner issues list --project quest-runner --type side --number 0 --scope physicalplan
-scripts/quest-runner issues read QP-0001 --project quest-runner --type side --number 0 --scope physicalplan
-scripts/quest-runner issues create --project quest-runner --type side --number 0 --scope physicalplan --title "Title" --body "Details"
-scripts/quest-runner issues edit QP-0001 --project quest-runner --type side --number 0 --scope physicalplan --status completed
-scripts/quest-runner issues respond QP-0001 --project quest-runner --type side --number 0 --scope physicalplan --outcome Fixed --explanation "Done"
-scripts/quest-runner issues list --project quest-runner --type side --number 0 --scope polishing --slice 1
+scripts/quest-runner issues list --project quest-runner --type side --number 0 --file physicalplan_issues.md
+scripts/quest-runner issues read QP-0001 --project quest-runner --type side --number 0 --file physicalplan_issues.md
+scripts/quest-runner issues create --project quest-runner --type side --number 0 --file physicalplan_issues.md --title "Title" --body "Details"
+scripts/quest-runner issues edit QP-0001 --project quest-runner --type side --number 0 --file physicalplan_issues.md --status completed
+scripts/quest-runner issues respond QP-0001 --project quest-runner --type side --number 0 --file physicalplan_issues.md --outcome Fixed --explanation "Done"
+scripts/quest-runner issues list --project quest-runner --type side --number 0 --file slices/0001_api/polishing_issues.md
 ```
 
 Run `scripts/quest-runner --help` or see the [CLI reference](../reference/cli.md)
