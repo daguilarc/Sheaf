@@ -984,6 +984,11 @@
     const explorerPane = config.explorerPane;
     const chatPane = config.chatPane;
     const onOpenFile = config.onOpenFile;
+    const touchLayout = config.touchLayout === true;
+    const mobileTabListEl = config.mobileTabListEl || null;
+    const mobileTitleEl = config.mobileTitleEl || null;
+    const mobileBackdropEl = config.mobileBackdropEl || null;
+    const mobileTabsPane = config.mobileTabsPane || null;
 
     const state = {
       tabs: [],
@@ -1007,6 +1012,12 @@
       chatCollapsed: false,
     };
 
+    const mobilePanelState = {
+      mobileExplorerOpen: false,
+      mobileTabsOpen: false,
+      mobileChatOpen: false,
+    };
+
     let activeResize = null;
 
     function FilesApiBase() {
@@ -1019,6 +1030,10 @@
     }
 
     function ApplyPanelLayout() {
+      if (touchLayout) {
+        return;
+      }
+
       const explorerWidth = panelState.explorerWidth + "px";
       const chatWidth = panelState.chatWidth + "px";
       if (
@@ -1039,6 +1054,104 @@
         "sheaf-chat-chat-pane--collapsed",
         panelState.chatCollapsed
       );
+    }
+
+    function ApplyMobilePanelState() {
+      if (!touchLayout) {
+        return;
+      }
+
+      const anyOpen =
+        mobilePanelState.mobileExplorerOpen ||
+        mobilePanelState.mobileTabsOpen ||
+        mobilePanelState.mobileChatOpen;
+
+      if (explorerPane) {
+        explorerPane.classList.toggle(
+          "sheaf-chat-mobile-panel--open",
+          mobilePanelState.mobileExplorerOpen
+        );
+      }
+      if (mobileTabsPane) {
+        mobileTabsPane.classList.toggle(
+          "sheaf-chat-mobile-panel--open",
+          mobilePanelState.mobileTabsOpen
+        );
+      }
+      if (chatPane) {
+        chatPane.classList.toggle(
+          "sheaf-chat-mobile-panel--open",
+          mobilePanelState.mobileChatOpen
+        );
+      }
+      if (mobileBackdropEl) {
+        mobileBackdropEl.classList.toggle(
+          "sheaf-chat-mobile-backdrop--visible",
+          anyOpen
+        );
+      }
+      if (workspaceEl) {
+        workspaceEl.classList.toggle(
+          "sheaf-chat-workspace--panel-open",
+          anyOpen
+        );
+      }
+    }
+
+    function CloseMobilePanels() {
+      mobilePanelState.mobileExplorerOpen = false;
+      mobilePanelState.mobileTabsOpen = false;
+      mobilePanelState.mobileChatOpen = false;
+      ApplyMobilePanelState();
+    }
+
+    function OpenMobilePanel(name) {
+      CloseMobilePanels();
+      if (name === "explorer") {
+        mobilePanelState.mobileExplorerOpen = true;
+      } else if (name === "tabs") {
+        mobilePanelState.mobileTabsOpen = true;
+      } else if (name === "chat") {
+        mobilePanelState.mobileChatOpen = true;
+      }
+      ApplyMobilePanelState();
+    }
+
+    function ToggleMobilePanel(name) {
+      if (name === "explorer") {
+        if (mobilePanelState.mobileExplorerOpen) {
+          CloseMobilePanels();
+          return;
+        }
+        OpenMobilePanel("explorer");
+        return;
+      }
+      if (name === "tabs") {
+        if (mobilePanelState.mobileTabsOpen) {
+          CloseMobilePanels();
+          return;
+        }
+        OpenMobilePanel("tabs");
+        return;
+      }
+      if (name === "chat") {
+        if (mobilePanelState.mobileChatOpen) {
+          CloseMobilePanels();
+          return;
+        }
+        OpenMobilePanel("chat");
+      }
+    }
+
+    function UpdateMobileTitle() {
+      if (!mobileTitleEl) {
+        return;
+      }
+
+      const selected = state.selectedPath
+        ? FindTab(state.selectedPath)
+        : null;
+      mobileTitleEl.textContent = selected ? selected.name : "No file open";
     }
 
     function FindTab(pathValue) {
@@ -1140,7 +1253,11 @@
           fileButton.classList.add("sheaf-chat-explorer-file--unsupported");
         }
         fileButton.addEventListener("click", function () {
-          OpenFile(entry.path);
+          OpenFile(entry.path).then(function () {
+            if (touchLayout) {
+              CloseMobilePanels();
+            }
+          });
         });
         fileItem.appendChild(fileButton);
         childList.appendChild(fileItem);
@@ -1182,41 +1299,61 @@
         });
     }
 
-    function RenderTabs() {
-      tabBarEl.textContent = "";
-
-      for (const tab of state.tabs) {
-        const tabButton = CreateElement("button", "sheaf-chat-tab");
-        tabButton.type = "button";
-        if (tab.path === state.selectedPath) {
-          tabButton.classList.add("sheaf-chat-tab--selected");
-        }
-        if (tab.stale) {
-          tabButton.classList.add("sheaf-chat-tab--stale");
-        }
-
-        const label = CreateElement("span", "sheaf-chat-tab-label");
-        label.textContent = tab.name;
-        tabButton.appendChild(label);
-
-        const closeButton = CreateElement(
-          "button",
-          "sheaf-chat-tab-close"
-        );
-        closeButton.type = "button";
-        closeButton.textContent = "×";
-        closeButton.addEventListener("click", function (event) {
-          event.stopPropagation();
-          CloseTab(tab.path);
-        });
-        tabButton.appendChild(closeButton);
-
-        tabButton.addEventListener("click", function () {
-          SelectTab(tab.path);
-        });
-
-        tabBarEl.appendChild(tabButton);
+    function AppendTabButton(containerEl, tab, vertical) {
+      const tabClass = vertical
+        ? "sheaf-chat-tab sheaf-chat-mobile-tab"
+        : "sheaf-chat-tab";
+      const tabButton = CreateElement("button", tabClass);
+      tabButton.type = "button";
+      if (tab.path === state.selectedPath) {
+        tabButton.classList.add("sheaf-chat-tab--selected");
       }
+      if (tab.stale) {
+        tabButton.classList.add("sheaf-chat-tab--stale");
+      }
+
+      const label = CreateElement("span", "sheaf-chat-tab-label");
+      label.textContent = tab.name;
+      tabButton.appendChild(label);
+
+      const closeButton = CreateElement(
+        "button",
+        "sheaf-chat-tab-close"
+      );
+      closeButton.type = "button";
+      closeButton.textContent = "×";
+      closeButton.addEventListener("click", function (event) {
+        event.stopPropagation();
+        CloseTab(tab.path);
+      });
+      tabButton.appendChild(closeButton);
+
+      tabButton.addEventListener("click", function () {
+        SelectTab(tab.path);
+        if (touchLayout) {
+          CloseMobilePanels();
+        }
+      });
+
+      containerEl.appendChild(tabButton);
+    }
+
+    function RenderTabs() {
+      if (tabBarEl) {
+        tabBarEl.textContent = "";
+        for (const tab of state.tabs) {
+          AppendTabButton(tabBarEl, tab, false);
+        }
+      }
+
+      if (mobileTabListEl) {
+        mobileTabListEl.textContent = "";
+        for (const tab of state.tabs) {
+          AppendTabButton(mobileTabListEl, tab, true);
+        }
+      }
+
+      UpdateMobileTitle();
     }
 
     function RenderSelectedFile() {
@@ -1493,6 +1630,7 @@
     }
 
     ApplyPanelLayout();
+    ApplyMobilePanelState();
     RenderExplorer();
     RenderTabs();
     RenderSelectedFile();
@@ -1512,8 +1650,14 @@
       StartResize: StartResize,
       ToggleExplorerCollapsed: ToggleExplorerCollapsed,
       ToggleChatCollapsed: ToggleChatCollapsed,
+      OpenMobilePanel: OpenMobilePanel,
+      CloseMobilePanels: CloseMobilePanels,
+      ToggleMobilePanel: ToggleMobilePanel,
       getPanelState: function () {
         return panelState;
+      },
+      getMobilePanelState: function () {
+        return mobilePanelState;
       },
       getState: function () {
         return state;
@@ -1548,6 +1692,109 @@
     header.appendChild(title);
     screen.appendChild(header);
 
+    const workspace = CreateElement(
+      "div",
+      "sheaf-chat-workspace sheaf-chat-workspace--mobile"
+    );
+
+    const filePane = CreateElement("div", "sheaf-chat-file-pane");
+    const mobileToolbar = CreateElement("div", "sheaf-chat-mobile-toolbar");
+
+    const explorerToggle = CreateElement(
+      "button",
+      "sheaf-chat-icon-button sheaf-chat-mobile-toolbar-button sheaf-chat-mobile-toolbar-explorer"
+    );
+    explorerToggle.type = "button";
+    explorerToggle.textContent = "☰";
+    explorerToggle.setAttribute("aria-label", "Open explorer");
+
+    const mobileFileTitle = CreateElement(
+      "span",
+      "sheaf-chat-mobile-file-title"
+    );
+    mobileFileTitle.textContent = "No file open";
+
+    const tabsToggle = CreateElement(
+      "button",
+      "sheaf-chat-icon-button sheaf-chat-mobile-toolbar-button sheaf-chat-mobile-toolbar-tabs"
+    );
+    tabsToggle.type = "button";
+    tabsToggle.textContent = "▤";
+    tabsToggle.setAttribute("aria-label", "Open tabs");
+
+    const chatToggle = CreateElement(
+      "button",
+      "sheaf-chat-icon-button sheaf-chat-mobile-toolbar-button sheaf-chat-mobile-toolbar-chat"
+    );
+    chatToggle.type = "button";
+    chatToggle.textContent = "💬";
+    chatToggle.setAttribute("aria-label", "Open chat");
+
+    mobileToolbar.appendChild(explorerToggle);
+    mobileToolbar.appendChild(mobileFileTitle);
+    mobileToolbar.appendChild(tabsToggle);
+    mobileToolbar.appendChild(chatToggle);
+
+    const fileViewEl = CreateElement("div", "sheaf-chat-file-view");
+    filePane.appendChild(mobileToolbar);
+    filePane.appendChild(fileViewEl);
+
+    const mobileBackdrop = CreateElement("div", "sheaf-chat-mobile-backdrop");
+
+    const explorerPane = CreateElement(
+      "div",
+      "sheaf-chat-mobile-panel sheaf-chat-mobile-panel--explorer"
+    );
+    const explorerHeader = CreateElement("div", "sheaf-chat-pane-header");
+    const explorerTitle = CreateElement("span", "sheaf-chat-pane-title");
+    explorerTitle.textContent = "Explorer";
+    const explorerClose = CreateElement(
+      "button",
+      "sheaf-chat-icon-button sheaf-chat-mobile-panel-close"
+    );
+    explorerClose.type = "button";
+    explorerClose.textContent = "×";
+    explorerHeader.appendChild(explorerTitle);
+    explorerHeader.appendChild(explorerClose);
+    const explorerEl = CreateElement("div", "sheaf-chat-explorer-tree");
+    explorerPane.appendChild(explorerHeader);
+    explorerPane.appendChild(explorerEl);
+
+    const tabsPane = CreateElement(
+      "div",
+      "sheaf-chat-mobile-panel sheaf-chat-mobile-panel--tabs"
+    );
+    const tabsHeader = CreateElement("div", "sheaf-chat-pane-header");
+    const tabsTitle = CreateElement("span", "sheaf-chat-pane-title");
+    tabsTitle.textContent = "Tabs";
+    const tabsClose = CreateElement(
+      "button",
+      "sheaf-chat-icon-button sheaf-chat-mobile-panel-close"
+    );
+    tabsClose.type = "button";
+    tabsClose.textContent = "×";
+    tabsHeader.appendChild(tabsTitle);
+    tabsHeader.appendChild(tabsClose);
+    const mobileTabListEl = CreateElement("div", "sheaf-chat-mobile-tab-list");
+    tabsPane.appendChild(tabsHeader);
+    tabsPane.appendChild(mobileTabListEl);
+
+    const chatPane = CreateElement(
+      "div",
+      "sheaf-chat-mobile-panel sheaf-chat-mobile-panel--chat"
+    );
+    const chatHeader = CreateElement("div", "sheaf-chat-pane-header");
+    const chatTitle = CreateElement("span", "sheaf-chat-pane-title");
+    chatTitle.textContent = "Chat";
+    const chatClose = CreateElement(
+      "button",
+      "sheaf-chat-icon-button sheaf-chat-mobile-panel-close"
+    );
+    chatClose.type = "button";
+    chatClose.textContent = "×";
+    chatHeader.appendChild(chatTitle);
+    chatHeader.appendChild(chatClose);
+
     const statusRow = CreateElement("div", "sheaf-chat-chat-status");
     const connectionLabel = CreateElement("span");
     connectionLabel.textContent = "Connecting…";
@@ -1555,12 +1802,10 @@
 
     const modelSelect = CreateElement("select", "sheaf-chat-model-select");
     statusRow.appendChild(modelSelect);
-    screen.appendChild(statusRow);
 
     const chatMain = CreateElement("div", "sheaf-chat-chat-main");
     const chatContainer = CreateElement("div", "sheaf-chat-chat-view");
     chatMain.appendChild(chatContainer);
-    screen.appendChild(chatMain);
 
     const composer = CreateElement("div", "sheaf-chat-composer");
     const textarea = CreateElement("textarea", "sheaf-chat-textarea");
@@ -1574,8 +1819,21 @@
     sendButton.textContent = "Send";
     composer.appendChild(textarea);
     composer.appendChild(sendButton);
-    screen.appendChild(composer);
+
+    chatPane.appendChild(chatHeader);
+    chatPane.appendChild(statusRow);
+    chatPane.appendChild(chatMain);
+    chatPane.appendChild(composer);
+
+    workspace.appendChild(filePane);
+    workspace.appendChild(mobileBackdrop);
+    workspace.appendChild(explorerPane);
+    workspace.appendChild(tabsPane);
+    workspace.appendChild(chatPane);
+    screen.appendChild(workspace);
     app.appendChild(screen);
+
+    let openFileFn = null;
 
     const session = CreateChatSessionController({
       route: route,
@@ -1587,6 +1845,57 @@
       composer: composer,
       textarea: textarea,
       sendButton: sendButton,
+      linkContext: {
+        rootMode: "root",
+        onFileLink: function (targetPath, fragment) {
+          if (openFileFn) {
+            openFileFn(targetPath, { fragment: fragment });
+          }
+        },
+      },
+    });
+
+    const workspaceController = CreateFileWorkspace({
+      route: route,
+      explorerEl: explorerEl,
+      tabBarEl: null,
+      fileViewEl: fileViewEl,
+      workspaceEl: workspace,
+      explorerPane: explorerPane,
+      chatPane: chatPane,
+      touchLayout: true,
+      mobileTabListEl: mobileTabListEl,
+      mobileTitleEl: mobileFileTitle,
+      mobileBackdropEl: mobileBackdrop,
+      mobileTabsPane: tabsPane,
+      onOpenFile: function (openFile) {
+        openFileFn = openFile;
+      },
+    });
+
+    session.setFileChangedHandler(workspaceController.HandleFileChanged);
+
+    explorerToggle.addEventListener("click", function () {
+      workspaceController.ToggleMobilePanel("explorer");
+    });
+    tabsToggle.addEventListener("click", function () {
+      workspaceController.ToggleMobilePanel("tabs");
+    });
+    chatToggle.addEventListener("click", function () {
+      workspaceController.ToggleMobilePanel("chat");
+    });
+
+    explorerClose.addEventListener("click", function () {
+      workspaceController.CloseMobilePanels();
+    });
+    tabsClose.addEventListener("click", function () {
+      workspaceController.CloseMobilePanels();
+    });
+    chatClose.addEventListener("click", function () {
+      workspaceController.CloseMobilePanels();
+    });
+    mobileBackdrop.addEventListener("click", function () {
+      workspaceController.CloseMobilePanels();
     });
 
     window.addEventListener(

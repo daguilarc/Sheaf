@@ -1173,6 +1173,223 @@ test("markdown file links and assistant file links open or focus tabs", async ()
   assert.match(RequiredElement(harness.app, ".sheaf-chat-tab--selected").textContent, /readme\.md/);
 });
 
+test("touch layout shows file view as primary with mobile toolbar", async () =>
+{
+  const harness = LoadChatHarness({ touch: true });
+  await FlushPromises();
+
+  assert.equal(harness.app.classList.contains("sheaf-chat-touch"), true);
+  RequiredElement(harness.app, ".sheaf-chat-workspace--mobile");
+  RequiredElement(harness.app, ".sheaf-chat-mobile-toolbar");
+  RequiredElement(harness.app, ".sheaf-chat-file-view");
+  RequiredElement(harness.app, ".sheaf-chat-mobile-file-title");
+
+  assert.equal(
+    harness.app.querySelector(".sheaf-chat-tab-bar"),
+    null,
+    "horizontal tab bar should not exist on touch",
+  );
+  assert.equal(
+    harness.app.querySelector(".sheaf-chat-resize-handle"),
+    null,
+    "resize handles should not exist on touch",
+  );
+});
+
+test("mobile explorer panel opens from left and can open files", async () =>
+{
+  const harness = LoadChatHarness({ touch: true });
+  await FlushPromises();
+
+  const explorerPanel = RequiredElement(
+    harness.app,
+    ".sheaf-chat-mobile-panel--explorer",
+  );
+  const explorerToggle = RequiredElement(
+    harness.app,
+    ".sheaf-chat-mobile-toolbar-explorer",
+  );
+
+  assert.equal(
+    explorerPanel.classList.contains("sheaf-chat-mobile-panel--open"),
+    false,
+  );
+
+  explorerToggle.click();
+  assert.equal(
+    explorerPanel.classList.contains("sheaf-chat-mobile-panel--open"),
+    true,
+  );
+  assert.equal(
+    RequiredElement(harness.app, ".sheaf-chat-mobile-backdrop").classList.contains(
+      "sheaf-chat-mobile-backdrop--visible",
+    ),
+    true,
+  );
+
+  ExplorerFileButton(harness.app, "readme.md").click();
+  await FlushPromises();
+
+  assert.equal(
+    explorerPanel.classList.contains("sheaf-chat-mobile-panel--open"),
+    false,
+    "explorer should close after opening a file",
+  );
+  assert.match(
+    RequiredElement(harness.app, ".sheaf-chat-mobile-file-title").textContent,
+    /readme\.md/,
+  );
+  assert.match(harness.app.textContent, /Readme/);
+});
+
+test("mobile tab panel opens from right with vertical tabs", async () =>
+{
+  const harness = LoadChatHarness({ touch: true });
+  await FlushPromises();
+
+  ExplorerFileButton(harness.app, "readme.md").click();
+  await FlushPromises();
+  ExplorerFileButton(harness.app, "other.md").click();
+  await FlushPromises();
+
+  const tabsPanel = RequiredElement(harness.app, ".sheaf-chat-mobile-panel--tabs");
+  const tabsToggle = RequiredElement(harness.app, ".sheaf-chat-mobile-toolbar-tabs");
+
+  tabsToggle.click();
+  assert.equal(tabsPanel.classList.contains("sheaf-chat-mobile-panel--open"), true);
+
+  const mobileTabs = harness.app.querySelectorAll(".sheaf-chat-mobile-tab");
+  assert.equal(mobileTabs.length, 2);
+  assert.match(mobileTabs[0].textContent, /readme\.md/);
+  assert.match(mobileTabs[1].textContent, /other\.md/);
+
+  mobileTabs[0].click();
+  await FlushPromises();
+
+  assert.equal(tabsPanel.classList.contains("sheaf-chat-mobile-panel--open"), false);
+  assert.match(
+    RequiredElement(harness.app, ".sheaf-chat-mobile-file-title").textContent,
+    /readme\.md/,
+  );
+  assert.match(harness.app.textContent, /Readme/);
+
+  tabsToggle.click();
+  const closeButtons = harness.app.querySelectorAll(
+    ".sheaf-chat-mobile-tab .sheaf-chat-tab-close",
+  );
+  assert.equal(closeButtons.length, 2);
+  closeButtons[1].click();
+  await FlushPromises();
+
+  assert.equal(harness.app.querySelectorAll(".sheaf-chat-mobile-tab").length, 1);
+  assert.match(
+    RequiredElement(harness.app, ".sheaf-chat-mobile-file-title").textContent,
+    /readme\.md/,
+  );
+});
+
+test("mobile chat panel opens from bottom and preserves send behavior", async () =>
+{
+  const harness = LoadChatHarness({ touch: true });
+  const socket = harness.sockets[0];
+  await FlushPromises();
+
+  const chatPanel = RequiredElement(harness.app, ".sheaf-chat-mobile-panel--chat");
+  const chatToggle = RequiredElement(harness.app, ".sheaf-chat-mobile-toolbar-chat");
+  const textarea = RequiredElement(harness.app, ".sheaf-chat-textarea");
+  const sendButton = RequiredElement(harness.app, ".sheaf-chat-send");
+
+  chatToggle.click();
+  assert.equal(chatPanel.classList.contains("sheaf-chat-mobile-panel--open"), true);
+  assert.ok(chatPanel.querySelector(".sheaf-chat-chat-status"));
+  assert.ok(chatPanel.querySelector(".sheaf-chat-chat-view"));
+  assert.ok(chatPanel.querySelector(".sheaf-chat-composer"));
+
+  socket.open();
+  textarea.value = "Mobile chat message";
+  sendButton.click();
+
+  assert.equal(
+    LastFrame(socket, "client.user_message").payload.text,
+    "Mobile chat message",
+  );
+});
+
+test("mobile backdrop closes panels without losing tabs or chat state", async () =>
+{
+  const harness = LoadChatHarness({ touch: true });
+  const socket = harness.sockets[0];
+  await FlushPromises();
+
+  ExplorerFileButton(harness.app, "readme.md").click();
+  await FlushPromises();
+
+  const chatToggle = RequiredElement(harness.app, ".sheaf-chat-mobile-toolbar-chat");
+  chatToggle.click();
+
+  socket.open();
+  const textarea = RequiredElement(harness.app, ".sheaf-chat-textarea");
+  const sendButton = RequiredElement(harness.app, ".sheaf-chat-send");
+  textarea.value = "Persist after close";
+  sendButton.click();
+
+  RequiredElement(harness.app, ".sheaf-chat-mobile-backdrop").click();
+
+  assert.equal(
+    RequiredElement(harness.app, ".sheaf-chat-mobile-panel--chat").classList.contains(
+      "sheaf-chat-mobile-panel--open",
+    ),
+    false,
+  );
+  assert.match(
+    RequiredElement(harness.app, ".sheaf-chat-mobile-file-title").textContent,
+    /readme\.md/,
+  );
+  assert.match(harness.app.textContent, /Readme/);
+  assert.equal(Frames(socket, "client.user_message").length, 1);
+});
+
+test("mobile stale-tab markers survive panel close", async () =>
+{
+  const harness = LoadChatHarness({ touch: true });
+  await FlushPromises();
+
+  ExplorerFileButton(harness.app, "readme.md").click();
+  await FlushPromises();
+  ExplorerFileButton(harness.app, "other.md").click();
+  await FlushPromises();
+
+  const socket = harness.sockets[0];
+  socket.receive(
+    ServerEnvelope("file.changed", {
+      eventType: "fileChanged",
+      path: "docs/readme.md",
+      fileId: "docs/readme.md",
+      changedAt: "2026-06-09T00:00:00.000Z",
+      source: "edit_tool",
+    }, 10),
+  );
+  await FlushPromises();
+
+  const tabsToggle = RequiredElement(harness.app, ".sheaf-chat-mobile-toolbar-tabs");
+  tabsToggle.click();
+
+  const readmeTab = harness.app
+    .querySelectorAll(".sheaf-chat-mobile-tab")
+    .find((tab) => tab.textContent.includes("readme.md"));
+  assert.ok(readmeTab);
+  assert.equal(readmeTab.classList.contains("sheaf-chat-tab--stale"), true);
+
+  RequiredElement(harness.app, ".sheaf-chat-mobile-backdrop").click();
+  tabsToggle.click();
+
+  const staleTab = harness.app
+    .querySelectorAll(".sheaf-chat-mobile-tab")
+    .find((tab) => tab.textContent.includes("readme.md"));
+  assert.ok(staleTab);
+  assert.equal(staleTab.classList.contains("sheaf-chat-tab--stale"), true);
+});
+
 test("file.changed refetches selected tab and defers stale background tabs", async () =>
 {
   const fetchCalls: string[] = [];
