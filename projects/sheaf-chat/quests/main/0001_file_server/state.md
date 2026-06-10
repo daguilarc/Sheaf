@@ -1,10 +1,10 @@
 # State
 
-- global_step: 1
+- global_step: 2
 - machine_name: quest
 - machine_path: projects/sheaf-chat/quests/main/0001_file_server
-- state: PhysicalPlanning
-- updated_at: 2026-06-10T03:25:52Z
+- state: ReviewPhysicalPlan
+- updated_at: 2026-06-10T03:31:50Z
 
 ## Tags
 
