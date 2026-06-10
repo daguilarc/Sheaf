@@ -180,44 +180,200 @@
     }
   }
 
-  function ProtectMath(markdown, placeholders) {
-    let working = markdown;
+  function EscapeHtml(value) {
+    return String(value)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
 
-    function ProtectPattern(pattern, displayMode) {
-      working = working.replace(pattern, function (match, tex) {
-        const rendered = RenderKatex(String(tex).trim(), displayMode);
-        const index = placeholders.length;
-        placeholders.push(
-          rendered != null
-            ? '<span class="sheaf-markdown-math' +
-                (displayMode ? " sheaf-markdown-math--display" : "") +
-                '">' +
-                rendered +
-                "</span>"
-            : match
-        );
-        return x_MathPlaceholderPrefix + index + x_MathPlaceholderSuffix;
+  function FindLineEnd(markdown, lineStart) {
+    const newlineIndex = markdown.indexOf("\n", lineStart);
+    return newlineIndex < 0 ? markdown.length : newlineIndex + 1;
+  }
+
+  function GetFenceMarker(line) {
+    const match = /^(?: {0,3})(`{3,}|~{3,})/.exec(line);
+    if (!match) {
+      return null;
+    }
+
+    return {
+      character: match[1].charAt(0),
+      length: match[1].length,
+    };
+  }
+
+  function FindFencedCodeRanges(markdown) {
+    const ranges = [];
+    let position = 0;
+    let openFence = null;
+
+    while (position < markdown.length) {
+      const lineStart = position;
+      const lineEnd = FindLineEnd(markdown, lineStart);
+      const line = markdown.slice(lineStart, lineEnd);
+      const marker = GetFenceMarker(line);
+
+      if (openFence) {
+        if (
+          marker &&
+          marker.character === openFence.character &&
+          marker.length >= openFence.length
+        ) {
+          ranges.push({ start: openFence.start, end: lineEnd });
+          openFence = null;
+        }
+      } else if (marker) {
+        openFence = {
+          start: lineStart,
+          character: marker.character,
+          length: marker.length,
+        };
+      }
+
+      position = lineEnd;
+    }
+
+    if (openFence) {
+      ranges.push({ start: openFence.start, end: markdown.length });
+    }
+
+    return ranges;
+  }
+
+  function IsPositionInRanges(position, ranges, rangeIndex) {
+    while (rangeIndex.value < ranges.length && ranges[rangeIndex.value].end <= position) {
+      rangeIndex.value += 1;
+    }
+
+    return (
+      rangeIndex.value < ranges.length &&
+      ranges[rangeIndex.value].start <= position &&
+      position < ranges[rangeIndex.value].end
+    );
+  }
+
+  function FindInlineCodeRanges(markdown, blockedRanges) {
+    const ranges = [];
+    const blockedIndex = { value: 0 };
+    let position = 0;
+
+    while (position < markdown.length) {
+      if (IsPositionInRanges(position, blockedRanges, blockedIndex)) {
+        position = blockedRanges[blockedIndex.value].end;
+        continue;
+      }
+
+      if (markdown.charAt(position) !== "`") {
+        position += 1;
+        continue;
+      }
+
+      let tickEnd = position + 1;
+      while (tickEnd < markdown.length && markdown.charAt(tickEnd) === "`") {
+        tickEnd += 1;
+      }
+
+      const tickRun = markdown.slice(position, tickEnd);
+      const closeIndex = markdown.indexOf(tickRun, tickEnd);
+
+      if (closeIndex < 0) {
+        position = tickEnd;
+        continue;
+      }
+
+      ranges.push({ start: position, end: closeIndex + tickRun.length });
+      position = closeIndex + tickRun.length;
+    }
+
+    return ranges;
+  }
+
+  function MergeRanges(ranges) {
+    if (ranges.length === 0) {
+      return [];
+    }
+
+    const sorted = ranges.slice().sort(function (left, right) {
+      return left.start - right.start || left.end - right.end;
+    });
+    const merged = [sorted[0]];
+
+    for (let index = 1; index < sorted.length; index += 1) {
+      const current = sorted[index];
+      const previous = merged[merged.length - 1];
+
+      if (current.start <= previous.end) {
+        previous.end = Math.max(previous.end, current.end);
+      } else {
+        merged.push(current);
+      }
+    }
+
+    return merged;
+  }
+
+  function FindCodeRanges(markdown) {
+    const fencedRanges = FindFencedCodeRanges(markdown);
+    return MergeRanges(fencedRanges.concat(FindInlineCodeRanges(markdown, fencedRanges)));
+  }
+
+  function ReplaceOutsideRanges(markdown, ranges, replacer) {
+    if (ranges.length === 0) {
+      return replacer(markdown);
+    }
+
+    let result = "";
+    let position = 0;
+
+    for (let index = 0; index < ranges.length; index += 1) {
+      const range = ranges[index];
+      result += replacer(markdown.slice(position, range.start));
+      result += markdown.slice(range.start, range.end);
+      position = range.end;
+    }
+
+    result += replacer(markdown.slice(position));
+    return result;
+  }
+
+  function ProtectMath(markdown, placeholders) {
+    function MakeMathPlaceholder(match, tex, displayMode) {
+      const rendered = RenderKatex(String(tex).trim(), displayMode);
+      const index = placeholders.length;
+      placeholders.push(
+        rendered != null
+          ? '<span class="sheaf-markdown-math' +
+              (displayMode ? " sheaf-markdown-math--display" : "") +
+              '">' +
+              rendered +
+              "</span>"
+          : EscapeHtml(match)
+      );
+      return x_MathPlaceholderPrefix + index + x_MathPlaceholderSuffix;
+    }
+
+    function ProtectPattern(segment, pattern, displayMode) {
+      return segment.replace(pattern, function (match, tex) {
+        return MakeMathPlaceholder(match, tex, displayMode);
       });
     }
 
-    ProtectPattern(/\$\$([\s\S]+?)\$\$/g, true);
-    ProtectPattern(/\\\[([\s\S]+?)\\\]/g, true);
-    ProtectPattern(/\\\(([\s\S]+?)\\\)/g, false);
-    working = working.replace(
-      /(^|[^\\])\$([^$\n]+?)\$(?!\$)/g,
-      function (match, prefix, tex) {
-        const rendered = RenderKatex(String(tex).trim(), false);
-        const index = placeholders.length;
-        placeholders.push(
-          rendered != null
-            ? '<span class="sheaf-markdown-math">' + rendered + "</span>"
-            : match
-        );
-        return prefix + x_MathPlaceholderPrefix + index + x_MathPlaceholderSuffix;
-      }
-    );
-
-    return working;
+    return ReplaceOutsideRanges(markdown, FindCodeRanges(markdown), function (segment) {
+      let protectedSegment = ProtectPattern(segment, /\$\$([\s\S]+?)\$\$/g, true);
+      protectedSegment = ProtectPattern(protectedSegment, /\\\[([\s\S]+?)\\\]/g, true);
+      protectedSegment = ProtectPattern(protectedSegment, /\\\(([\s\S]+?)\\\)/g, false);
+      protectedSegment = protectedSegment.replace(
+        /(^|[^\\])\$([^\s$\n](?:[^$\n]*?[^\s$\n])?)\$(?![\d$])/g,
+        function (_match, prefix, tex) {
+          return prefix + MakeMathPlaceholder("$" + tex + "$", tex, false);
+        }
+      );
+      return protectedSegment;
+    });
   }
 
   function RestoreMath(html, placeholders) {
@@ -297,6 +453,8 @@
       isMarkdownPath: IsMarkdownPath,
       protectMath: ProtectMath,
       restoreMath: RestoreMath,
+      escapeHtml: EscapeHtml,
+      findCodeRanges: FindCodeRanges,
       resolveRelativePath: ResolveRelativePath,
     },
   };

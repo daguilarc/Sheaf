@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { posix } from "node:path";
 import test from "node:test";
 
 import {
@@ -18,6 +20,16 @@ import {
 } from "../../src/server/static.js";
 import { FindRepositoryRoot } from "../../src/server/repo_paths.js";
 import { StartTestServer } from "./rest/helpers.js";
+
+function ResolveCssUrl(stylesheetPath: string, cssUrl: string): string
+{
+  if (cssUrl.startsWith("/"))
+  {
+    return posix.normalize(cssUrl);
+  }
+
+  return posix.normalize(posix.join(posix.dirname(stylesheetPath), cssUrl));
+}
 
 test("static roots resolve bundled UI and shared AGUI assets", () =>
 {
@@ -71,6 +83,33 @@ test("vendor allowlist resolves markdown-it, katex, and font assets", () =>
   const fontResolved = ResolveStaticFile(fontEntry![0], roots, vendorAllowlist);
   assert.ok(fontResolved);
   assert.match(fontResolved!.absolutePath, /KaTeX_.*\.(woff2|woff|ttf)$/);
+});
+
+test("KaTeX stylesheet font references resolve to served font assets", () =>
+{
+  const repoRoot = FindRepositoryRoot();
+
+  if (repoRoot === undefined)
+  {
+    throw new Error("repository root not found");
+  }
+
+  const roots = BuildSheafChatStaticRoots(repoRoot);
+  const vendorAllowlist = BuildVendorAssetAllowlist(repoRoot);
+  const katexCss = ResolveStaticFile(x_katexCssPath, roots, vendorAllowlist);
+
+  assert.ok(katexCss);
+
+  const cssText = readFileSync(katexCss!.absolutePath, "utf8");
+  const urlMatch = /url\((?:'|")?([^)'"]+\.(?:woff2|woff|ttf))(?:'|")?\)/.exec(cssText);
+
+  assert.ok(urlMatch);
+
+  const resolvedFontPath = ResolveCssUrl(x_katexCssPath, urlMatch![1]);
+  const fontResolved = ResolveStaticFile(resolvedFontPath, roots, vendorAllowlist);
+
+  assert.ok(fontResolved);
+  assert.match(fontResolved!.contentType, /^font\//);
 });
 
 test("vendor routes reject path traversal", () =>

@@ -110,6 +110,8 @@ function ToPlain<T>(value: T): T
 
 async function LoadSheafMarkdown(options?: {
   includeVendors?: boolean;
+  includeMarkdownIt?: boolean;
+  includeKatex?: boolean;
 }): Promise<SheafMarkdownApi>
 {
   const sandbox: Record<string, unknown> = {
@@ -119,11 +121,15 @@ async function LoadSheafMarkdown(options?: {
   sandbox.globalThis = sandbox;
   sandbox.window = sandbox;
 
-  if (options?.includeVendors === true)
+  if (options?.includeVendors === true || options?.includeMarkdownIt === true)
   {
     const markdownItModule = await import("markdown-it");
-    const katexModule = await import("katex");
     sandbox.markdownit = markdownItModule.default;
+  }
+
+  if (options?.includeVendors === true || options?.includeKatex === true)
+  {
+    const katexModule = await import("katex");
     sandbox.katex = katexModule.default;
   }
 
@@ -203,6 +209,31 @@ test("renderMarkdown renders headings, emphasis, code, links, and KaTeX math", a
   assert.match(html!, /class="sheaf-markdown-math/);
   assert.match(html!, /class="sheaf-markdown"/);
   assert.equal(html!.includes("<script>"), false);
+});
+
+test("renderMarkdown does not render math inside code spans or fenced code blocks", async () =>
+{
+  const sheafMarkdown = await LoadSheafMarkdown({ includeVendors: true });
+  const html = sheafMarkdown.renderMarkdown(
+    "`$x$`\n\n```sh\ncp $a $b\n$$not math$$\n```\n\nCurrency: it costs $5 to $10\n\nOutside math: $x^2$",
+  );
+
+  assert.ok(html);
+  assert.match(html!, /<code>\$x\$<\/code>/);
+  assert.match(html!, /cp \$a \$b/);
+  assert.match(html!, /\$\$not math\$\$/);
+  assert.match(html!, /it costs \$5 to \$10/);
+  assert.equal(html!.match(/sheaf-markdown-math/g)?.length, 1);
+});
+
+test("renderMarkdown escapes math fallback text when KaTeX is unavailable", async () =>
+{
+  const sheafMarkdown = await LoadSheafMarkdown({ includeMarkdownIt: true });
+  const html = sheafMarkdown.renderMarkdown("$<img src=x onerror=alert(1)>$");
+
+  assert.ok(html);
+  assert.equal(html!.includes("<img"), false);
+  assert.match(html!, /\$&lt;img src=x onerror=alert\(1\)&gt;\$/);
 });
 
 test("renderMarkdown returns null when markdown-it is unavailable", async () =>

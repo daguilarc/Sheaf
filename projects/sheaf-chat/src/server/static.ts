@@ -36,7 +36,7 @@ export const x_sheafMarkdownJsPath = `${x_sheafChatAssetPrefix}/sheaf-markdown.j
 export const x_markdownItJsPath = `${x_vendorAssetPrefix}/markdown-it.min.js`;
 export const x_katexJsPath = `${x_vendorAssetPrefix}/katex.min.js`;
 export const x_katexCssPath = `${x_vendorAssetPrefix}/katex.min.css`;
-export const x_katexFontsUrlPrefix = `${x_vendorAssetPrefix}/katex/fonts`;
+export const x_katexFontsUrlPrefix = `${x_vendorAssetPrefix}/fonts`;
 
 function NormalizeUrlPrefix(urlPrefix: string): string
 {
