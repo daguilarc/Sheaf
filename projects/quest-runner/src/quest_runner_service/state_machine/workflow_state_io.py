@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
 
@@ -31,6 +32,23 @@ def path_matches_collection_pattern(rel_path: str, pattern: str) -> bool:
         if pattern_part != path_part:
             return False
     return True
+
+
+@dataclass(frozen=True)
+class ActiveWorkflowChild:
+    collection: WorkflowCollection
+    child_id: str
+    child_dir: Path
+    child_number: int | None
+
+
+def collection_child_dir(
+    collection: WorkflowCollection,
+    quest_dir: Path,
+    child_id: str,
+) -> Path:
+    parts = [child_id if part == "*" else part for part in collection.path.split("/")]
+    return quest_dir.joinpath(*parts).resolve()
 
 
 class WorkflowStateIo:
@@ -113,6 +131,26 @@ class WorkflowStateIo:
     def machine_key_for_dir(self, machine_dir: Path) -> str:
         return self._machine_key_for_dir(machine_dir)
 
+    def active_child_for_state(
+        self, state: StateMachineState
+    ) -> ActiveWorkflowChild | None:
+        for collection in self.workflow.collections.values():
+            child_id = state.tags.get(collection.active_var, "").strip()
+            if not child_id:
+                continue
+            child_dir = collection_child_dir(collection, self.quest_dir, child_id)
+            if child_dir.is_dir():
+                return ActiveWorkflowChild(
+                    collection=collection,
+                    child_id=child_id,
+                    child_dir=child_dir,
+                    child_number=slice_index_from_dirname(child_id),
+                )
+        return None
+
+    def active_child(self) -> ActiveWorkflowChild | None:
+        return self.active_child_for_state(self.ReadStateMachineState(self.quest_dir))
+
     def _machine_key_for_dir(self, machine_dir: Path) -> str:
         if machine_dir.resolve() == self.quest_dir:
             return self.workflow.entry_machine
@@ -158,8 +196,8 @@ class WorkflowStateIo:
                 tags=dict(sm.tags),
                 updated_at=sm.updated_at,
             )
-        info = quest_fs.read_quest_state(self.quest_dir)
-        logical = self.logical_state_for_persisted(machine_key, info.state.value)
+        info = quest_fs.read_quest_file_state(self.quest_dir)
+        logical = self.logical_state_for_persisted(machine_key, info.state)
         rel = self.quest_dir.relative_to(self.repo_path).as_posix()
         tags: dict[str, str] = {}
         if info.active_slice:

@@ -11,10 +11,8 @@ from quest_runner_service import quest_fs
 from quest_runner_service.quest_runner import run_quest
 from quest_runner_service.quest_runner_v2 import run_quest_v2
 from quest_runner_service.quest_types import (
-    QuestState,
-    QuestStateInfo,
-    SliceState,
-    SliceStateInfo,
+    QuestFileState,
+    SliceFileState,
 )
 from quest_runner_service.state_machine.commit_metadata import parse_step_commit_message
 from quest_runner_service.state_machine.v2_step_executor import (
@@ -70,9 +68,9 @@ def _scaffold_slice(slice_dir: Path) -> None:
     pp = slice_dir / "physicalplan"
     pp.mkdir(parents=True, exist_ok=True)
     (pp / "plan.md").write_text("# plan\n", encoding="utf-8")
-    quest_fs.write_slice_state(
+    quest_fs.write_slice_file_state(
         slice_dir,
-        SliceStateInfo(state=SliceState.NotStarted, updated_at="2026-01-01T00:00:00Z"),
+        SliceFileState(state="NotStarted", updated_at="2026-01-01T00:00:00Z"),
     )
     (slice_dir / "state_history.md").write_text(
         "# State Transition History\n", encoding="utf-8"
@@ -116,10 +114,10 @@ class AutomatedRunTests(WorkflowRunnerIntegrationFixture):
         self.assertEqual(_git_head(self.worktree), before_head)
 
     def test_completed_returns_without_commit(self) -> None:
-        quest_fs.write_quest_state(
+        quest_fs.write_quest_file_state(
             self.wt_qdir,
-            QuestStateInfo(
-                state=QuestState.Completed,
+            QuestFileState(
+                state="Completed",
                 current_slice=None,
                 updated_at="2026-01-01T00:00:00Z",
                 global_step=3,
@@ -159,17 +157,17 @@ class AutomatedRunTests(WorkflowRunnerIntegrationFixture):
 
         sl = self.wt_qdir / "slices" / "0000_impl"
         _scaffold_slice(sl)
-        quest_fs.write_slice_state(
+        quest_fs.write_slice_file_state(
             sl,
-            SliceStateInfo(
-                state=SliceState.Implementing,
+            SliceFileState(
+                state="Implementing",
                 updated_at="2026-01-01T00:00:00Z",
             ),
         )
-        quest_fs.write_quest_state(
+        quest_fs.write_quest_file_state(
             self.wt_qdir,
-            QuestStateInfo(
-                state=QuestState.ExecuteSlice,
+            QuestFileState(
+                state="ExecuteSlice",
                 current_slice=0,
                 updated_at="2026-01-01T00:00:00Z",
                 active_slice="0000_impl",
@@ -183,7 +181,7 @@ class AutomatedRunTests(WorkflowRunnerIntegrationFixture):
 
         mock_harness_sequence.side_effect = complete_implementation
         before_head = _git_head(self.worktree)
-        before_gs = quest_fs.read_quest_state(self.wt_qdir).global_step
+        before_gs = quest_fs.read_quest_file_state(self.wt_qdir).global_step
 
         out = run_quest_v2(
             repo_path=self.worktree,
@@ -198,7 +196,7 @@ class AutomatedRunTests(WorkflowRunnerIntegrationFixture):
         self.assertEqual(out["steps_executed"], 1)
         self.assertEqual(out["last_commit"], after_head)
         self.assertEqual(
-            quest_fs.read_quest_state(self.wt_qdir).global_step,
+            quest_fs.read_quest_file_state(self.wt_qdir).global_step,
             before_gs + 1,
         )
 
@@ -225,7 +223,7 @@ class AutomatedRunTests(WorkflowRunnerIntegrationFixture):
 
         quest_key = _quest_key(self.meta)
         git_ops = SubprocessGitOps()
-        before_gs = quest_fs.read_quest_state(self.wt_qdir).global_step or 0
+        before_gs = quest_fs.read_quest_file_state(self.wt_qdir).global_step or 0
         result = advance_v2_top_level_step_without_harness(
             repo_path=self.worktree,
             quest_dir=self.wt_qdir,
@@ -234,10 +232,10 @@ class AutomatedRunTests(WorkflowRunnerIntegrationFixture):
             git_ops=git_ops,
         )
         self.assertEqual(result.kind, "advanced")
-        self.assertEqual(result.previous_quest_state, "PrePlanning")
-        self.assertEqual(result.next_quest_state, "PhysicalPlanning")
+        self.assertEqual(result.previous_workflow_state, "PrePlanning")
+        self.assertEqual(result.next_workflow_state, "PhysicalPlanning")
         self.assertIsNotNone(result.commit)
-        after_gs = quest_fs.read_quest_state(self.wt_qdir).global_step
+        after_gs = quest_fs.read_quest_file_state(self.wt_qdir).global_step
         self.assertEqual(after_gs, before_gs + 1)
         parsed = parse_step_commit_message(_git_head_message(self.worktree))
         self.assertIsNotNone(parsed)
@@ -263,17 +261,17 @@ class AutomatedRunTests(WorkflowRunnerIntegrationFixture):
         )
         sl = self.wt_qdir / "slices" / "0000_impl"
         _scaffold_slice(sl)
-        quest_fs.write_slice_state(
+        quest_fs.write_slice_file_state(
             sl,
-            SliceStateInfo(
-                state=SliceState.Implementing,
+            SliceFileState(
+                state="Implementing",
                 updated_at="2026-01-01T00:00:00Z",
             ),
         )
-        quest_fs.write_quest_state(
+        quest_fs.write_quest_file_state(
             self.wt_qdir,
-            QuestStateInfo(
-                state=QuestState.ExecuteSlice,
+            QuestFileState(
+                state="ExecuteSlice",
                 current_slice=0,
                 updated_at="2026-01-01T00:00:00Z",
                 active_slice="0000_impl",
@@ -282,7 +280,7 @@ class AutomatedRunTests(WorkflowRunnerIntegrationFixture):
         )
         _commit_all(self.worktree, "implementing setup")
         before_head = _git_head(self.worktree)
-        before_gs = quest_fs.read_quest_state(self.wt_qdir).global_step
+        before_gs = quest_fs.read_quest_file_state(self.wt_qdir).global_step
         out = run_quest(
             repo_path=self.worktree,
             quest_dir=self.wt_qdir,
@@ -291,22 +289,22 @@ class AutomatedRunTests(WorkflowRunnerIntegrationFixture):
         )
         self.assertEqual(out["status"], "max_steps")
         self.assertEqual(_git_head(self.worktree), before_head)
-        self.assertEqual(quest_fs.read_quest_state(self.wt_qdir).global_step, before_gs)
+        self.assertEqual(quest_fs.read_quest_file_state(self.wt_qdir).global_step, before_gs)
 
     def test_execute_slice_child_commit_has_nested_snapshot(self) -> None:
         sl = self.wt_qdir / "slices" / "0001_child"
         sl.mkdir(parents=True)
-        quest_fs.write_slice_state(
+        quest_fs.write_slice_file_state(
             sl,
-            SliceStateInfo(
-                state=SliceState.NotStarted,
+            SliceFileState(
+                state="NotStarted",
                 updated_at="2026-01-01T00:00:00Z",
             ),
         )
-        quest_fs.write_quest_state(
+        quest_fs.write_quest_file_state(
             self.wt_qdir,
-            QuestStateInfo(
-                state=QuestState.ExecuteSlice,
+            QuestFileState(
+                state="ExecuteSlice",
                 current_slice=1,
                 updated_at="2026-01-01T00:00:00Z",
                 active_slice="0001_child",
@@ -335,10 +333,10 @@ class AutomatedRunTests(WorkflowRunnerIntegrationFixture):
         self.assertEqual(snap.child.state_after, "Implementing")
 
     def test_quest_documenting_completes_without_docs_changes(self) -> None:
-        quest_fs.write_quest_state(
+        quest_fs.write_quest_file_state(
             self.wt_qdir,
-            QuestStateInfo(
-                state=QuestState.QuestDocumenting,
+            QuestFileState(
+                state="QuestDocumenting",
                 current_slice=None,
                 updated_at="2026-01-01T00:00:00Z",
                 global_step=6,
@@ -355,8 +353,8 @@ class AutomatedRunTests(WorkflowRunnerIntegrationFixture):
             git_ops=SubprocessGitOps(),
         )
         self.assertEqual(result.kind, "advanced")
-        self.assertEqual(result.next_quest_state, "Completed")
-        self.assertEqual(quest_fs.read_quest_state(self.wt_qdir).state, QuestState.Completed)
+        self.assertEqual(result.next_workflow_state, "Completed")
+        self.assertEqual(quest_fs.read_quest_file_state(self.wt_qdir).state, "Completed")
 
 
 class ManualAdvanceReasonTests(WorkflowRunnerIntegrationFixture):
@@ -368,10 +366,10 @@ class ManualAdvanceReasonTests(WorkflowRunnerIntegrationFixture):
         pp = sl / "physicalplan"
         pp.mkdir(parents=True)
         (pp / "plan.md").write_text("# plan\n", encoding="utf-8")
-        quest_fs.write_slice_state(
+        quest_fs.write_slice_file_state(
             sl,
-            SliceStateInfo(
-                state=SliceState.Implementing,
+            SliceFileState(
+                state="Implementing",
                 updated_at="2026-01-01T00:00:00Z",
             ),
         )
@@ -379,10 +377,10 @@ class ManualAdvanceReasonTests(WorkflowRunnerIntegrationFixture):
             "# State Transition History\n", encoding="utf-8"
         )
         (sl / "polishing_issues.md").write_text("# Issues\n", encoding="utf-8")
-        quest_fs.write_quest_state(
+        quest_fs.write_quest_file_state(
             self.wt_qdir,
-            QuestStateInfo(
-                state=QuestState.ExecuteSlice,
+            QuestFileState(
+                state="ExecuteSlice",
                 current_slice=0,
                 updated_at="2026-01-01T00:00:00Z",
                 active_slice="0000_impl",

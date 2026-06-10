@@ -21,10 +21,8 @@ from quest_runner_service.quest_service import (
 )
 from quest_runner_service.quest_types import (
     QuestMeta,
-    QuestState,
-    QuestStateInfo,
-    SliceState,
-    SliceStateInfo,
+    QuestFileState,
+    SliceFileState,
     utc_now_iso,
 )
 from quest_runner_service.worktrees import create_quest_scaffold_commit, create_quest_worktree
@@ -147,8 +145,8 @@ class WorkflowQuestCreationTests(unittest.TestCase):
             self.assertIn("state: PrePlanning\n", text)
             self.assertIn("global_step: 0\n", text)
             self.assertIn("machine_name: quest\n", text)
-            st = quest_fs.read_quest_state(qdir)
-            self.assertEqual(st.state, QuestState.PrePlanning)
+            st = quest_fs.read_quest_file_state(qdir)
+            self.assertEqual(st.state, "PrePlanning")
             self.assertEqual(st.global_step, 0)
 
     def test_initialize_slices_uses_workflow_scaffold(self) -> None:
@@ -327,10 +325,10 @@ class WorkflowUpgradeTests(unittest.TestCase):
         qdir = root / "projects" / "example" / "quests" / "main" / "0000_legacy"
         qdir.mkdir(parents=True)
         now = utc_now_iso()
-        quest_fs.write_quest_state(
+        quest_fs.write_quest_file_state(
             qdir,
-            QuestStateInfo(
-                state=QuestState.ExecuteSlice,
+            QuestFileState(
+                state="ExecuteSlice",
                 current_slice=1,
                 updated_at=now,
                 active_slice="0001_alpha",
@@ -359,10 +357,10 @@ class WorkflowUpgradeTests(unittest.TestCase):
             encoding="utf-8",
         )
         (qdir / "slices" / "0001_alpha" / "state.md").parent.mkdir(parents=True)
-        quest_fs.write_slice_state(
+        quest_fs.write_slice_file_state(
             qdir / "slices" / "0001_alpha",
-            SliceStateInfo(
-                state=SliceState.Implementing,
+            SliceFileState(
+                state="Implementing",
                 updated_at=now,
             ),
         )
@@ -432,8 +430,8 @@ class WorkflowUpgradeTests(unittest.TestCase):
             self.assertIn("state: ExecuteSlice\n", text)
             self.assertIn("active_slice: 0001_alpha\n", text)
             self.assertIn("global_step: 3\n", text)
-            st = quest_fs.read_quest_state(qdir)
-            self.assertEqual(st.state, QuestState.ExecuteSlice)
+            st = quest_fs.read_quest_file_state(qdir)
+            self.assertEqual(st.state, "ExecuteSlice")
             self.assertEqual(st.active_slice, "0001_alpha")
 
     def test_legacy_top_level_quest_is_not_upgraded(self) -> None:

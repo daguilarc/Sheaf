@@ -17,7 +17,7 @@ from .dashboard_chat import ChatStreamSession
 from .dashboard_data import DashboardBadRequest, DashboardNotFound
 from .harness import HarnessNotAvailable
 from . import quest_fs
-from .quest_fs import QuestStateParseError
+from .quest_fs import StateFileParseError
 from .issue_service import IssueNotFound
 from .quest_service import (
     AdvanceQuestConflict,
@@ -129,8 +129,8 @@ def create_app(
     def handle_harness_not_available(exc):
         return jsonify({"error": str(exc)}), 503
 
-    @app.errorhandler(QuestStateParseError)
-    def handle_quest_state_parse_error(exc):
+    @app.errorhandler(StateFileParseError)
+    def handle_state_file_parse_error(exc):
         return jsonify({"error": str(exc)}), 422
 
     @app.errorhandler(AdvanceQuestValidationError)

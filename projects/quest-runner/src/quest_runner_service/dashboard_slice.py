@@ -311,9 +311,9 @@ def slice_page_payload(
         "directory_name": slice_dir.name,
     }
     try:
-        slice_state = quest_fs.read_slice_state(slice_dir)
+        slice_state = quest_fs.read_slice_file_state(slice_dir)
         slice_state_payload = {
-            "state": slice_state.state.value,
+            "state": slice_state.state,
             "updated_at": slice_state.updated_at,
         }
     except FileNotFoundError:

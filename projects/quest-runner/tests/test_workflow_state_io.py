@@ -11,8 +11,7 @@ from quest_runner_service import quest_fs
 from quest_runner_service.errors import FatalInvariantError
 from quest_runner_service.quest_types import (
     QuestMeta,
-    QuestState,
-    QuestStateInfo,
+    QuestFileState,
     RecursiveSnapshot,
     StateMachineState,
     StepCommitMetadata,
@@ -254,12 +253,12 @@ class WorkflowSnapshotTests(unittest.TestCase):
         self.io = WorkflowStateIo(self.repo, self.quest_dir, self.meta, self.workflow)
 
     def test_top_level_snapshot_child_null(self) -> None:
-        quest_state = self.workflow.get_machine("quest").states["PhysicalPlanning"]
+        workflow_state_def = self.workflow.get_machine("quest").states["PhysicalPlanning"]
         snap = build_workflow_step_snapshot(
             workflow_io=self.io,
             machine_key="quest",
             machine_dir=self.quest_dir,
-            workflow_state=quest_state,
+            workflow_state=workflow_state_def,
             state_before="PhysicalPlanning",
             state_after="ReviewPhysicalPlan",
             tags={
@@ -288,12 +287,12 @@ class WorkflowSnapshotTests(unittest.TestCase):
             tags={},
             child=None,
         )
-        quest_state = self.workflow.get_machine("quest").states["ExecuteSlice"]
+        workflow_state_def = self.workflow.get_machine("quest").states["ExecuteSlice"]
         snap = build_workflow_step_snapshot(
             workflow_io=self.io,
             machine_key="quest",
             machine_dir=self.quest_dir,
-            workflow_state=quest_state,
+            workflow_state=workflow_state_def,
             state_before="ExecuteSlice",
             state_after="ExecuteSlice",
             tags={"active_slice": "0001_experiment_foundation"},
@@ -347,12 +346,12 @@ class WorkflowSnapshotTests(unittest.TestCase):
             state_after="Implementing",
             tags={},
         )
-        quest_state = self.workflow.get_machine("quest").states["ExecuteSlice"]
+        workflow_state_def = self.workflow.get_machine("quest").states["ExecuteSlice"]
         snap = build_workflow_step_snapshot(
             workflow_io=io,
             machine_key="quest",
             machine_dir=quest_dir,
-            workflow_state=quest_state,
+            workflow_state=workflow_state_def,
             state_before="ExecuteSlice",
             state_after="ExecuteSlice",
             tags={"active_slice": "0001_experiment_foundation"},
@@ -374,7 +373,7 @@ class WorkflowSnapshotTests(unittest.TestCase):
         self.assertEqual(to_dict(snap), expected)
 
     def test_commit_metadata_round_trip_with_workflow_snapshot(self) -> None:
-        quest_state = self.workflow.get_machine("quest").states["ExecuteSlice"]
+        workflow_state_def = self.workflow.get_machine("quest").states["ExecuteSlice"]
         child_state = self.workflow.get_machine("slice").states["SliceSetup"]
         child_snap = build_workflow_step_snapshot(
             workflow_io=self.io,
@@ -389,7 +388,7 @@ class WorkflowSnapshotTests(unittest.TestCase):
             workflow_io=self.io,
             machine_key="quest",
             machine_dir=self.quest_dir,
-            workflow_state=quest_state,
+            workflow_state=workflow_state_def,
             state_before="ExecuteSlice",
             state_after="ExecuteSlice",
             tags={"active_slice": "0001_experiment_foundation"},
@@ -427,8 +426,8 @@ class QuestFsGeneralizedReadTests(unittest.TestCase):
                     updated_at="2026-06-09T12:00:00Z",
                 ),
             )
-            info = quest_fs.read_quest_state(q)
-            self.assertEqual(info.state, QuestState.PrepareNextSlice)
+            info = quest_fs.read_quest_file_state(q)
+            self.assertEqual(info.state, "PrepareNextSlice")
             self.assertEqual(info.current_slice, 2)
             self.assertEqual(info.active_slice, "0002_other_slice")
 
@@ -439,8 +438,8 @@ class QuestFsGeneralizedReadTests(unittest.TestCase):
             meta = _sample_meta()
             quest_fs.write_quest_normalized_machine_state(
                 q,
-                QuestStateInfo(
-                    state=QuestState.ExperimentComplete,
+                QuestFileState(
+                    state="ExperimentComplete",
                     current_slice=None,
                     updated_at="2026-06-08T00:00:00Z",
                     global_step=7,
@@ -448,6 +447,6 @@ class QuestFsGeneralizedReadTests(unittest.TestCase):
                 meta,
                 Path(tmp),
             )
-            loaded = quest_fs.read_quest_state(q)
-            self.assertEqual(loaded.state, QuestState.ExperimentComplete)
+            loaded = quest_fs.read_quest_file_state(q)
+            self.assertEqual(loaded.state, "ExperimentComplete")
             self.assertEqual(loaded.global_step, 7)

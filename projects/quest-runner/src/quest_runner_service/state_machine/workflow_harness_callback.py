@@ -9,7 +9,6 @@ from ..harness import create_harness
 from ..harness_config import read_service_harness_configs
 from ..quest_runner import git_rev_parse_head, perform_role_harness_sequence
 from ..quest_thread import create_thread_with_provider_name, load_thread
-from ..quest_types import QuestState
 from ..workflow_config import WorkflowDefinition
 from ..workflow_profile_execution import (
     build_profile_execution_context,
@@ -53,14 +52,17 @@ def _invoke_workflow_profile_harness(
         ctx.harness_steps_acc[0] += 1
     quest_dir = ctx.machine_root_dir
     machine_dir = machine.StateMachineDir()
-    qsi = quest_fs.read_quest_state(quest_dir)
     slice_dir: Path | None = None
+    collection_name: str | None = None
     if machine_dir.resolve() != quest_dir.resolve():
         slice_dir = machine_dir
-    elif qsi.state == QuestState.ExecuteSlice and qsi.current_slice is not None:
-        slice_dir = quest_dir / "slices" / (qsi.active_slice or "")
-        if not slice_dir.is_dir():
-            slice_dir = None
+        collection = ctx.state_io._collection_for_dir(machine_dir)
+        collection_name = collection.name if collection is not None else None
+    else:
+        active_child = ctx.state_io.active_child()
+        if active_child is not None:
+            slice_dir = active_child.child_dir
+            collection_name = active_child.collection.name
     meta = quest_fs.read_quest_meta(quest_dir)
     profile = workflow.get_profile(profile_name)
     exec_profile = workflow_profile_to_execution_profile(profile)
@@ -68,7 +70,6 @@ def _invoke_workflow_profile_harness(
     harness = create_harness(
         exec_profile.harness, harness_configs.get(exec_profile.harness.value)
     )
-    collection_name = "slices" if slice_dir is not None else None
     exec_ctx = build_profile_execution_context(
         repo_path=ctx.repo_root,
         quest_dir=quest_dir,

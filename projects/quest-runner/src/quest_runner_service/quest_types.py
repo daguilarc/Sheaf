@@ -1,4 +1,4 @@
-"""Shared quest and slice type definitions for filesystem-backed state."""
+"""Shared quest runner type definitions."""
 
 from __future__ import annotations
 
@@ -25,27 +25,6 @@ def slice_index_from_dirname(name: str) -> int | None:
     return int(match.group(1)) if match else None
 
 
-class QuestState(Enum):
-    PrePlanning = "PrePlanning"
-    PhysicalPlanning = "PhysicalPlanning"
-    ReviewPhysicalPlan = "ReviewPhysicalPlan"
-    PrepareNextSlice = "PrepareNextSlice"
-    ExecuteSlice = "ExecuteSlice"
-    IntegrationTesting = "IntegrationTesting"
-    IntegrationTestPolishing = "IntegrationTestPolishing"
-    QuestDocumenting = "QuestDocumenting"
-    Completed = "Completed"
-    ExperimentComplete = "ExperimentComplete"
-
-
-class SliceState(Enum):
-    NotStarted = "NotStarted"
-    Implementing = "Implementing"
-    PolishingReview = "PolishingReview"
-    PolishingFix = "PolishingFix"
-    Done = "Done"
-
-
 class HarnessKind(Enum):
     Codex = "codex"
     Cursor = "cursor"
@@ -53,8 +32,8 @@ class HarnessKind(Enum):
 
 
 @dataclass
-class QuestStateInfo:
-    state: QuestState
+class QuestFileState:
+    state: str
     current_slice: int | None
     updated_at: str
     active_slice: str | None = None
@@ -62,8 +41,8 @@ class QuestStateInfo:
 
 
 @dataclass
-class SliceStateInfo:
-    state: SliceState
+class SliceFileState:
+    state: str
     updated_at: str
 
 

@@ -172,7 +172,7 @@ export function InferQuestDisplayStatus(overview, runStatus) {
   if (overlay === "running" || runStatus?.active_run != null) {
     return "running";
   }
-  if (overview.quest_state === "Completed") {
+  if (overview.is_terminal) {
     return overview.worktree_missing ? "landed" : "completed";
   }
   return "idle";
@@ -182,7 +182,7 @@ export function ShouldShowRunButton(overview, runStatus) {
   if (!overview) {
     return false;
   }
-  if (overview.quest_state === "Completed") {
+  if (overview.is_terminal) {
     return false;
   }
   if (overview.worktree_missing) {
@@ -205,7 +205,7 @@ export function ShouldShowAdvanceButton(overview, runStatus) {
   if (!overview) {
     return false;
   }
-  if (overview.quest_state === "Completed") {
+  if (overview.is_terminal) {
     return false;
   }
   if (overview.worktree_missing) {

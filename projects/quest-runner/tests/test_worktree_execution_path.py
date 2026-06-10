@@ -30,8 +30,7 @@ from quest_runner_service.quest_types import (
     ExecutionProfile,
     HarnessKind,
     QuestMeta,
-    QuestState,
-    QuestStateInfo,
+    QuestFileState,
     RecursiveSnapshot,
     StepCommitMetadata,
 )
@@ -436,10 +435,10 @@ class WorktreeDirtyWorkspaceTests(unittest.TestCase):
                 / "main"
                 / "0000_dirty_wt"
             )
-            quest_fs.write_quest_state(
+            quest_fs.write_quest_file_state(
                 wt_qdir,
-                QuestStateInfo(
-                    state=QuestState.PhysicalPlanning,
+                QuestFileState(
+                    state="PhysicalPlanning",
                     current_slice=None,
                     updated_at="2026-01-01T00:00:00Z",
                 ),

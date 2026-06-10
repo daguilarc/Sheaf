@@ -1123,19 +1123,19 @@ function RenderOverview(main) {
     </dl>
     <h2>State</h2>
     <dl class="dash-kv">
-      <dt>Quest state</dt><dd>${EscapeHtml(ov.quest_state)}</dd>
-      <dt>Active slice</dt><dd>${ov.current_slice == null ? "—" : EscapeHtml(String(ov.current_slice))}</dd>
+      <dt>Workflow state</dt><dd>${EscapeHtml(ov.workflow_state)}</dd>
+      <dt>Active child</dt><dd>${ov.active_child_number == null ? "—" : EscapeHtml(String(ov.active_child_number))}</dd>
       <dt>Slice state</dt><dd>${
-        ov.active_slice_state
-          ? `${EscapeHtml(ov.active_slice_state.state)} @ ${FormatDashboardTimestampWithAge(
-              ov.active_slice_state.updated_at
+        ov.active_child_state
+          ? `${EscapeHtml(ov.active_child_state.state)} @ ${FormatDashboardTimestampWithAge(
+              ov.active_child_state.updated_at
             )}`
           : "—"
       }</dd>
       <dt>Last update</dt><dd>${FormatDashboardTimestampWithAge(ov.updated_at)}</dd>
       <dt>Last transition</dt><dd>${ltHtml}</dd>
       <dt>Open issues (quest)</dt><dd>${EscapeHtml(String(ov.open_issues_quest_level))}</dd>
-      <dt>Open issues (active slice)</dt><dd>${EscapeHtml(String(ov.open_issues_active_slice))}</dd>
+      <dt>Open issues (active child)</dt><dd>${EscapeHtml(String(ov.open_issues_active_child))}</dd>
       <dt>Human intervention file</dt><dd>${ov.has_human_intervention_request ? "Yes" : "No"}</dd>
       <dt>Paused</dt><dd>${ov.has_paused_until ? "Yes" : "No"}</dd>
     </dl>

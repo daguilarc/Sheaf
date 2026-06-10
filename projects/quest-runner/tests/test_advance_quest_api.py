@@ -10,10 +10,8 @@ from unittest.mock import patch
 from quest_runner_service import quest_fs
 from quest_runner_service.quest_lock import QuestLock
 from quest_runner_service.quest_types import (
-    QuestState,
-    QuestStateInfo,
-    SliceState,
-    SliceStateInfo,
+    QuestFileState,
+    SliceFileState,
 )
 from quest_runner_service.state_machine.commit_metadata import parse_step_commit_message
 from quest_runner_service.worktrees import quest_worktree_path
@@ -140,8 +138,8 @@ class AdvanceQuestApiTests(unittest.TestCase):
         wt_qdir = _worktree_quest_dir(self.temp.root, out)
         meta = quest_fs.read_quest_meta(wt_qdir)
         worktree = quest_worktree_path(self.temp.root, meta)
-        before = quest_fs.read_quest_state(wt_qdir)
-        self.assertEqual(before.state, QuestState.PrePlanning)
+        before = quest_fs.read_quest_file_state(wt_qdir)
+        self.assertEqual(before.state, "PrePlanning")
 
         resp = client.post(
             "/advance_quest",
@@ -158,8 +156,8 @@ class AdvanceQuestApiTests(unittest.TestCase):
         self.assertEqual(body["next_state"], "PhysicalPlanning")
         self.assertIn("commit", body)
 
-        after = quest_fs.read_quest_state(wt_qdir)
-        self.assertEqual(after.state, QuestState.PhysicalPlanning)
+        after = quest_fs.read_quest_file_state(wt_qdir)
+        self.assertEqual(after.state, "PhysicalPlanning")
         head = subprocess.run(
             ["git", "-C", str(worktree), "rev-parse", "HEAD"],
             check=True,
@@ -180,10 +178,10 @@ class AdvanceQuestApiTests(unittest.TestCase):
         wt_qdir = _worktree_quest_dir(self.temp.root, out)
         meta = quest_fs.read_quest_meta(wt_qdir)
         worktree = quest_worktree_path(self.temp.root, meta)
-        quest_fs.write_quest_state(
+        quest_fs.write_quest_file_state(
             wt_qdir,
-            QuestStateInfo(
-                state=QuestState.Completed,
+            QuestFileState(
+                state="Completed",
                 current_slice=None,
                 updated_at="2026-01-01T00:00:00Z",
                 global_step=3,
@@ -221,10 +219,10 @@ class AdvanceQuestApiTests(unittest.TestCase):
         pp = sl / "physicalplan"
         pp.mkdir(parents=True)
         (pp / "plan.md").write_text("# plan\n", encoding="utf-8")
-        quest_fs.write_slice_state(
+        quest_fs.write_slice_file_state(
             sl,
-            SliceStateInfo(
-                state=SliceState.Implementing,
+            SliceFileState(
+                state="Implementing",
                 updated_at="2026-01-01T00:00:00Z",
             ),
         )
@@ -232,10 +230,10 @@ class AdvanceQuestApiTests(unittest.TestCase):
             "# State Transition History\n", encoding="utf-8"
         )
         (sl / "polishing_issues.md").write_text("# Issues\n", encoding="utf-8")
-        quest_fs.write_quest_state(
+        quest_fs.write_quest_file_state(
             wt_qdir,
-            QuestStateInfo(
-                state=QuestState.ExecuteSlice,
+            QuestFileState(
+                state="ExecuteSlice",
                 current_slice=0,
                 updated_at="2026-01-01T00:00:00Z",
                 active_slice="0000_impl",
@@ -243,7 +241,7 @@ class AdvanceQuestApiTests(unittest.TestCase):
             ),
         )
         _commit_all(worktree, "implementing setup")
-        before = quest_fs.read_quest_state(wt_qdir)
+        before = quest_fs.read_quest_file_state(wt_qdir)
 
         resp = client.post(
             "/advance_quest",
@@ -255,7 +253,7 @@ class AdvanceQuestApiTests(unittest.TestCase):
         )
         self.assertEqual(resp.status_code, 422)
         self.assertEqual(resp.get_json()["reason"], "missing_implementation_done")
-        after = quest_fs.read_quest_state(wt_qdir)
+        after = quest_fs.read_quest_file_state(wt_qdir)
         self.assertEqual(after.state, before.state)
         self.assertEqual(after.active_slice, before.active_slice)
 
@@ -273,17 +271,17 @@ class AdvanceQuestApiTests(unittest.TestCase):
         worktree = quest_worktree_path(self.temp.root, meta)
         sl = wt_qdir / "slices" / "0001_manual"
         sl.mkdir(parents=True)
-        quest_fs.write_slice_state(
+        quest_fs.write_slice_file_state(
             sl,
-            SliceStateInfo(
-                state=SliceState.NotStarted,
+            SliceFileState(
+                state="NotStarted",
                 updated_at="2026-01-01T00:00:00Z",
             ),
         )
-        quest_fs.write_quest_state(
+        quest_fs.write_quest_file_state(
             wt_qdir,
-            QuestStateInfo(
-                state=QuestState.ExecuteSlice,
+            QuestFileState(
+                state="ExecuteSlice",
                 current_slice=1,
                 updated_at="2026-01-01T00:00:00Z",
                 active_slice="0001_manual",
@@ -307,7 +305,7 @@ class AdvanceQuestApiTests(unittest.TestCase):
         self.assertEqual(body["next_state"], "ExecuteSlice")
         self.assertEqual(body["previous_slice_state"], "NotStarted")
         self.assertEqual(body["next_slice_state"], "Implementing")
-        self.assertEqual(quest_fs.read_slice_state(sl).state, SliceState.Implementing)
+        self.assertEqual(quest_fs.read_slice_file_state(sl).state, "Implementing")
         self.assertEqual(body["commit"], _head_commit(worktree))
         parsed = parse_step_commit_message(_head_commit_message(worktree))
         self.assertIsNotNone(parsed)
@@ -336,10 +334,10 @@ class AdvanceQuestApiTests(unittest.TestCase):
         pp = sl / "physicalplan"
         pp.mkdir(parents=True)
         (pp / "plan.md").write_text("# plan\n", encoding="utf-8")
-        quest_fs.write_slice_state(
+        quest_fs.write_slice_file_state(
             sl,
-            SliceStateInfo(
-                state=SliceState.NotStarted,
+            SliceFileState(
+                state="NotStarted",
                 updated_at="2026-01-01T00:00:00Z",
             ),
         )
@@ -351,10 +349,10 @@ class AdvanceQuestApiTests(unittest.TestCase):
             "# Physical Plan Accepted\n", encoding="utf-8"
         )
         (wt_qdir / "physicalplan_issues.md").write_text("# Issues\n", encoding="utf-8")
-        quest_fs.write_quest_state(
+        quest_fs.write_quest_file_state(
             wt_qdir,
-            QuestStateInfo(
-                state=QuestState.ReviewPhysicalPlan,
+            QuestFileState(
+                state="ReviewPhysicalPlan",
                 current_slice=None,
                 updated_at="2026-01-01T00:00:00Z",
                 global_step=2,
@@ -394,10 +392,10 @@ class AdvanceQuestApiTests(unittest.TestCase):
         wt_qdir = _worktree_quest_dir(self.temp.root, out)
         meta = quest_fs.read_quest_meta(wt_qdir)
         worktree = quest_worktree_path(self.temp.root, meta)
-        quest_fs.write_quest_state(
+        quest_fs.write_quest_file_state(
             wt_qdir,
-            QuestStateInfo(
-                state=QuestState.QuestDocumenting,
+            QuestFileState(
+                state="QuestDocumenting",
                 current_slice=None,
                 updated_at="2026-01-01T00:00:00Z",
                 global_step=6,
@@ -422,7 +420,7 @@ class AdvanceQuestApiTests(unittest.TestCase):
         self.assertEqual(body["previous_state"], "QuestDocumenting")
         self.assertEqual(body["next_state"], "Completed")
         self.assertEqual(body["commit"], _head_commit(worktree))
-        self.assertEqual(quest_fs.read_quest_state(wt_qdir).state, QuestState.Completed)
+        self.assertEqual(quest_fs.read_quest_file_state(wt_qdir).state, "Completed")
         parsed = parse_step_commit_message(_head_commit_message(worktree))
         self.assertIsNotNone(parsed)
         assert parsed is not None
@@ -441,10 +439,10 @@ class AdvanceQuestApiTests(unittest.TestCase):
         wt_qdir = _worktree_quest_dir(self.temp.root, out)
         meta = quest_fs.read_quest_meta(wt_qdir)
         worktree = quest_worktree_path(self.temp.root, meta)
-        quest_fs.write_quest_state(
+        quest_fs.write_quest_file_state(
             wt_qdir,
-            QuestStateInfo(
-                state=QuestState.QuestDocumenting,
+            QuestFileState(
+                state="QuestDocumenting",
                 current_slice=None,
                 updated_at="2026-01-01T00:00:00Z",
                 global_step=6,
@@ -465,7 +463,7 @@ class AdvanceQuestApiTests(unittest.TestCase):
         body = resp.get_json()
         self.assertEqual(body["previous_state"], "QuestDocumenting")
         self.assertEqual(body["next_state"], "Completed")
-        self.assertEqual(quest_fs.read_quest_state(wt_qdir).state, QuestState.Completed)
+        self.assertEqual(quest_fs.read_quest_file_state(wt_qdir).state, "Completed")
         self.assertEqual(body["commit"], _head_commit(worktree))
 
 

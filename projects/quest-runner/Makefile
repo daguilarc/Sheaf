@@ -17,6 +17,7 @@ TEST_MODULES := \
 	tests.test_dashboard_shell \
 	tests.test_dashboard_git \
 	tests.test_dashboard_slice \
+	tests.test_no_state_enums \
 	tests.test_normalized_state_md \
 	tests.test_state_machine_core \
 	tests.test_quest_fs_core \

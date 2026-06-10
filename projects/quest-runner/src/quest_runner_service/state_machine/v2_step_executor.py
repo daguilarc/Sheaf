@@ -8,16 +8,14 @@ from pathlib import Path
 from .. import quest_fs
 from ..errors import FatalInvariantError
 from ..quest_runner import (
-    _slice_path_for_quest,
     _write_human_intervention,
     collect_changed_paths_since,
 )
 from ..quest_types import (
     QuestMeta,
-    QuestState,
-    QuestStateInfo,
+    QuestFileState,
     RecursiveSnapshot,
-    SliceStateInfo,
+    SliceFileState,
     StateMachineId,
     StepCommitMetadata,
     utc_now_iso,
@@ -52,8 +50,8 @@ class V2StepResult:
 @dataclass
 class ManualAdvanceResult:
     kind: str
-    previous_quest_state: str
-    next_quest_state: str
+    previous_workflow_state: str
+    next_workflow_state: str
     previous_slice_state: str | None = None
     next_slice_state: str | None = None
     active_slice: str | None = None
@@ -83,7 +81,7 @@ def _write_commit_metadata_failure_log(quest_dir: Path, detail: str) -> Path:
 
 
 def _resolve_gs_before(
-    qsi: QuestStateInfo,
+    qsi: QuestFileState,
     repo_path: Path,
     git_ops: SubprocessGitOps,
     sm_id: StateMachineId,
@@ -102,12 +100,12 @@ def commit_v2_snapshot_step(
     git_ops: SubprocessGitOps,
     sm_id: StateMachineId,
     step_base: str,
-    before_quest: QuestStateInfo,
-    before_slice: SliceStateInfo | None,
+    before_quest: QuestFileState,
+    before_slice: SliceFileState | None,
     snapshot: RecursiveSnapshot,
     state_changed: bool,
 ) -> V2StepResult:
-    aq = quest_fs.read_quest_state(quest_dir)
+    aq = quest_fs.read_quest_file_state(quest_dir)
     changed = collect_changed_paths_since(repo_path, step_base)
     if not state_changed and not changed:
         return V2StepResult(kind="noop", snapshot=snapshot)
@@ -135,7 +133,7 @@ def commit_v2_snapshot_step(
         validate_parsed_step_commit(
             parsed,
             repo_root=repo_path,
-            expected_state_after=aq.state.value,
+            expected_state_after=aq.state,
         )
     except CommitMetadataValidationError as exc:
         _write_commit_metadata_failure_log(quest_dir, f"quest: {quest_key}\n\n{exc}")
@@ -148,7 +146,7 @@ def commit_v2_snapshot_step(
 
     quest_fs.write_quest_normalized_machine_state(
         quest_dir,
-        QuestStateInfo(
+        QuestFileState(
             state=aq.state,
             current_slice=aq.current_slice,
             updated_at=utc_now_iso(),
@@ -194,9 +192,13 @@ def execute_v2_top_level_step(
     workflow: WorkflowDefinition,
 ) -> V2StepResult:
     step_base = git_ops.GetHeadSha(repo_path)
-    bq = quest_fs.read_quest_state(quest_dir)
-    bsp = _slice_path_for_quest(quest_dir, bq)
-    bsi = quest_fs.read_slice_state(bsp) if bsp else None
+    bq = quest_fs.read_quest_file_state(quest_dir)
+    before_active = ctx.state_io.active_child()
+    bsi = (
+        quest_fs.read_slice_file_state(before_active.child_dir)
+        if before_active is not None
+        else None
+    )
 
     run_callback = build_workflow_run_callback(ctx, top, workflow)
     result = top.RunWorkflowStep(
@@ -241,22 +243,26 @@ def advance_v2_top_level_step_without_harness(
             "Quest has an open human_intervention_request.md; resolve it before advancing."
         )
 
-    bq = quest_fs.read_quest_state(quest_dir)
-    bsp = _slice_path_for_quest(quest_dir, bq)
-    bsi = quest_fs.read_slice_state(bsp) if bsp else None
-    prev_quest = bq.state.value
-    prev_slice = bsi.state.value if bsi is not None else None
+    bq = quest_fs.read_quest_file_state(quest_dir)
+    before_active = bundle.workflow_io.active_child()
+    bsi = (
+        quest_fs.read_slice_file_state(before_active.child_dir)
+        if before_active is not None
+        else None
+    )
+    prev_quest = bq.state
+    prev_slice = bsi.state if bsi is not None else None
 
     if is_top_level_workflow_complete(
         bundle.workflow, bundle.workflow_io, quest_dir
     ):
         return ManualAdvanceResult(
             kind="completed",
-            previous_quest_state=prev_quest,
-            next_quest_state=prev_quest,
+            previous_workflow_state=prev_quest,
+            next_workflow_state=prev_quest,
             previous_slice_state=prev_slice,
             next_slice_state=prev_slice,
-            active_slice=bq.active_slice,
+            active_slice=before_active.child_id if before_active is not None else None,
             message="Quest is already completed.",
         )
 
@@ -264,11 +270,15 @@ def advance_v2_top_level_step_without_harness(
 
     result = bundle.top.RunWorkflowStep(mode=ExecutionMode.Manual)
 
-    aq = quest_fs.read_quest_state(quest_dir)
-    asp = _slice_path_for_quest(quest_dir, aq)
-    asi = quest_fs.read_slice_state(asp) if asp else None
-    next_quest = aq.state.value
-    next_slice = asi.state.value if asi is not None else None
+    aq = quest_fs.read_quest_file_state(quest_dir)
+    after_active = bundle.workflow_io.active_child()
+    asi = (
+        quest_fs.read_slice_file_state(after_active.child_dir)
+        if after_active is not None
+        else None
+    )
+    next_quest = aq.state
+    next_slice = asi.state if asi is not None else None
 
     step_out = commit_v2_snapshot_step(
         repo_path=repo_path,
@@ -292,11 +302,11 @@ def advance_v2_top_level_step_without_harness(
     commit_sha = step_out.last_commit if step_out.kind == "committed" else None
     return ManualAdvanceResult(
         kind="advanced",
-        previous_quest_state=prev_quest,
-        next_quest_state=next_quest,
+        previous_workflow_state=prev_quest,
+        next_workflow_state=next_quest,
         previous_slice_state=prev_slice,
         next_slice_state=next_slice,
-        active_slice=aq.active_slice,
+        active_slice=after_active.child_id if after_active is not None else None,
         commit=commit_sha,
         message=f"Advanced quest {quest_key}",
         snapshot=result.snapshot,

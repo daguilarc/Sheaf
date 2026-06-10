@@ -23,11 +23,9 @@ from quest_runner_service.quest_lock import QuestLock
 from quest_runner_service.quest_service import QuestService
 from quest_runner_service.quest_types import (
     QuestMeta,
-    QuestState,
-    QuestStateInfo,
+    QuestFileState,
     RecursiveSnapshot,
-    SliceState,
-    SliceStateInfo,
+    SliceFileState,
 )
 from quest_runner_service.worktrees import remove_partial_worktree, run_git
 
@@ -156,15 +154,15 @@ class ExperimentCompleteStateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             q = Path(tmp) / "quest"
             q.mkdir()
-            original = QuestStateInfo(
-                state=QuestState.ExperimentComplete,
+            original = QuestFileState(
+                state="ExperimentComplete",
                 current_slice=None,
                 updated_at="2026-06-08T00:00:00Z",
                 global_step=12,
             )
-            quest_fs.write_quest_state(q, original)
-            loaded = quest_fs.read_quest_state(q)
-            self.assertEqual(loaded.state, QuestState.ExperimentComplete)
+            quest_fs.write_quest_file_state(q, original)
+            loaded = quest_fs.read_quest_file_state(q)
+            self.assertEqual(loaded.state, "ExperimentComplete")
             self.assertEqual(loaded.global_step, 12)
 
     def test_normalized_round_trip(self) -> None:
@@ -182,8 +180,8 @@ class ExperimentCompleteStateTests(unittest.TestCase):
             repo = Path(tmp)
             quest_fs.write_quest_normalized_machine_state(
                 q,
-                QuestStateInfo(
-                    state=QuestState.ExperimentComplete,
+                QuestFileState(
+                    state="ExperimentComplete",
                     current_slice=None,
                     updated_at="2026-06-08T00:00:00Z",
                     global_step=7,
@@ -191,8 +189,8 @@ class ExperimentCompleteStateTests(unittest.TestCase):
                 meta,
                 repo,
             )
-            loaded = quest_fs.read_quest_state(q)
-            self.assertEqual(loaded.state, QuestState.ExperimentComplete)
+            loaded = quest_fs.read_quest_file_state(q)
+            self.assertEqual(loaded.state, "ExperimentComplete")
             self.assertEqual(loaded.global_step, 7)
             sm = quest_fs.read_normalized_machine_state(q, require_global_step=False)
             self.assertEqual(sm.state, "ExperimentComplete")
@@ -244,17 +242,17 @@ class ExperimentAdvanceStopTests(unittest.TestCase):
             "# Accepted\n", encoding="utf-8"
         )
         (sl / "polishing_issues.md").write_text("# Issues\n", encoding="utf-8")
-        quest_fs.write_slice_state(
+        quest_fs.write_slice_file_state(
             sl,
-            SliceStateInfo(
-                state=SliceState.PolishingReview,
+            SliceFileState(
+                state="PolishingReview",
                 updated_at="2026-01-01T00:00:00Z",
             ),
         )
-        quest_fs.write_quest_state(
+        quest_fs.write_quest_file_state(
             wt_qdir,
-            QuestStateInfo(
-                state=QuestState.ExecuteSlice,
+            QuestFileState(
+                state="ExecuteSlice",
                 current_slice=0,
                 updated_at="2026-01-01T00:00:00Z",
                 active_slice="0000_done",
@@ -266,13 +264,13 @@ class ExperimentAdvanceStopTests(unittest.TestCase):
         return client, svc, out, wt_qdir, wt_path, exp_meta.experiment_id
 
     def _make_active_slice_completed(self, wt_qdir: Path, wt_path: Path) -> None:
-        qsi = quest_fs.read_quest_state(wt_qdir)
+        qsi = quest_fs.read_quest_file_state(wt_qdir)
         assert qsi.active_slice is not None
         sl = wt_qdir / "slices" / qsi.active_slice
-        quest_fs.write_slice_state(
+        quest_fs.write_slice_file_state(
             sl,
-            SliceStateInfo(
-                state=SliceState.Done,
+            SliceFileState(
+                state="Done",
                 updated_at="2026-01-01T00:00:00Z",
             ),
         )
@@ -294,10 +292,10 @@ class ExperimentAdvanceStopTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 200)
         body = resp.get_json()
         self.assertEqual(body["status"], "experiment_complete")
-        self.assertEqual(body["quest_state"], "ExperimentComplete")
+        self.assertEqual(body["workflow_state"], "ExperimentComplete")
         self.assertEqual(
-            quest_fs.read_quest_state(wt_qdir).state,
-            QuestState.ExperimentComplete,
+            quest_fs.read_quest_file_state(wt_qdir).state,
+            "ExperimentComplete",
         )
         source_qdir = quest_fs.find_quest_dir(
             self.temp.root, "example", "main", out["quest_number"]
@@ -341,7 +339,7 @@ class ExperimentAdvanceStopTests(unittest.TestCase):
         )
         self.assertEqual(rs.status_code, 200)
         body = rs.get_json()
-        self.assertEqual(body["quest_state"], "ExperimentComplete")
+        self.assertEqual(body["workflow_state"], "ExperimentComplete")
         self.assertEqual(body["experiment_id"], exp_id)
 
     def test_run_quest_experiment_reaches_stop_condition_and_reentry_noops(
@@ -360,12 +358,12 @@ class ExperimentAdvanceStopTests(unittest.TestCase):
             experiment_id=exp_id,
         )
         self.assertEqual(resp["status"], "experiment_complete")
-        self.assertEqual(resp["quest_state"], "ExperimentComplete")
+        self.assertEqual(resp["workflow_state"], "ExperimentComplete")
         self.assertEqual(resp["experiment_status"], "experiment_complete")
         self.assertTrue(resp["source_metadata_commit"])
 
-        wt_state = quest_fs.read_quest_state(wt_qdir)
-        self.assertEqual(wt_state.state, QuestState.ExperimentComplete)
+        wt_state = quest_fs.read_quest_file_state(wt_qdir)
+        self.assertEqual(wt_state.state, "ExperimentComplete")
         self.assertEqual(wt_state.global_step, 6)
 
         source_qdir = quest_fs.find_quest_dir(
@@ -391,7 +389,7 @@ class ExperimentAdvanceStopTests(unittest.TestCase):
             experiment_id=exp_id,
         )
         self.assertEqual(again["status"], "experiment_complete")
-        self.assertEqual(again["quest_state"], "ExperimentComplete")
+        self.assertEqual(again["workflow_state"], "ExperimentComplete")
         self.assertEqual(again["steps_executed"], 0)
         self.assertIsNone(again["source_metadata_commit"])
         self.assertEqual(

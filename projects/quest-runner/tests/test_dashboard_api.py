@@ -186,7 +186,7 @@ class DashboardHttpTests(unittest.TestCase):
         )
         self.assertEqual(ov.status_code, 200)
         j = ov.get_json()
-        self.assertEqual(j["quest_state"], "PrePlanning")
+        self.assertEqual(j["workflow_state"], "PrePlanning")
         self.assertEqual(j["quest"]["project"], "example")
         self.assertEqual(j["project"], "example")
         self.assertEqual(j["quest_type"], "main")
@@ -207,7 +207,7 @@ class DashboardHttpTests(unittest.TestCase):
         )
         self.assertEqual(rs.status_code, 200)
         rs_body = rs.get_json()
-        self.assertEqual(rs_body["quest_state"], "PrePlanning")
+        self.assertEqual(rs_body["workflow_state"], "PrePlanning")
         self.assertEqual(rs_body["project"], "example")
         self.assertEqual(rs_body["checkout_kind"], "worktree")
         self.assertFalse(rs_body["worktree_missing"])
@@ -257,7 +257,7 @@ class DashboardHttpTests(unittest.TestCase):
         self.assertEqual(hi.status_code, 200)
         self.assertFalse(hi.get_json()["present"])
 
-    def test_malformed_quest_state_422_on_snapshot(self) -> None:
+    def test_malformed_state_file_422_on_snapshot(self) -> None:
         ensure_project(self.temp.root, "example")
         client, svc = make_app_client(self.temp.root, self.repo_root)
         svc.create_quest(str(self.temp.root), "example", "main", "Bad")
@@ -525,7 +525,7 @@ class DashboardExperimentTests(unittest.TestCase):
         complete: bool = False,
     ) -> tuple[object, QuestService, dict, object, str]:
         from quest_runner_service.experiments import experiment_worktree_path
-        from quest_runner_service.quest_types import QuestState, QuestStateInfo
+        from quest_runner_service.quest_types import QuestFileState
         from quest_runner_service.worktrees import remove_partial_worktree
 
         from .test_experiment_scoped_operations import _add_experiment_worktree
@@ -558,10 +558,10 @@ class DashboardExperimentTests(unittest.TestCase):
                 wt_path, "example", "main", out["quest_number"]
             )
             assert wt_qdir is not None
-            quest_fs.write_quest_state(
+            quest_fs.write_quest_file_state(
                 wt_qdir,
-                QuestStateInfo(
-                    state=QuestState.ExperimentComplete,
+                QuestFileState(
+                    state="ExperimentComplete",
                     current_slice=None,
                     updated_at="2026-06-08T00:00:00Z",
                     global_step=5,

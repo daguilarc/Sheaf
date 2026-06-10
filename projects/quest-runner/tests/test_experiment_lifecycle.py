@@ -16,10 +16,8 @@ from quest_runner_service.experiments import (
     read_experiment_meta,
 )
 from quest_runner_service.quest_types import (
-    QuestState,
-    QuestStateInfo,
-    SliceState,
-    SliceStateInfo,
+    QuestFileState,
+    SliceFileState,
 )
 from quest_runner_service.worktrees import branch_exists, remove_partial_worktree, run_git
 
@@ -72,10 +70,10 @@ class ExperimentLifecycleIntegrationTests(unittest.TestCase):
             "{}\n", encoding="utf-8"
         )
 
-        quest_fs.write_quest_state(
+        quest_fs.write_quest_file_state(
             source_qdir,
-            QuestStateInfo(
-                state=QuestState.Completed,
+            QuestFileState(
+                state="Completed",
                 current_slice=None,
                 updated_at="2026-06-08T00:00:00Z",
                 global_step=5,
@@ -90,17 +88,17 @@ class ExperimentLifecycleIntegrationTests(unittest.TestCase):
         sl.mkdir(parents=True)
         (sl / "implementation_accepted.md").write_text("# Accepted\n", encoding="utf-8")
         (sl / "polishing_issues.md").write_text("# Issues\n", encoding="utf-8")
-        quest_fs.write_slice_state(
+        quest_fs.write_slice_file_state(
             sl,
-            SliceStateInfo(
-                state=SliceState.PolishingReview,
+            SliceFileState(
+                state="PolishingReview",
                 updated_at="2026-01-01T00:00:00Z",
             ),
         )
-        quest_fs.write_quest_state(
+        quest_fs.write_quest_file_state(
             wt_qdir,
-            QuestStateInfo(
-                state=QuestState.ExecuteSlice,
+            QuestFileState(
+                state="ExecuteSlice",
                 current_slice=0,
                 updated_at="2026-01-01T00:00:00Z",
                 active_slice="0000_done",
@@ -172,10 +170,10 @@ class ExperimentLifecycleIntegrationTests(unittest.TestCase):
         self.assertEqual(advance.status_code, 200)
         advance_body = advance.get_json()
         self.assertEqual(advance_body["status"], "experiment_complete")
-        self.assertEqual(advance_body["quest_state"], "ExperimentComplete")
+        self.assertEqual(advance_body["workflow_state"], "ExperimentComplete")
 
-        wt_state = quest_fs.read_quest_state(wt_qdir)
-        self.assertEqual(wt_state.state, QuestState.ExperimentComplete)
+        wt_state = quest_fs.read_quest_file_state(wt_qdir)
+        self.assertEqual(wt_state.state, "ExperimentComplete")
         source_meta = read_experiment_meta(exp_dir)
         self.assertEqual(source_meta.status, "experiment_complete")
         self.assertIsNotNone(source_meta.completed_at)

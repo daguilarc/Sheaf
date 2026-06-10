@@ -182,7 +182,7 @@ test("ShouldShowRunButton true for open idle quest with worktree", () => {
   assert.equal(
     ShouldShowRunButton(
       {
-        quest_state: "ExecuteSlice",
+        workflow_state: "ExecuteSlice",
         worktree_missing: false,
         execution_overlay_status: "none",
       },
@@ -194,7 +194,10 @@ test("ShouldShowRunButton true for open idle quest with worktree", () => {
 
 test("ShouldShowRunButton false when completed", () => {
   assert.equal(
-    ShouldShowRunButton({ quest_state: "Completed", worktree_missing: false }, null),
+    ShouldShowRunButton(
+      { workflow_state: "Completed", is_terminal: true, worktree_missing: false },
+      null
+    ),
     false
   );
 });
@@ -203,7 +206,7 @@ test("ShouldShowRunButton false when running", () => {
   assert.equal(
     ShouldShowRunButton(
       {
-        quest_state: "ExecuteSlice",
+        workflow_state: "ExecuteSlice",
         worktree_missing: false,
         execution_overlay_status: "running",
       },
@@ -217,7 +220,7 @@ test("ShouldShowRunButton false for human intervention", () => {
   assert.equal(
     ShouldShowRunButton(
       {
-        quest_state: "ExecuteSlice",
+        workflow_state: "ExecuteSlice",
         worktree_missing: false,
         execution_overlay_status: "human_intervention",
       },
@@ -231,7 +234,7 @@ test("ShouldShowRunButton false when worktree missing", () => {
   assert.equal(
     ShouldShowRunButton(
       {
-        quest_state: "ExecuteSlice",
+        workflow_state: "ExecuteSlice",
         worktree_missing: true,
         execution_overlay_status: "none",
       },
@@ -245,7 +248,7 @@ test("ShouldShowAdvanceButton true for stopped incomplete quest with worktree", 
   assert.equal(
     ShouldShowAdvanceButton(
       {
-        quest_state: "ExecuteSlice",
+        workflow_state: "ExecuteSlice",
         worktree_missing: false,
         execution_overlay_status: "none",
       },
@@ -259,7 +262,7 @@ test("ShouldShowAdvanceButton true during human intervention recovery", () => {
   assert.equal(
     ShouldShowAdvanceButton(
       {
-        quest_state: "ExecuteSlice",
+        workflow_state: "ExecuteSlice",
         worktree_missing: false,
         execution_overlay_status: "human_intervention",
       },
@@ -271,7 +274,10 @@ test("ShouldShowAdvanceButton true during human intervention recovery", () => {
 
 test("ShouldShowAdvanceButton false when completed", () => {
   assert.equal(
-    ShouldShowAdvanceButton({ quest_state: "Completed", worktree_missing: false }, null),
+    ShouldShowAdvanceButton(
+      { workflow_state: "Completed", is_terminal: true, worktree_missing: false },
+      null
+    ),
     false
   );
 });
@@ -280,7 +286,7 @@ test("ShouldShowAdvanceButton false when running", () => {
   assert.equal(
     ShouldShowAdvanceButton(
       {
-        quest_state: "ExecuteSlice",
+        workflow_state: "ExecuteSlice",
         worktree_missing: false,
         execution_overlay_status: "running",
       },
@@ -294,7 +300,7 @@ test("ShouldShowAdvanceButton false when paused", () => {
   assert.equal(
     ShouldShowAdvanceButton(
       {
-        quest_state: "ExecuteSlice",
+        workflow_state: "ExecuteSlice",
         worktree_missing: false,
         execution_overlay_status: "paused",
       },
@@ -308,7 +314,7 @@ test("ShouldShowAdvanceButton false when worktree missing", () => {
   assert.equal(
     ShouldShowAdvanceButton(
       {
-        quest_state: "ExecuteSlice",
+        workflow_state: "ExecuteSlice",
         worktree_missing: true,
         execution_overlay_status: "none",
       },
@@ -326,7 +332,8 @@ test("ShouldShowLandButton true only for completed quest with worktree", () => {
   assert.equal(
     ShouldShowLandButton(
       {
-        quest_state: "Completed",
+        workflow_state: "Completed",
+        is_terminal: true,
         worktree_missing: false,
         execution_overlay_status: "none",
       },
@@ -337,7 +344,8 @@ test("ShouldShowLandButton true only for completed quest with worktree", () => {
   assert.equal(
     ShouldShowLandButton(
       {
-        quest_state: "Completed",
+        workflow_state: "Completed",
+        is_terminal: true,
         worktree_missing: true,
         execution_overlay_status: "none",
       },
@@ -348,7 +356,7 @@ test("ShouldShowLandButton true only for completed quest with worktree", () => {
   assert.equal(
     ShouldShowLandButton(
       {
-        quest_state: "ExecuteSlice",
+        workflow_state: "ExecuteSlice",
         worktree_missing: false,
         execution_overlay_status: "none",
       },
@@ -362,7 +370,8 @@ test("ShouldShowLandButton false while completed quest is busy", () => {
   assert.equal(
     ShouldShowLandButton(
       {
-        quest_state: "Completed",
+        workflow_state: "Completed",
+        is_terminal: true,
         worktree_missing: false,
         execution_overlay_status: "running",
       },
@@ -376,7 +385,8 @@ test("InferQuestDisplayStatus distinguishes completed and landed", () => {
   assert.equal(
     InferQuestDisplayStatus(
       {
-        quest_state: "Completed",
+        workflow_state: "Completed",
+        is_terminal: true,
         worktree_missing: false,
         execution_overlay_status: "none",
       },
@@ -387,7 +397,8 @@ test("InferQuestDisplayStatus distinguishes completed and landed", () => {
   assert.equal(
     InferQuestDisplayStatus(
       {
-        quest_state: "Completed",
+        workflow_state: "Completed",
+        is_terminal: true,
         worktree_missing: true,
         execution_overlay_status: "none",
       },
@@ -401,7 +412,8 @@ test("InferQuestDisplayStatus keeps intervention and running precedence", () => 
   assert.equal(
     InferQuestDisplayStatus(
       {
-        quest_state: "Completed",
+        workflow_state: "Completed",
+        is_terminal: true,
         worktree_missing: false,
         execution_overlay_status: "human_intervention",
       },
@@ -412,7 +424,8 @@ test("InferQuestDisplayStatus keeps intervention and running precedence", () => 
   assert.equal(
     InferQuestDisplayStatus(
       {
-        quest_state: "Completed",
+        workflow_state: "Completed",
+        is_terminal: true,
         worktree_missing: false,
         execution_overlay_status: "paused",
       },
@@ -423,7 +436,8 @@ test("InferQuestDisplayStatus keeps intervention and running precedence", () => 
   assert.equal(
     InferQuestDisplayStatus(
       {
-        quest_state: "Completed",
+        workflow_state: "Completed",
+        is_terminal: true,
         worktree_missing: false,
         execution_overlay_status: "none",
       },
@@ -452,7 +466,8 @@ test("MergeRunBadge running when active_run set", () => {
 test("MergeRunBadge reports completed and landed", () => {
   const completed = MergeRunBadge(
     {
-      quest_state: "Completed",
+      workflow_state: "Completed",
+      is_terminal: true,
       worktree_missing: false,
       execution_overlay_status: "none",
     },
@@ -463,7 +478,8 @@ test("MergeRunBadge reports completed and landed", () => {
 
   const landed = MergeRunBadge(
     {
-      quest_state: "Completed",
+      workflow_state: "Completed",
+      is_terminal: true,
       worktree_missing: true,
       execution_overlay_status: "none",
     },

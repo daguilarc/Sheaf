@@ -21,7 +21,7 @@ from quest_runner_service.quest_service import (
     RepoNotFound,
     normalize_slug,
 )
-from quest_runner_service.quest_types import QuestMeta, QuestState
+from quest_runner_service.quest_types import QuestMeta
 from quest_runner_service.worktrees import WorktreeCreationError, is_worktree_clean
 
 
@@ -104,8 +104,8 @@ class CreateQuestTests(unittest.TestCase):
             self.assertIn("global_step: 0\n", state_text)
             meta = quest_fs.read_quest_meta(qdir)
             self.assertEqual(meta.project, "example")
-            st = quest_fs.read_quest_state(qdir)
-            self.assertEqual(st.state, QuestState.PrePlanning)
+            st = quest_fs.read_quest_file_state(qdir)
+            self.assertEqual(st.state, "PrePlanning")
             self.assertEqual(st.global_step, 0)
             self.assertEqual(out["project"], "example")
             self.assertEqual(out["worktree_name"], "example_main_0000_my_quest")
@@ -264,7 +264,7 @@ class CreateQuestTests(unittest.TestCase):
                 requested_by="tester",
             )
             qdir = Path(out["quest_dir"])
-            st = quest_fs.read_quest_state(qdir)
+            st = quest_fs.read_quest_file_state(qdir)
             meta = quest_fs.read_quest_meta(qdir)
             self.assertEqual(
                 meta,

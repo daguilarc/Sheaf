@@ -50,8 +50,7 @@ from quest_runner_service.quest_service import (
 )
 from quest_runner_service.quest_types import (
     QuestMeta,
-    QuestState,
-    QuestStateInfo,
+    QuestFileState,
     RecursiveSnapshot,
     StepCommitMetadata,
     TransitionRecord,
@@ -952,10 +951,10 @@ class ExperimentLandServiceTests(unittest.TestCase):
         sl = wt_qdir / "slices" / "0000_done"
         sl.mkdir(parents=True)
         (sl / "polishing_issues.md").write_text("# Slice\n", encoding="utf-8")
-        quest_fs.write_quest_state(
+        quest_fs.write_quest_file_state(
             wt_qdir,
-            QuestStateInfo(
-                state=QuestState.ExperimentComplete,
+            QuestFileState(
+                state="ExperimentComplete",
                 current_slice=None,
                 updated_at="2026-06-08T00:00:00Z",
                 global_step=6,
@@ -1050,10 +1049,10 @@ class ExperimentLandServiceTests(unittest.TestCase):
             wt_path, "example", "main", out["quest_number"]
         )
         assert wt_qdir is not None
-        quest_fs.write_quest_state(
+        quest_fs.write_quest_file_state(
             wt_qdir,
-            QuestStateInfo(
-                state=QuestState.ExecuteSlice,
+            QuestFileState(
+                state="ExecuteSlice",
                 current_slice=0,
                 updated_at="2026-06-08T00:00:00Z",
                 active_slice="0000_done",

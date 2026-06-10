@@ -15,11 +15,9 @@ from .quest_types import (
     IssueEntry,
     IssueResponseEntry,
     ProjectQuestRoot,
+    QuestFileState,
     QuestMeta,
-    QuestState,
-    QuestStateInfo,
-    SliceState,
-    SliceStateInfo,
+    SliceFileState,
     StateMachineState,
     TransitionRecord,
     slice_index_from_dirname,
@@ -37,7 +35,7 @@ _ALLOWED_MODIFY_PATH_PLACEHOLDERS: frozenset[str] = frozenset(
 )
 
 
-class QuestStateParseError(ValueError):
+class StateFileParseError(ValueError):
     """Raised when a quest or slice state markdown file is malformed."""
 
     def __init__(self, detail: str) -> None:
@@ -150,16 +148,16 @@ def _parse_kv_lines(
         if not line or line.startswith("#"):
             continue
         if ":" not in line:
-            raise QuestStateParseError(f"{label}: expected 'key: value' line, got {raw!r}")
+            raise StateFileParseError(f"{label}: expected 'key: value' line, got {raw!r}")
         key, _, rest = line.partition(":")
         key = key.strip()
         value = rest.strip()
         if key in found:
-            raise QuestStateParseError(f"{label}: duplicate key {key!r}")
+            raise StateFileParseError(f"{label}: duplicate key {key!r}")
         found[key] = value
     missing = required_keys - found.keys()
     if missing:
-        raise QuestStateParseError(
+        raise StateFileParseError(
             f"{label}: missing required key(s): {', '.join(sorted(missing))}"
         )
     return found
@@ -178,18 +176,18 @@ def _parse_bullet_kv_lines(
         if line.startswith("- "):
             line = line[2:].strip()
         if ":" not in line:
-            raise QuestStateParseError(
+            raise StateFileParseError(
                 f"{label}: expected '- key: value' line, got {raw!r}"
             )
         key, _, rest = line.partition(":")
         key = key.strip()
         value = rest.strip()
         if key in found:
-            raise QuestStateParseError(f"{label}: duplicate key {key!r}")
+            raise StateFileParseError(f"{label}: duplicate key {key!r}")
         found[key] = value
     missing = required_keys - found.keys()
     if missing:
-        raise QuestStateParseError(
+        raise StateFileParseError(
             f"{label}: missing required key(s): {', '.join(sorted(missing))}"
         )
     return found
@@ -225,7 +223,7 @@ def parse_normalized_state_md_text(
     while i < len(lines) and not lines[i].strip():
         i += 1
     if i >= len(lines) or lines[i].strip() != _NORMALIZED_STATE_HEADING:
-        raise QuestStateParseError(
+        raise StateFileParseError(
             f"{label}: expected first non-empty line to be {_NORMALIZED_STATE_HEADING!r}"
         )
     i += 1
@@ -240,7 +238,7 @@ def parse_normalized_state_md_text(
             i += 1
             continue
         if stripped.startswith("#") and mode == "state":
-            raise QuestStateParseError(
+            raise StateFileParseError(
                 f"{label}: unexpected heading {stripped!r} before {_TAGS_HEADING}"
             )
         if mode == "state":
@@ -249,7 +247,7 @@ def parse_normalized_state_md_text(
             tags_lines.append(raw)
         i += 1
     if mode != "tags":
-        raise QuestStateParseError(f"{label}: missing required {_TAGS_HEADING} section")
+        raise StateFileParseError(f"{label}: missing required {_TAGS_HEADING} section")
     state_body = "\n".join(body_lines)
     tags_body = "\n".join(tags_lines)
     kv = _parse_bullet_kv_lines(
@@ -259,7 +257,7 @@ def parse_normalized_state_md_text(
     )
     unknown = set(kv.keys()) - _ALLOWED_STATE_BODY_KEYS
     if unknown:
-        raise QuestStateParseError(f"{label}: unknown key(s) in state block: {sorted(unknown)}")
+        raise StateFileParseError(f"{label}: unknown key(s) in state block: {sorted(unknown)}")
     global_step: int | None
     gs_raw = kv.get("global_step")
     if gs_raw is None:
@@ -268,11 +266,11 @@ def parse_normalized_state_md_text(
         try:
             global_step = int(gs_raw)
         except ValueError as e:
-            raise QuestStateParseError(
+            raise StateFileParseError(
                 f"{label}: global_step must be an integer, got {gs_raw!r}"
             ) from e
     if require_global_step and global_step is None:
-        raise QuestStateParseError(f"{label}: missing required global_step for top-level machine")
+        raise StateFileParseError(f"{label}: missing required global_step for top-level machine")
     tags: dict[str, str] = {}
     if tags_body.strip():
         tags = _parse_bullet_kv_lines(tags_body, set(), f"{label} tags")
@@ -341,30 +339,20 @@ def _derive_current_slice_from_active_slice(active_slice: str | None) -> int | N
     return slice_index_from_dirname(active_slice)
 
 
-def _coerce_quest_state_for_info(raw: str, path: Path) -> QuestState:
-    try:
-        return QuestState(raw)
-    except ValueError as e:
-        raise QuestStateParseError(
-            f"Invalid quest state value {raw!r} in {path}"
-        ) from e
-
-
-def _read_quest_state_normalized(path: Path, text: str) -> QuestStateInfo:
+def _read_quest_file_state_normalized(path: Path, text: str) -> QuestFileState:
     sm = parse_normalized_state_md_text(
         text,
         require_global_step=False,
         label=f"normalized quest state file {path}",
     )
-    state = _coerce_quest_state_for_info(sm.state, path)
     active_slice = sm.tags.get("active_slice")
     if active_slice is not None:
         active_slice = active_slice.strip()
         if not active_slice:
             active_slice = None
     current_slice = _derive_current_slice_from_active_slice(active_slice)
-    return QuestStateInfo(
-        state=state,
+    return QuestFileState(
+        state=sm.state,
         current_slice=current_slice,
         updated_at=sm.updated_at,
         active_slice=active_slice,
@@ -372,7 +360,7 @@ def _read_quest_state_normalized(path: Path, text: str) -> QuestStateInfo:
     )
 
 
-def read_quest_state(quest_dir: Path) -> QuestStateInfo:
+def read_quest_file_state(quest_dir: Path) -> QuestFileState:
     path = quest_dir / "state.md"
     if not path.is_file():
         raise FileNotFoundError(f"Missing quest state file: {path}")
@@ -385,11 +373,11 @@ def read_quest_state(quest_dir: Path) -> QuestStateInfo:
         first = s
         break
     if first is None:
-        raise QuestStateParseError(f"Quest state file {path} is empty")
+        raise StateFileParseError(f"Quest state file {path} is empty")
     if first == _NORMALIZED_STATE_HEADING:
-        return _read_quest_state_normalized(path, text)
+        return _read_quest_file_state_normalized(path, text)
     if first != "# Quest State":
-        raise QuestStateParseError(
+        raise StateFileParseError(
             f"Quest state file {path} must begin with '# Quest State' or "
             f"{_NORMALIZED_STATE_HEADING!r} as the first non-empty line "
             f"(found {first!r})"
@@ -399,12 +387,7 @@ def read_quest_state(quest_dir: Path) -> QuestStateInfo:
         {"state", "current_slice", "updated_at"},
         f"quest state file {path}",
     )
-    try:
-        state = QuestState(kv["state"])
-    except ValueError as e:
-        raise QuestStateParseError(
-            f"Invalid quest state value {kv['state']!r} in {path}"
-        ) from e
+    state = kv["state"]
     cs_raw = kv["current_slice"].strip().lower()
     if cs_raw == "null":
         current_slice: int | None = None
@@ -412,20 +395,10 @@ def read_quest_state(quest_dir: Path) -> QuestStateInfo:
         try:
             current_slice = int(kv["current_slice"].strip())
         except ValueError as e:
-            raise QuestStateParseError(
+            raise StateFileParseError(
                 f"Invalid current_slice {kv['current_slice']!r} in {path} "
                 "(expected integer or null)"
             ) from e
-    if state == QuestState.ExecuteSlice and current_slice is None:
-        raise QuestStateParseError(
-            f"Quest state {path}: ExecuteSlice requires a concrete current_slice "
-            "(got null)"
-        )
-    if state != QuestState.ExecuteSlice and current_slice is not None:
-        raise QuestStateParseError(
-            f"Quest state {path}: current_slice must be null when state is "
-            f"{state.value} (got {current_slice})"
-        )
     active_slice = kv.get("active_slice")
     if active_slice is not None:
         active_slice = active_slice.strip()
@@ -437,10 +410,10 @@ def read_quest_state(quest_dir: Path) -> QuestStateInfo:
         try:
             global_step = int(gs_raw.strip())
         except ValueError as e:
-            raise QuestStateParseError(
+            raise StateFileParseError(
                 f"Invalid global_step {gs_raw!r} in {path}"
             ) from e
-    return QuestStateInfo(
+    return QuestFileState(
         state=state,
         current_slice=current_slice,
         updated_at=kv["updated_at"],
@@ -450,7 +423,7 @@ def read_quest_state(quest_dir: Path) -> QuestStateInfo:
 
 
 def read_slice_persisted_state(slice_dir: Path) -> tuple[str, str]:
-    """Read legacy slice ``state.md`` persisted state value without enum validation."""
+    """Read legacy slice ``state.md`` persisted state value."""
     path = slice_dir / "state.md"
     if not path.is_file():
         raise FileNotFoundError(f"Missing slice state file: {path}")
@@ -460,13 +433,13 @@ def read_slice_persisted_state(slice_dir: Path) -> tuple[str, str]:
         if not s:
             continue
         if s != "# Slice State":
-            raise QuestStateParseError(
+            raise StateFileParseError(
                 f"Slice state file {path} must begin with '# Slice State' "
                 f"as the first non-empty line (found {s!r})"
             )
         break
     else:
-        raise QuestStateParseError(f"Slice state file {path} is empty")
+        raise StateFileParseError(f"Slice state file {path} is empty")
     kv = _parse_kv_lines(
         text,
         {"state", "updated_at"},
@@ -488,18 +461,12 @@ def write_slice_persisted_state(
     path.write_text(body, encoding="utf-8")
 
 
-def read_slice_state(slice_dir: Path) -> SliceStateInfo:
+def read_slice_file_state(slice_dir: Path) -> SliceFileState:
     persisted, updated_at = read_slice_persisted_state(slice_dir)
-    try:
-        state = SliceState(persisted)
-    except ValueError as e:
-        raise QuestStateParseError(
-            f"Invalid slice state value {persisted!r} in {slice_dir / 'state.md'}"
-        ) from e
-    return SliceStateInfo(state=state, updated_at=updated_at)
+    return SliceFileState(state=persisted, updated_at=updated_at)
 
 
-def write_quest_state(quest_dir: Path, state: QuestStateInfo) -> None:
+def write_quest_file_state(quest_dir: Path, state: QuestFileState) -> None:
     path = quest_dir / "state.md"
     if state.current_slice is None:
         cs = "null"
@@ -507,7 +474,7 @@ def write_quest_state(quest_dir: Path, state: QuestStateInfo) -> None:
         cs = str(state.current_slice)
     body = (
         "# Quest State\n\n"
-        f"state: {state.state.value}\n"
+        f"state: {state.state}\n"
         f"current_slice: {cs}\n"
         f"updated_at: {state.updated_at}\n"
     )
@@ -520,7 +487,7 @@ def write_quest_state(quest_dir: Path, state: QuestStateInfo) -> None:
 
 def write_quest_normalized_machine_state(
     quest_dir: Path,
-    info: QuestStateInfo,
+    info: QuestFileState,
     meta: QuestMeta,
     repo_root: Path,
 ) -> None:
@@ -537,7 +504,7 @@ def write_quest_normalized_machine_state(
     sm = StateMachineState(
         machine_name="quest",
         machine_path=rel,
-        state=info.state.value,
+        state=info.state,
         global_step=gs,
         tags=tags,
         updated_at=info.updated_at,
@@ -545,10 +512,10 @@ def write_quest_normalized_machine_state(
     write_normalized_machine_state(quest_dir, sm)
 
 
-def write_slice_state(slice_dir: Path, state: SliceStateInfo) -> None:
+def write_slice_file_state(slice_dir: Path, state: SliceFileState) -> None:
     write_slice_persisted_state(
         slice_dir,
-        persisted_state=state.state.value,
+        persisted_state=state.state,
         updated_at=state.updated_at,
     )
 

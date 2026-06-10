@@ -8,10 +8,8 @@ from pathlib import Path
 
 from quest_runner_service import quest_fs
 from quest_runner_service.quest_types import (
-    QuestState,
-    QuestStateInfo,
-    SliceState,
-    SliceStateInfo,
+    QuestFileState,
+    SliceFileState,
 )
 from quest_runner_service.state_machine.adapters import SubprocessGitOps
 from quest_runner_service.state_machine.commit_metadata import parse_step_commit_message
@@ -84,17 +82,17 @@ class DefaultWorkflowCompatibilityTests(unittest.TestCase):
     def test_child_slice_setup_snapshot_matches_history_shape(self) -> None:
         sl = self.wt_qdir / "slices" / "0001_child"
         sl.mkdir(parents=True)
-        quest_fs.write_slice_state(
+        quest_fs.write_slice_file_state(
             sl,
-            SliceStateInfo(
-                state=SliceState.NotStarted,
+            SliceFileState(
+                state="NotStarted",
                 updated_at="2026-01-01T00:00:00Z",
             ),
         )
-        quest_fs.write_quest_state(
+        quest_fs.write_quest_file_state(
             self.wt_qdir,
-            QuestStateInfo(
-                state=QuestState.ExecuteSlice,
+            QuestFileState(
+                state="ExecuteSlice",
                 current_slice=1,
                 updated_at="2026-01-01T00:00:00Z",
                 active_slice="0001_child",

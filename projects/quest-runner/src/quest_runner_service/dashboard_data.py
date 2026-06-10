@@ -11,7 +11,16 @@ from urllib.parse import quote, urlencode
 from . import quest_fs
 from .dashboard_runs import ActiveRunTracker
 from .quest_lock import QuestLock
-from .quest_types import IssueEntry, IssueResponseEntry, QuestMeta, QuestState, slice_index_from_dirname
+from .quest_types import (
+    EXPERIMENT_COMPLETE_STATE,
+    IssueEntry,
+    IssueResponseEntry,
+    QuestMeta,
+    StateMachineState,
+    slice_index_from_dirname,
+)
+from .state_machine.workflow_state_io import ActiveWorkflowChild, WorkflowStateIo
+from .workflow_profile_execution import resolve_quest_workflow
 from .worktrees import quest_worktree_path, validate_project_name
 _PAUSED_UNTIL_LINE_RE = re.compile(
     r"^\s*Paused\s+until\s+(.+?)\s*$",
@@ -30,6 +39,70 @@ class DashboardNotFound(Exception):
     def __init__(self, message: str) -> None:
         self.message = message
         super().__init__(message)
+
+
+@dataclass(frozen=True)
+class DashboardWorkflowState:
+    workflow_state: StateMachineState
+    is_terminal: bool
+    active_child: ActiveWorkflowChild | None
+    active_child_state: StateMachineState | None
+
+
+def _dashboard_workflow_state(
+    *,
+    repo_path: Path,
+    quest_dir: Path,
+    meta: QuestMeta,
+) -> DashboardWorkflowState:
+    workflow = resolve_quest_workflow(quest_dir)
+    workflow_io = WorkflowStateIo(repo_path, quest_dir, meta, workflow)
+    state = workflow_io.ReadStateMachineState(quest_dir)
+    machine = workflow.get_machine(workflow.entry_machine)
+    state_def = machine.states.get(state.state)
+    is_terminal = (
+        state.state == EXPERIMENT_COMPLETE_STATE
+        or state.state in machine.terminal
+        or (state_def is not None and state_def.terminal)
+    )
+    active_child = workflow_io.active_child_for_state(state)
+    active_child_state = (
+        workflow_io.ReadStateMachineState(active_child.child_dir)
+        if active_child is not None
+        else None
+    )
+    return DashboardWorkflowState(
+        workflow_state=state,
+        is_terminal=is_terminal,
+        active_child=active_child,
+        active_child_state=active_child_state,
+    )
+
+
+def _active_child_payload(active_child: ActiveWorkflowChild | None) -> dict | None:
+    if active_child is None:
+        return None
+    return {
+        "collection": active_child.collection.name,
+        "child_id": active_child.child_id,
+        "directory_name": active_child.child_dir.name,
+        "child_number": active_child.child_number,
+    }
+
+
+def _active_child_state_payload(
+    active_child: ActiveWorkflowChild | None,
+    active_child_state: StateMachineState | None,
+) -> dict | None:
+    if active_child is None or active_child_state is None:
+        return None
+    return {
+        "collection": active_child.collection.name,
+        "child_id": active_child.child_id,
+        "child_number": active_child.child_number,
+        "state": active_child_state.state,
+        "updated_at": active_child_state.updated_at,
+    }
 
 
 def quote_query_param(value: str) -> str:
@@ -431,7 +504,7 @@ def _experiment_stop_condition_public(stop_condition) -> dict:
 
 def _experiment_can_land(*, worktree_state: str, meta_status: str) -> bool:
     return (
-        worktree_state == QuestState.ExperimentComplete.value
+        worktree_state == EXPERIMENT_COMPLETE_STATE
         or meta_status == "experiment_complete"
     )
 
@@ -543,7 +616,7 @@ def open_experiment_summary_row(
     )
     if worktree_qdir is None:
         return None
-    state_info = quest_fs.read_quest_state(worktree_qdir)
+    state_info = quest_fs.read_quest_file_state(worktree_qdir)
     lock_key = lock_key_for_quest(
         source_repo_root,
         meta,
@@ -566,7 +639,7 @@ def open_experiment_summary_row(
         "quest_slug": meta.quest_slug,
         "description": exp_meta.description,
         "status": exp_meta.status,
-        "state": state_info.state.value,
+        "state": state_info.state,
         "start_step": _experiment_start_step_public(exp_meta.start_step),
         "stop_condition": _experiment_stop_condition_public(
             exp_meta.stop_condition
@@ -574,7 +647,7 @@ def open_experiment_summary_row(
         "worktree_path": str(checkout_root),
         "branch_name": exp_meta.branch_name,
         "can_land": _experiment_can_land(
-            worktree_state=state_info.state.value,
+            worktree_state=state_info.state,
             meta_status=exp_meta.status,
         ),
         "execution_overlay_status": overlay,
@@ -681,7 +754,17 @@ def quest_summary_row(
     meta: QuestMeta,
 ) -> dict:
     lock_key = lock_key_for_quest(source_repo_root, meta)
-    state_info = quest_fs.read_quest_state(quest_dir)
+    dashboard_state = _dashboard_workflow_state(
+        repo_path=source_repo_root,
+        quest_dir=quest_dir,
+        meta=meta,
+    )
+    state_info = dashboard_state.workflow_state
+    active_child_number = (
+        dashboard_state.active_child.child_number
+        if dashboard_state.active_child is not None
+        else None
+    )
     pause = read_paused_until_state(quest_dir)
     overlay = execution_overlay_status(
         quest_dir=quest_dir,
@@ -695,8 +778,10 @@ def quest_summary_row(
         "number": meta.quest_number,
         "slug": meta.quest_slug,
         "name": meta.quest_name,
-        "state": state_info.state.value,
-        "current_slice": state_info.current_slice,
+        "state": state_info.state,
+        "workflow_state": state_info.state,
+        "is_terminal": dashboard_state.is_terminal,
+        "active_child_number": active_child_number,
         "updated_at": state_info.updated_at,
         "execution_overlay_status": overlay,
         "paused_until": paused_until_public(pause),
@@ -862,7 +947,12 @@ def quest_overview_payload(
         meta,
         experiment_id=experiment_id,
     )
-    state_info = quest_fs.read_quest_state(quest_dir)
+    dashboard_state = _dashboard_workflow_state(
+        repo_path=checkout_root,
+        quest_dir=quest_dir,
+        meta=meta,
+    )
+    state_info = dashboard_state.workflow_state
     pause = read_paused_until_state(quest_dir)
     overlay = execution_overlay_status(
         quest_dir=quest_dir,
@@ -873,24 +963,20 @@ def quest_overview_payload(
     )
     quest_issues = quest_fs.read_issues(quest_dir / "physicalplan_issues.md")
     q_counts = issue_status_counts(quest_issues)
-    slice_open = 0
-    slice_state_payload: dict | None = None
-    slice_meta: dict | None = None
-    if state_info.state == QuestState.ExecuteSlice and state_info.current_slice is not None:
-        sd = find_slice_dir(quest_dir, state_info.current_slice)
-        if sd is not None:
-            sst = quest_fs.read_slice_state(sd)
-            slice_state_payload = {
-                "state": sst.state.value,
-                "updated_at": sst.updated_at,
-            }
-            slice_meta = {
-                "slice_number": state_info.current_slice,
-                "directory_name": sd.name,
-            }
-            slice_issues = quest_fs.read_issues(sd / "polishing_issues.md")
-            sc = issue_status_counts(slice_issues)
-            slice_open = sc["open"]
+    active_child = dashboard_state.active_child
+    active_child_state_payload = _active_child_state_payload(
+        active_child,
+        dashboard_state.active_child_state,
+    )
+    active_child_meta = _active_child_payload(active_child)
+    active_child_number = (
+        active_child.child_number if active_child is not None else None
+    )
+    active_child_open = 0
+    if active_child is not None:
+        slice_issues = quest_fs.read_issues(active_child.child_dir / "polishing_issues.md")
+        sc = issue_status_counts(slice_issues)
+        active_child_open = sc["open"]
 
     slice_nav: list[dict] = []
     for p in quest_fs.list_slice_dirs(quest_dir):
@@ -923,10 +1009,11 @@ def quest_overview_payload(
             "name": meta.quest_name,
             "path": str(quest_dir),
         },
-        "quest_state": state_info.state.value,
-        "current_slice": state_info.current_slice,
-        "active_slice": slice_meta,
-        "active_slice_state": slice_state_payload,
+        "workflow_state": state_info.state,
+        "is_terminal": dashboard_state.is_terminal,
+        "active_child_number": active_child_number,
+        "active_child": active_child_meta,
+        "active_child_state": active_child_state_payload,
         "updated_at": state_info.updated_at,
         "last_transition": last_transition_from_step_history(step_history),
         "step_history": step_history,
@@ -936,7 +1023,7 @@ def quest_overview_payload(
         "has_paused_until": (quest_dir / "paused_until.md").is_file(),
         "paused_until": paused_until_public(pause),
         "open_issues_quest_level": q_counts["open"],
-        "open_issues_active_slice": slice_open,
+        "open_issues_active_child": active_child_open,
         "quest_dashboard_url": canonical_quest_dashboard_url(
             base_url=public_base_url,
             project=project,
@@ -957,7 +1044,7 @@ def quest_overview_payload(
             meta.quest_number,
             checkout.experiment_id,
         )
-        worktree_state = state_info.state.value
+        worktree_state = state_info.state
         payload["experiment"] = {
             "experiment_id": exp_meta.experiment_id,
             "experiment_number": exp_meta.experiment_number,
@@ -1029,8 +1116,18 @@ def run_status_payload(
         meta,
         experiment_id=experiment_id,
     )
-    state_info = quest_fs.read_quest_state(quest_dir)
     pause = read_paused_until_state(quest_dir)
+    checkout = resolve_dashboard_checkout(
+        source_repo_root,
+        meta,
+        experiment_id=experiment_id,
+    )
+    dashboard_state = _dashboard_workflow_state(
+        repo_path=Path(checkout.checkout_path),
+        quest_dir=quest_dir,
+        meta=meta,
+    )
+    state_info = dashboard_state.workflow_state
     overlay = execution_overlay_status(
         quest_dir=quest_dir,
         lock_key=lock_key,
@@ -1038,30 +1135,22 @@ def run_status_payload(
         quest_number=quest_number,
         lock=lock,
     )
-    slice_state_payload: dict | None = None
-    if state_info.state == QuestState.ExecuteSlice and state_info.current_slice is not None:
-        sd = find_slice_dir(quest_dir, state_info.current_slice)
-        if sd is not None:
-            sst = quest_fs.read_slice_state(sd)
-            slice_state_payload = {
-                "slice_number": state_info.current_slice,
-                "state": sst.state.value,
-                "updated_at": sst.updated_at,
-            }
+    active_child = dashboard_state.active_child
+    active_child_state_payload = _active_child_state_payload(
+        active_child,
+        dashboard_state.active_child_state,
+    )
+    active_child_number = (
+        active_child.child_number if active_child is not None else None
+    )
 
     active = run_tracker.get_for_quest(lock_key, quest_type, quest_number)
     heartbeat_candidates: list[str] = [state_info.updated_at]
-    if slice_state_payload:
-        heartbeat_candidates.append(slice_state_payload["updated_at"])
+    if active_child_state_payload:
+        heartbeat_candidates.append(active_child_state_payload["updated_at"])
     if active is not None:
         heartbeat_candidates.append(_iso_from_epoch(active.last_heartbeat))
     latest_hb = max(heartbeat_candidates)
-
-    checkout = resolve_dashboard_checkout(
-        source_repo_root,
-        meta,
-        experiment_id=experiment_id,
-    )
 
     status_payload: dict = {
         "project": project,
@@ -1072,9 +1161,11 @@ def run_status_payload(
         "checkout_kind": checkout.checkout_kind,
         "checkout_path": checkout.checkout_path,
         "worktree_missing": checkout.worktree_missing,
-        "quest_state": state_info.state.value,
-        "current_slice": state_info.current_slice,
-        "current_slice_state": slice_state_payload,
+        "workflow_state": state_info.state,
+        "is_terminal": dashboard_state.is_terminal,
+        "active_child_number": active_child_number,
+        "active_child": _active_child_payload(active_child),
+        "active_child_state": active_child_state_payload,
         "execution_overlay_status": overlay,
         "paused_until": paused_until_public(pause),
         "pause_marker_invalid": pause.kind == "invalid",

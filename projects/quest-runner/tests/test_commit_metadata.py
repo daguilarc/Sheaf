@@ -175,12 +175,12 @@ class CommitMetadataGoldenTests(unittest.TestCase):
                 state_after="PolishingReview",
                 tags={},
             )
-            quest_state = workflow.get_machine("quest").states["ExecuteSlice"]
+            workflow_state_def = workflow.get_machine("quest").states["ExecuteSlice"]
             snap = build_workflow_step_snapshot(
                 workflow_io=io,
                 machine_key="quest",
                 machine_dir=quest_dir,
-                workflow_state=quest_state,
+                workflow_state=workflow_state_def,
                 state_before="ExecuteSlice",
                 state_after="ExecuteSlice",
                 tags={"active_slice": "0001_foundation"},

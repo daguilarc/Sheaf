@@ -19,9 +19,9 @@ from .dashboard_runs import ActiveRunTracker
 from .deferred_tasks import DeferredTaskScheduler
 from .quest_lock import LockInfo, QuestLock
 from .quest_types import (
+    EXPERIMENT_COMPLETE_STATE,
     QuestMeta,
-    QuestState,
-    QuestStateInfo,
+    QuestFileState,
     utc_now_iso,
 )
 from . import experiments as experiment_ops
@@ -466,8 +466,8 @@ class QuestService:
 
             quest_fs.write_quest_normalized_machine_state(
                 quest_dir,
-                QuestStateInfo(
-                    state=QuestState.PrePlanning,
+                QuestFileState(
+                    state="PrePlanning",
                     current_slice=None,
                     updated_at=now,
                     global_step=0,
@@ -550,7 +550,7 @@ class QuestService:
             "quest_number": number,
             "quest_slug": norm_slug,
             "quest_dir": str(quest_dir),
-            "state": QuestState.PrePlanning.value,
+            "state": "PrePlanning",
             "created_files": created,
             "worktree_name": worktree_name,
             "worktree_branch": worktree_branch,
@@ -1072,8 +1072,8 @@ class QuestService:
             )
 
         try:
-            quest_fs.read_quest_state(qdir)
-        except quest_fs.QuestStateParseError:
+            quest_fs.read_quest_file_state(qdir)
+        except quest_fs.StateFileParseError:
             self.lock.release(key)
             raise
 
@@ -1209,11 +1209,11 @@ class QuestService:
             if result.kind == "completed":
                 if (
                     experiment_run is not None
-                    and result.next_quest_state == QuestState.ExperimentComplete.value
+                    and result.next_workflow_state == EXPERIMENT_COMPLETE_STATE
                 ):
                     body["status"] = "experiment_complete"
                     body["advanced"] = False
-                    body["quest_state"] = QuestState.ExperimentComplete.value
+                    body["workflow_state"] = EXPERIMENT_COMPLETE_STATE
                     return _apply_experiment_source_completion(
                         qdir,
                         experiment_run,
@@ -1244,9 +1244,9 @@ class QuestService:
                             commit_sha = extra
                     body["status"] = "experiment_complete"
                     body["advanced"] = True
-                    body["quest_state"] = QuestState.ExperimentComplete.value
-                    body["previous_state"] = result.previous_quest_state
-                    body["next_state"] = QuestState.ExperimentComplete.value
+                    body["workflow_state"] = EXPERIMENT_COMPLETE_STATE
+                    body["previous_state"] = result.previous_workflow_state
+                    body["next_state"] = EXPERIMENT_COMPLETE_STATE
                     if result.previous_slice_state is not None:
                         body["previous_slice_state"] = result.previous_slice_state
                     if result.next_slice_state is not None:
@@ -1264,8 +1264,8 @@ class QuestService:
                     )
 
             body["status"] = "advanced"
-            body["previous_state"] = result.previous_quest_state
-            body["next_state"] = result.next_quest_state
+            body["previous_state"] = result.previous_workflow_state
+            body["next_state"] = result.next_workflow_state
             if result.previous_slice_state is not None:
                 body["previous_slice_state"] = result.previous_slice_state
             if result.next_slice_state is not None:
@@ -1583,16 +1583,16 @@ class QuestService:
                 **base,
             })
 
-        quest_state = quest_fs.read_quest_state(exp_quest_dir)
-        if quest_state.state != QuestState.ExperimentComplete:
+        workflow_state = quest_fs.read_quest_file_state(exp_quest_dir)
+        if workflow_state.state != EXPERIMENT_COMPLETE_STATE:
             raise ExperimentLandConflict({
                 "status": "not_complete",
                 "error": (
-                    f"Experiment worktree quest state is {quest_state.state.value!r}, "
-                    f"expected {QuestState.ExperimentComplete.value!r}"
+                    f"Experiment worktree workflow state is {workflow_state.state!r}, "
+                    f"expected {EXPERIMENT_COMPLETE_STATE!r}"
                 ),
                 **base,
-                "quest_state": quest_state.state.value,
+                "workflow_state": workflow_state.state,
             })
 
         if exp_meta.status != "experiment_complete":

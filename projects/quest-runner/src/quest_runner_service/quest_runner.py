@@ -32,11 +32,6 @@ from .quest_thread import (
 from .quest_types import (
     ExecutionProfile,
     QuestMeta,
-    QuestState,
-    QuestStateInfo,
-    SliceState,
-    SliceStateInfo,
-    slice_index_from_dirname,
     utc_now_iso,
 )
 from .workflow_config import WorkflowDefinition, WorkflowProfile
@@ -750,20 +745,6 @@ def role_thread_key(role_name: str, slice_dir: Path | None) -> str:
         collection_name="slices",
     )
     return render_thread_registry_key(exec_ctx)
-
-
-def _get_slice_dir(quest_dir: Path, index: int) -> Path:
-    prefix = f"{index:04d}_"
-    for p in quest_fs.list_slice_dirs(quest_dir):
-        if p.name.startswith(prefix):
-            return p
-    fatal_invariant(f"No slice directory for index {index} under {quest_dir}")
-
-
-def _slice_path_for_quest(quest_dir: Path, q: QuestStateInfo) -> Path | None:
-    if q.state != QuestState.ExecuteSlice or q.current_slice is None:
-        return None
-    return _get_slice_dir(quest_dir, q.current_slice)
 
 
 def _write_human_intervention(quest_dir: Path, reason: str, detail: str = "") -> None:

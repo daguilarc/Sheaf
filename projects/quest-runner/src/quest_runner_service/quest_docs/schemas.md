@@ -62,7 +62,7 @@ active_slice: 0001_example_slice
 global_step: 18
 ```
 
-- `read_quest_state` auto-detects the format by heading.
+- `read_quest_file_state` auto-detects the format by heading.
 - `create_quest` still scaffolds new quests with the legacy `# Quest State`
   layout.
 - Once the v2 runner commits a top-level step, it rewrites quest-root `state.md`

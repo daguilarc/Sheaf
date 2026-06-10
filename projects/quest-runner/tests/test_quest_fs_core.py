@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 
 from quest_runner_service.quest_fs import (
-    QuestStateParseError,
+    StateFileParseError,
     append_history,
     append_issue_response,
     list_slice_dirs,
@@ -16,48 +16,47 @@ from quest_runner_service.quest_fs import (
     read_history,
     read_issue_responses,
     read_issues,
-    read_quest_state,
+    read_quest_file_state,
     read_state_execution_config_version,
     write_issues,
-    write_quest_state,
+    write_quest_file_state,
 )
 from quest_runner_service.quest_types import (
     ExecutionProfile,
     HarnessKind,
     IssueEntry,
     IssueResponseEntry,
-    QuestState,
-    QuestStateInfo,
+    QuestFileState,
     TransitionRecord,
 )
 
 
-class QuestStateRoundTripTests(unittest.TestCase):
+class StateFileRoundTripTests(unittest.TestCase):
     def test_quest_active_slice_round_trip(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             q = Path(tmp) / "quest"
             q.mkdir()
-            original = QuestStateInfo(
-                state=QuestState.ExecuteSlice,
+            original = QuestFileState(
+                state="ExecuteSlice",
                 current_slice=0,
                 updated_at="2026-04-01T12:00:00Z",
                 active_slice="0000_demo_slice",
             )
-            write_quest_state(q, original)
-            loaded = read_quest_state(q)
+            write_quest_file_state(q, original)
+            loaded = read_quest_file_state(q)
             self.assertEqual(loaded.active_slice, "0000_demo_slice")
 
-    def test_quest_state_round_trip(self) -> None:
+    def test_workflow_state_round_trip(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             q = Path(tmp) / "quest"
             q.mkdir()
-            original = QuestStateInfo(
-                state=QuestState.ExecuteSlice,
+            original = QuestFileState(
+                state="ExecuteSlice",
                 current_slice=2,
                 updated_at="2026-03-29T12:00:00Z",
             )
-            write_quest_state(q, original)
-            loaded = read_quest_state(q)
+            write_quest_file_state(q, original)
+            loaded = read_quest_file_state(q)
             self.assertEqual(loaded, original)
 
     def test_current_slice_null(self) -> None:
@@ -72,7 +71,7 @@ class QuestStateRoundTripTests(unittest.TestCase):
                 "updated_at: 2026-03-29T12:00:00Z\n",
                 encoding="utf-8",
             )
-            info = read_quest_state(q)
+            info = read_quest_file_state(q)
             self.assertIsNone(info.current_slice)
 
     def test_current_slice_integer(self) -> None:
@@ -87,14 +86,14 @@ class QuestStateRoundTripTests(unittest.TestCase):
                 "updated_at: 2026-03-29T12:00:00Z\n",
                 encoding="utf-8",
             )
-            info = read_quest_state(q)
+            info = read_quest_file_state(q)
             self.assertEqual(info.current_slice, 0)
 
 
-class QuestStateValidationTests(unittest.TestCase):
-    """PR-0001: reject invalid state/current_slice combinations."""
+class StateFileValidationTests(unittest.TestCase):
+    """Legacy state files preserve opaque workflow state strings."""
 
-    def test_preplanning_with_slice_rejected(self) -> None:
+    def test_preplanning_with_slice_preserved(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             q = Path(tmp) / "quest"
             q.mkdir()
@@ -105,10 +104,11 @@ class QuestStateValidationTests(unittest.TestCase):
                 "updated_at: 2026-03-29T12:00:00Z\n",
                 encoding="utf-8",
             )
-            with self.assertRaises(QuestStateParseError):
-                read_quest_state(q)
+            info = read_quest_file_state(q)
+            self.assertEqual(info.state, "PrePlanning")
+            self.assertEqual(info.current_slice, 3)
 
-    def test_execute_slice_with_null_rejected(self) -> None:
+    def test_execute_slice_with_null_preserved(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             q = Path(tmp) / "quest"
             q.mkdir()
@@ -119,10 +119,11 @@ class QuestStateValidationTests(unittest.TestCase):
                 "updated_at: 2026-03-29T12:00:00Z\n",
                 encoding="utf-8",
             )
-            with self.assertRaises(QuestStateParseError):
-                read_quest_state(q)
+            info = read_quest_file_state(q)
+            self.assertEqual(info.state, "ExecuteSlice")
+            self.assertIsNone(info.current_slice)
 
-    def test_completed_with_slice_rejected(self) -> None:
+    def test_completed_with_slice_preserved(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             q = Path(tmp) / "quest"
             q.mkdir()
@@ -133,8 +134,9 @@ class QuestStateValidationTests(unittest.TestCase):
                 "updated_at: 2026-03-29T12:00:00Z\n",
                 encoding="utf-8",
             )
-            with self.assertRaises(QuestStateParseError):
-                read_quest_state(q)
+            info = read_quest_file_state(q)
+            self.assertEqual(info.state, "Completed")
+            self.assertEqual(info.current_slice, 1)
 
     def test_execute_slice_with_index_accepted(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -147,8 +149,8 @@ class QuestStateValidationTests(unittest.TestCase):
                 "updated_at: 2026-03-29T12:00:00Z\n",
                 encoding="utf-8",
             )
-            info = read_quest_state(q)
-            self.assertEqual(info.state, QuestState.ExecuteSlice)
+            info = read_quest_file_state(q)
+            self.assertEqual(info.state, "ExecuteSlice")
             self.assertEqual(info.current_slice, 0)
 
     def test_normalized_execute_slice_without_active_slice_accepted(self) -> None:
@@ -175,8 +177,8 @@ class QuestStateValidationTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            info = read_quest_state(q)
-            self.assertEqual(info.state, QuestState.ExecuteSlice)
+            info = read_quest_file_state(q)
+            self.assertEqual(info.state, "ExecuteSlice")
             self.assertIsNone(info.current_slice)
             self.assertIsNone(info.active_slice)
 
@@ -641,10 +643,10 @@ class MalformedStateTests(unittest.TestCase):
                 "updated_at: 2026-03-29T12:00:00Z\n",
                 encoding="utf-8",
             )
-            with self.assertRaises(QuestStateParseError):
-                read_quest_state(q)
+            with self.assertRaises(StateFileParseError):
+                read_quest_file_state(q)
 
-    def test_bad_state_value_raises(self) -> None:
+    def test_arbitrary_state_value_accepted(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             q = Path(tmp) / "quest"
             q.mkdir()
@@ -653,8 +655,8 @@ class MalformedStateTests(unittest.TestCase):
                 "updated_at: 2026-03-29T12:00:00Z\n",
                 encoding="utf-8",
             )
-            with self.assertRaises(QuestStateParseError):
-                read_quest_state(q)
+            info = read_quest_file_state(q)
+            self.assertEqual(info.state, "NotAState")
 
     def test_bad_current_slice_raises(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -665,8 +667,8 @@ class MalformedStateTests(unittest.TestCase):
                 "current_slice: bogus\nupdated_at: 2026-03-29T12:00:00Z\n",
                 encoding="utf-8",
             )
-            with self.assertRaises(QuestStateParseError):
-                read_quest_state(q)
+            with self.assertRaises(StateFileParseError):
+                read_quest_file_state(q)
 
 
 class HistoryTests(unittest.TestCase):

@@ -353,7 +353,7 @@ class ExperimentLandApiTests(unittest.TestCase):
 
     def _setup_completed_experiment(self) -> tuple[object, dict, str]:
         from quest_runner_service import quest_fs
-        from quest_runner_service.quest_types import QuestState, QuestStateInfo
+        from quest_runner_service.quest_types import QuestFileState
         from quest_runner_service.worktrees import remove_partial_worktree
 
         from .test_experiments import (
@@ -389,10 +389,10 @@ class ExperimentLandApiTests(unittest.TestCase):
         assert wt_qdir is not None
         (wt_qdir / "logs").mkdir(exist_ok=True)
         (wt_qdir / "logs" / "step_0001_run.jsonl").write_text("{}\n", encoding="utf-8")
-        quest_fs.write_quest_state(
+        quest_fs.write_quest_file_state(
             wt_qdir,
-            QuestStateInfo(
-                state=QuestState.ExperimentComplete,
+            QuestFileState(
+                state="ExperimentComplete",
                 current_slice=None,
                 updated_at="2026-06-08T00:00:00Z",
                 global_step=2,

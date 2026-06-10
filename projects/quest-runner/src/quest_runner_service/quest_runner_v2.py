@@ -20,7 +20,7 @@ from .experiments import (
     mark_quest_experiment_complete,
     snapshot_matches_stop_condition,
 )
-from .quest_types import QuestState, RecursiveSnapshot
+from .quest_types import EXPERIMENT_COMPLETE_STATE, RecursiveSnapshot
 from .state_machine.adapters import QuestRootRoleProfileResolver, SubprocessGitOps
 from .state_machine.context import RunContext
 from .state_machine.v2_step_executor import execute_v2_top_level_step
@@ -57,7 +57,7 @@ def _experiment_complete_payload(
         "captured_outputs": captured_outputs,
         "experiment_id": experiment_run.experiment_meta.experiment_id,
         "experiment_status": "experiment_complete",
-        "quest_state": QuestState.ExperimentComplete.value,
+        "workflow_state": EXPERIMENT_COMPLETE_STATE,
     }
 
 
@@ -139,7 +139,7 @@ def run_quest_v2(
         sm = bundle.workflow_io.ReadStateMachineState(quest_dir)
         if (
             experiment_run is not None
-            and sm.state == QuestState.ExperimentComplete.value
+            and sm.state == EXPERIMENT_COMPLETE_STATE
         ):
             return _experiment_complete_payload(
                 steps_executed=steps_executed,

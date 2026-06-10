@@ -37,7 +37,7 @@ def _sample_meta() -> QuestMeta:
     )
 
 
-def _write_quest_state(
+def _write_quest_file_state(
     repo: Path,
     quest_dir: Path,
     *,
@@ -373,7 +373,7 @@ class SyntheticWorkflowGenericityTests(unittest.TestCase):
 class DefaultQuestTransitionTests(WorkflowInterpreterFixture):
     def test_physical_planning_advances_when_slices_ready(self) -> None:
         _scaffold_slice(self.quest_dir / "slices" / "0001_a")
-        _write_quest_state(self.repo, self.quest_dir, state="PhysicalPlanning")
+        _write_quest_file_state(self.repo, self.quest_dir, state="PhysicalPlanning")
         result = self._quest_machine().RunWorkflowStep(mode=ExecutionMode.Automated)
         self.assertEqual(result.snapshot.state_before, "PhysicalPlanning")
         self.assertEqual(result.snapshot.state_after, "ReviewPhysicalPlan")
@@ -383,7 +383,7 @@ class DefaultQuestTransitionTests(WorkflowInterpreterFixture):
     def test_physical_planning_stays_when_slice_plan_incomplete(self) -> None:
         sl = self.quest_dir / "slices" / "0001_a"
         sl.mkdir(parents=True)
-        _write_quest_state(self.repo, self.quest_dir, state="PhysicalPlanning")
+        _write_quest_file_state(self.repo, self.quest_dir, state="PhysicalPlanning")
         result = self._quest_machine().RunWorkflowStep(mode=ExecutionMode.Automated)
         self.assertEqual(result.snapshot.state_after, "PhysicalPlanning")
         self.assertEqual(result.transition_kind, "stay")
@@ -398,7 +398,7 @@ class DefaultQuestTransitionTests(WorkflowInterpreterFixture):
             encoding="utf-8",
         )
         (self.quest_dir / "physicalplan_accepted.md").write_text("accepted\n", encoding="utf-8")
-        _write_quest_state(self.repo, self.quest_dir, state="ReviewPhysicalPlan")
+        _write_quest_file_state(self.repo, self.quest_dir, state="ReviewPhysicalPlan")
         result = self._quest_machine().RunWorkflowStep(mode=ExecutionMode.Automated)
         self.assertEqual(result.snapshot.state_after, "PhysicalPlanning")
         self.assertEqual(result.snapshot.node_name, "ReviewPhysicalPlanNode")
@@ -406,14 +406,14 @@ class DefaultQuestTransitionTests(WorkflowInterpreterFixture):
 
     def test_review_physical_plan_advances_with_acceptance_and_no_issues(self) -> None:
         (self.quest_dir / "physicalplan_accepted.md").write_text("accepted\n", encoding="utf-8")
-        _write_quest_state(self.repo, self.quest_dir, state="ReviewPhysicalPlan")
+        _write_quest_file_state(self.repo, self.quest_dir, state="ReviewPhysicalPlan")
         result = self._quest_machine().RunWorkflowStep(mode=ExecutionMode.Automated)
         self.assertEqual(result.snapshot.state_after, "PrepareNextSlice")
         self.assertEqual(result.snapshot.node_name, "ReviewPhysicalPlanNode")
 
     def test_prepare_next_slice_selects_first_unfinished_child(self) -> None:
         _scaffold_slice(self.quest_dir / "slices" / "0001_a")
-        _write_quest_state(self.repo, self.quest_dir, state="PrepareNextSlice")
+        _write_quest_file_state(self.repo, self.quest_dir, state="PrepareNextSlice")
         result = self._quest_machine().RunWorkflowStep(mode=ExecutionMode.Automated)
         self.assertEqual(result.snapshot.state_after, "ExecuteSlice")
         self.assertEqual(result.snapshot.tags.get("active_slice"), "0001_a")
@@ -428,7 +428,7 @@ class DefaultQuestTransitionTests(WorkflowInterpreterFixture):
             updated_at=utc_now_iso(),
         )
         _scaffold_slice(self.quest_dir / "slices" / "0002_b")
-        _write_quest_state(
+        _write_quest_file_state(
             self.repo,
             self.quest_dir,
             state="PrepareNextSlice",
@@ -446,7 +446,7 @@ class DefaultQuestTransitionTests(WorkflowInterpreterFixture):
             persisted_state="Done",
             updated_at=utc_now_iso(),
         )
-        _write_quest_state(
+        _write_quest_file_state(
             self.repo,
             self.quest_dir,
             state="PrepareNextSlice",
@@ -458,7 +458,7 @@ class DefaultQuestTransitionTests(WorkflowInterpreterFixture):
 
     def test_execute_slice_stays_while_child_not_complete(self) -> None:
         _scaffold_slice(self.quest_dir / "slices" / "0001_a")
-        _write_quest_state(
+        _write_quest_file_state(
             self.repo,
             self.quest_dir,
             state="ExecuteSlice",
@@ -480,7 +480,7 @@ class DefaultQuestTransitionTests(WorkflowInterpreterFixture):
             persisted_state="Done",
             updated_at=utc_now_iso(),
         )
-        _write_quest_state(
+        _write_quest_file_state(
             self.repo,
             self.quest_dir,
             state="ExecuteSlice",
@@ -493,7 +493,7 @@ class DefaultQuestTransitionTests(WorkflowInterpreterFixture):
         self.assertEqual(result.snapshot.child.state_after, "Completed")
 
     def test_quest_documenting_advances_unconditionally(self) -> None:
-        _write_quest_state(self.repo, self.quest_dir, state="QuestDocumenting")
+        _write_quest_file_state(self.repo, self.quest_dir, state="QuestDocumenting")
         result = self._quest_machine().RunWorkflowStep(mode=ExecutionMode.Automated)
         self.assertEqual(result.snapshot.state_after, "Completed")
         self.assertEqual(result.snapshot.node_name, "QuestDocumentingNode")
@@ -506,19 +506,19 @@ class DefaultQuestTransitionTests(WorkflowInterpreterFixture):
             "- details: y\n- resolution_notes: none\n",
             encoding="utf-8",
         )
-        _write_quest_state(self.repo, self.quest_dir, state="IntegrationTesting")
+        _write_quest_file_state(self.repo, self.quest_dir, state="IntegrationTesting")
         result = self._quest_machine().RunWorkflowStep(mode=ExecutionMode.Automated)
         self.assertEqual(result.snapshot.state_after, "IntegrationTestPolishing")
         self.assertEqual(result.snapshot.node_name, "IntegrationTestingNode")
 
     def test_integration_testing_moves_to_documenting_with_no_open_issues(self) -> None:
-        _write_quest_state(self.repo, self.quest_dir, state="IntegrationTesting")
+        _write_quest_file_state(self.repo, self.quest_dir, state="IntegrationTesting")
         result = self._quest_machine().RunWorkflowStep(mode=ExecutionMode.Automated)
         self.assertEqual(result.snapshot.state_after, "QuestDocumenting")
         self.assertEqual(result.snapshot.node_name, "IntegrationTestingNode")
 
     def test_integration_test_polishing_returns_to_integration_testing(self) -> None:
-        _write_quest_state(self.repo, self.quest_dir, state="IntegrationTestPolishing")
+        _write_quest_file_state(self.repo, self.quest_dir, state="IntegrationTestPolishing")
         result = self._quest_machine().RunWorkflowStep(mode=ExecutionMode.Automated)
         self.assertEqual(result.snapshot.state_after, "IntegrationTesting")
         self.assertEqual(result.snapshot.node_name, "IntegrationTestPolishingNode")
@@ -628,19 +628,19 @@ class WorkflowInterpreterModeTests(WorkflowInterpreterFixture):
         self.assertEqual(ctx.exception.reason, "missing_implementation_done")
 
     def test_manual_pre_planning_advances_to_physical_planning(self) -> None:
-        _write_quest_state(self.repo, self.quest_dir, state="PrePlanning")
+        _write_quest_file_state(self.repo, self.quest_dir, state="PrePlanning")
         result = self._quest_machine().RunWorkflowStep(mode=ExecutionMode.Manual)
         self.assertEqual(result.snapshot.state_after, "PhysicalPlanning")
 
     def test_automated_pre_planning_stops_with_pre_planning_status(self) -> None:
-        _write_quest_state(self.repo, self.quest_dir, state="PrePlanning")
+        _write_quest_file_state(self.repo, self.quest_dir, state="PrePlanning")
         result = self._quest_machine().RunWorkflowStep(mode=ExecutionMode.Automated)
         self.assertEqual(result.transition_kind, "stop")
         self.assertEqual(result.stop_status, "pre_planning")
         self.assertEqual(result.snapshot.state_after, "PrePlanning")
 
     def test_run_callback_invoked_in_automated_mode(self) -> None:
-        _write_quest_state(self.repo, self.quest_dir, state="QuestDocumenting")
+        _write_quest_file_state(self.repo, self.quest_dir, state="QuestDocumenting")
         invoked: list[tuple[str, str]] = []
 
         def callback(profile: str, task: str) -> None:
@@ -677,12 +677,12 @@ class WorkflowInterpreterModeTests(WorkflowInterpreterFixture):
 
 class MigratedPredicateCoverageTests(WorkflowInterpreterFixture):
     def test_physical_planning_requires_slice_scaffolding(self) -> None:
-        _write_quest_state(self.repo, self.quest_dir, state="PhysicalPlanning")
+        _write_quest_file_state(self.repo, self.quest_dir, state="PhysicalPlanning")
         result = self._quest_machine().RunWorkflowStep(mode=ExecutionMode.Automated)
         self.assertEqual(result.snapshot.state_after, "PhysicalPlanning")
 
     def test_review_physical_plan_requires_acceptance_marker(self) -> None:
-        _write_quest_state(self.repo, self.quest_dir, state="ReviewPhysicalPlan")
+        _write_quest_file_state(self.repo, self.quest_dir, state="ReviewPhysicalPlan")
         result = self._quest_machine().RunWorkflowStep(mode=ExecutionMode.Automated)
         self.assertEqual(result.snapshot.state_after, "ReviewPhysicalPlan")
         self.assertEqual(result.stay_reason, "physical_plan_review_incomplete")
@@ -690,7 +690,7 @@ class MigratedPredicateCoverageTests(WorkflowInterpreterFixture):
     def test_prepare_next_slice_picks_first_unfinished(self) -> None:
         sl = self.quest_dir / "slices" / "0001_a"
         _scaffold_slice(sl)
-        _write_quest_state(self.repo, self.quest_dir, state="PrepareNextSlice")
+        _write_quest_file_state(self.repo, self.quest_dir, state="PrepareNextSlice")
         result = self._quest_machine().RunWorkflowStep(mode=ExecutionMode.Automated)
         self.assertEqual(result.snapshot.tags.get("active_slice"), "0001_a")
 

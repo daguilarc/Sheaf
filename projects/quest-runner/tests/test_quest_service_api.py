@@ -229,7 +229,7 @@ class QuestServiceApiTests(unittest.TestCase):
             time.sleep(0.03)
         assert rs is not None
         self.assertEqual(rs.get_json()["execution_overlay_status"], "none")
-        self.assertEqual(rs.get_json()["quest_state"], "PrePlanning")
+        self.assertEqual(rs.get_json()["workflow_state"], "PrePlanning")
 
     def test_run_quest_lock_contention(self) -> None:
         ensure_project(self.temp.root, "example")
@@ -333,7 +333,7 @@ class QuestServiceApiTests(unittest.TestCase):
         first = qdir / "slices" / "0001_rest_api"
         self.assertTrue((first / "physicalplan").is_dir())
         self.assertEqual(
-            quest_fs.read_slice_state(first).state.value,
+            quest_fs.read_slice_file_state(first).state,
             "NotStarted",
         )
         self.assertEqual(

@@ -13,7 +13,7 @@ from quest_runner_service.dashboard_slice import (
     render_dashboard_markdown,
     resolve_agent_log_path,
 )
-from quest_runner_service.quest_types import IssueEntry, SliceState, SliceStateInfo, utc_now_iso
+from quest_runner_service.quest_types import IssueEntry, SliceFileState, utc_now_iso
 
 from .test_helpers import TempRepo, ensure_project, make_app_client, quest_dir_on_checkout
 
@@ -33,10 +33,10 @@ class SlicePageHttpTests(unittest.TestCase):
         qdir = quest_dir_on_checkout(self.temp.root, out)
         sdir = qdir / "slices" / "0000_alpha"
         sdir.mkdir(parents=True)
-        quest_fs.write_slice_state(
+        quest_fs.write_slice_file_state(
             sdir,
-            SliceStateInfo(
-                state=SliceState.NotStarted,
+            SliceFileState(
+                state="NotStarted",
                 updated_at=utc_now_iso(),
             ),
         )

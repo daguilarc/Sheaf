@@ -13,8 +13,7 @@ from .dashboard_data import DashboardCheckout, DashboardBadRequest, DashboardNot
 from .quest_types import (
     EXPERIMENT_COMPLETE_STATE,
     QuestMeta,
-    QuestState,
-    QuestStateInfo,
+    QuestFileState,
     RecursiveSnapshot,
     utc_now_iso,
 )
@@ -630,13 +629,13 @@ def mark_quest_experiment_complete(
     meta: QuestMeta,
     repo_path: Path,
 ) -> bool:
-    cur = quest_fs.read_quest_state(quest_dir)
-    if cur.state.value == EXPERIMENT_COMPLETE_STATE:
+    cur = quest_fs.read_quest_file_state(quest_dir)
+    if cur.state == EXPERIMENT_COMPLETE_STATE:
         return False
     quest_fs.write_quest_normalized_machine_state(
         quest_dir,
-        QuestStateInfo(
-            state=QuestState.ExperimentComplete,
+        QuestFileState(
+            state="ExperimentComplete",
             current_slice=None,
             updated_at=utc_now_iso(),
             active_slice=cur.active_slice,

@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 
 from quest_runner_service.quest_fs import (
-    QuestStateParseError,
+    StateFileParseError,
     format_normalized_state_md,
     parse_normalized_state_md_text,
     read_normalized_machine_state,
@@ -67,7 +67,7 @@ class NormalizedStateMdRoundTripTests(unittest.TestCase):
             "- updated_at: 2026-04-01T00:00:00Z\n\n"
             "## Tags\n\n"
         )
-        with self.assertRaises(QuestStateParseError):
+        with self.assertRaises(StateFileParseError):
             parse_normalized_state_md_text(
                 body,
                 require_global_step=True,
@@ -84,7 +84,7 @@ class NormalizedStateMdRoundTripTests(unittest.TestCase):
             "- extra_field: no\n\n"
             "## Tags\n\n"
         )
-        with self.assertRaises(QuestStateParseError):
+        with self.assertRaises(StateFileParseError):
             parse_normalized_state_md_text(
                 body,
                 require_global_step=False,
@@ -93,7 +93,7 @@ class NormalizedStateMdRoundTripTests(unittest.TestCase):
 
     def test_wrong_heading_rejected(self) -> None:
         body = "# Quest State\n\n- state: A\n"
-        with self.assertRaises(QuestStateParseError):
+        with self.assertRaises(StateFileParseError):
             parse_normalized_state_md_text(
                 body,
                 require_global_step=False,
@@ -109,7 +109,7 @@ class NormalizedStateMdRoundTripTests(unittest.TestCase):
             "- state: A\n"
             "- updated_at: 2026-04-01T00:00:00Z\n"
         )
-        with self.assertRaises(QuestStateParseError):
+        with self.assertRaises(StateFileParseError):
             parse_normalized_state_md_text(
                 body,
                 require_global_step=True,
