@@ -92,8 +92,9 @@ Cleanup should be planned at the right time (not too early, not forgotten).
   `scripts/quest-runner issues respond <id> --file physicalplan_issues.md --outcome Fixed|NotFixed --explanation "..."`.
 - Responders must not close issues; use `Fixed` or `NotFixed` with a non-empty explanation.
 - Do not create, edit, or delete entries in `physicalplan_issues.md` (reviewer-owned).
-- Do not edit issue markdown files directly unless a human instructs you or the CLI/API
-  is unavailable.
+- Do not edit issue markdown files directly. If the CLI/API is unavailable or cannot
+  perform the needed issue operation, create/update quest-root
+  `human_intervention_request.md` and stop.
 - If you disagree with reviewer expectations and will not implement the requested
   change, record `NotFixed` with your reasoning and, when the disagreement remains
   unresolved after normal iteration, escalate via quest-root

@@ -1,6 +1,6 @@
 # Quest roles
 
-Quest Runner executes quests through six harness-backed roles. Each role has a
+Quest Runner executes quests through eight harness-backed roles. Each role has a
 prompt template and profile in the quest's `workflow/` directory, plus a
 deterministic thread identity in `thread_registry.json`.
 
@@ -17,6 +17,8 @@ human-facing reference for role behavior, routing, and file ownership.
 | `implementer` | slice | `ExecuteSlice` | `Implementing` | [implementer.md](../../src/quest_runner_service/default_workflow/prompts/implementer.md) |
 | `polisher_reviewer` | slice | `ExecuteSlice` | `PolishingReview` | [polisher_reviewer.md](../../src/quest_runner_service/default_workflow/prompts/polisher_reviewer.md) |
 | `polisher` | slice | `ExecuteSlice` | `PolishingFix` | [polisher.md](../../src/quest_runner_service/default_workflow/prompts/polisher.md) |
+| `integration_tester` | quest | `IntegrationTesting` | — | [integration_tester.md](../../src/quest_runner_service/default_workflow/prompts/integration_tester.md) |
+| `integration_test_polisher` | quest | `IntegrationTestPolishing` | — | [integration_test_polisher.md](../../src/quest_runner_service/default_workflow/prompts/integration_test_polisher.md) |
 | `documenter` | quest | `QuestDocumenting` | — | [documenter.md](../../src/quest_runner_service/default_workflow/prompts/documenter.md) |
 
 New quests copy default prompts, profiles, and state-machine routing from
@@ -33,6 +35,8 @@ PrePlanning          (no harness role; human/spec setup)
 PhysicalPlanning     -> physical_planner
 ReviewPhysicalPlan   -> physical_plan_reviewer
 ExecuteSlice         -> implementer | polisher_reviewer | polisher
+IntegrationTesting   -> integration_tester
+IntegrationTestPolishing -> integration_test_polisher
 QuestDocumenting     -> documenter
 Completed            (no harness role)
 ```
@@ -81,8 +85,8 @@ V2 quests use deterministic thread names from `quest_thread.build_spec_thread_na
 | Slice-scoped | `<repo>_quest_<number:04d>_slice_<slice:04d>_<role>` |
 
 Slice-scoped roles are `implementer`, `polisher_reviewer`, and `polisher`.
-Quest-scoped roles are `physical_planner`, `physical_plan_reviewer`, and
-`documenter`.
+Quest-scoped roles are `physical_planner`, `physical_plan_reviewer`,
+`integration_tester`, `integration_test_polisher`, and `documenter`.
 
 Records are stored in `<quest_dir>/thread_registry.json`. See
 [Runtime files](runtime-files.md).
@@ -102,6 +106,11 @@ The runner prompts reviewers to create acceptance markers only when their issue
 list has no open entries. The runner prompts the implementer to create
 `implementation_done.md` when the slice plan appears complete.
 
+The integration tester does not create an acceptance marker. After all slices are
+complete, the quest moves through `IntegrationTesting`; open entries in
+`integration_test_issues.md` route to `integration_test_polisher`, and a clear
+issue list routes to `QuestDocumenting`.
+
 ## Issue workflow (CLI)
 
 Agents normally work with issues through the CLI, not by editing markdown issue
@@ -116,8 +125,9 @@ scripts/quest-runner issues list/read/create/edit/respond/responses
 - Responders record notes with `issues respond --outcome Fixed|NotFixed`.
 - Reviewers close resolved issues with `issues edit --status completed`.
 - Responders must not close issues.
-- Direct edits to issue files are allowed only when a human instructs it or the
-  CLI/API is unavailable.
+- Direct edits to issue files are not allowed. If the CLI/API is unavailable or
+  cannot perform the needed issue operation, agents create/update quest-root
+  `human_intervention_request.md` and stop.
 
 Reviewer roles own issue lists. Responder roles record responses but do not mark
 issues `completed`.

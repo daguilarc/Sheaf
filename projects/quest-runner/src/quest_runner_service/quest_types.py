@@ -31,6 +31,8 @@ class QuestState(Enum):
     ReviewPhysicalPlan = "ReviewPhysicalPlan"
     PrepareNextSlice = "PrepareNextSlice"
     ExecuteSlice = "ExecuteSlice"
+    IntegrationTesting = "IntegrationTesting"
+    IntegrationTestPolishing = "IntegrationTestPolishing"
     QuestDocumenting = "QuestDocumenting"
     Completed = "Completed"
     ExperimentComplete = "ExperimentComplete"

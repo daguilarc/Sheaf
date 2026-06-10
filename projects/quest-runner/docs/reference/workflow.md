@@ -77,6 +77,9 @@ scaffold:
   - ensure_file:
       path: physicalplan_issues.md
       content: "# Issues\n"
+  - ensure_file:
+      path: integration_test_issues.md
+      content: "# Issues\n"
 
 collections:
   slices:
@@ -107,6 +110,10 @@ issues:
     path: "$active_child/polishing_issues.md"
     owner: polisher_reviewer
     id_prefix: PL
+  integration_test:
+    path: integration_test_issues.md
+    owner: integration_tester
+    id_prefix: IT
 
 machines:
   quest: machines/quest.yaml

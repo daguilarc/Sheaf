@@ -62,6 +62,12 @@ Later messages reuse the same thread and include:
   clear and the review is accepted, it creates `implementation_accepted.md`.
 - `polisher` fixes open polishing issues but does not close them; only `polisher` may
   append to `slices/<slice>/polishing_issue_responses.md` for that slice.
+- `integration_tester` writes and runs quest-level integration tests after all slices
+  are complete. It creates and closes issues in `integration_test_issues.md`, but does
+  not fix the bugs it finds.
+- `integration_test_polisher` fixes open integration test issues but does not close
+  them; only `integration_test_polisher` may append to
+  `integration_test_issue_responses.md`.
 - `documenter` writes only the current project's `docs/` directory, normally
   `projects/<project>/docs/`.
 
@@ -73,8 +79,8 @@ Normative format for issue response files: `docs/quest/schemas/issue-responses.m
   `open` or `completed`.
 - Responders record how they addressed each open issue they touch by appending sections
   to the matching issue responses file (`physicalplan_issue_responses.md` or
-  `polishing_issue_responses.md`); they must not mark reviewer-owned issues
-  `completed`.
+  `polishing_issue_responses.md` or `integration_test_issue_responses.md`); they must
+  not mark reviewer-owned issues `completed`.
 - Reviewers read issue responses when re-checking open issues; they must not edit
   response files—if a response is inadequate, they update the issue and/or escalate.
 - If an issue stays `open` across more than one cycle after the responder had a chance

@@ -93,6 +93,7 @@ Prefer links over repeated explanations.
 - Link to [Configuration](configuration.md) instead of restating config rules.
 - Link to [Services](services.md) instead of repeating service endpoint rules.
 - Link to [Logs And Data](logs-and-data.md) instead of duplicating runtime path rules.
+- Link to [Testing](testing.md) instead of restating test lane rules.
 - Link to [Glossary](glossary.md) when using shared terms.
 
 API specifications should live in one canonical reference document per project, usually `projects/<project>/docs/reference/api.md`, and other docs should link to that file.

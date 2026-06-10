@@ -263,6 +263,10 @@ class WorkflowInterpreterFixture(unittest.TestCase):
             self.workflow,
             self.io,
         )
+        (self.quest_dir / "integration_test_issues.md").write_text(
+            "# Issues\n",
+            encoding="utf-8",
+        )
 
     def _quest_machine(self):
         return self.loader.LoadTopStateMachine(self.quest_dir)
@@ -434,7 +438,7 @@ class DefaultQuestTransitionTests(WorkflowInterpreterFixture):
         self.assertEqual(result.snapshot.state_after, "ExecuteSlice")
         self.assertEqual(result.snapshot.tags.get("active_slice"), "0002_b")
 
-    def test_prepare_next_slice_clears_active_slice_when_no_unfinished_children(self) -> None:
+    def test_prepare_next_slice_goes_to_integration_testing_when_no_unfinished_children(self) -> None:
         done = self.quest_dir / "slices" / "0001_a"
         _scaffold_slice(done)
         quest_fs.write_slice_persisted_state(
@@ -449,7 +453,7 @@ class DefaultQuestTransitionTests(WorkflowInterpreterFixture):
             tags={"active_slice": "0001_a"},
         )
         result = self._quest_machine().RunWorkflowStep(mode=ExecutionMode.Automated)
-        self.assertEqual(result.snapshot.state_after, "QuestDocumenting")
+        self.assertEqual(result.snapshot.state_after, "IntegrationTesting")
         self.assertNotIn("active_slice", result.snapshot.tags)
 
     def test_execute_slice_stays_while_child_not_complete(self) -> None:
@@ -493,6 +497,31 @@ class DefaultQuestTransitionTests(WorkflowInterpreterFixture):
         result = self._quest_machine().RunWorkflowStep(mode=ExecutionMode.Automated)
         self.assertEqual(result.snapshot.state_after, "Completed")
         self.assertEqual(result.snapshot.node_name, "QuestDocumentingNode")
+
+    def test_integration_testing_moves_to_polisher_with_open_issues(self) -> None:
+        (self.quest_dir / "integration_test_issues.md").write_text(
+            "# Issues\n\n## Issue IT-0001\n\n"
+            "- status: open\n- owner_role: integration_tester\n"
+            "- created_at: t\n- updated_at: t\n- title: x\n"
+            "- details: y\n- resolution_notes: none\n",
+            encoding="utf-8",
+        )
+        _write_quest_state(self.repo, self.quest_dir, state="IntegrationTesting")
+        result = self._quest_machine().RunWorkflowStep(mode=ExecutionMode.Automated)
+        self.assertEqual(result.snapshot.state_after, "IntegrationTestPolishing")
+        self.assertEqual(result.snapshot.node_name, "IntegrationTestingNode")
+
+    def test_integration_testing_moves_to_documenting_with_no_open_issues(self) -> None:
+        _write_quest_state(self.repo, self.quest_dir, state="IntegrationTesting")
+        result = self._quest_machine().RunWorkflowStep(mode=ExecutionMode.Automated)
+        self.assertEqual(result.snapshot.state_after, "QuestDocumenting")
+        self.assertEqual(result.snapshot.node_name, "IntegrationTestingNode")
+
+    def test_integration_test_polishing_returns_to_integration_testing(self) -> None:
+        _write_quest_state(self.repo, self.quest_dir, state="IntegrationTestPolishing")
+        result = self._quest_machine().RunWorkflowStep(mode=ExecutionMode.Automated)
+        self.assertEqual(result.snapshot.state_after, "IntegrationTesting")
+        self.assertEqual(result.snapshot.node_name, "IntegrationTestPolishingNode")
 
 
 class DefaultSliceTransitionTests(WorkflowInterpreterFixture):

@@ -80,7 +80,7 @@ states:
       - if:
           var_exists: next_slice
         to: ExecuteSlice
-      - to: QuestDocumenting
+      - to: IntegrationTesting
         actions:
           - clear_var: active_slice
 
@@ -96,6 +96,36 @@ states:
             state_after: Completed
         to: PrepareNextSlice
       - to: ExecuteSlice
+
+  IntegrationTesting:
+    node_name: IntegrationTestingNode
+    run:
+      profile: integration_tester
+      task: |
+        Write and run integration tests for the completed quest. Focus especially
+        on behavior that crosses slice boundaries and would not be covered by
+        a single-slice review. Use `integration_test_issues.md` for any bugs
+        or blockers found.
+    transitions:
+      - if:
+          has_open_issues:
+            file: integration_test_issues.md
+        to: IntegrationTestPolishing
+      - if:
+          no_open_issues:
+            file: integration_test_issues.md
+        to: QuestDocumenting
+
+  IntegrationTestPolishing:
+    node_name: IntegrationTestPolishingNode
+    run:
+      profile: integration_test_polisher
+      task: |
+        Fix the open integration test issues for this quest. Use the issue CLI
+        with `integration_test_issues.md`. Record issue responses through the
+        CLI, but do not close issues yourself.
+    transitions:
+      - to: IntegrationTesting
 
   QuestDocumenting:
     node_name: QuestDocumentingNode

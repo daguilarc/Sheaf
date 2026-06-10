@@ -1,13 +1,15 @@
 # Issue response files
 
-Normative schema for files where `physical_planner` and `polisher` record whether
-each open reviewer issue was addressed. These files are separate from reviewer-owned
-issue lists (`physicalplan_issues.md`, `polishing_issues.md`).
+Normative schema for files where responder roles record whether each open reviewer
+issue was addressed. These files are separate from reviewer-owned issue lists
+(`physicalplan_issues.md`, `polishing_issues.md`,
+`integration_test_issues.md`).
 
 ## Paths
 
 ```text
 <quest_dir>/physicalplan_issue_responses.md
+<quest_dir>/integration_test_issue_responses.md
 slices/<slice>/polishing_issue_responses.md
 ```
 
@@ -36,6 +38,19 @@ Write authority: `polisher` only for this file in the current slice.
 Read authority: `polisher_reviewer` (and any role that needs context) must read this
 file when verifying issues; reviewers must not write to it.
 
+## Integration test issue responses
+
+Path: `<quest_dir>/integration_test_issue_responses.md`
+
+Purpose: After `integration_tester` leaves open entries in
+`integration_test_issues.md`, the `integration_test_polisher` records how it
+responded before the next integration test cycle.
+
+Write authority: `integration_test_polisher` only for this file at quest root.
+
+Read authority: `integration_tester` (and any role that needs context) must read
+this file when verifying issues; reviewers must not write to it.
+
 ## File format
 
 Each file is markdown with a fixed top-level heading and one section per issue
@@ -46,7 +61,7 @@ response in chronological or round order.
 
 ## Response <ISSUE_ID> <ISO-8601 UTC timestamp>
 
-- issue_id: <same id as in the matching issues file, e.g. QP-0001 or PL-0002>
+- issue_id: <same id as in the matching issues file, e.g. QP-0001, PL-0002, or IT-0003>
 - outcome: Fixed|NotFixed
 - explanation: <markdown text>
 ```
@@ -78,8 +93,8 @@ If no responses have been written yet, the file may be absent or contain only:
 
 ## Relationship to issues files
 
-- Reviewers continue to own `status: open|completed` in `physicalplan_issues.md` and
-  `polishing_issues.md` only.
+- Reviewers continue to own `status: open|completed` in `physicalplan_issues.md`,
+  `polishing_issues.md`, and `integration_test_issues.md` only.
 - Responders MUST NOT mark issues `completed`; they only append to the appropriate
   issue responses file.
 - Reviewers MUST consult the issue responses file when re-checking open issues.

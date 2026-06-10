@@ -133,6 +133,7 @@ class PreambleRenderingTests(unittest.TestCase):
         preamble = render_preamble(ctx)
         self.assertIn("--file physicalplan_issues.md", preamble)
         self.assertIn("polishing_issues.md", preamble)
+        self.assertIn("integration_test_issues.md", preamble)
         self.assertIn(str(self.slice_dir.relative_to(self.repo)), preamble)
         self.assertNotIn("--scope physicalplan", preamble)
         self.assertNotIn("--scope polishing", preamble)

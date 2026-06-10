@@ -178,12 +178,13 @@ Compatibility:
 
 Responder-written records of how open reviewer issues were handled. These files are
 separate from reviewer-owned issue lists (`physicalplan_issues.md`,
-`polishing_issues.md`).
+`polishing_issues.md`, `integration_test_issues.md`).
 
 Paths:
 
 ```text
 <quest_dir>/physicalplan_issue_responses.md
+<quest_dir>/integration_test_issue_responses.md
 <slice_dir>/polishing_issue_responses.md
 ```
 
@@ -191,6 +192,7 @@ Write authority:
 
 - `physicalplan_issue_responses.md`: `physical_planner` only.
 - `polishing_issue_responses.md`: `polisher` only for the current slice.
+- `integration_test_issue_responses.md`: `integration_test_polisher` only.
 
 Read authority:
 
@@ -198,8 +200,10 @@ Read authority:
   verifying open physical plan issues.
 - `polisher_reviewer` must read `polishing_issue_responses.md` when verifying open
   polishing issues.
+- `integration_tester` must read `integration_test_issue_responses.md` when
+  verifying open integration test issues.
 
-Reviewers must not create, edit, or delete entries in either responses file.
+Reviewers must not create, edit, or delete entries in response files.
 
 Full normative schema: [`schemas/issue-responses.md`](schemas/issue-responses.md).
 
@@ -209,6 +213,7 @@ Paths:
 
 ```text
 <quest_dir>/physicalplan_issues.md
+<quest_dir>/integration_test_issues.md
 <slice_dir>/polishing_issues.md
 ```
 
@@ -479,6 +484,21 @@ Purpose:
   and accepts the quest-level plan review.
 - The runner advances out of `ReviewPhysicalPlan` only when this file exists and
   `physicalplan_issues.md` has no open entries.
+
+## Integration Test Issues
+
+Path:
+
+```text
+<quest_dir>/integration_test_issues.md
+```
+
+Purpose:
+
+- Records integration test bugs and blockers found after all slices complete.
+- The runner routes from `IntegrationTesting` to `IntegrationTestPolishing` while
+  this file has open entries, and routes to `QuestDocumenting` when no open entries
+  remain.
 
 ## Implementation Acceptance Marker
 

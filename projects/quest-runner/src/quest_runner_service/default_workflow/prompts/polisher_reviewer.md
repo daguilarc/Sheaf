@@ -46,8 +46,9 @@ implemented slice is correct, complete, and production-ready.
   `scripts/quest-runner issues edit <id> --file polishing_issues.md --status completed`.
 - If you see something that looks like a bug in the quest harness, open a human
   intervention request. Do not work around bugs in the quest harness.
-- Do not edit issue markdown files directly unless a human instructs you or the CLI/API
-  is unavailable.
+- Do not edit issue markdown files directly. If the CLI/API is unavailable or cannot
+  perform the needed issue operation, create/update quest-root
+  `human_intervention_request.md` and stop.
 - Before verifying fixes to previously open issues, read responses with
   `scripts/quest-runner issues responses <id> --file polishing_issues.md` so you
   understand how the polisher responded. You must not record responses yourself; if a

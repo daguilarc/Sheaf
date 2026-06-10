@@ -41,6 +41,8 @@ class PackagedDefaultWorkflowTests(unittest.TestCase):
             "ReviewPhysicalPlan",
             "PrepareNextSlice",
             "ExecuteSlice",
+            "IntegrationTesting",
+            "IntegrationTestPolishing",
             "QuestDocumenting",
             "Completed",
         ]
@@ -53,6 +55,8 @@ class PackagedDefaultWorkflowTests(unittest.TestCase):
             "ReviewPhysicalPlan": "ReviewPhysicalPlanNode",
             "PrepareNextSlice": "PrepareNextSliceNode",
             "ExecuteSlice": "ExecuteActiveSliceNode",
+            "IntegrationTesting": "IntegrationTestingNode",
+            "IntegrationTestPolishing": "IntegrationTestPolishingNode",
             "QuestDocumenting": "QuestDocumentingNode",
             "Completed": "CompletedGateNode",
         }
@@ -91,6 +95,8 @@ class PackagedDefaultWorkflowTests(unittest.TestCase):
             "implementer",
             "polisher_reviewer",
             "polisher",
+            "integration_tester",
+            "integration_test_polisher",
             "documenter",
         ]
         self.assertEqual(list(workflow.profiles.keys()), expected_profiles)
@@ -127,6 +133,14 @@ class PackagedDefaultWorkflowTests(unittest.TestCase):
             "{repo}_quest_{quest_number:04d}_{profile}",
         )
         self.assertEqual(planner.thread_registry_key_template, "{profile}")
+        integration_tester = workflow.get_profile("integration_tester")
+        self.assertEqual(integration_tester.harness, "codex")
+        self.assertEqual(integration_tester.model, "gpt-5.5")
+        self.assertEqual(integration_tester.thread_scope, "quest")
+        integration_polisher = workflow.get_profile("integration_test_polisher")
+        self.assertEqual(integration_polisher.harness, "cursor")
+        self.assertEqual(integration_polisher.model, "composer-2.5")
+        self.assertEqual(integration_polisher.thread_scope, "quest")
 
     def test_issue_declarations(self) -> None:
         workflow = load_packaged_default_workflow()
@@ -140,6 +154,32 @@ class PackagedDefaultWorkflowTests(unittest.TestCase):
         )
         self.assertEqual(issues["polishing"].owner, "polisher_reviewer")
         self.assertEqual(issues["polishing"].id_prefix, "PL")
+        self.assertEqual(
+            issues["integration_test"].path,
+            "integration_test_issues.md",
+        )
+        self.assertEqual(issues["integration_test"].owner, "integration_tester")
+        self.assertEqual(issues["integration_test"].id_prefix, "IT")
+
+    def test_quest_scaffold_includes_issue_files(self) -> None:
+        workflow = load_packaged_default_workflow()
+        self.assertEqual(
+            workflow.scaffold,
+            [
+                {
+                    "ensure_file": {
+                        "path": "physicalplan_issues.md",
+                        "content": "# Issues\n",
+                    }
+                },
+                {
+                    "ensure_file": {
+                        "path": "integration_test_issues.md",
+                        "content": "# Issues\n",
+                    }
+                },
+            ],
+        )
 
     def test_collection_scaffold_byte_content(self) -> None:
         workflow = load_packaged_default_workflow()

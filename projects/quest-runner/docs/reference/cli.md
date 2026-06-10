@@ -290,8 +290,9 @@ worktree path and next manual cleanup step when the service returns one.
 ## Issue Commands
 
 Agents and humans use `scripts/quest-runner issues ...` for quest issue work.
-Agents should not edit issue markdown files directly when the CLI/API is
-available.
+Agents must not edit issue markdown files directly. If the CLI/API is unavailable
+or cannot perform the needed issue operation, agents create/update quest-root
+`human_intervention_request.md` and stop.
 
 Issue commands take `--file <quest-relative-path>` naming a workflow-declared
 issue file. For the default main-quest workflow:
@@ -300,6 +301,7 @@ issue file. For the default main-quest workflow:
 | --- | --- |
 | `physicalplan_issues.md` | `QP-NNNN` |
 | `slices/<slice_dir>/polishing_issues.md` | `PL-NNNN` |
+| `integration_test_issues.md` | `IT-NNNN` |
 
 ### `issues list`
 

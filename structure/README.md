@@ -11,6 +11,7 @@ Start here:
 - [Logs And Data](logs-and-data.md): required runtime output locations.
 - [Agent Harness Event Schema](agent-harness-event-schema.md): unified tagged-union schema for quest runner agent harness events.
 - [Web UI](webui.md): shared web UI utilities and project home page links.
+- [Testing](testing.md): regular, integration, smoke, and manual test lanes.
 - [Docs Structure](docs-structure.md): how project and repository documentation should be organized.
 - [Makefiles](makefile.md): root and per-project Make targets and command conventions.
 - [Scripts](scripts.md): shared root script and symlink conventions.

@@ -37,6 +37,17 @@ Projects must write logs under `logs/<project>/` and runtime data under `data/<p
 
 See [Logs And Data](logs-and-data.md).
 
+## Testing
+
+Projects must keep regular tests separate from opt-in integration tests.
+
+- The `test` target runs regular tests only.
+- Integration tests live under `tests/integration/` when present.
+- Integration tests run through an `integration-test` target and must not be
+  included in default `test` or `all` workflows.
+
+See [Testing](testing.md).
+
 ## Services
 
 Only projects that need a long-running process need a service entry. Services are registered in `config/services.json` and should expose the standard lifecycle endpoints.

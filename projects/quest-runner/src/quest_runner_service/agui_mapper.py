@@ -399,6 +399,9 @@ class QuestLogToAguiMapper:
                 )
             ]
 
+        if item_type == "todo_list":
+            return [self._custom(event, "codex.todo_list", item)]
+
         return self._fallback(event)
 
     def _consume_claude_payload(self, event: JsonObject, payload: JsonObject) -> list[JsonObject]:

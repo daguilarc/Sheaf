@@ -23,11 +23,14 @@ explicitly with `--file <quest-relative path>`.
   and `--explanation` (responders only; do not close issues)
 - Response history: `issues responses <id> --file <file>`
 - Quest-level issues use `--file physicalplan_issues.md`; slice issues use
-  `--file $active_child/polishing_issues.md`
+  `--file $active_child/polishing_issues.md`; quest integration test issues use
+  `--file integration_test_issues.md`
 
 If you see something that looks like a bug in the quest harness, open a human
 intervention request. Do not work around bugs in the quest harness.
 
 Do not edit `physicalplan_issues.md`, `physicalplan_issue_responses.md`,
-`polishing_issues.md`, or `polishing_issue_responses.md` directly unless a human
-instructs you or the CLI/API is unavailable.
+`polishing_issues.md`, `polishing_issue_responses.md`,
+`integration_test_issues.md`, or `integration_test_issue_responses.md` directly.
+If the CLI/API is unavailable or cannot perform the needed issue operation,
+create/update quest-root `human_intervention_request.md` and stop.

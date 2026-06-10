@@ -51,6 +51,21 @@ class IssueFileResolutionTests(unittest.TestCase):
             str(ctx.responses_path).endswith("physicalplan_issue_responses.md")
         )
 
+    def test_integration_test_issue_file_resolves(self) -> None:
+        _client, svc = make_app_client(self.temp.root, self.repo_root)
+        out = self._create_quest(svc)
+        ctx = self._ctx(out, "integration_test_issues.md")
+        self.assertEqual(ctx.issue_file, "integration_test_issues.md")
+        self.assertEqual(ctx.workflow_issue_alias, "integration_test")
+        self.assertEqual(ctx.id_prefix, "IT")
+        self.assertEqual(ctx.owner_role, "integration_tester")
+        self.assertTrue(
+            str(ctx.issues_path).endswith("integration_test_issues.md")
+        )
+        self.assertTrue(
+            str(ctx.responses_path).endswith("integration_test_issue_responses.md")
+        )
+
     def test_polishing_issue_file_resolves_for_inactive_slice(self) -> None:
         _client, svc = make_app_client(self.temp.root, self.repo_root)
         out = self._create_quest(svc)
@@ -120,6 +135,25 @@ class IssueFileResolutionTests(unittest.TestCase):
         body = resp.get_json()
         self.assertEqual(body["issue_id"], "QP-0001")
         self.assertEqual(body["owner_role"], "physical_plan_reviewer")
+
+    def test_create_integration_test_uses_it_prefix(self) -> None:
+        client, svc = make_app_client(self.temp.root, self.repo_root)
+        out = self._create_quest(svc)
+        resp = client.post(
+            "/api/issues",
+            json={
+                "project": "example",
+                "quest_type": "main",
+                "quest_number": out["quest_number"],
+                "issue_file": "integration_test_issues.md",
+                "title": "Integration failure",
+                "body": "Details",
+            },
+        )
+        self.assertEqual(resp.status_code, 201)
+        body = resp.get_json()
+        self.assertEqual(body["issue_id"], "IT-0001")
+        self.assertEqual(body["owner_role"], "integration_tester")
 
     def test_create_polishing_uses_pl_prefix(self) -> None:
         client, svc = make_app_client(self.temp.root, self.repo_root)

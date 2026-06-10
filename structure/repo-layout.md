@@ -37,7 +37,8 @@ projects/<project>/
 - `README.md` gives the short project overview and links into `docs/`.
 - `quests/` contains planned or active work for that project. See [Project Rules](project-rules.md).
 - `src/` contains implementation code.
-- `tests/` contains automated tests and test fixtures.
+- `tests/` contains automated tests and test fixtures. Integration tests, when
+  present, belong under `tests/integration/`; see [Testing](testing.md).
 - `docs/` describes the current state of the project. See [Docs Structure](docs-structure.md).
 
 Shared repo conventions are defined once in `structure/` and linked from project docs instead of being repeated.

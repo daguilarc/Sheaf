@@ -39,8 +39,9 @@ physical planning output is correct, complete, and executable before implementat
   `scripts/quest-runner issues edit <id> --file physicalplan_issues.md --status completed`.
 - If you see something that looks like a bug in the quest harness, open a human
   intervention request. Do not work around bugs in the quest harness.
-- Do not edit issue markdown files directly unless a human instructs you or the CLI/API
-  is unavailable.
+- Do not edit issue markdown files directly. If the CLI/API is unavailable or cannot
+  perform the needed issue operation, create/update quest-root
+  `human_intervention_request.md` and stop.
 
 ## Existing issue verification
 

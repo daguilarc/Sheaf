@@ -824,6 +824,12 @@ class ArchiveExperimentArtifactsTests(unittest.TestCase):
             (quest / "physicalplan_issue_responses.md").write_text(
                 "# Responses\n", encoding="utf-8"
             )
+            (quest / "integration_test_issues.md").write_text(
+                "# Integration\n", encoding="utf-8"
+            )
+            (quest / "integration_test_issue_responses.md").write_text(
+                "# Integration responses\n", encoding="utf-8"
+            )
             sl = quest / "slices" / "0000_a"
             sl.mkdir(parents=True)
             (sl / "polishing_issues.md").write_text("# Slice issues\n", encoding="utf-8")
@@ -838,8 +844,8 @@ class ArchiveExperimentArtifactsTests(unittest.TestCase):
             )
             self.assertIsInstance(summary, ArtifactCopySummary)
             self.assertEqual(summary.logs_copied, 1)
-            self.assertEqual(summary.issues_copied, 2)
-            self.assertEqual(summary.issue_responses_copied, 2)
+            self.assertEqual(summary.issues_copied, 3)
+            self.assertEqual(summary.issue_responses_copied, 3)
             self.assertEqual(summary.skipped_missing, 0)
             self.assertTrue(
                 (archive / "logs" / "step_0001_run.jsonl").is_file()
@@ -862,6 +868,14 @@ class ArchiveExperimentArtifactsTests(unittest.TestCase):
                     / "issue_responses"
                     / "quest"
                     / "physicalplan_issue_responses.md"
+                ).is_file()
+            )
+            self.assertTrue(
+                (
+                    archive
+                    / "issue_responses"
+                    / "quest"
+                    / "integration_test_issue_responses.md"
                 ).is_file()
             )
             self.assertTrue(
@@ -892,7 +906,7 @@ class ArchiveExperimentArtifactsTests(unittest.TestCase):
             )
             self.assertEqual(summary.issues_copied, 1)
             self.assertEqual(summary.issue_responses_copied, 0)
-            self.assertEqual(summary.skipped_missing, 2)
+            self.assertEqual(summary.skipped_missing, 3)
 
 
 class ExperimentLandServiceTests(unittest.TestCase):
@@ -962,7 +976,7 @@ class ExperimentLandServiceTests(unittest.TestCase):
         )
         self.assertEqual(result["status"], "landed")
         self.assertEqual(result["logs_copied"], 1)
-        self.assertEqual(result["issues_copied"], 2)
+        self.assertEqual(result["issues_copied"], 3)
         self.assertEqual(result["worktree_deleted"], True)
         self.assertEqual(result["branch_deleted"], True)
         self.assertEqual(result["remote_branch"], exp_meta.branch_name)

@@ -40,6 +40,8 @@ Supported persisted quest states:
 - `PhysicalPlanning`
 - `ReviewPhysicalPlan`
 - `ExecuteSlice`
+- `IntegrationTesting`
+- `IntegrationTestPolishing`
 - `QuestDocumenting`
 - `Completed`
 - `ExperimentComplete` (experiments only; stop condition reached, ready to land)
@@ -116,6 +118,7 @@ Paths:
 
 ```text
 <quest_dir>/physicalplan_issues.md
+<quest_dir>/integration_test_issues.md
 <slice_dir>/polishing_issues.md
 ```
 
@@ -127,6 +130,7 @@ Issue entries use `open` or `completed` status. Reviewer roles own completion:
 
 - `physical_plan_reviewer` owns physical-plan issue completion.
 - `polisher_reviewer` owns polishing issue completion.
+- `integration_tester` owns integration test issue completion.
 
 `resolution_notes: none` means no resolution note is set.
 
@@ -136,6 +140,7 @@ Paths:
 
 ```text
 <quest_dir>/physicalplan_issue_responses.md
+<quest_dir>/integration_test_issue_responses.md
 <slice_dir>/polishing_issue_responses.md
 ```
 
@@ -149,6 +154,8 @@ Write authority:
 - `physical_planner` records physical-plan issue responses through the CLI/API.
 - `polisher` records polishing issue responses for the current slice through the
   CLI/API.
+- `integration_test_polisher` records integration test issue responses through
+  the CLI/API.
 
 Reviewers read responses when verifying open issues, but reviewers do not
 record responses themselves.
