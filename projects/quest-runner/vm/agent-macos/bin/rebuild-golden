@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib.sh
+source "$SCRIPT_DIR/lib.sh"
+
+require_tooling
+
+fresh=0
+if [[ "${1:-}" == "--fresh" ]]; then
+  fresh=1
+  shift
+fi
+if [[ $# -gt 0 ]]; then
+  die "usage: rebuild-golden [--fresh]"
+fi
+
+if [[ "$fresh" -eq 1 ]] && vm_exists "$GOLDEN_VM"; then
+  echo "Deleting existing $GOLDEN_VM for a fresh rebuild..."
+  "$TART" stop "$GOLDEN_VM" --timeout 30 || true
+  "$TART" delete "$GOLDEN_VM"
+fi
+
+if ! vm_exists "$GOLDEN_VM"; then
+  echo "Cloning $BASE_IMAGE to $GOLDEN_VM..."
+  "$TART" clone "$BASE_IMAGE" "$GOLDEN_VM"
+else
+  echo "$GOLDEN_VM already exists; reusing it."
+fi
+
+"$TART" set "$GOLDEN_VM" \
+  --cpu "$VM_CPU" \
+  --memory "$VM_MEMORY_MB" \
+  --disk-size "$VM_DISK_GB" \
+  --display "$VM_DISPLAY"
+
+echo "Starting $GOLDEN_VM for provisioning..."
+log="$(start_vm_background "$GOLDEN_VM")"
+echo "Tart log: $log"
+
+ip="$(wait_for_ssh "$GOLDEN_VM")"
+echo "$GOLDEN_VM is reachable at $ip"
+
+echo "Running guest bootstrap..."
+remote_bootstrap="/tmp/sheaf-agent-vm-bootstrap.sh"
+remote_agent_tools="/tmp/sheaf-agent-vm-agent-tools.sh"
+remote_sheaf_deps="/tmp/sheaf-agent-vm-sheaf-deps.sh"
+ssh_upload "$ip" "$TOOLKIT_DIR/scripts/guest-bootstrap.sh" "$remote_bootstrap"
+ssh_upload "$ip" "$TOOLKIT_DIR/scripts/guest-agent-tools.sh" "$remote_agent_tools"
+ssh_upload "$ip" "$TOOLKIT_DIR/scripts/guest-sheaf-deps.sh" "$remote_sheaf_deps"
+ssh_exec "$ip" "SHEAF_AGENT_TOOLS_SCRIPT='$remote_agent_tools' SHEAF_DEPS_SCRIPT='$remote_sheaf_deps' bash '$remote_bootstrap'; rm -f '$remote_bootstrap' '$remote_agent_tools' '$remote_sheaf_deps'"
+
+echo "Stopping $GOLDEN_VM..."
+"$TART" stop "$GOLDEN_VM" --timeout 60 || true
+
+echo "Golden VM ready: $GOLDEN_VM"

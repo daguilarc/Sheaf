@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib.sh
+source "$SCRIPT_DIR/lib.sh"
+
+require_tooling
+
+if [[ $# -lt 1 ]]; then
+  die "usage: agent-clean <vm-name> [<vm-name> ...]"
+fi
+
+for vm in "$@"; do
+  if vm_exists "$vm"; then
+    "$TART" stop "$vm" --timeout 30 || true
+    "$TART" delete "$vm"
+    echo "Deleted $vm"
+  else
+    echo "Skipping missing VM: $vm"
+  fi
+done
+

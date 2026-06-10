@@ -1,4 +1,4 @@
-.PHONY: all test run clean venv
+.PHONY: all test run clean venv agent-vm-rebuild agent-vm-fresh agent-vm-run
 
 VENV_DIR := .venv
 PYTHON := $(VENV_DIR)/bin/python
@@ -60,3 +60,12 @@ clean:
 	find . -type f -name '*.pyc' -delete 2>/dev/null || true
 	rm -rf .pytest_cache
 	find src/quest_runner_service/dashboard_assets -type d -name node_modules -exec rm -rf {} + 2>/dev/null || true
+
+agent-vm-rebuild:
+	vm/agent-macos/bin/rebuild-golden
+
+agent-vm-fresh:
+	vm/agent-macos/bin/rebuild-golden --fresh
+
+agent-vm-run:
+	vm/agent-macos/bin/agent-run $(or $(WORKTREE),$(abspath ../..))

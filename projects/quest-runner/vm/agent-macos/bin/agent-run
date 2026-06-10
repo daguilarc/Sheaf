@@ -1,0 +1,110 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib.sh
+source "$SCRIPT_DIR/lib.sh"
+
+usage() {
+  cat <<'USAGE'
+Usage: agent-run [options] [worktree-path]
+
+Options:
+  --name NAME          Disposable VM name. Default: agent-YYYYmmdd-HHMMSS
+  --golden NAME        Source golden VM. Default: profile.env GOLDEN_VM
+  --softnet            Use Tart Softnet isolation. Requires host root access.
+  --host-only          Use host-only networking; no internet from the VM.
+  --read-only          Mount the worktree read-only.
+  --command COMMAND    Run a shell command over SSH after boot.
+  --keep-running       Leave VM running after --command.
+  -h, --help           Show this help.
+
+The worktree is mounted in the guest at:
+  /Volumes/My Shared Files/worktree
+USAGE
+}
+
+require_tooling
+
+name="${AGENT_VM_PREFIX}-$(date +%Y%m%d-%H%M%S)"
+golden="$GOLDEN_VM"
+worktree="$PWD"
+network=()
+mount_mode=""
+command_to_run=""
+keep_running=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --name)
+      name="${2:?missing --name value}"
+      shift 2
+      ;;
+    --golden)
+      golden="${2:?missing --golden value}"
+      shift 2
+      ;;
+    --host-only)
+      network=(--net-host)
+      shift
+      ;;
+    --softnet)
+      network=(--net-softnet)
+      shift
+      ;;
+    --read-only)
+      mount_mode=":ro"
+      shift
+      ;;
+    --command)
+      command_to_run="${2:?missing --command value}"
+      shift 2
+      ;;
+    --keep-running)
+      keep_running=1
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --*)
+      die "unknown option: $1"
+      ;;
+    *)
+      worktree="$1"
+      shift
+      ;;
+  esac
+done
+
+[[ -d "$worktree" ]] || die "worktree path does not exist: $worktree"
+worktree="$(cd "$worktree" && pwd)"
+vm_exists "$golden" || die "golden VM '$golden' does not exist. Run $TOOLKIT_DIR/bin/rebuild-golden first."
+vm_exists "$name" && die "VM '$name' already exists"
+
+echo "Cloning $golden to $name..."
+"$TART" clone "$golden" "$name"
+"$TART" set "$name" --random-mac --random-serial
+
+echo "Starting $name with $worktree mounted..."
+run_args=(--dir="worktree:$worktree$mount_mode")
+if [[ "${#network[@]}" -gt 0 ]]; then
+  run_args=("${network[@]}" "${run_args[@]}")
+fi
+log="$(start_vm_background "$name" "${run_args[@]}")"
+echo "Tart log: $log"
+
+ip="$(wait_for_ssh "$name")"
+echo "$name is ready."
+echo "SSH: $TOOLKIT_DIR/bin/agent-ssh $name"
+echo "Guest worktree: /Volumes/My Shared Files/worktree"
+
+if [[ -n "$command_to_run" ]]; then
+  echo "Running command in guest..."
+  ssh_exec "$ip" "source \"\$HOME/.zprofile\" 2>/dev/null || true; export PATH=\"\$HOME/.npm-global/bin:\$HOME/bin:/opt/homebrew/opt/sqlite/bin:/opt/homebrew/opt/make/libexec/gnubin:/opt/homebrew/opt/coreutils/libexec/gnubin:/opt/homebrew/opt/libtool/libexec/gnubin:/opt/homebrew/bin:/opt/homebrew/sbin:\$PATH\"; cd '/Volumes/My Shared Files/worktree' && $command_to_run"
+  if [[ "$keep_running" -eq 0 ]]; then
+    echo "Stopping $name after command..."
+    "$TART" stop "$name" --timeout 60 || true
+  fi
+fi
