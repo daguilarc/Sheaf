@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from .. import quest_fs
+from ..agent_vm import vm_executor_for_worktree
 from ..harness import create_harness
 from ..harness_config import read_service_harness_configs
 from ..quest_runner import git_rev_parse_head, perform_role_harness_sequence
@@ -71,8 +72,13 @@ def _invoke_workflow_profile_harness(
     profile = workflow.get_profile(profile_name)
     exec_profile = workflow_profile_to_execution_profile(profile)
     harness_configs = read_service_harness_configs(ctx.repo_root)
+    harness_config = dict(harness_configs.get(exec_profile.harness.value, {}))
+    executor = vm_executor_for_worktree(ctx.repo_root)
+    if executor is not None:
+        harness_config["_executor"] = executor
+        harness_config["_probe_cwd"] = str(ctx.repo_root)
     harness = create_harness(
-        exec_profile.harness, harness_configs.get(exec_profile.harness.value)
+        exec_profile.harness, harness_config
     )
     exec_ctx = build_profile_execution_context(
         repo_path=ctx.repo_root,

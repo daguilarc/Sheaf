@@ -344,15 +344,10 @@ class AutomatedRunTests(WorkflowRunnerIntegrationFixture):
         status = _git_status_porcelain(self.worktree)
         self.assertIn("human_intervention_request.md", status)
 
-    @patch(
-        "quest_runner_service.state_machine.workflow_harness_callback.perform_role_harness_sequence"
-    )
-    def test_implementing_stay_is_noop_without_file_changes(
-        self, mock_harness: MagicMock
-    ) -> None:
+    def test_implementing_stay_is_noop_without_file_changes(self) -> None:
         from quest_runner_service.harness import HarnessResponse
 
-        mock_harness.return_value = HarnessResponse(
+        harness_response = HarnessResponse(
             provider_thread_id="fake-thread-id",
             model="test",
             output_text="ok",
@@ -383,12 +378,19 @@ class AutomatedRunTests(WorkflowRunnerIntegrationFixture):
         _commit_all(self.worktree, "implementing setup")
         before_head = _git_head(self.worktree)
         before_gs = quest_fs.read_quest_file_state(self.wt_qdir).global_step
-        out = run_quest(
-            repo_path=self.worktree,
-            quest_dir=self.wt_qdir,
-            conductor_repo_path=self.repo_root,
-            max_steps=1,
-        )
+        with patch(
+            "quest_runner_service.state_machine.workflow_harness_callback.create_harness",
+            return_value=object(),
+        ), patch(
+            "quest_runner_service.state_machine.workflow_harness_callback.perform_role_harness_sequence",
+            return_value=harness_response,
+        ):
+            out = run_quest(
+                repo_path=self.worktree,
+                quest_dir=self.wt_qdir,
+                conductor_repo_path=self.repo_root,
+                max_steps=1,
+            )
         self.assertEqual(out["status"], "max_steps")
         self.assertEqual(_git_head(self.worktree), before_head)
         self.assertEqual(quest_fs.read_quest_file_state(self.wt_qdir).global_step, before_gs)

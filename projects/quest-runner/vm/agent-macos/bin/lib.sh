@@ -25,12 +25,24 @@ vm_ip() {
   "$TART" ip "$1" --wait "${2:-180}"
 }
 
+launch_label() {
+  local vm="$1"
+  local safe
+  safe="$(printf '%s' "$vm" | tr -c 'A-Za-z0-9_.-' '-')"
+  printf 'com.sheaf.agent-vm.%s\n' "$safe"
+}
+
 ssh_base() {
   "$SSHPASS" -p "$SSH_PASSWORD" ssh \
     -o StrictHostKeyChecking=no \
     -o UserKnownHostsFile=/dev/null \
     -o LogLevel=ERROR \
     -o ConnectTimeout=10 \
+    -o PreferredAuthentications=password \
+    -o PubkeyAuthentication=no \
+    -o IdentitiesOnly=yes \
+    -o KbdInteractiveAuthentication=no \
+    -o NumberOfPasswordPrompts=1 \
     "$SSH_USER@$1" "$@"
 }
 
@@ -42,6 +54,11 @@ ssh_exec() {
     -o UserKnownHostsFile=/dev/null \
     -o LogLevel=ERROR \
     -o ConnectTimeout=10 \
+    -o PreferredAuthentications=password \
+    -o PubkeyAuthentication=no \
+    -o IdentitiesOnly=yes \
+    -o KbdInteractiveAuthentication=no \
+    -o NumberOfPasswordPrompts=1 \
     "$SSH_USER@$ip" "$@"
 }
 
@@ -53,7 +70,25 @@ ssh_stdin() {
     -o UserKnownHostsFile=/dev/null \
     -o LogLevel=ERROR \
     -o ConnectTimeout=10 \
+    -o PreferredAuthentications=password \
+    -o PubkeyAuthentication=no \
+    -o IdentitiesOnly=yes \
+    -o KbdInteractiveAuthentication=no \
+    -o NumberOfPasswordPrompts=1 \
     "$SSH_USER@$ip" "$@"
+}
+
+ssh_exec_retry() {
+  local ip="$1"
+  shift
+  local attempt
+  for attempt in 1 2 3; do
+    if ssh_exec "$ip" "$@"; then
+      return 0
+    fi
+    sleep 2
+  done
+  return 1
 }
 
 ssh_upload() {
@@ -67,8 +102,20 @@ start_vm_background() {
   local vm="$1"
   shift
   local log="$AGENT_VM_LOG_DIR/$vm.log"
-  "$TART" run --no-graphics --no-audio --no-clipboard "$@" "$vm" >"$log" 2>&1 &
-  printf '%s\n' "$!" > "$AGENT_VM_LOG_DIR/$vm.pid"
+  local launcher="$AGENT_VM_LOG_DIR/$vm.launch.sh"
+  local label
+  label="$(launch_label "$vm")"
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf 'set -euo pipefail\n'
+    printf 'exec'
+    printf ' %q' "$TART" run --no-graphics --no-audio --no-clipboard "$@" "$vm"
+    printf ' >>%q 2>&1\n' "$log"
+  } > "$launcher"
+  chmod +x "$launcher"
+  launchctl remove "$label" >/dev/null 2>&1 || true
+  launchctl submit -l "$label" -- "$launcher"
+  printf '%s\n' "$label" > "$AGENT_VM_LOG_DIR/$vm.launchctl-label"
   printf '%s\n' "$log"
 }
 

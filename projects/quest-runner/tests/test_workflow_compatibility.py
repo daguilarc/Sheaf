@@ -122,14 +122,19 @@ class DefaultWorkflowCompatibilityTests(unittest.TestCase):
         self.assertEqual(child.state_after, "Implementing")
 
     def test_public_docs_describe_workflow_and_issue_file(self) -> None:
-        docs_root = self.repo_root / "docs" / "reference"
-        cli_text = (docs_root / "cli.md").read_text(encoding="utf-8")
+        docs_root = self.repo_root / "docs"
+        cli_text = (docs_root / "operations.md").read_text(encoding="utf-8")
         self.assertIn("workflow", cli_text)
         self.assertIn("--file", cli_text)
         self.assertNotIn("--scope physicalplan", cli_text)
-        api_text = (docs_root / "api.md").read_text(encoding="utf-8")
+        api_text = (docs_root / "capabilities" / "experiments.md").read_text(
+            encoding="utf-8"
+        )
         self.assertIn("workflow_path", api_text)
-        self.assertIn("issue_file", api_text)
+        issues_text = (docs_root / "capabilities" / "issues.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("issue_file", issues_text)
 
 
 if __name__ == "__main__":

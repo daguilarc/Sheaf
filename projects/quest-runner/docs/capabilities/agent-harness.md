@@ -204,11 +204,23 @@ quest-scoped profile uses a constant key.
 - **[ah-34]** IF enforcement follow-ups exceed 40 rounds for one profile
   step, THEN THE runner SHALL abort with a fatal invariant error.
 
-### Agent VM toolkit (`vm/agent-macos`)
+### Agent VM execution (`vm/agent-macos`)
 
-The VM toolkit is an operator surface for running agents in disposable
-Tart-based macOS VMs; the quest runner itself executes harness CLIs directly
-on the host and does not invoke the VM.
+The VM toolkit is both an operator surface and the backend for VM-backed
+harness execution. When `config/quest-runner.json` enables `agent_vm`, Quest
+Runner allocates one disposable Tart VM per quest or experiment worktree and
+executes harness CLIs in that VM over SSH.
+
+The VM boundary is an execution and side-effect boundary scoped by the mount
+manifest: harness processes run inside a disposable VM, so their filesystem
+and process side effects on the host are confined to the explicitly
+configured (and auto-injected, ah-42/ah-47) mounts. It is deliberately not a
+credential boundary — the harness state directories (`~/.codex`, `~/.claude`,
+`~/.cursor`, and related cache/state paths) are mounted read-write by design
+so provider credentials and sessions are shared between host and VM and a
+conversation can resume from either side (ah-43). The boundary confines what
+an agent process can touch; it makes no claim about what a model can
+generate.
 
 - **[ah-35]** THE project Makefile SHALL provide `agent-vm-rebuild`
   (reprovision the golden VM in place), `agent-vm-fresh` (delete the golden
@@ -217,17 +229,23 @@ on the host and does not invoke the VM.
 - **[ah-36]** WHEN `bin/agent-run [options] [worktree-path]` runs, THE
   toolkit SHALL clone the golden VM to a disposable VM (default name
   `agent-YYYYmmdd-HHMMSS`), randomize its MAC and serial, boot it with the
-  worktree mounted, and wait for SSH; the worktree (default `$PWD`) appears
-  in the guest at `/Volumes/My Shared Files/worktree`.
+  configured mounts attached, mirror requested guest paths to those mounts,
+  configure host-port access when requested, and wait for SSH; with no
+  explicit `--mount`, the worktree (default `$PWD`) is shared as a mount
+  named `worktree` and symlinked in the guest at its host-equal path (the
+  underlying share is `/Volumes/My Shared Files/worktree`).
 - **[ah-37]** THE `agent-run` flags SHALL be: `--name NAME` (disposable VM
   name), `--golden NAME` (source golden VM, default `agent-macos-golden`),
   `--softnet` (Tart Softnet isolation, requires host root), `--host-only`
   (host-only networking, no internet), `--read-only` (mount worktree
-  read-only), `--command COMMAND` (run a shell command in the guest worktree
-  over SSH after boot), `--keep-running` (do not stop the VM after
-  `--command`), `-h/--help`; IF the worktree path does not exist, the golden
-  VM is missing, or the VM name already exists, THEN it SHALL fail with an
-  error.
+  read-only), `--mount name:host-path:guest-path[:ro]` (add a named
+  directory share and path-preserving guest symlink),
+  `--host-port-range R` (forward guest loopback ports to host ports),
+  `--command COMMAND` (run a shell command in the guest worktree over SSH
+  after boot), `--keep-running` (do not stop the VM after `--command`),
+  `-h/--help`; IF the worktree path does not exist, the golden VM is missing,
+  a mount host path is missing, or the VM name already exists, THEN it SHALL
+  fail with an error.
 - **[ah-38]** WHEN `bin/rebuild-golden [--fresh]` runs, THE toolkit SHALL
   create the golden VM from `BASE_IMAGE`
   (`ghcr.io/cirruslabs/macos-sequoia-base:latest`) if absent, apply sizing
@@ -240,6 +258,64 @@ on the host and does not invoke the VM.
   running VM and `bin/agent-clean <vm>` to stop and delete disposable VMs;
   all settings in `vm/agent-macos/profile.env` (including `SSH_USER`/
   `SSH_PASSWORD`, default `admin`/`admin`) are environment-overridable.
+- **[ah-40]** WHERE `agent_vm.enabled` is true in the target repo's
+  `config/quest-runner.json`, THE service SHALL allocate an agent VM after a
+  quest worktree or experiment worktree is created, and SHALL record the VM
+  association in untracked runtime data under `data/quest-runner/`; a
+  recorded VM that still exists in Tart is reused rather than re-created.
+- **[ah-41]** WHERE an agent VM is associated with the target worktree, THE
+  harness layer SHALL execute `validate`, `create_thread`, and
+  `send_message` commands inside that VM over SSH while preserving the
+  existing streamed JSONL logging and idle-timeout behavior.
+- **[ah-42]** THE VM mount manifest SHALL support `$WORKTREE` and `$HOME`
+  substitutions in `host_path` and `guest_path`; THE service SHALL create
+  missing configured host paths, SHALL inject a read-write `worktree` mount
+  at the worktree's host path WHERE no mount named `worktree` is configured,
+  and SHALL mirror every mount's guest path to its Tart shared directory
+  with a symlink inside the disposable VM.
+- **[ah-43]** WHERE a mount is configured for a host harness state directory
+  (the shipped manifest mounts `$HOME/.codex`, `$HOME/.claude`,
+  `$HOME/.cursor`, and related share/state/cache paths), THE service SHALL
+  share it into the VM per the mount's `read_only` flag — read-write by
+  default — so provider credentials and sessions are shared and Codex,
+  Claude Code, and Cursor can resume conversations from either the host or
+  the VM.
+- **[ah-44]** WHEN `agent_vm.host_ports` is configured and the guest's
+  default-gateway (host) IP resolves, THE disposable VM SHALL forward guest
+  `127.0.0.1:<port>` to the host's matching port for every configured port
+  and SHALL write `SHEAF_HOST_IP` and `SHEAF_HOST_PORT_<port>_URL` entries
+  into the guest's `.sheaf-agent-vm.env` (contract below).
+- **[ah-45]** WHEN a quest lands successfully or an experiment lands
+  successfully, THE service SHALL delete the agent VM associated with the
+  removed worktree, if one is recorded.
+- **[ah-46]** IF `agent_vm.enabled` is absent or false, THEN Quest Runner
+  SHALL preserve host-local harness execution behavior.
+- **[ah-47]** WHEN expanding the mount manifest for a worktree whose git
+  common dir resolves, THE service SHALL auto-inject one extra read-write
+  path-preserving mount beyond ah-42: WHERE the worktree is a linked git
+  worktree (its source checkout root differs from the worktree), a
+  `source-checkout` mount of the primary checkout, unless a mount named
+  `source-checkout` is already configured; otherwise a `git-common` mount of
+  the git common dir, unless a mount named `git-common` is already
+  configured — so git operations that follow the worktree's `.git` link
+  resolve inside the guest.
+- **[ah-48]** IF worktree or agent VM creation fails after the quest
+  scaffold commit, THEN THE service SHALL remove the partial worktree and
+  fail the create with `Quest record was committed on the source branch but
+  worktree or agent VM creation failed; manual cleanup may be required for
+  <quest_dir> (commit <hash>).`; IF it fails after the experiment metadata
+  commit, THEN THE service SHALL fail with `Experiment metadata was
+  committed on the source branch but worktree or agent VM creation failed;
+  manual cleanup may be required for ...` naming the experiment dir, commit,
+  branch, and worktree path, and SHALL leave the experiment worktree in
+  place for manual cleanup. In both paths a half-created VM is best-effort
+  deleted via `agent-clean`.
+- **[ah-49]** WHEN executing any harness command inside an agent VM (the
+  service's SSH executor and `agent-run --command` alike), THE executor
+  SHALL `source "$HOME/.zprofile"` then `source "$HOME/.sheaf-agent-vm.env"`
+  (each tolerating absence) before changing to the guest working directory
+  and running the command; the env file is the single canonical source of
+  the guest `PATH` and Sheaf VM variables.
 
 ## Contracts
 
@@ -249,6 +325,17 @@ General config-file rules: [Configuration](../../../../structure/configuration.m
 
 ```json
 {
+  "agent_vm": {
+    "enabled": true,
+    "golden_vm": "agent-macos-golden",
+    "host_ports": "9000-9009",
+    "mounts": [
+      { "name": "worktree", "host_path": "$WORKTREE", "guest_path": "$WORKTREE" },
+      { "name": "codex", "host_path": "$HOME/.codex", "guest_path": "$HOME/.codex" },
+      { "name": "claude", "host_path": "$HOME/.claude", "guest_path": "$HOME/.claude" },
+      { "name": "cursor", "host_path": "$HOME/.cursor", "guest_path": "$HOME/.cursor" }
+    ]
+  },
   "harnesses": {
     "claude_code": { "cli_path": "/Users/me/.local/bin/claude" },
     "cursor":      { "cli_path": "/Users/me/.local/bin/cursor-agent" },
@@ -259,6 +346,10 @@ General config-file rules: [Configuration](../../../../structure/configuration.m
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
+| `agent_vm.enabled` | boolean | `false` | Enables one disposable VM per quest/experiment worktree. |
+| `agent_vm.golden_vm` | string | `agent-macos-golden` | Tart VM cloned for disposable agent runtimes. |
+| `agent_vm.host_ports` | string/list | `9000-9009` | Host TCP ports mirrored into guest loopback and exported as env URLs. |
+| `agent_vm.mounts` | array | `[]` | Mount manifest; each entry has `name`, `host_path`, `guest_path`, optional `read_only`. |
 | `harnesses` | object | `{}` | Map of harness kind → provider config. Keys must be `codex`, `claude_code`, or `cursor`. |
 | `harnesses.<kind>.cli_path` | string | none | Absolute path to the CLI binary. When absent/empty, the default command name is resolved on `PATH` (`codex`, `claude`, `cursor-agent`). |
 
@@ -297,14 +388,41 @@ make -C projects/quest-runner agent-vm-run [WORKTREE=/abs/path]
 
 vm/agent-macos/bin/rebuild-golden [--fresh]
 vm/agent-macos/bin/agent-run [--name N] [--golden N] [--softnet|--host-only]
-                             [--read-only] [--command CMD] [--keep-running]
+                             [--read-only] [--mount SPEC]
+                             [--host-port-range R]
+                             [--command CMD] [--keep-running]
                              [worktree-path]
 vm/agent-macos/bin/agent-ssh <vm-name>
 vm/agent-macos/bin/agent-clean <vm-name>
 ```
 
 Guest mount point: `/Volumes/My Shared Files/worktree`. Tart boot logs land
-in `vm/agent-macos/logs/` (gitignored).
+in `vm/agent-macos/logs/` (gitignored). VM association metadata lands in
+`data/quest-runner/agent-vms.json` (gitignored).
+
+### Guest environment file: `~/.sheaf-agent-vm.env`
+
+Written into the guest home by `agent-run`'s boot-time setup step and
+sourced — after `~/.zprofile` — before every VM-executed harness command
+(ah-49). The setup step also appends
+`source "$HOME/.sheaf-agent-vm.env" 2>/dev/null || true` to the guest's
+`~/.zprofile` and `~/.bash_profile` (once, marker-guarded) so interactive
+shells get the same environment.
+
+```bash
+export SHEAF_AGENT_VM=1
+export CODEX_HOME="$HOME/.codex"
+export PATH="$HOME/.npm-global/bin:$HOME/bin:/opt/homebrew/opt/sqlite/bin:/opt/homebrew/opt/python@3.14/bin:/opt/homebrew/opt/make/libexec/gnubin:/opt/homebrew/opt/coreutils/libexec/gnubin:/opt/homebrew/opt/libtool/libexec/gnubin:/opt/homebrew/bin:/opt/homebrew/sbin:$PATH"
+export SHEAF_HOST_IP='192.168.64.1'
+export SHEAF_HOST_PORT_9000_URL='http://192.168.64.1:9000'
+# ... one SHEAF_HOST_PORT_<port>_URL line per configured host port
+```
+
+The `SHEAF_HOST_IP` / `SHEAF_HOST_PORT_*` lines appear only when the guest's
+default-gateway IP resolves (ah-44); the first three lines are always
+written. `SHEAF_AGENT_VM=1` is what switches the quest-runner Makefile to
+the `.venv-vm` venv directory inside the VM (see
+[operations.md](../operations.md)).
 
 ## Design
 
@@ -322,10 +440,21 @@ in `vm/agent-macos/logs/` (gitignored).
   `config/quest-runner.json`. (`quest_fs.read_harness_configs()` retains a
   legacy fallback to quest-local `state_execution_config.yaml` when the
   service config is absent.)
+- `src/quest_runner_service/agent_vm.py` — parses `agent_vm` config,
+  expands the mount manifest (`_expanded_mounts`: `$WORKTREE`/`$HOME`
+  substitution, worktree-mount injection, the ah-47 `source-checkout` /
+  `git-common` auto-mounts), stores per-worktree VM metadata in
+  `data/quest-runner/agent-vms.json`, invokes
+  `vm/agent-macos/bin/agent-run` / `agent-clean`, and wraps harness commands
+  in an SSH executor that maps host worktree paths to guest paths. The
+  executor builds no inline environment: every remote command sources the
+  guest `~/.zprofile` and `~/.sheaf-agent-vm.env` (ah-49), keeping the guest
+  `PATH` canonical in one place.
 - `src/quest_runner_service/state_machine/workflow_harness_callback.py` —
-  the bridge from the workflow interpreter: resolves the profile, builds the
-  harness, renders thread name/registry key, loads-or-creates the thread,
-  and calls `perform_role_harness_sequence`; raises
+  the bridge from the workflow interpreter: resolves the profile, attaches a
+  VM executor when enabled, builds the harness, renders thread name/registry
+  key, loads-or-creates the thread, and calls `perform_role_harness_sequence`;
+  raises
   `HumanInterventionRequested` if the intervention file exists afterwards.
 - `src/quest_runner_service/quest_runner.py` —
   `perform_role_harness_sequence()` (the round loop: pre-send workspace
@@ -355,10 +484,22 @@ in `vm/agent-macos/logs/` (gitignored).
 - `vm/agent-macos/` — `bin/lib.sh` (Tart/sshpass plumbing, `profile.env`
   loading, SSH wait loop), `bin/rebuild-golden`, `bin/agent-run`,
   `bin/agent-ssh`, `bin/agent-clean`, `scripts/guest-*.sh` provisioners,
-  `README.md`. The golden image is local machine state and never committed.
+  `README.md`. `agent-run` embeds a guest-setup Python script that runs once
+  over SSH after boot: it symlinks each mount's `guest_path` to its share
+  under `/Volumes/My Shared Files/` (the symlink targets are driven purely
+  by the mount specs), writes `~/.sheaf-agent-vm.env`, and starts the
+  loopback port forwarder when host ports are configured. The golden image
+  is local machine state and never committed.
+- Golden-image principle: dependencies the agents need inside the VM belong
+  in the golden image, provisioned via `bin/rebuild-golden` from
+  `BASE_IMAGE`. As dependencies grow, the golden/base image is updated and
+  reprovisioned rather than installing software into running disposable VMs;
+  a disposable VM receives only runtime configuration at boot — the mount
+  symlinks, the env file, and the port forwarder.
 - Tests: `tests/test_harness_quest_thread_core.py`,
   `tests/test_workflow_profile_execution.py`,
-  `tests/test_workflow_runner_integration.py`, `tests/test_chat_event_bus.py`
+  `tests/test_workflow_runner_integration.py`, `tests/test_agent_vm.py`,
+  `tests/test_chat_event_bus.py`
   (run via `make -C projects/quest-runner test`).
 
 Non-obvious choices: each harness CLI is a fresh process per round (no

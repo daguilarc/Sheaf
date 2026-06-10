@@ -119,6 +119,26 @@ class CreateQuestTests(unittest.TestCase):
             )
             self.assertTrue(is_worktree_clean(worktree_path))
 
+    def test_allocates_agent_vm_after_worktree_creation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._track_root(Path(tmp))
+            _git_init(root)
+            _ensure_project(root, "example")
+            svc = self._service()
+            with patch.object(svc, "_ensure_agent_vm_for_worktree") as ensure_vm:
+                out = svc.create_quest(
+                    repo_path=str(root),
+                    project="example",
+                    quest_type="main",
+                    name="VM Quest",
+                )
+            ensure_vm.assert_called_once()
+            self.assertEqual(ensure_vm.call_args.args[0], root.resolve())
+            self.assertEqual(
+                ensure_vm.call_args.args[1],
+                Path(out["worktree_path"]),
+            )
+
     def test_numbering_scoped_by_project_and_type(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = self._track_root(Path(tmp))

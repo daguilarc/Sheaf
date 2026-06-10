@@ -12,6 +12,7 @@ if [[ $# -lt 1 ]]; then
 fi
 
 for vm in "$@"; do
+  launchctl remove "$(launch_label "$vm")" >/dev/null 2>&1 || true
   if vm_exists "$vm"; then
     "$TART" stop "$vm" --timeout 30 || true
     "$TART" delete "$vm"
@@ -20,4 +21,3 @@ for vm in "$@"; do
     echo "Skipping missing VM: $vm"
   fi
 done
-

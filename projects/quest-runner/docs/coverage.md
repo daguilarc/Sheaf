@@ -1,6 +1,6 @@
 # Spec Coverage
 
-Last audit: living-spec migration (one-time rewrite from code), 2026-06-10
+Last audit: agent VM sandboxing update (agent-harness re-audited), 2026-06-10
 
 | Capability | Status | Gaps |
 |---|---|---|
@@ -8,7 +8,7 @@ Last audit: living-spec migration (one-time rewrite from code), 2026-06-10
 | service-lifecycle | partial | shutdown/recovery, registry boot rule, server concurrency |
 | state-machine-engine | partial | vestigial constructs, loader leniency |
 | workflow-config | partial | legacy upgrade detail, thread.scope variants, version semantics |
-| agent-harness | partial | dead fields, legacy v1 config format, VM provisioning detail |
+| agent-harness | partial | dead fields, legacy v1 config format, golden-image/Xcode smoke coverage, shared-worktree artifact skew |
 | issues | partial | cross-process concurrency, resolution_notes write path |
 | slices | partial | checkout_kind enumeration |
 | experiments | partial | unused statuses, no exclusivity rule, manual recovery only |
@@ -73,8 +73,27 @@ Last audit: living-spec migration (one-time rewrite from code), 2026-06-10
   unspecified.
 - The legacy v1 quest-local `state_execution_config.yaml` `harnesses` format
   is referenced but not specified.
-- VM guest provisioning (package list, Xcode boundary, `lib.sh` SSH-wait
-  behavior) is covered only by `vm/agent-macos/README.md`, not normatively.
+- VM guest package inventory and Xcode/simulator readiness are environment
+  prerequisites for the golden image; the living spec covers harness mounts
+  (including the auto-injected worktree/`source-checkout`/`git-common`
+  mounts), the `.sheaf-agent-vm.env` guest environment contract, path
+  preservation, and host-port reachability, but does not pin exact installed
+  package versions.
+- Mocked coverage exercises VM config, metadata, lifecycle hooks, SSH command
+  construction, path mapping, and log streaming. The Quest Runner unit lane
+  has been run successfully inside a disposable VM. The broad repository
+  smoke remains environment-blocked on the current golden image because
+  Dictator's Swift tests cannot import XCTest; the golden image must include
+  working Xcode/XCTest and simulator support before that lane can be green.
+- Shared-worktree build artifacts (absolute-path shebangs, native ABI
+  binaries) can skew between host and VM when both run builds in the same
+  worktree. Mitigated today by the `.venv-vm` venv selection
+  (`SHEAF_AGENT_VM=1`) and Realtime Agent's pre-test `npm rebuild
+  better-sqlite3`; the stated strategy is golden-image toolchain parity with
+  the host, but no general enforcement or detection mechanism exists.
+- The `data/quest-runner/agent-vms.json` record schema (a versioned
+  `{version, records}` map keyed by worktree path) is named but not shaped;
+  it is untracked runtime metadata read and written only by `agent_vm.py`.
 - Exact exit-code semantics after an idle-timeout SIGTERM are loosely
   specified.
 - `HarnessResponse.thinking_tokens` (claude_code only) has no identified

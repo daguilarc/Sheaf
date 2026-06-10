@@ -504,12 +504,54 @@ class Harness(ABC):
 
     def __init__(self, config: dict[str, Any] | None = None) -> None:
         self.config = config or {}
+        self._executor = self.config.get("_executor")
+        self._probe_cwd = Path(str(self.config.get("_probe_cwd") or Path.cwd()))
 
     def _cli_bin(self, default: str) -> str:
         path = self.config.get("cli_path")
         if isinstance(path, str) and path.strip():
             return path
         return default
+
+    def _run_probe(
+        self,
+        cmd: list[str],
+        cwd: Path,
+        timeout: int,
+    ) -> subprocess.CompletedProcess[str]:
+        if self._executor is not None:
+            return self._executor.run_probe(cmd, cwd, timeout)
+        return subprocess.run(
+            cmd,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+
+    def _run_streaming(
+        self,
+        cmd: list[str],
+        cwd: Path,
+        idle_timeout_seconds: int,
+        env: dict[str, str] | None = None,
+        log_sink: HarnessJsonlLogSink | None = None,
+    ) -> dict[str, Any]:
+        if self._executor is not None:
+            return self._executor.run_cli_streaming(
+                cmd,
+                cwd,
+                idle_timeout_seconds,
+                env=env,
+                log_sink=log_sink,
+            )
+        return _run_cli_streaming(
+            cmd,
+            cwd,
+            idle_timeout_seconds,
+            env=env,
+            log_sink=log_sink,
+        )
 
     @abstractmethod
     def validate(self) -> None:
@@ -569,13 +611,13 @@ class ClaudeCodeHarness(Harness):
     def validate(self) -> None:
         cli = self._cli_bin("claude")
         try:
-            subprocess.run(
+            result = self._run_probe(
                 [cli, "--version"],
-                check=True,
-                capture_output=True,
-                text=True,
+                self._probe_cwd,
                 timeout=30,
             )
+            if result.returncode != 0:
+                raise subprocess.CalledProcessError(result.returncode, [cli, "--version"])
         except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
             raise HarnessNotAvailable(
                 f"Claude Code CLI ({cli!r}) is not available or `{cli} --version` failed"
@@ -610,7 +652,7 @@ class ClaudeCodeHarness(Harness):
             "-p",
             "Session initialization only. Reply with exactly READY.",
         ]
-        raw = _run_cli_streaming(cmd, repo_path, idle_timeout_seconds)
+        raw = self._run_streaming(cmd, repo_path, idle_timeout_seconds)
         session_id = _find_json_field(raw["output_text"], "session_id")
         if session_id:
             return session_id
@@ -652,7 +694,7 @@ class ClaudeCodeHarness(Harness):
             "-p",
             message,
         ]
-        raw = _run_cli_streaming(cmd, repo_path, idle_timeout_seconds, log_sink=log_sink)
+        raw = self._run_streaming(cmd, repo_path, idle_timeout_seconds, log_sink=log_sink)
         _raise_for_harness_failure(raw, "Claude Code", log_sink)
         output_text, thinking_tokens = _parse_claude_stream_json(raw["output_text"])
         if not output_text and raw["output_text"].strip():
@@ -685,13 +727,13 @@ class CodexHarness(Harness):
     def validate(self) -> None:
         cli = self._cli_bin("codex")
         try:
-            subprocess.run(
+            result = self._run_probe(
                 [cli, "--version"],
-                check=True,
-                capture_output=True,
-                text=True,
+                self._probe_cwd,
                 timeout=30,
             )
+            if result.returncode != 0:
+                raise subprocess.CalledProcessError(result.returncode, [cli, "--version"])
         except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
             raise HarnessNotAvailable(
                 f"Codex CLI ({cli!r}) is not available or `{cli} --version` failed"
@@ -720,7 +762,7 @@ class CodexHarness(Harness):
             "--full-auto",
             "Session initialization only. Reply with exactly READY.",
         ]
-        raw = _run_cli_streaming(cmd, repo_path, idle_timeout_seconds)
+        raw = self._run_streaming(cmd, repo_path, idle_timeout_seconds)
         thread_id = _find_stream_event_value(
             raw["output_text"],
             event_type="thread.started",
@@ -760,7 +802,7 @@ class CodexHarness(Harness):
             provider_thread_id,
             message,
         ]
-        raw = _run_cli_streaming(cmd, repo_path, idle_timeout_seconds, log_sink=log_sink)
+        raw = self._run_streaming(cmd, repo_path, idle_timeout_seconds, log_sink=log_sink)
         _raise_for_harness_failure(raw, "Codex", log_sink)
         actual_thread_id = _find_stream_event_value(
             raw["output_text"],
@@ -792,13 +834,13 @@ class CursorHarness(Harness):
     def validate(self) -> None:
         cli = self._cli_bin("cursor-agent")
         try:
-            subprocess.run(
+            result = self._run_probe(
                 [cli, "--version"],
-                check=True,
-                capture_output=True,
-                text=True,
+                self._probe_cwd,
                 timeout=30,
             )
+            if result.returncode != 0:
+                raise subprocess.CalledProcessError(result.returncode, [cli, "--version"])
         except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
             raise HarnessNotAvailable(
                 f"Cursor CLI ({cli!r}) is not available or `{cli} --version` failed"
@@ -820,7 +862,7 @@ class CursorHarness(Harness):
             cli,
             "create-chat",
         ]
-        raw = _run_cli_streaming(cmd, repo_path, idle_timeout_seconds)
+        raw = self._run_streaming(cmd, repo_path, idle_timeout_seconds)
         session_id = _first_nonempty_line(raw["output_text"])
         if session_id is None:
             raise HarnessNotAvailable(
@@ -856,7 +898,7 @@ class CursorHarness(Harness):
             "--stream-partial-output",
             message,
         ]
-        raw = _run_cli_streaming(cmd, repo_path, idle_timeout_seconds, log_sink=log_sink)
+        raw = self._run_streaming(cmd, repo_path, idle_timeout_seconds, log_sink=log_sink)
         _raise_for_harness_failure(raw, "Cursor", log_sink)
         return HarnessResponse(
             provider_thread_id=provider_thread_id,

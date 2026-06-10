@@ -1,4 +1,4 @@
-.PHONY: all install build test clean build-agent test-agent build-vscode-extension test-vscode-extension run-cli
+.PHONY: all install build test clean rebuild-native build-agent test-agent build-vscode-extension test-vscode-extension run-cli
 
 CLI := src/agent/dist/src/agent/src/cli.js
 
@@ -9,7 +9,10 @@ install:
 
 build: build-agent build-vscode-extension
 
-test: test-agent test-vscode-extension
+test: install rebuild-native test-agent test-vscode-extension
+
+rebuild-native:
+	npm rebuild better-sqlite3
 
 build-agent:
 	npm run build:agent

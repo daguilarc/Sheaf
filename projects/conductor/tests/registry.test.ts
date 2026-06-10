@@ -18,11 +18,11 @@ test("loadServiceRegistry reads the conductor service entry from config", async 
 {
   const paths = createRepoPaths();
   const services = await loadServiceRegistry(paths.servicesJsonPath);
+  const conductor = services.find((service) => service.name === "conductor");
 
-  assert.equal(services.length, 1);
-  assert.equal(services[0]?.name, "conductor");
-  assert.equal(services[0]?.host, "0.0.0.0");
-  assert.equal(services[0]?.port, 9001);
+  assert.ok(conductor);
+  assert.equal(conductor.host, "0.0.0.0");
+  assert.equal(conductor.port, 9001);
 });
 
 test("loadServiceRegistry rejects malformed JSON", async () =>

@@ -208,14 +208,15 @@ class LandApiTests(unittest.TestCase):
         wt_branch = _worktree_branch(out)
         (worktree / "quest-work.txt").write_text("done\n", encoding="utf-8")
         quest_commit = _commit_all(worktree, "quest work")
-        resp = client.post(
-            "/land",
-            json={
-                "project": "example",
-                "quest_type": "main",
-                "quest_number": out["quest_number"],
-            },
-        )
+        with patch.object(svc, "_delete_agent_vm_for_worktree") as delete_vm:
+            resp = client.post(
+                "/land",
+                json={
+                    "project": "example",
+                    "quest_type": "main",
+                    "quest_number": out["quest_number"],
+                },
+            )
         self.assertEqual(resp.status_code, 200)
         body = resp.get_json()
         self.assertEqual(body["status"], "landed")
@@ -227,6 +228,7 @@ class LandApiTests(unittest.TestCase):
         self.assertFalse(worktree.is_dir())
         self.assertFalse(_branch_exists(self.temp.root, wt_branch))
         self.assertFalse(_is_merge_commit(self.temp.root, body["target_head"]))
+        delete_vm.assert_called_once_with(self.temp.root.resolve(), worktree)
 
     def test_land_rebase_conflict(self) -> None:
         ensure_project(self.temp.root, "example")
@@ -414,16 +416,18 @@ class ExperimentLandApiTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 400)
 
     def test_experiment_land_success(self) -> None:
-        client, out, exp_id = self._setup_completed_experiment()
-        resp = client.post(
-            "/experiments/land",
-            json={
-                "project": "example",
-                "quest_type": "main",
-                "quest_number": out["quest_number"],
-                "experiment_id": exp_id,
-            },
-        )
+        _setup_client, out, exp_id = self._setup_completed_experiment()
+        client, svc = make_app_client(self.temp.root, self.repo_root)
+        with patch.object(svc, "_delete_agent_vm_for_worktree") as delete_vm:
+            resp = client.post(
+                "/experiments/land",
+                json={
+                    "project": "example",
+                    "quest_type": "main",
+                    "quest_number": out["quest_number"],
+                    "experiment_id": exp_id,
+                },
+            )
         self.assertEqual(resp.status_code, 200)
         body = resp.get_json()
         self.assertEqual(body["status"], "landed")
@@ -432,6 +436,7 @@ class ExperimentLandApiTests(unittest.TestCase):
         self.assertTrue(body["worktree_deleted"])
         self.assertTrue(body["branch_deleted"])
         self.assertNotIn("source_commit", body)
+        delete_vm.assert_called_once()
 
     def test_experiment_land_push_failure_returns_409(self) -> None:
         client, out, exp_id = self._setup_completed_experiment()

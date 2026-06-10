@@ -652,7 +652,7 @@ class WorkflowInterpreterModeTests(WorkflowInterpreterFixture):
         )
         self.assertTrue(result.run_profile_invoked)
         self.assertEqual(invoked[0][0], "documenter")
-        self.assertIn("documentation", invoked[0][1].lower())
+        self.assertIn("living spec", invoked[0][1].lower())
 
     def test_run_callback_skipped_in_manual_mode(self) -> None:
         sl = self.quest_dir / "slices" / "0001_a"

@@ -12,6 +12,7 @@ from pathlib import Path
 
 from . import issue_service
 from . import quest_fs
+from .agent_vm import AgentVmManager
 from .errors import FatalInvariantError
 from .chat_event_bus import ChatEventBus
 from .dashboard_data import DashboardBadRequest, DashboardCheckout, DashboardNotFound
@@ -528,13 +529,14 @@ class QuestService:
                 quest_slug=norm_slug,
             )
             create_quest_worktree(root, meta)
+            self._ensure_agent_vm_for_worktree(root, worktree_path)
         except Exception as exc:
             if quest_create_commit is not None:
                 remove_partial_worktree(root, meta)
                 rel = quest_dir.resolve().relative_to(root.resolve()).as_posix()
                 raise WorktreeCreationError(
                     "Quest record was committed on the source branch but worktree "
-                    f"creation failed; manual cleanup may be required for "
+                    f"or agent VM creation failed; manual cleanup may be required for "
                     f"{rel} (commit {quest_create_commit}).",
                     quest_dir=quest_dir,
                     quest_create_commit=quest_create_commit,
@@ -689,6 +691,7 @@ class QuestService:
                 worktree_path,
                 resolved_start.base_commit,
             )
+            self._ensure_agent_vm_for_worktree(root, worktree_path)
         except Exception as exc:
             if metadata_commit is None:
                 experiment_ops.remove_partial_experiment_worktree(
@@ -699,7 +702,7 @@ class QuestService:
                 raise
             raise experiment_ops.ExperimentWorktreeCreationError(
                 "Experiment metadata was committed on the source branch but "
-                f"worktree creation failed; manual cleanup may be required for "
+                f"worktree or agent VM creation failed; manual cleanup may be required for "
                 f"{exp_dir.relative_to(root).as_posix()} "
                 f"(commit {metadata_commit}, branch {branch_name!r}, "
                 f"worktree {worktree_path}).",
@@ -877,6 +880,12 @@ class QuestService:
         from .workflow_upgrade import upgrade_quest_if_needed
 
         upgrade_quest_if_needed(repo_root, quest_dir)
+
+    def _ensure_agent_vm_for_worktree(self, repo_root: Path, worktree_path: Path) -> None:
+        AgentVmManager(repo_root).ensure_for_worktree(worktree_path)
+
+    def _delete_agent_vm_for_worktree(self, repo_root: Path, worktree_path: Path) -> None:
+        AgentVmManager(repo_root).delete_for_worktree(worktree_path)
 
     def upgrade_quest(
         self,
@@ -1443,6 +1452,8 @@ class QuestService:
                 "target_head": rev_parse_head(source_root),
             })
 
+        self._delete_agent_vm_for_worktree(source_root, worktree_path)
+
         return {
             "status": "landed",
             **base,
@@ -1680,6 +1691,8 @@ class QuestService:
                 "worktree_deleted": True,
                 "branch_deleted": False,
             }) from exc
+
+        self._delete_agent_vm_for_worktree(source_root, worktree_path)
 
         landed_at = utc_now_iso()
         experiment_ops.update_experiment_status(

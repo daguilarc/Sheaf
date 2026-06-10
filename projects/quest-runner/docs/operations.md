@@ -69,7 +69,7 @@ make quest-runner-test
 ```
 
 This runs `PYTHONPATH=src .venv/bin/python -m unittest` over the
-`TEST_MODULES` list in `projects/quest-runner/Makefile` (34 modules, from
+`TEST_MODULES` list in `projects/quest-runner/Makefile` (35 modules, from
 `tests.test_commit_metadata` through `tests.test_dashboard_chat`).
 `tests.test_dashboard_shell` shells out to `node --test` for
 `dashboard-logic.test.mjs` and `dashboard-pages-utils.test.mjs` under
@@ -148,18 +148,39 @@ Quest execution invokes agent CLIs configured in repo-root
 
 ```json
 {
+  "agent_vm": {
+    "enabled": true,
+    "golden_vm": "agent-macos-golden",
+    "host_ports": "9000-9009",
+    "mounts": [
+      { "name": "worktree", "host_path": "$WORKTREE", "guest_path": "$WORKTREE" },
+      { "name": "codex", "host_path": "$HOME/.codex", "guest_path": "$HOME/.codex" },
+      { "name": "claude", "host_path": "$HOME/.claude", "guest_path": "$HOME/.claude" },
+      { "name": "cursor", "host_path": "$HOME/.cursor", "guest_path": "$HOME/.cursor" },
+      { "name": "local-bin", "host_path": "$HOME/.local/bin", "guest_path": "$HOME/.local/bin" },
+      { "name": "cursor-agent-data", "host_path": "$HOME/.local/share/cursor-agent", "guest_path": "$HOME/.local/share/cursor-agent" },
+      { "name": "claude-share", "host_path": "$HOME/.local/share/claude", "guest_path": "$HOME/.local/share/claude" },
+      { "name": "claude-state", "host_path": "$HOME/.local/state/claude", "guest_path": "$HOME/.local/state/claude" },
+      { "name": "claude-cache", "host_path": "$HOME/.cache/claude", "guest_path": "$HOME/.cache/claude" },
+      { "name": "codex-runtimes", "host_path": "$HOME/.cache/codex-runtimes", "guest_path": "$HOME/.cache/codex-runtimes" }
+    ]
+  },
   "harnesses": {
-    "claude_code": { "cli_path": "/Users/joyo/.local/bin/claude" },
-    "cursor": { "cli_path": "/Users/joyo/.local/bin/cursor-agent" },
+    "claude_code": { "cli_path": "/Users/me/.local/bin/claude" },
+    "cursor": { "cli_path": "/Users/me/.local/bin/cursor-agent" },
     "codex": {}
   }
 }
 ```
 
-Keys must be valid harness kinds (`claude_code`, `cursor`, `codex`). Set each
-`cli_path` to the installed binary on the host. A role whose harness is not
-available fails the run with `HarnessNotAvailable`. The file is optional for
-service startup and tests; it is required before running real quests.
+Harness keys must be valid harness kinds (`claude_code`, `cursor`, `codex`).
+Set each `cli_path` to the installed binary visible in the execution
+environment. When `agent_vm.enabled` is true, Quest Runner creates a
+disposable VM for each quest/experiment worktree, mirrors the configured
+mounts into path-preserving guest symlinks, and runs harness commands there
+over SSH. A role whose harness is not available fails the run with
+`HarnessNotAvailable`. The file is optional for service startup and tests; it
+is required before running real quests.
 
 ## CLI
 
@@ -252,6 +273,10 @@ scripts/quest-runner slices init --project <p> --type <t> --number <n> --count <
 
 `vm/agent-macos/` provisions a Tart-based macOS VM with the agent CLIs and
 Sheaf system dependencies preinstalled (see `vm/agent-macos/README.md`).
+Quest/experiment creation uses this toolkit automatically when
+`agent_vm.enabled` is true. New dependencies the agents need inside the VM
+go into the golden image via the rebuild targets below — not installed
+inside running disposable VMs.
 
 ```bash
 make -C projects/quest-runner agent-vm-rebuild                      # reprovision golden VM
@@ -259,3 +284,53 @@ make -C projects/quest-runner agent-vm-fresh                       # rebuild fro
 make -C projects/quest-runner agent-vm-run WORKTREE=/abs/worktree  # run a disposable clone with the worktree mounted
 projects/quest-runner/vm/agent-macos/bin/agent-clean <vm-name>     # delete a disposable clone
 ```
+
+Manual path-preserving run with host port forwarding:
+
+```bash
+projects/quest-runner/vm/agent-macos/bin/agent-run \
+  --mount "worktree:/abs/worktree:/abs/worktree" \
+  --mount "codex:$HOME/.codex:$HOME/.codex" \
+  --host-port-range 9000-9009 \
+  /abs/worktree
+```
+
+Inside the guest, `127.0.0.1:9000` through `127.0.0.1:9009` forward to the
+same ports on the host. Every guest command sources
+`$HOME/.sheaf-agent-vm.env`, which exports `SHEAF_AGENT_VM=1`, `CODEX_HOME`,
+the canonical guest `PATH`, `SHEAF_HOST_IP`, and
+`SHEAF_HOST_PORT_<port>_URL` variables (file contract in
+[agent-harness](capabilities/agent-harness.md)). The quest-runner Makefile
+selects `.venv-vm` as its venv directory when `SHEAF_AGENT_VM=1`, so VM test
+runs do not rewrite the host `.venv` shebangs; an explicit `VENV_DIR=`
+override always wins.
+
+Required VM smoke checks for this repository:
+
+```bash
+# Quest Runner unit lane inside a disposable VM
+projects/quest-runner/vm/agent-macos/bin/agent-run \
+  --command 'make -C projects/quest-runner test' \
+  /abs/checkout
+
+# Broad repository smoke inside a disposable VM
+projects/quest-runner/vm/agent-macos/bin/agent-run \
+  --command 'make test' \
+  /abs/checkout
+```
+
+The broad lane includes Dictator's iOS simulator target. It requires a golden
+VM with working Xcode and the configured iPhone simulator runtime; on a golden
+VM without those prerequisites, the non-iOS lanes are still meaningful but the
+broad smoke is environment-blocked. The current golden image must also expose
+Swift XCTest to `swift test`; without it, Dictator fails before its simulator
+target with `no such module 'XCTest'`.
+
+`make test` at the repository root propagates project failures.
+
+Build artifacts that embed absolute paths or native ABIs can go stale when a
+worktree is shared between host and VM. The primary strategy is keeping the
+golden image's toolchains (Node, Python, ...) matched to the host by
+updating the base image as dependencies change. The current concrete
+mitigations are the `.venv-vm` separation above and Realtime Agent's
+`rebuild-native` step (`npm rebuild better-sqlite3` runs before its tests).

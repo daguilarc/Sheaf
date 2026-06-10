@@ -1,6 +1,9 @@
 .PHONY: all test run clean venv agent-vm-rebuild agent-vm-fresh agent-vm-run
 
-VENV_DIR := .venv
+ifeq ($(SHEAF_AGENT_VM),1)
+VENV_DIR ?= .venv-vm
+endif
+VENV_DIR ?= .venv
 PYTHON := $(VENV_DIR)/bin/python
 PIP := $(VENV_DIR)/bin/pip
 
@@ -27,6 +30,7 @@ TEST_MODULES := \
 	tests.test_workflow_runner_integration \
 	tests.test_workflow_compatibility \
 	tests.test_workflow_profile_execution \
+	tests.test_agent_vm \
 	tests.test_harness_quest_thread_core \
 	tests.test_project_quest_model \
 	tests.test_quest_creation \

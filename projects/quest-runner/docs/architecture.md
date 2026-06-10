@@ -28,14 +28,14 @@ All paths are relative to `projects/quest-runner/`.
 | Runner entry | `src/quest_runner_service/quest_runner_v2.py` | Loads the quest-local `workflow/` directory and runs the step loop |
 | Workflow config | `src/quest_runner_service/workflow_config.py`, `workflow_scaffold.py`, `workflow_upgrade.py` | YAML loading/validation, copy-on-create scaffolding, legacy migration |
 | Default workflow package | `src/quest_runner_service/default_workflow/` | Packaged `workflow.yaml`, `machines/` (quest, slice), `profiles/` and `prompts/` for the eight default roles, `preamble.md` |
-| Harness layer | `src/quest_runner_service/harness.py`, `harness_config.py`, `quest_thread.py`, `workflow_profile_execution.py` | Adapters for the `claude_code`, `cursor`, and `codex` agent CLIs; provider config from `config/quest-runner.json`; per-role thread registry; profile prompt/path-rule assembly |
+| Harness layer | `src/quest_runner_service/harness.py`, `harness_config.py`, `quest_thread.py`, `workflow_profile_execution.py`, `agent_vm.py` | Adapters for the `claude_code`, `cursor`, and `codex` agent CLIs; provider config from `config/quest-runner.json`; per-role thread registry; profile prompt/path-rule assembly; optional VM-backed CLI execution |
 | Issues | `src/quest_runner_service/issue_service.py` | Structured issue files (`QP-`, `PL-`, `IT-` prefixes) edited only through the API/CLI |
 | Experiments | `src/quest_runner_service/experiments.py` | Replay a quest from an earlier step commit in a separate worktree; metadata, stop conditions, landing/archival |
 | Dashboard backend | `src/quest_runner_service/dashboard_data.py`, `dashboard_git.py`, `dashboard_slice.py`, `dashboard_runs.py`, `dashboard_chat.py` | JSON payloads, git commit/diff views, slice pages, in-memory run tracking, agent-log WebSocket |
 | Chat streaming | `src/quest_runner_service/agui_mapper.py`, `chat_event_bus.py` | Maps harness JSONL logs to AGUI events; fans live events out to WebSocket subscribers |
 | Dashboard frontend | `src/quest_runner_service/dashboard_assets/` | HTML/CSS/ES-module web UI served at `/dashboard` |
 | Prompt schema docs | `src/quest_runner_service/quest_docs/` | Runtime schema reference injected into role prompts (not part of this docs tree) |
-| Agent VM | `vm/agent-macos/` | Tart-based macOS VM for running agents in isolation (see [operations.md](operations.md)) |
+| Agent VM | `vm/agent-macos/` | Tart-based macOS VM image and lifecycle scripts for per-worktree harness execution (see [operations.md](operations.md)) |
 | CLI | `bin/quest-runner`, `src/quest_runner_service/cli.py`, repo-root `scripts/quest-runner` | Argparse CLI wrapping the REST service |
 
 Capabilities specified on top of these components:
@@ -58,7 +58,9 @@ Capabilities specified on top of these components:
    `projects/<project>/quests/<type>/<n>_<slug>/`, copies the packaged
    `default_workflow/` into the quest's `workflow/` directory
    (`workflow_scaffold.copy_packaged_default_workflow`), commits the scaffold,
-   and creates the quest worktree on branch `quest/<worktree_name>`
+   creates the quest worktree on branch `quest/<worktree_name>`, and, when
+   `agent_vm.enabled` is true, allocates the worktree's VM after worktree
+   creation succeeds
    ([quest-lifecycle](capabilities/quest-lifecycle.md)).
 2. **Run** — `POST /run_quest` acquires the per-worktree lock, returns `202`
    with a `run_id`, and schedules `quest_runner_v2.run_quest_v2` on a
@@ -73,7 +75,8 @@ Capabilities specified on top of these components:
    - if the node has a `run` block, `workflow_profile_execution.py` resolves
      the profile, renders the prompt (profile prompt + `workflow/preamble.md`
      + node task text + `quest_docs/` schema reference), and the harness layer
-     invokes the configured agent CLI on the role's persistent thread
+     invokes the configured agent CLI on the role's persistent thread either on
+     the host or inside the assigned worktree VM
      ([agent-harness](capabilities/agent-harness.md));
    - harness events are appended to `<quest_dir>/logs/step_<n>_<role>.jsonl`
      and fanned out live through the chat event bus
@@ -84,7 +87,8 @@ Capabilities specified on top of these components:
      JSON payload (`state_machine/commit_metadata.py`);
    - state transitions are written back to the quest/slice `state.md` files.
 4. **Land** — `POST /land` (or `scripts/quest-runner land`) integrates the
-   finished quest branch onto the target branch (default `main`).
+   finished quest branch onto the target branch (default `main`) and deletes
+   the registered worktree VM after successful landing cleanup.
 
 The dashboard reads the same filesystem and git data through
 `/api/dashboard/*`; it resolves the quest worktree first and falls back to the
@@ -123,9 +127,11 @@ source checkout for read-only views ([dashboard](capabilities/dashboard.md)).
   (`quest_thread.py`), so a role retains its conversation context across
   steps.
 - **Worktree as execution boundary.** All agent commands, path rules, and git
-  operations during a run are scoped to the quest (or experiment) worktree.
-  Per-worktree locks (`quest_lock.py`) serialize runs; lock contention is a
-  `409` with owner details.
+  operations during a run are scoped to the quest (or experiment) worktree. In
+  VM-backed mode the VM preserves the host worktree path inside the guest, so
+  provider sessions and path rules see the same filesystem paths as host-local
+  runs. Per-worktree locks (`quest_lock.py`) serialize runs; lock contention is
+  a `409` with owner details.
 - **Issues are API-mediated.** Issue markdown files (`physicalplan_issues.md`,
   slice `polishing_issues.md`, `integration_test_issues.md`) are read and
   written only through the issue API/CLI, keeping IDs and statuses

@@ -1,4 +1,61 @@
 {
+  "agent_vm": {
+    "enabled": true,
+    "golden_vm": "agent-macos-golden",
+    "host_ports": "9000-9009",
+    "mounts": [
+      {
+        "name": "worktree",
+        "host_path": "$WORKTREE",
+        "guest_path": "$WORKTREE"
+      },
+      {
+        "name": "codex",
+        "host_path": "$HOME/.codex",
+        "guest_path": "$HOME/.codex"
+      },
+      {
+        "name": "claude",
+        "host_path": "$HOME/.claude",
+        "guest_path": "$HOME/.claude"
+      },
+      {
+        "name": "cursor",
+        "host_path": "$HOME/.cursor",
+        "guest_path": "$HOME/.cursor"
+      },
+      {
+        "name": "local-bin",
+        "host_path": "$HOME/.local/bin",
+        "guest_path": "$HOME/.local/bin"
+      },
+      {
+        "name": "cursor-agent-data",
+        "host_path": "$HOME/.local/share/cursor-agent",
+        "guest_path": "$HOME/.local/share/cursor-agent"
+      },
+      {
+        "name": "claude-share",
+        "host_path": "$HOME/.local/share/claude",
+        "guest_path": "$HOME/.local/share/claude"
+      },
+      {
+        "name": "claude-state",
+        "host_path": "$HOME/.local/state/claude",
+        "guest_path": "$HOME/.local/state/claude"
+      },
+      {
+        "name": "claude-cache",
+        "host_path": "$HOME/.cache/claude",
+        "guest_path": "$HOME/.cache/claude"
+      },
+      {
+        "name": "codex-runtimes",
+        "host_path": "$HOME/.cache/codex-runtimes",
+        "guest_path": "$HOME/.cache/codex-runtimes"
+      }
+    ]
+  },
   "harnesses": {
     "claude_code": {
       "cli_path": "/Users/joyo/.local/bin/claude"

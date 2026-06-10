@@ -15,6 +15,8 @@ Options:
   --softnet            Use Tart Softnet isolation. Requires host root access.
   --host-only          Use host-only networking; no internet from the VM.
   --read-only          Mount the worktree read-only.
+  --mount SPEC         Add a path-preserving mount: name:host-path:guest-path[:ro].
+  --host-port-range R  Forward guest 127.0.0.1 ports to host ports. Default: none.
   --command COMMAND    Run a shell command over SSH after boot.
   --keep-running       Leave VM running after --command.
   -h, --help           Show this help.
@@ -33,6 +35,8 @@ network=()
 mount_mode=""
 command_to_run=""
 keep_running=0
+host_port_range=""
+mount_specs=()
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -55,6 +59,14 @@ while [[ $# -gt 0 ]]; do
     --read-only)
       mount_mode=":ro"
       shift
+      ;;
+    --mount)
+      mount_specs+=("${2:?missing --mount value}")
+      shift 2
+      ;;
+    --host-port-range)
+      host_port_range="${2:?missing --host-port-range value}"
+      shift 2
       ;;
     --command)
       command_to_run="${2:?missing --command value}"
@@ -83,12 +95,57 @@ worktree="$(cd "$worktree" && pwd)"
 vm_exists "$golden" || die "golden VM '$golden' does not exist. Run $TOOLKIT_DIR/bin/rebuild-golden first."
 vm_exists "$name" && die "VM '$name' already exists"
 
+if [[ "${#mount_specs[@]}" -eq 0 ]]; then
+  mount_specs+=("worktree:$worktree:$worktree$mount_mode")
+fi
+
+mounts_json="["
+run_args=()
+first_mount=1
+guest_worktree="$worktree"
+for spec in "${mount_specs[@]}"; do
+  IFS=':' read -r mount_name host_path guest_path mount_flag extra <<<"$spec"
+  [[ -n "$mount_name" && -n "$host_path" && -n "$guest_path" ]] || die "invalid --mount spec: $spec"
+  [[ -z "${extra:-}" ]] || die "invalid --mount spec with too many fields: $spec"
+  mount_opts=""
+  read_only=0
+  if [[ "${mount_flag:-}" == "ro" ]]; then
+    mount_opts=":ro"
+    read_only=1
+  elif [[ -n "${mount_flag:-}" ]]; then
+    die "invalid --mount option in spec: $spec"
+  fi
+  [[ -d "$host_path" ]] || die "mount host path does not exist: $host_path"
+  host_path="$(cd "$host_path" && pwd)"
+  if [[ "$mount_name" == "worktree" ]]; then
+    guest_worktree="$guest_path"
+  fi
+  run_args+=(--dir="$mount_name:$host_path$mount_opts")
+  mount_json="$(python3 - "$mount_name" "$host_path" "$guest_path" "$read_only" <<'PY'
+import json
+import sys
+
+print(json.dumps({
+    "name": sys.argv[1],
+    "host_path": sys.argv[2],
+    "guest_path": sys.argv[3],
+    "read_only": sys.argv[4] == "1",
+}))
+PY
+)"
+  if [[ "$first_mount" -eq 0 ]]; then
+    mounts_json+=","
+  fi
+  first_mount=0
+  mounts_json+="$mount_json"
+done
+mounts_json+="]"
+
 echo "Cloning $golden to $name..."
 "$TART" clone "$golden" "$name"
 "$TART" set "$name" --random-mac --random-serial
 
 echo "Starting $name with $worktree mounted..."
-run_args=(--dir="worktree:$worktree$mount_mode")
 if [[ "${#network[@]}" -gt 0 ]]; then
   run_args=("${network[@]}" "${run_args[@]}")
 fi
@@ -98,11 +155,239 @@ echo "Tart log: $log"
 ip="$(wait_for_ssh "$name")"
 echo "$name is ready."
 echo "SSH: $TOOLKIT_DIR/bin/agent-ssh $name"
-echo "Guest worktree: /Volumes/My Shared Files/worktree"
+echo "Configuring guest path mirrors..."
+remote_setup="/tmp/sheaf-agent-vm-setup.py"
+remote_payload="/tmp/sheaf-agent-vm-setup.json"
+tmp_setup="$(mktemp)"
+tmp_payload="$(mktemp)"
+cat > "$tmp_setup" <<'PY'
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import socket
+import socketserver
+import subprocess
+import sys
+import textwrap
+import threading
+import time
+from pathlib import Path
+
+
+SHARED_ROOT = Path("/Volumes/My Shared Files")
+
+
+def _run_privileged(args: list[str]) -> None:
+    result = subprocess.run(["sudo", "-n", *args], check=False, capture_output=True, text=True)
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip()
+        raise SystemExit(f"sudo {' '.join(args)} failed: {detail}")
+
+
+def _unlink_path(path: Path) -> None:
+    try:
+        path.unlink()
+    except PermissionError:
+        _run_privileged(["rm", "-f", str(path)])
+
+
+def _replace_with_symlink(target: Path, source: Path) -> None:
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+    except PermissionError:
+        _run_privileged(["mkdir", "-p", str(target.parent)])
+    if target.is_symlink():
+        _unlink_path(target)
+    elif target.exists():
+        if target.is_dir() and not any(target.iterdir()):
+            try:
+                target.rmdir()
+            except PermissionError:
+                _run_privileged(["rmdir", str(target)])
+        else:
+            backup = target.with_name(f"{target.name}.guest-bak-{int(time.time())}")
+            try:
+                target.rename(backup)
+            except PermissionError:
+                _run_privileged(["mv", str(target), str(backup)])
+    try:
+        target.symlink_to(source, target_is_directory=source.is_dir())
+    except PermissionError:
+        _run_privileged(["ln", "-s", str(source), str(target)])
+
+
+def _host_gateway() -> str:
+    result = subprocess.run(
+        ["route", "-n", "get", "default"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    for line in result.stdout.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("gateway:"):
+            return stripped.split(":", 1)[1].strip()
+    return ""
+
+
+def _parse_ports(raw: str) -> list[int]:
+    ports: list[int] = []
+    for piece in raw.split(","):
+        piece = piece.strip()
+        if not piece:
+            continue
+        if "-" in piece:
+            start, end = piece.split("-", 1)
+            ports.extend(range(int(start), int(end) + 1))
+        else:
+            ports.append(int(piece))
+    return sorted(set(ports))
+
+
+FORWARDER = r'''
+from __future__ import annotations
+
+import argparse
+import socket
+import socketserver
+import threading
+
+
+class ForwardHandler(socketserver.BaseRequestHandler):
+    host = ""
+    port = 0
+
+    def handle(self) -> None:
+        try:
+            upstream = socket.create_connection((self.host, self.port), timeout=10)
+        except OSError:
+            return
+        with upstream:
+            threads = [
+                threading.Thread(target=self._copy, args=(self.request, upstream), daemon=True),
+                threading.Thread(target=self._copy, args=(upstream, self.request), daemon=True),
+            ]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+
+    @staticmethod
+    def _copy(src: socket.socket, dst: socket.socket) -> None:
+        try:
+            while True:
+                data = src.recv(65536)
+                if not data:
+                    break
+                dst.sendall(data)
+        except OSError:
+            pass
+        finally:
+            try:
+                dst.shutdown(socket.SHUT_WR)
+            except OSError:
+                pass
+
+
+class ReusableServer(socketserver.ThreadingTCPServer):
+    allow_reuse_address = True
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--host", required=True)
+    parser.add_argument("--ports", required=True)
+    args = parser.parse_args()
+    servers = []
+    for raw_port in args.ports.split(","):
+        port = int(raw_port)
+        handler = type(f"Forward{port}", (ForwardHandler,), {"host": args.host, "port": port})
+        try:
+            server = ReusableServer(("127.0.0.1", port), handler)
+        except OSError:
+            continue
+        servers.append(server)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+    threading.Event().wait()
+
+
+if __name__ == "__main__":
+    main()
+'''
+
+
+def main() -> None:
+    payload = json.loads(sys.stdin.read())
+    mounts = payload["mounts"]
+    for mount in mounts:
+        source = SHARED_ROOT / mount["name"]
+        if not source.exists():
+            raise SystemExit(f"missing shared mount {source}")
+        _replace_with_symlink(Path(mount["guest_path"]), source)
+
+    host_ip = _host_gateway()
+    ports = _parse_ports(payload.get("host_port_range", ""))
+    home = Path.home()
+
+    env_path = home / ".sheaf-agent-vm.env"
+    lines = [
+        "export SHEAF_AGENT_VM=1",
+        'export CODEX_HOME="$HOME/.codex"',
+        'export PATH="$HOME/.npm-global/bin:$HOME/bin:/opt/homebrew/opt/sqlite/bin:/opt/homebrew/opt/python@3.14/bin:/opt/homebrew/opt/make/libexec/gnubin:/opt/homebrew/opt/coreutils/libexec/gnubin:/opt/homebrew/opt/libtool/libexec/gnubin:/opt/homebrew/bin:/opt/homebrew/sbin:$PATH"',
+    ]
+    if host_ip:
+        lines.append(f"export SHEAF_HOST_IP={host_ip!r}")
+        for port in ports:
+            lines.append(f"export SHEAF_HOST_PORT_{port}_URL='http://{host_ip}:{port}'")
+    env_path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+    for profile in (home / ".zprofile", home / ".bash_profile"):
+        marker = "source \"$HOME/.sheaf-agent-vm.env\""
+        existing = profile.read_text(encoding="utf-8") if profile.exists() else ""
+        if marker not in existing:
+            with profile.open("a", encoding="utf-8") as fh:
+                fh.write(f"\n{marker} 2>/dev/null || true\n")
+
+    if host_ip and ports:
+        bin_dir = home / "bin"
+        bin_dir.mkdir(exist_ok=True)
+        forwarder = bin_dir / "sheaf-host-port-forwarder.py"
+        forwarder.write_text(FORWARDER, encoding="utf-8")
+        log_dir = home / "Library" / "Logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        port_arg = ",".join(str(p) for p in ports)
+        subprocess.run(["pkill", "-f", "sheaf-host-port-forwarder.py"], check=False)
+        with (log_dir / "sheaf-host-port-forwarder.log").open("ab") as log:
+            subprocess.Popen(
+                [sys.executable, str(forwarder), "--host", host_ip, "--ports", port_arg],
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+
+
+if __name__ == "__main__":
+    main()
+PY
+ssh_upload "$ip" "$tmp_setup" "$remote_setup"
+python3 - "$mounts_json" "$host_port_range" > "$tmp_payload" <<'PY'
+import json
+import sys
+
+print(json.dumps({"mounts": json.loads(sys.argv[1]), "host_port_range": sys.argv[2]}))
+PY
+ssh_upload "$ip" "$tmp_payload" "$remote_payload"
+rm -f "$tmp_setup" "$tmp_payload"
+ssh_exec_retry "$ip" "python3 '$remote_setup' < '$remote_payload' && rm -f '$remote_setup' '$remote_payload'"
+
+echo "Guest worktree: $guest_worktree"
 
 if [[ -n "$command_to_run" ]]; then
   echo "Running command in guest..."
-  ssh_exec "$ip" "source \"\$HOME/.zprofile\" 2>/dev/null || true; export PATH=\"\$HOME/.npm-global/bin:\$HOME/bin:/opt/homebrew/opt/sqlite/bin:/opt/homebrew/opt/make/libexec/gnubin:/opt/homebrew/opt/coreutils/libexec/gnubin:/opt/homebrew/opt/libtool/libexec/gnubin:/opt/homebrew/bin:/opt/homebrew/sbin:\$PATH\"; cd '/Volumes/My Shared Files/worktree' && $command_to_run"
+  printf -v guest_worktree_q "%q" "$guest_worktree"
+  ssh_exec_retry "$ip" "source \"\$HOME/.zprofile\" 2>/dev/null || true; source \"\$HOME/.sheaf-agent-vm.env\" 2>/dev/null || true; cd $guest_worktree_q && $command_to_run"
   if [[ "$keep_running" -eq 0 ]]; then
     echo "Stopping $name after command..."
     "$TART" stop "$name" --timeout 60 || true

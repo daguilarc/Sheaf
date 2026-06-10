@@ -24,9 +24,11 @@ clean:
 	done
 
 test:
-	@for project in $(PROJECTS); do \
-		$(MAKE) -C projects/$$project test; \
-	done
+	@status=0; \
+	for project in $(PROJECTS); do \
+		$(MAKE) -C projects/$$project test || status=$$?; \
+	done; \
+	exit $$status
 
 conductor-build:
 	$(MAKE) -C projects/conductor build

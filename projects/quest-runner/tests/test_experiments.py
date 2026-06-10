@@ -671,6 +671,23 @@ class ExperimentCreationTests(unittest.TestCase):
         head = run_git(wt_path, "rev-parse", "HEAD").stdout.strip()
         self.assertEqual(head, parent_sha)
 
+    def test_create_allocates_agent_vm_after_experiment_worktree_creation(self) -> None:
+        svc, out, _source_qdir, _parent_sha = self._prepare_quest_with_step()
+        with patch.object(svc, "_ensure_agent_vm_for_worktree") as ensure_vm:
+            result = svc.create_experiment(
+                repo_path=str(self.temp.root),
+                project="example",
+                quest_type="main",
+                quest_number=out["quest_number"],
+                start_step=5,
+                stop_node="slice_completed",
+                notes="vm allocation test",
+                workflow_path=str(_default_workflow_dir(self.repo_root)),
+            )
+        ensure_vm.assert_called_once()
+        self.assertEqual(ensure_vm.call_args.args[0], self.temp.root.resolve())
+        self.assertEqual(ensure_vm.call_args.args[1], Path(result["worktree_path"]))
+
     def test_create_rejects_unknown_stop_node_before_worktree(self) -> None:
         svc, out, source_qdir, _parent = self._prepare_quest_with_step()
         with self.assertRaises(InvalidQuestInput):
