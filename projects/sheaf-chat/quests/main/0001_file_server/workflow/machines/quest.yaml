@@ -132,9 +132,10 @@ states:
     run:
       profile: documenter
       task: |
-        Write documentation in the current project's docs directory describing
-        what was built across the full quest. Do not modify repo-root `docs/`
-        unless it is the current project's docs directory.
+        Merge this quest's delta specs into the project's living spec under the
+        current project's docs directory, run the rebuild-test self-audit, and
+        update `docs/coverage.md`. Do not modify repo-root `docs/` unless it is
+        the current project's docs directory.
     transitions:
       - to: Completed
 
