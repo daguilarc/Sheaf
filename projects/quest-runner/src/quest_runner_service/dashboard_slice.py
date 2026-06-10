@@ -1,9 +1,8 @@
-"""Slice-level dashboard payloads: physical plan, issues, agents, and step logs."""
+"""Slice-level dashboard payloads: physical plan, issues, and step logs."""
 
 from __future__ import annotations
 
 import html
-import json
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -18,26 +17,22 @@ from .dashboard_data import (
     issue_status_counts,
     issues_latest_updated_at,
 )
-from .quest_runner import role_thread_key
 from .quest_types import IssueResponseEntry
 
 _STEP_LOG_RE = re.compile(r"^step_(\d+)_(.+)\.jsonl$")
 
-SLICE_SCOPED_ROLES: tuple[str, ...] = (
-    "implementer",
-    "polisher_reviewer",
-    "polisher",
-)
-QUEST_SCOPED_ROLES: tuple[str, ...] = (
-    "physical_planner",
-    "physical_plan_reviewer",
-    "documenter",
-)
-VALID_SUBPAGES = frozenset({"physicalplan", "issues", "agents"})
+VALID_SUBPAGES = frozenset({"physicalplan", "issues"})
 _INLINE_CODE_RE = re.compile(r"`([^`]+)`")
 _BOLD_RE = re.compile(r"\*\*([^*]+)\*\*")
 _ITALIC_RE = re.compile(r"(?<!\*)\*([^*\n]+)\*(?!\*)")
 _LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
+
+
+@dataclass(frozen=True)
+class AgentStepLog:
+    step: int
+    role: str
+    path: Path
 
 
 def _render_inline_markdown(text: str) -> str:
@@ -247,11 +242,18 @@ def issues_subpage_payload(quest_dir: Path, slice_dir: Path) -> dict:
     }
 
 
-def collect_step_logs_for_role(quest_dir: Path, role: str) -> list[tuple[int, Path]]:
+def _step_log_updated_at(path: Path) -> str:
+    st = path.stat()
+    return datetime.fromtimestamp(st.st_mtime, tz=timezone.utc).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+
+
+def collect_agent_step_logs(quest_dir: Path) -> list[AgentStepLog]:
     logs_dir = quest_dir / "logs"
     if not logs_dir.is_dir():
         return []
-    found: list[tuple[int, Path]] = []
+    found: list[AgentStepLog] = []
     for p in logs_dir.iterdir():
         if not p.is_file():
             continue
@@ -260,125 +262,41 @@ def collect_step_logs_for_role(quest_dir: Path, role: str) -> list[tuple[int, Pa
             continue
         step_n = int(m.group(1))
         role_part = m.group(2)
-        if role_part != role:
-            continue
-        found.append((step_n, p))
-    found.sort(key=lambda t: t[0])
+        found.append(AgentStepLog(step=step_n, role=role_part, path=p))
+    found.sort(key=lambda t: t.step, reverse=True)
     return found
 
 
-def _registry_ts(entry: dict, key: str) -> str | None:
-    raw = entry.get(key)
-    if raw is None:
-        return None
-    s = str(raw).strip()
-    return s or None
-
-
-def _agent_last_activity(registry_entry: dict | None) -> str | None:
-    if not registry_entry or not isinstance(registry_entry, dict):
-        return None
-    for k in ("last_used_at", "created_at"):
-        t = _registry_ts(registry_entry, k)
-        if t:
-            return t
-    return None
-
-
-def build_agent_key(scope: str, role: str) -> str:
-    return f"{scope}:{role}"
-
-
-def parse_agent_key(raw: str | None) -> tuple[str, str]:
-    if raw is None or not str(raw).strip():
-        raise DashboardBadRequest(
-            "Missing required query parameter: agent_key",
-            fields={"agent_key": "required"},
-        )
-    s = raw.strip()
-    scope, sep, role = s.partition(":")
-    if not sep or not scope or not role:
-        raise DashboardBadRequest(
-            "agent_key must be 'slice:<role>' or 'quest:<role>'",
-            fields={"agent_key": "invalid"},
-        )
-    if scope not in ("slice", "quest"):
-        raise DashboardBadRequest(
-            "agent_key scope must be slice or quest",
-            fields={"agent_key": "invalid"},
-        )
-    return scope, role
-
-
-def validate_agent_role(scope: str, role: str) -> None:
-    if scope == "slice":
-        if role not in SLICE_SCOPED_ROLES:
-            raise DashboardNotFound(f"Unknown slice-scoped role: {role!r}")
-    else:
-        if role not in QUEST_SCOPED_ROLES:
-            raise DashboardNotFound(f"Unknown quest-scoped role: {role!r}")
-
-
-def _agent_payload_entries(
+def _agent_step_log_payload(
     quest_dir: Path,
+    log: AgentStepLog,
     *,
-    roles: tuple[str, ...],
-    scope: str,
-    slice_number: int | None = None,
-) -> list[dict]:
-    try:
-        registry = quest_fs.read_thread_registry(quest_dir)
-    except (FileNotFoundError, ValueError, json.JSONDecodeError):
-        registry = {}
-    agents: list[dict] = []
-    slice_dir = find_slice_dir(quest_dir, slice_number) if scope == "slice" else None
-    for role in roles:
-        key = role_thread_key(role, slice_dir) if slice_dir is not None else role
-        raw_e = registry.get(key)
-        if raw_e is None and key != role:
-            raw_e = registry.get(role)
-        entry = raw_e if isinstance(raw_e, dict) else None
-        logs = collect_step_logs_for_role(quest_dir, role)
-        latest = logs[-1] if logs else None
-        latest_log = None
-        if latest is not None:
-            step_n, path = latest
-            latest_log = {
-                "step": step_n,
-                "filename": path.name,
-                "relative_path": _relative_under_quest(quest_dir, path),
-            }
-        agents.append(
-            {
-                "agent_key": build_agent_key(scope, role),
-                "scope": scope,
-                "role": role,
-                "thread_name": str(entry["thread_name"])
-                if entry and entry.get("thread_name")
-                else None,
-                "last_activity_at": _agent_last_activity(entry),
-                "latest_log": latest_log,
-            }
-        )
-    return agents
-
-
-def quest_agents_payload(quest_dir: Path) -> dict:
+    is_current: bool = False,
+) -> dict:
     return {
-        "agents": _agent_payload_entries(
-            quest_dir, roles=QUEST_SCOPED_ROLES, scope="quest"
-        )
+        "step": log.step,
+        "role": log.role,
+        "filename": log.path.name,
+        "relative_path": _relative_under_quest(quest_dir, log.path),
+        "updated_at": _step_log_updated_at(log.path),
+        "is_current": is_current,
     }
 
 
-def agents_subpage_payload(quest_dir: Path, slice_number: int) -> dict:
-    agents = _agent_payload_entries(
-        quest_dir,
-        roles=SLICE_SCOPED_ROLES,
-        scope="slice",
-        slice_number=slice_number,
-    )
-    return {"slice_number": slice_number, "agents": agents}
+def agent_steps_payload(quest_dir: Path) -> dict:
+    logs = collect_agent_step_logs(quest_dir)
+    default_step = logs[0].step if logs else None
+    return {
+        "default_step": default_step,
+        "steps": [
+            _agent_step_log_payload(
+                quest_dir,
+                log,
+                is_current=log.step == default_step,
+            )
+            for log in logs
+        ],
+    }
 
 
 def slice_page_payload(
@@ -403,10 +321,8 @@ def slice_page_payload(
 
     if subpage == "physicalplan":
         sub = physicalplan_subpage_payload(quest_dir, slice_dir)
-    elif subpage == "issues":
-        sub = issues_subpage_payload(quest_dir, slice_dir)
     else:
-        sub = agents_subpage_payload(quest_dir, slice_number)
+        sub = issues_subpage_payload(quest_dir, slice_dir)
 
     return {
         "slice": slice_meta,
@@ -419,75 +335,57 @@ def slice_page_payload(
 def resolve_agent_log_path(
     *,
     quest_dir: Path,
-    agent_key: str,
     step: int | None,
 ) -> tuple[int, Path]:
-    scope, role = parse_agent_key(agent_key)
-    validate_agent_role(scope, role)
-    logs = collect_step_logs_for_role(quest_dir, role)
+    logs = collect_agent_step_logs(quest_dir)
     if not logs:
-        raise DashboardNotFound(f"No log artifacts for role {role!r}")
+        raise DashboardNotFound("No agent step logs for this quest")
 
     if step is not None:
-        selected = next((p for sn, p in logs if sn == step), None)
+        selected = next((log.path for log in logs if log.step == step), None)
         if selected is None:
-            raise DashboardNotFound(f"No log for role {role!r} with step={step}")
+            raise DashboardNotFound(f"No agent step log with step={step}")
         return step, selected
-    return logs[-1]
+    latest = logs[0]
+    return latest.step, latest.path
 
 
 def agent_log_payload(
     *,
     quest_dir: Path,
-    agent_key: str,
     step: int | None,
 ) -> dict:
-    scope, role = parse_agent_key(agent_key)
     current_step, path = resolve_agent_log_path(
         quest_dir=quest_dir,
-        agent_key=agent_key,
         step=step,
     )
-    logs = collect_step_logs_for_role(quest_dir, role)
+    logs = collect_agent_step_logs(quest_dir)
+    current_log = next((log for log in logs if log.step == current_step), None)
+    if current_log is None:
+        raise DashboardNotFound(f"No agent step log with step={current_step}")
 
     raw = path.read_text(encoding="utf-8")
-    st = path.stat()
-    updated = datetime.fromtimestamp(st.st_mtime, tz=timezone.utc).strftime(
-        "%Y-%m-%dT%H:%M:%SZ"
-    )
-    try:
-        registry = quest_fs.read_thread_registry(quest_dir)
-    except (FileNotFoundError, ValueError, json.JSONDecodeError):
-        registry = {}
-    entry = registry.get(role) if isinstance(registry.get(role), dict) else None
-    thread_name = (
-        str(entry["thread_name"]) if entry and entry.get("thread_name") else None
-    )
-
-    siblings: list[dict] = []
-    for step_n, p in sorted(logs, key=lambda t: t[0], reverse=True):
-        siblings.append(
-            {
-                "step": step_n,
-                "filename": p.name,
-                "relative_path": _relative_under_quest(quest_dir, p),
-                "is_current": step_n == current_step,
-            }
+    steps = [
+        _agent_step_log_payload(
+            quest_dir,
+            log,
+            is_current=log.step == current_step,
         )
+        for log in logs
+    ]
 
     return {
-        "agent_key": agent_key,
-        "scope": scope,
-        "role": role,
+        "step": current_step,
+        "role": current_log.role,
         "jsonl_raw": raw,
         "metadata": {
             "relative_path": _relative_under_quest(quest_dir, path),
             "step": current_step,
             "filename": path.name,
-            "updated_at": updated,
-            "thread_name": thread_name,
+            "role": current_log.role,
+            "updated_at": _step_log_updated_at(path),
         },
-        "log_siblings": siblings,
+        "log_steps": steps,
     }
 
 

@@ -562,13 +562,62 @@ body {
   max-width: 42rem;
 }
 
-.dash-field select {
+.dash-field select,
+.dash-field input {
   padding: 8px 10px;
   border-radius: 6px;
   border: 1px solid var(--dash-border);
   background: var(--dash-elevated);
   color: var(--dash-text);
   font: inherit;
+}
+
+.dash-field input:focus,
+.dash-field select:focus {
+  outline: 2px solid rgba(59, 130, 246, 0.45);
+  outline-offset: 1px;
+}
+
+.dash-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 72px 16px 16px;
+  background: rgba(15, 20, 25, 0.72);
+}
+
+.dash-modal {
+  width: min(440px, 100%);
+  border: 1px solid var(--dash-border);
+  border-radius: var(--dash-radius);
+  background: var(--dash-surface);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.45);
+}
+
+.dash-modal__head,
+.dash-modal__actions {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--dash-border);
+}
+
+.dash-modal__head h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.dash-modal__body {
+  padding: 16px;
+}
+
+.dash-modal__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  border-top: 1px solid var(--dash-border);
+  border-bottom: none;
 }
 
 .dash-md-reader {
@@ -815,65 +864,6 @@ body {
   grid-column: 1 / -1;
   padding: 4px 10px;
   border-bottom: 1px solid var(--dash-border);
-  color: var(--dash-muted);
-}
-
-.dash-agent-layout {
-  display: grid;
-  grid-template-columns: minmax(240px, 320px) 1fr;
-  gap: 20px;
-  align-items: start;
-}
-
-@media (max-width: 800px) {
-  .dash-agent-layout {
-    grid-template-columns: 1fr;
-  }
-}
-
-.dash-agent-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
-.dash-agent-pill {
-  width: 100%;
-  text-align: left;
-  padding: 10px 12px;
-  margin-bottom: 8px;
-  border-radius: var(--dash-radius);
-  border: 1px solid var(--dash-border);
-  background: var(--dash-surface);
-  color: var(--dash-text);
-  font: inherit;
-  cursor: pointer;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 4px;
-}
-
-.dash-agent-pill:hover {
-  border-color: var(--dash-accent);
-}
-
-.dash-agent-pill--active {
-  border-color: var(--dash-accent);
-  box-shadow: 0 0 0 1px var(--dash-accent);
-}
-
-.dash-agent-scope {
-  font-size: 10px;
-  font-weight: 800;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--dash-muted);
-}
-
-.dash-agent-meta,
-.dash-agent-logref {
-  font-size: 12px;
   color: var(--dash-muted);
 }
 

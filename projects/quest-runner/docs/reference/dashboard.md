@@ -32,6 +32,11 @@ Quest selection and detail URLs include:
 This keeps navigation, run actions, git views, and slice views scoped to the
 owning Sheaf project. Legacy top-level `quests/` records are not listed.
 
+The topbar includes a **Create Quest** control for the selected project. It opens
+a dialog for choosing `main` or `side` and entering the quest name, then calls
+`POST /create_quest`. On success the dashboard refreshes the project snapshot
+and selects the new quest overview.
+
 Open experiments appear in the project snapshot `experiments` array alongside main
 and side quest rows. Each experiment row is labeled as an experiment and includes
 `experiment_id`, parent quest identity, description, current state, start step,
@@ -48,6 +53,10 @@ The overview page is the primary quest detail view. It shows:
 - active run status
 - recent step history
 - git-backed commit metadata from the resolved checkout
+
+Dashboard timestamps are rendered in local, human-readable form. Last-update and
+heartbeat fields include a relative age such as `(25 seconds ago)` or
+`(3 minutes ago)`.
 
 The page shows a **Run quest** control when the selected quest is idle and runnable.
 The control calls `POST /run_quest` with project, type, number, and optional step
@@ -101,8 +110,8 @@ expected quest worktree and returns a missing-worktree error when it is absent.
 
 Slice pages load through `/api/dashboard/slice_page` and include project
 identity in every request. The dashboard can display slice physical plans,
-polishing state, issue files, implementation markers, and agent logs for the
-selected quest.
+polishing state, issue files, and implementation markers for the selected
+quest.
 
 Physical-plan and polishing issue views read the quest-local issue files. Issue
 completion authority remains with reviewer roles through the runner workflow;
@@ -111,16 +120,16 @@ rules.
 
 ## Agent Logs
 
-Agent summaries come from `/api/dashboard/quest_agents`. Agent log metadata and
-step selectors load from `/api/dashboard/agent_log` by agent key and optional
-step. The visible transcript is a read-only chat view backed by the WebSocket
-stream documented in [Agent chat UI](chat-ui.md).
+Agent step summaries come from `/api/dashboard/agent_steps`. Agent log metadata
+loads from `/api/dashboard/agent_log` by optional step number. The visible
+transcript is a read-only chat view backed by the WebSocket stream documented in
+[Agent chat UI](chat-ui.md).
 
-The dashboard renders the chat view on the quest-level agents page and on slice
-agents subpages. Selecting a different agent or step closes the current
-WebSocket and opens a new one for the selected log. If the shared chat asset does
-not load, the agent panel reports that the transcript is unavailable without
-opening a WebSocket.
+The dashboard renders one quest-level Agents page. Its step dropdown lists every
+quest-local step log, regardless of role. Selecting a different step closes the
+current WebSocket and opens a new one for the selected log. If the shared chat
+asset does not load, the agent panel reports that the transcript is unavailable
+without opening a WebSocket.
 
 Agent log files remain quest-local JSONL files such as:
 

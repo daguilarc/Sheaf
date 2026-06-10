@@ -30,6 +30,8 @@ class DashboardShellRouteTests(unittest.TestCase):
         js = client.get("/dashboard/assets/app.js")
         self.assertEqual(js.status_code, 200)
         self.assertIn(b"RefreshScheduler", js.data)
+        self.assertIn(b"Create Quest", js.data)
+        self.assertIn(b"/create_quest", js.data)
         logic = client.get("/dashboard/assets/dashboard-logic.mjs")
         self.assertEqual(logic.status_code, 200)
         utils = client.get("/dashboard/assets/dashboard-pages-utils.mjs")

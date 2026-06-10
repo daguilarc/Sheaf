@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   BuildAdvanceQuestPayload,
+  BuildCreateQuestPayload,
   BuildDashboardSearchParams,
   BuildLandExperimentPayload,
   BuildLandQuestPayload,
@@ -112,6 +113,15 @@ test("BuildRunQuestPayload includes project identity", () => {
     quest_type: "main",
     quest_number: 1,
     max_steps: 3,
+  });
+});
+
+test("BuildCreateQuestPayload includes current project and name", () => {
+  const body = BuildCreateQuestPayload("web", "side", "New Thing");
+  assert.deepEqual(body, {
+    project: "web",
+    quest_type: "side",
+    name: "New Thing",
   });
 });
 

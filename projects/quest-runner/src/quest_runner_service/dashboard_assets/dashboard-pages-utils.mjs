@@ -11,12 +11,76 @@ export function EscapeHtml(s) {
     .replace(/"/g, "&quot;");
 }
 
+function ParseDashboardTimestamp(value) {
+  if (value == null || value === "") {
+    return null;
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+  return date;
+}
+
+function Pluralize(value, unit) {
+  return `${value} ${unit}${value === 1 ? "" : "s"}`;
+}
+
+export function FormatDashboardTimestamp(value) {
+  const date = ParseDashboardTimestamp(value);
+  if (!date) {
+    return EscapeHtml(value || "—");
+  }
+  return EscapeHtml(
+    new Intl.DateTimeFormat(undefined, {
+      dateStyle: "medium",
+      timeStyle: "short",
+    }).format(date)
+  );
+}
+
+export function FormatRelativeAge(value, now = new Date()) {
+  const date = ParseDashboardTimestamp(value);
+  if (!date) {
+    return "";
+  }
+  const deltaSeconds = Math.round((now.getTime() - date.getTime()) / 1000);
+  const absSeconds = Math.abs(deltaSeconds);
+  let amount;
+  let unit;
+  if (absSeconds < 60) {
+    amount = absSeconds;
+    unit = "second";
+  } else if (absSeconds < 3600) {
+    amount = Math.round(absSeconds / 60);
+    unit = "minute";
+  } else if (absSeconds < 86400) {
+    amount = Math.round(absSeconds / 3600);
+    unit = "hour";
+  } else {
+    amount = Math.round(absSeconds / 86400);
+    unit = "day";
+  }
+  const label = Pluralize(amount, unit);
+  return deltaSeconds < 0 ? `in ${label}` : `${label} ago`;
+}
+
+export function FormatDashboardTimestampWithAge(value, now = new Date()) {
+  const date = ParseDashboardTimestamp(value);
+  if (!date) {
+    return EscapeHtml(value || "—");
+  }
+  return `${FormatDashboardTimestamp(value)} <span class="dash-muted">(${EscapeHtml(
+    FormatRelativeAge(value, now)
+  )})</span>`;
+}
+
 /**
  * Renders quest ``last_transition`` from API (legacy or metadata-backed).
  */
 export function FormatQuestLastTransitionHtml(lt) {
   if (!lt) return "—";
-  let body = `${EscapeHtml(lt.timestamp)}: ${EscapeHtml(lt.previous_state)} → ${EscapeHtml(
+  let body = `${FormatDashboardTimestamp(lt.timestamp)}: ${EscapeHtml(lt.previous_state)} → ${EscapeHtml(
     lt.next_state
   )}`;
   if (lt.global_step != null) {

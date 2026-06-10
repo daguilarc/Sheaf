@@ -7,6 +7,9 @@ import {
   SelectPlanFile,
   FileLabelForDiff,
   BuildDiffRowsHtml,
+  FormatDashboardTimestamp,
+  FormatDashboardTimestampWithAge,
+  FormatRelativeAge,
   FormatQuestLastTransitionHtml,
 } from "./dashboard-pages-utils.mjs";
 
@@ -55,6 +58,28 @@ test("BuildDiffRowsHtml covers addition and removal", () => {
   assert.ok(html.includes("dash-diff-row--add"));
 });
 
+test("FormatDashboardTimestamp renders readable dates without ISO separator", () => {
+  const html = FormatDashboardTimestamp("2026-04-01T12:00:00Z");
+  assert.ok(html.includes("2026"));
+  assert.ok(!html.includes("T12:00:00Z"));
+});
+
+test("FormatDashboardTimestampWithAge appends relative age", () => {
+  const html = FormatDashboardTimestampWithAge(
+    "2026-04-01T11:58:00Z",
+    new Date("2026-04-01T12:00:00Z")
+  );
+  assert.ok(!html.includes("T11:58:00Z"));
+  assert.ok(html.includes("(2 minutes ago)"));
+});
+
+test("FormatRelativeAge handles seconds, hours, and future dates", () => {
+  const now = new Date("2026-04-01T12:00:00Z");
+  assert.equal(FormatRelativeAge("2026-04-01T11:59:35Z", now), "25 seconds ago");
+  assert.equal(FormatRelativeAge("2026-04-01T09:00:00Z", now), "3 hours ago");
+  assert.equal(FormatRelativeAge("2026-04-01T12:05:00Z", now), "in 5 minutes");
+});
+
 test("FormatQuestLastTransitionHtml null", () => {
   assert.equal(FormatQuestLastTransitionHtml(null), "—");
 });
@@ -83,4 +108,5 @@ test("FormatQuestLastTransitionHtml metadata step and slice chain", () => {
   assert.ok(html.includes("step 3"));
   assert.ok(html.includes("slice:"));
   assert.ok(html.includes("Implementing"));
+  assert.ok(!html.includes("T12:00:00Z"));
 });

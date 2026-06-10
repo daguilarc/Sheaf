@@ -292,7 +292,7 @@ class ExperimentScopedApiTests(unittest.TestCase):
                 "quest_type": "main",
                 "quest_number": out["quest_number"],
                 "experiment_id": exp_meta.experiment_id,
-                "agent_key": "slice:polisher",
+                "step": "4",
             },
         )
 

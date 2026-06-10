@@ -19,9 +19,8 @@ Implementation files:
 ## Server Flow
 
 The dashboard opens `WS /api/dashboard/agent_log/stream` with the selected
-`project`, `quest_type`, `quest_number`, `agent_key`, and optional `step`. The
-endpoint resolves the same quest-local log file used by
-`GET /api/dashboard/agent_log`.
+`project`, `quest_type`, `quest_number`, and optional `step`. The endpoint
+resolves the same quest-local log file used by `GET /api/dashboard/agent_log`.
 
 Each `ChatStreamSession` subscribes to `QuestService.chat_event_bus` before it
 reads the file. The session then:
@@ -40,8 +39,8 @@ highest integer `sequence` value seen in the file and skips queued live events a
 or below that sequence so replayed lines are not duplicated.
 
 Malformed JSONL lines produce `error` messages but do not stop replay unless the
-WebSocket send fails. Setup errors such as an unknown agent key or missing log
-are also sent as WebSocket `error` messages.
+WebSocket send fails. Setup errors such as an unknown step or missing log are
+also sent as WebSocket `error` messages.
 
 ## Browser Flow
 
@@ -56,16 +55,16 @@ window.ChatView.create(container, wsUrl)
 ```
 
 The returned handle owns the DOM nodes, reducer state, animation frame work, and
-WebSocket. When the selected agent, selected step, or dashboard page changes,
-the dashboard calls:
+WebSocket. When the selected step or dashboard page changes, the dashboard
+calls:
 
 ```js
 window.ChatView.destroy(handle)
 ```
 
 The dashboard may temporarily detach and reattach an existing handle while
-rerendering the same selected agent and step. This preserves the active socket
-and transcript DOM across dashboard refreshes.
+rerendering the same selected step. This preserves the active socket and
+transcript DOM across dashboard refreshes.
 
 ## Reducer State
 

@@ -9,12 +9,9 @@ from pathlib import Path
 from quest_runner_service import quest_fs
 from quest_runner_service.dashboard_slice import (
     DashboardNotFound,
-    agents_subpage_payload,
-    collect_step_logs_for_role,
-    parse_agent_key,
-    quest_agents_payload,
+    collect_agent_step_logs,
     render_dashboard_markdown,
-    validate_agent_role,
+    resolve_agent_log_path,
 )
 from quest_runner_service.quest_types import IssueEntry, SliceState, SliceStateInfo, utc_now_iso
 
@@ -95,29 +92,18 @@ class SlicePageHttpTests(unittest.TestCase):
         p = r.get_json()["payload"]
         self.assertEqual(p["open_count"], 1)
 
-    def test_quest_agents_page(self) -> None:
+    def test_agent_steps_page_discovers_all_logs(self) -> None:
         client, qdir = self._make_quest_with_slice()
-        quest_fs.write_thread_registry(
-            qdir,
-            {
-                "documenter": {
-                    "thread_name": "doc-thread",
-                    "harness_kind": "cursor",
-                    "provider_thread_id": "x",
-                    "pass_id": 0,
-                    "round_count": 0,
-                    "created_at": "2026-01-01T00:00:00Z",
-                    "last_used_at": "2026-01-04T00:00:00Z",
-                }
-            },
-        )
         logs = qdir / "logs"
         logs.mkdir()
         (logs / "step_0007_documenter.jsonl").write_text(
             '{"event_kind":"quest"}\n', encoding="utf-8"
         )
+        (logs / "step_0011_unexpected_role.jsonl").write_text(
+            '{"event_kind":"custom"}\n', encoding="utf-8"
+        )
         r = client.get(
-            "/api/dashboard/quest_agents",
+            "/api/dashboard/agent_steps",
             query_string={
                 "project": "example",
                 "quest_type": "main",
@@ -125,8 +111,10 @@ class SlicePageHttpTests(unittest.TestCase):
             },
         )
         self.assertEqual(r.status_code, 200)
-        agents = r.get_json()["agents"]
-        self.assertTrue(all(a["scope"] == "quest" for a in agents))
+        body = r.get_json()
+        self.assertEqual(body["default_step"], 11)
+        self.assertEqual([s["step"] for s in body["steps"]], [11, 7])
+        self.assertEqual(body["steps"][0]["role"], "unexpected_role")
 
     def test_agent_log_latest(self) -> None:
         client, qdir = self._make_quest_with_slice()
@@ -144,11 +132,34 @@ class SlicePageHttpTests(unittest.TestCase):
                 "project": "example",
                 "quest_type": "main",
                 "quest_number": "0",
-                "agent_key": "slice:polisher",
             },
         )
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.get_json()["metadata"]["step"], 10)
+
+    def test_agent_log_explicit_step(self) -> None:
+        client, qdir = self._make_quest_with_slice()
+        logs = qdir / "logs"
+        logs.mkdir()
+        (logs / "step_0005_polisher.jsonl").write_text(
+            '{"event_kind":"polish"}\n', encoding="utf-8"
+        )
+        (logs / "step_0010_polisher_reviewer.jsonl").write_text(
+            '{"event_kind":"review"}\n', encoding="utf-8"
+        )
+        r = client.get(
+            "/api/dashboard/agent_log",
+            query_string={
+                "project": "example",
+                "quest_type": "main",
+                "quest_number": "0",
+                "step": "5",
+            },
+        )
+        self.assertEqual(r.status_code, 200)
+        body = r.get_json()
+        self.assertEqual(body["metadata"]["step"], 5)
+        self.assertEqual(body["metadata"]["role"], "polisher")
 
 
 class AgentAssemblyUnitTests(unittest.TestCase):
@@ -159,15 +170,19 @@ class AgentAssemblyUnitTests(unittest.TestCase):
             logs.mkdir(parents=True)
             (logs / "step_0002_implementer.jsonl").write_text("b", encoding="utf-8")
             (logs / "step_0001_implementer.jsonl").write_text("a", encoding="utf-8")
-            found = collect_step_logs_for_role(qdir, "implementer")
-            self.assertEqual([t[0] for t in found], [1, 2])
+            (logs / "step_0003_custom_role.jsonl").write_text("c", encoding="utf-8")
+            found = collect_agent_step_logs(qdir)
+            self.assertEqual([t.step for t in found], [3, 2, 1])
+            self.assertEqual(found[0].role, "custom_role")
 
-    def test_parse_agent_key(self) -> None:
-        self.assertEqual(parse_agent_key("quest:documenter"), ("quest", "documenter"))
-
-    def test_validate_agent_role_quest_on_slice_fails(self) -> None:
-        with self.assertRaises(DashboardNotFound):
-            validate_agent_role("slice", "physical_planner")
+    def test_resolve_agent_log_path_unknown_step_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            qdir = Path(tmp) / "quest"
+            logs = qdir / "logs"
+            logs.mkdir(parents=True)
+            (logs / "step_0002_implementer.jsonl").write_text("b", encoding="utf-8")
+            with self.assertRaises(DashboardNotFound):
+                resolve_agent_log_path(quest_dir=qdir, step=99)
 
     def test_render_dashboard_markdown_formats_basic_markdown(self) -> None:
         html = render_dashboard_markdown("# Title\n\n- **bold** item\n\n`code`")

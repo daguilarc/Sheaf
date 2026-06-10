@@ -1,5 +1,6 @@
 import {
   BuildAdvanceQuestPayload,
+  BuildCreateQuestPayload,
   BuildLandExperimentPayload,
   BuildLandQuestPayload,
   BuildQuestApiQuery,
@@ -22,6 +23,8 @@ import {
   SelectPlanFile,
   FileLabelForDiff,
   BuildDiffRowsHtml,
+  FormatDashboardTimestamp,
+  FormatDashboardTimestampWithAge,
   FormatQuestLastTransitionHtml,
 } from "./dashboard-pages-utils.mjs";
 
@@ -36,6 +39,22 @@ async function FetchJson(url) {
     throw new Error(r.status + " " + (t.slice(0, 120) || r.statusText));
   }
   return r.json();
+}
+
+async function ResponseErrorMessage(response) {
+  const text = await response.text();
+  let msg = text.slice(0, 200) || response.statusText;
+  try {
+    const j = JSON.parse(text);
+    if (j.error) {
+      msg = j.error;
+    } else if (j.message) {
+      msg = j.message;
+    }
+  } catch (_e) {
+    // keep raw text
+  }
+  return `${response.status} ${msg}`;
 }
 
 function Qs(obj) {
@@ -78,6 +97,11 @@ const state = {
   runStatus: null,
   runActionError: null,
   runActionPending: false,
+  createQuestModalOpen: false,
+  createQuestType: "main",
+  createQuestName: "",
+  createQuestError: null,
+  createQuestPending: false,
   advanceActionError: null,
   advanceActionPending: false,
   landActionError: null,
@@ -95,7 +119,7 @@ const state = {
   diffsRequestSeq: 0,
   sliceRequestSeq: 0,
   agentLogRequestSeq: 0,
-  questAgentsRequestSeq: 0,
+  agentStepsRequestSeq: 0,
   autoRefreshBlockedUntil: 0,
 };
 
@@ -137,25 +161,24 @@ function QuestBase() {
 }
 
 function IsAgentsChatViewActive() {
-  return state.page === "agents" || (state.page === "slice" && state.subpage === "agents");
+  return state.page === "agents";
 }
 
-function BuildAgentLogWsUrl(agentKey, step) {
+function BuildAgentLogWsUrl(step) {
   const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-  const params = { ...QuestBase(), agent_key: agentKey };
+  const params = { ...QuestBase() };
   if (step != null) {
     params.step = String(step);
   }
   return `${proto}//${window.location.host}/api/dashboard/agent_log/stream?${Qs(params)}`;
 }
 
-function BuildAgentChatSessionKey(agentKey, step) {
+function BuildAgentChatSessionKey(step) {
   const base = QuestBase();
   return [
     base.project,
     base.quest_type,
     base.quest_number,
-    agentKey,
     step != null ? String(step) : "",
   ].join("|");
 }
@@ -185,9 +208,9 @@ function AttachReparentedChat(handle, container) {
   handle.container = container;
 }
 
-function MountAgentChatTranscript(main, agentKey, log) {
+function MountAgentChatTranscript(main, log) {
   const step = state.contentCache.agentLogStep ?? log.step;
-  const sessionKey = BuildAgentChatSessionKey(agentKey, step);
+  const sessionKey = BuildAgentChatSessionKey(step);
   const chatContainer = main.querySelector("#dash-agent-chat");
   if (!chatContainer) {
     return;
@@ -195,7 +218,7 @@ function MountAgentChatTranscript(main, agentKey, log) {
   if (!window.ChatView) {
     return;
   }
-  const wsUrl = BuildAgentLogWsUrl(agentKey, step);
+  const wsUrl = BuildAgentLogWsUrl(step);
   state.contentCache.chatHandle = window.ChatView.create(chatContainer, wsUrl);
   state.contentCache.chatSessionKey = sessionKey;
 }
@@ -259,7 +282,7 @@ async function LoadProjects() {
       if (state.page === "slice") {
         const sn = parseInt(parsed.slice_number || "0", 10);
         state.sliceNumber = Number.isNaN(sn) ? 0 : sn;
-        const subs = new Set(["physicalplan", "issues", "agents"]);
+        const subs = new Set(["physicalplan", "issues"]);
         state.subpage = subs.has(parsed.subpage) ? parsed.subpage : "physicalplan";
       }
     }
@@ -419,17 +442,14 @@ async function RefreshPhysicalPlanIssues() {
 
 async function RefreshAgentLog() {
   const reqSeq = ++state.agentLogRequestSeq;
-  const key = state.contentCache.selectedAgentKey;
-  if (!key) {
+  const step = state.contentCache.agentLogStep;
+  if (step == null) {
     DestroyActiveChat();
     state.contentCache.agentLog = null;
     state.contentCache.agentLogError = null;
     return;
   }
-  const params = { ...QuestBase(), agent_key: key };
-  if (state.contentCache.agentLogStep != null) {
-    params.step = String(state.contentCache.agentLogStep);
-  }
+  const params = { ...QuestBase(), step: String(step) };
   try {
     const log = await FetchJson(`/api/dashboard/agent_log?${Qs(params)}`);
     if (reqSeq !== state.agentLogRequestSeq) {
@@ -474,31 +494,24 @@ async function RefreshSlicePage() {
       localStorage.setItem(lsKey, sel);
     }
   }
-  if (state.subpage === "agents") {
-    const agents = j.payload?.agents || [];
-    const keys = new Set(agents.map((a) => a.agent_key));
-    if (!state.contentCache.selectedAgentKey || !keys.has(state.contentCache.selectedAgentKey)) {
-      state.contentCache.selectedAgentKey = agents[0]?.agent_key ?? null;
-      state.contentCache.agentLogStep = null;
-    }
-    await RefreshAgentLog();
-  }
   state.lastError = null;
   state.lastOkAt = new Date().toISOString();
 }
 
-async function RefreshQuestAgents() {
-  const reqSeq = ++state.questAgentsRequestSeq;
-  const j = await FetchJson(`/api/dashboard/quest_agents?${Qs(QuestBase())}`);
-  if (reqSeq !== state.questAgentsRequestSeq) {
+async function RefreshAgentSteps() {
+  const reqSeq = ++state.agentStepsRequestSeq;
+  const j = await FetchJson(`/api/dashboard/agent_steps?${Qs(QuestBase())}`);
+  if (reqSeq !== state.agentStepsRequestSeq) {
     return;
   }
-  state.contentCache.questAgents = j;
-  const agents = j.agents || [];
-  const keys = new Set(agents.map((a) => a.agent_key));
-  if (!state.contentCache.selectedAgentKey || !keys.has(state.contentCache.selectedAgentKey)) {
-    state.contentCache.selectedAgentKey = agents[0]?.agent_key ?? null;
-    state.contentCache.agentLogStep = null;
+  state.contentCache.agentSteps = j;
+  const steps = j.steps || [];
+  const stepValues = new Set(steps.map((s) => s.step));
+  if (
+    state.contentCache.agentLogStep == null ||
+    !stepValues.has(state.contentCache.agentLogStep)
+  ) {
+    state.contentCache.agentLogStep = j.default_step ?? steps[0]?.step ?? null;
   }
   await RefreshAgentLog();
   state.lastError = null;
@@ -533,6 +546,82 @@ async function LoadDiffFileDetailOnly() {
     state.contentCache.diffFileDetail = await FetchJson(
       `/api/dashboard/git_diff?${Qs({ ...QuestBase(), commit: sha, path })}`
     );
+  }
+}
+
+async function PostCreateQuest() {
+  const name = String(state.createQuestName || "").trim();
+  const body = BuildCreateQuestPayload(state.project, state.createQuestType, name);
+  const r = await fetch("/create_quest", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) {
+    throw new Error(await ResponseErrorMessage(r));
+  }
+  return r.json();
+}
+
+function OpenCreateQuestModal() {
+  state.createQuestModalOpen = true;
+  state.createQuestType = "main";
+  state.createQuestName = "";
+  state.createQuestError = null;
+  render();
+  window.setTimeout(() => {
+    const input = document.getElementById("dash-create-quest-name");
+    if (input instanceof HTMLInputElement) {
+      input.focus();
+    }
+  }, 0);
+}
+
+function CloseCreateQuestModal() {
+  if (state.createQuestPending) {
+    return;
+  }
+  state.createQuestModalOpen = false;
+  state.createQuestError = null;
+  render();
+}
+
+async function HandleCreateQuestSubmit() {
+  if (state.createQuestPending) {
+    return;
+  }
+  const name = String(state.createQuestName || "").trim();
+  if (!name) {
+    state.createQuestError = "Quest name is required.";
+    render();
+    return;
+  }
+  state.createQuestPending = true;
+  state.createQuestError = null;
+  render();
+  try {
+    const created = await PostCreateQuest();
+    state.createQuestModalOpen = false;
+    state.createQuestName = "";
+    state.createQuestError = null;
+    state.createQuestPending = false;
+    state.selectedKind = "quest";
+    state.experimentId = null;
+    state.archivedExperimentDetail = null;
+    state.archivedExperimentDetailId = null;
+    state.questType = created.quest_type;
+    state.questNumber = created.quest_number;
+    state.page = "overview";
+    state.contentCache = {};
+    DestroyActiveChat();
+    await LoadSnapshot();
+    PushUrl();
+    await RefreshActivePage({ includeRunStatus: true });
+    StartScheduler();
+  } catch (e) {
+    state.createQuestError = String(e.message || e);
+    state.createQuestPending = false;
+    render();
   }
 }
 
@@ -757,7 +846,7 @@ async function RefreshActivePage(options = {}) {
         await RefreshDiffs();
         break;
       case "agents":
-        await RefreshQuestAgents();
+        await RefreshAgentSteps();
         break;
       case "physicalplan":
         await RefreshPhysicalPlanIssues();
@@ -807,7 +896,7 @@ function FormatArchivedExperimentsHtml(ov) {
   const rows = archived
     .map((exp) => {
       const num = String(exp.experiment_number).padStart(4, "0");
-      const landed = exp.landed_at ? ` · landed ${EscapeHtml(exp.landed_at)}` : "";
+      const landed = exp.landed_at ? ` · landed ${FormatDashboardTimestamp(exp.landed_at)}` : "";
       const logs =
         exp.log_count != null
           ? ` · ${EscapeHtml(String(exp.log_count))} log file(s)`
@@ -863,8 +952,8 @@ function FormatArchivedExperimentsHtml(ov) {
         <h3>Archive detail: ${EscapeHtml(detail.experiment_id)}</h3>
         <dl class="dash-kv">
           <dt>Status</dt><dd>${EscapeHtml(detail.status)}</dd>
-          <dt>Created</dt><dd>${EscapeHtml(detail.created_at || "—")}</dd>
-          <dt>Landed</dt><dd>${EscapeHtml(detail.landed_at || "—")}</dd>
+          <dt>Created</dt><dd>${FormatDashboardTimestamp(detail.created_at)}</dd>
+          <dt>Landed</dt><dd>${FormatDashboardTimestamp(detail.landed_at)}</dd>
           ${remote}
         </dl>
         ${
@@ -1038,10 +1127,12 @@ function RenderOverview(main) {
       <dt>Active slice</dt><dd>${ov.current_slice == null ? "—" : EscapeHtml(String(ov.current_slice))}</dd>
       <dt>Slice state</dt><dd>${
         ov.active_slice_state
-          ? EscapeHtml(ov.active_slice_state.state + " @ " + ov.active_slice_state.updated_at)
+          ? `${EscapeHtml(ov.active_slice_state.state)} @ ${FormatDashboardTimestampWithAge(
+              ov.active_slice_state.updated_at
+            )}`
           : "—"
       }</dd>
-      <dt>Last update</dt><dd>${EscapeHtml(ov.updated_at)}</dd>
+      <dt>Last update</dt><dd>${FormatDashboardTimestampWithAge(ov.updated_at)}</dd>
       <dt>Last transition</dt><dd>${ltHtml}</dd>
       <dt>Open issues (quest)</dt><dd>${EscapeHtml(String(ov.open_issues_quest_level))}</dd>
       <dt>Open issues (active slice)</dt><dd>${EscapeHtml(String(ov.open_issues_active_slice))}</dd>
@@ -1050,7 +1141,7 @@ function RenderOverview(main) {
     </dl>
     ${
       rs?.latest_heartbeat_at
-        ? `<h2>Run heartbeat</h2><dl class="dash-kv"><dt>Latest heartbeat</dt><dd>${EscapeHtml(
+        ? `<h2>Run heartbeat</h2><dl class="dash-kv"><dt>Latest heartbeat</dt><dd>${FormatDashboardTimestampWithAge(
             rs.latest_heartbeat_at
           )}</dd></dl>`
         : ""
@@ -1111,7 +1202,7 @@ function RenderHuman(main) {
   main.innerHTML = `
     <header class="dash-page-head dash-page-head--hi">
       <h1>Human intervention <span class="dash-chip dash-chip--hi">Active request</span></h1>
-      <p class="dash-page-meta">Last updated ${EscapeHtml(j.updated_at || "—")} · ${EscapeHtml(j.path || "")}</p>
+      <p class="dash-page-meta">Last updated ${FormatDashboardTimestampWithAge(j.updated_at)} · ${EscapeHtml(j.path || "")}</p>
     </header>
     <div class="dash-toggle-row" role="group" aria-label="View mode">
       <button type="button" class="dash-btn dash-btn--tab ${mode === "rendered" ? "dash-btn--tab-active" : ""}" data-human-mode="rendered">Rendered</button>
@@ -1192,8 +1283,8 @@ function RenderDiffs(main) {
   }
   const meta = diff?.commit;
   const metaLine = meta
-    ? `${EscapeHtml(meta.sha?.slice(0, 7) || "")} · ${EscapeHtml(meta.author || "")} · ${EscapeHtml(
-        meta.committed_at || ""
+    ? `${EscapeHtml(meta.sha?.slice(0, 7) || "")} · ${EscapeHtml(meta.author || "")} · ${FormatDashboardTimestamp(
+        meta.committed_at
       )} · ${EscapeHtml(meta.title || "")}`
     : "";
   main.innerHTML = `
@@ -1253,8 +1344,8 @@ function RenderPhysicalPlan(main) {
           <span class="dash-issue-id">${EscapeHtml(i.issue_id)}</span>
           <span class="dash-issue-status">${EscapeHtml(i.status)}</span>
         </header>
-        <div class="dash-issue-meta">Owner: ${EscapeHtml(i.owner_role || "—")} · Updated ${EscapeHtml(
-        i.updated_at || "—"
+        <div class="dash-issue-meta">Owner: ${EscapeHtml(i.owner_role || "—")} · Updated ${FormatDashboardTimestampWithAge(
+        i.updated_at
       )}</div>
         <h2 class="dash-issue-title">${EscapeHtml(i.title || "")}</h2>
         <div class="dash-issue-details">${MarkdownToSafeHtml(i.details || "")}</div>
@@ -1274,8 +1365,8 @@ function RenderPhysicalPlan(main) {
       ? `<section class="dash-resp-summary"><h2>Issue responses</h2><ul>${resp
           .map(
             (r) =>
-              `<li><strong>${EscapeHtml(r.issue_id)}</strong> ${EscapeHtml(
-                r.response_timestamp || ""
+              `<li><strong>${EscapeHtml(r.issue_id)}</strong> ${FormatDashboardTimestamp(
+                r.response_timestamp
               )} — ${EscapeHtml(r.outcome || "")}<div class="dash-md-muted">${EscapeHtml(
                 r.explanation_preview || ""
               )}</div></li>`
@@ -1285,7 +1376,7 @@ function RenderPhysicalPlan(main) {
   main.innerHTML = `
     <header class="dash-page-head"><h1>Physical plan issues</h1>
       <p class="dash-page-meta">Open <strong>${j.open_count}</strong> · Completed <strong>${j.completed_count}</strong>${
-    j.latest_update_at ? ` · Latest update ${EscapeHtml(j.latest_update_at)}` : ""
+    j.latest_update_at ? ` · Latest update ${FormatDashboardTimestampWithAge(j.latest_update_at)}` : ""
   }</p>
     </header>
     ${
@@ -1309,7 +1400,9 @@ function RenderSlice(main) {
     String(j.slice.slice_number).padStart(4, "0")
   )}</h1><p class="dash-page-meta">${EscapeHtml(j.slice.directory_name || "")}${
     j.slice_state
-      ? ` · State ${EscapeHtml(j.slice_state.state)} @ ${EscapeHtml(j.slice_state.updated_at)}`
+      ? ` · State ${EscapeHtml(j.slice_state.state)} @ ${FormatDashboardTimestampWithAge(
+          j.slice_state.updated_at
+        )}`
       : ""
   }</p></header>`;
 
@@ -1400,8 +1493,8 @@ function RenderSlice(main) {
         ? `<section class="dash-resp-summary"><h2>Polishing responses</h2><ul>${pri.summaries
             .map(
               (r) =>
-                `<li><strong>${EscapeHtml(r.issue_id)}</strong> ${EscapeHtml(
-                  r.response_timestamp || ""
+                `<li><strong>${EscapeHtml(r.issue_id)}</strong> ${FormatDashboardTimestamp(
+                  r.response_timestamp
                 )} — ${EscapeHtml(r.outcome || "")}<div class="dash-md-muted">${EscapeHtml(
                   r.explanation_preview || ""
                 )}</div></li>`
@@ -1412,7 +1505,7 @@ function RenderSlice(main) {
       ${head}
       <p class="dash-page-meta">Open <strong>${pay.open_count}</strong> · Completed <strong>${pay.completed_count}</strong>${
       pay.latest_issue_updated_at
-        ? ` · Latest issue ${EscapeHtml(pay.latest_issue_updated_at)}`
+        ? ` · Latest issue ${FormatDashboardTimestampWithAge(pay.latest_issue_updated_at)}`
         : ""
     }</p>
       ${
@@ -1425,68 +1518,38 @@ function RenderSlice(main) {
     return;
   }
 
-  if (sub === "agents") {
-    RenderAgentsPanel({
-      main,
-      head,
-      agents: pay.agents || [],
-      emptyText: "No slice-scoped agents for this slice yet.",
-    });
-    return;
-  }
-
   main.innerHTML = `${head}<p class="dash-empty">No content for this subpage.</p>`;
 }
 
-function RenderAgentsPanel({ main, head, agents, emptyText }) {
-  if (agents.length === 0) {
+function RenderAgentsPanel({ main, head, steps, emptyText }) {
+  if (steps.length === 0) {
     DestroyActiveChat();
     main.innerHTML = `${head}<p class="dash-empty">${EscapeHtml(emptyText)}</p>`;
     return;
   }
-  const selKey = state.contentCache.selectedAgentKey;
   const log = state.contentCache.agentLog;
   const logErr = state.contentCache.agentLogError;
   const step = state.contentCache.agentLogStep ?? log?.step;
-  const sessionKey = log && selKey ? BuildAgentChatSessionKey(selKey, step) : null;
+  const sessionKey = log ? BuildAgentChatSessionKey(step) : null;
   let reparentHandle = null;
   if (sessionKey && sessionKey === state.contentCache.chatSessionKey && state.contentCache.chatHandle) {
     reparentHandle = DetachActiveChatForReparent();
   } else {
     DestroyActiveChat();
   }
-  const list = `<ul class="dash-agent-list" aria-label="Agents">${agents
-    .map((a) => {
-      const active = a.agent_key === selKey ? " dash-agent-pill--active" : "";
-      const ll = a.latest_log;
-      const logStr = ll
-        ? `step ${EscapeHtml(String(ll.step))} · ${EscapeHtml(ll.filename || "")}`
-        : "no log";
-      return `<li><button type="button" class="dash-agent-pill${active}" data-agent-key="${EscapeHtml(
-        a.agent_key
-      )}">
-        <span class="dash-agent-scope">${EscapeHtml(a.scope)}</span>
-        <strong>${EscapeHtml(a.role)}</strong>
-        <span class="dash-agent-meta">${EscapeHtml(a.thread_name || "—")} · ${EscapeHtml(
-        a.last_activity_at || "—"
-      )}</span>
-        <span class="dash-agent-logref">${logStr}</span>
-      </button></li>`;
-    })
-    .join("")}</ul>`;
   let logPanel = "";
   if (logErr) {
     logPanel = `<p class="dash-empty">Could not load log: ${EscapeHtml(logErr)}</p>`;
   } else if (!log) {
-    logPanel = `<p class="dash-empty">Select an agent to view its log.</p>`;
+    logPanel = `<p class="dash-empty">Select a step to view its log.</p>`;
   } else {
-    const sibs = log.log_siblings || [];
-    const stepOpts = sibs
+    const logSteps = log.log_steps || steps;
+    const stepOpts = logSteps
       .map(
         (s) =>
           `<option value="${EscapeHtml(String(s.step))}" ${s.is_current ? "selected" : ""}>Step ${EscapeHtml(
-            String(s.step)
-          )} — ${EscapeHtml(s.filename)}</option>`
+            String(s.step).padStart(4, "0")
+          )} — ${EscapeHtml(s.role || log.role || "")} — ${EscapeHtml(s.filename)}</option>`
       )
       .join("");
     const chatBody = window.ChatView
@@ -1494,9 +1557,9 @@ function RenderAgentsPanel({ main, head, agents, emptyText }) {
       : `<p class="dash-empty">Chat transcript unavailable: agui-chat.js failed to load.</p>`;
     logPanel = `
       <div class="dash-agent-log-head">
-        <h2>Log — ${EscapeHtml(log.role)} <code>${EscapeHtml(log.agent_key)}</code></h2>
-        <p class="dash-page-meta">${EscapeHtml(log.metadata?.relative_path || "")} · updated ${EscapeHtml(
-      log.metadata?.updated_at || ""
+        <h2>Log — step ${EscapeHtml(String(log.step).padStart(4, "0"))} · ${EscapeHtml(log.role || "")}</h2>
+        <p class="dash-page-meta">${EscapeHtml(log.metadata?.relative_path || "")} · updated ${FormatDashboardTimestampWithAge(
+      log.metadata?.updated_at
     )}</p>
         <label class="dash-field">Step artifact
           <select id="dash-agent-step" aria-label="Log step">${stepOpts}</select>
@@ -1506,27 +1569,15 @@ function RenderAgentsPanel({ main, head, agents, emptyText }) {
   }
   main.innerHTML = `
     ${head}
-    <div class="dash-agent-layout">
-      <aside class="dash-agent-aside">${list}</aside>
-      <section class="dash-agent-main">${logPanel}</section>
-    </div>
+    <section class="dash-agent-main">${logPanel}</section>
   `;
   if (reparentHandle) {
     const chatContainer = main.querySelector("#dash-agent-chat");
     AttachReparentedChat(reparentHandle, chatContainer);
     state.contentCache.chatHandle = reparentHandle;
-  } else if (log && selKey && window.ChatView) {
-    MountAgentChatTranscript(main, selKey, log);
+  } else if (log && window.ChatView) {
+    MountAgentChatTranscript(main, log);
   }
-  main.querySelectorAll("[data-agent-key]").forEach((btn) => {
-    btn.addEventListener("click", async () => {
-      DestroyActiveChat();
-      state.contentCache.selectedAgentKey = btn.getAttribute("data-agent-key");
-      state.contentCache.agentLogStep = null;
-      await RefreshAgentLog();
-      render();
-    });
-  });
   const stepEl = main.querySelector("#dash-agent-step");
   if (stepEl) {
     stepEl.addEventListener("change", async () => {
@@ -1536,6 +1587,79 @@ function RenderAgentsPanel({ main, head, agents, emptyText }) {
       render();
     });
   }
+}
+
+function RenderCreateQuestModal(root) {
+  if (!state.createQuestModalOpen) {
+    return;
+  }
+  const overlay = document.createElement("div");
+  overlay.className = "dash-modal-backdrop";
+  overlay.setAttribute("role", "presentation");
+  const dialog = document.createElement("form");
+  dialog.className = "dash-modal";
+  dialog.setAttribute("role", "dialog");
+  dialog.setAttribute("aria-modal", "true");
+  dialog.setAttribute("aria-labelledby", "dash-create-quest-title");
+  dialog.innerHTML = `
+    <header class="dash-modal__head">
+      <h2 id="dash-create-quest-title">Create Quest</h2>
+    </header>
+    <div class="dash-modal__body">
+      <label class="dash-field">Quest type
+        <select id="dash-create-quest-type" ${state.createQuestPending ? "disabled" : ""}>
+          <option value="main" ${state.createQuestType === "main" ? "selected" : ""}>Main</option>
+          <option value="side" ${state.createQuestType === "side" ? "selected" : ""}>Side</option>
+        </select>
+      </label>
+      <label class="dash-field">Quest name
+        <input id="dash-create-quest-name" type="text" required value="${EscapeHtml(
+          state.createQuestName
+        )}" ${state.createQuestPending ? "disabled" : ""} />
+      </label>
+      ${
+        state.createQuestError
+          ? `<p class="dash-run-error">${EscapeHtml(state.createQuestError)}</p>`
+          : ""
+      }
+    </div>
+    <footer class="dash-modal__actions">
+      <button type="button" id="dash-create-quest-cancel" class="dash-btn" ${
+        state.createQuestPending ? "disabled" : ""
+      }>Cancel</button>
+      <button type="submit" class="dash-btn dash-btn--primary" ${
+        state.createQuestPending ? "disabled" : ""
+      }>${state.createQuestPending ? "Creating..." : "Create"}</button>
+    </footer>
+  `;
+  overlay.appendChild(dialog);
+  overlay.addEventListener("click", (ev) => {
+    if (ev.target === overlay) {
+      CloseCreateQuestModal();
+    }
+  });
+  dialog.addEventListener("submit", (ev) => {
+    ev.preventDefault();
+    void HandleCreateQuestSubmit();
+  });
+  const typeEl = dialog.querySelector("#dash-create-quest-type");
+  if (typeEl instanceof HTMLSelectElement) {
+    typeEl.addEventListener("change", () => {
+      state.createQuestType = typeEl.value;
+    });
+  }
+  const nameEl = dialog.querySelector("#dash-create-quest-name");
+  if (nameEl instanceof HTMLInputElement) {
+    nameEl.addEventListener("input", () => {
+      state.createQuestName = nameEl.value;
+      state.createQuestError = null;
+    });
+  }
+  const cancelEl = dialog.querySelector("#dash-create-quest-cancel");
+  if (cancelEl instanceof HTMLButtonElement) {
+    cancelEl.addEventListener("click", () => CloseCreateQuestModal());
+  }
+  root.appendChild(overlay);
 }
 
 function render() {
@@ -1592,9 +1716,18 @@ function render() {
   refBtn.textContent = "Refresh now";
   refBtn.addEventListener("click", () => void RefreshActivePage());
   top.appendChild(refBtn);
+  const createBtn = document.createElement("button");
+  createBtn.type = "button";
+  createBtn.className = "dash-btn dash-btn--primary";
+  createBtn.textContent = "Create Quest";
+  createBtn.disabled = !state.project;
+  createBtn.addEventListener("click", () => OpenCreateQuestModal());
+  top.appendChild(createBtn);
   const st = document.createElement("div");
   st.className = "dash-status";
-  st.textContent = state.lastOkAt ? `Last OK: ${state.lastOkAt}` : "";
+  if (state.lastOkAt) {
+    st.innerHTML = `Last OK: ${FormatDashboardTimestampWithAge(state.lastOkAt)}`;
+  }
   top.appendChild(st);
   root.appendChild(top);
   if (!state.project || projects.length === 0) {
@@ -1791,13 +1924,12 @@ function render() {
       if (isSlice) {
         const sub = document.createElement("div");
         sub.className = "dash-subnav";
-        for (const sp of ["physicalplan", "issues", "agents"]) {
+        for (const sp of ["physicalplan", "issues"]) {
           const a = document.createElement("a");
           a.href = "#";
           a.className =
             "dash-nav-link" + (state.subpage === sp ? " dash-nav-link--active" : "");
-          a.textContent =
-            sp === "physicalplan" ? "Physical plan" : sp === "issues" ? "Issues" : "Slice agents";
+          a.textContent = sp === "physicalplan" ? "Physical plan" : "Issues";
           a.addEventListener("click", (ev) => {
             ev.preventDefault();
             state.subpage = sp;
@@ -1838,9 +1970,9 @@ function render() {
       case "agents":
         RenderAgentsPanel({
           main,
-          head: `<header class="dash-page-head"><h1>Agents</h1><p class="dash-page-meta">Quest-scoped agents across the full quest.</p></header>`,
-          agents: state.contentCache.questAgents?.agents || [],
-          emptyText: "No quest-scoped agents for this quest yet.",
+          head: `<header class="dash-page-head"><h1>Agents</h1><p class="dash-page-meta">Agent step logs across the full quest.</p></header>`,
+          steps: state.contentCache.agentSteps?.steps || [],
+          emptyText: "No agent step logs for this quest yet.",
         });
         break;
       case "physicalplan":
@@ -1856,6 +1988,7 @@ function render() {
   mainPanel.appendChild(main);
   layout.appendChild(mainPanel);
   root.appendChild(layout);
+  RenderCreateQuestModal(root);
 }
 
 async function Init() {

@@ -580,20 +580,23 @@ Human intervention request content when present.
 
 ### `GET /api/dashboard/slice_page`
 
-Slice subpage payload. Query parameters: `slice_number`, `subpage` (`physicalplan`,
-`polishing`, etc.).
+Slice subpage payload. Query parameters: `slice_number`, `subpage`
+(`physicalplan` or `issues`).
 
-### `GET /api/dashboard/quest_agents`
+### `GET /api/dashboard/agent_steps`
 
-Agent/thread registry summary for the quest.
+All agent step log artifacts for the quest, discovered from
+`logs/step_<n>_<role>.jsonl`. The response includes `default_step` and `steps`
+with step number, role, filename, relative path, updated timestamp, and current
+selection marker.
 
 ### `GET /api/dashboard/agent_log`
 
-Agent step log metadata and raw content. Query parameters: `agent_key`, optional
-`step`.
+Agent step log metadata and raw content. Query parameters: optional `step`.
+When omitted, Quest Runner selects the newest available step log.
 
-The dashboard uses this endpoint to populate the selected agent, step selector,
-and log metadata before opening the WebSocket transcript stream.
+The dashboard uses this endpoint to populate the selected step, all-step
+selector, and log metadata before opening the WebSocket transcript stream.
 
 ### `GET /api/dashboard/git_commits`
 
@@ -613,8 +616,7 @@ identity parameters used by the dashboard read APIs, plus:
 
 | Parameter | Required | Description |
 | --- | --- | --- |
-| `agent_key` | yes | Agent key such as `quest:physical_planner` or `slice:implementer` |
-| `step` | no | Step number to stream; defaults to the latest log for the role |
+| `step` | no | Step number to stream; defaults to the newest available step log |
 
 On connection, Quest Runner resolves the selected quest and JSONL log file,
 subscribes to the in-process chat event bus for that file, replays existing log
@@ -630,8 +632,8 @@ Server messages are JSON objects:
 | `{"type": "error", "message": "..."}` | Setup, JSONL parse, or stream error. |
 
 The client does not send application messages after connecting. Invalid quest
-parameters, unknown agent keys, and missing logs are reported as `error`
-messages on the WebSocket.
+parameters, unknown steps, and missing logs are reported as `error` messages on
+the WebSocket.
 
 ## Absent routes
 

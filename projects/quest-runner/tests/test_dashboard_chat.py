@@ -327,18 +327,24 @@ class AgentLogStreamRouteTests(unittest.TestCase):
                 "project": "example",
                 "quest_type": "main",
                 "quest_number": str(out["quest_number"]),
-                "agent_key": "slice:implementer",
+                "step": "1",
             },
         )
 
         self.assertTrue(any(message["type"] == "events" for message in ws.messages))
         self.assertEqual(ws.messages[-1], {"type": "caught_up"})
 
-    def test_stream_route_invalid_agent_key_sends_error(self) -> None:
+    def test_stream_route_unknown_step_sends_error(self) -> None:
         ensure_project(self.temp.root, "example")
         client, svc = make_app_client(self.temp.root, self.repo_root)
         out = svc.create_quest(
             str(self.temp.root), "example", "main", "Streamy"
+        )
+        qdir = quest_dir_on_checkout(self.temp.root, out)
+        logs = qdir / "logs"
+        logs.mkdir()
+        (logs / "step_0001_implementer.jsonl").write_text(
+            '{"event_kind":"x"}\n', encoding="utf-8"
         )
 
         ws = FakeWebSocket()
@@ -349,13 +355,13 @@ class AgentLogStreamRouteTests(unittest.TestCase):
                 "project": "example",
                 "quest_type": "main",
                 "quest_number": str(out["quest_number"]),
-                "agent_key": "slice:not_a_real_role",
+                "step": "99",
             },
         )
 
         self.assertEqual(
             ws.messages,
-            [{"type": "error", "message": "Unknown slice-scoped role: 'not_a_real_role'"}],
+            [{"type": "error", "message": "No agent step log with step=99"}],
         )
 
     def test_stream_route_missing_log_sends_error(self) -> None:
@@ -373,13 +379,12 @@ class AgentLogStreamRouteTests(unittest.TestCase):
                 "project": "example",
                 "quest_type": "main",
                 "quest_number": str(out["quest_number"]),
-                "agent_key": "slice:implementer",
             },
         )
 
         self.assertEqual(
             ws.messages,
-            [{"type": "error", "message": "No log artifacts for role 'implementer'"}],
+            [{"type": "error", "message": "No agent step logs for this quest"}],
         )
 
 

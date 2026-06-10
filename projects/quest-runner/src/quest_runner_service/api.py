@@ -584,19 +584,17 @@ def create_app(
         )
         return jsonify(payload)
 
-    @app.route("/api/dashboard/quest_agents", methods=["GET"])
-    def dashboard_quest_agents():
+    @app.route("/api/dashboard/agent_steps", methods=["GET"])
+    def dashboard_agent_steps():
         _project, _qt, _qn, qdir, _checkout_root, _experiment_id = _quest_context()
-        return jsonify(dashboard_slice.quest_agents_payload(qdir))
+        return jsonify(dashboard_slice.agent_steps_payload(qdir))
 
     @app.route("/api/dashboard/agent_log", methods=["GET"])
     def dashboard_agent_log():
         _project, _qt, _qn, qdir, _checkout_root, _experiment_id = _quest_context()
-        ak = request.args.get("agent_key")
         step = dashboard_slice.parse_optional_step(request.args.get("step"))
         payload = dashboard_slice.agent_log_payload(
             quest_dir=qdir,
-            agent_key=ak or "",
             step=step,
         )
         return jsonify(payload)
@@ -605,11 +603,9 @@ def create_app(
     def dashboard_agent_log_stream(ws):
         try:
             _project, _qt, _qn, qdir, _checkout_root, _experiment_id = _quest_context()
-            agent_key = request.args.get("agent_key") or ""
             step = dashboard_slice.parse_optional_step(request.args.get("step"))
             _step_num, log_path = dashboard_slice.resolve_agent_log_path(
                 quest_dir=qdir,
-                agent_key=agent_key,
                 step=step,
             )
         except (DashboardBadRequest, DashboardNotFound) as exc:

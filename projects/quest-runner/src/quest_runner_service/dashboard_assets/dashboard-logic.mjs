@@ -109,6 +109,14 @@ export function BuildRunQuestPayload(project, questType, questNumber, maxSteps) 
   return body;
 }
 
+export function BuildCreateQuestPayload(project, questType, name) {
+  return {
+    project,
+    quest_type: questType,
+    name,
+  };
+}
+
 export function BuildAdvanceQuestPayload(project, questType, questNumber) {
   return {
     project,
