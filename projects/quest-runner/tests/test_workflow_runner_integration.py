@@ -14,8 +14,10 @@ from quest_runner_service.quest_types import (
     QuestFileState,
     SliceFileState,
 )
+from quest_runner_service.errors import FatalInvariantError
 from quest_runner_service.state_machine.commit_metadata import parse_step_commit_message
 from quest_runner_service.state_machine.v2_step_executor import (
+    HumanInterventionConflict,
     advance_v2_top_level_step_without_harness,
 )
 from quest_runner_service.state_machine.adapters import SubprocessGitOps
@@ -36,6 +38,24 @@ def _git_head(repo: Path) -> str:
 def _git_head_message(repo: Path) -> str:
     return subprocess.run(
         ["git", "-C", str(repo), "log", "-1", "--format=%B"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+
+
+def _git_status_porcelain(repo: Path) -> str:
+    return subprocess.run(
+        ["git", "-C", str(repo), "status", "--porcelain"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+
+
+def _git_cached_names(repo: Path) -> str:
+    return subprocess.run(
+        ["git", "-C", str(repo), "diff", "--cached", "--name-only"],
         check=True,
         capture_output=True,
         text=True,
@@ -215,6 +235,61 @@ class AutomatedRunTests(WorkflowRunnerIntegrationFixture):
         self.assertEqual(snap.child.state_after, "PolishingReview")
 
     @patch("quest_runner_service.state_machine.workflow_harness_callback.create_harness")
+    @patch(
+        "quest_runner_service.state_machine.workflow_harness_callback.perform_role_harness_sequence"
+    )
+    def test_human_intervention_created_by_harness_keeps_state_uncommitted(
+        self, mock_harness_sequence: MagicMock, mock_create: MagicMock
+    ) -> None:
+        mock_create.return_value = MagicMock()
+
+        sl = self.wt_qdir / "slices" / "0000_impl"
+        _scaffold_slice(sl)
+        quest_fs.write_slice_file_state(
+            sl,
+            SliceFileState(
+                state="Implementing",
+                updated_at="2026-01-01T00:00:00Z",
+            ),
+        )
+        quest_fs.write_quest_file_state(
+            self.wt_qdir,
+            QuestFileState(
+                state="ExecuteSlice",
+                current_slice=0,
+                updated_at="2026-01-01T00:00:00Z",
+                active_slice="0000_impl",
+                global_step=5,
+            ),
+        )
+        _commit_all(self.worktree, "implementing setup")
+
+        def request_human_intervention(**_: object) -> None:
+            (sl / "implementation_done.md").write_text("done\n", encoding="utf-8")
+            (self.wt_qdir / "human_intervention_request.md").write_text(
+                "# Human intervention requested\n", encoding="utf-8"
+            )
+
+        mock_harness_sequence.side_effect = request_human_intervention
+        before_head = _git_head(self.worktree)
+
+        out = run_quest_v2(
+            repo_path=self.worktree,
+            quest_dir=self.wt_qdir,
+            conductor_repo_path=self.repo_root,
+            max_steps=1,
+        )
+
+        self.assertEqual(out["status"], "human_intervention")
+        self.assertEqual(_git_head(self.worktree), before_head)
+        self.assertEqual(quest_fs.read_quest_file_state(self.wt_qdir).state, "ExecuteSlice")
+        self.assertEqual(quest_fs.read_slice_file_state(sl).state, "Implementing")
+        status = _git_status_porcelain(self.worktree)
+        self.assertIn("implementation_done.md", status)
+        self.assertIn("human_intervention_request.md", status)
+        self.assertEqual(_git_cached_names(self.worktree), "")
+
+    @patch("quest_runner_service.state_machine.workflow_harness_callback.create_harness")
     def test_manual_advance_commits_and_increments_global_step(
         self, mock_create: MagicMock
     ) -> None:
@@ -241,6 +316,33 @@ class AutomatedRunTests(WorkflowRunnerIntegrationFixture):
         self.assertIsNotNone(parsed)
         assert parsed is not None
         self.assertEqual(parsed.metadata.snapshot.node_name, "PrePlanningGateNode")
+
+    @patch("quest_runner_service.state_machine.workflow_harness_callback.create_harness")
+    def test_manual_advance_commit_failure_restores_state_and_unstages(
+        self, mock_create: MagicMock
+    ) -> None:
+        mock_create.return_value = MagicMock()
+        from quest_runner_service.quest_runner import _quest_key
+
+        quest_key = _quest_key(self.meta)
+        git_ops = SubprocessGitOps()
+        git_ops.Commit = MagicMock(side_effect=FatalInvariantError("commit boom"))  # type: ignore[method-assign]
+        before_head = _git_head(self.worktree)
+
+        with self.assertRaises(HumanInterventionConflict):
+            advance_v2_top_level_step_without_harness(
+                repo_path=self.worktree,
+                quest_dir=self.wt_qdir,
+                quest_key=quest_key,
+                meta=self.meta,
+                git_ops=git_ops,
+            )
+
+        self.assertEqual(_git_head(self.worktree), before_head)
+        self.assertEqual(quest_fs.read_quest_file_state(self.wt_qdir).state, "PrePlanning")
+        self.assertEqual(_git_cached_names(self.worktree), "")
+        status = _git_status_porcelain(self.worktree)
+        self.assertIn("human_intervention_request.md", status)
 
     @patch(
         "quest_runner_service.state_machine.workflow_harness_callback.perform_role_harness_sequence"

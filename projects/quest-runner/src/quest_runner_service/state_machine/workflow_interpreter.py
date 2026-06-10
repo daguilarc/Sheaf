@@ -28,6 +28,12 @@ RunProfileCallback = Callable[[str, str], None]
 
 
 @dataclass(frozen=True)
+class PendingStateWrite:
+    machine_dir: Path
+    state: StateMachineState
+
+
+@dataclass(frozen=True)
 class WorkflowExecutionResult:
     snapshot: RecursiveSnapshot
     transition_kind: str | None
@@ -35,6 +41,7 @@ class WorkflowExecutionResult:
     stay_reason: str | None
     run_profile_invoked: bool
     state_changed: bool
+    pending_state_writes: tuple[PendingStateWrite, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -110,6 +117,7 @@ class WorkflowStateMachine:
         *,
         mode: ExecutionMode = ExecutionMode.Automated,
         run_callback: RunProfileCallback | None = None,
+        persist_state: bool = True,
     ) -> WorkflowExecutionResult:
         before = self.ReadState()
         state_def = self._workflow.get_machine(self._machine_key).states.get(before.state)
@@ -148,12 +156,14 @@ class WorkflowStateMachine:
             run_profile_invoked = True
         child_snapshot: RecursiveSnapshot | None = None
         child_result: ChildStepResult | None = None
+        child_pending_writes: tuple[PendingStateWrite, ...] = ()
         if state_def.child is not None:
-            child_snapshot, child_result = self._run_child_step(
+            child_snapshot, child_result, child_pending_writes = self._run_child_step(
                 state_def,
                 path_ctx,
                 mode=mode,
                 run_callback=run_callback,
+                persist_state=persist_state,
             )
         transition = self._match_transition(
             state_def,
@@ -207,9 +217,25 @@ class WorkflowStateMachine:
             stop_status = None
             stay_reason = None
         tags = dict(path_ctx.persisted_tags)
-        state_changed = after_state != before.state or tags != dict(before.tags)
-        if state_changed:
-            self.WriteState(after_state, tags)
+        local_state_changed = after_state != before.state or tags != dict(before.tags)
+        pending_state_writes: tuple[PendingStateWrite, ...] = tuple(child_pending_writes)
+        if local_state_changed:
+            updated = StateMachineState(
+                machine_name=before.machine_name,
+                machine_path=before.machine_path,
+                state=after_state,
+                global_step=before.global_step,
+                tags=tags,
+                updated_at=utc_now_iso(),
+            )
+            if persist_state:
+                self._workflow_io.WriteStateMachineState(self._machine_dir, updated)
+            else:
+                pending_state_writes = (
+                    *pending_state_writes,
+                    PendingStateWrite(machine_dir=self._machine_dir, state=updated),
+                )
+        state_changed = local_state_changed or bool(pending_state_writes)
         snapshot = build_workflow_step_snapshot(
             workflow_io=self._workflow_io,
             machine_key=self._machine_key,
@@ -227,6 +253,7 @@ class WorkflowStateMachine:
             stay_reason=stay_reason,
             run_profile_invoked=run_profile_invoked,
             state_changed=state_changed,
+            pending_state_writes=pending_state_writes,
         )
 
     def _run_child_step(
@@ -236,7 +263,8 @@ class WorkflowStateMachine:
         *,
         mode: ExecutionMode,
         run_callback: RunProfileCallback | None,
-    ) -> tuple[RecursiveSnapshot, ChildStepResult]:
+        persist_state: bool,
+    ) -> tuple[RecursiveSnapshot, ChildStepResult, tuple[PendingStateWrite, ...]]:
         child_block = state_def.child
         if child_block is None:
             raise FatalInvariantError("child block is required")
@@ -264,15 +292,17 @@ class WorkflowStateMachine:
         child_result = child_machine.RunWorkflowStep(
             mode=mode,
             run_callback=run_callback,
+            persist_state=persist_state,
         )
         if child_result.stop_status is not None:
             raise FatalInvariantError(
                 f"Child machine returned unexpected stop status "
                 f"{child_result.stop_status!r}"
             )
-        return child_result.snapshot, ChildStepResult(
+        result = ChildStepResult(
             state_after=child_result.snapshot.state_after
         )
+        return child_result.snapshot, result, child_result.pending_state_writes
 
     def _match_transition(
         self,

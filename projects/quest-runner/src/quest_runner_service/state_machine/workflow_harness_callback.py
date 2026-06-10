@@ -20,6 +20,10 @@ from .context import RunContext
 from .workflow_interpreter import RunProfileCallback, WorkflowStateMachine
 
 
+class HumanInterventionRequested(RuntimeError):
+    """A harness run produced a human-intervention request."""
+
+
 def build_workflow_run_callback(
     ctx: RunContext,
     machine: WorkflowStateMachine,
@@ -133,3 +137,8 @@ def _invoke_workflow_profile_harness(
         active_child_dir=slice_dir,
         collection_name=collection_name,
     )
+    if (quest_dir / workflow.special.human_intervention_file).is_file():
+        raise HumanInterventionRequested(
+            f"Quest has an open {workflow.special.human_intervention_file}; "
+            "stopping before workflow state advances."
+        )

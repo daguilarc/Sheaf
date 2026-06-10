@@ -128,6 +128,9 @@ class SubprocessGitOps:
         )
         return bool((r.stdout or "").strip())
 
+    def UnstageAll(self, repo_root: Path) -> None:
+        _git_checked(repo_root, "reset", "--mixed", "HEAD")
+
     def Commit(self, repo_root: Path, message: str) -> str:
         _git_checked(repo_root, "commit", "-m", message)
         return self.GetHeadSha(repo_root)
