@@ -150,6 +150,24 @@ export class AgentManager
     return this.m_storagePaths;
   }
 
+  async resolveSessionRootDirectory(pile: string, sessionId: string): Promise<string>
+  {
+    try
+    {
+      const bootstrap = await ResolveSessionBootstrap(
+        this.m_storagePaths,
+        pile,
+        sessionId,
+      );
+
+      return ResolveRootDirectory(this.m_storagePaths.repoRoot, bootstrap.rootDirectory);
+    }
+    catch
+    {
+      throw new AgentManagerError("session_not_found", `session not found: ${sessionId}`);
+    }
+  }
+
   listModels(): ModelMetadata[]
   {
     return ListModels(

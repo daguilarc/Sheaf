@@ -22,7 +22,12 @@ const x_errorStatusCodes: Record<string, number> = {
   pile_not_found: 404,
   manifest_not_found: 404,
   model_not_found: 404,
+  session_not_found: 404,
+  file_not_found: 404,
   path_escape: 403,
+  unsupported_file: 400,
+  not_a_file: 400,
+  not_a_directory: 400,
 };
 
 export function ResolveErrorStatusCode(code: string): number

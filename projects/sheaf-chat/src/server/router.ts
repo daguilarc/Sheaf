@@ -3,6 +3,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { StorageError } from "../storage/errors.js";
 import { HandleRouteError, SendRestError } from "./errors.js";
 import { HandleHealth } from "./routes/health.js";
+import { HandleGetSessionFile, HandleListSessionFiles } from "./routes/files.js";
 import { HandleSessionHistory } from "./routes/history.js";
 import { HandleListModels } from "./routes/models.js";
 import { HandleCreatePile, HandleListPiles } from "./routes/piles.js";
@@ -18,6 +19,8 @@ export interface MatchedRoute
   pile?: string;
   sessionId?: string;
   history?: boolean;
+  file?: boolean;
+  files?: boolean;
 }
 
 function DecodePathSegment(segment: string): string
@@ -85,9 +88,22 @@ export function MatchApiRoute(pathname: string): MatchedRoute | null
     return { pile, sessionId };
   }
 
-  if (segments.length === 6 && segments[5] === "history")
+  if (segments.length === 6)
   {
-    return { pile, sessionId, history: true };
+    if (segments[5] === "history")
+    {
+      return { pile, sessionId, history: true };
+    }
+
+    if (segments[5] === "file")
+    {
+      return { pile, sessionId, file: true };
+    }
+
+    if (segments[5] === "files")
+    {
+      return { pile, sessionId, files: true };
+    }
   }
 
   return null;
@@ -121,9 +137,22 @@ export function ResolveApiEndpoint(pathname: string): string | null
         return "pile_session";
       }
 
-      if (segments.length === 6 && segments[5] === "history")
+      if (segments.length === 6)
       {
-        return "pile_session_history";
+        if (segments[5] === "history")
+        {
+          return "pile_session_history";
+        }
+
+        if (segments[5] === "file")
+        {
+          return "pile_session_file";
+        }
+
+        if (segments[5] === "files")
+        {
+          return "pile_session_files";
+        }
       }
     }
   }
@@ -259,6 +288,54 @@ export async function DispatchApiRoute(
         route.pile,
         route.sessionId,
         url.searchParams,
+        response,
+      );
+      return;
+    }
+
+    if (endpoint === "pile_session_file")
+    {
+      if (route.pile === undefined || route.sessionId === undefined)
+      {
+        SendRestError(response, 404, "not_found", "route not found");
+        return;
+      }
+
+      if (request.method !== "GET")
+      {
+        SendRestError(response, 405, "method_not_allowed", "method not allowed");
+        return;
+      }
+
+      await HandleGetSessionFile(
+        context,
+        route.pile,
+        route.sessionId,
+        url.searchParams.get("path"),
+        response,
+      );
+      return;
+    }
+
+    if (endpoint === "pile_session_files")
+    {
+      if (route.pile === undefined || route.sessionId === undefined)
+      {
+        SendRestError(response, 404, "not_found", "route not found");
+        return;
+      }
+
+      if (request.method !== "GET")
+      {
+        SendRestError(response, 405, "method_not_allowed", "method not allowed");
+        return;
+      }
+
+      await HandleListSessionFiles(
+        context,
+        route.pile,
+        route.sessionId,
+        url.searchParams.get("path"),
         response,
       );
       return;

@@ -3,6 +3,7 @@ import { access, readFile } from "node:fs/promises";
 
 import { Type } from "typebox";
 
+import { IsBinaryBuffer } from "../fileClassification.js";
 import { RelativizeDisplayPath } from "../results.js";
 import type { ScopedToolContext, ScopedToolDefinition } from "../types.js";
 import {
@@ -19,21 +20,6 @@ const x_readSchema = Type.Object({
   offset: Type.Optional(Type.Number({ description: "Line number to start reading from (1-indexed)" })),
   limit: Type.Optional(Type.Number({ description: "Maximum number of lines to read" })),
 });
-
-function IsBinaryBuffer(buffer: Buffer): boolean
-{
-  const sample = buffer.subarray(0, Math.min(buffer.length, 8192));
-
-  for (const byte of sample)
-  {
-    if (byte === 0)
-    {
-      return true;
-    }
-  }
-
-  return false;
-}
 
 export function CreateReadTool(context: ScopedToolContext): ScopedToolDefinition
 {
