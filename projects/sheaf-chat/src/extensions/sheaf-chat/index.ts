@@ -19,7 +19,13 @@ export {
   type ScopedToolBindings,
 } from "./audit.js";
 export { PathEscapeError, x_rootEscapeDeniedCode } from "./errors.js";
-export { CreateRootPolicy, type ResolveInputPathOptions, type RootPolicy } from "./pathPolicy.js";
+export {
+  CreateRootPolicy,
+  IsPathWithinRoot,
+  ToRootRelativePathFromCanonical,
+  type ResolveInputPathOptions,
+  type RootPolicy,
+} from "./pathPolicy.js";
 export {
   AssertNoParentLeak,
   RelativizeDisplayPath,
@@ -33,7 +39,12 @@ export {
   x_scopedToolNames,
   type CreateScopedToolsInput,
 } from "./tools/createScopedTools.js";
-export type { ScopedToolContext, ScopedToolDefinition, ToolAgentResult } from "./types.js";
+export type {
+  FileChangedNotification,
+  ScopedToolContext,
+  ScopedToolDefinition,
+  ToolAgentResult,
+} from "./types.js";
 
 export async function RegisterScopedTools(
   pi: ExtensionAPI,

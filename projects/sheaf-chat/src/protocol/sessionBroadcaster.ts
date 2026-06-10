@@ -1,10 +1,17 @@
 import { randomUUID } from "node:crypto";
+import { realpath } from "node:fs/promises";
+import path from "node:path";
 import { performance } from "node:perf_hooks";
 
 import type { WebSocket } from "ws";
 import { WebSocket as WebSocketStatic } from "ws";
 
 import type { AgentManager } from "../agents/manager.js";
+import {
+  IsPathWithinRoot,
+  ToRootRelativePathFromCanonical,
+} from "../extensions/sheaf-chat/pathPolicy.js";
+import type { FileChangedNotification } from "../extensions/sheaf-chat/types.js";
 import {
   FormatSessionKey,
   type SessionKey,
@@ -28,6 +35,7 @@ import {
   CreateChatEnvelope,
   x_aguiEventKind,
   x_chatUserMessageKind,
+  x_fileChangedKind,
   x_historyPageKind,
 } from "./envelopes.js";
 import type { ClientHistoryRequestPayload, ClientUserMessagePayload } from "./clientFrames.js";
@@ -47,6 +55,16 @@ export interface SessionBroadcasterOptions
   storagePaths: StoragePaths;
   agentManager: AgentManager;
   persistenceHub: SessionPersistenceHub;
+  canonicalRootDirectory?: string;
+}
+
+export interface FileChangedBroadcastPayload
+{
+  eventType: "fileChanged";
+  path: string;
+  fileId: string;
+  changedAt: string;
+  source: "edit_tool";
 }
 
 function SendEnvelope(socket: WebSocket, envelope: ChatEnvelope): void
@@ -134,12 +152,14 @@ export class SessionBroadcaster
   private readonly m_persistenceHub: SessionPersistenceHub;
   private readonly m_clients = new Map<string, ConnectedClient>();
   private readonly m_unsubscribePersistedEnvelope: () => void;
+  private m_canonicalRootDirectory?: string;
 
   constructor(options: SessionBroadcasterOptions)
   {
     this.m_key = options.key;
     this.m_storagePaths = options.storagePaths;
     this.m_persistenceHub = options.persistenceHub;
+    this.m_canonicalRootDirectory = options.canonicalRootDirectory;
     this.m_unsubscribePersistedEnvelope = this.m_persistenceHub.Subscribe((envelope) =>
     {
       this.Broadcast(envelope);
@@ -154,6 +174,16 @@ export class SessionBroadcaster
   get ClientCount(): number
   {
     return this.m_clients.size;
+  }
+
+  get CanonicalRootDirectory(): string | undefined
+  {
+    return this.m_canonicalRootDirectory;
+  }
+
+  SetCanonicalRootDirectory(canonicalRootDirectory: string): void
+  {
+    this.m_canonicalRootDirectory = canonicalRootDirectory;
   }
 
   get LatestSequence(): number
@@ -205,6 +235,41 @@ export class SessionBroadcaster
     {
       SendEnvelope(client.socket, envelope);
     }
+  }
+
+  BroadcastFileChanged(changedCanonicalPath: string, changedAt: string): void
+  {
+    const canonicalRootDirectory = this.m_canonicalRootDirectory;
+
+    if (canonicalRootDirectory === undefined)
+    {
+      return;
+    }
+
+    if (!IsPathWithinRoot(changedCanonicalPath, canonicalRootDirectory))
+    {
+      return;
+    }
+
+    const rootRelativePath = ToRootRelativePathFromCanonical(
+      canonicalRootDirectory,
+      changedCanonicalPath,
+    );
+    const payload: FileChangedBroadcastPayload = {
+      eventType: "fileChanged",
+      path: rootRelativePath,
+      fileId: rootRelativePath,
+      changedAt,
+      source: "edit_tool",
+    };
+    const envelope = CreateChatEnvelope({
+      kind: x_fileChangedKind,
+      pile: this.m_key.pile,
+      sessionId: this.m_key.sessionId,
+      payload,
+    });
+
+    this.Broadcast(envelope);
   }
 
   async ReplayAfter(
@@ -315,8 +380,32 @@ export class SessionBroadcasterRegistry
       broadcaster = new SessionBroadcaster(options);
       this.m_broadcasters.set(encodedKey, broadcaster);
     }
+    else if (options.canonicalRootDirectory !== undefined)
+    {
+      broadcaster.SetCanonicalRootDirectory(options.canonicalRootDirectory);
+    }
 
     return broadcaster;
+  }
+
+  async BroadcastFileChanged(event: FileChangedNotification): Promise<void>
+  {
+    let changedCanonicalPath = path.resolve(event.absolutePath);
+
+    try
+    {
+      changedCanonicalPath = await realpath(changedCanonicalPath);
+    }
+    catch
+    {
+    }
+
+    const changedAt = new Date().toISOString();
+
+    for (const broadcaster of this.m_broadcasters.values())
+    {
+      broadcaster.BroadcastFileChanged(changedCanonicalPath, changedAt);
+    }
   }
 
   Get(key: SessionKey): SessionBroadcaster | undefined

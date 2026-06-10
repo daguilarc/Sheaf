@@ -1,5 +1,6 @@
 import { stat } from "node:fs/promises";
 
+import type { FileChangedNotification } from "../extensions/sheaf-chat/types.js";
 import type { SheafChatConfig } from "../server/config.js";
 import {
   AgentLifecycleState,
@@ -69,6 +70,7 @@ export interface AgentManagerOptions
   lifecycle?: LifecycleEmitter;
   summarizer?: SessionSummaryGenerator;
   createPiSession?: CreatePiSessionFn;
+  notifyFileChanged?: (event: FileChangedNotification) => void | Promise<void>;
   idleOffloadSeconds?: number;
   setTimeoutFn?: typeof setTimeout;
   clearTimeoutFn?: typeof clearTimeout;
@@ -90,6 +92,7 @@ export class AgentManager
   private readonly m_runtimeContext: SessionRuntimeContext;
   private readonly m_runtimes = new Map<string, SessionRuntime>();
   private readonly m_startupLocks = new Map<string, Promise<void>>();
+  private m_notifyFileChanged?: (event: FileChangedNotification) => void | Promise<void>;
 
   private constructor(
     config: SheafChatConfig,
@@ -99,6 +102,7 @@ export class AgentManager
     summarizer: SessionSummaryGenerator,
     createPiSession: CreatePiSessionFn,
     runtimeContext: SessionRuntimeContext,
+    notifyFileChanged?: (event: FileChangedNotification) => void | Promise<void>,
   )
   {
     this.m_config = config;
@@ -107,6 +111,7 @@ export class AgentManager
     this.m_lifecycle = lifecycle;
     this.m_createPiSession = createPiSession;
     this.m_runtimeContext = runtimeContext;
+    this.m_notifyFileChanged = notifyFileChanged;
   }
 
   static async Create(options: AgentManagerOptions): Promise<AgentManager>
@@ -137,7 +142,15 @@ export class AgentManager
       summarizer,
       createPiSession,
       runtimeContext,
+      options.notifyFileChanged,
     );
+  }
+
+  SetNotifyFileChanged(
+    notifyFileChanged: (event: FileChangedNotification) => void | Promise<void>,
+  ): void
+  {
+    this.m_notifyFileChanged = notifyFileChanged;
   }
 
   get lifecycle(): LifecycleEmitter
@@ -362,6 +375,7 @@ export class AgentManager
         pileDirectory: ResolvePileDirectoryPath(this.m_storagePaths, key.pile),
         model: bootstrap.model,
         coldResume: bootstrap.manifest !== undefined,
+        notifyFileChanged: this.m_notifyFileChanged,
       });
 
       runtime.BindPiSession(piSession);

@@ -1,5 +1,5 @@
 import { constants } from "node:fs";
-import { access, readFile, writeFile } from "node:fs/promises";
+import { access, readFile, realpath, writeFile } from "node:fs/promises";
 
 import { Type } from "typebox";
 
@@ -171,6 +171,27 @@ export function CreateEditTool(context: ScopedToolContext): ScopedToolDefinition
         );
         const finalContent = bom + RestoreLineEndings(newContent, originalEnding);
         await writeFile(absolutePath, finalContent, "utf-8");
+
+        let changedCanonicalPath = absolutePath;
+
+        try
+        {
+          changedCanonicalPath = await realpath(absolutePath);
+        }
+        catch
+        {
+        }
+
+        const notifyFileChanged = context.notifyFileChanged;
+
+        if (notifyFileChanged !== undefined)
+        {
+          await notifyFileChanged({
+            absolutePath: changedCanonicalPath,
+            rootDirectory: context.rootDirectory,
+            source: "edit_tool",
+          });
+        }
 
         return ToolSuccess(
           `Successfully replaced ${validated.edits.length} block(s) in ${displayPath}.`,

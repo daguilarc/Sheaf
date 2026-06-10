@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdir } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import test from "node:test";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import WebSocket from "ws";
@@ -9,19 +12,23 @@ import { AgentLifecycleState } from "../../../src/shared/types.js";
 import { AppendEnvelope, CollectSessionLogEntries } from "../../../src/storage/sessionLog.js";
 import { CreateStoragePaths } from "../../../src/storage/paths.js";
 import {
+  AssertFileChangedPayload,
   BuildWsUrl,
   ConnectWebSocket,
   CreateBlankSessionViaApi,
+  CreateSessionWithRoot,
   DrainConnection,
   CreateClientEnvelope,
   CreateFakeTimers,
   ResolveOpenAiTestModel,
+  RunSessionEdit,
   SendClientFrame,
   WaitForCondition,
   WaitForEnvelope,
   WaitForOpenOrReject,
   WithWebSocket,
   WithWebSocketTestServer,
+  WriteSessionFile,
 } from "./helpers.js";
 
 test("WebSocket connection sends server.hello then server.caught_up", async () =>
@@ -900,4 +907,169 @@ test("socket liveness uses connection id and disconnect releases idle broadcaste
     assert.equal(statusAfter?.state, AgentLifecycleState.Cold);
     assert.equal(fake?.disposed, true);
   }, { idleOffloadSeconds: 1, timers });
+});
+
+test("file.changed broadcasts to all open sessions with the same root", async () =>
+{
+  await WithWebSocketTestServer(async (handle) =>
+  {
+    const rootDirectory = path.join(handle.config.repoRoot, "projects", "demo");
+    const sessionA = await CreateSessionWithRoot(handle, rootDirectory);
+    const sessionB = await CreateSessionWithRoot(handle, rootDirectory);
+    const wsA = await ConnectWebSocket(
+      BuildWsUrl(handle, sessionA.pile, sessionA.sessionId, { clientId: "client-a" }),
+    );
+    const wsB = await ConnectWebSocket(
+      BuildWsUrl(handle, sessionB.pile, sessionB.sessionId, { clientId: "client-b" }),
+    );
+
+    try
+    {
+      await WriteSessionFile(rootDirectory, "docs/readme.md", "# Title\n");
+
+      const envelopePromiseA = WaitForEnvelope(
+        wsA.socket,
+        (envelope) => envelope.kind === "file.changed",
+      );
+      const envelopePromiseB = WaitForEnvelope(
+        wsB.socket,
+        (envelope) => envelope.kind === "file.changed",
+      );
+
+      await RunSessionEdit(handle, sessionA, {
+        path: "docs/readme.md",
+        edits: [{ oldText: "# Title", newText: "# Updated" }],
+      });
+
+      const [envelopeA, envelopeB] = await Promise.all([envelopePromiseA, envelopePromiseB]);
+      AssertFileChangedPayload(envelopeA, "docs/readme.md", handle.config.repoRoot);
+      AssertFileChangedPayload(envelopeB, "docs/readme.md", handle.config.repoRoot);
+
+      const updated = await readFile(path.join(rootDirectory, "docs/readme.md"), "utf-8");
+      assert.equal(updated, "# Updated\n");
+    }
+    finally
+    {
+      wsA.socket.close();
+      wsB.socket.close();
+    }
+  });
+});
+
+test("file.changed uses receiver-relative paths for parent and child roots", async () =>
+{
+  await WithWebSocketTestServer(async (handle) =>
+  {
+    const parentRoot = path.join(handle.config.repoRoot, "projects");
+    const childRoot = path.join(handle.config.repoRoot, "projects", "demo");
+    const parentSession = await CreateSessionWithRoot(handle, parentRoot);
+    const childSession = await CreateSessionWithRoot(handle, childRoot);
+    const parentWs = await ConnectWebSocket(
+      BuildWsUrl(handle, parentSession.pile, parentSession.sessionId, { clientId: "parent" }),
+    );
+    const childWs = await ConnectWebSocket(
+      BuildWsUrl(handle, childSession.pile, childSession.sessionId, { clientId: "child" }),
+    );
+
+    try
+    {
+      await WriteSessionFile(childRoot, "docs/readme.md", "# Child\n");
+      await WriteSessionFile(parentRoot, "other/sibling.md", "# Sibling\n");
+
+      const childEnvelopePromise = WaitForEnvelope(
+        childWs.socket,
+        (envelope) => envelope.kind === "file.changed",
+      );
+      const parentEnvelopePromise = WaitForEnvelope(
+        parentWs.socket,
+        (envelope) => envelope.kind === "file.changed",
+      );
+
+      await RunSessionEdit(handle, childSession, {
+        path: "docs/readme.md",
+        edits: [{ oldText: "# Child", newText: "# Child Updated" }],
+      });
+
+      const [childEnvelope, parentEnvelope] = await Promise.all([
+        childEnvelopePromise,
+        parentEnvelopePromise,
+      ]);
+      AssertFileChangedPayload(childEnvelope, "docs/readme.md", handle.config.repoRoot);
+      AssertFileChangedPayload(parentEnvelope, "demo/docs/readme.md", handle.config.repoRoot);
+
+      const childSiblingPromise = WaitForEnvelope(
+        childWs.socket,
+        (envelope) =>
+          envelope.kind === "file.changed" &&
+          (envelope.payload as { path?: string }).path === "other/sibling.md",
+        500,
+      ).catch(() => null);
+
+      await RunSessionEdit(handle, parentSession, {
+        path: "other/sibling.md",
+        edits: [{ oldText: "# Sibling", newText: "# Sibling Updated" }],
+      });
+
+      const parentSiblingEnvelope = await WaitForEnvelope(
+        parentWs.socket,
+        (envelope) =>
+          envelope.kind === "file.changed" &&
+          (envelope.payload as { path?: string }).path === "other/sibling.md",
+      );
+      AssertFileChangedPayload(parentSiblingEnvelope, "other/sibling.md", handle.config.repoRoot);
+      assert.equal(await childSiblingPromise, null);
+    }
+    finally
+    {
+      parentWs.socket.close();
+      childWs.socket.close();
+    }
+  });
+});
+
+test("file.changed is not sent to sessions with unrelated roots", async () =>
+{
+  await WithWebSocketTestServer(async (handle) =>
+  {
+    const demoRoot = path.join(handle.config.repoRoot, "projects", "demo");
+    const otherRoot = path.join(handle.config.repoRoot, "projects", "other");
+    await mkdir(otherRoot, { recursive: true });
+    const demoSession = await CreateSessionWithRoot(handle, demoRoot);
+    const otherSession = await CreateSessionWithRoot(handle, otherRoot);
+    const demoWs = await ConnectWebSocket(
+      BuildWsUrl(handle, demoSession.pile, demoSession.sessionId, { clientId: "demo" }),
+    );
+    const otherWs = await ConnectWebSocket(
+      BuildWsUrl(handle, otherSession.pile, otherSession.sessionId, { clientId: "other" }),
+    );
+
+    try
+    {
+      await WriteSessionFile(demoRoot, "docs/readme.md", "# Demo\n");
+
+      const demoEnvelopePromise = WaitForEnvelope(
+        demoWs.socket,
+        (envelope) => envelope.kind === "file.changed",
+      );
+      const otherEnvelopePromise = WaitForEnvelope(
+        otherWs.socket,
+        (envelope) => envelope.kind === "file.changed",
+        500,
+      ).catch(() => null);
+
+      await RunSessionEdit(handle, demoSession, {
+        path: "docs/readme.md",
+        edits: [{ oldText: "# Demo", newText: "# Demo Updated" }],
+      });
+
+      const demoEnvelope = await demoEnvelopePromise;
+      AssertFileChangedPayload(demoEnvelope, "docs/readme.md", handle.config.repoRoot);
+      assert.equal(await otherEnvelopePromise, null);
+    }
+    finally
+    {
+      demoWs.socket.close();
+      otherWs.socket.close();
+    }
+  });
 });

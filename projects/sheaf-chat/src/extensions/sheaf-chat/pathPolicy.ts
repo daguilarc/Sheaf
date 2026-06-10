@@ -37,9 +37,9 @@ function HasParentTraversal(inputPath: string): boolean
   return false;
 }
 
-function IsWithinRoot(candidate: string, canonicalRoot: string): boolean
+export function IsPathWithinRoot(candidate: string, canonicalRoot: string): boolean
 {
-  const relative = path.relative(canonicalRoot, candidate);
+  const relative = path.relative(path.resolve(canonicalRoot), path.resolve(candidate));
 
   if (relative === "")
   {
@@ -54,6 +54,27 @@ function IsWithinRoot(candidate: string, canonicalRoot: string): boolean
   return true;
 }
 
+export function ToRootRelativePathFromCanonical(canonicalRoot: string, absolutePath: string): string
+{
+  const relative = path.relative(path.resolve(canonicalRoot), path.resolve(absolutePath));
+
+  if (relative === "" || relative === ".")
+  {
+    return ".";
+  }
+
+  if (relative.startsWith("..") || path.isAbsolute(relative))
+  {
+    throw new PathEscapeError(
+      "Path is outside the session root",
+      absolutePath,
+      "resolved_path_outside_root",
+    );
+  }
+
+  return relative.split(path.sep).join("/");
+}
+
 export async function CreateRootPolicy(rootDirectory: string): Promise<RootPolicy>
 {
   const canonicalRoot = await realpath(path.resolve(rootDirectory));
@@ -62,7 +83,7 @@ export async function CreateRootPolicy(rootDirectory: string): Promise<RootPolic
   {
     const normalized = path.resolve(absolutePath);
 
-    if (!IsWithinRoot(normalized, canonicalRoot))
+    if (!IsPathWithinRoot(normalized, canonicalRoot))
     {
       throw new PathEscapeError(
         "Path is outside the session root",
@@ -175,7 +196,7 @@ export async function CreateRootPolicy(rootDirectory: string): Promise<RootPolic
       candidate = path.resolve(canonicalRoot, normalizedInput);
     }
 
-    if (!IsWithinRoot(candidate, canonicalRoot))
+    if (!IsPathWithinRoot(candidate, canonicalRoot))
     {
       throw new PathEscapeError(
         "Path is outside the session root",

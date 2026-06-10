@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readFile, realpath } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 
@@ -79,6 +79,84 @@ test("write creates files under root and reports relative paths", async () =>
 
     const written = await readFile(path.join(fixture.rootDirectory, "nested/new.txt"), "utf-8");
     assert.equal(written, "created");
+  }
+  finally
+  {
+    await fixture.cleanup();
+  }
+});
+
+test("edit notifies file changed only after a successful write", async () =>
+{
+  const notifications: Array<{ absolutePath: string; rootDirectory: string; source: string }> = [];
+  const fixture = await CreateScopedTestFixture(
+    async (rootDirectory, outsideDirectory) =>
+    {
+      await WriteRootFile(rootDirectory, "edit.txt", "alpha\nbeta\nbeta\n");
+      await WriteRootFile(outsideDirectory, "secret.txt", "secret\n");
+      await CreateOutsideSymlink(rootDirectory, outsideDirectory, "link.txt", "secret.txt");
+    },
+    {
+      notifyFileChanged: (event) =>
+      {
+        notifications.push(event);
+      },
+    },
+  );
+
+  try
+  {
+    const success = await RunTool(fixture, "edit", {
+      path: "edit.txt",
+      edits: [{ oldText: "alpha", newText: "gamma" }],
+    });
+    assert.equal(success.isError, undefined);
+    assert.equal(notifications.length, 1);
+    assert.equal(notifications[0]?.source, "edit_tool");
+    assert.equal(
+      notifications[0]?.absolutePath,
+      await realpath(path.join(fixture.rootDirectory, "edit.txt")),
+    );
+
+    const ambiguous = await RunTool(fixture, "edit", {
+      path: "edit.txt",
+      edits: [{ oldText: "beta", newText: "delta" }],
+    });
+    assert.equal(ambiguous.isError, true);
+    assert.equal(notifications.length, 1);
+
+    await assert.rejects(
+      () => RunTool(fixture, "edit", {
+        path: "missing.txt",
+        edits: [{ oldText: "a", newText: "b" }],
+      }),
+    );
+    assert.equal(notifications.length, 1);
+
+    const invalid = await RunTool(fixture, "edit", {
+      path: "edit.txt",
+      edits: [],
+    });
+    assert.equal(invalid.isError, true);
+    assert.equal(notifications.length, 1);
+
+    const escape = await RunTool(fixture, "edit", {
+      path: "link.txt",
+      edits: [{ oldText: "secret", newText: "leaked" }],
+    });
+    assert.equal(escape.isError, true);
+    assert.equal(notifications.length, 1);
+
+    const aborted = await fixture.tools.get("edit")?.execute(
+      "abort-call",
+      {
+        path: "edit.txt",
+        edits: [{ oldText: "gamma", newText: "zeta" }],
+      },
+      AbortSignal.abort(),
+    );
+    assert.equal(aborted?.isError, true);
+    assert.equal(notifications.length, 1);
   }
   finally
   {

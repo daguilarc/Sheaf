@@ -14,6 +14,7 @@ import {
   RegisterScopedTools,
   x_scopedToolNames,
 } from "../extensions/sheaf-chat/index.js";
+import type { FileChangedNotification } from "../extensions/sheaf-chat/types.js";
 import type { ModelReference } from "../shared/types.js";
 import { ResolveSheafAgentDir } from "./auth.js";
 import { CreateSheafProviderExtension } from "./providerExtension.js";
@@ -49,6 +50,7 @@ export interface CreateSheafPiSessionInput
   pileDirectory: string;
   model: ModelReference;
   coldResume?: boolean;
+  notifyFileChanged?: (event: FileChangedNotification) => void | Promise<void>;
 }
 
 export interface CreateSheafPiSessionOptions
@@ -145,7 +147,10 @@ class AgentSessionHandle implements PiSessionHandle
   }
 }
 
-function CreateScopedToolsExtension(rootDirectory: string)
+function CreateScopedToolsExtension(
+  rootDirectory: string,
+  notifyFileChanged?: (event: FileChangedNotification) => void | Promise<void>,
+)
 {
   const bindings = CreateDefaultBindings();
 
@@ -155,6 +160,7 @@ function CreateScopedToolsExtension(rootDirectory: string)
       rootDirectory,
       audit: bindings.audit,
       emitActivity: bindings.emitActivity,
+      notifyFileChanged,
     });
   };
 }
@@ -193,7 +199,7 @@ export async function CreateSheafPiSession(
     noContextFiles: true,
     extensionFactories: [
       CreateSheafProviderExtension(input.config, input.modelBundle.localProviderState),
-      CreateScopedToolsExtension(input.rootDirectory),
+      CreateScopedToolsExtension(input.rootDirectory, input.notifyFileChanged),
     ],
   });
 

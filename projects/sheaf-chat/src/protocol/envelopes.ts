@@ -15,3 +15,4 @@ export const x_chatUserMessageKind = "chat.user_message";
 export const x_sessionUpdatedKind = "session.updated";
 export const x_modelChangedKind = "model.changed";
 export const x_agentStatusKind = "agent.status";
+export const x_fileChangedKind = "file.changed";

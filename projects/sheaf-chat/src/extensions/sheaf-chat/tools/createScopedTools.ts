@@ -1,7 +1,7 @@
 import { CreateAuditLogger } from "../audit.js";
 import { CreateRootPolicy } from "../pathPolicy.js";
 import type { ScopedToolBindings } from "../audit.js";
-import type { ScopedToolContext, ScopedToolDefinition } from "../types.js";
+import type { FileChangedNotification, ScopedToolContext, ScopedToolDefinition } from "../types.js";
 import { CreateEditTool } from "./edit.js";
 import { CreateFileInfoTool } from "./fileInfo.js";
 import { CreateFindFilesTool } from "./findFiles.js";
@@ -27,6 +27,7 @@ export interface CreateScopedToolsInput
   rootDirectory: string;
   audit: ScopedToolBindings["audit"];
   emitActivity: ScopedToolBindings["emitActivity"];
+  notifyFileChanged?: (event: FileChangedNotification) => void | Promise<void>;
 }
 
 export async function CreateScopedToolContext(
@@ -40,6 +41,7 @@ export async function CreateScopedToolContext(
     policy,
     audit: input.audit,
     emitActivity: input.emitActivity,
+    notifyFileChanged: input.notifyFileChanged,
   };
 }
 

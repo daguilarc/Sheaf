@@ -5,7 +5,11 @@ import path from "node:path";
 import { CreateAuditLogger } from "../../src/extensions/sheaf-chat/audit.js";
 import { BuildScopedTools } from "../../src/extensions/sheaf-chat/tools/createScopedTools.js";
 import type { ScopedActivityEvent } from "../../src/extensions/sheaf-chat/audit.js";
-import type { ScopedToolContext, ScopedToolDefinition } from "../../src/extensions/sheaf-chat/types.js";
+import type {
+  FileChangedNotification,
+  ScopedToolContext,
+  ScopedToolDefinition,
+} from "../../src/extensions/sheaf-chat/types.js";
 
 export interface ScopedTestFixture
 {
@@ -17,8 +21,14 @@ export interface ScopedTestFixture
   cleanup(): Promise<void>;
 }
 
+export interface CreateScopedTestFixtureOptions
+{
+  notifyFileChanged?: (event: FileChangedNotification) => void | Promise<void>;
+}
+
 export async function CreateScopedTestFixture(
   layout?: (rootDirectory: string, outsideDirectory: string) => Promise<void>,
+  options: CreateScopedTestFixtureOptions = {},
 ): Promise<ScopedTestFixture>
 {
   const parent = await mkdtemp(path.join(tmpdir(), "sheaf-chat-tools-"));
@@ -42,6 +52,7 @@ export async function CreateScopedTestFixture(
     rootDirectory,
     audit,
     emitActivity,
+    notifyFileChanged: options.notifyFileChanged,
   });
   const tools = new Map(built.tools.map((tool) => [tool.name, tool]));
 

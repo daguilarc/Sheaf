@@ -33,6 +33,7 @@ import type { SessionPersistenceHubRegistry } from "../protocol/sessionPersisten
 import type { SheafChatConfig } from "./config.js";
 import { ProfileStreamPoint } from "./streamProfiler.js";
 import { ParseOptionalInteger } from "./http.js";
+import { CreateSessionRootPolicy } from "./files/sessionBrowser.js";
 import { ResolveSessionFilePath } from "../storage/paths.js";
 import { StorageError } from "../storage/errors.js";
 import { ValidatePileName, ValidateSessionId } from "../storage/validation.js";
@@ -277,11 +278,17 @@ export async function AttachChatWebSocketConnection(
     storagePaths: context.agentManager.storagePaths,
     agentManager: context.agentManager,
   });
+  const sessionRootPolicy = await CreateSessionRootPolicy(
+    context.agentManager,
+    params.pile,
+    params.sessionId,
+  );
   const broadcaster = await context.broadcasterRegistry.GetOrCreate({
     key,
     storagePaths: context.agentManager.storagePaths,
     agentManager: context.agentManager,
     persistenceHub,
+    canonicalRootDirectory: sessionRootPolicy.canonicalRoot,
   });
 
   const client = broadcaster.RegisterClient(socket, params.clientId);

@@ -101,6 +101,10 @@ export function CreateSheafChatServer(options: SheafChatServerOptions): SheafCha
   };
   const persistenceHubRegistry = new SessionPersistenceHubRegistry();
   const broadcasterRegistry = new SessionBroadcasterRegistry();
+  options.agentManager.SetNotifyFileChanged((event) =>
+  {
+    void broadcasterRegistry.BroadcastFileChanged(event);
+  });
   const chatWebSocketServer = CreateChatWebSocketServer();
   const chatWebSocketContext = {
     config: options.config,

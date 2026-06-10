@@ -1,8 +1,12 @@
+import assert from "node:assert/strict";
 import { mkdirSync } from "node:fs";
+import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import WebSocket from "ws";
 
+import { CreateAuditLogger } from "../../../src/extensions/sheaf-chat/audit.js";
+import { BuildScopedTools } from "../../../src/extensions/sheaf-chat/tools/createScopedTools.js";
 import type { PiSessionHandle } from "../../../src/agents/piAdapter.js";
 import { AgentManager } from "../../../src/agents/manager.js";
 import type { SessionBroadcasterRegistry } from "../../../src/protocol/sessionBroadcaster.js";
@@ -136,6 +140,7 @@ export function ResolveOpenAiTestModel(agentManager: AgentManager): { provider: 
 export async function CreateBlankSessionViaApi(
   handle: WebSocketTestHandle,
   pile = "default",
+  rootDirectory?: string,
 ): Promise<{ pile: string; sessionId: string }>
 {
   const storagePaths = CreateStoragePaths(handle.config.repoRoot);
@@ -145,7 +150,7 @@ export async function CreateBlankSessionViaApi(
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
-      rootDirectory: path.join(handle.config.repoRoot, "projects", "demo"),
+      rootDirectory: rootDirectory ?? path.join(handle.config.repoRoot, "projects", "demo"),
       model,
     }),
   });
@@ -160,6 +165,87 @@ export async function CreateBlankSessionViaApi(
     pile,
     sessionId: body.sessionId,
   };
+}
+
+export async function CreateSessionWithRoot(
+  handle: WebSocketTestHandle,
+  rootDirectory: string,
+  pile = "default",
+): Promise<{ pile: string; sessionId: string }>
+{
+  return CreateBlankSessionViaApi(handle, pile, rootDirectory);
+}
+
+export async function WriteSessionFile(
+  rootDirectory: string,
+  relativePath: string,
+  content: string,
+): Promise<string>
+{
+  const absolutePath = path.join(rootDirectory, relativePath);
+  await mkdir(path.dirname(absolutePath), { recursive: true });
+  await writeFile(absolutePath, content, "utf-8");
+  return absolutePath;
+}
+
+export async function RunSessionEdit(
+  handle: WebSocketTestHandle,
+  session: { pile: string; sessionId: string },
+  params: {
+    path: string;
+    edits: Array<{ oldText: string; newText: string }>;
+  },
+): Promise<void>
+{
+  const rootDirectory = await handle.agentManager.resolveSessionRootDirectory(
+    session.pile,
+    session.sessionId,
+  );
+  const built = await BuildScopedTools({
+    rootDirectory,
+    audit: CreateAuditLogger({ emitActivity: () => {} }),
+    emitActivity: () => {},
+    notifyFileChanged: (event) => handle.broadcasterRegistry.BroadcastFileChanged(event),
+  });
+  const editTool = built.tools.find((tool) => tool.name === "edit");
+
+  if (editTool === undefined)
+  {
+    throw new Error("edit tool not found");
+  }
+
+  const result = await editTool.execute("test-edit", params, undefined);
+
+  if (result.isError)
+  {
+    throw new Error(result.content[0]?.text ?? "edit failed");
+  }
+}
+
+export function AssertFileChangedPayload(
+  envelope: ChatEnvelope,
+  expectedPath: string,
+  repoRoot: string,
+): void
+{
+  assert.equal(envelope.kind, "file.changed");
+  assert.equal(envelope.sequence, undefined);
+
+  const payload = envelope.payload as {
+    eventType: string;
+    path: string;
+    fileId: string;
+    changedAt: string;
+    source: string;
+  };
+
+  assert.equal(payload.eventType, "fileChanged");
+  assert.equal(payload.path, expectedPath);
+  assert.equal(payload.fileId, expectedPath);
+  assert.equal(payload.source, "edit_tool");
+  assert.match(payload.changedAt, /^\d{4}-\d{2}-\d{2}T/);
+  assert.equal(JSON.stringify(payload).includes(repoRoot), false);
+  assert.equal(path.isAbsolute(payload.path), false);
 }
 
 export function BuildWsUrl(
