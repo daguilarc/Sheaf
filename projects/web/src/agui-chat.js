@@ -814,6 +814,21 @@
       .replace(/'/g, "&#39;");
   }
 
+  function RenderAssistantMarkdown(text) {
+    if (
+      typeof window !== "undefined" &&
+      window.SheafMarkdown &&
+      typeof window.SheafMarkdown.renderMarkdown === "function"
+    ) {
+      const rendered = window.SheafMarkdown.renderMarkdown(text);
+      if (rendered != null) {
+        return rendered;
+      }
+    }
+
+    return FormatMarkdown(text);
+  }
+
   function FormatMarkdown(text) {
     const placeholders = [];
     let working = EscapeHtml(text);
@@ -1096,12 +1111,20 @@
     return { root: fallback, content: fallback };
   }
 
-  function UpdateAssistantContent(contentNode, message) {
-    let html = FormatMarkdown(message.content);
+  function UpdateAssistantContent(contentNode, message, linkContext) {
+    let html = RenderAssistantMarkdown(message.content);
     if (message.isStreaming) {
       html += '<span class="agui-chat-streaming"></span>';
     }
     contentNode.innerHTML = html;
+
+    if (
+      typeof window !== "undefined" &&
+      window.SheafMarkdown &&
+      typeof window.SheafMarkdown.enhanceRenderedLinks === "function"
+    ) {
+      window.SheafMarkdown.enhanceRenderedLinks(contentNode, linkContext || {});
+    }
   }
 
   function UpdateMessageNode(handle, nodeEntry, message, state) {
@@ -1593,6 +1616,7 @@
       prependSnapshotMessages: PrependSnapshotMessages,
       escapeHtml: EscapeHtml,
       formatMarkdown: FormatMarkdown,
+      renderAssistantMarkdown: RenderAssistantMarkdown,
       isAtBottom: IsAtBottom,
       renderChat: RenderChat,
       scheduleRender: ScheduleRender,

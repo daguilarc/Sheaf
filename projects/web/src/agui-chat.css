@@ -344,3 +344,151 @@
   margin-bottom: 4px;
   color: var(--agui-chat-muted, #8b9cb3);
 }
+
+.sheaf-markdown
+{
+  line-height: 1.55;
+}
+
+.sheaf-markdown > :first-child
+{
+  margin-top: 0;
+}
+
+.sheaf-markdown > :last-child
+{
+  margin-bottom: 0;
+}
+
+.sheaf-markdown h1,
+.sheaf-markdown h2,
+.sheaf-markdown h3,
+.sheaf-markdown h4,
+.sheaf-markdown h5,
+.sheaf-markdown h6
+{
+  margin: 16px 0 8px;
+  line-height: 1.25;
+  font-weight: 700;
+}
+
+.sheaf-markdown h1
+{
+  font-size: 1.5em;
+}
+
+.sheaf-markdown h2
+{
+  font-size: 1.3em;
+}
+
+.sheaf-markdown h3
+{
+  font-size: 1.15em;
+}
+
+.sheaf-markdown p
+{
+  margin: 0 0 10px;
+}
+
+.sheaf-markdown ul,
+.sheaf-markdown ol
+{
+  margin: 0 0 10px;
+  padding-left: 1.5em;
+}
+
+.sheaf-markdown li
+{
+  margin: 4px 0;
+}
+
+.sheaf-markdown blockquote
+{
+  margin: 0 0 10px;
+  padding: 4px 12px;
+  border-left: 3px solid var(--agui-chat-border, #2d3a4d);
+  color: var(--agui-chat-muted, #8b9cb3);
+}
+
+.sheaf-markdown table
+{
+  width: 100%;
+  margin: 0 0 12px;
+  border-collapse: collapse;
+  display: block;
+  overflow-x: auto;
+}
+
+.sheaf-markdown th,
+.sheaf-markdown td
+{
+  border: 1px solid var(--agui-chat-border, #2d3a4d);
+  padding: 6px 10px;
+  text-align: left;
+}
+
+.sheaf-markdown th
+{
+  background: var(--agui-chat-surface-muted, #232f3e);
+}
+
+.sheaf-markdown pre
+{
+  margin: 8px 0;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: var(--agui-chat-bg, #0f1419);
+  border: 1px solid var(--agui-chat-border, #2d3a4d);
+  overflow-x: auto;
+}
+
+.sheaf-markdown pre code
+{
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  white-space: pre;
+}
+
+.sheaf-markdown code
+{
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.9em;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--agui-chat-surface-muted, #232f3e);
+  border: 1px solid var(--agui-chat-border, #2d3a4d);
+}
+
+.sheaf-markdown a
+{
+  color: var(--agui-chat-accent, #3b82f6);
+  text-decoration: underline;
+}
+
+.sheaf-markdown-file-link
+{
+  cursor: pointer;
+}
+
+.sheaf-markdown-math
+{
+  display: inline-block;
+  max-width: 100%;
+  overflow-x: auto;
+  vertical-align: middle;
+}
+
+.sheaf-markdown-math--display
+{
+  display: block;
+  margin: 12px 0;
+  overflow-x: auto;
+}
+
+.sheaf-markdown .katex-display
+{
+  overflow-x: auto;
+  overflow-y: hidden;
+}

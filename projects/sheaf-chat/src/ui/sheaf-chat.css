@@ -333,6 +333,11 @@ body
   display: none;
 }
 
+.sheaf-file-view-content .sheaf-markdown
+{
+  padding: 4px 0;
+}
+
 @media (max-width: 720px)
 {
   .sheaf-chat-header

@@ -16,6 +16,7 @@ import { DispatchApiRoute } from "./router.js";
 import type { RouteContext } from "./routes/context.js";
 import {
   BuildSheafChatStaticRoots,
+  BuildVendorAssetAllowlist,
   ReadStaticFile,
   ResolveSheafChatIndexPath,
   SendHtml,
@@ -66,6 +67,7 @@ async function HandleStaticRequest(
 ): Promise<void>
 {
   const staticRoots = BuildSheafChatStaticRoots(config.repoRoot);
+  const vendorAllowlist = BuildVendorAssetAllowlist(config.repoRoot);
 
   if (pathname === "/" || pathname === "/index.html")
   {
@@ -81,7 +83,7 @@ async function HandleStaticRequest(
     return;
   }
 
-  const staticFile = await ReadStaticFile(pathname, staticRoots);
+  const staticFile = await ReadStaticFile(pathname, staticRoots, vendorAllowlist);
 
   if (!staticFile)
   {
