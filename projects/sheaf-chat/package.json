@@ -9,6 +9,7 @@
     "build": "tsc",
     "start": "node dist/src/server/main.js",
     "test": "npm run build && node scripts/run-tests.mjs",
+    "test:integration": "npm run build && node scripts/run-integration-tests.mjs",
     "clean": "rm -rf dist node_modules"
   },
   "engines": {

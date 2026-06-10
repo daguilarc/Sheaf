@@ -1,10 +1,10 @@
 # State
 
-- global_step: 30
+- global_step: 31
 - machine_name: quest
 - machine_path: projects/sheaf-chat/quests/main/0001_file_server
-- state: IntegrationTesting
-- updated_at: 2026-06-10T05:40:44Z
+- state: QuestDocumenting
+- updated_at: 2026-06-10T19:09:42Z
 
 ## Tags
 
