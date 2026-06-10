@@ -1,6 +1,6 @@
 # State
 
-- global_step: 24
+- global_step: 25
 - machine_name: quest
 - machine_path: projects/sheaf-chat/quests/main/0001_file_server
 - state: ExecuteSlice
