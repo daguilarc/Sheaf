@@ -2,10 +2,10 @@
 
 ## Issue PL-0001
 
-- status: open
+- status: completed
 - owner_role: polisher_reviewer
 - created_at: 2026-06-10T03:41:55Z
-- updated_at: 2026-06-10T03:41:55Z
+- updated_at: 2026-06-10T03:44:57Z
 - title: Directory listing reports symlink target path instead of the entry's own path
 - details: ## What is wrong
 
