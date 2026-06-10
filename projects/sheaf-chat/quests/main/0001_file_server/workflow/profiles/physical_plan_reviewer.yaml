@@ -1,0 +1,19 @@
+harness: claude_code
+model: claude-opus-4-8
+reasoning_effort: null
+idle_timeout_seconds: 1800
+prompt: ../prompts/physical_plan_reviewer.md
+runtime_context:
+  include_current_child_path: true
+  include_reference_docs_path: true
+modify:
+  allow:
+    - "$quest/physicalplan_issues.md"
+    - "$quest/physicalplan_accepted.md"
+    - "$quest/human_intervention_request.md"
+  block:
+    - "**"
+thread:
+  scope: quest
+  name_template: "{repo}_quest_{quest_number:04d}_{profile}"
+  registry_key_template: "{profile}"

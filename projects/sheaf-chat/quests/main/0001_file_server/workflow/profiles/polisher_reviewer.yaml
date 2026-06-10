@@ -1,0 +1,19 @@
+harness: claude_code
+model: claude-opus-4-8
+reasoning_effort: null
+idle_timeout_seconds: 1800
+prompt: ../prompts/polisher_reviewer.md
+runtime_context:
+  include_current_child_path: true
+  include_reference_docs_path: true
+modify:
+  allow:
+    - "$active_child/polishing_issues.md"
+    - "$active_child/implementation_accepted.md"
+    - "$quest/human_intervention_request.md"
+  block:
+    - "**"
+thread:
+  scope: child
+  name_template: "{repo}_quest_{quest_number:04d}_slice_{child_number:04d}_{profile}"
+  registry_key_template: "slice_{child_number}_{profile}"

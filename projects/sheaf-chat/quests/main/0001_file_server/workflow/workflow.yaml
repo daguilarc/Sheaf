@@ -1,0 +1,70 @@
+version: 1
+name: default-main-quest
+entry_machine: quest
+
+special:
+  completed_state: Completed
+  human_intervention_file: human_intervention_request.md
+
+preamble: preamble.md
+
+variables:
+  quest: .
+  specs: specs
+  project_docs: $project/docs
+
+scaffold:
+  - ensure_file:
+      path: physicalplan_issues.md
+      content: "# Issues\n"
+  - ensure_file:
+      path: integration_test_issues.md
+      content: "# Issues\n"
+
+collections:
+  slices:
+    path: slices/*
+    machine: slice
+    order: lexical
+    id_from: directory_name
+    active_var: active_slice
+    scaffold:
+      - ensure_dir: physicalplan
+      - ensure_file:
+          path: state.md
+          content: "# Slice State\n\nstate: NotStarted\nupdated_at: {now}\n"
+      - ensure_file:
+          path: state_history.md
+          content: "# State Transition History\n\n"
+      - ensure_file:
+          path: polishing_issues.md
+          content: "# Issues\n"
+      - ensure_dir: notes
+
+issues:
+  physical_plan:
+    path: physicalplan_issues.md
+    owner: physical_plan_reviewer
+    id_prefix: QP
+  polishing:
+    path: "$active_child/polishing_issues.md"
+    owner: polisher_reviewer
+    id_prefix: PL
+  integration_test:
+    path: integration_test_issues.md
+    owner: integration_tester
+    id_prefix: IT
+
+machines:
+  quest: machines/quest.yaml
+  slice: machines/slice.yaml
+
+profiles:
+  physical_planner: profiles/physical_planner.yaml
+  physical_plan_reviewer: profiles/physical_plan_reviewer.yaml
+  implementer: profiles/implementer.yaml
+  polisher_reviewer: profiles/polisher_reviewer.yaml
+  polisher: profiles/polisher.yaml
+  integration_tester: profiles/integration_tester.yaml
+  integration_test_polisher: profiles/integration_test_polisher.yaml
+  documenter: profiles/documenter.yaml

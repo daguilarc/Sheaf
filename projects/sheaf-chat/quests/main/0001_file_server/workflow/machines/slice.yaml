@@ -1,0 +1,80 @@
+machine: slice
+initial: SliceSetup
+terminal: [Completed]
+
+states:
+  SliceSetup:
+    node_name: SliceSetupNode
+    persisted_as: NotStarted
+    actions:
+      - ensure_dir: physicalplan
+      - ensure_file:
+          path: state.md
+          content: "# Slice State\n\nstate: NotStarted\nupdated_at: {now}\n"
+      - ensure_file:
+          path: state_history.md
+          content: "# State Transition History\n\n"
+      - ensure_file:
+          path: polishing_issues.md
+          content: "# Issues\n"
+      - ensure_dir: notes
+    transitions:
+      - to: Implementing
+
+  Implementing:
+    node_name: SliceImplementingNode
+    run:
+      profile: implementer
+      task: |
+        Implement the plan described in this slice's `physicalplan/` directory.
+        When the full plan is complete, create `implementation_done.md` in this
+        slice with a brief completion summary.
+    transitions:
+      - if:
+          file_exists: implementation_done.md
+        to: PolishingReview
+      - stay:
+          reason: missing_implementation_done
+
+  PolishingReview:
+    node_name: SlicePolishingReviewNode
+    run:
+      profile: polisher_reviewer
+      task: |
+        Review the implementation in this slice. Use `git log` and the current
+        slice path to find implementer commits for this slice on the first
+        review pass, and relevant polisher commits on later passes, then review
+        those changes. Use the issue CLI with this slice's `polishing_issues.md`
+        file to create, edit, or close issues. If no open issues remain, create
+        `implementation_accepted.md` with an acceptance summary.
+    transitions:
+      - if:
+          has_open_issues:
+            file: polishing_issues.md
+        to: PolishingFix
+        actions:
+          - remove_file: implementation_accepted.md
+      - if:
+          all:
+            - no_open_issues:
+                file: polishing_issues.md
+            - file_exists: implementation_accepted.md
+        to: Completed
+      - stay:
+          reason: polishing_review_incomplete
+
+  PolishingFix:
+    node_name: SlicePolishingFixNode
+    run:
+      profile: polisher
+      task: |
+        Fix the open polishing issues for this slice. Use the issue CLI with
+        this slice's `polishing_issues.md`. Record issue responses through the
+        CLI, but do not close issues yourself.
+    transitions:
+      - to: PolishingReview
+
+  Completed:
+    node_name: SliceCompletedNode
+    persisted_as: Done
+    terminal: true
