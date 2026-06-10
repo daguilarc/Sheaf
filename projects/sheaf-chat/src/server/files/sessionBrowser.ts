@@ -316,7 +316,8 @@ export async function ListSessionDirectory(
       continue;
     }
 
-    const rootRelativePath = policy.ToRootRelativePath(resolved.absolutePath);
+    const entryAbsolute = path.join(absolutePath, entryName);
+    const rootRelativePath = policy.ToRootRelativePath(entryAbsolute);
 
     if (resolved.kind === "directory")
     {
