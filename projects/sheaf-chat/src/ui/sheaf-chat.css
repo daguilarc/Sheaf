@@ -374,18 +374,33 @@ body
 
 .sheaf-chat-explorer-pane--collapsed
 {
-  width: 0;
-  min-width: 0;
-  border-right: none;
+  width: var(--sheaf-chat-touch);
+  min-width: var(--sheaf-chat-touch);
   overflow: hidden;
 }
 
 .sheaf-chat-chat-pane--collapsed
 {
-  width: 0;
-  min-width: 0;
-  border-left: none;
+  width: var(--sheaf-chat-touch);
+  min-width: var(--sheaf-chat-touch);
   overflow: hidden;
+}
+
+.sheaf-chat-explorer-pane--collapsed .sheaf-chat-pane-header,
+.sheaf-chat-chat-pane--collapsed .sheaf-chat-pane-header
+{
+  justify-content: center;
+  padding: 0;
+  border-bottom: none;
+}
+
+.sheaf-chat-explorer-pane--collapsed .sheaf-chat-pane-title,
+.sheaf-chat-chat-pane--collapsed .sheaf-chat-pane-title,
+.sheaf-chat-explorer-pane--collapsed .sheaf-chat-explorer-tree,
+.sheaf-chat-chat-pane--collapsed .sheaf-chat-chat-main,
+.sheaf-chat-chat-pane--collapsed .sheaf-chat-composer
+{
+  display: none;
 }
 
 .sheaf-chat-pane-header

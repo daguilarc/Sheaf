@@ -10,10 +10,14 @@ directory is `projects/sheaf-chat/`.
 ## Prerequisites
 
 - Node.js >= 20 (`package.json` `engines`) with `npm` on `PATH`.
+- Playwright's Chromium browser cache for browser-backed integration tests.
+  Install it with `npm exec playwright install chromium` after
+  `npm install`, or bake it into the Quest Runner agent VM golden image for
+  offline/repeatable VM runs.
 - No other system dependencies. Runtime dependencies
   (`@earendil-works/pi-coding-agent`, `typebox`, `ws`, `markdown-it`,
-  `katex`) and dev dependencies (`typescript`, `ajv`, type packages) are
-  installed by `npm install`.
+  `katex`) and dev dependencies (`typescript`, `ajv`, `playwright`, type
+  packages) are installed by `npm install`.
 
 ## Make targets
 
@@ -59,8 +63,23 @@ make sheaf-chat-test
 `npm test` rebuilds, then `scripts/run-tests.mjs` recursively collects every
 `dist/tests/**/*.test.js`, sorts them, and runs them in one
 `node --test` invocation. It exits 1 if no compiled test files are found.
-There is no separate integration lane; everything (REST/WebSocket servers on
-ephemeral ports, temp data dirs, fake Pi sessions) runs in this lane.
+Integration tests are included in this lane because their compiled names end
+in `.test.js`. They start in-process REST/WebSocket servers on localhost,
+use temp data dirs and fake Pi sessions, and never require the production
+`sheaf-chat` service to be running.
+
+The focused integration lane is:
+
+```bash
+cd projects/sheaf-chat
+npm run test:integration
+```
+
+`scripts/run-integration-tests.mjs` recursively collects only
+`dist/tests/**/*.integration.test.js`. The browser integration starts its
+test server on `127.0.0.1:19104` by default; set
+`SHEAF_CHAT_PLAYWRIGHT_PORT=<port>` to choose a different base port. Tests
+that need a second browser server use the next port.
 
 Run a single compiled test file:
 
@@ -71,10 +90,32 @@ node --test dist/tests/server/websocket/protocol.test.js
 node --test dist/tests/server/rest/files.test.js
 node --test dist/tests/ui/chatScreen.test.js
 node --test dist/tests/integration/fileServer.integration.test.js
+node --test dist/tests/integration/browserChat.integration.test.js
 ```
 
 The shared AGUI renderer used by the chat screen is tested in
 `projects/web/tests/agui-chat.test.mjs` (outside this project).
+
+## Quest Runner Agent VM
+
+The browser integration is intended to run inside the Quest Runner macOS
+agent VM when the guest has the standard Sheaf toolchain plus Playwright's
+Chromium cache. The current agent VM dependency layer installs Node/npm but
+does not, by itself, download Playwright browser binaries. A fresh VM can run
+the test after:
+
+```bash
+cd /Volumes/My\ Shared\ Files/worktree/projects/sheaf-chat
+npm install
+npm exec playwright install chromium
+npm run test:integration
+```
+
+For deterministic VM execution without network access during a quest, the
+golden image or VM setup step should pre-run the Chromium install for the
+Playwright version locked in `package-lock.json`. The test binds only guest
+loopback ports and uses fake repo/data/session state, so it does not require
+the host production service or host port forwarding.
 
 ## Run the service
 

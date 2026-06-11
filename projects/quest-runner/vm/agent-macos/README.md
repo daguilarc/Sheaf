@@ -53,6 +53,11 @@ The repo remains the source of truth for language-level dependencies:
 - Python packages come from `projects/quest-runner/requirements.txt`.
 - Swift packages come from `projects/dictator/Package.swift`.
 
+Browser binaries for Playwright are not installed by the generic dependency
+layer. Projects that add Playwright browser tests must either run their own
+`npm exec playwright install <browser>` setup in the VM or bake the matching
+Playwright browser cache into the golden image.
+
 ## Xcode Boundary
 
 `projects/dictator` includes iOS Simulator tests via `xcodebuild`. Homebrew
@@ -73,4 +78,3 @@ Homebrew libraries are available.
 - `bin/agent-run`: clone, mount a worktree, and optionally run a command.
 - `bin/agent-ssh`: SSH into a running VM.
 - `bin/agent-clean`: stop/delete disposable VMs.
-

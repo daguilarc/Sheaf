@@ -93,6 +93,11 @@ outside this project's spec. Repository web UI rules:
 - **[ui-17]** IF `window.SheafMarkdown` is unavailable or cannot render a
   Markdown file preview, THEN THE UI SHALL fall back to escaped plain-text
   preview for the file content.
+- **[ui-18]** ON non-touch layouts, THE explorer and chat side panes SHALL
+  be collapsible and re-expandable from the collapsed state. A collapsed
+  side pane SHALL keep a visible, clickable rail control, hide pane content
+  that no longer fits, and update the control label/title/arrow to indicate
+  whether it will expand or collapse the pane.
 
 ## Contracts
 
@@ -138,7 +143,9 @@ onFileLink})`, and `SheafMarkdown.resolveFileLink(href, basePath, rootMode)`.
 - `src/ui/index.html` — the shell served at `/`, including vendor and shared
   assets in load order.
 - Tests drive the script with a fake DOM and fake WebSocket
-  (`tests/ui/chatScreen.test.ts`, `tests/ui/router.test.ts`).
+  (`tests/ui/chatScreen.test.ts`, `tests/ui/router.test.ts`) and with a
+  Playwright Chromium browser against an in-process fake server
+  (`tests/integration/browserChat.integration.test.ts`).
 
 ## Interactions
 

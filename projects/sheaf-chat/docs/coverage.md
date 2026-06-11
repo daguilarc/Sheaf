@@ -1,6 +1,6 @@
 # Spec Coverage
 
-Last audit: quest main/0001_file_server, 2026-06-10
+Last audit: sheaf-chat Playwright integration recovery, 2026-06-10
 
 | Capability | Status | Gaps |
 |---|---|---|
@@ -124,7 +124,9 @@ Last audit: quest main/0001_file_server, 2026-06-10
   queue is unbounded in memory.
 - The shared transcript renderer (`projects/web/src/agui-chat.js`) is
   consumed via its API but specified outside this project; that includes the
-  transcript-side Markdown/KaTeX rendering used by chat messages.
+  transcript-side Markdown/KaTeX rendering used by chat messages. Sheaf Chat
+  now has browser integration coverage that verifies the shared renderer is
+  loaded and produces Markdown/KaTeX DOM through the service-owned UI shell.
 - The history "limit 5000" initial load means very long sessions transfer
   their whole recent log on open; no incremental initial strategy is
   specified.

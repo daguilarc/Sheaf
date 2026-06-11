@@ -2058,11 +2058,38 @@
 
     session.setFileChangedHandler(workspaceController.HandleFileChanged);
 
+    function SyncCollapseButtons() {
+      const explorerCollapsed = explorerPane.classList.contains(
+        "sheaf-chat-explorer-pane--collapsed"
+      );
+      const chatCollapsed = chatPane.classList.contains(
+        "sheaf-chat-chat-pane--collapsed"
+      );
+
+      explorerCollapse.textContent = explorerCollapsed ? "⟩" : "⟨";
+      explorerCollapse.setAttribute(
+        "aria-label",
+        explorerCollapsed ? "Expand explorer" : "Collapse explorer"
+      );
+      explorerCollapse.title = explorerCollapsed ? "Expand explorer" : "Collapse explorer";
+
+      chatCollapse.textContent = chatCollapsed ? "⟨" : "⟩";
+      chatCollapse.setAttribute(
+        "aria-label",
+        chatCollapsed ? "Expand chat" : "Collapse chat"
+      );
+      chatCollapse.title = chatCollapsed ? "Expand chat" : "Collapse chat";
+    }
+
+    SyncCollapseButtons();
+
     explorerCollapse.addEventListener("click", function () {
       workspaceController.ToggleExplorerCollapsed();
+      SyncCollapseButtons();
     });
     chatCollapse.addEventListener("click", function () {
       workspaceController.ToggleChatCollapsed();
+      SyncCollapseButtons();
     });
 
     explorerResize.addEventListener("mousedown", function (event) {
