@@ -4,13 +4,15 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 
 SUPPORTED_TARGETS = ("claude", "cursor", "pi", "codex")
-TARGET_DIRS = {
+SCOPES = ("repo", "global", "all")
+REPO_TARGET_DIRS = {
     "claude": Path(".claude/skills"),
     "cursor": Path(".cursor/skills"),
     "pi": Path(".pi/skills"),
@@ -135,7 +137,15 @@ def render_skill(skill: Skill, repo_root: Path) -> str:
     )
 
 
-def build_outputs(repo_root: Path) -> list[Output]:
+def global_content_for(global_source: Path, repo_root: Path) -> str:
+    global_rel = global_source.relative_to(repo_root)
+    return (
+        f"{marker_for(global_rel)}\n\n"
+        f"{global_source.read_text(encoding='utf-8').strip()}\n"
+    )
+
+
+def read_sources(repo_root: Path) -> tuple[Path, list[Skill]]:
     agents_root = repo_root / "projects" / "agents"
     global_root = agents_root / "global"
     global_source = global_root / "AGENTS.md"
@@ -146,22 +156,96 @@ def build_outputs(repo_root: Path) -> list[Output]:
     if not skills_root.exists():
         raise ValueError(f"missing skills root: {skills_root}")
 
+    return global_source, read_skills(skills_root)
+
+
+def build_repo_outputs(repo_root: Path) -> list[Output]:
+    global_source, skills = read_sources(repo_root)
     outputs: list[Output] = []
-    global_rel = global_source.relative_to(repo_root)
-    global_content = f"{marker_for(global_rel)}\n\n{global_source.read_text(encoding='utf-8').strip()}\n"
+    global_content = global_content_for(global_source, repo_root)
     outputs.append(Output(repo_root / "AGENTS.md", global_content))
     outputs.append(Output(repo_root / "CLAUDE.md", global_content))
 
-    for skill in read_skills(skills_root):
+    for skill in skills:
         rendered = render_skill(skill, repo_root)
         for target in skill.targets:
             outputs.append(
                 Output(
-                    repo_root / TARGET_DIRS[target] / skill.skill_id / "SKILL.md",
+                    repo_root / REPO_TARGET_DIRS[target] / skill.skill_id / "SKILL.md",
                     rendered,
                 )
             )
 
+    return outputs
+
+
+def codex_home_for(home: Path, explicit_codex_home: Path | None) -> Path:
+    if explicit_codex_home is not None:
+        return explicit_codex_home
+    env_value = os.environ.get("CODEX_HOME", "").strip()
+    if env_value:
+        return Path(env_value).expanduser()
+    return home / ".codex"
+
+
+def build_global_outputs(
+    repo_root: Path, *, home: Path, codex_home: Path | None
+) -> list[Output]:
+    home = home.expanduser().resolve()
+    resolved_codex_home = codex_home_for(home, codex_home).expanduser().resolve()
+    global_source, skills = read_sources(repo_root)
+    global_content = global_content_for(global_source, repo_root)
+
+    instruction_paths = [
+        home / ".claude" / "CLAUDE.md",
+        home / ".cursor" / "AGENTS.md",
+        home / ".pi" / "AGENTS.md",
+        resolved_codex_home / "AGENTS.md",
+    ]
+    outputs = [Output(path, global_content) for path in instruction_paths]
+
+    for skill in skills:
+        rendered = render_skill(skill, repo_root)
+        if "claude" in skill.targets:
+            outputs.append(
+                Output(home / ".claude" / "skills" / skill.skill_id / "SKILL.md", rendered)
+            )
+        if "cursor" in skill.targets:
+            outputs.append(
+                Output(home / ".cursor" / "skills" / skill.skill_id / "SKILL.md", rendered)
+            )
+        if "pi" in skill.targets:
+            outputs.append(
+                Output(home / ".pi" / "skills" / skill.skill_id / "SKILL.md", rendered)
+            )
+        if "codex" in skill.targets:
+            outputs.append(
+                Output(home / ".agents" / "skills" / skill.skill_id / "SKILL.md", rendered)
+            )
+            outputs.append(
+                Output(
+                    resolved_codex_home / "skills" / skill.skill_id / "SKILL.md",
+                    rendered,
+                )
+            )
+
+    repo_root_resolved = repo_root.resolve()
+    in_repo = [output.path for output in outputs if output.path.is_relative_to(repo_root_resolved)]
+    if in_repo:
+        joined = ", ".join(str(path) for path in in_repo)
+        raise ValueError(f"global output path is inside repository: {joined}")
+
+    return outputs
+
+
+def build_outputs(
+    repo_root: Path, *, scope: str, home: Path, codex_home: Path | None
+) -> list[Output]:
+    outputs: list[Output] = []
+    if scope in ("repo", "all"):
+        outputs.extend(build_repo_outputs(repo_root))
+    if scope in ("global", "all"):
+        outputs.extend(build_global_outputs(repo_root, home=home, codex_home=codex_home))
     return outputs
 
 
@@ -170,15 +254,23 @@ def is_managed(content: str) -> bool:
 
 
 def install_outputs(outputs: list[Output], *, force: bool) -> int:
+    conflicts: list[Path] = []
+    for output in outputs:
+        if output.path.exists():
+            existing = output.path.read_text(encoding="utf-8")
+            if not force and not is_managed(existing):
+                conflicts.append(output.path)
+    if conflicts:
+        for path in conflicts:
+            print(f"conflict unmanaged {path}", file=sys.stderr)
+        return 1
+
     for output in outputs:
         if output.path.exists():
             existing = output.path.read_text(encoding="utf-8")
             if existing == output.content:
                 print(f"ok {output.path}")
                 continue
-            if not force and not is_managed(existing):
-                print(f"conflict unmanaged {output.path}", file=sys.stderr)
-                return 1
         output.path.parent.mkdir(parents=True, exist_ok=True)
         output.path.write_text(output.content, encoding="utf-8")
         print(f"wrote {output.path}")
@@ -226,10 +318,28 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("mode", choices=("install", "check", "clean"))
     parser.add_argument(
+        "--scope",
+        choices=SCOPES,
+        default="all",
+        help="Output scope to process. Defaults to all.",
+    )
+    parser.add_argument(
         "--repo-root",
         type=Path,
         default=Path(__file__).resolve().parents[3],
         help="Repository root. Defaults to the parent of projects/.",
+    )
+    parser.add_argument(
+        "--home",
+        type=Path,
+        default=Path.home(),
+        help="Home directory for global outputs. Defaults to the current user's home.",
+    )
+    parser.add_argument(
+        "--codex-home",
+        type=Path,
+        default=None,
+        help="Codex home for global Codex outputs. Defaults to CODEX_HOME or ~/.codex.",
     )
     parser.add_argument(
         "--force",
@@ -242,7 +352,12 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     repo_root = args.repo_root.resolve()
-    outputs = build_outputs(repo_root)
+    outputs = build_outputs(
+        repo_root,
+        scope=args.scope,
+        home=args.home,
+        codex_home=args.codex_home,
+    )
 
     if args.mode == "install":
         return install_outputs(outputs, force=args.force)

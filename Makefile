@@ -11,6 +11,8 @@ PROJECTS := conductor web quest-runner dictator realtime-agent sheaf-chat agents
 .PHONY: realtime-agent-build realtime-agent-test realtime-agent-clean realtime-agent-run-cli
 .PHONY: sheaf-chat-build sheaf-chat-test sheaf-chat-run sheaf-chat-clean
 .PHONY: agents-build agents-test agents-install agents-check agents-clean
+.PHONY: agents-install-repo agents-check-repo agents-clean-repo
+.PHONY: agents-install-global agents-check-global agents-clean-global
 
 .DEFAULT_GOAL := all
 
@@ -115,6 +117,24 @@ agents-check:
 agents-clean:
 	$(MAKE) -C projects/agents clean
 
+agents-install-repo:
+	$(MAKE) -C projects/agents install-repo
+
+agents-check-repo:
+	$(MAKE) -C projects/agents check-repo
+
+agents-clean-repo:
+	$(MAKE) -C projects/agents clean-repo
+
+agents-install-global:
+	$(MAKE) -C projects/agents install-global
+
+agents-check-global:
+	$(MAKE) -C projects/agents check-global
+
+agents-clean-global:
+	$(MAKE) -C projects/agents clean-global
+
 help:
 	@echo "Repository targets:"
 	@echo "  make all              Build and test every project under projects/"
@@ -127,8 +147,10 @@ help:
 	@echo "  make <project>-test   Test one project"
 	@echo "  make <project>-run    Run one project's service (if supported)"
 	@echo "  make <project>-clean  Clean one project"
-	@echo "  make agents-install   Install shared agent guidance"
-	@echo "  make agents-check     Verify installed agent guidance"
+	@echo "  make agents-install   Install shared agent guidance locally and globally"
+	@echo "  make agents-check     Verify local and global agent guidance"
+	@echo "  make agents-install-global  Install user-global agent guidance"
+	@echo "  make agents-check-global    Verify user-global agent guidance"
 	@echo ""
 	@echo "Projects: $(PROJECTS)"
 	@echo ""
