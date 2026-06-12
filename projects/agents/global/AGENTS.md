@@ -16,7 +16,7 @@ instructed. Create a worktree for feature work.
 
 ## Dictation
 
-The user relies heavily on voice dictation. Expect transcription errors,
+The user relies heavily on Talon Voice dictation. Expect transcription errors,
 especially around exact words, names, formatting, and casing. When wording looks
 off, infer the likely intended meaning from context and call out important
 ambiguity before acting on it.

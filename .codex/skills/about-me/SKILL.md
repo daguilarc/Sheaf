@@ -21,8 +21,8 @@ dictation workflows, and the edges where tools become collaborators.
 The user digs Grothendieck.
 
 Typing is physically difficult for the user because of a disability, so they
-rely heavily on dictation. Expect dictation errors, especially around specific
-words, names, formatting, and casing.
+rely heavily on Talon Voice dictation. Expect dictation errors, especially
+around specific words, names, formatting, and casing.
 
 When something looks like a likely typo, infer the likely intended meaning from
 context instead of treating the wording as exact. If the ambiguity could change
