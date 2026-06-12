@@ -13,7 +13,7 @@ PROJECTS := conductor web quest-runner dictator realtime-agent sheaf-chat agents
 .PHONY: agents-build agents-test agents-install agents-check agents-clean
 .PHONY: agents-install-repo agents-check-repo agents-clean-repo
 .PHONY: agents-install-global agents-check-global agents-clean-global
-.PHONY: vs-code-extension-build vs-code-extension-test vs-code-extension-clean
+.PHONY: vs-code-extension-build vs-code-extension-test vs-code-extension-install vs-code-extension-clean
 
 .DEFAULT_GOAL := all
 
@@ -142,6 +142,9 @@ vs-code-extension-build:
 vs-code-extension-test:
 	$(MAKE) -C projects/vs-code-extension test
 
+vs-code-extension-install:
+	$(MAKE) -C projects/vs-code-extension install
+
 vs-code-extension-clean:
 	$(MAKE) -C projects/vs-code-extension clean
 
@@ -155,6 +158,7 @@ help:
 	@echo "  make <project>        Run that project's default all target"
 	@echo "  make <project>-build  Build one project"
 	@echo "  make <project>-test   Test one project"
+	@echo "  make <project>-install  Install one project's dependencies (if supported)"
 	@echo "  make <project>-run    Run one project's service (if supported)"
 	@echo "  make <project>-clean  Clean one project"
 	@echo "  make agents-install   Install shared agent guidance locally and globally"
