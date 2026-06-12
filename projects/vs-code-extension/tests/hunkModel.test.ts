@@ -1,0 +1,151 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+
+import type { GitAdapter, ApplyPatchOptions } from "../src/gitAdapter.js";
+import { HunkModel, type ActiveFile, type HunkModelHost } from "../src/hunkModel.js";
+import type { Hunk, PaneState } from "../src/types.js";
+
+function MakeHunk(file: string, index: number, count: number): Hunk
+{
+  return {
+    id: `${file}:${index}`,
+    file,
+    index,
+    count,
+    header: `@@ -${index + 1},1 +${index + 1},1 @@`,
+    oldRange: { start: index + 1, lines: 1 },
+    newRange: { start: index + 1, lines: 1 },
+    patch: `diff --git a/${file} b/${file}\n--- a/${file}\n+++ b/${file}\n@@ -${index + 1},1 +${index + 1},1 @@\n-old\n+new\n`,
+    patchHash: `hash${index}`,
+  };
+}
+
+class FakeGit implements GitAdapter
+{
+  changedFiles = ["a.ts", "b.ts"];
+  hunks = new Map<string, Hunk[]>([
+    ["a.ts", [MakeHunk("a.ts", 0, 2), MakeHunk("a.ts", 1, 2)]],
+    ["b.ts", [MakeHunk("b.ts", 0, 1)]],
+  ]);
+  applied: Array<{ patch: string; options: ApplyPatchOptions }> = [];
+  failApply = false;
+
+  async findRepositoryRoot(): Promise<string | null>
+  {
+    return "/repo";
+  }
+
+  async listChangedFiles(): Promise<string[]>
+  {
+    return this.changedFiles;
+  }
+
+  async loadUnstagedHunks(): Promise<Map<string, Hunk[]>>
+  {
+    return new Map([...this.hunks].map(([file, hunks]) => [file, hunks.map((hunk) => ({ ...hunk }))]));
+  }
+
+  async applyPatch(_repoRoot: string, patch: string, options: ApplyPatchOptions): Promise<void>
+  {
+    if (this.failApply)
+    {
+      throw new Error("patch failed");
+    }
+    this.applied.push({ patch, options });
+  }
+}
+
+class FakeHost implements HunkModelHost
+{
+  activeFile: ActiveFile | null = { absPath: "/repo/a.ts", relativePath: "a.ts" };
+  states: PaneState[] = [];
+  shown = 0;
+  hidden = 0;
+  openedFiles: string[] = [];
+
+  async getActiveFile(): Promise<ActiveFile | null>
+  {
+    return this.activeFile;
+  }
+
+  async openFile(_repoRoot: string, relativePath: string): Promise<void>
+  {
+    this.openedFiles.push(relativePath);
+    this.activeFile = { absPath: `/repo/${relativePath}`, relativePath };
+  }
+
+  publishState(state: PaneState): void
+  {
+    this.states.push(state);
+  }
+
+  showPane(): void
+  {
+    this.shown += 1;
+  }
+
+  hidePane(): void
+  {
+    this.hidden += 1;
+  }
+}
+
+test("HunkModel computes current hunk and navigation availability", async () => {
+  const git = new FakeGit();
+  const host = new FakeHost();
+  const model = new HunkModel("window-1", git, host);
+
+  const state = await model.recompute(true);
+
+  assert.equal(state.paneOpen, true);
+  assert.equal(state.file, "a.ts");
+  assert.equal(state.hunkIndex, 0);
+  assert.equal(state.hunkCount, 2);
+  assert.equal(state.actions.canGoDown, true);
+  assert.equal(state.actions.canGoNextFile, true);
+  assert.equal(host.shown, 1);
+});
+
+test("HunkModel navigates hunks and files", async () => {
+  const git = new FakeGit();
+  const host = new FakeHost();
+  const model = new HunkModel("window-1", git, host);
+  await model.recompute(true);
+
+  const nextHunk = await model.run("nextHunk");
+  assert.equal(nextHunk.ok, true);
+  assert.equal(nextHunk.state.hunkIndex, 1);
+
+  const nextFile = await model.run("nextFile");
+  assert.equal(nextFile.ok, true);
+  assert.equal(nextFile.state.file, "b.ts");
+  assert.deepEqual(host.openedFiles, ["b.ts"]);
+});
+
+test("HunkModel stages, reverts, and clears undo on failed undo", async () => {
+  const git = new FakeGit();
+  const host = new FakeHost();
+  const model = new HunkModel("window-1", git, host);
+  await model.recompute(true);
+
+  await model.run("stage");
+  assert.equal(git.applied.at(-1)?.options.cached, true);
+  assert.equal(model.getState().actions.canUndo, true);
+
+  git.failApply = true;
+  const undo = await model.run("undo");
+  assert.equal(undo.ok, false);
+  assert.equal(undo.state.actions.canUndo, false);
+});
+
+test("HunkModel hides pane with no active hunks", async () => {
+  const git = new FakeGit();
+  const host = new FakeHost();
+  git.hunks = new Map();
+  const model = new HunkModel("window-1", git, host);
+
+  const state = await model.recompute(true);
+
+  assert.equal(state.paneOpen, false);
+  assert.equal(host.hidden, 1);
+});

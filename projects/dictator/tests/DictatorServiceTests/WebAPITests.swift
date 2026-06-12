@@ -14,6 +14,7 @@ final class WebAPITests: XCTestCase
     private var apiKeysURL: URL?
     private var runtimeConfigProvider: RuntimeConfigProvider?
     private var interactionStore: InteractionHistoryStore?
+    private var vsCodeHunkRegistry: VSCodeHunkRegistry?
     private var fakeClient = WebAPITestFakeCoreClient()
 
     override func tearDown() async throws
@@ -254,6 +255,100 @@ final class WebAPITests: XCTestCase
         XCTAssertFalse(String(data: encoded, encoding: .utf8)?.contains("sk-test") == true)
     }
 
+    func testVSCodeHunkStateAndCommandAPIRoundTrip() async throws
+    {
+        try await startServer()
+        let snapshot = """
+        {
+          "windowId": "window-1",
+          "focused": true,
+          "paneOpen": true,
+          "repoRoot": "/tmp/repo",
+          "file": "Sources/App.swift",
+          "fileIndex": 0,
+          "fileCount": 1,
+          "hunkIndex": 0,
+          "hunkCount": 2,
+          "currentHunk": {
+            "id": "Sources/App.swift:0:abc",
+            "file": "Sources/App.swift",
+            "index": 0,
+            "count": 2,
+            "header": "@@ -1 +1 @@",
+            "patchHash": "abc"
+          },
+          "actions": {
+            "canGoUp": false,
+            "canGoDown": true,
+            "canGoPrevFile": false,
+            "canGoNextFile": false,
+            "canStage": true,
+            "canRevert": true,
+            "canUndo": false
+          }
+        }
+        """.data(using: .utf8)!
+
+        let (stateStatus, stateBody) = try await jsonRequest(
+            method: "POST",
+            path: "/api/vscode-hunk/state",
+            body: snapshot,
+            contentType: "application/json"
+        )
+        XCTAssertEqual(stateStatus, 200)
+        XCTAssertEqual(stateBody["ok"] as? Bool, true)
+
+        let registry = try XCTUnwrap(vsCodeHunkRegistry)
+        let queued = registry.enqueueCommand(.stage)
+        XCTAssertNotNil(queued)
+
+        let commandResponse = try await rawRequest(method: "GET", path: "/api/vscode-hunk/command?window_id=window-1")
+        XCTAssertEqual(commandResponse.status, 200)
+        let command = try JSONDecoder().decode(VSCodeHunkCommandEnvelope.self, from: commandResponse.body)
+        XCTAssertEqual(command.action, .stage)
+        XCTAssertEqual(command.id, queued?.id)
+
+        let result = """
+        {
+          "commandId": "\(command.id)",
+          "windowId": "window-1",
+          "result": {
+            "ok": true,
+            "action": "stage"
+          }
+        }
+        """.data(using: .utf8)!
+        let (resultStatus, resultBody) = try await jsonRequest(
+            method: "POST",
+            path: "/api/vscode-hunk/command-result",
+            body: result,
+            contentType: "application/json"
+        )
+        XCTAssertEqual(resultStatus, 200)
+        XCTAssertEqual(resultBody["ok"] as? Bool, true)
+
+        let diagnostics = try await rawRequest(method: "GET", path: "/api/vscode-hunk/diagnostics")
+        XCTAssertEqual(diagnostics.status, 200)
+        let decoded = try JSONDecoder().decode(VSCodeHunkDiagnostics.self, from: diagnostics.body)
+        XCTAssertEqual(decoded.activeWindowId, "window-1")
+        XCTAssertEqual(decoded.lastCommandResult, VSCodeHunkCommandResult(ok: true, action: .stage, error: nil))
+
+        let disconnect = #"{"windowId":"window-1"}"#.data(using: .utf8)!
+        let (disconnectStatus, disconnectBody) = try await jsonRequest(
+            method: "POST",
+            path: "/api/vscode-hunk/disconnect",
+            body: disconnect,
+            contentType: "application/json"
+        )
+        XCTAssertEqual(disconnectStatus, 200)
+        XCTAssertEqual(disconnectBody["ok"] as? Bool, true)
+
+        let afterDisconnect = try await rawRequest(method: "GET", path: "/api/vscode-hunk/diagnostics")
+        let cleared = try JSONDecoder().decode(VSCodeHunkDiagnostics.self, from: afterDisconnect.body)
+        XCTAssertNil(cleared.activeWindowId)
+        XCTAssertEqual(cleared.instances.count, 0)
+    }
+
     func testWebUIDoesNotReferenceRetiredNativeControls() throws
     {
         let repoRoot = try SheafRootDiscovery.requireRepoRoot()
@@ -330,6 +425,9 @@ final class WebAPITests: XCTestCase
 
         let lifecycle = ServiceLifecycle()
         let activityTracker = DictationActivityTracker()
+        let vsCodeHunkRegistry = VSCodeHunkRegistry()
+        self.vsCodeHunkRegistry = vsCodeHunkRegistry
+
         let webContext = WebServiceContext(
             repoRoot: repoRoot,
             runtimeConfigProvider: provider,
@@ -339,7 +437,8 @@ final class WebAPITests: XCTestCase
             activityTracker: activityTracker,
             endpointDescription: "http://127.0.0.1:0",
             logPath: tempDir.appendingPathComponent("logs").path,
-            dataPath: tempDir.appendingPathComponent("data").path
+            dataPath: tempDir.appendingPathComponent("data").path,
+            vsCodeHunkRegistry: vsCodeHunkRegistry
         )
         let webAPIService = WebAPIService(context: webContext, urlSession: session)
         await webAPIService.prepare()

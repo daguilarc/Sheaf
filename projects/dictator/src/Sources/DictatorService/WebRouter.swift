@@ -17,6 +17,12 @@ enum WebRoute: Equatable
     case apiInteractionDetail(id: String)
     case apiModels(provider: String)
     case apiKeyStatus
+    case apiVSCodeHunkState
+    case apiVSCodeHunkHeartbeat
+    case apiVSCodeHunkDisconnect
+    case apiVSCodeHunkCommand(windowID: String)
+    case apiVSCodeHunkCommandResult
+    case apiVSCodeHunkDiagnostics
 }
 
 enum WebRouter
@@ -75,6 +81,22 @@ enum WebRouter
             return .apiModels(provider: provider)
         case (.GET, "/api/api-key-status"):
             return .apiKeyStatus
+        case (.POST, "/api/vscode-hunk/state"):
+            return .apiVSCodeHunkState
+        case (.POST, "/api/vscode-hunk/heartbeat"):
+            return .apiVSCodeHunkHeartbeat
+        case (.POST, "/api/vscode-hunk/disconnect"):
+            return .apiVSCodeHunkDisconnect
+        case (.GET, "/api/vscode-hunk/command"):
+            guard let windowID = query["window_id"], !windowID.isEmpty else
+            {
+                throw WebRouterError.badRequest("window_id query parameter is required")
+            }
+            return .apiVSCodeHunkCommand(windowID: windowID)
+        case (.POST, "/api/vscode-hunk/command-result"):
+            return .apiVSCodeHunkCommandResult
+        case (.GET, "/api/vscode-hunk/diagnostics"):
+            return .apiVSCodeHunkDiagnostics
         default:
             return nil
         }

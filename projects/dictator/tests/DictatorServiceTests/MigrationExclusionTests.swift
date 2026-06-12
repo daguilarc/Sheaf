@@ -37,7 +37,7 @@ final class MigrationExclusionTests: XCTestCase
 
     func testActiveSourceAndTestsExcludeLegacyPatterns() throws
     {
-        let repoRoot = try SheafRootDiscovery.requireRepoRoot()
+        let repoRoot = try SheafRootDiscovery.requireRepoRoot().resolvingSymlinksInPath()
         let scanRoots = [
             repoRoot.appendingPathComponent("projects/dictator/src", isDirectory: true),
             repoRoot.appendingPathComponent("projects/dictator/tests", isDirectory: true)
@@ -59,7 +59,10 @@ final class MigrationExclusionTests: XCTestCase
             {
                 guard isScannableFile(fileURL) else { continue }
 
-                let relativePath = fileURL.path.replacingOccurrences(of: repoRoot.path + "/", with: "")
+                let relativePath = fileURL
+                    .resolvingSymlinksInPath()
+                    .path
+                    .replacingOccurrences(of: repoRoot.path + "/", with: "")
                 if relativePath == "projects/dictator/tests/DictatorServiceTests/MigrationExclusionTests.swift"
                 {
                     continue

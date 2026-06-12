@@ -7,6 +7,11 @@ struct WebAPIJSON
         let error: String
     }
 
+    struct AcceptedResponse: Codable
+    {
+        let ok: Bool
+    }
+
     struct StatusResponse: Codable
     {
         let healthy: Bool

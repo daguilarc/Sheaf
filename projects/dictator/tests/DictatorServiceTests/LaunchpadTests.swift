@@ -356,33 +356,18 @@ final class LaunchpadTests: XCTestCase {
         XCTAssertEqual(auxTwo.action.promptSlot, 2)
     }
 
-    func testDefaultLayoutMapsFunctionKeyRectangle() throws {
+    func testDefaultLayoutReservesVSCodeHunkControlRectangle() throws {
         let config = try loadFixtureLayout()
         guard let arrowsPage = config.pages.first(where: { $0.id == "arrows" }) else {
             XCTFail("Expected arrows page in default layout")
             return
         }
 
-        let expectedPads: [(PadCoordinate, KeyboardKey, PadColor)] = [
-            (PadCoordinate(x: 0, y: 2), .f13, PadColor(r: 255, g: 0, b: 0)),
-            (PadCoordinate(x: 1, y: 2), .f14, PadColor(r: 255, g: 255, b: 0)),
-            (PadCoordinate(x: 2, y: 2), .f15, PadColor(r: 0, g: 255, b: 0)),
-            (PadCoordinate(x: 3, y: 2), .f16, PadColor(r: 255, g: 255, b: 255)),
-            (PadCoordinate(x: 0, y: 3), .f17, PadColor(r: 255, g: 255, b: 0)),
-            (PadCoordinate(x: 1, y: 3), .f18, PadColor(r: 255, g: 255, b: 0)),
-            (PadCoordinate(x: 2, y: 3), .f19, PadColor(r: 255, g: 255, b: 0)),
-            (PadCoordinate(x: 3, y: 3), .f20, PadColor(r: 255, g: 255, b: 255))
-        ]
-
-        for (coordinate, key, color) in expectedPads {
-            guard let pad = arrowsPage.pads.first(where: { $0.x == coordinate.x && $0.y == coordinate.y }) else {
-                XCTFail("Expected pad at (\(coordinate.x),\(coordinate.y)) in arrows page")
-                return
-            }
-
-            XCTAssertEqual(pad.action.type, .keystroke)
-            XCTAssertEqual(pad.action.key, key)
-            XCTAssertEqual(pad.color.color, color)
+        for coordinate in vscodeHunkCoordinates() {
+            XCTAssertNil(
+                arrowsPage.pads.first(where: { $0.x == coordinate.x && $0.y == coordinate.y }),
+                "Expected reserved coordinate (\(coordinate.x),\(coordinate.y)) to be absent from static layout"
+            )
         }
     }
 
@@ -685,6 +670,56 @@ final class LaunchpadTests: XCTestCase {
         XCTAssertEqual(layer.handleCount, 1)
     }
 
+    func testVSCodeHunkRegistrySelectsFocusedHealthyTarget() {
+        let registry = VSCodeHunkRegistry(timeoutSeconds: 3)
+        let now = Date(timeIntervalSince1970: 10)
+        registry.update(snapshot: makeVSCodeSnapshot(windowID: "a", focused: false), now: now)
+        registry.update(snapshot: makeVSCodeSnapshot(windowID: "b", focused: true), now: now)
+
+        XCTAssertEqual(registry.activeTarget(now: now)?.windowId, "b")
+        XCTAssertNil(registry.activeTarget(now: now.addingTimeInterval(4)))
+    }
+
+    func testVSCodeHunkControlLayerLightsAndDispatchesOnlyAvailableActions() {
+        let bus = RenderInvalidationBus()
+        let registry = VSCodeHunkRegistry(timeoutSeconds: 3)
+        let layer = VSCodeHunkLaunchpadControlLayer(registry: registry, invalidationBus: bus)
+        let state = makeVSCodeSnapshot(
+            windowID: "vscode",
+            focused: true,
+            actions: VSCodeHunkActionAvailability(
+                canGoUp: false,
+                canGoDown: true,
+                canGoPrevFile: false,
+                canGoNextFile: true,
+                canStage: true,
+                canRevert: true,
+                canUndo: false
+            )
+        )
+        registry.update(snapshot: state)
+
+        XCTAssertEqual(layer.getColor(at: PadCoordinate(x: 2, y: 2)), PadColor(r: 0, g: 255, b: 0))
+        XCTAssertEqual(layer.getColor(at: PadCoordinate(x: 1, y: 2)), .off)
+        XCTAssertEqual(layer.getColor(at: PadCoordinate(x: 3, y: 3)), .off)
+
+        XCTAssertTrue(layer.handle(PadEvent(coordinate: PadCoordinate(x: 2, y: 2), phase: .press, velocity: 100)))
+        XCTAssertEqual(registry.nextCommand(windowId: "vscode")?.action, .stage)
+
+        XCTAssertTrue(layer.handle(PadEvent(coordinate: PadCoordinate(x: 1, y: 2), phase: .press, velocity: 100)))
+        XCTAssertNil(registry.nextCommand(windowId: "vscode"))
+    }
+
+    func testVSCodeHunkControlLayerConsumesInactiveButtonsWithoutStaticFallback() {
+        let bus = RenderInvalidationBus()
+        let registry = VSCodeHunkRegistry(timeoutSeconds: 3)
+        let layer = VSCodeHunkLaunchpadControlLayer(registry: registry, invalidationBus: bus)
+
+        XCTAssertEqual(layer.getColor(at: PadCoordinate(x: 0, y: 2)), .off)
+        XCTAssertTrue(layer.handle(PadEvent(coordinate: PadCoordinate(x: 0, y: 2), phase: .press, velocity: 100)))
+        XCTAssertNil(registry.nextCommand(windowId: "missing"))
+    }
+
     func testInteractionBufferEvictsOldestWhenTrackedBytesExceedLimit() {
         let buffer = DictationInteractionBuffer(maxBytes: 20)
         let first = makeInteraction(whisperOutput: "aaaaaa", finalOutput: "bbbbbb")
@@ -795,6 +830,54 @@ private final class FakeControlLayer: LaunchpadControlLayer {
     func allCoordinatesForRendering() -> [PadCoordinate] {
         [PadCoordinate(x: 1, y: 9)]
     }
+}
+
+private func vscodeHunkCoordinates() -> [PadCoordinate] {
+    [
+        PadCoordinate(x: 0, y: 2),
+        PadCoordinate(x: 1, y: 2),
+        PadCoordinate(x: 2, y: 2),
+        PadCoordinate(x: 3, y: 2),
+        PadCoordinate(x: 0, y: 3),
+        PadCoordinate(x: 1, y: 3),
+        PadCoordinate(x: 2, y: 3),
+        PadCoordinate(x: 3, y: 3)
+    ]
+}
+
+private func makeVSCodeSnapshot(
+    windowID: String,
+    focused: Bool,
+    actions: VSCodeHunkActionAvailability = VSCodeHunkActionAvailability(
+        canGoUp: true,
+        canGoDown: true,
+        canGoPrevFile: true,
+        canGoNextFile: true,
+        canStage: true,
+        canRevert: true,
+        canUndo: true
+    )
+) -> VSCodeHunkPaneSnapshot {
+    VSCodeHunkPaneSnapshot(
+        windowId: windowID,
+        focused: focused,
+        paneOpen: true,
+        repoRoot: "/repo",
+        file: "a.ts",
+        fileIndex: 0,
+        fileCount: 2,
+        hunkIndex: 0,
+        hunkCount: 2,
+        currentHunk: VSCodeHunkMetadata(
+            id: "hunk",
+            file: "a.ts",
+            index: 0,
+            count: 2,
+            header: "@@ -1,1 +1,1 @@",
+            patchHash: "abc"
+        ),
+        actions: actions
+    )
 }
 
 private func makeInteraction(

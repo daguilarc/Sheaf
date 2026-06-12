@@ -12,6 +12,7 @@ struct WebServiceContext: Sendable
     let endpointDescription: String
     let logPath: String
     let dataPath: String
+    let vsCodeHunkRegistry: VSCodeHunkRegistry
 }
 
 actor WebAPIService
@@ -78,6 +79,18 @@ actor WebAPIService
             return try await .json(try await modelList(provider: provider))
         case .apiKeyStatus:
             return try await .json(apiKeyStatus())
+        case .apiVSCodeHunkState:
+            return try .json(updateVSCodeHunkState(body: body))
+        case .apiVSCodeHunkHeartbeat:
+            return try .json(updateVSCodeHunkHeartbeat(body: body))
+        case .apiVSCodeHunkDisconnect:
+            return try .json(disconnectVSCodeHunkClient(body: body))
+        case let .apiVSCodeHunkCommand(windowID):
+            return .json(context.vsCodeHunkRegistry.nextCommand(windowId: windowID))
+        case .apiVSCodeHunkCommandResult:
+            return try .json(recordVSCodeHunkCommandResult(body: body))
+        case .apiVSCodeHunkDiagnostics:
+            return .json(context.vsCodeHunkRegistry.diagnostics())
         }
     }
 
@@ -349,6 +362,34 @@ actor WebAPIService
         return WebAPIJSON.APIKeyStatusResponse(
             openai: WebAPIJSON.APIKeyProviderStatus(configured: configured)
         )
+    }
+
+    private func updateVSCodeHunkState(body: Data) throws -> WebAPIJSON.AcceptedResponse
+    {
+        let snapshot = try JSONDecoder().decode(VSCodeHunkPaneSnapshot.self, from: body)
+        context.vsCodeHunkRegistry.update(snapshot: snapshot)
+        return WebAPIJSON.AcceptedResponse(ok: true)
+    }
+
+    private func updateVSCodeHunkHeartbeat(body: Data) throws -> WebAPIJSON.AcceptedResponse
+    {
+        let request = try JSONDecoder().decode(VSCodeHunkHeartbeatRequest.self, from: body)
+        context.vsCodeHunkRegistry.heartbeat(windowId: request.windowId, focused: request.focused)
+        return WebAPIJSON.AcceptedResponse(ok: true)
+    }
+
+    private func disconnectVSCodeHunkClient(body: Data) throws -> WebAPIJSON.AcceptedResponse
+    {
+        let request = try JSONDecoder().decode(VSCodeHunkDisconnectRequest.self, from: body)
+        context.vsCodeHunkRegistry.disconnect(windowId: request.windowId)
+        return WebAPIJSON.AcceptedResponse(ok: true)
+    }
+
+    private func recordVSCodeHunkCommandResult(body: Data) throws -> WebAPIJSON.AcceptedResponse
+    {
+        let request = try JSONDecoder().decode(VSCodeHunkCommandResultRequest.self, from: body)
+        context.vsCodeHunkRegistry.recordResult(request.result)
+        return WebAPIJSON.AcceptedResponse(ok: true)
     }
 
     private func setField(_ fieldName: String, value: RuntimeConfigurationValue) async throws

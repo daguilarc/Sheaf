@@ -72,6 +72,38 @@ curl -X POST http://127.0.0.1:9003/exit     # clean shutdown (or SIGINT)
 Web UI: `http://127.0.0.1:9003/`. Trace log: `logs/dictator/trace.log`
 (also mirrored to stderr). Runtime data: `data/dictator/interactions/`.
 
+## VS Code Hunk Controls
+
+Dictator exposes a local REST-compatible control protocol for the Sheaf VS
+Code extension's unstaged-hunk pane:
+
+- `POST /api/vscode-hunk/state`
+- `POST /api/vscode-hunk/heartbeat`
+- `POST /api/vscode-hunk/disconnect`
+- `GET /api/vscode-hunk/command?window_id=<id>`
+- `POST /api/vscode-hunk/command-result`
+- `GET /api/vscode-hunk/diagnostics`
+
+Each extension instance reports a generated window id, focused-window state,
+pane visibility, current file/hunk metadata, and action availability. Dictator
+uses the most recent healthy focused instance as the active target. If no
+healthy focused pane has actionable hunks, the Launchpad hunk LEDs stay off
+and button presses in the reserved hunk region do not send keyboard fallback
+commands.
+
+Launchpad hunk mapping:
+
+| Coordinate | Action |
+| --- | --- |
+| `(0,2)` | Revert current hunk |
+| `(1,2)` | Previous hunk |
+| `(2,2)` | Stage current hunk |
+| `(3,2)` | Undo last stage/revert |
+| `(0,3)` | Previous changed file |
+| `(1,3)` | Next hunk |
+| `(2,3)` | Next changed file |
+| `(3,3)` | Unused/off |
+
 ## Test
 
 From `projects/dictator/`:

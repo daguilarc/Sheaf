@@ -44,6 +44,7 @@ final class LaunchpadServiceController
     private let apiClient: APIClient
     private let interactionStore: InteractionHistoryStore
     private let activityTracker: DictationActivityTracker
+    private let vsCodeHunkRegistry: VSCodeHunkRegistry
     private let sessionID = UUID().uuidString
 
     private let audioRecorder = AudioRecorder()
@@ -89,7 +90,8 @@ final class LaunchpadServiceController
         sttEngine: any STTEngine,
         coreClient: any DictatorCoreClient,
         interactionStore: InteractionHistoryStore,
-        activityTracker: DictationActivityTracker
+        activityTracker: DictationActivityTracker,
+        vsCodeHunkRegistry: VSCodeHunkRegistry
     )
     {
         self.repoRoot = repoRoot
@@ -99,6 +101,7 @@ final class LaunchpadServiceController
         self.apiClient = APIClient(coreClient: coreClient)
         self.interactionStore = interactionStore
         self.activityTracker = activityTracker
+        self.vsCodeHunkRegistry = vsCodeHunkRegistry
     }
 
     func start()
@@ -111,6 +114,13 @@ final class LaunchpadServiceController
 
         let invalidationBus = RenderInvalidationBus()
         let pageController = LaunchpadPageController(invalidationBus: invalidationBus)
+        vsCodeHunkRegistry.setOnChange {
+            invalidationBus.markDirty(reason: "vscode_hunk_state")
+        }
+        pageController.setControlLayer(
+            VSCodeHunkLaunchpadControlLayer(registry: vsCodeHunkRegistry, invalidationBus: invalidationBus),
+            forSlot: "vscode.hunks"
+        )
         let pageFactory = LaunchpadPageFactory(
             invalidationBus: invalidationBus,
             onKeystroke: { [weak self] key, baseModifiers in
@@ -234,6 +244,7 @@ final class LaunchpadServiceController
         }
         launchpadRenderWorker?.stop()
         launchpadMIDIManager?.stop()
+        vsCodeHunkRegistry.setOnChange(nil)
         launchpadRenderWorker = nil
         launchpadMIDIManager = nil
         launchpadPageController = nil
