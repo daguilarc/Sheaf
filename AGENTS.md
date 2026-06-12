@@ -11,18 +11,10 @@ If a harness, skill, CLI, installer, or other agentic infrastructure is broken,
 stop the current task and escalate to a human. Never work around broken agentic
 infrastructure.
 
-## OpenSpec Workflow
+## Worktrees
 
-Use the OPSX/OpenSpec workflow for planned changes when an OpenSpec change is
-active or requested. If `openspec` is not available on PATH, stop and report the
-infrastructure failure instead of bypassing the workflow.
-
-## Commits
-
-When the user explicitly says "commit what we have", stage all current working
-directory changes with `git add -A` and commit them together. Do not limit that
-phrase to files related to the current chat or task. If there are no staged
-changes after `git add -A`, report that there is nothing to commit.
+`main` stays clean. Do not develop directly on `main` unless explicitly
+instructed. Create a worktree for feature work.
 
 ## Dictation
 
