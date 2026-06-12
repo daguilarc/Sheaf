@@ -14,23 +14,23 @@ A record of planned or active work. [Quests](project-rules.md#quests-versus-docs
 
 ## Docs
 
-A project's [living spec](#living-spec), kept under `projects/<project>/docs/`. See [Docs Structure](docs-structure.md).
+A project's [living spec](#living-spec): capability specs under `openspec/specs/` plus the supporting docs under `projects/<project>/docs/`. See [Docs Structure](docs-structure.md).
 
 ## Living Spec
 
-The normative description of a project's current behavior in its `docs/` directory, organized by [capability](#capability) and held to the [rebuild test](#rebuild-test) standard. See [Docs Structure](docs-structure.md).
+The normative description of a project's current behavior, organized by [capability](#capability) under `openspec/specs/` (with architecture, operations, coverage, and shared contracts in the project's `docs/` directory) and held to the [rebuild test](#rebuild-test) standard. See [Docs Structure](docs-structure.md).
 
 ## Delta Spec
 
-A quest's `specs/` directory: requirements for a change, written against the [living spec](#living-spec). Completing a quest merges the delta into the living spec.
+An OpenSpec change's `specs/` directory (`openspec/changes/<change-id>/specs/`): `## ADDED/MODIFIED/REMOVED Requirements` written against the main specs. Archiving the change merges the delta into `openspec/specs/`.
 
 ## Capability
 
-A coherent externally visible behavior of a project, specified in one file under `docs/capabilities/`. See [Docs Structure](docs-structure.md#project-docs-layout).
+A coherent externally visible behavior of a project, specified in one spec at `openspec/specs/<project>-<capability>/spec.md`. See [Docs Structure](docs-structure.md#project-docs-layout).
 
 ## Requirement ID
 
-A stable, append-only identifier (`<prefix>-<n>`) for one externally observable requirement in a capability file. Never renumbered or reused; retired requirements keep their ID with a `RETIRED` marker. See [Docs Structure](docs-structure.md#requirement-rules-ears).
+A stable, append-only identifier (`<prefix>-<n>`) for one externally observable requirement in a capability spec, embedded in the requirement header (`### Requirement: <id> — <name>`). Never renumbered or reused; retired requirements keep their ID in the spec's `## Retired Requirements` section. See [Docs Structure](docs-structure.md#requirement-rules-ears).
 
 ## Rebuild Test
 

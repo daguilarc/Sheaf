@@ -146,7 +146,7 @@ There is no shutdown endpoint; stop the process directly.
 
 ## Configuration
 
-See [service](capabilities/service.md) for the normative key list and
+See [service](../../../openspec/specs/sheaf-chat-service/spec.md) for the normative key list and
 defaults, and [Configuration](../../../structure/configuration.md) for
 repository-wide rules. Summary:
 

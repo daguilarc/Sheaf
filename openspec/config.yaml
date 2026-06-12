@@ -1,20 +1,42 @@
 schema: spec-driven
 
-# Project context (optional)
-# This is shown to AI when creating artifacts.
-# Add your tech stack, conventions, style guides, domain knowledge, etc.
-# Example:
-#   context: |
-#     Tech stack: TypeScript, React, Node.js
-#     We use conventional commits
-#     Domain: e-commerce platform
+context: |
+  Sheaf is a multi-project monorepo. Each project lives under projects/<name>
+  (conductor, dictator, quest-runner, realtime-agent, sheaf-chat, web).
 
-# Per-artifact rules (optional)
-# Add custom rules for specific artifacts.
-# Example:
-#   rules:
-#     proposal:
-#       - Keep proposals under 500 words
-#       - Always include a "Non-goals" section
-#     tasks:
-#       - Break tasks into chunks of max 2 hours
+  Spec layout and naming:
+  - One spec per capability at openspec/specs/<project>-<capability>/spec.md
+    (e.g. sheaf-chat-chat-ui, quest-runner-state-machine-engine). Exception:
+    the web project's single capability is named web-utilities, not
+    web-web-utilities.
+  - Each spec declares its project ("Project: `projects/<name>`") and an ID
+    prefix above ## Purpose.
+
+  Requirement conventions (carried over from the pre-OpenSpec capability docs):
+  - Requirement headers are "### Requirement: <id> — <name>", e.g.
+    "### Requirement: svc-3 — Startup: registry validation". The <id> uses the
+    spec's ID prefix and is APPEND-ONLY: never renumber, reuse, or re-issue an
+    ID. New requirements take the next free number in that spec. IDs are
+    unique within a spec; prefixes may repeat across projects.
+  - Requirement bodies are EARS-style normative text (WHEN/WHILE/WHERE/IF...,
+    THE <system> SHALL ...). The SHALL/MUST clause must be on the first body
+    line. The normative wording is authoritative — tests and coverage docs
+    pin it; do not paraphrase existing requirement text when modifying
+    unrelated parts of a spec.
+  - Extra sections (## Contracts, ## Design, ## Interactions) after the
+    requirements hold worked examples, module maps, and cross-capability
+    links; keep them current when behavior changes.
+
+  Related docs that are NOT specs: projects/<name>/docs/ holds coverage.md
+  (spec-to-test gap audits), operations.md, architecture.md, and contracts/
+  (file-format contracts referenced from specs). Quest directories
+  (quests/, projects/*/quests/) are historical artifacts of the previous
+  workflow — never modify them.
+
+rules:
+  specs:
+    - Use EARS phrasing (WHEN/WHILE/WHERE/IF..., THE <system> SHALL ...) for requirement text
+    - New requirement IDs continue the spec's existing prefix and numbering; never renumber or reuse retired IDs
+    - Name requirements "<id> — <Group>: <short name>" matching the spec's existing style
+  proposal:
+    - Name the affected capability spec dirs (project-prefixed) explicitly

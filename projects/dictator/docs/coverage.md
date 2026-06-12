@@ -17,7 +17,7 @@ Last audit: living-spec migration (one-time rewrite from code), 2026-06-10
   engine or prompt builder consumes it (dp-8 documents acceptance only).
 - Talon-lite whisper decoding options (initial prompt, suppress regex,
   guidance) in `WhisperCPPBridgeSTTEngine` are unspecified; only the
-  observable Talon Lite outputs are pinned in [launchpad](capabilities/launchpad.md).
+  observable Talon Lite outputs are pinned in [launchpad](../../../openspec/specs/dictator-launchpad/spec.md).
 - `TranscribeResponse.segments`/`confidence`/`duration_ms` exist internally
   but are not exposed over HTTP; their computation is Design-level only.
 - Validation order among the 400/422 checks is not pinned beyond what tests

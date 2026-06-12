@@ -21,9 +21,9 @@ are tracked in [coverage.md](coverage.md).
 
 | Capability | Prefix | What it specifies |
 |---|---|---|
-| [service-management](capabilities/service-management.md) | `svc` | Startup and registry loading, health polling, conductor's own `/health` and `/exit`, the `/api/services` REST surface, start/stop/restart lifecycle actions, the npm package surface |
-| [log-access](capabilities/log-access.md) | `log` | Per-service log file listing and the WebSocket byte-range log streaming protocol (open/read_before/follow), including path-safety rules |
-| [web-ui](capabilities/web-ui.md) | `ui` | The browser UI: main service table page, per-service log viewer page, and constrained static asset serving |
+| [service-management](../../../openspec/specs/conductor-service-management/spec.md) | `svc` | Startup and registry loading, health polling, conductor's own `/health` and `/exit`, the `/api/services` REST surface, start/stop/restart lifecycle actions, the npm package surface |
+| [log-access](../../../openspec/specs/conductor-log-access/spec.md) | `log` | Per-service log file listing and the WebSocket byte-range log streaming protocol (open/read_before/follow), including path-safety rules |
+| [web-ui](../../../openspec/specs/conductor-web-ui/spec.md) | `ui` | The browser UI: main service table page, per-service log viewer page, and constrained static asset serving |
 
 ## Shared Contracts
 

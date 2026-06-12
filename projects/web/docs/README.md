@@ -23,7 +23,7 @@ The project is small enough to be a single capability; there is no separate
 
 | Capability | Prefix | What it specifies |
 |---|---|---|
-| [web-utilities](capabilities/web-utilities.md) | `web` | The shared asset surface (`sheaf.css`, `agui-chat.css`, `agui-chat.js`), the `ChatView` API, AGUI event reduction and rendering, theming contracts, browser constraints, and how consumers serve the files |
+| [web-utilities](../../../openspec/specs/web-utilities/spec.md) | `web` | The shared asset surface (`sheaf.css`, `agui-chat.css`, `agui-chat.js`), the `ChatView` API, AGUI event reduction and rendering, theming contracts, browser constraints, and how consumers serve the files |
 
 ## Shared Contracts
 

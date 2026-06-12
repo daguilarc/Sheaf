@@ -1,12 +1,12 @@
 # Contract: Session Files
 
-Shared by [piles-sessions](../capabilities/piles-sessions.md) (creates the
-files), [session-history](../capabilities/session-history.md) (appends and
-pages the envelope log), [chat-protocol](../capabilities/chat-protocol.md)
+Shared by [piles-sessions](../../../../openspec/specs/sheaf-chat-piles-sessions/spec.md) (creates the
+files), [session-history](../../../../openspec/specs/sheaf-chat-session-history/spec.md) (appends and
+pages the envelope log), [chat-protocol](../../../../openspec/specs/sheaf-chat-chat-protocol/spec.md)
 (wire envelopes are the persisted envelopes),
-[agent-runtime](../capabilities/agent-runtime.md) (bootstraps from
+[agent-runtime](../../../../openspec/specs/sheaf-chat-agent-runtime/spec.md) (bootstraps from
 provisional/manifest and writes the manifest), and
-[file-browser](../capabilities/file-browser.md) (resolves the session root
+[file-browser](../../../../openspec/specs/sheaf-chat-file-browser/spec.md) (resolves the session root
 for read-only file access). Code:
 `src/storage/paths.ts`, `src/storage/validation.ts`,
 `src/shared/validation.ts`, `src/shared/envelope.ts`,
@@ -104,7 +104,7 @@ One JSON object per line:
 Append-only. Lines that are blank or fail to parse are skipped on read.
 Entries are sorted by `sequence` on read, so physical order need not be
 relied on. Sequence allocation and paging semantics:
-[session-history](../capabilities/session-history.md).
+[session-history](../../../../openspec/specs/sheaf-chat-session-history/spec.md).
 
 ## `<sessionId>.provisional.json` — provisional record
 
@@ -152,7 +152,7 @@ Field meanings:
 
 - `schemaVersion` — `1`.
 - `chatName` / `description` — summarizer output from the first user message
-  ([agent-runtime](../capabilities/agent-runtime.md)).
+  ([agent-runtime](../../../../openspec/specs/sheaf-chat-agent-runtime/spec.md)).
 - `rootDirectory` — absolute session root; authoritative for scoped tools on
   resume. Relativized to the repository root only in wire payloads, never on
   disk.

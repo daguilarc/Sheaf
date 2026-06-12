@@ -1,8 +1,8 @@
 # Architecture
 
 Scope: cross-capability design of the realtime-agent project. Normative
-behavior lives in the capability files under
-[capabilities/](README.md#capability-map); this page is prose.
+behavior lives in the capability specs under
+[openspec/specs/](README.md#capability-map); this page is prose.
 
 ## Surfaces
 
@@ -55,27 +55,27 @@ extension bundle marks `vscode`, `better-sqlite3`, and `naudiodon` external.
    prompt, initial context, tool call set, model, turn mode, callbacks — and
    `AgentSessionDeps` — API key, database, optional base URL / safety
    identifier / WebSocket factory.
-2. [session-lifecycle](capabilities/session-lifecycle.md) creates a session
+2. [session-lifecycle](../../../openspec/specs/realtime-agent-session-lifecycle/spec.md) creates a session
    row in SQLite, opens the WebSocket, and transmits the startup sequence:
    `session.update` (shape owned by
-   [turn-model](capabilities/turn-model.md)), the system prompt and initial
+   [turn-model](../../../openspec/specs/realtime-agent-turn-model/spec.md)), the system prompt and initial
    context as conversation items, and — in server-VAD mode only — an initial
    `response.create`.
-3. Microphone frames from [audio-capture](capabilities/audio-capture.md)
+3. Microphone frames from [audio-capture](../../../openspec/specs/realtime-agent-audio-capture/spec.md)
    stream out as `input_audio_buffer.append` events.
 4. Every event in both directions passes through the event router: persisted
-   by [persistence](capabilities/persistence.md) (audio appends excluded
+   by [persistence](../../../openspec/specs/realtime-agent-persistence/spec.md) (audio appends excluded
    outgoing), classified, and fanned out to consumer callbacks.
 5. Model function calls are extracted (streaming deltas or `response.done`
-   output) and run through [tool-dispatch](capabilities/tool-dispatch.md)'s
+   output) and run through [tool-dispatch](../../../openspec/specs/realtime-agent-tool-dispatch/spec.md)'s
    per-session FIFO queue; outputs return as `function_call_output` items.
 6. Response-affecting operations (`response.create`, commit+create units,
    tool follow-ups) serialize through the response queue in
-   [turn-model](capabilities/turn-model.md) so they never interleave with an
+   [turn-model](../../../openspec/specs/realtime-agent-turn-model/spec.md) so they never interleave with an
    active model response or a pending tool output.
 7. The CLI prints non-audio events as JSON lines; the extension reduces the
    same stream into chat bubbles and adds
-   [freshness](capabilities/freshness.md) context pushes.
+   [freshness](../../../openspec/specs/realtime-agent-freshness/spec.md) context pushes.
 
 ## Key Decisions
 

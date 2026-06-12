@@ -1,9 +1,9 @@
 # Contract: Configuration Files
 
-Shared by [service-lifecycle](../capabilities/service-lifecycle.md) (startup
-load), [dictation-pipeline](../capabilities/dictation-pipeline.md) (consumes
-every pipeline knob), [web-ui](../capabilities/web-ui.md) (edits/resets), and
-[launchpad](../capabilities/launchpad.md) (auxiliary prompts, safe restore).
+Shared by [service-lifecycle](../../../../openspec/specs/dictator-service-lifecycle/spec.md) (startup
+load), [dictation-pipeline](../../../../openspec/specs/dictator-dictation-pipeline/spec.md) (consumes
+every pipeline knob), [web-ui](../../../../openspec/specs/dictator-web-ui/spec.md) (edits/resets), and
+[launchpad](../../../../openspec/specs/dictator-launchpad/spec.md) (auxiliary prompts, safe restore).
 Repo-wide config rules: [Configuration](../../../../structure/configuration.md).
 There is no environment-variable configuration.
 

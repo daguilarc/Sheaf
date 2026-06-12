@@ -23,16 +23,16 @@ and known gaps are tracked in [coverage.md](coverage.md).
 
 | Capability | Prefix | What it specifies |
 |---|---|---|
-| [service](capabilities/service.md) | `svc` | Process boot, configuration keys, health endpoints, static/vendor asset serving, REST dispatch and error envelope |
-| [piles-sessions](capabilities/piles-sessions.md) | `ps` | Pile and session REST API: list/create piles, create blank session shells, read manifests |
-| [session-history](capabilities/session-history.md) | `hist` | The per-session envelope log: sequence allocation, paging semantics, the REST history endpoint |
-| [chat-protocol](capabilities/chat-protocol.md) | `chat` | The `/ws/chat` WebSocket: connect/replay handshake, client and server frame kinds, broadcast and persistence behavior |
-| [agent-runtime](capabilities/agent-runtime.md) | `ar` | Agent lifecycle states, attach/detach, idle offload, message delivery and steering, cancellation, deferred manifest creation |
-| [models](capabilities/models.md) | `mdl` | Provider/model registry, the local OpenAI-compatible provider, availability rules, `/api/models`, service-local Pi auth storage |
-| [agui-mapping](capabilities/agui-mapping.md) | `agui` | Pi event → AGUI event mapping, Sheaf activity mapping, sanitization, snapshot reduction |
-| [scoped-tools](capabilities/scoped-tools.md) | `st` | The Pi extension exposing eight root-scoped filesystem tools and the path policy behind them |
-| [chat-ui](capabilities/chat-ui.md) | `ui` | The hash-routed browser UI: piles/sessions/chat screens, reconnect, acks, lazy history, and the file workspace host |
-| [file-browser](capabilities/file-browser.md) | `fb` | Session-root read-only file REST API, `file.changed` broadcasts, Markdown/KaTeX previews, file tabs and mobile/desktop workspace panels |
+| [service](../../../openspec/specs/sheaf-chat-service/spec.md) | `svc` | Process boot, configuration keys, health endpoints, static/vendor asset serving, REST dispatch and error envelope |
+| [piles-sessions](../../../openspec/specs/sheaf-chat-piles-sessions/spec.md) | `ps` | Pile and session REST API: list/create piles, create blank session shells, read manifests |
+| [session-history](../../../openspec/specs/sheaf-chat-session-history/spec.md) | `hist` | The per-session envelope log: sequence allocation, paging semantics, the REST history endpoint |
+| [chat-protocol](../../../openspec/specs/sheaf-chat-chat-protocol/spec.md) | `chat` | The `/ws/chat` WebSocket: connect/replay handshake, client and server frame kinds, broadcast and persistence behavior |
+| [agent-runtime](../../../openspec/specs/sheaf-chat-agent-runtime/spec.md) | `ar` | Agent lifecycle states, attach/detach, idle offload, message delivery and steering, cancellation, deferred manifest creation |
+| [models](../../../openspec/specs/sheaf-chat-models/spec.md) | `mdl` | Provider/model registry, the local OpenAI-compatible provider, availability rules, `/api/models`, service-local Pi auth storage |
+| [agui-mapping](../../../openspec/specs/sheaf-chat-agui-mapping/spec.md) | `agui` | Pi event → AGUI event mapping, Sheaf activity mapping, sanitization, snapshot reduction |
+| [scoped-tools](../../../openspec/specs/sheaf-chat-scoped-tools/spec.md) | `st` | The Pi extension exposing eight root-scoped filesystem tools and the path policy behind them |
+| [chat-ui](../../../openspec/specs/sheaf-chat-chat-ui/spec.md) | `ui` | The hash-routed browser UI: piles/sessions/chat screens, reconnect, acks, lazy history, and the file workspace host |
+| [file-browser](../../../openspec/specs/sheaf-chat-file-browser/spec.md) | `fb` | Session-root read-only file REST API, `file.changed` broadcasts, Markdown/KaTeX previews, file tabs and mobile/desktop workspace panels |
 
 ## Shared Contracts
 

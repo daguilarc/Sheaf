@@ -6,7 +6,7 @@ units of feature work stored under `projects/<project>/quests/<type>/<n>_<slug>/
 dedicated git worktree per quest. It exposes a Flask HTTP service (port `9002`),
 a CLI that wraps that service, and a web dashboard with a live agent-chat view.
 This document is cross-capability design prose; normative requirements live in
-the capability files under [capabilities/](capabilities/), and exact build/run/test
+the capability specs under [openspec/specs/](../../../openspec/specs/), and exact build/run/test
 commands live in [operations.md](operations.md).
 
 Quest Runner is filesystem- and git-backed only: there is no database. Quest
@@ -39,16 +39,16 @@ All paths are relative to `projects/quest-runner/`.
 | CLI | `bin/quest-runner`, `src/quest_runner_service/cli.py`, repo-root `scripts/quest-runner` | Argparse CLI wrapping the REST service |
 
 Capabilities specified on top of these components:
-[quest-lifecycle](capabilities/quest-lifecycle.md),
-[service-lifecycle](capabilities/service-lifecycle.md),
-[state-machine-engine](capabilities/state-machine-engine.md),
-[workflow-config](capabilities/workflow-config.md),
-[agent-harness](capabilities/agent-harness.md),
-[issues](capabilities/issues.md),
-[slices](capabilities/slices.md),
-[experiments](capabilities/experiments.md),
-[dashboard](capabilities/dashboard.md),
-[chat-stream](capabilities/chat-stream.md).
+[quest-lifecycle](../../../openspec/specs/quest-runner-quest-lifecycle/spec.md),
+[service-lifecycle](../../../openspec/specs/quest-runner-service-lifecycle/spec.md),
+[state-machine-engine](../../../openspec/specs/quest-runner-state-machine-engine/spec.md),
+[workflow-config](../../../openspec/specs/quest-runner-workflow-config/spec.md),
+[agent-harness](../../../openspec/specs/quest-runner-agent-harness/spec.md),
+[issues](../../../openspec/specs/quest-runner-issues/spec.md),
+[slices](../../../openspec/specs/quest-runner-slices/spec.md),
+[experiments](../../../openspec/specs/quest-runner-experiments/spec.md),
+[dashboard](../../../openspec/specs/quest-runner-dashboard/spec.md),
+[chat-stream](../../../openspec/specs/quest-runner-chat-stream/spec.md).
 
 ## Execution data flow
 
@@ -61,7 +61,7 @@ Capabilities specified on top of these components:
    creates the quest worktree on branch `quest/<worktree_name>`, and, when
    `agent_vm.enabled` is true, allocates the worktree's VM after worktree
    creation succeeds
-   ([quest-lifecycle](capabilities/quest-lifecycle.md)).
+   ([quest-lifecycle](../../../openspec/specs/quest-runner-quest-lifecycle/spec.md)).
 2. **Run** — `POST /run_quest` acquires the per-worktree lock, returns `202`
    with a `run_id`, and schedules `quest_runner_v2.run_quest_v2` on a
    background thread. The run executes entirely inside the quest worktree;
@@ -77,10 +77,10 @@ Capabilities specified on top of these components:
      + node task text + `quest_docs/` schema reference), and the harness layer
      invokes the configured agent CLI on the role's persistent thread either on
      the host or inside the assigned worktree VM
-     ([agent-harness](capabilities/agent-harness.md));
+     ([agent-harness](../../../openspec/specs/quest-runner-agent-harness/spec.md));
    - harness events are appended to `<quest_dir>/logs/step_<n>_<role>.jsonl`
      and fanned out live through the chat event bus
-     ([chat-stream](capabilities/chat-stream.md));
+     ([chat-stream](../../../openspec/specs/quest-runner-chat-stream/spec.md));
    - profile path rules are enforced over the files the harness touched;
    - if the worktree changed, a git commit is created whose message carries
      `quest-step`, `state-machine-path`, node names, and a recursive snapshot
@@ -92,7 +92,7 @@ Capabilities specified on top of these components:
 
 The dashboard reads the same filesystem and git data through
 `/api/dashboard/*`; it resolves the quest worktree first and falls back to the
-source checkout for read-only views ([dashboard](capabilities/dashboard.md)).
+source checkout for read-only views ([dashboard](../../../openspec/specs/quest-runner-dashboard/spec.md)).
 
 ## Key design decisions and invariants
 
@@ -104,7 +104,7 @@ source checkout for read-only views ([dashboard](capabilities/dashboard.md)).
   copied into each new quest's `workflow/` directory. A quest always runs the
   workflow it was created with — later changes to the package never alter
   in-flight quests, and experiments can substitute an entire alternate
-  `workflow/` directory ([workflow-config](capabilities/workflow-config.md)).
+  `workflow/` directory ([workflow-config](../../../openspec/specs/quest-runner-workflow-config/spec.md)).
 - **No state enums in code.** State names come exclusively from the workflow
   machine YAML; the interpreter is generic and the codebase carries no
   hardcoded quest-state enum (guarded by `tests/test_no_state_enums.py`).
@@ -135,13 +135,13 @@ source checkout for read-only views ([dashboard](capabilities/dashboard.md)).
 - **Issues are API-mediated.** Issue markdown files (`physicalplan_issues.md`,
   slice `polishing_issues.md`, `integration_test_issues.md`) are read and
   written only through the issue API/CLI, keeping IDs and statuses
-  machine-parseable ([issues](capabilities/issues.md)).
+  machine-parseable ([issues](../../../openspec/specs/quest-runner-issues/spec.md)).
 - **Experiments replay, never merge.** An experiment branches from the parent
   of a chosen step commit, runs an alternate workflow in its own worktree to a
   configured stop node, and lands by archiving artifacts under
   `experiments/<n>/` on the source checkout and pushing the branch — it never
   rebases or merges code into `main`
-  ([experiments](capabilities/experiments.md)).
+  ([experiments](../../../openspec/specs/quest-runner-experiments/spec.md)).
 
 ## Service boundaries
 
@@ -149,7 +149,7 @@ Quest Runner deliberately excludes service orchestration: registration and
 lifecycle of other services, service-log streaming, SQLite, and MCP routes
 belong to `projects/conductor/`. Quest Runner registers itself in
 `config/services.json` and offers `GET /health` and `POST /exit` for
-coordinated shutdown ([service-lifecycle](capabilities/service-lifecycle.md)).
+coordinated shutdown ([service-lifecycle](../../../openspec/specs/quest-runner-service-lifecycle/spec.md)).
 
 Service process logs go to `logs/quest-runner/`; all quest-run artifacts stay
 inside the quest directory in its worktree. See repository-wide rules in

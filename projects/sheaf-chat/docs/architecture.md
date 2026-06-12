@@ -79,7 +79,7 @@ The broadcaster fans persisted envelopes out to connected sockets and serves
 replay and history-page requests. Hubs live in a registry for the process
 lifetime; broadcasters are released when their last client disconnects. The
 connect handshake (hello → replay → caught_up → live) is specified in
-[chat-protocol](capabilities/chat-protocol.md).
+[chat-protocol](../../../openspec/specs/sheaf-chat-chat-protocol/spec.md).
 
 ## Agent runtime
 

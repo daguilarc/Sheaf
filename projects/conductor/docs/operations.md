@@ -105,4 +105,4 @@ their stdout/stderr appended to
 `logs/<service_name>/<service_name>_stderr.log` under the repository root —
 the same layout `start_conductor.sh` uses for conductor itself. Log viewing
 reads from `logs/<service_name>/` (see
-[log-access](capabilities/log-access.md)).
+[log-access](../../../openspec/specs/conductor-log-access/spec.md)).

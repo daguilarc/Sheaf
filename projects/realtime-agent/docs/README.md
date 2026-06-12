@@ -23,16 +23,16 @@ and known gaps are tracked in [coverage.md](coverage.md).
 
 | Capability | Prefix | What it specifies |
 |---|---|---|
-| [session-lifecycle](capabilities/session-lifecycle.md) | `ses` | `startAgentSession`: connection, startup event sequence, the `RealtimeAgentSession` send/stop API, event routing and classification, structured-context envelope, end reasons |
-| [turn-model](capabilities/turn-model.md) | `turn` | Server-VAD vs manual turn modes, the `session.update` payload, the response queue (policies, atomic units, tool-output holds) |
-| [tool-dispatch](capabilities/tool-dispatch.md) | `td` | Tool registry, function-call extraction and dedupe, FIFO dispatch, structured error payloads, lifecycle notifications, follow-up responses |
-| [persistence](capabilities/persistence.md) | `db` | The SQLite database: schema, session rows, event rows, write policy |
-| [audio-capture](capabilities/audio-capture.md) | `aud` | Microphone device listing/selection, PortAudio and sox capture paths, PCM frame format |
-| [config](capabilities/config.md) | `cfg` | Repository-root discovery, `config/realtime-agent.json`, `config/api_keys.json`, the runtime JSONL logger and its redaction rules |
-| [cli](capabilities/cli.md) | `cli` | The `realtime-agent` CLI: flags, defaults, stdout event lines, exit codes, signal shutdown |
-| [vscode-extension](capabilities/vscode-extension.md) | `vsx` | Extension manifest surfaces, commands/keybindings, settings, API-key resolution, session controller states, chat pane, storage exception |
-| [editor-tools](capabilities/editor-tools.md) | `et` | The `sheaf VS Code` tool set: seven editor tools, the workspace path policy, the tool error catalogue |
-| [freshness](capabilities/freshness.md) | `fr` | Stale-editor-state tracking and structured context pushes, agent-mutation suppression |
+| [session-lifecycle](../../../openspec/specs/realtime-agent-session-lifecycle/spec.md) | `ses` | `startAgentSession`: connection, startup event sequence, the `RealtimeAgentSession` send/stop API, event routing and classification, structured-context envelope, end reasons |
+| [turn-model](../../../openspec/specs/realtime-agent-turn-model/spec.md) | `turn` | Server-VAD vs manual turn modes, the `session.update` payload, the response queue (policies, atomic units, tool-output holds) |
+| [tool-dispatch](../../../openspec/specs/realtime-agent-tool-dispatch/spec.md) | `td` | Tool registry, function-call extraction and dedupe, FIFO dispatch, structured error payloads, lifecycle notifications, follow-up responses |
+| [persistence](../../../openspec/specs/realtime-agent-persistence/spec.md) | `db` | The SQLite database: schema, session rows, event rows, write policy |
+| [audio-capture](../../../openspec/specs/realtime-agent-audio-capture/spec.md) | `aud` | Microphone device listing/selection, PortAudio and sox capture paths, PCM frame format |
+| [config](../../../openspec/specs/realtime-agent-config/spec.md) | `cfg` | Repository-root discovery, `config/realtime-agent.json`, `config/api_keys.json`, the runtime JSONL logger and its redaction rules |
+| [cli](../../../openspec/specs/realtime-agent-cli/spec.md) | `cli` | The `realtime-agent` CLI: flags, defaults, stdout event lines, exit codes, signal shutdown |
+| [vscode-extension](../../../openspec/specs/realtime-agent-vscode-extension/spec.md) | `vsx` | Extension manifest surfaces, commands/keybindings, settings, API-key resolution, session controller states, chat pane, storage exception |
+| [editor-tools](../../../openspec/specs/realtime-agent-editor-tools/spec.md) | `et` | The `sheaf VS Code` tool set: seven editor tools, the workspace path policy, the tool error catalogue |
+| [freshness](../../../openspec/specs/realtime-agent-freshness/spec.md) | `fr` | Stale-editor-state tracking and structured context pushes, agent-mutation suppression |
 
 ## Shared Contracts
 
@@ -40,12 +40,12 @@ No `contracts/` directory exists: every schema in this project has a single
 owning capability, and other capabilities link to it. The candidates and
 their canonical homes:
 
-- SQLite schema — [persistence](capabilities/persistence.md).
-- Runtime JSONL log-entry format — [config](capabilities/config.md).
-- Structured-context envelope — [session-lifecycle](capabilities/session-lifecycle.md)
-  (kinds produced by [freshness](capabilities/freshness.md)).
-- Tool error payloads — [tool-dispatch](capabilities/tool-dispatch.md)
-  (dispatcher-level) and [editor-tools](capabilities/editor-tools.md)
+- SQLite schema — [persistence](../../../openspec/specs/realtime-agent-persistence/spec.md).
+- Runtime JSONL log-entry format — [config](../../../openspec/specs/realtime-agent-config/spec.md).
+- Structured-context envelope — [session-lifecycle](../../../openspec/specs/realtime-agent-session-lifecycle/spec.md)
+  (kinds produced by [freshness](../../../openspec/specs/realtime-agent-freshness/spec.md)).
+- Tool error payloads — [tool-dispatch](../../../openspec/specs/realtime-agent-tool-dispatch/spec.md)
+  (dispatcher-level) and [editor-tools](../../../openspec/specs/realtime-agent-editor-tools/spec.md)
   (tool-level `ToolError`).
 
 ## Repository Rules

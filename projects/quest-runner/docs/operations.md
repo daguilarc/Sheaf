@@ -300,7 +300,7 @@ same ports on the host. Every guest command sources
 `$HOME/.sheaf-agent-vm.env`, which exports `SHEAF_AGENT_VM=1`, `CODEX_HOME`,
 the canonical guest `PATH`, `SHEAF_HOST_IP`, and
 `SHEAF_HOST_PORT_<port>_URL` variables (file contract in
-[agent-harness](capabilities/agent-harness.md)). The quest-runner Makefile
+[agent-harness](../../../openspec/specs/quest-runner-agent-harness/spec.md)). The quest-runner Makefile
 selects `.venv-vm` as its venv directory when `SHEAF_AGENT_VM=1`, so VM test
 runs do not rewrite the host `.venv` shebangs; an explicit `VENV_DIR=`
 override always wins.

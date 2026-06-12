@@ -1,8 +1,8 @@
 # Contract: Interaction Records
 
-Shared by [dictation-pipeline](../capabilities/dictation-pipeline.md) (writes
-HTTP interactions), [launchpad](../capabilities/launchpad.md) (writes
-Launchpad interactions), and [web-ui](../capabilities/web-ui.md) (reads them
+Shared by [dictation-pipeline](../../../../openspec/specs/dictator-dictation-pipeline/spec.md) (writes
+HTTP interactions), [launchpad](../../../../openspec/specs/dictator-launchpad/spec.md) (writes
+Launchpad interactions), and [web-ui](../../../../openspec/specs/dictator-web-ui/spec.md) (reads them
 via `/api/interactions`). Runtime-data rules:
 [Logs And Data](../../../../structure/logs-and-data.md).
 

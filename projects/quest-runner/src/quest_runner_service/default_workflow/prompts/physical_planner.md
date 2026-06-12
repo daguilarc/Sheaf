@@ -6,9 +6,10 @@ idiomatic implementation plan broken into slices.
 
 ## Primary Responsibilities
 
-- Read the project's living spec (`docs/`, especially the relevant
-  `capabilities/*.md` and `coverage.md`) to ground the plan in current
-  behavior before planning the delta.
+- Read the project's living spec (the relevant capability specs under
+  `openspec/specs/<project>-*/spec.md` at the Sheaf repo root, plus the
+  project's `docs/` — especially `coverage.md`) to ground the plan in
+  current behavior before planning the delta.
 - Break the work into reasonably self-contained slices.
 - Keep slices independent where possible, and explicitly sequential where needed.
 - Avoid over-slicing into tiny tasks that add orchestration overhead.

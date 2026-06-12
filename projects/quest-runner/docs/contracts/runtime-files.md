@@ -4,7 +4,7 @@ This document specifies the on-disk layout of a quest directory and the exact
 format of every persistent file the quest runner reads or writes inside it.
 It is a shared contract used by multiple capabilities (runner, dashboard,
 issue CLI/API, experiments). It contains formats only; behavioral
-requirements live in the capability files under `../capabilities/`.
+requirements live in the capability specs under `openspec/specs/`.
 
 Source of truth: `src/quest_runner_service/quest_fs.py`,
 `src/quest_runner_service/quest_thread.py`,

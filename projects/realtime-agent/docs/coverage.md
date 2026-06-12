@@ -72,7 +72,7 @@ Last audit: living-spec migration (one-time rewrite from code), 2026-06-10
   even when `logs_dir` is customized (cfg-3); whether `logs_dir` should
   feed it is unresolved — the old docs implied it did.
 - `data_dir` is loaded and defaulted but consumed by nothing.
-- `DEFAULT_DATABASE_PATH` ([persistence](capabilities/persistence.md)) is
+- `DEFAULT_DATABASE_PATH` ([persistence](../../../openspec/specs/realtime-agent-persistence/spec.md)) is
   computed at module import and throws outside a Sheaf checkout, making
   the package import-unsafe elsewhere; unspecified whether that is
   intended.

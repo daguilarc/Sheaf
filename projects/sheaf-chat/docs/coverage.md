@@ -110,7 +110,7 @@ Last audit: sheaf-chat Playwright integration recovery, 2026-06-10
 - The service binds the extension with a no-op `emitActivity`
   (`CreateDefaultBindings()` in `src/agents/piAdapter.ts`), so
   `sheaf_chat.path_escape_denied` activity never reaches the chat stream
-  even though [agui-mapping](capabilities/agui-mapping.md) defines the
+  even though [agui-mapping](../../../openspec/specs/sheaf-chat-agui-mapping/spec.md) defines the
   mapping. Browser-visible escape reporting is currently aspirational.
 - The audit logger accumulates escape events in memory with no read
   surface.

@@ -54,6 +54,6 @@ Root Makefile delegates: `make web-build`, `make web-test`, `make web-clean`.
 There is nothing to run. The project ships static files; each consuming
 service serves `projects/web/src/` from its own repository checkout at
 `/assets/web/<filename>` (consumer list and code pointers:
-[web-utilities — Interactions](capabilities/web-utilities.md#interactions)).
+[web-utilities — Interactions](../../../openspec/specs/web-utilities/spec.md#interactions)).
 Changes to files under `src/` are picked up by consumers on the next HTTP
 request (quest-runner serves them with caching disabled).

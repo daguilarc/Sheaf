@@ -20,16 +20,16 @@ and known gaps are tracked in [coverage.md](coverage.md).
 
 | Capability | Prefix | What it specifies |
 |---|---|---|
-| [quest-lifecycle](capabilities/quest-lifecycle.md) | `ql` | Create, run, advance, upgrade, and land quests; worktrees, branches, commit conventions, human-intervention pauses |
-| [service-lifecycle](capabilities/service-lifecycle.md) | `svc` | The long-running service process: health, exit, startup, registry entry, CLI base-URL resolution |
-| [state-machine-engine](capabilities/state-machine-engine.md) | `sm` | The workflow YAML language semantics: machines, transitions, conditions, actions, variables, collections, the step model |
-| [workflow-config](capabilities/workflow-config.md) | `wf` | The `workflow/` package format: workflow.yaml, profiles, prompts, preamble; the packaged default eight-role pipeline |
-| [agent-harness](capabilities/agent-harness.md) | `ah` | Harness adapters (codex, claude_code, cursor), thread registry, step logs, path enforcement, the agent VM |
-| [issues](capabilities/issues.md) | `iss` | Issue files, issue HTTP API, issue CLI, ownership and response semantics |
-| [slices](capabilities/slices.md) | `sl` | Slice initialization API/CLI, naming, numbering, scaffolding |
-| [experiments](capabilities/experiments.md) | `exp` | Replay experiments: create, scoped runs, stop conditions, landing/archival |
-| [dashboard](capabilities/dashboard.md) | `dash` | The dashboard SPA and `/api/dashboard/*` data endpoints, including git views |
-| [chat-stream](capabilities/chat-stream.md) | `chat` | WebSocket agent-log streaming and quest-event → AGUI mapping |
+| [quest-lifecycle](../../../openspec/specs/quest-runner-quest-lifecycle/spec.md) | `ql` | Create, run, advance, upgrade, and land quests; worktrees, branches, commit conventions, human-intervention pauses |
+| [service-lifecycle](../../../openspec/specs/quest-runner-service-lifecycle/spec.md) | `svc` | The long-running service process: health, exit, startup, registry entry, CLI base-URL resolution |
+| [state-machine-engine](../../../openspec/specs/quest-runner-state-machine-engine/spec.md) | `sm` | The workflow YAML language semantics: machines, transitions, conditions, actions, variables, collections, the step model |
+| [workflow-config](../../../openspec/specs/quest-runner-workflow-config/spec.md) | `wf` | The `workflow/` package format: workflow.yaml, profiles, prompts, preamble; the packaged default eight-role pipeline |
+| [agent-harness](../../../openspec/specs/quest-runner-agent-harness/spec.md) | `ah` | Harness adapters (codex, claude_code, cursor), thread registry, step logs, path enforcement, the agent VM |
+| [issues](../../../openspec/specs/quest-runner-issues/spec.md) | `iss` | Issue files, issue HTTP API, issue CLI, ownership and response semantics |
+| [slices](../../../openspec/specs/quest-runner-slices/spec.md) | `sl` | Slice initialization API/CLI, naming, numbering, scaffolding |
+| [experiments](../../../openspec/specs/quest-runner-experiments/spec.md) | `exp` | Replay experiments: create, scoped runs, stop conditions, landing/archival |
+| [dashboard](../../../openspec/specs/quest-runner-dashboard/spec.md) | `dash` | The dashboard SPA and `/api/dashboard/*` data endpoints, including git views |
+| [chat-stream](../../../openspec/specs/quest-runner-chat-stream/spec.md) | `chat` | WebSocket agent-log streaming and quest-event → AGUI mapping |
 
 ## Shared Contracts
 

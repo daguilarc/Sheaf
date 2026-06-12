@@ -11,7 +11,7 @@ running project. Repo-wide conventions: [Makefiles](../../../structure/makefile.
 - Node.js 20 or newer (`engines: ">=20"`) and npm.
 - macOS CLI microphone capture with no `--input-device` uses the sox `rec`
   binary (`brew install sox`); all other capture paths use the bundled
-  PortAudio module. See [audio-capture](capabilities/audio-capture.md).
+  PortAudio module. See [audio-capture](../../../openspec/specs/realtime-agent-audio-capture/spec.md).
 - For extension development: VS Code 1.85+; Xcode command-line tools on
   macOS when rebuilding native modules.
 - An OpenAI API key in `config/api_keys.json` at the repository root
@@ -114,13 +114,13 @@ node projects/realtime-agent/src/agent/dist/src/agent/src/cli.js --list-input-de
 Runtime output: JSON event lines on stdout, SQLite at
 `data/realtime-agent/realtime-agent.sqlite`, JSONL log at
 `logs/realtime-agent/realtime-agent.jsonl`. Stop with `Ctrl+C` (exit 0).
-Full flag and exit-code contract: [cli](capabilities/cli.md).
+Full flag and exit-code contract: [cli](../../../openspec/specs/realtime-agent-cli/spec.md).
 
 ## Launch The VS Code Extension
 
 1. Build the project: `make -C projects/realtime-agent build`.
 2. Provide an OpenAI API key via one of (resolution order in
-   [vscode-extension](capabilities/vscode-extension.md)):
+   [vscode-extension](../../../openspec/specs/realtime-agent-vscode-extension/spec.md)):
    - VS Code Secret Storage under key `sheaf.realtime.openAiApiKey`,
    - `config/api_keys.json` when the workspace is a Sheaf repository
      checkout,
