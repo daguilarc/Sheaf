@@ -1,0 +1,8 @@
+id: pyramid-index
+name: pyramid-index
+description: Read, create, and maintain pyramid indexes for source material.
+targets:
+  - claude
+  - cursor
+  - pi
+  - codex

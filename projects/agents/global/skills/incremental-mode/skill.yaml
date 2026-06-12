@@ -1,0 +1,8 @@
+id: incremental-mode
+name: incremental-mode
+description: Follow explicit keyboard-style instructions without adjacent initiative.
+targets:
+  - claude
+  - cursor
+  - pi
+  - codex

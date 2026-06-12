@@ -1,0 +1,8 @@
+id: git-workflow
+name: git-workflow
+description: Linear Git workflow, rebase discipline, and the land procedure.
+targets:
+  - claude
+  - cursor
+  - pi
+  - codex

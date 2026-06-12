@@ -1,0 +1,8 @@
+id: about-me
+name: about-me
+description: User context, collaboration preferences, dictation constraints, and how to treat a likely typo.
+targets:
+  - claude
+  - cursor
+  - pi
+  - codex

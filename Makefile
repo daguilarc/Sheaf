@@ -1,6 +1,6 @@
 MAKEFLAGS += --warn-undefined-variables
 
-PROJECTS := conductor web quest-runner dictator realtime-agent sheaf-chat
+PROJECTS := conductor web quest-runner dictator realtime-agent sheaf-chat agents
 
 .PHONY: all clean test help
 .PHONY: $(PROJECTS)
@@ -10,6 +10,7 @@ PROJECTS := conductor web quest-runner dictator realtime-agent sheaf-chat
 .PHONY: dictator-build dictator-test dictator-run dictator-clean
 .PHONY: realtime-agent-build realtime-agent-test realtime-agent-clean realtime-agent-run-cli
 .PHONY: sheaf-chat-build sheaf-chat-test sheaf-chat-run sheaf-chat-clean
+.PHONY: agents-build agents-test agents-install agents-check agents-clean
 
 .DEFAULT_GOAL := all
 
@@ -99,6 +100,21 @@ sheaf-chat-run:
 sheaf-chat-clean:
 	$(MAKE) -C projects/sheaf-chat clean
 
+agents-build:
+	$(MAKE) -C projects/agents build
+
+agents-test:
+	$(MAKE) -C projects/agents test
+
+agents-install:
+	$(MAKE) -C projects/agents install
+
+agents-check:
+	$(MAKE) -C projects/agents check
+
+agents-clean:
+	$(MAKE) -C projects/agents clean
+
 help:
 	@echo "Repository targets:"
 	@echo "  make all              Build and test every project under projects/"
@@ -111,6 +127,8 @@ help:
 	@echo "  make <project>-test   Test one project"
 	@echo "  make <project>-run    Run one project's service (if supported)"
 	@echo "  make <project>-clean  Clean one project"
+	@echo "  make agents-install   Install shared agent guidance"
+	@echo "  make agents-check     Verify installed agent guidance"
 	@echo ""
 	@echo "Projects: $(PROJECTS)"
 	@echo ""

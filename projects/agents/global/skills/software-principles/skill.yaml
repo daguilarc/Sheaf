@@ -1,0 +1,8 @@
+id: software-principles
+name: software-principles
+description: Engineering quality principles, contracts, tests, and infrastructure escalation.
+targets:
+  - claude
+  - cursor
+  - pi
+  - codex
