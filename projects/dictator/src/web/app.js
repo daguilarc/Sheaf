@@ -6,6 +6,7 @@
     status: null,
     configFields: [],
     configOptions: {},
+    injectableRules: [],
     promptDir: "",
     selectedPromptPath: null,
     selectedInteractionId: null
@@ -564,6 +565,117 @@
     await refresh();
   }
 
+  async function promptFileOptions()
+  {
+    const options = await loadConfigOptions("system_prompt");
+    return options.map(function (option)
+    {
+      return option.value;
+    });
+  }
+
+  async function renderInjectableRules()
+  {
+    showError("injectable-rules-error", null);
+    const data = await api("/api/injectable-rules");
+    state.injectableRules = data.rules || [];
+
+    const promptList = document.getElementById("injectable-rule-prompts");
+    if (promptList)
+    {
+      try
+      {
+        const options = await promptFileOptions();
+        promptList.innerHTML = options.map(function (path)
+        {
+          return '<option value="' + escapeHtml(path) + '"></option>';
+        }).join("");
+      }
+      catch (err)
+      {
+        showError("injectable-rules-error", "Prompt file options could not be loaded: " + err.message);
+      }
+    }
+
+    const list = document.getElementById("injectable-rules-list");
+    if (!list)
+    {
+      return;
+    }
+    list.innerHTML = "";
+    if (!state.injectableRules.length)
+    {
+      const empty = document.createElement("div");
+      empty.className = "muted";
+      empty.textContent = "No injectable rules configured.";
+      list.appendChild(empty);
+      return;
+    }
+
+    for (const rule of state.injectableRules)
+    {
+      const row = document.createElement("div");
+      row.className = "injectable-rule-row";
+
+      const trigger = document.createElement("div");
+      trigger.className = "injectable-rule-trigger";
+      trigger.textContent = rule.key;
+
+      const promptPath = document.createElement("code");
+      promptPath.textContent = rule.prompt_path;
+
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "btn btn-secondary";
+      remove.textContent = "Delete";
+      remove.addEventListener("click", function ()
+      {
+        deleteInjectableRule(rule.key).catch(function (err)
+        {
+          showError("injectable-rules-error", err.message);
+        });
+      });
+
+      row.appendChild(trigger);
+      row.appendChild(promptPath);
+      row.appendChild(remove);
+      list.appendChild(row);
+    }
+  }
+
+  async function addInjectableRule(event)
+  {
+    event.preventDefault();
+    showError("injectable-rules-error", null);
+    const keyInput = document.getElementById("injectable-rule-key");
+    const promptInput = document.getElementById("injectable-rule-prompt");
+    const key = keyInput ? keyInput.value : "";
+    const promptPath = promptInput ? promptInput.value : "";
+
+    await api("/api/injectable-rules", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key: key, prompt_path: promptPath })
+    });
+
+    if (keyInput)
+    {
+      keyInput.value = "";
+    }
+    if (promptInput)
+    {
+      promptInput.value = "";
+    }
+    await renderInjectableRules();
+  }
+
+  async function deleteInjectableRule(key)
+  {
+    showError("injectable-rules-error", null);
+    await api("/api/injectable-rules?key=" + encodeURIComponent(key), { method: "DELETE" });
+    await renderInjectableRules();
+  }
+
   async function loadInteractions()
   {
     const data = await api("/api/interactions");
@@ -669,6 +781,7 @@
     await renderConfigForm();
     await loadPromptDirectory(state.promptDir);
     await previewCurrentSystemPrompt();
+    await renderInjectableRules();
     await loadInteractions();
     if (state.selectedInteractionId)
     {
@@ -683,6 +796,7 @@
     const promptBtn = document.getElementById("prompt-select-btn");
     const dictateForm = document.getElementById("dictate-form");
     const topSettingsForm = document.getElementById("top-settings-form");
+    const injectableRulesForm = document.getElementById("injectable-rules-form");
 
     if (saveBtn)
     {
@@ -726,6 +840,16 @@
         saveTopSettings().catch(function (err)
         {
           showError("top-settings-error", err.message);
+        });
+      });
+    }
+    if (injectableRulesForm)
+    {
+      injectableRulesForm.addEventListener("submit", function (event)
+      {
+        addInjectableRule(event).catch(function (err)
+        {
+          showError("injectable-rules-error", err.message);
         });
       });
     }

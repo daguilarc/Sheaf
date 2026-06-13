@@ -62,6 +62,20 @@
         </div>
       </section>
 
+      <section class="card" id="injectable-rules-panel">
+        <div class="card-header">
+          <h2>Injectable rules</h2>
+        </div>
+        <div id="injectable-rules-error" class="inline-error hidden" role="alert"></div>
+        <form id="injectable-rules-form" class="injectable-rules-form">
+          <label>Trigger <input type="text" id="injectable-rule-key" autocomplete="off"></label>
+          <label>Prompt file <input type="text" id="injectable-rule-prompt" list="injectable-rule-prompts" autocomplete="off"></label>
+          <datalist id="injectable-rule-prompts"></datalist>
+          <button type="submit" class="btn btn-primary" aria-label="Add injectable rule">+</button>
+        </form>
+        <div id="injectable-rules-list" class="injectable-rules-list"></div>
+      </section>
+
       <section class="card" id="history-panel">
         <div class="card-header">
           <h2>Interaction history</h2>

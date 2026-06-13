@@ -68,6 +68,7 @@ final class WebAPITests: XCTestCase
             "/api/prompts",
             "/api/prompts/preview",
             "/api/prompts/selection",
+            "/api/injectable-rules",
             "/api/interactions",
             "/v1/dictate-audio"
         ]
@@ -207,6 +208,71 @@ final class WebAPITests: XCTestCase
         XCTAssertEqual(reviewStatus, 200)
         saved = try JSONDecoder().decode(RuntimeConfigFile.self, from: Data(contentsOf: configURL))
         XCTAssertEqual(saved.reviewSystemPrompt, promptPath)
+    }
+
+    func testInjectableRulesAPIListsAddsReplacesAndDeletesRules() async throws
+    {
+        try await startServer()
+        let promptPath = SystemPromptCatalog.defaultPromptFile
+
+        let (initialStatus, initialBody) = try await jsonRequest(method: "GET", path: "/api/injectable-rules")
+        XCTAssertEqual(initialStatus, 200)
+        XCTAssertEqual((initialBody["rules"] as? [[String: Any]])?.count, 0)
+
+        let add = #"{"key":"dogs","prompt_path":"\#(promptPath)"}"#.data(using: .utf8)!
+        let (addStatus, addBody) = try await jsonRequest(
+            method: "POST",
+            path: "/api/injectable-rules",
+            body: add,
+            contentType: "application/json"
+        )
+        XCTAssertEqual(addStatus, 200)
+        var rules = addBody["rules"] as? [[String: Any]]
+        XCTAssertEqual(rules?.first?["key"] as? String, "dogs")
+        XCTAssertEqual(rules?.first?["prompt_path"] as? String, promptPath)
+
+        let replace = #"{"key":"dogs","prompt_path":"code_review_refiner_v1.md"}"#.data(using: .utf8)!
+        let (replaceStatus, replaceBody) = try await jsonRequest(
+            method: "POST",
+            path: "/api/injectable-rules",
+            body: replace,
+            contentType: "application/json"
+        )
+        XCTAssertEqual(replaceStatus, 200)
+        rules = replaceBody["rules"] as? [[String: Any]]
+        XCTAssertEqual(rules?.first?["prompt_path"] as? String, "code_review_refiner_v1.md")
+
+        let configURL = try XCTUnwrap(configURL)
+        var saved = try JSONDecoder().decode(RuntimeConfigFile.self, from: Data(contentsOf: configURL))
+        XCTAssertEqual(saved.injectableRules["dogs"], "code_review_refiner_v1.md")
+
+        let (deleteStatus, deleteBody) = try await jsonRequest(
+            method: "DELETE",
+            path: "/api/injectable-rules?key=dogs"
+        )
+        XCTAssertEqual(deleteStatus, 200)
+        XCTAssertEqual((deleteBody["rules"] as? [[String: Any]])?.count, 0)
+
+        saved = try JSONDecoder().decode(RuntimeConfigFile.self, from: Data(contentsOf: configURL))
+        XCTAssertEqual(saved.injectableRules, [:])
+    }
+
+    func testInjectableRulesAPIRejectsInvalidPromptPathsWithoutMutation() async throws
+    {
+        try await startServer()
+        let invalid = #"{"key":"dogs","prompt_path":"missing.md"}"#.data(using: .utf8)!
+        let (status, body) = try await jsonRequest(
+            method: "POST",
+            path: "/api/injectable-rules",
+            body: invalid,
+            contentType: "application/json"
+        )
+        XCTAssertEqual(status, 400)
+        XCTAssertNotNil(body["error"] as? String)
+
+        let configURL = try XCTUnwrap(configURL)
+        let saved = try JSONDecoder().decode(RuntimeConfigFile.self, from: Data(contentsOf: configURL))
+        XCTAssertEqual(saved.injectableRules, [:])
     }
 
     func testInteractionsListAndDetailReadPersistedRecords() async throws
@@ -496,6 +562,19 @@ final class WebAPITests: XCTestCase
                 XCTAssertFalse(text.contains(token), "Found \(token) in \(url.lastPathComponent)")
             }
         }
+    }
+
+    func testWebUIIncludesInjectableRuleControls() throws
+    {
+        let repoRoot = try SheafRootDiscovery.requireRepoRoot()
+        let webDir = repoRoot.appendingPathComponent("projects/dictator/src/web")
+        let html = try String(contentsOf: webDir.appendingPathComponent("index.html"), encoding: .utf8)
+        let js = try String(contentsOf: webDir.appendingPathComponent("app.js"), encoding: .utf8)
+
+        XCTAssertTrue(html.contains("injectable-rules-form"))
+        XCTAssertTrue(html.contains("Add injectable rule"))
+        XCTAssertTrue(js.contains("/api/injectable-rules"))
+        XCTAssertTrue(js.contains("deleteInjectableRule"))
     }
 
     private func startServer(hasOpenAIKey: Bool = false, ollamaAvailable: Bool = true) async throws

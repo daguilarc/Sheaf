@@ -402,12 +402,14 @@ final class LaunchpadServiceController
                 let reviewRefinementEngine = reviewHunk == nil
                     ? nil
                     : makeRefinementEngine(
+                        runtimeConfig: runtimeConfig,
                         systemPromptBodyOverride: effectiveSystemPromptBody,
                         configurationOverride: runtimeConfiguration
                     )
                 let overrideRefinementEngine = systemPromptPathOverride == nil
                     ? nil
                     : makeRefinementEngine(
+                        runtimeConfig: runtimeConfig,
                         systemPromptBodyOverride: effectiveSystemPromptBody,
                         configurationOverride: runtimeConfiguration
                     )
@@ -843,24 +845,35 @@ final class LaunchpadServiceController
     }
 
     private func makeRefinementEngine(
+        runtimeConfig: RuntimeConfigFile,
         systemPromptBodyOverride: String,
         configurationOverride: LLMRuntimeConfiguration
     ) -> any RefinementEngine
     {
-        ProviderRoutingRefinementEngine(
-            configuration: configurationOverride,
-            ollamaEngine: OllamaRefinementEngine(
-                host: configurationOverride.ollamaHost,
-                model: configurationOverride.ollamaModel,
-                systemPrompt: systemPromptBodyOverride
-            ),
-            openAIEngine: OpenAIRefinementEngine(
-                model: configurationOverride.openAIModel,
-                systemPrompt: systemPromptBodyOverride,
-                secretStore: secretStore
-            ),
-            canUseOpenAI: { [secretStore] in
-                (try? secretStore.getOpenAIKey()) != nil
+        let promptCatalog = SystemPromptCatalog(
+            directoryURL: runtimeConfig.resolvedSystemPromptsDirectoryURL(currentDirectoryPath: repoRoot.path)
+        )
+        return InjectableRulesRefinementEngine(
+            basePrompt: systemPromptBodyOverride,
+            injectableRules: runtimeConfig.injectableRules,
+            promptCatalog: promptCatalog,
+            makeEngine: { [configurationOverride, secretStore] systemPrompt in
+                ProviderRoutingRefinementEngine(
+                    configuration: configurationOverride,
+                    ollamaEngine: OllamaRefinementEngine(
+                        host: configurationOverride.ollamaHost,
+                        model: configurationOverride.ollamaModel,
+                        systemPrompt: systemPrompt
+                    ),
+                    openAIEngine: OpenAIRefinementEngine(
+                        model: configurationOverride.openAIModel,
+                        systemPrompt: systemPrompt,
+                        secretStore: secretStore
+                    ),
+                    canUseOpenAI: { [secretStore] in
+                        (try? secretStore.getOpenAIKey()) != nil
+                    }
+                )
             }
         )
     }

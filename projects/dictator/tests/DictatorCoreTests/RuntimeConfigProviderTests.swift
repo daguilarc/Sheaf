@@ -171,6 +171,39 @@ final class RuntimeConfigProviderTests: XCTestCase {
         XCTAssertEqual(decoded.dictatorServerHost, RuntimeConfigFile.defaultDictatorServerHost)
         XCTAssertEqual(decoded.dictatorServerPort, RuntimeConfigFile.defaultDictatorServerPort)
         XCTAssertEqual(decoded.dictatorServerEnabled, RuntimeConfigFile.defaultDictatorServerEnabled)
+        XCTAssertEqual(decoded.injectableRules, [:])
+    }
+
+    func testRuntimeConfigDecodesAndPersistsInjectableRules() throws {
+        let json = """
+        {
+          "version": 2,
+          "cloud_model": "gpt-4.1-mini",
+          "local_model": "qwen2.5:7b-instruct",
+          "system_prompt": "intent_refiner_v1.md",
+          "use_cloud": false,
+          "injectable_rules": {
+            " dogs ": " dog_rules.md ",
+            "cats": "cat_rules.md"
+          },
+          "updated_at": "2026-02-24T00:00:00Z"
+        }
+        """.data(using: .utf8)!
+
+        let decoded = try JSONDecoder().decode(RuntimeConfigFile.self, from: json)
+        XCTAssertEqual(decoded.injectableRules, [
+            "dogs": "dog_rules.md",
+            "cats": "cat_rules.md"
+        ])
+
+        let tempDir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let store = RuntimeConfigStore(fileURL: tempDir.appendingPathComponent("dictator.json"))
+        try store.save(decoded)
+
+        let persisted = try XCTUnwrap(try store.load())
+        XCTAssertEqual(persisted.injectableRules["dogs"], "dog_rules.md")
+        XCTAssertEqual(persisted.injectableRules["cats"], "cat_rules.md")
     }
 
     func testApplyInMemoryPatchUpdatesReviewPromptPath() async throws {
@@ -243,6 +276,67 @@ final class RuntimeConfigProviderTests: XCTestCase {
         XCTAssertEqual(updated.interactionsBufferBytes, 25 * 1024 * 1024)
     }
 
+    func testApplyPatchUpsertsAndDeletesInjectableRules() async throws {
+        let tempDir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let primaryURL = tempDir.appendingPathComponent("runtime-config.json")
+        let provider = RuntimeConfigProvider(
+            store: RuntimeConfigStore(fileURL: primaryURL),
+            defaultStore: nil
+        )
+
+        var updated = try await provider.applyPatch(
+            RuntimeConfigPatch(
+                injectableRuleUpsert: InjectableRuleUpsert(
+                    key: " dogs ",
+                    promptPath: " dog_rules.md "
+                )
+            )
+        )
+        XCTAssertEqual(updated.injectableRules, ["dogs": "dog_rules.md"])
+
+        updated = try await provider.applyPatch(
+            RuntimeConfigPatch(
+                injectableRuleUpsert: InjectableRuleUpsert(
+                    key: "dogs",
+                    promptPath: "better_dog_rules.md"
+                )
+            )
+        )
+        XCTAssertEqual(updated.injectableRules, ["dogs": "better_dog_rules.md"])
+
+        updated = try await provider.applyPatch(RuntimeConfigPatch(injectableRuleDeleteKey: "dogs"))
+        XCTAssertEqual(updated.injectableRules, [:])
+    }
+
+    func testApplyPatchRejectsInvalidInjectableRuleEdits() async throws {
+        let tempDir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let primaryURL = tempDir.appendingPathComponent("runtime-config.json")
+        let provider = RuntimeConfigProvider(
+            store: RuntimeConfigStore(fileURL: primaryURL),
+            defaultStore: nil
+        )
+
+        try await assertInjectableRulePatchFails(provider, RuntimeConfigPatch(
+            injectableRuleUpsert: InjectableRuleUpsert(key: " ", promptPath: "dog_rules.md")
+        ))
+        try await assertInjectableRulePatchFails(provider, RuntimeConfigPatch(
+            injectableRuleUpsert: InjectableRuleUpsert(key: "dogs", promptPath: " ")
+        ))
+        try await assertInjectableRulePatchFails(provider, RuntimeConfigPatch(
+            injectableRuleUpsert: InjectableRuleUpsert(key: "dogs", promptPath: "/tmp/dog_rules.md")
+        ))
+        try await assertInjectableRulePatchFails(provider, RuntimeConfigPatch(
+            injectableRuleUpsert: InjectableRuleUpsert(key: "dogs", promptPath: "../dog_rules.md")
+        ))
+
+        let current = await provider.currentRuntimeConfig()
+        XCTAssertEqual(current.injectableRules, [:])
+    }
+
     private func makeSheafRepoRoot() throws -> URL {
         let repoRoot = try makeTempDir()
         try FileManager.default.createDirectory(
@@ -268,5 +362,21 @@ final class RuntimeConfigProviderTests: XCTestCase {
         let dir = base.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
+    }
+
+    private func assertInjectableRulePatchFails(
+        _ provider: RuntimeConfigProvider,
+        _ patch: RuntimeConfigPatch
+    ) async throws {
+        do {
+            _ = try await provider.applyPatch(patch)
+            XCTFail("Expected injectable rule patch to fail")
+        } catch let error as DictatorError {
+            guard case .configUpdateFailed = error else {
+                return XCTFail("Unexpected DictatorError: \(error)")
+            }
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
     }
 }

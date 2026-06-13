@@ -1,6 +1,6 @@
 import Foundation
 
-public struct SystemPromptCatalog {
+public struct SystemPromptCatalog: @unchecked Sendable {
     public enum EntryKind: Sendable, Equatable {
         case directory
         case file

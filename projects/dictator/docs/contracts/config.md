@@ -33,6 +33,7 @@ when a key is missing or, for strings, blank):
 | `dictator_server_host` | string | `0.0.0.0` | Display/compat only — the bind endpoint comes from `config/services.json` |
 | `dictator_server_port` | int | `9003` | Display/compat only |
 | `dictator_server_enabled` | bool | `true` | `false` logs a startup warning; service starts anyway |
+| `injectable_rules` | object | `{}` | Trigger string → prompt file path, relative to `system_prompts_dir`; matching triggers append prompt file contents during refinement |
 | `updated_at` | string | — (**required**) | ISO-8601 timestamp of the last write |
 
 Decode leniency: only `use_cloud` and `updated_at` are required. A legacy
@@ -45,7 +46,13 @@ against the Sheaf repo root for known prefixes (`projects/dictator/`,
 `skills/`); other relative paths prefer an existing path under the current
 directory, then the repo root.
 
-Writes (config patch, prompt selection, reset, safe restore, first-run
+`injectable_rules` matching is case-insensitive simple substring matching
+against the raw Whisper transcript. Values are prompt file paths, not inline
+instruction text. When a trigger matches, Dictator loads that prompt file from
+the prompt catalog and appends its contents to the refinement prompt only; the
+raw transcript and refinement input are not modified.
+
+Writes (config patch, prompt selection, injectable rule edits, reset, safe restore, first-run
 creation) are atomic — pretty-printed JSON with sorted keys written to
 `<file>.tmp` then replaced — and refresh `updated_at`
 (`yyyy-MM-ddTHH:mm:ssZ`).
@@ -62,6 +69,7 @@ Worked example (current production shape):
   "dictator_server_host": "0.0.0.0",
   "dictator_server_port": 9003,
   "fallback_mode": "openai",
+  "injectable_rules": {},
   "interactions_buffer_bytes": 104857600,
   "local_model": "qwen2.5:7b-instruct",
   "ollama_bin_path": "/opt/homebrew/bin/ollama",

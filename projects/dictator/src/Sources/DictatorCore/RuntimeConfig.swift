@@ -14,6 +14,7 @@ public struct RuntimeConfigFile: Codable, Sendable, Equatable {
     public static let defaultDictatorServerHost = "0.0.0.0"
     public static let defaultDictatorServerPort = 9003
     public static let defaultDictatorServerEnabled = true
+    public static let defaultInjectableRules: [String: String] = [:]
 
     public let version: Int
     public let cloudModel: String
@@ -34,6 +35,7 @@ public struct RuntimeConfigFile: Codable, Sendable, Equatable {
     public let dictatorServerHost: String
     public let dictatorServerPort: Int
     public let dictatorServerEnabled: Bool
+    public let injectableRules: [String: String]
     public let updatedAt: String
 
     public var model: String {
@@ -60,6 +62,7 @@ public struct RuntimeConfigFile: Codable, Sendable, Equatable {
         dictatorServerHost: String = Self.defaultDictatorServerHost,
         dictatorServerPort: Int = Self.defaultDictatorServerPort,
         dictatorServerEnabled: Bool = Self.defaultDictatorServerEnabled,
+        injectableRules: [String: String] = Self.defaultInjectableRules,
         updatedAt: String
     ) {
         self.version = version
@@ -81,6 +84,7 @@ public struct RuntimeConfigFile: Codable, Sendable, Equatable {
         self.dictatorServerHost = dictatorServerHost
         self.dictatorServerPort = dictatorServerPort
         self.dictatorServerEnabled = dictatorServerEnabled
+        self.injectableRules = Self.normalizedInjectableRules(injectableRules)
         self.updatedAt = updatedAt
     }
 
@@ -115,6 +119,7 @@ public struct RuntimeConfigFile: Codable, Sendable, Equatable {
         case dictatorServerHost = "dictator_server_host"
         case dictatorServerPort = "dictator_server_port"
         case dictatorServerEnabled = "dictator_server_enabled"
+        case injectableRules = "injectable_rules"
         case updatedAt = "updated_at"
     }
 
@@ -142,6 +147,7 @@ public struct RuntimeConfigFile: Codable, Sendable, Equatable {
         let dictatorServerHost = try container.decodeIfPresent(String.self, forKey: .dictatorServerHost)
         let dictatorServerPort = try container.decodeIfPresent(Int.self, forKey: .dictatorServerPort)
         let dictatorServerEnabled = try container.decodeIfPresent(Bool.self, forKey: .dictatorServerEnabled)
+        let injectableRules = try container.decodeIfPresent([String: String].self, forKey: .injectableRules)
         let legacyModel = try container.decodeIfPresent(String.self, forKey: .model)
 
         let resolvedCloudModel = cloudModel ?? legacyModel ?? Self.defaultCloudModel
@@ -162,6 +168,7 @@ public struct RuntimeConfigFile: Codable, Sendable, Equatable {
         let resolvedDictatorServerHost = Self.normalizedNonEmpty(dictatorServerHost) ?? Self.defaultDictatorServerHost
         let resolvedDictatorServerPort = dictatorServerPort ?? Self.defaultDictatorServerPort
         let resolvedDictatorServerEnabled = dictatorServerEnabled ?? Self.defaultDictatorServerEnabled
+        let resolvedInjectableRules = injectableRules ?? Self.defaultInjectableRules
 
         self.init(
             version: version,
@@ -183,6 +190,7 @@ public struct RuntimeConfigFile: Codable, Sendable, Equatable {
             dictatorServerHost: resolvedDictatorServerHost,
             dictatorServerPort: resolvedDictatorServerPort,
             dictatorServerEnabled: resolvedDictatorServerEnabled,
+            injectableRules: resolvedInjectableRules,
             updatedAt: updatedAt
         )
     }
@@ -208,6 +216,7 @@ public struct RuntimeConfigFile: Codable, Sendable, Equatable {
         try container.encode(dictatorServerHost, forKey: .dictatorServerHost)
         try container.encode(dictatorServerPort, forKey: .dictatorServerPort)
         try container.encode(dictatorServerEnabled, forKey: .dictatorServerEnabled)
+        try container.encode(injectableRules, forKey: .injectableRules)
         try container.encode(updatedAt, forKey: .updatedAt)
     }
 
@@ -226,6 +235,7 @@ public struct RuntimeConfigFile: Codable, Sendable, Equatable {
             dictatorServerHost: Self.defaultDictatorServerHost,
             dictatorServerPort: Self.defaultDictatorServerPort,
             dictatorServerEnabled: Self.defaultDictatorServerEnabled,
+            injectableRules: Self.defaultInjectableRules,
             updatedAt: Self.timestamp(from: now)
         )
     }
@@ -259,6 +269,53 @@ public struct RuntimeConfigFile: Codable, Sendable, Equatable {
             return nil
         }
         return value
+    }
+
+    static func normalizedInjectableRules(_ rules: [String: String]) -> [String: String] {
+        var normalized: [String: String] = [:]
+        for (key, promptPath) in rules {
+            let normalizedKey = key.trimmingCharacters(in: .whitespacesAndNewlines)
+            let normalizedPath = promptPath.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !normalizedKey.isEmpty, !normalizedPath.isEmpty else {
+                continue
+            }
+            normalized[normalizedKey] = normalizedPath
+        }
+        return normalized
+    }
+
+    public static func validateInjectableRule(key: String, promptPath: String?) throws -> String {
+        let trimmedKey = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedKey.isEmpty else {
+            throw DictatorError.configUpdateFailed("injectable rule key cannot be empty")
+        }
+        guard let promptPath else {
+            return trimmedKey
+        }
+        let trimmedPath = promptPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedPath.isEmpty else {
+            throw DictatorError.configUpdateFailed("injectable rule prompt path cannot be empty")
+        }
+        guard !trimmedPath.hasPrefix("/") else {
+            throw DictatorError.configUpdateFailed("injectable rule prompt path must be relative")
+        }
+        let normalizedPath = trimmedPath.replacingOccurrences(of: "\\", with: "/")
+        var depth = 0
+        for component in normalizedPath.split(separator: "/", omittingEmptySubsequences: true) {
+            let part = String(component)
+            if part == "." {
+                continue
+            }
+            if part == ".." {
+                depth -= 1
+            } else {
+                depth += 1
+            }
+            if depth < 0 {
+                throw DictatorError.configUpdateFailed("injectable rule prompt path escapes prompt directory")
+            }
+        }
+        return trimmedKey
     }
 
     private static func trimTrailingSlash(_ value: String) -> String {
@@ -319,6 +376,9 @@ public struct RuntimeConfigPatch: Sendable, Equatable {
     public let reviewSystemPrompt: String?
     public let interactionsBufferBytes: Int?
     public let useCloud: Bool?
+    public let injectableRules: [String: String]?
+    public let injectableRuleUpsert: InjectableRuleUpsert?
+    public let injectableRuleDeleteKey: String?
 
     public init(
         model: String? = nil,
@@ -329,7 +389,10 @@ public struct RuntimeConfigPatch: Sendable, Equatable {
         auxiliarySystemPrompt2: String? = nil,
         reviewSystemPrompt: String? = nil,
         interactionsBufferBytes: Int? = nil,
-        useCloud: Bool? = nil
+        useCloud: Bool? = nil,
+        injectableRules: [String: String]? = nil,
+        injectableRuleUpsert: InjectableRuleUpsert? = nil,
+        injectableRuleDeleteKey: String? = nil
     ) {
         self.model = model
         self.cloudModel = cloudModel
@@ -340,6 +403,9 @@ public struct RuntimeConfigPatch: Sendable, Equatable {
         self.reviewSystemPrompt = reviewSystemPrompt
         self.interactionsBufferBytes = interactionsBufferBytes
         self.useCloud = useCloud
+        self.injectableRules = injectableRules
+        self.injectableRuleUpsert = injectableRuleUpsert
+        self.injectableRuleDeleteKey = injectableRuleDeleteKey
     }
 
     var isEmpty: Bool {
@@ -352,6 +418,19 @@ public struct RuntimeConfigPatch: Sendable, Equatable {
             && reviewSystemPrompt == nil
             && interactionsBufferBytes == nil
             && useCloud == nil
+            && injectableRules == nil
+            && injectableRuleUpsert == nil
+            && injectableRuleDeleteKey == nil
+    }
+}
+
+public struct InjectableRuleUpsert: Sendable, Equatable {
+    public let key: String
+    public let promptPath: String
+
+    public init(key: String, promptPath: String) {
+        self.key = key
+        self.promptPath = promptPath
     }
 }
 
@@ -492,6 +571,20 @@ public actor RuntimeConfigProvider {
         let resolvedReviewSystemPrompt = patch.reviewSystemPrompt?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? runtimeConfig.reviewSystemPrompt
         let resolvedInteractionsBufferBytes = patch.interactionsBufferBytes ?? runtimeConfig.interactionsBufferBytes
+        var resolvedInjectableRules = patch.injectableRules.map(RuntimeConfigFile.normalizedInjectableRules)
+            ?? runtimeConfig.injectableRules
+
+        if let upsert = patch.injectableRuleUpsert {
+            let key = try RuntimeConfigFile.validateInjectableRule(
+                key: upsert.key,
+                promptPath: upsert.promptPath
+            )
+            resolvedInjectableRules[key] = upsert.promptPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if let deleteKey = patch.injectableRuleDeleteKey {
+            let key = try RuntimeConfigFile.validateInjectableRule(key: deleteKey, promptPath: nil)
+            resolvedInjectableRules.removeValue(forKey: key)
+        }
 
         if resolvedCloudModel.isEmpty {
             throw DictatorError.configUpdateFailed("cloud model cannot be empty")
@@ -535,6 +628,7 @@ public actor RuntimeConfigProvider {
             dictatorServerHost: runtimeConfig.dictatorServerHost,
             dictatorServerPort: runtimeConfig.dictatorServerPort,
             dictatorServerEnabled: runtimeConfig.dictatorServerEnabled,
+            injectableRules: resolvedInjectableRules,
             updatedAt: RuntimeConfigFile.timestamp(from: now)
         )
         return next
@@ -577,6 +671,7 @@ public actor RuntimeConfigProvider {
             dictatorServerHost: defaultConfig.dictatorServerHost,
             dictatorServerPort: defaultConfig.dictatorServerPort,
             dictatorServerEnabled: defaultConfig.dictatorServerEnabled,
+            injectableRules: defaultConfig.injectableRules,
             updatedAt: RuntimeConfigFile.timestamp(from: now)
         )
 

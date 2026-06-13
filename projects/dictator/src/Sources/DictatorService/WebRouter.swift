@@ -13,6 +13,9 @@ enum WebRoute: Equatable
     case apiPrompts(directory: String)
     case apiPromptPreview(path: String)
     case apiPromptSelection
+    case apiInjectableRules
+    case apiInjectableRulesUpsert
+    case apiInjectableRulesDelete(key: String)
     case apiInteractions
     case apiInteractionDetail(id: String)
     case apiModels(provider: String)
@@ -64,6 +67,16 @@ enum WebRouter
             return .apiPromptPreview(path: promptPath)
         case (.POST, "/api/prompts/selection"):
             return .apiPromptSelection
+        case (.GET, "/api/injectable-rules"):
+            return .apiInjectableRules
+        case (.POST, "/api/injectable-rules"):
+            return .apiInjectableRulesUpsert
+        case (.DELETE, "/api/injectable-rules"):
+            guard let key = query["key"], !key.isEmpty else
+            {
+                throw WebRouterError.badRequest("key query parameter is required")
+            }
+            return .apiInjectableRulesDelete(key: key)
         case (.GET, "/api/interactions"):
             return .apiInteractions
         case (.GET, let detailPath) where detailPath.hasPrefix("/api/interactions/"):

@@ -7,6 +7,10 @@
   "dictator_server_host" : "0.0.0.0",
   "dictator_server_port" : 9003,
   "fallback_mode" : "openai",
+  "injectable_rules" : {
+    "blark" : "injectable_blark_casing_rules.md",
+    "borg" : "injectable_borg_refiner_instructions.md"
+  },
   "interactions_buffer_bytes" : 104857600,
   "local_model" : "qwen2.5:7b-instruct",
   "ollama_bin_path" : "\/opt\/homebrew\/bin\/ollama",

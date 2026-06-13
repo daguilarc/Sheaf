@@ -21,25 +21,33 @@ public final class RuntimeConfigRefinementEngine: RefinementEngine {
     public func refine(_ request: RefineRequest) async throws -> RefineResponse {
         let runtimeConfig = await runtimeConfigProvider.currentRuntimeConfig()
         let configuration = await runtimeConfigProvider.currentConfiguration()
-        let systemPrompt = SystemPromptCatalog(
+        let promptCatalog = SystemPromptCatalog(
             directoryURL: runtimeConfig.resolvedSystemPromptsDirectoryURL()
-        ).resolvePrompt(named: configuration.systemPrompt)
-        let router = ProviderRoutingRefinementEngine(
-            configuration: configuration,
-            ollamaEngine: OllamaRefinementEngine(
-                host: configuration.ollamaHost,
-                model: configuration.ollamaModel,
-                systemPrompt: systemPrompt,
-                session: session
-            ),
-            openAIEngine: OpenAIRefinementEngine(
-                model: configuration.openAIModel,
-                systemPrompt: systemPrompt,
-                secretStore: secretStore,
-                session: session
-            ),
-            canUseOpenAI: canUseOpenAI
         )
-        return try await router.refine(request)
+        let baseSystemPrompt = promptCatalog.resolvePrompt(named: configuration.systemPrompt)
+        let engine = InjectableRulesRefinementEngine(
+            basePrompt: baseSystemPrompt,
+            injectableRules: runtimeConfig.injectableRules,
+            promptCatalog: promptCatalog,
+            makeEngine: { [configuration, secretStore, session, canUseOpenAI] systemPrompt in
+                ProviderRoutingRefinementEngine(
+                    configuration: configuration,
+                    ollamaEngine: OllamaRefinementEngine(
+                        host: configuration.ollamaHost,
+                        model: configuration.ollamaModel,
+                        systemPrompt: systemPrompt,
+                        session: session
+                    ),
+                    openAIEngine: OpenAIRefinementEngine(
+                        model: configuration.openAIModel,
+                        systemPrompt: systemPrompt,
+                        secretStore: secretStore,
+                        session: session
+                    ),
+                    canUseOpenAI: canUseOpenAI
+                )
+            }
+        )
+        return try await engine.refine(request)
     }
 }

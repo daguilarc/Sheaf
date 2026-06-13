@@ -109,6 +109,24 @@ struct WebAPIJSON
         let path: String
     }
 
+    struct InjectableRulesResponse: Codable
+    {
+        let rules: [InjectableRule]
+        let updated_at: String
+    }
+
+    struct InjectableRule: Codable
+    {
+        let key: String
+        let prompt_path: String
+    }
+
+    struct InjectableRuleUpsertRequest: Decodable
+    {
+        let key: String
+        let prompt_path: String
+    }
+
     struct InteractionSummary: Codable
     {
         let id: String

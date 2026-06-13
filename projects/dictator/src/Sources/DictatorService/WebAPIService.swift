@@ -72,6 +72,12 @@ actor WebAPIService
             return try await .json(try await promptPreview(path: path))
         case .apiPromptSelection:
             return try await .json(try await applyPromptSelection(body: body))
+        case .apiInjectableRules:
+            return try await .json(await injectableRules())
+        case .apiInjectableRulesUpsert:
+            return try await .json(try await upsertInjectableRule(body: body))
+        case let .apiInjectableRulesDelete(key):
+            return try await .json(try await deleteInjectableRule(key: key))
         case .apiInteractions:
             return try await .json(await interactionList())
         case let .apiInteractionDetail(id):
@@ -311,6 +317,68 @@ actor WebAPIService
         _ = try await context.runtimeConfigProvider.applyPatch(patch)
         await prepare()
         return try await configSnapshot()
+    }
+
+    private func injectableRules() async -> WebAPIJSON.InjectableRulesResponse
+    {
+        let config = await context.runtimeConfigProvider.currentRuntimeConfig()
+        return injectableRulesResponse(config: config)
+    }
+
+    private func upsertInjectableRule(body: Data) async throws -> WebAPIJSON.InjectableRulesResponse
+    {
+        let request = try JSONDecoder().decode(WebAPIJSON.InjectableRuleUpsertRequest.self, from: body)
+        let config = await context.runtimeConfigProvider.currentRuntimeConfig()
+        let catalog = SystemPromptCatalog(
+            directoryURL: config.resolvedSystemPromptsDirectoryURL(currentDirectoryPath: context.repoRoot.path)
+        )
+        let key = try RuntimeConfigFile.validateInjectableRule(key: request.key, promptPath: request.prompt_path)
+        let promptPath = try validatedInjectableRulePromptPath(request.prompt_path, catalog: catalog)
+        let updated = try await context.runtimeConfigProvider.applyPatch(
+            RuntimeConfigPatch(
+                injectableRuleUpsert: InjectableRuleUpsert(key: key, promptPath: promptPath)
+            )
+        )
+        return injectableRulesResponse(config: updated)
+    }
+
+    private func deleteInjectableRule(key: String) async throws -> WebAPIJSON.InjectableRulesResponse
+    {
+        let normalizedKey = try RuntimeConfigFile.validateInjectableRule(key: key, promptPath: nil)
+        let updated = try await context.runtimeConfigProvider.applyPatch(
+            RuntimeConfigPatch(injectableRuleDeleteKey: normalizedKey)
+        )
+        return injectableRulesResponse(config: updated)
+    }
+
+    private func validatedInjectableRulePromptPath(
+        _ path: String,
+        catalog: SystemPromptCatalog
+    ) throws -> String
+    {
+        let sanitized = catalog.sanitizeRelativePath(path)
+        let available = try catalog.listPromptFiles()
+        guard available.contains(sanitized) else
+        {
+            throw DictatorError.configUpdateFailed("unknown injectable rule prompt path: \(sanitized)")
+        }
+        _ = try catalog.loadPrompt(named: sanitized)
+        return sanitized
+    }
+
+    private func injectableRulesResponse(config: RuntimeConfigFile) -> WebAPIJSON.InjectableRulesResponse
+    {
+        let rules = config.injectableRules
+            .map { WebAPIJSON.InjectableRule(key: $0.key, prompt_path: $0.value) }
+            .sorted { lhs, rhs in
+                let keyCompare = lhs.key.localizedCaseInsensitiveCompare(rhs.key)
+                if keyCompare != .orderedSame
+                {
+                    return keyCompare == .orderedAscending
+                }
+                return lhs.prompt_path.localizedCaseInsensitiveCompare(rhs.prompt_path) == .orderedAscending
+            }
+        return WebAPIJSON.InjectableRulesResponse(rules: rules, updated_at: config.updatedAt)
     }
 
     private func interactionList() async -> WebAPIJSON.InteractionListResponse

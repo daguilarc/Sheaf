@@ -322,11 +322,71 @@ code
   margin-bottom: 0.75rem;
 }
 
-.dictate-form label
+.dictate-form label,
+.injectable-rules-form label
 {
   display: grid;
   gap: 0.25rem;
   font-size: 0.85rem;
+}
+
+.injectable-rules-form
+{
+  display: grid;
+  grid-template-columns: minmax(10rem, 1fr) minmax(12rem, 1.4fr) auto;
+  gap: 0.5rem;
+  align-items: end;
+  margin-bottom: 0.75rem;
+}
+
+.injectable-rules-form input
+{
+  width: 100%;
+  padding: 0.4rem 0.5rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+}
+
+.injectable-rules-list
+{
+  display: grid;
+  gap: 0.5rem;
+}
+
+.injectable-rule-row
+{
+  display: grid;
+  grid-template-columns: minmax(8rem, 1fr) minmax(10rem, 1.4fr) auto;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+}
+
+.injectable-rule-trigger
+{
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.injectable-rule-row code
+{
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 700px)
+{
+  .injectable-rules-form,
+  .injectable-rule-row
+  {
+    grid-template-columns: 1fr;
+  }
 }
 
 .inline-error
