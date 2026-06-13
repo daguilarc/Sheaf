@@ -23,7 +23,8 @@ public final class OllamaRefinementEngine: RefinementEngine {
             model: model,
             prompt: RefinementPromptBuilder.buildInput(
                 rawTranscript: request.raw_transcript,
-                optionalContext: request.optional_context ?? [:]
+                optionalContext: request.optional_context ?? [:],
+                contextBlocks: request.context_blocks ?? []
             ),
             system: systemPrompt,
             stream: false

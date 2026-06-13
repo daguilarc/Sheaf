@@ -94,6 +94,7 @@ final class WebAPITests: XCTestCase
         XCTAssertNotNil(body["provider_mode"])
         XCTAssertNotNil(body["cloud_model"])
         XCTAssertNotNil(body["local_model"])
+        XCTAssertEqual(body["review_system_prompt"] as? String, SystemPromptCatalog.defaultReviewPromptFile)
         XCTAssertNotNil(body["log_path"])
         XCTAssertNotNil(body["data_path"])
         let apiKeys = body["api_keys"] as? [String: Any]
@@ -107,7 +108,7 @@ final class WebAPITests: XCTestCase
     func testConfigPatchPersistsToDictatorJSON() async throws
     {
         try await startServer()
-        let patch = #"{"use_cloud":true,"cloud_model":"gpt-5.2"}"#.data(using: .utf8)!
+        let patch = #"{"use_cloud":true,"cloud_model":"gpt-5.2","review_system_prompt":"code_review_refiner_v1.md"}"#.data(using: .utf8)!
         let (status, _) = try await jsonRequest(method: "PATCH", path: "/api/config", body: patch, contentType: "application/json")
         XCTAssertEqual(status, 200)
 
@@ -115,6 +116,13 @@ final class WebAPITests: XCTestCase
         let saved = try JSONDecoder().decode(RuntimeConfigFile.self, from: Data(contentsOf: configURL))
         XCTAssertTrue(saved.useCloud)
         XCTAssertEqual(saved.cloudModel, "gpt-5.2")
+        XCTAssertEqual(saved.reviewSystemPrompt, "code_review_refiner_v1.md")
+
+        let (_, configBody) = try await jsonRequest(method: "GET", path: "/api/config")
+        let fields = configBody["fields"] as? [[String: Any]]
+        let reviewField = fields?.first { ($0["name"] as? String) == "review_system_prompt" }
+        let current = reviewField?["current"] as? [String: Any]
+        XCTAssertEqual(current?["value"] as? String, "code_review_refiner_v1.md")
     }
 
     func testInvalidConfigPatchFailsClearly() async throws
@@ -138,6 +146,7 @@ final class WebAPITests: XCTestCase
         let configURL = try XCTUnwrap(configURL)
         let saved = try JSONDecoder().decode(RuntimeConfigFile.self, from: Data(contentsOf: configURL))
         XCTAssertFalse(saved.useCloud)
+        XCTAssertEqual(saved.reviewSystemPrompt, SystemPromptCatalog.defaultReviewPromptFile)
     }
 
     func testPromptListAndPreviewRejectPathTraversal() async throws
@@ -155,7 +164,7 @@ final class WebAPITests: XCTestCase
         XCTAssertNotNil(previewBody["error"] as? String)
     }
 
-    func testPromptSelectionPersistsPrimaryAndAuxiliaryPaths() async throws
+    func testPromptSelectionPersistsPrimaryAuxiliaryAndReviewPaths() async throws
     {
         try await startServer()
         let repoRoot = try SheafRootDiscovery.requireRepoRoot()
@@ -187,6 +196,17 @@ final class WebAPITests: XCTestCase
         XCTAssertEqual(auxStatus, 200)
         saved = try JSONDecoder().decode(RuntimeConfigFile.self, from: Data(contentsOf: configURL))
         XCTAssertEqual(saved.auxiliarySystemPrompt1, promptPath)
+
+        let review = #"{"target":"review","path":"\#(promptPath)"}"#.data(using: .utf8)!
+        let (reviewStatus, _) = try await jsonRequest(
+            method: "POST",
+            path: "/api/prompts/selection",
+            body: review,
+            contentType: "application/json"
+        )
+        XCTAssertEqual(reviewStatus, 200)
+        saved = try JSONDecoder().decode(RuntimeConfigFile.self, from: Data(contentsOf: configURL))
+        XCTAssertEqual(saved.reviewSystemPrompt, promptPath)
     }
 
     func testInteractionsListAndDetailReadPersistedRecords() async throws
@@ -277,6 +297,16 @@ final class WebAPITests: XCTestCase
             "header": "@@ -1 +1 @@",
             "patchHash": "abc"
           },
+          "currentHunkReview": {
+            "repoRoot": "/tmp/repo",
+            "file": "Sources/App.swift",
+            "hunkId": "Sources/App.swift:0:abc",
+            "hunkIndex": 0,
+            "hunkCount": 2,
+            "header": "@@ -1 +1 @@",
+            "patchHash": "abc",
+            "patch": "@@ -1 +1 @@\\n-old\\n+new\\n"
+          },
           "actions": {
             "canGoUp": false,
             "canGoDown": true,
@@ -331,7 +361,109 @@ final class WebAPITests: XCTestCase
         XCTAssertEqual(diagnostics.status, 200)
         let decoded = try JSONDecoder().decode(VSCodeHunkDiagnostics.self, from: diagnostics.body)
         XCTAssertEqual(decoded.activeWindowId, "window-1")
-        XCTAssertEqual(decoded.lastCommandResult, VSCodeHunkCommandResult(ok: true, action: .stage, error: nil))
+        XCTAssertEqual(decoded.lastCommandResult, VSCodeHunkCommandResult(ok: true, action: .stage, error: nil, reviewFacts: nil))
+        XCTAssertEqual(decoded.diffReview?.hasActiveReview, false)
+
+        let reviewFacts = """
+        {
+          "commandId": "revert-command",
+          "windowId": "window-1",
+          "result": {
+            "ok": true,
+            "action": "revert",
+            "reviewFacts": {
+              "revertedHunk": {
+                "repoRoot": "/tmp/repo",
+                "file": "Sources/App.swift",
+                "hunkId": "Sources/App.swift:0:abc",
+                "hunkIndex": 0,
+                "hunkCount": 2,
+                "header": "@@ -1 +1 @@",
+                "patchHash": "abc",
+                "patch": "@@ -1 +1 @@\\n-old\\n+new\\n"
+              }
+            }
+          }
+        }
+        """.data(using: .utf8)!
+        let (reviewFactsStatus, _) = try await jsonRequest(
+            method: "POST",
+            path: "/api/vscode-hunk/command-result",
+            body: reviewFacts,
+            contentType: "application/json"
+        )
+        XCTAssertEqual(reviewFactsStatus, 200)
+
+        let afterRevert = try await rawRequest(method: "GET", path: "/api/vscode-hunk/diagnostics")
+        let afterRevertDiagnostics = try JSONDecoder().decode(VSCodeHunkDiagnostics.self, from: afterRevert.body)
+        XCTAssertEqual(afterRevertDiagnostics.diffReview?.hasActiveReview, true)
+        XCTAssertEqual(afterRevertDiagnostics.diffReview?.entryCount, 1)
+
+        let failedUndoFacts = """
+        {
+          "commandId": "failed-undo-command",
+          "windowId": "window-1",
+          "result": {
+            "ok": false,
+            "action": "undo",
+            "error": "simulated failure",
+            "reviewFacts": {
+              "restoredRevertedHunk": {
+                "repoRoot": "/tmp/repo",
+                "file": "Sources/App.swift",
+                "hunkId": "Sources/App.swift:0:abc",
+                "hunkIndex": 0,
+                "hunkCount": 2,
+                "header": "@@ -1 +1 @@",
+                "patchHash": "abc",
+                "patch": "@@ -1 +1 @@\\n-old\\n+new\\n"
+              }
+            }
+          }
+        }
+        """.data(using: .utf8)!
+        _ = try await jsonRequest(
+            method: "POST",
+            path: "/api/vscode-hunk/command-result",
+            body: failedUndoFacts,
+            contentType: "application/json"
+        )
+        let afterFailedUndo = try await rawRequest(method: "GET", path: "/api/vscode-hunk/diagnostics")
+        let afterFailedUndoDiagnostics = try JSONDecoder().decode(VSCodeHunkDiagnostics.self, from: afterFailedUndo.body)
+        XCTAssertEqual(afterFailedUndoDiagnostics.diffReview?.entryCount, 1)
+
+        let undoFacts = """
+        {
+          "commandId": "undo-command",
+          "windowId": "window-1",
+          "result": {
+            "ok": true,
+            "action": "undo",
+            "reviewFacts": {
+              "restoredRevertedHunk": {
+                "repoRoot": "/tmp/repo",
+                "file": "Sources/App.swift",
+                "hunkId": "Sources/App.swift:0:abc",
+                "hunkIndex": 0,
+                "hunkCount": 2,
+                "header": "@@ -1 +1 @@",
+                "patchHash": "abc",
+                "patch": "@@ -1 +1 @@\\n-old\\n+new\\n"
+              }
+            }
+          }
+        }
+        """.data(using: .utf8)!
+        _ = try await jsonRequest(
+            method: "POST",
+            path: "/api/vscode-hunk/command-result",
+            body: undoFacts,
+            contentType: "application/json"
+        )
+        let afterUndo = try await rawRequest(method: "GET", path: "/api/vscode-hunk/diagnostics")
+        let afterUndoDiagnostics = try JSONDecoder().decode(VSCodeHunkDiagnostics.self, from: afterUndo.body)
+        XCTAssertEqual(afterUndoDiagnostics.diffReview?.hasActiveReview, false)
+        XCTAssertEqual(afterUndoDiagnostics.diffReview?.entryCount, 0)
 
         let disconnect = #"{"windowId":"window-1"}"#.data(using: .utf8)!
         let (disconnectStatus, disconnectBody) = try await jsonRequest(
@@ -426,6 +558,7 @@ final class WebAPITests: XCTestCase
         let lifecycle = ServiceLifecycle()
         let activityTracker = DictationActivityTracker()
         let vsCodeHunkRegistry = VSCodeHunkRegistry()
+        let diffReviewStore = DiffReviewStore()
         self.vsCodeHunkRegistry = vsCodeHunkRegistry
 
         let webContext = WebServiceContext(
@@ -438,7 +571,8 @@ final class WebAPITests: XCTestCase
             endpointDescription: "http://127.0.0.1:0",
             logPath: tempDir.appendingPathComponent("logs").path,
             dataPath: tempDir.appendingPathComponent("data").path,
-            vsCodeHunkRegistry: vsCodeHunkRegistry
+            vsCodeHunkRegistry: vsCodeHunkRegistry,
+            diffReviewStore: diffReviewStore
         )
         let webAPIService = WebAPIService(context: webContext, urlSession: session)
         await webAPIService.prepare()

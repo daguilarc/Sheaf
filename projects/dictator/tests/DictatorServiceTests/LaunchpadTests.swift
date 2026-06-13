@@ -720,6 +720,42 @@ final class LaunchpadTests: XCTestCase {
         XCTAssertNil(registry.nextCommand(windowId: "missing"))
     }
 
+    func testDiffReviewLaunchpadLayerRendersStateColors() {
+        let registry = VSCodeHunkRegistry(timeoutSeconds: 3)
+        let store = DiffReviewStore()
+        let layer = DiffReviewLaunchpadControlLayer(registry: registry, reviewStore: store, onPress: {})
+        let coordinate = PadCoordinate(x: 2, y: 7)
+
+        XCTAssertEqual(layer.getColor(at: coordinate), .off)
+
+        registry.update(snapshot: makeVSCodeSnapshot(windowID: "vscode", focused: true))
+        XCTAssertEqual(layer.getColor(at: coordinate), PadColor(r: 90, g: 90, b: 90))
+
+        store.appendComment(hunk: makeReviewHunk(), text: "Needs follow-up.")
+        XCTAssertEqual(layer.getColor(at: coordinate), PadColor(r: 0, g: 0, b: 255))
+
+        registry.heartbeat(windowId: "vscode", focused: false)
+        XCTAssertEqual(layer.getColor(at: coordinate), PadColor(r: 0, g: 255, b: 0))
+
+        store.setRecordingActive(true)
+        XCTAssertEqual(layer.getColor(at: coordinate), PadColor(r: 255, g: 0, b: 0))
+    }
+
+    func testDiffReviewLaunchpadLayerConsumesReviewPadPress() {
+        let registry = VSCodeHunkRegistry(timeoutSeconds: 3)
+        let store = DiffReviewStore()
+        var presses = 0
+        let layer = DiffReviewLaunchpadControlLayer(registry: registry, reviewStore: store) {
+            presses += 1
+        }
+
+        XCTAssertFalse(layer.handle(PadEvent(coordinate: PadCoordinate(x: 1, y: 7), phase: .press, velocity: 100)))
+        XCTAssertTrue(layer.handle(PadEvent(coordinate: PadCoordinate(x: 2, y: 7), phase: .release, velocity: 0)))
+        XCTAssertEqual(presses, 0)
+        XCTAssertTrue(layer.handle(PadEvent(coordinate: PadCoordinate(x: 2, y: 7), phase: .press, velocity: 100)))
+        XCTAssertEqual(presses, 1)
+    }
+
     func testInteractionBufferEvictsOldestWhenTrackedBytesExceedLimit() {
         let buffer = DictationInteractionBuffer(maxBytes: 20)
         let first = makeInteraction(whisperOutput: "aaaaaa", finalOutput: "bbbbbb")
@@ -775,6 +811,19 @@ final class LaunchpadTests: XCTestCase {
         }()
         XCTAssertEqual(finalCount, countAfterRelease)
     }
+}
+
+private func makeReviewHunk() -> VSCodeHunkReviewContext {
+    VSCodeHunkReviewContext(
+        repoRoot: "/repo",
+        file: "a.ts",
+        hunkId: "hunk",
+        hunkIndex: 0,
+        hunkCount: 2,
+        header: "@@ -1,1 +1,1 @@",
+        patchHash: "abc",
+        patch: "diff --git a/a.ts b/a.ts\n@@ -1,1 +1,1 @@\n-old\n+new\n"
+    )
 }
 
 private final class FakeColorProvider: ColorProvider {
@@ -875,6 +924,16 @@ private func makeVSCodeSnapshot(
             count: 2,
             header: "@@ -1,1 +1,1 @@",
             patchHash: "abc"
+        ),
+        currentHunkReview: VSCodeHunkReviewContext(
+            repoRoot: "/repo",
+            file: "a.ts",
+            hunkId: "hunk",
+            hunkIndex: 0,
+            hunkCount: 2,
+            header: "@@ -1,1 +1,1 @@",
+            patchHash: "abc",
+            patch: "diff --git a/a.ts b/a.ts\n@@ -1,1 +1,1 @@\n-old\n+new\n"
         ),
         actions: actions
     )

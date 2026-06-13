@@ -56,6 +56,18 @@ function State(hunks: PaneState["hunks"], currentHunkId: string): PaneState
     hunks,
     currentHunkId,
     currentHunk,
+    currentHunkReview: currentHunk === null
+      ? null
+      : {
+        repoRoot: "/repo",
+        file: currentHunk.file,
+        hunkId: currentHunk.id,
+        hunkIndex: currentHunk.index,
+        hunkCount: currentHunk.count,
+        header: currentHunk.header,
+        patchHash: currentHunk.patchHash,
+        patch: currentHunk.patch,
+      },
     actions: {
       canGoUp: false,
       canGoDown: false,

@@ -26,7 +26,11 @@ public final class OpenAIRefinementEngine: RefinementEngine {
         let payload = ResponsesPayload(
             model: model,
             instructions: systemPrompt,
-            input: Self.buildInput(rawTranscript: request.raw_transcript, optionalContext: request.optional_context ?? [:])
+            input: Self.buildInput(
+                rawTranscript: request.raw_transcript,
+                optionalContext: request.optional_context ?? [:],
+                contextBlocks: request.context_blocks ?? []
+            )
         )
         var urlRequest = URLRequest(url: URL(string: "https://api.openai.com/v1/responses")!)
         urlRequest.httpMethod = "POST"
@@ -71,8 +75,16 @@ public final class OpenAIRefinementEngine: RefinementEngine {
         )
     }
 
-    static func buildInput(rawTranscript: String, optionalContext: [String: String]) -> String {
-        RefinementPromptBuilder.buildInput(rawTranscript: rawTranscript, optionalContext: optionalContext)
+    static func buildInput(
+        rawTranscript: String,
+        optionalContext: [String: String],
+        contextBlocks: [RefinementContextBlock] = []
+    ) -> String {
+        RefinementPromptBuilder.buildInput(
+            rawTranscript: rawTranscript,
+            optionalContext: optionalContext,
+            contextBlocks: contextBlocks
+        )
     }
 
     private struct ResponsesPayload: Encodable {

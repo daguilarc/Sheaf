@@ -46,6 +46,18 @@ export interface Hunk
   patchHash: string;
 }
 
+export interface HunkReviewContext
+{
+  repoRoot: string;
+  file: string;
+  hunkId: string;
+  hunkIndex: number;
+  hunkCount: number;
+  header: string;
+  patchHash: string;
+  patch: string;
+}
+
 export interface ActionAvailability
 {
   canGoUp: boolean;
@@ -71,9 +83,16 @@ export interface PaneState
   hunks: Hunk[];
   currentHunkId: string | null;
   currentHunk: Hunk | null;
+  currentHunkReview: HunkReviewContext | null;
   actions: ActionAvailability;
 }
 
+export interface CommandReviewFacts
+{
+  revertedHunk?: HunkReviewContext;
+  restoredRevertedHunk?: HunkReviewContext;
+}
+
 export type CommandResult =
-  | { ok: true; action: HunkAction; state: PaneState }
+  | { ok: true; action: HunkAction; state: PaneState; reviewFacts?: CommandReviewFacts }
   | { ok: false; action: HunkAction; error: string; state: PaneState };

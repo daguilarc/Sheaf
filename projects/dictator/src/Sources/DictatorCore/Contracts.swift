@@ -57,11 +57,30 @@ public struct RefineRequest: Codable, Sendable {
     public let raw_transcript: String
     public let optional_context: [String: String]?
     public let style_prefs: [String: String]?
+    public let context_blocks: [RefinementContextBlock]?
 
-    public init(raw_transcript: String, optional_context: [String: String]? = nil, style_prefs: [String: String]? = nil) {
+    public init(
+        raw_transcript: String,
+        optional_context: [String: String]? = nil,
+        style_prefs: [String: String]? = nil,
+        context_blocks: [RefinementContextBlock]? = nil
+    ) {
         self.raw_transcript = raw_transcript
         self.optional_context = optional_context
         self.style_prefs = style_prefs
+        self.context_blocks = context_blocks
+    }
+}
+
+public struct RefinementContextBlock: Codable, Sendable, Equatable {
+    public let title: String
+    public let metadata: [String: String]
+    public let body: String
+
+    public init(title: String, metadata: [String: String] = [:], body: String) {
+        self.title = title
+        self.metadata = metadata
+        self.body = body
     }
 }
 

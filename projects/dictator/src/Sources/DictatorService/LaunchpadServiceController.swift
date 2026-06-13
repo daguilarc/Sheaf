@@ -45,6 +45,7 @@ final class LaunchpadServiceController
     private let interactionStore: InteractionHistoryStore
     private let activityTracker: DictationActivityTracker
     private let vsCodeHunkRegistry: VSCodeHunkRegistry
+    private let diffReviewStore: DiffReviewStore
     private let sessionID = UUID().uuidString
 
     private let audioRecorder = AudioRecorder()
@@ -74,6 +75,7 @@ final class LaunchpadServiceController
     private var recordingContext: [String: String]?
     private var activeInteractionMode: InteractionMode = .standard
     private var activeSystemPromptPathOverride: String?
+    private var activeReviewHunk: VSCodeHunkReviewContext?
     private var activeDictationTask: Task<DictateCallResult, Error>?
     private var dictationState: DictationState = .idle
     private var shiftLatchState: ShiftLatchState = .unpressed
@@ -91,7 +93,8 @@ final class LaunchpadServiceController
         coreClient: any DictatorCoreClient,
         interactionStore: InteractionHistoryStore,
         activityTracker: DictationActivityTracker,
-        vsCodeHunkRegistry: VSCodeHunkRegistry
+        vsCodeHunkRegistry: VSCodeHunkRegistry,
+        diffReviewStore: DiffReviewStore
     )
     {
         self.repoRoot = repoRoot
@@ -102,6 +105,7 @@ final class LaunchpadServiceController
         self.interactionStore = interactionStore
         self.activityTracker = activityTracker
         self.vsCodeHunkRegistry = vsCodeHunkRegistry
+        self.diffReviewStore = diffReviewStore
     }
 
     func start()
@@ -117,9 +121,24 @@ final class LaunchpadServiceController
         vsCodeHunkRegistry.setOnChange {
             invalidationBus.markDirty(reason: "vscode_hunk_state")
         }
+        diffReviewStore.setOnChange {
+            invalidationBus.markDirty(reason: "diff_review_state")
+        }
         pageController.setControlLayer(
             VSCodeHunkLaunchpadControlLayer(registry: vsCodeHunkRegistry, invalidationBus: invalidationBus),
             forSlot: "vscode.hunks"
+        )
+        pageController.setControlLayer(
+            DiffReviewLaunchpadControlLayer(
+                registry: vsCodeHunkRegistry,
+                reviewStore: diffReviewStore,
+                onPress: { [weak self] in
+                    Task { @MainActor in
+                        await self?.handleDiffReviewPadPress()
+                    }
+                }
+            ),
+            forSlot: "diff.review"
         )
         let pageFactory = LaunchpadPageFactory(
             invalidationBus: invalidationBus,
@@ -245,6 +264,7 @@ final class LaunchpadServiceController
         launchpadRenderWorker?.stop()
         launchpadMIDIManager?.stop()
         vsCodeHunkRegistry.setOnChange(nil)
+        diffReviewStore.setOnChange(nil)
         launchpadRenderWorker = nil
         launchpadMIDIManager = nil
         launchpadPageController = nil
@@ -333,6 +353,7 @@ final class LaunchpadServiceController
             recordingContext = nil
             activeInteractionMode = .standard
             activeSystemPromptPathOverride = nil
+            activeReviewHunk = nil
             setDictationState(.idle)
             TraceLogger.log("launchpad recording start failed: \(error)")
         }
@@ -351,14 +372,18 @@ final class LaunchpadServiceController
             let interactionMode = activeInteractionMode
             let requestContext = recordingContext
             let systemPromptPathOverride = activeSystemPromptPathOverride
+            let reviewHunk = activeReviewHunk
             recordingContext = nil
             activeInteractionMode = .standard
             activeSystemPromptPathOverride = nil
+            activeReviewHunk = nil
 
             let locale = Locale.current.identifier.replacingOccurrences(of: "_", with: "-")
             let runtimeConfiguration = await runtimeConfigProvider.currentConfiguration()
             let runtimeConfig = await runtimeConfigProvider.currentRuntimeConfig()
-            let effectiveSystemPromptPath = systemPromptPathOverride ?? runtimeConfig.systemPrompt
+            let effectiveSystemPromptPath = reviewHunk == nil
+                ? (systemPromptPathOverride ?? runtimeConfig.systemPrompt)
+                : runtimeConfig.reviewSystemPrompt
             let effectiveSystemPromptBody = resolvedSystemPromptBody(
                 runtimeConfig: runtimeConfig,
                 promptPath: effectiveSystemPromptPath
@@ -374,13 +399,63 @@ final class LaunchpadServiceController
             let pipelineStart = Date()
             do
             {
+                let reviewRefinementEngine = reviewHunk == nil
+                    ? nil
+                    : makeRefinementEngine(
+                        systemPromptBodyOverride: effectiveSystemPromptBody,
+                        configurationOverride: runtimeConfiguration
+                    )
                 let overrideRefinementEngine = systemPromptPathOverride == nil
                     ? nil
                     : makeRefinementEngine(
                         systemPromptBodyOverride: effectiveSystemPromptBody,
                         configurationOverride: runtimeConfiguration
                     )
-                let task = Task { [apiClient, sttEngine, talonLiteOrchestrator] in
+                let task: Task<DictateCallResult, Error> = Task { [apiClient, sttEngine, talonLiteOrchestrator] in
+                    if let reviewHunk
+                    {
+                        let transcribeStart = Date()
+                        let transcribed = try await sttEngine.transcribe(
+                            TranscribeRequest(
+                                audio_b64: capturedAudio.data.base64EncodedString(),
+                                sample_rate: capturedAudio.sampleRate,
+                                locale: locale,
+                                session_id: sessionID
+                            )
+                        )
+                        let transcribeMs = Int(Date().timeIntervalSince(transcribeStart) * 1000)
+                        if transcribed.raw_transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        {
+                            return DictateCallResult(
+                                response: DictateResponse(
+                                    raw_transcript: "",
+                                    revised_text: "",
+                                    edit_summary: "Transcription empty; skipped refinement.",
+                                    uncertainty_flags: ["empty_transcript_skipped_refinement"]
+                                ),
+                                transcribeMs: transcribeMs,
+                                refineMs: 0
+                            )
+                        }
+                        let refineStart = Date()
+                        let refined = try await reviewRefinementEngine!.refine(
+                            RefineRequest(
+                                raw_transcript: transcribed.raw_transcript,
+                                context_blocks: [reviewHunk.refinementContextBlock()]
+                            )
+                        )
+                        return DictateCallResult(
+                            response: DictateResponse(
+                                raw_transcript: transcribed.raw_transcript,
+                                revised_text: refined.revised_text,
+                                edit_summary: refined.edit_summary,
+                                uncertainty_flags: refined.uncertainty_flags
+                            ),
+                            transcribeMs: transcribeMs,
+                            refineMs: Int(Date().timeIntervalSince(refineStart) * 1000),
+                            providerMetadata: refined.providerMetadata
+                        )
+                    }
                     switch interactionMode
                     {
                     case .standard:
@@ -429,6 +504,23 @@ final class LaunchpadServiceController
                 let dictated = dictatedCall.response
                 let totalPipelineMs = elapsedMs(since: pipelineStart)
 
+                if let reviewHunk
+                {
+                    let trimmedReview = dictated.revised_text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if trimmedReview.isEmpty
+                    {
+                        TraceLogger.log("launchpad review comment produced empty revised text; skipping review entry")
+                    }
+                    else
+                    {
+                        diffReviewStore.appendComment(hunk: reviewHunk, text: trimmedReview)
+                        TraceLogger.log("launchpad review comment appended file=\(reviewHunk.file) hash=\(reviewHunk.patchHash)")
+                    }
+                    diffReviewStore.setRecordingActive(false)
+                    setDictationState(.idle)
+                    return
+                }
+
                 let insertStart = Date()
                 let insertResult: Result<Void, ClipboardInserter.InsertError>
                 if dictated.revised_text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -465,6 +557,10 @@ final class LaunchpadServiceController
             catch
             {
                 activeDictationTask = nil
+                if reviewHunk != nil
+                {
+                    diffReviewStore.setRecordingActive(false)
+                }
                 setDictationState(.idle)
                 if error is CancellationError
                 {
@@ -496,8 +592,12 @@ final class LaunchpadServiceController
         recordingContext = nil
         activeInteractionMode = .standard
         activeSystemPromptPathOverride = nil
+        activeReviewHunk = nil
+        diffReviewStore.setRecordingActive(false)
         _ = audioRecorder.stop()
         cancelActiveDictationTask()
+        activeReviewHunk = nil
+        diffReviewStore.setRecordingActive(false)
         setDictationState(.idle)
         TraceLogger.log("launchpad recording canceled")
     }
@@ -509,6 +609,8 @@ final class LaunchpadServiceController
             return
         }
         cancelActiveDictationTask()
+        activeReviewHunk = nil
+        diffReviewStore.setRecordingActive(false)
         setDictationState(.idle)
         TraceLogger.log("launchpad thinking canceled")
     }
@@ -525,6 +627,72 @@ final class LaunchpadServiceController
             var modifiers = modifiersForKeyPress(.backspace)
             _ = keyboardInjector.send(.backspace, modifiers: modifiers)
             modifiers.removeAll()
+        }
+    }
+
+    private func handleDiffReviewPadPress() async
+    {
+        if activeReviewHunk != nil
+        {
+            if dictationState == .recording, recordingController.isRecording
+            {
+                await stopRecordingAndProcess()
+            }
+            return
+        }
+
+        if let hunk = vsCodeHunkRegistry.activeReviewHunk()
+        {
+            await startReviewRecording(hunk: hunk)
+            return
+        }
+
+        if diffReviewStore.hasActiveReview
+        {
+            postActiveDiffReview()
+        }
+    }
+
+    private func startReviewRecording(hunk: VSCodeHunkReviewContext) async
+    {
+        guard dictationState == .idle, !recordingController.isRecording else
+        {
+            return
+        }
+        switch await audioRecorder.start()
+        {
+        case .success:
+            recordingContext = nil
+            activeInteractionMode = .standard
+            activeSystemPromptPathOverride = nil
+            activeReviewHunk = hunk
+            diffReviewStore.setRecordingActive(true)
+            _ = recordingController.toggle()
+            setDictationState(.recording)
+            TraceLogger.log("launchpad review recording started file=\(hunk.file) hash=\(hunk.patchHash)")
+        case let .failure(error):
+            recordingContext = nil
+            activeReviewHunk = nil
+            diffReviewStore.setRecordingActive(false)
+            setDictationState(.idle)
+            TraceLogger.log("launchpad review recording start failed: \(error)")
+        }
+    }
+
+    private func postActiveDiffReview()
+    {
+        guard let reviewText = diffReviewStore.serializedReview() else
+        {
+            return
+        }
+        switch ClipboardInserter.insertPreservingClipboard(reviewText)
+        {
+        case .success:
+            diffReviewStore.clearAfterSuccessfulPost()
+            TraceLogger.log("launchpad diff review posted")
+        case let .failure(error):
+            diffReviewStore.recordPostError(String(describing: error))
+            TraceLogger.log("launchpad diff review post failed: \(error)")
         }
     }
 

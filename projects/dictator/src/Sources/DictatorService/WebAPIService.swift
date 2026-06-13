@@ -13,6 +13,7 @@ struct WebServiceContext: Sendable
     let logPath: String
     let dataPath: String
     let vsCodeHunkRegistry: VSCodeHunkRegistry
+    let diffReviewStore: DiffReviewStore
 }
 
 actor WebAPIService
@@ -90,7 +91,7 @@ actor WebAPIService
         case .apiVSCodeHunkCommandResult:
             return try .json(recordVSCodeHunkCommandResult(body: body))
         case .apiVSCodeHunkDiagnostics:
-            return .json(context.vsCodeHunkRegistry.diagnostics())
+            return .json(context.vsCodeHunkRegistry.diagnostics(diffReview: context.diffReviewStore.diagnostics()))
         }
     }
 
@@ -124,6 +125,7 @@ actor WebAPIService
             system_prompt: config.systemPrompt,
             auxiliary_system_prompt_1: config.auxiliarySystemPrompt1,
             auxiliary_system_prompt_2: config.auxiliarySystemPrompt2,
+            review_system_prompt: config.reviewSystemPrompt,
             api_keys: WebAPIJSON.APIKeyFlags(openai_configured: openAIConfigured),
             stt_model_present: sttPresent,
             stt_model_path: sttPath,
@@ -195,6 +197,10 @@ actor WebAPIService
         {
             try await setField(WebConfigFieldMapping.auxiliarySystemPrompt2, value: .string(auxiliary2))
         }
+        if let reviewPrompt = request.review_system_prompt
+        {
+            try await setField(WebConfigFieldMapping.reviewSystemPrompt, value: .string(reviewPrompt))
+        }
         if let bufferBytes = request.interactions_buffer_bytes
         {
             let megabytes = max(1, bufferBytes / (1024 * 1024))
@@ -210,6 +216,7 @@ actor WebAPIService
             || request.system_prompt != nil
             || request.auxiliary_system_prompt_1 != nil
             || request.auxiliary_system_prompt_2 != nil
+            || request.review_system_prompt != nil
             || request.interactions_buffer_bytes != nil
         guard hasPatch else
         {
@@ -295,8 +302,10 @@ actor WebAPIService
             patch = RuntimeConfigPatch(auxiliarySystemPrompt1: sanitized)
         case "auxiliary2":
             patch = RuntimeConfigPatch(auxiliarySystemPrompt2: sanitized)
+        case "review":
+            patch = RuntimeConfigPatch(reviewSystemPrompt: sanitized)
         default:
-            throw DictatorError.configUpdateFailed("target must be primary, auxiliary1, or auxiliary2")
+            throw DictatorError.configUpdateFailed("target must be primary, auxiliary1, auxiliary2, or review")
         }
 
         _ = try await context.runtimeConfigProvider.applyPatch(patch)
@@ -389,6 +398,17 @@ actor WebAPIService
     {
         let request = try JSONDecoder().decode(VSCodeHunkCommandResultRequest.self, from: body)
         context.vsCodeHunkRegistry.recordResult(request.result)
+        if request.result.ok
+        {
+            if let reverted = request.result.reviewFacts?.revertedHunk
+            {
+                context.diffReviewStore.appendReverted(hunk: reverted)
+            }
+            if let restored = request.result.reviewFacts?.restoredRevertedHunk
+            {
+                context.diffReviewStore.removeReverted(hunk: restored)
+            }
+        }
         return WebAPIJSON.AcceptedResponse(ok: true)
     }
 
@@ -417,6 +437,8 @@ actor WebAPIService
             return .string(config.auxiliarySystemPrompt1)
         case WebConfigFieldMapping.auxiliarySystemPrompt2:
             return .string(config.auxiliarySystemPrompt2)
+        case WebConfigFieldMapping.reviewSystemPrompt:
+            return .string(config.reviewSystemPrompt)
         case WebConfigFieldMapping.interactionsBufferBytes:
             let megabytes = max(1, config.interactionsBufferBytes / (1024 * 1024))
             return .string("\(megabytes) MB")

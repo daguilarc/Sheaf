@@ -75,6 +75,38 @@ public enum ClipboardInserter {
         return .success(())
     }
 
+    @discardableResult
+    public static func insertPreservingClipboard(_ text: String) -> Result<Void, InsertError> {
+        TraceLogger.log("insert preserving clipboard begin (textLength=\(text.count))")
+        guard AXIsProcessTrusted() else {
+            TraceLogger.log("insert preserving clipboard failed: accessibility permission missing")
+            return .failure(.accessibilityPermissionMissing)
+        }
+
+        let pb = NSPasteboard.general
+        let priorClipboard = snapshot(pb)
+        pb.clearContents()
+        guard pb.setString(text, forType: .string) else {
+            _ = restore(priorClipboard, to: pb)
+            TraceLogger.log("insert preserving clipboard failed: clipboard write failed")
+            return .failure(.clipboardWriteFailed)
+        }
+
+        guard synthesizeCommandKey(virtualKey: 9) else {
+            _ = restore(priorClipboard, to: pb)
+            TraceLogger.log("insert preserving clipboard failed: key event synthesis failed")
+            return .failure(.keyEventSynthesisFailed)
+        }
+
+        Thread.sleep(forTimeInterval: 0.1)
+        guard restore(priorClipboard, to: pb) else {
+            TraceLogger.log("insert preserving clipboard failed: clipboard restore failed")
+            return .failure(.clipboardWriteFailed)
+        }
+        TraceLogger.log("insert preserving clipboard success")
+        return .success(())
+    }
+
     public static func captureSelectedText() -> Result<String?, InsertError> {
         guard AXIsProcessTrusted() else {
             return .failure(.accessibilityPermissionMissing)

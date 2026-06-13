@@ -20,6 +20,7 @@ when a key is missing or, for strings, blank):
 | `system_prompt` | string | `intent_refiner_v1.md` | Primary prompt file, relative to the prompts dir |
 | `auxiliary_system_prompt_1` | string | `intent_refiner_v1.md` | Launchpad auxiliary slot 1 |
 | `auxiliary_system_prompt_2` | string | `intent_refiner_v1.md` | Launchpad auxiliary slot 2 |
+| `review_system_prompt` | string | `code_review_refiner_v1.md` | Launchpad voice diff review prompt |
 | `interactions_buffer_bytes` | int | `104857600` (100 MiB) | In-memory history cap and startup reload budget |
 | `use_cloud` | bool | — (**required**) | `true` → OpenAI, `false` → Ollama |
 | `fallback_mode` | string | `openai` | `openai` enables Ollama→OpenAI fallback; anything else effectively none |
@@ -65,6 +66,7 @@ Worked example (current production shape):
   "local_model": "qwen2.5:7b-instruct",
   "ollama_bin_path": "/opt/homebrew/bin/ollama",
   "ollama_host": "http://127.0.0.1:11434",
+  "review_system_prompt": "code_review_refiner_v1.md",
   "stt_language": "en",
   "stt_model_path": "models/ggml-base.en.bin",
   "system_prompt": "intent_refiner_v1.md",

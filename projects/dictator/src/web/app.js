@@ -343,6 +343,7 @@
       "cloud_model",
       "local_model",
       "system_prompt",
+      "review_system_prompt",
       "interactions_buffer_bytes"
     ];
 

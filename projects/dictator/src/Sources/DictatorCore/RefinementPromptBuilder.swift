@@ -32,9 +32,13 @@ enum RefinementPromptBuilder {
     - Do not include explanations, notes, or meta-commentary unless explicitly requested.
     """
 
-    static func buildInput(rawTranscript: String, optionalContext: [String: String]) -> String {
+    static func buildInput(
+        rawTranscript: String,
+        optionalContext: [String: String],
+        contextBlocks: [RefinementContextBlock] = []
+    ) -> String {
         let selectedText = optionalContext["selected_text"]?.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let selectedText, !selectedText.isEmpty {
+        if contextBlocks.isEmpty, let selectedText, !selectedText.isEmpty {
             return """
             Take the following input and modify it based on the following request.
 
@@ -63,10 +67,50 @@ enum RefinementPromptBuilder {
             contextLines.append("Active site: \(activeSite)")
         }
 
-        if contextLines.isEmpty {
+        let renderedBlocks = renderContextBlocks(contextBlocks)
+
+        if contextLines.isEmpty, renderedBlocks.isEmpty {
             return rawTranscript
         }
 
-        return "Context:\n" + contextLines.map { "- \($0)" }.joined(separator: "\n") + "\n\nTranscript:\n\(rawTranscript)"
+        var sections: [String] = []
+        if !contextLines.isEmpty {
+            sections.append("Context:\n" + contextLines.map { "- \($0)" }.joined(separator: "\n"))
+        }
+        if !renderedBlocks.isEmpty {
+            sections.append(renderedBlocks)
+        }
+        sections.append("Transcript:\n\(rawTranscript)")
+        return sections.joined(separator: "\n\n")
+    }
+
+    private static func renderContextBlocks(_ blocks: [RefinementContextBlock]) -> String {
+        blocks.compactMap { block in
+            let title = block.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            let body = block.body.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !title.isEmpty, !body.isEmpty else {
+                return nil
+            }
+            let metadata = block.metadata
+                .filter { !$0.key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                .sorted { $0.key < $1.key }
+                .map { "\($0.key): \($0.value)" }
+                .joined(separator: "\n")
+            if metadata.isEmpty {
+                return """
+                Context block: \(title)
+                \(body)
+                End context block: \(title)
+                """
+            }
+            return """
+            Context block: \(title)
+            \(metadata)
+
+            \(body)
+            End context block: \(title)
+            """
+        }
+        .joined(separator: "\n\n")
     }
 }

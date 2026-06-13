@@ -1,4 +1,4 @@
-import type { ActionAvailability, CommandResult, Hunk, HunkAction, PaneState } from "./types.js";
+import type { ActionAvailability, CommandResult, CommandReviewFacts, Hunk, HunkAction, HunkReviewContext, PaneState } from "./types.js";
 import type { GitAdapter } from "./gitAdapter.js";
 
 export interface ActiveFile
@@ -22,6 +22,7 @@ interface UndoEntry
   repoRoot: string;
   file: string;
   patch: string;
+  reviewContext: HunkReviewContext;
 }
 
 export class HunkModel
@@ -91,6 +92,7 @@ export class HunkModel
     try
     {
       let reveal = false;
+      let reviewFacts: CommandReviewFacts | undefined;
       switch (action)
       {
       case "previousHunk":
@@ -109,10 +111,10 @@ export class HunkModel
         await this.stageCurrentHunk();
         break;
       case "revert":
-        await this.revertCurrentHunk();
+        reviewFacts = { revertedHunk: await this.revertCurrentHunk() };
         break;
       case "undo":
-        await this.undo();
+        reviewFacts = await this.undo();
         break;
       }
 
@@ -126,7 +128,7 @@ export class HunkModel
         this.host.clearReviewSurface(state);
       }
       this.host.publishState(state);
-      return { ok: true, action, state };
+      return reviewFacts === undefined ? { ok: true, action, state } : { ok: true, action, state, reviewFacts };
     }
     catch (error)
     {
@@ -181,23 +183,25 @@ export class HunkModel
     const hunk = this.requireCurrentHunk();
     const repoRoot = this.requireRepoRoot();
     await this.git.applyPatch(repoRoot, hunk.patch, { cached: true });
-    this.undoStack.push({ kind: "stage", repoRoot, file: hunk.file, patch: hunk.patch });
+    this.undoStack.push({ kind: "stage", repoRoot, file: hunk.file, patch: hunk.patch, reviewContext: this.reviewContextFor(hunk, repoRoot) });
   }
 
-  private async revertCurrentHunk(): Promise<void>
+  private async revertCurrentHunk(): Promise<HunkReviewContext>
   {
     const hunk = this.requireCurrentHunk();
     const repoRoot = this.requireRepoRoot();
+    const reviewContext = this.reviewContextFor(hunk, repoRoot);
     await this.git.applyPatch(repoRoot, hunk.patch, { reverse: true });
-    this.undoStack.push({ kind: "revert", repoRoot, file: hunk.file, patch: hunk.patch });
+    this.undoStack.push({ kind: "revert", repoRoot, file: hunk.file, patch: hunk.patch, reviewContext });
+    return reviewContext;
   }
 
-  private async undo(): Promise<void>
+  private async undo(): Promise<CommandReviewFacts | undefined>
   {
     const entry = this.undoStack.pop();
     if (entry === undefined)
     {
-      return;
+      return undefined;
     }
 
     try
@@ -216,6 +220,7 @@ export class HunkModel
       this.undoStack = [];
       throw error;
     }
+    return entry.kind === "revert" ? { restoredRevertedHunk: entry.reviewContext } : undefined;
   }
 
   private setEmpty(): PaneState
@@ -251,7 +256,24 @@ export class HunkModel
       hunks: this.currentHunks(),
       currentHunkId: currentHunk?.id ?? null,
       currentHunk,
+      currentHunkReview: currentHunk === null || this.repoRoot === null
+        ? null
+        : this.reviewContextFor(currentHunk, this.repoRoot),
       actions,
+    };
+  }
+
+  private reviewContextFor(hunk: Hunk, repoRoot: string): HunkReviewContext
+  {
+    return {
+      repoRoot,
+      file: hunk.file,
+      hunkId: hunk.id,
+      hunkIndex: hunk.index,
+      hunkCount: hunk.count,
+      header: hunk.header,
+      patchHash: hunk.patchHash,
+      patch: hunk.patch,
     };
   }
 

@@ -11,6 +11,7 @@
   "local_model" : "qwen2.5:7b-instruct",
   "ollama_bin_path" : "\/opt\/homebrew\/bin\/ollama",
   "ollama_host" : "http:\/\/127.0.0.1:11434",
+  "review_system_prompt" : "code_review_refiner_v1.md",
   "stt_language" : "en",
   "stt_model_path" : "models\/ggml-base.en.bin",
   "system_prompt" : "intent_refiner_v1.md",

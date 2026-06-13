@@ -1,3 +1,4 @@
+import DictatorCore
 import Foundation
 
 enum VSCodeHunkAction: String, Codable, CaseIterable {
@@ -58,6 +59,17 @@ struct VSCodeHunkMetadata: Codable, Equatable {
     let patchHash: String
 }
 
+struct VSCodeHunkReviewContext: Codable, Equatable, Sendable {
+    let repoRoot: String
+    let file: String
+    let hunkId: String
+    let hunkIndex: Int
+    let hunkCount: Int
+    let header: String
+    let patchHash: String
+    let patch: String
+}
+
 struct VSCodeHunkPaneSnapshot: Codable, Equatable {
     let windowId: String
     let focused: Bool
@@ -69,6 +81,7 @@ struct VSCodeHunkPaneSnapshot: Codable, Equatable {
     let hunkIndex: Int
     let hunkCount: Int
     let currentHunk: VSCodeHunkMetadata?
+    let currentHunkReview: VSCodeHunkReviewContext?
     let actions: VSCodeHunkActionAvailability
 }
 
@@ -96,6 +109,12 @@ struct VSCodeHunkCommandResult: Codable, Equatable {
     let ok: Bool
     let action: VSCodeHunkAction
     let error: String?
+    let reviewFacts: VSCodeHunkCommandReviewFacts?
+}
+
+struct VSCodeHunkCommandReviewFacts: Codable, Equatable {
+    let revertedHunk: VSCodeHunkReviewContext?
+    let restoredRevertedHunk: VSCodeHunkReviewContext?
 }
 
 struct VSCodeHunkInstanceDiagnostic: Codable, Equatable {
@@ -119,6 +138,7 @@ struct VSCodeHunkDiagnostics: Codable, Equatable {
     let activeWindowId: String?
     let instances: [VSCodeHunkInstanceDiagnostic]
     let lastCommandResult: VSCodeHunkCommandResult?
+    let diffReview: DiffReviewDiagnostics?
 }
 
 final class VSCodeHunkRegistry: @unchecked Sendable {
@@ -184,6 +204,7 @@ final class VSCodeHunkRegistry: @unchecked Sendable {
                 hunkIndex: instance.snapshot.hunkIndex,
                 hunkCount: instance.snapshot.hunkCount,
                 currentHunk: instance.snapshot.currentHunk,
+                currentHunkReview: instance.snapshot.currentHunkReview,
                 actions: instance.snapshot.actions
             )
             instances[windowId] = instance
@@ -231,6 +252,14 @@ final class VSCodeHunkRegistry: @unchecked Sendable {
         return target.snapshot.paneOpen && target.snapshot.actions.allows(action)
     }
 
+    func activeReviewHunk(now: Date = Date()) -> VSCodeHunkReviewContext? {
+        guard let target = activeTarget(now: now),
+              target.snapshot.paneOpen else {
+            return nil
+        }
+        return target.snapshot.currentHunkReview
+    }
+
     func enqueueCommand(_ action: VSCodeHunkAction, now: Date = Date()) -> VSCodeHunkCommandEnvelope? {
         lock.lock()
         expireLocked(now: now)
@@ -274,7 +303,7 @@ final class VSCodeHunkRegistry: @unchecked Sendable {
         callback?()
     }
 
-    func diagnostics(now: Date = Date()) -> VSCodeHunkDiagnostics {
+    func diagnostics(now: Date = Date(), diffReview: DiffReviewDiagnostics? = nil) -> VSCodeHunkDiagnostics {
         lock.lock()
         defer { lock.unlock() }
         expireLocked(now: now)
@@ -302,7 +331,8 @@ final class VSCodeHunkRegistry: @unchecked Sendable {
         return VSCodeHunkDiagnostics(
             activeWindowId: activeTargetLocked(now: now)?.windowId,
             instances: diagnostics,
-            lastCommandResult: lastCommandResult
+            lastCommandResult: lastCommandResult,
+            diffReview: diffReview
         )
     }
 
@@ -388,5 +418,76 @@ final class VSCodeHunkLaunchpadControlLayer: LaunchpadControlLayer {
 
     func allCoordinatesForRendering() -> [PadCoordinate] {
         Self.bindings.map(\.coordinate)
+    }
+}
+
+final class DiffReviewLaunchpadControlLayer: LaunchpadControlLayer {
+    private static let coordinate = PadCoordinate(x: 2, y: 7)
+    private let registry: VSCodeHunkRegistry
+    private let reviewStore: DiffReviewStore
+    private let onPress: () -> Void
+
+    init(
+        registry: VSCodeHunkRegistry,
+        reviewStore: DiffReviewStore,
+        onPress: @escaping () -> Void
+    ) {
+        self.registry = registry
+        self.reviewStore = reviewStore
+        self.onPress = onPress
+    }
+
+    func handle(_ event: PadEvent) -> Bool {
+        guard event.coordinate == Self.coordinate else {
+            return false
+        }
+        guard event.phase == .press else {
+            return true
+        }
+        onPress()
+        return true
+    }
+
+    func getColor(at coordinate: PadCoordinate) -> PadColor? {
+        guard coordinate == Self.coordinate else {
+            return nil
+        }
+        let diagnostics = reviewStore.diagnostics()
+        if diagnostics.reviewRecordingActive {
+            return PadColor(r: 255, g: 0, b: 0)
+        }
+        let hasFocusedHunk = registry.activeReviewHunk() != nil
+        if hasFocusedHunk, diagnostics.hasActiveReview {
+            return PadColor(r: 0, g: 0, b: 255)
+        }
+        if hasFocusedHunk {
+            return PadColor(r: 90, g: 90, b: 90)
+        }
+        if diagnostics.hasActiveReview {
+            return PadColor(r: 0, g: 255, b: 0)
+        }
+        return .off
+    }
+
+    func allCoordinatesForRendering() -> [PadCoordinate] {
+        [Self.coordinate]
+    }
+}
+
+extension VSCodeHunkReviewContext {
+    func refinementContextBlock() -> RefinementContextBlock {
+        RefinementContextBlock(
+            title: "Current hunk",
+            metadata: [
+                "repoRoot": repoRoot,
+                "file": file,
+                "hunkId": hunkId,
+                "hunkIndex": "\(hunkIndex)",
+                "hunkCount": "\(hunkCount)",
+                "header": header,
+                "patchHash": patchHash
+            ],
+            body: patch
+        )
     }
 }

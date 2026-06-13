@@ -167,9 +167,25 @@ final class RuntimeConfigProviderTests: XCTestCase {
         XCTAssertEqual(decoded.sttModelPath, RuntimeConfigFile.defaultSTTModelPath)
         XCTAssertEqual(decoded.auxiliarySystemPrompt1, SystemPromptCatalog.defaultPromptFile)
         XCTAssertEqual(decoded.auxiliarySystemPrompt2, SystemPromptCatalog.defaultPromptFile)
+        XCTAssertEqual(decoded.reviewSystemPrompt, SystemPromptCatalog.defaultReviewPromptFile)
         XCTAssertEqual(decoded.dictatorServerHost, RuntimeConfigFile.defaultDictatorServerHost)
         XCTAssertEqual(decoded.dictatorServerPort, RuntimeConfigFile.defaultDictatorServerPort)
         XCTAssertEqual(decoded.dictatorServerEnabled, RuntimeConfigFile.defaultDictatorServerEnabled)
+    }
+
+    func testApplyInMemoryPatchUpdatesReviewPromptPath() async throws {
+        let tempDir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let primaryURL = tempDir.appendingPathComponent("runtime-config.json")
+        let primaryStore = RuntimeConfigStore(fileURL: primaryURL)
+        let provider = RuntimeConfigProvider(store: primaryStore, defaultStore: nil)
+
+        let updated = try await provider.applyInMemoryPatch(
+            RuntimeConfigPatch(reviewSystemPrompt: "review/custom.md")
+        )
+
+        XCTAssertEqual(updated.reviewSystemPrompt, "review/custom.md")
     }
 
     func testApplyInMemoryPatchUpdatesAuxiliaryPromptPaths() async throws {

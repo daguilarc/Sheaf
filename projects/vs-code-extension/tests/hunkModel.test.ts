@@ -111,6 +111,16 @@ test("HunkModel computes current hunk and navigation availability", async () => 
   assert.equal(state.hunkCount, 2);
   assert.equal(state.hunks.length, 2);
   assert.equal(state.currentHunkId, "a.ts:0");
+  assert.deepEqual(state.currentHunkReview, {
+    repoRoot: "/repo",
+    file: "a.ts",
+    hunkId: "a.ts:0",
+    hunkIndex: 0,
+    hunkCount: 2,
+    header: "@@ -1,1 +1,1 @@",
+    patchHash: "hash0",
+    patch: git.hunks.get("a.ts")?.[0]?.patch,
+  });
   assert.equal(state.actions.canGoDown, true);
   assert.equal(state.actions.canGoNextFile, true);
   assert.equal(host.rendered.length, 1);
@@ -149,6 +159,43 @@ test("HunkModel stages, reverts, and clears undo on failed undo", async () => {
   const undo = await model.run("undo");
   assert.equal(undo.ok, false);
   assert.equal(undo.state.actions.canUndo, false);
+});
+
+test("HunkModel reports review facts for revert and undo revert only", async () => {
+  const git = new FakeGit();
+  const host = new FakeHost();
+  const model = new HunkModel("window-1", git, host);
+  await model.recompute(true);
+
+  const stage = await model.run("stage");
+  assert.equal(stage.ok, true);
+  if (stage.ok)
+  {
+    assert.equal(stage.reviewFacts, undefined);
+  }
+
+  const undoStage = await model.run("undo");
+  assert.equal(undoStage.ok, true);
+  if (undoStage.ok)
+  {
+    assert.equal(undoStage.reviewFacts, undefined);
+  }
+
+  const revert = await model.run("revert");
+  assert.equal(revert.ok, true);
+  if (revert.ok)
+  {
+    assert.equal(revert.reviewFacts?.revertedHunk?.hunkId, "a.ts:0");
+    assert.equal(revert.reviewFacts?.revertedHunk?.patchHash, "hash0");
+  }
+
+  const undoRevert = await model.run("undo");
+  assert.equal(undoRevert.ok, true);
+  if (undoRevert.ok)
+  {
+    assert.equal(undoRevert.reviewFacts?.restoredRevertedHunk?.hunkId, "a.ts:0");
+    assert.equal(undoRevert.reviewFacts?.restoredRevertedHunk?.patchHash, "hash0");
+  }
 });
 
 test("HunkModel hides pane with no active hunks", async () => {

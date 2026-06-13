@@ -108,6 +108,16 @@ function state(): PaneState
       },
     ],
     currentHunkId: "src/app.ts:0:abc",
+    currentHunkReview: {
+      repoRoot: "/tmp/repo",
+      file: "src/app.ts",
+      hunkId: "src/app.ts:0:abc",
+      hunkIndex: 0,
+      hunkCount: 1,
+      header: "@@ -1 +1 @@",
+      patchHash: "abc",
+      patch: "",
+    },
     actions: {
       canGoUp: false,
       canGoDown: false,
