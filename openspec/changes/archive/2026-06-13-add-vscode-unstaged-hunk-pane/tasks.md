@@ -55,5 +55,5 @@
 - [x] 7.1 Run VS Code extension unit tests and build.
 - [x] 7.2 Run Dictator service tests covering protocol and Launchpad behavior.
 - [x] 7.3 Run the relevant repo-level validation commands for `projects/vs-code-extension` and `projects/dictator`.
-- [ ] 7.4 Manually smoke test with VS Code focused/unfocused, multiple VS Code windows, external file edits, multiple hunks, multiple changed files, stage, revert, and undo.
+- [x] 7.4 Manually smoke test with VS Code focused/unfocused, multiple VS Code windows, external file edits, multiple hunks, multiple changed files, stage, revert, and undo.
 - [x] 7.5 Update project docs or operations notes for the extension, Dictator protocol endpoint, and Launchpad hunk-control mapping.

@@ -193,6 +193,21 @@ THE controller SHALL render pad colors over MIDI (programmer mode), re-rendering
 - **WHEN** the record-status or shift-latch state changes
 - **THEN** those pads re-render immediately
 
+### Requirement: lp-18 — VS Code hunk-control static layout reservation
+THE shipped Launchpad product layout and fixture layout SHALL NOT define static pads at `(0,2)`, `(1,2)`, `(2,2)`, `(3,2)`, `(0,3)`, `(1,3)`, `(2,3)`, or `(3,3)`; those coordinates are reserved for the VS Code hunk-control layer and SHALL NOT send F13-F20 or any other static keystroke from the base layout.
+
+#### Scenario: Product layout reserves hunk controls
+- **WHEN** `projects/dictator/src/launchpad/launchpad-layout.json` is decoded
+- **THEN** no static pad exists at `(0,2)`, `(1,2)`, `(2,2)`, `(3,2)`, `(0,3)`, `(1,3)`, `(2,3)`, or `(3,3)`
+
+#### Scenario: Fixture layout reserves hunk controls
+- **WHEN** `projects/dictator/tests/fixtures/launchpad-layout.json` is decoded
+- **THEN** no static pad exists at `(0,2)`, `(1,2)`, `(2,2)`, `(3,2)`, `(0,3)`, `(1,3)`, `(2,3)`, or `(3,3)`
+
+#### Scenario: Reserved coordinates do not send F-commands
+- **WHEN** a hunk-control coordinate is pressed with no active VS Code hunk-control layer action available
+- **THEN** Dictator sends no F13-F20 keyboard event
+
 ## Contracts
 
 ### Layout file — `src/launchpad/launchpad-layout.json`
@@ -230,7 +245,9 @@ Roles: `record_status` (color driven by dictation state) and `shift_latch`
 (color driven by latch state); pads without a role render their static
 `color`. The shipped product layout binds: primary/auxiliary/Talon-Lite
 dictation toggles, safe-config restore, shift latch, contextual backspace,
-Space, Enter, arrows, F13–F20, and Cmd+C/V/X/Z.
+Space, Enter, arrows, and Cmd+C/V/X/Z. The coordinates `(0,2)`, `(1,2)`,
+`(2,2)`, `(3,2)`, `(0,3)`, `(1,3)`, `(2,3)`, and `(3,3)` are reserved for the
+VS Code hunk-control layer and are not static keystroke pads.
 
 ### Pinned dictation-state colors
 
