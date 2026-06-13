@@ -75,9 +75,39 @@ function state(): PaneState
       header: "@@ -1 +1 @@",
       oldRange: { start: 1, lines: 1 },
       newRange: { start: 1, lines: 1 },
+      displayLines: [
+        { kind: "deleted", text: "old", oldLine: 1, newLine: null },
+        { kind: "added", text: "new", oldLine: null, newLine: 1 },
+      ],
+      displayBlocks: [
+        { kind: "added", anchorNewLine: 1, attachment: "before", lines: [{ kind: "added", text: "new", oldLine: null, newLine: 1 }] },
+        { kind: "deleted", anchorNewLine: 1, attachment: "after", lines: [{ kind: "deleted", text: "old", oldLine: 1, newLine: null }] },
+      ],
       patchHash: "abc",
       patch: "",
     },
+    hunks: [
+      {
+        id: "src/app.ts:0:abc",
+        file: "src/app.ts",
+        index: 0,
+        count: 1,
+        header: "@@ -1 +1 @@",
+        oldRange: { start: 1, lines: 1 },
+        newRange: { start: 1, lines: 1 },
+        displayLines: [
+          { kind: "deleted", text: "old", oldLine: 1, newLine: null },
+          { kind: "added", text: "new", oldLine: null, newLine: 1 },
+        ],
+        displayBlocks: [
+          { kind: "added", anchorNewLine: 1, attachment: "before", lines: [{ kind: "added", text: "new", oldLine: null, newLine: 1 }] },
+          { kind: "deleted", anchorNewLine: 1, attachment: "after", lines: [{ kind: "deleted", text: "old", oldLine: 1, newLine: null }] },
+        ],
+        patchHash: "abc",
+        patch: "",
+      },
+    ],
+    currentHunkId: "src/app.ts:0:abc",
     actions: {
       canGoUp: false,
       canGoDown: false,

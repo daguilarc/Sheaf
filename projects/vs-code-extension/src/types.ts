@@ -13,6 +13,24 @@ export interface HunkRange
   lines: number;
 }
 
+export type HunkDisplayLineKind = "context" | "added" | "deleted";
+
+export interface HunkDisplayLine
+{
+  kind: HunkDisplayLineKind;
+  text: string;
+  oldLine: number | null;
+  newLine: number | null;
+}
+
+export interface HunkDisplayBlock
+{
+  kind: "added" | "deleted";
+  lines: HunkDisplayLine[];
+  anchorNewLine: number;
+  attachment: "before" | "after";
+}
+
 export interface Hunk
 {
   id: string;
@@ -22,6 +40,8 @@ export interface Hunk
   header: string;
   oldRange: HunkRange;
   newRange: HunkRange;
+  displayLines: HunkDisplayLine[];
+  displayBlocks: HunkDisplayBlock[];
   patch: string;
   patchHash: string;
 }
@@ -48,6 +68,8 @@ export interface PaneState
   fileCount: number;
   hunkIndex: number;
   hunkCount: number;
+  hunks: Hunk[];
+  currentHunkId: string | null;
   currentHunk: Hunk | null;
   actions: ActionAvailability;
 }

@@ -4,8 +4,10 @@ import { randomUUID } from "node:crypto";
 import { DictatorClient } from "./dictatorClient.js";
 import { CliGitAdapter, ToRepoRelative } from "./gitAdapter.js";
 import { HunkModel, type ActiveFile, type HunkModelHost } from "./hunkModel.js";
-import { HunkPane } from "./pane.js";
+import { InlineHunkRenderer } from "./inlineHunkRenderer.js";
 import type { HunkAction, PaneState } from "./types.js";
+import { ParseVirtualUri } from "./virtualHunkDocument.js";
+import { RegisterVirtualHunkProvider, VirtualHunkProvider } from "./virtualHunkProvider.js";
 
 const COMMANDS: Array<[string, HunkAction]> = [
   ["sheaf.hunks.previousHunk", "previousHunk"],
@@ -26,15 +28,31 @@ export function activate(context: vscode.ExtensionContext): void
   let client: DictatorClient;
   let debounce: ReturnType<typeof setTimeout> | undefined;
 
-  const pane = new HunkPane(context.extensionUri, (action) => {
-    void RunAction(action);
-  });
+  const renderer = new InlineHunkRenderer();
+  const virtualProvider = new VirtualHunkProvider();
+  RegisterVirtualHunkProvider(context, virtualProvider);
 
   const host: HunkModelHost = {
     async getActiveFile(): Promise<ActiveFile | null>
     {
       const editor = vscode.window.activeTextEditor;
-      if (editor === undefined || editor.document.uri.scheme !== "file")
+      if (editor === undefined)
+      {
+        return null;
+      }
+      if (editor.document.uri.scheme === "sheaf-hunks")
+      {
+        const identity = ParseVirtualUri(editor.document.uri.toString());
+        if (identity === null)
+        {
+          return null;
+        }
+        return {
+          absPath: `${identity.repoRoot}/${identity.file}`,
+          relativePath: identity.file,
+        };
+      }
+      if (editor.document.uri.scheme !== "file")
       {
         return null;
       }
@@ -44,28 +62,33 @@ export function activate(context: vscode.ExtensionContext): void
       {
         return null;
       }
+      const relativePath = ToRepoRelative(repoRoot, editor.document.uri.fsPath);
       return {
         absPath: editor.document.uri.fsPath,
-        relativePath: ToRepoRelative(repoRoot, editor.document.uri.fsPath),
+        relativePath,
       };
     },
     async openFile(repoRoot: string, relativePath: string): Promise<void>
     {
-      const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(`${repoRoot}/${relativePath}`));
-      await vscode.window.showTextDocument(doc, { preview: false, preserveFocus: true });
+      void repoRoot;
+      void relativePath;
     },
     publishState(state: PaneState): void
     {
-      pane.postState(state);
       void client.publishState(state);
     },
-    showPane(state: PaneState): void
+    async renderReviewSurface(state: PaneState, options: { reveal: boolean } = { reveal: false }): Promise<void>
     {
-      pane.show(state);
+      const { document, editor } = await virtualProvider.render(state);
+      renderer.render(editor, state, document);
+      if (options.reveal)
+      {
+        virtualProvider.revealCurrentHunk(editor, document, state);
+      }
     },
-    hidePane(state: PaneState): void
+    clearReviewSurface(): void
     {
-      pane.hide(state);
+      renderer.clear();
     },
   };
 
@@ -100,7 +123,12 @@ export function activate(context: vscode.ExtensionContext): void
     gitIndexWatcher,
     vscode.window.onDidChangeWindowState(() => RefreshSoon()),
     vscode.window.onDidChangeActiveTextEditor(() => RefreshSoon()),
-    vscode.workspace.onDidChangeTextDocument(() => RefreshSoon()),
+    vscode.workspace.onDidChangeTextDocument((event) => {
+      if (event.document.uri.scheme === "file")
+      {
+        RefreshSoon();
+      }
+    }),
     watcher.onDidChange(() => RefreshSoon()),
     watcher.onDidCreate(() => RefreshSoon()),
     watcher.onDidDelete(() => RefreshSoon()),
@@ -120,6 +148,8 @@ export function activate(context: vscode.ExtensionContext): void
     vscode.commands.registerCommand("sheaf.hunks.getCurrentHunk", () => {
       return model.getState().currentHunk;
     }),
+    renderer,
+    virtualProvider,
     { dispose: () => client.stop() },
   );
 

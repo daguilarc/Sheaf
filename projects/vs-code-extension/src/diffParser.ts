@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import type { Hunk } from "./types.js";
+import type { Hunk, HunkDisplayBlock, HunkDisplayLine } from "./types.js";
 
 interface FilePatch
 {
@@ -34,6 +34,7 @@ export function ParseUnifiedDiff(diffText: string): Map<string, Hunk[]>
       const newLines = Number(match[4] ?? "1");
       const patchText = [...patch.headerLines, ...hunkLines].join("\n") + "\n";
       const patchHash = Hash(patchText);
+      const displayLines = ParseHunkDisplayLines(hunkLines.slice(1), oldStart, newStart);
 
       hunks.push({
         id: `${patch.file}:${header}:${patchHash}`,
@@ -43,6 +44,8 @@ export function ParseUnifiedDiff(diffText: string): Map<string, Hunk[]>
         header,
         oldRange: { start: oldStart, lines: oldLines },
         newRange: { start: newStart, lines: newLines },
+        displayLines,
+        displayBlocks: BuildDisplayBlocks(displayLines, newStart),
         patch: patchText,
         patchHash,
       });
@@ -79,8 +82,14 @@ function SplitFilePatches(diffText: string): FilePatch[]
     currentHunk = undefined;
   }
 
-  for (const line of lines)
+  for (let index = 0; index < lines.length; index += 1)
   {
+    const line = lines[index] ?? "";
+    if (index === lines.length - 1 && line.length === 0)
+    {
+      continue;
+    }
+
     if (line.startsWith("diff --git "))
     {
       FinishHunk();
@@ -125,6 +134,80 @@ function ParseDiffGitFile(line: string): string
   const parts = line.split(" ");
   const b = parts[3] ?? "";
   return b.startsWith("b/") ? b.slice(2) : b;
+}
+
+function ParseHunkDisplayLines(lines: string[], oldStart: number, newStart: number): HunkDisplayLine[]
+{
+  const result: HunkDisplayLine[] = [];
+  let oldLine = oldStart;
+  let newLine = newStart;
+
+  for (const line of lines)
+  {
+    if (line.startsWith("\\"))
+    {
+      continue;
+    }
+
+    const prefix = line[0] ?? " ";
+    const text = line.slice(1);
+    if (prefix === "+")
+    {
+      result.push({ kind: "added", text, oldLine: null, newLine });
+      newLine += 1;
+    }
+    else if (prefix === "-")
+    {
+      result.push({ kind: "deleted", text, oldLine, newLine: null });
+      oldLine += 1;
+    }
+    else
+    {
+      result.push({ kind: "context", text, oldLine, newLine });
+      oldLine += 1;
+      newLine += 1;
+    }
+  }
+
+  return result;
+}
+
+function BuildDisplayBlocks(lines: HunkDisplayLine[], hunkNewStart: number): HunkDisplayBlock[]
+{
+  const deleted = lines.filter((line) => line.kind === "deleted");
+  const added = lines.filter((line) => line.kind === "added");
+  const anchorNewLine = AnchorNewLine(lines, hunkNewStart);
+  const blocks: HunkDisplayBlock[] = [];
+  if (added.length > 0)
+  {
+    blocks.push({ kind: "added", lines: added, anchorNewLine: added[0]?.newLine ?? anchorNewLine, attachment: "before" });
+  }
+  if (deleted.length > 0)
+  {
+    const lastAddedLine = added.at(-1)?.newLine;
+    blocks.push({
+      kind: "deleted",
+      lines: deleted,
+      anchorNewLine: lastAddedLine ?? anchorNewLine,
+      attachment: lastAddedLine === undefined || lastAddedLine === null ? "before" : "after",
+    });
+  }
+  return blocks;
+}
+
+function AnchorNewLine(lines: HunkDisplayLine[], fallback: number): number
+{
+  const firstAdded = lines.find((line) => line.kind === "added" && line.newLine !== null);
+  if (firstAdded?.newLine !== undefined && firstAdded.newLine !== null)
+  {
+    return firstAdded.newLine;
+  }
+  const firstContext = lines.find((line) => line.kind === "context" && line.newLine !== null);
+  if (firstContext?.newLine !== undefined && firstContext.newLine !== null)
+  {
+    return firstContext.newLine;
+  }
+  return Math.max(1, fallback);
 }
 
 function Hash(value: string): string

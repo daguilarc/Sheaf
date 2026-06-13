@@ -15,6 +15,14 @@ function MakeHunk(file: string, index: number, count: number): Hunk
     header: `@@ -${index + 1},1 +${index + 1},1 @@`,
     oldRange: { start: index + 1, lines: 1 },
     newRange: { start: index + 1, lines: 1 },
+    displayLines: [
+      { kind: "deleted", text: "old", oldLine: index + 1, newLine: null },
+      { kind: "added", text: "new", oldLine: null, newLine: index + 1 },
+    ],
+    displayBlocks: [
+      { kind: "added", anchorNewLine: index + 1, attachment: "before", lines: [{ kind: "added", text: "new", oldLine: null, newLine: index + 1 }] },
+      { kind: "deleted", anchorNewLine: index + 1, attachment: "after", lines: [{ kind: "deleted", text: "old", oldLine: index + 1, newLine: null }] },
+    ],
     patch: `diff --git a/${file} b/${file}\n--- a/${file}\n+++ b/${file}\n@@ -${index + 1},1 +${index + 1},1 @@\n-old\n+new\n`,
     patchHash: `hash${index}`,
   };
@@ -59,8 +67,8 @@ class FakeHost implements HunkModelHost
 {
   activeFile: ActiveFile | null = { absPath: "/repo/a.ts", relativePath: "a.ts" };
   states: PaneState[] = [];
-  shown = 0;
-  hidden = 0;
+  rendered: Array<{ state: PaneState; reveal: boolean }> = [];
+  cleared = 0;
   openedFiles: string[] = [];
 
   async getActiveFile(): Promise<ActiveFile | null>
@@ -79,14 +87,14 @@ class FakeHost implements HunkModelHost
     this.states.push(state);
   }
 
-  showPane(): void
+  renderReviewSurface(state: PaneState, options: { reveal: boolean } = { reveal: false }): void
   {
-    this.shown += 1;
+    this.rendered.push({ state, reveal: options.reveal });
   }
 
-  hidePane(): void
+  clearReviewSurface(): void
   {
-    this.hidden += 1;
+    this.cleared += 1;
   }
 }
 
@@ -101,9 +109,12 @@ test("HunkModel computes current hunk and navigation availability", async () => 
   assert.equal(state.file, "a.ts");
   assert.equal(state.hunkIndex, 0);
   assert.equal(state.hunkCount, 2);
+  assert.equal(state.hunks.length, 2);
+  assert.equal(state.currentHunkId, "a.ts:0");
   assert.equal(state.actions.canGoDown, true);
   assert.equal(state.actions.canGoNextFile, true);
-  assert.equal(host.shown, 1);
+  assert.equal(host.rendered.length, 1);
+  assert.equal(host.rendered[0]?.reveal, false);
 });
 
 test("HunkModel navigates hunks and files", async () => {
@@ -115,11 +126,13 @@ test("HunkModel navigates hunks and files", async () => {
   const nextHunk = await model.run("nextHunk");
   assert.equal(nextHunk.ok, true);
   assert.equal(nextHunk.state.hunkIndex, 1);
+  assert.equal(host.rendered.at(-1)?.reveal, true);
 
   const nextFile = await model.run("nextFile");
   assert.equal(nextFile.ok, true);
   assert.equal(nextFile.state.file, "b.ts");
   assert.deepEqual(host.openedFiles, ["b.ts"]);
+  assert.equal(host.rendered.at(-1)?.reveal, true);
 });
 
 test("HunkModel stages, reverts, and clears undo on failed undo", async () => {
@@ -147,5 +160,5 @@ test("HunkModel hides pane with no active hunks", async () => {
   const state = await model.recompute(true);
 
   assert.equal(state.paneOpen, false);
-  assert.equal(host.hidden, 1);
+  assert.equal(host.cleared, 1);
 });

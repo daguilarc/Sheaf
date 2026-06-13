@@ -11,9 +11,9 @@ export interface HunkModelHost
 {
   getActiveFile(): Promise<ActiveFile | null>;
   openFile(repoRoot: string, relativePath: string): Promise<void>;
+  renderReviewSurface(state: PaneState, options?: { reveal: boolean }): Promise<void> | void;
+  clearReviewSurface(state: PaneState): void;
   publishState(state: PaneState): void;
-  showPane(state: PaneState): void;
-  hidePane(state: PaneState): void;
 }
 
 interface UndoEntry
@@ -68,7 +68,7 @@ export class HunkModel
     {
       this.currentHunkId = null;
       const state = this.state();
-      this.host.hidePane(state);
+      this.host.clearReviewSurface(state);
       this.host.publishState(state);
       return state;
     }
@@ -76,7 +76,7 @@ export class HunkModel
     const preserved = previousHunkId === null ? undefined : hunks.find((hunk) => hunk.id === previousHunkId);
     this.currentHunkId = preserved?.id ?? hunks[0]?.id ?? null;
     const state = this.state();
-    this.host.showPane(state);
+    await this.host.renderReviewSurface(state);
     this.host.publishState(state);
     return state;
   }
@@ -90,19 +90,20 @@ export class HunkModel
   {
     try
     {
+      let reveal = false;
       switch (action)
       {
       case "previousHunk":
-        this.moveHunk(-1);
+        reveal = this.moveHunk(-1);
         break;
       case "nextHunk":
-        this.moveHunk(1);
+        reveal = this.moveHunk(1);
         break;
       case "previousFile":
-        await this.moveFile(-1);
+        reveal = await this.moveFile(-1);
         break;
       case "nextFile":
-        await this.moveFile(1);
+        reveal = await this.moveFile(1);
         break;
       case "stage":
         await this.stageCurrentHunk();
@@ -116,6 +117,14 @@ export class HunkModel
       }
 
       const state = this.state();
+      if (state.paneOpen)
+      {
+        await this.host.renderReviewSurface(state, { reveal });
+      }
+      else
+      {
+        this.host.clearReviewSurface(state);
+      }
       this.host.publishState(state);
       return { ok: true, action, state };
     }
@@ -126,27 +135,30 @@ export class HunkModel
     }
   }
 
-  private moveHunk(delta: number): void
+  private moveHunk(delta: number): boolean
   {
     const hunks = this.currentHunks();
     const current = this.currentHunk();
     if (current === null)
     {
-      return;
+      return false;
     }
     const nextIndex = current.index + delta;
     if (nextIndex < 0 || nextIndex >= hunks.length)
     {
-      return;
+      return false;
     }
-    this.currentHunkId = hunks[nextIndex]?.id ?? this.currentHunkId;
+    const nextHunkId = hunks[nextIndex]?.id ?? this.currentHunkId;
+    const changed = nextHunkId !== this.currentHunkId;
+    this.currentHunkId = nextHunkId;
+    return changed;
   }
 
-  private async moveFile(delta: number): Promise<void>
+  private async moveFile(delta: number): Promise<boolean>
   {
     if (this.repoRoot === null || this.currentFile === null)
     {
-      return;
+      return false;
     }
 
     const filesWithHunks = this.filesWithHunks();
@@ -154,13 +166,14 @@ export class HunkModel
     const nextIndex = index + delta;
     if (index < 0 || nextIndex < 0 || nextIndex >= filesWithHunks.length)
     {
-      return;
+      return false;
     }
 
     const nextFile = filesWithHunks[nextIndex] ?? this.currentFile;
     this.currentFile = nextFile;
     this.currentHunkId = this.hunksByFile.get(nextFile)?.[0]?.id ?? null;
     await this.host.openFile(this.repoRoot, nextFile);
+    return true;
   }
 
   private async stageCurrentHunk(): Promise<void>
@@ -213,7 +226,7 @@ export class HunkModel
     this.currentFile = null;
     this.currentHunkId = null;
     const state = this.state();
-    this.host.hidePane(state);
+    this.host.clearReviewSurface(state);
     this.host.publishState(state);
     return state;
   }
@@ -235,6 +248,8 @@ export class HunkModel
       fileCount: filesWithHunks.length,
       hunkIndex: currentHunk?.index ?? -1,
       hunkCount: currentHunk?.count ?? 0,
+      hunks: this.currentHunks(),
+      currentHunkId: currentHunk?.id ?? null,
       currentHunk,
       actions,
     };

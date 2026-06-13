@@ -1,7 +1,7 @@
 {
   "name": "sheaf-unstaged-hunk-pane",
-  "displayName": "Sheaf Unstaged Hunk Pane",
-  "description": "Custom peek-like unstaged hunk pane with Dictator Launchpad integration.",
+  "displayName": "Sheaf Inline Unstaged Hunks",
+  "description": "Inline unstaged hunk diff decorations with Dictator Launchpad integration.",
   "version": "0.0.1",
   "publisher": "sheaf",
   "private": true,
@@ -61,7 +61,7 @@
       }
     ],
     "configuration": {
-      "title": "Sheaf Unstaged Hunk Pane",
+      "title": "Sheaf Inline Unstaged Hunks",
       "properties": {
         "sheaf.hunks.dictatorBaseUrl": {
           "type": "string",
