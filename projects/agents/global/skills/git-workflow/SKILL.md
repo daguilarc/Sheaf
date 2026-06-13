@@ -8,6 +8,11 @@ Follow a linear Git doctrine.
 `main` stays clean. Do not develop directly on `main` unless explicitly
 instructed. Create a worktree for feature work.
 
+When creating a worktree, first use the active harness's native managed worktree
+feature if one is available. For Codex, prefer the Codex desktop managed
+thread/worktree tooling over manually running `git worktree` and choosing a
+directory.
+
 Never merge. Never use merge commits as part of normal development or landing.
 
 Definitions:
@@ -15,7 +20,7 @@ Definitions:
 - `rebase` means rebase the current working branch on `main`.
 - `land` means archive with OpenSpec if you're applying an OpenSpec change,
   rebase the working branch on `main`, fast-forward `main` to the working
-  branch, delete the working branch, and delete the worktree.
+  branch, delete the working branch, delete the worktree, and push `main`.
 
 When landing an OpenSpec change, first verify the change is actually ready for
 archiving. If artifacts or tasks are incomplete, or the archive workflow would
@@ -29,3 +34,4 @@ Landing procedure:
 3. Fast-forward `main` to the working branch.
 4. Delete the working branch.
 5. Delete the worktree.
+6. Push `main`.
