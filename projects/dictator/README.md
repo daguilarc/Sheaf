@@ -1,6 +1,6 @@
 # Dictator
 
-Dictator is a Sheaf dictation service: it transcribes WAV audio, refines text through configurable LLM providers, and exposes an operational web UI plus an iOS keyboard client.
+Dictator is a Sheaf macOS dictation service: it transcribes WAV audio, refines text through configurable LLM providers, and exposes an operational web UI. The old iOS keyboard client is retained in the repo for possible revival, but it is quarantined and not part of the default build or test workflow.
 
 ## Run the service
 
@@ -29,8 +29,8 @@ curl http://127.0.0.1:9003/health
 From this directory:
 
 ```bash
-make build      # Swift package + iOS keyboard Xcode build
-make test       # Swift package tests + iOS simulator tests
+make build      # Swift package build
+make test       # Swift package tests
 make test-core  # DictatorCore unit tests only
 make run        # start DictatorService locally
 ```
@@ -40,6 +40,13 @@ From the Sheaf root:
 ```bash
 make dictator-build
 make dictator-test
+```
+
+The retained iOS keyboard app has opt-in manual lanes only:
+
+```bash
+make ios-build
+make ios-test   # requires Xcode and an available iOS Simulator
 ```
 
 ## Documentation

@@ -5,8 +5,9 @@ Dictator is the Sheaf dictation service: a macOS Swift service on port
 transcript through a configurable LLM provider (Ollama or OpenAI with
 fallback), records every interaction, and exposes an operational web
 dashboard. A Launchpad Pro hardware controller drives the same pipeline
-in-process with OS-level text insertion, and an iOS keyboard host
-app/extension acts as a remote client.
+in-process with OS-level text insertion. The iOS keyboard host
+app/extension is retained as quarantined source for possible future revival,
+but is not part of default validation.
 
 This directory is the project's living spec under the rules in
 [Docs Structure](../../../structure/docs-structure.md): normative
@@ -23,10 +24,11 @@ and known gaps are tracked in [coverage.md](coverage.md).
 | Capability | Prefix | What it specifies |
 |---|---|---|
 | [dictation-pipeline](../../../openspec/specs/dictator-dictation-pipeline/spec.md) | `dp` | `POST /v1/dictate-audio`: headers, WAV validation, error catalogue; STT, prompt building, provider routing and fallback, interaction recording |
+| [build-workflow](../../../openspec/specs/dictator-build-workflow/spec.md) | `dbw` | Default Swift package build/test lanes, root Makefile forwarding, and opt-in quarantined iOS validation lanes |
 | [service-lifecycle](../../../openspec/specs/dictator-service-lifecycle/spec.md) | `svc` | Startup (root discovery, registry, config/secrets, health warnings), CLI overrides, `/health`, `/exit`, SIGINT shutdown, 404/405 fallbacks, trace log |
 | [web-ui](../../../openspec/specs/dictator-web-ui/spec.md) | `web` | Static dashboard shell and all `/api/*` endpoints: status, config edit/options/reset, prompts, interaction history, models, key status |
 | [launchpad](../../../openspec/specs/dictator-launchpad/spec.md) | `lp` | Launchpad Pro layout JSON, dictation pads and states, Talon Lite mode, keystroke injection, shift latch, contextual backspace, safe-config restore, paste insertion |
-| [ios-keyboard](../../../openspec/specs/dictator-ios-keyboard/spec.md) | `ios` | iOS host app + keyboard extension: server URL resolution, upload contract usage, app-group session state machine, Darwin notifications, diagnostics |
+| [ios-keyboard](../../../openspec/specs/dictator-ios-keyboard/spec.md) | `ios` | Retained/quarantined iOS host app + keyboard extension: server URL resolution, upload contract usage, app-group session state machine, Darwin notifications, diagnostics |
 
 ## Shared Contracts
 

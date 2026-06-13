@@ -7,7 +7,7 @@ IOS_DERIVED_DATA := .build/xcode
 
 all: build test
 
-build: swift-build ios-build
+build: swift-build
 
 swift-build:
 	swift build
@@ -15,7 +15,7 @@ swift-build:
 ios-build:
 	xcodebuild -project $(IOS_XCODEPROJ) -scheme $(IOS_SCHEME) -sdk $(IOS_SDK) -derivedDataPath $(IOS_DERIVED_DATA) CODE_SIGNING_ALLOWED=NO build
 
-test: swift-test ios-test
+test: swift-test
 
 swift-test:
 	swift test

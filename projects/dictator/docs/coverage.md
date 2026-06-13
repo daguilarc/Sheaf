@@ -8,7 +8,7 @@ Last audit: living-spec migration (one-time rewrite from code), 2026-06-10
 | service-lifecycle | partial | in-flight requests at shutdown, log rotation, server concurrency limits |
 | web-ui | partial | dashboard rendering detail, stale config-manager snapshots, 500-path messages |
 | launchpad | partial | MIDI wire protocol, render-worker timing, Talon Lite grammar not enumerated |
-| ios-keyboard | partial | host/extension UI flows, recording format on device, Xcode signing setup |
+| ios-keyboard | quarantined | retained for possible revival; host/extension UI flows, recording format on device, Xcode signing setup |
 
 ## Known gaps
 
@@ -61,6 +61,9 @@ Last audit: living-spec migration (one-time rewrite from code), 2026-06-10
   layout has one page; page-switching behavior is unspecified.
 
 ### ios-keyboard
+- The iOS keyboard client is quarantined and intentionally excluded from
+  default Dictator build/test validation. It is retained for possible future
+  revival and can be checked manually with the opt-in iOS lanes.
 - Host app and keyboard extension UI flows (buttons, status text, recording
   pipeline on device) are unspecified; only the shared contract surface
   (`SharedConfig`) is pinned.

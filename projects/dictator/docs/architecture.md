@@ -1,11 +1,12 @@
 # Architecture
 
-Dictator is a single macOS Swift process (`DictatorService`) plus a separate
-iOS client. The service owns one HTTP listener (SwiftNIO, one event-loop
-thread) on the registered Sheaf port `9003` and serves three surfaces from
-it: the dictation API, the operational web UI, and the standard service
-endpoints. A fourth surface — the Launchpad Pro hardware controller — runs
-in-process alongside the server and shares the same pipeline and stores.
+Dictator is a single macOS Swift process (`DictatorService`). The service owns
+one HTTP listener (SwiftNIO, one event-loop thread) on the registered Sheaf
+port `9003` and serves three surfaces from it: the dictation API, the
+operational web UI, and the standard service endpoints. A fourth surface, the
+Launchpad Pro hardware controller, runs in-process alongside the server and
+shares the same pipeline and stores. The iOS keyboard client remains in the
+repository as quarantined source, but it is not built or tested by default.
 
 ## Project layout
 
@@ -21,7 +22,7 @@ projects/dictator/
     launchpad/                # product Launchpad layout JSON
     prompts/system-prompts/   # refinement prompt catalog
     contracts/                # dictation_v1.yaml (informative API sketch)
-    ios-keyboard/             # Xcode project: host app + keyboard extension + shared code
+    ios-keyboard/             # quarantined Xcode project: host app + keyboard extension + shared code
   tests/                      # DictatorCoreTests, DictatorServiceTests, fixtures, ios-keyboard tests
   docs/                       # this living spec
 ```
@@ -57,7 +58,7 @@ Two design choices shape most of the code:
 ## Dictation data flow
 
 ```text
-WAV (HTTP client / Launchpad mic / iOS host app)
+WAV (HTTP client / Launchpad mic / retained iOS host app)
   → header + WAV validation (HTTP) or AudioRecorder capture (Launchpad)
   → WhisperCPPBridgeSTTEngine (native whisper.cpp, temp file, stt_model_path)
   → empty-transcript short-circuit
@@ -94,6 +95,14 @@ interaction stack (`VoiceConfigDecision`,
 `FocusedInputDetector`, `InMemorySecretStore`, and the
 `LaunchpadArrowCycle*` event-tap trio. They are tracked in
 [coverage](coverage.md), not specified as behavior.
+
+## Retained but quarantined
+
+The iOS keyboard host app and keyboard extension remain under
+`src/ios-keyboard/`, with tests under `tests/ios-keyboard/`, for possible
+future reactivation. They are not part of the default `build`, `test`,
+`dictator-build`, or `dictator-test` workflows. Use the explicit `ios-build`
+and `ios-test` targets only for manual revival checks.
 
 ## Intentionally not migrated
 

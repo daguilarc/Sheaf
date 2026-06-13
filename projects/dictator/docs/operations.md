@@ -7,8 +7,8 @@ checkout. Repo-wide lane rules: [Testing](../../../structure/testing.md),
 
 ## Prerequisites
 
-- macOS 13+ with a Swift 5.10 toolchain; Xcode (with an `iPhone 16` iOS
-  Simulator) is required only for the iOS lanes.
+- macOS 13+ with a Swift 5.10 toolchain.
+- Optional, quarantined iOS checks: Xcode with an available iOS Simulator.
 - whisper.cpp libraries via Homebrew — the package links `-lwhisper -lggml
   -lggml-base` with library search paths
   `/opt/homebrew/Cellar/whisper-cpp/1.8.3/libexec/lib`, `/opt/homebrew/lib`,
@@ -35,16 +35,24 @@ checkout. Repo-wide lane rules: [Testing](../../../structure/testing.md),
 From `projects/dictator/`:
 
 ```bash
-make build        # = swift-build + ios-build
+make build        # = swift-build (service + core only; no Xcode needed)
 make swift-build  # swift build (service + core only; no Xcode needed)
+```
+
+From the Sheaf root: `make dictator-build` (delegates to `make -C
+projects/dictator build`). Build output stays in git-ignored `.build/`
+(SwiftPM).
+
+The retained iOS keyboard app and extension are quarantined. They are not part
+of default build validation, but can be checked manually:
+
+```bash
 make ios-build    # xcodebuild -project src/ios-keyboard/DictatorKeyboardHost/DictatorKeyboardHost.xcodeproj \
                   #   -scheme DictatorKeyboardHost -sdk iphonesimulator \
                   #   -derivedDataPath .build/xcode CODE_SIGNING_ALLOWED=NO build
 ```
 
-From the Sheaf root: `make dictator-build` (delegates to `make -C
-projects/dictator build`). Build output stays in git-ignored `.build/`
-(SwiftPM) and `.build/xcode/` (DerivedData).
+Manual iOS build output stays in git-ignored `.build/xcode/` (DerivedData).
 
 ## Run
 
@@ -109,15 +117,14 @@ Launchpad hunk mapping:
 From `projects/dictator/`:
 
 ```bash
-make test         # swift-test then ios-test (needs Xcode + iPhone 16 simulator)
+make test         # = swift-test (service + core tests only; no iOS simulator needed)
 make swift-test   # swift test — all DictatorCoreTests + DictatorServiceTests
 make test-core    # swift test --filter DictatorCoreTests
-make ios-test     # xcodebuild ... -destination 'platform=iOS Simulator,name=iPhone 16' test
 ```
 
-From the Sheaf root: `make dictator-test` (delegates to `make test`, so it
-includes the iOS lane). Use `make swift-test` on machines without simulator
-support. Focused suites run with SwiftPM filters, e.g.:
+From the Sheaf root: `make dictator-test` (delegates to `make test`, which
+excludes the quarantined iOS lane). Focused suites run with SwiftPM filters,
+e.g.:
 
 ```bash
 swift test --filter LaunchpadTests
@@ -131,7 +138,13 @@ hygiene — no legacy external-repo paths in `src/`/`tests/`, no tracked build
 artifacts or secrets in `git ls-files projects/dictator`, and git-ignored
 SwiftPM/Xcode output paths.
 
-After running iOS lanes, verify no build artifacts became tracked:
+The retained iOS tests are quarantined manual checks:
+
+```bash
+make ios-test     # xcodebuild ... -destination 'platform=iOS Simulator,name=iPhone 16' test
+```
+
+After running manual iOS lanes, verify no build artifacts became tracked:
 
 ```bash
 git status --short projects/dictator

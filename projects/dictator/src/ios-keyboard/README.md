@@ -1,10 +1,14 @@
 # iOS Keyboard App
 
+This iOS implementation is retained but quarantined. It is not part of the
+default Dictator build or test workflow; use these files only for manual checks
+or a future reactivation pass.
+
 Canonical iOS implementation lives in:
 
 - `projects/dictator/src/ios-keyboard/DictatorKeyboardHost/HostApp`: host diagnostics and setup guidance.
 - `projects/dictator/src/ios-keyboard/DictatorKeyboardHost/DictatorKeyboardExtension`: custom keyboard with dictation controls and transcript insertion.
-- `projects/dictator/src/ios-keyboard/DictatorKeyboardHost/DictatorKeyboardHost.xcodeproj`: active Xcode project.
+- `projects/dictator/src/ios-keyboard/DictatorKeyboardHost/DictatorKeyboardHost.xcodeproj`: retained Xcode project.
 - `projects/dictator/tests/ios-keyboard/`: unit and UI tests referenced by the Xcode project.
 
 ## Runtime model
@@ -30,7 +34,7 @@ From `projects/dictator/`:
 
 ```bash
 make ios-build
-make ios-test   # requires an available iOS Simulator destination
+make ios-test   # manual quarantine check; requires an available iOS Simulator destination
 ```
 
 See `XCODE_SETUP.md` for device installation steps.
