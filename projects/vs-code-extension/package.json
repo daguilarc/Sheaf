@@ -78,11 +78,10 @@
     "test": "rm -rf .test-dist && tsc -p tsconfig.test.json && node scripts/run-tests.mjs",
     "clean": "rm -rf out .test-dist node_modules *.vsix"
   },
-  "dependencies": {},
   "devDependencies": {
     "@types/node": "^22.15.21",
     "@types/vscode": "^1.85.0",
-    "esbuild": "^0.24.0",
+    "esbuild": "^0.28.1",
     "typescript": "^5.8.3"
   }
 }
