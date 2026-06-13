@@ -1,14 +1,24 @@
-.PHONY: all install build test clean
+EDITOR_CLI ?= cursor
+VSIX := sheaf-unstaged-hunk-pane-0.0.1.vsix
 
-all: install test
+.PHONY: all deps install package build test clean
 
-install:
+all: deps test
+
+deps:
 	npm install
 
-build:
+build: deps
 	npm run build
 
-test: install
+package: build
+	npx --no-install vsce package --allow-missing-repository --out $(VSIX)
+
+install: package
+	@command -v $(EDITOR_CLI) >/dev/null || { echo "EDITOR_CLI '$(EDITOR_CLI)' not found. Try: make install EDITOR_CLI=code"; exit 1; }
+	$(EDITOR_CLI) --install-extension $(VSIX) --force
+
+test: deps
 	npm test
 
 clean:

@@ -158,7 +158,7 @@ help:
 	@echo "  make <project>        Run that project's default all target"
 	@echo "  make <project>-build  Build one project"
 	@echo "  make <project>-test   Test one project"
-	@echo "  make <project>-install  Install one project's dependencies (if supported)"
+	@echo "  make <project>-install  Install one project (if supported)"
 	@echo "  make <project>-run    Run one project's service (if supported)"
 	@echo "  make <project>-clean  Clean one project"
 	@echo "  make agents-install   Install shared agent guidance locally and globally"
