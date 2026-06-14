@@ -37,6 +37,8 @@ rules:
   specs:
     - Use EARS phrasing (WHEN/WHILE/WHERE/IF..., THE <system> SHALL ...) for requirement text
     - New requirement IDs continue the spec's existing prefix and numbering; never renumber or reuse retired IDs
-    - Name requirements "<id> — <Group>: <short name>" matching the spec's existing style
+    - >-
+      Name requirements "<id> — <Group>: <short name>" matching the spec's
+      existing style
   proposal:
     - Name the affected capability spec dirs (project-prefixed) explicitly
