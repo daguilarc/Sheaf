@@ -9,129 +9,50 @@ The REST surface for organizing chat sessions: list and create piles, create
 blank session shells inside a pile, and read session manifests. A pile is a
 storage directory; a session shell is the minimum on-disk state needed to
 open a WebSocket and start chatting.
-
 ## Requirements
+### Requirement: ps-10 — Workspace chats: list chats
 
-### Requirement: ps-1 — List piles
+WHEN the service receives `GET /api/repositories/:repoId/workspaces/:workspaceId/chats`, THE service SHALL respond 200 with `{"chats": [<manifest>...]}` for the selected workspace, sorted newest-first by chat activity `updatedAt`; only chats with manifests appear, and message history is not included.
 
-WHEN it receives `GET /api/piles`, THE service SHALL respond 200 with `{"piles": [...]}` sorted by pile name; each summary counts `*.manifest.json` files as `sessionCount` and reports the newest manifest file mtime as `latestUpdatedAt` (ISO string, or `null` when none). The piles root is created on demand, so a fresh checkout returns `{"piles": []}`.
+#### Scenario: List workspace chats
 
-#### Scenario: List piles
+- **WHEN** the service receives `GET /api/repositories/:repoId/workspaces/:workspaceId/chats`
+- **THEN** it responds 200 with manifests for that workspace sorted newest-first by chat activity `updatedAt`
+- **AND** it does not include message history
 
-- **WHEN** the service receives `GET /api/piles`
-- **THEN** it responds 200 with `{"piles": [...]}` sorted by pile name, with each summary including `sessionCount` (count of `*.manifest.json` files) and `latestUpdatedAt` (newest manifest mtime as ISO string, or `null` when none)
+#### Scenario: Fresh workspace
 
-#### Scenario: Fresh checkout
+- **WHEN** no manifested chats exist for the workspace
+- **THEN** it responds 200 with `{"chats": []}`
 
-- **WHEN** no piles have been created yet (fresh checkout)
-- **THEN** the service responds 200 with `{"piles": []}`
+### Requirement: ps-11 — Workspace chats: create chat shell
 
-### Requirement: ps-2 — Create pile
+WHEN the service receives `POST /api/repositories/:repoId/workspaces/:workspaceId/chats` with a valid `model`, THE service SHALL allocate a blank chat shell under that workspace: an empty Pi session file, an empty history log, and a provisional record using the workspace root directory; it SHALL respond 201 with the `chatId`, provisional chat metadata, and WebSocket URL, and SHALL NOT write a manifest.
 
-WHEN it receives `POST /api/piles` with `{"pile": "<name>"}`, THE service SHALL create the pile directory (idempotently) and respond 201 with `{"pile": "<name>", "sessionCount": 0, "latestUpdatedAt": null}`.
+#### Scenario: Create workspace chat
 
-#### Scenario: Create pile
-
-- **WHEN** the service receives `POST /api/piles` with a valid `{"pile": "<name>"}` body
-- **THEN** it creates the pile directory idempotently and responds 201 with `{"pile": "<name>", "sessionCount": 0, "latestUpdatedAt": null}`
-
-### Requirement: ps-3 — Create-pile validation errors
-
-IF the create-pile body is not an object or `pile` is not a non-empty string, THEN THE service SHALL respond 400 `invalid_request`; IF the name fails validation, THEN 400 `invalid_pile` (or `invalid_name` for non-NFC input) — patterns in [session files](../../../projects/sheaf-chat/docs/contracts/session-files.md).
-
-#### Scenario: Body not an object or pile missing
-
-- **WHEN** the create-pile body is not an object or `pile` is not a non-empty string
-- **THEN** the service responds 400 `invalid_request`
-
-#### Scenario: Name fails validation
-
-- **WHEN** the `pile` name fails the validation pattern
-- **THEN** the service responds 400 `invalid_pile` (or 400 `invalid_name` for non-NFC input)
-
-### Requirement: ps-4 — List sessions in pile
-
-WHEN it receives `GET /api/piles/:pile/sessions`, THE service SHALL respond 200 with `{"sessions": [<manifest>...]}` sorted newest-first by `updatedAt`. Only sessions with a manifest appear; entries whose manifest is unreadable, invalid, or has an invalid session-id stem are silently skipped. Message history is never included.
-
-#### Scenario: List sessions
-
-- **WHEN** the service receives `GET /api/piles/:pile/sessions`
-- **THEN** it responds 200 with `{"sessions": [<manifest>...]}` sorted newest-first by `updatedAt`, silently skipping entries whose manifest is unreadable, invalid, or has an invalid session-id stem, and never including message history
-
-### Requirement: ps-5 — Create session shell
-
-WHEN it receives `POST /api/piles/:pile/sessions` with valid `rootDirectory` and `model`, THE service SHALL allocate a blank session shell — an empty Pi session file, an empty history log, and a provisional record — and respond 201 with the session id, the provisional session (root relativized to the repository root when inside it), and the WebSocket URL (see Contracts). It SHALL NOT write a manifest.
-
-#### Scenario: Create session shell
-
-- **WHEN** the service receives `POST /api/piles/:pile/sessions` with valid `rootDirectory` and `model`
-- **THEN** it allocates a blank session shell (empty Pi session file, empty history log, provisional record) and responds 201 with the session id, provisional session, and WebSocket URL
+- **WHEN** the service receives a valid create-chat request for a workspace
+- **THEN** it allocates a blank chat shell using the workspace root directory
+- **AND** it responds with the `chatId`, provisional chat metadata, and WebSocket URL
 
 #### Scenario: No manifest written
 
-- **WHEN** a blank session shell is allocated
+- **WHEN** a blank workspace chat shell is created
 - **THEN** no manifest file is written
 
-### Requirement: ps-6 — Relative root resolution and session id generation
+### Requirement: ps-12 — Workspace chats: read chat manifest
 
-THE service SHALL resolve a relative `rootDirectory` against the repository root, store it absolute, and generate the session id as a UUID with hyphens removed.
-
-#### Scenario: Resolve relative rootDirectory
-
-- **WHEN** a session shell is created with a relative `rootDirectory`
-- **THEN** the service resolves it against the repository root and stores the absolute path
-
-#### Scenario: Generate session id
-
-- **WHEN** a session shell is created
-- **THEN** the session id is generated as a UUID with hyphens removed
-
-### Requirement: ps-7 — Create-session validation errors
-
-IF `rootDirectory` is missing/empty or `model.provider` / `model.id` are missing/empty, THEN THE service SHALL respond 400 `invalid_request`; IF the resolved root does not exist or is not a directory, THEN 400 `invalid_root_directory`; IF the model is unknown, THEN 404 `model_not_found`; IF the model is known but unavailable, THEN 400 `model_unavailable` (see [models](../sheaf-chat-models/spec.md)).
-
-#### Scenario: Missing required fields
-
-- **WHEN** `rootDirectory` is missing/empty or `model.provider` / `model.id` are missing/empty
-- **THEN** the service responds 400 `invalid_request`
-
-#### Scenario: Invalid root directory
-
-- **WHEN** the resolved root does not exist or is not a directory
-- **THEN** the service responds 400 `invalid_root_directory`
-
-#### Scenario: Unknown model
-
-- **WHEN** the requested model is unknown
-- **THEN** the service responds 404 `model_not_found`
-
-#### Scenario: Model unavailable
-
-- **WHEN** the model is known but unavailable
-- **THEN** the service responds 400 `model_unavailable`
-
-### Requirement: ps-8 — Pile not found
-
-IF the pile of any `/api/piles/:pile/...` route does not exist as a directory, THEN THE service SHALL respond 404 `pile_not_found` with message `pile not found: <pile>`.
-
-#### Scenario: Pile not found
-
-- **WHEN** a request is made to any `/api/piles/:pile/...` route and the pile does not exist as a directory
-- **THEN** the service responds 404 `pile_not_found` with message `pile not found: <pile>`
-
-### Requirement: ps-9 — Get session manifest
-
-WHEN it receives `GET /api/piles/:pile/sessions/:sessionId`, THE service SHALL respond 200 with `{"manifest": <manifest>}`; IF no manifest exists for the session (including blank shells), THEN 404 `manifest_not_found` with message `manifest not found for session <sessionId>`.
+WHEN the service receives `GET /api/repositories/:repoId/workspaces/:workspaceId/chats/:chatId`, THE service SHALL respond 200 with `{"manifest": <manifest>}`; IF no manifest exists for the chat, THEN it SHALL respond 404 `manifest_not_found`.
 
 #### Scenario: Manifest found
 
-- **WHEN** the service receives `GET /api/piles/:pile/sessions/:sessionId` and a manifest exists
-- **THEN** it responds 200 with `{"manifest": <manifest>}`
+- **WHEN** a workspace chat manifest exists
+- **THEN** the service returns it in a `manifest` response body
 
 #### Scenario: Manifest not found
 
-- **WHEN** the service receives `GET /api/piles/:pile/sessions/:sessionId` and no manifest exists for the session (including blank shells)
-- **THEN** it responds 404 `manifest_not_found` with message `manifest not found for session <sessionId>`
+- **WHEN** no manifest exists for the chat
+- **THEN** the service responds 404 `manifest_not_found`
 
 ## Contracts
 

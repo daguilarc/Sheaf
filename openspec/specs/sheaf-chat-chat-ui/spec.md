@@ -12,9 +12,7 @@ delegated to the shared AGUI renderer
 (`projects/web/src/agui-chat.js`, exposed as `window.ChatView`), which is
 outside this project's spec. Repository web UI rules:
 [structure/webui.md](../../../structure/webui.md).
-
 ## Requirements
-
 ### Requirement: ui-1 — Shell and routing: dependency-free first-party scripts
 
 THE UI SHALL be dependency-free first-party scripts that render into `#app` in `src/ui/index.html`, loading Markdown-it/KaTeX and Highlight.js vendor assets from `/assets/vendor/`, the shared renderer assets from `/assets/web/`, and its own assets from `/assets/sheaf-chat/`.
@@ -26,32 +24,43 @@ THE UI SHALL be dependency-free first-party scripts that render into `#app` in `
 
 ### Requirement: ui-2 — Shell and routing: hash routing
 
-THE UI SHALL hash-route: `#/` and `#/piles` → piles screen; `#/piles/<pile>` → sessions screen; `#/piles/<pile>/sessions/<id>` → chat screen; anything else falls back to the piles screen. Segments are URI-encoded in links and decoded on parse. Route changes destroy the active chat screen (closing its socket intentionally, no reconnect).
+THE UI SHALL hash-route: `#/` and `#/repositories` to the repository picker; `#/repositories/<repoId>` to the workspace picker; `#/repositories/<repoId>/workspaces/<workspaceId>` to the workspace editor; `#/repositories/<repoId>/workspaces/<workspaceId>/chats/<chatId>` to the same workspace editor with that chat selected in the chat pane; anything else falls back to the repository picker. The workspace editor SHALL be a single mounted view keyed by `repoId` + `workspaceId`, and the `chatId` segment SHALL mirror chat-pane state only. A hash change that alters only the `chatId` for the same workspace SHALL update the chat pane in place and SHALL NOT re-mount the editor or re-fetch the workspace's file or editor state; only a change of `repoId` or `workspaceId`, or leaving the editor, mounts or unmounts the editor and destroys the active chat connection. Segments are URI-encoded in links and decoded on parse.
 
-#### Scenario: Root hash navigates to piles
+#### Scenario: Root hash navigates to repository picker
 
-- **WHEN** the URL hash is `#/` or `#/piles`
-- **THEN** the piles screen is rendered
+- **WHEN** the URL hash is `#/` or `#/repositories`
+- **THEN** the repository picker is rendered
 
-#### Scenario: Pile hash navigates to sessions
+#### Scenario: Repository hash navigates to workspace picker
 
-- **WHEN** the URL hash is `#/piles/<pile>`
-- **THEN** the sessions screen for that pile is rendered
+- **WHEN** the URL hash is `#/repositories/<repoId>`
+- **THEN** the workspace picker for that repository is rendered
 
-#### Scenario: Session hash navigates to chat
+#### Scenario: Workspace hash navigates to editor
 
-- **WHEN** the URL hash is `#/piles/<pile>/sessions/<id>`
-- **THEN** the chat screen for that session is rendered
+- **WHEN** the URL hash is `#/repositories/<repoId>/workspaces/<workspaceId>`
+- **THEN** the workspace editor is rendered with the chat pane showing the chat list
 
-#### Scenario: Unknown hash falls back to piles
+#### Scenario: Chat hash selects the chat in the pane
+
+- **WHEN** the URL hash is `#/repositories/<repoId>/workspaces/<workspaceId>/chats/<chatId>`
+- **THEN** the workspace editor for that workspace is rendered with that chat opened and connected in the chat pane
+
+#### Scenario: Unknown hash falls back to repository picker
 
 - **WHEN** the URL hash is anything else
-- **THEN** the piles screen is rendered
+- **THEN** the repository picker is rendered
 
-#### Scenario: Route change destroys chat screen
+#### Scenario: Changing only the chat does not re-mount the editor
 
-- **WHEN** the route changes away from the chat screen
-- **THEN** the active chat screen is destroyed, closing its socket intentionally with no reconnect
+- **WHEN** the hash changes only the `chatId` segment for the same `repoId` + `workspaceId`
+- **THEN** only the chat pane updates to the new chat
+- **AND** the editor is not re-mounted and the workspace file and editor state are not re-fetched
+
+#### Scenario: Leaving the workspace destroys the chat connection
+
+- **WHEN** the route changes to a different repository or workspace, or leaves the editor
+- **THEN** the active chat connection is destroyed, closing its socket intentionally with no reconnect
 
 ### Requirement: ui-3 — Shell and routing: stable client id
 
@@ -67,52 +76,14 @@ THE UI SHALL keep a stable client id in `localStorage` under key `sheaf-chat-cli
 - **WHEN** `localStorage` is unavailable
 - **THEN** a new UUID is generated per call and sent as the `client` query parameter
 
-### Requirement: ui-4 — Piles and sessions screens: piles listing and creation
-
-THE piles screen SHALL list piles from `GET /api/piles` (name, session count, latest update time) and create piles via `POST /api/piles`, re-fetching the list on success and showing the REST error message on failure.
-
-#### Scenario: Piles listed
-
-- **WHEN** the piles screen loads
-- **THEN** it fetches `GET /api/piles` and displays each pile's name, session count, and latest update time
-
-#### Scenario: Pile created successfully
-
-- **WHEN** a new pile is created via `POST /api/piles` and the request succeeds
-- **THEN** the piles list is re-fetched and displayed
-
-#### Scenario: Pile creation fails
-
-- **WHEN** a new pile is created via `POST /api/piles` and the request fails
-- **THEN** the REST error message is shown
-
-### Requirement: ui-5 — Piles and sessions screens: sessions listing and creation
-
-THE sessions screen SHALL list a pile's sessions from `GET /api/piles/:pile/sessions` (chat name, root, model, updated time) and create sessions via `POST` with a root-directory input (default `projects`) and a model selector populated from `GET /api/models` (unavailable models shown ` (unavailable)` and disabled); on success it SHALL navigate straight to the chat route for the returned session id.
-
-#### Scenario: Sessions listed
-
-- **WHEN** the sessions screen loads for a pile
-- **THEN** it fetches `GET /api/piles/:pile/sessions` and displays each session's chat name, root, model, and updated time
-
-#### Scenario: Session created successfully
-
-- **WHEN** a new session is created via `POST` and the request succeeds
-- **THEN** the UI navigates to the chat route for the returned session id
-
-#### Scenario: Model selector populated
-
-- **WHEN** the sessions screen loads
-- **THEN** the model selector is populated from `GET /api/models`, with unavailable models shown ` (unavailable)` and disabled
-
 ### Requirement: ui-6 — Chat screen: WebSocket connect and hello
 
-WHEN the chat screen opens, THE UI SHALL connect to `/ws/chat` (`ws:`/`wss:` per page protocol) with `p`, `session`, `client`, and — when a sequence is known — `after`, and SHALL send a `client.hello` (`supportsSnapshots`, `supportsLazyHistory`, `lastSeenSequence`) when the socket opens.
+WHEN a chat becomes selected in the chat pane — whether by selecting it from the chat list or by loading a URL whose `chatId` segment names it — THE UI SHALL connect to `/ws/chat` (`ws:`/`wss:` per page protocol) with `repo`, `workspace`, `chat`, `client`, and — when a sequence is known — `after`, and SHALL send a `client.hello` (`supportsSnapshots`, `supportsLazyHistory`, `lastSeenSequence`) when the socket opens.
 
-#### Scenario: Chat screen opens
+#### Scenario: Chat selected in the pane
 
-- **WHEN** the chat screen opens
-- **THEN** the UI connects to `/ws/chat` with `p`, `session`, `client`, and `after` (when a sequence is known) query parameters, and sends a `client.hello` with `supportsSnapshots`, `supportsLazyHistory`, and `lastSeenSequence` when the socket opens
+- **WHEN** a chat is selected in the chat pane (by list selection or a chat-bearing URL)
+- **THEN** the UI connects to `/ws/chat` with `repo`, `workspace`, `chat`, `client`, and `after` (when a sequence is known) query parameters, and sends a `client.hello` with `supportsSnapshots`, `supportsLazyHistory`, and `lastSeenSequence` when the socket opens
 
 ### Requirement: ui-7 — Chat screen: server.hello handling
 
@@ -276,6 +247,60 @@ ON non-touch layouts, THE explorer and chat side panes SHALL be collapsible and 
 
 - **WHEN** a collapsed side pane is re-expanded on a non-touch layout
 - **THEN** pane content is shown and the control label/title/arrow updates to indicate it will collapse the pane
+
+### Requirement: ui-23 — Workspace editor: chat pane owns open/close with two-level back
+
+THE chat pane SHALL own a `list` ↔ `open` sub-state: with no chat selected it lists the workspace's chats; selecting or creating a chat opens it in the chat pane, and a chat-pane Back returns to the list. Opening or closing a chat SHALL update only the chat pane and SHALL NOT re-mount the workspace editor or re-fetch the workspace's file or editor state, so the explorer and file panes and the restored editor state persist across chat open and close. The top-level (screen) Back SHALL navigate to the workspace picker regardless of whether a chat is open.
+
+#### Scenario: Chat-pane Back returns to the chat list
+
+- **WHEN** a chat is open and the user presses the chat-pane Back
+- **THEN** the chat pane returns to the chat list and only the chat pane re-renders
+- **AND** the explorer and file panes and the restored editor state are unchanged
+
+#### Scenario: Top-level Back leaves the editor
+
+- **WHEN** the user presses the top-level Back, whether or not a chat is open
+- **THEN** the UI navigates to the workspace picker
+
+#### Scenario: Opening a chat preserves the editor
+
+- **WHEN** the user opens a chat from the chat list
+- **THEN** only the chat pane swaps to the conversation
+- **AND** the explorer and file panes and the restored editor state are unchanged
+
+### Requirement: ui-24 — Chat pane: optimistic local echo of submitted messages
+
+WHEN the user submits a chat message, THE UI SHALL render that message in the transcript immediately, keyed by the client-generated message id, without waiting for any server echo; WHEN the server later echoes the same message id (as `chat.user_message` and/or agui text-message events) or replays it from history, THE UI SHALL reconcile it to the single already-rendered message rather than rendering a duplicate.
+
+#### Scenario: Submitted message renders immediately
+
+- **WHEN** the user submits a chat message
+- **THEN** the message appears in the transcript immediately, before any server echo, keyed by the client-generated message id
+
+#### Scenario: Server echo does not duplicate the message
+
+- **WHEN** the server later echoes that message with the same id, or replays it from history
+- **THEN** the UI reconciles it to the single already-rendered message and does not render a duplicate
+
+### Requirement: ui-25 — Agent Review tab: workspace-scoped, gated on unstaged hunks
+
+THE workspace editor SHALL resolve Agent Review from the selected workspace (worktree) root via `GET /api/repositories/:repoId/workspaces/:workspaceId/agent-review` and the `/ws/agent-review?repo&workspace&client` socket, independent of any open chat, and SHALL present the Agent Review tab in the file pane only when that worktree has at least one unstaged hunk. This SHALL apply equally to the repository's main worktree and any linked worktree.
+
+#### Scenario: Worktree has unstaged hunks
+
+- **WHEN** the selected workspace worktree has at least one unstaged hunk
+- **THEN** the editor presents the Agent Review tab in the file pane
+
+#### Scenario: Worktree has no unstaged hunks
+
+- **WHEN** the selected workspace worktree has no unstaged hunks
+- **THEN** the editor does not present the Agent Review tab
+
+#### Scenario: Independent of an open chat
+
+- **WHEN** the selected workspace (main or linked worktree) has unstaged hunks
+- **THEN** the editor presents the Agent Review tab regardless of whether a chat is open
 
 ## Contracts
 

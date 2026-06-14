@@ -126,6 +126,8 @@ WHEN a chat becomes selected in the chat pane — whether by selecting it from t
 - **WHEN** a chat is selected in the chat pane (by list selection or a chat-bearing URL)
 - **THEN** the UI connects to `/ws/chat` with `repo`, `workspace`, `chat`, `client`, and `after` (when a sequence is known) query parameters, and sends a `client.hello` with `supportsSnapshots`, `supportsLazyHistory`, and `lastSeenSequence` when the socket opens
 
+## ADDED Requirements
+
 ### Requirement: ui-23 — Workspace editor: chat pane owns open/close with two-level back
 
 THE chat pane SHALL own a `list` ↔ `open` sub-state: with no chat selected it lists the workspace's chats; selecting or creating a chat opens it in the chat pane, and a chat-pane Back returns to the list. Opening or closing a chat SHALL update only the chat pane and SHALL NOT re-mount the workspace editor or re-fetch the workspace's file or editor state, so the explorer and file panes and the restored editor state persist across chat open and close. The top-level (screen) Back SHALL navigate to the workspace picker regardless of whether a chat is open.

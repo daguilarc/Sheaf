@@ -1,6 +1,6 @@
 ## MODIFIED Requirements
 
-### Requirement: arm-1 — Availability: Git worktree detection (workspace-scoped)
+### Requirement: arm-1 — Availability: Git repository detection
 
 WHEN the service receives `GET /api/repositories/:repoId/workspaces/:workspaceId/agent-review`, THE Sheaf Chat service SHALL resolve Agent Review availability from the selected workspace (worktree) root, independent of any chat; it SHALL report Agent Review Mode as available WHEN that workspace root resolves to a Git worktree top level — the repository's main worktree or any linked worktree — and include the repository root, the workspace-root-relative path, and the ordered unstaged hunks and file summaries computed from that worktree; IF the workspace root does not resolve to a Git worktree, THEN THE service SHALL report Agent Review Mode as unavailable without exposing hunk commands.
 
@@ -25,7 +25,7 @@ WHEN the service receives `GET /api/repositories/:repoId/workspaces/:workspaceId
 - **THEN** Agent Review Mode is unavailable
 - **AND** no hunk mutation command is exposed
 
-### Requirement: arm-2 — Review WebSocket: Upgrade and bootstrap (workspace-scoped)
+### Requirement: arm-2 — Review WebSocket: Upgrade and bootstrap
 
 THE Sheaf Chat service SHALL accept dedicated Agent Review Mode WebSocket upgrades at `/ws/agent-review` with valid `repo`, `workspace`, and `client` parameters and no `chat` parameter; WHEN the connection is accepted, THE service SHALL send a non-persisted bootstrap frame containing availability, current hunk state, ordered file summaries, and ordered unstaged hunks computed from the selected workspace worktree.
 
@@ -44,7 +44,7 @@ THE Sheaf Chat service SHALL accept dedicated Agent Review Mode WebSocket upgrad
 - **WHEN** the service sends Agent Review bootstrap, state, command-result, or error frames
 - **THEN** those frames are not appended to any chat history
 
-### Requirement: arm-9 — Safety: Root-scoped Git side effects (workspace-scoped)
+### Requirement: arm-9 — Safety: Root-scoped Git side effects
 
 WHEN Agent Review Mode runs Git commands, THE Sheaf Chat service SHALL execute them with argument arrays scoped to the resolved repository root, SHALL limit hunk discovery and commands to paths contained by the selected workspace worktree root, and SHALL reject commands whose target file or patch would escape that root.
 

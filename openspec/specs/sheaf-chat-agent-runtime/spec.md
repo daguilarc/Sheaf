@@ -9,9 +9,7 @@ The in-memory runtime that owns one embedded Pi agent session per chat
 session: lifecycle states, attach/detach reference counting, idle offload,
 hot and cold resume, user-message delivery (prompt vs steer), cancellation,
 model switching, and the deferred initial-manifest write with its summarizer.
-
 ## Requirements
-
 ### Requirement: ar-1 — Lifecycle: lifecycle states and status events
 
 THE service SHALL report agent lifecycle states `cold`, `starting`, `active`, `idle`, `stopping`, `failed`, and SHALL emit a status event (persisted/broadcast as `agent.status`, [chat-protocol](../sheaf-chat-chat-protocol/spec.md)) on every state change, with `previousState` included.
@@ -46,19 +44,22 @@ THE service SHALL serialize startup per session: concurrent attaches to the same
 
 ### Requirement: ar-4 — Lifecycle: cold-resume bootstrap
 
-WHEN cold-resuming, THE service SHALL bootstrap from the manifest when present, otherwise from the provisional record; IF the Pi session file is missing, THEN attachment SHALL fail (`session file not found for <sessionId>`). The manifest's `rootDirectory` and `model` are authoritative on resume.
+WHEN cold-resuming, THE service SHALL bootstrap from the chat manifest when present, otherwise from the provisional workspace chat record; IF the Pi session file is missing, THEN attachment SHALL fail (`chat file not found for <chatId>`). The manifest's `rootDirectory` and `model` are authoritative on resume.
 
 #### Scenario: Manifest present on cold resume
-- **WHEN** cold-resuming a session and the manifest is present
+
+- **WHEN** cold-resuming a chat and the manifest is present
 - **THEN** the service bootstraps from the manifest, using its `rootDirectory` and `model` as authoritative values
 
 #### Scenario: No manifest on cold resume
-- **WHEN** cold-resuming a session and no manifest is present
-- **THEN** the service bootstraps from the provisional record
+
+- **WHEN** cold-resuming a chat and no manifest is present
+- **THEN** the service bootstraps from the provisional workspace chat record
 
 #### Scenario: Pi session file missing
-- **WHEN** cold-resuming a session and the Pi session file is missing
-- **THEN** attachment fails with `session file not found for <sessionId>`
+
+- **WHEN** cold-resuming a chat and the Pi session file is missing
+- **THEN** attachment fails with `chat file not found for <chatId>`
 
 ### Requirement: ar-5 — Lifecycle: idle transition and offload timer
 
@@ -134,15 +135,17 @@ WHEN a validated model selection is applied, THE service SHALL set the model on 
 
 ### Requirement: ar-11 — Deferred manifest: initial write
 
-WHEN the first user message of a session is accepted, THE service SHALL start generating a summary from its text; WHEN the first assistant message completes (Pi `message_end` with role `assistant`), THE service SHALL write the initial manifest exactly once with the summary as `chatName` and `description` ([format](../../../projects/sheaf-chat/docs/contracts/session-files.md)) and emit a manifest-updated event (broadcast as `session.updated`).
+WHEN the first user message of a workspace chat is accepted, THE service SHALL start generating a summary from its text; WHEN the first assistant message completes (Pi `message_end` with role `assistant`), THE service SHALL write the initial chat manifest exactly once with the summary as `chatName` and `description` and emit a manifest-updated event (broadcast as `session.updated`).
 
 #### Scenario: First user message accepted
-- **WHEN** the first user message of a session is accepted
+
+- **WHEN** the first user message of a workspace chat is accepted
 - **THEN** the service starts generating a summary from its text
 
 #### Scenario: First assistant message completes
+
 - **WHEN** the first assistant message completes (Pi `message_end` with role `assistant`)
-- **THEN** the service writes the initial manifest exactly once with the summary as `chatName` and `description`, and emits a manifest-updated event broadcast as `session.updated`
+- **THEN** the service writes the initial chat manifest exactly once with the summary as `chatName` and `description`, and emits a manifest-updated event broadcast as `session.updated`
 
 ### Requirement: ar-12 — Deferred manifest: deterministic summarizer
 
@@ -207,6 +210,29 @@ IF the session's configured model is not found in the registry at Pi-session cre
 #### Scenario: Model not found at switch
 - **WHEN** the session's configured model is not found in the registry at a model switch
 - **THEN** the operation fails with `model not found: <provider>/<id>`
+
+### Requirement: ar-18 — Workspace identity: runtime keys
+
+THE service SHALL key agent runtimes by `{repoId, workspaceId, chatId}` and SHALL not use pile names as part of runtime identity.
+
+#### Scenario: Runtime created
+
+- **WHEN** a chat runtime is created for a workspace chat
+- **THEN** its lifecycle key contains `repoId`, `workspaceId`, and `chatId`
+
+### Requirement: ar-19 — Workspace root: Pi session construction
+
+WHEN creating or resuming a workspace chat runtime, THE service SHALL use the chat manifest root when present and the provisional workspace root otherwise, and SHALL pass the workspace root as the Pi session working directory and scoped-tools root.
+
+#### Scenario: Manifest present on resume
+
+- **WHEN** a workspace chat has a manifest
+- **THEN** the service uses the manifest root as authoritative for Pi session construction
+
+#### Scenario: Provisional chat
+
+- **WHEN** a workspace chat has no manifest yet
+- **THEN** the service uses the provisional workspace root for Pi session construction
 
 ## Contracts
 
