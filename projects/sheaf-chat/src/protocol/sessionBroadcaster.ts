@@ -13,8 +13,11 @@ import {
 } from "../extensions/sheaf-chat/pathPolicy.js";
 import type { FileChangedNotification } from "../extensions/sheaf-chat/types.js";
 import {
-  FormatSessionKey,
-  type SessionKey,
+  FormatChatKey,
+  KeyChatId,
+  KeyRepoId,
+  KeyWorkspaceId,
+  type ChatKey,
 } from "../agents/lifecycle.js";
 import {
   eventsToSnapshots,
@@ -47,11 +50,18 @@ export interface ConnectedClient
   clientId?: string;
   socket: WebSocket;
   lastAckSequence?: number;
+  // While "catching_up", live broadcasts are buffered rather than sent, so that a
+  // connection can subscribe before it replays history without losing or
+  // reordering envelopes that arrive during the replay. On ActivateClient the
+  // buffer is flushed (deduped by sequence) and the client goes "live".
+  state: "catching_up" | "live";
+  liveBuffer: ChatEnvelope[];
+  lastDeliveredSequence: number;
 }
 
 export interface SessionBroadcasterOptions
 {
-  key: SessionKey;
+  key: ChatKey;
   storagePaths: StoragePaths;
   agentManager: AgentManager;
   persistenceHub: SessionPersistenceHub;
@@ -147,7 +157,7 @@ function ExtractAguiEvents(envelopes: ChatEnvelope[]): AguiEvent[]
 
 export class SessionBroadcaster
 {
-  private readonly m_key: SessionKey;
+  private readonly m_key: ChatKey;
   private readonly m_storagePaths: StoragePaths;
   private readonly m_persistenceHub: SessionPersistenceHub;
   private readonly m_clients = new Map<string, ConnectedClient>();
@@ -166,7 +176,7 @@ export class SessionBroadcaster
     });
   }
 
-  get Key(): SessionKey
+  get Key(): ChatKey
   {
     return this.m_key;
   }
@@ -199,22 +209,58 @@ export class SessionBroadcaster
   RegisterClient(socket: WebSocket, clientId?: string): ConnectedClient
   {
     const connectionId = randomUUID();
-
-    return {
+    const client: ConnectedClient = {
       connectionId,
       socket,
       clientId,
+      state: "catching_up",
+      liveBuffer: [],
+      lastDeliveredSequence: 0,
     };
+
+    // Subscribe immediately so no broadcast is missed while the connection
+    // replays history; broadcasts are buffered until ActivateClient.
+    this.m_clients.set(connectionId, client);
+    return client;
   }
 
+  // Flush any envelopes that arrived during catch-up (deduped against what the
+  // replay already delivered) and switch the client to live delivery.
   ActivateClient(client: ConnectedClient): void
   {
-    this.m_clients.set(client.connectionId, client);
+    const buffered = client.liveBuffer;
+    client.liveBuffer = [];
+    client.state = "live";
+
+    for (const envelope of buffered)
+    {
+      this.DeliverTracked(client, envelope);
+    }
   }
 
   RemoveClient(connectionId: string): void
   {
     this.m_clients.delete(connectionId);
+  }
+
+  // Send an envelope to a client, deduped by sequence so an envelope delivered by
+  // both the history replay and the live stream reaches the client exactly once.
+  private DeliverTracked(client: ConnectedClient, envelope: ChatEnvelope): void
+  {
+    if (
+      envelope.sequence !== undefined &&
+      envelope.sequence <= client.lastDeliveredSequence
+    )
+    {
+      return;
+    }
+
+    SendEnvelope(client.socket, envelope);
+
+    if (envelope.sequence !== undefined)
+    {
+      client.lastDeliveredSequence = Math.max(client.lastDeliveredSequence, envelope.sequence);
+    }
   }
 
   SendDirect(connectionId: string, envelope: ChatEnvelope): void
@@ -233,7 +279,13 @@ export class SessionBroadcaster
   {
     for (const client of this.m_clients.values())
     {
-      SendEnvelope(client.socket, envelope);
+      if (client.state === "catching_up")
+      {
+        client.liveBuffer.push(envelope);
+        continue;
+      }
+
+      this.DeliverTracked(client, envelope);
     }
   }
 
@@ -264,8 +316,9 @@ export class SessionBroadcaster
     };
     const envelope = CreateChatEnvelope({
       kind: x_fileChangedKind,
-      pile: this.m_key.pile,
-      sessionId: this.m_key.sessionId,
+      repoId: KeyRepoId(this.m_key),
+      workspaceId: KeyWorkspaceId(this.m_key),
+      chatId: KeyChatId(this.m_key),
       payload,
     });
 
@@ -280,15 +333,16 @@ export class SessionBroadcaster
   {
     const entries = await CollectSessionLogEntries(
       this.m_storagePaths,
-      this.m_key.pile,
-      this.m_key.sessionId,
+      KeyRepoId(this.m_key),
+      KeyWorkspaceId(this.m_key),
+      KeyChatId(this.m_key),
     );
 
     for (const entry of entries)
     {
       if (entry.sequence > after && entry.sequence <= throughSequence)
       {
-        SendEnvelope(client.socket, entry.envelope);
+        this.DeliverTracked(client, entry.envelope);
       }
     }
   }
@@ -309,8 +363,9 @@ export class SessionBroadcaster
   {
     const pagePromise = ReadHistoryPage(
       this.m_storagePaths,
-      this.m_key.pile,
-      this.m_key.sessionId,
+      KeyRepoId(this.m_key),
+      KeyWorkspaceId(this.m_key),
+      KeyChatId(this.m_key),
       request as HistoryPageRequest,
     );
 
@@ -339,8 +394,9 @@ export class SessionBroadcaster
 
     const envelope = CreateChatEnvelope({
       kind: x_historyPageKind,
-      pile: this.m_key.pile,
-      sessionId: this.m_key.sessionId,
+      repoId: KeyRepoId(this.m_key),
+      workspaceId: KeyWorkspaceId(this.m_key),
+      chatId: KeyChatId(this.m_key),
       payload,
     });
 
@@ -372,7 +428,7 @@ export class SessionBroadcasterRegistry
 
   async GetOrCreate(options: SessionBroadcasterOptions): Promise<SessionBroadcaster>
   {
-    const encodedKey = FormatSessionKey(options.key);
+    const encodedKey = FormatChatKey(options.key);
     let broadcaster = this.m_broadcasters.get(encodedKey);
 
     if (broadcaster === undefined)
@@ -408,14 +464,14 @@ export class SessionBroadcasterRegistry
     }
   }
 
-  Get(key: SessionKey): SessionBroadcaster | undefined
+  Get(key: ChatKey): SessionBroadcaster | undefined
   {
-    return this.m_broadcasters.get(FormatSessionKey(key));
+    return this.m_broadcasters.get(FormatChatKey(key));
   }
 
-  Remove(key: SessionKey): void
+  Remove(key: ChatKey): void
   {
-    const encodedKey = FormatSessionKey(key);
+    const encodedKey = FormatChatKey(key);
     const broadcaster = this.m_broadcasters.get(encodedKey);
 
     if (broadcaster !== undefined)
@@ -425,7 +481,7 @@ export class SessionBroadcasterRegistry
     }
   }
 
-  ReleaseIfIdle(key: SessionKey): void
+  ReleaseIfIdle(key: ChatKey): void
   {
     const broadcaster = this.Get(key);
 

@@ -477,7 +477,7 @@ function JsonResponse(body: unknown, ok = true): FakeFetchResponse
 function DefaultFileFetch(path: string): FakeFetchResponse | null
 {
   const filesMatch = path.match(
-    /\/api\/piles\/[^/]+\/sessions\/[^/]+\/files\?path=(.+)$/,
+    /\/api\/repositories\/[^/]+\/workspaces\/[^/]+(?:\/chats\/[^/]+)?\/files\?path=(.+)$/,
   );
   if (filesMatch) {
     const directoryPath = decodeURIComponent(filesMatch[1]);
@@ -509,7 +509,7 @@ function DefaultFileFetch(path: string): FakeFetchResponse | null
   }
 
   const fileMatch = path.match(
-    /\/api\/piles\/[^/]+\/sessions\/[^/]+\/file\?path=(.+)$/,
+    /\/api\/repositories\/[^/]+\/workspaces\/[^/]+(?:\/chats\/[^/]+)?\/file\?path=(.+)$/,
   );
   if (fileMatch) {
     const filePath = decodeURIComponent(fileMatch[1]);
@@ -538,7 +538,7 @@ function DefaultFileFetch(path: string): FakeFetchResponse | null
 function HighlightFileFetch(path: string): FakeFetchResponse | null
 {
   const filesMatch = path.match(
-    /\/api\/piles\/[^/]+\/sessions\/[^/]+\/files\?path=(.+)$/,
+    /\/api\/repositories\/[^/]+\/workspaces\/[^/]+(?:\/chats\/[^/]+)?\/files\?path=(.+)$/,
   );
   if (filesMatch) {
     return JsonResponse({
@@ -570,7 +570,7 @@ function HighlightFileFetch(path: string): FakeFetchResponse | null
   }
 
   const fileMatch = path.match(
-    /\/api\/piles\/[^/]+\/sessions\/[^/]+\/file\?path=(.+)$/,
+    /\/api\/repositories\/[^/]+\/workspaces\/[^/]+(?:\/chats\/[^/]+)?\/file\?path=(.+)$/,
   );
   if (fileMatch) {
     const filePath = decodeURIComponent(fileMatch[1]);
@@ -610,7 +610,7 @@ function LoadChatHarness(options?: {
   const pendingTimers: Array<(() => void) | null> = [];
   const windowListeners: Record<string, Listener[]> = {};
   const location = {
-    hash: options?.hash || "#/piles/default/sessions/sess-1",
+    hash: options?.hash || "#/repositories/repo-1/workspaces/workspace-1/chats/chat-1",
     protocol: "http:",
     host: "127.0.0.1:9004",
   };
@@ -737,8 +737,9 @@ function ServerEnvelope(
     v: 1,
     id: "server-" + kind + "-" + String(sequence || "unsequenced"),
     kind,
-    pile: "default",
-    sessionId: "sess-1",
+    repoId: "repo-1",
+    workspaceId: "workspace-1",
+    chatId: "chat-1",
     timestamp: "2026-06-08T00:00:00.000Z",
     payload,
   };
@@ -795,14 +796,14 @@ async function FlushPromises(): Promise<void>
   await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-test("piles screen renders backend pile summaries and navigates by pile name", async () =>
+test("repository picker renders backend repositories and navigates by repo id", async () =>
 {
   const requests: Array<{ path: string; request?: Record<string, unknown> }> = [];
-  let piles: Array<{ pile: string; sessionCount: number; latestUpdatedAt: string | null }> = [
+  const repositories: Array<{ repoId: string; name: string; path: string }> = [
     {
-      pile: "work",
-      sessionCount: 2,
-      latestUpdatedAt: "2026-06-08T18:00:00.000Z",
+      repoId: "repo-1",
+      name: "work",
+      path: "/Users/test/work",
     },
   ];
   const harness = LoadChatHarness({
@@ -810,21 +811,8 @@ test("piles screen renders backend pile summaries and navigates by pile name", a
     fetch: async (path, request) => {
       requests.push({ path, request });
 
-      if (path === "/api/piles" && request?.method === "POST") {
-        const body = JSON.parse(String(request.body));
-        piles = [
-          ...piles,
-          {
-            pile: body.pile,
-            sessionCount: 0,
-            latestUpdatedAt: null,
-          },
-        ];
-        return JsonResponse({ pile: body.pile, sessionCount: 0, latestUpdatedAt: null }, true);
-      }
-
-      if (path === "/api/piles") {
-        return JsonResponse({ piles }, true);
+      if (path === "/api/repositories") {
+        return JsonResponse({ repositories }, true);
       }
 
       return JsonResponse({ error: { message: "unexpected request" } }, false);
@@ -833,31 +821,17 @@ test("piles screen renders backend pile summaries and navigates by pile name", a
 
   await FlushPromises();
 
-  const firstPileButton = RequiredElement(harness.app, ".sheaf-chat-list-button");
-  assert.match(firstPileButton.textContent, /^work/);
-  assert.doesNotMatch(firstPileButton.textContent, /undefined/);
+  const firstRepositoryButton = RequiredElement(harness.app, ".sheaf-chat-list-button");
+  assert.match(firstRepositoryButton.textContent, /^work/);
+  assert.doesNotMatch(firstRepositoryButton.textContent, /undefined/);
 
-  firstPileButton.click();
-  assert.equal(harness.location.hash, "#/piles/work");
-
-  const input = RequiredElement(harness.app, ".sheaf-chat-input");
-  const form = RequiredElement(harness.app, "form");
-  input.value = "research";
-  form.dispatchEvent({
-    type: "submit",
-    preventDefault: () => undefined,
-  });
-
-  await FlushPromises();
-
-  const postRequest = requests.find((request) => request.request?.method === "POST");
-  assert.ok(postRequest);
-  assert.equal(JSON.parse(String(postRequest.request?.body)).pile, "research");
+  firstRepositoryButton.click();
+  assert.equal(harness.location.hash, "#/repositories/repo-1");
+  assert.equal(requests.some((request) => request.request?.method === "POST"), false);
   assert.doesNotMatch(harness.app.textContent, /undefined/);
-  assert.match(harness.app.textContent, /research/);
 });
 
-test("chat send waits for server broadcast and dual user paths render once", () =>
+test("chat send renders optimistically and dual user paths reconcile to one bubble", () =>
 {
   const harness = LoadChatHarness();
   const socket = harness.sockets[0];
@@ -875,9 +849,11 @@ test("chat send waits for server broadcast and dual user paths render once", () 
   assert.deepEqual(userFrame.payload.attachments, []);
   assert.equal(userFrame.payload.text, "Hello from user");
   assert.equal(userFrame.payload.steer, true);
-  assert.equal(handle.state.messageOrder.length, 0);
 
   const messageId = String(userFrame.payload.messageId);
+  // The message is rendered immediately on submit via the optimistic local echo.
+  assert.deepEqual(Array.from(handle.state.messageOrder), [messageId]);
+
   socket.receive(
     ServerEnvelope("chat.user_message", {
       messageId,
@@ -911,6 +887,66 @@ test("chat send waits for server broadcast and dual user paths render once", () 
   assert.equal(message.role, "user");
   assert.equal(message.content, "Hello from user");
   assert.equal(handle.transcript.querySelectorAll(".agui-chat-bubble--user").length, 1);
+});
+
+// Reproduction for the "first message does not appear" bug.
+//
+// Today the user's own message is rendered only when the server echoes it back
+// (chat.user_message / agui TEXT_MESSAGE events). On a brand-new chat whose agent
+// must cold-start, that single echo races the connect/bootstrap handshake, so the
+// user's first message can be invisible (or dropped) in the live view even though
+// it is persisted and shows up on reload.
+//
+// The fix is an optimistic local echo: a submitted message renders immediately,
+// keyed by the client-generated messageId, and the later server echo (same id)
+// dedupes to a single bubble. This test asserts that behavior and therefore FAILS
+// on current code (the message does not appear until the server broadcasts it) and
+// PASSES once optimistic echo lands.
+test("user message appears immediately on submit and the later server echo does not duplicate it", () =>
+{
+  const harness = LoadChatHarness();
+  const socket = harness.sockets[0];
+  const textarea = RequiredElement(harness.app, ".sheaf-chat-textarea");
+  const sendButton = RequiredElement(harness.app, ".sheaf-chat-send");
+  const handle = harness.handles[0];
+
+  socket.open();
+  harness.flushAnimationFrames();
+
+  textarea.value = "hello";
+  sendButton.click();
+  harness.flushAnimationFrames();
+
+  const userFrame = LastFrame(socket, "client.user_message");
+  const messageId = String(userFrame.payload.messageId);
+
+  // The submitted message must be visible right away, without any server frame.
+  assert.equal(
+    handle.transcript.querySelectorAll(".agui-chat-bubble--user").length,
+    1,
+    "submitted user message should render immediately, before any server echo",
+  );
+  assert.deepEqual(Array.from(handle.state.messageOrder), [messageId]);
+  assert.equal(handle.state.messages.get(messageId).content, "hello");
+
+  // The server then echoes the same message (chat.user_message plus the dual agui
+  // TEXT_MESSAGE events, same messageId). It must reconcile to one bubble.
+  socket.receive(ServerEnvelope("chat.user_message", { messageId, text: "hello" }, 1));
+  socket.receive(
+    ServerEnvelope("agui.event", { type: "TEXT_MESSAGE_START", messageId, role: "user" }, 2),
+  );
+  socket.receive(
+    ServerEnvelope("agui.event", { type: "TEXT_MESSAGE_CONTENT", messageId, delta: "hello" }, 3),
+  );
+  socket.receive(ServerEnvelope("agui.event", { type: "TEXT_MESSAGE_END", messageId }, 4));
+  harness.flushAnimationFrames();
+
+  assert.equal(
+    handle.transcript.querySelectorAll(".agui-chat-bubble--user").length,
+    1,
+    "server echo of the same messageId must not duplicate the optimistic bubble",
+  );
+  assert.deepEqual(Array.from(handle.state.messageOrder), [messageId]);
 });
 
 test("disconnected submissions queue and flush on reconnect", () =>
@@ -964,8 +1000,9 @@ test("sequenced envelopes are acked and reconnect resumes after last sequence", 
 
   assert.equal(harness.sockets.length, 2);
   assert.match(harness.sockets[1].url, /^ws:\/\/127\.0\.0\.1:9004\/ws\/chat\?/);
-  assert.match(harness.sockets[1].url, /p=default/);
-  assert.match(harness.sockets[1].url, /session=sess-1/);
+  assert.match(harness.sockets[1].url, /repo=repo-1/);
+  assert.match(harness.sockets[1].url, /workspace=workspace-1/);
+  assert.match(harness.sockets[1].url, /chat=chat-1/);
   assert.match(harness.sockets[1].url, /after=7/);
 });
 
@@ -1582,7 +1619,8 @@ test("mobile chat panel opens from bottom and preserves send behavior", async ()
 
   chatToggle.click();
   assert.equal(chatPanel.classList.contains("sheaf-chat-mobile-panel--open"), true);
-  assert.ok(chatPanel.querySelector(".sheaf-chat-chat-status"));
+  assert.ok(chatPanel.querySelector(".sheaf-chat-chat-pane-top"));
+  assert.ok(chatPanel.querySelector(".sheaf-chat-chat-pane-back"), "chat-pane Back present");
   assert.ok(chatPanel.querySelector(".sheaf-chat-chat-view"));
   assert.ok(chatPanel.querySelector(".sheaf-chat-composer"));
 

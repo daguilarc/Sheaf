@@ -8,21 +8,24 @@ import {
   type ModelReference,
 } from "../shared/types.js";
 import {
-  AllocateSessionShell,
+  AllocateChatShell,
   CreateStoragePaths,
-  EnsurePileExists,
   type StoragePaths,
 } from "../storage/index.js";
-import { ResolveRootDirectory } from "../storage/paths.js";
+import { ResolveRootDirectory, ResolveWorkspaceDirectory } from "../storage/paths.js";
+import { ResolveWorkspace } from "../storage/repositories.js";
 import { StorageError } from "../storage/errors.js";
 
 import { CreateSheafAuthStorage } from "./auth.js";
 import {
-  FormatSessionKey,
+  FormatChatKey,
+  KeyChatId,
+  KeyRepoId,
+  KeyWorkspaceId,
   LifecycleEmitter,
   type AgentStatusSnapshot,
   type ModelApplyTo,
-  type SessionKey,
+  type ChatKey,
   type UserMessageSubmission,
 } from "./lifecycle.js";
 import {
@@ -39,7 +42,7 @@ import {
 } from "./piAdapter.js";
 import {
   CreateRuntimeRecordFromColdResume,
-  ResolvePileDirectoryPath,
+  ResolveWorkspaceRuntimeDirectory,
   ResolveSessionBootstrap,
   SessionRuntime,
   type SessionRuntimeContext,
@@ -76,10 +79,10 @@ export interface AgentManagerOptions
   clearTimeoutFn?: typeof clearTimeout;
 }
 
-export interface CreateBlankSessionResult
+export interface CreateBlankChatResult
 {
-  key: SessionKey;
-  shell: import("../shared/types.js").AllocatedSessionShell;
+  key: ChatKey;
+  shell: import("../shared/types.js").AllocatedChatShell;
 }
 
 export class AgentManager
@@ -163,21 +166,37 @@ export class AgentManager
     return this.m_storagePaths;
   }
 
-  async resolveSessionRootDirectory(pile: string, sessionId: string): Promise<string>
+  // Resolve a workspace's worktree root from cached workspace metadata, without
+  // needing a chat. Used by workspace-scoped features such as Agent Review.
+  async resolveWorkspaceRootDirectory(
+    repoId: string,
+    workspaceId: string,
+  ): Promise<string>
+  {
+    const workspace = await ResolveWorkspace(this.m_storagePaths, repoId, workspaceId);
+    return ResolveRootDirectory(this.m_storagePaths.repoRoot, workspace.path);
+  }
+
+  async resolveSessionRootDirectory(
+    repoId: string,
+    workspaceId: string,
+    chatId: string,
+  ): Promise<string>
   {
     try
     {
       const bootstrap = await ResolveSessionBootstrap(
         this.m_storagePaths,
-        pile,
-        sessionId,
+        repoId,
+        workspaceId,
+        chatId,
       );
 
       return ResolveRootDirectory(this.m_storagePaths.repoRoot, bootstrap.rootDirectory);
     }
     catch
     {
-      throw new AgentManagerError("session_not_found", `session not found: ${sessionId}`);
+      throw new AgentManagerError("chat_not_found", `chat not found: ${chatId}`);
     }
   }
 
@@ -190,14 +209,12 @@ export class AgentManager
     );
   }
 
-  async createBlankSession(
-    pile: string,
-    rootDirectory: string,
+  async createBlankChat(
+    repoId: string,
+    workspaceId: string,
     model: ModelReference,
-  ): Promise<CreateBlankSessionResult>
+  ): Promise<CreateBlankChatResult>
   {
-    await EnsurePileExists(this.m_storagePaths, pile);
-    await this.ValidateRootDirectory(rootDirectory);
     ValidateModelSelection(
       this.m_config,
       this.m_modelBundle.modelRegistry,
@@ -205,31 +222,37 @@ export class AgentManager
       model,
     );
 
-    const absoluteRoot = ResolveRootDirectory(this.m_storagePaths.repoRoot, rootDirectory);
-    const shell = await AllocateSessionShell(
+    const shell = await AllocateChatShell(
       this.m_storagePaths,
-      pile,
-      absoluteRoot,
+      repoId,
+      workspaceId,
       model,
     );
+    await this.ValidateRootDirectory(shell.provisionalChat.rootDirectory);
 
     return {
       key: {
-        pile: shell.pile,
-        sessionId: shell.sessionId,
+        repoId: shell.repoId,
+        workspaceId: shell.workspaceId,
+        chatId: shell.chatId,
       },
       shell,
     };
   }
 
   async attachSession(
-    pile: string,
-    sessionId: string,
+    repoId: string,
+    workspaceId: string,
+    chatId: string,
     clientId?: string,
   ): Promise<AgentStatusSnapshot>
   {
-    const key: SessionKey = { pile, sessionId };
-    const encodedKey = FormatSessionKey(key);
+    const key: ChatKey = {
+      repoId,
+      workspaceId,
+      chatId,
+    };
+    const encodedKey = FormatChatKey(key);
     const existing = this.m_runtimes.get(encodedKey);
 
     if (existing !== undefined && existing.Record.piSession !== undefined)
@@ -263,14 +286,14 @@ export class AgentManager
     return this.BuildStatus(runtime);
   }
 
-  async submitUserMessage(key: SessionKey, message: UserMessageSubmission): Promise<void>
+  async submitUserMessage(key: ChatKey, message: UserMessageSubmission): Promise<void>
   {
     const runtime = await this.RequireActiveRuntime(key);
     await runtime.AcceptUserMessage(message);
   }
 
   async selectModel(
-    key: SessionKey,
+    key: ChatKey,
     model: ModelReference,
     applyTo: ModelApplyTo = "next_turn",
   ): Promise<void>
@@ -286,9 +309,9 @@ export class AgentManager
     await runtime.SelectModel(model, applyTo);
   }
 
-  async cancelTurn(key: SessionKey): Promise<void>
+  async cancelTurn(key: ChatKey): Promise<void>
   {
-    const runtime = this.m_runtimes.get(FormatSessionKey(key));
+    const runtime = this.m_runtimes.get(FormatChatKey(key));
 
     if (runtime === undefined)
     {
@@ -298,9 +321,9 @@ export class AgentManager
     await runtime.CancelTurn();
   }
 
-  markClientDetached(key: SessionKey, clientId?: string): void
+  markClientDetached(key: ChatKey, clientId?: string): void
   {
-    const runtime = this.m_runtimes.get(FormatSessionKey(key));
+    const runtime = this.m_runtimes.get(FormatChatKey(key));
 
     if (runtime === undefined)
     {
@@ -310,9 +333,9 @@ export class AgentManager
     runtime.DetachClient(clientId);
   }
 
-  getStatus(key: SessionKey): AgentStatusSnapshot | null
+  getStatus(key: ChatKey): AgentStatusSnapshot | null
   {
-    const runtime = this.m_runtimes.get(FormatSessionKey(key));
+    const runtime = this.m_runtimes.get(FormatChatKey(key));
 
     if (runtime === undefined)
     {
@@ -333,14 +356,14 @@ export class AgentManager
     this.m_startupLocks.clear();
   }
 
-  private async RequireActiveRuntime(key: SessionKey): Promise<SessionRuntime>
+  private async RequireActiveRuntime(key: ChatKey): Promise<SessionRuntime>
   {
-    const encodedKey = FormatSessionKey(key);
+    const encodedKey = FormatChatKey(key);
     let runtime = this.m_runtimes.get(encodedKey);
 
     if (runtime === undefined || runtime.Record.piSession === undefined)
     {
-      await this.attachSession(key.pile, key.sessionId);
+      await this.attachSession(KeyRepoId(key), KeyWorkspaceId(key), KeyChatId(key));
       runtime = this.m_runtimes.get(encodedKey);
     }
 
@@ -352,17 +375,18 @@ export class AgentManager
     return runtime;
   }
 
-  private async StartSessionRuntime(key: SessionKey): Promise<SessionRuntime>
+  private async StartSessionRuntime(key: ChatKey): Promise<SessionRuntime>
   {
     const bootstrap = await ResolveSessionBootstrap(
       this.m_storagePaths,
-      key.pile,
-      key.sessionId,
+      KeyRepoId(key),
+      KeyWorkspaceId(key),
+      KeyChatId(key),
     );
     const record = CreateRuntimeRecordFromColdResume(key, bootstrap);
     const runtime = new SessionRuntime(this.m_runtimeContext, record);
 
-    this.m_runtimes.set(FormatSessionKey(key), runtime);
+    this.m_runtimes.set(FormatChatKey(key), runtime);
     runtime.TransitionState(AgentLifecycleState.Starting);
 
     try
@@ -372,7 +396,11 @@ export class AgentManager
         modelBundle: this.m_modelBundle,
         rootDirectory: bootstrap.rootDirectory,
         sessionFilePath: bootstrap.sessionFilePath,
-        pileDirectory: ResolvePileDirectoryPath(this.m_storagePaths, key.pile),
+        workspaceDirectory: ResolveWorkspaceRuntimeDirectory(
+          this.m_storagePaths,
+          KeyRepoId(key),
+          KeyWorkspaceId(key),
+        ),
         model: bootstrap.model,
         coldResume: bootstrap.manifest !== undefined,
         notifyFileChanged: this.m_notifyFileChanged,

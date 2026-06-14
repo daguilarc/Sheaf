@@ -17,7 +17,6 @@ import type { SheafChatConfig } from "../../../src/server/config.js";
 import { BuildChatWebSocketUrl } from "../../../src/server/websockets.js";
 import { CreateSheafChatServer } from "../../../src/server/server.js";
 import { CreateStoragePaths } from "../../../src/storage/paths.js";
-import { CreatePile } from "../../../src/storage/piles.js";
 import {
   CreateFakeTimers,
   CreateTestConfigWithRoot,
@@ -25,6 +24,7 @@ import {
   FakePiSession,
 } from "../../agents/lifecycle/helpers.js";
 import { WithFakeRepoAsync } from "../../agents/modelRegistry/helpers.js";
+import { CacheTestWorkspace } from "../../storage/helpers.js";
 
 export { CreateFakeTimers, WithFakeRepoAsync };
 
@@ -139,41 +139,44 @@ export function ResolveOpenAiTestModel(agentManager: AgentManager): { provider: 
 
 export async function CreateBlankSessionViaApi(
   handle: WebSocketTestHandle,
-  pile = "default",
   rootDirectory?: string,
-): Promise<{ pile: string; sessionId: string }>
+): Promise<{ repoId: string; workspaceId: string; chatId: string }>
 {
   const storagePaths = CreateStoragePaths(handle.config.repoRoot);
-  await CreatePile(storagePaths, pile);
+  const workspacePath = rootDirectory ?? path.join(handle.config.repoRoot, "projects", "demo");
+  const { repository, workspace } = await CacheTestWorkspace(storagePaths, workspacePath, {
+    repoPath: workspacePath,
+    workspaceDisplayName: "main",
+  });
   const model = ResolveOpenAiTestModel(handle.agentManager);
-  const response = await fetch(`${handle.baseUrl}/api/piles/${pile}/sessions`, {
+  const response = await fetch(
+    `${handle.baseUrl}/api/repositories/${encodeURIComponent(repository.repoId)}/workspaces/${encodeURIComponent(workspace.workspaceId)}/chats`,
+    {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      rootDirectory: rootDirectory ?? path.join(handle.config.repoRoot, "projects", "demo"),
-      model,
-    }),
-  });
+      body: JSON.stringify({ model }),
+    },
+  );
 
   if (!response.ok)
   {
     throw new Error(`create session failed: ${response.status}`);
   }
 
-  const body = await response.json() as { sessionId: string };
+  const body = await response.json() as { chatId: string };
   return {
-    pile,
-    sessionId: body.sessionId,
+    repoId: repository.repoId,
+    workspaceId: workspace.workspaceId,
+    chatId: body.chatId,
   };
 }
 
 export async function CreateSessionWithRoot(
   handle: WebSocketTestHandle,
   rootDirectory: string,
-  pile = "default",
-): Promise<{ pile: string; sessionId: string }>
+): Promise<{ repoId: string; workspaceId: string; chatId: string }>
 {
-  return CreateBlankSessionViaApi(handle, pile, rootDirectory);
+  return CreateBlankSessionViaApi(handle, rootDirectory);
 }
 
 export async function WriteSessionFile(
@@ -190,7 +193,7 @@ export async function WriteSessionFile(
 
 export async function RunSessionEdit(
   handle: WebSocketTestHandle,
-  session: { pile: string; sessionId: string },
+  session: { repoId: string; workspaceId: string; chatId: string },
   params: {
     path: string;
     edits: Array<{ oldText: string; newText: string }>;
@@ -198,8 +201,9 @@ export async function RunSessionEdit(
 ): Promise<void>
 {
   const rootDirectory = await handle.agentManager.resolveSessionRootDirectory(
-    session.pile,
-    session.sessionId,
+    session.repoId,
+    session.workspaceId,
+    session.chatId,
   );
   const built = await BuildScopedTools({
     rootDirectory,
@@ -250,14 +254,16 @@ export function AssertFileChangedPayload(
 
 export function BuildWsUrl(
   handle: WebSocketTestHandle,
-  pile: string,
-  sessionId: string,
+  repoId: string,
+  workspaceId: string,
+  chatId: string,
   options: { clientId?: string; after?: number } = {},
 ): string
 {
   const route = BuildChatWebSocketUrl({
-    pile,
-    sessionId,
+    repoId,
+    workspaceId,
+    chatId,
     clientId: options.clientId,
     after: options.after,
   });
@@ -440,18 +446,21 @@ export async function CollectEnvelopesUntil(
 
 export function CreateClientEnvelope(
   kind: string,
-  pile: string,
-  sessionId: string,
+  repoId: string,
+  workspaceId: string,
+  chatId: string,
   payload?: unknown,
   id?: string,
 ): ChatEnvelope
 {
   return CreateChatEnvelope({
     kind,
-    pile,
-    sessionId,
+    repoId,
+    workspaceId,
+    chatId,
     payload,
     id: id ?? `client-${kind}-${Date.now()}`,
+    timestamp: new Date().toISOString(),
   });
 }
 

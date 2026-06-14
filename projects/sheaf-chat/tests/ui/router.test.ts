@@ -10,12 +10,23 @@ const sheafChatJsPath = path.join(x_packageRoot, "src", "ui", "sheaf-chat.js");
 
 interface SheafChatTestApi
 {
-  parseRoute: () => { screen: string; pile?: string; sessionId?: string };
-  buildWebSocketUrl: (pile: string, sessionId: string, after?: number) => string;
+  parseRoute: () => {
+    screen: string;
+    repoId?: string;
+    workspaceId?: string;
+    chatId?: string;
+  };
+  buildWebSocketUrl: (
+    repoId: string,
+    workspaceId: string,
+    chatId: string,
+    after?: number,
+  ) => string;
   createEnvelope: (
     kind: string,
-    pile: string,
-    sessionId: string,
+    repoId: string,
+    workspaceId: string,
+    chatId: string,
     payload: unknown,
   ) => Record<string, unknown>;
 }
@@ -56,32 +67,40 @@ function LoadSheafChatApp(): { api: SheafChatTestApi; location: { hash: string }
   return { api: app._test, location };
 }
 
-test("router parses piles, sessions, and chat routes", () =>
+test("router parses repository, workspace, and chat routes", () =>
 {
   const { api, location } = LoadSheafChatApp();
 
   location.hash = "#/";
-  assert.equal(api.parseRoute().screen, "piles");
+  assert.equal(api.parseRoute().screen, "repositories");
 
-  location.hash = "#/piles/demo";
-  const sessionsRoute = api.parseRoute();
-  assert.equal(sessionsRoute.screen, "sessions");
-  assert.equal(sessionsRoute.pile, "demo");
+  location.hash = "#/repositories/repo-1";
+  const workspacesRoute = api.parseRoute();
+  assert.equal(workspacesRoute.screen, "workspaces");
+  assert.equal(workspacesRoute.repoId, "repo-1");
 
-  location.hash = "#/piles/demo/sessions/sess-1";
+  location.hash = "#/repositories/repo-1/workspaces/workspace-1";
+  const workspaceRoute = api.parseRoute();
+  assert.equal(workspaceRoute.screen, "workspace");
+  assert.equal(workspaceRoute.repoId, "repo-1");
+  assert.equal(workspaceRoute.workspaceId, "workspace-1");
+
+  location.hash = "#/repositories/repo-1/workspaces/workspace-1/chats/chat-1";
   const chatRoute = api.parseRoute();
   assert.equal(chatRoute.screen, "chat");
-  assert.equal(chatRoute.pile, "demo");
-  assert.equal(chatRoute.sessionId, "sess-1");
+  assert.equal(chatRoute.repoId, "repo-1");
+  assert.equal(chatRoute.workspaceId, "workspace-1");
+  assert.equal(chatRoute.chatId, "chat-1");
 });
 
 test("buildWebSocketUrl includes reconnect after sequence", () =>
 {
   const { api } = LoadSheafChatApp();
-  const url = api.buildWebSocketUrl("default", "sess-1", 42);
+  const url = api.buildWebSocketUrl("repo-1", "workspace-1", "chat-1", 42);
   assert.match(url, /^ws:\/\/127\.0\.0\.1:9004\/ws\/chat\?/);
-  assert.match(url, /p=default/);
-  assert.match(url, /session=sess-1/);
+  assert.match(url, /repo=repo-1/);
+  assert.match(url, /workspace=workspace-1/);
+  assert.match(url, /chat=chat-1/);
   assert.match(url, /after=42/);
   assert.match(url, /client=/);
 });
@@ -89,12 +108,17 @@ test("buildWebSocketUrl includes reconnect after sequence", () =>
 test("createEnvelope builds protocol frames", () =>
 {
   const { api } = LoadSheafChatApp();
-  const envelope = api.createEnvelope("client.user_message", "default", "sess-1", {
-    text: "hello",
-  });
+  const envelope = api.createEnvelope(
+    "client.user_message",
+    "repo-1",
+    "workspace-1",
+    "chat-1",
+    { text: "hello" },
+  );
   assert.equal(envelope.v, 1);
   assert.equal(envelope.kind, "client.user_message");
-  assert.equal(envelope.pile, "default");
-  assert.equal(envelope.sessionId, "sess-1");
+  assert.equal(envelope.repoId, "repo-1");
+  assert.equal(envelope.workspaceId, "workspace-1");
+  assert.equal(envelope.chatId, "chat-1");
   assert.deepEqual(envelope.payload, { text: "hello" });
 });

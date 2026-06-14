@@ -36,7 +36,7 @@ test("WebSocket connection sends server.hello then server.caught_up", async () =
   await WithWebSocketTestServer(async (handle) =>
   {
     const session = await CreateBlankSessionViaApi(handle);
-    const url = BuildWsUrl(handle, session.pile, session.sessionId, { clientId: "browser-1" });
+    const url = BuildWsUrl(handle, session.repoId, session.workspaceId, session.chatId, { clientId: "browser-1" });
 
     await WithWebSocket(url, async (_socket, bootstrap) =>
     {
@@ -45,14 +45,14 @@ test("WebSocket connection sends server.hello then server.caught_up", async () =
       const hello = bootstrap.find((entry) => entry.kind === "server.hello");
 
       assert.ok(hello);
-      assert.equal(hello?.pile, session.pile);
-      assert.equal(hello?.sessionId, session.sessionId);
+      assert.equal(hello?.repoId, session.repoId);
+      assert.equal(hello?.chatId, session.chatId);
       assert.equal(hello?.clientId, "browser-1");
 
       const payload = hello?.payload as {
         connectionId: string;
         manifest: unknown;
-        provisionalSession: { rootDirectory: string; model: { provider: string; id: string } };
+        provisionalChat: { rootDirectory: string; model: { provider: string; id: string } };
         latestSequence: number;
         historyWindow: { oldestSequence: number | null; newestSequence: number | null };
         models: unknown[];
@@ -61,7 +61,7 @@ test("WebSocket connection sends server.hello then server.caught_up", async () =
 
       assert.match(payload.connectionId, /^[0-9a-f-]{36}$/);
       assert.equal(payload.manifest, null);
-      assert.ok(payload.provisionalSession);
+      assert.ok(payload.provisionalChat);
       assert.ok(Array.isArray(payload.models));
       assert.ok(payload.activeModel.provider.length > 0);
       assert.equal(bootstrap[bootstrap.length - 1]?.kind, "server.caught_up");
@@ -73,31 +73,31 @@ test("WebSocket connection sends server.hello then server.caught_up", async () =
   });
 });
 
-test("WebSocket rejects invalid pile and session query parameters", async () =>
+test("WebSocket rejects invalid repo, workspace, and chat query parameters", async () =>
 {
   await WithWebSocketTestServer(async (handle) =>
   {
-    const invalidPile = await WaitForOpenOrReject(
-      `${handle.wsBaseUrl}/ws/chat?p=../evil&session=abc123`,
+    const invalidRepo = await WaitForOpenOrReject(
+      `${handle.wsBaseUrl}/ws/chat?repo=../evil&workspace=workspace_123456&chat=chat_123456789012`,
     );
-    assert.equal(invalidPile.ok, false);
-    if (!invalidPile.ok)
+    assert.equal(invalidRepo.ok, false);
+    if (!invalidRepo.ok)
     {
-      assert.equal(invalidPile.status, 400);
+      assert.equal(invalidRepo.status, 400);
     }
 
-    const missingSession = await WaitForOpenOrReject(
-      `${handle.wsBaseUrl}/ws/chat?p=default`,
+    const missingChat = await WaitForOpenOrReject(
+      `${handle.wsBaseUrl}/ws/chat?repo=repo_123456789012&workspace=workspace_123456`,
     );
-    assert.equal(missingSession.ok, false);
+    assert.equal(missingChat.ok, false);
 
-    const missingSessionFile = await WaitForOpenOrReject(
-      `${handle.wsBaseUrl}/ws/chat?p=default&session=notasession`,
+    const missingChatFile = await WaitForOpenOrReject(
+      `${handle.wsBaseUrl}/ws/chat?repo=repo_123456789012&workspace=workspace_123456&chat=chat_123456789012`,
     );
-    assert.equal(missingSessionFile.ok, false);
-    if (!missingSessionFile.ok)
+    assert.equal(missingChatFile.ok, false);
+    if (!missingChatFile.ok)
     {
-      assert.equal(missingSessionFile.status, 404);
+      assert.equal(missingChatFile.status, 404);
     }
   });
 });
@@ -107,7 +107,7 @@ test("new session first user message is broadcast with AGUI events", async () =>
   await WithWebSocketTestServer(async (handle) =>
   {
     const session = await CreateBlankSessionViaApi(handle);
-    const url = BuildWsUrl(handle, session.pile, session.sessionId);
+    const url = BuildWsUrl(handle, session.repoId, session.workspaceId, session.chatId);
 
     await WithWebSocket(url, async (socket) =>
     {
@@ -115,8 +115,9 @@ test("new session first user message is broadcast with AGUI events", async () =>
         socket,
         CreateClientEnvelope(
           "client.user_message",
-          session.pile,
-          session.sessionId,
+          session.repoId,
+          session.workspaceId,
+          session.chatId,
           {
             messageId: "user-msg-1",
             text: "Hello agent",
@@ -152,13 +153,75 @@ test("new session first user message is broadcast with AGUI events", async () =>
   });
 });
 
+test("user message uses one stable id across echo and agui events and is delivered exactly once", async () =>
+{
+  await WithWebSocketTestServer(async (handle) =>
+  {
+    const session = await CreateBlankSessionViaApi(handle);
+    const url = BuildWsUrl(handle, session.repoId, session.workspaceId, session.chatId);
+    const connected = await ConnectWebSocket(url);
+    const socket = connected.socket;
+
+    const collected: ChatEnvelope[] = [];
+    const collector = (data: WebSocket.RawData) =>
+    {
+      collected.push(JSON.parse(data.toString()) as ChatEnvelope);
+    };
+    socket.on("message", collector);
+
+    try
+    {
+      await DrainConnection(socket);
+      SendClientFrame(
+        socket,
+        CreateClientEnvelope(
+          "client.user_message",
+          session.repoId,
+          session.workspaceId,
+          session.chatId,
+          { messageId: "stable-user-1", text: "Hello", attachments: [], steer: true },
+          "frame-stable-1",
+        ),
+      );
+
+      await WaitForCondition(() => collected.some((e) => e.kind === "chat.user_message"));
+      await DrainConnection(socket);
+
+      // The connection that submitted the message receives the echo exactly once
+      // (the replay/live dedupe must not double-deliver it).
+      const echoes = collected.filter((e) => e.kind === "chat.user_message");
+      assert.equal(echoes.length, 1);
+      assert.equal((echoes[0].payload as { messageId: string }).messageId, "stable-user-1");
+
+      // Its agui text-message representation carries the same client id, so the
+      // browser's optimistic echo, the live echo, and any replay reconcile to one.
+      const userStarts = collected.filter(
+        (e) =>
+          e.kind === "agui.event" &&
+          (e.payload as { type?: string }).type === "TEXT_MESSAGE_START" &&
+          (e.payload as { role?: string }).role === "user",
+      );
+      assert.ok(userStarts.length >= 1);
+      for (const event of userStarts)
+      {
+        assert.equal((event.payload as { messageId: string }).messageId, "stable-user-1");
+      }
+    }
+    finally
+    {
+      socket.off("message", collector);
+      socket.close();
+    }
+  });
+});
+
 test("two clients on the same session receive identical broadcasts", async () =>
 {
   await WithWebSocketTestServer(async (handle) =>
   {
     const session = await CreateBlankSessionViaApi(handle);
-    const urlA = BuildWsUrl(handle, session.pile, session.sessionId, { clientId: "client-a" });
-    const urlB = BuildWsUrl(handle, session.pile, session.sessionId, { clientId: "client-b" });
+    const urlA = BuildWsUrl(handle, session.repoId, session.workspaceId, session.chatId, { clientId: "client-a" });
+    const urlB = BuildWsUrl(handle, session.repoId, session.workspaceId, session.chatId, { clientId: "client-b" });
 
     const connectedA = await ConnectWebSocket(urlA);
     const connectedB = await ConnectWebSocket(urlB);
@@ -187,8 +250,9 @@ test("two clients on the same session receive identical broadcasts", async () =>
         socketA,
         CreateClientEnvelope(
           "client.user_message",
-          session.pile,
-          session.sessionId,
+          session.repoId,
+          session.workspaceId,
+          session.chatId,
           {
             messageId: "shared-msg-1",
             text: "visible to both",
@@ -226,14 +290,14 @@ test("sequential broadcasters do not duplicate persisted agent events", async ()
   await WithWebSocketTestServer(async (handle) =>
   {
     const session = await CreateBlankSessionViaApi(handle);
-    const key = { pile: session.pile, sessionId: session.sessionId };
-    const urlA = BuildWsUrl(handle, session.pile, session.sessionId, { clientId: "client-a" });
+    const key = { repoId: session.repoId, workspaceId: session.workspaceId, chatId: session.chatId };
+    const urlA = BuildWsUrl(handle, session.repoId, session.workspaceId, session.chatId, { clientId: "client-a" });
     const connectedA = await ConnectWebSocket(urlA);
 
     connectedA.socket.close();
     await WaitForCondition(() => handle.broadcasterRegistry.Get(key) === undefined);
 
-    const urlB = BuildWsUrl(handle, session.pile, session.sessionId, { clientId: "client-b" });
+    const urlB = BuildWsUrl(handle, session.repoId, session.workspaceId, session.chatId, { clientId: "client-b" });
     const connectedB = await ConnectWebSocket(urlB);
     const socketB = connectedB.socket;
     const collectedB: ChatEnvelope[] = [];
@@ -279,7 +343,7 @@ test("sequential broadcasters do not duplicate persisted agent events", async ()
       );
 
       const storagePaths = CreateStoragePaths(handle.config.repoRoot);
-      const entries = await CollectSessionLogEntries(storagePaths, session.pile, session.sessionId);
+      const entries = await CollectSessionLogEntries(storagePaths, session.repoId, session.workspaceId, session.chatId);
       const persistedTextEvents = entries.filter((entry) =>
         entry.envelope.kind === "agui.event" &&
         (entry.envelope.payload as { type?: string; delta?: string }).type === "TEXT_MESSAGE_CONTENT" &&
@@ -307,14 +371,15 @@ test("duplicate client.user_message by messageId does not create duplicate broad
   await WithWebSocketTestServer(async (handle) =>
   {
     const session = await CreateBlankSessionViaApi(handle);
-    const url = BuildWsUrl(handle, session.pile, session.sessionId);
+    const url = BuildWsUrl(handle, session.repoId, session.workspaceId, session.chatId);
 
     await WithWebSocket(url, async (socket) =>
     {
       const frame = CreateClientEnvelope(
         "client.user_message",
-        session.pile,
-        session.sessionId,
+        session.repoId,
+        session.workspaceId,
+          session.chatId,
         {
           messageId: "retry-msg",
           text: "only once",
@@ -352,20 +417,22 @@ test("reconnect with after replays missed envelopes before server.caught_up", as
     const session = await CreateBlankSessionViaApi(handle);
     const storagePaths = CreateStoragePaths(handle.config.repoRoot);
 
-    await AppendEnvelope(storagePaths, session.pile, session.sessionId, {
+    await AppendEnvelope(storagePaths, session.repoId, session.workspaceId, session.chatId, {
       kind: "chat.user_message",
-      pile: session.pile,
-      sessionId: session.sessionId,
+      repoId: session.repoId,
+      workspaceId: session.workspaceId,
+          chatId: session.chatId,
       payload: {
         messageId: "stored-1",
         text: "stored message",
       },
     });
 
-    await AppendEnvelope(storagePaths, session.pile, session.sessionId, {
+    await AppendEnvelope(storagePaths, session.repoId, session.workspaceId, session.chatId, {
       kind: "agui.event",
-      pile: session.pile,
-      sessionId: session.sessionId,
+      repoId: session.repoId,
+      workspaceId: session.workspaceId,
+          chatId: session.chatId,
       payload: {
         type: "TEXT_MESSAGE_START",
         messageId: "stored-1",
@@ -373,7 +440,7 @@ test("reconnect with after replays missed envelopes before server.caught_up", as
       },
     });
 
-    const url = BuildWsUrl(handle, session.pile, session.sessionId, { after: 1 });
+    const url = BuildWsUrl(handle, session.repoId, session.workspaceId, session.chatId, { after: 1 });
 
     await WithWebSocket(url, async (_socket, bootstrap) =>
     {
@@ -395,37 +462,40 @@ test("client.history_request sent immediately after server.hello is handled", as
     const session = await CreateBlankSessionViaApi(handle);
     const storagePaths = CreateStoragePaths(handle.config.repoRoot);
 
-    await AppendEnvelope(storagePaths, session.pile, session.sessionId, {
+    await AppendEnvelope(storagePaths, session.repoId, session.workspaceId, session.chatId, {
       kind: "agui.event",
-      pile: session.pile,
-      sessionId: session.sessionId,
+      repoId: session.repoId,
+      workspaceId: session.workspaceId,
+          chatId: session.chatId,
       payload: {
         type: "TEXT_MESSAGE_START",
         messageId: "stored-1",
         role: "user",
       },
     });
-    await AppendEnvelope(storagePaths, session.pile, session.sessionId, {
+    await AppendEnvelope(storagePaths, session.repoId, session.workspaceId, session.chatId, {
       kind: "agui.event",
-      pile: session.pile,
-      sessionId: session.sessionId,
+      repoId: session.repoId,
+      workspaceId: session.workspaceId,
+          chatId: session.chatId,
       payload: {
         type: "TEXT_MESSAGE_CONTENT",
         messageId: "stored-1",
         delta: "stored message",
       },
     });
-    await AppendEnvelope(storagePaths, session.pile, session.sessionId, {
+    await AppendEnvelope(storagePaths, session.repoId, session.workspaceId, session.chatId, {
       kind: "agui.event",
-      pile: session.pile,
-      sessionId: session.sessionId,
+      repoId: session.repoId,
+      workspaceId: session.workspaceId,
+          chatId: session.chatId,
       payload: {
         type: "TEXT_MESSAGE_END",
         messageId: "stored-1",
       },
     });
 
-    const url = BuildWsUrl(handle, session.pile, session.sessionId);
+    const url = BuildWsUrl(handle, session.repoId, session.workspaceId, session.chatId);
     const socket = new WebSocket(url);
 
     try
@@ -459,8 +529,9 @@ test("client.history_request sent immediately after server.hello is handled", as
               socket,
               CreateClientEnvelope(
                 "client.history_request",
-                session.pile,
-                session.sessionId,
+                session.repoId,
+                session.workspaceId,
+          session.chatId,
                 {
                   limit: 80,
                   prefer: "snapshots",
@@ -503,10 +574,11 @@ test("client.history_request returns history.page for before and after cursors",
 
     for (let index = 1; index <= 3; index += 1)
     {
-      await AppendEnvelope(storagePaths, session.pile, session.sessionId, {
+      await AppendEnvelope(storagePaths, session.repoId, session.workspaceId, session.chatId, {
         kind: "chat.user_message",
-        pile: session.pile,
-        sessionId: session.sessionId,
+        repoId: session.repoId,
+        workspaceId: session.workspaceId,
+          chatId: session.chatId,
         payload: {
           messageId: `msg-${index}`,
           text: `message ${index}`,
@@ -514,7 +586,7 @@ test("client.history_request returns history.page for before and after cursors",
       });
     }
 
-    const url = BuildWsUrl(handle, session.pile, session.sessionId);
+    const url = BuildWsUrl(handle, session.repoId, session.workspaceId, session.chatId);
 
     await WithWebSocket(url, async (socket) =>
     {
@@ -522,8 +594,9 @@ test("client.history_request returns history.page for before and after cursors",
         socket,
         CreateClientEnvelope(
           "client.history_request",
-          session.pile,
-          session.sessionId,
+          session.repoId,
+          session.workspaceId,
+          session.chatId,
           {
             before: 3,
             limit: 10,
@@ -552,8 +625,9 @@ test("client.history_request returns history.page for before and after cursors",
         socket,
         CreateClientEnvelope(
           "client.history_request",
-          session.pile,
-          session.sessionId,
+          session.repoId,
+          session.workspaceId,
+          session.chatId,
           {
             after: 1,
             limit: 10,
@@ -589,10 +663,11 @@ test("client.history_request events mode does not duplicate stored user AGUI eve
     const storagePaths = CreateStoragePaths(handle.config.repoRoot);
     const messageId = "stored-user-with-agui";
 
-    await AppendEnvelope(storagePaths, session.pile, session.sessionId, {
+    await AppendEnvelope(storagePaths, session.repoId, session.workspaceId, session.chatId, {
       kind: "chat.user_message",
-      pile: session.pile,
-      sessionId: session.sessionId,
+      repoId: session.repoId,
+      workspaceId: session.workspaceId,
+          chatId: session.chatId,
       payload: {
         messageId,
         text: "stored user text",
@@ -601,15 +676,16 @@ test("client.history_request events mode does not duplicate stored user AGUI eve
 
     for (const event of mapUserMessageToAgui({ messageId, text: "stored user text" }))
     {
-      await AppendEnvelope(storagePaths, session.pile, session.sessionId, {
+      await AppendEnvelope(storagePaths, session.repoId, session.workspaceId, session.chatId, {
         kind: "agui.event",
-        pile: session.pile,
-        sessionId: session.sessionId,
+        repoId: session.repoId,
+        workspaceId: session.workspaceId,
+          chatId: session.chatId,
         payload: event,
       });
     }
 
-    const url = BuildWsUrl(handle, session.pile, session.sessionId);
+    const url = BuildWsUrl(handle, session.repoId, session.workspaceId, session.chatId);
 
     await WithWebSocket(url, async (socket) =>
     {
@@ -617,8 +693,9 @@ test("client.history_request events mode does not duplicate stored user AGUI eve
         socket,
         CreateClientEnvelope(
           "client.history_request",
-          session.pile,
-          session.sessionId,
+          session.repoId,
+          session.workspaceId,
+          session.chatId,
           {
             after: 0,
             limit: 10,
@@ -654,10 +731,11 @@ test("live broadcasts continue while history request is served", async () =>
 
     for (let index = 1; index <= 5; index += 1)
     {
-      await AppendEnvelope(storagePaths, session.pile, session.sessionId, {
+      await AppendEnvelope(storagePaths, session.repoId, session.workspaceId, session.chatId, {
         kind: "chat.user_message",
-        pile: session.pile,
-        sessionId: session.sessionId,
+        repoId: session.repoId,
+        workspaceId: session.workspaceId,
+          chatId: session.chatId,
         payload: {
           messageId: `bulk-${index}`,
           text: `bulk ${index}`,
@@ -665,7 +743,7 @@ test("live broadcasts continue while history request is served", async () =>
       });
     }
 
-    const url = BuildWsUrl(handle, session.pile, session.sessionId);
+    const url = BuildWsUrl(handle, session.repoId, session.workspaceId, session.chatId);
     const connected = await ConnectWebSocket(url);
     const socket = connected.socket;
 
@@ -677,8 +755,9 @@ test("live broadcasts continue while history request is served", async () =>
         socket,
         CreateClientEnvelope(
           "client.history_request",
-          session.pile,
-          session.sessionId,
+          session.repoId,
+          session.workspaceId,
+          session.chatId,
           {
             before: 5,
             limit: 50,
@@ -691,8 +770,9 @@ test("live broadcasts continue while history request is served", async () =>
         socket,
         CreateClientEnvelope(
           "client.user_message",
-          session.pile,
-          session.sessionId,
+          session.repoId,
+          session.workspaceId,
+          session.chatId,
           {
             messageId: "live-during-history",
             text: "live while paging",
@@ -743,7 +823,7 @@ test("client.model_select updates active model and broadcasts model.changed", as
   await WithWebSocketTestServer(async (handle) =>
   {
     const session = await CreateBlankSessionViaApi(handle);
-    const url = BuildWsUrl(handle, session.pile, session.sessionId);
+    const url = BuildWsUrl(handle, session.repoId, session.workspaceId, session.chatId);
     const model = ResolveOpenAiTestModel(handle.agentManager);
 
     await WithWebSocket(url, async (socket) =>
@@ -752,8 +832,9 @@ test("client.model_select updates active model and broadcasts model.changed", as
         socket,
         CreateClientEnvelope(
           "client.model_select",
-          session.pile,
-          session.sessionId,
+          session.repoId,
+          session.workspaceId,
+          session.chatId,
           {
             provider: model.provider,
             id: model.id,
@@ -783,7 +864,7 @@ test("client.cancel aborts the active turn", async () =>
   await WithWebSocketTestServer(async (handle) =>
   {
     const session = await CreateBlankSessionViaApi(handle);
-    const url = BuildWsUrl(handle, session.pile, session.sessionId);
+    const url = BuildWsUrl(handle, session.repoId, session.workspaceId, session.chatId);
 
     await WithWebSocket(url, async (socket) =>
     {
@@ -793,7 +874,7 @@ test("client.cancel aborts the active turn", async () =>
 
       SendClientFrame(
         socket,
-        CreateClientEnvelope("client.cancel", session.pile, session.sessionId),
+        CreateClientEnvelope("client.cancel", session.repoId, session.workspaceId, session.chatId),
       );
 
       await WaitForCondition(() => fake.abortCalls === 1);
@@ -806,13 +887,13 @@ test("client.ping receives server.pong", async () =>
   await WithWebSocketTestServer(async (handle) =>
   {
     const session = await CreateBlankSessionViaApi(handle);
-    const url = BuildWsUrl(handle, session.pile, session.sessionId);
+    const url = BuildWsUrl(handle, session.repoId, session.workspaceId, session.chatId);
 
     await WithWebSocket(url, async (socket) =>
     {
       SendClientFrame(
         socket,
-        CreateClientEnvelope("client.ping", session.pile, session.sessionId, undefined, "ping-1"),
+        CreateClientEnvelope("client.ping", session.repoId, session.workspaceId, session.chatId, undefined, "ping-1"),
       );
 
       const pong = await WaitForEnvelope(socket, (envelope) => envelope.kind === "server.pong");
@@ -826,7 +907,7 @@ test("concurrent user messages are sequenced monotonically", async () =>
   await WithWebSocketTestServer(async (handle) =>
   {
     const session = await CreateBlankSessionViaApi(handle);
-    const url = BuildWsUrl(handle, session.pile, session.sessionId);
+    const url = BuildWsUrl(handle, session.repoId, session.workspaceId, session.chatId);
 
     await WithWebSocket(url, async (socket) =>
     {
@@ -834,8 +915,9 @@ test("concurrent user messages are sequenced monotonically", async () =>
         socket,
         CreateClientEnvelope(
           "client.user_message",
-          session.pile,
-          session.sessionId,
+          session.repoId,
+          session.workspaceId,
+          session.chatId,
           { messageId: "concurrent-a", text: "A" },
         ),
       );
@@ -843,8 +925,9 @@ test("concurrent user messages are sequenced monotonically", async () =>
         socket,
         CreateClientEnvelope(
           "client.user_message",
-          session.pile,
-          session.sessionId,
+          session.repoId,
+          session.workspaceId,
+          session.chatId,
           { messageId: "concurrent-b", text: "B" },
         ),
       );
@@ -876,8 +959,8 @@ test("socket liveness uses connection id and disconnect releases idle broadcaste
   await WithWebSocketTestServer(async (handle) =>
   {
     const session = await CreateBlankSessionViaApi(handle);
-    const key = { pile: session.pile, sessionId: session.sessionId };
-    const url = BuildWsUrl(handle, session.pile, session.sessionId);
+    const key = { repoId: session.repoId, workspaceId: session.workspaceId, chatId: session.chatId };
+    const url = BuildWsUrl(handle, session.repoId, session.workspaceId, session.chatId);
     const connected = await ConnectWebSocket(url);
 
     const statusOpen = handle.agentManager.getStatus(key);
@@ -917,10 +1000,10 @@ test("file.changed broadcasts to all open sessions with the same root", async ()
     const sessionA = await CreateSessionWithRoot(handle, rootDirectory);
     const sessionB = await CreateSessionWithRoot(handle, rootDirectory);
     const wsA = await ConnectWebSocket(
-      BuildWsUrl(handle, sessionA.pile, sessionA.sessionId, { clientId: "client-a" }),
+      BuildWsUrl(handle, sessionA.repoId, sessionA.workspaceId, sessionA.chatId, { clientId: "client-a" }),
     );
     const wsB = await ConnectWebSocket(
-      BuildWsUrl(handle, sessionB.pile, sessionB.sessionId, { clientId: "client-b" }),
+      BuildWsUrl(handle, sessionB.repoId, sessionB.workspaceId, sessionB.chatId, { clientId: "client-b" }),
     );
 
     try
@@ -965,10 +1048,10 @@ test("file.changed uses receiver-relative paths for parent and child roots", asy
     const parentSession = await CreateSessionWithRoot(handle, parentRoot);
     const childSession = await CreateSessionWithRoot(handle, childRoot);
     const parentWs = await ConnectWebSocket(
-      BuildWsUrl(handle, parentSession.pile, parentSession.sessionId, { clientId: "parent" }),
+      BuildWsUrl(handle, parentSession.repoId, parentSession.workspaceId, parentSession.chatId, { clientId: "parent" }),
     );
     const childWs = await ConnectWebSocket(
-      BuildWsUrl(handle, childSession.pile, childSession.sessionId, { clientId: "child" }),
+      BuildWsUrl(handle, childSession.repoId, childSession.workspaceId, childSession.chatId, { clientId: "child" }),
     );
 
     try
@@ -1037,10 +1120,10 @@ test("file.changed is not sent to sessions with unrelated roots", async () =>
     const demoSession = await CreateSessionWithRoot(handle, demoRoot);
     const otherSession = await CreateSessionWithRoot(handle, otherRoot);
     const demoWs = await ConnectWebSocket(
-      BuildWsUrl(handle, demoSession.pile, demoSession.sessionId, { clientId: "demo" }),
+      BuildWsUrl(handle, demoSession.repoId, demoSession.workspaceId, demoSession.chatId, { clientId: "demo" }),
     );
     const otherWs = await ConnectWebSocket(
-      BuildWsUrl(handle, otherSession.pile, otherSession.sessionId, { clientId: "other" }),
+      BuildWsUrl(handle, otherSession.repoId, otherSession.workspaceId, otherSession.chatId, { clientId: "other" }),
     );
 
     try

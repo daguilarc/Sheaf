@@ -6,15 +6,26 @@ import path from "node:path";
 import { WebSocket, WebSocketServer } from "ws";
 
 import type { AgentManager } from "../../agents/manager.js";
-import { FormatSessionKey, type SessionKey } from "../../agents/lifecycle.js";
 import type { FileChangedNotification } from "../../extensions/sheaf-chat/types.js";
 import type { SheafChatConfig } from "../config.js";
 import {
-  ParseChatWebSocketQuery,
+  ParseAgentReviewWebSocketQuery,
   rejectUpgradeWithHttpStatus,
   StorageErrorToHttpStatus,
-  type ChatWebSocketConnectParams,
+  type WorkspaceWebSocketConnectParams,
 } from "../websocket.js";
+
+// Agent Review is scoped to a workspace (worktree), not a chat.
+interface WorkspaceReviewKey
+{
+  repoId: string;
+  workspaceId: string;
+}
+
+function FormatWorkspaceReviewKey(key: WorkspaceReviewKey): string
+{
+  return `${key.repoId}/${key.workspaceId}`;
+}
 import { StorageError } from "../../storage/errors.js";
 import {
   ApplyAgentReviewPatch,
@@ -203,7 +214,7 @@ function ParseClientFrame(data: WebSocket.RawData): AgentReviewClientFrame
 
 class AgentReviewSession
 {
-  private readonly m_key: SessionKey;
+  private readonly m_key: WorkspaceReviewKey;
   private readonly m_agentManager: AgentManager;
   private readonly m_dictatorEndpoint: DictatorEndpointResolver | null;
   private readonly m_providerId: string;
@@ -217,7 +228,7 @@ class AgentReviewSession
   private m_refreshInFlight: Promise<void> | null = null;
 
   constructor(
-    key: SessionKey,
+    key: WorkspaceReviewKey,
     agentManager: AgentManager,
     dictatorEndpoint: DictatorEndpointResolver | null,
   )
@@ -225,7 +236,7 @@ class AgentReviewSession
     this.m_key = key;
     this.m_agentManager = agentManager;
     this.m_dictatorEndpoint = dictatorEndpoint;
-    this.m_providerId = `sheaf-chat:${key.pile}:${key.sessionId}`;
+    this.m_providerId = `sheaf-chat:${key.repoId}:${key.workspaceId}`;
   }
 
   Dispose(): void
@@ -321,9 +332,9 @@ class AgentReviewSession
 
   private async Refresh(): Promise<void>
   {
-    const sessionRoot = await this.m_agentManager.resolveSessionRootDirectory(
-      this.m_key.pile,
-      this.m_key.sessionId,
+    const sessionRoot = await this.m_agentManager.resolveWorkspaceRootDirectory(
+      this.m_key.repoId,
+      this.m_key.workspaceId,
     );
     const gitState = await LoadAgentReviewGitState(sessionRoot);
     const priorHunkId = this.m_state?.currentHunk?.hunkId;
@@ -516,6 +527,16 @@ class AgentReviewSession
         this.m_currentIndex = target;
       }
     }
+
+    // Reflect the new focus in the cached state. Refresh() re-pins focus by the
+    // current hunk's id (to preserve it across external changes); without this,
+    // navigation — which does not mutate the worktree — would be undone because
+    // the prior hunk is still present and Refresh would restore it.
+    this.m_state = {
+      ...state,
+      currentIndex: this.m_currentIndex,
+      currentHunk: this.m_currentIndex >= 0 ? state.hunks[this.m_currentIndex]! : null,
+    };
 
     return { ok: true, action, commandId };
   }
@@ -817,9 +838,15 @@ export class AgentReviewService
     return new WebSocketServer({ noServer: true });
   }
 
-  async Availability(pile: string, sessionId: string): Promise<AgentReviewState>
+  async Availability(
+    repoId: string,
+    workspaceId: string,
+  ): Promise<AgentReviewState>
   {
-    const sessionRoot = await this.m_agentManager.resolveSessionRootDirectory(pile, sessionId);
+    const sessionRoot = await this.m_agentManager.resolveWorkspaceRootDirectory(
+      repoId,
+      workspaceId,
+    );
     const gitState = await LoadAgentReviewGitState(sessionRoot);
     const currentIndex = NormalizeCurrentIndex(gitState.hunks, 0);
 
@@ -847,11 +874,11 @@ export class AgentReviewService
     }
   }
 
-  async Attach(socket: WebSocket, params: ChatWebSocketConnectParams): Promise<void>
+  async Attach(socket: WebSocket, params: WorkspaceWebSocketConnectParams): Promise<void>
   {
     const key = {
-      pile: params.pile,
-      sessionId: params.sessionId,
+      repoId: params.repoId,
+      workspaceId: params.workspaceId,
     };
     const session = this.GetOrCreateSession(key);
     await session.Attach(socket);
@@ -878,9 +905,9 @@ export class AgentReviewService
     this.m_sessions.clear();
   }
 
-  private GetOrCreateSession(key: SessionKey): AgentReviewSession
+  private GetOrCreateSession(key: WorkspaceReviewKey): AgentReviewSession
   {
-    const encoded = FormatSessionKey(key);
+    const encoded = FormatWorkspaceReviewKey(key);
     let session = this.m_sessions.get(encoded);
 
     if (session === undefined)
@@ -901,7 +928,7 @@ export function MatchAgentReviewWebSocketPath(pathname: string): boolean
 export async function ResolveAgentReviewWebSocketUpgrade(
   agentReviewService: AgentReviewService,
   request: IncomingMessage,
-): Promise<ChatWebSocketConnectParams | null>
+): Promise<WorkspaceWebSocketConnectParams | null>
 {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
 
@@ -910,8 +937,8 @@ export async function ResolveAgentReviewWebSocketUpgrade(
     return null;
   }
 
-  const params = ParseChatWebSocketQuery(url);
-  await agentReviewService.Availability(params.pile, params.sessionId);
+  const params = ParseAgentReviewWebSocketQuery(url);
+  await agentReviewService.Availability(params.repoId, params.workspaceId);
   return params;
 }
 

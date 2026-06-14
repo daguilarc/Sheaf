@@ -36,7 +36,7 @@ import { ParseOptionalInteger } from "./http.js";
 import { CreateSessionRootPolicy } from "./files/sessionBrowser.js";
 import { ResolveSessionFilePath } from "../storage/paths.js";
 import { StorageError } from "../storage/errors.js";
-import { ValidatePileName, ValidateSessionId } from "../storage/validation.js";
+import { ValidateChatId, ValidateRepoId, ValidateWorkspaceId } from "../storage/validation.js";
 
 export interface ChatWebSocketContext
 {
@@ -48,8 +48,9 @@ export interface ChatWebSocketContext
 
 export interface ChatWebSocketConnectParams
 {
-  pile: string;
-  sessionId: string;
+  repoId: string;
+  workspaceId: string;
+  chatId: string;
   clientId?: string;
   after?: number;
 }
@@ -79,28 +80,37 @@ export function CreateChatWebSocketServer(): WebSocketServer
 
 export function ParseChatWebSocketQuery(url: URL): ChatWebSocketConnectParams
 {
-  const pile = url.searchParams.get("p") ?? url.searchParams.get("pile");
+  const repoId = url.searchParams.get("repo");
 
-  if (pile === null || pile.length === 0)
+  if (repoId === null || repoId.length === 0)
   {
-    throw new StorageError("invalid_request", "pile query parameter is required");
+    throw new StorageError("invalid_request", "repo query parameter is required");
   }
 
-  const session = url.searchParams.get("session");
+  const workspaceId = url.searchParams.get("workspace");
 
-  if (session === null || session.length === 0)
+  if (workspaceId === null || workspaceId.length === 0)
   {
-    throw new StorageError("invalid_request", "session query parameter is required");
+    throw new StorageError("invalid_request", "workspace query parameter is required");
   }
 
-  const validatedPile = ValidatePileName(pile);
-  const validatedSessionId = ValidateSessionId(session);
+  const chatId = url.searchParams.get("chat");
+
+  if (chatId === null || chatId.length === 0)
+  {
+    throw new StorageError("invalid_request", "chat query parameter is required");
+  }
+
+  const validatedRepoId = ValidateRepoId(repoId);
+  const validatedWorkspaceId = ValidateWorkspaceId(workspaceId);
+  const validatedChatId = ValidateChatId(chatId);
   const clientId = url.searchParams.get("client") ?? undefined;
   const after = ParseOptionalInteger(url.searchParams.get("after"), "after");
 
   const params: ChatWebSocketConnectParams = {
-    pile: validatedPile,
-    sessionId: validatedSessionId,
+    repoId: validatedRepoId,
+    workspaceId: validatedWorkspaceId,
+    chatId: validatedChatId,
   };
 
   if (clientId !== undefined && clientId.length > 0)
@@ -116,6 +126,48 @@ export function ParseChatWebSocketQuery(url: URL): ChatWebSocketConnectParams
   return params;
 }
 
+export interface WorkspaceWebSocketConnectParams
+{
+  repoId: string;
+  workspaceId: string;
+  clientId?: string;
+}
+
+// Agent Review is workspace-scoped: its socket carries repo/workspace/client and
+// no chat parameter.
+export function ParseAgentReviewWebSocketQuery(url: URL): WorkspaceWebSocketConnectParams
+{
+  const repoId = url.searchParams.get("repo");
+
+  if (repoId === null || repoId.length === 0)
+  {
+    throw new StorageError("invalid_request", "repo query parameter is required");
+  }
+
+  const workspaceId = url.searchParams.get("workspace");
+
+  if (workspaceId === null || workspaceId.length === 0)
+  {
+    throw new StorageError("invalid_request", "workspace query parameter is required");
+  }
+
+  const validatedRepoId = ValidateRepoId(repoId);
+  const validatedWorkspaceId = ValidateWorkspaceId(workspaceId);
+  const clientId = url.searchParams.get("client") ?? undefined;
+
+  const params: WorkspaceWebSocketConnectParams = {
+    repoId: validatedRepoId,
+    workspaceId: validatedWorkspaceId,
+  };
+
+  if (clientId !== undefined && clientId.length > 0)
+  {
+    params.clientId = clientId;
+  }
+
+  return params;
+}
+
 export function MatchChatWebSocketPath(pathname: string): boolean
 {
   return pathname === "/ws/chat";
@@ -123,11 +175,17 @@ export function MatchChatWebSocketPath(pathname: string): boolean
 
 async function SessionFileExists(
   context: ChatWebSocketContext,
-  pile: string,
-  sessionId: string,
+  repoId: string,
+  workspaceId: string,
+  chatId: string,
 ): Promise<boolean>
 {
-  const sessionPath = ResolveSessionFilePath(context.agentManager.storagePaths, pile, sessionId);
+  const sessionPath = ResolveSessionFilePath(
+    context.agentManager.storagePaths,
+    repoId,
+    workspaceId,
+    chatId,
+  );
 
   try
   {
@@ -145,7 +203,12 @@ export async function ValidateChatWebSocketConnect(
   params: ChatWebSocketConnectParams,
 ): Promise<void>
 {
-  const exists = await SessionFileExists(context, params.pile, params.sessionId);
+  const exists = await SessionFileExists(
+    context,
+    params.repoId,
+    params.workspaceId,
+    params.chatId,
+  );
 
   if (!exists)
   {
@@ -175,8 +238,9 @@ function SendErrorFrame(
 
   const envelope = CreateChatEnvelope({
     kind: x_serverErrorKind,
-    pile: params.pile,
-    sessionId: params.sessionId,
+    repoId: params.repoId,
+    workspaceId: params.workspaceId,
+    chatId: params.chatId,
     clientId: params.clientId,
     payload,
   });
@@ -196,8 +260,9 @@ async function SendHello(
 ): Promise<void>
 {
   const status = await context.agentManager.attachSession(
-    params.pile,
-    params.sessionId,
+    params.repoId,
+    params.workspaceId,
+    params.chatId,
     client.connectionId,
   );
   onAttached();
@@ -217,7 +282,7 @@ async function SendHello(
 
   if (manifest === undefined && status.provisionalRootDirectory !== undefined)
   {
-    helloPayload.provisionalSession = {
+    helloPayload.provisionalChat = {
       rootDirectory: RelativizeAbsolutePath(
         status.provisionalRootDirectory,
         context.config.repoRoot,
@@ -228,8 +293,9 @@ async function SendHello(
 
   const envelope = CreateChatEnvelope({
     kind: x_serverHelloKind,
-    pile: params.pile,
-    sessionId: params.sessionId,
+    repoId: params.repoId,
+    workspaceId: params.workspaceId,
+    chatId: params.chatId,
     clientId: params.clientId,
     payload: helloPayload,
   });
@@ -251,8 +317,9 @@ async function SendReplayAndCaughtUp(
 
   const caughtUp = CreateChatEnvelope({
     kind: x_serverCaughtUpKind,
-    pile: params.pile,
-    sessionId: params.sessionId,
+    repoId: params.repoId,
+    workspaceId: params.workspaceId,
+    chatId: params.chatId,
     clientId: params.clientId,
     payload: {},
   });
@@ -268,8 +335,9 @@ export async function AttachChatWebSocketConnection(
 ): Promise<void>
 {
   const key = {
-    pile: params.pile,
-    sessionId: params.sessionId,
+    repoId: params.repoId,
+    workspaceId: params.workspaceId,
+    chatId: params.chatId,
   };
 
   const persistenceHub = await context.persistenceHubRegistry.GetOrCreate({
@@ -280,8 +348,9 @@ export async function AttachChatWebSocketConnection(
   });
   const sessionRootPolicy = await CreateSessionRootPolicy(
     context.agentManager,
-    params.pile,
-    params.sessionId,
+    params.repoId,
+    params.workspaceId,
+    params.chatId,
   );
   const broadcaster = await context.broadcasterRegistry.GetOrCreate({
     key,
@@ -417,13 +486,17 @@ async function HandleClientMessage(
     return;
   }
 
-  if (frame.frame.pile !== params.pile || frame.frame.sessionId !== params.sessionId)
+  if (
+    frame.frame.repoId !== params.repoId ||
+    frame.frame.workspaceId !== params.workspaceId ||
+    frame.frame.chatId !== params.chatId
+  )
   {
     SendErrorFrame(
       socket,
       params,
       "invalid_frame",
-      "frame pile/sessionId does not match connection",
+      "frame repoId/workspaceId/chatId does not match connection",
       false,
       frame.frame.id,
     );
@@ -431,8 +504,9 @@ async function HandleClientMessage(
   }
 
   const key = {
-    pile: params.pile,
-    sessionId: params.sessionId,
+    repoId: params.repoId,
+    workspaceId: params.workspaceId,
+    chatId: params.chatId,
   };
 
   try
@@ -479,8 +553,9 @@ async function HandleClientMessage(
       {
         const pong = CreateChatEnvelope({
           kind: x_serverPongKind,
-          pile: params.pile,
-          sessionId: params.sessionId,
+          repoId: params.repoId,
+          workspaceId: params.workspaceId,
+          chatId: params.chatId,
           clientId: params.clientId,
           payload: {
             requestId: frame.frame.id,
@@ -538,8 +613,7 @@ export function StorageErrorToHttpStatus(error: StorageError): number
     case "not_found":
       return 404;
 
-    case "invalid_pile":
-    case "invalid_session_id":
+    case "invalid_id":
     case "invalid_request":
     case "invalid_history_request":
       return 400;

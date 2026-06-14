@@ -1,27 +1,37 @@
-import { appendFile, access, open, readFile, writeFile } from "node:fs/promises";
+import { appendFile, access, mkdir, open, readFile, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
 import readline from "node:readline";
 
-import type { AllocatedSessionShell, ModelReference, SessionLogEntry } from "../shared/types.js";
+import type { AllocatedChatShell, ModelReference, SessionLogEntry } from "../shared/types.js";
 import type { ChatEnvelope, CreateChatEnvelopeInput } from "../shared/envelope.js";
 import { CreateChatEnvelope } from "../shared/envelope.js";
 import { StorageError } from "./errors.js";
 import { ReadManifest, UpdateManifest } from "./manifests.js";
-import { EnsurePileExists } from "./piles.js";
 import {
+  ResolveChatsDirectory,
   ResolveHistoryFilePath,
   ResolveProvisionalFilePath,
-  ResolveRootDirectory,
   ResolveSessionFilePath,
   type StoragePaths,
 } from "./paths.js";
-import { ValidateSessionId } from "./validation.js";
+import {
+  CacheRepositoryMetadata,
+  CacheWorkspaceMetadata,
+  ResolveRepository,
+  ResolveWorkspace,
+} from "./repositories.js";
+import { ValidateChatId } from "./validation.js";
 
 export const x_defaultExtensionVersion = "0.1.0";
 
-interface ProvisionalSessionRecord
+interface ProvisionalChatRecord
 {
+  repoId: string;
+  workspaceId: string;
+  chatId: string;
+  repositoryPath: string;
+  workspacePath: string;
   rootDirectory: string;
   model: ModelReference;
   createdAt: string;
@@ -31,18 +41,19 @@ const x_sequenceLocks = new Map<string, Promise<void>>();
 const x_latestSequences = new Map<string, number>();
 const x_tailReadChunkBytes = 64 * 1024;
 
-function SessionKey(pile: string, sessionId: string): string
+function ChatKey(repoId: string, workspaceId: string, chatId: string): string
 {
-  return `${pile}\u0000${sessionId}`;
+  return `${repoId}\u0000${workspaceId}\u0000${chatId}`;
 }
 
 async function WithSessionLock<T>(
-  pile: string,
-  sessionId: string,
+  repoId: string,
+  workspaceId: string,
+  chatId: string,
   operation: () => Promise<T>,
 ): Promise<T>
 {
-  const key = SessionKey(pile, sessionId);
+  const key = ChatKey(repoId, workspaceId, chatId);
   const previous = x_sequenceLocks.get(key) ?? Promise.resolve();
   let release!: () => void;
   const current = new Promise<void>((resolve) =>
@@ -89,11 +100,12 @@ function ParseSessionLogEntry(line: string): SessionLogEntry | null
 
 export async function ReadAllSessionLogEntries(
   paths: StoragePaths,
-  pile: string,
-  sessionId: string,
+  repoId: string,
+  workspaceId: string,
+  chatId: string,
 ): Promise<SessionLogEntry[]>
 {
-  const historyPath = ResolveHistoryFilePath(paths, pile, sessionId);
+  const historyPath = ResolveHistoryFilePath(paths, repoId, workspaceId, chatId);
 
   let raw: string;
 
@@ -124,11 +136,12 @@ export async function ReadAllSessionLogEntries(
 
 export async function ReadLatestSequence(
   paths: StoragePaths,
-  pile: string,
-  sessionId: string,
+  repoId: string,
+  workspaceId: string,
+  chatId: string,
 ): Promise<number>
 {
-  const entries = await ReadAllSessionLogEntries(paths, pile, sessionId);
+  const entries = await ReadAllSessionLogEntries(paths, repoId, workspaceId, chatId);
 
   if (entries.length === 0)
   {
@@ -209,13 +222,14 @@ async function ReadLatestSequenceFromHistoryTail(historyPath: string): Promise<n
 
 async function ReadLatestSequenceFromManifest(
   paths: StoragePaths,
-  pile: string,
-  sessionId: string,
+  repoId: string,
+  workspaceId: string,
+  chatId: string,
 ): Promise<number>
 {
   try
   {
-    const manifest = await ReadManifest(paths, pile, sessionId);
+    const manifest = await ReadManifest(paths, repoId, workspaceId, chatId);
     return manifest.history.lastSequence;
   }
   catch (error)
@@ -231,11 +245,12 @@ async function ReadLatestSequenceFromManifest(
 
 async function InitializeLatestSequence(
   paths: StoragePaths,
-  pile: string,
-  sessionId: string,
+  repoId: string,
+  workspaceId: string,
+  chatId: string,
 ): Promise<number>
 {
-  const key = SessionKey(pile, sessionId);
+  const key = ChatKey(repoId, workspaceId, chatId);
   const cached = x_latestSequences.get(key);
 
   if (cached !== undefined)
@@ -243,9 +258,9 @@ async function InitializeLatestSequence(
     return cached;
   }
 
-  const historyPath = ResolveHistoryFilePath(paths, pile, sessionId);
+  const historyPath = ResolveHistoryFilePath(paths, repoId, workspaceId, chatId);
   const [manifestSequence, tailSequence] = await Promise.all([
-    ReadLatestSequenceFromManifest(paths, pile, sessionId),
+    ReadLatestSequenceFromManifest(paths, repoId, workspaceId, chatId),
     ReadLatestSequenceFromHistoryTail(historyPath),
   ]);
   const latestSequence = Math.max(manifestSequence, tailSequence);
@@ -292,25 +307,34 @@ async function StreamSessionLogEntries(
   }
 }
 
-export async function AllocateSessionShell(
+export async function AllocateChatShell(
   paths: StoragePaths,
-  pile: string,
-  rootDirectory: string,
+  repoId: string,
+  workspaceId: string,
   model: ModelReference,
-): Promise<AllocatedSessionShell>
+): Promise<AllocatedChatShell>
 {
-  await EnsurePileExists(paths, pile);
-  const sessionId = ValidateSessionId(randomUUID().replace(/-/g, ""));
-  const absoluteRoot = ResolveRootDirectory(paths.repoRoot, rootDirectory);
-  const sessionFilePath = ResolveSessionFilePath(paths, pile, sessionId);
-  const historyFilePath = ResolveHistoryFilePath(paths, pile, sessionId);
-  const provisionalFilePath = ResolveProvisionalFilePath(paths, pile, sessionId);
-  const provisionalRecord: ProvisionalSessionRecord = {
-    rootDirectory: absoluteRoot,
+  const repository = await ResolveRepository(paths, repoId);
+  const workspace = await ResolveWorkspace(paths, repoId, workspaceId);
+  await CacheRepositoryMetadata(paths, repository);
+  await CacheWorkspaceMetadata(paths, workspace);
+  const chatId = ValidateChatId(randomUUID().replace(/-/g, ""));
+  const chatsDirectory = ResolveChatsDirectory(paths, repoId, workspaceId);
+  const sessionFilePath = ResolveSessionFilePath(paths, repoId, workspaceId, chatId);
+  const historyFilePath = ResolveHistoryFilePath(paths, repoId, workspaceId, chatId);
+  const provisionalFilePath = ResolveProvisionalFilePath(paths, repoId, workspaceId, chatId);
+  const provisionalRecord: ProvisionalChatRecord = {
+    repoId,
+    workspaceId,
+    chatId,
+    repositoryPath: repository.path,
+    workspacePath: workspace.path,
+    rootDirectory: workspace.path,
     model,
     createdAt: new Date().toISOString(),
   };
 
+  await mkdir(chatsDirectory, { recursive: true });
   await writeFile(sessionFilePath, "", "utf8");
   await writeFile(historyFilePath, "", "utf8");
   await writeFile(
@@ -320,12 +344,10 @@ export async function AllocateSessionShell(
   );
 
   return {
-    pile,
-    sessionId,
-    provisionalSession: {
-      rootDirectory: absoluteRoot,
-      model,
-    },
+    repoId,
+    workspaceId,
+    chatId,
+    provisionalChat: provisionalRecord,
     sessionFilePath,
     historyFilePath,
   };
@@ -338,17 +360,23 @@ export interface AppendEnvelopeInput extends Omit<CreateChatEnvelopeInput, "sequ
 
 export async function AppendEnvelope(
   paths: StoragePaths,
-  pile: string,
-  sessionId: string,
+  repoId: string,
+  workspaceId: string,
+  chatId: string,
   input: AppendEnvelopeInput,
 ): Promise<ChatEnvelope>
 {
-  const validatedSessionId = ValidateSessionId(sessionId);
+  const validatedChatId = ValidateChatId(chatId);
 
-  return WithSessionLock(pile, validatedSessionId, async () =>
+  return WithSessionLock(repoId, workspaceId, validatedChatId, async () =>
   {
-    const historyPath = ResolveHistoryFilePath(paths, pile, validatedSessionId);
-    const latestSequence = await InitializeLatestSequence(paths, pile, validatedSessionId);
+    const historyPath = ResolveHistoryFilePath(paths, repoId, workspaceId, validatedChatId);
+    const latestSequence = await InitializeLatestSequence(
+      paths,
+      repoId,
+      workspaceId,
+      validatedChatId,
+    );
     const sequence = input.sequence ?? latestSequence + 1;
 
     if (sequence <= latestSequence)
@@ -361,8 +389,9 @@ export async function AppendEnvelope(
 
     const envelope = CreateChatEnvelope({
       ...input,
-      pile,
-      sessionId: validatedSessionId,
+      repoId,
+      workspaceId,
+      chatId: validatedChatId,
       sequence,
     });
     const entry: SessionLogEntry = {
@@ -371,11 +400,11 @@ export async function AppendEnvelope(
     };
 
     await appendFile(historyPath, `${JSON.stringify(entry)}\n`, "utf8");
-    x_latestSequences.set(SessionKey(pile, validatedSessionId), sequence);
+    x_latestSequences.set(ChatKey(repoId, workspaceId, validatedChatId), sequence);
 
     try
     {
-      await UpdateManifest(paths, pile, validatedSessionId, {
+      await UpdateManifest(paths, repoId, workspaceId, validatedChatId, {
         lastSequence: sequence,
       });
     }
@@ -393,11 +422,12 @@ export async function AppendEnvelope(
 
 export async function CollectSessionLogEntries(
   paths: StoragePaths,
-  pile: string,
-  sessionId: string,
+  repoId: string,
+  workspaceId: string,
+  chatId: string,
 ): Promise<SessionLogEntry[]>
 {
-  const historyPath = ResolveHistoryFilePath(paths, pile, sessionId);
+  const historyPath = ResolveHistoryFilePath(paths, repoId, workspaceId, chatId);
   const entries: SessionLogEntry[] = [];
 
   await StreamSessionLogEntries(historyPath, (entry) =>

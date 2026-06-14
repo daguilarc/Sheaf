@@ -1,40 +1,66 @@
 export { StorageError } from "./errors.js";
 export { ReadHistoryPage, x_defaultHistoryLimit, x_maxHistoryLimit } from "./history.js";
 export {
-  ListSessionManifests,
+  ListChatManifests,
+  ManifestExists,
   ReadManifest,
   UpdateManifest,
   WriteInitialManifest,
 } from "./manifests.js";
 export {
   AssertPathWithinRoot,
-  AssertPilePathWithinRoot,
+  AssertRepositoryPathWithinRoot,
   CreateStoragePaths,
   ManifestSessionFileReference,
+  ResolveChatsDirectory,
   ResolveHistoryFilePath,
   ResolveManifestFilePath,
-  ResolvePileDirectory,
   ResolveProvisionalFilePath,
+  ResolveRepositoryDirectory,
+  ResolveRepositoryMetadataPath,
   ResolveRootDirectory,
   ResolveSessionFilePath,
+  ResolveWorkspaceDirectory,
+  ResolveWorkspaceEditorStatePath,
+  ResolveWorkspaceMetadataPath,
   type StoragePaths,
   x_historyFileSuffix,
   x_manifestFileSuffix,
   x_provisionalFileSuffix,
+  x_repositoriesDirRelative,
+  x_repositoryMetadataFile,
   x_sessionFileSuffix,
+  x_workspaceEditorStateFile,
+  x_workspaceMetadataFile,
 } from "./paths.js";
 export {
-  CreatePile,
-  EnsurePileExists,
-  ListPiles,
-  ManifestExists,
-} from "./piles.js";
-export {
-  AllocateSessionShell,
+  AllocateChatShell,
   AppendEnvelope,
   CollectSessionLogEntries,
   ReadAllSessionLogEntries,
   ReadLatestSequence,
   x_defaultExtensionVersion,
 } from "./sessionLog.js";
-export { ValidatePileName, ValidateSessionId, x_pileNamePattern, x_sessionIdPattern } from "./validation.js";
+export {
+  CacheRepositoryMetadata,
+  CacheWorkspaceMetadata,
+  IdForCanonicalPath,
+  ListRepositories,
+  ListWorkspaces,
+  NormalizeWorkspaceEditorState,
+  ParseGitWorktreePorcelain,
+  ReadRepositoryMetadata,
+  ReadWorkspaceEditorState,
+  ReadWorkspaceMetadata,
+  ResolveRepository,
+  ResolveWorkspace,
+  WriteWorkspaceEditorState,
+  x_emptyWorkspaceEditorState,
+} from "./repositories.js";
+export {
+  ValidateChatId,
+  ValidateIdentityId,
+  ValidateRepoId,
+  ValidateWorkspaceId,
+  x_identityIdPattern,
+} from "./validation.js";

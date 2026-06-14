@@ -47,7 +47,7 @@ export interface CreateSheafPiSessionInput
   modelBundle: SheafModelRegistryBundle;
   rootDirectory: string;
   sessionFilePath: string;
-  pileDirectory: string;
+  workspaceDirectory: string;
   model: ModelReference;
   coldResume?: boolean;
   notifyFileChanged?: (event: FileChangedNotification) => void | Promise<void>;
@@ -175,7 +175,7 @@ export async function CreateSheafPiSession(
   const settingsManager = SettingsManager.create(input.rootDirectory, agentDir);
   const sessionManager = SessionManager.open(
     input.sessionFilePath,
-    input.pileDirectory,
+    input.workspaceDirectory,
     input.rootDirectory,
   );
   const piModel = input.modelBundle.modelRegistry.find(

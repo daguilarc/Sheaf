@@ -4,25 +4,39 @@ import { StorageError } from "../storage/errors.js";
 import { HandleRouteError, SendRestError } from "./errors.js";
 import { HandleGetAgentReviewAvailability } from "./routes/agentReview.js";
 import { HandleHealth } from "./routes/health.js";
-import { HandleGetSessionFile, HandleListSessionFiles } from "./routes/files.js";
+import {
+  HandleGetChatFile,
+  HandleGetWorkspaceFile,
+  HandleListChatFiles,
+  HandleListWorkspaceFiles,
+} from "./routes/files.js";
 import { HandleSessionHistory } from "./routes/history.js";
 import { HandleListModels } from "./routes/models.js";
-import { HandleCreatePile, HandleListPiles } from "./routes/piles.js";
 import {
-  HandleCreateSession,
-  HandleGetSession,
-  HandleListSessions,
+  HandleGetWorkspaceEditorState,
+  HandleListRepositories,
+  HandleListWorkspaces,
+  HandlePutWorkspaceEditorState,
+} from "./routes/repositories.js";
+import {
+  HandleCreateChat,
+  HandleGetChat,
+  HandleListChats,
 } from "./routes/sessions.js";
 import type { RouteContext } from "./routes/context.js";
 
 export interface MatchedRoute
 {
-  pile?: string;
-  sessionId?: string;
+  repoId?: string;
+  workspaceId?: string;
+  chatId?: string;
   history?: boolean;
   agentReview?: boolean;
   file?: boolean;
   files?: boolean;
+  editorState?: boolean;
+  workspaceFile?: boolean;
+  workspaceFiles?: boolean;
 }
 
 function DecodePathSegment(segment: string): string
@@ -48,12 +62,11 @@ export function MatchApiRoute(pathname: string): MatchedRoute | null
 
   if (segments.length === 2)
   {
-    if (segments[1] === "health" || segments[1] === "models")
-    {
-      return {};
-    }
-
-    if (segments[1] === "piles")
+    if (
+      segments[1] === "health" ||
+      segments[1] === "models" ||
+      segments[1] === "repositories"
+    )
     {
       return {};
     }
@@ -61,55 +74,87 @@ export function MatchApiRoute(pathname: string): MatchedRoute | null
     return null;
   }
 
-  if (segments[1] !== "piles" || segments.length < 3)
+  if (segments[1] !== "repositories" || segments.length < 3)
   {
     return null;
   }
 
-  const pile = DecodePathSegment(segments[2]);
+  const repoId = DecodePathSegment(segments[2]);
 
   if (segments.length === 3)
   {
-    return { pile };
+    return { repoId };
   }
 
-  if (segments[3] !== "sessions")
+  if (segments[3] !== "workspaces")
   {
     return null;
   }
 
   if (segments.length === 4)
   {
-    return { pile };
+    return { repoId };
   }
 
-  const sessionId = DecodePathSegment(segments[4]);
+  const workspaceId = DecodePathSegment(segments[4]);
 
   if (segments.length === 5)
   {
-    return { pile, sessionId };
+    return { repoId, workspaceId };
+  }
+
+  if (segments.length === 6 && segments[5] === "editor-state")
+  {
+    return { repoId, workspaceId, editorState: true };
+  }
+
+  if (segments.length === 6 && segments[5] === "file")
+  {
+    return { repoId, workspaceId, workspaceFile: true };
+  }
+
+  if (segments.length === 6 && segments[5] === "files")
+  {
+    return { repoId, workspaceId, workspaceFiles: true };
+  }
+
+  if (segments.length === 6 && segments[5] === "agent-review")
+  {
+    return { repoId, workspaceId, agentReview: true };
+  }
+
+  if (segments[5] !== "chats")
+  {
+    return null;
   }
 
   if (segments.length === 6)
   {
-    if (segments[5] === "history")
+    return { repoId, workspaceId };
+  }
+
+  const chatId = DecodePathSegment(segments[6]);
+
+  if (segments.length === 7)
+  {
+    return { repoId, workspaceId, chatId };
+  }
+
+  if (segments.length === 8)
+  {
+    if (segments[7] === "history")
     {
-      return { pile, sessionId, history: true };
+      return { repoId, workspaceId, chatId, history: true };
     }
 
-    if (segments[5] === "agent-review")
+    if (segments[7] === "file")
     {
-      return { pile, sessionId, agentReview: true };
+      return { repoId, workspaceId, chatId, file: true };
     }
 
-    if (segments[5] === "file")
+    if (segments[7] === "files")
     {
-      return { pile, sessionId, file: true };
-    }
-
-    if (segments[5] === "files")
-    {
-      return { pile, sessionId, files: true };
+      return { repoId, workspaceId, chatId, files: true };
     }
   }
 
@@ -130,46 +175,86 @@ export function ResolveApiEndpoint(pathname: string): string | null
     return segments[1] ?? null;
   }
 
-  if (segments[1] === "piles")
+  if (segments[1] !== "repositories")
   {
-    if (segments[3] === "sessions")
+    return null;
+  }
+
+  if (segments.length === 4 && segments[3] === "workspaces")
+  {
+    return "repository_workspaces";
+  }
+
+  if (segments.length === 6 && segments[3] === "workspaces" && segments[5] === "chats")
+  {
+    return "workspace_chats";
+  }
+
+  if (
+    segments.length === 6 &&
+    segments[3] === "workspaces" &&
+    segments[5] === "editor-state"
+  )
+  {
+    return "workspace_editor_state";
+  }
+
+  if (segments.length === 6 && segments[3] === "workspaces" && segments[5] === "file")
+  {
+    return "workspace_file";
+  }
+
+  if (segments.length === 6 && segments[3] === "workspaces" && segments[5] === "files")
+  {
+    return "workspace_files";
+  }
+
+  if (segments.length === 6 && segments[3] === "workspaces" && segments[5] === "agent-review")
+  {
+    return "workspace_agent_review";
+  }
+
+  if (segments.length === 7 && segments[3] === "workspaces" && segments[5] === "chats")
+  {
+    return "workspace_chat";
+  }
+
+  if (segments.length === 8 && segments[3] === "workspaces" && segments[5] === "chats")
+  {
+    if (segments[7] === "history")
     {
-      if (segments.length === 4)
-      {
-        return "pile_sessions";
-      }
+      return "workspace_chat_history";
+    }
 
-      if (segments.length === 5)
-      {
-        return "pile_session";
-      }
+    if (segments[7] === "file")
+    {
+      return "workspace_chat_file";
+    }
 
-      if (segments.length === 6)
-      {
-        if (segments[5] === "history")
-        {
-          return "pile_session_history";
-        }
-
-        if (segments[5] === "agent-review")
-        {
-          return "pile_session_agent_review";
-        }
-
-        if (segments[5] === "file")
-        {
-          return "pile_session_file";
-        }
-
-        if (segments[5] === "files")
-        {
-          return "pile_session_files";
-        }
-      }
+    if (segments[7] === "files")
+    {
+      return "workspace_chat_files";
     }
   }
 
   return null;
+}
+
+function HasWorkspace(route: MatchedRoute): route is MatchedRoute & {
+  repoId: string;
+  workspaceId: string;
+}
+{
+  return route.repoId !== undefined && route.workspaceId !== undefined;
+}
+
+function HasChat(route: MatchedRoute): route is MatchedRoute & {
+  repoId: string;
+  workspaceId: string;
+  chatId: string;
+}
+{
+  return HasWorkspace(route) && route.chatId !== undefined;
 }
 
 export async function DispatchApiRoute(
@@ -221,51 +306,21 @@ export async function DispatchApiRoute(
       return;
     }
 
-    if (endpoint === "piles")
+    if (endpoint === "repositories")
     {
-      if (request.method === "GET")
+      if (request.method !== "GET")
       {
-        await HandleListPiles(context, response);
+        SendRestError(response, 405, "method_not_allowed", "method not allowed");
         return;
       }
 
-      if (request.method === "POST")
-      {
-        await HandleCreatePile(context, request, response);
-        return;
-      }
-
-      SendRestError(response, 405, "method_not_allowed", "method not allowed");
+      await HandleListRepositories(context, response);
       return;
     }
 
-    if (endpoint === "pile_sessions")
+    if (endpoint === "repository_workspaces")
     {
-      if (route.pile === undefined)
-      {
-        SendRestError(response, 404, "not_found", "route not found");
-        return;
-      }
-
-      if (request.method === "GET")
-      {
-        await HandleListSessions(context, route.pile, response);
-        return;
-      }
-
-      if (request.method === "POST")
-      {
-        await HandleCreateSession(context, route.pile, request, response);
-        return;
-      }
-
-      SendRestError(response, 405, "method_not_allowed", "method not allowed");
-      return;
-    }
-
-    if (endpoint === "pile_session")
-    {
-      if (route.pile === undefined || route.sessionId === undefined)
+      if (route.repoId === undefined)
       {
         SendRestError(response, 404, "not_found", "route not found");
         return;
@@ -277,13 +332,133 @@ export async function DispatchApiRoute(
         return;
       }
 
-      await HandleGetSession(context, route.pile, route.sessionId, response);
+      await HandleListWorkspaces(context, route.repoId, response);
       return;
     }
 
-    if (endpoint === "pile_session_history")
+    if (endpoint === "workspace_editor_state")
     {
-      if (route.pile === undefined || route.sessionId === undefined)
+      if (!HasWorkspace(route))
+      {
+        SendRestError(response, 404, "not_found", "route not found");
+        return;
+      }
+
+      if (request.method === "GET")
+      {
+        await HandleGetWorkspaceEditorState(context, route.repoId, route.workspaceId, response);
+        return;
+      }
+
+      if (request.method === "PUT")
+      {
+        await HandlePutWorkspaceEditorState(
+          context,
+          route.repoId,
+          route.workspaceId,
+          request,
+          response,
+        );
+        return;
+      }
+
+      SendRestError(response, 405, "method_not_allowed", "method not allowed");
+      return;
+    }
+
+    if (endpoint === "workspace_chats")
+    {
+      if (!HasWorkspace(route))
+      {
+        SendRestError(response, 404, "not_found", "route not found");
+        return;
+      }
+
+      if (request.method === "GET")
+      {
+        await HandleListChats(context, route.repoId, route.workspaceId, response);
+        return;
+      }
+
+      if (request.method === "POST")
+      {
+        await HandleCreateChat(context, route.repoId, route.workspaceId, request, response);
+        return;
+      }
+
+      SendRestError(response, 405, "method_not_allowed", "method not allowed");
+      return;
+    }
+
+    if (endpoint === "workspace_file")
+    {
+      if (!HasWorkspace(route))
+      {
+        SendRestError(response, 404, "not_found", "route not found");
+        return;
+      }
+
+      if (request.method !== "GET")
+      {
+        SendRestError(response, 405, "method_not_allowed", "method not allowed");
+        return;
+      }
+
+      await HandleGetWorkspaceFile(
+        context,
+        route.repoId,
+        route.workspaceId,
+        url.searchParams.get("path"),
+        response,
+      );
+      return;
+    }
+
+    if (endpoint === "workspace_files")
+    {
+      if (!HasWorkspace(route))
+      {
+        SendRestError(response, 404, "not_found", "route not found");
+        return;
+      }
+
+      if (request.method !== "GET")
+      {
+        SendRestError(response, 405, "method_not_allowed", "method not allowed");
+        return;
+      }
+
+      await HandleListWorkspaceFiles(
+        context,
+        route.repoId,
+        route.workspaceId,
+        url.searchParams.get("path"),
+        response,
+      );
+      return;
+    }
+
+    if (endpoint === "workspace_chat")
+    {
+      if (!HasChat(route))
+      {
+        SendRestError(response, 404, "not_found", "route not found");
+        return;
+      }
+
+      if (request.method !== "GET")
+      {
+        SendRestError(response, 405, "method_not_allowed", "method not allowed");
+        return;
+      }
+
+      await HandleGetChat(context, route.repoId, route.workspaceId, route.chatId, response);
+      return;
+    }
+
+    if (endpoint === "workspace_chat_history")
+    {
+      if (!HasChat(route))
       {
         SendRestError(response, 404, "not_found", "route not found");
         return;
@@ -297,17 +472,18 @@ export async function DispatchApiRoute(
 
       await HandleSessionHistory(
         context,
-        route.pile,
-        route.sessionId,
+        route.repoId,
+        route.workspaceId,
+        route.chatId,
         url.searchParams,
         response,
       );
       return;
     }
 
-    if (endpoint === "pile_session_agent_review")
+    if (endpoint === "workspace_agent_review")
     {
-      if (route.pile === undefined || route.sessionId === undefined)
+      if (!HasWorkspace(route))
       {
         SendRestError(response, 404, "not_found", "route not found");
         return;
@@ -319,13 +495,18 @@ export async function DispatchApiRoute(
         return;
       }
 
-      await HandleGetAgentReviewAvailability(context, route.pile, route.sessionId, response);
+      await HandleGetAgentReviewAvailability(
+        context,
+        route.repoId,
+        route.workspaceId,
+        response,
+      );
       return;
     }
 
-    if (endpoint === "pile_session_file")
+    if (endpoint === "workspace_chat_file")
     {
-      if (route.pile === undefined || route.sessionId === undefined)
+      if (!HasChat(route))
       {
         SendRestError(response, 404, "not_found", "route not found");
         return;
@@ -337,19 +518,20 @@ export async function DispatchApiRoute(
         return;
       }
 
-      await HandleGetSessionFile(
+      await HandleGetChatFile(
         context,
-        route.pile,
-        route.sessionId,
+        route.repoId,
+        route.workspaceId,
+        route.chatId,
         url.searchParams.get("path"),
         response,
       );
       return;
     }
 
-    if (endpoint === "pile_session_files")
+    if (endpoint === "workspace_chat_files")
     {
-      if (route.pile === undefined || route.sessionId === undefined)
+      if (!HasChat(route))
       {
         SendRestError(response, 404, "not_found", "route not found");
         return;
@@ -361,10 +543,11 @@ export async function DispatchApiRoute(
         return;
       }
 
-      await HandleListSessionFiles(
+      await HandleListChatFiles(
         context,
-        route.pile,
-        route.sessionId,
+        route.repoId,
+        route.workspaceId,
+        route.chatId,
         url.searchParams.get("path"),
         response,
       );

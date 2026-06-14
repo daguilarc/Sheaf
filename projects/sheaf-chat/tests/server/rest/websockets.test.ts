@@ -7,10 +7,11 @@ test("BuildChatWebSocketUrl builds required query parameters", () =>
 {
   assert.equal(
     BuildChatWebSocketUrl({
-      pile: "default",
-      sessionId: "abc123",
+      repoId: "repo_123456789012",
+      workspaceId: "workspace_123456",
+      chatId: "chat_123456789012",
     }),
-    "/ws/chat?p=default&session=abc123",
+    "/ws/chat?repo=repo_123456789012&workspace=workspace_123456&chat=chat_123456789012",
   );
 });
 
@@ -18,11 +19,12 @@ test("BuildChatWebSocketUrl includes optional client and after parameters", () =
 {
   assert.equal(
     BuildChatWebSocketUrl({
-      pile: "work",
-      sessionId: "sess1",
+      repoId: "repo_123456789012",
+      workspaceId: "workspace_123456",
+      chatId: "chat_123456789012",
       clientId: "browser-1",
       after: 42,
     }),
-    "/ws/chat?p=work&session=sess1&client=browser-1&after=42",
+    "/ws/chat?repo=repo_123456789012&workspace=workspace_123456&chat=chat_123456789012&client=browser-1&after=42",
   );
 });

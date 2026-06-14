@@ -1,7 +1,8 @@
 export interface BuildChatWebSocketUrlInput
 {
-  pile: string;
-  sessionId: string;
+  repoId: string;
+  workspaceId: string;
+  chatId: string;
   clientId?: string;
   after?: number;
 }
@@ -9,8 +10,9 @@ export interface BuildChatWebSocketUrlInput
 export function BuildChatWebSocketUrl(input: BuildChatWebSocketUrlInput): string
 {
   const params = new URLSearchParams();
-  params.set("p", input.pile);
-  params.set("session", input.sessionId);
+  params.set("repo", input.repoId);
+  params.set("workspace", input.workspaceId);
+  params.set("chat", input.chatId);
 
   if (input.clientId !== undefined && input.clientId.length > 0)
   {

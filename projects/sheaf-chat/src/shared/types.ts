@@ -26,23 +26,48 @@ export interface ModelMetadata extends ModelReference
   unavailableReason?: string;
 }
 
-export interface SessionManifestHistory
+export interface ChatManifestHistory
 {
   messageCount: number;
   lastSequence: number;
 }
 
-export interface SessionManifestPi
+export interface ChatManifestPi
 {
   sessionFile: string;
   extensionVersion: string;
 }
 
-export interface SessionManifest
+export interface RepositoryMetadata
+{
+  repoId: string;
+  name: string;
+  path: string;
+  discoveredAt: string;
+}
+
+export interface WorkspaceMetadata
+{
+  repoId: string;
+  workspaceId: string;
+  kind: "main" | "worktree";
+  path: string;
+  displayName: string;
+  branch?: string;
+  head?: string;
+  bare?: boolean;
+  detached?: boolean;
+  discoveredAt: string;
+}
+
+export interface ChatManifest
 {
   schemaVersion: number;
-  pile: string;
-  sessionId: string;
+  repoId: string;
+  workspaceId: string;
+  chatId: string;
+  repositoryPath: string;
+  workspacePath: string;
   chatName: string;
   description: string;
   rootDirectory: string;
@@ -50,36 +75,41 @@ export interface SessionManifest
   updatedAt: string;
   lastOpenedAt: string;
   model: ModelReference;
-  pi: SessionManifestPi;
-  history: SessionManifestHistory;
+  pi: ChatManifestPi;
+  history: ChatManifestHistory;
 }
 
-export interface PileSummary
+export interface ProvisionalChat
 {
-  pile: string;
-  sessionCount: number;
-  latestUpdatedAt: string | null;
-}
-
-export interface ProvisionalSession
-{
+  repoId: string;
+  workspaceId: string;
+  chatId: string;
+  repositoryPath: string;
+  workspacePath: string;
   rootDirectory: string;
   model: ModelReference;
+  createdAt?: string;
 }
 
-export interface AllocatedSessionShell
+export type ProvisionalSession = ProvisionalChat;
+
+export interface AllocatedChatShell
 {
-  pile: string;
-  sessionId: string;
-  provisionalSession: ProvisionalSession;
+  repoId: string;
+  workspaceId: string;
+  chatId: string;
+  provisionalChat: ProvisionalChat;
   sessionFilePath: string;
   historyFilePath: string;
 }
 
 export interface WriteInitialManifestInput
 {
-  pile: string;
-  sessionId: string;
+  repoId: string;
+  workspaceId: string;
+  chatId: string;
+  repositoryPath: string;
+  workspacePath: string;
   chatName: string;
   description: string;
   rootDirectory: string;
@@ -124,6 +154,19 @@ export interface SessionLogEntry
 {
   sequence: number;
   envelope: ChatEnvelope;
+}
+
+export interface WorkspaceEditorViewport
+{
+  scrollTop: number;
+}
+
+export interface WorkspaceEditorState
+{
+  tabs: string[];
+  selectedPath: string | null;
+  expandedDirectories: string[];
+  viewports: Record<string, WorkspaceEditorViewport>;
 }
 
 export type AguiEventPayload = Record<string, unknown>;

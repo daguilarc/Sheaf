@@ -2,8 +2,11 @@ import { performance } from "node:perf_hooks";
 
 import type { AgentManager } from "../agents/manager.js";
 import {
-  FormatSessionKey,
-  type SessionKey,
+  FormatChatKey,
+  KeyChatId,
+  KeyRepoId,
+  KeyWorkspaceId,
+  type ChatKey,
   type UserMessageSubmission,
 } from "../agents/lifecycle.js";
 import {
@@ -40,7 +43,7 @@ import type { ClientUserMessagePayload } from "./clientFrames.js";
 
 export interface SessionPersistenceHubOptions
 {
-  key: SessionKey;
+  key: ChatKey;
   config: SheafChatConfig;
   storagePaths: StoragePaths;
   agentManager: AgentManager;
@@ -56,7 +59,7 @@ type EnvelopeSubscriber = (envelope: ChatEnvelope) => void;
 
 export class SessionPersistenceHub
 {
-  private readonly m_key: SessionKey;
+  private readonly m_key: ChatKey;
   private readonly m_config: SheafChatConfig;
   private readonly m_storagePaths: StoragePaths;
   private readonly m_agentManager: AgentManager;
@@ -76,7 +79,7 @@ export class SessionPersistenceHub
     this.m_agentManager = options.agentManager;
   }
 
-  get Key(): SessionKey
+  get Key(): ChatKey
   {
     return this.m_key;
   }
@@ -95,8 +98,9 @@ export class SessionPersistenceHub
 
     const entries = await CollectSessionLogEntries(
       this.m_storagePaths,
-      this.m_key.pile,
-      this.m_key.sessionId,
+      KeyRepoId(this.m_key),
+      KeyWorkspaceId(this.m_key),
+      KeyChatId(this.m_key),
     );
 
     if (entries.length > 0)
@@ -135,8 +139,9 @@ export class SessionPersistenceHub
   {
     const entries = await CollectSessionLogEntries(
       this.m_storagePaths,
-      this.m_key.pile,
-      this.m_key.sessionId,
+      KeyRepoId(this.m_key),
+      KeyWorkspaceId(this.m_key),
+      KeyChatId(this.m_key),
     );
 
     if (entries.length === 0)
@@ -196,7 +201,7 @@ export class SessionPersistenceHub
     const rootDirectory = status?.rootDirectory ?? status?.provisionalRootDirectory;
 
     return {
-      threadId: this.m_key.sessionId,
+      threadId: KeyChatId(this.m_key),
       canonicalRoot: rootDirectory,
       rootDirectory,
     };
@@ -279,12 +284,14 @@ export class SessionPersistenceHub
 
     const envelope = await AppendEnvelope(
       this.m_storagePaths,
-      this.m_key.pile,
-      this.m_key.sessionId,
+      KeyRepoId(this.m_key),
+      KeyWorkspaceId(this.m_key),
+      KeyChatId(this.m_key),
       {
         kind: input.kind,
-        pile: this.m_key.pile,
-        sessionId: this.m_key.sessionId,
+        repoId: KeyRepoId(this.m_key),
+        workspaceId: KeyWorkspaceId(this.m_key),
+        chatId: KeyChatId(this.m_key),
         clientId: input.clientId,
         payload: input.payload,
       },
@@ -317,13 +324,13 @@ export class SessionPersistenceHub
 
   private SubscribeLifecycle(): void
   {
-    const encodedKey = FormatSessionKey(this.m_key);
+    const encodedKey = FormatChatKey(this.m_key);
     const lifecycle = this.m_agentManager.lifecycle;
 
     this.m_unsubscribeLifecycle.push(
       lifecycle.On("agentEvent", (event) =>
       {
-        if (FormatSessionKey(event.key) !== encodedKey)
+        if (FormatChatKey(event.key) !== encodedKey)
         {
           return;
         }
@@ -332,7 +339,7 @@ export class SessionPersistenceHub
       }),
       lifecycle.On("model", (event) =>
       {
-        if (FormatSessionKey(event.key) !== encodedKey)
+        if (FormatChatKey(event.key) !== encodedKey)
         {
           return;
         }
@@ -341,7 +348,7 @@ export class SessionPersistenceHub
       }),
       lifecycle.On("status", (event) =>
       {
-        if (FormatSessionKey(event.key) !== encodedKey)
+        if (FormatChatKey(event.key) !== encodedKey)
         {
           return;
         }
@@ -350,7 +357,7 @@ export class SessionPersistenceHub
       }),
       lifecycle.On("manifestUpdated", (event) =>
       {
-        if (FormatSessionKey(event.key) !== encodedKey)
+        if (FormatChatKey(event.key) !== encodedKey)
         {
           return;
         }
@@ -359,7 +366,7 @@ export class SessionPersistenceHub
       }),
       lifecycle.On("error", (event) =>
       {
-        if (FormatSessionKey(event.key) !== encodedKey)
+        if (FormatChatKey(event.key) !== encodedKey)
         {
           return;
         }
@@ -446,7 +453,7 @@ export class SessionPersistenceHub
     });
   }
 
-  private async HandleManifestUpdated(manifest: import("../shared/types.js").SessionManifest): Promise<void>
+  private async HandleManifestUpdated(manifest: import("../shared/types.js").ChatManifest): Promise<void>
   {
     const relativeRoot = RelativizeAbsolutePath(manifest.rootDirectory, this.m_config.repoRoot);
 
@@ -500,7 +507,7 @@ export class SessionPersistenceHubRegistry
 
   async GetOrCreate(options: SessionPersistenceHubOptions): Promise<SessionPersistenceHub>
   {
-    const encodedKey = FormatSessionKey(options.key);
+    const encodedKey = FormatChatKey(options.key);
     const existing = this.m_hubs.get(encodedKey);
 
     if (existing !== undefined)
@@ -529,9 +536,9 @@ export class SessionPersistenceHubRegistry
     return initializing;
   }
 
-  Get(key: SessionKey): SessionPersistenceHub | undefined
+  Get(key: ChatKey): SessionPersistenceHub | undefined
   {
-    return this.m_hubs.get(FormatSessionKey(key));
+    return this.m_hubs.get(FormatChatKey(key));
   }
 
   Dispose(): void

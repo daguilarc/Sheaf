@@ -133,7 +133,7 @@ test("browser chat renders assistant markdown and LaTeX through the real UI", as
     const rootDirectory = path.join(handle.config.repoRoot, "projects", "demo");
     await WriteSessionFile(rootDirectory, "render-check.md", "# Render Fixture\n");
 
-    const session = await CreateSessionWithRoot(handle, rootDirectory, "default");
+    const session = await CreateSessionWithRoot(handle, rootDirectory);
     const browser = await chromium.launch({ headless: true });
     const page = await browser.newPage();
     const consoleMessages: string[] = [];
@@ -154,7 +154,7 @@ test("browser chat renders assistant markdown and LaTeX through the real UI", as
     try
     {
       await page.goto(
-        `${handle.baseUrl}/#/piles/${encodeURIComponent(session.pile)}/sessions/${encodeURIComponent(session.sessionId)}`,
+        `${handle.baseUrl}/#/repositories/${encodeURIComponent(session.repoId)}/workspaces/${encodeURIComponent(session.workspaceId)}/chats/${encodeURIComponent(session.chatId)}`,
         { waitUntil: "domcontentloaded" },
       );
 
@@ -240,14 +240,14 @@ test("browser chat can re-expand desktop side panes after collapse", async () =>
     const rootDirectory = path.join(handle.config.repoRoot, "projects", "demo");
     await WriteSessionFile(rootDirectory, "render-check.md", "# Render Fixture\n");
 
-    const session = await CreateSessionWithRoot(handle, rootDirectory, "default");
+    const session = await CreateSessionWithRoot(handle, rootDirectory);
     const browser = await chromium.launch({ headless: true });
     const page = await browser.newPage();
 
     try
     {
       await page.goto(
-        `${handle.baseUrl}/#/piles/${encodeURIComponent(session.pile)}/sessions/${encodeURIComponent(session.sessionId)}`,
+        `${handle.baseUrl}/#/repositories/${encodeURIComponent(session.repoId)}/workspaces/${encodeURIComponent(session.workspaceId)}/chats/${encodeURIComponent(session.chatId)}`,
         { waitUntil: "domcontentloaded" },
       );
 

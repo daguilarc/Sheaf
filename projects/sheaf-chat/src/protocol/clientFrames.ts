@@ -89,14 +89,19 @@ function ParseChatEnvelope(value: unknown): ChatEnvelope
     throw new StorageError("invalid_frame", "frame id is required");
   }
 
-  if (typeof value.pile !== "string" || value.pile.length === 0)
+  if (typeof value.repoId !== "string" || value.repoId.length === 0)
   {
-    throw new StorageError("invalid_frame", "frame pile is required");
+    throw new StorageError("invalid_frame", "frame repoId is required");
   }
 
-  if (typeof value.sessionId !== "string" || value.sessionId.length === 0)
+  if (typeof value.workspaceId !== "string" || value.workspaceId.length === 0)
   {
-    throw new StorageError("invalid_frame", "frame sessionId is required");
+    throw new StorageError("invalid_frame", "frame workspaceId is required");
+  }
+
+  if (typeof value.chatId !== "string" || value.chatId.length === 0)
+  {
+    throw new StorageError("invalid_frame", "frame chatId is required");
   }
 
   if (typeof value.timestamp !== "string" || value.timestamp.length === 0)

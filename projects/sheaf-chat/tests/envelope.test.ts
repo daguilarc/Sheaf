@@ -10,8 +10,9 @@ test("CreateChatEnvelope builds spec-compliant frames", () =>
 {
   const envelope = CreateChatEnvelope({
     kind: "client.user_message",
-    pile: "default",
-    sessionId: "session-1",
+    repoId: "repo_123456789012",
+    workspaceId: "workspace_123456",
+    chatId: "chat_123456789012",
     clientId: "browser-1",
     payload: {
       messageId: "msg-1",
@@ -24,8 +25,11 @@ test("CreateChatEnvelope builds spec-compliant frames", () =>
   assert.equal(envelope.v, x_chatEnvelopeVersion);
   assert.equal(envelope.kind, "client.user_message");
   assert.equal(envelope.id, "frame-1");
-  assert.equal(envelope.pile, "default");
-  assert.equal(envelope.sessionId, "session-1");
+  assert.equal(envelope.repoId, "repo_123456789012");
+  assert.equal(envelope.workspaceId, "workspace_123456");
+  assert.equal(envelope.chatId, "chat_123456789012");
+  assert.equal("pile" in envelope, false);
+  assert.equal("sessionId" in envelope, false);
   assert.equal(envelope.clientId, "browser-1");
   assert.equal(envelope.sequence, undefined);
   assert.equal(envelope.timestamp, "2026-06-08T00:00:00.000Z");
@@ -39,8 +43,9 @@ test("CreateChatEnvelope generates id and timestamp when omitted", () =>
 {
   const envelope = CreateChatEnvelope({
     kind: "server.hello",
-    pile: "work",
-    sessionId: "abc123",
+    repoId: "repo_123456789012",
+    workspaceId: "workspace_123456",
+    chatId: "chat_123456789012",
     sequence: 7,
   });
 

@@ -1,12 +1,10 @@
 import {
-  IsValidPileName,
-  IsValidSessionId,
-  x_pileNamePattern,
-  x_sessionIdPattern,
+  IsValidIdentityId,
+  x_identityIdPattern,
 } from "../shared/validation.js";
 import { StorageError } from "./errors.js";
 
-export { x_pileNamePattern, x_sessionIdPattern };
+export { x_identityIdPattern };
 
 function AssertNormalizedStem(value: string, label: string): void
 {
@@ -21,32 +19,32 @@ function AssertNormalizedStem(value: string, label: string): void
   }
 }
 
-export function ValidatePileName(name: string): string
+export function ValidateIdentityId(id: string, label = "id"): string
 {
-  AssertNormalizedStem(name, "pile name");
+  AssertNormalizedStem(id, label);
 
-  if (!IsValidPileName(name))
+  if (!IsValidIdentityId(id))
   {
     throw new StorageError(
-      "invalid_pile",
-      "pile name must be a safe single path segment",
+      "invalid_id",
+      `${label} must be a safe generated identifier`,
     );
   }
 
-  return name;
+  return id;
 }
 
-export function ValidateSessionId(sessionId: string): string
+export function ValidateRepoId(repoId: string): string
 {
-  AssertNormalizedStem(sessionId, "session id");
+  return ValidateIdentityId(repoId, "repoId");
+}
 
-  if (!IsValidSessionId(sessionId))
-  {
-    throw new StorageError(
-      "invalid_session_id",
-      "session id must be a safe single path segment",
-    );
-  }
+export function ValidateWorkspaceId(workspaceId: string): string
+{
+  return ValidateIdentityId(workspaceId, "workspaceId");
+}
 
-  return sessionId;
+export function ValidateChatId(chatId: string): string
+{
+  return ValidateIdentityId(chatId, "chatId");
 }

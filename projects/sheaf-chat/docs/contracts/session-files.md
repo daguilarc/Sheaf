@@ -1,75 +1,74 @@
-# Contract: Session Files
+# Contract: Chat Files
 
-Shared by [piles-sessions](../../../../openspec/specs/sheaf-chat-piles-sessions/spec.md) (creates the
-files), [session-history](../../../../openspec/specs/sheaf-chat-session-history/spec.md) (appends and
-pages the envelope log), [chat-protocol](../../../../openspec/specs/sheaf-chat-chat-protocol/spec.md)
-(wire envelopes are the persisted envelopes),
-[agent-runtime](../../../../openspec/specs/sheaf-chat-agent-runtime/spec.md) (bootstraps from
-provisional/manifest and writes the manifest), and
-[file-browser](../../../../openspec/specs/sheaf-chat-file-browser/spec.md) (resolves the session root
-for read-only file access). Code:
-`src/storage/paths.ts`, `src/storage/validation.ts`,
-`src/shared/validation.ts`, `src/shared/envelope.ts`,
-`src/shared/types.ts`.
+Shared by [repo-workspaces](../../../../openspec/specs/sheaf-chat-repo-workspaces/spec.md),
+[piles-sessions](../../../../openspec/specs/sheaf-chat-piles-sessions/spec.md) (the replaced
+workspace chat REST contract),
+[session-history](../../../../openspec/specs/sheaf-chat-session-history/spec.md),
+[chat-protocol](../../../../openspec/specs/sheaf-chat-chat-protocol/spec.md),
+[agent-runtime](../../../../openspec/specs/sheaf-chat-agent-runtime/spec.md), and
+[file-browser](../../../../openspec/specs/sheaf-chat-file-browser/spec.md). Code:
+`src/storage/paths.ts`, `src/storage/repositories.ts`,
+`src/storage/validation.ts`, `src/shared/validation.ts`,
+`src/shared/envelope.ts`, `src/shared/types.ts`.
 
-## Directory layout
+## Directory Layout
 
-All runtime state is under `data/sheaf-chat/` relative to the repository
-root:
+All runtime state is under `data/sheaf-chat/` relative to the repository root:
 
 ```text
 data/sheaf-chat/
-  pi-agent/                 # service-local Pi agent state (models capability)
+  pi-agent/
     auth.json
     models.json
   auth/
-    openai/                 # reserved for OpenAI OAuth material
-  sessions/
-    piles/
-      <pile>/
-        <sessionId>.jsonl                 # Pi session file
-        <sessionId>.sheaf-history.jsonl   # Sheaf envelope history log
-        <sessionId>.provisional.json      # pre-manifest session record
-        <sessionId>.manifest.json         # session manifest (deferred)
+    openai/
+  repositories/
+    <repoId>/
+      repository.json
+      workspaces/
+        <workspaceId>/
+          workspace.json
+          editor-state.json
+          chats/
+            <chatId>.jsonl
+            <chatId>.sheaf-history.jsonl
+            <chatId>.provisional.json
+            <chatId>.manifest.json
 ```
 
-A session exists when `<sessionId>.jsonl` exists; it is *established* (shows
-in listings) when `<sessionId>.manifest.json` exists.
+A chat shell exists when `<chatId>.jsonl` exists. It is established and shown
+in workspace chat lists when `<chatId>.manifest.json` exists. Old
+`data/sheaf-chat/sessions/...` data is not migrated; deleting
+`data/sheaf-chat` is the reset path for this breaking change.
 
-## Name validation
+## Identity Validation
 
-Pile names and session ids must be safe single path segments
-(`src/shared/validation.ts`):
+`repoId`, `workspaceId`, and `chatId` are generated, path-safe identity ids:
 
 ```text
-pile name:  ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$
-session id: ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$
+^[A-Za-z0-9_-]{16,128}$
 ```
 
-Additionally rejected for both: empty strings, `.` and `..`, anything
-containing `/` or `\`, and strings that are not Unicode-NFC-normalized
-(error code `invalid_name`). Pattern failures use error codes `invalid_pile`
-/ `invalid_session_id` with messages
-`pile name must be a safe single path segment` /
-`session id must be a safe single path segment`. Server-generated session
-ids are UUIDs with hyphens removed (32 hex chars).
+They also reject empty strings, `.` and `..`, `/`, `\`, and non-NFC input
+(`invalid_name`). Pattern failures use `invalid_id`.
 
-Resolved pile paths are additionally asserted to stay under the piles root
-(`AssertPathWithinRoot`, error code `path_escape`, message
-`path escapes the storage root`).
+`repoId` and `workspaceId` are deterministic base64url SHA-256 values derived
+from canonical absolute paths. `chatId` is a generated UUID with hyphens
+removed.
 
-## Chat envelope
+## Chat Envelope
 
-Every WebSocket frame (both directions) and every persisted history entry
-payload is a chat envelope:
+Every WebSocket frame and every persisted history entry payload is a chat
+envelope:
 
 ```json
 {
   "v": 1,
   "kind": "agui.event",
-  "id": "5e0f0b8c-…",
-  "pile": "default",
-  "sessionId": "0123456789abcdef0123456789abcdef",
+  "id": "5e0f0b8c-...",
+  "repoId": "repo_123456789012",
+  "workspaceId": "workspace_123456",
+  "chatId": "0123456789abcdef0123456789abcdef",
   "clientId": "browser-client-id",
   "sequence": 12,
   "timestamp": "2026-06-10T00:00:00.000Z",
@@ -77,95 +76,72 @@ payload is a chat envelope:
 }
 ```
 
-- `v` is always `1`.
-- `kind`, `id`, `pile`, `sessionId`, `timestamp` are required non-empty
-  strings; `clientId`, `sequence`, `payload` are optional.
-- Server-created envelopes get a random UUID `id` and current ISO timestamp
-  unless supplied.
-- Only the server assigns `sequence`; persisted envelopes carry strictly
-  increasing per-session sequences starting at 1. Client frames must not set
-  one (a numeric `sequence` is accepted but ignored on input).
+`v`, `kind`, `id`, `repoId`, `workspaceId`, `chatId`, and `timestamp` are
+required. `clientId`, `sequence`, and `payload` are optional. Only the server
+assigns persisted `sequence` values.
 
-## `<sessionId>.jsonl` — Pi session file
+## Chat Files
 
-Opaque to Sheaf Chat: created empty at session allocation and thereafter
-owned by Pi's `SessionManager.open(sessionFilePath, pileDirectory,
-rootDirectory)`. Sheaf Chat never parses it; its existence gates WebSocket
-connects.
+`<chatId>.jsonl` is the opaque Pi session file. Sheaf Chat creates it empty
+at chat-shell allocation and later passes it to Pi for resume.
 
-## `<sessionId>.sheaf-history.jsonl` — envelope history log
-
-One JSON object per line:
+`<chatId>.sheaf-history.jsonl` is append-only JSON Lines:
 
 ```json
-{"sequence": 12, "envelope": { "v": 1, "kind": "agui.event", "...": "..." }}
+{"sequence": 12, "envelope": { "v": 1, "kind": "agui.event" }}
 ```
 
-Append-only. Lines that are blank or fail to parse are skipped on read.
-Entries are sorted by `sequence` on read, so physical order need not be
-relied on. Sequence allocation and paging semantics:
-[session-history](../../../../openspec/specs/sheaf-chat-session-history/spec.md).
+Sequence allocation is serialized per `{repoId, workspaceId, chatId}`. Lines
+that are blank or fail to parse are skipped on read.
 
-## `<sessionId>.provisional.json` — provisional record
+`<chatId>.provisional.json` is written at shell allocation and records
+`repoId`, `workspaceId`, `chatId`, `repositoryPath`, `workspacePath`,
+`rootDirectory`, `model`, and `createdAt`. The root is always the selected
+workspace canonical absolute path; clients do not choose chat roots.
 
-Written at session allocation, pretty-printed with trailing newline:
-
-```json
-{
-  "rootDirectory": "/abs/path/to/root",
-  "model": { "provider": "local", "id": "qwen3-coder" },
-  "createdAt": "2026-06-10T00:00:00.000Z"
-}
-```
-
-`rootDirectory` is absolute (relative request input is resolved against the
-repository root). Read on cold resume only when no manifest exists;
-`createdAt` is ignored on read. The file is not deleted when the manifest is
-later written.
-
-## `<sessionId>.manifest.json` — session manifest
-
-Written (pretty-printed, trailing newline) after the first assistant message
-completes; updated in place afterwards:
+`<chatId>.manifest.json` is written after the first assistant message
+completes and is updated in place afterwards:
 
 ```json
 {
   "schemaVersion": 1,
-  "pile": "default",
-  "sessionId": "0123456789abcdef0123456789abcdef",
+  "repoId": "repo_123456789012",
+  "workspaceId": "workspace_123456",
+  "chatId": "0123456789abcdef0123456789abcdef",
+  "repositoryPath": "/Users/name/reporoot",
+  "workspacePath": "/Users/name/reporoot",
   "chatName": "Inspect project",
   "description": "Inspect project",
-  "rootDirectory": "/abs/path/to/root",
+  "rootDirectory": "/Users/name/reporoot",
   "createdAt": "2026-06-10T00:00:00.000Z",
   "updatedAt": "2026-06-10T00:00:00.000Z",
   "lastOpenedAt": "2026-06-10T00:00:00.000Z",
   "model": { "provider": "local", "id": "qwen3-coder" },
   "pi": {
-    "sessionFile": "data/sheaf-chat/sessions/piles/default/0123456789abcdef0123456789abcdef.jsonl",
+    "sessionFile": "data/sheaf-chat/repositories/<repoId>/workspaces/<workspaceId>/chats/<chatId>.jsonl",
     "extensionVersion": "0.1.0"
   },
   "history": { "messageCount": 0, "lastSequence": 12 }
 }
 ```
 
-Field meanings:
+Manifest identity must match the requested repo/workspace/chat identity or
+the read fails with `invalid_manifest`.
 
-- `schemaVersion` — `1`.
-- `chatName` / `description` — summarizer output from the first user message
-  ([agent-runtime](../../../../openspec/specs/sheaf-chat-agent-runtime/spec.md)).
-- `rootDirectory` — absolute session root; authoritative for scoped tools on
-  resume. Relativized to the repository root only in wire payloads, never on
-  disk.
-- `createdAt`/`updatedAt`/`lastOpenedAt` — ISO timestamps; all three set to
-  the write time on initial write; `updatedAt` refreshed on every update.
-- `pi.sessionFile` — repo-relative path to the Pi session file.
-- `pi.extensionVersion` — scoped-tools extension version (`0.1.0`).
-- `history.lastSequence` — newest persisted envelope sequence; updated on
-  every append once the manifest exists.
-- `history.messageCount` — written as 0 at creation and never incremented by
-  any current code path (known gap; see [coverage](../coverage.md)).
+## Workspace Editor State
 
-A manifest read whose `pile`/`sessionId` do not match the requested identity
-fails with `invalid_manifest` (`manifest identity does not match request`);
-unparseable JSON fails with `invalid_manifest` (`manifest is not valid
-JSON`).
+`editor-state.json` stores server-side file workspace state for a workspace:
+
+```json
+{
+  "tabs": ["README.md"],
+  "selectedPath": "README.md",
+  "expandedDirectories": [".", "src"],
+  "viewports": {
+    "README.md": { "scrollTop": 120 }
+  }
+}
+```
+
+All stored paths are workspace-root-relative and are normalized/rejected by
+the server before write. Escaping paths fail with `path_escape`.

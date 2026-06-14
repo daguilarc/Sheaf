@@ -1,11 +1,12 @@
 # Spec Coverage
 
-Last audit: sheaf-chat Playwright integration recovery, 2026-06-10
+Last audit: repository/workspace chat apply, 2026-06-14
 
 | Capability | Status | Gaps |
 |---|---|---|
 | service | partial | no shutdown surface, profiling points unenumerated, registry fields unused |
-| piles-sessions | partial | provisional file never deleted, `lastOpenedAt` never refreshed, mtime-based pile freshness |
+| repo-workspaces | partial | home discovery path is intentionally narrow, path-derived ids change after moves |
+| piles-sessions | replaced | old pile/session REST surface removed; workspace chat routes are the replacement |
 | session-history | partial | external-writer cache staleness, no retention, `messageCount` unmaintained |
 | chat-protocol | partial | WS close codes, hub lifetime, `client.hello` unused, `clientId` echo semantics |
 | agent-runtime | partial | no LLM summarizer wired, `followUp` handle method unused, failed-state recovery loose |
@@ -30,17 +31,17 @@ Last audit: sheaf-chat Playwright integration recovery, 2026-06-10
   [structure/logs-and-data.md](../../../structure/logs-and-data.md) is
   unresolved.
 
+### repo-workspaces
+- Repository discovery intentionally inspects only direct children of the
+  user's home directory. Nested repositories are invisible by design.
+- `repoId` and `workspaceId` are path-derived. Moving a repository or
+  worktree changes identity; no migration is provided.
+- `editor-state.json` is last-writer-wins and has no per-device merge policy.
+
 ### piles-sessions
-- `<sessionId>.provisional.json` is never deleted after the manifest is
-  written; both files coexist and the manifest wins on resume.
-- `manifest.lastOpenedAt` is set at creation and never refreshed; no code
-  path passes `lastOpenedAt` to `UpdateManifest`.
-- `ListPiles.latestUpdatedAt` uses manifest file mtime, not the manifest's
-  `updatedAt` field; the two can diverge (e.g. after copying data dirs).
-- Pile deletion/rename and session deletion have no API — intentionally
-  absent.
-- Concurrent `POST /api/piles` for the same name is idempotent (mkdir
-  recursive), but no test pins it.
+- The pile/session API and storage layout are removed. Existing
+  `data/sheaf-chat/sessions/...` data is not read or migrated; delete
+  `data/sheaf-chat` when resetting to the new layout.
 
 ### session-history
 - The in-process latest-sequence cache means envelopes appended to the log
@@ -78,7 +79,7 @@ Last audit: sheaf-chat Playwright integration recovery, 2026-06-10
 - `AgentStatusSnapshot` is only partially surfaced (`server.hello`); fields
   like `isStreaming`, `activeRunCount`, `connectedClientCount` have no
   external consumer and are unspecified beyond Design.
-- `lastOpenedAt` is never updated on attach (see piles-sessions).
+- `lastOpenedAt` is never updated on attach.
 
 ### models
 - The local model list is fetched once at process start; there is no
@@ -151,5 +152,5 @@ Last audit: sheaf-chat Playwright integration recovery, 2026-06-10
   code caps at 5000 (`x_maxHistoryLimit`). Docs now follow the code.
 - The previous docs claimed path-enforcement activity is visible to browser
   clients; the wiring is a no-op (see scoped-tools gap).
-- The previous docs claimed session ids use the same pattern as pile names
-  (max 64 chars); session ids actually allow up to 128 chars.
+- The previous docs claimed session ids use the same pattern as pile names;
+  generated repo/workspace/chat ids now use the shared identity-id pattern.

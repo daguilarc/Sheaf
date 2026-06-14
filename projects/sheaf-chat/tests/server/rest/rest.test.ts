@@ -5,9 +5,8 @@ import test from "node:test";
 import { x_serviceName, x_serviceVersion } from "../../../src/server/constants.js";
 import { AppendEnvelope, WriteInitialManifest } from "../../../src/storage/index.js";
 import { ResolveManifestFilePath } from "../../../src/storage/paths.js";
-import { CreatePile } from "../../../src/storage/piles.js";
-import { AllocateSessionShell } from "../../../src/storage/sessionLog.js";
 import {
+  CreateWorkspaceChatViaApi,
   RequestJson,
   ResolveOpenAiTestModel,
   WithTestServer,
@@ -24,6 +23,16 @@ function ErrorBody(body: unknown): { code: string; message: string }
     code: error.code as string,
     message: error.message as string,
   };
+}
+
+function WorkspaceChatsPath(repoId: string, workspaceId: string): string
+{
+  return `/api/repositories/${encodeURIComponent(repoId)}/workspaces/${encodeURIComponent(workspaceId)}/chats`;
+}
+
+function ChatPath(repoId: string, workspaceId: string, chatId: string): string
+{
+  return `${WorkspaceChatsPath(repoId, workspaceId)}/${encodeURIComponent(chatId)}`;
 }
 
 test("GET /health returns conductor-compatible service health", async () =>
@@ -88,144 +97,142 @@ test("GET /api/models returns availability metadata", async () =>
   });
 });
 
-test("pile endpoints list and create piles with validation errors", async () =>
+test("removed pile endpoints return not_found", async () =>
 {
   await WithTestServer(async ({ baseUrl }) =>
   {
-    const empty = await RequestJson(baseUrl, "GET", "/api/piles");
-    assert.equal(empty.status, 200);
-    assert.deepEqual((empty.body as { piles: unknown[] }).piles, []);
+    const listed = await RequestJson(baseUrl, "GET", "/api/piles");
+    assert.equal(listed.status, 404);
+    assert.equal(ErrorBody(listed.body).code, "not_found");
 
     const created = await RequestJson(baseUrl, "POST", "/api/piles", { pile: "work" });
-    assert.equal(created.status, 201);
-    assert.deepEqual(created.body, {
-      pile: "work",
-      sessionCount: 0,
-      latestUpdatedAt: null,
-    });
-
-    const listed = await RequestJson(baseUrl, "GET", "/api/piles");
-    assert.equal(listed.status, 200);
-    assert.equal((listed.body as { piles: Array<{ pile: string }> }).piles.length, 1);
-
-    const invalid = await RequestJson(baseUrl, "POST", "/api/piles", { pile: "../escape" });
-    assert.equal(invalid.status, 400);
-    assert.equal(ErrorBody(invalid.body).code, "invalid_pile");
+    assert.equal(created.status, 404);
+    assert.equal(ErrorBody(created.body).code, "not_found");
   });
 });
 
-test("session endpoints list, read, and create blank sessions", async () =>
+test("workspace chat endpoints list, read, and create blank chats", async () =>
 {
-  await WithTestServer(async ({ baseUrl, agentManager }) =>
+  await WithTestServer(async (handle) =>
   {
-    await RequestJson(baseUrl, "POST", "/api/piles", { pile: "default" });
+    const { baseUrl, agentManager } = handle;
     const model = ResolveOpenAiTestModel(agentManager);
-
-    const missingPile = await RequestJson(baseUrl, "GET", "/api/piles/missing/sessions");
-    assert.equal(missingPile.status, 404);
-    assert.equal(ErrorBody(missingPile.body).code, "pile_not_found");
-
-    const created = await RequestJson(baseUrl, "POST", "/api/piles/default/sessions", {
-      rootDirectory: "projects/demo",
-      model,
-    });
-    assert.equal(created.status, 201);
-
-    const body = created.body as {
-      sessionId: string;
-      provisionalSession: { rootDirectory: string; model: typeof model };
-      webSocketUrl: string;
-    };
-
-    assert.equal(typeof body.sessionId, "string");
-    assert.equal(body.provisionalSession.rootDirectory, "projects/demo");
-    assert.deepEqual(body.provisionalSession.model, model);
-    assert.equal(
-      body.webSocketUrl,
-      `/ws/chat?p=default&session=${encodeURIComponent(body.sessionId)}`,
-    );
+    const created = await CreateWorkspaceChatViaApi(handle);
 
     const manifestPath = ResolveManifestFilePath(
       agentManager.storagePaths,
-      "default",
-      body.sessionId,
+      created.repoId,
+      created.workspaceId,
+      created.chatId,
     );
     await assert.rejects(async () => access(manifestPath));
 
-    const invalidRoot = await RequestJson(baseUrl, "POST", "/api/piles/default/sessions", {
-      rootDirectory: "missing/root",
-      model,
-    });
-    assert.equal(invalidRoot.status, 400);
-    assert.equal(ErrorBody(invalidRoot.body).code, "invalid_root_directory");
-
-    const listed = await RequestJson(baseUrl, "GET", "/api/piles/default/sessions");
+    const listed = await RequestJson(
+      baseUrl,
+      "GET",
+      WorkspaceChatsPath(created.repoId, created.workspaceId),
+    );
     assert.equal(listed.status, 200);
-    assert.deepEqual((listed.body as { sessions: unknown[] }).sessions, []);
+    assert.deepEqual((listed.body as { chats: unknown[] }).chats, []);
 
     await WriteInitialManifest(agentManager.storagePaths, {
-      pile: "default",
-      sessionId: body.sessionId,
+      repoId: created.repoId,
+      workspaceId: created.workspaceId,
+      chatId: created.chatId,
+      repositoryPath: created.workspacePath,
+      workspacePath: created.workspacePath,
       chatName: "Listed chat",
       description: "desc",
-      rootDirectory: "projects/demo",
+      rootDirectory: created.workspacePath,
       model,
       extensionVersion: "0.1.0",
     });
 
-    const listedAfter = await RequestJson(baseUrl, "GET", "/api/piles/default/sessions");
-    assert.equal((listedAfter.body as { sessions: Array<{ sessionId: string }> }).sessions.length, 1);
+    const listedAfter = await RequestJson(
+      baseUrl,
+      "GET",
+      WorkspaceChatsPath(created.repoId, created.workspaceId),
+    );
+    assert.equal(
+      (listedAfter.body as { chats: Array<{ chatId: string }> }).chats[0]?.chatId,
+      created.chatId,
+    );
 
     const one = await RequestJson(
       baseUrl,
       "GET",
-      `/api/piles/default/sessions/${body.sessionId}`,
+      ChatPath(created.repoId, created.workspaceId, created.chatId),
     );
     assert.equal(one.status, 200);
     assert.equal(
-      (one.body as { manifest: { sessionId: string } }).manifest.sessionId,
-      body.sessionId,
+      (one.body as { manifest: { chatId: string; workspaceId: string } }).manifest.workspaceId,
+      created.workspaceId,
     );
 
     const missingManifest = await RequestJson(
       baseUrl,
       "GET",
-      "/api/piles/default/sessions/doesnotexist123",
+      ChatPath(created.repoId, created.workspaceId, "doesnotexist12345"),
     );
     assert.equal(missingManifest.status, 404);
     assert.equal(ErrorBody(missingManifest.body).code, "manifest_not_found");
   });
 });
 
-test("history fallback supports latest, before, after, and snapshots", async () =>
+test("workspace chat creation ignores client-provided root directory", async () =>
 {
-  await WithTestServer(async ({ baseUrl, agentManager }) =>
+  await WithTestServer(async (handle) =>
   {
-    await CreatePile(agentManager.storagePaths, "default");
-    const shell = await AllocateSessionShell(agentManager.storagePaths, "default", "projects/demo", {
-      provider: "openai",
-      id: "gpt-5-codex",
-    });
+    const model = ResolveOpenAiTestModel(handle.agentManager);
+    const created = await CreateWorkspaceChatViaApi(handle);
+    const response = await RequestJson(
+      handle.baseUrl,
+      "POST",
+      WorkspaceChatsPath(created.repoId, created.workspaceId),
+      { rootDirectory: "/tmp/escape", model },
+    );
+
+    assert.equal(response.status, 201);
+    const body = response.body as {
+      provisionalChat: { rootDirectory: string };
+      webSocketUrl: string;
+    };
+    assert.equal(body.provisionalChat.rootDirectory, created.workspacePath);
+    assert.match(body.webSocketUrl, /^\/ws\/chat\?repo=/);
+    assert.equal(body.webSocketUrl.includes("workspace="), true);
+    assert.equal(body.webSocketUrl.includes("chat="), true);
+  });
+});
+
+test("history endpoint supports latest, before, after, snapshots, and invalid requests", async () =>
+{
+  await WithTestServer(async (handle) =>
+  {
+    const created = await CreateWorkspaceChatViaApi(handle);
 
     for (let sequence = 1; sequence <= 6; sequence += 1)
     {
-      await AppendEnvelope(agentManager.storagePaths, "default", shell.sessionId, {
-        kind: "agui.event",
-        pile: "default",
-        sessionId: shell.sessionId,
-        payload: {
-          type: "TEXT_MESSAGE_CONTENT",
-          messageId: "assistant-1",
-          delta: `chunk-${sequence}`,
+      await AppendEnvelope(
+        handle.agentManager.storagePaths,
+        created.repoId,
+        created.workspaceId,
+        created.chatId,
+        {
+          kind: "agui.event",
+          repoId: created.repoId,
+          workspaceId: created.workspaceId,
+          chatId: created.chatId,
+          payload: {
+            type: "TEXT_MESSAGE_CONTENT",
+            messageId: "assistant-1",
+            delta: `chunk-${sequence}`,
+          },
         },
-      });
+      );
     }
 
-    const latest = await RequestJson(
-      baseUrl,
-      "GET",
-      `/api/piles/default/sessions/${shell.sessionId}/history?limit=2`,
-    );
+    const historyPath = `${ChatPath(created.repoId, created.workspaceId, created.chatId)}/history`;
+    const latest = await RequestJson(handle.baseUrl, "GET", `${historyPath}?limit=2`);
     assert.equal(latest.status, 200);
 
     const latestBody = latest.body as {
@@ -239,22 +246,14 @@ test("history fallback supports latest, before, after, and snapshots", async () 
     assert.equal(latestBody.envelopes.length, 2);
     assert.equal(latestBody.hasMoreBefore, true);
 
-    const before = await RequestJson(
-      baseUrl,
-      "GET",
-      `/api/piles/default/sessions/${shell.sessionId}/history?before=5&limit=2`,
-    );
+    const before = await RequestJson(handle.baseUrl, "GET", `${historyPath}?before=5&limit=2`);
     assert.equal(before.status, 200);
     assert.deepEqual(
       (before.body as { events: Array<{ delta?: string }> }).events.map((event) => event.delta),
       ["chunk-3", "chunk-4"],
     );
 
-    const after = await RequestJson(
-      baseUrl,
-      "GET",
-      `/api/piles/default/sessions/${shell.sessionId}/history?after=4&limit=2`,
-    );
+    const after = await RequestJson(handle.baseUrl, "GET", `${historyPath}?after=4&limit=2`);
     assert.equal(after.status, 200);
     assert.deepEqual(
       (after.body as { events: Array<{ delta?: string }> }).events.map((event) => event.delta),
@@ -262,47 +261,19 @@ test("history fallback supports latest, before, after, and snapshots", async () 
     );
 
     const snapshots = await RequestJson(
-      baseUrl,
+      handle.baseUrl,
       "GET",
-      `/api/piles/default/sessions/${shell.sessionId}/history?prefer=snapshots&limit=6`,
+      `${historyPath}?prefer=snapshots&limit=6`,
     );
     assert.equal(snapshots.status, 200);
     assert.ok(Array.isArray((snapshots.body as { messages: unknown[] }).messages));
 
     const invalid = await RequestJson(
-      baseUrl,
+      handle.baseUrl,
       "GET",
-      `/api/piles/default/sessions/${shell.sessionId}/history?before=3&after=4`,
+      `${historyPath}?before=3&after=4`,
     );
     assert.equal(invalid.status, 400);
     assert.equal(ErrorBody(invalid.body).code, "invalid_history_request");
-  });
-});
-
-test("unsupported methods and routes return stable errors", async () =>
-{
-  await WithTestServer(async ({ baseUrl }) =>
-  {
-    const method = await RequestJson(baseUrl, "POST", "/api/health");
-    assert.equal(method.status, 405);
-    assert.equal(ErrorBody(method.body).code, "method_not_allowed");
-
-    const missing = await RequestJson(baseUrl, "GET", "/api/unknown");
-    assert.equal(missing.status, 404);
-    assert.equal(ErrorBody(missing.body).code, "not_found");
-
-    const barePile = await fetch(`${baseUrl}/api/piles/work`, {
-      method: "GET",
-      signal: AbortSignal.timeout(1000),
-    });
-    assert.equal(barePile.status, 404);
-    assert.equal(ErrorBody(await barePile.json()).code, "not_found");
-
-    const barePilePost = await fetch(`${baseUrl}/api/piles/work`, {
-      method: "POST",
-      signal: AbortSignal.timeout(1000),
-    });
-    assert.equal(barePilePost.status, 404);
-    assert.equal(ErrorBody(await barePilePost.json()).code, "not_found");
   });
 });

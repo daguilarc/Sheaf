@@ -193,7 +193,7 @@ test("GET / serves the browser UI shell and static assets", async () =>
     const js = await fetch(`${handle.baseUrl}${x_sheafChatJsPath}`);
     assert.equal(js.status, 200);
     assert.match(js.headers.get("content-type") ?? "", /javascript/);
-    assert.match(await js.text(), /RenderPilesScreen/);
+    assert.match(await js.text(), /RenderRepositoriesScreen/);
   }
   finally
   {

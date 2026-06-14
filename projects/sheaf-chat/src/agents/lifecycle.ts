@@ -5,13 +5,14 @@ import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import {
   AgentLifecycleState,
   type ModelReference,
-  type SessionManifest,
+  type ChatManifest,
 } from "../shared/types.js";
 
-export interface SessionKey
+export interface ChatKey
 {
-  pile: string;
-  sessionId: string;
+  repoId: string;
+  workspaceId: string;
+  chatId: string;
 }
 
 export type ModelApplyTo = "next_turn" | "current_turn";
@@ -26,7 +27,7 @@ export interface UserMessageSubmission
 
 export interface AgentStatusSnapshot
 {
-  key: SessionKey;
+  key: ChatKey;
   state: AgentLifecycleState;
   model: ModelReference;
   rootDirectory: string;
@@ -35,7 +36,7 @@ export interface AgentStatusSnapshot
   isStreaming: boolean;
   activeRunCount: number;
   activeToolCount: number;
-  manifest?: SessionManifest;
+  manifest?: ChatManifest;
   provisionalRootDirectory?: string;
   error?: string;
 }
@@ -50,39 +51,39 @@ export type LifecycleEventName =
 
 export interface LifecycleStatusEvent
 {
-  key: SessionKey;
+  key: ChatKey;
   state: AgentLifecycleState;
   previousState?: AgentLifecycleState;
 }
 
 export interface LifecycleModelEvent
 {
-  key: SessionKey;
+  key: ChatKey;
   model: ModelReference;
   applyTo: ModelApplyTo;
 }
 
 export interface LifecycleUserMessageAcceptedEvent
 {
-  key: SessionKey;
+  key: ChatKey;
   message: UserMessageSubmission;
 }
 
 export interface LifecycleAgentEvent
 {
-  key: SessionKey;
+  key: ChatKey;
   event: AgentSessionEvent;
 }
 
 export interface LifecycleManifestUpdatedEvent
 {
-  key: SessionKey;
-  manifest: SessionManifest;
+  key: ChatKey;
+  manifest: ChatManifest;
 }
 
 export interface LifecycleErrorEvent
 {
-  key: SessionKey;
+  key: ChatKey;
   code: string;
   message: string;
   fatal?: boolean;
@@ -100,23 +101,39 @@ export interface LifecycleEventMap
 
 const x_keySeparator = "\u0000";
 
-export function FormatSessionKey(key: SessionKey): string
+export function FormatChatKey(key: ChatKey): string
 {
-  return `${key.pile}${x_keySeparator}${key.sessionId}`;
+  return `${KeyRepoId(key)}${x_keySeparator}${KeyWorkspaceId(key)}${x_keySeparator}${KeyChatId(key)}`;
 }
 
-export function ParseSessionKey(encoded: string): SessionKey
+export function KeyRepoId(key: ChatKey): string
 {
-  const separatorIndex = encoded.indexOf(x_keySeparator);
+  return key.repoId;
+}
 
-  if (separatorIndex < 0)
+export function KeyWorkspaceId(key: ChatKey): string
+{
+  return key.workspaceId;
+}
+
+export function KeyChatId(key: ChatKey): string
+{
+  return key.chatId;
+}
+
+export function ParseChatKey(encoded: string): ChatKey
+{
+  const parts = encoded.split(x_keySeparator);
+
+  if (parts.length !== 3)
   {
-    throw new Error(`invalid session key: ${encoded}`);
+    throw new Error(`invalid chat key: ${encoded}`);
   }
 
   return {
-    pile: encoded.slice(0, separatorIndex),
-    sessionId: encoded.slice(separatorIndex + 1),
+    repoId: parts[0],
+    workspaceId: parts[1],
+    chatId: parts[2],
   };
 }
 

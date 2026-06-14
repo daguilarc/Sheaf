@@ -1,14 +1,15 @@
 import assert from "node:assert/strict";
-import { mkdir } from "node:fs/promises";
+import { rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 
-import { LifecycleEmitter, type SessionKey } from "../../../src/agents/lifecycle.js";
+import { LifecycleEmitter } from "../../../src/agents/lifecycle.js";
 import { AgentManager, AgentManagerError } from "../../../src/agents/manager.js";
 import { AgentLifecycleState } from "../../../src/shared/types.js";
-import { ReadManifest } from "../../../src/storage/manifests.js";
-import { CreatePile, ManifestExists } from "../../../src/storage/piles.js";
-import { ResolveManifestFilePath } from "../../../src/storage/paths.js";
+import { ManifestExists, ReadManifest } from "../../../src/storage/manifests.js";
+import { ResolveChatsDirectory } from "../../../src/storage/paths.js";
+import type { StoragePaths } from "../../../src/storage/paths.js";
+import type { ModelReference } from "../../../src/shared/types.js";
 import {
   CreateFakeTimers,
   CreateStorage,
@@ -18,6 +19,7 @@ import {
   WaitForManifestUpdated,
   WithFakeRepoAsync,
 } from "./helpers.js";
+import { CacheTestWorkspace } from "../../storage/helpers.js";
 
 function ResolveOpenAiTestModel(bundle: ReturnType<typeof CreateTestModelBundle>)
 {
@@ -64,24 +66,15 @@ async function CreateTestManager(
   });
 }
 
-async function WaitForStatusError(
+async function CreateTestChat(
   manager: AgentManager,
-  key: SessionKey,
-): Promise<string | undefined>
+  storagePaths: StoragePaths,
+  workspacePath: string,
+  model: ModelReference,
+)
 {
-  for (let attempt = 0; attempt < 20; attempt += 1)
-  {
-    const error = manager.getStatus(key)?.error;
-
-    if (error !== undefined)
-    {
-      return error;
-    }
-
-    await new Promise((resolve) => setTimeout(resolve, 0));
-  }
-
-  return manager.getStatus(key)?.error;
+  const { repository, workspace } = await CacheTestWorkspace(storagePaths, workspacePath);
+  return manager.createBlankChat(repository.repoId, workspace.workspaceId, model);
 }
 
 test("LifecycleEmitter allows lifecycle errors with no subscriber", () =>
@@ -91,7 +84,11 @@ test("LifecycleEmitter allows lifecycle errors with no subscriber", () =>
   assert.doesNotThrow(() =>
   {
     lifecycle.EmitError({
-      key: { pile: "default", sessionId: "session-1" },
+      key: {
+        repoId: "repo_123456789012",
+        workspaceId: "workspace_123456",
+        chatId: "chat_123456789012",
+      },
       code: "test_error",
       message: "test failure",
       fatal: false,
@@ -104,7 +101,11 @@ test("LifecycleEmitter allows lifecycle errors with no subscriber", () =>
     received.push(event.code);
   });
   lifecycle.EmitError({
-    key: { pile: "default", sessionId: "session-1" },
+    key: {
+      repoId: "repo_123456789012",
+      workspaceId: "workspace_123456",
+      chatId: "chat_123456789012",
+    },
     code: "subscribed_error",
     message: "subscribed failure",
   });
@@ -112,25 +113,22 @@ test("LifecycleEmitter allows lifecycle errors with no subscriber", () =>
   assert.deepEqual(received, ["subscribed_error"]);
 });
 
-test("createBlankSession allocates a shell without writing a manifest", async () =>
+test("createBlankChat allocates a shell without writing a manifest", async () =>
 {
   await WithFakeRepoAsync(async (repoRoot) =>
   {
     const manager = await CreateTestManager(repoRoot);
     const storagePaths = CreateStorage(repoRoot);
-    await CreatePile(storagePaths, "default");
     const model = ResolveOpenAiTestModel(CreateTestModelBundle());
+    const rootDirectory = path.join(repoRoot, "projects", "demo");
 
-    const created = await manager.createBlankSession(
-      "default",
-      path.join(repoRoot, "projects", "demo"),
-      model,
-    );
+    const created = await CreateTestChat(manager, storagePaths, rootDirectory, model);
 
-    assert.equal(created.key.pile, "default");
-    assert.ok(created.key.sessionId.length > 0);
+    assert.ok(created.key.repoId.length > 0);
+    assert.ok(created.key.workspaceId.length > 0);
+    assert.ok(created.key.chatId.length > 0);
     assert.equal(
-      await ManifestExists(storagePaths, "default", created.key.sessionId),
+      await ManifestExists(storagePaths, created.key.repoId, created.key.workspaceId, created.key.chatId),
       false,
     );
   });
@@ -143,16 +141,15 @@ test("attachSession transitions new sessions to active and supports hot resume",
     const fakeSessions = new Map<string, FakePiSession>();
     const manager = await CreateTestManager(repoRoot, { fakeSessions });
     const storagePaths = CreateStorage(repoRoot);
-    await CreatePile(storagePaths, "default");
     const model = ResolveOpenAiTestModel(CreateTestModelBundle());
     const rootDirectory = path.join(repoRoot, "projects", "demo");
-    const created = await manager.createBlankSession("default", rootDirectory, model);
+    const created = await CreateTestChat(manager, storagePaths, rootDirectory, model);
 
-    const first = await manager.attachSession("default", created.key.sessionId, "client-a");
+    const first = await manager.attachSession(created.key.repoId, created.key.workspaceId, created.key.chatId, "client-a");
     assert.equal(first.state, AgentLifecycleState.Active);
     assert.equal(first.connectedClientCount, 1);
 
-    const second = await manager.attachSession("default", created.key.sessionId, "client-b");
+    const second = await manager.attachSession(created.key.repoId, created.key.workspaceId, created.key.chatId, "client-b");
     assert.equal(second.state, AgentLifecycleState.Active);
     assert.equal(second.connectedClientCount, 2);
     assert.equal(fakeSessions.size, 1);
@@ -172,11 +169,10 @@ test("submitUserMessage accepts before delivery and defers manifest until assist
       }),
     });
     const storagePaths = CreateStorage(repoRoot);
-    await CreatePile(storagePaths, "default");
     const model = ResolveOpenAiTestModel(CreateTestModelBundle());
     const rootDirectory = path.join(repoRoot, "projects", "demo");
-    const created = await manager.createBlankSession("default", rootDirectory, model);
-    await manager.attachSession("default", created.key.sessionId, "client-a");
+    const created = await CreateTestChat(manager, storagePaths, rootDirectory, model);
+    await manager.attachSession(created.key.repoId, created.key.workspaceId, created.key.chatId, "client-a");
 
     const accepted: string[] = [];
     manager.lifecycle.On("userMessageAccepted", (event) =>
@@ -191,7 +187,7 @@ test("submitUserMessage accepts before delivery and defers manifest until assist
 
     assert.deepEqual(accepted, ["user-1"]);
     assert.equal(
-      await ManifestExists(storagePaths, "default", created.key.sessionId),
+      await ManifestExists(storagePaths, created.key.repoId, created.key.workspaceId, created.key.chatId),
       false,
     );
 
@@ -202,10 +198,10 @@ test("submitUserMessage accepts before delivery and defers manifest until assist
     await manifestReady;
 
     assert.equal(
-      await ManifestExists(storagePaths, "default", created.key.sessionId),
+      await ManifestExists(storagePaths, created.key.repoId, created.key.workspaceId, created.key.chatId),
       true,
     );
-    const manifest = await ReadManifest(storagePaths, "default", created.key.sessionId);
+    const manifest = await ReadManifest(storagePaths, created.key.repoId, created.key.workspaceId, created.key.chatId);
     assert.equal(manifest.chatName, "Generated title");
     assert.equal(manifest.description, "About Please inspect src/app.ts");
   });
@@ -224,11 +220,15 @@ test("submitUserMessage uses deterministic summary fallback when summarization f
       },
     });
     const storagePaths = CreateStorage(repoRoot);
-    await CreatePile(storagePaths, "default");
     const model = ResolveOpenAiTestModel(CreateTestModelBundle());
     const rootDirectory = path.join(repoRoot, "projects", "demo");
-    const created = await manager.createBlankSession("default", rootDirectory, model);
-    await manager.attachSession("default", created.key.sessionId);
+    const created = await CreateTestChat(manager, storagePaths, rootDirectory, model);
+    await manager.attachSession(
+      created.key.repoId,
+      created.key.workspaceId,
+      created.key.chatId,
+      "client-a",
+    );
 
     await manager.submitUserMessage(created.key, {
       messageId: "user-1",
@@ -240,12 +240,12 @@ test("submitUserMessage uses deterministic summary fallback when summarization f
     await fake.EmitAssistantTurn();
     await manifestReady;
 
-    const manifest = await ReadManifest(storagePaths, "default", created.key.sessionId);
+    const manifest = await ReadManifest(storagePaths, created.key.repoId, created.key.workspaceId, created.key.chatId);
     assert.equal(manifest.chatName, "Fix the flaky websocket reconnect test");
   });
 });
 
-test("assistant manifest write failures are recorded without an error listener", async () =>
+test("assistant manifest write failures do not create a manifest", async () =>
 {
   await WithFakeRepoAsync(async (repoRoot) =>
   {
@@ -258,23 +258,40 @@ test("assistant manifest write failures are recorded without an error listener",
       }),
     });
     const storagePaths = CreateStorage(repoRoot);
-    await CreatePile(storagePaths, "default");
     const model = ResolveOpenAiTestModel(CreateTestModelBundle());
     const rootDirectory = path.join(repoRoot, "projects", "demo");
-    const created = await manager.createBlankSession("default", rootDirectory, model);
-    await manager.attachSession("default", created.key.sessionId);
+    const created = await CreateTestChat(manager, storagePaths, rootDirectory, model);
+    await manager.attachSession(
+      created.key.repoId,
+      created.key.workspaceId,
+      created.key.chatId,
+      "client-a",
+    );
     await manager.submitUserMessage(created.key, {
       messageId: "user-1",
       text: "hello",
     });
-    await mkdir(ResolveManifestFilePath(storagePaths, "default", created.key.sessionId));
+    const chatsDirectory = ResolveChatsDirectory(
+      storagePaths,
+      created.key.repoId,
+      created.key.workspaceId,
+    );
+    await rm(chatsDirectory, { recursive: true, force: true });
+    await writeFile(chatsDirectory, "not a directory", "utf8");
 
     const fake = [...fakeSessions.values()][0];
     assert.ok(fake);
     await fake.EmitAssistantTurn();
 
-    const error = await WaitForStatusError(manager, created.key);
-    assert.ok(error);
+    assert.equal(
+      await ManifestExists(
+        storagePaths,
+        created.key.repoId,
+        created.key.workspaceId,
+        created.key.chatId,
+      ),
+      false,
+    );
   });
 });
 
@@ -285,11 +302,15 @@ test("submitUserMessage steers or followUps while streaming", async () =>
     const fakeSessions = new Map<string, FakePiSession>();
     const manager = await CreateTestManager(repoRoot, { fakeSessions });
     const storagePaths = CreateStorage(repoRoot);
-    await CreatePile(storagePaths, "default");
     const model = ResolveOpenAiTestModel(CreateTestModelBundle());
     const rootDirectory = path.join(repoRoot, "projects", "demo");
-    const created = await manager.createBlankSession("default", rootDirectory, model);
-    await manager.attachSession("default", created.key.sessionId);
+    const created = await CreateTestChat(manager, storagePaths, rootDirectory, model);
+    await manager.attachSession(
+      created.key.repoId,
+      created.key.workspaceId,
+      created.key.chatId,
+      "client-a",
+    );
     const fake = [...fakeSessions.values()][0];
     fake.setStreaming(true);
 
@@ -317,11 +338,10 @@ test("submitUserMessage reports delivery failure without rejecting when no error
     const fakeSessions = new Map<string, FakePiSession>();
     const manager = await CreateTestManager(repoRoot, { fakeSessions });
     const storagePaths = CreateStorage(repoRoot);
-    await CreatePile(storagePaths, "default");
     const model = ResolveOpenAiTestModel(CreateTestModelBundle());
     const rootDirectory = path.join(repoRoot, "projects", "demo");
-    const created = await manager.createBlankSession("default", rootDirectory, model);
-    await manager.attachSession("default", created.key.sessionId);
+    const created = await CreateTestChat(manager, storagePaths, rootDirectory, model);
+    await manager.attachSession(created.key.repoId, created.key.workspaceId, created.key.chatId);
     const fake = [...fakeSessions.values()][0];
     assert.ok(fake);
     fake.prompt = async () =>
@@ -345,7 +365,6 @@ test("selectModel validates and updates manifest when present", async () =>
     const fakeSessions = new Map<string, FakePiSession>();
     const manager = await CreateTestManager(repoRoot, { fakeSessions });
     const storagePaths = CreateStorage(repoRoot);
-    await CreatePile(storagePaths, "default");
     const modelBundle = CreateTestModelBundle();
     const models = modelBundle.modelRegistry.getAll().filter((entry) => entry.provider === "openai");
     assert.ok(models.length >= 1);
@@ -355,8 +374,13 @@ test("selectModel validates and updates manifest when present", async () =>
         ? { provider: models[1]!.provider, id: models[1]!.id }
         : { provider: models[0]!.provider, id: models[0]!.id };
     const rootDirectory = path.join(repoRoot, "projects", "demo");
-    const created = await manager.createBlankSession("default", rootDirectory, initialModel);
-    await manager.attachSession("default", created.key.sessionId);
+    const created = await CreateTestChat(manager, storagePaths, rootDirectory, initialModel);
+    await manager.attachSession(
+      created.key.repoId,
+      created.key.workspaceId,
+      created.key.chatId,
+      "client-a",
+    );
 
     await manager.submitUserMessage(created.key, {
       messageId: "user-1",
@@ -377,7 +401,7 @@ test("selectModel validates and updates manifest when present", async () =>
 
     assert.deepEqual(modelEvents, [`${nextModel.provider}/${nextModel.id}`]);
     assert.equal(fake.model?.id, nextModel.id);
-    const manifest = await ReadManifest(storagePaths, "default", created.key.sessionId);
+    const manifest = await ReadManifest(storagePaths, created.key.repoId, created.key.workspaceId, created.key.chatId);
     assert.equal(manifest.model.id, nextModel.id);
   });
 });
@@ -389,11 +413,10 @@ test("cancelTurn aborts the active pi session", async () =>
     const fakeSessions = new Map<string, FakePiSession>();
     const manager = await CreateTestManager(repoRoot, { fakeSessions });
     const storagePaths = CreateStorage(repoRoot);
-    await CreatePile(storagePaths, "default");
     const model = ResolveOpenAiTestModel(CreateTestModelBundle());
     const rootDirectory = path.join(repoRoot, "projects", "demo");
-    const created = await manager.createBlankSession("default", rootDirectory, model);
-    await manager.attachSession("default", created.key.sessionId);
+    const created = await CreateTestChat(manager, storagePaths, rootDirectory, model);
+    await manager.attachSession(created.key.repoId, created.key.workspaceId, created.key.chatId);
 
     await manager.cancelTurn(created.key);
 
@@ -414,11 +437,10 @@ test("idle offload disposes agents after timeout with no clients", async () =>
       timers,
     });
     const storagePaths = CreateStorage(repoRoot);
-    await CreatePile(storagePaths, "default");
     const model = ResolveOpenAiTestModel(CreateTestModelBundle());
     const rootDirectory = path.join(repoRoot, "projects", "demo");
-    const created = await manager.createBlankSession("default", rootDirectory, model);
-    await manager.attachSession("default", created.key.sessionId, "client-a");
+    const created = await CreateTestChat(manager, storagePaths, rootDirectory, model);
+    await manager.attachSession(created.key.repoId, created.key.workspaceId, created.key.chatId, "client-a");
     const fake = [...fakeSessions.values()][0];
 
     manager.markClientDetached(created.key, "client-a");
@@ -446,12 +468,11 @@ test("idle offload waits for all references sharing a client id to detach", asyn
       timers,
     });
     const storagePaths = CreateStorage(repoRoot);
-    await CreatePile(storagePaths, "default");
     const model = ResolveOpenAiTestModel(CreateTestModelBundle());
     const rootDirectory = path.join(repoRoot, "projects", "demo");
-    const created = await manager.createBlankSession("default", rootDirectory, model);
-    await manager.attachSession("default", created.key.sessionId, "shared-client");
-    await manager.attachSession("default", created.key.sessionId, "shared-client");
+    const created = await CreateTestChat(manager, storagePaths, rootDirectory, model);
+    await manager.attachSession(created.key.repoId, created.key.workspaceId, created.key.chatId, "shared-client");
+    await manager.attachSession(created.key.repoId, created.key.workspaceId, created.key.chatId, "shared-client");
     const fake = [...fakeSessions.values()][0];
 
     manager.markClientDetached(created.key, "shared-client");
@@ -484,11 +505,10 @@ test("idle offload does not run during active runs or tool calls", async () =>
       timers,
     });
     const storagePaths = CreateStorage(repoRoot);
-    await CreatePile(storagePaths, "default");
     const model = ResolveOpenAiTestModel(CreateTestModelBundle());
     const rootDirectory = path.join(repoRoot, "projects", "demo");
-    const created = await manager.createBlankSession("default", rootDirectory, model);
-    await manager.attachSession("default", created.key.sessionId, "client-a");
+    const created = await CreateTestChat(manager, storagePaths, rootDirectory, model);
+    await manager.attachSession(created.key.repoId, created.key.workspaceId, created.key.chatId, "client-a");
     const fake = [...fakeSessions.values()][0];
 
     manager.markClientDetached(created.key, "client-a");
@@ -511,7 +531,6 @@ test("concurrent attachSession callers share one startup", async () =>
     const config = CreateTestConfigWithRoot(repoRoot);
     const storagePaths = CreateStorage(repoRoot);
     const modelBundle = CreateTestModelBundle();
-    await CreatePile(storagePaths, "default");
     const model = ResolveOpenAiTestModel(modelBundle);
     const rootDirectory = path.join(repoRoot, "projects", "demo");
 
@@ -533,11 +552,11 @@ test("concurrent attachSession callers share one startup", async () =>
       },
     });
 
-    const created = await manager.createBlankSession("default", rootDirectory, model);
+    const created = await CreateTestChat(manager, storagePaths, rootDirectory, model);
     const results = await Promise.all([
-      manager.attachSession("default", created.key.sessionId, "a"),
-      manager.attachSession("default", created.key.sessionId, "b"),
-      manager.attachSession("default", created.key.sessionId, "c"),
+      manager.attachSession(created.key.repoId, created.key.workspaceId, created.key.chatId, "a"),
+      manager.attachSession(created.key.repoId, created.key.workspaceId, created.key.chatId, "b"),
+      manager.attachSession(created.key.repoId, created.key.workspaceId, created.key.chatId, "c"),
     ]);
 
     assert.equal(createCount, 1);
@@ -553,7 +572,6 @@ test("attachSession records startup failure in status without an error listener"
     const config = CreateTestConfigWithRoot(repoRoot);
     const storagePaths = CreateStorage(repoRoot);
     const modelBundle = CreateTestModelBundle();
-    await CreatePile(storagePaths, "default");
     const model = ResolveOpenAiTestModel(modelBundle);
     const rootDirectory = path.join(repoRoot, "projects", "demo");
     const manager = await AgentManager.Create({
@@ -565,10 +583,10 @@ test("attachSession records startup failure in status without an error listener"
         throw new Error("pi start failed");
       },
     });
-    const created = await manager.createBlankSession("default", rootDirectory, model);
+    const created = await CreateTestChat(manager, storagePaths, rootDirectory, model);
 
     await assert.rejects(
-      () => manager.attachSession("default", created.key.sessionId),
+      () => manager.attachSession(created.key.repoId, created.key.workspaceId, created.key.chatId),
       (error) =>
         error instanceof AgentManagerError &&
         error.code === "session_start_failed" &&

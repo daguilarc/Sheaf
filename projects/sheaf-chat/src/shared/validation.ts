@@ -1,34 +1,18 @@
-export const x_pileNamePattern = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
-export const x_sessionIdPattern = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+export const x_identityIdPattern = /^[A-Za-z0-9_-]{16,128}$/;
 
 const x_reservedNames = new Set([".", ".."]);
 
-export function IsValidPileName(name: string): boolean
+export function IsValidIdentityId(id: string): boolean
 {
-  if (name.length === 0 || x_reservedNames.has(name))
+  if (id.length === 0 || x_reservedNames.has(id))
   {
     return false;
   }
 
-  if (name.includes("/") || name.includes("\\"))
+  if (id.includes("/") || id.includes("\\"))
   {
     return false;
   }
 
-  return x_pileNamePattern.test(name);
-}
-
-export function IsValidSessionId(sessionId: string): boolean
-{
-  if (sessionId.length === 0 || x_reservedNames.has(sessionId))
-  {
-    return false;
-  }
-
-  if (sessionId.includes("/") || sessionId.includes("\\"))
-  {
-    return false;
-  }
-
-  return x_sessionIdPattern.test(sessionId);
+  return x_identityIdPattern.test(id);
 }

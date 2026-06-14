@@ -6,6 +6,7 @@ import { CreateSheafChatServer } from "../../../src/server/server.js";
 import { CreateStoragePaths } from "../../../src/storage/paths.js";
 import { CreateTestModelBundle } from "../../agents/lifecycle/helpers.js";
 import { BuildTestConfig, WithFakeRepoAsync } from "../../agents/modelRegistry/helpers.js";
+import { CacheTestWorkspace } from "../../storage/helpers.js";
 
 export interface TestServerHandle
 {
@@ -103,5 +104,36 @@ export function ResolveOpenAiTestModel(agentManager: AgentManager): { provider: 
   return {
     provider: model.provider,
     id: model.id,
+  };
+}
+
+export async function CreateWorkspaceChatViaApi(
+  handle: TestServerHandle,
+  workspacePath = `${handle.config.repoRoot}/projects/demo`,
+): Promise<{ repoId: string; workspaceId: string; chatId: string; workspacePath: string }>
+{
+  const storagePaths = CreateStoragePaths(handle.config.repoRoot);
+  const { repository, workspace } = await CacheTestWorkspace(storagePaths, workspacePath, {
+    repoPath: workspacePath,
+    workspaceDisplayName: "main",
+  });
+  const model = ResolveOpenAiTestModel(handle.agentManager);
+  const response = await RequestJson(
+    handle.baseUrl,
+    "POST",
+    `/api/repositories/${encodeURIComponent(repository.repoId)}/workspaces/${encodeURIComponent(workspace.workspaceId)}/chats`,
+    { model },
+  );
+
+  if (response.status !== 201)
+  {
+    throw new Error(`create chat failed: ${response.status}`);
+  }
+
+  return {
+    repoId: repository.repoId,
+    workspaceId: workspace.workspaceId,
+    chatId: (response.body as { chatId: string }).chatId,
+    workspacePath,
   };
 }

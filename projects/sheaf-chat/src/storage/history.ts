@@ -3,7 +3,7 @@ import type { ChatEnvelope } from "../shared/envelope.js";
 import { StorageError } from "./errors.js";
 import { CollectSessionLogEntries } from "./sessionLog.js";
 import type { StoragePaths } from "./paths.js";
-import { ValidateSessionId } from "./validation.js";
+import { ValidateChatId } from "./validation.js";
 
 export const x_defaultHistoryLimit = 50;
 export const x_maxHistoryLimit = 5000;
@@ -121,15 +121,21 @@ function BuildAfterPage(
 
 export async function ReadHistoryPage(
   paths: StoragePaths,
-  pile: string,
-  sessionId: string,
+  repoId: string,
+  workspaceId: string,
+  chatId: string,
   request: HistoryPageRequest = {},
 ): Promise<HistoryPage>
 {
-  const validatedSessionId = ValidateSessionId(sessionId);
+  const validatedChatId = ValidateChatId(chatId);
   const validatedRequest = ValidateHistoryRequest(request);
   const limit = ClampHistoryLimit(validatedRequest.limit);
-  const entries = await CollectSessionLogEntries(paths, pile, validatedSessionId);
+  const entries = await CollectSessionLogEntries(
+    paths,
+    repoId,
+    workspaceId,
+    validatedChatId,
+  );
 
   if (validatedRequest.before !== undefined)
   {

@@ -8,21 +8,22 @@ import { promisify } from "node:util";
 import { WebSocket } from "ws";
 
 import {
+  CreateWorkspaceChatViaApi,
   RequestJson,
-  ResolveOpenAiTestModel,
+  type TestServerHandle,
   WithTestServer,
 } from "./helpers.js";
 
 const ExecFile = promisify(execFile);
 
-function WsUrl(baseUrl: string, pile: string, sessionId: string): string
+function WsUrl(baseUrl: string, repoId: string, workspaceId: string): string
 {
   const url = new URL(baseUrl);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
   url.pathname = "/ws/agent-review";
   url.search = "";
-  url.searchParams.set("p", pile);
-  url.searchParams.set("session", sessionId);
+  url.searchParams.set("repo", repoId);
+  url.searchParams.set("workspace", workspaceId);
   url.searchParams.set("client", "test-client");
   return url.toString();
 }
@@ -53,21 +54,18 @@ async function Git(cwd: string, args: string[]): Promise<string>
 }
 
 async function CreateGitReviewSession(
-  baseUrl: string,
-  agentManager: import("../../../src/agents/manager.js").AgentManager,
-): Promise<{ pile: string; sessionId: string; repoRoot: string; filePath: string }>
+  handle: TestServerHandle,
+): Promise<{
+  repoId: string;
+  workspaceId: string;
+  chatId: string;
+  repoRoot: string;
+  filePath: string;
+}>
 {
-  const pile = "default";
-  await RequestJson(baseUrl, "POST", "/api/piles", { pile });
-  const created = await RequestJson(baseUrl, "POST", `/api/piles/${pile}/sessions`, {
-    rootDirectory: "projects/demo",
-    model: ResolveOpenAiTestModel(agentManager),
-  });
-  assert.equal(created.status, 201);
-
-  const sessionId = (created.body as { sessionId: string }).sessionId;
-  const repoRoot = agentManager.storagePaths.repoRoot;
+  const repoRoot = handle.agentManager.storagePaths.repoRoot;
   const demoRoot = path.join(repoRoot, "projects/demo");
+  const created = await CreateWorkspaceChatViaApi(handle, demoRoot);
   const filePath = path.join(demoRoot, "app.ts");
 
   await mkdir(demoRoot, { recursive: true });
@@ -79,18 +77,18 @@ async function CreateGitReviewSession(
   await Git(repoRoot, ["commit", "-m", "initial"]);
   await writeFile(filePath, "one\ntwo changed\nthree\n", "utf8");
 
-  return { pile, sessionId, repoRoot, filePath };
+  return { ...created, repoRoot, filePath };
 }
 
-test("Agent Review availability reports Git hunks under the session root", async () =>
+test("Agent Review availability reports Git hunks under the workspace root", async () =>
 {
-  await WithTestServer(async ({ baseUrl, agentManager }) =>
+  await WithTestServer(async (handle) =>
   {
-    const { pile, sessionId } = await CreateGitReviewSession(baseUrl, agentManager);
+    const { repoId, workspaceId } = await CreateGitReviewSession(handle);
     const response = await RequestJson(
-      baseUrl,
+      handle.baseUrl,
       "GET",
-      `/api/piles/${pile}/sessions/${sessionId}/agent-review`,
+      `/api/repositories/${encodeURIComponent(repoId)}/workspaces/${encodeURIComponent(workspaceId)}/agent-review`,
     );
 
     assert.equal(response.status, 200);
@@ -112,11 +110,11 @@ test("Agent Review availability reports Git hunks under the session root", async
 
 test("Agent Review WebSocket stages, reverts, and undoes current hunks", async () =>
 {
-  await WithTestServer(async ({ baseUrl, agentManager }) =>
+  await WithTestServer(async (handle) =>
   {
-    const { pile, sessionId, repoRoot, filePath } =
-      await CreateGitReviewSession(baseUrl, agentManager);
-    const socket = new WebSocket(WsUrl(baseUrl, pile, sessionId));
+    const { repoId, workspaceId, repoRoot, filePath } =
+      await CreateGitReviewSession(handle);
+    const socket = new WebSocket(WsUrl(handle.baseUrl, repoId, workspaceId));
 
     await new Promise<void>((resolve, reject) =>
     {
@@ -169,6 +167,88 @@ test("Agent Review WebSocket stages, reverts, and undoes current hunks", async (
       "projects/demo/app.ts",
     );
     assert.equal(await readFile(filePath, "utf8"), "one\ntwo changed\nthree\n");
+
+    await new Promise<void>((resolve) =>
+    {
+      socket.once("close", () => resolve());
+      socket.close();
+    });
+  });
+});
+
+async function CreateMultiHunkReviewSession(
+  handle: TestServerHandle,
+): Promise<{ repoId: string; workspaceId: string }>
+{
+  const repoRoot = handle.agentManager.storagePaths.repoRoot;
+  const demoRoot = path.join(repoRoot, "projects/demo");
+  const created = await CreateWorkspaceChatViaApi(handle, demoRoot);
+
+  await mkdir(demoRoot, { recursive: true });
+  await Git(repoRoot, ["init"]);
+  await Git(repoRoot, ["config", "user.email", "test@example.com"]);
+  await Git(repoRoot, ["config", "user.name", "Test User"]);
+
+  const base = Array.from({ length: 30 }, (_, index) => `line ${index + 1}`);
+  const alphaPath = path.join(demoRoot, "alpha.ts");
+  const betaPath = path.join(demoRoot, "beta.ts");
+  await writeFile(alphaPath, `${base.join("\n")}\n`, "utf8");
+  await writeFile(betaPath, `${base.join("\n")}\n`, "utf8");
+  await Git(repoRoot, ["add", "."]);
+  await Git(repoRoot, ["commit", "-m", "initial"]);
+
+  // alpha.ts: two changes far apart -> two separate hunks. beta.ts: one hunk.
+  const alpha = base.slice();
+  alpha[1] = "line 2 changed";
+  alpha[26] = "line 27 changed";
+  await writeFile(alphaPath, `${alpha.join("\n")}\n`, "utf8");
+  const beta = base.slice();
+  beta[14] = "line 15 changed";
+  await writeFile(betaPath, `${beta.join("\n")}\n`, "utf8");
+
+  return { repoId: created.repoId, workspaceId: created.workspaceId };
+}
+
+test("Agent Review WebSocket navigates between hunks and files", async () =>
+{
+  await WithTestServer(async (handle) =>
+  {
+    const { repoId, workspaceId } = await CreateMultiHunkReviewSession(handle);
+    const socket = new WebSocket(WsUrl(handle.baseUrl, repoId, workspaceId));
+
+    await new Promise<void>((resolve, reject) =>
+    {
+      socket.once("open", () => resolve());
+      socket.once("error", reject);
+    });
+
+    const bootstrap = await WaitForFrame(socket, "bootstrap");
+    const first = bootstrap.state.currentHunk;
+    // Three hunks across two files: alpha.ts (x2), beta.ts (x1).
+    assert.equal(first.file, "projects/demo/alpha.ts");
+    assert.equal(first.hunkIndex, 0);
+    assert.equal(first.hunkCount, 3);
+    assert.equal(first.fileCount, 2);
+
+    // Next hunk: advance to the second hunk in the same file.
+    socket.send(JSON.stringify({ type: "command", id: "next-1", action: "nextHunk" }));
+    const afterNextHunk = await WaitForFrame(socket, "command_result");
+    assert.equal(afterNextHunk.result.ok, true);
+    assert.equal(afterNextHunk.state.currentHunk.file, "projects/demo/alpha.ts");
+    assert.equal(afterNextHunk.state.currentHunk.hunkIndex, 1);
+    assert.notEqual(afterNextHunk.state.currentHunk.hunkId, first.hunkId);
+
+    // Next file: advance to the first hunk of the next file.
+    socket.send(JSON.stringify({ type: "command", id: "nextfile-1", action: "nextFile" }));
+    const afterNextFile = await WaitForFrame(socket, "command_result");
+    assert.equal(afterNextFile.result.ok, true);
+    assert.equal(afterNextFile.state.currentHunk.file, "projects/demo/beta.ts");
+
+    // Previous file: move back into the first file.
+    socket.send(JSON.stringify({ type: "command", id: "prevfile-1", action: "previousFile" }));
+    const afterPrevFile = await WaitForFrame(socket, "command_result");
+    assert.equal(afterPrevFile.result.ok, true);
+    assert.equal(afterPrevFile.state.currentHunk.file, "projects/demo/alpha.ts");
 
     await new Promise<void>((resolve) =>
     {

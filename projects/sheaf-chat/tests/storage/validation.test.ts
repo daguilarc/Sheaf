@@ -2,37 +2,37 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { StorageError } from "../../src/storage/errors.js";
-import { ValidatePileName, ValidateSessionId } from "../../src/storage/validation.js";
+import {
+  ValidateChatId,
+  ValidateRepoId,
+  ValidateWorkspaceId,
+} from "../../src/storage/validation.js";
 
-test("ValidatePileName rejects traversal, reserved names, and invalid stems", () =>
+test("ValidateIdentityId wrappers reject traversal, reserved names, and invalid ids", () =>
 {
   assert.throws(
-    () => ValidatePileName(""),
-    (error: unknown) => error instanceof StorageError && error.code === "invalid_pile",
+    () => ValidateRepoId(""),
+    (error: unknown) => error instanceof StorageError && error.code === "invalid_id",
   );
-  assert.throws(() => ValidatePileName("."), StorageError);
-  assert.throws(() => ValidatePileName(".."), StorageError);
-  assert.throws(() => ValidatePileName("bad/name"), StorageError);
-  assert.throws(() => ValidatePileName("bad\\name"), StorageError);
-  assert.throws(() => ValidatePileName("-leading-dash"), StorageError);
+  assert.throws(() => ValidateWorkspaceId("."), StorageError);
+  assert.throws(() => ValidateChatId(".."), StorageError);
+  assert.throws(() => ValidateRepoId("bad/name"), StorageError);
+  assert.throws(() => ValidateWorkspaceId("bad\\name"), StorageError);
+  assert.throws(() => ValidateChatId("short"), StorageError);
 });
 
-test("ValidatePileName rejects Unicode normalization differences", () =>
+test("ValidateIdentityId wrappers reject Unicode normalization differences", () =>
 {
-  const nfdName = "e\u0301team";
+  const nfdName = "repo_12345678901e\u0301";
   const nfcName = nfdName.normalize("NFC");
 
   assert.notEqual(nfdName, nfcName);
   assert.throws(
-    () => ValidatePileName(nfdName),
+    () => ValidateRepoId(nfdName),
     (error: unknown) => error instanceof StorageError && error.code === "invalid_name",
   );
-  assert.equal(ValidatePileName(`a${nfcName.slice(1)}`), `a${nfcName.slice(1)}`);
-});
-
-test("ValidateSessionId accepts generated ids and rejects unsafe values", () =>
-{
-  assert.equal(ValidateSessionId("01Jabc"), "01Jabc");
-  assert.throws(() => ValidateSessionId(".."), StorageError);
-  assert.throws(() => ValidateSessionId("bad/name"), StorageError);
+  assert.throws(
+    () => ValidateRepoId(nfcName),
+    (error: unknown) => error instanceof StorageError && error.code === "invalid_id",
+  );
 });

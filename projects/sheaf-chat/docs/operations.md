@@ -133,7 +133,9 @@ stderr. Current registration: host `0.0.0.0`, port `9004`, `home_path` `/`,
 command `make sheaf-chat-run` (see
 [Services](../../../structure/services.md)).
 
-Open `http://localhost:9004/` for the piles screen.
+Open `http://localhost:9004/` for the repository picker. The service lists
+Git repositories whose top-level root is a direct child of the user's home
+directory, then lets the browser select a worktree and open workspace chats.
 
 Verify:
 

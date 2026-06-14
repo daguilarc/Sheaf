@@ -3,20 +3,26 @@ import path from "node:path";
 
 import { GetDefaultSheafChatPaths } from "../server/repo_paths.js";
 import { StorageError } from "./errors.js";
-import { ValidatePileName, ValidateSessionId } from "./validation.js";
+import {
+  ValidateChatId,
+  ValidateRepoId,
+  ValidateWorkspaceId,
+} from "./validation.js";
 
-export const x_pilesDirRelative = "data/sheaf-chat/sessions/piles";
+export const x_repositoriesDirRelative = "data/sheaf-chat/repositories";
 export const x_historyFileSuffix = ".sheaf-history.jsonl";
 export const x_manifestFileSuffix = ".manifest.json";
 export const x_provisionalFileSuffix = ".provisional.json";
 export const x_sessionFileSuffix = ".jsonl";
+export const x_repositoryMetadataFile = "repository.json";
+export const x_workspaceMetadataFile = "workspace.json";
+export const x_workspaceEditorStateFile = "editor-state.json";
 
 export interface StoragePaths
 {
   repoRoot: string;
   dataDir: string;
-  sessionsDir: string;
-  pilesDir: string;
+  repositoriesDir: string;
 }
 
 export function CreateStoragePaths(repoRoot: string): StoragePaths
@@ -26,46 +32,121 @@ export function CreateStoragePaths(repoRoot: string): StoragePaths
   return {
     repoRoot,
     dataDir: defaults.dataDir,
-    sessionsDir: defaults.sessionsDir,
-    pilesDir: path.join(defaults.sessionsDir, "piles"),
+    repositoriesDir: path.join(defaults.dataDir, "repositories"),
   };
 }
 
-export function ResolvePileDirectory(paths: StoragePaths, pile: string): string
+export function ResolveRepositoryDirectory(paths: StoragePaths, repoId: string): string
 {
-  const validatedPile = ValidatePileName(pile);
-  return path.join(paths.pilesDir, validatedPile);
+  return path.join(paths.repositoriesDir, ValidateRepoId(repoId));
 }
 
-export function ResolveSessionStem(paths: StoragePaths, pile: string, sessionId: string): string
+export function ResolveRepositoryMetadataPath(paths: StoragePaths, repoId: string): string
 {
-  const pileDir = ResolvePileDirectory(paths, pile);
-  const validatedSessionId = ValidateSessionId(sessionId);
-  return path.join(pileDir, validatedSessionId);
+  return path.join(ResolveRepositoryDirectory(paths, repoId), x_repositoryMetadataFile);
 }
 
-export function ResolveSessionFilePath(paths: StoragePaths, pile: string, sessionId: string): string
+export function ResolveWorkspacesDirectory(paths: StoragePaths, repoId: string): string
 {
-  const validatedSessionId = ValidateSessionId(sessionId);
-  return `${ResolveSessionStem(paths, pile, sessionId)}${x_sessionFileSuffix}`;
+  return path.join(ResolveRepositoryDirectory(paths, repoId), "workspaces");
 }
 
-export function ResolveManifestFilePath(paths: StoragePaths, pile: string, sessionId: string): string
+export function ResolveWorkspaceDirectory(
+  paths: StoragePaths,
+  repoId: string,
+  workspaceId: string,
+): string
 {
-  const validatedSessionId = ValidateSessionId(sessionId);
-  return `${ResolveSessionStem(paths, pile, sessionId)}${x_manifestFileSuffix}`;
+  return path.join(
+    ResolveWorkspacesDirectory(paths, repoId),
+    ValidateWorkspaceId(workspaceId),
+  );
 }
 
-export function ResolveHistoryFilePath(paths: StoragePaths, pile: string, sessionId: string): string
+export function ResolveWorkspaceMetadataPath(
+  paths: StoragePaths,
+  repoId: string,
+  workspaceId: string,
+): string
 {
-  const validatedSessionId = ValidateSessionId(sessionId);
-  return `${ResolveSessionStem(paths, pile, sessionId)}${x_historyFileSuffix}`;
+  return path.join(
+    ResolveWorkspaceDirectory(paths, repoId, workspaceId),
+    x_workspaceMetadataFile,
+  );
 }
 
-export function ResolveProvisionalFilePath(paths: StoragePaths, pile: string, sessionId: string): string
+export function ResolveWorkspaceEditorStatePath(
+  paths: StoragePaths,
+  repoId: string,
+  workspaceId: string,
+): string
 {
-  const validatedSessionId = ValidateSessionId(sessionId);
-  return `${ResolveSessionStem(paths, pile, sessionId)}${x_provisionalFileSuffix}`;
+  return path.join(
+    ResolveWorkspaceDirectory(paths, repoId, workspaceId),
+    x_workspaceEditorStateFile,
+  );
+}
+
+export function ResolveChatsDirectory(
+  paths: StoragePaths,
+  repoId: string,
+  workspaceId: string,
+): string
+{
+  return path.join(ResolveWorkspaceDirectory(paths, repoId, workspaceId), "chats");
+}
+
+export function ResolveChatStem(
+  paths: StoragePaths,
+  repoId: string,
+  workspaceId: string,
+  chatId: string,
+): string
+{
+  return path.join(
+    ResolveChatsDirectory(paths, repoId, workspaceId),
+    ValidateChatId(chatId),
+  );
+}
+
+export function ResolveSessionFilePath(
+  paths: StoragePaths,
+  repoId: string,
+  workspaceId: string,
+  chatId: string,
+): string
+{
+  return `${ResolveChatStem(paths, repoId, workspaceId, chatId)}${x_sessionFileSuffix}`;
+}
+
+export function ResolveManifestFilePath(
+  paths: StoragePaths,
+  repoId: string,
+  workspaceId: string,
+  chatId: string,
+): string
+{
+  return `${ResolveChatStem(paths, repoId, workspaceId, chatId)}${x_manifestFileSuffix}`;
+}
+
+export function ResolveHistoryFilePath(
+  paths: StoragePaths,
+  repoId: string,
+  workspaceId: string,
+  chatId: string,
+): string
+{
+  return `${ResolveChatStem(paths, repoId, workspaceId, chatId)}${x_historyFileSuffix}`;
+}
+
+export function ResolveProvisionalFilePath(
+  paths: StoragePaths,
+  repoId: string,
+  workspaceId: string,
+  chatId: string,
+): string
+{
+  return `${ResolveChatStem(paths, repoId, workspaceId, chatId)}${x_provisionalFileSuffix}`;
 }
 
 export function ResolveRootDirectory(repoRoot: string, rootDirectory: string): string
@@ -80,16 +161,18 @@ export function ResolveRootDirectory(repoRoot: string, rootDirectory: string): s
 
 export function ManifestSessionFileReference(
   repoRoot: string,
-  pile: string,
-  sessionId: string,
+  repoId: string,
+  workspaceId: string,
+  chatId: string,
 ): string
 {
-  const validatedPile = ValidatePileName(pile);
-  const validatedSessionId = ValidateSessionId(sessionId);
   return path.join(
-    x_pilesDirRelative,
-    validatedPile,
-    `${validatedSessionId}${x_sessionFileSuffix}`,
+    x_repositoriesDirRelative,
+    ValidateRepoId(repoId),
+    "workspaces",
+    ValidateWorkspaceId(workspaceId),
+    "chats",
+    `${ValidateChatId(chatId)}${x_sessionFileSuffix}`,
   );
 }
 
@@ -131,10 +214,10 @@ export async function AssertPathWithinRoot(
   throw new StorageError("path_escape", "path escapes the storage root");
 }
 
-export async function AssertPilePathWithinRoot(
+export async function AssertRepositoryPathWithinRoot(
   paths: StoragePaths,
-  pileDirectory: string,
+  repositoryDirectory: string,
 ): Promise<string>
 {
-  return AssertPathWithinRoot(pileDirectory, paths.pilesDir);
+  return AssertPathWithinRoot(repositoryDirectory, paths.repositoriesDir);
 }

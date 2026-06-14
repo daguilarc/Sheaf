@@ -68,8 +68,9 @@ function ExtractAguiEvents(page: Awaited<ReturnType<typeof ReadHistoryPage>>): A
 
 export async function HandleSessionHistory(
   context: RouteContext,
-  pile: string,
-  sessionId: string,
+  repoId: string,
+  workspaceId: string,
+  chatId: string,
   searchParams: URLSearchParams,
   response: ServerResponse,
 ): Promise<void>
@@ -77,8 +78,9 @@ export async function HandleSessionHistory(
   const request = ParseHistoryQuery(searchParams);
   const page = await ReadHistoryPage(
     context.agentManager.storagePaths,
-    pile,
-    sessionId,
+    repoId,
+    workspaceId,
+    chatId,
     request,
   );
   const prefer = request.prefer ?? "events";

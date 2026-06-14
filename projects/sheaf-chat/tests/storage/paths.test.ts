@@ -6,8 +6,7 @@ import test from "node:test";
 import { StorageError } from "../../src/storage/errors.js";
 import {
   AssertPathWithinRoot,
-  CreateStoragePaths,
-  ResolvePileDirectory,
+  ResolveRepositoryDirectory,
   ResolveRootDirectory,
 } from "../../src/storage/paths.js";
 import { WithTempStorage } from "./helpers.js";
@@ -22,30 +21,30 @@ test("ResolveRootDirectory stores absolute paths for relative inputs", async () 
   });
 });
 
-test("ResolvePileDirectory rejects traversal through pile names", async () =>
+test("ResolveRepositoryDirectory rejects traversal through generated ids", async () =>
 {
   await WithTempStorage(async (paths) =>
   {
     assert.throws(
-      () => ResolvePileDirectory(paths, "../escape"),
+      () => ResolveRepositoryDirectory(paths, "../escape"),
       (error: unknown) => error instanceof StorageError,
     );
   });
 });
 
-test("AssertPathWithinRoot rejects symlink escapes from the piles root", async () =>
+test("AssertPathWithinRoot rejects symlink escapes from the repositories root", async () =>
 {
   await WithTempStorage(async (paths) =>
   {
-    await mkdir(paths.pilesDir, { recursive: true });
+    await mkdir(paths.repositoriesDir, { recursive: true });
     const outsideDir = path.join(paths.repoRoot, "outside");
-    const linkPath = path.join(paths.pilesDir, "linked");
+    const linkPath = path.join(paths.repositoriesDir, "linked");
     await mkdir(outsideDir, { recursive: true });
     await writeFile(path.join(outsideDir, "secret.txt"), "nope", "utf8");
     await symlink(outsideDir, linkPath, "dir");
 
     await assert.rejects(
-      () => AssertPathWithinRoot(linkPath, paths.pilesDir),
+      () => AssertPathWithinRoot(linkPath, paths.repositoriesDir),
       (error: unknown) => error instanceof StorageError && error.code === "path_escape",
     );
   });

@@ -8,8 +8,8 @@ import {
 import {
   AgentLifecycleState,
   type ModelReference,
-  type ProvisionalSession,
-  type SessionManifest,
+  type ProvisionalChat,
+  type ChatManifest,
 } from "../shared/types.js";
 import {
   ManifestExists,
@@ -20,18 +20,19 @@ import {
 } from "../storage/index.js";
 import type { StoragePaths } from "../storage/paths.js";
 import {
-  ResolvePileDirectory,
   ResolveProvisionalFilePath,
   ResolveSessionFilePath,
+  ResolveWorkspaceDirectory,
 } from "../storage/paths.js";
 import { access, readFile } from "node:fs/promises";
 
 import type {
   LifecycleEmitter,
   LifecycleErrorEvent,
-  SessionKey,
+  ChatKey,
   UserMessageSubmission,
 } from "./lifecycle.js";
+import { KeyChatId, KeyRepoId, KeyWorkspaceId } from "./lifecycle.js";
 import type { PiSessionHandle } from "./piAdapter.js";
 import { BuildDeterministicSummary, type SessionSummary, type SessionSummaryGenerator } from "./summarizer.js";
 
@@ -48,15 +49,15 @@ export interface SessionRuntimeContext
 
 export interface SessionRuntimeRecord
 {
-  key: SessionKey;
+  key: ChatKey;
   state: AgentLifecycleState;
   rootDirectory: string;
   model: ModelReference;
   sessionFilePath: string;
   clients: Map<string, number>;
   piSession?: PiSessionHandle;
-  manifest?: SessionManifest;
-  provisional?: ProvisionalSession;
+  manifest?: ChatManifest;
+  provisional?: ProvisionalChat;
   manifestWritten: boolean;
   firstUserMessageSent: boolean;
   firstAssistantCompleted: boolean;
@@ -88,7 +89,7 @@ export class SessionRuntime
     return this.m_record;
   }
 
-  get Key(): SessionKey
+  get Key(): ChatKey
   {
     return this.m_record.key;
   }
@@ -259,8 +260,9 @@ export class SessionRuntime
     {
       const manifest = await UpdateManifest(
         this.m_context.storagePaths,
-        this.m_record.key.pile,
-        this.m_record.key.sessionId,
+        KeyRepoId(this.m_record.key),
+        KeyWorkspaceId(this.m_record.key),
+        KeyChatId(this.m_record.key),
         { model },
       );
       this.m_record.manifest = manifest;
@@ -457,8 +459,11 @@ export class SessionRuntime
       this.m_record.summaryResult = summary;
 
       const manifest = await WriteInitialManifest(this.m_context.storagePaths, {
-        pile: this.m_record.key.pile,
-        sessionId: this.m_record.key.sessionId,
+        repoId: KeyRepoId(this.m_record.key),
+        workspaceId: KeyWorkspaceId(this.m_record.key),
+        chatId: KeyChatId(this.m_record.key),
+        repositoryPath: this.m_record.provisional?.repositoryPath ?? this.m_record.rootDirectory,
+        workspacePath: this.m_record.provisional?.workspacePath ?? this.m_record.rootDirectory,
         chatName: summary.chatName,
         description: summary.description,
         rootDirectory: this.m_record.rootDirectory,
@@ -487,18 +492,29 @@ export class SessionRuntime
 
 export async function LoadProvisionalSession(
   storagePaths: StoragePaths,
-  pile: string,
-  sessionId: string,
-): Promise<ProvisionalSession>
+  repoId: string,
+  workspaceId: string,
+  chatId: string,
+): Promise<ProvisionalChat>
 {
-  const provisionalPath = ResolveProvisionalFilePath(storagePaths, pile, sessionId);
+  const provisionalPath = ResolveProvisionalFilePath(storagePaths, repoId, workspaceId, chatId);
   const raw = await readFile(provisionalPath, "utf8");
   const parsed = JSON.parse(raw) as {
+    repoId?: string;
+    workspaceId?: string;
+    chatId?: string;
+    repositoryPath?: string;
+    workspacePath?: string;
     rootDirectory: string;
     model: ModelReference;
   };
 
   return {
+    repoId: parsed.repoId ?? repoId,
+    workspaceId: parsed.workspaceId ?? workspaceId,
+    chatId: parsed.chatId ?? chatId,
+    repositoryPath: parsed.repositoryPath ?? parsed.rootDirectory,
+    workspacePath: parsed.workspacePath ?? parsed.rootDirectory,
     rootDirectory: parsed.rootDirectory,
     model: parsed.model,
   };
@@ -506,17 +522,18 @@ export async function LoadProvisionalSession(
 
 export async function ResolveSessionBootstrap(
   storagePaths: StoragePaths,
-  pile: string,
-  sessionId: string,
+  repoId: string,
+  workspaceId: string,
+  chatId: string,
 ): Promise<{
   rootDirectory: string;
   model: ModelReference;
   sessionFilePath: string;
-  manifest?: SessionManifest;
-  provisional?: ProvisionalSession;
+  manifest?: ChatManifest;
+  provisional?: ProvisionalChat;
 }>
 {
-  const sessionFilePath = ResolveSessionFilePath(storagePaths, pile, sessionId);
+  const sessionFilePath = ResolveSessionFilePath(storagePaths, repoId, workspaceId, chatId);
 
   try
   {
@@ -524,14 +541,14 @@ export async function ResolveSessionBootstrap(
   }
   catch
   {
-    throw new Error(`session file not found for ${sessionId}`);
+    throw new Error(`chat file not found for ${chatId}`);
   }
 
-  const hasManifest = await ManifestExists(storagePaths, pile, sessionId);
+  const hasManifest = await ManifestExists(storagePaths, repoId, workspaceId, chatId);
 
   if (hasManifest)
   {
-    const manifest = await ReadManifest(storagePaths, pile, sessionId);
+    const manifest = await ReadManifest(storagePaths, repoId, workspaceId, chatId);
 
     return {
       rootDirectory: manifest.rootDirectory,
@@ -541,7 +558,7 @@ export async function ResolveSessionBootstrap(
     };
   }
 
-  const provisional = await LoadProvisionalSession(storagePaths, pile, sessionId);
+  const provisional = await LoadProvisionalSession(storagePaths, repoId, workspaceId, chatId);
 
   return {
     rootDirectory: provisional.rootDirectory,
@@ -552,7 +569,7 @@ export async function ResolveSessionBootstrap(
 }
 
 export function CreateRuntimeRecordFromColdResume(
-  key: SessionKey,
+  key: ChatKey,
   bootstrap: Awaited<ReturnType<typeof ResolveSessionBootstrap>>,
 ): SessionRuntimeRecord
 {
@@ -574,7 +591,11 @@ export function CreateRuntimeRecordFromColdResume(
   };
 }
 
-export function ResolvePileDirectoryPath(storagePaths: StoragePaths, pile: string): string
+export function ResolveWorkspaceRuntimeDirectory(
+  storagePaths: StoragePaths,
+  repoId: string,
+  workspaceId: string,
+): string
 {
-  return ResolvePileDirectory(storagePaths, pile);
+  return ResolveWorkspaceDirectory(storagePaths, repoId, workspaceId);
 }

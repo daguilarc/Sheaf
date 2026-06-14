@@ -35,10 +35,10 @@ test("file server integrates REST browsing, controlled edits, websocket broadcas
     const parentSession = await CreateSessionWithRoot(handle, parentRoot);
     const childSession = await CreateSessionWithRoot(handle, childRoot);
     const parentConnection = await ConnectWebSocket(
-      BuildWsUrl(handle, parentSession.pile, parentSession.sessionId, { clientId: "parent" }),
+      BuildWsUrl(handle, parentSession.repoId, parentSession.workspaceId, parentSession.chatId, { clientId: "parent" }),
     );
     const childConnection = await ConnectWebSocket(
-      BuildWsUrl(handle, childSession.pile, childSession.sessionId, { clientId: "child" }),
+      BuildWsUrl(handle, childSession.repoId, childSession.workspaceId, childSession.chatId, { clientId: "child" }),
     );
 
     try
@@ -46,7 +46,7 @@ test("file server integrates REST browsing, controlled edits, websocket broadcas
       const childList = await RequestJson(
         handle.baseUrl,
         "GET",
-        `/api/piles/${childSession.pile}/sessions/${childSession.sessionId}/files?path=${encodeURIComponent("docs")}`,
+        `/api/repositories/${childSession.repoId}/workspaces/${childSession.workspaceId}/chats/${childSession.chatId}/files?path=${encodeURIComponent("docs")}`,
       );
       assert.equal(childList.status, 200);
       const childEntries = (childList.body as {
@@ -63,7 +63,7 @@ test("file server integrates REST browsing, controlled edits, websocket broadcas
       const childBefore = await RequestJson(
         handle.baseUrl,
         "GET",
-        `/api/piles/${childSession.pile}/sessions/${childSession.sessionId}/file?path=${encodeURIComponent("docs/readme.md")}`,
+        `/api/repositories/${childSession.repoId}/workspaces/${childSession.workspaceId}/chats/${childSession.chatId}/file?path=${encodeURIComponent("docs/readme.md")}`,
       );
       assert.equal(childBefore.status, 200);
       assert.equal(ExtractFileContent(childBefore.body), "# Initial\n\n[Other](other.md)\n");
@@ -71,7 +71,7 @@ test("file server integrates REST browsing, controlled edits, websocket broadcas
       const parentBefore = await RequestJson(
         handle.baseUrl,
         "GET",
-        `/api/piles/${parentSession.pile}/sessions/${parentSession.sessionId}/file?path=${encodeURIComponent("demo/docs/readme.md")}`,
+        `/api/repositories/${parentSession.repoId}/workspaces/${parentSession.workspaceId}/chats/${parentSession.chatId}/file?path=${encodeURIComponent("demo/docs/readme.md")}`,
       );
       assert.equal(parentBefore.status, 200);
       assert.equal(ExtractFileContent(parentBefore.body), "# Initial\n\n[Other](other.md)\n");
@@ -101,7 +101,7 @@ test("file server integrates REST browsing, controlled edits, websocket broadcas
       const childAfter = await RequestJson(
         handle.baseUrl,
         "GET",
-        `/api/piles/${childSession.pile}/sessions/${childSession.sessionId}/file?path=${encodeURIComponent("docs/readme.md")}`,
+        `/api/repositories/${childSession.repoId}/workspaces/${childSession.workspaceId}/chats/${childSession.chatId}/file?path=${encodeURIComponent("docs/readme.md")}`,
       );
       assert.equal(childAfter.status, 200);
       assert.equal(ExtractFileContent(childAfter.body), "# Updated\n\n[Other](other.md)\n");
@@ -109,7 +109,7 @@ test("file server integrates REST browsing, controlled edits, websocket broadcas
       const parentAfter = await RequestJson(
         handle.baseUrl,
         "GET",
-        `/api/piles/${parentSession.pile}/sessions/${parentSession.sessionId}/file?path=${encodeURIComponent("demo/docs/readme.md")}`,
+        `/api/repositories/${parentSession.repoId}/workspaces/${parentSession.workspaceId}/chats/${parentSession.chatId}/file?path=${encodeURIComponent("demo/docs/readme.md")}`,
       );
       assert.equal(parentAfter.status, 200);
       assert.equal(ExtractFileContent(parentAfter.body), "# Updated\n\n[Other](other.md)\n");

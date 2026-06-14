@@ -5,8 +5,8 @@ import type { RouteContext } from "./context.js";
 
 export async function HandleGetAgentReviewAvailability(
   context: RouteContext,
-  pile: string,
-  sessionId: string,
+  repoId: string,
+  workspaceId: string,
   response: ServerResponse,
 ): Promise<void>
 {
@@ -21,6 +21,6 @@ export async function HandleGetAgentReviewAvailability(
     return;
   }
 
-  const state = await context.agentReviewService.Availability(pile, sessionId);
+  const state = await context.agentReviewService.Availability(repoId, workspaceId);
   SendJson(response, 200, state);
 }

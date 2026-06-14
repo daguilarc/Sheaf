@@ -7,8 +7,9 @@ export interface ChatEnvelope
   v: typeof x_chatEnvelopeVersion;
   kind: string;
   id: string;
-  pile: string;
-  sessionId: string;
+  repoId: string;
+  workspaceId: string;
+  chatId: string;
   clientId?: string;
   sequence?: number;
   timestamp: string;
@@ -18,8 +19,9 @@ export interface ChatEnvelope
 export interface CreateChatEnvelopeInput
 {
   kind: string;
-  pile: string;
-  sessionId: string;
+  repoId: string;
+  workspaceId: string;
+  chatId: string;
   clientId?: string;
   sequence?: number;
   payload?: unknown;
@@ -33,8 +35,9 @@ export function CreateChatEnvelope(input: CreateChatEnvelopeInput): ChatEnvelope
     v: x_chatEnvelopeVersion,
     kind: input.kind,
     id: input.id ?? randomUUID(),
-    pile: input.pile,
-    sessionId: input.sessionId,
+    repoId: input.repoId,
+    workspaceId: input.workspaceId,
+    chatId: input.chatId,
     timestamp: input.timestamp ?? new Date().toISOString(),
   };
 

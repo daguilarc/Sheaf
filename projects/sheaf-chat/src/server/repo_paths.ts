@@ -8,7 +8,6 @@ export interface SheafChatPaths
   apiKeysFile: string;
   servicesJsonFile: string;
   dataDir: string;
-  sessionsDir: string;
   authDir: string;
 }
 
@@ -16,7 +15,6 @@ const x_globalConfigRelative = "config/global_config.json";
 const x_apiKeysRelative = "config/api_keys.json";
 const x_servicesJsonRelative = "config/services.json";
 const x_dataDirRelative = "data/sheaf-chat";
-const x_sessionsDirRelative = "data/sheaf-chat/sessions";
 const x_authDirRelative = "data/sheaf-chat/auth";
 
 const x_moduleDir =
@@ -71,7 +69,6 @@ export function GetDefaultSheafChatPaths(root?: string): SheafChatPaths
     apiKeysFile: path.join(repoRoot, x_apiKeysRelative),
     servicesJsonFile: path.join(repoRoot, x_servicesJsonRelative),
     dataDir: path.join(repoRoot, x_dataDirRelative),
-    sessionsDir: path.join(repoRoot, x_sessionsDirRelative),
     authDir: path.join(repoRoot, x_authDirRelative),
   };
 }
@@ -82,5 +79,4 @@ export {
   x_dataDirRelative,
   x_globalConfigRelative,
   x_servicesJsonRelative,
-  x_sessionsDirRelative,
 };

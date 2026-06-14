@@ -14,6 +14,7 @@ import {
 } from "../../extensions/sheaf-chat/pathPolicy.js";
 import { x_treeDefaultIgnores } from "../../extensions/sheaf-chat/toolHelpers.js";
 import { StorageError } from "../../storage/errors.js";
+import { ResolveWorkspace } from "../../storage/repositories.js";
 
 export interface FileBrowserEntry
 {
@@ -124,12 +125,27 @@ async function ResolveBrowserExistingPath(
 
 export async function CreateSessionRootPolicy(
   agentManager: AgentManager,
-  pile: string,
-  sessionId: string,
+  repoId: string,
+  workspaceId: string,
+  chatId: string,
 ): Promise<RootPolicy>
 {
-  const rootDirectory = await agentManager.resolveSessionRootDirectory(pile, sessionId);
+  const rootDirectory = await agentManager.resolveSessionRootDirectory(
+    repoId,
+    workspaceId,
+    chatId,
+  );
   return CreateRootPolicy(rootDirectory);
+}
+
+export async function CreateWorkspaceRootPolicy(
+  agentManager: AgentManager,
+  repoId: string,
+  workspaceId: string,
+): Promise<RootPolicy>
+{
+  const workspace = await ResolveWorkspace(agentManager.storagePaths, repoId, workspaceId);
+  return CreateRootPolicy(workspace.path);
 }
 
 export async function ResolveBrowserRelativePath(

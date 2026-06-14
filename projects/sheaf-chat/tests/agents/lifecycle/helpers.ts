@@ -8,7 +8,14 @@ import { AuthStorage, ModelRegistry } from "@earendil-works/pi-coding-agent";
 import type { PiSessionHandle } from "../../../src/agents/piAdapter.js";
 import type { SheafModelRegistryBundle } from "../../../src/agents/models.js";
 import type { SheafChatConfig } from "../../../src/server/config.js";
-import { CreateStoragePaths } from "../../../src/storage/paths.js";
+import {
+  CreateStoragePaths,
+  ManifestSessionFileReference,
+  ResolveManifestFilePath,
+  ResolveSessionFilePath,
+  ResolveWorkspaceDirectory,
+} from "../../../src/storage/paths.js";
+import { IdForCanonicalPath } from "../../../src/storage/repositories.js";
 import type { ModelReference } from "../../../src/shared/types.js";
 import {
   BuildTestConfig,
@@ -215,21 +222,53 @@ export function CreateFakeTimers(): FakeTimerController & { Advance(ms: number):
 
 export function WriteColdResumeFixture(
   repoRoot: string,
-  pile: string,
-  sessionId: string,
+  workspacePath: string,
+  chatId: string,
   rootDirectory: string,
   model: ModelReference,
-): { sessionFilePath: string; manifestPath: string }
+): {
+  repoId: string;
+  workspaceId: string;
+  chatId: string;
+  sessionFilePath: string;
+  manifestPath: string;
+}
 {
   const storagePaths = CreateStoragePaths(repoRoot);
-  const pileDir = path.join(storagePaths.pilesDir, pile);
-  mkdirSync(pileDir, { recursive: true });
+  const canonicalWorkspacePath = path.resolve(workspacePath);
+  const repoId = IdForCanonicalPath(canonicalWorkspacePath);
+  const workspaceId = IdForCanonicalPath(canonicalWorkspacePath);
+  const workspaceDirectory = ResolveWorkspaceDirectory(storagePaths, repoId, workspaceId);
+  mkdirSync(workspaceDirectory, { recursive: true });
+  writeFileSync(
+    path.join(storagePaths.repositoriesDir, repoId, "repository.json"),
+    `${JSON.stringify({
+      repoId,
+      name: path.basename(canonicalWorkspacePath),
+      path: canonicalWorkspacePath,
+      discoveredAt: "2026-06-08T00:00:00.000Z",
+    }, null, 2)}\n`,
+    "utf8",
+  );
+  writeFileSync(
+    path.join(workspaceDirectory, "workspace.json"),
+    `${JSON.stringify({
+      repoId,
+      workspaceId,
+      kind: "main",
+      path: canonicalWorkspacePath,
+      displayName: path.basename(canonicalWorkspacePath),
+      discoveredAt: "2026-06-08T00:00:00.000Z",
+    }, null, 2)}\n`,
+    "utf8",
+  );
 
-  const sessionFilePath = path.join(pileDir, `${sessionId}.jsonl`);
+  const sessionFilePath = ResolveSessionFilePath(storagePaths, repoId, workspaceId, chatId);
+  mkdirSync(path.dirname(sessionFilePath), { recursive: true });
   const header = {
     type: "session",
     version: 3,
-    id: sessionId,
+    id: chatId,
     timestamp: "2026-06-08T00:00:00.000Z",
     cwd: rootDirectory,
   };
@@ -262,8 +301,11 @@ export function WriteColdResumeFixture(
 
   const manifest = {
     schemaVersion: 1,
-    pile,
-    sessionId,
+    repoId,
+    workspaceId,
+    chatId,
+    repositoryPath: canonicalWorkspacePath,
+    workspacePath: canonicalWorkspacePath,
     chatName: "Cold resume chat",
     description: "Existing session",
     rootDirectory,
@@ -272,7 +314,7 @@ export function WriteColdResumeFixture(
     lastOpenedAt: "2026-06-08T00:00:00.000Z",
     model,
     pi: {
-      sessionFile: `data/sheaf-chat/sessions/piles/${pile}/${sessionId}.jsonl`,
+      sessionFile: ManifestSessionFileReference(repoRoot, repoId, workspaceId, chatId),
       extensionVersion: "0.1.0",
     },
     history: {
@@ -280,8 +322,8 @@ export function WriteColdResumeFixture(
       lastSequence: 0,
     },
   };
-  const manifestPath = path.join(pileDir, `${sessionId}.manifest.json`);
+  const manifestPath = ResolveManifestFilePath(storagePaths, repoId, workspaceId, chatId);
   writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
 
-  return { sessionFilePath, manifestPath };
+  return { repoId, workspaceId, chatId, sessionFilePath, manifestPath };
 }

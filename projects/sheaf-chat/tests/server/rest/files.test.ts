@@ -5,8 +5,10 @@ import test from "node:test";
 
 import { WriteInitialManifest } from "../../../src/storage/index.js";
 import {
+  CreateWorkspaceChatViaApi,
   RequestJson,
   ResolveOpenAiTestModel,
+  type TestServerHandle,
   WithTestServer,
 } from "./helpers.js";
 
@@ -24,21 +26,19 @@ function ErrorBody(body: unknown): { code: string; message: string }
 }
 
 async function CreateSessionWithDocs(
-  baseUrl: string,
+  handle: TestServerHandle,
   agentManager: import("../../../src/agents/manager.js").AgentManager,
   options?: { manifested?: boolean },
-): Promise<{ pile: string; sessionId: string; repoRoot: string }>
+): Promise<{
+  repoId: string;
+  workspaceId: string;
+  chatId: string;
+  repoRoot: string;
+  workspacePath: string;
+}>
 {
-  const pile = "default";
-  await RequestJson(baseUrl, "POST", "/api/piles", { pile });
   const model = ResolveOpenAiTestModel(agentManager);
-  const created = await RequestJson(baseUrl, "POST", `/api/piles/${pile}/sessions`, {
-    rootDirectory: "projects/demo",
-    model,
-  });
-  assert.equal(created.status, 201);
-
-  const sessionId = (created.body as { sessionId: string }).sessionId;
+  const created = await CreateWorkspaceChatViaApi(handle);
   const repoRoot = agentManager.storagePaths.repoRoot;
   const docsDir = path.join(repoRoot, "projects/demo/docs");
   const notesDir = path.join(docsDir, "notes");
@@ -53,29 +53,48 @@ async function CreateSessionWithDocs(
   if (options?.manifested)
   {
     await WriteInitialManifest(agentManager.storagePaths, {
-      pile,
-      sessionId,
+      repoId: created.repoId,
+      workspaceId: created.workspaceId,
+      chatId: created.chatId,
+      repositoryPath: created.workspacePath,
+      workspacePath: created.workspacePath,
       chatName: "Docs chat",
       description: "desc",
-      rootDirectory: "projects/demo",
+      rootDirectory: created.workspacePath,
       model,
       extensionVersion: "0.1.0",
     });
   }
 
-  return { pile, sessionId, repoRoot };
+  return { ...created, repoRoot };
+}
+
+function ChatFileRoute(
+  session: { repoId: string; workspaceId: string; chatId: string },
+  endpoint: "file" | "files",
+  relativePath?: string,
+): string
+{
+  const route =
+    `/api/repositories/${encodeURIComponent(session.repoId)}` +
+    `/workspaces/${encodeURIComponent(session.workspaceId)}` +
+    `/chats/${encodeURIComponent(session.chatId)}/${endpoint}`;
+  return relativePath === undefined
+    ? route
+    : `${route}?path=${encodeURIComponent(relativePath)}`;
 }
 
 test("file browser retrieves markdown and lists directories for provisional sessions", async () =>
 {
-  await WithTestServer(async ({ baseUrl, agentManager }) =>
+  await WithTestServer(async (handle) =>
   {
-    const { pile, sessionId } = await CreateSessionWithDocs(baseUrl, agentManager);
+    const { baseUrl, agentManager } = handle;
+    const session = await CreateSessionWithDocs(handle, agentManager);
 
     const file = await RequestJson(
       baseUrl,
       "GET",
-      `/api/piles/${pile}/sessions/${sessionId}/file?path=${encodeURIComponent("docs/readme.md")}`,
+      ChatFileRoute(session, "file", "docs/readme.md"),
     );
     assert.equal(file.status, 200);
 
@@ -104,7 +123,7 @@ test("file browser retrieves markdown and lists directories for provisional sess
     const rootListing = await RequestJson(
       baseUrl,
       "GET",
-      `/api/piles/${pile}/sessions/${sessionId}/files`,
+      ChatFileRoute(session, "files"),
     );
     assert.equal(rootListing.status, 200);
 
@@ -120,7 +139,7 @@ test("file browser retrieves markdown and lists directories for provisional sess
     const docsListing = await RequestJson(
       baseUrl,
       "GET",
-      `/api/piles/${pile}/sessions/${sessionId}/files?path=${encodeURIComponent("docs")}`,
+      ChatFileRoute(session, "files", "docs"),
     );
     assert.equal(docsListing.status, 200);
 
@@ -152,16 +171,17 @@ test("file browser retrieves markdown and lists directories for provisional sess
 
 test("file browser works for manifested sessions", async () =>
 {
-  await WithTestServer(async ({ baseUrl, agentManager }) =>
+  await WithTestServer(async (handle) =>
   {
-    const { pile, sessionId } = await CreateSessionWithDocs(baseUrl, agentManager, {
+    const { baseUrl, agentManager } = handle;
+    const session = await CreateSessionWithDocs(handle, agentManager, {
       manifested: true,
     });
 
     const file = await RequestJson(
       baseUrl,
       "GET",
-      `/api/piles/${pile}/sessions/${sessionId}/file?path=${encodeURIComponent("docs/readme.md")}`,
+      ChatFileRoute(session, "file", "docs/readme.md"),
     );
     assert.equal(file.status, 200);
     assert.equal((file.body as { file: { content: string } }).file.content, "# Title\n");
@@ -170,9 +190,11 @@ test("file browser works for manifested sessions", async () =>
 
 test("file browser rejects path escapes and invalid file requests", async () =>
 {
-  await WithTestServer(async ({ baseUrl, agentManager }) =>
+  await WithTestServer(async (handle) =>
   {
-    const { pile, sessionId, repoRoot } = await CreateSessionWithDocs(baseUrl, agentManager);
+    const { baseUrl, agentManager } = handle;
+    const session = await CreateSessionWithDocs(handle, agentManager);
+    const { repoRoot } = session;
     const outsideDir = path.join(repoRoot, "outside");
     await mkdir(outsideDir, { recursive: true });
     await writeFile(path.join(outsideDir, "secret.md"), "secret", "utf-8");
@@ -184,7 +206,7 @@ test("file browser rejects path escapes and invalid file requests", async () =>
     const missingPath = await RequestJson(
       baseUrl,
       "GET",
-      `/api/piles/${pile}/sessions/${sessionId}/file?path=${encodeURIComponent("docs/missing.md")}`,
+      ChatFileRoute(session, "file", "docs/missing.md"),
     );
     assert.equal(missingPath.status, 404);
     assert.equal(ErrorBody(missingPath.body).code, "file_not_found");
@@ -192,7 +214,7 @@ test("file browser rejects path escapes and invalid file requests", async () =>
     const emptyPath = await RequestJson(
       baseUrl,
       "GET",
-      `/api/piles/${pile}/sessions/${sessionId}/file`,
+      ChatFileRoute(session, "file"),
     );
     assert.equal(emptyPath.status, 400);
     assert.equal(ErrorBody(emptyPath.body).code, "invalid_request");
@@ -200,7 +222,7 @@ test("file browser rejects path escapes and invalid file requests", async () =>
     const parentTraversal = await RequestJson(
       baseUrl,
       "GET",
-      `/api/piles/${pile}/sessions/${sessionId}/file?path=${encodeURIComponent("../outside/secret.md")}`,
+      ChatFileRoute(session, "file", "../outside/secret.md"),
     );
     assert.equal(parentTraversal.status, 403);
     assert.equal(ErrorBody(parentTraversal.body).code, "path_escape");
@@ -208,7 +230,7 @@ test("file browser rejects path escapes and invalid file requests", async () =>
     const encodedTraversal = await RequestJson(
       baseUrl,
       "GET",
-      `/api/piles/${pile}/sessions/${sessionId}/file?path=docs%2F..%2F..%2Foutside%2Fsecret.md`,
+      `${ChatFileRoute(session, "file")}?path=docs%2F..%2F..%2Foutside%2Fsecret.md`,
     );
     assert.equal(encodedTraversal.status, 403);
     assert.equal(ErrorBody(encodedTraversal.body).code, "path_escape");
@@ -216,7 +238,7 @@ test("file browser rejects path escapes and invalid file requests", async () =>
     const absolutePath = await RequestJson(
       baseUrl,
       "GET",
-      `/api/piles/${pile}/sessions/${sessionId}/file?path=${encodeURIComponent(path.join(repoRoot, "outside/secret.md"))}`,
+      ChatFileRoute(session, "file", path.join(repoRoot, "outside/secret.md")),
     );
     assert.equal(absolutePath.status, 403);
     assert.equal(ErrorBody(absolutePath.body).code, "path_escape");
@@ -224,7 +246,7 @@ test("file browser rejects path escapes and invalid file requests", async () =>
     const backslashTraversal = await RequestJson(
       baseUrl,
       "GET",
-      `/api/piles/${pile}/sessions/${sessionId}/file?path=${encodeURIComponent("docs\\..\\..\\outside\\secret.md")}`,
+      ChatFileRoute(session, "file", "docs\\..\\..\\outside\\secret.md"),
     );
     assert.equal(backslashTraversal.status, 403);
     assert.equal(ErrorBody(backslashTraversal.body).code, "path_escape");
@@ -232,7 +254,7 @@ test("file browser rejects path escapes and invalid file requests", async () =>
     const symlinkEscape = await RequestJson(
       baseUrl,
       "GET",
-      `/api/piles/${pile}/sessions/${sessionId}/file?path=${encodeURIComponent("docs/escape-link")}`,
+      ChatFileRoute(session, "file", "docs/escape-link"),
     );
     assert.equal(symlinkEscape.status, 403);
     assert.equal(ErrorBody(symlinkEscape.body).code, "path_escape");
@@ -240,7 +262,7 @@ test("file browser rejects path escapes and invalid file requests", async () =>
     const directoryAsFile = await RequestJson(
       baseUrl,
       "GET",
-      `/api/piles/${pile}/sessions/${sessionId}/file?path=${encodeURIComponent("docs")}`,
+      ChatFileRoute(session, "file", "docs"),
     );
     assert.equal(directoryAsFile.status, 400);
     assert.equal(ErrorBody(directoryAsFile.body).code, "not_a_file");
@@ -248,7 +270,7 @@ test("file browser rejects path escapes and invalid file requests", async () =>
     const rootAsFile = await RequestJson(
       baseUrl,
       "GET",
-      `/api/piles/${pile}/sessions/${sessionId}/file?path=${encodeURIComponent(".")}`,
+      ChatFileRoute(session, "file", "."),
     );
     assert.equal(rootAsFile.status, 400);
     assert.equal(ErrorBody(rootAsFile.body).code, "not_a_file");
@@ -256,7 +278,7 @@ test("file browser rejects path escapes and invalid file requests", async () =>
     const binaryFile = await RequestJson(
       baseUrl,
       "GET",
-      `/api/piles/${pile}/sessions/${sessionId}/file?path=${encodeURIComponent("docs/image.png")}`,
+      ChatFileRoute(session, "file", "docs/image.png"),
     );
     assert.equal(binaryFile.status, 400);
     assert.equal(ErrorBody(binaryFile.body).code, "unsupported_file");
@@ -264,9 +286,9 @@ test("file browser rejects path escapes and invalid file requests", async () =>
     const missingSession = await RequestJson(
       baseUrl,
       "GET",
-      `/api/piles/${pile}/sessions/doesnotexist123/file?path=${encodeURIComponent("docs/readme.md")}`,
+      ChatFileRoute({ ...session, chatId: "doesnotexist12345" }, "file", "docs/readme.md"),
     );
     assert.equal(missingSession.status, 404);
-    assert.equal(ErrorBody(missingSession.body).code, "session_not_found");
+    assert.equal(ErrorBody(missingSession.body).code, "chat_not_found");
   });
 });

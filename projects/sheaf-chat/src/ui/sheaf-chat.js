@@ -1,11 +1,10 @@
 /**
- * Sheaf Chat browser UI: piles, sessions, and interactive chat screens.
+ * Sheaf Chat browser UI: repositories, workspaces, and interactive chat screens.
  */
 (function () {
   "use strict";
 
   const x_ClientIdKey = "sheaf-chat-client-id";
-  const x_DefaultRootDirectory = "projects";
   const x_HistoryPageLimit = 5000;
   const x_InitialHistoryLimit = 5000;
   const x_NearTopHistoryThreshold = 80;
@@ -65,49 +64,74 @@
     });
 
     if (parts.length === 0) {
-      return { screen: "piles" };
+      return { screen: "repositories" };
     }
 
-    if (parts[0] === "piles" && parts.length === 1) {
-      return { screen: "piles" };
+    if (parts[0] === "repositories" && parts.length === 1) {
+      return { screen: "repositories" };
     }
 
-    if (parts[0] === "piles" && parts.length === 2) {
-      return { screen: "sessions", pile: decodeURIComponent(parts[1]) };
+    if (parts[0] === "repositories" && parts.length === 2) {
+      return { screen: "workspaces", repoId: decodeURIComponent(parts[1]) };
     }
 
     if (
-      parts[0] === "piles" &&
+      parts[0] === "repositories" &&
       parts.length === 4 &&
-      parts[2] === "sessions"
+      parts[2] === "workspaces"
     ) {
       return {
-        screen: "chat",
-        pile: decodeURIComponent(parts[1]),
-        sessionId: decodeURIComponent(parts[3]),
+        screen: "workspace",
+        repoId: decodeURIComponent(parts[1]),
+        workspaceId: decodeURIComponent(parts[3]),
       };
     }
 
-    return { screen: "piles" };
+    if (
+      parts[0] === "repositories" &&
+      parts.length === 6 &&
+      parts[2] === "workspaces" &&
+      parts[4] === "chats"
+    ) {
+      return {
+        screen: "chat",
+        repoId: decodeURIComponent(parts[1]),
+        workspaceId: decodeURIComponent(parts[3]),
+        chatId: decodeURIComponent(parts[5]),
+      };
+    }
+
+    return { screen: "repositories" };
   }
 
   function NavigateTo(route) {
-    if (route.screen === "piles") {
+    if (route.screen === "repositories") {
       window.location.hash = "#/";
       return;
     }
 
-    if (route.screen === "sessions") {
-      window.location.hash = "#/piles/" + encodeURIComponent(route.pile);
+    if (route.screen === "workspaces") {
+      window.location.hash = "#/repositories/" + encodeURIComponent(route.repoId);
+      return;
+    }
+
+    if (route.screen === "workspace") {
+      window.location.hash =
+        "#/repositories/" +
+        encodeURIComponent(route.repoId) +
+        "/workspaces/" +
+        encodeURIComponent(route.workspaceId);
       return;
     }
 
     if (route.screen === "chat") {
       window.location.hash =
-        "#/piles/" +
-        encodeURIComponent(route.pile) +
-        "/sessions/" +
-        encodeURIComponent(route.sessionId);
+        "#/repositories/" +
+        encodeURIComponent(route.repoId) +
+        "/workspaces/" +
+        encodeURIComponent(route.workspaceId) +
+        "/chats/" +
+        encodeURIComponent(route.chatId);
     }
   }
 
@@ -160,9 +184,9 @@
     return { screen, content };
   }
 
-  function RenderPilesScreen(app, route) {
+  function RenderRepositoriesScreen(app, route) {
     app.textContent = "";
-    const shell = CreateScreenShell("Piles", null);
+    const shell = CreateScreenShell("Repositories", null);
     app.appendChild(shell.screen);
 
     const list = CreateElement("ul", "sheaf-chat-list");
@@ -171,100 +195,46 @@
     const errorNode = CreateElement("div", "sheaf-chat-error");
     shell.content.appendChild(errorNode);
 
-    const form = CreateElement("form", "sheaf-chat-form");
-    const field = CreateElement("div", "sheaf-chat-field");
-    const label = CreateElement("label", "sheaf-chat-label");
-    label.textContent = "New pile name";
-    label.htmlFor = "sheaf-chat-new-pile";
-    const input = CreateElement("input", "sheaf-chat-input");
-    input.id = "sheaf-chat-new-pile";
-    input.name = "pile";
-    input.required = true;
-    input.autocomplete = "off";
-    field.appendChild(label);
-    field.appendChild(input);
-    form.appendChild(field);
-
-    const submit = CreateElement("button", "sheaf-chat-button sheaf-chat-button--primary");
-    submit.type = "submit";
-    submit.textContent = "Create pile";
-    form.appendChild(submit);
-    shell.screen.appendChild(form);
-
-    function RenderPileRows(piles) {
+    function RenderRepositoryRows(repositories) {
       list.textContent = "";
       errorNode.textContent = "";
 
-      if (!piles || piles.length === 0) {
+      if (!repositories || repositories.length === 0) {
         const empty = CreateElement("p", "sheaf-chat-empty");
-        empty.textContent = "No piles yet. Create one below.";
+        empty.textContent = "No repositories found.";
         list.appendChild(empty);
         return;
       }
 
-      for (const pile of piles) {
-        const pileName = pile.pile || pile.name;
-        const latestUpdatedAt = pile.latestUpdatedAt || pile.updatedAt;
+      for (const repository of repositories) {
         const item = CreateElement("li", "sheaf-chat-list-item");
         const button = CreateElement("button", "sheaf-chat-list-button");
         button.type = "button";
-        button.textContent = pileName;
+        button.textContent = repository.name || repository.repoId;
         const meta = CreateElement("span", "sheaf-chat-list-meta");
-        meta.textContent =
-          (pile.sessionCount != null ? pile.sessionCount : 0) +
-          " sessions" +
-          (latestUpdatedAt ? " · " + FormatTimestamp(latestUpdatedAt) : "");
+        meta.textContent = repository.path || "";
         button.appendChild(meta);
         button.addEventListener("click", function () {
-          NavigateTo({ screen: "sessions", pile: pileName });
+          NavigateTo({ screen: "workspaces", repoId: repository.repoId });
         });
         item.appendChild(button);
         list.appendChild(item);
       }
     }
 
-    form.addEventListener("submit", function (event) {
-      event.preventDefault();
-      errorNode.textContent = "";
-      const pileName = input.value.trim();
-      if (!pileName) {
-        return;
-      }
-
-      submit.disabled = true;
-      FetchJson("/api/piles", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ pile: pileName }),
-      })
-        .then(function () {
-          input.value = "";
-          return FetchJson("/api/piles");
-        })
-        .then(function (body) {
-          RenderPileRows(body.piles || []);
-        })
-        .catch(function (error) {
-          errorNode.textContent = error.message || "Failed to create pile";
-        })
-        .finally(function () {
-          submit.disabled = false;
-        });
-    });
-
-    FetchJson("/api/piles")
+    FetchJson("/api/repositories")
       .then(function (body) {
-        RenderPileRows(body.piles || []);
+        RenderRepositoryRows(body.repositories || []);
       })
       .catch(function (error) {
-        errorNode.textContent = error.message || "Failed to load piles";
+        errorNode.textContent = error.message || "Failed to load repositories";
       });
   }
 
-  function RenderSessionsScreen(app, route) {
+  function RenderWorkspacesScreen(app, route) {
     app.textContent = "";
-    const shell = CreateScreenShell(route.pile, function () {
-      NavigateTo({ screen: "piles" });
+    const shell = CreateScreenShell("Workspaces", function () {
+      NavigateTo({ screen: "repositories" });
     });
     app.appendChild(shell.screen);
 
@@ -273,75 +243,28 @@
     const errorNode = CreateElement("div", "sheaf-chat-error");
     shell.content.appendChild(errorNode);
 
-    const form = CreateElement("form", "sheaf-chat-form");
-    const rootField = CreateElement("div", "sheaf-chat-field");
-    const rootLabel = CreateElement("label", "sheaf-chat-label");
-    rootLabel.textContent = "Root directory";
-    rootLabel.htmlFor = "sheaf-chat-root-directory";
-    const rootInput = CreateElement("input", "sheaf-chat-input");
-    rootInput.id = "sheaf-chat-root-directory";
-    rootInput.name = "rootDirectory";
-    rootInput.required = true;
-    rootInput.value = x_DefaultRootDirectory;
-    rootField.appendChild(rootLabel);
-    rootField.appendChild(rootInput);
-
-    const modelField = CreateElement("div", "sheaf-chat-field");
-    const modelLabel = CreateElement("label", "sheaf-chat-label");
-    modelLabel.textContent = "Model";
-    modelLabel.htmlFor = "sheaf-chat-new-session-model";
-    const modelSelect = CreateElement("select", "sheaf-chat-select");
-    modelSelect.id = "sheaf-chat-new-session-model";
-    modelSelect.name = "model";
-    modelSelect.required = true;
-    modelField.appendChild(modelLabel);
-    modelField.appendChild(modelSelect);
-
-    form.appendChild(rootField);
-    form.appendChild(modelField);
-
-    const submit = CreateElement("button", "sheaf-chat-button sheaf-chat-button--primary");
-    submit.type = "submit";
-    submit.textContent = "New session";
-    form.appendChild(submit);
-    shell.screen.appendChild(form);
-
-    let models = [];
-
-    function RenderSessionRows(sessions) {
+    function RenderWorkspaceRows(workspaces) {
       list.textContent = "";
-      if (!sessions || sessions.length === 0) {
+      if (!workspaces || workspaces.length === 0) {
         const empty = CreateElement("p", "sheaf-chat-empty");
-        empty.textContent = "No sessions in this pile yet.";
+        empty.textContent = "No workspaces found.";
         list.appendChild(empty);
         return;
       }
 
-      for (const session of sessions) {
+      for (const workspace of workspaces) {
         const item = CreateElement("li", "sheaf-chat-list-item");
         const button = CreateElement("button", "sheaf-chat-list-button");
         button.type = "button";
-        const title =
-          session.chatName ||
-          session.description ||
-          session.sessionId ||
-          "Session";
-        button.textContent = title;
+        button.textContent = workspace.displayName || workspace.workspaceId;
         const meta = CreateElement("span", "sheaf-chat-list-meta");
-        const model =
-          session.model && session.model.id
-            ? session.model.provider + "/" + session.model.id
-            : "";
-        meta.textContent =
-          (session.rootDirectory || "") +
-          (model ? " · " + model : "") +
-          (session.updatedAt ? " · " + FormatTimestamp(session.updatedAt) : "");
+        meta.textContent = (workspace.kind || "workspace") + " · " + (workspace.path || "");
         button.appendChild(meta);
         button.addEventListener("click", function () {
           NavigateTo({
-            screen: "chat",
-            pile: route.pile,
-            sessionId: session.sessionId,
+            screen: "workspace",
+            repoId: route.repoId,
+            workspaceId: workspace.workspaceId,
           });
         });
         item.appendChild(button);
@@ -349,70 +272,33 @@
       }
     }
 
-    function PopulateModelSelect() {
-      modelSelect.textContent = "";
-      for (const model of models) {
-        const option = document.createElement("option");
-        option.value = model.provider + ":" + model.id;
-        option.textContent =
-          (model.displayName || model.id) +
-          (model.available === false ? " (unavailable)" : "");
-        option.disabled = model.available === false;
-        modelSelect.appendChild(option);
-      }
-    }
-
-    form.addEventListener("submit", function (event) {
-      event.preventDefault();
-      errorNode.textContent = "";
-      const selected = modelSelect.value.split(":");
-      if (selected.length !== 2) {
-        errorNode.textContent = "Select a model";
-        return;
-      }
-
-      submit.disabled = true;
-      FetchJson("/api/piles/" + encodeURIComponent(route.pile) + "/sessions", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          rootDirectory: rootInput.value.trim(),
-          model: { provider: selected[0], id: selected[1] },
-        }),
-      })
-        .then(function (body) {
-          NavigateTo({
-            screen: "chat",
-            pile: route.pile,
-            sessionId: body.sessionId,
-          });
-        })
-        .catch(function (error) {
-          errorNode.textContent = error.message || "Failed to create session";
-        })
-        .finally(function () {
-          submit.disabled = false;
-        });
-    });
-
-    Promise.all([
-      FetchJson("/api/models"),
-      FetchJson("/api/piles/" + encodeURIComponent(route.pile) + "/sessions"),
-    ])
-      .then(function (results) {
-        models = results[0].models || [];
-        PopulateModelSelect();
-        RenderSessionRows(results[1].sessions || []);
+    FetchJson("/api/repositories/" + encodeURIComponent(route.repoId) + "/workspaces")
+      .then(function (body) {
+        RenderWorkspaceRows(body.workspaces || []);
       })
       .catch(function (error) {
-        errorNode.textContent = error.message || "Failed to load sessions";
+        errorNode.textContent = error.message || "Failed to load workspaces";
       });
   }
 
-  function BuildWebSocketUrl(pile, sessionId, after) {
+  function WorkspaceApiBase(route) {
+    return (
+      "/api/repositories/" +
+      encodeURIComponent(route.repoId) +
+      "/workspaces/" +
+      encodeURIComponent(route.workspaceId)
+    );
+  }
+
+  function ChatApiBase(route) {
+    return WorkspaceApiBase(route) + "/chats/" + encodeURIComponent(route.chatId);
+  }
+
+  function BuildWebSocketUrl(repoId, workspaceId, chatId, after) {
     const params = new URLSearchParams();
-    params.set("p", pile);
-    params.set("session", sessionId);
+    params.set("repo", repoId);
+    params.set("workspace", workspaceId);
+    params.set("chat", chatId);
     params.set("client", GetClientId());
     if (after != null && after > 0) {
       params.set("after", String(after));
@@ -428,10 +314,10 @@
     );
   }
 
-  function BuildAgentReviewWebSocketUrl(pile, sessionId) {
+  function BuildAgentReviewWebSocketUrl(repoId, workspaceId) {
     const params = new URLSearchParams();
-    params.set("p", pile);
-    params.set("session", sessionId);
+    params.set("repo", repoId);
+    params.set("workspace", workspaceId);
     params.set("client", GetClientId());
 
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
@@ -444,13 +330,14 @@
     );
   }
 
-  function CreateEnvelope(kind, pile, sessionId, payload) {
+  function CreateEnvelope(kind, repoId, workspaceId, chatId, payload) {
     return {
       v: 1,
       kind: kind,
       id: GenerateId(),
-      pile: pile,
-      sessionId: sessionId,
+      repoId: repoId,
+      workspaceId: workspaceId,
+      chatId: chatId,
       timestamp: new Date().toISOString(),
       payload: payload,
     };
@@ -733,7 +620,7 @@
         return;
       }
       SendEnvelope(
-        CreateEnvelope("client.ack", route.pile, route.sessionId, {
+        CreateEnvelope("client.ack", route.repoId, route.workspaceId, route.chatId, {
           sequence: sequence,
         })
       );
@@ -756,8 +643,9 @@
       }
       const envelope = CreateEnvelope(
         "client.history_request",
-        route.pile,
-        route.sessionId,
+        route.repoId,
+        route.workspaceId,
+        route.chatId,
         payload
       );
       if (options.before != null) {
@@ -821,6 +709,26 @@
       ContinueHistoryIfPinnedNearTop();
     }
 
+    function AppendUserMessage(messageId, text) {
+      if (!chatHandle) {
+        return;
+      }
+      window.ChatView.appendAguiEvent(chatHandle, {
+        type: "TEXT_MESSAGE_START",
+        messageId: messageId,
+        role: "user",
+      });
+      window.ChatView.appendAguiEvent(chatHandle, {
+        type: "TEXT_MESSAGE_CONTENT",
+        messageId: messageId,
+        delta: text != null ? String(text) : "",
+      });
+      window.ChatView.appendAguiEvent(chatHandle, {
+        type: "TEXT_MESSAGE_END",
+        messageId: messageId,
+      });
+    }
+
     function HandleServerEnvelope(envelope) {
       if (!envelope || typeof envelope !== "object") {
         return;
@@ -872,23 +780,10 @@
       }
 
       if (kind === "chat.user_message" && payload) {
-        const messageId = payload.messageId || GenerateId();
-        if (chatHandle) {
-          window.ChatView.appendAguiEvent(chatHandle, {
-            type: "TEXT_MESSAGE_START",
-            messageId: messageId,
-            role: "user",
-          });
-          window.ChatView.appendAguiEvent(chatHandle, {
-            type: "TEXT_MESSAGE_CONTENT",
-            messageId: messageId,
-            delta: payload.text != null ? String(payload.text) : "",
-          });
-          window.ChatView.appendAguiEvent(chatHandle, {
-            type: "TEXT_MESSAGE_END",
-            messageId: messageId,
-          });
-        }
+        // The same messageId may already be on screen from the optimistic local
+        // echo in SubmitMessage; the renderer dedupes by id, so re-applying the
+        // events here reconciles to the single existing bubble.
+        AppendUserMessage(payload.messageId || GenerateId(), payload.text);
         return;
       }
 
@@ -942,7 +837,12 @@
       UpdateComposerState();
       UpdateStatusText();
 
-      const wsUrl = BuildWebSocketUrl(route.pile, route.sessionId, lastSequence);
+      const wsUrl = BuildWebSocketUrl(
+        route.repoId,
+        route.workspaceId,
+        route.chatId,
+        lastSequence
+      );
       socket = new WebSocket(wsUrl);
 
       socket.addEventListener("open", function () {
@@ -951,7 +851,7 @@
         UpdateStatusText();
         FlushQueue();
         SendEnvelope(
-          CreateEnvelope("client.hello", route.pile, route.sessionId, {
+          CreateEnvelope("client.hello", route.repoId, route.workspaceId, route.chatId, {
             supportsSnapshots: true,
             supportsLazyHistory: true,
             lastSeenSequence: lastSequence,
@@ -1011,8 +911,11 @@
       }
 
       const messageId = GenerateId();
+      // Optimistic local echo: render the user's message immediately so it never
+      // depends on the server round-trip (the later server echo dedupes by id).
+      AppendUserMessage(messageId, text);
       QueueOrSend(
-        CreateEnvelope("client.user_message", route.pile, route.sessionId, {
+        CreateEnvelope("client.user_message", route.repoId, route.workspaceId, route.chatId, {
           messageId: messageId,
           text: text,
           attachments: [],
@@ -1045,7 +948,7 @@
         return;
       }
       QueueOrSend(
-        CreateEnvelope("client.model_select", route.pile, route.sessionId, {
+        CreateEnvelope("client.model_select", route.repoId, route.workspaceId, route.chatId, {
           provider: parts[0],
           id: parts[1],
           applyTo: "next_turn",
@@ -1102,6 +1005,7 @@
     const state = {
       tabs: [],
       selectedPath: null,
+      viewports: {},
       directoryCache: {},
       expandedDirectories: new Set(["."]),
       agentReview: {
@@ -1137,14 +1041,138 @@
     };
 
     let activeResize = null;
+    let saveEditorStateTimer = null;
+    let applyingEditorState = false;
 
     function FilesApiBase() {
-      return (
-        "/api/piles/" +
-        encodeURIComponent(route.pile) +
-        "/sessions/" +
-        encodeURIComponent(route.sessionId)
+      return route.chatId ? ChatApiBase(route) : WorkspaceApiBase(route);
+    }
+
+    function AgentReviewBase() {
+      // Agent Review is workspace-scoped (the worktree), independent of any chat.
+      return WorkspaceApiBase(route) + "/agent-review";
+    }
+
+    function EditorStateApi() {
+      return WorkspaceApiBase(route) + "/editor-state";
+    }
+
+    function CaptureSelectedViewport() {
+      if (!state.selectedPath) {
+        return;
+      }
+
+      // While restoring editor state, the live scrollTop is still 0 because the
+      // restore runs in a later animation frame. Capturing here would clobber the
+      // viewport we are about to restore, so leave the restored values untouched.
+      if (applyingEditorState) {
+        return;
+      }
+
+      state.viewports[state.selectedPath] = {
+        scrollTop: fileViewEl.scrollTop || 0,
+      };
+    }
+
+    function BuildEditorStatePayload() {
+      CaptureSelectedViewport();
+      return {
+        tabs: state.tabs.map(function (tab) {
+          return tab.path;
+        }),
+        selectedPath: state.selectedPath,
+        expandedDirectories: Array.from(state.expandedDirectories),
+        viewports: state.viewports,
+      };
+    }
+
+    function ScheduleEditorStateSave() {
+      if (applyingEditorState) {
+        return;
+      }
+
+      if (saveEditorStateTimer !== null) {
+        clearTimeout(saveEditorStateTimer);
+      }
+
+      saveEditorStateTimer = window.setTimeout(function () {
+        saveEditorStateTimer = null;
+        FetchJson(EditorStateApi(), {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(BuildEditorStatePayload()),
+        }).catch(function () {
+        });
+      }, 250);
+    }
+
+    function RestoreSelectedViewport() {
+      if (!state.selectedPath) {
+        return;
+      }
+
+      const viewport = state.viewports[state.selectedPath];
+      if (!viewport || typeof viewport.scrollTop !== "number") {
+        return;
+      }
+
+      window.requestAnimationFrame(function () {
+        fileViewEl.scrollTop = viewport.scrollTop;
+      });
+    }
+
+    function ApplyEditorState(editorState) {
+      if (!editorState || typeof editorState !== "object") {
+        return Promise.resolve();
+      }
+
+      applyingEditorState = true;
+      state.expandedDirectories = new Set(
+        Array.isArray(editorState.expandedDirectories)
+          ? editorState.expandedDirectories
+          : ["."]
       );
+      state.expandedDirectories.add(".");
+      state.viewports =
+        editorState.viewports && typeof editorState.viewports === "object"
+          ? editorState.viewports
+          : {};
+
+      const tabs = Array.isArray(editorState.tabs) ? editorState.tabs : [];
+      const selectedPath =
+        typeof editorState.selectedPath === "string" ? editorState.selectedPath : null;
+
+      return Promise.all(Array.from(state.expandedDirectories).map(function (directoryPath) {
+        return LoadDirectory(directoryPath);
+      }))
+        .then(function () {
+          return tabs.reduce(function (chain, tabPath) {
+            return chain.then(function () {
+              return OpenFile(tabPath);
+            });
+          }, Promise.resolve());
+        })
+        .then(function () {
+          if (selectedPath) {
+            return SelectTab(selectedPath);
+          }
+          return Promise.resolve();
+        })
+        .finally(function () {
+          applyingEditorState = false;
+          RenderExplorer();
+          RenderTabs();
+          RenderSelectedFile();
+        });
+    }
+
+    function LoadEditorState() {
+      return FetchJson(EditorStateApi())
+        .then(function (body) {
+          return ApplyEditorState(body.editorState);
+        })
+        .catch(function () {
+        });
     }
 
     function ReviewCommand(action) {
@@ -1172,21 +1200,19 @@
       }
 
       const review = state.agentReview;
+      const reviewHunks =
+        review.state && Array.isArray(review.state.hunks) ? review.state.hunks : [];
+      // Show the Agent Review tab only when the current worktree has unstaged
+      // hunks (or we are already in review mode). A Git worktree with nothing to
+      // review does not surface the tab.
+      const showReview =
+        review.loaded && review.available && (review.active || reviewHunks.length > 0);
+
       reviewBarEl.textContent = "";
       reviewBarEl.classList.toggle("sheaf-chat-agent-review--active", review.active);
-      reviewBarEl.classList.toggle(
-        "sheaf-chat-agent-review--available",
-        review.loaded && review.available
-      );
+      reviewBarEl.classList.toggle("sheaf-chat-agent-review--available", showReview);
 
-      if (!review.loaded) {
-        const status = CreateElement("span", "sheaf-chat-agent-review-status");
-        status.textContent = "Checking review mode...";
-        reviewBarEl.appendChild(status);
-        return;
-      }
-
-      if (!review.available) {
+      if (!showReview) {
         return;
       }
 
@@ -1269,7 +1295,9 @@
       review.error = null;
       RenderReviewBar();
 
-      const socket = new WebSocket(BuildAgentReviewWebSocketUrl(route.pile, route.sessionId));
+      const socket = new WebSocket(
+        BuildAgentReviewWebSocketUrl(route.repoId, route.workspaceId)
+      );
       review.socket = socket;
       socket.addEventListener("open", function () {
         review.connected = true;
@@ -1339,8 +1367,7 @@
     }
 
     function LoadAgentReviewAvailability() {
-      const url = FilesApiBase() + "/agent-review";
-      return FetchJson(url)
+      return FetchJson(AgentReviewBase())
         .then(function (body) {
           state.agentReview.loaded = true;
           state.agentReview.available = body && body.available === true;
@@ -1593,12 +1620,14 @@
       if (state.expandedDirectories.has(directoryPath)) {
         state.expandedDirectories.delete(directoryPath);
         RenderExplorer();
+        ScheduleEditorStateSave();
         return;
       }
 
       state.expandedDirectories.add(directoryPath);
       LoadDirectory(directoryPath).then(function () {
         RenderExplorer();
+        ScheduleEditorStateSave();
       });
     }
 
@@ -1775,6 +1804,8 @@
       if (selected.fragment) {
         ScrollToFragment(selected.fragment);
         selected.fragment = null;
+      } else {
+        RestoreSelectedViewport();
       }
     }
 
@@ -1841,6 +1872,7 @@
       state.selectedPath = normalized;
       RenderTabs();
       RenderSelectedFile();
+      ScheduleEditorStateSave();
       return FetchTabContent(tab, options);
     }
 
@@ -1855,12 +1887,14 @@
         return OpenFile(normalized, options);
       }
 
+      CaptureSelectedViewport();
       state.selectedPath = normalized;
       if (options && options.fragment) {
         tab.fragment = options.fragment;
       }
 
       RenderTabs();
+      ScheduleEditorStateSave();
 
       if (tab.stale || tab.isLoading) {
         return FetchTabContent(tab, options);
@@ -1892,6 +1926,7 @@
       }
       RenderTabs();
       RenderSelectedFile();
+      ScheduleEditorStateSave();
     }
 
     function HandleFileChanged(payload) {
@@ -1984,7 +2019,12 @@
     LoadDirectory(".").then(function () {
       RenderExplorer();
     });
+    LoadEditorState();
     LoadAgentReviewAvailability();
+    fileViewEl.addEventListener("scroll", function () {
+      CaptureSelectedViewport();
+      ScheduleEditorStateSave();
+    });
 
     if (typeof onOpenFile === "function") {
       onOpenFile(OpenFile);
@@ -2015,17 +2055,32 @@
     };
   }
 
-  function RenderTouchChatScreen(app, route) {
+  // Single touch/mobile workspace editor mounted by repo+workspace. Mirrors the
+  // desktop editor: the file pane and slide-in panels mount once, and the chat
+  // panel owns a list <-> open sub-state via the shared chat-pane controller.
+  function RenderWorkspaceEditorTouch(app, route) {
     app.textContent = "";
+    const noop = function () {};
     if (!window.ChatView) {
       const missing = CreateElement("p", "sheaf-chat-error");
       missing.textContent = "Chat renderer failed to load.";
       app.appendChild(missing);
-      return null;
+      return {
+        repoId: route.repoId,
+        workspaceId: route.workspaceId,
+        applyRoute: noop,
+        destroy: noop,
+      };
     }
 
     app.classList.add("sheaf-chat-touch");
     app.classList.remove("sheaf-chat-desktop");
+
+    const workspaceRoute = {
+      screen: "workspace",
+      repoId: route.repoId,
+      workspaceId: route.workspaceId,
+    };
 
     const screen = CreateElement("div", "sheaf-chat-screen sheaf-chat-chat-layout");
     const header = CreateElement("header", "sheaf-chat-header");
@@ -2033,12 +2088,12 @@
     back.type = "button";
     back.textContent = "Back";
     back.addEventListener("click", function () {
-      NavigateTo({ screen: "sessions", pile: route.pile });
+      NavigateTo({ screen: "workspaces", repoId: route.repoId });
     });
     header.appendChild(back);
 
     const title = CreateElement("h1", "sheaf-chat-header-title");
-    title.textContent = route.sessionId;
+    title.textContent = "Workspace";
     header.appendChild(title);
     screen.appendChild(header);
 
@@ -2137,7 +2192,7 @@
     );
     const chatHeader = CreateElement("div", "sheaf-chat-pane-header");
     const chatTitle = CreateElement("span", "sheaf-chat-pane-title");
-    chatTitle.textContent = "Chat";
+    chatTitle.textContent = "Chats";
     const chatClose = CreateElement(
       "button",
       "sheaf-chat-icon-button sheaf-chat-mobile-panel-close"
@@ -2146,36 +2201,9 @@
     chatClose.textContent = "×";
     chatHeader.appendChild(chatTitle);
     chatHeader.appendChild(chatClose);
-
-    const statusRow = CreateElement("div", "sheaf-chat-chat-status");
-    const connectionLabel = CreateElement("span");
-    connectionLabel.textContent = "Connecting…";
-    statusRow.appendChild(connectionLabel);
-
-    const modelSelect = CreateElement("select", "sheaf-chat-model-select");
-    statusRow.appendChild(modelSelect);
-
-    const chatMain = CreateElement("div", "sheaf-chat-chat-main");
-    const chatContainer = CreateElement("div", "sheaf-chat-chat-view");
-    chatMain.appendChild(chatContainer);
-
-    const composer = CreateElement("div", "sheaf-chat-composer");
-    const textarea = CreateElement("textarea", "sheaf-chat-textarea");
-    textarea.rows = 1;
-    textarea.placeholder = "Message the agent…";
-    const sendButton = CreateElement(
-      "button",
-      "sheaf-chat-button sheaf-chat-button--primary sheaf-chat-send"
-    );
-    sendButton.type = "button";
-    sendButton.textContent = "Send";
-    composer.appendChild(textarea);
-    composer.appendChild(sendButton);
-
+    const chatPaneBody = CreateElement("div", "sheaf-chat-chat-pane-body");
     chatPane.appendChild(chatHeader);
-    chatPane.appendChild(statusRow);
-    chatPane.appendChild(chatMain);
-    chatPane.appendChild(composer);
+    chatPane.appendChild(chatPaneBody);
 
     workspace.appendChild(filePane);
     workspace.appendChild(mobileBackdrop);
@@ -2186,29 +2214,8 @@
     app.appendChild(screen);
 
     let openFileFn = null;
-
-    const session = CreateChatSessionController({
-      route: route,
-      touchLayout: true,
-      title: title,
-      connectionLabel: connectionLabel,
-      modelSelect: modelSelect,
-      chatContainer: chatContainer,
-      composer: composer,
-      textarea: textarea,
-      sendButton: sendButton,
-      linkContext: {
-        rootMode: "root",
-        onFileLink: function (targetPath, fragment) {
-          if (openFileFn) {
-            openFileFn(targetPath, { fragment: fragment });
-          }
-        },
-      },
-    });
-
     const workspaceController = CreateFileWorkspace({
-      route: route,
+      route: workspaceRoute,
       explorerEl: explorerEl,
       tabBarEl: null,
       fileViewEl: fileViewEl,
@@ -2226,8 +2233,6 @@
       },
     });
 
-    session.setFileChangedHandler(workspaceController.HandleFileChanged);
-
     explorerToggle.addEventListener("click", function () {
       workspaceController.ToggleMobilePanel("explorer");
     });
@@ -2237,7 +2242,6 @@
     chatToggle.addEventListener("click", function () {
       workspaceController.ToggleMobilePanel("chat");
     });
-
     explorerClose.addEventListener("click", function () {
       workspaceController.CloseMobilePanels();
     });
@@ -2251,28 +2255,296 @@
       workspaceController.CloseMobilePanels();
     });
 
+    const chatPaneController = CreateChatPaneController({
+      route: route,
+      workspaceRoute: workspaceRoute,
+      body: chatPaneBody,
+      titleEl: chatTitle,
+      workspaceController: workspaceController,
+      touchLayout: true,
+      getOpenFile: function () {
+        return openFileFn;
+      },
+    });
+
+    chatPaneController.applyRoute(route);
+
     window.addEventListener(
       "pagehide",
       function () {
-        session.destroy();
+        chatPaneController.destroy();
       },
       { once: true }
     );
 
-    return session.destroy;
+    return {
+      repoId: route.repoId,
+      workspaceId: route.workspaceId,
+      applyRoute: chatPaneController.applyRoute,
+      destroy: chatPaneController.destroy,
+    };
   }
 
-  function RenderDesktopChatScreen(app, route) {
+  // Owns the chat pane's list <-> open sub-state for a mounted workspace editor.
+  // Shared by the desktop and touch editors; only the surrounding layout differs.
+  // Opening or closing a chat swaps only the pane body (no editor re-mount).
+  function CreateChatPaneController(config) {
+    const route = config.route;
+    const workspaceRoute = config.workspaceRoute;
+    const body = config.body;
+    const titleEl = config.titleEl;
+    const workspaceController = config.workspaceController;
+    const touchLayout = config.touchLayout === true;
+    const getOpenFile = config.getOpenFile || function () { return null; };
+
+    let currentSession = null;
+
+    function DestroySession() {
+      if (currentSession) {
+        currentSession.destroy();
+        currentSession = null;
+      }
+    }
+
+    function ShowChatList() {
+      DestroySession();
+      titleEl.textContent = "Chats";
+      body.textContent = "";
+
+      const form = CreateElement("form", "sheaf-chat-form");
+      const modelLabel = CreateElement("label", "sheaf-chat-label");
+      modelLabel.textContent = "Model";
+      modelLabel.htmlFor = "sheaf-chat-new-chat-model";
+      const modelSelect = CreateElement("select", "sheaf-chat-select");
+      modelSelect.id = "sheaf-chat-new-chat-model";
+      const submit = CreateElement(
+        "button",
+        "sheaf-chat-icon-button sheaf-chat-button--primary"
+      );
+      submit.type = "submit";
+      submit.textContent = "+";
+      submit.title = "New chat";
+      submit.setAttribute("aria-label", "New chat");
+      form.appendChild(modelLabel);
+      form.appendChild(modelSelect);
+      form.appendChild(submit);
+      body.appendChild(form);
+
+      const list = CreateElement("ul", "sheaf-chat-list");
+      body.appendChild(list);
+      const errorNode = CreateElement("div", "sheaf-chat-error");
+      body.appendChild(errorNode);
+
+      function PopulateModels(models) {
+        modelSelect.textContent = "";
+        for (const model of models) {
+          const option = document.createElement("option");
+          option.value = model.provider + ":" + model.id;
+          option.textContent =
+            (model.displayName || model.id) +
+            (model.available === false ? " (unavailable)" : "");
+          option.disabled = model.available === false;
+          modelSelect.appendChild(option);
+        }
+      }
+
+      function RenderChats(chats) {
+        list.textContent = "";
+        if (!chats || chats.length === 0) {
+          const empty = CreateElement("p", "sheaf-chat-empty");
+          empty.textContent = "No chats in this workspace yet.";
+          list.appendChild(empty);
+          return;
+        }
+
+        for (const chat of chats) {
+          const item = CreateElement("li", "sheaf-chat-list-item");
+          const button = CreateElement("button", "sheaf-chat-list-button");
+          button.type = "button";
+          button.textContent = chat.chatName || chat.description || chat.chatId || "Chat";
+          const meta = CreateElement("span", "sheaf-chat-list-meta");
+          const model =
+            chat.model && chat.model.id
+              ? chat.model.provider + "/" + chat.model.id
+              : "";
+          meta.textContent =
+            (model ? model : "") +
+            (chat.updatedAt ? " · " + FormatTimestamp(chat.updatedAt) : "");
+          button.appendChild(meta);
+          button.addEventListener("click", function () {
+            NavigateTo({
+              screen: "chat",
+              repoId: route.repoId,
+              workspaceId: route.workspaceId,
+              chatId: chat.chatId,
+            });
+          });
+          item.appendChild(button);
+          list.appendChild(item);
+        }
+      }
+
+      form.addEventListener("submit", function (event) {
+        event.preventDefault();
+        errorNode.textContent = "";
+        const selected = modelSelect.value.split(":");
+        if (selected.length !== 2) {
+          errorNode.textContent = "Select a model";
+          return;
+        }
+
+        submit.disabled = true;
+        FetchJson(WorkspaceApiBase(workspaceRoute) + "/chats", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            model: { provider: selected[0], id: selected[1] },
+          }),
+        })
+          .then(function (created) {
+            NavigateTo({
+              screen: "chat",
+              repoId: route.repoId,
+              workspaceId: route.workspaceId,
+              chatId: created.chatId,
+            });
+          })
+          .catch(function (error) {
+            errorNode.textContent = error.message || "Failed to create chat";
+          })
+          .finally(function () {
+            submit.disabled = false;
+          });
+      });
+
+      Promise.all([
+        FetchJson("/api/models"),
+        FetchJson(WorkspaceApiBase(workspaceRoute) + "/chats"),
+      ])
+        .then(function (results) {
+          PopulateModels(results[0].models || []);
+          RenderChats(results[1].chats || []);
+        })
+        .catch(function (error) {
+          errorNode.textContent = error.message || "Failed to load workspace";
+        });
+    }
+
+    function OpenChat(chatId) {
+      DestroySession();
+      titleEl.textContent = chatId;
+      body.textContent = "";
+
+      const chatRoute = {
+        screen: "chat",
+        repoId: route.repoId,
+        workspaceId: route.workspaceId,
+        chatId: chatId,
+      };
+
+      const paneTop = CreateElement("div", "sheaf-chat-chat-pane-top");
+      const paneBack = CreateElement(
+        "button",
+        "sheaf-chat-back sheaf-chat-chat-pane-back"
+      );
+      paneBack.type = "button";
+      paneBack.textContent = "Back";
+      paneBack.title = "Back to chats";
+      paneBack.setAttribute("aria-label", "Back to chats");
+      paneBack.addEventListener("click", function () {
+        NavigateTo(workspaceRoute);
+      });
+      const connectionLabel = CreateElement("span", "sheaf-chat-connection");
+      connectionLabel.textContent = "Connecting…";
+      const modelSelect = CreateElement("select", "sheaf-chat-model-select");
+      paneTop.appendChild(paneBack);
+      paneTop.appendChild(connectionLabel);
+      paneTop.appendChild(modelSelect);
+      body.appendChild(paneTop);
+
+      const chatContainer = CreateElement("div", "sheaf-chat-chat-view");
+      body.appendChild(chatContainer);
+
+      const composer = CreateElement("div", "sheaf-chat-composer");
+      const textarea = CreateElement("textarea", "sheaf-chat-textarea");
+      textarea.rows = 1;
+      textarea.placeholder = "Message the agent…";
+      const sendButton = CreateElement(
+        "button",
+        "sheaf-chat-button sheaf-chat-button--primary sheaf-chat-send"
+      );
+      sendButton.type = "button";
+      sendButton.textContent = "Send";
+      composer.appendChild(textarea);
+      composer.appendChild(sendButton);
+      body.appendChild(composer);
+
+      const session = CreateChatSessionController({
+        route: chatRoute,
+        touchLayout: touchLayout,
+        title: titleEl,
+        connectionLabel: connectionLabel,
+        modelSelect: modelSelect,
+        chatContainer: chatContainer,
+        composer: composer,
+        textarea: textarea,
+        sendButton: sendButton,
+        linkContext: {
+          rootMode: "root",
+          onFileLink: function (targetPath, fragment) {
+            const openFile = getOpenFile();
+            if (openFile) {
+              openFile(targetPath, { fragment: fragment });
+            }
+          },
+        },
+      });
+      session.setFileChangedHandler(workspaceController.HandleFileChanged);
+      currentSession = session;
+    }
+
+    function ApplyRoute(nextRoute) {
+      if (nextRoute && nextRoute.chatId) {
+        OpenChat(nextRoute.chatId);
+        return;
+      }
+      ShowChatList();
+    }
+
+    return {
+      applyRoute: ApplyRoute,
+      destroy: DestroySession,
+    };
+  }
+
+  // Single desktop workspace editor mounted by repo+workspace. The explorer and
+  // file panes mount once; the chat pane owns a list <-> open sub-state. Opening
+  // or closing a chat swaps only the chat pane (no editor re-mount), the top-level
+  // Back returns to the workspace picker, and a chat-pane Back returns to the list.
+  function RenderWorkspaceEditorDesktop(app, route) {
     app.textContent = "";
+
+    const noop = function () {};
     if (!window.ChatView) {
       const missing = CreateElement("p", "sheaf-chat-error");
       missing.textContent = "Chat renderer failed to load.";
       app.appendChild(missing);
-      return null;
+      return {
+        repoId: route.repoId,
+        workspaceId: route.workspaceId,
+        applyRoute: noop,
+        destroy: noop,
+      };
     }
 
     app.classList.add("sheaf-chat-desktop");
     app.classList.remove("sheaf-chat-touch");
+
+    const workspaceRoute = {
+      screen: "workspace",
+      repoId: route.repoId,
+      workspaceId: route.workspaceId,
+    };
 
     const screen = CreateElement("div", "sheaf-chat-screen sheaf-chat-chat-layout");
     const header = CreateElement("header", "sheaf-chat-header");
@@ -2280,23 +2552,13 @@
     back.type = "button";
     back.textContent = "Back";
     back.addEventListener("click", function () {
-      NavigateTo({ screen: "sessions", pile: route.pile });
+      NavigateTo({ screen: "workspaces", repoId: route.repoId });
     });
     header.appendChild(back);
-
     const title = CreateElement("h1", "sheaf-chat-header-title");
-    title.textContent = route.sessionId;
+    title.textContent = "Workspace";
     header.appendChild(title);
     screen.appendChild(header);
-
-    const statusRow = CreateElement("div", "sheaf-chat-chat-status");
-    const connectionLabel = CreateElement("span");
-    connectionLabel.textContent = "Connecting…";
-    statusRow.appendChild(connectionLabel);
-
-    const modelSelect = CreateElement("select", "sheaf-chat-model-select");
-    statusRow.appendChild(modelSelect);
-    screen.appendChild(statusRow);
 
     const workspace = CreateElement("div", "sheaf-chat-workspace");
 
@@ -2337,7 +2599,7 @@
     const chatPane = CreateElement("div", "sheaf-chat-chat-pane");
     const chatHeader = CreateElement("div", "sheaf-chat-pane-header");
     const chatTitle = CreateElement("span", "sheaf-chat-pane-title");
-    chatTitle.textContent = "Chat";
+    chatTitle.textContent = "Chats";
     const chatCollapse = CreateElement(
       "button",
       "sheaf-chat-icon-button sheaf-chat-pane-collapse"
@@ -2346,27 +2608,9 @@
     chatCollapse.textContent = "⟩";
     chatHeader.appendChild(chatTitle);
     chatHeader.appendChild(chatCollapse);
-
-    const chatMain = CreateElement("div", "sheaf-chat-chat-main");
-    const chatContainer = CreateElement("div", "sheaf-chat-chat-view");
-    chatMain.appendChild(chatContainer);
-
-    const composer = CreateElement("div", "sheaf-chat-composer");
-    const textarea = CreateElement("textarea", "sheaf-chat-textarea");
-    textarea.rows = 1;
-    textarea.placeholder = "Message the agent…";
-    const sendButton = CreateElement(
-      "button",
-      "sheaf-chat-button sheaf-chat-button--primary sheaf-chat-send"
-    );
-    sendButton.type = "button";
-    sendButton.textContent = "Send";
-    composer.appendChild(textarea);
-    composer.appendChild(sendButton);
-
+    const chatPaneBody = CreateElement("div", "sheaf-chat-chat-pane-body");
     chatPane.appendChild(chatHeader);
-    chatPane.appendChild(chatMain);
-    chatPane.appendChild(composer);
+    chatPane.appendChild(chatPaneBody);
 
     workspace.appendChild(explorerPane);
     workspace.appendChild(explorerResize);
@@ -2377,29 +2621,8 @@
     app.appendChild(screen);
 
     let openFileFn = null;
-
-    const session = CreateChatSessionController({
-      route: route,
-      touchLayout: false,
-      title: title,
-      connectionLabel: connectionLabel,
-      modelSelect: modelSelect,
-      chatContainer: chatContainer,
-      composer: composer,
-      textarea: textarea,
-      sendButton: sendButton,
-      linkContext: {
-        rootMode: "root",
-        onFileLink: function (targetPath, fragment) {
-          if (openFileFn) {
-            openFileFn(targetPath, { fragment: fragment });
-          }
-        },
-      },
-    });
-
     const workspaceController = CreateFileWorkspace({
-      route: route,
+      route: workspaceRoute,
       explorerEl: explorerEl,
       tabBarEl: tabBarEl,
       fileViewEl: fileViewEl,
@@ -2412,8 +2635,6 @@
       },
     });
 
-    session.setFileChangedHandler(workspaceController.HandleFileChanged);
-
     function SyncCollapseButtons() {
       const explorerCollapsed = explorerPane.classList.contains(
         "sheaf-chat-explorer-pane--collapsed"
@@ -2421,14 +2642,12 @@
       const chatCollapsed = chatPane.classList.contains(
         "sheaf-chat-chat-pane--collapsed"
       );
-
       explorerCollapse.textContent = explorerCollapsed ? "⟩" : "⟨";
       explorerCollapse.setAttribute(
         "aria-label",
         explorerCollapsed ? "Expand explorer" : "Collapse explorer"
       );
       explorerCollapse.title = explorerCollapsed ? "Expand explorer" : "Collapse explorer";
-
       chatCollapse.textContent = chatCollapsed ? "⟨" : "⟩";
       chatCollapse.setAttribute(
         "aria-label",
@@ -2436,7 +2655,6 @@
       );
       chatCollapse.title = chatCollapsed ? "Expand chat" : "Collapse chat";
     }
-
     SyncCollapseButtons();
 
     explorerCollapse.addEventListener("click", function () {
@@ -2447,7 +2665,6 @@
       workspaceController.ToggleChatCollapsed();
       SyncCollapseButtons();
     });
-
     explorerResize.addEventListener("mousedown", function (event) {
       workspaceController.StartResize("explorer", event);
     });
@@ -2455,23 +2672,34 @@
       workspaceController.StartResize("chat", event);
     });
 
+    const chatPaneController = CreateChatPaneController({
+      route: route,
+      workspaceRoute: workspaceRoute,
+      body: chatPaneBody,
+      titleEl: chatTitle,
+      workspaceController: workspaceController,
+      touchLayout: false,
+      getOpenFile: function () {
+        return openFileFn;
+      },
+    });
+
+    chatPaneController.applyRoute(route);
+
     window.addEventListener(
       "pagehide",
       function () {
-        session.destroy();
+        chatPaneController.destroy();
       },
       { once: true }
     );
 
-    return session.destroy;
-  }
-
-  function RenderChatScreen(app, route) {
-    if (IsTouchLayout()) {
-      return RenderTouchChatScreen(app, route);
-    }
-
-    return RenderDesktopChatScreen(app, route);
+    return {
+      repoId: route.repoId,
+      workspaceId: route.workspaceId,
+      applyRoute: chatPaneController.applyRoute,
+      destroy: chatPaneController.destroy,
+    };
   }
 
   function Render(route) {
@@ -2480,34 +2708,76 @@
       return null;
     }
 
-    if (route.screen === "piles") {
-      RenderPilesScreen(app, route);
+    if (route.screen === "repositories") {
+      RenderRepositoriesScreen(app, route);
       return null;
     }
 
-    if (route.screen === "sessions") {
-      RenderSessionsScreen(app, route);
+    if (route.screen === "workspaces") {
+      RenderWorkspacesScreen(app, route);
       return null;
     }
 
-    if (route.screen === "chat") {
-      return RenderChatScreen(app, route);
-    }
-
-    RenderPilesScreen(app, route);
+    RenderRepositoriesScreen(app, route);
     return null;
   }
 
+  function MountRoute(route) {
+    const app = document.getElementById("app");
+    if (!app) {
+      return { kind: "other", destroy: function () {} };
+    }
+
+    const isEditorRoute = route.screen === "workspace" || route.screen === "chat";
+    if (isEditorRoute) {
+      const touch = IsTouchLayout();
+      const editor = touch
+        ? RenderWorkspaceEditorTouch(app, route)
+        : RenderWorkspaceEditorDesktop(app, route);
+      return {
+        kind: "editor",
+        touch: touch,
+        repoId: editor.repoId,
+        workspaceId: editor.workspaceId,
+        applyRoute: editor.applyRoute,
+        destroy: editor.destroy,
+      };
+    }
+
+    const destroy = Render(route);
+    return {
+      kind: "other",
+      destroy: typeof destroy === "function" ? destroy : function () {},
+    };
+  }
+
   function Boot() {
-    let destroyChat = null;
+    let mounted = null;
 
     function OnRouteChange() {
-      if (destroyChat) {
-        destroyChat();
-        destroyChat = null;
-      }
       const route = ParseRoute();
-      destroyChat = Render(route);
+      const isEditorRoute = route.screen === "workspace" || route.screen === "chat";
+
+      if (
+        mounted &&
+        mounted.kind === "editor" &&
+        isEditorRoute &&
+        mounted.touch === IsTouchLayout() &&
+        mounted.repoId === route.repoId &&
+        mounted.workspaceId === route.workspaceId
+      ) {
+        // The same workspace editor is already mounted; update only the chat
+        // pane in place so the explorer and file panes (and their server-restored
+        // state) are not torn down and re-fetched.
+        mounted.applyRoute(route);
+        return;
+      }
+
+      if (mounted) {
+        mounted.destroy();
+        mounted = null;
+      }
+      mounted = MountRoute(route);
     }
 
     window.addEventListener("hashchange", OnRouteChange);

@@ -1,35 +1,45 @@
-import { readFile, readdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import path from "node:path";
 
 import type {
-  SessionManifest,
+  ChatManifest,
   UpdateManifestInput,
   WriteInitialManifestInput,
 } from "../shared/types.js";
 import { x_manifestSchemaVersion } from "../shared/types.js";
 import { StorageError } from "./errors.js";
-import { EnsurePileExists } from "./piles.js";
 import {
   ManifestSessionFileReference,
+  ResolveChatsDirectory,
   ResolveManifestFilePath,
-  ResolvePileDirectory,
   type StoragePaths,
 } from "./paths.js";
-import { ValidateSessionId } from "./validation.js";
+import { ResolveRepository, ResolveWorkspace } from "./repositories.js";
+import { ValidateChatId } from "./validation.js";
 
-function ParseManifest(raw: string, pile: string, sessionId: string): SessionManifest
+function ParseManifest(
+  raw: string,
+  repoId: string,
+  workspaceId: string,
+  chatId: string,
+): ChatManifest
 {
-  let parsed: SessionManifest;
+  let parsed: ChatManifest;
 
   try
   {
-    parsed = JSON.parse(raw) as SessionManifest;
+    parsed = JSON.parse(raw) as ChatManifest;
   }
   catch
   {
     throw new StorageError("invalid_manifest", "manifest is not valid JSON");
   }
 
-  if (parsed.pile !== pile || parsed.sessionId !== sessionId)
+  if (
+    parsed.repoId !== repoId ||
+    parsed.workspaceId !== workspaceId ||
+    parsed.chatId !== chatId
+  )
   {
     throw new StorageError("invalid_manifest", "manifest identity does not match request");
   }
@@ -39,13 +49,13 @@ function ParseManifest(raw: string, pile: string, sessionId: string): SessionMan
 
 export async function ReadManifest(
   paths: StoragePaths,
-  pile: string,
-  sessionId: string,
-): Promise<SessionManifest>
+  repoId: string,
+  workspaceId: string,
+  chatId: string,
+): Promise<ChatManifest>
 {
-  await EnsurePileExists(paths, pile);
-  const validatedSessionId = ValidateSessionId(sessionId);
-  const manifestPath = ResolveManifestFilePath(paths, pile, validatedSessionId);
+  const validatedChatId = ValidateChatId(chatId);
+  const manifestPath = ResolveManifestFilePath(paths, repoId, workspaceId, validatedChatId);
 
   let raw: string;
 
@@ -57,22 +67,33 @@ export async function ReadManifest(
   {
     throw new StorageError(
       "manifest_not_found",
-      `manifest not found for session ${validatedSessionId}`,
+      `manifest not found for chat ${validatedChatId}`,
     );
   }
 
-  return ParseManifest(raw, pile, validatedSessionId);
+  return ParseManifest(raw, repoId, workspaceId, validatedChatId);
 }
 
-export async function ListSessionManifests(
+export async function ListChatManifests(
   paths: StoragePaths,
-  pile: string,
-): Promise<SessionManifest[]>
+  repoId: string,
+  workspaceId: string,
+): Promise<ChatManifest[]>
 {
-  await EnsurePileExists(paths, pile);
-  const pileDirectory = ResolvePileDirectory(paths, pile);
-  const entries = await readdir(pileDirectory);
-  const manifests: SessionManifest[] = [];
+  await ResolveWorkspace(paths, repoId, workspaceId);
+  const chatsDirectory = ResolveChatsDirectory(paths, repoId, workspaceId);
+  let entries: string[];
+
+  try
+  {
+    entries = await readdir(chatsDirectory);
+  }
+  catch
+  {
+    return [];
+  }
+
+  const manifests: ChatManifest[] = [];
 
   for (const entry of entries)
   {
@@ -81,12 +102,12 @@ export async function ListSessionManifests(
       continue;
     }
 
-    const sessionId = entry.slice(0, -".manifest.json".length);
+    const chatId = entry.slice(0, -".manifest.json".length);
 
     try
     {
-      ValidateSessionId(sessionId);
-      manifests.push(await ReadManifest(paths, pile, sessionId));
+      ValidateChatId(chatId);
+      manifests.push(await ReadManifest(paths, repoId, workspaceId, chatId));
     }
     catch
     {
@@ -101,16 +122,30 @@ export async function ListSessionManifests(
 export async function WriteInitialManifest(
   paths: StoragePaths,
   input: WriteInitialManifestInput,
-): Promise<SessionManifest>
+): Promise<ChatManifest>
 {
-  await EnsurePileExists(paths, input.pile);
-  const validatedSessionId = ValidateSessionId(input.sessionId);
-  const manifestPath = ResolveManifestFilePath(paths, input.pile, validatedSessionId);
+  const repoId = input.repoId;
+  const workspaceId = input.workspaceId;
+  const chatId = input.chatId;
+  const repositoryPath = input.repositoryPath;
+  const workspacePath = input.workspacePath;
+  await ResolveRepository(paths, repoId).catch(() => undefined);
+  await ResolveWorkspace(paths, repoId, workspaceId).catch(() => undefined);
+  const validatedChatId = ValidateChatId(chatId);
+  const manifestPath = ResolveManifestFilePath(
+    paths,
+    repoId,
+    workspaceId,
+    validatedChatId,
+  );
   const now = new Date().toISOString();
-  const manifest: SessionManifest = {
+  const manifest: ChatManifest = {
     schemaVersion: x_manifestSchemaVersion,
-    pile: input.pile,
-    sessionId: validatedSessionId,
+    repoId,
+    workspaceId,
+    chatId: validatedChatId,
+    repositoryPath,
+    workspacePath,
     chatName: input.chatName,
     description: input.description,
     rootDirectory: input.rootDirectory,
@@ -119,7 +154,12 @@ export async function WriteInitialManifest(
     lastOpenedAt: now,
     model: input.model,
     pi: {
-      sessionFile: ManifestSessionFileReference(paths.repoRoot, input.pile, validatedSessionId),
+      sessionFile: ManifestSessionFileReference(
+        paths.repoRoot,
+        repoId,
+        workspaceId,
+        validatedChatId,
+      ),
       extensionVersion: input.extensionVersion,
     },
     history: {
@@ -128,19 +168,21 @@ export async function WriteInitialManifest(
     },
   };
 
+  await mkdir(path.dirname(manifestPath), { recursive: true });
   await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
   return manifest;
 }
 
 export async function UpdateManifest(
   paths: StoragePaths,
-  pile: string,
-  sessionId: string,
+  repoId: string,
+  workspaceId: string,
+  chatId: string,
   update: UpdateManifestInput,
-): Promise<SessionManifest>
+): Promise<ChatManifest>
 {
-  const manifest = await ReadManifest(paths, pile, sessionId);
-  const updated: SessionManifest = {
+  const manifest = await ReadManifest(paths, repoId, workspaceId, chatId);
+  const updated: ChatManifest = {
     ...manifest,
     chatName: update.chatName ?? manifest.chatName,
     description: update.description ?? manifest.description,
@@ -154,7 +196,25 @@ export async function UpdateManifest(
     },
   };
 
-  const manifestPath = ResolveManifestFilePath(paths, pile, sessionId);
+  const manifestPath = ResolveManifestFilePath(paths, repoId, workspaceId, chatId);
   await writeFile(manifestPath, `${JSON.stringify(updated, null, 2)}\n`, "utf8");
   return updated;
+}
+
+export async function ManifestExists(
+  paths: StoragePaths,
+  repoId: string,
+  workspaceId: string,
+  chatId: string,
+): Promise<boolean>
+{
+  try
+  {
+    await readFile(ResolveManifestFilePath(paths, repoId, workspaceId, chatId), "utf8");
+    return true;
+  }
+  catch
+  {
+    return false;
+  }
 }
