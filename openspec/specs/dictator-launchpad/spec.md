@@ -191,25 +191,6 @@ THE controller SHALL render pad colors over MIDI (programmer mode), re-rendering
 - **WHEN** the record-status or shift-latch state changes
 - **THEN** those pads re-render immediately
 
-### Requirement: lp-18 — VS Code hunk-control static layout reservation
-
-THE shipped Launchpad product layout and fixture layout SHALL NOT define static pads at `(0,2)`, `(1,2)`, `(2,2)`, `(3,2)`, `(0,3)`, `(1,3)`, `(2,3)`, or `(3,3)`; those coordinates are reserved for the hunk-control layer and SHALL NOT send F13-F20 or any other static keystroke from the base layout.
-
-#### Scenario: Product layout reserves hunk controls
-
-- **WHEN** `projects/dictator/src/launchpad/launchpad-layout.json` is decoded
-- **THEN** no static pad exists at `(0,2)`, `(1,2)`, `(2,2)`, `(3,2)`, `(0,3)`, `(1,3)`, `(2,3)`, or `(3,3)`
-
-#### Scenario: Fixture layout reserves hunk controls
-
-- **WHEN** `projects/dictator/tests/fixtures/launchpad-layout.json` is decoded
-- **THEN** no static pad exists at `(0,2)`, `(1,2)`, `(2,2)`, `(3,2)`, `(0,3)`, `(1,3)`, `(2,3)`, or `(3,3)`
-
-#### Scenario: Reserved coordinates do not send F-commands
-
-- **WHEN** a hunk-control coordinate is pressed with no active hunk-control layer action available
-- **THEN** Dictator sends no F13-F20 keyboard event
-
 ### Requirement: lp-19 — Voice diff review pad
 
 THE Launchpad controller SHALL reserve `(2,7)` as the voice diff review pad and SHALL render it red while a review recording is active, blue when a current focused hunk review target and an active review are both present, grey when a current focused hunk review target is present with no active review, green when an active review exists without a focused current hunk review target, and off otherwise.
@@ -276,17 +257,12 @@ WHEN the contextual-backspace pad is pressed during review-comment recording or 
 
 ### Requirement: lp-22 — Hunk controls: Provider routing
 
-WHEN a Launchpad hunk-control button is pressed, THE Launchpad controller SHALL route the matching navigation, stage, revert, or undo command to the healthy focused hunk review target selected by Dictator, including either VS Code or Sheaf Chat providers; IF no healthy focused hunk review target reports the action available, THEN the controller SHALL consume the button without sending a keyboard fallback.
+WHEN a Launchpad hunk-control button is pressed, THE Launchpad controller SHALL route the matching navigation, stage, revert, or undo command to the healthy focused hunk review target selected by Dictator; IF no healthy focused hunk review target reports the action available, THEN the controller SHALL consume the button without sending a keyboard fallback.
 
 #### Scenario: Sheaf Chat hunk target focused
 
 - **WHEN** Sheaf Chat Agent Review Mode is the healthy focused hunk review target and a lit hunk-control button is pressed
 - **THEN** Dictator sends the matching hunk command to the Sheaf Chat provider
-
-#### Scenario: VS Code hunk target focused
-
-- **WHEN** VS Code is the healthy focused hunk review target and a lit hunk-control button is pressed
-- **THEN** Dictator sends the matching hunk command to the VS Code provider
 
 #### Scenario: No commandable hunk target
 
@@ -330,11 +306,8 @@ Roles: `record_status` (color driven by dictation state) and `shift_latch`
 (color driven by latch state); pads without a role render their static
 `color`. The shipped product layout binds: primary/auxiliary/Talon-Lite
 dictation toggles, safe-config restore, shift latch, contextual backspace,
-Space, Enter, arrows, and Cmd+C/V/X/Z. The coordinates `(0,2)`, `(1,2)`,
-`(2,2)`, `(3,2)`, `(0,3)`, `(1,3)`, `(2,3)`, and `(3,3)` are reserved for the
-VS Code hunk-control layer and are not static keystroke pads. The coordinate
-`(2,7)` is reserved for the voice diff review control layer and is not a static
-keystroke pad.
+Space, Enter, arrows, and Cmd+C/V/X/Z. The coordinate `(2,7)` is reserved for
+the voice diff review control layer and is not a static keystroke pad.
 
 ### Pinned dictation-state colors
 

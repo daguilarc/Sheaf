@@ -20,12 +20,11 @@ enum WebRoute: Equatable
     case apiInteractionDetail(id: String)
     case apiModels(provider: String)
     case apiKeyStatus
-    case apiVSCodeHunkState
-    case apiVSCodeHunkHeartbeat
-    case apiVSCodeHunkDisconnect
-    case apiVSCodeHunkCommand(windowID: String)
-    case apiVSCodeHunkCommandResult
-    case apiVSCodeHunkDiagnostics
+    case apiHunkReviewState
+    case apiHunkReviewDisconnect
+    case apiHunkReviewCommand(providerID: String)
+    case apiHunkReviewCommandResult
+    case apiHunkReviewDiagnostics
 }
 
 enum WebRouter
@@ -94,22 +93,20 @@ enum WebRouter
             return .apiModels(provider: provider)
         case (.GET, "/api/api-key-status"):
             return .apiKeyStatus
-        case (.POST, "/api/vscode-hunk/state"):
-            return .apiVSCodeHunkState
-        case (.POST, "/api/vscode-hunk/heartbeat"):
-            return .apiVSCodeHunkHeartbeat
-        case (.POST, "/api/vscode-hunk/disconnect"):
-            return .apiVSCodeHunkDisconnect
-        case (.GET, "/api/vscode-hunk/command"):
-            guard let windowID = query["window_id"], !windowID.isEmpty else
+        case (.POST, "/api/hunk-review/state"):
+            return .apiHunkReviewState
+        case (.POST, "/api/hunk-review/disconnect"):
+            return .apiHunkReviewDisconnect
+        case (.GET, "/api/hunk-review/command"):
+            guard let providerID = query["provider_id"], !providerID.isEmpty else
             {
-                throw WebRouterError.badRequest("window_id query parameter is required")
+                throw WebRouterError.badRequest("provider_id query parameter is required")
             }
-            return .apiVSCodeHunkCommand(windowID: windowID)
-        case (.POST, "/api/vscode-hunk/command-result"):
-            return .apiVSCodeHunkCommandResult
-        case (.GET, "/api/vscode-hunk/diagnostics"):
-            return .apiVSCodeHunkDiagnostics
+            return .apiHunkReviewCommand(providerID: providerID)
+        case (.POST, "/api/hunk-review/command-result"):
+            return .apiHunkReviewCommandResult
+        case (.GET, "/api/hunk-review/diagnostics"):
+            return .apiHunkReviewDiagnostics
         default:
             return nil
         }

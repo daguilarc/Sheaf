@@ -49,8 +49,8 @@ final class DiffReviewStoreTests: XCTestCase {
         XCTAssertNil(store.serializedReview())
     }
 
-    private func hunk(id: String, hash: String) -> VSCodeHunkReviewContext {
-        VSCodeHunkReviewContext(
+    private func hunk(id: String, hash: String) -> HunkReviewContext {
+        HunkReviewContext(
             sourceProvider: "sheaf-chat",
             repoRoot: "/repo",
             file: "Sources/App.swift",

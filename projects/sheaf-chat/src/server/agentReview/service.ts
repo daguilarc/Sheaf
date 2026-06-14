@@ -206,7 +206,7 @@ class AgentReviewSession
   private readonly m_key: SessionKey;
   private readonly m_agentManager: AgentManager;
   private readonly m_dictatorEndpoint: DictatorEndpointResolver | null;
-  private readonly m_windowId: string;
+  private readonly m_providerId: string;
   private readonly m_sockets = new Set<WebSocket>();
   private readonly m_undoStack: UndoEntry[] = [];
   private m_state: AgentReviewState | null = null;
@@ -225,7 +225,7 @@ class AgentReviewSession
     this.m_key = key;
     this.m_agentManager = agentManager;
     this.m_dictatorEndpoint = dictatorEndpoint;
-    this.m_windowId = `sheaf-chat:${key.pile}:${key.sessionId}`;
+    this.m_providerId = `sheaf-chat:${key.pile}:${key.sessionId}`;
   }
 
   Dispose(): void
@@ -642,7 +642,7 @@ class AgentReviewSession
     const state = this.RequireState();
     const current = state.currentHunk;
     const body = {
-      windowId: this.m_windowId,
+      providerId: this.m_providerId,
       focused: this.m_sockets.size > 0 && current !== null,
       paneOpen: this.m_sockets.size > 0 && state.available,
       repoRoot: state.repoRoot,
@@ -667,7 +667,7 @@ class AgentReviewSession
 
     try
     {
-      const response = await fetch(`${endpoint.url}/api/vscode-hunk/state`, {
+      const response = await fetch(`${endpoint.url}/api/hunk-review/state`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
@@ -692,10 +692,10 @@ class AgentReviewSession
 
     try
     {
-      await fetch(`${endpoint.url}/api/vscode-hunk/disconnect`, {
+      await fetch(`${endpoint.url}/api/hunk-review/disconnect`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ windowId: this.m_windowId }),
+        body: JSON.stringify({ providerId: this.m_providerId }),
       });
     }
     catch
@@ -713,12 +713,12 @@ class AgentReviewSession
 
     try
     {
-      await fetch(`${endpoint.url}/api/vscode-hunk/command-result`, {
+      await fetch(`${endpoint.url}/api/hunk-review/command-result`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           commandId: result.commandId,
-          windowId: this.m_windowId,
+          providerId: this.m_providerId,
           result: {
             ok: result.ok,
             action: DictatorActionPayload(result.action),
@@ -772,7 +772,7 @@ class AgentReviewSession
     try
     {
       const response = await fetch(
-        `${endpoint.url}/api/vscode-hunk/command?window_id=${encodeURIComponent(this.m_windowId)}`,
+        `${endpoint.url}/api/hunk-review/command?provider_id=${encodeURIComponent(this.m_providerId)}`,
       );
       if (!response.ok)
       {

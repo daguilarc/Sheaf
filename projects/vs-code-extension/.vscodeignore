@@ -1,9 +1,0 @@
-node_modules/**
-src/**
-tests/**
-.test-dist/**
-out/**/*.map
-scripts/**
-tsconfig*.json
-esbuild.config.mjs
-*.vsix

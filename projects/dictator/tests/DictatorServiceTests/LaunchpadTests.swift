@@ -356,21 +356,6 @@ final class LaunchpadTests: XCTestCase {
         XCTAssertEqual(auxTwo.action.promptSlot, 2)
     }
 
-    func testDefaultLayoutReservesVSCodeHunkControlRectangle() throws {
-        let config = try loadFixtureLayout()
-        guard let arrowsPage = config.pages.first(where: { $0.id == "arrows" }) else {
-            XCTFail("Expected arrows page in default layout")
-            return
-        }
-
-        for coordinate in vscodeHunkCoordinates() {
-            XCTAssertNil(
-                arrowsPage.pads.first(where: { $0.x == coordinate.x && $0.y == coordinate.y }),
-                "Expected reserved coordinate (\(coordinate.x),\(coordinate.y)) to be absent from static layout"
-            )
-        }
-    }
-
     func testProductLayoutKeepsServiceActionsAndOmitsNativeUIActions() throws {
         let config = try loadProductLayout()
         guard let arrowsPage = config.pages.first(where: { $0.id == "arrows" }) else {
@@ -670,24 +655,25 @@ final class LaunchpadTests: XCTestCase {
         XCTAssertEqual(layer.handleCount, 1)
     }
 
-    func testVSCodeHunkRegistrySelectsFocusedHealthyTarget() {
-        let registry = VSCodeHunkRegistry(timeoutSeconds: 3)
+    func testHunkReviewRegistrySelectsFocusedHealthyTarget() {
+        let registry = HunkReviewRegistry(timeoutSeconds: 3)
         let now = Date(timeIntervalSince1970: 10)
-        registry.update(snapshot: makeVSCodeSnapshot(windowID: "a", focused: false), now: now)
-        registry.update(snapshot: makeVSCodeSnapshot(windowID: "b", focused: true), now: now)
+        registry.update(snapshot: makeHunkReviewSnapshot(providerID: "a", focused: false), now: now)
+        registry.update(snapshot: makeHunkReviewSnapshot(providerID: "b", focused: true), now: now)
 
-        XCTAssertEqual(registry.activeTarget(now: now)?.windowId, "b")
+        XCTAssertEqual(registry.activeTarget(now: now)?.providerId, "b")
         XCTAssertNil(registry.activeTarget(now: now.addingTimeInterval(4)))
     }
 
-    func testVSCodeHunkControlLayerLightsAndDispatchesOnlyAvailableActions() {
+    func testHunkReviewControlLayerLightsAndDispatchesOnlyAvailableActions() {
         let bus = RenderInvalidationBus()
-        let registry = VSCodeHunkRegistry(timeoutSeconds: 3)
-        let layer = VSCodeHunkLaunchpadControlLayer(registry: registry, invalidationBus: bus)
-        let state = makeVSCodeSnapshot(
-            windowID: "vscode",
+        let registry = HunkReviewRegistry(timeoutSeconds: 3)
+        let layer = HunkReviewLaunchpadControlLayer(registry: registry, invalidationBus: bus)
+        let state = makeHunkReviewSnapshot(
+            providerID: "sheaf-chat:default:sess",
             focused: true,
-            actions: VSCodeHunkActionAvailability(
+            sourceProvider: "sheaf-chat",
+            actions: HunkReviewActionAvailability(
                 canGoUp: false,
                 canGoDown: true,
                 canGoPrevFile: false,
@@ -704,31 +690,31 @@ final class LaunchpadTests: XCTestCase {
         XCTAssertEqual(layer.getColor(at: PadCoordinate(x: 3, y: 3)), .off)
 
         XCTAssertTrue(layer.handle(PadEvent(coordinate: PadCoordinate(x: 2, y: 2), phase: .press, velocity: 100)))
-        XCTAssertEqual(registry.nextCommand(windowId: "vscode")?.action, .stage)
+        XCTAssertEqual(registry.nextCommand(providerId: "sheaf-chat:default:sess")?.action, .stage)
 
         XCTAssertTrue(layer.handle(PadEvent(coordinate: PadCoordinate(x: 1, y: 2), phase: .press, velocity: 100)))
-        XCTAssertNil(registry.nextCommand(windowId: "vscode"))
+        XCTAssertNil(registry.nextCommand(providerId: "sheaf-chat:default:sess"))
     }
 
-    func testVSCodeHunkControlLayerConsumesInactiveButtonsWithoutStaticFallback() {
+    func testHunkReviewControlLayerConsumesInactiveButtonsWithoutStaticFallback() {
         let bus = RenderInvalidationBus()
-        let registry = VSCodeHunkRegistry(timeoutSeconds: 3)
-        let layer = VSCodeHunkLaunchpadControlLayer(registry: registry, invalidationBus: bus)
+        let registry = HunkReviewRegistry(timeoutSeconds: 3)
+        let layer = HunkReviewLaunchpadControlLayer(registry: registry, invalidationBus: bus)
 
         XCTAssertEqual(layer.getColor(at: PadCoordinate(x: 0, y: 2)), .off)
         XCTAssertTrue(layer.handle(PadEvent(coordinate: PadCoordinate(x: 0, y: 2), phase: .press, velocity: 100)))
-        XCTAssertNil(registry.nextCommand(windowId: "missing"))
+        XCTAssertNil(registry.nextCommand(providerId: "missing"))
     }
 
     func testHunkControlLayerRoutesSheafChatProviderCommands() {
         let bus = RenderInvalidationBus()
-        let registry = VSCodeHunkRegistry(timeoutSeconds: 3)
-        let layer = VSCodeHunkLaunchpadControlLayer(registry: registry, invalidationBus: bus)
-        registry.update(snapshot: makeVSCodeSnapshot(
-            windowID: "sheaf-chat:default:sess",
+        let registry = HunkReviewRegistry(timeoutSeconds: 3)
+        let layer = HunkReviewLaunchpadControlLayer(registry: registry, invalidationBus: bus)
+        registry.update(snapshot: makeHunkReviewSnapshot(
+            providerID: "sheaf-chat:default:sess",
             focused: true,
             sourceProvider: "sheaf-chat",
-            actions: VSCodeHunkActionAvailability(
+            actions: HunkReviewActionAvailability(
                 canGoUp: false,
                 canGoDown: false,
                 canGoPrevFile: false,
@@ -742,24 +728,28 @@ final class LaunchpadTests: XCTestCase {
         XCTAssertEqual(registry.diagnostics().activeSourceProvider, "sheaf-chat")
         XCTAssertEqual(layer.getColor(at: PadCoordinate(x: 0, y: 2)), PadColor(r: 255, g: 0, b: 0))
         XCTAssertTrue(layer.handle(PadEvent(coordinate: PadCoordinate(x: 0, y: 2), phase: .press, velocity: 100)))
-        XCTAssertEqual(registry.nextCommand(windowId: "sheaf-chat:default:sess")?.action, .revert)
+        XCTAssertEqual(registry.nextCommand(providerId: "sheaf-chat:default:sess")?.action, .revert)
     }
 
     func testDiffReviewLaunchpadLayerRendersStateColors() {
-        let registry = VSCodeHunkRegistry(timeoutSeconds: 3)
+        let registry = HunkReviewRegistry(timeoutSeconds: 3)
         let store = DiffReviewStore()
         let layer = DiffReviewLaunchpadControlLayer(registry: registry, reviewStore: store, onPress: {})
         let coordinate = PadCoordinate(x: 2, y: 7)
 
         XCTAssertEqual(layer.getColor(at: coordinate), .off)
 
-        registry.update(snapshot: makeVSCodeSnapshot(windowID: "vscode", focused: true))
+        registry.update(snapshot: makeHunkReviewSnapshot(
+            providerID: "sheaf-chat:default:sess",
+            focused: true,
+            sourceProvider: "sheaf-chat"
+        ))
         XCTAssertEqual(layer.getColor(at: coordinate), PadColor(r: 90, g: 90, b: 90))
 
         store.appendComment(hunk: makeReviewHunk(), text: "Needs follow-up.")
         XCTAssertEqual(layer.getColor(at: coordinate), PadColor(r: 0, g: 0, b: 255))
 
-        registry.heartbeat(windowId: "vscode", focused: false)
+        registry.updateFocus(providerId: "sheaf-chat:default:sess", focused: false)
         XCTAssertEqual(layer.getColor(at: coordinate), PadColor(r: 0, g: 255, b: 0))
 
         store.setRecordingActive(true)
@@ -767,7 +757,7 @@ final class LaunchpadTests: XCTestCase {
     }
 
     func testDiffReviewLaunchpadLayerConsumesReviewPadPress() {
-        let registry = VSCodeHunkRegistry(timeoutSeconds: 3)
+        let registry = HunkReviewRegistry(timeoutSeconds: 3)
         let store = DiffReviewStore()
         var presses = 0
         let layer = DiffReviewLaunchpadControlLayer(registry: registry, reviewStore: store) {
@@ -838,8 +828,8 @@ final class LaunchpadTests: XCTestCase {
     }
 }
 
-private func makeReviewHunk() -> VSCodeHunkReviewContext {
-    VSCodeHunkReviewContext(
+private func makeReviewHunk() -> HunkReviewContext {
+    HunkReviewContext(
         repoRoot: "/repo",
         file: "a.ts",
         hunkId: "hunk",
@@ -906,24 +896,11 @@ private final class FakeControlLayer: LaunchpadControlLayer {
     }
 }
 
-private func vscodeHunkCoordinates() -> [PadCoordinate] {
-    [
-        PadCoordinate(x: 0, y: 2),
-        PadCoordinate(x: 1, y: 2),
-        PadCoordinate(x: 2, y: 2),
-        PadCoordinate(x: 3, y: 2),
-        PadCoordinate(x: 0, y: 3),
-        PadCoordinate(x: 1, y: 3),
-        PadCoordinate(x: 2, y: 3),
-        PadCoordinate(x: 3, y: 3)
-    ]
-}
-
-private func makeVSCodeSnapshot(
-    windowID: String,
+private func makeHunkReviewSnapshot(
+    providerID: String,
     focused: Bool,
     sourceProvider: String? = nil,
-    actions: VSCodeHunkActionAvailability = VSCodeHunkActionAvailability(
+    actions: HunkReviewActionAvailability = HunkReviewActionAvailability(
         canGoUp: true,
         canGoDown: true,
         canGoPrevFile: true,
@@ -932,9 +909,9 @@ private func makeVSCodeSnapshot(
         canRevert: true,
         canUndo: true
     )
-) -> VSCodeHunkPaneSnapshot {
-    VSCodeHunkPaneSnapshot(
-        windowId: windowID,
+) -> HunkReviewProviderSnapshot {
+    HunkReviewProviderSnapshot(
+        providerId: providerID,
         focused: focused,
         paneOpen: true,
         repoRoot: "/repo",
@@ -943,7 +920,7 @@ private func makeVSCodeSnapshot(
         fileCount: 2,
         hunkIndex: 0,
         hunkCount: 2,
-        currentHunk: VSCodeHunkMetadata(
+        currentHunk: HunkReviewMetadata(
             id: "hunk",
             file: "a.ts",
             index: 0,
@@ -951,7 +928,7 @@ private func makeVSCodeSnapshot(
             header: "@@ -1,1 +1,1 @@",
             patchHash: "abc"
         ),
-        currentHunkReview: VSCodeHunkReviewContext(
+        currentHunkReview: HunkReviewContext(
             sourceProvider: sourceProvider,
             repoRoot: "/repo",
             file: "a.ts",

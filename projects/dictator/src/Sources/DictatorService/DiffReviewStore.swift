@@ -11,7 +11,7 @@ struct DiffReviewHunkSnapshot: Codable, Equatable, Sendable {
     let patchHash: String
     let patch: String
 
-    init(_ context: VSCodeHunkReviewContext) {
+    init(_ context: HunkReviewContext) {
         sourceProvider = context.effectiveSourceProvider
         repoRoot = context.repoRoot
         file = context.file
@@ -76,7 +76,7 @@ final class DiffReviewStore: @unchecked Sendable {
         lock.unlock()
     }
 
-    func appendComment(hunk context: VSCodeHunkReviewContext, text: String) {
+    func appendComment(hunk context: HunkReviewContext, text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             return
@@ -89,7 +89,7 @@ final class DiffReviewStore: @unchecked Sendable {
         callback?()
     }
 
-    func appendReverted(hunk context: VSCodeHunkReviewContext) {
+    func appendReverted(hunk context: HunkReviewContext) {
         lock.lock()
         entries.append(.reverted(hunk: DiffReviewHunkSnapshot(context)))
         lastPostError = nil
@@ -98,7 +98,7 @@ final class DiffReviewStore: @unchecked Sendable {
         callback?()
     }
 
-    func removeReverted(hunk context: VSCodeHunkReviewContext) {
+    func removeReverted(hunk context: HunkReviewContext) {
         let snapshot = DiffReviewHunkSnapshot(context)
         lock.lock()
         if let index = entries.lastIndex(where: { entry in

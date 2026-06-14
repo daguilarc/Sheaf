@@ -6,7 +6,7 @@ ID prefix: `vdr` — requirement IDs are append-only; never renumber or reuse.
 ## Purpose
 
 Dictator maintains a lightweight in-memory voice diff review while the user
-reviews VS Code hunk-pane changes from the Launchpad. Spoken review comments,
+reviews focused hunk-review target changes from the Launchpad. Spoken review comments,
 reverted hunk markers, and undo-revert cleanup are serialized into a
 self-contained review that can be pasted into an agent chat without submitting
 it automatically.
@@ -112,7 +112,7 @@ WHEN the review pad is pressed while an active diff review exists and there is n
 
 ### Requirement: vdr-5 — Review diagnostics
 
-WHEN Dictator exposes diagnostics for hunk controls or Launchpad state, THE service SHALL include whether an active diff review exists, the active review entry count, whether a review-comment recording is active, and the source provider of any focused current hunk review target.
+WHEN Dictator exposes diagnostics for voice diff review or Launchpad state, THE service SHALL include whether an active diff review exists, the active review entry count, whether a review-comment recording is active, and the source provider of any focused current hunk review target.
 
 #### Scenario: Diagnostics requested during review
 
@@ -128,4 +128,3 @@ WHEN Dictator exposes diagnostics for hunk controls or Launchpad state, THE serv
 
 - **WHEN** diagnostics are requested while a hunk review target has focus
 - **THEN** Dictator reports the focused target's source provider
-

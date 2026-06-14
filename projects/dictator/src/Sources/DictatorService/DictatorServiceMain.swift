@@ -197,7 +197,7 @@ struct DictatorServiceMain
         )
 
         let activityTracker = DictationActivityTracker()
-        let vsCodeHunkRegistry = VSCodeHunkRegistry()
+        let hunkReviewRegistry = HunkReviewRegistry()
         let diffReviewStore = DiffReviewStore()
         let endpointDescription = "http://127.0.0.1:\(endpoint.port)"
         let webContext = WebServiceContext(
@@ -210,7 +210,7 @@ struct DictatorServiceMain
             endpointDescription: endpointDescription,
             logPath: repoRoot.appendingPathComponent("logs/dictator", isDirectory: true).path,
             dataPath: dataDirectoryURL.path,
-            vsCodeHunkRegistry: vsCodeHunkRegistry,
+            hunkReviewRegistry: hunkReviewRegistry,
             diffReviewStore: diffReviewStore
         )
         let webAPIService = WebAPIService(context: webContext)
@@ -224,7 +224,7 @@ struct DictatorServiceMain
             coreClient: coreClient,
             interactionStore: interactionStore,
             activityTracker: activityTracker,
-            vsCodeHunkRegistry: vsCodeHunkRegistry,
+            hunkReviewRegistry: hunkReviewRegistry,
             diffReviewStore: diffReviewStore
         )
         await MainActor.run

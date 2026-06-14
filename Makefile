@@ -136,18 +136,6 @@ agents-check-global:
 agents-clean-global:
 	$(MAKE) -C projects/agents clean-global
 
-vs-code-extension-build:
-	$(MAKE) -C projects/vs-code-extension build
-
-vs-code-extension-test:
-	$(MAKE) -C projects/vs-code-extension test
-
-vs-code-extension-install:
-	$(MAKE) -C projects/vs-code-extension install
-
-vs-code-extension-clean:
-	$(MAKE) -C projects/vs-code-extension clean
-
 help:
 	@echo "Repository targets:"
 	@echo "  make all              Build and test every project under projects/"

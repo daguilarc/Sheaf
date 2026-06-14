@@ -14,7 +14,7 @@ final class WebAPITests: XCTestCase
     private var apiKeysURL: URL?
     private var runtimeConfigProvider: RuntimeConfigProvider?
     private var interactionStore: InteractionHistoryStore?
-    private var vsCodeHunkRegistry: VSCodeHunkRegistry?
+    private var hunkReviewRegistry: HunkReviewRegistry?
     private var fakeClient = WebAPITestFakeCoreClient()
 
     override func tearDown() async throws
@@ -341,12 +341,12 @@ final class WebAPITests: XCTestCase
         XCTAssertFalse(String(data: encoded, encoding: .utf8)?.contains("sk-test") == true)
     }
 
-    func testVSCodeHunkStateAndCommandAPIRoundTrip() async throws
+    func testHunkReviewStateAndCommandAPIRoundTrip() async throws
     {
         try await startServer()
         let snapshot = """
         {
-          "windowId": "window-1",
+          "providerId": "window-1",
           "focused": true,
           "paneOpen": true,
           "repoRoot": "/tmp/repo",
@@ -387,27 +387,27 @@ final class WebAPITests: XCTestCase
 
         let (stateStatus, stateBody) = try await jsonRequest(
             method: "POST",
-            path: "/api/vscode-hunk/state",
+            path: "/api/hunk-review/state",
             body: snapshot,
             contentType: "application/json"
         )
         XCTAssertEqual(stateStatus, 200)
         XCTAssertEqual(stateBody["ok"] as? Bool, true)
 
-        let registry = try XCTUnwrap(vsCodeHunkRegistry)
+        let registry = try XCTUnwrap(hunkReviewRegistry)
         let queued = registry.enqueueCommand(.stage)
         XCTAssertNotNil(queued)
 
-        let commandResponse = try await rawRequest(method: "GET", path: "/api/vscode-hunk/command?window_id=window-1")
+        let commandResponse = try await rawRequest(method: "GET", path: "/api/hunk-review/command?provider_id=window-1")
         XCTAssertEqual(commandResponse.status, 200)
-        let command = try JSONDecoder().decode(VSCodeHunkCommandEnvelope.self, from: commandResponse.body)
+        let command = try JSONDecoder().decode(HunkReviewCommandEnvelope.self, from: commandResponse.body)
         XCTAssertEqual(command.action, .stage)
         XCTAssertEqual(command.id, queued?.id)
 
         let result = """
         {
           "commandId": "\(command.id)",
-          "windowId": "window-1",
+          "providerId": "window-1",
           "result": {
             "ok": true,
             "action": "stage"
@@ -416,24 +416,24 @@ final class WebAPITests: XCTestCase
         """.data(using: .utf8)!
         let (resultStatus, resultBody) = try await jsonRequest(
             method: "POST",
-            path: "/api/vscode-hunk/command-result",
+            path: "/api/hunk-review/command-result",
             body: result,
             contentType: "application/json"
         )
         XCTAssertEqual(resultStatus, 200)
         XCTAssertEqual(resultBody["ok"] as? Bool, true)
 
-        let diagnostics = try await rawRequest(method: "GET", path: "/api/vscode-hunk/diagnostics")
+        let diagnostics = try await rawRequest(method: "GET", path: "/api/hunk-review/diagnostics")
         XCTAssertEqual(diagnostics.status, 200)
-        let decoded = try JSONDecoder().decode(VSCodeHunkDiagnostics.self, from: diagnostics.body)
-        XCTAssertEqual(decoded.activeWindowId, "window-1")
-        XCTAssertEqual(decoded.lastCommandResult, VSCodeHunkCommandResult(ok: true, action: .stage, error: nil, reviewFacts: nil))
+        let decoded = try JSONDecoder().decode(HunkReviewDiagnostics.self, from: diagnostics.body)
+        XCTAssertEqual(decoded.activeProviderId, "window-1")
+        XCTAssertEqual(decoded.lastCommandResult, HunkReviewCommandResult(ok: true, action: .stage, error: nil, reviewFacts: nil))
         XCTAssertEqual(decoded.diffReview?.hasActiveReview, false)
 
         let reviewFacts = """
         {
           "commandId": "revert-command",
-          "windowId": "window-1",
+          "providerId": "window-1",
           "result": {
             "ok": true,
             "action": "revert",
@@ -454,21 +454,21 @@ final class WebAPITests: XCTestCase
         """.data(using: .utf8)!
         let (reviewFactsStatus, _) = try await jsonRequest(
             method: "POST",
-            path: "/api/vscode-hunk/command-result",
+            path: "/api/hunk-review/command-result",
             body: reviewFacts,
             contentType: "application/json"
         )
         XCTAssertEqual(reviewFactsStatus, 200)
 
-        let afterRevert = try await rawRequest(method: "GET", path: "/api/vscode-hunk/diagnostics")
-        let afterRevertDiagnostics = try JSONDecoder().decode(VSCodeHunkDiagnostics.self, from: afterRevert.body)
+        let afterRevert = try await rawRequest(method: "GET", path: "/api/hunk-review/diagnostics")
+        let afterRevertDiagnostics = try JSONDecoder().decode(HunkReviewDiagnostics.self, from: afterRevert.body)
         XCTAssertEqual(afterRevertDiagnostics.diffReview?.hasActiveReview, true)
         XCTAssertEqual(afterRevertDiagnostics.diffReview?.entryCount, 1)
 
         let failedUndoFacts = """
         {
           "commandId": "failed-undo-command",
-          "windowId": "window-1",
+          "providerId": "window-1",
           "result": {
             "ok": false,
             "action": "undo",
@@ -490,18 +490,18 @@ final class WebAPITests: XCTestCase
         """.data(using: .utf8)!
         _ = try await jsonRequest(
             method: "POST",
-            path: "/api/vscode-hunk/command-result",
+            path: "/api/hunk-review/command-result",
             body: failedUndoFacts,
             contentType: "application/json"
         )
-        let afterFailedUndo = try await rawRequest(method: "GET", path: "/api/vscode-hunk/diagnostics")
-        let afterFailedUndoDiagnostics = try JSONDecoder().decode(VSCodeHunkDiagnostics.self, from: afterFailedUndo.body)
+        let afterFailedUndo = try await rawRequest(method: "GET", path: "/api/hunk-review/diagnostics")
+        let afterFailedUndoDiagnostics = try JSONDecoder().decode(HunkReviewDiagnostics.self, from: afterFailedUndo.body)
         XCTAssertEqual(afterFailedUndoDiagnostics.diffReview?.entryCount, 1)
 
         let undoFacts = """
         {
           "commandId": "undo-command",
-          "windowId": "window-1",
+          "providerId": "window-1",
           "result": {
             "ok": true,
             "action": "undo",
@@ -522,29 +522,29 @@ final class WebAPITests: XCTestCase
         """.data(using: .utf8)!
         _ = try await jsonRequest(
             method: "POST",
-            path: "/api/vscode-hunk/command-result",
+            path: "/api/hunk-review/command-result",
             body: undoFacts,
             contentType: "application/json"
         )
-        let afterUndo = try await rawRequest(method: "GET", path: "/api/vscode-hunk/diagnostics")
-        let afterUndoDiagnostics = try JSONDecoder().decode(VSCodeHunkDiagnostics.self, from: afterUndo.body)
+        let afterUndo = try await rawRequest(method: "GET", path: "/api/hunk-review/diagnostics")
+        let afterUndoDiagnostics = try JSONDecoder().decode(HunkReviewDiagnostics.self, from: afterUndo.body)
         XCTAssertEqual(afterUndoDiagnostics.diffReview?.hasActiveReview, false)
         XCTAssertEqual(afterUndoDiagnostics.diffReview?.entryCount, 0)
 
-        let disconnect = #"{"windowId":"window-1"}"#.data(using: .utf8)!
+        let disconnect = #"{"providerId":"window-1"}"#.data(using: .utf8)!
         let (disconnectStatus, disconnectBody) = try await jsonRequest(
             method: "POST",
-            path: "/api/vscode-hunk/disconnect",
+            path: "/api/hunk-review/disconnect",
             body: disconnect,
             contentType: "application/json"
         )
         XCTAssertEqual(disconnectStatus, 200)
         XCTAssertEqual(disconnectBody["ok"] as? Bool, true)
 
-        let afterDisconnect = try await rawRequest(method: "GET", path: "/api/vscode-hunk/diagnostics")
-        let cleared = try JSONDecoder().decode(VSCodeHunkDiagnostics.self, from: afterDisconnect.body)
-        XCTAssertNil(cleared.activeWindowId)
-        XCTAssertEqual(cleared.instances.count, 0)
+        let afterDisconnect = try await rawRequest(method: "GET", path: "/api/hunk-review/diagnostics")
+        let cleared = try JSONDecoder().decode(HunkReviewDiagnostics.self, from: afterDisconnect.body)
+        XCTAssertNil(cleared.activeProviderId)
+        XCTAssertEqual(cleared.providers.count, 0)
     }
 
     func testWebUIDoesNotReferenceRetiredNativeControls() throws
@@ -636,9 +636,9 @@ final class WebAPITests: XCTestCase
 
         let lifecycle = ServiceLifecycle()
         let activityTracker = DictationActivityTracker()
-        let vsCodeHunkRegistry = VSCodeHunkRegistry()
+        let hunkReviewRegistry = HunkReviewRegistry()
         let diffReviewStore = DiffReviewStore()
-        self.vsCodeHunkRegistry = vsCodeHunkRegistry
+        self.hunkReviewRegistry = hunkReviewRegistry
 
         let webContext = WebServiceContext(
             repoRoot: repoRoot,
@@ -650,7 +650,7 @@ final class WebAPITests: XCTestCase
             endpointDescription: "http://127.0.0.1:0",
             logPath: tempDir.appendingPathComponent("logs").path,
             dataPath: tempDir.appendingPathComponent("data").path,
-            vsCodeHunkRegistry: vsCodeHunkRegistry,
+            hunkReviewRegistry: hunkReviewRegistry,
             diffReviewStore: diffReviewStore
         )
         let webAPIService = WebAPIService(context: webContext, urlSession: session)

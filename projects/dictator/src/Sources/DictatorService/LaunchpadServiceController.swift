@@ -44,7 +44,7 @@ final class LaunchpadServiceController
     private let apiClient: APIClient
     private let interactionStore: InteractionHistoryStore
     private let activityTracker: DictationActivityTracker
-    private let vsCodeHunkRegistry: VSCodeHunkRegistry
+    private let hunkReviewRegistry: HunkReviewRegistry
     private let diffReviewStore: DiffReviewStore
     private let sessionID = UUID().uuidString
 
@@ -75,7 +75,7 @@ final class LaunchpadServiceController
     private var recordingContext: [String: String]?
     private var activeInteractionMode: InteractionMode = .standard
     private var activeSystemPromptPathOverride: String?
-    private var activeReviewHunk: VSCodeHunkReviewContext?
+    private var activeReviewHunk: HunkReviewContext?
     private var activeDictationTask: Task<DictateCallResult, Error>?
     private var dictationState: DictationState = .idle
     private var shiftLatchState: ShiftLatchState = .unpressed
@@ -93,7 +93,7 @@ final class LaunchpadServiceController
         coreClient: any DictatorCoreClient,
         interactionStore: InteractionHistoryStore,
         activityTracker: DictationActivityTracker,
-        vsCodeHunkRegistry: VSCodeHunkRegistry,
+        hunkReviewRegistry: HunkReviewRegistry,
         diffReviewStore: DiffReviewStore
     )
     {
@@ -104,7 +104,7 @@ final class LaunchpadServiceController
         self.apiClient = APIClient(coreClient: coreClient)
         self.interactionStore = interactionStore
         self.activityTracker = activityTracker
-        self.vsCodeHunkRegistry = vsCodeHunkRegistry
+        self.hunkReviewRegistry = hunkReviewRegistry
         self.diffReviewStore = diffReviewStore
     }
 
@@ -118,19 +118,19 @@ final class LaunchpadServiceController
 
         let invalidationBus = RenderInvalidationBus()
         let pageController = LaunchpadPageController(invalidationBus: invalidationBus)
-        vsCodeHunkRegistry.setOnChange {
-            invalidationBus.markDirty(reason: "vscode_hunk_state")
+        hunkReviewRegistry.setOnChange {
+            invalidationBus.markDirty(reason: "hunk_review_state")
         }
         diffReviewStore.setOnChange {
             invalidationBus.markDirty(reason: "diff_review_state")
         }
         pageController.setControlLayer(
-            VSCodeHunkLaunchpadControlLayer(registry: vsCodeHunkRegistry, invalidationBus: invalidationBus),
-            forSlot: "vscode.hunks"
+            HunkReviewLaunchpadControlLayer(registry: hunkReviewRegistry, invalidationBus: invalidationBus),
+            forSlot: "hunk.review"
         )
         pageController.setControlLayer(
             DiffReviewLaunchpadControlLayer(
-                registry: vsCodeHunkRegistry,
+                registry: hunkReviewRegistry,
                 reviewStore: diffReviewStore,
                 onPress: { [weak self] in
                     Task { @MainActor in
@@ -263,7 +263,7 @@ final class LaunchpadServiceController
         }
         launchpadRenderWorker?.stop()
         launchpadMIDIManager?.stop()
-        vsCodeHunkRegistry.setOnChange(nil)
+        hunkReviewRegistry.setOnChange(nil)
         diffReviewStore.setOnChange(nil)
         launchpadRenderWorker = nil
         launchpadMIDIManager = nil
@@ -643,7 +643,7 @@ final class LaunchpadServiceController
             return
         }
 
-        if let hunk = vsCodeHunkRegistry.activeReviewHunk()
+        if let hunk = hunkReviewRegistry.activeReviewHunk()
         {
             await startReviewRecording(hunk: hunk)
             return
@@ -655,7 +655,7 @@ final class LaunchpadServiceController
         }
     }
 
-    private func startReviewRecording(hunk: VSCodeHunkReviewContext) async
+    private func startReviewRecording(hunk: HunkReviewContext) async
     {
         guard dictationState == .idle, !recordingController.isRecording else
         {

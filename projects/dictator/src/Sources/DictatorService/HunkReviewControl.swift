@@ -1,7 +1,7 @@
 import DictatorCore
 import Foundation
 
-enum VSCodeHunkAction: String, Codable, CaseIterable {
+enum HunkReviewAction: String, Codable, CaseIterable {
     case previousHunk
     case nextHunk
     case previousFile
@@ -11,7 +11,7 @@ enum VSCodeHunkAction: String, Codable, CaseIterable {
     case undo
 }
 
-struct VSCodeHunkActionAvailability: Codable, Equatable {
+struct HunkReviewActionAvailability: Codable, Equatable {
     let canGoUp: Bool
     let canGoDown: Bool
     let canGoPrevFile: Bool
@@ -20,7 +20,7 @@ struct VSCodeHunkActionAvailability: Codable, Equatable {
     let canRevert: Bool
     let canUndo: Bool
 
-    static let none = VSCodeHunkActionAvailability(
+    static let none = HunkReviewActionAvailability(
         canGoUp: false,
         canGoDown: false,
         canGoPrevFile: false,
@@ -30,7 +30,7 @@ struct VSCodeHunkActionAvailability: Codable, Equatable {
         canUndo: false
     )
 
-    func allows(_ action: VSCodeHunkAction) -> Bool {
+    func allows(_ action: HunkReviewAction) -> Bool {
         switch action {
         case .previousHunk:
             return canGoUp
@@ -50,7 +50,7 @@ struct VSCodeHunkActionAvailability: Codable, Equatable {
     }
 }
 
-struct VSCodeHunkMetadata: Codable, Equatable {
+struct HunkReviewMetadata: Codable, Equatable {
     let id: String
     let file: String
     let index: Int
@@ -59,7 +59,7 @@ struct VSCodeHunkMetadata: Codable, Equatable {
     let patchHash: String
 }
 
-struct VSCodeHunkReviewContext: Codable, Equatable, Sendable {
+struct HunkReviewContext: Codable, Equatable, Sendable {
     let sourceProvider: String?
     let repoRoot: String
     let file: String
@@ -93,12 +93,12 @@ struct VSCodeHunkReviewContext: Codable, Equatable, Sendable {
     }
 
     var effectiveSourceProvider: String {
-        sourceProvider ?? "vscode"
+        sourceProvider ?? "unknown"
     }
 }
 
-struct VSCodeHunkPaneSnapshot: Codable, Equatable {
-    let windowId: String
+struct HunkReviewProviderSnapshot: Codable, Equatable {
+    let providerId: String
     let focused: Bool
     let paneOpen: Bool
     let repoRoot: String?
@@ -107,45 +107,40 @@ struct VSCodeHunkPaneSnapshot: Codable, Equatable {
     let fileCount: Int
     let hunkIndex: Int
     let hunkCount: Int
-    let currentHunk: VSCodeHunkMetadata?
-    let currentHunkReview: VSCodeHunkReviewContext?
-    let actions: VSCodeHunkActionAvailability
+    let currentHunk: HunkReviewMetadata?
+    let currentHunkReview: HunkReviewContext?
+    let actions: HunkReviewActionAvailability
 }
 
-struct VSCodeHunkHeartbeatRequest: Codable {
-    let windowId: String
-    let focused: Bool
+struct HunkReviewDisconnectRequest: Codable {
+    let providerId: String
 }
 
-struct VSCodeHunkDisconnectRequest: Codable {
-    let windowId: String
-}
-
-struct VSCodeHunkCommandEnvelope: Codable, Equatable {
+struct HunkReviewCommandEnvelope: Codable, Equatable {
     let id: String
-    let action: VSCodeHunkAction
+    let action: HunkReviewAction
 }
 
-struct VSCodeHunkCommandResultRequest: Codable {
+struct HunkReviewCommandResultRequest: Codable {
     let commandId: String
-    let windowId: String
-    let result: VSCodeHunkCommandResult
+    let providerId: String
+    let result: HunkReviewCommandResult
 }
 
-struct VSCodeHunkCommandResult: Codable, Equatable {
+struct HunkReviewCommandResult: Codable, Equatable {
     let ok: Bool
-    let action: VSCodeHunkAction
+    let action: HunkReviewAction
     let error: String?
-    let reviewFacts: VSCodeHunkCommandReviewFacts?
+    let reviewFacts: HunkReviewCommandReviewFacts?
 }
 
-struct VSCodeHunkCommandReviewFacts: Codable, Equatable {
-    let revertedHunk: VSCodeHunkReviewContext?
-    let restoredRevertedHunk: VSCodeHunkReviewContext?
+struct HunkReviewCommandReviewFacts: Codable, Equatable {
+    let revertedHunk: HunkReviewContext?
+    let restoredRevertedHunk: HunkReviewContext?
 }
 
-struct VSCodeHunkInstanceDiagnostic: Codable, Equatable {
-    let windowId: String
+struct HunkReviewProviderDiagnostic: Codable, Equatable {
+    let providerId: String
     let sourceProvider: String
     let healthy: Bool
     let focused: Bool
@@ -162,31 +157,31 @@ struct VSCodeHunkInstanceDiagnostic: Codable, Equatable {
     let canUndo: Bool
 }
 
-struct VSCodeHunkDiagnostics: Codable, Equatable {
-    let activeWindowId: String?
+struct HunkReviewDiagnostics: Codable, Equatable {
+    let activeProviderId: String?
     let activeSourceProvider: String?
-    let instances: [VSCodeHunkInstanceDiagnostic]
-    let lastCommandResult: VSCodeHunkCommandResult?
+    let providers: [HunkReviewProviderDiagnostic]
+    let lastCommandResult: HunkReviewCommandResult?
     let diffReview: DiffReviewDiagnostics?
 }
 
-final class VSCodeHunkRegistry: @unchecked Sendable {
+final class HunkReviewRegistry: @unchecked Sendable {
     struct ActiveTarget {
-        let windowId: String
-        let snapshot: VSCodeHunkPaneSnapshot
+        let providerId: String
+        let snapshot: HunkReviewProviderSnapshot
     }
 
     private struct Instance {
-        var snapshot: VSCodeHunkPaneSnapshot
-        var lastHeartbeat: Date
-        var pendingCommands: [VSCodeHunkCommandEnvelope]
+        var snapshot: HunkReviewProviderSnapshot
+        var lastContact: Date
+        var pendingCommands: [HunkReviewCommandEnvelope]
     }
 
     private let lock = NSLock()
     private let timeoutSeconds: TimeInterval
     private var instances: [String: Instance] = [:]
-    private var lastFocusedWindowId: String?
-    private var lastCommandResult: VSCodeHunkCommandResult?
+    private var lastFocusedProviderId: String?
+    private var lastCommandResult: HunkReviewCommandResult?
     private var onChange: (() -> Void)?
 
     init(timeoutSeconds: TimeInterval = 3.0) {
@@ -199,18 +194,18 @@ final class VSCodeHunkRegistry: @unchecked Sendable {
         lock.unlock()
     }
 
-    func update(snapshot: VSCodeHunkPaneSnapshot, now: Date = Date()) {
+    func update(snapshot: HunkReviewProviderSnapshot, now: Date = Date()) {
         lock.lock()
-        var instance = instances[snapshot.windowId] ?? Instance(
+        var instance = instances[snapshot.providerId] ?? Instance(
             snapshot: snapshot,
-            lastHeartbeat: now,
+            lastContact: now,
             pendingCommands: []
         )
         instance.snapshot = snapshot
-        instance.lastHeartbeat = now
-        instances[snapshot.windowId] = instance
+        instance.lastContact = now
+        instances[snapshot.providerId] = instance
         if snapshot.focused {
-            lastFocusedWindowId = snapshot.windowId
+            lastFocusedProviderId = snapshot.providerId
         }
         expireLocked(now: now)
         let callback = onChange
@@ -218,12 +213,12 @@ final class VSCodeHunkRegistry: @unchecked Sendable {
         callback?()
     }
 
-    func heartbeat(windowId: String, focused: Bool, now: Date = Date()) {
+    func updateFocus(providerId: String, focused: Bool, now: Date = Date()) {
         lock.lock()
-        if var instance = instances[windowId] {
-            instance.lastHeartbeat = now
-            instance.snapshot = VSCodeHunkPaneSnapshot(
-                windowId: instance.snapshot.windowId,
+        if var instance = instances[providerId] {
+            instance.lastContact = now
+            instance.snapshot = HunkReviewProviderSnapshot(
+                providerId: instance.snapshot.providerId,
                 focused: focused,
                 paneOpen: instance.snapshot.paneOpen,
                 repoRoot: instance.snapshot.repoRoot,
@@ -236,10 +231,10 @@ final class VSCodeHunkRegistry: @unchecked Sendable {
                 currentHunkReview: instance.snapshot.currentHunkReview,
                 actions: instance.snapshot.actions
             )
-            instances[windowId] = instance
+            instances[providerId] = instance
         }
         if focused {
-            lastFocusedWindowId = windowId
+            lastFocusedProviderId = providerId
         }
         expireLocked(now: now)
         let callback = onChange
@@ -247,14 +242,14 @@ final class VSCodeHunkRegistry: @unchecked Sendable {
         callback?()
     }
 
-    func disconnect(windowId: String) {
+    func disconnect(providerId: String) {
         lock.lock()
-        instances.removeValue(forKey: windowId)
-        if lastFocusedWindowId == windowId {
-            lastFocusedWindowId = instances.values
+        instances.removeValue(forKey: providerId)
+        if lastFocusedProviderId == providerId {
+            lastFocusedProviderId = instances.values
                 .filter { $0.snapshot.focused }
-                .max { $0.lastHeartbeat < $1.lastHeartbeat }?
-                .snapshot.windowId
+                .max { $0.lastContact < $1.lastContact }?
+                .snapshot.providerId
         }
         let callback = onChange
         lock.unlock()
@@ -265,23 +260,23 @@ final class VSCodeHunkRegistry: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         expireLocked(now: now)
-        guard let windowId = lastFocusedWindowId,
-              let instance = instances[windowId],
+        guard let providerId = lastFocusedProviderId,
+              let instance = instances[providerId],
               isHealthy(instance, now: now),
               instance.snapshot.focused else {
             return nil
         }
-        return ActiveTarget(windowId: windowId, snapshot: instance.snapshot)
+        return ActiveTarget(providerId: providerId, snapshot: instance.snapshot)
     }
 
-    func canDispatch(_ action: VSCodeHunkAction, now: Date = Date()) -> Bool {
+    func canDispatch(_ action: HunkReviewAction, now: Date = Date()) -> Bool {
         guard let target = activeTarget(now: now) else {
             return false
         }
         return target.snapshot.paneOpen && target.snapshot.actions.allows(action)
     }
 
-    func activeReviewHunk(now: Date = Date()) -> VSCodeHunkReviewContext? {
+    func activeReviewHunk(now: Date = Date()) -> HunkReviewContext? {
         guard let target = activeTarget(now: now),
               target.snapshot.paneOpen else {
             return nil
@@ -289,11 +284,11 @@ final class VSCodeHunkRegistry: @unchecked Sendable {
         return target.snapshot.currentHunkReview
     }
 
-    func enqueueCommand(_ action: VSCodeHunkAction, now: Date = Date()) -> VSCodeHunkCommandEnvelope? {
+    func enqueueCommand(_ action: HunkReviewAction, now: Date = Date()) -> HunkReviewCommandEnvelope? {
         lock.lock()
         expireLocked(now: now)
-        guard let windowId = lastFocusedWindowId,
-              var instance = instances[windowId],
+        guard let providerId = lastFocusedProviderId,
+              var instance = instances[providerId],
               isHealthy(instance, now: now),
               instance.snapshot.focused,
               instance.snapshot.paneOpen,
@@ -301,30 +296,34 @@ final class VSCodeHunkRegistry: @unchecked Sendable {
             lock.unlock()
             return nil
         }
-        let command = VSCodeHunkCommandEnvelope(id: UUID().uuidString, action: action)
+        let command = HunkReviewCommandEnvelope(id: UUID().uuidString, action: action)
         instance.pendingCommands.append(command)
-        instances[windowId] = instance
+        instances[providerId] = instance
         let callback = onChange
         lock.unlock()
         callback?()
         return command
     }
 
-    func nextCommand(windowId: String, now: Date = Date()) -> VSCodeHunkCommandEnvelope? {
+    func nextCommand(providerId: String, now: Date = Date()) -> HunkReviewCommandEnvelope? {
         lock.lock()
         defer { lock.unlock() }
         expireLocked(now: now)
-        guard var instance = instances[windowId],
-              isHealthy(instance, now: now),
-              !instance.pendingCommands.isEmpty else {
+        guard var instance = instances[providerId],
+              isHealthy(instance, now: now) else {
+            return nil
+        }
+        instance.lastContact = now
+        guard !instance.pendingCommands.isEmpty else {
+            instances[providerId] = instance
             return nil
         }
         let command = instance.pendingCommands.removeFirst()
-        instances[windowId] = instance
+        instances[providerId] = instance
         return command
     }
 
-    func recordResult(_ result: VSCodeHunkCommandResult) {
+    func recordResult(_ result: HunkReviewCommandResult) {
         lock.lock()
         lastCommandResult = result
         let callback = onChange
@@ -332,17 +331,17 @@ final class VSCodeHunkRegistry: @unchecked Sendable {
         callback?()
     }
 
-    func diagnostics(now: Date = Date(), diffReview: DiffReviewDiagnostics? = nil) -> VSCodeHunkDiagnostics {
+    func diagnostics(now: Date = Date(), diffReview: DiffReviewDiagnostics? = nil) -> HunkReviewDiagnostics {
         lock.lock()
         defer { lock.unlock() }
         expireLocked(now: now)
         let diagnostics = instances.values
-            .sorted { $0.snapshot.windowId < $1.snapshot.windowId }
+            .sorted { $0.snapshot.providerId < $1.snapshot.providerId }
             .map { instance in
                 let actions = instance.snapshot.actions
-                return VSCodeHunkInstanceDiagnostic(
-                    windowId: instance.snapshot.windowId,
-                    sourceProvider: instance.snapshot.currentHunkReview?.effectiveSourceProvider ?? "vscode",
+                return HunkReviewProviderDiagnostic(
+                    providerId: instance.snapshot.providerId,
+                    sourceProvider: instance.snapshot.currentHunkReview?.effectiveSourceProvider ?? "unknown",
                     healthy: isHealthy(instance, now: now),
                     focused: instance.snapshot.focused,
                     paneOpen: instance.snapshot.paneOpen,
@@ -358,48 +357,48 @@ final class VSCodeHunkRegistry: @unchecked Sendable {
                     canUndo: actions.canUndo
                 )
             }
-        return VSCodeHunkDiagnostics(
-            activeWindowId: activeTargetLocked(now: now)?.windowId,
+        return HunkReviewDiagnostics(
+            activeProviderId: activeTargetLocked(now: now)?.providerId,
             activeSourceProvider: activeTargetLocked(now: now)?
                 .snapshot.currentHunkReview?.effectiveSourceProvider,
-            instances: diagnostics,
+            providers: diagnostics,
             lastCommandResult: lastCommandResult,
             diffReview: diffReview
         )
     }
 
     private func activeTargetLocked(now: Date) -> ActiveTarget? {
-        guard let windowId = lastFocusedWindowId,
-              let instance = instances[windowId],
+        guard let providerId = lastFocusedProviderId,
+              let instance = instances[providerId],
               isHealthy(instance, now: now),
               instance.snapshot.focused else {
             return nil
         }
-        return ActiveTarget(windowId: windowId, snapshot: instance.snapshot)
+        return ActiveTarget(providerId: providerId, snapshot: instance.snapshot)
     }
 
     private func expireLocked(now: Date) {
         let stale = instances.filter { !isHealthy($0.value, now: now) }.map(\.key)
-        for windowId in stale {
-            instances.removeValue(forKey: windowId)
+        for providerId in stale {
+            instances.removeValue(forKey: providerId)
         }
-        if let focused = lastFocusedWindowId, instances[focused] == nil {
-            lastFocusedWindowId = instances.values
+        if let focused = lastFocusedProviderId, instances[focused] == nil {
+            lastFocusedProviderId = instances.values
                 .filter { $0.snapshot.focused && isHealthy($0, now: now) }
-                .max { $0.lastHeartbeat < $1.lastHeartbeat }?
-                .snapshot.windowId
+                .max { $0.lastContact < $1.lastContact }?
+                .snapshot.providerId
         }
     }
 
     private func isHealthy(_ instance: Instance, now: Date) -> Bool {
-        now.timeIntervalSince(instance.lastHeartbeat) <= timeoutSeconds
+        now.timeIntervalSince(instance.lastContact) <= timeoutSeconds
     }
 }
 
-final class VSCodeHunkLaunchpadControlLayer: LaunchpadControlLayer {
+final class HunkReviewLaunchpadControlLayer: LaunchpadControlLayer {
     private struct Binding {
         let coordinate: PadCoordinate
-        let action: VSCodeHunkAction?
+        let action: HunkReviewAction?
         let color: PadColor
     }
 
@@ -414,10 +413,10 @@ final class VSCodeHunkLaunchpadControlLayer: LaunchpadControlLayer {
         Binding(coordinate: PadCoordinate(x: 3, y: 3), action: nil, color: .off)
     ]
 
-    private let registry: VSCodeHunkRegistry
+    private let registry: HunkReviewRegistry
     private let invalidationBus: RenderInvalidationBus
 
-    init(registry: VSCodeHunkRegistry, invalidationBus: RenderInvalidationBus) {
+    init(registry: HunkReviewRegistry, invalidationBus: RenderInvalidationBus) {
         self.registry = registry
         self.invalidationBus = invalidationBus
     }
@@ -431,7 +430,7 @@ final class VSCodeHunkLaunchpadControlLayer: LaunchpadControlLayer {
         }
         if registry.enqueueCommand(action) != nil {
             TraceLogger.log("launchpad hunk action queued action=\(action.rawValue)")
-            invalidationBus.markDirty(reason: "vscode_hunk_command")
+            invalidationBus.markDirty(reason: "hunk_review_command")
         } else {
             TraceLogger.log("launchpad hunk action ignored action=\(action.rawValue)")
         }
@@ -455,12 +454,12 @@ final class VSCodeHunkLaunchpadControlLayer: LaunchpadControlLayer {
 
 final class DiffReviewLaunchpadControlLayer: LaunchpadControlLayer {
     private static let coordinate = PadCoordinate(x: 2, y: 7)
-    private let registry: VSCodeHunkRegistry
+    private let registry: HunkReviewRegistry
     private let reviewStore: DiffReviewStore
     private let onPress: () -> Void
 
     init(
-        registry: VSCodeHunkRegistry,
+        registry: HunkReviewRegistry,
         reviewStore: DiffReviewStore,
         onPress: @escaping () -> Void
     ) {
@@ -506,7 +505,7 @@ final class DiffReviewLaunchpadControlLayer: LaunchpadControlLayer {
     }
 }
 
-extension VSCodeHunkReviewContext {
+extension HunkReviewContext {
     func refinementContextBlock() -> RefinementContextBlock {
         RefinementContextBlock(
             title: "Current hunk",
