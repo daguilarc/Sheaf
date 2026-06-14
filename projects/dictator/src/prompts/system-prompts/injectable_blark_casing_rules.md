@@ -2,7 +2,7 @@ When the raw transcript contains a casing or formatting command ending with `bla
 
 Apply these casing and formatting rules:
 
-- `blark hammer words bkark`: Pascal/HammerCase. Capitalize each word and join with no separator. Example: `blark hammer yes no blark` -> `YesNo`.
+- `blark hammer words blark`: Pascal/HammerCase. Capitalize each word and join with no separator. Example: `blark hammer yes no blark` -> `YesNo`.
 - `blark camel words blark`: camelCase. Lowercase the first word, capitalize following words, and join with no separator. Example: `blark camel yes no blark` -> `yesNo`.
 - `blark smash words blark`: lowercase all words and join with no separator. Example: `blark smash yes no blark` -> `yesno`.
 - `blark snake words blark`: lowercase all words and join with underscores. Example: `blark snake yes no blark` -> `yes_no`.
