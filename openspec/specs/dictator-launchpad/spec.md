@@ -6,8 +6,9 @@ ID prefix: `lp` — requirement IDs are append-only; never renumber or reuse.
 ## Purpose
 
 The service drives a Novation Launchpad Pro Mk3 as a hardware control
-surface: pads toggle dictation (standard, auxiliary-prompt, and Talon Lite
-modes), inject macOS keystrokes, send contextual backspace, latch Shift, and
+surface: pads toggle dictation (standard and auxiliary-prompt modes), control
+the full Talon installation, inject macOS keystrokes, send contextual
+backspace, latch Shift, and
 restore safe runtime config. Dictation results are inserted into the active
 macOS application via synthetic paste. This is the service-side replacement
 for the legacy AppKit Launchpad UI; there is no native window or overlay.
@@ -24,18 +25,18 @@ WHEN the service starts, THE Launchpad controller SHALL load the layout from `pr
 - **THEN** the controller logs the failure and stays inactive while the rest of the service runs normally
 
 ### Requirement: lp-2 — Lifecycle and layout: Layout file decode shape
-THE layout file SHALL decode as `{"initial_page_id"?, "pages": [{"id", "pads": [{"x", "y", "color": {r,g,b}, "role"?, "action"}]}]}`; validation rejects empty page lists, empty page ids, coordinates outside x ∈ [-1, 8] / y ∈ [-1, 9], `keystroke` actions without `key`, dictation actions without `command`, `auxiliary_dictation` without `command` and `prompt_slot` ∈ {1, 2}, and `modifier_latch` without `modifier`.
+THE layout file SHALL decode as `{"initial_page_id"?, "pages": [{"id", "pads": [{"x", "y", "color": {r,g,b}, "role"?, "action"}]}]}`; validation rejects empty page lists, empty page ids, coordinates outside x ∈ [-1, 8] / y ∈ [-1, 9], `keystroke` actions without `key`, dictation actions without `command`, `auxiliary_dictation` without `command` and `prompt_slot` ∈ {1, 2}, `talon_control` without `command`, and `modifier_latch` without `modifier`.
 
 #### Scenario: Valid layout file
 - **WHEN** the layout file is present
-- **THEN** it is decoded with the specified shape and validation rejects empty page lists, empty page ids, out-of-range coordinates, `keystroke` actions without `key`, dictation actions without `command`, `auxiliary_dictation` without `command` and `prompt_slot` ∈ {1, 2}, and `modifier_latch` without `modifier`
+- **THEN** it is decoded with the specified shape and validation rejects empty page lists, empty page ids, out-of-range coordinates, `keystroke` actions without `key`, dictation actions without `command`, `auxiliary_dictation` without `command` and `prompt_slot` ∈ {1, 2}, `talon_control` without `command`, and `modifier_latch` without `modifier`
 
 ### Requirement: lp-3 — Lifecycle and layout: Accepted action types
-THE decoder SHALL accept action types `keystroke`, `dictation`, `auxiliary_dictation`, `talon_lite_dictation`, `contextual_backspace`, `modifier_latch`, `load_safe_runtime_config`, `next_window`, `app_reload`, and `toggle_fullscreen_overlay`; the last three are decode-compatible no-ops in the service (a trace line explains why). Dictation commands are `start`, `stop`, `cancel`, `toggle`; the only modifier is `shift`.
+THE decoder SHALL accept action types `keystroke`, `dictation`, `auxiliary_dictation`, `talon_control`, `contextual_backspace`, `modifier_latch`, `load_safe_runtime_config`, `next_window`, `app_reload`, and `toggle_fullscreen_overlay`; the last three are decode-compatible no-ops in the service (a trace line explains why). Dictation and Talon-control commands are `start`, `stop`, `cancel`, `toggle`; the only modifier is `shift`.
 
 #### Scenario: Accepted action types decoded
 - **WHEN** the layout file is decoded
-- **THEN** the decoder accepts all specified action types, treats `next_window`, `app_reload`, and `toggle_fullscreen_overlay` as no-ops with a trace line, accepts dictation commands `start`/`stop`/`cancel`/`toggle`, and accepts `shift` as the only modifier
+- **THEN** the decoder accepts all specified action types, treats `next_window`, `app_reload`, and `toggle_fullscreen_overlay` as no-ops with a trace line, accepts dictation and Talon-control commands `start`/`stop`/`cancel`/`toggle`, and accepts `shift` as the only modifier
 
 ### Requirement: lp-4 — Lifecycle and layout: Controller shutdown
 WHEN the service stops, THE controller SHALL cancel any active dictation task, stop an in-progress recording, and shut down the render worker and MIDI connection.
@@ -88,13 +89,6 @@ WHEN recording stops in standard mode, THE controller SHALL run the same in-proc
 - **WHEN** recording stops in auxiliary mode
 - **THEN** the controller runs the identical flow with the prompt file from `auxiliary_system_prompt_1`/`_2` (slot 1/2) substituted for the primary system prompt
 
-### Requirement: lp-9 — Dictation pads: Talon Lite recording stop
-WHEN recording stops in Talon Lite mode, THE controller SHALL transcribe with the talon-lite decode mode and run the Talon Lite parse → LLM-correct → reparse → render pipeline; the result's `edit_summary` is `Talon-lite pipeline rendered after LLM correction.` or `Talon-lite pipeline rendered without LLM correction.` and corrected runs carry uncertainty flag `talon_lite_llm_corrected`.
-
-#### Scenario: Recording stops in Talon Lite mode
-- **WHEN** recording stops in Talon Lite mode
-- **THEN** the controller transcribes with the talon-lite decode mode, runs the Talon Lite parse → LLM-correct → reparse → render pipeline, sets `edit_summary` to `Talon-lite pipeline rendered after LLM correction.` or `Talon-lite pipeline rendered without LLM correction.`, and corrected runs carry uncertainty flag `talon_lite_llm_corrected`
-
 ### Requirement: lp-10 — Dictation pads: Result insertion
 WHEN a dictation produces non-empty revised text, THE controller SHALL insert it into the active target by writing the pasteboard and posting synthetic Cmd+V, then restore the previous pasteboard contents (~0.1 s later); empty revised text skips insertion.
 
@@ -107,15 +101,15 @@ WHEN a dictation produces non-empty revised text, THE controller SHALL insert it
 - **THEN** insertion is skipped
 
 ### Requirement: lp-11 — Dictation pads: Interaction record
-WHEN a Launchpad dictation completes or fails, THE controller SHALL append an interaction record ([interactions](../../../projects/dictator/docs/contracts/interactions.md)) with `request_source: "launchpad"` and a per-controller `session_id`; the stored mode is `talon_lite` for Talon Lite runs, `text_replacement` when selected text was captured, `raw_dictation` when raw and revised text are equal after trimming, otherwise `revision`. Failures store mode `revision`/`talon_lite`, edit summary `Dictation pipeline failed.` / `Talon-lite pipeline failed.`, uncertainty flag `pipeline_error`, and the error text; cancellations record nothing.
+WHEN a Launchpad dictation completes or fails, THE controller SHALL append an interaction record ([interactions](../../../projects/dictator/docs/contracts/interactions.md)) with `request_source: "launchpad"` and a per-controller `session_id`; the stored mode is `text_replacement` when selected text was captured, `raw_dictation` when raw and revised text are equal after trimming, otherwise `revision`. Failures store mode `revision`, edit summary `Dictation pipeline failed.`, uncertainty flag `pipeline_error`, and the error text; cancellations record nothing.
 
 #### Scenario: Dictation completes successfully
 - **WHEN** a Launchpad dictation completes
-- **THEN** the controller appends an interaction record with `request_source: "launchpad"`, a per-controller `session_id`, and the appropriate mode (`talon_lite`, `text_replacement`, `raw_dictation`, or `revision`)
+- **THEN** the controller appends an interaction record with `request_source: "launchpad"`, a per-controller `session_id`, and the appropriate mode (`text_replacement`, `raw_dictation`, or `revision`)
 
 #### Scenario: Dictation fails
 - **WHEN** a Launchpad dictation fails
-- **THEN** the controller appends an interaction record with mode `revision`/`talon_lite`, edit summary `Dictation pipeline failed.`/`Talon-lite pipeline failed.`, uncertainty flag `pipeline_error`, and the error text
+- **THEN** the controller appends an interaction record with mode `revision`, edit summary `Dictation pipeline failed.`, uncertainty flag `pipeline_error`, and the error text
 
 #### Scenario: Dictation cancelled
 - **WHEN** a Launchpad dictation is cancelled
@@ -177,7 +171,7 @@ WHEN the `load_safe_runtime_config` pad is pressed while idle, THE controller SH
 - **THEN** the press is ignored (`launchpad safe runtime restore skipped: busy`)
 
 ### Requirement: lp-17 — Rendering and connection: Pad color rendering
-THE controller SHALL render pad colors over MIDI (programmer mode), re-rendering everything on (re)connect and on wake; pressed pads render dimmed (each channel quartered); record-status and shift-latch pads re-render on every state change.
+THE controller SHALL render pad colors over MIDI (programmer mode), re-rendering everything on (re)connect and on wake; pressed pads render dimmed (each channel quartered); record-status, Talon-control, and shift-latch pads re-render on every relevant state change.
 
 #### Scenario: Connect or wake
 - **WHEN** the controller (re)connects or the system wakes
@@ -188,7 +182,7 @@ THE controller SHALL render pad colors over MIDI (programmer mode), re-rendering
 - **THEN** the pad renders dimmed (each channel quartered)
 
 #### Scenario: State change
-- **WHEN** the record-status or shift-latch state changes
+- **WHEN** the record-status, Talon-control, or shift-latch state changes
 - **THEN** those pads re-render immediately
 
 ### Requirement: lp-19 — Voice diff review pad
@@ -269,6 +263,44 @@ WHEN a Launchpad hunk-control button is pressed, THE Launchpad controller SHALL 
 - **WHEN** no healthy focused hunk review target reports the button's action available
 - **THEN** Dictator sends no hunk command and no keyboard command
 
+### Requirement: lp-22 — Talon control pad
+THE Launchpad controller SHALL repurpose the former Talon Lite pad at `(1,7)` as a Talon control pad that toggles the full Talon installation through [dictator-talon-control](../dictator-talon-control/spec.md).
+
+#### Scenario: Talon asleep
+- **WHEN** the Talon control pad is pressed while Talon is asleep and Dictator is idle
+- **THEN** the controller requests Talon wake through the Talon control client
+
+#### Scenario: Talon awake
+- **WHEN** the Talon control pad is pressed while Talon is awake
+- **THEN** the controller requests Talon sleep through the Talon control client
+
+#### Scenario: Talon unavailable
+- **WHEN** the Talon control pad is pressed while the Talon bridge is unavailable
+- **THEN** the controller logs that Talon control is unavailable and does not start Dictator dictation
+
+#### Scenario: Dictator busy
+- **WHEN** the Talon control pad is pressed while Dictator is recording or processing non-Talon dictation
+- **THEN** the controller refuses to wake Talon and does not interrupt the active Dictator dictation
+
+### Requirement: lp-23 — Talon control pad colors
+THE Launchpad controller SHALL render the Talon control pad using dynamic status colors: green when Talon is awake, dim amber when Talon is asleep, red when Talon wake is blocked by active Dictator dictation, and grey when Talon control is unavailable or in error.
+
+#### Scenario: Talon awake color
+- **WHEN** Talon state is `awake`
+- **THEN** the Talon control pad renders green
+
+#### Scenario: Talon asleep color
+- **WHEN** Talon state is `asleep`
+- **THEN** the Talon control pad renders dim amber
+
+#### Scenario: Talon blocked color
+- **WHEN** Talon wake is blocked because Dictator is active
+- **THEN** the Talon control pad renders red
+
+#### Scenario: Talon unavailable color
+- **WHEN** Talon control state is `unavailable` or `error`
+- **THEN** the Talon control pad renders grey
+
 ## Contracts
 
 ### Layout file — `src/launchpad/launchpad-layout.json`
@@ -285,8 +317,8 @@ WHEN a Launchpad hunk-control button is pressed, THE Launchpad controller SHALL 
           "action": { "type": "dictation", "command": "toggle" } },
         { "x": 0, "y": 6, "color": { "r": 90, "g": 90, "b": 255 },
           "action": { "type": "auxiliary_dictation", "command": "toggle", "prompt_slot": 1 } },
-        { "x": 1, "y": 7, "color": { "r": 255, "g": 170, "b": 0 },
-          "action": { "type": "talon_lite_dictation", "command": "toggle" } },
+        { "x": 1, "y": 7, "role": "talon_status", "color": { "r": 255, "g": 170, "b": 0 },
+          "action": { "type": "talon_control", "command": "toggle" } },
         { "x": -1, "y": 0, "color": { "r": 0, "g": 180, "b": 255 },
           "action": { "type": "load_safe_runtime_config" } },
         { "x": 5, "y": 6, "role": "shift_latch",
@@ -302,10 +334,11 @@ WHEN a Launchpad hunk-control button is pressed, THE Launchpad controller SHALL 
 }
 ```
 
-Roles: `record_status` (color driven by dictation state) and `shift_latch`
-(color driven by latch state); pads without a role render their static
-`color`. The shipped product layout binds: primary/auxiliary/Talon-Lite
-dictation toggles, safe-config restore, shift latch, contextual backspace,
+Roles: `record_status` (color driven by dictation state), `talon_status`
+(color driven by Talon control state), and `shift_latch` (color driven by
+latch state); pads without a role render their static
+`color`. The shipped product layout binds: primary/auxiliary dictation
+toggles, the Talon control pad, safe-config restore, shift latch, contextual backspace,
 Space, Enter, arrows, and Cmd+C/V/X/Z. The coordinate `(2,7)` is reserved for
 the voice diff review control layer and is not a static keystroke pad.
 
@@ -340,15 +373,17 @@ the voice diff review control layer and is not a static keystroke pad.
   snapshot/restore, synthetic Cmd+C selection capture and Cmd+V insert;
   `KeyboardInjector.swift` — CGEvent key synthesis + Accessibility checks;
   `ActiveTargetContextProvider.swift` — frontmost app/site context.
-- `src/Sources/DictatorCore/TalonLiteParser.swift`,
-  `TalonLiteRecoveryEngine.swift` (contains `TalonLitePipelineOrchestrator`
-  and `RuntimeConfigTalonLiteLLMCorrectionEngine`) — Talon Lite grammar,
-  rendering, LLM correction, and recovery.
+- `src/Sources/DictatorService/TalonControlClient.swift` — loopback HTTP
+  client for the Talon bridge (status/wake/sleep) with awake/asleep/
+  unavailable/error mapping; `LaunchpadTalonControlState.swift` — Talon
+  control pad color and blocked-wake state. See
+  [dictator-talon-control](../dictator-talon-control/spec.md).
 - Tests: `tests/DictatorServiceTests/LaunchpadTests.swift` (layout decode and
   validation, page dispatch, render diffs, product-layout guard that pins
   which actions are bound and that legacy overlay/navigation actions stay
-  absent), `LaunchpadAppCycleStateTests.swift`, and
-  `tests/DictatorCoreTests/TalonLite*Tests.swift`.
+  absent), `LaunchpadAppCycleStateTests.swift`,
+  `LaunchpadTalonControlStateTests.swift`, and
+  `TalonControlClientTests.swift`.
 
 ## Interactions
 
