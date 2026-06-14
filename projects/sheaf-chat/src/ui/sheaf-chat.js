@@ -428,6 +428,22 @@
     );
   }
 
+  function BuildAgentReviewWebSocketUrl(pile, sessionId) {
+    const params = new URLSearchParams();
+    params.set("p", pile);
+    params.set("session", sessionId);
+    params.set("client", GetClientId());
+
+    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    return (
+      protocol +
+      "//" +
+      window.location.host +
+      "/ws/agent-review?" +
+      params.toString()
+    );
+  }
+
   function CreateEnvelope(kind, pile, sessionId, payload) {
     return {
       v: 1,
@@ -1072,6 +1088,7 @@
     const explorerEl = config.explorerEl;
     const tabBarEl = config.tabBarEl;
     const fileViewEl = config.fileViewEl;
+    const reviewBarEl = config.reviewBarEl || null;
     const workspaceEl = config.workspaceEl;
     const explorerPane = config.explorerPane;
     const chatPane = config.chatPane;
@@ -1087,6 +1104,15 @@
       selectedPath: null,
       directoryCache: {},
       expandedDirectories: new Set(["."]),
+      agentReview: {
+        loaded: false,
+        available: false,
+        active: false,
+        socket: null,
+        connected: false,
+        state: null,
+        error: null,
+      },
     };
 
     const panelState = {
@@ -1119,6 +1145,213 @@
         "/sessions/" +
         encodeURIComponent(route.sessionId)
       );
+    }
+
+    function ReviewCommand(action) {
+      const review = state.agentReview;
+      const reviewState = review.state;
+      const current = reviewState ? reviewState.currentHunk : null;
+      if (!review.socket || review.socket.readyState !== WebSocket.OPEN) {
+        review.error = "Agent Review is disconnected.";
+        RenderReviewBar();
+        return;
+      }
+
+      review.socket.send(JSON.stringify({
+        type: "command",
+        id: GenerateId(),
+        action: action,
+        hunkId: current ? current.hunkId : undefined,
+        patchHash: current ? current.patchHash : undefined,
+      }));
+    }
+
+    function RenderReviewBar() {
+      if (!reviewBarEl) {
+        return;
+      }
+
+      const review = state.agentReview;
+      reviewBarEl.textContent = "";
+      reviewBarEl.classList.toggle("sheaf-chat-agent-review--active", review.active);
+      reviewBarEl.classList.toggle(
+        "sheaf-chat-agent-review--available",
+        review.loaded && review.available
+      );
+
+      if (!review.loaded) {
+        const status = CreateElement("span", "sheaf-chat-agent-review-status");
+        status.textContent = "Checking review mode...";
+        reviewBarEl.appendChild(status);
+        return;
+      }
+
+      if (!review.available) {
+        return;
+      }
+
+      const toggle = CreateElement("button", "sheaf-chat-button sheaf-chat-agent-review-toggle");
+      toggle.type = "button";
+      toggle.textContent = review.active ? "Exit Review" : "Agent Review";
+      toggle.addEventListener("click", function () {
+        if (review.active) {
+          StopAgentReview();
+        } else {
+          StartAgentReview();
+        }
+      });
+      reviewBarEl.appendChild(toggle);
+
+      if (!review.active) {
+        return;
+      }
+
+      const reviewState = review.state;
+      const actions = reviewState ? reviewState.actions : {};
+      const current = reviewState ? reviewState.currentHunk : null;
+      const status = CreateElement("span", "sheaf-chat-agent-review-status");
+      status.textContent = current
+        ? (current.hunkIndex + 1) + "/" + current.hunkCount + " " + current.file
+        : "No unstaged hunks";
+      reviewBarEl.appendChild(status);
+
+      const buttons = [
+        ["previousFile", "Prev File", actions.canGoPrevFile],
+        ["previousHunk", "Prev", actions.canGoUp],
+        ["nextHunk", "Next", actions.canGoDown],
+        ["nextFile", "Next File", actions.canGoNextFile],
+        ["stage", "Stage", actions.canStage],
+        ["revert", "Revert", actions.canRevert],
+        ["undo", "Undo", actions.canUndo],
+      ];
+
+      for (const entry of buttons) {
+        const button = CreateElement("button", "sheaf-chat-icon-button sheaf-chat-agent-review-command");
+        button.type = "button";
+        button.textContent = entry[1];
+        button.disabled = entry[2] !== true;
+        button.addEventListener("click", function () {
+          ReviewCommand(entry[0]);
+        });
+        reviewBarEl.appendChild(button);
+      }
+
+      if (review.error) {
+        const error = CreateElement("span", "sheaf-chat-agent-review-error");
+        error.textContent = review.error;
+        reviewBarEl.appendChild(error);
+      }
+    }
+
+    function ApplyReviewState(nextState) {
+      state.agentReview.state = nextState;
+      state.agentReview.available = nextState && nextState.available === true;
+      state.agentReview.error = null;
+
+      const current = nextState ? nextState.currentHunk : null;
+      if (state.agentReview.active && current && current.file) {
+        OpenFile(current.file).then(function () {
+          RenderSelectedFile();
+        });
+      }
+
+      RenderReviewBar();
+      RenderSelectedFile();
+    }
+
+    function StartAgentReview() {
+      const review = state.agentReview;
+      if (review.active) {
+        return;
+      }
+
+      review.active = true;
+      review.error = null;
+      RenderReviewBar();
+
+      const socket = new WebSocket(BuildAgentReviewWebSocketUrl(route.pile, route.sessionId));
+      review.socket = socket;
+      socket.addEventListener("open", function () {
+        review.connected = true;
+        RenderReviewBar();
+      });
+      socket.addEventListener("message", function (event) {
+        let frame;
+        try {
+          frame = JSON.parse(event.data);
+        } catch (_error) {
+          return;
+        }
+
+        if (
+          (frame.type === "bootstrap" || frame.type === "state") &&
+          frame.state
+        ) {
+          ApplyReviewState(frame.state);
+          return;
+        }
+
+        if (frame.type === "command_result") {
+          if (frame.result && frame.result.ok === false) {
+            review.error = frame.result.error || "Agent Review command failed.";
+          }
+          if (frame.state) {
+            ApplyReviewState(frame.state);
+          } else {
+            RenderReviewBar();
+          }
+          return;
+        }
+
+        if (frame.type === "error") {
+          review.error = frame.message || "Agent Review error.";
+          RenderReviewBar();
+        }
+      });
+      socket.addEventListener("close", function () {
+        review.connected = false;
+        if (review.socket === socket) {
+          review.socket = null;
+        }
+        if (review.active) {
+          review.error = "Agent Review disconnected.";
+        }
+        RenderReviewBar();
+      });
+      socket.addEventListener("error", function () {
+        review.error = "Agent Review connection failed.";
+        RenderReviewBar();
+      });
+    }
+
+    function StopAgentReview() {
+      const review = state.agentReview;
+      review.active = false;
+      review.connected = false;
+      review.error = null;
+      review.state = null;
+      if (review.socket) {
+        review.socket.close();
+        review.socket = null;
+      }
+      RenderReviewBar();
+      RenderSelectedFile();
+    }
+
+    function LoadAgentReviewAvailability() {
+      const url = FilesApiBase() + "/agent-review";
+      return FetchJson(url)
+        .then(function (body) {
+          state.agentReview.loaded = true;
+          state.agentReview.available = body && body.available === true;
+          state.agentReview.state = body || null;
+          RenderReviewBar();
+        })
+        .catch(function () {
+          state.agentReview.loaded = true;
+          state.agentReview.available = false;
+          RenderReviewBar();
+        });
     }
 
     function ApplyPanelLayout() {
@@ -1476,6 +1709,27 @@
       }
 
       const contentWrap = CreateElement("div", "sheaf-file-view-content");
+      const reviewState = state.agentReview.state;
+      const currentHunk = state.agentReview.active && reviewState
+        ? reviewState.currentHunk
+        : null;
+
+      if (currentHunk && currentHunk.file === selected.path) {
+        const hunkPanel = CreateElement("div", "sheaf-chat-agent-review-hunk");
+        const hunkTitle = CreateElement("div", "sheaf-chat-agent-review-hunk-title");
+        hunkTitle.textContent =
+          "Focused hunk " +
+          (currentHunk.hunkIndex + 1) +
+          "/" +
+          currentHunk.hunkCount +
+          " " +
+          currentHunk.header;
+        const patchPreview = CreateElement("pre", "sheaf-chat-agent-review-patch");
+        patchPreview.textContent = currentHunk.patch || "";
+        hunkPanel.appendChild(hunkTitle);
+        hunkPanel.appendChild(patchPreview);
+        fileViewEl.appendChild(hunkPanel);
+      }
 
       if (IsMarkdownContentType(selected.contentType, selected.path)) {
         if (
@@ -1725,10 +1979,12 @@
     ApplyMobilePanelState();
     RenderExplorer();
     RenderTabs();
+    RenderReviewBar();
     RenderSelectedFile();
     LoadDirectory(".").then(function () {
       RenderExplorer();
     });
+    LoadAgentReviewAvailability();
 
     if (typeof onOpenFile === "function") {
       onOpenFile(OpenFile);
@@ -1754,6 +2010,8 @@
       getState: function () {
         return state;
       },
+      StartAgentReview: StartAgentReview,
+      StopAgentReview: StopAgentReview,
     };
   }
 
@@ -1828,7 +2086,9 @@
     mobileToolbar.appendChild(chatToggle);
 
     const fileViewEl = CreateElement("div", "sheaf-chat-file-view");
+    const reviewBarEl = CreateElement("div", "sheaf-chat-agent-review-bar");
     filePane.appendChild(mobileToolbar);
+    filePane.appendChild(reviewBarEl);
     filePane.appendChild(fileViewEl);
 
     const mobileBackdrop = CreateElement("div", "sheaf-chat-mobile-backdrop");
@@ -1952,6 +2212,7 @@
       explorerEl: explorerEl,
       tabBarEl: null,
       fileViewEl: fileViewEl,
+      reviewBarEl: reviewBarEl,
       workspaceEl: workspace,
       explorerPane: explorerPane,
       chatPane: chatPane,
@@ -2062,8 +2323,10 @@
 
     const filePane = CreateElement("div", "sheaf-chat-file-pane");
     const tabBarEl = CreateElement("div", "sheaf-chat-tab-bar");
+    const reviewBarEl = CreateElement("div", "sheaf-chat-agent-review-bar");
     const fileViewEl = CreateElement("div", "sheaf-chat-file-view");
     filePane.appendChild(tabBarEl);
+    filePane.appendChild(reviewBarEl);
     filePane.appendChild(fileViewEl);
 
     const chatResize = CreateElement(
@@ -2140,6 +2403,7 @@
       explorerEl: explorerEl,
       tabBarEl: tabBarEl,
       fileViewEl: fileViewEl,
+      reviewBarEl: reviewBarEl,
       workspaceEl: workspace,
       explorerPane: explorerPane,
       chatPane: chatPane,

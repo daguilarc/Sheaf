@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 
 import { StorageError } from "../storage/errors.js";
 import { HandleRouteError, SendRestError } from "./errors.js";
+import { HandleGetAgentReviewAvailability } from "./routes/agentReview.js";
 import { HandleHealth } from "./routes/health.js";
 import { HandleGetSessionFile, HandleListSessionFiles } from "./routes/files.js";
 import { HandleSessionHistory } from "./routes/history.js";
@@ -19,6 +20,7 @@ export interface MatchedRoute
   pile?: string;
   sessionId?: string;
   history?: boolean;
+  agentReview?: boolean;
   file?: boolean;
   files?: boolean;
 }
@@ -95,6 +97,11 @@ export function MatchApiRoute(pathname: string): MatchedRoute | null
       return { pile, sessionId, history: true };
     }
 
+    if (segments[5] === "agent-review")
+    {
+      return { pile, sessionId, agentReview: true };
+    }
+
     if (segments[5] === "file")
     {
       return { pile, sessionId, file: true };
@@ -142,6 +149,11 @@ export function ResolveApiEndpoint(pathname: string): string | null
         if (segments[5] === "history")
         {
           return "pile_session_history";
+        }
+
+        if (segments[5] === "agent-review")
+        {
+          return "pile_session_agent_review";
         }
 
         if (segments[5] === "file")
@@ -290,6 +302,24 @@ export async function DispatchApiRoute(
         url.searchParams,
         response,
       );
+      return;
+    }
+
+    if (endpoint === "pile_session_agent_review")
+    {
+      if (route.pile === undefined || route.sessionId === undefined)
+      {
+        SendRestError(response, 404, "not_found", "route not found");
+        return;
+      }
+
+      if (request.method !== "GET")
+      {
+        SendRestError(response, 405, "method_not_allowed", "method not allowed");
+        return;
+      }
+
+      await HandleGetAgentReviewAvailability(context, route.pile, route.sessionId, response);
       return;
     }
 

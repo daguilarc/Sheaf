@@ -12,11 +12,11 @@ final class DiffReviewStoreTests: XCTestCase {
 
         let serialized = store.serializedReview()
         XCTAssertNotNil(serialized)
-        XCTAssertTrue(serialized?.contains("1. Sources/App.swift @@ -1 +1 @@ [aaa]") == true)
+        XCTAssertTrue(serialized?.contains("1. sheaf-chat Sources/App.swift @@ -1 +1 @@ [aaa]") == true)
         XCTAssertTrue(serialized?.contains("Please simplify this branch.") == true)
         XCTAssertTrue(serialized?.contains("diff --git a/Sources/App.swift b/Sources/App.swift") == true)
         XCTAssertTrue(serialized?.contains("-old\n+new") == true)
-        XCTAssertTrue(serialized?.contains("2. Sources/App.swift @@ -1 +1 @@ [bbb]") == true)
+        XCTAssertTrue(serialized?.contains("2. sheaf-chat Sources/App.swift @@ -1 +1 @@ [bbb]") == true)
         XCTAssertTrue(serialized?.contains("Rejected this hunk. Do not reintroduce it in the next turn.") == true)
         XCTAssertTrue(serialized?.contains("```diff") == true)
     }
@@ -51,6 +51,7 @@ final class DiffReviewStoreTests: XCTestCase {
 
     private func hunk(id: String, hash: String) -> VSCodeHunkReviewContext {
         VSCodeHunkReviewContext(
+            sourceProvider: "sheaf-chat",
             repoRoot: "/repo",
             file: "Sources/App.swift",
             hunkId: id,

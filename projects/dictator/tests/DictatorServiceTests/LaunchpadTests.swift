@@ -720,6 +720,31 @@ final class LaunchpadTests: XCTestCase {
         XCTAssertNil(registry.nextCommand(windowId: "missing"))
     }
 
+    func testHunkControlLayerRoutesSheafChatProviderCommands() {
+        let bus = RenderInvalidationBus()
+        let registry = VSCodeHunkRegistry(timeoutSeconds: 3)
+        let layer = VSCodeHunkLaunchpadControlLayer(registry: registry, invalidationBus: bus)
+        registry.update(snapshot: makeVSCodeSnapshot(
+            windowID: "sheaf-chat:default:sess",
+            focused: true,
+            sourceProvider: "sheaf-chat",
+            actions: VSCodeHunkActionAvailability(
+                canGoUp: false,
+                canGoDown: false,
+                canGoPrevFile: false,
+                canGoNextFile: false,
+                canStage: true,
+                canRevert: true,
+                canUndo: true
+            )
+        ))
+
+        XCTAssertEqual(registry.diagnostics().activeSourceProvider, "sheaf-chat")
+        XCTAssertEqual(layer.getColor(at: PadCoordinate(x: 0, y: 2)), PadColor(r: 255, g: 0, b: 0))
+        XCTAssertTrue(layer.handle(PadEvent(coordinate: PadCoordinate(x: 0, y: 2), phase: .press, velocity: 100)))
+        XCTAssertEqual(registry.nextCommand(windowId: "sheaf-chat:default:sess")?.action, .revert)
+    }
+
     func testDiffReviewLaunchpadLayerRendersStateColors() {
         let registry = VSCodeHunkRegistry(timeoutSeconds: 3)
         let store = DiffReviewStore()
@@ -897,6 +922,7 @@ private func vscodeHunkCoordinates() -> [PadCoordinate] {
 private func makeVSCodeSnapshot(
     windowID: String,
     focused: Bool,
+    sourceProvider: String? = nil,
     actions: VSCodeHunkActionAvailability = VSCodeHunkActionAvailability(
         canGoUp: true,
         canGoDown: true,
@@ -926,6 +952,7 @@ private func makeVSCodeSnapshot(
             patchHash: "abc"
         ),
         currentHunkReview: VSCodeHunkReviewContext(
+            sourceProvider: sourceProvider,
             repoRoot: "/repo",
             file: "a.ts",
             hunkId: "hunk",

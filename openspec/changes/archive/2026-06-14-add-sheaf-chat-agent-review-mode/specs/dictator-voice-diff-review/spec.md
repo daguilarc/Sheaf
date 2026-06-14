@@ -1,16 +1,5 @@
-# Capability: Dictator Voice Diff Review
+## MODIFIED Requirements
 
-Project: `projects/dictator`
-ID prefix: `vdr` — requirement IDs are append-only; never renumber or reuse.
-
-## Purpose
-
-Dictator maintains a lightweight in-memory voice diff review while the user
-reviews VS Code hunk-pane changes from the Launchpad. Spoken review comments,
-reverted hunk markers, and undo-revert cleanup are serialized into a
-self-contained review that can be pasted into an agent chat without submitting
-it automatically.
-## Requirements
 ### Requirement: vdr-1 — Active diff review state
 
 WHEN a voice diff review entry is created, THE Dictator service SHALL maintain at most one active in-memory diff review containing ordered entries, where each entry stores a provider-neutral hunk snapshot and either a review comment or a reverted-hunk marker.

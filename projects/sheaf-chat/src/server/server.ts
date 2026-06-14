@@ -5,6 +5,10 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type { WebSocketServer } from "ws";
 
 import type { AgentManager } from "../agents/manager.js";
+import {
+  AgentReviewService,
+  HandleAgentReviewUpgrade,
+} from "./agentReview/service.js";
 import { SessionBroadcasterRegistry } from "../protocol/sessionBroadcaster.js";
 import { SessionPersistenceHubRegistry } from "../protocol/sessionPersistenceHub.js";
 import { StorageError } from "../storage/errors.js";
@@ -44,6 +48,8 @@ export interface SheafChatServer
 {
   httpServer: Server;
   chatWebSocketServer: WebSocketServer;
+  agentReviewWebSocketServer: WebSocketServer;
+  agentReviewService: AgentReviewService;
   broadcasterRegistry: SessionBroadcasterRegistry;
   persistenceHubRegistry: SessionPersistenceHubRegistry;
   listen: () => Promise<number>;
@@ -97,17 +103,24 @@ async function HandleStaticRequest(
 export function CreateSheafChatServer(options: SheafChatServerOptions): SheafChatServer
 {
   const serverStartTime = Date.now();
+  const agentReviewService = new AgentReviewService({
+    config: options.config,
+    agentManager: options.agentManager,
+  });
   const routeContext: RouteContext = {
     config: options.config,
     agentManager: options.agentManager,
+    agentReviewService,
   };
   const persistenceHubRegistry = new SessionPersistenceHubRegistry();
   const broadcasterRegistry = new SessionBroadcasterRegistry();
   options.agentManager.SetNotifyFileChanged((event) =>
   {
     void broadcasterRegistry.BroadcastFileChanged(event);
+    void agentReviewService.NotifyFileChanged(event);
   });
   const chatWebSocketServer = CreateChatWebSocketServer();
+  const agentReviewWebSocketServer = agentReviewService.CreateWebSocketServer();
   const chatWebSocketContext = {
     config: options.config,
     agentManager: options.agentManager,
@@ -152,6 +165,19 @@ export function CreateSheafChatServer(options: SheafChatServerOptions): SheafCha
     {
       try
       {
+        if (
+          await HandleAgentReviewUpgrade(
+            agentReviewService,
+            agentReviewWebSocketServer,
+            request,
+            socket,
+            head,
+          )
+        )
+        {
+          return;
+        }
+
         const params = await ResolveChatWebSocketUpgrade(chatWebSocketContext, request);
 
         if (params === null)
@@ -183,6 +209,8 @@ export function CreateSheafChatServer(options: SheafChatServerOptions): SheafCha
   return {
     httpServer,
     chatWebSocketServer,
+    agentReviewWebSocketServer,
+    agentReviewService,
     broadcasterRegistry,
     persistenceHubRegistry,
     listen: () =>
@@ -208,18 +236,22 @@ export function CreateSheafChatServer(options: SheafChatServerOptions): SheafCha
       {
         broadcasterRegistry.Dispose();
         persistenceHubRegistry.Dispose();
+        agentReviewService.Dispose();
 
         chatWebSocketServer.close(() =>
         {
-          httpServer.close((error) =>
+          agentReviewWebSocketServer.close(() =>
           {
-            if (error)
+            httpServer.close((error) =>
             {
-              reject(error);
-              return;
-            }
+              if (error)
+              {
+                reject(error);
+                return;
+              }
 
-            resolve();
+              resolve();
+            });
           });
         });
       }),

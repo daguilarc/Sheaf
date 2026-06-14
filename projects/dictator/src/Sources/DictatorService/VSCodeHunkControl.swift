@@ -60,6 +60,7 @@ struct VSCodeHunkMetadata: Codable, Equatable {
 }
 
 struct VSCodeHunkReviewContext: Codable, Equatable, Sendable {
+    let sourceProvider: String?
     let repoRoot: String
     let file: String
     let hunkId: String
@@ -68,6 +69,32 @@ struct VSCodeHunkReviewContext: Codable, Equatable, Sendable {
     let header: String
     let patchHash: String
     let patch: String
+
+    init(
+        sourceProvider: String? = nil,
+        repoRoot: String,
+        file: String,
+        hunkId: String,
+        hunkIndex: Int,
+        hunkCount: Int,
+        header: String,
+        patchHash: String,
+        patch: String
+    ) {
+        self.sourceProvider = sourceProvider
+        self.repoRoot = repoRoot
+        self.file = file
+        self.hunkId = hunkId
+        self.hunkIndex = hunkIndex
+        self.hunkCount = hunkCount
+        self.header = header
+        self.patchHash = patchHash
+        self.patch = patch
+    }
+
+    var effectiveSourceProvider: String {
+        sourceProvider ?? "vscode"
+    }
 }
 
 struct VSCodeHunkPaneSnapshot: Codable, Equatable {
@@ -119,6 +146,7 @@ struct VSCodeHunkCommandReviewFacts: Codable, Equatable {
 
 struct VSCodeHunkInstanceDiagnostic: Codable, Equatable {
     let windowId: String
+    let sourceProvider: String
     let healthy: Bool
     let focused: Bool
     let paneOpen: Bool
@@ -136,6 +164,7 @@ struct VSCodeHunkInstanceDiagnostic: Codable, Equatable {
 
 struct VSCodeHunkDiagnostics: Codable, Equatable {
     let activeWindowId: String?
+    let activeSourceProvider: String?
     let instances: [VSCodeHunkInstanceDiagnostic]
     let lastCommandResult: VSCodeHunkCommandResult?
     let diffReview: DiffReviewDiagnostics?
@@ -313,6 +342,7 @@ final class VSCodeHunkRegistry: @unchecked Sendable {
                 let actions = instance.snapshot.actions
                 return VSCodeHunkInstanceDiagnostic(
                     windowId: instance.snapshot.windowId,
+                    sourceProvider: instance.snapshot.currentHunkReview?.effectiveSourceProvider ?? "vscode",
                     healthy: isHealthy(instance, now: now),
                     focused: instance.snapshot.focused,
                     paneOpen: instance.snapshot.paneOpen,
@@ -330,6 +360,8 @@ final class VSCodeHunkRegistry: @unchecked Sendable {
             }
         return VSCodeHunkDiagnostics(
             activeWindowId: activeTargetLocked(now: now)?.windowId,
+            activeSourceProvider: activeTargetLocked(now: now)?
+                .snapshot.currentHunkReview?.effectiveSourceProvider,
             instances: diagnostics,
             lastCommandResult: lastCommandResult,
             diffReview: diffReview
@@ -398,10 +430,10 @@ final class VSCodeHunkLaunchpadControlLayer: LaunchpadControlLayer {
             return true
         }
         if registry.enqueueCommand(action) != nil {
-            TraceLogger.log("launchpad vscode hunk action queued action=\(action.rawValue)")
+            TraceLogger.log("launchpad hunk action queued action=\(action.rawValue)")
             invalidationBus.markDirty(reason: "vscode_hunk_command")
         } else {
-            TraceLogger.log("launchpad vscode hunk action ignored action=\(action.rawValue)")
+            TraceLogger.log("launchpad hunk action ignored action=\(action.rawValue)")
         }
         return true
     }
@@ -479,6 +511,7 @@ extension VSCodeHunkReviewContext {
         RefinementContextBlock(
             title: "Current hunk",
             metadata: [
+                "sourceProvider": effectiveSourceProvider,
                 "repoRoot": repoRoot,
                 "file": file,
                 "hunkId": hunkId,

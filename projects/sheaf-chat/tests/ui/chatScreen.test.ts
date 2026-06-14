@@ -1113,6 +1113,107 @@ test("desktop workspace renders explorer, file, and chat panes", async () =>
   RequiredElement(harness.app, ".sheaf-chat-file-view");
 });
 
+test("Agent Review Mode opens review socket and sends hunk commands", async () =>
+{
+  const reviewState: any = {
+    available: true,
+    repoRoot: "/repo",
+    sessionRoot: "/repo/projects/demo",
+    sessionRootRelativeToRepo: "projects/demo",
+    currentIndex: 0,
+    currentHunk: {
+      sourceProvider: "sheaf-chat",
+      repoRoot: "/repo",
+      sessionRoot: "/repo/projects/demo",
+      file: "app.ts",
+      hunkId: "hunk-1",
+      hunkIndex: 0,
+      hunkCount: 1,
+      fileIndex: 0,
+      fileCount: 1,
+      header: "@@ -1 +1 @@",
+      patchHash: "abc123",
+      patch: "diff --git a/app.ts b/app.ts\n@@ -1 +1 @@\n-old\n+new\n",
+    },
+    hunks: [],
+    files: [{ file: "app.ts", hunkCount: 1 }],
+    actions: {
+      canGoUp: false,
+      canGoDown: false,
+      canGoPrevFile: false,
+      canGoNextFile: false,
+      canStage: true,
+      canRevert: true,
+      canUndo: false,
+    },
+    dictatorBridge: { connected: false, url: null, lastError: null },
+  };
+  reviewState.hunks = [reviewState.currentHunk];
+
+  const harness = LoadChatHarness({
+    fetch: async (requestPath) => {
+      if (requestPath.endsWith("/agent-review")) {
+        return JsonResponse(reviewState);
+      }
+      if (requestPath.includes("/files?path=")) {
+        return JsonResponse({
+          directory: { name: ".", path: ".", kind: "directory" },
+          entries: [
+            {
+              name: "app.ts",
+              path: "app.ts",
+              kind: "file",
+              supported: true,
+              contentType: "text/plain",
+            },
+          ],
+        });
+      }
+      if (requestPath.includes("/file?path=")) {
+        return JsonResponse({
+          file: {
+            name: "app.ts",
+            path: "app.ts",
+            kind: "file",
+            supported: true,
+            contentType: "text/plain",
+            content: "new\n",
+            size: 4,
+            modifiedAt: "2026-06-08T00:00:00.000Z",
+          },
+        });
+      }
+      return JsonResponse({});
+    },
+  });
+  await FlushPromises();
+
+  const toggle = RequiredElement(harness.app, ".sheaf-chat-agent-review-toggle");
+  assert.match(toggle.textContent, /Agent Review/);
+  toggle.click();
+
+  const reviewSocket = harness.sockets.find((socket) => socket.url.includes("/ws/agent-review"));
+  assert.ok(reviewSocket, "expected Agent Review WebSocket");
+  reviewSocket.open();
+  reviewSocket.receive({ type: "bootstrap", state: reviewState });
+  await FlushPromises();
+
+  assert.match(harness.app.textContent, /Focused hunk 1\/1/);
+  assert.match(harness.app.textContent, /old/);
+  assert.match(harness.app.textContent, /new/);
+
+  const stage = harness.app
+    .querySelectorAll(".sheaf-chat-agent-review-command")
+    .find((button) => button.textContent.includes("Stage"));
+  assert.ok(stage, "expected Stage button");
+  stage.click();
+
+  const sent = reviewSocket.sent.map((raw) => JSON.parse(raw) as Record<string, any>);
+  assert.equal(sent.at(-1)?.action, "stage");
+  assert.equal(sent.at(-1)?.hunkId, "hunk-1");
+  assert.equal(sent.at(-1)?.patchHash, "abc123");
+});
+
 test("explorer file rows open tabs and switching updates selected content", async () =>
 {
   const harness = LoadChatHarness();

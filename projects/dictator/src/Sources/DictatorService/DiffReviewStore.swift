@@ -1,6 +1,7 @@
 import Foundation
 
 struct DiffReviewHunkSnapshot: Codable, Equatable, Sendable {
+    let sourceProvider: String
     let repoRoot: String
     let file: String
     let hunkId: String
@@ -11,6 +12,7 @@ struct DiffReviewHunkSnapshot: Codable, Equatable, Sendable {
     let patch: String
 
     init(_ context: VSCodeHunkReviewContext) {
+        sourceProvider = context.effectiveSourceProvider
         repoRoot = context.repoRoot
         file = context.file
         hunkId = context.hunkId
@@ -160,7 +162,7 @@ final class DiffReviewStore: @unchecked Sendable {
         ]
         for (index, entry) in entries.enumerated() {
             let hunk = entry.hunk
-            lines.append("\(index + 1). \(hunk.file) \(hunk.header) [\(hunk.patchHash)]")
+            lines.append("\(index + 1). \(hunk.sourceProvider) \(hunk.file) \(hunk.header) [\(hunk.patchHash)]")
             switch entry {
             case let .comment(_, text):
                 lines.append(text)
