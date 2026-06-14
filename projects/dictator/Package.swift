@@ -36,7 +36,8 @@ let package = Package(
             dependencies: [
                 "DictatorCore",
                 .product(name: "NIO", package: "swift-nio"),
-                .product(name: "NIOHTTP1", package: "swift-nio")
+                .product(name: "NIOHTTP1", package: "swift-nio"),
+                .product(name: "NIOWebSocket", package: "swift-nio")
             ],
             path: "src/Sources/DictatorService"
         ),

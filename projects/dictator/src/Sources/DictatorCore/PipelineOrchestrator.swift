@@ -53,7 +53,8 @@ public final class PipelineOrchestrator: DictatorCoreClient {
             RefineRequest(
                 raw_transcript: transcribed.raw_transcript,
                 optional_context: request.optional_context,
-                style_prefs: request.style_prefs
+                style_prefs: request.style_prefs,
+                context_blocks: request.context_blocks
             )
         )
 

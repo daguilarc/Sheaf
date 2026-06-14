@@ -20,11 +20,7 @@ enum WebRoute: Equatable
     case apiInteractionDetail(id: String)
     case apiModels(provider: String)
     case apiKeyStatus
-    case apiHunkReviewState
-    case apiHunkReviewDisconnect
-    case apiHunkReviewCommand(providerID: String)
-    case apiHunkReviewCommandResult
-    case apiHunkReviewDiagnostics
+    case apiRPCDiagnostics
 }
 
 enum WebRouter
@@ -93,20 +89,8 @@ enum WebRouter
             return .apiModels(provider: provider)
         case (.GET, "/api/api-key-status"):
             return .apiKeyStatus
-        case (.POST, "/api/hunk-review/state"):
-            return .apiHunkReviewState
-        case (.POST, "/api/hunk-review/disconnect"):
-            return .apiHunkReviewDisconnect
-        case (.GET, "/api/hunk-review/command"):
-            guard let providerID = query["provider_id"], !providerID.isEmpty else
-            {
-                throw WebRouterError.badRequest("provider_id query parameter is required")
-            }
-            return .apiHunkReviewCommand(providerID: providerID)
-        case (.POST, "/api/hunk-review/command-result"):
-            return .apiHunkReviewCommandResult
-        case (.GET, "/api/hunk-review/diagnostics"):
-            return .apiHunkReviewDiagnostics
+        case (.GET, "/api/rpc/diagnostics"):
+            return .apiRPCDiagnostics
         default:
             return nil
         }

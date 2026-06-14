@@ -2,6 +2,7 @@ import DictatorCore
 import Foundation
 import NIO
 import NIOHTTP1
+import NIOWebSocket
 
 struct DictationHTTPSuccessRecord: Sendable
 {
@@ -40,6 +41,7 @@ final class DictationHTTPServer
     private let webAPIService: WebAPIService?
     private let activityTracker: DictationActivityTracker?
     private let talonControl: (any TalonControlProviding)?
+    private let rpcService: DictatorRPCService?
     private let group: MultiThreadedEventLoopGroup
     private var channel: Channel?
 
@@ -53,7 +55,8 @@ final class DictationHTTPServer
         onFailureRecord: (@Sendable (DictationHTTPFailureRecord) async -> Void)? = nil,
         webAPIService: WebAPIService? = nil,
         activityTracker: DictationActivityTracker? = nil,
-        talonControl: (any TalonControlProviding)? = nil
+        talonControl: (any TalonControlProviding)? = nil,
+        rpcService: DictatorRPCService? = nil
     )
     {
         self.host = host
@@ -66,6 +69,7 @@ final class DictationHTTPServer
         self.webAPIService = webAPIService
         self.activityTracker = activityTracker
         self.talonControl = talonControl
+        self.rpcService = rpcService
         self.group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
     }
 
@@ -80,21 +84,68 @@ final class DictationHTTPServer
             .serverChannelOption(ChannelOptions.backlog, value: 256)
             .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
             .childChannelInitializer
-            { [lifecycle, coreClient, maxBodyBytes, onSuccessRecord, onFailureRecord, webAPIService, activityTracker, talonControl] channel in
-                channel.pipeline.configureHTTPServerPipeline().flatMap
+            { [lifecycle, coreClient, maxBodyBytes, onSuccessRecord, onFailureRecord, webAPIService, activityTracker, talonControl, rpcService] channel in
+                let httpHandler = DictationHTTPHandler(
+                    lifecycle: lifecycle,
+                    coreClient: coreClient,
+                    maxBodyBytes: maxBodyBytes,
+                    onSuccessRecord: onSuccessRecord,
+                    onFailureRecord: onFailureRecord,
+                    webAPIService: webAPIService,
+                    activityTracker: activityTracker,
+                    talonControl: talonControl
+                )
+
+                let upgradeConfiguration: NIOHTTPServerUpgradeConfiguration?
+                if let rpcService
                 {
-                    channel.pipeline.addHandler(
-                        DictationHTTPHandler(
-                            lifecycle: lifecycle,
-                            coreClient: coreClient,
-                            maxBodyBytes: maxBodyBytes,
-                            onSuccessRecord: onSuccessRecord,
-                            onFailureRecord: onFailureRecord,
-                            webAPIService: webAPIService,
-                            activityTracker: activityTracker,
-                            talonControl: talonControl
-                        )
+                    let upgrader = NIOWebSocketServerUpgrader(
+                        // Allow up to 1 MiB cursor.insertText payloads (default is 16 KiB).
+                        maxFrameSize: 2 * 1024 * 1024,
+                        shouldUpgrade: { channel, head in
+                            guard let clientID = DictatorRPCWebSocketUpgrade.clientID(from: head) else {
+                                return channel.eventLoop.makeSucceededFuture(nil)
+                            }
+                            var headers = HTTPHeaders()
+                            headers.add(name: "X-Dictator-RPC-Client", value: clientID)
+                            return channel.eventLoop.makeSucceededFuture(headers)
+                        },
+                        upgradePipelineHandler: { channel, head in
+                            let clientID = DictatorRPCWebSocketUpgrade.clientID(from: head) ?? "unknown"
+                            return channel.pipeline.addHandler(
+                                DictatorRPCWebSocketHandler(rpcService: rpcService, clientID: clientID)
+                            )
+                        }
                     )
+                    upgradeConfiguration = NIOHTTPServerUpgradeConfiguration(
+                        upgraders: [upgrader],
+                        completionHandler: { _ in
+                            // On a successful WebSocket upgrade the HTTP codec is torn down;
+                            // remove the HTTP application handler too so it never receives raw
+                            // WebSocket frames as HTTP parts.
+                            channel.pipeline.removeHandler(httpHandler, promise: nil)
+                        }
+                    )
+                }
+                else
+                {
+                    upgradeConfiguration = nil
+                }
+
+                let configured: EventLoopFuture<Void>
+                if let upgradeConfiguration
+                {
+                    configured = channel.pipeline.configureHTTPServerPipeline(
+                        withServerUpgrade: upgradeConfiguration
+                    )
+                }
+                else
+                {
+                    configured = channel.pipeline.configureHTTPServerPipeline()
+                }
+                return configured.flatMap
+                {
+                    channel.pipeline.addHandler(httpHandler)
                 }
             }
             .childChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
@@ -153,6 +204,52 @@ private enum DictationHTTPRoute
     case health
     case exit
     case dictateAudio
+}
+
+enum DictatorRPCWebSocketUpgrade
+{
+    static func clientID(from head: HTTPRequestHead) -> String?
+    {
+        let parsed = parseURI(head.uri)
+        guard head.method == .GET,
+              parsed.path == "/ws/rpc",
+              let client = parsed.query["client"]?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !client.isEmpty else
+        {
+            return nil
+        }
+        return client
+    }
+
+    private static func parseURI(_ uri: String) -> (path: String, query: [String: String])
+    {
+        guard let questionMark = uri.firstIndex(of: "?") else
+        {
+            return (uri, [:])
+        }
+
+        let path = String(uri[..<questionMark])
+        let queryString = String(uri[uri.index(after: questionMark)...])
+        var query: [String: String] = [:]
+        for pair in queryString.split(separator: "&")
+        {
+            let parts = pair.split(separator: "=", maxSplits: 1).map(String.init)
+            guard let key = parts.first, !key.isEmpty else
+            {
+                continue
+            }
+            let value = parts.count > 1 ? decodeQueryComponent(parts[1]) : ""
+            query[key] = value
+        }
+        return (path, query)
+    }
+
+    private static func decodeQueryComponent(_ value: String) -> String
+    {
+        value
+            .replacingOccurrences(of: "+", with: " ")
+            .removingPercentEncoding ?? value
+    }
 }
 
 private struct DictationHTTPRouter
@@ -326,7 +423,7 @@ enum DictationHTTPValidation
     }
 }
 
-private final class DictationHTTPHandler: ChannelInboundHandler
+private final class DictationHTTPHandler: ChannelInboundHandler, RemovableChannelHandler
 {
     typealias InboundIn = HTTPServerRequestPart
     typealias OutboundOut = HTTPServerResponsePart

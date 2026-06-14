@@ -115,36 +115,31 @@ curl -X POST http://127.0.0.1:28579/wake
 Dictator sends `POST /sleep` before every non-Talon dictation start. A bridge
 failure is logged and does not block normal Dictator dictation.
 
-## Hunk Review Controls
+## Local WebSocket RPC
 
-Dictator exposes a local REST-compatible control protocol for focused hunk
-review providers such as Sheaf Chat Agent Review Mode:
+Dictator exposes `/ws/rpc?client=<id>` for local clients that need mechanical
+control of Dictator-owned capabilities without app-specific review semantics.
+The protocol uses JSON request envelopes `{ "id", "method", "params" }`,
+response envelopes `{ "id", "result" }` or `{ "id", "error" }`, and event
+envelopes `{ "method", "params" }`.
 
-- `POST /api/hunk-review/state`
-- `POST /api/hunk-review/disconnect`
-- `GET /api/hunk-review/command?provider_id=<id>`
-- `POST /api/hunk-review/command-result`
-- `GET /api/hunk-review/diagnostics`
+Supported methods:
 
-Each provider reports a generated provider id, focus state, review-surface
-visibility, current file/hunk metadata, and action availability. Dictator uses
-the most recent healthy focused provider as the active target. If no healthy
-focused provider has actionable hunks, the Launchpad hunk LEDs stay off and
-button presses in the hunk-control region do not send keyboard fallback
-commands.
+- `rpc.ping`
+- `launchpad.setCells`
+- `launchpad.releaseCells`
+- `cursor.insertText`
+- `dictationContext.push`
+- `dictationContext.pop`
 
-Launchpad hunk mapping:
+Sheaf Chat Agent Review Mode owns the single review/comment/post cell `(3,3)`
+through `launchpad.setCells`. Dictator sends generic
+`launchpad.cellPressed`/`launchpad.cellReleased` events for cells owned by RPC
+clients and suppresses static layout actions for those cells.
 
-| Coordinate | Action |
-| --- | --- |
-| `(0,2)` | Revert current hunk |
-| `(1,2)` | Previous hunk |
-| `(2,2)` | Stage current hunk |
-| `(3,2)` | Undo last stage/revert |
-| `(0,3)` | Previous changed file |
-| `(1,3)` | Next hunk |
-| `(2,3)` | Next changed file |
-| `(3,3)` | Unused/off |
+Diagnostics are available at `GET /api/rpc/diagnostics` and report connected
+RPC clients, externally owned Launchpad cells, and pushed dictation context
+blocks.
 
 ## Test
 

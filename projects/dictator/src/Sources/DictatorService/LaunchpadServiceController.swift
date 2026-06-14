@@ -42,8 +42,7 @@ final class LaunchpadServiceController
     private let interactionStore: InteractionHistoryStore
     private let activityTracker: DictationActivityTracker
     private let talonControl: any TalonControlProviding
-    private let hunkReviewRegistry: HunkReviewRegistry
-    private let diffReviewStore: DiffReviewStore
+    private let rpcService: DictatorRPCService
     private let sessionID = UUID().uuidString
 
     private let audioRecorder = AudioRecorder()
@@ -56,9 +55,9 @@ final class LaunchpadServiceController
         }
     }
     private var recordingContext: [String: String]?
+    private var recordingContextBlocks: [RefinementContextBlock]?
     private var activeInteractionMode: InteractionMode = .standard
     private var activeSystemPromptPathOverride: String?
-    private var activeReviewHunk: HunkReviewContext?
     private var activeDictationTask: Task<DictateCallResult, Error>?
     private var dictationState: DictationState = .idle
     private var shiftLatchState: ShiftLatchState = .unpressed
@@ -78,8 +77,7 @@ final class LaunchpadServiceController
         interactionStore: InteractionHistoryStore,
         activityTracker: DictationActivityTracker,
         talonControl: any TalonControlProviding,
-        hunkReviewRegistry: HunkReviewRegistry,
-        diffReviewStore: DiffReviewStore
+        rpcService: DictatorRPCService
     )
     {
         self.repoRoot = repoRoot
@@ -90,8 +88,7 @@ final class LaunchpadServiceController
         self.interactionStore = interactionStore
         self.activityTracker = activityTracker
         self.talonControl = talonControl
-        self.hunkReviewRegistry = hunkReviewRegistry
-        self.diffReviewStore = diffReviewStore
+        self.rpcService = rpcService
     }
 
     func start()
@@ -104,27 +101,12 @@ final class LaunchpadServiceController
 
         let invalidationBus = RenderInvalidationBus()
         let pageController = LaunchpadPageController(invalidationBus: invalidationBus)
-        hunkReviewRegistry.setOnChange {
-            invalidationBus.markDirty(reason: "hunk_review_state")
-        }
-        diffReviewStore.setOnChange {
-            invalidationBus.markDirty(reason: "diff_review_state")
+        rpcService.setOnChange {
+            invalidationBus.markDirty(reason: "rpc_launchpad_state")
         }
         pageController.setControlLayer(
-            HunkReviewLaunchpadControlLayer(registry: hunkReviewRegistry, invalidationBus: invalidationBus),
-            forSlot: "hunk.review"
-        )
-        pageController.setControlLayer(
-            DiffReviewLaunchpadControlLayer(
-                registry: hunkReviewRegistry,
-                reviewStore: diffReviewStore,
-                onPress: { [weak self] in
-                    Task { @MainActor in
-                        await self?.handleDiffReviewPadPress()
-                    }
-                }
-            ),
-            forSlot: "diff.review"
+            ExternalLaunchpadControlLayer(rpcService: rpcService),
+            forSlot: "external.rpc"
         )
         let pageFactory = LaunchpadPageFactory(
             invalidationBus: invalidationBus,
@@ -255,8 +237,7 @@ final class LaunchpadServiceController
         }
         launchpadRenderWorker?.stop()
         launchpadMIDIManager?.stop()
-        hunkReviewRegistry.setOnChange(nil)
-        diffReviewStore.setOnChange(nil)
+        rpcService.setOnChange(nil)
         launchpadRenderWorker = nil
         launchpadMIDIManager = nil
         launchpadPageController = nil
@@ -397,6 +378,8 @@ final class LaunchpadServiceController
             }
 
             recordingContext = context.isEmpty ? nil : context
+            let contextBlocks = rpcService.activeContextBlocks()
+            recordingContextBlocks = contextBlocks.isEmpty ? nil : contextBlocks
             activeInteractionMode = mode
             activeSystemPromptPathOverride = systemPromptPathOverride
             _ = recordingController.toggle()
@@ -405,9 +388,9 @@ final class LaunchpadServiceController
         case let .failure(error):
             await activityTracker.endActivity()
             recordingContext = nil
+            recordingContextBlocks = nil
             activeInteractionMode = .standard
             activeSystemPromptPathOverride = nil
-            activeReviewHunk = nil
             setDictationState(.idle)
             TraceLogger.log("launchpad recording start failed: \(error)")
         }
@@ -426,19 +409,17 @@ final class LaunchpadServiceController
         case let .success(capturedAudio):
             let interactionMode = activeInteractionMode
             let requestContext = recordingContext
+            let requestContextBlocks = recordingContextBlocks
             let systemPromptPathOverride = activeSystemPromptPathOverride
-            let reviewHunk = activeReviewHunk
             recordingContext = nil
+            recordingContextBlocks = nil
             activeInteractionMode = .standard
             activeSystemPromptPathOverride = nil
-            activeReviewHunk = nil
 
             let locale = Locale.current.identifier.replacingOccurrences(of: "_", with: "-")
             let runtimeConfiguration = await runtimeConfigProvider.currentConfiguration()
             let runtimeConfig = await runtimeConfigProvider.currentRuntimeConfig()
-            let effectiveSystemPromptPath = reviewHunk == nil
-                ? (systemPromptPathOverride ?? runtimeConfig.systemPrompt)
-                : runtimeConfig.reviewSystemPrompt
+            let effectiveSystemPromptPath = systemPromptPathOverride ?? runtimeConfig.systemPrompt
             let effectiveSystemPromptBody = resolvedSystemPromptBody(
                 runtimeConfig: runtimeConfig,
                 promptPath: effectiveSystemPromptPath
@@ -454,13 +435,6 @@ final class LaunchpadServiceController
             let pipelineStart = Date()
             do
             {
-                let reviewRefinementEngine = reviewHunk == nil
-                    ? nil
-                    : makeRefinementEngine(
-                        runtimeConfig: runtimeConfig,
-                        systemPromptBodyOverride: effectiveSystemPromptBody,
-                        configurationOverride: runtimeConfiguration
-                    )
                 let overrideRefinementEngine = systemPromptPathOverride == nil
                     ? nil
                     : makeRefinementEngine(
@@ -469,56 +443,13 @@ final class LaunchpadServiceController
                         configurationOverride: runtimeConfiguration
                     )
                 let task: Task<DictateCallResult, Error> = Task { [apiClient, sttEngine] in
-                    if let reviewHunk
-                    {
-                        let transcribeStart = Date()
-                        let transcribed = try await sttEngine.transcribe(
-                            TranscribeRequest(
-                                audio_b64: capturedAudio.data.base64EncodedString(),
-                                sample_rate: capturedAudio.sampleRate,
-                                locale: locale,
-                                session_id: sessionID
-                            )
-                        )
-                        let transcribeMs = Int(Date().timeIntervalSince(transcribeStart) * 1000)
-                        if transcribed.raw_transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                        {
-                            return DictateCallResult(
-                                response: DictateResponse(
-                                    raw_transcript: "",
-                                    revised_text: "",
-                                    edit_summary: "Transcription empty; skipped refinement.",
-                                    uncertainty_flags: ["empty_transcript_skipped_refinement"]
-                                ),
-                                transcribeMs: transcribeMs,
-                                refineMs: 0
-                            )
-                        }
-                        let refineStart = Date()
-                        let refined = try await reviewRefinementEngine!.refine(
-                            RefineRequest(
-                                raw_transcript: transcribed.raw_transcript,
-                                context_blocks: [reviewHunk.refinementContextBlock()]
-                            )
-                        )
-                        return DictateCallResult(
-                            response: DictateResponse(
-                                raw_transcript: transcribed.raw_transcript,
-                                revised_text: refined.revised_text,
-                                edit_summary: refined.edit_summary,
-                                uncertainty_flags: refined.uncertainty_flags
-                            ),
-                            transcribeMs: transcribeMs,
-                            refineMs: Int(Date().timeIntervalSince(refineStart) * 1000),
-                            providerMetadata: refined.providerMetadata
-                        )
-                    }
                     let request = DictateRequest(
                         audio_b64: capturedAudio.data.base64EncodedString(),
                         sample_rate: capturedAudio.sampleRate,
                         locale: locale,
                         session_id: sessionID,
-                        optional_context: requestContext
+                        optional_context: requestContext,
+                        context_blocks: requestContextBlocks
                     )
                     if let overrideRefinementEngine
                     {
@@ -535,23 +466,6 @@ final class LaunchpadServiceController
                 activeDictationTask = nil
                 let dictated = dictatedCall.response
                 let totalPipelineMs = elapsedMs(since: pipelineStart)
-
-                if let reviewHunk
-                {
-                    let trimmedReview = dictated.revised_text.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if trimmedReview.isEmpty
-                    {
-                        TraceLogger.log("launchpad review comment produced empty revised text; skipping review entry")
-                    }
-                    else
-                    {
-                        diffReviewStore.appendComment(hunk: reviewHunk, text: trimmedReview)
-                        TraceLogger.log("launchpad review comment appended file=\(reviewHunk.file) hash=\(reviewHunk.patchHash)")
-                    }
-                    diffReviewStore.setRecordingActive(false)
-                    setDictationState(.idle)
-                    return
-                }
 
                 let insertStart = Date()
                 let insertResult: Result<Void, ClipboardInserter.InsertError>
@@ -589,10 +503,6 @@ final class LaunchpadServiceController
             catch
             {
                 activeDictationTask = nil
-                if reviewHunk != nil
-                {
-                    diffReviewStore.setRecordingActive(false)
-                }
                 setDictationState(.idle)
                 if error is CancellationError
                 {
@@ -622,14 +532,11 @@ final class LaunchpadServiceController
         }
         _ = recordingController.toggle()
         recordingContext = nil
+        recordingContextBlocks = nil
         activeInteractionMode = .standard
         activeSystemPromptPathOverride = nil
-        activeReviewHunk = nil
-        diffReviewStore.setRecordingActive(false)
         _ = audioRecorder.stop()
         cancelActiveDictationTask()
-        activeReviewHunk = nil
-        diffReviewStore.setRecordingActive(false)
         setDictationState(.idle)
         TraceLogger.log("launchpad recording canceled")
     }
@@ -641,8 +548,6 @@ final class LaunchpadServiceController
             return
         }
         cancelActiveDictationTask()
-        activeReviewHunk = nil
-        diffReviewStore.setRecordingActive(false)
         setDictationState(.idle)
         TraceLogger.log("launchpad thinking canceled")
     }
@@ -659,75 +564,6 @@ final class LaunchpadServiceController
             var modifiers = modifiersForKeyPress(.backspace)
             _ = keyboardInjector.send(.backspace, modifiers: modifiers)
             modifiers.removeAll()
-        }
-    }
-
-    private func handleDiffReviewPadPress() async
-    {
-        if activeReviewHunk != nil
-        {
-            if dictationState == .recording, recordingController.isRecording
-            {
-                await stopRecordingAndProcess()
-            }
-            return
-        }
-
-        if let hunk = hunkReviewRegistry.activeReviewHunk()
-        {
-            await startReviewRecording(hunk: hunk)
-            return
-        }
-
-        if diffReviewStore.hasActiveReview
-        {
-            postActiveDiffReview()
-        }
-    }
-
-    private func startReviewRecording(hunk: HunkReviewContext) async
-    {
-        guard dictationState == .idle, !recordingController.isRecording else
-        {
-            return
-        }
-        await sleepTalon(reason: "launchpad review dictation start")
-        await activityTracker.beginRecording()
-        switch await audioRecorder.start()
-        {
-        case .success:
-            recordingContext = nil
-            activeInteractionMode = .standard
-            activeSystemPromptPathOverride = nil
-            activeReviewHunk = hunk
-            diffReviewStore.setRecordingActive(true)
-            _ = recordingController.toggle()
-            setDictationState(.recording)
-            TraceLogger.log("launchpad review recording started file=\(hunk.file) hash=\(hunk.patchHash)")
-        case let .failure(error):
-            await activityTracker.endActivity()
-            recordingContext = nil
-            activeReviewHunk = nil
-            diffReviewStore.setRecordingActive(false)
-            setDictationState(.idle)
-            TraceLogger.log("launchpad review recording start failed: \(error)")
-        }
-    }
-
-    private func postActiveDiffReview()
-    {
-        guard let reviewText = diffReviewStore.serializedReview() else
-        {
-            return
-        }
-        switch ClipboardInserter.insertPreservingClipboard(reviewText)
-        {
-        case .success:
-            diffReviewStore.clearAfterSuccessfulPost()
-            TraceLogger.log("launchpad diff review posted")
-        case let .failure(error):
-            diffReviewStore.recordPostError(String(describing: error))
-            TraceLogger.log("launchpad diff review post failed: \(error)")
         }
     }
 

@@ -198,8 +198,7 @@ struct DictatorServiceMain
 
         let activityTracker = DictationActivityTracker()
         let talonControlClient = TalonControlClient()
-        let hunkReviewRegistry = HunkReviewRegistry()
-        let diffReviewStore = DiffReviewStore()
+        let rpcService = DictatorRPCService()
         let endpointDescription = "http://127.0.0.1:\(endpoint.port)"
         let webContext = WebServiceContext(
             repoRoot: repoRoot,
@@ -211,8 +210,7 @@ struct DictatorServiceMain
             endpointDescription: endpointDescription,
             logPath: repoRoot.appendingPathComponent("logs/dictator", isDirectory: true).path,
             dataPath: dataDirectoryURL.path,
-            hunkReviewRegistry: hunkReviewRegistry,
-            diffReviewStore: diffReviewStore
+            rpcService: rpcService
         )
         let webAPIService = WebAPIService(context: webContext)
         await webAPIService.prepare()
@@ -226,8 +224,7 @@ struct DictatorServiceMain
             interactionStore: interactionStore,
             activityTracker: activityTracker,
             talonControl: talonControlClient,
-            hunkReviewRegistry: hunkReviewRegistry,
-            diffReviewStore: diffReviewStore
+            rpcService: rpcService
         )
         await MainActor.run
         {
@@ -243,7 +240,8 @@ struct DictatorServiceMain
             onFailureRecord: onFailureRecord,
             webAPIService: webAPIService,
             activityTracker: activityTracker,
-            talonControl: talonControlClient
+            talonControl: talonControlClient,
+            rpcService: rpcService
         )
         shutdown.SetServer(server)
 

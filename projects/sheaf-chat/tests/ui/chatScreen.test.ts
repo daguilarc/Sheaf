@@ -18,6 +18,7 @@ type Listener = (event: Record<string, unknown>) => void;
 
 class FakeElement
 {
+  public static activeElement: FakeElement | null = null;
   public readonly tagName: string;
   public readonly nodeName: string;
   public className = "";
@@ -223,6 +224,12 @@ class FakeElement
   public click(): void
   {
     this.dispatchEvent({ type: "click" });
+  }
+
+  public focus(): void
+  {
+    FakeElement.activeElement = this;
+    this.dispatchEvent({ type: "focus" });
   }
 
   public querySelector(selector: string): FakeElement | null
@@ -1183,6 +1190,11 @@ test("Agent Review Mode opens review socket and sends hunk commands", async () =
       canRevert: true,
       canUndo: false,
     },
+    reviewDraft: {
+      entries: [],
+      visibleCommentHunkId: null,
+      hasSerializedContent: false,
+    },
     dictatorBridge: { connected: false, url: null, lastError: null },
   };
   reviewState.hunks = [reviewState.currentHunk];
@@ -1238,6 +1250,7 @@ test("Agent Review Mode opens review socket and sends hunk commands", async () =
   assert.match(harness.app.textContent, /Focused hunk 1\/1/);
   assert.match(harness.app.textContent, /old/);
   assert.match(harness.app.textContent, /new/);
+  assert.equal(harness.app.querySelector(".sheaf-chat-agent-review-comment-textarea"), null);
 
   const stage = harness.app
     .querySelectorAll(".sheaf-chat-agent-review-command")
@@ -1249,6 +1262,26 @@ test("Agent Review Mode opens review socket and sends hunk commands", async () =
   assert.equal(sent.at(-1)?.action, "stage");
   assert.equal(sent.at(-1)?.hunkId, "hunk-1");
   assert.equal(sent.at(-1)?.patchHash, "abc123");
+
+  reviewState.reviewDraft.visibleCommentHunkId = "hunk-1";
+  reviewSocket.receive({ type: "state", state: reviewState });
+  reviewSocket.receive({ type: "focus_comment", hunkId: "hunk-1" });
+  await FlushPromises();
+  harness.runTimers();
+
+  const commentBox = RequiredElement(harness.app, ".sheaf-chat-agent-review-comment-textarea") as any;
+  assert.equal(
+    FakeElement.activeElement?.classList.contains("sheaf-chat-agent-review-comment-textarea"),
+    true,
+  );
+
+  commentBox.value = "Please simplify this branch.";
+  commentBox.dispatchEvent(new Event("input", { bubbles: true }));
+
+  const afterComment = reviewSocket.sent.map((raw) => JSON.parse(raw) as Record<string, any>);
+  assert.equal(afterComment.at(-1)?.type, "comment");
+  assert.equal(afterComment.at(-1)?.hunkId, "hunk-1");
+  assert.equal(afterComment.at(-1)?.text, "Please simplify this branch.");
 });
 
 test("explorer file rows open tabs and switching updates selected content", async () =>

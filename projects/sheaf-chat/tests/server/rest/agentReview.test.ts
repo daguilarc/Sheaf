@@ -5,7 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
 
-import { WebSocket } from "ws";
+import { WebSocket, WebSocketServer } from "ws";
 
 import {
   CreateWorkspaceChatViaApi,
@@ -28,10 +28,15 @@ function WsUrl(baseUrl: string, repoId: string, workspaceId: string): string
   return url.toString();
 }
 
-function WaitForFrame(socket: WebSocket, type: string): Promise<Record<string, any>>
+function WaitForFrame(socket: WebSocket, type: string, timeoutMs = 5000): Promise<Record<string, any>>
 {
   return new Promise((resolve, reject) =>
   {
+    const timer = setTimeout(() =>
+    {
+      socket.off("message", onMessage);
+      reject(new Error(`timed out waiting for Agent Review frame: ${type}`));
+    }, timeoutMs);
     const onMessage = (raw: WebSocket.RawData): void =>
     {
       const frame = JSON.parse(raw.toString()) as Record<string, any>;
@@ -40,11 +45,160 @@ function WaitForFrame(socket: WebSocket, type: string): Promise<Record<string, a
         return;
       }
       socket.off("message", onMessage);
+      clearTimeout(timer);
       resolve(frame);
     };
     socket.on("message", onMessage);
-    socket.once("error", reject);
+    socket.once("error", (error) =>
+    {
+      clearTimeout(timer);
+      reject(error);
+    });
   });
+}
+
+function WaitForFrameWhere(
+  socket: WebSocket,
+  type: string,
+  predicate: (frame: Record<string, any>) => boolean,
+  label = type,
+  timeoutMs = 5000,
+): Promise<Record<string, any>>
+{
+  return new Promise((resolve, reject) =>
+  {
+    const timer = setTimeout(() =>
+    {
+      socket.off("message", onMessage);
+      reject(new Error(`timed out waiting for matching Agent Review frame: ${label}`));
+    }, timeoutMs);
+    const onMessage = (raw: WebSocket.RawData): void =>
+    {
+      const frame = JSON.parse(raw.toString()) as Record<string, any>;
+      if (frame.type !== type || !predicate(frame))
+      {
+        return;
+      }
+      socket.off("message", onMessage);
+      clearTimeout(timer);
+      resolve(frame);
+    };
+    socket.on("message", onMessage);
+    socket.once("error", (error) =>
+    {
+      clearTimeout(timer);
+      reject(error);
+    });
+  });
+}
+
+class FakeDictatorRPCServer
+{
+  readonly server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+  socket: WebSocket | null = null;
+  insertedText: string | null = null;
+  private readonly requests: Array<Record<string, any>> = [];
+  private readonly waiters: Array<{
+    method: string;
+    resolve: (request: Record<string, any>) => void;
+  }> = [];
+
+  async start(): Promise<number>
+  {
+    this.server.on("connection", (socket) =>
+    {
+      this.socket = socket;
+      socket.send(JSON.stringify({
+        method: "rpc.hello",
+        params: {
+          protocolVersion: 1,
+          capabilities: ["launchpad.cells", "cursor.insertText", "dictationContext"],
+        },
+      }));
+      socket.on("message", (raw) =>
+      {
+        const request = JSON.parse(raw.toString()) as Record<string, any>;
+        this.requests.push(request);
+        if (request.method === "cursor.insertText")
+        {
+          this.insertedText = request.params.text;
+        }
+        socket.send(JSON.stringify({ id: request.id, result: { ok: true } }));
+        this.resolveWaiter(request);
+      });
+    });
+
+    await new Promise<void>((resolve) => this.server.once("listening", resolve));
+    const address = this.server.address();
+    assert.ok(address !== null && typeof address === "object");
+    return address.port;
+  }
+
+  async close(): Promise<void>
+  {
+    this.socket?.close();
+    await new Promise<void>((resolve) => this.server.close(() => resolve()));
+  }
+
+  sendPress(x = 3, y = 3): void
+  {
+    this.socket?.send(JSON.stringify({
+      method: "launchpad.cellPressed",
+      params: { x, y, sequence: 1 },
+    }));
+  }
+
+  lastRequest(method: string): Record<string, any> | undefined
+  {
+    for (let i = this.requests.length - 1; i >= 0; i -= 1)
+    {
+      if (this.requests[i]!.method === method)
+      {
+        return this.requests[i];
+      }
+    }
+    return undefined;
+  }
+
+  waitForRequest(method: string, timeoutMs = 5000): Promise<Record<string, any>>
+  {
+    const existing = this.requests.find((request) => request.method === method);
+    if (existing !== undefined)
+    {
+      return Promise.resolve(existing);
+    }
+    return new Promise((resolve, reject) =>
+    {
+      const timer = setTimeout(() =>
+      {
+        const index = this.waiters.findIndex((waiter) => waiter.resolve === resolve);
+        if (index >= 0)
+        {
+          this.waiters.splice(index, 1);
+        }
+        reject(new Error(`timed out waiting for Dictator RPC request: ${method}`));
+      }, timeoutMs);
+      this.waiters.push({
+        method,
+        resolve: (request) =>
+        {
+          clearTimeout(timer);
+          resolve(request);
+        },
+      });
+    });
+  }
+
+  private resolveWaiter(request: Record<string, any>): void
+  {
+    const index = this.waiters.findIndex((waiter) => waiter.method === request.method);
+    if (index < 0)
+    {
+      return;
+    }
+    const [waiter] = this.waiters.splice(index, 1);
+    waiter.resolve(request);
+  }
 }
 
 async function Git(cwd: string, args: string[]): Promise<string>
@@ -135,7 +289,7 @@ test("Agent Review WebSocket stages, reverts, and undoes current hunks", async (
     }));
     const stage = await WaitForFrame(socket, "command_result");
     assert.equal(stage.result.ok, true);
-    assert.equal(stage.result.reviewFacts, undefined);
+    assert.equal(stage.state.reviewDraft.entries.length, 0);
     assert.match(await Git(repoRoot, ["diff", "--cached", "--", "projects/demo/app.ts"]), /two changed/);
     assert.equal((await Git(repoRoot, ["diff", "--", "projects/demo/app.ts"])).trim(), "");
 
@@ -156,16 +310,14 @@ test("Agent Review WebSocket stages, reverts, and undoes current hunks", async (
     }));
     const revert = await WaitForFrame(socket, "command_result");
     assert.equal(revert.result.ok, true);
-    assert.equal(revert.result.reviewFacts.revertedHunk.file, "projects/demo/app.ts");
+    assert.equal(revert.state.reviewDraft.entries[0].kind, "rejected");
+    assert.equal(revert.state.reviewDraft.entries[0].hunk.file, "projects/demo/app.ts");
     assert.equal(await readFile(filePath, "utf8"), "one\ntwo\nthree\n");
 
     socket.send(JSON.stringify({ type: "command", id: "undo-revert", action: "undo" }));
     const undoRevert = await WaitForFrame(socket, "command_result");
     assert.equal(undoRevert.result.ok, true);
-    assert.equal(
-      undoRevert.result.reviewFacts.restoredRevertedHunk.file,
-      "projects/demo/app.ts",
-    );
+    assert.equal(undoRevert.state.reviewDraft.entries.length, 0);
     assert.equal(await readFile(filePath, "utf8"), "one\ntwo changed\nthree\n");
 
     await new Promise<void>((resolve) =>
@@ -256,4 +408,278 @@ test("Agent Review WebSocket navigates between hunks and files", async () =>
       socket.close();
     });
   });
+});
+
+test("Agent Review Dictator RPC cell reveals comments and inserts serialized review", async () =>
+{
+  const fakeDictator = new FakeDictatorRPCServer();
+  const dictatorPort = await fakeDictator.start();
+  try
+  {
+    await WithTestServer(async (handle) =>
+    {
+      await writeFile(
+        handle.config.paths.servicesJsonFile,
+        JSON.stringify([{ name: "dictator", host: "127.0.0.1", port: dictatorPort }]),
+        "utf8",
+      );
+
+      const { repoId, workspaceId } = await CreateGitReviewSession(handle);
+      const socket = new WebSocket(WsUrl(handle.baseUrl, repoId, workspaceId));
+
+      await new Promise<void>((resolve, reject) =>
+      {
+        socket.once("open", () => resolve());
+        socket.once("error", reject);
+      });
+
+      const bootstrap = await WaitForFrame(socket, "bootstrap");
+      const hunk = bootstrap.state.currentHunk;
+      assert.equal(hunk.file, "projects/demo/app.ts");
+
+      const setCells = await fakeDictator.waitForRequest("launchpad.setCells");
+      const reviewCell = setCells.params.cells.find(
+        (cell: Record<string, unknown>) => cell.x === 3 && cell.y === 3,
+      );
+      assert.deepEqual(reviewCell, { x: 3, y: 3, r: 90, g: 90, b: 90 });
+
+      fakeDictator.sendPress();
+      const focusComment = await WaitForFrame(socket, "focus_comment");
+      assert.equal(focusComment.hunkId, hunk.hunkId);
+
+      socket.send(JSON.stringify({ type: "comment_focus", hunkId: hunk.hunkId }));
+      const pushContext = await fakeDictator.waitForRequest("dictationContext.push");
+      assert.equal(pushContext.params.id, `comment:${hunk.hunkId}`);
+      assert.match(pushContext.params.body, /two changed/);
+
+      socket.send(JSON.stringify({ type: "comment_blur", hunkId: hunk.hunkId }));
+      const popContext = await fakeDictator.waitForRequest("dictationContext.pop");
+      assert.equal(popContext.params.id, `comment:${hunk.hunkId}`);
+
+      const commentedPromise = WaitForFrameWhere(
+        socket,
+        "state",
+        (frame) => frame.state.reviewDraft.entries.length === 1,
+        "commented draft state",
+      );
+      socket.send(JSON.stringify({
+        type: "comment",
+        hunkId: hunk.hunkId,
+        text: "Please simplify this branch.",
+      }));
+      const commented = await commentedPromise;
+      assert.equal(commented.state.reviewDraft.entries[0].kind, "comment");
+      assert.equal(commented.state.reviewDraft.entries[0].text, "Please simplify this branch.");
+
+      const awayPromise = WaitForFrameWhere(
+        socket,
+        "state",
+        (frame) => frame.state.currentHunk === null,
+        "away review state",
+      );
+      socket.send(JSON.stringify({ type: "focus", hunkId: null }));
+      const away = await awayPromise;
+      assert.equal(away.state.currentHunk, null);
+      assert.equal(away.state.reviewDraft.hasSerializedContent, true);
+
+      const insertPromise = fakeDictator.waitForRequest("cursor.insertText");
+      const clearedPromise = WaitForFrameWhere(
+        socket,
+        "state",
+        (frame) => frame.state.reviewDraft.entries.length === 0,
+        "cleared review state",
+      );
+      fakeDictator.sendPress();
+      await insertPromise;
+      assert.match(fakeDictator.insertedText ?? "", /Please simplify this branch\./);
+      assert.match(fakeDictator.insertedText ?? "", /```diff/);
+      const cleared = await clearedPromise;
+      assert.equal(cleared.state.reviewDraft.entries.length, 0);
+
+      await new Promise<void>((resolve) =>
+      {
+        socket.once("close", () => resolve());
+        socket.close();
+      });
+    });
+  }
+  finally
+  {
+    await fakeDictator.close();
+  }
+});
+
+function CellMap(cells: Array<Record<string, unknown>>): Map<string, Record<string, unknown>>
+{
+  const map = new Map<string, Record<string, unknown>>();
+  for (const cell of cells)
+  {
+    map.set(`${cell.x},${cell.y}`, cell);
+  }
+  return map;
+}
+
+test("Agent Review Launchpad navigation cells reflect action availability", async () =>
+{
+  const fakeDictator = new FakeDictatorRPCServer();
+  const dictatorPort = await fakeDictator.start();
+  try
+  {
+    await WithTestServer(async (handle) =>
+    {
+      await writeFile(
+        handle.config.paths.servicesJsonFile,
+        JSON.stringify([{ name: "dictator", host: "127.0.0.1", port: dictatorPort }]),
+        "utf8",
+      );
+
+      const { repoId, workspaceId } = await CreateMultiHunkReviewSession(handle);
+      const socket = new WebSocket(WsUrl(handle.baseUrl, repoId, workspaceId));
+      await new Promise<void>((resolve, reject) =>
+      {
+        socket.once("open", () => resolve());
+        socket.once("error", reject);
+      });
+      await WaitForFrame(socket, "bootstrap");
+
+      const setCells = await fakeDictator.waitForRequest("launchpad.setCells");
+      const cells = CellMap(setCells.params.cells);
+
+      // First hunk of a three-hunk, two-file diff: can go down + stage + revert,
+      // but cannot go up, change file, or undo.
+      assert.deepEqual(cells.get("0,2"), { x: 0, y: 2, r: 255, g: 0, b: 0 }); // revert
+      assert.deepEqual(cells.get("2,2"), { x: 2, y: 2, r: 0, g: 255, b: 0 }); // stage
+      assert.deepEqual(cells.get("1,3"), { x: 1, y: 3, r: 255, g: 255, b: 0 }); // next hunk
+      assert.deepEqual(cells.get("1,2"), { x: 1, y: 2, off: true }); // previous hunk
+      assert.deepEqual(cells.get("3,2"), { x: 3, y: 2, off: true }); // undo
+      assert.deepEqual(cells.get("0,3"), { x: 0, y: 3, off: true }); // previous file
+      assert.deepEqual(cells.get("2,3"), { x: 2, y: 3, off: true }); // next file
+      assert.deepEqual(cells.get("3,3"), { x: 3, y: 3, r: 90, g: 90, b: 90 }); // review cell grey
+
+      await new Promise<void>((resolve) =>
+      {
+        socket.once("close", () => resolve());
+        socket.close();
+      });
+    });
+  }
+  finally
+  {
+    await fakeDictator.close();
+  }
+});
+
+test("Agent Review Launchpad next-hunk cell advances the current hunk", async () =>
+{
+  const fakeDictator = new FakeDictatorRPCServer();
+  const dictatorPort = await fakeDictator.start();
+  try
+  {
+    await WithTestServer(async (handle) =>
+    {
+      await writeFile(
+        handle.config.paths.servicesJsonFile,
+        JSON.stringify([{ name: "dictator", host: "127.0.0.1", port: dictatorPort }]),
+        "utf8",
+      );
+
+      const { repoId, workspaceId } = await CreateMultiHunkReviewSession(handle);
+      const socket = new WebSocket(WsUrl(handle.baseUrl, repoId, workspaceId));
+      await new Promise<void>((resolve, reject) =>
+      {
+        socket.once("open", () => resolve());
+        socket.once("error", reject);
+      });
+      const bootstrap = await WaitForFrame(socket, "bootstrap");
+      assert.equal(bootstrap.state.currentHunk.hunkIndex, 0);
+      await fakeDictator.waitForRequest("launchpad.setCells");
+
+      const advanced = WaitForFrameWhere(
+        socket,
+        "state",
+        (frame) => frame.state.currentHunk?.hunkIndex === 1,
+        "next hunk via launchpad",
+      );
+      fakeDictator.sendPress(1, 3); // next-hunk cell
+      const state = await advanced;
+      assert.equal(state.state.currentHunk.hunkIndex, 1);
+
+      await new Promise<void>((resolve) =>
+      {
+        socket.once("close", () => resolve());
+        socket.close();
+      });
+    });
+  }
+  finally
+  {
+    await fakeDictator.close();
+  }
+});
+
+test("Agent Review Launchpad ignores presses for unavailable actions", async () =>
+{
+  const fakeDictator = new FakeDictatorRPCServer();
+  const dictatorPort = await fakeDictator.start();
+  try
+  {
+    await WithTestServer(async (handle) =>
+    {
+      await writeFile(
+        handle.config.paths.servicesJsonFile,
+        JSON.stringify([{ name: "dictator", host: "127.0.0.1", port: dictatorPort }]),
+        "utf8",
+      );
+
+      const { repoId, workspaceId } = await CreateMultiHunkReviewSession(handle);
+      const socket = new WebSocket(WsUrl(handle.baseUrl, repoId, workspaceId));
+      await new Promise<void>((resolve, reject) =>
+      {
+        socket.once("open", () => resolve());
+        socket.once("error", reject);
+      });
+      await WaitForFrame(socket, "bootstrap");
+      await fakeDictator.waitForRequest("launchpad.setCells");
+
+      // Record the index of every state frame until the next-hunk command lands.
+      const seen: number[] = [];
+      const reachedNextHunk = new Promise<void>((resolve) =>
+      {
+        const onMessage = (raw: WebSocket.RawData): void =>
+        {
+          const frame = JSON.parse(raw.toString()) as Record<string, any>;
+          if (frame.type === "state" && frame.state.currentHunk != null)
+          {
+            seen.push(frame.state.currentHunk.hunkIndex);
+            if (frame.state.currentHunk.hunkIndex === 1)
+            {
+              socket.off("message", onMessage);
+              resolve();
+            }
+          }
+        };
+        socket.on("message", onMessage);
+      });
+
+      // Undo is unavailable at the first hunk (no prior mutation); its press must
+      // be a no-op that emits no frame. The available next-hunk press follows.
+      fakeDictator.sendPress(3, 2); // undo cell (off / unavailable)
+      fakeDictator.sendPress(1, 3); // next-hunk cell (available)
+      await reachedNextHunk;
+
+      // If the unavailable undo press had been dispatched it would have broadcast
+      // an index-0 state frame first; the guard means the only frame is next-hunk.
+      assert.deepEqual(seen, [1]);
+
+      await new Promise<void>((resolve) =>
+      {
+        socket.once("close", () => resolve());
+        socket.close();
+      });
+    });
+  }
+  finally
+  {
+    await fakeDictator.close();
+  }
 });

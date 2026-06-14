@@ -127,6 +127,7 @@ public struct DictateRequest: Codable, Sendable {
     public let session_id: String
     public let optional_context: [String: String]?
     public let style_prefs: [String: String]?
+    public let context_blocks: [RefinementContextBlock]?
 
     public init(
         audio_b64: String,
@@ -134,7 +135,8 @@ public struct DictateRequest: Codable, Sendable {
         locale: String,
         session_id: String,
         optional_context: [String: String]? = nil,
-        style_prefs: [String: String]? = nil
+        style_prefs: [String: String]? = nil,
+        context_blocks: [RefinementContextBlock]? = nil
     ) {
         self.audio_b64 = audio_b64
         self.sample_rate = sample_rate
@@ -142,6 +144,7 @@ public struct DictateRequest: Codable, Sendable {
         self.session_id = session_id
         self.optional_context = optional_context
         self.style_prefs = style_prefs
+        self.context_blocks = context_blocks
     }
 }
 

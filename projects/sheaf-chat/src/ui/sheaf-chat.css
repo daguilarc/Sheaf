@@ -706,6 +706,33 @@ body
   line-height: 1.45;
 }
 
+.sheaf-chat-agent-review-comment
+{
+  margin-top: 10px;
+}
+
+.sheaf-chat-agent-review-comment-textarea
+{
+  width: 100%;
+  min-height: 96px;
+  resize: vertical;
+  box-sizing: border-box;
+  border: 1px solid var(--sheaf-chat-border);
+  border-radius: 6px;
+  background: var(--sheaf-chat-surface);
+  color: var(--sheaf-chat-text);
+  padding: 8px;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.sheaf-chat-agent-review-comment-textarea:focus
+{
+  outline: 2px solid color-mix(in srgb, var(--sheaf-chat-accent) 50%, transparent);
+  outline-offset: 1px;
+}
+
 .sheaf-chat-file-empty,
 .sheaf-chat-file-loading
 {

@@ -56,11 +56,28 @@ export interface AgentReviewState extends AgentReviewAvailability
   hunks: AgentReviewHunk[];
   files: AgentReviewFileSummary[];
   actions: AgentReviewActions;
+  reviewDraft: AgentReviewDraftState;
   dictatorBridge: {
     connected: boolean;
     url: string | null;
     lastError: string | null;
   };
+}
+
+export type AgentReviewDraftEntryKind = "comment" | "rejected";
+
+export interface AgentReviewDraftEntry
+{
+  kind: AgentReviewDraftEntryKind;
+  hunk: AgentReviewHunk;
+  text?: string;
+}
+
+export interface AgentReviewDraftState
+{
+  entries: AgentReviewDraftEntry[];
+  visibleCommentHunkId: string | null;
+  hasSerializedContent: boolean;
 }
 
 export interface AgentReviewCommandResult
@@ -70,10 +87,6 @@ export interface AgentReviewCommandResult
   commandId?: string;
   error?: string;
   stale?: boolean;
-  reviewFacts?: {
-    revertedHunk?: AgentReviewHunk;
-    restoredRevertedHunk?: AgentReviewHunk;
-  };
 }
 
 export interface AgentReviewClientCommand
@@ -91,10 +104,35 @@ export interface AgentReviewClientFocus
   hunkId?: string | null;
 }
 
-export type AgentReviewClientFrame = AgentReviewClientCommand | AgentReviewClientFocus;
+export interface AgentReviewClientComment
+{
+  type: "comment";
+  hunkId: string;
+  text: string;
+}
+
+export interface AgentReviewClientCommentFocus
+{
+  type: "comment_focus";
+  hunkId: string;
+}
+
+export interface AgentReviewClientCommentBlur
+{
+  type: "comment_blur";
+  hunkId: string;
+}
+
+export type AgentReviewClientFrame =
+  | AgentReviewClientCommand
+  | AgentReviewClientFocus
+  | AgentReviewClientComment
+  | AgentReviewClientCommentFocus
+  | AgentReviewClientCommentBlur;
 
 export type AgentReviewServerFrame =
   | { type: "bootstrap"; state: AgentReviewState }
   | { type: "state"; state: AgentReviewState }
+  | { type: "focus_comment"; hunkId: string }
   | { type: "command_result"; result: AgentReviewCommandResult; state: AgentReviewState }
   | { type: "error"; code: string; message: string; requestId?: string };

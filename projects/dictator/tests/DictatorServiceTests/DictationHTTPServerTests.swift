@@ -288,10 +288,60 @@ final class DictationHTTPServerTests: XCTestCase
         XCTAssertEqual(response.raw_transcript, "internal")
     }
 
+    // Regression: a real WebSocket client masks its frames, and the HTTP->WS
+    // upgrade used to leave the HTTP handler in the pipeline. Both defects only
+    // appear over the live NIO pipeline (not when calling handleTextFrame
+    // directly), so exercise the full path: upgrade, masked frame, response, and
+    // confirm the service survives.
+    func testWebSocketRPCUpgradeHandlesMaskedClientFrames() async throws
+    {
+        let rpc = DictatorRPCService()
+        try await startServer(rpcService: rpc)
+
+        let url = URL(string: "ws://127.0.0.1:\(port)/ws/rpc?client=regression")!
+        let task = URLSession.shared.webSocketTask(with: url)
+        task.resume()
+
+        let hello = try await receiveText(task)
+        XCTAssertTrue(hello.contains("rpc.hello"), "expected rpc.hello, got: \(hello)")
+
+        try await task.send(.string(
+            #"{"id":"1","method":"launchpad.setCells","params":{"cells":[{"x":3,"y":3,"r":0,"g":0,"b":90}]}}"#
+        ))
+        let response = try await receiveText(task)
+        XCTAssertTrue(response.contains("\"id\":\"1\""), "expected id echo, got: \(response)")
+        XCTAssertTrue(response.contains("\"result\""), "expected a result, got: \(response)")
+        XCTAssertFalse(
+            response.contains("invalid JSON-RPC envelope"),
+            "client frame was not unmasked: \(response)"
+        )
+
+        // The upgrade previously crashed the whole service; it must still serve.
+        let (status, body) = try await request(method: "GET", path: "/health")
+        XCTAssertEqual(status, 200)
+        XCTAssertEqual(body["healthy"] as? Bool, true)
+
+        task.cancel(with: .goingAway, reason: nil)
+    }
+
+    private func receiveText(_ task: URLSessionWebSocketTask) async throws -> String
+    {
+        switch try await task.receive()
+        {
+        case let .string(text):
+            return text
+        case let .data(data):
+            return String(decoding: data, as: UTF8.self)
+        @unknown default:
+            return ""
+        }
+    }
+
     private func startServer(
         maxBodyBytes: Int = 25 * 1024 * 1024,
         healthWarning: String? = nil,
-        recordCallbacks: Bool = false
+        recordCallbacks: Bool = false,
+        rpcService: DictatorRPCService? = nil
     ) async throws
     {
         shutdownCalled = false
@@ -322,7 +372,8 @@ final class DictationHTTPServerTests: XCTestCase
                 self.failureRecords.append(record)
             }
             : nil,
-            talonControl: fakeTalon
+            talonControl: fakeTalon,
+            rpcService: rpcService
         )
         try await server.start()
         if let bound = server.boundPort

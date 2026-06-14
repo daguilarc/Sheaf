@@ -38,6 +38,8 @@ import type {
   AgentReviewActions,
   AgentReviewClientFrame,
   AgentReviewCommandResult,
+  AgentReviewDraftEntry,
+  AgentReviewDraftState,
   AgentReviewHunk,
   AgentReviewServerFrame,
   AgentReviewState,
@@ -64,6 +66,50 @@ interface DictatorEndpointResolver
 {
   resolve: () => Promise<DictatorEndpoint | null>;
 }
+
+interface DictatorRPCEnvelope
+{
+  id?: string;
+  method?: string;
+  params?: Record<string, unknown>;
+  result?: unknown;
+  error?: { code?: string; message?: string };
+}
+
+type ReviewCellColor = "off" | "grey" | "blue" | "green";
+
+const REVIEW_CELL = { x: 3, y: 3 } as const;
+
+const REVIEW_CELL_COLORS: Record<ReviewCellColor, { r: number; g: number; b: number } | { off: true }> = {
+  off: { off: true },
+  grey: { r: 90, g: 90, b: 90 },
+  blue: { r: 0, g: 0, b: 255 },
+  green: { r: 0, g: 255, b: 0 },
+};
+
+interface NavCell
+{
+  x: number;
+  y: number;
+  action: AgentReviewAction;
+  availability: keyof AgentReviewActions;
+  color: { r: number; g: number; b: number };
+}
+
+// Hunk navigation and mutation cells, preserving the positions and colors the
+// old Dictator-owned HunkReviewLaunchpadControlLayer rendered. Sheaf Chat now
+// owns these over the generic RPC; Dictator only renders the supplied colors and
+// forwards generic press events. Each cell lights only when its action is
+// currently available and is off otherwise.
+const NAV_CELLS: readonly NavCell[] = [
+  { x: 0, y: 2, action: "revert", availability: "canRevert", color: { r: 255, g: 0, b: 0 } },
+  { x: 1, y: 2, action: "previousHunk", availability: "canGoUp", color: { r: 255, g: 255, b: 0 } },
+  { x: 2, y: 2, action: "stage", availability: "canStage", color: { r: 0, g: 255, b: 0 } },
+  { x: 3, y: 2, action: "undo", availability: "canUndo", color: { r: 255, g: 255, b: 255 } },
+  { x: 0, y: 3, action: "previousFile", availability: "canGoPrevFile", color: { r: 255, g: 255, b: 0 } },
+  { x: 1, y: 3, action: "nextHunk", availability: "canGoDown", color: { r: 255, g: 255, b: 0 } },
+  { x: 2, y: 3, action: "nextFile", availability: "canGoNextFile", color: { r: 255, g: 255, b: 0 } },
+];
 
 function SendFrame(socket: WebSocket, frame: AgentReviewServerFrame): void
 {
@@ -109,11 +155,6 @@ function ActionsFor(hunks: AgentReviewHunk[], currentIndex: number, canUndo: boo
     canRevert: true,
     canUndo,
   };
-}
-
-function DictatorActionPayload(action: AgentReviewAction): string
-{
-  return action;
 }
 
 function IsPathWithinRoot(root: string, candidate: string): boolean
@@ -164,6 +205,280 @@ function CreateDictatorEndpointResolver(config: SheafChatConfig): DictatorEndpoi
   };
 }
 
+function DictatorRPCUrl(endpoint: DictatorEndpoint, providerId: string): string
+{
+  const url = new URL(endpoint.url);
+  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  url.pathname = "/ws/rpc";
+  url.search = "";
+  url.searchParams.set("client", providerId);
+  return url.toString();
+}
+
+class DictatorRPCClient
+{
+  private readonly m_endpointResolver: DictatorEndpointResolver;
+  private readonly m_providerId: string;
+  private readonly m_onCellPressed: (x: number, y: number) => void;
+  private readonly m_onStatusChanged: () => void;
+  private m_socket: WebSocket | null = null;
+  private m_connecting: Promise<void> | null = null;
+  private m_nextRequestID = 1;
+  private m_pending = new Map<string, {
+    resolve: (value: unknown) => void;
+    reject: (error: Error) => void;
+  }>();
+  private m_connected = false;
+  private m_url: string | null = null;
+  private m_lastError: string | null = null;
+
+  constructor(
+    endpointResolver: DictatorEndpointResolver,
+    providerId: string,
+    onCellPressed: (x: number, y: number) => void,
+    onStatusChanged: () => void,
+  )
+  {
+    this.m_endpointResolver = endpointResolver;
+    this.m_providerId = providerId;
+    this.m_onCellPressed = onCellPressed;
+    this.m_onStatusChanged = onStatusChanged;
+  }
+
+  get connected(): boolean
+  {
+    return this.m_connected;
+  }
+
+  get url(): string | null
+  {
+    return this.m_url;
+  }
+
+  get lastError(): string | null
+  {
+    return this.m_lastError;
+  }
+
+  async ensureConnected(): Promise<boolean>
+  {
+    if (this.m_connected && this.m_socket?.readyState === WebSocket.OPEN)
+    {
+      return true;
+    }
+
+    if (this.m_connecting !== null)
+    {
+      await this.m_connecting;
+      return this.m_connected;
+    }
+
+    this.m_connecting = this.connect();
+    try
+    {
+      await this.m_connecting;
+    }
+    finally
+    {
+      this.m_connecting = null;
+    }
+    return this.m_connected;
+  }
+
+  disconnect(): void
+  {
+    const socket = this.m_socket;
+    this.m_socket = null;
+    this.setStatus(false, this.m_url, null);
+    for (const pending of this.m_pending.values())
+    {
+      pending.reject(new Error("Dictator RPC disconnected"));
+    }
+    this.m_pending.clear();
+    socket?.close();
+  }
+
+  async setCells(reviewColor: ReviewCellColor, actions: AgentReviewActions): Promise<void>
+  {
+    const cells: Array<Record<string, unknown>> = NAV_CELLS.map((cell) =>
+      actions[cell.availability]
+        ? { x: cell.x, y: cell.y, ...cell.color }
+        : { x: cell.x, y: cell.y, off: true },
+    );
+    cells.push({ ...REVIEW_CELL, ...REVIEW_CELL_COLORS[reviewColor] });
+    await this.call("launchpad.setCells", { cells });
+  }
+
+  async insertText(text: string): Promise<void>
+  {
+    await this.call("cursor.insertText", { text });
+  }
+
+  async pushContext(hunk: AgentReviewHunk): Promise<void>
+  {
+    await this.call("dictationContext.push", {
+      id: `comment:${hunk.hunkId}`,
+      title: `Review hunk: ${hunk.file}`,
+      metadata: {
+        file: hunk.file,
+        hunkId: hunk.hunkId,
+        patchHash: hunk.patchHash,
+      },
+      body: [
+        hunk.header,
+        "",
+        hunk.patch,
+      ].join("\n"),
+    });
+  }
+
+  async popContext(hunkId: string): Promise<void>
+  {
+    await this.call("dictationContext.pop", { id: `comment:${hunkId}` });
+  }
+
+  private async connect(): Promise<void>
+  {
+    const endpoint = await this.m_endpointResolver.resolve();
+    if (endpoint === null)
+    {
+      this.setStatus(false, null, null);
+      return;
+    }
+
+    const url = DictatorRPCUrl(endpoint, this.m_providerId);
+    this.m_url = endpoint.url;
+
+    await new Promise<void>((resolve) =>
+    {
+      const socket = new WebSocket(url);
+      let settled = false;
+      const settle = (): void =>
+      {
+        if (!settled)
+        {
+          settled = true;
+          resolve();
+        }
+      };
+
+      socket.on("open", () =>
+      {
+        this.m_socket = socket;
+        this.setStatus(true, endpoint.url, null);
+        settle();
+      });
+      socket.on("message", (raw) =>
+      {
+        this.handleMessage(raw);
+      });
+      socket.on("close", () =>
+      {
+        if (this.m_socket === socket)
+        {
+          this.m_socket = null;
+        }
+        this.setStatus(false, endpoint.url, this.m_connected ? "Dictator RPC closed" : this.m_lastError);
+        for (const pending of this.m_pending.values())
+        {
+          pending.reject(new Error("Dictator RPC closed"));
+        }
+        this.m_pending.clear();
+        settle();
+      });
+      socket.on("error", (error) =>
+      {
+        this.setStatus(false, endpoint.url, error instanceof Error ? error.message : String(error));
+        settle();
+      });
+    });
+  }
+
+  private async call(method: string, params: Record<string, unknown>): Promise<unknown>
+  {
+    const connected = await this.ensureConnected();
+    if (!connected || this.m_socket === null || this.m_socket.readyState !== WebSocket.OPEN)
+    {
+      throw new Error(this.m_lastError ?? "Dictator RPC unavailable");
+    }
+
+    const id = String(this.m_nextRequestID++);
+    const envelope: DictatorRPCEnvelope = { id, method, params };
+    return new Promise((resolve, reject) =>
+    {
+      this.m_pending.set(id, { resolve, reject });
+      this.m_socket!.send(JSON.stringify(envelope), (error) =>
+      {
+        if (error != null)
+        {
+          this.m_pending.delete(id);
+          reject(error);
+        }
+      });
+    });
+  }
+
+  private handleMessage(raw: WebSocket.RawData): void
+  {
+    let envelope: DictatorRPCEnvelope;
+    try
+    {
+      envelope = JSON.parse(raw.toString()) as DictatorRPCEnvelope;
+    }
+    catch
+    {
+      return;
+    }
+
+    if (envelope.id !== undefined)
+    {
+      const pending = this.m_pending.get(envelope.id);
+      if (pending === undefined)
+      {
+        return;
+      }
+      this.m_pending.delete(envelope.id);
+      if (envelope.error !== undefined)
+      {
+        pending.reject(new Error(envelope.error.message ?? envelope.error.code ?? "Dictator RPC error"));
+      }
+      else
+      {
+        pending.resolve(envelope.result);
+      }
+      return;
+    }
+
+    if (envelope.method === "rpc.hello")
+    {
+      this.setStatus(true, this.m_url, null);
+    }
+    else if (envelope.method === "launchpad.cellPressed")
+    {
+      const params = envelope.params ?? {};
+      if (typeof params.x === "number" && typeof params.y === "number")
+      {
+        this.m_onCellPressed(params.x, params.y);
+      }
+    }
+  }
+
+  private setStatus(connected: boolean, url: string | null, lastError: string | null): void
+  {
+    const changed =
+      this.m_connected !== connected ||
+      this.m_url !== url ||
+      this.m_lastError !== lastError;
+    this.m_connected = connected;
+    this.m_url = url;
+    this.m_lastError = lastError;
+    if (changed)
+    {
+      this.m_onStatusChanged();
+    }
+  }
+}
+
 function NormalizeCurrentIndex(hunks: AgentReviewHunk[], desiredIndex: number): number
 {
   if (hunks.length === 0)
@@ -182,6 +497,30 @@ function ParseClientFrame(data: WebSocket.RawData): AgentReviewClientFrame
   {
     return {
       type: "focus",
+      hunkId: parsed.hunkId,
+    };
+  }
+
+  if (
+    parsed.type === "comment" &&
+    typeof parsed.hunkId === "string" &&
+    typeof parsed.text === "string"
+  )
+  {
+    return {
+      type: "comment",
+      hunkId: parsed.hunkId,
+      text: parsed.text,
+    };
+  }
+
+  if (
+    (parsed.type === "comment_focus" || parsed.type === "comment_blur") &&
+    typeof parsed.hunkId === "string"
+  )
+  {
+    return {
+      type: parsed.type,
       hunkId: parsed.hunkId,
     };
   }
@@ -218,13 +557,15 @@ class AgentReviewSession
   private readonly m_agentManager: AgentManager;
   private readonly m_dictatorEndpoint: DictatorEndpointResolver | null;
   private readonly m_providerId: string;
+  private readonly m_dictatorRPC: DictatorRPCClient | null;
   private readonly m_sockets = new Set<WebSocket>();
   private readonly m_undoStack: UndoEntry[] = [];
+  private readonly m_reviewEntries: AgentReviewDraftEntry[] = [];
   private m_state: AgentReviewState | null = null;
   private m_currentIndex = -1;
-  private m_bridgeConnected = false;
-  private m_bridgeLastError: string | null = null;
-  private m_pollTimer: NodeJS.Timeout | null = null;
+  private m_focusClearedExplicitly = false;
+  private m_visibleCommentHunkId: string | null = null;
+  private m_pushedContextHunkId: string | null = null;
   private m_refreshInFlight: Promise<void> | null = null;
 
   constructor(
@@ -237,11 +578,23 @@ class AgentReviewSession
     this.m_agentManager = agentManager;
     this.m_dictatorEndpoint = dictatorEndpoint;
     this.m_providerId = `sheaf-chat:${key.repoId}:${key.workspaceId}`;
+    this.m_dictatorRPC = dictatorEndpoint === null
+      ? null
+      : new DictatorRPCClient(
+        dictatorEndpoint,
+        this.m_providerId,
+        (x, y) => { void this.HandleCellPressed(x, y); },
+        () => {
+          void this.RefreshAndBroadcast().catch(() =>
+          {
+          });
+        },
+      );
   }
 
   Dispose(): void
   {
-    this.ClearPollTimer();
+    this.PopActiveContext();
 
     for (const socket of this.m_sockets)
     {
@@ -249,7 +602,7 @@ class AgentReviewSession
     }
 
     this.m_sockets.clear();
-    void this.DisconnectDictator();
+    this.m_dictatorRPC?.disconnect();
   }
 
   get ClientCount(): number
@@ -269,9 +622,10 @@ class AgentReviewSession
       this.m_sockets.delete(socket);
       if (this.m_sockets.size === 0)
       {
-        this.ClearPollTimer();
+        this.PopActiveContext();
         this.m_currentIndex = -1;
-        void this.DisconnectDictator();
+        this.m_visibleCommentHunkId = null;
+        this.m_dictatorRPC?.disconnect();
       }
     });
 
@@ -280,8 +634,7 @@ class AgentReviewSession
       type: "bootstrap",
       state: this.RequireState(),
     });
-    this.EnsurePollTimer();
-    await this.PublishDictatorState();
+    await this.UpdateDictatorCells();
   }
 
   async RefreshAndBroadcast(): Promise<void>
@@ -296,7 +649,7 @@ class AgentReviewSession
       .then(() =>
       {
         this.BroadcastState();
-        return this.PublishDictatorState();
+        return this.UpdateDictatorCells();
       })
       .finally(() =>
       {
@@ -317,7 +670,9 @@ class AgentReviewSession
       return;
     }
 
-    void this.RefreshAndBroadcast();
+    void this.RefreshAndBroadcast().catch(() =>
+    {
+    });
   }
 
   private RequireState(): AgentReviewState
@@ -337,17 +692,24 @@ class AgentReviewSession
       this.m_key.workspaceId,
     );
     const gitState = await LoadAgentReviewGitState(sessionRoot);
+    const hadState = this.m_state !== null;
     const priorHunkId = this.m_state?.currentHunk?.hunkId;
-    let currentIndex = priorHunkId === undefined
-      ? this.m_currentIndex
-      : gitState.hunks.findIndex((hunk) => hunk.hunkId === priorHunkId);
+    let currentIndex = hadState && this.m_currentIndex < 0 && this.m_focusClearedExplicitly
+      ? -1
+      : priorHunkId === undefined
+        ? this.m_currentIndex
+        : gitState.hunks.findIndex((hunk) => hunk.hunkId === priorHunkId);
 
-    if (currentIndex < 0)
+    if (currentIndex < 0 && this.m_currentIndex >= 0)
     {
       currentIndex = this.m_currentIndex;
     }
 
-    this.m_currentIndex = NormalizeCurrentIndex(gitState.hunks, currentIndex);
+    this.m_currentIndex = !hadState
+      ? NormalizeCurrentIndex(gitState.hunks, currentIndex)
+      : currentIndex < 0 && this.m_focusClearedExplicitly
+      ? -1
+      : NormalizeCurrentIndex(gitState.hunks, currentIndex);
     const actions = ActionsFor(gitState.hunks, this.m_currentIndex, this.m_undoStack.length > 0);
     const currentHunk = this.m_currentIndex >= 0 ? gitState.hunks[this.m_currentIndex]! : null;
 
@@ -358,16 +720,21 @@ class AgentReviewSession
       hunks: gitState.hunks,
       files: gitState.files,
       actions,
+      reviewDraft: this.ReviewDraftState(),
       dictatorBridge: {
-        connected: this.m_bridgeConnected,
+        connected: this.m_dictatorRPC?.connected ?? false,
         url: await this.DictatorUrl(),
-        lastError: this.m_bridgeLastError,
+        lastError: this.m_dictatorRPC?.lastError ?? null,
       },
     };
   }
 
   private async DictatorUrl(): Promise<string | null>
   {
+    if (this.m_dictatorRPC?.url !== null && this.m_dictatorRPC?.url !== undefined)
+    {
+      return this.m_dictatorRPC.url;
+    }
     const endpoint = await this.ResolveEndpoint();
     return endpoint?.url ?? null;
   }
@@ -387,6 +754,124 @@ class AgentReviewSession
         state,
       });
     }
+  }
+
+  private ReviewDraftState(): AgentReviewDraftState
+  {
+    return {
+      entries: this.m_reviewEntries.map((entry) => ({
+        kind: entry.kind,
+        hunk: entry.hunk,
+        text: entry.text,
+      })),
+      visibleCommentHunkId: this.m_visibleCommentHunkId,
+      hasSerializedContent: this.SerializedReview() !== null,
+    };
+  }
+
+  private FindReviewEntryIndex(kind: AgentReviewDraftEntry["kind"], hunkId: string): number
+  {
+    return this.m_reviewEntries.findIndex(
+      (entry) => entry.kind === kind && entry.hunk.hunkId === hunkId,
+    );
+  }
+
+  private CommentForHunk(hunkId: string): string | null
+  {
+    const entry = this.m_reviewEntries.find(
+      (candidate) => candidate.kind === "comment" && candidate.hunk.hunkId === hunkId,
+    );
+    return entry?.text ?? null;
+  }
+
+  private UpsertComment(hunk: AgentReviewHunk, text: string): void
+  {
+    const trimmed = text.trim();
+    const index = this.FindReviewEntryIndex("comment", hunk.hunkId);
+    if (trimmed.length === 0)
+    {
+      if (index >= 0)
+      {
+        this.m_reviewEntries.splice(index, 1);
+      }
+      return;
+    }
+
+    const entry: AgentReviewDraftEntry = { kind: "comment", hunk, text };
+    if (index >= 0)
+    {
+      this.m_reviewEntries[index] = entry;
+    }
+    else
+    {
+      this.m_reviewEntries.push(entry);
+    }
+  }
+
+  private AddRejectedMarker(hunk: AgentReviewHunk): void
+  {
+    if (this.FindReviewEntryIndex("rejected", hunk.hunkId) >= 0)
+    {
+      return;
+    }
+    this.m_reviewEntries.push({ kind: "rejected", hunk });
+  }
+
+  private RemoveRejectedMarker(hunk: AgentReviewHunk): void
+  {
+    const index = this.FindReviewEntryIndex("rejected", hunk.hunkId);
+    if (index >= 0)
+    {
+      this.m_reviewEntries.splice(index, 1);
+    }
+  }
+
+  private SerializedReview(): string | null
+  {
+    const serializable = this.m_reviewEntries.filter((entry) =>
+      entry.kind === "rejected" ||
+      (entry.text?.trim().length ?? 0) > 0
+    );
+    if (serializable.length === 0)
+    {
+      return null;
+    }
+
+    return serializable.map((entry, index) =>
+    {
+      const hunk = entry.hunk;
+      const content = entry.kind === "rejected"
+        ? "Rejected this hunk. Do not reintroduce it in the next turn."
+        : entry.text!.trim();
+      return [
+        `${index + 1}. ${hunk.sourceProvider} ${hunk.file} ${hunk.header} [${hunk.patchHash}]`,
+        content,
+        "",
+        "```diff",
+        hunk.patch.trimEnd(),
+        "```",
+      ].join("\n");
+    }).join("\n\n");
+  }
+
+  private ClearReviewDraftAfterSuccessfulInsert(): void
+  {
+    this.m_reviewEntries.length = 0;
+    this.m_visibleCommentHunkId = null;
+  }
+
+  private ReviewCellColor(): ReviewCellColor
+  {
+    const state = this.RequireState();
+    const current = state.currentHunk;
+    if (current !== null)
+    {
+      return this.CommentForHunk(current.hunkId) !== null ||
+        this.m_visibleCommentHunkId === current.hunkId
+        ? "blue"
+        : "grey";
+    }
+    return this.SerializedReview() === null ? "off" : "green";
   }
 
   private async HandleMessage(socket: WebSocket, data: WebSocket.RawData): Promise<void>
@@ -410,7 +895,27 @@ class AgentReviewSession
     {
       await this.FocusHunk(frame.hunkId ?? null);
       this.BroadcastState();
-      await this.PublishDictatorState();
+      await this.UpdateDictatorCells();
+      return;
+    }
+
+    if (frame.type === "comment")
+    {
+      await this.UpdateComment(frame.hunkId, frame.text);
+      this.BroadcastState();
+      await this.UpdateDictatorCells();
+      return;
+    }
+
+    if (frame.type === "comment_focus")
+    {
+      await this.PushCommentContext(frame.hunkId);
+      return;
+    }
+
+    if (frame.type === "comment_blur")
+    {
+      await this.PopCommentContext(frame.hunkId);
       return;
     }
 
@@ -432,10 +937,17 @@ class AgentReviewSession
 
   private async FocusHunk(hunkId: string | null): Promise<void>
   {
+    const previousVisible = this.m_visibleCommentHunkId;
     const state = this.RequireState();
     if (hunkId === null)
     {
       this.m_currentIndex = -1;
+      this.m_focusClearedExplicitly = true;
+      this.m_state = {
+        ...state,
+        currentIndex: -1,
+        currentHunk: null,
+      };
     }
     else
     {
@@ -443,10 +955,89 @@ class AgentReviewSession
       if (index >= 0)
       {
         this.m_currentIndex = index;
+        this.m_focusClearedExplicitly = false;
       }
     }
 
     await this.Refresh();
+    const current = this.RequireState().currentHunk;
+    if (current === null || current.hunkId !== previousVisible)
+    {
+      this.m_visibleCommentHunkId = current !== null && this.CommentForHunk(current.hunkId) !== null
+        ? current.hunkId
+        : null;
+      this.PopActiveContext();
+      await this.Refresh();
+    }
+  }
+
+  private async UpdateComment(hunkId: string, text: string): Promise<void>
+  {
+    const state = this.RequireState();
+    const hunk = state.hunks.find((candidate) => candidate.hunkId === hunkId);
+    if (hunk === undefined)
+    {
+      return;
+    }
+    this.UpsertComment(hunk, text);
+    this.m_visibleCommentHunkId = hunkId;
+    await this.Refresh();
+  }
+
+  private async PushCommentContext(hunkId: string): Promise<void>
+  {
+    const state = this.RequireState();
+    const hunk = state.currentHunk?.hunkId === hunkId
+      ? state.currentHunk
+      : state.hunks.find((candidate) => candidate.hunkId === hunkId) ?? null;
+    if (hunk === null)
+    {
+      return;
+    }
+
+    if (this.m_pushedContextHunkId !== null && this.m_pushedContextHunkId !== hunkId)
+    {
+      await this.PopCommentContext(this.m_pushedContextHunkId);
+    }
+
+    try
+    {
+      await this.m_dictatorRPC?.pushContext(hunk);
+      this.m_pushedContextHunkId = hunkId;
+    }
+    catch
+    {
+    }
+  }
+
+  private async PopCommentContext(hunkId: string): Promise<void>
+  {
+    if (this.m_pushedContextHunkId !== hunkId)
+    {
+      return;
+    }
+    this.m_pushedContextHunkId = null;
+    try
+    {
+      await this.m_dictatorRPC?.popContext(hunkId);
+    }
+    catch
+    {
+    }
+  }
+
+  private voidPopCommentContext(hunkId: string): void
+  {
+    this.m_pushedContextHunkId = null;
+    void this.m_dictatorRPC?.popContext(hunkId);
+  }
+
+  private PopActiveContext(): void
+  {
+    if (this.m_pushedContextHunkId !== null)
+    {
+      this.voidPopCommentContext(this.m_pushedContextHunkId);
+    }
   }
 
   private async ExecuteCommand(
@@ -475,8 +1066,7 @@ class AgentReviewSession
 
     await this.Refresh();
     this.BroadcastState();
-    await this.PublishCommandResult(result);
-    await this.PublishDictatorState();
+    await this.UpdateDictatorCells();
     return result;
   }
 
@@ -607,11 +1197,14 @@ class AgentReviewSession
     }
 
     this.m_undoStack.push({ action, hunk });
+    if (action === "revert")
+    {
+      this.AddRejectedMarker(hunk);
+    }
     return {
       ok: true,
       action,
       commandId: options.commandId,
-      reviewFacts: action === "revert" ? { revertedHunk: hunk } : undefined,
     };
   }
 
@@ -640,181 +1233,106 @@ class AgentReviewSession
       };
     }
 
+    if (entry.action === "revert")
+    {
+      this.RemoveRejectedMarker(entry.hunk);
+    }
+
     return {
       ok: true,
       action: "undo",
       commandId,
-      reviewFacts: entry.action === "revert"
-        ? { restoredRevertedHunk: entry.hunk }
-        : undefined,
     };
   }
 
-  private async PublishDictatorState(): Promise<void>
+  private async UpdateDictatorCells(): Promise<void>
   {
-    const endpoint = await this.ResolveEndpoint();
-    if (endpoint === null)
-    {
-      this.m_bridgeConnected = false;
-      this.m_bridgeLastError = null;
-      return;
-    }
-
-    const state = this.RequireState();
-    const current = state.currentHunk;
-    const body = {
-      providerId: this.m_providerId,
-      focused: this.m_sockets.size > 0 && current !== null,
-      paneOpen: this.m_sockets.size > 0 && state.available,
-      repoRoot: state.repoRoot,
-      file: current?.file ?? null,
-      fileIndex: current?.fileIndex ?? 0,
-      fileCount: state.files.length,
-      hunkIndex: current?.hunkIndex ?? 0,
-      hunkCount: state.hunks.length,
-      currentHunk: current === null
-        ? null
-        : {
-          id: current.hunkId,
-          file: current.file,
-          index: current.hunkIndex,
-          count: current.hunkCount,
-          header: current.header,
-          patchHash: current.patchHash,
-        },
-      currentHunkReview: current,
-      actions: state.actions,
-    };
-
-    try
-    {
-      const response = await fetch(`${endpoint.url}/api/hunk-review/state`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      this.m_bridgeConnected = response.ok;
-      this.m_bridgeLastError = response.ok ? null : `Dictator state rejected: ${response.status}`;
-    }
-    catch (error)
-    {
-      this.m_bridgeConnected = false;
-      this.m_bridgeLastError = error instanceof Error ? error.message : String(error);
-    }
-  }
-
-  private async DisconnectDictator(): Promise<void>
-  {
-    const endpoint = await this.ResolveEndpoint();
-    if (endpoint === null)
+    if (this.m_dictatorRPC === null || this.m_sockets.size === 0 || this.m_state === null)
     {
       return;
     }
 
     try
     {
-      await fetch(`${endpoint.url}/api/hunk-review/disconnect`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ providerId: this.m_providerId }),
-      });
+      await this.m_dictatorRPC.setCells(this.ReviewCellColor(), this.m_state.actions);
     }
     catch
     {
     }
   }
 
-  private async PublishCommandResult(result: AgentReviewCommandResult): Promise<void>
+  private async HandleCellPressed(x: number, y: number): Promise<void>
   {
-    const endpoint = await this.ResolveEndpoint();
-    if (endpoint === null || result.commandId === undefined)
+    if (x === REVIEW_CELL.x && y === REVIEW_CELL.y)
+    {
+      await this.HandleReviewCellPressed();
+      return;
+    }
+
+    const cell = NAV_CELLS.find((candidate) => candidate.x === x && candidate.y === y);
+    if (cell === undefined || this.m_state === null)
+    {
+      return;
+    }
+    if (!this.m_state.actions[cell.availability])
     {
       return;
     }
 
-    try
-    {
-      await fetch(`${endpoint.url}/api/hunk-review/command-result`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          commandId: result.commandId,
-          providerId: this.m_providerId,
-          result: {
-            ok: result.ok,
-            action: DictatorActionPayload(result.action),
-            error: result.error ?? null,
-            reviewFacts: result.reviewFacts ?? null,
-          },
-        }),
-      });
-    }
-    catch
-    {
-    }
+    await this.ExecuteCommand(cell.action, {});
   }
 
-  private EnsurePollTimer(): void
+  private async HandleReviewCellPressed(): Promise<void>
   {
-    if (this.m_pollTimer !== null)
+    if (this.m_state === null)
     {
       return;
     }
 
-    this.m_pollTimer = setInterval(() =>
+    const current = this.m_state.currentHunk;
+    if (current !== null)
     {
-      void this.PollDictatorCommand();
-    }, 250);
-  }
-
-  private ClearPollTimer(): void
-  {
-    if (this.m_pollTimer !== null)
-    {
-      clearInterval(this.m_pollTimer);
-      this.m_pollTimer = null;
-    }
-  }
-
-  private async PollDictatorCommand(): Promise<void>
-  {
-    if (this.m_sockets.size === 0)
-    {
-      this.ClearPollTimer();
-      return;
-    }
-
-    const endpoint = await this.ResolveEndpoint();
-    if (endpoint === null)
-    {
-      return;
-    }
-
-    try
-    {
-      const response = await fetch(
-        `${endpoint.url}/api/hunk-review/command?provider_id=${encodeURIComponent(this.m_providerId)}`,
-      );
-      if (!response.ok)
+      this.m_visibleCommentHunkId = current.hunkId;
+      await this.Refresh();
+      this.BroadcastState();
+      for (const socket of this.m_sockets)
       {
-        return;
+        SendFrame(socket, { type: "focus_comment", hunkId: current.hunkId });
       }
-      const command = await response.json() as { id?: unknown; action?: unknown } | null;
-      if (
-        command === null ||
-        typeof command.id !== "string" ||
-        typeof command.action !== "string"
-      )
-      {
-        return;
-      }
+      await this.UpdateDictatorCells();
+      return;
+    }
 
-      await this.ExecuteCommand(command.action as AgentReviewAction, {
-        commandId: command.id,
-      });
+    const serialized = this.SerializedReview();
+    if (serialized === null)
+    {
+      return;
+    }
+
+    try
+    {
+      await this.m_dictatorRPC?.insertText(serialized);
+      this.ClearReviewDraftAfterSuccessfulInsert();
+      if (this.m_state !== null)
+      {
+        this.m_state = {
+          ...this.m_state,
+          reviewDraft: this.ReviewDraftState(),
+        };
+      }
+      try
+      {
+        await this.Refresh();
+      }
+      catch
+      {
+      }
+      this.BroadcastState();
+      await this.UpdateDictatorCells();
     }
     catch
     {
+      await this.UpdateDictatorCells();
     }
   }
 }
@@ -857,6 +1375,11 @@ export class AgentReviewService
       hunks: gitState.hunks,
       files: gitState.files,
       actions: ActionsFor(gitState.hunks, currentIndex, false),
+      reviewDraft: {
+        entries: [],
+        visibleCommentHunkId: null,
+        hasSerializedContent: false,
+      },
       dictatorBridge: {
         connected: false,
         url: (await this.m_dictatorEndpoint?.resolve())?.url ?? null,

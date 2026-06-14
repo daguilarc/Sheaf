@@ -14,7 +14,7 @@ final class WebAPITests: XCTestCase
     private var apiKeysURL: URL?
     private var runtimeConfigProvider: RuntimeConfigProvider?
     private var interactionStore: InteractionHistoryStore?
-    private var hunkReviewRegistry: HunkReviewRegistry?
+    private var rpcService: DictatorRPCService?
     private var fakeClient = WebAPITestFakeCoreClient()
 
     override func tearDown() async throws
@@ -341,210 +341,29 @@ final class WebAPITests: XCTestCase
         XCTAssertFalse(String(data: encoded, encoding: .utf8)?.contains("sk-test") == true)
     }
 
-    func testHunkReviewStateAndCommandAPIRoundTrip() async throws
+    func testRPCDiagnosticsReplaceHunkReviewDiagnostics() async throws
     {
         try await startServer()
-        let snapshot = """
-        {
-          "providerId": "window-1",
-          "focused": true,
-          "paneOpen": true,
-          "repoRoot": "/tmp/repo",
-          "file": "Sources/App.swift",
-          "fileIndex": 0,
-          "fileCount": 1,
-          "hunkIndex": 0,
-          "hunkCount": 2,
-          "currentHunk": {
-            "id": "Sources/App.swift:0:abc",
-            "file": "Sources/App.swift",
-            "index": 0,
-            "count": 2,
-            "header": "@@ -1 +1 @@",
-            "patchHash": "abc"
-          },
-          "currentHunkReview": {
-            "repoRoot": "/tmp/repo",
-            "file": "Sources/App.swift",
-            "hunkId": "Sources/App.swift:0:abc",
-            "hunkIndex": 0,
-            "hunkCount": 2,
-            "header": "@@ -1 +1 @@",
-            "patchHash": "abc",
-            "patch": "@@ -1 +1 @@\\n-old\\n+new\\n"
-          },
-          "actions": {
-            "canGoUp": false,
-            "canGoDown": true,
-            "canGoPrevFile": false,
-            "canGoNextFile": false,
-            "canStage": true,
-            "canRevert": true,
-            "canUndo": false
-          }
-        }
-        """.data(using: .utf8)!
-
-        let (stateStatus, stateBody) = try await jsonRequest(
-            method: "POST",
-            path: "/api/hunk-review/state",
-            body: snapshot,
-            contentType: "application/json"
+        let service = try XCTUnwrap(rpcService)
+        let sessionID = service.registerClient(clientID: "window-1") { _ in }
+        _ = service.handleTextFrame(
+            #"{"id":"set","method":"launchpad.setCells","params":{"cells":[{"x":3,"y":3,"r":1,"g":2,"b":3}]}}"#,
+            sessionID: sessionID
         )
-        XCTAssertEqual(stateStatus, 200)
-        XCTAssertEqual(stateBody["ok"] as? Bool, true)
-
-        let registry = try XCTUnwrap(hunkReviewRegistry)
-        let queued = registry.enqueueCommand(.stage)
-        XCTAssertNotNil(queued)
-
-        let commandResponse = try await rawRequest(method: "GET", path: "/api/hunk-review/command?provider_id=window-1")
-        XCTAssertEqual(commandResponse.status, 200)
-        let command = try JSONDecoder().decode(HunkReviewCommandEnvelope.self, from: commandResponse.body)
-        XCTAssertEqual(command.action, .stage)
-        XCTAssertEqual(command.id, queued?.id)
-
-        let result = """
-        {
-          "commandId": "\(command.id)",
-          "providerId": "window-1",
-          "result": {
-            "ok": true,
-            "action": "stage"
-          }
-        }
-        """.data(using: .utf8)!
-        let (resultStatus, resultBody) = try await jsonRequest(
-            method: "POST",
-            path: "/api/hunk-review/command-result",
-            body: result,
-            contentType: "application/json"
+        _ = service.handleTextFrame(
+            #"{"id":"ctx","method":"dictationContext.push","params":{"id":"hunk","title":"Focused hunk","body":"patch"}}"#,
+            sessionID: sessionID
         )
-        XCTAssertEqual(resultStatus, 200)
-        XCTAssertEqual(resultBody["ok"] as? Bool, true)
 
-        let diagnostics = try await rawRequest(method: "GET", path: "/api/hunk-review/diagnostics")
+        let diagnostics = try await rawRequest(method: "GET", path: "/api/rpc/diagnostics")
         XCTAssertEqual(diagnostics.status, 200)
-        let decoded = try JSONDecoder().decode(HunkReviewDiagnostics.self, from: diagnostics.body)
-        XCTAssertEqual(decoded.activeProviderId, "window-1")
-        XCTAssertEqual(decoded.lastCommandResult, HunkReviewCommandResult(ok: true, action: .stage, error: nil, reviewFacts: nil))
-        XCTAssertEqual(decoded.diffReview?.hasActiveReview, false)
+        let decoded = try JSONDecoder().decode(DictatorRPCDiagnostic.self, from: diagnostics.body)
+        XCTAssertEqual(decoded.connected_clients, 1)
+        XCTAssertEqual(decoded.owned_cells, 1)
+        XCTAssertEqual(decoded.pushed_context_blocks, 1)
 
-        let reviewFacts = """
-        {
-          "commandId": "revert-command",
-          "providerId": "window-1",
-          "result": {
-            "ok": true,
-            "action": "revert",
-            "reviewFacts": {
-              "revertedHunk": {
-                "repoRoot": "/tmp/repo",
-                "file": "Sources/App.swift",
-                "hunkId": "Sources/App.swift:0:abc",
-                "hunkIndex": 0,
-                "hunkCount": 2,
-                "header": "@@ -1 +1 @@",
-                "patchHash": "abc",
-                "patch": "@@ -1 +1 @@\\n-old\\n+new\\n"
-              }
-            }
-          }
-        }
-        """.data(using: .utf8)!
-        let (reviewFactsStatus, _) = try await jsonRequest(
-            method: "POST",
-            path: "/api/hunk-review/command-result",
-            body: reviewFacts,
-            contentType: "application/json"
-        )
-        XCTAssertEqual(reviewFactsStatus, 200)
-
-        let afterRevert = try await rawRequest(method: "GET", path: "/api/hunk-review/diagnostics")
-        let afterRevertDiagnostics = try JSONDecoder().decode(HunkReviewDiagnostics.self, from: afterRevert.body)
-        XCTAssertEqual(afterRevertDiagnostics.diffReview?.hasActiveReview, true)
-        XCTAssertEqual(afterRevertDiagnostics.diffReview?.entryCount, 1)
-
-        let failedUndoFacts = """
-        {
-          "commandId": "failed-undo-command",
-          "providerId": "window-1",
-          "result": {
-            "ok": false,
-            "action": "undo",
-            "error": "simulated failure",
-            "reviewFacts": {
-              "restoredRevertedHunk": {
-                "repoRoot": "/tmp/repo",
-                "file": "Sources/App.swift",
-                "hunkId": "Sources/App.swift:0:abc",
-                "hunkIndex": 0,
-                "hunkCount": 2,
-                "header": "@@ -1 +1 @@",
-                "patchHash": "abc",
-                "patch": "@@ -1 +1 @@\\n-old\\n+new\\n"
-              }
-            }
-          }
-        }
-        """.data(using: .utf8)!
-        _ = try await jsonRequest(
-            method: "POST",
-            path: "/api/hunk-review/command-result",
-            body: failedUndoFacts,
-            contentType: "application/json"
-        )
-        let afterFailedUndo = try await rawRequest(method: "GET", path: "/api/hunk-review/diagnostics")
-        let afterFailedUndoDiagnostics = try JSONDecoder().decode(HunkReviewDiagnostics.self, from: afterFailedUndo.body)
-        XCTAssertEqual(afterFailedUndoDiagnostics.diffReview?.entryCount, 1)
-
-        let undoFacts = """
-        {
-          "commandId": "undo-command",
-          "providerId": "window-1",
-          "result": {
-            "ok": true,
-            "action": "undo",
-            "reviewFacts": {
-              "restoredRevertedHunk": {
-                "repoRoot": "/tmp/repo",
-                "file": "Sources/App.swift",
-                "hunkId": "Sources/App.swift:0:abc",
-                "hunkIndex": 0,
-                "hunkCount": 2,
-                "header": "@@ -1 +1 @@",
-                "patchHash": "abc",
-                "patch": "@@ -1 +1 @@\\n-old\\n+new\\n"
-              }
-            }
-          }
-        }
-        """.data(using: .utf8)!
-        _ = try await jsonRequest(
-            method: "POST",
-            path: "/api/hunk-review/command-result",
-            body: undoFacts,
-            contentType: "application/json"
-        )
-        let afterUndo = try await rawRequest(method: "GET", path: "/api/hunk-review/diagnostics")
-        let afterUndoDiagnostics = try JSONDecoder().decode(HunkReviewDiagnostics.self, from: afterUndo.body)
-        XCTAssertEqual(afterUndoDiagnostics.diffReview?.hasActiveReview, false)
-        XCTAssertEqual(afterUndoDiagnostics.diffReview?.entryCount, 0)
-
-        let disconnect = #"{"providerId":"window-1"}"#.data(using: .utf8)!
-        let (disconnectStatus, disconnectBody) = try await jsonRequest(
-            method: "POST",
-            path: "/api/hunk-review/disconnect",
-            body: disconnect,
-            contentType: "application/json"
-        )
-        XCTAssertEqual(disconnectStatus, 200)
-        XCTAssertEqual(disconnectBody["ok"] as? Bool, true)
-
-        let afterDisconnect = try await rawRequest(method: "GET", path: "/api/hunk-review/diagnostics")
-        let cleared = try JSONDecoder().decode(HunkReviewDiagnostics.self, from: afterDisconnect.body)
-        XCTAssertNil(cleared.activeProviderId)
-        XCTAssertEqual(cleared.providers.count, 0)
+        let retired = try await rawRequest(method: "GET", path: "/api/hunk-review/diagnostics")
+        XCTAssertEqual(retired.status, 404)
     }
 
     func testWebUIDoesNotReferenceRetiredNativeControls() throws
@@ -636,9 +455,8 @@ final class WebAPITests: XCTestCase
 
         let lifecycle = ServiceLifecycle()
         let activityTracker = DictationActivityTracker()
-        let hunkReviewRegistry = HunkReviewRegistry()
-        let diffReviewStore = DiffReviewStore()
-        self.hunkReviewRegistry = hunkReviewRegistry
+        let rpcService = DictatorRPCService()
+        self.rpcService = rpcService
 
         let webContext = WebServiceContext(
             repoRoot: repoRoot,
@@ -650,8 +468,7 @@ final class WebAPITests: XCTestCase
             endpointDescription: "http://127.0.0.1:0",
             logPath: tempDir.appendingPathComponent("logs").path,
             dataPath: tempDir.appendingPathComponent("data").path,
-            hunkReviewRegistry: hunkReviewRegistry,
-            diffReviewStore: diffReviewStore
+            rpcService: rpcService
         )
         let webAPIService = WebAPIService(context: webContext, urlSession: session)
         await webAPIService.prepare()
@@ -663,7 +480,8 @@ final class WebAPITests: XCTestCase
             lifecycle: lifecycle,
             coreClient: fakeClient,
             webAPIService: webAPIService,
-            activityTracker: activityTracker
+            activityTracker: activityTracker,
+            rpcService: rpcService
         )
         try await server.start()
         if let bound = server.boundPort

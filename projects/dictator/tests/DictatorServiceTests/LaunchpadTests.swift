@@ -662,120 +662,54 @@ final class LaunchpadTests: XCTestCase {
         XCTAssertEqual(layer.handleCount, 1)
     }
 
-    func testHunkReviewRegistrySelectsFocusedHealthyTarget() {
-        let registry = HunkReviewRegistry(timeoutSeconds: 3)
-        let now = Date(timeIntervalSince1970: 10)
-        registry.update(snapshot: makeHunkReviewSnapshot(providerID: "a", focused: false), now: now)
-        registry.update(snapshot: makeHunkReviewSnapshot(providerID: "b", focused: true), now: now)
-
-        XCTAssertEqual(registry.activeTarget(now: now)?.providerId, "b")
-        XCTAssertNil(registry.activeTarget(now: now.addingTimeInterval(4)))
-    }
-
-    func testHunkReviewControlLayerLightsAndDispatchesOnlyAvailableActions() {
-        let bus = RenderInvalidationBus()
-        let registry = HunkReviewRegistry(timeoutSeconds: 3)
-        let layer = HunkReviewLaunchpadControlLayer(registry: registry, invalidationBus: bus)
-        let state = makeHunkReviewSnapshot(
-            providerID: "sheaf-chat:default:sess",
-            focused: true,
-            sourceProvider: "sheaf-chat",
-            actions: HunkReviewActionAvailability(
-                canGoUp: false,
-                canGoDown: true,
-                canGoPrevFile: false,
-                canGoNextFile: true,
-                canStage: true,
-                canRevert: true,
-                canUndo: false
-            )
-        )
-        registry.update(snapshot: state)
-
-        XCTAssertEqual(layer.getColor(at: PadCoordinate(x: 2, y: 2)), PadColor(r: 0, g: 255, b: 0))
-        XCTAssertEqual(layer.getColor(at: PadCoordinate(x: 1, y: 2)), .off)
-        XCTAssertEqual(layer.getColor(at: PadCoordinate(x: 3, y: 3)), .off)
-
-        XCTAssertTrue(layer.handle(PadEvent(coordinate: PadCoordinate(x: 2, y: 2), phase: .press, velocity: 100)))
-        XCTAssertEqual(registry.nextCommand(providerId: "sheaf-chat:default:sess")?.action, .stage)
-
-        XCTAssertTrue(layer.handle(PadEvent(coordinate: PadCoordinate(x: 1, y: 2), phase: .press, velocity: 100)))
-        XCTAssertNil(registry.nextCommand(providerId: "sheaf-chat:default:sess"))
-    }
-
-    func testHunkReviewControlLayerConsumesInactiveButtonsWithoutStaticFallback() {
-        let bus = RenderInvalidationBus()
-        let registry = HunkReviewRegistry(timeoutSeconds: 3)
-        let layer = HunkReviewLaunchpadControlLayer(registry: registry, invalidationBus: bus)
-
-        XCTAssertEqual(layer.getColor(at: PadCoordinate(x: 0, y: 2)), .off)
-        XCTAssertTrue(layer.handle(PadEvent(coordinate: PadCoordinate(x: 0, y: 2), phase: .press, velocity: 100)))
-        XCTAssertNil(registry.nextCommand(providerId: "missing"))
-    }
-
-    func testHunkControlLayerRoutesSheafChatProviderCommands() {
-        let bus = RenderInvalidationBus()
-        let registry = HunkReviewRegistry(timeoutSeconds: 3)
-        let layer = HunkReviewLaunchpadControlLayer(registry: registry, invalidationBus: bus)
-        registry.update(snapshot: makeHunkReviewSnapshot(
-            providerID: "sheaf-chat:default:sess",
-            focused: true,
-            sourceProvider: "sheaf-chat",
-            actions: HunkReviewActionAvailability(
-                canGoUp: false,
-                canGoDown: false,
-                canGoPrevFile: false,
-                canGoNextFile: false,
-                canStage: true,
-                canRevert: true,
-                canUndo: true
-            )
-        ))
-
-        XCTAssertEqual(registry.diagnostics().activeSourceProvider, "sheaf-chat")
-        XCTAssertEqual(layer.getColor(at: PadCoordinate(x: 0, y: 2)), PadColor(r: 255, g: 0, b: 0))
-        XCTAssertTrue(layer.handle(PadEvent(coordinate: PadCoordinate(x: 0, y: 2), phase: .press, velocity: 100)))
-        XCTAssertEqual(registry.nextCommand(providerId: "sheaf-chat:default:sess")?.action, .revert)
-    }
-
-    func testDiffReviewLaunchpadLayerRendersStateColors() {
-        let registry = HunkReviewRegistry(timeoutSeconds: 3)
-        let store = DiffReviewStore()
-        let layer = DiffReviewLaunchpadControlLayer(registry: registry, reviewStore: store, onPress: {})
-        let coordinate = PadCoordinate(x: 2, y: 7)
-
-        XCTAssertEqual(layer.getColor(at: coordinate), .off)
-
-        registry.update(snapshot: makeHunkReviewSnapshot(
-            providerID: "sheaf-chat:default:sess",
-            focused: true,
-            sourceProvider: "sheaf-chat"
-        ))
-        XCTAssertEqual(layer.getColor(at: coordinate), PadColor(r: 90, g: 90, b: 90))
-
-        store.appendComment(hunk: makeReviewHunk(), text: "Needs follow-up.")
-        XCTAssertEqual(layer.getColor(at: coordinate), PadColor(r: 0, g: 0, b: 255))
-
-        registry.updateFocus(providerId: "sheaf-chat:default:sess", focused: false)
-        XCTAssertEqual(layer.getColor(at: coordinate), PadColor(r: 0, g: 255, b: 0))
-
-        store.setRecordingActive(true)
-        XCTAssertEqual(layer.getColor(at: coordinate), PadColor(r: 255, g: 0, b: 0))
-    }
-
-    func testDiffReviewLaunchpadLayerConsumesReviewPadPress() {
-        let registry = HunkReviewRegistry(timeoutSeconds: 3)
-        let store = DiffReviewStore()
-        var presses = 0
-        let layer = DiffReviewLaunchpadControlLayer(registry: registry, reviewStore: store) {
-            presses += 1
+    func testExternalLaunchpadLayerRendersOwnedCellAndConsumesPressRelease() throws {
+        let service = DictatorRPCService()
+        var sent: [DictatorRPCEnvelope] = []
+        let sessionID = service.registerClient(clientID: "sheaf-chat:test") { text in
+            if let data = text.data(using: .utf8),
+               let envelope = try? JSONDecoder().decode(DictatorRPCEnvelope.self, from: data) {
+                sent.append(envelope)
+            }
         }
+        sent.removeAll()
 
-        XCTAssertFalse(layer.handle(PadEvent(coordinate: PadCoordinate(x: 1, y: 7), phase: .press, velocity: 100)))
-        XCTAssertTrue(layer.handle(PadEvent(coordinate: PadCoordinate(x: 2, y: 7), phase: .release, velocity: 0)))
-        XCTAssertEqual(presses, 0)
-        XCTAssertTrue(layer.handle(PadEvent(coordinate: PadCoordinate(x: 2, y: 7), phase: .press, velocity: 100)))
-        XCTAssertEqual(presses, 1)
+        let request = """
+        {"id":"set","method":"launchpad.setCells","params":{"cells":[{"x":3,"y":3,"r":12,"g":34,"b":56}]}}
+        """
+        let response = try XCTUnwrap(service.handleTextFrame(request, sessionID: sessionID))
+        let envelope = try JSONDecoder().decode(DictatorRPCEnvelope.self, from: Data(response.utf8))
+        XCTAssertEqual(envelope.id, "set")
+        XCTAssertEqual(envelope.result, .object(["ok": .bool(true)]))
+
+        let layer = ExternalLaunchpadControlLayer(rpcService: service)
+        let coordinate = PadCoordinate(x: 3, y: 3)
+        XCTAssertEqual(layer.getColor(at: coordinate), PadColor(r: 12, g: 34, b: 56))
+        XCTAssertEqual(layer.allCoordinatesForRendering(), [coordinate])
+
+        XCTAssertTrue(layer.handle(PadEvent(coordinate: coordinate, phase: .press, velocity: 100)))
+        XCTAssertTrue(layer.handle(PadEvent(coordinate: coordinate, phase: .release, velocity: 0)))
+        XCTAssertEqual(sent.map(\.method), ["launchpad.cellPressed", "launchpad.cellReleased"])
+        XCTAssertEqual(sent.first?.params?.objectValue?["x"], .number(3))
+        XCTAssertEqual(sent.first?.params?.objectValue?["y"], .number(3))
+        XCTAssertEqual(sent.first?.id, nil)
+    }
+
+    func testExternalLaunchpadOwnershipCleanupReturnsCellToNormalBehavior() throws {
+        let service = DictatorRPCService()
+        let sessionID = service.registerClient(clientID: "sheaf-chat:test") { _ in }
+        _ = service.handleTextFrame(
+            #"{"id":"set","method":"launchpad.setCells","params":{"cells":[{"x":3,"y":3,"off":true}]}}"#,
+            sessionID: sessionID
+        )
+
+        let layer = ExternalLaunchpadControlLayer(rpcService: service)
+        let coordinate = PadCoordinate(x: 3, y: 3)
+        XCTAssertEqual(layer.getColor(at: coordinate), .off)
+        XCTAssertTrue(layer.handle(PadEvent(coordinate: coordinate, phase: .press, velocity: 100)))
+
+        service.unregisterClient(sessionID: sessionID)
+        XCTAssertNil(layer.getColor(at: coordinate))
+        XCTAssertFalse(layer.handle(PadEvent(coordinate: coordinate, phase: .press, velocity: 100)))
     }
 
     func testInteractionBufferEvictsOldestWhenTrackedBytesExceedLimit() {
@@ -835,19 +769,6 @@ final class LaunchpadTests: XCTestCase {
     }
 }
 
-private func makeReviewHunk() -> HunkReviewContext {
-    HunkReviewContext(
-        repoRoot: "/repo",
-        file: "a.ts",
-        hunkId: "hunk",
-        hunkIndex: 0,
-        hunkCount: 2,
-        header: "@@ -1,1 +1,1 @@",
-        patchHash: "abc",
-        patch: "diff --git a/a.ts b/a.ts\n@@ -1,1 +1,1 @@\n-old\n+new\n"
-    )
-}
-
 private final class FakeColorProvider: ColorProvider {
     var colors: [PadCoordinate: PadColor] = [:]
 
@@ -901,53 +822,6 @@ private final class FakeControlLayer: LaunchpadControlLayer {
     func allCoordinatesForRendering() -> [PadCoordinate] {
         [PadCoordinate(x: 1, y: 9)]
     }
-}
-
-private func makeHunkReviewSnapshot(
-    providerID: String,
-    focused: Bool,
-    sourceProvider: String? = nil,
-    actions: HunkReviewActionAvailability = HunkReviewActionAvailability(
-        canGoUp: true,
-        canGoDown: true,
-        canGoPrevFile: true,
-        canGoNextFile: true,
-        canStage: true,
-        canRevert: true,
-        canUndo: true
-    )
-) -> HunkReviewProviderSnapshot {
-    HunkReviewProviderSnapshot(
-        providerId: providerID,
-        focused: focused,
-        paneOpen: true,
-        repoRoot: "/repo",
-        file: "a.ts",
-        fileIndex: 0,
-        fileCount: 2,
-        hunkIndex: 0,
-        hunkCount: 2,
-        currentHunk: HunkReviewMetadata(
-            id: "hunk",
-            file: "a.ts",
-            index: 0,
-            count: 2,
-            header: "@@ -1,1 +1,1 @@",
-            patchHash: "abc"
-        ),
-        currentHunkReview: HunkReviewContext(
-            sourceProvider: sourceProvider,
-            repoRoot: "/repo",
-            file: "a.ts",
-            hunkId: "hunk",
-            hunkIndex: 0,
-            hunkCount: 2,
-            header: "@@ -1,1 +1,1 @@",
-            patchHash: "abc",
-            patch: "diff --git a/a.ts b/a.ts\n@@ -1,1 +1,1 @@\n-old\n+new\n"
-        ),
-        actions: actions
-    )
 }
 
 private func makeInteraction(

@@ -12,8 +12,7 @@ struct WebServiceContext: Sendable
     let endpointDescription: String
     let logPath: String
     let dataPath: String
-    let hunkReviewRegistry: HunkReviewRegistry
-    let diffReviewStore: DiffReviewStore
+    let rpcService: DictatorRPCService
 }
 
 actor WebAPIService
@@ -86,16 +85,8 @@ actor WebAPIService
             return try await .json(try await modelList(provider: provider))
         case .apiKeyStatus:
             return try await .json(apiKeyStatus())
-        case .apiHunkReviewState:
-            return try .json(updateHunkReviewState(body: body))
-        case .apiHunkReviewDisconnect:
-            return try .json(disconnectHunkReviewClient(body: body))
-        case let .apiHunkReviewCommand(providerID):
-            return .json(context.hunkReviewRegistry.nextCommand(providerId: providerID))
-        case .apiHunkReviewCommandResult:
-            return try .json(recordHunkReviewCommandResult(body: body))
-        case .apiHunkReviewDiagnostics:
-            return .json(context.hunkReviewRegistry.diagnostics(diffReview: context.diffReviewStore.diagnostics()))
+        case .apiRPCDiagnostics:
+            return .json(context.rpcService.diagnostics())
         }
     }
 
@@ -437,38 +428,6 @@ actor WebAPIService
         return WebAPIJSON.APIKeyStatusResponse(
             openai: WebAPIJSON.APIKeyProviderStatus(configured: configured)
         )
-    }
-
-    private func updateHunkReviewState(body: Data) throws -> WebAPIJSON.AcceptedResponse
-    {
-        let snapshot = try JSONDecoder().decode(HunkReviewProviderSnapshot.self, from: body)
-        context.hunkReviewRegistry.update(snapshot: snapshot)
-        return WebAPIJSON.AcceptedResponse(ok: true)
-    }
-
-    private func disconnectHunkReviewClient(body: Data) throws -> WebAPIJSON.AcceptedResponse
-    {
-        let request = try JSONDecoder().decode(HunkReviewDisconnectRequest.self, from: body)
-        context.hunkReviewRegistry.disconnect(providerId: request.providerId)
-        return WebAPIJSON.AcceptedResponse(ok: true)
-    }
-
-    private func recordHunkReviewCommandResult(body: Data) throws -> WebAPIJSON.AcceptedResponse
-    {
-        let request = try JSONDecoder().decode(HunkReviewCommandResultRequest.self, from: body)
-        context.hunkReviewRegistry.recordResult(request.result)
-        if request.result.ok
-        {
-            if let reverted = request.result.reviewFacts?.revertedHunk
-            {
-                context.diffReviewStore.appendReverted(hunk: reverted)
-            }
-            if let restored = request.result.reviewFacts?.restoredRevertedHunk
-            {
-                context.diffReviewStore.removeReverted(hunk: restored)
-            }
-        }
-        return WebAPIJSON.AcceptedResponse(ok: true)
     }
 
     private func setField(_ fieldName: String, value: RuntimeConfigurationValue) async throws
