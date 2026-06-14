@@ -535,8 +535,71 @@ function DefaultFileFetch(path: string): FakeFetchResponse | null
   return null;
 }
 
+function HighlightFileFetch(path: string): FakeFetchResponse | null
+{
+  const filesMatch = path.match(
+    /\/api\/piles\/[^/]+\/sessions\/[^/]+\/files\?path=(.+)$/,
+  );
+  if (filesMatch) {
+    return JsonResponse({
+      directory: { name: ".", path: ".", kind: "directory" },
+      entries: [
+        {
+          name: "main.cpp",
+          path: "main.cpp",
+          kind: "file",
+          supported: true,
+          contentType: "text/plain",
+        },
+        {
+          name: "config.json",
+          path: "config.json",
+          kind: "file",
+          supported: true,
+          contentType: "text/plain",
+        },
+        {
+          name: "notes.txt",
+          path: "notes.txt",
+          kind: "file",
+          supported: true,
+          contentType: "text/plain",
+        },
+      ],
+    });
+  }
+
+  const fileMatch = path.match(
+    /\/api\/piles\/[^/]+\/sessions\/[^/]+\/file\?path=(.+)$/,
+  );
+  if (fileMatch) {
+    const filePath = decodeURIComponent(fileMatch[1]);
+    const contents: Record<string, string> = {
+      "main.cpp": "int main() { return 0; }\n",
+      "config.json": "{ \"enabled\": true }\n",
+      "notes.txt": "plain notes\n",
+    };
+    const content = contents[filePath] || "";
+    return JsonResponse({
+      file: {
+        name: filePath,
+        path: filePath,
+        kind: "file",
+        supported: true,
+        contentType: "text/plain",
+        content,
+        size: content.length,
+        modifiedAt: "2026-06-08T00:00:00.000Z",
+      },
+    });
+  }
+
+  return null;
+}
+
 function LoadChatHarness(options?: {
   fetch?: (path: string, request?: Record<string, unknown>) => Promise<FakeFetchResponse>;
+  highlight?: unknown;
   hash?: string;
   touch?: boolean;
   markdown?: boolean;
@@ -601,6 +664,9 @@ function LoadChatHarness(options?: {
   };
   context.window = context;
   context.globalThis = context;
+  if (options && "highlight" in options) {
+    context.hljs = options.highlight;
+  }
   if (options?.touch === true) {
     context.ontouchstart = null;
   }
@@ -1073,6 +1139,90 @@ test("explorer file rows open tabs and switching updates selected content", asyn
   await FlushPromises();
   assert.match(RequiredElement(harness.app, ".sheaf-chat-tab--selected").textContent, /readme\.md/);
   assert.match(harness.app.textContent, /Readme/);
+});
+
+test("text file previews use mapped Highlight.js languages", async () =>
+{
+  const calls: Array<{ code: string; language: string }> = [];
+  const harness = LoadChatHarness({
+    fetch: async (path) => HighlightFileFetch(path) || JsonResponse({}),
+    highlight: {
+      getLanguage(language: string): boolean {
+        return ["cpp", "json"].includes(language);
+      },
+      highlight(code: string, options: { language: string }): { value: string } {
+        calls.push({ code, language: options.language });
+        if (options.language === "cpp") {
+          return { value: '<span class="hljs-keyword">int</span> main()' };
+        }
+        return { value: '{ <span class="hljs-attr">&quot;enabled&quot;</span>: true }' };
+      },
+    },
+  });
+  await FlushPromises();
+
+  ExplorerFileButton(harness.app, "main.cpp").click();
+  await FlushPromises();
+
+  RequiredElement(harness.app, ".sheaf-chat-file-highlighted");
+  RequiredElement(harness.app, ".hljs-keyword");
+  assert.equal(calls[0].language, "cpp");
+  assert.match(calls[0].code, /int main/);
+
+  ExplorerFileButton(harness.app, "config.json").click();
+  await FlushPromises();
+
+  RequiredElement(harness.app, ".sheaf-chat-file-highlighted");
+  RequiredElement(harness.app, ".hljs-attr");
+  assert.equal(calls[1].language, "json");
+  assert.match(calls[1].code, /enabled/);
+});
+
+test("text file previews fall back to plain text without a usable highlighter", async () =>
+{
+  const harness = LoadChatHarness({
+    fetch: async (path) => HighlightFileFetch(path) || JsonResponse({}),
+  });
+  await FlushPromises();
+
+  ExplorerFileButton(harness.app, "main.cpp").click();
+  await FlushPromises();
+
+  assert.equal(harness.app.querySelector(".sheaf-chat-file-highlighted"), null);
+  RequiredElement(harness.app, ".sheaf-chat-file-plain");
+  assert.match(harness.app.textContent, /int main/);
+});
+
+test("text file previews fall back for unmapped extensions and highlighter failures", async () =>
+{
+  const calls: string[] = [];
+  const harness = LoadChatHarness({
+    fetch: async (path) => HighlightFileFetch(path) || JsonResponse({}),
+    highlight: {
+      getLanguage(language: string): boolean {
+        return language === "cpp";
+      },
+      highlight(_code: string, options: { language: string }): { value: string } {
+        calls.push(options.language);
+        throw new Error("highlight failed");
+      },
+    },
+  });
+  await FlushPromises();
+
+  ExplorerFileButton(harness.app, "notes.txt").click();
+  await FlushPromises();
+
+  assert.equal(calls.length, 0);
+  assert.equal(harness.app.querySelector(".sheaf-chat-file-highlighted"), null);
+  assert.match(harness.app.textContent, /plain notes/);
+
+  ExplorerFileButton(harness.app, "main.cpp").click();
+  await FlushPromises();
+
+  assert.deepEqual(calls, ["cpp"]);
+  assert.equal(harness.app.querySelector(".sheaf-chat-file-highlighted"), null);
+  assert.match(harness.app.textContent, /int main/);
 });
 
 test("closing a tab updates the selected file content", async () =>

@@ -149,10 +149,10 @@ WHERE `SHEAF_CHAT_PROFILE_STREAM=1` is set in the environment, THE service SHALL
 
 ### Requirement: svc-13 — Vendor asset allowlist
 
-THE service SHALL serve vendor assets only from the explicit allowlist for Markdown-it, KaTeX JavaScript/CSS, and KaTeX font files under `/assets/vendor/`; any unlisted vendor path SHALL return 404.
+THE service SHALL serve vendor assets only from the explicit allowlist for Markdown-it, KaTeX JavaScript/CSS, KaTeX font files, Highlight.js JavaScript, and Highlight.js theme CSS under `/assets/vendor/`; any unlisted vendor path SHALL return 404.
 
 #### Scenario: Allowlisted vendor asset
-- **WHEN** a request is received for a vendor path in the explicit allowlist (Markdown-it, KaTeX JS/CSS, KaTeX font files)
+- **WHEN** a request is received for a vendor path in the explicit allowlist (Markdown-it, KaTeX JS/CSS, KaTeX font files, Highlight.js JavaScript, or Highlight.js theme CSS)
 - **THEN** the service serves the corresponding file
 
 #### Scenario: Unlisted vendor path
@@ -225,6 +225,8 @@ the endpoint). `openAi.configured` is true when `openai_api_key` is set.
 | `/assets/vendor/markdown-it.min.js` | `projects/sheaf-chat/node_modules/markdown-it/dist/markdown-it.min.js` |
 | `/assets/vendor/katex.min.js`, `/assets/vendor/katex.min.css` | `projects/sheaf-chat/node_modules/katex/dist/` |
 | `/assets/vendor/fonts/<font>.woff`, `.woff2`, `.ttf` | KaTeX font files discovered in `projects/sheaf-chat/node_modules/katex/dist/fonts/` |
+| `/assets/vendor/highlight.min.js` | `projects/sheaf-chat/node_modules/@highlightjs/cdn-assets/highlight.min.js` |
+| `/assets/vendor/highlight-github-dark-dimmed.min.css` | `projects/sheaf-chat/node_modules/@highlightjs/cdn-assets/styles/github-dark-dimmed.min.css` |
 
 ### REST error catalogue (status mapping)
 

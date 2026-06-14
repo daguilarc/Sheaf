@@ -37,6 +37,8 @@ export const x_markdownItJsPath = `${x_vendorAssetPrefix}/markdown-it.min.js`;
 export const x_katexJsPath = `${x_vendorAssetPrefix}/katex.min.js`;
 export const x_katexCssPath = `${x_vendorAssetPrefix}/katex.min.css`;
 export const x_katexFontsUrlPrefix = `${x_vendorAssetPrefix}/fonts`;
+export const x_highlightJsPath = `${x_vendorAssetPrefix}/highlight.min.js`;
+export const x_highlightThemeCssPath = `${x_vendorAssetPrefix}/highlight-github-dark-dimmed.min.css`;
 
 function NormalizeUrlPrefix(urlPrefix: string): string
 {
@@ -97,6 +99,17 @@ export function BuildVendorAssetAllowlist(repoRoot: string): Map<string, string>
     [x_markdownItJsPath, join(nodeModulesDir, "markdown-it", "dist", "markdown-it.min.js")],
     [x_katexJsPath, join(nodeModulesDir, "katex", "dist", "katex.min.js")],
     [x_katexCssPath, join(nodeModulesDir, "katex", "dist", "katex.min.css")],
+    [x_highlightJsPath, join(nodeModulesDir, "@highlightjs", "cdn-assets", "highlight.min.js")],
+    [
+      x_highlightThemeCssPath,
+      join(
+        nodeModulesDir,
+        "@highlightjs",
+        "cdn-assets",
+        "styles",
+        "github-dark-dimmed.min.css",
+      ),
+    ],
   ]);
 
   for (const fontFileName of ListKatexFontFileNames(packageRoot))

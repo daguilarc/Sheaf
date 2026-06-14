@@ -512,6 +512,98 @@
     return lower.endsWith(".md") || lower.endsWith(".markdown");
   }
 
+  const x_HighlightLanguageByExtension = {
+    ".bash": "bash",
+    ".c++": "cpp",
+    ".cc": "cpp",
+    ".cjs": "javascript",
+    ".cpp": "cpp",
+    ".cts": "typescript",
+    ".cxx": "cpp",
+    ".h": "cpp",
+    ".h++": "cpp",
+    ".hh": "cpp",
+    ".htm": "xml",
+    ".html": "xml",
+    ".hpp": "cpp",
+    ".hxx": "cpp",
+    ".js": "javascript",
+    ".json": "json",
+    ".json5": "json",
+    ".jsonc": "json",
+    ".jsx": "javascript",
+    ".mjs": "javascript",
+    ".mts": "typescript",
+    ".plist": "xml",
+    ".py": "python",
+    ".pyw": "python",
+    ".sh": "bash",
+    ".svg": "xml",
+    ".swift": "swift",
+    ".ts": "typescript",
+    ".tsx": "typescript",
+    ".xhtml": "xml",
+    ".xml": "xml",
+    ".yaml": "yaml",
+    ".yml": "yaml",
+    ".zsh": "bash",
+  };
+
+  function HighlightLanguageForPath(pathValue) {
+    const fileName = BaseName(pathValue).toLowerCase();
+    const dotIndex = fileName.lastIndexOf(".");
+    if (dotIndex < 0) {
+      return null;
+    }
+
+    return x_HighlightLanguageByExtension[fileName.slice(dotIndex)] || null;
+  }
+
+  function CreatePlainFilePreview(content) {
+    const plain = CreateElement("pre", "sheaf-chat-file-plain");
+    plain.textContent = content;
+    return plain;
+  }
+
+  function GetHighlighter() {
+    if (typeof window !== "undefined" && window.hljs) {
+      return window.hljs;
+    }
+    if (typeof globalThis !== "undefined" && globalThis.hljs) {
+      return globalThis.hljs;
+    }
+    return null;
+  }
+
+  function CreateHighlightedFilePreview(content, language) {
+    const highlighter = GetHighlighter();
+    if (
+      !highlighter ||
+      typeof highlighter.highlight !== "function" ||
+      typeof highlighter.getLanguage !== "function" ||
+      !highlighter.getLanguage(language)
+    ) {
+      return null;
+    }
+
+    try {
+      const result = highlighter.highlight(String(content), {
+        language: language,
+        ignoreIllegals: true,
+      });
+      const pre = CreateElement(
+        "pre",
+        "sheaf-chat-file-plain sheaf-chat-file-highlighted"
+      );
+      const code = CreateElement("code", "hljs language-" + language);
+      code.innerHTML = result && result.value != null ? String(result.value) : "";
+      pre.appendChild(code);
+      return pre;
+    } catch (_error) {
+      return null;
+    }
+  }
+
   function CreateChatSessionController(config) {
     const route = config.route;
     const touchLayout = config.touchLayout === true;
@@ -1402,22 +1494,22 @@
               });
             }
           } else {
-            const fallback = CreateElement("pre", "sheaf-chat-file-plain");
-            fallback.textContent = selected.content;
-            contentWrap.appendChild(fallback);
+            contentWrap.appendChild(CreatePlainFilePreview(selected.content));
           }
         } else {
-          const fallback = CreateElement("pre", "sheaf-chat-file-plain");
-          fallback.textContent = selected.content;
-          contentWrap.appendChild(fallback);
+          contentWrap.appendChild(CreatePlainFilePreview(selected.content));
         }
       } else if (
         selected.contentType &&
         selected.contentType.indexOf("text/") === 0
       ) {
-        const plain = CreateElement("pre", "sheaf-chat-file-plain");
-        plain.textContent = selected.content;
-        contentWrap.appendChild(plain);
+        const language = HighlightLanguageForPath(selected.path);
+        const highlighted = language
+          ? CreateHighlightedFilePreview(selected.content, language)
+          : null;
+        contentWrap.appendChild(
+          highlighted || CreatePlainFilePreview(selected.content)
+        );
       } else {
         const unsupported = CreateElement("div", "sheaf-chat-file-unsupported");
         unsupported.textContent = "This file type is not supported for preview.";

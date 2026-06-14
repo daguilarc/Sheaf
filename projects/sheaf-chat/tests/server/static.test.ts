@@ -10,6 +10,8 @@ import {
   ResolveStaticFile,
   x_aguiChatCssPath,
   x_aguiChatJsPath,
+  x_highlightJsPath,
+  x_highlightThemeCssPath,
   x_katexCssPath,
   x_katexFontsUrlPrefix,
   x_katexJsPath,
@@ -55,7 +57,7 @@ test("static roots resolve bundled UI and shared AGUI assets", () =>
   assert.ok(ResolveSheafChatIndexPath(repoRoot).endsWith("index.html"));
 });
 
-test("vendor allowlist resolves markdown-it, katex, and font assets", () =>
+test("vendor allowlist resolves markdown-it, katex, highlight.js, and font assets", () =>
 {
   const repoRoot = FindRepositoryRoot();
 
@@ -69,12 +71,18 @@ test("vendor allowlist resolves markdown-it, katex, and font assets", () =>
   const markdownIt = ResolveStaticFile(x_markdownItJsPath, roots, vendorAllowlist);
   const katexJs = ResolveStaticFile(x_katexJsPath, roots, vendorAllowlist);
   const katexCss = ResolveStaticFile(x_katexCssPath, roots, vendorAllowlist);
+  const highlightJs = ResolveStaticFile(x_highlightJsPath, roots, vendorAllowlist);
+  const highlightThemeCss = ResolveStaticFile(x_highlightThemeCssPath, roots, vendorAllowlist);
 
   assert.ok(markdownIt);
   assert.ok(katexJs);
   assert.ok(katexCss);
+  assert.ok(highlightJs);
+  assert.ok(highlightThemeCss);
   assert.match(markdownIt!.absolutePath, /markdown-it\.min\.js$/);
   assert.match(katexJs!.absolutePath, /katex\.min\.js$/);
+  assert.match(highlightJs!.absolutePath, /@highlightjs\/cdn-assets\/highlight\.min\.js$/);
+  assert.match(highlightThemeCss!.absolutePath, /github-dark-dimmed\.min\.css$/);
 
   const fontEntry = [...vendorAllowlist.entries()].find(([urlPath]) =>
     urlPath.startsWith(x_katexFontsUrlPrefix + "/"),
@@ -153,6 +161,8 @@ test("GET / serves the browser UI shell and static assets", async () =>
     assert.match(mainPage.headers.get("content-type") ?? "", /text\/html/);
     assert.match(mainHtml, /markdown-it\.min\.js/);
     assert.match(mainHtml, /katex\.min\.js/);
+    assert.match(mainHtml, /highlight\.min\.js/);
+    assert.match(mainHtml, /highlight-github-dark-dimmed\.min\.css/);
     assert.match(mainHtml, /sheaf-markdown\.js/);
     assert.match(mainHtml, /agui-chat\.js/);
     assert.match(mainHtml, /sheaf-chat\.js/);
@@ -160,6 +170,16 @@ test("GET / serves the browser UI shell and static assets", async () =>
     const markdownIt = await fetch(`${handle.baseUrl}${x_markdownItJsPath}`);
     assert.equal(markdownIt.status, 200);
     assert.match(markdownIt.headers.get("content-type") ?? "", /javascript/);
+
+    const highlightJs = await fetch(`${handle.baseUrl}${x_highlightJsPath}`);
+    assert.equal(highlightJs.status, 200);
+    assert.match(highlightJs.headers.get("content-type") ?? "", /javascript/);
+    assert.match(await highlightJs.text(), /highlight/);
+
+    const highlightCss = await fetch(`${handle.baseUrl}${x_highlightThemeCssPath}`);
+    assert.equal(highlightCss.status, 200);
+    assert.match(highlightCss.headers.get("content-type") ?? "", /text\/css/);
+    assert.match(await highlightCss.text(), /\.hljs/);
 
     const sheafMarkdown = await fetch(`${handle.baseUrl}${x_sheafMarkdownJsPath}`);
     assert.equal(sheafMarkdown.status, 200);

@@ -596,6 +596,18 @@ body
   line-height: 1.5;
 }
 
+.sheaf-chat-file-highlighted .hljs
+{
+  display: block;
+  overflow: visible;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  white-space: inherit;
+  word-break: inherit;
+  font: inherit;
+}
+
 .sheaf-chat-desktop .sheaf-chat-chat-pane .sheaf-chat-chat-main
 {
   flex: 1;
