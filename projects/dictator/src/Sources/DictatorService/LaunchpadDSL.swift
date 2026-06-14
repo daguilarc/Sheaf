@@ -19,6 +19,7 @@ struct LaunchpadPageConfig: Decodable {
 struct LaunchpadPadConfig: Decodable {
     enum Role: String, Decodable {
         case recordStatus = "record_status"
+        case talonStatus = "talon_status"
         case shiftLatch = "shift_latch"
     }
 
@@ -44,7 +45,7 @@ struct LaunchpadActionConfig: Decodable {
         case keystroke
         case dictation
         case auxiliaryDictation = "auxiliary_dictation"
-        case talonLiteDictation = "talon_lite_dictation"
+        case talonControl = "talon_control"
         case contextualBackspace = "contextual_backspace"
         case nextWindow = "next_window"
         case appReload = "app_reload"
@@ -194,12 +195,12 @@ enum LaunchpadLayoutLoader {
                             userInfo: [NSLocalizedDescriptionKey: "Auxiliary dictation action missing valid prompt_slot at (\(pad.x),\(pad.y)) page \(page.id)"]
                         )
                     }
-                case .talonLiteDictation:
+                case .talonControl:
                     guard pad.action.command != nil else {
                         throw NSError(
                             domain: "LaunchpadLayoutLoader",
                             code: 8,
-                            userInfo: [NSLocalizedDescriptionKey: "Talon-lite dictation action missing command at (\(pad.x),\(pad.y)) page \(page.id)"]
+                            userInfo: [NSLocalizedDescriptionKey: "Talon control action missing command at (\(pad.x),\(pad.y)) page \(page.id)"]
                         )
                     }
                 case .contextualBackspace:
@@ -234,7 +235,7 @@ final class LaunchpadPageFactory {
     private let onKeystroke: ((KeyboardKey, Set<KeyboardModifier>) -> Void)?
     private let onDictationCommand: ((LaunchpadActionConfig.DictationCommand) -> Void)?
     private let onAuxiliaryDictationCommand: ((Int, LaunchpadActionConfig.DictationCommand) -> Void)?
-    private let onTalonLiteDictationCommand: ((LaunchpadActionConfig.DictationCommand) -> Void)?
+    private let onTalonControlCommand: ((LaunchpadActionConfig.DictationCommand) -> Void)?
     private let onContextualBackspace: (() -> Void)?
     private let onNextWindowSwitchPress: (() -> Void)?
     private let onNextWindowSwitchRelease: (() -> Void)?
@@ -242,6 +243,7 @@ final class LaunchpadPageFactory {
     private let onLoadSafeRuntimeConfig: (() -> Void)?
     private let onToggleFullscreenOverlay: (() -> Void)?
     private let recordStatusColorProvider: () -> PadColor
+    private let talonStatusColorProvider: () -> PadColor
     private let shiftLatchColorProvider: () -> PadColor
     private let onModifierPress: ((LaunchpadActionConfig.ModifierType) -> Void)?
     private let onModifierRelease: ((LaunchpadActionConfig.ModifierType) -> Void)?
@@ -251,7 +253,7 @@ final class LaunchpadPageFactory {
         onKeystroke: ((KeyboardKey, Set<KeyboardModifier>) -> Void)?,
         onDictationCommand: ((LaunchpadActionConfig.DictationCommand) -> Void)?,
         onAuxiliaryDictationCommand: ((Int, LaunchpadActionConfig.DictationCommand) -> Void)?,
-        onTalonLiteDictationCommand: ((LaunchpadActionConfig.DictationCommand) -> Void)?,
+        onTalonControlCommand: ((LaunchpadActionConfig.DictationCommand) -> Void)?,
         onContextualBackspace: (() -> Void)?,
         onNextWindowSwitchPress: (() -> Void)?,
         onNextWindowSwitchRelease: (() -> Void)?,
@@ -259,6 +261,7 @@ final class LaunchpadPageFactory {
         onLoadSafeRuntimeConfig: (() -> Void)?,
         onToggleFullscreenOverlay: (() -> Void)?,
         recordStatusColorProvider: @escaping () -> PadColor,
+        talonStatusColorProvider: @escaping () -> PadColor,
         shiftLatchColorProvider: @escaping () -> PadColor,
         onModifierPress: ((LaunchpadActionConfig.ModifierType) -> Void)?,
         onModifierRelease: ((LaunchpadActionConfig.ModifierType) -> Void)?
@@ -267,7 +270,7 @@ final class LaunchpadPageFactory {
         self.onKeystroke = onKeystroke
         self.onDictationCommand = onDictationCommand
         self.onAuxiliaryDictationCommand = onAuxiliaryDictationCommand
-        self.onTalonLiteDictationCommand = onTalonLiteDictationCommand
+        self.onTalonControlCommand = onTalonControlCommand
         self.onContextualBackspace = onContextualBackspace
         self.onNextWindowSwitchPress = onNextWindowSwitchPress
         self.onNextWindowSwitchRelease = onNextWindowSwitchRelease
@@ -275,6 +278,7 @@ final class LaunchpadPageFactory {
         self.onLoadSafeRuntimeConfig = onLoadSafeRuntimeConfig
         self.onToggleFullscreenOverlay = onToggleFullscreenOverlay
         self.recordStatusColorProvider = recordStatusColorProvider
+        self.talonStatusColorProvider = talonStatusColorProvider
         self.shiftLatchColorProvider = shiftLatchColorProvider
         self.onModifierPress = onModifierPress
         self.onModifierRelease = onModifierRelease
@@ -284,7 +288,7 @@ final class LaunchpadPageFactory {
         let onKeystroke = self.onKeystroke
         let onDictationCommand = self.onDictationCommand
         let onAuxiliaryDictationCommand = self.onAuxiliaryDictationCommand
-        let onTalonLiteDictationCommand = self.onTalonLiteDictationCommand
+        let onTalonControlCommand = self.onTalonControlCommand
         let onContextualBackspace = self.onContextualBackspace
         let onNextWindowSwitchPress = self.onNextWindowSwitchPress
         let onNextWindowSwitchRelease = self.onNextWindowSwitchRelease
@@ -292,6 +296,7 @@ final class LaunchpadPageFactory {
         let onLoadSafeRuntimeConfig = self.onLoadSafeRuntimeConfig
         let onToggleFullscreenOverlay = self.onToggleFullscreenOverlay
         let recordStatusColorProvider = self.recordStatusColorProvider
+        let talonStatusColorProvider = self.talonStatusColorProvider
         let shiftLatchColorProvider = self.shiftLatchColorProvider
         let onModifierPress = self.onModifierPress
         let onModifierRelease = self.onModifierRelease
@@ -331,15 +336,15 @@ final class LaunchpadPageFactory {
                         "launchpad action missing auxiliary_dictation fields page=\(pageID) x=\(padConfig.x) y=\(padConfig.y)"
                     )
                 }
-            case .talonLiteDictation:
+            case .talonControl:
                 if let command = padConfig.action.command {
                     TraceLogger.log(
-                        "launchpad action talon_lite_dictation page=\(pageID) x=\(padConfig.x) y=\(padConfig.y) command=\(command.rawValue)"
+                        "launchpad action talon_control page=\(pageID) x=\(padConfig.x) y=\(padConfig.y) command=\(command.rawValue)"
                     )
-                    onTalonLiteDictationCommand?(command)
+                    onTalonControlCommand?(command)
                 } else {
                     TraceLogger.log(
-                        "launchpad action missing talon_lite_dictation command page=\(pageID) x=\(padConfig.x) y=\(padConfig.y)"
+                        "launchpad action missing talon_control command page=\(pageID) x=\(padConfig.x) y=\(padConfig.y)"
                     )
                 }
             case .contextualBackspace:
@@ -380,7 +385,7 @@ final class LaunchpadPageFactory {
                 switch padConfig.action.type {
                 case .keystroke, .contextualBackspace:
                     shouldRepeat = true
-                case .dictation, .auxiliaryDictation, .talonLiteDictation, .nextWindow, .appReload, .modifierLatch, .loadSafeRuntimeConfig, .toggleFullscreenOverlay:
+                case .dictation, .auxiliaryDictation, .talonControl, .nextWindow, .appReload, .modifierLatch, .loadSafeRuntimeConfig, .toggleFullscreenOverlay:
                     shouldRepeat = false
                 }
                 let cell: LaunchpadCellType
@@ -388,6 +393,14 @@ final class LaunchpadPageFactory {
                     cell = LaunchpadStatusCell(
                         invalidationBus: invalidationBus,
                         statusColorProvider: recordStatusColorProvider,
+                        onPress: {
+                            runAction(padConfig, pageID: pageConfig.id)
+                        }
+                    )
+                } else if padConfig.role == .talonStatus {
+                    cell = LaunchpadStatusCell(
+                        invalidationBus: invalidationBus,
+                        statusColorProvider: talonStatusColorProvider,
                         onPress: {
                             runAction(padConfig, pageID: pageConfig.id)
                         }

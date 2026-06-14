@@ -113,7 +113,7 @@ actor WebAPIService
         let sttPresent = FileManager.default.fileExists(atPath: sttPath)
         let openAIConfigured = (try? context.secretStore.getOpenAIKey()) != nil
         let ollamaStatus = await checkOllamaReachability(host: config.ollamaHost)
-        let dictationState = await context.activityTracker.currentState().rawValue
+        let dictationState = await context.activityTracker.currentState().apiValue
         let providerMode = config.useCloud ? "cloud" : "local"
 
         return WebAPIJSON.StatusResponse(

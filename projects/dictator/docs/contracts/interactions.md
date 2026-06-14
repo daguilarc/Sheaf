@@ -62,7 +62,7 @@ Field semantics:
 | Field | Meaning |
 |---|---|
 | `payload.id` | Interaction UUID (uppercase UUID string) |
-| `payload.mode` | `raw_dictation`, `revision`, `text_replacement`, or `talon_lite` |
+| `payload.mode` | `raw_dictation`, `revision`, or `text_replacement`; unknown values in historical records (e.g. the retired `talon_lite`) decode as `revision` |
 | `payload.whisper_output` | Raw STT transcript (empty on failure records) |
 | `payload.final_output` | Refined/inserted text; on failures, the error description |
 | `payload.system_prompt_path` / `_body` | Prompt file used and a full body snapshot at interaction time |

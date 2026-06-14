@@ -39,6 +39,7 @@ final class DictationHTTPServer
     private let onFailureRecord: (@Sendable (DictationHTTPFailureRecord) async -> Void)?
     private let webAPIService: WebAPIService?
     private let activityTracker: DictationActivityTracker?
+    private let talonControl: (any TalonControlProviding)?
     private let group: MultiThreadedEventLoopGroup
     private var channel: Channel?
 
@@ -51,7 +52,8 @@ final class DictationHTTPServer
         onSuccessRecord: (@Sendable (DictationHTTPSuccessRecord) async -> Void)? = nil,
         onFailureRecord: (@Sendable (DictationHTTPFailureRecord) async -> Void)? = nil,
         webAPIService: WebAPIService? = nil,
-        activityTracker: DictationActivityTracker? = nil
+        activityTracker: DictationActivityTracker? = nil,
+        talonControl: (any TalonControlProviding)? = nil
     )
     {
         self.host = host
@@ -63,6 +65,7 @@ final class DictationHTTPServer
         self.onFailureRecord = onFailureRecord
         self.webAPIService = webAPIService
         self.activityTracker = activityTracker
+        self.talonControl = talonControl
         self.group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
     }
 
@@ -77,7 +80,7 @@ final class DictationHTTPServer
             .serverChannelOption(ChannelOptions.backlog, value: 256)
             .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
             .childChannelInitializer
-            { [lifecycle, coreClient, maxBodyBytes, onSuccessRecord, onFailureRecord, webAPIService, activityTracker] channel in
+            { [lifecycle, coreClient, maxBodyBytes, onSuccessRecord, onFailureRecord, webAPIService, activityTracker, talonControl] channel in
                 channel.pipeline.configureHTTPServerPipeline().flatMap
                 {
                     channel.pipeline.addHandler(
@@ -88,7 +91,8 @@ final class DictationHTTPServer
                             onSuccessRecord: onSuccessRecord,
                             onFailureRecord: onFailureRecord,
                             webAPIService: webAPIService,
-                            activityTracker: activityTracker
+                            activityTracker: activityTracker,
+                            talonControl: talonControl
                         )
                     )
                 }
@@ -341,6 +345,7 @@ private final class DictationHTTPHandler: ChannelInboundHandler
     private let onFailureRecord: (@Sendable (DictationHTTPFailureRecord) async -> Void)?
     private let webAPIService: WebAPIService?
     private let activityTracker: DictationActivityTracker?
+    private let talonControl: (any TalonControlProviding)?
     private let encoder = JSONEncoder()
     private var pendingRequest: PendingRequest?
     private var activeTask: Task<Void, Never>?
@@ -352,7 +357,8 @@ private final class DictationHTTPHandler: ChannelInboundHandler
         onSuccessRecord: (@Sendable (DictationHTTPSuccessRecord) async -> Void)?,
         onFailureRecord: (@Sendable (DictationHTTPFailureRecord) async -> Void)?,
         webAPIService: WebAPIService?,
-        activityTracker: DictationActivityTracker?
+        activityTracker: DictationActivityTracker?,
+        talonControl: (any TalonControlProviding)?
     )
     {
         self.lifecycle = lifecycle
@@ -362,6 +368,7 @@ private final class DictationHTTPHandler: ChannelInboundHandler
         self.onFailureRecord = onFailureRecord
         self.webAPIService = webAPIService
         self.activityTracker = activityTracker
+        self.talonControl = talonControl
     }
 
     func channelRead(context: ChannelHandlerContext, data: NIOAny)
@@ -677,6 +684,7 @@ private final class DictationHTTPHandler: ChannelInboundHandler
             {
                 return
             }
+            await self.forceTalonSleep(requestID: requestID)
             if let activityTracker = self.activityTracker
             {
                 await activityTracker.beginProcessing()
@@ -768,6 +776,26 @@ private final class DictationHTTPHandler: ChannelInboundHandler
                     )
                 }
             }
+        }
+    }
+
+    private func forceTalonSleep(requestID: String) async
+    {
+        guard let talonControl else
+        {
+            return
+        }
+        let status = await talonControl.sleep()
+        switch status.state
+        {
+        case .asleep:
+            TraceLogger.log("[\(requestID)] Talon sleep requested before HTTP dictation")
+        case .awake:
+            TraceLogger.log("[\(requestID)] Talon sleep requested before HTTP dictation but bridge still reports awake")
+        case .unavailable:
+            TraceLogger.log("[\(requestID)] Talon sleep skipped before HTTP dictation: bridge unavailable")
+        case let .error(message):
+            TraceLogger.log("[\(requestID)] Talon sleep failed before HTTP dictation: \(message)")
         }
     }
 

@@ -15,7 +15,6 @@ final class LaunchpadServiceController
     private enum InteractionMode
     {
         case standard
-        case talonLite
 
         var logName: String
         {
@@ -23,8 +22,6 @@ final class LaunchpadServiceController
             {
             case .standard:
                 return "standard"
-            case .talonLite:
-                return "talon_lite"
             }
         }
     }
@@ -44,6 +41,7 @@ final class LaunchpadServiceController
     private let apiClient: APIClient
     private let interactionStore: InteractionHistoryStore
     private let activityTracker: DictationActivityTracker
+    private let talonControl: any TalonControlProviding
     private let hunkReviewRegistry: HunkReviewRegistry
     private let diffReviewStore: DiffReviewStore
     private let sessionID = UUID().uuidString
@@ -57,21 +55,6 @@ final class LaunchpadServiceController
             self?.handleKeyboardDispatchResult(result)
         }
     }
-    private lazy var talonLiteCorrectionEngine = RuntimeConfigTalonLiteLLMCorrectionEngine(
-        runtimeConfigProvider: runtimeConfigProvider,
-        secretStore: secretStore,
-        canUseOpenAI: { [secretStore] in
-            (try? secretStore.getOpenAIKey()) != nil
-        }
-    )
-    private lazy var talonLiteOrchestrator = TalonLitePipelineOrchestrator(
-        sttEngine: sttEngine,
-        correctionEngine: talonLiteCorrectionEngine,
-        trace: { message in
-            TraceLogger.log(message)
-        }
-    )
-
     private var recordingContext: [String: String]?
     private var activeInteractionMode: InteractionMode = .standard
     private var activeSystemPromptPathOverride: String?
@@ -79,6 +62,7 @@ final class LaunchpadServiceController
     private var activeDictationTask: Task<DictateCallResult, Error>?
     private var dictationState: DictationState = .idle
     private var shiftLatchState: ShiftLatchState = .unpressed
+    private var talonControlState = LaunchpadTalonControlState()
 
     private var launchpadMIDIManager: LaunchpadMIDIManager?
     private var launchpadPageController: LaunchpadPageController?
@@ -93,6 +77,7 @@ final class LaunchpadServiceController
         coreClient: any DictatorCoreClient,
         interactionStore: InteractionHistoryStore,
         activityTracker: DictationActivityTracker,
+        talonControl: any TalonControlProviding,
         hunkReviewRegistry: HunkReviewRegistry,
         diffReviewStore: DiffReviewStore
     )
@@ -104,6 +89,7 @@ final class LaunchpadServiceController
         self.apiClient = APIClient(coreClient: coreClient)
         self.interactionStore = interactionStore
         self.activityTracker = activityTracker
+        self.talonControl = talonControl
         self.hunkReviewRegistry = hunkReviewRegistry
         self.diffReviewStore = diffReviewStore
     }
@@ -157,9 +143,9 @@ final class LaunchpadServiceController
                     await self?.handleLaunchpadAuxiliaryDictationCommand(command, promptSlot: promptSlot)
                 }
             },
-            onTalonLiteDictationCommand: { [weak self] command in
+            onTalonControlCommand: { [weak self] command in
                 Task { @MainActor in
-                    await self?.handleLaunchpadDictationCommand(command, mode: .talonLite)
+                    await self?.handleLaunchpadTalonControlCommand(command)
                 }
             },
             onContextualBackspace: { [weak self] in
@@ -184,6 +170,9 @@ final class LaunchpadServiceController
             },
             recordStatusColorProvider: { [weak self] in
                 self?.recordStatusColor() ?? .off
+            },
+            talonStatusColorProvider: { [weak self] in
+                self?.talonStatusColor() ?? PadColor(r: 60, g: 60, b: 60)
             },
             shiftLatchColorProvider: { [weak self] in
                 self?.shiftLatchColor() ?? PadColor(r: 50, g: 50, b: 0)
@@ -250,6 +239,9 @@ final class LaunchpadServiceController
 
         renderWorker.start()
         midiManager.start()
+        Task { @MainActor in
+            await refreshTalonStatus(reason: "startup")
+        }
         TraceLogger.log("launchpad service controller started")
     }
 
@@ -322,11 +314,72 @@ final class LaunchpadServiceController
         )
     }
 
+    private func handleLaunchpadTalonControlCommand(_ command: LaunchpadActionConfig.DictationCommand) async
+    {
+        switch command
+        {
+        case .start:
+            await wakeTalonIfIdle()
+        case .stop, .cancel:
+            await sleepTalon(reason: "launchpad talon control \(command.rawValue)")
+        case .toggle:
+            let status = await talonControl.status()
+            talonControlState.refresh(status)
+            launchpadInvalidationBus?.markDirty(reason: "talon_status")
+            switch status.state
+            {
+            case .awake:
+                await sleepTalon(reason: "launchpad talon toggle")
+            case .asleep:
+                await wakeTalonIfIdle()
+            case .unavailable:
+                TraceLogger.log("launchpad Talon control unavailable")
+            case let .error(message):
+                TraceLogger.log("launchpad Talon control error: \(message)")
+            }
+        }
+    }
+
+    private func wakeTalonIfIdle() async
+    {
+        let isActive = await activityTracker.isActive()
+        if !talonControlState.beginWakeAttempt(isDictationActive: isActive)
+        {
+            launchpadInvalidationBus?.markDirty(reason: "talon_blocked")
+            await sleepTalon(reason: "launchpad Talon wake refused while Dictator active")
+            TraceLogger.log("launchpad Talon wake refused: Dictator dictation is active")
+            return
+        }
+
+        let status = await talonControl.wake()
+        talonControlState.recordWake(status)
+        launchpadInvalidationBus?.markDirty(reason: "talon_status")
+        TraceLogger.log("launchpad Talon wake requested state=\(status.logName)")
+    }
+
+    private func sleepTalon(reason: String) async
+    {
+        let status = await talonControl.sleep()
+        talonControlState.recordSleep(status)
+        launchpadInvalidationBus?.markDirty(reason: "talon_status")
+        TraceLogger.log("\(reason): Talon sleep requested state=\(status.logName)")
+    }
+
+    private func refreshTalonStatus(reason: String) async
+    {
+        let status = await talonControl.status()
+        talonControlState.refresh(status)
+        launchpadInvalidationBus?.markDirty(reason: "talon_status")
+        TraceLogger.log("Talon status refreshed reason=\(reason) state=\(status.logName)")
+    }
+
     private func startRecording(
         mode: InteractionMode,
         systemPromptPathOverride: String?
     ) async
     {
+        await sleepTalon(reason: "launchpad non-Talon dictation start")
+        await activityTracker.beginRecording()
         switch await audioRecorder.start()
         {
         case .success:
@@ -350,6 +403,7 @@ final class LaunchpadServiceController
             setDictationState(.recording)
             TraceLogger.log("launchpad recording started mode=\(mode.logName)")
         case let .failure(error):
+            await activityTracker.endActivity()
             recordingContext = nil
             activeInteractionMode = .standard
             activeSystemPromptPathOverride = nil
@@ -366,6 +420,7 @@ final class LaunchpadServiceController
         switch stopResult
         {
         case let .failure(error):
+            await activityTracker.endActivity()
             setDictationState(.idle)
             TraceLogger.log("launchpad recording stop failed: \(error)")
         case let .success(capturedAudio):
@@ -389,11 +444,11 @@ final class LaunchpadServiceController
                 promptPath: effectiveSystemPromptPath
             )
 
-            setDictationState(.thinking)
             await activityTracker.beginProcessing()
+            setDictationState(.thinking)
             defer
             {
-                Task { await activityTracker.endProcessing() }
+                Task { await activityTracker.endActivity() }
             }
 
             let pipelineStart = Date()
@@ -413,7 +468,7 @@ final class LaunchpadServiceController
                         systemPromptBodyOverride: effectiveSystemPromptBody,
                         configurationOverride: runtimeConfiguration
                     )
-                let task: Task<DictateCallResult, Error> = Task { [apiClient, sttEngine, talonLiteOrchestrator] in
+                let task: Task<DictateCallResult, Error> = Task { [apiClient, sttEngine] in
                     if let reviewHunk
                     {
                         let transcribeStart = Date()
@@ -458,47 +513,22 @@ final class LaunchpadServiceController
                             providerMetadata: refined.providerMetadata
                         )
                     }
-                    switch interactionMode
+                    let request = DictateRequest(
+                        audio_b64: capturedAudio.data.base64EncodedString(),
+                        sample_rate: capturedAudio.sampleRate,
+                        locale: locale,
+                        session_id: sessionID,
+                        optional_context: requestContext
+                    )
+                    if let overrideRefinementEngine
                     {
-                    case .standard:
-                        let request = DictateRequest(
-                            audio_b64: capturedAudio.data.base64EncodedString(),
-                            sample_rate: capturedAudio.sampleRate,
-                            locale: locale,
-                            session_id: sessionID,
-                            optional_context: requestContext
+                        let orchestrator = PipelineOrchestrator(
+                            sttEngine: sttEngine,
+                            refinementEngine: overrideRefinementEngine
                         )
-                        if let overrideRefinementEngine
-                        {
-                            let orchestrator = PipelineOrchestrator(
-                                sttEngine: sttEngine,
-                                refinementEngine: overrideRefinementEngine
-                            )
-                            return try await orchestrator.dictate(request)
-                        }
-                        return try await apiClient.dictate(request)
-                    case .talonLite:
-                        let request = TranscribeRequest(
-                            audio_b64: capturedAudio.data.base64EncodedString(),
-                            sample_rate: capturedAudio.sampleRate,
-                            locale: locale,
-                            session_id: sessionID,
-                            decode_mode: .talonLite
-                        )
-                        let processed = try await talonLiteOrchestrator.process(request)
-                        return DictateCallResult(
-                            response: DictateResponse(
-                                raw_transcript: processed.rawTranscript,
-                                revised_text: processed.outputText,
-                                edit_summary: processed.wasLLMCorrected
-                                    ? "Talon-lite pipeline rendered after LLM correction."
-                                    : "Talon-lite pipeline rendered without LLM correction.",
-                                uncertainty_flags: processed.wasLLMCorrected ? ["talon_lite_llm_corrected"] : []
-                            ),
-                            transcribeMs: processed.transcribeMs,
-                            refineMs: max(0, processed.pipelineMs - processed.transcribeMs)
-                        )
+                        return try await orchestrator.dictate(request)
                     }
+                    return try await apiClient.dictate(request)
                 }
                 activeDictationTask = task
                 let dictatedCall = try await task.value
@@ -661,6 +691,8 @@ final class LaunchpadServiceController
         {
             return
         }
+        await sleepTalon(reason: "launchpad review dictation start")
+        await activityTracker.beginRecording()
         switch await audioRecorder.start()
         {
         case .success:
@@ -673,6 +705,7 @@ final class LaunchpadServiceController
             setDictationState(.recording)
             TraceLogger.log("launchpad review recording started file=\(hunk.file) hash=\(hunk.patchHash)")
         case let .failure(error):
+            await activityTracker.endActivity()
             recordingContext = nil
             activeReviewHunk = nil
             diffReviewStore.setRecordingActive(false)
@@ -807,6 +840,10 @@ final class LaunchpadServiceController
     private func setDictationState(_ newState: DictationState)
     {
         dictationState = newState
+        if newState == .idle
+        {
+            talonControlState.clearBlockedWake()
+        }
         launchpadInvalidationBus?.markDirty(reason: "dictation_state")
     }
 
@@ -816,7 +853,7 @@ final class LaunchpadServiceController
         activeDictationTask = nil
         Task
         {
-            await activityTracker.endProcessing()
+            await activityTracker.endActivity()
         }
     }
 
@@ -842,6 +879,11 @@ final class LaunchpadServiceController
         case .pressedWillLatchOnRelease, .pressedNoLatchOnRelease, .latched:
             return PadColor(r: 255, g: 220, b: 0)
         }
+    }
+
+    private func talonStatusColor() -> PadColor
+    {
+        talonControlState.color
     }
 
     private func makeRefinementEngine(
@@ -963,13 +1005,13 @@ final class LaunchpadServiceController
         let interaction = DictationInteraction(
             whisperOutput: "",
             finalOutput: String(describing: error),
-            mode: mode == .talonLite ? .talonLite : .revision,
+            mode: .revision,
             systemPromptPath: systemPromptPath,
             systemPromptBody: systemPromptBody,
             model: model(forProvider: provider, runtimeConfiguration: runtimeConfiguration),
             provider: provider,
             optionalContext: optionalContext ?? [:],
-            editSummary: mode == .talonLite ? "Talon-lite pipeline failed." : "Dictation pipeline failed.",
+            editSummary: "Dictation pipeline failed.",
             uncertaintyFlags: ["pipeline_error"],
             errorMessage: String(describing: error),
             timings: DictationInteractionTimings(
@@ -992,10 +1034,6 @@ final class LaunchpadServiceController
         optionalContext: [String: String]?
     ) -> DictationInteractionMode
     {
-        if interactionMode == .talonLite
-        {
-            return .talonLite
-        }
         let selectedText = optionalContext?["selected_text"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if !selectedText.isEmpty
         {

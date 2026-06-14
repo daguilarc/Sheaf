@@ -1,29 +1,21 @@
 import Foundation
 
-public enum TranscriptionDecodeMode: String, Codable, Sendable {
-    case standard
-    case talonLite = "talon_lite"
-}
-
 public struct TranscribeRequest: Codable, Sendable {
     public let audio_b64: String
     public let sample_rate: Int
     public let locale: String
     public let session_id: String
-    public let decode_mode: TranscriptionDecodeMode
 
     public init(
         audio_b64: String,
         sample_rate: Int,
         locale: String,
-        session_id: String,
-        decode_mode: TranscriptionDecodeMode = .standard
+        session_id: String
     ) {
         self.audio_b64 = audio_b64
         self.sample_rate = sample_rate
         self.locale = locale
         self.session_id = session_id
-        self.decode_mode = decode_mode
     }
 }
 

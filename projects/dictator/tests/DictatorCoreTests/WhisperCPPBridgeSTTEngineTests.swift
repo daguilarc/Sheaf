@@ -70,51 +70,13 @@ final class WhisperCPPBridgeSTTEngineTests: XCTestCase {
         }
     }
 
-    func testTranscribeForwardsDecodeModeToRuntime() async throws {
-        let runtime = CapturingRuntime()
-        let engine = WhisperCPPBridgeSTTEngine(
-            configuration: .init(modelPath: "model.bin"),
-            runtime: runtime
-        )
-
-        _ = try await engine.transcribe(
-            .init(
-                audio_b64: Data("x".utf8).base64EncodedString(),
-                sample_rate: 16_000,
-                locale: "en-US",
-                session_id: "s",
-                decode_mode: .talonLite
-            )
-        )
-
-        let lastMode = await runtime.lastMode
-        XCTAssertEqual(lastMode, .talonLite)
-    }
-
-    func testNativeRuntimeBuildsTalonLiteDecodingOptions() {
-        let options = WhisperCppNativeRuntime.makeDecodingOptions(for: .talonLite)
-
-        XCTAssertTrue(options.useTalonGuidance)
-        XCTAssertNotNil(options.initialPrompt)
-        XCTAssertNil(options.suppressRegex)
-    }
-
-    func testNativeRuntimeKeepsStandardDecodingOptionsUnchanged() {
-        let options = WhisperCppNativeRuntime.makeDecodingOptions(for: .standard)
-
-        XCTAssertFalse(options.useTalonGuidance)
-        XCTAssertNil(options.initialPrompt)
-        XCTAssertNil(options.suppressRegex)
-    }
-
     func testNativeRuntimeReturnsSTTFailureForInvalidInputFile() async {
         let runtime = WhisperCppNativeRuntime()
         do {
             _ = try await runtime.transcribe(
                 audioFileURL: URL(fileURLWithPath: "/tmp/none.wav"),
                 modelPath: "model.bin",
-                language: "en",
-                decodeMode: .standard
+                language: "en"
             )
             XCTFail("expected failure")
         } catch let error as DictatorError {
@@ -134,23 +96,8 @@ private struct StubRuntime: WhisperRuntime {
     func transcribe(
         audioFileURL: URL,
         modelPath: String,
-        language: String,
-        decodeMode: TranscriptionDecodeMode
+        language: String
     ) async throws -> TranscribeResponse {
         try result.get()
-    }
-}
-
-private actor CapturingRuntime: WhisperRuntime {
-    var lastMode: TranscriptionDecodeMode?
-
-    func transcribe(
-        audioFileURL: URL,
-        modelPath: String,
-        language: String,
-        decodeMode: TranscriptionDecodeMode
-    ) async throws -> TranscribeResponse {
-        lastMode = decodeMode
-        return TranscribeResponse(raw_transcript: "air bat", segments: [], confidence: 1, duration_ms: 100)
     }
 }

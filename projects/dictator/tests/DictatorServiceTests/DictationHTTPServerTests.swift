@@ -9,6 +9,7 @@ final class DictationHTTPServerTests: XCTestCase
     private var server: DictationHTTPServer?
     private var port: Int = 0
     private var fakeClient = FakeDictatorCoreClient()
+    private var fakeTalon = FakeTalonControl()
     private var shutdownCalled = false
     private var successRecords: [DictationHTTPSuccessRecord] = []
     private var failureRecords: [DictationHTTPFailureRecord] = []
@@ -17,6 +18,7 @@ final class DictationHTTPServerTests: XCTestCase
     {
         try await super.setUp()
         fakeClient = FakeDictatorCoreClient()
+        fakeTalon = FakeTalonControl()
     }
 
     override func tearDown() async throws
@@ -87,6 +89,32 @@ final class DictationHTTPServerTests: XCTestCase
         }
         XCTAssertTrue(didRecord)
         XCTAssertEqual(successRecords.first?.sessionID, "session-1")
+    }
+
+    func testDictateAudioForcesTalonSleepBeforePipeline() async throws
+    {
+        await fakeClient.setDictateResult(
+            .success(
+                DictateCallResult(
+                    response: DictateResponse(
+                        raw_transcript: "hello",
+                        revised_text: "Hello.",
+                        edit_summary: "capitalized",
+                        uncertainty_flags: []
+                    ),
+                    transcribeMs: 10,
+                    refineMs: 20
+                )
+            )
+        )
+        try await startServer()
+
+        let wav = WAVFixture.makeMonoPCM16(sampleRate: 16000)
+        let (status, _) = try await dictateRequest(wav: wav)
+
+        let sleepCount = await fakeTalon.sleepCount()
+        XCTAssertEqual(status, 200)
+        XCTAssertEqual(sleepCount, 1)
     }
 
     func testUnsupportedContentTypeRejected() async throws
@@ -293,7 +321,8 @@ final class DictationHTTPServerTests: XCTestCase
             ? { record in
                 self.failureRecords.append(record)
             }
-            : nil
+            : nil,
+            talonControl: fakeTalon
         )
         try await server.start()
         if let bound = server.boundPort
@@ -419,6 +448,37 @@ final class DictationHTTPServerTests: XCTestCase
             try? await Task.sleep(nanoseconds: 20_000_000)
         }
         return condition()
+    }
+}
+
+private actor FakeTalonControl: TalonControlProviding
+{
+    private var sleeps = 0
+    private var wakes = 0
+    private var current = TalonControlStatus(state: .asleep, speechEnabled: false, modes: ["sleep"])
+
+    func status() async -> TalonControlStatus
+    {
+        current
+    }
+
+    @discardableResult func sleep() async -> TalonControlStatus
+    {
+        sleeps += 1
+        current = TalonControlStatus(state: .asleep, speechEnabled: false, modes: ["sleep"])
+        return current
+    }
+
+    @discardableResult func wake() async -> TalonControlStatus
+    {
+        wakes += 1
+        current = TalonControlStatus(state: .awake, speechEnabled: true, modes: ["command"])
+        return current
+    }
+
+    func sleepCount() -> Int
+    {
+        sleeps
     }
 }
 

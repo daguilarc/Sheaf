@@ -29,6 +29,9 @@ checkout. Repo-wide lane rules: [Testing](../../../structure/testing.md),
   warnings.
 - Runtime use of the Launchpad surface additionally needs macOS microphone
   and Accessibility permissions and a Launchpad Pro Mk3.
+- Optional full-Talon Launchpad control needs Talon installed. Dictator talks
+  to Talon through the Sheaf-owned bridge installed below; normal dictation
+  still works when Talon or the bridge is unavailable.
 
 ## Build
 
@@ -79,6 +82,38 @@ curl -X POST http://127.0.0.1:9003/exit     # clean shutdown (or SIGINT)
 
 Web UI: `http://127.0.0.1:9003/`. Trace log: `logs/dictator/trace.log`
 (also mirrored to stderr). Runtime data: `data/dictator/interactions/`.
+
+## Talon Bridge
+
+The Launchpad Talon pad controls the full Talon app through a Talon user
+script kept in this repository at `src/talon/sheaf_control`. Install it as a
+symlink into Talon's user directory:
+
+```bash
+make dictator-install-talon-bridge
+```
+
+The project-local form is equivalent:
+
+```bash
+make -C projects/dictator install-talon-bridge
+```
+
+The target creates `~/.talon/user/sheaf_control -> <repo>/projects/dictator/src/talon/sheaf_control`.
+It is idempotent for the correct symlink and refuses to replace an existing
+different symlink or directory. After installing, reload Talon scripts or
+restart Talon so the bridge starts.
+
+Manual bridge probes:
+
+```bash
+curl http://127.0.0.1:28579/status
+curl -X POST http://127.0.0.1:28579/sleep
+curl -X POST http://127.0.0.1:28579/wake
+```
+
+Dictator sends `POST /sleep` before every non-Talon dictation start. A bridge
+failure is logged and does not block normal Dictator dictation.
 
 ## Hunk Review Controls
 

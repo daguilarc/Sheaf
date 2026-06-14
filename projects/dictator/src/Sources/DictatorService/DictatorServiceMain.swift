@@ -197,6 +197,7 @@ struct DictatorServiceMain
         )
 
         let activityTracker = DictationActivityTracker()
+        let talonControlClient = TalonControlClient()
         let hunkReviewRegistry = HunkReviewRegistry()
         let diffReviewStore = DiffReviewStore()
         let endpointDescription = "http://127.0.0.1:\(endpoint.port)"
@@ -224,6 +225,7 @@ struct DictatorServiceMain
             coreClient: coreClient,
             interactionStore: interactionStore,
             activityTracker: activityTracker,
+            talonControl: talonControlClient,
             hunkReviewRegistry: hunkReviewRegistry,
             diffReviewStore: diffReviewStore
         )
@@ -240,7 +242,8 @@ struct DictatorServiceMain
             onSuccessRecord: onSuccessRecord,
             onFailureRecord: onFailureRecord,
             webAPIService: webAPIService,
-            activityTracker: activityTracker
+            activityTracker: activityTracker,
+            talonControl: talonControlClient
         )
         shutdown.SetServer(server)
 

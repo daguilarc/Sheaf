@@ -15,11 +15,12 @@ projects/dictator/
   Package.swift               # SwiftPM: DictatorCore (lib), DictatorService (exe), CWhisper (system lib)
   Makefile                    # build/test/run lanes (see operations.md)
   src/
-    Sources/DictatorCore/     # pipeline, runtime config, STT, refinement, Talon Lite
-    Sources/DictatorService/  # HTTP server, web APIs, Launchpad, interaction history
+    Sources/DictatorCore/     # pipeline, runtime config, STT, refinement
+    Sources/DictatorService/  # HTTP server, web APIs, Launchpad, Talon control client, interaction history
     Sources/CWhisper/         # whisper.cpp module map + shim header
     web/                      # static dashboard (index.html, app.js, styles.css)
     launchpad/                # product Launchpad layout JSON
+    talon/sheaf_control/      # Talon user script bridge, symlinked into ~/.talon/user
     prompts/system-prompts/   # refinement prompt catalog
     contracts/                # dictation_v1.yaml (informative API sketch)
     ios-keyboard/             # quarantined Xcode project: host app + keyboard extension + shared code
@@ -54,6 +55,11 @@ Two design choices shape most of the code:
   catalogs are rebuilt from the current `RuntimeConfigProvider` snapshot on
   every dictation, so web-UI patches (provider, models, prompts) take effect
   on the next request without restart.
+- **Talon control is a local bridge.** Dictator does not drive Talon's private
+  REPL protocol. A Sheaf-owned Talon user script exposes local-only
+  wake/sleep/status operations on `127.0.0.1:28579`, and Dictator's
+  `TalonControlClient` treats bridge failures as `unavailable` rather than a
+  service-startup failure.
 
 ## Dictation data flow
 
@@ -69,6 +75,11 @@ WAV (HTTP client / Launchpad mic / retained iOS host app)
   → InteractionHistoryStore.append → in-memory ring + hourly JSONL under data/dictator/interactions/
   → (Launchpad only) ClipboardInserter pastes revised text into the active app
 ```
+
+Before any HTTP or Launchpad dictation path starts recording or processing
+non-Talon audio, Dictator sends a best-effort Talon sleep command through the
+bridge. The Launchpad Talon pad refuses to wake Talon while this tracker says
+Dictator is recording or processing.
 
 The web UI reads the same store back through `/api/interactions`, and
 `/api/status` merges service health, config, key status, STT-model presence,

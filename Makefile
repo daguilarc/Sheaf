@@ -7,7 +7,7 @@ PROJECTS := conductor web quest-runner dictator realtime-agent sheaf-chat agents
 .PHONY: conductor-build conductor-test conductor-run conductor-clean
 .PHONY: web-build web-test web-clean
 .PHONY: quest-runner-build quest-runner-test quest-runner-run quest-runner-clean
-.PHONY: dictator-build dictator-test dictator-run dictator-clean
+.PHONY: dictator-build dictator-test dictator-run dictator-clean dictator-install-talon-bridge
 .PHONY: realtime-agent-build realtime-agent-test realtime-agent-clean realtime-agent-run-cli
 .PHONY: sheaf-chat-build sheaf-chat-test sheaf-chat-run sheaf-chat-clean
 .PHONY: agents-build agents-test agents-install agents-check agents-clean
@@ -75,6 +75,9 @@ dictator-test:
 
 dictator-run:
 	$(MAKE) -C projects/dictator run
+
+dictator-install-talon-bridge:
+	$(MAKE) -C projects/dictator install-talon-bridge
 
 dictator-clean:
 	$(MAKE) -C projects/dictator clean

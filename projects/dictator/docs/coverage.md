@@ -7,7 +7,7 @@ Last audit: living-spec migration (one-time rewrite from code), 2026-06-10
 | dictation-pipeline | partial | `X-Style-Prefs-Json` dead end, whisper talon decode options, segments/confidence internal shape |
 | service-lifecycle | partial | in-flight requests at shutdown, log rotation, server concurrency limits |
 | web-ui | partial | dashboard rendering detail, stale config-manager snapshots, 500-path messages |
-| launchpad | partial | MIDI wire protocol, render-worker timing, Talon Lite grammar not enumerated |
+| launchpad | partial | MIDI wire protocol, render-worker timing, Talon bridge lifecycle details |
 | ios-keyboard | quarantined | retained for possible revival; host/extension UI flows, recording format on device, Xcode signing setup |
 
 ## Known gaps
@@ -15,9 +15,6 @@ Last audit: living-spec migration (one-time rewrite from code), 2026-06-10
 ### dictation-pipeline
 - `X-Style-Prefs-Json` is validated and forwarded as `style_prefs`, but no
   engine or prompt builder consumes it (dp-8 documents acceptance only).
-- Talon-lite whisper decoding options (initial prompt, suppress regex,
-  guidance) in `WhisperCPPBridgeSTTEngine` are unspecified; only the
-  observable Talon Lite outputs are pinned in [launchpad](../../../openspec/specs/dictator-launchpad/spec.md).
 - `TranscribeResponse.segments`/`confidence`/`duration_ms` exist internally
   but are not exposed over HTTP; their computation is Design-level only.
 - Validation order among the 400/422 checks is not pinned beyond what tests
@@ -54,9 +51,10 @@ Last audit: living-spec migration (one-time rewrite from code), 2026-06-10
   in `LaunchpadMIDIManager` and pinned by `LaunchpadTests` but not specified
   here.
 - Render-worker cadence and diffing are Design-level only.
-- The Talon Lite grammar (commands, captures, rendering rules) and the LLM
-  correction prompt are not enumerated; covered only by
-  `TalonLite*Tests`.
+- The Talon bridge install/reload lifecycle is documented operationally, but
+  script reload timing and Talon app lifecycle behavior are not fully specified.
+- The legacy Talon Lite grammar remains covered only by `TalonLite*Tests` and
+  is no longer reachable from the product Launchpad layout.
 - Multi-page layouts are supported by the page controller but the product
   layout has one page; page-switching behavior is unspecified.
 

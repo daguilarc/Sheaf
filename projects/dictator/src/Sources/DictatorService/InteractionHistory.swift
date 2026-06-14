@@ -5,7 +5,6 @@ enum DictationInteractionMode: String, Sendable, Equatable {
     case rawDictation = "raw_dictation"
     case revision
     case textReplacement = "text_replacement"
-    case talonLite = "talon_lite"
 }
 
 struct DictationInteractionTimings: Sendable, Equatable {

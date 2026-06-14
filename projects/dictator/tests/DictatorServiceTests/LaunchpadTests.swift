@@ -181,7 +181,7 @@ final class LaunchpadTests: XCTestCase {
         XCTAssertNoThrow(try LaunchpadLayoutLoader.decode(json))
     }
 
-    func testLayoutDecodeAcceptsTalonLiteDictationAction() throws {
+    func testLayoutDecodeAcceptsTalonControlAction() throws {
         let json = """
         {
           "pages": [
@@ -191,8 +191,9 @@ final class LaunchpadTests: XCTestCase {
                 {
                   "x": 1,
                   "y": 7,
+                  "role": "talon_status",
                   "color": { "r": 255, "g": 170, "b": 0 },
-                  "action": { "type": "talon_lite_dictation", "command": "toggle" }
+                  "action": { "type": "talon_control", "command": "toggle" }
                 }
               ]
             }
@@ -366,7 +367,7 @@ final class LaunchpadTests: XCTestCase {
         let actionTypes = arrowsPage.pads.map(\.action.type)
         XCTAssertTrue(actionTypes.contains(.dictation))
         XCTAssertTrue(actionTypes.contains(.auxiliaryDictation))
-        XCTAssertTrue(actionTypes.contains(.talonLiteDictation))
+        XCTAssertTrue(actionTypes.contains(.talonControl))
         XCTAssertTrue(actionTypes.contains(.keystroke))
         XCTAssertTrue(actionTypes.contains(.contextualBackspace))
         XCTAssertTrue(actionTypes.contains(.loadSafeRuntimeConfig))
@@ -427,7 +428,7 @@ final class LaunchpadTests: XCTestCase {
             onKeystroke: nil,
             onDictationCommand: nil,
             onAuxiliaryDictationCommand: nil,
-            onTalonLiteDictationCommand: nil,
+            onTalonControlCommand: nil,
             onContextualBackspace: nil,
             onNextWindowSwitchPress: nil,
             onNextWindowSwitchRelease: nil,
@@ -437,6 +438,7 @@ final class LaunchpadTests: XCTestCase {
                 toggleCount += 1
             },
             recordStatusColorProvider: { .off },
+            talonStatusColorProvider: { .off },
             shiftLatchColorProvider: { .off },
             onModifierPress: nil,
             onModifierRelease: nil
@@ -449,7 +451,7 @@ final class LaunchpadTests: XCTestCase {
         XCTAssertEqual(toggleCount, 1)
     }
 
-    func testPageFactoryDispatchesTalonLiteDictationAction() throws {
+    func testPageFactoryDispatchesTalonControlAction() throws {
         let bus = RenderInvalidationBus()
         let json = """
         {
@@ -461,8 +463,9 @@ final class LaunchpadTests: XCTestCase {
                 {
                   "x": 1,
                   "y": 7,
+                  "role": "talon_status",
                   "color": { "r": 255, "g": 170, "b": 0 },
-                  "action": { "type": "talon_lite_dictation", "command": "toggle" }
+                  "action": { "type": "talon_control", "command": "toggle" }
                 }
               ]
             }
@@ -477,7 +480,7 @@ final class LaunchpadTests: XCTestCase {
             onKeystroke: nil,
             onDictationCommand: nil,
             onAuxiliaryDictationCommand: nil,
-            onTalonLiteDictationCommand: { commands.append($0) },
+            onTalonControlCommand: { commands.append($0) },
             onContextualBackspace: nil,
             onNextWindowSwitchPress: nil,
             onNextWindowSwitchRelease: nil,
@@ -485,6 +488,7 @@ final class LaunchpadTests: XCTestCase {
             onLoadSafeRuntimeConfig: nil,
             onToggleFullscreenOverlay: nil,
             recordStatusColorProvider: { .off },
+            talonStatusColorProvider: { PadColor(r: 0, g: 255, b: 0) },
             shiftLatchColorProvider: { .off },
             onModifierPress: nil,
             onModifierRelease: nil
@@ -495,6 +499,7 @@ final class LaunchpadTests: XCTestCase {
 
         pageController.handle(PadEvent(coordinate: PadCoordinate(x: 1, y: 7), phase: .press, velocity: 100))
         XCTAssertEqual(commands, [.toggle])
+        XCTAssertEqual(pageController.getColor(at: PadCoordinate(x: 1, y: 7)), PadColor(r: 0, g: 255, b: 0))
     }
 
     func testPageFactoryDispatchesAuxiliaryDictationAction() throws {
@@ -525,7 +530,7 @@ final class LaunchpadTests: XCTestCase {
             onKeystroke: nil,
             onDictationCommand: nil,
             onAuxiliaryDictationCommand: { dispatched.append(($0, $1)) },
-            onTalonLiteDictationCommand: nil,
+            onTalonControlCommand: nil,
             onContextualBackspace: nil,
             onNextWindowSwitchPress: nil,
             onNextWindowSwitchRelease: nil,
@@ -533,6 +538,7 @@ final class LaunchpadTests: XCTestCase {
             onLoadSafeRuntimeConfig: nil,
             onToggleFullscreenOverlay: nil,
             recordStatusColorProvider: { .off },
+            talonStatusColorProvider: { .off },
             shiftLatchColorProvider: { .off },
             onModifierPress: nil,
             onModifierRelease: nil
@@ -576,7 +582,7 @@ final class LaunchpadTests: XCTestCase {
             onKeystroke: nil,
             onDictationCommand: nil,
             onAuxiliaryDictationCommand: nil,
-            onTalonLiteDictationCommand: nil,
+            onTalonControlCommand: nil,
             onContextualBackspace: nil,
             onNextWindowSwitchPress: {
                 switchPressCount += 1
@@ -588,6 +594,7 @@ final class LaunchpadTests: XCTestCase {
             onLoadSafeRuntimeConfig: nil,
             onToggleFullscreenOverlay: nil,
             recordStatusColorProvider: { .off },
+            talonStatusColorProvider: { .off },
             shiftLatchColorProvider: { .off },
             onModifierPress: nil,
             onModifierRelease: nil

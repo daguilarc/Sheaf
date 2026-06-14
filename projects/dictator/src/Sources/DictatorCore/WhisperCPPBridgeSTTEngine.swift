@@ -4,8 +4,7 @@ public protocol WhisperRuntime: Sendable {
     func transcribe(
         audioFileURL: URL,
         modelPath: String,
-        language: String,
-        decodeMode: TranscriptionDecodeMode
+        language: String
     ) async throws -> TranscribeResponse
 }
 
@@ -48,8 +47,7 @@ public struct WhisperCPPBridgeSTTEngine: STTEngine {
             return try await runtime.transcribe(
                 audioFileURL: audioURL,
                 modelPath: configuration.modelPath,
-                language: configuration.language,
-                decodeMode: request.decode_mode
+                language: configuration.language
             )
         } catch let error as DictatorError {
             throw error
@@ -87,16 +85,14 @@ public struct WhisperCppNativeRuntime: WhisperRuntime {
     public func transcribe(
         audioFileURL: URL,
         modelPath: String,
-        language: String,
-        decodeMode: TranscriptionDecodeMode
+        language: String
     ) async throws -> TranscribeResponse {
         #if canImport(CWhisper) && canImport(AVFoundation)
         do {
             return try runNativeTranscription(
                 audioFileURL: audioFileURL,
                 modelPath: modelPath,
-                language: language,
-                decodeMode: decodeMode
+                language: language
             )
         } catch let error as DictatorError {
             throw error
@@ -107,41 +103,6 @@ public struct WhisperCppNativeRuntime: WhisperRuntime {
         throw DictatorError.sttFailed("native whisper runtime is not linked in this build")
         #endif
     }
-
-    static func makeDecodingOptions(for decodeMode: TranscriptionDecodeMode) -> WhisperDecodingOptions {
-        switch decodeMode {
-        case .standard:
-            return WhisperDecodingOptions(
-                initialPrompt: nil,
-                suppressRegex: nil,
-                useTalonGuidance: false
-            )
-        case .talonLite:
-            return WhisperDecodingOptions(
-                initialPrompt: TalonLiteWhisperGuidance.initialPrompt,
-                suppressRegex: nil,
-                useTalonGuidance: true
-            )
-        }
-    }
-}
-
-struct WhisperDecodingOptions: Equatable {
-    let initialPrompt: String?
-    let suppressRegex: String?
-    let useTalonGuidance: Bool
-}
-
-private enum TalonLiteWhisperGuidance {
-    private static let closedClassWords: [String] = {
-        let operatorWords = TalonLiteGrammarParser.allOperatorTokens.flatMap { $0 }
-        let characterWords = Array(TalonLiteGrammarParser.characterTokens)
-        return Array(Set(operatorWords + characterWords + [TalonLiteGrammarParser.bangLiteral])).sorted()
-    }()
-
-    static let initialPrompt: String = closedClassWords.joined(separator: " ")
-
-    static let boostedWords: Set<String> = Set(closedClassWords)
 }
 
 #if canImport(CWhisper) && canImport(AVFoundation)
@@ -151,8 +112,7 @@ import CWhisper
 private func runNativeTranscription(
     audioFileURL: URL,
     modelPath: String,
-    language: String,
-    decodeMode: TranscriptionDecodeMode
+    language: String
 ) throws -> TranscribeResponse {
     let samples = try readMonoFloatSamples(at: audioFileURL, targetSampleRate: 16_000)
     guard !samples.isEmpty else {
@@ -173,33 +133,6 @@ private func runNativeTranscription(
     params.no_timestamps = false
     params.suppress_blank = true
     params.suppress_nst = true
-
-    let decodingOptions = WhisperCppNativeRuntime.makeDecodingOptions(for: decodeMode)
-    let guidanceState = decodingOptions.useTalonGuidance ? TalonLiteWhisperLogitsFilterState(context: ctx) : nil
-    if let initialPrompt = decodingOptions.initialPrompt {
-        let duplicated = strdup(initialPrompt)
-        params.initial_prompt = duplicated.map { UnsafePointer($0) }
-        params.carry_initial_prompt = true
-    }
-    if let suppressRegex = decodingOptions.suppressRegex {
-        let duplicated = strdup(suppressRegex)
-        params.suppress_regex = duplicated.map { UnsafePointer($0) }
-    }
-    if let guidanceState {
-        params.logits_filter_callback = talonLiteLogitsFilterCallback
-        params.logits_filter_callback_user_data = Unmanaged.passRetained(guidanceState).toOpaque()
-    }
-    defer {
-        if let prompt = params.initial_prompt {
-            free(UnsafeMutableRawPointer(mutating: prompt))
-        }
-        if let suppressRegex = params.suppress_regex {
-            free(UnsafeMutableRawPointer(mutating: suppressRegex))
-        }
-        if let userData = params.logits_filter_callback_user_data {
-            Unmanaged<TalonLiteWhisperLogitsFilterState>.fromOpaque(userData).release()
-        }
-    }
 
     _ = modelPath
     let runResult: Int32 = language.withCString { langPtr in
@@ -253,65 +186,6 @@ private func runNativeTranscription(
         confidence: confidence,
         duration_ms: durationMs
     )
-}
-
-private final class TalonLiteWhisperLogitsFilterState {
-    private let tokenAdjustments: [Float]
-
-    init(context: OpaquePointer) {
-        let vocabCount = Int(whisper_n_vocab(context))
-        var adjustments = Array(repeating: Float(0), count: vocabCount)
-
-        for tokenID in 0 ..< vocabCount {
-            guard let rawPtr = whisper_token_to_str(context, whisper_token(tokenID)) else {
-                continue
-            }
-
-            let raw = String(cString: rawPtr)
-            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty else {
-                continue
-            }
-
-            if TalonLiteWhisperGuidance.boostedWords.contains(trimmed) {
-                adjustments[tokenID] += 3.5
-            }
-
-            let lettersOnly = trimmed.unicodeScalars.allSatisfy { CharacterSet.letters.contains($0) || CharacterSet.whitespaces.contains($0) || $0 == "'" }
-            if lettersOnly {
-                adjustments[tokenID] += 0.25
-            } else {
-                adjustments[tokenID] -= 2.5
-            }
-
-            if trimmed.rangeOfCharacter(from: .decimalDigits) != nil {
-                adjustments[tokenID] -= 1.5
-            }
-        }
-
-        tokenAdjustments = adjustments
-    }
-
-    func apply(to logits: UnsafeMutablePointer<Float>?) {
-        guard let logits else {
-            return
-        }
-
-        for (index, adjustment) in tokenAdjustments.enumerated() where adjustment != 0 {
-            logits[index] += adjustment
-        }
-    }
-}
-
-private let talonLiteLogitsFilterCallback: whisper_logits_filter_callback = { _, _, _, _, logits, userData in
-    guard let userData else {
-        return
-    }
-
-    Unmanaged<TalonLiteWhisperLogitsFilterState>
-        .fromOpaque(userData)
-        .takeUnretainedValue()
-        .apply(to: logits)
 }
 
 private func readMonoFloatSamples(at url: URL, targetSampleRate: Double) throws -> [Float] {

@@ -27,7 +27,7 @@ and known gaps are tracked in [coverage.md](coverage.md).
 | [build-workflow](../../../openspec/specs/dictator-build-workflow/spec.md) | `dbw` | Default Swift package build/test lanes, root Makefile forwarding, and opt-in quarantined iOS validation lanes |
 | [service-lifecycle](../../../openspec/specs/dictator-service-lifecycle/spec.md) | `svc` | Startup (root discovery, registry, config/secrets, health warnings), CLI overrides, `/health`, `/exit`, SIGINT shutdown, 404/405 fallbacks, trace log |
 | [web-ui](../../../openspec/specs/dictator-web-ui/spec.md) | `web` | Static dashboard shell and all `/api/*` endpoints: status, config edit/options/reset, prompts, interaction history, models, key status |
-| [launchpad](../../../openspec/specs/dictator-launchpad/spec.md) | `lp` | Launchpad Pro layout JSON, dictation pads and states, Talon Lite mode, keystroke injection, shift latch, contextual backspace, safe-config restore, paste insertion |
+| [launchpad](../../../openspec/specs/dictator-launchpad/spec.md) | `lp` | Launchpad Pro layout JSON, dictation pads and states, full Talon wake/sleep control, keystroke injection, shift latch, contextual backspace, safe-config restore, paste insertion |
 | [ios-keyboard](../../../openspec/specs/dictator-ios-keyboard/spec.md) | `ios` | Retained/quarantined iOS host app + keyboard extension: server URL resolution, upload contract usage, app-group session state machine, Darwin notifications, diagnostics |
 
 ## Shared Contracts

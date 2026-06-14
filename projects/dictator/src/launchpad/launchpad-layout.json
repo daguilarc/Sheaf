@@ -26,8 +26,9 @@
         {
           "x": 1,
           "y": 7,
+          "role": "talon_status",
           "color": { "r": 255, "g": 170, "b": 0 },
-          "action": { "type": "talon_lite_dictation", "command": "toggle" }
+          "action": { "type": "talon_control", "command": "toggle" }
         },
         {
           "x": -1,

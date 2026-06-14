@@ -37,6 +37,27 @@ final class MakefileWorkflowTests: XCTestCase
 
         XCTAssertEqual(targetRecipe("dictator-build", in: makefile), ["$(MAKE) -C projects/dictator build"])
         XCTAssertEqual(targetRecipe("dictator-test", in: makefile), ["$(MAKE) -C projects/dictator test"])
+        XCTAssertEqual(
+            targetRecipe("dictator-install-talon-bridge", in: makefile),
+            ["$(MAKE) -C projects/dictator install-talon-bridge"]
+        )
+    }
+
+    func testTalonBridgeInstallTargetCreatesRepoSymlinkAndRefusesReplacement() throws
+    {
+        let repoRoot = try SheafRootDiscovery.requireRepoRoot()
+        let makefile = try loadMakefile(
+            repoRoot.appendingPathComponent("projects/dictator/Makefile")
+        )
+
+        XCTAssertTrue(makefile.contains("TALON_HOME ?= $(HOME)/.talon"))
+        XCTAssertTrue(makefile.contains("TALON_BRIDGE_SOURCE := $(abspath src/talon/sheaf_control)"))
+        XCTAssertTrue(makefile.contains("TALON_BRIDGE_TARGET := $(TALON_HOME)/user/sheaf_control"))
+        XCTAssertTrue(makefile.contains("install-talon-bridge:"))
+        XCTAssertTrue(makefile.contains("mkdir -p \"$(TALON_HOME)/user\""))
+        XCTAssertTrue(makefile.contains("ln -s \"$(TALON_BRIDGE_SOURCE)\" \"$(TALON_BRIDGE_TARGET)\""))
+        XCTAssertTrue(makefile.contains("Refusing to replace existing symlink"))
+        XCTAssertTrue(makefile.contains("Refusing to replace existing path"))
     }
 
     private func loadMakefile(_ url: URL) throws -> String
