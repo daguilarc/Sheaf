@@ -7,9 +7,12 @@ import { promisify } from "node:util";
 
 import { WebSocket, WebSocketServer } from "ws";
 
+import { SetAgentReviewGitHookForTests } from "../../../src/server/agentReview/git.js";
+import { WithFakeRepoAsync } from "../../agents/modelRegistry/helpers.js";
 import {
   CreateWorkspaceChatViaApi,
   RequestJson,
+  StartTestServer,
   type TestServerHandle,
   WithTestServer,
 } from "./helpers.js";
@@ -1029,4 +1032,93 @@ test("Agent Review Launchpad stays active while any client is focused", async ()
   {
     await fakeDictator.close();
   }
+});
+
+test("Agent Review teardown waits for in-flight git work before completing", async () =>
+{
+  const rejections: unknown[] = [];
+  const onUnhandled = (reason: unknown): void =>
+  {
+    rejections.push(reason);
+  };
+  process.on("unhandledRejection", onUnhandled);
+
+  const fakeDictator = new FakeDictatorRPCServer();
+  const dictatorPort = await fakeDictator.start();
+  let releaseGit: (() => void) | null = null;
+  try
+  {
+    await WithFakeRepoAsync(async (repoRoot) =>
+    {
+      const handle = await StartTestServer(repoRoot);
+      try
+      {
+        await writeFile(
+          handle.config.paths.servicesJsonFile,
+          JSON.stringify([{ name: "dictator", host: "127.0.0.1", port: dictatorPort }]),
+          "utf8",
+        );
+
+        const { repoId, workspaceId } = await CreateMultiHunkReviewSession(handle);
+        const socket = new WebSocket(WsUrl(handle.baseUrl, repoId, workspaceId));
+        await new Promise<void>((resolve, reject) =>
+        {
+          socket.once("open", () => resolve());
+          socket.once("error", reject);
+        });
+        await WaitForFrame(socket, "bootstrap");
+        await fakeDictator.waitForRequest("launchpad.setCells");
+
+        // Arm a one-shot git gate: the next git invocation (the press's refresh)
+        // blocks until we release it, holding command work deterministically in
+        // flight.
+        let signalGitStarted: () => void = () => {};
+        const gitStarted = new Promise<void>((resolve) => { signalGitStarted = resolve; });
+        const gate = new Promise<void>((resolve) => { releaseGit = resolve; });
+        let armed = true;
+        SetAgentReviewGitHookForTests(async () =>
+        {
+          if (!armed)
+          {
+            return;
+          }
+          armed = false;
+          signalGitStarted();
+          await gate;
+        });
+
+        fakeDictator.sendPress(1, 3); // next-hunk -> ExecuteCommand -> git
+        await gitStarted;             // git is now in flight, blocked on the gate
+
+        // Tear down while git is in flight. A correct lifecycle drains in-flight
+        // work, so close must NOT resolve until the gate is released.
+        const close = handle.close();
+        const winner = await Promise.race([
+          close.then(() => "closed"),
+          new Promise<string>((resolve) => setTimeout(() => resolve("pending"), 200)),
+        ]);
+        assert.equal(winner, "pending", "teardown resolved before in-flight git settled");
+
+        releaseGit?.();               // let git finish against the still-present repo
+        releaseGit = null;
+        await close;                  // teardown now completes cleanly
+      }
+      finally
+      {
+        SetAgentReviewGitHookForTests(null);
+        releaseGit?.();               // never leave git blocked on a failure path
+      }
+    });
+
+    // The repository is removed only after teardown completed (callback return).
+    // Give any incorrectly-detached async work a chance to surface.
+    await new Promise<void>((resolve) => setTimeout(resolve, 50));
+  }
+  finally
+  {
+    await fakeDictator.close();
+    process.off("unhandledRejection", onUnhandled);
+  }
+
+  assert.deepEqual(rejections, []);
 });

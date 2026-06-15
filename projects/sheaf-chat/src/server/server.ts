@@ -236,24 +236,28 @@ export function CreateSheafChatServer(options: SheafChatServerOptions): SheafCha
       {
         broadcasterRegistry.Dispose();
         persistenceHubRegistry.Dispose();
-        agentReviewService.Dispose();
 
-        chatWebSocketServer.close(() =>
+        // Drain Agent Review sessions (in-flight git/RPC work) before tearing
+        // down the WebSocket and HTTP servers, so no async work outlives close.
+        void agentReviewService.Dispose().then(() =>
         {
-          agentReviewWebSocketServer.close(() =>
+          chatWebSocketServer.close(() =>
           {
-            httpServer.close((error) =>
+            agentReviewWebSocketServer.close(() =>
             {
-              if (error)
+              httpServer.close((error) =>
               {
-                reject(error);
-                return;
-              }
+                if (error)
+                {
+                  reject(error);
+                  return;
+                }
 
-              resolve();
+                resolve();
+              });
             });
           });
-        });
+        }).catch(reject);
       }),
   };
 }

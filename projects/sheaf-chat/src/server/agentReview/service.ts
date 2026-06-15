@@ -111,6 +111,13 @@ const NAV_CELLS: readonly NavCell[] = [
   { x: 2, y: 3, action: "nextFile", availability: "canGoNextFile", color: { r: 255, g: 255, b: 0 } },
 ];
 
+function ReportBackgroundError(context: string, error: unknown): void
+{
+  // Background work failures must be observed, not silently swallowed. They are
+  // not re-thrown because the work is dispatched outside any request lifecycle.
+  console.error(`[agent-review] ${context}:`, error);
+}
+
 function SendFrame(socket: WebSocket, frame: AgentReviewServerFrame): void
 {
   if (socket.readyState === WebSocket.OPEN)
@@ -604,6 +611,8 @@ class AgentReviewSession
   private m_visibleCommentHunkId: string | null = null;
   private m_pushedContextHunkId: string | null = null;
   private m_refreshInFlight: Promise<void> | null = null;
+  private m_closing = false;
+  private readonly m_backgroundWork = new Set<Promise<unknown>>();
 
   constructor(
     key: WorkspaceReviewKey,
@@ -620,26 +629,62 @@ class AgentReviewSession
       : new DictatorRPCClient(
         dictatorEndpoint,
         this.m_providerId,
-        (x, y) => { void this.HandleCellPressed(x, y).catch(() => {}); },
-        () => {
-          void this.RefreshAndBroadcast().catch(() =>
-          {
-          });
-        },
+        (x, y) => { this.RunBackground("cell press", () => this.HandleCellPressed(x, y)); },
+        () => { this.RunBackground("status refresh", () => this.RefreshAndBroadcast()); },
       );
   }
 
-  Dispose(): void
+  // Dispatch fire-and-forget work so teardown can drain it and so a failure
+  // surfaces as a logged error rather than an unhandled rejection. New work is
+  // refused once teardown has begun.
+  private RunBackground(context: string, run: () => Promise<void>): void
   {
-    this.PopActiveContext();
+    if (this.m_closing)
+    {
+      return;
+    }
+    const operation = run().catch((error: unknown) =>
+    {
+      ReportBackgroundError(context, error);
+    });
+    this.m_backgroundWork.add(operation);
+    void operation.finally(() =>
+    {
+      this.m_backgroundWork.delete(operation);
+    });
+  }
+
+  // Wait for all in-flight background and refresh work to settle. New work is
+  // suppressed once m_closing is set, so this loop terminates.
+  private async DrainInFlight(): Promise<void>
+  {
+    while (this.m_backgroundWork.size > 0 || this.m_refreshInFlight !== null)
+    {
+      const pending: Array<Promise<unknown>> = [...this.m_backgroundWork];
+      if (this.m_refreshInFlight !== null)
+      {
+        pending.push(this.m_refreshInFlight);
+      }
+      await Promise.allSettled(pending);
+    }
+  }
+
+  async Dispose(): Promise<void>
+  {
+    this.m_closing = true;
+    // Dictator releases this client's pushed context and owned cells on
+    // disconnect, so teardown only clears local state and never issues a new
+    // RPC pop that could outlive the connection.
+    this.m_pushedContextHunkId = null;
 
     for (const socket of this.m_sockets)
     {
       socket.close();
     }
-
     this.m_sockets.clear();
     this.m_focusedSockets.clear();
+
+    await this.DrainInFlight();
     this.m_dictatorRPC?.disconnect();
   }
 
@@ -659,7 +704,7 @@ class AgentReviewSession
     this.m_focusedSockets.add(socket);
     socket.on("message", (data) =>
     {
-      void this.HandleMessage(socket, data).catch(() => {});
+      this.RunBackground("client message", () => this.HandleMessage(socket, data));
     });
     socket.on("close", () =>
     {
@@ -667,6 +712,8 @@ class AgentReviewSession
       this.m_focusedSockets.delete(socket);
       if (this.m_sockets.size === 0)
       {
+        // Last client gone: clear local state and disconnect. Disconnect makes
+        // Dictator release pushed context, so we do not issue an RPC pop here.
         this.PopActiveContext();
         this.m_currentIndex = -1;
         this.m_visibleCommentHunkId = null;
@@ -684,6 +731,13 @@ class AgentReviewSession
 
   async RefreshAndBroadcast(): Promise<void>
   {
+    // No git/broadcast work once teardown has begun or when no client is
+    // attached — there is nothing to broadcast to and it must not race teardown.
+    if (this.m_closing || this.m_sockets.size === 0)
+    {
+      return;
+    }
+
     if (this.m_refreshInFlight !== null)
     {
       await this.m_refreshInFlight;
@@ -715,9 +769,7 @@ class AgentReviewSession
       return;
     }
 
-    void this.RefreshAndBroadcast().catch(() =>
-    {
-    });
+    this.RunBackground("file-change refresh", () => this.RefreshAndBroadcast());
   }
 
   private RequireState(): AgentReviewState
@@ -921,6 +973,11 @@ class AgentReviewSession
 
   private async HandleMessage(socket: WebSocket, data: WebSocket.RawData): Promise<void>
   {
+    if (this.m_closing)
+    {
+      return;
+    }
+
     let frame: AgentReviewClientFrame;
     try
     {
@@ -1091,18 +1148,12 @@ class AgentReviewSession
     }
   }
 
-  private voidPopCommentContext(hunkId: string): void
-  {
-    this.m_pushedContextHunkId = null;
-    void this.m_dictatorRPC?.popContext(hunkId)?.catch(() => {});
-  }
-
   private PopActiveContext(): void
   {
-    if (this.m_pushedContextHunkId !== null)
-    {
-      this.voidPopCommentContext(this.m_pushedContextHunkId);
-    }
+    // Local-only: callers disconnect the RPC immediately afterward, and Dictator
+    // releases pushed context on disconnect. Issuing an RPC pop here would be a
+    // fire-and-forget call that could outlive the connection.
+    this.m_pushedContextHunkId = null;
   }
 
   private async ExecuteCommand(
@@ -1347,9 +1398,9 @@ class AgentReviewSession
 
   private async HandleCellPressed(x: number, y: number): Promise<void>
   {
-    // The pads are dark while no client is focused; ignore presses Dictator
-    // still forwards so the dark grid is inert.
-    if (!this.AnyClientFocused())
+    // Ignore presses once teardown has begun, and while no client is focused
+    // (the pads are dark then, so Dictator-forwarded presses must be inert).
+    if (this.m_closing || !this.AnyClientFocused())
     {
       return;
     }
@@ -1498,25 +1549,25 @@ export class AgentReviewService
     await session.Attach(socket);
   }
 
-  ReleaseIdle(): void
+  async ReleaseIdle(): Promise<void>
   {
+    const idle: AgentReviewSession[] = [];
     for (const [key, session] of this.m_sessions.entries())
     {
       if (session.ClientCount === 0)
       {
-        session.Dispose();
+        idle.push(session);
         this.m_sessions.delete(key);
       }
     }
+    await Promise.all(idle.map((session) => session.Dispose()));
   }
 
-  Dispose(): void
+  async Dispose(): Promise<void>
   {
-    for (const session of this.m_sessions.values())
-    {
-      session.Dispose();
-    }
+    const sessions = [...this.m_sessions.values()];
     this.m_sessions.clear();
+    await Promise.all(sessions.map((session) => session.Dispose()));
   }
 
   private GetOrCreateSession(key: WorkspaceReviewKey): AgentReviewSession

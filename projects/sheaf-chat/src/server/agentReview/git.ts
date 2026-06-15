@@ -39,8 +39,23 @@ function Sha256(value: string): string
   return createHash("sha256").update(value).digest("hex");
 }
 
-function RunGit(cwd: string, args: string[], input?: string): Promise<string>
+// Test-only seam: awaited before each git invocation so tests can hold git work
+// in flight deterministically and exercise teardown draining. Never set outside
+// tests.
+let g_beforeRunGitForTests: (() => Promise<void>) | null = null;
+
+export function SetAgentReviewGitHookForTests(hook: (() => Promise<void>) | null): void
 {
+  g_beforeRunGitForTests = hook;
+}
+
+async function RunGit(cwd: string, args: string[], input?: string): Promise<string>
+{
+  if (g_beforeRunGitForTests !== null)
+  {
+    await g_beforeRunGitForTests();
+  }
+
   return new Promise((resolve, reject) =>
   {
     const child = spawn("git", args, {
