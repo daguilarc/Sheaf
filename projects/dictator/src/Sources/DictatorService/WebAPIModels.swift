@@ -26,7 +26,6 @@ struct WebAPIJSON
         let system_prompt: String
         let auxiliary_system_prompt_1: String
         let auxiliary_system_prompt_2: String
-        let review_system_prompt: String
         let api_keys: APIKeyFlags
         let stt_model_present: Bool
         let stt_model_path: String
@@ -73,7 +72,6 @@ struct WebAPIJSON
         let system_prompt: String?
         let auxiliary_system_prompt_1: String?
         let auxiliary_system_prompt_2: String?
-        let review_system_prompt: String?
         let interactions_buffer_bytes: Int?
     }
 
@@ -201,7 +199,6 @@ enum WebConfigFieldMapping
     static let systemPrompt = "system_prompt"
     static let auxiliarySystemPrompt1 = "auxiliary_system_prompt_1"
     static let auxiliarySystemPrompt2 = "auxiliary_system_prompt_2"
-    static let reviewSystemPrompt = "review_system_prompt"
     static let interactionsBufferBytes = "interactions_buffer_bytes"
 
     static let managerNameByField: [String: String] = [
@@ -211,7 +208,6 @@ enum WebConfigFieldMapping
         systemPrompt: "System Prompt",
         auxiliarySystemPrompt1: "Auxiliary Prompt 1",
         auxiliarySystemPrompt2: "Auxiliary Prompt 2",
-        reviewSystemPrompt: "Review Prompt",
         interactionsBufferBytes: "Interactions Buffer"
     ]
 
@@ -222,7 +218,6 @@ enum WebConfigFieldMapping
         systemPrompt: "Primary system prompt",
         auxiliarySystemPrompt1: "Auxiliary prompt 1",
         auxiliarySystemPrompt2: "Auxiliary prompt 2",
-        reviewSystemPrompt: "Review prompt",
         interactionsBufferBytes: "Interaction history buffer"
     ]
 

@@ -291,8 +291,10 @@ Roles: `record_status` (color driven by dictation state), `talon_status`
 latch state); pads without a role render their static
 `color`. The shipped product layout binds: primary/auxiliary dictation
 toggles, the Talon control pad, safe-config restore, shift latch, contextual backspace,
-Space, Enter, arrows, and Cmd+C/V/X/Z. The coordinate `(2,7)` is reserved for
-the voice diff review control layer and is not a static keystroke pad.
+Space, Enter, arrows, and Cmd+C/V/X/Z. The coordinate `(2,7)` carries no
+static keystroke binding and is not part of any review workflow (see lp-25);
+like other unbound coordinates it may be claimed by an external app through
+WebSocket RPC cell ownership (see `dictator-websocket-rpc`).
 
 ### Pinned dictation-state colors
 

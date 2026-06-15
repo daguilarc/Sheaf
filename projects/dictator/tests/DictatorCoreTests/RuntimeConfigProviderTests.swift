@@ -167,7 +167,6 @@ final class RuntimeConfigProviderTests: XCTestCase {
         XCTAssertEqual(decoded.sttModelPath, RuntimeConfigFile.defaultSTTModelPath)
         XCTAssertEqual(decoded.auxiliarySystemPrompt1, SystemPromptCatalog.defaultPromptFile)
         XCTAssertEqual(decoded.auxiliarySystemPrompt2, SystemPromptCatalog.defaultPromptFile)
-        XCTAssertEqual(decoded.reviewSystemPrompt, SystemPromptCatalog.defaultReviewPromptFile)
         XCTAssertEqual(decoded.dictatorServerHost, RuntimeConfigFile.defaultDictatorServerHost)
         XCTAssertEqual(decoded.dictatorServerPort, RuntimeConfigFile.defaultDictatorServerPort)
         XCTAssertEqual(decoded.dictatorServerEnabled, RuntimeConfigFile.defaultDictatorServerEnabled)
@@ -182,6 +181,7 @@ final class RuntimeConfigProviderTests: XCTestCase {
           "local_model": "qwen2.5:7b-instruct",
           "system_prompt": "intent_refiner_v1.md",
           "use_cloud": false,
+          "review_system_prompt": "code_review_refiner_v1.md",
           "injectable_rules": {
             " dogs ": " dog_rules.md ",
             "cats": "cat_rules.md"
@@ -190,6 +190,7 @@ final class RuntimeConfigProviderTests: XCTestCase {
         }
         """.data(using: .utf8)!
 
+        // A stale `review_system_prompt` key from older configs must be ignored, not fatal.
         let decoded = try JSONDecoder().decode(RuntimeConfigFile.self, from: json)
         XCTAssertEqual(decoded.injectableRules, [
             "dogs": "dog_rules.md",
@@ -204,21 +205,6 @@ final class RuntimeConfigProviderTests: XCTestCase {
         let persisted = try XCTUnwrap(try store.load())
         XCTAssertEqual(persisted.injectableRules["dogs"], "dog_rules.md")
         XCTAssertEqual(persisted.injectableRules["cats"], "cat_rules.md")
-    }
-
-    func testApplyInMemoryPatchUpdatesReviewPromptPath() async throws {
-        let tempDir = try makeTempDir()
-        defer { try? FileManager.default.removeItem(at: tempDir) }
-
-        let primaryURL = tempDir.appendingPathComponent("runtime-config.json")
-        let primaryStore = RuntimeConfigStore(fileURL: primaryURL)
-        let provider = RuntimeConfigProvider(store: primaryStore, defaultStore: nil)
-
-        let updated = try await provider.applyInMemoryPatch(
-            RuntimeConfigPatch(reviewSystemPrompt: "review/custom.md")
-        )
-
-        XCTAssertEqual(updated.reviewSystemPrompt, "review/custom.md")
     }
 
     func testApplyInMemoryPatchUpdatesAuxiliaryPromptPaths() async throws {

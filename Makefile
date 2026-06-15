@@ -1,6 +1,6 @@
 MAKEFLAGS += --warn-undefined-variables
 
-PROJECTS := conductor web quest-runner dictator realtime-agent sheaf-chat agents vs-code-extension
+PROJECTS := conductor web quest-runner dictator realtime-agent sheaf-chat agents
 
 .PHONY: all clean test help
 .PHONY: $(PROJECTS)
@@ -13,7 +13,6 @@ PROJECTS := conductor web quest-runner dictator realtime-agent sheaf-chat agents
 .PHONY: agents-build agents-test agents-install agents-check agents-clean
 .PHONY: agents-install-repo agents-check-repo agents-clean-repo
 .PHONY: agents-install-global agents-check-global agents-clean-global
-.PHONY: vs-code-extension-build vs-code-extension-test vs-code-extension-install vs-code-extension-clean
 
 .DEFAULT_GOAL := all
 

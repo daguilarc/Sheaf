@@ -1,7 +1,7 @@
 # sheaf-chat-agent-review-mode Specification
 
 ## Purpose
-TBD - created by archiving change add-sheaf-chat-agent-review-mode. Update Purpose after archive.
+Define Sheaf Chat's Agent Review Mode, where Sheaf Chat owns the entire code-review workflow over a workspace's unstaged Git hunks: hunk discovery, focused navigation, staging/reverting/undo, per-hunk review comments, reverted-hunk markers, and review serialization. Sheaf Chat drives the Launchpad and inserts the serialized review by acting as a client of Dictator's generic `dictator-websocket-rpc` surface (owning the review cell block, handling cell events, calling `cursor.insertText`, and pushing hunk dictation context while a comment text box is focused). Dictator holds no review state.
 ## Requirements
 ### Requirement: arm-1 — Availability: Git repository detection
 

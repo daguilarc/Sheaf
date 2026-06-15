@@ -19,7 +19,6 @@ public struct SystemPromptCatalog: @unchecked Sendable {
     }
 
     public static let defaultPromptFile = "intent_refiner_v1.md"
-    public static let defaultReviewPromptFile = "code_review_refiner_v1.md"
 
     private let directoryURL: URL
     private let fileManager: FileManager

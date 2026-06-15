@@ -215,21 +215,6 @@ WHILE a dictation request is being processed, THE service SHALL report `dictatio
 - **WHEN** a dictation request completes
 - **THEN** `GET /api/status` returns `dictation_state: "idle"`
 
-### Requirement: dp-22 — Review refinement prompt configuration
-THE Dictator runtime configuration SHALL include `review_system_prompt`, a prompt file path relative to `system_prompts_dir`, and SHALL default it to `code_review_refiner_v1.md` when the key is missing or blank.
-
-#### Scenario: Review prompt key present
-- **WHEN** runtime config contains `review_system_prompt`
-- **THEN** Dictator uses that prompt file for voice diff review refinement
-
-#### Scenario: Review prompt key missing
-- **WHEN** runtime config omits `review_system_prompt` or sets it blank
-- **THEN** Dictator falls back to `code_review_refiner_v1.md` for voice diff review refinement
-
-#### Scenario: Review prompt selectable
-- **WHEN** the runtime config API returns or updates selectable prompt settings
-- **THEN** `review_system_prompt` is exposed and validated like the other prompt file settings
-
 ### Requirement: dp-23 — Reusable refinement context blocks
 WHEN a dictation or refinement mode provides structured context blocks, THE dictation pipeline SHALL render those blocks into the refinement input in a stable delimited form before the raw transcript so mode-specific context can be reused without custom prompt string assembly.
 
@@ -244,21 +229,6 @@ WHEN a dictation or refinement mode provides structured context blocks, THE dict
 #### Scenario: Future modes reuse context blocks
 - **WHEN** a future dictation mode needs to inject non-hunk context
 - **THEN** it can supply additional structured context blocks without adding a new prompt assembly path
-
-### Requirement: dp-24 — Hunk-aware review refinement input
-WHEN refining a voice diff review comment, THE dictation pipeline SHALL build refinement input from the raw transcript plus a structured hunk review context block and SHALL NOT use the selected-text replacement template for this mode.
-
-#### Scenario: Hunk context included
-- **WHEN** Dictator refines a review-comment recording
-- **THEN** the refinement input includes a structured context block containing the hunk file path, header, patch hash, and patch text before the raw transcript
-
-#### Scenario: Review prompt refines user comment only
-- **WHEN** Dictator loads the default review prompt
-- **THEN** the prompt instructs the model to refine the user's spoken code review comment while preserving the review intent and not independently evaluating the code
-
-#### Scenario: No selected text replacement
-- **WHEN** Dictator refines a review-comment recording and optional context contains hunk fields
-- **THEN** the refinement input does not use the selected-text transform template
 
 ### Requirement: dp-25 — Injectable refinement rules
 WHEN building the system prompt for a non-empty refinement request, THE dictation pipeline SHALL read `injectable_rules` from the current runtime config, case-insensitively match each non-empty key against the raw Whisper transcript using simple substring matching, resolve each matching value as a prompt file path relative to `system_prompts_dir`, and append the contents of each resolved prompt file to the end of the system prompt sent to the selected refinement provider.
@@ -300,10 +270,6 @@ WHEN any non-Talon Dictator dictation starts, THE Dictator service SHALL send a 
 
 #### Scenario: Launchpad auxiliary dictation starts
 - **WHEN** Launchpad auxiliary dictation starts recording
-- **THEN** Dictator sends Talon a sleep command before audio recording begins
-
-#### Scenario: Launchpad review dictation starts
-- **WHEN** Launchpad voice diff review dictation starts recording
 - **THEN** Dictator sends Talon a sleep command before audio recording begins
 
 #### Scenario: Talon already asleep

@@ -161,40 +161,6 @@ final class RuntimeConfigurationManagerTests: XCTestCase {
         XCTAssertEqual(inMemory.auxiliarySystemPrompt1, "auxiliary_refiner_1.md")
     }
 
-    func testReviewSystemPromptConfigurationUpdatesReviewPromptPath() async throws {
-        let tempDir = try makeTempDir()
-        defer { try? FileManager.default.removeItem(at: tempDir) }
-
-        let promptsDir = tempDir.appendingPathComponent("prompts/system-prompts", isDirectory: true)
-        try FileManager.default.createDirectory(at: promptsDir, withIntermediateDirectories: true)
-        try "review".write(to: promptsDir.appendingPathComponent("code_review_refiner_v1.md"), atomically: true, encoding: .utf8)
-
-        let provider = RuntimeConfigProvider(
-            store: RuntimeConfigStore(fileURL: tempDir.appendingPathComponent("runtime-config.json")),
-            defaultStore: nil
-        )
-
-        let manager = RuntimeConfigurationManager(
-            configurations: [
-                RuntimeSystemPromptConfiguration(
-                    name: "Review Prompt",
-                    currentValue: SystemPromptCatalog.defaultReviewPromptFile,
-                    defaultValue: SystemPromptCatalog.defaultReviewPromptFile,
-                    runtimeConfigProvider: provider,
-                    target: .review,
-                    promptCatalog: SystemPromptCatalog(directoryURL: promptsDir)
-                )
-            ]
-        )
-
-        let options = try await manager.getOptions(name: "Review Prompt")
-        XCTAssertEqual(options, [.string("code_review_refiner_v1.md")])
-
-        try await manager.set(name: "Review Prompt", value: .string("code_review_refiner_v1.md"))
-        let inMemory = await provider.currentRuntimeConfig()
-        XCTAssertEqual(inMemory.reviewSystemPrompt, "code_review_refiner_v1.md")
-    }
-
     func testInteractionsBufferConfigurationUpdatesRuntimeConfig() async throws {
         let tempDir = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: tempDir) }

@@ -311,7 +311,6 @@ public final class RuntimeSystemPromptConfiguration: RuntimeConfiguration, @unch
         case primary
         case auxiliary1
         case auxiliary2
-        case review
     }
 
     private let runtimeConfigProvider: RuntimeConfigProvider
@@ -357,8 +356,6 @@ public final class RuntimeSystemPromptConfiguration: RuntimeConfiguration, @unch
             patch = RuntimeConfigPatch(auxiliarySystemPrompt1: sanitizedPath)
         case .auxiliary2:
             patch = RuntimeConfigPatch(auxiliarySystemPrompt2: sanitizedPath)
-        case .review:
-            patch = RuntimeConfigPatch(reviewSystemPrompt: sanitizedPath)
         }
         let updated = try await runtimeConfigProvider.applyInMemoryPatch(
             patch
@@ -371,8 +368,6 @@ public final class RuntimeSystemPromptConfiguration: RuntimeConfiguration, @unch
             updatedValue = updated.auxiliarySystemPrompt1
         case .auxiliary2:
             updatedValue = updated.auxiliarySystemPrompt2
-        case .review:
-            updatedValue = updated.reviewSystemPrompt
         }
         updateCurrentValue(.string(updatedValue))
     }

@@ -63,14 +63,6 @@ enum WebServiceFactory
                     target: .auxiliary2,
                     promptCatalog: promptCatalog
                 ),
-                RuntimeSystemPromptConfiguration(
-                    name: WebConfigFieldMapping.managerNameByField[WebConfigFieldMapping.reviewSystemPrompt]!,
-                    currentValue: config.reviewSystemPrompt,
-                    defaultValue: defaults.reviewSystemPrompt,
-                    runtimeConfigProvider: runtimeConfigProvider,
-                    target: .review,
-                    promptCatalog: promptCatalog
-                ),
                 RuntimeInteractionsBufferConfiguration(
                     name: WebConfigFieldMapping.managerNameByField[WebConfigFieldMapping.interactionsBufferBytes]!,
                     currentValueBytes: config.interactionsBufferBytes,

@@ -22,7 +22,6 @@ public struct RuntimeConfigFile: Codable, Sendable, Equatable {
     public let systemPrompt: String
     public let auxiliarySystemPrompt1: String
     public let auxiliarySystemPrompt2: String
-    public let reviewSystemPrompt: String
     public let interactionsBufferBytes: Int
     public let useCloud: Bool
     public let fallbackMode: String
@@ -49,7 +48,6 @@ public struct RuntimeConfigFile: Codable, Sendable, Equatable {
         systemPrompt: String = SystemPromptCatalog.defaultPromptFile,
         auxiliarySystemPrompt1: String = SystemPromptCatalog.defaultPromptFile,
         auxiliarySystemPrompt2: String = SystemPromptCatalog.defaultPromptFile,
-        reviewSystemPrompt: String = SystemPromptCatalog.defaultReviewPromptFile,
         interactionsBufferBytes: Int = Self.defaultInteractionsBufferBytes,
         useCloud: Bool,
         fallbackMode: String = Self.defaultFallbackMode,
@@ -71,7 +69,6 @@ public struct RuntimeConfigFile: Codable, Sendable, Equatable {
         self.systemPrompt = systemPrompt
         self.auxiliarySystemPrompt1 = auxiliarySystemPrompt1
         self.auxiliarySystemPrompt2 = auxiliarySystemPrompt2
-        self.reviewSystemPrompt = reviewSystemPrompt
         self.interactionsBufferBytes = interactionsBufferBytes
         self.useCloud = useCloud
         self.fallbackMode = fallbackMode
@@ -106,7 +103,6 @@ public struct RuntimeConfigFile: Codable, Sendable, Equatable {
         case systemPrompt = "system_prompt"
         case auxiliarySystemPrompt1 = "auxiliary_system_prompt_1"
         case auxiliarySystemPrompt2 = "auxiliary_system_prompt_2"
-        case reviewSystemPrompt = "review_system_prompt"
         case interactionsBufferBytes = "interactions_buffer_bytes"
         case useCloud = "use_cloud"
         case fallbackMode = "fallback_mode"
@@ -135,7 +131,6 @@ public struct RuntimeConfigFile: Codable, Sendable, Equatable {
         let systemPrompt = try container.decodeIfPresent(String.self, forKey: .systemPrompt)
         let auxiliarySystemPrompt1 = try container.decodeIfPresent(String.self, forKey: .auxiliarySystemPrompt1)
         let auxiliarySystemPrompt2 = try container.decodeIfPresent(String.self, forKey: .auxiliarySystemPrompt2)
-        let reviewSystemPrompt = try container.decodeIfPresent(String.self, forKey: .reviewSystemPrompt)
         let interactionsBufferBytes = try container.decodeIfPresent(Int.self, forKey: .interactionsBufferBytes)
         let fallbackMode = try container.decodeIfPresent(String.self, forKey: .fallbackMode)
         let ollamaHost = try container.decodeIfPresent(String.self, forKey: .ollamaHost)
@@ -155,8 +150,6 @@ public struct RuntimeConfigFile: Codable, Sendable, Equatable {
         let resolvedSystemPrompt = systemPrompt ?? SystemPromptCatalog.defaultPromptFile
         let resolvedAuxiliarySystemPrompt1 = auxiliarySystemPrompt1 ?? SystemPromptCatalog.defaultPromptFile
         let resolvedAuxiliarySystemPrompt2 = auxiliarySystemPrompt2 ?? SystemPromptCatalog.defaultPromptFile
-        let resolvedReviewSystemPrompt = Self.normalizedNonEmpty(reviewSystemPrompt)
-            ?? SystemPromptCatalog.defaultReviewPromptFile
         let resolvedInteractionsBufferBytes = interactionsBufferBytes ?? Self.defaultInteractionsBufferBytes
         let resolvedFallbackMode = Self.normalizedNonEmpty(fallbackMode) ?? Self.defaultFallbackMode
         let resolvedOllamaHost = Self.normalizedNonEmpty(ollamaHost) ?? Self.defaultOllamaHost
@@ -177,7 +170,6 @@ public struct RuntimeConfigFile: Codable, Sendable, Equatable {
             systemPrompt: resolvedSystemPrompt,
             auxiliarySystemPrompt1: resolvedAuxiliarySystemPrompt1,
             auxiliarySystemPrompt2: resolvedAuxiliarySystemPrompt2,
-            reviewSystemPrompt: resolvedReviewSystemPrompt,
             interactionsBufferBytes: resolvedInteractionsBufferBytes,
             useCloud: useCloud,
             fallbackMode: resolvedFallbackMode,
@@ -203,7 +195,6 @@ public struct RuntimeConfigFile: Codable, Sendable, Equatable {
         try container.encode(systemPrompt, forKey: .systemPrompt)
         try container.encode(auxiliarySystemPrompt1, forKey: .auxiliarySystemPrompt1)
         try container.encode(auxiliarySystemPrompt2, forKey: .auxiliarySystemPrompt2)
-        try container.encode(reviewSystemPrompt, forKey: .reviewSystemPrompt)
         try container.encode(interactionsBufferBytes, forKey: .interactionsBufferBytes)
         try container.encode(useCloud, forKey: .useCloud)
         try container.encode(fallbackMode, forKey: .fallbackMode)
@@ -228,7 +219,6 @@ public struct RuntimeConfigFile: Codable, Sendable, Equatable {
             systemPrompt: SystemPromptCatalog.defaultPromptFile,
             auxiliarySystemPrompt1: SystemPromptCatalog.defaultPromptFile,
             auxiliarySystemPrompt2: SystemPromptCatalog.defaultPromptFile,
-            reviewSystemPrompt: SystemPromptCatalog.defaultReviewPromptFile,
             useCloud: false,
             dataDir: Self.defaultDataDir,
             systemPromptsDir: Self.defaultSystemPromptsDir,
@@ -373,7 +363,6 @@ public struct RuntimeConfigPatch: Sendable, Equatable {
     public let systemPrompt: String?
     public let auxiliarySystemPrompt1: String?
     public let auxiliarySystemPrompt2: String?
-    public let reviewSystemPrompt: String?
     public let interactionsBufferBytes: Int?
     public let useCloud: Bool?
     public let injectableRules: [String: String]?
@@ -387,7 +376,6 @@ public struct RuntimeConfigPatch: Sendable, Equatable {
         systemPrompt: String? = nil,
         auxiliarySystemPrompt1: String? = nil,
         auxiliarySystemPrompt2: String? = nil,
-        reviewSystemPrompt: String? = nil,
         interactionsBufferBytes: Int? = nil,
         useCloud: Bool? = nil,
         injectableRules: [String: String]? = nil,
@@ -400,7 +388,6 @@ public struct RuntimeConfigPatch: Sendable, Equatable {
         self.systemPrompt = systemPrompt
         self.auxiliarySystemPrompt1 = auxiliarySystemPrompt1
         self.auxiliarySystemPrompt2 = auxiliarySystemPrompt2
-        self.reviewSystemPrompt = reviewSystemPrompt
         self.interactionsBufferBytes = interactionsBufferBytes
         self.useCloud = useCloud
         self.injectableRules = injectableRules
@@ -415,7 +402,6 @@ public struct RuntimeConfigPatch: Sendable, Equatable {
             && systemPrompt == nil
             && auxiliarySystemPrompt1 == nil
             && auxiliarySystemPrompt2 == nil
-            && reviewSystemPrompt == nil
             && interactionsBufferBytes == nil
             && useCloud == nil
             && injectableRules == nil
@@ -568,8 +554,6 @@ public actor RuntimeConfigProvider {
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? runtimeConfig.auxiliarySystemPrompt1
         let resolvedAuxiliarySystemPrompt2 = patch.auxiliarySystemPrompt2?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? runtimeConfig.auxiliarySystemPrompt2
-        let resolvedReviewSystemPrompt = patch.reviewSystemPrompt?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? runtimeConfig.reviewSystemPrompt
         let resolvedInteractionsBufferBytes = patch.interactionsBufferBytes ?? runtimeConfig.interactionsBufferBytes
         var resolvedInjectableRules = patch.injectableRules.map(RuntimeConfigFile.normalizedInjectableRules)
             ?? runtimeConfig.injectableRules
@@ -601,9 +585,6 @@ public actor RuntimeConfigProvider {
         if resolvedAuxiliarySystemPrompt2.isEmpty {
             throw DictatorError.configUpdateFailed("auxiliary system prompt 2 cannot be empty")
         }
-        if resolvedReviewSystemPrompt.isEmpty {
-            throw DictatorError.configUpdateFailed("review system prompt cannot be empty")
-        }
         if resolvedInteractionsBufferBytes <= 0 {
             throw DictatorError.configUpdateFailed("interactions buffer size must be > 0 bytes")
         }
@@ -615,7 +596,6 @@ public actor RuntimeConfigProvider {
             systemPrompt: resolvedSystemPrompt,
             auxiliarySystemPrompt1: resolvedAuxiliarySystemPrompt1,
             auxiliarySystemPrompt2: resolvedAuxiliarySystemPrompt2,
-            reviewSystemPrompt: resolvedReviewSystemPrompt,
             interactionsBufferBytes: resolvedInteractionsBufferBytes,
             useCloud: resolvedUseCloud,
             fallbackMode: runtimeConfig.fallbackMode,
@@ -658,7 +638,6 @@ public actor RuntimeConfigProvider {
             systemPrompt: defaultConfig.systemPrompt,
             auxiliarySystemPrompt1: defaultConfig.auxiliarySystemPrompt1,
             auxiliarySystemPrompt2: defaultConfig.auxiliarySystemPrompt2,
-            reviewSystemPrompt: defaultConfig.reviewSystemPrompt,
             interactionsBufferBytes: defaultConfig.interactionsBufferBytes,
             useCloud: defaultConfig.useCloud,
             fallbackMode: defaultConfig.fallbackMode,

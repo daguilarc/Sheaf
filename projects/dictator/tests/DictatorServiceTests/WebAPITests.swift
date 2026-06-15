@@ -95,7 +95,6 @@ final class WebAPITests: XCTestCase
         XCTAssertNotNil(body["provider_mode"])
         XCTAssertNotNil(body["cloud_model"])
         XCTAssertNotNil(body["local_model"])
-        XCTAssertEqual(body["review_system_prompt"] as? String, SystemPromptCatalog.defaultReviewPromptFile)
         XCTAssertNotNil(body["log_path"])
         XCTAssertNotNil(body["data_path"])
         let apiKeys = body["api_keys"] as? [String: Any]
@@ -109,7 +108,7 @@ final class WebAPITests: XCTestCase
     func testConfigPatchPersistsToDictatorJSON() async throws
     {
         try await startServer()
-        let patch = #"{"use_cloud":true,"cloud_model":"gpt-5.2","review_system_prompt":"code_review_refiner_v1.md"}"#.data(using: .utf8)!
+        let patch = #"{"use_cloud":true,"cloud_model":"gpt-5.2"}"#.data(using: .utf8)!
         let (status, _) = try await jsonRequest(method: "PATCH", path: "/api/config", body: patch, contentType: "application/json")
         XCTAssertEqual(status, 200)
 
@@ -117,13 +116,6 @@ final class WebAPITests: XCTestCase
         let saved = try JSONDecoder().decode(RuntimeConfigFile.self, from: Data(contentsOf: configURL))
         XCTAssertTrue(saved.useCloud)
         XCTAssertEqual(saved.cloudModel, "gpt-5.2")
-        XCTAssertEqual(saved.reviewSystemPrompt, "code_review_refiner_v1.md")
-
-        let (_, configBody) = try await jsonRequest(method: "GET", path: "/api/config")
-        let fields = configBody["fields"] as? [[String: Any]]
-        let reviewField = fields?.first { ($0["name"] as? String) == "review_system_prompt" }
-        let current = reviewField?["current"] as? [String: Any]
-        XCTAssertEqual(current?["value"] as? String, "code_review_refiner_v1.md")
     }
 
     func testInvalidConfigPatchFailsClearly() async throws
@@ -147,7 +139,6 @@ final class WebAPITests: XCTestCase
         let configURL = try XCTUnwrap(configURL)
         let saved = try JSONDecoder().decode(RuntimeConfigFile.self, from: Data(contentsOf: configURL))
         XCTAssertFalse(saved.useCloud)
-        XCTAssertEqual(saved.reviewSystemPrompt, SystemPromptCatalog.defaultReviewPromptFile)
     }
 
     func testPromptListAndPreviewRejectPathTraversal() async throws
@@ -165,7 +156,7 @@ final class WebAPITests: XCTestCase
         XCTAssertNotNil(previewBody["error"] as? String)
     }
 
-    func testPromptSelectionPersistsPrimaryAuxiliaryAndReviewPaths() async throws
+    func testPromptSelectionPersistsPrimaryAndAuxiliaryPaths() async throws
     {
         try await startServer()
         let repoRoot = try SheafRootDiscovery.requireRepoRoot()
@@ -197,17 +188,6 @@ final class WebAPITests: XCTestCase
         XCTAssertEqual(auxStatus, 200)
         saved = try JSONDecoder().decode(RuntimeConfigFile.self, from: Data(contentsOf: configURL))
         XCTAssertEqual(saved.auxiliarySystemPrompt1, promptPath)
-
-        let review = #"{"target":"review","path":"\#(promptPath)"}"#.data(using: .utf8)!
-        let (reviewStatus, _) = try await jsonRequest(
-            method: "POST",
-            path: "/api/prompts/selection",
-            body: review,
-            contentType: "application/json"
-        )
-        XCTAssertEqual(reviewStatus, 200)
-        saved = try JSONDecoder().decode(RuntimeConfigFile.self, from: Data(contentsOf: configURL))
-        XCTAssertEqual(saved.reviewSystemPrompt, promptPath)
     }
 
     func testInjectableRulesAPIListsAddsReplacesAndDeletesRules() async throws
@@ -231,7 +211,7 @@ final class WebAPITests: XCTestCase
         XCTAssertEqual(rules?.first?["key"] as? String, "dogs")
         XCTAssertEqual(rules?.first?["prompt_path"] as? String, promptPath)
 
-        let replace = #"{"key":"dogs","prompt_path":"code_review_refiner_v1.md"}"#.data(using: .utf8)!
+        let replace = #"{"key":"dogs","prompt_path":"intent_refiner_v1.md"}"#.data(using: .utf8)!
         let (replaceStatus, replaceBody) = try await jsonRequest(
             method: "POST",
             path: "/api/injectable-rules",
@@ -240,11 +220,11 @@ final class WebAPITests: XCTestCase
         )
         XCTAssertEqual(replaceStatus, 200)
         rules = replaceBody["rules"] as? [[String: Any]]
-        XCTAssertEqual(rules?.first?["prompt_path"] as? String, "code_review_refiner_v1.md")
+        XCTAssertEqual(rules?.first?["prompt_path"] as? String, "intent_refiner_v1.md")
 
         let configURL = try XCTUnwrap(configURL)
         var saved = try JSONDecoder().decode(RuntimeConfigFile.self, from: Data(contentsOf: configURL))
-        XCTAssertEqual(saved.injectableRules["dogs"], "code_review_refiner_v1.md")
+        XCTAssertEqual(saved.injectableRules["dogs"], "intent_refiner_v1.md")
 
         let (deleteStatus, deleteBody) = try await jsonRequest(
             method: "DELETE",

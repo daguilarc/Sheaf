@@ -1,7 +1,7 @@
 # dictator-websocket-rpc Specification
 
 ## Purpose
-TBD - created by archiving change generic-dictator-rpc-review-mode. Update Purpose after archive.
+Define a generic, app-agnostic local WebSocket RPC surface on Dictator (`/ws/rpc`) that lets an external application own Launchpad cells (setting colors and receiving press/release events), request clipboard-preserving cursor text insertion, and push/pop transient dictation context blocks. The protocol carries no review or hunk semantics; it exposes Dictator's mechanical Launchpad and cursor-insertion capabilities so apps such as Sheaf Chat can build higher-level workflows (e.g. Agent Review Mode) on top of it.
 ## Requirements
 ### Requirement: rpc-1 — Connection: Local WebSocket RPC endpoint
 WHEN a local client opens a WebSocket connection to `/ws/rpc` with a non-empty `client` query parameter, THE Dictator service SHALL accept the connection, register a per-connection client session, and send a `rpc.hello` event containing the supported protocol version and available capabilities.
@@ -98,7 +98,7 @@ WHEN a connected client calls `cursor.insertText` with non-empty text up to 1 Mi
 WHEN a connected client calls `dictationContext.push` with a client-scoped context id, title, optional metadata, and body, THE Dictator service SHALL add or replace that context block for the client; WHEN the client calls `dictationContext.pop` with that id, THE service SHALL remove that block; WHEN Launchpad dictation starts, THE service SHALL include active pushed context blocks in the dictation context snapshot.
 
 #### Scenario: Context pushed
-- **WHEN** a client pushes a context block for a focused review hunk
+- **WHEN** a client pushes a context block
 - **THEN** Dictator stores that block as active for that client connection
 
 #### Scenario: Context popped
