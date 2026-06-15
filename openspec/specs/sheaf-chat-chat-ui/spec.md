@@ -5,9 +5,10 @@ ID prefix: `ui` — requirement IDs are append-only; never renumber or reuse.
 
 ## Purpose
 
-The service-owned browser application (`src/ui/`): three hash-routed screens
-(piles, sessions, chat) over the REST API and the chat WebSocket, including
-the chat screen's session-root file workspace. Transcript rendering is
+The service-owned browser application (`src/ui/`): hash-routed screens — a
+repository picker, a workspace picker, and the workspace editor with its chat
+pane — over the REST API and the chat WebSocket, including the editor's
+workspace-root file browser. Transcript rendering is
 delegated to the shared AGUI renderer
 (`projects/web/src/agui-chat.js`, exposed as `window.ChatView`), which is
 outside this project's spec. Repository web UI rules:
@@ -305,7 +306,7 @@ THE workspace editor SHALL resolve Agent Review from the selected workspace (wor
 ## Contracts
 
 This capability consumes the REST contracts of
-[piles-sessions](../sheaf-chat-piles-sessions/spec.md) / [models](../sheaf-chat-models/spec.md) and the frame
+[workspace-chats](../sheaf-chat-workspace-chats/spec.md) / [models](../sheaf-chat-models/spec.md) and the frame
 contracts of [chat-protocol](../sheaf-chat-chat-protocol/spec.md). UI-owned constants:
 
 | Constant | Value |
@@ -353,7 +354,7 @@ onFileLink})`, and `SheafMarkdown.resolveFileLink(href, basePath, rootMode)`.
 ## Interactions
 
 - [service](../sheaf-chat-service/spec.md) — serves the shell and assets.
-- [piles-sessions](../sheaf-chat-piles-sessions/spec.md), [models](../sheaf-chat-models/spec.md) — REST calls.
+- [workspace-chats](../sheaf-chat-workspace-chats/spec.md), [models](../sheaf-chat-models/spec.md) — REST calls.
 - [chat-protocol](../sheaf-chat-chat-protocol/spec.md) — the WebSocket client behavior
   specified here is the counterpart of that capability.
 - [file-browser](../sheaf-chat-file-browser/spec.md) — file REST calls, workspace tab/panel

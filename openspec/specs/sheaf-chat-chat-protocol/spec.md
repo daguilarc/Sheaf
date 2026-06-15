@@ -311,7 +311,7 @@ THE service SHALL identify a user message by a single stable id — the client-p
 ### Connect URL
 
 ```text
-/ws/chat?p=<pile>&session=<sessionId>&client=<clientId>&after=<sequence>
+/ws/chat?repo=<repoId>&workspace=<workspaceId>&chat=<chatId>&client=<clientId>&after=<sequence>
 ```
 
 ### `server.hello` payload
@@ -388,13 +388,13 @@ The payload path and `fileId` are root-relative for the receiving session.
 
 | Condition | Surface | Code / message (exact) |
 |---|---|---|
-| Upgrade with missing `p`/`session` | HTTP 400 on upgrade | `pile query parameter is required` / `session query parameter is required` |
-| Upgrade with invalid pile/session/`after` | HTTP 400 on upgrade | validation messages from [session files](../../../projects/sheaf-chat/docs/contracts/session-files.md); `after must be an integer` |
+| Upgrade with missing `repo`/`workspace`/`chat` | HTTP 400 on upgrade | `repo query parameter is required` / `workspace query parameter is required` / `chat query parameter is required` |
+| Upgrade with invalid repo/workspace/chat/`after` | HTTP 400 on upgrade | validation messages from [session files](../../../projects/sheaf-chat/docs/contracts/session-files.md); `after must be an integer` |
 | Session file missing | HTTP 404 on upgrade | `session not found` |
 | Malformed JSON frame | non-fatal `server.error` | `invalid_frame` / `malformed JSON frame` |
 | `v` != 1 | non-fatal `server.error` | `invalid_frame` / `frame version must be 1` |
 | Missing envelope field | non-fatal `server.error` | `invalid_frame` / `frame <field> is required` |
-| Identity mismatch | non-fatal `server.error` | `invalid_frame` / `frame pile/sessionId does not match connection` |
+| Identity mismatch | non-fatal `server.error` | `invalid_frame` / `frame repoId/workspaceId/chatId does not match connection` |
 | Unknown kind | non-fatal `server.error` | `invalid_frame` / `unsupported client frame kind: <kind>` |
 | `before`+`after` in history request | non-fatal `server.error` | `invalid_history_request` |
 | Frame handler failure | non-fatal `server.error` | underlying code or `request_failed`, with `requestId` |

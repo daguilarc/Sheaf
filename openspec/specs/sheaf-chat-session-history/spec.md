@@ -161,7 +161,7 @@ WHEN reading a page for a workspace chat with no history file, THE service SHALL
 
 ## Contracts
 
-### `GET /api/piles/:pile/sessions/:sessionId/history`
+### `GET /api/repositories/:repoId/workspaces/:workspaceId/chats/:chatId/history`
 
 | Parameter | Meaning |
 |---|---|
@@ -213,8 +213,8 @@ empty log.
 - `src/server/routes/history.ts` — query parsing and the events/snapshots
   response split.
 - The latest-sequence cache (`x_latestSequences`) is process-global and
-  keyed by `pile\0sessionId`; external writers to the log file during
-  process lifetime are not detected.
+  keyed by `repoId\0workspaceId\0chatId`; external writers to the log file
+  during process lifetime are not detected.
 - Paging loads and sorts the full log in memory per request; there is no
   index.
 
@@ -226,5 +226,5 @@ empty log.
   and serves `client.history_request` / replay from the same log.
 - [agui-mapping](../sheaf-chat-agui-mapping/spec.md) — `eventsToSnapshots` for
   `prefer=snapshots`.
-- [piles-sessions](../sheaf-chat-piles-sessions/spec.md) — the REST route shares pile/session
-  validation.
+- [workspace-chats](../sheaf-chat-workspace-chats/spec.md) — the REST route shares
+  repository/workspace/chat validation.

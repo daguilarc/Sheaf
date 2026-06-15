@@ -440,7 +440,7 @@ WHEN the selected file tab changes or the file tab bar re-renders on the non-tou
 
 ## Contracts
 
-### `GET /api/piles/:pile/sessions/:sessionId/file`
+### `GET /api/repositories/:repoId/workspaces/:workspaceId/chats/:chatId/file`
 
 Query:
 
@@ -465,7 +465,7 @@ Successful response:
 }
 ```
 
-### `GET /api/piles/:pile/sessions/:sessionId/files`
+### `GET /api/repositories/:repoId/workspaces/:workspaceId/chats/:chatId/files`
 
 Query:
 
@@ -527,8 +527,9 @@ session history log and does not carry a `sequence`.
   "v": 1,
   "kind": "file.changed",
   "id": "5e0f0b8c-...",
-  "pile": "default",
-  "sessionId": "0123456789abcdef0123456789abcdef",
+  "repoId": "<repoId>",
+  "workspaceId": "<workspaceId>",
+  "chatId": "0123456789abcdef0123456789abcdef",
   "timestamp": "2026-06-10T00:00:00.000Z",
   "payload": {
     "eventType": "fileChanged",

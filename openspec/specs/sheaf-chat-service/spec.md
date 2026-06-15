@@ -260,7 +260,7 @@ the endpoint). `openAi.configured` is true when `openai_api_key` is set.
 
 ## Interactions
 
-- [piles-sessions](../sheaf-chat-piles-sessions/spec.md), [session-history](../sheaf-chat-session-history/spec.md),
+- [workspace-chats](../sheaf-chat-workspace-chats/spec.md), [session-history](../sheaf-chat-session-history/spec.md),
   [models](../sheaf-chat-models/spec.md) — REST routes dispatched by this capability's router.
 - [chat-protocol](../sheaf-chat-chat-protocol/spec.md) — WebSocket upgrades validated before
   `ws` handshake.

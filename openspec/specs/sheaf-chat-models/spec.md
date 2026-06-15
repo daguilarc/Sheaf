@@ -201,7 +201,7 @@ data/sheaf-chat/auth/openai/           # reserved for OpenAI OAuth material
 
 - [service](../sheaf-chat-service/spec.md) — configuration keys and `/api/health` dependency
   flags derived from the same config.
-- [piles-sessions](../sheaf-chat-piles-sessions/spec.md) — session creation validates against
+- [workspace-chats](../sheaf-chat-workspace-chats/spec.md) — chat creation validates against
   this registry.
 - [chat-protocol](../sheaf-chat-chat-protocol/spec.md) — `client.model_select` validation;
   `server.hello` carries `models` from `ListModels`.

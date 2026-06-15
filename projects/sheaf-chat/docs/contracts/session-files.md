@@ -1,8 +1,8 @@
 # Contract: Chat Files
 
 Shared by [repo-workspaces](../../../../openspec/specs/sheaf-chat-repo-workspaces/spec.md),
-[piles-sessions](../../../../openspec/specs/sheaf-chat-piles-sessions/spec.md) (the replaced
-workspace chat REST contract),
+[workspace-chats](../../../../openspec/specs/sheaf-chat-workspace-chats/spec.md) (the workspace
+chat REST contract),
 [session-history](../../../../openspec/specs/sheaf-chat-session-history/spec.md),
 [chat-protocol](../../../../openspec/specs/sheaf-chat-chat-protocol/spec.md),
 [agent-runtime](../../../../openspec/specs/sheaf-chat-agent-runtime/spec.md), and

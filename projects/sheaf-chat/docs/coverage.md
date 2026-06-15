@@ -6,7 +6,7 @@ Last audit: repository/workspace chat apply, 2026-06-14
 |---|---|---|
 | service | partial | no shutdown surface, profiling points unenumerated, registry fields unused |
 | repo-workspaces | partial | home discovery path is intentionally narrow, path-derived ids change after moves |
-| piles-sessions | replaced | old pile/session REST surface removed; workspace chat routes are the replacement |
+| workspace-chats | partial | list/create/read chat routes; legacy pile/session REST surface and storage removed |
 | session-history | partial | external-writer cache staleness, no retention, `messageCount` unmaintained |
 | chat-protocol | partial | WS close codes, hub lifetime, `client.hello` unused, `clientId` echo semantics |
 | agent-runtime | partial | no LLM summarizer wired, `followUp` handle method unused, failed-state recovery loose |
@@ -38,8 +38,8 @@ Last audit: repository/workspace chat apply, 2026-06-14
   worktree changes identity; no migration is provided.
 - `editor-state.json` is last-writer-wins and has no per-device merge policy.
 
-### piles-sessions
-- The pile/session API and storage layout are removed. Existing
+### workspace-chats
+- The legacy pile/session API and storage layout are removed. Existing
   `data/sheaf-chat/sessions/...` data is not read or migrated; delete
   `data/sheaf-chat` when resetting to the new layout.
 

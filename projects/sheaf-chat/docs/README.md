@@ -24,7 +24,7 @@ and known gaps are tracked in [coverage.md](coverage.md).
 |---|---|---|
 | [service](../../../openspec/specs/sheaf-chat-service/spec.md) | `svc` | Process boot, configuration keys, health endpoints, static/vendor asset serving, REST dispatch and error envelope |
 | [repo-workspaces](../../../openspec/specs/sheaf-chat-repo-workspaces/spec.md) | `rw` | Direct-home repository discovery, worktree discovery, workspace ids, metadata caching, and server-side workspace editor state |
-| [piles-sessions](../../../openspec/specs/sheaf-chat-piles-sessions/spec.md) | `ps` | Historical capability now replaced by workspace chat list/create/read routes |
+| [workspace-chats](../../../openspec/specs/sheaf-chat-workspace-chats/spec.md) | `wc` | Workspace chat list, create, and read routes |
 | [session-history](../../../openspec/specs/sheaf-chat-session-history/spec.md) | `hist` | The per-chat envelope log: sequence allocation, paging semantics, the REST history endpoint |
 | [chat-protocol](../../../openspec/specs/sheaf-chat-chat-protocol/spec.md) | `chat` | The `/ws/chat` WebSocket: repo/workspace/chat connect parameters, replay handshake, client and server frame kinds, broadcast and persistence behavior |
 | [agent-runtime](../../../openspec/specs/sheaf-chat-agent-runtime/spec.md) | `ar` | Agent lifecycle states, attach/detach, idle offload, message delivery and steering, cancellation, deferred manifest creation |
