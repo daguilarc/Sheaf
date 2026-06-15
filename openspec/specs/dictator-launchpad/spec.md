@@ -185,84 +185,6 @@ THE controller SHALL render pad colors over MIDI (programmer mode), re-rendering
 - **WHEN** the record-status, Talon-control, or shift-latch state changes
 - **THEN** those pads re-render immediately
 
-### Requirement: lp-19 — Voice diff review pad
-
-THE Launchpad controller SHALL reserve `(2,7)` as the voice diff review pad and SHALL render it red while a review recording is active, blue when a current focused hunk review target and an active review are both present, grey when a current focused hunk review target is present with no active review, green when an active review exists without a focused current hunk review target, and off otherwise.
-
-#### Scenario: Review recording renders red
-
-- **WHEN** a review-comment recording is active
-- **THEN** the review pad at `(2,7)` renders red
-
-#### Scenario: Focused hunk with existing review renders blue
-
-- **WHEN** a healthy focused hunk review target has a current hunk and Dictator has an active diff review
-- **THEN** the review pad renders blue
-
-#### Scenario: Focused hunk without review renders grey
-
-- **WHEN** a healthy focused hunk review target has a current hunk and Dictator has no active diff review
-- **THEN** the review pad renders grey
-
-#### Scenario: Away with review renders green
-
-- **WHEN** Dictator has an active diff review and no healthy focused hunk review target has a current hunk
-- **THEN** the review pad renders green
-
-#### Scenario: No review action renders off
-
-- **WHEN** there is no active review and no healthy focused current hunk review target
-- **THEN** the review pad renders off
-
-### Requirement: lp-20 — Voice diff review pad actions
-
-WHEN the review pad is pressed, THE Launchpad controller SHALL start or stop hunk review-comment recording in focused-hunk mode, SHALL serialize and post the active review in away-review mode, and SHALL ignore the press when the pad is off.
-
-#### Scenario: Press focused hunk pad
-
-- **WHEN** the review pad is pressed while a healthy focused hunk review target has a current hunk and no review recording is active
-- **THEN** Dictator starts a hunk review-comment recording
-
-#### Scenario: Stop active review recording
-
-- **WHEN** the review pad is pressed while a review-comment recording is active
-- **THEN** Dictator stops recording and processes the comment
-
-#### Scenario: Press away review pad
-
-- **WHEN** the review pad is pressed while an active review exists and there is no healthy focused current hunk review target
-- **THEN** Dictator serializes and posts the active review
-
-#### Scenario: Press off review pad
-
-- **WHEN** the review pad is pressed while it is off
-- **THEN** Dictator consumes the event without starting recording, posting text, or sending a keystroke
-
-### Requirement: lp-21 — Voice diff review cancellation
-WHEN the contextual-backspace pad is pressed during review-comment recording or review-comment refinement, THE Launchpad controller SHALL cancel that active review operation without appending a review entry.
-
-#### Scenario: Cancel review recording
-- **WHEN** contextual backspace is pressed while a review-comment recording is active
-- **THEN** Dictator cancels recording and appends no review entry
-
-#### Scenario: Cancel review refinement
-- **WHEN** contextual backspace is pressed while a review-comment refinement task is active
-- **THEN** Dictator cancels processing and appends no review entry
-
-### Requirement: lp-22 — Hunk controls: Provider routing
-
-WHEN a Launchpad hunk-control button is pressed, THE Launchpad controller SHALL route the matching navigation, stage, revert, or undo command to the healthy focused hunk review target selected by Dictator; IF no healthy focused hunk review target reports the action available, THEN the controller SHALL consume the button without sending a keyboard fallback.
-
-#### Scenario: Sheaf Chat hunk target focused
-
-- **WHEN** Sheaf Chat Agent Review Mode is the healthy focused hunk review target and a lit hunk-control button is pressed
-- **THEN** Dictator sends the matching hunk command to the Sheaf Chat provider
-
-#### Scenario: No commandable hunk target
-
-- **WHEN** no healthy focused hunk review target reports the button's action available
-- **THEN** Dictator sends no hunk command and no keyboard command
-
 ### Requirement: lp-22 — Talon control pad
 THE Launchpad controller SHALL repurpose the former Talon Lite pad at `(1,7)` as a Talon control pad that toggles the full Talon installation through [dictator-talon-control](../dictator-talon-control/spec.md).
 
@@ -300,6 +222,36 @@ THE Launchpad controller SHALL render the Talon control pad using dynamic status
 #### Scenario: Talon unavailable color
 - **WHEN** Talon control state is `unavailable` or `error`
 - **THEN** the Talon control pad renders grey
+
+### Requirement: lp-24 — External cells: WebSocket RPC ownership
+WHEN the WebSocket RPC layer owns one or more Launchpad cells, THE Launchpad controller SHALL render the RPC-supplied colors for those cells, route press and release events for those cells to the RPC layer, and prevent owned cells from dispatching static layout actions.
+
+#### Scenario: RPC-owned cell renders supplied color
+- **WHEN** a WebSocket RPC client owns `(3,3)` and supplies a grey color
+- **THEN** the Launchpad controller renders `(3,3)` grey
+
+#### Scenario: RPC-owned cell press routed externally
+- **WHEN** the user presses a WebSocket RPC-owned cell
+- **THEN** the Launchpad controller routes the press to the RPC layer and does not dispatch a static layout action
+
+#### Scenario: RPC ownership removed
+- **WHEN** the WebSocket RPC layer releases ownership of a cell
+- **THEN** the Launchpad controller returns that cell to the normal static-layout or off rendering behavior
+
+### Requirement: lp-25 — External cells: Agent review controls move to generic RPC ownership
+THE Launchpad controller SHALL NOT treat `(2,7)` as a review control and SHALL NOT implement built-in review, hunk-navigation, stage, revert, or undo behavior at the Agent Review coordinates; all Sheaf Chat Agent Review controls — hunk navigation, stage, revert, undo, and the review/comment/post cell — SHALL be provided through WebSocket RPC cell ownership and generic cell events, with Dictator rendering only the supplied colors and routing only the generic press/release events.
+
+#### Scenario: Coordinate two seven removed from review workflow
+- **WHEN** the user presses `(2,7)`
+- **THEN** Dictator does not start review recording, post a review, or otherwise treat `(2,7)` as part of the review workflow
+
+#### Scenario: Coordinate three three owned
+- **WHEN** `(3,3)` is owned by Sheaf Chat over WebSocket RPC
+- **THEN** Dictator sends generic cell press and release events for the Sheaf Chat review/comment/post Launchpad cell
+
+#### Scenario: Hunk navigation and mutation cells owned externally
+- **WHEN** Sheaf Chat owns the hunk navigation, stage, revert, and undo cells over WebSocket RPC
+- **THEN** Dictator renders their supplied colors and sends generic cell press and release events without performing any hunk navigation, staging, reverting, or undo itself
 
 ## Contracts
 
