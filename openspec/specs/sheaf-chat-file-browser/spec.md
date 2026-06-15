@@ -511,7 +511,7 @@ All errors use the standard service envelope
 |---|---:|---|---|
 | Missing read `path` | 400 | `invalid_request` | `path query parameter is required` |
 | Missing file/list path | 404 | `file_not_found` | `path not found` |
-| Missing session bootstrap | 404 | `session_not_found` | `session not found: <sessionId>` |
+| Missing chat bootstrap | 404 | `chat_not_found` | `chat not found: <chatId>` |
 | Directory requested as file | 400 | `not_a_file` | `path is a directory, not a file` |
 | File requested as directory | 400 | `not_a_directory` | `path is not a directory` |
 | Unsupported file read | 400 | `unsupported_file` | `file is not a supported text document` |

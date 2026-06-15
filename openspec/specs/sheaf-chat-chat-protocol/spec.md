@@ -320,7 +320,7 @@ THE service SHALL identify a user message by a single stable id — the client-p
 {
   "connectionId": "9c2f4e1a-…",
   "manifest": null,
-  "provisionalSession": {
+  "provisionalChat": {
     "rootDirectory": "projects",
     "model": { "provider": "local", "id": "qwen3-coder" }
   },
@@ -331,7 +331,7 @@ THE service SHALL identify a user message by a single stable id — the client-p
 }
 ```
 
-`manifest` is the persisted manifest or `null`; `provisionalSession` is
+`manifest` is the persisted manifest or `null`; `provisionalChat` is
 present only while no manifest exists and the provisional root is known
 (root relativized to the repository root). `latestSequence` is 0 for an
 empty log.

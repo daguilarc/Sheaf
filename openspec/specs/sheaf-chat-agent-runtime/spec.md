@@ -241,7 +241,7 @@ The externally observable surfaces of this capability are the
 envelopes specified in [chat-protocol](../sheaf-chat-chat-protocol/spec.md), the manifest file
 in [session files](../../../projects/sheaf-chat/docs/contracts/session-files.md), and the
 `AgentStatusSnapshot` fields surfaced through `server.hello`
-(`manifest`, `activeModel`, `provisionalSession`).
+(`manifest`, `activeModel`, `provisionalChat`).
 
 Lifecycle states:
 
@@ -264,7 +264,7 @@ Lifecycle states:
 | Pi delivery failure | `user_message_delivery_failed` (non-fatal) | underlying message |
 | Cancel | `cancelled` (non-fatal) | `Turn cancelled` |
 | Manifest write failure | `manifest_write_failed` (non-fatal) | underlying message |
-| Session file missing on resume | — (attach fails) | `session file not found for <sessionId>` |
+| Chat file missing on resume | — (attach fails) | `chat file not found for <chatId>` |
 | Unknown model at Pi level | — (operation fails) | `model not found: <provider>/<id>` |
 
 ## Design

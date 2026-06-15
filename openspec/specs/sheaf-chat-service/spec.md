@@ -232,9 +232,9 @@ the endpoint). `openAi.configured` is true when `openai_api_key` is set.
 
 | Code | Status |
 |---|---|
-| `invalid_request`, `invalid_json`, `invalid_pile`, `invalid_session_id`, `invalid_name`, `invalid_manifest`, `invalid_history_request`, `invalid_sequence`, `model_unavailable`, `invalid_root_directory`, `unsupported_file`, `not_a_file`, `not_a_directory` | 400 |
+| `invalid_request`, `invalid_json`, `invalid_id`, `invalid_name`, `invalid_manifest`, `invalid_history_request`, `invalid_sequence`, `model_unavailable`, `invalid_root_directory`, `unsupported_file`, `not_a_file`, `not_a_directory` | 400 |
 | `path_escape` | 403 |
-| `not_found`, `pile_not_found`, `manifest_not_found`, `model_not_found`, `session_not_found`, `file_not_found` | 404 |
+| `not_found`, `manifest_not_found`, `model_not_found`, `chat_not_found`, `file_not_found` | 404 |
 | `method_not_allowed` | 405 |
 | `internal_error` (and any unmapped code) | 500 |
 
