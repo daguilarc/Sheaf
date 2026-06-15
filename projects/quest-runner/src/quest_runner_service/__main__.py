@@ -13,6 +13,7 @@ from .api import create_app
 from .logging_config import configure_service_logging
 from .quest_lock import QuestLock
 from .quest_service import QuestService
+from .smoke_test import resolve_asset_root
 
 log = logging.getLogger("quest_runner")
 _EXIT_DELAY_SECONDS = 0.1
@@ -46,6 +47,15 @@ def main() -> None:
     source_repo_root = _resolve_source_repo_root()
     log_dir = source_repo_root / "logs" / "quest-runner"
     configure_service_logging(log_dir)
+
+    asset_resolution = resolve_asset_root(source_repo_root, os.environ)
+    if asset_resolution.warning is not None:
+        log.warning("%s", asset_resolution.warning)
+    elif asset_resolution.used_smoke_asset_root:
+        log.info(
+            "smoke-test mode: resolving git-ignored assets from %s",
+            asset_resolution.asset_root,
+        )
 
     started_at = time.time()
     quest_service = QuestService(QuestLock(), source_repo_root)

@@ -116,8 +116,21 @@ struct DictatorServiceMain
             TraceLogger.log("using registered service endpoint: \(endpoint.host):\(endpoint.port)")
         }
 
+        let assetResolution = SmokeTestMode.resolveAssetRootFromProcessEnvironment(
+            repoRoot: repoRoot
+        )
+        if let warning = assetResolution.warning
+        {
+            TraceLogger.log("warning: \(warning)")
+        }
+        else if assetResolution.usedSmokeAssetRoot
+        {
+            TraceLogger.log("smoke-test mode: resolving git-ignored assets from \(assetResolution.url.path)")
+        }
+        let assetRoot = assetResolution.url
+
         let secretStore = APIKeysStore(
-            fileURL: repoRoot.appendingPathComponent("config/api_keys.json", isDirectory: false)
+            fileURL: assetRoot.appendingPathComponent("config/api_keys.json", isDirectory: false)
         )
 
         let hasOpenAIKey: Bool
@@ -137,7 +150,7 @@ struct DictatorServiceMain
 
         TraceLogger.log("loaded runtime config from \(configStore.fileURL.path)")
 
-        let sttModelPath = config.resolvedSTTModelPath(currentDirectoryPath: repoRoot.path)
+        let sttModelPath = config.resolvedSTTModelPath(currentDirectoryPath: assetRoot.path)
         if !FileManager.default.fileExists(atPath: sttModelPath)
         {
             TraceLogger.log("warning: STT model not found at \(sttModelPath)")

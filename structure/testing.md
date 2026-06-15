@@ -83,6 +83,35 @@ checks that require:
 These checks should document their prerequisites and expected side effects in
 the project docs.
 
+### Smoke-Test Mode
+
+Smoke-test mode lets a feature worktree's services run for human testing without
+hand-copying the git-ignored assets (API keys, whisper/STT models) out of the
+main checkout. It is signalled by two environment variables:
+
+- `SHEAF_SMOKE_TEST_MODE`: when set to any non-empty value other than `0` or
+  `false` (case-insensitive), smoke-test mode is active. It is a general
+  "running for testing" flag so future test-only behavior can reuse it.
+- `SHEAF_SMOKE_ASSET_ROOT`: absolute path to the repository whose git-ignored
+  assets (`config/api_keys.json`, `.secrets.json`, models under `models/`)
+  services should use while smoke-test mode is active. Tracked files (code,
+  `config/services.json`, per-project tracked config) still come from the
+  service's own repository root, so the worktree's behavior is what gets tested.
+
+When smoke-test mode is active but `SHEAF_SMOKE_ASSET_ROOT` is unset, empty, or
+not an existing directory, services log a warning and fall back to normal
+repository-root asset resolution rather than failing startup.
+
+You do not set these variables by hand. Conductor sets them: its lifecycle
+`start`/`restart` API accepts an optional `smoke_test` flag, and when set
+Conductor discovers the main working tree and injects both variables into the
+service it spawns. Every registered service except Conductor honors the flag
+(Conductor has no external asset dependencies). A smoke restart rebinds the
+service's registered production port, replacing the running production instance,
+so smoke launches from multiple worktrees are not run in parallel. See the
+`smoke-test` agent skill (`projects/agents/global/skills/smoke-test/`) for the
+ready-to-run launch script.
+
 ## Directory Layout
 
 Put regular tests under the project's existing `tests/` tree.

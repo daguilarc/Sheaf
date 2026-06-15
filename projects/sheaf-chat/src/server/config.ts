@@ -5,8 +5,10 @@ import type { ModelMetadata } from "../shared/types.js";
 import {
   FindRepositoryRoot,
   GetDefaultSheafChatPaths,
+  x_apiKeysRelative,
   type SheafChatPaths,
 } from "./repo_paths.js";
+import { ResolveSmokeAssetRoot } from "./smoke_test.js";
 
 export const x_defaultAgentIdleOffloadSeconds = 300;
 
@@ -38,6 +40,7 @@ export interface LoadSheafChatConfigOptions
   repoRoot?: string;
   globalConfigPath?: string;
   apiKeysPath?: string;
+  env?: NodeJS.ProcessEnv;
 }
 
 export class ConfigLoadError extends Error
@@ -111,7 +114,19 @@ export async function LoadSheafChatConfig(
   const repoRoot = RequireRepoRoot(options.repoRoot);
   const paths = GetDefaultSheafChatPaths(repoRoot);
   const globalConfigPath = options.globalConfigPath ?? paths.globalConfigFile;
-  const apiKeysPath = options.apiKeysPath ?? paths.apiKeysFile;
+
+  // In smoke-test mode, the git-ignored API keys file is read from the main-repo
+  // asset root; tracked config (global_config, services.json) stays on the
+  // worktree's repo root.
+  const smokeAssetRoot = ResolveSmokeAssetRoot({ repoRoot, env: options.env });
+  if (smokeAssetRoot.warning !== null)
+  {
+    console.error(`sheaf-chat: ${smokeAssetRoot.warning}`);
+  }
+  const defaultApiKeysFile = smokeAssetRoot.usedSmokeAssetRoot
+    ? path.join(smokeAssetRoot.assetRoot, x_apiKeysRelative)
+    : paths.apiKeysFile;
+  const apiKeysPath = options.apiKeysPath ?? defaultApiKeysFile;
 
   let globalConfig: GlobalConfigFile = {};
 

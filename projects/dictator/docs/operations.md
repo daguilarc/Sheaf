@@ -184,3 +184,16 @@ git status --short projects/dictator
 ```bash
 make clean        # rm -rf .build .swiftpm .swiftpm-module-cache DerivedData build
 ```
+
+## Smoke-test mode
+
+When the service is started with `SHEAF_SMOKE_TEST_MODE` active (normally via
+Conductor's `smoke_test` restart flag), it resolves its git-ignored assets —
+`config/api_keys.json` and the configured STT (whisper) model — from
+`SHEAF_SMOKE_ASSET_ROOT` instead of its own repo root, while tracked config
+(`config/services.json`, `config/dictator.json`) still comes from the repo root.
+If `SHEAF_SMOKE_ASSET_ROOT` is unset/empty/missing, it logs a warning and falls
+back to repo-root resolution. This lets a worktree's dictator run against the
+real keys and whisper model that live only in the main checkout. See
+[structure/testing.md](../../../structure/testing.md) and the `smoke-test` agent
+skill.

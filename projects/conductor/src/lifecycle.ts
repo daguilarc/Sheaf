@@ -12,6 +12,12 @@ import {
   type PresentedServiceHealth,
 } from "./service_presenter.js";
 import type { ServiceDefinition } from "./service_definition.js";
+import { buildSmokeTestEnv, discoverSmokeAssetRoot } from "./smoke_test.js";
+
+export type LifecycleActionOptions =
+{
+  smokeTest?: boolean;
+};
 
 export type ProcessInfo =
 {
@@ -78,6 +84,7 @@ export type LifecycleManagerOptions =
   fetchFn?: FetchFn;
   exitRequestTimeoutMs?: number;
   killProcess?: (pid: number) => void;
+  resolveSmokeAssetRoot?: () => string;
 };
 
 export function buildExitUrl(service: ServiceDefinition): string
@@ -188,11 +195,14 @@ export class LifecycleManager
   private m_exitRequester: ExitRequester;
   private m_getHeartbeat: (serviceName: string) => HeartbeatState | undefined;
   private m_killProcess: (pid: number) => void;
+  private m_resolveSmokeAssetRoot: () => string;
   private m_startedProcesses = new Map<string, SpawnedProcess>();
 
   constructor(options: LifecycleManagerOptions)
   {
     this.m_repoRoot = options.repoRoot;
+    this.m_resolveSmokeAssetRoot = options.resolveSmokeAssetRoot
+      ?? (() => discoverSmokeAssetRoot({ repoRoot: this.m_repoRoot }));
     this.m_processRunner = options.processRunner ?? createProcessRunner();
     this.m_exitRequester = options.exitRequester ?? createExitRequester({
       fetchFn: options.fetchFn,
@@ -212,7 +222,10 @@ export class LifecycleManager
     });
   }
 
-  StartService(service: ServiceDefinition): StartServiceResult
+  StartService(
+    service: ServiceDefinition,
+    options?: LifecycleActionOptions,
+  ): StartServiceResult
   {
     const validationError = validateServiceCommand(service);
     const heartbeat = toPresentedHeartbeat(service.name, this.m_getHeartbeat(service.name));
@@ -228,12 +241,17 @@ export class LifecycleManager
       };
     }
 
+    const spawnEnv = options?.smokeTest
+      ? buildSmokeTestEnv(this.m_resolveSmokeAssetRoot())
+      : undefined;
+
     try
     {
       const process = this.m_processRunner.spawn(
         service.command,
         this.m_repoRoot,
         service.name,
+        spawnEnv,
       );
       this.m_startedProcesses.set(service.name, process);
 
@@ -308,11 +326,14 @@ export class LifecycleManager
     };
   }
 
-  async RestartService(service: ServiceDefinition): Promise<RestartServiceResult>
+  async RestartService(
+    service: ServiceDefinition,
+    options?: LifecycleActionOptions,
+  ): Promise<RestartServiceResult>
   {
     const heartbeat = toPresentedHeartbeat(service.name, this.m_getHeartbeat(service.name));
     const stopResult = await this.StopService(service);
-    const startResult = this.StartService(service);
+    const startResult = this.StartService(service, options);
 
     const restartRequested = startResult.started;
     const error = startResult.error ?? (startResult.started ? undefined : stopResult.error);

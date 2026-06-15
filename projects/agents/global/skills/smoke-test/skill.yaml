@@ -1,0 +1,8 @@
+id: smoke-test
+name: smoke-test
+description: Launch the Sheaf services for human smoke testing through Conductor, with assets sourced from the main repo.
+targets:
+  - claude
+  - cursor
+  - pi
+  - codex

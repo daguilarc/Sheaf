@@ -11,6 +11,8 @@ import {
 import {
   decodePathSegment,
   parseRequestPath,
+  readJsonBody,
+  readSmokeTestFlag,
   sendJson,
   sendJsonAfterFlush,
 } from "./http_json.js";
@@ -257,7 +259,8 @@ export function createConductorServer(options: ConductorServerOptions): Conducto
 
       if (action === "start" && method === "POST")
       {
-        const result = lifecycleManager.StartService(service);
+        const smokeTest = readSmokeTestFlag(await readJsonBody(request));
+        const result = lifecycleManager.StartService(service, { smokeTest });
 
         if (result.error && !result.started)
         {
@@ -279,7 +282,8 @@ export function createConductorServer(options: ConductorServerOptions): Conducto
 
       if (action === "restart" && method === "POST")
       {
-        const result = await lifecycleManager.RestartService(service);
+        const smokeTest = readSmokeTestFlag(await readJsonBody(request));
+        const result = await lifecycleManager.RestartService(service, { smokeTest });
 
         if (result.error && !result.restart_requested)
         {

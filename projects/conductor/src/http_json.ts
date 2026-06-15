@@ -40,3 +40,41 @@ export function decodePathSegment(segment: string): string
 {
   return decodeURIComponent(segment);
 }
+
+export async function readJsonBody(request: IncomingMessage): Promise<unknown>
+{
+  if (typeof (request as AsyncIterable<unknown>)[Symbol.asyncIterator] !== "function")
+  {
+    return undefined;
+  }
+
+  const chunks: Buffer[] = [];
+
+  for await (const chunk of request)
+  {
+    chunks.push(chunk as Buffer);
+  }
+
+  const raw = Buffer.concat(chunks).toString("utf8").trim();
+
+  if (raw.length === 0)
+  {
+    return undefined;
+  }
+
+  try
+  {
+    return JSON.parse(raw);
+  }
+  catch
+  {
+    return undefined;
+  }
+}
+
+export function readSmokeTestFlag(body: unknown): boolean
+{
+  return typeof body === "object"
+    && body !== null
+    && (body as Record<string, unknown>).smoke_test === true;
+}

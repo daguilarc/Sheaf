@@ -173,3 +173,15 @@ auth/model files); format in [session files](contracts/session-files.md).
 Deleting a session's four files removes the session. The service writes no
 log files; stdout/stderr handling follows
 [Logs And Data](../../../structure/logs-and-data.md).
+
+## Smoke-test mode
+
+When the service is started with `SHEAF_SMOKE_TEST_MODE` active (normally via
+Conductor's `smoke_test` restart flag), it resolves its git-ignored
+`config/api_keys.json` from `SHEAF_SMOKE_ASSET_ROOT` instead of its own repo
+root, while tracked config (`config/services.json`, `config/global_config.json`)
+and worktree-local runtime data (`data/sheaf-chat/`) stay on the repo root. If
+`SHEAF_SMOKE_ASSET_ROOT` is unset/empty/missing, it logs a warning and falls
+back to repo-root resolution. See
+[structure/testing.md](../../../structure/testing.md) and the `smoke-test` agent
+skill.

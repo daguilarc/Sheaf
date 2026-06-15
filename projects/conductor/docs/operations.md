@@ -63,6 +63,27 @@ and binds the host and port of the `conductor` registry entry (currently
 `0.0.0.0:9001`). The UI is then at `http://127.0.0.1:9001/`. There are no
 CLI flags or environment-variable overrides.
 
+## Smoke-test launches
+
+The lifecycle endpoints accept an optional JSON body to launch a service in
+smoke-test mode:
+
+```bash
+curl -X POST http://127.0.0.1:9001/api/services/dictator/restart \
+  -H "Content-Type: application/json" \
+  -d '{"smoke_test": true}'
+```
+
+`POST /api/services/<name>/start` and `/api/services/<name>/restart` both honor
+`{"smoke_test": true}`. When set, conductor discovers the main working tree (an
+explicit `SHEAF_SMOKE_ASSET_ROOT` in conductor's own environment wins, otherwise
+the parent of the shared `.git` from `git rev-parse --git-common-dir`, otherwise
+conductor's own repo root) and spawns the service with `SHEAF_SMOKE_TEST_MODE=1`
+and `SHEAF_SMOKE_ASSET_ROOT` set to that root. Without the flag (or with
+`false`), the spawn environment is unchanged. The service then reads its
+git-ignored assets from the asset root. See [structure/testing.md](../../../structure/testing.md)
+and the `smoke-test` agent skill for the full flow.
+
 ## Stop
 
 ```bash

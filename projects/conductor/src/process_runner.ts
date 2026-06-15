@@ -20,7 +20,12 @@ export type SpawnFailure =
 
 export type ProcessRunner =
 {
-  spawn: (command: string, cwd: string, serviceName: string) => SpawnedProcess;
+  spawn: (
+    command: string,
+    cwd: string,
+    serviceName: string,
+    env?: Record<string, string>,
+  ) => SpawnedProcess;
 };
 
 export function parseCommand(command: string): string[]
@@ -93,9 +98,11 @@ export function spawnCommand(
   serviceName: string,
   repoRoot: string,
   spawnFn: typeof nodeSpawn = nodeSpawn,
+  env?: Record<string, string>,
 ): SpawnedProcess
 {
   const { stdoutFd, stderrFd } = openServiceLogStreams(repoRoot, serviceName);
+  const childEnv = env ? { ...process.env, ...env } : undefined;
 
   try
   {
@@ -106,6 +113,7 @@ export function spawnCommand(
         shell: true,
         detached: true,
         stdio: ["ignore", stdoutFd, stderrFd],
+        env: childEnv,
       });
 
       if (child.pid === undefined)
@@ -133,6 +141,7 @@ export function spawnCommand(
       cwd,
       detached: true,
       stdio: ["ignore", stdoutFd, stderrFd],
+      env: childEnv,
     });
 
     if (child.pid === undefined)
@@ -170,11 +179,16 @@ function createSpawnFailure(command: string, argv: string[], message: string): E
 export function createProcessRunner(spawnFn: typeof nodeSpawn = nodeSpawn): ProcessRunner
 {
   return {
-    spawn(command: string, cwd: string, serviceName: string): SpawnedProcess
+    spawn(
+      command: string,
+      cwd: string,
+      serviceName: string,
+      env?: Record<string, string>,
+    ): SpawnedProcess
     {
       try
       {
-        return spawnCommand(command, cwd, serviceName, cwd, spawnFn);
+        return spawnCommand(command, cwd, serviceName, cwd, spawnFn, env);
       }
       catch (error: unknown)
       {

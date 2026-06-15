@@ -43,7 +43,8 @@ TEST_MODULES := \
 	tests.test_migration_validation \
 	tests.test_agui_mapper \
 	tests.test_chat_event_bus \
-	tests.test_dashboard_chat
+	tests.test_dashboard_chat \
+	tests.test_smoke_test
 
 all: test
 

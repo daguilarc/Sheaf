@@ -153,6 +153,15 @@ final class MigrationExclusionTests: XCTestCase
             return true
         }
 
+        // The smoke-test contract is an env-var signal set by Conductor, distinct
+        // from Dictator's file-based runtime config. The single bridge file that
+        // reads the process environment for it is sanctioned here.
+        if pattern == "ProcessInfo.processInfo.environment"
+            && relativePath == "projects/dictator/src/Sources/DictatorCore/SmokeTestMode.swift"
+        {
+            return true
+        }
+
         if (pattern == "/v1/transcribe" || pattern == "/v1/refine")
             && relativePath == "projects/dictator/tests/DictatorServiceTests/DictationHTTPServerTests.swift"
         {

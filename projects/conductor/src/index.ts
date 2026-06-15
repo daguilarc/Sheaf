@@ -23,9 +23,21 @@ export {
 export {
   decodePathSegment,
   parseRequestPath,
+  readJsonBody,
+  readSmokeTestFlag,
   sendJson,
   sendJsonAfterFlush,
 } from "./http_json.js";
+export {
+  SMOKE_ASSET_ROOT_ENV_VAR,
+  SMOKE_TEST_MODE_ENV_VAR,
+  buildSmokeTestEnv,
+  discoverSmokeAssetRoot,
+  isSmokeTestModeActive,
+  type DiscoverSmokeAssetRootOptions,
+  type GitCommonDirReader,
+  type SmokeTestEnv,
+} from "./smoke_test.js";
 export {
   presentAllServices,
   presentService,
@@ -52,6 +64,7 @@ export {
   type CommandValidationError,
   type ExitRequester,
   type ExitRequestResult,
+  type LifecycleActionOptions,
   type LifecycleManagerOptions,
   type ProcessInfo,
   type RestartServiceResult,

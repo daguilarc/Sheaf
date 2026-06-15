@@ -114,6 +114,15 @@ make -C projects/quest-runner run
 # or: bash projects/quest-runner/start_quest_runner.sh
 ```
 
+When the service is started with `SHEAF_SMOKE_TEST_MODE` active (normally via
+Conductor's `smoke_test` restart flag), it resolves any git-ignored assets it
+reads from `SHEAF_SMOKE_ASSET_ROOT` instead of its own repo root, while tracked
+config (`config/services.json`, `config/quest-runner.json`) stays on the repo
+root; it logs the chosen asset root at startup and warns and falls back to
+repo-root resolution when the asset root is unset/empty/missing. See
+[structure/testing.md](../../../structure/testing.md) and the `smoke-test` agent
+skill.
+
 `start_quest_runner.sh` creates the venv if missing, installs
 `requirements.txt`, sets `PYTHONPATH` to `projects/quest-runner/src`, `cd`s to
 the repository root, and execs:
