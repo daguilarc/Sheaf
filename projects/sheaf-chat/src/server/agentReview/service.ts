@@ -143,14 +143,20 @@ function ActionsFor(hunks: AgentReviewHunk[], currentIndex: number, canUndo: boo
   }
 
   const current = hunks[currentIndex]!;
-  const previous = hunks[currentIndex - 1];
-  const next = hunks[currentIndex + 1];
+
+  // Hunk navigation loops within the current file, so it is available whenever
+  // that file has more than one hunk and unavailable for a single-hunk file.
+  const [fileStart, fileEnd] = FileHunkRange(hunks, currentIndex);
+  const fileHasMultipleHunks = fileEnd > fileStart;
 
   return {
-    canGoUp: currentIndex > 0,
-    canGoDown: currentIndex < hunks.length - 1,
-    canGoPrevFile: previous !== undefined && previous.file !== current.file,
-    canGoNextFile: next !== undefined && next.file !== current.file,
+    canGoUp: fileHasMultipleHunks,
+    canGoDown: fileHasMultipleHunks,
+    // File navigation is available whenever another file with unstaged hunks
+    // exists in that direction, regardless of which hunk in the current file is
+    // selected.
+    canGoPrevFile: current.fileIndex > 0,
+    canGoNextFile: current.fileIndex < current.fileCount - 1,
     canStage: true,
     canRevert: true,
     canUndo,
@@ -489,6 +495,25 @@ function NormalizeCurrentIndex(hunks: AgentReviewHunk[], desiredIndex: number): 
   return Math.min(Math.max(0, desiredIndex), hunks.length - 1);
 }
 
+// Hunks are grouped contiguously by file (see BuildHunks in git.ts), so the
+// current file occupies a single [start, end] run. Returns the inclusive index
+// bounds of the run containing `index`.
+function FileHunkRange(hunks: AgentReviewHunk[], index: number): [number, number]
+{
+  const file = hunks[index]!.file;
+  let start = index;
+  while (start > 0 && hunks[start - 1]!.file === file)
+  {
+    start -= 1;
+  }
+  let end = index;
+  while (end < hunks.length - 1 && hunks[end + 1]!.file === file)
+  {
+    end += 1;
+  }
+  return [start, end];
+}
+
 function ParseClientFrame(data: WebSocket.RawData): AgentReviewClientFrame
 {
   const parsed = JSON.parse(data.toString()) as Partial<AgentReviewClientFrame>;
@@ -522,6 +547,14 @@ function ParseClientFrame(data: WebSocket.RawData): AgentReviewClientFrame
     return {
       type: parsed.type,
       hunkId: parsed.hunkId,
+    };
+  }
+
+  if (parsed.type === "presence" && typeof parsed.focused === "boolean")
+  {
+    return {
+      type: "presence",
+      focused: parsed.focused,
     };
   }
 
@@ -559,6 +592,10 @@ class AgentReviewSession
   private readonly m_providerId: string;
   private readonly m_dictatorRPC: DictatorRPCClient | null;
   private readonly m_sockets = new Set<WebSocket>();
+  // Subset of m_sockets whose browser tab is currently focused (visible and
+  // window-focused). The Launchpad is lit while any attached client is focused
+  // and dark when none are. Sockets default to focused on attach.
+  private readonly m_focusedSockets = new Set<WebSocket>();
   private readonly m_undoStack: UndoEntry[] = [];
   private readonly m_reviewEntries: AgentReviewDraftEntry[] = [];
   private m_state: AgentReviewState | null = null;
@@ -583,7 +620,7 @@ class AgentReviewSession
       : new DictatorRPCClient(
         dictatorEndpoint,
         this.m_providerId,
-        (x, y) => { void this.HandleCellPressed(x, y); },
+        (x, y) => { void this.HandleCellPressed(x, y).catch(() => {}); },
         () => {
           void this.RefreshAndBroadcast().catch(() =>
           {
@@ -602,6 +639,7 @@ class AgentReviewSession
     }
 
     this.m_sockets.clear();
+    this.m_focusedSockets.clear();
     this.m_dictatorRPC?.disconnect();
   }
 
@@ -610,16 +648,23 @@ class AgentReviewSession
     return this.m_sockets.size;
   }
 
+  private AnyClientFocused(): boolean
+  {
+    return this.m_focusedSockets.size > 0;
+  }
+
   async Attach(socket: WebSocket): Promise<void>
   {
     this.m_sockets.add(socket);
+    this.m_focusedSockets.add(socket);
     socket.on("message", (data) =>
     {
-      void this.HandleMessage(socket, data);
+      void this.HandleMessage(socket, data).catch(() => {});
     });
     socket.on("close", () =>
     {
       this.m_sockets.delete(socket);
+      this.m_focusedSockets.delete(socket);
       if (this.m_sockets.size === 0)
       {
         this.PopActiveContext();
@@ -919,6 +964,26 @@ class AgentReviewSession
       return;
     }
 
+    if (frame.type === "presence")
+    {
+      const wasAnyFocused = this.AnyClientFocused();
+      if (frame.focused)
+      {
+        this.m_focusedSockets.add(socket);
+      }
+      else
+      {
+        this.m_focusedSockets.delete(socket);
+      }
+      // Only touch the Launchpad when the aggregate focus state flips: clear it
+      // on going fully dark, restore it on the first focused client returning.
+      if (wasAnyFocused !== this.AnyClientFocused())
+      {
+        await this.UpdateDictatorCells();
+      }
+      return;
+    }
+
     const result = await this.ExecuteCommand(frame.action, {
       commandId: frame.id,
       hunkId: frame.hunkId,
@@ -1029,7 +1094,7 @@ class AgentReviewSession
   private voidPopCommentContext(hunkId: string): void
   {
     this.m_pushedContextHunkId = null;
-    void this.m_dictatorRPC?.popContext(hunkId);
+    void this.m_dictatorRPC?.popContext(hunkId)?.catch(() => {});
   }
 
   private PopActiveContext(): void
@@ -1081,40 +1146,49 @@ class AgentReviewSession
       return { ok: false, action, commandId, error: "no hunks available" };
     }
 
-    if (action === "previousHunk")
+    if (action === "previousHunk" || action === "nextHunk")
     {
-      this.m_currentIndex = NormalizeCurrentIndex(state.hunks, this.m_currentIndex - 1);
-    }
-    else if (action === "nextHunk")
-    {
-      this.m_currentIndex = NormalizeCurrentIndex(state.hunks, this.m_currentIndex + 1);
+      // Loop within the current file's contiguous run: next-hunk wraps from the
+      // last hunk to the first, previous-hunk wraps from the first to the last.
+      // File boundaries are crossed only by the file commands.
+      if (this.m_currentIndex < 0)
+      {
+        this.m_currentIndex = NormalizeCurrentIndex(state.hunks, 0);
+      }
+      else
+      {
+        const [start, end] = FileHunkRange(state.hunks, this.m_currentIndex);
+        this.m_currentIndex = action === "nextHunk"
+          ? (this.m_currentIndex >= end ? start : this.m_currentIndex + 1)
+          : (this.m_currentIndex <= start ? end : this.m_currentIndex - 1);
+      }
     }
     else if (action === "previousFile")
     {
+      // Land on the first hunk of the previous file, regardless of which hunk in
+      // the current file is selected.
       const current = state.hunks[this.m_currentIndex];
-      const target = current === undefined
-        ? -1
-        : state.hunks
-          .slice(0, this.m_currentIndex)
-          .map((hunk, index) => ({ hunk, index }))
-          .reverse()
-          .find((entry) => entry.hunk.file !== current.file)?.index ?? -1;
-      if (target >= 0)
+      if (current !== undefined && current.fileIndex > 0)
       {
-        this.m_currentIndex = target;
+        const target = state.hunks.findIndex((hunk) => hunk.fileIndex === current.fileIndex - 1);
+        if (target >= 0)
+        {
+          this.m_currentIndex = target;
+        }
       }
     }
     else if (action === "nextFile")
     {
+      // Land on the first hunk of the next file, regardless of which hunk in the
+      // current file is selected.
       const current = state.hunks[this.m_currentIndex];
-      const target = current === undefined
-        ? -1
-        : state.hunks
-          .map((hunk, index) => ({ hunk, index }))
-          .find((entry) => entry.index > this.m_currentIndex && entry.hunk.file !== current.file)?.index ?? -1;
-      if (target >= 0)
+      if (current !== undefined && current.fileIndex < current.fileCount - 1)
       {
-        this.m_currentIndex = target;
+        const target = state.hunks.findIndex((hunk) => hunk.fileIndex === current.fileIndex + 1);
+        if (target >= 0)
+        {
+          this.m_currentIndex = target;
+        }
       }
     }
 
@@ -1254,7 +1328,17 @@ class AgentReviewSession
 
     try
     {
-      await this.m_dictatorRPC.setCells(this.ReviewCellColor(), this.m_state.actions);
+      // While no attached client is focused, keep every owned cell off
+      // regardless of action availability — a background refresh must not
+      // relight the grid while the user is away. Restore from state on refocus.
+      if (!this.AnyClientFocused())
+      {
+        await this.m_dictatorRPC.setCells("off", EmptyActions());
+      }
+      else
+      {
+        await this.m_dictatorRPC.setCells(this.ReviewCellColor(), this.m_state.actions);
+      }
     }
     catch
     {
@@ -1263,6 +1347,13 @@ class AgentReviewSession
 
   private async HandleCellPressed(x: number, y: number): Promise<void>
   {
+    // The pads are dark while no client is focused; ignore presses Dictator
+    // still forwards so the dark grid is inert.
+    if (!this.AnyClientFocused())
+    {
+      return;
+    }
+
     if (x === REVIEW_CELL.x && y === REVIEW_CELL.y)
     {
       await this.HandleReviewCellPressed();

@@ -100,6 +100,7 @@ class FakeDictatorRPCServer
   private readonly requests: Array<Record<string, any>> = [];
   private readonly waiters: Array<{
     method: string;
+    predicate?: (request: Record<string, any>) => boolean;
     resolve: (request: Record<string, any>) => void;
   }> = [];
 
@@ -162,7 +163,21 @@ class FakeDictatorRPCServer
 
   waitForRequest(method: string, timeoutMs = 5000): Promise<Record<string, any>>
   {
-    const existing = this.requests.find((request) => request.method === method);
+    return this.waitForRequestWhere(method, undefined, timeoutMs);
+  }
+
+  // Resolve with the next (or already-seen) request for `method` that also
+  // satisfies `predicate`. Use clearRequests() first to wait for a request that
+  // happens strictly after a known point.
+  waitForRequestWhere(
+    method: string,
+    predicate?: (request: Record<string, any>) => boolean,
+    timeoutMs = 5000,
+  ): Promise<Record<string, any>>
+  {
+    const existing = this.requests.find(
+      (request) => request.method === method && (predicate === undefined || predicate(request)),
+    );
     if (existing !== undefined)
     {
       return Promise.resolve(existing);
@@ -171,27 +186,34 @@ class FakeDictatorRPCServer
     {
       const timer = setTimeout(() =>
       {
-        const index = this.waiters.findIndex((waiter) => waiter.resolve === resolve);
+        const index = this.waiters.findIndex((waiter) => waiter.resolve === wrapped);
         if (index >= 0)
         {
           this.waiters.splice(index, 1);
         }
         reject(new Error(`timed out waiting for Dictator RPC request: ${method}`));
       }, timeoutMs);
-      this.waiters.push({
-        method,
-        resolve: (request) =>
-        {
-          clearTimeout(timer);
-          resolve(request);
-        },
-      });
+      const wrapped = (request: Record<string, any>): void =>
+      {
+        clearTimeout(timer);
+        resolve(request);
+      };
+      this.waiters.push({ method, predicate, resolve: wrapped });
     });
+  }
+
+  clearRequests(): void
+  {
+    this.requests.length = 0;
   }
 
   private resolveWaiter(request: Record<string, any>): void
   {
-    const index = this.waiters.findIndex((waiter) => waiter.method === request.method);
+    const index = this.waiters.findIndex(
+      (waiter) =>
+        waiter.method === request.method &&
+        (waiter.predicate === undefined || waiter.predicate(request)),
+    );
     if (index < 0)
     {
       return;
@@ -545,15 +567,18 @@ test("Agent Review Launchpad navigation cells reflect action availability", asyn
       const setCells = await fakeDictator.waitForRequest("launchpad.setCells");
       const cells = CellMap(setCells.params.cells);
 
-      // First hunk of a three-hunk, two-file diff: can go down + stage + revert,
-      // but cannot go up, change file, or undo.
+      // First hunk of alpha.ts (two hunks), with beta.ts after it. Hunk
+      // navigation loops within the file, so both next-hunk and previous-hunk are
+      // available. next-file is available because another file exists after the
+      // current one; previous-file is not (alpha.ts is the first file). Stage and
+      // revert are available; undo is not.
       assert.deepEqual(cells.get("0,2"), { x: 0, y: 2, r: 255, g: 0, b: 0 }); // revert
       assert.deepEqual(cells.get("2,2"), { x: 2, y: 2, r: 0, g: 255, b: 0 }); // stage
       assert.deepEqual(cells.get("1,3"), { x: 1, y: 3, r: 255, g: 255, b: 0 }); // next hunk
-      assert.deepEqual(cells.get("1,2"), { x: 1, y: 2, off: true }); // previous hunk
+      assert.deepEqual(cells.get("1,2"), { x: 1, y: 2, r: 255, g: 255, b: 0 }); // previous hunk (loops)
       assert.deepEqual(cells.get("3,2"), { x: 3, y: 2, off: true }); // undo
-      assert.deepEqual(cells.get("0,3"), { x: 0, y: 3, off: true }); // previous file
-      assert.deepEqual(cells.get("2,3"), { x: 2, y: 3, off: true }); // next file
+      assert.deepEqual(cells.get("0,3"), { x: 0, y: 3, off: true }); // previous file (first file)
+      assert.deepEqual(cells.get("2,3"), { x: 2, y: 3, r: 255, g: 255, b: 0 }); // next file (beta exists)
       assert.deepEqual(cells.get("3,3"), { x: 3, y: 3, r: 90, g: 90, b: 90 }); // review cell grey
 
       await new Promise<void>((resolve) =>
@@ -675,6 +700,328 @@ test("Agent Review Launchpad ignores presses for unavailable actions", async () 
       {
         socket.once("close", () => resolve());
         socket.close();
+      });
+    });
+  }
+  finally
+  {
+    await fakeDictator.close();
+  }
+});
+
+function AllCellsOff(cells: Array<Record<string, unknown>>): boolean
+{
+  return cells.length > 0 && cells.every((cell) => cell.off === true);
+}
+
+test("Agent Review next/previous hunk loop within the current file", async () =>
+{
+  await WithTestServer(async (handle) =>
+  {
+    const { repoId, workspaceId } = await CreateMultiHunkReviewSession(handle);
+    const socket = new WebSocket(WsUrl(handle.baseUrl, repoId, workspaceId));
+    await new Promise<void>((resolve, reject) =>
+    {
+      socket.once("open", () => resolve());
+      socket.once("error", reject);
+    });
+
+    const bootstrap = await WaitForFrame(socket, "bootstrap");
+    assert.equal(bootstrap.state.currentHunk.file, "projects/demo/alpha.ts");
+    assert.equal(bootstrap.state.currentHunk.hunkIndex, 0);
+    // alpha.ts has two hunks, so in-file looping makes both directions available.
+    assert.equal(bootstrap.state.actions.canGoUp, true);
+    assert.equal(bootstrap.state.actions.canGoDown, true);
+
+    const Command = async (action: string): Promise<Record<string, any>> =>
+    {
+      socket.send(JSON.stringify({ type: "command", action }));
+      return WaitForFrame(socket, "command_result");
+    };
+
+    // Next within alpha: hunk 0 -> hunk 1.
+    let res = await Command("nextHunk");
+    assert.equal(res.state.currentHunk.file, "projects/demo/alpha.ts");
+    assert.equal(res.state.currentHunk.hunkIndex, 1);
+
+    // Next from alpha's last hunk wraps back to alpha's first hunk.
+    res = await Command("nextHunk");
+    assert.equal(res.state.currentHunk.file, "projects/demo/alpha.ts");
+    assert.equal(res.state.currentHunk.hunkIndex, 0);
+
+    // Previous from alpha's first hunk wraps to alpha's last hunk.
+    res = await Command("previousHunk");
+    assert.equal(res.state.currentHunk.file, "projects/demo/alpha.ts");
+    assert.equal(res.state.currentHunk.hunkIndex, 1);
+
+    // Crossing files uses the file command.
+    res = await Command("nextFile");
+    assert.equal(res.state.currentHunk.file, "projects/demo/beta.ts");
+    assert.equal(res.state.currentHunk.hunkIndex, 2);
+    // beta.ts has a single hunk: hunk navigation is unavailable and a no-op.
+    assert.equal(res.state.actions.canGoUp, false);
+    assert.equal(res.state.actions.canGoDown, false);
+
+    res = await Command("nextHunk");
+    assert.equal(res.state.currentHunk.file, "projects/demo/beta.ts");
+    assert.equal(res.state.currentHunk.hunkIndex, 2);
+
+    await new Promise<void>((resolve) =>
+    {
+      socket.once("close", () => resolve());
+      socket.close();
+    });
+  });
+});
+
+test("Agent Review file navigation works from any hunk and lands on a file's first hunk", async () =>
+{
+  await WithTestServer(async (handle) =>
+  {
+    const { repoId, workspaceId } = await CreateMultiHunkReviewSession(handle);
+    const socket = new WebSocket(WsUrl(handle.baseUrl, repoId, workspaceId));
+    await new Promise<void>((resolve, reject) =>
+    {
+      socket.once("open", () => resolve());
+      socket.once("error", reject);
+    });
+
+    const bootstrap = await WaitForFrame(socket, "bootstrap");
+    // alpha.ts hunk 0: the adjacent hunk is still alpha, but beta.ts exists, so
+    // next-file is available regardless of the selected hunk. previous-file is
+    // not (alpha.ts is the first file).
+    assert.equal(bootstrap.state.currentHunk.file, "projects/demo/alpha.ts");
+    assert.equal(bootstrap.state.currentHunk.hunkIndex, 0);
+    assert.equal(bootstrap.state.actions.canGoNextFile, true);
+    assert.equal(bootstrap.state.actions.canGoPrevFile, false);
+
+    const Command = async (action: string): Promise<Record<string, any>> =>
+    {
+      socket.send(JSON.stringify({ type: "command", action }));
+      return WaitForFrame(socket, "command_result");
+    };
+
+    // Next file lands on beta.ts's first (only) hunk.
+    let res = await Command("nextFile");
+    assert.equal(res.state.currentHunk.file, "projects/demo/beta.ts");
+    assert.equal(res.state.currentHunk.hunkIndex, 2);
+    assert.equal(res.state.actions.canGoNextFile, false);
+    assert.equal(res.state.actions.canGoPrevFile, true);
+
+    // Previous file lands on alpha.ts's FIRST hunk, not its last.
+    res = await Command("previousFile");
+    assert.equal(res.state.currentHunk.file, "projects/demo/alpha.ts");
+    assert.equal(res.state.currentHunk.hunkIndex, 0);
+
+    await new Promise<void>((resolve) =>
+    {
+      socket.once("close", () => resolve());
+      socket.close();
+    });
+  });
+});
+
+test("Agent Review Launchpad clears and restores around tab focus", async () =>
+{
+  const fakeDictator = new FakeDictatorRPCServer();
+  const dictatorPort = await fakeDictator.start();
+  try
+  {
+    await WithTestServer(async (handle) =>
+    {
+      await writeFile(
+        handle.config.paths.servicesJsonFile,
+        JSON.stringify([{ name: "dictator", host: "127.0.0.1", port: dictatorPort }]),
+        "utf8",
+      );
+
+      const { repoId, workspaceId } = await CreateMultiHunkReviewSession(handle);
+      const socket = new WebSocket(WsUrl(handle.baseUrl, repoId, workspaceId));
+      await new Promise<void>((resolve, reject) =>
+      {
+        socket.once("open", () => resolve());
+        socket.once("error", reject);
+      });
+      await WaitForFrame(socket, "bootstrap");
+
+      // Focused on attach: the next-hunk cell is lit.
+      const lit = await fakeDictator.waitForRequest("launchpad.setCells");
+      assert.deepEqual(CellMap(lit.params.cells).get("1,3"), { x: 1, y: 3, r: 255, g: 255, b: 0 });
+
+      // Record broadcast hunk indices; an ignored press emits none.
+      const seen: number[] = [];
+      const reachedNextHunk = new Promise<void>((resolve) =>
+      {
+        const onMessage = (raw: WebSocket.RawData): void =>
+        {
+          const frame = JSON.parse(raw.toString()) as Record<string, any>;
+          if (frame.type === "state" && frame.state.currentHunk != null)
+          {
+            seen.push(frame.state.currentHunk.hunkIndex);
+            if (frame.state.currentHunk.hunkIndex === 1)
+            {
+              socket.off("message", onMessage);
+              resolve();
+            }
+          }
+        };
+        socket.on("message", onMessage);
+      });
+
+      // Unfocused: every owned cell goes off regardless of availability.
+      fakeDictator.clearRequests();
+      socket.send(JSON.stringify({ type: "presence", focused: false }));
+      const dark = await fakeDictator.waitForRequestWhere(
+        "launchpad.setCells",
+        (req) => AllCellsOff(req.params.cells),
+      );
+      assert.deepEqual(CellMap(dark.params.cells).get("1,3"), { x: 1, y: 3, off: true });
+      assert.deepEqual(CellMap(dark.params.cells).get("3,3"), { x: 3, y: 3, off: true });
+
+      // A press during the unfocused window is dropped.
+      fakeDictator.sendPress(1, 3);
+
+      // Refocus restores the lit cells from current state.
+      fakeDictator.clearRequests();
+      socket.send(JSON.stringify({ type: "presence", focused: true }));
+      await fakeDictator.waitForRequestWhere(
+        "launchpad.setCells",
+        (req) => CellMap(req.params.cells).get("1,3")?.off !== true,
+      );
+
+      // The focused press advances; the only broadcast index is from this press.
+      fakeDictator.sendPress(1, 3);
+      await reachedNextHunk;
+      assert.deepEqual(seen, [1]);
+
+      await new Promise<void>((resolve) =>
+      {
+        socket.once("close", () => resolve());
+        socket.close();
+      });
+    });
+  }
+  finally
+  {
+    await fakeDictator.close();
+  }
+});
+
+test("Agent Review Launchpad stays dark on a state refresh while unfocused", async () =>
+{
+  const fakeDictator = new FakeDictatorRPCServer();
+  const dictatorPort = await fakeDictator.start();
+  try
+  {
+    await WithTestServer(async (handle) =>
+    {
+      await writeFile(
+        handle.config.paths.servicesJsonFile,
+        JSON.stringify([{ name: "dictator", host: "127.0.0.1", port: dictatorPort }]),
+        "utf8",
+      );
+
+      const { repoId, workspaceId } = await CreateMultiHunkReviewSession(handle);
+      const socket = new WebSocket(WsUrl(handle.baseUrl, repoId, workspaceId));
+      await new Promise<void>((resolve, reject) =>
+      {
+        socket.once("open", () => resolve());
+        socket.once("error", reject);
+      });
+      await WaitForFrame(socket, "bootstrap");
+      await fakeDictator.waitForRequest("launchpad.setCells");
+
+      socket.send(JSON.stringify({ type: "presence", focused: false }));
+      await fakeDictator.waitForRequestWhere(
+        "launchpad.setCells",
+        (req) => AllCellsOff(req.params.cells),
+      );
+
+      // A state-changing command still refreshes state and runs the cell update,
+      // but the gate keeps the grid dark rather than relighting available actions.
+      fakeDictator.clearRequests();
+      const advanced = WaitForFrameWhere(
+        socket,
+        "command_result",
+        (frame) => frame.state.currentHunk?.hunkIndex === 1,
+        "nextHunk while unfocused",
+      );
+      socket.send(JSON.stringify({ type: "command", action: "nextHunk" }));
+      await advanced;
+
+      const afterRefresh = await fakeDictator.waitForRequestWhere(
+        "launchpad.setCells",
+        () => true,
+      );
+      assert.deepEqual(CellMap(afterRefresh.params.cells).get("1,3"), { x: 1, y: 3, off: true });
+
+      await new Promise<void>((resolve) =>
+      {
+        socket.once("close", () => resolve());
+        socket.close();
+      });
+    });
+  }
+  finally
+  {
+    await fakeDictator.close();
+  }
+});
+
+test("Agent Review Launchpad stays active while any client is focused", async () =>
+{
+  const fakeDictator = new FakeDictatorRPCServer();
+  const dictatorPort = await fakeDictator.start();
+  try
+  {
+    await WithTestServer(async (handle) =>
+    {
+      await writeFile(
+        handle.config.paths.servicesJsonFile,
+        JSON.stringify([{ name: "dictator", host: "127.0.0.1", port: dictatorPort }]),
+        "utf8",
+      );
+
+      const { repoId, workspaceId } = await CreateMultiHunkReviewSession(handle);
+      const socketA = new WebSocket(WsUrl(handle.baseUrl, repoId, workspaceId));
+      await new Promise<void>((resolve, reject) =>
+      {
+        socketA.once("open", () => resolve());
+        socketA.once("error", reject);
+      });
+      await WaitForFrame(socketA, "bootstrap");
+
+      const socketB = new WebSocket(WsUrl(handle.baseUrl, repoId, workspaceId));
+      await new Promise<void>((resolve, reject) =>
+      {
+        socketB.once("open", () => resolve());
+        socketB.once("error", reject);
+      });
+      await WaitForFrame(socketB, "bootstrap");
+      await fakeDictator.waitForRequest("launchpad.setCells");
+
+      // A goes unfocused, but B is still focused, so the grid stays active and a
+      // press is still handled.
+      socketA.send(JSON.stringify({ type: "presence", focused: false }));
+      const advanced = WaitForFrameWhere(
+        socketB,
+        "state",
+        (frame) => frame.state.currentHunk?.hunkIndex === 1,
+        "advance while B focused",
+      );
+      fakeDictator.sendPress(1, 3);
+      const state = await advanced;
+      assert.equal(state.state.currentHunk.hunkIndex, 1);
+
+      await new Promise<void>((resolve) =>
+      {
+        socketA.once("close", () => resolve());
+        socketA.close();
+      });
+      await new Promise<void>((resolve) =>
+      {
+        socketB.once("close", () => resolve());
+        socketB.close();
       });
     });
   }

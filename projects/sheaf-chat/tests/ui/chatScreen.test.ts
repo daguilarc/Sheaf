@@ -19,6 +19,7 @@ type Listener = (event: Record<string, unknown>) => void;
 class FakeElement
 {
   public static activeElement: FakeElement | null = null;
+  public static scrolledIntoView: FakeElement[] = [];
   public readonly tagName: string;
   public readonly nodeName: string;
   public className = "";
@@ -230,6 +231,11 @@ class FakeElement
   {
     FakeElement.activeElement = this;
     this.dispatchEvent({ type: "focus" });
+  }
+
+  public scrollIntoView(): void
+  {
+    FakeElement.scrolledIntoView.push(this);
   }
 
   public querySelector(selector: string): FakeElement | null
@@ -1282,6 +1288,132 @@ test("Agent Review Mode opens review socket and sends hunk commands", async () =
   assert.equal(afterComment.at(-1)?.type, "comment");
   assert.equal(afterComment.at(-1)?.hunkId, "hunk-1");
   assert.equal(afterComment.at(-1)?.text, "Please simplify this branch.");
+});
+
+test("Agent Review Mode shows unstaged-hunk counts and updates with state", async () =>
+{
+  const makeHunk = (file: string, fileIndex: number, hunkIndex: number) => ({
+    sourceProvider: "sheaf-chat",
+    repoRoot: "/repo",
+    sessionRoot: "/repo/projects/demo",
+    file,
+    hunkId: `${file}-${hunkIndex}`,
+    hunkIndex,
+    hunkCount: 3,
+    fileIndex,
+    fileCount: 2,
+    header: "@@ -1 +1 @@",
+    patchHash: `hash-${hunkIndex}`,
+    patch: `diff --git a/${file} b/${file}\n@@ -1 +1 @@\n-old\n+new\n`,
+  });
+
+  const reviewState: any = {
+    available: true,
+    repoRoot: "/repo",
+    sessionRoot: "/repo/projects/demo",
+    sessionRootRelativeToRepo: "projects/demo",
+    currentIndex: 0,
+    currentHunk: makeHunk("alpha.ts", 0, 0),
+    hunks: [makeHunk("alpha.ts", 0, 0), makeHunk("alpha.ts", 0, 1), makeHunk("beta.ts", 1, 2)],
+    files: [
+      { file: "alpha.ts", hunkCount: 2 },
+      { file: "beta.ts", hunkCount: 1 },
+    ],
+    actions: {
+      canGoUp: true,
+      canGoDown: true,
+      canGoPrevFile: false,
+      canGoNextFile: false,
+      canStage: true,
+      canRevert: true,
+      canUndo: false,
+    },
+    reviewDraft: { entries: [], visibleCommentHunkId: null, hasSerializedContent: false },
+    dictatorBridge: { connected: false, url: null, lastError: null },
+  };
+
+  const harness = LoadChatHarness({
+    fetch: async (requestPath) => {
+      if (requestPath.endsWith("/agent-review")) {
+        return JsonResponse(reviewState);
+      }
+      if (requestPath.includes("/files?path=")) {
+        return JsonResponse({
+          directory: { name: ".", path: ".", kind: "directory" },
+          entries: [],
+        });
+      }
+      if (requestPath.includes("/file?path=")) {
+        return JsonResponse({
+          file: {
+            name: "alpha.ts",
+            path: "alpha.ts",
+            kind: "file",
+            supported: true,
+            contentType: "text/plain",
+            content: "new\n",
+            size: 4,
+            modifiedAt: "2026-06-08T00:00:00.000Z",
+          },
+        });
+      }
+      return JsonResponse({});
+    },
+  });
+  await FlushPromises();
+
+  RequiredElement(harness.app, ".sheaf-chat-agent-review-toggle").click();
+  const reviewSocket = harness.sockets.find((socket) => socket.url.includes("/ws/agent-review"));
+  assert.ok(reviewSocket, "expected Agent Review WebSocket");
+  reviewSocket.open();
+  reviewSocket.receive({ type: "bootstrap", state: reviewState });
+  await FlushPromises();
+
+  const counts = RequiredElement(harness.app, ".sheaf-chat-agent-review-counts");
+  // alpha.ts (two hunks) is file 1 of 2; current hunk is hunk 1 of that file.
+  assert.ok(counts.textContent.includes("1/2 in file"), counts.textContent);
+  assert.ok(counts.textContent.includes("file 1/2"), counts.textContent);
+
+  // Moving focus to beta.ts (one hunk, file 2 of 2) updates both positions.
+  reviewState.currentHunk = makeHunk("beta.ts", 1, 2);
+  reviewState.currentIndex = 2;
+  reviewSocket.receive({ type: "state", state: reviewState });
+  await FlushPromises();
+
+  const updated = RequiredElement(harness.app, ".sheaf-chat-agent-review-counts");
+  assert.ok(updated.textContent.includes("1/1 in file"), updated.textContent);
+  assert.ok(updated.textContent.includes("file 2/2"), updated.textContent);
+});
+
+test("file tabs auto-scroll to keep the active tab visible", async () =>
+{
+  const harness = LoadChatHarness();
+  await FlushPromises();
+
+  FakeElement.scrolledIntoView = [];
+
+  ExplorerFileButton(harness.app, "readme.md").click();
+  await FlushPromises();
+  ExplorerFileButton(harness.app, "other.md").click();
+  await FlushPromises();
+
+  const lastScrolled = FakeElement.scrolledIntoView.at(-1);
+  assert.ok(lastScrolled, "expected a tab to be scrolled into view");
+  assert.ok(
+    lastScrolled.classList.contains("sheaf-chat-tab--selected"),
+    "scrolled element should be the selected tab",
+  );
+  assert.ok(lastScrolled.textContent.includes("other.md"), lastScrolled.textContent);
+
+  // Switching back to the first tab scrolls that one into view.
+  const tabs = harness.app.querySelectorAll(".sheaf-chat-tab");
+  tabs[0].click();
+  await FlushPromises();
+
+  const afterSwitch = FakeElement.scrolledIntoView.at(-1);
+  assert.ok(afterSwitch, "expected the reselected tab to be scrolled into view");
+  assert.ok(afterSwitch.classList.contains("sheaf-chat-tab--selected"));
+  assert.ok(afterSwitch.textContent.includes("readme.md"), afterSwitch.textContent);
 });
 
 test("explorer file rows open tabs and switching updates selected content", async () =>

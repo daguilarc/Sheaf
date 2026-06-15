@@ -1017,6 +1017,7 @@
         state: null,
         error: null,
         pendingCommentFocusHunkId: null,
+        presenceListener: null,
       },
     };
 
@@ -1204,6 +1205,46 @@
       return true;
     }
 
+    function ReviewWindowFocused() {
+      // Strict focus: the tab must be visible AND the window must hold OS focus.
+      // Fall back to focused when the environment lacks these APIs.
+      const visible =
+        typeof document.hidden === "boolean" ? !document.hidden : true;
+      const focused =
+        typeof document.hasFocus === "function" ? document.hasFocus() : true;
+      return visible && focused;
+    }
+
+    function SendReviewPresence() {
+      SendReviewFrame({ type: "presence", focused: ReviewWindowFocused() });
+    }
+
+    function AttachReviewPresenceListeners() {
+      const review = state.agentReview;
+      if (review.presenceListener) {
+        return;
+      }
+      const listener = function () {
+        SendReviewPresence();
+      };
+      review.presenceListener = listener;
+      document.addEventListener("visibilitychange", listener);
+      window.addEventListener("focus", listener);
+      window.addEventListener("blur", listener);
+    }
+
+    function DetachReviewPresenceListeners() {
+      const review = state.agentReview;
+      const listener = review.presenceListener;
+      if (!listener) {
+        return;
+      }
+      review.presenceListener = null;
+      document.removeEventListener("visibilitychange", listener);
+      window.removeEventListener("focus", listener);
+      window.removeEventListener("blur", listener);
+    }
+
     function ReviewEntryForHunk(hunkId, kind) {
       const reviewState = state.agentReview.state;
       const entries = reviewState && reviewState.reviewDraft
@@ -1271,10 +1312,38 @@
       const actions = reviewState ? reviewState.actions : {};
       const current = reviewState ? reviewState.currentHunk : null;
       const status = CreateElement("span", "sheaf-chat-agent-review-status");
+      // The current file is shown by its always-visible tab, so the review bar
+      // no longer repeats the file name here.
       status.textContent = current
-        ? (current.hunkIndex + 1) + "/" + current.hunkCount + " " + current.file
+        ? (current.hunkIndex + 1) + "/" + current.hunkCount
         : "No unstaged hunks";
       reviewBarEl.appendChild(status);
+
+      // Unobtrusive position indicator: which hunk within the current file
+      // (a/x) and which file among files with unstaged hunks (file b/y).
+      const reviewFiles =
+        reviewState && Array.isArray(reviewState.files) ? reviewState.files : [];
+      const fileCount = reviewFiles.length;
+      const counts = CreateElement("span", "sheaf-chat-agent-review-counts");
+      if (current) {
+        const currentFile = reviewFiles[current.fileIndex];
+        const fileHunkCount = currentFile ? currentFile.hunkCount : 0;
+        let hunksBeforeFile = 0;
+        for (let i = 0; i < current.fileIndex; i += 1) {
+          hunksBeforeFile += reviewFiles[i] ? reviewFiles[i].hunkCount : 0;
+        }
+        const hunkInFile = current.hunkIndex - hunksBeforeFile + 1;
+        const fileNumber = current.fileIndex + 1;
+        counts.textContent =
+          hunkInFile + "/" + fileHunkCount + " in file · file " + fileNumber + "/" + fileCount;
+        counts.title =
+          "Viewing hunk " + hunkInFile + " of " + fileHunkCount + " in this file · file " +
+          fileNumber + " of " + fileCount + " files";
+      } else {
+        counts.textContent = fileCount + (fileCount === 1 ? " file" : " files");
+        counts.title = fileCount + " files with unstaged hunks";
+      }
+      reviewBarEl.appendChild(counts);
 
       const buttons = [
         ["previousFile", "Prev File", actions.canGoPrevFile],
@@ -1336,6 +1405,8 @@
       review.socket = socket;
       socket.addEventListener("open", function () {
         review.connected = true;
+        SendReviewPresence();
+        AttachReviewPresenceListeners();
         RenderReviewBar();
       });
       socket.addEventListener("message", function (event) {
@@ -1382,6 +1453,7 @@
         if (review.socket === socket) {
           review.socket = null;
         }
+        DetachReviewPresenceListeners();
         if (review.active) {
           review.error = "Agent Review disconnected.";
         }
@@ -1399,6 +1471,7 @@
       review.connected = false;
       review.error = null;
       review.state = null;
+      DetachReviewPresenceListeners();
       if (review.socket) {
         review.socket.close();
         review.socket = null;
@@ -1733,6 +1806,17 @@
       containerEl.appendChild(tabButton);
     }
 
+    function ScrollSelectedTabIntoView() {
+      // Keep the active file's tab visible when the horizontal tab bar overflows.
+      if (!tabBarEl) {
+        return;
+      }
+      const selected = tabBarEl.querySelector(".sheaf-chat-tab--selected");
+      if (selected && selected.scrollIntoView) {
+        selected.scrollIntoView({ block: "nearest", inline: "nearest" });
+      }
+    }
+
     function RenderTabs() {
       if (tabBarEl) {
         tabBarEl.textContent = "";
@@ -1748,6 +1832,7 @@
         }
       }
 
+      ScrollSelectedTabIntoView();
       UpdateMobileTitle();
     }
 

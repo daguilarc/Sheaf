@@ -123,12 +123,19 @@ export interface AgentReviewClientCommentBlur
   hunkId: string;
 }
 
+export interface AgentReviewClientPresence
+{
+  type: "presence";
+  focused: boolean;
+}
+
 export type AgentReviewClientFrame =
   | AgentReviewClientCommand
   | AgentReviewClientFocus
   | AgentReviewClientComment
   | AgentReviewClientCommentFocus
-  | AgentReviewClientCommentBlur;
+  | AgentReviewClientCommentBlur
+  | AgentReviewClientPresence;
 
 export type AgentReviewServerFrame =
   | { type: "bootstrap"; state: AgentReviewState }

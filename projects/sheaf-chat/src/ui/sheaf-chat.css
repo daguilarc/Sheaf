@@ -614,6 +614,15 @@ body
   white-space: nowrap;
 }
 
+.sheaf-chat-agent-review-counts
+{
+  flex: none;
+  color: var(--sheaf-chat-muted);
+  font-size: 11px;
+  white-space: nowrap;
+  opacity: 0.8;
+}
+
 .sheaf-chat-agent-review-error
 {
   color: var(--sheaf-chat-danger);
