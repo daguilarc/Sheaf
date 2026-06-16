@@ -273,8 +273,12 @@ test("Agent Review availability reports Git hunks under the workspace root", asy
     assert.equal(response.status, 200);
     const body = response.body as {
       available: boolean;
-      currentHunk: { sourceProvider: string; file: string; patch: string } | null;
+      currentHunk: { sourceProvider: string; file: string; hunkId: string; patch: string } | null;
       files: Array<{ file: string; hunkCount: number }>;
+      inlineFiles: Array<{
+        file: string;
+        rows: Array<{ kind: string; text: string; hunkId?: string }>;
+      }>;
       actions: { canStage: boolean; canRevert: boolean };
     };
     assert.equal(body.available, true);
@@ -282,6 +286,23 @@ test("Agent Review availability reports Git hunks under the workspace root", asy
     assert.equal(body.currentHunk?.file, "projects/demo/app.ts");
     assert.match(body.currentHunk?.patch ?? "", /two changed/);
     assert.deepEqual(body.files, [{ file: "projects/demo/app.ts", hunkCount: 1 }]);
+    assert.equal(body.inlineFiles[0]?.file, "projects/demo/app.ts");
+    assert.ok(
+      body.inlineFiles[0]?.rows.some((row) =>
+        row.kind === "deletion" &&
+        row.text === "two" &&
+        row.hunkId === body.currentHunk?.hunkId,
+      ),
+      "expected deleted old line in inline review rows",
+    );
+    assert.ok(
+      body.inlineFiles[0]?.rows.some((row) =>
+        row.kind === "addition" &&
+        row.text === "two changed" &&
+        row.hunkId === body.currentHunk?.hunkId,
+      ),
+      "expected added new line in inline review rows",
+    );
     assert.equal(body.actions.canStage, true);
     assert.equal(body.actions.canRevert, true);
   });
@@ -315,6 +336,7 @@ test("Agent Review WebSocket stages, reverts, and undoes current hunks", async (
     const stage = await WaitForFrame(socket, "command_result");
     assert.equal(stage.result.ok, true);
     assert.equal(stage.state.reviewDraft.entries.length, 0);
+    assert.equal(stage.state.inlineFiles.length, 0);
     assert.match(await Git(repoRoot, ["diff", "--cached", "--", "projects/demo/app.ts"]), /two changed/);
     assert.equal((await Git(repoRoot, ["diff", "--", "projects/demo/app.ts"])).trim(), "");
 
@@ -406,6 +428,28 @@ test("Agent Review WebSocket navigates between hunks and files", async () =>
     assert.equal(first.hunkIndex, 0);
     assert.equal(first.hunkCount, 3);
     assert.equal(first.fileCount, 2);
+    const alphaInline = bootstrap.state.inlineFiles.find(
+      (file: Record<string, any>) => file.file === "projects/demo/alpha.ts",
+    );
+    assert.ok(alphaInline, "expected alpha.ts inline review document");
+    const alphaHunkIds = new Set(
+      alphaInline.rows
+        .map((row: Record<string, any>) => row.hunkId)
+        .filter(Boolean),
+    );
+    assert.equal(alphaHunkIds.size, 2);
+    assert.ok(
+      alphaInline.rows.some((row: Record<string, any>) =>
+        row.kind === "addition" && row.text === "line 2 changed",
+      ),
+      "expected first alpha addition in inline rows",
+    );
+    assert.ok(
+      alphaInline.rows.some((row: Record<string, any>) =>
+        row.kind === "addition" && row.text === "line 27 changed",
+      ),
+      "expected second alpha addition in inline rows",
+    );
 
     // Next hunk: advance to the second hunk in the same file.
     socket.send(JSON.stringify({ type: "command", id: "next-1", action: "nextHunk" }));
@@ -432,6 +476,41 @@ test("Agent Review WebSocket navigates between hunks and files", async () =>
       socket.once("close", () => resolve());
       socket.close();
     });
+  });
+});
+
+test("Agent Review excludes binary diffs from hunks and inline documents", async () =>
+{
+  await WithTestServer(async (handle) =>
+  {
+    const repoRoot = handle.agentManager.storagePaths.repoRoot;
+    const demoRoot = path.join(repoRoot, "projects/demo");
+    const { repoId, workspaceId } = await CreateWorkspaceChatViaApi(handle, demoRoot);
+    const binaryPath = path.join(demoRoot, "image.bin");
+
+    await mkdir(demoRoot, { recursive: true });
+    await Git(repoRoot, ["init"]);
+    await Git(repoRoot, ["config", "user.email", "test@example.com"]);
+    await Git(repoRoot, ["config", "user.name", "Test User"]);
+    await writeFile(binaryPath, Buffer.from([0, 1, 2, 3, 4, 5]));
+    await Git(repoRoot, ["add", "projects/demo/image.bin"]);
+    await Git(repoRoot, ["commit", "-m", "initial"]);
+    await writeFile(binaryPath, Buffer.from([0, 1, 2, 3, 255, 5]));
+
+    const response = await RequestJson(
+      handle.baseUrl,
+      "GET",
+      `/api/repositories/${encodeURIComponent(repoId)}/workspaces/${encodeURIComponent(workspaceId)}/agent-review`,
+    );
+    assert.equal(response.status, 200);
+    const body = response.body as {
+      available: boolean;
+      hunks: unknown[];
+      inlineFiles: unknown[];
+    };
+    assert.equal(body.available, true);
+    assert.deepEqual(body.hunks, []);
+    assert.deepEqual(body.inlineFiles, []);
   });
 });
 
@@ -815,6 +894,50 @@ test("Agent Review file navigation works from any hunk and lands on a file's fir
     res = await Command("previousFile");
     assert.equal(res.state.currentHunk.file, "projects/demo/alpha.ts");
     assert.equal(res.state.currentHunk.hunkIndex, 0);
+
+    await new Promise<void>((resolve) =>
+    {
+      socket.once("close", () => resolve());
+      socket.close();
+    });
+  });
+});
+
+test("Agent Review staging a hunk prefers remaining hunks in the same file", async () =>
+{
+  await WithTestServer(async (handle) =>
+  {
+    const { repoId, workspaceId } = await CreateMultiHunkReviewSession(handle);
+    const socket = new WebSocket(WsUrl(handle.baseUrl, repoId, workspaceId));
+    await new Promise<void>((resolve, reject) =>
+    {
+      socket.once("open", () => resolve());
+      socket.once("error", reject);
+    });
+
+    await WaitForFrame(socket, "bootstrap");
+
+    socket.send(JSON.stringify({ type: "command", action: "nextHunk" }));
+    const secondAlpha = await WaitForFrame(socket, "command_result");
+    assert.equal(secondAlpha.state.currentHunk.file, "projects/demo/alpha.ts");
+    assert.equal(secondAlpha.state.currentHunk.hunkIndex, 1);
+
+    socket.send(JSON.stringify({ type: "command", action: "stage" }));
+    const staged = await WaitForFrame(socket, "command_result");
+    assert.equal(staged.result.ok, true);
+    assert.equal(staged.state.currentHunk.file, "projects/demo/alpha.ts");
+    assert.equal(staged.state.currentHunk.hunkIndex, 0);
+
+    const alphaInline = staged.state.inlineFiles.find(
+      (file: Record<string, any>) => file.file === "projects/demo/alpha.ts",
+    );
+    assert.ok(alphaInline, "expected alpha.ts inline review document after staging");
+    assert.ok(
+      alphaInline.rows.some((row: Record<string, any>) =>
+        row.kind === "context" && row.text === "line 27 changed",
+      ),
+      "expected staged alpha hunk to remain visible as normal context",
+    );
 
     await new Promise<void>((resolve) =>
     {

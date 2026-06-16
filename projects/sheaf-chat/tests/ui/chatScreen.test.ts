@@ -1187,6 +1187,15 @@ test("Agent Review Mode opens review socket and sends hunk commands", async () =
     },
     hunks: [],
     files: [{ file: "app.ts", hunkCount: 1 }],
+    inlineFiles: [
+      {
+        file: "app.ts",
+        rows: [
+          { id: "app.ts:1", kind: "deletion", text: "old", hunkId: "hunk-1", oldLineNumber: 1 },
+          { id: "app.ts:2", kind: "addition", text: "new", hunkId: "hunk-1", newLineNumber: 1 },
+        ],
+      },
+    ],
     actions: {
       canGoUp: false,
       canGoDown: false,
@@ -1252,8 +1261,25 @@ test("Agent Review Mode opens review socket and sends hunk commands", async () =
   reviewSocket.open();
   reviewSocket.receive({ type: "bootstrap", state: reviewState });
   await FlushPromises();
+  harness.flushAnimationFrames();
 
-  assert.match(harness.app.textContent, /Focused hunk 1\/1/);
+  assert.equal(harness.app.querySelector(".sheaf-chat-agent-review-hunk"), null);
+  RequiredElement(harness.app, ".sheaf-chat-agent-review-inline");
+  const focusedRows = harness.app.querySelectorAll(".sheaf-chat-agent-review-inline-row--focused");
+  assert.equal(focusedRows.length, 2);
+  assert.ok(
+    focusedRows.some((row) =>
+      row.classList.contains("sheaf-chat-agent-review-inline-row--deletion") &&
+      row.textContent.includes("old"),
+    ),
+  );
+  assert.ok(
+    focusedRows.some((row) =>
+      row.classList.contains("sheaf-chat-agent-review-inline-row--addition") &&
+      row.textContent.includes("new"),
+    ),
+  );
+  assert.equal(FakeElement.scrolledIntoView.at(-1)?.getAttribute("data-hunk-id"), "hunk-1");
   assert.match(harness.app.textContent, /old/);
   assert.match(harness.app.textContent, /new/);
   assert.equal(harness.app.querySelector(".sheaf-chat-agent-review-comment-textarea"), null);
@@ -1276,6 +1302,7 @@ test("Agent Review Mode opens review socket and sends hunk commands", async () =
   harness.runTimers();
 
   const commentBox = RequiredElement(harness.app, ".sheaf-chat-agent-review-comment-textarea") as any;
+  RequiredElement(harness.app, ".sheaf-chat-agent-review-inline .sheaf-chat-agent-review-comment");
   assert.equal(
     FakeElement.activeElement?.classList.contains("sheaf-chat-agent-review-comment-textarea"),
     true,
@@ -1318,6 +1345,25 @@ test("Agent Review Mode shows unstaged-hunk counts and updates with state", asyn
     files: [
       { file: "alpha.ts", hunkCount: 2 },
       { file: "beta.ts", hunkCount: 1 },
+    ],
+    inlineFiles: [
+      {
+        file: "alpha.ts",
+        rows: [
+          { id: "alpha-0-old", kind: "deletion", text: "old alpha 1", hunkId: "alpha.ts-0", oldLineNumber: 1 },
+          { id: "alpha-0-new", kind: "addition", text: "new alpha 1", hunkId: "alpha.ts-0", newLineNumber: 1 },
+          { id: "alpha-context", kind: "context", text: "between", newLineNumber: 2 },
+          { id: "alpha-1-old", kind: "deletion", text: "old alpha 2", hunkId: "alpha.ts-1", oldLineNumber: 5 },
+          { id: "alpha-1-new", kind: "addition", text: "new alpha 2", hunkId: "alpha.ts-1", newLineNumber: 5 },
+        ],
+      },
+      {
+        file: "beta.ts",
+        rows: [
+          { id: "beta-2-old", kind: "deletion", text: "old beta", hunkId: "beta.ts-2", oldLineNumber: 1 },
+          { id: "beta-2-new", kind: "addition", text: "new beta", hunkId: "beta.ts-2", newLineNumber: 1 },
+        ],
+      },
     ],
     actions: {
       canGoUp: true,
@@ -1368,21 +1414,26 @@ test("Agent Review Mode shows unstaged-hunk counts and updates with state", asyn
   reviewSocket.open();
   reviewSocket.receive({ type: "bootstrap", state: reviewState });
   await FlushPromises();
+  harness.flushAnimationFrames();
 
   const counts = RequiredElement(harness.app, ".sheaf-chat-agent-review-counts");
   // alpha.ts (two hunks) is file 1 of 2; current hunk is hunk 1 of that file.
   assert.ok(counts.textContent.includes("1/2 in file"), counts.textContent);
   assert.ok(counts.textContent.includes("file 1/2"), counts.textContent);
+  assert.equal(harness.app.querySelectorAll(".sheaf-chat-agent-review-inline-row--focused").length, 2);
+  assert.equal(harness.app.querySelectorAll(".sheaf-chat-agent-review-inline-row--muted").length, 2);
 
   // Moving focus to beta.ts (one hunk, file 2 of 2) updates both positions.
   reviewState.currentHunk = makeHunk("beta.ts", 1, 2);
   reviewState.currentIndex = 2;
   reviewSocket.receive({ type: "state", state: reviewState });
   await FlushPromises();
+  harness.flushAnimationFrames();
 
   const updated = RequiredElement(harness.app, ".sheaf-chat-agent-review-counts");
   assert.ok(updated.textContent.includes("1/1 in file"), updated.textContent);
   assert.ok(updated.textContent.includes("file 2/2"), updated.textContent);
+  assert.equal(FakeElement.scrolledIntoView.at(-1)?.getAttribute("data-hunk-id"), "beta.ts-2");
 });
 
 test("file tabs auto-scroll to keep the active tab visible", async () =>

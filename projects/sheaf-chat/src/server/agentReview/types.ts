@@ -40,6 +40,24 @@ export interface AgentReviewFileSummary
   hunkCount: number;
 }
 
+export type AgentReviewInlineRowKind = "context" | "addition" | "deletion";
+
+export interface AgentReviewInlineRow
+{
+  id: string;
+  kind: AgentReviewInlineRowKind;
+  text: string;
+  hunkId?: string;
+  oldLineNumber?: number;
+  newLineNumber?: number;
+}
+
+export interface AgentReviewInlineFile
+{
+  file: string;
+  rows: AgentReviewInlineRow[];
+}
+
 export interface AgentReviewAvailability
 {
   available: boolean;
@@ -55,6 +73,7 @@ export interface AgentReviewState extends AgentReviewAvailability
   currentHunk: AgentReviewHunk | null;
   hunks: AgentReviewHunk[];
   files: AgentReviewFileSummary[];
+  inlineFiles: AgentReviewInlineFile[];
   actions: AgentReviewActions;
   reviewDraft: AgentReviewDraftState;
   dictatorBridge: {

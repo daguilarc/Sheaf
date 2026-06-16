@@ -1017,6 +1017,7 @@
         state: null,
         error: null,
         pendingCommentFocusHunkId: null,
+        pendingScrollHunkId: null,
         presenceListener: null,
       },
     };
@@ -1270,6 +1271,215 @@
         (draft && draft.visibleCommentHunkId === hunkId);
     }
 
+    function InlineReviewFileForPath(pathValue) {
+      const reviewState = state.agentReview.state;
+      const inlineFiles = reviewState && Array.isArray(reviewState.inlineFiles)
+        ? reviewState.inlineFiles
+        : [];
+      return inlineFiles.find(function (file) {
+        return file && file.file === pathValue && Array.isArray(file.rows);
+      }) || null;
+    }
+
+    function FindReviewHunkAnchor(hunkId) {
+      const anchors = fileViewEl.querySelectorAll(".sheaf-chat-agent-review-inline-hunk-anchor");
+      return Array.from(anchors).find(function (anchor) {
+        return anchor.getAttribute("data-hunk-id") === hunkId;
+      }) || null;
+    }
+
+    function ReviewHunkChangedRows(hunkId) {
+      const rows = fileViewEl.querySelectorAll(
+        ".sheaf-chat-agent-review-inline-row--addition[data-hunk-id], " +
+        ".sheaf-chat-agent-review-inline-row--deletion[data-hunk-id]"
+      );
+      return Array.from(rows).filter(function (row) {
+        return row.getAttribute("data-hunk-id") === hunkId;
+      });
+    }
+
+    function HunkRowsFullyVisible(rows, viewRect) {
+      if (rows.length === 0) {
+        return false;
+      }
+
+      for (const row of rows) {
+        if (typeof row.getBoundingClientRect !== "function") {
+          return false;
+        }
+        const rowRect = row.getBoundingClientRect();
+        if (rowRect.top < viewRect.top || rowRect.bottom > viewRect.bottom) {
+          return false;
+        }
+      }
+
+      return true;
+    }
+
+    function ScrollPendingReviewHunk() {
+      const hunkId = state.agentReview.pendingScrollHunkId;
+      if (!hunkId) {
+        return;
+      }
+
+      const anchor = FindReviewHunkAnchor(hunkId);
+      if (!anchor) {
+        return;
+      }
+
+      state.agentReview.pendingScrollHunkId = null;
+      window.requestAnimationFrame(function () {
+        const hunkChangedRows = ReviewHunkChangedRows(hunkId);
+        if (
+          typeof fileViewEl.getBoundingClientRect !== "function" ||
+          typeof anchor.getBoundingClientRect !== "function" ||
+          typeof fileViewEl.scrollTo !== "function"
+        ) {
+          if (typeof anchor.scrollIntoView === "function") {
+            anchor.scrollIntoView({ block: "center" });
+          }
+          return;
+        }
+
+        const viewRect = fileViewEl.getBoundingClientRect();
+        if (HunkRowsFullyVisible(hunkChangedRows, viewRect)) {
+          return;
+        }
+
+        const anchorRect = anchor.getBoundingClientRect();
+        const rowHeight = anchorRect.height > 0 ? anchorRect.height : 18;
+        const anchorTop = anchorRect.top - viewRect.top + fileViewEl.scrollTop;
+        const contextOffset = rowHeight * 2;
+        const nextScrollTop = Math.max(0, anchorTop - contextOffset);
+        fileViewEl.scrollTo({
+          top: nextScrollTop,
+          behavior: "auto",
+        });
+      });
+    }
+
+    function CreateReviewCommentBox(currentHunk) {
+      const commentWrap = CreateElement("div", "sheaf-chat-agent-review-comment");
+      const textarea = CreateElement("textarea", "sheaf-chat-agent-review-comment-textarea");
+      textarea.rows = 3;
+      textarea.value = CommentTextForHunk(currentHunk.hunkId);
+      textarea.addEventListener("input", function () {
+        SendReviewFrame({
+          type: "comment",
+          hunkId: currentHunk.hunkId,
+          text: textarea.value,
+        });
+      });
+      textarea.addEventListener("focus", function () {
+        SendReviewFrame({
+          type: "comment_focus",
+          hunkId: currentHunk.hunkId,
+        });
+      });
+      textarea.addEventListener("blur", function () {
+        SendReviewFrame({
+          type: "comment_blur",
+          hunkId: currentHunk.hunkId,
+        });
+      });
+      commentWrap.appendChild(textarea);
+
+      if (state.agentReview.pendingCommentFocusHunkId === currentHunk.hunkId) {
+        state.agentReview.pendingCommentFocusHunkId = null;
+        window.setTimeout(function () {
+          textarea.focus();
+        }, 0);
+      }
+
+      return commentWrap;
+    }
+
+    function RenderInlineReviewFile(contentWrap, inlineFile, currentHunk) {
+      const review = CreateElement("div", "sheaf-chat-agent-review-inline");
+      const rows = Array.isArray(inlineFile.rows) ? inlineFile.rows : [];
+      const focusedHunkId = currentHunk ? currentHunk.hunkId : null;
+      const anchorHunkIds = new Set();
+      let anchoredHunks = new Set();
+      let mountedComment = false;
+
+      rows.forEach(function (row) {
+        const hunkId = typeof row.hunkId === "string" ? row.hunkId : null;
+        if (
+          hunkId !== null &&
+          !anchorHunkIds.has(hunkId) &&
+          (row.kind === "addition" || row.kind === "deletion")
+        ) {
+          anchorHunkIds.add(hunkId);
+        }
+      });
+
+      rows.forEach(function (row, index) {
+        const hunkId = typeof row.hunkId === "string" ? row.hunkId : null;
+        const isFocused = hunkId !== null && hunkId === focusedHunkId;
+        const classNames = [
+          "sheaf-chat-agent-review-inline-row",
+          "sheaf-chat-agent-review-inline-row--" + (row.kind || "context"),
+        ];
+        if (hunkId !== null) {
+          classNames.push("sheaf-chat-agent-review-inline-row--changed");
+          classNames.push(
+            isFocused
+              ? "sheaf-chat-agent-review-inline-row--focused"
+              : "sheaf-chat-agent-review-inline-row--muted"
+          );
+        }
+
+        const rowEl = CreateElement("div", classNames.join(" "));
+        rowEl.setAttribute("data-review-row-id", String(row.id || index));
+        if (hunkId !== null) {
+          rowEl.setAttribute("data-hunk-id", hunkId);
+          if (
+            !anchoredHunks.has(hunkId) &&
+            anchorHunkIds.has(hunkId) &&
+            (row.kind === "addition" || row.kind === "deletion")
+          ) {
+            anchoredHunks.add(hunkId);
+            rowEl.classList.add("sheaf-chat-agent-review-inline-hunk-anchor");
+            rowEl.setAttribute("data-review-hunk-anchor", hunkId);
+          }
+        }
+
+        const marker = CreateElement("span", "sheaf-chat-agent-review-inline-marker");
+        marker.textContent =
+          row.kind === "addition" ? "+" :
+          row.kind === "deletion" ? "-" :
+          " ";
+        const lineNumber = CreateElement("span", "sheaf-chat-agent-review-inline-line-number");
+        const oldLine = row.oldLineNumber == null ? "" : String(row.oldLineNumber);
+        const newLine = row.newLineNumber == null ? "" : String(row.newLineNumber);
+        lineNumber.textContent = oldLine || newLine ? oldLine + " " + newLine : "";
+        const code = CreateElement("span", "sheaf-chat-agent-review-inline-code");
+        code.textContent = row.text == null ? "" : String(row.text);
+
+        rowEl.appendChild(marker);
+        rowEl.appendChild(lineNumber);
+        rowEl.appendChild(code);
+        review.appendChild(rowEl);
+
+        const next = rows[index + 1];
+        const isFocusedHunkEnd =
+          focusedHunkId !== null &&
+          hunkId === focusedHunkId &&
+          (!next || next.hunkId !== focusedHunkId);
+        if (
+          isFocusedHunkEnd &&
+          currentHunk &&
+          !mountedComment &&
+          ShouldShowReviewCommentBox(currentHunk.hunkId)
+        ) {
+          mountedComment = true;
+          review.appendChild(CreateReviewCommentBox(currentHunk));
+        }
+      });
+
+      contentWrap.appendChild(review);
+    }
+
     function RenderReviewBar() {
       if (!reviewBarEl) {
         return;
@@ -1379,14 +1589,21 @@
       state.agentReview.error = null;
 
       const current = nextState ? nextState.currentHunk : null;
+      let renderSelectedFileNow = true;
       if (state.agentReview.active && current && current.file) {
-        OpenFile(current.file).then(function () {
-          RenderSelectedFile();
-        });
+        state.agentReview.pendingScrollHunkId = current.hunkId;
+        if (state.selectedPath !== current.file) {
+          renderSelectedFileNow = false;
+          OpenFile(current.file);
+        }
+      } else {
+        state.agentReview.pendingScrollHunkId = null;
       }
 
       RenderReviewBar();
-      RenderSelectedFile();
+      if (renderSelectedFileNow) {
+        RenderSelectedFile();
+      }
     }
 
     function StartAgentReview() {
@@ -1471,6 +1688,7 @@
       review.connected = false;
       review.error = null;
       review.state = null;
+      review.pendingScrollHunkId = null;
       DetachReviewPresenceListeners();
       if (review.socket) {
         review.socket.close();
@@ -1868,56 +2086,15 @@
       const currentHunk = state.agentReview.active && reviewState
         ? reviewState.currentHunk
         : null;
+      const inlineFile = state.agentReview.active
+        ? InlineReviewFileForPath(selected.path)
+        : null;
 
-      if (currentHunk && currentHunk.file === selected.path) {
-        const hunkPanel = CreateElement("div", "sheaf-chat-agent-review-hunk");
-        const hunkTitle = CreateElement("div", "sheaf-chat-agent-review-hunk-title");
-        hunkTitle.textContent =
-          "Focused hunk " +
-          (currentHunk.hunkIndex + 1) +
-          "/" +
-          currentHunk.hunkCount +
-          " " +
-          currentHunk.header;
-        const patchPreview = CreateElement("pre", "sheaf-chat-agent-review-patch");
-        patchPreview.textContent = currentHunk.patch || "";
-        hunkPanel.appendChild(hunkTitle);
-        hunkPanel.appendChild(patchPreview);
-        if (ShouldShowReviewCommentBox(currentHunk.hunkId)) {
-          const commentWrap = CreateElement("div", "sheaf-chat-agent-review-comment");
-          const textarea = CreateElement("textarea", "sheaf-chat-agent-review-comment-textarea");
-          textarea.rows = 3;
-          textarea.value = CommentTextForHunk(currentHunk.hunkId);
-          textarea.addEventListener("input", function () {
-            SendReviewFrame({
-              type: "comment",
-              hunkId: currentHunk.hunkId,
-              text: textarea.value,
-            });
-          });
-          textarea.addEventListener("focus", function () {
-            SendReviewFrame({
-              type: "comment_focus",
-              hunkId: currentHunk.hunkId,
-            });
-          });
-          textarea.addEventListener("blur", function () {
-            SendReviewFrame({
-              type: "comment_blur",
-              hunkId: currentHunk.hunkId,
-            });
-          });
-          commentWrap.appendChild(textarea);
-          hunkPanel.appendChild(commentWrap);
-
-          if (state.agentReview.pendingCommentFocusHunkId === currentHunk.hunkId) {
-            state.agentReview.pendingCommentFocusHunkId = null;
-            window.setTimeout(function () {
-              textarea.focus();
-            }, 0);
-          }
-        }
-        fileViewEl.appendChild(hunkPanel);
+      if (inlineFile) {
+        RenderInlineReviewFile(contentWrap, inlineFile, currentHunk);
+        fileViewEl.appendChild(contentWrap);
+        ScrollPendingReviewHunk();
+        return;
       }
 
       if (IsMarkdownContentType(selected.contentType, selected.path)) {

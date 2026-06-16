@@ -718,6 +718,7 @@ body
 .sheaf-chat-agent-review-comment
 {
   margin-top: 10px;
+  margin-bottom: 10px;
 }
 
 .sheaf-chat-agent-review-comment-textarea
@@ -740,6 +741,72 @@ body
 {
   outline: 2px solid color-mix(in srgb, var(--sheaf-chat-accent) 50%, transparent);
   outline-offset: 1px;
+}
+
+.sheaf-chat-agent-review-inline
+{
+  margin: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.sheaf-chat-agent-review-inline-row
+{
+  display: grid;
+  grid-template-columns: 2ch 8ch minmax(0, 1fr);
+  min-height: 20px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.sheaf-chat-agent-review-inline-marker,
+.sheaf-chat-agent-review-inline-line-number
+{
+  user-select: none;
+  color: var(--sheaf-chat-muted);
+}
+
+.sheaf-chat-agent-review-inline-marker
+{
+  text-align: center;
+}
+
+.sheaf-chat-agent-review-inline-line-number
+{
+  padding-right: 10px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.sheaf-chat-agent-review-inline-code
+{
+  min-width: 0;
+}
+
+.sheaf-chat-agent-review-inline-row--addition.sheaf-chat-agent-review-inline-row--muted
+{
+  background: rgba(44, 112, 64, 0.38);
+}
+
+.sheaf-chat-agent-review-inline-row--deletion.sheaf-chat-agent-review-inline-row--muted
+{
+  background: rgba(132, 48, 48, 0.38);
+}
+
+.sheaf-chat-agent-review-inline-row--addition.sheaf-chat-agent-review-inline-row--focused
+{
+  background: rgba(42, 180, 82, 0.55);
+}
+
+.sheaf-chat-agent-review-inline-row--deletion.sheaf-chat-agent-review-inline-row--focused
+{
+  background: rgba(210, 58, 58, 0.58);
+}
+
+.sheaf-chat-agent-review-inline-row--focused
+{
+  box-shadow: inset 3px 0 color-mix(in srgb, var(--sheaf-chat-accent) 70%, transparent);
 }
 
 .sheaf-chat-file-empty,

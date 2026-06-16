@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { realpath } from "node:fs/promises";
+import { readFile, realpath } from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
 
@@ -12,6 +12,9 @@ import type {
   AgentReviewAvailability,
   AgentReviewFileSummary,
   AgentReviewHunk,
+  AgentReviewInlineFile,
+  AgentReviewInlineRow,
+  AgentReviewInlineRowKind,
 } from "./types.js";
 
 export interface AgentReviewGitState
@@ -19,6 +22,7 @@ export interface AgentReviewGitState
   availability: AgentReviewAvailability;
   hunks: AgentReviewHunk[];
   files: AgentReviewFileSummary[];
+  inlineFiles: AgentReviewInlineFile[];
 }
 
 export interface AgentReviewMutationResult
@@ -31,7 +35,27 @@ interface ParsedFileDiff
 {
   file: string;
   headerLines: string[];
-  hunkBodies: string[][];
+  hunks: ParsedHunkDiff[];
+}
+
+interface ParsedHunkDiff
+{
+  header: string;
+  oldStart: number;
+  oldCount: number;
+  newStart: number;
+  newCount: number;
+  lines: ParsedHunkLine[];
+  rawLines: string[];
+  hunkId?: string;
+}
+
+interface ParsedHunkLine
+{
+  kind: AgentReviewInlineRowKind;
+  text: string;
+  oldLineNumber?: number;
+  newLineNumber?: number;
 }
 
 function Sha256(value: string): string
@@ -164,10 +188,87 @@ function ParseFileDiff(block: string): ParsedFileDiff | null
     hunkBodies.push(current);
   }
 
+  const hunks = hunkBodies
+    .map(ParseHunkDiff)
+    .filter((hunk): hunk is ParsedHunkDiff => hunk !== null);
+
+  if (hunks.length === 0)
+  {
+    return null;
+  }
+
   return {
     file,
     headerLines,
-    hunkBodies,
+    hunks,
+  };
+}
+
+function ParseHunkDiff(rawLines: string[]): ParsedHunkDiff | null
+{
+  const header = rawLines[0] ?? "";
+  const match = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(header);
+  if (match === null)
+  {
+    return null;
+  }
+
+  const oldStart = Number(match[1]);
+  const oldCount = match[2] === undefined ? 1 : Number(match[2]);
+  const newStart = Number(match[3]);
+  const newCount = match[4] === undefined ? 1 : Number(match[4]);
+  let oldLineNumber = oldStart;
+  let newLineNumber = newStart;
+  const lines: ParsedHunkLine[] = [];
+
+  for (const rawLine of rawLines.slice(1))
+  {
+    if (rawLine.startsWith("\\"))
+    {
+      continue;
+    }
+
+    const prefix = rawLine.slice(0, 1);
+    const text = rawLine.slice(1);
+    if (prefix === " ")
+    {
+      lines.push({
+        kind: "context",
+        text,
+        oldLineNumber,
+        newLineNumber,
+      });
+      oldLineNumber += 1;
+      newLineNumber += 1;
+    }
+    else if (prefix === "-")
+    {
+      lines.push({
+        kind: "deletion",
+        text,
+        oldLineNumber,
+      });
+      oldLineNumber += 1;
+    }
+    else if (prefix === "+")
+    {
+      lines.push({
+        kind: "addition",
+        text,
+        newLineNumber,
+      });
+      newLineNumber += 1;
+    }
+  }
+
+  return {
+    header,
+    oldStart,
+    oldCount,
+    newStart,
+    newCount,
+    lines,
+    rawLines,
   };
 }
 
@@ -179,22 +280,23 @@ function BuildHunks(
 {
   const files = parsedFiles.map((file) => ({
     file: file.file,
-    hunkCount: file.hunkBodies.length,
+    hunkCount: file.hunks.length,
   }));
-  const totalHunks = parsedFiles.reduce((sum, file) => sum + file.hunkBodies.length, 0);
+  const totalHunks = parsedFiles.reduce((sum, file) => sum + file.hunks.length, 0);
   const hunks: AgentReviewHunk[] = [];
 
   for (let fileIndex = 0; fileIndex < parsedFiles.length; fileIndex += 1)
   {
     const file = parsedFiles[fileIndex]!;
-    for (let localHunkIndex = 0; localHunkIndex < file.hunkBodies.length; localHunkIndex += 1)
+    for (let localHunkIndex = 0; localHunkIndex < file.hunks.length; localHunkIndex += 1)
     {
-      const hunkLines = file.hunkBodies[localHunkIndex]!;
-      const patch = [...file.headerLines, ...hunkLines].join("\n") + "\n";
+      const hunk = file.hunks[localHunkIndex]!;
+      const patch = [...file.headerLines, ...hunk.rawLines].join("\n") + "\n";
       const patchHash = Sha256(patch);
       const globalIndex = hunks.length;
-      const header = hunkLines[0] ?? "";
+      const header = hunk.header;
       const hunkId = `${file.file}:${globalIndex}:${patchHash.slice(0, 16)}`;
+      hunk.hunkId = hunkId;
 
       hunks.push({
         sourceProvider: "sheaf-chat",
@@ -217,6 +319,103 @@ function BuildHunks(
     hunks,
     files,
   };
+}
+
+function SplitContentLines(content: string): string[]
+{
+  const lines = content.split("\n");
+  if (lines.length > 0 && lines[lines.length - 1] === "")
+  {
+    lines.pop();
+  }
+  return lines;
+}
+
+function RowID(file: string, kind: AgentReviewInlineRowKind, lineNumber: number, index: number): string
+{
+  return `${file}:${kind}:${lineNumber}:${index}`;
+}
+
+async function BuildInlineFiles(
+  repoRoot: string,
+  sessionRoot: string,
+  parsedFiles: ParsedFileDiff[],
+): Promise<AgentReviewInlineFile[]>
+{
+  const inlineFiles: AgentReviewInlineFile[] = [];
+
+  for (const file of parsedFiles)
+  {
+    const absoluteFile = path.resolve(repoRoot, file.file);
+    if (!IsPathWithinRoot(absoluteFile, sessionRoot))
+    {
+      continue;
+    }
+
+    let content: string;
+    try
+    {
+      content = await readFile(absoluteFile, "utf8");
+    }
+    catch
+    {
+      continue;
+    }
+
+    const worktreeLines = SplitContentLines(content);
+    const rows: AgentReviewInlineRow[] = [];
+    let nextNewLineNumber = 1;
+    let rowIndex = 0;
+
+    const PushCurrentFileContextUntil = (exclusiveNewLineNumber: number): void =>
+    {
+      while (
+        nextNewLineNumber < exclusiveNewLineNumber &&
+        nextNewLineNumber <= worktreeLines.length
+      )
+      {
+        rows.push({
+          id: RowID(file.file, "context", nextNewLineNumber, rowIndex),
+          kind: "context",
+          text: worktreeLines[nextNewLineNumber - 1] ?? "",
+          newLineNumber: nextNewLineNumber,
+        });
+        nextNewLineNumber += 1;
+        rowIndex += 1;
+      }
+    };
+
+    for (const hunk of file.hunks)
+    {
+      PushCurrentFileContextUntil(hunk.newStart);
+
+      for (const line of hunk.lines)
+      {
+        const lineNumber = line.newLineNumber ?? line.oldLineNumber ?? rowIndex;
+        rows.push({
+          id: `${hunk.hunkId ?? file.file}:${line.kind}:${lineNumber}:${rowIndex}`,
+          kind: line.kind,
+          text: line.text,
+          hunkId: hunk.hunkId,
+          oldLineNumber: line.oldLineNumber,
+          newLineNumber: line.newLineNumber,
+        });
+        if (line.newLineNumber !== undefined)
+        {
+          nextNewLineNumber = Math.max(nextNewLineNumber, line.newLineNumber + 1);
+        }
+        rowIndex += 1;
+      }
+    }
+
+    PushCurrentFileContextUntil(worktreeLines.length + 1);
+    inlineFiles.push({
+      file: file.file,
+      rows,
+    });
+  }
+
+  return inlineFiles;
 }
 
 function FormatSessionPathspec(repoRoot: string, sessionRoot: string): string
@@ -292,6 +491,7 @@ export async function LoadAgentReviewGitState(
       availability,
       hunks: [],
       files: [],
+      inlineFiles: [],
     };
   }
 
@@ -311,11 +511,17 @@ export async function LoadAgentReviewGitState(
     availability.sessionRoot,
     parsedFiles,
   );
+  const inlineFiles = await BuildInlineFiles(
+    availability.repoRoot,
+    availability.sessionRoot,
+    parsedFiles,
+  );
 
   return {
     availability,
     hunks,
     files,
+    inlineFiles,
   };
 }
 

@@ -790,12 +790,18 @@ class AgentReviewSession
     );
     const gitState = await LoadAgentReviewGitState(sessionRoot);
     const hadState = this.m_state !== null;
-    const priorHunkId = this.m_state?.currentHunk?.hunkId;
+    const priorHunk = this.m_state?.currentHunk;
+    const priorHunkId = priorHunk?.hunkId;
     let currentIndex = hadState && this.m_currentIndex < 0 && this.m_focusClearedExplicitly
       ? -1
       : priorHunkId === undefined
         ? this.m_currentIndex
         : gitState.hunks.findIndex((hunk) => hunk.hunkId === priorHunkId);
+
+    if (currentIndex < 0 && priorHunk != null)
+    {
+      currentIndex = gitState.hunks.findIndex((hunk) => hunk.file === priorHunk.file);
+    }
 
     if (currentIndex < 0 && this.m_currentIndex >= 0)
     {
@@ -816,6 +822,7 @@ class AgentReviewSession
       currentHunk,
       hunks: gitState.hunks,
       files: gitState.files,
+      inlineFiles: gitState.inlineFiles,
       actions,
       reviewDraft: this.ReviewDraftState(),
       dictatorBridge: {
@@ -1516,6 +1523,7 @@ export class AgentReviewService
       currentHunk: currentIndex >= 0 ? gitState.hunks[currentIndex]! : null,
       hunks: gitState.hunks,
       files: gitState.files,
+      inlineFiles: gitState.inlineFiles,
       actions: ActionsFor(gitState.hunks, currentIndex, false),
       reviewDraft: {
         entries: [],
