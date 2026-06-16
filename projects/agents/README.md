@@ -12,11 +12,20 @@ global/
     <skill-id>/
       skill.yaml
       SKILL.md
+sheaf/
+  skills/
+    <skill-id>/
+      skill.yaml
+      SKILL.md
 ```
 
 `global/AGENTS.md` is rendered to the repository root as both `AGENTS.md` and
 `CLAUDE.md`, and to user-global harness locations when global install scope is
 enabled.
+
+`global/skills/` contains skills that are safe to install into user-global
+harness locations. `sheaf/skills/` contains Sheaf-only skills that render into
+this repository's harness directories only.
 
 Each skill directory contains:
 
@@ -70,6 +79,8 @@ make agents-clean-global
 
 Default `install`, `check`, and `clean` operate on both repo-local and
 user-global outputs. The `*-repo` and `*-global` targets limit the scope.
+Repo-local outputs include both global skills and Sheaf-only skills. User-global
+outputs include only global skills.
 
 User-global outputs are written to:
 

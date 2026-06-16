@@ -12,6 +12,7 @@ from pathlib import Path
 
 SUPPORTED_TARGETS = ("claude", "cursor", "pi", "codex")
 SCOPES = ("repo", "global", "all")
+OBSOLETE_GLOBAL_SKILL_IDS = ("smoke-test",)
 REPO_TARGET_DIRS = {
     "claude": Path(".claude/skills"),
     "cursor": Path(".cursor/skills"),
@@ -72,6 +73,9 @@ def parse_skill_yaml(path: Path) -> dict[str, object]:
 
 
 def read_skills(skills_root: Path) -> list[Skill]:
+    if not skills_root.exists():
+        return []
+
     skills: list[Skill] = []
     for source_dir in sorted(p for p in skills_root.iterdir() if p.is_dir()):
         metadata_path = source_dir / "skill.yaml"
@@ -145,28 +149,30 @@ def global_content_for(global_source: Path, repo_root: Path) -> str:
     )
 
 
-def read_sources(repo_root: Path) -> tuple[Path, list[Skill]]:
+def read_sources(repo_root: Path) -> tuple[Path, list[Skill], list[Skill]]:
     agents_root = repo_root / "projects" / "agents"
     global_root = agents_root / "global"
+    sheaf_root = agents_root / "sheaf"
     global_source = global_root / "AGENTS.md"
-    skills_root = global_root / "skills"
+    global_skills_root = global_root / "skills"
+    sheaf_skills_root = sheaf_root / "skills"
 
     if not global_source.exists():
         raise ValueError(f"missing global instructions: {global_source}")
-    if not skills_root.exists():
-        raise ValueError(f"missing skills root: {skills_root}")
+    if not global_skills_root.exists():
+        raise ValueError(f"missing skills root: {global_skills_root}")
 
-    return global_source, read_skills(skills_root)
+    return global_source, read_skills(global_skills_root), read_skills(sheaf_skills_root)
 
 
 def build_repo_outputs(repo_root: Path) -> list[Output]:
-    global_source, skills = read_sources(repo_root)
+    global_source, global_skills, sheaf_skills = read_sources(repo_root)
     outputs: list[Output] = []
     global_content = global_content_for(global_source, repo_root)
     outputs.append(Output(repo_root / "AGENTS.md", global_content))
     outputs.append(Output(repo_root / "CLAUDE.md", global_content))
 
-    for skill in skills:
+    for skill in [*global_skills, *sheaf_skills]:
         rendered = render_skill(skill, repo_root)
         for target in skill.targets:
             outputs.append(
@@ -193,7 +199,7 @@ def build_global_outputs(
 ) -> list[Output]:
     home = home.expanduser().resolve()
     resolved_codex_home = codex_home_for(home, codex_home).expanduser().resolve()
-    global_source, skills = read_sources(repo_root)
+    global_source, global_skills, _sheaf_skills = read_sources(repo_root)
     global_content = global_content_for(global_source, repo_root)
 
     instruction_paths = [
@@ -204,7 +210,7 @@ def build_global_outputs(
     ]
     outputs = [Output(path, global_content) for path in instruction_paths]
 
-    for skill in skills:
+    for skill in global_skills:
         rendered = render_skill(skill, repo_root)
         if "claude" in skill.targets:
             outputs.append(
@@ -234,6 +240,25 @@ def build_global_outputs(
     if in_repo:
         joined = ", ".join(str(path) for path in in_repo)
         raise ValueError(f"global output path is inside repository: {joined}")
+
+    return outputs
+
+
+def build_obsolete_global_outputs(*, home: Path, codex_home: Path | None) -> list[Output]:
+    home = home.expanduser().resolve()
+    resolved_codex_home = codex_home_for(home, codex_home).expanduser().resolve()
+
+    outputs: list[Output] = []
+    for skill_id in OBSOLETE_GLOBAL_SKILL_IDS:
+        outputs.extend(
+            [
+                Output(home / ".claude" / "skills" / skill_id / "SKILL.md", ""),
+                Output(home / ".cursor" / "skills" / skill_id / "SKILL.md", ""),
+                Output(home / ".pi" / "skills" / skill_id / "SKILL.md", ""),
+                Output(home / ".agents" / "skills" / skill_id / "SKILL.md", ""),
+                Output(resolved_codex_home / "skills" / skill_id / "SKILL.md", ""),
+            ]
+        )
 
     return outputs
 
@@ -293,6 +318,20 @@ def check_outputs(outputs: list[Output]) -> int:
             status = 1
         else:
             print(f"ok {output.path}")
+    return status
+
+
+def check_obsolete_outputs(outputs: list[Output]) -> int:
+    status = 0
+    for output in outputs:
+        if not output.path.exists():
+            continue
+        existing = output.path.read_text(encoding="utf-8")
+        if is_managed(existing):
+            print(f"obsolete managed {output.path}", file=sys.stderr)
+            status = 1
+        else:
+            print(f"skip unmanaged obsolete {output.path}")
     return status
 
 
@@ -358,13 +397,26 @@ def main() -> int:
         home=args.home,
         codex_home=args.codex_home,
     )
+    obsolete_outputs: list[Output] = []
+    if args.scope in ("global", "all"):
+        obsolete_outputs = build_obsolete_global_outputs(
+            home=args.home,
+            codex_home=args.codex_home,
+        )
 
     if args.mode == "install":
-        return install_outputs(outputs, force=args.force)
+        install_status = install_outputs(outputs, force=args.force)
+        if install_status != 0:
+            return install_status
+        return clean_outputs(obsolete_outputs)
     if args.mode == "check":
-        return check_outputs(outputs)
+        check_status = check_outputs(outputs)
+        obsolete_status = check_obsolete_outputs(obsolete_outputs)
+        return check_status or obsolete_status
     if args.mode == "clean":
-        return clean_outputs(outputs)
+        clean_status = clean_outputs(outputs)
+        obsolete_status = clean_outputs(obsolete_outputs)
+        return clean_status or obsolete_status
     raise AssertionError(args.mode)
 
 

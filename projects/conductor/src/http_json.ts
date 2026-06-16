@@ -78,3 +78,32 @@ export function readSmokeTestFlag(body: unknown): boolean
     && body !== null
     && (body as Record<string, unknown>).smoke_test === true;
 }
+
+export type LifecycleRequestOptions =
+{
+  smokeTest: boolean;
+  worktree?: string;
+  error?: string;
+};
+
+export function readLifecycleRequestOptions(body: unknown): LifecycleRequestOptions
+{
+  const smokeTest = readSmokeTestFlag(body);
+
+  if (typeof body !== "object" || body === null || !("worktree" in body))
+  {
+    return { smokeTest };
+  }
+
+  const value = (body as Record<string, unknown>).worktree;
+  if (value === undefined || value === null)
+  {
+    return { smokeTest };
+  }
+  if (typeof value !== "string")
+  {
+    return { smokeTest, error: "worktree must be a string" };
+  }
+
+  return { smokeTest, worktree: value };
+}

@@ -1,13 +1,3 @@
----
-name: smoke-test
-description: Launch the Sheaf services for human smoke testing through Conductor, with assets sourced from the main repo.
-metadata:
-  managedBy: sheaf-agents-installer
-  source: projects/agents/sheaf/skills/smoke-test
----
-
-<!-- sheaf-agents-managed: DO NOT EDIT; source=projects/agents/sheaf/skills/smoke-test -->
-
 # Smoke Test
 
 Use this skill to launch Sheaf services for human smoke testing from a feature

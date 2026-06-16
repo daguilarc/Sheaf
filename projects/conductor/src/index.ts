@@ -61,6 +61,7 @@ export {
   buildExitUrl,
   createExitRequester,
   validateServiceCommand,
+  validateWorktreeRoot,
   type CommandValidationError,
   type ExitRequester,
   type ExitRequestResult,

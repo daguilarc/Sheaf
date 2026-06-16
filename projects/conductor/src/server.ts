@@ -11,8 +11,8 @@ import {
 import {
   decodePathSegment,
   parseRequestPath,
+  readLifecycleRequestOptions,
   readJsonBody,
-  readSmokeTestFlag,
   sendJson,
   sendJsonAfterFlush,
 } from "./http_json.js";
@@ -259,12 +259,21 @@ export function createConductorServer(options: ConductorServerOptions): Conducto
 
       if (action === "start" && method === "POST")
       {
-        const smokeTest = readSmokeTestFlag(await readJsonBody(request));
-        const result = lifecycleManager.StartService(service, { smokeTest });
+        const lifecycleOptions = readLifecycleRequestOptions(await readJsonBody(request));
+        if (lifecycleOptions.error)
+        {
+          sendJson(response, 400, { error: lifecycleOptions.error });
+          return;
+        }
+
+        const result = lifecycleManager.StartService(service, lifecycleOptions);
 
         if (result.error && !result.started)
         {
-          const statusCode = result.error.includes("missing or empty") ? 400 : 500;
+          const statusCode = result.error.includes("missing or empty")
+            || result.error.includes("worktree")
+            ? 400
+            : 500;
           sendJson(response, statusCode, result);
           return;
         }
@@ -282,12 +291,21 @@ export function createConductorServer(options: ConductorServerOptions): Conducto
 
       if (action === "restart" && method === "POST")
       {
-        const smokeTest = readSmokeTestFlag(await readJsonBody(request));
-        const result = await lifecycleManager.RestartService(service, { smokeTest });
+        const lifecycleOptions = readLifecycleRequestOptions(await readJsonBody(request));
+        if (lifecycleOptions.error)
+        {
+          sendJson(response, 400, { error: lifecycleOptions.error });
+          return;
+        }
+
+        const result = await lifecycleManager.RestartService(service, lifecycleOptions);
 
         if (result.error && !result.restart_requested)
         {
-          const statusCode = result.error.includes("missing or empty") ? 400 : 500;
+          const statusCode = result.error.includes("missing or empty")
+            || result.error.includes("worktree")
+            ? 400
+            : 500;
           sendJson(response, statusCode, result);
           return;
         }

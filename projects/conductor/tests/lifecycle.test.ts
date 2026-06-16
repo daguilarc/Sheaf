@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,6 +14,7 @@ import {
   createShutdownController,
   parseCommand,
   validateServiceCommand,
+  validateWorktreeRoot,
   type ProcessRunner,
   type ServiceDefinition,
   type SpawnedProcess,
@@ -52,11 +53,25 @@ async function requestJson(
   port: number,
   method: string,
   path: string,
+  requestBody?: unknown,
 ): Promise<{ status: number; body: unknown }>
 {
-  const response = await fetch(`http://127.0.0.1:${port}${path}`, { method });
-  const body = await response.json() as unknown;
-  return { status: response.status, body };
+  const response = await fetch(`http://127.0.0.1:${port}${path}`, {
+    method,
+    headers: requestBody === undefined ? undefined : { "Content-Type": "application/json" },
+    body: requestBody === undefined ? undefined : JSON.stringify(requestBody),
+  });
+  const responseBody = await response.json() as unknown;
+  return { status: response.status, body: responseBody };
+}
+
+async function createTempSheafRoot(): Promise<string>
+{
+  const root = await mkdtemp(join(tmpdir(), "conductor-worktree-"));
+  await mkdir(join(root, "config"), { recursive: true });
+  await mkdir(join(root, "structure"), { recursive: true });
+  await writeFile(join(root, "config", "services.json"), "[]\n", "utf8");
+  return root;
 }
 
 function createCapturedResponse(): {
@@ -403,6 +418,57 @@ test("POST /api/services/{service_name}/restart stops before start", async () =>
   });
 });
 
+test("POST /api/services/{service_name}/restart can launch from a worktree", async () =>
+{
+  const tempRoot = await createTempSheafRoot();
+  const spawned: Array<{ command: string; cwd: string }> = [];
+
+  try
+  {
+    await withLifecycleServer({
+      processRunner: createFakeProcessRunner((command, cwd, _serviceName) =>
+      {
+        spawned.push({ command, cwd });
+        return { pid: 6262, command, argv: parseCommand(command) };
+      }),
+      exitRequester: createExitRequester({
+        fetchFn: async () => new Response(JSON.stringify({ exiting: true }), { status: 200 }),
+      }),
+    }, async ({ port }) =>
+    {
+      const response = await requestJson(port, "POST", "/api/services/alpha/restart", {
+        worktree: tempRoot,
+      });
+      assert.equal(response.status, 200);
+
+      const body = response.body as Record<string, unknown>;
+      assert.equal(body.started, true);
+      assert.equal(spawned.length, 1);
+      assert.equal(spawned[0]!.command, "echo alpha");
+      assert.equal(spawned[0]!.cwd, tempRoot);
+    });
+  }
+  finally
+  {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("POST /api/services/{service_name}/restart rejects invalid worktree", async () =>
+{
+  await withLifecycleServer({}, async ({ port }) =>
+  {
+    const response = await requestJson(port, "POST", "/api/services/alpha/restart", {
+      worktree: "relative/path",
+    });
+    assert.equal(response.status, 400);
+
+    const body = response.body as Record<string, unknown>;
+    assert.equal(body.started, false);
+    assert.equal(body.error, "worktree path must be absolute");
+  });
+});
+
 test("POST /api/services/{service_name}/restart succeeds when stop is unreachable and start succeeds", async () =>
 {
   const events: string[] = [];
@@ -549,6 +615,63 @@ test("LifecycleManager StartService runs from provided repo root", async () =>
     const result = lifecycleManager.StartService(testServices[0]!);
     assert.equal(result.started, true);
     assert.deepEqual(spawned, [tempRoot]);
+  }
+  finally
+  {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("LifecycleManager StartService can override launch root with worktree", async () =>
+{
+  const productionRoot = await mkdtemp(join(tmpdir(), "conductor-production-"));
+  const worktreeRoot = await createTempSheafRoot();
+  const spawned: string[] = [];
+
+  try
+  {
+    const healthPoller = new HealthPoller({ services: [testServices[0]!] });
+    const lifecycleManager = new LifecycleManager({
+      repoRoot: productionRoot,
+      processRunner: createFakeProcessRunner((command, cwd, _serviceName) =>
+      {
+        spawned.push(cwd);
+        return { pid: 1, command, argv: parseCommand(command) };
+      }),
+      getHeartbeat: (serviceName) => healthPoller.getHeartbeat(serviceName),
+    });
+
+    const result = lifecycleManager.StartService(testServices[0]!, {
+      worktree: worktreeRoot,
+    });
+    assert.equal(result.started, true);
+    assert.deepEqual(spawned, [worktreeRoot]);
+  }
+  finally
+  {
+    await rm(productionRoot, { recursive: true, force: true });
+    await rm(worktreeRoot, { recursive: true, force: true });
+  }
+});
+
+test("validateWorktreeRoot rejects paths that are not Sheaf roots", async () =>
+{
+  const tempRoot = await mkdtemp(join(tmpdir(), "conductor-not-sheaf-"));
+
+  try
+  {
+    assert.throws(
+      () => validateWorktreeRoot("relative/path"),
+      /worktree path must be absolute/,
+    );
+    assert.throws(
+      () => validateWorktreeRoot(join(tempRoot, "missing")),
+      /worktree path does not exist/,
+    );
+    assert.throws(
+      () => validateWorktreeRoot(tempRoot),
+      /worktree path is not a Sheaf repository root/,
+    );
   }
   finally
   {

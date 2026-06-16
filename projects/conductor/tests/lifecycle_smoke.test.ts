@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import {
@@ -22,14 +25,18 @@ const alpha: ServiceDefinition = {
   command: "echo alpha",
 };
 
-type SpawnRecord = { serviceName: string; env: Record<string, string> | undefined };
+type SpawnRecord = {
+  serviceName: string;
+  cwd: string;
+  env: Record<string, string> | undefined;
+};
 
 function createCapturingRunner(records: SpawnRecord[]): ProcessRunner
 {
   return {
-    spawn(command: string, _cwd: string, serviceName: string, env?: Record<string, string>): SpawnedProcess
+    spawn(command: string, cwd: string, serviceName: string, env?: Record<string, string>): SpawnedProcess
     {
-      records.push({ serviceName, env });
+      records.push({ serviceName, cwd, env });
       return { pid: 1234, command, argv: parseCommand(command) };
     },
   };
@@ -44,6 +51,15 @@ function createManager(records: SpawnRecord[]): LifecycleManager
     resolveSmokeAssetRoot: () => "/main/checkout",
     getHeartbeat: (serviceName) => healthPoller.getHeartbeat(serviceName),
   });
+}
+
+async function createTempSheafRoot(): Promise<string>
+{
+  const root = await mkdtemp(join(tmpdir(), "conductor-smoke-worktree-"));
+  await mkdir(join(root, "config"), { recursive: true });
+  await mkdir(join(root, "structure"), { recursive: true });
+  await writeFile(join(root, "config", "services.json"), "[]\n", "utf8");
+  return root;
 }
 
 test("StartService injects the smoke env when smokeTest is true", () =>
@@ -92,6 +108,42 @@ test("RestartService forwards the smoke flag to the start phase", async () =>
     [SMOKE_TEST_MODE_ENV_VAR]: "1",
     [SMOKE_ASSET_ROOT_ENV_VAR]: "/main/checkout",
   });
+});
+
+test("RestartService with smoke and worktree keeps production asset root", async () =>
+{
+  const worktreeRoot = await createTempSheafRoot();
+  const records: SpawnRecord[] = [];
+  const exitRequester = createExitRequester({
+    fetchFn: async () => new Response(JSON.stringify({ exiting: true }), { status: 200 }),
+  });
+  const healthPoller = new HealthPoller({ services: [alpha] });
+  const restartManager = new LifecycleManager({
+    repoRoot: "/repo/production",
+    processRunner: createCapturingRunner(records),
+    resolveSmokeAssetRoot: () => "/repo/production",
+    exitRequester,
+    getHeartbeat: (serviceName) => healthPoller.getHeartbeat(serviceName),
+  });
+
+  try
+  {
+    await restartManager.RestartService(alpha, {
+      smokeTest: true,
+      worktree: worktreeRoot,
+    });
+
+    assert.equal(records.length, 1);
+    assert.equal(records[0]!.cwd, worktreeRoot);
+    assert.deepEqual(records[0]!.env, {
+      [SMOKE_TEST_MODE_ENV_VAR]: "1",
+      [SMOKE_ASSET_ROOT_ENV_VAR]: "/repo/production",
+    });
+  }
+  finally
+  {
+    await rm(worktreeRoot, { recursive: true, force: true });
+  }
 });
 
 async function withServer(

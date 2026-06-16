@@ -1,6 +1,8 @@
 import type { FetchFn } from "./health_poller.js";
 import { resolvePollHost } from "./health_poller.js";
 import type { HeartbeatState } from "./health_poller.js";
+import { existsSync } from "node:fs";
+import { isAbsolute, join, resolve } from "node:path";
 import {
   createProcessRunner,
   type ProcessRunner,
@@ -17,6 +19,7 @@ import { buildSmokeTestEnv, discoverSmokeAssetRoot } from "./smoke_test.js";
 export type LifecycleActionOptions =
 {
   smokeTest?: boolean;
+  worktree?: string;
 };
 
 export type ProcessInfo =
@@ -161,6 +164,39 @@ export function validateServiceCommand(service: ServiceDefinition): CommandValid
   return null;
 }
 
+export function validateWorktreeRoot(worktree: string | undefined): string | undefined
+{
+  if (worktree === undefined)
+  {
+    return undefined;
+  }
+
+  const trimmed = worktree.trim();
+  if (trimmed.length === 0)
+  {
+    throw new Error("worktree path is empty");
+  }
+  if (!isAbsolute(trimmed))
+  {
+    throw new Error("worktree path must be absolute");
+  }
+
+  const resolved = resolve(trimmed);
+  if (!existsSync(resolved))
+  {
+    throw new Error("worktree path does not exist");
+  }
+  if (
+    !existsSync(join(resolved, "config", "services.json"))
+    || !existsSync(join(resolved, "structure"))
+  )
+  {
+    throw new Error("worktree path is not a Sheaf repository root");
+  }
+
+  return resolved;
+}
+
 function toProcessInfo(process: SpawnedProcess): ProcessInfo
 {
   return {
@@ -241,6 +277,24 @@ export class LifecycleManager
       };
     }
 
+    let launchRoot = this.m_repoRoot;
+    try
+    {
+      launchRoot = validateWorktreeRoot(options?.worktree) ?? this.m_repoRoot;
+    }
+    catch (error: unknown)
+    {
+      const message = error instanceof Error ? error.message : "invalid worktree path";
+
+      return {
+        name: service.name,
+        action: "start",
+        started: false,
+        heartbeat,
+        error: message,
+      };
+    }
+
     const spawnEnv = options?.smokeTest
       ? buildSmokeTestEnv(this.m_resolveSmokeAssetRoot())
       : undefined;
@@ -249,7 +303,7 @@ export class LifecycleManager
     {
       const process = this.m_processRunner.spawn(
         service.command,
-        this.m_repoRoot,
+        launchRoot,
         service.name,
         spawnEnv,
       );
