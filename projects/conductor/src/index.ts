@@ -17,6 +17,8 @@ export {
   parseHealthResponseBody,
   resolvePollHost,
   type FetchFn,
+  type ForegroundLeaseRelease,
+  type ForegroundLeaseRenewal,
   type HealthPollerOptions,
   type HeartbeatState,
 } from "./health_poller.js";

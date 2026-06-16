@@ -67,6 +67,31 @@ function handleServiceNotFound(response: ServerResponse): void
   sendJson(response, 404, { error: "service not found" });
 }
 
+function readForegroundLeaseRequest(body: unknown): { clientId: string; active: boolean } | undefined
+{
+  if (typeof body !== "object" || body === null || Array.isArray(body))
+  {
+    return undefined;
+  }
+
+  const record = body as Record<string, unknown>;
+
+  if (typeof record.client_id !== "string" || record.client_id.trim().length === 0)
+  {
+    return undefined;
+  }
+
+  if (typeof record.active !== "boolean")
+  {
+    return undefined;
+  }
+
+  return {
+    clientId: record.client_id,
+    active: record.active,
+  };
+}
+
 function findRegisteredService(
   services: ServiceDefinition[],
   serviceName: string,
@@ -218,6 +243,24 @@ export function createConductorServer(options: ConductorServerOptions): Conducto
         (serviceName) => options.healthPoller.getHeartbeat(serviceName),
       );
       sendJson(response, 200, services);
+      return;
+    }
+
+    if (method === "POST" && path === "/api/health/foreground-lease")
+    {
+      const leaseRequest = readForegroundLeaseRequest(await readJsonBody(request));
+
+      if (!leaseRequest)
+      {
+        sendJson(response, 400, { error: "invalid foreground heartbeat lease" });
+        return;
+      }
+
+      const result = leaseRequest.active
+        ? options.healthPoller.renewForegroundLease(leaseRequest.clientId)
+        : options.healthPoller.releaseForegroundLease(leaseRequest.clientId);
+
+      sendJson(response, 200, result);
       return;
     }
 

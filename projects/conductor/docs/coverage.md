@@ -4,9 +4,9 @@ Last audit: living-spec migration (one-time rewrite from code), 2026-06-10
 
 | Capability | Status | Gaps |
 |---|---|---|
-| service-management | partial | no double-start guard, restart race, owned-process map volatility, poll overlap |
+| service-management | partial | no double-start guard, restart race, owned-process map volatility |
 | log-access | partial | UTF-8 boundary behavior, WS close codes, no keepalive |
-| web-ui | partial | browser-script behavior pinned by source regex only, no auto-refresh spec |
+| web-ui | partial | browser-script behavior pinned by source regex only |
 
 ## Known gaps
 
@@ -23,9 +23,6 @@ Last audit: living-spec migration (one-time rewrite from code), 2026-06-10
 - Started children are detached and never reaped/await-ed; conductor has no
   notion of "running" beyond heartbeats. Exit of a started child is invisible
   until the next failed poll.
-- Poll cycles are fired on a fixed interval without overlap protection; a
-  cycle slower than 30 s can overlap the next (per-service requests do have
-  5 s timeouts, which bounds this in practice). Unspecified.
 - `HealthPoller`/`LifecycleManager` tunables (`pollIntervalMs`,
   `requestTimeoutMs`, `exitRequestTimeoutMs`) are constructor options with no
   config-file surface; only the defaults are normative.
@@ -53,9 +50,6 @@ Last audit: living-spec migration (one-time rewrite from code), 2026-06-10
   source files plus one end-to-end WebSocket round trip; no DOM-level tests
   pin the rendering, so visual/markup specifics beyond the listed elements
   are non-normative.
-- The main page has no periodic auto-refresh; heartbeat data goes stale until
-  the user acts or reloads. Intentional, but the refresh policy is
-  unspecified.
 - Error handling in `main.js`/`logs.js` for fetch-level network failures
   (promise rejections, as opposed to non-2xx responses) is unspecified.
 

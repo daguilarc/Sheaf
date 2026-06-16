@@ -98,6 +98,16 @@ test("browser JavaScript uses API and WebSocket paths without query-string file 
   );
 
   assert.match(mainJs, /fetch\("\/api\/services"\)/);
+  assert.match(mainJs, /foregroundRefreshIntervalMs\s*=\s*1_000/);
+  assert.match(mainJs, /fetch\("\/api\/health\/foreground-lease"/);
+  assert.match(mainJs, /client_id:\s*foregroundLeaseId/);
+  assert.match(mainJs, /active:\s*true/);
+  assert.match(mainJs, /active:\s*false/);
+  assert.match(mainJs, /document\.addEventListener\("visibilitychange",\s*updateForegroundRefresh\)/);
+  assert.match(mainJs, /window\.addEventListener\("focus",\s*updateForegroundRefresh\)/);
+  assert.match(mainJs, /window\.addEventListener\("blur",\s*stopForegroundRefresh\)/);
+  assert.match(mainJs, /window\.addEventListener\("pagehide",\s*stopForegroundRefresh\)/);
+  assert.match(mainJs, /navigator\.sendBeacon/);
   assert.match(mainJs, /\/api\/services\/\$\{encodeURIComponent\(serviceName\)\}\/\$\{action\}/);
   assert.match(mainJs, /method: "POST"/);
   assert.match(mainJs, /createActionButton\("Start"/);

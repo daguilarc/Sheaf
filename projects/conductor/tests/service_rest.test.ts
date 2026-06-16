@@ -28,11 +28,20 @@ async function requestJson(
   port: number,
   method: string,
   path: string,
+  body?: unknown,
 ): Promise<{ status: number; body: unknown }>
 {
-  const response = await fetch(`http://127.0.0.1:${port}${path}`, { method });
-  const body = await response.json() as unknown;
-  return { status: response.status, body };
+  const init: RequestInit = { method };
+
+  if (body !== undefined)
+  {
+    init.headers = { "Content-Type": "application/json" };
+    init.body = JSON.stringify(body);
+  }
+
+  const response = await fetch(`http://127.0.0.1:${port}${path}`, init);
+  const responseBody = await response.json() as unknown;
+  return { status: response.status, body: responseBody };
 }
 
 async function withTestServer(
@@ -148,6 +157,107 @@ test("GET /api/services/{service_name}/health returns heartbeat-only data", asyn
     assert.ok(health.last_checked_at);
     assert.equal(health.last_error, null);
   });
+});
+
+test("POST /api/health/foreground-lease renews and releases focused polling", async () =>
+{
+  await withTestServer(async ({ port, healthPoller }) =>
+  {
+    assert.equal(healthPoller.hasActiveForegroundLeases(), false);
+
+    const renew = await requestJson(port, "POST", "/api/health/foreground-lease", {
+      client_id: "page-1",
+      active: true,
+    });
+    assert.equal(renew.status, 200);
+    assert.equal((renew.body as Record<string, unknown>).foreground_polling, true);
+    assert.equal((renew.body as Record<string, unknown>).poll_interval_ms, 1_000);
+    assert.match(String((renew.body as Record<string, unknown>).expires_at), /^\d{4}-\d{2}-\d{2}T/);
+    assert.equal(healthPoller.hasActiveForegroundLeases(), true);
+
+    const release = await requestJson(port, "POST", "/api/health/foreground-lease", {
+      client_id: "page-1",
+      active: false,
+    });
+    assert.equal(release.status, 200);
+    assert.deepEqual(release.body, {
+      foreground_polling: false,
+      poll_interval_ms: 1_000,
+    });
+    assert.equal(healthPoller.hasActiveForegroundLeases(), false);
+  });
+});
+
+test("POST /api/health/foreground-lease validates request body", async () =>
+{
+  await withTestServer(async ({ port }) =>
+  {
+    const invalidBodies = [
+      undefined,
+      {},
+      { client_id: "", active: true },
+      { client_id: "page-1", active: "true" },
+      { client_id: 1, active: true },
+    ];
+
+    for (const body of invalidBodies)
+    {
+      const response = await requestJson(
+        port,
+        "POST",
+        "/api/health/foreground-lease",
+        body,
+      );
+      assert.equal(response.status, 400);
+      assert.deepEqual(response.body, { error: "invalid foreground heartbeat lease" });
+    }
+  });
+});
+
+test("POST /api/health/foreground-lease is observational", async () =>
+{
+  let fetchCount = 0;
+  const healthPoller = new HealthPoller({
+    services: testServices,
+    fetchFn: async () =>
+    {
+      fetchCount += 1;
+      return new Response(JSON.stringify({ healthy: true, uptime: fetchCount }), {
+        status: 200,
+      });
+    },
+  });
+
+  const shutdownController = createShutdownController({
+    stopPoller: () => healthPoller.stop(),
+    closeServer: async () => undefined,
+  });
+
+  const server = createConductorServer({
+    services: testServices,
+    bindHost: "127.0.0.1",
+    bindPort: 0,
+    healthPoller,
+    shutdownController,
+  });
+
+  const port = await server.listen();
+
+  try
+  {
+    const response = await requestJson(port, "POST", "/api/health/foreground-lease", {
+      client_id: "page-1",
+      active: true,
+    });
+
+    assert.equal(response.status, 200);
+    assert.equal(fetchCount, 0);
+  }
+  finally
+  {
+    healthPoller.stop();
+    await server.close();
+  }
 });
 
 test("unknown service routes return 404", async () =>

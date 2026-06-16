@@ -3,6 +3,20 @@
   const statusEl = document.getElementById("services-status");
   const tableWrapEl = document.getElementById("services-table-wrap");
   const tableBodyEl = document.getElementById("services-body");
+  const foregroundLeaseId = createForegroundLeaseId();
+  const foregroundRefreshIntervalMs = 1_000;
+  let foregroundRefreshTimer = null;
+  let foregroundRefreshInFlight = false;
+
+  function createForegroundLeaseId()
+  {
+    if (window.crypto && typeof window.crypto.randomUUID === "function")
+    {
+      return window.crypto.randomUUID();
+    }
+
+    return `page-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  }
 
   function resolveBrowserHomeUrl(homeUrl)
   {
@@ -115,7 +129,7 @@
       return;
     }
 
-    await loadServices();
+    await loadServices({ showLoading: false });
   }
 
   function renderServiceRow(service)
@@ -203,9 +217,12 @@
     statusEl.textContent = `${services.length} service(s)`;
   }
 
-  async function loadServices()
+  async function loadServices(options = {})
   {
-    statusEl.textContent = "Loading services…";
+    if (options.showLoading !== false)
+    {
+      statusEl.textContent = "Loading services…";
+    }
 
     const response = await fetch("/api/services");
 
@@ -219,5 +236,113 @@
     renderServices(services);
   }
 
+  function isForegroundRefreshWanted()
+  {
+    return document.visibilityState !== "hidden" && document.hasFocus();
+  }
+
+  async function renewForegroundLease()
+  {
+    const response = await fetch("/api/health/foreground-lease", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        client_id: foregroundLeaseId,
+        active: true,
+      }),
+    });
+
+    if (!response.ok)
+    {
+      throw new Error(`Foreground lease failed (${response.status})`);
+    }
+  }
+
+  function releaseForegroundLease()
+  {
+    const body = JSON.stringify({
+      client_id: foregroundLeaseId,
+      active: false,
+    });
+
+    if (navigator.sendBeacon)
+    {
+      navigator.sendBeacon(
+        "/api/health/foreground-lease",
+        new Blob([body], { type: "application/json" }),
+      );
+      return;
+    }
+
+    void fetch("/api/health/foreground-lease", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body,
+      keepalive: true,
+    }).catch(() => undefined);
+  }
+
+  async function refreshForegroundServices()
+  {
+    if (foregroundRefreshInFlight)
+    {
+      return;
+    }
+
+    foregroundRefreshInFlight = true;
+
+    try
+    {
+      await renewForegroundLease().catch(() => undefined);
+      await loadServices({ showLoading: false });
+    }
+    finally
+    {
+      foregroundRefreshInFlight = false;
+    }
+  }
+
+  function stopForegroundRefresh()
+  {
+    if (foregroundRefreshTimer !== null)
+    {
+      clearInterval(foregroundRefreshTimer);
+      foregroundRefreshTimer = null;
+    }
+
+    releaseForegroundLease();
+  }
+
+  function updateForegroundRefresh()
+  {
+    if (!isForegroundRefreshWanted())
+    {
+      stopForegroundRefresh();
+      return;
+    }
+
+    void refreshForegroundServices();
+
+    if (foregroundRefreshTimer === null)
+    {
+      foregroundRefreshTimer = setInterval(() =>
+      {
+        if (!isForegroundRefreshWanted())
+        {
+          stopForegroundRefresh();
+          return;
+        }
+
+        void refreshForegroundServices();
+      }, foregroundRefreshIntervalMs);
+    }
+  }
+
+  document.addEventListener("visibilitychange", updateForegroundRefresh);
+  window.addEventListener("focus", updateForegroundRefresh);
+  window.addEventListener("blur", stopForegroundRefresh);
+  window.addEventListener("pagehide", stopForegroundRefresh);
+
   void loadServices();
+  updateForegroundRefresh();
 })();

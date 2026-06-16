@@ -111,6 +111,25 @@ IF a stream `error` message arrives (e.g. truncation) or a frame is malformed, T
 - **WHEN** a stream `error` message arrives or a frame is malformed
 - **THEN** the browser script displays the message and reveals a `Reopen file` button that reopens the selected file with a fresh WebSocket
 
+### Requirement: ui-12 — Main page behavior: focused heartbeat refresh
+WHILE the main page document is visible and the browser window is focused, THE browser script SHALL renew a foreground heartbeat lease at least once per second, fetch `GET /api/services` at least once per second, and re-render the service table from the returned heartbeat state.
+
+#### Scenario: Main page visible and focused
+- **WHEN** the main page document is visible and the browser window is focused
+- **THEN** the browser script renews a foreground heartbeat lease at least once per second and refreshes the service table from `GET /api/services` at least once per second
+
+#### Scenario: Main page regains visibility or focus
+- **WHEN** the main page becomes visible or the browser window regains focus
+- **THEN** the browser script immediately renews the foreground heartbeat lease and refreshes the service table
+
+#### Scenario: Main page hidden or blurred
+- **WHEN** the main page document becomes hidden or the browser window loses focus
+- **THEN** the browser script stops the once-per-second refresh loop and releases or allows expiry of its foreground heartbeat lease
+
+#### Scenario: Foreground lease renewal fails
+- **WHEN** renewing the foreground heartbeat lease fails while the page remains visible and focused
+- **THEN** the browser script continues refreshing `GET /api/services` on the foreground cadence and retries lease renewal on the next foreground tick without replacing the last rendered service table with an empty state
+
 ## Contracts
 
 The HTTP surfaces are fully described by the requirements above; JSON shapes
@@ -143,7 +162,9 @@ Pinned asset paths (exported as constants and asserted by tests):
   rejection, containment check per asset root; first matching root wins.
 - `src/ui/main.js` — service table rendering, lifecycle button wiring,
   status-line updates; re-renders the whole table after each successful
-  action. No periodic auto-refresh.
+  action. While the page is visible and focused, it renews a foreground
+  heartbeat lease and refreshes `GET /api/services` once per second; blur,
+  hide, and pagehide stop the loop and release or allow expiry of the lease.
 - `src/ui/logs.js` — WebSocket client: tail/append/scrollback state
   (`earliestStart`, `readBeforePending`, `suppressScrollLoad`), follow
   toggle, reopen-on-error.
@@ -154,8 +175,10 @@ Pinned asset paths (exported as constants and asserted by tests):
 ## Interactions
 
 - [service-management](../conductor-service-management/spec.md) — data source
-  (`GET /api/services`) and action target (start/stop/restart); stopping
-  `conductor` from its own UI kills the page's backend after the response.
+  (`GET /api/services`), foreground heartbeat lease target
+  (`POST /api/health/foreground-lease`), and action target
+  (start/stop/restart); stopping `conductor` from its own UI kills the page's
+  backend after the response.
 - [log-access](../conductor-log-access/spec.md) — file listing and the streaming protocol the
   logs page speaks.
 - Shared stylesheet ownership: `projects/web` (see

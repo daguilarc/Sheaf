@@ -11,16 +11,32 @@ export type HeartbeatState =
 
 export type FetchFn = typeof fetch;
 
+export type ForegroundLeaseRenewal =
+{
+  foreground_polling: true;
+  poll_interval_ms: number;
+  expires_at: string;
+};
+
+export type ForegroundLeaseRelease =
+{
+  foreground_polling: boolean;
+  poll_interval_ms: number;
+};
+
 export type HealthPollerOptions =
 {
   services: ServiceDefinition[];
   fetchFn?: FetchFn;
   pollIntervalMs?: number;
+  foregroundPollIntervalMs?: number;
+  foregroundLeaseTtlMs?: number;
   requestTimeoutMs?: number;
   setIntervalFn?: typeof setInterval;
   clearIntervalFn?: typeof clearInterval;
   setTimeoutFn?: typeof setTimeout;
   clearTimeoutFn?: typeof clearTimeout;
+  nowFn?: () => number;
 };
 
 function createInitialHeartbeatState(): HeartbeatState
@@ -112,24 +128,29 @@ export class HealthPoller
   private m_services: ServiceDefinition[];
   private m_fetchFn: FetchFn;
   private m_pollIntervalMs: number;
+  private m_foregroundPollIntervalMs: number;
+  private m_foregroundLeaseTtlMs: number;
   private m_requestTimeoutMs: number;
-  private m_setIntervalFn: typeof setInterval;
-  private m_clearIntervalFn: typeof clearInterval;
   private m_setTimeoutFn: typeof setTimeout;
   private m_clearTimeoutFn: typeof clearTimeout;
+  private m_nowFn: () => number;
   private m_states = new Map<string, HeartbeatState>();
-  private m_timer: ReturnType<typeof setInterval> | null = null;
+  private m_foregroundLeases = new Map<string, number>();
+  private m_timer: ReturnType<typeof setTimeout> | null = null;
+  private m_started = false;
+  private m_pollInProgress = false;
 
   constructor(options: HealthPollerOptions)
   {
     this.m_services = options.services;
     this.m_fetchFn = options.fetchFn ?? fetch;
     this.m_pollIntervalMs = options.pollIntervalMs ?? 30_000;
+    this.m_foregroundPollIntervalMs = options.foregroundPollIntervalMs ?? 1_000;
+    this.m_foregroundLeaseTtlMs = options.foregroundLeaseTtlMs ?? 3_000;
     this.m_requestTimeoutMs = options.requestTimeoutMs ?? 5_000;
-    this.m_setIntervalFn = options.setIntervalFn ?? setInterval;
-    this.m_clearIntervalFn = options.clearIntervalFn ?? clearInterval;
     this.m_setTimeoutFn = options.setTimeoutFn ?? setTimeout;
     this.m_clearTimeoutFn = options.clearTimeoutFn ?? clearTimeout;
+    this.m_nowFn = options.nowFn ?? Date.now;
 
     for (const service of this.m_services)
     {
@@ -142,35 +163,144 @@ export class HealthPoller
     return this.m_states.get(serviceName);
   }
 
+  getForegroundPollIntervalMs(): number
+  {
+    return this.m_foregroundPollIntervalMs;
+  }
+
+  hasActiveForegroundLeases(): boolean
+  {
+    this.pruneExpiredForegroundLeases();
+    return this.m_foregroundLeases.size > 0;
+  }
+
+  renewForegroundLease(clientId: string): ForegroundLeaseRenewal
+  {
+    const hadActiveLease = this.hasActiveForegroundLeases();
+    const expiresAtMs = this.m_nowFn() + this.m_foregroundLeaseTtlMs;
+
+    this.m_foregroundLeases.set(clientId, expiresAtMs);
+
+    if (this.m_started && !hadActiveLease)
+    {
+      this.scheduleNextPoll(0);
+    }
+
+    return {
+      foreground_polling: true,
+      poll_interval_ms: this.m_foregroundPollIntervalMs,
+      expires_at: new Date(expiresAtMs).toISOString(),
+    };
+  }
+
+  releaseForegroundLease(clientId: string): ForegroundLeaseRelease
+  {
+    this.m_foregroundLeases.delete(clientId);
+    const foregroundPolling = this.hasActiveForegroundLeases();
+
+    if (this.m_started && !foregroundPolling)
+    {
+      this.scheduleNextPoll(this.m_pollIntervalMs);
+    }
+
+    return {
+      foreground_polling: foregroundPolling,
+      poll_interval_ms: this.m_foregroundPollIntervalMs,
+    };
+  }
+
   start(): void
   {
-    if (this.m_timer !== null)
+    if (this.m_started)
     {
       return;
     }
 
-    void this.runPollCycle();
-
-    this.m_timer = this.m_setIntervalFn(() =>
-    {
-      void this.runPollCycle();
-    }, this.m_pollIntervalMs);
+    this.m_started = true;
+    void this.runScheduledPollCycle();
   }
 
   stop(): void
   {
-    if (this.m_timer === null)
+    if (!this.m_started)
     {
       return;
     }
 
-    this.m_clearIntervalFn(this.m_timer);
-    this.m_timer = null;
+    this.m_started = false;
+    this.clearScheduledPoll();
   }
 
   async runPollCycle(): Promise<void>
   {
     await Promise.all(this.m_services.map((service) => this.pollService(service)));
+  }
+
+  private async runScheduledPollCycle(): Promise<void>
+  {
+    if (this.m_pollInProgress)
+    {
+      if (this.m_started)
+      {
+        this.scheduleNextPoll(this.getActivePollIntervalMs());
+      }
+      return;
+    }
+
+    this.m_pollInProgress = true;
+
+    try
+    {
+      await this.runPollCycle();
+    }
+    finally
+    {
+      this.m_pollInProgress = false;
+
+      if (this.m_started)
+      {
+        this.scheduleNextPoll(this.getActivePollIntervalMs());
+      }
+    }
+  }
+
+  private scheduleNextPoll(delayMs: number): void
+  {
+    this.clearScheduledPoll();
+    this.m_timer = this.m_setTimeoutFn(() =>
+    {
+      this.m_timer = null;
+      void this.runScheduledPollCycle();
+    }, delayMs);
+  }
+
+  private clearScheduledPoll(): void
+  {
+    if (this.m_timer !== null)
+    {
+      this.m_clearTimeoutFn(this.m_timer);
+      this.m_timer = null;
+    }
+  }
+
+  private getActivePollIntervalMs(): number
+  {
+    return this.hasActiveForegroundLeases()
+      ? this.m_foregroundPollIntervalMs
+      : this.m_pollIntervalMs;
+  }
+
+  private pruneExpiredForegroundLeases(): void
+  {
+    const now = this.m_nowFn();
+
+    for (const [clientId, expiresAtMs] of this.m_foregroundLeases)
+    {
+      if (expiresAtMs <= now)
+      {
+        this.m_foregroundLeases.delete(clientId);
+      }
+    }
   }
 
   private async pollService(service: ServiceDefinition): Promise<void>

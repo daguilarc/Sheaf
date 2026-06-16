@@ -286,6 +286,54 @@ THE npm package SHALL expose a `conductor` bin (`dist/src/main.js`) and an impor
 - **WHEN** the npm package is installed
 - **THEN** it exposes a `conductor` bin at `dist/src/main.js` and an importable library entry at `dist/src/index.js` with types at `dist/src/index.d.ts`, re-exporting the public modules
 
+### Requirement: svc-23 — Health polling: focused foreground cadence
+
+WHILE at least one foreground heartbeat lease is active, THE health poller SHALL run a full poll cycle every 1 second (default `foregroundPollIntervalMs` 1000) instead of waiting for the normal background interval; when no foreground lease is active, it SHALL preserve the normal 30-second background cadence from svc-7.
+
+#### Scenario: Foreground lease activates fast polling
+
+- **WHEN** a foreground heartbeat lease becomes active
+- **THEN** the health poller runs service health poll cycles every 1 second using the same health classification rules as background polling
+
+#### Scenario: No active foreground lease
+
+- **WHEN** no foreground heartbeat lease is active
+- **THEN** the health poller uses the normal 30-second background cadence
+
+#### Scenario: Slow poll cycle overlaps next foreground tick
+
+- **WHEN** a foreground poll tick arrives while the previous poll cycle is still running
+- **THEN** the health poller skips the overlapping tick rather than queueing another poll cycle
+
+### Requirement: svc-24 — REST surface: foreground heartbeat lease
+
+WHEN the service receives `POST /api/health/foreground-lease` with JSON body `{ "client_id": <non-empty string>, "active": true }`, THE service SHALL renew that client's foreground heartbeat lease for a short expiry window (default `foregroundLeaseTtlMs` 3000), ensure focused foreground polling is scheduled, and respond 200 with `{ "foreground_polling": true, "poll_interval_ms": 1000, "expires_at": <ISO-8601 timestamp> }`.
+
+#### Scenario: Lease renewed
+
+- **WHEN** `POST /api/health/foreground-lease` receives a non-empty `client_id` with `active: true`
+- **THEN** the service renews that client's foreground heartbeat lease and responds with the active foreground polling status, poll interval, and lease expiry timestamp
+
+#### Scenario: Lease released
+
+- **WHEN** `POST /api/health/foreground-lease` receives a non-empty `client_id` with `active: false`
+- **THEN** the service releases that client's foreground heartbeat lease and responds 200 with `{ "foreground_polling": <whether any other foreground lease remains active>, "poll_interval_ms": 1000 }`
+
+#### Scenario: Lease request invalid
+
+- **WHEN** `POST /api/health/foreground-lease` receives a missing or invalid JSON body, an empty `client_id`, or an `active` value that is not boolean
+- **THEN** the service responds 400 `{"error": "invalid foreground heartbeat lease"}`
+
+#### Scenario: Lease expires
+
+- **WHEN** a foreground heartbeat lease is not renewed before its expiry window elapses
+- **THEN** the service treats that lease as inactive without requiring an explicit release request
+
+#### Scenario: Foreground lease remains observational
+
+- **WHEN** a foreground heartbeat lease is renewed or released
+- **THEN** the service adjusts only health polling cadence and does not start, stop, restart, or synchronously probe any service for that request
+
 ## Contracts
 
 ### `GET /health` — 200
@@ -337,6 +385,27 @@ reported them. `GET /api/services/<name>` returns one such object.
 }
 ```
 
+### `POST /api/health/foreground-lease` — 200
+
+Renew:
+
+```json
+{
+  "foreground_polling": true,
+  "poll_interval_ms": 1000,
+  "expires_at": "2026-06-16T12:00:03.000Z"
+}
+```
+
+Release:
+
+```json
+{
+  "foreground_polling": false,
+  "poll_interval_ms": 1000
+}
+```
+
 ### `POST /api/services/<name>/start` — 200
 
 ```json
@@ -381,6 +450,7 @@ reported them. `GET /api/services/<name>` returns one such object.
 | Unknown service name on any service route | 404 | `{"error": "service not found"}` |
 | Unmatched route or method | 404 | `{"error": "not found"}` |
 | Any request while shutdown is in progress | 404 | `{"error": "not found"}` |
+| foreground heartbeat lease: invalid body | 400 | `{"error": "invalid foreground heartbeat lease"}` |
 | start/restart: command missing or empty | 400 | result body with `"error": "service command is missing or empty"` |
 | start/restart: spawn failure | 500 | result body with the spawn error message; `process.pid` is `-1` when argv known |
 | stop: exit request failed, no owned process | 200 | result body with `"stop_requested": false` and `"error"` = network message or `HTTP <status>` |
@@ -420,8 +490,11 @@ reported them. `GET /api/services/<name>` returns one such object.
   `_stdout.log`/`_stderr.log` naming shared with `start_conductor.sh`).
 - `src/health_poller.ts` — `HealthPoller`; `resolvePollHost` maps `0.0.0.0`,
   `parseHealthResponseBody` implements svc-8's classification. Poll cycles
-  run all services concurrently (`Promise.all`); timers and fetch are
-  injectable for tests.
+  run all services concurrently (`Promise.all`); timers, fetch, and the clock
+  are injectable for tests. Foreground heartbeat leases switch the scheduler
+  from the 30-second background cadence to the 1-second foreground cadence
+  while at least one unexpired lease remains active; overlapping scheduled
+  cycles are skipped.
 - `src/service_presenter.ts` — `presentService` / `presentServiceHealth` /
   `presentAllServices`; optional fields are omitted, never null.
 - `src/lifecycle.ts` — `LifecycleManager.StartService/StopService/
@@ -434,7 +507,8 @@ reported them. `GET /api/services/<name>` returns one such object.
   stdio to appended log fds which are closed in the parent after spawn).
 - `src/server.ts` — route table and status mapping; the
   missing-or-empty-command → 400 mapping keys on the error string containing
-  `missing or empty`.
+  `missing or empty`. `POST /api/health/foreground-lease` validates
+  `client_id`/`active` and renews or releases foreground polling leases.
 - `src/shutdown.ts` — `createShutdownController`; `wasShutdownRequested`
   makes repeat `/exit` calls no-ops.
 - Tests: `tests/registry.test.ts`, `tests/health.test.ts`,

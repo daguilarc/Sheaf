@@ -27,6 +27,58 @@ const testServices: ServiceDefinition[] = [
   },
 ];
 
+type FakeTimer =
+{
+  id: number;
+  handler: () => void;
+  delayMs: number;
+};
+
+class FakeTimers
+{
+  private m_nextId = 1;
+  private m_timers = new Map<number, FakeTimer>();
+
+  readonly setTimeout = ((handler: TimerHandler, delay?: number): ReturnType<typeof setTimeout> =>
+  {
+    const id = this.m_nextId;
+    this.m_nextId += 1;
+    this.m_timers.set(id, {
+      id,
+      handler: handler as () => void,
+      delayMs: delay ?? 0,
+    });
+    return id as unknown as ReturnType<typeof setTimeout>;
+  }) as unknown as typeof setTimeout;
+
+  readonly clearTimeout = ((timer?: ReturnType<typeof setTimeout>): void =>
+  {
+    this.m_timers.delete(timer as unknown as number);
+  }) as typeof clearTimeout;
+
+  get timers(): FakeTimer[]
+  {
+    return [...this.m_timers.values()];
+  }
+
+  get onlyTimer(): FakeTimer
+  {
+    assert.equal(this.m_timers.size, 1);
+    return this.timers[0]!;
+  }
+
+  run(timer: FakeTimer): void
+  {
+    this.m_timers.delete(timer.id);
+    timer.handler();
+  }
+}
+
+async function settleAsyncWork(): Promise<void>
+{
+  await new Promise((resolve) => setImmediate(resolve));
+}
+
 async function requestJson(
   port: number,
   method: string,
@@ -357,23 +409,146 @@ test("health poller initial state is deterministic", () =>
   });
 });
 
+test("health poller foreground leases renew, release, and expire", () =>
+{
+  let now = Date.parse("2026-06-16T12:00:00.000Z");
+  const poller = new HealthPoller({
+    services: [testServices[0]!],
+    foregroundLeaseTtlMs: 3_000,
+    nowFn: () => now,
+  });
+
+  const renewal = poller.renewForegroundLease("page-1");
+  assert.deepEqual(renewal, {
+    foreground_polling: true,
+    poll_interval_ms: 1_000,
+    expires_at: "2026-06-16T12:00:03.000Z",
+  });
+  assert.equal(poller.hasActiveForegroundLeases(), true);
+
+  now += 2_999;
+  assert.equal(poller.hasActiveForegroundLeases(), true);
+
+  now += 1;
+  assert.equal(poller.hasActiveForegroundLeases(), false);
+
+  poller.renewForegroundLease("page-1");
+  poller.renewForegroundLease("page-2");
+  assert.deepEqual(poller.releaseForegroundLease("page-1"), {
+    foreground_polling: true,
+    poll_interval_ms: 1_000,
+  });
+  assert.deepEqual(poller.releaseForegroundLease("page-2"), {
+    foreground_polling: false,
+    poll_interval_ms: 1_000,
+  });
+});
+
+test("health poller switches between background and foreground cadence", async () =>
+{
+  let now = Date.parse("2026-06-16T12:00:00.000Z");
+  let fetchCount = 0;
+  const timers = new FakeTimers();
+  const poller = new HealthPoller({
+    services: [testServices[0]!],
+    fetchFn: async () =>
+    {
+      fetchCount += 1;
+      return new Response(JSON.stringify({ healthy: true, uptime: fetchCount }), { status: 200 });
+    },
+    pollIntervalMs: 30_000,
+    foregroundPollIntervalMs: 1_000,
+    foregroundLeaseTtlMs: 3_000,
+    setTimeoutFn: timers.setTimeout,
+    clearTimeoutFn: timers.clearTimeout,
+    nowFn: () => now,
+  });
+
+  poller.start();
+  await settleAsyncWork();
+  assert.equal(fetchCount, 1);
+  assert.equal(timers.onlyTimer.delayMs, 30_000);
+
+  poller.renewForegroundLease("page-1");
+  assert.equal(timers.onlyTimer.delayMs, 0);
+
+  timers.run(timers.onlyTimer);
+  await settleAsyncWork();
+  assert.equal(fetchCount, 2);
+  assert.equal(timers.onlyTimer.delayMs, 1_000);
+
+  now += 3_000;
+  timers.run(timers.onlyTimer);
+  await settleAsyncWork();
+  assert.equal(fetchCount, 3);
+  assert.equal(timers.onlyTimer.delayMs, 30_000);
+
+  poller.stop();
+});
+
+test("health poller skips overlapping scheduled poll cycles", async () =>
+{
+  let resolveFetch: (response: Response) => void = () => undefined;
+  let fetchCount = 0;
+  const timers = new FakeTimers();
+  const poller = new HealthPoller({
+    services: [testServices[0]!],
+    fetchFn: async () =>
+    {
+      fetchCount += 1;
+      return await new Promise<Response>((resolve) =>
+      {
+        resolveFetch = resolve;
+      });
+    },
+    foregroundPollIntervalMs: 1_000,
+    foregroundLeaseTtlMs: 3_000,
+    setTimeoutFn: timers.setTimeout,
+    clearTimeoutFn: timers.clearTimeout,
+  });
+
+  poller.start();
+  await settleAsyncWork();
+  assert.equal(fetchCount, 1);
+
+  poller.renewForegroundLease("page-1");
+  const immediateForegroundPoll = timers.timers.find((timer) => timer.delayMs === 0);
+  assert.ok(immediateForegroundPoll);
+  timers.run(immediateForegroundPoll);
+  await settleAsyncWork();
+  assert.equal(fetchCount, 1);
+  assert.ok(timers.timers.some((timer) => timer.delayMs === 1_000));
+
+  resolveFetch(new Response(JSON.stringify({ healthy: true, uptime: 1 }), { status: 200 }));
+  await settleAsyncWork();
+  assert.equal(fetchCount, 1);
+  assert.ok(timers.timers.some((timer) => timer.delayMs === 1_000));
+
+  poller.stop();
+});
+
 test("health poller stop clears the polling timer", async () =>
 {
-  let intervalCount = 0;
-  const setIntervalFn = ((handler: TimerHandler) =>
+  const timers = new FakeTimers();
+  let clearedTimer = false;
+  const clearTimeoutFn = ((timer?: ReturnType<typeof setTimeout>): void =>
   {
-    intervalCount += 1;
-    return setInterval(handler, 1_000);
-  }) as typeof setInterval;
+    clearedTimer = true;
+    timers.clearTimeout(timer);
+  }) as typeof clearTimeout;
 
   const poller = new HealthPoller({
     services: [testServices[0]!],
     fetchFn: async () => new Response(JSON.stringify({ healthy: true, uptime: 1 }), { status: 200 }),
-    setIntervalFn,
+    setTimeoutFn: timers.setTimeout,
+    clearTimeoutFn,
   });
 
   poller.start();
-  assert.equal(intervalCount, 1);
+  await settleAsyncWork();
+  assert.equal(timers.onlyTimer.delayMs, 30_000);
   poller.stop();
+  assert.equal(clearedTimer, true);
+  assert.equal(timers.timers.length, 0);
   poller.stop();
 });
