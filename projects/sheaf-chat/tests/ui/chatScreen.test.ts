@@ -1423,6 +1423,14 @@ test("Agent Review Mode shows unstaged-hunk counts and updates with state", asyn
   assert.equal(harness.app.querySelectorAll(".sheaf-chat-agent-review-inline-row--focused").length, 2);
   assert.equal(harness.app.querySelectorAll(".sheaf-chat-agent-review-inline-row--muted").length, 2);
 
+  const nextButton = harness.app
+    .querySelectorAll(".sheaf-chat-agent-review-command")
+    .find((button) => button.textContent === "Next");
+  assert.ok(nextButton, "expected next-hunk button");
+  nextButton.click();
+  const sent = reviewSocket.sent.map((raw) => JSON.parse(raw) as Record<string, any>);
+  assert.equal(sent.at(-1)?.action, "nextHunk");
+
   // Moving focus to beta.ts (one hunk, file 2 of 2) updates both positions.
   reviewState.currentHunk = makeHunk("beta.ts", 1, 2);
   reviewState.currentIndex = 2;
@@ -1434,6 +1442,136 @@ test("Agent Review Mode shows unstaged-hunk counts and updates with state", asyn
   assert.ok(updated.textContent.includes("1/1 in file"), updated.textContent);
   assert.ok(updated.textContent.includes("file 2/2"), updated.textContent);
   assert.equal(FakeElement.scrolledIntoView.at(-1)?.getAttribute("data-hunk-id"), "beta.ts-2");
+});
+
+test("Agent Review Mode reveals focused hunks with up to three leading rows", async () =>
+{
+  const hunk = {
+    sourceProvider: "sheaf-chat",
+    repoRoot: "/repo",
+    sessionRoot: "/repo/projects/demo",
+    file: "app.ts",
+    hunkId: "hunk-later",
+    hunkIndex: 0,
+    hunkCount: 1,
+    fileIndex: 0,
+    fileCount: 1,
+    header: "@@ -5 +5 @@",
+    patchHash: "hash-later",
+    patch: "diff --git a/app.ts b/app.ts\n@@ -5 +5 @@\n-old\n+new\n",
+  };
+  const reviewState: any = {
+    available: true,
+    repoRoot: "/repo",
+    sessionRoot: "/repo/projects/demo",
+    sessionRootRelativeToRepo: "projects/demo",
+    currentIndex: 0,
+    currentHunk: hunk,
+    hunks: [hunk],
+    files: [{ file: "app.ts", hunkCount: 1 }],
+    inlineFiles: [
+      {
+        file: "app.ts",
+        rows: [
+          { id: "row-1", kind: "context", text: "one", newLineNumber: 1 },
+          { id: "row-2", kind: "context", text: "two", newLineNumber: 2 },
+          { id: "row-3", kind: "context", text: "three", newLineNumber: 3 },
+          { id: "row-4", kind: "context", text: "four", newLineNumber: 4 },
+          { id: "row-5-old", kind: "deletion", text: "old", hunkId: "hunk-later", oldLineNumber: 5 },
+          { id: "row-5-new", kind: "addition", text: "new", hunkId: "hunk-later", newLineNumber: 5 },
+        ],
+      },
+    ],
+    actions: {
+      canGoUp: false,
+      canGoDown: false,
+      canGoPrevFile: false,
+      canGoNextFile: false,
+      canStage: true,
+      canRevert: true,
+      canUndo: false,
+    },
+    reviewDraft: { entries: [], visibleCommentHunkId: null, hasSerializedContent: false },
+    dictatorBridge: { connected: false, url: null, lastError: null },
+  };
+
+  const harness = LoadChatHarness({
+    fetch: async (requestPath) => {
+      if (requestPath.endsWith("/agent-review")) {
+        return JsonResponse(reviewState);
+      }
+      if (requestPath.includes("/files?path=")) {
+        return JsonResponse({
+          directory: { name: ".", path: ".", kind: "directory" },
+          entries: [],
+        });
+      }
+      if (requestPath.includes("/file?path=")) {
+        return JsonResponse({
+          file: {
+            name: "app.ts",
+            path: "app.ts",
+            kind: "file",
+            supported: true,
+            contentType: "text/plain",
+            content: "new\n",
+            size: 4,
+            modifiedAt: "2026-06-08T00:00:00.000Z",
+          },
+        });
+      }
+      return JsonResponse({});
+    },
+  });
+  await FlushPromises();
+
+  FakeElement.scrolledIntoView = [];
+  RequiredElement(harness.app, ".sheaf-chat-agent-review-toggle").click();
+  const reviewSocket = harness.sockets.find((socket) => socket.url.includes("/ws/agent-review"));
+  assert.ok(reviewSocket, "expected Agent Review WebSocket");
+  reviewSocket.open();
+  reviewSocket.receive({ type: "bootstrap", state: reviewState });
+  await FlushPromises();
+  harness.flushAnimationFrames();
+
+  assert.equal(FakeElement.scrolledIntoView.at(-1)?.getAttribute("data-review-row-id"), "row-2");
+
+  const nearStartHunk = {
+    ...hunk,
+    hunkId: "hunk-near-start",
+    patchHash: "hash-near-start",
+    header: "@@ -2 +2 @@",
+  };
+  reviewState.currentHunk = nearStartHunk;
+  reviewState.hunks = [nearStartHunk];
+  reviewState.inlineFiles = [
+    {
+      file: "app.ts",
+      rows: [
+        { id: "start-row-1", kind: "context", text: "one", newLineNumber: 1 },
+        {
+          id: "start-row-2-old",
+          kind: "deletion",
+          text: "old",
+          hunkId: "hunk-near-start",
+          oldLineNumber: 2,
+        },
+        {
+          id: "start-row-2-new",
+          kind: "addition",
+          text: "new",
+          hunkId: "hunk-near-start",
+          newLineNumber: 2,
+        },
+      ],
+    },
+  ];
+
+  reviewSocket.receive({ type: "state", state: reviewState });
+  await FlushPromises();
+  harness.flushAnimationFrames();
+
+  assert.equal(FakeElement.scrolledIntoView.at(-1)?.getAttribute("data-review-row-id"), "start-row-1");
 });
 
 test("file tabs auto-scroll to keep the active tab visible", async () =>

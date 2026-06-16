@@ -499,7 +499,7 @@ export async function LoadAgentReviewGitState(
   const diffText = await RunGit(availability.repoRoot, [
     "diff",
     "--no-ext-diff",
-    "--unified=3",
+    "--unified=0",
     "--",
     pathspec,
   ]);
@@ -542,12 +542,12 @@ export async function ApplyAgentReviewPatch(
 {
   const args =
     action === "stage"
-      ? ["apply", "--cached", "--whitespace=nowarn", "-"]
+      ? ["apply", "--cached", "--unidiff-zero", "--whitespace=nowarn", "-"]
       : action === "unstage"
-        ? ["apply", "--cached", "--reverse", "--whitespace=nowarn", "-"]
+        ? ["apply", "--cached", "--reverse", "--unidiff-zero", "--whitespace=nowarn", "-"]
         : action === "revert"
-          ? ["apply", "--reverse", "--whitespace=nowarn", "-"]
-          : ["apply", "--whitespace=nowarn", "-"];
+          ? ["apply", "--reverse", "--unidiff-zero", "--whitespace=nowarn", "-"]
+          : ["apply", "--unidiff-zero", "--whitespace=nowarn", "-"];
 
   try
   {

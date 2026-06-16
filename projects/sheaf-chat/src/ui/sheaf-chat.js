@@ -1288,6 +1288,16 @@
       }) || null;
     }
 
+    function ReviewHunkRevealTarget(anchor) {
+      const parent = anchor && anchor.parentNode;
+      const siblings = parent && Array.isArray(parent.children) ? Array.from(parent.children) : [];
+      const index = siblings.indexOf(anchor);
+      if (index < 0) {
+        return anchor;
+      }
+      return siblings[Math.max(0, index - 3)] || anchor;
+    }
+
     function ReviewHunkChangedRows(hunkId) {
       const rows = fileViewEl.querySelectorAll(
         ".sheaf-chat-agent-review-inline-row--addition[data-hunk-id], " +
@@ -1326,17 +1336,18 @@
       if (!anchor) {
         return;
       }
+      const revealTarget = ReviewHunkRevealTarget(anchor);
 
       state.agentReview.pendingScrollHunkId = null;
       window.requestAnimationFrame(function () {
         const hunkChangedRows = ReviewHunkChangedRows(hunkId);
         if (
           typeof fileViewEl.getBoundingClientRect !== "function" ||
-          typeof anchor.getBoundingClientRect !== "function" ||
+          typeof revealTarget.getBoundingClientRect !== "function" ||
           typeof fileViewEl.scrollTo !== "function"
         ) {
-          if (typeof anchor.scrollIntoView === "function") {
-            anchor.scrollIntoView({ block: "center" });
+          if (typeof revealTarget.scrollIntoView === "function") {
+            revealTarget.scrollIntoView({ block: "start" });
           }
           return;
         }
@@ -1346,11 +1357,9 @@
           return;
         }
 
-        const anchorRect = anchor.getBoundingClientRect();
-        const rowHeight = anchorRect.height > 0 ? anchorRect.height : 18;
-        const anchorTop = anchorRect.top - viewRect.top + fileViewEl.scrollTop;
-        const contextOffset = rowHeight * 2;
-        const nextScrollTop = Math.max(0, anchorTop - contextOffset);
+        const targetRect = revealTarget.getBoundingClientRect();
+        const targetTop = targetRect.top - viewRect.top + fileViewEl.scrollTop;
+        const nextScrollTop = Math.max(0, targetTop);
         fileViewEl.scrollTo({
           top: nextScrollTop,
           behavior: "auto",

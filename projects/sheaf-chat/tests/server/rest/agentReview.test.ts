@@ -259,6 +259,32 @@ async function CreateGitReviewSession(
   return { ...created, repoRoot, filePath };
 }
 
+async function CreateSeparatedReviewSession(
+  handle: TestServerHandle,
+): Promise<{
+  repoId: string;
+  workspaceId: string;
+  repoRoot: string;
+  filePath: string;
+}>
+{
+  const repoRoot = handle.agentManager.storagePaths.repoRoot;
+  const demoRoot = path.join(repoRoot, "projects/demo");
+  const created = await CreateWorkspaceChatViaApi(handle, demoRoot);
+  const filePath = path.join(demoRoot, "app.ts");
+
+  await mkdir(demoRoot, { recursive: true });
+  await Git(repoRoot, ["init"]);
+  await Git(repoRoot, ["config", "user.email", "test@example.com"]);
+  await Git(repoRoot, ["config", "user.name", "Test User"]);
+  await writeFile(filePath, "line 1\nline 2\nline 3\nline 4\nline 5\n", "utf8");
+  await Git(repoRoot, ["add", "projects/demo/app.ts"]);
+  await Git(repoRoot, ["commit", "-m", "initial"]);
+  await writeFile(filePath, "line 1\nline 2 changed\nline 3\nline 4 changed\nline 5\n", "utf8");
+
+  return { ...created, repoRoot, filePath };
+}
+
 test("Agent Review availability reports Git hunks under the workspace root", async () =>
 {
   await WithTestServer(async (handle) =>
@@ -305,6 +331,70 @@ test("Agent Review availability reports Git hunks under the workspace root", asy
     );
     assert.equal(body.actions.canStage, true);
     assert.equal(body.actions.canRevert, true);
+  });
+});
+
+test("Agent Review splits separated changed runs and keeps adjacent changes together", async () =>
+{
+  await WithTestServer(async (handle) =>
+  {
+    const repoRoot = handle.agentManager.storagePaths.repoRoot;
+    const demoRoot = path.join(repoRoot, "projects/demo");
+    const created = await CreateWorkspaceChatViaApi(handle, demoRoot);
+    const separatedPath = path.join(demoRoot, "separated.ts");
+    const adjacentPath = path.join(demoRoot, "adjacent.ts");
+
+    await mkdir(demoRoot, { recursive: true });
+    await Git(repoRoot, ["init"]);
+    await Git(repoRoot, ["config", "user.email", "test@example.com"]);
+    await Git(repoRoot, ["config", "user.name", "Test User"]);
+    await writeFile(separatedPath, "line 1\nline 2\nline 3\nline 4\nline 5\n", "utf8");
+    await writeFile(adjacentPath, "line 1\nline 2\nline 3\nline 4\n", "utf8");
+    await Git(repoRoot, ["add", "."]);
+    await Git(repoRoot, ["commit", "-m", "initial"]);
+    await writeFile(separatedPath, "line 1\nline 2 changed\nline 3\nline 4 changed\nline 5\n", "utf8");
+    await writeFile(adjacentPath, "line 1\nline 2 changed\nline 3 changed\nline 4\n", "utf8");
+
+    const response = await RequestJson(
+      handle.baseUrl,
+      "GET",
+      `/api/repositories/${encodeURIComponent(created.repoId)}/workspaces/${encodeURIComponent(created.workspaceId)}/agent-review`,
+    );
+    assert.equal(response.status, 200);
+    const body = response.body as {
+      files: Array<{ file: string; hunkCount: number }>;
+      hunks: Array<{ file: string; patch: string }>;
+      inlineFiles: Array<{
+        file: string;
+        rows: Array<{ kind: string; text: string; hunkId?: string }>;
+      }>;
+    };
+
+    assert.deepEqual(body.files, [
+      { file: "projects/demo/adjacent.ts", hunkCount: 1 },
+      { file: "projects/demo/separated.ts", hunkCount: 2 },
+    ]);
+    const adjacentHunks = body.hunks.filter((hunk) => hunk.file === "projects/demo/adjacent.ts");
+    const separatedHunks = body.hunks.filter((hunk) => hunk.file === "projects/demo/separated.ts");
+    assert.equal(adjacentHunks.length, 1);
+    assert.equal(separatedHunks.length, 2);
+    assert.match(adjacentHunks[0]?.patch ?? "", /line 2 changed/);
+    assert.match(adjacentHunks[0]?.patch ?? "", /line 3 changed/);
+    assert.match(separatedHunks[0]?.patch ?? "", /line 2 changed/);
+    assert.doesNotMatch(separatedHunks[0]?.patch ?? "", /line 4 changed/);
+    assert.match(separatedHunks[1]?.patch ?? "", /line 4 changed/);
+    assert.doesNotMatch(separatedHunks[1]?.patch ?? "", /line 2 changed/);
+
+    const separatedInline = body.inlineFiles.find((file) => file.file === "projects/demo/separated.ts");
+    assert.ok(separatedInline, "expected separated.ts inline file");
+    assert.ok(
+      separatedInline.rows.some((row) =>
+        row.kind === "context" &&
+        row.text === "line 3" &&
+        row.hunkId === undefined,
+      ),
+      "expected unchanged line between hunks to remain ordinary context",
+    );
   });
 });
 
@@ -366,6 +456,151 @@ test("Agent Review WebSocket stages, reverts, and undoes current hunks", async (
     assert.equal(undoRevert.result.ok, true);
     assert.equal(undoRevert.state.reviewDraft.entries.length, 0);
     assert.equal(await readFile(filePath, "utf8"), "one\ntwo changed\nthree\n");
+
+    await new Promise<void>((resolve) =>
+    {
+      socket.once("close", () => resolve());
+      socket.close();
+    });
+  });
+});
+
+test("Agent Review mutates only the selected zero-context hunk", async () =>
+{
+  await WithTestServer(async (handle) =>
+  {
+    const { repoId, workspaceId, repoRoot, filePath } =
+      await CreateSeparatedReviewSession(handle);
+    const socket = new WebSocket(WsUrl(handle.baseUrl, repoId, workspaceId));
+
+    await new Promise<void>((resolve, reject) =>
+    {
+      socket.once("open", () => resolve());
+      socket.once("error", reject);
+    });
+
+    const bootstrap = await WaitForFrame(socket, "bootstrap");
+    const firstHunk = bootstrap.state.currentHunk;
+    assert.equal(firstHunk.file, "projects/demo/app.ts");
+    assert.equal(bootstrap.state.hunks.length, 2);
+    assert.match(firstHunk.patch, /line 2 changed/);
+    assert.doesNotMatch(firstHunk.patch, /line 4 changed/);
+
+    socket.send(JSON.stringify({
+      type: "command",
+      id: "stage-first",
+      action: "stage",
+      hunkId: firstHunk.hunkId,
+      patchHash: firstHunk.patchHash,
+    }));
+    const stage = await WaitForFrame(socket, "command_result");
+    assert.equal(stage.result.ok, true);
+    assert.equal(stage.state.reviewDraft.entries.length, 0);
+    const cachedAfterStage = await Git(repoRoot, [
+      "diff",
+      "--cached",
+      "--unified=0",
+      "--",
+      "projects/demo/app.ts",
+    ]);
+    const worktreeAfterStage = await Git(repoRoot, [
+      "diff",
+      "--unified=0",
+      "--",
+      "projects/demo/app.ts",
+    ]);
+    assert.match(cachedAfterStage, /line 2 changed/);
+    assert.doesNotMatch(cachedAfterStage, /line 4 changed/);
+    assert.match(worktreeAfterStage, /line 4 changed/);
+    assert.doesNotMatch(worktreeAfterStage, /line 2 changed/);
+
+    socket.send(JSON.stringify({ type: "command", id: "undo-stage", action: "undo" }));
+    const undoStage = await WaitForFrame(socket, "command_result");
+    assert.equal(undoStage.result.ok, true);
+    assert.equal((await Git(repoRoot, ["diff", "--cached", "--", "projects/demo/app.ts"])).trim(), "");
+    const worktreeAfterUndoStage = await Git(repoRoot, [
+      "diff",
+      "--unified=0",
+      "--",
+      "projects/demo/app.ts",
+    ]);
+    assert.match(worktreeAfterUndoStage, /line 2 changed/);
+    assert.match(worktreeAfterUndoStage, /line 4 changed/);
+
+    socket.send(JSON.stringify({ type: "command", id: "next", action: "nextHunk" }));
+    const next = await WaitForFrame(socket, "command_result");
+    const secondHunk = next.state.currentHunk;
+    assert.match(secondHunk.patch, /line 4 changed/);
+    assert.doesNotMatch(secondHunk.patch, /line 2 changed/);
+
+    socket.send(JSON.stringify({
+      type: "command",
+      id: "revert-second",
+      action: "revert",
+      hunkId: secondHunk.hunkId,
+      patchHash: secondHunk.patchHash,
+    }));
+    const revert = await WaitForFrame(socket, "command_result");
+    assert.equal(revert.result.ok, true);
+    assert.equal(revert.state.reviewDraft.entries.length, 1);
+    assert.equal(revert.state.reviewDraft.entries[0].kind, "rejected");
+    assert.equal(
+      await readFile(filePath, "utf8"),
+      "line 1\nline 2 changed\nline 3\nline 4\nline 5\n",
+    );
+
+    socket.send(JSON.stringify({ type: "command", id: "undo-revert", action: "undo" }));
+    const undoRevert = await WaitForFrame(socket, "command_result");
+    assert.equal(undoRevert.result.ok, true);
+    assert.equal(undoRevert.state.reviewDraft.entries.length, 0);
+    assert.equal(
+      await readFile(filePath, "utf8"),
+      "line 1\nline 2 changed\nline 3\nline 4 changed\nline 5\n",
+    );
+
+    await new Promise<void>((resolve) =>
+    {
+      socket.once("close", () => resolve());
+      socket.close();
+    });
+  });
+});
+
+test("Agent Review rejects stale zero-context hunk mutations", async () =>
+{
+  await WithTestServer(async (handle) =>
+  {
+    const { repoId, workspaceId, repoRoot } = await CreateSeparatedReviewSession(handle);
+    const socket = new WebSocket(WsUrl(handle.baseUrl, repoId, workspaceId));
+
+    await new Promise<void>((resolve, reject) =>
+    {
+      socket.once("open", () => resolve());
+      socket.once("error", reject);
+    });
+
+    const bootstrap = await WaitForFrame(socket, "bootstrap");
+    const hunk = bootstrap.state.currentHunk;
+    socket.send(JSON.stringify({
+      type: "command",
+      id: "stale-stage",
+      action: "stage",
+      hunkId: hunk.hunkId,
+      patchHash: "not-the-current-patch",
+    }));
+    const stale = await WaitForFrame(socket, "command_result");
+    assert.equal(stale.result.ok, false);
+    assert.equal(stale.result.stale, true);
+    assert.match(stale.result.error, /patch changed/);
+    assert.equal((await Git(repoRoot, ["diff", "--cached", "--", "projects/demo/app.ts"])).trim(), "");
+    const worktreeAfterStale = await Git(repoRoot, [
+      "diff",
+      "--unified=0",
+      "--",
+      "projects/demo/app.ts",
+    ]);
+    assert.match(worktreeAfterStale, /line 2 changed/);
+    assert.match(worktreeAfterStale, /line 4 changed/);
 
     await new Promise<void>((resolve) =>
     {
