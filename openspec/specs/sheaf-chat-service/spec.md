@@ -177,6 +177,38 @@ WHILE smoke-test mode is active (`SHEAF_SMOKE_TEST_MODE`), THE Sheaf Chat servic
 - **WHEN** Sheaf Chat starts with smoke-test mode active but `SHEAF_SMOKE_ASSET_ROOT` unset, empty, or not an existing directory
 - **THEN** it logs a warning and resolves assets from its own repository root
 
+### Requirement: svc-15 — Standard service endpoints: POST /exit shutdown
+
+WHEN the service receives `POST /exit`, THE service SHALL respond 200 with `{"exiting": true}`, flush that response before starting shutdown, then stop accepting new work, close the HTTP server, close the chat and Agent Review WebSocket servers, dispose server registries and Agent Review resources, and let the production process exit with code 0. WHILE shutdown is in progress, THE service SHALL reject WebSocket upgrades with HTTP 404 and answer non-exit HTTP requests with the standard 404 REST error body. Repeated shutdown requests SHALL be idempotent.
+
+#### Scenario: Exit request received
+
+- **WHEN** the service receives `POST /exit`
+- **THEN** it responds 200 with `{"exiting": true}`
+- **AND** after that response is flushed, it closes the HTTP server, chat WebSocket server, Agent Review WebSocket server, registries, and Agent Review resources
+- **AND** the production process exits with code 0
+
+#### Scenario: Repeated exit request
+
+- **WHEN** `POST /exit` is received while shutdown is already in progress and the HTTP server can still respond
+- **THEN** the service responds 200 with `{"exiting": true}`
+- **AND** it does not run cleanup more than once
+
+#### Scenario: Request during shutdown
+
+- **WHEN** shutdown is in progress and a non-exit HTTP request arrives before the HTTP server closes
+- **THEN** the service responds 404 with the standard REST error body
+
+#### Scenario: WebSocket upgrade during shutdown
+
+- **WHEN** shutdown is in progress and a WebSocket upgrade request arrives before the HTTP server closes
+- **THEN** the service rejects the upgrade with HTTP 404
+
+#### Scenario: Non-POST method on /exit
+
+- **WHEN** a request with any method other than POST is received for `/exit`
+- **THEN** the service returns 405 with the standard REST error body
+
 ## Contracts
 
 ### Configuration keys
@@ -212,6 +244,12 @@ WHILE smoke-test mode is active (`SHEAF_SMOKE_TEST_MODE`), THE Sheaf Chat servic
 
 ```json
 { "healthy": true, "uptime": 12.345 }
+```
+
+### `POST /exit`
+
+```json
+{ "exiting": true }
 ```
 
 ### `GET /api/health`
@@ -259,11 +297,13 @@ the endpoint). `openAi.configured` is true when `openai_api_key` is set.
 ## Design
 
 - `src/server/main.ts` — boot sequence; logs
-  `Sheaf Chat listening on <host>:<port>` to stderr.
+  `Sheaf Chat listening on <host>:<port>` to stderr and exits with code 0
+  after `/exit` cleanup completes.
 - `src/server/config.ts` — `LoadSheafChatConfig`; `repo_paths.ts` —
   root discovery and default path set.
-- `src/server/server.ts` — request dispatch order (`/health`, `/api/`,
-  static) and upgrade handling; `http.ts` — `SendJson`/`ReadJsonBody`.
+- `src/server/server.ts` — request dispatch order (`/exit`, `/health`,
+  `/api/`, static), upgrade handling, and idempotent resource cleanup;
+  `http.ts` — `SendJson`/`ReadJsonBody`.
 - `src/server/router.ts` — segment-based API route matching with
   `decodeURIComponent` on path parameters (a malformed escape is
   `invalid_request`).
@@ -273,8 +313,7 @@ the endpoint). `openAi.configured` is true when `openai_api_key` is set.
   whitelist, and vendor allowlist for Markdown-it/KaTeX assets.
 - `src/server/streamProfiler.ts` — profiling checkpoints; enabled once at
   module load from the environment.
-- No graceful-shutdown or exit endpoint exists; `server.close()` is used by
-  tests only.
+- `server.close()` is shared by tests and the `/exit` shutdown path.
 
 ## Interactions
 

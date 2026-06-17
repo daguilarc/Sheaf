@@ -144,7 +144,11 @@ curl -s http://localhost:9004/health       # {"healthy":true,"uptime":...}
 curl -s http://localhost:9004/api/health   # service/version/dependency status
 ```
 
-There is no shutdown endpoint; stop the process directly.
+Stop the service through the standard lifecycle endpoint:
+
+```bash
+curl -s -X POST http://localhost:9004/exit  # {"exiting":true}
+```
 
 ## Configuration
 

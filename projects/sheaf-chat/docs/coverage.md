@@ -4,7 +4,7 @@ Last audit: repository/workspace chat apply, 2026-06-14
 
 | Capability | Status | Gaps |
 |---|---|---|
-| service | partial | no shutdown surface, profiling points unenumerated, registry fields unused |
+| service | partial | profiling points unenumerated, registry fields unused, shutdown race details not audited beyond `/exit` |
 | repo-workspaces | partial | home discovery path is intentionally narrow, path-derived ids change after moves |
 | workspace-chats | partial | list/create/read chat routes; legacy pile/session REST surface and storage removed |
 | session-history | partial | external-writer cache staleness, no retention, `messageCount` unmaintained |
@@ -19,9 +19,9 @@ Last audit: repository/workspace chat apply, 2026-06-14
 ## Known gaps
 
 ### service
-- There is no shutdown/exit endpoint or graceful-close path in production;
-  `server.close()` exists for tests only. Recovery after a kill mid-append
-  relies on the history log's parse-skip behavior and is unspecified.
+- `POST /exit` provides the standard service shutdown path. Recovery after a
+  kill mid-append relies on the history log's parse-skip behavior and is
+  unspecified.
 - The `command` and `home_path` fields of the `services.json` entry are not
   read by this service (boot uses only `host`/`port`).
 - The full set of `SHEAF_CHAT_PROFILE_STREAM` checkpoint names is not

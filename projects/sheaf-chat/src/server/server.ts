@@ -42,6 +42,8 @@ export interface SheafChatServerOptions
   bindHost: string;
   bindPort: number;
   agentManager: AgentManager;
+  scheduleShutdown?: (shutdown: () => void) => void;
+  onShutdownComplete?: () => void | Promise<void>;
 }
 
 export interface SheafChatServer
@@ -64,6 +66,11 @@ function HandleNotFound(response: ServerResponse): void
 function ComputeUptimeSeconds(serverStartTime: number): number
 {
   return Math.max(0, (Date.now() - serverStartTime) / 1000);
+}
+
+function ScheduleShutdown(shutdown: () => void): void
+{
+  setImmediate(shutdown);
 }
 
 async function HandleStaticRequest(
@@ -103,6 +110,7 @@ async function HandleStaticRequest(
 export function CreateSheafChatServer(options: SheafChatServerOptions): SheafChatServer
 {
   const serverStartTime = Date.now();
+  const scheduleShutdown = options.scheduleShutdown ?? ScheduleShutdown;
   const agentReviewService = new AgentReviewService({
     config: options.config,
     agentManager: options.agentManager,
@@ -127,12 +135,97 @@ export function CreateSheafChatServer(options: SheafChatServerOptions): SheafCha
     persistenceHubRegistry,
     broadcasterRegistry,
   };
+  let shutdownRequested = false;
+  let shutdownScheduled = false;
+  let closePromise: Promise<void> | null = null;
+
+  const closeResources = (): Promise<void> =>
+  {
+    if (closePromise !== null)
+    {
+      return closePromise;
+    }
+
+    closePromise = new Promise<void>((resolve, reject) =>
+    {
+      broadcasterRegistry.Dispose();
+      persistenceHubRegistry.Dispose();
+
+      // Drain Agent Review sessions (in-flight git/RPC work) before tearing
+      // down the WebSocket and HTTP servers, so no async work outlives close.
+      void agentReviewService.Dispose().then(() =>
+      {
+        chatWebSocketServer.close(() =>
+        {
+          agentReviewWebSocketServer.close(() =>
+          {
+            if (!httpServer.listening)
+            {
+              resolve();
+              return;
+            }
+
+            httpServer.close((error) =>
+            {
+              if (error)
+              {
+                reject(error);
+                return;
+              }
+
+              resolve();
+            });
+          });
+        });
+      }).catch(reject);
+    });
+
+    return closePromise;
+  };
+
+  const scheduleExitShutdown = (): void =>
+  {
+    if (shutdownScheduled)
+    {
+      return;
+    }
+
+    shutdownScheduled = true;
+    scheduleShutdown(() =>
+    {
+      void closeResources().then(() => options.onShutdownComplete?.()).catch((error: unknown) =>
+      {
+        console.error(error);
+        process.exitCode = 1;
+      });
+    });
+  };
 
   const httpServer = createServer((request: IncomingMessage, response: ServerResponse) =>
   {
     void (async () =>
     {
       const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
+
+      if (url.pathname === "/exit")
+      {
+        if (request.method !== "POST")
+        {
+          SendJson(response, 405, FormatRestError("method_not_allowed", "method not allowed"));
+          return;
+        }
+
+        shutdownRequested = true;
+        response.once("finish", scheduleExitShutdown);
+        SendJson(response, 200, { exiting: true });
+        return;
+      }
+
+      if (shutdownRequested)
+      {
+        HandleNotFound(response);
+        return;
+      }
 
       if (url.pathname === "/health")
       {
@@ -165,6 +258,12 @@ export function CreateSheafChatServer(options: SheafChatServerOptions): SheafCha
     {
       try
       {
+        if (shutdownRequested)
+        {
+          rejectUpgradeWithHttpStatus(socket, 404, "not found");
+          return;
+        }
+
         if (
           await HandleAgentReviewUpgrade(
             agentReviewService,
@@ -232,32 +331,6 @@ export function CreateSheafChatServer(options: SheafChatServerOptions): SheafCha
         });
       }),
     close: () =>
-      new Promise<void>((resolve, reject) =>
-      {
-        broadcasterRegistry.Dispose();
-        persistenceHubRegistry.Dispose();
-
-        // Drain Agent Review sessions (in-flight git/RPC work) before tearing
-        // down the WebSocket and HTTP servers, so no async work outlives close.
-        void agentReviewService.Dispose().then(() =>
-        {
-          chatWebSocketServer.close(() =>
-          {
-            agentReviewWebSocketServer.close(() =>
-            {
-              httpServer.close((error) =>
-              {
-                if (error)
-                {
-                  reject(error);
-                  return;
-                }
-
-                resolve();
-              });
-            });
-          });
-        }).catch(reject);
-      }),
+      closeResources(),
   };
 }

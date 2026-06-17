@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { access } from "node:fs/promises";
 import test from "node:test";
 
+import WebSocket from "ws";
+
 import { x_serviceName, x_serviceVersion } from "../../../src/server/constants.js";
 import { AppendEnvelope, WriteInitialManifest } from "../../../src/storage/index.js";
 import { ResolveManifestFilePath } from "../../../src/storage/paths.js";
@@ -35,6 +37,43 @@ function ChatPath(repoId: string, workspaceId: string, chatId: string): string
   return `${WorkspaceChatsPath(repoId, workspaceId)}/${encodeURIComponent(chatId)}`;
 }
 
+function WebSocketUrl(baseUrl: string, route: string): string
+{
+  return `${baseUrl.replace(/^http/, "ws")}${route}`;
+}
+
+async function RequestWebSocketUpgradeStatus(baseUrl: string, route: string): Promise<number>
+{
+  return new Promise<number>((resolve, reject) =>
+  {
+    const socket = new WebSocket(WebSocketUrl(baseUrl, route));
+    let settled = false;
+
+    socket.once("unexpected-response", (_request, response) =>
+    {
+      settled = true;
+      resolve(response.statusCode ?? 0);
+    });
+    socket.once("open", () =>
+    {
+      socket.close();
+      if (!settled)
+      {
+        settled = true;
+        reject(new Error("websocket upgrade unexpectedly succeeded"));
+      }
+    });
+    socket.once("error", (error) =>
+    {
+      if (!settled)
+      {
+        settled = true;
+        reject(error);
+      }
+    });
+  });
+}
+
 test("GET /health returns conductor-compatible service health", async () =>
 {
   await WithTestServer(async ({ baseUrl }) =>
@@ -51,6 +90,60 @@ test("GET /health returns conductor-compatible service health", async () =>
     assert.equal(typeof body.uptime, "number");
     assert.ok(body.uptime >= 0);
   });
+});
+
+test("POST /exit returns service-contract body and schedules shutdown after response", async () =>
+{
+  await WithTestServer(async (handle) =>
+  {
+    const response = await RequestJson(handle.baseUrl, "POST", "/exit");
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(response.body, { exiting: true });
+    assert.equal(handle.scheduledShutdownCount(), 1);
+
+    await handle.runScheduledShutdown();
+  }, { holdShutdown: true });
+});
+
+test("POST /exit is idempotent and non-exit requests return not_found during shutdown", async () =>
+{
+  await WithTestServer(async (handle) =>
+  {
+    const first = await RequestJson(handle.baseUrl, "POST", "/exit");
+    const second = await RequestJson(handle.baseUrl, "POST", "/exit");
+    const health = await RequestJson(handle.baseUrl, "GET", "/health");
+    const wrongMethod = await RequestJson(handle.baseUrl, "GET", "/exit");
+
+    assert.equal(first.status, 200);
+    assert.deepEqual(first.body, { exiting: true });
+    assert.equal(second.status, 200);
+    assert.deepEqual(second.body, { exiting: true });
+    assert.equal(handle.scheduledShutdownCount(), 1);
+    assert.equal(health.status, 404);
+    assert.equal(ErrorBody(health.body).code, "not_found");
+    assert.equal(wrongMethod.status, 405);
+    assert.equal(ErrorBody(wrongMethod.body).code, "method_not_allowed");
+
+    await handle.runScheduledShutdown();
+  }, { holdShutdown: true });
+});
+
+test("websocket upgrades are rejected with 404 during shutdown", async () =>
+{
+  await WithTestServer(async (handle) =>
+  {
+    const exit = await RequestJson(handle.baseUrl, "POST", "/exit");
+    assert.equal(exit.status, 200);
+
+    const status = await RequestWebSocketUpgradeStatus(
+      handle.baseUrl,
+      "/ws/chat?repo=test&workspace=test&chat=test",
+    );
+    assert.equal(status, 404);
+
+    await handle.runScheduledShutdown();
+  }, { holdShutdown: true });
 });
 
 test("GET /api/health returns service metadata without secrets", async () =>

@@ -13,10 +13,20 @@ export interface TestServerHandle
   baseUrl: string;
   config: SheafChatConfig;
   agentManager: AgentManager;
+  scheduledShutdownCount: () => number;
+  runScheduledShutdown: () => Promise<void>;
   close: () => Promise<void>;
 }
 
-export async function StartTestServer(repoRoot: string): Promise<TestServerHandle>
+export interface TestServerOptions
+{
+  holdShutdown?: boolean;
+}
+
+export async function StartTestServer(
+  repoRoot: string,
+  options: TestServerOptions = {},
+): Promise<TestServerHandle>
 {
   mkdirSync(repoRoot, { recursive: true });
   mkdirSync(`${repoRoot}/projects/demo`, { recursive: true });
@@ -31,11 +41,20 @@ export async function StartTestServer(repoRoot: string): Promise<TestServerHandl
     storagePaths,
     modelBundle,
   });
+  let scheduledShutdown: (() => void) | null = null;
+  let scheduledShutdownCount = 0;
   const server = CreateSheafChatServer({
     config,
     bindHost: "127.0.0.1",
     bindPort: 0,
     agentManager,
+    scheduleShutdown: options.holdShutdown
+      ? (shutdown) =>
+        {
+          scheduledShutdownCount += 1;
+          scheduledShutdown = shutdown;
+        }
+      : undefined,
   });
   const port = await server.listen();
   const baseUrl = `http://127.0.0.1:${port}`;
@@ -44,6 +63,14 @@ export async function StartTestServer(repoRoot: string): Promise<TestServerHandl
     baseUrl,
     config,
     agentManager,
+    scheduledShutdownCount: () => scheduledShutdownCount,
+    runScheduledShutdown: async () =>
+    {
+      const shutdown = scheduledShutdown;
+      scheduledShutdown = null;
+      shutdown?.();
+      await server.close();
+    },
     close: async () =>
     {
       await server.close();
@@ -54,11 +81,12 @@ export async function StartTestServer(repoRoot: string): Promise<TestServerHandl
 
 export async function WithTestServer(
   callback: (handle: TestServerHandle) => Promise<void>,
+  options: TestServerOptions = {},
 ): Promise<void>
 {
   await WithFakeRepoAsync(async (repoRoot) =>
   {
-    const handle = await StartTestServer(repoRoot);
+    const handle = await StartTestServer(repoRoot, options);
 
     try
     {

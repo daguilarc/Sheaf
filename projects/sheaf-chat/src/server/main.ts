@@ -22,6 +22,10 @@ async function main(): Promise<void>
     bindHost: service.host,
     bindPort: service.port,
     agentManager,
+    onShutdownComplete: () =>
+    {
+      process.exit(0);
+    },
   });
 
   const port = await server.listen();
