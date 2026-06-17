@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "^compact$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "__SHEAF_CODEX_POST_COMPACT_HOOK_COMMAND__",
+            "statusMessage": "Loading post-compaction reminder",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

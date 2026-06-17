@@ -93,8 +93,22 @@ User-global outputs are written to:
 - `~/.agents/skills/<skill-id>/SKILL.md`
 - `$CODEX_HOME/AGENTS.md`
 - `$CODEX_HOME/skills/<skill-id>/SKILL.md`
+- `$CODEX_HOME/hooks/sheaf/session_start_after_compact.py`
+- `$CODEX_HOME/hooks.json`
 
 `CODEX_HOME` defaults to `~/.codex`.
+
+The Codex hook is a user-global `SessionStart` hook for the `compact` source.
+After Codex compacts a session, it injects a short developer-context reminder:
+if the agent was working from a plan, checklist, or task list, it should review
+that material after compaction. Codex may require reviewing and trusting the
+new command hook through `/hooks` before it runs.
+
+Because Codex uses a single user-level `$CODEX_HOME/hooks.json` file, the
+installer treats that file like other managed outputs: it writes the managed
+file when missing or already managed, and it fails on an unmanaged conflicting
+file unless `--force` is passed. If you already maintain personal Codex hooks,
+review and merge the Sheaf hook intentionally before forcing installation.
 
 To explicitly replace unmanaged destination files during install, pass the
 installer flag through make:

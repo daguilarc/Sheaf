@@ -8,7 +8,9 @@ all: check
 
 build: check
 
-test: check
+test:
+	python3 -m unittest discover -s scripts -p '*_test.py'
+	python3 scripts/install.py check --scope repo
 
 install:
 	python3 scripts/install.py install --scope all $(AGENTS_INSTALL_FLAGS)

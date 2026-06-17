@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
+import shlex
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,7 +21,8 @@ REPO_TARGET_DIRS = {
     "pi": Path(".pi/skills"),
     "codex": Path(".codex/skills"),
 }
-MANAGED_MARKER = "<!-- sheaf-agents-managed: DO NOT EDIT"
+MANAGED_MARKER = "sheaf-agents-managed: DO NOT EDIT"
+CODEX_HOOK_COMMAND_PLACEHOLDER = "__SHEAF_CODEX_POST_COMPACT_HOOK_COMMAND__"
 
 
 @dataclass(frozen=True)
@@ -123,7 +126,11 @@ def read_skills(skills_root: Path) -> list[Skill]:
 
 
 def marker_for(source: Path) -> str:
-    return f"{MANAGED_MARKER}; source={source.as_posix()} -->"
+    return f"<!-- {MANAGED_MARKER}; source={source.as_posix()} -->"
+
+
+def line_comment_marker_for(source: Path) -> str:
+    return f"# {MANAGED_MARKER}; source={source.as_posix()}"
 
 
 def render_skill(skill: Skill, repo_root: Path) -> str:
@@ -147,6 +154,60 @@ def global_content_for(global_source: Path, repo_root: Path) -> str:
         f"{marker_for(global_rel)}\n\n"
         f"{global_source.read_text(encoding='utf-8').strip()}\n"
     )
+
+
+def script_content_for(script_source: Path, repo_root: Path) -> str:
+    script_rel = script_source.relative_to(repo_root)
+    body = script_source.read_text(encoding="utf-8").strip()
+    marker = line_comment_marker_for(script_rel)
+    if body.startswith("#!"):
+        shebang, _, rest = body.partition("\n")
+        return f"{shebang}\n{marker}\n{rest.strip()}\n"
+    return f"{marker}\n\n{body}\n"
+
+
+def replace_hook_command(value: object, command: str) -> tuple[object, int]:
+    if isinstance(value, dict):
+        replaced: dict[str, object] = {}
+        count = 0
+        for key, nested in value.items():
+            if key == "command" and nested == CODEX_HOOK_COMMAND_PLACEHOLDER:
+                replaced[key] = command
+                count += 1
+                continue
+            replaced_value, replaced_count = replace_hook_command(nested, command)
+            replaced[key] = replaced_value
+            count += replaced_count
+        return replaced, count
+    if isinstance(value, list):
+        replaced_list: list[object] = []
+        count = 0
+        for nested in value:
+            replaced_value, replaced_count = replace_hook_command(nested, command)
+            replaced_list.append(replaced_value)
+            count += replaced_count
+        return replaced_list, count
+    return value, 0
+
+
+def codex_hooks_content_for(
+    hooks_source: Path, repo_root: Path, installed_script: Path
+) -> str:
+    hooks_rel = hooks_source.relative_to(repo_root)
+    template = json.loads(hooks_source.read_text(encoding="utf-8"))
+    command = f"python3 {shlex.quote(str(installed_script))}"
+    rendered, replacement_count = replace_hook_command(template, command)
+    if replacement_count != 1:
+        raise ValueError(
+            f"{hooks_source}: expected exactly one Codex hook command placeholder, "
+            f"found {replacement_count}"
+        )
+    if not isinstance(rendered, dict):
+        raise ValueError(f"{hooks_source}: hook template must be a JSON object")
+    rendered["_sheaf_agents_managed"] = (
+        f"{MANAGED_MARKER}; source={hooks_rel.as_posix()}"
+    )
+    return json.dumps(rendered, indent=2) + "\n"
 
 
 def read_sources(repo_root: Path) -> tuple[Path, list[Skill], list[Skill]]:
@@ -234,6 +295,33 @@ def build_global_outputs(
                     rendered,
                 )
             )
+
+    codex_hooks_root = repo_root / "projects" / "agents" / "global" / "codex" / "hooks"
+    codex_script_source = codex_hooks_root / "session_start_after_compact.py"
+    codex_hooks_source = codex_hooks_root / "hooks.json"
+    if not codex_script_source.exists():
+        raise ValueError(f"missing Codex hook script: {codex_script_source}")
+    if not codex_hooks_source.exists():
+        raise ValueError(f"missing Codex hook config: {codex_hooks_source}")
+    installed_codex_script = (
+        resolved_codex_home / "hooks" / "sheaf" / "session_start_after_compact.py"
+    )
+    outputs.append(
+        Output(
+            installed_codex_script,
+            script_content_for(codex_script_source, repo_root),
+        )
+    )
+    outputs.append(
+        Output(
+            resolved_codex_home / "hooks.json",
+            codex_hooks_content_for(
+                codex_hooks_source,
+                repo_root,
+                installed_codex_script,
+            ),
+        )
+    )
 
     repo_root_resolved = repo_root.resolve()
     in_repo = [output.path for output in outputs if output.path.is_relative_to(repo_root_resolved)]
