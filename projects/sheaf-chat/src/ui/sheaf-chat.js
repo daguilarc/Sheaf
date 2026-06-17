@@ -1290,7 +1290,7 @@
 
     function ReviewHunkRevealTarget(anchor) {
       const parent = anchor && anchor.parentNode;
-      const siblings = parent && Array.isArray(parent.children) ? Array.from(parent.children) : [];
+      const siblings = parent ? Array.from(parent.children || []) : [];
       const index = siblings.indexOf(anchor);
       if (index < 0) {
         return anchor;

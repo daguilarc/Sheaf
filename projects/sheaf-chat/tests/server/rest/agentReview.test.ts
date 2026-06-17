@@ -630,7 +630,13 @@ test("Agent Review rejects stale zero-context hunk mutations", async () =>
 
 async function CreateMultiHunkReviewSession(
   handle: TestServerHandle,
-): Promise<{ repoId: string; workspaceId: string }>
+): Promise<{
+  repoId: string;
+  workspaceId: string;
+  repoRoot: string;
+  alphaPath: string;
+  betaPath: string;
+}>
 {
   const repoRoot = handle.agentManager.storagePaths.repoRoot;
   const demoRoot = path.join(repoRoot, "projects/demo");
@@ -658,7 +664,94 @@ async function CreateMultiHunkReviewSession(
   beta[14] = "line 15 changed";
   await writeFile(betaPath, `${beta.join("\n")}\n`, "utf8");
 
-  return { repoId: created.repoId, workspaceId: created.workspaceId };
+  return {
+    repoId: created.repoId,
+    workspaceId: created.workspaceId,
+    repoRoot,
+    alphaPath,
+    betaPath,
+  };
+}
+
+async function CreateThreeFileReviewSession(
+  handle: TestServerHandle,
+): Promise<{ repoId: string; workspaceId: string; betaPath: string }>
+{
+  const repoRoot = handle.agentManager.storagePaths.repoRoot;
+  const demoRoot = path.join(repoRoot, "projects/demo");
+  const created = await CreateWorkspaceChatViaApi(handle, demoRoot);
+  const base = "line 1\nline 2\nline 3\n";
+  const betaPath = path.join(demoRoot, "beta.ts");
+
+  await mkdir(demoRoot, { recursive: true });
+  await Git(repoRoot, ["init"]);
+  await Git(repoRoot, ["config", "user.email", "test@example.com"]);
+  await Git(repoRoot, ["config", "user.name", "Test User"]);
+  await writeFile(path.join(demoRoot, "alpha.ts"), base, "utf8");
+  await writeFile(betaPath, base, "utf8");
+  await writeFile(path.join(demoRoot, "charlie.ts"), base, "utf8");
+  await Git(repoRoot, ["add", "."]);
+  await Git(repoRoot, ["commit", "-m", "initial"]);
+
+  await writeFile(path.join(demoRoot, "alpha.ts"), "line 1\nalpha changed\nline 3\n", "utf8");
+  await writeFile(betaPath, "line 1\nbeta changed\nline 3\n", "utf8");
+  await writeFile(path.join(demoRoot, "charlie.ts"), "line 1\ncharlie changed\nline 3\n", "utf8");
+
+  return { repoId: created.repoId, workspaceId: created.workspaceId, betaPath };
+}
+
+async function CreateHeaderDriftReviewSession(
+  handle: TestServerHandle,
+): Promise<{ repoId: string; workspaceId: string; repoRoot: string }>
+{
+  const repoRoot = handle.agentManager.storagePaths.repoRoot;
+  const demoRoot = path.join(repoRoot, "projects/demo");
+  const created = await CreateWorkspaceChatViaApi(handle, demoRoot);
+  const filePath = path.join(demoRoot, "app.ts");
+  const base = Array.from({ length: 30 }, (_, index) => `line ${index + 1}`);
+
+  await mkdir(demoRoot, { recursive: true });
+  await Git(repoRoot, ["init"]);
+  await Git(repoRoot, ["config", "user.email", "test@example.com"]);
+  await Git(repoRoot, ["config", "user.name", "Test User"]);
+  await writeFile(filePath, `${base.join("\n")}\n`, "utf8");
+  await Git(repoRoot, ["add", "."]);
+  await Git(repoRoot, ["commit", "-m", "initial"]);
+
+  const changed = base.slice();
+  changed.splice(2, 0, "inserted before downstream hunk");
+  changed[21] = "line 21 changed";
+  await writeFile(filePath, `${changed.join("\n")}\n`, "utf8");
+
+  return { repoId: created.repoId, workspaceId: created.workspaceId, repoRoot };
+}
+
+async function CreateDuplicateContentReviewSession(
+  handle: TestServerHandle,
+): Promise<{ repoId: string; workspaceId: string; repoRoot: string }>
+{
+  const repoRoot = handle.agentManager.storagePaths.repoRoot;
+  const demoRoot = path.join(repoRoot, "projects/demo");
+  const created = await CreateWorkspaceChatViaApi(handle, demoRoot);
+  const filePath = path.join(demoRoot, "app.ts");
+  const base = Array.from({ length: 30 }, (_, index) => `line ${index + 1}`);
+  base[1] = "repeat";
+  base[26] = "repeat";
+
+  await mkdir(demoRoot, { recursive: true });
+  await Git(repoRoot, ["init"]);
+  await Git(repoRoot, ["config", "user.email", "test@example.com"]);
+  await Git(repoRoot, ["config", "user.name", "Test User"]);
+  await writeFile(filePath, `${base.join("\n")}\n`, "utf8");
+  await Git(repoRoot, ["add", "."]);
+  await Git(repoRoot, ["commit", "-m", "initial"]);
+
+  const changed = base.slice();
+  changed[1] = "repeat changed";
+  changed[26] = "repeat changed";
+  await writeFile(filePath, `${changed.join("\n")}\n`, "utf8");
+
+  return { repoId: created.repoId, workspaceId: created.workspaceId, repoRoot };
 }
 
 test("Agent Review WebSocket navigates between hunks and files", async () =>
@@ -876,6 +969,13 @@ function CellMap(cells: Array<Record<string, unknown>>): Map<string, Record<stri
   return map;
 }
 
+function NonReviewCellsOff(cells: Array<Record<string, unknown>>): boolean
+{
+  return cells.length > 0 && cells.every((cell) =>
+    (cell.x === 3 && cell.y === 3) || cell.off === true,
+  );
+}
+
 test("Agent Review Launchpad navigation cells reflect action availability", async () =>
 {
   const fakeDictator = new FakeDictatorRPCServer();
@@ -915,6 +1015,166 @@ test("Agent Review Launchpad navigation cells reflect action availability", asyn
       assert.deepEqual(cells.get("0,3"), { x: 0, y: 3, off: true }); // previous file (first file)
       assert.deepEqual(cells.get("2,3"), { x: 2, y: 3, r: 255, g: 255, b: 0 }); // next file (beta exists)
       assert.deepEqual(cells.get("3,3"), { x: 3, y: 3, r: 90, g: 90, b: 90 }); // review cell grey
+
+      await new Promise<void>((resolve) =>
+      {
+        socket.once("close", () => resolve());
+        socket.close();
+      });
+    });
+  }
+  finally
+  {
+    await fakeDictator.close();
+  }
+});
+
+test("Agent Review unfocused Dictator RPC cell is off and no-op without armed draft", async () =>
+{
+  const fakeDictator = new FakeDictatorRPCServer();
+  const dictatorPort = await fakeDictator.start();
+  try
+  {
+    await WithTestServer(async (handle) =>
+    {
+      await writeFile(
+        handle.config.paths.servicesJsonFile,
+        JSON.stringify([{ name: "dictator", host: "127.0.0.1", port: dictatorPort }]),
+        "utf8",
+      );
+
+      const { repoId, workspaceId } = await CreateGitReviewSession(handle);
+      const socket = new WebSocket(WsUrl(handle.baseUrl, repoId, workspaceId));
+      await new Promise<void>((resolve, reject) =>
+      {
+        socket.once("open", () => resolve());
+        socket.once("error", reject);
+      });
+      await WaitForFrame(socket, "bootstrap");
+      await fakeDictator.waitForRequest("launchpad.setCells");
+
+      const awayPromise = WaitForFrameWhere(
+        socket,
+        "state",
+        (frame) => frame.state.currentHunk === null,
+        "unfocused no-draft state",
+      );
+      socket.send(JSON.stringify({ type: "focus", hunkId: null }));
+      await awayPromise;
+
+      fakeDictator.clearRequests();
+      socket.send(JSON.stringify({ type: "presence", focused: false }));
+      const dark = await fakeDictator.waitForRequestWhere(
+        "launchpad.setCells",
+        (req) => AllCellsOff(req.params.cells),
+      );
+      assert.deepEqual(CellMap(dark.params.cells).get("3,3"), { x: 3, y: 3, off: true });
+
+      fakeDictator.clearRequests();
+      fakeDictator.sendPress(3, 3);
+      await assert.rejects(
+        fakeDictator.waitForRequest("cursor.insertText", 100),
+        /timed out waiting for Dictator RPC request: cursor\.insertText/,
+      );
+
+      await new Promise<void>((resolve) =>
+      {
+        socket.once("close", () => resolve());
+        socket.close();
+      });
+    });
+  }
+  finally
+  {
+    await fakeDictator.close();
+  }
+});
+
+test("Agent Review unfocused armed review cell stays green and pastes via Dictator RPC cell", async () =>
+{
+  const fakeDictator = new FakeDictatorRPCServer();
+  const dictatorPort = await fakeDictator.start();
+  try
+  {
+    await WithTestServer(async (handle) =>
+    {
+      await writeFile(
+        handle.config.paths.servicesJsonFile,
+        JSON.stringify([{ name: "dictator", host: "127.0.0.1", port: dictatorPort }]),
+        "utf8",
+      );
+
+      const { repoId, workspaceId } = await CreateGitReviewSession(handle);
+      const socket = new WebSocket(WsUrl(handle.baseUrl, repoId, workspaceId));
+      await new Promise<void>((resolve, reject) =>
+      {
+        socket.once("open", () => resolve());
+        socket.once("error", reject);
+      });
+
+      const bootstrap = await WaitForFrame(socket, "bootstrap");
+      const hunk = bootstrap.state.currentHunk;
+      await fakeDictator.waitForRequest("launchpad.setCells");
+
+      const commentedPromise = WaitForFrameWhere(
+        socket,
+        "state",
+        (frame) => frame.state.reviewDraft.entries.length === 1,
+        "unfocused armed review draft",
+      );
+      socket.send(JSON.stringify({
+        type: "comment",
+        hunkId: hunk.hunkId,
+        text: "Keep this explanation for the next turn.",
+      }));
+      await commentedPromise;
+
+      const awayPromise = WaitForFrameWhere(
+        socket,
+        "state",
+        (frame) => frame.state.currentHunk === null && frame.state.reviewDraft.hasSerializedContent,
+        "unfocused armed no-hunk state",
+      );
+      socket.send(JSON.stringify({ type: "focus", hunkId: null }));
+      await awayPromise;
+
+      fakeDictator.clearRequests();
+      socket.send(JSON.stringify({ type: "presence", focused: false }));
+      const armed = await fakeDictator.waitForRequestWhere(
+        "launchpad.setCells",
+        (req) =>
+          NonReviewCellsOff(req.params.cells) &&
+          CellMap(req.params.cells).get("3,3")?.g === 255,
+      );
+      const armedCells = CellMap(armed.params.cells);
+      assert.deepEqual(armedCells.get("1,3"), { x: 1, y: 3, off: true });
+      assert.deepEqual(armedCells.get("0,2"), { x: 0, y: 2, off: true });
+      assert.deepEqual(armedCells.get("3,3"), { x: 3, y: 3, r: 0, g: 255, b: 0 });
+
+      fakeDictator.clearRequests();
+      fakeDictator.failNextRequest("cursor.insertText", { message: "paste failed" });
+      const failedInsert = fakeDictator.waitForRequest("cursor.insertText");
+      const stillArmed = fakeDictator.waitForRequestWhere(
+        "launchpad.setCells",
+        (req) => CellMap(req.params.cells).get("3,3")?.g === 255,
+      );
+      fakeDictator.sendPress(3, 3);
+      await failedInsert;
+      await stillArmed;
+
+      fakeDictator.clearRequests();
+      const insertPromise = fakeDictator.waitForRequest("cursor.insertText");
+      const clearedPromise = WaitForFrameWhere(
+        socket,
+        "state",
+        (frame) => frame.state.reviewDraft.entries.length === 0,
+        "unfocused pasted review draft",
+      );
+      fakeDictator.sendPress(3, 3);
+      await insertPromise;
+      assert.match(fakeDictator.insertedText ?? "", /Keep this explanation for the next turn\./);
+      const cleared = await clearedPromise;
+      assert.equal(cleared.state.reviewDraft.hasSerializedContent, false);
 
       await new Promise<void>((resolve) =>
       {
@@ -1191,6 +1451,412 @@ test("Agent Review staging a hunk prefers remaining hunks in the same file", asy
       ),
       "expected staged alpha hunk to remain visible as normal context",
     );
+
+    await new Promise<void>((resolve) =>
+    {
+      socket.once("close", () => resolve());
+      socket.close();
+    });
+  });
+});
+
+test("Agent Review stages and reverts a non-first hunk without mutating siblings", async () =>
+{
+  await WithTestServer(async (handle) =>
+  {
+    const { repoId, workspaceId, repoRoot, alphaPath } =
+      await CreateMultiHunkReviewSession(handle);
+    const socket = new WebSocket(WsUrl(handle.baseUrl, repoId, workspaceId));
+    await new Promise<void>((resolve, reject) =>
+    {
+      socket.once("open", () => resolve());
+      socket.once("error", reject);
+    });
+
+    await WaitForFrame(socket, "bootstrap");
+    socket.send(JSON.stringify({ type: "command", id: "next-alpha", action: "nextHunk" }));
+    const next = await WaitForFrame(socket, "command_result");
+    const secondAlpha = next.state.currentHunk;
+    assert.equal(secondAlpha.file, "projects/demo/alpha.ts");
+    assert.match(secondAlpha.patch, /line 27 changed/);
+    assert.doesNotMatch(secondAlpha.patch, /line 2 changed/);
+
+    socket.send(JSON.stringify({
+      type: "command",
+      id: "stage-second-alpha",
+      action: "stage",
+      hunkId: secondAlpha.hunkId,
+      patchHash: secondAlpha.patchHash,
+    }));
+    const staged = await WaitForFrame(socket, "command_result");
+    assert.equal(staged.result.ok, true);
+    const cached = await Git(repoRoot, [
+      "diff",
+      "--cached",
+      "--unified=0",
+      "--",
+      "projects/demo/alpha.ts",
+    ]);
+    const unstaged = await Git(repoRoot, [
+      "diff",
+      "--unified=0",
+      "--",
+      "projects/demo/alpha.ts",
+    ]);
+    assert.match(cached, /line 27 changed/);
+    assert.doesNotMatch(cached, /line 2 changed/);
+    assert.match(unstaged, /line 2 changed/);
+    assert.doesNotMatch(unstaged, /line 27 changed/);
+
+    socket.send(JSON.stringify({ type: "command", id: "undo-stage-alpha", action: "undo" }));
+    const undoStage = await WaitForFrame(socket, "command_result");
+    assert.equal(undoStage.result.ok, true);
+    assert.equal((await Git(repoRoot, ["diff", "--cached", "--", "projects/demo/alpha.ts"])).trim(), "");
+    assert.equal(undoStage.state.currentHunk.file, "projects/demo/alpha.ts");
+    assert.match(undoStage.state.currentHunk.patch, /line 27 changed/);
+    assert.doesNotMatch(undoStage.state.currentHunk.patch, /line 2 changed/);
+
+    socket.send(JSON.stringify({
+      type: "command",
+      id: "revert-second-alpha",
+      action: "revert",
+      hunkId: undoStage.state.currentHunk.hunkId,
+      patchHash: undoStage.state.currentHunk.patchHash,
+    }));
+    const reverted = await WaitForFrame(socket, "command_result");
+    assert.equal(reverted.result.ok, true);
+    assert.equal(reverted.state.reviewDraft.entries.at(-1).kind, "rejected");
+    assert.equal(reverted.state.reviewDraft.entries.at(-1).hunk.file, "projects/demo/alpha.ts");
+    assert.match(reverted.state.reviewDraft.entries.at(-1).hunk.patch, /line 27 changed/);
+    assert.equal(
+      await readFile(alphaPath, "utf8"),
+      `${[
+        "line 1", "line 2 changed", "line 3", "line 4", "line 5",
+        "line 6", "line 7", "line 8", "line 9", "line 10",
+        "line 11", "line 12", "line 13", "line 14", "line 15",
+        "line 16", "line 17", "line 18", "line 19", "line 20",
+        "line 21", "line 22", "line 23", "line 24", "line 25",
+        "line 26", "line 27", "line 28", "line 29", "line 30",
+      ].join("\n")}\n`,
+    );
+
+    socket.send(JSON.stringify({ type: "command", id: "undo-revert-alpha", action: "undo" }));
+    const undoRevert = await WaitForFrame(socket, "command_result");
+    assert.equal(undoRevert.result.ok, true);
+    assert.equal(undoRevert.state.reviewDraft.entries.length, 0);
+    assert.equal(
+      await readFile(alphaPath, "utf8"),
+      `${[
+        "line 1", "line 2 changed", "line 3", "line 4", "line 5",
+        "line 6", "line 7", "line 8", "line 9", "line 10",
+        "line 11", "line 12", "line 13", "line 14", "line 15",
+        "line 16", "line 17", "line 18", "line 19", "line 20",
+        "line 21", "line 22", "line 23", "line 24", "line 25",
+        "line 26", "line 27 changed", "line 28", "line 29", "line 30",
+      ].join("\n")}\n`,
+    );
+    assert.equal(undoRevert.state.currentHunk.file, "projects/demo/alpha.ts");
+    assert.match(undoRevert.state.currentHunk.patch, /line 27 changed/);
+
+    await new Promise<void>((resolve) =>
+    {
+      socket.once("close", () => resolve());
+      socket.close();
+    });
+  });
+});
+
+test("Agent Review does not auto-advance to another file after completing a file", async () =>
+{
+  await WithTestServer(async (handle) =>
+  {
+    const { repoId, workspaceId } = await CreateMultiHunkReviewSession(handle);
+    const socket = new WebSocket(WsUrl(handle.baseUrl, repoId, workspaceId));
+    await new Promise<void>((resolve, reject) =>
+    {
+      socket.once("open", () => resolve());
+      socket.once("error", reject);
+    });
+
+    await WaitForFrame(socket, "bootstrap");
+    socket.send(JSON.stringify({ type: "command", id: "stage-first-alpha", action: "stage" }));
+    const afterFirst = await WaitForFrame(socket, "command_result");
+    assert.equal(afterFirst.result.ok, true);
+    assert.equal(afterFirst.state.currentHunk.file, "projects/demo/alpha.ts");
+
+    socket.send(JSON.stringify({
+      type: "command",
+      id: "stage-last-alpha",
+      action: "stage",
+      hunkId: afterFirst.state.currentHunk.hunkId,
+      patchHash: afterFirst.state.currentHunk.patchHash,
+    }));
+    const afterLast = await WaitForFrame(socket, "command_result");
+    assert.equal(afterLast.result.ok, true);
+    assert.equal(afterLast.state.currentHunk, null);
+    assert.equal(afterLast.state.actions.canGoNextFile, true);
+    assert.equal(afterLast.state.actions.canStage, false);
+
+    socket.send(JSON.stringify({ type: "command", id: "explicit-next-file", action: "nextFile" }));
+    const explicitNext = await WaitForFrame(socket, "command_result");
+    assert.equal(explicitNext.result.ok, true);
+    assert.equal(explicitNext.state.currentHunk.file, "projects/demo/beta.ts");
+
+    await new Promise<void>((resolve) =>
+    {
+      socket.once("close", () => resolve());
+      socket.close();
+    });
+  });
+});
+
+test("Agent Review nextFile from a completed middle file advances to the following file", async () =>
+{
+  await WithTestServer(async (handle) =>
+  {
+    const { repoId, workspaceId } = await CreateThreeFileReviewSession(handle);
+    const socket = new WebSocket(WsUrl(handle.baseUrl, repoId, workspaceId));
+    await new Promise<void>((resolve, reject) =>
+    {
+      socket.once("open", () => resolve());
+      socket.once("error", reject);
+    });
+
+    const bootstrap = await WaitForFrame(socket, "bootstrap");
+    assert.equal(bootstrap.state.currentHunk.file, "projects/demo/alpha.ts");
+
+    socket.send(JSON.stringify({ type: "command", id: "middle-file", action: "nextFile" }));
+    const middle = await WaitForFrame(socket, "command_result");
+    assert.equal(middle.result.ok, true);
+    assert.equal(middle.state.currentHunk.file, "projects/demo/beta.ts");
+
+    socket.send(JSON.stringify({
+      type: "command",
+      id: "complete-middle-file",
+      action: "stage",
+      hunkId: middle.state.currentHunk.hunkId,
+      patchHash: middle.state.currentHunk.patchHash,
+    }));
+    const completedMiddle = await WaitForFrame(socket, "command_result");
+    assert.equal(completedMiddle.result.ok, true);
+    assert.equal(completedMiddle.state.currentHunk, null);
+    assert.equal(completedMiddle.state.actions.canGoNextFile, true);
+
+    socket.send(JSON.stringify({ type: "command", id: "next-after-middle", action: "nextFile" }));
+    const afterNext = await WaitForFrame(socket, "command_result");
+    assert.equal(afterNext.result.ok, true);
+    assert.equal(afterNext.state.currentHunk.file, "projects/demo/charlie.ts");
+
+    await new Promise<void>((resolve) =>
+    {
+      socket.once("close", () => resolve());
+      socket.close();
+    });
+  });
+});
+
+test("Agent Review preserves sibling hunks when downstream headers drift", async () =>
+{
+  await WithTestServer(async (handle) =>
+  {
+    const { repoId, workspaceId, repoRoot } = await CreateHeaderDriftReviewSession(handle);
+    const socket = new WebSocket(WsUrl(handle.baseUrl, repoId, workspaceId));
+    await new Promise<void>((resolve, reject) =>
+    {
+      socket.once("open", () => resolve());
+      socket.once("error", reject);
+    });
+
+    const bootstrap = await WaitForFrame(socket, "bootstrap");
+    const insertion = bootstrap.state.currentHunk;
+    assert.equal(insertion.file, "projects/demo/app.ts");
+    assert.match(insertion.patch, /inserted before downstream hunk/);
+    assert.doesNotMatch(insertion.patch, /line 21 changed/);
+
+    socket.send(JSON.stringify({
+      type: "command",
+      id: "stage-insertion",
+      action: "stage",
+      hunkId: insertion.hunkId,
+      patchHash: insertion.patchHash,
+    }));
+    const staged = await WaitForFrame(socket, "command_result");
+    assert.equal(staged.result.ok, true);
+    assert.equal(staged.state.currentHunk.file, "projects/demo/app.ts");
+    assert.match(staged.state.currentHunk.patch, /line 21 changed/);
+
+    const unstaged = await Git(repoRoot, [
+      "diff",
+      "--unified=0",
+      "--",
+      "projects/demo/app.ts",
+    ]);
+    assert.match(unstaged, /line 21 changed/);
+    assert.doesNotMatch(unstaged, /inserted before downstream hunk/);
+
+    await new Promise<void>((resolve) =>
+    {
+      socket.once("close", () => resolve());
+      socket.close();
+    });
+  });
+});
+
+test("Agent Review stages a non-first duplicate-content hunk without rejecting its sibling", async () =>
+{
+  await WithTestServer(async (handle) =>
+  {
+    const { repoId, workspaceId, repoRoot } = await CreateDuplicateContentReviewSession(handle);
+    const socket = new WebSocket(WsUrl(handle.baseUrl, repoId, workspaceId));
+    await new Promise<void>((resolve, reject) =>
+    {
+      socket.once("open", () => resolve());
+      socket.once("error", reject);
+    });
+
+    const bootstrap = await WaitForFrame(socket, "bootstrap");
+    assert.equal(bootstrap.state.currentHunk.file, "projects/demo/app.ts");
+    assert.match(bootstrap.state.currentHunk.patch, /@@ -2 \+2 @@/);
+
+    socket.send(JSON.stringify({ type: "command", id: "second-duplicate", action: "nextHunk" }));
+    const second = await WaitForFrame(socket, "command_result");
+    assert.equal(second.state.currentHunk.file, "projects/demo/app.ts");
+    assert.match(second.state.currentHunk.patch, /@@ -27 \+27 @@/);
+    assert.match(second.state.currentHunk.patch, /repeat changed/);
+
+    socket.send(JSON.stringify({
+      type: "command",
+      id: "stage-second-duplicate",
+      action: "stage",
+      hunkId: second.state.currentHunk.hunkId,
+      patchHash: second.state.currentHunk.patchHash,
+    }));
+    const staged = await WaitForFrame(socket, "command_result");
+    assert.equal(staged.result.ok, true);
+    assert.equal(staged.state.currentHunk.file, "projects/demo/app.ts");
+    assert.match(staged.state.currentHunk.patch, /@@ -2 \+2 @@/);
+
+    const cached = await Git(repoRoot, [
+      "diff",
+      "--cached",
+      "--unified=0",
+      "--",
+      "projects/demo/app.ts",
+    ]);
+    const unstaged = await Git(repoRoot, [
+      "diff",
+      "--unified=0",
+      "--",
+      "projects/demo/app.ts",
+    ]);
+    assert.match(cached, /@@ -27 \+27 @@/);
+    assert.doesNotMatch(cached, /@@ -2 \+2 @@/);
+    assert.match(unstaged, /@@ -2 \+2 @@/);
+    assert.doesNotMatch(unstaged, /@@ -27 \+27 @@/);
+
+    await new Promise<void>((resolve) =>
+    {
+      socket.once("close", () => resolve());
+      socket.close();
+    });
+  });
+});
+
+test("Agent Review keeps completed-file no-focus state across a plain refresh", async () =>
+{
+  await WithTestServer(async (handle) =>
+  {
+    const { repoId, workspaceId } = await CreateThreeFileReviewSession(handle);
+    const socket = new WebSocket(WsUrl(handle.baseUrl, repoId, workspaceId));
+    await new Promise<void>((resolve, reject) =>
+    {
+      socket.once("open", () => resolve());
+      socket.once("error", reject);
+    });
+
+    await WaitForFrame(socket, "bootstrap");
+    socket.send(JSON.stringify({ type: "command", id: "middle-file", action: "nextFile" }));
+    const middle = await WaitForFrame(socket, "command_result");
+    assert.equal(middle.state.currentHunk.file, "projects/demo/beta.ts");
+
+    socket.send(JSON.stringify({
+      type: "command",
+      id: "complete-middle-file",
+      action: "stage",
+      hunkId: middle.state.currentHunk.hunkId,
+      patchHash: middle.state.currentHunk.patchHash,
+    }));
+    const completedMiddle = await WaitForFrame(socket, "command_result");
+    assert.equal(completedMiddle.result.ok, true);
+    assert.equal(completedMiddle.state.currentHunk, null);
+
+    const alpha = completedMiddle.state.hunks.find(
+      (hunk: Record<string, any>) => hunk.file === "projects/demo/alpha.ts",
+    );
+    assert.ok(alpha);
+    socket.send(JSON.stringify({
+      type: "comment",
+      hunkId: alpha.hunkId,
+      text: "Still needs review.",
+    }));
+    const refreshed = await WaitForFrame(socket, "state");
+    assert.equal(refreshed.state.currentHunk, null);
+    assert.equal(refreshed.state.actions.canGoNextFile, true);
+
+    socket.send(JSON.stringify({ type: "command", id: "next-after-refresh", action: "nextFile" }));
+    const afterNext = await WaitForFrame(socket, "command_result");
+    assert.equal(afterNext.result.ok, true);
+    assert.equal(afterNext.state.currentHunk.file, "projects/demo/charlie.ts");
+
+    await new Promise<void>((resolve) =>
+    {
+      socket.once("close", () => resolve());
+      socket.close();
+    });
+  });
+});
+
+test("Agent Review selects a completed anchor file when it gains a reappearing hunk", async () =>
+{
+  await WithTestServer(async (handle) =>
+  {
+    const { repoId, workspaceId, betaPath } = await CreateThreeFileReviewSession(handle);
+    const socket = new WebSocket(WsUrl(handle.baseUrl, repoId, workspaceId));
+    await new Promise<void>((resolve, reject) =>
+    {
+      socket.once("open", () => resolve());
+      socket.once("error", reject);
+    });
+
+    await WaitForFrame(socket, "bootstrap");
+    socket.send(JSON.stringify({ type: "command", id: "middle-file", action: "nextFile" }));
+    const middle = await WaitForFrame(socket, "command_result");
+    assert.equal(middle.state.currentHunk.file, "projects/demo/beta.ts");
+
+    socket.send(JSON.stringify({
+      type: "command",
+      id: "complete-middle-file",
+      action: "stage",
+      hunkId: middle.state.currentHunk.hunkId,
+      patchHash: middle.state.currentHunk.patchHash,
+    }));
+    const completedMiddle = await WaitForFrame(socket, "command_result");
+    assert.equal(completedMiddle.result.ok, true);
+    assert.equal(completedMiddle.state.currentHunk, null);
+
+    await writeFile(betaPath, "line 1\nbeta changed\nbeta reappearing hunk\n", "utf8");
+    const alpha = completedMiddle.state.hunks.find(
+      (hunk: Record<string, any>) => hunk.file === "projects/demo/alpha.ts",
+    );
+    assert.ok(alpha);
+    socket.send(JSON.stringify({
+      type: "comment",
+      hunkId: alpha.hunkId,
+      text: "Trigger a plain refresh.",
+    }));
+    const refreshed = await WaitForFrame(socket, "state");
+    assert.equal(refreshed.state.currentHunk.file, "projects/demo/beta.ts");
+    assert.match(refreshed.state.currentHunk.patch, /beta reappearing hunk/);
 
     await new Promise<void>((resolve) =>
     {

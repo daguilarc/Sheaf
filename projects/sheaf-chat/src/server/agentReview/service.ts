@@ -174,12 +174,71 @@ function EmptyActions(): AgentReviewActions
   };
 }
 
-function ActionsFor(hunks: AgentReviewHunk[], currentIndex: number, canUndo: boolean): AgentReviewActions
+function HunkChangedContentSignature(hunk: AgentReviewHunk): string
 {
-  if (hunks.length === 0 || currentIndex < 0)
+  return hunk.patch
+    .split("\n")
+    .filter((line) =>
+      (line.startsWith("+") && !line.startsWith("+++")) ||
+      (line.startsWith("-") && !line.startsWith("---")),
+    )
+    .join("\n");
+}
+
+function CountChangedContentSignatures(hunks: AgentReviewHunk[]): Map<string, number>
+{
+  const counts = new Map<string, number>();
+  for (const hunk of hunks)
+  {
+    const signature = HunkChangedContentSignature(hunk);
+    counts.set(signature, (counts.get(signature) ?? 0) + 1);
+  }
+  return counts;
+}
+
+function FirstHunkIndexAfterFile(hunks: AgentReviewHunk[], file: string): number
+{
+  return hunks.findIndex((hunk) => hunk.file > file);
+}
+
+function LastHunkIndexBeforeFile(hunks: AgentReviewHunk[], file: string): number
+{
+  for (let index = hunks.length - 1; index >= 0; index -= 1)
+  {
+    const hunk = hunks[index]!;
+    if (hunk.file < file)
+    {
+      return index;
+    }
+  }
+  return -1;
+}
+
+function ActionsFor(
+  hunks: AgentReviewHunk[],
+  currentIndex: number,
+  canUndo: boolean,
+  fileNavigationAnchor: string | null = null,
+): AgentReviewActions
+{
+  if (hunks.length === 0)
   {
     return {
       ...EmptyActions(),
+      canUndo,
+    };
+  }
+
+  if (currentIndex < 0)
+  {
+    return {
+      ...EmptyActions(),
+      canGoPrevFile: fileNavigationAnchor !== null
+        ? LastHunkIndexBeforeFile(hunks, fileNavigationAnchor) >= 0
+        : false,
+      canGoNextFile: fileNavigationAnchor !== null
+        ? FirstHunkIndexAfterFile(hunks, fileNavigationAnchor) >= 0
+        : hunks.length > 0,
       canUndo,
     };
   }
@@ -734,6 +793,10 @@ class AgentReviewSession
   private m_state: AgentReviewState | null = null;
   private m_currentIndex = -1;
   private m_focusClearedExplicitly = false;
+  private m_postMutationFile: string | null = null;
+  private m_postMutationTargetPatchHash: string | null = null;
+  private m_postMutationPreferNoCrossFile = false;
+  private m_fileNavigationAnchor: string | null = null;
   private m_visibleCommentHunkId: string | null = null;
   private m_pushedContextHunkId: string | null = null;
   private m_refreshInFlight: Promise<void> | null = null;
@@ -924,22 +987,23 @@ class AgentReviewSession
         ? this.m_currentIndex
         : gitState.hunks.findIndex((hunk) => hunk.hunkId === priorHunkId);
 
-    if (currentIndex < 0 && priorHunk != null)
-    {
-      currentIndex = gitState.hunks.findIndex((hunk) => hunk.file === priorHunk.file);
-    }
-
     if (currentIndex < 0 && this.m_currentIndex >= 0)
     {
       currentIndex = this.m_currentIndex;
     }
 
-    this.m_currentIndex = !hadState
-      ? NormalizeCurrentIndex(gitState.hunks, currentIndex)
-      : currentIndex < 0 && this.m_focusClearedExplicitly
-      ? -1
-      : NormalizeCurrentIndex(gitState.hunks, currentIndex);
-    const actions = ActionsFor(gitState.hunks, this.m_currentIndex, this.m_undoStack.length > 0);
+    this.m_currentIndex = this.SelectCurrentIndexAfterRefresh(
+      gitState.hunks,
+      currentIndex,
+      priorHunk,
+      hadState,
+    );
+    const actions = ActionsFor(
+      gitState.hunks,
+      this.m_currentIndex,
+      this.m_undoStack.length > 0,
+      this.m_fileNavigationAnchor,
+    );
     const currentHunk = this.m_currentIndex >= 0 ? gitState.hunks[this.m_currentIndex]! : null;
 
     this.m_state = {
@@ -957,6 +1021,78 @@ class AgentReviewSession
         lastError: this.m_dictatorRPC?.lastError ?? null,
       },
     };
+  }
+
+  private SelectCurrentIndexAfterRefresh(
+    hunks: AgentReviewHunk[],
+    proposedIndex: number,
+    priorHunk: AgentReviewHunk | null | undefined,
+    hadState: boolean,
+  ): number
+  {
+    if (this.m_postMutationPreferNoCrossFile && this.m_postMutationFile !== null)
+    {
+      const postMutationFile = this.m_postMutationFile;
+      const targetPatchHash = this.m_postMutationTargetPatchHash;
+      this.m_postMutationFile = null;
+      this.m_postMutationTargetPatchHash = null;
+      this.m_postMutationPreferNoCrossFile = false;
+
+      if (targetPatchHash !== null)
+      {
+        const restoredTargetIndex = hunks.findIndex(
+          (hunk) => hunk.file === postMutationFile && hunk.patchHash === targetPatchHash,
+        );
+        if (restoredTargetIndex >= 0)
+        {
+          return restoredTargetIndex;
+        }
+      }
+
+      const sameFileIndex = hunks.findIndex((hunk) => hunk.file === postMutationFile);
+      if (sameFileIndex >= 0)
+      {
+        this.m_fileNavigationAnchor = null;
+        return sameFileIndex;
+      }
+
+      this.m_fileNavigationAnchor = postMutationFile;
+      return -1;
+    }
+
+    if (!hadState)
+    {
+      this.m_fileNavigationAnchor = null;
+      return NormalizeCurrentIndex(hunks, proposedIndex);
+    }
+
+    if (proposedIndex < 0 && this.m_focusClearedExplicitly)
+    {
+      return -1;
+    }
+
+    if (proposedIndex < 0 && this.m_fileNavigationAnchor !== null)
+    {
+      const anchoredFileIndex = hunks.findIndex((hunk) => hunk.file === this.m_fileNavigationAnchor);
+      if (anchoredFileIndex >= 0)
+      {
+        this.m_fileNavigationAnchor = null;
+        return anchoredFileIndex;
+      }
+
+      return -1;
+    }
+
+    if (proposedIndex < 0 && priorHunk != null)
+    {
+      const sameFileIndex = hunks.findIndex((hunk) => hunk.file === priorHunk.file);
+      if (sameFileIndex >= 0)
+      {
+        return sameFileIndex;
+      }
+    }
+
+    return NormalizeCurrentIndex(hunks, proposedIndex);
   }
 
   private async DictatorUrl(): Promise<string | null>
@@ -1198,6 +1334,7 @@ class AgentReviewSession
     {
       this.m_currentIndex = -1;
       this.m_focusClearedExplicitly = true;
+      this.m_fileNavigationAnchor = null;
       this.m_state = {
         ...state,
         currentIndex: -1,
@@ -1211,6 +1348,7 @@ class AgentReviewSession
       {
         this.m_currentIndex = index;
         this.m_focusClearedExplicitly = false;
+        this.m_fileNavigationAnchor = null;
       }
     }
 
@@ -1352,7 +1490,16 @@ class AgentReviewSession
       // Land on the first hunk of the previous file, regardless of which hunk in
       // the current file is selected.
       const current = state.hunks[this.m_currentIndex];
-      if (current !== undefined && current.fileIndex > 0)
+      if (current === undefined && this.m_fileNavigationAnchor !== null)
+      {
+        const target = LastHunkIndexBeforeFile(state.hunks, this.m_fileNavigationAnchor);
+        if (target >= 0)
+        {
+          const targetFile = state.hunks[target]!.file;
+          this.m_currentIndex = state.hunks.findIndex((hunk) => hunk.file === targetFile);
+        }
+      }
+      else if (current !== undefined && current.fileIndex > 0)
       {
         const target = state.hunks.findIndex((hunk) => hunk.fileIndex === current.fileIndex - 1);
         if (target >= 0)
@@ -1366,7 +1513,19 @@ class AgentReviewSession
       // Land on the first hunk of the next file, regardless of which hunk in the
       // current file is selected.
       const current = state.hunks[this.m_currentIndex];
-      if (current !== undefined && current.fileIndex < current.fileCount - 1)
+      if (current === undefined && this.m_fileNavigationAnchor !== null)
+      {
+        const target = FirstHunkIndexAfterFile(state.hunks, this.m_fileNavigationAnchor);
+        if (target >= 0)
+        {
+          this.m_currentIndex = target;
+        }
+      }
+      else if (current === undefined)
+      {
+        this.m_currentIndex = 0;
+      }
+      else if (current.fileIndex < current.fileCount - 1)
       {
         const target = state.hunks.findIndex((hunk) => hunk.fileIndex === current.fileIndex + 1);
         if (target >= 0)
@@ -1374,6 +1533,12 @@ class AgentReviewSession
           this.m_currentIndex = target;
         }
       }
+    }
+
+    if (this.m_currentIndex >= 0)
+    {
+      this.m_fileNavigationAnchor = null;
+      this.m_focusClearedExplicitly = false;
     }
 
     // Reflect the new focus in the cached state. Refresh() re-pins focus by the
@@ -1417,6 +1582,45 @@ class AgentReviewSession
     return hunk;
   }
 
+  private async VerifyTargetRemovedFromUnstaged(hunk: AgentReviewHunk): Promise<string | null>
+  {
+    const priorState = this.RequireState();
+    const targetSignature = HunkChangedContentSignature(hunk);
+    const priorSameFile = priorState.hunks.filter((candidate) => candidate.file === hunk.file);
+    const expectedCounts = CountChangedContentSignatures(priorSameFile);
+    const targetPriorCount = expectedCounts.get(targetSignature) ?? 0;
+    expectedCounts.set(targetSignature, Math.max(0, targetPriorCount - 1));
+
+    let refreshed;
+    try
+    {
+      refreshed = await LoadAgentReviewGitState(hunk.sessionRoot);
+    }
+    catch (error)
+    {
+      return error instanceof Error ? error.message : String(error);
+    }
+
+    const refreshedSameFile = refreshed.hunks.filter((candidate) => candidate.file === hunk.file);
+    const refreshedCounts = CountChangedContentSignatures(refreshedSameFile);
+    const expectedTargetCount = expectedCounts.get(targetSignature) ?? 0;
+    const refreshedTargetCount = refreshedCounts.get(targetSignature) ?? 0;
+    if (refreshedTargetCount > expectedTargetCount)
+    {
+      return "selected hunk is still unstaged after mutation";
+    }
+
+    for (const [signature, expectedCount] of expectedCounts)
+    {
+      if ((refreshedCounts.get(signature) ?? 0) < expectedCount)
+      {
+        return "a sibling hunk changed while mutating the selected hunk";
+      }
+    }
+
+    return null;
+  }
+
   private async MutateCurrentHunk(
     action: "stage" | "revert",
     options: { commandId?: string; hunkId?: string; patchHash?: string },
@@ -1454,6 +1658,27 @@ class AgentReviewSession
       };
     }
 
+    const verificationError = await this.VerifyTargetRemovedFromUnstaged(hunk);
+    if (verificationError !== null)
+    {
+      const rollback = await ApplyAgentReviewPatch(
+        hunk.repoRoot,
+        action === "stage" ? "unstage" : "restore",
+        hunk.patch,
+      );
+      return {
+        ok: false,
+        action,
+        commandId: options.commandId,
+        error: rollback.ok
+          ? verificationError
+          : `${verificationError}; rollback failed: ${rollback.error ?? "unknown error"}`,
+      };
+    }
+
+    this.m_postMutationFile = hunk.file;
+    this.m_postMutationTargetPatchHash = null;
+    this.m_postMutationPreferNoCrossFile = true;
     this.m_undoStack.push({ action, hunk });
     if (action === "revert")
     {
@@ -1491,6 +1716,9 @@ class AgentReviewSession
       };
     }
 
+    this.m_postMutationFile = entry.hunk.file;
+    this.m_postMutationTargetPatchHash = entry.hunk.patchHash;
+    this.m_postMutationPreferNoCrossFile = true;
     if (entry.action === "revert")
     {
       this.RemoveRejectedMarker(entry.hunk);
@@ -1512,12 +1740,16 @@ class AgentReviewSession
 
     try
     {
-      // While no attached client is focused, keep every owned cell off
-      // regardless of action availability — a background refresh must not
-      // relight the grid while the user is away. Restore from state on refocus.
+      // While no attached client is focused, keep navigation/mutation cells off
+      // regardless of action availability. The review cell may stay armed for
+      // pasting a serialized draft after focus has deliberately been cleared.
       if (!this.AnyClientFocused())
       {
-        await this.m_dictatorRPC.setCellsWithStaleSessionRetry("off", EmptyActions());
+        const reviewColor =
+          this.m_state.currentHunk === null && this.SerializedReview() !== null
+            ? "green"
+            : "off";
+        await this.m_dictatorRPC.setCellsWithStaleSessionRetry(reviewColor, EmptyActions());
       }
       else
       {
@@ -1531,16 +1763,29 @@ class AgentReviewSession
 
   private async HandleCellPressed(x: number, y: number): Promise<void>
   {
-    // Ignore presses once teardown has begun, and while no client is focused
-    // (the pads are dark then, so Dictator-forwarded presses must be inert).
-    if (this.m_closing || !this.AnyClientFocused())
+    // Ignore presses once teardown has begun. When no client is focused,
+    // navigation/mutation cells remain inert, but an armed review cell can still
+    // paste the serialized draft.
+    if (this.m_closing)
     {
       return;
     }
 
     if (x === REVIEW_CELL.x && y === REVIEW_CELL.y)
     {
+      if (
+        !this.AnyClientFocused() &&
+        (this.m_state?.currentHunk !== null || this.SerializedReview() === null)
+      )
+      {
+        return;
+      }
       await this.HandleReviewCellPressed();
+      return;
+    }
+
+    if (!this.AnyClientFocused())
+    {
       return;
     }
 

@@ -16,10 +16,93 @@ const x_aguiChatJsPath = path.resolve(x_packageRoot, "..", "web", "src", "agui-c
 
 type Listener = (event: Record<string, unknown>) => void;
 
+interface FakeRect
+{
+  top: number;
+  bottom: number;
+  left: number;
+  right: number;
+  width: number;
+  height: number;
+}
+
+class FakeChildCollection implements Iterable<FakeElement>
+{
+  private readonly x_items: FakeElement[] = [];
+
+  public get length(): number
+  {
+    return this.x_items.length;
+  }
+
+  public set length(value: number)
+  {
+    this.x_items.length = value;
+    this.x_SyncIndexes();
+  }
+
+  public [Symbol.iterator](): Iterator<FakeElement>
+  {
+    return this.x_items[Symbol.iterator]();
+  }
+
+  public at(index: number): FakeElement | undefined
+  {
+    return this.x_items.at(index);
+  }
+
+  public filter(predicate: (child: FakeElement) => boolean): FakeElement[]
+  {
+    return this.x_items.filter(predicate);
+  }
+
+  public includes(child: FakeElement): boolean
+  {
+    return this.x_items.includes(child);
+  }
+
+  public indexOf(child: FakeElement): number
+  {
+    return this.x_items.indexOf(child);
+  }
+
+  public map<T>(callback: (child: FakeElement) => T): T[]
+  {
+    return this.x_items.map(callback);
+  }
+
+  public push(child: FakeElement): number
+  {
+    const length = this.x_items.push(child);
+    this.x_SyncIndexes();
+    return length;
+  }
+
+  public splice(start: number, deleteCount: number, ...items: FakeElement[]): FakeElement[]
+  {
+    const removed = this.x_items.splice(start, deleteCount, ...items);
+    this.x_SyncIndexes();
+    return removed;
+  }
+
+  private x_SyncIndexes(): void
+  {
+    for (const key of Object.keys(this)) {
+      if (/^\d+$/.test(key)) {
+        delete (this as unknown as Record<string, FakeElement>)[key];
+      }
+    }
+    this.x_items.forEach((item, index) => {
+      (this as unknown as Record<number, FakeElement>)[index] = item;
+    });
+  }
+}
+
 class FakeElement
 {
   public static activeElement: FakeElement | null = null;
   public static scrolledIntoView: FakeElement[] = [];
+  public static scrollToCalls: Array<{ element: FakeElement; options: { top?: number; behavior?: string } }> = [];
   public readonly tagName: string;
   public readonly nodeName: string;
   public className = "";
@@ -31,7 +114,7 @@ class FakeElement
   } as Record<string, string> & {
     setProperty: (name: string, value: string) => void;
   };
-  public readonly children: FakeElement[] = [];
+  public readonly children = new FakeChildCollection();
   public parentNode: FakeElement | null = null;
   public type = "";
   public id = "";
@@ -47,6 +130,8 @@ class FakeElement
   public scrollHeight = 0;
   public scrollTop = 0;
   public clientHeight = 0;
+  public getBoundingClientRect?: () => FakeRect;
+  public scrollTo?: (options: { top?: number; behavior?: string }) => void;
   private x_textContent = "";
   private x_innerHTML = "";
   private readonly x_attributes = new Map<string, string>();
@@ -88,7 +173,7 @@ class FakeElement
 
   public get childNodes(): FakeElement[]
   {
-    return this.children;
+    return Array.from(this.children);
   }
 
   public get textContent(): string
@@ -245,7 +330,10 @@ class FakeElement
 
   public querySelectorAll(selector: string): FakeElement[]
   {
-    const parts = selector.trim().split(/\s+/).filter(Boolean);
+    const selectors = selector
+      .split(",")
+      .map((part) => part.trim())
+      .filter(Boolean);
     const results: FakeElement[] = [];
     const stack: FakeElement[] = [this];
 
@@ -255,12 +343,17 @@ class FakeElement
         continue;
       }
 
-      if (parts.length === 1) {
-        if (this.x_MatchesSelector(node, parts[0])) {
+      for (const candidate of selectors) {
+        const parts = candidate.split(/\s+/).filter(Boolean);
+        if (parts.length === 1) {
+          if (this.x_MatchesSelector(node, parts[0])) {
+            results.push(node);
+            break;
+          }
+        } else if (this.x_MatchesDescendantSelector(node, parts)) {
           results.push(node);
+          break;
         }
-      } else if (this.x_MatchesDescendantSelector(node, parts)) {
-        results.push(node);
       }
 
       stack.push(...node.children);
@@ -303,23 +396,29 @@ class FakeElement
 
   private x_MatchesSelector(node: FakeElement, selector: string): boolean
   {
-    if (selector.startsWith(".")) {
-      const className = selector.slice(1);
-      return node.x_ClassNames().includes(className);
+    const classMatch = /^\.([^\[]+)/.exec(selector);
+    const attrMatch = /\[([^\]=]+)(?:="([^"]*)")?\]/.exec(selector);
+
+    if (classMatch && !node.x_ClassNames().includes(classMatch[1])) {
+      return false;
+    }
+
+    if (attrMatch) {
+      const attrValue = node.getAttribute(attrMatch[1]);
+      if (attrMatch[2] != null) {
+        return attrValue === attrMatch[2];
+      }
+      return attrValue != null;
+    }
+
+    if (classMatch) {
+      return true;
     }
 
     if (selector.includes("[")) {
       const tagMatch = /^([a-zA-Z][\w-]*)/.exec(selector);
-      const attrMatch = /\[([^\]=]+)(?:="([^"]*)")?\]/.exec(selector);
       if (tagMatch && node.tagName !== tagMatch[1].toUpperCase()) {
         return false;
-      }
-      if (attrMatch) {
-        const attrValue = node.getAttribute(attrMatch[1]);
-        if (attrMatch[2] != null) {
-          return attrValue === attrMatch[2];
-        }
-        return attrValue != null;
       }
     }
 
@@ -808,6 +907,1339 @@ async function FlushPromises(): Promise<void>
   }
   await new Promise((resolve) => setTimeout(resolve, 0));
 }
+
+class SeededRandom
+{
+  private x_state: number;
+
+  public constructor(seed: number)
+  {
+    this.x_state = seed >>> 0;
+  }
+
+  public next(): number
+  {
+    this.x_state = (Math.imul(this.x_state, 1664525) + 1013904223) >>> 0;
+    return this.x_state / 0x100000000;
+  }
+
+  public int(maxExclusive: number): number
+  {
+    return Math.floor(this.next() * maxExclusive);
+  }
+
+  public pick<T>(items: T[]): T
+  {
+    assert.ok(items.length > 0, "expected seeded random choice candidates");
+    return items[this.int(items.length)];
+  }
+}
+
+interface ReviewWorkflowHunk
+{
+  file: string;
+  hunkId: string;
+  ordinal: number;
+  header: string;
+  patchHash: string;
+  oldText: string;
+  newText: string;
+}
+
+interface ReviewWorkflowUndo
+{
+  kind: "stage" | "revert";
+  hunkId: string;
+}
+
+interface ReviewWorkflowCell
+{
+  x: number;
+  y: number;
+  r?: number;
+  g?: number;
+  b?: number;
+  off?: true;
+}
+
+interface ExpectedClientFrame
+{
+  type: string;
+  action?: string;
+  hunkId?: string;
+  patchHash?: string;
+  text?: string;
+  focused?: boolean;
+}
+
+function CellKey(cell: Pick<ReviewWorkflowCell, "x" | "y">): string
+{
+  return `${cell.x},${cell.y}`;
+}
+
+function ReviewWorkflowCellMap(cells: ReviewWorkflowCell[]): Map<string, ReviewWorkflowCell>
+{
+  const map = new Map<string, ReviewWorkflowCell>();
+  for (const cell of cells) {
+    map.set(CellKey(cell), cell);
+  }
+  return map;
+}
+
+class FakeReviewDictatorRpc
+{
+  public readonly cellPaints: ReviewWorkflowCell[][] = [];
+  public readonly insertTextCalls: string[] = [];
+
+  public setCells(cells: ReviewWorkflowCell[]): void
+  {
+    this.cellPaints.push(cells.map((cell) => ({ ...cell })));
+  }
+
+  public insertText(text: string): void
+  {
+    this.insertTextCalls.push(text);
+  }
+
+  public lastCellPaint(): ReviewWorkflowCell[]
+  {
+    assert.ok(this.cellPaints.length > 0, "expected fake launchpad.setCells calls");
+    return this.cellPaints[this.cellPaints.length - 1];
+  }
+}
+
+function SerializedReviewFromEntries(entries: Array<Record<string, any>>): string | null
+{
+  const serializable = entries.filter((entry) =>
+    entry.kind === "rejected" ||
+    (typeof entry.text === "string" && entry.text.trim().length > 0)
+  );
+  if (serializable.length === 0) {
+    return null;
+  }
+
+  return serializable.map((entry, index) => {
+    const hunk = entry.hunk as Record<string, string>;
+    const body = entry.kind === "rejected"
+      ? "Rejected this hunk. Do not reintroduce it in the next turn."
+      : String(entry.text).trim();
+    return [
+      `${index + 1}. ${hunk.sourceProvider} ${hunk.file} ${hunk.header} [${hunk.patchHash}]`,
+      body,
+      "",
+      "```diff",
+      String(hunk.patch).trimEnd(),
+      "```",
+    ].join("\n");
+  }).join("\n\n");
+}
+
+function RandomReviewSession(seed: number): ReviewWorkflowHunk[]
+{
+  const random = new SeededRandom(seed);
+  const files = [
+    { file: "alpha.ts", hunks: 3 },
+    { file: "beta.ts", hunks: 2 + random.int(2) },
+    { file: "gamma.ts", hunks: 2 + random.int(2) },
+  ];
+  const hunks: ReviewWorkflowHunk[] = [];
+
+  for (const file of files) {
+    for (let index = 0; index < file.hunks; index += 1) {
+      const line = 8 + (index * 11) + random.int(3);
+      const shortFile = file.file.replace(/\W+/g, "-");
+      hunks.push({
+        file: file.file,
+        hunkId: `${shortFile}-hunk-${index + 1}`,
+        ordinal: index,
+        header: `@@ -${line},1 +${line},1 @@`,
+        patchHash: `${shortFile}-hash-${index + 1}-${random.int(10000)}`,
+        oldText: `${file.file} old separated line ${index + 1}`,
+        newText: `${file.file} new separated line ${index + 1}`,
+      });
+    }
+  }
+
+  return hunks;
+}
+
+class FakeAgentReviewWorkflow
+{
+  public readonly seed: number;
+  public readonly hunks: ReviewWorkflowHunk[];
+  public readonly fileOrder: string[];
+  public readonly unstaged = new Set<string>();
+  public readonly staged = new Set<string>();
+  public readonly rejected = new Set<string>();
+  public readonly pastedRejected = new Set<string>();
+  public readonly comments = new Map<string, string>();
+  public readonly undoStack: ReviewWorkflowUndo[] = [];
+  public readonly dictator = new FakeReviewDictatorRpc();
+  public readonly serverFrames: Array<Record<string, any>> = [];
+  public visibleCommentHunkId: string | null = null;
+  public focused = true;
+  public currentHunkId: string | null;
+  public fileAnchor: string;
+  private x_socket: FakeWebSocket | null = null;
+  private x_nextSentIndex = 0;
+
+  public constructor(seed: number)
+  {
+    this.seed = seed;
+    this.hunks = RandomReviewSession(seed);
+    this.fileOrder = Array.from(new Set(this.hunks.map((hunk) => hunk.file)));
+    for (const hunk of this.hunks) {
+      this.unstaged.add(hunk.hunkId);
+    }
+    this.currentHunkId = this.hunks[0].hunkId;
+    this.fileAnchor = this.hunks[0].file;
+    this.x_UpdateCells();
+  }
+
+  public attach(socket: FakeWebSocket): void
+  {
+    this.x_socket = socket;
+  }
+
+  public sendBootstrap(): void
+  {
+    this.x_Receive({ type: "bootstrap", state: this.state() });
+  }
+
+  public receiveClientFrames(): Array<Record<string, any>>
+  {
+    assert.ok(this.x_socket, "expected fake review socket to be attached");
+    const processed: Array<Record<string, any>> = [];
+    while (this.x_nextSentIndex < this.x_socket.sent.length) {
+      const frame = JSON.parse(this.x_socket.sent[this.x_nextSentIndex]) as Record<string, any>;
+      this.x_nextSentIndex += 1;
+      processed.push(frame);
+      this.x_HandleClientFrame(frame);
+    }
+    return processed;
+  }
+
+  public hunk(hunkId: string): ReviewWorkflowHunk
+  {
+    const hunk = this.hunks.find((entry) => entry.hunkId === hunkId);
+    assert.ok(hunk, `seed ${this.seed}: expected hunk ${hunkId}`);
+    return hunk;
+  }
+
+  public currentHunk(): ReviewWorkflowHunk | null
+  {
+    return this.currentHunkId ? this.hunk(this.currentHunkId) : null;
+  }
+
+  public state(): Record<string, any>
+  {
+    const visibleHunks = this.x_VisibleHunks();
+    const files = this.fileOrder
+      .map((file) => ({
+        file,
+        hunkCount: visibleHunks.filter((hunk) => hunk.file === file).length,
+      }))
+      .filter((file) => file.hunkCount > 0);
+    const currentHunk = this.currentHunk();
+    const currentIndex = currentHunk
+      ? visibleHunks.findIndex((hunk) => hunk.hunkId === currentHunk.hunkId)
+      : -1;
+
+    return {
+      available: true,
+      repoRoot: "/repo",
+      sessionRoot: "/repo/projects/demo",
+      sessionRootRelativeToRepo: "projects/demo",
+      currentIndex,
+      currentHunk: currentHunk ? this.x_AgentHunk(currentHunk, visibleHunks, files) : null,
+      hunks: visibleHunks.map((hunk) => this.x_AgentHunk(hunk, visibleHunks, files)),
+      files,
+      inlineFiles: this.x_InlineFiles(),
+      actions: this.actions(),
+      reviewDraft: this.reviewDraft(),
+      dictatorBridge: { connected: true, url: "fake://dictator", lastError: null },
+    };
+  }
+
+  public actions(): Record<string, boolean>
+  {
+    const current = this.currentHunk();
+    const currentFile = current ? current.file : this.fileAnchor;
+    const sameFile = this.x_UnstagedInFile(currentFile);
+    return {
+      canGoUp: current !== null && sameFile.length > 1,
+      canGoDown: current !== null && sameFile.length > 1,
+      canGoPrevFile: this.x_FileWithUnstagedBefore(currentFile) !== null,
+      canGoNextFile: this.x_FileWithUnstagedAfter(currentFile) !== null,
+      canStage: current !== null,
+      canRevert: current !== null,
+      canUndo: this.undoStack.length > 0,
+    };
+  }
+
+  public reviewDraft(): Record<string, any>
+  {
+    const entries: Array<Record<string, any>> = [];
+    for (const hunk of this.hunks) {
+      const text = this.comments.get(hunk.hunkId);
+      if (text && text.trim().length > 0) {
+        entries.push({
+          kind: "comment",
+          hunk: this.x_AgentHunkSnapshot(hunk),
+          text,
+        });
+      }
+      if (this.rejected.has(hunk.hunkId)) {
+        entries.push({
+          kind: "rejected",
+          hunk: this.x_AgentHunkSnapshot(hunk),
+        });
+      }
+    }
+    return {
+      entries,
+      visibleCommentHunkId: this.visibleCommentHunkId,
+      hasSerializedContent: entries.length > 0,
+    };
+  }
+
+  public serializedReview(): string | null
+  {
+    return SerializedReviewFromEntries(this.reviewDraft().entries as Array<Record<string, any>>);
+  }
+
+  public expectedCells(): ReviewWorkflowCell[]
+  {
+    return this.x_ComputeCells();
+  }
+
+  public observedState(): Record<string, any>
+  {
+    const frame = this.serverFrames
+      .slice()
+      .reverse()
+      .find((entry) => entry && entry.state);
+    assert.ok(frame, `seed ${this.seed}: expected observed Agent Review state frame`);
+    return frame.state;
+  }
+
+  public pressCell(x: number, y: number): void
+  {
+    if (x === 3 && y === 3) {
+      if (!this.focused) {
+        const serialized = this.serializedReview();
+        if (this.currentHunkId === null && serialized !== null) {
+          this.dictator.insertText(serialized);
+          this.comments.clear();
+          for (const hunkId of this.rejected) {
+            this.pastedRejected.add(hunkId);
+          }
+          this.rejected.clear();
+          this.visibleCommentHunkId = null;
+          this.x_EmitState();
+        }
+        this.x_UpdateCells();
+        return;
+      }
+
+      if (this.currentHunkId !== null) {
+        this.visibleCommentHunkId = this.currentHunkId;
+        this.x_EmitState();
+        this.x_Receive({ type: "focus_comment", hunkId: this.currentHunkId });
+      }
+      this.x_UpdateCells();
+      return;
+    }
+
+    const actionByCell: Record<string, string> = {
+      "0,2": "revert",
+      "1,2": "previousHunk",
+      "2,2": "stage",
+      "3,2": "undo",
+      "0,3": "previousFile",
+      "1,3": "nextHunk",
+      "2,3": "nextFile",
+    };
+    const action = actionByCell[`${x},${y}`];
+    if (!this.focused || !action) {
+      this.x_UpdateCells();
+      return;
+    }
+    this.x_RunCommand(action, undefined, undefined, "fake-cell-press");
+    this.x_Receive({
+      type: "command_result",
+      result: { ok: true, action, commandId: "fake-cell-press" },
+      state: this.state(),
+    });
+  }
+
+  public assertTargetedNonFirstMutation(
+    mutatedHunkId: string,
+    firstHunkId: string,
+    step: string,
+  ): void
+  {
+    assert.ok(
+      this.staged.has(mutatedHunkId) || this.rejected.has(mutatedHunkId),
+      `seed ${this.seed} ${step}: expected selected non-first hunk ${mutatedHunkId} to be mutated`,
+    );
+    assert.ok(
+      this.unstaged.has(firstHunkId),
+      `seed ${this.seed} ${step}: first hunk ${firstHunkId} must remain unstaged`,
+    );
+    assert.equal(
+      this.staged.has(firstHunkId) || this.rejected.has(firstHunkId),
+      false,
+      `seed ${this.seed} ${step}: first hunk ${firstHunkId} must not be mutated`,
+    );
+  }
+
+  public assertModel(step: string): void
+  {
+    for (const hunk of this.hunks) {
+      const buckets = [
+        this.unstaged.has(hunk.hunkId),
+        this.staged.has(hunk.hunkId),
+        this.rejected.has(hunk.hunkId),
+        this.pastedRejected.has(hunk.hunkId),
+      ].filter(Boolean).length;
+      assert.equal(buckets, 1, `seed ${this.seed} ${step}: hunk ${hunk.hunkId} must be in exactly one bucket`);
+    }
+    assert.deepEqual(
+      this.dictator.lastCellPaint(),
+      this.expectedCells(),
+      `seed ${this.seed} ${step}: observed fake Launchpad colors must match the expected model`,
+    );
+  }
+
+  private x_HandleClientFrame(frame: Record<string, any>): void
+  {
+    if (frame.type === "presence") {
+      this.focused = frame.focused === true;
+      this.x_UpdateCells();
+      return;
+    }
+
+    if (frame.type === "command") {
+      const action = String(frame.action || "");
+      this.x_RunCommand(action, frame.hunkId, frame.patchHash, frame.id);
+      this.x_Receive({
+        type: "command_result",
+        result: { ok: true, action, commandId: frame.id },
+        state: this.state(),
+      });
+      return;
+    }
+
+    if (frame.type === "comment") {
+      const hunkId = String(frame.hunkId || "");
+      const text = String(frame.text || "");
+      if (text.trim().length > 0) {
+        this.comments.set(hunkId, text);
+      } else {
+        this.comments.delete(hunkId);
+      }
+      this.visibleCommentHunkId = hunkId;
+      this.x_EmitState();
+      return;
+    }
+
+    if (frame.type === "comment_focus") {
+      this.visibleCommentHunkId = String(frame.hunkId || "");
+      this.x_UpdateCells();
+      return;
+    }
+
+    if (frame.type === "comment_blur") {
+      this.x_UpdateCells();
+    }
+  }
+
+  private x_RunCommand(action: string, hunkId?: string, patchHash?: string, commandId?: string): void
+  {
+    const current = this.currentHunk();
+    if (action === "stage" || action === "revert") {
+      assert.ok(current, `seed ${this.seed}: expected current hunk for ${action}`);
+      assert.equal(hunkId, current.hunkId, `seed ${this.seed}: ${action} must target the selected hunk`);
+      assert.equal(patchHash, current.patchHash, `seed ${this.seed}: ${action} must include selected patch hash`);
+    }
+
+    if (action === "nextHunk") {
+      this.x_MoveHunk(1);
+    } else if (action === "previousHunk") {
+      this.x_MoveHunk(-1);
+    } else if (action === "nextFile") {
+      this.x_MoveFile(1);
+    } else if (action === "previousFile") {
+      this.x_MoveFile(-1);
+    } else if (action === "stage" && current) {
+      this.x_MutateCurrentHunk(current, "stage");
+    } else if (action === "revert" && current) {
+      this.x_MutateCurrentHunk(current, "revert");
+    } else if (action === "undo") {
+      this.x_Undo();
+    } else {
+      assert.fail(`seed ${this.seed}: unsupported review action ${action} (${commandId || "no id"})`);
+    }
+    this.x_UpdateCells();
+  }
+
+  private x_MoveHunk(direction: 1 | -1): void
+  {
+    const current = this.currentHunk();
+    if (!current) {
+      return;
+    }
+    const sameFile = this.x_UnstagedInFile(current.file);
+    const index = sameFile.findIndex((hunk) => hunk.hunkId === current.hunkId);
+    if (index < 0 || sameFile.length < 2) {
+      return;
+    }
+    const nextIndex = (index + direction + sameFile.length) % sameFile.length;
+    this.currentHunkId = sameFile[nextIndex].hunkId;
+    this.fileAnchor = sameFile[nextIndex].file;
+  }
+
+  private x_MoveFile(direction: 1 | -1): void
+  {
+    const target = direction > 0
+      ? this.x_FileWithUnstagedAfter(this.fileAnchor)
+      : this.x_FileWithUnstagedBefore(this.fileAnchor);
+    if (!target) {
+      return;
+    }
+    const hunks = this.x_UnstagedInFile(target);
+    this.currentHunkId = hunks[0]?.hunkId || null;
+    this.fileAnchor = target;
+  }
+
+  private x_MutateCurrentHunk(current: ReviewWorkflowHunk, kind: "stage" | "revert"): void
+  {
+    this.unstaged.delete(current.hunkId);
+    if (kind === "stage") {
+      this.staged.add(current.hunkId);
+    } else {
+      this.rejected.add(current.hunkId);
+      this.pastedRejected.delete(current.hunkId);
+    }
+    this.undoStack.push({ kind, hunkId: current.hunkId });
+    this.visibleCommentHunkId = null;
+    this.x_FocusAfterMutation(current);
+  }
+
+  private x_FocusAfterMutation(previous: ReviewWorkflowHunk): void
+  {
+    const remaining = this.x_UnstagedInFile(previous.file);
+    this.fileAnchor = previous.file;
+    if (remaining.length === 0) {
+      this.currentHunkId = null;
+      return;
+    }
+    const next = remaining.find((hunk) => hunk.ordinal > previous.ordinal) || remaining.at(-1);
+    this.currentHunkId = next ? next.hunkId : null;
+  }
+
+  private x_Undo(): void
+  {
+    const entry = this.undoStack.pop();
+    if (!entry) {
+      return;
+    }
+    if (entry.kind === "stage") {
+      this.staged.delete(entry.hunkId);
+    } else {
+      this.rejected.delete(entry.hunkId);
+      this.pastedRejected.delete(entry.hunkId);
+    }
+    this.unstaged.add(entry.hunkId);
+    const hunk = this.hunk(entry.hunkId);
+    this.currentHunkId = entry.hunkId;
+    this.fileAnchor = hunk.file;
+    this.visibleCommentHunkId = null;
+  }
+
+  private x_EmitState(): void
+  {
+    this.x_UpdateCells();
+    this.x_Receive({ type: "state", state: this.state() });
+  }
+
+  private x_Receive(envelope: unknown): void
+  {
+    assert.ok(this.x_socket, "expected fake review socket to be attached");
+    this.serverFrames.push(envelope as Record<string, any>);
+    this.x_socket.receive(envelope);
+  }
+
+  private x_UpdateCells(): void
+  {
+    this.dictator.setCells(this.x_ComputeCells());
+  }
+
+  private x_ComputeCells(): ReviewWorkflowCell[]
+  {
+    const actions = this.actions();
+    const off = (x: number, y: number): ReviewWorkflowCell => ({ x, y, off: true });
+    const navCells: Array<ReviewWorkflowCell & { availability: string }> = [
+      { x: 0, y: 2, availability: "canRevert", r: 255, g: 0, b: 0 },
+      { x: 1, y: 2, availability: "canGoUp", r: 255, g: 255, b: 0 },
+      { x: 2, y: 2, availability: "canStage", r: 0, g: 255, b: 0 },
+      { x: 3, y: 2, availability: "canUndo", r: 255, g: 255, b: 255 },
+      { x: 0, y: 3, availability: "canGoPrevFile", r: 255, g: 255, b: 0 },
+      { x: 1, y: 3, availability: "canGoDown", r: 255, g: 255, b: 0 },
+      { x: 2, y: 3, availability: "canGoNextFile", r: 255, g: 255, b: 0 },
+    ];
+    const cells = navCells.map((cell) =>
+      this.focused && actions[cell.availability]
+        ? { x: cell.x, y: cell.y, r: cell.r, g: cell.g, b: cell.b }
+        : off(cell.x, cell.y),
+    );
+    const reviewColor = !this.focused
+      ? (this.currentHunkId === null && this.serializedReview() !== null
+        ? { r: 0, g: 255, b: 0 }
+        : { off: true as const })
+      : (this.serializedReview() !== null
+        ? { r: 0, g: 0, b: 255 }
+        : { r: 90, g: 90, b: 90 });
+    cells.push({ x: 3, y: 3, ...reviewColor });
+    return cells;
+  }
+
+  private x_VisibleHunks(): ReviewWorkflowHunk[]
+  {
+    return this.hunks.filter((hunk) => this.unstaged.has(hunk.hunkId));
+  }
+
+  private x_UnstagedInFile(file: string): ReviewWorkflowHunk[]
+  {
+    return this.hunks.filter((hunk) => hunk.file === file && this.unstaged.has(hunk.hunkId));
+  }
+
+  private x_FileWithUnstagedAfter(file: string): string | null
+  {
+    const start = this.fileOrder.indexOf(file);
+    for (let index = Math.max(0, start + 1); index < this.fileOrder.length; index += 1) {
+      if (this.x_UnstagedInFile(this.fileOrder[index]).length > 0) {
+        return this.fileOrder[index];
+      }
+    }
+    return null;
+  }
+
+  private x_FileWithUnstagedBefore(file: string): string | null
+  {
+    const start = this.fileOrder.indexOf(file);
+    for (let index = start - 1; index >= 0; index -= 1) {
+      if (this.x_UnstagedInFile(this.fileOrder[index]).length > 0) {
+        return this.fileOrder[index];
+      }
+    }
+    return null;
+  }
+
+  private x_AgentHunk(
+    hunk: ReviewWorkflowHunk,
+    visibleHunks: ReviewWorkflowHunk[],
+    files: Array<{ file: string; hunkCount: number }>,
+  ): Record<string, any>
+  {
+    const fileIndex = files.findIndex((file) => file.file === hunk.file);
+    return {
+      ...this.x_AgentHunkSnapshot(hunk),
+      hunkIndex: visibleHunks.findIndex((entry) => entry.hunkId === hunk.hunkId),
+      hunkCount: visibleHunks.length,
+      fileIndex,
+      fileCount: files.length,
+    };
+  }
+
+  private x_AgentHunkSnapshot(hunk: ReviewWorkflowHunk): Record<string, any>
+  {
+    return {
+      sourceProvider: "sheaf-chat",
+      repoRoot: "/repo",
+      sessionRoot: "/repo/projects/demo",
+      file: hunk.file,
+      hunkId: hunk.hunkId,
+      hunkIndex: hunk.ordinal,
+      hunkCount: this.hunks.length,
+      fileIndex: this.fileOrder.indexOf(hunk.file),
+      fileCount: this.fileOrder.length,
+      header: hunk.header,
+      patchHash: hunk.patchHash,
+      patch: [
+        `diff --git a/${hunk.file} b/${hunk.file}`,
+        hunk.header,
+        `-${hunk.oldText}`,
+        `+${hunk.newText}`,
+        "",
+      ].join("\n"),
+    };
+  }
+
+  private x_InlineFiles(): Array<Record<string, any>>
+  {
+    return this.fileOrder.map((file) => {
+      const rows: Array<Record<string, any>> = [];
+      let lineNumber = 1;
+      for (const hunk of this.hunks.filter((entry) => entry.file === file)) {
+        rows.push({
+          id: `${hunk.hunkId}-context-before-a`,
+          kind: "context",
+          text: `${file} context ${hunk.ordinal + 1}.a`,
+          newLineNumber: lineNumber,
+        });
+        lineNumber += 1;
+        rows.push({
+          id: `${hunk.hunkId}-context-before-b`,
+          kind: "context",
+          text: `${file} context ${hunk.ordinal + 1}.b`,
+          newLineNumber: lineNumber,
+        });
+        lineNumber += 1;
+        if (this.unstaged.has(hunk.hunkId)) {
+          rows.push({
+            id: `${hunk.hunkId}-old`,
+            kind: "deletion",
+            text: hunk.oldText,
+            hunkId: hunk.hunkId,
+            oldLineNumber: lineNumber,
+          });
+          rows.push({
+            id: `${hunk.hunkId}-new`,
+            kind: "addition",
+            text: hunk.newText,
+            hunkId: hunk.hunkId,
+            newLineNumber: lineNumber,
+          });
+        }
+        lineNumber += 1;
+      }
+      return { file, rows };
+    });
+  }
+}
+
+async function FlushReviewWorkflow(harness: ChatHarness): Promise<void>
+{
+  await FlushPromises();
+  harness.runTimers();
+  harness.flushAnimationFrames();
+  await FlushPromises();
+}
+
+function ReviewCommandButton(root: FakeElement, label: string): FakeElement
+{
+  const button = root
+    .querySelectorAll(".sheaf-chat-agent-review-command")
+    .find((entry) => entry.textContent === label);
+  assert.ok(button, "expected Agent Review command button " + label);
+  return button;
+}
+
+function ClickReviewCommand(root: FakeElement, label: string, seed: number, step: string): void
+{
+  const button = ReviewCommandButton(root, label);
+  assert.equal(button.disabled, false, `seed ${seed} ${step}: ${label} button should be enabled before click`);
+  button.click();
+}
+
+function ClientFramesSince(socket: FakeWebSocket, startIndex: number): Array<Record<string, any>>
+{
+  return socket.sent
+    .slice(startIndex)
+    .map((raw) => JSON.parse(raw) as Record<string, any>);
+}
+
+function ExpectedCommandFrame(workflow: FakeAgentReviewWorkflow, action: string): ExpectedClientFrame
+{
+  const current = workflow.currentHunk();
+  return {
+    type: "command",
+    action,
+    hunkId: current?.hunkId,
+    patchHash: current?.patchHash,
+  };
+}
+
+function AssertClientFrames(
+  actual: Array<Record<string, any>>,
+  expected: ExpectedClientFrame[],
+  seed: number,
+  step: string,
+): void
+{
+  assert.equal(
+    actual.length,
+    expected.length,
+    `seed ${seed} ${step}: expected ${expected.length} new WebSocket frame(s), got ${actual.length}`,
+  );
+
+  for (let index = 0; index < expected.length; index += 1) {
+    const actualFrame = actual[index];
+    const expectedFrame = expected[index];
+    assert.equal(actualFrame.type, expectedFrame.type, `seed ${seed} ${step}: frame ${index} type`);
+
+    if (expectedFrame.type === "command") {
+      assert.equal(actualFrame.action, expectedFrame.action, `seed ${seed} ${step}: command action`);
+      assert.equal(actualFrame.hunkId, expectedFrame.hunkId, `seed ${seed} ${step}: command hunkId`);
+      assert.equal(actualFrame.patchHash, expectedFrame.patchHash, `seed ${seed} ${step}: command patchHash`);
+      assert.equal(typeof actualFrame.id, "string", `seed ${seed} ${step}: command id should be generated`);
+    } else if (expectedFrame.type === "comment") {
+      assert.equal(actualFrame.hunkId, expectedFrame.hunkId, `seed ${seed} ${step}: comment hunkId`);
+      assert.equal(actualFrame.text, expectedFrame.text, `seed ${seed} ${step}: comment text`);
+    } else if (expectedFrame.type === "comment_focus") {
+      assert.equal(actualFrame.hunkId, expectedFrame.hunkId, `seed ${seed} ${step}: comment focus hunkId`);
+    } else if (expectedFrame.type === "presence") {
+      assert.equal(actualFrame.focused, expectedFrame.focused, `seed ${seed} ${step}: presence focus`);
+    } else {
+      assert.fail(`seed ${seed} ${step}: unsupported expected frame type ${expectedFrame.type}`);
+    }
+  }
+}
+
+async function CompleteObservedStep(
+  harness: ChatHarness,
+  workflow: FakeAgentReviewWorkflow,
+  socket: FakeWebSocket,
+  beforeSent: number,
+  expectedFrames: ExpectedClientFrame[],
+  step: string,
+): Promise<void>
+{
+  const sentFrames = ClientFramesSince(socket, beforeSent);
+  AssertClientFrames(sentFrames, expectedFrames, workflow.seed, step);
+  const processedFrames = workflow.receiveClientFrames();
+  assert.deepEqual(
+    processedFrames,
+    sentFrames,
+    `seed ${workflow.seed} ${step}: fake service should process the observed client frames`,
+  );
+  await FlushReviewWorkflow(harness);
+  AssertReviewWorkflowUi(harness, workflow, step);
+}
+
+async function ClickReviewCommandStep(
+  harness: ChatHarness,
+  workflow: FakeAgentReviewWorkflow,
+  socket: FakeWebSocket,
+  label: string,
+  action: string,
+  step: string,
+): Promise<void>
+{
+  const beforeSent = socket.sent.length;
+  const expected = ExpectedCommandFrame(workflow, action);
+  ClickReviewCommand(harness.app, label, workflow.seed, step);
+  await CompleteObservedStep(harness, workflow, socket, beforeSent, [expected], step);
+}
+
+async function SetReviewPresenceStep(
+  harness: ChatHarness,
+  workflow: FakeAgentReviewWorkflow,
+  socket: FakeWebSocket,
+  hidden: boolean,
+  step: string,
+): Promise<void>
+{
+  const beforeSent = socket.sent.length;
+  (harness.document as any).hidden = hidden;
+  harness.document.dispatchEvent({ type: "visibilitychange" });
+  await CompleteObservedStep(
+    harness,
+    workflow,
+    socket,
+    beforeSent,
+    [{ type: "presence", focused: !hidden }],
+    step,
+  );
+}
+
+function AgentReviewStateFetch(workflow: FakeAgentReviewWorkflow) {
+  return async (requestPath: string): Promise<FakeFetchResponse> => {
+    if (requestPath.endsWith("/agent-review")) {
+      return JsonResponse(workflow.state());
+    }
+    if (requestPath.includes("/files?path=")) {
+      return JsonResponse({
+        directory: { name: ".", path: ".", kind: "directory" },
+        entries: workflow.fileOrder.map((file) => ({
+          name: file,
+          path: file,
+          kind: "file",
+          supported: true,
+          contentType: "text/plain",
+        })),
+      });
+    }
+    if (requestPath.includes("/file?path=")) {
+      const filePath = decodeURIComponent(requestPath.split("/file?path=")[1] || "");
+      const content = workflow.hunks
+        .filter((hunk) => hunk.file === filePath)
+        .map((hunk) => hunk.newText)
+        .join("\n") + "\n";
+      return JsonResponse({
+        file: {
+          name: filePath,
+          path: filePath,
+          kind: "file",
+          supported: true,
+          contentType: "text/plain",
+          content,
+          size: content.length,
+          modifiedAt: "2026-06-08T00:00:00.000Z",
+        },
+      });
+    }
+    return JsonResponse({});
+  };
+}
+
+function AssertReviewWorkflowUi(
+  harness: ChatHarness,
+  workflow: FakeAgentReviewWorkflow,
+  step: string,
+): void
+{
+  const state = workflow.observedState();
+  const current = state.currentHunk as Record<string, any> | null;
+  const seedPrefix = `seed ${workflow.seed} ${step}`;
+  const focusedRows = harness.app.querySelectorAll(".sheaf-chat-agent-review-inline-row--focused");
+
+  if (current) {
+    assert.ok(
+      focusedRows.length >= 2,
+      `${seedPrefix}: expected focused inline rows for ${current.hunkId}`,
+    );
+    assert.ok(
+      focusedRows.every((row) => row.getAttribute("data-hunk-id") === current.hunkId),
+      `${seedPrefix}: focused rows should belong to ${current.hunkId}`,
+    );
+    const counts = RequiredElement(harness.app, ".sheaf-chat-agent-review-counts");
+    assert.match(counts.textContent, /in file/, `${seedPrefix}: expected hunk/file counts`);
+  } else {
+    assert.equal(focusedRows.length, 0, `${seedPrefix}: expected no focused rows without current hunk`);
+    assert.match(
+      RequiredElement(harness.app, ".sheaf-chat-agent-review-status").textContent,
+      /No unstaged hunks/,
+      `${seedPrefix}: expected no-current-hunk status`,
+    );
+  }
+
+  const buttonExpectations: Array<[string, string]> = [
+    ["Prev File", "canGoPrevFile"],
+    ["Prev", "canGoUp"],
+    ["Next", "canGoDown"],
+    ["Next File", "canGoNextFile"],
+    ["Stage", "canStage"],
+    ["Revert", "canRevert"],
+    ["Undo", "canUndo"],
+  ];
+  for (const [label, key] of buttonExpectations) {
+    assert.equal(
+      ReviewCommandButton(harness.app, label).disabled,
+      state.actions[key] !== true,
+      `${seedPrefix}: ${label} availability should match model`,
+    );
+  }
+
+  const textarea = harness.app.querySelector(".sheaf-chat-agent-review-comment-textarea") as FakeElement | null;
+  const expectedComment = current ? workflow.comments.get(String(current.hunkId)) || "" : "";
+  const shouldShowComment =
+    current !== null &&
+    (expectedComment.trim().length > 0 || workflow.visibleCommentHunkId === current.hunkId);
+  if (shouldShowComment) {
+    assert.ok(textarea, `${seedPrefix}: expected focused comment textarea`);
+    assert.equal(textarea.value, expectedComment, `${seedPrefix}: rendered comment text should match model`);
+  } else {
+    assert.equal(textarea, null, `${seedPrefix}: expected no focused comment textarea`);
+  }
+
+  const cellMap = ReviewWorkflowCellMap(workflow.dictator.lastCellPaint());
+  const expectedCells = ReviewWorkflowCellMap(workflow.expectedCells());
+  for (const [key, expected] of expectedCells) {
+    assert.deepEqual(cellMap.get(key), expected, `${seedPrefix}: fake Launchpad cell ${key}`);
+  }
+
+  const expectedDraft = workflow.reviewDraft();
+  assert.deepEqual(
+    state.reviewDraft.entries,
+    expectedDraft.entries,
+    `${seedPrefix}: review draft entries should match the expected model`,
+  );
+  assert.equal(
+    state.reviewDraft.visibleCommentHunkId,
+    expectedDraft.visibleCommentHunkId,
+    `${seedPrefix}: visible comment hunk should match the expected model`,
+  );
+  const observedSerialized = SerializedReviewFromEntries(state.reviewDraft.entries);
+  assert.equal(
+    state.reviewDraft.hasSerializedContent,
+    observedSerialized !== null,
+    `${seedPrefix}: serialized draft availability should match model`,
+  );
+  assert.equal(
+    observedSerialized,
+    workflow.serializedReview(),
+    `${seedPrefix}: serialized review text should match the expected draft entries`,
+  );
+  workflow.assertModel(step);
+}
+
+test("Agent Review Mode randomized Agent Review workflow seed 0x5eed2026", async () =>
+{
+  const seed = 0x5eed2026;
+  const random = new SeededRandom(seed);
+  const workflow = new FakeAgentReviewWorkflow(seed);
+  const alphaFirst = "alpha-ts-hunk-1";
+  const alphaSecond = "alpha-ts-hunk-2";
+  const harness = LoadChatHarness({ fetch: AgentReviewStateFetch(workflow) });
+  await FlushPromises();
+
+  RequiredElement(harness.app, ".sheaf-chat-agent-review-toggle").click();
+  const reviewSocket = harness.sockets.find((socket) => socket.url.includes("/ws/agent-review"));
+  assert.ok(reviewSocket, `seed ${seed}: expected Agent Review WebSocket`);
+  workflow.attach(reviewSocket);
+  reviewSocket.open();
+  const openFrames = workflow.receiveClientFrames();
+  AssertClientFrames(openFrames, [{ type: "presence", focused: true }], seed, "socket open presence");
+  workflow.sendBootstrap();
+  await FlushReviewWorkflow(harness);
+  AssertReviewWorkflowUi(harness, workflow, "bootstrap");
+
+  await ClickReviewCommandStep(harness, workflow, reviewSocket, "Next", "nextHunk", "skip first hunk");
+  assert.equal(workflow.currentHunkId, alphaSecond, `seed ${seed}: expected navigation to non-first alpha hunk`);
+  assert.ok(workflow.unstaged.has(alphaFirst), `seed ${seed}: skipped first alpha hunk should remain unstaged`);
+  AssertReviewWorkflowUi(harness, workflow, "after skipping first hunk");
+
+  await ClickReviewCommandStep(harness, workflow, reviewSocket, "Stage", "stage", "stage non-first hunk");
+  workflow.assertTargetedNonFirstMutation(alphaSecond, alphaFirst, "after staging non-first hunk");
+  AssertReviewWorkflowUi(harness, workflow, "after staging non-first hunk");
+
+  await ClickReviewCommandStep(harness, workflow, reviewSocket, "Undo", "undo", "undo non-first stage");
+  assert.ok(workflow.unstaged.has(alphaSecond), `seed ${seed}: undo-stage should restore selected non-first hunk`);
+  assert.equal(workflow.staged.has(alphaSecond), false, `seed ${seed}: undo-stage should unstage selected hunk`);
+  AssertReviewWorkflowUi(harness, workflow, "after undoing non-first stage");
+
+  await ClickReviewCommandStep(harness, workflow, reviewSocket, "Revert", "revert", "revert non-first hunk");
+  workflow.assertTargetedNonFirstMutation(alphaSecond, alphaFirst, "after reverting non-first hunk");
+  AssertReviewWorkflowUi(harness, workflow, "after reverting non-first hunk");
+
+  await ClickReviewCommandStep(harness, workflow, reviewSocket, "Undo", "undo", "undo non-first revert");
+  assert.ok(workflow.unstaged.has(alphaSecond), `seed ${seed}: undo-revert should restore selected non-first hunk`);
+  assert.equal(workflow.rejected.has(alphaSecond), false, `seed ${seed}: undo-revert should clear selected rejected marker`);
+  AssertReviewWorkflowUi(harness, workflow, "after undoing non-first revert");
+
+  const initialCommentText = `seed ${seed} deterministic comment add`;
+  let beforeSent = reviewSocket.sent.length;
+  workflow.pressCell(3, 3);
+  await FlushReviewWorkflow(harness);
+  let commentBox = RequiredElement(
+    harness.app,
+    ".sheaf-chat-agent-review-comment-textarea",
+  ) as FakeElement;
+  commentBox.value = initialCommentText;
+  commentBox.dispatchEvent({ type: "input" });
+  await CompleteObservedStep(
+    harness,
+    workflow,
+    reviewSocket,
+    beforeSent,
+    [
+      { type: "comment_focus", hunkId: alphaSecond },
+      { type: "comment", hunkId: alphaSecond, text: initialCommentText },
+    ],
+    "after deterministic comment add",
+  );
+  assert.equal(
+    workflow.comments.get(alphaSecond),
+    initialCommentText,
+    `seed ${seed}: expected initial deterministic comment to be stored`,
+  );
+
+  const editedCommentText = `seed ${seed} deterministic comment edit`;
+  beforeSent = reviewSocket.sent.length;
+  commentBox = RequiredElement(
+    harness.app,
+    ".sheaf-chat-agent-review-comment-textarea",
+  ) as FakeElement;
+  commentBox.value = editedCommentText;
+  commentBox.dispatchEvent({ type: "input" });
+  await CompleteObservedStep(
+    harness,
+    workflow,
+    reviewSocket,
+    beforeSent,
+    [{ type: "comment", hunkId: alphaSecond, text: editedCommentText }],
+    "after deterministic comment edit",
+  );
+  assert.equal(
+    workflow.comments.get(alphaSecond),
+    editedCommentText,
+    `seed ${seed}: expected deterministic comment edit to overwrite the earlier text`,
+  );
+  assert.equal(
+    workflow.reviewDraft().entries.filter((entry: Record<string, any>) =>
+      entry.kind === "comment" &&
+      entry.hunk.hunkId === alphaSecond &&
+      entry.text === editedCommentText
+    ).length,
+    1,
+    `seed ${seed}: expected exactly one edited comment draft entry for ${alphaSecond}`,
+  );
+
+  assert.equal(workflow.actions().canGoNextFile, true, `seed ${seed}: expected next-file to be available`);
+  await ClickReviewCommandStep(harness, workflow, reviewSocket, "Next File", "nextFile", "guaranteed next-file jump");
+  AssertReviewWorkflowUi(harness, workflow, "after guaranteed next-file jump");
+
+  if (workflow.actions().canGoPrevFile) {
+    await ClickReviewCommandStep(
+      harness,
+      workflow,
+      reviewSocket,
+      "Prev File",
+      "previousFile",
+      "guaranteed previous-file jump",
+    );
+    AssertReviewWorkflowUi(harness, workflow, "after guaranteed previous-file jump");
+  }
+
+  const runRandomStep = async (index: number): Promise<void> => {
+    const actions = workflow.actions();
+    const candidates: Array<() => Promise<{
+      label: string;
+      beforeSent: number;
+      expectedFrames: ExpectedClientFrame[];
+    }>> = [];
+
+    if (actions.canGoDown) {
+      candidates.push(async () => {
+        const beforeSent = reviewSocket.sent.length;
+        const expected = ExpectedCommandFrame(workflow, "nextHunk");
+        ClickReviewCommand(harness.app, "Next", seed, `random ${index} next hunk`);
+        return { label: "next hunk", beforeSent, expectedFrames: [expected] };
+      });
+    }
+    if (actions.canGoUp) {
+      candidates.push(async () => {
+        const beforeSent = reviewSocket.sent.length;
+        const expected = ExpectedCommandFrame(workflow, "previousHunk");
+        ClickReviewCommand(harness.app, "Prev", seed, `random ${index} previous hunk`);
+        return { label: "previous hunk", beforeSent, expectedFrames: [expected] };
+      });
+    }
+    if (actions.canGoNextFile) {
+      candidates.push(async () => {
+        const beforeSent = reviewSocket.sent.length;
+        const expected = ExpectedCommandFrame(workflow, "nextFile");
+        ClickReviewCommand(harness.app, "Next File", seed, `random ${index} next file`);
+        return { label: "next file", beforeSent, expectedFrames: [expected] };
+      });
+    }
+    if (actions.canGoPrevFile) {
+      candidates.push(async () => {
+        const beforeSent = reviewSocket.sent.length;
+        const expected = ExpectedCommandFrame(workflow, "previousFile");
+        ClickReviewCommand(harness.app, "Prev File", seed, `random ${index} previous file`);
+        return { label: "previous file", beforeSent, expectedFrames: [expected] };
+      });
+    }
+    if (actions.canStage) {
+      candidates.push(async () => {
+        const beforeSent = reviewSocket.sent.length;
+        const expected = ExpectedCommandFrame(workflow, "stage");
+        ClickReviewCommand(harness.app, "Stage", seed, `random ${index} stage`);
+        return { label: "stage", beforeSent, expectedFrames: [expected] };
+      });
+    }
+    if (actions.canRevert) {
+      candidates.push(async () => {
+        const beforeSent = reviewSocket.sent.length;
+        const expected = ExpectedCommandFrame(workflow, "revert");
+        ClickReviewCommand(harness.app, "Revert", seed, `random ${index} revert`);
+        return { label: "revert", beforeSent, expectedFrames: [expected] };
+      });
+    }
+    if (actions.canUndo) {
+      candidates.push(async () => {
+        const beforeSent = reviewSocket.sent.length;
+        const expected = ExpectedCommandFrame(workflow, "undo");
+        ClickReviewCommand(harness.app, "Undo", seed, `random ${index} undo`);
+        return { label: "undo", beforeSent, expectedFrames: [expected] };
+      });
+    }
+    if (workflow.currentHunkId !== null && workflow.focused) {
+      candidates.push(async () => {
+        const beforeSent = reviewSocket.sent.length;
+        const hunkId = workflow.currentHunkId!;
+        workflow.pressCell(3, 3);
+        await FlushReviewWorkflow(harness);
+        const textarea = RequiredElement(
+          harness.app,
+          ".sheaf-chat-agent-review-comment-textarea",
+        ) as FakeElement;
+        const text = `seed ${seed} randomized comment ${index}.${random.int(100)}`;
+        textarea.value = text;
+        textarea.dispatchEvent({ type: "input" });
+        return {
+          label: "comment",
+          beforeSent,
+          expectedFrames: [
+            { type: "comment_focus", hunkId },
+            { type: "comment", hunkId, text },
+          ],
+        };
+      });
+      candidates.push(async () => {
+        const beforeSent = reviewSocket.sent.length;
+        (harness.document as any).hidden = true;
+        harness.document.dispatchEvent({ type: "visibilitychange" });
+        return {
+          label: "presence hidden",
+          beforeSent,
+          expectedFrames: [{ type: "presence", focused: false }],
+        };
+      });
+    }
+    if (workflow.focused === false) {
+      candidates.push(async () => {
+        const beforeSent = reviewSocket.sent.length;
+        (harness.document as any).hidden = false;
+        harness.document.dispatchEvent({ type: "visibilitychange" });
+        return {
+          label: "presence visible",
+          beforeSent,
+          expectedFrames: [{ type: "presence", focused: true }],
+        };
+      });
+    }
+
+    const observation = await random.pick(candidates)();
+    await CompleteObservedStep(
+      harness,
+      workflow,
+      reviewSocket,
+      observation.beforeSent,
+      observation.expectedFrames,
+      `random step ${index}: ${observation.label}`,
+    );
+  };
+
+  for (let index = 0; index < 18; index += 1) {
+    await runRandomStep(index);
+  }
+
+  if (workflow.focused === false) {
+    await SetReviewPresenceStep(
+      harness,
+      workflow,
+      reviewSocket,
+      false,
+      "refocused before arming paste",
+    );
+    AssertReviewWorkflowUi(harness, workflow, "refocused before arming paste");
+  }
+
+  if (workflow.serializedReview() === null && workflow.currentHunkId !== null) {
+    const beforeSent = reviewSocket.sent.length;
+    const hunkId = workflow.currentHunkId;
+    workflow.pressCell(3, 3);
+    await FlushReviewWorkflow(harness);
+    const textarea = RequiredElement(
+      harness.app,
+      ".sheaf-chat-agent-review-comment-textarea",
+    ) as FakeElement;
+    const text = `seed ${seed} final armed review`;
+    textarea.value = text;
+    textarea.dispatchEvent({ type: "input" });
+    await CompleteObservedStep(
+      harness,
+      workflow,
+      reviewSocket,
+      beforeSent,
+      [
+        { type: "comment_focus", hunkId },
+        { type: "comment", hunkId, text },
+      ],
+      "after final comment arms review",
+    );
+  }
+
+  if (workflow.currentHunkId === null && workflow.actions().canGoNextFile) {
+    await ClickReviewCommandStep(
+      harness,
+      workflow,
+      reviewSocket,
+      "Next File",
+      "nextFile",
+      "select file before completion check",
+    );
+    AssertReviewWorkflowUi(harness, workflow, "after selecting file before completion check");
+  }
+
+  assert.ok(workflow.currentHunkId, `seed ${seed}: expected a current hunk before completion check`);
+  const completedFile = workflow.currentHunk()!.file;
+  while (workflow.currentHunk() && workflow.currentHunk()!.file === completedFile) {
+    const action = random.next() < 0.5 ? "Stage" : "Revert";
+    await ClickReviewCommandStep(
+      harness,
+      workflow,
+      reviewSocket,
+      action,
+      action.toLowerCase(),
+      `complete file with ${action}`,
+    );
+    AssertReviewWorkflowUi(harness, workflow, `after completing file hunk with ${action}`);
+  }
+
+  assert.equal(
+    workflow.currentHunkId,
+    null,
+    `seed ${seed}: completing all hunks in ${completedFile} must leave no current hunk`,
+  );
+  assert.ok(
+    workflow.actions().canGoNextFile || workflow.actions().canGoPrevFile,
+    `seed ${seed}: another file should remain available only through explicit file navigation`,
+  );
+  AssertReviewWorkflowUi(harness, workflow, "after completing file without auto-advance");
+
+  await SetReviewPresenceStep(harness, workflow, reviewSocket, true, "after unfocused armed state");
+  const awayCells = ReviewWorkflowCellMap(workflow.dictator.lastCellPaint());
+  assert.deepEqual(
+    awayCells.get("3,3"),
+    { x: 3, y: 3, r: 0, g: 255, b: 0 },
+    `seed ${seed}: armed review cell should stay green while unfocused`,
+  );
+  AssertReviewWorkflowUi(harness, workflow, "after unfocused armed state");
+
+  const serializedBeforePaste = workflow.serializedReview();
+  assert.ok(serializedBeforePaste, `seed ${seed}: expected serialized review before paste`);
+  const insertCountBeforePaste = workflow.dictator.insertTextCalls.length;
+  const beforePasteSent = reviewSocket.sent.length;
+  workflow.pressCell(3, 3);
+  AssertClientFrames(
+    ClientFramesSince(reviewSocket, beforePasteSent),
+    [],
+    seed,
+    "after pressing (3,3) paste",
+  );
+  await FlushReviewWorkflow(harness);
+  assert.equal(
+    workflow.dictator.insertTextCalls.length,
+    insertCountBeforePaste + 1,
+    `seed ${seed}: pressing (3,3) should call fake cursor.insertText once`,
+  );
+  assert.equal(
+    workflow.dictator.insertTextCalls.at(-1),
+    serializedBeforePaste,
+    `seed ${seed}: fake cursor.insertText should receive the armed review`,
+  );
+  assert.equal(workflow.serializedReview(), null, `seed ${seed}: successful paste should clear the review draft`);
+  AssertReviewWorkflowUi(harness, workflow, "after pressing (3,3) paste");
+
+  await SetReviewPresenceStep(harness, workflow, reviewSocket, false, "after final refocus");
+  AssertReviewWorkflowUi(harness, workflow, "after final refocus");
+});
 
 test("repository picker renders backend repositories and navigates by repo id", async () =>
 {
@@ -1444,7 +2876,7 @@ test("Agent Review Mode shows unstaged-hunk counts and updates with state", asyn
   assert.equal(FakeElement.scrolledIntoView.at(-1)?.getAttribute("data-hunk-id"), "beta.ts-2");
 });
 
-test("Agent Review Mode reveals focused hunks with up to three leading rows", async () =>
+test("Agent Review Mode scrolls inline hunks with up to three leading rows", async () =>
 {
   const hunk = {
     sourceProvider: "sheaf-chat",
@@ -1572,6 +3004,132 @@ test("Agent Review Mode reveals focused hunks with up to three leading rows", as
   harness.flushAnimationFrames();
 
   assert.equal(FakeElement.scrolledIntoView.at(-1)?.getAttribute("data-review-row-id"), "start-row-1");
+});
+
+test("Agent Review Mode keeps already visible inline hunk rows in place", async () =>
+{
+  const hunk = {
+    sourceProvider: "sheaf-chat",
+    repoRoot: "/repo",
+    sessionRoot: "/repo/projects/demo",
+    file: "app.ts",
+    hunkId: "hunk-visible",
+    hunkIndex: 0,
+    hunkCount: 1,
+    fileIndex: 0,
+    fileCount: 1,
+    header: "@@ -5 +5 @@",
+    patchHash: "hash-visible",
+    patch: "diff --git a/app.ts b/app.ts\n@@ -5 +5 @@\n-old\n+new\n",
+  };
+  const reviewState: any = {
+    available: true,
+    repoRoot: "/repo",
+    sessionRoot: "/repo/projects/demo",
+    sessionRootRelativeToRepo: "projects/demo",
+    currentIndex: 0,
+    currentHunk: hunk,
+    hunks: [hunk],
+    files: [{ file: "app.ts", hunkCount: 1 }],
+    inlineFiles: [
+      {
+        file: "app.ts",
+        rows: [
+          { id: "visible-row-1", kind: "context", text: "one", newLineNumber: 1 },
+          { id: "visible-row-2", kind: "context", text: "two", newLineNumber: 2 },
+          { id: "visible-row-3", kind: "context", text: "three", newLineNumber: 3 },
+          { id: "visible-row-4", kind: "context", text: "four", newLineNumber: 4 },
+          { id: "visible-row-5-old", kind: "deletion", text: "old", hunkId: "hunk-visible", oldLineNumber: 5 },
+          { id: "visible-row-5-new", kind: "addition", text: "new", hunkId: "hunk-visible", newLineNumber: 5 },
+        ],
+      },
+    ],
+    actions: {
+      canGoUp: false,
+      canGoDown: false,
+      canGoPrevFile: false,
+      canGoNextFile: false,
+      canStage: true,
+      canRevert: true,
+      canUndo: false,
+    },
+    reviewDraft: { entries: [], visibleCommentHunkId: null, hasSerializedContent: false },
+    dictatorBridge: { connected: false, url: null, lastError: null },
+  };
+
+  const harness = LoadChatHarness({
+    fetch: async (requestPath) => {
+      if (requestPath.endsWith("/agent-review")) {
+        return JsonResponse(reviewState);
+      }
+      if (requestPath.includes("/files?path=")) {
+        return JsonResponse({
+          directory: { name: ".", path: ".", kind: "directory" },
+          entries: [],
+        });
+      }
+      if (requestPath.includes("/file?path=")) {
+        return JsonResponse({
+          file: {
+            name: "app.ts",
+            path: "app.ts",
+            kind: "file",
+            supported: true,
+            contentType: "text/plain",
+            content: "new\n",
+            size: 4,
+            modifiedAt: "2026-06-08T00:00:00.000Z",
+          },
+        });
+      }
+      return JsonResponse({});
+    },
+  });
+  await FlushPromises();
+
+  RequiredElement(harness.app, ".sheaf-chat-agent-review-toggle").click();
+  const reviewSocket = harness.sockets.find((socket) => socket.url.includes("/ws/agent-review"));
+  assert.ok(reviewSocket, "expected Agent Review WebSocket");
+  reviewSocket.open();
+  reviewSocket.receive({ type: "bootstrap", state: reviewState });
+  await FlushPromises();
+
+  const fileView = RequiredElement(harness.app, ".sheaf-chat-file-view");
+  fileView.scrollTop = 40;
+  fileView.getBoundingClientRect = () => ({
+    top: 100,
+    bottom: 200,
+    left: 0,
+    right: 500,
+    width: 500,
+    height: 100,
+  });
+  fileView.scrollTo = (options) => {
+    FakeElement.scrollToCalls.push({ element: fileView, options });
+    if (typeof options.top === "number") {
+      fileView.scrollTop = options.top;
+    }
+  };
+
+  const inlineRows = harness.app.querySelectorAll(".sheaf-chat-agent-review-inline-row");
+  inlineRows.forEach((row, index) => {
+    row.getBoundingClientRect = () => ({
+      top: 40 + (index * 20),
+      bottom: 60 + (index * 20),
+      left: 0,
+      right: 500,
+      width: 500,
+      height: 20,
+    });
+  });
+
+  FakeElement.scrolledIntoView = [];
+  FakeElement.scrollToCalls = [];
+  harness.flushAnimationFrames();
+
+  assert.equal(FakeElement.scrolledIntoView.length, 0);
+  assert.equal(FakeElement.scrollToCalls.length, 0);
+  assert.equal(fileView.scrollTop, 40);
 });
 
 test("file tabs auto-scroll to keep the active tab visible", async () =>
