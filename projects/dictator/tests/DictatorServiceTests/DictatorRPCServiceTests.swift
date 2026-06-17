@@ -138,6 +138,36 @@ final class DictatorRPCServiceTests: XCTestCase {
         XCTAssertEqual(service.diagnostics(), DictatorRPCDiagnostic(connected_clients: 0, owned_cells: 0, pushed_context_blocks: 0))
     }
 
+    func testPingRenewsLivenessWithoutMutatingOwnedState() throws {
+        let service = DictatorRPCService(heartbeatTimeoutSeconds: 0.05) { text in
+            XCTFail("rpc.ping must not insert text, got \(text)")
+            return .success(())
+        }
+        let sessionID = service.registerClient(clientID: "client") { _ in }
+
+        _ = service.handleTextFrame(
+            #"{"id":"cell","method":"launchpad.setCells","params":{"cells":[{"x":3,"y":3,"r":1,"g":2,"b":3}]}}"#,
+            sessionID: sessionID
+        )
+        _ = service.handleTextFrame(
+            #"{"id":"ctx","method":"dictationContext.push","params":{"id":"hunk","title":"Focused","body":"patch"}}"#,
+            sessionID: sessionID
+        )
+
+        Thread.sleep(forTimeInterval: 0.04)
+        let ping = try response(
+            service.handleTextFrame(#"{"id":"ping","method":"rpc.ping"}"#, sessionID: sessionID)
+        )
+        XCTAssertEqual(ping.id, "ping")
+        XCTAssertEqual(ping.result, .object(["ok": .bool(true)]))
+
+        service.cleanupExpiredSessions(now: Date().addingTimeInterval(0.04))
+
+        XCTAssertEqual(service.color(at: PadCoordinate(x: 3, y: 3)), PadColor(r: 1, g: 2, b: 3))
+        XCTAssertEqual(service.activeContextBlocks().map(\.title), ["Focused"])
+        XCTAssertEqual(service.diagnostics(), DictatorRPCDiagnostic(connected_clients: 1, owned_cells: 1, pushed_context_blocks: 1))
+    }
+
     func testDisconnectCleanup() {
         let service = DictatorRPCService()
         let sessionID = service.registerClient(clientID: "client") { _ in }

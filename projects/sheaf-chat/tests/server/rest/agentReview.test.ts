@@ -100,7 +100,9 @@ class FakeDictatorRPCServer
   readonly server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
   socket: WebSocket | null = null;
   insertedText: string | null = null;
+  connectionCount = 0;
   private readonly requests: Array<Record<string, any>> = [];
+  private readonly failures = new Map<string, Array<{ code?: string; message: string }>>();
   private readonly waiters: Array<{
     method: string;
     predicate?: (request: Record<string, any>) => boolean;
@@ -111,6 +113,7 @@ class FakeDictatorRPCServer
   {
     this.server.on("connection", (socket) =>
     {
+      this.connectionCount += 1;
       this.socket = socket;
       socket.send(JSON.stringify({
         method: "rpc.hello",
@@ -127,7 +130,15 @@ class FakeDictatorRPCServer
         {
           this.insertedText = request.params.text;
         }
-        socket.send(JSON.stringify({ id: request.id, result: { ok: true } }));
+        const failure = this.failures.get(request.method)?.shift();
+        if (failure !== undefined)
+        {
+          socket.send(JSON.stringify({ id: request.id, error: failure }));
+        }
+        else
+        {
+          socket.send(JSON.stringify({ id: request.id, result: { ok: true } }));
+        }
         this.resolveWaiter(request);
       });
     });
@@ -162,6 +173,13 @@ class FakeDictatorRPCServer
       }
     }
     return undefined;
+  }
+
+  failNextRequest(method: string, error: { code?: string; message: string }): void
+  {
+    const failures = this.failures.get(method) ?? [];
+    failures.push(error);
+    this.failures.set(method, failures);
   }
 
   waitForRequest(method: string, timeoutMs = 5000): Promise<Record<string, any>>
@@ -1383,6 +1401,199 @@ test("Agent Review Launchpad stays active while any client is focused", async ()
       {
         socketB.once("close", () => resolve());
         socketB.close();
+      });
+    });
+  }
+  finally
+  {
+    await fakeDictator.close();
+  }
+});
+
+test("Agent Review Dictator RPC sends heartbeat pings during quiet review sessions", async () =>
+{
+  const priorHeartbeat = process.env.SHEAF_CHAT_AGENT_REVIEW_RPC_HEARTBEAT_MS;
+  process.env.SHEAF_CHAT_AGENT_REVIEW_RPC_HEARTBEAT_MS = "25";
+
+  const fakeDictator = new FakeDictatorRPCServer();
+  const dictatorPort = await fakeDictator.start();
+  try
+  {
+    await WithTestServer(async (handle) =>
+    {
+      await writeFile(
+        handle.config.paths.servicesJsonFile,
+        JSON.stringify([{ name: "dictator", host: "127.0.0.1", port: dictatorPort }]),
+        "utf8",
+      );
+
+      const { repoId, workspaceId } = await CreateGitReviewSession(handle);
+      const socket = new WebSocket(WsUrl(handle.baseUrl, repoId, workspaceId));
+      await new Promise<void>((resolve, reject) =>
+      {
+        socket.once("open", () => resolve());
+        socket.once("error", reject);
+      });
+      await WaitForFrame(socket, "bootstrap");
+      await fakeDictator.waitForRequest("launchpad.setCells");
+
+      fakeDictator.clearRequests();
+      await fakeDictator.waitForRequest("rpc.ping", 1000);
+
+      await new Promise<void>((resolve) =>
+      {
+        socket.once("close", () => resolve());
+        socket.close();
+      });
+    });
+  }
+  finally
+  {
+    if (priorHeartbeat === undefined)
+    {
+      delete process.env.SHEAF_CHAT_AGENT_REVIEW_RPC_HEARTBEAT_MS;
+    }
+    else
+    {
+      process.env.SHEAF_CHAT_AGENT_REVIEW_RPC_HEARTBEAT_MS = priorHeartbeat;
+    }
+    await fakeDictator.close();
+  }
+});
+
+test("Agent Review reconnects and repaints Launchpad cells after Dictator expires the RPC session", async () =>
+{
+  const fakeDictator = new FakeDictatorRPCServer();
+  const dictatorPort = await fakeDictator.start();
+  try
+  {
+    await WithTestServer(async (handle) =>
+    {
+      await writeFile(
+        handle.config.paths.servicesJsonFile,
+        JSON.stringify([{ name: "dictator", host: "127.0.0.1", port: dictatorPort }]),
+        "utf8",
+      );
+
+      const { repoId, workspaceId } = await CreateGitReviewSession(handle);
+      const socket = new WebSocket(WsUrl(handle.baseUrl, repoId, workspaceId));
+      await new Promise<void>((resolve, reject) =>
+      {
+        socket.once("open", () => resolve());
+        socket.once("error", reject);
+      });
+      const bootstrap = await WaitForFrame(socket, "bootstrap");
+      const hunk = bootstrap.state.currentHunk;
+      await fakeDictator.waitForRequest("launchpad.setCells");
+
+      fakeDictator.clearRequests();
+      fakeDictator.failNextRequest("launchpad.setCells", {
+        code: "invalid_request",
+        message: "client session not found",
+      });
+
+      socket.send(JSON.stringify({
+        type: "comment",
+        hunkId: hunk.hunkId,
+        text: "Please simplify this branch.",
+      }));
+      await WaitForFrameWhere(
+        socket,
+        "state",
+        (frame) => frame.state.reviewDraft.entries.length === 1,
+        "commented draft state",
+      );
+
+      const repainted = await fakeDictator.waitForRequestWhere(
+        "launchpad.setCells",
+        (request) =>
+          fakeDictator.connectionCount > 1 &&
+          CellMap(request.params.cells).get("3,3")?.b === 255,
+      );
+      assert.equal(fakeDictator.connectionCount, 2);
+      assert.deepEqual(CellMap(repainted.params.cells).get("3,3"), { x: 3, y: 3, r: 0, g: 0, b: 255 });
+
+      await new Promise<void>((resolve) =>
+      {
+        socket.once("close", () => resolve());
+        socket.close();
+      });
+    });
+  }
+  finally
+  {
+    await fakeDictator.close();
+  }
+});
+
+test("Agent Review stale-session repaint failure preserves the browser review draft", async () =>
+{
+  const fakeDictator = new FakeDictatorRPCServer();
+  const dictatorPort = await fakeDictator.start();
+  try
+  {
+    await WithTestServer(async (handle) =>
+    {
+      await writeFile(
+        handle.config.paths.servicesJsonFile,
+        JSON.stringify([{ name: "dictator", host: "127.0.0.1", port: dictatorPort }]),
+        "utf8",
+      );
+
+      const { repoId, workspaceId } = await CreateGitReviewSession(handle);
+      const socket = new WebSocket(WsUrl(handle.baseUrl, repoId, workspaceId));
+      await new Promise<void>((resolve, reject) =>
+      {
+        socket.once("open", () => resolve());
+        socket.once("error", reject);
+      });
+      const bootstrap = await WaitForFrame(socket, "bootstrap");
+      const hunk = bootstrap.state.currentHunk;
+      await fakeDictator.waitForRequest("launchpad.setCells");
+
+      fakeDictator.clearRequests();
+      fakeDictator.failNextRequest("launchpad.setCells", {
+        code: "invalid_request",
+        message: "client session not found",
+      });
+      fakeDictator.failNextRequest("launchpad.setCells", {
+        code: "invalid_request",
+        message: "client session not found",
+      });
+
+      socket.send(JSON.stringify({
+        type: "comment",
+        hunkId: hunk.hunkId,
+        text: "Please simplify this branch.",
+      }));
+      const commented = await WaitForFrameWhere(
+        socket,
+        "state",
+        (frame) => frame.state.reviewDraft.entries.length === 1,
+        "commented draft state",
+      );
+      assert.equal(commented.state.reviewDraft.entries[0].text, "Please simplify this branch.");
+
+      await fakeDictator.waitForRequestWhere(
+        "launchpad.setCells",
+        () => fakeDictator.connectionCount > 1,
+      );
+
+      assert.equal(socket.readyState, WebSocket.OPEN);
+      socket.send(JSON.stringify({ type: "focus", hunkId: null }));
+      const away = await WaitForFrameWhere(
+        socket,
+        "state",
+        (frame) => frame.state.currentHunk === null,
+        "away state after failed repaint",
+      );
+      assert.equal(away.state.reviewDraft.entries[0].text, "Please simplify this branch.");
+      assert.equal(away.state.reviewDraft.hasSerializedContent, true);
+
+      await new Promise<void>((resolve) =>
+      {
+        socket.once("close", () => resolve());
+        socket.close();
       });
     });
   }

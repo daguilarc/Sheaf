@@ -78,6 +78,41 @@ interface DictatorRPCEnvelope
 
 type ReviewCellColor = "off" | "grey" | "blue" | "green";
 
+class DictatorRPCError extends Error
+{
+  readonly code: string | null;
+
+  constructor(message: string, code: string | null = null)
+  {
+    super(message);
+    this.name = "DictatorRPCError";
+    this.code = code;
+  }
+}
+
+function IsStaleDictatorRPCSession(error: unknown): boolean
+{
+  if (!(error instanceof Error))
+  {
+    return false;
+  }
+  return /client session not found/i.test(error.message);
+}
+
+function DictatorRPCHeartbeatIntervalMS(): number
+{
+  const raw = process.env.SHEAF_CHAT_AGENT_REVIEW_RPC_HEARTBEAT_MS;
+  if (raw !== undefined)
+  {
+    const parsed = Number(raw);
+    if (Number.isFinite(parsed) && parsed >= 10)
+    {
+      return parsed;
+    }
+  }
+  return 10_000;
+}
+
 const REVIEW_CELL = { x: 3, y: 3 } as const;
 
 const REVIEW_CELL_COLORS: Record<ReviewCellColor, { r: number; g: number; b: number } | { off: true }> = {
@@ -244,6 +279,7 @@ class DictatorRPCClient
   private m_connected = false;
   private m_url: string | null = null;
   private m_lastError: string | null = null;
+  private m_heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(
     endpointResolver: DictatorEndpointResolver,
@@ -302,6 +338,7 @@ class DictatorRPCClient
   {
     const socket = this.m_socket;
     this.m_socket = null;
+    this.stopHeartbeat();
     this.setStatus(false, this.m_url, null);
     for (const pending of this.m_pending.values())
     {
@@ -322,9 +359,31 @@ class DictatorRPCClient
     await this.call("launchpad.setCells", { cells });
   }
 
+  async setCellsWithStaleSessionRetry(reviewColor: ReviewCellColor, actions: AgentReviewActions): Promise<void>
+  {
+    try
+    {
+      await this.setCells(reviewColor, actions);
+    }
+    catch (error)
+    {
+      if (!IsStaleDictatorRPCSession(error))
+      {
+        throw error;
+      }
+      this.invalidateConnection(error);
+      await this.setCells(reviewColor, actions);
+    }
+  }
+
   async insertText(text: string): Promise<void>
   {
     await this.call("cursor.insertText", { text });
+  }
+
+  async ping(): Promise<void>
+  {
+    await this.call("rpc.ping", {});
   }
 
   async pushContext(hunk: AgentReviewHunk): Promise<void>
@@ -366,6 +425,7 @@ class DictatorRPCClient
     {
       const socket = new WebSocket(url);
       let settled = false;
+      let opened = false;
       const settle = (): void =>
       {
         if (!settled)
@@ -377,8 +437,10 @@ class DictatorRPCClient
 
       socket.on("open", () =>
       {
+        opened = true;
         this.m_socket = socket;
         this.setStatus(true, endpoint.url, null);
+        this.startHeartbeat();
         settle();
       });
       socket.on("message", (raw) =>
@@ -387,9 +449,15 @@ class DictatorRPCClient
       });
       socket.on("close", () =>
       {
+        if (opened && this.m_socket !== socket)
+        {
+          settle();
+          return;
+        }
         if (this.m_socket === socket)
         {
           this.m_socket = null;
+          this.stopHeartbeat();
         }
         this.setStatus(false, endpoint.url, this.m_connected ? "Dictator RPC closed" : this.m_lastError);
         for (const pending of this.m_pending.values())
@@ -401,10 +469,60 @@ class DictatorRPCClient
       });
       socket.on("error", (error) =>
       {
+        if (opened && this.m_socket !== socket)
+        {
+          settle();
+          return;
+        }
+        if (this.m_socket === socket)
+        {
+          this.stopHeartbeat();
+        }
         this.setStatus(false, endpoint.url, error instanceof Error ? error.message : String(error));
         settle();
       });
     });
+  }
+
+  private startHeartbeat(): void
+  {
+    if (this.m_heartbeatTimer !== null)
+    {
+      return;
+    }
+    this.m_heartbeatTimer = setInterval(() =>
+    {
+      void this.ping().catch((error: unknown) =>
+      {
+        this.invalidateConnection(error);
+      });
+    }, DictatorRPCHeartbeatIntervalMS());
+    this.m_heartbeatTimer.unref?.();
+  }
+
+  private stopHeartbeat(): void
+  {
+    if (this.m_heartbeatTimer === null)
+    {
+      return;
+    }
+    clearInterval(this.m_heartbeatTimer);
+    this.m_heartbeatTimer = null;
+  }
+
+  private invalidateConnection(error: unknown): void
+  {
+    const message = error instanceof Error ? error.message : String(error);
+    const socket = this.m_socket;
+    this.m_socket = null;
+    this.stopHeartbeat();
+    this.setStatus(false, this.m_url, message);
+    for (const pending of this.m_pending.values())
+    {
+      pending.reject(error instanceof Error ? error : new Error(message));
+    }
+    this.m_pending.clear();
+    socket?.close();
   }
 
   private async call(method: string, params: Record<string, unknown>): Promise<unknown>
@@ -453,7 +571,15 @@ class DictatorRPCClient
       this.m_pending.delete(envelope.id);
       if (envelope.error !== undefined)
       {
-        pending.reject(new Error(envelope.error.message ?? envelope.error.code ?? "Dictator RPC error"));
+        const error = new DictatorRPCError(
+          envelope.error.message ?? envelope.error.code ?? "Dictator RPC error",
+          envelope.error.code ?? null,
+        );
+        if (IsStaleDictatorRPCSession(error))
+        {
+          this.invalidateConnection(error);
+        }
+        pending.reject(error);
       }
       else
       {
@@ -1391,11 +1517,11 @@ class AgentReviewSession
       // relight the grid while the user is away. Restore from state on refocus.
       if (!this.AnyClientFocused())
       {
-        await this.m_dictatorRPC.setCells("off", EmptyActions());
+        await this.m_dictatorRPC.setCellsWithStaleSessionRetry("off", EmptyActions());
       }
       else
       {
-        await this.m_dictatorRPC.setCells(this.ReviewCellColor(), this.m_state.actions);
+        await this.m_dictatorRPC.setCellsWithStaleSessionRetry(this.ReviewCellColor(), this.m_state.actions);
       }
     }
     catch
