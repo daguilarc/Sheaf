@@ -60,7 +60,7 @@ final class TalonControlClient: TalonControlProviding, @unchecked Sendable
     init(
         baseURL: URL = URL(string: "http://127.0.0.1:28579")!,
         urlSession: URLSession = .shared,
-        timeout: TimeInterval = 0.35
+        timeout: TimeInterval = 1.25
     )
     {
         self.baseURL = baseURL

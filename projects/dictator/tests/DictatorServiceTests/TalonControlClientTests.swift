@@ -56,6 +56,20 @@ final class TalonControlClientTests: XCTestCase
         XCTAssertEqual(captured.path, "/sleep")
     }
 
+    func testSleepRequestTimeoutAllowsDeferredBridgeResponse() async
+    {
+        let capturedRequest = CapturedTalonControlRequest()
+        let client = makeClient { request in
+            capturedRequest.set(request)
+            return (200, #"{"speech_enabled":false,"mode":["sleep"]}"#)
+        }
+
+        _ = await client.sleep()
+        let captured = capturedRequest.values()
+
+        XCTAssertGreaterThanOrEqual(captured.timeoutInterval ?? 0, 1.0)
+    }
+
     func testWakeUsesWakeEndpoint() async
     {
         let capturedRequest = CapturedTalonControlRequest()
@@ -115,6 +129,7 @@ private final class CapturedTalonControlRequest: @unchecked Sendable
     private let lock = NSLock()
     private var method: String?
     private var path: String?
+    private var timeoutInterval: TimeInterval?
 
     func set(_ request: URLRequest)
     {
@@ -122,14 +137,15 @@ private final class CapturedTalonControlRequest: @unchecked Sendable
         {
             method = request.httpMethod
             path = request.url?.path
+            timeoutInterval = request.timeoutInterval
         }
     }
 
-    func values() -> (method: String?, path: String?)
+    func values() -> (method: String?, path: String?, timeoutInterval: TimeInterval?)
     {
         lock.withLock
         {
-            (method, path)
+            (method, path, timeoutInterval)
         }
     }
 }
