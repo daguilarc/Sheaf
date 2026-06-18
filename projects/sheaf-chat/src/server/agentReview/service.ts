@@ -802,6 +802,7 @@ class AgentReviewSession
   private m_pushedContextHunkId: string | null = null;
   private m_refreshInFlight: Promise<void> | null = null;
   private m_closing = false;
+  private m_launchpadCommandSequence = 0;
   private readonly m_backgroundWork = new Set<Promise<unknown>>();
 
   constructor(
@@ -1123,6 +1124,25 @@ class AgentReviewSession
     }
   }
 
+  private BroadcastCommandResult(result: AgentReviewCommandResult): void
+  {
+    const state = this.RequireState();
+    for (const client of this.m_sockets)
+    {
+      SendFrame(client, {
+        type: "command_result",
+        result,
+        state,
+      });
+    }
+  }
+
+  private NextLaunchpadCommandId(): string
+  {
+    this.m_launchpadCommandSequence += 1;
+    return `launchpad:${this.m_launchpadCommandSequence}`;
+  }
+
   private ReviewDraftState(): AgentReviewDraftState
   {
     return {
@@ -1316,15 +1336,7 @@ class AgentReviewSession
       hunkId: frame.hunkId,
       patchHash: frame.patchHash,
     });
-    const state = this.RequireState();
-    for (const client of this.m_sockets)
-    {
-      SendFrame(client, {
-        type: "command_result",
-        result,
-        state,
-      });
-    }
+    this.BroadcastCommandResult(result);
   }
 
   private async FocusHunk(hunkId: string | null, file: string | null = null): Promise<void>
@@ -1806,7 +1818,10 @@ class AgentReviewSession
       return;
     }
 
-    await this.ExecuteCommand(cell.action, {});
+    const result = await this.ExecuteCommand(cell.action, {
+      commandId: this.NextLaunchpadCommandId(),
+    });
+    this.BroadcastCommandResult(result);
   }
 
   private async HandleReviewCellPressed(): Promise<void>

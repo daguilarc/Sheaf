@@ -868,6 +868,16 @@ function RequiredElement(root: FakeElement, selector: string): FakeElement
   return element;
 }
 
+function AssertSelectedFileTab(root: FakeElement, expectedPath: string): void
+{
+  assert.ok(
+    Array.from(root.querySelectorAll(".sheaf-chat-tab--selected")).some((tab) =>
+      tab.textContent.includes(expectedPath),
+    ),
+    `expected selected tab to include ${expectedPath}`,
+  );
+}
+
 function CssRuleBody(cssText: string, selector: string): string
 {
   const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -2917,6 +2927,155 @@ test("unified file viewer jumps from a non-hunk file to the next hunk file", asy
       tab.textContent.includes("app.ts"),
     ),
     "expected next-file navigation to focus app.ts in the normal tab bar",
+  );
+});
+
+test("unified file viewer follows Launchpad-origin Agent Review command results", async () =>
+{
+  const hunk = {
+    sourceProvider: "sheaf-chat",
+    repoRoot: "/repo",
+    sessionRoot: "/repo/projects/demo",
+    file: "app.ts",
+    hunkId: "hunk-1",
+    hunkIndex: 0,
+    hunkCount: 1,
+    fileIndex: 0,
+    fileCount: 1,
+    header: "@@ -1 +1 @@",
+    patchHash: "abc123",
+    patch: "diff --git a/app.ts b/app.ts\n@@ -1 +1 @@\n-old\n+new\n",
+  };
+  const focusedState: any = {
+    available: true,
+    repoRoot: "/repo",
+    sessionRoot: "/repo/projects/demo",
+    sessionRootRelativeToRepo: "projects/demo",
+    currentIndex: 0,
+    currentHunk: hunk,
+    hunks: [hunk],
+    files: [{ file: "app.ts", hunkCount: 1 }],
+    inlineFiles: [
+      {
+        file: "app.ts",
+        rows: [
+          { id: "app.ts:1", kind: "deletion", text: "old", hunkId: "hunk-1", oldLineNumber: 1 },
+          { id: "app.ts:2", kind: "addition", text: "new", hunkId: "hunk-1", newLineNumber: 1 },
+        ],
+      },
+    ],
+    actions: {
+      canGoUp: false,
+      canGoDown: false,
+      canGoPrevFile: false,
+      canGoNextFile: false,
+      canStage: true,
+      canRevert: true,
+      canUndo: false,
+    },
+    reviewDraft: { entries: [], visibleCommentHunkId: null, hasSerializedContent: false },
+    dictatorBridge: { connected: false, url: null, lastError: null },
+  };
+  const anchoredState: any = {
+    ...focusedState,
+    currentIndex: -1,
+    currentHunk: null,
+    actions: {
+      canGoUp: false,
+      canGoDown: false,
+      canGoPrevFile: false,
+      canGoNextFile: true,
+      canStage: false,
+      canRevert: false,
+      canUndo: false,
+    },
+  };
+
+  const harness = LoadChatHarness({
+    fetch: async (requestPath) => {
+      if (requestPath.endsWith("/agent-review")) {
+        return JsonResponse(focusedState);
+      }
+      if (requestPath.includes("/files?path=")) {
+        return JsonResponse({
+          directory: { name: ".", path: ".", kind: "directory" },
+          entries: [
+            {
+              name: "aardvark.ts",
+              path: "aardvark.ts",
+              kind: "file",
+              supported: true,
+              contentType: "text/plain",
+            },
+            {
+              name: "app.ts",
+              path: "app.ts",
+              kind: "file",
+              supported: true,
+              contentType: "text/plain",
+            },
+          ],
+        });
+      }
+      if (requestPath.includes("/file?path=")) {
+        const filePath = decodeURIComponent(requestPath.split("/file?path=")[1] || "");
+        const content = filePath === "aardvark.ts" ? "plain file\n" : "new\n";
+        return JsonResponse({
+          file: {
+            name: filePath,
+            path: filePath,
+            kind: "file",
+            supported: true,
+            contentType: "text/plain",
+            content,
+            size: content.length,
+            modifiedAt: "2026-06-08T00:00:00.000Z",
+          },
+        });
+      }
+      return JsonResponse({});
+    },
+  });
+  await FlushPromises();
+
+  const reviewSocket = harness.sockets.find((socket) => socket.url.includes("/ws/agent-review"));
+  assert.ok(reviewSocket, "expected Agent Review WebSocket");
+  reviewSocket.open();
+  reviewSocket.receive({ type: "bootstrap", state: focusedState });
+  await FlushPromises();
+  harness.flushAnimationFrames();
+
+  ExplorerFileButton(harness.app, "aardvark.ts").click();
+  await FlushPromises();
+
+  assert.equal(harness.app.querySelector(".sheaf-chat-agent-review-inline"), null);
+  assert.match(harness.app.textContent, /plain file/);
+  let sent = reviewSocket.sent.map((raw) => JSON.parse(raw) as Record<string, any>);
+  assert.equal(sent.at(-1)?.type, "focus");
+  assert.equal(sent.at(-1)?.hunkId, null);
+  assert.equal(sent.at(-1)?.file, "aardvark.ts");
+
+  reviewSocket.receive({ type: "state", state: anchoredState });
+  await FlushPromises();
+
+  const sentBeforeCommandResult = reviewSocket.sent.length;
+  reviewSocket.receive({
+    type: "command_result",
+    result: { ok: true, action: "nextFile", commandId: "launchpad:1" },
+    state: focusedState,
+  });
+  await FlushPromises();
+  harness.flushAnimationFrames();
+
+  RequiredElement(harness.app, ".sheaf-chat-agent-review-inline");
+  AssertSelectedFileTab(harness.app, "app.ts");
+  sent = reviewSocket.sent
+    .slice(sentBeforeCommandResult)
+    .map((raw) => JSON.parse(raw) as Record<string, any>);
+  assert.equal(
+    sent.some((frame) => frame.type === "focus" && frame.file === "aardvark.ts"),
+    false,
+    "command-result sync must not steer focus back to the old non-hunk file",
   );
 });
 

@@ -1272,13 +1272,133 @@ test("Agent Review Launchpad next-hunk cell advances the current hunk", async ()
 
       const advanced = WaitForFrameWhere(
         socket,
-        "state",
-        (frame) => frame.state.currentHunk?.hunkIndex === 1,
+        "command_result",
+        (frame) =>
+          frame.result?.ok === true &&
+          frame.result?.action === "nextHunk" &&
+          typeof frame.result?.commandId === "string" &&
+          frame.result.commandId.startsWith("launchpad:") &&
+          frame.state.currentHunk?.hunkIndex === 1,
         "next hunk via launchpad",
       );
       fakeDictator.sendPress(1, 3); // next-hunk cell
       const state = await advanced;
       assert.equal(state.state.currentHunk.hunkIndex, 1);
+
+      await new Promise<void>((resolve) =>
+      {
+        socket.once("close", () => resolve());
+        socket.close();
+      });
+    });
+  }
+  finally
+  {
+    await fakeDictator.close();
+  }
+});
+
+test("Agent Review Launchpad next-file cell emits command result and advances file", async () =>
+{
+  const fakeDictator = new FakeDictatorRPCServer();
+  const dictatorPort = await fakeDictator.start();
+  try
+  {
+    await WithTestServer(async (handle) =>
+    {
+      await writeFile(
+        handle.config.paths.servicesJsonFile,
+        JSON.stringify([{ name: "dictator", host: "127.0.0.1", port: dictatorPort }]),
+        "utf8",
+      );
+
+      const { repoId, workspaceId } = await CreateMultiHunkReviewSession(handle);
+      const socket = new WebSocket(WsUrl(handle.baseUrl, repoId, workspaceId));
+      await new Promise<void>((resolve, reject) =>
+      {
+        socket.once("open", () => resolve());
+        socket.once("error", reject);
+      });
+      const bootstrap = await WaitForFrame(socket, "bootstrap");
+      assert.equal(bootstrap.state.currentHunk.file, "projects/demo/alpha.ts");
+      await fakeDictator.waitForRequest("launchpad.setCells");
+
+      const commandResult = WaitForFrameWhere(
+        socket,
+        "command_result",
+        (frame) =>
+          frame.result?.ok === true &&
+          frame.result?.action === "nextFile" &&
+          typeof frame.result?.commandId === "string" &&
+          frame.result.commandId.startsWith("launchpad:") &&
+          frame.state.currentHunk?.file === "projects/demo/beta.ts",
+        "next file via launchpad command result",
+      );
+      fakeDictator.sendPress(2, 3);
+      const frame = await commandResult;
+      assert.equal(frame.state.currentHunk.file, "projects/demo/beta.ts");
+
+      await new Promise<void>((resolve) =>
+      {
+        socket.once("close", () => resolve());
+        socket.close();
+      });
+    });
+  }
+  finally
+  {
+    await fakeDictator.close();
+  }
+});
+
+test("Agent Review Launchpad file navigation can start from a focused file without hunks", async () =>
+{
+  const fakeDictator = new FakeDictatorRPCServer();
+  const dictatorPort = await fakeDictator.start();
+  try
+  {
+    await WithTestServer(async (handle) =>
+    {
+      await writeFile(
+        handle.config.paths.servicesJsonFile,
+        JSON.stringify([{ name: "dictator", host: "127.0.0.1", port: dictatorPort }]),
+        "utf8",
+      );
+
+      const { repoId, workspaceId } = await CreateMultiHunkReviewSession(handle);
+      const socket = new WebSocket(WsUrl(handle.baseUrl, repoId, workspaceId));
+      await new Promise<void>((resolve, reject) =>
+      {
+        socket.once("open", () => resolve());
+        socket.once("error", reject);
+      });
+      await WaitForFrame(socket, "bootstrap");
+      await fakeDictator.waitForRequest("launchpad.setCells");
+
+      socket.send(JSON.stringify({
+        type: "focus",
+        hunkId: null,
+        file: "projects/demo/aaa.ts",
+      }));
+      const anchored = await WaitForFrame(socket, "state");
+      assert.equal(anchored.state.currentHunk, null);
+      assert.equal(anchored.state.actions.canGoNextFile, true);
+      await fakeDictator.waitForRequest("launchpad.setCells");
+
+      const commandResult = WaitForFrameWhere(
+        socket,
+        "command_result",
+        (frame) =>
+          frame.result?.ok === true &&
+          frame.result?.action === "nextFile" &&
+          typeof frame.result?.commandId === "string" &&
+          frame.result.commandId.startsWith("launchpad:") &&
+          frame.state.currentHunk?.file === "projects/demo/alpha.ts",
+        "next file from non-hunk selected file via launchpad",
+      );
+      fakeDictator.sendPress(2, 3);
+      const frame = await commandResult;
+      assert.equal(frame.state.currentHunk.file, "projects/demo/alpha.ts");
 
       await new Promise<void>((resolve) =>
       {
@@ -1346,6 +1466,87 @@ test("Agent Review Launchpad ignores presses for unavailable actions", async () 
       // If the unavailable undo press had been dispatched it would have broadcast
       // an index-0 state frame first; the guard means the only frame is next-hunk.
       assert.deepEqual(seen, [1]);
+
+      await new Promise<void>((resolve) =>
+      {
+        socket.once("close", () => resolve());
+        socket.close();
+      });
+    });
+  }
+  finally
+  {
+    await fakeDictator.close();
+  }
+});
+
+test("Agent Review Launchpad mutation cells emit command results", async () =>
+{
+  const fakeDictator = new FakeDictatorRPCServer();
+  const dictatorPort = await fakeDictator.start();
+  try
+  {
+    await WithTestServer(async (handle) =>
+    {
+      await writeFile(
+        handle.config.paths.servicesJsonFile,
+        JSON.stringify([{ name: "dictator", host: "127.0.0.1", port: dictatorPort }]),
+        "utf8",
+      );
+
+      const { repoId, workspaceId } = await CreateMultiHunkReviewSession(handle);
+      const socket = new WebSocket(WsUrl(handle.baseUrl, repoId, workspaceId));
+      await new Promise<void>((resolve, reject) =>
+      {
+        socket.once("open", () => resolve());
+        socket.once("error", reject);
+      });
+      await WaitForFrame(socket, "bootstrap");
+      await fakeDictator.waitForRequest("launchpad.setCells");
+
+      const staged = WaitForFrameWhere(
+        socket,
+        "command_result",
+        (frame) =>
+          frame.result?.ok === true &&
+          frame.result?.action === "stage" &&
+          typeof frame.result?.commandId === "string" &&
+          frame.result.commandId.startsWith("launchpad:") &&
+          frame.state.actions.canUndo === true,
+        "stage via launchpad",
+      );
+      fakeDictator.sendPress(2, 2);
+      const afterStage = await staged;
+      assert.equal(afterStage.result.action, "stage");
+
+      const undone = WaitForFrameWhere(
+        socket,
+        "command_result",
+        (frame) =>
+          frame.result?.ok === true &&
+          frame.result?.action === "undo" &&
+          typeof frame.result?.commandId === "string" &&
+          frame.result.commandId.startsWith("launchpad:"),
+        "undo via launchpad",
+      );
+      fakeDictator.sendPress(3, 2);
+      const afterUndo = await undone;
+      assert.equal(afterUndo.result.action, "undo");
+
+      const reverted = WaitForFrameWhere(
+        socket,
+        "command_result",
+        (frame) =>
+          frame.result?.ok === true &&
+          frame.result?.action === "revert" &&
+          typeof frame.result?.commandId === "string" &&
+          frame.result.commandId.startsWith("launchpad:") &&
+          frame.state.reviewDraft.hasSerializedContent === true,
+        "revert via launchpad",
+      );
+      fakeDictator.sendPress(0, 2);
+      const afterRevert = await reverted;
+      assert.equal(afterRevert.result.action, "revert");
 
       await new Promise<void>((resolve) =>
       {

@@ -1660,6 +1660,7 @@
       if (current && current.file && (shouldOpenCurrent || state.selectedPath === current.file)) {
         state.agentReview.pendingScrollHunkId = current.hunkId;
         if (shouldOpenCurrent && state.selectedPath !== current.file) {
+          state.agentReview.lastFocusKey = "hunk:" + current.hunkId;
           renderSelectedFileNow = false;
           OpenFile(current.file);
         }
@@ -1729,6 +1730,13 @@
           }
           if (frame.state) {
             review.socketReady = true;
+            review.pendingCommandResult = true;
+            if (
+              frame.result &&
+              (frame.result.action === "stage" || frame.result.action === "revert")
+            ) {
+              review.pendingHunkMutation = true;
+            }
             ApplyReviewState(frame.state);
           } else {
             RenderReviewBar();
