@@ -1019,6 +1019,7 @@
         error: null,
         pendingCommentFocusHunkId: null,
         pendingScrollHunkId: null,
+        pendingScrollForceReveal: false,
         presenceListener: null,
         lastFocusKey: null,
         pendingHunkMutation: false,
@@ -1050,6 +1051,30 @@
     let activeResize = null;
     let saveEditorStateTimer = null;
     let applyingEditorState = false;
+    const fileNavigation =
+      window.SheafFileNavigation &&
+      typeof window.SheafFileNavigation.createController === "function"
+        ? window.SheafFileNavigation.createController({
+          fileViewEl: fileViewEl,
+          getSelectedTab: function () {
+            return state.selectedPath ? FindTab(state.selectedPath) : null;
+          },
+          getTabs: function () {
+            return state.tabs.slice();
+          },
+          listDirectory: function (directoryPath) {
+            const cacheKey = directoryPath || ".";
+            return LoadDirectory(cacheKey).then(function () {
+              const cached = state.directoryCache[cacheKey] || {};
+              return Array.isArray(cached.entries) ? cached.entries : [];
+            });
+          },
+          openFile: OpenFile,
+          selectTab: SelectTab,
+          renderSelectedFile: RenderSelectedFile,
+          onStateChange: ScheduleEditorStateSave,
+        })
+        : null;
 
     function FilesApiBase() {
       return route.chatId ? ChatApiBase(route) : WorkspaceApiBase(route);
@@ -1090,6 +1115,10 @@
         selectedPath: state.selectedPath,
         expandedDirectories: Array.from(state.expandedDirectories),
         viewports: state.viewports,
+        navigation:
+          fileNavigation && typeof fileNavigation.exportState === "function"
+            ? fileNavigation.exportState()
+            : undefined,
       };
     }
 
@@ -1144,6 +1173,9 @@
         editorState.viewports && typeof editorState.viewports === "object"
           ? editorState.viewports
           : {};
+      if (fileNavigation && typeof fileNavigation.applyState === "function") {
+        fileNavigation.applyState(editorState.navigation);
+      }
 
       const tabs = Array.isArray(editorState.tabs) ? editorState.tabs : [];
       const selectedPath =
@@ -1396,6 +1428,7 @@
       if (!hunkId) {
         return;
       }
+      const forceReveal = state.agentReview.pendingScrollForceReveal === true;
 
       const anchor = FindReviewHunkAnchor(hunkId);
       if (!anchor) {
@@ -1404,7 +1437,8 @@
       const revealTarget = ReviewHunkRevealTarget(anchor);
 
       state.agentReview.pendingScrollHunkId = null;
-      window.requestAnimationFrame(function () {
+      state.agentReview.pendingScrollForceReveal = false;
+      function RevealReviewHunkNow() {
         const hunkChangedRows = ReviewHunkChangedRows(hunkId);
         if (
           typeof fileViewEl.getBoundingClientRect !== "function" ||
@@ -1412,24 +1446,39 @@
           typeof fileViewEl.scrollTo !== "function"
         ) {
           if (typeof revealTarget.scrollIntoView === "function") {
+            if (
+              fileNavigation &&
+              typeof fileNavigation.noteProgrammaticScroll === "function"
+            ) {
+              fileNavigation.noteProgrammaticScroll(fileViewEl.scrollTop || 0);
+            }
             revealTarget.scrollIntoView({ block: "start" });
           }
           return;
         }
 
         const viewRect = fileViewEl.getBoundingClientRect();
-        if (HunkRowsFullyVisible(hunkChangedRows, viewRect)) {
+        if (!forceReveal && HunkRowsFullyVisible(hunkChangedRows, viewRect)) {
           return;
         }
 
         const targetRect = revealTarget.getBoundingClientRect();
         const targetTop = targetRect.top - viewRect.top + fileViewEl.scrollTop;
         const nextScrollTop = Math.max(0, targetTop);
+        if (
+          fileNavigation &&
+          typeof fileNavigation.noteProgrammaticScroll === "function"
+        ) {
+          fileNavigation.noteProgrammaticScroll(nextScrollTop);
+        }
         fileViewEl.scrollTo({
           top: nextScrollTop,
           behavior: "auto",
         });
-      });
+      }
+
+      RevealReviewHunkNow();
+      window.requestAnimationFrame(RevealReviewHunkNow);
     }
 
     function CreateReviewCommentBox(currentHunk) {
@@ -1468,13 +1517,17 @@
       return commentWrap;
     }
 
-    function RenderInlineReviewFile(contentWrap, inlineFile, currentHunk) {
+    function RenderInlineReviewFile(contentWrap, inlineFile, currentHunk, selectedFile) {
       const review = CreateElement("div", "sheaf-chat-agent-review-inline");
       const rows = Array.isArray(inlineFile.rows) ? inlineFile.rows : [];
       const focusedHunkId = currentHunk ? currentHunk.hunkId : null;
       const anchorHunkIds = new Set();
       let anchoredHunks = new Set();
       let mountedComment = false;
+      let sourceSearchOffset = 0;
+      const sourceContent = selectedFile && selectedFile.content != null
+        ? String(selectedFile.content)
+        : "";
 
       rows.forEach(function (row) {
         const hunkId = typeof row.hunkId === "string" ? row.hunkId : null;
@@ -1515,6 +1568,17 @@
             anchoredHunks.add(hunkId);
             rowEl.classList.add("sheaf-chat-agent-review-inline-hunk-anchor");
             rowEl.setAttribute("data-review-hunk-anchor", hunkId);
+          }
+        }
+        if (row.text != null && String(row.text).length > 0 && sourceContent.length > 0) {
+          const rowText = String(row.text);
+          let sourceOffset = sourceContent.indexOf(rowText, sourceSearchOffset);
+          if (sourceOffset < 0) {
+            sourceOffset = sourceContent.indexOf(rowText);
+          }
+          if (sourceOffset >= 0) {
+            rowEl.setAttribute("data-source-offset", String(sourceOffset));
+            sourceSearchOffset = sourceOffset + rowText.length;
           }
         }
 
@@ -1659,6 +1723,7 @@
         (!state.selectedPath || (state.agentReview.pendingCommandResult && state.selectedPath !== current.file));
       if (current && current.file && (shouldOpenCurrent || state.selectedPath === current.file)) {
         state.agentReview.pendingScrollHunkId = current.hunkId;
+        state.agentReview.pendingScrollForceReveal = shouldOpenCurrent === true;
         if (shouldOpenCurrent && state.selectedPath !== current.file) {
           state.agentReview.lastFocusKey = "hunk:" + current.hunkId;
           renderSelectedFileNow = false;
@@ -1666,6 +1731,7 @@
         }
       } else {
         state.agentReview.pendingScrollHunkId = null;
+        state.agentReview.pendingScrollForceReveal = false;
       }
       if (state.agentReview.pendingHunkMutation && current === null && state.selectedPath) {
         state.agentReview.lastFocusKey = "file:" + state.selectedPath;
@@ -1775,6 +1841,7 @@
       review.error = null;
       review.state = null;
       review.pendingScrollHunkId = null;
+      review.pendingScrollForceReveal = false;
       review.lastFocusKey = null;
       review.pendingHunkMutation = false;
       review.pendingCommandResult = false;
@@ -2152,6 +2219,9 @@
         : null;
 
       if (!selected) {
+        if (fileNavigation) {
+          fileNavigation.syncSelectedTab(null);
+        }
         const empty = CreateElement("p", "sheaf-chat-file-empty");
         empty.textContent = "Open a file from the explorer.";
         fileViewEl.appendChild(empty);
@@ -2159,6 +2229,9 @@
       }
 
       if (selected.isLoading) {
+        if (fileNavigation) {
+          fileNavigation.syncSelectedTab(null);
+        }
         const loading = CreateElement("p", "sheaf-chat-file-loading");
         loading.textContent = "Loading…";
         fileViewEl.appendChild(loading);
@@ -2166,6 +2239,9 @@
       }
 
       if (selected.error) {
+        if (fileNavigation) {
+          fileNavigation.syncSelectedTab(null);
+        }
         const errorNode = CreateElement("div", "sheaf-chat-file-error");
         errorNode.textContent = selected.error;
         fileViewEl.appendChild(errorNode);
@@ -2178,7 +2254,13 @@
       const inlineFile = reviewState ? InlineReviewFileForPath(selected.path) : null;
 
       if (inlineFile) {
-        RenderInlineReviewFile(contentWrap, inlineFile, currentHunk);
+        RenderInlineReviewFile(contentWrap, inlineFile, currentHunk, selected);
+        if (
+          fileNavigation &&
+          typeof fileNavigation.decorateRenderedReview === "function"
+        ) {
+          fileNavigation.decorateRenderedReview(contentWrap, selected);
+        }
         fileViewEl.appendChild(contentWrap);
         ScrollPendingReviewHunk();
         return;
@@ -2200,11 +2282,25 @@
                 },
               });
             }
+            if (
+              fileNavigation &&
+              typeof fileNavigation.decorateRenderedMarkdown === "function"
+            ) {
+              fileNavigation.decorateRenderedMarkdown(contentWrap, selected);
+            }
           } else {
-            contentWrap.appendChild(CreatePlainFilePreview(selected.content));
+            contentWrap.appendChild(
+              fileNavigation
+                ? fileNavigation.renderPlainText(selected)
+                : CreatePlainFilePreview(selected.content)
+            );
           }
         } else {
-          contentWrap.appendChild(CreatePlainFilePreview(selected.content));
+          contentWrap.appendChild(
+            fileNavigation
+              ? fileNavigation.renderPlainText(selected)
+              : CreatePlainFilePreview(selected.content)
+          );
         }
       } else if (
         selected.contentType &&
@@ -2214,9 +2310,29 @@
         const highlighted = language
           ? CreateHighlightedFilePreview(selected.content, language)
           : null;
+        if (
+          highlighted &&
+          fileNavigation &&
+          typeof fileNavigation.decorateHighlightedPreview === "function"
+        ) {
+          fileNavigation.decorateHighlightedPreview(highlighted, selected);
+        }
         contentWrap.appendChild(
-          highlighted || CreatePlainFilePreview(selected.content)
+          highlighted ||
+            (fileNavigation
+              ? fileNavigation.renderPlainText(selected)
+              : CreatePlainFilePreview(selected.content))
         );
+        if (
+          highlighted &&
+          fileNavigation &&
+          typeof fileNavigation.renderPrompt === "function"
+        ) {
+          const prompt = fileNavigation.renderPrompt(selected);
+          if (prompt) {
+            contentWrap.appendChild(prompt);
+          }
+        }
       } else {
         const unsupported = CreateElement("div", "sheaf-chat-file-unsupported");
         unsupported.textContent = "This file type is not supported for preview.";
@@ -2386,6 +2502,9 @@
       if (saveEditorStateTimer !== null) {
         clearTimeout(saveEditorStateTimer);
         saveEditorStateTimer = null;
+      }
+      if (fileNavigation) {
+        fileNavigation.destroy();
       }
       StopAgentReview();
     }

@@ -25,6 +25,7 @@ type Locator = {
   count: () => Promise<number>;
   first: () => Locator;
   innerText: () => Promise<string>;
+  press: (key: string) => Promise<void>;
   waitFor: (options?: { timeout?: number; state?: "attached" | "detached" | "visible" | "hidden" }) => Promise<void>;
 };
 
@@ -511,6 +512,7 @@ test("front door Agent Review renders inline diffs and stages focused hunks in C
 
           await page.waitForSelector(".sheaf-chat-agent-review-inline", { timeout: 5000 });
           await page.waitForSelector(".sheaf-chat-agent-review-inline-row--focused", { timeout: 5000 });
+          await page.waitForSelector(".sheaf-chat-file-point--review", { timeout: 5000 });
           await page.locator(".sheaf-chat-explorer-file", { hasText: "notes.md" }).click();
           await page.waitForFunction(() =>
           {
@@ -551,6 +553,25 @@ test("front door Agent Review renders inline diffs and stages focused hunks in C
             "expected non-focused second hunk to be visible and muted",
           );
 
+          const fileView = page.locator(".sheaf-chat-file-view");
+          const initialReviewPoint = await page.evaluate(() =>
+            Number(document.querySelector(".sheaf-chat-file-view")?.getAttribute("data-point-offset") ?? "0")
+          );
+          await fileView.press("ArrowRight");
+          await page.waitForFunction((expectedPoint: unknown) =>
+            Number(document.querySelector(".sheaf-chat-file-view")?.getAttribute("data-point-offset") ?? "0") ===
+              Number(expectedPoint),
+          initialReviewPoint + 1, { timeout: 5000 });
+          await fileView.press("Control+G");
+          await page.waitForFunction(() =>
+            document.querySelector(".sheaf-chat-form textarea") !== document.activeElement,
+          undefined, { timeout: 5000 });
+          assert.equal(
+            await page.locator(".sheaf-chat-agent-review-inline-row--focused").count() > 0,
+            true,
+            "review hunk focus should survive file-view navigation",
+          );
+
           await ClickExactButtonText(page, ".sheaf-chat-agent-review-command", "Next");
           await page.waitForFunction(() =>
           {
@@ -587,6 +608,7 @@ test("front door Agent Review renders inline diffs and stages focused hunks in C
             const focusedLine = focusedRows.find((row) =>
               row.textContent?.includes("Line 300: altered for agent review.") === true
             );
+            const point = document.querySelector(".sheaf-chat-file-point");
             const focusedRect = focusedLine?.getBoundingClientRect();
             const topOffset = viewRect !== undefined && focusedRect !== undefined
               ? focusedRect.top - viewRect.top
@@ -596,6 +618,8 @@ test("front door Agent Review renders inline diffs and stages focused hunks in C
               scrollTop: view?.scrollTop ?? 0,
               focusedHunkId: focusedLine?.getAttribute("data-hunk-id") ?? null,
               focusedText: focusedRows.map((row) => row.textContent ?? ""),
+              pointInFocusedHunk: focusedLine?.contains(point) ?? false,
+              pointOffset: view?.getAttribute("data-point-offset") ?? null,
               rowHeight,
               topOffset,
               focusedVisible:
@@ -617,6 +641,11 @@ test("front door Agent Review renders inline diffs and stages focused hunks in C
             `expected hunk navigation to place focused row near top; topOffset=${afterNext.topOffset}`,
           );
           assert.ok(afterNext.focusedText.some((text) => text.includes("Line 300: altered for agent review.")));
+          assert.equal(
+            afterNext.pointInFocusedHunk,
+            true,
+            `expected point to follow focused hunk; pointOffset=${afterNext.pointOffset}`,
+          );
           assert.equal(pageErrors.length, 0, `unexpected page errors after navigation: ${pageErrors.join("\n")}`);
 
           reviewSocket = new WebSocket(BuildAgentReviewWsUrl(handle.baseUrl, routeIds.repoId, routeIds.workspaceId));
@@ -687,25 +716,53 @@ test("front door Agent Review renders inline diffs and stages focused hunks in C
             const selectedTab = document.querySelector(".sheaf-chat-tab--selected .sheaf-chat-tab-label");
             return selectedTab?.textContent?.trim() === "zeta.md";
           }, undefined, { timeout: 5000 });
-          await page.waitForFunction(() =>
+          try
           {
-            const view = document.querySelector(".sheaf-chat-file-view") as HTMLElement | null;
-            const focusedRows = Array.from(document.querySelectorAll(".sheaf-chat-agent-review-inline-row--focused"));
-            const focusedLine = focusedRows.find((row) =>
-              row.textContent?.includes("Line 300: altered in the next review file.") === true
-            );
-            const viewRect = view?.getBoundingClientRect();
-            const focusedRect = focusedLine?.getBoundingClientRect();
-            const rowHeight = focusedRect?.height ?? 0;
-            const topOffset = viewRect !== undefined && focusedRect !== undefined
-              ? focusedRect.top - viewRect.top
-              : Number.POSITIVE_INFINITY;
-            return viewRect !== undefined
-              && focusedRect !== undefined
-              && focusedRect.top >= viewRect.top
-              && focusedRect.bottom <= viewRect.bottom
-              && topOffset <= Math.max(96, rowHeight * 4);
-          }, undefined, { timeout: 5000 });
+            await page.waitForFunction(() =>
+            {
+              const view = document.querySelector(".sheaf-chat-file-view") as HTMLElement | null;
+              const focusedRows = Array.from(document.querySelectorAll(".sheaf-chat-agent-review-inline-row--focused"));
+              const focusedLine = focusedRows.find((row) =>
+                row.textContent?.includes("Line 300: altered in the next review file.") === true
+              );
+              const viewRect = view?.getBoundingClientRect();
+              const focusedRect = focusedLine?.getBoundingClientRect();
+              const rowHeight = focusedRect?.height ?? 0;
+              const topOffset = viewRect !== undefined && focusedRect !== undefined
+                ? focusedRect.top - viewRect.top
+                : Number.POSITIVE_INFINITY;
+              return viewRect !== undefined
+                && focusedRect !== undefined
+                && focusedRect.top >= viewRect.top
+                && focusedRect.bottom <= viewRect.bottom
+                && topOffset <= Math.max(96, rowHeight * 4);
+            }, undefined, { timeout: 5000 });
+          }
+          catch (error)
+          {
+            const metrics = await page.evaluate(() =>
+            {
+              const view = document.querySelector(".sheaf-chat-file-view") as HTMLElement | null;
+              const focusedRows = Array.from(document.querySelectorAll(".sheaf-chat-agent-review-inline-row--focused"));
+              const focusedLine = focusedRows.find((row) =>
+                row.textContent?.includes("Line 300: altered in the next review file.") === true
+              );
+              const viewRect = view?.getBoundingClientRect();
+              const focusedRect = focusedLine?.getBoundingClientRect();
+              return {
+                selectedTab: document.querySelector(".sheaf-chat-tab--selected .sheaf-chat-tab-label")?.textContent?.trim() ?? null,
+                focusedTexts: focusedRows.map((row) => row.textContent ?? ""),
+                pointText: document.querySelector(".sheaf-chat-file-point")?.textContent ?? null,
+                pointOffset: view?.getAttribute("data-point-offset") ?? null,
+                scrollTop: view?.scrollTop ?? null,
+                viewTop: viewRect?.top ?? null,
+                viewBottom: viewRect?.bottom ?? null,
+                focusedTop: focusedRect?.top ?? null,
+                focusedBottom: focusedRect?.bottom ?? null,
+              };
+            });
+            throw new Error(`next-file hunk reveal failed: ${JSON.stringify(metrics)} :: ${String(error)}`);
+          }
           const afterNextFile = await page.evaluate(() =>
           {
             const view = document.querySelector(".sheaf-chat-file-view") as HTMLElement | null;
@@ -715,9 +772,12 @@ test("front door Agent Review renders inline diffs and stages focused hunks in C
             );
             const viewRect = view?.getBoundingClientRect();
             const focusedRect = focusedLine?.getBoundingClientRect();
+            const point = document.querySelector(".sheaf-chat-file-point");
             return {
               counts: document.querySelector(".sheaf-chat-agent-review-counts")?.textContent ?? "",
               focusedText: focusedRows.map((row) => row.textContent ?? ""),
+              pointInFocusedHunk: focusedLine?.contains(point) ?? false,
+              pointOffset: view?.getAttribute("data-point-offset") ?? null,
               rowHeight: focusedRect?.height ?? null,
               scrollTop: view?.scrollTop ?? 0,
               topOffset: viewRect !== undefined && focusedRect !== undefined
@@ -737,6 +797,11 @@ test("front door Agent Review renders inline diffs and stages focused hunks in C
               text.includes("Line 300: altered in the next review file."),
             ),
             "expected next-file navigation to focus the first hunk in zeta.md",
+          );
+          assert.equal(
+            afterNextFile.pointInFocusedHunk,
+            true,
+            `expected point to follow next-file focused hunk; pointOffset=${afterNextFile.pointOffset}`,
           );
 
           await page.evaluate(() =>

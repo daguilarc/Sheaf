@@ -213,10 +213,30 @@ test("workspace editor state normalizes paths and rejects escapes", async () =>
           viewports: {
             "README.md": { scrollTop: 12.9 },
           },
+          navigation: {
+            "README.md": {
+              point: 9.8,
+              mark: 2.1,
+              markActive: true,
+              line: 1.2,
+              column: 4.6,
+              before: "heading",
+              after: " body",
+            },
+          },
         },
       );
       assert.deepEqual(state.tabs, ["README.md"]);
       assert.equal(state.viewports["README.md"]?.scrollTop, 12);
+      assert.deepEqual(state.navigation["README.md"], {
+        point: 9,
+        mark: 2,
+        markActive: true,
+        line: 1,
+        column: 4,
+        before: "heading",
+        after: " body",
+      });
       assert.deepEqual(
         await ReadWorkspaceEditorState(paths, repository!.repoId, workspace!.workspaceId),
         state,

@@ -161,12 +161,24 @@ export interface WorkspaceEditorViewport
   scrollTop: number;
 }
 
+export interface WorkspaceEditorNavigationState
+{
+  point: number;
+  mark: number | null;
+  markActive: boolean;
+  line?: number;
+  column?: number;
+  before?: string;
+  after?: string;
+}
+
 export interface WorkspaceEditorState
 {
   tabs: string[];
   selectedPath: string | null;
   expandedDirectories: string[];
   viewports: Record<string, WorkspaceEditorViewport>;
+  navigation: Record<string, WorkspaceEditorNavigationState>;
 }
 
 export type AguiEventPayload = Record<string, unknown>;

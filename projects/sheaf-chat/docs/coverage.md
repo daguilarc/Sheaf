@@ -137,6 +137,12 @@ Last audit: repository/workspace chat apply, 2026-06-14
 ### file-browser
 - `GET /file` reads the entire file into memory and `GET /files` reads an
   entire directory with no documented size, entry-count, or latency budget.
+- Browser integration coverage exercises read-only Emacs-style point
+  movement, `C-g`, mark/region exchange, incremental search, find-file,
+  buffer/tab switching, Markdown source-offset navigation, point/viewport
+  synchronization, smart-case search, two-step search wrap behavior,
+  Agent Review hunk point-following, and a deterministic mixed-command
+  simulation through Playwright.
 - Chat-message Markdown/KaTeX rendering is delegated to the shared web
   renderer; Sheaf Chat documents only the file-link handler it passes in.
 - Fragment navigation preserves `#fragment` and attempts to scroll to an
@@ -145,6 +151,9 @@ Last audit: repository/workspace chat apply, 2026-06-14
 - Permission-denied and other unexpected filesystem errors from file reads
   or directory listings fall through the generic service `internal_error`
   path with the thrown message; there is no file-browser-specific error code.
+- Agent Review compatibility is covered by server/API tests, retained UI
+  smoke coverage, and a Chromium flow that drives hunk navigation, comment
+  placement, next-file review navigation, and focused-hunk staging.
 
 ## Observed code/spec mismatches (candidate fixes, not spec gaps)
 

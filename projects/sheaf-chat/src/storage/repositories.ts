@@ -28,6 +28,7 @@ export const x_emptyWorkspaceEditorState: WorkspaceEditorState = {
   selectedPath: null,
   expandedDirectories: [],
   viewports: {},
+  navigation: {},
 };
 
 export function IdForCanonicalPath(canonicalPath: string): string
@@ -553,6 +554,7 @@ export function NormalizeWorkspaceEditorState(input: unknown): WorkspaceEditorSt
       ? null
       : NormalizeWorkspaceRelativePath(record.selectedPath, "selectedPath");
   const viewports: Record<string, { scrollTop: number }> = {};
+  const navigation: WorkspaceEditorState["navigation"] = {};
 
   if (
     record.viewports !== undefined &&
@@ -581,11 +583,62 @@ export function NormalizeWorkspaceEditorState(input: unknown): WorkspaceEditorSt
     };
   }
 
+  if (
+    record.navigation !== undefined &&
+    (record.navigation === null || typeof record.navigation !== "object" || Array.isArray(record.navigation))
+  )
+  {
+    throw new StorageError("invalid_request", "navigation must be an object");
+  }
+
+  for (const [rawPath, rawSnapshot] of Object.entries(
+    (record.navigation as Record<string, unknown> | undefined) ?? {},
+  ))
+  {
+    const navigationPath = NormalizeWorkspaceRelativePath(rawPath, "navigation path");
+
+    if (rawSnapshot === null || typeof rawSnapshot !== "object" || Array.isArray(rawSnapshot))
+    {
+      throw new StorageError("invalid_request", "navigation snapshot must be an object");
+    }
+
+    const snapshot = rawSnapshot as Record<string, unknown>;
+    const point = typeof snapshot.point === "number" && Number.isFinite(snapshot.point)
+      ? Math.max(0, Math.floor(snapshot.point))
+      : 0;
+    const mark = typeof snapshot.mark === "number" && Number.isFinite(snapshot.mark)
+      ? Math.max(0, Math.floor(snapshot.mark))
+      : null;
+    const line = typeof snapshot.line === "number" && Number.isFinite(snapshot.line)
+      ? Math.max(0, Math.floor(snapshot.line))
+      : undefined;
+    const column = typeof snapshot.column === "number" && Number.isFinite(snapshot.column)
+      ? Math.max(0, Math.floor(snapshot.column))
+      : undefined;
+    const before = typeof snapshot.before === "string"
+      ? snapshot.before.slice(-128)
+      : undefined;
+    const after = typeof snapshot.after === "string"
+      ? snapshot.after.slice(0, 128)
+      : undefined;
+
+    navigation[navigationPath] = {
+      point,
+      mark,
+      markActive: snapshot.markActive === true,
+      ...(line === undefined ? {} : { line }),
+      ...(column === undefined ? {} : { column }),
+      ...(before === undefined ? {} : { before }),
+      ...(after === undefined ? {} : { after }),
+    };
+  }
+
   return {
     tabs: Array.from(new Set(tabs)),
     selectedPath,
     expandedDirectories: Array.from(new Set(expandedDirectories)),
     viewports,
+    navigation,
   };
 }
 

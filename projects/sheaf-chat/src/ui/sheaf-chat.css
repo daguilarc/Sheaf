@@ -681,6 +681,101 @@ body
   padding: 12px;
 }
 
+.sheaf-chat-file-view:focus
+{
+  outline: 2px solid color-mix(in srgb, var(--sheaf-chat-accent) 45%, transparent);
+  outline-offset: -2px;
+}
+
+.sheaf-chat-file-navigable
+{
+  position: relative;
+}
+
+.sheaf-chat-file-point
+{
+  background: var(--sheaf-chat-accent);
+  color: var(--sheaf-chat-surface);
+  outline: 1px solid color-mix(in srgb, var(--sheaf-chat-accent) 75%, var(--sheaf-chat-text));
+}
+
+.sheaf-chat-file-point--markdown,
+.sheaf-chat-file-point--review
+{
+  display: inline-block;
+  min-width: 0.55em;
+}
+
+.sheaf-chat-file-point--empty
+{
+  background: transparent;
+  color: inherit;
+  display: inline;
+  min-width: 0;
+  outline: none;
+  position: relative;
+}
+
+.sheaf-chat-file-point--empty::after
+{
+  border-left: 2px solid var(--sheaf-chat-accent);
+  bottom: 0.1em;
+  content: "";
+  left: 0;
+  position: absolute;
+  top: 0.1em;
+}
+
+.sheaf-chat-file-region
+{
+  background: color-mix(in srgb, var(--sheaf-chat-accent) 25%, transparent);
+  box-shadow: inset 0 -1px color-mix(in srgb, var(--sheaf-chat-accent) 45%, transparent);
+}
+
+.sheaf-chat-file-search-match
+{
+  background: color-mix(in srgb, #ffd166 55%, transparent);
+  color: var(--sheaf-chat-text);
+}
+
+.sheaf-chat-file-minibuffer
+{
+  position: sticky;
+  bottom: 0;
+  margin-top: 8px;
+  border: 1px solid var(--sheaf-chat-border);
+  border-radius: 6px;
+  background: var(--sheaf-chat-surface);
+  color: var(--sheaf-chat-text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.4;
+  padding: 6px 8px;
+  white-space: normal;
+}
+
+.sheaf-chat-file-minibuffer-label
+{
+  color: var(--sheaf-chat-text-muted);
+  font-weight: 700;
+}
+
+.sheaf-chat-file-minibuffer-input
+{
+  color: var(--sheaf-chat-text);
+}
+
+.sheaf-chat-file-minibuffer-candidates
+{
+  color: var(--sheaf-chat-text-muted);
+}
+
+.sheaf-chat-file-minibuffer-error
+{
+  color: var(--sheaf-chat-danger, #b42318);
+  font-weight: 700;
+}
+
 .sheaf-chat-agent-review-hunk
 {
   margin: 0 0 12px;
