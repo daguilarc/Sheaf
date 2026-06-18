@@ -7,6 +7,7 @@ enum WebServiceFactory
         runtimeConfigProvider: RuntimeConfigProvider,
         secretStore: APIKeysStore,
         promptCatalog: SystemPromptCatalog,
+        audioInputResolver: AudioInputResolving,
         onBufferBytesUpdated: @escaping @Sendable (Int) -> Void
     ) async -> RuntimeConfigurationManager
     {
@@ -15,6 +16,18 @@ enum WebServiceFactory
 
         return RuntimeConfigurationManager(
             configurations: [
+                RuntimeStringConfiguration(
+                    name: WebConfigFieldMapping.managerNameByField[WebConfigFieldMapping.audioInput]!,
+                    currentValue: config.audioInput ?? "",
+                    defaultValue: defaults.audioInput ?? "",
+                    options: audioInputOptions(from: audioInputResolver),
+                    setter: { value in
+                        let updated = try await runtimeConfigProvider.applyInMemoryPatch(
+                            RuntimeConfigPatch(audioInput: value)
+                        )
+                        return updated.audioInput ?? ""
+                    }
+                ),
                 RuntimeBooleanConfiguration(
                     name: WebConfigFieldMapping.managerNameByField[WebConfigFieldMapping.useCloud]!,
                     currentValue: config.useCloud,
@@ -72,5 +85,29 @@ enum WebServiceFactory
                 )
             ]
         )
+    }
+
+    private static func audioInputOptions(from resolver: AudioInputResolving) -> [String]
+    {
+        let devices = resolver.availableInputs()
+        let trimmedNames = devices.map { $0.name.trimmingCharacters(in: .whitespacesAndNewlines) }
+        let nameCounts = Dictionary(grouping: trimmedNames.filter { !$0.isEmpty }, by: { $0 })
+            .mapValues(\.count)
+        var seen: Set<String> = [""]
+        var options = [""]
+        for device in devices
+        {
+            let name = device.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            let value = name.isEmpty || (nameCounts[name] ?? 0) > 1
+                ? device.id
+                : name
+            guard !seen.contains(value) else
+            {
+                continue
+            }
+            seen.insert(value)
+            options.append(value)
+        }
+        return options
     }
 }

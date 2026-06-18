@@ -306,6 +306,42 @@ public final class RuntimeBooleanConfiguration: RuntimeConfiguration, @unchecked
     }
 }
 
+public final class RuntimeStringConfiguration: RuntimeConfiguration, @unchecked Sendable {
+    public typealias Setter = @Sendable (String) async throws -> String
+
+    private let optionValues: [String]
+    private let setter: Setter
+
+    public init(
+        name: String,
+        currentValue: String,
+        defaultValue: String,
+        options: [String] = [],
+        setter: @escaping Setter
+    ) {
+        self.optionValues = options
+        self.setter = setter
+        super.init(
+            name: name,
+            currentValue: .string(currentValue),
+            defaultValue: .string(defaultValue)
+        )
+    }
+
+    public override func getOptions() async throws -> [RuntimeConfigurationValue] {
+        optionValues.map { .string($0) }
+    }
+
+    public override func set(_ value: RuntimeConfigurationValue) async throws {
+        guard case let .string(stringValue) = value else {
+            throw DictatorError.configUpdateFailed("\(name) must be a string")
+        }
+
+        let updatedValue = try await setter(stringValue)
+        updateCurrentValue(.string(updatedValue))
+    }
+}
+
 public final class RuntimeSystemPromptConfiguration: RuntimeConfiguration, @unchecked Sendable {
     public enum Target: Sendable {
         case primary

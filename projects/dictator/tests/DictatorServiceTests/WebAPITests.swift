@@ -86,7 +86,15 @@ final class WebAPITests: XCTestCase
 
     func testStatusPayloadIncludesExpectedFieldsAndHidesSecrets() async throws
     {
-        try await startServer(hasOpenAIKey: true)
+        try await startServer(
+            hasOpenAIKey: true,
+            audioInputResolver: StaticAudioInputResolver(
+                devices: [
+                    AudioInputDevice(id: "built-in", name: "Built-in Microphone", channelCount: 1)
+                ],
+                defaultDeviceID: "built-in"
+            )
+        )
         let (status, body) = try await jsonRequest(method: "GET", path: "/api/status")
         XCTAssertEqual(status, 200)
         XCTAssertEqual(body["healthy"] as? Bool, true)
@@ -95,6 +103,11 @@ final class WebAPITests: XCTestCase
         XCTAssertNotNil(body["provider_mode"])
         XCTAssertNotNil(body["cloud_model"])
         XCTAssertNotNil(body["local_model"])
+        XCTAssertEqual(body["audio_input"] as? String, "")
+        XCTAssertEqual(body["audio_input_effective"] as? String, "Built-in Microphone")
+        XCTAssertEqual(body["audio_input_mode"] as? String, "default")
+        XCTAssertEqual(body["audio_input_available"] as? Bool, true)
+        XCTAssertNotNil(body["audio_input_unavailable_reason"])
         XCTAssertNotNil(body["log_path"])
         XCTAssertNotNil(body["data_path"])
         let apiKeys = body["api_keys"] as? [String: Any]
@@ -103,6 +116,22 @@ final class WebAPITests: XCTestCase
         let encoded = try JSONSerialization.data(withJSONObject: body)
         let encodedString = String(data: encoded, encoding: .utf8) ?? ""
         XCTAssertFalse(encodedString.contains("sk-"))
+    }
+
+    func testStatusReportsUnavailableSelectedAudioInput() async throws
+    {
+        try await startServer(
+            initialAudioInput: "Scarlett 2i2",
+            audioInputResolver: StaticAudioInputResolver(devices: [])
+        )
+        let (status, body) = try await jsonRequest(method: "GET", path: "/api/status")
+
+        XCTAssertEqual(status, 200)
+        XCTAssertEqual(body["audio_input"] as? String, "Scarlett 2i2")
+        XCTAssertEqual(body["audio_input_effective"] as? String, "Scarlett 2i2")
+        XCTAssertEqual(body["audio_input_mode"] as? String, "selected")
+        XCTAssertEqual(body["audio_input_available"] as? Bool, false)
+        XCTAssertTrue((body["audio_input_unavailable_reason"] as? String)?.contains("Scarlett 2i2") == true)
     }
 
     func testConfigPatchPersistsToDictatorJSON() async throws
@@ -116,6 +145,144 @@ final class WebAPITests: XCTestCase
         let saved = try JSONDecoder().decode(RuntimeConfigFile.self, from: Data(contentsOf: configURL))
         XCTAssertTrue(saved.useCloud)
         XCTAssertEqual(saved.cloudModel, "gpt-5.2")
+    }
+
+    func testConfigPatchPersistsAudioInputStringNullAndBlank() async throws
+    {
+        try await startServer()
+
+        let named = #"{"audio_input":"  Scarlett 2i2  "}"#.data(using: .utf8)!
+        let (namedStatus, _) = try await jsonRequest(
+            method: "PATCH",
+            path: "/api/config",
+            body: named,
+            contentType: "application/json"
+        )
+        XCTAssertEqual(namedStatus, 200)
+        var saved = try JSONDecoder().decode(RuntimeConfigFile.self, from: Data(contentsOf: try XCTUnwrap(configURL)))
+        XCTAssertEqual(saved.audioInput, "Scarlett 2i2")
+
+        let explicitNull = #"{"audio_input":null}"#.data(using: .utf8)!
+        let (nullStatus, _) = try await jsonRequest(
+            method: "PATCH",
+            path: "/api/config",
+            body: explicitNull,
+            contentType: "application/json"
+        )
+        XCTAssertEqual(nullStatus, 200)
+        saved = try JSONDecoder().decode(RuntimeConfigFile.self, from: Data(contentsOf: try XCTUnwrap(configURL)))
+        XCTAssertNil(saved.audioInput)
+
+        let blank = #"{"audio_input":""}"#.data(using: .utf8)!
+        let (blankStatus, _) = try await jsonRequest(
+            method: "PATCH",
+            path: "/api/config",
+            body: blank,
+            contentType: "application/json"
+        )
+        XCTAssertEqual(blankStatus, 200)
+        saved = try JSONDecoder().decode(RuntimeConfigFile.self, from: Data(contentsOf: try XCTUnwrap(configURL)))
+        XCTAssertNil(saved.audioInput)
+    }
+
+    func testConfigSnapshotIncludesAudioInputField() async throws
+    {
+        try await startServer()
+        let (status, body) = try await jsonRequest(method: "GET", path: "/api/config")
+        XCTAssertEqual(status, 200)
+
+        let fields = try XCTUnwrap(body["fields"] as? [[String: Any]])
+        XCTAssertEqual(fields.count, 8)
+        XCTAssertEqual(
+            fields.compactMap { $0["name"] as? String },
+            [
+                "audio_input",
+                "auxiliary_system_prompt_1",
+                "auxiliary_system_prompt_2",
+                "cloud_model",
+                "interactions_buffer_bytes",
+                "local_model",
+                "system_prompt",
+                "use_cloud"
+            ]
+        )
+        let audioInput = try XCTUnwrap(fields.first { $0["name"] as? String == "audio_input" })
+        XCTAssertEqual(audioInput["label"] as? String, "Audio input")
+        XCTAssertEqual(audioInput["type"] as? String, "string")
+        XCTAssertEqual(audioInput["editable"] as? Bool, true)
+        XCTAssertEqual((audioInput["current"] as? [String: Any])?["value"] as? String, "")
+        XCTAssertEqual((audioInput["default"] as? [String: Any])?["value"] as? String, "")
+    }
+
+    func testConfigOptionsIncludesDefaultAndAvailableAudioInputs() async throws
+    {
+        try await startServer(
+            audioInputResolver: StaticAudioInputResolver(
+                devices: [
+                    AudioInputDevice(id: "built-in", name: "Built-in Microphone", channelCount: 1),
+                    AudioInputDevice(id: "scarlett-id", name: "Scarlett 2i2", channelCount: 2)
+                ],
+                defaultDeviceID: "built-in"
+            )
+        )
+
+        let (status, body) = try await jsonRequest(method: "GET", path: "/api/config/options?name=audio_input")
+        XCTAssertEqual(status, 200)
+        XCTAssertEqual(body["name"] as? String, "audio_input")
+        let options = try XCTUnwrap(body["options"] as? [[String: Any]])
+        XCTAssertTrue(options.contains { $0["value"] as? String == "" })
+        XCTAssertTrue(options.contains { $0["value"] as? String == "Built-in Microphone" })
+        XCTAssertTrue(options.contains { $0["value"] as? String == "Scarlett 2i2" })
+    }
+
+    func testConfigOptionsUsesStableIDsForDuplicateAudioInputNames() async throws
+    {
+        try await startServer(
+            audioInputResolver: StaticAudioInputResolver(
+                devices: [
+                    AudioInputDevice(id: "scarlett-front", name: "Scarlett 2i2", channelCount: 2),
+                    AudioInputDevice(id: "scarlett-back", name: "Scarlett 2i2", channelCount: 2)
+                ],
+                defaultDeviceID: "scarlett-front"
+            )
+        )
+
+        let (status, body) = try await jsonRequest(method: "GET", path: "/api/config/options?name=audio_input")
+        XCTAssertEqual(status, 200)
+        let options = try XCTUnwrap(body["options"] as? [[String: Any]])
+        XCTAssertTrue(options.contains { $0["value"] as? String == "" })
+        XCTAssertTrue(options.contains { $0["value"] as? String == "scarlett-front" })
+        XCTAssertTrue(options.contains { $0["value"] as? String == "scarlett-back" })
+        XCTAssertFalse(options.contains { $0["value"] as? String == "Scarlett 2i2" })
+    }
+
+    func testConfigOptionsReflectsCurrentAudioInputsAfterDeviceChanges() async throws
+    {
+        let resolver = MutableAudioInputResolver(
+            devices: [
+                AudioInputDevice(id: "built-in", name: "Built-in Microphone", channelCount: 1)
+            ],
+            defaultDeviceID: "built-in"
+        )
+        try await startServer(audioInputResolver: resolver)
+
+        let (initialStatus, initialBody) = try await jsonRequest(method: "GET", path: "/api/config/options?name=audio_input")
+        XCTAssertEqual(initialStatus, 200)
+        let initialOptions = try XCTUnwrap(initialBody["options"] as? [[String: Any]])
+        XCTAssertTrue(initialOptions.contains { $0["value"] as? String == "Built-in Microphone" })
+
+        resolver.setDevices(
+            [
+                AudioInputDevice(id: "scarlett-id", name: "Scarlett 2i2", channelCount: 2)
+            ],
+            defaultDeviceID: "scarlett-id"
+        )
+
+        let (updatedStatus, updatedBody) = try await jsonRequest(method: "GET", path: "/api/config/options?name=audio_input")
+        XCTAssertEqual(updatedStatus, 200)
+        let updatedOptions = try XCTUnwrap(updatedBody["options"] as? [[String: Any]])
+        XCTAssertFalse(updatedOptions.contains { $0["value"] as? String == "Built-in Microphone" })
+        XCTAssertTrue(updatedOptions.contains { $0["value"] as? String == "Scarlett 2i2" })
     }
 
     func testInvalidConfigPatchFailsClearly() async throws
@@ -376,7 +543,25 @@ final class WebAPITests: XCTestCase
         XCTAssertTrue(js.contains("deleteInjectableRule"))
     }
 
-    private func startServer(hasOpenAIKey: Bool = false, ollamaAvailable: Bool = true) async throws
+    func testWebUIHidesDictationSubmitWhenAudioInputUnavailable() throws
+    {
+        let repoRoot = try SheafRootDiscovery.requireRepoRoot()
+        let appJS = try String(
+            contentsOf: repoRoot.appendingPathComponent("projects/dictator/src/web/app.js"),
+            encoding: .utf8
+        )
+
+        XCTAssertTrue(appJS.contains("audio_input_available"))
+        XCTAssertTrue(appJS.contains(#"querySelector('button[type="submit"]')"#))
+        XCTAssertTrue(appJS.contains("submitButton.hidden = status.audio_input_available === false"))
+    }
+
+    private func startServer(
+        hasOpenAIKey: Bool = false,
+        ollamaAvailable: Bool = true,
+        initialAudioInput: String? = nil,
+        audioInputResolver: AudioInputResolving = StaticAudioInputResolver(devices: [], defaultDeviceID: nil)
+    ) async throws
     {
         let repoRoot = try SheafRootDiscovery.requireRepoRoot()
         let tempDir = try makeTempDir()
@@ -388,8 +573,31 @@ final class WebAPITests: XCTestCase
         self.safeConfigURL = safeConfigURL
 
         let defaults = RuntimeConfigFile.bootstrap()
+        let initialConfig = RuntimeConfigFile(
+            version: defaults.version,
+            cloudModel: defaults.cloudModel,
+            localModel: defaults.localModel,
+            audioInput: initialAudioInput,
+            systemPrompt: defaults.systemPrompt,
+            auxiliarySystemPrompt1: defaults.auxiliarySystemPrompt1,
+            auxiliarySystemPrompt2: defaults.auxiliarySystemPrompt2,
+            interactionsBufferBytes: defaults.interactionsBufferBytes,
+            useCloud: defaults.useCloud,
+            fallbackMode: defaults.fallbackMode,
+            ollamaHost: defaults.ollamaHost,
+            sttModelPath: defaults.sttModelPath,
+            sttLanguage: defaults.sttLanguage,
+            ollamaBinPath: defaults.ollamaBinPath,
+            dataDir: defaults.dataDir,
+            systemPromptsDir: defaults.systemPromptsDir,
+            dictatorServerHost: defaults.dictatorServerHost,
+            dictatorServerPort: defaults.dictatorServerPort,
+            dictatorServerEnabled: defaults.dictatorServerEnabled,
+            injectableRules: defaults.injectableRules,
+            updatedAt: defaults.updatedAt
+        )
         try RuntimeConfigStore(fileURL: safeConfigURL).save(defaults)
-        try RuntimeConfigStore(fileURL: configURL).save(defaults)
+        try RuntimeConfigStore(fileURL: configURL).save(initialConfig)
 
         let apiKeysURL = tempDir.appendingPathComponent("api_keys.json")
         self.apiKeysURL = apiKeysURL
@@ -448,7 +656,8 @@ final class WebAPITests: XCTestCase
             endpointDescription: "http://127.0.0.1:0",
             logPath: tempDir.appendingPathComponent("logs").path,
             dataPath: tempDir.appendingPathComponent("data").path,
-            rpcService: rpcService
+            rpcService: rpcService,
+            audioInputResolver: audioInputResolver
         )
         let webAPIService = WebAPIService(context: webContext, urlSession: session)
         await webAPIService.prepare()
@@ -611,5 +820,39 @@ private actor WebAPITestFakeCoreClient: DictatorCoreClient
     func interactForRuntimeConfig(_ request: VoiceConfigInteractionRequest) async throws -> VoiceConfigInteractionResult
     {
         throw DictatorError.configInteractionUnavailable
+    }
+}
+
+private final class MutableAudioInputResolver: AudioInputResolving, @unchecked Sendable
+{
+    private let lock = NSLock()
+    private var devices: [AudioInputDevice]
+    private var defaultDeviceID: String?
+
+    init(devices: [AudioInputDevice], defaultDeviceID: String?)
+    {
+        self.devices = devices
+        self.defaultDeviceID = defaultDeviceID
+    }
+
+    func availableInputs() -> [AudioInputDevice]
+    {
+        lock.withLock { devices }
+    }
+
+    func resolve(configuredAudioInput: String?) -> ResolvedAudioInput
+    {
+        let snapshot = lock.withLock { (devices, defaultDeviceID) }
+        return StaticAudioInputResolver(devices: snapshot.0, defaultDeviceID: snapshot.1)
+            .resolve(configuredAudioInput: configuredAudioInput)
+    }
+
+    func setDevices(_ devices: [AudioInputDevice], defaultDeviceID: String?)
+    {
+        lock.withLock
+        {
+            self.devices = devices
+            self.defaultDeviceID = defaultDeviceID
+        }
     }
 }

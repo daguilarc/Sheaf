@@ -23,6 +23,11 @@ struct WebAPIJSON
         let fallback_mode: String
         let cloud_model: String
         let local_model: String
+        let audio_input: String
+        let audio_input_effective: String
+        let audio_input_mode: String
+        let audio_input_available: Bool
+        let audio_input_unavailable_reason: String
         let system_prompt: String
         let auxiliary_system_prompt_1: String
         let auxiliary_system_prompt_2: String
@@ -73,6 +78,49 @@ struct WebAPIJSON
         let auxiliary_system_prompt_1: String?
         let auxiliary_system_prompt_2: String?
         let interactions_buffer_bytes: Int?
+
+        enum CodingKeys: String, CodingKey
+        {
+            case use_cloud
+            case cloud_model
+            case local_model
+            case audio_input
+            case system_prompt
+            case auxiliary_system_prompt_1
+            case auxiliary_system_prompt_2
+            case interactions_buffer_bytes
+        }
+
+        let audio_input: String??
+
+        init(from decoder: Decoder) throws
+        {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            use_cloud = try container.decodeIfPresent(Bool.self, forKey: .use_cloud)
+            cloud_model = try container.decodeIfPresent(String.self, forKey: .cloud_model)
+            local_model = try container.decodeIfPresent(String.self, forKey: .local_model)
+            system_prompt = try container.decodeIfPresent(String.self, forKey: .system_prompt)
+            auxiliary_system_prompt_1 = try container.decodeIfPresent(
+                String.self,
+                forKey: .auxiliary_system_prompt_1
+            )
+            auxiliary_system_prompt_2 = try container.decodeIfPresent(
+                String.self,
+                forKey: .auxiliary_system_prompt_2
+            )
+            interactions_buffer_bytes = try container.decodeIfPresent(Int.self, forKey: .interactions_buffer_bytes)
+
+            if container.contains(.audio_input)
+            {
+                audio_input = try container.decodeNil(forKey: .audio_input)
+                    ? .some(nil)
+                    : .some(container.decode(String.self, forKey: .audio_input))
+            }
+            else
+            {
+                audio_input = nil
+            }
+        }
     }
 
     struct ConfigOptionsResponse: Codable
@@ -195,6 +243,7 @@ enum WebConfigFieldMapping
 {
     static let cloudModel = "cloud_model"
     static let localModel = "local_model"
+    static let audioInput = "audio_input"
     static let useCloud = "use_cloud"
     static let systemPrompt = "system_prompt"
     static let auxiliarySystemPrompt1 = "auxiliary_system_prompt_1"
@@ -204,6 +253,7 @@ enum WebConfigFieldMapping
     static let managerNameByField: [String: String] = [
         cloudModel: "Cloud Model",
         localModel: "Local Model",
+        audioInput: "Audio Input",
         useCloud: "Use Cloud",
         systemPrompt: "System Prompt",
         auxiliarySystemPrompt1: "Auxiliary Prompt 1",
@@ -214,6 +264,7 @@ enum WebConfigFieldMapping
     static let labelByField: [String: String] = [
         cloudModel: "Cloud model",
         localModel: "Local model",
+        audioInput: "Audio input",
         useCloud: "Use cloud provider",
         systemPrompt: "Primary system prompt",
         auxiliarySystemPrompt1: "Auxiliary prompt 1",

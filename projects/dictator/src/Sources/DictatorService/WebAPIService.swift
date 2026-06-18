@@ -13,6 +13,7 @@ struct WebServiceContext: Sendable
     let logPath: String
     let dataPath: String
     let rpcService: DictatorRPCService
+    let audioInputResolver: AudioInputResolving
 }
 
 actor WebAPIService
@@ -38,6 +39,7 @@ actor WebAPIService
             runtimeConfigProvider: context.runtimeConfigProvider,
             secretStore: context.secretStore,
             promptCatalog: promptCatalog,
+            audioInputResolver: context.audioInputResolver,
             onBufferBytesUpdated: { [interactionStore = context.interactionStore] bytes in
                 Task
                 {
@@ -106,6 +108,7 @@ actor WebAPIService
         let ollamaStatus = await checkOllamaReachability(host: config.ollamaHost)
         let dictationState = await context.activityTracker.currentState().apiValue
         let providerMode = config.useCloud ? "cloud" : "local"
+        let resolvedAudioInput = context.audioInputResolver.resolve(configuredAudioInput: config.audioInput)
 
         return WebAPIJSON.StatusResponse(
             healthy: true,
@@ -117,6 +120,11 @@ actor WebAPIService
             fallback_mode: config.fallbackMode,
             cloud_model: config.cloudModel,
             local_model: config.localModel,
+            audio_input: config.audioInput ?? "",
+            audio_input_effective: effectiveAudioInputName(configuredAudioInput: config.audioInput, resolved: resolvedAudioInput),
+            audio_input_mode: resolvedAudioInput.mode == .systemDefault ? "default" : "selected",
+            audio_input_available: resolvedAudioInput.isAvailable,
+            audio_input_unavailable_reason: resolvedAudioInput.unavailableReason ?? "",
             system_prompt: config.systemPrompt,
             auxiliary_system_prompt_1: config.auxiliarySystemPrompt1,
             auxiliary_system_prompt_2: config.auxiliarySystemPrompt2,
@@ -179,6 +187,10 @@ actor WebAPIService
         {
             try await setField(WebConfigFieldMapping.localModel, value: .string(localModel))
         }
+        if let audioInput = request.audio_input
+        {
+            try await setField(WebConfigFieldMapping.audioInput, value: .string(audioInput ?? ""))
+        }
         if let systemPrompt = request.system_prompt
         {
             try await setField(WebConfigFieldMapping.systemPrompt, value: .string(systemPrompt))
@@ -203,6 +215,7 @@ actor WebAPIService
         let hasPatch = request.use_cloud != nil
             || request.cloud_model != nil
             || request.local_model != nil
+            || request.audio_input != nil
             || request.system_prompt != nil
             || request.auxiliary_system_prompt_1 != nil
             || request.auxiliary_system_prompt_2 != nil
@@ -226,6 +239,14 @@ actor WebAPIService
 
     private func configOptions(fieldName: String) async throws -> WebAPIJSON.ConfigOptionsResponse
     {
+        if fieldName == WebConfigFieldMapping.audioInput
+        {
+            return WebAPIJSON.ConfigOptionsResponse(
+                name: fieldName,
+                options: audioInputOptions().map { encodeValue(.string($0)) }
+            )
+        }
+
         guard let managerName = WebConfigFieldMapping.managerName(for: fieldName) else
         {
             throw DictatorError.configUpdateFailed("unknown config field: \(fieldName)")
@@ -235,6 +256,39 @@ actor WebAPIService
             name: fieldName,
             options: options.map(encodeValue)
         )
+    }
+
+    private func audioInputOptions() -> [String]
+    {
+        let devices = context.audioInputResolver.availableInputs()
+        let trimmedNames = devices.map { $0.name.trimmingCharacters(in: .whitespacesAndNewlines) }
+        let nameCounts = Dictionary(grouping: trimmedNames.filter { !$0.isEmpty }, by: { $0 })
+            .mapValues(\.count)
+        var seen: Set<String> = [""]
+        var options = [""]
+        for device in devices
+        {
+            let name = device.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            let value = name.isEmpty || (nameCounts[name] ?? 0) > 1
+                ? device.id
+                : name
+            guard !seen.contains(value) else
+            {
+                continue
+            }
+            seen.insert(value)
+            options.append(value)
+        }
+        return options
+    }
+
+    private func effectiveAudioInputName(configuredAudioInput: String?, resolved: ResolvedAudioInput) -> String
+    {
+        if let device = resolved.device
+        {
+            return device.name
+        }
+        return configuredAudioInput ?? ""
     }
 
     private func promptList(directory: String) async throws -> WebAPIJSON.PromptListResponse
@@ -441,6 +495,8 @@ actor WebAPIService
             return .string(config.cloudModel)
         case WebConfigFieldMapping.localModel:
             return .string(config.localModel)
+        case WebConfigFieldMapping.audioInput:
+            return .string(config.audioInput ?? "")
         case WebConfigFieldMapping.systemPrompt:
             return .string(config.systemPrompt)
         case WebConfigFieldMapping.auxiliarySystemPrompt1:

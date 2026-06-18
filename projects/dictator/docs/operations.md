@@ -28,7 +28,11 @@ checkout. Repo-wide lane rules: [Testing](../../../structure/testing.md),
   refinement and fallback. The service starts without either, with health
   warnings.
 - Runtime use of the Launchpad surface additionally needs macOS microphone
-  and Accessibility permissions and a Launchpad Pro Mk3.
+  and Accessibility permissions and a Launchpad Pro Mk3. Dictator records
+  from `config/dictator.json` `audio_input`; leave it missing, null, or blank
+  for the system default input, or set an exact input name/stable ID. A
+  configured but unavailable input disables the web record button and renders
+  Launchpad `(0,7)` off with no default-input fallback.
 - Optional full-Talon Launchpad control needs Talon installed. Dictator talks
   to Talon through the Sheaf-owned bridge installed below; normal dictation
   still works when Talon or the bridge is unavailable.

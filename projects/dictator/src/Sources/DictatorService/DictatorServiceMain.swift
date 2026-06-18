@@ -212,6 +212,7 @@ struct DictatorServiceMain
         let activityTracker = DictationActivityTracker()
         let talonControlClient = TalonControlClient()
         let rpcService = DictatorRPCService()
+        let audioInputResolver = SystemAudioInputResolver()
         let endpointDescription = "http://127.0.0.1:\(endpoint.port)"
         let webContext = WebServiceContext(
             repoRoot: repoRoot,
@@ -223,7 +224,8 @@ struct DictatorServiceMain
             endpointDescription: endpointDescription,
             logPath: repoRoot.appendingPathComponent("logs/dictator", isDirectory: true).path,
             dataPath: dataDirectoryURL.path,
-            rpcService: rpcService
+            rpcService: rpcService,
+            audioInputResolver: audioInputResolver
         )
         let webAPIService = WebAPIService(context: webContext)
         await webAPIService.prepare()
@@ -237,7 +239,8 @@ struct DictatorServiceMain
             interactionStore: interactionStore,
             activityTracker: activityTracker,
             talonControl: talonControlClient,
-            rpcService: rpcService
+            rpcService: rpcService,
+            audioInputResolver: audioInputResolver
         )
         await MainActor.run
         {

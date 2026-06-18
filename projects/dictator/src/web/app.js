@@ -111,6 +111,23 @@
       endpoint.textContent = status.dictate_endpoint + "\n" + status.health_endpoint +
         "\nData: " + status.data_path + "\nLogs: " + status.log_path;
     }
+
+    updateDictationAvailability(status);
+  }
+
+  function updateDictationAvailability(status)
+  {
+    const form = document.getElementById("dictate-form");
+    if (!form)
+    {
+      return;
+    }
+
+    const submitButton = form.querySelector('button[type="submit"]');
+    if (submitButton)
+    {
+      submitButton.hidden = status.audio_input_available === false;
+    }
   }
 
   function escapeHtml(value)
@@ -124,13 +141,17 @@
 
   async function loadConfigOptions(fieldName)
   {
-    if (Object.prototype.hasOwnProperty.call(state.configOptions, fieldName))
+    if (fieldName !== "audio_input" && Object.prototype.hasOwnProperty.call(state.configOptions, fieldName))
     {
       return state.configOptions[fieldName];
     }
     const data = await api("/api/config/options?name=" + encodeURIComponent(fieldName));
-    state.configOptions[fieldName] = data.options || [];
-    return state.configOptions[fieldName];
+    const options = data.options || [];
+    if (fieldName !== "audio_input")
+    {
+      state.configOptions[fieldName] = options;
+    }
+    return options;
   }
 
   function fieldByName(name)

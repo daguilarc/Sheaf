@@ -43,9 +43,10 @@ final class LaunchpadServiceController
     private let activityTracker: DictationActivityTracker
     private let talonControl: any TalonControlProviding
     private let rpcService: DictatorRPCService
+    private let audioInputResolver: AudioInputResolving
     private let sessionID = UUID().uuidString
 
-    private let audioRecorder = AudioRecorder()
+    private let audioRecorder: AudioRecorder
     private let recordingController = RecordingController()
     private let activeTargetContextProvider = ActiveTargetContextProvider()
     private lazy var keyboardInjector = KeyboardInjector { [weak self] result in
@@ -60,6 +61,8 @@ final class LaunchpadServiceController
     private var activeSystemPromptPathOverride: String?
     private var activeDictationTask: Task<DictateCallResult, Error>?
     private var dictationState: DictationState = .idle
+    private var recordActionEnabled = true
+    private var resolvedAudioInputForRecording: ResolvedAudioInput?
     private var shiftLatchState: ShiftLatchState = .unpressed
     private var talonControlState = LaunchpadTalonControlState()
 
@@ -77,7 +80,9 @@ final class LaunchpadServiceController
         interactionStore: InteractionHistoryStore,
         activityTracker: DictationActivityTracker,
         talonControl: any TalonControlProviding,
-        rpcService: DictatorRPCService
+        rpcService: DictatorRPCService,
+        audioInputResolver: AudioInputResolving,
+        audioRecorder: AudioRecorder = AudioRecorder()
     )
     {
         self.repoRoot = repoRoot
@@ -89,6 +94,8 @@ final class LaunchpadServiceController
         self.activityTracker = activityTracker
         self.talonControl = talonControl
         self.rpcService = rpcService
+        self.audioInputResolver = audioInputResolver
+        self.audioRecorder = audioRecorder
     }
 
     func start()
@@ -152,6 +159,9 @@ final class LaunchpadServiceController
             },
             recordStatusColorProvider: { [weak self] in
                 self?.recordStatusColor() ?? .off
+            },
+            recordActionEnabledProvider: { [weak self] in
+                self?.recordActionEnabled ?? false
             },
             talonStatusColorProvider: { [weak self] in
                 self?.talonStatusColor() ?? PadColor(r: 60, g: 60, b: 60)
@@ -222,6 +232,7 @@ final class LaunchpadServiceController
         renderWorker.start()
         midiManager.start()
         Task { @MainActor in
+            _ = await refreshRecordAudioInputAvailability(reason: "startup")
             await refreshTalonStatus(reason: "startup")
         }
         TraceLogger.log("launchpad service controller started")
@@ -256,6 +267,10 @@ final class LaunchpadServiceController
         case .start:
             if dictationState == .idle && !recordingController.isRecording
             {
+                guard await recordActionIsAvailableForLaunchpadCommand(command) else
+                {
+                    return
+                }
                 await startRecording(mode: mode, systemPromptPathOverride: systemPromptPathOverride)
             }
         case .stop:
@@ -276,6 +291,10 @@ final class LaunchpadServiceController
             }
             else
             {
+                guard await recordActionIsAvailableForLaunchpadCommand(command) else
+                {
+                    return
+                }
                 await startRecording(mode: mode, systemPromptPathOverride: systemPromptPathOverride)
             }
         }
@@ -359,9 +378,18 @@ final class LaunchpadServiceController
         systemPromptPathOverride: String?
     ) async
     {
+        let availability = await refreshRecordAudioInputAvailability(reason: "start_recording")
+        guard availability.recordActionEnabled else
+        {
+            let configured = availability.resolvedInput.configuredValue ?? "<blank>"
+            let reason = availability.resolvedInput.unavailableReason ?? "selected audio input unavailable"
+            TraceLogger.log("launchpad recording ignored: audio_input=\(configured) reason=\(reason)")
+            return
+        }
+
         await sleepTalon(reason: "launchpad non-Talon dictation start")
         await activityTracker.beginRecording()
-        switch await audioRecorder.start()
+        switch await audioRecorder.start(resolvedInput: availability.resolvedInput)
         {
         case .success:
             var context = activeTargetContextProvider.captureContext() ?? [:]
@@ -382,6 +410,7 @@ final class LaunchpadServiceController
             recordingContextBlocks = contextBlocks.isEmpty ? nil : contextBlocks
             activeInteractionMode = mode
             activeSystemPromptPathOverride = systemPromptPathOverride
+            resolvedAudioInputForRecording = availability.resolvedInput
             _ = recordingController.toggle()
             setDictationState(.recording)
             TraceLogger.log("launchpad recording started mode=\(mode.logName)")
@@ -391,6 +420,7 @@ final class LaunchpadServiceController
             recordingContextBlocks = nil
             activeInteractionMode = .standard
             activeSystemPromptPathOverride = nil
+            resolvedAudioInputForRecording = nil
             setDictationState(.idle)
             TraceLogger.log("launchpad recording start failed: \(error)")
         }
@@ -415,6 +445,7 @@ final class LaunchpadServiceController
             recordingContextBlocks = nil
             activeInteractionMode = .standard
             activeSystemPromptPathOverride = nil
+            resolvedAudioInputForRecording = nil
 
             let locale = Locale.current.identifier.replacingOccurrences(of: "_", with: "-")
             let runtimeConfiguration = await runtimeConfigProvider.currentConfiguration()
@@ -535,6 +566,7 @@ final class LaunchpadServiceController
         recordingContextBlocks = nil
         activeInteractionMode = .standard
         activeSystemPromptPathOverride = nil
+        resolvedAudioInputForRecording = nil
         _ = audioRecorder.stop()
         cancelActiveDictationTask()
         setDictationState(.idle)
@@ -683,6 +715,37 @@ final class LaunchpadServiceController
         launchpadInvalidationBus?.markDirty(reason: "dictation_state")
     }
 
+    private func recordActionIsAvailableForLaunchpadCommand(_ command: LaunchpadActionConfig.DictationCommand) async -> Bool
+    {
+        let availability = await refreshRecordAudioInputAvailability(reason: "launchpad_command")
+        guard availability.recordActionEnabled else
+        {
+            let configured = availability.resolvedInput.configuredValue ?? "<blank>"
+            let reason = availability.resolvedInput.unavailableReason ?? "selected audio input unavailable"
+            TraceLogger.log("launchpad dictation action ignored command=\(command.rawValue) audio_input=\(configured) reason=\(reason)")
+            return false
+        }
+        return true
+    }
+
+    private func refreshRecordAudioInputAvailability(reason: String) async -> LaunchpadAudioInputAvailability
+    {
+        let runtimeConfig = await runtimeConfigProvider.currentRuntimeConfig()
+        let availability = LaunchpadAudioInputAvailability.evaluate(
+            configuredAudioInput: runtimeConfig.audioInput,
+            resolver: audioInputResolver
+        )
+        if recordActionEnabled != availability.recordActionEnabled
+        {
+            recordActionEnabled = availability.recordActionEnabled
+            launchpadInvalidationBus?.markDirty(reason: "audio_input_availability")
+        }
+        TraceLogger.log(
+            "launchpad audio input availability reason=\(reason) mode=\(availability.resolvedInput.mode.logName) available=\(availability.resolvedInput.isAvailable)"
+        )
+        return availability
+    }
+
     private func cancelActiveDictationTask()
     {
         activeDictationTask?.cancel()
@@ -721,6 +784,18 @@ final class LaunchpadServiceController
     {
         talonControlState.color
     }
+
+#if DEBUG
+    func handleStandardDictationCommandForTesting(_ command: LaunchpadActionConfig.DictationCommand) async
+    {
+        await handleLaunchpadDictationCommand(command, mode: .standard)
+    }
+
+    var isRecordingForTesting: Bool
+    {
+        recordingController.isRecording
+    }
+#endif
 
     private func makeRefinementEngine(
         runtimeConfig: RuntimeConfigFile,

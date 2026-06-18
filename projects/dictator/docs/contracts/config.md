@@ -15,6 +15,7 @@ when a key is missing or, for strings, blank):
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `version` | int | `1` when absent; bootstrap writes `2` | Config schema version |
+| `audio_input` | string or null | `null` | Dictator recording input selector; missing, null, or blank after trimming uses the system default input |
 | `cloud_model` | string | `gpt-4.1-mini` | OpenAI model when `use_cloud` |
 | `local_model` | string | `qwen2.5:7b-instruct` | Ollama model otherwise |
 | `system_prompt` | string | `intent_refiner_v1.md` | Primary prompt file, relative to the prompts dir |
@@ -39,6 +40,17 @@ Decode leniency: only `use_cloud` and `updated_at` are required. A legacy
 `"model"` key (version-1 files) seeds both `cloud_model` and `local_model`
 when those are absent.
 
+`audio_input` selects the macOS input used by Dictator recording surfaces,
+including the web dashboard and Launchpad record pad. Missing, `null`, or
+blank values mean "use the current system default input". A nonblank value is
+trimmed and matched exactly against an available input's stable ID or display
+name. There is no fallback for a configured input: if the selected input is
+missing, ambiguous, has no input channels, or cannot be opened for recording,
+Dictator fails that recording attempt instead of using the system default.
+The web dashboard hides its record/submit affordance while the selected input
+is unavailable; Launchpad renders the `(0,7)` record-status pad off and
+ignores dictation actions until the selected input becomes available again.
+
 Relative `data_dir` / `system_prompts_dir` / `stt_model_path` values resolve
 against the Sheaf repo root for known prefixes (`projects/dictator/`,
 `config/`, `data/dictator`, `logs/dictator`, `prompts/`, `contracts/`,
@@ -60,6 +72,7 @@ Worked example (current production shape):
 
 ```json
 {
+  "audio_input": null,
   "auxiliary_system_prompt_1": "intent_refiner_v1.md",
   "auxiliary_system_prompt_2": "intent_refiner_v1.md",
   "cloud_model": "gpt-4.1-mini",

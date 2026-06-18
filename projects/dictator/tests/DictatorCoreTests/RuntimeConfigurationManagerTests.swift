@@ -189,6 +189,45 @@ final class RuntimeConfigurationManagerTests: XCTestCase {
         XCTAssertEqual(inMemory.interactionsBufferBytes, 50 * 1024 * 1024)
     }
 
+    func testAudioInputStringConfigurationAllowsDefaultOptionAndPersistsTrimmedValue() async throws {
+        let tempDir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let provider = RuntimeConfigProvider(
+            store: RuntimeConfigStore(fileURL: tempDir.appendingPathComponent("runtime-config.json")),
+            defaultStore: nil
+        )
+
+        let manager = RuntimeConfigurationManager(
+            configurations: [
+                RuntimeStringConfiguration(
+                    name: "Audio Input",
+                    currentValue: "",
+                    defaultValue: "",
+                    options: ["", "Scarlett 2i2"],
+                    setter: { value in
+                        let updated = try await provider.applyInMemoryPatch(
+                            RuntimeConfigPatch(audioInput: value)
+                        )
+                        return updated.audioInput ?? ""
+                    }
+                )
+            ]
+        )
+
+        let options = try await manager.getOptions(name: "Audio Input")
+        XCTAssertEqual(options, [.string(""), .string("Scarlett 2i2")])
+
+        try await manager.set(name: "Audio Input", value: .string("  Scarlett 2i2  "))
+        let inMemory = await provider.currentRuntimeConfig()
+        XCTAssertEqual(inMemory.audioInput, "Scarlett 2i2")
+
+        let listed = try await manager.list()
+        let audioInput = try XCTUnwrap(listed.first(where: { $0.name == "Audio Input" }))
+        XCTAssertEqual(audioInput.currentValue, .string("Scarlett 2i2"))
+        XCTAssertEqual(audioInput.defaultValue, .string(""))
+    }
+
     private func makeTempDir() throws -> URL {
         let base = FileManager.default.temporaryDirectory
         let dir = base.appendingPathComponent(UUID().uuidString, isDirectory: true)

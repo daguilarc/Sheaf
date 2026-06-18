@@ -243,6 +243,7 @@ final class LaunchpadPageFactory {
     private let onLoadSafeRuntimeConfig: (() -> Void)?
     private let onToggleFullscreenOverlay: (() -> Void)?
     private let recordStatusColorProvider: () -> PadColor
+    private let recordActionEnabledProvider: () -> Bool
     private let talonStatusColorProvider: () -> PadColor
     private let shiftLatchColorProvider: () -> PadColor
     private let onModifierPress: ((LaunchpadActionConfig.ModifierType) -> Void)?
@@ -261,6 +262,7 @@ final class LaunchpadPageFactory {
         onLoadSafeRuntimeConfig: (() -> Void)?,
         onToggleFullscreenOverlay: (() -> Void)?,
         recordStatusColorProvider: @escaping () -> PadColor,
+        recordActionEnabledProvider: @escaping () -> Bool = { true },
         talonStatusColorProvider: @escaping () -> PadColor,
         shiftLatchColorProvider: @escaping () -> PadColor,
         onModifierPress: ((LaunchpadActionConfig.ModifierType) -> Void)?,
@@ -278,6 +280,7 @@ final class LaunchpadPageFactory {
         self.onLoadSafeRuntimeConfig = onLoadSafeRuntimeConfig
         self.onToggleFullscreenOverlay = onToggleFullscreenOverlay
         self.recordStatusColorProvider = recordStatusColorProvider
+        self.recordActionEnabledProvider = recordActionEnabledProvider
         self.talonStatusColorProvider = talonStatusColorProvider
         self.shiftLatchColorProvider = shiftLatchColorProvider
         self.onModifierPress = onModifierPress
@@ -296,6 +299,7 @@ final class LaunchpadPageFactory {
         let onLoadSafeRuntimeConfig = self.onLoadSafeRuntimeConfig
         let onToggleFullscreenOverlay = self.onToggleFullscreenOverlay
         let recordStatusColorProvider = self.recordStatusColorProvider
+        let recordActionEnabledProvider = self.recordActionEnabledProvider
         let talonStatusColorProvider = self.talonStatusColorProvider
         let shiftLatchColorProvider = self.shiftLatchColorProvider
         let onModifierPress = self.onModifierPress
@@ -392,7 +396,9 @@ final class LaunchpadPageFactory {
                 if padConfig.role == .recordStatus {
                     cell = LaunchpadStatusCell(
                         invalidationBus: invalidationBus,
-                        statusColorProvider: recordStatusColorProvider,
+                        statusColorProvider: {
+                            recordActionEnabledProvider() ? recordStatusColorProvider() : .off
+                        },
                         onPress: {
                             runAction(padConfig, pageID: pageConfig.id)
                         }

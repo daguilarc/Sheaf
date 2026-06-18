@@ -69,6 +69,164 @@ final class LaunchpadTests: XCTestCase {
         XCTAssertGreaterThan(generation, 0)
     }
 
+    func testAudioInputAvailabilityAllowsDefaultInput() {
+        let resolver = StaticAudioInputResolver(
+            devices: [
+                AudioInputDevice(id: "built-in", name: "Built-in Microphone", channelCount: 1)
+            ],
+            defaultDeviceID: "built-in"
+        )
+
+        let availability = LaunchpadAudioInputAvailability.evaluate(
+            configuredAudioInput: nil,
+            resolver: resolver
+        )
+
+        XCTAssertTrue(availability.recordActionEnabled)
+        XCTAssertEqual(availability.resolvedInput.mode, .systemDefault)
+        XCTAssertEqual(availability.resolvedInput.device?.id, "built-in")
+    }
+
+    func testAudioInputAvailabilityDisablesRecordActionForUnavailableSelectedInput() {
+        let availability = LaunchpadAudioInputAvailability.evaluate(
+            configuredAudioInput: "Missing Interface",
+            resolver: StaticAudioInputResolver(devices: [])
+        )
+
+        XCTAssertFalse(availability.recordActionEnabled)
+        XCTAssertEqual(availability.resolvedInput.mode, .selected)
+        XCTAssertFalse(availability.resolvedInput.isAvailable)
+    }
+
+    func testAudioInputAvailabilityReenablesRecordActionWhenSelectedInputReturns() {
+        let resolver = StaticAudioInputResolver(
+            devices: [
+                AudioInputDevice(id: "scarlett-id", name: "Scarlett 2i2", channelCount: 2)
+            ],
+            defaultDeviceID: "scarlett-id"
+        )
+
+        let availability = LaunchpadAudioInputAvailability.evaluate(
+            configuredAudioInput: "Scarlett 2i2",
+            resolver: resolver
+        )
+
+        XCTAssertTrue(availability.recordActionEnabled)
+        XCTAssertEqual(availability.resolvedInput.mode, .selected)
+        XCTAssertEqual(availability.resolvedInput.device?.id, "scarlett-id")
+    }
+
+    @MainActor
+    func testLaunchpadControllerPassesSelectedRuntimeAudioInputToRecorder() async throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("launchpad-controller-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let provider = try await makeLaunchpadRuntimeConfigProvider(tempDir: tempDir, audioInput: "Scarlett 2i2")
+        let resolver = StaticAudioInputResolver(
+            devices: [
+                AudioInputDevice(id: "scarlett-id", name: "Scarlett 2i2", channelCount: 2)
+            ],
+            defaultDeviceID: "scarlett-id"
+        )
+        var appliedSelection: AudioRecorder.AudioInputSelection?
+        var recordingStarterCalled = false
+        let recorder = AudioRecorder(
+            inputSelectionApplier: { selection in
+                appliedSelection = selection
+                return {}
+            },
+            recordingStarter: {
+                recordingStarterCalled = true
+                return { .success(CapturedAudio(data: Data([1, 2, 3]), sampleRate: 16_000)) }
+            },
+            microphonePermissionProvider: { true }
+        )
+        let controller = makeLaunchpadController(
+            tempDir: tempDir,
+            provider: provider,
+            resolver: resolver,
+            recorder: recorder
+        )
+
+        await controller.handleStandardDictationCommandForTesting(.start)
+
+        XCTAssertTrue(recordingStarterCalled)
+        XCTAssertTrue(controller.isRecordingForTesting)
+        XCTAssertEqual(appliedSelection?.device.id, "scarlett-id")
+    }
+
+    @MainActor
+    func testLaunchpadControllerStartsDefaultRuntimeAudioInputWithoutSelectedInputApply() async throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("launchpad-controller-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let provider = try await makeLaunchpadRuntimeConfigProvider(tempDir: tempDir, audioInput: nil)
+        let resolver = StaticAudioInputResolver(
+            devices: [
+                AudioInputDevice(id: "built-in", name: "Built-in Microphone", channelCount: 1)
+            ],
+            defaultDeviceID: "built-in"
+        )
+        var appliedSelection: AudioRecorder.AudioInputSelection?
+        var recordingStarterCalled = false
+        let recorder = AudioRecorder(
+            inputSelectionApplier: { selection in
+                appliedSelection = selection
+                return {}
+            },
+            recordingStarter: {
+                recordingStarterCalled = true
+                return { .success(CapturedAudio(data: Data([1, 2, 3]), sampleRate: 16_000)) }
+            },
+            microphonePermissionProvider: { true }
+        )
+        let controller = makeLaunchpadController(
+            tempDir: tempDir,
+            provider: provider,
+            resolver: resolver,
+            recorder: recorder
+        )
+
+        await controller.handleStandardDictationCommandForTesting(.start)
+
+        XCTAssertTrue(recordingStarterCalled)
+        XCTAssertTrue(controller.isRecordingForTesting)
+        XCTAssertNil(appliedSelection)
+    }
+
+    @MainActor
+    func testLaunchpadControllerIgnoresUnavailableSelectedRuntimeAudioInputBeforeRecorderSetup() async throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("launchpad-controller-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let provider = try await makeLaunchpadRuntimeConfigProvider(tempDir: tempDir, audioInput: "Missing Interface")
+        var recordingStarterCalled = false
+        let recorder = AudioRecorder(
+            recordingStarter: {
+                recordingStarterCalled = true
+                return { .success(CapturedAudio(data: Data([1, 2, 3]), sampleRate: 16_000)) }
+            },
+            microphonePermissionProvider: { true }
+        )
+        let controller = makeLaunchpadController(
+            tempDir: tempDir,
+            provider: provider,
+            resolver: StaticAudioInputResolver(devices: []),
+            recorder: recorder
+        )
+
+        await controller.handleStandardDictationCommandForTesting(.start)
+
+        XCTAssertFalse(recordingStarterCalled)
+        XCTAssertFalse(controller.isRecordingForTesting)
+    }
+
     func testLayoutDecodeValidatesKeystrokeAction() throws {
         let json = """
         {
@@ -553,6 +711,118 @@ final class LaunchpadTests: XCTestCase {
         XCTAssertEqual(dispatched.first?.1, .toggle)
     }
 
+    func testPageFactoryRendersRecordStatusOffWhenRecordActionUnavailable() throws {
+        let bus = RenderInvalidationBus()
+        let json = """
+        {
+          "initial_page_id": "control",
+          "pages": [
+            {
+              "id": "control",
+              "pads": [
+                {
+                  "x": 0,
+                  "y": 7,
+                  "role": "record_status",
+                  "color": { "r": 255, "g": 255, "b": 255 },
+                  "action": { "type": "dictation", "command": "toggle" }
+                }
+              ]
+            }
+          ]
+        }
+        """.data(using: .utf8)!
+        let config = try LaunchpadLayoutLoader.decode(json)
+
+        var commands: [LaunchpadActionConfig.DictationCommand] = []
+        let factory = LaunchpadPageFactory(
+            invalidationBus: bus,
+            onKeystroke: nil,
+            onDictationCommand: { commands.append($0) },
+            onAuxiliaryDictationCommand: nil,
+            onTalonControlCommand: nil,
+            onContextualBackspace: nil,
+            onNextWindowSwitchPress: nil,
+            onNextWindowSwitchRelease: nil,
+            onAppReload: nil,
+            onLoadSafeRuntimeConfig: nil,
+            onToggleFullscreenOverlay: nil,
+            recordStatusColorProvider: { PadColor(r: 255, g: 255, b: 255) },
+            recordActionEnabledProvider: { false },
+            talonStatusColorProvider: { .off },
+            shiftLatchColorProvider: { .off },
+            onModifierPress: nil,
+            onModifierRelease: nil
+        )
+        let pages = factory.makePages(from: config)
+        let pageController = LaunchpadPageController(invalidationBus: bus)
+        pageController.setPages(pages, initialPageID: config.initialPageID)
+
+        let recordPad = PadCoordinate(x: 0, y: 7)
+        XCTAssertEqual(pageController.getColor(at: recordPad), .off)
+
+        pageController.handle(PadEvent(coordinate: recordPad, phase: .press, velocity: 100))
+        XCTAssertEqual(commands, [.toggle])
+    }
+
+    func testPageFactoryRestoresRecordStatusColorAndDispatchWhenRecordActionBecomesAvailable() throws {
+        let bus = RenderInvalidationBus()
+        let json = """
+        {
+          "initial_page_id": "control",
+          "pages": [
+            {
+              "id": "control",
+              "pads": [
+                {
+                  "x": 0,
+                  "y": 7,
+                  "role": "record_status",
+                  "color": { "r": 255, "g": 255, "b": 255 },
+                  "action": { "type": "dictation", "command": "toggle" }
+                }
+              ]
+            }
+          ]
+        }
+        """.data(using: .utf8)!
+        let config = try LaunchpadLayoutLoader.decode(json)
+
+        var isAvailable = false
+        var commands: [LaunchpadActionConfig.DictationCommand] = []
+        let factory = LaunchpadPageFactory(
+            invalidationBus: bus,
+            onKeystroke: nil,
+            onDictationCommand: { commands.append($0) },
+            onAuxiliaryDictationCommand: nil,
+            onTalonControlCommand: nil,
+            onContextualBackspace: nil,
+            onNextWindowSwitchPress: nil,
+            onNextWindowSwitchRelease: nil,
+            onAppReload: nil,
+            onLoadSafeRuntimeConfig: nil,
+            onToggleFullscreenOverlay: nil,
+            recordStatusColorProvider: { PadColor(r: 255, g: 255, b: 255) },
+            recordActionEnabledProvider: { isAvailable },
+            talonStatusColorProvider: { .off },
+            shiftLatchColorProvider: { .off },
+            onModifierPress: nil,
+            onModifierRelease: nil
+        )
+        let pages = factory.makePages(from: config)
+        let pageController = LaunchpadPageController(invalidationBus: bus)
+        pageController.setPages(pages, initialPageID: config.initialPageID)
+
+        let recordPad = PadCoordinate(x: 0, y: 7)
+        XCTAssertEqual(pageController.getColor(at: recordPad), .off)
+
+        isAvailable = true
+        XCTAssertEqual(pageController.getColor(at: recordPad), PadColor(r: 255, g: 255, b: 255))
+
+        pageController.handle(PadEvent(coordinate: recordPad, phase: .press, velocity: 100))
+        XCTAssertEqual(commands, [.toggle])
+    }
+
     func testPageFactoryDispatchesNextWindowPressAndReleaseActions() throws {
         let bus = RenderInvalidationBus()
         let json = """
@@ -766,6 +1036,97 @@ final class LaunchpadTests: XCTestCase {
             return repeatCount
         }()
         XCTAssertEqual(finalCount, countAfterRelease)
+    }
+}
+
+private func makeLaunchpadRuntimeConfigProvider(
+    tempDir: URL,
+    audioInput: String?
+) async throws -> RuntimeConfigProvider {
+    let configURL = tempDir.appendingPathComponent("dictator.json")
+    let safeConfigURL = tempDir.appendingPathComponent("dictator.safe.json")
+    let defaults = RuntimeConfigFile.bootstrap()
+    try RuntimeConfigStore(fileURL: safeConfigURL).save(defaults)
+    try RuntimeConfigStore(fileURL: configURL).save(defaults)
+    let provider = RuntimeConfigProvider(
+        store: RuntimeConfigStore(fileURL: configURL),
+        defaultStore: RuntimeConfigStore(fileURL: safeConfigURL)
+    )
+    _ = try await provider.applyInMemoryPatch(RuntimeConfigPatch(audioInput: audioInput))
+    return provider
+}
+
+@MainActor
+private func makeLaunchpadController(
+    tempDir: URL,
+    provider: RuntimeConfigProvider,
+    resolver: AudioInputResolving,
+    recorder: AudioRecorder
+) -> LaunchpadServiceController {
+    let interactionStore = InteractionHistoryStore(
+        buffer: DictationInteractionBuffer(maxBytes: 1024 * 1024),
+        dataDirectoryURL: tempDir.appendingPathComponent("interactions", isDirectory: true),
+        initialLoadBytes: 1024 * 1024
+    )
+    return LaunchpadServiceController(
+        repoRoot: tempDir,
+        runtimeConfigProvider: provider,
+        secretStore: APIKeysStore(fileURL: tempDir.appendingPathComponent("api_keys.json")),
+        sttEngine: LaunchpadTestSTTEngine(),
+        coreClient: LaunchpadTestCoreClient(),
+        interactionStore: interactionStore,
+        activityTracker: DictationActivityTracker(),
+        talonControl: LaunchpadTestTalonControl(),
+        rpcService: DictatorRPCService(),
+        audioInputResolver: resolver,
+        audioRecorder: recorder
+    )
+}
+
+private struct LaunchpadTestSTTEngine: STTEngine {
+    func transcribe(_ request: TranscribeRequest) async throws -> TranscribeResponse {
+        TranscribeResponse(raw_transcript: "", segments: [], confidence: 0, duration_ms: 0)
+    }
+}
+
+private actor LaunchpadTestCoreClient: DictatorCoreClient {
+    func transcribe(_ request: TranscribeRequest) async throws -> TranscribeResponse {
+        TranscribeResponse(raw_transcript: "", segments: [], confidence: 0, duration_ms: 0)
+    }
+
+    func refine(_ request: RefineRequest) async throws -> RefineResponse {
+        RefineResponse(revised_text: "", edit_summary: "", uncertainty_flags: [])
+    }
+
+    func dictate(_ request: DictateRequest) async throws -> DictateCallResult {
+        DictateCallResult(
+            response: DictateResponse(
+                raw_transcript: "",
+                revised_text: "",
+                edit_summary: "",
+                uncertainty_flags: []
+            ),
+            transcribeMs: 0,
+            refineMs: 0
+        )
+    }
+
+    func interactForRuntimeConfig(_ request: VoiceConfigInteractionRequest) async throws -> VoiceConfigInteractionResult {
+        throw DictatorError.configInteractionUnavailable
+    }
+}
+
+private actor LaunchpadTestTalonControl: TalonControlProviding {
+    func status() async -> TalonControlStatus {
+        TalonControlStatus(state: .asleep, speechEnabled: false, modes: [])
+    }
+
+    @discardableResult func sleep() async -> TalonControlStatus {
+        TalonControlStatus(state: .asleep, speechEnabled: false, modes: [])
+    }
+
+    @discardableResult func wake() async -> TalonControlStatus {
+        TalonControlStatus(state: .awake, speechEnabled: true, modes: [])
     }
 }
 

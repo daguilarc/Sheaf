@@ -173,6 +173,115 @@ final class RuntimeConfigProviderTests: XCTestCase {
         XCTAssertEqual(decoded.injectableRules, [:])
     }
 
+    func testRuntimeConfigAudioInputDefaultsToNilWhenMissingNullOrBlank() throws {
+        XCTAssertNil(RuntimeConfigFile.bootstrap(now: Date(timeIntervalSince1970: 0)).audioInput)
+
+        let missing = try decodeRuntimeConfigJSON(audioInputLine: nil)
+        XCTAssertNil(missing.audioInput)
+
+        let explicitNull = try decodeRuntimeConfigJSON(audioInputLine: #""audio_input": null,"#)
+        XCTAssertNil(explicitNull.audioInput)
+
+        let blank = try decodeRuntimeConfigJSON(audioInputLine: #""audio_input": "   ","#)
+        XCTAssertNil(blank.audioInput)
+    }
+
+    func testRuntimeConfigAudioInputStoresTrimmedNonBlankAndEncodesIt() throws {
+        let decoded = try decodeRuntimeConfigJSON(audioInputLine: #""audio_input": "  Scarlett 2i2  ","#)
+        XCTAssertEqual(decoded.audioInput, "Scarlett 2i2")
+
+        let encoded = try JSONEncoder().encode(decoded)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        XCTAssertEqual(object["audio_input"] as? String, "Scarlett 2i2")
+    }
+
+    func testRuntimeConfigAudioInputAcceptsCamelCaseAlias() throws {
+        let named = try decodeRuntimeConfigJSON(audioInputLine: #""audioInput": "  Scarlett 2i2  ","#)
+        XCTAssertEqual(named.audioInput, "Scarlett 2i2")
+
+        let explicitNull = try decodeRuntimeConfigJSON(audioInputLine: #""audioInput": null,"#)
+        XCTAssertNil(explicitNull.audioInput)
+
+        let blank = try decodeRuntimeConfigJSON(audioInputLine: #""audioInput": "   ","#)
+        XCTAssertNil(blank.audioInput)
+    }
+
+    func testRuntimeConfigAudioInputNilIsOmittedWhenEncoded() throws {
+        let decoded = try decodeRuntimeConfigJSON(audioInputLine: #""audio_input": null,"#)
+
+        let encoded = try JSONEncoder().encode(decoded)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        XCTAssertNil(object["audio_input"])
+    }
+
+    func testAudioInputPatchPersistsTrimmedNamedSelectorAndCanReturnToDefault() async throws {
+        let tempDir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let primaryURL = tempDir.appendingPathComponent("runtime-config.json")
+        let provider = RuntimeConfigProvider(
+            store: RuntimeConfigStore(fileURL: primaryURL),
+            defaultStore: nil
+        )
+
+        var updated = try await provider.applyPatch(
+            RuntimeConfigPatch(audioInput: "  Scarlett 2i2  ")
+        )
+        XCTAssertEqual(updated.audioInput, "Scarlett 2i2")
+
+        var persisted = try XCTUnwrap(try RuntimeConfigStore(fileURL: primaryURL).load())
+        XCTAssertEqual(persisted.audioInput, "Scarlett 2i2")
+
+        updated = try await provider.applyPatch(
+            RuntimeConfigPatch(audioInput: .some(nil))
+        )
+        XCTAssertNil(updated.audioInput)
+
+        persisted = try XCTUnwrap(try RuntimeConfigStore(fileURL: primaryURL).load())
+        XCTAssertNil(persisted.audioInput)
+    }
+
+    func testRestoreDefaultsToDiskRestoresSafeAudioInputDefault() async throws {
+        let tempDir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let primaryURL = tempDir.appendingPathComponent("runtime-config.json")
+        let safeURL = tempDir.appendingPathComponent("runtime-config.safe")
+
+        let safe = RuntimeConfigFile(
+            version: 2,
+            cloudModel: "gpt-4.1-mini",
+            localModel: "qwen2.5:7b-instruct",
+            audioInput: nil,
+            useCloud: false,
+            updatedAt: "2026-02-24T00:05:00Z"
+        )
+        let primary = RuntimeConfigFile(
+            version: 2,
+            cloudModel: "gpt-4.1-mini",
+            localModel: "qwen2.5:7b-instruct",
+            audioInput: "Scarlett 2i2",
+            useCloud: false,
+            updatedAt: "2026-02-24T00:00:00Z"
+        )
+        try RuntimeConfigStore(fileURL: safeURL).save(safe)
+        try RuntimeConfigStore(fileURL: primaryURL).save(primary)
+
+        let provider = RuntimeConfigProvider(
+            store: RuntimeConfigStore(fileURL: primaryURL),
+            defaultStore: RuntimeConfigStore(fileURL: safeURL)
+        )
+
+        let startupDefault = await provider.startupDefaultConfig()
+        XCTAssertNil(startupDefault.audioInput)
+
+        let restored = try await provider.restoreDefaultsToDisk(now: Date(timeIntervalSince1970: 0))
+        XCTAssertEqual(restored.audioInput, startupDefault.audioInput)
+
+        let persisted = try XCTUnwrap(try RuntimeConfigStore(fileURL: primaryURL).load())
+        XCTAssertEqual(persisted.audioInput, startupDefault.audioInput)
+    }
+
     func testRuntimeConfigDecodesAndPersistsInjectableRules() throws {
         let json = """
         {
@@ -348,6 +457,21 @@ final class RuntimeConfigProviderTests: XCTestCase {
         let dir = base.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
+    }
+
+    private func decodeRuntimeConfigJSON(audioInputLine: String?) throws -> RuntimeConfigFile {
+        let audioInput = audioInputLine.map { "\n          \($0)" } ?? ""
+        let json = """
+        {
+          "version": 2,
+          "cloud_model": "gpt-4.1-mini",
+          "local_model": "qwen2.5:7b-instruct",\(audioInput)
+          "system_prompt": "intent_refiner_v1.md",
+          "use_cloud": false,
+          "updated_at": "2026-02-24T00:00:00Z"
+        }
+        """.data(using: .utf8)!
+        return try JSONDecoder().decode(RuntimeConfigFile.self, from: json)
     }
 
     private func assertInjectableRulePatchFails(

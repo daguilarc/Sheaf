@@ -15,10 +15,12 @@ public struct RuntimeConfigFile: Codable, Sendable, Equatable {
     public static let defaultDictatorServerPort = 9003
     public static let defaultDictatorServerEnabled = true
     public static let defaultInjectableRules: [String: String] = [:]
+    public static let defaultAudioInput: String? = nil
 
     public let version: Int
     public let cloudModel: String
     public let localModel: String
+    public let audioInput: String?
     public let systemPrompt: String
     public let auxiliarySystemPrompt1: String
     public let auxiliarySystemPrompt2: String
@@ -45,6 +47,7 @@ public struct RuntimeConfigFile: Codable, Sendable, Equatable {
         version: Int = 2,
         cloudModel: String,
         localModel: String,
+        audioInput: String? = Self.defaultAudioInput,
         systemPrompt: String = SystemPromptCatalog.defaultPromptFile,
         auxiliarySystemPrompt1: String = SystemPromptCatalog.defaultPromptFile,
         auxiliarySystemPrompt2: String = SystemPromptCatalog.defaultPromptFile,
@@ -66,6 +69,7 @@ public struct RuntimeConfigFile: Codable, Sendable, Equatable {
         self.version = version
         self.cloudModel = cloudModel
         self.localModel = localModel
+        self.audioInput = Self.normalizedNonEmpty(audioInput)
         self.systemPrompt = systemPrompt
         self.auxiliarySystemPrompt1 = auxiliarySystemPrompt1
         self.auxiliarySystemPrompt2 = auxiliarySystemPrompt2
@@ -100,6 +104,8 @@ public struct RuntimeConfigFile: Codable, Sendable, Equatable {
         case model
         case cloudModel = "cloud_model"
         case localModel = "local_model"
+        case audioInput = "audio_input"
+        case audioInputCamel = "audioInput"
         case systemPrompt = "system_prompt"
         case auxiliarySystemPrompt1 = "auxiliary_system_prompt_1"
         case auxiliarySystemPrompt2 = "auxiliary_system_prompt_2"
@@ -128,6 +134,8 @@ public struct RuntimeConfigFile: Codable, Sendable, Equatable {
 
         let cloudModel = try container.decodeIfPresent(String.self, forKey: .cloudModel)
         let localModel = try container.decodeIfPresent(String.self, forKey: .localModel)
+        let audioInput = try container.decodeIfPresent(String.self, forKey: .audioInput)
+            ?? container.decodeIfPresent(String.self, forKey: .audioInputCamel)
         let systemPrompt = try container.decodeIfPresent(String.self, forKey: .systemPrompt)
         let auxiliarySystemPrompt1 = try container.decodeIfPresent(String.self, forKey: .auxiliarySystemPrompt1)
         let auxiliarySystemPrompt2 = try container.decodeIfPresent(String.self, forKey: .auxiliarySystemPrompt2)
@@ -167,6 +175,7 @@ public struct RuntimeConfigFile: Codable, Sendable, Equatable {
             version: version,
             cloudModel: resolvedCloudModel,
             localModel: resolvedLocalModel,
+            audioInput: audioInput,
             systemPrompt: resolvedSystemPrompt,
             auxiliarySystemPrompt1: resolvedAuxiliarySystemPrompt1,
             auxiliarySystemPrompt2: resolvedAuxiliarySystemPrompt2,
@@ -192,6 +201,7 @@ public struct RuntimeConfigFile: Codable, Sendable, Equatable {
         try container.encode(version, forKey: .version)
         try container.encode(cloudModel, forKey: .cloudModel)
         try container.encode(localModel, forKey: .localModel)
+        try container.encodeIfPresent(audioInput, forKey: .audioInput)
         try container.encode(systemPrompt, forKey: .systemPrompt)
         try container.encode(auxiliarySystemPrompt1, forKey: .auxiliarySystemPrompt1)
         try container.encode(auxiliarySystemPrompt2, forKey: .auxiliarySystemPrompt2)
@@ -254,7 +264,7 @@ public struct RuntimeConfigFile: Codable, Sendable, Equatable {
         return formatter.string(from: date)
     }
 
-    private static func normalizedNonEmpty(_ value: String?) -> String? {
+    static func normalizedNonEmpty(_ value: String?) -> String? {
         guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else {
             return nil
         }
@@ -360,6 +370,7 @@ public struct RuntimeConfigPatch: Sendable, Equatable {
     public let model: String?
     public let cloudModel: String?
     public let localModel: String?
+    public let audioInput: String??
     public let systemPrompt: String?
     public let auxiliarySystemPrompt1: String?
     public let auxiliarySystemPrompt2: String?
@@ -373,6 +384,7 @@ public struct RuntimeConfigPatch: Sendable, Equatable {
         model: String? = nil,
         cloudModel: String? = nil,
         localModel: String? = nil,
+        audioInput: String?? = nil,
         systemPrompt: String? = nil,
         auxiliarySystemPrompt1: String? = nil,
         auxiliarySystemPrompt2: String? = nil,
@@ -385,6 +397,7 @@ public struct RuntimeConfigPatch: Sendable, Equatable {
         self.model = model
         self.cloudModel = cloudModel
         self.localModel = localModel
+        self.audioInput = audioInput
         self.systemPrompt = systemPrompt
         self.auxiliarySystemPrompt1 = auxiliarySystemPrompt1
         self.auxiliarySystemPrompt2 = auxiliarySystemPrompt2
@@ -399,6 +412,7 @@ public struct RuntimeConfigPatch: Sendable, Equatable {
         model == nil
             && cloudModel == nil
             && localModel == nil
+            && audioInput == nil
             && systemPrompt == nil
             && auxiliarySystemPrompt1 == nil
             && auxiliarySystemPrompt2 == nil
@@ -548,6 +562,7 @@ public actor RuntimeConfigProvider {
             ?? (resolvedUseCloud ? (patchedModel ?? runtimeConfig.cloudModel) : runtimeConfig.cloudModel)
         let resolvedLocalModel = (patch.localModel?.trimmingCharacters(in: .whitespacesAndNewlines))
             ?? (resolvedUseCloud ? runtimeConfig.localModel : (patchedModel ?? runtimeConfig.localModel))
+        let resolvedAudioInput = patch.audioInput.map(RuntimeConfigFile.normalizedNonEmpty) ?? runtimeConfig.audioInput
         let resolvedSystemPrompt = patch.systemPrompt?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? runtimeConfig.systemPrompt
         let resolvedAuxiliarySystemPrompt1 = patch.auxiliarySystemPrompt1?
@@ -593,6 +608,7 @@ public actor RuntimeConfigProvider {
             version: runtimeConfig.version,
             cloudModel: resolvedCloudModel,
             localModel: resolvedLocalModel,
+            audioInput: resolvedAudioInput,
             systemPrompt: resolvedSystemPrompt,
             auxiliarySystemPrompt1: resolvedAuxiliarySystemPrompt1,
             auxiliarySystemPrompt2: resolvedAuxiliarySystemPrompt2,
@@ -635,6 +651,7 @@ public actor RuntimeConfigProvider {
             version: defaultConfig.version,
             cloudModel: defaultConfig.cloudModel,
             localModel: defaultConfig.localModel,
+            audioInput: defaultConfig.audioInput,
             systemPrompt: defaultConfig.systemPrompt,
             auxiliarySystemPrompt1: defaultConfig.auxiliarySystemPrompt1,
             auxiliarySystemPrompt2: defaultConfig.auxiliarySystemPrompt2,
