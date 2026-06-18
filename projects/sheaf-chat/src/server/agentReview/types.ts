@@ -121,6 +121,7 @@ export interface AgentReviewClientFocus
 {
   type: "focus";
   hunkId?: string | null;
+  file?: string | null;
 }
 
 export interface AgentReviewClientComment

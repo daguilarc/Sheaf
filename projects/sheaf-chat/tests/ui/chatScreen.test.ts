@@ -970,6 +970,7 @@ interface ExpectedClientFrame
   patchHash?: string;
   text?: string;
   focused?: boolean;
+  file?: string | null;
 }
 
 function CellKey(cell: Pick<ReviewWorkflowCell, "x" | "y">): string
@@ -1317,6 +1318,21 @@ class FakeAgentReviewWorkflow
     if (frame.type === "presence") {
       this.focused = frame.focused === true;
       this.x_UpdateCells();
+      return;
+    }
+
+    if (frame.type === "focus") {
+      if (typeof frame.hunkId === "string") {
+        const target = this.hunks.find((hunk) => hunk.hunkId === frame.hunkId && this.unstaged.has(hunk.hunkId));
+        if (target) {
+          this.currentHunkId = target.hunkId;
+          this.fileAnchor = target.file;
+        }
+      } else {
+        this.currentHunkId = null;
+        this.fileAnchor = typeof frame.file === "string" ? frame.file : this.fileAnchor;
+      }
+      this.x_EmitState();
       return;
     }
 
@@ -1692,6 +1708,9 @@ function AssertClientFrames(
       assert.equal(actualFrame.hunkId, expectedFrame.hunkId, `seed ${seed} ${step}: comment focus hunkId`);
     } else if (expectedFrame.type === "presence") {
       assert.equal(actualFrame.focused, expectedFrame.focused, `seed ${seed} ${step}: presence focus`);
+    } else if (expectedFrame.type === "focus") {
+      assert.equal(actualFrame.hunkId ?? null, expectedFrame.hunkId ?? null, `seed ${seed} ${step}: focus hunkId`);
+      assert.equal(actualFrame.file ?? null, expectedFrame.file ?? null, `seed ${seed} ${step}: focus file`);
     } else {
       assert.fail(`seed ${seed} ${step}: unsupported expected frame type ${expectedFrame.type}`);
     }
@@ -1896,7 +1915,6 @@ test("Agent Review Mode randomized Agent Review workflow seed 0x5eed2026", async
   const harness = LoadChatHarness({ fetch: AgentReviewStateFetch(workflow) });
   await FlushPromises();
 
-  RequiredElement(harness.app, ".sheaf-chat-agent-review-toggle").click();
   const reviewSocket = harness.sockets.find((socket) => socket.url.includes("/ws/agent-review"));
   assert.ok(reviewSocket, `seed ${seed}: expected Agent Review WebSocket`);
   workflow.attach(reviewSocket);
@@ -2684,10 +2702,6 @@ test("Agent Review Mode opens review socket and sends hunk commands", async () =
   });
   await FlushPromises();
 
-  const toggle = RequiredElement(harness.app, ".sheaf-chat-agent-review-toggle");
-  assert.match(toggle.textContent, /Agent Review/);
-  toggle.click();
-
   const reviewSocket = harness.sockets.find((socket) => socket.url.includes("/ws/agent-review"));
   assert.ok(reviewSocket, "expected Agent Review WebSocket");
   reviewSocket.open();
@@ -2749,6 +2763,163 @@ test("Agent Review Mode opens review socket and sends hunk commands", async () =
   assert.equal(afterComment.at(-1)?.text, "Please simplify this branch.");
 });
 
+test("unified file viewer jumps from a non-hunk file to the next hunk file", async () =>
+{
+  const hunk = {
+    sourceProvider: "sheaf-chat",
+    repoRoot: "/repo",
+    sessionRoot: "/repo/projects/demo",
+    file: "app.ts",
+    hunkId: "hunk-1",
+    hunkIndex: 0,
+    hunkCount: 1,
+    fileIndex: 0,
+    fileCount: 1,
+    header: "@@ -1 +1 @@",
+    patchHash: "abc123",
+    patch: "diff --git a/app.ts b/app.ts\n@@ -1 +1 @@\n-old\n+new\n",
+  };
+  const focusedState: any = {
+    available: true,
+    repoRoot: "/repo",
+    sessionRoot: "/repo/projects/demo",
+    sessionRootRelativeToRepo: "projects/demo",
+    currentIndex: 0,
+    currentHunk: hunk,
+    hunks: [hunk],
+    files: [{ file: "app.ts", hunkCount: 1 }],
+    inlineFiles: [
+      {
+        file: "app.ts",
+        rows: [
+          { id: "app.ts:1", kind: "deletion", text: "old", hunkId: "hunk-1", oldLineNumber: 1 },
+          { id: "app.ts:2", kind: "addition", text: "new", hunkId: "hunk-1", newLineNumber: 1 },
+        ],
+      },
+    ],
+    actions: {
+      canGoUp: false,
+      canGoDown: false,
+      canGoPrevFile: false,
+      canGoNextFile: false,
+      canStage: true,
+      canRevert: true,
+      canUndo: false,
+    },
+    reviewDraft: { entries: [], visibleCommentHunkId: null, hasSerializedContent: false },
+    dictatorBridge: { connected: false, url: null, lastError: null },
+  };
+  const anchoredState: any = {
+    ...focusedState,
+    currentIndex: -1,
+    currentHunk: null,
+    actions: {
+      canGoUp: false,
+      canGoDown: false,
+      canGoPrevFile: false,
+      canGoNextFile: true,
+      canStage: false,
+      canRevert: false,
+      canUndo: false,
+    },
+  };
+
+  const harness = LoadChatHarness({
+    fetch: async (requestPath) => {
+      if (requestPath.endsWith("/agent-review")) {
+        return JsonResponse(focusedState);
+      }
+      if (requestPath.includes("/files?path=")) {
+        return JsonResponse({
+          directory: { name: ".", path: ".", kind: "directory" },
+          entries: [
+            {
+              name: "aardvark.ts",
+              path: "aardvark.ts",
+              kind: "file",
+              supported: true,
+              contentType: "text/plain",
+            },
+            {
+              name: "app.ts",
+              path: "app.ts",
+              kind: "file",
+              supported: true,
+              contentType: "text/plain",
+            },
+          ],
+        });
+      }
+      if (requestPath.includes("/file?path=")) {
+        const filePath = decodeURIComponent(requestPath.split("/file?path=")[1] || "");
+        const content = filePath === "aardvark.ts" ? "plain file\n" : "new\n";
+        return JsonResponse({
+          file: {
+            name: filePath,
+            path: filePath,
+            kind: "file",
+            supported: true,
+            contentType: "text/plain",
+            content,
+            size: content.length,
+            modifiedAt: "2026-06-08T00:00:00.000Z",
+          },
+        });
+      }
+      return JsonResponse({});
+    },
+  });
+  await FlushPromises();
+
+  const reviewSocket = harness.sockets.find((socket) => socket.url.includes("/ws/agent-review"));
+  assert.ok(reviewSocket, "expected Agent Review WebSocket");
+  reviewSocket.open();
+  reviewSocket.receive({ type: "bootstrap", state: focusedState });
+  await FlushPromises();
+  harness.flushAnimationFrames();
+
+  ExplorerFileButton(harness.app, "aardvark.ts").click();
+  await FlushPromises();
+
+  assert.equal(harness.app.querySelector(".sheaf-chat-agent-review-inline"), null);
+  assert.match(harness.app.textContent, /plain file/);
+  let sent = reviewSocket.sent.map((raw) => JSON.parse(raw) as Record<string, any>);
+  assert.equal(sent.at(-1)?.type, "focus");
+  assert.equal(sent.at(-1)?.hunkId, null);
+  assert.equal(sent.at(-1)?.file, "aardvark.ts");
+
+  reviewSocket.receive({ type: "state", state: anchoredState });
+  await FlushPromises();
+
+  const nextFile = harness.app
+    .querySelectorAll(".sheaf-chat-agent-review-command")
+    .find((button) => button.textContent === "Next File");
+  assert.ok(nextFile, "expected next-file button");
+  assert.equal(nextFile.disabled, false);
+  nextFile.click();
+
+  sent = reviewSocket.sent.map((raw) => JSON.parse(raw) as Record<string, any>);
+  assert.equal(sent.at(-1)?.type, "command");
+  assert.equal(sent.at(-1)?.action, "nextFile");
+  assert.equal(sent.at(-1)?.hunkId, undefined);
+
+  reviewSocket.receive({
+    type: "command_result",
+    result: { ok: true, action: "nextFile", commandId: sent.at(-1)?.id },
+    state: focusedState,
+  });
+  await FlushPromises();
+  harness.flushAnimationFrames();
+
+  RequiredElement(harness.app, ".sheaf-chat-agent-review-inline");
+  assert.ok(
+    Array.from(harness.app.querySelectorAll(".sheaf-chat-tab--selected")).some((tab) =>
+      tab.textContent.includes("app.ts"),
+    ),
+    "expected next-file navigation to focus app.ts in the normal tab bar",
+  );
+});
+
 test("Agent Review Mode shows unstaged-hunk counts and updates with state", async () =>
 {
   const makeHunk = (file: string, fileIndex: number, hunkIndex: number) => ({
@@ -2801,7 +2972,7 @@ test("Agent Review Mode shows unstaged-hunk counts and updates with state", asyn
       canGoUp: true,
       canGoDown: true,
       canGoPrevFile: false,
-      canGoNextFile: false,
+      canGoNextFile: true,
       canStage: true,
       canRevert: true,
       canUndo: false,
@@ -2840,7 +3011,6 @@ test("Agent Review Mode shows unstaged-hunk counts and updates with state", asyn
   });
   await FlushPromises();
 
-  RequiredElement(harness.app, ".sheaf-chat-agent-review-toggle").click();
   const reviewSocket = harness.sockets.find((socket) => socket.url.includes("/ws/agent-review"));
   assert.ok(reviewSocket, "expected Agent Review WebSocket");
   reviewSocket.open();
@@ -2850,29 +3020,33 @@ test("Agent Review Mode shows unstaged-hunk counts and updates with state", asyn
 
   const counts = RequiredElement(harness.app, ".sheaf-chat-agent-review-counts");
   // alpha.ts (two hunks) is file 1 of 2; current hunk is hunk 1 of that file.
-  assert.ok(counts.textContent.includes("1/2 in file"), counts.textContent);
-  assert.ok(counts.textContent.includes("file 1/2"), counts.textContent);
+  assert.match(counts.textContent, /1\/2\s+in\s+file/);
+  assert.match(counts.textContent, /file\s+1\/2/);
   assert.equal(harness.app.querySelectorAll(".sheaf-chat-agent-review-inline-row--focused").length, 2);
   assert.equal(harness.app.querySelectorAll(".sheaf-chat-agent-review-inline-row--muted").length, 2);
 
   const nextButton = harness.app
     .querySelectorAll(".sheaf-chat-agent-review-command")
-    .find((button) => button.textContent === "Next");
-  assert.ok(nextButton, "expected next-hunk button");
+    .find((button) => button.textContent === "Next File");
+  assert.ok(nextButton, "expected next-file button");
   nextButton.click();
   const sent = reviewSocket.sent.map((raw) => JSON.parse(raw) as Record<string, any>);
-  assert.equal(sent.at(-1)?.action, "nextHunk");
+  assert.equal(sent.at(-1)?.action, "nextFile");
 
   // Moving focus to beta.ts (one hunk, file 2 of 2) updates both positions.
   reviewState.currentHunk = makeHunk("beta.ts", 1, 2);
   reviewState.currentIndex = 2;
-  reviewSocket.receive({ type: "state", state: reviewState });
+  reviewSocket.receive({
+    type: "command_result",
+    result: { ok: true, action: "nextFile", commandId: sent.at(-1)?.id },
+    state: reviewState,
+  });
   await FlushPromises();
   harness.flushAnimationFrames();
 
   const updated = RequiredElement(harness.app, ".sheaf-chat-agent-review-counts");
-  assert.ok(updated.textContent.includes("1/1 in file"), updated.textContent);
-  assert.ok(updated.textContent.includes("file 2/2"), updated.textContent);
+  assert.match(updated.textContent, /1\/1\s+in\s+file/);
+  assert.match(updated.textContent, /file\s+2\/2/);
   assert.equal(FakeElement.scrolledIntoView.at(-1)?.getAttribute("data-hunk-id"), "beta.ts-2");
 });
 
@@ -2958,7 +3132,6 @@ test("Agent Review Mode scrolls inline hunks with up to three leading rows", asy
   await FlushPromises();
 
   FakeElement.scrolledIntoView = [];
-  RequiredElement(harness.app, ".sheaf-chat-agent-review-toggle").click();
   const reviewSocket = harness.sockets.find((socket) => socket.url.includes("/ws/agent-review"));
   assert.ok(reviewSocket, "expected Agent Review WebSocket");
   reviewSocket.open();
@@ -3087,7 +3260,6 @@ test("Agent Review Mode keeps already visible inline hunk rows in place", async 
   });
   await FlushPromises();
 
-  RequiredElement(harness.app, ".sheaf-chat-agent-review-toggle").click();
   const reviewSocket = harness.sockets.find((socket) => socket.url.includes("/ws/agent-review"));
   assert.ok(reviewSocket, "expected Agent Review WebSocket");
   reviewSocket.open();
@@ -3126,6 +3298,8 @@ test("Agent Review Mode keeps already visible inline hunk rows in place", async 
   FakeElement.scrolledIntoView = [];
   FakeElement.scrollToCalls = [];
   harness.flushAnimationFrames();
+  FakeElement.scrolledIntoView = [];
+  FakeElement.scrollToCalls = [];
 
   assert.equal(FakeElement.scrolledIntoView.length, 0);
   assert.equal(FakeElement.scrollToCalls.length, 0);

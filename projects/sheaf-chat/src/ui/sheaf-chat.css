@@ -589,12 +589,6 @@ body
   display: flex;
 }
 
-.sheaf-chat-agent-review-toggle
-{
-  min-height: 32px;
-  font-size: 12px;
-}
-
 .sheaf-chat-agent-review-command
 {
   width: auto;

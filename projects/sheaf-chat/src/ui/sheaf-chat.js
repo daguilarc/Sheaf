@@ -1014,11 +1014,15 @@
         active: false,
         socket: null,
         connected: false,
+        socketReady: false,
         state: null,
         error: null,
         pendingCommentFocusHunkId: null,
         pendingScrollHunkId: null,
         presenceListener: null,
+        lastFocusKey: null,
+        pendingHunkMutation: false,
+        pendingCommandResult: false,
       },
     };
 
@@ -1182,11 +1186,16 @@
       const review = state.agentReview;
       const reviewState = review.state;
       const current = reviewState ? reviewState.currentHunk : null;
-      if (!review.socket || review.socket.readyState !== WebSocket.OPEN) {
+      if (!review.socket || review.socket.readyState !== WebSocket.OPEN || !review.socketReady) {
         review.error = "Agent Review is disconnected.";
         RenderReviewBar();
         return;
       }
+
+      if (action === "stage" || action === "revert") {
+        review.pendingHunkMutation = true;
+      }
+      review.pendingCommandResult = true;
 
       review.socket.send(JSON.stringify({
         type: "command",
@@ -1279,6 +1288,62 @@
       return inlineFiles.find(function (file) {
         return file && file.file === pathValue && Array.isArray(file.rows);
       }) || null;
+    }
+
+    function FirstReviewHunkForPath(pathValue) {
+      const reviewState = state.agentReview.state;
+      const hunks = reviewState && Array.isArray(reviewState.hunks)
+        ? reviewState.hunks
+        : [];
+      return hunks.find(function (hunk) {
+        return hunk && hunk.file === pathValue;
+      }) || null;
+    }
+
+    function CurrentReviewHunkForSelectedFile() {
+      const reviewState = state.agentReview.state;
+      const current = reviewState ? reviewState.currentHunk : null;
+      if (current && current.file === state.selectedPath) {
+        return current;
+      }
+      return state.selectedPath ? FirstReviewHunkForPath(state.selectedPath) : null;
+    }
+
+    function SynchronizeReviewFocus() {
+      const review = state.agentReview;
+      if (
+        !state.selectedPath ||
+        !review.state ||
+        !review.socket ||
+        review.socket.readyState !== WebSocket.OPEN ||
+        !review.socketReady
+      ) {
+        return;
+      }
+
+      const current = review.state.currentHunk;
+      const target = FirstReviewHunkForPath(state.selectedPath);
+      const focusKey = target
+        ? "hunk:" + target.hunkId
+        : "file:" + state.selectedPath;
+      if (review.lastFocusKey === focusKey) {
+        return;
+      }
+
+      if (target) {
+        if (current && current.hunkId === target.hunkId) {
+          review.lastFocusKey = focusKey;
+          return;
+        }
+        if (SendReviewFrame({ type: "focus", hunkId: target.hunkId })) {
+          review.lastFocusKey = focusKey;
+        }
+        return;
+      }
+
+      if (SendReviewFrame({ type: "focus", hunkId: null, file: state.selectedPath })) {
+        review.lastFocusKey = focusKey;
+      }
     }
 
     function FindReviewHunkAnchor(hunkId) {
@@ -1497,39 +1562,28 @@
       const review = state.agentReview;
       const reviewHunks =
         review.state && Array.isArray(review.state.hunks) ? review.state.hunks : [];
-      // Show the Agent Review tab only when the current worktree has unstaged
-      // hunks (or we are already in review mode). A Git worktree with nothing to
-      // review does not surface the tab.
+      // Show review controls only when there are hunks, preserved review output,
+      // or an error worth surfacing. A Git worktree with nothing to review does
+      // not surface the bar.
+      const draft =
+        review.state && review.state.reviewDraft ? review.state.reviewDraft : null;
       const showReview =
-        review.loaded && review.available && (review.active || reviewHunks.length > 0);
+        review.loaded &&
+        review.available &&
+        (reviewHunks.length > 0 || review.error || (draft && draft.hasSerializedContent));
 
       reviewBarEl.textContent = "";
-      reviewBarEl.classList.toggle("sheaf-chat-agent-review--active", review.active);
+      reviewBarEl.classList.toggle("sheaf-chat-agent-review--active", showReview);
       reviewBarEl.classList.toggle("sheaf-chat-agent-review--available", showReview);
 
       if (!showReview) {
         return;
       }
 
-      const toggle = CreateElement("button", "sheaf-chat-button sheaf-chat-agent-review-toggle");
-      toggle.type = "button";
-      toggle.textContent = review.active ? "Exit Review" : "Agent Review";
-      toggle.addEventListener("click", function () {
-        if (review.active) {
-          StopAgentReview();
-        } else {
-          StartAgentReview();
-        }
-      });
-      reviewBarEl.appendChild(toggle);
-
-      if (!review.active) {
-        return;
-      }
-
       const reviewState = review.state;
       const actions = reviewState ? reviewState.actions : {};
-      const current = reviewState ? reviewState.currentHunk : null;
+      const current = CurrentReviewHunkForSelectedFile();
+      const commandsReady = review.socketReady === true;
       const status = CreateElement("span", "sheaf-chat-agent-review-status");
       // The current file is shown by its always-visible tab, so the review bar
       // no longer repeats the file name here.
@@ -1578,7 +1632,7 @@
         const button = CreateElement("button", "sheaf-chat-icon-button sheaf-chat-agent-review-command");
         button.type = "button";
         button.textContent = entry[1];
-        button.disabled = entry[2] !== true;
+        button.disabled = !commandsReady || entry[2] !== true;
         button.addEventListener("click", function () {
           ReviewCommand(entry[0]);
         });
@@ -1599,20 +1653,30 @@
 
       const current = nextState ? nextState.currentHunk : null;
       let renderSelectedFileNow = true;
-      if (state.agentReview.active && current && current.file) {
+      const shouldOpenCurrent =
+        current &&
+        current.file &&
+        (!state.selectedPath || (state.agentReview.pendingCommandResult && state.selectedPath !== current.file));
+      if (current && current.file && (shouldOpenCurrent || state.selectedPath === current.file)) {
         state.agentReview.pendingScrollHunkId = current.hunkId;
-        if (state.selectedPath !== current.file) {
+        if (shouldOpenCurrent && state.selectedPath !== current.file) {
           renderSelectedFileNow = false;
           OpenFile(current.file);
         }
       } else {
         state.agentReview.pendingScrollHunkId = null;
       }
+      if (state.agentReview.pendingHunkMutation && current === null && state.selectedPath) {
+        state.agentReview.lastFocusKey = "file:" + state.selectedPath;
+      }
+      state.agentReview.pendingHunkMutation = false;
+      state.agentReview.pendingCommandResult = false;
 
       RenderReviewBar();
       if (renderSelectedFileNow) {
         RenderSelectedFile();
       }
+      SynchronizeReviewFocus();
     }
 
     function StartAgentReview() {
@@ -1629,6 +1693,7 @@
         BuildAgentReviewWebSocketUrl(route.repoId, route.workspaceId)
       );
       review.socket = socket;
+      review.socketReady = false;
       socket.addEventListener("open", function () {
         review.connected = true;
         SendReviewPresence();
@@ -1647,6 +1712,7 @@
           (frame.type === "bootstrap" || frame.type === "state") &&
           frame.state
         ) {
+          review.socketReady = true;
           ApplyReviewState(frame.state);
           return;
         }
@@ -1662,6 +1728,7 @@
             review.error = frame.result.error || "Agent Review command failed.";
           }
           if (frame.state) {
+            review.socketReady = true;
             ApplyReviewState(frame.state);
           } else {
             RenderReviewBar();
@@ -1676,6 +1743,7 @@
       });
       socket.addEventListener("close", function () {
         review.connected = false;
+        review.socketReady = false;
         if (review.socket === socket) {
           review.socket = null;
         }
@@ -1695,9 +1763,13 @@
       const review = state.agentReview;
       review.active = false;
       review.connected = false;
+      review.socketReady = false;
       review.error = null;
       review.state = null;
       review.pendingScrollHunkId = null;
+      review.lastFocusKey = null;
+      review.pendingHunkMutation = false;
+      review.pendingCommandResult = false;
       DetachReviewPresenceListeners();
       if (review.socket) {
         review.socket.close();
@@ -1712,8 +1784,10 @@
         .then(function (body) {
           state.agentReview.loaded = true;
           state.agentReview.available = body && body.available === true;
-          state.agentReview.state = body || null;
-          RenderReviewBar();
+          ApplyReviewState(body || null);
+          if (state.agentReview.available) {
+            StartAgentReview();
+          }
         })
         .catch(function () {
           state.agentReview.loaded = true;
@@ -2092,12 +2166,8 @@
 
       const contentWrap = CreateElement("div", "sheaf-file-view-content");
       const reviewState = state.agentReview.state;
-      const currentHunk = state.agentReview.active && reviewState
-        ? reviewState.currentHunk
-        : null;
-      const inlineFile = state.agentReview.active
-        ? InlineReviewFileForPath(selected.path)
-        : null;
+      const currentHunk = reviewState ? CurrentReviewHunkForSelectedFile() : null;
+      const inlineFile = reviewState ? InlineReviewFileForPath(selected.path) : null;
 
       if (inlineFile) {
         RenderInlineReviewFile(contentWrap, inlineFile, currentHunk);
@@ -2216,8 +2286,10 @@
       };
       state.tabs.push(tab);
       state.selectedPath = normalized;
+      state.agentReview.lastFocusKey = null;
       RenderTabs();
       RenderSelectedFile();
+      SynchronizeReviewFocus();
       ScheduleEditorStateSave();
       return FetchTabContent(tab, options);
     }
@@ -2235,6 +2307,7 @@
 
       CaptureSelectedViewport();
       state.selectedPath = normalized;
+      state.agentReview.lastFocusKey = null;
       if (options && options.fragment) {
         tab.fragment = options.fragment;
       }
@@ -2243,10 +2316,12 @@
       ScheduleEditorStateSave();
 
       if (tab.stale || tab.isLoading) {
+        SynchronizeReviewFocus();
         return FetchTabContent(tab, options);
       }
 
       RenderSelectedFile();
+      SynchronizeReviewFocus();
       return Promise.resolve();
     }
 
@@ -2269,9 +2344,11 @@
           state.tabs.length > 0
             ? state.tabs[Math.max(0, index - 1)].path
             : null;
+        state.agentReview.lastFocusKey = null;
       }
       RenderTabs();
       RenderSelectedFile();
+      SynchronizeReviewFocus();
       ScheduleEditorStateSave();
     }
 
@@ -2295,6 +2372,14 @@
 
       tab.stale = true;
       RenderTabs();
+    }
+
+    function DestroyFileWorkspace() {
+      if (saveEditorStateTimer !== null) {
+        clearTimeout(saveEditorStateTimer);
+        saveEditorStateTimer = null;
+      }
+      StopAgentReview();
     }
 
     function StartResize(which, event) {
@@ -2398,6 +2483,7 @@
       },
       StartAgentReview: StartAgentReview,
       StopAgentReview: StopAgentReview,
+      destroy: DestroyFileWorkspace,
     };
   }
 
@@ -2615,11 +2701,14 @@
 
     chatPaneController.applyRoute(route);
 
+    function DestroyWorkspaceEditor() {
+      chatPaneController.destroy();
+      workspaceController.destroy();
+    }
+
     window.addEventListener(
       "pagehide",
-      function () {
-        chatPaneController.destroy();
-      },
+      DestroyWorkspaceEditor,
       { once: true }
     );
 
@@ -2627,7 +2716,7 @@
       repoId: route.repoId,
       workspaceId: route.workspaceId,
       applyRoute: chatPaneController.applyRoute,
-      destroy: chatPaneController.destroy,
+      destroy: DestroyWorkspaceEditor,
     };
   }
 
@@ -3032,11 +3121,14 @@
 
     chatPaneController.applyRoute(route);
 
+    function DestroyWorkspaceEditor() {
+      chatPaneController.destroy();
+      workspaceController.destroy();
+    }
+
     window.addEventListener(
       "pagehide",
-      function () {
-        chatPaneController.destroy();
-      },
+      DestroyWorkspaceEditor,
       { once: true }
     );
 
@@ -3044,7 +3136,7 @@
       repoId: route.repoId,
       workspaceId: route.workspaceId,
       applyRoute: chatPaneController.applyRoute,
-      destroy: chatPaneController.destroy,
+      destroy: DestroyWorkspaceEditor,
     };
   }
 

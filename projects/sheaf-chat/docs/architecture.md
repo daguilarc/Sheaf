@@ -114,8 +114,11 @@ workspace root otherwise:
 - `/api/repositories/:repoId/workspaces/:workspaceId/chats/:chatId/file`
 - `/api/repositories/:repoId/workspaces/:workspaceId/chats/:chatId/files`
 
-Agent Review Mode uses the same workspace chat root and accepts
-`repo`/`workspace`/`chat` on `/ws/agent-review`.
+Agent Review state uses the same workspace root and accepts `repo`,
+`workspace`, and `client` on `/ws/agent-review`. The browser keeps one tabbed
+file viewer: files with unstaged reviewable hunks render through the inline
+Agent Review view, while files without hunks keep the normal file preview and
+can use review file navigation to jump to another file with hunks.
 
 ## Security Boundaries
 

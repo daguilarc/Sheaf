@@ -825,6 +825,62 @@ test("Agent Review WebSocket navigates between hunks and files", async () =>
   });
 });
 
+test("Agent Review file navigation can start from a focused file without hunks", async () =>
+{
+  await WithTestServer(async (handle) =>
+  {
+    const { repoId, workspaceId } = await CreateMultiHunkReviewSession(handle);
+    const socket = new WebSocket(WsUrl(handle.baseUrl, repoId, workspaceId));
+
+    await new Promise<void>((resolve, reject) =>
+    {
+      socket.once("open", () => resolve());
+      socket.once("error", reject);
+    });
+
+    await WaitForFrame(socket, "bootstrap");
+
+    socket.send(JSON.stringify({
+      type: "focus",
+      hunkId: null,
+      file: "projects/demo/aaa.ts",
+    }));
+    const anchored = await WaitForFrame(socket, "state");
+    assert.equal(anchored.state.currentHunk, null);
+    assert.equal(anchored.state.actions.canGoPrevFile, false);
+    assert.equal(anchored.state.actions.canGoNextFile, true);
+    assert.equal(anchored.state.actions.canStage, false);
+    assert.equal(anchored.state.actions.canRevert, false);
+
+    socket.send(JSON.stringify({ type: "command", id: "next-from-anchor", action: "nextFile" }));
+    const afterNext = await WaitForFrame(socket, "command_result");
+    assert.equal(afterNext.result.ok, true);
+    assert.equal(afterNext.state.currentHunk.file, "projects/demo/alpha.ts");
+    assert.equal(afterNext.state.currentHunk.hunkIndex, 0);
+
+    socket.send(JSON.stringify({
+      type: "focus",
+      hunkId: null,
+      file: "projects/demo/zzz.ts",
+    }));
+    const anchoredAfter = await WaitForFrame(socket, "state");
+    assert.equal(anchoredAfter.state.currentHunk, null);
+    assert.equal(anchoredAfter.state.actions.canGoPrevFile, true);
+    assert.equal(anchoredAfter.state.actions.canGoNextFile, false);
+
+    socket.send(JSON.stringify({ type: "command", id: "prev-from-anchor", action: "previousFile" }));
+    const afterPrev = await WaitForFrame(socket, "command_result");
+    assert.equal(afterPrev.result.ok, true);
+    assert.equal(afterPrev.state.currentHunk.file, "projects/demo/beta.ts");
+
+    await new Promise<void>((resolve) =>
+    {
+      socket.once("close", () => resolve());
+      socket.close();
+    });
+  });
+});
+
 test("Agent Review excludes binary diffs from hunks and inline documents", async () =>
 {
   await WithTestServer(async (handle) =>

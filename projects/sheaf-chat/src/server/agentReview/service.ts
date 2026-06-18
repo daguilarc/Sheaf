@@ -715,6 +715,7 @@ function ParseClientFrame(data: WebSocket.RawData): AgentReviewClientFrame
     return {
       type: "focus",
       hunkId: parsed.hunkId,
+      file: typeof parsed.file === "string" ? parsed.file : null,
     };
   }
 
@@ -1264,7 +1265,7 @@ class AgentReviewSession
 
     if (frame.type === "focus")
     {
-      await this.FocusHunk(frame.hunkId ?? null);
+      await this.FocusHunk(frame.hunkId ?? null, frame.file ?? null);
       this.BroadcastState();
       await this.UpdateDictatorCells();
       return;
@@ -1326,7 +1327,7 @@ class AgentReviewSession
     }
   }
 
-  private async FocusHunk(hunkId: string | null): Promise<void>
+  private async FocusHunk(hunkId: string | null, file: string | null = null): Promise<void>
   {
     const previousVisible = this.m_visibleCommentHunkId;
     const state = this.RequireState();
@@ -1334,11 +1335,17 @@ class AgentReviewSession
     {
       this.m_currentIndex = -1;
       this.m_focusClearedExplicitly = true;
-      this.m_fileNavigationAnchor = null;
+      this.m_fileNavigationAnchor = file;
       this.m_state = {
         ...state,
         currentIndex: -1,
         currentHunk: null,
+        actions: ActionsFor(
+          state.hunks,
+          -1,
+          this.m_undoStack.length > 0,
+          this.m_fileNavigationAnchor,
+        ),
       };
     }
     else

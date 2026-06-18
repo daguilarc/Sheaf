@@ -509,13 +509,14 @@ test("front door Agent Review renders inline diffs and stages focused hunks in C
           });
           const routeIds = ParseChatRoute(await page.evaluate(() => window.location.hash));
 
-          await page.locator(".sheaf-chat-agent-review-toggle", { hasText: "Agent Review" }).waitFor({
-            timeout: 5000,
-          });
-          await page.locator(".sheaf-chat-agent-review-toggle", { hasText: "Agent Review" }).click();
-
           await page.waitForSelector(".sheaf-chat-agent-review-inline", { timeout: 5000 });
           await page.waitForSelector(".sheaf-chat-agent-review-inline-row--focused", { timeout: 5000 });
+          await page.locator(".sheaf-chat-explorer-file", { hasText: "notes.md" }).click();
+          await page.waitForFunction(() =>
+          {
+            const selected = document.querySelector(".sheaf-chat-tab--selected .sheaf-chat-tab-label");
+            return selected?.textContent?.trim() === "notes.md";
+          }, undefined, { timeout: 5000 });
 
           const initialRows = await page.evaluate(() =>
           {
