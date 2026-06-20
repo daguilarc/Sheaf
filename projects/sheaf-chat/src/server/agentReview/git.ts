@@ -387,7 +387,10 @@ async function BuildInlineFiles(
 
     for (const hunk of file.hunks)
     {
-      PushCurrentFileContextUntil(hunk.newStart);
+      const insertionNewLineNumber = hunk.newCount === 0
+        ? hunk.newStart + 1
+        : hunk.newStart;
+      PushCurrentFileContextUntil(insertionNewLineNumber);
 
       for (const line of hunk.lines)
       {
