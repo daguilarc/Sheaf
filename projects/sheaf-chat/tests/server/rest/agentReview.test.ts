@@ -407,6 +407,99 @@ test("Agent Review availability reports Git hunks under the workspace root", asy
   });
 });
 
+test("Agent Review inline documents place pure deletions after preceding context", async () =>
+{
+  await WithTestServer(async (handle) =>
+  {
+    const repoRoot = handle.agentManager.storagePaths.repoRoot;
+    const demoRoot = path.join(repoRoot, "projects/demo");
+    const created = await CreateWorkspaceChatViaApi(handle, demoRoot);
+    const filePath = path.join(demoRoot, "boundary.cpp");
+
+    await mkdir(demoRoot, { recursive: true });
+    await Git(repoRoot, ["init"]);
+    await Git(repoRoot, ["config", "user.email", "test@example.com"]);
+    await Git(repoRoot, ["config", "user.name", "Test User"]);
+    await writeFile(
+      filePath,
+      [
+        "struct TheoryOfTime : public TheoryOfTimeBase",
+        "{",
+        "    Tick2Phasor m_tick2Phasor;",
+        "    Phasor2Tick m_phasor2Tick;",
+        "    SmartGrid::MessageOutBuffer* m_messageOutBuffer;",
+        "};",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    await Git(repoRoot, ["add", "projects/demo/boundary.cpp"]);
+    await Git(repoRoot, ["commit", "-m", "initial"]);
+    await writeFile(
+      filePath,
+      [
+        "struct TheoryOfTime : public TheoryOfTimeBase",
+        "{",
+        "    Phasor2Tick m_phasor2Tick;",
+        "    SmartGrid::MessageOutBuffer* m_messageOutBuffer;",
+        "};",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const response = await RequestJson(
+      handle.baseUrl,
+      "GET",
+      `/api/repositories/${encodeURIComponent(created.repoId)}/workspaces/${encodeURIComponent(created.workspaceId)}/agent-review`,
+    );
+
+    assert.equal(response.status, 200);
+    const body = response.body as {
+      inlineFiles: Array<{
+        file: string;
+        rows: Array<{
+          kind: string;
+          text: string;
+          hunkId?: string;
+          oldLineNumber?: number;
+          newLineNumber?: number;
+        }>;
+      }>;
+    };
+    const inlineFile = body.inlineFiles.find((file) => file.file === "projects/demo/boundary.cpp");
+    assert.ok(inlineFile, "expected boundary.cpp inline review document");
+
+    const braceIndex = inlineFile.rows.findIndex((row) =>
+      row.kind === "context" &&
+      row.text === "{" &&
+      row.newLineNumber === 2
+    );
+    const deletionIndex = inlineFile.rows.findIndex((row) =>
+      row.kind === "deletion" &&
+      row.text === "    Tick2Phasor m_tick2Phasor;" &&
+      row.oldLineNumber === 3
+    );
+    const followingIndex = inlineFile.rows.findIndex((row) =>
+      row.kind === "context" &&
+      row.text === "    Phasor2Tick m_phasor2Tick;" &&
+      row.newLineNumber === 3
+    );
+
+    assert.notEqual(braceIndex, -1, "expected opening brace context row");
+    assert.notEqual(deletionIndex, -1, "expected deleted member row");
+    assert.notEqual(followingIndex, -1, "expected following context row");
+    assert.ok(
+      braceIndex < deletionIndex,
+      `expected deletion after opening brace; rows=${JSON.stringify(inlineFile.rows)}`,
+    );
+    assert.ok(
+      deletionIndex < followingIndex,
+      `expected deletion before following member; rows=${JSON.stringify(inlineFile.rows)}`,
+    );
+  });
+});
+
 test("Agent Review splits separated changed runs and keeps adjacent changes together", async () =>
 {
   await WithTestServer(async (handle) =>
