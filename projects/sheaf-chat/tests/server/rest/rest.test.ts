@@ -42,6 +42,28 @@ function WebSocketUrl(baseUrl: string, route: string): string
   return `${baseUrl.replace(/^http/, "ws")}${route}`;
 }
 
+function CaptureConsoleError(): { lines: string[]; restore: () => void }
+{
+  const original = console.error;
+  const lines: string[] = [];
+  console.error = (...args: unknown[]) =>
+  {
+    lines.push(args.map((arg) => String(arg)).join(" "));
+  };
+  return {
+    lines,
+    restore: () =>
+    {
+      console.error = original;
+    },
+  };
+}
+
+function ParseServerLog(line: string): Record<string, unknown>
+{
+  return JSON.parse(line) as Record<string, unknown>;
+}
+
 async function RequestWebSocketUpgradeStatus(baseUrl: string, route: string): Promise<number>
 {
   return new Promise<number>((resolve, reject) =>
@@ -201,6 +223,33 @@ test("removed pile endpoints return not_found", async () =>
     const created = await RequestJson(baseUrl, "POST", "/api/piles", { pile: "work" });
     assert.equal(created.status, 404);
     assert.equal(ErrorBody(created.body).code, "not_found");
+  });
+});
+
+test("handled REST errors are logged without changing response body", async () =>
+{
+  await WithTestServer(async ({ baseUrl }) =>
+  {
+    const captured = CaptureConsoleError();
+    try
+    {
+      const listed = await RequestJson(baseUrl, "GET", "/api/piles");
+
+      assert.equal(listed.status, 404);
+      assert.equal(ErrorBody(listed.body).code, "not_found");
+      assert.equal(captured.lines.length, 1);
+      const log = ParseServerLog(captured.lines[0]!);
+      assert.equal(log.service, "sheaf-chat");
+      assert.equal(log.event, "sheaf_chat.handled_error");
+      assert.equal(log.feature, "rest");
+      assert.equal(log.code, "not_found");
+      assert.equal(log.message, "route not found");
+      assert.equal(JSON.stringify(log).includes("test-key"), false);
+    }
+    finally
+    {
+      captured.restore();
+    }
   });
 });
 

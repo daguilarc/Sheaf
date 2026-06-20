@@ -31,6 +31,28 @@ import {
   WriteSessionFile,
 } from "./helpers.js";
 
+function CaptureConsoleError(): { lines: string[]; restore: () => void }
+{
+  const original = console.error;
+  const lines: string[] = [];
+  console.error = (...args: unknown[]) =>
+  {
+    lines.push(args.map((arg) => String(arg)).join(" "));
+  };
+  return {
+    lines,
+    restore: () =>
+    {
+      console.error = original;
+    },
+  };
+}
+
+function ParseServerLog(line: string): Record<string, unknown>
+{
+  return JSON.parse(line) as Record<string, unknown>;
+}
+
 test("WebSocket connection sends server.hello then server.caught_up", async () =>
 {
   await WithWebSocketTestServer(async (handle) =>
@@ -98,6 +120,59 @@ test("WebSocket rejects invalid repo, workspace, and chat query parameters", asy
     if (!missingChatFile.ok)
     {
       assert.equal(missingChatFile.status, 404);
+    }
+  });
+});
+
+test("chat WebSocket handled frame errors are logged with request correlation", async () =>
+{
+  await WithWebSocketTestServer(async (handle) =>
+  {
+    const session = await CreateBlankSessionViaApi(handle);
+    const url = BuildWsUrl(handle, session.repoId, session.workspaceId, session.chatId, { clientId: "test-client" });
+    const connected = await ConnectWebSocket(url);
+    const socket = connected.socket;
+    const captured = CaptureConsoleError();
+
+    try
+    {
+      await DrainConnection(socket);
+      SendClientFrame(
+        socket,
+        CreateClientEnvelope(
+          "client.ping",
+          session.repoId,
+          session.workspaceId,
+          "different-chat",
+          {},
+          "wrong-chat-frame",
+        ),
+      );
+
+      const error = await WaitForEnvelope(
+        socket,
+        (envelope) =>
+          envelope.kind === "server.error" &&
+          (envelope.payload as { requestId?: string }).requestId === "wrong-chat-frame",
+      );
+      assert.equal((error.payload as { code: string }).code, "invalid_frame");
+      assert.equal(captured.lines.length, 1);
+      const log = ParseServerLog(captured.lines[0]!);
+      assert.equal(log.service, "sheaf-chat");
+      assert.equal(log.event, "sheaf_chat.handled_error");
+      assert.equal(log.feature, "chat-websocket");
+      assert.equal(log.code, "invalid_frame");
+      assert.equal(log.requestId, "wrong-chat-frame");
+      assert.equal(log.repoId, session.repoId);
+      assert.equal(log.workspaceId, session.workspaceId);
+      assert.equal(log.chatId, session.chatId);
+      assert.equal(log.clientId, "test-client");
+      assert.equal(JSON.stringify(log).includes("different-chat"), false);
+    }
+    finally
+    {
+      captured.restore();
+      socket.close();
     }
   });
 });

@@ -5,6 +5,7 @@ import { ModelValidationError } from "../agents/models.js";
 import { FormatRestError } from "../shared/errors.js";
 import { StorageError } from "../storage/errors.js";
 import { SendJson } from "./http.js";
+import { LogHandledServerError } from "./logging.js";
 
 const x_errorStatusCodes: Record<string, number> = {
   invalid_request: 400,
@@ -40,6 +41,12 @@ export function SendRestError(
   message: string,
 ): void
 {
+  LogHandledServerError({
+    feature: "rest",
+    statusCode,
+    code,
+    message,
+  });
   SendJson(response, statusCode, FormatRestError(code, message));
 }
 

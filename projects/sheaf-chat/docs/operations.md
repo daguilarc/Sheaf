@@ -178,6 +178,13 @@ Deleting a session's four files removes the session. The service writes no
 log files; stdout/stderr handling follows
 [Logs And Data](../../../structure/logs-and-data.md).
 
+Handled server errors emit one structured JSON line to stderr with
+`service:"sheaf-chat"` and `event:"sheaf_chat.handled_error"`. The log line
+contains stable diagnostic fields such as feature, code, status, request,
+repo/workspace/chat/client, command action, and stale-session status, but not
+request bodies, chat text, hunk patches, or file contents. When launched by
+Conductor these lines are visible in the captured `sheaf-chat` stderr log.
+
 ## Smoke-test mode
 
 When the service is started with `SHEAF_SMOKE_TEST_MODE` active (normally via

@@ -34,6 +34,7 @@ import type { SheafChatConfig } from "./config.js";
 import { ProfileStreamPoint } from "./streamProfiler.js";
 import { ParseOptionalInteger } from "./http.js";
 import { CreateSessionRootPolicy } from "./files/sessionBrowser.js";
+import { LogHandledServerError } from "./logging.js";
 import { ResolveSessionFilePath } from "../storage/paths.js";
 import { StorageError } from "../storage/errors.js";
 import { ValidateChatId, ValidateRepoId, ValidateWorkspaceId } from "../storage/validation.js";
@@ -225,6 +226,16 @@ function SendErrorFrame(
   requestId?: string,
 ): void
 {
+  LogHandledServerError({
+    feature: "chat-websocket",
+    code,
+    message,
+    requestId,
+    repoId: params.repoId,
+    workspaceId: params.workspaceId,
+    chatId: params.chatId,
+    clientId: params.clientId,
+  });
   const payload: Record<string, unknown> = {
     code,
     message,

@@ -8,6 +8,7 @@ import { WebSocket, WebSocketServer } from "ws";
 import type { AgentManager } from "../../agents/manager.js";
 import type { FileChangedNotification } from "../../extensions/sheaf-chat/types.js";
 import type { SheafChatConfig } from "../config.js";
+import { LogHandledServerError } from "../logging.js";
 import {
   ParseAgentReviewWebSocketQuery,
   rejectUpgradeWithHttpStatus,
@@ -785,6 +786,7 @@ class AgentReviewSession
   private readonly m_providerId: string;
   private readonly m_dictatorRPC: DictatorRPCClient | null;
   private readonly m_sockets = new Set<WebSocket>();
+  private readonly m_socketClientIds = new Map<WebSocket, string | undefined>();
   // Subset of m_sockets whose browser tab is currently focused (visible and
   // window-focused). The Launchpad is lit while any attached client is focused
   // and dark when none are. Sockets default to focused on attach.
@@ -870,7 +872,7 @@ class AgentReviewSession
 
     for (const socket of this.m_sockets)
     {
-      socket.close();
+      socket.terminate();
     }
     this.m_sockets.clear();
     this.m_focusedSockets.clear();
@@ -889,9 +891,10 @@ class AgentReviewSession
     return this.m_focusedSockets.size > 0;
   }
 
-  async Attach(socket: WebSocket): Promise<void>
+  async Attach(socket: WebSocket, params: WorkspaceWebSocketConnectParams): Promise<void>
   {
     this.m_sockets.add(socket);
+    this.m_socketClientIds.set(socket, params.clientId);
     this.m_focusedSockets.add(socket);
     socket.on("message", (data) =>
     {
@@ -900,6 +903,7 @@ class AgentReviewSession
     socket.on("close", () =>
     {
       this.m_sockets.delete(socket);
+      this.m_socketClientIds.delete(socket);
       this.m_focusedSockets.delete(socket);
       if (this.m_sockets.size === 0)
       {
@@ -1275,10 +1279,17 @@ class AgentReviewSession
     }
     catch (error)
     {
+      const code = error instanceof StorageError ? error.code : "invalid_frame";
+      const message = error instanceof Error ? error.message : String(error);
+      this.LogHandledError({
+        socket,
+        code,
+        message,
+      });
       SendFrame(socket, {
         type: "error",
-        code: error instanceof StorageError ? error.code : "invalid_frame",
-        message: error instanceof Error ? error.message : String(error),
+        code,
+        message,
       });
       return;
     }
@@ -1336,7 +1347,39 @@ class AgentReviewSession
       hunkId: frame.hunkId,
       patchHash: frame.patchHash,
     });
+    if (!result.ok)
+    {
+      this.LogHandledError({
+        socket,
+        action: result.action,
+        commandId: result.commandId,
+        message: result.error ?? "Agent Review command failed",
+        stale: result.stale,
+      });
+    }
     this.BroadcastCommandResult(result);
+  }
+
+  private LogHandledError(fields: {
+    socket: WebSocket;
+    message: string;
+    code?: string;
+    action?: AgentReviewAction;
+    commandId?: string;
+    stale?: boolean;
+  }): void
+  {
+    LogHandledServerError({
+      feature: "agent-review",
+      code: fields.code,
+      action: fields.action,
+      commandId: fields.commandId,
+      message: fields.message,
+      stale: fields.stale,
+      repoId: this.m_key.repoId,
+      workspaceId: this.m_key.workspaceId,
+      clientId: this.m_socketClientIds.get(fields.socket),
+    });
   }
 
   private async FocusHunk(hunkId: string | null, file: string | null = null): Promise<void>
@@ -1947,7 +1990,7 @@ export class AgentReviewService
       workspaceId: params.workspaceId,
     };
     const session = this.GetOrCreateSession(key);
-    await session.Attach(socket);
+    await session.Attach(socket, params);
   }
 
   async ReleaseIdle(): Promise<void>

@@ -31,6 +31,58 @@ function WsUrl(baseUrl: string, repoId: string, workspaceId: string): string
   return url.toString();
 }
 
+function CaptureConsoleError(): { lines: string[]; restore: () => void }
+{
+  const original = console.error;
+  const lines: string[] = [];
+  console.error = (...args: unknown[]) =>
+  {
+    lines.push(args.map((arg) => String(arg)).join(" "));
+  };
+  return {
+    lines,
+    restore: () =>
+    {
+      console.error = original;
+    },
+  };
+}
+
+function ParseServerLog(line: string): Record<string, unknown>
+{
+  return JSON.parse(line) as Record<string, unknown>;
+}
+
+async function CloseSocket(socket: WebSocket): Promise<void>
+{
+  if (socket.readyState === WebSocket.CLOSED)
+  {
+    return;
+  }
+
+  await new Promise<void>((resolve) =>
+  {
+    const timer = setTimeout(() =>
+    {
+      socket.terminate();
+      resolve();
+    }, 1000);
+    socket.once("close", () =>
+    {
+      clearTimeout(timer);
+      resolve();
+    });
+    if (socket.readyState === WebSocket.OPEN)
+    {
+      socket.close();
+    }
+    else
+    {
+      socket.terminate();
+    }
+  });
+}
+
 function WaitForFrame(socket: WebSocket, type: string, timeoutMs = 5000): Promise<Record<string, any>>
 {
   return new Promise((resolve, reject) =>
@@ -151,7 +203,10 @@ class FakeDictatorRPCServer
 
   async close(): Promise<void>
   {
-    this.socket?.close();
+    for (const client of this.server.clients)
+    {
+      client.terminate();
+    }
     await new Promise<void>((resolve) => this.server.close(() => resolve()));
   }
 
@@ -434,15 +489,26 @@ test("Agent Review WebSocket stages, reverts, and undoes current hunks", async (
     const hunk = bootstrap.state.currentHunk;
     assert.equal(hunk.file, "projects/demo/app.ts");
 
-    socket.send(JSON.stringify({
-      type: "command",
-      id: "stage-1",
-      action: "stage",
-      hunkId: hunk.hunkId,
-      patchHash: hunk.patchHash,
-    }));
-    const stage = await WaitForFrame(socket, "command_result");
-    assert.equal(stage.result.ok, true);
+    const captured = CaptureConsoleError();
+    let stage: Record<string, any> | null = null;
+    try
+    {
+      socket.send(JSON.stringify({
+        type: "command",
+        id: "stage-1",
+        action: "stage",
+        hunkId: hunk.hunkId,
+        patchHash: hunk.patchHash,
+      }));
+      stage = await WaitForFrame(socket, "command_result");
+      assert.equal(stage.result.ok, true);
+      assert.deepEqual(captured.lines, []);
+    }
+    finally
+    {
+      captured.restore();
+    }
+    assert.ok(stage);
     assert.equal(stage.state.reviewDraft.entries.length, 0);
     assert.equal(stage.state.inlineFiles.length, 0);
     assert.match(await Git(repoRoot, ["diff", "--cached", "--", "projects/demo/app.ts"]), /two changed/);
@@ -474,12 +540,6 @@ test("Agent Review WebSocket stages, reverts, and undoes current hunks", async (
     assert.equal(undoRevert.result.ok, true);
     assert.equal(undoRevert.state.reviewDraft.entries.length, 0);
     assert.equal(await readFile(filePath, "utf8"), "one\ntwo changed\nthree\n");
-
-    await new Promise<void>((resolve) =>
-    {
-      socket.once("close", () => resolve());
-      socket.close();
-    });
   });
 });
 
@@ -575,12 +635,6 @@ test("Agent Review mutates only the selected zero-context hunk", async () =>
       await readFile(filePath, "utf8"),
       "line 1\nline 2 changed\nline 3\nline 4 changed\nline 5\n",
     );
-
-    await new Promise<void>((resolve) =>
-    {
-      socket.once("close", () => resolve());
-      socket.close();
-    });
   });
 });
 
@@ -599,17 +653,38 @@ test("Agent Review rejects stale zero-context hunk mutations", async () =>
 
     const bootstrap = await WaitForFrame(socket, "bootstrap");
     const hunk = bootstrap.state.currentHunk;
-    socket.send(JSON.stringify({
-      type: "command",
-      id: "stale-stage",
-      action: "stage",
-      hunkId: hunk.hunkId,
-      patchHash: "not-the-current-patch",
-    }));
-    const stale = await WaitForFrame(socket, "command_result");
-    assert.equal(stale.result.ok, false);
-    assert.equal(stale.result.stale, true);
-    assert.match(stale.result.error, /patch changed/);
+    const captured = CaptureConsoleError();
+    try
+    {
+      socket.send(JSON.stringify({
+        type: "command",
+        id: "stale-stage",
+        action: "stage",
+        hunkId: hunk.hunkId,
+        patchHash: "not-the-current-patch",
+      }));
+      const stale = await WaitForFrame(socket, "command_result");
+      assert.equal(stale.result.ok, false);
+      assert.equal(stale.result.stale, true);
+      assert.match(stale.result.error, /patch changed/);
+      assert.equal(captured.lines.length, 1);
+      const log = ParseServerLog(captured.lines[0]!);
+      assert.equal(log.service, "sheaf-chat");
+      assert.equal(log.event, "sheaf_chat.handled_error");
+      assert.equal(log.feature, "agent-review");
+      assert.equal(log.action, "stage");
+      assert.equal(log.commandId, "stale-stage");
+      assert.equal(log.repoId, repoId);
+      assert.equal(log.workspaceId, workspaceId);
+      assert.equal(log.clientId, "test-client");
+      assert.equal(log.stale, true);
+      assert.match(String(log.message), /patch changed/);
+      assert.equal(JSON.stringify(log).includes(hunk.patch), false);
+    }
+    finally
+    {
+      captured.restore();
+    }
     assert.equal((await Git(repoRoot, ["diff", "--cached", "--", "projects/demo/app.ts"])).trim(), "");
     const worktreeAfterStale = await Git(repoRoot, [
       "diff",
@@ -626,6 +701,61 @@ test("Agent Review rejects stale zero-context hunk mutations", async () =>
       socket.close();
     });
   });
+});
+
+test("Agent Review logs malformed WebSocket frames without leaking payloads", async () =>
+{
+  const fakeDictator = new FakeDictatorRPCServer();
+  const dictatorPort = await fakeDictator.start();
+  try
+  {
+    await WithTestServer(async (handle) =>
+    {
+      await writeFile(
+        handle.config.paths.servicesJsonFile,
+        JSON.stringify([{ name: "dictator", host: "127.0.0.1", port: dictatorPort }]),
+        "utf8",
+      );
+      const { repoId, workspaceId } = await CreateGitReviewSession(handle);
+      const socket = new WebSocket(WsUrl(handle.baseUrl, repoId, workspaceId));
+
+      await new Promise<void>((resolve, reject) =>
+      {
+        socket.once("open", () => resolve());
+        socket.once("error", reject);
+      });
+
+      await WaitForFrame(socket, "bootstrap");
+      await fakeDictator.waitForRequest("launchpad.setCells");
+      const captured = CaptureConsoleError();
+      try
+      {
+        socket.send("{\"type\":\"command\",\"id\":\"bad-frame\",\"action\":\"stage\",\"patch\":\"secret patch text\"");
+        const frame = await WaitForFrame(socket, "error");
+        assert.equal(frame.code, "invalid_frame");
+        assert.equal(captured.lines.length, 1);
+        const log = ParseServerLog(captured.lines[0]!);
+        assert.equal(log.service, "sheaf-chat");
+        assert.equal(log.event, "sheaf_chat.handled_error");
+        assert.equal(log.feature, "agent-review");
+        assert.equal(log.code, "invalid_frame");
+        assert.equal(log.repoId, repoId);
+        assert.equal(log.workspaceId, workspaceId);
+        assert.equal(log.clientId, "test-client");
+        assert.match(String(log.message), /malformed|JSON|Unexpected/i);
+        assert.equal(JSON.stringify(log).includes("secret patch text"), false);
+      }
+      finally
+      {
+        captured.restore();
+        await CloseSocket(socket);
+      }
+    });
+  }
+  finally
+  {
+    await fakeDictator.close();
+  }
 });
 
 async function CreateMultiHunkReviewSession(
