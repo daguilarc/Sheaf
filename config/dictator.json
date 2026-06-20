@@ -1,5 +1,5 @@
 {
-  "audio_input" : null,
+  "audio_input" : "Samson G-Track Pro",
   "auxiliary_system_prompt_1" : "intent_refiner_v1.md",
   "auxiliary_system_prompt_2" : "intent_refiner_v1.md",
   "cloud_model" : "gpt-4.1-mini",
@@ -16,12 +16,11 @@
   "local_model" : "qwen2.5:7b-instruct",
   "ollama_bin_path" : "\/opt\/homebrew\/bin\/ollama",
   "ollama_host" : "http:\/\/127.0.0.1:11434",
-  "review_system_prompt" : "code_review_refiner_v1.md",
   "stt_language" : "en",
   "stt_model_path" : "models\/ggml-base.en.bin",
   "system_prompt" : "intent_refiner_v1.md",
   "system_prompts_dir" : "projects\/dictator\/src\/prompts\/system-prompts",
-  "updated_at" : "2026-06-07T20:42:10Z",
+  "updated_at" : "2026-06-18T21:03:55Z",
   "use_cloud" : true,
   "version" : 2
 }
