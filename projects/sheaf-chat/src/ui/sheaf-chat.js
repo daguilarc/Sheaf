@@ -1553,14 +1553,58 @@
     function RenderInlineReviewFile(contentWrap, inlineFile, currentHunk, selectedFile) {
       const review = CreateElement("div", "sheaf-chat-agent-review-inline");
       const rows = Array.isArray(inlineFile.rows) ? inlineFile.rows : [];
+      const sourceRendering = window.SheafSourceRendering;
+      const documentModel =
+        sourceRendering &&
+        typeof sourceRendering.buildReviewDocument === "function"
+          ? sourceRendering.buildReviewDocument(selectedFile.path, inlineFile)
+          : { path: String(selectedFile.path || ""), text: rows.map(function (row) {
+              return row && row.text != null ? String(row.text) : "";
+            }).join("\n"), segments: [] };
+      const rowSegments = Array.isArray(documentModel.segments)
+        ? documentModel.segments.filter(function (segment) {
+            return segment && segment.kind !== "separator";
+          })
+        : [];
       const focusedHunkId = currentHunk ? currentHunk.hunkId : null;
       const anchorHunkIds = new Set();
       let anchoredHunks = new Set();
       let mountedComment = false;
-      let sourceSearchOffset = 0;
-      const sourceContent = selectedFile && selectedFile.content != null
-        ? String(selectedFile.content)
-        : "";
+      const language = HighlightLanguageForPath(selectedFile.path);
+      const highlighter = GetHighlighter();
+
+      selectedFile.renderDocument = documentModel;
+      selectedFile.navigationDocumentText = documentModel.text;
+
+      function SegmentForRow(row, index) {
+        const fallbackText = row && row.text != null ? String(row.text) : "";
+        return rowSegments[index] || {
+          id: String(row && row.id ? row.id : "row:" + index),
+          kind: row && row.kind ? String(row.kind) : "context",
+          text: fallbackText,
+          start: 0,
+          end: fallbackText.length,
+        };
+      }
+
+      function RenderReviewCodeCell(code, segment) {
+        if (
+          sourceRendering &&
+          typeof sourceRendering.renderSegmentIntoElement === "function"
+        ) {
+          sourceRendering.renderSegmentIntoElement(code, segment, {
+            language: language,
+            highlighter: highlighter,
+          });
+          code.setAttribute("data-source-offset", String(segment.start));
+          return;
+        }
+        code.setAttribute("data-source-offset", String(segment.start));
+        code.setAttribute("data-render-segment-id", String(segment.id));
+        code.setAttribute("data-render-start", String(segment.start));
+        code.setAttribute("data-render-end", String(segment.end));
+        code.textContent = segment && segment.text != null ? String(segment.text) : "";
+      }
 
       rows.forEach(function (row) {
         const hunkId = typeof row.hunkId === "string" ? row.hunkId : null;
@@ -1574,6 +1618,7 @@
       });
 
       rows.forEach(function (row, index) {
+        const segment = SegmentForRow(row, index);
         const hunkId = typeof row.hunkId === "string" ? row.hunkId : null;
         const isFocused = hunkId !== null && hunkId === focusedHunkId;
         const classNames = [
@@ -1603,17 +1648,6 @@
             rowEl.setAttribute("data-review-hunk-anchor", hunkId);
           }
         }
-        if (row.text != null && String(row.text).length > 0 && sourceContent.length > 0) {
-          const rowText = String(row.text);
-          let sourceOffset = sourceContent.indexOf(rowText, sourceSearchOffset);
-          if (sourceOffset < 0) {
-            sourceOffset = sourceContent.indexOf(rowText);
-          }
-          if (sourceOffset >= 0) {
-            rowEl.setAttribute("data-source-offset", String(sourceOffset));
-            sourceSearchOffset = sourceOffset + rowText.length;
-          }
-        }
 
         const marker = CreateElement("span", "sheaf-chat-agent-review-inline-marker");
         marker.textContent =
@@ -1625,7 +1659,7 @@
         const newLine = row.newLineNumber == null ? "" : String(row.newLineNumber);
         lineNumber.textContent = oldLine || newLine ? oldLine + " " + newLine : "";
         const code = CreateElement("span", "sheaf-chat-agent-review-inline-code");
-        code.textContent = row.text == null ? "" : String(row.text);
+        RenderReviewCodeCell(code, segment);
 
         rowEl.appendChild(marker);
         rowEl.appendChild(lineNumber);
@@ -2309,7 +2343,6 @@
       const inlineFile = reviewState ? InlineReviewFileForPath(selected.path) : null;
 
       if (inlineFile) {
-        selected.renderDocument = null;
         RenderInlineReviewFile(contentWrap, inlineFile, currentHunk, selected);
         if (
           fileNavigation &&
@@ -2324,6 +2357,7 @@
 
       if (IsMarkdownContentType(selected.contentType, selected.path)) {
         selected.renderDocument = null;
+        selected.navigationDocumentText = null;
         if (
           window.SheafMarkdown &&
           typeof window.SheafMarkdown.renderMarkdown === "function"
@@ -2371,6 +2405,7 @@
             : null;
         const language = HighlightLanguageForPath(selected.path);
         selected.renderDocument = documentModel;
+        selected.navigationDocumentText = documentModel ? documentModel.text : null;
         const rendered =
           documentModel &&
           sourceRendering &&
@@ -2408,6 +2443,7 @@
         }
       } else {
         selected.renderDocument = null;
+        selected.navigationDocumentText = null;
         const unsupported = CreateElement("div", "sheaf-chat-file-unsupported");
         unsupported.textContent = "This file type is not supported for preview.";
         contentWrap.appendChild(unsupported);

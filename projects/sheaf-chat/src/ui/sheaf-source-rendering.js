@@ -114,25 +114,41 @@
     }
   }
 
-  function RenderCodeSegment(parent, segment, language, highlighter) {
+  function RenderSegmentIntoElement(element, segment, options) {
+    if (!element) {
+      return false;
+    }
+    const renderOptions = options && typeof options === "object" ? options : {};
+    const language = renderOptions.language ? Text(renderOptions.language) : null;
+    const highlighter = renderOptions.highlighter || null;
     const text = Text(segment && segment.text);
     const highlighted = language
       ? RenderHighlightedCode(text, language, highlighter)
       : null;
+
+    ApplySegmentAttributes(element, segment);
+    if (highlighted === null) {
+      element.textContent = text;
+      return false;
+    }
+
+    element.classList.add("hljs");
+    element.classList.add("language-" + LanguageClass(language));
+    element.innerHTML = highlighted;
+    return true;
+  }
+
+  function RenderCodeSegment(parent, segment, language, highlighter) {
     const code = CreateElement(
       "code",
-      highlighted === null
-        ? ""
-        : "hljs language-" + LanguageClass(language)
+      ""
     );
-    ApplySegmentAttributes(code, segment);
-    if (highlighted === null) {
-      code.textContent = text;
-    } else {
-      code.innerHTML = highlighted;
-    }
+    const highlighted = RenderSegmentIntoElement(code, segment, {
+      language: language,
+      highlighter: highlighter,
+    });
     parent.appendChild(code);
-    return highlighted !== null;
+    return highlighted;
   }
 
   function RenderDocument(documentModel, options) {
@@ -185,6 +201,7 @@
     buildReviewDocument: BuildReviewDocument,
     renderCodeSegment: RenderCodeSegment,
     renderDocument: RenderDocument,
+    renderSegmentIntoElement: RenderSegmentIntoElement,
     segmentForOffset: SegmentForOffset,
   };
 })();

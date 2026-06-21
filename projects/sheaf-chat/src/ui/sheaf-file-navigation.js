@@ -206,6 +206,10 @@
   }
 
   function TextSegments(container) {
+    const renderedSegments = RenderedTextSegments(container);
+    if (renderedSegments.length > 0) {
+      return renderedSegments;
+    }
     const segments = [];
     let offset = 0;
     const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
@@ -223,6 +227,95 @@
     return segments;
   }
 
+  function HasRenderOffsets(element) {
+    return !!(
+      element &&
+      element.nodeType === 1 &&
+      element.hasAttribute("data-render-start") &&
+      element.hasAttribute("data-render-end")
+    );
+  }
+
+  function RenderOffsetElementNumber(element, name) {
+    const value = Number(element.getAttribute(name));
+    return Number.isFinite(value) ? value : null;
+  }
+
+  function IsNestedRenderOffsetElement(element, container) {
+    let parent = element.parentElement;
+    while (parent) {
+      if (HasRenderOffsets(parent)) {
+        return true;
+      }
+      if (parent === container) {
+        return false;
+      }
+      parent = parent.parentElement;
+    }
+    return false;
+  }
+
+  function RenderOffsetElements(container) {
+    if (!container || container.nodeType !== 1) {
+      return [];
+    }
+    const elements = [];
+    if (HasRenderOffsets(container)) {
+      elements.push(container);
+    }
+    Array.prototype.forEach.call(
+      container.querySelectorAll("[data-render-start][data-render-end]"),
+      function (element) {
+        if (!IsNestedRenderOffsetElement(element, container)) {
+          elements.push(element);
+        }
+      }
+    );
+    return elements;
+  }
+
+  function RenderedTextSegments(container) {
+    const elements = RenderOffsetElements(container);
+    const segments = [];
+    elements.forEach(function (element) {
+      const renderStart = RenderOffsetElementNumber(element, "data-render-start");
+      const renderEnd = RenderOffsetElementNumber(element, "data-render-end");
+      if (renderStart === null || renderEnd === null || renderEnd < renderStart) {
+        return;
+      }
+
+      let localOffset = 0;
+      let emittedTextSegment = false;
+      const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+      let node = walker.nextNode();
+      while (node) {
+        const length = node.nodeValue ? node.nodeValue.length : 0;
+        const start = renderStart + localOffset;
+        const end = Math.min(renderEnd, start + length);
+        if (end > start) {
+          emittedTextSegment = true;
+          segments.push({
+            node: node,
+            element: element,
+            start: start,
+            end: end,
+          });
+        }
+        localOffset += length;
+        node = walker.nextNode();
+      }
+      if (!emittedTextSegment && renderStart === renderEnd) {
+        segments.push({
+          node: null,
+          element: element,
+          start: renderStart,
+          end: renderEnd,
+        });
+      }
+    });
+    return segments;
+  }
+
   function WrapTextRange(container, start, end, className) {
     if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
       return;
@@ -230,7 +323,13 @@
     const segments = TextSegments(container);
     for (let index = segments.length - 1; index >= 0; index -= 1) {
       const segment = segments[index];
-      if (!segment || segment.end <= start || segment.start >= end || !segment.node.parentNode) {
+      if (
+        !segment ||
+        !segment.node ||
+        segment.end <= start ||
+        segment.start >= end ||
+        !segment.node.parentNode
+      ) {
         continue;
       }
       const text = segment.node.nodeValue || "";
@@ -257,9 +356,26 @@
   function InsertPointAtTextOffset(container, point, className) {
     const segments = TextSegments(container);
     const safePoint = Math.max(0, point);
+    let boundarySegment = null;
     for (let index = 0; index < segments.length; index += 1) {
       const segment = segments[index];
-      if (!segment || safePoint < segment.start || safePoint >= segment.end || !segment.node.parentNode) {
+      if (
+        segment &&
+        safePoint === segment.end &&
+        (
+          (segment.node && segment.node.parentNode) ||
+          (segment.element && segment.element.nodeType === 1)
+        )
+      ) {
+        boundarySegment = segment;
+      }
+      if (
+        !segment ||
+        !segment.node ||
+        safePoint < segment.start ||
+        safePoint >= segment.end ||
+        !segment.node.parentNode
+      ) {
         continue;
       }
       const text = segment.node.nodeValue || "";
@@ -285,6 +401,17 @@
     pointNode.className = (className || "sheaf-chat-file-point") + " sheaf-chat-file-point--empty";
     pointNode.setAttribute("data-navigation-role", "point");
     pointNode.textContent = "";
+    if (boundarySegment && boundarySegment.node && boundarySegment.node.parentNode) {
+      boundarySegment.node.parentNode.insertBefore(
+        pointNode,
+        boundarySegment.node.nextSibling
+      );
+      return pointNode;
+    }
+    if (boundarySegment && boundarySegment.element && boundarySegment.element.nodeType === 1) {
+      boundarySegment.element.appendChild(pointNode);
+      return pointNode;
+    }
     container.appendChild(pointNode);
     return pointNode;
   }
@@ -1243,6 +1370,12 @@
       if (!sourceContainer || !fileViewEl.contains(sourceContainer)) {
         return;
       }
+      if (
+        sourceContainer.classList &&
+        sourceContainer.classList.contains("sheaf-chat-agent-review-inline")
+      ) {
+        return;
+      }
       const doc = fileViewEl.ownerDocument || document;
       let range = null;
       if (typeof doc.caretRangeFromPoint === "function") {
@@ -1436,41 +1569,52 @@
       return container;
     }
 
-    function DecorateReviewFocusedPoint(row) {
-      const code = row ? row.querySelector(".sheaf-chat-agent-review-inline-code") : null;
-      if (!code) {
-        return false;
-      }
-      InsertPointAtTextOffset(
-        code,
-        0,
-        "sheaf-chat-file-point sheaf-chat-file-point--review"
-      );
-      return true;
-    }
-
     function RenderPrompt(tab) {
       return CreatePromptElement(SyncSelectedTab(tab));
+    }
+
+    function PreferredFocusedReviewRow(review) {
+      const rows = Array.prototype.slice.call(
+        review.querySelectorAll(".sheaf-chat-agent-review-inline-row--focused")
+      );
+      return rows.find(function (row) {
+        return row.classList.contains("sheaf-chat-agent-review-inline-row--addition") &&
+          row.querySelector(".sheaf-chat-agent-review-inline-code[data-render-start]");
+      }) ||
+        rows.find(function (row) {
+          return row.classList.contains("sheaf-chat-agent-review-inline-row--context") &&
+            row.querySelector(".sheaf-chat-agent-review-inline-code[data-render-start]");
+        }) ||
+        rows.find(function (row) {
+          return !row.classList.contains("sheaf-chat-agent-review-inline-row--deletion") &&
+            row.querySelector(".sheaf-chat-agent-review-inline-code[data-render-start]");
+        }) ||
+        rows.find(function (row) {
+          return row.querySelector(".sheaf-chat-agent-review-inline-code[data-render-start]");
+        }) ||
+        null;
     }
 
     function DecorateRenderedReview(container, tab) {
       const review = container.querySelector(".sheaf-chat-agent-review-inline");
       const state = StateForTab(tab);
       let focusedRow = null;
+      let focusedCode = null;
       if (review) {
         review.classList.add("sheaf-chat-file-navigable");
-        focusedRow = review.querySelector(
-          ".sheaf-chat-agent-review-inline-row--focused[data-source-offset]"
-        );
-        if (focusedRow) {
+        focusedRow = PreferredFocusedReviewRow(review);
+        focusedCode = focusedRow
+          ? focusedRow.querySelector(".sheaf-chat-agent-review-inline-code[data-render-start]")
+          : null;
+        if (focusedCode) {
           const focusKey =
             String(focusedRow.getAttribute("data-hunk-id") || "") +
             ":" +
-            String(focusedRow.getAttribute("data-source-offset") || "");
+            String(focusedCode.getAttribute("data-render-start") || "");
           if (state.reviewFocusKey !== focusKey) {
             state.point = ClampOffset(
               NavigationText(tab),
-              Number(focusedRow.getAttribute("data-source-offset"))
+              Number(focusedCode.getAttribute("data-render-start"))
             );
             state.desiredColumn = null;
             state.reviewFocusKey = focusKey;
@@ -1478,14 +1622,12 @@
         }
       }
       SyncSelectedTab(tab);
-      if (!focusedRow || !DecorateReviewFocusedPoint(focusedRow)) {
-        DecorateRenderedSource(
-          review || container,
-          tab,
-          state,
-          "sheaf-chat-file-point sheaf-chat-file-point--review"
-        );
-      }
+      DecorateRenderedSource(
+        review || container,
+        tab,
+        state,
+        "sheaf-chat-file-point sheaf-chat-file-point--review"
+      );
       AppendPrompt(container, state);
     }
 
