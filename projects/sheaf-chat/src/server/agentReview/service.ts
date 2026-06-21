@@ -402,10 +402,21 @@ function ApplyHunkToIndexedContent(indexContent: string, hunk: AgentReviewHunk):
 
   let cursor = cursorStart;
   const result = lines.slice(0, cursorStart);
+  let hunkOutputTrailingNewline: boolean | null = null;
+  let lastPatchLineEmittedOutput = false;
   for (const line of patchLines.slice(headerIndex + 1))
   {
-    if (line.length === 0 || line.startsWith("\\"))
+    if (line.length === 0)
     {
+      continue;
+    }
+    if (line.startsWith("\\"))
+    {
+      if (lastPatchLineEmittedOutput)
+      {
+        hunkOutputTrailingNewline = false;
+      }
+      lastPatchLineEmittedOutput = false;
       continue;
     }
 
@@ -419,6 +430,8 @@ function ApplyHunkToIndexedContent(indexContent: string, hunk: AgentReviewHunk):
       }
       result.push(text);
       cursor += 1;
+      hunkOutputTrailingNewline = true;
+      lastPatchLineEmittedOutput = true;
     }
     else if (prefix === "-")
     {
@@ -427,14 +440,20 @@ function ApplyHunkToIndexedContent(indexContent: string, hunk: AgentReviewHunk):
         throw new Error("hunk deletion does not match index file");
       }
       cursor += 1;
+      lastPatchLineEmittedOutput = false;
     }
     else if (prefix === "+")
     {
       result.push(text);
+      hunkOutputTrailingNewline = true;
+      lastPatchLineEmittedOutput = true;
     }
   }
   result.push(...lines.slice(cursor));
-  return JoinTextLines(result, trailingNewline);
+  const nextTrailingNewline = cursor === lines.length
+    ? hunkOutputTrailingNewline ?? result.length > 0
+    : trailingNewline;
+  return JoinTextLines(result, nextTrailingNewline);
 }
 
 function FirstHunkIndexAfterFile(hunks: AgentReviewHunk[], file: string): number

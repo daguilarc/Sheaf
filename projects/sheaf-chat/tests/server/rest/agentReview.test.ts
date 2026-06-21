@@ -407,6 +407,32 @@ async function CreateSeparatedReviewSession(
   return { ...created, repoRoot, filePath };
 }
 
+async function CreateTrailingNewlineReviewSession(
+  handle: TestServerHandle,
+): Promise<{
+  repoId: string;
+  workspaceId: string;
+  repoRoot: string;
+  filePath: string;
+}>
+{
+  const repoRoot = handle.agentManager.storagePaths.repoRoot;
+  const demoRoot = path.join(repoRoot, "projects/demo");
+  const created = await CreateWorkspaceChatViaApi(handle, demoRoot);
+  const filePath = path.join(demoRoot, "trailing.ts");
+
+  await mkdir(demoRoot, { recursive: true });
+  await Git(repoRoot, ["init"]);
+  await Git(repoRoot, ["config", "user.email", "test@example.com"]);
+  await Git(repoRoot, ["config", "user.name", "Test User"]);
+  await writeFile(filePath, "line 1\n};", "utf8");
+  await Git(repoRoot, ["add", "projects/demo/trailing.ts"]);
+  await Git(repoRoot, ["commit", "-m", "initial"]);
+  await writeFile(filePath, "line 1\n};\n", "utf8");
+
+  return { ...created, repoRoot, filePath };
+}
+
 test("Agent Review availability reports Git hunks under the workspace root", async () =>
 {
   await WithTestServer(async (handle) =>
@@ -777,6 +803,49 @@ test("Agent Review mutates only the selected zero-context hunk", async () =>
       await readFile(filePath, "utf8"),
       "line 1\nline 2 changed\nline 3\nline 4 changed\nline 5\n",
     );
+  });
+});
+
+test("Agent Review stages a trailing-newline-only hunk", async () =>
+{
+  await WithTestServer(async (handle) =>
+  {
+    const { repoId, workspaceId, repoRoot, filePath } =
+      await CreateTrailingNewlineReviewSession(handle);
+    const socket = new WebSocket(WsUrl(handle.baseUrl, repoId, workspaceId));
+
+    await new Promise<void>((resolve, reject) =>
+    {
+      socket.once("open", () => resolve());
+      socket.once("error", reject);
+    });
+
+    const bootstrap = await WaitForFrame(socket, "bootstrap");
+    const hunk = bootstrap.state.currentHunk;
+    assert.equal(hunk.file, "projects/demo/trailing.ts");
+    assert.match(hunk.patch, /No newline at end of file/);
+
+    socket.send(JSON.stringify({
+      type: "command",
+      id: "stage-trailing-newline",
+      action: "stage",
+      hunkId: hunk.hunkId,
+      patchHash: hunk.patchHash,
+    }));
+    const stage = await WaitForFrame(socket, "command_result");
+    assert.equal(stage.result.ok, true);
+    assert.equal((await Git(repoRoot, ["diff", "--", "projects/demo/trailing.ts"])).trim(), "");
+    assert.match(
+      await Git(repoRoot, ["diff", "--cached", "--", "projects/demo/trailing.ts"]),
+      /No newline at end of file/,
+    );
+    assert.equal(await readFile(filePath, "utf8"), "line 1\n};\n");
+
+    await new Promise<void>((resolve) =>
+    {
+      socket.once("close", () => resolve());
+      socket.close();
+    });
   });
 });
 
