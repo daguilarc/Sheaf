@@ -11,6 +11,7 @@ import markdownit from "markdown-it";
 const x_packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const x_sheafChatJsPath = path.join(x_packageRoot, "src", "ui", "sheaf-chat.js");
 const x_sheafMarkdownJsPath = path.join(x_packageRoot, "src", "ui", "sheaf-markdown.js");
+const x_sheafSourceRenderingJsPath = path.join(x_packageRoot, "src", "ui", "sheaf-source-rendering.js");
 const x_sheafChatCssPath = path.join(x_packageRoot, "src", "ui", "sheaf-chat.css");
 const x_aguiChatJsPath = path.resolve(x_packageRoot, "..", "web", "src", "agui-chat.js");
 
@@ -564,6 +565,7 @@ class FakeWebSocket
 interface ChatHarness
 {
   app: FakeElement;
+  sourceRendering: any;
   document: FakeDocument;
   location: { hash: string; protocol: string; host: string };
   sockets: FakeWebSocket[];
@@ -790,6 +792,7 @@ function LoadChatHarness(options?: {
     vm.runInContext(fs.readFileSync(x_sheafMarkdownJsPath, "utf8"), context);
   }
   vm.runInContext(fs.readFileSync(x_aguiChatJsPath, "utf8"), context);
+  vm.runInContext(fs.readFileSync(x_sheafSourceRenderingJsPath, "utf8"), context);
 
   const handles: any[] = [];
   const originalCreate = context.ChatView.create;
@@ -803,6 +806,7 @@ function LoadChatHarness(options?: {
 
   return {
     app: document.app,
+    sourceRendering: context.SheafSourceRendering,
     document,
     location,
     sockets: FakeWebSocket.instances,
@@ -3559,6 +3563,50 @@ test("text file previews use mapped Highlight.js languages", async () =>
   RequiredElement(harness.app, ".hljs-attr");
   assert.equal(calls[1].language, "json");
   assert.match(calls[1].code, /enabled/);
+});
+
+test("source rendering module builds plain and Agent Review documents", () =>
+{
+  const harness = LoadChatHarness({ markdown: false });
+  const sourceRendering = harness.sourceRendering;
+  assert.ok(sourceRendering);
+
+  const plain = sourceRendering.buildPlainDocument(null, undefined);
+  assert.deepEqual(JSON.parse(JSON.stringify(plain)), {
+    path: "",
+    text: "",
+    segments: [{
+      id: "source:0",
+      kind: "source",
+      text: "",
+      start: 0,
+      end: 0,
+      sourceStart: 0,
+      sourceEnd: 0,
+    }],
+  });
+
+  const review = sourceRendering.buildReviewDocument("main.cpp", {
+    rows: [
+      { id: "old", kind: "deletion", text: "int old_value = 1;", hunkId: "hunk-edit", oldLineNumber: 1 },
+      { id: "new", kind: "addition", text: "int new_value = 2;", hunkId: "hunk-edit", newLineNumber: 1 },
+    ],
+  });
+  assert.equal(review.path, "main.cpp");
+  assert.equal(review.text, "int old_value = 1;\nint new_value = 2;");
+  assert.deepEqual(JSON.parse(JSON.stringify(review.segments.map((segment: any) => segment.kind))), ["deletion", "separator", "addition"]);
+  assert.equal(review.segments[0].virtual, true);
+  assert.equal(review.segments[0].hunkId, "hunk-edit");
+  assert.equal(review.segments[0].oldLineNumber, 1);
+  assert.equal(review.segments[0].newLineNumber, null);
+  assert.equal(review.segments[1].text, "\n");
+  assert.equal(review.segments[2].virtual, false);
+  assert.equal(review.segments[2].newLineNumber, 1);
+  assert.equal(sourceRendering.segmentForOffset(review, 0), review.segments[0]);
+  assert.equal(sourceRendering.segmentForOffset(review, review.text.indexOf("new_value")), review.segments[2]);
+  assert.equal(sourceRendering.segmentForOffset(review, -10), review.segments[0]);
+  assert.equal(sourceRendering.segmentForOffset(review, "not-a-number"), review.segments[0]);
+  assert.equal(sourceRendering.segmentForOffset(review, review.text.length + 100), review.segments[2]);
 });
 
 test("Agent Review hunk-aware text files preserve Highlight.js token rendering", async () =>
