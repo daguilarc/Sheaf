@@ -1,0 +1,3 @@
+{"type":"assistant_delta","message_id":"msg-1","delta":"Cursor "}
+{"type":"tool_call","tool_call_id":"tool-1","name":"shell","input":{"cmd":"npm test"}}
+{"type":"result","session_id":"cursor-thread-1","message_id":"msg-1","result":"Cursor final"}
