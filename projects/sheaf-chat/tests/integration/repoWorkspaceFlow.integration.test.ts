@@ -579,6 +579,17 @@ test("front door Agent Review renders inline diffs and stages focused hunks in C
             true,
             "review hunk focus should survive file-view navigation",
           );
+          await fileView.press("Control+S");
+          await fileView.press("a");
+          await fileView.press("l");
+          await fileView.press("t");
+          await page.waitForSelector(".sheaf-chat-file-search-match", { timeout: 5000 });
+          await fileView.press("Enter");
+          assert.equal(
+            await page.locator(".sheaf-chat-agent-review-inline-row--focused").count() > 0,
+            true,
+            "review hunk focus should survive accepted file-view search",
+          );
 
           await ClickExactButtonText(page, ".sheaf-chat-agent-review-command", "Next");
           await page.waitForFunction(() =>
