@@ -178,10 +178,9 @@ Targeted validation passed on 2026-06-21:
 - `node --test dist/tests/integration/browserChat.integration.test.js --test-name-pattern "file view|highlighted|search|mark|navigation"` (18/18)
 - `node --test dist/tests/integration/repoWorkspaceFlow.integration.test.js --test-name-pattern "Agent Review|hunk-aware source rendering"` (3/3)
 
-The full `npm test` command was attempted, but the sandboxed run failed when
-Playwright launched Chromium with `bootstrap_check_in ... Permission denied
-(1100)`. The requested unsandboxed retry could not run because the approval
-system rejected it due to the account usage limit.
+The full `npm test` command passed on 2026-06-21 when rerun with unsandboxed
+Chromium process launch permissions. The earlier sandboxed attempt failed
+before assertions because macOS denied Chromium's Mach bootstrap registration.
 
 ## Observed code/spec mismatches (candidate fixes, not spec gaps)
 

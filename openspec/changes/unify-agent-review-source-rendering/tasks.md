@@ -43,10 +43,9 @@ deterministic render document from ordered inline rows.
 - [x] 5.2 Run the relevant browser integration tests for normal file navigation/highlighting and front-door Agent Review behavior.
 - [x] 5.3 Run the full Sheaf Chat test suite or document any environment limitation that prevents it.
 
-Note: `npm test` was attempted, but the sandboxed run failed launching
-Playwright Chromium with a macOS Mach bootstrap permission error. The
-unsandboxed approval retry was rejected due to the account usage limit, so
-the limitation is documented in `projects/sheaf-chat/docs/coverage.md`.
+Note: `npm test` passed on 2026-06-21 when rerun with unsandboxed Chromium
+process launch permissions after the sandboxed attempt hit a macOS Mach
+bootstrap permission error.
 
 ## 6. Coverage And Split-Path Audit
 
