@@ -1098,6 +1098,26 @@ test("hunk-aware source rendering preserves highlighting and Emacs navigation", 
               ChangedRowHasToken(".sheaf-chat-agent-review-inline-row--addition", "new edit token")
             );
           }, undefined, { timeout: 5000 });
+          const changedHighlightedCodeStyles = await page.evaluate(() =>
+            Array.from(document.querySelectorAll(".sheaf-chat-agent-review-inline-row--changed .sheaf-chat-agent-review-inline-code.hljs"))
+              .map((code) => ({
+                text: code.textContent ?? "",
+                backgroundColor: window.getComputedStyle(code).backgroundColor,
+              }))
+              .filter((entry) => entry.text.trim().length > 0)
+          );
+          assert.ok(
+            changedHighlightedCodeStyles.some((entry) => entry.text.includes("delete only token")),
+            "expected deletion hunk text in highlighted style sample",
+          );
+          assert.ok(
+            changedHighlightedCodeStyles.some((entry) => entry.text.includes("insert only token")),
+            "expected insertion hunk text in highlighted style sample",
+          );
+          assert.deepEqual(
+            changedHighlightedCodeStyles.map((entry) => entry.backgroundColor),
+            changedHighlightedCodeStyles.map(() => "rgba(0, 0, 0, 0)"),
+          );
 
           const fileView = page.locator(".sheaf-chat-file-view");
           await fileView.click();

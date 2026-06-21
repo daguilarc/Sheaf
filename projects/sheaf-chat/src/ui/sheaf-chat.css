@@ -922,7 +922,8 @@ body
   line-height: 1.5;
 }
 
-.sheaf-chat-file-highlighted .hljs
+.sheaf-chat-file-highlighted .hljs,
+.sheaf-chat-agent-review-inline-code.hljs
 {
   display: block;
   overflow: visible;
