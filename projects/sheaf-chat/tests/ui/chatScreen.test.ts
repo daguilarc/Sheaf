@@ -3561,6 +3561,111 @@ test("text file previews use mapped Highlight.js languages", async () =>
   assert.match(calls[1].code, /enabled/);
 });
 
+test("Agent Review hunk-aware text files preserve Highlight.js token rendering", async () =>
+{
+  const calls: Array<{ code: string; language: string }> = [];
+  const hunk = {
+    sourceProvider: "sheaf-chat",
+    repoRoot: "/repo",
+    sessionRoot: "/repo/projects/demo",
+    file: "main.cpp",
+    hunkId: "hunk-edit",
+    hunkIndex: 0,
+    hunkCount: 1,
+    fileIndex: 0,
+    fileCount: 1,
+    header: "@@ -1,2 +1,2 @@",
+    patchHash: "abc123",
+    patch: "diff --git a/main.cpp b/main.cpp\n@@ -1,2 +1,2 @@\n-int old_value = 1;\n+int new_value = 2;\n return new_value;\n",
+  };
+  const reviewState: any = {
+    available: true,
+    repoRoot: "/repo",
+    sessionRoot: "/repo/projects/demo",
+    sessionRootRelativeToRepo: "projects/demo",
+    currentIndex: 0,
+    currentHunk: hunk,
+    hunks: [hunk],
+    files: [{ file: "main.cpp", hunkCount: 1 }],
+    inlineFiles: [{
+      file: "main.cpp",
+      rows: [
+        { id: "old", kind: "deletion", text: "int old_value = 1;", hunkId: "hunk-edit", oldLineNumber: 1 },
+        { id: "new", kind: "addition", text: "int new_value = 2;", hunkId: "hunk-edit", newLineNumber: 1 },
+        { id: "ctx", kind: "context", text: "return new_value;", newLineNumber: 2 },
+      ],
+    }],
+    actions: {
+      canGoUp: false,
+      canGoDown: false,
+      canGoPrevFile: false,
+      canGoNextFile: false,
+      canStage: true,
+      canRevert: true,
+      canUndo: false,
+    },
+    reviewDraft: { entries: [], visibleCommentHunkId: null, hasSerializedContent: false },
+    dictatorBridge: { connected: false, url: null, lastError: null },
+  };
+  const harness = LoadChatHarness({
+    fetch: async (requestPath) => {
+      if (requestPath.endsWith("/agent-review")) {
+        return JsonResponse(reviewState);
+      }
+      if (requestPath.includes("/files?path=")) {
+        return JsonResponse({
+          directory: { name: ".", path: ".", kind: "directory" },
+          entries: [{
+            name: "main.cpp",
+            path: "main.cpp",
+            kind: "file",
+            supported: true,
+            contentType: "text/plain",
+          }],
+        });
+      }
+      if (requestPath.includes("/file?path=")) {
+        return JsonResponse({
+          file: {
+            name: "main.cpp",
+            path: "main.cpp",
+            kind: "file",
+            supported: true,
+            contentType: "text/plain",
+            content: "int new_value = 2;\nreturn new_value;\n",
+            size: 37,
+            modifiedAt: "2026-06-21T00:00:00.000Z",
+          },
+        });
+      }
+      return JsonResponse({});
+    },
+    highlight: {
+      getLanguage(language: string): boolean {
+        return language === "cpp";
+      },
+      highlight(code: string, options: { language: string }): { value: string } {
+        calls.push({ code, language: options.language });
+        return { value: code.replace(/\bint\b/g, '<span class="hljs-keyword">int</span>') };
+      },
+    },
+  });
+  await FlushPromises();
+
+  const reviewSocket = harness.sockets.find((socket) => socket.url.includes("/ws/agent-review"));
+  assert.ok(reviewSocket, "expected Agent Review WebSocket");
+  reviewSocket.open();
+  reviewSocket.receive({ type: "bootstrap", state: reviewState });
+  await FlushPromises();
+  harness.flushAnimationFrames();
+
+  RequiredElement(harness.app, ".sheaf-chat-agent-review-inline");
+  RequiredElement(harness.app, ".sheaf-chat-agent-review-inline-row--deletion .hljs-keyword");
+  RequiredElement(harness.app, ".sheaf-chat-agent-review-inline-row--addition .hljs-keyword");
+  assert.ok(calls.some((call) => call.language === "cpp" && call.code.includes("old_value")));
+  assert.ok(calls.some((call) => call.language === "cpp" && call.code.includes("new_value")));
+});
+
 test("text file previews fall back to plain text without a usable highlighter", async () =>
 {
   const harness = LoadChatHarness({

@@ -200,6 +200,14 @@ async function ClickExactButtonText(page: Page, selector: string, text: string):
   assert.equal(clicked, true, `expected button with exact text: ${text}`);
 }
 
+async function PressSearchText(locator: Locator, text: string): Promise<void>
+{
+  for (const character of text)
+  {
+    await locator.press(character === " " ? "Space" : character);
+  }
+}
+
 interface ChatRouteIds
 {
   repoId: string;
@@ -882,6 +890,207 @@ test("front door Agent Review renders inline diffs and stages focused hunks in C
         finally
         {
           reviewSocket?.close();
+          await page.close();
+          await context.close();
+        }
+      }
+      finally
+      {
+        await browser.close();
+      }
+    }, {
+      realRepoRoot: x_realRepoRoot,
+      port: 0,
+    });
+  }
+  finally
+  {
+    if (originalHome === undefined)
+    {
+      delete process.env.HOME;
+    }
+    else
+    {
+      process.env.HOME = originalHome;
+    }
+
+    fixture.cleanup();
+  }
+});
+
+test("hunk-aware source rendering preserves highlighting and Emacs navigation", async () =>
+{
+  const { chromium } = await LoadPlaywright();
+  const fixture = CreateFixtureRepo();
+  const originalHome = process.env.HOME;
+  process.env.HOME = fixture.homeDirectory;
+
+  writeFileSync(
+    path.join(fixture.repoPath, "review.js"),
+    [
+      "function kept() {",
+      "  return 'context anchor';",
+      "}",
+      "",
+      "function renamed() {",
+      "  return 'old edit token';",
+      "}",
+      "",
+      "function removed() {",
+      "  return 'delete only token';",
+      "}",
+    ].join("\n") + "\n",
+    "utf8",
+  );
+  Git(fixture.repoPath, ["add", "review.js"]);
+  Git(fixture.repoPath, ["commit", "-m", "Add review fixture"]);
+  writeFileSync(
+    path.join(fixture.repoPath, "review.js"),
+    [
+      "function kept() {",
+      "  return 'context anchor';",
+      "}",
+      "",
+      "function renamed() {",
+      "  return 'new edit token';",
+      "}",
+      "",
+      "function inserted() {",
+      "  return 'insert only token';",
+      "}",
+    ].join("\n") + "\n",
+    "utf8",
+  );
+
+  try
+  {
+    await WithBrowserTestServer(async (handle) =>
+    {
+      const browser = await chromium.launch({ headless: true });
+
+      try
+      {
+        const availableModel = ResolveOpenAiTestModel(handle.agentManager);
+        const modelValue = `${availableModel.provider}:${availableModel.id}`;
+        const context = await browser.newContext();
+        const page = await context.newPage();
+        const pageErrors: string[] = [];
+
+        page.on("pageerror", (error) =>
+        {
+          pageErrors.push(error instanceof Error ? error.message : String(error));
+        });
+
+        try
+        {
+          await page.goto(`${handle.baseUrl}/#/`, { waitUntil: "domcontentloaded" });
+
+          await page.locator(".sheaf-chat-list-button", { hasText: fixture.repoName }).waitFor({ timeout: 5000 });
+          await page.locator(".sheaf-chat-list-button", { hasText: fixture.repoName }).click();
+          await page.locator(".sheaf-chat-list-button", { hasText: "main" }).waitFor({ timeout: 5000 });
+          await page.locator(".sheaf-chat-list-button", { hasText: "main" }).first().click();
+
+          await page.waitForSelector(".sheaf-chat-workspace .sheaf-chat-form", { timeout: 5000 });
+          await page.selectOption("#sheaf-chat-new-chat-model", modelValue);
+          await page.locator(".sheaf-chat-form button[type=\"submit\"]").click();
+
+          await page.waitForFunction(() => /\/chats\//.test(window.location.hash), undefined, { timeout: 5000 });
+          await page.waitForFunction(() => document.body.textContent?.includes("Connected") === true, undefined, {
+            timeout: 5000,
+          });
+
+          await page.locator(".sheaf-chat-explorer-file", { hasText: "review.js" }).waitFor({ timeout: 5000 });
+          await page.locator(".sheaf-chat-explorer-file", { hasText: "review.js" }).click();
+          await page.waitForFunction(() =>
+          {
+            const selected = document.querySelector(".sheaf-chat-tab--selected .sheaf-chat-tab-label");
+            return selected?.textContent?.trim() === "review.js";
+          }, undefined, { timeout: 5000 });
+          await page.waitForSelector(".sheaf-chat-agent-review-inline", { timeout: 5000 });
+          await page.waitForSelector(".sheaf-chat-agent-review-inline-row--focused", { timeout: 5000 });
+
+          const inlineRows = await page.evaluate(() =>
+          {
+            return Array.from(document.querySelectorAll(".sheaf-chat-agent-review-inline-row")).map((row) => ({
+              className: row.className,
+              text: row.textContent ?? "",
+            }));
+          });
+          assert.ok(
+            inlineRows.some((row) =>
+              row.className.includes("sheaf-chat-agent-review-inline-row--addition") &&
+              row.text.includes("insert only token"),
+            ),
+            "expected addition row for pure insertion",
+          );
+          assert.ok(
+            inlineRows.some((row) =>
+              row.className.includes("sheaf-chat-agent-review-inline-row--deletion") &&
+              row.text.includes("delete only token"),
+            ),
+            "expected deletion row for pure deletion",
+          );
+          assert.ok(
+            inlineRows.some((row) =>
+              row.className.includes("sheaf-chat-agent-review-inline-row--deletion") &&
+              row.text.includes("old edit token"),
+            ),
+            "expected deletion row for old replacement side",
+          );
+          assert.ok(
+            inlineRows.some((row) =>
+              row.className.includes("sheaf-chat-agent-review-inline-row--addition") &&
+              row.text.includes("new edit token"),
+            ),
+            "expected addition row for new replacement side",
+          );
+
+          await page.waitForFunction(() =>
+          {
+            return Array.from(document.querySelectorAll(".sheaf-chat-agent-review-inline-row--changed")).some((row) =>
+              (
+                row.textContent?.includes("insert only token") === true ||
+                row.textContent?.includes("delete only token") === true ||
+                row.textContent?.includes("old edit token") === true ||
+                row.textContent?.includes("new edit token") === true
+              ) &&
+              row.querySelector(".hljs-keyword, .hljs-string") !== null
+            );
+          }, undefined, { timeout: 5000 });
+
+          const fileView = page.locator(".sheaf-chat-file-view");
+          await fileView.click();
+          await fileView.press("Control+S");
+          await PressSearchText(fileView, "insert only token");
+          await page.waitForSelector(
+            ".sheaf-chat-agent-review-inline-row--addition .sheaf-chat-file-search-match",
+            { timeout: 5000 },
+          );
+
+          await fileView.press("Control+G");
+          await fileView.press("Control+S");
+          await PressSearchText(fileView, "delete only token");
+          await page.waitForSelector(
+            ".sheaf-chat-agent-review-inline-row--deletion .sheaf-chat-file-search-match",
+            { timeout: 5000 },
+          );
+
+          await fileView.press("Enter");
+          await fileView.press("Control+Space");
+          await fileView.press("ArrowRight");
+          await fileView.press("ArrowRight");
+          await page.waitForFunction(() =>
+          {
+            return Array.from(document.querySelectorAll(".sheaf-chat-agent-review-inline-row--deletion")).some((row) =>
+              row.textContent?.includes("delete only token") === true &&
+              row.querySelector(".sheaf-chat-agent-review-inline-code .sheaf-chat-file-region") !== null
+            );
+          }, undefined, { timeout: 5000 });
+
+          assert.deepEqual(pageErrors, []);
+        }
+        finally
+        {
           await page.close();
           await context.close();
         }
