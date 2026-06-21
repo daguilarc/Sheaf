@@ -155,6 +155,34 @@ Last audit: repository/workspace chat apply, 2026-06-14
   smoke coverage, and a Chromium flow that drives hunk navigation, comment
   placement, next-file review navigation, and focused-hunk staging.
 
+#### Unified Source Rendering Coverage
+
+Last audit: unified Agent Review source rendering, 2026-06-21
+
+| Scenario | No-hunk coverage | Hunk-bearing coverage |
+|---|---|---|
+| Syntax highlighting | `browserChat.integration.test.ts` highlighted file navigation; `chatScreen.test.ts` mapped Highlight.js tests | `chatScreen.test.ts` Agent Review hunk Highlight.js test; `repoWorkspaceFlow.integration.test.ts` hunk-aware source rendering |
+| Point/navigation | `browserChat.integration.test.ts` file view movement, line movement, page movement, viewport sync, deterministic simulation | `repoWorkspaceFlow.integration.test.ts` Agent Review hunk focus, point following, next-file focus, hunk-aware search/mark flow |
+| Mark/region | `browserChat.integration.test.ts` mark, active region, `C-x C-x`, and `C-g` mark deactivation | `repoWorkspaceFlow.integration.test.ts` region on deleted virtual hunk text |
+| Incremental search | `browserChat.integration.test.ts` forward/reverse search, smart case, cancellation, direction switch, and wrap behavior | `repoWorkspaceFlow.integration.test.ts` search in inserted text, deleted text, and both sides of an edit |
+| Pure insertion | n/a | `repoWorkspaceFlow.integration.test.ts` separated pure insertion fixture and exact row/search assertions |
+| Pure deletion | n/a | `repoWorkspaceFlow.integration.test.ts` separated pure deletion fixture, search, mark/region, and text stability assertions |
+| Edit replacement | n/a | `repoWorkspaceFlow.integration.test.ts` old-side and new-side row, highlighting, and search assertions |
+| Text stability | `browserChat.integration.test.ts` rendered file point/text stability | `repoWorkspaceFlow.integration.test.ts` hunk code-cell text stability after search and mark/region decoration |
+| Agent Review behavior | n/a | `repoWorkspaceFlow.integration.test.ts` hunk reveal, focus survival after movement/search, comments, staging, next-file navigation |
+
+Targeted validation passed on 2026-06-21:
+
+- `npm run build`
+- `node --test dist/tests/ui/chatScreen.test.js --test-name-pattern "Agent Review|Highlight|highlight|Emacs|search|mark"` (34/34)
+- `node --test dist/tests/integration/browserChat.integration.test.js --test-name-pattern "file view|highlighted|search|mark|navigation"` (18/18)
+- `node --test dist/tests/integration/repoWorkspaceFlow.integration.test.js --test-name-pattern "Agent Review|hunk-aware source rendering"` (3/3)
+
+The full `npm test` command was attempted, but the sandboxed run failed when
+Playwright launched Chromium with `bootstrap_check_in ... Permission denied
+(1100)`. The requested unsandboxed retry could not run because the approval
+system rejected it due to the account usage limit.
+
 ## Observed code/spec mismatches (candidate fixes, not spec gaps)
 
 - The previous docs claimed the history page limit was capped at 200; the
