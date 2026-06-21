@@ -932,12 +932,28 @@ test("hunk-aware source rendering preserves highlighting and Emacs navigation", 
       "  return 'context anchor';",
       "}",
       "",
+      "function removed() {",
+      "  return 'delete only token';",
+      "}",
+      "",
+      "function afterDeletionOne() {",
+      "  return 'stable deletion context one';",
+      "}",
+      "",
+      "function afterDeletionTwo() {",
+      "  return 'stable deletion context two';",
+      "}",
+      "",
       "function renamed() {",
       "  return 'old edit token';",
       "}",
       "",
-      "function removed() {",
-      "  return 'delete only token';",
+      "function afterRenameOne() {",
+      "  return 'stable rename context one';",
+      "}",
+      "",
+      "function afterRenameTwo() {",
+      "  return 'stable rename context two';",
       "}",
     ].join("\n") + "\n",
     "utf8",
@@ -951,8 +967,24 @@ test("hunk-aware source rendering preserves highlighting and Emacs navigation", 
       "  return 'context anchor';",
       "}",
       "",
+      "function afterDeletionOne() {",
+      "  return 'stable deletion context one';",
+      "}",
+      "",
+      "function afterDeletionTwo() {",
+      "  return 'stable deletion context two';",
+      "}",
+      "",
       "function renamed() {",
       "  return 'new edit token';",
+      "}",
+      "",
+      "function afterRenameOne() {",
+      "  return 'stable rename context one';",
+      "}",
+      "",
+      "function afterRenameTwo() {",
+      "  return 'stable rename context two';",
       "}",
       "",
       "function inserted() {",
@@ -1008,42 +1040,24 @@ test("hunk-aware source rendering preserves highlighting and Emacs navigation", 
           }, undefined, { timeout: 5000 });
           await page.waitForSelector(".sheaf-chat-agent-review-inline", { timeout: 5000 });
           await page.waitForSelector(".sheaf-chat-agent-review-inline-row--focused", { timeout: 5000 });
+          await page.waitForSelector(".sheaf-chat-agent-review-inline .hljs", { timeout: 5000 });
 
-          const inlineRows = await page.evaluate(() =>
-          {
-            return Array.from(document.querySelectorAll(".sheaf-chat-agent-review-inline-row")).map((row) => ({
-              className: row.className,
-              text: row.textContent ?? "",
-            }));
+          const pureInsertionRow = page.locator(".sheaf-chat-agent-review-inline-row--addition", {
+            hasText: "insert only token",
           });
-          assert.ok(
-            inlineRows.some((row) =>
-              row.className.includes("sheaf-chat-agent-review-inline-row--addition") &&
-              row.text.includes("insert only token"),
-            ),
-            "expected addition row for pure insertion",
-          );
-          assert.ok(
-            inlineRows.some((row) =>
-              row.className.includes("sheaf-chat-agent-review-inline-row--deletion") &&
-              row.text.includes("delete only token"),
-            ),
-            "expected deletion row for pure deletion",
-          );
-          assert.ok(
-            inlineRows.some((row) =>
-              row.className.includes("sheaf-chat-agent-review-inline-row--deletion") &&
-              row.text.includes("old edit token"),
-            ),
-            "expected deletion row for old replacement side",
-          );
-          assert.ok(
-            inlineRows.some((row) =>
-              row.className.includes("sheaf-chat-agent-review-inline-row--addition") &&
-              row.text.includes("new edit token"),
-            ),
-            "expected addition row for new replacement side",
-          );
+          const pureDeletionRow = page.locator(".sheaf-chat-agent-review-inline-row--deletion", {
+            hasText: "delete only token",
+          });
+          const editDeletionRow = page.locator(".sheaf-chat-agent-review-inline-row--deletion", {
+            hasText: "old edit token",
+          });
+          const editAdditionRow = page.locator(".sheaf-chat-agent-review-inline-row--addition", {
+            hasText: "new edit token",
+          });
+          assert.equal(await pureInsertionRow.count(), 1, "expected one addition row for pure insertion");
+          assert.equal(await pureDeletionRow.count(), 1, "expected one deletion row for pure deletion");
+          assert.equal(await editDeletionRow.count(), 1, "expected one deletion row for old replacement side");
+          assert.equal(await editAdditionRow.count(), 1, "expected one addition row for new replacement side");
 
           await page.waitForFunction(() =>
           {
@@ -1057,6 +1071,22 @@ test("hunk-aware source rendering preserves highlighting and Emacs navigation", 
               row.querySelector(".hljs-keyword, .hljs-string") !== null
             );
           }, undefined, { timeout: 5000 });
+          await page.waitForFunction(() =>
+          {
+            const ChangedRowHasToken = (selector: string, text: string) =>
+            {
+              return Array.from(document.querySelectorAll(selector)).some((row) =>
+                row.textContent?.includes(text) === true &&
+                row.querySelector(".hljs-string") !== null
+              );
+            };
+            return (
+              ChangedRowHasToken(".sheaf-chat-agent-review-inline-row--addition", "insert only token") &&
+              ChangedRowHasToken(".sheaf-chat-agent-review-inline-row--deletion", "delete only token") &&
+              ChangedRowHasToken(".sheaf-chat-agent-review-inline-row--deletion", "old edit token") &&
+              ChangedRowHasToken(".sheaf-chat-agent-review-inline-row--addition", "new edit token")
+            );
+          }, undefined, { timeout: 5000 });
 
           const fileView = page.locator(".sheaf-chat-file-view");
           await fileView.click();
@@ -1067,13 +1097,38 @@ test("hunk-aware source rendering preserves highlighting and Emacs navigation", 
             { timeout: 5000 },
           );
 
-          await fileView.press("Control+G");
-          await fileView.press("Control+S");
+          await fileView.press("Enter");
+          await fileView.press("Control+R");
+          await PressSearchText(fileView, "new edit token");
+          await page.waitForFunction(() =>
+          {
+            return Array.from(document.querySelectorAll(".sheaf-chat-agent-review-inline-row--addition")).some((row) =>
+              row.textContent?.includes("new edit token") === true &&
+              row.querySelector(".sheaf-chat-file-search-match") !== null
+            );
+          }, undefined, { timeout: 5000 });
+
+          await fileView.press("Enter");
+          await fileView.press("Control+R");
+          await PressSearchText(fileView, "old edit token");
+          await page.waitForFunction(() =>
+          {
+            return Array.from(document.querySelectorAll(".sheaf-chat-agent-review-inline-row--deletion")).some((row) =>
+              row.textContent?.includes("old edit token") === true &&
+              row.querySelector(".sheaf-chat-file-search-match") !== null
+            );
+          }, undefined, { timeout: 5000 });
+
+          await fileView.press("Enter");
+          await fileView.press("Control+R");
           await PressSearchText(fileView, "delete only token");
-          await page.waitForSelector(
-            ".sheaf-chat-agent-review-inline-row--deletion .sheaf-chat-file-search-match",
-            { timeout: 5000 },
-          );
+          await page.waitForFunction(() =>
+          {
+            return Array.from(document.querySelectorAll(".sheaf-chat-agent-review-inline-row--deletion")).some((row) =>
+              row.textContent?.includes("delete only token") === true &&
+              row.querySelector(".sheaf-chat-file-search-match") !== null
+            );
+          }, undefined, { timeout: 5000 });
 
           await fileView.press("Enter");
           await fileView.press("Control+Space");
