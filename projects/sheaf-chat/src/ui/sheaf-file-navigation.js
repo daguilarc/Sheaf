@@ -10,6 +10,16 @@
     return Math.max(0, Math.min(text.length, parsed));
   }
 
+  function NavigationText(tab) {
+    if (tab && tab.renderDocument && typeof tab.renderDocument.text === "string") {
+      return tab.renderDocument.text;
+    }
+    if (tab && typeof tab.navigationDocumentText === "string") {
+      return tab.navigationDocumentText;
+    }
+    return String(tab && tab.content != null ? tab.content : "");
+  }
+
   function CreateTextNode(text) {
     return document.createTextNode(String(text == null ? "" : text));
   }
@@ -280,7 +290,7 @@
   }
 
   function DecorateRenderedSource(container, tab, state, pointClassName) {
-    const text = String(tab && tab.content != null ? tab.content : "");
+    const text = NavigationText(tab);
     const point = ClampOffset(text, state && state.point);
     if (state && state.markActive === true && state.mark !== null && state.mark !== point) {
       WrapTextRange(
@@ -319,7 +329,7 @@
   }
 
   function NavigationSnapshot(tab, state) {
-    const text = String(tab && tab.content != null ? tab.content : "");
+    const text = NavigationText(tab);
     const starts = BuildLineStarts(text);
     const lineIndex = LineIndexForOffset(starts, state.point);
     const lineStart = starts[lineIndex] || 0;
@@ -396,20 +406,25 @@
     function StateForTab(tab) {
       const path = tab && tab.path ? String(tab.path) : "";
       if (!tabStates.has(path)) {
-        const state = CreateNavigationState(tab ? tab.content : "");
+        const text = NavigationText(tab);
+        const state = CreateNavigationState(text);
         if (pendingSnapshots.has(path)) {
           const snapshot = pendingSnapshots.get(path);
-          state.point = RestorePointFromSnapshot(tab ? tab.content : "", snapshot);
+          state.point = RestorePointFromSnapshot(text, snapshot);
           state.mark = snapshot && snapshot.mark === null
             ? null
-            : ClampOffset(tab ? tab.content : "", snapshot ? snapshot.mark : null);
+            : ClampOffset(text, snapshot ? snapshot.mark : null);
           state.markActive = snapshot ? snapshot.markActive === true : false;
           pendingSnapshots.delete(path);
         }
         tabStates.set(path, state);
       }
       const state = tabStates.get(path);
-      state.point = ClampOffset(tab ? tab.content : "", state.point);
+      const text = NavigationText(tab);
+      state.point = ClampOffset(text, state.point);
+      if (state.mark !== null) {
+        state.mark = ClampOffset(text, state.mark);
+      }
       return state;
     }
 
@@ -515,7 +530,7 @@
         return;
       }
       const point = state.point;
-      const content = String(tab.content == null ? "" : tab.content);
+      const content = NavigationText(tab);
       window.requestAnimationFrame(function () {
         const starts = BuildLineStarts(content);
         const lineIndex = LineIndexForOffset(starts, ClampOffset(content, point));
@@ -536,7 +551,7 @@
     }
 
     function SetPoint(tab, state, point, desiredColumn, options) {
-      state.point = ClampOffset(tab ? tab.content : "", point);
+      state.point = ClampOffset(NavigationText(tab), point);
       state.desiredColumn = desiredColumn == null ? null : desiredColumn;
       onStateChange();
       renderSelectedFile();
@@ -566,7 +581,7 @@
         return false;
       }
       const previousPoint = selected.state.point;
-      selected.state.point = ClampOffset(selected.tab.content, selected.state.mark);
+      selected.state.point = ClampOffset(NavigationText(selected.tab), selected.state.mark);
       selected.state.mark = previousPoint;
       selected.state.markActive = true;
       selected.state.prefix = null;
@@ -708,7 +723,7 @@
       if (repeat && prompt.wrapPendingDirection === prompt.direction) {
         allowWrap = true;
       }
-      const match = FindSearchMatch(tab.content, prompt.query, startOffset, prompt.direction, allowWrap);
+      const match = FindSearchMatch(NavigationText(tab), prompt.query, startOffset, prompt.direction, allowWrap);
       if (match !== null) {
         prompt.matchStart = match.index;
         prompt.matchEnd = match.index + prompt.query.length;
@@ -1011,7 +1026,7 @@
       }
       const tab = selected.tab;
       const state = selected.state;
-      const text = String(tab.content == null ? "" : tab.content);
+      const text = NavigationText(tab);
       const starts = BuildLineStarts(text);
       const lineIndex = LineIndexForOffset(starts, state.point);
 
@@ -1278,12 +1293,12 @@
         return;
       }
       const moved = MoveVertical(
-        selected.tab.content,
+        NavigationText(selected.tab),
         selected.state.point,
         selected.state.desiredColumn,
         lineDelta
       );
-      selected.state.point = ClampOffset(selected.tab.content, moved.point);
+      selected.state.point = ClampOffset(NavigationText(selected.tab), moved.point);
       selected.state.desiredColumn = moved.desiredColumn;
       lastScrollTop = currentScrollTop;
       onStateChange();
@@ -1396,7 +1411,7 @@
       const pre = document.createElement("pre");
       pre.className = "sheaf-chat-file-plain sheaf-chat-file-navigable";
       pre.setAttribute("data-navigation-kind", "source");
-      AppendDecoratedSource(pre, tab ? tab.content : "", state);
+      AppendDecoratedSource(pre, NavigationText(tab), state);
       wrap.appendChild(pre);
       AppendPrompt(wrap, state);
       return wrap;
@@ -1454,7 +1469,7 @@
             String(focusedRow.getAttribute("data-source-offset") || "");
           if (state.reviewFocusKey !== focusKey) {
             state.point = ClampOffset(
-              tab ? tab.content : "",
+              NavigationText(tab),
               Number(focusedRow.getAttribute("data-source-offset"))
             );
             state.desiredColumn = null;

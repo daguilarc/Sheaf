@@ -2309,6 +2309,7 @@
       const inlineFile = reviewState ? InlineReviewFileForPath(selected.path) : null;
 
       if (inlineFile) {
+        selected.renderDocument = null;
         RenderInlineReviewFile(contentWrap, inlineFile, currentHunk, selected);
         if (
           fileNavigation &&
@@ -2322,6 +2323,7 @@
       }
 
       if (IsMarkdownContentType(selected.contentType, selected.path)) {
+        selected.renderDocument = null;
         if (
           window.SheafMarkdown &&
           typeof window.SheafMarkdown.renderMarkdown === "function"
@@ -2361,10 +2363,26 @@
         selected.contentType &&
         selected.contentType.indexOf("text/") === 0
       ) {
+        const sourceRendering = window.SheafSourceRendering;
+        const documentModel =
+          sourceRendering &&
+          typeof sourceRendering.buildPlainDocument === "function"
+            ? sourceRendering.buildPlainDocument(selected.path, selected.content)
+            : null;
         const language = HighlightLanguageForPath(selected.path);
-        const highlighted = language
+        selected.renderDocument = documentModel;
+        const rendered =
+          documentModel &&
+          sourceRendering &&
+          typeof sourceRendering.renderDocument === "function"
+            ? sourceRendering.renderDocument(documentModel, {
+                language: language,
+                highlighter: GetHighlighter(),
+              })
+            : null;
+        const highlighted = rendered || (language
           ? CreateHighlightedFilePreview(selected.content, language)
-          : null;
+          : null);
         if (
           highlighted &&
           fileNavigation &&
@@ -2389,6 +2407,7 @@
           }
         }
       } else {
+        selected.renderDocument = null;
         const unsupported = CreateElement("div", "sheaf-chat-file-unsupported");
         unsupported.textContent = "This file type is not supported for preview.";
         contentWrap.appendChild(unsupported);
