@@ -1101,6 +1101,11 @@ test("hunk-aware source rendering preserves highlighting and Emacs navigation", 
 
           const fileView = page.locator(".sheaf-chat-file-view");
           await fileView.click();
+          const beforeDecoratedCodeText = await page.evaluate(() =>
+            Array.from(document.querySelectorAll(".sheaf-chat-agent-review-inline-code"))
+              .map((node) => node.textContent ?? "")
+              .join("\n")
+          );
           await fileView.press("Control+S");
           await PressSearchText(fileView, "insert only token");
           await page.waitForSelector(
@@ -1152,6 +1157,15 @@ test("hunk-aware source rendering preserves highlighting and Emacs navigation", 
               row.querySelector(".sheaf-chat-agent-review-inline-code .sheaf-chat-file-region") !== null
             );
           }, undefined, { timeout: 5000 });
+
+          assert.equal(
+            await page.evaluate(() =>
+              Array.from(document.querySelectorAll(".sheaf-chat-agent-review-inline-code"))
+                .map((node) => node.textContent ?? "")
+                .join("\n")
+            ),
+            beforeDecoratedCodeText,
+          );
 
           assert.deepEqual(pageErrors, []);
         }
