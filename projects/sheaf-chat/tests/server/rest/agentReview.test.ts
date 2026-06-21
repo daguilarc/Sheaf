@@ -305,6 +305,55 @@ async function Git(cwd: string, args: string[]): Promise<string>
   return result.stdout;
 }
 
+function SeededInt(seed: number): () => number
+{
+  let value = seed >>> 0;
+  return () =>
+  {
+    value = (value * 1664525 + 1013904223) >>> 0;
+    return value;
+  };
+}
+
+async function CreateSeededMixedIndexReviewSession(
+  handle: TestServerHandle,
+  seed: number,
+): Promise<{ repoId: string; workspaceId: string; repoRoot: string; fileRel: string }>
+{
+  const repoRoot = handle.agentManager.storagePaths.repoRoot;
+  const demoRoot = path.join(repoRoot, "projects/demo");
+  const created = await CreateWorkspaceChatViaApi(handle, demoRoot);
+  const fileRel = `projects/demo/random-${seed}.ts`;
+  const filePath = path.join(repoRoot, fileRel);
+  const next = SeededInt(seed);
+  const base = Array.from({ length: 48 }, (_, index) => `seed ${seed} base ${index + 1}`);
+
+  await mkdir(demoRoot, { recursive: true });
+  await Git(repoRoot, ["init"]);
+  await Git(repoRoot, ["config", "user.email", "test@example.com"]);
+  await Git(repoRoot, ["config", "user.name", "Test User"]);
+  await writeFile(filePath, `${base.join("\n")}\n`, "utf8");
+  await Git(repoRoot, ["add", fileRel]);
+  await Git(repoRoot, ["commit", "-m", `seed ${seed} base`]);
+
+  const staged = base.slice();
+  staged[1 + (next() % 4)] = "duplicate changed text";
+  staged.splice(34 + (next() % 4), 0, `seed ${seed} staged insert`);
+  await writeFile(filePath, `${staged.join("\n")}\n`, "utf8");
+  await Git(repoRoot, ["add", fileRel]);
+
+  const changed = staged.slice();
+  const first = 8 + (next() % 3);
+  const second = 20 + (next() % 3);
+  const third = 40 + (next() % 3);
+  changed[first] = "duplicate changed text";
+  changed.splice(second, 0, `seed ${seed} unstaged inserted sibling`);
+  changed[third] = `seed ${seed} tail changed`;
+  await writeFile(filePath, `${changed.join("\n")}\n`, "utf8");
+
+  return { repoId: created.repoId, workspaceId: created.workspaceId, repoRoot, fileRel };
+}
+
 async function CreateGitReviewSession(
   handle: TestServerHandle,
 ): Promise<{
@@ -944,6 +993,39 @@ async function CreateHeaderDriftReviewSession(
   const changed = base.slice();
   changed.splice(2, 0, "inserted before downstream hunk");
   changed[21] = "line 21 changed";
+  await writeFile(filePath, `${changed.join("\n")}\n`, "utf8");
+
+  return { repoId: created.repoId, workspaceId: created.workspaceId, repoRoot };
+}
+
+async function CreateCloseHunkDriftReviewSession(
+  handle: TestServerHandle,
+): Promise<{ repoId: string; workspaceId: string; repoRoot: string }>
+{
+  const repoRoot = handle.agentManager.storagePaths.repoRoot;
+  const demoRoot = path.join(repoRoot, "projects/demo");
+  const created = await CreateWorkspaceChatViaApi(handle, demoRoot);
+  const filePath = path.join(demoRoot, "app.ts");
+  const base = Array.from({ length: 30 }, (_, index) => `line ${index + 1}`);
+
+  await mkdir(demoRoot, { recursive: true });
+  await Git(repoRoot, ["init"]);
+  await Git(repoRoot, ["config", "user.email", "test@example.com"]);
+  await Git(repoRoot, ["config", "user.name", "Test User"]);
+  await writeFile(filePath, `${base.join("\n")}\n`, "utf8");
+  await Git(repoRoot, ["add", "."]);
+  await Git(repoRoot, ["commit", "-m", "initial"]);
+
+  const staged = base.slice();
+  staged.splice(3, 0, "staged helper type");
+  staged[8] = "line 9 staged";
+  await writeFile(filePath, `${staged.join("\n")}\n`, "utf8");
+  await Git(repoRoot, ["add", "projects/demo/app.ts"]);
+
+  const changed = staged.slice();
+  changed.splice(2, 0, ...Array.from({ length: 20 }, (_, index) => `inserted setup ${index + 1}`));
+  changed.splice(27, 0, "nearby inserted setup");
+  changed[39] = "line 19 changed after inserted setup";
   await writeFile(filePath, `${changed.join("\n")}\n`, "utf8");
 
   return { repoId: created.repoId, workspaceId: created.workspaceId, repoRoot };
@@ -1784,6 +1866,81 @@ test("Agent Review Launchpad mutation cells emit command results", async () =>
   }
 });
 
+test("Agent Review Launchpad mutation failures are logged as handled server errors", async () =>
+{
+  const fakeDictator = new FakeDictatorRPCServer();
+  const dictatorPort = await fakeDictator.start();
+  try
+  {
+    await WithTestServer(async (handle) =>
+    {
+      await writeFile(
+        handle.config.paths.servicesJsonFile,
+        JSON.stringify([{ name: "dictator", host: "127.0.0.1", port: dictatorPort }]),
+        "utf8",
+      );
+
+      const { repoId, workspaceId, filePath } = await CreateGitReviewSession(handle);
+      const socket = new WebSocket(WsUrl(handle.baseUrl, repoId, workspaceId));
+      await new Promise<void>((resolve, reject) =>
+      {
+        socket.once("open", () => resolve());
+        socket.once("error", reject);
+      });
+      const bootstrap = await WaitForFrame(socket, "bootstrap");
+      const hunk = bootstrap.state.currentHunk;
+      await fakeDictator.waitForRequest("launchpad.setCells");
+
+      // Leave Sheaf Chat's cached hunk state stale while making the patch no
+      // longer apply. The lit Launchpad stage cell will dispatch the command,
+      // which must fail visibly in server logs.
+      await writeFile(filePath, "one\ntwo externally changed\nthree\n", "utf8");
+
+      const captured = CaptureConsoleError();
+      try
+      {
+        const failed = WaitForFrameWhere(
+          socket,
+          "command_result",
+          (frame) =>
+            frame.result?.ok === false &&
+            frame.result?.action === "stage" &&
+            typeof frame.result?.commandId === "string" &&
+            frame.result.commandId.startsWith("launchpad:"),
+          "failed stage via launchpad",
+        );
+        fakeDictator.sendPress(2, 2);
+        const frame = await failed;
+        assert.equal(frame.result.stale, true);
+        assert.match(String(frame.result.error), /focused hunk changed|patch changed/);
+
+        assert.equal(captured.lines.length, 1);
+        const log = ParseServerLog(captured.lines[0]!);
+        assert.equal(log.service, "sheaf-chat");
+        assert.equal(log.event, "sheaf_chat.handled_error");
+        assert.equal(log.feature, "agent-review");
+        assert.equal(log.action, "stage");
+        assert.equal(log.repoId, repoId);
+        assert.equal(log.workspaceId, workspaceId);
+        assert.equal(typeof log.commandId, "string");
+        assert.equal(String(log.commandId).startsWith("launchpad:"), true);
+        assert.equal(log.stale, true);
+        assert.equal(JSON.stringify(log).includes(hunk.patch), false);
+      }
+      finally
+      {
+        captured.restore();
+      }
+
+      await CloseSocket(socket);
+    });
+  }
+  finally
+  {
+    await fakeDictator.close();
+  }
+});
+
 function AllCellsOff(cells: Array<Record<string, unknown>>): boolean
 {
   return cells.length > 0 && cells.every((cell) => cell.off === true);
@@ -2179,6 +2336,149 @@ test("Agent Review preserves sibling hunks when downstream headers drift", async
       socket.once("close", () => resolve());
       socket.close();
     });
+  });
+});
+
+test("Agent Review can stage the first close hunk again after undoing sibling stages", async () =>
+{
+  await WithTestServer(async (handle) =>
+  {
+    const { repoId, workspaceId, repoRoot } = await CreateCloseHunkDriftReviewSession(handle);
+    const socket = new WebSocket(WsUrl(handle.baseUrl, repoId, workspaceId));
+    await new Promise<void>((resolve, reject) =>
+    {
+      socket.once("open", () => resolve());
+      socket.once("error", reject);
+    });
+
+    const bootstrap = await WaitForFrame(socket, "bootstrap");
+    assert.equal(bootstrap.state.hunks.length, 3);
+
+    socket.send(JSON.stringify({ type: "command", id: "next-1", action: "nextHunk" }));
+    await WaitForFrame(socket, "command_result");
+    socket.send(JSON.stringify({ type: "command", id: "next-2", action: "nextHunk" }));
+    const last = await WaitForFrame(socket, "command_result");
+    assert.match(last.state.currentHunk.patch, /line 19 changed after inserted setup/);
+
+    let current = last.state.currentHunk;
+    for (const id of ["stage-last", "stage-first", "stage-middle"])
+    {
+      socket.send(JSON.stringify({
+        type: "command",
+        id,
+        action: "stage",
+        hunkId: current.hunkId,
+        patchHash: current.patchHash,
+      }));
+      const staged = await WaitForFrame(socket, "command_result");
+      assert.equal(staged.result.ok, true);
+      current = staged.state.currentHunk;
+    }
+
+    for (const id of ["undo-first", "undo-middle", "undo-last"])
+    {
+      socket.send(JSON.stringify({ type: "command", id, action: "undo" }));
+      const undone = await WaitForFrame(socket, "command_result");
+      assert.equal(undone.result.ok, true);
+    }
+
+    socket.send(JSON.stringify({ type: "command", id: "wrap-to-first", action: "nextHunk" }));
+    const wrapped = await WaitForFrame(socket, "command_result");
+    const first = wrapped.state.currentHunk;
+    assert.match(first.patch, /inserted setup 1/);
+
+    socket.send(JSON.stringify({
+      type: "command",
+      id: "stage-first-again",
+      action: "stage",
+      hunkId: first.hunkId,
+      patchHash: first.patchHash,
+    }));
+    const restaged = await WaitForFrame(socket, "command_result");
+    assert.equal(restaged.result.ok, true);
+
+    const cached = await Git(repoRoot, [
+      "diff",
+      "--cached",
+      "--unified=0",
+      "--",
+      "projects/demo/app.ts",
+    ]);
+    const unstaged = await Git(repoRoot, [
+      "diff",
+      "--unified=0",
+      "--",
+      "projects/demo/app.ts",
+    ]);
+    assert.match(cached, /inserted setup 1/);
+    assert.doesNotMatch(cached, /nearby inserted setup/);
+    assert.match(unstaged, /nearby inserted setup/);
+
+    await CloseSocket(socket);
+  });
+});
+
+test("Agent Review randomized mixed-index staging preserves sibling hunks", async () =>
+{
+  await WithTestServer(async (handle) =>
+  {
+    for (const seed of [3, 11, 29, 47])
+    {
+      const { repoId, workspaceId, repoRoot, fileRel } =
+        await CreateSeededMixedIndexReviewSession(handle, seed);
+      const socket = new WebSocket(WsUrl(handle.baseUrl, repoId, workspaceId));
+      await new Promise<void>((resolve, reject) =>
+      {
+        socket.once("open", () => resolve());
+        socket.once("error", reject);
+      });
+
+      const bootstrap = await WaitForFrame(socket, "bootstrap");
+      const initialHunkCount = bootstrap.state.hunks.length;
+      assert.ok(
+        initialHunkCount >= 3,
+        `seed ${seed} should expose multiple unstaged hunks`,
+      );
+
+      let current = bootstrap.state.currentHunk;
+      assert.ok(current, `seed ${seed} should focus a hunk`);
+      socket.send(JSON.stringify({
+        type: "command",
+        id: `seed-${seed}-stage-first`,
+        action: "stage",
+        hunkId: current.hunkId,
+        patchHash: current.patchHash,
+      }));
+      const stagedFirst = await WaitForFrame(socket, "command_result");
+      assert.equal(stagedFirst.result.ok, true, `seed ${seed} initial stage`);
+
+      socket.send(JSON.stringify({ type: "command", id: `seed-${seed}-undo`, action: "undo" }));
+      const undone = await WaitForFrame(socket, "command_result");
+      assert.equal(undone.result.ok, true, `seed ${seed} undo`);
+      current = undone.state.currentHunk;
+
+      for (let attempt = 0; attempt < Math.min(2, initialHunkCount - 1) && current !== null; attempt += 1)
+      {
+        socket.send(JSON.stringify({
+          type: "command",
+          id: `seed-${seed}-restage-${attempt}`,
+          action: "stage",
+          hunkId: current.hunkId,
+          patchHash: current.patchHash,
+        }));
+        const restaged = await WaitForFrame(socket, "command_result");
+        assert.equal(restaged.result.ok, true, `seed ${seed} restage ${attempt}`);
+        current = restaged.state.currentHunk;
+      }
+
+      const cached = await Git(repoRoot, ["diff", "--cached", "--unified=0", "--", fileRel]);
+      const unstaged = await Git(repoRoot, ["diff", "--unified=0", "--", fileRel]);
+      assert.match(cached, /duplicate changed text|unstaged inserted sibling|tail changed/);
+      assert.notEqual(unstaged.trim(), "", `seed ${seed} should leave sibling hunks unstaged`);
+
+      await CloseSocket(socket);
+      await Git(repoRoot, ["reset", "--hard", "HEAD"]);
+    }
   });
 });
 

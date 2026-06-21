@@ -1214,10 +1214,38 @@
         });
     }
 
+    function TraceAgentReviewUi(event, fields) {
+      try {
+        if (window.localStorage.getItem("sheaf.chat.agentReviewTrace") !== "1") {
+          return;
+        }
+      } catch (_) {
+        return;
+      }
+      if (!window.console || typeof window.console.info !== "function") {
+        return;
+      }
+      const payload = Object.assign({
+        service: "sheaf-chat",
+        feature: "agent-review",
+        event: event,
+        repoId: route.repoId,
+        workspaceId: route.workspaceId,
+      }, fields || {});
+      window.console.info("[agent-review]", payload);
+    }
+
     function ReviewCommand(action) {
       const review = state.agentReview;
       const reviewState = review.state;
       const current = reviewState ? reviewState.currentHunk : null;
+      TraceAgentReviewUi("ui.command.click", {
+        action: action,
+        socketReady: review.socketReady === true,
+        socketState: review.socket ? review.socket.readyState : null,
+        hunkId: current ? current.hunkId : null,
+        patchHash: current ? current.patchHash : null,
+      });
       if (!review.socket || review.socket.readyState !== WebSocket.OPEN || !review.socketReady) {
         review.error = "Agent Review is disconnected.";
         RenderReviewBar();
@@ -1236,6 +1264,11 @@
         hunkId: current ? current.hunkId : undefined,
         patchHash: current ? current.patchHash : undefined,
       }));
+      TraceAgentReviewUi("ui.command.sent", {
+        action: action,
+        hunkId: current ? current.hunkId : null,
+        patchHash: current ? current.patchHash : null,
+      });
     }
 
     function SendReviewFrame(frame) {
@@ -1763,6 +1796,7 @@
       review.socketReady = false;
       socket.addEventListener("open", function () {
         review.connected = true;
+        TraceAgentReviewUi("ui.socket.open");
         SendReviewPresence();
         AttachReviewPresenceListeners();
         RenderReviewBar();
@@ -1779,6 +1813,14 @@
           (frame.type === "bootstrap" || frame.type === "state") &&
           frame.state
         ) {
+          TraceAgentReviewUi("ui.state.received", {
+            frameType: frame.type,
+            available: frame.state.available === true,
+            hunkCount: Array.isArray(frame.state.hunks) ? frame.state.hunks.length : null,
+            currentHunkId: frame.state.currentHunk ? frame.state.currentHunk.hunkId : null,
+            dictatorConnected: frame.state.dictatorBridge ? frame.state.dictatorBridge.connected === true : null,
+            dictatorLastError: frame.state.dictatorBridge ? frame.state.dictatorBridge.lastError : null,
+          });
           review.socketReady = true;
           ApplyReviewState(frame.state);
           return;
@@ -1791,6 +1833,13 @@
         }
 
         if (frame.type === "command_result") {
+          TraceAgentReviewUi("ui.command.result", {
+            action: frame.result ? frame.result.action : null,
+            commandId: frame.result ? frame.result.commandId : null,
+            ok: frame.result ? frame.result.ok === true : null,
+            error: frame.result ? frame.result.error || null : null,
+            stale: frame.result ? frame.result.stale === true : null,
+          });
           if (frame.result && frame.result.ok === false) {
             review.error = frame.result.error || "Agent Review command failed.";
           }
@@ -1811,6 +1860,10 @@
         }
 
         if (frame.type === "error") {
+          TraceAgentReviewUi("ui.error_frame", {
+            code: frame.code || null,
+            message: frame.message || null,
+          });
           review.error = frame.message || "Agent Review error.";
           RenderReviewBar();
         }
@@ -1818,6 +1871,7 @@
       socket.addEventListener("close", function () {
         review.connected = false;
         review.socketReady = false;
+        TraceAgentReviewUi("ui.socket.close");
         if (review.socket === socket) {
           review.socket = null;
         }
@@ -1828,6 +1882,7 @@
         RenderReviewBar();
       });
       socket.addEventListener("error", function () {
+        TraceAgentReviewUi("ui.socket.error");
         review.error = "Agent Review connection failed.";
         RenderReviewBar();
       });

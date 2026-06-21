@@ -528,6 +528,14 @@ export async function LoadAgentReviewGitState(
   };
 }
 
+export async function ReadAgentReviewIndexFile(
+  repoRoot: string,
+  file: string,
+): Promise<string>
+{
+  return RunGit(repoRoot, ["show", `:${file}`]);
+}
+
 export function AssertReviewHunkUnderSession(hunk: AgentReviewHunk): void
 {
   const absoluteFile = path.resolve(hunk.repoRoot, hunk.file);

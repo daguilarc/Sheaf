@@ -32,6 +32,7 @@ import {
   ApplyAgentReviewPatch,
   AssertReviewHunkUnderSession,
   LoadAgentReviewGitState,
+  ReadAgentReviewIndexFile,
   ResolveAgentReviewAvailability,
 } from "./git.js";
 import type {
@@ -154,6 +155,32 @@ function ReportBackgroundError(context: string, error: unknown): void
   console.error(`[agent-review] ${context}:`, error);
 }
 
+type AgentReviewTraceScalar = string | number | boolean | null;
+
+function TraceAgentReview(
+  event: string,
+  fields: Record<string, AgentReviewTraceScalar | undefined> = {},
+): void
+{
+  if (process.env.SHEAF_CHAT_AGENT_REVIEW_TRACE !== "1")
+  {
+    return;
+  }
+  const entry: Record<string, AgentReviewTraceScalar> = {
+    service: "sheaf-chat",
+    feature: "agent-review",
+    event,
+  };
+  for (const [key, value] of Object.entries(fields))
+  {
+    if (value !== undefined)
+    {
+      entry[key] = value;
+    }
+  }
+  console.log(JSON.stringify(entry));
+}
+
 function SendFrame(socket: WebSocket, frame: AgentReviewServerFrame): void
 {
   if (socket.readyState === WebSocket.OPEN)
@@ -175,26 +202,239 @@ function EmptyActions(): AgentReviewActions
   };
 }
 
-function HunkChangedContentSignature(hunk: AgentReviewHunk): string
+interface ChangedLineOccurrence
 {
-  return hunk.patch
-    .split("\n")
-    .filter((line) =>
-      (line.startsWith("+") && !line.startsWith("+++")) ||
-      (line.startsWith("-") && !line.startsWith("---")),
-    )
-    .join("\n");
+  kind: "addition" | "deletion";
+  text: string;
+  oldLineNumber?: number;
+  newLineNumber?: number;
 }
 
-function CountChangedContentSignatures(hunks: AgentReviewHunk[]): Map<string, number>
+function ParseHunkRange(
+  header: string,
+): { oldStart: number; oldCount: number; newStart: number; newCount: number } | null
+{
+  const match = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(header);
+  if (match === null)
+  {
+    return null;
+  }
+  return {
+    oldStart: Number(match[1]),
+    oldCount: match[2] === undefined ? 1 : Number(match[2]),
+    newStart: Number(match[3]),
+    newCount: match[4] === undefined ? 1 : Number(match[4]),
+  };
+}
+
+function HunkChangedOccurrences(hunk: AgentReviewHunk): ChangedLineOccurrence[]
+{
+  const lines = hunk.patch.split("\n");
+  const headerIndex = lines.findIndex((line) => line.startsWith("@@ "));
+  const range = headerIndex >= 0 ? ParseHunkRange(lines[headerIndex]!) : null;
+  if (range === null)
+  {
+    return [];
+  }
+
+  let oldLineNumber = range.oldStart;
+  let newLineNumber = range.newStart;
+  const occurrences: ChangedLineOccurrence[] = [];
+
+  for (const line of lines.slice(headerIndex + 1))
+  {
+    if (line.length === 0 || line.startsWith("\\"))
+    {
+      continue;
+    }
+
+    const prefix = line.slice(0, 1);
+    const text = line.slice(1);
+    if (prefix === " ")
+    {
+      oldLineNumber += 1;
+      newLineNumber += 1;
+    }
+    else if (prefix === "-")
+    {
+      occurrences.push({
+        kind: "deletion",
+        text,
+        oldLineNumber,
+      });
+      oldLineNumber += 1;
+    }
+    else if (prefix === "+")
+    {
+      occurrences.push({
+        kind: "addition",
+        text,
+        newLineNumber,
+      });
+      newLineNumber += 1;
+    }
+  }
+
+  return occurrences;
+}
+
+function ChangedOccurrenceKey(occurrence: ChangedLineOccurrence): string
+{
+  return [
+    occurrence.kind,
+    occurrence.oldLineNumber ?? "",
+    occurrence.newLineNumber ?? "",
+    occurrence.text,
+  ].join("\0");
+}
+
+function HunkChangedContentLines(hunk: AgentReviewHunk): string[]
+{
+  return HunkChangedOccurrences(hunk).map((occurrence) =>
+    `${occurrence.kind === "addition" ? "+" : "-"}${occurrence.text}`,
+  );
+}
+
+function CountChangedOccurrences(hunks: AgentReviewHunk[]): Map<string, number>
 {
   const counts = new Map<string, number>();
   for (const hunk of hunks)
   {
-    const signature = HunkChangedContentSignature(hunk);
-    counts.set(signature, (counts.get(signature) ?? 0) + 1);
+    for (const occurrence of HunkChangedOccurrences(hunk))
+    {
+      const key = ChangedOccurrenceKey(occurrence);
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
   }
   return counts;
+}
+
+function CountChangedContentLines(hunks: AgentReviewHunk[]): Map<string, number>
+{
+  const counts = new Map<string, number>();
+  for (const hunk of hunks)
+  {
+    for (const line of HunkChangedContentLines(hunk))
+    {
+      counts.set(line, (counts.get(line) ?? 0) + 1);
+    }
+  }
+  return counts;
+}
+
+function SubtractHunkOccurrences(
+  counts: Map<string, number>,
+  hunk: AgentReviewHunk,
+): Map<string, number>
+{
+  const result = new Map(counts);
+  for (const occurrence of HunkChangedOccurrences(hunk))
+  {
+    const key = ChangedOccurrenceKey(occurrence);
+    const next = (result.get(key) ?? 0) - 1;
+    if (next > 0)
+    {
+      result.set(key, next);
+    }
+    else
+    {
+      result.delete(key);
+    }
+  }
+  return result;
+}
+
+function SubtractHunkContentLines(
+  counts: Map<string, number>,
+  hunk: AgentReviewHunk,
+): Map<string, number>
+{
+  const result = new Map(counts);
+  for (const line of HunkChangedContentLines(hunk))
+  {
+    const next = (result.get(line) ?? 0) - 1;
+    if (next > 0)
+    {
+      result.set(line, next);
+    }
+    else
+    {
+      result.delete(line);
+    }
+  }
+  return result;
+}
+
+function SplitTextLines(content: string): { lines: string[]; trailingNewline: boolean }
+{
+  const trailingNewline = content.endsWith("\n");
+  const lines = content.split("\n");
+  if (trailingNewline)
+  {
+    lines.pop();
+  }
+  return { lines, trailingNewline };
+}
+
+function JoinTextLines(lines: string[], trailingNewline: boolean): string
+{
+  return `${lines.join("\n")}${trailingNewline ? "\n" : ""}`;
+}
+
+function ApplyHunkToIndexedContent(indexContent: string, hunk: AgentReviewHunk): string
+{
+  const patchLines = hunk.patch.split("\n");
+  const headerIndex = patchLines.findIndex((line) => line.startsWith("@@ "));
+  const range = headerIndex >= 0 ? ParseHunkRange(patchLines[headerIndex]!) : null;
+  if (range === null)
+  {
+    throw new Error("hunk patch has no parseable range");
+  }
+
+  const { lines, trailingNewline } = SplitTextLines(indexContent);
+  const cursorStart = range.oldCount === 0
+    ? range.oldStart
+    : Math.max(0, range.oldStart - 1);
+  if (cursorStart > lines.length)
+  {
+    throw new Error("hunk range starts after index file end");
+  }
+
+  let cursor = cursorStart;
+  const result = lines.slice(0, cursorStart);
+  for (const line of patchLines.slice(headerIndex + 1))
+  {
+    if (line.length === 0 || line.startsWith("\\"))
+    {
+      continue;
+    }
+
+    const prefix = line.slice(0, 1);
+    const text = line.slice(1);
+    if (prefix === " ")
+    {
+      if (lines[cursor] !== text)
+      {
+        throw new Error("hunk context does not match index file");
+      }
+      result.push(text);
+      cursor += 1;
+    }
+    else if (prefix === "-")
+    {
+      if (lines[cursor] !== text)
+      {
+        throw new Error("hunk deletion does not match index file");
+      }
+      cursor += 1;
+    }
+    else if (prefix === "+")
+    {
+      result.push(text);
+    }
+  }
+  result.push(...lines.slice(cursor));
+  return JoinTextLines(result, trailingNewline);
 }
 
 function FirstHunkIndexAfterFile(hunks: AgentReviewHunk[], file: string): number
@@ -474,12 +714,20 @@ class DictatorRPCClient
     const endpoint = await this.m_endpointResolver.resolve();
     if (endpoint === null)
     {
+      TraceAgentReview("dictator_rpc.unavailable", {
+        providerId: this.m_providerId,
+        reason: "no endpoint",
+      });
       this.setStatus(false, null, null);
       return;
     }
 
     const url = DictatorRPCUrl(endpoint, this.m_providerId);
     this.m_url = endpoint.url;
+    TraceAgentReview("dictator_rpc.connect.start", {
+      providerId: this.m_providerId,
+      url: endpoint.url,
+    });
 
     await new Promise<void>((resolve) =>
     {
@@ -499,6 +747,10 @@ class DictatorRPCClient
       {
         opened = true;
         this.m_socket = socket;
+        TraceAgentReview("dictator_rpc.connect.open", {
+          providerId: this.m_providerId,
+          url: endpoint.url,
+        });
         this.setStatus(true, endpoint.url, null);
         this.startHeartbeat();
         settle();
@@ -509,6 +761,11 @@ class DictatorRPCClient
       });
       socket.on("close", () =>
       {
+        TraceAgentReview("dictator_rpc.connect.close", {
+          providerId: this.m_providerId,
+          url: endpoint.url,
+          opened,
+        });
         if (opened && this.m_socket !== socket)
         {
           settle();
@@ -529,6 +786,11 @@ class DictatorRPCClient
       });
       socket.on("error", (error) =>
       {
+        TraceAgentReview("dictator_rpc.connect.error", {
+          providerId: this.m_providerId,
+          url: endpoint.url,
+          message: error instanceof Error ? error.message : String(error),
+        });
         if (opened && this.m_socket !== socket)
         {
           settle();
@@ -657,6 +919,11 @@ class DictatorRPCClient
       const params = envelope.params ?? {};
       if (typeof params.x === "number" && typeof params.y === "number")
       {
+        TraceAgentReview("dictator_rpc.cell_pressed", {
+          providerId: this.m_providerId,
+          x: params.x,
+          y: params.y,
+        });
         this.m_onCellPressed(params.x, params.y);
       }
     }
@@ -896,6 +1163,13 @@ class AgentReviewSession
     this.m_sockets.add(socket);
     this.m_socketClientIds.set(socket, params.clientId);
     this.m_focusedSockets.add(socket);
+    TraceAgentReview("session.attach", {
+      repoId: this.m_key.repoId,
+      workspaceId: this.m_key.workspaceId,
+      clientId: params.clientId,
+      clients: this.m_sockets.size,
+      focusedClients: this.m_focusedSockets.size,
+    });
     socket.on("message", (data) =>
     {
       this.RunBackground("client message", () => this.HandleMessage(socket, data));
@@ -905,6 +1179,12 @@ class AgentReviewSession
       this.m_sockets.delete(socket);
       this.m_socketClientIds.delete(socket);
       this.m_focusedSockets.delete(socket);
+      TraceAgentReview("session.detach", {
+        repoId: this.m_key.repoId,
+        workspaceId: this.m_key.workspaceId,
+        clients: this.m_sockets.size,
+        focusedClients: this.m_focusedSockets.size,
+      });
       if (this.m_sockets.size === 0)
       {
         // Last client gone: clear local state and disconnect. Disconnect makes
@@ -1337,11 +1617,27 @@ class AgentReviewSession
       // on going fully dark, restore it on the first focused client returning.
       if (wasAnyFocused !== this.AnyClientFocused())
       {
+        TraceAgentReview("presence.focus_changed", {
+          repoId: this.m_key.repoId,
+          workspaceId: this.m_key.workspaceId,
+          focused: this.AnyClientFocused(),
+          focusedClients: this.m_focusedSockets.size,
+        });
         await this.UpdateDictatorCells();
       }
       return;
     }
 
+    TraceAgentReview("client.command.received", {
+      repoId: this.m_key.repoId,
+      workspaceId: this.m_key.workspaceId,
+      action: frame.action,
+      commandId: frame.id,
+      hunkId: frame.hunkId,
+      patchHash: frame.patchHash,
+      clients: this.m_sockets.size,
+      focusedClients: this.m_focusedSockets.size,
+    });
     const result = await this.ExecuteCommand(frame.action, {
       commandId: frame.id,
       hunkId: frame.hunkId,
@@ -1361,8 +1657,8 @@ class AgentReviewSession
   }
 
   private LogHandledError(fields: {
-    socket: WebSocket;
     message: string;
+    socket?: WebSocket;
     code?: string;
     action?: AgentReviewAction;
     commandId?: string;
@@ -1378,7 +1674,7 @@ class AgentReviewSession
       stale: fields.stale,
       repoId: this.m_key.repoId,
       workspaceId: this.m_key.workspaceId,
-      clientId: this.m_socketClientIds.get(fields.socket),
+      clientId: fields.socket !== undefined ? this.m_socketClientIds.get(fields.socket) : undefined,
     });
   }
 
@@ -1494,6 +1790,18 @@ class AgentReviewSession
     options: { commandId?: string; hunkId?: string; patchHash?: string },
   ): Promise<AgentReviewCommandResult>
   {
+    TraceAgentReview("command.start", {
+      repoId: this.m_key.repoId,
+      workspaceId: this.m_key.workspaceId,
+      action,
+      commandId: options.commandId,
+      hunkId: options.hunkId,
+      patchHash: options.patchHash,
+      currentIndex: this.m_currentIndex,
+      hunkCount: this.m_state?.hunks.length,
+      clients: this.m_sockets.size,
+      focusedClients: this.m_focusedSockets.size,
+    });
     let result: AgentReviewCommandResult;
     if (
       action === "previousHunk" ||
@@ -1516,6 +1824,17 @@ class AgentReviewSession
     await this.Refresh();
     this.BroadcastState();
     await this.UpdateDictatorCells();
+    TraceAgentReview("command.end", {
+      repoId: this.m_key.repoId,
+      workspaceId: this.m_key.workspaceId,
+      action,
+      commandId: options.commandId,
+      ok: result.ok,
+      error: result.error,
+      stale: result.stale,
+      currentIndex: this.m_currentIndex,
+      hunkCount: this.m_state?.hunks.length,
+    });
     return result;
   }
 
@@ -1644,14 +1963,18 @@ class AgentReviewSession
     return hunk;
   }
 
-  private async VerifyTargetRemovedFromUnstaged(hunk: AgentReviewHunk): Promise<string | null>
+  private async VerifyTargetMutation(
+    action: "stage" | "revert",
+    hunk: AgentReviewHunk,
+    expectedIndexContent?: string,
+  ): Promise<string | null>
   {
     const priorState = this.RequireState();
-    const targetSignature = HunkChangedContentSignature(hunk);
     const priorSameFile = priorState.hunks.filter((candidate) => candidate.file === hunk.file);
-    const expectedCounts = CountChangedContentSignatures(priorSameFile);
-    const targetPriorCount = expectedCounts.get(targetSignature) ?? 0;
-    expectedCounts.set(targetSignature, Math.max(0, targetPriorCount - 1));
+    const priorOccurrenceCounts = CountChangedOccurrences(priorSameFile);
+    const expectedOccurrenceCounts = SubtractHunkOccurrences(priorOccurrenceCounts, hunk);
+    const priorContentCounts = CountChangedContentLines(priorSameFile);
+    const expectedContentCounts = SubtractHunkContentLines(priorContentCounts, hunk);
 
     let refreshed;
     try
@@ -1664,19 +1987,50 @@ class AgentReviewSession
     }
 
     const refreshedSameFile = refreshed.hunks.filter((candidate) => candidate.file === hunk.file);
-    const refreshedCounts = CountChangedContentSignatures(refreshedSameFile);
-    const expectedTargetCount = expectedCounts.get(targetSignature) ?? 0;
-    const refreshedTargetCount = refreshedCounts.get(targetSignature) ?? 0;
-    if (refreshedTargetCount > expectedTargetCount)
+    const refreshedOccurrenceCounts = CountChangedOccurrences(refreshedSameFile);
+    for (const occurrence of HunkChangedOccurrences(hunk))
     {
-      return "selected hunk is still unstaged after mutation";
+      const key = ChangedOccurrenceKey(occurrence);
+      if ((refreshedOccurrenceCounts.get(key) ?? 0) > (expectedOccurrenceCounts.get(key) ?? 0))
+      {
+        return "selected hunk is still unstaged after mutation";
+      }
     }
 
-    for (const [signature, expectedCount] of expectedCounts)
+    const refreshedContentCounts = CountChangedContentLines(refreshedSameFile);
+    for (const [signature, expectedCount] of expectedContentCounts)
     {
-      if ((refreshedCounts.get(signature) ?? 0) < expectedCount)
+      if ((refreshedContentCounts.get(signature) ?? 0) < expectedCount)
       {
         return "a sibling hunk changed while mutating the selected hunk";
+      }
+    }
+    for (const [signature, refreshedCount] of refreshedContentCounts)
+    {
+      if (refreshedCount > (expectedContentCounts.get(signature) ?? 0))
+      {
+        return "a sibling hunk changed while mutating the selected hunk";
+      }
+    }
+
+    if (action === "stage")
+    {
+      if (expectedIndexContent === undefined)
+      {
+        return "selected hunk was not staged into the Git index: missing expected index snapshot";
+      }
+      let actualIndexContent: string;
+      try
+      {
+        actualIndexContent = await ReadAgentReviewIndexFile(hunk.repoRoot, hunk.file);
+      }
+      catch (error)
+      {
+        return error instanceof Error ? error.message : String(error);
+      }
+      if (actualIndexContent !== expectedIndexContent)
+      {
+        return "selected hunk was not staged into the Git index";
       }
     }
 
@@ -1691,10 +2045,23 @@ class AgentReviewSession
     let hunk: AgentReviewHunk;
     try
     {
+      if (options.hunkId !== undefined || options.patchHash !== undefined)
+      {
+        await this.Refresh();
+      }
       hunk = this.ValidateTargetHunk(action, options.hunkId, options.patchHash);
     }
     catch (error)
     {
+      TraceAgentReview("mutation.validate_failed", {
+        repoId: this.m_key.repoId,
+        workspaceId: this.m_key.workspaceId,
+        action,
+        commandId: options.commandId,
+        hunkId: options.hunkId,
+        patchHash: options.patchHash,
+        message: error instanceof Error ? error.message : String(error),
+      });
       return {
         ok: false,
         action,
@@ -1704,11 +2071,43 @@ class AgentReviewSession
       };
     }
 
+    let expectedIndexContent: string | undefined;
+    if (action === "stage")
+    {
+      try
+      {
+        expectedIndexContent = ApplyHunkToIndexedContent(
+          await ReadAgentReviewIndexFile(hunk.repoRoot, hunk.file),
+          hunk,
+        );
+      }
+      catch (error)
+      {
+        return {
+          ok: false,
+          action,
+          commandId: options.commandId,
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+    }
+
     const result = await ApplyAgentReviewPatch(
       hunk.repoRoot,
       action === "stage" ? "stage" : "revert",
       hunk.patch,
     );
+    TraceAgentReview("mutation.apply_result", {
+      repoId: this.m_key.repoId,
+      workspaceId: this.m_key.workspaceId,
+      action,
+      commandId: options.commandId,
+      hunkId: hunk.hunkId,
+      patchHash: hunk.patchHash,
+      file: hunk.file,
+      ok: result.ok,
+      error: result.error,
+    });
 
     if (!result.ok)
     {
@@ -1720,9 +2119,17 @@ class AgentReviewSession
       };
     }
 
-    const verificationError = await this.VerifyTargetRemovedFromUnstaged(hunk);
+    const verificationError = await this.VerifyTargetMutation(action, hunk, expectedIndexContent);
     if (verificationError !== null)
     {
+      TraceAgentReview("mutation.verify_failed", {
+        repoId: this.m_key.repoId,
+        workspaceId: this.m_key.workspaceId,
+        action,
+        commandId: options.commandId,
+        hunkId: hunk.hunkId,
+        message: verificationError,
+      });
       const rollback = await ApplyAgentReviewPatch(
         hunk.repoRoot,
         action === "stage" ? "unstage" : "restore",
@@ -1818,18 +2225,41 @@ class AgentReviewSession
         await this.m_dictatorRPC.setCellsWithStaleSessionRetry(this.ReviewCellColor(), this.m_state.actions);
       }
     }
-    catch
+    catch (error)
     {
+      TraceAgentReview("dictator_cells.update_failed", {
+        repoId: this.m_key.repoId,
+        workspaceId: this.m_key.workspaceId,
+        message: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
   private async HandleCellPressed(x: number, y: number): Promise<void>
   {
+    TraceAgentReview("launchpad.cell.dispatch", {
+      repoId: this.m_key.repoId,
+      workspaceId: this.m_key.workspaceId,
+      x,
+      y,
+      closing: this.m_closing,
+      clients: this.m_sockets.size,
+      focusedClients: this.m_focusedSockets.size,
+      hasState: this.m_state !== null,
+      currentIndex: this.m_currentIndex,
+    });
     // Ignore presses once teardown has begun. When no client is focused,
     // navigation/mutation cells remain inert, but an armed review cell can still
     // paste the serialized draft.
     if (this.m_closing)
     {
+      TraceAgentReview("launchpad.cell.ignored", {
+        repoId: this.m_key.repoId,
+        workspaceId: this.m_key.workspaceId,
+        x,
+        y,
+        reason: "closing",
+      });
       return;
     }
 
@@ -1840,6 +2270,13 @@ class AgentReviewSession
         (this.m_state?.currentHunk !== null || this.SerializedReview() === null)
       )
       {
+        TraceAgentReview("launchpad.cell.ignored", {
+          repoId: this.m_key.repoId,
+          workspaceId: this.m_key.workspaceId,
+          x,
+          y,
+          reason: "review_cell_unfocused",
+        });
         return;
       }
       await this.HandleReviewCellPressed();
@@ -1848,22 +2285,76 @@ class AgentReviewSession
 
     if (!this.AnyClientFocused())
     {
+      TraceAgentReview("launchpad.cell.ignored", {
+        repoId: this.m_key.repoId,
+        workspaceId: this.m_key.workspaceId,
+        x,
+        y,
+        reason: "no_focused_client",
+      });
       return;
     }
 
     const cell = NAV_CELLS.find((candidate) => candidate.x === x && candidate.y === y);
     if (cell === undefined || this.m_state === null)
     {
+      TraceAgentReview("launchpad.cell.ignored", {
+        repoId: this.m_key.repoId,
+        workspaceId: this.m_key.workspaceId,
+        x,
+        y,
+        reason: cell === undefined ? "unmapped_cell" : "no_state",
+      });
       return;
     }
     if (!this.m_state.actions[cell.availability])
     {
+      TraceAgentReview("launchpad.cell.ignored", {
+        repoId: this.m_key.repoId,
+        workspaceId: this.m_key.workspaceId,
+        x,
+        y,
+        action: cell.action,
+        reason: "action_unavailable",
+      });
       return;
     }
 
+    TraceAgentReview("launchpad.command.start", {
+      repoId: this.m_key.repoId,
+      workspaceId: this.m_key.workspaceId,
+      x,
+      y,
+      action: cell.action,
+      availability: cell.availability,
+    });
+    const target = cell.action === "stage" || cell.action === "revert"
+      ? this.m_state.currentHunk
+      : null;
     const result = await this.ExecuteCommand(cell.action, {
       commandId: this.NextLaunchpadCommandId(),
+      hunkId: target?.hunkId,
+      patchHash: target?.patchHash,
     });
+    TraceAgentReview("launchpad.command.end", {
+      repoId: this.m_key.repoId,
+      workspaceId: this.m_key.workspaceId,
+      x,
+      y,
+      action: cell.action,
+      ok: result.ok,
+      commandId: result.commandId,
+      error: result.error,
+    });
+    if (!result.ok)
+    {
+      this.LogHandledError({
+        action: result.action,
+        commandId: result.commandId,
+        message: result.error ?? "Agent Review command failed",
+        stale: result.stale,
+      });
+    }
     this.BroadcastCommandResult(result);
   }
 
