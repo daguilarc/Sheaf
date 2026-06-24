@@ -49,6 +49,18 @@ targets:
 
 Supported targets are `claude`, `cursor`, `pi`, and `codex`.
 
+Skills may target any subset of supported harnesses. For example, a Codex-only
+skill declares only:
+
+```yaml
+targets:
+  - codex
+```
+
+Repo-local installs render that skill only under `.codex/skills/`. User-global
+installs render it only to the documented Codex user skill locations:
+`~/.agents/skills/` and `$CODEX_HOME/skills/`.
+
 ## Commands
 
 ```shell

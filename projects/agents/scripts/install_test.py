@@ -32,7 +32,7 @@ def hook_outputs(outputs: list[object], codex_home: Path) -> list[object]:
 class CodexHookOutputTests(unittest.TestCase):
     def test_global_outputs_include_rendered_codex_hook(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
-            home = Path(tempdir) / "home"
+            home = (Path(tempdir) / "home").resolve()
             codex_home = (Path(tempdir) / "codex-home").resolve()
             outputs = install.build_global_outputs(
                 REPO_ROOT,
@@ -93,6 +93,63 @@ class CodexHookOutputTests(unittest.TestCase):
             self.assertEqual(1, install.check_outputs(outputs))
             self.assertEqual(0, install.clean_outputs(outputs))
             self.assertTrue(config_path.exists())
+
+
+class CodexOnlySkillOutputTests(unittest.TestCase):
+    skill_id = "xagent-subagents"
+
+    def test_repo_outputs_include_xagent_subagents_only_for_codex(self) -> None:
+        outputs = install.build_repo_outputs(REPO_ROOT)
+        paths = {output.path.relative_to(REPO_ROOT) for output in outputs}
+
+        self.assertIn(
+            Path(".codex/skills") / self.skill_id / "SKILL.md",
+            paths,
+        )
+        self.assertNotIn(
+            Path(".claude/skills") / self.skill_id / "SKILL.md",
+            paths,
+        )
+        self.assertNotIn(
+            Path(".cursor/skills") / self.skill_id / "SKILL.md",
+            paths,
+        )
+        self.assertNotIn(
+            Path(".pi/skills") / self.skill_id / "SKILL.md",
+            paths,
+        )
+
+    def test_global_outputs_include_xagent_subagents_only_for_codex(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            home = (Path(tempdir) / "home").resolve()
+            codex_home = (Path(tempdir) / "codex-home").resolve()
+            outputs = install.build_global_outputs(
+                REPO_ROOT,
+                home=home,
+                codex_home=codex_home,
+            )
+            paths = {output.path for output in outputs}
+
+            self.assertIn(
+                home / ".agents" / "skills" / self.skill_id / "SKILL.md",
+                paths,
+            )
+            self.assertIn(
+                codex_home / "skills" / self.skill_id / "SKILL.md",
+                paths,
+            )
+            self.assertNotIn(
+                home / ".claude" / "skills" / self.skill_id / "SKILL.md",
+                paths,
+            )
+            self.assertNotIn(
+                home / ".cursor" / "skills" / self.skill_id / "SKILL.md",
+                paths,
+            )
+            self.assertNotIn(
+                home / ".pi" / "skills" / self.skill_id / "SKILL.md",
+                paths,
+            )
 
 
 if __name__ == "__main__":
