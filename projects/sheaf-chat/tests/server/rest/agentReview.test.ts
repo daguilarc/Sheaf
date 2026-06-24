@@ -315,6 +315,719 @@ function SeededInt(seed: number): () => number
   };
 }
 
+type StateMachineEditKind = "replace" | "insert" | "delete";
+
+interface StateMachineEdit
+{
+  id: string;
+  fileRel: string;
+  kind: StateMachineEditKind;
+  anchor: number;
+  order: number;
+  before: string[];
+  after: string[];
+  description: string;
+  initialIndexAfter: boolean;
+  initialWorktreeAfter: boolean;
+}
+
+interface StateMachineEditStatus
+{
+  indexAfter: boolean;
+  worktreeAfter: boolean;
+}
+
+interface StateMachineFile
+{
+  fileRel: string;
+  baseLines: string[];
+}
+
+interface StateMachineUndoEntry
+{
+  statuses: Map<string, StateMachineEditStatus>;
+  rejectedEditIds: Set<string>;
+}
+
+interface StateMachineFixture
+{
+  repoId: string;
+  workspaceId: string;
+  repoRoot: string;
+  files: StateMachineFile[];
+  edits: StateMachineEdit[];
+  statuses: Map<string, StateMachineEditStatus>;
+  rejectedEditIds: Set<string>;
+  undoStack: StateMachineUndoEntry[];
+  summary: string;
+}
+
+type StateMachineOperationKind =
+  | "nextHunk"
+  | "previousHunk"
+  | "nextFile"
+  | "previousFile"
+  | "stage"
+  | "revert"
+  | "undo"
+  | "focus"
+  | "staleStage"
+  | "staleRevert";
+
+interface StateMachineOperation
+{
+  kind: StateMachineOperationKind;
+  target?: Record<string, any>;
+}
+
+interface StateMachineContext
+{
+  seed: number;
+  step: number;
+  operation: string;
+}
+
+function StateMachineLabel(context: StateMachineContext, detail: string): string
+{
+  return `seed=${context.seed} step=${context.step} op=${context.operation}: ${detail}`;
+}
+
+function CloneStatuses(
+  statuses: Map<string, StateMachineEditStatus>,
+): Map<string, StateMachineEditStatus>
+{
+  return new Map(
+    Array.from(statuses.entries()).map(([id, status]) => [
+      id,
+      { indexAfter: status.indexAfter, worktreeAfter: status.worktreeAfter },
+    ]),
+  );
+}
+
+function StateMachineEditToken(editId: string): string
+{
+  return `[edit:${editId}]`;
+}
+
+function RenderStateMachineFile(
+  fixture: Pick<StateMachineFixture, "edits" | "statuses">,
+  file: StateMachineFile,
+  side: "index" | "worktree",
+): string
+{
+  const insertions = new Map<number, StateMachineEdit[]>();
+  const directEdits = new Map<number, StateMachineEdit>();
+  for (const edit of fixture.edits.filter((candidate) => candidate.fileRel === file.fileRel))
+  {
+    if (edit.kind === "insert")
+    {
+      const existing = insertions.get(edit.anchor) ?? [];
+      existing.push(edit);
+      insertions.set(edit.anchor, existing);
+    }
+    else
+    {
+      directEdits.set(edit.anchor, edit);
+    }
+  }
+
+  const lines: string[] = [];
+  const emitInsertions = (anchor: number): void =>
+  {
+    const ordered = (insertions.get(anchor) ?? []).slice().sort((left, right) => left.order - right.order);
+    for (const edit of ordered)
+    {
+      const status = fixture.statuses.get(edit.id);
+      assert.ok(status, `missing edit status for ${edit.id}`);
+      const useAfter = side === "index" ? status.indexAfter : status.worktreeAfter;
+      if (useAfter)
+      {
+        lines.push(...edit.after);
+      }
+    }
+  };
+
+  for (let index = 0; index < file.baseLines.length; index += 1)
+  {
+    emitInsertions(index);
+    const edit = directEdits.get(index);
+    if (edit === undefined)
+    {
+      lines.push(file.baseLines[index]!);
+      continue;
+    }
+    const status = fixture.statuses.get(edit.id);
+    assert.ok(status, `missing edit status for ${edit.id}`);
+    const useAfter = side === "index" ? status.indexAfter : status.worktreeAfter;
+    lines.push(...(useAfter ? edit.after : edit.before));
+  }
+  emitInsertions(file.baseLines.length);
+
+  return `${lines.join("\n")}\n`;
+}
+
+function ActiveStateMachineEdits(fixture: StateMachineFixture): StateMachineEdit[]
+{
+  return fixture.edits.filter((edit) =>
+  {
+    const status = fixture.statuses.get(edit.id);
+    return status !== undefined && status.indexAfter !== status.worktreeAfter;
+  });
+}
+
+function EditIdsForHunk(fixture: StateMachineFixture, hunk: Record<string, any> | null | undefined): string[]
+{
+  const patch = typeof hunk?.patch === "string" ? hunk.patch : "";
+  const changedPatchText = patch.split("\n")
+    .filter((line) =>
+      (line.startsWith("+") && !line.startsWith("+++")) ||
+      (line.startsWith("-") && !line.startsWith("---"))
+    )
+    .join("\n");
+  return fixture.edits
+    .filter((edit) => changedPatchText.includes(StateMachineEditToken(edit.id)))
+    .map((edit) => edit.id);
+}
+
+function ObservedChangedText(state: Record<string, any>): string
+{
+  const parts: string[] = [];
+  for (const file of state.inlineFiles ?? [])
+  {
+    for (const row of file.rows ?? [])
+    {
+      if (row.kind === "addition" || row.kind === "deletion")
+      {
+        parts.push(String(row.text ?? ""));
+      }
+    }
+  }
+  return parts.join("\n");
+}
+
+function StateMachineHunkSummary(
+  fixture: StateMachineFixture,
+  hunk: Record<string, any> | null | undefined,
+): string
+{
+  if (hunk === null || hunk === undefined)
+  {
+    return "none";
+  }
+  return [
+    `file=${String(hunk.file)}`,
+    `index=${String(hunk.hunkIndex)}`,
+    `hash=${String(hunk.patchHash).slice(0, 12)}`,
+    `edits=${EditIdsForHunk(fixture, hunk).join(",") || "none"}`,
+  ].join(" ");
+}
+
+function ApplyStateMachineMutation(
+  fixture: StateMachineFixture,
+  action: "stage" | "revert",
+  editIds: string[],
+): void
+{
+  fixture.undoStack.push({
+    statuses: CloneStatuses(fixture.statuses),
+    rejectedEditIds: new Set(fixture.rejectedEditIds),
+  });
+  for (const editId of editIds)
+  {
+    const status = fixture.statuses.get(editId);
+    assert.ok(status, `missing edit status for ${editId}`);
+    if (action === "stage")
+    {
+      status.indexAfter = status.worktreeAfter;
+      fixture.rejectedEditIds.delete(editId);
+    }
+    else
+    {
+      status.worktreeAfter = status.indexAfter;
+      fixture.rejectedEditIds.add(editId);
+    }
+  }
+}
+
+function UndoStateMachineMutation(fixture: StateMachineFixture): boolean
+{
+  const prior = fixture.undoStack.pop();
+  if (prior === undefined)
+  {
+    return false;
+  }
+  fixture.statuses = CloneStatuses(prior.statuses);
+  fixture.rejectedEditIds = new Set(prior.rejectedEditIds);
+  return true;
+}
+
+async function GitExit(cwd: string, args: string[]): Promise<number>
+{
+  try
+  {
+    await ExecFile("git", args, { cwd });
+    return 0;
+  }
+  catch (error)
+  {
+    const maybe = error as { code?: unknown };
+    return typeof maybe.code === "number" ? maybe.code : 1;
+  }
+}
+
+async function GitHasDiff(cwd: string, args: string[]): Promise<boolean>
+{
+  const code = await GitExit(cwd, ["diff", "--quiet", ...args]);
+  return code === 1;
+}
+
+function ParseStateMachineNumberList(value: string | undefined, fallback: number[]): number[]
+{
+  if (value === undefined || value.trim() === "")
+  {
+    return fallback;
+  }
+  return value.split(",")
+    .map((part) => Number(part.trim()))
+    .filter((part) => Number.isFinite(part));
+}
+
+function StateMachineStepCount(): number
+{
+  const parsed = Number(process.env.SHEAF_AGENT_REVIEW_STATE_MACHINE_STEPS);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 28;
+}
+
+function StateMachineSeeds(): number[]
+{
+  const stressCount = Number(process.env.SHEAF_AGENT_REVIEW_STATE_MACHINE_STRESS_SEEDS);
+  if (Number.isFinite(stressCount) && stressCount > 0)
+  {
+    return Array.from({ length: Math.floor(stressCount) }, (_, index) => 0x51ea + index * 7919);
+  }
+  return ParseStateMachineNumberList(
+    process.env.SHEAF_AGENT_REVIEW_STATE_MACHINE_SEEDS,
+    [0x51ea, 0xc0de, 0x5eed, 0x0ace, 0xbeef, 0x1337],
+  );
+}
+
+async function CreateStateMachineReviewSession(
+  handle: TestServerHandle,
+  seed: number,
+): Promise<StateMachineFixture>
+{
+  const repoRoot = handle.agentManager.storagePaths.repoRoot;
+  const demoRoot = path.join(repoRoot, "projects/demo", `state-machine-${seed}`);
+  const next = SeededInt(seed);
+  const fileCount = 2 + (next() % 2);
+  const files: StateMachineFile[] = [];
+  const edits: StateMachineEdit[] = [];
+  let order = 0;
+
+  const addEdit = (edit: Omit<StateMachineEdit, "order">): void =>
+  {
+    edits.push({ ...edit, order: order++ });
+  };
+
+  await mkdir(demoRoot, { recursive: true });
+  const created = await CreateWorkspaceChatViaApi(handle, demoRoot);
+  await Git(repoRoot, ["init"]);
+  await Git(repoRoot, ["config", "user.email", "test@example.com"]);
+  await Git(repoRoot, ["config", "user.name", "Test User"]);
+
+  for (let fileIndex = 0; fileIndex < fileCount; fileIndex += 1)
+  {
+    const fileRel = `projects/demo/state-machine-${seed}/file-${fileIndex}.ts`;
+    const baseLines = Array.from(
+      { length: 90 },
+      (_, lineIndex) => `seed ${seed} file ${fileIndex} base ${lineIndex + 1}`,
+    );
+    files.push({ fileRel, baseLines });
+    await writeFile(path.join(repoRoot, fileRel), `${baseLines.join("\n")}\n`, "utf8");
+
+    const stagedReplaceAnchor = 4 + (next() % 3);
+    addEdit({
+      id: `s${seed}-f${fileIndex}-staged-replace`,
+      fileRel,
+      kind: "replace",
+      anchor: stagedReplaceAnchor,
+      before: [baseLines[stagedReplaceAnchor]!],
+      after: [`staged replacement seed ${seed} file ${fileIndex}`],
+      description: "staged replacement",
+      initialIndexAfter: true,
+      initialWorktreeAfter: true,
+    });
+    const stagedInsertId = `s${seed}-f${fileIndex}-staged-insert`;
+    addEdit({
+      id: stagedInsertId,
+      fileRel,
+      kind: "insert",
+      anchor: 58 + (next() % 5),
+      before: [],
+      after: [
+        `staged inserted helper ${StateMachineEditToken(stagedInsertId)}`,
+        `staged inserted helper tail ${StateMachineEditToken(stagedInsertId)}`,
+      ],
+      description: "staged insertion",
+      initialIndexAfter: true,
+      initialWorktreeAfter: true,
+    });
+
+    const largeInsertId = `s${seed}-f${fileIndex}-large-insert`;
+    addEdit({
+      id: largeInsertId,
+      fileRel,
+      kind: "insert",
+      anchor: 2 + (next() % 2),
+      before: [],
+      after: Array.from(
+        { length: 12 + (next() % 5) },
+        (_, lineIndex) => `large inserted block ${lineIndex} ${StateMachineEditToken(largeInsertId)}`,
+      ),
+      description: "large insert block before later edits",
+      initialIndexAfter: false,
+      initialWorktreeAfter: true,
+    });
+
+    const replaceId = `s${seed}-f${fileIndex}-replace`;
+    addEdit({
+      id: replaceId,
+      fileRel,
+      kind: "replace",
+      anchor: 16 + (next() % 3),
+      before: [`semantic replace before ${StateMachineEditToken(replaceId)}`],
+      after: [`duplicate changed text ${StateMachineEditToken(replaceId)}`],
+      description: "duplicate-content replacement",
+      initialIndexAfter: false,
+      initialWorktreeAfter: true,
+    });
+
+    const closeInsertId = `s${seed}-f${fileIndex}-close-insert`;
+    addEdit({
+      id: closeInsertId,
+      fileRel,
+      kind: "insert",
+      anchor: 21 + (next() % 2),
+      before: [],
+      after: [`nearby inserted setup ${StateMachineEditToken(closeInsertId)}`],
+      description: "close sibling insertion",
+      initialIndexAfter: false,
+      initialWorktreeAfter: true,
+    });
+
+    const deleteId = `s${seed}-f${fileIndex}-delete`;
+    addEdit({
+      id: deleteId,
+      fileRel,
+      kind: "delete",
+      anchor: 32 + (next() % 4),
+      before: [`semantic delete before ${StateMachineEditToken(deleteId)}`],
+      after: [],
+      description: "pure deletion",
+      initialIndexAfter: false,
+      initialWorktreeAfter: true,
+    });
+
+    const tailId = `s${seed}-f${fileIndex}-tail`;
+    addEdit({
+      id: tailId,
+      fileRel,
+      kind: "replace",
+      anchor: 72 + (next() % 5),
+      before: [`semantic tail before ${StateMachineEditToken(tailId)}`],
+      after: [`semantic tail after ${StateMachineEditToken(tailId)}`],
+      description: "tail replacement",
+      initialIndexAfter: false,
+      initialWorktreeAfter: true,
+    });
+  }
+
+  const initialStatuses = new Map<string, StateMachineEditStatus>();
+  const baseStatuses = new Map<string, StateMachineEditStatus>();
+  for (const edit of edits)
+  {
+    initialStatuses.set(edit.id, {
+      indexAfter: edit.initialIndexAfter,
+      worktreeAfter: edit.initialWorktreeAfter,
+    });
+    baseStatuses.set(edit.id, {
+      indexAfter: false,
+      worktreeAfter: false,
+    });
+  }
+
+  const fixture: StateMachineFixture = {
+    ...created,
+    repoRoot,
+    files,
+    edits,
+    statuses: baseStatuses,
+    rejectedEditIds: new Set(),
+    undoStack: [],
+    summary: `seed ${seed}: ${files.length} files, ${edits.length} semantic edits`,
+  };
+
+  for (const file of files)
+  {
+    await writeFile(path.join(repoRoot, file.fileRel), RenderStateMachineFile(fixture, file, "index"), "utf8");
+  }
+  await Git(repoRoot, ["add", "."]);
+  await Git(repoRoot, ["commit", "-m", `state-machine ${seed} base`]);
+
+  fixture.statuses = initialStatuses;
+  for (const file of files)
+  {
+    await writeFile(path.join(repoRoot, file.fileRel), RenderStateMachineFile(fixture, file, "index"), "utf8");
+  }
+  await Git(repoRoot, ["add", "."]);
+
+  for (const file of files)
+  {
+    await writeFile(path.join(repoRoot, file.fileRel), RenderStateMachineFile(fixture, file, "worktree"), "utf8");
+  }
+
+  return fixture;
+}
+
+async function ConnectAgentReviewSocket(
+  baseUrl: string,
+  repoId: string,
+  workspaceId: string,
+): Promise<WebSocket>
+{
+  const socket = new WebSocket(WsUrl(baseUrl, repoId, workspaceId));
+  socket.setMaxListeners(100);
+  await new Promise<void>((resolve, reject) =>
+  {
+    socket.once("open", () => resolve());
+    socket.once("error", reject);
+  });
+  return socket;
+}
+
+async function AssertStateMachineOracle(
+  fixture: StateMachineFixture,
+  state: Record<string, any>,
+  context: StateMachineContext,
+): Promise<void>
+{
+  const active = ActiveStateMachineEdits(fixture);
+  const activeIds = new Set(active.map((edit) => edit.id));
+  const patchText = ObservedChangedText(state);
+
+  for (const edit of fixture.edits)
+  {
+    const tokenPresent = patchText.includes(StateMachineEditToken(edit.id));
+    assert.equal(
+      tokenPresent,
+      activeIds.has(edit.id),
+      StateMachineLabel(context, `hunk token presence for ${edit.id}; fixture=${fixture.summary}`),
+    );
+  }
+
+  if (active.length === 0)
+  {
+    assert.equal(state.currentHunk, null, StateMachineLabel(context, "no active edits should leave no current hunk"));
+  }
+  if (state.currentHunk !== null)
+  {
+    const currentEditIds = EditIdsForHunk(fixture, state.currentHunk);
+    assert.ok(
+      currentEditIds.length > 0 && currentEditIds.every((editId) => activeIds.has(editId)),
+      StateMachineLabel(context, `current hunk maps to active edits ${StateMachineHunkSummary(fixture, state.currentHunk)}`),
+    );
+  }
+  assert.equal(
+    Boolean(state.actions?.canUndo),
+    fixture.undoStack.length > 0,
+    StateMachineLabel(context, "undo availability"),
+  );
+  assert.equal(Boolean(state.actions?.canStage), state.currentHunk !== null, StateMachineLabel(context, "stage availability"));
+  assert.equal(Boolean(state.actions?.canRevert), state.currentHunk !== null, StateMachineLabel(context, "revert availability"));
+
+  const rejectedMarkers = new Set<string>();
+  for (const entry of state.reviewDraft?.entries ?? [])
+  {
+    if (entry?.kind !== "rejected")
+    {
+      continue;
+    }
+    for (const editId of EditIdsForHunk(fixture, entry.hunk))
+    {
+      rejectedMarkers.add(editId);
+    }
+  }
+  assert.deepEqual(
+    Array.from(rejectedMarkers).sort(),
+    Array.from(fixture.rejectedEditIds).sort(),
+    StateMachineLabel(context, "rejected marker edit ids"),
+  );
+
+  for (const file of fixture.files)
+  {
+    const expectedIndex = RenderStateMachineFile(fixture, file, "index");
+    const expectedWorktree = RenderStateMachineFile(fixture, file, "worktree");
+    const actualIndex = await Git(fixture.repoRoot, ["show", `:${file.fileRel}`]);
+    const actualWorktree = await readFile(path.join(fixture.repoRoot, file.fileRel), "utf8");
+    assert.equal(actualIndex, expectedIndex, StateMachineLabel(context, `index content ${file.fileRel}`));
+    assert.equal(actualWorktree, expectedWorktree, StateMachineLabel(context, `worktree content ${file.fileRel}`));
+
+    const shouldHaveStagedDiff = expectedIndex !== file.baseLines.join("\n") + "\n";
+    const shouldHaveUnstagedDiff = expectedIndex !== expectedWorktree;
+    assert.equal(
+      await GitHasDiff(fixture.repoRoot, ["--cached", "--", file.fileRel]),
+      shouldHaveStagedDiff,
+      StateMachineLabel(context, `staged diff presence ${file.fileRel}`),
+    );
+    assert.equal(
+      await GitHasDiff(fixture.repoRoot, ["--", file.fileRel]),
+      shouldHaveUnstagedDiff,
+      StateMachineLabel(context, `unstaged diff presence ${file.fileRel}`),
+    );
+  }
+}
+
+function ChooseStateMachineOperation(
+  fixture: StateMachineFixture,
+  state: Record<string, any>,
+  staleTargets: Record<string, any>[],
+  next: () => number,
+): StateMachineOperation
+{
+  const operations: StateMachineOperation[] = [
+    { kind: "nextHunk" },
+    { kind: "previousHunk" },
+    { kind: "nextFile" },
+    { kind: "previousFile" },
+  ];
+  if (state.currentHunk !== null)
+  {
+    operations.push({ kind: "stage", target: state.currentHunk });
+    operations.push({ kind: "revert", target: state.currentHunk });
+  }
+  if ((state.hunks ?? []).length > 0)
+  {
+    const hunks = state.hunks as Record<string, any>[];
+    operations.push({ kind: "focus", target: hunks[next() % hunks.length] });
+  }
+  operations.push({ kind: "undo" });
+  const currentHunkIds = new Set(
+    Array.isArray(state.hunks)
+      ? (state.hunks as Record<string, any>[]).map((hunk) => String(hunk.hunkId))
+      : [],
+  );
+  const staleCandidates = staleTargets.filter((target) => !currentHunkIds.has(String(target.hunkId)));
+  if (state.currentHunk !== null && staleCandidates.length > 0)
+  {
+    const target = staleCandidates[next() % staleCandidates.length]!;
+    operations.push({ kind: "staleStage", target });
+    operations.push({ kind: "staleRevert", target });
+  }
+
+  // Bias toward mutations once the generator has exposed active edits, while
+  // keeping navigation/focus/stale paths in the random walk.
+  const activeCount = ActiveStateMachineEdits(fixture).length;
+  if (activeCount > 0 && state.currentHunk !== null)
+  {
+    operations.push({ kind: "stage", target: state.currentHunk });
+    operations.push({ kind: "revert", target: state.currentHunk });
+  }
+
+  return operations[next() % operations.length]!;
+}
+
+async function ExecuteStateMachineOperation(
+  socket: WebSocket,
+  fixture: StateMachineFixture,
+  state: Record<string, any>,
+  operation: StateMachineOperation,
+  context: StateMachineContext,
+  staleTargets: Record<string, any>[],
+): Promise<Record<string, any>>
+{
+  const id = `state-machine-${context.seed}-${context.step}-${operation.kind}`;
+  if (operation.kind === "focus")
+  {
+    socket.send(JSON.stringify({
+      type: "focus",
+      hunkId: operation.target?.hunkId ?? null,
+      file: operation.target?.file ?? null,
+    }));
+    const focused = await WaitForFrame(socket, "state");
+    return focused.state;
+  }
+
+  const action = operation.kind === "staleStage"
+    ? "stage"
+    : operation.kind === "staleRevert"
+      ? "revert"
+      : operation.kind;
+  const target = operation.target ?? state.currentHunk;
+  const expectStale = operation.kind === "staleStage" || operation.kind === "staleRevert";
+  const expectUndoFailure = operation.kind === "undo" && fixture.undoStack.length === 0;
+  const expectNoHunksNavigationFailure =
+    (operation.kind === "nextHunk" ||
+      operation.kind === "previousHunk" ||
+      operation.kind === "nextFile" ||
+      operation.kind === "previousFile") &&
+    (state.hunks ?? []).length === 0;
+  const targetEditIds = target === null || target === undefined ? [] : EditIdsForHunk(fixture, target);
+
+  socket.send(JSON.stringify({
+    type: "command",
+    id,
+    action,
+    hunkId: target?.hunkId,
+    patchHash: target?.patchHash,
+  }));
+  const frame = await WaitForFrame(socket, "command_result");
+  assert.equal(frame.result.action, action, StateMachineLabel(context, "command action"));
+
+  if (expectStale)
+  {
+    assert.equal(frame.result.ok, false, StateMachineLabel(context, `stale command should fail ${StateMachineHunkSummary(fixture, target)}`));
+    assert.equal(frame.result.stale, true, StateMachineLabel(context, "stale command flag"));
+    return frame.state;
+  }
+
+  if (expectUndoFailure)
+  {
+    assert.equal(frame.result.ok, false, StateMachineLabel(context, "unavailable undo should fail"));
+    return frame.state;
+  }
+
+  if (expectNoHunksNavigationFailure)
+  {
+    assert.equal(frame.result.ok, false, StateMachineLabel(context, "navigation without hunks should fail"));
+    return frame.state;
+  }
+
+  assert.equal(
+    frame.result.ok,
+    true,
+    StateMachineLabel(
+      context,
+      `command should succeed result=${JSON.stringify(frame.result)} target=${StateMachineHunkSummary(fixture, target)}`,
+    ),
+  );
+
+  if (action === "stage" || action === "revert")
+  {
+    assert.ok(
+      targetEditIds.length > 0,
+      StateMachineLabel(context, `mutation target should map to semantic edits ${StateMachineHunkSummary(fixture, target)}`),
+    );
+    ApplyStateMachineMutation(fixture, action, targetEditIds);
+    staleTargets.push(target);
+  }
+  else if (action === "undo")
+  {
+    assert.equal(UndoStateMachineMutation(fixture), true, StateMachineLabel(context, "oracle undo should be available"));
+  }
+
+  return frame.state;
+}
+
 async function CreateSeededMixedIndexReviewSession(
   handle: TestServerHandle,
   seed: number,
@@ -2547,6 +3260,59 @@ test("Agent Review randomized mixed-index staging preserves sibling hunks", asyn
 
       await CloseSocket(socket);
       await Git(repoRoot, ["reset", "--hard", "HEAD"]);
+    }
+  });
+});
+
+test("Agent Review randomized state machine validates hunk mutations semantically", async () =>
+{
+  await WithTestServer(async (handle) =>
+  {
+    for (const seed of StateMachineSeeds())
+    {
+      const fixture = await CreateStateMachineReviewSession(handle, seed);
+      const socket = await ConnectAgentReviewSocket(handle.baseUrl, fixture.repoId, fixture.workspaceId);
+      const staleTargets: Record<string, any>[] = [];
+      const next = SeededInt(seed ^ 0x9e3779b9);
+      let state: Record<string, any>;
+      try
+      {
+        const bootstrap = await WaitForFrame(socket, "bootstrap");
+        state = bootstrap.state;
+        await AssertStateMachineOracle(fixture, state, {
+          seed,
+          step: 0,
+          operation: "bootstrap",
+        });
+
+        for (let step = 1; step <= StateMachineStepCount(); step += 1)
+        {
+          const operation = ChooseStateMachineOperation(fixture, state, staleTargets, next);
+          const context: StateMachineContext = {
+            seed,
+            step,
+            operation: operation.kind,
+          };
+          state = await ExecuteStateMachineOperation(
+            socket,
+            fixture,
+            state,
+            operation,
+            context,
+            staleTargets,
+          );
+          await AssertStateMachineOracle(fixture, state, context);
+
+          if (ActiveStateMachineEdits(fixture).length === 0 && fixture.undoStack.length === 0)
+          {
+            break;
+          }
+        }
+      }
+      finally
+      {
+        await CloseSocket(socket);
+      }
     }
   });
 });

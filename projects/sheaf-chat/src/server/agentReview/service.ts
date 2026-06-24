@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import type { IncomingMessage } from "node:http";
 import type { Duplex } from "node:stream";
 import path from "node:path";
@@ -290,9 +290,31 @@ function ChangedOccurrenceKey(occurrence: ChangedLineOccurrence): string
 
 function HunkChangedContentLines(hunk: AgentReviewHunk): string[]
 {
-  return HunkChangedOccurrences(hunk).map((occurrence) =>
-    `${occurrence.kind === "addition" ? "+" : "-"}${occurrence.text}`,
-  );
+  const additions = new Map<string, number>();
+  const deletions = new Map<string, number>();
+  for (const occurrence of HunkChangedOccurrences(hunk))
+  {
+    const counts = occurrence.kind === "addition" ? additions : deletions;
+    counts.set(occurrence.text, (counts.get(occurrence.text) ?? 0) + 1);
+  }
+
+  const result: string[] = [];
+  const texts = new Set([...additions.keys(), ...deletions.keys()]);
+  for (const text of texts)
+  {
+    const additionCount = additions.get(text) ?? 0;
+    const deletionCount = deletions.get(text) ?? 0;
+    const cancelCount = Math.min(additionCount, deletionCount);
+    for (let i = cancelCount; i < additionCount; i += 1)
+    {
+      result.push(`+${text}`);
+    }
+    for (let i = cancelCount; i < deletionCount; i += 1)
+    {
+      result.push(`-${text}`);
+    }
+  }
+  return result;
 }
 
 function CountChangedOccurrences(hunks: AgentReviewHunk[]): Map<string, number>
@@ -311,12 +333,33 @@ function CountChangedOccurrences(hunks: AgentReviewHunk[]): Map<string, number>
 
 function CountChangedContentLines(hunks: AgentReviewHunk[]): Map<string, number>
 {
-  const counts = new Map<string, number>();
+  const additions = new Map<string, number>();
+  const deletions = new Map<string, number>();
   for (const hunk of hunks)
   {
-    for (const line of HunkChangedContentLines(hunk))
+    for (const occurrence of HunkChangedOccurrences(hunk))
     {
-      counts.set(line, (counts.get(line) ?? 0) + 1);
+      const counts = occurrence.kind === "addition" ? additions : deletions;
+      counts.set(occurrence.text, (counts.get(occurrence.text) ?? 0) + 1);
+    }
+  }
+
+  const counts = new Map<string, number>();
+  const texts = new Set([...additions.keys(), ...deletions.keys()]);
+  for (const text of texts)
+  {
+    const additionCount = additions.get(text) ?? 0;
+    const deletionCount = deletions.get(text) ?? 0;
+    const cancelCount = Math.min(additionCount, deletionCount);
+    const remainingAdditions = additionCount - cancelCount;
+    const remainingDeletions = deletionCount - cancelCount;
+    if (remainingAdditions > 0)
+    {
+      counts.set(`+${text}`, remainingAdditions);
+    }
+    if (remainingDeletions > 0)
+    {
+      counts.set(`-${text}`, remainingDeletions);
     }
   }
   return counts;
@@ -381,7 +424,11 @@ function JoinTextLines(lines: string[], trailingNewline: boolean): string
   return `${lines.join("\n")}${trailingNewline ? "\n" : ""}`;
 }
 
-function ApplyHunkToIndexedContent(indexContent: string, hunk: AgentReviewHunk): string
+function ApplyHunkToContent(
+  content: string,
+  hunk: AgentReviewHunk,
+  direction: "forward" | "reverse",
+): string
 {
   const patchLines = hunk.patch.split("\n");
   const headerIndex = patchLines.findIndex((line) => line.startsWith("@@ "));
@@ -391,10 +438,10 @@ function ApplyHunkToIndexedContent(indexContent: string, hunk: AgentReviewHunk):
     throw new Error("hunk patch has no parseable range");
   }
 
-  const { lines, trailingNewline } = SplitTextLines(indexContent);
-  const cursorStart = range.oldCount === 0
-    ? range.oldStart
-    : Math.max(0, range.oldStart - 1);
+  const { lines, trailingNewline } = SplitTextLines(content);
+  const start = direction === "forward" ? range.oldStart : range.newStart;
+  const count = direction === "forward" ? range.oldCount : range.newCount;
+  const cursorStart = count === 0 ? start : Math.max(0, start - 1);
   if (cursorStart > lines.length)
   {
     throw new Error("hunk range starts after index file end");
@@ -435,18 +482,39 @@ function ApplyHunkToIndexedContent(indexContent: string, hunk: AgentReviewHunk):
     }
     else if (prefix === "-")
     {
-      if (lines[cursor] !== text)
+      if (direction === "forward")
       {
-        throw new Error("hunk deletion does not match index file");
+        if (lines[cursor] !== text)
+        {
+          throw new Error("hunk deletion does not match target file");
+        }
+        cursor += 1;
+        lastPatchLineEmittedOutput = false;
       }
-      cursor += 1;
-      lastPatchLineEmittedOutput = false;
+      else
+      {
+        result.push(text);
+        hunkOutputTrailingNewline = true;
+        lastPatchLineEmittedOutput = true;
+      }
     }
     else if (prefix === "+")
     {
-      result.push(text);
-      hunkOutputTrailingNewline = true;
-      lastPatchLineEmittedOutput = true;
+      if (direction === "forward")
+      {
+        result.push(text);
+        hunkOutputTrailingNewline = true;
+        lastPatchLineEmittedOutput = true;
+      }
+      else
+      {
+        if (lines[cursor] !== text)
+        {
+          throw new Error("hunk addition does not match target file");
+        }
+        cursor += 1;
+        lastPatchLineEmittedOutput = false;
+      }
     }
   }
   result.push(...lines.slice(cursor));
@@ -454,6 +522,21 @@ function ApplyHunkToIndexedContent(indexContent: string, hunk: AgentReviewHunk):
     ? hunkOutputTrailingNewline ?? result.length > 0
     : trailingNewline;
   return JoinTextLines(result, nextTrailingNewline);
+}
+
+function ApplyHunkToIndexedContent(indexContent: string, hunk: AgentReviewHunk): string
+{
+  return ApplyHunkToContent(indexContent, hunk, "forward");
+}
+
+function ApplyReverseHunkToWorktreeContent(worktreeContent: string, hunk: AgentReviewHunk): string
+{
+  return ApplyHunkToContent(worktreeContent, hunk, "reverse");
+}
+
+function ApplyRestoreHunkToWorktreeContent(worktreeContent: string, hunk: AgentReviewHunk): string
+{
+  return ApplyHunkToContent(worktreeContent, hunk, "forward");
 }
 
 function FirstHunkIndexAfterFile(hunks: AgentReviewHunk[], file: string): number
@@ -1986,6 +2069,7 @@ class AgentReviewSession
     action: "stage" | "revert",
     hunk: AgentReviewHunk,
     expectedIndexContent?: string,
+    expectedWorktreeContent?: string,
   ): Promise<string | null>
   {
     const priorState = this.RequireState();
@@ -2052,6 +2136,22 @@ class AgentReviewSession
         return "selected hunk was not staged into the Git index";
       }
     }
+    else if (expectedWorktreeContent !== undefined)
+    {
+      let actualWorktreeContent: string;
+      try
+      {
+        actualWorktreeContent = await readFile(path.resolve(hunk.repoRoot, hunk.file), "utf8");
+      }
+      catch (error)
+      {
+        return error instanceof Error ? error.message : String(error);
+      }
+      if (actualWorktreeContent !== expectedWorktreeContent)
+      {
+        return "selected hunk was not reverted from the worktree";
+      }
+    }
 
     return null;
   }
@@ -2091,6 +2191,8 @@ class AgentReviewSession
     }
 
     let expectedIndexContent: string | undefined;
+    let originalWorktreeContent: string | undefined;
+    let expectedWorktreeContent: string | undefined;
     if (action === "stage")
     {
       try
@@ -2110,12 +2212,38 @@ class AgentReviewSession
         };
       }
     }
+    else
+    {
+      try
+      {
+        originalWorktreeContent = await readFile(path.resolve(hunk.repoRoot, hunk.file), "utf8");
+        expectedWorktreeContent = ApplyReverseHunkToWorktreeContent(originalWorktreeContent, hunk);
+      }
+      catch (error)
+      {
+        return {
+          ok: false,
+          action,
+          commandId: options.commandId,
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+    }
 
-    const result = await ApplyAgentReviewPatch(
-      hunk.repoRoot,
-      action === "stage" ? "stage" : "revert",
-      hunk.patch,
-    );
+    const result = action === "stage"
+      ? await ApplyAgentReviewPatch(hunk.repoRoot, "stage", hunk.patch)
+      : await (async (): Promise<{ ok: boolean; error?: string }> =>
+        {
+          try
+          {
+            await writeFile(path.resolve(hunk.repoRoot, hunk.file), expectedWorktreeContent!, "utf8");
+            return { ok: true };
+          }
+          catch (error)
+          {
+            return { ok: false, error: error instanceof Error ? error.message : String(error) };
+          }
+        })();
     TraceAgentReview("mutation.apply_result", {
       repoId: this.m_key.repoId,
       workspaceId: this.m_key.workspaceId,
@@ -2138,7 +2266,12 @@ class AgentReviewSession
       };
     }
 
-    const verificationError = await this.VerifyTargetMutation(action, hunk, expectedIndexContent);
+    const verificationError = await this.VerifyTargetMutation(
+      action,
+      hunk,
+      expectedIndexContent,
+      expectedWorktreeContent,
+    );
     if (verificationError !== null)
     {
       TraceAgentReview("mutation.verify_failed", {
@@ -2149,11 +2282,20 @@ class AgentReviewSession
         hunkId: hunk.hunkId,
         message: verificationError,
       });
-      const rollback = await ApplyAgentReviewPatch(
-        hunk.repoRoot,
-        action === "stage" ? "unstage" : "restore",
-        hunk.patch,
-      );
+      const rollback = action === "stage"
+        ? await ApplyAgentReviewPatch(hunk.repoRoot, "unstage", hunk.patch)
+        : await (async (): Promise<{ ok: boolean; error?: string }> =>
+          {
+            try
+            {
+              await writeFile(path.resolve(hunk.repoRoot, hunk.file), originalWorktreeContent!, "utf8");
+              return { ok: true };
+            }
+            catch (error)
+            {
+              return { ok: false, error: error instanceof Error ? error.message : String(error) };
+            }
+          })();
       return {
         ok: false,
         action,
@@ -2187,11 +2329,25 @@ class AgentReviewSession
       return { ok: false, action: "undo", commandId, error: "no undoable hunk mutation" };
     }
 
-    const result = await ApplyAgentReviewPatch(
-      entry.hunk.repoRoot,
-      entry.action === "stage" ? "unstage" : "restore",
-      entry.hunk.patch,
-    );
+    const result = entry.action === "stage"
+      ? await ApplyAgentReviewPatch(entry.hunk.repoRoot, "unstage", entry.hunk.patch)
+      : await (async (): Promise<{ ok: boolean; error?: string }> =>
+        {
+          try
+          {
+            const currentWorktreeContent = await readFile(path.resolve(entry.hunk.repoRoot, entry.hunk.file), "utf8");
+            const restoredWorktreeContent = ApplyRestoreHunkToWorktreeContent(
+              currentWorktreeContent,
+              entry.hunk,
+            );
+            await writeFile(path.resolve(entry.hunk.repoRoot, entry.hunk.file), restoredWorktreeContent, "utf8");
+            return { ok: true };
+          }
+          catch (error)
+          {
+            return { ok: false, error: error instanceof Error ? error.message : String(error) };
+          }
+        })();
 
     if (!result.ok)
     {

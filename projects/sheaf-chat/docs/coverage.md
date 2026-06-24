@@ -154,10 +154,15 @@ Last audit: repository/workspace chat apply, 2026-06-14
 - Agent Review compatibility is covered by server/API tests, retained UI
   smoke coverage, and a Chromium flow that drives hunk navigation, comment
   placement, next-file review navigation, and focused-hunk staging.
+- Agent Review hunk mutation is also covered by a real-Git randomized
+  state-machine test that drives `/ws/agent-review` commands, randomizes
+  navigation/focus/stage/revert/undo/stale attempts, and checks index,
+  worktree, rejected-marker, undo, and action-availability outcomes against
+  a semantic oracle after every step.
 
 #### Unified Source Rendering Coverage
 
-Last audit: unified Agent Review source rendering, 2026-06-21
+Last audit: unified Agent Review source rendering and hunk state machine, 2026-06-24
 
 | Scenario | No-hunk coverage | Hunk-bearing coverage |
 |---|---|---|
@@ -177,6 +182,7 @@ Targeted validation passed on 2026-06-21:
 - `node --test dist/tests/ui/chatScreen.test.js --test-name-pattern "Agent Review|Highlight|highlight|Emacs|search|mark"` (34/34)
 - `node --test dist/tests/integration/browserChat.integration.test.js --test-name-pattern "file view|highlighted|search|mark|navigation"` (18/18)
 - `node --test dist/tests/integration/repoWorkspaceFlow.integration.test.js --test-name-pattern "Agent Review|hunk-aware source rendering"` (3/3)
+- `node --test dist/tests/server/rest/agentReview.test.js --test-name-pattern "randomized state machine"` (1/1)
 
 The full `npm test` command passed on 2026-06-21 when rerun with unsandboxed
 Chromium process launch permissions. The earlier sandboxed attempt failed
