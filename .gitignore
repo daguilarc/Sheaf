@@ -8,6 +8,7 @@ node_modules/
 projects/conductor/node_modules/
 projects/conductor/dist/
 projects/xagent/dist/
+projects/synth/build/
 projects/sheaf-chat/dist/
 projects/realtime-agent/node_modules/
 projects/realtime-agent/src/agent/dist/

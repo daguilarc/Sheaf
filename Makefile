@@ -1,6 +1,6 @@
 MAKEFLAGS += --warn-undefined-variables
 
-PROJECTS := conductor web quest-runner dictator realtime-agent sheaf-chat agents xagent
+PROJECTS := conductor web quest-runner dictator realtime-agent sheaf-chat agents xagent synth
 
 .PHONY: all clean test help
 .PHONY: $(PROJECTS)
@@ -14,6 +14,7 @@ PROJECTS := conductor web quest-runner dictator realtime-agent sheaf-chat agents
 .PHONY: agents-install-repo agents-check-repo agents-clean-repo
 .PHONY: agents-install-global agents-check-global agents-clean-global
 .PHONY: xagent-build xagent-test xagent-clean
+.PHONY: synth-build synth-test synth-clean
 
 .DEFAULT_GOAL := all
 
@@ -147,6 +148,15 @@ xagent-test:
 
 xagent-clean:
 	$(MAKE) -C projects/xagent clean
+
+synth-build:
+	$(MAKE) -C projects/synth build
+
+synth-test:
+	$(MAKE) -C projects/synth test
+
+synth-clean:
+	$(MAKE) -C projects/synth clean
 
 help:
 	@echo "Repository targets:"
