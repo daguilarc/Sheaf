@@ -1,3 +1,4 @@
+#include "synth/MidiController.hpp"
 #include "synth/ParameterModulation.hpp"
 
 #ifdef JUCE_MAJOR_VERSION
@@ -7,10 +8,12 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <exception>
 #include <iostream>
+#include <mutex>
 #include <optional>
 #include <random>
 #include <span>
@@ -204,6 +207,7 @@ TEST_CASE(modulators_use_voice_major_dot_product) {
 TEST_CASE(modulator_metadata_is_not_per_voice) {
     synth::Modulators modulators(3, 2);
     modulators.Metadata(1).name = "LFO";
+    modulators.Metadata(1).shortName = "LF";
     modulators.Metadata(1).color = {.r = 12, .g = 34, .b = 56};
     modulators.Metadata(1).connected = true;
 
@@ -211,6 +215,7 @@ TEST_CASE(modulator_metadata_is_not_per_voice) {
     modulators.Value(2, 1) = -0.75f;
 
     REQUIRE_TRUE(modulators.Metadata(1).name == "LFO");
+    REQUIRE_TRUE(modulators.Metadata(1).shortName == "LF");
     REQUIRE_TRUE(modulators.Metadata(1).color.g == 34);
     REQUIRE_TRUE(modulators.Metadata(1).connected);
     REQUIRE_NEAR(modulators.Value(0, 1), 0.25f, 0.0001f);
@@ -1160,7 +1165,7 @@ TEST_CASE(press_opens_modulation_view_and_target_cell_closes_it) {
     REQUIRE_TRUE(bank.VisibleParameter(1) == &parameter);
 }
 
-TEST_CASE(modulation_view_reserves_target_cell_when_bank_is_undersized) {
+TEST_CASE(modulation_view_return_cell_uses_final_compact_fallback_position) {
     synth::ParameterManager manager;
     manager.SetGestureCount(2);
     auto& group = manager.CreateGroup({
@@ -1178,28 +1183,30 @@ TEST_CASE(modulation_view_reserves_target_cell_when_bank_is_undersized) {
     auto& bank = manager.CreateBank();
     bank.AddMapping(10, parameter);
     bank.AddMapping(11, depthA);
+    bank.AddMapping(12, depthB);
 
     bank.HandlePress(10);
 
     REQUIRE_TRUE(bank.ShowingModulation());
-    REQUIRE_TRUE(bank.VisibleMappingCount() == 2);
+    REQUIRE_TRUE(bank.VisibleMappingCount() == 3);
     REQUIRE_TRUE(bank.VisibleParameter(10) == &depthA);
-    REQUIRE_TRUE(bank.VisibleParameter(11) == &parameter);
+    REQUIRE_TRUE(bank.VisibleParameter(11) == &depthB);
+    REQUIRE_TRUE(bank.VisibleParameter(12) == &parameter);
     REQUIRE_TRUE(bank.TargetParameter() == &parameter);
 
-    bank.HandleTick(11, {.leftScene = 0, .rightScene = 0, .blend = 0.0f}, 0.1f);
+    bank.HandleTick(12, {.leftScene = 0, .rightScene = 0, .blend = 0.0f}, 0.1f);
     REQUIRE_NEAR(parameter.SceneCenter(0), 0.9f, 0.0001f);
 
-    bank.HandleShiftPress(11, {.leftScene = 0, .rightScene = 0, .blend = 0.0f});
+    bank.HandleShiftPress(12, {.leftScene = 0, .rightScene = 0, .blend = 0.0f});
     REQUIRE_NEAR(parameter.SceneCenter(0), 0.4f, 0.0001f);
 
-    bank.HandlePress(11);
+    bank.HandlePress(12);
 
     REQUIRE_TRUE(!bank.ShowingModulation());
     REQUIRE_TRUE(bank.VisibleParameter(10) == &parameter);
 }
 
-TEST_CASE(undersized_modulation_view_marks_trailing_slot_cells_disconnected) {
+TEST_CASE(modulation_view_places_return_at_final_slot_position) {
     synth::ParameterManager manager;
     manager.SetGestureCount(1);
     auto& group = manager.CreateGroup({
@@ -1220,17 +1227,48 @@ TEST_CASE(undersized_modulation_view_marks_trailing_slot_cells_disconnected) {
     slot.AddPhysicalEncoder(12);
     slot.SelectBank(&bank);
 
-    bank.HandlePress(10);
+    slot.HandlePress(10);
     auto ui = manager.CreateUIState();
     manager.PopulateUIState(*ui);
 
     REQUIRE_TRUE(ui->slots[0].showingModulationView.load());
     REQUIRE_TRUE(ui->slots[0].cells[0].connected.load());
-    REQUIRE_TRUE(ui->slots[0].cells[1].connected.load());
-    REQUIRE_TRUE(!ui->slots[0].cells[2].connected.load());
-    REQUIRE_TRUE(ui->slots[0].cells[2].switchValues.load() == 0);
-    REQUIRE_TRUE(ui->slots[0].cells[2].modulatorsAffectingMask.load() == 0);
-    REQUIRE_TRUE(ui->slots[0].cells[2].gesturesAffectingMask.load() == 0);
+    REQUIRE_TRUE(!ui->slots[0].cells[1].connected.load());
+    REQUIRE_TRUE(ui->slots[0].cells[2].connected.load());
+    REQUIRE_TRUE(bank.VisibleParameter(10) == &depth);
+    REQUIRE_TRUE(bank.VisibleParameter(11) == nullptr);
+    REQUIRE_TRUE(bank.VisibleParameter(12) == &parameter);
+    REQUIRE_TRUE(ui->slots[0].cells[1].switchValues.load() == 0);
+    REQUIRE_TRUE(ui->slots[0].cells[1].modulatorsAffectingMask.load() == 0);
+    REQUIRE_TRUE(ui->slots[0].cells[1].gesturesAffectingMask.load() == 0);
+}
+
+TEST_CASE(modulation_view_rejects_more_modulators_than_slot_depth_positions) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 3,
+        .numScenes = 1,
+        .maxParameters = 4,
+    });
+    auto& parameter = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.4f});
+    auto& bank = manager.CreateBank();
+    bank.AddMapping(10, parameter);
+    auto& slot = manager.CreateBankSlot();
+    slot.AddPhysicalEncoder(10);
+    slot.AddPhysicalEncoder(11);
+    slot.AddPhysicalEncoder(12);
+    slot.SelectBank(&bank);
+
+    bool threw = false;
+    try {
+        slot.HandlePress(10);
+    } catch (const std::logic_error&) {
+        threw = true;
+    }
+
+    REQUIRE_TRUE(threw);
+    REQUIRE_TRUE(!bank.ShowingModulation());
 }
 
 TEST_CASE(modulation_view_materializes_missing_depth_parameter_when_capacity_allows) {
@@ -1244,19 +1282,31 @@ TEST_CASE(modulation_view_materializes_missing_depth_parameter_when_capacity_all
     });
     auto& carrier = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.5f});
     auto& filler = manager.CreateParameter(group, {.name = "Filler", .defaultValue = 0.25f});
+    group.GetModulators().Metadata(0).name = "Filter Env";
+    group.GetModulators().Metadata(0).shortName = "Env";
+    group.GetModulators().Metadata(0).color = synth::Color::Cyan;
     auto& bank = manager.CreateBank();
     bank.AddMapping(1, carrier);
     bank.AddMapping(2, filler);
+    auto& slot = manager.CreateBankSlot();
+    slot.AddPhysicalEncoder(1);
+    slot.AddPhysicalEncoder(2);
+    slot.AddPhysicalEncoder(3);
+    slot.SelectBank(&bank);
 
-    bank.HandlePress(1);
+    slot.HandlePress(1);
 
     synth::Parameter* depth = carrier.ModulationDepthParameter(0);
     REQUIRE_TRUE(depth != nullptr);
     REQUIRE_TRUE(group.ParameterCount() == 3);
+    REQUIRE_TRUE(depth->Name() == "Filter Env");
+    REQUIRE_TRUE(depth->ShortName() == "Env");
+    REQUIRE_TRUE(depth->ParamColor() == synth::Color::Cyan);
     REQUIRE_TRUE(depth->Range() == synth::RangeKind::Bipolar);
     REQUIRE_NEAR(depth->SceneCenter(0), 0.0f, 0.0001f);
     REQUIRE_TRUE(bank.VisibleParameter(1) == depth);
-    REQUIRE_TRUE(bank.VisibleParameter(2) == &carrier);
+    REQUIRE_TRUE(bank.VisibleParameter(2) == nullptr);
+    REQUIRE_TRUE(bank.VisibleParameter(3) == &carrier);
     REQUIRE_TRUE(bank.TargetParameter() == &carrier);
 
     bank.HandleTick(1, {.leftScene = 0, .rightScene = 0, .blend = 0.0f}, 0.2f);
@@ -1612,6 +1662,425 @@ TEST_CASE(message_bus_bank_select_deselects_prior_modulation_view) {
     REQUIRE_TRUE(!bankA.ShowingModulation());
 }
 
+struct CountingMidiInProcessor : synth::MidiInProcessor {
+    int count = 0;
+    synth::BasicMidi last;
+
+    void Process(const synth::BasicMidi& midi) override {
+        ++count;
+        last = midi;
+    }
+};
+
+struct FakeMidiSink : synth::IMidiOutputSink {
+    std::vector<synth::BasicMidi> sent;
+
+    void Send(const synth::BasicMidi& midi) override {
+        sent.push_back(midi);
+    }
+};
+
+TEST_CASE(midi_basic_helpers_expose_raw_bytes_and_sizes) {
+    const synth::BasicMidi cc = synth::BasicMidi::CC(10, 2, 7, 99);
+    REQUIRE_TRUE(cc.timestamp == 10);
+    REQUIRE_TRUE(cc.Size() == 3);
+    REQUIRE_TRUE(cc.Status() == synth::BasicMidi::kStatusCC);
+    REQUIRE_TRUE(cc.Channel() == 2);
+    REQUIRE_TRUE(cc.GetCC() == 7);
+    REQUIRE_TRUE(cc.GetValue() == 99);
+    REQUIRE_TRUE(cc.raw[0] == 0xB2);
+
+    const synth::BasicMidi note = synth::BasicMidi::Note(11, 3, 60, 100);
+    REQUIRE_TRUE(note.Status() == synth::BasicMidi::kStatusNote);
+    REQUIRE_TRUE(note.Channel() == 3);
+    REQUIRE_TRUE(note.GetNote() == 60);
+    REQUIRE_TRUE(note.GetValue() == 100);
+
+    const synth::BasicMidi noteOff = synth::BasicMidi::Note(12, 4, 61, 0);
+    REQUIRE_TRUE(noteOff.Status() == synth::BasicMidi::kStatusNoteOff);
+    REQUIRE_TRUE(noteOff.Channel() == 4);
+    REQUIRE_TRUE(noteOff.GetNote() == 61);
+
+    const synth::BasicMidi bend = synth::BasicMidi::PitchBend(13, 5, 0x1234);
+    REQUIRE_TRUE(bend.Status() == synth::BasicMidi::kStatusPitchBend);
+    REQUIRE_TRUE(bend.Channel() == 5);
+    REQUIRE_TRUE(bend.GetPitchBend() == 0x1234);
+
+    const synth::BasicMidi clock = synth::BasicMidi::Clock(44);
+    REQUIRE_TRUE(clock.timestamp == 44);
+    REQUIRE_TRUE(clock.Size() == 1);
+    REQUIRE_TRUE(clock.raw[0] == synth::BasicMidi::kStatusClock);
+    REQUIRE_TRUE(synth::BasicMidi::IsSupportedRealtimeStatus(clock.raw[0]));
+    REQUIRE_TRUE(synth::BasicMidi::TransportStart(45).Size() == 1);
+    REQUIRE_TRUE(synth::BasicMidi::TransportContinue(46).Size() == 1);
+    REQUIRE_TRUE(synth::BasicMidi::TransportStop(47).Size() == 1);
+}
+
+TEST_CASE(midi_encoder_input_maps_scaled_turns_pushes_and_timestamps) {
+    synth::ParameterManager manager;
+    synth::MessageInBus bus(&manager, 16);
+    synth::EncoderMidiInConfig config = synth::EncoderMidiInConfig::TwisterDefault(1);
+    config.turnStep = 0.01f;
+    config.KeepFirstPositions(6);
+    synth::EncoderMidiInProcessor processor(config, &bus);
+    processor.SetTimestampProvider([] { return 0; });
+
+    processor.Process(synth::BasicMidi::CC(9999, 0, 5, 63));
+    synth::MessageIn message;
+    REQUIRE_TRUE(bus.Pop(message, 0));
+    REQUIRE_TRUE(message.type == synth::MessageIn::Type::ParamIncDec);
+    REQUIRE_TRUE(message.timestamp == 0);
+    REQUIRE_TRUE(message.slotIx == 1);
+    REQUIRE_TRUE(message.position == 5);
+    REQUIRE_NEAR(message.delta, -0.01f, 0.000001f);
+
+    processor.Process(synth::BasicMidi::CC(9999, 0, 5, 66));
+    REQUIRE_TRUE(bus.Pop(message, 0));
+    REQUIRE_TRUE(message.type == synth::MessageIn::Type::ParamIncDec);
+    REQUIRE_TRUE(message.timestamp == 0);
+    REQUIRE_TRUE(message.slotIx == 1);
+    REQUIRE_TRUE(message.position == 5);
+    REQUIRE_NEAR(message.delta, 0.02f, 0.000001f);
+
+    processor.Process(synth::BasicMidi::CC(9999, 1, 5, 127));
+    REQUIRE_TRUE(bus.Pop(message, 0));
+    REQUIRE_TRUE(message.type == synth::MessageIn::Type::ParamPush);
+    REQUIRE_TRUE(message.timestamp == 0);
+    REQUIRE_TRUE(message.slotIx == 1);
+    REQUIRE_TRUE(message.position == 5);
+}
+
+TEST_CASE(midi_encoder_input_direction_only_zero_and_thru_behavior) {
+    synth::MessageInBus bus(nullptr, 16);
+    synth::EncoderMidiInConfig config;
+    config.relativeMode = synth::EncoderRelativeMode::DirectionOnly;
+    config.turnStep = 0.01f;
+    config.turns.push_back({.control = {.channel = 0, .cc = 1}, .slotIx = 0, .position = 0});
+    config.pushes.push_back({.control = {.channel = 1, .cc = 1}, .slotIx = 0, .position = 0});
+    synth::EncoderMidiInProcessor processor(config, &bus);
+    CountingMidiInProcessor thru;
+    processor.SetThru(&thru);
+
+    processor.Process(synth::BasicMidi::CC(1, 0, 1, 1));
+    synth::MessageIn message;
+    REQUIRE_TRUE(bus.Pop(message, 0));
+    REQUIRE_NEAR(message.delta, -0.01f, 0.000001f);
+
+    processor.Process(synth::BasicMidi::CC(1, 0, 1, 64));
+    REQUIRE_TRUE(!bus.Pop(message, 0));
+
+    processor.Process(synth::BasicMidi::CC(1, 0, 1, 127));
+    REQUIRE_TRUE(bus.Pop(message, 0));
+    REQUIRE_NEAR(message.delta, 0.01f, 0.000001f);
+
+    processor.Process(synth::BasicMidi::CC(1, 1, 1, 0));
+    REQUIRE_TRUE(!bus.Pop(message, 0));
+    REQUIRE_TRUE(thru.count == 0);
+
+    processor.Process(synth::BasicMidi::CC(1, 9, 9, 99));
+    REQUIRE_TRUE(thru.count == 1);
+    REQUIRE_TRUE(thru.last.Channel() == 9);
+    REQUIRE_TRUE(thru.last.GetCC() == 9);
+}
+
+TEST_CASE(midi_encoder_default_presets_map_row_major_and_trim) {
+    synth::EncoderMidiInConfig twister = synth::EncoderMidiInConfig::TwisterDefault(2);
+    REQUIRE_TRUE(twister.relativeMode == synth::EncoderRelativeMode::Signed7Bit);
+    REQUIRE_NEAR(twister.turnStep, 1.0f / 128.0f, 0.000001f);
+    REQUIRE_TRUE(twister.turns.size() == 16);
+    REQUIRE_TRUE(twister.pushes.size() == 16);
+    REQUIRE_TRUE(twister.turns.front().control.channel == 0);
+    REQUIRE_TRUE(twister.turns.front().control.cc == 0);
+    REQUIRE_TRUE(twister.turns.front().slotIx == 2);
+    REQUIRE_TRUE(twister.turns.front().position == 0);
+    REQUIRE_TRUE(twister.turns.back().control.channel == 0);
+    REQUIRE_TRUE(twister.turns.back().control.cc == 15);
+    REQUIRE_TRUE(twister.turns.back().position == 15);
+    REQUIRE_TRUE(twister.pushes.front().control.channel == 1);
+    REQUIRE_TRUE(twister.pushes.back().control.cc == 15);
+
+    synth::EncoderMidiInConfig wrld = synth::EncoderMidiInConfig::WrldBldrDefault(3);
+    REQUIRE_TRUE(wrld.turns.front().control.channel == 0);
+    REQUIRE_TRUE(wrld.pushes.front().control.channel == 1);
+    REQUIRE_TRUE(wrld.turns.back().slotIx == 3);
+    REQUIRE_TRUE(wrld.turns.back().position == 15);
+
+    wrld.KeepFirstPositions(3);
+    REQUIRE_TRUE(wrld.turns.size() == 3);
+    REQUIRE_TRUE(wrld.pushes.size() == 3);
+    REQUIRE_TRUE(wrld.turns.back().control.cc == 2);
+}
+
+TEST_CASE(midi_encoder_input_supports_incomplete_and_multi_slot_maps) {
+    synth::MessageInBus bus(nullptr, 16);
+    synth::EncoderMidiInConfig config;
+    config.turnStep = 0.5f;
+    config.turns.push_back({.control = {.channel = 0, .cc = 1}, .slotIx = 0, .position = 2});
+    config.turns.push_back({.control = {.channel = 0, .cc = 7}, .slotIx = 4, .position = 3});
+    synth::EncoderMidiInProcessor processor(config, &bus);
+    processor.SetTimestampProvider([] { return 123; });
+
+    processor.Process(synth::BasicMidi::CC(1, 0, 1, 65));
+    synth::MessageIn message;
+    REQUIRE_TRUE(bus.Pop(message, 123));
+    REQUIRE_TRUE(message.slotIx == 0);
+    REQUIRE_TRUE(message.position == 2);
+    REQUIRE_NEAR(message.delta, 0.5f, 0.000001f);
+
+    processor.Process(synth::BasicMidi::CC(1, 0, 7, 62));
+    REQUIRE_TRUE(bus.Pop(message, 123));
+    REQUIRE_TRUE(message.slotIx == 4);
+    REQUIRE_TRUE(message.position == 3);
+    REQUIRE_NEAR(message.delta, -1.0f, 0.000001f);
+
+    processor.Process(synth::BasicMidi::CC(1, 0, 2, 65));
+    REQUIRE_TRUE(!bus.Pop(message, 123));
+}
+
+TEST_CASE(midi_sender_delivers_fifo_and_stops_cleanly) {
+    FakeMidiSink sink;
+    synth::MidiSender sender;
+    sender.SetSink(&sink);
+    sender.Start();
+    REQUIRE_TRUE(sender.Enqueue(synth::BasicMidi::CC(0, 0, 1, 2)));
+    REQUIRE_TRUE(sender.Enqueue(synth::BasicMidi::CC(0, 0, 3, 4)));
+    sender.FlushForTests(std::chrono::milliseconds(500));
+    sender.Stop();
+    sender.Stop();
+    REQUIRE_TRUE(sink.sent.size() == 2);
+    REQUIRE_TRUE(sink.sent[0].GetCC() == 1);
+    REQUIRE_TRUE(sink.sent[1].GetCC() == 3);
+}
+
+TEST_CASE(twister_output_debounces_reset_and_uses_channels) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 1,
+        .numScenes = 2,
+        .maxParameters = 4,
+        .processLiteAlpha = 1.0f,
+    });
+    auto& parameter = manager.CreateParameter(group, {
+        .name = "Cutoff",
+        .shortName = "Cut",
+        .defaultValue = 0.5f,
+        .color = synth::Color::Green,
+    });
+    auto& bank = manager.CreateBank();
+    bank.AddMapping(10, parameter);
+    auto& slot = manager.CreateBankSlot();
+    slot.AddPhysicalEncoder(10);
+    slot.SelectBank(&bank);
+    parameter.Compute(manager.Scene());
+    parameter.ProcessLite();
+    auto ui = manager.CreateUIState();
+    manager.PopulateUIState(*ui);
+
+    FakeMidiSink sink;
+    synth::MidiSender sender;
+    sender.SetSink(&sink);
+    sender.Start();
+    auto config = synth::EncoderMidiOutConfig::TwisterDefault(0);
+    config.KeepFirstPositions(1);
+    synth::TwisterMidiOutProcessor processor(config, &sender, ui.get());
+    processor.Process();
+    sender.FlushForTests(std::chrono::milliseconds(500));
+    REQUIRE_TRUE(sink.sent.size() == 3);
+    REQUIRE_TRUE(sink.sent[0].Channel() == 1);
+    REQUIRE_TRUE(sink.sent[0].GetCC() == 0);
+    REQUIRE_TRUE(sink.sent[0].GetValue() != 0);
+    REQUIRE_TRUE(sink.sent[1].Channel() == 2);
+    REQUIRE_TRUE(sink.sent[1].GetValue() == synth::FullBrightnessAnimationValue());
+    REQUIRE_TRUE(sink.sent[2].Channel() == 0);
+    REQUIRE_TRUE(sink.sent[2].GetValue() == 64);
+    const std::size_t afterFirst = sink.sent.size();
+
+    processor.Process();
+    sender.FlushForTests(std::chrono::milliseconds(500));
+    REQUIRE_TRUE(sink.sent.size() == afterFirst);
+
+    processor.Reset();
+    processor.Process();
+    sender.FlushForTests(std::chrono::milliseconds(500));
+    REQUIRE_TRUE(sink.sent.size() == afterFirst + 3);
+    sender.Stop();
+}
+
+TEST_CASE(twister_output_skips_unstable_snapshot_without_cache_update) {
+    synth::ParameterManager::UIState ui;
+    ui.Configure(1, 1, 1, 0);
+    ui.slots[0].connected.store(true);
+    ui.slots[0].cells[0].revision.store(1);
+    ui.slots[0].cells[0].connected.store(true);
+    ui.slots[0].cells[0].voiceCount.store(1);
+    ui.slots[0].cells[0].values[0].store(0.25f);
+    ui.slots[0].cells[0].color.Store(synth::Color::Red);
+    ui.slots[0].cells[0].indicatorColors[0].Store(synth::Color::Cyan);
+
+    FakeMidiSink sink;
+    synth::MidiSender sender;
+    sender.SetSink(&sink);
+    sender.Start();
+    auto config = synth::EncoderMidiOutConfig::TwisterDefault(0);
+    config.KeepFirstPositions(1);
+    synth::TwisterMidiOutProcessor processor(config, &sender, &ui);
+
+    processor.Process();
+    sender.FlushForTests(std::chrono::milliseconds(200));
+    REQUIRE_TRUE(sink.sent.empty());
+
+    auto& stableCell = ui.slots[0].cells[0];
+    stableCell.revision.store(2);
+    stableCell.connected.store(true);
+    stableCell.voiceCount.store(1);
+    stableCell.values[0].store(0.25f);
+    stableCell.color.Store(synth::Color::Red);
+    stableCell.indicatorColors[0].Store(synth::Color::Cyan);
+    processor.Process();
+    sender.FlushForTests(std::chrono::milliseconds(500));
+    sender.Stop();
+    REQUIRE_TRUE(sink.sent.size() == 3);
+}
+
+TEST_CASE(twister_output_blanks_disconnected_mapped_cells_once) {
+    synth::ParameterManager::UIState ui;
+    ui.Configure(1, 1, 1, 0);
+
+    FakeMidiSink sink;
+    synth::MidiSender sender;
+    sender.SetSink(&sink);
+    sender.Start();
+    auto config = synth::EncoderMidiOutConfig::TwisterDefault(0);
+    config.KeepFirstPositions(1);
+    synth::TwisterMidiOutProcessor processor(config, &sender, &ui);
+
+    processor.Process();
+    sender.FlushForTests(std::chrono::milliseconds(500));
+    REQUIRE_TRUE(sink.sent.size() == 3);
+    REQUIRE_TRUE(sink.sent[0].Channel() == 1);
+    REQUIRE_TRUE(sink.sent[0].GetValue() == 0);
+    REQUIRE_TRUE(sink.sent[1].Channel() == 2);
+    REQUIRE_TRUE(sink.sent[1].GetValue() == 0);
+    REQUIRE_TRUE(sink.sent[2].Channel() == 0);
+    REQUIRE_TRUE(sink.sent[2].GetValue() == 0);
+
+    processor.Process();
+    sender.FlushForTests(std::chrono::milliseconds(500));
+    sender.Stop();
+    REQUIRE_TRUE(sink.sent.size() == 3);
+}
+
+TEST_CASE(wrld_bldr_output_sends_value_and_source_derived_sysex) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numScenes = 1,
+        .maxParameters = 1,
+        .processLiteAlpha = 1.0f,
+        .voiceIndicatorColors = {synth::Color::Cyan},
+    });
+    auto& parameter = manager.CreateParameter(group, {
+        .name = "Gain",
+        .defaultValue = 0.25f,
+        .color = synth::Color::Orange,
+    });
+    auto& bank = manager.CreateBank();
+    bank.AddMapping(10, parameter);
+    auto& slot = manager.CreateBankSlot();
+    slot.AddPhysicalEncoder(10);
+    slot.SelectBank(&bank);
+    parameter.Compute(manager.Scene());
+    parameter.ProcessLite();
+    auto ui = manager.CreateUIState();
+    manager.PopulateUIState(*ui);
+
+    FakeMidiSink sink;
+    synth::MidiSender sender;
+    sender.SetSink(&sink);
+    sender.Start();
+    auto config = synth::EncoderMidiOutConfig::WrldBldrDefault(0);
+    config.KeepFirstPositions(1);
+    synth::WrldBldrMidiOutProcessor processor(config, &sender, ui.get());
+    processor.Process();
+    sender.FlushForTests(std::chrono::milliseconds(500));
+    REQUIRE_TRUE(sink.sent.size() == 3);
+    REQUIRE_TRUE(sink.sent[0].Status() == synth::BasicMidi::kStatusCC);
+    REQUIRE_TRUE(sink.sent[0].Channel() == 0);
+    REQUIRE_TRUE(sink.sent[0].GetCC() == 0);
+    REQUIRE_TRUE(sink.sent[0].GetValue() == 32);
+
+    const synth::BasicMidi& button = sink.sent[1];
+    REQUIRE_TRUE(button.raw.size() == 14);
+    REQUIRE_TRUE(button.raw[0] == 0xF0);
+    REQUIRE_TRUE(button.raw[1] == 0x79);
+    REQUIRE_TRUE(button.raw[2] == 0x74);
+    REQUIRE_TRUE(button.raw[3] == 0x78);
+    REQUIRE_TRUE(button.raw[4] == 0x00);
+    REQUIRE_TRUE(button.raw[5] == 0x01);
+    REQUIRE_TRUE(button.raw[6] == 0x00);
+    REQUIRE_TRUE(button.raw[7] == 0x20);
+    REQUIRE_TRUE(button.raw[8] == 1);
+    REQUIRE_TRUE(button.raw[9] == 0);
+    REQUIRE_TRUE(button.raw[10] == synth::Color::Orange.r / 2);
+    REQUIRE_TRUE(button.raw[11] == synth::Color::Orange.g / 2);
+    REQUIRE_TRUE(button.raw[12] == synth::Color::Orange.b / 2);
+    REQUIRE_TRUE(button.raw[13] == 0xF7);
+
+    const synth::BasicMidi& indicator = sink.sent[2];
+    REQUIRE_TRUE(indicator.raw.size() == 14);
+    REQUIRE_TRUE(indicator.raw[8] == 0);
+    REQUIRE_TRUE(indicator.raw[9] == 0);
+    REQUIRE_TRUE(indicator.raw[10] == synth::Color::Cyan.r / 2);
+    REQUIRE_TRUE(indicator.raw[11] == synth::Color::Cyan.g / 2);
+    REQUIRE_TRUE(indicator.raw[12] == synth::Color::Cyan.b / 2);
+    REQUIRE_TRUE(indicator.raw[13] == 0xF7);
+
+    const std::size_t afterFirst = sink.sent.size();
+    processor.Process();
+    sender.FlushForTests(std::chrono::milliseconds(500));
+    REQUIRE_TRUE(sink.sent.size() == afterFirst);
+
+    processor.Reset();
+    processor.Process();
+    sender.FlushForTests(std::chrono::milliseconds(500));
+    REQUIRE_TRUE(sink.sent.size() == afterFirst + 3);
+    sender.Stop();
+}
+
+TEST_CASE(wrld_bldr_output_blanks_disconnected_mapped_cells_once) {
+    synth::ParameterManager::UIState ui;
+    ui.Configure(1, 1, 1, 0);
+
+    FakeMidiSink sink;
+    synth::MidiSender sender;
+    sender.SetSink(&sink);
+    sender.Start();
+    auto config = synth::EncoderMidiOutConfig::WrldBldrDefault(0);
+    config.KeepFirstPositions(1);
+    synth::WrldBldrMidiOutProcessor processor(config, &sender, &ui);
+
+    processor.Process();
+    sender.FlushForTests(std::chrono::milliseconds(500));
+    REQUIRE_TRUE(sink.sent.size() == 3);
+    REQUIRE_TRUE(sink.sent[0].Status() == synth::BasicMidi::kStatusCC);
+    REQUIRE_TRUE(sink.sent[0].Channel() == 0);
+    REQUIRE_TRUE(sink.sent[0].GetValue() == 0);
+    REQUIRE_TRUE(sink.sent[1].raw[8] == 1);
+    REQUIRE_TRUE(sink.sent[1].raw[10] == 0);
+    REQUIRE_TRUE(sink.sent[1].raw[11] == 0);
+    REQUIRE_TRUE(sink.sent[1].raw[12] == 0);
+    REQUIRE_TRUE(sink.sent[2].raw[8] == 0);
+    REQUIRE_TRUE(sink.sent[2].raw[10] == 0);
+    REQUIRE_TRUE(sink.sent[2].raw[11] == 0);
+    REQUIRE_TRUE(sink.sent[2].raw[12] == 0);
+
+    processor.Process();
+    sender.FlushForTests(std::chrono::milliseconds(500));
+    sender.Stop();
+    REQUIRE_TRUE(sink.sent.size() == 3);
+}
+
 TEST_CASE(message_bus_single_producer_single_consumer_threaded_order) {
     constexpr std::size_t kMessages = 1000;
     synth::MessageInBus bus(nullptr, 64);
@@ -1687,6 +2156,7 @@ constexpr std::size_t kSimVoices = 4;
 constexpr std::size_t kSimMods = 3;
 constexpr std::size_t kSimGestures = 2;
 constexpr std::size_t kSimScenes = 3;
+constexpr std::array<synth::PhysicalEncoderId, 5> kSimSlotEncoders{10, 11, 12, 20, 21};
 
 struct SimCell {
     synth::PhysicalEncoderId encoder = 0;
@@ -1987,19 +2457,19 @@ void SimProcessLiteAll(SimOracle& oracle) {
 void SimOpenModulationView(SimOracle& oracle, SimBank& bank, int paramIx) {
     bank.selectedParameter = paramIx;
     bank.visible.clear();
-    if (bank.top.empty()) {
-        return;
+
+    if (kSimMods > kSimSlotEncoders.size() - 1) {
+        throw std::logic_error("simulation slot has too many modulators");
     }
 
-    const std::size_t depthCellCount = std::min<std::size_t>(kSimMods, bank.top.size() - 1);
-    for (std::size_t cellIx = 0; cellIx < depthCellCount; ++cellIx) {
+    for (std::size_t cellIx = 0; cellIx < kSimMods; ++cellIx) {
         bank.visible.push_back({
-            .encoder = bank.top[cellIx].encoder,
+            .encoder = kSimSlotEncoders[cellIx],
             .parameter = oracle.params[static_cast<std::size_t>(paramIx)].route[cellIx],
         });
     }
     bank.visible.push_back({
-        .encoder = bank.top[depthCellCount].encoder,
+        .encoder = kSimSlotEncoders.back(),
         .parameter = paramIx,
     });
 }
@@ -2101,7 +2571,7 @@ void SimRevertToDefault(SimOracle& oracle, SimParam& parameter) {
 }
 
 bool SimEncoderIsPhysical(synth::PhysicalEncoderId encoder) {
-    return encoder == 10 || encoder == 11 || encoder == 12 || encoder == 20 || encoder == 21;
+    return std::find(kSimSlotEncoders.begin(), kSimSlotEncoders.end(), encoder) != kSimSlotEncoders.end();
 }
 
 void SimHandlePress(SimOracle& oracle, synth::PhysicalEncoderId encoder) {
@@ -2277,7 +2747,6 @@ void SimCheck(const SimOracle& oracle, const std::array<synth::Parameter*, kSimP
         }
     }
 
-    const std::array<synth::PhysicalEncoderId, 5> encoders{10, 11, 12, 20, 21};
     for (std::size_t bankIx = 0; bankIx < banks.size(); ++bankIx) {
         const SimBank& expected = oracle.banks[bankIx];
         const synth::Bank& actual = *banks[bankIx];
@@ -2289,7 +2758,7 @@ void SimCheck(const SimOracle& oracle, const std::array<synth::Parameter*, kSimP
         if (actual.SelectedParameter() != expectedSelected) {
             SimFailBool(seed, step, action, "bankIx=" + std::to_string(bankIx) + " selected parameter");
         }
-        for (const synth::PhysicalEncoderId encoder : encoders) {
+        for (const synth::PhysicalEncoderId encoder : kSimSlotEncoders) {
             const SimCell* cell = SimFindCell(expected, encoder);
             const synth::Parameter* expectedVisible =
                 cell == nullptr || cell->parameter < 0 ? nullptr : params[static_cast<std::size_t>(cell->parameter)];
@@ -2313,15 +2782,14 @@ void SimCheckUIState(const SimOracle& oracle, const synth::ParameterManager::UIS
     }
 
     const SimBank& bank = oracle.banks[static_cast<std::size_t>(oracle.selectedBank)];
-    const std::array<synth::PhysicalEncoderId, 5> slotEncoders{10, 11, 12, 20, 21};
     const std::array<synth::Color, 4> defaultIndicators{
         synth::Color::Cyan,
         synth::Color::Orange,
         synth::Color::Green,
         synth::Color::Indigo,
     };
-    for (std::size_t position = 0; position < slotEncoders.size(); ++position) {
-        const SimCell* cell = SimFindCell(bank, slotEncoders[position]);
+    for (std::size_t position = 0; position < kSimSlotEncoders.size(); ++position) {
+        const SimCell* cell = SimFindCell(bank, kSimSlotEncoders[position]);
         const synth::Parameter::UIState& actual = ui.slots[0].cells[position];
         const bool expectedConnected = cell != nullptr && cell->parameter >= 0;
         if (actual.connected.load() != expectedConnected) {

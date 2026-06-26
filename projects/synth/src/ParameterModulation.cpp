@@ -989,6 +989,11 @@ bool Bank::OwnsVisible(PhysicalEncoderId encoderId) const {
 }
 
 void Bank::HandlePress(PhysicalEncoderId encoderId) {
+    const std::vector<PhysicalEncoderId> layout = CompactPhysicalLayout();
+    HandlePress(encoderId, layout);
+}
+
+void Bank::HandlePress(PhysicalEncoderId encoderId, std::span<const PhysicalEncoderId> physicalLayout) {
     Cell* cell = FindVisibleCell(encoderId);
     if (cell == nullptr) {
         return;
@@ -998,7 +1003,7 @@ void Bank::HandlePress(PhysicalEncoderId encoderId) {
         return;
     }
     if (cell->parameter != nullptr) {
-        OpenModulationView(*cell->parameter);
+        OpenModulationView(*cell->parameter, physicalLayout);
     }
 }
 
@@ -1087,11 +1092,14 @@ Parameter* Bank::EnsureModulationDepthParameter(Parameter& parameter, std::size_
         return nullptr;
     }
 
+    const ModulatorMetadata& modulator = parameter.Group().GetModulators().Metadata(modIx);
     ParameterConfig config{
-        .name = parameter.Name() + " Mod Depth " + std::to_string(modIx + 1),
-        .shortName = parameter.ShortName(),
+        .name = modulator.name.empty() ? parameter.Name() + " Mod Depth " + std::to_string(modIx + 1)
+                                       : modulator.name,
+        .shortName = modulator.shortName.empty() ? parameter.ShortName() : modulator.shortName,
         .defaultValue = 0.0f,
         .range = RangeKind::Bipolar,
+        .color = modulator.color,
     };
     Parameter& created = manager_->CreateParameter(parameter.Group(), std::move(config));
     if (!parameter.AssignModulationDepth(modIx, &created)) {
@@ -1100,27 +1108,39 @@ Parameter* Bank::EnsureModulationDepthParameter(Parameter& parameter, std::size_
     return &created;
 }
 
-void Bank::OpenModulationView(Parameter& parameter) {
-    selected_ = &parameter;
-    visible_.clear();
-
-    if (topLevel_.empty()) {
-        return;
+void Bank::OpenModulationView(Parameter& parameter, std::span<const PhysicalEncoderId> physicalLayout) {
+    if (physicalLayout.empty()) {
+        throw std::logic_error("modulation view requires at least one physical position");
     }
 
     const std::size_t modulatorCount = parameter.Group().Config().numModulators;
-    const std::size_t depthCellCount = std::min(modulatorCount, topLevel_.size() - 1);
-    for (std::size_t cellIx = 0; cellIx < depthCellCount; ++cellIx) {
+    if (modulatorCount > physicalLayout.size() - 1) {
+        throw std::logic_error("modulation view has more modulators than slot depth positions");
+    }
+
+    selected_ = &parameter;
+    visible_.clear();
+
+    for (std::size_t cellIx = 0; cellIx < modulatorCount; ++cellIx) {
         visible_.push_back({
-            .encoderId = topLevel_[cellIx].encoderId,
+            .encoderId = physicalLayout[cellIx],
             .parameter = EnsureModulationDepthParameter(parameter, cellIx),
         });
     }
 
     visible_.push_back({
-        .encoderId = topLevel_[depthCellCount].encoderId,
+        .encoderId = physicalLayout.back(),
         .parameter = &parameter,
     });
+}
+
+std::vector<PhysicalEncoderId> Bank::CompactPhysicalLayout() const {
+    std::vector<PhysicalEncoderId> layout;
+    layout.reserve(topLevel_.size());
+    for (const Cell& cell : topLevel_) {
+        layout.push_back(cell.encoderId);
+    }
+    return layout;
 }
 
 void BankSlot::SelectBank(Bank* bank) {
@@ -1142,7 +1162,7 @@ void BankSlot::AddPhysicalEncoder(PhysicalEncoderId encoderId) {
 
 void BankSlot::HandlePress(PhysicalEncoderId encoderId) {
     if (Owns(encoderId)) {
-        selectedBank_->HandlePress(encoderId);
+        selectedBank_->HandlePress(encoderId, physicalEncoders_);
     }
 }
 

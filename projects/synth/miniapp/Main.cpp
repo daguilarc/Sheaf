@@ -2,6 +2,8 @@
 
 #include "DemoModulation.hpp"
 #include "EncoderComponent.hpp"
+#include "MidiHandlers.hpp"
+#include "synth/MidiController.hpp"
 #include "synth/ParameterModulation.hpp"
 
 #include <array>
@@ -26,6 +28,7 @@ public:
         });
         groupA_ = &groupA;
         groupA.GetModulators().Metadata(0).name = "Demo LFO";
+        groupA.GetModulators().Metadata(0).shortName = "LFO";
         groupA.GetModulators().Metadata(0).color = synth::Color::Cyan;
         groupA.GetModulators().Metadata(0).connected = true;
         auto& groupB = manager_.CreateGroup({
@@ -38,6 +41,7 @@ public:
         });
         groupB_ = &groupB;
         groupB.GetModulators().Metadata(0).name = "Tri LFO";
+        groupB.GetModulators().Metadata(0).shortName = "Tri";
         groupB.GetModulators().Metadata(0).color = synth::Color::Red;
         groupB.GetModulators().Metadata(0).connected = true;
         manager_.GestureMetadataAt(0).name = "Gesture 1";
@@ -67,6 +71,9 @@ public:
         manager_.SetSceneEndpoints(0, 1);
         uiState_ = manager_.CreateUIState();
         bus_.SetManager(&manager_);
+        midiBus_.SetManager(&manager_);
+        midiSender_.SetSink(&midiOutputHandler_);
+        midiSender_.Start();
 
         for (std::size_t ix = 0; ix < encoders_.size(); ++ix) {
             addAndMakeVisible(encoders_[ix]);
@@ -98,8 +105,18 @@ public:
         };
         addAndMakeVisible(blendSlider_);
 
-        setSize(760, 380);
+        configureMidiControls();
+        rebuildMidiProcessors();
+
+        setSize(820, 460);
         startTimerHz(30);
+    }
+
+    ~MainComponent() override {
+        stopTimer();
+        midiInHandler_.Close();
+        midiOutputHandler_.Close();
+        midiSender_.Stop();
     }
 
     void paint(juce::Graphics& g) override {
@@ -128,6 +145,15 @@ public:
         auto sliders = area.removeFromTop(80);
         gestureSlider_.setBounds(sliders.removeFromLeft(getWidth() / 2 - 24).reduced(8));
         blendSlider_.setBounds(sliders.reduced(8));
+        auto midi = area.removeFromTop(96).reduced(4);
+        const int comboWidth = juce::jmax(120, midi.getWidth() / 5);
+        controllerPresetBox_.setBounds(midi.removeFromLeft(comboWidth).reduced(4));
+        refreshMidiButton_.setBounds(midi.removeFromLeft(74).reduced(4));
+        midiInputBox_.setBounds(midi.removeFromLeft(comboWidth).reduced(4));
+        openInputButton_.setBounds(midi.removeFromLeft(82).reduced(4));
+        midiOutputBox_.setBounds(midi.removeFromLeft(comboWidth).reduced(4));
+        openOutputButton_.setBounds(midi.removeFromLeft(82).reduced(4));
+        midiStatusLabel_.setBounds(midi.reduced(4));
     }
 
 private:
@@ -135,6 +161,146 @@ private:
         button.setButtonText(text);
         button.onClick = std::move(callback);
         addAndMakeVisible(button);
+    }
+
+    enum class ControllerPreset {
+        Twister,
+        WrldBldr,
+    };
+
+    ControllerPreset selectedPreset() const {
+        return controllerPresetBox_.getSelectedId() == 2 ? ControllerPreset::WrldBldr : ControllerPreset::Twister;
+    }
+
+    void configureMidiControls() {
+        controllerPresetBox_.addItem("Twister", 1);
+        controllerPresetBox_.addItem("Wrld.Bldr", 2);
+        controllerPresetBox_.setSelectedId(1, juce::dontSendNotification);
+        controllerPresetBox_.onChange = [this] { rebuildMidiProcessors(); };
+        addAndMakeVisible(controllerPresetBox_);
+
+        refreshMidiButton_.setButtonText("Refresh");
+        refreshMidiButton_.onClick = [this] { refreshMidiDevices(); };
+        addAndMakeVisible(refreshMidiButton_);
+
+        midiInputBox_.setTextWhenNoChoicesAvailable("No inputs");
+        midiInputBox_.setTextWhenNothingSelected("MIDI input");
+        addAndMakeVisible(midiInputBox_);
+
+        midiOutputBox_.setTextWhenNoChoicesAvailable("No outputs");
+        midiOutputBox_.setTextWhenNothingSelected("MIDI output");
+        addAndMakeVisible(midiOutputBox_);
+
+        openInputButton_.onClick = [this] { toggleMidiInput(); };
+        addAndMakeVisible(openInputButton_);
+        openOutputButton_.onClick = [this] { toggleMidiOutput(); };
+        addAndMakeVisible(openOutputButton_);
+
+        midiStatusLabel_.setColour(juce::Label::textColourId, juce::Colours::white);
+        midiStatusLabel_.setJustificationType(juce::Justification::centredLeft);
+        addAndMakeVisible(midiStatusLabel_);
+
+        refreshMidiDevices();
+        updateMidiStatus();
+    }
+
+    void refreshMidiDevices() {
+        midiInputDevices_ = synth_juce::MidiInHandler::AvailableDevices();
+        midiOutputDevices_ = synth_juce::MidiOutputHandler::AvailableDevices();
+
+        midiInputBox_.clear(juce::dontSendNotification);
+        for (int ix = 0; ix < midiInputDevices_.size(); ++ix) {
+            midiInputBox_.addItem(midiInputDevices_[ix].name, ix + 1);
+        }
+        if (midiInputDevices_.size() > 0 && midiInputBox_.getSelectedId() == 0) {
+            midiInputBox_.setSelectedId(1, juce::dontSendNotification);
+        }
+
+        midiOutputBox_.clear(juce::dontSendNotification);
+        for (int ix = 0; ix < midiOutputDevices_.size(); ++ix) {
+            midiOutputBox_.addItem(midiOutputDevices_[ix].name, ix + 1);
+        }
+        if (midiOutputDevices_.size() > 0 && midiOutputBox_.getSelectedId() == 0) {
+            midiOutputBox_.setSelectedId(1, juce::dontSendNotification);
+        }
+
+        updateMidiStatus();
+    }
+
+    void rebuildMidiProcessors() {
+        synth::EncoderMidiInConfig inputConfig = selectedPreset() == ControllerPreset::WrldBldr
+                                                     ? synth::EncoderMidiInConfig::WrldBldrDefault(0)
+                                                     : synth::EncoderMidiInConfig::TwisterDefault(0);
+        inputConfig.KeepFirstPositions(encoders_.size());
+        auto inputProcessor = std::make_unique<synth::EncoderMidiInProcessor>(std::move(inputConfig), &midiBus_);
+        inputProcessor->SetTimestampProvider([] { return 0; });
+        midiInHandler_.SetProcessor(std::move(inputProcessor));
+
+        synth::EncoderMidiOutConfig outputConfig = selectedPreset() == ControllerPreset::WrldBldr
+                                                      ? synth::EncoderMidiOutConfig::WrldBldrDefault(0)
+                                                      : synth::EncoderMidiOutConfig::TwisterDefault(0);
+        outputConfig.KeepFirstPositions(encoders_.size());
+        if (selectedPreset() == ControllerPreset::WrldBldr) {
+            midiOutProcessor_ =
+                std::make_unique<synth::WrldBldrMidiOutProcessor>(std::move(outputConfig), &midiSender_, uiState_.get());
+        } else {
+            midiOutProcessor_ =
+                std::make_unique<synth::TwisterMidiOutProcessor>(std::move(outputConfig), &midiSender_, uiState_.get());
+        }
+    }
+
+    juce::String selectedInputIdentifier() const {
+        const int selectedId = midiInputBox_.getSelectedId();
+        const int ix = selectedId - 1;
+        return ix >= 0 && ix < midiInputDevices_.size() ? midiInputDevices_[ix].identifier : juce::String();
+    }
+
+    juce::String selectedOutputIdentifier() const {
+        const int selectedId = midiOutputBox_.getSelectedId();
+        const int ix = selectedId - 1;
+        return ix >= 0 && ix < midiOutputDevices_.size() ? midiOutputDevices_[ix].identifier : juce::String();
+    }
+
+    void toggleMidiInput() {
+        if (midiInHandler_.IsOpen()) {
+            midiInHandler_.Close();
+            updateMidiStatus();
+            return;
+        }
+        rebuildMidiProcessors();
+        const juce::String identifier = selectedInputIdentifier();
+        if (identifier.isNotEmpty()) {
+            midiInHandler_.Open(identifier);
+        }
+        updateMidiStatus();
+    }
+
+    void toggleMidiOutput() {
+        if (midiOutputHandler_.IsOpen()) {
+            midiOutputHandler_.Close();
+            updateMidiStatus();
+            return;
+        }
+        const juce::String identifier = selectedOutputIdentifier();
+        if (identifier.isNotEmpty() && midiOutputHandler_.Open(identifier) && midiOutProcessor_ != nullptr) {
+            midiOutProcessor_->Reset();
+        }
+        updateMidiStatus();
+    }
+
+    void updateMidiStatus() {
+        openInputButton_.setButtonText(midiInHandler_.IsOpen() ? "Close In" : "Open In");
+        openOutputButton_.setButtonText(midiOutputHandler_.IsOpen() ? "Close Out" : "Open Out");
+        juce::String status = midiInHandler_.IsOpen() ? "In " + midiInHandler_.DeviceName() : "In closed";
+        status += " / ";
+        status += midiOutputHandler_.IsOpen() ? "Out " + midiOutputHandler_.DeviceName() : "Out closed";
+        if (midiInHandler_.LastError().isNotEmpty()) {
+            status += " / " + midiInHandler_.LastError();
+        }
+        if (midiOutputHandler_.LastError().isNotEmpty()) {
+            status += " / " + midiOutputHandler_.LastError();
+        }
+        midiStatusLabel_.setText(status, juce::dontSendNotification);
     }
 
     static juce::Colour toJuce(synth::Color color) {
@@ -180,12 +346,17 @@ private:
             groupB_->GetModulators().Value(voiceIx, 0) =
                 synth_miniapp::UnipolarSineModulator(phase_, synth_miniapp::ThreePhaseVoiceOffset(voiceIx));
         }
-        bus_.Process(nextTimestamp_++);
+        const std::uint64_t processTimestamp = nextTimestamp_++;
+        bus_.Process(processTimestamp);
+        midiBus_.Process(processTimestamp);
         for (synth::Parameter* parameter : parameters_) {
             parameter->Compute(manager_.Scene());
             parameter->ProcessLite();
         }
         manager_.PopulateUIState(*uiState_);
+        if (midiOutputHandler_.IsOpen() && midiOutProcessor_ != nullptr) {
+            midiOutProcessor_->Process();
+        }
         const bool gestureSelected = uiState_->gestures.gestureCapacity > 0 &&
                                      uiState_->gestures.selected[0].load(std::memory_order_relaxed);
         const synth::Color gestureColor = uiState_->gestures.gestureCapacity > 0
@@ -206,6 +377,7 @@ private:
 
     synth::ParameterManager manager_;
     synth::MessageInBus bus_{&manager_};
+    synth::MessageInBus midiBus_{&manager_};
     synth::ParameterGroup* groupA_ = nullptr;
     synth::ParameterGroup* groupB_ = nullptr;
     synth::Parameter* cutoff_ = nullptr;
@@ -231,6 +403,19 @@ private:
     juce::TextButton stopButton_;
     juce::Slider gestureSlider_;
     juce::Slider blendSlider_;
+    juce::ComboBox controllerPresetBox_;
+    juce::ComboBox midiInputBox_;
+    juce::ComboBox midiOutputBox_;
+    juce::TextButton refreshMidiButton_;
+    juce::TextButton openInputButton_;
+    juce::TextButton openOutputButton_;
+    juce::Label midiStatusLabel_;
+    juce::Array<juce::MidiDeviceInfo> midiInputDevices_;
+    juce::Array<juce::MidiDeviceInfo> midiOutputDevices_;
+    synth_juce::MidiInHandler midiInHandler_;
+    synth_juce::MidiOutputHandler midiOutputHandler_;
+    synth::MidiSender midiSender_;
+    std::unique_ptr<synth::MidiOutProcessor> midiOutProcessor_;
     std::uint64_t nextTimestamp_ = 1;
     float phase_ = 0.0f;
 };

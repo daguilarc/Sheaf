@@ -116,6 +116,7 @@ struct ParameterGroupConfig {
 
 struct ModulatorMetadata {
     std::string name;
+    std::string shortName;
     Color color;
     bool connected = false;
 };
@@ -359,6 +360,7 @@ public:
     void AddMapping(PhysicalEncoderId encoderId, Parameter& parameter);
     bool OwnsVisible(PhysicalEncoderId encoderId) const;
     void HandlePress(PhysicalEncoderId encoderId);
+    void HandlePress(PhysicalEncoderId encoderId, std::span<const PhysicalEncoderId> physicalLayout);
     void HandleShiftPress(PhysicalEncoderId encoderId, const SceneState& scene);
     void HandleTick(PhysicalEncoderId encoderId, const SceneState& scene, float delta);
     void Deselect();
@@ -379,7 +381,8 @@ private:
     Cell* FindVisibleCell(PhysicalEncoderId encoderId);
     const Cell* FindVisibleCell(PhysicalEncoderId encoderId) const;
     Parameter* EnsureModulationDepthParameter(Parameter& parameter, std::size_t modIx);
-    void OpenModulationView(Parameter& parameter);
+    void OpenModulationView(Parameter& parameter, std::span<const PhysicalEncoderId> physicalLayout);
+    std::vector<PhysicalEncoderId> CompactPhysicalLayout() const;
 
     ParameterManager* manager_ = nullptr;
     std::vector<Cell> topLevel_;

@@ -188,6 +188,9 @@ public:
         const float baseRadius = juce::jmin(bounds.getWidth(), bounds.getHeight()) * 0.43f;
 
         const auto snapshot = LoadSnapshot();
+        if (!snapshot.connected) {
+            return;
+        }
         const auto cellColor = snapshot.connected ? ToJuce(snapshot.color) : juce::Colour(56, 60, 62);
 
         DrawBackground(g, bounds, centerX, centerY, baseRadius, cellColor, snapshot.connected);
@@ -476,6 +479,7 @@ private:
 
         segmentDisplay_.SetText(text);
         segmentDisplay_.SetOnColor(snapshot.connected ? color.brighter(0.45f) : juce::Colour(92, 96, 98));
+        segmentDisplay_.setVisible(snapshot.connected);
     }
 
     std::uint64_t NextTimestamp(const juce::MouseEvent& event) {

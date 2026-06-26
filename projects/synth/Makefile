@@ -5,8 +5,8 @@ BUILD_DIR := build
 BUILD_SENTINEL := $(BUILD_DIR)/.dir
 LIB := $(BUILD_DIR)/libsynth.a
 TEST_BIN := $(BUILD_DIR)/parameter_modulation_tests
-SRC := src/ParameterModulation.cpp
-OBJ := $(BUILD_DIR)/ParameterModulation.o
+SRC := src/ParameterModulation.cpp src/MidiController.cpp
+OBJ := $(BUILD_DIR)/ParameterModulation.o $(BUILD_DIR)/MidiController.o
 MINIAPP_DIR := miniapp
 MINIAPP_MAKEFILE := $(MINIAPP_DIR)/Makefile
 
@@ -20,7 +20,10 @@ $(BUILD_SENTINEL):
 	mkdir -p $(BUILD_DIR)
 	touch $@
 
-$(OBJ): $(SRC) include/synth/ParameterModulation.hpp | $(BUILD_SENTINEL)
+$(BUILD_DIR)/ParameterModulation.o: src/ParameterModulation.cpp include/synth/ParameterModulation.hpp | $(BUILD_SENTINEL)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/MidiController.o: src/MidiController.cpp include/synth/MidiController.hpp include/synth/ParameterModulation.hpp | $(BUILD_SENTINEL)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
 
 $(LIB): $(OBJ)
