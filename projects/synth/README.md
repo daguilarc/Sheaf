@@ -14,6 +14,7 @@ The audio-rate read path is designed to stay compact:
 ```text
 Get(voice) =
   clamp(currentCenter * currentCenterScale[voice]
+        + currentNormalizationOffset[voice]
         + dot(modulatorValues[voice], currentDepths[voice]))
 ```
 
@@ -25,13 +26,27 @@ product.
 ```text
 sum = sum(abs(rawDepth[m]))
 
-if sum < 1:
-  centerScale[voice] = 1 - sum
-  depth[voice][m] = rawDepth[m]
-else:
-  centerScale[voice] = 0
+centerScale[voice] = max(0, 1 - sum)
+
+if sum > 1:
   depth[voice][m] = rawDepth[m] / sum
+else:
+  depth[voice][m] = rawDepth[m]
+
+normalizationOffset[voice] = -sum(min(0, depth[voice][m]))
+
+if sum > 1:
+  minValue[voice] = rangeMin
+  maxValue[voice] = 1
+else:
+  base = center * centerScale[voice] + normalizationOffset[voice]
+  minValue[voice] = clamp(base + sum(min(0, depth[voice][m])))
+  maxValue[voice] = clamp(base + sum(max(0, depth[voice][m])))
 ```
+
+`ProcessLite` slews center scale, normalization offset, depths, and min/max
+values. Parameter UI state publishes the slewed current min/max values for the
+encoder range arcs.
 
 The minimal initial API includes range clamping:
 
@@ -85,9 +100,10 @@ audible blended value reaches `targetBlended`.
 Banks map physical encoders to parameters. Pressing a mapped parameter opens a
 modulation-depth view; missing depth parameters are materialized as bipolar
 parameters with default `0` when group capacity allows. The final visible bank
-cell is reserved as the return cell, so an undersized bank shows as many depth
-cells as fit before the return cell. Return cells handle press only; tick and
-shift-press are ignored.
+cell is the selected target parameter, so an undersized bank shows as many depth
+cells as fit before the target. While the modulation view is open, the owning
+bank treats pressing that target cell as close-view navigation; tick and
+shift-press continue to route to the visible target parameter normally.
 
 The randomized simulation test runs bounded default seeds during
 `make synth-test`. Larger runs can be requested with:
@@ -95,3 +111,46 @@ The randomized simulation test runs bounded default seeds during
 ```text
 SYNTH_RANDOM_SEEDS=0x51A7,0xC0FFEE SYNTH_RANDOM_STEPS=5000 make synth-test
 ```
+
+## External UI State And Messages
+
+The external control layer mirrors the parameter tree with caller-owned UI
+state populated once per frame. UI-state structs contain atomics and are sized
+up front through `ParameterManager::CreateUIState()`; `PopulateUIState` only
+stores into existing memory.
+
+`Parameter::UIState` reports:
+
+- connected state, bipolar flag, color, and stable short name pointer;
+- per-voice value, min/max range, and indicator color.
+
+Disconnected slot positions are represented by `connected=false` with neutral
+values and off colors; parameter UI state does not encode page/navigation roles.
+
+`BankSlot::UIState` exposes visible cells in `AddPhysicalEncoder` order and a
+`showingModulationView` flag. `ParameterManager::UIState` includes slot state,
+manager-owned gesture values/selection, scene endpoints/blend, and shift-held
+state. Core synth code uses `synth::Color`; JUCE color conversion is only for
+miniapp/UI code.
+
+External actions are represented as timestamped `MessageIn` values. The
+bounded `MessageInBus` is single-producer/single-consumer: one producer may
+`Push`, one consumer may `Process(timestamp)`, and callers with multiple
+producers must serialize before pushing. The bus applies parameter turns and
+pushes through slot position, bank selection through manager bank index,
+gesture messages through manager-owned gestures, and scene messages through the
+manager scene API. A `SceneSelect(sceneIx)` message selects one scene ordinal;
+the manager writes it to the less-selected endpoint of the current blend
+(`blend <= 0.5` updates right, `blend > 0.5` updates left) and leaves blend
+unchanged. `Clock`, `Start`, and `Stop` are accepted and drained but
+intentionally inert in this change.
+
+Gestures are manager-owned. `ParameterManager::SetGestureCount(count)` must be
+called before groups are created when gestures are needed; the default gesture
+count is zero. Groups receive the fixed manager gesture count for arena sizing,
+and direct gesture calls should use manager APIs.
+
+Scene endpoint changes should use `SetSceneEndpoints(left, right)`, which
+rejects endpoints that are invalid for any existing group and leaves prior
+scene state unchanged. `SetSceneBlend(blend)` clamps and updates blend
+independently.

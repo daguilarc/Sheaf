@@ -1,7 +1,12 @@
 #include "synth/ParameterModulation.hpp"
 
+#ifdef JUCE_MAJOR_VERSION
+#error "synth core tests must not see JUCE headers"
+#endif
+
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <cstdlib>
 #include <exception>
@@ -12,6 +17,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -67,7 +73,6 @@ TEST_CASE(group_config_validation) {
     synth::ParameterGroupConfig valid{
         .numVoices = 4,
         .numModulators = 0,
-        .numGestures = 0,
         .numScenes = 1,
         .maxParameters = 8,
         .processLiteAlpha = 0.5f,
@@ -95,19 +100,81 @@ TEST_CASE(group_config_validation) {
     REQUIRE_TRUE(!highAlpha.IsValid());
 }
 
+TEST_CASE(color_hsv_and_atomic_storage) {
+    const synth::Color color{.r = 64, .g = 128, .b = 255};
+    const synth::HSV hsv = synth::ToHSV(color);
+    const synth::Color roundTrip = synth::Color::FromHSV(hsv.h, hsv.s, hsv.v);
+    REQUIRE_TRUE(std::abs(static_cast<int>(roundTrip.r) - static_cast<int>(color.r)) <= 1);
+    REQUIRE_TRUE(std::abs(static_cast<int>(roundTrip.g) - static_cast<int>(color.g)) <= 1);
+    REQUIRE_TRUE(std::abs(static_cast<int>(roundTrip.b) - static_cast<int>(color.b)) <= 1);
+    REQUIRE_TRUE(color.AdjustBrightness(0.5f).r == 32);
+
+    synth::AtomicColor atomicColor;
+    atomicColor.Store(synth::Color::Orange);
+    REQUIRE_TRUE(atomicColor.Load() == synth::Color::Orange);
+    REQUIRE_TRUE(atomicColor.IsLockFree());
+}
+
+TEST_CASE(manager_gesture_count_is_fixed_before_groups) {
+    synth::ParameterManager manager;
+    REQUIRE_TRUE(manager.GestureCount() == 0);
+    REQUIRE_TRUE(manager.SetGestureCount(2));
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numScenes = 1,
+        .maxParameters = 1,
+    });
+    REQUIRE_TRUE(group.GestureCount() == 2);
+    REQUIRE_TRUE(!manager.SetGestureCount(3));
+}
+
+TEST_CASE(validated_scene_endpoint_setter_preserves_state_on_reject) {
+    synth::ParameterManager manager;
+    manager.SetGestureCount(1);
+    (void)manager.CreateGroup({.numVoices = 1, .numScenes = 2, .maxParameters = 1});
+    (void)manager.CreateGroup({.numVoices = 1, .numScenes = 1, .maxParameters = 1});
+
+    REQUIRE_TRUE(manager.SetSceneEndpoints(0, 0));
+    manager.SetSceneBlend(0.25f);
+    REQUIRE_TRUE(!manager.SetSceneEndpoints(1, 0));
+    REQUIRE_TRUE(manager.Scene().leftScene == 0);
+    REQUIRE_TRUE(manager.Scene().rightScene == 0);
+    REQUIRE_NEAR(manager.Scene().blend, 0.25f, 0.0001f);
+}
+
+TEST_CASE(default_voice_indicator_colors_are_deterministic) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 7,
+        .numScenes = 1,
+        .maxParameters = 1,
+    });
+    auto& parameter = manager.CreateParameter(group, {.name = "Voices", .defaultValue = 0.5f});
+    synth::Parameter::UIState ui(7);
+    parameter.PopulateUIState(ui);
+
+    REQUIRE_TRUE(ui.indicatorColors[0].Load() == synth::Color::Cyan);
+    REQUIRE_TRUE(ui.indicatorColors[1].Load() == synth::Color::Orange);
+    REQUIRE_TRUE(ui.indicatorColors[2].Load() == synth::Color::Green);
+    REQUIRE_TRUE(ui.indicatorColors[3].Load() == synth::Color::Indigo);
+    REQUIRE_TRUE(ui.indicatorColors[4].Load() == synth::Color::Yellow);
+    REQUIRE_TRUE(ui.indicatorColors[5].Load() == synth::Color::Blue);
+    REQUIRE_TRUE(ui.indicatorColors[6].Load() != synth::Color::Off);
+    REQUIRE_TRUE(ui.indicatorColors[6].Load() != ui.indicatorColors[0].Load());
+}
+
 TEST_CASE(manager_assigns_unique_ids) {
     synth::ParameterManager manager;
+    manager.SetGestureCount(2);
     auto& groupA = manager.CreateGroup({
         .numVoices = 1,
         .numModulators = 1,
-        .numGestures = 1,
         .numScenes = 2,
         .maxParameters = 2,
     });
     auto& groupB = manager.CreateGroup({
         .numVoices = 2,
         .numModulators = 0,
-        .numGestures = 0,
         .numScenes = 1,
         .maxParameters = 1,
     });
@@ -169,10 +236,10 @@ TEST_CASE(gestures_store_values_and_selection) {
 
 TEST_CASE(parameter_default_state) {
     synth::ParameterManager manager;
+    manager.SetGestureCount(2);
     auto& group = manager.CreateGroup({
         .numVoices = 2,
         .numModulators = 2,
-        .numGestures = 1,
         .numScenes = 2,
         .maxParameters = 1,
     });
@@ -202,10 +269,10 @@ TEST_CASE(parameter_default_state) {
 
 TEST_CASE(allocator_exhaustion_does_not_register_partial_parameter) {
     synth::ParameterManager manager;
+    manager.SetGestureCount(2);
     auto& group = manager.CreateGroup({
         .numVoices = 1,
         .numModulators = 0,
-        .numGestures = 0,
         .numScenes = 1,
         .maxParameters = 1,
     });
@@ -230,10 +297,10 @@ TEST_CASE(allocator_exhaustion_does_not_register_partial_parameter) {
 
 TEST_CASE(stable_parameter_pointers_survive_later_allocations) {
     synth::ParameterManager manager;
+    manager.SetGestureCount(2);
     auto& group = manager.CreateGroup({
         .numVoices = 1,
         .numModulators = 1,
-        .numGestures = 0,
         .numScenes = 1,
         .maxParameters = 3,
     });
@@ -252,10 +319,10 @@ TEST_CASE(stable_parameter_pointers_survive_later_allocations) {
 
 TEST_CASE(scene_and_gesture_interpolation) {
     synth::ParameterManager manager;
+    manager.SetGestureCount(2);
     auto& group = manager.CreateGroup({
         .numVoices = 1,
         .numModulators = 0,
-        .numGestures = 1,
         .numScenes = 2,
         .maxParameters = 2,
     });
@@ -273,17 +340,17 @@ TEST_CASE(scene_and_gesture_interpolation) {
     gesture.GestureValue(1, 0) = 0.9f;
     gesture.SetGestureActive(0, 0, true);
     gesture.SetGestureActive(1, 0, true);
-    group.GetGestures().Value(0) = 0.5f;
+    manager.SetGestureValue(0, 0.5f);
     gesture.Compute({.leftScene = 0, .rightScene = 1, .blend = 0.25f});
     REQUIRE_NEAR(gesture.TargetCenter(), 0.65f, 0.0001f);
 }
 
 TEST_CASE(multiple_gestures_use_effective_weighted_average) {
     synth::ParameterManager manager;
+    manager.SetGestureCount(2);
     auto& group = manager.CreateGroup({
         .numVoices = 1,
         .numModulators = 0,
-        .numGestures = 2,
         .numScenes = 1,
         .maxParameters = 1,
     });
@@ -294,8 +361,8 @@ TEST_CASE(multiple_gestures_use_effective_weighted_average) {
     parameter.GestureValue(0, 1) = 1.0f;
     parameter.SetGestureActive(0, 0, true);
     parameter.SetGestureActive(0, 1, true);
-    group.GetGestures().Value(0) = 0.2f;
-    group.GetGestures().Value(1) = 0.8f;
+    manager.SetGestureValue(0, 0.2f);
+    manager.SetGestureValue(1, 0.8f);
 
     parameter.Compute({.leftScene = 0, .rightScene = 0, .blend = 0.0f});
 
@@ -304,10 +371,10 @@ TEST_CASE(multiple_gestures_use_effective_weighted_average) {
 
 TEST_CASE(modulation_normalization_under_one) {
     synth::ParameterManager manager;
+    manager.SetGestureCount(2);
     auto& group = manager.CreateGroup({
         .numVoices = 1,
         .numModulators = 1,
-        .numGestures = 0,
         .numScenes = 1,
         .maxParameters = 2,
     });
@@ -324,10 +391,10 @@ TEST_CASE(modulation_normalization_under_one) {
 
 TEST_CASE(modulation_normalization_over_one_preserves_sign) {
     synth::ParameterManager manager;
+    manager.SetGestureCount(2);
     auto& group = manager.CreateGroup({
         .numVoices = 1,
         .numModulators = 2,
-        .numGestures = 0,
         .numScenes = 1,
         .maxParameters = 3,
     });
@@ -353,12 +420,172 @@ TEST_CASE(modulation_normalization_over_one_preserves_sign) {
     REQUIRE_NEAR(parameter.TargetDepths(0)[1], -0.5f, 0.0001f);
 }
 
-TEST_CASE(nested_depth_route_reads_get_and_bypasses_slew) {
+TEST_CASE(negative_modulation_depths_add_normalization_offset) {
     synth::ParameterManager manager;
     auto& group = manager.CreateGroup({
         .numVoices = 1,
+        .numModulators = 2,
+        .numScenes = 1,
+        .maxParameters = 3,
+        .processLiteAlpha = 1.0f,
+    });
+
+    auto& parameter = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.5f});
+    auto& positive = manager.CreateParameter(group, {
+        .name = "Positive",
+        .defaultValue = 0.25f,
+        .range = synth::RangeKind::Bipolar,
+    });
+    auto& negative = manager.CreateParameter(group, {
+        .name = "Negative",
+        .defaultValue = -0.5f,
+        .range = synth::RangeKind::Bipolar,
+    });
+    REQUIRE_TRUE(parameter.AssignModulationDepth(0, &positive));
+    REQUIRE_TRUE(parameter.AssignModulationDepth(1, &negative));
+
+    parameter.Compute({.leftScene = 0, .rightScene = 0, .blend = 0.0f});
+    parameter.ProcessLite();
+
+    REQUIRE_NEAR(parameter.TargetCenterScale(0), 0.25f, 0.0001f);
+    REQUIRE_NEAR(parameter.TargetNormalizationOffset(0), 0.5f, 0.0001f);
+    REQUIRE_NEAR(parameter.TargetDepths(0)[0], 0.25f, 0.0001f);
+    REQUIRE_NEAR(parameter.TargetDepths(0)[1], -0.5f, 0.0001f);
+
+    group.GetModulators().Value(0, 0) = 0.0f;
+    group.GetModulators().Value(0, 1) = 0.0f;
+    REQUIRE_NEAR(parameter.Get(0), 0.625f, 0.0001f);
+
+    group.GetModulators().Value(0, 0) = 1.0f;
+    group.GetModulators().Value(0, 1) = 0.0f;
+    REQUIRE_NEAR(parameter.Get(0), 0.875f, 0.0001f);
+
+    group.GetModulators().Value(0, 0) = 0.0f;
+    group.GetModulators().Value(0, 1) = 1.0f;
+    REQUIRE_NEAR(parameter.Get(0), 0.125f, 0.0001f);
+}
+
+TEST_CASE(overfull_negative_modulation_offset_uses_normalized_depths) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 2,
+        .numScenes = 1,
+        .maxParameters = 3,
+        .processLiteAlpha = 1.0f,
+    });
+
+    auto& parameter = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.5f});
+    auto& positive = manager.CreateParameter(group, {
+        .name = "Positive",
+        .defaultValue = 1.0f,
+        .range = synth::RangeKind::Bipolar,
+    });
+    auto& negative = manager.CreateParameter(group, {
+        .name = "Negative",
+        .defaultValue = -1.0f,
+        .range = synth::RangeKind::Bipolar,
+    });
+    REQUIRE_TRUE(parameter.AssignModulationDepth(0, &positive));
+    REQUIRE_TRUE(parameter.AssignModulationDepth(1, &negative));
+
+    parameter.Compute({.leftScene = 0, .rightScene = 0, .blend = 0.0f});
+    parameter.ProcessLite();
+
+    REQUIRE_NEAR(parameter.TargetCenterScale(0), 0.0f, 0.0001f);
+    REQUIRE_NEAR(parameter.TargetNormalizationOffset(0), 0.5f, 0.0001f);
+    REQUIRE_NEAR(parameter.TargetDepths(0)[0], 0.5f, 0.0001f);
+    REQUIRE_NEAR(parameter.TargetDepths(0)[1], -0.5f, 0.0001f);
+
+    group.GetModulators().Value(0, 0) = 0.0f;
+    group.GetModulators().Value(0, 1) = 0.0f;
+    REQUIRE_NEAR(parameter.Get(0), 0.5f, 0.0001f);
+
+    group.GetModulators().Value(0, 0) = 1.0f;
+    group.GetModulators().Value(0, 1) = 0.0f;
+    REQUIRE_NEAR(parameter.Get(0), 1.0f, 0.0001f);
+
+    group.GetModulators().Value(0, 0) = 0.0f;
+    group.GetModulators().Value(0, 1) = 1.0f;
+    REQUIRE_NEAR(parameter.Get(0), 0.0f, 0.0001f);
+}
+
+TEST_CASE(ui_state_min_max_reports_underfull_modulation_reachable_range) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 2,
+        .numScenes = 1,
+        .maxParameters = 3,
+        .processLiteAlpha = 1.0f,
+    });
+
+    auto& parameter = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.5f});
+    auto& positive = manager.CreateParameter(group, {
+        .name = "Positive",
+        .defaultValue = 0.25f,
+        .range = synth::RangeKind::Bipolar,
+    });
+    auto& negative = manager.CreateParameter(group, {
+        .name = "Negative",
+        .defaultValue = -0.5f,
+        .range = synth::RangeKind::Bipolar,
+    });
+    REQUIRE_TRUE(parameter.AssignModulationDepth(0, &positive));
+    REQUIRE_TRUE(parameter.AssignModulationDepth(1, &negative));
+
+    parameter.Compute({.leftScene = 0, .rightScene = 0, .blend = 0.0f});
+    parameter.ProcessLite();
+
+    synth::Parameter::UIState ui(1);
+    parameter.PopulateUIState(ui);
+    REQUIRE_NEAR(ui.minValues[0].load(), 0.125f, 0.0001f);
+    REQUIRE_NEAR(ui.maxValues[0].load(), 0.875f, 0.0001f);
+}
+
+TEST_CASE(ui_state_min_max_reports_full_range_when_modulation_is_overfull) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 2,
+        .numScenes = 1,
+        .maxParameters = 3,
+        .processLiteAlpha = 1.0f,
+    });
+
+    auto& parameter = manager.CreateParameter(group, {
+        .name = "Carrier",
+        .defaultValue = 0.0f,
+        .range = synth::RangeKind::Bipolar,
+    });
+    auto& positive = manager.CreateParameter(group, {
+        .name = "Positive",
+        .defaultValue = 1.0f,
+        .range = synth::RangeKind::Bipolar,
+    });
+    auto& negative = manager.CreateParameter(group, {
+        .name = "Negative",
+        .defaultValue = -1.0f,
+        .range = synth::RangeKind::Bipolar,
+    });
+    REQUIRE_TRUE(parameter.AssignModulationDepth(0, &positive));
+    REQUIRE_TRUE(parameter.AssignModulationDepth(1, &negative));
+
+    parameter.Compute({.leftScene = 0, .rightScene = 0, .blend = 0.0f});
+    parameter.ProcessLite();
+
+    synth::Parameter::UIState ui(1);
+    parameter.PopulateUIState(ui);
+    REQUIRE_NEAR(ui.minValues[0].load(), -1.0f, 0.0001f);
+    REQUIRE_NEAR(ui.maxValues[0].load(), 1.0f, 0.0001f);
+}
+
+TEST_CASE(nested_depth_route_reads_get_and_bypasses_slew) {
+    synth::ParameterManager manager;
+    manager.SetGestureCount(2);
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
         .numModulators = 1,
-        .numGestures = 0,
         .numScenes = 2,
         .maxParameters = 2,
         .processLiteAlpha = 0.1f,
@@ -379,19 +606,23 @@ TEST_CASE(nested_depth_route_reads_get_and_bypasses_slew) {
     REQUIRE_NEAR(carrier.TargetCenterScale(0), 0.2f, 0.0001f);
 }
 
-TEST_CASE(process_lite_slews_center_scale_and_depths) {
+TEST_CASE(process_lite_slews_center_scale_offset_and_depths) {
     synth::ParameterManager manager;
+    manager.SetGestureCount(2);
     auto& group = manager.CreateGroup({
         .numVoices = 1,
         .numModulators = 1,
-        .numGestures = 0,
         .numScenes = 2,
         .maxParameters = 2,
         .processLiteAlpha = 0.25f,
     });
 
     auto& parameter = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.0f});
-    auto& depth = manager.CreateParameter(group, {.name = "Depth", .defaultValue = 0.5f});
+    auto& depth = manager.CreateParameter(group, {
+        .name = "Depth",
+        .defaultValue = -0.5f,
+        .range = synth::RangeKind::Bipolar,
+    });
     parameter.SceneCenter(0) = 1.0f;
     parameter.SceneCenter(1) = 1.0f;
     REQUIRE_TRUE(parameter.AssignModulationDepth(0, &depth));
@@ -401,15 +632,104 @@ TEST_CASE(process_lite_slews_center_scale_and_depths) {
 
     REQUIRE_NEAR(parameter.CurrentCenter(), 0.25f, 0.0001f);
     REQUIRE_NEAR(parameter.CurrentCenterScale(0), 0.875f, 0.0001f);
-    REQUIRE_NEAR(parameter.CurrentDepths(0)[0], 0.125f, 0.0001f);
+    REQUIRE_NEAR(parameter.CurrentNormalizationOffset(0), 0.125f, 0.0001f);
+    REQUIRE_NEAR(parameter.CurrentDepths(0)[0], -0.125f, 0.0001f);
+
+    synth::Parameter::UIState ui(1);
+    parameter.PopulateUIState(ui);
+    REQUIRE_NEAR(ui.minValues[0].load(), 0.125f, 0.0001f);
+    REQUIRE_NEAR(ui.maxValues[0].load(), 0.25f, 0.0001f);
+}
+
+TEST_CASE(switch_metadata_and_buckets_use_unslewed_display_target) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 0,
+        .numScenes = 2,
+        .maxParameters = 2,
+        .processLiteAlpha = 0.25f,
+    });
+
+    auto& stepped = manager.CreateParameter(group, {
+        .name = "Mode",
+        .defaultValue = 0.0f,
+        .switchValues = 4,
+    });
+    stepped.SceneCenter(1) = 1.0f;
+    stepped.Compute({.leftScene = 0, .rightScene = 1, .blend = 1.0f});
+
+    REQUIRE_TRUE(stepped.SwitchValues() == 4);
+    REQUIRE_TRUE(stepped.IsSwitch());
+    REQUIRE_NEAR(stepped.Get(0), 0.0f, 0.0001f);
+    REQUIRE_TRUE(stepped.GetSwitchVal(0) == 3);
+
+    auto& bipolar = manager.CreateParameter(group, {
+        .name = "Bipolar",
+        .defaultValue = -1.0f,
+        .range = synth::RangeKind::Bipolar,
+        .switchValues = 4,
+    });
+    bipolar.SceneCenter(1) = 0.0f;
+    bipolar.Compute({.leftScene = 0, .rightScene = 1, .blend = 1.0f});
+    REQUIRE_TRUE(bipolar.GetSwitchVal(0) == 2);
+
+    synth::Parameter::UIState ui(1);
+    stepped.PopulateUIState(ui);
+    REQUIRE_TRUE(ui.switchValues.load() == 4);
+    REQUIRE_TRUE(ui.switchValue[0].load() == 3);
+
+    ui.SetDisconnected();
+    REQUIRE_TRUE(ui.switchValues.load() == 0);
+    REQUIRE_TRUE(ui.switchValue[0].load() == 0);
+    REQUIRE_TRUE(ui.modulatorsAffectingMask.load() == 0);
+    REQUIRE_TRUE(ui.gesturesAffectingMask.load() == 0);
+}
+
+TEST_CASE(ui_state_reports_affecting_masks_for_first_32_indices) {
+    synth::ParameterManager manager;
+    manager.SetGestureCount(33);
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 33,
+        .numScenes = 2,
+        .maxParameters = 4,
+    });
+
+    auto& parameter = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.5f});
+    auto& depth31 = manager.CreateParameter(group, {.name = "Depth31", .defaultValue = 0.25f});
+    auto& depth32 = manager.CreateParameter(group, {.name = "Depth32", .defaultValue = 0.25f});
+    REQUIRE_TRUE(parameter.AssignModulationDepth(31, &depth31));
+    REQUIRE_TRUE(parameter.AssignModulationDepth(32, &depth32));
+    parameter.SetGestureActive(0, 0, true);
+    parameter.SetGestureActive(0, 31, true);
+    parameter.SetGestureActive(0, 32, true);
+    parameter.SetGestureActive(1, 1, true);
+    parameter.SetGestureActive(1, 31, true);
+
+    synth::Parameter::UIState ui(1);
+    REQUIRE_TRUE(manager.SetSceneEndpoints(0, 1));
+
+    manager.SetSceneBlend(0.0f);
+    parameter.PopulateUIState(ui);
+    REQUIRE_TRUE(ui.modulatorsAffectingMask.load() == (1u << 31));
+    REQUIRE_TRUE(ui.gesturesAffectingMask.load() == ((1u << 0) | (1u << 31)));
+
+    manager.SetSceneBlend(1.0f);
+    parameter.PopulateUIState(ui);
+    REQUIRE_TRUE(ui.gesturesAffectingMask.load() == ((1u << 1) | (1u << 31)));
+
+    manager.SetSceneBlend(0.5f);
+    parameter.PopulateUIState(ui);
+    REQUIRE_TRUE(ui.gesturesAffectingMask.load() == ((1u << 0) | (1u << 1) | (1u << 31)));
 }
 
 TEST_CASE(cycle_rejection_direct_and_indirect) {
     synth::ParameterManager manager;
+    manager.SetGestureCount(2);
     auto& group = manager.CreateGroup({
         .numVoices = 1,
         .numModulators = 1,
-        .numGestures = 0,
         .numScenes = 1,
         .maxParameters = 3,
     });
@@ -427,12 +747,34 @@ TEST_CASE(cycle_rejection_direct_and_indirect) {
     REQUIRE_TRUE(a.ModulationDepthParameter(0) == &b);
 }
 
+TEST_CASE(modulation_depth_assignment_rejects_cross_group_routes) {
+    synth::ParameterManager manager;
+    auto& carrierGroup = manager.CreateGroup({
+        .numVoices = 2,
+        .numModulators = 1,
+        .numScenes = 2,
+        .maxParameters = 1,
+    });
+    auto& smallerDepthGroup = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 0,
+        .numScenes = 1,
+        .maxParameters = 1,
+    });
+
+    auto& carrier = manager.CreateParameter(carrierGroup, {.name = "Carrier", .defaultValue = 0.5f});
+    auto& depth = manager.CreateParameter(smallerDepthGroup, {.name = "Other Group Depth", .defaultValue = 0.25f});
+
+    REQUIRE_TRUE(!carrier.AssignModulationDepth(0, &depth));
+    REQUIRE_TRUE(carrier.ModulationDepthParameter(0) == nullptr);
+}
+
 TEST_CASE(get_clamps_and_rejects_out_of_range_voice) {
     synth::ParameterManager manager;
+    manager.SetGestureCount(2);
     auto& group = manager.CreateGroup({
         .numVoices = 1,
         .numModulators = 1,
-        .numGestures = 0,
         .numScenes = 1,
         .maxParameters = 1,
     });
@@ -454,10 +796,10 @@ TEST_CASE(get_clamps_and_rejects_out_of_range_voice) {
 
 TEST_CASE(handle_inc_dec_endpoint_scene) {
     synth::ParameterManager manager;
+    manager.SetGestureCount(2);
     auto& group = manager.CreateGroup({
         .numVoices = 1,
         .numModulators = 0,
-        .numGestures = 0,
         .numScenes = 2,
         .maxParameters = 1,
     });
@@ -473,10 +815,10 @@ TEST_CASE(handle_inc_dec_endpoint_scene) {
 
 TEST_CASE(handle_inc_dec_mid_blend_matches_smart_grid_attenuation) {
     synth::ParameterManager manager;
+    manager.SetGestureCount(2);
     auto& group = manager.CreateGroup({
         .numVoices = 1,
         .numModulators = 0,
-        .numGestures = 0,
         .numScenes = 2,
         .maxParameters = 1,
     });
@@ -495,10 +837,10 @@ TEST_CASE(handle_inc_dec_mid_blend_matches_smart_grid_attenuation) {
 
 TEST_CASE(handle_inc_dec_saturation_solve_matches_smart_grid) {
     synth::ParameterManager manager;
+    manager.SetGestureCount(2);
     auto& group = manager.CreateGroup({
         .numVoices = 1,
         .numModulators = 0,
-        .numGestures = 0,
         .numScenes = 2,
         .maxParameters = 1,
     });
@@ -517,10 +859,10 @@ TEST_CASE(handle_inc_dec_saturation_solve_matches_smart_grid) {
 
 TEST_CASE(selected_gesture_activation_snapshots_parent_value) {
     synth::ParameterManager manager;
+    manager.SetGestureCount(2);
     auto& group = manager.CreateGroup({
         .numVoices = 1,
         .numModulators = 0,
-        .numGestures = 1,
         .numScenes = 2,
         .maxParameters = 1,
     });
@@ -529,7 +871,7 @@ TEST_CASE(selected_gesture_activation_snapshots_parent_value) {
     parameter.SceneCenter(1) = 0.75f;
     parameter.GestureValue(0, 0) = 0.9f;
     parameter.GestureValue(1, 0) = 0.9f;
-    group.GetGestures().Select(0, true);
+    manager.SelectGesture(0);
 
     parameter.HandleIncDec({.leftScene = 0, .rightScene = 1, .blend = 0.0f}, 0.0f);
 
@@ -541,18 +883,18 @@ TEST_CASE(selected_gesture_activation_snapshots_parent_value) {
 
 TEST_CASE(selected_gesture_weight_one_edits_gesture_without_moving_base) {
     synth::ParameterManager manager;
+    manager.SetGestureCount(2);
     auto& group = manager.CreateGroup({
         .numVoices = 1,
         .numModulators = 0,
-        .numGestures = 1,
         .numScenes = 1,
         .maxParameters = 1,
     });
     auto& parameter = manager.CreateParameter(group, {.name = "Gesture", .defaultValue = 0.5f});
     parameter.SceneCenter(0) = 0.5f;
     parameter.GestureValue(0, 0) = 0.5f;
-    group.GetGestures().Select(0, true);
-    group.GetGestures().Value(0) = 1.0f;
+    manager.SelectGesture(0);
+    manager.SetGestureValue(0, 1.0f);
 
     const synth::SceneState scene{.leftScene = 0, .rightScene = 0, .blend = 0.0f};
     parameter.HandleIncDec(scene, 0.2f);
@@ -565,18 +907,18 @@ TEST_CASE(selected_gesture_weight_one_edits_gesture_without_moving_base) {
 
 TEST_CASE(selected_gesture_weight_biases_gesture_edit_over_base_edit) {
     synth::ParameterManager manager;
+    manager.SetGestureCount(2);
     auto& group = manager.CreateGroup({
         .numVoices = 1,
         .numModulators = 0,
-        .numGestures = 1,
         .numScenes = 1,
         .maxParameters = 1,
     });
     auto& parameter = manager.CreateParameter(group, {.name = "Gesture", .defaultValue = 0.5f});
     parameter.SceneCenter(0) = 0.5f;
     parameter.GestureValue(0, 0) = 0.5f;
-    group.GetGestures().Select(0, true);
-    group.GetGestures().Value(0) = 0.75f;
+    manager.SelectGesture(0);
+    manager.SetGestureValue(0, 0.75f);
 
     parameter.HandleIncDec({.leftScene = 0, .rightScene = 0, .blend = 0.0f}, 0.2f);
 
@@ -586,18 +928,18 @@ TEST_CASE(selected_gesture_weight_biases_gesture_edit_over_base_edit) {
 
 TEST_CASE(selected_gesture_mid_blend_activates_both_scenes) {
     synth::ParameterManager manager;
+    manager.SetGestureCount(2);
     auto& group = manager.CreateGroup({
         .numVoices = 1,
         .numModulators = 0,
-        .numGestures = 1,
         .numScenes = 2,
         .maxParameters = 1,
     });
     auto& parameter = manager.CreateParameter(group, {.name = "Gesture", .defaultValue = 0.5f});
     parameter.SceneCenter(0) = 0.2f;
     parameter.SceneCenter(1) = 0.8f;
-    group.GetGestures().Select(0, true);
-    group.GetGestures().Value(0) = 0.5f;
+    manager.SelectGesture(0);
+    manager.SetGestureValue(0, 0.5f);
 
     parameter.HandleIncDec({.leftScene = 0, .rightScene = 1, .blend = 0.5f}, 0.0f);
 
@@ -609,18 +951,18 @@ TEST_CASE(selected_gesture_mid_blend_activates_both_scenes) {
 
 TEST_CASE(selected_gesture_weight_sum_over_one_leaves_base_unmoved) {
     synth::ParameterManager manager;
+    manager.SetGestureCount(2);
     auto& group = manager.CreateGroup({
         .numVoices = 1,
         .numModulators = 0,
-        .numGestures = 2,
         .numScenes = 1,
         .maxParameters = 1,
     });
     auto& parameter = manager.CreateParameter(group, {.name = "Gesture", .defaultValue = 0.5f});
-    group.GetGestures().Select(0, true);
-    group.GetGestures().Select(1, true);
-    group.GetGestures().Value(0) = 0.8f;
-    group.GetGestures().Value(1) = 0.7f;
+    manager.SelectGesture(0);
+    manager.SelectGesture(1);
+    manager.SetGestureValue(0, 0.8f);
+    manager.SetGestureValue(1, 0.7f);
 
     parameter.HandleIncDec({.leftScene = 0, .rightScene = 0, .blend = 0.0f}, 0.3f);
 
@@ -631,10 +973,10 @@ TEST_CASE(selected_gesture_weight_sum_over_one_leaves_base_unmoved) {
 
 TEST_CASE(handle_inc_dec_negative_saturates_lower_bound) {
     synth::ParameterManager manager;
+    manager.SetGestureCount(2);
     auto& group = manager.CreateGroup({
         .numVoices = 1,
         .numModulators = 0,
-        .numGestures = 0,
         .numScenes = 1,
         .maxParameters = 1,
     });
@@ -648,10 +990,10 @@ TEST_CASE(handle_inc_dec_negative_saturates_lower_bound) {
 
 TEST_CASE(revert_to_default_clears_modulation_and_gestures) {
     synth::ParameterManager manager;
+    manager.SetGestureCount(2);
     auto& group = manager.CreateGroup({
         .numVoices = 2,
         .numModulators = 1,
-        .numGestures = 1,
         .numScenes = 2,
         .maxParameters = 2,
         .processLiteAlpha = 1.0f,
@@ -691,10 +1033,10 @@ TEST_CASE(revert_to_default_clears_modulation_and_gestures) {
 
 TEST_CASE(revert_to_default_rejects_invalid_scene_without_mutation) {
     synth::ParameterManager manager;
+    manager.SetGestureCount(2);
     auto& group = manager.CreateGroup({
         .numVoices = 1,
         .numModulators = 1,
-        .numGestures = 1,
         .numScenes = 1,
         .maxParameters = 2,
     });
@@ -723,10 +1065,10 @@ TEST_CASE(revert_to_default_rejects_invalid_scene_without_mutation) {
 
 TEST_CASE(page_routing_changes_without_mutating_parameter_state) {
     synth::ParameterManager manager;
+    manager.SetGestureCount(2);
     auto& group = manager.CreateGroup({
         .numVoices = 1,
         .numModulators = 1,
-        .numGestures = 1,
         .numScenes = 2,
         .maxParameters = 2,
     });
@@ -736,7 +1078,7 @@ TEST_CASE(page_routing_changes_without_mutating_parameter_state) {
     parameter.SceneCenter(0) = 0.7f;
     parameter.GestureValue(0, 0) = 0.9f;
     parameter.SetGestureActive(0, 0, true);
-    group.GetGestures().Value(0) = 0.5f;
+    manager.SetGestureValue(0, 0.5f);
     group.GetModulators().Value(0, 0) = 0.25f;
 
     auto& pageA = manager.CreatePage("A");
@@ -763,6 +1105,7 @@ TEST_CASE(page_routing_changes_without_mutating_parameter_state) {
 
 TEST_CASE(mixed_group_bank_routes_each_parameter_to_its_group) {
     synth::ParameterManager manager;
+    manager.SetGestureCount(2);
     auto& groupA = manager.CreateGroup({.numVoices = 1, .numScenes = 1, .maxParameters = 1});
     auto& groupB = manager.CreateGroup({.numVoices = 1, .numScenes = 1, .maxParameters = 1});
     auto& a = manager.CreateParameter(groupA, {.name = "A", .defaultValue = 0.1f});
@@ -782,8 +1125,9 @@ TEST_CASE(mixed_group_bank_routes_each_parameter_to_its_group) {
     REQUIRE_NEAR(b.SceneCenter(0), 0.5f, 0.0001f);
 }
 
-TEST_CASE(press_opens_modulation_view_and_return_cell_closes_it) {
+TEST_CASE(press_opens_modulation_view_and_target_cell_closes_it) {
     synth::ParameterManager manager;
+    manager.SetGestureCount(2);
     auto& group = manager.CreateGroup({
         .numVoices = 1,
         .numModulators = 2,
@@ -804,7 +1148,7 @@ TEST_CASE(press_opens_modulation_view_and_return_cell_closes_it) {
 
     REQUIRE_TRUE(bank.ShowingModulation());
     REQUIRE_TRUE(bank.SelectedParameter() == &parameter);
-    REQUIRE_TRUE(bank.ReturnParameter() == &parameter);
+    REQUIRE_TRUE(bank.TargetParameter() == &parameter);
     REQUIRE_TRUE(bank.VisibleMappingCount() == 3);
     REQUIRE_TRUE(bank.VisibleParameter(1) == &depthA);
     REQUIRE_TRUE(bank.VisibleParameter(2) == &depthB);
@@ -816,8 +1160,9 @@ TEST_CASE(press_opens_modulation_view_and_return_cell_closes_it) {
     REQUIRE_TRUE(bank.VisibleParameter(1) == &parameter);
 }
 
-TEST_CASE(modulation_view_reserves_return_cell_when_bank_is_undersized) {
+TEST_CASE(modulation_view_reserves_target_cell_when_bank_is_undersized) {
     synth::ParameterManager manager;
+    manager.SetGestureCount(2);
     auto& group = manager.CreateGroup({
         .numVoices = 1,
         .numModulators = 2,
@@ -840,11 +1185,13 @@ TEST_CASE(modulation_view_reserves_return_cell_when_bank_is_undersized) {
     REQUIRE_TRUE(bank.VisibleMappingCount() == 2);
     REQUIRE_TRUE(bank.VisibleParameter(10) == &depthA);
     REQUIRE_TRUE(bank.VisibleParameter(11) == &parameter);
-    REQUIRE_TRUE(bank.ReturnParameter() == &parameter);
+    REQUIRE_TRUE(bank.TargetParameter() == &parameter);
 
     bank.HandleTick(11, {.leftScene = 0, .rightScene = 0, .blend = 0.0f}, 0.1f);
+    REQUIRE_NEAR(parameter.SceneCenter(0), 0.9f, 0.0001f);
+
     bank.HandleShiftPress(11, {.leftScene = 0, .rightScene = 0, .blend = 0.0f});
-    REQUIRE_NEAR(parameter.SceneCenter(0), 0.8f, 0.0001f);
+    REQUIRE_NEAR(parameter.SceneCenter(0), 0.4f, 0.0001f);
 
     bank.HandlePress(11);
 
@@ -852,8 +1199,43 @@ TEST_CASE(modulation_view_reserves_return_cell_when_bank_is_undersized) {
     REQUIRE_TRUE(bank.VisibleParameter(10) == &parameter);
 }
 
+TEST_CASE(undersized_modulation_view_marks_trailing_slot_cells_disconnected) {
+    synth::ParameterManager manager;
+    manager.SetGestureCount(1);
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 1,
+        .numScenes = 1,
+        .maxParameters = 2,
+    });
+    auto& parameter = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.4f});
+    auto& depth = manager.CreateParameter(group, {.name = "Depth", .defaultValue = 0.0f});
+    REQUIRE_TRUE(parameter.AssignModulationDepth(0, &depth));
+    auto& bank = manager.CreateBank();
+    bank.AddMapping(10, parameter);
+    bank.AddMapping(11, depth);
+    auto& slot = manager.CreateBankSlot();
+    slot.AddPhysicalEncoder(10);
+    slot.AddPhysicalEncoder(11);
+    slot.AddPhysicalEncoder(12);
+    slot.SelectBank(&bank);
+
+    bank.HandlePress(10);
+    auto ui = manager.CreateUIState();
+    manager.PopulateUIState(*ui);
+
+    REQUIRE_TRUE(ui->slots[0].showingModulationView.load());
+    REQUIRE_TRUE(ui->slots[0].cells[0].connected.load());
+    REQUIRE_TRUE(ui->slots[0].cells[1].connected.load());
+    REQUIRE_TRUE(!ui->slots[0].cells[2].connected.load());
+    REQUIRE_TRUE(ui->slots[0].cells[2].switchValues.load() == 0);
+    REQUIRE_TRUE(ui->slots[0].cells[2].modulatorsAffectingMask.load() == 0);
+    REQUIRE_TRUE(ui->slots[0].cells[2].gesturesAffectingMask.load() == 0);
+}
+
 TEST_CASE(modulation_view_materializes_missing_depth_parameter_when_capacity_allows) {
     synth::ParameterManager manager;
+    manager.SetGestureCount(2);
     auto& group = manager.CreateGroup({
         .numVoices = 1,
         .numModulators = 2,
@@ -875,7 +1257,7 @@ TEST_CASE(modulation_view_materializes_missing_depth_parameter_when_capacity_all
     REQUIRE_NEAR(depth->SceneCenter(0), 0.0f, 0.0001f);
     REQUIRE_TRUE(bank.VisibleParameter(1) == depth);
     REQUIRE_TRUE(bank.VisibleParameter(2) == &carrier);
-    REQUIRE_TRUE(bank.ReturnParameter() == &carrier);
+    REQUIRE_TRUE(bank.TargetParameter() == &carrier);
 
     bank.HandleTick(1, {.leftScene = 0, .rightScene = 0, .blend = 0.0f}, 0.2f);
 
@@ -884,6 +1266,7 @@ TEST_CASE(modulation_view_materializes_missing_depth_parameter_when_capacity_all
 
 TEST_CASE(pressing_modulation_cell_opens_nested_modulation_view) {
     synth::ParameterManager manager;
+    manager.SetGestureCount(2);
     auto& group = manager.CreateGroup({
         .numVoices = 1,
         .numModulators = 1,
@@ -904,13 +1287,14 @@ TEST_CASE(pressing_modulation_cell_opens_nested_modulation_view) {
 
     REQUIRE_TRUE(bank.ShowingModulation());
     REQUIRE_TRUE(bank.SelectedParameter() == &depth);
-    REQUIRE_TRUE(bank.ReturnParameter() == &depth);
+    REQUIRE_TRUE(bank.TargetParameter() == &depth);
     REQUIRE_TRUE(bank.VisibleParameter(1) == &nested);
     REQUIRE_TRUE(bank.VisibleParameter(2) == &depth);
 }
 
 TEST_CASE(slot_bank_switch_deselects_prior_modulation_view) {
     synth::ParameterManager manager;
+    manager.SetGestureCount(2);
     auto& group = manager.CreateGroup({
         .numVoices = 1,
         .numModulators = 1,
@@ -941,6 +1325,7 @@ TEST_CASE(slot_bank_switch_deselects_prior_modulation_view) {
 
 TEST_CASE(routed_tick_dispatches_to_selected_bank) {
     synth::ParameterManager manager;
+    manager.SetGestureCount(2);
     auto& group = manager.CreateGroup({.numVoices = 1, .numScenes = 1, .maxParameters = 2});
     auto& selected = manager.CreateParameter(group, {.name = "Selected", .defaultValue = 0.25f});
     auto& unselected = manager.CreateParameter(group, {.name = "Unselected", .defaultValue = 0.5f});
@@ -960,6 +1345,7 @@ TEST_CASE(routed_tick_dispatches_to_selected_bank) {
 
 TEST_CASE(shift_press_resets_visible_parameter_to_default) {
     synth::ParameterManager manager;
+    manager.SetGestureCount(2);
     auto& group = manager.CreateGroup({.numVoices = 1, .numScenes = 1, .maxParameters = 1});
     auto& parameter = manager.CreateParameter(group, {.name = "Reset", .defaultValue = 0.35f});
     parameter.SceneCenter(0) = 0.9f;
@@ -977,6 +1363,7 @@ TEST_CASE(shift_press_resets_visible_parameter_to_default) {
 
 TEST_CASE(unmapped_encoder_ignored) {
     synth::ParameterManager manager;
+    manager.SetGestureCount(2);
     auto& group = manager.CreateGroup({.numVoices = 1, .numScenes = 1, .maxParameters = 1});
     auto& parameter = manager.CreateParameter(group, {.name = "Stable", .defaultValue = 0.25f});
     auto& bank = manager.CreateBank();
@@ -995,9 +1382,9 @@ TEST_CASE(unmapped_encoder_ignored) {
 
 TEST_CASE(external_gesture_selection_and_value_api) {
     synth::ParameterManager manager;
+    manager.SetGestureCount(2);
     auto& group = manager.CreateGroup({
         .numVoices = 1,
-        .numGestures = 1,
         .numScenes = 1,
         .maxParameters = 1,
     });
@@ -1005,24 +1392,274 @@ TEST_CASE(external_gesture_selection_and_value_api) {
     parameter.GestureValue(0, 0) = 1.0f;
     parameter.SetGestureActive(0, 0, true);
 
-    manager.SelectGesture(group, 0);
-    manager.SetGestureValue(group, 0, 0.75f);
+    manager.SelectGesture(0);
+    manager.SetGestureValue(0, 0.75f);
     parameter.Compute({.leftScene = 0, .rightScene = 0, .blend = 0.0f});
 
-    REQUIRE_TRUE(manager.GestureSelected(group, 0));
-    REQUIRE_NEAR(manager.GestureValue(group, 0), 0.75f, 0.0001f);
+    REQUIRE_TRUE(manager.GestureSelected(0));
+    REQUIRE_NEAR(manager.GestureValue(0), 0.75f, 0.0001f);
     REQUIRE_NEAR(parameter.TargetCenter(), 0.8f, 0.0001f);
 
-    manager.DeselectGesture(group, 0);
-    REQUIRE_TRUE(!manager.GestureSelected(group, 0));
+    manager.DeselectGesture(0);
+    REQUIRE_TRUE(!manager.GestureSelected(0));
+}
+
+TEST_CASE(parameter_and_slot_ui_state_reports_values_colors_and_target_cell_metadata) {
+    synth::ParameterManager manager;
+    manager.SetGestureCount(1);
+    auto& group = manager.CreateGroup({
+        .numVoices = 2,
+        .numModulators = 1,
+        .numScenes = 1,
+        .maxParameters = 4,
+        .processLiteAlpha = 1.0f,
+        .voiceIndicatorColors = {synth::Color::Cyan, synth::Color::Orange},
+    });
+    auto& parameter = manager.CreateParameter(group, {
+        .name = "Pan",
+        .shortName = "Pan",
+        .defaultValue = 0.0f,
+        .range = synth::RangeKind::Bipolar,
+        .color = synth::Color::Green,
+        .switchValues = 5,
+    });
+    auto& bank = manager.CreateBank();
+    bank.AddMapping(10, parameter);
+    bank.AddMapping(11, parameter);
+    auto& slot = manager.CreateBankSlot();
+    slot.AddPhysicalEncoder(10);
+    slot.AddPhysicalEncoder(11);
+    slot.SelectBank(&bank);
+
+    auto& depth = manager.CreateParameter(group, {
+        .name = "Pan Depth",
+        .defaultValue = 1.0f,
+        .range = synth::RangeKind::Bipolar,
+    });
+    REQUIRE_TRUE(parameter.AssignModulationDepth(0, &depth));
+    group.GetModulators().Value(0, 0) = 0.25f;
+    group.GetModulators().Value(1, 0) = 0.75f;
+    parameter.Compute({.leftScene = 0, .rightScene = 0, .blend = 0.0f});
+    parameter.ProcessLite();
+    auto ui = manager.CreateUIState();
+    manager.PopulateUIState(*ui);
+
+    const synth::Parameter::UIState& cell = ui->slots[0].cells[0];
+    REQUIRE_TRUE(cell.connected.load());
+    REQUIRE_TRUE(cell.bipolar.load());
+    REQUIRE_TRUE(cell.color.Load() == synth::Color::Green);
+    REQUIRE_TRUE(cell.indicatorColors[0].Load() == synth::Color::Cyan);
+    REQUIRE_TRUE(cell.indicatorColors[1].Load() == synth::Color::Orange);
+    REQUIRE_NEAR(cell.minValues[0].load(), 0.0f, 0.0001f);
+    REQUIRE_NEAR(cell.maxValues[1].load(), 1.0f, 0.0001f);
+
+    manager.HandlePress(0, 0);
+    manager.PopulateUIState(*ui);
+    REQUIRE_TRUE(ui->slots[0].showingModulationView.load());
+    const synth::Parameter::UIState& targetCell = ui->slots[0].cells[1];
+    REQUIRE_TRUE(targetCell.connected.load());
+    REQUIRE_TRUE(targetCell.switchValues.load() == 5);
+    REQUIRE_TRUE(targetCell.switchValue[0].load() == 3);
+    REQUIRE_TRUE(targetCell.switchValue[1].load() == 4);
+    REQUIRE_TRUE(targetCell.modulatorsAffectingMask.load() == 1u);
+    REQUIRE_TRUE(targetCell.gesturesAffectingMask.load() == 0u);
+    REQUIRE_TRUE(targetCell.color.Load() == synth::Color::Green);
+    REQUIRE_TRUE(targetCell.shortName.load() == parameter.ShortName().c_str());
+}
+
+TEST_CASE(message_bus_routes_external_messages_and_timestamps) {
+    synth::ParameterManager manager;
+    manager.SetGestureCount(1);
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numScenes = 3,
+        .maxParameters = 2,
+    });
+    auto& parameter = manager.CreateParameter(group, {.name = "Cutoff", .defaultValue = 0.25f});
+    auto& bankA = manager.CreateBank();
+    bankA.AddMapping(10, parameter);
+    auto& bankB = manager.CreateBank();
+    bankB.AddMapping(10, parameter);
+    auto& slot = manager.CreateBankSlot();
+    slot.AddPhysicalEncoder(10);
+    slot.SelectBank(&bankA);
+
+    synth::MessageInBus bus(&manager, 3);
+    auto ui = manager.CreateUIState();
+    REQUIRE_TRUE(bus.Push(synth::MessageIn::ParamIncDec(10, 0, 0, 0.25f)));
+    bus.Process(9);
+    REQUIRE_NEAR(parameter.SceneCenter(0), 0.25f, 0.0001f);
+    bus.Process(10);
+    REQUIRE_NEAR(parameter.SceneCenter(0), 0.5f, 0.0001f);
+
+    REQUIRE_TRUE(bus.Push(synth::MessageIn::SetShift(11, true)));
+    REQUIRE_TRUE(bus.Push(synth::MessageIn::ParamPush(11, 0, 0)));
+    bus.Process(11);
+    REQUIRE_TRUE(manager.ShiftHeld());
+    REQUIRE_NEAR(parameter.SceneCenter(0), 0.25f, 0.0001f);
+    manager.PopulateUIState(*ui);
+    REQUIRE_TRUE(ui->shiftHeld.load());
+
+    REQUIRE_TRUE(bus.Push(synth::MessageIn::ToggleGestureSelect(12, 0)));
+    REQUIRE_TRUE(bus.Push(synth::MessageIn::SetGestureValue(12, 0, 0.75f)));
+    REQUIRE_TRUE(bus.Push(synth::MessageIn::SelectParamBank(12, 0, 1)));
+    REQUIRE_TRUE(!bus.Push(synth::MessageIn::Clock(12)));
+    bus.Process(12);
+    REQUIRE_TRUE(manager.GestureSelected(0));
+    REQUIRE_NEAR(manager.GestureValue(0), 0.75f, 0.0001f);
+    REQUIRE_TRUE(slot.SelectedBank() == &bankB);
+    manager.PopulateUIState(*ui);
+    REQUIRE_TRUE(ui->gestures.selected[0].load());
+
+    REQUIRE_TRUE(bus.Push(synth::MessageIn::SetSceneBlend(13, 0.25f)));
+    REQUIRE_TRUE(bus.Push(synth::MessageIn::SceneSelect(13, 2)));
+    bus.Process(13);
+    REQUIRE_TRUE(manager.Scene().leftScene == 0);
+    REQUIRE_TRUE(manager.Scene().rightScene == 2);
+    REQUIRE_NEAR(manager.Scene().blend, 0.25f, 0.0001f);
+
+    REQUIRE_TRUE(bus.Push(synth::MessageIn::SetSceneBlend(14, 0.75f)));
+    REQUIRE_TRUE(bus.Push(synth::MessageIn::SceneSelect(14, 1)));
+    bus.Process(14);
+    REQUIRE_TRUE(manager.Scene().leftScene == 1);
+    REQUIRE_TRUE(manager.Scene().rightScene == 2);
+    REQUIRE_NEAR(manager.Scene().blend, 0.75f, 0.0001f);
+
+    REQUIRE_TRUE(bus.Push(synth::MessageIn::SetSceneBlend(15, 0.5f)));
+    REQUIRE_TRUE(bus.Push(synth::MessageIn::SceneSelect(15, 0)));
+    bus.Process(15);
+    REQUIRE_TRUE(manager.Scene().leftScene == 1);
+    REQUIRE_TRUE(manager.Scene().rightScene == 0);
+    REQUIRE_NEAR(manager.Scene().blend, 0.5f, 0.0001f);
+
+    REQUIRE_TRUE(bus.Push(synth::MessageIn::SceneSelect(16, 3)));
+    bus.Process(16);
+    REQUIRE_TRUE(manager.Scene().leftScene == 1);
+    REQUIRE_TRUE(manager.Scene().rightScene == 0);
+    manager.PopulateUIState(*ui);
+    REQUIRE_TRUE(ui->leftScene.load() == 1);
+    REQUIRE_TRUE(ui->rightScene.load() == 0);
+}
+
+TEST_CASE(message_bus_routes_modulation_target_position_to_visible_parameter) {
+    synth::ParameterManager manager;
+    manager.SetGestureCount(1);
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 1,
+        .numScenes = 1,
+        .maxParameters = 2,
+    });
+    auto& carrier = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.4f});
+    auto& bank = manager.CreateBank();
+    bank.AddMapping(10, carrier);
+    bank.AddMapping(11, carrier);
+    auto& slot = manager.CreateBankSlot();
+    slot.AddPhysicalEncoder(10);
+    slot.AddPhysicalEncoder(11);
+    slot.SelectBank(&bank);
+
+    synth::MessageInBus bus(&manager, 8);
+    REQUIRE_TRUE(bus.Push(synth::MessageIn::ParamPush(1, 0, 0)));
+    bus.Process(1);
+    REQUIRE_TRUE(bank.ShowingModulation());
+    REQUIRE_TRUE(bank.VisibleParameter(11) == &carrier);
+
+    REQUIRE_TRUE(bus.Push(synth::MessageIn::ParamIncDec(2, 0, 1, 0.2f)));
+    bus.Process(2);
+    REQUIRE_NEAR(carrier.SceneCenter(0), 0.6f, 0.0001f);
+
+    REQUIRE_TRUE(bus.Push(synth::MessageIn::SetShift(3, true)));
+    REQUIRE_TRUE(bus.Push(synth::MessageIn::ParamPush(4, 0, 1)));
+    REQUIRE_TRUE(bus.Push(synth::MessageIn::SetShift(5, false)));
+    bus.Process(5);
+    REQUIRE_TRUE(bank.ShowingModulation());
+    REQUIRE_NEAR(carrier.SceneCenter(0), 0.4f, 0.0001f);
+
+    REQUIRE_TRUE(bus.Push(synth::MessageIn::ParamPush(6, 0, 1)));
+    bus.Process(6);
+    REQUIRE_TRUE(!bank.ShowingModulation());
+}
+
+TEST_CASE(message_bus_bank_select_deselects_prior_modulation_view) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 1,
+        .numScenes = 1,
+        .maxParameters = 2,
+    });
+    auto& parameter = manager.CreateParameter(group, {.name = "Cutoff", .defaultValue = 0.25f});
+    auto& bankA = manager.CreateBank();
+    bankA.AddMapping(10, parameter);
+    bankA.AddMapping(11, parameter);
+    auto& bankB = manager.CreateBank();
+    bankB.AddMapping(10, parameter);
+    bankB.AddMapping(11, parameter);
+    auto& slot = manager.CreateBankSlot();
+    slot.AddPhysicalEncoder(10);
+    slot.AddPhysicalEncoder(11);
+    slot.SelectBank(&bankA);
+
+    synth::MessageInBus bus(&manager, 8);
+    REQUIRE_TRUE(bus.Push(synth::MessageIn::ParamPush(1, 0, 0)));
+    bus.Process(1);
+    REQUIRE_TRUE(bankA.ShowingModulation());
+
+    REQUIRE_TRUE(bus.Push(synth::MessageIn::SelectParamBank(2, 0, 1)));
+    bus.Process(2);
+    REQUIRE_TRUE(slot.SelectedBank() == &bankB);
+    REQUIRE_TRUE(!bankA.ShowingModulation());
+}
+
+TEST_CASE(message_bus_single_producer_single_consumer_threaded_order) {
+    constexpr std::size_t kMessages = 1000;
+    synth::MessageInBus bus(nullptr, 64);
+    std::atomic<bool> producerDone{false};
+    std::atomic<bool> failed{false};
+
+    std::thread producer([&] {
+        for (std::size_t ix = 0; ix < kMessages; ++ix) {
+            const auto message = synth::MessageIn::SetSceneBlend(static_cast<std::uint64_t>(ix), static_cast<float>(ix));
+            while (!bus.Push(message)) {
+                std::this_thread::yield();
+            }
+        }
+        producerDone.store(true, std::memory_order_release);
+    });
+
+    std::thread consumer([&] {
+        std::size_t expected = 0;
+        while (expected < kMessages) {
+            synth::MessageIn message;
+            if (!bus.Pop(message, kMessages)) {
+                if (producerDone.load(std::memory_order_acquire) && bus.Size() == 0) {
+                    failed.store(true, std::memory_order_release);
+                    return;
+                }
+                std::this_thread::yield();
+                continue;
+            }
+            if (message.timestamp != expected || message.type != synth::MessageIn::Type::SetSceneBlend) {
+                failed.store(true, std::memory_order_release);
+                return;
+            }
+            ++expected;
+        }
+    });
+
+    producer.join();
+    consumer.join();
+    REQUIRE_TRUE(!failed.load());
+    REQUIRE_TRUE(bus.Size() == 0);
 }
 
 TEST_CASE(clear_gesture_active_flags_for_active_scene_selection) {
     synth::ParameterManager manager;
+    manager.SetGestureCount(2);
     manager.Scene() = {.leftScene = 0, .rightScene = 1, .blend = 0.5f};
     auto& group = manager.CreateGroup({
         .numVoices = 1,
-        .numGestures = 1,
         .numScenes = 3,
         .maxParameters = 2,
     });
@@ -1034,7 +1671,7 @@ TEST_CASE(clear_gesture_active_flags_for_active_scene_selection) {
     second.SetGestureActive(0, 0, true);
     second.SetGestureActive(1, 0, true);
 
-    manager.ClearGestureActiveFlagsForActiveSceneSelection(group, 0);
+    manager.ClearGestureActiveFlagsForActiveSceneSelection(0);
 
     REQUIRE_TRUE(!first.GestureActive(0, 0));
     REQUIRE_TRUE(!first.GestureActive(1, 0));
@@ -1054,7 +1691,6 @@ constexpr std::size_t kSimScenes = 3;
 struct SimCell {
     synth::PhysicalEncoderId encoder = 0;
     int parameter = -1;
-    bool returnCell = false;
 };
 
 struct SimBank {
@@ -1066,6 +1702,7 @@ struct SimBank {
 struct SimParam {
     synth::RangeKind range = synth::RangeKind::Unipolar;
     float defaultValue = 0.0f;
+    std::size_t switchValues = 0;
     std::array<float, kSimScenes> sceneCenter{};
     std::array<std::array<float, kSimGestures>, kSimScenes> gestureValue{};
     std::array<std::array<bool, kSimGestures>, kSimScenes> gestureActive{};
@@ -1074,6 +1711,12 @@ struct SimParam {
     float targetCenter = 0.0f;
     std::array<float, kSimVoices> currentCenterScale{};
     std::array<float, kSimVoices> targetCenterScale{};
+    std::array<float, kSimVoices> currentNormalizationOffset{};
+    std::array<float, kSimVoices> targetNormalizationOffset{};
+    std::array<float, kSimVoices> currentMinValue{};
+    std::array<float, kSimVoices> targetMinValue{};
+    std::array<float, kSimVoices> currentMaxValue{};
+    std::array<float, kSimVoices> targetMaxValue{};
     std::array<std::array<float, kSimMods>, kSimVoices> currentDepth{};
     std::array<std::array<float, kSimMods>, kSimVoices> targetDepth{};
 };
@@ -1091,6 +1734,10 @@ struct SimOracle {
 
 float SimClamp(float value, synth::RangeKind range) {
     return synth::ClampToRange(value, range);
+}
+
+float SimRangeMin(synth::RangeKind range) {
+    return range == synth::RangeKind::Bipolar ? -1.0f : 0.0f;
 }
 
 float SimBlend(float left, float right, float blend) {
@@ -1187,11 +1834,66 @@ float SimRawCenter(const SimOracle& oracle, const SimParam& parameter) {
 
 float SimGet(const SimOracle& oracle, std::size_t paramIx, std::size_t voiceIx) {
     const SimParam& parameter = oracle.params[paramIx];
-    float value = parameter.currentCenter * parameter.currentCenterScale[voiceIx];
+    float value = parameter.currentCenter * parameter.currentCenterScale[voiceIx] +
+                  parameter.currentNormalizationOffset[voiceIx];
     for (std::size_t modIx = 0; modIx < kSimMods; ++modIx) {
         value += oracle.modulatorValue[voiceIx][modIx] * parameter.currentDepth[voiceIx][modIx];
     }
     return SimClamp(value, parameter.range);
+}
+
+float SimTargetGet(const SimOracle& oracle, std::size_t paramIx, std::size_t voiceIx) {
+    const SimParam& parameter = oracle.params[paramIx];
+    float value = parameter.targetCenter * parameter.targetCenterScale[voiceIx] +
+                  parameter.targetNormalizationOffset[voiceIx];
+    for (std::size_t modIx = 0; modIx < kSimMods; ++modIx) {
+        value += oracle.modulatorValue[voiceIx][modIx] * parameter.targetDepth[voiceIx][modIx];
+    }
+    return SimClamp(value, parameter.range);
+}
+
+std::size_t SimSwitchVal(const SimOracle& oracle, std::size_t paramIx, std::size_t voiceIx) {
+    const SimParam& parameter = oracle.params[paramIx];
+    if (parameter.switchValues <= 1) {
+        return 0;
+    }
+    float normalized = SimTargetGet(oracle, paramIx, voiceIx);
+    if (parameter.range == synth::RangeKind::Bipolar) {
+        normalized = (normalized + 1.0f) * 0.5f;
+    }
+    normalized = std::clamp(normalized, 0.0f, 1.0f);
+    const double maxBucket = static_cast<double>(parameter.switchValues - 1);
+    return static_cast<std::size_t>(std::clamp(std::round(static_cast<double>(normalized) * maxBucket), 0.0, maxBucket));
+}
+
+std::uint32_t SimModulatorsAffectingMask(const SimParam& parameter) {
+    std::uint32_t mask = 0;
+    for (std::size_t modIx = 0; modIx < std::min<std::size_t>(kSimMods, 32); ++modIx) {
+        if (parameter.route[modIx] >= 0) {
+            mask |= (std::uint32_t{1} << modIx);
+        }
+    }
+    return mask;
+}
+
+std::uint32_t SimGesturesAffectingMask(const SimOracle& oracle, const SimParam& parameter) {
+    std::uint32_t mask = 0;
+    const float blend = std::clamp(oracle.scene.blend, 0.0f, 1.0f);
+    for (std::size_t gestureIx = 0; gestureIx < std::min<std::size_t>(kSimGestures, 32); ++gestureIx) {
+        bool active = false;
+        if (blend <= 0.0f) {
+            active = parameter.gestureActive[oracle.scene.leftScene][gestureIx];
+        } else if (blend >= 1.0f) {
+            active = parameter.gestureActive[oracle.scene.rightScene][gestureIx];
+        } else {
+            active = parameter.gestureActive[oracle.scene.leftScene][gestureIx] ||
+                     parameter.gestureActive[oracle.scene.rightScene][gestureIx];
+        }
+        if (active) {
+            mask |= (std::uint32_t{1} << gestureIx);
+        }
+    }
+    return mask;
 }
 
 void SimComputeAtDepth(SimOracle& oracle, std::size_t paramIx, std::size_t recursionDepth) {
@@ -1221,11 +1923,36 @@ void SimComputeAtDepth(SimOracle& oracle, std::size_t paramIx, std::size_t recur
                 depth /= weightSum;
             }
         }
+
+        float normalizationOffset = 0.0f;
+        for (const float depth : parameter.targetDepth[voiceIx]) {
+            normalizationOffset -= std::min(0.0f, depth);
+        }
+        parameter.targetNormalizationOffset[voiceIx] = normalizationOffset;
+
+        if (weightSum > 1.0f) {
+            parameter.targetMinValue[voiceIx] = SimRangeMin(parameter.range);
+            parameter.targetMaxValue[voiceIx] = 1.0f;
+        } else {
+            float minContribution = 0.0f;
+            float maxContribution = 0.0f;
+            for (const float depth : parameter.targetDepth[voiceIx]) {
+                minContribution += std::min(0.0f, depth);
+                maxContribution += std::max(0.0f, depth);
+            }
+            const float base = parameter.targetCenter * parameter.targetCenterScale[voiceIx] +
+                               parameter.targetNormalizationOffset[voiceIx];
+            parameter.targetMinValue[voiceIx] = SimClamp(base + minContribution, parameter.range);
+            parameter.targetMaxValue[voiceIx] = SimClamp(base + maxContribution, parameter.range);
+        }
     }
 
     if (recursionDepth > 0) {
         parameter.currentCenter = parameter.targetCenter;
         parameter.currentCenterScale = parameter.targetCenterScale;
+        parameter.currentNormalizationOffset = parameter.targetNormalizationOffset;
+        parameter.currentMinValue = parameter.targetMinValue;
+        parameter.currentMaxValue = parameter.targetMaxValue;
         parameter.currentDepth = parameter.targetDepth;
     }
 }
@@ -1241,11 +1968,17 @@ void SimProcessLiteAll(SimOracle& oracle) {
     for (auto& parameter : oracle.params) {
         parameter.currentCenter += alpha * (parameter.targetCenter - parameter.currentCenter);
         for (std::size_t voiceIx = 0; voiceIx < kSimVoices; ++voiceIx) {
-            parameter.currentCenterScale[voiceIx] +=
-                alpha * (parameter.targetCenterScale[voiceIx] - parameter.currentCenterScale[voiceIx]);
-            for (std::size_t modIx = 0; modIx < kSimMods; ++modIx) {
-                parameter.currentDepth[voiceIx][modIx] +=
-                    alpha * (parameter.targetDepth[voiceIx][modIx] - parameter.currentDepth[voiceIx][modIx]);
+        parameter.currentCenterScale[voiceIx] +=
+            alpha * (parameter.targetCenterScale[voiceIx] - parameter.currentCenterScale[voiceIx]);
+        parameter.currentNormalizationOffset[voiceIx] +=
+            alpha * (parameter.targetNormalizationOffset[voiceIx] - parameter.currentNormalizationOffset[voiceIx]);
+        parameter.currentMinValue[voiceIx] +=
+            alpha * (parameter.targetMinValue[voiceIx] - parameter.currentMinValue[voiceIx]);
+        parameter.currentMaxValue[voiceIx] +=
+            alpha * (parameter.targetMaxValue[voiceIx] - parameter.currentMaxValue[voiceIx]);
+        for (std::size_t modIx = 0; modIx < kSimMods; ++modIx) {
+            parameter.currentDepth[voiceIx][modIx] +=
+                alpha * (parameter.targetDepth[voiceIx][modIx] - parameter.currentDepth[voiceIx][modIx]);
             }
         }
     }
@@ -1263,13 +1996,11 @@ void SimOpenModulationView(SimOracle& oracle, SimBank& bank, int paramIx) {
         bank.visible.push_back({
             .encoder = bank.top[cellIx].encoder,
             .parameter = oracle.params[static_cast<std::size_t>(paramIx)].route[cellIx],
-            .returnCell = false,
         });
     }
     bank.visible.push_back({
         .encoder = bank.top[depthCellCount].encoder,
         .parameter = paramIx,
-        .returnCell = true,
     });
 }
 
@@ -1361,6 +2092,12 @@ void SimRevertToDefault(SimOracle& oracle, SimParam& parameter) {
     parameter.targetCenter = defaultValue;
     parameter.currentCenterScale.fill(1.0f);
     parameter.targetCenterScale.fill(1.0f);
+    parameter.currentNormalizationOffset.fill(0.0f);
+    parameter.targetNormalizationOffset.fill(0.0f);
+    parameter.currentMinValue.fill(defaultValue);
+    parameter.targetMinValue.fill(defaultValue);
+    parameter.currentMaxValue.fill(defaultValue);
+    parameter.targetMaxValue.fill(defaultValue);
 }
 
 bool SimEncoderIsPhysical(synth::PhysicalEncoderId encoder) {
@@ -1376,7 +2113,7 @@ void SimHandlePress(SimOracle& oracle, synth::PhysicalEncoderId encoder) {
     if (cell == nullptr) {
         return;
     }
-    if (cell->returnCell) {
+    if (bank.selectedParameter >= 0 && cell->parameter == bank.selectedParameter) {
         SimDeselect(bank);
         return;
     }
@@ -1391,7 +2128,7 @@ void SimHandleTick(SimOracle& oracle, synth::PhysicalEncoderId encoder, float de
     }
     SimBank& bank = oracle.banks[static_cast<std::size_t>(oracle.selectedBank)];
     SimCell* cell = SimFindCell(bank, encoder);
-    if (cell == nullptr || cell->returnCell || cell->parameter < 0) {
+    if (cell == nullptr || cell->parameter < 0) {
         return;
     }
     SimHandleIncDec(oracle, oracle.params[static_cast<std::size_t>(cell->parameter)], delta);
@@ -1403,7 +2140,7 @@ void SimHandleShiftPress(SimOracle& oracle, synth::PhysicalEncoderId encoder) {
     }
     SimBank& bank = oracle.banks[static_cast<std::size_t>(oracle.selectedBank)];
     SimCell* cell = SimFindCell(bank, encoder);
-    if (cell == nullptr || cell->returnCell || cell->parameter < 0) {
+    if (cell == nullptr || cell->parameter < 0) {
         return;
     }
     SimRevertToDefault(oracle, oracle.params[static_cast<std::size_t>(cell->parameter)]);
@@ -1476,7 +2213,7 @@ void SimCheck(const SimOracle& oracle, const std::array<synth::Parameter*, kSimP
             SimFailBool(seed, step, action, "group gestureIx=" + std::to_string(gestureIx) + " selected");
         }
         SimCheckNear(seed, step, action, "group gestureIx=" + std::to_string(gestureIx) + " weight",
-                     oracle.gestureWeight[gestureIx], group.GestureValue(gestureIx));
+                     oracle.gestureWeight[gestureIx], manager.GestureValue(gestureIx));
     }
     if (slot.SelectedBank() != banks[static_cast<std::size_t>(oracle.selectedBank)]) {
         SimFailBool(seed, step, action, "slot selectedBank=" + std::to_string(oracle.selectedBank));
@@ -1520,6 +2257,12 @@ void SimCheck(const SimOracle& oracle, const std::array<synth::Parameter*, kSimP
             SimCheckNear(seed, step, action, SimParamField(actual, paramIx, voiceField + " current center scale"),
                          expected.currentCenterScale[voiceIx],
                          actual.CurrentCenterScale(voiceIx));
+            SimCheckNear(seed, step, action, SimParamField(actual, paramIx, voiceField + " target normalization offset"),
+                         expected.targetNormalizationOffset[voiceIx],
+                         actual.TargetNormalizationOffset(voiceIx));
+            SimCheckNear(seed, step, action, SimParamField(actual, paramIx, voiceField + " current normalization offset"),
+                         expected.currentNormalizationOffset[voiceIx],
+                         actual.CurrentNormalizationOffset(voiceIx));
             for (std::size_t modIx = 0; modIx < kSimMods; ++modIx) {
                 const std::string modField = voiceField + " modIx=" + std::to_string(modIx);
                 SimCheckNear(seed, step, action, SimParamField(actual, paramIx, modField + " target depth"),
@@ -1559,6 +2302,93 @@ void SimCheck(const SimOracle& oracle, const std::array<synth::Parameter*, kSimP
     }
 }
 
+void SimCheckUIState(const SimOracle& oracle, const synth::ParameterManager::UIState& ui, unsigned seed, int step,
+                     const std::string& action) {
+    if (ui.leftScene.load() != oracle.scene.leftScene || ui.rightScene.load() != oracle.scene.rightScene) {
+        SimFailBool(seed, step, action, "ui scene endpoints");
+    }
+    SimCheckNear(seed, step, action, "ui scene blend", oracle.scene.blend, ui.sceneBlend.load());
+    if (ui.shiftHeld.load()) {
+        SimFailBool(seed, step, action, "ui shift held");
+    }
+
+    const SimBank& bank = oracle.banks[static_cast<std::size_t>(oracle.selectedBank)];
+    const std::array<synth::PhysicalEncoderId, 5> slotEncoders{10, 11, 12, 20, 21};
+    const std::array<synth::Color, 4> defaultIndicators{
+        synth::Color::Cyan,
+        synth::Color::Orange,
+        synth::Color::Green,
+        synth::Color::Indigo,
+    };
+    for (std::size_t position = 0; position < slotEncoders.size(); ++position) {
+        const SimCell* cell = SimFindCell(bank, slotEncoders[position]);
+        const synth::Parameter::UIState& actual = ui.slots[0].cells[position];
+        const bool expectedConnected = cell != nullptr && cell->parameter >= 0;
+        if (actual.connected.load() != expectedConnected) {
+            SimFailBool(seed, step, action, "ui position=" + std::to_string(position) + " connected");
+        }
+        if (!expectedConnected) {
+            if (actual.switchValues.load() != 0 || actual.modulatorsAffectingMask.load() != 0 ||
+                actual.gesturesAffectingMask.load() != 0) {
+                SimFailBool(seed, step, action, "ui position=" + std::to_string(position) + " disconnected switches/masks");
+            }
+        }
+        if (expectedConnected) {
+            const std::size_t paramIx = static_cast<std::size_t>(cell->parameter);
+            const SimParam& expected = oracle.params[paramIx];
+            if (actual.bipolar.load() != (expected.range == synth::RangeKind::Bipolar)) {
+                SimFailBool(seed, step, action, "ui position=" + std::to_string(position) + " bipolar");
+            }
+            if (actual.color.Load() != synth::Color::Grey) {
+                SimFailBool(seed, step, action, "ui position=" + std::to_string(position) + " color");
+            }
+            const std::size_t expectedSwitchValues = expected.switchValues;
+            const std::uint32_t expectedModulatorMask = SimModulatorsAffectingMask(expected);
+            const std::uint32_t expectedGestureMask = SimGesturesAffectingMask(oracle, expected);
+            if (actual.switchValues.load() != expectedSwitchValues) {
+                SimFailBool(seed, step, action, "ui position=" + std::to_string(position) + " switch values");
+            }
+            if (actual.modulatorsAffectingMask.load() != expectedModulatorMask) {
+                SimFailBool(seed, step, action, "ui position=" + std::to_string(position) + " modulator mask");
+            }
+            if (actual.gesturesAffectingMask.load() != expectedGestureMask) {
+                SimFailBool(seed, step, action, "ui position=" + std::to_string(position) + " gesture mask");
+            }
+            for (std::size_t voiceIx = 0; voiceIx < kSimVoices; ++voiceIx) {
+                SimCheckNear(seed, step, action,
+                             "ui position=" + std::to_string(position) + " voice=" + std::to_string(voiceIx),
+                             SimGet(oracle, paramIx, voiceIx),
+                             actual.values[voiceIx].load());
+                SimCheckNear(seed, step, action,
+                             "ui position=" + std::to_string(position) + " min=" + std::to_string(voiceIx),
+                             expected.currentMinValue[voiceIx], actual.minValues[voiceIx].load());
+                SimCheckNear(seed, step, action,
+                             "ui position=" + std::to_string(position) + " max=" + std::to_string(voiceIx),
+                             expected.currentMaxValue[voiceIx], actual.maxValues[voiceIx].load());
+                const std::size_t expectedSwitchValue = SimSwitchVal(oracle, paramIx, voiceIx);
+                if (actual.switchValue[voiceIx].load() != expectedSwitchValue) {
+                    SimFailBool(seed, step, action,
+                                "ui position=" + std::to_string(position) + " switch=" + std::to_string(voiceIx));
+                }
+                if (actual.indicatorColors[voiceIx].Load() != defaultIndicators[voiceIx]) {
+                    SimFailBool(seed, step, action,
+                                "ui position=" + std::to_string(position) + " indicator=" + std::to_string(voiceIx));
+                }
+            }
+        }
+    }
+    if (ui.gestures.gestureCapacity != kSimGestures) {
+        SimFailBool(seed, step, action, "ui gesture capacity");
+    }
+    for (std::size_t gestureIx = 0; gestureIx < kSimGestures; ++gestureIx) {
+        if (ui.gestures.selected[gestureIx].load() != oracle.gestureSelected[gestureIx]) {
+            SimFailBool(seed, step, action, "ui gesture selected");
+        }
+        SimCheckNear(seed, step, action, "ui gesture value", oracle.gestureWeight[gestureIx],
+                     ui.gestures.values[gestureIx].load());
+    }
+}
+
 void SimInitializeOracle(SimOracle& oracle) {
     const std::array<float, kSimParams> defaults{0.35f, 0.1f, -0.2f};
     const std::array<synth::RangeKind, kSimParams> ranges{
@@ -1566,11 +2396,13 @@ void SimInitializeOracle(SimOracle& oracle) {
         synth::RangeKind::Bipolar,
         synth::RangeKind::Bipolar,
     };
+    const std::array<std::size_t, kSimParams> switchValues{5, 0, 3};
 
     for (std::size_t paramIx = 0; paramIx < kSimParams; ++paramIx) {
         SimParam& parameter = oracle.params[paramIx];
         parameter.defaultValue = defaults[paramIx];
         parameter.range = ranges[paramIx];
+        parameter.switchValues = switchValues[paramIx];
         const float defaultValue = SimClamp(defaults[paramIx], ranges[paramIx]);
         parameter.sceneCenter.fill(defaultValue);
         for (auto& row : parameter.gestureValue) {
@@ -1584,6 +2416,12 @@ void SimInitializeOracle(SimOracle& oracle) {
         parameter.targetCenter = defaultValue;
         parameter.currentCenterScale.fill(1.0f);
         parameter.targetCenterScale.fill(1.0f);
+        parameter.currentNormalizationOffset.fill(0.0f);
+        parameter.targetNormalizationOffset.fill(0.0f);
+        parameter.currentMinValue.fill(defaultValue);
+        parameter.targetMinValue.fill(defaultValue);
+        parameter.currentMaxValue.fill(defaultValue);
+        parameter.targetMaxValue.fill(defaultValue);
         for (auto& row : parameter.currentDepth) {
             row.fill(0.0f);
         }
@@ -1596,16 +2434,28 @@ void SimInitializeOracle(SimOracle& oracle) {
     oracle.params[0].route[1] = 2;
     oracle.params[1].route[0] = 2;
     oracle.banks[0].top = {
-        {.encoder = 10, .parameter = 0, .returnCell = false},
-        {.encoder = 11, .parameter = 1, .returnCell = false},
-        {.encoder = 12, .parameter = 2, .returnCell = false},
+        {.encoder = 10, .parameter = 0},
+        {.encoder = 11, .parameter = 1},
+        {.encoder = 12, .parameter = 2},
     };
     oracle.banks[1].top = {
-        {.encoder = 20, .parameter = 2, .returnCell = false},
-        {.encoder = 21, .parameter = 0, .returnCell = false},
+        {.encoder = 20, .parameter = 2},
+        {.encoder = 21, .parameter = 0},
     };
     SimDeselect(oracle.banks[0]);
     SimDeselect(oracle.banks[1]);
+}
+
+void SimSetLessSelectedScene(SimOracle& oracle, std::size_t sceneIx) {
+    if (sceneIx >= kSimScenes) {
+        return;
+    }
+    const float blend = std::clamp(oracle.scene.blend, 0.0f, 1.0f);
+    if (blend <= 0.5f) {
+        oracle.scene.rightScene = sceneIx;
+    } else {
+        oracle.scene.leftScene = sceneIx;
+    }
 }
 
 } // namespace
@@ -1616,31 +2466,41 @@ TEST_CASE(randomized_parameter_modulation_simulation) {
 
     for (const unsigned seed : seeds) {
         synth::ParameterManager manager;
-        manager.Scene() = {.leftScene = 0, .rightScene = 1, .blend = 0.25f};
+        manager.SetGestureCount(2);
         auto& group = manager.CreateGroup({
             .numVoices = kSimVoices,
             .numModulators = kSimMods,
-            .numGestures = kSimGestures,
             .numScenes = kSimScenes,
             .maxParameters = kSimParams,
             .processLiteAlpha = 0.25f,
         });
-        auto& carrier = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.35f});
+        auto& carrier = manager.CreateParameter(group, {
+            .name = "Carrier",
+            .defaultValue = 0.35f,
+            .switchValues = 5,
+        });
         auto& depthA = manager.CreateParameter(
             group, {.name = "DepthA", .defaultValue = 0.1f, .range = synth::RangeKind::Bipolar});
         auto& depthB = manager.CreateParameter(
-            group, {.name = "DepthB", .defaultValue = -0.2f, .range = synth::RangeKind::Bipolar});
+            group, {
+                .name = "DepthB",
+                .defaultValue = -0.2f,
+                .range = synth::RangeKind::Bipolar,
+                .switchValues = 3,
+            });
         REQUIRE_TRUE(carrier.AssignModulationDepth(0, &depthA));
         REQUIRE_TRUE(carrier.AssignModulationDepth(1, &depthB));
         REQUIRE_TRUE(depthA.AssignModulationDepth(0, &depthB));
 
         auto& auxGroup = manager.CreateGroup({
             .numVoices = 1,
-            .numScenes = 1,
+            .numScenes = kSimScenes,
             .maxParameters = 1,
         });
         auto& aux = manager.CreateParameter(auxGroup, {.name = "Aux", .defaultValue = 0.25f});
         REQUIRE_TRUE(manager.NumGroups() == 2);
+        REQUIRE_TRUE(manager.SetSceneEndpoints(0, 1));
+        manager.SetSceneBlend(0.25f);
 
         auto& pageA = manager.CreatePage("A");
         auto& pageB = manager.CreatePage("B");
@@ -1703,14 +2563,14 @@ TEST_CASE(randomized_parameter_modulation_simulation) {
             case 3: {
                 const std::size_t gestureIx = rng() % kSimGestures;
                 action = "select gesture " + std::to_string(gestureIx);
-                manager.SelectGesture(group, gestureIx);
+                manager.SelectGesture(gestureIx);
                 oracle.gestureSelected[gestureIx] = true;
                 break;
             }
             case 4: {
                 const std::size_t gestureIx = rng() % kSimGestures;
                 action = "deselect gesture " + std::to_string(gestureIx);
-                manager.DeselectGesture(group, gestureIx);
+                manager.DeselectGesture(gestureIx);
                 oracle.gestureSelected[gestureIx] = false;
                 break;
             }
@@ -1718,7 +2578,7 @@ TEST_CASE(randomized_parameter_modulation_simulation) {
                 const std::size_t gestureIx = rng() % kSimGestures;
                 const float value = unipolarDist(rng);
                 action = "set gesture value " + std::to_string(gestureIx);
-                manager.SetGestureValue(group, gestureIx, value);
+                manager.SetGestureValue(gestureIx, value);
                 oracle.gestureWeight[gestureIx] = value;
                 break;
             }
@@ -1740,8 +2600,7 @@ TEST_CASE(randomized_parameter_modulation_simulation) {
                 const std::size_t left = rng() % kSimScenes;
                 const std::size_t right = rng() % kSimScenes;
                 action = "change scene";
-                manager.Scene().leftScene = left;
-                manager.Scene().rightScene = right;
+                REQUIRE_TRUE(manager.SetSceneEndpoints(left, right));
                 oracle.scene.leftScene = left;
                 oracle.scene.rightScene = right;
                 break;
@@ -1749,7 +2608,7 @@ TEST_CASE(randomized_parameter_modulation_simulation) {
             case 9: {
                 const float blend = unipolarDist(rng);
                 action = "change blend";
-                manager.Scene().blend = blend;
+                manager.SetSceneBlend(blend);
                 oracle.scene.blend = blend;
                 break;
             }
@@ -1779,7 +2638,7 @@ TEST_CASE(randomized_parameter_modulation_simulation) {
             default: {
                 const std::size_t gestureIx = rng() % kSimGestures;
                 action = "clear active gesture " + std::to_string(gestureIx);
-                manager.ClearGestureActiveFlagsForActiveSceneSelection(group, gestureIx);
+                manager.ClearGestureActiveFlagsForActiveSceneSelection(gestureIx);
                 const float blend = std::clamp(oracle.scene.blend, 0.0f, 1.0f);
                 for (auto& parameter : oracle.params) {
                     if (blend <= 0.0f) {
@@ -1798,6 +2657,207 @@ TEST_CASE(randomized_parameter_modulation_simulation) {
             }
 
             SimCheck(oracle, params, banks, group, slot, manager, seed, step, action);
+        }
+    }
+}
+
+TEST_CASE(randomized_message_bus_ui_state_simulation) {
+    const std::vector<unsigned> seeds = SimSeedsFromEnvironment();
+    const int steps = std::min(SimStepsFromEnvironment(), 250);
+
+    for (const unsigned seed : seeds) {
+        synth::ParameterManager manager;
+        manager.SetGestureCount(kSimGestures);
+        auto& group = manager.CreateGroup({
+            .numVoices = kSimVoices,
+            .numModulators = kSimMods,
+            .numScenes = kSimScenes,
+            .maxParameters = kSimParams,
+            .processLiteAlpha = 0.25f,
+        });
+        auto& carrier = manager.CreateParameter(group, {
+            .name = "Carrier",
+            .defaultValue = 0.35f,
+            .switchValues = 5,
+        });
+        auto& depthA = manager.CreateParameter(
+            group, {.name = "DepthA", .defaultValue = 0.1f, .range = synth::RangeKind::Bipolar});
+        auto& depthB = manager.CreateParameter(
+            group, {
+                .name = "DepthB",
+                .defaultValue = -0.2f,
+                .range = synth::RangeKind::Bipolar,
+                .switchValues = 3,
+            });
+        REQUIRE_TRUE(carrier.AssignModulationDepth(0, &depthA));
+        REQUIRE_TRUE(carrier.AssignModulationDepth(1, &depthB));
+        REQUIRE_TRUE(depthA.AssignModulationDepth(0, &depthB));
+
+        auto& auxGroup = manager.CreateGroup({
+            .numVoices = 1,
+            .numScenes = kSimScenes,
+            .maxParameters = 1,
+        });
+        auto& aux = manager.CreateParameter(auxGroup, {.name = "Aux", .defaultValue = 0.25f});
+        (void)aux;
+        REQUIRE_TRUE(manager.SetSceneEndpoints(0, 1));
+        manager.SetSceneBlend(0.25f);
+
+        auto& pageA = manager.CreatePage("A");
+        auto& pageB = manager.CreatePage("B");
+        manager.AssignParameterToPage(pageA.ordinal, carrier);
+        manager.AssignParameterToPage(pageB.ordinal, depthA);
+        manager.SelectActivePage(pageA.ordinal);
+
+        auto& bankA = manager.CreateBank();
+        bankA.AddMapping(10, carrier);
+        bankA.AddMapping(11, depthA);
+        bankA.AddMapping(12, depthB);
+        auto& bankB = manager.CreateBank();
+        bankB.AddMapping(20, depthB);
+        bankB.AddMapping(21, carrier);
+        auto& slot = manager.CreateBankSlot();
+        for (const synth::PhysicalEncoderId encoder : {10u, 11u, 12u, 20u, 21u}) {
+            slot.AddPhysicalEncoder(encoder);
+        }
+        slot.SelectBank(&bankA);
+
+        synth::MessageInBus bus(&manager, 256);
+        auto ui = manager.CreateUIState();
+        SimOracle oracle;
+        SimInitializeOracle(oracle);
+        const std::array<synth::Parameter*, kSimParams> params{&carrier, &depthA, &depthB};
+        const std::array<synth::Bank*, 2> banks{&bankA, &bankB};
+        const std::array<synth::PhysicalEncoderId, 6> encoders{10, 11, 12, 20, 21, 99};
+        std::mt19937 rng(seed ^ 0xB05u);
+        std::uniform_real_distribution<float> deltaDist(-0.18f, 0.18f);
+        std::uniform_real_distribution<float> bipolarDist(-1.0f, 1.0f);
+        std::uniform_real_distribution<float> unipolarDist(0.0f, 1.0f);
+        std::uint64_t timestamp = 1;
+
+        SimCheck(oracle, params, banks, group, slot, manager, seed, -1, "initial bus");
+        manager.PopulateUIState(*ui);
+        SimCheckUIState(oracle, *ui, seed, -1, "initial bus ui");
+
+        for (int step = 0; step < steps; ++step) {
+            std::string action;
+            switch (rng() % 13) {
+            case 0: {
+                const std::size_t position = rng() % encoders.size();
+                const float delta = deltaDist(rng);
+                action = "bus turn position " + std::to_string(position);
+                REQUIRE_TRUE(bus.Push(synth::MessageIn::ParamIncDec(timestamp, 0, position, delta)));
+                bus.Process(timestamp);
+                SimHandleTick(oracle, encoders[position], delta);
+                break;
+            }
+            case 1: {
+                const std::size_t position = rng() % encoders.size();
+                action = "bus press position " + std::to_string(position);
+                REQUIRE_TRUE(bus.Push(synth::MessageIn::ParamPush(timestamp, 0, position)));
+                bus.Process(timestamp);
+                SimHandlePress(oracle, encoders[position]);
+                break;
+            }
+            case 2: {
+                const std::size_t position = rng() % encoders.size();
+                action = "bus shift press position " + std::to_string(position);
+                REQUIRE_TRUE(bus.Push(synth::MessageIn::SetShift(timestamp, true)));
+                REQUIRE_TRUE(bus.Push(synth::MessageIn::ParamPush(timestamp, 0, position)));
+                REQUIRE_TRUE(bus.Push(synth::MessageIn::SetShift(timestamp, false)));
+                bus.Process(timestamp);
+                SimHandleShiftPress(oracle, encoders[position]);
+                break;
+            }
+            case 3: {
+                const std::size_t gestureIx = rng() % kSimGestures;
+                action = "bus toggle gesture " + std::to_string(gestureIx);
+                REQUIRE_TRUE(bus.Push(synth::MessageIn::ToggleGestureSelect(timestamp, gestureIx)));
+                bus.Process(timestamp);
+                oracle.gestureSelected[gestureIx] = !oracle.gestureSelected[gestureIx];
+                break;
+            }
+            case 4: {
+                const std::size_t gestureIx = rng() % kSimGestures;
+                const float value = unipolarDist(rng);
+                action = "bus set gesture value " + std::to_string(gestureIx);
+                REQUIRE_TRUE(bus.Push(synth::MessageIn::SetGestureValue(timestamp, gestureIx, value)));
+                bus.Process(timestamp);
+                oracle.gestureWeight[gestureIx] = value;
+                break;
+            }
+            case 5: {
+                const int bankIx = static_cast<int>(rng() % 2);
+                action = "bus select bank " + std::to_string(bankIx);
+                REQUIRE_TRUE(bus.Push(synth::MessageIn::SelectParamBank(timestamp, 0, static_cast<std::size_t>(bankIx))));
+                bus.Process(timestamp);
+                SimSelectBank(oracle, bankIx);
+                break;
+            }
+            case 6: {
+                const std::size_t sceneIx = rng() % kSimScenes;
+                action = "bus scene";
+                REQUIRE_TRUE(bus.Push(synth::MessageIn::SceneSelect(timestamp, sceneIx)));
+                bus.Process(timestamp);
+                SimSetLessSelectedScene(oracle, sceneIx);
+                break;
+            }
+            case 7: {
+                const float blend = unipolarDist(rng);
+                action = "bus blend";
+                REQUIRE_TRUE(bus.Push(synth::MessageIn::SetSceneBlend(timestamp, blend)));
+                bus.Process(timestamp);
+                oracle.scene.blend = blend;
+                break;
+            }
+            case 8: {
+                const std::size_t voiceIx = rng() % kSimVoices;
+                const std::size_t modIx = rng() % kSimMods;
+                const float value = bipolarDist(rng);
+                action = "change modulator";
+                group.GetModulators().Value(voiceIx, modIx) = value;
+                oracle.modulatorValue[voiceIx][modIx] = value;
+                break;
+            }
+            case 9:
+                action = "compute";
+                for (synth::Parameter* parameter : params) {
+                    parameter->Compute(manager.Scene());
+                }
+                SimComputeAll(oracle);
+                break;
+            case 10:
+                action = "process lite";
+                for (synth::Parameter* parameter : params) {
+                    parameter->ProcessLite();
+                }
+                SimProcessLiteAll(oracle);
+                break;
+            case 11: {
+                action = "bus inert transport";
+                REQUIRE_TRUE(bus.Push(synth::MessageIn::Clock(timestamp)));
+                REQUIRE_TRUE(bus.Push(synth::MessageIn::Start(timestamp)));
+                REQUIRE_TRUE(bus.Push(synth::MessageIn::Stop(timestamp)));
+                bus.Process(timestamp);
+                break;
+            }
+            case 12: {
+                action = "bus invalid scene";
+                const std::size_t previousLeft = manager.Scene().leftScene;
+                const std::size_t previousRight = manager.Scene().rightScene;
+                REQUIRE_TRUE(bus.Push(synth::MessageIn::SceneSelect(timestamp, kSimScenes + 1)));
+                bus.Process(timestamp);
+                REQUIRE_TRUE(manager.Scene().leftScene == previousLeft);
+                REQUIRE_TRUE(manager.Scene().rightScene == previousRight);
+                break;
+            }
+            }
+            ++timestamp;
+            SimCheck(oracle, params, banks, group, slot, manager, seed, step, action);
+            if (step % 11 == 0) {
+                manager.PopulateUIState(*ui);
+                SimCheckUIState(oracle, *ui, seed, step, action);
+            }
         }
     }
 }
@@ -1842,6 +2902,7 @@ TEST_CASE(invalid_indices_throw) {
     threw = false;
     try {
         synth::ParameterManager manager;
+    manager.SetGestureCount(2);
         manager.CreateGroup({.numVoices = 0, .numScenes = 1, .maxParameters = 1});
     } catch (const std::invalid_argument&) {
         threw = true;

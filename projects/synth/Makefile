@@ -7,8 +7,10 @@ LIB := $(BUILD_DIR)/libsynth.a
 TEST_BIN := $(BUILD_DIR)/parameter_modulation_tests
 SRC := src/ParameterModulation.cpp
 OBJ := $(BUILD_DIR)/ParameterModulation.o
+MINIAPP_DIR := miniapp
+MINIAPP_MAKEFILE := $(MINIAPP_DIR)/Makefile
 
-.PHONY: all build test clean
+.PHONY: all build test miniapp clean
 
 all: build test
 
@@ -30,5 +32,9 @@ $(TEST_BIN): tests/parameter_modulation_tests.cpp $(LIB)
 test: $(TEST_BIN)
 	$(TEST_BIN)
 
+miniapp:
+	$(MAKE) -C $(MINIAPP_DIR)
+
 clean:
 	rm -rf $(BUILD_DIR)
+	if [ -f "$(MINIAPP_MAKEFILE)" ]; then $(MAKE) -C $(MINIAPP_DIR) clean; fi

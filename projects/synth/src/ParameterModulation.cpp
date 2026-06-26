@@ -1,6 +1,7 @@
 #include "synth/ParameterModulation.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
 #include <stdexcept>
@@ -31,6 +32,33 @@ float Blend(float left, float right, float blend) {
 
 bool OutsideRange(float value, RangeKind range) {
     return ClampToRange(value, range) != value;
+}
+
+float RangeMin(RangeKind range) {
+    return range == RangeKind::Bipolar ? -1.0f : 0.0f;
+}
+
+float RangeMax(RangeKind) {
+    return 1.0f;
+}
+
+std::uint8_t ToByte(float value) {
+    return static_cast<std::uint8_t>(std::clamp(std::round(value * 255.0f), 0.0f, 255.0f));
+}
+
+Color DefaultVoiceColor(std::size_t voiceIx) {
+    static constexpr std::array<Color, 6> kPalette = {
+        Color{.r = 0, .g = 255, .b = 255, .a = 255},
+        Color{.r = 255, .g = 128, .b = 0, .a = 255},
+        Color{.r = 0, .g = 200, .b = 80, .a = 255},
+        Color{.r = 75, .g = 0, .b = 130, .a = 255},
+        Color{.r = 255, .g = 220, .b = 0, .a = 255},
+        Color{.r = 0, .g = 80, .b = 255, .a = 255},
+    };
+    if (voiceIx < kPalette.size()) {
+        return kPalette[voiceIx];
+    }
+    return Color::FromHSV(std::fmod(static_cast<float>(voiceIx) * 0.61803398875f, 1.0f), 0.7f, 0.95f);
 }
 
 void ApplySceneDistribution(float& left, float& right, float blend, float delta, RangeKind range) {
@@ -67,6 +95,100 @@ void ApplySceneDistribution(float& left, float& right, float blend, float delta,
 }
 
 } // namespace
+
+const Color Color::Off{.r = 0, .g = 0, .b = 0, .a = 255};
+const Color Color::White{.r = 255, .g = 255, .b = 255, .a = 255};
+const Color Color::Red{.r = 255, .g = 0, .b = 0, .a = 255};
+const Color Color::Orange{.r = 255, .g = 128, .b = 0, .a = 255};
+const Color Color::Yellow{.r = 255, .g = 220, .b = 0, .a = 255};
+const Color Color::Green{.r = 0, .g = 200, .b = 80, .a = 255};
+const Color Color::Cyan{.r = 0, .g = 255, .b = 255, .a = 255};
+const Color Color::Blue{.r = 0, .g = 80, .b = 255, .a = 255};
+const Color Color::Indigo{.r = 75, .g = 0, .b = 130, .a = 255};
+const Color Color::Grey{.r = 128, .g = 128, .b = 128, .a = 255};
+
+std::uint32_t Color::Packed() const {
+    return static_cast<std::uint32_t>(r) | (static_cast<std::uint32_t>(g) << 8) |
+           (static_cast<std::uint32_t>(b) << 16) | (static_cast<std::uint32_t>(a) << 24);
+}
+
+Color Color::FromPacked(std::uint32_t packed) {
+    return {
+        .r = static_cast<std::uint8_t>(packed & 0xff),
+        .g = static_cast<std::uint8_t>((packed >> 8) & 0xff),
+        .b = static_cast<std::uint8_t>((packed >> 16) & 0xff),
+        .a = static_cast<std::uint8_t>((packed >> 24) & 0xff),
+    };
+}
+
+Color Color::AdjustBrightness(float scale) const {
+    return {
+        .r = static_cast<std::uint8_t>(std::clamp(std::round(static_cast<float>(r) * scale), 0.0f, 255.0f)),
+        .g = static_cast<std::uint8_t>(std::clamp(std::round(static_cast<float>(g) * scale), 0.0f, 255.0f)),
+        .b = static_cast<std::uint8_t>(std::clamp(std::round(static_cast<float>(b) * scale), 0.0f, 255.0f)),
+        .a = a,
+    };
+}
+
+Color Color::FromHSV(float h, float s, float v) {
+    h = std::fmod(h, 1.0f);
+    if (h < 0.0f) {
+        h += 1.0f;
+    }
+    s = std::clamp(s, 0.0f, 1.0f);
+    v = std::clamp(v, 0.0f, 1.0f);
+    const float c = v * s;
+    const float hPrime = h * 6.0f;
+    const float x = c * (1.0f - std::fabs(std::fmod(hPrime, 2.0f) - 1.0f));
+    float r = 0.0f;
+    float g = 0.0f;
+    float b = 0.0f;
+    if (hPrime < 1.0f) {
+        r = c;
+        g = x;
+    } else if (hPrime < 2.0f) {
+        r = x;
+        g = c;
+    } else if (hPrime < 3.0f) {
+        g = c;
+        b = x;
+    } else if (hPrime < 4.0f) {
+        g = x;
+        b = c;
+    } else if (hPrime < 5.0f) {
+        r = x;
+        b = c;
+    } else {
+        r = c;
+        b = x;
+    }
+    const float m = v - c;
+    return {.r = ToByte(r + m), .g = ToByte(g + m), .b = ToByte(b + m), .a = 255};
+}
+
+HSV ToHSV(Color color) {
+    const float r = static_cast<float>(color.r) / 255.0f;
+    const float g = static_cast<float>(color.g) / 255.0f;
+    const float b = static_cast<float>(color.b) / 255.0f;
+    const float maxValue = std::max({r, g, b});
+    const float minValue = std::min({r, g, b});
+    const float delta = maxValue - minValue;
+    float h = 0.0f;
+    if (delta != 0.0f) {
+        if (maxValue == r) {
+            h = std::fmod((g - b) / delta, 6.0f);
+        } else if (maxValue == g) {
+            h = ((b - r) / delta) + 2.0f;
+        } else {
+            h = ((r - g) / delta) + 4.0f;
+        }
+        h /= 6.0f;
+        if (h < 0.0f) {
+            h += 1.0f;
+        }
+    }
+    return {.h = h, .s = maxValue == 0.0f ? 0.0f : delta / maxValue, .v = maxValue};
+}
 
 float ClampToRange(float value, RangeKind range) {
     if (range == RangeKind::Bipolar) {
@@ -173,25 +295,48 @@ void Gestures::CheckIndex(std::size_t gestureIx) const {
     }
 }
 
-ParameterGroup::ParameterGroup(ParameterGroupConfig config)
+ParameterGroup::ParameterGroup(ParameterGroupConfig config, ParameterManager& manager, std::size_t gestureCount)
     : config_(ValidateConfig(config)),
+      manager_(&manager),
+      gestureCount_(gestureCount),
+      voiceIndicatorColors_(config.voiceIndicatorColors),
       modulators_(config.numVoices, config.numModulators),
-      gestures_(config.numGestures) {
+      parameterCount_(0) {
+    if (voiceIndicatorColors_.size() < config_.numVoices) {
+        const std::size_t existing = voiceIndicatorColors_.size();
+        voiceIndicatorColors_.resize(config_.numVoices);
+        for (std::size_t voiceIx = existing; voiceIx < config_.numVoices; ++voiceIx) {
+            voiceIndicatorColors_[voiceIx] = DefaultVoiceColor(voiceIx);
+        }
+    }
     parameters_.reserve(config_.maxParameters);
     currentCenterScaleArena_.resize(config_.maxParameters * config_.numVoices);
     targetCenterScaleArena_.resize(config_.maxParameters * config_.numVoices);
+    currentNormalizationOffsetArena_.resize(config_.maxParameters * config_.numVoices);
+    targetNormalizationOffsetArena_.resize(config_.maxParameters * config_.numVoices);
+    currentMinValueArena_.resize(config_.maxParameters * config_.numVoices);
+    targetMinValueArena_.resize(config_.maxParameters * config_.numVoices);
+    currentMaxValueArena_.resize(config_.maxParameters * config_.numVoices);
+    targetMaxValueArena_.resize(config_.maxParameters * config_.numVoices);
     currentDepthArena_.resize(config_.maxParameters * config_.numVoices * config_.numModulators);
     targetDepthArena_.resize(config_.maxParameters * config_.numVoices * config_.numModulators);
     modulationDepthArena_.resize(config_.maxParameters * config_.numModulators, nullptr);
     sceneCenterArena_.resize(config_.maxParameters * config_.numScenes);
-    gestureValueArena_.resize(config_.maxParameters * config_.numScenes * config_.numGestures);
-    gestureActiveArena_.resize(config_.maxParameters * config_.numScenes * config_.numGestures, 0);
+    gestureValueArena_.resize(config_.maxParameters * config_.numScenes * gestureCount_);
+    gestureActiveArena_.resize(config_.maxParameters * config_.numScenes * gestureCount_, 0);
 }
 
 ParameterGroup::~ParameterGroup() = default;
 
 bool ParameterGroup::CanAllocate() const {
     return parameterCount_ < config_.maxParameters;
+}
+
+Color ParameterGroup::VoiceIndicatorColor(std::size_t voiceIx) const {
+    if (voiceIx >= config_.numVoices) {
+        throw std::out_of_range("voice indicator index out of range");
+    }
+    return voiceIndicatorColors_[voiceIx];
 }
 
 Parameter::Parameter(ParameterId id, ParameterGroup& group, ParameterConfig config, std::size_t slotIx)
@@ -205,6 +350,24 @@ Parameter::Parameter(ParameterId id, ParameterGroup& group, ParameterConfig conf
                                       group_.Config().numVoices)),
       targetCenterScales_(ArenaSlice(group_.targetCenterScaleArena_, slotIx_ * group_.Config().numVoices,
                                      group_.Config().numVoices)),
+      currentNormalizationOffsets_(ArenaSlice(group_.currentNormalizationOffsetArena_,
+                                             slotIx_ * group_.Config().numVoices,
+                                             group_.Config().numVoices)),
+      targetNormalizationOffsets_(ArenaSlice(group_.targetNormalizationOffsetArena_,
+                                            slotIx_ * group_.Config().numVoices,
+                                            group_.Config().numVoices)),
+      currentMinValues_(ArenaSlice(group_.currentMinValueArena_,
+                                   slotIx_ * group_.Config().numVoices,
+                                   group_.Config().numVoices)),
+      targetMinValues_(ArenaSlice(group_.targetMinValueArena_,
+                                  slotIx_ * group_.Config().numVoices,
+                                  group_.Config().numVoices)),
+      currentMaxValues_(ArenaSlice(group_.currentMaxValueArena_,
+                                   slotIx_ * group_.Config().numVoices,
+                                   group_.Config().numVoices)),
+      targetMaxValues_(ArenaSlice(group_.targetMaxValueArena_,
+                                  slotIx_ * group_.Config().numVoices,
+                                  group_.Config().numVoices)),
       currentDepths_(ArenaSlice(group_.currentDepthArena_,
                                 slotIx_ * group_.Config().numVoices * group_.Config().numModulators,
                                 group_.Config().numVoices * group_.Config().numModulators)),
@@ -216,13 +379,19 @@ Parameter::Parameter(ParameterId id, ParameterGroup& group, ParameterConfig conf
       sceneCenters_(ArenaSlice(group_.sceneCenterArena_, slotIx_ * group_.Config().numScenes,
                                group_.Config().numScenes)),
       gestureValues_(ArenaSlice(group_.gestureValueArena_,
-                                slotIx_ * group_.Config().numScenes * group_.Config().numGestures,
-                                group_.Config().numScenes * group_.Config().numGestures)),
+                                slotIx_ * group_.Config().numScenes * group_.GestureCount(),
+                                group_.Config().numScenes * group_.GestureCount())),
       gestureActive_(ArenaSlice(group_.gestureActiveArena_,
-                                slotIx_ * group_.Config().numScenes * group_.Config().numGestures,
-                                group_.Config().numScenes * group_.Config().numGestures)) {
+                                slotIx_ * group_.Config().numScenes * group_.GestureCount(),
+                                group_.Config().numScenes * group_.GestureCount())) {
     std::fill(currentCenterScales_.begin(), currentCenterScales_.end(), 1.0f);
     std::fill(targetCenterScales_.begin(), targetCenterScales_.end(), 1.0f);
+    std::fill(currentNormalizationOffsets_.begin(), currentNormalizationOffsets_.end(), 0.0f);
+    std::fill(targetNormalizationOffsets_.begin(), targetNormalizationOffsets_.end(), 0.0f);
+    std::fill(currentMinValues_.begin(), currentMinValues_.end(), currentCenter_);
+    std::fill(targetMinValues_.begin(), targetMinValues_.end(), currentCenter_);
+    std::fill(currentMaxValues_.begin(), currentMaxValues_.end(), currentCenter_);
+    std::fill(targetMaxValues_.begin(), targetMaxValues_.end(), currentCenter_);
     std::fill(currentDepths_.begin(), currentDepths_.end(), 0.0f);
     std::fill(targetDepths_.begin(), targetDepths_.end(), 0.0f);
     std::fill(modulationDepths_.begin(), modulationDepths_.end(), nullptr);
@@ -231,13 +400,97 @@ Parameter::Parameter(ParameterId id, ParameterGroup& group, ParameterConfig conf
     std::fill(gestureActive_.begin(), gestureActive_.end(), 0);
 }
 
+void Parameter::UIState::Configure(std::size_t newVoiceCapacity) {
+    voiceCapacity = newVoiceCapacity;
+    values = std::make_unique<std::atomic<float>[]>(voiceCapacity);
+    minValues = std::make_unique<std::atomic<float>[]>(voiceCapacity);
+    maxValues = std::make_unique<std::atomic<float>[]>(voiceCapacity);
+    switchValue = std::make_unique<std::atomic<std::size_t>[]>(voiceCapacity);
+    indicatorColors = std::make_unique<AtomicColor[]>(voiceCapacity);
+    SetDisconnected();
+}
+
+void Parameter::UIState::SetDisconnected() {
+    revision.fetch_add(1, std::memory_order_acq_rel);
+    connected.store(false, std::memory_order_relaxed);
+    bipolar.store(false, std::memory_order_relaxed);
+    switchValues.store(0, std::memory_order_relaxed);
+    modulatorsAffectingMask.store(0, std::memory_order_relaxed);
+    gesturesAffectingMask.store(0, std::memory_order_relaxed);
+    color.Store(Color::Off);
+    shortName.store(nullptr, std::memory_order_relaxed);
+    voiceCount.store(0, std::memory_order_relaxed);
+    for (std::size_t voiceIx = 0; voiceIx < voiceCapacity; ++voiceIx) {
+        values[voiceIx].store(0.0f, std::memory_order_relaxed);
+        minValues[voiceIx].store(0.0f, std::memory_order_relaxed);
+        maxValues[voiceIx].store(0.0f, std::memory_order_relaxed);
+        switchValue[voiceIx].store(0, std::memory_order_relaxed);
+        indicatorColors[voiceIx].Store(Color::Off);
+    }
+    revision.fetch_add(1, std::memory_order_release);
+}
+
+std::size_t Parameter::SwitchValues() const {
+    return config_.switchValues;
+}
+
+bool Parameter::IsSwitch() const {
+    return config_.switchValues > 1;
+}
+
 float Parameter::Get(std::size_t voiceIx) const {
     if (voiceIx >= group_.Config().numVoices) {
         throw std::out_of_range("parameter voice index out of range");
     }
-    return ClampToRange(currentCenter_ * currentCenterScales_[voiceIx] +
+    return ClampToRange(currentCenter_ * currentCenterScales_[voiceIx] + currentNormalizationOffsets_[voiceIx] +
                             group_.GetModulators().Apply(voiceIx, CurrentDepths(voiceIx)),
                         config_.range);
+}
+
+std::size_t Parameter::GetSwitchVal(std::size_t voiceIx) const {
+    if (config_.switchValues <= 1) {
+        if (voiceIx >= group_.Config().numVoices) {
+            throw std::out_of_range("parameter voice index out of range");
+        }
+        return 0;
+    }
+
+    float normalized = TargetValue(voiceIx);
+    if (config_.range == RangeKind::Bipolar) {
+        normalized = (normalized + 1.0f) * 0.5f;
+    }
+    normalized = std::clamp(normalized, 0.0f, 1.0f);
+    const double maxBucket = static_cast<double>(config_.switchValues - 1);
+    const double rounded = std::round(static_cast<double>(normalized) * maxBucket);
+    return static_cast<std::size_t>(std::clamp(rounded, 0.0, maxBucket));
+}
+
+void Parameter::PopulateUIState(UIState& state) const {
+    const std::size_t voices = std::min(state.voiceCapacity, group_.Config().numVoices);
+    state.revision.fetch_add(1, std::memory_order_acq_rel);
+    state.bipolar.store(config_.range == RangeKind::Bipolar, std::memory_order_relaxed);
+    state.switchValues.store(config_.switchValues, std::memory_order_relaxed);
+    state.modulatorsAffectingMask.store(ModulatorsAffectingMask(), std::memory_order_relaxed);
+    state.gesturesAffectingMask.store(GesturesAffectingMask(), std::memory_order_relaxed);
+    state.color.Store(config_.color);
+    state.shortName.store(config_.shortName.c_str(), std::memory_order_relaxed);
+    state.voiceCount.store(voices, std::memory_order_relaxed);
+    for (std::size_t voiceIx = 0; voiceIx < voices; ++voiceIx) {
+        state.values[voiceIx].store(Get(voiceIx), std::memory_order_relaxed);
+        state.minValues[voiceIx].store(currentMinValues_[voiceIx], std::memory_order_relaxed);
+        state.maxValues[voiceIx].store(currentMaxValues_[voiceIx], std::memory_order_relaxed);
+        state.switchValue[voiceIx].store(GetSwitchVal(voiceIx), std::memory_order_relaxed);
+        state.indicatorColors[voiceIx].Store(group_.VoiceIndicatorColor(voiceIx));
+    }
+    for (std::size_t voiceIx = voices; voiceIx < state.voiceCapacity; ++voiceIx) {
+        state.values[voiceIx].store(0.0f, std::memory_order_relaxed);
+        state.minValues[voiceIx].store(0.0f, std::memory_order_relaxed);
+        state.maxValues[voiceIx].store(0.0f, std::memory_order_relaxed);
+        state.switchValue[voiceIx].store(0, std::memory_order_relaxed);
+        state.indicatorColors[voiceIx].Store(Color::Off);
+    }
+    state.connected.store(true, std::memory_order_relaxed);
+    state.revision.fetch_add(1, std::memory_order_release);
 }
 
 void Parameter::Compute(const SceneState& scene) {
@@ -250,6 +503,10 @@ void Parameter::ProcessLite() {
     for (std::size_t voiceIx = 0; voiceIx < currentCenterScales_.size(); ++voiceIx) {
         currentCenterScales_[voiceIx] +=
             alpha * (targetCenterScales_[voiceIx] - currentCenterScales_[voiceIx]);
+        currentNormalizationOffsets_[voiceIx] +=
+            alpha * (targetNormalizationOffsets_[voiceIx] - currentNormalizationOffsets_[voiceIx]);
+        currentMinValues_[voiceIx] += alpha * (targetMinValues_[voiceIx] - currentMinValues_[voiceIx]);
+        currentMaxValues_[voiceIx] += alpha * (targetMaxValues_[voiceIx] - currentMaxValues_[voiceIx]);
     }
     for (std::size_t ix = 0; ix < currentDepths_.size(); ++ix) {
         currentDepths_[ix] += alpha * (targetDepths_[ix] - currentDepths_[ix]);
@@ -262,8 +519,8 @@ void Parameter::HandleIncDec(const SceneState& scene, float delta) {
 
     bool hasSelectedGesture = false;
     float selectedEffectiveWeightSum = 0.0f;
-    for (std::size_t gestureIx = 0; gestureIx < group_.Config().numGestures; ++gestureIx) {
-        if (!group_.GetGestures().Selected(gestureIx)) {
+    for (std::size_t gestureIx = 0; gestureIx < group_.GestureCount(); ++gestureIx) {
+        if (!group_.Manager().GestureSelected(gestureIx)) {
             continue;
         }
 
@@ -295,8 +552,8 @@ void Parameter::HandleIncDec(const SceneState& scene, float delta) {
         return;
     }
 
-    for (std::size_t gestureIx = 0; gestureIx < group_.Config().numGestures; ++gestureIx) {
-        if (!group_.GetGestures().Selected(gestureIx)) {
+    for (std::size_t gestureIx = 0; gestureIx < group_.GestureCount(); ++gestureIx) {
+        if (!group_.Manager().GestureSelected(gestureIx)) {
             continue;
         }
 
@@ -316,6 +573,8 @@ void Parameter::RevertToDefault(const SceneState& scene) {
     ClearModulationDepths();
     std::fill(currentDepths_.begin(), currentDepths_.end(), 0.0f);
     std::fill(targetDepths_.begin(), targetDepths_.end(), 0.0f);
+    std::fill(currentNormalizationOffsets_.begin(), currentNormalizationOffsets_.end(), 0.0f);
+    std::fill(targetNormalizationOffsets_.begin(), targetNormalizationOffsets_.end(), 0.0f);
 
     const float defaultValue = ClampToRange(config_.defaultValue, config_.range);
     const float blend = std::clamp(scene.blend, 0.0f, 1.0f);
@@ -334,11 +593,18 @@ void Parameter::RevertToDefault(const SceneState& scene) {
     targetCenter_ = defaultValue;
     std::fill(currentCenterScales_.begin(), currentCenterScales_.end(), 1.0f);
     std::fill(targetCenterScales_.begin(), targetCenterScales_.end(), 1.0f);
+    std::fill(currentMinValues_.begin(), currentMinValues_.end(), defaultValue);
+    std::fill(targetMinValues_.begin(), targetMinValues_.end(), defaultValue);
+    std::fill(currentMaxValues_.begin(), currentMaxValues_.end(), defaultValue);
+    std::fill(targetMaxValues_.begin(), targetMaxValues_.end(), defaultValue);
 }
 
 bool Parameter::AssignModulationDepth(std::size_t modIx, Parameter* parameter) {
     if (modIx >= modulationDepths_.size()) {
         throw std::out_of_range("modulation depth index out of range");
+    }
+    if (parameter != nullptr && &parameter->Group() != &group_) {
+        return false;
     }
     if (parameter != nullptr && WouldCreateCycle(parameter)) {
         return false;
@@ -447,6 +713,20 @@ float Parameter::TargetCenterScale(std::size_t voiceIx) const {
     return targetCenterScales_[voiceIx];
 }
 
+float Parameter::CurrentNormalizationOffset(std::size_t voiceIx) const {
+    if (voiceIx >= group_.Config().numVoices) {
+        throw std::out_of_range("parameter voice index out of range");
+    }
+    return currentNormalizationOffsets_[voiceIx];
+}
+
+float Parameter::TargetNormalizationOffset(std::size_t voiceIx) const {
+    if (voiceIx >= group_.Config().numVoices) {
+        throw std::out_of_range("parameter voice index out of range");
+    }
+    return targetNormalizationOffsets_[voiceIx];
+}
+
 std::size_t Parameter::VoiceModIndex(std::size_t voiceIx, std::size_t modIx) const {
     if (voiceIx >= group_.Config().numVoices) {
         throw std::out_of_range("parameter voice index out of range");
@@ -461,10 +741,10 @@ std::size_t Parameter::SceneGestureIndex(std::size_t sceneIx, std::size_t gestur
     if (sceneIx >= group_.Config().numScenes) {
         throw std::out_of_range("parameter scene index out of range");
     }
-    if (gestureIx >= group_.Config().numGestures) {
+    if (gestureIx >= group_.GestureCount()) {
         throw std::out_of_range("parameter gesture index out of range");
     }
-    return sceneIx * group_.Config().numGestures + gestureIx;
+    return sceneIx * group_.GestureCount() + gestureIx;
 }
 
 void Parameter::ValidateSceneEndpoints(const SceneState& scene) const {
@@ -475,7 +755,7 @@ void Parameter::ValidateSceneEndpoints(const SceneState& scene) const {
 
 float Parameter::EffectiveGestureWeight(const SceneState& scene, std::size_t gestureIx, float blend) const {
     const float clampedBlend = std::clamp(blend, 0.0f, 1.0f);
-    const float groupWeight = group_.GetGestures().Value(gestureIx);
+    const float groupWeight = group_.Manager().GestureValue(gestureIx);
     const float leftWeight = GestureActive(scene.leftScene, gestureIx) ? groupWeight * (1.0f - clampedBlend) : 0.0f;
     const float rightWeight = GestureActive(scene.rightScene, gestureIx) ? groupWeight * clampedBlend : 0.0f;
     return leftWeight + rightWeight;
@@ -490,7 +770,7 @@ void Parameter::ActivateGestureForScene(std::size_t sceneIx, std::size_t gesture
 
 void Parameter::ResetSceneToDefault(std::size_t sceneIx, float defaultValue) {
     SceneCenter(sceneIx) = defaultValue;
-    for (std::size_t gestureIx = 0; gestureIx < group_.Config().numGestures; ++gestureIx) {
+    for (std::size_t gestureIx = 0; gestureIx < group_.GestureCount(); ++gestureIx) {
         SetGestureActive(sceneIx, gestureIx, false);
     }
 }
@@ -503,7 +783,7 @@ float Parameter::ComputeRawCenter(const SceneState& scene) const {
 
     float weightedMixSum = 0.0f;
     float activeWeightSum = 0.0f;
-    for (std::size_t gestureIx = 0; gestureIx < group_.Config().numGestures; ++gestureIx) {
+    for (std::size_t gestureIx = 0; gestureIx < group_.GestureCount(); ++gestureIx) {
         const float effectiveWeight = EffectiveGestureWeight(scene, gestureIx, blend);
         if (effectiveWeight == 0.0f) {
             continue;
@@ -549,11 +829,37 @@ void Parameter::ComputeAtDepth(const SceneState& scene, std::size_t recursionDep
                 targetDepths_[VoiceModIndex(voiceIx, modIx)] /= weightSum;
             }
         }
+
+        float normalizationOffset = 0.0f;
+        for (std::size_t modIx = 0; modIx < group_.Config().numModulators; ++modIx) {
+            normalizationOffset -= std::min(0.0f, targetDepths_[VoiceModIndex(voiceIx, modIx)]);
+        }
+        targetNormalizationOffsets_[voiceIx] = normalizationOffset;
+
+        if (weightSum > 1.0f) {
+            targetMinValues_[voiceIx] = RangeMin(config_.range);
+            targetMaxValues_[voiceIx] = RangeMax(config_.range);
+        } else {
+            float minContribution = 0.0f;
+            float maxContribution = 0.0f;
+            for (std::size_t modIx = 0; modIx < group_.Config().numModulators; ++modIx) {
+                const float depth = targetDepths_[VoiceModIndex(voiceIx, modIx)];
+                minContribution += std::min(0.0f, depth);
+                maxContribution += std::max(0.0f, depth);
+            }
+            const float base = targetCenter_ * targetCenterScales_[voiceIx] + targetNormalizationOffsets_[voiceIx];
+            targetMinValues_[voiceIx] = ClampToRange(base + minContribution, config_.range);
+            targetMaxValues_[voiceIx] = ClampToRange(base + maxContribution, config_.range);
+        }
     }
 
     if (recursionDepth_ > 0) {
         currentCenter_ = targetCenter_;
         std::copy(targetCenterScales_.begin(), targetCenterScales_.end(), currentCenterScales_.begin());
+        std::copy(targetNormalizationOffsets_.begin(), targetNormalizationOffsets_.end(),
+                  currentNormalizationOffsets_.begin());
+        std::copy(targetMinValues_.begin(), targetMinValues_.end(), currentMinValues_.begin());
+        std::copy(targetMaxValues_.begin(), targetMaxValues_.end(), currentMaxValues_.begin());
         std::copy(targetDepths_.begin(), targetDepths_.end(), currentDepths_.begin());
     }
 }
@@ -571,28 +877,72 @@ bool Parameter::WouldCreateCycle(const Parameter* candidate) const {
     return false;
 }
 
+float Parameter::TargetValue(std::size_t voiceIx) const {
+    if (voiceIx >= group_.Config().numVoices) {
+        throw std::out_of_range("parameter voice index out of range");
+    }
+    return ClampToRange(targetCenter_ * targetCenterScales_[voiceIx] + targetNormalizationOffsets_[voiceIx] +
+                            group_.GetModulators().Apply(voiceIx, TargetDepths(voiceIx)),
+                        config_.range);
+}
+
+std::uint32_t Parameter::ModulatorsAffectingMask() const {
+    std::uint32_t mask = 0;
+    const std::size_t count = std::min<std::size_t>(modulationDepths_.size(), 32);
+    for (std::size_t modIx = 0; modIx < count; ++modIx) {
+        if (modulationDepths_[modIx] != nullptr) {
+            mask |= (std::uint32_t{1} << modIx);
+        }
+    }
+    return mask;
+}
+
+std::uint32_t Parameter::GesturesAffectingMask() const {
+    std::uint32_t mask = 0;
+    const SceneState& scene = group_.Manager().Scene();
+    const float blend = std::clamp(scene.blend, 0.0f, 1.0f);
+    const std::size_t count = std::min<std::size_t>(group_.GestureCount(), 32);
+    const bool leftSceneValid = scene.leftScene < group_.Config().numScenes;
+    const bool rightSceneValid = scene.rightScene < group_.Config().numScenes;
+    for (std::size_t gestureIx = 0; gestureIx < count; ++gestureIx) {
+        bool active = false;
+        if (blend <= 0.0f) {
+            active = leftSceneValid && GestureActive(scene.leftScene, gestureIx);
+        } else if (blend >= 1.0f) {
+            active = rightSceneValid && GestureActive(scene.rightScene, gestureIx);
+        } else {
+            active = (leftSceneValid && GestureActive(scene.leftScene, gestureIx)) ||
+                     (rightSceneValid && GestureActive(scene.rightScene, gestureIx));
+        }
+        if (active) {
+            mask |= (std::uint32_t{1} << gestureIx);
+        }
+    }
+    return mask;
+}
+
 void ParameterGroup::SelectGesture(std::size_t gestureIx) {
-    gestures_.Select(gestureIx, true);
+    manager_->SelectGesture(gestureIx);
 }
 
 void ParameterGroup::DeselectGesture(std::size_t gestureIx) {
-    gestures_.Select(gestureIx, false);
+    manager_->DeselectGesture(gestureIx);
 }
 
 bool ParameterGroup::GestureSelected(std::size_t gestureIx) const {
-    return gestures_.Selected(gestureIx);
+    return manager_->GestureSelected(gestureIx);
 }
 
 void ParameterGroup::SetGestureValue(std::size_t gestureIx, float value) {
-    gestures_.Value(gestureIx) = value;
+    manager_->SetGestureValue(gestureIx, value);
 }
 
 float ParameterGroup::GestureValue(std::size_t gestureIx) const {
-    return gestures_.Value(gestureIx);
+    return manager_->GestureValue(gestureIx);
 }
 
 void ParameterGroup::ClearGestureActiveFlagsForActiveSceneSelection(const SceneState& scene, std::size_t gestureIx) {
-    if (gestureIx >= config_.numGestures) {
+    if (gestureIx >= gestureCount_) {
         throw std::out_of_range("gesture index out of range");
     }
     if (scene.leftScene >= config_.numScenes || scene.rightScene >= config_.numScenes) {
@@ -621,7 +971,6 @@ void Bank::AddMapping(PhysicalEncoderId encoderId, Parameter& parameter) {
     for (Cell& cell : topLevel_) {
         if (cell.encoderId == encoderId) {
             cell.parameter = &parameter;
-            cell.returnCell = false;
             if (!ShowingModulation()) {
                 visible_ = topLevel_;
             }
@@ -629,7 +978,7 @@ void Bank::AddMapping(PhysicalEncoderId encoderId, Parameter& parameter) {
         }
     }
 
-    topLevel_.push_back({.encoderId = encoderId, .parameter = &parameter, .returnCell = false});
+    topLevel_.push_back({.encoderId = encoderId, .parameter = &parameter});
     if (!ShowingModulation()) {
         visible_ = topLevel_;
     }
@@ -644,7 +993,7 @@ void Bank::HandlePress(PhysicalEncoderId encoderId) {
     if (cell == nullptr) {
         return;
     }
-    if (cell->returnCell) {
+    if (ShowingModulation() && cell->parameter == selected_) {
         Deselect();
         return;
     }
@@ -655,7 +1004,7 @@ void Bank::HandlePress(PhysicalEncoderId encoderId) {
 
 void Bank::HandleShiftPress(PhysicalEncoderId encoderId, const SceneState& scene) {
     Cell* cell = FindVisibleCell(encoderId);
-    if (cell == nullptr || cell->returnCell || cell->parameter == nullptr) {
+    if (cell == nullptr || cell->parameter == nullptr) {
         return;
     }
     cell->parameter->RevertToDefault(scene);
@@ -663,7 +1012,7 @@ void Bank::HandleShiftPress(PhysicalEncoderId encoderId, const SceneState& scene
 
 void Bank::HandleTick(PhysicalEncoderId encoderId, const SceneState& scene, float delta) {
     Cell* cell = FindVisibleCell(encoderId);
-    if (cell == nullptr || cell->returnCell || cell->parameter == nullptr) {
+    if (cell == nullptr || cell->parameter == nullptr) {
         return;
     }
     cell->parameter->HandleIncDec(scene, delta);
@@ -687,13 +1036,28 @@ Parameter* Bank::VisibleParameter(PhysicalEncoderId encoderId) const {
     return cell == nullptr ? nullptr : cell->parameter;
 }
 
-Parameter* Bank::ReturnParameter() const {
-    for (const Cell& cell : visible_) {
-        if (cell.returnCell) {
-            return cell.parameter;
-        }
+Bank::VisibleCell Bank::VisibleCellFor(PhysicalEncoderId encoderId) const {
+    const Cell* cell = FindVisibleCell(encoderId);
+    if (cell == nullptr) {
+        return {};
     }
-    return nullptr;
+    return {
+        .parameter = cell->parameter,
+    };
+}
+
+Parameter* Bank::TargetParameter() const {
+    return ShowingModulation() ? selected_ : nullptr;
+}
+
+void BankSlot::UIState::Configure(std::size_t newCellCapacity, std::size_t voiceCapacity) {
+    cellCapacity = newCellCapacity;
+    cells = std::make_unique<Parameter::UIState[]>(cellCapacity);
+    for (std::size_t cellIx = 0; cellIx < cellCapacity; ++cellIx) {
+        cells[cellIx].Configure(voiceCapacity);
+    }
+    connected.store(false, std::memory_order_relaxed);
+    showingModulationView.store(false, std::memory_order_relaxed);
 }
 
 Bank::Cell* Bank::FindVisibleCell(PhysicalEncoderId encoderId) {
@@ -750,14 +1114,12 @@ void Bank::OpenModulationView(Parameter& parameter) {
         visible_.push_back({
             .encoderId = topLevel_[cellIx].encoderId,
             .parameter = EnsureModulationDepthParameter(parameter, cellIx),
-            .returnCell = false,
         });
     }
 
     visible_.push_back({
         .encoderId = topLevel_[depthCellCount].encoderId,
         .parameter = &parameter,
-        .returnCell = true,
     });
 }
 
@@ -796,12 +1158,46 @@ void BankSlot::HandleTick(PhysicalEncoderId encoderId, const SceneState& scene, 
     }
 }
 
+bool BankSlot::ResolvePosition(std::size_t position, PhysicalEncoderId& encoderId) const {
+    if (position >= physicalEncoders_.size()) {
+        return false;
+    }
+    encoderId = physicalEncoders_[position];
+    return true;
+}
+
+void BankSlot::PopulateUIState(UIState& state) const {
+    state.connected.store(selectedBank_ != nullptr, std::memory_order_relaxed);
+    state.showingModulationView.store(selectedBank_ != nullptr && selectedBank_->ShowingModulation(),
+                                      std::memory_order_relaxed);
+    for (std::size_t cellIx = 0; cellIx < state.cellCapacity; ++cellIx) {
+        if (cellIx >= physicalEncoders_.size() || selectedBank_ == nullptr) {
+            state.cells[cellIx].SetDisconnected();
+            continue;
+        }
+        const Bank::VisibleCell cell = selectedBank_->VisibleCellFor(physicalEncoders_[cellIx]);
+        if (cell.parameter == nullptr) {
+            state.cells[cellIx].SetDisconnected();
+            continue;
+        }
+        cell.parameter->PopulateUIState(state.cells[cellIx]);
+    }
+}
+
 bool BankSlot::OwnsPhysicalEncoder(PhysicalEncoderId encoderId) const {
     return std::find(physicalEncoders_.begin(), physicalEncoders_.end(), encoderId) != physicalEncoders_.end();
 }
 
+bool ParameterManager::SetGestureCount(std::size_t count) {
+    if (!groups_.empty()) {
+        return false;
+    }
+    gestures_ = Gestures(count);
+    return true;
+}
+
 ParameterGroup& ParameterManager::CreateGroup(ParameterGroupConfig config) {
-    auto group = std::make_unique<ParameterGroup>(config);
+    auto group = std::make_unique<ParameterGroup>(std::move(config), *this, gestures_.NumGestures());
     ParameterGroup& result = *group;
     groups_.push_back(std::move(group));
     return result;
@@ -824,6 +1220,36 @@ ParameterId ParameterManager::NextParameterId() {
         throw std::overflow_error("parameter ID space exhausted");
     }
     return nextId_++;
+}
+
+bool ParameterManager::SceneEndpointsValid(std::size_t leftScene, std::size_t rightScene) const {
+    for (const auto& group : groups_) {
+        if (leftScene >= group->Config().numScenes || rightScene >= group->Config().numScenes) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool ParameterManager::SetSceneEndpoints(std::size_t leftScene, std::size_t rightScene) {
+    if (!SceneEndpointsValid(leftScene, rightScene)) {
+        return false;
+    }
+    scene_.leftScene = leftScene;
+    scene_.rightScene = rightScene;
+    return true;
+}
+
+bool ParameterManager::SetLessSelectedScene(std::size_t sceneIx) {
+    const float blend = std::clamp(scene_.blend, 0.0f, 1.0f);
+    if (blend <= 0.5f) {
+        return SetSceneEndpoints(scene_.leftScene, sceneIx);
+    }
+    return SetSceneEndpoints(sceneIx, scene_.rightScene);
+}
+
+void ParameterManager::SetSceneBlend(float blend) {
+    scene_.blend = std::clamp(blend, 0.0f, 1.0f);
 }
 
 Page& ParameterManager::CreatePage(std::string name) {
@@ -888,11 +1314,27 @@ Bank& ParameterManager::CreateBank() {
     return result;
 }
 
+Bank* ParameterManager::BankAt(std::size_t bankIx) {
+    return bankIx >= banks_.size() ? nullptr : banks_[bankIx].get();
+}
+
+const Bank* ParameterManager::BankAt(std::size_t bankIx) const {
+    return bankIx >= banks_.size() ? nullptr : banks_[bankIx].get();
+}
+
 BankSlot& ParameterManager::CreateBankSlot() {
     auto slot = std::make_unique<BankSlot>();
     BankSlot& result = *slot;
     slots_.push_back(std::move(slot));
     return result;
+}
+
+BankSlot* ParameterManager::BankSlotAt(std::size_t slotIx) {
+    return slotIx >= slots_.size() ? nullptr : slots_[slotIx].get();
+}
+
+const BankSlot* ParameterManager::BankSlotAt(std::size_t slotIx) const {
+    return slotIx >= slots_.size() ? nullptr : slots_[slotIx].get();
 }
 
 void ParameterManager::HandlePress(PhysicalEncoderId encoderId) {
@@ -922,28 +1364,333 @@ void ParameterManager::HandleTick(PhysicalEncoderId encoderId, float delta) {
     }
 }
 
-void ParameterManager::SelectGesture(ParameterGroup& group, std::size_t gestureIx) {
-    group.SelectGesture(gestureIx);
+void ParameterManager::HandlePress(std::size_t slotIx, std::size_t position) {
+    BankSlot* slot = BankSlotAt(slotIx);
+    PhysicalEncoderId encoderId = 0;
+    if (slot != nullptr && slot->ResolvePosition(position, encoderId)) {
+        slot->HandlePress(encoderId);
+    }
 }
 
-void ParameterManager::DeselectGesture(ParameterGroup& group, std::size_t gestureIx) {
-    group.DeselectGesture(gestureIx);
+void ParameterManager::HandleShiftPress(std::size_t slotIx, std::size_t position) {
+    BankSlot* slot = BankSlotAt(slotIx);
+    PhysicalEncoderId encoderId = 0;
+    if (slot != nullptr && slot->ResolvePosition(position, encoderId)) {
+        slot->HandleShiftPress(encoderId, scene_);
+    }
 }
 
-bool ParameterManager::GestureSelected(const ParameterGroup& group, std::size_t gestureIx) const {
-    return group.GestureSelected(gestureIx);
+void ParameterManager::HandleTick(std::size_t slotIx, std::size_t position, float delta) {
+    BankSlot* slot = BankSlotAt(slotIx);
+    PhysicalEncoderId encoderId = 0;
+    if (slot != nullptr && slot->ResolvePosition(position, encoderId)) {
+        slot->HandleTick(encoderId, scene_, delta);
+    }
 }
 
-void ParameterManager::SetGestureValue(ParameterGroup& group, std::size_t gestureIx, float value) {
-    group.SetGestureValue(gestureIx, value);
+bool ParameterManager::SelectBankForSlot(std::size_t slotIx, std::size_t bankIx) {
+    BankSlot* slot = BankSlotAt(slotIx);
+    Bank* bank = BankAt(bankIx);
+    if (slot == nullptr || bank == nullptr) {
+        return false;
+    }
+    slot->SelectBank(bank);
+    return true;
 }
 
-float ParameterManager::GestureValue(const ParameterGroup& group, std::size_t gestureIx) const {
-    return group.GestureValue(gestureIx);
+void ParameterManager::SelectGesture(std::size_t gestureIx) {
+    gestures_.Select(gestureIx, true);
 }
 
-void ParameterManager::ClearGestureActiveFlagsForActiveSceneSelection(ParameterGroup& group, std::size_t gestureIx) {
-    group.ClearGestureActiveFlagsForActiveSceneSelection(scene_, gestureIx);
+void ParameterManager::DeselectGesture(std::size_t gestureIx) {
+    gestures_.Select(gestureIx, false);
+}
+
+void ParameterManager::ToggleGestureSelected(std::size_t gestureIx) {
+    gestures_.Select(gestureIx, !gestures_.Selected(gestureIx));
+}
+
+bool ParameterManager::GestureSelected(std::size_t gestureIx) const {
+    return gestures_.Selected(gestureIx);
+}
+
+void ParameterManager::SetGestureValue(std::size_t gestureIx, float value) {
+    gestures_.Value(gestureIx) = std::clamp(value, 0.0f, 1.0f);
+}
+
+float ParameterManager::GestureValue(std::size_t gestureIx) const {
+    return gestures_.Value(gestureIx);
+}
+
+GestureMetadata& ParameterManager::GestureMetadataAt(std::size_t gestureIx) {
+    return gestures_.Metadata(gestureIx);
+}
+
+const GestureMetadata& ParameterManager::GestureMetadataAt(std::size_t gestureIx) const {
+    return gestures_.Metadata(gestureIx);
+}
+
+void ParameterManager::ClearGestureActiveFlagsForActiveSceneSelection(std::size_t gestureIx) {
+    for (const auto& group : groups_) {
+        group->ClearGestureActiveFlagsForActiveSceneSelection(scene_, gestureIx);
+    }
+}
+
+std::size_t ParameterManager::MaxVoiceCount() const {
+    std::size_t result = 0;
+    for (const auto& group : groups_) {
+        result = std::max(result, group->Config().numVoices);
+    }
+    return result;
+}
+
+std::size_t ParameterManager::MaxSlotCellCount() const {
+    std::size_t result = 0;
+    for (const auto& slot : slots_) {
+        result = std::max(result, slot->PhysicalEncoders().size());
+    }
+    return result;
+}
+
+void ParameterManager::GestureManagerUIState::Configure(std::size_t newGestureCapacity) {
+    gestureCapacity = newGestureCapacity;
+    values = std::make_unique<std::atomic<float>[]>(gestureCapacity);
+    selected = std::make_unique<std::atomic<bool>[]>(gestureCapacity);
+    colors = std::make_unique<AtomicColor[]>(gestureCapacity);
+    connected = std::make_unique<std::atomic<bool>[]>(gestureCapacity);
+    for (std::size_t gestureIx = 0; gestureIx < gestureCapacity; ++gestureIx) {
+        values[gestureIx].store(0.0f, std::memory_order_relaxed);
+        selected[gestureIx].store(false, std::memory_order_relaxed);
+        colors[gestureIx].Store(Color::Off);
+        connected[gestureIx].store(false, std::memory_order_relaxed);
+    }
+}
+
+void ParameterManager::UIState::Configure(std::size_t newSlotCapacity, std::size_t cellCapacity,
+                                          std::size_t voiceCapacity, std::size_t gestureCapacity) {
+    slotCapacity = newSlotCapacity;
+    slots = std::make_unique<BankSlot::UIState[]>(slotCapacity);
+    for (std::size_t slotIx = 0; slotIx < slotCapacity; ++slotIx) {
+        slots[slotIx].Configure(cellCapacity, voiceCapacity);
+    }
+    gestures.Configure(gestureCapacity);
+}
+
+std::unique_ptr<ParameterManager::UIState> ParameterManager::CreateUIState() const {
+    auto state = std::make_unique<UIState>();
+    state->Configure(slots_.size(), MaxSlotCellCount(), MaxVoiceCount(), gestures_.NumGestures());
+    return state;
+}
+
+void ParameterManager::PopulateUIState(UIState& state) const {
+    state.leftScene.store(scene_.leftScene, std::memory_order_relaxed);
+    state.rightScene.store(scene_.rightScene, std::memory_order_relaxed);
+    state.sceneBlend.store(scene_.blend, std::memory_order_relaxed);
+    state.shiftHeld.store(shiftHeld_, std::memory_order_relaxed);
+    for (std::size_t slotIx = 0; slotIx < state.slotCapacity; ++slotIx) {
+        if (slotIx < slots_.size()) {
+            slots_[slotIx]->PopulateUIState(state.slots[slotIx]);
+        } else {
+            state.slots[slotIx].connected.store(false, std::memory_order_relaxed);
+            state.slots[slotIx].showingModulationView.store(false, std::memory_order_relaxed);
+            for (std::size_t cellIx = 0; cellIx < state.slots[slotIx].cellCapacity; ++cellIx) {
+                state.slots[slotIx].cells[cellIx].SetDisconnected();
+            }
+        }
+    }
+    for (std::size_t gestureIx = 0; gestureIx < state.gestures.gestureCapacity; ++gestureIx) {
+        const bool connected = gestureIx < gestures_.NumGestures();
+        state.gestures.connected[gestureIx].store(connected, std::memory_order_relaxed);
+        if (!connected) {
+            state.gestures.values[gestureIx].store(0.0f, std::memory_order_relaxed);
+            state.gestures.selected[gestureIx].store(false, std::memory_order_relaxed);
+            state.gestures.colors[gestureIx].Store(Color::Off);
+            continue;
+        }
+        state.gestures.values[gestureIx].store(gestures_.Value(gestureIx), std::memory_order_relaxed);
+        state.gestures.selected[gestureIx].store(gestures_.Selected(gestureIx), std::memory_order_relaxed);
+        state.gestures.colors[gestureIx].Store(gestures_.Metadata(gestureIx).color);
+    }
+}
+
+MessageIn MessageIn::ParamIncDec(std::uint64_t timestamp, std::size_t slotIx, std::size_t position, float delta) {
+    MessageIn message;
+    message.timestamp = timestamp;
+    message.type = Type::ParamIncDec;
+    message.slotIx = slotIx;
+    message.position = position;
+    message.delta = delta;
+    return message;
+}
+
+MessageIn MessageIn::ParamPush(std::uint64_t timestamp, std::size_t slotIx, std::size_t position) {
+    MessageIn message;
+    message.timestamp = timestamp;
+    message.type = Type::ParamPush;
+    message.slotIx = slotIx;
+    message.position = position;
+    return message;
+}
+
+MessageIn MessageIn::ToggleShift(std::uint64_t timestamp) {
+    MessageIn message;
+    message.timestamp = timestamp;
+    message.type = Type::ToggleShift;
+    return message;
+}
+
+MessageIn MessageIn::SetShift(std::uint64_t timestamp, bool held) {
+    MessageIn message = ToggleShift(timestamp);
+    message.boolValue = held;
+    message.hasBoolValue = true;
+    return message;
+}
+
+MessageIn MessageIn::ToggleGestureSelect(std::uint64_t timestamp, std::size_t gestureIx) {
+    MessageIn message;
+    message.timestamp = timestamp;
+    message.type = Type::ToggleGestureSelect;
+    message.gestureIx = gestureIx;
+    return message;
+}
+
+MessageIn MessageIn::SelectParamBank(std::uint64_t timestamp, std::size_t slotIx, std::size_t bankIx) {
+    MessageIn message;
+    message.timestamp = timestamp;
+    message.type = Type::SelectParamBank;
+    message.slotIx = slotIx;
+    message.bankIx = bankIx;
+    return message;
+}
+
+MessageIn MessageIn::Start(std::uint64_t timestamp) {
+    MessageIn message;
+    message.timestamp = timestamp;
+    message.type = Type::Start;
+    return message;
+}
+
+MessageIn MessageIn::Stop(std::uint64_t timestamp) {
+    MessageIn message;
+    message.timestamp = timestamp;
+    message.type = Type::Stop;
+    return message;
+}
+
+MessageIn MessageIn::Clock(std::uint64_t timestamp) {
+    MessageIn message;
+    message.timestamp = timestamp;
+    message.type = Type::Clock;
+    return message;
+}
+
+MessageIn MessageIn::SetGestureValue(std::uint64_t timestamp, std::size_t gestureIx, float value) {
+    MessageIn message;
+    message.timestamp = timestamp;
+    message.type = Type::SetGestureValue;
+    message.gestureIx = gestureIx;
+    message.value = value;
+    return message;
+}
+
+MessageIn MessageIn::SceneSelect(std::uint64_t timestamp, std::size_t sceneIx) {
+    MessageIn message;
+    message.timestamp = timestamp;
+    message.type = Type::SceneSelect;
+    message.sceneIx = sceneIx;
+    return message;
+}
+
+MessageIn MessageIn::SetSceneBlend(std::uint64_t timestamp, float blend) {
+    MessageIn message;
+    message.timestamp = timestamp;
+    message.type = Type::SetSceneBlend;
+    message.value = blend;
+    return message;
+}
+
+MessageInBus::MessageInBus(ParameterManager* manager, std::size_t capacity)
+    : manager_(manager),
+      queue_(capacity == 0 ? 1 : capacity) {}
+
+bool MessageInBus::Push(const MessageIn& message) {
+    const std::size_t size = size_.load(std::memory_order_acquire);
+    if (size >= queue_.size()) {
+        return false;
+    }
+    const std::size_t tail = tail_.load(std::memory_order_relaxed);
+    queue_[tail] = message;
+    tail_.store((tail + 1) % queue_.size(), std::memory_order_release);
+    size_.fetch_add(1, std::memory_order_release);
+    return true;
+}
+
+bool MessageInBus::Pop(MessageIn& message, std::uint64_t timestamp) {
+    const std::size_t size = size_.load(std::memory_order_acquire);
+    if (size == 0) {
+        return false;
+    }
+    const std::size_t head = head_.load(std::memory_order_relaxed);
+    if (queue_[head].timestamp > timestamp) {
+        return false;
+    }
+    message = queue_[head];
+    head_.store((head + 1) % queue_.size(), std::memory_order_release);
+    size_.fetch_sub(1, std::memory_order_release);
+    return true;
+}
+
+void MessageInBus::Apply(const MessageIn& message) {
+    if (manager_ == nullptr) {
+        return;
+    }
+    switch (message.type) {
+    case MessageIn::Type::ParamIncDec:
+        if (!manager_->ShiftHeld()) {
+            manager_->HandleTick(message.slotIx, message.position, message.delta);
+        }
+        break;
+    case MessageIn::Type::ParamPush:
+        if (manager_->ShiftHeld()) {
+            manager_->HandleShiftPress(message.slotIx, message.position);
+        } else {
+            manager_->HandlePress(message.slotIx, message.position);
+        }
+        break;
+    case MessageIn::Type::ToggleShift:
+        if (message.hasBoolValue) {
+            manager_->SetShiftHeld(message.boolValue);
+        } else {
+            manager_->ToggleShiftHeld();
+        }
+        break;
+    case MessageIn::Type::ToggleGestureSelect:
+        manager_->ToggleGestureSelected(message.gestureIx);
+        break;
+    case MessageIn::Type::SelectParamBank:
+        manager_->SelectBankForSlot(message.slotIx, message.bankIx);
+        break;
+    case MessageIn::Type::SetGestureValue:
+        manager_->SetGestureValue(message.gestureIx, message.value);
+        break;
+    case MessageIn::Type::SceneSelect:
+        manager_->SetLessSelectedScene(message.sceneIx);
+        break;
+    case MessageIn::Type::SetSceneBlend:
+        manager_->SetSceneBlend(message.value);
+        break;
+    case MessageIn::Type::Start:
+    case MessageIn::Type::Stop:
+    case MessageIn::Type::Clock:
+        break;
+    }
+}
+
+void MessageInBus::Process(std::uint64_t timestamp) {
+    MessageIn message;
+    while (Pop(message, timestamp)) {
+        Apply(message);
+    }
 }
 
 Page* ParameterManager::FindPage(PageOrdinal ordinal) {
