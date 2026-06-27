@@ -168,7 +168,7 @@ TEST_CASE(default_voice_indicator_colors_are_deterministic) {
 
 TEST_CASE(manager_assigns_unique_ids) {
     synth::ParameterManager manager;
-    manager.SetGestureCount(2);
+    manager.SetGestureCount(4);
     auto& groupA = manager.CreateGroup({
         .numVoices = 1,
         .numModulators = 1,
@@ -241,7 +241,7 @@ TEST_CASE(gestures_store_values_and_selection) {
 
 TEST_CASE(parameter_default_state) {
     synth::ParameterManager manager;
-    manager.SetGestureCount(2);
+    manager.SetGestureCount(4);
     auto& group = manager.CreateGroup({
         .numVoices = 2,
         .numModulators = 2,
@@ -1591,6 +1591,122 @@ TEST_CASE(message_bus_routes_external_messages_and_timestamps) {
     REQUIRE_TRUE(ui->rightScene.load() == 0);
 }
 
+TEST_CASE(message_bus_ignores_out_of_bounds_targets) {
+    synth::ParameterManager manager;
+    manager.SetGestureCount(1);
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numScenes = 2,
+        .maxParameters = 2,
+    });
+    auto& parameter = manager.CreateParameter(group, {.name = "A", .defaultValue = 0.25f});
+    auto& bank = manager.CreateBank();
+    bank.AddMapping(10, parameter);
+    auto& slot = manager.CreateBankSlot();
+    slot.AddPhysicalEncoder(10);
+    slot.SelectBank(&bank);
+    manager.SetSceneEndpoints(0, 1);
+    manager.SetSceneBlend(0.25f);
+    manager.SetGestureValue(0, 0.5f);
+
+    synth::MessageInBus bus(&manager, 16);
+    REQUIRE_TRUE(bus.Push(synth::MessageIn::SelectParamBank(0, 0, 99)));
+    REQUIRE_TRUE(bus.Push(synth::MessageIn::SetGestureValue(0, 99, 1.0f)));
+    REQUIRE_TRUE(bus.Push(synth::MessageIn::ToggleGestureSelect(0, 99)));
+    REQUIRE_TRUE(bus.Push(synth::MessageIn::SceneSelect(0, 99)));
+    REQUIRE_TRUE(bus.Push(synth::MessageIn::ParamIncDec(0, 99, 0, 0.5f)));
+    REQUIRE_TRUE(bus.Push(synth::MessageIn::ParamIncDec(0, 0, 99, 0.5f)));
+    bus.Process(0);
+
+    REQUIRE_TRUE(slot.SelectedBank() == &bank);
+    REQUIRE_TRUE(!manager.GestureSelected(0));
+    REQUIRE_NEAR(manager.GestureValue(0), 0.5f, 0.0001f);
+    REQUIRE_TRUE(manager.Scene().leftScene == 0);
+    REQUIRE_TRUE(manager.Scene().rightScene == 1);
+    REQUIRE_NEAR(manager.Scene().blend, 0.25f, 0.0001f);
+    REQUIRE_NEAR(parameter.SceneCenter(0), 0.25f, 0.0001f);
+}
+
+TEST_CASE(message_bus_set_shift_and_set_gesture_select_are_idempotent) {
+    synth::ParameterManager manager;
+    manager.SetGestureCount(2);
+    (void)manager.CreateGroup({
+        .numVoices = 1,
+        .numScenes = 1,
+        .maxParameters = 1,
+    });
+    synth::MessageInBus bus(&manager, 8);
+
+    REQUIRE_TRUE(bus.Push(synth::MessageIn::SetShift(0, true)));
+    REQUIRE_TRUE(bus.Push(synth::MessageIn::SetShift(0, true)));
+    REQUIRE_TRUE(bus.Push(synth::MessageIn::SetGestureSelect(0, 1, true)));
+    REQUIRE_TRUE(bus.Push(synth::MessageIn::SetGestureSelect(0, 1, false)));
+    bus.Process(0);
+
+    REQUIRE_TRUE(manager.ShiftHeld());
+    REQUIRE_TRUE(!manager.GestureSelected(1));
+}
+
+TEST_CASE(manager_ui_state_reports_bank_colors_selection_and_gesture_affecting) {
+    synth::ParameterManager manager;
+    manager.SetGestureCount(4);
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numScenes = 2,
+        .maxParameters = 4,
+    });
+    auto& affected = manager.CreateParameter(group, {.name = "A", .defaultValue = 0.25f});
+    auto& unaffected = manager.CreateParameter(group, {.name = "B", .defaultValue = 0.5f});
+    auto& drillHidden = manager.CreateParameter(group, {.name = "C", .defaultValue = 0.75f});
+    affected.SetGestureActive(0, 0, true);
+    unaffected.SetGestureActive(0, 1, true);
+    drillHidden.SetGestureActive(0, 2, true);
+
+    auto& bankA = manager.CreateBank();
+    bankA.SetColor(synth::Color::Green);
+    bankA.AddMapping(10, affected);
+    bankA.AddMapping(13, drillHidden);
+    auto& bankB = manager.CreateBank();
+    bankB.SetColor(synth::Color::Blue);
+    bankB.AddMapping(11, unaffected);
+    auto& bankC = manager.CreateBank();
+    bankC.SetColor(synth::Color::Red);
+    bankC.AddMapping(12, affected);
+
+    auto& slot = manager.CreateBankSlot();
+    slot.AddPhysicalEncoder(10);
+    slot.AddPhysicalEncoder(13);
+    slot.SelectBank(&bankA);
+    manager.HandlePress(0, 0);
+    REQUIRE_TRUE(bankA.ShowingModulation());
+
+    synth::ParameterManager::UIState ui;
+    ui.Configure(1, 2, 1, 4, 4);
+    manager.PopulateUIState(ui);
+
+    REQUIRE_TRUE(ui.bankCapacity == 4);
+    REQUIRE_TRUE(ui.banks[0].connected.load());
+    REQUIRE_TRUE(ui.banks[0].selected.load());
+    REQUIRE_TRUE(ui.banks[0].color.Load() == synth::Color::Green);
+    REQUIRE_TRUE(ui.banks[1].connected.load());
+    REQUIRE_TRUE(!ui.banks[1].selected.load());
+    REQUIRE_TRUE(ui.banks[1].color.Load() == synth::Color::Blue);
+    REQUIRE_TRUE(ui.banks[2].connected.load());
+    REQUIRE_TRUE(!ui.banks[2].selected.load());
+    REQUIRE_TRUE(ui.banks[2].color.Load() == synth::Color::Red);
+    REQUIRE_TRUE(!ui.banks[3].connected.load());
+    REQUIRE_TRUE(!ui.banks[3].selected.load());
+    REQUIRE_TRUE(ui.banks[3].color.Load() == synth::Color::Off);
+    REQUIRE_TRUE(ui.gestures.bankAffectingCount[0].load() == 2);
+    REQUIRE_TRUE(ui.gestures.bankAffectingMask[0].load() == ((1u << 0u) | (1u << 2u)));
+    REQUIRE_TRUE(ui.gestures.bankAffectingCount[1].load() == 1);
+    REQUIRE_TRUE(ui.gestures.bankAffectingMask[1].load() == (1u << 1u));
+    REQUIRE_TRUE(ui.gestures.bankAffectingCount[2].load() == 1);
+    REQUIRE_TRUE(ui.gestures.bankAffectingMask[2].load() == (1u << 0u));
+    REQUIRE_TRUE(ui.gestures.bankAffectingCount[3].load() == 0);
+    REQUIRE_TRUE(ui.gestures.bankAffectingMask[3].load() == 0);
+}
+
 TEST_CASE(message_bus_routes_modulation_target_position_to_visible_parameter) {
     synth::ParameterManager manager;
     manager.SetGestureCount(1);
@@ -1783,6 +1899,108 @@ TEST_CASE(midi_encoder_input_direction_only_zero_and_thru_behavior) {
     REQUIRE_TRUE(thru.last.GetCC() == 9);
 }
 
+TEST_CASE(midi_analog_input_maps_gestures_scene_blend_timestamps_and_thru) {
+    synth::MessageInBus bus(nullptr, 16);
+    synth::AnalogMidiInConfig config;
+    config.gestures.push_back({.control = {.channel = 2, .cc = 3}, .gestureIx = 3});
+    config.gestures.push_back({.control = {.channel = 2, .cc = 4}, .gestureIx = 4});
+    config.sceneBlend = synth::MidiControlAddress{.channel = 2, .cc = 16};
+    synth::AnalogMidiInProcessor processor(config, &bus);
+    processor.SetTimestampProvider([] { return 42; });
+    CountingMidiInProcessor thru;
+    processor.SetThru(&thru);
+
+    processor.Process(synth::BasicMidi::CC(999, 2, 3, 64));
+    synth::MessageIn message;
+    REQUIRE_TRUE(bus.Pop(message, 42));
+    REQUIRE_TRUE(message.type == synth::MessageIn::Type::SetGestureValue);
+    REQUIRE_TRUE(message.timestamp == 42);
+    REQUIRE_TRUE(message.gestureIx == 3);
+    REQUIRE_NEAR(message.value, 64.0f / 127.0f, 0.000001f);
+
+    processor.Process(synth::BasicMidi::CC(999, 2, 4, 0));
+    REQUIRE_TRUE(bus.Pop(message, 42));
+    REQUIRE_TRUE(message.type == synth::MessageIn::Type::SetGestureValue);
+    REQUIRE_TRUE(message.gestureIx == 4);
+    REQUIRE_NEAR(message.value, 0.0f, 0.000001f);
+
+    processor.Process(synth::BasicMidi::CC(999, 2, 16, 127));
+    REQUIRE_TRUE(bus.Pop(message, 42));
+    REQUIRE_TRUE(message.type == synth::MessageIn::Type::SetSceneBlend);
+    REQUIRE_TRUE(message.timestamp == 42);
+    REQUIRE_NEAR(message.value, 1.0f, 0.000001f);
+
+    processor.Process(synth::BasicMidi::CC(999, 2, 99, 1));
+    REQUIRE_TRUE(!bus.Pop(message, 42));
+    REQUIRE_TRUE(thru.count == 1);
+    REQUIRE_TRUE(thru.last.Channel() == 2);
+    REQUIRE_TRUE(thru.last.GetCC() == 99);
+
+    processor.Process(synth::BasicMidi::Clock(999));
+    REQUIRE_TRUE(thru.count == 2);
+    REQUIRE_TRUE(thru.last.Status() == synth::BasicMidi::kStatusClock);
+}
+
+TEST_CASE(midi_system_button_input_maps_press_release_timestamps_and_thru) {
+    synth::MessageInBus bus(nullptr, 16);
+    synth::SystemButtonMidiInConfig config;
+    config.associations.push_back({
+        .control = {.channel = 5, .cc = 32},
+        .press = synth::MessageIn::SetShift(1, true),
+        .release = synth::MessageIn::SetShift(1, false),
+    });
+    config.associations.push_back({
+        .control = {.channel = 5, .cc = 0},
+        .press = synth::MessageIn::SetGestureSelect(1, 0, true),
+        .release = synth::MessageIn::SetGestureSelect(1, 0, false),
+    });
+    config.associations.push_back({
+        .control = {.channel = 5, .cc = 33},
+        .press = synth::MessageIn::ToggleShift(1),
+    });
+    synth::SystemButtonMidiInProcessor processor(config, &bus);
+    processor.SetTimestampProvider([] { return 77; });
+    CountingMidiInProcessor thru;
+    processor.SetThru(&thru);
+
+    processor.Process(synth::BasicMidi::CC(999, 5, 32, 127));
+    synth::MessageIn message;
+    REQUIRE_TRUE(bus.Pop(message, 77));
+    REQUIRE_TRUE(message.type == synth::MessageIn::Type::ToggleShift);
+    REQUIRE_TRUE(message.timestamp == 77);
+    REQUIRE_TRUE(message.hasBoolValue);
+    REQUIRE_TRUE(message.boolValue);
+
+    processor.Process(synth::BasicMidi::CC(999, 5, 32, 0));
+    REQUIRE_TRUE(bus.Pop(message, 77));
+    REQUIRE_TRUE(message.type == synth::MessageIn::Type::ToggleShift);
+    REQUIRE_TRUE(message.timestamp == 77);
+    REQUIRE_TRUE(message.hasBoolValue);
+    REQUIRE_TRUE(!message.boolValue);
+
+    processor.Process(synth::BasicMidi::CC(999, 5, 0, 0));
+    REQUIRE_TRUE(bus.Pop(message, 77));
+    REQUIRE_TRUE(message.type == synth::MessageIn::Type::SetGestureSelect);
+    REQUIRE_TRUE(message.timestamp == 77);
+    REQUIRE_TRUE(message.gestureIx == 0);
+    REQUIRE_TRUE(message.hasBoolValue);
+    REQUIRE_TRUE(!message.boolValue);
+
+    processor.Process(synth::BasicMidi::CC(999, 5, 33, 0));
+    REQUIRE_TRUE(!bus.Pop(message, 77));
+    REQUIRE_TRUE(thru.count == 0);
+
+    processor.Process(synth::BasicMidi::CC(999, 5, 99, 1));
+    REQUIRE_TRUE(!bus.Pop(message, 77));
+    REQUIRE_TRUE(thru.count == 1);
+    REQUIRE_TRUE(thru.last.Channel() == 5);
+    REQUIRE_TRUE(thru.last.GetCC() == 99);
+
+    processor.Process(synth::BasicMidi::Clock(999));
+    REQUIRE_TRUE(thru.count == 2);
+    REQUIRE_TRUE(thru.last.Status() == synth::BasicMidi::kStatusClock);
+}
+
 TEST_CASE(midi_encoder_default_presets_map_row_major_and_trim) {
     synth::EncoderMidiInConfig twister = synth::EncoderMidiInConfig::TwisterDefault(2);
     REQUIRE_TRUE(twister.relativeMode == synth::EncoderRelativeMode::Signed7Bit);
@@ -1835,6 +2053,360 @@ TEST_CASE(midi_encoder_input_supports_incomplete_and_multi_slot_maps) {
 
     processor.Process(synth::BasicMidi::CC(1, 0, 2, 65));
     REQUIRE_TRUE(!bus.Pop(message, 123));
+}
+
+TEST_CASE(system_message_output_info_reports_colors_and_on_state) {
+    synth::ParameterManager::UIState ui;
+    ui.Configure(0, 0, 0, 4, 3);
+    ui.sceneCapacity = 2;
+    ui.leftScene.store(0);
+    ui.rightScene.store(1);
+    ui.sceneBlend.store(0.25f);
+    ui.shiftHeld.store(true);
+    ui.banks[0].connected.store(true);
+    ui.banks[0].selected.store(true);
+    ui.banks[0].color.Store(synth::Color::Green);
+    ui.banks[1].connected.store(true);
+    ui.banks[1].selected.store(false);
+    ui.banks[1].color.Store(synth::Color::Blue);
+    for (std::size_t gestureIx = 0; gestureIx < 4; ++gestureIx) {
+        ui.gestures.connected[gestureIx].store(true);
+        ui.gestures.selected[gestureIx].store(false);
+    }
+    ui.gestures.selected[0].store(true);
+    ui.gestures.bankAffectingCount[1].store(1);
+    ui.gestures.bankAffectingMask[1].store(1u << 0u);
+    ui.gestures.bankAffectingCount[2].store(2);
+    ui.gestures.bankAffectingMask[2].store((1u << 0u) | (1u << 1u));
+
+    synth::SystemMessageOutputInfo info(&ui);
+    synth::SystemMessageOutputState state = info.Evaluate(synth::MessageIn::SelectParamBank(0, 0, 0));
+    REQUIRE_TRUE(state.isOn);
+    REQUIRE_TRUE(state.color == synth::Color::Green);
+
+    state = info.Evaluate(synth::MessageIn::SelectParamBank(0, 0, 1));
+    REQUIRE_TRUE(!state.isOn);
+    REQUIRE_TRUE(state.color == synth::Color::Blue.AdjustBrightness(0.35f));
+
+    state = info.Evaluate(synth::MessageIn::SelectParamBank(0, 0, 99));
+    REQUIRE_TRUE(!state.isOn);
+    REQUIRE_TRUE(state.color == synth::Color::Off);
+
+    state = info.Evaluate(synth::MessageIn::ToggleShift(0));
+    REQUIRE_TRUE(state.isOn);
+    REQUIRE_TRUE(state.color == synth::Color::White);
+    ui.shiftHeld.store(false);
+    state = info.Evaluate(synth::MessageIn::ToggleShift(0));
+    REQUIRE_TRUE(!state.isOn);
+    REQUIRE_TRUE(state.color == synth::Color::Grey);
+
+    state = info.Evaluate(synth::MessageIn::SceneSelect(0, 0));
+    REQUIRE_TRUE(state.isOn);
+    REQUIRE_TRUE(state.color == synth::Color::Orange.AdjustBrightness(0.5f + 0.5f * (1.0f - 0.25f)));
+    state = info.Evaluate(synth::MessageIn::SceneSelect(0, 1));
+    REQUIRE_TRUE(state.isOn);
+    REQUIRE_TRUE(state.color == synth::Color::Green.AdjustBrightness(0.5f + 0.5f * 0.25f));
+    ui.leftScene.store(1);
+    ui.rightScene.store(1);
+    state = info.Evaluate(synth::MessageIn::SceneSelect(0, 1));
+    REQUIRE_TRUE(state.isOn);
+    REQUIRE_TRUE(state.color == synth::Color::Orange.AdjustBrightness(0.5f + 0.5f * (1.0f - 0.25f)));
+    state = info.Evaluate(synth::MessageIn::SceneSelect(0, 99));
+    REQUIRE_TRUE(!state.isOn);
+    REQUIRE_TRUE(state.color == synth::Color::Off);
+
+    state = info.Evaluate(synth::MessageIn::ToggleGestureSelect(0, 0));
+    REQUIRE_TRUE(state.isOn);
+    REQUIRE_TRUE(state.color == synth::Color::White);
+    state = info.Evaluate(synth::MessageIn::ToggleGestureSelect(0, 1));
+    REQUIRE_TRUE(!state.isOn);
+    REQUIRE_TRUE(state.color == synth::Color::Green);
+    state = info.Evaluate(synth::MessageIn::ToggleGestureSelect(0, 2));
+    REQUIRE_TRUE(!state.isOn);
+    REQUIRE_TRUE(state.color == synth::Color::White);
+    state = info.Evaluate(synth::MessageIn::ToggleGestureSelect(0, 3));
+    REQUIRE_TRUE(!state.isOn);
+    REQUIRE_TRUE(state.color == synth::Color::Grey.AdjustBrightness(0.5f));
+    state = info.Evaluate(synth::MessageIn::ToggleGestureSelect(0, 99));
+    REQUIRE_TRUE(!state.isOn);
+    REQUIRE_TRUE(state.color == synth::Color::Off);
+
+    state = info.Evaluate(synth::MessageIn::ParamPush(0, 0, 0));
+    REQUIRE_TRUE(!state.isOn);
+    REQUIRE_TRUE(state.color == synth::Color::Off);
+}
+
+TEST_CASE(system_output_processors_debounce_reset_and_render_cc_and_wrld_bldr) {
+    synth::ParameterManager::UIState ui;
+    ui.Configure(0, 0, 0, 0, 0);
+    ui.shiftHeld.store(true);
+
+    FakeMidiSink sink;
+    synth::MidiSender sender;
+    sender.SetSink(&sink);
+    sender.Start();
+
+    synth::SystemCcMidiOutConfig ccConfig;
+    ccConfig.associations.push_back({
+        .control = {.channel = 5, .cc = 32},
+        .message = synth::MessageIn::ToggleShift(0),
+    });
+    synth::SystemCcMidiOutProcessor ccProcessor(ccConfig, &sender, &ui);
+    ccProcessor.Process();
+    sender.FlushForTests(std::chrono::milliseconds(500));
+    REQUIRE_TRUE(sink.sent.size() == 1);
+    REQUIRE_TRUE(sink.sent[0].Status() == synth::BasicMidi::kStatusCC);
+    REQUIRE_TRUE(sink.sent[0].Channel() == 5);
+    REQUIRE_TRUE(sink.sent[0].GetCC() == 32);
+    REQUIRE_TRUE(sink.sent[0].GetValue() == 127);
+
+    ccProcessor.Process();
+    sender.FlushForTests(std::chrono::milliseconds(500));
+    REQUIRE_TRUE(sink.sent.size() == 1);
+
+    ui.shiftHeld.store(false);
+    ccProcessor.Process();
+    sender.FlushForTests(std::chrono::milliseconds(500));
+    REQUIRE_TRUE(sink.sent.size() == 2);
+    REQUIRE_TRUE(sink.sent[1].GetValue() == 0);
+
+    ccProcessor.Reset();
+    ccProcessor.Process();
+    sender.FlushForTests(std::chrono::milliseconds(500));
+    REQUIRE_TRUE(sink.sent.size() == 3);
+    REQUIRE_TRUE(sink.sent[2].GetValue() == 0);
+
+    synth::WrldBldrSystemMidiOutConfig wrldConfig;
+    wrldConfig.associations.push_back({
+        .position = {.channel = 5, .x = 0, .y = 4},
+        .message = synth::MessageIn::ToggleShift(0),
+    });
+    synth::WrldBldrSystemMidiOutProcessor wrldProcessor(wrldConfig, &sender, &ui);
+    ui.shiftHeld.store(true);
+    wrldProcessor.Process();
+    sender.FlushForTests(std::chrono::milliseconds(500));
+    REQUIRE_TRUE(sink.sent.size() == 4);
+    REQUIRE_TRUE(sink.sent[3].IsSysEx());
+    REQUIRE_TRUE(sink.sent[3].raw[8] == 5);
+    REQUIRE_TRUE(sink.sent[3].raw[9] == synth::WrldBldrPositionToCC(0, 4));
+    REQUIRE_TRUE(sink.sent[3].raw[10] == synth::Color::White.r / 2);
+    REQUIRE_TRUE(sink.sent[3].raw[11] == synth::Color::White.g / 2);
+    REQUIRE_TRUE(sink.sent[3].raw[12] == synth::Color::White.b / 2);
+
+    wrldProcessor.Process();
+    sender.FlushForTests(std::chrono::milliseconds(500));
+    REQUIRE_TRUE(sink.sent.size() == 4);
+
+    wrldProcessor.Reset();
+    wrldProcessor.Process();
+    sender.FlushForTests(std::chrono::milliseconds(500));
+    sender.Stop();
+    REQUIRE_TRUE(sink.sent.size() == 5);
+    REQUIRE_TRUE(sink.sent[4].IsSysEx());
+}
+
+TEST_CASE(midi_controller_profile_builds_chained_input_processors) {
+    synth::MessageInBus bus(nullptr, 16);
+    synth::MidiControllerProfileConfig config;
+    synth::EncoderMidiInConfig encoder;
+    encoder.turnStep = 0.25f;
+    encoder.turns.push_back({.control = {.channel = 0, .cc = 1}, .slotIx = 2, .position = 3});
+    config.encoderInput = encoder;
+    synth::AnalogMidiInConfig analog;
+    analog.gestures.push_back({.control = {.channel = 2, .cc = 4}, .gestureIx = 5});
+    config.analogInput = analog;
+    config.systemMessages.push_back({
+        .control = {.channel = 5, .cc = 32},
+        .wrldBldrPosition = synth::WrldBldrSystemPosition{.channel = 5, .x = 0, .y = 4},
+        .press = synth::MessageIn::ToggleShift(0),
+        .feedback = synth::MessageIn::ToggleShift(0),
+    });
+
+    synth::MidiControllerProfileResult profile =
+        synth::CreateMidiControllerProfile(config, &bus, nullptr, nullptr, [] { return 88; });
+    REQUIRE_TRUE(profile.input != nullptr);
+    REQUIRE_TRUE(profile.inputThru.size() == 2);
+
+    profile.input->Process(synth::BasicMidi::CC(1, 0, 1, 65));
+    synth::MessageIn message;
+    REQUIRE_TRUE(bus.Pop(message, 88));
+    REQUIRE_TRUE(message.type == synth::MessageIn::Type::ParamIncDec);
+    REQUIRE_TRUE(message.timestamp == 88);
+    REQUIRE_TRUE(message.slotIx == 2);
+    REQUIRE_TRUE(message.position == 3);
+    REQUIRE_NEAR(message.delta, 0.25f, 0.000001f);
+
+    profile.input->Process(synth::BasicMidi::CC(1, 2, 4, 127));
+    REQUIRE_TRUE(bus.Pop(message, 88));
+    REQUIRE_TRUE(message.type == synth::MessageIn::Type::SetGestureValue);
+    REQUIRE_TRUE(message.timestamp == 88);
+    REQUIRE_TRUE(message.gestureIx == 5);
+    REQUIRE_NEAR(message.value, 1.0f, 0.000001f);
+
+    profile.input->Process(synth::BasicMidi::CC(1, 5, 32, 1));
+    REQUIRE_TRUE(bus.Pop(message, 88));
+    REQUIRE_TRUE(message.type == synth::MessageIn::Type::ToggleShift);
+    REQUIRE_TRUE(message.timestamp == 88);
+}
+
+TEST_CASE(midi_controller_profile_builds_independent_outputs_from_shared_system_associations) {
+    synth::ParameterManager::UIState ui;
+    ui.Configure(0, 0, 0, 0, 0);
+    ui.shiftHeld.store(true);
+
+    synth::MidiControllerProfileConfig config;
+    config.systemMessages.push_back({
+        .control = {.channel = 5, .cc = 32},
+        .wrldBldrPosition = synth::WrldBldrSystemPosition{.channel = 5, .x = 0, .y = 4},
+        .press = synth::MessageIn::ToggleShift(0),
+        .feedback = synth::MessageIn::ToggleShift(0),
+    });
+
+    FakeMidiSink sink;
+    synth::MidiSender sender;
+    sender.SetSink(&sink);
+    sender.Start();
+    synth::MidiControllerProfileResult profile =
+        synth::CreateMidiControllerProfile(config, nullptr, &sender, &ui);
+
+    REQUIRE_TRUE(profile.outputs.size() == 2);
+    profile.outputs[0]->Process();
+    profile.outputs[1]->Process();
+    sender.FlushForTests(std::chrono::milliseconds(500));
+    sender.Stop();
+
+    REQUIRE_TRUE(sink.sent.size() == 2);
+    REQUIRE_TRUE(sink.sent[0].Status() == synth::BasicMidi::kStatusCC);
+    REQUIRE_TRUE(sink.sent[0].Channel() == 5);
+    REQUIRE_TRUE(sink.sent[0].GetCC() == 32);
+    REQUIRE_TRUE(sink.sent[0].GetValue() == 127);
+    REQUIRE_TRUE(sink.sent[1].IsSysEx());
+    REQUIRE_TRUE(sink.sent[1].raw[8] == 5);
+    REQUIRE_TRUE(sink.sent[1].raw[9] == synth::WrldBldrPositionToCC(0, 4));
+}
+
+TEST_CASE(wrld_bldr_default_profile_maps_encoders_analogs_and_system_buttons) {
+    synth::ParameterManager manager;
+    manager.SetGestureCount(1);
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numScenes = 2,
+        .maxParameters = 2,
+    });
+    auto& parameter = manager.CreateParameter(group, {.name = "Cutoff", .defaultValue = 0.25f});
+    auto& bank = manager.CreateBank();
+    bank.AddMapping(10, parameter);
+    auto& slot = manager.CreateBankSlot();
+    slot.AddPhysicalEncoder(10);
+    slot.SelectBank(&bank);
+    manager.SetSceneEndpoints(0, 0);
+
+    synth::MessageInBus bus(&manager, 64);
+    synth::WrldBldrDefaultProfileOptions options;
+    options.visibleEncoderCount = 1;
+    options.sceneCount = 8;
+    options.bankButtonCount = 16;
+    options.gestureSelectorCount = 1;
+    synth::MidiControllerProfileResult profile =
+        synth::CreateWrldBldrDefaultProfile(options, &bus, nullptr, nullptr, [] { return 99; });
+    REQUIRE_TRUE(profile.input != nullptr);
+    REQUIRE_TRUE(profile.inputThru.size() == 2);
+
+    profile.input->Process(synth::BasicMidi::CC(0, 0, 0, 65));
+    synth::MessageIn message;
+    REQUIRE_TRUE(bus.Pop(message, 99));
+    REQUIRE_TRUE(message.type == synth::MessageIn::Type::ParamIncDec);
+    REQUIRE_TRUE(message.slotIx == 0);
+    REQUIRE_TRUE(message.position == 0);
+
+    profile.input->Process(synth::BasicMidi::CC(0, 2, 0, 127));
+    REQUIRE_TRUE(bus.Pop(message, 99));
+    REQUIRE_TRUE(message.type == synth::MessageIn::Type::SetSceneBlend);
+    REQUIRE_NEAR(message.value, 1.0f, 0.000001f);
+
+    profile.input->Process(synth::BasicMidi::CC(0, 2, 1, 64));
+    REQUIRE_TRUE(bus.Pop(message, 99));
+    REQUIRE_TRUE(message.type == synth::MessageIn::Type::SetGestureValue);
+    REQUIRE_TRUE(message.gestureIx == 0);
+    REQUIRE_NEAR(message.value, 64.0f / 127.0f, 0.000001f);
+
+    profile.input->Process(synth::BasicMidi::CC(0, 14, 0, 32));
+    REQUIRE_TRUE(bus.Pop(message, 99));
+    REQUIRE_TRUE(message.type == synth::MessageIn::Type::SetGestureValue);
+    REQUIRE_TRUE(message.gestureIx == 1);
+    REQUIRE_NEAR(message.value, 32.0f / 127.0f, 0.000001f);
+
+    profile.input->Process(synth::BasicMidi::CC(0, 5, synth::WrldBldrPositionToCC(0, 4), 127));
+    REQUIRE_TRUE(bus.Pop(message, 99));
+    REQUIRE_TRUE(message.type == synth::MessageIn::Type::ToggleShift);
+    REQUIRE_TRUE(message.hasBoolValue);
+    REQUIRE_TRUE(message.boolValue);
+
+    profile.input->Process(synth::BasicMidi::CC(0, 5, synth::WrldBldrPositionToCC(0, 4), 0));
+    REQUIRE_TRUE(bus.Pop(message, 99));
+    REQUIRE_TRUE(message.type == synth::MessageIn::Type::ToggleShift);
+    REQUIRE_TRUE(message.hasBoolValue);
+    REQUIRE_TRUE(!message.boolValue);
+
+    profile.input->Process(synth::BasicMidi::CC(0, 5, synth::WrldBldrPositionToCC(0, 0), 127));
+    REQUIRE_TRUE(bus.Pop(message, 99));
+    REQUIRE_TRUE(message.type == synth::MessageIn::Type::SetGestureSelect);
+    REQUIRE_TRUE(message.gestureIx == 0);
+    REQUIRE_TRUE(message.boolValue);
+
+    profile.input->Process(synth::BasicMidi::CC(0, 5, synth::WrldBldrPositionToCC(0, 0), 0));
+    REQUIRE_TRUE(bus.Pop(message, 99));
+    REQUIRE_TRUE(message.type == synth::MessageIn::Type::SetGestureSelect);
+    REQUIRE_TRUE(message.gestureIx == 0);
+    REQUIRE_TRUE(!message.boolValue);
+
+    profile.input->Process(synth::BasicMidi::CC(0, 5, synth::WrldBldrPositionToCC(1, 6), 127));
+    REQUIRE_TRUE(bus.Pop(message, 99));
+    REQUIRE_TRUE(message.type == synth::MessageIn::Type::SceneSelect);
+    REQUIRE_TRUE(message.sceneIx == 1);
+
+    profile.input->Process(synth::BasicMidi::CC(0, 5, synth::WrldBldrPositionToCC(7, 2), 127));
+    REQUIRE_TRUE(bus.Pop(message, 99));
+    REQUIRE_TRUE(message.type == synth::MessageIn::Type::SelectParamBank);
+    REQUIRE_TRUE(message.bankIx == 15);
+    bus.Push(message);
+    bus.Process(99);
+    REQUIRE_TRUE(slot.SelectedBank() == &bank);
+    REQUIRE_TRUE(manager.Scene().leftScene == 0);
+    REQUIRE_TRUE(manager.Scene().rightScene == 0);
+}
+
+TEST_CASE(wrld_bldr_default_profile_creates_encoder_and_system_outputs) {
+    synth::ParameterManager::UIState ui;
+    ui.Configure(0, 0, 0, 0, 0);
+    ui.shiftHeld.store(true);
+
+    synth::WrldBldrDefaultProfileOptions options;
+    options.visibleEncoderCount = 1;
+    options.sceneCount = 1;
+    options.bankButtonCount = 1;
+    options.gestureSelectorCount = 1;
+    FakeMidiSink sink;
+    synth::MidiSender sender;
+    sender.SetSink(&sink);
+    sender.Start();
+    synth::MidiControllerProfileResult profile =
+        synth::CreateWrldBldrDefaultProfile(options, nullptr, &sender, &ui);
+
+    REQUIRE_TRUE(profile.outputs.size() == 3);
+    profile.outputs[1]->Process();
+    profile.outputs[2]->Process();
+    sender.FlushForTests(std::chrono::milliseconds(500));
+    sender.Stop();
+    REQUIRE_TRUE(sink.sent.size() >= 2);
+    bool sawCc = false;
+    bool sawSysex = false;
+    for (const synth::BasicMidi& midi : sink.sent) {
+        sawCc = sawCc || midi.Status() == synth::BasicMidi::kStatusCC;
+        sawSysex = sawSysex || midi.IsSysEx();
+    }
+    REQUIRE_TRUE(sawCc);
+    REQUIRE_TRUE(sawSysex);
 }
 
 TEST_CASE(midi_sender_delivers_fifo_and_stops_cleanly) {

@@ -242,6 +242,86 @@ std::optional<float> EncoderMidiInProcessor::DecodeDelta(std::uint8_t value) con
     return static_cast<float>(ticks) * config_.turnStep;
 }
 
+AnalogMidiInProcessor::AnalogMidiInProcessor(AnalogMidiInConfig config, MessageInBus* bus)
+    : MidiInProcessor(bus),
+      config_(std::move(config)) {}
+
+void AnalogMidiInProcessor::SetConfig(AnalogMidiInConfig config) {
+    config_ = std::move(config);
+}
+
+void AnalogMidiInProcessor::Process(const BasicMidi& midi) {
+    if (!midi.IsCC()) {
+        PassToThru(midi);
+        return;
+    }
+
+    const float normalized = static_cast<float>(midi.GetValue()) / 127.0f;
+    if (const AnalogMidiMapping* mapping = FindGesture(midi)) {
+        Push(MessageIn::SetGestureValue(NextTimestamp(), mapping->gestureIx, normalized));
+        return;
+    }
+
+    const MidiControlAddress address{.channel = midi.Channel(), .cc = midi.GetCC()};
+    if (config_.sceneBlend.has_value() && *config_.sceneBlend == address) {
+        Push(MessageIn::SetSceneBlend(NextTimestamp(), normalized));
+        return;
+    }
+
+    PassToThru(midi);
+}
+
+const AnalogMidiMapping* AnalogMidiInProcessor::FindGesture(const BasicMidi& midi) const {
+    const MidiControlAddress address{.channel = midi.Channel(), .cc = midi.GetCC()};
+    const auto itr = std::find_if(config_.gestures.begin(), config_.gestures.end(),
+                                  [address](const AnalogMidiMapping& mapping) { return mapping.control == address; });
+    return itr == config_.gestures.end() ? nullptr : &*itr;
+}
+
+SystemButtonMidiInProcessor::SystemButtonMidiInProcessor(SystemButtonMidiInConfig config, MessageInBus* bus)
+    : MidiInProcessor(bus),
+      config_(std::move(config)) {}
+
+void SystemButtonMidiInProcessor::SetConfig(SystemButtonMidiInConfig config) {
+    config_ = std::move(config);
+}
+
+void SystemButtonMidiInProcessor::Process(const BasicMidi& midi) {
+    if (!midi.IsCC()) {
+        PassToThru(midi);
+        return;
+    }
+
+    const SystemButtonMidiAssociation* association = FindAssociation(midi);
+    if (association == nullptr) {
+        PassToThru(midi);
+        return;
+    }
+
+    if (midi.GetValue() > 0) {
+        PushStamped(association->press);
+        return;
+    }
+
+    if (association->release.has_value()) {
+        PushStamped(*association->release);
+    }
+}
+
+const SystemButtonMidiAssociation* SystemButtonMidiInProcessor::FindAssociation(const BasicMidi& midi) const {
+    const MidiControlAddress address{.channel = midi.Channel(), .cc = midi.GetCC()};
+    const auto itr = std::find_if(config_.associations.begin(), config_.associations.end(),
+                                  [address](const SystemButtonMidiAssociation& association) {
+                                      return association.control == address;
+                                  });
+    return itr == config_.associations.end() ? nullptr : &*itr;
+}
+
+void SystemButtonMidiInProcessor::PushStamped(MessageIn message) {
+    message.timestamp = NextTimestamp();
+    Push(message);
+}
+
 MidiSender::MidiSender(std::size_t capacity)
     : queue_(capacity == 0 ? 1 : capacity) {}
 
@@ -487,8 +567,303 @@ void WrldBldrMidiOutProcessor::Process() {
     }
 }
 
+SystemMessageOutputInfo::SystemMessageOutputInfo(ParameterManager::UIState* uiState)
+    : uiState_(uiState) {}
+
+SystemMessageOutputState SystemMessageOutputInfo::Evaluate(const MessageIn& message) const {
+    if (uiState_ == nullptr) {
+        return {};
+    }
+
+    switch (message.type) {
+    case MessageIn::Type::SelectParamBank: {
+        if (message.bankIx >= uiState_->bankCapacity) {
+            return {};
+        }
+        const ParameterManager::BankUIState& bank = uiState_->banks[message.bankIx];
+        if (!bank.connected.load(std::memory_order_relaxed)) {
+            return {};
+        }
+        const bool selected = bank.selected.load(std::memory_order_relaxed);
+        const Color color = bank.color.Load(std::memory_order_relaxed);
+        return {.color = selected ? color : color.AdjustBrightness(0.35f), .isOn = selected};
+    }
+    case MessageIn::Type::ToggleShift: {
+        const bool held = uiState_->shiftHeld.load(std::memory_order_relaxed);
+        return {.color = held ? Color::White : Color::Grey, .isOn = held};
+    }
+    case MessageIn::Type::SceneSelect: {
+        if (message.sceneIx >= uiState_->sceneCapacity) {
+            return {};
+        }
+        const std::size_t leftScene = uiState_->leftScene.load(std::memory_order_relaxed);
+        const std::size_t rightScene = uiState_->rightScene.load(std::memory_order_relaxed);
+        const float blend = std::clamp(uiState_->sceneBlend.load(std::memory_order_relaxed), 0.0f, 1.0f);
+        if (message.sceneIx == leftScene) {
+            return {.color = Color::Orange.AdjustBrightness(0.5f + 0.5f * (1.0f - blend)), .isOn = true};
+        }
+        if (message.sceneIx == rightScene) {
+            return {.color = Color::Green.AdjustBrightness(0.5f + 0.5f * blend), .isOn = true};
+        }
+        return {};
+    }
+    case MessageIn::Type::ToggleGestureSelect:
+    case MessageIn::Type::SetGestureSelect: {
+        if (message.gestureIx >= uiState_->gestures.gestureCapacity ||
+            !uiState_->gestures.connected[message.gestureIx].load(std::memory_order_relaxed)) {
+            return {};
+        }
+        const bool selected = uiState_->gestures.selected[message.gestureIx].load(std::memory_order_relaxed);
+        if (selected) {
+            return {.color = Color::White, .isOn = true};
+        }
+        return {.color = GestureColor(message.gestureIx), .isOn = false};
+    }
+    case MessageIn::Type::ParamIncDec:
+    case MessageIn::Type::ParamPush:
+    case MessageIn::Type::Start:
+    case MessageIn::Type::Stop:
+    case MessageIn::Type::Clock:
+    case MessageIn::Type::SetGestureValue:
+    case MessageIn::Type::SetSceneBlend:
+        return {};
+    }
+    return {};
+}
+
+Color SystemMessageOutputInfo::GestureColor(std::size_t gestureIx) const {
+    const std::size_t count = uiState_->gestures.bankAffectingCount[gestureIx].load(std::memory_order_relaxed);
+    if (count == 0) {
+        return Color::Grey.AdjustBrightness(0.5f);
+    }
+    if (count > 1) {
+        return Color::White;
+    }
+
+    const std::uint32_t mask = uiState_->gestures.bankAffectingMask[gestureIx].load(std::memory_order_relaxed);
+    const std::size_t bankCount = std::min<std::size_t>(uiState_->bankCapacity, 32);
+    for (std::size_t bankIx = 0; bankIx < bankCount; ++bankIx) {
+        if ((mask & (std::uint32_t{1} << bankIx)) == 0) {
+            continue;
+        }
+        if (uiState_->banks[bankIx].connected.load(std::memory_order_relaxed)) {
+            return uiState_->banks[bankIx].color.Load(std::memory_order_relaxed);
+        }
+    }
+    return Color::Grey.AdjustBrightness(0.5f);
+}
+
+SystemCcMidiOutProcessor::SystemCcMidiOutProcessor(SystemCcMidiOutConfig config, MidiSender* sender,
+                                                   ParameterManager::UIState* uiState)
+    : config_(std::move(config)),
+      sender_(sender),
+      info_(uiState) {}
+
+void SystemCcMidiOutProcessor::SetConfig(SystemCcMidiOutConfig config) {
+    config_ = std::move(config);
+    Reset();
+}
+
+void SystemCcMidiOutProcessor::Reset() {
+    cache_.clear();
+}
+
+void SystemCcMidiOutProcessor::Process() {
+    if (CacheNeedsResize(cache_.size(), config_.associations.size())) {
+        cache_.assign(config_.associations.size(), {});
+    }
+
+    for (std::size_t ix = 0; ix < config_.associations.size(); ++ix) {
+        const SystemCcMidiOutAssociation& association = config_.associations[ix];
+        const SystemMessageOutputState state = info_.Evaluate(association.message);
+        CacheEntry& cache = cache_[ix];
+        if (!cache.valid || cache.isOn != state.isOn) {
+            Enqueue(BasicMidi::CC(0, association.control.channel, association.control.cc, state.isOn ? 127 : 0));
+        }
+        cache = {.valid = true, .isOn = state.isOn};
+    }
+}
+
+bool SystemCcMidiOutProcessor::Enqueue(const BasicMidi& midi) {
+    return sender_ != nullptr && sender_->Enqueue(midi);
+}
+
+WrldBldrSystemMidiOutProcessor::WrldBldrSystemMidiOutProcessor(WrldBldrSystemMidiOutConfig config,
+                                                               MidiSender* sender,
+                                                               ParameterManager::UIState* uiState)
+    : config_(std::move(config)),
+      sender_(sender),
+      info_(uiState) {}
+
+void WrldBldrSystemMidiOutProcessor::SetConfig(WrldBldrSystemMidiOutConfig config) {
+    config_ = std::move(config);
+    Reset();
+}
+
+void WrldBldrSystemMidiOutProcessor::Reset() {
+    cache_.clear();
+}
+
+void WrldBldrSystemMidiOutProcessor::Process() {
+    if (CacheNeedsResize(cache_.size(), config_.associations.size())) {
+        cache_.assign(config_.associations.size(), {});
+    }
+
+    for (std::size_t ix = 0; ix < config_.associations.size(); ++ix) {
+        const WrldBldrSystemMidiOutAssociation& association = config_.associations[ix];
+        const Color color = info_.Evaluate(association.message).color;
+        CacheEntry& cache = cache_[ix];
+        if (!cache.valid || cache.color != color) {
+            Enqueue(WrldBldrColorSysex(0, association.position.channel,
+                                       WrldBldrPositionToCC(association.position.x, association.position.y), color));
+        }
+        cache = {.valid = true, .color = color};
+    }
+}
+
+bool WrldBldrSystemMidiOutProcessor::Enqueue(const BasicMidi& midi) {
+    return sender_ != nullptr && sender_->Enqueue(midi);
+}
+
+MidiControllerProfileResult CreateMidiControllerProfile(
+    const MidiControllerProfileConfig& config, MessageInBus* bus, MidiSender* sender,
+    ParameterManager::UIState* uiState, MidiInProcessor::TimestampProvider timestampProvider) {
+    MidiControllerProfileResult result;
+    MidiInProcessor* tail = nullptr;
+    auto appendInput = [&](std::unique_ptr<MidiInProcessor> processor) {
+        processor->SetMessageInBus(bus);
+        processor->SetTimestampProvider(timestampProvider);
+        if (result.input == nullptr) {
+            result.input = std::move(processor);
+            tail = result.input.get();
+            return;
+        }
+        tail->SetThru(processor.get());
+        tail = processor.get();
+        result.inputThru.push_back(std::move(processor));
+    };
+
+    if (config.encoderInput.has_value()) {
+        appendInput(std::make_unique<EncoderMidiInProcessor>(*config.encoderInput, bus));
+    }
+    if (config.analogInput.has_value()) {
+        appendInput(std::make_unique<AnalogMidiInProcessor>(*config.analogInput, bus));
+    }
+    if (!config.systemMessages.empty()) {
+        SystemButtonMidiInConfig systemInput;
+        systemInput.associations.reserve(config.systemMessages.size());
+        for (const MidiControllerSystemMessageAssociation& association : config.systemMessages) {
+            systemInput.associations.push_back({
+                .control = association.control,
+                .press = association.press,
+                .release = association.release,
+            });
+        }
+        appendInput(std::make_unique<SystemButtonMidiInProcessor>(std::move(systemInput), bus));
+    }
+
+    if (config.encoderOutput.has_value()) {
+        result.outputs.push_back(std::make_unique<WrldBldrMidiOutProcessor>(*config.encoderOutput, sender, uiState));
+    }
+
+    SystemCcMidiOutConfig ccOutput;
+    WrldBldrSystemMidiOutConfig wrldOutput;
+    for (const MidiControllerSystemMessageAssociation& association : config.systemMessages) {
+        ccOutput.associations.push_back({
+            .control = association.control,
+            .message = association.feedback,
+        });
+        if (association.wrldBldrPosition.has_value()) {
+            wrldOutput.associations.push_back({
+                .position = *association.wrldBldrPosition,
+                .message = association.feedback,
+            });
+        }
+    }
+    if (!ccOutput.associations.empty()) {
+        result.outputs.push_back(std::make_unique<SystemCcMidiOutProcessor>(std::move(ccOutput), sender, uiState));
+    }
+    if (!wrldOutput.associations.empty()) {
+        result.outputs.push_back(std::make_unique<WrldBldrSystemMidiOutProcessor>(std::move(wrldOutput), sender, uiState));
+    }
+
+    return result;
+}
+
+MidiControllerProfileConfig WrldBldrDefaultProfileConfig(WrldBldrDefaultProfileOptions options) {
+    MidiControllerProfileConfig config;
+    config.encoderInput = EncoderMidiInConfig::WrldBldrDefault(options.slotIx);
+    config.encoderInput->KeepFirstPositions(options.visibleEncoderCount);
+    config.encoderOutput = EncoderMidiOutConfig::WrldBldrDefault(options.slotIx);
+    config.encoderOutput->KeepFirstPositions(options.visibleEncoderCount);
+
+    auto addAnalogLogical = [&](MidiControlAddress control, std::size_t logicalIx) {
+        if (logicalIx == 0) {
+            config.analogInput->sceneBlend = control;
+        } else if (logicalIx <= 16) {
+            config.analogInput->gestures.push_back({.control = control, .gestureIx = logicalIx - 1});
+        }
+    };
+
+    config.analogInput = AnalogMidiInConfig{};
+    for (std::uint8_t cc = 0; cc <= 16; ++cc) {
+        addAnalogLogical({.channel = 2, .cc = cc}, cc);
+    }
+    for (std::uint8_t cc = 0; cc <= 14; ++cc) {
+        addAnalogLogical({.channel = 14, .cc = cc}, static_cast<std::size_t>(cc) + 2);
+    }
+
+    auto addSystemPosition = [&](std::uint8_t x, std::uint8_t y, MessageIn press,
+                                 std::optional<MessageIn> release = std::nullopt) {
+        const WrldBldrSystemPosition position{.channel = 5, .x = x, .y = y};
+        config.systemMessages.push_back({
+            .control = {.channel = 5, .cc = WrldBldrPositionToCC(x, y)},
+            .wrldBldrPosition = position,
+            .press = press,
+            .release = release,
+            .feedback = press,
+        });
+    };
+
+    // Source-derived from TheNonagonSquiggleBoyWrldBldr.hpp AuxGrid:
+    // channel 5 maps x = cc % 8, y = cc / 8; shift is (0,4),
+    // scene selectors live on row 6, gesture selectors on rows 0/1, and
+    // bank selectors occupy rows 3 (first eight) and 2 (second eight).
+    addSystemPosition(0, 4, MessageIn::SetShift(0, true), MessageIn::SetShift(0, false));
+
+    for (std::size_t sceneIx = 0; sceneIx < options.sceneCount; ++sceneIx) {
+        addSystemPosition(static_cast<std::uint8_t>(sceneIx % 8), 6, MessageIn::SceneSelect(0, sceneIx));
+    }
+
+    for (std::size_t bankIx = 0; bankIx < options.bankButtonCount; ++bankIx) {
+        const std::uint8_t x = static_cast<std::uint8_t>(bankIx % 8);
+        const std::uint8_t y = static_cast<std::uint8_t>(bankIx < 8 ? 3 : 2);
+        addSystemPosition(x, y, MessageIn::SelectParamBank(0, options.slotIx, bankIx));
+    }
+
+    for (std::size_t gestureIx = 0; gestureIx < options.gestureSelectorCount; ++gestureIx) {
+        const std::uint8_t x = static_cast<std::uint8_t>(gestureIx % 8);
+        const std::uint8_t y = static_cast<std::uint8_t>(gestureIx < 8 ? 0 : 1);
+        addSystemPosition(x, y, MessageIn::SetGestureSelect(0, gestureIx, true),
+                          MessageIn::SetGestureSelect(0, gestureIx, false));
+    }
+
+    return config;
+}
+
+MidiControllerProfileResult CreateWrldBldrDefaultProfile(
+    WrldBldrDefaultProfileOptions options, MessageInBus* bus, MidiSender* sender,
+    ParameterManager::UIState* uiState, MidiInProcessor::TimestampProvider timestampProvider) {
+    return CreateMidiControllerProfile(WrldBldrDefaultProfileConfig(options), bus, sender, uiState,
+                                       std::move(timestampProvider));
+}
+
 std::uint8_t EncoderPositionToCC(std::size_t position) {
     return static_cast<std::uint8_t>(position % 16);
+}
+
+std::uint8_t WrldBldrPositionToCC(std::uint8_t x, std::uint8_t y) {
+    return static_cast<std::uint8_t>((static_cast<unsigned>(y) * 8u + static_cast<unsigned>(x)) & 0x7F);
 }
 
 std::uint8_t ColorToTwister(Color color) {

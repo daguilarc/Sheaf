@@ -56,10 +56,12 @@ public:
         cutoff_->SetGestureActive(0, 0, true);
         cutoff_->SetGestureActive(1, 0, true);
         bankA_ = &manager_.CreateBank();
+        bankA_->SetColor(synth::Color::Green);
         bankA_->AddMapping(10, *cutoff_);
         bankA_->AddMapping(11, *shape_);
         bankA_->AddMapping(12, *level_);
         bankB_ = &manager_.CreateBank();
+        bankB_->SetColor(synth::Color::Red);
         bankB_->AddMapping(10, *spread_);
         bankB_->AddMapping(11, *fold_);
         bankB_->AddMapping(12, *tone_);
@@ -115,6 +117,7 @@ public:
     ~MainComponent() override {
         stopTimer();
         midiInHandler_.Close();
+        midiInHandler_.SetProcessor(nullptr);
         midiOutputHandler_.Close();
         midiSender_.Stop();
     }
@@ -146,8 +149,7 @@ public:
         gestureSlider_.setBounds(sliders.removeFromLeft(getWidth() / 2 - 24).reduced(8));
         blendSlider_.setBounds(sliders.reduced(8));
         auto midi = area.removeFromTop(96).reduced(4);
-        const int comboWidth = juce::jmax(120, midi.getWidth() / 5);
-        controllerPresetBox_.setBounds(midi.removeFromLeft(comboWidth).reduced(4));
+        const int comboWidth = juce::jmax(120, midi.getWidth() / 4);
         refreshMidiButton_.setBounds(midi.removeFromLeft(74).reduced(4));
         midiInputBox_.setBounds(midi.removeFromLeft(comboWidth).reduced(4));
         openInputButton_.setBounds(midi.removeFromLeft(82).reduced(4));
@@ -163,22 +165,7 @@ private:
         addAndMakeVisible(button);
     }
 
-    enum class ControllerPreset {
-        Twister,
-        WrldBldr,
-    };
-
-    ControllerPreset selectedPreset() const {
-        return controllerPresetBox_.getSelectedId() == 2 ? ControllerPreset::WrldBldr : ControllerPreset::Twister;
-    }
-
     void configureMidiControls() {
-        controllerPresetBox_.addItem("Twister", 1);
-        controllerPresetBox_.addItem("Wrld.Bldr", 2);
-        controllerPresetBox_.setSelectedId(1, juce::dontSendNotification);
-        controllerPresetBox_.onChange = [this] { rebuildMidiProcessors(); };
-        addAndMakeVisible(controllerPresetBox_);
-
         refreshMidiButton_.setButtonText("Refresh");
         refreshMidiButton_.onClick = [this] { refreshMidiDevices(); };
         addAndMakeVisible(refreshMidiButton_);
@@ -228,25 +215,15 @@ private:
     }
 
     void rebuildMidiProcessors() {
-        synth::EncoderMidiInConfig inputConfig = selectedPreset() == ControllerPreset::WrldBldr
-                                                     ? synth::EncoderMidiInConfig::WrldBldrDefault(0)
-                                                     : synth::EncoderMidiInConfig::TwisterDefault(0);
-        inputConfig.KeepFirstPositions(encoders_.size());
-        auto inputProcessor = std::make_unique<synth::EncoderMidiInProcessor>(std::move(inputConfig), &midiBus_);
-        inputProcessor->SetTimestampProvider([] { return 0; });
-        midiInHandler_.SetProcessor(std::move(inputProcessor));
-
-        synth::EncoderMidiOutConfig outputConfig = selectedPreset() == ControllerPreset::WrldBldr
-                                                      ? synth::EncoderMidiOutConfig::WrldBldrDefault(0)
-                                                      : synth::EncoderMidiOutConfig::TwisterDefault(0);
-        outputConfig.KeepFirstPositions(encoders_.size());
-        if (selectedPreset() == ControllerPreset::WrldBldr) {
-            midiOutProcessor_ =
-                std::make_unique<synth::WrldBldrMidiOutProcessor>(std::move(outputConfig), &midiSender_, uiState_.get());
-        } else {
-            midiOutProcessor_ =
-                std::make_unique<synth::TwisterMidiOutProcessor>(std::move(outputConfig), &midiSender_, uiState_.get());
-        }
+        midiInHandler_.SetProcessor(nullptr);
+        synth::WrldBldrDefaultProfileOptions options;
+        options.visibleEncoderCount = encoders_.size();
+        options.sceneCount = 3;
+        options.bankButtonCount = 16;
+        options.gestureSelectorCount = 1;
+        midiProfile_ =
+            synth::CreateWrldBldrDefaultProfile(options, &midiBus_, &midiSender_, uiState_.get(), [] { return 0; });
+        midiInHandler_.SetProcessor(std::move(midiProfile_.input));
     }
 
     juce::String selectedInputIdentifier() const {
@@ -282,8 +259,10 @@ private:
             return;
         }
         const juce::String identifier = selectedOutputIdentifier();
-        if (identifier.isNotEmpty() && midiOutputHandler_.Open(identifier) && midiOutProcessor_ != nullptr) {
-            midiOutProcessor_->Reset();
+        if (identifier.isNotEmpty() && midiOutputHandler_.Open(identifier)) {
+            for (auto& output : midiProfile_.outputs) {
+                output->Reset();
+            }
         }
         updateMidiStatus();
     }
@@ -354,8 +333,10 @@ private:
             parameter->ProcessLite();
         }
         manager_.PopulateUIState(*uiState_);
-        if (midiOutputHandler_.IsOpen() && midiOutProcessor_ != nullptr) {
-            midiOutProcessor_->Process();
+        if (midiOutputHandler_.IsOpen()) {
+            for (auto& output : midiProfile_.outputs) {
+                output->Process();
+            }
         }
         const bool gestureSelected = uiState_->gestures.gestureCapacity > 0 &&
                                      uiState_->gestures.selected[0].load(std::memory_order_relaxed);
@@ -403,7 +384,6 @@ private:
     juce::TextButton stopButton_;
     juce::Slider gestureSlider_;
     juce::Slider blendSlider_;
-    juce::ComboBox controllerPresetBox_;
     juce::ComboBox midiInputBox_;
     juce::ComboBox midiOutputBox_;
     juce::TextButton refreshMidiButton_;
@@ -415,7 +395,7 @@ private:
     synth_juce::MidiInHandler midiInHandler_;
     synth_juce::MidiOutputHandler midiOutputHandler_;
     synth::MidiSender midiSender_;
-    std::unique_ptr<synth::MidiOutProcessor> midiOutProcessor_;
+    synth::MidiControllerProfileResult midiProfile_;
     std::uint64_t nextTimestamp_ = 1;
     float phase_ = 0.0f;
 };

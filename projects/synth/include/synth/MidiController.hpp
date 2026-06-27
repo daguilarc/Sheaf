@@ -126,9 +126,65 @@ private:
     EncoderMidiInConfig config_;
 };
 
+struct AnalogMidiMapping {
+    MidiControlAddress control;
+    std::size_t gestureIx = 0;
+};
+
+struct AnalogMidiInConfig {
+    std::vector<AnalogMidiMapping> gestures;
+    std::optional<MidiControlAddress> sceneBlend;
+};
+
+class AnalogMidiInProcessor final : public MidiInProcessor {
+public:
+    AnalogMidiInProcessor(AnalogMidiInConfig config, MessageInBus* bus = nullptr);
+
+    void SetConfig(AnalogMidiInConfig config);
+    const AnalogMidiInConfig& Config() const { return config_; }
+    void Process(const BasicMidi& midi) override;
+
+private:
+    const AnalogMidiMapping* FindGesture(const BasicMidi& midi) const;
+
+    AnalogMidiInConfig config_;
+};
+
+struct SystemButtonMidiAssociation {
+    MidiControlAddress control;
+    MessageIn press;
+    std::optional<MessageIn> release;
+};
+
+struct SystemButtonMidiInConfig {
+    std::vector<SystemButtonMidiAssociation> associations;
+};
+
+class SystemButtonMidiInProcessor final : public MidiInProcessor {
+public:
+    SystemButtonMidiInProcessor(SystemButtonMidiInConfig config, MessageInBus* bus = nullptr);
+
+    void SetConfig(SystemButtonMidiInConfig config);
+    const SystemButtonMidiInConfig& Config() const { return config_; }
+    void Process(const BasicMidi& midi) override;
+
+private:
+    const SystemButtonMidiAssociation* FindAssociation(const BasicMidi& midi) const;
+    void PushStamped(MessageIn message);
+
+    SystemButtonMidiInConfig config_;
+};
+
 struct IMidiOutputSink {
     virtual ~IMidiOutputSink() = default;
     virtual void Send(const BasicMidi& midi) = 0;
+};
+
+class MidiOutputProcessor {
+public:
+    virtual ~MidiOutputProcessor() = default;
+    virtual void Reset() = 0;
+    virtual void Process() = 0;
 };
 
 class MidiSender {
@@ -177,7 +233,7 @@ struct EncoderMidiOutConfig {
     void KeepFirstPositions(std::size_t count);
 };
 
-class MidiOutProcessor {
+class MidiOutProcessor : public MidiOutputProcessor {
 public:
     MidiOutProcessor(EncoderMidiOutConfig config, MidiSender* sender, ParameterManager::UIState* uiState);
     virtual ~MidiOutProcessor() = default;
@@ -187,8 +243,7 @@ public:
     void SetConfig(EncoderMidiOutConfig config);
     const EncoderMidiOutConfig& Config() const { return config_; }
 
-    virtual void Reset();
-    virtual void Process() = 0;
+    void Reset() override;
 
 protected:
     struct CellSnapshot {
@@ -247,7 +302,139 @@ private:
     std::vector<CacheEntry> cache_;
 };
 
+struct SystemMessageOutputState {
+    Color color = Color::Off;
+    bool isOn = false;
+};
+
+class SystemMessageOutputInfo {
+public:
+    explicit SystemMessageOutputInfo(ParameterManager::UIState* uiState = nullptr);
+
+    void SetUIState(ParameterManager::UIState* uiState) { uiState_ = uiState; }
+    ParameterManager::UIState* UIState() const { return uiState_; }
+    SystemMessageOutputState Evaluate(const MessageIn& message) const;
+
+private:
+    Color GestureColor(std::size_t gestureIx) const;
+    ParameterManager::UIState* uiState_ = nullptr;
+};
+
+struct SystemCcMidiOutAssociation {
+    MidiControlAddress control;
+    MessageIn message;
+};
+
+struct SystemCcMidiOutConfig {
+    std::vector<SystemCcMidiOutAssociation> associations;
+};
+
+class SystemCcMidiOutProcessor final : public MidiOutputProcessor {
+public:
+    SystemCcMidiOutProcessor(SystemCcMidiOutConfig config, MidiSender* sender, ParameterManager::UIState* uiState);
+
+    void SetSender(MidiSender* sender) { sender_ = sender; }
+    void SetUIState(ParameterManager::UIState* uiState) { info_.SetUIState(uiState); }
+    void SetConfig(SystemCcMidiOutConfig config);
+    const SystemCcMidiOutConfig& Config() const { return config_; }
+    void Reset() override;
+    void Process() override;
+
+private:
+    struct CacheEntry {
+        bool valid = false;
+        bool isOn = false;
+    };
+
+    bool Enqueue(const BasicMidi& midi);
+
+    SystemCcMidiOutConfig config_;
+    MidiSender* sender_ = nullptr;
+    SystemMessageOutputInfo info_;
+    std::vector<CacheEntry> cache_;
+};
+
+struct WrldBldrSystemPosition {
+    std::uint8_t channel = 0;
+    std::uint8_t x = 0;
+    std::uint8_t y = 0;
+};
+
+struct WrldBldrSystemMidiOutAssociation {
+    WrldBldrSystemPosition position;
+    MessageIn message;
+};
+
+struct WrldBldrSystemMidiOutConfig {
+    std::vector<WrldBldrSystemMidiOutAssociation> associations;
+};
+
+class WrldBldrSystemMidiOutProcessor final : public MidiOutputProcessor {
+public:
+    WrldBldrSystemMidiOutProcessor(WrldBldrSystemMidiOutConfig config, MidiSender* sender,
+                                   ParameterManager::UIState* uiState);
+
+    void SetSender(MidiSender* sender) { sender_ = sender; }
+    void SetUIState(ParameterManager::UIState* uiState) { info_.SetUIState(uiState); }
+    void SetConfig(WrldBldrSystemMidiOutConfig config);
+    const WrldBldrSystemMidiOutConfig& Config() const { return config_; }
+    void Reset() override;
+    void Process() override;
+
+private:
+    struct CacheEntry {
+        bool valid = false;
+        Color color = Color::Off;
+    };
+
+    bool Enqueue(const BasicMidi& midi);
+
+    WrldBldrSystemMidiOutConfig config_;
+    MidiSender* sender_ = nullptr;
+    SystemMessageOutputInfo info_;
+    std::vector<CacheEntry> cache_;
+};
+
+struct MidiControllerSystemMessageAssociation {
+    MidiControlAddress control;
+    std::optional<WrldBldrSystemPosition> wrldBldrPosition;
+    MessageIn press;
+    std::optional<MessageIn> release;
+    MessageIn feedback;
+};
+
+struct MidiControllerProfileConfig {
+    std::optional<EncoderMidiInConfig> encoderInput;
+    std::optional<EncoderMidiOutConfig> encoderOutput;
+    std::optional<AnalogMidiInConfig> analogInput;
+    std::vector<MidiControllerSystemMessageAssociation> systemMessages;
+};
+
+struct MidiControllerProfileResult {
+    std::unique_ptr<MidiInProcessor> input;
+    std::vector<std::unique_ptr<MidiInProcessor>> inputThru;
+    std::vector<std::unique_ptr<MidiOutputProcessor>> outputs;
+};
+
+MidiControllerProfileResult CreateMidiControllerProfile(
+    const MidiControllerProfileConfig& config, MessageInBus* bus, MidiSender* sender,
+    ParameterManager::UIState* uiState, MidiInProcessor::TimestampProvider timestampProvider = {});
+
+struct WrldBldrDefaultProfileOptions {
+    std::size_t slotIx = 0;
+    std::size_t visibleEncoderCount = 16;
+    std::size_t sceneCount = 8;
+    std::size_t bankButtonCount = 16;
+    std::size_t gestureSelectorCount = 0;
+};
+
+MidiControllerProfileConfig WrldBldrDefaultProfileConfig(WrldBldrDefaultProfileOptions options = {});
+MidiControllerProfileResult CreateWrldBldrDefaultProfile(
+    WrldBldrDefaultProfileOptions options, MessageInBus* bus, MidiSender* sender,
+    ParameterManager::UIState* uiState, MidiInProcessor::TimestampProvider timestampProvider = {});
+
 std::uint8_t EncoderPositionToCC(std::size_t position);
+std::uint8_t WrldBldrPositionToCC(std::uint8_t x, std::uint8_t y);
 std::uint8_t ColorToTwister(Color color);
 std::uint8_t FullBrightnessAnimationValue();
 BasicMidi WrldBldrColorSysex(std::uint64_t timestamp, std::uint8_t channel, std::uint8_t cc, Color color);

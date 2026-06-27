@@ -296,6 +296,7 @@ public:
     float GestureValue(std::size_t sceneIx, std::size_t gestureIx) const;
     void SetGestureActive(std::size_t sceneIx, std::size_t gestureIx, bool active);
     bool GestureActive(std::size_t sceneIx, std::size_t gestureIx) const;
+    std::uint32_t GesturesAffectingMask() const;
 
     std::span<float> CurrentDepths(std::size_t voiceIx);
     std::span<const float> CurrentDepths(std::size_t voiceIx) const;
@@ -322,7 +323,6 @@ private:
     bool WouldCreateCycle(const Parameter* candidate) const;
     float TargetValue(std::size_t voiceIx) const;
     std::uint32_t ModulatorsAffectingMask() const;
-    std::uint32_t GesturesAffectingMask() const;
 
     ParameterId id_;
     ParameterGroup& group_;
@@ -365,12 +365,15 @@ public:
     void HandleTick(PhysicalEncoderId encoderId, const SceneState& scene, float delta);
     void Deselect();
     bool ShowingModulation() const;
+    void SetColor(Color color) { color_ = color; }
+    Color GetColor() const { return color_; }
 
     std::size_t VisibleMappingCount() const;
     Parameter* VisibleParameter(PhysicalEncoderId encoderId) const;
     VisibleCell VisibleCellFor(PhysicalEncoderId encoderId) const;
     Parameter* SelectedParameter() const { return selected_; }
     Parameter* TargetParameter() const;
+    std::uint32_t GesturesAffectingMask() const;
 
 private:
     struct Cell {
@@ -385,6 +388,7 @@ private:
     std::vector<PhysicalEncoderId> CompactPhysicalLayout() const;
 
     ParameterManager* manager_ = nullptr;
+    Color color_ = Color::Grey;
     std::vector<Cell> topLevel_;
     std::vector<Cell> visible_;
     Parameter* selected_ = nullptr;
@@ -441,6 +445,14 @@ public:
         std::unique_ptr<std::atomic<bool>[]> selected;
         std::unique_ptr<AtomicColor[]> colors;
         std::unique_ptr<std::atomic<bool>[]> connected;
+        std::unique_ptr<std::atomic<std::uint32_t>[]> bankAffectingMask;
+        std::unique_ptr<std::atomic<std::size_t>[]> bankAffectingCount;
+    };
+
+    struct BankUIState {
+        std::atomic<bool> connected{false};
+        std::atomic<bool> selected{false};
+        AtomicColor color;
     };
 
     struct UIState {
@@ -449,14 +461,17 @@ public:
         UIState& operator=(const UIState&) = delete;
 
         void Configure(std::size_t slotCapacity, std::size_t cellCapacity, std::size_t voiceCapacity,
-                       std::size_t gestureCapacity);
+                       std::size_t gestureCapacity, std::size_t bankCapacity = 0);
 
         std::atomic<std::size_t> leftScene{0};
         std::atomic<std::size_t> rightScene{0};
         std::atomic<float> sceneBlend{0.0f};
         std::atomic<bool> shiftHeld{false};
+        std::size_t sceneCapacity = 0;
         std::size_t slotCapacity = 0;
+        std::size_t bankCapacity = 0;
         std::unique_ptr<BankSlot::UIState[]> slots;
+        std::unique_ptr<BankUIState[]> banks;
         GestureManagerUIState gestures;
     };
 
@@ -519,6 +534,7 @@ private:
     Page* FindPage(PageOrdinal ordinal);
     const Page* FindPage(PageOrdinal ordinal) const;
     bool SceneEndpointsValid(std::size_t leftScene, std::size_t rightScene) const;
+    std::size_t SceneCapacity() const;
     std::size_t MaxVoiceCount() const;
     std::size_t MaxSlotCellCount() const;
 
@@ -539,6 +555,7 @@ struct MessageIn {
         ParamPush,
         ToggleShift,
         ToggleGestureSelect,
+        SetGestureSelect,
         SelectParamBank,
         Start,
         Stop,
@@ -565,6 +582,7 @@ struct MessageIn {
     static MessageIn ToggleShift(std::uint64_t timestamp);
     static MessageIn SetShift(std::uint64_t timestamp, bool held);
     static MessageIn ToggleGestureSelect(std::uint64_t timestamp, std::size_t gestureIx);
+    static MessageIn SetGestureSelect(std::uint64_t timestamp, std::size_t gestureIx, bool selected);
     static MessageIn SelectParamBank(std::uint64_t timestamp, std::size_t slotIx, std::size_t bankIx);
     static MessageIn Start(std::uint64_t timestamp);
     static MessageIn Stop(std::uint64_t timestamp);

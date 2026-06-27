@@ -1055,6 +1055,16 @@ Parameter* Bank::TargetParameter() const {
     return ShowingModulation() ? selected_ : nullptr;
 }
 
+std::uint32_t Bank::GesturesAffectingMask() const {
+    std::uint32_t mask = 0;
+    for (const Cell& cell : topLevel_) {
+        if (cell.parameter != nullptr) {
+            mask |= cell.parameter->GesturesAffectingMask();
+        }
+    }
+    return mask;
+}
+
 void BankSlot::UIState::Configure(std::size_t newCellCapacity, std::size_t voiceCapacity) {
     cellCapacity = newCellCapacity;
     cells = std::make_unique<Parameter::UIState[]>(cellCapacity);
@@ -1464,6 +1474,17 @@ std::size_t ParameterManager::MaxVoiceCount() const {
     return result;
 }
 
+std::size_t ParameterManager::SceneCapacity() const {
+    if (groups_.empty()) {
+        return 0;
+    }
+    std::size_t result = groups_.front()->Config().numScenes;
+    for (const auto& group : groups_) {
+        result = std::min(result, group->Config().numScenes);
+    }
+    return result;
+}
+
 std::size_t ParameterManager::MaxSlotCellCount() const {
     std::size_t result = 0;
     for (const auto& slot : slots_) {
@@ -1478,27 +1499,40 @@ void ParameterManager::GestureManagerUIState::Configure(std::size_t newGestureCa
     selected = std::make_unique<std::atomic<bool>[]>(gestureCapacity);
     colors = std::make_unique<AtomicColor[]>(gestureCapacity);
     connected = std::make_unique<std::atomic<bool>[]>(gestureCapacity);
+    bankAffectingMask = std::make_unique<std::atomic<std::uint32_t>[]>(gestureCapacity);
+    bankAffectingCount = std::make_unique<std::atomic<std::size_t>[]>(gestureCapacity);
     for (std::size_t gestureIx = 0; gestureIx < gestureCapacity; ++gestureIx) {
         values[gestureIx].store(0.0f, std::memory_order_relaxed);
         selected[gestureIx].store(false, std::memory_order_relaxed);
         colors[gestureIx].Store(Color::Off);
         connected[gestureIx].store(false, std::memory_order_relaxed);
+        bankAffectingMask[gestureIx].store(0, std::memory_order_relaxed);
+        bankAffectingCount[gestureIx].store(0, std::memory_order_relaxed);
     }
 }
 
 void ParameterManager::UIState::Configure(std::size_t newSlotCapacity, std::size_t cellCapacity,
-                                          std::size_t voiceCapacity, std::size_t gestureCapacity) {
+                                          std::size_t voiceCapacity, std::size_t gestureCapacity,
+                                          std::size_t newBankCapacity) {
     slotCapacity = newSlotCapacity;
     slots = std::make_unique<BankSlot::UIState[]>(slotCapacity);
     for (std::size_t slotIx = 0; slotIx < slotCapacity; ++slotIx) {
         slots[slotIx].Configure(cellCapacity, voiceCapacity);
+    }
+    bankCapacity = newBankCapacity;
+    banks = std::make_unique<BankUIState[]>(bankCapacity);
+    for (std::size_t bankIx = 0; bankIx < bankCapacity; ++bankIx) {
+        banks[bankIx].connected.store(false, std::memory_order_relaxed);
+        banks[bankIx].selected.store(false, std::memory_order_relaxed);
+        banks[bankIx].color.Store(Color::Off);
     }
     gestures.Configure(gestureCapacity);
 }
 
 std::unique_ptr<ParameterManager::UIState> ParameterManager::CreateUIState() const {
     auto state = std::make_unique<UIState>();
-    state->Configure(slots_.size(), MaxSlotCellCount(), MaxVoiceCount(), gestures_.NumGestures());
+    state->Configure(slots_.size(), MaxSlotCellCount(), MaxVoiceCount(), gestures_.NumGestures(), banks_.size());
+    state->sceneCapacity = SceneCapacity();
     return state;
 }
 
@@ -1507,6 +1541,7 @@ void ParameterManager::PopulateUIState(UIState& state) const {
     state.rightScene.store(scene_.rightScene, std::memory_order_relaxed);
     state.sceneBlend.store(scene_.blend, std::memory_order_relaxed);
     state.shiftHeld.store(shiftHeld_, std::memory_order_relaxed);
+    state.sceneCapacity = SceneCapacity();
     for (std::size_t slotIx = 0; slotIx < state.slotCapacity; ++slotIx) {
         if (slotIx < slots_.size()) {
             slots_[slotIx]->PopulateUIState(state.slots[slotIx]);
@@ -1518,9 +1553,29 @@ void ParameterManager::PopulateUIState(UIState& state) const {
             }
         }
     }
+    for (std::size_t bankIx = 0; bankIx < state.bankCapacity; ++bankIx) {
+        const bool connected = bankIx < banks_.size();
+        state.banks[bankIx].connected.store(connected, std::memory_order_relaxed);
+        state.banks[bankIx].selected.store(false, std::memory_order_relaxed);
+        state.banks[bankIx].color.Store(connected ? banks_[bankIx]->GetColor() : Color::Off);
+    }
+    for (const auto& slot : slots_) {
+        Bank* selectedBank = slot->SelectedBank();
+        if (selectedBank == nullptr) {
+            continue;
+        }
+        for (std::size_t bankIx = 0; bankIx < std::min(state.bankCapacity, banks_.size()); ++bankIx) {
+            if (banks_[bankIx].get() == selectedBank) {
+                state.banks[bankIx].selected.store(true, std::memory_order_relaxed);
+                break;
+            }
+        }
+    }
     for (std::size_t gestureIx = 0; gestureIx < state.gestures.gestureCapacity; ++gestureIx) {
         const bool connected = gestureIx < gestures_.NumGestures();
         state.gestures.connected[gestureIx].store(connected, std::memory_order_relaxed);
+        state.gestures.bankAffectingMask[gestureIx].store(0, std::memory_order_relaxed);
+        state.gestures.bankAffectingCount[gestureIx].store(0, std::memory_order_relaxed);
         if (!connected) {
             state.gestures.values[gestureIx].store(0.0f, std::memory_order_relaxed);
             state.gestures.selected[gestureIx].store(false, std::memory_order_relaxed);
@@ -1530,6 +1585,21 @@ void ParameterManager::PopulateUIState(UIState& state) const {
         state.gestures.values[gestureIx].store(gestures_.Value(gestureIx), std::memory_order_relaxed);
         state.gestures.selected[gestureIx].store(gestures_.Selected(gestureIx), std::memory_order_relaxed);
         state.gestures.colors[gestureIx].Store(gestures_.Metadata(gestureIx).color);
+    }
+    const std::size_t compactBankCount = std::min<std::size_t>({state.bankCapacity, banks_.size(), 32});
+    for (std::size_t bankIx = 0; bankIx < compactBankCount; ++bankIx) {
+        const std::uint32_t affecting = banks_[bankIx]->GesturesAffectingMask();
+        for (std::size_t gestureIx = 0;
+             gestureIx < std::min<std::size_t>(state.gestures.gestureCapacity, 32);
+             ++gestureIx) {
+            if ((affecting & (std::uint32_t{1} << gestureIx)) == 0) {
+                continue;
+            }
+            std::uint32_t mask = state.gestures.bankAffectingMask[gestureIx].load(std::memory_order_relaxed);
+            mask |= (std::uint32_t{1} << bankIx);
+            state.gestures.bankAffectingMask[gestureIx].store(mask, std::memory_order_relaxed);
+            state.gestures.bankAffectingCount[gestureIx].fetch_add(1, std::memory_order_relaxed);
+        }
     }
 }
 
@@ -1571,6 +1641,14 @@ MessageIn MessageIn::ToggleGestureSelect(std::uint64_t timestamp, std::size_t ge
     message.timestamp = timestamp;
     message.type = Type::ToggleGestureSelect;
     message.gestureIx = gestureIx;
+    return message;
+}
+
+MessageIn MessageIn::SetGestureSelect(std::uint64_t timestamp, std::size_t gestureIx, bool selected) {
+    MessageIn message = ToggleGestureSelect(timestamp, gestureIx);
+    message.type = Type::SetGestureSelect;
+    message.boolValue = selected;
+    message.hasBoolValue = true;
     return message;
 }
 
@@ -1685,13 +1763,26 @@ void MessageInBus::Apply(const MessageIn& message) {
         }
         break;
     case MessageIn::Type::ToggleGestureSelect:
-        manager_->ToggleGestureSelected(message.gestureIx);
+        if (message.gestureIx < manager_->GestureCount()) {
+            manager_->ToggleGestureSelected(message.gestureIx);
+        }
+        break;
+    case MessageIn::Type::SetGestureSelect:
+        if (message.gestureIx < manager_->GestureCount()) {
+            if (message.boolValue) {
+                manager_->SelectGesture(message.gestureIx);
+            } else {
+                manager_->DeselectGesture(message.gestureIx);
+            }
+        }
         break;
     case MessageIn::Type::SelectParamBank:
         manager_->SelectBankForSlot(message.slotIx, message.bankIx);
         break;
     case MessageIn::Type::SetGestureValue:
-        manager_->SetGestureValue(message.gestureIx, message.value);
+        if (message.gestureIx < manager_->GestureCount()) {
+            manager_->SetGestureValue(message.gestureIx, message.value);
+        }
         break;
     case MessageIn::Type::SceneSelect:
         manager_->SetLessSelectedScene(message.sceneIx);
