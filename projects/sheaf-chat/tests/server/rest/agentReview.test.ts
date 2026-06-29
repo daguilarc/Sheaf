@@ -595,7 +595,7 @@ function ParseStateMachineNumberList(value: string | undefined, fallback: number
 function StateMachineStepCount(): number
 {
   const parsed = Number(process.env.SHEAF_AGENT_REVIEW_STATE_MACHINE_STEPS);
-  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 28;
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 64;
 }
 
 function StateMachineSeeds(): number[]
@@ -657,12 +657,14 @@ async function CreateStateMachineReviewSession(
       initialIndexAfter: true,
       initialWorktreeAfter: true,
     });
+    const partialInsertionAnchors = [2, 3, 86, 87];
+    const partialInsertionAnchor = partialInsertionAnchors[next() % partialInsertionAnchors.length]!;
     const stagedInsertId = `s${seed}-f${fileIndex}-staged-insert`;
     addEdit({
       id: stagedInsertId,
       fileRel,
       kind: "insert",
-      anchor: 58 + (next() % 5),
+      anchor: partialInsertionAnchor,
       before: [],
       after: [
         `staged inserted helper ${StateMachineEditToken(stagedInsertId)}`,
@@ -678,7 +680,7 @@ async function CreateStateMachineReviewSession(
       id: largeInsertId,
       fileRel,
       kind: "insert",
-      anchor: 2 + (next() % 2),
+      anchor: partialInsertionAnchor,
       before: [],
       after: Array.from(
         { length: 12 + (next() % 5) },
@@ -1839,6 +1841,145 @@ async function CreateDuplicateContentReviewSession(
   await writeFile(filePath, `${changed.join("\n")}\n`, "utf8");
 
   return { repoId: created.repoId, workspaceId: created.workspaceId, repoRoot };
+}
+
+async function CreateAmbiguousInsertionReviewSession(
+  handle: TestServerHandle,
+): Promise<{ repoId: string; workspaceId: string; repoRoot: string; fileRel: string }>
+{
+  const repoRoot = handle.agentManager.storagePaths.repoRoot;
+  const demoRoot = path.join(repoRoot, "projects/demo");
+  const created = await CreateWorkspaceChatViaApi(handle, demoRoot);
+  const fileRel = "projects/demo/scope.hpp";
+  const filePath = path.join(repoRoot, fileRel);
+
+  const base = [
+    "struct ResponseComponent",
+    "{",
+    "    bool m_logX;",
+    "",
+    "    ResponseComponent()",
+    "        : m_voiceOffset(nullptr)",
+    "        , m_logX(true)",
+    "    {",
+    "    }",
+    "",
+    "    void Draw()",
+    "    {",
+    "        responseDrawer.m_logX = m_logX;",
+    "        responseDrawer.Draw();",
+    "    }",
+    "",
+    "    void OnClick(const MouseEvent& event)",
+    "    {",
+    "        if (event.mods.isShiftDown())",
+    "        {",
+    "            m_logX = !m_logX;",
+    "        }",
+    "        else",
+    "        {",
+    "            ++(*m_voiceOffset);",
+    "            if (*m_voiceOffset == static_cast<int>(x_voicesPerTrack))",
+    "            {",
+    "                *m_voiceOffset = -1;",
+    "            }",
+    "        }",
+    "    }",
+    "};",
+    "",
+    "struct LaterComponent",
+    "{",
+    "    void Paint();",
+    "};",
+  ];
+
+  await mkdir(demoRoot, { recursive: true });
+  await Git(repoRoot, ["init"]);
+  await Git(repoRoot, ["config", "user.email", "test@example.com"]);
+  await Git(repoRoot, ["config", "user.name", "Test User"]);
+  await writeFile(filePath, `${base.join("\n")}\n`, "utf8");
+  await Git(repoRoot, ["add", fileRel]);
+  await Git(repoRoot, ["commit", "-m", "initial"]);
+
+  const staged = base.filter((line) => line !== "    bool m_logX;");
+  await writeFile(filePath, `${staged.join("\n")}\n`, "utf8");
+  await Git(repoRoot, ["add", fileRel]);
+
+  const changed = [
+    "struct ResponseComponent",
+    "{",
+    "",
+    "    ResponseComponent()",
+    "        : m_voiceOffset(nullptr)",
+    "    {",
+    "    }",
+    "",
+    "    void Draw()",
+    "    {",
+    "        responseDrawer.Draw();",
+    "    }",
+    "",
+    "    void OnClick(const MouseEvent& event)",
+    "    {",
+    "        ++(*m_voiceOffset);",
+    "        if (*m_voiceOffset == static_cast<int>(x_voicesPerTrack))",
+    "        {",
+    "            *m_voiceOffset = -1;",
+    "        }",
+    "    }",
+    "};",
+    "",
+    "struct ThruFrequencyResponseComponent",
+    "{",
+    "    void Draw(Graphics& g)",
+    "    {",
+    "        int voiceOffset = *m_voiceOffset;",
+    "        size_t baseVoiceIx = m_voiceIx->load() * x_voicesPerTrack;",
+    "        size_t numLoops = voiceOffset == -1 ? x_voicesPerTrack : 1;",
+    "",
+    "        for (size_t loopIx = 0; loopIx < numLoops; ++loopIx)",
+    "        {",
+    "            size_t voiceIx = baseVoiceIx + (voiceOffset == -1 ? loopIx : static_cast<size_t>(voiceOffset));",
+    "            if (voiceOffset == -1 && m_uiState->m_muted[voiceIx].load())",
+    "            {",
+    "                continue;",
+    "            }",
+    "",
+    "            auto& sourceUIState = m_uiState->m_voiceSourceUIState[voiceIx];",
+    "            if (sourceUIState.m_sourceMachine.load() != SourceMachine::Thru)",
+    "            {",
+    "                continue;",
+    "            }",
+    "",
+    "            SmartGrid::Color color = TheNonagonSmartGrid::VoiceColor(voiceIx);",
+    "            PathDrawer responseDrawer(height, width, 0, 0);",
+    "            responseDrawer.DrawFrequencyResponse(",
+    "                g,",
+    "                Colour(color.m_red, color.m_green, color.m_blue),",
+    "                sourceUIState.m_thruUIState,",
+    "                1.0f);",
+    "        }",
+    "    }",
+    "",
+    "    void OnClick(const MouseEvent& event)",
+    "    {",
+    "        (void)event;",
+    "        ++(*m_voiceOffset);",
+    "        if (*m_voiceOffset == static_cast<int>(x_voicesPerTrack))",
+    "        {",
+    "            *m_voiceOffset = -1;",
+    "        }",
+    "    }",
+    "};",
+    "",
+    "struct LaterComponent",
+    "{",
+    "    void Paint();",
+    "};",
+  ];
+  await writeFile(filePath, `${changed.join("\n")}\n`, "utf8");
+
+  return { repoId: created.repoId, workspaceId: created.workspaceId, repoRoot, fileRel };
 }
 
 test("Agent Review WebSocket navigates between hunks and files", async () =>
@@ -3374,6 +3515,79 @@ test("Agent Review stages a non-first duplicate-content hunk without rejecting i
       socket.once("close", () => resolve());
       socket.close();
     });
+  });
+});
+
+test("Agent Review stages an insertion-only hunk from a larger inserted block at its real location", async () =>
+{
+  await WithTestServer(async (handle) =>
+  {
+    const { repoId, workspaceId, repoRoot, fileRel } = await CreateAmbiguousInsertionReviewSession(handle);
+    const socket = new WebSocket(WsUrl(handle.baseUrl, repoId, workspaceId));
+    await new Promise<void>((resolve, reject) =>
+    {
+      socket.once("open", () => resolve());
+      socket.once("error", reject);
+    });
+
+    const bootstrap = await WaitForFrame(socket, "bootstrap");
+    const target = bootstrap.state.hunks.find((hunk: Record<string, any>) =>
+      hunk.file === fileRel &&
+      hunk.patch.includes("SmartGrid::Color color = TheNonagonSmartGrid::VoiceColor(voiceIx)")
+    );
+    assert.ok(target, "expected an insertion-only frequency-response drawing hunk");
+    assert.match(target.patch, /^@@ -\d+,0 \+\d+,\d+ @@/m);
+
+    let current = bootstrap.state.currentHunk;
+    for (let attempt = 0; current.hunkId !== target.hunkId && attempt < bootstrap.state.hunks.length; attempt += 1)
+    {
+      socket.send(JSON.stringify({
+        type: "command",
+        id: `advance-to-ambiguous-${attempt}`,
+        action: "nextHunk",
+      }));
+      const next = await WaitForFrame(socket, "command_result");
+      assert.equal(next.result.ok, true);
+      current = next.state.currentHunk;
+    }
+    assert.equal(current.hunkId, target.hunkId);
+
+    socket.send(JSON.stringify({
+      type: "command",
+      id: "stage-ambiguous-insertion",
+      action: "stage",
+      hunkId: current.hunkId,
+      patchHash: current.patchHash,
+    }));
+    const staged = await WaitForFrame(socket, "command_result");
+    assert.equal(staged.result.ok, true, JSON.stringify(staged.result));
+
+    const cached = await Git(repoRoot, ["diff", "--cached", "--unified=0", "--", fileRel]);
+    const unstaged = await Git(repoRoot, ["diff", "--unified=0", "--", fileRel]);
+    const AddedLines = (diff: string): string[] =>
+      diff.split("\n").filter((line) => line.startsWith("+") && !line.startsWith("+++"));
+    assert.match(cached, /SmartGrid::Color color = TheNonagonSmartGrid::VoiceColor\(voiceIx\)/);
+    assert.deepEqual(AddedLines(cached), AddedLines(current.patch));
+    assert.doesNotMatch(cached, /\+            auto& sourceUIState = m_uiState->m_voiceSourceUIState\[voiceIx\]/);
+    assert.doesNotMatch(unstaged, /-            SmartGrid::Color color = TheNonagonSmartGrid::VoiceColor\(voiceIx\)/);
+    assert.doesNotMatch(unstaged, /\+            SmartGrid::Color color = TheNonagonSmartGrid::VoiceColor\(voiceIx\)/);
+    assert.match(unstaged, /sourceUIState\.m_sourceMachine\.load\(\) != SourceMachine::Thru/);
+
+    socket.send(JSON.stringify({
+      type: "command",
+      id: "undo-ambiguous-insertion-stage",
+      action: "undo",
+    }));
+    const undone = await WaitForFrame(socket, "command_result");
+    assert.equal(undone.result.ok, true, JSON.stringify(undone.result));
+
+    const cachedAfterUndo = await Git(repoRoot, ["diff", "--cached", "--unified=0", "--", fileRel]);
+    const unstagedAfterUndo = await Git(repoRoot, ["diff", "--unified=0", "--", fileRel]);
+    assert.doesNotMatch(cachedAfterUndo, /SmartGrid::Color color = TheNonagonSmartGrid::VoiceColor\(voiceIx\)/);
+    assert.match(unstagedAfterUndo, /\+            SmartGrid::Color color = TheNonagonSmartGrid::VoiceColor\(voiceIx\)/);
+    assert.match(unstagedAfterUndo, /sourceUIState\.m_sourceMachine\.load\(\) != SourceMachine::Thru/);
+
+    await CloseSocket(socket);
   });
 });
 

@@ -536,6 +536,33 @@ export async function ReadAgentReviewIndexFile(
   return RunGit(repoRoot, ["show", `:${file}`]);
 }
 
+export async function WriteAgentReviewIndexFile(
+  repoRoot: string,
+  file: string,
+  content: string,
+): Promise<void>
+{
+  const indexEntry = await RunGit(repoRoot, ["ls-files", "-s", "--", file]);
+  const entries = indexEntry.split("\n")
+    .map((candidate) => /^(\d+)\s+[0-9a-fA-F]+\s+(\d+)\t/.exec(candidate))
+    .filter((match): match is RegExpExecArray => match !== null);
+  if (entries.length === 0)
+  {
+    throw new Error("index file is missing");
+  }
+
+  const unmerged = entries.some((entry) => entry[2] !== "0");
+  const stageZero = entries.find((entry) => entry[2] === "0");
+  if (unmerged || stageZero === undefined)
+  {
+    throw new Error("index file is unmerged");
+  }
+
+  const mode = stageZero[1]!;
+  const objectId = (await RunGit(repoRoot, ["hash-object", "-w", "--stdin"], content)).trim();
+  await RunGit(repoRoot, ["update-index", "--index-info"], `${mode} ${objectId} 0\t${file}\n`);
+}
+
 export function AssertReviewHunkUnderSession(hunk: AgentReviewHunk): void
 {
   const absoluteFile = path.resolve(hunk.repoRoot, hunk.file);

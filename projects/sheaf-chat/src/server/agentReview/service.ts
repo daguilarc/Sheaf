@@ -34,6 +34,7 @@ import {
   LoadAgentReviewGitState,
   ReadAgentReviewIndexFile,
   ResolveAgentReviewAvailability,
+  WriteAgentReviewIndexFile,
 } from "./git.js";
 import type {
   AgentReviewAction,
@@ -57,6 +58,8 @@ interface UndoEntry
 {
   action: "stage" | "revert";
   hunk: AgentReviewHunk;
+  previousIndexContent?: string;
+  previousWorktreeContent?: string;
 }
 
 interface DictatorEndpoint
@@ -2190,6 +2193,7 @@ class AgentReviewSession
       };
     }
 
+    let originalIndexContent: string | undefined;
     let expectedIndexContent: string | undefined;
     let originalWorktreeContent: string | undefined;
     let expectedWorktreeContent: string | undefined;
@@ -2197,8 +2201,9 @@ class AgentReviewSession
     {
       try
       {
+        originalIndexContent = await ReadAgentReviewIndexFile(hunk.repoRoot, hunk.file);
         expectedIndexContent = ApplyHunkToIndexedContent(
-          await ReadAgentReviewIndexFile(hunk.repoRoot, hunk.file),
+          originalIndexContent,
           hunk,
         );
       }
@@ -2231,7 +2236,18 @@ class AgentReviewSession
     }
 
     const result = action === "stage"
-      ? await ApplyAgentReviewPatch(hunk.repoRoot, "stage", hunk.patch)
+      ? await (async (): Promise<{ ok: boolean; error?: string }> =>
+        {
+          try
+          {
+            await WriteAgentReviewIndexFile(hunk.repoRoot, hunk.file, expectedIndexContent!);
+            return { ok: true };
+          }
+          catch (error)
+          {
+            return { ok: false, error: error instanceof Error ? error.message : String(error) };
+          }
+        })()
       : await (async (): Promise<{ ok: boolean; error?: string }> =>
         {
           try
@@ -2283,7 +2299,18 @@ class AgentReviewSession
         message: verificationError,
       });
       const rollback = action === "stage"
-        ? await ApplyAgentReviewPatch(hunk.repoRoot, "unstage", hunk.patch)
+        ? await (async (): Promise<{ ok: boolean; error?: string }> =>
+          {
+            try
+            {
+              await WriteAgentReviewIndexFile(hunk.repoRoot, hunk.file, originalIndexContent!);
+              return { ok: true };
+            }
+            catch (error)
+            {
+              return { ok: false, error: error instanceof Error ? error.message : String(error) };
+            }
+          })()
         : await (async (): Promise<{ ok: boolean; error?: string }> =>
           {
             try
@@ -2309,7 +2336,12 @@ class AgentReviewSession
     this.m_postMutationFile = hunk.file;
     this.m_postMutationTargetPatchHash = null;
     this.m_postMutationPreferNoCrossFile = true;
-    this.m_undoStack.push({ action, hunk });
+    this.m_undoStack.push({
+      action,
+      hunk,
+      previousIndexContent: originalIndexContent,
+      previousWorktreeContent: originalWorktreeContent,
+    });
     if (action === "revert")
     {
       this.AddRejectedMarker(hunk);
@@ -2330,9 +2362,45 @@ class AgentReviewSession
     }
 
     const result = entry.action === "stage"
-      ? await ApplyAgentReviewPatch(entry.hunk.repoRoot, "unstage", entry.hunk.patch)
+      ? await (async (): Promise<{ ok: boolean; error?: string }> =>
+        {
+          if (entry.previousIndexContent === undefined)
+          {
+            return { ok: false, error: "missing previous index content" };
+          }
+          try
+          {
+            await WriteAgentReviewIndexFile(
+              entry.hunk.repoRoot,
+              entry.hunk.file,
+              entry.previousIndexContent,
+            );
+            return { ok: true };
+          }
+          catch (error)
+          {
+            return { ok: false, error: error instanceof Error ? error.message : String(error) };
+          }
+        })()
       : await (async (): Promise<{ ok: boolean; error?: string }> =>
         {
+          if (entry.previousWorktreeContent !== undefined)
+          {
+            try
+            {
+              await writeFile(
+                path.resolve(entry.hunk.repoRoot, entry.hunk.file),
+                entry.previousWorktreeContent,
+                "utf8",
+              );
+              return { ok: true };
+            }
+            catch (error)
+            {
+              return { ok: false, error: error instanceof Error ? error.message : String(error) };
+            }
+          }
+          // Undo entries from older in-memory sessions may not have the full snapshot.
           try
           {
             const currentWorktreeContent = await readFile(path.resolve(entry.hunk.repoRoot, entry.hunk.file), "utf8");
