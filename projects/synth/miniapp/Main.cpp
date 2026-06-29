@@ -3,6 +3,8 @@
 #include "DemoModulation.hpp"
 #include "EncoderComponent.hpp"
 #include "MidiHandlers.hpp"
+#include "WaveformComponents.hpp"
+#include "synth/DspOscillators.hpp"
 #include "synth/MidiController.hpp"
 #include "synth/ParameterModulation.hpp"
 
@@ -18,58 +20,64 @@ class MainComponent final : public juce::Component, private juce::Timer {
 public:
     MainComponent() {
         manager_.SetGestureCount(1);
-        auto& groupA = manager_.CreateGroup({
+        auto& group = manager_.CreateGroup({
             .numVoices = 2,
-            .numModulators = 1,
+            .numModulators = 3,
             .numScenes = 3,
-            .maxParameters = 8,
+            .maxParameters = 24,
             .processLiteAlpha = 1.0f,
             .voiceIndicatorColors = {synth::Color::Cyan, synth::Color::Orange},
         });
-        groupA_ = &groupA;
-        groupA.GetModulators().Metadata(0).name = "Demo LFO";
-        groupA.GetModulators().Metadata(0).shortName = "LFO";
-        groupA.GetModulators().Metadata(0).color = synth::Color::Cyan;
-        groupA.GetModulators().Metadata(0).connected = true;
-        auto& groupB = manager_.CreateGroup({
-            .numVoices = 3,
-            .numModulators = 1,
-            .numScenes = 3,
-            .maxParameters = 8,
-            .processLiteAlpha = 1.0f,
-            .voiceIndicatorColors = {synth::Color::Red, synth::Color::Yellow, synth::Color::Green},
-        });
-        groupB_ = &groupB;
-        groupB.GetModulators().Metadata(0).name = "Tri LFO";
-        groupB.GetModulators().Metadata(0).shortName = "Tri";
-        groupB.GetModulators().Metadata(0).color = synth::Color::Red;
-        groupB.GetModulators().Metadata(0).connected = true;
+        group_ = &group;
+        group.GetModulators().Metadata(0).name = "VCO";
+        group.GetModulators().Metadata(0).shortName = "VCO";
+        group.GetModulators().Metadata(0).color = synth::Color::Cyan;
+        group.GetModulators().Metadata(0).connected = true;
+        group.GetModulators().Metadata(1).name = "Swap VCO";
+        group.GetModulators().Metadata(1).shortName = "Swp";
+        group.GetModulators().Metadata(1).color = synth::Color::Orange;
+        group.GetModulators().Metadata(1).connected = true;
+        group.GetModulators().Metadata(2).name = "Sine LFO";
+        group.GetModulators().Metadata(2).shortName = "LFO";
+        group.GetModulators().Metadata(2).color = synth::Color::Green;
+        group.GetModulators().Metadata(2).connected = true;
         manager_.GestureMetadataAt(0).name = "Gesture 1";
         manager_.GestureMetadataAt(0).color = synth::Color::Orange;
-        cutoff_ = &manager_.CreateParameter(groupA, {.name = "Cutoff", .shortName = "Cut", .defaultValue = 0.35f, .color = synth::Color::Green});
-        shape_ = &manager_.CreateParameter(groupA, {.name = "Shape", .shortName = "Shp", .defaultValue = 0.0f, .range = synth::RangeKind::Bipolar, .switchValues = 5, .color = synth::Color::Blue});
-        level_ = &manager_.CreateParameter(groupA, {.name = "Level", .shortName = "Lvl", .defaultValue = 0.7f, .color = synth::Color::Yellow});
-        spread_ = &manager_.CreateParameter(groupB, {.name = "Spread", .shortName = "Spr", .defaultValue = 0.45f, .color = synth::Color::Red});
-        fold_ = &manager_.CreateParameter(groupB, {.name = "Fold", .shortName = "Fld", .defaultValue = 0.0f, .range = synth::RangeKind::Bipolar, .switchValues = 7, .color = synth::Color::Indigo});
-        tone_ = &manager_.CreateParameter(groupB, {.name = "Tone", .shortName = "Ton", .defaultValue = 0.6f, .color = synth::Color::Cyan});
-        parameters_ = {cutoff_, shape_, level_, spread_, fold_, tone_};
-        cutoff_->SetGestureActive(0, 0, true);
-        cutoff_->SetGestureActive(1, 0, true);
-        bankA_ = &manager_.CreateBank();
-        bankA_->SetColor(synth::Color::Green);
-        bankA_->AddMapping(10, *cutoff_);
-        bankA_->AddMapping(11, *shape_);
-        bankA_->AddMapping(12, *level_);
-        bankB_ = &manager_.CreateBank();
-        bankB_->SetColor(synth::Color::Red);
-        bankB_->AddMapping(10, *spread_);
-        bankB_->AddMapping(11, *fold_);
-        bankB_->AddMapping(12, *tone_);
+        tune_ = &manager_.CreateParameter(group, {.name = "Tune", .shortName = "Tun", .defaultValue = 0.35f, .color = synth::Color::Cyan});
+        phaseParam_ = &manager_.CreateParameter(group, {.name = "Phase", .shortName = "Phs", .defaultValue = 0.0f, .color = synth::Color::Blue});
+        shape_ = &manager_.CreateParameter(group, {.name = "Shape", .shortName = "Shp", .defaultValue = 0.0f, .color = synth::Color::Indigo});
+        volume_ = &manager_.CreateParameter(group, {.name = "Volume", .shortName = "Vol", .defaultValue = 0.7f, .color = synth::Color::Yellow});
+        lfoSpeed_ = &manager_.CreateParameter(group, {.name = "LFO Speed", .shortName = "Spd", .defaultValue = 0.35f, .color = synth::Color::Green});
+        parameters_ = {tune_, phaseParam_, shape_, volume_, lfoSpeed_};
+        for (synth::Parameter* parameter : std::array<synth::Parameter*, 5>{tune_, phaseParam_, shape_, volume_, lfoSpeed_}) {
+            createModulationDepths(group, *parameter);
+        }
+        tune_->SetGestureActive(0, 0, true);
+        tune_->SetGestureActive(1, 0, true);
+
+        auto& vcoPage = manager_.CreatePage("VCO");
+        manager_.AssignParameterToPage(vcoPage.ordinal, *tune_);
+        manager_.AssignParameterToPage(vcoPage.ordinal, *phaseParam_);
+        manager_.AssignParameterToPage(vcoPage.ordinal, *shape_);
+        manager_.AssignParameterToPage(vcoPage.ordinal, *volume_);
+        auto& lfoPage = manager_.CreatePage("LFO");
+        manager_.AssignParameterToPage(lfoPage.ordinal, *lfoSpeed_);
+
+        vcoBank_ = &manager_.CreateBank();
+        vcoBank_->SetColor(synth::Color::Cyan);
+        vcoBank_->AddMapping(10, *tune_);
+        vcoBank_->AddMapping(11, *phaseParam_);
+        vcoBank_->AddMapping(12, *shape_);
+        vcoBank_->AddMapping(13, *volume_);
+        lfoBank_ = &manager_.CreateBank();
+        lfoBank_->SetColor(synth::Color::Green);
+        lfoBank_->AddMapping(10, *lfoSpeed_);
         slot_ = &manager_.CreateBankSlot();
-        for (auto encoder : {10u, 11u, 12u}) {
+        for (auto encoder : {10u, 11u, 12u, 13u}) {
             slot_->AddPhysicalEncoder(encoder);
         }
-        slot_->SelectBank(bankA_);
+        slot_->SelectBank(vcoBank_);
+        manager_.SetActivePage(0);
         manager_.SetSceneEndpoints(0, 1);
         uiState_ = manager_.CreateUIState();
         bus_.SetManager(&manager_);
@@ -81,12 +89,21 @@ public:
             addAndMakeVisible(encoders_[ix]);
             encoders_[ix].BindMessages(&bus_, 0, ix);
             encoders_[ix].SetTimestampProvider([this] { return nextTimestamp_++; });
-            encoders_[ix].SetModulatorColors({synth::Color::Cyan});
+            encoders_[ix].SetModulatorColors({synth::Color::Cyan, synth::Color::Orange, synth::Color::Green});
             encoders_[ix].SetGestureColors({synth::Color::Orange});
         }
 
-        addButton(bankAButton_, "Bank A", [this] { bus_.Push(synth::MessageIn::SelectParamBank(nextTimestamp_++, 0, 0)); });
-        addButton(bankBButton_, "Bank B", [this] { bus_.Push(synth::MessageIn::SelectParamBank(nextTimestamp_++, 0, 1)); });
+        scopeHolders_[0] = scopeWriter_.ReserveChans(1);
+        scopeHolders_[1] = scopeWriter_.ReserveChans(1);
+        vcos_[0].SetScopeWriterHolder(&scopeHolders_[0]);
+        vcos_[1].SetScopeWriterHolder(&scopeHolders_[1]);
+        vcos_[0].SetColor(synth::Color::Cyan);
+        vcos_[1].SetColor(synth::Color::Orange);
+        waveformComponent_.SetUIStates(vcoUiStatePointers_);
+        addAndMakeVisible(waveformComponent_);
+
+        addButton(bankAButton_, "VCO", [this] { selectPage(0); });
+        addButton(bankBButton_, "LFO", [this] { selectPage(1); });
         addButton(gestureButton_, "Gesture", [this] { bus_.Push(synth::MessageIn::ToggleGestureSelect(nextTimestamp_++, 0)); });
         addButton(sceneAButton_, "S1", [this] { bus_.Push(synth::MessageIn::SceneSelect(nextTimestamp_++, 0)); });
         addButton(sceneBButton_, "S2", [this] { bus_.Push(synth::MessageIn::SceneSelect(nextTimestamp_++, 1)); });
@@ -110,7 +127,7 @@ public:
         configureMidiControls();
         rebuildMidiProcessors();
 
-        setSize(820, 460);
+        setSize(900, 560);
         startTimerHz(30);
     }
 
@@ -134,8 +151,9 @@ public:
         area.removeFromTop(32);
         auto encoderRow = area.removeFromTop(150);
         for (auto& encoder : encoders_) {
-            encoder.setBounds(encoderRow.removeFromLeft(150).reduced(12));
+            encoder.setBounds(encoderRow.removeFromLeft(132).reduced(10));
         }
+        waveformComponent_.setBounds(encoderRow.reduced(8));
         auto controls = area.removeFromTop(52);
         std::array<juce::TextButton*, 9> buttons{
             &bankAButton_, &bankBButton_, &gestureButton_, &shiftButton_, &sceneAButton_,
@@ -163,6 +181,26 @@ private:
         button.setButtonText(text);
         button.onClick = std::move(callback);
         addAndMakeVisible(button);
+    }
+
+    void selectPage(std::size_t pageIx) {
+        manager_.SelectBankForSlot(0, pageIx);
+        manager_.SetActivePage(static_cast<synth::PageOrdinal>(pageIx));
+    }
+
+    void createModulationDepths(synth::ParameterGroup& group, synth::Parameter& target) {
+        for (std::size_t modIx = 0; modIx < group.Config().numModulators; ++modIx) {
+            const auto& modulator = group.GetModulators().Metadata(modIx);
+            synth::Parameter& depth = manager_.CreateParameter(group, {
+                .name = target.Name() + " " + modulator.name,
+                .shortName = modulator.shortName,
+                .defaultValue = 0.0f,
+                .range = synth::RangeKind::Bipolar,
+                .color = modulator.color,
+            });
+            target.AssignModulationDepth(modIx, &depth);
+            parameters_.push_back(&depth);
+        }
     }
 
     void configureMidiControls() {
@@ -317,21 +355,14 @@ private:
     }
 
     void timerCallback() override {
-        phase_ += 0.06f;
-        groupA_->GetModulators().Value(0, 0) = synth_miniapp::UnipolarSineModulator(phase_);
-        groupA_->GetModulators().Value(1, 0) =
-            synth_miniapp::UnipolarSineModulator(phase_, juce::MathConstants<float>::halfPi);
-        for (std::size_t voiceIx = 0; voiceIx < 3; ++voiceIx) {
-            groupB_->GetModulators().Value(voiceIx, 0) =
-                synth_miniapp::UnipolarSineModulator(phase_, synth_miniapp::ThreePhaseVoiceOffset(voiceIx));
-        }
         const std::uint64_t processTimestamp = nextTimestamp_++;
         bus_.Process(processTimestamp);
         midiBus_.Process(processTimestamp);
+        manager_.SetActivePage(slot_->SelectedBank() == lfoBank_ ? 1 : 0);
         for (synth::Parameter* parameter : parameters_) {
             parameter->Compute(manager_.Scene());
-            parameter->ProcessLite();
         }
+        processDspFrame();
         manager_.PopulateUIState(*uiState_);
         if (midiOutputHandler_.IsOpen()) {
             for (auto& output : midiProfile_.outputs) {
@@ -354,25 +385,64 @@ private:
             encoders_[ix].Bind(&uiState_->slots[0].cells[ix]);
             encoders_[ix].repaint();
         }
+        waveformComponent_.repaint();
+    }
+
+    void processDspFrame() {
+        constexpr std::size_t blockSize = 256;
+        for (std::size_t sampleIx = 0; sampleIx < blockSize; ++sampleIx) {
+            synth_miniapp::ProcessLiteParameters(parameters_);
+            std::array<float, 2> outputs{};
+            for (std::size_t voiceIx = 0; voiceIx < vcos_.size(); ++voiceIx) {
+                const float tune = tune_->Get(voiceIx);
+                const float phaseOffset = phaseParam_->Get(voiceIx);
+                const float shape = shape_->Get(voiceIx);
+                const float volume = volume_->Get(voiceIx);
+                const double freq = 0.002 + static_cast<double>(tune) * 0.08;
+                const float output = vcos_[voiceIx].Process({
+                    .freq = freq,
+                    .phaseOffset = phaseOffset + static_cast<float>(voiceIx) * 0.01f,
+                    .wavetablePosition = shape,
+                    .maxFreq = 0.5f,
+                }) * volume;
+                vcos_[voiceIx].m_output = output;
+                outputs[voiceIx] = output;
+            }
+            scopeWriter_.AdvanceIndex();
+            phase_ += synth_miniapp::LfoPhaseStep(lfoSpeed_->Get(0));
+            synth_miniapp::PublishVcoModulators(group_->GetModulators(), outputs[0], outputs[1]);
+            synth_miniapp::PublishLfoModulator(
+                group_->GetModulators(),
+                phase_,
+                juce::MathConstants<float>::halfPi);
+        }
+        scopeWriter_.Publish();
+
+        vcos_[0].PopulateUIState(vcoUiStates_[0]);
+        vcos_[1].PopulateUIState(vcoUiStates_[1]);
     }
 
     synth::ParameterManager manager_;
     synth::MessageInBus bus_{&manager_};
     synth::MessageInBus midiBus_{&manager_};
-    synth::ParameterGroup* groupA_ = nullptr;
-    synth::ParameterGroup* groupB_ = nullptr;
-    synth::Parameter* cutoff_ = nullptr;
+    synth::ParameterGroup* group_ = nullptr;
+    synth::Parameter* tune_ = nullptr;
+    synth::Parameter* phaseParam_ = nullptr;
     synth::Parameter* shape_ = nullptr;
-    synth::Parameter* level_ = nullptr;
-    synth::Parameter* spread_ = nullptr;
-    synth::Parameter* fold_ = nullptr;
-    synth::Parameter* tone_ = nullptr;
+    synth::Parameter* volume_ = nullptr;
+    synth::Parameter* lfoSpeed_ = nullptr;
     std::vector<synth::Parameter*> parameters_;
-    synth::Bank* bankA_ = nullptr;
-    synth::Bank* bankB_ = nullptr;
+    synth::Bank* vcoBank_ = nullptr;
+    synth::Bank* lfoBank_ = nullptr;
     synth::BankSlot* slot_ = nullptr;
     std::unique_ptr<synth::ParameterManager::UIState> uiState_;
-    std::array<synth_juce::EncoderComponent, 3> encoders_;
+    std::array<synth_juce::EncoderComponent, 4> encoders_;
+    synth::ScopeWriter scopeWriter_{2, 4096};
+    std::array<synth::ScopeWriterHolder, 2> scopeHolders_;
+    std::array<synth::DefaultWavetableVco, 2> vcos_;
+    std::array<synth::DefaultWavetableVco::UIState, 2> vcoUiStates_;
+    std::array<synth::DefaultWavetableVco::UIState*, 2> vcoUiStatePointers_{{&vcoUiStates_[0], &vcoUiStates_[1]}};
+    synth_juce::VcoWaveformComponent waveformComponent_;
     juce::TextButton bankAButton_;
     juce::TextButton bankBButton_;
     juce::TextButton gestureButton_;

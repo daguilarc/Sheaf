@@ -7,8 +7,15 @@ APP_BUNDLE_BINARY := $(APP_BUNDLE)/Contents/MacOS/SynthMiniapp
 GEOMETRY_TEST := $(BUILD_DIR)/encoder_component_geometry_tests
 MODULATION_TEST := $(BUILD_DIR)/demo_modulation_tests
 SYNTH_ROOT := ..
-SYNTH_SRC := $(SYNTH_ROOT)/src/ParameterModulation.cpp $(SYNTH_ROOT)/src/MidiController.cpp
-SYNTH_HEADERS := $(SYNTH_ROOT)/include/synth/ParameterModulation.hpp $(SYNTH_ROOT)/include/synth/MidiController.hpp
+SYNTH_SRC := $(SYNTH_ROOT)/src/ParameterModulation.cpp $(SYNTH_ROOT)/src/MidiController.cpp $(SYNTH_ROOT)/src/DspWavetable.cpp
+SYNTH_HEADERS := $(SYNTH_ROOT)/include/synth/ParameterModulation.hpp $(SYNTH_ROOT)/include/synth/MidiController.hpp \
+	$(SYNTH_ROOT)/include/synth/DspMath.hpp \
+	$(SYNTH_ROOT)/include/synth/DspNumbers.hpp \
+	$(SYNTH_ROOT)/include/synth/DspTransferFunction.hpp \
+	$(SYNTH_ROOT)/include/synth/DspFilters.hpp \
+	$(SYNTH_ROOT)/include/synth/DspScope.hpp \
+	$(SYNTH_ROOT)/include/synth/DspWavetable.hpp \
+	$(SYNTH_ROOT)/include/synth/DspOscillators.hpp
 SYNTH_JUCE_HEADERS := $(wildcard $(SYNTH_ROOT)/juce/*.hpp)
 SRC := Main.cpp
 GEOMETRY_TEST_SRC := $(SYNTH_ROOT)/juce/EncoderComponentGeometryTests.cpp
@@ -103,8 +110,8 @@ $(APP): $(SRC) $(MINIAPP_HEADERS) $(SYNTH_SRC) $(SYNTH_HEADERS) $(SYNTH_JUCE_HEA
 $(GEOMETRY_TEST): $(GEOMETRY_TEST_SRC) $(SYNTH_SRC) $(SYNTH_HEADERS) $(SYNTH_JUCE_HEADERS) $(JUCE_MODULE_OBJ) $(JUCE_C_MODULE_OBJ) | $(BUILD_DIR)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(GEOMETRY_TEST_SRC) $(SYNTH_SRC) $(JUCE_MODULE_OBJ) $(JUCE_C_MODULE_OBJ) -o $@ $(LDFLAGS_DARWIN)
 
-$(MODULATION_TEST): $(MODULATION_TEST_SRC) $(MINIAPP_HEADERS) | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) $(MODULATION_TEST_SRC) -o $@
+$(MODULATION_TEST): $(MODULATION_TEST_SRC) $(MINIAPP_HEADERS) $(SYNTH_HEADERS) $(SYNTH_ROOT)/src/ParameterModulation.cpp | $(BUILD_DIR)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(MODULATION_TEST_SRC) $(SYNTH_ROOT)/src/ParameterModulation.cpp -o $@
 
 $(APP_BUNDLE): $(APP) Info.plist
 	mkdir -p "$(APP_BUNDLE)/Contents/MacOS"

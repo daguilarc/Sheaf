@@ -601,11 +601,11 @@ WHEN automated tests cover the external synth parameter control surface, THE tes
 - **THEN** the failure output includes seed, step number, message/action, and the mismatched expected and actual UI or model field
 
 ### Requirement: spm-26 — Miniapp: JUCE external control probe
-WHEN the synth external UI/message layer is implemented, THE repository SHALL contain a `projects/synth/miniapp` JUCE application that demonstrates the parameter system through `MessageInBus` and UI-state snapshots while keeping JUCE code outside core synth library headers and sources.
+WHEN the synth external UI/message layer and DSP miniapp integration are implemented, THE repository SHALL contain a `projects/synth/miniapp` JUCE application that demonstrates the parameter system, MIDI message routing, DSP-backed parameters, scope UI-state snapshots, and reusable JUCE components while keeping JUCE code outside core synth library headers and sources.
 
 #### Scenario: Miniapp shows current feature set
 - **WHEN** the miniapp runs
-- **THEN** it displays reusable synth JUCE encoder components, buttons, and sliders for at least two voices, at least two parameter banks, three scene selection buttons, scene blend, visible left/right scene endpoint state, gesture selection, gesture value, latching shift state, and one modulation source
+- **THEN** it displays reusable synth JUCE encoder components, buttons, sliders, one parameter group with two voices, page-bank controls for Tune, Phase, Shape, Volume, and LFO Speed, three scene selection buttons, scene blend, visible left/right scene endpoint state, gesture selection, gesture value, latching shift state, three modulation sources, and one waveform pane containing both VCO traces
 
 #### Scenario: Miniapp uses local JUCE checkout
 - **WHEN** the miniapp target is built in this repository layout
@@ -616,10 +616,11 @@ WHEN the synth external UI/message layer is implemented, THE repository SHALL co
 - **THEN** the miniapp sends a parameter push message through `MessageInBus`
 - **AND** the visible UI updates to show modulation-depth controls for that parameter and the target parameter at the final visible position
 
-#### Scenario: Miniapp modulator uses two voice sine offsets
-- **WHEN** the miniapp timer advances the demo modulation source
-- **THEN** voice 0 receives a sine-wave modulation value
-- **AND** voice 1 receives the same sine wave offset by 90 degrees
+#### Scenario: Miniapp modulator uses DSP and LFO sources
+- **WHEN** the miniapp processing step advances modulation sources
+- **THEN** modulator 0 receives the two VCO outputs mapped by voice and normalized into `[0, 1]`
+- **AND** modulator 1 receives the two VCO outputs swapped by voice and normalized into `[0, 1]`
+- **AND** modulator 2 receives the existing sine/cosine LFO values for the two voices
 
 #### Scenario: Miniapp converts colors at JUCE boundary
 - **WHEN** the miniapp paints synth UI state
