@@ -4,6 +4,7 @@
 #include "synth/DspWavetable.hpp"
 #include "synth/ParameterModulation.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstddef>
@@ -17,6 +18,7 @@ struct Incrementer {
 
     double m_phase = 0.0;
     double m_wrappedPhase = 0.0;
+    double m_topOffset = 0.0;
     bool m_top = false;
 
     double Process(const Input& input) {
@@ -24,6 +26,11 @@ struct Incrementer {
         m_phase += input.freq;
         m_wrappedPhase = WrappedPhase();
         m_top = std::floor(previous) != std::floor(m_phase);
+        m_topOffset = 0.0;
+        if (m_top && input.freq > 0.0) {
+            const double crossing = std::floor(previous) + 1.0;
+            m_topOffset = std::clamp((crossing - previous) / input.freq, 0.0, 1.0);
+        }
         return m_wrappedPhase;
     }
 
@@ -85,7 +92,10 @@ public:
         if (m_scopeWriterHolder) {
             m_scopeWriterHolder->Write(m_output);
             if (m_top) {
-                m_scopeWriterHolder->RecordStart();
+                const double markerOffset = m_incrementer.m_topOffset - 1.0;
+                if (markerOffset >= 0.0 || m_scopeWriterHolder->Writer()->CurrentIndex() > 0) {
+                    m_scopeWriterHolder->RecordStart(0, markerOffset);
+                }
             }
         }
         return m_output;

@@ -25,6 +25,19 @@ public:
         ComputeBucketExpX();
     }
 
+    static double ScopeSampleForPoint(std::size_t point, std::size_t numXSamples) {
+        return static_cast<double>(point) * static_cast<double>(numXSamples) / static_cast<double>(kNumPoints - 1);
+    }
+
+    static bool ScopePointCrossesTransfer(std::size_t point, std::size_t numXSamples, double transferSample) {
+        if (point == 0 || transferSample <= 0.0 || transferSample >= static_cast<double>(numXSamples)) {
+            return false;
+        }
+        const double previousSample = ScopeSampleForPoint(point - 1, numXSamples);
+        const double sample = ScopeSampleForPoint(point, numXSamples);
+        return previousSample < transferSample && sample >= transferSample;
+    }
+
     void SetBounds(juce::Rectangle<float> bounds) {
         xMin_ = bounds.getX();
         yMin_ = bounds.getY();
@@ -57,14 +70,13 @@ public:
                        float maxY) {
         juce::Path path;
         const float denominator = std::max(1.0e-6f, maxY - minY);
-        const std::size_t transferSample = scopeReader.TransferXSample();
+        const double transferSample = scopeReader.TransferXSample();
         for (std::size_t j = 0; j < kNumPoints; ++j) {
-            const float sample = static_cast<float>(j) * static_cast<float>(scopeReader.NumXSamples())
-                / static_cast<float>(kNumPoints);
-            const float y = (scopeReader.Get(static_cast<std::size_t>(sample)) - minY) / denominator;
+            const double sample = ScopeSampleForPoint(j, scopeReader.NumXSamples());
+            const float y = (scopeReader.Get(sample) - minY) / denominator;
             const float screenX = xMin_ + width_ * static_cast<float>(j) / static_cast<float>(kNumPoints - 1);
             const float screenY = yMin_ + height_ * (1.0f - std::clamp(y, 0.0f, 1.0f));
-            if (j == 0 || j == transferSample) {
+            if (j == 0 || ScopePointCrossesTransfer(j, scopeReader.NumXSamples(), transferSample)) {
                 path.startNewSubPath(screenX, screenY);
             } else {
                 path.lineTo(screenX, screenY);
@@ -82,9 +94,10 @@ public:
         if (scopeReader.Empty() || scopeReader.NumXSamples() == 0) {
             return;
         }
-        const std::size_t sample = std::min(
-            scopeReader.TransferXSample() > 0 ? scopeReader.TransferXSample() - 1 : 0,
-            scopeReader.NumXSamples() - 1);
+        const double sample = std::clamp(
+            scopeReader.TransferXSample() > 0.0 ? scopeReader.TransferXSample() - 1.0 : 0.0,
+            0.0,
+            static_cast<double>(scopeReader.NumXSamples() - 1));
         const float denominator = std::max(1.0e-6f, maxY - minY);
         const float x = xMin_ + width_ * static_cast<float>(sample) / static_cast<float>(scopeReader.NumXSamples() - 1);
         const float normalizedY = (scopeReader.Get(sample) - minY) / denominator;

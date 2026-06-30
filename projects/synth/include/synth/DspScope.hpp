@@ -27,8 +27,8 @@ public:
     void Write(float value) { Write(0, value); }
     void Write(std::size_t relativeChan, float value);
     void WriteAt(std::size_t relativeChan, std::size_t uBlockIndex, float value);
-    void RecordStart(std::size_t relativeChan = 0, std::size_t uBlockIndex = 0);
-    void RecordEnd(std::size_t relativeChan = 0, std::size_t uBlockIndex = 0);
+    void RecordStart(std::size_t relativeChan = 0, double uBlockOffset = 0.0);
+    void RecordEnd(std::size_t relativeChan = 0, double uBlockOffset = 0.0);
 
 private:
     ScopeWriter* writer_ = nullptr;
@@ -42,18 +42,18 @@ public:
     ScopeReader(const ScopeWriter* writer, std::size_t channel, std::size_t numXSamples, std::size_t numCycles = 1);
 
     bool Empty() const { return empty_; }
-    float Get(std::size_t xSample) const;
-    std::size_t TransferXSample() const { return transferXSample_; }
+    float Get(double xSample) const;
+    double TransferXSample() const { return transferXSample_; }
     std::size_t NumXSamples() const { return numXSamples_; }
 
 private:
     const ScopeWriter* writer_ = nullptr;
     std::size_t channel_ = 0;
     std::size_t numXSamples_ = 0;
-    std::size_t startIndex_ = 0;
-    std::size_t endIndex_ = 0;
-    std::size_t postTransferIndex_ = 0;
-    std::size_t transferXSample_ = 0;
+    double startIndex_ = 0.0;
+    double endIndex_ = 0.0;
+    double postTransferIndex_ = 0.0;
+    double transferXSample_ = 0.0;
     bool hasPostTransfer_ = false;
     bool empty_ = true;
 };
@@ -81,8 +81,8 @@ public:
         : maxChannels_(maxChannels),
           maxFrames_(maxFrames),
           buffer_(maxChannels * maxFrames, 0.0f),
-          startMarkers_(maxChannels, std::vector<std::size_t>(kNumMarkerIndices, 0)),
-          endMarkers_(maxChannels, std::vector<std::size_t>(kNumMarkerIndices, std::numeric_limits<std::size_t>::max())),
+          startMarkers_(maxChannels, std::vector<double>(kNumMarkerIndices, 0.0)),
+          endMarkers_(maxChannels, std::vector<double>(kNumMarkerIndices, std::numeric_limits<double>::quiet_NaN())),
           markerWriteIndices_(maxChannels) {}
 
     ScopeWriterHolder ReserveChans(std::size_t numChans) {
@@ -130,25 +130,25 @@ public:
         publishedIndex_.store(index_);
     }
 
-    void RecordStart(std::size_t channel, std::size_t uBlockIndex = 0) {
+    void RecordStart(std::size_t channel, double uBlockOffset = 0.0) {
         CheckChannel(channel);
         const std::size_t count = markerWriteIndices_[channel].load();
         const std::size_t markerIndex = count % kNumMarkerIndices;
-        startMarkers_[channel][markerIndex] = index_ + uBlockIndex;
-        endMarkers_[channel][markerIndex] = std::numeric_limits<std::size_t>::max();
+        startMarkers_[channel][markerIndex] = static_cast<double>(index_) + uBlockOffset;
+        endMarkers_[channel][markerIndex] = std::numeric_limits<double>::quiet_NaN();
         markerWriteIndices_[channel].store(count + 1);
     }
 
-    void RecordEnd(std::size_t channel, std::size_t uBlockIndex = 0) {
+    void RecordEnd(std::size_t channel, double uBlockOffset = 0.0) {
         CheckChannel(channel);
         const std::size_t count = markerWriteIndices_[channel].load();
         if (count == 0) {
             return;
         }
-        endMarkers_[channel][(count - 1) % kNumMarkerIndices] = index_ + uBlockIndex;
+        endMarkers_[channel][(count - 1) % kNumMarkerIndices] = static_cast<double>(index_) + uBlockOffset;
     }
 
-    bool LatestStart(std::size_t channel, std::size_t& start) const {
+    bool LatestStart(std::size_t channel, double& start) const {
         CheckChannel(channel);
         const std::size_t markerCount = markerWriteIndices_[channel].load();
         if (markerCount == 0) {
@@ -158,7 +158,7 @@ public:
         return true;
     }
 
-    bool PreviousStart(std::size_t channel, std::size_t& start) const {
+    bool PreviousStart(std::size_t channel, double& start) const {
         CheckChannel(channel);
         const std::size_t markerCount = markerWriteIndices_[channel].load();
         if (markerCount < 2) {
@@ -168,14 +168,14 @@ public:
         return true;
     }
 
-    bool LatestEnd(std::size_t channel, std::size_t& end) const {
+    bool LatestEnd(std::size_t channel, double& end) const {
         CheckChannel(channel);
         const std::size_t markerCount = markerWriteIndices_[channel].load();
         if (markerCount == 0) {
             return false;
         }
         end = endMarkers_[channel][(markerCount - 1) % kNumMarkerIndices];
-        return end != std::numeric_limits<std::size_t>::max();
+        return !std::isnan(end);
     }
 
 private:
@@ -198,8 +198,8 @@ private:
     std::size_t index_ = 0;
     std::atomic<std::size_t> publishedIndex_{0};
     std::vector<float> buffer_;
-    std::vector<std::vector<std::size_t>> startMarkers_;
-    std::vector<std::vector<std::size_t>> endMarkers_;
+    std::vector<std::vector<double>> startMarkers_;
+    std::vector<std::vector<double>> endMarkers_;
     std::vector<std::atomic<std::size_t>> markerWriteIndices_;
 };
 
@@ -222,15 +222,15 @@ inline void ScopeWriterHolder::WriteAt(std::size_t relativeChan, std::size_t uBl
     }
 }
 
-inline void ScopeWriterHolder::RecordStart(std::size_t relativeChan, std::size_t uBlockIndex) {
+inline void ScopeWriterHolder::RecordStart(std::size_t relativeChan, double uBlockOffset) {
     if (writer_) {
-        writer_->RecordStart(FlatChan(relativeChan), uBlockIndex);
+        writer_->RecordStart(FlatChan(relativeChan), uBlockOffset);
     }
 }
 
-inline void ScopeWriterHolder::RecordEnd(std::size_t relativeChan, std::size_t uBlockIndex) {
+inline void ScopeWriterHolder::RecordEnd(std::size_t relativeChan, double uBlockOffset) {
     if (writer_) {
-        writer_->RecordEnd(FlatChan(relativeChan), uBlockIndex);
+        writer_->RecordEnd(FlatChan(relativeChan), uBlockOffset);
     }
 }
 
@@ -240,55 +240,55 @@ inline ScopeReader::ScopeReader(const ScopeWriter* writer, std::size_t channel, 
         return;
     }
 
-    std::size_t latestStart = 0;
-    std::size_t previousStart = 0;
+    double latestStart = 0.0;
+    double previousStart = 0.0;
     if (!writer_->LatestStart(channel_, latestStart)) {
         const std::size_t publishedIndex = writer_->PublishedIndex();
-        endIndex_ = publishedIndex > 0 ? publishedIndex - 1 : 0;
-        startIndex_ = endIndex_ > numXSamples_ ? endIndex_ - numXSamples_ : 0;
-        transferXSample_ = numXSamples_;
+        endIndex_ = static_cast<double>(publishedIndex > 0 ? publishedIndex - 1 : 0);
+        startIndex_ = endIndex_ > static_cast<double>(numXSamples_) ? endIndex_ - static_cast<double>(numXSamples_) : 0.0;
+        transferXSample_ = static_cast<double>(numXSamples_);
         hasPostTransfer_ = false;
         empty_ = endIndex_ <= startIndex_;
         return;
     }
 
     startIndex_ = latestStart;
-    std::size_t latestEnd = 0;
+    double latestEnd = 0.0;
     if (writer_->LatestEnd(channel_, latestEnd) && latestEnd > latestStart) {
         endIndex_ = latestEnd;
     } else {
         const std::size_t publishedIndex = writer_->PublishedIndex();
-        endIndex_ = publishedIndex > 0 ? publishedIndex - 1 : 0;
+        endIndex_ = static_cast<double>(publishedIndex > 0 ? publishedIndex - 1 : 0);
     }
 
     if (writer_->PreviousStart(channel_, previousStart) && previousStart < latestStart) {
-        const std::size_t cycleLength = std::max<std::size_t>(1, latestStart - previousStart);
-        const std::size_t elapsed = endIndex_ > latestStart ? endIndex_ - latestStart : 0;
-        transferXSample_ = std::min(numXSamples_, elapsed * numXSamples_ / (cycleLength * std::max<std::size_t>(1, numCycles)));
-        postTransferIndex_ = previousStart + std::min(elapsed, cycleLength);
-        hasPostTransfer_ = transferXSample_ < numXSamples_;
+        const double cycleLength = std::max(1.0, latestStart - previousStart);
+        const double elapsed = std::max(0.0, endIndex_ - latestStart);
+        const double cycles = static_cast<double>(std::max<std::size_t>(1, numCycles));
+        transferXSample_ = std::min(static_cast<double>(numXSamples_), elapsed * static_cast<double>(numXSamples_) / (cycleLength * cycles));
+        postTransferIndex_ = static_cast<double>(previousStart) + std::min(elapsed, cycleLength);
+        hasPostTransfer_ = transferXSample_ < static_cast<double>(numXSamples_);
     } else {
-        transferXSample_ = numXSamples_;
+        transferXSample_ = static_cast<double>(numXSamples_);
         hasPostTransfer_ = false;
     }
     empty_ = endIndex_ <= startIndex_;
 }
 
-inline float ScopeReader::Get(std::size_t xSample) const {
+inline float ScopeReader::Get(double xSample) const {
     if (empty_ || !writer_ || numXSamples_ == 0) {
         return 0.0f;
     }
-    const std::size_t clampedSample = std::min(xSample, numXSamples_ - 1);
+    const double clampedSample = std::clamp(xSample, 0.0, static_cast<double>(numXSamples_ - 1));
     double readIndex = static_cast<double>(startIndex_);
     if (!hasPostTransfer_ || clampedSample < transferXSample_) {
-        const double denominator = static_cast<double>(std::max<std::size_t>(1, transferXSample_));
-        const double wayThrough = static_cast<double>(clampedSample) / denominator;
-        readIndex = static_cast<double>(startIndex_) + wayThrough * static_cast<double>(endIndex_ - startIndex_);
+        const double denominator = std::max(1.0, transferXSample_);
+        const double wayThrough = clampedSample / denominator;
+        readIndex = startIndex_ + wayThrough * (endIndex_ - startIndex_);
     } else {
-        const double denominator = static_cast<double>(std::max<std::size_t>(1, numXSamples_ - transferXSample_));
-        const double wayThrough = static_cast<double>(clampedSample - transferXSample_) / denominator;
-        readIndex = static_cast<double>(postTransferIndex_)
-            + wayThrough * static_cast<double>(startIndex_ - postTransferIndex_);
+        const double denominator = std::max(1.0, static_cast<double>(numXSamples_) - transferXSample_);
+        const double wayThrough = (clampedSample - transferXSample_) / denominator;
+        readIndex = postTransferIndex_ + wayThrough * (startIndex_ - postTransferIndex_);
     }
     return writer_->Read(channel_, readIndex);
 }

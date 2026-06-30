@@ -1,4 +1,5 @@
 #include "EncoderComponent.hpp"
+#include "PathDrawer.hpp"
 
 #include <cmath>
 #include <iostream>
@@ -11,6 +12,19 @@ void RequireNear(float actual, float expected, float tolerance, const char* labe
     if (std::fabs(actual - expected) > tolerance) {
         throw std::runtime_error(std::string(label) + " expected " + std::to_string(expected) + " got " +
                                  std::to_string(actual));
+    }
+}
+
+void RequireNear(double actual, double expected, double tolerance, const char* label) {
+    if (std::fabs(actual - expected) > tolerance) {
+        throw std::runtime_error(std::string(label) + " expected " + std::to_string(expected) + " got " +
+                                 std::to_string(actual));
+    }
+}
+
+void RequireTrue(bool condition, const char* label) {
+    if (!condition) {
+        throw std::runtime_error(std::string(label) + " expected true");
     }
 }
 
@@ -33,6 +47,18 @@ int main() {
     const juce::Point<float> zeroPoint = synth_juce::EncoderComponent::IndicatorPoint(100.0f, 100.0f, 20.0f, 0.0f);
     RequireNear(zeroPoint.x, 100.0f + 20.0f * std::cos(pi * 0.75f), tolerance, "indicator x at zero");
     RequireNear(zeroPoint.y, 100.0f + 20.0f * std::sin(pi * 0.75f), tolerance, "indicator y at zero");
+
+    RequireNear(synth_juce::PathDrawer::ScopeSampleForPoint(1, 10), 10.0 / 1023.0, 0.000001,
+                "scope sample remains fractional");
+    const std::size_t transferPoint = 410;
+    RequireTrue(!synth_juce::PathDrawer::ScopePointCrossesTransfer(transferPoint - 1, 10, 4.0),
+                "scope transfer does not break early");
+    RequireTrue(synth_juce::PathDrawer::ScopePointCrossesTransfer(transferPoint, 10, 4.0),
+                "scope transfer breaks when crossed");
+    RequireTrue(!synth_juce::PathDrawer::ScopePointCrossesTransfer(transferPoint + 1, 10, 4.0),
+                "scope transfer breaks once");
+    RequireTrue(!synth_juce::PathDrawer::ScopePointCrossesTransfer(synth_juce::PathDrawer::kNumPoints - 1, 10, 10.0),
+                "full-span transfer does not split path");
 
     std::cout << "Encoder geometry tests passed\n";
     return 0;

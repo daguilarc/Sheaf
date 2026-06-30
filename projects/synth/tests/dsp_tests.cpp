@@ -16,6 +16,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 namespace {
@@ -145,6 +146,31 @@ TEST_CASE(scope_reserves_flat_channels_and_publishes_stable_readers) {
     REQUIRE_TRUE(reader.TransferXSample() <= reader.NumXSamples());
 }
 
+TEST_CASE(scope_reader_uses_floating_point_sample_coordinates) {
+    synth::ScopeWriter writer(1, 32);
+    auto holder = writer.ReserveChans(1);
+
+    holder.RecordStart();
+    holder.Write(0.0f);
+    writer.AdvanceIndex();
+    holder.Write(10.0f);
+    writer.AdvanceIndex();
+    holder.Write(20.0f);
+    writer.AdvanceIndex();
+    holder.RecordEnd();
+    writer.Publish();
+
+    synth::ScopeReader reader(&writer, holder.FlatChan(), 3);
+    REQUIRE_TRUE(!reader.Empty());
+    REQUIRE_NEAR(reader.Get(0.5), 5.0f, 0.0001f);
+    REQUIRE_NEAR(reader.Get(1.5), 15.0f, 0.0001f);
+}
+
+TEST_CASE(scope_reader_exposes_floating_point_sampling_api) {
+    static_assert(std::is_same_v<decltype(&synth::ScopeReader::Get), float (synth::ScopeReader::*)(double) const>);
+    static_assert(std::is_same_v<decltype(std::declval<const synth::ScopeReader&>().TransferXSample()), double>);
+}
+
 TEST_CASE(scope_reader_stitches_previous_cycle_after_latest_partial_cycle) {
     synth::ScopeWriter writer(1, 64);
     auto holder = writer.ReserveChans(1);
@@ -164,11 +190,34 @@ TEST_CASE(scope_reader_stitches_previous_cycle_after_latest_partial_cycle) {
 
     synth::ScopeReader reader(&writer, holder.FlatChan(), 10);
     REQUIRE_TRUE(!reader.Empty());
-    REQUIRE_TRUE(reader.TransferXSample() == 4);
+    REQUIRE_NEAR(reader.TransferXSample(), 4.0f, 0.0001f);
     REQUIRE_NEAR(reader.Get(0), 10.0f, 0.0001f);
-    REQUIRE_NEAR(reader.Get(3), 13.0f, 0.0001f);
-    REQUIRE_NEAR(reader.Get(4), 4.0f, 0.0001f);
+    REQUIRE_NEAR(reader.Get(3.5), 13.5f, 0.0001f);
+    REQUIRE_NEAR(reader.Get(4.5), 4.5f, 0.0001f);
     REQUIRE_NEAR(reader.Get(9), 9.0f, 0.0001f);
+}
+
+TEST_CASE(scope_reader_aligns_fractional_start_markers) {
+    synth::ScopeWriter writer(1, 64);
+    auto holder = writer.ReserveChans(1);
+
+    holder.RecordStart(0, 0.25);
+    for (std::size_t ix = 0; ix < 10; ++ix) {
+        holder.Write(static_cast<float>(ix));
+        writer.AdvanceIndex();
+    }
+
+    holder.RecordStart(0, 0.25);
+    for (std::size_t ix = 10; ix < 15; ++ix) {
+        holder.Write(static_cast<float>(ix));
+        writer.AdvanceIndex();
+    }
+    writer.Publish();
+
+    synth::ScopeReader reader(&writer, holder.FlatChan(), 10);
+    REQUIRE_TRUE(!reader.Empty());
+    REQUIRE_NEAR(reader.Get(0), 10.25f, 0.0001f);
+    REQUIRE_NEAR(reader.Get(4.0), 4.25f, 0.0001f);
 }
 
 TEST_CASE(wavetables_wrap_adapt_morph_and_provide_defaults) {
@@ -202,6 +251,36 @@ TEST_CASE(incrementer_accumulates_total_phase_and_reports_top) {
     REQUIRE_NEAR(static_cast<float>(incrementer.m_phase), 1.25f, 0.0001f);
     REQUIRE_NEAR(static_cast<float>(incrementer.m_wrappedPhase), 0.25f, 0.0001f);
     REQUIRE_TRUE(incrementer.m_top);
+}
+
+TEST_CASE(incrementer_reports_fractional_top_offset) {
+    synth::Incrementer incrementer;
+    incrementer.m_phase = 0.75;
+
+    incrementer.Process({.freq = 0.5});
+
+    REQUIRE_TRUE(incrementer.m_top);
+    REQUIRE_NEAR(static_cast<float>(incrementer.m_topOffset), 0.5f, 0.0001f);
+}
+
+TEST_CASE(wavetable_vco_records_top_marker_at_true_cycle_boundary) {
+    synth::ScopeWriter writer(2, 32);
+    auto holder = writer.ReserveChans(1);
+    synth::WavetableVco<8> vco;
+    vco.SetScopeWriterHolder(&holder);
+
+    vco.m_incrementer.m_phase = 0.7;
+    vco.Process({.freq = 0.2, .phaseOffset = 0.0f, .wavetablePosition = 0.0f, .maxFreq = 0.5f});
+    writer.AdvanceIndex();
+    vco.Process({.freq = 0.2, .phaseOffset = 0.0f, .wavetablePosition = 0.0f, .maxFreq = 0.5f});
+    writer.AdvanceIndex();
+    vco.Process({.freq = 0.2, .phaseOffset = 0.0f, .wavetablePosition = 0.0f, .maxFreq = 0.5f});
+    writer.AdvanceIndex();
+    writer.Publish();
+
+    synth::ScopeReader reader(&writer, holder.FlatChan(), 4);
+    REQUIRE_TRUE(!reader.Empty());
+    REQUIRE_NEAR(reader.Get(0), 0.0f, 0.05f);
 }
 
 TEST_CASE(wavetable_vco_uses_position_scope_and_ui_state) {
