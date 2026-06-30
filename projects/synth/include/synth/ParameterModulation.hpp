@@ -96,6 +96,7 @@ struct PageDescriptor {
 
 class Parameter;
 class ParameterManager;
+class BankSlot;
 
 struct Page {
     PageOrdinal ordinal = 0;
@@ -142,6 +143,10 @@ public:
     float& Value(std::size_t voiceIx, std::size_t modIx);
     float Value(std::size_t voiceIx, std::size_t modIx) const;
     float Apply(std::size_t voiceIx, std::span<const float> depths) const;
+    // Source pointers are caller-owned and must remain address-stable while registered.
+    void SetModulationSource(std::size_t modIx, std::span<float* const> sourcePointers,
+                             ModulatorMetadata metadata);
+    void UpdateModValues();
 
     std::size_t NumVoices() const { return numVoices_; }
     std::size_t NumModulators() const { return numModulators_; }
@@ -158,6 +163,7 @@ private:
     std::size_t numModulators_ = 0;
     std::vector<float> values_;
     std::vector<ModulatorMetadata> metadata_;
+    std::vector<float*> sourcePointers_;
 };
 
 class Gestures {
@@ -198,8 +204,13 @@ public:
 
     bool CanAllocate() const;
     std::size_t ParameterCount() const { return parameterCount_; }
+    Parameter& ParameterByLocalIndex(std::size_t localIx);
+    const Parameter& ParameterByLocalIndex(std::size_t localIx) const;
     std::size_t GestureCount() const { return gestureCount_; }
     Color VoiceIndicatorColor(std::size_t voiceIx) const;
+    void SetModulationSource(std::size_t modIx, std::span<float* const> sourcePointers,
+                             ModulatorMetadata metadata);
+    void UpdateModValues();
     void SelectGesture(std::size_t gestureIx);
     void DeselectGesture(std::size_t gestureIx);
     bool GestureSelected(std::size_t gestureIx) const;
@@ -210,6 +221,8 @@ public:
 private:
     friend class Parameter;
     friend class ParameterManager;
+
+    Parameter& CreateLocalParameter(ParameterConfig config, ParameterId id);
 
     // Groups own parameter objects and all same-shaped per-parameter arenas.
     // Parameter instances hold spans into these arenas; callers must not move a
@@ -287,6 +300,7 @@ public:
     void RevertToDefault(const SceneState& scene);
 
     bool AssignModulationDepth(std::size_t modIx, Parameter* parameter);
+    Parameter& EnsureModulationDepth(std::size_t modIx, ParameterConfig config);
     void ClearModulationDepths();
     Parameter* ModulationDepthParameter(std::size_t modIx) const;
 
@@ -318,11 +332,13 @@ private:
     float EffectiveGestureWeight(const SceneState& scene, std::size_t gestureIx, float blend) const;
     void ActivateGestureForScene(std::size_t sceneIx, std::size_t gestureIx);
     void ResetSceneToDefault(std::size_t sceneIx, float defaultValue);
+    void ResetModulationDepthToNeutral(const SceneState& scene);
     float ComputeRawCenter(const SceneState& scene) const;
     void ComputeAtDepth(const SceneState& scene, std::size_t recursionDepth);
     bool WouldCreateCycle(const Parameter* candidate) const;
     float TargetValue(std::size_t voiceIx) const;
     std::uint32_t ModulatorsAffectingMask() const;
+    bool HasNonDefaultState() const;
 
     ParameterId id_;
     ParameterGroup& group_;
@@ -358,6 +374,9 @@ public:
     // Banks do not own parameters; they map physical controls to manager-owned
     // parameters and transient modulation-depth views.
     void AddMapping(PhysicalEncoderId encoderId, Parameter& parameter);
+    void RegisterParameters(std::span<Parameter* const> parameters, std::size_t offset);
+    std::size_t SlotCapacity() const;
+    BankSlot* AssociatedSlot() const { return slot_; }
     bool OwnsVisible(PhysicalEncoderId encoderId) const;
     void HandlePress(PhysicalEncoderId encoderId);
     void HandlePress(PhysicalEncoderId encoderId, std::span<const PhysicalEncoderId> physicalLayout);
@@ -376,11 +395,14 @@ public:
     std::uint32_t GesturesAffectingMask() const;
 
 private:
+    friend class BankSlot;
+
     struct Cell {
         PhysicalEncoderId encoderId = 0;
         Parameter* parameter = nullptr;
     };
 
+    void AssociateSlot(BankSlot& slot);
     Cell* FindVisibleCell(PhysicalEncoderId encoderId);
     const Cell* FindVisibleCell(PhysicalEncoderId encoderId) const;
     Parameter* EnsureModulationDepthParameter(Parameter& parameter, std::size_t modIx);
@@ -388,6 +410,7 @@ private:
     std::vector<PhysicalEncoderId> CompactPhysicalLayout() const;
 
     ParameterManager* manager_ = nullptr;
+    BankSlot* slot_ = nullptr;
     Color color_ = Color::Grey;
     std::vector<Cell> topLevel_;
     std::vector<Cell> visible_;
@@ -480,8 +503,21 @@ public:
     bool SetGestureCount(std::size_t count);
     std::size_t GestureCount() const { return gestures_.NumGestures(); }
     ParameterGroup& CreateGroup(ParameterGroupConfig config);
+    ParameterId RegisterParameter(ParameterGroup& group, ParameterConfig config);
     Parameter& CreateParameter(ParameterGroup& group, ParameterConfig config);
-    ParameterId NextParameterId();
+    Parameter& ParameterById(ParameterId id);
+    const Parameter& ParameterById(ParameterId id) const;
+    std::size_t ParameterCount() const { return parameters_.size(); }
+
+    float GetLinear(float minValue, float maxValue, std::size_t voiceIx, ParameterId id) const;
+    float GetExponential(float minValue, float maxValue, std::size_t voiceIx, ParameterId id) const;
+    float GetZeroBasedExponential(float maxValue, float midpointValue, std::size_t voiceIx, ParameterId id) const;
+    float GetBipolarLinear(float maxAbsValue, std::size_t voiceIx, ParameterId id) const;
+    float GetBipolarExponential(float minAbsValue, float maxAbsValue, std::size_t voiceIx, ParameterId id) const;
+    float GetBipolarZeroBasedExponential(float maxAbsValue, float midpointAbsValue, std::size_t voiceIx,
+                                         ParameterId id) const;
+    void UpdateModValues(ParameterGroup& group);
+    void UpdateModValues();
 
     SceneState& Scene() { return scene_; }
     const SceneState& Scene() const { return scene_; }
@@ -534,14 +570,16 @@ private:
     Page* FindPage(PageOrdinal ordinal);
     const Page* FindPage(PageOrdinal ordinal) const;
     bool SceneEndpointsValid(std::size_t leftScene, std::size_t rightScene) const;
+    bool OwnsGroup(const ParameterGroup& group) const;
     std::size_t SceneCapacity() const;
     std::size_t MaxVoiceCount() const;
     std::size_t MaxSlotCellCount() const;
 
-    ParameterId nextId_ = 1;
     SceneState scene_;
     Gestures gestures_;
     bool shiftHeld_ = false;
+    std::vector<Parameter*> parameters_;
+    std::vector<std::string> parameterNames_;
     std::vector<std::unique_ptr<ParameterGroup>> groups_;
     std::vector<std::unique_ptr<Page>> pages_;
     std::optional<PageOrdinal> activePageOrdinal_;

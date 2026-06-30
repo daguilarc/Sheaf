@@ -1,6 +1,8 @@
 #include "DemoModulation.hpp"
+#include "synth/Modules.hpp"
 #include "synth/ParameterModulation.hpp"
 
+#include <array>
 #include <cmath>
 #include <iostream>
 #include <stdexcept>
@@ -72,6 +74,45 @@ int main() {
     synth_miniapp::ProcessLiteParameters(parameters);
     RequireNear(phase.Get(0), 1.0f, tolerance, "sample 1 direct VCO phase voice 0");
     RequireNear(phase.Get(1), 0.0f, tolerance, "sample 1 direct VCO phase voice 1");
+
+    synth::ParameterManager moduleManager;
+    auto& moduleGroup = moduleManager.CreateGroup({
+        .numVoices = 2,
+        .numModulators = 3,
+        .numScenes = 1,
+        .maxParameters = 4,
+        .processLiteAlpha = 1.0f,
+    });
+    synth::DualWavetableVcoModule module;
+    module.RegisterParameters(moduleManager, moduleGroup, "Osc");
+    module.RegisterModulationSources(moduleGroup, 0, 1);
+    float lfo0 = 0.25f;
+    float lfo1 = 0.75f;
+    std::array<float*, 2> lfoSources{&lfo0, &lfo1};
+    moduleGroup.SetModulationSource(2, lfoSources, {
+                                                     .name = "Sine LFO",
+                                                     .shortName = "LFO",
+                                                     .color = synth::Color::Green,
+                                                     .connected = true,
+                                                 });
+    module.CurrentInput().voices[0].vco.freq = 0.125;
+    module.CurrentInput().voices[0].vco.maxFreq = 0.5f;
+    module.CurrentInput().voices[1].vco.freq = 0.125;
+    module.CurrentInput().voices[1].vco.phaseOffset = 0.25f;
+    module.CurrentInput().voices[1].vco.maxFreq = 0.5f;
+    module.Process();
+    moduleManager.UpdateModValues(moduleGroup);
+
+    RequireNear(moduleGroup.GetModulators().Value(0, 0), module.DirectModulationSources()[0], tolerance,
+                "module direct source voice 0");
+    RequireNear(moduleGroup.GetModulators().Value(1, 0), module.DirectModulationSources()[1], tolerance,
+                "module direct source voice 1");
+    RequireNear(moduleGroup.GetModulators().Value(0, 1), module.SwappedModulationSources()[0], tolerance,
+                "module swapped source voice 0");
+    RequireNear(moduleGroup.GetModulators().Value(1, 1), module.SwappedModulationSources()[1], tolerance,
+                "module swapped source voice 1");
+    RequireNear(moduleGroup.GetModulators().Value(0, 2), 0.25f, tolerance, "lfo pointer source voice 0");
+    RequireNear(moduleGroup.GetModulators().Value(1, 2), 0.75f, tolerance, "lfo pointer source voice 1");
 
     std::cout << "Demo modulation tests passed\n";
     return 0;

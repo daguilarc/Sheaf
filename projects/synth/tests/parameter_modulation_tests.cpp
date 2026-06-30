@@ -189,9 +189,71 @@ TEST_CASE(manager_assigns_unique_ids) {
     auto& third = manager.CreateParameter(groupA, {.name = "A2", .defaultValue = 0.3f});
     REQUIRE_TRUE(first.Id() != second.Id());
     REQUIRE_TRUE(second.Id() != third.Id());
-    REQUIRE_TRUE(first.Id() == 1);
-    REQUIRE_TRUE(second.Id() == 2);
-    REQUIRE_TRUE(third.Id() == 3);
+    REQUIRE_TRUE(first.Id() == 0);
+    REQUIRE_TRUE(second.Id() == 1);
+    REQUIRE_TRUE(third.Id() == 2);
+}
+
+TEST_CASE(manager_register_parameter_returns_zero_based_list_index) {
+    synth::ParameterManager manager;
+    auto& groupA = manager.CreateGroup({.numVoices = 1, .numScenes = 1, .maxParameters = 2});
+    auto& groupB = manager.CreateGroup({.numVoices = 1, .numScenes = 1, .maxParameters = 1});
+
+    const synth::ParameterId firstId = manager.RegisterParameter(groupA, {.name = "A", .defaultValue = 0.1f});
+    const synth::ParameterId secondId = manager.RegisterParameter(groupB, {.name = "B", .defaultValue = 0.2f});
+    const synth::ParameterId thirdId = manager.RegisterParameter(groupA, {.name = "C", .defaultValue = 0.3f});
+
+    REQUIRE_TRUE(firstId == 0);
+    REQUIRE_TRUE(secondId == 1);
+    REQUIRE_TRUE(thirdId == 2);
+    REQUIRE_TRUE(manager.ParameterCount() == 3);
+    REQUIRE_TRUE(&manager.ParameterById(firstId) == &groupA.ParameterByLocalIndex(0));
+    REQUIRE_TRUE(&manager.ParameterById(secondId) == &groupB.ParameterByLocalIndex(0));
+    REQUIRE_TRUE(&manager.ParameterById(thirdId) == &groupA.ParameterByLocalIndex(1));
+}
+
+TEST_CASE(register_parameter_rejects_duplicate_effective_names) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({.numVoices = 1, .numScenes = 1, .maxParameters = 2});
+    (void)manager.RegisterParameter(group, {.name = "Cutoff", .defaultValue = 0.1f});
+
+    bool threw = false;
+    try {
+        (void)manager.RegisterParameter(group, {.name = "Cutoff", .defaultValue = 0.2f});
+    } catch (const std::logic_error&) {
+        threw = true;
+    }
+
+    REQUIRE_TRUE(threw);
+    REQUIRE_TRUE(manager.ParameterCount() == 1);
+    REQUIRE_TRUE(group.ParameterCount() == 1);
+}
+
+TEST_CASE(parameter_lookup_rejects_invalid_id) {
+    synth::ParameterManager manager;
+
+    bool threw = false;
+    try {
+        (void)manager.ParameterById(0);
+    } catch (const std::out_of_range&) {
+        threw = true;
+    }
+
+    REQUIRE_TRUE(threw);
+}
+
+TEST_CASE(create_parameter_uses_zero_based_list_index_ids) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({.numVoices = 1, .numScenes = 1, .maxParameters = 2});
+
+    auto& first = manager.CreateParameter(group, {.name = "First", .defaultValue = 0.1f});
+    auto& second = manager.CreateParameter(group, {.name = "Second", .defaultValue = 0.2f});
+
+    REQUIRE_TRUE(first.Id() == 0);
+    REQUIRE_TRUE(second.Id() == 1);
+    REQUIRE_TRUE(manager.ParameterCount() == 2);
+    REQUIRE_TRUE(&manager.ParameterById(first.Id()) == &first);
+    REQUIRE_TRUE(&manager.ParameterById(second.Id()) == &second);
 }
 
 TEST_CASE(modulators_use_voice_major_dot_product) {
@@ -220,6 +282,164 @@ TEST_CASE(modulator_metadata_is_not_per_voice) {
     REQUIRE_TRUE(modulators.Metadata(1).connected);
     REQUIRE_NEAR(modulators.Value(0, 1), 0.25f, 0.0001f);
     REQUIRE_NEAR(modulators.Value(2, 1), -0.75f, 0.0001f);
+}
+
+TEST_CASE(group_modulation_source_registration_stores_metadata) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 2,
+        .numModulators = 1,
+        .numScenes = 1,
+        .maxParameters = 1,
+    });
+    float voice0 = 0.25f;
+    float voice1 = 0.75f;
+    std::array<float*, 2> sources{&voice0, &voice1};
+
+    group.SetModulationSource(0, sources, {
+                                             .name = "VCO",
+                                             .shortName = "VCO",
+                                             .color = synth::Color::Cyan,
+                                             .connected = true,
+                                         });
+
+    const synth::ModulatorMetadata& metadata = group.GetModulators().Metadata(0);
+    REQUIRE_TRUE(metadata.name == "VCO");
+    REQUIRE_TRUE(metadata.shortName == "VCO");
+    REQUIRE_TRUE(metadata.color == synth::Color::Cyan);
+    REQUIRE_TRUE(metadata.connected);
+}
+
+TEST_CASE(group_update_mod_values_refreshes_registered_source_each_sample) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 2,
+        .numModulators = 1,
+        .numScenes = 1,
+        .maxParameters = 1,
+    });
+    float voice0 = 0.25f;
+    float voice1 = 0.75f;
+    std::array<float*, 2> sources{&voice0, &voice1};
+    group.SetModulationSource(0, sources, {.name = "VCO", .connected = true});
+
+    group.UpdateModValues();
+    REQUIRE_NEAR(group.GetModulators().Value(0, 0), 0.25f, 0.0001f);
+    REQUIRE_NEAR(group.GetModulators().Value(1, 0), 0.75f, 0.0001f);
+
+    voice0 = 0.4f;
+    voice1 = 0.6f;
+    group.UpdateModValues();
+    REQUIRE_NEAR(group.GetModulators().Value(0, 0), 0.4f, 0.0001f);
+    REQUIRE_NEAR(group.GetModulators().Value(1, 0), 0.6f, 0.0001f);
+}
+
+TEST_CASE(group_modulation_source_registration_rejects_invalid_inputs_without_mutation) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 2,
+        .numModulators = 1,
+        .numScenes = 1,
+        .maxParameters = 1,
+    });
+    float voice0 = 0.2f;
+    float voice1 = 0.8f;
+    std::array<float*, 2> validSources{&voice0, &voice1};
+    group.SetModulationSource(0, validSources, {
+                                                .name = "Original",
+                                                .shortName = "Orig",
+                                                .color = synth::Color::Green,
+                                                .connected = true,
+                                            });
+    group.UpdateModValues();
+
+    bool threw = false;
+    try {
+        std::array<float*, 1> wrongCount{&voice0};
+        group.SetModulationSource(0, wrongCount, {.name = "Wrong", .connected = true});
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    REQUIRE_TRUE(threw);
+
+    threw = false;
+    try {
+        std::array<float*, 2> nullConnected{&voice0, nullptr};
+        group.SetModulationSource(0, nullConnected, {.name = "Null", .connected = true});
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    REQUIRE_TRUE(threw);
+
+    threw = false;
+    try {
+        group.SetModulationSource(1, validSources, {.name = "Invalid", .connected = true});
+    } catch (const std::out_of_range&) {
+        threw = true;
+    }
+    REQUIRE_TRUE(threw);
+
+    const synth::ModulatorMetadata& metadata = group.GetModulators().Metadata(0);
+    REQUIRE_TRUE(metadata.name == "Original");
+    REQUIRE_TRUE(metadata.shortName == "Orig");
+    REQUIRE_TRUE(metadata.color == synth::Color::Green);
+    REQUIRE_TRUE(metadata.connected);
+
+    voice0 = 0.3f;
+    voice1 = 0.7f;
+    group.UpdateModValues();
+    REQUIRE_NEAR(group.GetModulators().Value(0, 0), 0.3f, 0.0001f);
+    REQUIRE_NEAR(group.GetModulators().Value(1, 0), 0.7f, 0.0001f);
+}
+
+TEST_CASE(manager_update_mod_values_delegates_to_one_group_or_all_groups) {
+    synth::ParameterManager manager;
+    auto& groupA = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 1,
+        .numScenes = 1,
+        .maxParameters = 1,
+    });
+    auto& groupB = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 1,
+        .numScenes = 1,
+        .maxParameters = 1,
+    });
+    float sourceA = 0.1f;
+    float sourceB = 0.9f;
+    std::array<float*, 1> sourcesA{&sourceA};
+    std::array<float*, 1> sourcesB{&sourceB};
+    groupA.SetModulationSource(0, sourcesA, {.name = "A", .connected = true});
+    groupB.SetModulationSource(0, sourcesB, {.name = "B", .connected = true});
+
+    manager.UpdateModValues(groupA);
+    REQUIRE_NEAR(groupA.GetModulators().Value(0, 0), 0.1f, 0.0001f);
+    REQUIRE_NEAR(groupB.GetModulators().Value(0, 0), 0.0f, 0.0001f);
+
+    sourceA = 0.2f;
+    sourceB = 0.8f;
+    manager.UpdateModValues();
+    REQUIRE_NEAR(groupA.GetModulators().Value(0, 0), 0.2f, 0.0001f);
+    REQUIRE_NEAR(groupB.GetModulators().Value(0, 0), 0.8f, 0.0001f);
+}
+
+TEST_CASE(update_mod_values_copies_source_values_unchanged) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 2,
+        .numModulators = 1,
+        .numScenes = 1,
+        .maxParameters = 1,
+    });
+    float voice0 = -0.25f;
+    float voice1 = 1.25f;
+    std::array<float*, 2> sources{&voice0, &voice1};
+    group.SetModulationSource(0, sources, {.name = "Raw", .connected = true});
+
+    group.UpdateModValues();
+    REQUIRE_NEAR(group.GetModulators().Value(0, 0), -0.25f, 0.0001f);
+    REQUIRE_NEAR(group.GetModulators().Value(1, 0), 1.25f, 0.0001f);
 }
 
 TEST_CASE(gestures_store_values_and_selection) {
@@ -256,7 +476,7 @@ TEST_CASE(parameter_default_state) {
         .range = synth::RangeKind::Unipolar,
     });
 
-    REQUIRE_TRUE(parameter.Id() == 1);
+    REQUIRE_TRUE(parameter.Id() == 0);
     REQUIRE_TRUE(parameter.Name() == "Cutoff");
     REQUIRE_TRUE(&parameter.Group() == &group);
     REQUIRE_NEAR(parameter.SceneCenter(0), 0.3f, 0.0001f);
@@ -283,7 +503,7 @@ TEST_CASE(allocator_exhaustion_does_not_register_partial_parameter) {
     });
 
     auto& first = manager.CreateParameter(group, {.name = "A", .defaultValue = 0.1f});
-    REQUIRE_TRUE(first.Id() == 1);
+    REQUIRE_TRUE(first.Id() == 0);
     REQUIRE_TRUE(group.ParameterCount() == 1);
     REQUIRE_TRUE(!group.CanAllocate());
 
@@ -296,8 +516,8 @@ TEST_CASE(allocator_exhaustion_does_not_register_partial_parameter) {
 
     REQUIRE_TRUE(threw);
     REQUIRE_TRUE(group.ParameterCount() == 1);
-    REQUIRE_TRUE(first.Id() == 1);
-    REQUIRE_TRUE(manager.NextParameterId() == 2);
+    REQUIRE_TRUE(first.Id() == 0);
+    REQUIRE_TRUE(manager.ParameterCount() == 1);
 }
 
 TEST_CASE(stable_parameter_pointers_survive_later_allocations) {
@@ -316,9 +536,9 @@ TEST_CASE(stable_parameter_pointers_survive_later_allocations) {
     auto& third = manager.CreateParameter(group, {.name = "Third", .defaultValue = 0.3f});
 
     REQUIRE_TRUE(&first == firstPtr);
-    REQUIRE_TRUE(firstPtr->Id() == 1);
-    REQUIRE_TRUE(second.Id() == 2);
-    REQUIRE_TRUE(third.Id() == 3);
+    REQUIRE_TRUE(firstPtr->Id() == 0);
+    REQUIRE_TRUE(second.Id() == 1);
+    REQUIRE_TRUE(third.Id() == 2);
     REQUIRE_TRUE(group.ParameterCount() == 3);
 }
 
@@ -799,6 +1019,152 @@ TEST_CASE(get_clamps_and_rejects_out_of_range_voice) {
     REQUIRE_TRUE(threw);
 }
 
+TEST_CASE(manager_linear_mapping_reaches_endpoints) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numScenes = 1,
+        .maxParameters = 1,
+        .processLiteAlpha = 1.0f,
+    });
+    const synth::ParameterId paramId = manager.RegisterParameter(group, {.name = "Level", .defaultValue = 0.0f});
+    auto& parameter = manager.ParameterById(paramId);
+
+    parameter.SceneCenter(0) = 0.0f;
+    parameter.Compute(manager.Scene());
+    parameter.ProcessLite();
+    REQUIRE_NEAR(manager.GetLinear(10.0f, 20.0f, 0, paramId), 10.0f, 0.0001f);
+
+    parameter.SceneCenter(0) = 0.5f;
+    parameter.Compute(manager.Scene());
+    parameter.ProcessLite();
+    REQUIRE_NEAR(manager.GetLinear(10.0f, 20.0f, 0, paramId), 15.0f, 0.0001f);
+
+    parameter.SceneCenter(0) = 1.0f;
+    parameter.Compute(manager.Scene());
+    parameter.ProcessLite();
+    REQUIRE_NEAR(manager.GetLinear(10.0f, 20.0f, 0, paramId), 20.0f, 0.0001f);
+}
+
+TEST_CASE(manager_exponential_mapping_reaches_endpoints_and_midpoint) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numScenes = 1,
+        .maxParameters = 1,
+        .processLiteAlpha = 1.0f,
+    });
+    const synth::ParameterId paramId = manager.RegisterParameter(group, {.name = "Frequency", .defaultValue = 0.0f});
+    auto& parameter = manager.ParameterById(paramId);
+
+    parameter.SceneCenter(0) = 0.0f;
+    parameter.Compute(manager.Scene());
+    parameter.ProcessLite();
+    REQUIRE_NEAR(manager.GetExponential(32.0f, 3000.0f, 0, paramId), 32.0f, 0.0001f);
+
+    parameter.SceneCenter(0) = 0.5f;
+    parameter.Compute(manager.Scene());
+    parameter.ProcessLite();
+    REQUIRE_NEAR(manager.GetExponential(32.0f, 3000.0f, 0, paramId), std::sqrt(32.0f * 3000.0f), 0.001f);
+
+    parameter.SceneCenter(0) = 1.0f;
+    parameter.Compute(manager.Scene());
+    parameter.ProcessLite();
+    REQUIRE_NEAR(manager.GetExponential(32.0f, 3000.0f, 0, paramId), 3000.0f, 0.001f);
+}
+
+TEST_CASE(manager_zero_based_exponential_mapping_honors_midpoint) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numScenes = 1,
+        .maxParameters = 1,
+        .processLiteAlpha = 1.0f,
+    });
+    const synth::ParameterId paramId = manager.RegisterParameter(group, {.name = "Depth", .defaultValue = 0.0f});
+    auto& parameter = manager.ParameterById(paramId);
+
+    parameter.SceneCenter(0) = 0.0f;
+    parameter.Compute(manager.Scene());
+    parameter.ProcessLite();
+    REQUIRE_NEAR(manager.GetZeroBasedExponential(1.0f, 0.1f, 0, paramId), 0.0f, 0.0001f);
+
+    parameter.SceneCenter(0) = 0.5f;
+    parameter.Compute(manager.Scene());
+    parameter.ProcessLite();
+    REQUIRE_NEAR(manager.GetZeroBasedExponential(1.0f, 0.1f, 0, paramId), 0.1f, 0.0001f);
+
+    parameter.SceneCenter(0) = 1.0f;
+    parameter.Compute(manager.Scene());
+    parameter.ProcessLite();
+    REQUIRE_NEAR(manager.GetZeroBasedExponential(1.0f, 0.1f, 0, paramId), 1.0f, 0.0001f);
+}
+
+TEST_CASE(manager_bipolar_mapping_helpers_return_signed_values) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numScenes = 1,
+        .maxParameters = 1,
+        .processLiteAlpha = 1.0f,
+    });
+    const synth::ParameterId paramId = manager.RegisterParameter(group, {.name = "Amount", .defaultValue = 0.0f});
+    auto& parameter = manager.ParameterById(paramId);
+
+    parameter.SceneCenter(0) = 0.0f;
+    parameter.Compute(manager.Scene());
+    parameter.ProcessLite();
+    REQUIRE_NEAR(manager.GetBipolarLinear(2.0f, 0, paramId), -2.0f, 0.0001f);
+    REQUIRE_NEAR(manager.GetBipolarExponential(0.25f, 4.0f, 0, paramId), -4.0f, 0.0001f);
+    REQUIRE_NEAR(manager.GetBipolarZeroBasedExponential(1.0f, 0.1f, 0, paramId), -1.0f, 0.0001f);
+
+    parameter.SceneCenter(0) = 0.5f;
+    parameter.Compute(manager.Scene());
+    parameter.ProcessLite();
+    REQUIRE_NEAR(manager.GetBipolarLinear(2.0f, 0, paramId), 0.0f, 0.0001f);
+    REQUIRE_NEAR(manager.GetBipolarExponential(0.25f, 4.0f, 0, paramId), 0.0f, 0.0001f);
+    REQUIRE_NEAR(manager.GetBipolarZeroBasedExponential(1.0f, 0.1f, 0, paramId), 0.0f, 0.0001f);
+    bool threw = false;
+    try {
+        (void)manager.GetBipolarZeroBasedExponential(1.0f, 2.0f, 0, paramId);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    REQUIRE_TRUE(threw);
+
+    parameter.SceneCenter(0) = 1.0f;
+    parameter.Compute(manager.Scene());
+    parameter.ProcessLite();
+    REQUIRE_NEAR(manager.GetBipolarLinear(2.0f, 0, paramId), 2.0f, 0.0001f);
+    REQUIRE_NEAR(manager.GetBipolarExponential(0.25f, 4.0f, 0, paramId), 4.0f, 0.0001f);
+    REQUIRE_NEAR(manager.GetBipolarZeroBasedExponential(1.0f, 0.1f, 0, paramId), 1.0f, 0.0001f);
+}
+
+TEST_CASE(manager_mapping_helpers_use_parameter_get_for_voice_value) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 1,
+        .numScenes = 1,
+        .maxParameters = 2,
+        .processLiteAlpha = 1.0f,
+    });
+    const synth::ParameterId carrierId =
+        manager.RegisterParameter(group, {.name = "Carrier", .defaultValue = 0.2f});
+    const synth::ParameterId depthId = manager.RegisterParameter(group, {.name = "Depth", .defaultValue = 0.5f});
+    auto& carrier = manager.ParameterById(carrierId);
+    auto& depth = manager.ParameterById(depthId);
+    REQUIRE_TRUE(carrier.AssignModulationDepth(0, &depth));
+
+    group.GetModulators().Value(0, 0) = 1.0f;
+    carrier.Compute(manager.Scene());
+    carrier.ProcessLite();
+
+    REQUIRE_NEAR(carrier.Get(0), 0.6f, 0.0001f);
+    REQUIRE_NEAR(manager.GetLinear(10.0f, 20.0f, 0, carrierId), 16.0f, 0.0001f);
+    REQUIRE_NEAR(manager.GetBipolarLinear(2.0f, 0, carrierId), 0.4f, 0.0001f);
+}
+
 TEST_CASE(handle_inc_dec_endpoint_scene) {
     synth::ParameterManager manager;
     manager.SetGestureCount(2);
@@ -1021,7 +1387,9 @@ TEST_CASE(revert_to_default_clears_modulation_and_gestures) {
     parameter.Compute(scene);
     parameter.ProcessLite();
 
-    REQUIRE_TRUE(parameter.ModulationDepthParameter(0) == nullptr);
+    REQUIRE_TRUE(parameter.ModulationDepthParameter(0) == &depth);
+    REQUIRE_NEAR(depth.SceneCenter(0), 0.0f, 0.0001f);
+    REQUIRE_NEAR(depth.SceneCenter(1), 0.0f, 0.0001f);
     REQUIRE_NEAR(parameter.SceneCenter(0), 0.4f, 0.0001f);
     REQUIRE_NEAR(parameter.SceneCenter(1), 0.4f, 0.0001f);
     REQUIRE_TRUE(!parameter.GestureActive(0, 0));
@@ -1128,6 +1496,172 @@ TEST_CASE(mixed_group_bank_routes_each_parameter_to_its_group) {
 
     REQUIRE_NEAR(a.SceneCenter(0), 0.3f, 0.0001f);
     REQUIRE_NEAR(b.SceneCenter(0), 0.5f, 0.0001f);
+}
+
+TEST_CASE(bank_module_registration_uses_associated_slot_layout_and_offset) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({.numVoices = 1, .numScenes = 1, .maxParameters = 2});
+    auto& tune = manager.CreateParameter(group, {.name = "Tune", .defaultValue = 0.5f});
+    auto& shape = manager.CreateParameter(group, {.name = "Shape", .defaultValue = 0.25f});
+    auto& bank = manager.CreateBank();
+    auto& slot = manager.CreateBankSlot();
+    slot.AddPhysicalEncoder(10);
+    slot.AddPhysicalEncoder(11);
+    slot.AddPhysicalEncoder(12);
+    slot.AddPhysicalEncoder(13);
+    slot.SelectBank(&bank);
+
+    std::array<synth::Parameter*, 2> parameters{&tune, &shape};
+    bank.RegisterParameters(parameters, 1);
+
+    REQUIRE_TRUE(bank.AssociatedSlot() == &slot);
+    REQUIRE_TRUE(bank.SlotCapacity() == 4);
+    REQUIRE_TRUE(bank.VisibleParameter(10) == nullptr);
+    REQUIRE_TRUE(bank.VisibleParameter(11) == &tune);
+    REQUIRE_TRUE(bank.VisibleParameter(12) == &shape);
+    REQUIRE_TRUE(bank.VisibleParameter(13) == nullptr);
+}
+
+TEST_CASE(multiple_banks_share_one_slot_layout_for_module_registration) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({.numVoices = 1, .numScenes = 1, .maxParameters = 2});
+    auto& firstParam = manager.CreateParameter(group, {.name = "First", .defaultValue = 0.1f});
+    auto& secondParam = manager.CreateParameter(group, {.name = "Second", .defaultValue = 0.2f});
+    auto& firstBank = manager.CreateBank();
+    auto& secondBank = manager.CreateBank();
+    auto& slot = manager.CreateBankSlot();
+    slot.AddPhysicalEncoder(20);
+    slot.AddPhysicalEncoder(21);
+
+    slot.SelectBank(&firstBank);
+    std::array<synth::Parameter*, 1> firstParams{&firstParam};
+    firstBank.RegisterParameters(firstParams, 0);
+
+    slot.SelectBank(&secondBank);
+    std::array<synth::Parameter*, 1> secondParams{&secondParam};
+    secondBank.RegisterParameters(secondParams, 1);
+
+    REQUIRE_TRUE(firstBank.AssociatedSlot() == &slot);
+    REQUIRE_TRUE(secondBank.AssociatedSlot() == &slot);
+    REQUIRE_TRUE(firstBank.SlotCapacity() == 2);
+    REQUIRE_TRUE(secondBank.SlotCapacity() == 2);
+    REQUIRE_TRUE(slot.SelectedBank() == &secondBank);
+    REQUIRE_TRUE(firstBank.VisibleParameter(20) == &firstParam);
+    REQUIRE_TRUE(secondBank.VisibleParameter(21) == &secondParam);
+}
+
+TEST_CASE(bank_module_registration_rejects_missing_slot_and_capacity_overrun_without_mutation) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({.numVoices = 1, .numScenes = 1, .maxParameters = 3});
+    auto& existing = manager.CreateParameter(group, {.name = "Existing", .defaultValue = 0.1f});
+    auto& first = manager.CreateParameter(group, {.name = "First", .defaultValue = 0.2f});
+    auto& second = manager.CreateParameter(group, {.name = "Second", .defaultValue = 0.3f});
+    auto& bank = manager.CreateBank();
+    std::array<synth::Parameter*, 2> parameters{&first, &second};
+
+    bool threw = false;
+    try {
+        (void)bank.SlotCapacity();
+    } catch (const std::logic_error&) {
+        threw = true;
+    }
+    REQUIRE_TRUE(threw);
+
+    threw = false;
+    try {
+        bank.RegisterParameters(parameters, 0);
+    } catch (const std::logic_error&) {
+        threw = true;
+    }
+    REQUIRE_TRUE(threw);
+
+    auto& slot = manager.CreateBankSlot();
+    slot.AddPhysicalEncoder(10);
+    slot.AddPhysicalEncoder(11);
+    slot.SelectBank(&bank);
+    bank.AddMapping(10, existing);
+
+    threw = false;
+    try {
+        bank.RegisterParameters(parameters, 1);
+    } catch (const std::logic_error&) {
+        threw = true;
+    }
+    REQUIRE_TRUE(threw);
+    REQUIRE_TRUE(bank.VisibleParameter(10) == &existing);
+    REQUIRE_TRUE(bank.VisibleParameter(11) == nullptr);
+}
+
+TEST_CASE(bank_module_registration_rejects_duplicate_names_nulls_and_duplicate_slots) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({.numVoices = 1, .numScenes = 1, .maxParameters = 2});
+    auto& parameter = manager.CreateParameter(group, {.name = "Repeated", .defaultValue = 0.1f});
+    auto& other = manager.CreateParameter(group, {.name = "Other", .defaultValue = 0.2f});
+    auto& bank = manager.CreateBank();
+    auto& slot = manager.CreateBankSlot();
+    slot.AddPhysicalEncoder(10);
+    slot.AddPhysicalEncoder(11);
+    slot.SelectBank(&bank);
+
+    bool threw = false;
+    try {
+        std::array<synth::Parameter*, 2> duplicateNames{&parameter, &parameter};
+        bank.RegisterParameters(duplicateNames, 0);
+    } catch (const std::logic_error&) {
+        threw = true;
+    }
+    REQUIRE_TRUE(threw);
+    REQUIRE_TRUE(bank.VisibleParameter(10) == nullptr);
+    REQUIRE_TRUE(bank.VisibleParameter(11) == nullptr);
+
+    threw = false;
+    try {
+        std::array<synth::Parameter*, 2> nullParameter{&parameter, nullptr};
+        bank.RegisterParameters(nullParameter, 0);
+    } catch (const std::logic_error&) {
+        threw = true;
+    }
+    REQUIRE_TRUE(threw);
+    REQUIRE_TRUE(bank.VisibleParameter(10) == nullptr);
+    REQUIRE_TRUE(bank.VisibleParameter(11) == nullptr);
+
+    threw = false;
+    try {
+        slot.AddPhysicalEncoder(10);
+    } catch (const std::logic_error&) {
+        threw = true;
+    }
+    REQUIRE_TRUE(threw);
+
+    std::array<synth::Parameter*, 2> valid{&parameter, &other};
+    bank.RegisterParameters(valid, 0);
+    REQUIRE_TRUE(bank.VisibleParameter(10) == &parameter);
+    REQUIRE_TRUE(bank.VisibleParameter(11) == &other);
+}
+
+TEST_CASE(bank_cannot_be_associated_with_two_slots) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({.numVoices = 1, .numScenes = 1, .maxParameters = 1});
+    auto& parameter = manager.CreateParameter(group, {.name = "Only", .defaultValue = 0.5f});
+    auto& bank = manager.CreateBank();
+    auto& firstSlot = manager.CreateBankSlot();
+    auto& secondSlot = manager.CreateBankSlot();
+    firstSlot.AddPhysicalEncoder(1);
+    secondSlot.AddPhysicalEncoder(2);
+    firstSlot.SelectBank(&bank);
+    std::array<synth::Parameter*, 1> parameters{&parameter};
+    bank.RegisterParameters(parameters, 0);
+
+    bool threw = false;
+    try {
+        secondSlot.SelectBank(&bank);
+    } catch (const std::logic_error&) {
+        threw = true;
+    }
+    REQUIRE_TRUE(threw);
+    REQUIRE_TRUE(bank.AssociatedSlot() == &firstSlot);
+    REQUIRE_TRUE(firstSlot.SelectedBank() == &bank);
+    REQUIRE_TRUE(secondSlot.SelectedBank() == nullptr);
 }
 
 TEST_CASE(press_opens_modulation_view_and_target_cell_closes_it) {
@@ -1299,7 +1833,8 @@ TEST_CASE(modulation_view_materializes_missing_depth_parameter_when_capacity_all
     synth::Parameter* depth = carrier.ModulationDepthParameter(0);
     REQUIRE_TRUE(depth != nullptr);
     REQUIRE_TRUE(group.ParameterCount() == 3);
-    REQUIRE_TRUE(depth->Name() == "Filter Env");
+    REQUIRE_TRUE(manager.ParameterCount() == 2);
+    REQUIRE_TRUE(depth->Name() == "Carrier Filter Env");
     REQUIRE_TRUE(depth->ShortName() == "Env");
     REQUIRE_TRUE(depth->ParamColor() == synth::Color::Cyan);
     REQUIRE_TRUE(depth->Range() == synth::RangeKind::Bipolar);
@@ -1312,6 +1847,89 @@ TEST_CASE(modulation_view_materializes_missing_depth_parameter_when_capacity_all
     bank.HandleTick(1, {.leftScene = 0, .rightScene = 0, .blend = 0.0f}, 0.2f);
 
     REQUIRE_NEAR(depth->SceneCenter(0), 0.2f, 0.0001f);
+}
+
+TEST_CASE(modulation_view_keeps_owned_depth_parameter_after_reset) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 1,
+        .numScenes = 1,
+        .maxParameters = 3,
+    });
+    group.GetModulators().Metadata(0).name = "VCO Direct";
+    group.GetModulators().Metadata(0).shortName = "VCO";
+    group.GetModulators().Metadata(0).color = synth::Color::Cyan;
+    auto& tune = manager.CreateParameter(group, {.name = "Tune", .defaultValue = 0.5f});
+    auto& depth = tune.EnsureModulationDepth(0, {
+        .name = "Tune VCO Direct",
+        .shortName = "VCO",
+        .defaultValue = 0.0f,
+        .range = synth::RangeKind::Bipolar,
+        .color = synth::Color::Cyan,
+    });
+
+    auto& bank = manager.CreateBank();
+    bank.AddMapping(10, tune);
+    auto& slot = manager.CreateBankSlot();
+    slot.AddPhysicalEncoder(10);
+    slot.AddPhysicalEncoder(11);
+    slot.SelectBank(&bank);
+
+    slot.HandlePress(10);
+    REQUIRE_TRUE(bank.VisibleParameter(10) == &depth);
+    REQUIRE_TRUE(bank.VisibleParameter(11) == &tune);
+
+    slot.HandleShiftPress(11, {.leftScene = 0, .rightScene = 0, .blend = 0.0f});
+    REQUIRE_TRUE(tune.ModulationDepthParameter(0) == &depth);
+    slot.HandlePress(11);
+    REQUIRE_TRUE(!bank.ShowingModulation());
+
+    slot.HandlePress(10);
+
+    REQUIRE_TRUE(tune.ModulationDepthParameter(0) == &depth);
+    REQUIRE_TRUE(bank.VisibleParameter(10) == &depth);
+    REQUIRE_TRUE(bank.VisibleParameter(11) == &tune);
+    REQUIRE_TRUE(manager.ParameterCount() == 1);
+    REQUIRE_TRUE(group.ParameterCount() == 2);
+}
+
+TEST_CASE(modulation_view_lazy_depth_names_include_target_parameter_for_duplicate_modulators) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 1,
+        .numScenes = 1,
+        .maxParameters = 4,
+    });
+    auto& first = manager.CreateParameter(group, {.name = "Carrier A", .defaultValue = 0.25f});
+    auto& second = manager.CreateParameter(group, {.name = "Carrier B", .defaultValue = 0.75f});
+    group.GetModulators().Metadata(0).name = "Filter Env";
+    group.GetModulators().Metadata(0).shortName = "Env";
+    group.GetModulators().Metadata(0).color = synth::Color::Cyan;
+
+    auto& bank = manager.CreateBank();
+    bank.AddMapping(1, first);
+    bank.AddMapping(2, second);
+    auto& slot = manager.CreateBankSlot();
+    slot.AddPhysicalEncoder(1);
+    slot.AddPhysicalEncoder(2);
+    slot.SelectBank(&bank);
+
+    slot.HandlePress(1);
+    slot.HandlePress(2);
+    slot.HandlePress(2);
+
+    synth::Parameter* firstDepth = first.ModulationDepthParameter(0);
+    synth::Parameter* secondDepth = second.ModulationDepthParameter(0);
+    REQUIRE_TRUE(firstDepth != nullptr);
+    REQUIRE_TRUE(secondDepth != nullptr);
+    REQUIRE_TRUE(firstDepth->Name() == "Carrier A Filter Env");
+    REQUIRE_TRUE(secondDepth->Name() == "Carrier B Filter Env");
+    REQUIRE_TRUE(firstDepth->ShortName() == "Env");
+    REQUIRE_TRUE(secondDepth->ShortName() == "Env");
+    REQUIRE_TRUE(group.ParameterCount() == 4);
+    REQUIRE_TRUE(manager.ParameterCount() == 2);
 }
 
 TEST_CASE(pressing_modulation_cell_opens_nested_modulation_view) {
@@ -2908,10 +3526,50 @@ std::size_t SimSwitchVal(const SimOracle& oracle, std::size_t paramIx, std::size
     return static_cast<std::size_t>(std::clamp(std::round(static_cast<double>(normalized) * maxBucket), 0.0, maxBucket));
 }
 
-std::uint32_t SimModulatorsAffectingMask(const SimParam& parameter) {
+bool SimHasNonZeroState(const SimOracle& oracle, const SimParam& parameter) {
+    constexpr float tolerance = 0.000001f;
+    if (std::fabs(parameter.currentCenter) > tolerance || std::fabs(parameter.targetCenter) > tolerance) {
+        return true;
+    }
+    for (const float center : parameter.sceneCenter) {
+        if (std::fabs(center) > tolerance) {
+            return true;
+        }
+    }
+    for (const auto& row : parameter.gestureActive) {
+        for (const bool active : row) {
+            if (active) {
+                return true;
+            }
+        }
+    }
+    for (const auto& row : parameter.currentDepth) {
+        for (const float depth : row) {
+            if (std::fabs(depth) > tolerance) {
+                return true;
+            }
+        }
+    }
+    for (const auto& row : parameter.targetDepth) {
+        for (const float depth : row) {
+            if (std::fabs(depth) > tolerance) {
+                return true;
+            }
+        }
+    }
+    for (const int route : parameter.route) {
+        if (route >= 0 && SimHasNonZeroState(oracle, oracle.params[static_cast<std::size_t>(route)])) {
+            return true;
+        }
+    }
+    return false;
+}
+
+std::uint32_t SimModulatorsAffectingMask(const SimOracle& oracle, const SimParam& parameter) {
     std::uint32_t mask = 0;
     for (std::size_t modIx = 0; modIx < std::min<std::size_t>(kSimMods, 32); ++modIx) {
-        if (parameter.route[modIx] >= 0) {
+        const int route = parameter.route[modIx];
+        if (route >= 0 && SimHasNonZeroState(oracle, oracle.params[static_cast<std::size_t>(route)])) {
             mask |= (std::uint32_t{1} << modIx);
         }
     }
@@ -3103,8 +3761,56 @@ void SimHandleIncDec(SimOracle& oracle, SimParam& parameter, float delta) {
     }
 }
 
+void SimResetDepthToNeutral(SimOracle& oracle, SimParam& parameter) {
+    for (const int route : parameter.route) {
+        if (route >= 0) {
+            SimResetDepthToNeutral(oracle, oracle.params[static_cast<std::size_t>(route)]);
+        }
+    }
+
+    for (auto& row : parameter.currentDepth) {
+        row.fill(0.0f);
+    }
+    for (auto& row : parameter.targetDepth) {
+        row.fill(0.0f);
+    }
+
+    const float blend = std::clamp(oracle.scene.blend, 0.0f, 1.0f);
+    auto resetScene = [&](std::size_t sceneIx) {
+        parameter.sceneCenter[sceneIx] = 0.0f;
+        parameter.gestureActive[sceneIx].fill(false);
+    };
+
+    if (blend <= 0.0f) {
+        resetScene(oracle.scene.leftScene);
+    } else if (blend >= 1.0f) {
+        resetScene(oracle.scene.rightScene);
+    } else {
+        resetScene(oracle.scene.leftScene);
+        if (oracle.scene.rightScene != oracle.scene.leftScene) {
+            resetScene(oracle.scene.rightScene);
+        }
+    }
+
+    parameter.currentCenter = 0.0f;
+    parameter.targetCenter = 0.0f;
+    parameter.currentCenterScale.fill(1.0f);
+    parameter.targetCenterScale.fill(1.0f);
+    parameter.currentNormalizationOffset.fill(0.0f);
+    parameter.targetNormalizationOffset.fill(0.0f);
+    parameter.currentMinValue.fill(0.0f);
+    parameter.targetMinValue.fill(0.0f);
+    parameter.currentMaxValue.fill(0.0f);
+    parameter.targetMaxValue.fill(0.0f);
+}
+
 void SimRevertToDefault(SimOracle& oracle, SimParam& parameter) {
-    parameter.route.fill(-1);
+    for (const int route : parameter.route) {
+        if (route >= 0) {
+            SimResetDepthToNeutral(oracle, oracle.params[static_cast<std::size_t>(route)]);
+        }
+    }
+
     for (auto& row : parameter.currentDepth) {
         row.fill(0.0f);
     }
@@ -3383,7 +4089,7 @@ void SimCheckUIState(const SimOracle& oracle, const synth::ParameterManager::UIS
                 SimFailBool(seed, step, action, "ui position=" + std::to_string(position) + " color");
             }
             const std::size_t expectedSwitchValues = expected.switchValues;
-            const std::uint32_t expectedModulatorMask = SimModulatorsAffectingMask(expected);
+            const std::uint32_t expectedModulatorMask = SimModulatorsAffectingMask(oracle, expected);
             const std::uint32_t expectedGestureMask = SimGesturesAffectingMask(oracle, expected);
             if (actual.switchValues.load() != expectedSwitchValues) {
                 SimFailBool(seed, step, action, "ui position=" + std::to_string(position) + " switch values");

@@ -11,6 +11,9 @@ namespace synth {
 
 namespace {
 
+// Local modulation-depth controls are intentionally not addressable through ParameterManager::ParameterById.
+constexpr ParameterId kLocalParameterId = std::numeric_limits<ParameterId>::max();
+
 ParameterGroupConfig ValidateConfig(ParameterGroupConfig config) {
     if (!config.IsValid()) {
         throw std::invalid_argument("invalid parameter group config");
@@ -40,6 +43,28 @@ float RangeMin(RangeKind range) {
 
 float RangeMax(RangeKind) {
     return 1.0f;
+}
+
+float LinearMap(float minValue, float maxValue, float normalized) {
+    return minValue + (maxValue - minValue) * normalized;
+}
+
+float ExponentialMap(float minValue, float maxValue, float normalized) {
+    if (minValue <= 0.0f || maxValue <= 0.0f) {
+        throw std::invalid_argument("exponential mapping endpoints must be positive");
+    }
+    return minValue * std::pow(maxValue / minValue, normalized);
+}
+
+float ZeroBasedExponentialMap(float maxValue, float midpointValue, float normalized) {
+    if (maxValue <= 0.0f || midpointValue <= 0.0f || midpointValue >= maxValue) {
+        throw std::invalid_argument("zero-based exponential mapping requires 0 < midpoint < max");
+    }
+    if (normalized <= 0.0f) {
+        return 0.0f;
+    }
+    const float exponent = std::log(midpointValue / maxValue) / std::log(0.5f);
+    return maxValue * std::pow(normalized, exponent);
 }
 
 std::uint8_t ToByte(float value) {
@@ -206,7 +231,8 @@ Modulators::Modulators(std::size_t voices, std::size_t modulators)
     : numVoices_(voices),
       numModulators_(modulators),
       values_(voices * modulators, 0.0f),
-      metadata_(modulators) {}
+      metadata_(modulators),
+      sourcePointers_(voices * modulators, nullptr) {}
 
 float& Modulators::Value(std::size_t voiceIx, std::size_t modIx) {
     return values_.at(Index(voiceIx, modIx));
@@ -230,6 +256,42 @@ float Modulators::Apply(std::size_t voiceIx, std::span<const float> depths) cons
         result += values_[rowStart + modIx] * depths[modIx];
     }
     return result;
+}
+
+void Modulators::SetModulationSource(std::size_t modIx, std::span<float* const> sourcePointers,
+                                     ModulatorMetadata metadata) {
+    if (modIx >= numModulators_) {
+        throw std::out_of_range("modulator index out of range");
+    }
+    if (sourcePointers.size() != numVoices_) {
+        throw std::invalid_argument("modulation source pointer count does not match voice count");
+    }
+    if (metadata.connected) {
+        for (float* sourcePointer : sourcePointers) {
+            if (sourcePointer == nullptr) {
+                throw std::invalid_argument("connected modulation source pointer must not be null");
+            }
+        }
+    }
+
+    metadata_[modIx] = std::move(metadata);
+    for (std::size_t voiceIx = 0; voiceIx < numVoices_; ++voiceIx) {
+        sourcePointers_[voiceIx * numModulators_ + modIx] = sourcePointers[voiceIx];
+    }
+}
+
+void Modulators::UpdateModValues() {
+    for (std::size_t modIx = 0; modIx < numModulators_; ++modIx) {
+        if (!metadata_[modIx].connected) {
+            continue;
+        }
+        for (std::size_t voiceIx = 0; voiceIx < numVoices_; ++voiceIx) {
+            const std::size_t index = voiceIx * numModulators_ + modIx;
+            if (sourcePointers_[index] != nullptr) {
+                values_[index] = *sourcePointers_[index];
+            }
+        }
+    }
 }
 
 ModulatorMetadata& Modulators::Metadata(std::size_t modIx) {
@@ -332,11 +394,43 @@ bool ParameterGroup::CanAllocate() const {
     return parameterCount_ < config_.maxParameters;
 }
 
+Parameter& ParameterGroup::CreateLocalParameter(ParameterConfig config, ParameterId id) {
+    if (config.name.empty()) {
+        throw std::logic_error("parameter name must not be empty");
+    }
+    if (!CanAllocate()) {
+        throw std::length_error("parameter group capacity exhausted");
+    }
+
+    auto parameter = std::make_unique<Parameter>(id, *this, std::move(config), parameterCount_);
+    Parameter& result = *parameter;
+    parameters_.push_back(std::move(parameter));
+    ++parameterCount_;
+    return result;
+}
+
+Parameter& ParameterGroup::ParameterByLocalIndex(std::size_t localIx) {
+    return *parameters_.at(localIx);
+}
+
+const Parameter& ParameterGroup::ParameterByLocalIndex(std::size_t localIx) const {
+    return *parameters_.at(localIx);
+}
+
 Color ParameterGroup::VoiceIndicatorColor(std::size_t voiceIx) const {
     if (voiceIx >= config_.numVoices) {
         throw std::out_of_range("voice indicator index out of range");
     }
     return voiceIndicatorColors_[voiceIx];
+}
+
+void ParameterGroup::SetModulationSource(std::size_t modIx, std::span<float* const> sourcePointers,
+                                         ModulatorMetadata metadata) {
+    modulators_.SetModulationSource(modIx, sourcePointers, std::move(metadata));
+}
+
+void ParameterGroup::UpdateModValues() {
+    modulators_.UpdateModValues();
 }
 
 Parameter::Parameter(ParameterId id, ParameterGroup& group, ParameterConfig config, std::size_t slotIx)
@@ -570,7 +664,11 @@ void Parameter::HandleIncDec(const SceneState& scene, float delta) {
 
 void Parameter::RevertToDefault(const SceneState& scene) {
     ValidateSceneEndpoints(scene);
-    ClearModulationDepths();
+    for (Parameter* depthParameter : modulationDepths_) {
+        if (depthParameter != nullptr) {
+            depthParameter->ResetModulationDepthToNeutral(scene);
+        }
+    }
     std::fill(currentDepths_.begin(), currentDepths_.end(), 0.0f);
     std::fill(targetDepths_.begin(), targetDepths_.end(), 0.0f);
     std::fill(currentNormalizationOffsets_.begin(), currentNormalizationOffsets_.end(), 0.0f);
@@ -612,6 +710,21 @@ bool Parameter::AssignModulationDepth(std::size_t modIx, Parameter* parameter) {
 
     modulationDepths_[modIx] = parameter;
     return true;
+}
+
+Parameter& Parameter::EnsureModulationDepth(std::size_t modIx, ParameterConfig config) {
+    if (modIx >= modulationDepths_.size()) {
+        throw std::out_of_range("modulation depth index out of range");
+    }
+    if (Parameter* existing = modulationDepths_[modIx]; existing != nullptr) {
+        return *existing;
+    }
+
+    Parameter& created = group_.CreateLocalParameter(std::move(config), kLocalParameterId);
+    if (!AssignModulationDepth(modIx, &created)) {
+        throw std::logic_error("created modulation depth could not be assigned");
+    }
+    return created;
 }
 
 void Parameter::ClearModulationDepths() {
@@ -775,6 +888,41 @@ void Parameter::ResetSceneToDefault(std::size_t sceneIx, float defaultValue) {
     }
 }
 
+void Parameter::ResetModulationDepthToNeutral(const SceneState& scene) {
+    ValidateSceneEndpoints(scene);
+    for (Parameter* depthParameter : modulationDepths_) {
+        if (depthParameter != nullptr) {
+            depthParameter->ResetModulationDepthToNeutral(scene);
+        }
+    }
+
+    constexpr float neutralDepth = 0.0f;
+    const float blend = std::clamp(scene.blend, 0.0f, 1.0f);
+    if (blend <= 0.0f) {
+        ResetSceneToDefault(scene.leftScene, neutralDepth);
+    } else if (blend >= 1.0f) {
+        ResetSceneToDefault(scene.rightScene, neutralDepth);
+    } else {
+        ResetSceneToDefault(scene.leftScene, neutralDepth);
+        if (scene.rightScene != scene.leftScene) {
+            ResetSceneToDefault(scene.rightScene, neutralDepth);
+        }
+    }
+
+    currentCenter_ = neutralDepth;
+    targetCenter_ = neutralDepth;
+    std::fill(currentCenterScales_.begin(), currentCenterScales_.end(), 1.0f);
+    std::fill(targetCenterScales_.begin(), targetCenterScales_.end(), 1.0f);
+    std::fill(currentNormalizationOffsets_.begin(), currentNormalizationOffsets_.end(), 0.0f);
+    std::fill(targetNormalizationOffsets_.begin(), targetNormalizationOffsets_.end(), 0.0f);
+    std::fill(currentMinValues_.begin(), currentMinValues_.end(), neutralDepth);
+    std::fill(targetMinValues_.begin(), targetMinValues_.end(), neutralDepth);
+    std::fill(currentMaxValues_.begin(), currentMaxValues_.end(), neutralDepth);
+    std::fill(targetMaxValues_.begin(), targetMaxValues_.end(), neutralDepth);
+    std::fill(currentDepths_.begin(), currentDepths_.end(), neutralDepth);
+    std::fill(targetDepths_.begin(), targetDepths_.end(), neutralDepth);
+}
+
 float Parameter::ComputeRawCenter(const SceneState& scene) const {
     ValidateSceneEndpoints(scene);
     const float blend = std::clamp(scene.blend, 0.0f, 1.0f);
@@ -890,11 +1038,45 @@ std::uint32_t Parameter::ModulatorsAffectingMask() const {
     std::uint32_t mask = 0;
     const std::size_t count = std::min<std::size_t>(modulationDepths_.size(), 32);
     for (std::size_t modIx = 0; modIx < count; ++modIx) {
-        if (modulationDepths_[modIx] != nullptr) {
+        if (modulationDepths_[modIx] != nullptr && modulationDepths_[modIx]->HasNonDefaultState()) {
             mask |= (std::uint32_t{1} << modIx);
         }
     }
     return mask;
+}
+
+bool Parameter::HasNonDefaultState() const {
+    constexpr float tolerance = 0.000001f;
+
+    if (std::fabs(currentCenter_) > tolerance || std::fabs(targetCenter_) > tolerance) {
+        return true;
+    }
+    for (const float center : sceneCenters_) {
+        if (std::fabs(center) > tolerance) {
+            return true;
+        }
+    }
+    for (const std::uint8_t active : gestureActive_) {
+        if (active != 0) {
+            return true;
+        }
+    }
+    for (const float depth : currentDepths_) {
+        if (std::fabs(depth) > tolerance) {
+            return true;
+        }
+    }
+    for (const float depth : targetDepths_) {
+        if (std::fabs(depth) > tolerance) {
+            return true;
+        }
+    }
+    for (const Parameter* depthParameter : modulationDepths_) {
+        if (depthParameter != nullptr && depthParameter->HasNonDefaultState()) {
+            return true;
+        }
+    }
+    return false;
 }
 
 std::uint32_t Parameter::GesturesAffectingMask() const {
@@ -982,6 +1164,67 @@ void Bank::AddMapping(PhysicalEncoderId encoderId, Parameter& parameter) {
     if (!ShowingModulation()) {
         visible_ = topLevel_;
     }
+}
+
+void Bank::RegisterParameters(std::span<Parameter* const> parameters, std::size_t offset) {
+    if (slot_ == nullptr) {
+        throw std::logic_error("bank registration requires an associated bank slot");
+    }
+
+    const std::span<const PhysicalEncoderId> layout = slot_->PhysicalEncoders();
+    if (offset > layout.size() || parameters.size() > layout.size() - offset) {
+        throw std::logic_error("bank registration exceeds slot capacity");
+    }
+
+    for (std::size_t parameterIx = 0; parameterIx < parameters.size(); ++parameterIx) {
+        if (parameters[parameterIx] == nullptr) {
+            throw std::logic_error("bank registration parameter must not be null");
+        }
+        for (std::size_t otherIx = parameterIx + 1; otherIx < parameters.size(); ++otherIx) {
+            if (parameters[otherIx] == nullptr) {
+                throw std::logic_error("bank registration parameter must not be null");
+            }
+            if (parameters[parameterIx]->Name() == parameters[otherIx]->Name()) {
+                throw std::logic_error("duplicate visible parameter name in bank registration");
+            }
+        }
+    }
+
+    for (std::size_t slotIx = offset; slotIx < offset + parameters.size(); ++slotIx) {
+        for (std::size_t otherIx = slotIx + 1; otherIx < offset + parameters.size(); ++otherIx) {
+            if (layout[slotIx] == layout[otherIx]) {
+                throw std::logic_error("duplicate physical slot in bank registration");
+            }
+        }
+    }
+
+    std::vector<Cell> next = topLevel_;
+    for (std::size_t parameterIx = 0; parameterIx < parameters.size(); ++parameterIx) {
+        const PhysicalEncoderId encoderId = layout[offset + parameterIx];
+        bool replaced = false;
+        for (Cell& cell : next) {
+            if (cell.encoderId == encoderId) {
+                cell.parameter = parameters[parameterIx];
+                replaced = true;
+                break;
+            }
+        }
+        if (!replaced) {
+            next.push_back({.encoderId = encoderId, .parameter = parameters[parameterIx]});
+        }
+    }
+
+    topLevel_ = std::move(next);
+    if (!ShowingModulation()) {
+        visible_ = topLevel_;
+    }
+}
+
+std::size_t Bank::SlotCapacity() const {
+    if (slot_ == nullptr) {
+        throw std::logic_error("bank has no associated slot layout");
+    }
+    return slot_->PhysicalEncoders().size();
 }
 
 bool Bank::OwnsVisible(PhysicalEncoderId encoderId) const {
@@ -1093,6 +1336,13 @@ const Bank::Cell* Bank::FindVisibleCell(PhysicalEncoderId encoderId) const {
     return nullptr;
 }
 
+void Bank::AssociateSlot(BankSlot& slot) {
+    if (slot_ != nullptr && slot_ != &slot) {
+        throw std::logic_error("bank is already associated with a different slot");
+    }
+    slot_ = &slot;
+}
+
 Parameter* Bank::EnsureModulationDepthParameter(Parameter& parameter, std::size_t modIx) {
     Parameter* depthParameter = parameter.ModulationDepthParameter(modIx);
     if (depthParameter != nullptr || manager_ == nullptr) {
@@ -1103,19 +1353,17 @@ Parameter* Bank::EnsureModulationDepthParameter(Parameter& parameter, std::size_
     }
 
     const ModulatorMetadata& modulator = parameter.Group().GetModulators().Metadata(modIx);
+    const std::string name = modulator.name.empty()
+                                 ? parameter.Name() + " Mod Depth " + std::to_string(modIx + 1)
+                                 : parameter.Name() + " " + modulator.name;
     ParameterConfig config{
-        .name = modulator.name.empty() ? parameter.Name() + " Mod Depth " + std::to_string(modIx + 1)
-                                       : modulator.name,
+        .name = name,
         .shortName = modulator.shortName.empty() ? parameter.ShortName() : modulator.shortName,
         .defaultValue = 0.0f,
         .range = RangeKind::Bipolar,
         .color = modulator.color,
     };
-    Parameter& created = manager_->CreateParameter(parameter.Group(), std::move(config));
-    if (!parameter.AssignModulationDepth(modIx, &created)) {
-        return nullptr;
-    }
-    return &created;
+    return &parameter.EnsureModulationDepth(modIx, std::move(config));
 }
 
 void Bank::OpenModulationView(Parameter& parameter, std::span<const PhysicalEncoderId> physicalLayout) {
@@ -1154,6 +1402,9 @@ std::vector<PhysicalEncoderId> Bank::CompactPhysicalLayout() const {
 }
 
 void BankSlot::SelectBank(Bank* bank) {
+    if (bank != nullptr) {
+        bank->AssociateSlot(*this);
+    }
     if (selectedBank_ != nullptr && selectedBank_ != bank) {
         selectedBank_->Deselect();
     }
@@ -1165,9 +1416,10 @@ bool BankSlot::Owns(PhysicalEncoderId encoderId) const {
 }
 
 void BankSlot::AddPhysicalEncoder(PhysicalEncoderId encoderId) {
-    if (!OwnsPhysicalEncoder(encoderId)) {
-        physicalEncoders_.push_back(encoderId);
+    if (OwnsPhysicalEncoder(encoderId)) {
+        throw std::logic_error("duplicate physical encoder in bank slot");
     }
+    physicalEncoders_.push_back(encoderId);
 }
 
 void BankSlot::HandlePress(PhysicalEncoderId encoderId) {
@@ -1233,23 +1485,105 @@ ParameterGroup& ParameterManager::CreateGroup(ParameterGroupConfig config) {
     return result;
 }
 
-Parameter& ParameterManager::CreateParameter(ParameterGroup& group, ParameterConfig config) {
+ParameterId ParameterManager::RegisterParameter(ParameterGroup& group, ParameterConfig config) {
+    if (!OwnsGroup(group)) {
+        throw std::logic_error("parameter group is not owned by this manager");
+    }
+    if (config.name.empty()) {
+        throw std::logic_error("parameter name must not be empty");
+    }
+    if (std::find(parameterNames_.begin(), parameterNames_.end(), config.name) != parameterNames_.end()) {
+        throw std::logic_error("duplicate parameter name");
+    }
     if (!group.CanAllocate()) {
         throw std::length_error("parameter group capacity exhausted");
     }
-
-    auto parameter = std::make_unique<Parameter>(NextParameterId(), group, std::move(config), group.parameterCount_);
-    Parameter& result = *parameter;
-    group.parameters_.push_back(std::move(parameter));
-    ++group.parameterCount_;
-    return result;
-}
-
-ParameterId ParameterManager::NextParameterId() {
-    if (nextId_ == std::numeric_limits<ParameterId>::max()) {
+    if (parameters_.size() >= static_cast<std::size_t>(kLocalParameterId)) {
         throw std::overflow_error("parameter ID space exhausted");
     }
-    return nextId_++;
+
+    const ParameterId id = static_cast<ParameterId>(parameters_.size());
+    const std::string name = config.name;
+    Parameter& created = group.CreateLocalParameter(std::move(config), id);
+    Parameter* result = &created;
+    parameters_.push_back(result);
+    parameterNames_.push_back(name);
+    return id;
+}
+
+Parameter& ParameterManager::CreateParameter(ParameterGroup& group, ParameterConfig config) {
+    return ParameterById(RegisterParameter(group, std::move(config)));
+}
+
+Parameter& ParameterManager::ParameterById(ParameterId id) {
+    return *parameters_.at(static_cast<std::size_t>(id));
+}
+
+const Parameter& ParameterManager::ParameterById(ParameterId id) const {
+    return *parameters_.at(static_cast<std::size_t>(id));
+}
+
+float ParameterManager::GetLinear(float minValue, float maxValue, std::size_t voiceIx, ParameterId id) const {
+    const float normalized = std::clamp(ParameterById(id).Get(voiceIx), 0.0f, 1.0f);
+    return LinearMap(minValue, maxValue, normalized);
+}
+
+float ParameterManager::GetExponential(float minValue, float maxValue, std::size_t voiceIx, ParameterId id) const {
+    const float normalized = std::clamp(ParameterById(id).Get(voiceIx), 0.0f, 1.0f);
+    return ExponentialMap(minValue, maxValue, normalized);
+}
+
+float ParameterManager::GetZeroBasedExponential(float maxValue, float midpointValue, std::size_t voiceIx,
+                                                ParameterId id) const {
+    const float normalized = std::clamp(ParameterById(id).Get(voiceIx), 0.0f, 1.0f);
+    return ZeroBasedExponentialMap(maxValue, midpointValue, normalized);
+}
+
+float ParameterManager::GetBipolarLinear(float maxAbsValue, std::size_t voiceIx, ParameterId id) const {
+    if (maxAbsValue < 0.0f) {
+        throw std::invalid_argument("bipolar linear maximum must be non-negative");
+    }
+    const float bipolar = std::clamp(ParameterById(id).Get(voiceIx), 0.0f, 1.0f) * 2.0f - 1.0f;
+    return bipolar * maxAbsValue;
+}
+
+float ParameterManager::GetBipolarExponential(float minAbsValue, float maxAbsValue, std::size_t voiceIx,
+                                              ParameterId id) const {
+    if (minAbsValue <= 0.0f || maxAbsValue <= 0.0f) {
+        throw std::invalid_argument("bipolar exponential endpoints must be positive");
+    }
+    const float bipolar = std::clamp(ParameterById(id).Get(voiceIx), 0.0f, 1.0f) * 2.0f - 1.0f;
+    if (bipolar == 0.0f) {
+        return 0.0f;
+    }
+    const float magnitude = ExponentialMap(minAbsValue, maxAbsValue, std::fabs(bipolar));
+    return std::copysign(magnitude, bipolar);
+}
+
+float ParameterManager::GetBipolarZeroBasedExponential(float maxAbsValue, float midpointAbsValue,
+                                                       std::size_t voiceIx, ParameterId id) const {
+    if (maxAbsValue <= 0.0f || midpointAbsValue <= 0.0f || midpointAbsValue >= maxAbsValue) {
+        throw std::invalid_argument("zero-based exponential mapping requires 0 < midpoint < max");
+    }
+    const float bipolar = std::clamp(ParameterById(id).Get(voiceIx), 0.0f, 1.0f) * 2.0f - 1.0f;
+    if (bipolar == 0.0f) {
+        return 0.0f;
+    }
+    const float magnitude = ZeroBasedExponentialMap(maxAbsValue, midpointAbsValue, std::fabs(bipolar));
+    return std::copysign(magnitude, bipolar);
+}
+
+void ParameterManager::UpdateModValues(ParameterGroup& group) {
+    if (!OwnsGroup(group)) {
+        throw std::logic_error("parameter group is not owned by this manager");
+    }
+    group.UpdateModValues();
+}
+
+void ParameterManager::UpdateModValues() {
+    for (const std::unique_ptr<ParameterGroup>& group : groups_) {
+        group->UpdateModValues();
+    }
 }
 
 bool ParameterManager::SceneEndpointsValid(std::size_t leftScene, std::size_t rightScene) const {
@@ -1259,6 +1593,11 @@ bool ParameterManager::SceneEndpointsValid(std::size_t leftScene, std::size_t ri
         }
     }
     return true;
+}
+
+bool ParameterManager::OwnsGroup(const ParameterGroup& group) const {
+    return std::any_of(groups_.begin(), groups_.end(),
+                       [&group](const std::unique_ptr<ParameterGroup>& owned) { return owned.get() == &group; });
 }
 
 bool ParameterManager::SetSceneEndpoints(std::size_t leftScene, std::size_t rightScene) {

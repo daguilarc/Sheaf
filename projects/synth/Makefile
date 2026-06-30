@@ -6,8 +6,9 @@ BUILD_SENTINEL := $(BUILD_DIR)/.dir
 LIB := $(BUILD_DIR)/libsynth.a
 TEST_BIN := $(BUILD_DIR)/parameter_modulation_tests
 DSP_TEST_BIN := $(BUILD_DIR)/dsp_tests
-SRC := src/ParameterModulation.cpp src/MidiController.cpp src/DspWavetable.cpp
-OBJ := $(BUILD_DIR)/ParameterModulation.o $(BUILD_DIR)/MidiController.o $(BUILD_DIR)/DspWavetable.o
+MODULE_TEST_BIN := $(BUILD_DIR)/module_tests
+SRC := src/ParameterModulation.cpp src/MidiController.cpp src/DspWavetable.cpp src/Modules.cpp
+OBJ := $(BUILD_DIR)/ParameterModulation.o $(BUILD_DIR)/MidiController.o $(BUILD_DIR)/DspWavetable.o $(BUILD_DIR)/Modules.o
 DSP_HEADERS := include/synth/DspMath.hpp include/synth/DspNumbers.hpp include/synth/DspTransferFunction.hpp include/synth/DspFilters.hpp include/synth/DspScope.hpp include/synth/DspWavetable.hpp include/synth/DspOscillators.hpp
 MINIAPP_DIR := miniapp
 MINIAPP_MAKEFILE := $(MINIAPP_DIR)/Makefile
@@ -31,6 +32,9 @@ $(BUILD_DIR)/MidiController.o: src/MidiController.cpp include/synth/MidiControll
 $(BUILD_DIR)/DspWavetable.o: src/DspWavetable.cpp $(DSP_HEADERS) | $(BUILD_SENTINEL)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
 
+$(BUILD_DIR)/Modules.o: src/Modules.cpp include/synth/Modules.hpp include/synth/ParameterModulation.hpp $(DSP_HEADERS) | $(BUILD_SENTINEL)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
+
 $(LIB): $(OBJ)
 	ar rcs $@ $^
 
@@ -40,9 +44,13 @@ $(TEST_BIN): tests/parameter_modulation_tests.cpp $(LIB)
 $(DSP_TEST_BIN): tests/dsp_tests.cpp $(LIB) $(DSP_HEADERS)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< $(LIB) -o $@
 
-test: $(TEST_BIN) $(DSP_TEST_BIN)
+$(MODULE_TEST_BIN): tests/module_tests.cpp $(LIB) include/synth/Modules.hpp
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< $(LIB) -o $@
+
+test: $(TEST_BIN) $(DSP_TEST_BIN) $(MODULE_TEST_BIN)
 	$(TEST_BIN)
 	$(DSP_TEST_BIN)
+	$(MODULE_TEST_BIN)
 
 miniapp:
 	$(MAKE) -C $(MINIAPP_DIR)
