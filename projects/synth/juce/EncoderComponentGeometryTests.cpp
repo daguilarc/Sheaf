@@ -1,4 +1,5 @@
 #include "EncoderComponent.hpp"
+#include "MidiHandlers.hpp"
 #include "PathDrawer.hpp"
 
 #include <cmath>
@@ -59,6 +60,16 @@ int main() {
                 "scope transfer breaks once");
     RequireTrue(!synth_juce::PathDrawer::ScopePointCrossesTransfer(synth_juce::PathDrawer::kNumPoints - 1, 10, 10.0),
                 "full-span transfer does not split path");
+
+    synth_juce::MidiInHandler midiIn;
+    if (midiIn.Open("__sheaf_missing_midi_input__") || midiIn.IsOpen()) {
+        throw std::runtime_error("missing MIDI input identifier should leave handler closed");
+    }
+
+    synth_juce::MidiOutputHandler midiOut;
+    if (midiOut.Open("__sheaf_missing_midi_output__") || midiOut.IsOpen()) {
+        throw std::runtime_error("missing MIDI output identifier should leave handler closed");
+    }
 
     std::cout << "Encoder geometry tests passed\n";
     return 0;

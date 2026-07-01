@@ -1,5 +1,7 @@
 #include "synth/MidiController.hpp"
+#include "synth/Json.hpp"
 #include "synth/ParameterModulation.hpp"
+#include "synth/PatchPersistence.hpp"
 
 #ifdef JUCE_MAJOR_VERSION
 #error "synth core tests must not see JUCE headers"
@@ -12,6 +14,8 @@
 #include <cmath>
 #include <cstdlib>
 #include <exception>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <mutex>
 #include <optional>
@@ -70,6 +74,61 @@ void RequireNear(float actual, float expected, float tolerance, const char* expr
 TEST_CASE(smoke_clamps_ranges) {
     REQUIRE_NEAR(synth::ClampToRange(2.0f, synth::RangeKind::Unipolar), 1.0f, 0.0001f);
     REQUIRE_NEAR(synth::ClampToRange(-2.0f, synth::RangeKind::Bipolar), -1.0f, 0.0001f);
+}
+
+TEST_CASE(json_arena_build_parse_dump_and_grow_retry) {
+    synth::JsonArena arena(1024);
+    synth::JSON root = arena.Object();
+    root.SetNew("name", arena.String("Patch A"));
+    root.SetNew("version", arena.Integer(1));
+    synth::JSON values = arena.Array();
+    values.AppendNew(arena.Real(0.25));
+    values.AppendNew(arena.Boolean(true));
+    root.SetNew("values", values);
+    REQUIRE_TRUE(!arena.Failed());
+
+    char* dumped = root.Dumps(JSON_ENCODE_ANY);
+    REQUIRE_TRUE(dumped != nullptr);
+
+    synth::JsonArena parsedArena(16);
+    synth::JSON parsed = parsedArena.Loads(dumped);
+    bool grew = false;
+    while (parsed.IsNull() && parsedArena.Failed()) {
+        grew = true;
+        parsedArena.GrowAndReset();
+        parsed = parsedArena.Loads(dumped);
+    }
+    free(dumped);
+
+    REQUIRE_TRUE(grew);
+    REQUIRE_TRUE(!parsed.IsNull());
+    REQUIRE_TRUE(std::string(parsed.Get("name").StringValue()) == "Patch A");
+    REQUIRE_TRUE(parsed.Get("version").IntegerValue() == 1);
+    REQUIRE_NEAR(static_cast<float>(parsed.Get("values").GetAt(0).NumberValue()), 0.25f, 0.000001f);
+    REQUIRE_TRUE(parsed.Get("values").GetAt(1).BooleanValue());
+
+    synth::JSON missing = parsed.Get("missing");
+    REQUIRE_TRUE(missing.IsNull());
+    REQUIRE_TRUE(missing.StringValue() == nullptr);
+    REQUIRE_TRUE(missing.IntegerValue() == 0);
+    REQUIRE_TRUE(missing.NumberValue() == 0.0);
+    REQUIRE_TRUE(!missing.BooleanValue());
+    REQUIRE_TRUE(missing.Size() == 0);
+
+    synth::JsonArena nullArena(64);
+    synth::JSON parsedNull = nullArena.Loads("null");
+    REQUIRE_TRUE(parsedNull.IsNull());
+    REQUIRE_TRUE(!nullArena.Failed());
+
+    synth::JsonArena integerArena(128);
+    synth::JSON largeInteger = integerArena.Loads("922337203685477580");
+    REQUIRE_TRUE(!largeInteger.IsNull());
+    REQUIRE_TRUE(largeInteger.IntegerValue() == 922337203685477580LL);
+
+    synth::JsonArena malformedUnicodeArena(256);
+    synth::JSON malformedUnicode = malformedUnicodeArena.Loads("\"\\uD800\"");
+    REQUIRE_TRUE(malformedUnicode.IsNull());
+    REQUIRE_TRUE(!malformedUnicodeArena.Failed());
 }
 
 TEST_CASE(group_config_validation) {
@@ -1805,7 +1864,7 @@ TEST_CASE(modulation_view_rejects_more_modulators_than_slot_depth_positions) {
     REQUIRE_TRUE(!bank.ShowingModulation());
 }
 
-TEST_CASE(modulation_view_materializes_missing_depth_parameter_when_capacity_allows) {
+TEST_CASE(modulation_view_open_is_noop_when_capacity_cannot_fill_all_modulators) {
     synth::ParameterManager manager;
     manager.SetGestureCount(2);
     auto& group = manager.CreateGroup({
@@ -1830,9 +1889,91 @@ TEST_CASE(modulation_view_materializes_missing_depth_parameter_when_capacity_all
 
     slot.HandlePress(1);
 
+    REQUIRE_TRUE(!bank.ShowingModulation());
+    REQUIRE_TRUE(group.ParameterCount() == 2);
+    REQUIRE_TRUE(manager.ParameterCount() == 2);
+    REQUIRE_TRUE(carrier.ModulationDepthParameter(0) == nullptr);
+    REQUIRE_TRUE(carrier.ModulationDepthParameter(1) == nullptr);
+    REQUIRE_TRUE(bank.VisibleParameter(1) == &carrier);
+    REQUIRE_TRUE(bank.VisibleParameter(2) == &filler);
+    REQUIRE_TRUE(bank.VisibleParameter(3) == nullptr);
+}
+
+TEST_CASE(modulation_view_requests_storage_batch_and_succeeds_after_reinforcement) {
+    synth::ParameterMessageOutBus outputBus(4);
+    synth::ParameterManager manager;
+    manager.SetParameterMessageOutBus(&outputBus);
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 2,
+        .numScenes = 1,
+        .maxParameters = 2,
+    });
+    auto& carrier = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.5f});
+    auto& filler = manager.CreateParameter(group, {.name = "Filler", .defaultValue = 0.25f});
+    auto& bank = manager.CreateBank();
+    bank.AddMapping(1, carrier);
+    bank.AddMapping(2, filler);
+    auto& slot = manager.CreateBankSlot();
+    slot.AddPhysicalEncoder(1);
+    slot.AddPhysicalEncoder(2);
+    slot.AddPhysicalEncoder(3);
+    slot.SelectBank(&bank);
+
+    slot.HandlePress(1);
+
+    REQUIRE_TRUE(!bank.ShowingModulation());
+    REQUIRE_TRUE(carrier.ModulationDepthParameter(0) == nullptr);
+    REQUIRE_TRUE(carrier.ModulationDepthParameter(1) == nullptr);
+    synth::ParameterMessageOut request;
+    REQUIRE_TRUE(outputBus.Pop(request));
+    REQUIRE_TRUE(request.type == synth::ParameterMessageOut::Type::ParameterStorageBatchNeeded);
+    REQUIRE_TRUE(request.group == &group);
+    REQUIRE_TRUE(request.minimumAdditionalParameters >= 2);
+    REQUIRE_TRUE(request.requestedParameters >= group.Config().numModulators * 2);
+
+    group.AddParameterStorageBatch(synth::MakeParameterStorageBatch(group.Config(), group.GestureCount(),
+                                                                    request.requestedParameters));
+    slot.HandlePress(1);
+
+    REQUIRE_TRUE(bank.ShowingModulation());
+    REQUIRE_TRUE(carrier.ModulationDepthParameter(0) != nullptr);
+    REQUIRE_TRUE(carrier.ModulationDepthParameter(1) != nullptr);
+    REQUIRE_TRUE(bank.VisibleParameter(1) == carrier.ModulationDepthParameter(0));
+    REQUIRE_TRUE(bank.VisibleParameter(2) == carrier.ModulationDepthParameter(1));
+    REQUIRE_TRUE(bank.VisibleParameter(3) == &carrier);
+}
+
+TEST_CASE(modulation_view_materializes_all_missing_depth_parameters_when_capacity_allows) {
+    synth::ParameterManager manager;
+    manager.SetGestureCount(2);
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 2,
+        .numScenes = 1,
+        .maxParameters = 4,
+    });
+    auto& carrier = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.5f});
+    auto& filler = manager.CreateParameter(group, {.name = "Filler", .defaultValue = 0.25f});
+    group.GetModulators().Metadata(0).name = "Filter Env";
+    group.GetModulators().Metadata(0).shortName = "Env";
+    group.GetModulators().Metadata(0).color = synth::Color::Cyan;
+    auto& bank = manager.CreateBank();
+    bank.AddMapping(1, carrier);
+    bank.AddMapping(2, filler);
+    auto& slot = manager.CreateBankSlot();
+    slot.AddPhysicalEncoder(1);
+    slot.AddPhysicalEncoder(2);
+    slot.AddPhysicalEncoder(3);
+    slot.SelectBank(&bank);
+
+    slot.HandlePress(1);
+
     synth::Parameter* depth = carrier.ModulationDepthParameter(0);
+    synth::Parameter* secondDepth = carrier.ModulationDepthParameter(1);
     REQUIRE_TRUE(depth != nullptr);
-    REQUIRE_TRUE(group.ParameterCount() == 3);
+    REQUIRE_TRUE(secondDepth != nullptr);
+    REQUIRE_TRUE(group.ParameterCount() == 4);
     REQUIRE_TRUE(manager.ParameterCount() == 2);
     REQUIRE_TRUE(depth->Name() == "Carrier Filter Env");
     REQUIRE_TRUE(depth->ShortName() == "Env");
@@ -1840,7 +1981,7 @@ TEST_CASE(modulation_view_materializes_missing_depth_parameter_when_capacity_all
     REQUIRE_TRUE(depth->Range() == synth::RangeKind::Bipolar);
     REQUIRE_NEAR(depth->SceneCenter(0), 0.0f, 0.0001f);
     REQUIRE_TRUE(bank.VisibleParameter(1) == depth);
-    REQUIRE_TRUE(bank.VisibleParameter(2) == nullptr);
+    REQUIRE_TRUE(bank.VisibleParameter(2) == secondDepth);
     REQUIRE_TRUE(bank.VisibleParameter(3) == &carrier);
     REQUIRE_TRUE(bank.TargetParameter() == &carrier);
 
@@ -3685,12 +3826,17 @@ void SimProcessLiteAll(SimOracle& oracle) {
 }
 
 void SimOpenModulationView(SimOracle& oracle, SimBank& bank, int paramIx) {
-    bank.selectedParameter = paramIx;
-    bank.visible.clear();
-
     if (kSimMods > kSimSlotEncoders.size() - 1) {
         throw std::logic_error("simulation slot has too many modulators");
     }
+    for (std::size_t cellIx = 0; cellIx < kSimMods; ++cellIx) {
+        if (oracle.params[static_cast<std::size_t>(paramIx)].route[cellIx] < 0) {
+            return;
+        }
+    }
+
+    bank.selectedParameter = paramIx;
+    bank.visible.clear();
 
     for (std::size_t cellIx = 0; cellIx < kSimMods; ++cellIx) {
         bank.visible.push_back({
@@ -3918,9 +4064,13 @@ std::vector<unsigned> SimSeedsFromEnvironment() {
     return seeds.empty() ? std::vector<unsigned>{0x51A7u} : seeds;
 }
 
-int SimStepsFromEnvironment() {
+int SimStepsFromEnvironmentOrDefault(int defaultSteps) {
     const char* env = std::getenv("SYNTH_RANDOM_STEPS");
-    return env == nullptr || *env == '\0' ? 160 : std::max(1, std::atoi(env));
+    return env == nullptr || *env == '\0' ? std::max(1, defaultSteps) : std::max(1, std::atoi(env));
+}
+
+int SimStepsFromEnvironment() {
+    return SimStepsFromEnvironmentOrDefault(160);
 }
 
 void SimFail(unsigned seed, int step, const std::string& action, const std::string& field, float expected, float actual) {
@@ -3958,7 +4108,11 @@ void SimCheck(const SimOracle& oracle, const std::array<synth::Parameter*, kSimP
     }
     for (std::size_t gestureIx = 0; gestureIx < kSimGestures; ++gestureIx) {
         if (group.GestureSelected(gestureIx) != oracle.gestureSelected[gestureIx]) {
-            SimFailBool(seed, step, action, "group gestureIx=" + std::to_string(gestureIx) + " selected");
+            std::ostringstream oss;
+            oss << "seed " << seed << " step " << step << " action " << action << " group gestureIx=" << gestureIx
+                << " selected expected " << oracle.gestureSelected[gestureIx] << " got "
+                << group.GestureSelected(gestureIx);
+            throw std::runtime_error(oss.str());
         }
         SimCheckNear(seed, step, action, "group gestureIx=" + std::to_string(gestureIx) + " weight",
                      oracle.gestureWeight[gestureIx], manager.GestureValue(gestureIx));
@@ -4204,6 +4358,68 @@ void SimSetLessSelectedScene(SimOracle& oracle, std::size_t sceneIx) {
     }
 }
 
+void SimSnapAllToTarget(SimOracle& oracle) {
+    for (auto& parameter : oracle.params) {
+        parameter.currentCenter = parameter.targetCenter;
+        parameter.currentCenterScale = parameter.targetCenterScale;
+        parameter.currentNormalizationOffset = parameter.targetNormalizationOffset;
+        parameter.currentMinValue = parameter.targetMinValue;
+        parameter.currentMaxValue = parameter.targetMaxValue;
+        parameter.currentDepth = parameter.targetDepth;
+    }
+}
+
+void SimComputeAllAndSnap(SimOracle& oracle) {
+    SimComputeAll(oracle);
+    SimSnapAllToTarget(oracle);
+}
+
+struct SimPatchSnapshot {
+    std::array<SimParam, kSimParams> params;
+};
+
+SimPatchSnapshot SimCapturePatchSnapshot(const SimOracle& oracle) {
+    return {.params = oracle.params};
+}
+
+void SimApplyPatchSnapshot(SimOracle& oracle, const SimPatchSnapshot& snapshot) {
+    for (std::size_t paramIx = 0; paramIx < kSimParams; ++paramIx) {
+        SimParam& target = oracle.params[paramIx];
+        const SimParam& saved = snapshot.params[paramIx];
+        target.sceneCenter = saved.sceneCenter;
+        target.gestureValue = saved.gestureValue;
+        target.gestureActive = saved.gestureActive;
+    }
+    SimComputeAllAndSnap(oracle);
+}
+
+void SimApplyNewPatch(SimOracle& oracle) {
+    const auto banks = oracle.banks;
+    const int selectedBank = oracle.selectedBank;
+    const auto modulatorValue = oracle.modulatorValue;
+    SimInitializeOracle(oracle);
+    oracle.banks = banks;
+    oracle.selectedBank = selectedBank;
+    oracle.modulatorValue = modulatorValue;
+    oracle.scene = {.leftScene = 0, .rightScene = 1, .blend = 0.25f};
+    oracle.activePage = 0;
+    oracle.gestureWeight.fill(0.0f);
+    oracle.gestureSelected.fill(false);
+    SimComputeAllAndSnap(oracle);
+}
+
+std::size_t SimFindLatestPatchInDirectory(
+    const std::vector<std::pair<std::filesystem::path, SimPatchSnapshot>>& versions,
+    const std::filesystem::path& patchDir) {
+    for (std::size_t reverseIx = versions.size(); reverseIx > 0; --reverseIx) {
+        const std::size_t ix = reverseIx - 1;
+        if (versions[ix].first.parent_path() == patchDir) {
+            return ix;
+        }
+    }
+    throw std::runtime_error("saved patch directory not found: " + patchDir.string());
+}
+
 } // namespace
 
 TEST_CASE(randomized_parameter_modulation_simulation) {
@@ -4409,7 +4625,7 @@ TEST_CASE(randomized_parameter_modulation_simulation) {
 
 TEST_CASE(randomized_message_bus_ui_state_simulation) {
     const std::vector<unsigned> seeds = SimSeedsFromEnvironment();
-    const int steps = std::min(SimStepsFromEnvironment(), 250);
+    const int steps = SimStepsFromEnvironmentOrDefault(250);
 
     for (const unsigned seed : seeds) {
         synth::ParameterManager manager;
@@ -4606,6 +4822,1956 @@ TEST_CASE(randomized_message_bus_ui_state_simulation) {
             }
         }
     }
+}
+
+TEST_CASE(randomized_patch_lifecycle_simulation) {
+    const std::vector<unsigned> seeds = SimSeedsFromEnvironment();
+    const int steps = SimStepsFromEnvironmentOrDefault(260);
+
+    for (const unsigned seed : seeds) {
+        const std::filesystem::path tempRoot =
+            std::filesystem::temp_directory_path() / ("sheaf-synth-patch-random-" + std::to_string(seed));
+        std::filesystem::remove_all(tempRoot);
+        std::filesystem::create_directories(tempRoot);
+
+        synth::ParameterManager manager;
+        manager.SetGestureCount(kSimGestures);
+        auto& group = manager.CreateGroup({
+            .numVoices = kSimVoices,
+            .numModulators = kSimMods,
+            .numScenes = kSimScenes,
+            .maxParameters = kSimParams,
+            .processLiteAlpha = 0.25f,
+        });
+        auto& carrier = manager.CreateParameter(group, {
+            .name = "Carrier",
+            .defaultValue = 0.35f,
+            .switchValues = 5,
+        });
+        auto& depthA = manager.CreateParameter(
+            group, {.name = "DepthA", .defaultValue = 0.1f, .range = synth::RangeKind::Bipolar});
+        auto& depthB = manager.CreateParameter(
+            group, {
+                .name = "DepthB",
+                .defaultValue = -0.2f,
+                .range = synth::RangeKind::Bipolar,
+                .switchValues = 3,
+            });
+        REQUIRE_TRUE(carrier.AssignModulationDepth(0, &depthA));
+        REQUIRE_TRUE(carrier.AssignModulationDepth(1, &depthB));
+        REQUIRE_TRUE(depthA.AssignModulationDepth(0, &depthB));
+        REQUIRE_TRUE(manager.SetSceneEndpoints(0, 1));
+        manager.SetSceneBlend(0.25f);
+
+        auto& pageA = manager.CreatePage("A");
+        auto& pageB = manager.CreatePage("B");
+        manager.AssignParameterToPage(pageA.ordinal, carrier);
+        manager.AssignParameterToPage(pageB.ordinal, depthA);
+        manager.SelectActivePage(pageA.ordinal);
+
+        auto& bankA = manager.CreateBank();
+        bankA.AddMapping(10, carrier);
+        bankA.AddMapping(11, depthA);
+        bankA.AddMapping(12, depthB);
+        auto& bankB = manager.CreateBank();
+        bankB.AddMapping(20, depthB);
+        bankB.AddMapping(21, carrier);
+        auto& slot = manager.CreateBankSlot();
+        for (const synth::PhysicalEncoderId encoder : {10u, 11u, 12u, 20u, 21u}) {
+            slot.AddPhysicalEncoder(encoder);
+        }
+        slot.SelectBank(&bankA);
+        manager.CaptureDefaultControlState();
+
+        synth::WrldBldrDefaultProfileOptions midiOptions;
+        midiOptions.visibleEncoderCount = 5;
+        midiOptions.sceneCount = kSimScenes;
+        midiOptions.bankButtonCount = 2;
+        midiOptions.gestureSelectorCount = kSimGestures;
+        const synth::MidiControllerProfileConfig defaultProfile = synth::WrldBldrDefaultProfileConfig(midiOptions);
+        synth::MidiControllerProfileConfig profile = defaultProfile;
+        synth::MidiEndpointState defaultEndpoints;
+        synth::MidiEndpointState endpoints;
+        synth::PatchMessageInBus inputBus(32);
+        synth::MessageOutBus outputBus(32);
+        synth::PatchManager patchManager(&inputBus, &outputBus);
+
+        SimOracle oracle;
+        SimInitializeOracle(oracle);
+        const std::array<synth::Parameter*, kSimParams> params{&carrier, &depthA, &depthB};
+        const std::array<synth::Bank*, 2> banks{&bankA, &bankB};
+        const std::array<synth::PhysicalEncoderId, 6> encoders{10, 11, 12, 20, 21, 99};
+        std::vector<std::pair<std::filesystem::path, SimPatchSnapshot>> savedVersions;
+        std::optional<std::filesystem::path> expectedCurrentPatchDir;
+        std::mt19937 rng(seed ^ 0x9A7C4u);
+        std::uniform_real_distribution<float> deltaDist(-0.24f, 0.24f);
+        std::uniform_real_distribution<float> bipolarDist(-1.0f, 1.0f);
+        std::uniform_real_distribution<float> unipolarDist(0.0f, 1.0f);
+        int patchNameCounter = 0;
+        int writeCounter = 0;
+
+        auto processPatchMessages = [&] {
+            synth::PatchMessageIn message;
+            while (inputBus.Pop(message)) {
+                const synth::PatchApplyStatus status =
+                    synth::ApplyPatchMessage(message, manager, profile, defaultProfile,
+                                             endpoints, defaultEndpoints, outputBus);
+                REQUIRE_TRUE(status == synth::PatchApplyStatus::Applied ||
+                             status == synth::PatchApplyStatus::Reverted ||
+                             status == synth::PatchApplyStatus::Serialized);
+            }
+        };
+
+        auto completePendingSave = [&](const SimPatchSnapshot& snapshot) {
+            processPatchMessages();
+            const auto now = std::chrono::system_clock::from_time_t(1700001000 + writeCounter++);
+            const synth::PatchCommandResult completion = patchManager.ProcessResponses(now);
+            REQUIRE_TRUE(completion.status == synth::PatchCommandStatus::Written);
+            savedVersions.push_back({completion.path, snapshot});
+            expectedCurrentPatchDir = completion.path.parent_path();
+            REQUIRE_TRUE(patchManager.CurrentPatchDirectory().has_value());
+            REQUIRE_TRUE(*patchManager.CurrentPatchDirectory() == *expectedCurrentPatchDir);
+            return completion.path;
+        };
+
+        auto saveAsCurrentOracle = [&] {
+            const std::filesystem::path patchDir = tempRoot / ("Patch-" + std::to_string(patchNameCounter++));
+            const SimPatchSnapshot snapshot = SimCapturePatchSnapshot(oracle);
+            const synth::PatchCommandResult result = patchManager.SavePatchAs(patchDir);
+            REQUIRE_TRUE(result.status == synth::PatchCommandStatus::Pending);
+            completePendingSave(snapshot);
+        };
+
+        auto saveCurrentOracle = [&] {
+            if (!expectedCurrentPatchDir.has_value()) {
+                saveAsCurrentOracle();
+                return;
+            }
+            const SimPatchSnapshot snapshot = SimCapturePatchSnapshot(oracle);
+            const synth::PatchCommandResult result = patchManager.SavePatch();
+            REQUIRE_TRUE(result.status == synth::PatchCommandStatus::Pending);
+            completePendingSave(snapshot);
+        };
+
+        auto loadPatchPath = [&](const std::filesystem::path& path, const SimPatchSnapshot& snapshot,
+                                const std::filesystem::path& expectedDir) {
+            const synth::PatchCommandResult result = patchManager.LoadPatch(path);
+            REQUIRE_TRUE(result.status == synth::PatchCommandStatus::Ok);
+            processPatchMessages();
+            SimApplyPatchSnapshot(oracle, snapshot);
+            expectedCurrentPatchDir = expectedDir;
+            REQUIRE_TRUE(patchManager.CurrentPatchDirectory().has_value());
+            REQUIRE_TRUE(*patchManager.CurrentPatchDirectory() == expectedDir);
+        };
+
+        saveAsCurrentOracle();
+        SimCheck(oracle, params, banks, group, slot, manager, seed, -1, "initial patch save");
+
+        for (int step = 0; step < steps; ++step) {
+            std::string action;
+            switch (rng() % 22) {
+            case 0:
+            case 1:
+            case 2: {
+                const auto encoder = encoders[rng() % encoders.size()];
+                const float delta = deltaDist(rng);
+                action = "patch turn encoder " + std::to_string(encoder);
+                manager.HandleTick(encoder, delta);
+                SimHandleTick(oracle, encoder, delta);
+                break;
+            }
+            case 3: {
+                const auto encoder = encoders[rng() % encoders.size()];
+                action = "patch press encoder " + std::to_string(encoder);
+                manager.HandlePress(encoder);
+                SimHandlePress(oracle, encoder);
+                break;
+            }
+            case 4: {
+                const auto encoder = encoders[rng() % encoders.size()];
+                action = "patch shift press " + std::to_string(encoder);
+                manager.HandleShiftPress(encoder);
+                SimHandleShiftPress(oracle, encoder);
+                break;
+            }
+            case 5: {
+                const std::size_t gestureIx = rng() % kSimGestures;
+                action = "patch select gesture " + std::to_string(gestureIx);
+                manager.SelectGesture(gestureIx);
+                oracle.gestureSelected[gestureIx] = true;
+                break;
+            }
+            case 6: {
+                const std::size_t gestureIx = rng() % kSimGestures;
+                action = "patch deselect gesture " + std::to_string(gestureIx);
+                manager.DeselectGesture(gestureIx);
+                oracle.gestureSelected[gestureIx] = false;
+                break;
+            }
+            case 7: {
+                const std::size_t gestureIx = rng() % kSimGestures;
+                const float value = unipolarDist(rng);
+                action = "patch set gesture value " + std::to_string(gestureIx);
+                manager.SetGestureValue(gestureIx, value);
+                oracle.gestureWeight[gestureIx] = value;
+                break;
+            }
+            case 8: {
+                const int bankIx = static_cast<int>(rng() % 2);
+                action = "patch select bank " + std::to_string(bankIx);
+                slot.SelectBank(banks[static_cast<std::size_t>(bankIx)]);
+                SimSelectBank(oracle, bankIx);
+                break;
+            }
+            case 9: {
+                const std::size_t sceneIx = rng() % kSimScenes;
+                action = "patch scene";
+                REQUIRE_TRUE(manager.SetLessSelectedScene(sceneIx));
+                SimSetLessSelectedScene(oracle, sceneIx);
+                break;
+            }
+            case 10: {
+                const float blend = unipolarDist(rng);
+                action = "patch blend";
+                manager.SetSceneBlend(blend);
+                oracle.scene.blend = blend;
+                break;
+            }
+            case 11: {
+                const std::size_t voiceIx = rng() % kSimVoices;
+                const std::size_t modIx = rng() % kSimMods;
+                const float value = bipolarDist(rng);
+                action = "patch modulator";
+                group.GetModulators().Value(voiceIx, modIx) = value;
+                oracle.modulatorValue[voiceIx][modIx] = value;
+                break;
+            }
+            case 12:
+                action = "patch compute";
+                for (synth::Parameter* parameter : params) {
+                    parameter->Compute(manager.Scene());
+                }
+                SimComputeAll(oracle);
+                break;
+            case 13:
+                action = "patch process lite";
+                for (synth::Parameter* parameter : params) {
+                    parameter->ProcessLite();
+                }
+                SimProcessLiteAll(oracle);
+                break;
+            case 14: {
+                const std::size_t gestureIx = rng() % kSimGestures;
+                action = "patch clear active gesture " + std::to_string(gestureIx);
+                manager.ClearGestureActiveFlagsForActiveSceneSelection(gestureIx);
+                const float blend = std::clamp(oracle.scene.blend, 0.0f, 1.0f);
+                for (auto& parameter : oracle.params) {
+                    if (blend <= 0.0f) {
+                        parameter.gestureActive[oracle.scene.leftScene][gestureIx] = false;
+                    } else if (blend >= 1.0f) {
+                        parameter.gestureActive[oracle.scene.rightScene][gestureIx] = false;
+                    } else {
+                        parameter.gestureActive[oracle.scene.leftScene][gestureIx] = false;
+                        if (oracle.scene.rightScene != oracle.scene.leftScene) {
+                            parameter.gestureActive[oracle.scene.rightScene][gestureIx] = false;
+                        }
+                    }
+                }
+                break;
+            }
+            case 15:
+            case 16:
+                action = "patch save";
+                saveCurrentOracle();
+                break;
+            case 17:
+                action = "patch save as";
+                saveAsCurrentOracle();
+                break;
+            case 18: {
+                action = "patch load directory";
+                const std::size_t versionIx = rng() % savedVersions.size();
+                const std::filesystem::path dir = savedVersions[versionIx].first.parent_path();
+                const std::size_t latestIx = SimFindLatestPatchInDirectory(savedVersions, dir);
+                loadPatchPath(dir, savedVersions[latestIx].second, dir);
+                break;
+            }
+            case 19: {
+                action = "patch load version";
+                const std::size_t versionIx = rng() % savedVersions.size();
+                const auto& [path, snapshot] = savedVersions[versionIx];
+                loadPatchPath(path, snapshot, path.parent_path());
+                break;
+            }
+            case 20:
+                action = "patch revert";
+                if (!expectedCurrentPatchDir.has_value()) {
+                    REQUIRE_TRUE(patchManager.RevertPatch().status == synth::PatchCommandStatus::Ok);
+                    processPatchMessages();
+                    SimApplyNewPatch(oracle);
+                } else {
+                    const std::size_t latestIx = SimFindLatestPatchInDirectory(savedVersions, *expectedCurrentPatchDir);
+                    REQUIRE_TRUE(patchManager.RevertPatch().status == synth::PatchCommandStatus::Ok);
+                    processPatchMessages();
+                    SimApplyPatchSnapshot(oracle, savedVersions[latestIx].second);
+                }
+                break;
+            default:
+                action = "patch new";
+                REQUIRE_TRUE(patchManager.NewPatch().status == synth::PatchCommandStatus::Ok);
+                processPatchMessages();
+                expectedCurrentPatchDir.reset();
+                SimApplyNewPatch(oracle);
+                REQUIRE_TRUE(!patchManager.CurrentPatchDirectory().has_value());
+                break;
+            }
+
+            SimCheck(oracle, params, banks, group, slot, manager, seed, step, action);
+        }
+
+        std::filesystem::remove_all(tempRoot);
+    }
+}
+
+TEST_CASE(randomized_patch_lifecycle_preserves_recursive_local_modulation_depths) {
+    struct ParamValueSnapshot {
+        std::array<float, kSimScenes> sceneCenter{};
+        std::array<std::array<float, kSimGestures>, kSimScenes> gestureValue{};
+        std::array<std::array<bool, kSimGestures>, kSimScenes> gestureActive{};
+    };
+
+    struct RecursivePatchSnapshot {
+        std::vector<ParamValueSnapshot> values;
+    };
+
+    auto captureValues = [](const std::vector<synth::Parameter*>& parameters) {
+        RecursivePatchSnapshot snapshot;
+        snapshot.values.resize(parameters.size());
+        for (std::size_t paramIx = 0; paramIx < parameters.size(); ++paramIx) {
+            for (std::size_t sceneIx = 0; sceneIx < kSimScenes; ++sceneIx) {
+                snapshot.values[paramIx].sceneCenter[sceneIx] = parameters[paramIx]->SceneCenter(sceneIx);
+                for (std::size_t gestureIx = 0; gestureIx < kSimGestures; ++gestureIx) {
+                    snapshot.values[paramIx].gestureValue[sceneIx][gestureIx] =
+                        parameters[paramIx]->GestureValue(sceneIx, gestureIx);
+                    snapshot.values[paramIx].gestureActive[sceneIx][gestureIx] =
+                        parameters[paramIx]->GestureActive(sceneIx, gestureIx);
+                }
+            }
+        }
+        return snapshot;
+    };
+
+    auto checkValues = [](const std::vector<synth::Parameter*>& parameters, const RecursivePatchSnapshot& expected,
+                          unsigned seed, int step, const std::string& action) {
+        for (std::size_t paramIx = 0; paramIx < parameters.size(); ++paramIx) {
+            for (std::size_t sceneIx = 0; sceneIx < kSimScenes; ++sceneIx) {
+                SimCheckNear(seed, step, action,
+                             "recursive paramIx=" + std::to_string(paramIx) + " sceneIx=" +
+                                 std::to_string(sceneIx) + " center",
+                             expected.values[paramIx].sceneCenter[sceneIx],
+                             parameters[paramIx]->SceneCenter(sceneIx));
+                for (std::size_t gestureIx = 0; gestureIx < kSimGestures; ++gestureIx) {
+                    const std::string field = "recursive paramIx=" + std::to_string(paramIx) + " sceneIx=" +
+                                              std::to_string(sceneIx) + " gestureIx=" +
+                                              std::to_string(gestureIx);
+                    SimCheckNear(seed, step, action, field + " value",
+                                 expected.values[paramIx].gestureValue[sceneIx][gestureIx],
+                                 parameters[paramIx]->GestureValue(sceneIx, gestureIx));
+                    if (expected.values[paramIx].gestureActive[sceneIx][gestureIx] !=
+                        parameters[paramIx]->GestureActive(sceneIx, gestureIx)) {
+                        SimFailBool(seed, step, action, field + " active");
+                    }
+                }
+            }
+        }
+    };
+
+    auto findLatestRecursive = [](const std::vector<std::pair<std::filesystem::path, RecursivePatchSnapshot>>& versions,
+                                  const std::filesystem::path& patchDir) {
+        for (std::size_t reverseIx = versions.size(); reverseIx > 0; --reverseIx) {
+            const std::size_t ix = reverseIx - 1;
+            if (versions[ix].first.parent_path() == patchDir) {
+                return ix;
+            }
+        }
+        throw std::runtime_error("recursive patch directory not found: " + patchDir.string());
+    };
+
+    const std::vector<unsigned> seeds = SimSeedsFromEnvironment();
+    const int steps = SimStepsFromEnvironmentOrDefault(220);
+
+    for (const unsigned seed : seeds) {
+        const std::filesystem::path tempRoot =
+            std::filesystem::temp_directory_path() / ("sheaf-synth-recursive-patch-random-" + std::to_string(seed));
+        std::filesystem::remove_all(tempRoot);
+        std::filesystem::create_directories(tempRoot);
+
+        synth::ParameterManager manager;
+        manager.SetGestureCount(kSimGestures);
+        auto& group = manager.CreateGroup({
+            .numVoices = kSimVoices,
+            .numModulators = kSimMods,
+            .numScenes = kSimScenes,
+            .maxParameters = 8,
+            .processLiteAlpha = 0.25f,
+        });
+        auto& cutoff = manager.CreateParameter(group, {.name = "Cutoff", .defaultValue = 0.35f});
+        auto& resonance = manager.CreateParameter(
+            group, {.name = "Resonance", .defaultValue = 0.1f, .range = synth::RangeKind::Bipolar});
+        auto& cutoffLfo = cutoff.EnsureModulationDepth(
+            0, {.name = "Cutoff LFO", .defaultValue = 0.0f, .range = synth::RangeKind::Bipolar});
+        auto& cutoffEnv = cutoff.EnsureModulationDepth(
+            1, {.name = "Cutoff Env", .defaultValue = 0.0f, .range = synth::RangeKind::Bipolar});
+        auto& lfoCurve = cutoffLfo.EnsureModulationDepth(
+            2, {.name = "Cutoff LFO Curve", .defaultValue = 0.0f, .range = synth::RangeKind::Bipolar});
+        auto& resonanceLfo = resonance.EnsureModulationDepth(
+            0, {.name = "Resonance LFO", .defaultValue = 0.0f, .range = synth::RangeKind::Bipolar});
+        REQUIRE_TRUE(manager.SetSceneEndpoints(0, 1));
+        manager.SetSceneBlend(0.25f);
+        manager.CaptureDefaultControlState();
+
+        std::vector<synth::Parameter*> tracked{&cutoff, &resonance, &cutoffLfo, &cutoffEnv, &lfoCurve, &resonanceLfo};
+        RecursivePatchSnapshot expected = captureValues(tracked);
+        const RecursivePatchSnapshot defaultExpected = expected;
+
+        synth::WrldBldrDefaultProfileOptions midiOptions;
+        midiOptions.visibleEncoderCount = 5;
+        midiOptions.sceneCount = kSimScenes;
+        midiOptions.bankButtonCount = 2;
+        midiOptions.gestureSelectorCount = kSimGestures;
+        const synth::MidiControllerProfileConfig defaultProfile = synth::WrldBldrDefaultProfileConfig(midiOptions);
+        synth::MidiControllerProfileConfig profile = defaultProfile;
+        synth::MidiEndpointState defaultEndpoints;
+        synth::MidiEndpointState endpoints;
+        synth::PatchMessageInBus inputBus(32);
+        synth::MessageOutBus outputBus(32);
+        synth::PatchManager patchManager(&inputBus, &outputBus);
+        std::vector<std::pair<std::filesystem::path, RecursivePatchSnapshot>> savedVersions;
+        std::optional<std::filesystem::path> expectedCurrentPatchDir;
+        std::mt19937 rng(seed ^ 0xD33F5u);
+        std::uniform_real_distribution<float> bipolarDist(-1.0f, 1.0f);
+        std::uniform_real_distribution<float> unipolarDist(0.0f, 1.0f);
+        int patchNameCounter = 0;
+        int writeCounter = 0;
+
+        auto processPatchMessages = [&] {
+            synth::PatchMessageIn message;
+            while (inputBus.Pop(message)) {
+                const synth::PatchApplyStatus status =
+                    synth::ApplyPatchMessage(message, manager, profile, defaultProfile,
+                                             endpoints, defaultEndpoints, outputBus);
+                REQUIRE_TRUE(status == synth::PatchApplyStatus::Applied ||
+                             status == synth::PatchApplyStatus::Reverted ||
+                             status == synth::PatchApplyStatus::Serialized);
+            }
+        };
+
+        auto completePendingSave = [&](const RecursivePatchSnapshot& snapshot) {
+            processPatchMessages();
+            const auto now = std::chrono::system_clock::from_time_t(1700005000 + writeCounter++);
+            const synth::PatchCommandResult completion = patchManager.ProcessResponses(now);
+            REQUIRE_TRUE(completion.status == synth::PatchCommandStatus::Written);
+            savedVersions.push_back({completion.path, snapshot});
+            expectedCurrentPatchDir = completion.path.parent_path();
+        };
+
+        auto saveAsExpected = [&] {
+            const std::filesystem::path patchDir = tempRoot / ("Patch-" + std::to_string(patchNameCounter++));
+            const synth::PatchCommandResult result = patchManager.SavePatchAs(patchDir);
+            REQUIRE_TRUE(result.status == synth::PatchCommandStatus::Pending);
+            completePendingSave(expected);
+        };
+
+        auto saveExpected = [&] {
+            if (!expectedCurrentPatchDir.has_value()) {
+                saveAsExpected();
+                return;
+            }
+            const synth::PatchCommandResult result = patchManager.SavePatch();
+            REQUIRE_TRUE(result.status == synth::PatchCommandStatus::Pending);
+            completePendingSave(expected);
+        };
+
+        saveAsExpected();
+        checkValues(tracked, expected, seed, -1, "initial recursive save");
+
+        for (int step = 0; step < steps; ++step) {
+            std::string action;
+            switch (rng() % 12) {
+            case 0:
+            case 1:
+            case 2: {
+                const std::size_t paramIx = rng() % tracked.size();
+                const std::size_t sceneIx = rng() % kSimScenes;
+                const float value = paramIx < 2 ? unipolarDist(rng) : bipolarDist(rng);
+                action = "recursive set scene";
+                tracked[paramIx]->SceneCenter(sceneIx) = value;
+                expected.values[paramIx].sceneCenter[sceneIx] = value;
+                manager.ComputeAllParameters();
+                break;
+            }
+            case 3: {
+                const std::size_t paramIx = rng() % tracked.size();
+                const std::size_t sceneIx = rng() % kSimScenes;
+                const std::size_t gestureIx = rng() % kSimGestures;
+                const float value = paramIx < 2 ? unipolarDist(rng) : bipolarDist(rng);
+                action = "recursive set gesture value";
+                tracked[paramIx]->GestureValue(sceneIx, gestureIx) = value;
+                expected.values[paramIx].gestureValue[sceneIx][gestureIx] = value;
+                manager.ComputeAllParameters();
+                break;
+            }
+            case 4: {
+                const std::size_t paramIx = rng() % tracked.size();
+                const std::size_t sceneIx = rng() % kSimScenes;
+                const std::size_t gestureIx = rng() % kSimGestures;
+                const bool active = (rng() % 2) == 0;
+                action = "recursive set gesture active";
+                tracked[paramIx]->SetGestureActive(sceneIx, gestureIx, active);
+                expected.values[paramIx].gestureActive[sceneIx][gestureIx] = active;
+                manager.ComputeAllParameters();
+                break;
+            }
+            case 5:
+                action = "recursive compute";
+                manager.ComputeAllParameters();
+                break;
+            case 6:
+                action = "recursive save";
+                saveExpected();
+                break;
+            case 7:
+                action = "recursive save as";
+                saveAsExpected();
+                break;
+            case 8: {
+                action = "recursive load directory";
+                const std::size_t versionIx = rng() % savedVersions.size();
+                const std::filesystem::path dir = savedVersions[versionIx].first.parent_path();
+                const std::size_t latestIx = findLatestRecursive(savedVersions, dir);
+                REQUIRE_TRUE(patchManager.LoadPatch(dir).status == synth::PatchCommandStatus::Ok);
+                processPatchMessages();
+                expectedCurrentPatchDir = dir;
+                expected = savedVersions[latestIx].second;
+                checkValues(tracked, expected, seed, step, action);
+                continue;
+            }
+            case 9: {
+                action = "recursive load version";
+                const std::size_t versionIx = rng() % savedVersions.size();
+                REQUIRE_TRUE(patchManager.LoadPatch(savedVersions[versionIx].first).status == synth::PatchCommandStatus::Ok);
+                processPatchMessages();
+                expectedCurrentPatchDir = savedVersions[versionIx].first.parent_path();
+                expected = savedVersions[versionIx].second;
+                checkValues(tracked, expected, seed, step, action);
+                continue;
+            }
+            case 10:
+                action = "recursive revert";
+                if (!expectedCurrentPatchDir.has_value()) {
+                    REQUIRE_TRUE(patchManager.RevertPatch().status == synth::PatchCommandStatus::Ok);
+                    processPatchMessages();
+                    expected = defaultExpected;
+                } else {
+                    const std::size_t latestIx = findLatestRecursive(savedVersions, *expectedCurrentPatchDir);
+                    REQUIRE_TRUE(patchManager.RevertPatch().status == synth::PatchCommandStatus::Ok);
+                    processPatchMessages();
+                    expected = savedVersions[latestIx].second;
+                }
+                break;
+            default:
+                action = "recursive new";
+                REQUIRE_TRUE(patchManager.NewPatch().status == synth::PatchCommandStatus::Ok);
+                processPatchMessages();
+                expectedCurrentPatchDir.reset();
+                expected = defaultExpected;
+                break;
+            }
+
+            checkValues(tracked, expected, seed, step, action);
+        }
+
+        std::filesystem::remove_all(tempRoot);
+    }
+}
+
+TEST_CASE(randomized_recursive_modulation_ui_tree_round_trips_into_fresh_initialization) {
+    struct TreeEntry {
+        std::string path;
+        std::string name;
+        std::array<float, kSimScenes> sceneCenter{};
+        std::array<std::array<float, kSimGestures>, kSimScenes> gestureValue{};
+        std::array<std::array<bool, kSimGestures>, kSimScenes> gestureActive{};
+    };
+
+    auto captureParameter = [](auto& self, const synth::Parameter& parameter, const std::string& path,
+                               std::vector<TreeEntry>& entries) -> void {
+        TreeEntry entry;
+        entry.path = path;
+        entry.name = parameter.Name();
+        for (std::size_t sceneIx = 0; sceneIx < kSimScenes; ++sceneIx) {
+            entry.sceneCenter[sceneIx] = parameter.SceneCenter(sceneIx);
+            for (std::size_t gestureIx = 0; gestureIx < kSimGestures; ++gestureIx) {
+                entry.gestureValue[sceneIx][gestureIx] = parameter.GestureValue(sceneIx, gestureIx);
+                entry.gestureActive[sceneIx][gestureIx] = parameter.GestureActive(sceneIx, gestureIx);
+            }
+        }
+        entries.push_back(entry);
+        for (std::size_t modIx = 0; modIx < kSimMods; ++modIx) {
+            if (const synth::Parameter* child = parameter.ModulationDepthParameter(modIx); child != nullptr) {
+                self(self, *child, path + "/" + std::to_string(modIx), entries);
+            }
+        }
+    };
+
+    auto captureTree = [&](const std::array<synth::Parameter*, 2>& roots) {
+        std::vector<TreeEntry> entries;
+        for (std::size_t rootIx = 0; rootIx < roots.size(); ++rootIx) {
+            captureParameter(captureParameter, *roots[rootIx], std::to_string(rootIx), entries);
+        }
+        std::sort(entries.begin(), entries.end(), [](const TreeEntry& lhs, const TreeEntry& rhs) {
+            return lhs.path < rhs.path;
+        });
+        return entries;
+    };
+
+    auto defaultValueForPath = [](const std::string& path) {
+        if (path == "0") {
+            return 0.25f;
+        }
+        if (path == "1") {
+            return 0.5f;
+        }
+        return 0.0f;
+    };
+
+    auto parameterHasPersistedState = [&](auto& self, const synth::Parameter& parameter,
+                                          const std::string& path) -> bool {
+        constexpr float tolerance = 0.000001f;
+        const float defaultValue = defaultValueForPath(path);
+        for (std::size_t sceneIx = 0; sceneIx < kSimScenes; ++sceneIx) {
+            if (std::fabs(parameter.SceneCenter(sceneIx) - defaultValue) > tolerance) {
+                return true;
+            }
+            for (std::size_t gestureIx = 0; gestureIx < kSimGestures; ++gestureIx) {
+                if (std::fabs(parameter.GestureValue(sceneIx, gestureIx) - defaultValue) > tolerance ||
+                    parameter.GestureActive(sceneIx, gestureIx)) {
+                    return true;
+                }
+            }
+        }
+        for (std::size_t voiceIx = 0; voiceIx < kSimVoices; ++voiceIx) {
+            for (const float depth : parameter.CurrentDepths(voiceIx)) {
+                if (std::fabs(depth) > tolerance) {
+                    return true;
+                }
+            }
+            for (const float depth : parameter.TargetDepths(voiceIx)) {
+                if (std::fabs(depth) > tolerance) {
+                    return true;
+                }
+            }
+            if (std::fabs(parameter.CurrentCenterScale(voiceIx) - 1.0f) > tolerance ||
+                std::fabs(parameter.TargetCenterScale(voiceIx) - 1.0f) > tolerance ||
+                std::fabs(parameter.CurrentNormalizationOffset(voiceIx)) > tolerance ||
+                std::fabs(parameter.TargetNormalizationOffset(voiceIx)) > tolerance) {
+                return true;
+            }
+        }
+        for (std::size_t modIx = 0; modIx < kSimMods; ++modIx) {
+            if (const synth::Parameter* child = parameter.ModulationDepthParameter(modIx); child != nullptr) {
+                if (self(self, *child, path + "/" + std::to_string(modIx))) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    };
+
+    auto capturePersistedTree = [&](const std::array<synth::Parameter*, 2>& roots) {
+        auto capturePersistedParameter = [&](auto& self, const synth::Parameter& parameter,
+                                             const std::string& path, bool force,
+                                             std::vector<TreeEntry>& entries) -> void {
+            if (!force && !parameterHasPersistedState(parameterHasPersistedState, parameter, path)) {
+                return;
+            }
+            TreeEntry entry;
+            entry.path = path;
+            entry.name = parameter.Name();
+            for (std::size_t sceneIx = 0; sceneIx < kSimScenes; ++sceneIx) {
+                entry.sceneCenter[sceneIx] = parameter.SceneCenter(sceneIx);
+                for (std::size_t gestureIx = 0; gestureIx < kSimGestures; ++gestureIx) {
+                    entry.gestureValue[sceneIx][gestureIx] = parameter.GestureValue(sceneIx, gestureIx);
+                    entry.gestureActive[sceneIx][gestureIx] = parameter.GestureActive(sceneIx, gestureIx);
+                }
+            }
+            entries.push_back(entry);
+
+            for (std::size_t modIx = 0; modIx < kSimMods; ++modIx) {
+                const std::string key = std::to_string(modIx);
+                const synth::Parameter* child = parameter.ModulationDepthParameter(modIx);
+                if (child != nullptr) {
+                    self(self, *child, path + "/" + key, false, entries);
+                }
+            }
+        };
+
+        std::vector<TreeEntry> entries;
+        for (std::size_t rootIx = 0; rootIx < roots.size(); ++rootIx) {
+            capturePersistedParameter(capturePersistedParameter, *roots[rootIx], std::to_string(rootIx), true,
+                                      entries);
+        }
+        std::sort(entries.begin(), entries.end(), [](const TreeEntry& lhs, const TreeEntry& rhs) {
+            return lhs.path < rhs.path;
+        });
+        return entries;
+    };
+
+    auto assertTreeMatches = [&](const std::array<synth::Parameter*, 2>& roots, const std::vector<TreeEntry>& expected,
+                                 unsigned seed, int step, const std::string& action) {
+        const std::vector<TreeEntry> actual = captureTree(roots);
+        if (actual.size() != expected.size()) {
+            SimFailBool(seed, step, action, "recursive ui tree entry count");
+        }
+        for (std::size_t entryIx = 0; entryIx < expected.size(); ++entryIx) {
+            const TreeEntry& exp = expected[entryIx];
+            const TreeEntry& got = actual[entryIx];
+            if (exp.path != got.path || exp.name != got.name) {
+                SimFailBool(seed, step, action, "recursive ui tree path/name");
+            }
+            for (std::size_t sceneIx = 0; sceneIx < kSimScenes; ++sceneIx) {
+                SimCheckNear(seed, step, action, exp.path + " scene", exp.sceneCenter[sceneIx],
+                             got.sceneCenter[sceneIx]);
+                for (std::size_t gestureIx = 0; gestureIx < kSimGestures; ++gestureIx) {
+                    SimCheckNear(seed, step, action, exp.path + " gesture value",
+                                 exp.gestureValue[sceneIx][gestureIx],
+                                 got.gestureValue[sceneIx][gestureIx]);
+                    if (exp.gestureActive[sceneIx][gestureIx] != got.gestureActive[sceneIx][gestureIx]) {
+                        SimFailBool(seed, step, action, exp.path + " gesture active");
+                    }
+                }
+            }
+        }
+    };
+
+    auto assertPersistedTreeMatches = [&](const std::array<synth::Parameter*, 2>& roots,
+                                          const std::vector<TreeEntry>& expected,
+                                          unsigned seed, int step, const std::string& action) {
+        const std::vector<TreeEntry> actual = capturePersistedTree(roots);
+        if (actual.size() != expected.size()) {
+            SimFailBool(seed, step, action, "recursive persisted ui tree entry count");
+        }
+        for (std::size_t entryIx = 0; entryIx < expected.size(); ++entryIx) {
+            const TreeEntry& exp = expected[entryIx];
+            const TreeEntry& got = actual[entryIx];
+            if (exp.path != got.path || exp.name != got.name) {
+                SimFailBool(seed, step, action, "recursive persisted ui tree path/name");
+            }
+            for (std::size_t sceneIx = 0; sceneIx < kSimScenes; ++sceneIx) {
+                SimCheckNear(seed, step, action, exp.path + " persisted scene", exp.sceneCenter[sceneIx],
+                             got.sceneCenter[sceneIx]);
+                for (std::size_t gestureIx = 0; gestureIx < kSimGestures; ++gestureIx) {
+                    SimCheckNear(seed, step, action, exp.path + " persisted gesture value",
+                                 exp.gestureValue[sceneIx][gestureIx],
+                                 got.gestureValue[sceneIx][gestureIx]);
+                    if (exp.gestureActive[sceneIx][gestureIx] != got.gestureActive[sceneIx][gestureIx]) {
+                        SimFailBool(seed, step, action, exp.path + " persisted gesture active");
+                    }
+                }
+            }
+        }
+    };
+
+    struct Rig {
+        synth::ParameterManager manager;
+        synth::ParameterMessageOutBus outputBus{64};
+        synth::ParameterGroup* group = nullptr;
+        synth::Bank* bank = nullptr;
+        synth::BankSlot* slot = nullptr;
+        synth::Parameter* phase = nullptr;
+        synth::Parameter* shape = nullptr;
+    };
+
+    auto buildRig = [](Rig& rig) {
+        rig.manager.SetGestureCount(kSimGestures);
+        rig.manager.SetParameterMessageOutBus(&rig.outputBus);
+        auto& group = rig.manager.CreateGroup({
+            .numVoices = kSimVoices,
+            .numModulators = kSimMods,
+            .numScenes = kSimScenes,
+            .maxParameters = 2,
+            .processLiteAlpha = 0.3f,
+        });
+        rig.group = &group;
+        group.GetModulators().Metadata(0) = {
+            .name = "Sweep",
+            .shortName = "Swp",
+            .color = synth::Color::Cyan,
+            .connected = true,
+        };
+        group.GetModulators().Metadata(1) = {
+            .name = "Envelope",
+            .shortName = "Env",
+            .color = synth::Color::Orange,
+            .connected = true,
+        };
+        group.GetModulators().Metadata(2) = {
+            .name = "LFO",
+            .shortName = "LFO",
+            .color = synth::Color::Green,
+            .connected = true,
+        };
+        rig.phase = &rig.manager.CreateParameter(group, {.name = "Osc Phase", .defaultValue = 0.25f});
+        rig.shape = &rig.manager.CreateParameter(group, {.name = "Osc Shape", .defaultValue = 0.5f});
+        auto& bank = rig.manager.CreateBank();
+        rig.bank = &bank;
+        bank.AddMapping(10, *rig.phase);
+        bank.AddMapping(11, *rig.shape);
+        auto& slot = rig.manager.CreateBankSlot();
+        rig.slot = &slot;
+        for (synth::PhysicalEncoderId encoder : {10u, 11u, 12u, 13u}) {
+            slot.AddPhysicalEncoder(encoder);
+        }
+        slot.SelectBank(&bank);
+        REQUIRE_TRUE(rig.manager.SetSceneEndpoints(0, 1));
+        rig.manager.SetSceneBlend(0.25f);
+        rig.manager.CaptureDefaultControlState();
+    };
+
+    auto processStorageRequests = [](Rig& rig) {
+        synth::ParameterMessageOut message;
+        while (rig.outputBus.Pop(message)) {
+            REQUIRE_TRUE(message.type == synth::ParameterMessageOut::Type::ParameterStorageBatchNeeded);
+            REQUIRE_TRUE(message.group != nullptr);
+            message.group->AddParameterStorageBatch(
+                synth::MakeParameterStorageBatch(message.group->Config(), message.group->GestureCount(),
+                                                 message.requestedParameters));
+        }
+    };
+
+    auto dirtyTargetBeforeLoad = [](Rig& rig) {
+        synth::Parameter* phaseSweep = rig.phase->EnsureModulationDepth(0);
+        REQUIRE_TRUE(phaseSweep != nullptr);
+        synth::Parameter* phaseSweepLfo = phaseSweep->EnsureModulationDepth(2);
+        REQUIRE_TRUE(phaseSweepLfo != nullptr);
+        synth::Parameter* shapeEnv = rig.shape->EnsureModulationDepth(1);
+        REQUIRE_TRUE(shapeEnv != nullptr);
+        rig.phase->SceneCenter(0) = 0.93f;
+        phaseSweep->SceneCenter(0) = 0.81f;
+        phaseSweep->GestureValue(1, 0) = -0.47f;
+        phaseSweep->SetGestureActive(1, 0, true);
+        phaseSweepLfo->SceneCenter(0) = -0.62f;
+        shapeEnv->SceneCenter(1) = 0.58f;
+        rig.manager.ComputeAllParameters();
+    };
+
+    const std::vector<unsigned> seeds = SimSeedsFromEnvironment();
+    const int steps = SimStepsFromEnvironmentOrDefault(320);
+    const std::array<synth::PhysicalEncoderId, 4> encoders{10, 11, 12, 13};
+
+    for (const unsigned seed : seeds) {
+        Rig source;
+        buildRig(source);
+        processStorageRequests(source);
+        std::size_t maxPersistedEntryCount = 0;
+        std::mt19937 rng(seed ^ 0xB16B00B5u);
+        std::uniform_real_distribution<float> deltaDist(-0.35f, 0.35f);
+        std::uniform_real_distribution<float> valueDist(0.0f, 1.0f);
+
+        for (int step = 0; step < steps; ++step) {
+            std::string action;
+            switch (rng() % 10) {
+            case 0:
+            case 1: {
+                const synth::PhysicalEncoderId encoder = encoders[rng() % encoders.size()];
+                action = "recursive ui press";
+                source.slot->HandlePress(encoder);
+                processStorageRequests(source);
+                break;
+            }
+            case 2:
+            case 3: {
+                const synth::PhysicalEncoderId encoder = encoders[rng() % encoders.size()];
+                action = "recursive ui tick";
+                source.slot->HandleTick(encoder, source.manager.Scene(), deltaDist(rng));
+                source.manager.ComputeAllParameters();
+                break;
+            }
+            case 4:
+                action = "recursive ui scene";
+                REQUIRE_TRUE(source.manager.SetSceneEndpoints(rng() % kSimScenes, rng() % kSimScenes));
+                source.manager.SetSceneBlend(valueDist(rng));
+                source.manager.ComputeAllParameters();
+                break;
+            case 5: {
+                action = "recursive ui gesture select";
+                const std::size_t gestureIx = rng() % kSimGestures;
+                source.manager.ToggleGestureSelected(gestureIx);
+                source.manager.SetGestureValue(gestureIx, valueDist(rng));
+                source.manager.ComputeAllParameters();
+                break;
+            }
+            case 6: {
+                action = "recursive ui shift press";
+                const synth::PhysicalEncoderId encoder = encoders[rng() % encoders.size()];
+                source.slot->HandleShiftPress(encoder, source.manager.Scene());
+                source.manager.ComputeAllParameters();
+                break;
+            }
+            default:
+                action = "recursive ui compute";
+                source.manager.ComputeAllParameters();
+                break;
+            }
+
+            if (step % 9 == 0) {
+                std::array<synth::Parameter*, 2> sourceRoots{source.phase, source.shape};
+                synth::JsonArena arena(262144);
+                synth::JSON saved;
+                do {
+                    saved = source.manager.ParameterValuesToJSON(arena);
+                    if (!saved.IsNull() && !arena.Failed()) {
+                        break;
+                    }
+                    arena.GrowAndReset();
+                } while (arena.Capacity() <= synth::JsonArena::kDefaultCapacity);
+                REQUIRE_TRUE(!saved.IsNull());
+                REQUIRE_TRUE(!arena.Failed());
+                const std::vector<TreeEntry> expected = capturePersistedTree(sourceRoots);
+                maxPersistedEntryCount = std::max(maxPersistedEntryCount, expected.size());
+
+                Rig target;
+                buildRig(target);
+                const std::size_t targetStorage = std::max<std::size_t>(128, expected.size() * (kSimMods + 1));
+                target.group->AddParameterStorageBatch(
+                    synth::MakeParameterStorageBatch(target.group->Config(), target.group->GestureCount(), targetStorage));
+                REQUIRE_TRUE(target.manager.LoadParameterValuesFromJSON(saved));
+                std::array<synth::Parameter*, 2> targetRoots{target.phase, target.shape};
+                assertTreeMatches(targetRoots, expected, seed, step, action);
+
+                Rig dirtyTarget;
+                buildRig(dirtyTarget);
+                dirtyTarget.group->AddParameterStorageBatch(
+                    synth::MakeParameterStorageBatch(dirtyTarget.group->Config(), dirtyTarget.group->GestureCount(),
+                                                     targetStorage));
+                dirtyTargetBeforeLoad(dirtyTarget);
+                REQUIRE_TRUE(dirtyTarget.manager.LoadParameterValuesFromJSON(saved));
+                std::array<synth::Parameter*, 2> dirtyTargetRoots{dirtyTarget.phase, dirtyTarget.shape};
+                assertPersistedTreeMatches(dirtyTargetRoots, expected, seed, step, action);
+            }
+        }
+        REQUIRE_TRUE(maxPersistedEntryCount > 2);
+    }
+}
+
+TEST_CASE(parameter_values_json_round_trips_values_by_name_and_live_mod_slot) {
+    synth::ParameterManager source;
+    source.SetGestureCount(2);
+    auto& sourceGroup = source.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 2,
+        .numScenes = 3,
+        .maxParameters = 4,
+    });
+    auto& cutoff = source.CreateParameter(sourceGroup, {.name = "Cutoff", .defaultValue = 0.25f});
+    auto& resonance = source.CreateParameter(sourceGroup, {.name = "Resonance", .defaultValue = 0.4f});
+    auto& depth = cutoff.EnsureModulationDepth(0, {.name = "Cutoff LFO Depth", .defaultValue = 0.0f});
+
+    cutoff.SceneCenter(0) = 0.11f;
+    cutoff.SceneCenter(1) = 0.22f;
+    cutoff.SceneCenter(2) = 0.33f;
+    cutoff.GestureValue(0, 0) = 0.41f;
+    cutoff.GestureValue(0, 1) = 0.42f;
+    cutoff.GestureValue(1, 0) = 0.51f;
+    cutoff.GestureValue(1, 1) = 0.52f;
+    cutoff.GestureValue(2, 0) = 0.61f;
+    cutoff.GestureValue(2, 1) = 0.62f;
+    cutoff.SetGestureActive(0, 0, true);
+    cutoff.SetGestureActive(1, 1, true);
+    cutoff.SetGestureActive(2, 0, true);
+    depth.SceneCenter(0) = 0.71f;
+    depth.SceneCenter(1) = 0.72f;
+    depth.SceneCenter(2) = 0.73f;
+    depth.GestureValue(1, 0) = 0.81f;
+    depth.SetGestureActive(1, 0, true);
+    resonance.SceneCenter(0) = 0.91f;
+
+    synth::JsonArena arena(32768);
+    synth::JSON saved = source.ParameterValuesToJSON(arena);
+    REQUIRE_TRUE(!saved.Get("Cutoff").IsNull());
+    REQUIRE_TRUE(!saved.Get("Resonance").IsNull());
+    REQUIRE_TRUE(!saved.Get("Cutoff").Get("modDepths").Get("0").IsNull());
+    REQUIRE_TRUE(saved.Get("Cutoff").Get("modDepths").Get("1").IsNull());
+
+    synth::ParameterManager target;
+    target.SetGestureCount(2);
+    auto& targetGroup = target.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 2,
+        .numScenes = 3,
+        .maxParameters = 4,
+    });
+    auto& targetResonance = target.CreateParameter(targetGroup, {.name = "Resonance", .defaultValue = 0.4f});
+    auto& targetCutoff = target.CreateParameter(targetGroup, {.name = "Cutoff", .defaultValue = 0.25f});
+    auto& targetDepth = targetCutoff.EnsureModulationDepth(0, {.name = "Different Child Name", .defaultValue = 0.0f});
+
+    REQUIRE_TRUE(target.LoadParameterValuesFromJSON(saved));
+
+    REQUIRE_NEAR(targetCutoff.SceneCenter(0), 0.11f, 0.000001f);
+    REQUIRE_NEAR(targetCutoff.SceneCenter(1), 0.22f, 0.000001f);
+    REQUIRE_NEAR(targetCutoff.SceneCenter(2), 0.33f, 0.000001f);
+    REQUIRE_NEAR(targetCutoff.GestureValue(0, 0), 0.41f, 0.000001f);
+    REQUIRE_NEAR(targetCutoff.GestureValue(0, 1), 0.42f, 0.000001f);
+    REQUIRE_NEAR(targetCutoff.GestureValue(1, 0), 0.51f, 0.000001f);
+    REQUIRE_NEAR(targetCutoff.GestureValue(1, 1), 0.52f, 0.000001f);
+    REQUIRE_NEAR(targetCutoff.GestureValue(2, 0), 0.61f, 0.000001f);
+    REQUIRE_NEAR(targetCutoff.GestureValue(2, 1), 0.62f, 0.000001f);
+    REQUIRE_TRUE(targetCutoff.GestureActive(0, 0));
+    REQUIRE_TRUE(!targetCutoff.GestureActive(0, 1));
+    REQUIRE_TRUE(!targetCutoff.GestureActive(1, 0));
+    REQUIRE_TRUE(targetCutoff.GestureActive(1, 1));
+    REQUIRE_TRUE(targetCutoff.GestureActive(2, 0));
+    REQUIRE_TRUE(!targetCutoff.GestureActive(2, 1));
+    REQUIRE_NEAR(targetDepth.SceneCenter(0), 0.71f, 0.000001f);
+    REQUIRE_NEAR(targetDepth.SceneCenter(1), 0.72f, 0.000001f);
+    REQUIRE_NEAR(targetDepth.SceneCenter(2), 0.73f, 0.000001f);
+    REQUIRE_NEAR(targetDepth.GestureValue(1, 0), 0.81f, 0.000001f);
+    REQUIRE_TRUE(targetDepth.GestureActive(1, 0));
+    REQUIRE_NEAR(targetResonance.SceneCenter(0), 0.91f, 0.000001f);
+    REQUIRE_NEAR(targetResonance.Get(0), 0.91f, 0.000001f);
+    synth::Parameter::UIState resonanceUI(1);
+    targetResonance.PopulateUIState(resonanceUI);
+    REQUIRE_NEAR(resonanceUI.values[0].load(), 0.91f, 0.000001f);
+}
+
+TEST_CASE(parameter_values_json_materializes_saved_recursive_mod_depths_from_code_slots) {
+    synth::ParameterManager source;
+    source.SetGestureCount(1);
+    auto& sourceGroup = source.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 3,
+        .numScenes = 2,
+        .maxParameters = 8,
+    });
+    sourceGroup.GetModulators().Metadata(0) = {
+        .name = "Sweep",
+        .shortName = "Swp",
+        .color = synth::Color::Cyan,
+        .connected = true,
+    };
+    sourceGroup.GetModulators().Metadata(2) = {
+        .name = "LFO",
+        .shortName = "LFO",
+        .color = synth::Color::Green,
+        .connected = true,
+    };
+    auto& sourcePhase = source.CreateParameter(sourceGroup, {.name = "Osc Phase", .defaultValue = 0.25f});
+    auto& sourceSweepDepth = sourcePhase.EnsureModulationDepth(
+        0, {.name = "Osc Phase Sweep", .shortName = "Swp", .defaultValue = 0.0f, .range = synth::RangeKind::Bipolar});
+    auto& sourceNestedLfoDepth = sourceSweepDepth.EnsureModulationDepth(
+        2, {.name = "Osc Phase Sweep LFO", .shortName = "LFO", .defaultValue = 0.0f, .range = synth::RangeKind::Bipolar});
+    sourceSweepDepth.SceneCenter(0) = 0.45f;
+    sourceSweepDepth.SceneCenter(1) = -0.25f;
+    sourceNestedLfoDepth.SceneCenter(0) = 0.72f;
+    sourceNestedLfoDepth.GestureValue(1, 0) = -0.33f;
+    sourceNestedLfoDepth.SetGestureActive(1, 0, true);
+
+    synth::JsonArena arena(65536);
+    synth::JSON saved = source.ParameterValuesToJSON(arena);
+    REQUIRE_TRUE(!saved.Get("Osc Phase").Get("modDepths").Get("0").IsNull());
+    REQUIRE_TRUE(!saved.Get("Osc Phase").Get("modDepths").Get("0").Get("modDepths").Get("2").IsNull());
+
+    synth::ParameterManager target;
+    target.SetGestureCount(1);
+    auto& targetGroup = target.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 3,
+        .numScenes = 2,
+        .maxParameters = 8,
+    });
+    targetGroup.GetModulators().Metadata(0) = sourceGroup.GetModulators().Metadata(0);
+    targetGroup.GetModulators().Metadata(2) = sourceGroup.GetModulators().Metadata(2);
+    auto& targetPhase = target.CreateParameter(targetGroup, {.name = "Osc Phase", .defaultValue = 0.25f});
+
+    REQUIRE_TRUE(target.LoadParameterValuesFromJSON(saved));
+
+    synth::Parameter* targetSweepDepth = targetPhase.ModulationDepthParameter(0);
+    REQUIRE_TRUE(targetSweepDepth != nullptr);
+    synth::Parameter* targetNestedLfoDepth = targetSweepDepth->ModulationDepthParameter(2);
+    REQUIRE_TRUE(targetNestedLfoDepth != nullptr);
+    REQUIRE_TRUE(targetSweepDepth->Name() == "Osc Phase Sweep");
+    REQUIRE_TRUE(targetNestedLfoDepth->Name() == "Osc Phase Sweep LFO");
+    REQUIRE_NEAR(targetSweepDepth->SceneCenter(0), 0.45f, 0.000001f);
+    REQUIRE_NEAR(targetSweepDepth->SceneCenter(1), -0.25f, 0.000001f);
+    REQUIRE_NEAR(targetNestedLfoDepth->SceneCenter(0), 0.72f, 0.000001f);
+    REQUIRE_NEAR(targetNestedLfoDepth->GestureValue(1, 0), -0.33f, 0.000001f);
+    REQUIRE_TRUE(targetNestedLfoDepth->GestureActive(1, 0));
+    synth::Parameter::UIState sweepDepthUI(1);
+    targetSweepDepth->PopulateUIState(sweepDepthUI);
+    REQUIRE_TRUE((sweepDepthUI.modulatorsAffectingMask.load() & (1u << 2)) != 0);
+}
+
+TEST_CASE(parameter_values_json_load_resets_dirty_lazy_modulation_branches_before_applying) {
+    synth::ParameterManager manager;
+    manager.SetGestureCount(1);
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 3,
+        .numScenes = 2,
+        .maxParameters = 8,
+    });
+    group.GetModulators().Metadata(0) = {
+        .name = "Sweep",
+        .shortName = "Swp",
+        .color = synth::Color::Cyan,
+        .connected = true,
+    };
+    group.GetModulators().Metadata(2) = {
+        .name = "LFO",
+        .shortName = "LFO",
+        .color = synth::Color::Green,
+        .connected = true,
+    };
+    auto& phase = manager.CreateParameter(group, {.name = "Osc Phase", .defaultValue = 0.25f});
+    manager.CaptureDefaultControlState();
+
+    synth::JsonArena cleanArena(65536);
+    synth::JSON clean = manager.ParameterValuesToJSON(cleanArena);
+    REQUIRE_TRUE(!cleanArena.Failed());
+    REQUIRE_TRUE(clean.Get("Osc Phase").Get("modDepths").Get("0").IsNull());
+
+    auto& sweepDepth = phase.EnsureModulationDepth(
+        0, {.name = "Osc Phase Sweep", .shortName = "Swp", .defaultValue = 0.0f, .range = synth::RangeKind::Bipolar});
+    auto& nestedLfoDepth = sweepDepth.EnsureModulationDepth(
+        2, {.name = "Osc Phase Sweep LFO", .shortName = "LFO", .defaultValue = 0.0f,
+            .range = synth::RangeKind::Bipolar});
+    phase.SceneCenter(0) = 0.91f;
+    sweepDepth.SceneCenter(0) = 0.77f;
+    sweepDepth.SetGestureActive(1, 0, true);
+    sweepDepth.GestureValue(1, 0) = -0.44f;
+    nestedLfoDepth.SceneCenter(0) = -0.66f;
+
+    REQUIRE_TRUE(manager.LoadParameterValuesFromJSON(clean));
+
+    REQUIRE_NEAR(phase.SceneCenter(0), 0.25f, 0.000001f);
+    REQUIRE_NEAR(sweepDepth.SceneCenter(0), 0.0f, 0.000001f);
+    REQUIRE_NEAR(sweepDepth.SceneCenter(1), 0.0f, 0.000001f);
+    REQUIRE_TRUE(!sweepDepth.GestureActive(1, 0));
+    REQUIRE_NEAR(sweepDepth.GestureValue(1, 0), 0.0f, 0.000001f);
+    REQUIRE_NEAR(nestedLfoDepth.SceneCenter(0), 0.0f, 0.000001f);
+
+    synth::JsonArena afterLoadArena(65536);
+    synth::JSON afterLoad = manager.ParameterValuesToJSON(afterLoadArena);
+    REQUIRE_TRUE(!afterLoadArena.Failed());
+    REQUIRE_TRUE(afterLoad.Get("Osc Phase").Get("modDepths").Get("0").IsNull());
+}
+
+TEST_CASE(parameter_values_json_persists_inactive_depth_gesture_values) {
+    synth::ParameterManager source;
+    source.SetGestureCount(1);
+    auto& sourceGroup = source.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 1,
+        .numScenes = 1,
+        .maxParameters = 2,
+    });
+    sourceGroup.GetModulators().Metadata(0) = {
+        .name = "Sweep",
+        .shortName = "Swp",
+        .color = synth::Color::Cyan,
+        .connected = true,
+    };
+    auto& sourcePhase = source.CreateParameter(sourceGroup, {.name = "Osc Phase", .defaultValue = 0.25f});
+    auto& sourceSweepDepth = sourcePhase.EnsureModulationDepth(
+        0, {.name = "Osc Phase Sweep", .shortName = "Swp", .defaultValue = 0.0f,
+            .range = synth::RangeKind::Bipolar});
+    sourceSweepDepth.GestureValue(0, 0) = 0.42f;
+    REQUIRE_TRUE(!sourceSweepDepth.GestureActive(0, 0));
+
+    synth::JsonArena arena(32768);
+    synth::JSON saved = source.ParameterValuesToJSON(arena);
+    REQUIRE_TRUE(!arena.Failed());
+    REQUIRE_TRUE(!saved.Get("Osc Phase").Get("modDepths").Get("0").IsNull());
+
+    synth::ParameterManager target;
+    target.SetGestureCount(1);
+    auto& targetGroup = target.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 1,
+        .numScenes = 1,
+        .maxParameters = 2,
+    });
+    targetGroup.GetModulators().Metadata(0) = sourceGroup.GetModulators().Metadata(0);
+    auto& targetPhase = target.CreateParameter(targetGroup, {.name = "Osc Phase", .defaultValue = 0.25f});
+
+    REQUIRE_TRUE(target.LoadParameterValuesFromJSON(saved));
+    synth::Parameter* targetSweepDepth = targetPhase.ModulationDepthParameter(0);
+    REQUIRE_TRUE(targetSweepDepth != nullptr);
+    REQUIRE_NEAR(targetSweepDepth->GestureValue(0, 0), 0.42f, 0.000001f);
+    REQUIRE_TRUE(!targetSweepDepth->GestureActive(0, 0));
+}
+
+TEST_CASE(parameter_values_json_ignores_unknown_names_and_materializes_saved_depth_slots) {
+    synth::JsonArena arena(4096);
+    synth::JSON root = arena.Object();
+    synth::JSON cutoff = arena.Object();
+    synth::JSON centers = arena.Array();
+    centers.AppendNew(arena.Real(0.35));
+    centers.AppendNew(arena.Real(0.45));
+    cutoff.SetNew("sceneCenters", centers);
+    synth::JSON modDepths = arena.Object();
+    synth::JSON missingChild = arena.Object();
+    synth::JSON childCenters = arena.Array();
+    childCenters.AppendNew(arena.Real(0.8));
+    childCenters.AppendNew(arena.Real(0.9));
+    missingChild.SetNew("sceneCenters", childCenters);
+    modDepths.SetNew("1", missingChild);
+    cutoff.SetNew("modDepths", modDepths);
+    root.SetNew("Cutoff", cutoff);
+    root.SetNew("Unknown Parameter", cutoff);
+
+    synth::ParameterManager manager;
+    manager.SetGestureCount(1);
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 2,
+        .numScenes = 2,
+        .maxParameters = 3,
+    });
+    auto& cutoffParam = manager.CreateParameter(group, {.name = "Cutoff", .defaultValue = 0.2f});
+    auto& resonance = manager.CreateParameter(group, {.name = "Resonance", .defaultValue = 0.6f});
+
+    REQUIRE_TRUE(manager.LoadParameterValuesFromJSON(root));
+
+    REQUIRE_NEAR(cutoffParam.SceneCenter(0), 0.35f, 0.000001f);
+    REQUIRE_NEAR(cutoffParam.SceneCenter(1), 0.45f, 0.000001f);
+    REQUIRE_NEAR(resonance.SceneCenter(0), 0.6f, 0.000001f);
+    REQUIRE_NEAR(resonance.SceneCenter(1), 0.6f, 0.000001f);
+    synth::Parameter* loadedChild = cutoffParam.ModulationDepthParameter(1);
+    REQUIRE_TRUE(loadedChild != nullptr);
+    REQUIRE_NEAR(loadedChild->SceneCenter(0), 0.8f, 0.000001f);
+    REQUIRE_NEAR(loadedChild->SceneCenter(1), 0.9f, 0.000001f);
+    REQUIRE_TRUE(loadedChild->Name() == "Cutoff Mod Depth 2");
+    REQUIRE_TRUE(manager.ParameterCount() == 2);
+}
+
+TEST_CASE(parameter_values_json_shape_mismatches_leave_defaults_after_load_reset) {
+    synth::ParameterManager manager;
+    manager.SetGestureCount(2);
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 0,
+        .numScenes = 2,
+        .maxParameters = 1,
+    });
+    auto& cutoff = manager.CreateParameter(group, {.name = "Cutoff", .defaultValue = 0.2f});
+    cutoff.SceneCenter(0) = 0.11f;
+    cutoff.SceneCenter(1) = 0.22f;
+    cutoff.GestureValue(0, 0) = 0.31f;
+    cutoff.GestureValue(0, 1) = 0.32f;
+    cutoff.GestureValue(1, 0) = 0.41f;
+    cutoff.GestureValue(1, 1) = 0.42f;
+    cutoff.SetGestureActive(0, 0, true);
+    cutoff.SetGestureActive(1, 1, true);
+
+    synth::JsonArena arena(4096);
+    synth::JSON root = arena.Object();
+    synth::JSON value = arena.Object();
+    synth::JSON badCenters = arena.Array();
+    badCenters.AppendNew(arena.Real(0.9));
+    value.SetNew("sceneCenters", badCenters);
+    synth::JSON badGestureValues = arena.Array();
+    synth::JSON badGestureRow0 = arena.Array();
+    badGestureRow0.AppendNew(arena.Real(0.9));
+    badGestureRow0.AppendNew(arena.Real(0.8));
+    synth::JSON badGestureRow1 = arena.Array();
+    badGestureRow1.AppendNew(arena.Real(0.7));
+    badGestureValues.AppendNew(badGestureRow0);
+    badGestureValues.AppendNew(badGestureRow1);
+    value.SetNew("gestureValues", badGestureValues);
+    synth::JSON badGestureActive = arena.Array();
+    synth::JSON activeRow0 = arena.Array();
+    activeRow0.AppendNew(arena.Boolean(false));
+    activeRow0.AppendNew(arena.Boolean(false));
+    synth::JSON activeRow1 = arena.Array();
+    activeRow1.AppendNew(arena.Boolean(false));
+    activeRow1.AppendNew(arena.Boolean(false));
+    badGestureActive.AppendNew(activeRow0);
+    badGestureActive.AppendNew(activeRow1);
+    value.SetNew("gestureActive", badGestureActive);
+    root.SetNew("Cutoff", value);
+
+    REQUIRE_TRUE(manager.LoadParameterValuesFromJSON(root));
+
+    REQUIRE_NEAR(cutoff.SceneCenter(0), 0.2f, 0.000001f);
+    REQUIRE_NEAR(cutoff.SceneCenter(1), 0.2f, 0.000001f);
+    REQUIRE_NEAR(cutoff.GestureValue(0, 0), 0.2f, 0.000001f);
+    REQUIRE_NEAR(cutoff.GestureValue(0, 1), 0.2f, 0.000001f);
+    REQUIRE_NEAR(cutoff.GestureValue(1, 0), 0.2f, 0.000001f);
+    REQUIRE_NEAR(cutoff.GestureValue(1, 1), 0.2f, 0.000001f);
+    REQUIRE_TRUE(!cutoff.GestureActive(0, 0));
+    REQUIRE_TRUE(!cutoff.GestureActive(0, 1));
+    REQUIRE_TRUE(!cutoff.GestureActive(1, 0));
+    REQUIRE_TRUE(!cutoff.GestureActive(1, 1));
+
+    cutoff.SetGestureActive(0, 0, true);
+    cutoff.SetGestureActive(1, 1, true);
+    synth::JSON rootWithBadActive = arena.Object();
+    synth::JSON valueWithBadActive = arena.Object();
+    synth::JSON badActive = arena.Array();
+    synth::JSON badActiveRow0 = arena.Array();
+    badActiveRow0.AppendNew(arena.Boolean(false));
+    badActiveRow0.AppendNew(arena.Boolean(false));
+    synth::JSON badActiveRow1 = arena.Array();
+    badActiveRow1.AppendNew(arena.Boolean(false));
+    badActive.AppendNew(badActiveRow0);
+    badActive.AppendNew(badActiveRow1);
+    valueWithBadActive.SetNew("gestureActive", badActive);
+    rootWithBadActive.SetNew("Cutoff", valueWithBadActive);
+
+    REQUIRE_TRUE(manager.LoadParameterValuesFromJSON(rootWithBadActive));
+    REQUIRE_TRUE(!cutoff.GestureActive(0, 0));
+    REQUIRE_TRUE(!cutoff.GestureActive(0, 1));
+    REQUIRE_TRUE(!cutoff.GestureActive(1, 0));
+    REQUIRE_TRUE(!cutoff.GestureActive(1, 1));
+}
+
+TEST_CASE(midi_profile_config_json_round_trips_wrld_bldr_defaults_and_rebuilds_processors) {
+    synth::WrldBldrDefaultProfileOptions options;
+    options.visibleEncoderCount = 4;
+    options.sceneCount = 3;
+    options.bankButtonCount = 5;
+    options.gestureSelectorCount = 2;
+    const synth::MidiControllerProfileConfig source = synth::WrldBldrDefaultProfileConfig(options);
+
+    synth::JsonArena arena(262144);
+    synth::JSON json = synth::ToJSON(arena, source);
+    REQUIRE_TRUE(!arena.Failed());
+    char* dumped = json.Dumps(JSON_ENCODE_ANY);
+    REQUIRE_TRUE(dumped != nullptr);
+
+    synth::JsonArena parseArena(4096);
+    synth::JSON parsedJson = parseArena.Loads(dumped);
+    while (parsedJson.IsNull() && parseArena.Failed()) {
+        parseArena.GrowAndReset();
+        parsedJson = parseArena.Loads(dumped);
+    }
+    std::free(dumped);
+
+    synth::MidiControllerProfileConfig loaded;
+    REQUIRE_TRUE(synth::FromJSON(parsedJson, loaded));
+    REQUIRE_TRUE(loaded.encoderInput.has_value());
+    REQUIRE_TRUE(loaded.encoderOutput.has_value());
+    REQUIRE_TRUE(loaded.analogInput.has_value());
+    REQUIRE_TRUE(loaded.encoderInput->relativeMode == synth::EncoderRelativeMode::Signed7Bit);
+    REQUIRE_TRUE(loaded.encoderInput->turns.size() == 4);
+    REQUIRE_TRUE(loaded.encoderInput->pushes.size() == 4);
+    REQUIRE_TRUE(loaded.encoderInput->turns[3].control.channel == 0);
+    REQUIRE_TRUE(loaded.encoderInput->turns[3].control.cc == synth::EncoderPositionToCC(3));
+    REQUIRE_TRUE(loaded.encoderInput->pushes[3].control.channel == 1);
+    REQUIRE_TRUE(loaded.encoderInput->pushes[3].slotIx == options.slotIx);
+    REQUIRE_TRUE(loaded.encoderInput->pushes[3].position == 3);
+    REQUIRE_NEAR(loaded.encoderInput->turnStep, 1.0f / 128.0f, 0.000001f);
+    REQUIRE_TRUE(loaded.encoderOutput->mappings.size() == 4);
+    REQUIRE_TRUE(loaded.encoderOutput->mappings[3].cc == synth::EncoderPositionToCC(3));
+    REQUIRE_TRUE(loaded.analogInput->sceneBlend.has_value());
+    REQUIRE_TRUE(loaded.analogInput->sceneBlend->channel == 2);
+    REQUIRE_TRUE(loaded.analogInput->sceneBlend->cc == 0);
+    REQUIRE_TRUE(!loaded.analogInput->gestures.empty());
+    REQUIRE_TRUE(loaded.analogInput->gestures[0].control.channel == 2);
+    REQUIRE_TRUE(loaded.analogInput->gestures[0].control.cc == 1);
+    REQUIRE_TRUE(loaded.analogInput->gestures[0].gestureIx == 0);
+    REQUIRE_TRUE(loaded.systemMessages.size() == 11);
+    REQUIRE_TRUE(loaded.systemMessages[0].control.channel == 5);
+    REQUIRE_TRUE(loaded.systemMessages[0].wrldBldrPosition.has_value());
+    REQUIRE_TRUE(loaded.systemMessages[0].press.type == synth::MessageIn::Type::ToggleShift);
+    REQUIRE_TRUE(loaded.systemMessages[0].release.has_value());
+    REQUIRE_TRUE(loaded.systemMessages[0].release->type == synth::MessageIn::Type::ToggleShift);
+    REQUIRE_TRUE(loaded.systemMessages[0].feedback.type == synth::MessageIn::Type::ToggleShift);
+    REQUIRE_TRUE(loaded.systemMessages[0].feedback.hasBoolValue);
+    REQUIRE_TRUE(loaded.systemMessages[0].feedback.boolValue);
+    REQUIRE_TRUE(loaded.systemMessages.back().press.type == synth::MessageIn::Type::SetGestureSelect);
+    REQUIRE_TRUE(loaded.systemMessages.back().press.gestureIx == 1);
+    REQUIRE_TRUE(loaded.systemMessages.back().release.has_value());
+    REQUIRE_TRUE(loaded.systemMessages.back().release->gestureIx == 1);
+    REQUIRE_TRUE(loaded.systemMessages.back().feedback.type == synth::MessageIn::Type::SetGestureSelect);
+    REQUIRE_TRUE(loaded.systemMessages.back().feedback.gestureIx == 1);
+    REQUIRE_TRUE(loaded.systemMessages.back().feedback.hasBoolValue);
+    REQUIRE_TRUE(loaded.systemMessages.back().feedback.boolValue);
+
+    synth::MidiControllerProfileResult result =
+        synth::CreateMidiControllerProfile(loaded, nullptr, nullptr, nullptr, [] { return 0; });
+    REQUIRE_TRUE(dynamic_cast<synth::EncoderMidiInProcessor*>(result.input.get()) != nullptr);
+    REQUIRE_TRUE(result.inputThru.size() == 2);
+    REQUIRE_TRUE(dynamic_cast<synth::AnalogMidiInProcessor*>(result.inputThru[0].get()) != nullptr);
+    REQUIRE_TRUE(dynamic_cast<synth::SystemButtonMidiInProcessor*>(result.inputThru[1].get()) != nullptr);
+    REQUIRE_TRUE(result.outputs.size() == 3);
+    REQUIRE_TRUE(dynamic_cast<synth::WrldBldrMidiOutProcessor*>(result.outputs[0].get()) != nullptr);
+    REQUIRE_TRUE(dynamic_cast<synth::SystemCcMidiOutProcessor*>(result.outputs[1].get()) != nullptr);
+    REQUIRE_TRUE(dynamic_cast<synth::WrldBldrSystemMidiOutProcessor*>(result.outputs[2].get()) != nullptr);
+}
+
+TEST_CASE(midi_profile_config_json_rejects_invalid_values_without_mutating_target) {
+    synth::MidiControllerProfileConfig target = synth::WrldBldrDefaultProfileConfig({});
+    const std::size_t originalTurnCount = target.encoderInput->turns.size();
+    const std::size_t originalSystemMessageCount = target.systemMessages.size();
+
+    synth::JsonArena arena(4096);
+    synth::JSON root = arena.Object();
+    root.SetNew("schema", arena.String("synth.midiControllerProfileConfig"));
+    root.SetNew("schemaVersion", arena.Integer(1));
+    synth::JSON encoderInput = arena.Object();
+    encoderInput.SetNew("relativeMode", arena.String("signed7Bit"));
+    encoderInput.SetNew("turnStep", arena.Real(0.01));
+    synth::JSON turns = arena.Array();
+    synth::JSON badTurn = arena.Object();
+    synth::JSON badControl = arena.Object();
+    badControl.SetNew("channel", arena.Integer(16));
+    badControl.SetNew("cc", arena.Integer(1));
+    badTurn.SetNew("control", badControl);
+    badTurn.SetNew("slotIx", arena.Integer(0));
+    badTurn.SetNew("position", arena.Integer(0));
+    turns.AppendNew(badTurn);
+    encoderInput.SetNew("turns", turns);
+    encoderInput.SetNew("pushes", arena.Array());
+    root.SetNew("encoderInput", encoderInput);
+    root.SetNew("encoderOutput", arena.Null());
+    root.SetNew("analogInput", arena.Null());
+    root.SetNew("systemMessages", arena.Array());
+
+    REQUIRE_TRUE(!synth::FromJSON(root, target));
+    REQUIRE_TRUE(target.encoderInput.has_value());
+    REQUIRE_TRUE(target.encoderInput->turns.size() == originalTurnCount);
+
+    synth::JsonArena turnStepArena(4096);
+    synth::JSON badTurnStepRoot = turnStepArena.Object();
+    badTurnStepRoot.SetNew("schema", turnStepArena.String("synth.midiControllerProfileConfig"));
+    badTurnStepRoot.SetNew("schemaVersion", turnStepArena.Integer(1));
+    synth::JSON badTurnStepInput = turnStepArena.Object();
+    badTurnStepInput.SetNew("relativeMode", turnStepArena.String("signed7Bit"));
+    badTurnStepInput.SetNew("turnStep", turnStepArena.Real(0.0));
+    badTurnStepInput.SetNew("turns", turnStepArena.Array());
+    badTurnStepInput.SetNew("pushes", turnStepArena.Array());
+    badTurnStepRoot.SetNew("encoderInput", badTurnStepInput);
+    badTurnStepRoot.SetNew("encoderOutput", turnStepArena.Null());
+    badTurnStepRoot.SetNew("analogInput", turnStepArena.Null());
+    badTurnStepRoot.SetNew("systemMessages", turnStepArena.Array());
+    REQUIRE_TRUE(!synth::FromJSON(badTurnStepRoot, target));
+    REQUIRE_TRUE(target.encoderInput.has_value());
+    REQUIRE_TRUE(target.encoderInput->turns.size() == originalTurnCount);
+
+    synth::JSON missingSchema = arena.Object();
+    missingSchema.SetNew("schemaVersion", arena.Integer(1));
+    missingSchema.SetNew("systemMessages", arena.Array());
+    REQUIRE_TRUE(!synth::FromJSON(missingSchema, target));
+    REQUIRE_TRUE(target.encoderInput.has_value());
+    REQUIRE_TRUE(target.encoderInput->turns.size() == originalTurnCount);
+
+    synth::JSON wrongVersion = arena.Object();
+    wrongVersion.SetNew("schema", arena.String("synth.midiControllerProfileConfig"));
+    wrongVersion.SetNew("schemaVersion", arena.Integer(2));
+    wrongVersion.SetNew("systemMessages", arena.Array());
+    REQUIRE_TRUE(!synth::FromJSON(wrongVersion, target));
+    REQUIRE_TRUE(target.systemMessages.size() == originalSystemMessageCount);
+
+    synth::JsonArena systemArena(4096);
+    synth::JSON badSystemRoot = systemArena.Object();
+    badSystemRoot.SetNew("schema", systemArena.String("synth.midiControllerProfileConfig"));
+    badSystemRoot.SetNew("schemaVersion", systemArena.Integer(1));
+    badSystemRoot.SetNew("encoderInput", systemArena.Null());
+    badSystemRoot.SetNew("encoderOutput", systemArena.Null());
+    badSystemRoot.SetNew("analogInput", systemArena.Null());
+    synth::JSON systemMessages = systemArena.Array();
+    synth::JSON association = systemArena.Object();
+    association.SetNew("control", synth::ToJSON(systemArena, synth::MidiControlAddress{.channel = 5, .cc = 32}));
+    association.SetNew("wrldBldrPosition", systemArena.Null());
+    association.SetNew("press", synth::ToJSON(systemArena, synth::MessageIn::ToggleShift(99)));
+    association.SetNew("release", systemArena.Null());
+    synth::JSON badFeedback = systemArena.Object();
+    badFeedback.SetNew("type", systemArena.String("notARealMessage"));
+    badFeedback.SetNew("slotIx", systemArena.Integer(0));
+    badFeedback.SetNew("position", systemArena.Integer(0));
+    badFeedback.SetNew("gestureIx", systemArena.Integer(0));
+    badFeedback.SetNew("bankIx", systemArena.Integer(0));
+    badFeedback.SetNew("sceneIx", systemArena.Integer(0));
+    badFeedback.SetNew("value", systemArena.Real(0.0));
+    badFeedback.SetNew("delta", systemArena.Real(0.0));
+    badFeedback.SetNew("boolValue", systemArena.Boolean(false));
+    badFeedback.SetNew("hasBoolValue", systemArena.Boolean(false));
+    association.SetNew("feedback", badFeedback);
+    systemMessages.AppendNew(association);
+    badSystemRoot.SetNew("systemMessages", systemMessages);
+    REQUIRE_TRUE(!synth::FromJSON(badSystemRoot, target));
+    REQUIRE_TRUE(target.systemMessages.size() == originalSystemMessageCount);
+}
+
+TEST_CASE(patch_json_loads_parameter_values_midi_profile_and_endpoint_identifiers) {
+    synth::ParameterManager source;
+    source.SetGestureCount(1);
+    auto& sourceGroup = source.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 1,
+        .numScenes = 2,
+        .maxParameters = 2,
+    });
+    auto& sourceCutoff = source.CreateParameter(sourceGroup, {.name = "Cutoff", .defaultValue = 0.2f});
+    sourceCutoff.SceneCenter(0) = 0.45f;
+    sourceCutoff.SceneCenter(1) = 0.55f;
+    sourceCutoff.GestureValue(1, 0) = 0.75f;
+    sourceCutoff.SetGestureActive(1, 0, true);
+
+    synth::WrldBldrDefaultProfileOptions options;
+    options.visibleEncoderCount = 2;
+    options.sceneCount = 2;
+    options.bankButtonCount = 2;
+    options.gestureSelectorCount = 1;
+    const synth::MidiControllerProfileConfig midiProfile = synth::WrldBldrDefaultProfileConfig(options);
+    const synth::MidiEndpointState endpoints{
+        .inputIdentifier = "input-device-id",
+        .outputIdentifier = "output-device-id",
+    };
+
+    synth::JsonArena arena(262144);
+    synth::JSON root = synth::BuildPatchJSON(arena, "Patch A", source, midiProfile, endpoints);
+    REQUIRE_TRUE(!arena.Failed());
+    REQUIRE_TRUE(std::string(root.Get("schema").StringValue()) == "sheaf.synth.patch");
+    REQUIRE_TRUE(root.Get("schemaVersion").IntegerValue() == 1);
+    REQUIRE_TRUE(std::string(root.Get("patchName").StringValue()) == "Patch A");
+    REQUIRE_TRUE(!root.Get("parameterValues").Get("Cutoff").IsNull());
+    REQUIRE_TRUE(!root.Get("midiProfile").Get("encoderInput").IsNull());
+    REQUIRE_TRUE(std::string(root.Get("midiEndpoints").Get("inputIdentifier").StringValue()) == "input-device-id");
+
+    synth::ParameterManager target;
+    target.SetGestureCount(1);
+    auto& targetGroup = target.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 1,
+        .numScenes = 2,
+        .maxParameters = 2,
+    });
+    auto& targetCutoff = target.CreateParameter(targetGroup, {.name = "Cutoff", .defaultValue = 0.2f});
+    auto& targetNewParameter = target.CreateParameter(targetGroup, {.name = "New Parameter", .defaultValue = 0.33f});
+    synth::MidiControllerProfileConfig loadedProfile;
+    synth::MidiEndpointState loadedEndpoints;
+
+    REQUIRE_TRUE(synth::LoadPatchJSON(root, target, loadedProfile, &loadedEndpoints));
+    REQUIRE_NEAR(targetCutoff.SceneCenter(0), 0.45f, 0.000001f);
+    REQUIRE_NEAR(targetCutoff.SceneCenter(1), 0.55f, 0.000001f);
+    REQUIRE_NEAR(targetCutoff.GestureValue(1, 0), 0.75f, 0.000001f);
+    REQUIRE_TRUE(targetCutoff.GestureActive(1, 0));
+    REQUIRE_NEAR(targetNewParameter.SceneCenter(0), 0.33f, 0.000001f);
+    REQUIRE_TRUE(loadedProfile.encoderInput.has_value());
+    REQUIRE_TRUE(loadedProfile.encoderInput->turns.size() == 2);
+    REQUIRE_TRUE(loadedProfile.systemMessages.size() == 6);
+    REQUIRE_TRUE(loadedEndpoints.inputIdentifier == "input-device-id");
+    REQUIRE_TRUE(loadedEndpoints.outputIdentifier == "output-device-id");
+
+    synth::JsonArena noEndpointArena(32768);
+    synth::JSON noEndpointRoot = noEndpointArena.Object();
+    noEndpointRoot.SetNew("schema", noEndpointArena.String("sheaf.synth.patch"));
+    noEndpointRoot.SetNew("schemaVersion", noEndpointArena.Integer(1));
+    noEndpointRoot.SetNew("patchName", noEndpointArena.String("Patch A"));
+    noEndpointRoot.SetNew("parameterValues", source.ParameterValuesToJSON(noEndpointArena));
+    noEndpointRoot.SetNew("midiProfile", synth::ToJSON(noEndpointArena, midiProfile));
+    synth::MidiEndpointState defaultedEndpoints{.inputIdentifier = "old-in", .outputIdentifier = "old-out"};
+    REQUIRE_TRUE(synth::LoadPatchJSON(noEndpointRoot, target, loadedProfile, &defaultedEndpoints));
+    REQUIRE_TRUE(defaultedEndpoints.inputIdentifier.empty());
+    REQUIRE_TRUE(defaultedEndpoints.outputIdentifier.empty());
+}
+
+TEST_CASE(patch_json_rejects_invalid_roots_without_mutating_profile_or_endpoints) {
+    synth::ParameterManager manager;
+    manager.SetGestureCount(0);
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 0,
+        .numScenes = 1,
+        .maxParameters = 1,
+    });
+    auto& cutoff = manager.CreateParameter(group, {.name = "Cutoff", .defaultValue = 0.2f});
+
+    synth::MidiControllerProfileConfig targetProfile = synth::WrldBldrDefaultProfileConfig({});
+    const std::size_t originalTurnCount = targetProfile.encoderInput->turns.size();
+    synth::MidiEndpointState endpoints{.inputIdentifier = "in", .outputIdentifier = "out"};
+
+    synth::JsonArena arena(4096);
+    synth::JSON wrongSchema = arena.Object();
+    wrongSchema.SetNew("schema", arena.String("wrong.schema"));
+    wrongSchema.SetNew("schemaVersion", arena.Integer(1));
+    wrongSchema.SetNew("patchName", arena.String("Patch"));
+    REQUIRE_TRUE(!synth::LoadPatchJSON(wrongSchema, manager, targetProfile, &endpoints));
+    REQUIRE_TRUE(targetProfile.encoderInput.has_value());
+    REQUIRE_TRUE(targetProfile.encoderInput->turns.size() == originalTurnCount);
+    REQUIRE_TRUE(endpoints.inputIdentifier == "in");
+
+    synth::JSON wrongVersion = arena.Object();
+    wrongVersion.SetNew("schema", arena.String("sheaf.synth.patch"));
+    wrongVersion.SetNew("schemaVersion", arena.Integer(2));
+    wrongVersion.SetNew("patchName", arena.String("Patch"));
+    REQUIRE_TRUE(!synth::LoadPatchJSON(wrongVersion, manager, targetProfile, &endpoints));
+    REQUIRE_TRUE(targetProfile.encoderInput->turns.size() == originalTurnCount);
+    REQUIRE_TRUE(endpoints.outputIdentifier == "out");
+
+    synth::JSON missingPatchName = arena.Object();
+    missingPatchName.SetNew("schema", arena.String("sheaf.synth.patch"));
+    missingPatchName.SetNew("schemaVersion", arena.Integer(1));
+    REQUIRE_TRUE(!synth::LoadPatchJSON(missingPatchName, manager, targetProfile, &endpoints));
+    REQUIRE_TRUE(targetProfile.encoderInput->turns.size() == originalTurnCount);
+
+    synth::JSON nonObjectRoot = arena.Array();
+    REQUIRE_TRUE(!synth::LoadPatchJSON(nonObjectRoot, manager, targetProfile, &endpoints));
+    REQUIRE_TRUE(targetProfile.encoderInput->turns.size() == originalTurnCount);
+    REQUIRE_TRUE(endpoints.inputIdentifier == "in");
+    REQUIRE_TRUE(endpoints.outputIdentifier == "out");
+
+    cutoff.SceneCenter(0) = 0.44f;
+    synth::JSON badParameterValues = arena.Object();
+    badParameterValues.SetNew("schema", arena.String("sheaf.synth.patch"));
+    badParameterValues.SetNew("schemaVersion", arena.Integer(1));
+    badParameterValues.SetNew("patchName", arena.String("Patch"));
+    badParameterValues.SetNew("parameterValues", arena.Array());
+    synth::JSON minimalMidiProfile = arena.Object();
+    minimalMidiProfile.SetNew("schema", arena.String("synth.midiControllerProfileConfig"));
+    minimalMidiProfile.SetNew("schemaVersion", arena.Integer(1));
+    badParameterValues.SetNew("midiProfile", minimalMidiProfile);
+    REQUIRE_TRUE(!synth::LoadPatchJSON(badParameterValues, manager, targetProfile, &endpoints));
+    REQUIRE_NEAR(cutoff.SceneCenter(0), 0.44f, 0.000001f);
+    REQUIRE_TRUE(targetProfile.encoderInput->turns.size() == originalTurnCount);
+    REQUIRE_TRUE(endpoints.inputIdentifier == "in");
+    REQUIRE_TRUE(endpoints.outputIdentifier == "out");
+
+    synth::JSON missingParameterValues = arena.Object();
+    missingParameterValues.SetNew("schema", arena.String("sheaf.synth.patch"));
+    missingParameterValues.SetNew("schemaVersion", arena.Integer(1));
+    missingParameterValues.SetNew("patchName", arena.String("Patch"));
+    missingParameterValues.SetNew("midiProfile", minimalMidiProfile);
+    REQUIRE_TRUE(!synth::LoadPatchJSON(missingParameterValues, manager, targetProfile, &endpoints));
+    REQUIRE_NEAR(cutoff.SceneCenter(0), 0.44f, 0.000001f);
+    REQUIRE_TRUE(targetProfile.encoderInput->turns.size() == originalTurnCount);
+    REQUIRE_TRUE(endpoints.inputIdentifier == "in");
+    REQUIRE_TRUE(endpoints.outputIdentifier == "out");
+}
+
+TEST_CASE(patch_file_versioning_writes_collision_safe_sortable_versions) {
+    const auto now = std::chrono::system_clock::from_time_t(1700000000);
+    const auto tempRoot = std::filesystem::temp_directory_path() /
+                          ("sheaf-synth-patch-test-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::filesystem::remove_all(tempRoot);
+
+    const std::filesystem::path first = synth::SavePatchVersion(tempRoot, "Patch A", "{\"save\":1}", now);
+    const std::filesystem::path second = synth::SavePatchVersion(tempRoot, "Patch A", "{\"save\":2}", now);
+    const std::string baseName = synth::TimestampPatchFilename(now);
+    const std::string firstSuffix = "-000.json";
+    const auto suffixPos = baseName.rfind(firstSuffix);
+    REQUIRE_TRUE(suffixPos != std::string::npos);
+    const std::string stem = baseName.substr(0, suffixPos);
+    REQUIRE_TRUE(first != second);
+    REQUIRE_TRUE(first.filename().string() == baseName);
+    REQUIRE_TRUE(second.filename().string() == stem + "-001.json");
+    REQUIRE_TRUE(std::filesystem::exists(first));
+    REQUIRE_TRUE(std::filesystem::exists(second));
+
+    const std::optional<std::filesystem::path> latest = synth::LatestPatchVersion(synth::PatchDirectory(tempRoot, "Patch A"));
+    REQUIRE_TRUE(latest.has_value());
+    REQUIRE_TRUE(latest->filename() == second.filename());
+    REQUIRE_TRUE(synth::LoadPatchVersionText(first) == "{\"save\":1}");
+    REQUIRE_TRUE(synth::LoadPatchVersionText(second) == "{\"save\":2}");
+
+    std::filesystem::remove_all(tempRoot);
+}
+
+TEST_CASE(patch_file_round_trips_real_patch_json_through_latest_version) {
+    synth::ParameterManager source;
+    source.SetGestureCount(1);
+    auto& sourceGroup = source.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 1,
+        .numScenes = 2,
+        .maxParameters = 2,
+    });
+    auto& cutoff = source.CreateParameter(sourceGroup, {.name = "Cutoff", .defaultValue = 0.2f});
+    auto& depth = cutoff.EnsureModulationDepth(0, {.name = "Cutoff LFO", .defaultValue = 0.0f});
+    cutoff.SceneCenter(0) = 0.61f;
+    cutoff.GestureValue(1, 0) = 0.72f;
+    cutoff.SetGestureActive(1, 0, true);
+    depth.SceneCenter(1) = 0.31f;
+
+    synth::WrldBldrDefaultProfileOptions options;
+    options.visibleEncoderCount = 1;
+    options.sceneCount = 2;
+    options.bankButtonCount = 1;
+    options.gestureSelectorCount = 1;
+    const synth::MidiControllerProfileConfig midiProfile = synth::WrldBldrDefaultProfileConfig(options);
+    const synth::MidiEndpointState endpoints{
+        .inputIdentifier = "saved-input",
+        .outputIdentifier = "saved-output",
+    };
+
+    synth::JsonArena buildArena(262144);
+    const synth::JSON patch = synth::BuildPatchJSON(buildArena, "Round Trip", source, midiProfile, endpoints);
+    REQUIRE_TRUE(!patch.IsNull());
+    REQUIRE_TRUE(!buildArena.Failed());
+    char* dumped = patch.Dumps(JSON_ENCODE_ANY);
+    REQUIRE_TRUE(dumped != nullptr);
+    const std::string jsonText(dumped);
+    std::free(dumped);
+
+    const auto now = std::chrono::system_clock::from_time_t(1700000500);
+    const auto tempRoot = std::filesystem::temp_directory_path() /
+                          ("sheaf-synth-real-patch-test-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::filesystem::remove_all(tempRoot);
+    const std::filesystem::path saved = synth::SavePatchVersion(tempRoot, "Round Trip", jsonText, now);
+
+    const std::optional<std::filesystem::path> latest =
+        synth::LatestPatchVersion(synth::PatchDirectory(tempRoot, "Round Trip"));
+    REQUIRE_TRUE(latest.has_value());
+    REQUIRE_TRUE(*latest == saved);
+
+    const std::string loadedText = synth::LoadPatchVersionText(*latest);
+    synth::JsonArena parseArena(262144);
+    synth::JSON loadedRoot = parseArena.Loads(loadedText.c_str());
+    REQUIRE_TRUE(!loadedRoot.IsNull());
+    REQUIRE_TRUE(!parseArena.Failed());
+
+    synth::ParameterManager target;
+    target.SetGestureCount(1);
+    auto& targetGroup = target.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 1,
+        .numScenes = 2,
+        .maxParameters = 3,
+    });
+    auto& targetCutoff = target.CreateParameter(targetGroup, {.name = "Cutoff", .defaultValue = 0.2f});
+    auto& targetDepth = targetCutoff.EnsureModulationDepth(0, {.name = "Cutoff LFO", .defaultValue = 0.0f});
+    auto& added = target.CreateParameter(targetGroup, {.name = "New Default", .defaultValue = 0.44f});
+
+    synth::MidiControllerProfileConfig loadedProfile;
+    synth::MidiEndpointState loadedEndpoints;
+    REQUIRE_TRUE(synth::LoadPatchJSON(loadedRoot, target, loadedProfile, &loadedEndpoints));
+    REQUIRE_NEAR(targetCutoff.SceneCenter(0), 0.61f, 0.000001f);
+    REQUIRE_NEAR(targetCutoff.GestureValue(1, 0), 0.72f, 0.000001f);
+    REQUIRE_TRUE(targetCutoff.GestureActive(1, 0));
+    REQUIRE_NEAR(targetDepth.SceneCenter(1), 0.31f, 0.000001f);
+    REQUIRE_NEAR(added.SceneCenter(0), 0.44f, 0.000001f);
+    REQUIRE_TRUE(loadedProfile.encoderInput.has_value());
+    REQUIRE_TRUE(loadedProfile.encoderInput->turns.size() == 1);
+    REQUIRE_TRUE(loadedEndpoints.inputIdentifier == "saved-input");
+    REQUIRE_TRUE(loadedEndpoints.outputIdentifier == "saved-output");
+
+    std::filesystem::remove_all(tempRoot);
+}
+
+TEST_CASE(revert_all_to_defaults_resets_values_controls_and_existing_depths_only) {
+    synth::ParameterManager manager;
+    manager.SetGestureCount(1);
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 2,
+        .numScenes = 2,
+        .maxParameters = 2,
+    });
+    auto& cutoff = manager.CreateParameter(group, {.name = "Cutoff", .defaultValue = 0.25f});
+    auto& depth = cutoff.EnsureModulationDepth(0, {.name = "Cutoff LFO", .defaultValue = 0.0f});
+    manager.SetSceneEndpoints(0, 1);
+    manager.SetSceneBlend(0.35f);
+    manager.SetGestureValue(0, 0.4f);
+    manager.SelectGesture(0);
+    manager.CaptureDefaultControlState();
+
+    cutoff.SceneCenter(0) = 0.91f;
+    cutoff.SceneCenter(1) = 0.83f;
+    cutoff.GestureValue(1, 0) = 0.73f;
+    cutoff.SetGestureActive(1, 0, true);
+    depth.SceneCenter(0) = 0.44f;
+    depth.GestureValue(1, 0) = 0.22f;
+    manager.SetSceneBlend(1.0f);
+    manager.SetShiftHeld(true);
+    manager.DeselectGesture(0);
+
+    manager.RevertAllToDefaults();
+    REQUIRE_NEAR(cutoff.SceneCenter(0), 0.25f, 0.000001f);
+    REQUIRE_NEAR(cutoff.SceneCenter(1), 0.25f, 0.000001f);
+    REQUIRE_NEAR(cutoff.GestureValue(1, 0), 0.25f, 0.000001f);
+    REQUIRE_TRUE(!cutoff.GestureActive(1, 0));
+    REQUIRE_NEAR(depth.SceneCenter(0), 0.0f, 0.000001f);
+    REQUIRE_NEAR(depth.GestureValue(1, 0), 0.0f, 0.000001f);
+    REQUIRE_TRUE(cutoff.ModulationDepthParameter(1) == nullptr);
+    REQUIRE_TRUE(manager.ParameterCount() == 1);
+    REQUIRE_TRUE(manager.Scene().leftScene == 0);
+    REQUIRE_TRUE(manager.Scene().rightScene == 1);
+    REQUIRE_NEAR(manager.Scene().blend, 0.35f, 0.000001f);
+    REQUIRE_TRUE(!manager.ShiftHeld());
+    REQUIRE_TRUE(manager.GestureSelected(0));
+    REQUIRE_NEAR(manager.GestureValue(0), 0.4f, 0.000001f);
+}
+
+TEST_CASE(patch_messages_serialize_load_and_revert_initialized_state) {
+    synth::ParameterManager manager;
+    manager.SetGestureCount(1);
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 1,
+        .numScenes = 2,
+        .maxParameters = 2,
+    });
+    auto& cutoff = manager.CreateParameter(group, {.name = "Cutoff", .defaultValue = 0.2f});
+    manager.CaptureDefaultControlState();
+
+    synth::WrldBldrDefaultProfileOptions options;
+    options.visibleEncoderCount = 1;
+    options.sceneCount = 2;
+    options.bankButtonCount = 1;
+    options.gestureSelectorCount = 1;
+    const synth::MidiControllerProfileConfig defaultProfile = synth::WrldBldrDefaultProfileConfig(options);
+    synth::MidiControllerProfileConfig profile = defaultProfile;
+    synth::MidiEndpointState defaultEndpoints;
+    synth::MidiEndpointState endpoints{.inputIdentifier = "in-a", .outputIdentifier = "out-a"};
+    synth::MessageOutBus outputBus(4);
+
+    cutoff.SceneCenter(0) = 0.66f;
+    const auto status = synth::ApplyPatchMessage(
+        synth::PatchMessageIn::SerializeToJSON(42, "Patch A"), manager, profile, defaultProfile,
+        endpoints, defaultEndpoints, outputBus);
+    REQUIRE_TRUE(status == synth::PatchApplyStatus::Serialized);
+    synth::MessageOut out;
+    REQUIRE_TRUE(outputBus.Pop(out));
+    REQUIRE_TRUE(out.requestId == 42);
+    REQUIRE_TRUE(out.document.arena != nullptr);
+    REQUIRE_TRUE(synth::ValidatePatchJSON(out.document.root));
+    REQUIRE_TRUE(synth::ApplyPatchMessage(
+                     synth::PatchMessageIn::SerializeToJSON(43, "Too Small"), manager, profile, defaultProfile,
+                     endpoints, defaultEndpoints, outputBus,
+                     synth::PatchSerializationContext{.initialArenaCapacity = 1, .maxArenaCapacity = 1}) ==
+                 synth::PatchApplyStatus::ArenaExhausted);
+
+    cutoff.SceneCenter(0) = 0.1f;
+    endpoints.inputIdentifier = "changed";
+    REQUIRE_TRUE(synth::ApplyPatchMessage(
+                     synth::PatchMessageIn::LoadFromJSON(out.document), manager, profile, defaultProfile,
+                     endpoints, defaultEndpoints, outputBus) == synth::PatchApplyStatus::Applied);
+    REQUIRE_NEAR(cutoff.SceneCenter(0), 0.66f, 0.000001f);
+    REQUIRE_TRUE(endpoints.inputIdentifier == "in-a");
+
+    cutoff.SceneCenter(0) = 0.99f;
+    endpoints.inputIdentifier = "changed";
+    REQUIRE_TRUE(synth::ApplyPatchMessage(
+                     synth::PatchMessageIn::RevertAllToDefault(), manager, profile, defaultProfile,
+                     endpoints, defaultEndpoints, outputBus) == synth::PatchApplyStatus::Reverted);
+    REQUIRE_NEAR(cutoff.SceneCenter(0), 0.2f, 0.000001f);
+    REQUIRE_TRUE(endpoints.inputIdentifier.empty());
+    REQUIRE_TRUE(profile.encoderInput.has_value());
+    REQUIRE_TRUE(profile.encoderInput->turns.size() == defaultProfile.encoderInput->turns.size());
+}
+
+TEST_CASE(patch_manager_save_load_revert_lifecycle_uses_messages_and_current_directory) {
+    synth::PatchMessageInBus inputBus(8);
+    synth::MessageOutBus outputBus(8);
+    synth::PatchManager patchManager(&inputBus, &outputBus);
+
+    synth::ParameterManager manager;
+    manager.SetGestureCount(0);
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 0,
+        .numScenes = 1,
+        .maxParameters = 2,
+    });
+    auto& cutoff = manager.CreateParameter(group, {.name = "Cutoff", .defaultValue = 0.2f});
+    manager.CaptureDefaultControlState();
+
+    const synth::MidiControllerProfileConfig defaultProfile = synth::WrldBldrDefaultProfileConfig({});
+    synth::MidiControllerProfileConfig profile = defaultProfile;
+    synth::MidiEndpointState defaultEndpoints;
+    synth::MidiEndpointState endpoints;
+
+    const auto tempRoot = std::filesystem::temp_directory_path() /
+                          ("sheaf-synth-patch-manager-test-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    const std::filesystem::path patchDir = tempRoot / "Patch A";
+    std::filesystem::remove_all(tempRoot);
+
+    REQUIRE_TRUE(patchManager.SavePatch().status == synth::PatchCommandStatus::NeedsSaveAsPath);
+
+    cutoff.SceneCenter(0) = 0.72f;
+    synth::PatchCommandResult saveAs = patchManager.SavePatchAs(patchDir);
+    REQUIRE_TRUE(saveAs.status == synth::PatchCommandStatus::Pending);
+    REQUIRE_TRUE(patchManager.SavePatchAs(tempRoot / "Patch B").status == synth::PatchCommandStatus::Busy);
+    const std::filesystem::path busyExistingPatchDir = tempRoot / "Already Exists While Busy";
+    std::filesystem::create_directories(busyExistingPatchDir);
+    REQUIRE_TRUE(patchManager.SavePatchAs(busyExistingPatchDir).status == synth::PatchCommandStatus::Busy);
+    synth::PatchMessageIn message;
+    REQUIRE_TRUE(inputBus.Pop(message));
+    REQUIRE_TRUE(message.type == synth::PatchMessageIn::Type::SerializeToJSON);
+    REQUIRE_TRUE(message.requestId == saveAs.requestId);
+    REQUIRE_TRUE(synth::ApplyPatchMessage(message, manager, profile, defaultProfile,
+                                          endpoints, defaultEndpoints, outputBus) == synth::PatchApplyStatus::Serialized);
+    synth::PatchCommandResult written = patchManager.ProcessResponses(std::chrono::system_clock::from_time_t(1700000100));
+    REQUIRE_TRUE(written.status == synth::PatchCommandStatus::Written);
+    REQUIRE_TRUE(patchManager.CurrentPatchDirectory().has_value());
+    REQUIRE_TRUE(*patchManager.CurrentPatchDirectory() == patchDir);
+    REQUIRE_TRUE(std::filesystem::exists(written.path));
+    const std::filesystem::path firstVersion = written.path;
+
+    REQUIRE_TRUE(patchManager.SavePatchAs(patchDir).status == synth::PatchCommandStatus::AlreadyExists);
+
+    const std::filesystem::path racedPatchDir = tempRoot / "Race Patch";
+    saveAs = patchManager.SavePatchAs(racedPatchDir);
+    REQUIRE_TRUE(saveAs.status == synth::PatchCommandStatus::Pending);
+    REQUIRE_TRUE(inputBus.Pop(message));
+    REQUIRE_TRUE(synth::ApplyPatchMessage(message, manager, profile, defaultProfile,
+                                          endpoints, defaultEndpoints, outputBus) == synth::PatchApplyStatus::Serialized);
+    std::filesystem::create_directories(racedPatchDir);
+    written = patchManager.ProcessResponses(std::chrono::system_clock::from_time_t(1700000100));
+    REQUIRE_TRUE(written.status == synth::PatchCommandStatus::AlreadyExists);
+    REQUIRE_TRUE(*patchManager.CurrentPatchDirectory() == patchDir);
+
+    cutoff.SceneCenter(0) = 0.84f;
+    synth::PatchCommandResult save = patchManager.SavePatch();
+    REQUIRE_TRUE(save.status == synth::PatchCommandStatus::Pending);
+    REQUIRE_TRUE(inputBus.Pop(message));
+    REQUIRE_TRUE(synth::ApplyPatchMessage(message, manager, profile, defaultProfile,
+                                          endpoints, defaultEndpoints, outputBus) == synth::PatchApplyStatus::Serialized);
+    written = patchManager.ProcessResponses(std::chrono::system_clock::from_time_t(1700000100));
+    REQUIRE_TRUE(written.status == synth::PatchCommandStatus::Written);
+    REQUIRE_TRUE(written.path != firstVersion);
+
+    cutoff.SceneCenter(0) = 0.1f;
+    REQUIRE_TRUE(patchManager.LoadPatch(firstVersion).status == synth::PatchCommandStatus::Ok);
+    REQUIRE_TRUE(inputBus.Pop(message));
+    REQUIRE_TRUE(message.type == synth::PatchMessageIn::Type::LoadFromJSON);
+    REQUIRE_TRUE(synth::ApplyPatchMessage(message, manager, profile, defaultProfile,
+                                          endpoints, defaultEndpoints, outputBus) == synth::PatchApplyStatus::Applied);
+    REQUIRE_NEAR(cutoff.SceneCenter(0), 0.72f, 0.000001f);
+    REQUIRE_TRUE(*patchManager.CurrentPatchDirectory() == patchDir);
+
+    REQUIRE_TRUE(patchManager.LoadPatch(tempRoot / "missing").status == synth::PatchCommandStatus::NotFound);
+    REQUIRE_TRUE(*patchManager.CurrentPatchDirectory() == patchDir);
+    const std::filesystem::path invalidPatchDir = tempRoot / "Invalid";
+    std::filesystem::create_directories(invalidPatchDir);
+    const std::filesystem::path invalidVersion = invalidPatchDir / "20231114T221640Z-000.json";
+    {
+        std::ofstream out(invalidVersion);
+        out << R"({"schema":"sheaf.synth.patch","schemaVersion":999,"patchName":"Invalid"})";
+    }
+    REQUIRE_TRUE(patchManager.LoadPatch(invalidVersion).status == synth::PatchCommandStatus::InvalidPatch);
+    REQUIRE_TRUE(*patchManager.CurrentPatchDirectory() == patchDir);
+
+    cutoff.SceneCenter(0) = 0.0f;
+    REQUIRE_TRUE(patchManager.RevertPatch().status == synth::PatchCommandStatus::Ok);
+    REQUIRE_TRUE(inputBus.Pop(message));
+    REQUIRE_TRUE(message.type == synth::PatchMessageIn::Type::LoadFromJSON);
+    REQUIRE_TRUE(synth::ApplyPatchMessage(message, manager, profile, defaultProfile,
+                                          endpoints, defaultEndpoints, outputBus) == synth::PatchApplyStatus::Applied);
+    REQUIRE_NEAR(cutoff.SceneCenter(0), 0.84f, 0.000001f);
+
+    REQUIRE_TRUE(patchManager.NewPatch().status == synth::PatchCommandStatus::Ok);
+    REQUIRE_TRUE(!patchManager.CurrentPatchDirectory().has_value());
+    REQUIRE_TRUE(inputBus.Pop(message));
+    REQUIRE_TRUE(message.type == synth::PatchMessageIn::Type::RevertAllToDefault);
+    REQUIRE_TRUE(synth::ApplyPatchMessage(message, manager, profile, defaultProfile,
+                                          endpoints, defaultEndpoints, outputBus) == synth::PatchApplyStatus::Reverted);
+    REQUIRE_NEAR(cutoff.SceneCenter(0), 0.2f, 0.000001f);
+
+    std::filesystem::remove_all(tempRoot);
 }
 
 TEST_CASE(invalid_indices_throw) {

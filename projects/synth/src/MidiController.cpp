@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <string_view>
 
 namespace synth {
 
@@ -44,6 +45,151 @@ bool MappingIsFirstPosition(const EncoderMidiOutMapping& mapping, std::size_t co
 
 bool CacheNeedsResize(std::size_t size, std::size_t targetSize) {
     return size != targetSize;
+}
+
+bool IsObject(JSON json) {
+    return json.m_node != nullptr && json.m_node->m_type == JsonType::Object;
+}
+
+bool IsArray(JSON json) {
+    return json.m_node != nullptr && json.m_node->m_type == JsonType::Array;
+}
+
+bool IsString(JSON json) {
+    return json.m_node != nullptr && json.m_node->m_type == JsonType::String;
+}
+
+bool IsInteger(JSON json) {
+    return json.m_node != nullptr && json.m_node->m_type == JsonType::Integer;
+}
+
+bool IsNumber(JSON json) {
+    return json.m_node != nullptr &&
+           (json.m_node->m_type == JsonType::Integer || json.m_node->m_type == JsonType::Real);
+}
+
+bool IsBoolean(JSON json) {
+    return json.m_node != nullptr && json.m_node->m_type == JsonType::Boolean;
+}
+
+bool ReadSize(JSON json, std::size_t& value) {
+    if (!IsInteger(json) || json.IntegerValue() < 0) {
+        return false;
+    }
+    value = static_cast<std::size_t>(json.IntegerValue());
+    return true;
+}
+
+bool ReadU8(JSON json, std::uint8_t& value, std::uint8_t max = 0x7F) {
+    if (!IsInteger(json) || json.IntegerValue() < 0 || json.IntegerValue() > max) {
+        return false;
+    }
+    value = static_cast<std::uint8_t>(json.IntegerValue());
+    return true;
+}
+
+bool ReadFloat(JSON json, float& value) {
+    if (!IsNumber(json)) {
+        return false;
+    }
+    value = static_cast<float>(json.NumberValue());
+    return true;
+}
+
+bool ReadBool(JSON json, bool& value) {
+    if (!IsBoolean(json)) {
+        return false;
+    }
+    value = json.BooleanValue();
+    return true;
+}
+
+const char* MessageTypeName(MessageIn::Type type) {
+    switch (type) {
+    case MessageIn::Type::ParamIncDec:
+        return "paramIncDec";
+    case MessageIn::Type::ParamPush:
+        return "paramPush";
+    case MessageIn::Type::ToggleShift:
+        return "toggleShift";
+    case MessageIn::Type::ToggleGestureSelect:
+        return "toggleGestureSelect";
+    case MessageIn::Type::SetGestureSelect:
+        return "setGestureSelect";
+    case MessageIn::Type::SelectParamBank:
+        return "selectParamBank";
+    case MessageIn::Type::Start:
+        return "start";
+    case MessageIn::Type::Stop:
+        return "stop";
+    case MessageIn::Type::Clock:
+        return "clock";
+    case MessageIn::Type::SetGestureValue:
+        return "setGestureValue";
+    case MessageIn::Type::SceneSelect:
+        return "sceneSelect";
+    case MessageIn::Type::SetSceneBlend:
+        return "setSceneBlend";
+    }
+    return "clock";
+}
+
+bool ParseMessageType(std::string_view value, MessageIn::Type& type) {
+    if (value == "paramIncDec") {
+        type = MessageIn::Type::ParamIncDec;
+    } else if (value == "paramPush") {
+        type = MessageIn::Type::ParamPush;
+    } else if (value == "toggleShift") {
+        type = MessageIn::Type::ToggleShift;
+    } else if (value == "toggleGestureSelect") {
+        type = MessageIn::Type::ToggleGestureSelect;
+    } else if (value == "setGestureSelect") {
+        type = MessageIn::Type::SetGestureSelect;
+    } else if (value == "selectParamBank") {
+        type = MessageIn::Type::SelectParamBank;
+    } else if (value == "start") {
+        type = MessageIn::Type::Start;
+    } else if (value == "stop") {
+        type = MessageIn::Type::Stop;
+    } else if (value == "clock") {
+        type = MessageIn::Type::Clock;
+    } else if (value == "setGestureValue") {
+        type = MessageIn::Type::SetGestureValue;
+    } else if (value == "sceneSelect") {
+        type = MessageIn::Type::SceneSelect;
+    } else if (value == "setSceneBlend") {
+        type = MessageIn::Type::SetSceneBlend;
+    } else {
+        return false;
+    }
+    return true;
+}
+
+template <typename T>
+JSON VectorToJSON(JsonArena& arena, const std::vector<T>& values) {
+    JSON array = arena.Array();
+    for (const T& value : values) {
+        array.AppendNew(ToJSON(arena, value));
+    }
+    return array;
+}
+
+template <typename T>
+bool VectorFromJSON(JSON json, std::vector<T>& values) {
+    if (!IsArray(json)) {
+        return false;
+    }
+    std::vector<T> parsed;
+    parsed.reserve(json.Size());
+    for (std::size_t ix = 0; ix < json.Size(); ++ix) {
+        T value;
+        if (!FromJSON(json.GetAt(ix), value)) {
+            return false;
+        }
+        parsed.push_back(std::move(value));
+    }
+    values = std::move(parsed);
+    return true;
 }
 
 } // namespace
@@ -723,6 +869,359 @@ void WrldBldrSystemMidiOutProcessor::Process() {
 
 bool WrldBldrSystemMidiOutProcessor::Enqueue(const BasicMidi& midi) {
     return sender_ != nullptr && sender_->Enqueue(midi);
+}
+
+JSON ToJSON(JsonArena& arena, EncoderRelativeMode value) {
+    switch (value) {
+    case EncoderRelativeMode::Signed7Bit:
+        return arena.String("signed7Bit");
+    case EncoderRelativeMode::DirectionOnly:
+        return arena.String("directionOnly");
+    }
+    return arena.String("signed7Bit");
+}
+
+bool FromJSON(JSON json, EncoderRelativeMode& value) {
+    if (!IsString(json)) {
+        return false;
+    }
+    const std::string_view mode(json.StringValue());
+    if (mode == "signed7Bit") {
+        value = EncoderRelativeMode::Signed7Bit;
+        return true;
+    }
+    if (mode == "directionOnly") {
+        value = EncoderRelativeMode::DirectionOnly;
+        return true;
+    }
+    return false;
+}
+
+JSON ToJSON(JsonArena& arena, const MidiControlAddress& value) {
+    JSON json = arena.Object();
+    json.SetNew("channel", arena.Integer(value.channel));
+    json.SetNew("cc", arena.Integer(value.cc));
+    return json;
+}
+
+bool FromJSON(JSON json, MidiControlAddress& value) {
+    if (!IsObject(json)) {
+        return false;
+    }
+    MidiControlAddress parsed;
+    if (!ReadU8(json.Get("channel"), parsed.channel, 0x0F) || !ReadU8(json.Get("cc"), parsed.cc)) {
+        return false;
+    }
+    value = parsed;
+    return true;
+}
+
+JSON ToJSON(JsonArena& arena, const EncoderMidiMapping& value) {
+    JSON json = arena.Object();
+    json.SetNew("control", ToJSON(arena, value.control));
+    json.SetNew("slotIx", arena.Integer(static_cast<int64_t>(value.slotIx)));
+    json.SetNew("position", arena.Integer(static_cast<int64_t>(value.position)));
+    return json;
+}
+
+bool FromJSON(JSON json, EncoderMidiMapping& value) {
+    if (!IsObject(json)) {
+        return false;
+    }
+    EncoderMidiMapping parsed;
+    if (!FromJSON(json.Get("control"), parsed.control) || !ReadSize(json.Get("slotIx"), parsed.slotIx) ||
+        !ReadSize(json.Get("position"), parsed.position)) {
+        return false;
+    }
+    value = parsed;
+    return true;
+}
+
+JSON ToJSON(JsonArena& arena, const EncoderMidiInConfig& value) {
+    JSON json = arena.Object();
+    json.SetNew("relativeMode", ToJSON(arena, value.relativeMode));
+    json.SetNew("turnStep", arena.Real(value.turnStep));
+    json.SetNew("turns", VectorToJSON(arena, value.turns));
+    json.SetNew("pushes", VectorToJSON(arena, value.pushes));
+    return json;
+}
+
+bool FromJSON(JSON json, EncoderMidiInConfig& value) {
+    if (!IsObject(json)) {
+        return false;
+    }
+    EncoderMidiInConfig parsed;
+    if (!FromJSON(json.Get("relativeMode"), parsed.relativeMode) || !ReadFloat(json.Get("turnStep"), parsed.turnStep) ||
+        !std::isfinite(parsed.turnStep) || parsed.turnStep <= 0.0f ||
+        !VectorFromJSON(json.Get("turns"), parsed.turns) || !VectorFromJSON(json.Get("pushes"), parsed.pushes)) {
+        return false;
+    }
+    value = std::move(parsed);
+    return true;
+}
+
+JSON ToJSON(JsonArena& arena, const AnalogMidiMapping& value) {
+    JSON json = arena.Object();
+    json.SetNew("control", ToJSON(arena, value.control));
+    json.SetNew("gestureIx", arena.Integer(static_cast<int64_t>(value.gestureIx)));
+    return json;
+}
+
+bool FromJSON(JSON json, AnalogMidiMapping& value) {
+    if (!IsObject(json)) {
+        return false;
+    }
+    AnalogMidiMapping parsed;
+    if (!FromJSON(json.Get("control"), parsed.control) || !ReadSize(json.Get("gestureIx"), parsed.gestureIx)) {
+        return false;
+    }
+    value = parsed;
+    return true;
+}
+
+JSON ToJSON(JsonArena& arena, const AnalogMidiInConfig& value) {
+    JSON json = arena.Object();
+    json.SetNew("gestures", VectorToJSON(arena, value.gestures));
+    if (value.sceneBlend.has_value()) {
+        json.SetNew("sceneBlend", ToJSON(arena, *value.sceneBlend));
+    } else {
+        json.SetNew("sceneBlend", arena.Null());
+    }
+    return json;
+}
+
+bool FromJSON(JSON json, AnalogMidiInConfig& value) {
+    if (!IsObject(json)) {
+        return false;
+    }
+    AnalogMidiInConfig parsed;
+    if (!VectorFromJSON(json.Get("gestures"), parsed.gestures)) {
+        return false;
+    }
+    const JSON sceneBlend = json.Get("sceneBlend");
+    if (!sceneBlend.IsNull()) {
+        MidiControlAddress address;
+        if (!FromJSON(sceneBlend, address)) {
+            return false;
+        }
+        parsed.sceneBlend = address;
+    }
+    value = std::move(parsed);
+    return true;
+}
+
+JSON ToJSON(JsonArena& arena, const EncoderMidiOutMapping& value) {
+    JSON json = arena.Object();
+    json.SetNew("slotIx", arena.Integer(static_cast<int64_t>(value.slotIx)));
+    json.SetNew("position", arena.Integer(static_cast<int64_t>(value.position)));
+    json.SetNew("cc", arena.Integer(value.cc));
+    return json;
+}
+
+bool FromJSON(JSON json, EncoderMidiOutMapping& value) {
+    if (!IsObject(json)) {
+        return false;
+    }
+    EncoderMidiOutMapping parsed;
+    if (!ReadSize(json.Get("slotIx"), parsed.slotIx) || !ReadSize(json.Get("position"), parsed.position) ||
+        !ReadU8(json.Get("cc"), parsed.cc)) {
+        return false;
+    }
+    value = parsed;
+    return true;
+}
+
+JSON ToJSON(JsonArena& arena, const EncoderMidiOutConfig& value) {
+    JSON json = arena.Object();
+    json.SetNew("mappings", VectorToJSON(arena, value.mappings));
+    json.SetNew("wrldBldrColorBudgetPerProcess",
+                arena.Integer(static_cast<int64_t>(value.wrldBldrColorBudgetPerProcess)));
+    return json;
+}
+
+bool FromJSON(JSON json, EncoderMidiOutConfig& value) {
+    if (!IsObject(json)) {
+        return false;
+    }
+    EncoderMidiOutConfig parsed;
+    if (!VectorFromJSON(json.Get("mappings"), parsed.mappings) ||
+        !ReadSize(json.Get("wrldBldrColorBudgetPerProcess"), parsed.wrldBldrColorBudgetPerProcess)) {
+        return false;
+    }
+    value = std::move(parsed);
+    return true;
+}
+
+JSON ToJSON(JsonArena& arena, const MessageIn& value) {
+    JSON json = arena.Object();
+    json.SetNew("type", arena.String(MessageTypeName(value.type)));
+    json.SetNew("slotIx", arena.Integer(static_cast<int64_t>(value.slotIx)));
+    json.SetNew("position", arena.Integer(static_cast<int64_t>(value.position)));
+    json.SetNew("gestureIx", arena.Integer(static_cast<int64_t>(value.gestureIx)));
+    json.SetNew("bankIx", arena.Integer(static_cast<int64_t>(value.bankIx)));
+    json.SetNew("sceneIx", arena.Integer(static_cast<int64_t>(value.sceneIx)));
+    json.SetNew("value", arena.Real(value.value));
+    json.SetNew("delta", arena.Real(value.delta));
+    json.SetNew("boolValue", arena.Boolean(value.boolValue));
+    json.SetNew("hasBoolValue", arena.Boolean(value.hasBoolValue));
+    return json;
+}
+
+bool FromJSON(JSON json, MessageIn& value) {
+    if (!IsObject(json) || !IsString(json.Get("type"))) {
+        return false;
+    }
+    MessageIn parsed;
+    if (!ParseMessageType(json.Get("type").StringValue(), parsed.type)) {
+        return false;
+    }
+    if (!ReadSize(json.Get("slotIx"), parsed.slotIx) || !ReadSize(json.Get("position"), parsed.position) ||
+        !ReadSize(json.Get("gestureIx"), parsed.gestureIx) ||
+        !ReadSize(json.Get("bankIx"), parsed.bankIx) || !ReadSize(json.Get("sceneIx"), parsed.sceneIx) ||
+        !ReadFloat(json.Get("value"), parsed.value) || !ReadFloat(json.Get("delta"), parsed.delta) ||
+        !ReadBool(json.Get("boolValue"), parsed.boolValue) ||
+        !ReadBool(json.Get("hasBoolValue"), parsed.hasBoolValue)) {
+        return false;
+    }
+    value = parsed;
+    return true;
+}
+
+JSON ToJSON(JsonArena& arena, const WrldBldrSystemPosition& value) {
+    JSON json = arena.Object();
+    json.SetNew("channel", arena.Integer(value.channel));
+    json.SetNew("x", arena.Integer(value.x));
+    json.SetNew("y", arena.Integer(value.y));
+    return json;
+}
+
+bool FromJSON(JSON json, WrldBldrSystemPosition& value) {
+    if (!IsObject(json)) {
+        return false;
+    }
+    WrldBldrSystemPosition parsed;
+    if (!ReadU8(json.Get("channel"), parsed.channel, 0x0F) || !ReadU8(json.Get("x"), parsed.x, 7) ||
+        !ReadU8(json.Get("y"), parsed.y, 15)) {
+        return false;
+    }
+    value = parsed;
+    return true;
+}
+
+JSON ToJSON(JsonArena& arena, const MidiControllerSystemMessageAssociation& value) {
+    JSON json = arena.Object();
+    json.SetNew("control", ToJSON(arena, value.control));
+    if (value.wrldBldrPosition.has_value()) {
+        json.SetNew("wrldBldrPosition", ToJSON(arena, *value.wrldBldrPosition));
+    } else {
+        json.SetNew("wrldBldrPosition", arena.Null());
+    }
+    json.SetNew("press", ToJSON(arena, value.press));
+    if (value.release.has_value()) {
+        json.SetNew("release", ToJSON(arena, *value.release));
+    } else {
+        json.SetNew("release", arena.Null());
+    }
+    json.SetNew("feedback", ToJSON(arena, value.feedback));
+    return json;
+}
+
+bool FromJSON(JSON json, MidiControllerSystemMessageAssociation& value) {
+    if (!IsObject(json)) {
+        return false;
+    }
+    MidiControllerSystemMessageAssociation parsed;
+    if (!FromJSON(json.Get("control"), parsed.control) || !FromJSON(json.Get("press"), parsed.press) ||
+        !FromJSON(json.Get("feedback"), parsed.feedback)) {
+        return false;
+    }
+    const JSON position = json.Get("wrldBldrPosition");
+    if (!position.IsNull()) {
+        WrldBldrSystemPosition parsedPosition;
+        if (!FromJSON(position, parsedPosition)) {
+            return false;
+        }
+        parsed.wrldBldrPosition = parsedPosition;
+    }
+    const JSON release = json.Get("release");
+    if (!release.IsNull()) {
+        MessageIn parsedRelease;
+        if (!FromJSON(release, parsedRelease)) {
+            return false;
+        }
+        parsed.release = parsedRelease;
+    }
+    value = std::move(parsed);
+    return true;
+}
+
+JSON ToJSON(JsonArena& arena, const MidiControllerProfileConfig& value) {
+    JSON json = arena.Object();
+    json.SetNew("schema", arena.String("synth.midiControllerProfileConfig"));
+    json.SetNew("schemaVersion", arena.Integer(1));
+    if (value.encoderInput.has_value()) {
+        json.SetNew("encoderInput", ToJSON(arena, *value.encoderInput));
+    } else {
+        json.SetNew("encoderInput", arena.Null());
+    }
+    if (value.encoderOutput.has_value()) {
+        json.SetNew("encoderOutput", ToJSON(arena, *value.encoderOutput));
+    } else {
+        json.SetNew("encoderOutput", arena.Null());
+    }
+    if (value.analogInput.has_value()) {
+        json.SetNew("analogInput", ToJSON(arena, *value.analogInput));
+    } else {
+        json.SetNew("analogInput", arena.Null());
+    }
+    json.SetNew("systemMessages", VectorToJSON(arena, value.systemMessages));
+    return json;
+}
+
+bool FromJSON(JSON json, MidiControllerProfileConfig& value) {
+    if (!IsObject(json)) {
+        return false;
+    }
+    const JSON schema = json.Get("schema");
+    if (!IsString(schema) || std::string_view(schema.StringValue()) != "synth.midiControllerProfileConfig") {
+        return false;
+    }
+    const JSON version = json.Get("schemaVersion");
+    if (!IsInteger(version) || version.IntegerValue() != 1) {
+        return false;
+    }
+
+    MidiControllerProfileConfig parsed;
+    const JSON encoderInput = json.Get("encoderInput");
+    if (!encoderInput.IsNull()) {
+        EncoderMidiInConfig config;
+        if (!FromJSON(encoderInput, config)) {
+            return false;
+        }
+        parsed.encoderInput = std::move(config);
+    }
+    const JSON encoderOutput = json.Get("encoderOutput");
+    if (!encoderOutput.IsNull()) {
+        EncoderMidiOutConfig config;
+        if (!FromJSON(encoderOutput, config)) {
+            return false;
+        }
+        parsed.encoderOutput = std::move(config);
+    }
+    const JSON analogInput = json.Get("analogInput");
+    if (!analogInput.IsNull()) {
+        AnalogMidiInConfig config;
+        if (!FromJSON(analogInput, config)) {
+            return false;
+        }
+        parsed.analogInput = std::move(config);
+    }
+    const JSON systemMessages = json.Get("systemMessages");
+    if (!systemMessages.IsNull() && !VectorFromJSON(systemMessages, parsed.systemMessages)) {
+        return false;
+    }
+    value = std::move(parsed);
+    return true;
 }
 
 MidiControllerProfileResult CreateMidiControllerProfile(

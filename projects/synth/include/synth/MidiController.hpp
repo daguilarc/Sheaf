@@ -433,6 +433,31 @@ MidiControllerProfileResult CreateWrldBldrDefaultProfile(
     WrldBldrDefaultProfileOptions options, MessageInBus* bus, MidiSender* sender,
     ParameterManager::UIState* uiState, MidiInProcessor::TimestampProvider timestampProvider = {});
 
+JSON ToJSON(JsonArena& arena, EncoderRelativeMode value);
+bool FromJSON(JSON json, EncoderRelativeMode& value);
+JSON ToJSON(JsonArena& arena, const MidiControlAddress& value);
+bool FromJSON(JSON json, MidiControlAddress& value);
+JSON ToJSON(JsonArena& arena, const EncoderMidiMapping& value);
+bool FromJSON(JSON json, EncoderMidiMapping& value);
+JSON ToJSON(JsonArena& arena, const EncoderMidiInConfig& value);
+bool FromJSON(JSON json, EncoderMidiInConfig& value);
+JSON ToJSON(JsonArena& arena, const AnalogMidiMapping& value);
+bool FromJSON(JSON json, AnalogMidiMapping& value);
+JSON ToJSON(JsonArena& arena, const AnalogMidiInConfig& value);
+bool FromJSON(JSON json, AnalogMidiInConfig& value);
+JSON ToJSON(JsonArena& arena, const EncoderMidiOutMapping& value);
+bool FromJSON(JSON json, EncoderMidiOutMapping& value);
+JSON ToJSON(JsonArena& arena, const EncoderMidiOutConfig& value);
+bool FromJSON(JSON json, EncoderMidiOutConfig& value);
+JSON ToJSON(JsonArena& arena, const MessageIn& value);
+bool FromJSON(JSON json, MessageIn& value);
+JSON ToJSON(JsonArena& arena, const WrldBldrSystemPosition& value);
+bool FromJSON(JSON json, WrldBldrSystemPosition& value);
+JSON ToJSON(JsonArena& arena, const MidiControllerSystemMessageAssociation& value);
+bool FromJSON(JSON json, MidiControllerSystemMessageAssociation& value);
+JSON ToJSON(JsonArena& arena, const MidiControllerProfileConfig& value);
+bool FromJSON(JSON json, MidiControllerProfileConfig& value);
+
 std::uint8_t EncoderPositionToCC(std::size_t position);
 std::uint8_t WrldBldrPositionToCC(std::uint8_t x, std::uint8_t y);
 std::uint8_t ColorToTwister(Color color);

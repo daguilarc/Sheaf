@@ -10,6 +10,8 @@
 #include <string_view>
 #include <vector>
 
+#include "synth/Json.hpp"
+
 namespace synth {
 
 using ParameterId = std::uint32_t;
@@ -97,6 +99,7 @@ struct PageDescriptor {
 class Parameter;
 class ParameterManager;
 class BankSlot;
+struct ParameterStorageBatch;
 
 struct Page {
     PageOrdinal ordinal = 0;
@@ -114,6 +117,40 @@ struct ParameterGroupConfig {
 
     bool IsValid() const;
 };
+
+struct ParameterStorageBatch {
+    ParameterStorageBatch(const ParameterGroupConfig& config, std::size_t gestureCount, std::size_t capacity);
+    ~ParameterStorageBatch();
+
+    bool Compatible(const ParameterGroupConfig& config, std::size_t liveGestureCount) const;
+    std::size_t Available() const { return capacity - allocated; }
+
+    std::size_t numVoices = 0;
+    std::size_t numModulators = 0;
+    std::size_t numScenes = 0;
+    std::size_t gestureCount = 0;
+    std::size_t capacity = 0;
+    std::size_t allocated = 0;
+    std::vector<std::unique_ptr<Parameter>> parameters;
+    std::vector<float> currentCenterScaleArena;
+    std::vector<float> targetCenterScaleArena;
+    std::vector<float> currentNormalizationOffsetArena;
+    std::vector<float> targetNormalizationOffsetArena;
+    std::vector<float> currentMinValueArena;
+    std::vector<float> targetMinValueArena;
+    std::vector<float> currentMaxValueArena;
+    std::vector<float> targetMaxValueArena;
+    std::vector<float> currentDepthArena;
+    std::vector<float> targetDepthArena;
+    std::vector<Parameter*> modulationDepthArena;
+    std::vector<float> sceneCenterArena;
+    std::vector<float> gestureValueArena;
+    std::vector<std::uint8_t> gestureActiveArena;
+};
+
+std::unique_ptr<ParameterStorageBatch> MakeParameterStorageBatch(const ParameterGroupConfig& config,
+                                                                 std::size_t gestureCount,
+                                                                 std::size_t capacity);
 
 struct ModulatorMetadata {
     std::string name;
@@ -203,6 +240,8 @@ public:
     const ParameterManager& Manager() const { return *manager_; }
 
     bool CanAllocate() const;
+    std::size_t AvailableParameterSlots() const;
+    void AddParameterStorageBatch(std::unique_ptr<ParameterStorageBatch> batch);
     std::size_t ParameterCount() const { return parameterCount_; }
     Parameter& ParameterByLocalIndex(std::size_t localIx);
     const Parameter& ParameterByLocalIndex(std::size_t localIx) const;
@@ -221,8 +260,11 @@ public:
 private:
     friend class Parameter;
     friend class ParameterManager;
+    friend class Bank;
 
     Parameter& CreateLocalParameter(ParameterConfig config, ParameterId id);
+    void RequestParameterStorageBatch(std::size_t minimumAdditionalParameters);
+    void RequestParameterStorageBatchIfLow();
 
     // Groups own parameter objects and all same-shaped per-parameter arenas.
     // Parameter instances hold spans into these arenas; callers must not move a
@@ -234,6 +276,8 @@ private:
     Modulators modulators_;
     std::size_t parameterCount_ = 0;
     std::vector<std::unique_ptr<Parameter>> parameters_;
+    std::vector<std::unique_ptr<ParameterStorageBatch>> extraStorageBatches_;
+    bool storageRequestPending_ = false;
     std::vector<float> currentCenterScaleArena_;
     std::vector<float> targetCenterScaleArena_;
     std::vector<float> currentNormalizationOffsetArena_;
@@ -253,6 +297,8 @@ private:
 class Parameter {
 public:
     Parameter(ParameterId id, ParameterGroup& group, ParameterConfig config, std::size_t slotIx);
+    Parameter(ParameterId id, ParameterGroup& group, ParameterConfig config,
+              ParameterStorageBatch& storageBatch, std::size_t slotIx);
 
     struct UIState {
         UIState() = default;
@@ -298,8 +344,10 @@ public:
     void ProcessLite();
     void HandleIncDec(const SceneState& scene, float delta);
     void RevertToDefault(const SceneState& scene);
+    void RevertAllToDefault();
 
     bool AssignModulationDepth(std::size_t modIx, Parameter* parameter);
+    Parameter* EnsureModulationDepth(std::size_t modIx);
     Parameter& EnsureModulationDepth(std::size_t modIx, ParameterConfig config);
     void ClearModulationDepths();
     Parameter* ModulationDepthParameter(std::size_t modIx) const;
@@ -324,8 +372,12 @@ public:
     float CurrentNormalizationOffset(std::size_t voiceIx) const;
     float TargetNormalizationOffset(std::size_t voiceIx) const;
     std::size_t RecursionDepth() const { return recursionDepth_; }
+    JSON ToValueJSON(JsonArena& arena) const;
+    bool LoadValuesFromJSON(JSON json);
 
 private:
+    friend class ParameterManager;
+
     std::size_t VoiceModIndex(std::size_t voiceIx, std::size_t modIx) const;
     std::size_t SceneGestureIndex(std::size_t sceneIx, std::size_t gestureIx) const;
     void ValidateSceneEndpoints(const SceneState& scene) const;
@@ -335,10 +387,13 @@ private:
     void ResetModulationDepthToNeutral(const SceneState& scene);
     float ComputeRawCenter(const SceneState& scene) const;
     void ComputeAtDepth(const SceneState& scene, std::size_t recursionDepth);
+    void SnapCurrentToTarget();
     bool WouldCreateCycle(const Parameter* candidate) const;
+    ParameterConfig ModulationDepthConfig(std::size_t modIx) const;
     float TargetValue(std::size_t voiceIx) const;
     std::uint32_t ModulatorsAffectingMask() const;
     bool HasNonDefaultState() const;
+    bool HasNonZeroState() const;
 
     ParameterId id_;
     ParameterGroup& group_;
@@ -406,6 +461,8 @@ private:
     Cell* FindVisibleCell(PhysicalEncoderId encoderId);
     const Cell* FindVisibleCell(PhysicalEncoderId encoderId) const;
     Parameter* EnsureModulationDepthParameter(Parameter& parameter, std::size_t modIx);
+    bool CanOpenModulationView(const Parameter& parameter) const;
+    std::size_t MissingModulationDepthCount(const Parameter& parameter) const;
     void OpenModulationView(Parameter& parameter, std::span<const PhysicalEncoderId> physicalLayout);
     std::vector<PhysicalEncoderId> CompactPhysicalLayout() const;
 
@@ -449,6 +506,37 @@ private:
 
     std::vector<PhysicalEncoderId> physicalEncoders_;
     Bank* selectedBank_ = nullptr;
+};
+
+struct ParameterMessageOut {
+    enum class Type {
+        ParameterStorageBatchNeeded,
+    };
+
+    Type type = Type::ParameterStorageBatchNeeded;
+    ParameterGroup* group = nullptr;
+    std::size_t minimumAdditionalParameters = 0;
+    std::size_t requestedParameters = 0;
+
+    static ParameterMessageOut ParameterStorageBatchNeeded(ParameterGroup& group,
+                                                           std::size_t minimumAdditionalParameters,
+                                                           std::size_t requestedParameters);
+};
+
+class ParameterMessageOutBus {
+public:
+    explicit ParameterMessageOutBus(std::size_t capacity = 64);
+
+    bool Push(const ParameterMessageOut& message);
+    bool Pop(ParameterMessageOut& message);
+    std::size_t Size() const { return size_.load(std::memory_order_acquire); }
+    std::size_t Capacity() const { return queue_.size(); }
+
+private:
+    std::vector<ParameterMessageOut> queue_;
+    std::atomic<std::size_t> head_{0};
+    std::atomic<std::size_t> tail_{0};
+    std::atomic<std::size_t> size_{0};
 };
 
 class ParameterManager {
@@ -508,6 +596,13 @@ public:
     Parameter& ParameterById(ParameterId id);
     const Parameter& ParameterById(ParameterId id) const;
     std::size_t ParameterCount() const { return parameters_.size(); }
+    Parameter* FindParameterByName(std::string_view name);
+    const Parameter* FindParameterByName(std::string_view name) const;
+    JSON ParameterValuesToJSON(JsonArena& arena) const;
+    bool LoadParameterValuesFromJSON(JSON json);
+    void ComputeAllParameters();
+    void CaptureDefaultControlState();
+    void RevertAllToDefaults();
 
     float GetLinear(float minValue, float maxValue, std::size_t voiceIx, ParameterId id) const;
     float GetExponential(float minValue, float maxValue, std::size_t voiceIx, ParameterId id) const;
@@ -565,6 +660,8 @@ public:
 
     std::unique_ptr<UIState> CreateUIState() const;
     void PopulateUIState(UIState& state) const;
+    void SetParameterMessageOutBus(ParameterMessageOutBus* bus) { parameterMessageOutBus_ = bus; }
+    bool RequestParameterStorageBatch(ParameterGroup& group, std::size_t minimumAdditionalParameters);
 
 private:
     Page* FindPage(PageOrdinal ordinal);
@@ -575,7 +672,16 @@ private:
     std::size_t MaxVoiceCount() const;
     std::size_t MaxSlotCellCount() const;
 
+    struct DefaultControlState {
+        SceneState scene;
+        bool shiftHeld = false;
+        std::vector<float> gestureValues;
+        std::vector<bool> gestureSelected;
+        std::optional<PageOrdinal> activePageOrdinal;
+    };
+
     SceneState scene_;
+    DefaultControlState defaultControlState_;
     Gestures gestures_;
     bool shiftHeld_ = false;
     std::vector<Parameter*> parameters_;
@@ -585,6 +691,7 @@ private:
     std::optional<PageOrdinal> activePageOrdinal_;
     std::vector<std::unique_ptr<Bank>> banks_;
     std::vector<std::unique_ptr<BankSlot>> slots_;
+    ParameterMessageOutBus* parameterMessageOutBus_ = nullptr;
 };
 
 struct MessageIn {

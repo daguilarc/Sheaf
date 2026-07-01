@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <charconv>
 #include <cmath>
 #include <limits>
 #include <stdexcept>
@@ -119,6 +120,32 @@ void ApplySceneDistribution(float& left, float& right, float blend, float delta,
     }
 }
 
+bool IsJsonArray(JSON json) {
+    return json.m_node != nullptr && json.m_node->m_type == JsonType::Array;
+}
+
+bool IsJsonObject(JSON json) {
+    return json.m_node != nullptr && json.m_node->m_type == JsonType::Object;
+}
+
+const JsonMember* JsonObjectMembers(JSON json) {
+    if (!IsJsonObject(json)) {
+        return nullptr;
+    }
+    return static_cast<const JsonMember*>(json.m_node->m_container.m_entries);
+}
+
+bool ParseDecimalIndex(std::string_view text, std::size_t& result) {
+    if (text.empty()) {
+        return false;
+    }
+    result = 0;
+    const auto* begin = text.data();
+    const auto* end = begin + text.size();
+    const std::from_chars_result parsed = std::from_chars(begin, end, result);
+    return parsed.ec == std::errc{} && parsed.ptr == end;
+}
+
 } // namespace
 
 const Color Color::Off{.r = 0, .g = 0, .b = 0, .a = 255};
@@ -225,6 +252,41 @@ float ClampToRange(float value, RangeKind range) {
 bool ParameterGroupConfig::IsValid() const {
     return numVoices > 0 && numScenes > 0 && maxParameters > 0 && processLiteAlpha >= 0.0f &&
            processLiteAlpha <= 1.0f;
+}
+
+ParameterStorageBatch::ParameterStorageBatch(const ParameterGroupConfig& config, std::size_t gestureCount,
+                                             std::size_t capacity)
+    : numVoices(config.numVoices),
+      numModulators(config.numModulators),
+      numScenes(config.numScenes),
+      gestureCount(gestureCount),
+      capacity(capacity),
+      currentCenterScaleArena(capacity * config.numVoices),
+      targetCenterScaleArena(capacity * config.numVoices),
+      currentNormalizationOffsetArena(capacity * config.numVoices),
+      targetNormalizationOffsetArena(capacity * config.numVoices),
+      currentMinValueArena(capacity * config.numVoices),
+      targetMinValueArena(capacity * config.numVoices),
+      currentMaxValueArena(capacity * config.numVoices),
+      targetMaxValueArena(capacity * config.numVoices),
+      currentDepthArena(capacity * config.numVoices * config.numModulators),
+      targetDepthArena(capacity * config.numVoices * config.numModulators),
+      modulationDepthArena(capacity * config.numModulators, nullptr),
+      sceneCenterArena(capacity * config.numScenes),
+      gestureValueArena(capacity * config.numScenes * gestureCount),
+      gestureActiveArena(capacity * config.numScenes * gestureCount, 0) {
+    parameters.reserve(capacity);
+}
+
+bool ParameterStorageBatch::Compatible(const ParameterGroupConfig& config, std::size_t liveGestureCount) const {
+    return numVoices == config.numVoices && numModulators == config.numModulators &&
+           numScenes == config.numScenes && gestureCount == liveGestureCount && capacity > 0;
+}
+
+std::unique_ptr<ParameterStorageBatch> MakeParameterStorageBatch(const ParameterGroupConfig& config,
+                                                                 std::size_t gestureCount,
+                                                                 std::size_t capacity) {
+    return std::make_unique<ParameterStorageBatch>(config, gestureCount, capacity);
 }
 
 Modulators::Modulators(std::size_t voices, std::size_t modulators)
@@ -391,7 +453,24 @@ ParameterGroup::ParameterGroup(ParameterGroupConfig config, ParameterManager& ma
 ParameterGroup::~ParameterGroup() = default;
 
 bool ParameterGroup::CanAllocate() const {
-    return parameterCount_ < config_.maxParameters;
+    return AvailableParameterSlots() > 0;
+}
+
+std::size_t ParameterGroup::AvailableParameterSlots() const {
+    const std::size_t initialAllocated = std::min(parameterCount_, config_.maxParameters);
+    std::size_t available = config_.maxParameters - initialAllocated;
+    for (const auto& batch : extraStorageBatches_) {
+        available += batch->Available();
+    }
+    return available;
+}
+
+void ParameterGroup::AddParameterStorageBatch(std::unique_ptr<ParameterStorageBatch> batch) {
+    if (batch == nullptr || !batch->Compatible(config_, gestureCount_)) {
+        throw std::invalid_argument("parameter storage batch does not match group shape");
+    }
+    storageRequestPending_ = false;
+    extraStorageBatches_.push_back(std::move(batch));
 }
 
 Parameter& ParameterGroup::CreateLocalParameter(ParameterConfig config, ParameterId id) {
@@ -402,19 +481,77 @@ Parameter& ParameterGroup::CreateLocalParameter(ParameterConfig config, Paramete
         throw std::length_error("parameter group capacity exhausted");
     }
 
-    auto parameter = std::make_unique<Parameter>(id, *this, std::move(config), parameterCount_);
-    Parameter& result = *parameter;
-    parameters_.push_back(std::move(parameter));
-    ++parameterCount_;
-    return result;
+    if (parameterCount_ < config_.maxParameters) {
+        auto parameter = std::make_unique<Parameter>(id, *this, std::move(config), parameterCount_);
+        Parameter& result = *parameter;
+        parameters_.push_back(std::move(parameter));
+        ++parameterCount_;
+        RequestParameterStorageBatchIfLow();
+        return result;
+    }
+
+    for (const auto& batch : extraStorageBatches_) {
+        if (batch->Available() == 0) {
+            continue;
+        }
+        const std::size_t slotIx = batch->allocated++;
+        auto parameter = std::make_unique<Parameter>(id, *this, std::move(config), *batch, slotIx);
+        Parameter& result = *parameter;
+        batch->parameters.push_back(std::move(parameter));
+        ++parameterCount_;
+        RequestParameterStorageBatchIfLow();
+        return result;
+    }
+
+    throw std::length_error("parameter group capacity exhausted");
 }
 
 Parameter& ParameterGroup::ParameterByLocalIndex(std::size_t localIx) {
-    return *parameters_.at(localIx);
+    if (localIx < parameters_.size()) {
+        return *parameters_.at(localIx);
+    }
+    std::size_t remaining = localIx - parameters_.size();
+    for (const auto& batch : extraStorageBatches_) {
+        if (remaining < batch->parameters.size()) {
+            return *batch->parameters.at(remaining);
+        }
+        remaining -= batch->parameters.size();
+    }
+    throw std::out_of_range("parameter local index out of range");
 }
 
 const Parameter& ParameterGroup::ParameterByLocalIndex(std::size_t localIx) const {
-    return *parameters_.at(localIx);
+    if (localIx < parameters_.size()) {
+        return *parameters_.at(localIx);
+    }
+    std::size_t remaining = localIx - parameters_.size();
+    for (const auto& batch : extraStorageBatches_) {
+        if (remaining < batch->parameters.size()) {
+            return *batch->parameters.at(remaining);
+        }
+        remaining -= batch->parameters.size();
+    }
+    throw std::out_of_range("parameter local index out of range");
+}
+
+void ParameterGroup::RequestParameterStorageBatch(std::size_t minimumAdditionalParameters) {
+    if (storageRequestPending_ || manager_ == nullptr || minimumAdditionalParameters == 0) {
+        return;
+    }
+    if (manager_->RequestParameterStorageBatch(*this, minimumAdditionalParameters)) {
+        storageRequestPending_ = true;
+    }
+}
+
+void ParameterGroup::RequestParameterStorageBatchIfLow() {
+    const std::size_t lowWatermark = config_.numModulators * 2;
+    if (lowWatermark == 0) {
+        return;
+    }
+    const std::size_t available = AvailableParameterSlots();
+    if (available < lowWatermark) {
+        RequestParameterStorageBatch(lowWatermark - available);
+    }
 }
 
 Color ParameterGroup::VoiceIndicatorColor(std::size_t voiceIx) const {
@@ -493,6 +630,70 @@ Parameter::Parameter(ParameterId id, ParameterGroup& group, ParameterConfig conf
     std::fill(gestureValues_.begin(), gestureValues_.end(), currentCenter_);
     std::fill(gestureActive_.begin(), gestureActive_.end(), 0);
 }
+
+Parameter::Parameter(ParameterId id, ParameterGroup& group, ParameterConfig config,
+                     ParameterStorageBatch& storageBatch, std::size_t slotIx)
+    : id_(id),
+      group_(group),
+      config_(std::move(config)),
+      slotIx_(slotIx),
+      currentCenter_(ClampToRange(config_.defaultValue, config_.range)),
+      targetCenter_(currentCenter_),
+      currentCenterScales_(ArenaSlice(storageBatch.currentCenterScaleArena, slotIx_ * group_.Config().numVoices,
+                                      group_.Config().numVoices)),
+      targetCenterScales_(ArenaSlice(storageBatch.targetCenterScaleArena, slotIx_ * group_.Config().numVoices,
+                                     group_.Config().numVoices)),
+      currentNormalizationOffsets_(ArenaSlice(storageBatch.currentNormalizationOffsetArena,
+                                             slotIx_ * group_.Config().numVoices,
+                                             group_.Config().numVoices)),
+      targetNormalizationOffsets_(ArenaSlice(storageBatch.targetNormalizationOffsetArena,
+                                            slotIx_ * group_.Config().numVoices,
+                                            group_.Config().numVoices)),
+      currentMinValues_(ArenaSlice(storageBatch.currentMinValueArena,
+                                   slotIx_ * group_.Config().numVoices,
+                                   group_.Config().numVoices)),
+      targetMinValues_(ArenaSlice(storageBatch.targetMinValueArena,
+                                  slotIx_ * group_.Config().numVoices,
+                                  group_.Config().numVoices)),
+      currentMaxValues_(ArenaSlice(storageBatch.currentMaxValueArena,
+                                   slotIx_ * group_.Config().numVoices,
+                                   group_.Config().numVoices)),
+      targetMaxValues_(ArenaSlice(storageBatch.targetMaxValueArena,
+                                  slotIx_ * group_.Config().numVoices,
+                                  group_.Config().numVoices)),
+      currentDepths_(ArenaSlice(storageBatch.currentDepthArena,
+                                slotIx_ * group_.Config().numVoices * group_.Config().numModulators,
+                                group_.Config().numVoices * group_.Config().numModulators)),
+      targetDepths_(ArenaSlice(storageBatch.targetDepthArena,
+                               slotIx_ * group_.Config().numVoices * group_.Config().numModulators,
+                               group_.Config().numVoices * group_.Config().numModulators)),
+      modulationDepths_(ArenaSlice(storageBatch.modulationDepthArena, slotIx_ * group_.Config().numModulators,
+                                   group_.Config().numModulators)),
+      sceneCenters_(ArenaSlice(storageBatch.sceneCenterArena, slotIx_ * group_.Config().numScenes,
+                               group_.Config().numScenes)),
+      gestureValues_(ArenaSlice(storageBatch.gestureValueArena,
+                                slotIx_ * group_.Config().numScenes * group_.GestureCount(),
+                                group_.Config().numScenes * group_.GestureCount())),
+      gestureActive_(ArenaSlice(storageBatch.gestureActiveArena,
+                                slotIx_ * group_.Config().numScenes * group_.GestureCount(),
+                                group_.Config().numScenes * group_.GestureCount())) {
+    std::fill(currentCenterScales_.begin(), currentCenterScales_.end(), 1.0f);
+    std::fill(targetCenterScales_.begin(), targetCenterScales_.end(), 1.0f);
+    std::fill(currentNormalizationOffsets_.begin(), currentNormalizationOffsets_.end(), 0.0f);
+    std::fill(targetNormalizationOffsets_.begin(), targetNormalizationOffsets_.end(), 0.0f);
+    std::fill(currentMinValues_.begin(), currentMinValues_.end(), currentCenter_);
+    std::fill(targetMinValues_.begin(), targetMinValues_.end(), currentCenter_);
+    std::fill(currentMaxValues_.begin(), currentMaxValues_.end(), currentCenter_);
+    std::fill(targetMaxValues_.begin(), targetMaxValues_.end(), currentCenter_);
+    std::fill(currentDepths_.begin(), currentDepths_.end(), 0.0f);
+    std::fill(targetDepths_.begin(), targetDepths_.end(), 0.0f);
+    std::fill(modulationDepths_.begin(), modulationDepths_.end(), nullptr);
+    std::fill(sceneCenters_.begin(), sceneCenters_.end(), currentCenter_);
+    std::fill(gestureValues_.begin(), gestureValues_.end(), currentCenter_);
+    std::fill(gestureActive_.begin(), gestureActive_.end(), 0);
+}
+
+ParameterStorageBatch::~ParameterStorageBatch() = default;
 
 void Parameter::UIState::Configure(std::size_t newVoiceCapacity) {
     voiceCapacity = newVoiceCapacity;
@@ -589,6 +790,128 @@ void Parameter::PopulateUIState(UIState& state) const {
 
 void Parameter::Compute(const SceneState& scene) {
     ComputeAtDepth(scene, 0);
+}
+
+JSON Parameter::ToValueJSON(JsonArena& arena) const {
+    JSON root = arena.Object();
+
+    JSON sceneCenters = arena.Array();
+    for (std::size_t sceneIx = 0; sceneIx < group_.Config().numScenes; ++sceneIx) {
+        sceneCenters.AppendNew(arena.Real(SceneCenter(sceneIx)));
+    }
+    root.SetNew("sceneCenters", sceneCenters);
+
+    JSON gestureValues = arena.Array();
+    for (std::size_t sceneIx = 0; sceneIx < group_.Config().numScenes; ++sceneIx) {
+        JSON row = arena.Array();
+        for (std::size_t gestureIx = 0; gestureIx < group_.GestureCount(); ++gestureIx) {
+            row.AppendNew(arena.Real(GestureValue(sceneIx, gestureIx)));
+        }
+        gestureValues.AppendNew(row);
+    }
+    root.SetNew("gestureValues", gestureValues);
+
+    JSON gestureActive = arena.Array();
+    for (std::size_t sceneIx = 0; sceneIx < group_.Config().numScenes; ++sceneIx) {
+        JSON row = arena.Array();
+        for (std::size_t gestureIx = 0; gestureIx < group_.GestureCount(); ++gestureIx) {
+            row.AppendNew(arena.Boolean(GestureActive(sceneIx, gestureIx)));
+        }
+        gestureActive.AppendNew(row);
+    }
+    root.SetNew("gestureActive", gestureActive);
+
+    JSON modDepths = arena.Object();
+    for (std::size_t modIx = 0; modIx < modulationDepths_.size(); ++modIx) {
+        const Parameter* depthParameter = modulationDepths_[modIx];
+        if (depthParameter == nullptr || !depthParameter->HasNonDefaultState()) {
+            continue;
+        }
+        const std::string key = std::to_string(modIx);
+        modDepths.SetNew(key.c_str(), depthParameter->ToValueJSON(arena));
+    }
+    root.SetNew("modDepths", modDepths);
+
+    return root;
+}
+
+bool Parameter::LoadValuesFromJSON(JSON json) {
+    if (!IsJsonObject(json)) {
+        return false;
+    }
+
+    JSON sceneCenters = json.Get("sceneCenters");
+    if (!sceneCenters.IsNull() && IsJsonArray(sceneCenters) && sceneCenters.Size() == group_.Config().numScenes) {
+        for (std::size_t sceneIx = 0; sceneIx < group_.Config().numScenes; ++sceneIx) {
+            SceneCenter(sceneIx) = static_cast<float>(sceneCenters.GetAt(sceneIx).NumberValue());
+        }
+    }
+
+    JSON gestureValues = json.Get("gestureValues");
+    bool gestureValuesShapeMatches = !gestureValues.IsNull() && IsJsonArray(gestureValues) &&
+                                     gestureValues.Size() == group_.Config().numScenes;
+    if (gestureValuesShapeMatches) {
+        for (std::size_t sceneIx = 0; sceneIx < group_.Config().numScenes; ++sceneIx) {
+            JSON row = gestureValues.GetAt(sceneIx);
+            if (!IsJsonArray(row) || row.Size() != group_.GestureCount()) {
+                gestureValuesShapeMatches = false;
+                break;
+            }
+        }
+    }
+    if (gestureValuesShapeMatches) {
+        for (std::size_t sceneIx = 0; sceneIx < group_.Config().numScenes; ++sceneIx) {
+            JSON row = gestureValues.GetAt(sceneIx);
+            for (std::size_t gestureIx = 0; gestureIx < group_.GestureCount(); ++gestureIx) {
+                GestureValue(sceneIx, gestureIx) = static_cast<float>(row.GetAt(gestureIx).NumberValue());
+            }
+        }
+    }
+
+    JSON gestureActive = json.Get("gestureActive");
+    bool gestureActiveShapeMatches = !gestureActive.IsNull() && IsJsonArray(gestureActive) &&
+                                     gestureActive.Size() == group_.Config().numScenes;
+    if (gestureActiveShapeMatches) {
+        for (std::size_t sceneIx = 0; sceneIx < group_.Config().numScenes; ++sceneIx) {
+            JSON row = gestureActive.GetAt(sceneIx);
+            if (!IsJsonArray(row) || row.Size() != group_.GestureCount()) {
+                gestureActiveShapeMatches = false;
+                break;
+            }
+        }
+    }
+    if (gestureActiveShapeMatches) {
+        for (std::size_t sceneIx = 0; sceneIx < group_.Config().numScenes; ++sceneIx) {
+            JSON row = gestureActive.GetAt(sceneIx);
+            for (std::size_t gestureIx = 0; gestureIx < group_.GestureCount(); ++gestureIx) {
+                SetGestureActive(sceneIx, gestureIx, row.GetAt(gestureIx).BooleanValue());
+            }
+        }
+    }
+
+    JSON modDepths = json.Get("modDepths");
+    if (IsJsonObject(modDepths)) {
+        const JsonMember* members = JsonObjectMembers(modDepths);
+        for (std::size_t ix = 0; ix < modDepths.Size(); ++ix) {
+            if (members[ix].m_key == nullptr) {
+                continue;
+            }
+            std::size_t modIx = 0;
+            if (!ParseDecimalIndex(members[ix].m_key, modIx) || modIx >= modulationDepths_.size()) {
+                continue;
+            }
+            Parameter* depthParameter = modulationDepths_[modIx];
+            if (depthParameter == nullptr) {
+                depthParameter = EnsureModulationDepth(modIx);
+            }
+            if (depthParameter == nullptr) {
+                continue;
+            }
+            depthParameter->LoadValuesFromJSON(JSON(members[ix].m_value));
+        }
+    }
+
+    return true;
 }
 
 void Parameter::ProcessLite() {
@@ -697,6 +1020,35 @@ void Parameter::RevertToDefault(const SceneState& scene) {
     std::fill(targetMaxValues_.begin(), targetMaxValues_.end(), defaultValue);
 }
 
+void Parameter::RevertAllToDefault() {
+    for (Parameter* depthParameter : modulationDepths_) {
+        if (depthParameter != nullptr) {
+            depthParameter->RevertAllToDefault();
+        }
+    }
+    std::fill(currentDepths_.begin(), currentDepths_.end(), 0.0f);
+    std::fill(targetDepths_.begin(), targetDepths_.end(), 0.0f);
+    std::fill(currentNormalizationOffsets_.begin(), currentNormalizationOffsets_.end(), 0.0f);
+    std::fill(targetNormalizationOffsets_.begin(), targetNormalizationOffsets_.end(), 0.0f);
+
+    const float defaultValue = ClampToRange(config_.defaultValue, config_.range);
+    for (std::size_t sceneIx = 0; sceneIx < group_.Config().numScenes; ++sceneIx) {
+        ResetSceneToDefault(sceneIx, defaultValue);
+        for (std::size_t gestureIx = 0; gestureIx < group_.GestureCount(); ++gestureIx) {
+            GestureValue(sceneIx, gestureIx) = defaultValue;
+        }
+    }
+
+    currentCenter_ = defaultValue;
+    targetCenter_ = defaultValue;
+    std::fill(currentCenterScales_.begin(), currentCenterScales_.end(), 1.0f);
+    std::fill(targetCenterScales_.begin(), targetCenterScales_.end(), 1.0f);
+    std::fill(currentMinValues_.begin(), currentMinValues_.end(), defaultValue);
+    std::fill(targetMinValues_.begin(), targetMinValues_.end(), defaultValue);
+    std::fill(currentMaxValues_.begin(), currentMaxValues_.end(), defaultValue);
+    std::fill(targetMaxValues_.begin(), targetMaxValues_.end(), defaultValue);
+}
+
 bool Parameter::AssignModulationDepth(std::size_t modIx, Parameter* parameter) {
     if (modIx >= modulationDepths_.size()) {
         throw std::out_of_range("modulation depth index out of range");
@@ -710,6 +1062,20 @@ bool Parameter::AssignModulationDepth(std::size_t modIx, Parameter* parameter) {
 
     modulationDepths_[modIx] = parameter;
     return true;
+}
+
+Parameter* Parameter::EnsureModulationDepth(std::size_t modIx) {
+    if (modIx >= modulationDepths_.size()) {
+        throw std::out_of_range("modulation depth index out of range");
+    }
+    if (Parameter* existing = modulationDepths_[modIx]; existing != nullptr) {
+        return existing;
+    }
+    if (!group_.CanAllocate()) {
+        group_.RequestParameterStorageBatch(1);
+        return nullptr;
+    }
+    return &EnsureModulationDepth(modIx, ModulationDepthConfig(modIx));
 }
 
 Parameter& Parameter::EnsureModulationDepth(std::size_t modIx, ParameterConfig config) {
@@ -736,6 +1102,22 @@ Parameter* Parameter::ModulationDepthParameter(std::size_t modIx) const {
         throw std::out_of_range("modulation depth index out of range");
     }
     return modulationDepths_[modIx];
+}
+
+ParameterConfig Parameter::ModulationDepthConfig(std::size_t modIx) const {
+    if (modIx >= modulationDepths_.size()) {
+        throw std::out_of_range("modulation depth index out of range");
+    }
+    const ModulatorMetadata& modulator = group_.GetModulators().Metadata(modIx);
+    return {
+        .name = modulator.name.empty()
+                    ? Name() + " Mod Depth " + std::to_string(modIx + 1)
+                    : Name() + " " + modulator.name,
+        .shortName = modulator.shortName.empty() ? ShortName() : modulator.shortName,
+        .defaultValue = 0.0f,
+        .range = RangeKind::Bipolar,
+        .color = modulator.color,
+    };
 }
 
 float& Parameter::SceneCenter(std::size_t sceneIx) {
@@ -1012,6 +1394,20 @@ void Parameter::ComputeAtDepth(const SceneState& scene, std::size_t recursionDep
     }
 }
 
+void Parameter::SnapCurrentToTarget() {
+    currentCenter_ = targetCenter_;
+    std::copy(targetCenterScales_.begin(), targetCenterScales_.end(), currentCenterScales_.begin());
+    std::copy(targetNormalizationOffsets_.begin(), targetNormalizationOffsets_.end(), currentNormalizationOffsets_.begin());
+    std::copy(targetMinValues_.begin(), targetMinValues_.end(), currentMinValues_.begin());
+    std::copy(targetMaxValues_.begin(), targetMaxValues_.end(), currentMaxValues_.begin());
+    std::copy(targetDepths_.begin(), targetDepths_.end(), currentDepths_.begin());
+    for (Parameter* depthParameter : modulationDepths_) {
+        if (depthParameter != nullptr) {
+            depthParameter->SnapCurrentToTarget();
+        }
+    }
+}
+
 bool Parameter::WouldCreateCycle(const Parameter* candidate) const {
     if (candidate == this) {
         return true;
@@ -1038,14 +1434,14 @@ std::uint32_t Parameter::ModulatorsAffectingMask() const {
     std::uint32_t mask = 0;
     const std::size_t count = std::min<std::size_t>(modulationDepths_.size(), 32);
     for (std::size_t modIx = 0; modIx < count; ++modIx) {
-        if (modulationDepths_[modIx] != nullptr && modulationDepths_[modIx]->HasNonDefaultState()) {
+        if (modulationDepths_[modIx] != nullptr && modulationDepths_[modIx]->HasNonZeroState()) {
             mask |= (std::uint32_t{1} << modIx);
         }
     }
     return mask;
 }
 
-bool Parameter::HasNonDefaultState() const {
+bool Parameter::HasNonZeroState() const {
     constexpr float tolerance = 0.000001f;
 
     if (std::fabs(currentCenter_) > tolerance || std::fabs(targetCenter_) > tolerance) {
@@ -1068,6 +1464,77 @@ bool Parameter::HasNonDefaultState() const {
     }
     for (const float depth : targetDepths_) {
         if (std::fabs(depth) > tolerance) {
+            return true;
+        }
+    }
+    for (const float offset : currentNormalizationOffsets_) {
+        if (std::fabs(offset) > tolerance) {
+            return true;
+        }
+    }
+    for (const float offset : targetNormalizationOffsets_) {
+        if (std::fabs(offset) > tolerance) {
+            return true;
+        }
+    }
+    for (const Parameter* depthParameter : modulationDepths_) {
+        if (depthParameter != nullptr && depthParameter->HasNonZeroState()) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool Parameter::HasNonDefaultState() const {
+    constexpr float tolerance = 0.000001f;
+    const float defaultValue = ClampToRange(config_.defaultValue, config_.range);
+
+    if (std::fabs(currentCenter_ - defaultValue) > tolerance ||
+        std::fabs(targetCenter_ - defaultValue) > tolerance) {
+        return true;
+    }
+    for (const float center : sceneCenters_) {
+        if (std::fabs(center - defaultValue) > tolerance) {
+            return true;
+        }
+    }
+    for (const float value : gestureValues_) {
+        if (std::fabs(value - defaultValue) > tolerance) {
+            return true;
+        }
+    }
+    for (const std::uint8_t active : gestureActive_) {
+        if (active != 0) {
+            return true;
+        }
+    }
+    for (const float depth : currentDepths_) {
+        if (std::fabs(depth) > tolerance) {
+            return true;
+        }
+    }
+    for (const float depth : targetDepths_) {
+        if (std::fabs(depth) > tolerance) {
+            return true;
+        }
+    }
+    for (const float scale : currentCenterScales_) {
+        if (std::fabs(scale - 1.0f) > tolerance) {
+            return true;
+        }
+    }
+    for (const float scale : targetCenterScales_) {
+        if (std::fabs(scale - 1.0f) > tolerance) {
+            return true;
+        }
+    }
+    for (const float offset : currentNormalizationOffsets_) {
+        if (std::fabs(offset) > tolerance) {
+            return true;
+        }
+    }
+    for (const float offset : targetNormalizationOffsets_) {
+        if (std::fabs(offset) > tolerance) {
             return true;
         }
     }
@@ -1352,18 +1819,21 @@ Parameter* Bank::EnsureModulationDepthParameter(Parameter& parameter, std::size_
         return nullptr;
     }
 
-    const ModulatorMetadata& modulator = parameter.Group().GetModulators().Metadata(modIx);
-    const std::string name = modulator.name.empty()
-                                 ? parameter.Name() + " Mod Depth " + std::to_string(modIx + 1)
-                                 : parameter.Name() + " " + modulator.name;
-    ParameterConfig config{
-        .name = name,
-        .shortName = modulator.shortName.empty() ? parameter.ShortName() : modulator.shortName,
-        .defaultValue = 0.0f,
-        .range = RangeKind::Bipolar,
-        .color = modulator.color,
-    };
-    return &parameter.EnsureModulationDepth(modIx, std::move(config));
+    return parameter.EnsureModulationDepth(modIx);
+}
+
+bool Bank::CanOpenModulationView(const Parameter& parameter) const {
+    return parameter.Group().AvailableParameterSlots() >= MissingModulationDepthCount(parameter);
+}
+
+std::size_t Bank::MissingModulationDepthCount(const Parameter& parameter) const {
+    std::size_t missing = 0;
+    for (std::size_t modIx = 0; modIx < parameter.Group().Config().numModulators; ++modIx) {
+        if (parameter.ModulationDepthParameter(modIx) == nullptr) {
+            ++missing;
+        }
+    }
+    return missing;
 }
 
 void Bank::OpenModulationView(Parameter& parameter, std::span<const PhysicalEncoderId> physicalLayout) {
@@ -1374,6 +1844,13 @@ void Bank::OpenModulationView(Parameter& parameter, std::span<const PhysicalEnco
     const std::size_t modulatorCount = parameter.Group().Config().numModulators;
     if (modulatorCount > physicalLayout.size() - 1) {
         throw std::logic_error("modulation view has more modulators than slot depth positions");
+    }
+
+    const std::size_t missing = MissingModulationDepthCount(parameter);
+    const std::size_t available = parameter.Group().AvailableParameterSlots();
+    if (available < missing) {
+        parameter.Group().RequestParameterStorageBatch(missing - available);
+        return;
     }
 
     selected_ = &parameter;
@@ -1390,6 +1867,7 @@ void Bank::OpenModulationView(Parameter& parameter, std::span<const PhysicalEnco
         .encoderId = physicalLayout.back(),
         .parameter = &parameter,
     });
+    parameter.Group().RequestParameterStorageBatchIfLow();
 }
 
 std::vector<PhysicalEncoderId> Bank::CompactPhysicalLayout() const {
@@ -1470,6 +1948,44 @@ bool BankSlot::OwnsPhysicalEncoder(PhysicalEncoderId encoderId) const {
     return std::find(physicalEncoders_.begin(), physicalEncoders_.end(), encoderId) != physicalEncoders_.end();
 }
 
+ParameterMessageOut ParameterMessageOut::ParameterStorageBatchNeeded(ParameterGroup& group,
+                                                                     std::size_t minimumAdditionalParameters,
+                                                                     std::size_t requestedParameters) {
+    ParameterMessageOut message;
+    message.type = Type::ParameterStorageBatchNeeded;
+    message.group = &group;
+    message.minimumAdditionalParameters = minimumAdditionalParameters;
+    message.requestedParameters = requestedParameters;
+    return message;
+}
+
+ParameterMessageOutBus::ParameterMessageOutBus(std::size_t capacity)
+    : queue_(capacity == 0 ? 1 : capacity) {}
+
+bool ParameterMessageOutBus::Push(const ParameterMessageOut& message) {
+    const std::size_t size = size_.load(std::memory_order_acquire);
+    if (size >= queue_.size()) {
+        return false;
+    }
+    const std::size_t tail = tail_.load(std::memory_order_relaxed);
+    queue_[tail] = message;
+    tail_.store((tail + 1) % queue_.size(), std::memory_order_release);
+    size_.fetch_add(1, std::memory_order_release);
+    return true;
+}
+
+bool ParameterMessageOutBus::Pop(ParameterMessageOut& message) {
+    const std::size_t size = size_.load(std::memory_order_acquire);
+    if (size == 0) {
+        return false;
+    }
+    const std::size_t head = head_.load(std::memory_order_relaxed);
+    message = queue_[head];
+    head_.store((head + 1) % queue_.size(), std::memory_order_release);
+    size_.fetch_sub(1, std::memory_order_release);
+    return true;
+}
+
 bool ParameterManager::SetGestureCount(std::size_t count) {
     if (!groups_.empty()) {
         return false;
@@ -1521,6 +2037,122 @@ Parameter& ParameterManager::ParameterById(ParameterId id) {
 
 const Parameter& ParameterManager::ParameterById(ParameterId id) const {
     return *parameters_.at(static_cast<std::size_t>(id));
+}
+
+Parameter* ParameterManager::FindParameterByName(std::string_view name) {
+    for (Parameter* parameter : parameters_) {
+        if (parameter != nullptr && parameter->Name() == name) {
+            return parameter;
+        }
+    }
+    return nullptr;
+}
+
+const Parameter* ParameterManager::FindParameterByName(std::string_view name) const {
+    for (const Parameter* parameter : parameters_) {
+        if (parameter != nullptr && parameter->Name() == name) {
+            return parameter;
+        }
+    }
+    return nullptr;
+}
+
+JSON ParameterManager::ParameterValuesToJSON(JsonArena& arena) const {
+    JSON root = arena.Object();
+    for (const Parameter* parameter : parameters_) {
+        if (parameter == nullptr) {
+            continue;
+        }
+        root.SetNew(parameter->Name().c_str(), parameter->ToValueJSON(arena));
+    }
+    return root;
+}
+
+bool ParameterManager::LoadParameterValuesFromJSON(JSON json) {
+    if (!IsJsonObject(json)) {
+        return false;
+    }
+
+    for (Parameter* parameter : parameters_) {
+        if (parameter != nullptr) {
+            parameter->RevertAllToDefault();
+        }
+    }
+
+    const JsonMember* members = JsonObjectMembers(json);
+    for (std::size_t ix = 0; ix < json.Size(); ++ix) {
+        if (members[ix].m_key == nullptr) {
+            continue;
+        }
+        Parameter* parameter = FindParameterByName(members[ix].m_key);
+        if (parameter == nullptr) {
+            continue;
+        }
+        parameter->LoadValuesFromJSON(JSON(members[ix].m_value));
+    }
+
+    ComputeAllParameters();
+    return true;
+}
+
+void ParameterManager::ComputeAllParameters() {
+    for (Parameter* parameter : parameters_) {
+        if (parameter == nullptr) {
+            continue;
+        }
+        parameter->Compute(scene_);
+        parameter->SnapCurrentToTarget();
+    }
+}
+
+void ParameterManager::CaptureDefaultControlState() {
+    defaultControlState_.scene = scene_;
+    defaultControlState_.shiftHeld = shiftHeld_;
+    defaultControlState_.activePageOrdinal = activePageOrdinal_;
+    defaultControlState_.gestureValues.clear();
+    defaultControlState_.gestureSelected.clear();
+    defaultControlState_.gestureValues.reserve(GestureCount());
+    defaultControlState_.gestureSelected.reserve(GestureCount());
+    for (std::size_t gestureIx = 0; gestureIx < GestureCount(); ++gestureIx) {
+        defaultControlState_.gestureValues.push_back(GestureValue(gestureIx));
+        defaultControlState_.gestureSelected.push_back(GestureSelected(gestureIx));
+    }
+}
+
+void ParameterManager::RevertAllToDefaults() {
+    for (Parameter* parameter : parameters_) {
+        if (parameter != nullptr) {
+            parameter->RevertAllToDefault();
+        }
+    }
+
+    if (SceneEndpointsValid(defaultControlState_.scene.leftScene, defaultControlState_.scene.rightScene)) {
+        scene_ = defaultControlState_.scene;
+    } else {
+        scene_ = {};
+    }
+    scene_.blend = std::clamp(scene_.blend, 0.0f, 1.0f);
+    shiftHeld_ = defaultControlState_.shiftHeld;
+    activePageOrdinal_ = defaultControlState_.activePageOrdinal;
+    if (activePageOrdinal_.has_value() && FindPage(*activePageOrdinal_) == nullptr) {
+        activePageOrdinal_.reset();
+    }
+
+    for (std::size_t gestureIx = 0; gestureIx < GestureCount(); ++gestureIx) {
+        const float value = gestureIx < defaultControlState_.gestureValues.size()
+                                ? defaultControlState_.gestureValues[gestureIx]
+                                : 0.0f;
+        SetGestureValue(gestureIx, value);
+        const bool selected = gestureIx < defaultControlState_.gestureSelected.size() &&
+                              defaultControlState_.gestureSelected[gestureIx];
+        if (selected) {
+            SelectGesture(gestureIx);
+        } else {
+            DeselectGesture(gestureIx);
+        }
+    }
+
+    ComputeAllParameters();
 }
 
 float ParameterManager::GetLinear(float minValue, float maxValue, std::size_t voiceIx, ParameterId id) const {
@@ -1940,6 +2572,16 @@ void ParameterManager::PopulateUIState(UIState& state) const {
             state.gestures.bankAffectingCount[gestureIx].fetch_add(1, std::memory_order_relaxed);
         }
     }
+}
+
+bool ParameterManager::RequestParameterStorageBatch(ParameterGroup& group, std::size_t minimumAdditionalParameters) {
+    if (!OwnsGroup(group) || parameterMessageOutBus_ == nullptr || minimumAdditionalParameters == 0) {
+        return false;
+    }
+    const std::size_t lowWatermark = group.Config().numModulators * 2;
+    const std::size_t requested = std::max(minimumAdditionalParameters, lowWatermark);
+    return parameterMessageOutBus_->Push(
+        ParameterMessageOut::ParameterStorageBatchNeeded(group, minimumAdditionalParameters, requested));
 }
 
 MessageIn MessageIn::ParamIncDec(std::uint64_t timestamp, std::size_t slotIx, std::size_t position, float delta) {

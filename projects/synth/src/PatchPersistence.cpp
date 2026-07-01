@@ -1,0 +1,542 @@
+#include "synth/PatchPersistence.hpp"
+
+#include <algorithm>
+#include <cctype>
+#include <cstdio>
+#include <cstdlib>
+#include <ctime>
+#include <fstream>
+#include <iomanip>
+#include <memory>
+#include <sstream>
+#include <stdexcept>
+#include <system_error>
+#include <vector>
+
+namespace synth {
+
+namespace {
+
+constexpr std::string_view kPatchVersionSuffix = "-000.json";
+
+bool IsObject(JSON json) {
+    return json.m_node != nullptr && json.m_node->m_type == JsonType::Object;
+}
+
+bool IsString(JSON json) {
+    return json.m_node != nullptr && json.m_node->m_type == JsonType::String;
+}
+
+bool IsInteger(JSON json) {
+    return json.m_node != nullptr && json.m_node->m_type == JsonType::Integer;
+}
+
+bool ValidPatchRoot(JSON root) {
+    if (!IsObject(root)) {
+        return false;
+    }
+    const JSON schema = root.Get("schema");
+    const JSON version = root.Get("schemaVersion");
+    return IsString(schema) && std::string_view(schema.StringValue()) == "sheaf.synth.patch" &&
+           IsInteger(version) && version.IntegerValue() == 1;
+}
+
+std::string SanitizePatchName(std::string_view patchName) {
+    std::string result;
+    result.reserve(patchName.size());
+    for (char ch : patchName) {
+        const unsigned char uch = static_cast<unsigned char>(ch);
+        if (std::isalnum(uch) || ch == '-' || ch == '_' || ch == '.' || ch == ' ') {
+            result.push_back(ch);
+        } else {
+            result.push_back('_');
+        }
+    }
+    const auto first = result.find_first_not_of(' ');
+    const auto last = result.find_last_not_of(' ');
+    if (first == std::string::npos) {
+        return "Untitled";
+    }
+    return result.substr(first, last - first + 1);
+}
+
+std::string ReadWholeFile(const std::filesystem::path& path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) {
+        throw std::runtime_error("could not open patch version for reading");
+    }
+    std::ostringstream contents;
+    contents << in.rdbuf();
+    return contents.str();
+}
+
+} // namespace
+
+JSON ToJSON(JsonArena& arena, const MidiEndpointState& endpoints) {
+    JSON json = arena.Object();
+    json.SetNew("inputIdentifier", arena.String(endpoints.inputIdentifier.c_str()));
+    json.SetNew("outputIdentifier", arena.String(endpoints.outputIdentifier.c_str()));
+    return json;
+}
+
+bool FromJSON(JSON json, MidiEndpointState& endpoints) {
+    if (!IsObject(json)) {
+        return false;
+    }
+    MidiEndpointState parsed;
+    const JSON input = json.Get("inputIdentifier");
+    const JSON output = json.Get("outputIdentifier");
+    if (!input.IsNull()) {
+        if (!IsString(input)) {
+            return false;
+        }
+        parsed.inputIdentifier = input.StringValue();
+    }
+    if (!output.IsNull()) {
+        if (!IsString(output)) {
+            return false;
+        }
+        parsed.outputIdentifier = output.StringValue();
+    }
+    endpoints = std::move(parsed);
+    return true;
+}
+
+JSON BuildPatchJSON(JsonArena& arena, std::string_view patchName,
+                    const ParameterManager& manager,
+                    const MidiControllerProfileConfig& midiProfile,
+                    const MidiEndpointState& endpoints) {
+    JSON root = arena.Object();
+    root.SetNew("schema", arena.String("sheaf.synth.patch"));
+    root.SetNew("schemaVersion", arena.Integer(1));
+    const std::string patchNameText(patchName);
+    root.SetNew("patchName", arena.String(patchNameText.c_str()));
+    root.SetNew("parameterValues", manager.ParameterValuesToJSON(arena));
+    root.SetNew("midiProfile", ToJSON(arena, midiProfile));
+    root.SetNew("midiEndpoints", ToJSON(arena, endpoints));
+    return root;
+}
+
+bool LoadPatchJSON(JSON root, ParameterManager& manager,
+                   MidiControllerProfileConfig& midiProfile,
+                   MidiEndpointState* endpoints) {
+    if (!ValidPatchRoot(root) || !IsString(root.Get("patchName"))) {
+        return false;
+    }
+
+    const JSON parameterValues = root.Get("parameterValues");
+    if (!IsObject(parameterValues)) {
+        return false;
+    }
+
+    MidiControllerProfileConfig parsedProfile;
+    if (!FromJSON(root.Get("midiProfile"), parsedProfile)) {
+        return false;
+    }
+
+    MidiEndpointState parsedEndpoints;
+    const JSON endpointJson = root.Get("midiEndpoints");
+    if (!endpointJson.IsNull() && !FromJSON(endpointJson, parsedEndpoints)) {
+        return false;
+    }
+
+    manager.LoadParameterValuesFromJSON(parameterValues);
+
+    midiProfile = std::move(parsedProfile);
+    if (endpoints != nullptr) {
+        *endpoints = std::move(parsedEndpoints);
+    }
+    return true;
+}
+
+bool ValidatePatchJSON(JSON root) {
+    if (!ValidPatchRoot(root) || !IsString(root.Get("patchName")) || !IsObject(root.Get("parameterValues"))) {
+        return false;
+    }
+    MidiControllerProfileConfig profile;
+    if (!FromJSON(root.Get("midiProfile"), profile)) {
+        return false;
+    }
+    const JSON endpointJson = root.Get("midiEndpoints");
+    if (!endpointJson.IsNull()) {
+        MidiEndpointState endpoints;
+        if (!FromJSON(endpointJson, endpoints)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+std::string TimestampPatchFilename(std::chrono::system_clock::time_point now) {
+    const std::time_t time = std::chrono::system_clock::to_time_t(now);
+    std::tm tm{};
+#if defined(_WIN32)
+    gmtime_s(&tm, &time);
+#else
+    gmtime_r(&time, &tm);
+#endif
+    std::ostringstream name;
+    name << std::put_time(&tm, "%Y-%m-%dT%H-%M-%S") << kPatchVersionSuffix;
+    return name.str();
+}
+
+std::filesystem::path PatchDirectory(const std::filesystem::path& patchesRoot, std::string_view patchName) {
+    return patchesRoot / SanitizePatchName(patchName);
+}
+
+std::filesystem::path SavePatchVersion(const std::filesystem::path& patchesRoot, std::string_view patchName,
+                                       const std::string& jsonText,
+                                       std::chrono::system_clock::time_point now) {
+    return SavePatchVersionInDirectory(PatchDirectory(patchesRoot, patchName), jsonText, now);
+}
+
+std::filesystem::path SavePatchVersionInDirectory(
+    const std::filesystem::path& patchDir, const std::string& jsonText,
+    std::chrono::system_clock::time_point now) {
+    std::filesystem::create_directories(patchDir);
+
+    const std::string base = TimestampPatchFilename(now);
+    const std::string stem = base.substr(0, base.size() - kPatchVersionSuffix.size());
+    std::filesystem::path versionFile = patchDir / base;
+    for (int suffix = 1; std::filesystem::exists(versionFile); ++suffix) {
+        std::ostringstream candidate;
+        candidate << stem << '-' << std::setw(3) << std::setfill('0') << suffix << ".json";
+        versionFile = patchDir / candidate.str();
+    }
+
+    const std::filesystem::path tempFile = versionFile.string() + ".tmp";
+    std::filesystem::remove(tempFile);
+
+    std::ofstream out(tempFile, std::ios::binary | std::ios::trunc);
+    if (!out) {
+        throw std::runtime_error("could not open patch version for writing");
+    }
+    out << jsonText;
+    if (!out) {
+        std::filesystem::remove(tempFile);
+        throw std::runtime_error("could not write patch version");
+    }
+    out.close();
+    if (!out) {
+        std::filesystem::remove(tempFile);
+        throw std::runtime_error("could not close patch version");
+    }
+    std::filesystem::rename(tempFile, versionFile);
+    return versionFile;
+}
+
+std::optional<std::filesystem::path> LatestPatchVersion(const std::filesystem::path& patchDir) {
+    if (!std::filesystem::exists(patchDir) || !std::filesystem::is_directory(patchDir)) {
+        return std::nullopt;
+    }
+
+    std::vector<std::filesystem::path> versions;
+    for (const auto& entry : std::filesystem::directory_iterator(patchDir)) {
+        if (entry.is_regular_file() && entry.path().extension() == ".json") {
+            versions.push_back(entry.path());
+        }
+    }
+    if (versions.empty()) {
+        return std::nullopt;
+    }
+
+    std::sort(versions.begin(), versions.end(), [](const auto& lhs, const auto& rhs) {
+        return lhs.filename().string() < rhs.filename().string();
+    });
+    return versions.back();
+}
+
+std::string LoadPatchVersionText(const std::filesystem::path& versionFile) {
+    return ReadWholeFile(versionFile);
+}
+
+PatchMessageIn PatchMessageIn::LoadFromJSON(JsonDocument document) {
+    PatchMessageIn message;
+    message.type = Type::LoadFromJSON;
+    message.document = std::move(document);
+    return message;
+}
+
+PatchMessageIn PatchMessageIn::RevertAllToDefault() {
+    PatchMessageIn message;
+    message.type = Type::RevertAllToDefault;
+    return message;
+}
+
+PatchMessageIn PatchMessageIn::SerializeToJSON(std::uint64_t requestId, std::string patchName) {
+    PatchMessageIn message;
+    message.type = Type::SerializeToJSON;
+    message.requestId = requestId;
+    message.patchName = std::move(patchName);
+    return message;
+}
+
+MessageOut MessageOut::SerializedJSON(std::uint64_t requestId, JsonDocument document) {
+    MessageOut message;
+    message.type = Type::SerializedJSON;
+    message.requestId = requestId;
+    message.document = std::move(document);
+    return message;
+}
+
+PatchMessageInBus::PatchMessageInBus(std::size_t capacity)
+    : queue_(capacity == 0 ? 1 : capacity) {}
+
+bool PatchMessageInBus::Push(const PatchMessageIn& message) {
+    const std::size_t size = size_.load(std::memory_order_acquire);
+    if (size >= queue_.size()) {
+        return false;
+    }
+    const std::size_t tail = tail_.load(std::memory_order_relaxed);
+    queue_[tail] = message;
+    tail_.store((tail + 1) % queue_.size(), std::memory_order_release);
+    size_.fetch_add(1, std::memory_order_release);
+    return true;
+}
+
+bool PatchMessageInBus::Pop(PatchMessageIn& message) {
+    const std::size_t size = size_.load(std::memory_order_acquire);
+    if (size == 0) {
+        return false;
+    }
+    const std::size_t head = head_.load(std::memory_order_relaxed);
+    message = std::move(queue_[head]);
+    head_.store((head + 1) % queue_.size(), std::memory_order_release);
+    size_.fetch_sub(1, std::memory_order_release);
+    return true;
+}
+
+MessageOutBus::MessageOutBus(std::size_t capacity)
+    : queue_(capacity == 0 ? 1 : capacity) {}
+
+bool MessageOutBus::Push(const MessageOut& message) {
+    const std::size_t size = size_.load(std::memory_order_acquire);
+    if (size >= queue_.size()) {
+        return false;
+    }
+    const std::size_t tail = tail_.load(std::memory_order_relaxed);
+    queue_[tail] = message;
+    tail_.store((tail + 1) % queue_.size(), std::memory_order_release);
+    size_.fetch_add(1, std::memory_order_release);
+    return true;
+}
+
+bool MessageOutBus::Pop(MessageOut& message) {
+    const std::size_t size = size_.load(std::memory_order_acquire);
+    if (size == 0) {
+        return false;
+    }
+    const std::size_t head = head_.load(std::memory_order_relaxed);
+    message = std::move(queue_[head]);
+    head_.store((head + 1) % queue_.size(), std::memory_order_release);
+    size_.fetch_sub(1, std::memory_order_release);
+    return true;
+}
+
+PatchApplyStatus ApplyPatchMessage(
+    const PatchMessageIn& message, ParameterManager& manager,
+    MidiControllerProfileConfig& midiProfile, const MidiControllerProfileConfig& defaultMidiProfile,
+    MidiEndpointState& endpoints, const MidiEndpointState& defaultEndpoints,
+    MessageOutBus& outputBus, PatchSerializationContext context) {
+    switch (message.type) {
+    case PatchMessageIn::Type::LoadFromJSON:
+        if (message.document.root.IsNull() ||
+            !LoadPatchJSON(message.document.root, manager, midiProfile, &endpoints)) {
+            return PatchApplyStatus::InvalidJSON;
+        }
+        return PatchApplyStatus::Applied;
+    case PatchMessageIn::Type::RevertAllToDefault:
+        manager.RevertAllToDefaults();
+        midiProfile = defaultMidiProfile;
+        endpoints = defaultEndpoints;
+        return PatchApplyStatus::Reverted;
+    case PatchMessageIn::Type::SerializeToJSON: {
+        const std::string patchName = message.patchName.empty() ? std::string("Untitled") : message.patchName;
+        const std::size_t maxArenaCapacity =
+            std::max(context.initialArenaCapacity, context.maxArenaCapacity == 0 ? std::size_t{1} : context.maxArenaCapacity);
+        auto arena = std::make_shared<JsonArena>(context.initialArenaCapacity);
+        JSON root;
+        for (;;) {
+            root = BuildPatchJSON(*arena, patchName, manager, midiProfile, endpoints);
+            if (!root.IsNull() && !arena->Failed()) {
+                break;
+            }
+            if (arena->Capacity() >= maxArenaCapacity) {
+                return PatchApplyStatus::ArenaExhausted;
+            }
+            arena->GrowAndReset();
+        }
+        if (!outputBus.Push(MessageOut::SerializedJSON(message.requestId, JsonDocument{.arena = arena, .root = root}))) {
+            return PatchApplyStatus::OutputQueueFull;
+        }
+        return PatchApplyStatus::Serialized;
+    }
+    }
+    return PatchApplyStatus::InvalidJSON;
+}
+
+PatchManager::PatchManager(PatchMessageInBus* inputBus, MessageOutBus* outputBus,
+                           std::size_t initialArenaCapacity)
+    : inputBus_(inputBus),
+      outputBus_(outputBus),
+      initialArenaCapacity_(initialArenaCapacity == 0 ? 1 : initialArenaCapacity) {}
+
+void PatchManager::SetBuses(PatchMessageInBus* inputBus, MessageOutBus* outputBus) {
+    inputBus_ = inputBus;
+    outputBus_ = outputBus;
+}
+
+PatchCommandResult PatchManager::NewPatch() {
+    if (inputBus_ == nullptr || !inputBus_->Push(PatchMessageIn::RevertAllToDefault())) {
+        return {.status = PatchCommandStatus::QueueFull};
+    }
+    currentPatchDirectory_.reset();
+    pendingSave_.reset();
+    return {.status = PatchCommandStatus::Ok};
+}
+
+PatchCommandResult PatchManager::SavePatch() {
+    if (!currentPatchDirectory_.has_value()) {
+        return {.status = PatchCommandStatus::NeedsSaveAsPath};
+    }
+    return DispatchSerialize(PendingSave::Kind::Save, *currentPatchDirectory_);
+}
+
+PatchCommandResult PatchManager::SavePatchAs(const std::filesystem::path& patchDir) {
+    if (pendingSave_.has_value()) {
+        return {.status = PatchCommandStatus::Busy, .requestId = pendingSave_->requestId, .path = pendingSave_->patchDir};
+    }
+    std::error_code ec;
+    if (std::filesystem::exists(patchDir, ec) || ec) {
+        return {.status = PatchCommandStatus::AlreadyExists, .path = patchDir};
+    }
+    return DispatchSerialize(PendingSave::Kind::SaveAs, patchDir);
+}
+
+PatchCommandResult PatchManager::LoadPatch(const std::filesystem::path& path) {
+    std::error_code ec;
+    if (!std::filesystem::exists(path, ec)) {
+        return {.status = ec ? PatchCommandStatus::IOError : PatchCommandStatus::NotFound, .path = path};
+    }
+    if (std::filesystem::is_directory(path, ec) && !ec) {
+        const auto latest = LatestPatchVersion(path);
+        if (!latest.has_value()) {
+            return {.status = PatchCommandStatus::NotFound, .path = path};
+        }
+        return LoadPatchVersion(*latest, path);
+    }
+    if (ec) {
+        return {.status = PatchCommandStatus::IOError, .path = path};
+    }
+    if (!std::filesystem::is_regular_file(path, ec) || ec) {
+        return {.status = ec ? PatchCommandStatus::IOError : PatchCommandStatus::NotFound, .path = path};
+    }
+    return LoadPatchVersion(path, path.parent_path());
+}
+
+PatchCommandResult PatchManager::RevertPatch() {
+    if (!currentPatchDirectory_.has_value()) {
+        return NewPatch();
+    }
+    const auto latest = LatestPatchVersion(*currentPatchDirectory_);
+    if (!latest.has_value()) {
+        return {.status = PatchCommandStatus::NotFound, .path = *currentPatchDirectory_};
+    }
+    return LoadPatchVersion(*latest, *currentPatchDirectory_);
+}
+
+PatchCommandResult PatchManager::ProcessResponses(std::chrono::system_clock::time_point now) {
+    if (outputBus_ == nullptr || !pendingSave_.has_value()) {
+        return {.status = PatchCommandStatus::NoCompletion};
+    }
+
+    MessageOut message;
+    while (outputBus_->Pop(message)) {
+        if (message.type != MessageOut::Type::SerializedJSON || message.requestId != pendingSave_->requestId) {
+            continue;
+        }
+        const PendingSave pending = *pendingSave_;
+        pendingSave_.reset();
+        if (message.document.root.IsNull()) {
+            return {.status = PatchCommandStatus::InvalidPatch, .requestId = pending.requestId, .path = pending.patchDir};
+        }
+
+        if (pending.kind == PendingSave::Kind::SaveAs) {
+            std::error_code ec;
+            if (std::filesystem::exists(pending.patchDir, ec) || ec) {
+                return {.status = PatchCommandStatus::AlreadyExists, .requestId = pending.requestId, .path = pending.patchDir};
+            }
+        }
+
+        char* dumped = message.document.root.Dumps(JSON_ENCODE_ANY);
+        if (dumped == nullptr) {
+            return {.status = PatchCommandStatus::InvalidPatch, .requestId = pending.requestId, .path = pending.patchDir};
+        }
+        const std::string jsonText(dumped);
+        std::free(dumped);
+
+        try {
+            const std::filesystem::path versionFile = SavePatchVersionInDirectory(pending.patchDir, jsonText, now);
+            if (pending.kind == PendingSave::Kind::SaveAs) {
+                currentPatchDirectory_ = pending.patchDir;
+            }
+            return {.status = PatchCommandStatus::Written, .requestId = pending.requestId, .path = versionFile};
+        } catch (const std::exception&) {
+            return {.status = PatchCommandStatus::IOError, .requestId = pending.requestId, .path = pending.patchDir};
+        }
+    }
+    return {.status = PatchCommandStatus::NoCompletion};
+}
+
+PatchCommandResult PatchManager::DispatchSerialize(PendingSave::Kind kind, const std::filesystem::path& patchDir) {
+    if (pendingSave_.has_value()) {
+        return {.status = PatchCommandStatus::Busy, .requestId = pendingSave_->requestId, .path = pendingSave_->patchDir};
+    }
+    if (inputBus_ == nullptr || outputBus_ == nullptr) {
+        return {.status = PatchCommandStatus::QueueFull, .path = patchDir};
+    }
+    const std::uint64_t requestId = nextRequestId_++;
+    if (!inputBus_->Push(PatchMessageIn::SerializeToJSON(requestId, PatchNameForDirectory(patchDir)))) {
+        return {.status = PatchCommandStatus::QueueFull, .requestId = requestId, .path = patchDir};
+    }
+    pendingSave_ = PendingSave{.kind = kind, .requestId = requestId, .patchDir = patchDir};
+    return {.status = PatchCommandStatus::Pending, .requestId = requestId, .path = patchDir};
+}
+
+PatchCommandResult PatchManager::LoadPatchVersion(const std::filesystem::path& versionFile,
+                                                  const std::filesystem::path& currentPatchDirectory) {
+    if (inputBus_ == nullptr) {
+        return {.status = PatchCommandStatus::QueueFull, .path = versionFile};
+    }
+    try {
+        JsonDocument document = ParsePatchText(LoadPatchVersionText(versionFile));
+        if (document.root.IsNull() || !ValidatePatchJSON(document.root)) {
+            return {.status = PatchCommandStatus::InvalidPatch, .path = versionFile};
+        }
+        if (!inputBus_->Push(PatchMessageIn::LoadFromJSON(std::move(document)))) {
+            return {.status = PatchCommandStatus::QueueFull, .path = versionFile};
+        }
+        currentPatchDirectory_ = currentPatchDirectory;
+        pendingSave_.reset();
+        return {.status = PatchCommandStatus::Ok, .path = versionFile};
+    } catch (const std::exception&) {
+        return {.status = PatchCommandStatus::IOError, .path = versionFile};
+    }
+}
+
+JsonDocument PatchManager::ParsePatchText(const std::string& text) const {
+    auto arena = std::make_shared<JsonArena>(initialArenaCapacity_);
+    JSON root = arena->Loads(text.c_str());
+    while (root.IsNull() && arena->Failed()) {
+        arena->GrowAndReset();
+        root = arena->Loads(text.c_str());
+    }
+    return {.arena = arena, .root = root};
+}
+
+std::string PatchManager::PatchNameForDirectory(const std::filesystem::path& patchDir) const {
+    const std::string filename = patchDir.filename().string();
+    return filename.empty() ? std::string("Untitled") : filename;
+}
+
+} // namespace synth

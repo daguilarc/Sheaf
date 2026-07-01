@@ -7,10 +7,12 @@ APP_BUNDLE_BINARY := $(APP_BUNDLE)/Contents/MacOS/SynthMiniapp
 GEOMETRY_TEST := $(BUILD_DIR)/encoder_component_geometry_tests
 MODULATION_TEST := $(BUILD_DIR)/demo_modulation_tests
 SYNTH_ROOT := ..
-SYNTH_SRC := $(SYNTH_ROOT)/src/ParameterModulation.cpp $(SYNTH_ROOT)/src/MidiController.cpp $(SYNTH_ROOT)/src/DspWavetable.cpp \
+SYNTH_SRC := $(SYNTH_ROOT)/src/ParameterModulation.cpp $(SYNTH_ROOT)/src/MidiController.cpp $(SYNTH_ROOT)/src/PatchPersistence.cpp $(SYNTH_ROOT)/src/DspWavetable.cpp \
 	$(SYNTH_ROOT)/src/Modules.cpp
 SYNTH_HEADERS := $(SYNTH_ROOT)/include/synth/ParameterModulation.hpp $(SYNTH_ROOT)/include/synth/MidiController.hpp \
+	$(SYNTH_ROOT)/include/synth/Json.hpp \
 	$(SYNTH_ROOT)/include/synth/Modules.hpp \
+	$(SYNTH_ROOT)/include/synth/PatchPersistence.hpp \
 	$(SYNTH_ROOT)/include/synth/DspMath.hpp \
 	$(SYNTH_ROOT)/include/synth/DspNumbers.hpp \
 	$(SYNTH_ROOT)/include/synth/DspTransferFunction.hpp \

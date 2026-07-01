@@ -6,12 +6,18 @@
 #include "WaveformComponents.hpp"
 #include "synth/MidiController.hpp"
 #include "synth/Modules.hpp"
+#include "synth/PatchPersistence.hpp"
 #include "synth/ParameterModulation.hpp"
 
 #include <array>
 #include <cmath>
+#include <filesystem>
+#include <fstream>
 #include <functional>
 #include <memory>
+#include <optional>
+#include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -20,6 +26,7 @@ class MainComponent final : public juce::Component, private juce::Timer {
 public:
     MainComponent() {
         manager_.SetGestureCount(1);
+        manager_.SetParameterMessageOutBus(&parameterMessageOutBus_);
         auto& group = manager_.CreateGroup({
             .numVoices = 2,
             .numModulators = 3,
@@ -46,9 +53,6 @@ public:
         volume_ = &manager_.ParameterById(vcoModule_.Parameters().volume);
         lfoSpeed_ = &manager_.CreateParameter(group, {.name = "LFO Speed", .shortName = "Spd", .defaultValue = 0.35f, .color = synth::Color::Green});
         parameters_ = {tune_, phaseParam_, shape_, volume_, lfoSpeed_};
-        for (synth::Parameter* parameter : std::array<synth::Parameter*, 5>{tune_, phaseParam_, shape_, volume_, lfoSpeed_}) {
-            createModulationDepths(group, *parameter);
-        }
         tune_->SetGestureActive(0, 0, true);
         tune_->SetGestureActive(1, 0, true);
 
@@ -73,6 +77,7 @@ public:
         vcoModule_.RegisterToBank(*vcoBank_, 0);
         manager_.SetActivePage(0);
         manager_.SetSceneEndpoints(0, 1);
+        manager_.CaptureDefaultControlState();
         uiState_ = manager_.CreateUIState();
         bus_.SetManager(&manager_);
         midiBus_.SetManager(&manager_);
@@ -105,6 +110,11 @@ public:
         addButton(shiftButton_, "Shift", [this] { bus_.Push(synth::MessageIn::ToggleShift(nextTimestamp_++)); });
         addButton(startButton_, "Start", [this] { bus_.Push(synth::MessageIn::Start(nextTimestamp_++)); });
         addButton(stopButton_, "Stop", [this] { bus_.Push(synth::MessageIn::Stop(nextTimestamp_++)); });
+        addButton(newPatchButton_, "New", [this] { NewPatch(); });
+        addButton(savePatchButton_, "Save", [this] { SavePatch(); });
+        addButton(saveAsPatchButton_, "Save As", [this] { SavePatchAs(nextTemporaryPatchDirectory()); });
+        addButton(loadPatchButton_, "Load", [this] { LoadPatch(loadPatchTarget()); });
+        addButton(revertPatchButton_, "Revert", [this] { RevertPatch(); });
 
         gestureSlider_.setRange(0.0, 1.0, 0.001);
         gestureSlider_.onValueChange = [this] {
@@ -119,6 +129,8 @@ public:
         addAndMakeVisible(blendSlider_);
 
         configureMidiControls();
+        midiProfileConfig_ = synth::WrldBldrDefaultProfileConfig(defaultMidiProfileOptions());
+        defaultMidiProfileConfig_ = midiProfileConfig_;
         rebuildMidiProcessors();
 
         setSize(900, 560);
@@ -131,6 +143,50 @@ public:
         midiInHandler_.SetProcessor(nullptr);
         midiOutputHandler_.Close();
         midiSender_.Stop();
+    }
+
+    synth::PatchCommandResult NewPatch() {
+        const auto result = patchManager_.NewPatch();
+        processPatchMessages();
+        logPatchCommand("NewPatch", result);
+        return result;
+    }
+
+    synth::PatchCommandResult SavePatch() {
+        syncMidiEndpointStateFromSelection();
+        auto result = patchManager_.SavePatch();
+        if (result.status == synth::PatchCommandStatus::NeedsSaveAsPath) {
+            result = patchManager_.SavePatchAs(nextTemporaryPatchDirectory());
+        }
+        processPatchMessages();
+        const auto completion = patchManager_.ProcessResponses();
+        const auto finalResult = completion.status == synth::PatchCommandStatus::NoCompletion ? result : completion;
+        logPatchCommand("SavePatch", finalResult);
+        return finalResult;
+    }
+
+    synth::PatchCommandResult SavePatchAs(const std::filesystem::path& patchDir) {
+        syncMidiEndpointStateFromSelection();
+        const auto result = patchManager_.SavePatchAs(patchDir);
+        processPatchMessages();
+        const auto completion = patchManager_.ProcessResponses();
+        const auto finalResult = completion.status == synth::PatchCommandStatus::NoCompletion ? result : completion;
+        logPatchCommand("SavePatchAs", finalResult);
+        return finalResult;
+    }
+
+    synth::PatchCommandResult LoadPatch(const std::filesystem::path& path) {
+        const auto result = patchManager_.LoadPatch(path);
+        processPatchMessages();
+        logPatchCommand("LoadPatch", result);
+        return result;
+    }
+
+    synth::PatchCommandResult RevertPatch() {
+        const auto result = patchManager_.RevertPatch();
+        processPatchMessages();
+        logPatchCommand("RevertPatch", result);
+        return result;
     }
 
     void paint(juce::Graphics& g) override {
@@ -157,6 +213,14 @@ public:
         for (auto* button : buttons) {
             button->setBounds(controls.removeFromLeft(buttonWidth).reduced(4));
         }
+        auto patchControls = area.removeFromTop(44);
+        std::array<juce::TextButton*, 5> patchButtons{
+            &newPatchButton_, &savePatchButton_, &saveAsPatchButton_, &loadPatchButton_, &revertPatchButton_,
+        };
+        const int patchButtonWidth = patchControls.getWidth() / static_cast<int>(patchButtons.size());
+        for (auto* button : patchButtons) {
+            button->setBounds(patchControls.removeFromLeft(patchButtonWidth).reduced(4));
+        }
         auto sliders = area.removeFromTop(80);
         gestureSlider_.setBounds(sliders.removeFromLeft(getWidth() / 2 - 24).reduced(8));
         blendSlider_.setBounds(sliders.reduced(8));
@@ -180,19 +244,6 @@ private:
     void selectPage(std::size_t pageIx) {
         manager_.SelectBankForSlot(0, pageIx);
         manager_.SetActivePage(static_cast<synth::PageOrdinal>(pageIx));
-    }
-
-    void createModulationDepths(synth::ParameterGroup& group, synth::Parameter& target) {
-        for (std::size_t modIx = 0; modIx < group.Config().numModulators; ++modIx) {
-            const auto& modulator = group.GetModulators().Metadata(modIx);
-            target.EnsureModulationDepth(modIx, {
-                .name = target.Name() + " " + modulator.name,
-                .shortName = modulator.shortName,
-                .defaultValue = 0.0f,
-                .range = synth::RangeKind::Bipolar,
-                .color = modulator.color,
-            });
-        }
     }
 
     void configureMidiControls() {
@@ -221,6 +272,47 @@ private:
         updateMidiStatus();
     }
 
+    synth::WrldBldrDefaultProfileOptions defaultMidiProfileOptions() const {
+        synth::WrldBldrDefaultProfileOptions options;
+        options.visibleEncoderCount = encoders_.size();
+        options.sceneCount = 3;
+        options.bankButtonCount = 16;
+        options.gestureSelectorCount = 1;
+        return options;
+    }
+
+    static bool selectDeviceByIdentifier(juce::ComboBox& box, const juce::Array<juce::MidiDeviceInfo>& devices,
+                                         std::string_view identifier) {
+        if (identifier.empty()) {
+            if (devices.size() > 0 && box.getSelectedId() == 0) {
+                box.setSelectedId(1, juce::dontSendNotification);
+            }
+            return false;
+        }
+        const juce::String juceIdentifier = toJuceString(identifier);
+        for (int ix = 0; ix < devices.size(); ++ix) {
+            if (devices[ix].identifier == juceIdentifier) {
+                box.setSelectedId(ix + 1, juce::dontSendNotification);
+                return true;
+            }
+        }
+        box.setSelectedId(0, juce::dontSendNotification);
+        return false;
+    }
+
+    static bool hasDeviceIdentifier(const juce::Array<juce::MidiDeviceInfo>& devices, std::string_view identifier) {
+        if (identifier.empty()) {
+            return false;
+        }
+        const juce::String juceIdentifier = toJuceString(identifier);
+        for (const auto& device : devices) {
+            if (device.identifier == juceIdentifier) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     void refreshMidiDevices() {
         midiInputDevices_ = synth_juce::MidiInHandler::AvailableDevices();
         midiOutputDevices_ = synth_juce::MidiOutputHandler::AvailableDevices();
@@ -229,30 +321,21 @@ private:
         for (int ix = 0; ix < midiInputDevices_.size(); ++ix) {
             midiInputBox_.addItem(midiInputDevices_[ix].name, ix + 1);
         }
-        if (midiInputDevices_.size() > 0 && midiInputBox_.getSelectedId() == 0) {
-            midiInputBox_.setSelectedId(1, juce::dontSendNotification);
-        }
+        selectDeviceByIdentifier(midiInputBox_, midiInputDevices_, midiEndpointState_.inputIdentifier);
 
         midiOutputBox_.clear(juce::dontSendNotification);
         for (int ix = 0; ix < midiOutputDevices_.size(); ++ix) {
             midiOutputBox_.addItem(midiOutputDevices_[ix].name, ix + 1);
         }
-        if (midiOutputDevices_.size() > 0 && midiOutputBox_.getSelectedId() == 0) {
-            midiOutputBox_.setSelectedId(1, juce::dontSendNotification);
-        }
+        selectDeviceByIdentifier(midiOutputBox_, midiOutputDevices_, midiEndpointState_.outputIdentifier);
 
         updateMidiStatus();
     }
 
     void rebuildMidiProcessors() {
         midiInHandler_.SetProcessor(nullptr);
-        synth::WrldBldrDefaultProfileOptions options;
-        options.visibleEncoderCount = encoders_.size();
-        options.sceneCount = 3;
-        options.bankButtonCount = 16;
-        options.gestureSelectorCount = 1;
         midiProfile_ =
-            synth::CreateWrldBldrDefaultProfile(options, &midiBus_, &midiSender_, uiState_.get(), [] { return 0; });
+            synth::CreateMidiControllerProfile(midiProfileConfig_, &midiBus_, &midiSender_, uiState_.get(), [] { return 0; });
         midiInHandler_.SetProcessor(std::move(midiProfile_.input));
     }
 
@@ -274,10 +357,13 @@ private:
             updateMidiStatus();
             return;
         }
+        syncMidiEndpointStateFromSelection();
         rebuildMidiProcessors();
         const juce::String identifier = selectedInputIdentifier();
         if (identifier.isNotEmpty()) {
-            midiInHandler_.Open(identifier);
+            if (midiInHandler_.Open(identifier)) {
+                midiEndpointState_.inputIdentifier = identifier.toStdString();
+            }
         }
         updateMidiStatus();
     }
@@ -288,8 +374,10 @@ private:
             updateMidiStatus();
             return;
         }
+        syncMidiEndpointStateFromSelection();
         const juce::String identifier = selectedOutputIdentifier();
         if (identifier.isNotEmpty() && midiOutputHandler_.Open(identifier)) {
+            midiEndpointState_.outputIdentifier = identifier.toStdString();
             for (auto& output : midiProfile_.outputs) {
                 output->Reset();
             }
@@ -312,8 +400,232 @@ private:
         midiStatusLabel_.setText(status, juce::dontSendNotification);
     }
 
+    void syncMidiEndpointStateFromSelection() {
+        const juce::String input = selectedInputIdentifier();
+        const juce::String output = selectedOutputIdentifier();
+        if (input.isNotEmpty()) {
+            midiEndpointState_.inputIdentifier = input.toStdString();
+        }
+        if (output.isNotEmpty()) {
+            midiEndpointState_.outputIdentifier = output.toStdString();
+        }
+    }
+
+    void openSavedMidiDevices() {
+        midiInHandler_.Close();
+        midiOutputHandler_.Close();
+        if (hasDeviceIdentifier(midiInputDevices_, midiEndpointState_.inputIdentifier)) {
+            midiInHandler_.Open(juce::String(midiEndpointState_.inputIdentifier.c_str()));
+        }
+        if (hasDeviceIdentifier(midiOutputDevices_, midiEndpointState_.outputIdentifier) &&
+            midiOutputHandler_.Open(juce::String(midiEndpointState_.outputIdentifier.c_str()))) {
+            for (auto& output : midiProfile_.outputs) {
+                output->Reset();
+            }
+        }
+        updateMidiStatus();
+    }
+
+    static std::filesystem::path temporaryPatchRoot() {
+        return std::filesystem::temp_directory_path() / "sheaf-synth-miniapp-patches";
+    }
+
+    static std::filesystem::path defaultTemporaryPatchDirectory() {
+        return temporaryPatchRoot() / "Default";
+    }
+
+    static std::filesystem::path patchLogPath() {
+        return temporaryPatchRoot() / "miniapp.log";
+    }
+
+    std::filesystem::path nextTemporaryPatchDirectory() const {
+        const std::filesystem::path base = defaultTemporaryPatchDirectory();
+        if (!std::filesystem::exists(base)) {
+            return base;
+        }
+        for (int ix = 1;; ++ix) {
+            const std::filesystem::path candidate = temporaryPatchRoot() / ("Default-" + std::to_string(ix));
+            if (!std::filesystem::exists(candidate)) {
+                return candidate;
+            }
+        }
+    }
+
+    std::filesystem::path loadPatchTarget() const {
+        if (patchManager_.CurrentPatchDirectory().has_value()) {
+            return *patchManager_.CurrentPatchDirectory();
+        }
+        if (const auto latestPatchDir = latestTemporaryPatchDirectory(); latestPatchDir.has_value()) {
+            return *latestPatchDir;
+        }
+        return defaultTemporaryPatchDirectory();
+    }
+
+    static std::optional<std::filesystem::path> latestTemporaryPatchDirectory() {
+        std::error_code ec;
+        if (!std::filesystem::is_directory(temporaryPatchRoot(), ec) || ec) {
+            return std::nullopt;
+        }
+
+        std::optional<std::filesystem::path> latestPatchDir;
+        std::optional<std::filesystem::path> latestVersion;
+        for (const auto& entry : std::filesystem::directory_iterator(temporaryPatchRoot(), ec)) {
+            if (ec) {
+                return latestPatchDir;
+            }
+            if (!entry.is_directory(ec) || ec) {
+                ec.clear();
+                continue;
+            }
+            const auto version = synth::LatestPatchVersion(entry.path());
+            if (!version.has_value()) {
+                continue;
+            }
+            const std::string versionName = version->filename().string();
+            const std::string latestVersionName =
+                latestVersion.has_value() ? latestVersion->filename().string() : std::string();
+            const std::string patchDirName = entry.path().filename().string();
+            const std::string latestPatchDirName =
+                latestPatchDir.has_value() ? latestPatchDir->filename().string() : std::string();
+            if (!latestVersion.has_value() || versionName > latestVersionName ||
+                (versionName == latestVersionName && patchDirName > latestPatchDirName)) {
+                latestVersion = *version;
+                latestPatchDir = entry.path();
+            }
+        }
+        return latestPatchDir;
+    }
+
+    static const char* patchCommandStatusName(synth::PatchCommandStatus status) {
+        switch (status) {
+        case synth::PatchCommandStatus::Ok:
+            return "Ok";
+        case synth::PatchCommandStatus::Pending:
+            return "Pending";
+        case synth::PatchCommandStatus::NoCompletion:
+            return "NoCompletion";
+        case synth::PatchCommandStatus::Written:
+            return "Written";
+        case synth::PatchCommandStatus::NeedsSaveAsPath:
+            return "NeedsSaveAsPath";
+        case synth::PatchCommandStatus::Busy:
+            return "Busy";
+        case synth::PatchCommandStatus::AlreadyExists:
+            return "AlreadyExists";
+        case synth::PatchCommandStatus::NotFound:
+            return "NotFound";
+        case synth::PatchCommandStatus::InvalidPatch:
+            return "InvalidPatch";
+        case synth::PatchCommandStatus::QueueFull:
+            return "QueueFull";
+        case synth::PatchCommandStatus::IOError:
+            return "IOError";
+        }
+        return "Unknown";
+    }
+
+    static const char* patchApplyStatusName(synth::PatchApplyStatus status) {
+        switch (status) {
+        case synth::PatchApplyStatus::Applied:
+            return "Applied";
+        case synth::PatchApplyStatus::Reverted:
+            return "Reverted";
+        case synth::PatchApplyStatus::Serialized:
+            return "Serialized";
+        case synth::PatchApplyStatus::InvalidJSON:
+            return "InvalidJSON";
+        case synth::PatchApplyStatus::OutputQueueFull:
+            return "OutputQueueFull";
+        case synth::PatchApplyStatus::ArenaExhausted:
+            return "ArenaExhausted";
+        }
+        return "Unknown";
+    }
+
+    static const char* patchMessageTypeName(synth::PatchMessageIn::Type type) {
+        switch (type) {
+        case synth::PatchMessageIn::Type::LoadFromJSON:
+            return "LoadFromJSON";
+        case synth::PatchMessageIn::Type::RevertAllToDefault:
+            return "RevertAllToDefault";
+        case synth::PatchMessageIn::Type::SerializeToJSON:
+            return "SerializeToJSON";
+        }
+        return "Unknown";
+    }
+
+    void appendPatchLog(const std::string& line) const {
+        std::error_code ec;
+        std::filesystem::create_directories(temporaryPatchRoot(), ec);
+        std::ofstream out(patchLogPath(), std::ios::app);
+        if (!out) {
+            return;
+        }
+        out << juce::Time::getCurrentTime().toISO8601(true).toStdString() << " " << line << "\n";
+    }
+
+    void logPatchCommand(const char* action, const synth::PatchCommandResult& result) const {
+        std::string line(action);
+        line += " status=";
+        line += patchCommandStatusName(result.status);
+        if (result.requestId != 0) {
+            line += " requestId=" + std::to_string(result.requestId);
+        }
+        if (!result.path.empty()) {
+            line += " path=" + result.path.string();
+        }
+        if (patchManager_.CurrentPatchDirectory().has_value()) {
+            line += " currentPatch=" + patchManager_.CurrentPatchDirectory()->string();
+        } else {
+            line += " currentPatch=<null>";
+        }
+        appendPatchLog(line);
+    }
+
+    bool processPatchMessages() {
+        bool stateChanged = false;
+        synth::PatchMessageIn message;
+        while (patchInputBus_.Pop(message)) {
+            const synth::PatchApplyStatus status =
+                synth::ApplyPatchMessage(message, manager_, midiProfileConfig_, defaultMidiProfileConfig_,
+                                         midiEndpointState_, defaultMidiEndpointState_, messageOutBus_);
+            appendPatchLog(std::string("ApplyPatchMessage type=") + patchMessageTypeName(message.type) +
+                           " requestId=" + std::to_string(message.requestId) +
+                           " status=" + patchApplyStatusName(status));
+            if (status == synth::PatchApplyStatus::Applied || status == synth::PatchApplyStatus::Reverted) {
+                stateChanged = true;
+            }
+        }
+        if (stateChanged) {
+            rebuildMidiProcessors();
+            refreshMidiDevices();
+            openSavedMidiDevices();
+            manager_.PopulateUIState(*uiState_);
+        }
+        return stateChanged;
+    }
+
+    void processParameterMessages() {
+        synth::ParameterMessageOut message;
+        while (parameterMessageOutBus_.Pop(message)) {
+            if (message.type != synth::ParameterMessageOut::Type::ParameterStorageBatchNeeded ||
+                message.group == nullptr) {
+                continue;
+            }
+            message.group->AddParameterStorageBatch(
+                synth::MakeParameterStorageBatch(message.group->Config(), message.group->GestureCount(),
+                                                 message.requestedParameters));
+            appendPatchLog("ParameterStorageBatchProvided requested=" +
+                           std::to_string(message.requestedParameters));
+        }
+    }
+
     static juce::Colour toJuce(synth::Color color) {
         return juce::Colour(color.r, color.g, color.b, color.a);
+    }
+
+    static juce::String toJuceString(std::string_view text) {
+        return juce::String(std::string(text).c_str());
     }
 
     static void setButtonLit(juce::TextButton& button, bool lit, juce::Colour litColour) {
@@ -347,6 +659,9 @@ private:
     }
 
     void timerCallback() override {
+        processParameterMessages();
+        processPatchMessages();
+        patchManager_.ProcessResponses();
         const std::uint64_t processTimestamp = nextTimestamp_++;
         bus_.Process(processTimestamp);
         midiBus_.Process(processTimestamp);
@@ -378,6 +693,9 @@ private:
             encoders_[ix].repaint();
         }
         waveformComponent_.repaint();
+        processParameterMessages();
+        processPatchMessages();
+        patchManager_.ProcessResponses();
     }
 
     void processDspFrame() {
@@ -401,6 +719,10 @@ private:
     synth::ParameterManager manager_;
     synth::MessageInBus bus_{&manager_};
     synth::MessageInBus midiBus_{&manager_};
+    synth::PatchMessageInBus patchInputBus_;
+    synth::MessageOutBus messageOutBus_;
+    synth::PatchManager patchManager_{&patchInputBus_, &messageOutBus_};
+    synth::ParameterMessageOutBus parameterMessageOutBus_;
     synth::ParameterGroup* group_ = nullptr;
     synth::Parameter* tune_ = nullptr;
     synth::Parameter* phaseParam_ = nullptr;
@@ -436,12 +758,21 @@ private:
     juce::TextButton refreshMidiButton_;
     juce::TextButton openInputButton_;
     juce::TextButton openOutputButton_;
+    juce::TextButton newPatchButton_;
+    juce::TextButton savePatchButton_;
+    juce::TextButton saveAsPatchButton_;
+    juce::TextButton loadPatchButton_;
+    juce::TextButton revertPatchButton_;
     juce::Label midiStatusLabel_;
     juce::Array<juce::MidiDeviceInfo> midiInputDevices_;
     juce::Array<juce::MidiDeviceInfo> midiOutputDevices_;
     synth_juce::MidiInHandler midiInHandler_;
     synth_juce::MidiOutputHandler midiOutputHandler_;
     synth::MidiSender midiSender_;
+    synth::MidiControllerProfileConfig midiProfileConfig_;
+    synth::MidiControllerProfileConfig defaultMidiProfileConfig_;
+    synth::MidiEndpointState midiEndpointState_;
+    synth::MidiEndpointState defaultMidiEndpointState_;
     synth::MidiControllerProfileResult midiProfile_;
     std::uint64_t nextTimestamp_ = 1;
     float phase_ = 0.0f;
