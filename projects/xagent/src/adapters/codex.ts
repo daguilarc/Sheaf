@@ -20,14 +20,14 @@ export class CodexAdapter implements HarnessAdapter {
   }
 }
 
-function buildCodexCommand(
+export function buildCodexCommand(
   context: AdapterTurnContext,
   state: ProcessHarnessState,
   options: HarnessStartOptions,
 ) {
   const args = state.providerThreadId === undefined
-    ? ["exec", "--json", "--skip-git-repo-check"]
-    : ["exec", "resume", "--json", "--skip-git-repo-check"];
+    ? ["exec", "--json", "--skip-git-repo-check", "--dangerously-bypass-approvals-and-sandbox"]
+    : ["exec", "resume", "--json", "--skip-git-repo-check", "--dangerously-bypass-approvals-and-sandbox"];
   if (options.model !== undefined) {
     args.push("--model", options.model);
   }

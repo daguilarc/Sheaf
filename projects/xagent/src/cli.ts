@@ -1,4 +1,5 @@
 import { Readable, type Writable } from "node:stream";
+import path from "node:path";
 
 import {
   harnessNames,
@@ -10,7 +11,7 @@ import {
 import { FakeHarnessAdapter } from "./adapters/fake.js";
 import { createAdapter } from "./adapters/index.js";
 import type { HarnessAdapter } from "./adapters/types.js";
-import { listRuns, readNormalizedLog } from "./logs.js";
+import { getDefaultLogRoot, listRuns, readNormalizedLog } from "./logs.js";
 import { runSession } from "./runtime.js";
 
 export type CliCommand =
@@ -75,6 +76,7 @@ export async function main(
 ): Promise<CliResult> {
   const command = parseArgs(argv);
   const adapterFactory = dependencies.createAdapter ?? createCliAdapter;
+  const logRoot = resolveLogRoot(cwd);
 
   if (command.command === "run") {
     return runSession({
@@ -83,6 +85,7 @@ export async function main(
       model: command.model,
       thinkingLevel: command.thinkingLevel,
       repoRoot: cwd,
+      logRoot,
       cwd,
       stdin: withInitialMessage(command.initialMessage, stdin),
       stdout,
@@ -96,13 +99,21 @@ export async function main(
   }
 
   if (command.command === "list") {
-    const runs = await listRuns(cwd);
+    const runs = await listRuns(logRoot);
     stdout.write(`${JSON.stringify(runs, null, 2)}\n`);
     return { exitCode: 0 };
   }
 
-  stdout.write(await readNormalizedLog(cwd, command.runId));
+  stdout.write(await readNormalizedLog(logRoot, command.runId));
   return { exitCode: 0 };
+}
+
+function resolveLogRoot(cwd: string): string {
+  const configured = process.env.XAGENT_LOG_ROOT?.trim();
+  if (configured !== undefined && configured.length > 0) {
+    return path.resolve(configured);
+  }
+  return getDefaultLogRoot(cwd);
 }
 
 function createCliAdapter(harness: HarnessName): HarnessAdapter {

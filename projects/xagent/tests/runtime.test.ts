@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Readable, Writable } from "node:stream";
@@ -9,7 +9,7 @@ import type { OutputEvent, OutputEventBody } from "../src/events.js";
 import { FakeHarnessAdapter } from "../src/adapters/fake.js";
 import type { AdapterEvent, HarnessAdapter, HarnessSession, HarnessStartOptions } from "../src/adapters/types.js";
 import { createOutputFilter } from "../src/filter.js";
-import { listRuns } from "../src/logs.js";
+import { getDefaultLogRoot, listRuns } from "../src/logs.js";
 import { runSession } from "../src/runtime.js";
 
 test("runtime emits startup, preserves the fake adapter session across turns, and becomes ready after each turn", async () => {
@@ -275,7 +275,7 @@ test("runSession returns success after a failed turn when shutdown is orderly", 
     "input_closed",
     0,
   ]);
-  const runs = await listRuns(repoRoot);
+  const runs = await listRuns(getDefaultLogRoot(repoRoot));
   assert.equal(runs[0]?.exit_status, "completed");
 });
 
@@ -303,10 +303,39 @@ test("adapter start failures emit structured JSONL and update metadata away from
     "start_failed",
     1,
   ]);
-  const runs = await listRuns(repoRoot);
+  const runs = await listRuns(getDefaultLogRoot(repoRoot));
   assert.equal(runs[0]?.exit_status, "failed");
   const normalizedLog = await readFile(path.join(repoRoot, "data", "xagent", "xrun_start_fail", "normalized.jsonl"), "utf8");
   assert.equal(normalizedLog.includes("\"code\":\"harness_unavailable\""), true);
+});
+
+test("log root failures emit structured JSONL before starting a harness", async () => {
+  const repoRoot = await mkdtemp(path.join(tmpdir(), "xagent-runtime-"));
+  const blockedParent = path.join(await mkdtemp(path.join(tmpdir(), "xagent-blocked-log-")), "file");
+  await writeFile(blockedParent, "not a directory");
+  const stdout = new MemoryWritable();
+
+  const result = await runSession({
+    harness: "codex",
+    mode: "subagent",
+    repoRoot,
+    logRoot: path.join(blockedParent, "xagent"),
+    cwd: repoRoot,
+    stdin: Readable.from([]),
+    stdout,
+    adapter: new FakeHarnessAdapter(),
+    runId: "xrun_log_root_unavailable",
+    clock: fixedClock(),
+  });
+
+  assert.deepEqual(result, { exitCode: 1 });
+  const events = parseJsonl(stdout.text);
+  assert.deepEqual(events.map((event) => event.type), ["error", "session.ended"]);
+  assert.equal(events[0]?.type === "error" ? events[0].code : undefined, "log_root_unavailable");
+  assert.deepEqual(events[1]?.type === "session.ended" ? [events[1].reason, events[1].exit_code] : undefined, [
+    "log_root_unavailable",
+    1,
+  ]);
 });
 
 test("session close failures update metadata away from running", async () => {
@@ -329,7 +358,7 @@ test("session close failures update metadata away from running", async () => {
     /close failed/,
   );
 
-  const runs = await listRuns(repoRoot);
+  const runs = await listRuns(getDefaultLogRoot(repoRoot));
   assert.equal(runs[0]?.exit_status, "failed");
   const ended = parseJsonl(stdout.text).filter((event) => event.type === "session.ended");
   assert.deepEqual(ended.map((event) => event.type === "session.ended" ? [event.reason, event.exit_code] : []), [
@@ -358,7 +387,7 @@ test("emit failures update metadata away from running", async () => {
     /stdout failed/,
   );
 
-  const runs = await listRuns(repoRoot);
+  const runs = await listRuns(getDefaultLogRoot(repoRoot));
   assert.equal(runs[0]?.exit_status, "failed");
 });
 

@@ -280,7 +280,7 @@ WHEN OpenSpec and Superpowers are both used to plan and implement changes, THE a
 
 ### Requirement: asd-20 — Shared skill: xagent-subagents
 
-WHEN Codex review or subagent work benefits from cross-provider opinions, THE agents project SHALL provide a global Codex-only `xagent-subagents` skill under `projects/agents/global/skills/xagent-subagents/` with metadata and source instructions that guide Codex through using the `xagent` CLI to launch external review and worker subagents.
+WHEN Codex review or subagent work benefits from cross-provider opinions, THE agents project SHALL provide a global Codex-only `xagent-subagents` skill under `projects/agents/global/skills/xagent-subagents/` with metadata and source instructions that guide Codex through using packaged `xagent` to launch external review and worker subagents without assuming that `xagent` is on `PATH` or built inside the active repository.
 
 #### Scenario: xagent-subagents skill source exists
 
@@ -294,16 +294,24 @@ WHEN Codex review or subagent work benefits from cross-provider opinions, THE ag
 #### Scenario: Skill directs Codex to use Claude through xagent for review
 
 - **WHEN** Codex opens the `xagent-subagents` skill for review work
-- **THEN** the skill body instructs Codex to run `xagent` from the active worktree root
+- **THEN** the skill body instructs Codex to run the packaged xagent launcher or tool path from the active worktree root
 - **AND** the skill body instructs Codex to use `xagent run --harness claude_code` for cross-provider review opinions when appropriate
 - **AND** the skill body instructs Codex to include the review scope, expected output shape, and relevant files or diffs in the subagent prompt
+
+#### Scenario: Skill explains repository-independent use
+
+- **WHEN** Codex opens the `xagent-subagents` skill
+- **THEN** the skill explains that xagent should be launched from the active worktree root so child harnesses use that repository
+- **AND** it explains that the executable runtime is supplied by the Codex distribution rather than by the active repository
+- **AND** it explains that packaged xagent defaults persisted logs to `/Users/joyo/Sheaf/data/xagent`
 
 #### Scenario: Skill documents Claude model tiers
 
 - **WHEN** Codex opens the `xagent-subagents` skill
-- **THEN** the skill body identifies Claude Opus 4.8 as the strongest review model
-- **AND** the skill body identifies Claude Sonnet 4.8 as the middle or default review model
-- **AND** the skill body identifies Claude Haiku 4.7 as the fast, small, inexpensive review model
+- **THEN** the strongest-review command example uses `--model opus`
+- **AND** the surrounding guidance does not recommend the stale dotted alias `claude-opus-4.8`
+- **AND** the skill instructs Codex to verify unfamiliar Claude Code model aliases locally before retrying
+- **AND** it instructs Codex not to silently downgrade to a weaker model after a model rejection
 
 #### Scenario: Skill documents Cursor and GPT worker routing
 
@@ -311,9 +319,14 @@ WHEN Codex review or subagent work benefits from cross-provider opinions, THE ag
 - **THEN** the skill body identifies Cursor Composer 2.5 as a capable worker option through the Cursor harness
 - **AND** the skill body instructs Codex to prefer a GPT or Codex-backed worker agent for the trickiest implementation tasks
 
+#### Scenario: Skill explains invocation and harness permission failures
+
+- **WHEN** Codex opens the `xagent-subagents` skill
+- **THEN** it explains that sandboxed agents can invoke xagent but real runs may fail with `log_root_unavailable` or harness-specific errors when they lack write, network, auth, or process permissions
+
 #### Scenario: Skill preserves agentic infrastructure escalation
 
-- **WHEN** `xagent`, Claude Code, Cursor Agent, or a selected model cannot be launched as instructed
+- **WHEN** the packaged xagent launcher or tool, Claude Code, Cursor Agent, or a selected model cannot be launched as instructed
 - **THEN** the skill body instructs Codex to surface the failure instead of silently working around broken agentic infrastructure
 
 ### Requirement: asd-20 — Source tree: Codex global hook assets

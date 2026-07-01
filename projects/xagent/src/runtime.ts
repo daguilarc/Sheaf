@@ -15,6 +15,7 @@ import {
   appendNormalizedEvent,
   appendRawProviderEvent,
   createRunRecord,
+  generateRunId,
   updateRunExitStatus,
   type RunRecord,
 } from "./logs.js";
@@ -27,6 +28,7 @@ export type RunSessionOptions = {
   readonly model?: string;
   readonly thinkingLevel?: ThinkingLevel;
   readonly repoRoot: string;
+  readonly logRoot?: string;
   readonly cwd: string;
   readonly stdin: Readable;
   readonly stdout: Writable;
@@ -41,15 +43,34 @@ export type RunSessionResult = {
 
 export async function runSession(options: RunSessionOptions): Promise<RunSessionResult> {
   const clock = options.clock ?? (() => new Date());
-  const runRecord = await createRunRecord({
-    repoRoot: options.repoRoot,
-    runId: options.runId,
-    harness: options.harness,
-    mode: options.mode,
-    model: options.model,
-    thinkingLevel: options.thinkingLevel,
-    clock,
-  });
+  const runId = options.runId ?? generateRunId(clock());
+  let runRecord: RunRecord;
+  try {
+    runRecord = await createRunRecord({
+      repoRoot: options.repoRoot,
+      logRoot: options.logRoot,
+      runId,
+      harness: options.harness,
+      mode: options.mode,
+      model: options.model,
+      thinkingLevel: options.thinkingLevel,
+      clock,
+    });
+  } catch (error) {
+    const sequencer = new EventSequencer(runId, clock);
+    await writeJsonLine(options.stdout, sanitizeValue(sequencer.stamp({
+      type: "error",
+      code: "log_root_unavailable",
+      message: error instanceof Error ? error.message : String(error),
+      recoverable: false,
+    }), options.repoRoot));
+    await writeJsonLine(options.stdout, sanitizeValue(sequencer.stamp({
+      type: "session.ended",
+      reason: "log_root_unavailable",
+      exit_code: 1,
+    }), options.repoRoot));
+    return { exitCode: 1 };
+  }
   const sequencer = new EventSequencer(runRecord.run_id, clock);
   const outputFilter = createOutputFilter({ mode: options.mode, clock: { now: () => clock().getTime() } });
   let closeAttempted = false;

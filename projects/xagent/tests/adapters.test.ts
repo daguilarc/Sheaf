@@ -6,7 +6,7 @@ import test from "node:test";
 import type { AdapterEvent, AdapterTurnContext } from "../src/adapters/types.js";
 import { assertCommandAvailable, ProcessJsonlSession, type ProcessHarnessState } from "../src/adapters/process_jsonl.js";
 import { parseClaudeProviderEvent } from "../src/adapters/claude_code.js";
-import { parseCodexProviderEvent } from "../src/adapters/codex.js";
+import { buildCodexCommand, parseCodexProviderEvent } from "../src/adapters/codex.js";
 import { parseCursorProviderEvent } from "../src/adapters/cursor.js";
 import { createAdapter } from "../src/adapters/index.js";
 import { parsePiProviderEvent } from "../src/adapters/pi.js";
@@ -71,6 +71,34 @@ test("adapter factory reports capabilities for all supported harnesses", () => {
   });
   assert.equal(createAdapter("pi").harness, "pi");
   assert.equal(createAdapter("claude_code").harness, "claude_code");
+});
+
+test("codex adapter launches child sessions without approval or sandbox prompts", () => {
+  const initial = buildCodexCommand(context, { providerSequence: 0 }, { cwd: process.cwd() });
+  assert.deepEqual(initial.args.slice(0, 4), [
+    "exec",
+    "--json",
+    "--skip-git-repo-check",
+    "--dangerously-bypass-approvals-and-sandbox",
+  ]);
+  assert.equal(initial.args.at(-1), context.text);
+
+  const resumed = buildCodexCommand(
+    context,
+    { providerSequence: 0, providerThreadId: "codex-thread-1" },
+    { cwd: process.cwd(), model: "gpt-5.5", thinkingLevel: "high" },
+  );
+  assert.deepEqual(resumed.args.slice(0, 5), [
+    "exec",
+    "resume",
+    "--json",
+    "--skip-git-repo-check",
+    "--dangerously-bypass-approvals-and-sandbox",
+  ]);
+  assert.ok(resumed.args.includes("--model"));
+  assert.ok(resumed.args.includes("--reasoning-effort"));
+  assert.equal(resumed.args.at(-2), "codex-thread-1");
+  assert.equal(resumed.args.at(-1), context.text);
 });
 
 test("process JSONL session preserves non-JSON stdout as raw provider and status events", async () => {

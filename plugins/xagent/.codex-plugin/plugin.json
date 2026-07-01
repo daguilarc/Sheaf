@@ -1,0 +1,24 @@
+{
+  "name": "xagent",
+  "version": "0.1.0",
+  "description": "Run xagent cross-harness subagents from any Codex workspace.",
+  "author": {
+    "name": "Sheaf"
+  },
+  "license": "MIT",
+  "keywords": ["xagent", "codex", "subagents", "review"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "xagent",
+    "shortDescription": "Cross-harness subagents for Codex.",
+    "longDescription": "Provides a packaged xagent launcher and Codex skill so agents can run review and worker subagents from any active repository.",
+    "developerName": "Sheaf",
+    "category": "Productivity",
+    "capabilities": ["Write", "Review"],
+    "defaultPrompt": [
+      "Run an xagent review of this branch.",
+      "Use xagent to get a Claude code review.",
+      "Launch a cross-harness worker with xagent."
+    ]
+  }
+}

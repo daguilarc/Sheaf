@@ -14,6 +14,7 @@ PROJECTS := conductor web quest-runner dictator realtime-agent sheaf-chat agents
 .PHONY: agents-install-repo agents-check-repo agents-clean-repo
 .PHONY: agents-install-global agents-check-global agents-clean-global
 .PHONY: xagent-build xagent-test xagent-clean
+.PHONY: xagent-plugin-build xagent-plugin-test
 .PHONY: synth-build synth-test synth-clean
 
 .DEFAULT_GOAL := all
@@ -148,6 +149,13 @@ xagent-test:
 
 xagent-clean:
 	$(MAKE) -C projects/xagent clean
+
+xagent-plugin-build:
+	python3 plugins/xagent/scripts/package_xagent.py
+
+xagent-plugin-test:
+	python3 plugins/xagent/scripts/package_xagent.py
+	python3 /Users/joyo/.codex/skills/.system/plugin-creator/scripts/validate_plugin.py plugins/xagent
 
 synth-build:
 	$(MAKE) -C projects/synth build

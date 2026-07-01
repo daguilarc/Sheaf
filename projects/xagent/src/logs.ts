@@ -33,6 +33,7 @@ export type RunRecord = RunMetadata & {
 
 export type CreateRunRecordOptions = {
   readonly repoRoot: string;
+  readonly logRoot?: string;
   readonly harness: HarnessName;
   readonly mode: OutputMode;
   readonly model?: string;
@@ -45,7 +46,8 @@ export async function createRunRecord(options: CreateRunRecordOptions): Promise<
   const clock = options.clock ?? (() => new Date());
   const runId = options.runId ?? generateRunId(clock());
   validateRunIdForCreate(runId);
-  const runDir = getRunDir(options.repoRoot, runId);
+  const logRoot = options.logRoot ?? getDefaultLogRoot(options.repoRoot);
+  const runDir = getRunDir(logRoot, runId);
   const metadataPath = path.join(runDir, "metadata.json");
   const normalizedLogPath = path.join(runDir, "normalized.jsonl");
   const rawProviderLogPath = path.join(runDir, "raw-provider.jsonl");
@@ -65,10 +67,10 @@ export async function createRunRecord(options: CreateRunRecordOptions): Promise<
     updated_at: timestamp,
     exit_status: "running",
     paths: {
-      run_dir: path.relative(options.repoRoot, runDir),
-      metadata: path.relative(options.repoRoot, metadataPath),
-      normalized: path.relative(options.repoRoot, normalizedLogPath),
-      raw_provider: path.relative(options.repoRoot, rawProviderLogPath),
+      run_dir: path.relative(logRoot, runDir),
+      metadata: path.relative(logRoot, metadataPath),
+      normalized: path.relative(logRoot, normalizedLogPath),
+      raw_provider: path.relative(logRoot, rawProviderLogPath),
     },
     runDir,
     metadataPath,
@@ -98,8 +100,8 @@ export async function updateRunExitStatus(
   await writeMetadata(record);
 }
 
-export async function listRuns(repoRoot: string): Promise<RunMetadata[]> {
-  const root = getXagentDataDir(repoRoot);
+export async function listRuns(logRoot: string): Promise<RunMetadata[]> {
+  const root = logRoot;
   let entries: string[];
   try {
     entries = await readdir(root);
@@ -126,10 +128,10 @@ export async function listRuns(repoRoot: string): Promise<RunMetadata[]> {
   return runs.sort((left, right) => right.created_at.localeCompare(left.created_at));
 }
 
-export async function readNormalizedLog(repoRoot: string, runId: string): Promise<string> {
+export async function readNormalizedLog(logRoot: string, runId: string): Promise<string> {
   validateGeneratedRunId(runId);
-  const logPath = path.join(getRunDir(repoRoot, runId), "normalized.jsonl");
-  assertPathInside(getXagentDataDir(repoRoot), logPath);
+  const logPath = path.join(getRunDir(logRoot, runId), "normalized.jsonl");
+  assertPathInside(logRoot, logPath);
   return readFile(logPath, "utf8");
 }
 
@@ -138,12 +140,12 @@ export function generateRunId(date: Date = new Date()): string {
   return `xrun_${timestamp}_${randomBytes(4).toString("hex")}`;
 }
 
-function getXagentDataDir(repoRoot: string): string {
+export function getDefaultLogRoot(repoRoot: string): string {
   return path.join(repoRoot, "data", "xagent");
 }
 
-function getRunDir(repoRoot: string, runId: string): string {
-  return path.join(getXagentDataDir(repoRoot), runId);
+function getRunDir(logRoot: string, runId: string): string {
+  return path.join(logRoot, runId);
 }
 
 function validateRunIdForCreate(runId: string): void {

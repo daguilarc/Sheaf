@@ -9,7 +9,7 @@ import { FakeHarnessAdapter } from "../src/adapters/fake.js";
 import { PlaceholderHarnessAdapter } from "../src/adapters/placeholder.js";
 import { main, parseArgs, runCli } from "../src/cli.js";
 import type { OutputEvent } from "../src/events.js";
-import { appendNormalizedEvent, createRunRecord, listRuns } from "../src/logs.js";
+import { appendNormalizedEvent, createRunRecord, getDefaultLogRoot, listRuns } from "../src/logs.js";
 
 test("parses a valid run command", () => {
   assert.deepEqual(parseArgs(["run", "--harness", "codex", "--subagent"]), {
@@ -192,7 +192,7 @@ test("run command reports unavailable placeholder harness as structured JSONL", 
     1,
   ]);
 
-  const runs = await listRuns(repoRoot);
+  const runs = await listRuns(getDefaultLogRoot(repoRoot));
   assert.equal(runs.length, 1);
   assert.equal(runs[0]?.harness, "codex");
   assert.equal(runs[0]?.mode, "subagent");

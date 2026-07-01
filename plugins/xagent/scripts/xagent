@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+PLUGIN_DIR="$(cd "${SCRIPT_DIR}/.." && pwd -P)"
+ENTRYPOINT="${PLUGIN_DIR}/assets/xagent/dist/src/main.js"
+MAIN_SHEAF_LOG_ROOT="/Users/joyo/Sheaf/data/xagent"
+
+if ! command -v node >/dev/null 2>&1; then
+  echo "xagent plugin requires Node.js >=20, but node is not on PATH." >&2
+  exit 127
+fi
+
+NODE_MAJOR="$(node -p 'Number(process.versions.node.split(".")[0])')"
+if [ "${NODE_MAJOR}" -lt 20 ]; then
+  echo "xagent plugin requires Node.js >=20, found $(node --version)." >&2
+  exit 1
+fi
+
+if [ ! -f "${ENTRYPOINT}" ]; then
+  echo "xagent packaged runtime is missing: ${ENTRYPOINT}" >&2
+  echo "Run make xagent-plugin-build from the Sheaf repository to rebuild plugin assets." >&2
+  exit 1
+fi
+
+export XAGENT_LOG_ROOT="${XAGENT_LOG_ROOT:-${SHEAF_XAGENT_LOG_ROOT:-${MAIN_SHEAF_LOG_ROOT}}}"
+
+exec node "${ENTRYPOINT}" "$@"
