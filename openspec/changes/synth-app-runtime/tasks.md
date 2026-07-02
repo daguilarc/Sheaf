@@ -26,9 +26,9 @@
 
 ## 4. SynthRig test harness
 
-- [ ] 4.1 Implement `synth_rig::SynthRig<App>` in `tests/support/SynthRig.hpp` wrapping `Engine<App>`: buffer allocation from config, `RunBlocks`/`RunSamples`/`RunSeconds` with block-derived deterministic timestamps and per-block `MessageThreadTick`, output capture ring with sticky NaN/Inf flag and peak tracking (sar-13)
-- [ ] 4.2 Add injection verbs: encoder turn/press/shift-press, gesture select/value, scene select/endpoints/blend as `MessageIn` onto the UI bus; `SendMidi(BasicMidi)` through the engine's MIDI input processor chain into the MIDI bus (sar-13)
-- [ ] 4.3 Add observation and patch helpers: UI-state access, parameter readback, `Output()`/`LastOutput()`/`OutputPeak()`/`SawNaN()`, `SavePatch`/`LoadPatch`/`RevertPatch` issuing patch commands and pumping with a bounded block budget, returning success/failure/timeout status (sar-13)
+- [x] 4.1 Implement `synth_rig::SynthRig<App>` in `tests/support/SynthRig.hpp` wrapping `Engine<App>`: buffer allocation from config, `RunBlocks`/`RunSamples`/`RunSeconds` with block-derived deterministic timestamps and per-block `MessageThreadTick`, output capture ring with sticky NaN/Inf flag and peak tracking (sar-13)
+- [x] 4.2 Add injection verbs: encoder turn/press/shift-press, gesture select/value, scene select/endpoints/blend as `MessageIn` onto the UI bus; `SendMidi(BasicMidi)` through the engine's MIDI input processor chain into the MIDI bus (sar-13)
+- [x] 4.3 Add observation and patch helpers: UI-state access, parameter readback, `Output()`/`LastOutput()`/`OutputPeak()`/`SawNaN()`, `SavePatch`/`LoadPatch`/`RevertPatch` issuing patch commands and pumping with a bounded block budget, returning success/failure/timeout status (sar-13)
 - [ ] 4.4 Write rig-driven system tests for the engine contract: bus drain ordering, MIDI-through-profile routing to a parameter, determinism (two identical runs produce identical state sequences), patch round-trip, and patch-helper timeout on a never-arriving response (sar-13)
 
 ## 5. Runtime scaffolding and build
