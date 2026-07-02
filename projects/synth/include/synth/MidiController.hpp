@@ -150,8 +150,28 @@ private:
     AnalogMidiInConfig config_;
 };
 
+enum class LaunchpadController {
+    LaunchpadX,
+    LaunchpadProMk3,
+    LaunchpadMiniMk3,
+};
+
+struct LaunchpadGridPosition {
+    LaunchpadController controller = LaunchpadController::LaunchpadX;
+    int x = 0;
+    int y = 0;
+
+    bool operator==(const LaunchpadGridPosition& other) const = default;
+};
+
+bool LaunchpadShapeSupports(LaunchpadController controller, int x, int y);
+std::optional<std::uint8_t> LaunchpadPositionToNote(LaunchpadController controller, int x, int y);
+std::optional<LaunchpadGridPosition> LaunchpadNoteToPosition(LaunchpadController controller, std::uint8_t note);
+std::optional<std::uint8_t> LaunchpadProductByte(LaunchpadController controller);
+
 struct SystemButtonMidiAssociation {
-    MidiControlAddress control;
+    std::optional<MidiControlAddress> control;
+    std::optional<LaunchpadGridPosition> launchpadPosition;
     MessageIn press;
     std::optional<MessageIn> release;
 };
@@ -395,9 +415,45 @@ private:
     std::vector<CacheEntry> cache_;
 };
 
+struct LaunchpadGridMidiOutAssociation {
+    LaunchpadGridPosition position;
+    MessageIn message;
+};
+
+struct LaunchpadGridMidiOutConfig {
+    std::vector<LaunchpadGridMidiOutAssociation> associations;
+};
+
+class LaunchpadGridMidiOutProcessor final : public MidiOutputProcessor {
+public:
+    LaunchpadGridMidiOutProcessor(LaunchpadGridMidiOutConfig config, MidiSender* sender,
+                                  ParameterManager::UIState* uiState);
+
+    void SetSender(MidiSender* sender) { sender_ = sender; }
+    void SetUIState(ParameterManager::UIState* uiState) { info_.SetUIState(uiState); }
+    void SetConfig(LaunchpadGridMidiOutConfig config);
+    const LaunchpadGridMidiOutConfig& Config() const { return config_; }
+    void Reset() override;
+    void Process() override;
+
+private:
+    struct CacheEntry {
+        bool valid = false;
+        Color color = Color::Off;
+    };
+
+    bool Enqueue(const BasicMidi& midi);
+
+    LaunchpadGridMidiOutConfig config_;
+    MidiSender* sender_ = nullptr;
+    SystemMessageOutputInfo info_;
+    std::vector<CacheEntry> cache_;
+};
+
 struct MidiControllerSystemMessageAssociation {
-    MidiControlAddress control;
+    std::optional<MidiControlAddress> control;
     std::optional<WrldBldrSystemPosition> wrldBldrPosition;
+    std::optional<LaunchpadGridPosition> launchpadPosition;
     MessageIn press;
     std::optional<MessageIn> release;
     MessageIn feedback;
@@ -433,6 +489,20 @@ MidiControllerProfileResult CreateWrldBldrDefaultProfile(
     WrldBldrDefaultProfileOptions options, MessageInBus* bus, MidiSender* sender,
     ParameterManager::UIState* uiState, MidiInProcessor::TimestampProvider timestampProvider = {});
 
+struct LaunchpadDefaultProfileOptions {
+    LaunchpadController controller = LaunchpadController::LaunchpadX;
+    std::size_t slotIx = 0;
+    std::size_t sceneCount = 8;
+    std::size_t bankButtonCount = 8;
+    std::size_t gestureSelectorCount = 0;
+    std::optional<LaunchpadGridPosition> shiftPosition;
+};
+
+MidiControllerProfileConfig LaunchpadDefaultProfileConfig(LaunchpadDefaultProfileOptions options = {});
+MidiControllerProfileResult CreateLaunchpadDefaultProfile(
+    LaunchpadDefaultProfileOptions options, MessageInBus* bus, MidiSender* sender,
+    ParameterManager::UIState* uiState, MidiInProcessor::TimestampProvider timestampProvider = {});
+
 JSON ToJSON(JsonArena& arena, EncoderRelativeMode value);
 bool FromJSON(JSON json, EncoderRelativeMode& value);
 JSON ToJSON(JsonArena& arena, const MidiControlAddress& value);
@@ -453,6 +523,10 @@ JSON ToJSON(JsonArena& arena, const MessageIn& value);
 bool FromJSON(JSON json, MessageIn& value);
 JSON ToJSON(JsonArena& arena, const WrldBldrSystemPosition& value);
 bool FromJSON(JSON json, WrldBldrSystemPosition& value);
+JSON ToJSON(JsonArena& arena, LaunchpadController value);
+bool FromJSON(JSON json, LaunchpadController& value);
+JSON ToJSON(JsonArena& arena, const LaunchpadGridPosition& value);
+bool FromJSON(JSON json, LaunchpadGridPosition& value);
 JSON ToJSON(JsonArena& arena, const MidiControllerSystemMessageAssociation& value);
 bool FromJSON(JSON json, MidiControllerSystemMessageAssociation& value);
 JSON ToJSON(JsonArena& arena, const MidiControllerProfileConfig& value);
@@ -463,5 +537,6 @@ std::uint8_t WrldBldrPositionToCC(std::uint8_t x, std::uint8_t y);
 std::uint8_t ColorToTwister(Color color);
 std::uint8_t FullBrightnessAnimationValue();
 BasicMidi WrldBldrColorSysex(std::uint64_t timestamp, std::uint8_t channel, std::uint8_t cc, Color color);
+BasicMidi LaunchpadColorSysex(std::uint64_t timestamp, LaunchpadController controller, int x, int y, Color color);
 
 } // namespace synth

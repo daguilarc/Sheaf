@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <string_view>
 
 namespace synth {
@@ -85,6 +86,19 @@ bool ReadU8(JSON json, std::uint8_t& value, std::uint8_t max = 0x7F) {
         return false;
     }
     value = static_cast<std::uint8_t>(json.IntegerValue());
+    return true;
+}
+
+bool ReadInt(JSON json, int& value) {
+    if (!IsInteger(json)) {
+        return false;
+    }
+    const std::int64_t integer = json.IntegerValue();
+    if (integer < static_cast<std::int64_t>(std::numeric_limits<int>::min()) ||
+        integer > static_cast<std::int64_t>(std::numeric_limits<int>::max())) {
+        return false;
+    }
+    value = static_cast<int>(integer);
     return true;
 }
 
@@ -433,7 +447,9 @@ void SystemButtonMidiInProcessor::SetConfig(SystemButtonMidiInConfig config) {
 }
 
 void SystemButtonMidiInProcessor::Process(const BasicMidi& midi) {
-    if (!midi.IsCC()) {
+    const bool isNote = midi.Status() == BasicMidi::kStatusNote && midi.Size() >= 3;
+    const bool isNoteOff = midi.Status() == BasicMidi::kStatusNoteOff && midi.Size() >= 3;
+    if (!midi.IsCC() && !isNote && !isNoteOff) {
         PassToThru(midi);
         return;
     }
@@ -444,7 +460,7 @@ void SystemButtonMidiInProcessor::Process(const BasicMidi& midi) {
         return;
     }
 
-    if (midi.GetValue() > 0) {
+    if (!isNoteOff && midi.GetValue() > 0) {
         PushStamped(association->press);
         return;
     }
@@ -455,12 +471,28 @@ void SystemButtonMidiInProcessor::Process(const BasicMidi& midi) {
 }
 
 const SystemButtonMidiAssociation* SystemButtonMidiInProcessor::FindAssociation(const BasicMidi& midi) const {
-    const MidiControlAddress address{.channel = midi.Channel(), .cc = midi.GetCC()};
-    const auto itr = std::find_if(config_.associations.begin(), config_.associations.end(),
-                                  [address](const SystemButtonMidiAssociation& association) {
-                                      return association.control == address;
-                                  });
-    return itr == config_.associations.end() ? nullptr : &*itr;
+    const bool canMatchLaunchpad = midi.IsCC() ||
+                                   (midi.Status() == BasicMidi::kStatusNote && midi.Size() >= 3) ||
+                                   (midi.Status() == BasicMidi::kStatusNoteOff && midi.Size() >= 3);
+    const std::uint8_t launchpadNote = midi.IsCC() ? midi.GetCC() : midi.GetNote();
+    const std::optional<MidiControlAddress> address =
+        midi.IsCC() ? std::optional<MidiControlAddress>(MidiControlAddress{.channel = midi.Channel(), .cc = midi.GetCC()})
+                    : std::nullopt;
+
+    for (const SystemButtonMidiAssociation& association : config_.associations) {
+        if (address.has_value() && association.control.has_value() && *association.control == *address) {
+            return &association;
+        }
+        if (canMatchLaunchpad && association.launchpadPosition.has_value()) {
+            const LaunchpadGridPosition& position = *association.launchpadPosition;
+            const std::optional<std::uint8_t> mapped =
+                LaunchpadPositionToNote(position.controller, position.x, position.y);
+            if (mapped.has_value() && *mapped == launchpadNote) {
+                return &association;
+            }
+        }
+    }
+    return nullptr;
 }
 
 void SystemButtonMidiInProcessor::PushStamped(MessageIn message) {
@@ -871,6 +903,43 @@ bool WrldBldrSystemMidiOutProcessor::Enqueue(const BasicMidi& midi) {
     return sender_ != nullptr && sender_->Enqueue(midi);
 }
 
+LaunchpadGridMidiOutProcessor::LaunchpadGridMidiOutProcessor(LaunchpadGridMidiOutConfig config,
+                                                             MidiSender* sender,
+                                                             ParameterManager::UIState* uiState)
+    : config_(std::move(config)),
+      sender_(sender),
+      info_(uiState) {}
+
+void LaunchpadGridMidiOutProcessor::SetConfig(LaunchpadGridMidiOutConfig config) {
+    config_ = std::move(config);
+    Reset();
+}
+
+void LaunchpadGridMidiOutProcessor::Reset() {
+    cache_.clear();
+}
+
+void LaunchpadGridMidiOutProcessor::Process() {
+    if (CacheNeedsResize(cache_.size(), config_.associations.size())) {
+        cache_.assign(config_.associations.size(), {});
+    }
+
+    for (std::size_t ix = 0; ix < config_.associations.size(); ++ix) {
+        const LaunchpadGridMidiOutAssociation& association = config_.associations[ix];
+        const Color color = info_.Evaluate(association.message).color;
+        CacheEntry& cache = cache_[ix];
+        if (!cache.valid || cache.color != color) {
+            Enqueue(LaunchpadColorSysex(0, association.position.controller, association.position.x,
+                                        association.position.y, color));
+        }
+        cache = {.valid = true, .color = color};
+    }
+}
+
+bool LaunchpadGridMidiOutProcessor::Enqueue(const BasicMidi& midi) {
+    return sender_ != nullptr && !midi.raw.empty() && sender_->Enqueue(midi);
+}
+
 JSON ToJSON(JsonArena& arena, EncoderRelativeMode value) {
     switch (value) {
     case EncoderRelativeMode::Signed7Bit:
@@ -1108,13 +1177,75 @@ bool FromJSON(JSON json, WrldBldrSystemPosition& value) {
     return true;
 }
 
+JSON ToJSON(JsonArena& arena, LaunchpadController value) {
+    switch (value) {
+    case LaunchpadController::LaunchpadX:
+        return arena.String("launchpadX");
+    case LaunchpadController::LaunchpadProMk3:
+        return arena.String("launchpadProMk3");
+    case LaunchpadController::LaunchpadMiniMk3:
+        return arena.String("launchpadMiniMk3");
+    }
+    return arena.String("launchpadX");
+}
+
+bool FromJSON(JSON json, LaunchpadController& value) {
+    if (!IsString(json)) {
+        return false;
+    }
+    const std::string_view name(json.StringValue());
+    if (name == "launchpadX") {
+        value = LaunchpadController::LaunchpadX;
+        return true;
+    }
+    if (name == "launchpadProMk3") {
+        value = LaunchpadController::LaunchpadProMk3;
+        return true;
+    }
+    if (name == "launchpadMiniMk3") {
+        value = LaunchpadController::LaunchpadMiniMk3;
+        return true;
+    }
+    return false;
+}
+
+JSON ToJSON(JsonArena& arena, const LaunchpadGridPosition& value) {
+    JSON json = arena.Object();
+    json.SetNew("controller", ToJSON(arena, value.controller));
+    json.SetNew("x", arena.Integer(value.x));
+    json.SetNew("y", arena.Integer(value.y));
+    return json;
+}
+
+bool FromJSON(JSON json, LaunchpadGridPosition& value) {
+    if (!IsObject(json)) {
+        return false;
+    }
+    LaunchpadGridPosition parsed;
+    if (!FromJSON(json.Get("controller"), parsed.controller) || !ReadInt(json.Get("x"), parsed.x) ||
+        !ReadInt(json.Get("y"), parsed.y) || !LaunchpadShapeSupports(parsed.controller, parsed.x, parsed.y)) {
+        return false;
+    }
+    value = parsed;
+    return true;
+}
+
 JSON ToJSON(JsonArena& arena, const MidiControllerSystemMessageAssociation& value) {
     JSON json = arena.Object();
-    json.SetNew("control", ToJSON(arena, value.control));
+    if (value.control.has_value()) {
+        json.SetNew("control", ToJSON(arena, *value.control));
+    } else {
+        json.SetNew("control", arena.Null());
+    }
     if (value.wrldBldrPosition.has_value()) {
         json.SetNew("wrldBldrPosition", ToJSON(arena, *value.wrldBldrPosition));
     } else {
         json.SetNew("wrldBldrPosition", arena.Null());
+    }
+    if (value.launchpadPosition.has_value()) {
+        json.SetNew("launchpadPosition", ToJSON(arena, *value.launchpadPosition));
+    } else {
+        json.SetNew("launchpadPosition", arena.Null());
     }
     json.SetNew("press", ToJSON(arena, value.press));
     if (value.release.has_value()) {
@@ -1131,9 +1262,16 @@ bool FromJSON(JSON json, MidiControllerSystemMessageAssociation& value) {
         return false;
     }
     MidiControllerSystemMessageAssociation parsed;
-    if (!FromJSON(json.Get("control"), parsed.control) || !FromJSON(json.Get("press"), parsed.press) ||
-        !FromJSON(json.Get("feedback"), parsed.feedback)) {
+    if (!FromJSON(json.Get("press"), parsed.press) || !FromJSON(json.Get("feedback"), parsed.feedback)) {
         return false;
+    }
+    const JSON control = json.Get("control");
+    if (!control.IsNull()) {
+        MidiControlAddress parsedControl;
+        if (!FromJSON(control, parsedControl)) {
+            return false;
+        }
+        parsed.control = parsedControl;
     }
     const JSON position = json.Get("wrldBldrPosition");
     if (!position.IsNull()) {
@@ -1142,6 +1280,14 @@ bool FromJSON(JSON json, MidiControllerSystemMessageAssociation& value) {
             return false;
         }
         parsed.wrldBldrPosition = parsedPosition;
+    }
+    const JSON launchpadPosition = json.Get("launchpadPosition");
+    if (!launchpadPosition.IsNull()) {
+        LaunchpadGridPosition parsedPosition;
+        if (!FromJSON(launchpadPosition, parsedPosition)) {
+            return false;
+        }
+        parsed.launchpadPosition = parsedPosition;
     }
     const JSON release = json.Get("release");
     if (!release.IsNull()) {
@@ -1254,6 +1400,7 @@ MidiControllerProfileResult CreateMidiControllerProfile(
         for (const MidiControllerSystemMessageAssociation& association : config.systemMessages) {
             systemInput.associations.push_back({
                 .control = association.control,
+                .launchpadPosition = association.launchpadPosition,
                 .press = association.press,
                 .release = association.release,
             });
@@ -1267,14 +1414,36 @@ MidiControllerProfileResult CreateMidiControllerProfile(
 
     SystemCcMidiOutConfig ccOutput;
     WrldBldrSystemMidiOutConfig wrldOutput;
+    LaunchpadGridMidiOutConfig launchpadXOutput;
+    LaunchpadGridMidiOutConfig launchpadProOutput;
+    LaunchpadGridMidiOutConfig launchpadMiniOutput;
+    auto launchpadOutputFor = [&](LaunchpadController controller) -> LaunchpadGridMidiOutConfig& {
+        switch (controller) {
+        case LaunchpadController::LaunchpadX:
+            return launchpadXOutput;
+        case LaunchpadController::LaunchpadProMk3:
+            return launchpadProOutput;
+        case LaunchpadController::LaunchpadMiniMk3:
+            return launchpadMiniOutput;
+        }
+        return launchpadXOutput;
+    };
     for (const MidiControllerSystemMessageAssociation& association : config.systemMessages) {
-        ccOutput.associations.push_back({
-            .control = association.control,
-            .message = association.feedback,
-        });
+        if (association.control.has_value()) {
+            ccOutput.associations.push_back({
+                .control = *association.control,
+                .message = association.feedback,
+            });
+        }
         if (association.wrldBldrPosition.has_value()) {
             wrldOutput.associations.push_back({
                 .position = *association.wrldBldrPosition,
+                .message = association.feedback,
+            });
+        }
+        if (association.launchpadPosition.has_value()) {
+            launchpadOutputFor(association.launchpadPosition->controller).associations.push_back({
+                .position = *association.launchpadPosition,
                 .message = association.feedback,
             });
         }
@@ -1284,6 +1453,18 @@ MidiControllerProfileResult CreateMidiControllerProfile(
     }
     if (!wrldOutput.associations.empty()) {
         result.outputs.push_back(std::make_unique<WrldBldrSystemMidiOutProcessor>(std::move(wrldOutput), sender, uiState));
+    }
+    if (!launchpadXOutput.associations.empty()) {
+        result.outputs.push_back(
+            std::make_unique<LaunchpadGridMidiOutProcessor>(std::move(launchpadXOutput), sender, uiState));
+    }
+    if (!launchpadProOutput.associations.empty()) {
+        result.outputs.push_back(
+            std::make_unique<LaunchpadGridMidiOutProcessor>(std::move(launchpadProOutput), sender, uiState));
+    }
+    if (!launchpadMiniOutput.associations.empty()) {
+        result.outputs.push_back(
+            std::make_unique<LaunchpadGridMidiOutProcessor>(std::move(launchpadMiniOutput), sender, uiState));
     }
 
     return result;
@@ -1316,7 +1497,7 @@ MidiControllerProfileConfig WrldBldrDefaultProfileConfig(WrldBldrDefaultProfileO
                                  std::optional<MessageIn> release = std::nullopt) {
         const WrldBldrSystemPosition position{.channel = 5, .x = x, .y = y};
         config.systemMessages.push_back({
-            .control = {.channel = 5, .cc = WrldBldrPositionToCC(x, y)},
+            .control = MidiControlAddress{.channel = 5, .cc = WrldBldrPositionToCC(x, y)},
             .wrldBldrPosition = position,
             .press = press,
             .release = release,
@@ -1357,12 +1538,149 @@ MidiControllerProfileResult CreateWrldBldrDefaultProfile(
                                        std::move(timestampProvider));
 }
 
+MidiControllerProfileConfig LaunchpadDefaultProfileConfig(LaunchpadDefaultProfileOptions options) {
+    MidiControllerProfileConfig config;
+
+    auto addSystemPosition = [&](LaunchpadGridPosition position, MessageIn press,
+                                 std::optional<MessageIn> release = std::nullopt,
+                                 std::optional<MessageIn> feedback = std::nullopt) {
+        if (!LaunchpadShapeSupports(position.controller, position.x, position.y)) {
+            return;
+        }
+        config.systemMessages.push_back({
+            .launchpadPosition = position,
+            .press = press,
+            .release = release,
+            .feedback = feedback.value_or(press),
+        });
+    };
+
+    auto position = [&](int x, int y) {
+        return LaunchpadGridPosition{.controller = options.controller, .x = x, .y = y};
+    };
+
+    for (std::size_t sceneIx = 0; sceneIx < options.sceneCount; ++sceneIx) {
+        addSystemPosition(position(static_cast<int>(sceneIx), -1), MessageIn::SceneSelect(0, sceneIx));
+    }
+
+    for (std::size_t bankIx = 0; bankIx < options.bankButtonCount; ++bankIx) {
+        addSystemPosition(position(8, static_cast<int>(bankIx)),
+                          MessageIn::SelectParamBank(0, options.slotIx, bankIx));
+    }
+
+    for (std::size_t gestureIx = 0; gestureIx < options.gestureSelectorCount; ++gestureIx) {
+        addSystemPosition(position(static_cast<int>(gestureIx), 0),
+                          MessageIn::SetGestureSelect(0, gestureIx, true),
+                          MessageIn::SetGestureSelect(0, gestureIx, false));
+    }
+
+    const LaunchpadGridPosition defaultShift = position(8, -1);
+    const LaunchpadGridPosition shiftPosition = options.shiftPosition.value_or(defaultShift);
+    const bool useShift =
+        options.shiftPosition.has_value() ? shiftPosition.controller == options.controller
+                                          : LaunchpadShapeSupports(defaultShift.controller, defaultShift.x, defaultShift.y);
+    if (useShift) {
+        addSystemPosition(shiftPosition, MessageIn::SetShift(0, true), MessageIn::SetShift(0, false),
+                          MessageIn::ToggleShift(0));
+    }
+
+    return config;
+}
+
+MidiControllerProfileResult CreateLaunchpadDefaultProfile(
+    LaunchpadDefaultProfileOptions options, MessageInBus* bus, MidiSender* sender,
+    ParameterManager::UIState* uiState, MidiInProcessor::TimestampProvider timestampProvider) {
+    return CreateMidiControllerProfile(LaunchpadDefaultProfileConfig(options), bus, sender, uiState,
+                                       std::move(timestampProvider));
+}
+
 std::uint8_t EncoderPositionToCC(std::size_t position) {
     return static_cast<std::uint8_t>(position % 16);
 }
 
 std::uint8_t WrldBldrPositionToCC(std::uint8_t x, std::uint8_t y) {
     return static_cast<std::uint8_t>((static_cast<unsigned>(y) * 8u + static_cast<unsigned>(x)) & 0x7F);
+}
+
+bool LaunchpadShapeSupports(LaunchpadController controller, int x, int y) {
+    if (controller == LaunchpadController::LaunchpadX || controller == LaunchpadController::LaunchpadMiniMk3) {
+        return x >= 0 && x < 9 && y >= -1 && y < 8;
+    }
+    if (controller == LaunchpadController::LaunchpadProMk3) {
+        return x >= -1 && x < 9 && y >= -1 && y < 10;
+    }
+    return false;
+}
+
+std::optional<std::uint8_t> LaunchpadPositionToNote(LaunchpadController controller, int x, int y) {
+    if (!LaunchpadShapeSupports(controller, x, y)) {
+        return std::nullopt;
+    }
+
+    int physicalY = 8 - y - 1;
+    if (physicalY == -1) {
+        physicalY = 9;
+    } else if (physicalY == -2) {
+        physicalY = -1;
+    }
+
+    const int note = 11 + 10 * physicalY + x;
+    if (note < 0 || note > 127) {
+        return std::nullopt;
+    }
+    return static_cast<std::uint8_t>(note);
+}
+
+std::optional<LaunchpadGridPosition> LaunchpadNoteToPosition(LaunchpadController controller, std::uint8_t note) {
+    int x = 0;
+    int y = 0;
+    if (note < 10) {
+        x = static_cast<int>(note) - 1;
+        y = 9;
+    } else {
+        y = (static_cast<int>(note) - 11) / 10;
+        x = (static_cast<int>(note) - 11) % 10;
+        if (y == 9) {
+            y = -1;
+        }
+        if (x == 9) {
+            x = -1;
+            y += 1;
+        }
+        y = 7 - y;
+    }
+
+    const auto matchesNote = [controller, note](int candidateX, int candidateY) {
+        const std::optional<std::uint8_t> mapped = LaunchpadPositionToNote(controller, candidateX, candidateY);
+        return mapped.has_value() && *mapped == note;
+    };
+
+    if (LaunchpadShapeSupports(controller, x, y) && matchesNote(x, y)) {
+        return LaunchpadGridPosition{.controller = controller, .x = x, .y = y};
+    }
+
+    for (int candidateY = -1; candidateY < 10; ++candidateY) {
+        for (int candidateX = -1; candidateX < 9; ++candidateX) {
+            if (!LaunchpadShapeSupports(controller, candidateX, candidateY) ||
+                !matchesNote(candidateX, candidateY)) {
+                continue;
+            }
+            return LaunchpadGridPosition{.controller = controller, .x = candidateX, .y = candidateY};
+        }
+    }
+    return std::nullopt;
+}
+
+std::optional<std::uint8_t> LaunchpadProductByte(LaunchpadController controller) {
+    switch (controller) {
+    case LaunchpadController::LaunchpadX:
+        return 0x0C;
+    case LaunchpadController::LaunchpadMiniMk3:
+        return 0x0D;
+    case LaunchpadController::LaunchpadProMk3:
+        return 0x0E;
+    }
+    return std::nullopt;
 }
 
 std::uint8_t ColorToTwister(Color color) {
@@ -1392,6 +1710,29 @@ BasicMidi WrldBldrColorSysex(std::uint64_t timestamp, std::uint8_t channel, std:
                                            0x20,
                                            channel,
                                            cc,
+                                           static_cast<std::uint8_t>(color.r / 2),
+                                           static_cast<std::uint8_t>(color.g / 2),
+                                           static_cast<std::uint8_t>(color.b / 2),
+                                           0xF7,
+                                       });
+}
+
+BasicMidi LaunchpadColorSysex(std::uint64_t timestamp, LaunchpadController controller, int x, int y, Color color) {
+    const std::optional<std::uint8_t> product = LaunchpadProductByte(controller);
+    const std::optional<std::uint8_t> note = LaunchpadPositionToNote(controller, x, y);
+    if (!product.has_value() || !note.has_value()) {
+        return {};
+    }
+    return BasicMidi::SysEx(timestamp, {
+                                           0xF0,
+                                           0x00,
+                                           0x20,
+                                           0x29,
+                                           0x02,
+                                           *product,
+                                           0x03,
+                                           0x03,
+                                           *note,
                                            static_cast<std::uint8_t>(color.r / 2),
                                            static_cast<std::uint8_t>(color.g / 2),
                                            static_cast<std::uint8_t>(color.b / 2),

@@ -2704,17 +2704,17 @@ TEST_CASE(midi_system_button_input_maps_press_release_timestamps_and_thru) {
     synth::MessageInBus bus(nullptr, 16);
     synth::SystemButtonMidiInConfig config;
     config.associations.push_back({
-        .control = {.channel = 5, .cc = 32},
+        .control = synth::MidiControlAddress{.channel = 5, .cc = 32},
         .press = synth::MessageIn::SetShift(1, true),
         .release = synth::MessageIn::SetShift(1, false),
     });
     config.associations.push_back({
-        .control = {.channel = 5, .cc = 0},
+        .control = synth::MidiControlAddress{.channel = 5, .cc = 0},
         .press = synth::MessageIn::SetGestureSelect(1, 0, true),
         .release = synth::MessageIn::SetGestureSelect(1, 0, false),
     });
     config.associations.push_back({
-        .control = {.channel = 5, .cc = 33},
+        .control = synth::MidiControlAddress{.channel = 5, .cc = 33},
         .press = synth::MessageIn::ToggleShift(1),
     });
     synth::SystemButtonMidiInProcessor processor(config, &bus);
@@ -2760,6 +2760,139 @@ TEST_CASE(midi_system_button_input_maps_press_release_timestamps_and_thru) {
     REQUIRE_TRUE(thru.last.Status() == synth::BasicMidi::kStatusClock);
 }
 
+TEST_CASE(midi_system_button_input_matches_launchpad_positions_generically) {
+    synth::MessageInBus bus(nullptr, 16);
+    synth::SystemButtonMidiInConfig config;
+    config.associations.push_back({
+        .launchpadPosition = synth::LaunchpadGridPosition{
+            .controller = synth::LaunchpadController::LaunchpadX,
+            .x = 0,
+            .y = 7,
+        },
+        .press = synth::MessageIn::SceneSelect(0, 0),
+    });
+    config.associations.push_back({
+        .launchpadPosition = synth::LaunchpadGridPosition{
+            .controller = synth::LaunchpadController::LaunchpadProMk3,
+            .x = 0,
+            .y = 0,
+        },
+        .press = synth::MessageIn::SetGestureSelect(0, 0, true),
+        .release = synth::MessageIn::SetGestureSelect(0, 0, false),
+    });
+    config.associations.push_back({
+        .launchpadPosition = synth::LaunchpadGridPosition{
+            .controller = synth::LaunchpadController::LaunchpadMiniMk3,
+            .x = 1,
+            .y = 1,
+        },
+        .press = synth::MessageIn::SetGestureSelect(0, 1, true),
+        .release = synth::MessageIn::SetGestureSelect(0, 1, false),
+    });
+    config.associations.push_back({
+        .launchpadPosition = synth::LaunchpadGridPosition{
+            .controller = synth::LaunchpadController::LaunchpadX,
+            .x = 0,
+            .y = -1,
+        },
+        .press = synth::MessageIn::SelectParamBank(0, 0, 2),
+        .release = synth::MessageIn::SelectParamBank(0, 0, 0),
+    });
+    config.associations.push_back({
+        .launchpadPosition = synth::LaunchpadGridPosition{
+            .controller = synth::LaunchpadController::LaunchpadX,
+            .x = -1,
+            .y = 0,
+        },
+        .press = synth::MessageIn::SceneSelect(0, 7),
+    });
+
+    synth::SystemButtonMidiInProcessor processor(config, &bus);
+    processor.SetTimestampProvider([] { return 55; });
+    CountingMidiInProcessor thru;
+    processor.SetThru(&thru);
+
+    processor.Process(synth::BasicMidi::Note(9, 0, 11, 127));
+    synth::MessageIn message;
+    REQUIRE_TRUE(bus.Pop(message, 55));
+    REQUIRE_TRUE(message.type == synth::MessageIn::Type::SceneSelect);
+    REQUIRE_TRUE(message.sceneIx == 0);
+    REQUIRE_TRUE(message.timestamp == 55);
+
+    processor.Process(synth::BasicMidi::Note(9, 0, 11, 0));
+    REQUIRE_TRUE(!bus.Pop(message, 55));
+    REQUIRE_TRUE(thru.count == 0);
+
+    const auto gestureNote = synth::LaunchpadPositionToNote(synth::LaunchpadController::LaunchpadProMk3, 0, 0);
+    REQUIRE_TRUE(gestureNote.has_value());
+    processor.Process(synth::BasicMidi::NoteOff(9, 0, *gestureNote));
+    REQUIRE_TRUE(bus.Pop(message, 55));
+    REQUIRE_TRUE(message.type == synth::MessageIn::Type::SetGestureSelect);
+    REQUIRE_TRUE(message.gestureIx == 0);
+    REQUIRE_TRUE(message.hasBoolValue);
+    REQUIRE_TRUE(!message.boolValue);
+
+    const auto miniNote = synth::LaunchpadPositionToNote(synth::LaunchpadController::LaunchpadMiniMk3, 1, 1);
+    REQUIRE_TRUE(miniNote.has_value());
+    processor.Process(synth::BasicMidi::Note(9, 0, *miniNote, 0));
+    REQUIRE_TRUE(bus.Pop(message, 55));
+    REQUIRE_TRUE(message.type == synth::MessageIn::Type::SetGestureSelect);
+    REQUIRE_TRUE(message.gestureIx == 1);
+    REQUIRE_TRUE(message.hasBoolValue);
+    REQUIRE_TRUE(!message.boolValue);
+
+    const auto edgeCc = synth::LaunchpadPositionToNote(synth::LaunchpadController::LaunchpadX, 0, -1);
+    REQUIRE_TRUE(edgeCc.has_value());
+    processor.Process(synth::BasicMidi::CC(9, 0, *edgeCc, 127));
+    REQUIRE_TRUE(bus.Pop(message, 55));
+    REQUIRE_TRUE(message.type == synth::MessageIn::Type::SelectParamBank);
+    REQUIRE_TRUE(message.bankIx == 2);
+
+    processor.Process(synth::BasicMidi::CC(9, 0, *edgeCc, 0));
+    REQUIRE_TRUE(bus.Pop(message, 55));
+    REQUIRE_TRUE(message.type == synth::MessageIn::Type::SelectParamBank);
+    REQUIRE_TRUE(message.bankIx == 0);
+
+    synth::SystemButtonMidiInConfig orderedConfig;
+    orderedConfig.associations.push_back({
+        .launchpadPosition = synth::LaunchpadGridPosition{
+            .controller = synth::LaunchpadController::LaunchpadX,
+            .x = 0,
+            .y = -1,
+        },
+        .press = synth::MessageIn::SceneSelect(0, 4),
+    });
+    orderedConfig.associations.push_back({
+        .control = synth::MidiControlAddress{.channel = 0, .cc = *edgeCc},
+        .press = synth::MessageIn::SceneSelect(0, 5),
+    });
+    processor.SetConfig(orderedConfig);
+    processor.Process(synth::BasicMidi::CC(9, 0, *edgeCc, 127));
+    REQUIRE_TRUE(bus.Pop(message, 55));
+    REQUIRE_TRUE(message.type == synth::MessageIn::Type::SceneSelect);
+    REQUIRE_TRUE(message.sceneIx == 4);
+
+    processor.Process(synth::BasicMidi::Note(9, 0, 12, 127));
+    REQUIRE_TRUE(!bus.Pop(message, 55));
+    REQUIRE_TRUE(thru.count == 1);
+    REQUIRE_TRUE(thru.last.Status() == synth::BasicMidi::kStatusNote);
+    REQUIRE_TRUE(thru.last.GetNote() == 12);
+
+    processor.Process(synth::BasicMidi::CC(9, 0, 12, 127));
+    REQUIRE_TRUE(!bus.Pop(message, 55));
+    REQUIRE_TRUE(thru.count == 2);
+    REQUIRE_TRUE(thru.last.IsCC());
+    REQUIRE_TRUE(thru.last.GetCC() == 12);
+
+    const auto proOnlyNote = synth::LaunchpadPositionToNote(synth::LaunchpadController::LaunchpadProMk3, -1, 0);
+    REQUIRE_TRUE(proOnlyNote.has_value());
+    processor.Process(synth::BasicMidi::Note(9, 0, *proOnlyNote, 127));
+    REQUIRE_TRUE(!bus.Pop(message, 55));
+    REQUIRE_TRUE(thru.count == 3);
+    REQUIRE_TRUE(thru.last.Status() == synth::BasicMidi::kStatusNote);
+    REQUIRE_TRUE(thru.last.GetNote() == *proOnlyNote);
+}
+
 TEST_CASE(midi_encoder_default_presets_map_row_major_and_trim) {
     synth::EncoderMidiInConfig twister = synth::EncoderMidiInConfig::TwisterDefault(2);
     REQUIRE_TRUE(twister.relativeMode == synth::EncoderRelativeMode::Signed7Bit);
@@ -2786,6 +2919,47 @@ TEST_CASE(midi_encoder_default_presets_map_row_major_and_trim) {
     REQUIRE_TRUE(wrld.turns.size() == 3);
     REQUIRE_TRUE(wrld.pushes.size() == 3);
     REQUIRE_TRUE(wrld.turns.back().control.cc == 2);
+}
+
+TEST_CASE(launchpad_position_helpers_match_smart_grid_mapping) {
+    using synth::LaunchpadController;
+
+    REQUIRE_TRUE(synth::LaunchpadShapeSupports(LaunchpadController::LaunchpadX, 0, 7));
+    REQUIRE_TRUE(synth::LaunchpadShapeSupports(LaunchpadController::LaunchpadX, 8, -1));
+    REQUIRE_TRUE(!synth::LaunchpadShapeSupports(LaunchpadController::LaunchpadX, -1, 0));
+    REQUIRE_TRUE(synth::LaunchpadShapeSupports(LaunchpadController::LaunchpadMiniMk3, 8, 0));
+    REQUIRE_TRUE(!synth::LaunchpadShapeSupports(LaunchpadController::LaunchpadMiniMk3, -1, 0));
+    REQUIRE_TRUE(synth::LaunchpadShapeSupports(LaunchpadController::LaunchpadProMk3, -1, 0));
+    REQUIRE_TRUE(synth::LaunchpadShapeSupports(LaunchpadController::LaunchpadProMk3, 0, 9));
+
+    auto note = synth::LaunchpadPositionToNote(LaunchpadController::LaunchpadX, 0, 7);
+    REQUIRE_TRUE(note.has_value());
+    REQUIRE_TRUE(*note == 11);
+    note = synth::LaunchpadPositionToNote(LaunchpadController::LaunchpadX, 0, -1);
+    REQUIRE_TRUE(note.has_value());
+    REQUIRE_TRUE(*note == 91);
+    note = synth::LaunchpadPositionToNote(LaunchpadController::LaunchpadX, -1, 0);
+    REQUIRE_TRUE(!note.has_value());
+
+    auto position = synth::LaunchpadNoteToPosition(LaunchpadController::LaunchpadX, 11);
+    REQUIRE_TRUE(position.has_value());
+    REQUIRE_TRUE(position->controller == LaunchpadController::LaunchpadX);
+    REQUIRE_TRUE(position->x == 0);
+    REQUIRE_TRUE(position->y == 7);
+
+    note = synth::LaunchpadPositionToNote(LaunchpadController::LaunchpadProMk3, -1, 8);
+    REQUIRE_TRUE(note.has_value());
+    REQUIRE_TRUE(*note == 100);
+    position = synth::LaunchpadNoteToPosition(LaunchpadController::LaunchpadProMk3, *note);
+    REQUIRE_TRUE(position.has_value());
+    REQUIRE_TRUE(position->controller == LaunchpadController::LaunchpadProMk3);
+    REQUIRE_TRUE(position->x == -1);
+    REQUIRE_TRUE(position->y == 8);
+    REQUIRE_TRUE(synth::LaunchpadNoteToPosition(LaunchpadController::LaunchpadProMk3, 110) == std::nullopt);
+
+    REQUIRE_TRUE(synth::LaunchpadProductByte(LaunchpadController::LaunchpadX) == 0x0C);
+    REQUIRE_TRUE(synth::LaunchpadProductByte(LaunchpadController::LaunchpadMiniMk3) == 0x0D);
+    REQUIRE_TRUE(synth::LaunchpadProductByte(LaunchpadController::LaunchpadProMk3) == 0x0E);
 }
 
 TEST_CASE(midi_encoder_input_supports_incomplete_and_multi_slot_maps) {
@@ -2964,6 +3138,74 @@ TEST_CASE(system_output_processors_debounce_reset_and_render_cc_and_wrld_bldr) {
     REQUIRE_TRUE(sink.sent[4].IsSysEx());
 }
 
+TEST_CASE(launchpad_color_sysex_uses_controller_product_and_rgb_note) {
+    auto midi = synth::LaunchpadColorSysex(7, synth::LaunchpadController::LaunchpadX, 0, 7, synth::Color::White);
+    REQUIRE_TRUE(midi.IsSysEx());
+    REQUIRE_TRUE(midi.timestamp == 7);
+    REQUIRE_TRUE(midi.raw[0] == 0xF0);
+    REQUIRE_TRUE(midi.raw[1] == 0x00);
+    REQUIRE_TRUE(midi.raw[2] == 0x20);
+    REQUIRE_TRUE(midi.raw[3] == 0x29);
+    REQUIRE_TRUE(midi.raw[4] == 0x02);
+    REQUIRE_TRUE(midi.raw[5] == 0x0C);
+    REQUIRE_TRUE(midi.raw[6] == 0x03);
+    REQUIRE_TRUE(midi.raw[7] == 0x03);
+    REQUIRE_TRUE(midi.raw[8] == 11);
+    REQUIRE_TRUE(midi.raw[9] == 127);
+    REQUIRE_TRUE(midi.raw[10] == 127);
+    REQUIRE_TRUE(midi.raw[11] == 127);
+
+    midi = synth::LaunchpadColorSysex(7, synth::LaunchpadController::LaunchpadMiniMk3, 0, 7,
+                                      synth::Color::Orange);
+    REQUIRE_TRUE(midi.raw[5] == 0x0D);
+    REQUIRE_TRUE(midi.raw[9] == synth::Color::Orange.r / 2);
+    REQUIRE_TRUE(midi.raw[10] == synth::Color::Orange.g / 2);
+    REQUIRE_TRUE(midi.raw[11] == synth::Color::Orange.b / 2);
+
+    midi = synth::LaunchpadColorSysex(7, synth::LaunchpadController::LaunchpadProMk3, -1, 0,
+                                      synth::Color::Green);
+    REQUIRE_TRUE(midi.raw[5] == 0x0E);
+}
+
+TEST_CASE(launchpad_output_processor_debounces_reset_and_uses_system_info) {
+    synth::ParameterManager::UIState ui;
+    ui.Configure(0, 0, 0, 0, 0);
+    ui.shiftHeld.store(true);
+
+    FakeMidiSink sink;
+    synth::MidiSender sender;
+    sender.SetSink(&sink);
+    sender.Start();
+
+    synth::LaunchpadGridMidiOutConfig config;
+    config.associations.push_back({
+        .position = {.controller = synth::LaunchpadController::LaunchpadX, .x = 0, .y = 7},
+        .message = synth::MessageIn::ToggleShift(0),
+    });
+    synth::LaunchpadGridMidiOutProcessor processor(config, &sender, &ui);
+    processor.Process();
+    sender.FlushForTests(std::chrono::milliseconds(500));
+    REQUIRE_TRUE(sink.sent.size() == 1);
+    REQUIRE_TRUE(sink.sent[0].raw[5] == 0x0C);
+    REQUIRE_TRUE(sink.sent[0].raw[9] == 127);
+
+    processor.Process();
+    sender.FlushForTests(std::chrono::milliseconds(500));
+    REQUIRE_TRUE(sink.sent.size() == 1);
+
+    ui.shiftHeld.store(false);
+    processor.Process();
+    sender.FlushForTests(std::chrono::milliseconds(500));
+    REQUIRE_TRUE(sink.sent.size() == 2);
+    REQUIRE_TRUE(sink.sent[1].raw[9] == synth::Color::Grey.r / 2);
+
+    processor.Reset();
+    processor.Process();
+    sender.FlushForTests(std::chrono::milliseconds(500));
+    sender.Stop();
+    REQUIRE_TRUE(sink.sent.size() == 3);
+}
+
 TEST_CASE(midi_controller_profile_builds_chained_input_processors) {
     synth::MessageInBus bus(nullptr, 16);
     synth::MidiControllerProfileConfig config;
@@ -2975,7 +3217,7 @@ TEST_CASE(midi_controller_profile_builds_chained_input_processors) {
     analog.gestures.push_back({.control = {.channel = 2, .cc = 4}, .gestureIx = 5});
     config.analogInput = analog;
     config.systemMessages.push_back({
-        .control = {.channel = 5, .cc = 32},
+        .control = synth::MidiControlAddress{.channel = 5, .cc = 32},
         .wrldBldrPosition = synth::WrldBldrSystemPosition{.channel = 5, .x = 0, .y = 4},
         .press = synth::MessageIn::ToggleShift(0),
         .feedback = synth::MessageIn::ToggleShift(0),
@@ -3008,6 +3250,53 @@ TEST_CASE(midi_controller_profile_builds_chained_input_processors) {
     REQUIRE_TRUE(message.timestamp == 88);
 }
 
+TEST_CASE(midi_controller_profile_routes_launchpad_only_system_associations) {
+    synth::MessageInBus bus(nullptr, 16);
+    synth::ParameterManager::UIState ui;
+    ui.Configure(0, 0, 0, 0, 0);
+    ui.sceneCapacity = 4;
+    ui.leftScene.store(3);
+    ui.rightScene.store(3);
+    ui.sceneBlend.store(0.0f);
+    synth::MidiControllerProfileConfig config;
+    config.systemMessages.push_back({
+        .launchpadPosition = synth::LaunchpadGridPosition{
+            .controller = synth::LaunchpadController::LaunchpadX,
+            .x = 0,
+            .y = 7,
+        },
+        .press = synth::MessageIn::SceneSelect(0, 3),
+        .feedback = synth::MessageIn::SceneSelect(0, 3),
+    });
+
+    FakeMidiSink sink;
+    synth::MidiSender sender;
+    sender.SetSink(&sink);
+    sender.Start();
+    synth::MidiControllerProfileResult profile =
+        synth::CreateMidiControllerProfile(config, &bus, &sender, &ui, [] { return 91; });
+    REQUIRE_TRUE(dynamic_cast<synth::SystemButtonMidiInProcessor*>(profile.input.get()) != nullptr);
+    REQUIRE_TRUE(profile.inputThru.empty());
+    REQUIRE_TRUE(profile.outputs.size() == 1);
+    REQUIRE_TRUE(dynamic_cast<synth::LaunchpadGridMidiOutProcessor*>(profile.outputs[0].get()) != nullptr);
+
+    profile.input->Process(synth::BasicMidi::Note(1, 0, 11, 127));
+    synth::MessageIn message;
+    REQUIRE_TRUE(bus.Pop(message, 91));
+    REQUIRE_TRUE(message.type == synth::MessageIn::Type::SceneSelect);
+    REQUIRE_TRUE(message.sceneIx == 3);
+    REQUIRE_TRUE(message.timestamp == 91);
+
+    profile.outputs[0]->Process();
+    sender.FlushForTests(std::chrono::milliseconds(500));
+    sender.Stop();
+    REQUIRE_TRUE(sink.sent.size() == 1);
+    REQUIRE_TRUE(sink.sent[0].IsSysEx());
+    REQUIRE_TRUE(sink.sent[0].raw[5] == 0x0C);
+    REQUIRE_TRUE(sink.sent[0].raw[8] == 11);
+    REQUIRE_TRUE(sink.sent[0].raw[9] == synth::Color::Orange.r / 2);
+}
+
 TEST_CASE(midi_controller_profile_builds_independent_outputs_from_shared_system_associations) {
     synth::ParameterManager::UIState ui;
     ui.Configure(0, 0, 0, 0, 0);
@@ -3015,7 +3304,7 @@ TEST_CASE(midi_controller_profile_builds_independent_outputs_from_shared_system_
 
     synth::MidiControllerProfileConfig config;
     config.systemMessages.push_back({
-        .control = {.channel = 5, .cc = 32},
+        .control = synth::MidiControlAddress{.channel = 5, .cc = 32},
         .wrldBldrPosition = synth::WrldBldrSystemPosition{.channel = 5, .x = 0, .y = 4},
         .press = synth::MessageIn::ToggleShift(0),
         .feedback = synth::MessageIn::ToggleShift(0),
@@ -3166,6 +3455,148 @@ TEST_CASE(wrld_bldr_default_profile_creates_encoder_and_system_outputs) {
     }
     REQUIRE_TRUE(sawCc);
     REQUIRE_TRUE(sawSysex);
+}
+
+TEST_CASE(launchpad_default_profile_creates_only_system_input_and_grid_output) {
+    synth::MessageInBus bus(nullptr, 32);
+    synth::ParameterManager::UIState ui;
+    ui.Configure(0, 0, 0, 1, 2);
+    ui.sceneCapacity = 2;
+    ui.leftScene.store(1);
+    ui.rightScene.store(1);
+    ui.sceneBlend.store(0.0f);
+    ui.gestures.connected[0].store(true);
+    ui.gestures.selected[0].store(true);
+    ui.banks[0].connected.store(true);
+    ui.banks[0].selected.store(true);
+    ui.banks[0].color.Store(synth::Color::Green);
+
+    synth::LaunchpadDefaultProfileOptions options;
+    options.controller = synth::LaunchpadController::LaunchpadMiniMk3;
+    options.slotIx = 4;
+    options.sceneCount = 2;
+    options.bankButtonCount = 2;
+    options.gestureSelectorCount = 1;
+    const synth::MidiControllerProfileConfig config = synth::LaunchpadDefaultProfileConfig(options);
+    REQUIRE_TRUE(!config.encoderInput.has_value());
+    REQUIRE_TRUE(!config.encoderOutput.has_value());
+    REQUIRE_TRUE(!config.analogInput.has_value());
+    REQUIRE_TRUE(config.systemMessages.size() == 6);
+    REQUIRE_TRUE(config.systemMessages[0].launchpadPosition.has_value());
+    REQUIRE_TRUE(config.systemMessages[0].launchpadPosition->controller == options.controller);
+    REQUIRE_TRUE(config.systemMessages[0].launchpadPosition->x == 0);
+    REQUIRE_TRUE(config.systemMessages[0].launchpadPosition->y == -1);
+    REQUIRE_TRUE(config.systemMessages[2].press.type == synth::MessageIn::Type::SelectParamBank);
+    REQUIRE_TRUE(config.systemMessages[2].press.slotIx == 4);
+    REQUIRE_TRUE(config.systemMessages[2].press.bankIx == 0);
+    REQUIRE_TRUE(config.systemMessages[4].press.type == synth::MessageIn::Type::SetGestureSelect);
+    REQUIRE_TRUE(config.systemMessages[4].release.has_value());
+    REQUIRE_TRUE(config.systemMessages[5].press.type == synth::MessageIn::Type::ToggleShift);
+    REQUIRE_TRUE(config.systemMessages[5].press.hasBoolValue);
+    REQUIRE_TRUE(config.systemMessages[5].press.boolValue);
+    REQUIRE_TRUE(config.systemMessages[5].release.has_value());
+    REQUIRE_TRUE(config.systemMessages[5].release->type == synth::MessageIn::Type::ToggleShift);
+    REQUIRE_TRUE(config.systemMessages[5].release->hasBoolValue);
+    REQUIRE_TRUE(!config.systemMessages[5].release->boolValue);
+    REQUIRE_TRUE(config.systemMessages[5].feedback.type == synth::MessageIn::Type::ToggleShift);
+
+    FakeMidiSink sink;
+    synth::MidiSender sender;
+    sender.SetSink(&sink);
+    sender.Start();
+    synth::MidiControllerProfileResult profile =
+        synth::CreateLaunchpadDefaultProfile(options, &bus, &sender, &ui, [] { return 123; });
+    REQUIRE_TRUE(dynamic_cast<synth::SystemButtonMidiInProcessor*>(profile.input.get()) != nullptr);
+    REQUIRE_TRUE(profile.inputThru.empty());
+    REQUIRE_TRUE(profile.outputs.size() == 1);
+    REQUIRE_TRUE(dynamic_cast<synth::LaunchpadGridMidiOutProcessor*>(profile.outputs[0].get()) != nullptr);
+
+    const auto sceneNote = synth::LaunchpadPositionToNote(options.controller, 1, -1);
+    REQUIRE_TRUE(sceneNote.has_value());
+    profile.input->Process(synth::BasicMidi::Note(0, 0, *sceneNote, 127));
+    synth::MessageIn message;
+    REQUIRE_TRUE(bus.Pop(message, 123));
+    REQUIRE_TRUE(message.type == synth::MessageIn::Type::SceneSelect);
+    REQUIRE_TRUE(message.sceneIx == 1);
+    REQUIRE_TRUE(message.timestamp == 123);
+
+    const auto gestureNote = synth::LaunchpadPositionToNote(options.controller, 0, 0);
+    REQUIRE_TRUE(gestureNote.has_value());
+    profile.input->Process(synth::BasicMidi::Note(0, 0, *gestureNote, 0));
+    REQUIRE_TRUE(bus.Pop(message, 123));
+    REQUIRE_TRUE(message.type == synth::MessageIn::Type::SetGestureSelect);
+    REQUIRE_TRUE(message.hasBoolValue);
+    REQUIRE_TRUE(!message.boolValue);
+
+    profile.outputs[0]->Process();
+    sender.FlushForTests(std::chrono::milliseconds(500));
+    sender.Stop();
+    bool sawSelectedScene = false;
+    for (const synth::BasicMidi& midi : sink.sent) {
+        if (midi.IsSysEx() && midi.raw[5] == 0x0D && midi.raw[8] == *sceneNote) {
+            sawSelectedScene = midi.raw[9] == synth::Color::Orange.r / 2 &&
+                               midi.raw[10] == synth::Color::Orange.g / 2 &&
+                               midi.raw[11] == synth::Color::Orange.b / 2;
+        }
+    }
+    REQUIRE_TRUE(sawSelectedScene);
+}
+
+TEST_CASE(launchpad_default_profiles_skip_unsupported_positions_for_each_controller) {
+    const auto expectController = [](synth::LaunchpadController controller, std::size_t expectedCount) {
+        synth::LaunchpadDefaultProfileOptions options;
+        options.controller = controller;
+        options.sceneCount = 10;
+        options.bankButtonCount = 11;
+        options.gestureSelectorCount = 10;
+        const synth::MidiControllerProfileConfig config = synth::LaunchpadDefaultProfileConfig(options);
+        REQUIRE_TRUE(config.systemMessages.size() == expectedCount);
+        REQUIRE_TRUE(!config.encoderInput.has_value());
+        REQUIRE_TRUE(!config.encoderOutput.has_value());
+        REQUIRE_TRUE(!config.analogInput.has_value());
+        for (const synth::MidiControllerSystemMessageAssociation& association : config.systemMessages) {
+            REQUIRE_TRUE(!association.control.has_value());
+            REQUIRE_TRUE(!association.wrldBldrPosition.has_value());
+            REQUIRE_TRUE(association.launchpadPosition.has_value());
+            REQUIRE_TRUE(association.launchpadPosition->controller == controller);
+            REQUIRE_TRUE(synth::LaunchpadShapeSupports(controller, association.launchpadPosition->x,
+                                                       association.launchpadPosition->y));
+        }
+    };
+
+    expectController(synth::LaunchpadController::LaunchpadX, 27);
+    expectController(synth::LaunchpadController::LaunchpadMiniMk3, 27);
+    expectController(synth::LaunchpadController::LaunchpadProMk3, 29);
+
+    synth::LaunchpadDefaultProfileOptions unsupportedShift;
+    unsupportedShift.controller = synth::LaunchpadController::LaunchpadX;
+    unsupportedShift.sceneCount = 0;
+    unsupportedShift.bankButtonCount = 0;
+    unsupportedShift.gestureSelectorCount = 0;
+    unsupportedShift.shiftPosition =
+        synth::LaunchpadGridPosition{.controller = synth::LaunchpadController::LaunchpadX, .x = -1, .y = 0};
+    REQUIRE_TRUE(synth::LaunchpadDefaultProfileConfig(unsupportedShift).systemMessages.empty());
+
+    synth::LaunchpadDefaultProfileOptions mismatchedShift;
+    mismatchedShift.controller = synth::LaunchpadController::LaunchpadMiniMk3;
+    mismatchedShift.sceneCount = 0;
+    mismatchedShift.bankButtonCount = 0;
+    mismatchedShift.gestureSelectorCount = 0;
+    mismatchedShift.shiftPosition =
+        synth::LaunchpadGridPosition{.controller = synth::LaunchpadController::LaunchpadProMk3, .x = -1, .y = 0};
+    REQUIRE_TRUE(synth::LaunchpadDefaultProfileConfig(mismatchedShift).systemMessages.empty());
+
+    synth::LaunchpadDefaultProfileOptions proShift;
+    proShift.controller = synth::LaunchpadController::LaunchpadProMk3;
+    proShift.sceneCount = 0;
+    proShift.bankButtonCount = 0;
+    proShift.gestureSelectorCount = 0;
+    proShift.shiftPosition =
+        synth::LaunchpadGridPosition{.controller = synth::LaunchpadController::LaunchpadProMk3, .x = -1, .y = 0};
+    const synth::MidiControllerProfileConfig proShiftConfig = synth::LaunchpadDefaultProfileConfig(proShift);
+    REQUIRE_TRUE(proShiftConfig.systemMessages.size() == 1);
+    REQUIRE_TRUE(proShiftConfig.systemMessages[0].launchpadPosition->x == -1);
+    REQUIRE_TRUE(proShiftConfig.systemMessages[0].launchpadPosition->y == 0);
 }
 
 TEST_CASE(midi_sender_delivers_fifo_and_stops_cleanly) {
@@ -6182,7 +6613,8 @@ TEST_CASE(midi_profile_config_json_round_trips_wrld_bldr_defaults_and_rebuilds_p
     REQUIRE_TRUE(loaded.analogInput->gestures[0].control.cc == 1);
     REQUIRE_TRUE(loaded.analogInput->gestures[0].gestureIx == 0);
     REQUIRE_TRUE(loaded.systemMessages.size() == 11);
-    REQUIRE_TRUE(loaded.systemMessages[0].control.channel == 5);
+    REQUIRE_TRUE(loaded.systemMessages[0].control.has_value());
+    REQUIRE_TRUE(loaded.systemMessages[0].control->channel == 5);
     REQUIRE_TRUE(loaded.systemMessages[0].wrldBldrPosition.has_value());
     REQUIRE_TRUE(loaded.systemMessages[0].press.type == synth::MessageIn::Type::ToggleShift);
     REQUIRE_TRUE(loaded.systemMessages[0].release.has_value());
@@ -6209,6 +6641,122 @@ TEST_CASE(midi_profile_config_json_round_trips_wrld_bldr_defaults_and_rebuilds_p
     REQUIRE_TRUE(dynamic_cast<synth::WrldBldrMidiOutProcessor*>(result.outputs[0].get()) != nullptr);
     REQUIRE_TRUE(dynamic_cast<synth::SystemCcMidiOutProcessor*>(result.outputs[1].get()) != nullptr);
     REQUIRE_TRUE(dynamic_cast<synth::WrldBldrSystemMidiOutProcessor*>(result.outputs[2].get()) != nullptr);
+}
+
+TEST_CASE(midi_profile_config_json_round_trips_launchpad_system_positions) {
+    synth::MidiControllerProfileConfig source;
+    source.systemMessages.push_back({
+        .launchpadPosition = synth::LaunchpadGridPosition{
+            .controller = synth::LaunchpadController::LaunchpadMiniMk3,
+            .x = 1,
+            .y = 1,
+        },
+        .press = synth::MessageIn::SceneSelect(0, 2),
+        .feedback = synth::MessageIn::SceneSelect(0, 2),
+    });
+    source.systemMessages.push_back({
+        .control = synth::MidiControlAddress{.channel = 5, .cc = 32},
+        .wrldBldrPosition = synth::WrldBldrSystemPosition{.channel = 5, .x = 0, .y = 4},
+        .launchpadPosition = synth::LaunchpadGridPosition{
+            .controller = synth::LaunchpadController::LaunchpadProMk3,
+            .x = -1,
+            .y = 0,
+        },
+        .press = synth::MessageIn::ToggleShift(0),
+        .release = synth::MessageIn::SetShift(0, false),
+        .feedback = synth::MessageIn::ToggleShift(0),
+    });
+
+    synth::JsonArena arena(262144);
+    synth::JSON json = synth::ToJSON(arena, source);
+    REQUIRE_TRUE(!arena.Failed());
+    synth::JSON firstLaunchpad = json.Get("systemMessages").GetAt(0).Get("launchpadPosition");
+    REQUIRE_TRUE(!firstLaunchpad.IsNull());
+    REQUIRE_TRUE(std::string(firstLaunchpad.Get("controller").StringValue()) == "launchpadMiniMk3");
+    REQUIRE_TRUE(firstLaunchpad.Get("x").IntegerValue() == 1);
+    REQUIRE_TRUE(firstLaunchpad.Get("y").IntegerValue() == 1);
+    synth::JSON secondLaunchpad = json.Get("systemMessages").GetAt(1).Get("launchpadPosition");
+    REQUIRE_TRUE(!secondLaunchpad.IsNull());
+    REQUIRE_TRUE(std::string(secondLaunchpad.Get("controller").StringValue()) == "launchpadProMk3");
+
+    synth::MidiControllerProfileConfig loaded;
+    REQUIRE_TRUE(synth::FromJSON(json, loaded));
+    REQUIRE_TRUE(loaded.systemMessages.size() == 2);
+    REQUIRE_TRUE(!loaded.systemMessages[0].control.has_value());
+    REQUIRE_TRUE(!loaded.systemMessages[0].wrldBldrPosition.has_value());
+    REQUIRE_TRUE(loaded.systemMessages[0].launchpadPosition.has_value());
+    REQUIRE_TRUE(loaded.systemMessages[0].launchpadPosition->controller ==
+                 synth::LaunchpadController::LaunchpadMiniMk3);
+    REQUIRE_TRUE(loaded.systemMessages[0].launchpadPosition->x == 1);
+    REQUIRE_TRUE(loaded.systemMessages[0].launchpadPosition->y == 1);
+    REQUIRE_TRUE(loaded.systemMessages[0].press.type == synth::MessageIn::Type::SceneSelect);
+    REQUIRE_TRUE(loaded.systemMessages[0].press.sceneIx == 2);
+    REQUIRE_TRUE(loaded.systemMessages[1].control.has_value());
+    REQUIRE_TRUE(loaded.systemMessages[1].wrldBldrPosition.has_value());
+    REQUIRE_TRUE(loaded.systemMessages[1].launchpadPosition.has_value());
+    REQUIRE_TRUE(loaded.systemMessages[1].launchpadPosition->controller ==
+                 synth::LaunchpadController::LaunchpadProMk3);
+    REQUIRE_TRUE(loaded.systemMessages[1].launchpadPosition->x == -1);
+    REQUIRE_TRUE(loaded.systemMessages[1].launchpadPosition->y == 0);
+    REQUIRE_TRUE(loaded.systemMessages[1].release.has_value());
+
+    synth::MidiControllerProfileResult rebuilt =
+        synth::CreateMidiControllerProfile(loaded, nullptr, nullptr, nullptr, [] { return 0; });
+    REQUIRE_TRUE(dynamic_cast<synth::SystemButtonMidiInProcessor*>(rebuilt.input.get()) != nullptr);
+    REQUIRE_TRUE(rebuilt.outputs.size() == 4);
+    std::size_t launchpadOutputCount = 0;
+    for (const auto& output : rebuilt.outputs) {
+        if (dynamic_cast<synth::LaunchpadGridMidiOutProcessor*>(output.get()) != nullptr) {
+            ++launchpadOutputCount;
+        }
+    }
+    REQUIRE_TRUE(launchpadOutputCount == 2);
+
+    synth::JsonArena invalidArena(32768);
+    synth::MidiControllerProfileConfig invalidSource = source;
+    invalidSource.systemMessages[0].launchpadPosition->x = -1;
+    synth::JSON invalid = synth::ToJSON(invalidArena, invalidSource);
+    REQUIRE_TRUE(!invalidArena.Failed());
+    synth::MidiControllerProfileConfig unchanged = source;
+    REQUIRE_TRUE(!synth::FromJSON(invalid, unchanged));
+    REQUIRE_TRUE(unchanged.systemMessages.size() == source.systemMessages.size());
+    REQUIRE_TRUE(unchanged.systemMessages[0].launchpadPosition.has_value());
+    REQUIRE_TRUE(unchanged.systemMessages[0].launchpadPosition->x == 1);
+
+    const auto makeProfileWithLaunchpadX = [](synth::JsonArena& profileArena, std::int64_t x) {
+        synth::JSON root = profileArena.Object();
+        root.SetNew("schema", profileArena.String("synth.midiControllerProfileConfig"));
+        root.SetNew("schemaVersion", profileArena.Integer(1));
+        synth::JSON systemMessages = profileArena.Array();
+        synth::JSON association = profileArena.Object();
+        association.SetNew("control", profileArena.Null());
+        association.SetNew("wrldBldrPosition", profileArena.Null());
+        synth::JSON launchpadPosition = profileArena.Object();
+        launchpadPosition.SetNew("controller", profileArena.String("launchpadX"));
+        launchpadPosition.SetNew("x", profileArena.Integer(x));
+        launchpadPosition.SetNew("y", profileArena.Integer(1));
+        association.SetNew("launchpadPosition", launchpadPosition);
+        association.SetNew("press", synth::ToJSON(profileArena, synth::MessageIn::SceneSelect(0, 2)));
+        association.SetNew("release", profileArena.Null());
+        association.SetNew("feedback", synth::ToJSON(profileArena, synth::MessageIn::SceneSelect(0, 2)));
+        systemMessages.AppendNew(association);
+        root.SetNew("systemMessages", systemMessages);
+        return root;
+    };
+
+    synth::JsonArena tooLargeArena(4096);
+    synth::JSON tooLarge = makeProfileWithLaunchpadX(tooLargeArena, 4294967297LL);
+    REQUIRE_TRUE(!tooLargeArena.Failed());
+    unchanged = source;
+    REQUIRE_TRUE(!synth::FromJSON(tooLarge, unchanged));
+    REQUIRE_TRUE(unchanged.systemMessages[0].launchpadPosition->x == 1);
+
+    synth::JsonArena tooSmallArena(4096);
+    synth::JSON tooSmall = makeProfileWithLaunchpadX(tooSmallArena, -4294967295LL);
+    REQUIRE_TRUE(!tooSmallArena.Failed());
+    unchanged = source;
+    REQUIRE_TRUE(!synth::FromJSON(tooSmall, unchanged));
+    REQUIRE_TRUE(unchanged.systemMessages[0].launchpadPosition->x == 1);
 }
 
 TEST_CASE(midi_profile_config_json_rejects_invalid_values_without_mutating_target) {
