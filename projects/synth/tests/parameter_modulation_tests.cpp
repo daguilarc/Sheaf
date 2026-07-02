@@ -7455,6 +7455,85 @@ TEST_CASE(patch_messages_serialize_load_and_revert_initialized_state) {
     REQUIRE_TRUE(profile.encoderInput->turns.size() == defaultProfile.encoderInput->turns.size());
 }
 
+TEST_CASE(apply_patch_message_reuses_caller_arena) {
+    synth::ParameterManager manager;
+    manager.SetGestureCount(1);
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 1,
+        .numScenes = 2,
+        .maxParameters = 2,
+    });
+    manager.CreateParameter(group, {.name = "Cutoff", .defaultValue = 0.2f});
+    manager.CaptureDefaultControlState();
+
+    synth::WrldBldrDefaultProfileOptions options;
+    options.visibleEncoderCount = 1;
+    options.sceneCount = 2;
+    options.bankButtonCount = 1;
+    options.gestureSelectorCount = 1;
+    const synth::MidiControllerProfileConfig defaultProfile = synth::WrldBldrDefaultProfileConfig(options);
+    synth::MidiControllerProfileConfig profile = defaultProfile;
+    synth::MidiEndpointState defaultEndpoints;
+    synth::MidiEndpointState endpoints{.inputIdentifier = "in-a", .outputIdentifier = "out-a"};
+    synth::MessageOutBus outputBus(4);
+
+    synth::JsonArena arena(64 * 1024);
+    synth::PatchSerializationContext context;
+    context.arena = &arena;
+
+    const auto first = synth::ApplyPatchMessage(
+        synth::PatchMessageIn::SerializeToJSON(1, "A"), manager, profile, defaultProfile,
+        endpoints, defaultEndpoints, outputBus, context);
+    REQUIRE_TRUE(first == synth::PatchApplyStatus::Serialized);
+    const auto second = synth::ApplyPatchMessage(
+        synth::PatchMessageIn::SerializeToJSON(2, "B"), manager, profile, defaultProfile,
+        endpoints, defaultEndpoints, outputBus, context);
+    REQUIRE_TRUE(second == synth::PatchApplyStatus::Serialized);  // arena reused, both succeed
+
+    synth::MessageOut out;
+    REQUIRE_TRUE(outputBus.Pop(out));
+    REQUIRE_TRUE(out.requestId == 1);
+    REQUIRE_TRUE(synth::ValidatePatchJSON(out.document.root));
+    REQUIRE_TRUE(outputBus.Pop(out));
+    REQUIRE_TRUE(out.requestId == 2);
+    REQUIRE_TRUE(synth::ValidatePatchJSON(out.document.root));
+}
+
+TEST_CASE(apply_patch_message_reports_exhaustion_without_growing_caller_arena) {
+    synth::ParameterManager manager;
+    manager.SetGestureCount(1);
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 1,
+        .numScenes = 2,
+        .maxParameters = 2,
+    });
+    manager.CreateParameter(group, {.name = "Cutoff", .defaultValue = 0.2f});
+    manager.CaptureDefaultControlState();
+
+    synth::WrldBldrDefaultProfileOptions options;
+    options.visibleEncoderCount = 1;
+    options.sceneCount = 2;
+    options.bankButtonCount = 1;
+    options.gestureSelectorCount = 1;
+    const synth::MidiControllerProfileConfig defaultProfile = synth::WrldBldrDefaultProfileConfig(options);
+    synth::MidiControllerProfileConfig profile = defaultProfile;
+    synth::MidiEndpointState defaultEndpoints;
+    synth::MidiEndpointState endpoints{.inputIdentifier = "in-a", .outputIdentifier = "out-a"};
+    synth::MessageOutBus outputBus(4);
+
+    synth::JsonArena tiny(64);  // far too small for any patch document
+    synth::PatchSerializationContext context;
+    context.arena = &tiny;
+
+    const auto status = synth::ApplyPatchMessage(
+        synth::PatchMessageIn::SerializeToJSON(3, "C"), manager, profile, defaultProfile,
+        endpoints, defaultEndpoints, outputBus, context);
+    REQUIRE_TRUE(status == synth::PatchApplyStatus::ArenaExhausted);
+    REQUIRE_TRUE(tiny.Capacity() == 64);  // caller's arena was not grown/reallocated
+}
+
 TEST_CASE(patch_manager_save_load_revert_lifecycle_uses_messages_and_current_directory) {
     synth::PatchMessageInBus inputBus(8);
     synth::MessageOutBus outputBus(8);

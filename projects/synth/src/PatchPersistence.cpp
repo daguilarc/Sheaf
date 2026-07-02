@@ -352,6 +352,24 @@ PatchApplyStatus ApplyPatchMessage(
         return PatchApplyStatus::Reverted;
     case PatchMessageIn::Type::SerializeToJSON: {
         const std::string patchName = message.patchName.empty() ? std::string("Untitled") : message.patchName;
+        if (context.arena != nullptr) {
+            // Caller-owned arena: reuse it in place (audio-thread-safe pointer
+            // rewind) and never grow or reallocate it here. Growth on
+            // exhaustion is the caller's (message-thread) responsibility.
+            context.arena->Reset();
+            const JSON root = BuildPatchJSON(*context.arena, patchName, manager, midiProfile, endpoints);
+            if (root.IsNull() || context.arena->Failed()) {
+                return PatchApplyStatus::ArenaExhausted;
+            }
+            // Alias a non-owning shared_ptr so JsonDocument's ownership model
+            // stays uniform without freeing the caller's arena.
+            std::shared_ptr<JsonArena> aliasedArena(std::shared_ptr<void>(), context.arena);
+            if (!outputBus.Push(MessageOut::SerializedJSON(
+                    message.requestId, JsonDocument{.arena = std::move(aliasedArena), .root = root}))) {
+                return PatchApplyStatus::OutputQueueFull;
+            }
+            return PatchApplyStatus::Serialized;
+        }
         const std::size_t maxArenaCapacity =
             std::max(context.initialArenaCapacity, context.maxArenaCapacity == 0 ? std::size_t{1} : context.maxArenaCapacity);
         auto arena = std::make_shared<JsonArena>(context.initialArenaCapacity);
