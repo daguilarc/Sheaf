@@ -602,6 +602,11 @@ public:
     JSON ParameterValuesToJSON(JsonArena& arena) const;
     bool LoadParameterValuesFromJSON(JSON json);
     void ComputeAllParameters();
+    // Control-rate target computation for the steady-state audio pump:
+    // Compute() every parameter without snapping current values, so
+    // ProcessLite() slewing stays audible (sar-6). Use ComputeAllParameters()
+    // only for non-steady-state moments (init, patch load, revert).
+    void ComputeAllTargets();
     void CaptureDefaultControlState();
     void RevertAllToDefaults();
 

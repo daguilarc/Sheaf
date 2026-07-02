@@ -7614,6 +7614,32 @@ TEST_CASE(invalid_indices_throw) {
     REQUIRE_TRUE(threw);
 }
 
+TEST_CASE(compute_all_targets_preserves_process_lite_slew) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({.numVoices = 1,
+                                       .numModulators = 0,
+                                       .numScenes = 1,
+                                       .maxParameters = 4,
+                                       .processLiteAlpha = 0.1f});
+    auto& parameter = manager.CreateParameter(group, {.name = "SlewProbe", .defaultValue = 0.0f});
+    manager.ComputeAllParameters();
+    REQUIRE_NEAR(parameter.Get(0), 0.0f, 1e-6f);
+
+    parameter.SceneCenter(0) = 1.0f;
+
+    manager.ComputeAllTargets();
+    const float afterTargets = parameter.Get(0);
+    REQUIRE_NEAR(afterTargets, 0.0f, 1e-6f);  // current not snapped
+
+    parameter.ProcessLite();
+    const float afterOneSlew = parameter.Get(0);
+    REQUIRE_TRUE(afterOneSlew > 0.0f);
+    REQUIRE_TRUE(afterOneSlew < 1.0f);        // approaching, not jumped
+
+    manager.ComputeAllParameters();           // existing API still snaps
+    REQUIRE_NEAR(parameter.Get(0), 1.0f, 1e-4f);
+}
+
 int main() {
     int failed = 0;
     for (const auto& test : Registry()) {

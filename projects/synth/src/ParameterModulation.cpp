@@ -2107,6 +2107,15 @@ void ParameterManager::ComputeAllParameters() {
     }
 }
 
+void ParameterManager::ComputeAllTargets() {
+    for (Parameter* parameter : parameters_) {
+        if (parameter == nullptr) {
+            continue;
+        }
+        parameter->Compute(scene_);
+    }
+}
+
 void ParameterManager::CaptureDefaultControlState() {
     defaultControlState_.scene = scene_;
     defaultControlState_.shiftHeld = shiftHeld_;
