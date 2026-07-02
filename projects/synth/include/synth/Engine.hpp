@@ -352,15 +352,37 @@ public:
     bool HasStashedPatchMessageForTest() const { return pendingPatchMessage_.has_value(); }
     bool IsArenaGrowPendingForTest() const { return arenaGrowPending_.load(std::memory_order_acquire); }
 
-    // Test-only hook: rebuild midiProcessors_ from the current
-    // midiProfileConfig_ on demand. Production code only ever rebuilds
-    // through the tick's midiRebuildPending_ path (Task 5) or the
-    // Initialize() startup-patch path; a headless rig that pokes
-    // Context().midiProfileConfig directly (bypassing the patch-apply flow
-    // entirely, since it isn't loading a patch) has no other way to make
-    // that edit take effect. Mirrors the same RebuildMidiProcessors() call
-    // those production paths use, so the observable result (a freshly
-    // constructed midiProcessors_ from midiProfileConfig_) is identical.
+    // Public host API: rebuild midiProcessors_ from the current
+    // midiProfileConfig_ on demand (e.g. after a host mutates
+    // Context().midiProfileConfig directly, such as switching MIDI
+    // controller presets — see MidiPanel). Runs
+    // midiProcessorsWillRebuildCallback_ (if set) synchronously, BEFORE the
+    // current midiProcessors_ chain is destroyed/replaced, then constructs a
+    // fresh chain via CreateMidiControllerProfile against midiBus_/uiState_
+    // (uiState_ may still be null the first time this runs, during
+    // Initialize(), before uiState_ is populated is not the case here, since
+    // Initialize() calls this after uiState_ is populated; the function
+    // tolerates a null UIState* regardless since CreateMidiControllerProfile
+    // does). This is the single call site for the midiProcessors_
+    // assignment, so it covers every rebuild: Initialize()'s silent first
+    // rebuild, Initialize()'s startup-patch rebuild, MessageThreadTick()'s
+    // patch-driven rebuild, and any host-initiated rebuild (e.g. a preset
+    // switch). Does NOT itself invoke midiProcessorsRebuiltCallback_ — the
+    // tick's midiRebuildPending_ path does that after clearing the flag;
+    // callers rebuilding directly on the message thread (like MidiPanel's
+    // preset switch) invoke midiProcessorsRebuiltCallback_ themselves, or
+    // otherwise handle the endpoint-reopen consequences of a fresh chain.
+    void RebuildMidiProcessors() {
+        if (midiProcessorsWillRebuildCallback_) {
+            midiProcessorsWillRebuildCallback_();
+        }
+        midiProcessors_ = CreateMidiControllerProfile(midiProfileConfig_, &midiBus_, &midiSender_, uiState_.get(),
+                                                       timestampProvider_);
+    }
+
+    // Test-only alias for RebuildMidiProcessors(), kept for existing test
+    // call sites (e.g. SynthRig::InstallMidiProfileForTest). Prefer calling
+    // RebuildMidiProcessors() directly in new code.
     void RebuildMidiProcessorsForTest() { RebuildMidiProcessors(); }
 
     // Rig/test support: last non-NoCompletion patch response observed by
@@ -411,26 +433,6 @@ public:
     }
 
 private:
-    // CreateMidiControllerProfile against midiBus_/uiState_. uiState_ may
-    // still be null the first time this runs during Initialize is not the
-    // case here (Initialize calls this after uiState_ is populated), but the
-    // function tolerates a null UIState* since CreateMidiControllerProfile
-    // does.
-    void RebuildMidiProcessors() {
-        // Give the host a chance to detach any external pointers into the
-        // current midiProcessors_ chain BEFORE it is destroyed/replaced
-        // below (see SetMidiProcessorsWillRebuildCallback's doc comment).
-        // This is the single call site for the midiProcessors_ assignment,
-        // so it covers every rebuild: Initialize()'s silent first rebuild,
-        // Initialize()'s startup-patch rebuild, and MessageThreadTick()'s
-        // rebuild.
-        if (midiProcessorsWillRebuildCallback_) {
-            midiProcessorsWillRebuildCallback_();
-        }
-        midiProcessors_ = CreateMidiControllerProfile(midiProfileConfig_, &midiBus_, &midiSender_, uiState_.get(),
-                                                       timestampProvider_);
-    }
-
     // Audio-thread drain loop shared by ProcessBlock's no-stash path and its
     // post-retry continuation. Drains patchInputBus_ via ApplyPatchMessage;
     // Applied/Reverted set midiRebuildPending_; ArenaExhausted stashes the

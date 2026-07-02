@@ -28,6 +28,17 @@
 // which redundantly closes/reopens devices a startup patch's own rebuild
 // callback may have just opened; harmless (idempotent) and matches the old
 // miniapp's always-reopen-at-startup behavior, so not changed here.
+//
+// Controller preset selection (spm-37, final-review Finding 1): presetBox_
+// offers "Twister" and "WRLD.Bldr", ported from the pre-runtime miniapp's
+// controllerPresetBox_ (git history around 4240fce^). Unlike that miniapp
+// (which built processors directly), this panel is one of the "unlike the
+// old app" cases above: on selection it writes the chosen preset's
+// MidiControllerProfileConfig into *engine.Context().midiProfileConfig and
+// calls the engine's public Engine::RebuildMidiProcessors() (promoted from
+// the former test-only RebuildMidiProcessorsForTest() so a production UI
+// action has a documented, will-rebuild-safe way to trigger a rebuild) —
+// see OnPresetChanged().
 
 #include "synth/Engine.hpp"
 #include "synth/MidiController.hpp"
@@ -87,7 +98,25 @@ private:
 template <synth::SynthApplication App>
 class MidiPanel : public juce::Component {
 public:
+    static constexpr int kTwisterItemId = 1;
+    static constexpr int kWrldBldrItemId = 2;
+
     explicit MidiPanel(synth::Engine<App>& engine) : engine_(engine) {
+        // Controller preset combo (spm-37): "Twister" and "WRLD.Bldr",
+        // matching the pre-runtime miniapp's controllerPresetBox_ item text
+        // exactly (see rebuildMidiProcessors/configureMidiControls in the
+        // deleted miniapp's Main.cpp, git history around 4240fce^). Default
+        // selection is WRLD.Bldr (id 2), matching the app's Init-configured
+        // default profile (WrldBldrDefaultProfileConfig) so the combo starts
+        // in sync with what's actually live without needing to infer the
+        // preset from midiProfileConfig's shape (MidiControllerProfileConfig
+        // carries no controller-kind discriminator).
+        presetBox_.addItem("Twister", kTwisterItemId);
+        presetBox_.addItem("WRLD.Bldr", kWrldBldrItemId);
+        presetBox_.setSelectedId(kWrldBldrItemId, juce::dontSendNotification);
+        presetBox_.onChange = [this] { OnPresetChanged(); };
+        addAndMakeVisible(presetBox_);
+
         refreshButton_.setButtonText("Refresh");
         refreshButton_.onClick = [this] { Refresh(); };
         addAndMakeVisible(refreshButton_);
@@ -134,7 +163,8 @@ public:
 
     void resized() override {
         auto area = getLocalBounds().reduced(4);
-        const int comboWidth = juce::jmax(120, area.getWidth() / 4);
+        const int comboWidth = juce::jmax(120, area.getWidth() / 5);
+        presetBox_.setBounds(area.removeFromLeft(comboWidth).reduced(4));
         refreshButton_.setBounds(area.removeFromLeft(74).reduced(4));
         inputBox_.setBounds(area.removeFromLeft(comboWidth).reduced(4));
         openInputButton_.setBounds(area.removeFromLeft(82).reduced(4));
@@ -164,6 +194,29 @@ public:
         SelectDeviceByIdentifier(outputBox_, outputDevices_, engine_.Endpoints().outputIdentifier);
 
         UpdateStatus();
+    }
+
+    // presetBox_.onChange target (spm-37): builds the MidiControllerProfileConfig
+    // for the newly selected preset, installs it as the engine's live
+    // profile, and rebuilds the MIDI processor chain against it through the
+    // engine's public, will-rebuild-safe RebuildMidiProcessors() (the same
+    // call production code uses from Initialize()/MessageThreadTick() —
+    // Engine::RebuildMidiProcessorsForTest() is test-only and not
+    // appropriate for a production UI action). RebuildMidiProcessors()
+    // itself already invokes SetMidiProcessorsWillRebuildCallback's target
+    // (OnMidiProcessorsWillRebuild(), detaching the forwarding processor)
+    // before destroying the old chain; runs on the message thread (JUCE
+    // combo box callbacks run on the message thread), matching
+    // MidiControllerProfileConfig's documented message-thread-only contract.
+    // Called directly rather than via the engine's rebuilt callback (which
+    // isn't fired by a direct RebuildMidiProcessors() call — see its doc
+    // comment): ReopenPersistedEndpoints() performs the identical
+    // reopen-against-fresh-chain sequence the tick's rebuild path triggers
+    // through that callback.
+    void OnPresetChanged() {
+        *engine_.Context().midiProfileConfig = SelectedPresetConfig();
+        engine_.RebuildMidiProcessors();
+        ReopenPersistedEndpoints();
     }
 
     // Wired by Runtime as engine.SetMidiProcessorsWillRebuildCallback's
@@ -210,6 +263,22 @@ public:
     }
 
 private:
+    // Builds the MidiControllerProfileConfig for whatever preset is
+    // currently selected in presetBox_. WRLD.Bldr goes through
+    // WrldBldrDefaultProfileConfig; the Twister preset uses the MIDI Fighter
+    // Twister whole-profile factory MfTwisterDefaultProfileConfig (encoder
+    // in/out plus the Twister-native output protocol and side buttons) —
+    // both are the same whole-profile factories the app's Init() default and
+    // patch profiles use. visibleEncoderCount is left at its default (16):
+    // the runtime shell renders a fixed encoder grid, unlike the old
+    // miniapp's encoders_.size().
+    synth::MidiControllerProfileConfig SelectedPresetConfig() const {
+        if (presetBox_.getSelectedId() == kTwisterItemId) {
+            return synth::MfTwisterDefaultProfileConfig();
+        }
+        return synth::WrldBldrDefaultProfileConfig();
+    }
+
     // Installs a fresh EngineForwardingMidiInProcessor wrapping the
     // engine's current MidiInputProcessor() into inHandler_, through its
     // mutex-guarded SetProcessor. Must only be called when midiProcessors_
@@ -333,6 +402,7 @@ private:
     synth_juce::MidiInHandler inHandler_;
     synth_juce::MidiOutputHandler outHandler_;
 
+    juce::ComboBox presetBox_;
     juce::TextButton refreshButton_;
     juce::ComboBox inputBox_;
     juce::ComboBox outputBox_;
