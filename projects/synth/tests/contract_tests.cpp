@@ -1,4 +1,5 @@
 #include "synth/AppContext.hpp"
+#include "synth/AppConcepts.hpp"
 
 #ifdef JUCE_MAJOR_VERSION
 #error "synth contract tests must not see JUCE headers"
@@ -107,6 +108,32 @@ TEST_CASE(app_context_holds_live_pointers) {
     context.uiBus = &uiBus;
     REQUIRE_TRUE(context.parameterManager == &manager);
     REQUIRE_TRUE(context.uiBus == &uiBus);
+}
+
+namespace {
+struct ConceptCoreOnlyApp {
+    static synth::RuntimeConfig Config() { return {}; }
+    void Init(synth::AppContext*) {}
+    void ProcessBlock(synth::AudioBlock&) {}
+};
+struct ConceptFullApp : ConceptCoreOnlyApp {
+    int UIComponent() { return 0; }  // stand-in; runtime consumes the real type
+    void PrepareToPlay(double, int) {}
+};
+struct ConceptNotAnApp {
+    void ProcessBlock(synth::AudioBlock&) {}
+};
+}  // namespace
+
+TEST_CASE(application_concepts_gate_correctly) {
+    REQUIRE_TRUE(synth::SynthApplicationCore<ConceptCoreOnlyApp>);
+    REQUIRE_TRUE(synth::SynthApplicationCore<ConceptFullApp>);
+    REQUIRE_TRUE(!synth::SynthApplicationCore<ConceptNotAnApp>);
+    REQUIRE_TRUE(!synth::SynthApplication<ConceptCoreOnlyApp>);   // UI-less core rejected by full concept
+    REQUIRE_TRUE(synth::SynthApplication<ConceptFullApp>);
+    REQUIRE_TRUE(!synth::HasPrepareToPlay<ConceptCoreOnlyApp>);
+    REQUIRE_TRUE(synth::HasPrepareToPlay<ConceptFullApp>);
+    REQUIRE_TRUE(!synth::HasProcessFrame<ConceptFullApp>);
 }
 
 int main() {
