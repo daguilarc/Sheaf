@@ -25,7 +25,8 @@
 // implemented once, in ApplyAudioDeviceSelection(), and reached from two
 // paths: (a) the user changing audioPanel_'s combo (wired to
 // audioPanel_->onOutputSelected in the constructor) and (b) a startup or
-// runtime patch changing engine.AudioDevice(), via
+// runtime patch changing the engine's audio device state (observed via
+// engine.AudioDeviceSnapshot()), via
 // engine_.SetAudioDeviceChangedCallback (wired in Start(), BEFORE
 // Initialize() — see Start()'s doc comment for why the callback must
 // tolerate firing before deviceManager_ is initialised).
@@ -85,6 +86,12 @@ public:
         // ApplyAudioDeviceSelection is safe (same pattern as the
         // will-rebuild callback above).
         audioPanel_->onOutputSelected = [this](const juce::String& name) { ApplyAudioDeviceSelection(name); };
+
+        // Input-device combo counterpart (Task 3 review, Minor): wired
+        // identically to onOutputSelected above, just for the input device
+        // name field. Only ever fires when audioPanel_ actually built an
+        // input combo (App::Config().numAudioInputs > 0).
+        audioPanel_->onInputSelected = [this](const juce::String& name) { ApplyAudioDeviceInputSelection(name); };
     }
 
     ~Runtime() override {
@@ -120,8 +127,8 @@ public:
     //       synchronously, before deviceManager_ has been touched at all)
     //   3. engine_.Initialize()
     //   4. open the audio device, applying preferred rate/block where
-    //      allowed, PREFERRING engine.AudioDevice().outputDeviceName over
-    //      the platform default when it names a currently-enumerated device
+    //      allowed, PREFERRING engine.AudioDeviceSnapshot().outputDeviceName
+    //      over the platform default when it names a currently-enumerated device
     //      (Task 4 brief: this is what makes a startup-patch-carried device
     //      actually take effect, since step 2a's callback necessarily fires
     //      too early to open anything itself — see the callback's own doc
@@ -186,11 +193,11 @@ public:
         // the currently enumerated output devices — an absent device leaves
         // the just-initialised default device alone, no failure, matching
         // OnEngineAudioDeviceChanged's "absent -> keep current" contract.
-        // engine_.AudioDevice() already holds the startup patch's value here
-        // (Initialize() applied it above; OnEngineAudioDeviceChanged fired
-        // too early, before deviceManager_ existed, to act on it itself —
+        // engine_.AudioDeviceSnapshot() already holds the startup patch's
+        // value here (Initialize() applied it above; OnEngineAudioDeviceChanged
+        // fired too early, before deviceManager_ existed, to act on it itself —
         // see that method's doc comment).
-        const juce::String wantedOutputName = juce::String(engine_.AudioDevice().outputDeviceName);
+        const juce::String wantedOutputName = juce::String(engine_.AudioDeviceSnapshot().outputDeviceName);
         if (wantedOutputName.isNotEmpty() && IsEnumeratedOutputDevice(wantedOutputName)) {
             SwitchOutputDevice(wantedOutputName, "startup");
         } else {
@@ -202,16 +209,17 @@ public:
             }
         }
         // Refresh() re-enumerates output devices and re-syncs the combo's
-        // selection to engine.AudioDevice() as it now stands (post
+        // selection to engine.AudioDeviceSnapshot() as it now stands (post
         // startup-preference handling above). INFO-logged explicitly (not
         // just implied by the "Audio device switch"/"Audio device state"
         // lines above) so a session log has one unambiguous line confirming
         // the selector reflects startup state even on the "no startup
         // device, nothing to switch" path.
         audioPanel_->Refresh();
+        const synth::AudioDeviceState startupAudioDeviceState = engine_.AudioDeviceSnapshot();
         INFO("Audio device selector startup sync: selected=%s",
-             engine_.AudioDevice().outputDeviceName.empty() ? "System Default"
-                                                              : engine_.AudioDevice().outputDeviceName.c_str());
+             startupAudioDeviceState.outputDeviceName.empty() ? "System Default"
+                                                                : startupAudioDeviceState.outputDeviceName.c_str());
 
         if (synth::MidiSender* sender = engine_.Context().midiSender; sender != nullptr) {
             sender->Start();
@@ -310,6 +318,13 @@ private:
         return deviceType != nullptr && deviceType->getDeviceNames(false).contains(name);
     }
 
+    // Input-side counterpart of IsEnumeratedOutputDevice, used by
+    // ApplyAudioDeviceInputSelection's absent-device handling.
+    bool IsEnumeratedInputDevice(const juce::String& name) const {
+        juce::AudioIODeviceType* deviceType = deviceManager_.getCurrentDeviceTypeObject();
+        return deviceType != nullptr && deviceType->getDeviceNames(true).contains(name);
+    }
+
     // Mutates the current AudioDeviceSetup's sampleRate/bufferSize to
     // config.preferredSampleRate/preferredBlockSize when the CURRENT device
     // supports them, and applies it via setAudioDeviceSetup — the same
@@ -404,27 +419,78 @@ private:
 
     // audioPanel_->onOutputSelected's target: the user picked an output
     // device in the combo, on the message thread (JUCE combo box callbacks
-    // run there). Updates engine.AudioDevice().outputDeviceName (so it
-    // persists into the next saved patch, mirroring how MidiPanel writes
-    // engine_.Endpoints() on selection) THEN applies the switch. "System
-    // Default" (empty name) clears deviceManager_'s outputDeviceName
-    // preference the same way, via the same AudioDeviceSetup path (an empty
-    // outputDeviceName + useDefaultOutputDevice==false is what JUCE treats
-    // as "we picked no explicit device" -- see AudioDeviceSetup's own
-    // doc comment); we deliberately still route it through
-    // SwitchOutputDevice() rather than a separate branch, so both cases get
-    // identical logging/rate/block handling.
+    // run there). Records the selection via engine_.SetAudioDeviceFromHost
+    // (so it persists into the next saved patch, mirroring how MidiPanel
+    // writes engine_.Endpoints() on selection, AND advances the engine's
+    // audio-device-state shadow so a later patch revert back to this exact
+    // selection is correctly treated as "no change" -- see
+    // SetAudioDeviceFromHost's doc comment; this replaces the old direct
+    // `engine_.AudioDevice().outputDeviceName = ...` write, which left the
+    // shadow stale and raced with the audio-thread patch drain -- Task 3
+    // review findings 1/2) THEN applies the switch. "System Default" (empty
+    // name) clears deviceManager_'s outputDeviceName preference the same
+    // way, via the same AudioDeviceSetup path (an empty outputDeviceName +
+    // useDefaultOutputDevice==false is what JUCE treats as "we picked no
+    // explicit device" -- see AudioDeviceSetup's own doc comment); we
+    // deliberately still route it through SwitchOutputDevice() rather than a
+    // separate branch, so both cases get identical logging/rate/block
+    // handling.
     void ApplyAudioDeviceSelection(const juce::String& outputName) {
-        engine_.AudioDevice().outputDeviceName = outputName.toStdString();
+        synth::AudioDeviceState newState = engine_.AudioDeviceSnapshot();
+        newState.outputDeviceName = outputName.toStdString();
+        engine_.SetAudioDeviceFromHost(newState);
         SwitchOutputDevice(outputName, "selection");
         audioPanel_->SetStatus(outputName.isEmpty() ? "Audio: System Default" : "Audio: " + outputName);
         audioPanel_->SyncSelection();
     }
 
+    // audioPanel_->onInputSelected's target (Task 3 review, Minor): the user
+    // picked an input device in the combo, on the message thread. Wired
+    // identically to ApplyAudioDeviceSelection above, just for the input
+    // device name field: records the selection via
+    // engine_.SetAudioDeviceFromHost (same shadow-advancing rationale) then
+    // applies it via AudioDeviceSetup.inputDeviceName + setAudioDeviceSetup,
+    // with the same absent-device handling (an inputName not currently
+    // enumerated is not applied; the status label reports it, matching
+    // SwitchOutputDevice/OnEngineAudioDeviceChanged's "absent -> keep
+    // current, no failure" contract). Unlike SwitchOutputDevice's "" ->
+    // System Default resolution, an empty inputDeviceName does not need
+    // special-casing here: setAudioDeviceSetup only deletes the current
+    // device when BOTH inputDeviceName AND outputDeviceName are empty (see
+    // its own implementation), and outputDeviceName here always carries
+    // forward whatever the current setup already has (read via
+    // getAudioDeviceSetup() below), so it's never simultaneously empty
+    // except in the same already-handled "no device wanted" case
+    // SwitchOutputDevice's own doc comment describes.
+    void ApplyAudioDeviceInputSelection(const juce::String& inputName) {
+        synth::AudioDeviceState newState = engine_.AudioDeviceSnapshot();
+        newState.inputDeviceName = inputName.toStdString();
+        engine_.SetAudioDeviceFromHost(newState);
+
+        if (inputName.isNotEmpty() && !IsEnumeratedInputDevice(inputName)) {
+            const juce::String message = "audio input device not found: " + inputName;
+            INFO("%s", message.toRawUTF8());
+            audioPanel_->SetStatus(message);
+            audioPanel_->SyncSelection();
+            return;
+        }
+
+        juce::AudioDeviceManager::AudioDeviceSetup setup = deviceManager_.getAudioDeviceSetup();
+        setup.inputDeviceName = inputName;
+        const juce::String setupError = deviceManager_.setAudioDeviceSetup(setup, true);
+        if (setupError.isNotEmpty()) {
+            INFO("Audio input device switch (selection) FAILED: %s", setupError.toRawUTF8());
+        }
+        ApplyPreferredRateAndBlockSize();
+        audioPanel_->SetStatus(inputName.isEmpty() ? "Audio In: System Default" : "Audio In: " + inputName);
+        audioPanel_->SyncSelection();
+    }
+
     // engine_.SetAudioDeviceChangedCallback's target (wired in Start(),
     // BEFORE engine_.Initialize() — see Start()'s doc comment). Invoked on
-    // the message thread whenever a consumed patch message changed
-    // engine.AudioDevice(), AFTER the state is fully applied engine-side.
+    // the message thread whenever a consumed patch message changed the
+    // engine's audio device state, AFTER the state is fully applied
+    // engine-side.
     //
     // Ordering hazard (binding, Task 4 brief): this callback can fire
     // DURING engine_.Initialize() itself (a startup patch's synchronous
@@ -437,21 +503,22 @@ private:
     // pre-device-open; it just can't actually switch anything yet in that
     // case. That's fine: Start()'s own device-open step (later in Start(),
     // after Initialize() returns) is what applies the startup-carried
-    // device for real, by reading engine_.AudioDevice().outputDeviceName
+    // device for real, by reading engine_.AudioDeviceSnapshot().outputDeviceName
     // itself once deviceManager_ exists (see the "Prefer a
     // startup-patch-carried output device" comment there) — this callback
     // firing early is a no-op in that case, not a missed update, because the
-    // desired name is already recorded in engine_.AudioDevice() for Start()
-    // to read afterwards.
+    // desired name is already recorded in the engine's audio device state
+    // for Start() to read afterwards.
     //
     // For a RUNTIME patch load/revert (the callback firing after Start()
     // has completed and deviceManager_ is fully up), this callback is the
     // only path that applies the change — it behaves exactly like
     // ApplyAudioDeviceSelection's switch, just sourced from
-    // engine.AudioDevice() instead of a combo pick, and does NOT re-write
-    // engine.AudioDevice() (it's already the source of truth here).
+    // engine.AudioDeviceSnapshot() instead of a combo pick, and does NOT
+    // re-write the engine's audio device state (it's already the source of
+    // truth here).
     void OnEngineAudioDeviceChanged() {
-        const juce::String outputName = juce::String(engine_.AudioDevice().outputDeviceName);
+        const juce::String outputName = juce::String(engine_.AudioDeviceSnapshot().outputDeviceName);
         if (outputName.isEmpty()) {
             if (deviceManager_.getCurrentAudioDevice() != nullptr) {
                 SwitchOutputDevice(outputName, "patch");

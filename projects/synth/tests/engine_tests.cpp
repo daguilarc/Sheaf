@@ -979,8 +979,8 @@ TEST_CASE(engine_revert_all_to_default_restores_app_init_audio_device_state) {
 
     // Sanity: the live audio device state really is the app-configured value
     // right after Initialize.
-    REQUIRE_TRUE(engine.AudioDevice().outputDeviceName == "Speakers");
-    REQUIRE_TRUE(engine.AudioDevice().inputDeviceName == "Mic");
+    REQUIRE_TRUE(engine.AudioDeviceSnapshot().outputDeviceName == "Speakers");
+    REQUIRE_TRUE(engine.AudioDeviceSnapshot().inputDeviceName == "Mic");
 
     TestBlockBuffers buffers(2, 4);
 
@@ -998,8 +998,8 @@ TEST_CASE(engine_revert_all_to_default_restores_app_init_audio_device_state) {
 
     // The live audio device state must still equal the app's Init-configured
     // default -- NOT have been reset to an empty AudioDeviceState{}.
-    REQUIRE_TRUE(engine.AudioDevice().outputDeviceName == "Speakers");
-    REQUIRE_TRUE(engine.AudioDevice().inputDeviceName == "Mic");
+    REQUIRE_TRUE(engine.AudioDeviceSnapshot().outputDeviceName == "Speakers");
+    REQUIRE_TRUE(engine.AudioDeviceSnapshot().inputDeviceName == "Mic");
 
     EngineTestApp::initAudioDeviceState = synth::AudioDeviceState{};  // restore default for subsequent tests
 }
@@ -1016,13 +1016,13 @@ TEST_CASE(engine_tick_fires_audio_device_changed_callback_once_when_load_changes
     engine.Initialize();
     engine.Prepare(48000.0, 256);
 
-    REQUIRE_TRUE(engine.AudioDevice().outputDeviceName.empty());  // sanity: starts empty
+    REQUIRE_TRUE(engine.AudioDeviceSnapshot().outputDeviceName.empty());  // sanity: starts empty
 
     int callbackCalls = 0;
     std::string outputNameAtCallback;
     engine.SetAudioDeviceChangedCallback([&]() {
         ++callbackCalls;
-        outputNameAtCallback = engine.AudioDevice().outputDeviceName;
+        outputNameAtCallback = engine.AudioDeviceSnapshot().outputDeviceName;
     });
 
     const std::filesystem::path patchDir =
@@ -1042,7 +1042,7 @@ TEST_CASE(engine_tick_fires_audio_device_changed_callback_once_when_load_changes
         synth::AudioBlock block = buffers.Block(4);
         engine.ProcessBlock(block, /*timestamp=*/0);
     }
-    REQUIRE_TRUE(engine.AudioDevice().outputDeviceName == "Interface A");  // state already applied
+    REQUIRE_TRUE(engine.AudioDeviceSnapshot().outputDeviceName == "Interface A");  // state already applied
     REQUIRE_TRUE(callbackCalls == 0);  // callback hasn't run yet: that's the tick's job
 
     engine.MessageThreadTick();
@@ -1088,7 +1088,7 @@ TEST_CASE(engine_tick_does_not_fire_audio_device_changed_callback_when_load_has_
     engine.MessageThreadTick();
 
     REQUIRE_TRUE(callbackCalls == 0);
-    REQUIRE_TRUE(engine.AudioDevice().outputDeviceName.empty());
+    REQUIRE_TRUE(engine.AudioDeviceSnapshot().outputDeviceName.empty());
 
     std::filesystem::remove_all(patchDir);
 }
@@ -1115,14 +1115,14 @@ TEST_CASE(engine_initialize_fires_audio_device_changed_callback_for_startup_load
     std::string outputNameAtCallback;
     engine.SetAudioDeviceChangedCallback([&]() {
         ++callbackCalls;
-        outputNameAtCallback = engine.AudioDevice().outputDeviceName;
+        outputNameAtCallback = engine.AudioDeviceSnapshot().outputDeviceName;
     });
 
     engine.Initialize();
 
     REQUIRE_TRUE(callbackCalls == 1);  // fired exactly once, during Initialize()
     REQUIRE_TRUE(outputNameAtCallback == "Startup Interface");
-    REQUIRE_TRUE(engine.AudioDevice().outputDeviceName == "Startup Interface");
+    REQUIRE_TRUE(engine.AudioDeviceSnapshot().outputDeviceName == "Startup Interface");
 
     std::filesystem::remove_all(root);
     EngineTestApp::testPatchesRoot.clear();
@@ -1184,6 +1184,96 @@ TEST_CASE(engine_audio_state_shadow_synced_after_startup_drain) {
     std::filesystem::remove_all(root);
     std::filesystem::remove_all(runtimePatchDir);
     EngineTestApp::testPatchesRoot.clear();
+}
+
+TEST_CASE(engine_revert_after_host_selection_fires_changed_callback) {
+    // Regression test for the reviewer's scenario (Task 3 review, Critical
+    // Finding 1): a host-initiated selection (e.g. the runtime's audio-device
+    // combo) must advance BOTH the live state and the
+    // lastNotifiedAudioDeviceState_ shadow via SetAudioDeviceFromHost. If it
+    // only wrote the live state (the old `engine_.AudioDevice().outputDeviceName
+    // = ...` pattern), the shadow would stay stale at the pre-selection value,
+    // so a later revert back to that stale shadow value would be
+    // (incorrectly) treated as "no change" and never notify the host, leaving
+    // its JUCE device selection stuck on DeviceX even though the engine's
+    // state reverted to empty.
+    EngineTestApp::testPatchesRoot.clear();
+    EngineTestApp::processLiteAlpha = 1.0f;
+    synth::Engine<EngineTestApp> engine([] { return std::uint64_t{0}; });
+    engine.Initialize();
+    engine.Prepare(48000.0, 256);
+
+    // Sanity: startup default is empty (no app-configured device, no startup
+    // patch).
+    REQUIRE_TRUE(engine.AudioDeviceSnapshot().outputDeviceName.empty());
+
+    int callbackCalls = 0;
+    std::string outputNameAtCallback;
+    engine.SetAudioDeviceChangedCallback([&]() {
+        ++callbackCalls;
+        outputNameAtCallback = engine.AudioDeviceSnapshot().outputDeviceName;
+    });
+
+    // Simulate a host-initiated selection (Runtime::ApplyAudioDeviceSelection's
+    // path): the host picks "DeviceX" in its combo.
+    engine.SetAudioDeviceFromHost(synth::AudioDeviceState{.outputDeviceName = "DeviceX", .inputDeviceName = ""});
+
+    REQUIRE_TRUE(engine.AudioDeviceSnapshot().outputDeviceName == "DeviceX");
+    REQUIRE_TRUE(callbackCalls == 0);  // host-initiated changes never fire the callback (see (b) below)
+
+    // Drive a patch REVERT (no saved patch exists, so RevertPatch() falls
+    // back to NewPatch()'s RevertAllToDefault -- the default audio device
+    // state is empty, i.e. different from "DeviceX") through
+    // ProcessBlock + MessageThreadTick.
+    const synth::PatchCommandResult revertResult = engine.Patches().RevertPatch();
+    REQUIRE_TRUE(revertResult.status == synth::PatchCommandStatus::Ok);
+
+    TestBlockBuffers buffers(2, 4);
+    {
+        synth::AudioBlock block = buffers.Block(4);
+        engine.ProcessBlock(block, /*timestamp=*/0);
+    }
+    engine.MessageThreadTick();
+
+    // The revert changed the state back to the default (empty), which is a
+    // real change relative to "DeviceX" -- the host MUST be told, so the
+    // callback fires and observes the reverted (empty) state.
+    REQUIRE_TRUE(callbackCalls == 1);
+    REQUIRE_TRUE(outputNameAtCallback.empty());
+    REQUIRE_TRUE(engine.AudioDeviceSnapshot().outputDeviceName.empty());
+}
+
+TEST_CASE(engine_set_audio_device_from_host_fires_no_callback) {
+    // (b): SetAudioDeviceFromHost itself must never fire
+    // audioDeviceChangedCallback_ -- host-initiated changes are by
+    // definition already known to the host that just made them; the
+    // callback exists solely to notify the host of changes IT did not
+    // originate (patch load/revert).
+    EngineTestApp::testPatchesRoot.clear();
+    EngineTestApp::processLiteAlpha = 1.0f;
+    synth::Engine<EngineTestApp> engine([] { return std::uint64_t{0}; });
+    engine.Initialize();
+    engine.Prepare(48000.0, 256);
+
+    int callbackCalls = 0;
+    engine.SetAudioDeviceChangedCallback([&]() { ++callbackCalls; });
+
+    engine.SetAudioDeviceFromHost(synth::AudioDeviceState{.outputDeviceName = "Interface B", .inputDeviceName = ""});
+    REQUIRE_TRUE(engine.AudioDeviceSnapshot().outputDeviceName == "Interface B");
+    REQUIRE_TRUE(callbackCalls == 0);
+
+    // Also confirm no *pending* notification was left for the tick to
+    // deliver later -- a tick with nothing else happening must stay at 0.
+    engine.MessageThreadTick();
+    REQUIRE_TRUE(callbackCalls == 0);
+
+    // A second host-initiated call to a different value likewise fires
+    // nothing.
+    engine.SetAudioDeviceFromHost(synth::AudioDeviceState{.outputDeviceName = "Interface C", .inputDeviceName = ""});
+    REQUIRE_TRUE(engine.AudioDeviceSnapshot().outputDeviceName == "Interface C");
+    REQUIRE_TRUE(callbackCalls == 0);
+    engine.MessageThreadTick();
+    REQUIRE_TRUE(callbackCalls == 0);
 }
 
 int main() {
