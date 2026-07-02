@@ -1050,6 +1050,13 @@ TEST_CASE(engine_tick_fires_audio_device_changed_callback_once_when_load_changes
     REQUIRE_TRUE(callbackCalls == 1);  // fired exactly once
     REQUIRE_TRUE(outputNameAtCallback == "Interface A");  // callback observed the already-applied new state
 
+    // A second tick with no new device-changing patch message must NOT
+    // fire again: audioDeviceChangedPending_ was consumed (exchanged false)
+    // by the first tick, so the flag must stay cleared here.
+    engine.MessageThreadTick();
+
+    REQUIRE_TRUE(callbackCalls == 1);  // still exactly once: flag was consumed, not just observed
+
     std::filesystem::remove_all(patchDir);
 }
 
