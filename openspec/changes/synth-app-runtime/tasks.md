@@ -2,9 +2,9 @@
 
 ## 1. Application contract headers (JUCE-free core)
 
-- [ ] 1.1 Add `include/synth/AppContext.hpp` with `RuntimeConfig` (app name, audio in/out counts, preferred sample rate/block size, patches root, logs root, UI dimensions/frame rate), `AudioBlock` (input/output pointers, actual channel counts, frame count), and `AppContext` (non-owning pointers to parameter manager, patch manager, UI/MIDI message buses, parameter message out bus, patch buses, MIDI sender, live + default MIDI profile configs, runtime config, late-bound UI-state pointer)
-- [ ] 1.2 Extend a JUCE-free test binary to include the new header and assert it compiles without `JUCE_MAJOR_VERSION` (sar-1, sar-6 block-view scenario)
-- [ ] 1.3 Add contract doc comments pinning thread roles per bus/manager pointer (producer/consumer thread per sar-7)
+- [x] 1.1 Add `include/synth/AppContext.hpp` with `RuntimeConfig` (app name, audio in/out counts, preferred sample rate/block size, patches root, logs root, UI dimensions/frame rate), `AudioBlock` (input/output pointers, actual channel counts, frame count), and `AppContext` (non-owning pointers to parameter manager, patch manager, UI/MIDI message buses, parameter message out bus, patch buses, MIDI sender, live + default MIDI profile configs, runtime config, late-bound UI-state pointer)
+- [x] 1.2 Extend a JUCE-free test binary to include the new header and assert it compiles without `JUCE_MAJOR_VERSION` (sar-1, sar-6 block-view scenario)
+- [x] 1.3 Add contract doc comments pinning thread roles per bus/manager pointer (producer/consumer thread per sar-7)
 
 ## 2. Async logging port (JUCE-free core)
 
