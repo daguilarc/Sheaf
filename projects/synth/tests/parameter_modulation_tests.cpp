@@ -2,6 +2,7 @@
 #include "synth/Json.hpp"
 #include "synth/ParameterModulation.hpp"
 #include "synth/PatchPersistence.hpp"
+#include "synth/ThreadId.hpp"
 
 #ifdef JUCE_MAJOR_VERSION
 #error "synth core tests must not see JUCE headers"
@@ -7724,6 +7725,41 @@ TEST_CASE(compute_all_targets_preserves_process_lite_slew) {
 
     manager.ComputeAllParameters();           // existing API still snaps
     REQUIRE_NEAR(parameter.Get(0), 1.0f, 1e-4f);
+}
+
+namespace {
+
+// Regression for slog-2: MidiSender's worker thread (Run()) must tag itself
+// with ThreadId::MidiSender so log messages produced while sending (and any
+// future thread-identity-sensitive code on that thread) observe the correct
+// identity. This sink records synth::GetCurrentThreadId() as observed from
+// inside Send(), which runs on the sender's worker thread.
+struct RecordingMidiOutputSink final : synth::IMidiOutputSink {
+    std::mutex mutex;
+    std::optional<synth::ThreadId> observedThreadId;
+
+    void Send(const synth::BasicMidi&) override {
+        std::lock_guard lock(mutex);
+        observedThreadId = synth::GetCurrentThreadId();
+    }
+};
+
+}  // namespace
+
+TEST_CASE(midi_sender_run_tags_worker_thread_with_midi_sender_id) {
+    RecordingMidiOutputSink sink;
+    synth::MidiSender sender;
+    sender.SetSink(&sink);
+    sender.Start();
+
+    REQUIRE_TRUE(sender.Enqueue(synth::BasicMidi::CC(0, 0, 1, 64)));
+    REQUIRE_TRUE(sender.FlushForTests(std::chrono::milliseconds(1000)));
+
+    sender.Stop();
+
+    std::lock_guard lock(sink.mutex);
+    REQUIRE_TRUE(sink.observedThreadId.has_value());
+    REQUIRE_TRUE(*sink.observedThreadId == synth::ThreadId::MidiSender);
 }
 
 int main() {

@@ -1,4 +1,5 @@
 #include "synth/MidiController.hpp"
+#include "synth/ThreadId.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -595,6 +596,7 @@ bool MidiSender::FlushForTests(std::chrono::milliseconds timeout) {
 }
 
 void MidiSender::Run() {
+    ScopedThreadId scopedThreadId(ThreadId::MidiSender);
     for (;;) {
         BasicMidi midi;
         IMidiOutputSink* sink = nullptr;
