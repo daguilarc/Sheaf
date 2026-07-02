@@ -37,38 +37,6 @@
 
 namespace synth_runtime {
 
-namespace detail {
-
-inline const char* PatchCommandStatusName(synth::PatchCommandStatus status) {
-    switch (status) {
-    case synth::PatchCommandStatus::Ok:
-        return "Ok";
-    case synth::PatchCommandStatus::Pending:
-        return "Pending";
-    case synth::PatchCommandStatus::NoCompletion:
-        return "NoCompletion";
-    case synth::PatchCommandStatus::Written:
-        return "Written";
-    case synth::PatchCommandStatus::NeedsSaveAsPath:
-        return "NeedsSaveAsPath";
-    case synth::PatchCommandStatus::Busy:
-        return "Busy";
-    case synth::PatchCommandStatus::AlreadyExists:
-        return "AlreadyExists";
-    case synth::PatchCommandStatus::NotFound:
-        return "NotFound";
-    case synth::PatchCommandStatus::InvalidPatch:
-        return "InvalidPatch";
-    case synth::PatchCommandStatus::QueueFull:
-        return "QueueFull";
-    case synth::PatchCommandStatus::IOError:
-        return "IOError";
-    }
-    return "Unknown";
-}
-
-}  // namespace detail
-
 template <synth::SynthApplication App>
 class Runtime : private juce::AudioIODeviceCallback, private juce::Timer {
 public:
@@ -282,7 +250,7 @@ private:
     }
 
     void LogPatchCommand(const char* action, const synth::PatchCommandResult& result) {
-        INFO("%s status=%s requestId=%llu", action, detail::PatchCommandStatusName(result.status),
+        INFO("%s status=%s requestId=%llu", action, synth::PatchCommandStatusName(result.status),
              static_cast<unsigned long long>(result.requestId));
     }
 

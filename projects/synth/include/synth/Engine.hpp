@@ -215,6 +215,7 @@ public:
                 const PatchApplyStatus retryStatus = ApplyPatchMessage(
                     stashed, manager_, midiProfileConfig_, defaultMidiProfileConfig_, endpoints_,
                     defaultEndpoints_, patchOutputBus_, serializationContext_);
+                LogPatchApplyOutcome(stashed, retryStatus);
                 if (retryStatus == PatchApplyStatus::Applied || retryStatus == PatchApplyStatus::Reverted) {
                     midiRebuildPending_.store(true, std::memory_order_release);
                     DrainPatchInputBus();
@@ -272,6 +273,11 @@ public:
                 parameterMessage.group == nullptr) {
                 continue;
             }
+            // slog-7: INFO-log storage-batch provisioning (group pointer +
+            // requested count) so a session log shows when/how often groups
+            // are reinforced with additional parameter storage.
+            INFO("MessageThreadTick: provisioning storage batch for group %p (requested=%zu)",
+                 static_cast<const void*>(parameterMessage.group), parameterMessage.requestedParameters);
             parameterMessage.group->AddParameterStorageBatch(MakeParameterStorageBatch(
                 parameterMessage.group->Config(), parameterMessage.group->GestureCount(),
                 parameterMessage.requestedParameters));
@@ -284,6 +290,11 @@ public:
         const PatchCommandResult patchResult = patchManager_.ProcessResponses();
         if (patchResult.status != PatchCommandStatus::NoCompletion) {
             lastTickPatchResult_ = patchResult;
+            // slog-7: INFO-log non-NoCompletion patch command results (status
+            // name + path) so patch save/load/revert activity is visible in
+            // the session log.
+            INFO("MessageThreadTick: patch command result status=%s path=%s",
+                 PatchCommandStatusName(patchResult.status), patchResult.path.string().c_str());
         }
 
         if (midiRebuildPending_.load(std::memory_order_acquire)) {
@@ -433,6 +444,7 @@ private:
             const PatchApplyStatus status = ApplyPatchMessage(
                 patchMessage, manager_, midiProfileConfig_, defaultMidiProfileConfig_, endpoints_,
                 defaultEndpoints_, patchOutputBus_, serializationContext_);
+            LogPatchApplyOutcome(patchMessage, status);
             if (status == PatchApplyStatus::Applied || status == PatchApplyStatus::Reverted) {
                 midiRebuildPending_.store(true, std::memory_order_release);
             } else if (status == PatchApplyStatus::ArenaExhausted) {
@@ -441,6 +453,18 @@ private:
                 break;
             }
         }
+    }
+
+    // slog-7: INFO-log each ApplyPatchMessage outcome (message type + apply
+    // status name) from the audio-thread patch drain (ProcessBlock's no-stash
+    // drain loop and its stashed-message retry). This runs on the audio
+    // thread, but the logger's producer path (AsyncLogQueue::Log) is
+    // audio-safe (slog-3: no locks, no heap allocation, no IO), and patch
+    // commands are rare/user-initiated, so the extra INFO call per message is
+    // negligible relative to block-processing cost.
+    void LogPatchApplyOutcome(const PatchMessageIn& message, PatchApplyStatus status) {
+        INFO("ProcessBlock: patch message type=%s apply-status=%s", PatchMessageInTypeName(message.type),
+             PatchApplyStatusName(status));
     }
 
     // MessageThreadTick's (Task 5) sole responsibility for the drain

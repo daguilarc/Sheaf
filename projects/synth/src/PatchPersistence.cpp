@@ -406,6 +406,64 @@ PatchApplyStatus ApplyPatchMessage(
     return PatchApplyStatus::InvalidJSON;
 }
 
+const char* PatchApplyStatusName(PatchApplyStatus status) {
+    switch (status) {
+    case PatchApplyStatus::Applied:
+        return "Applied";
+    case PatchApplyStatus::Reverted:
+        return "Reverted";
+    case PatchApplyStatus::Serialized:
+        return "Serialized";
+    case PatchApplyStatus::InvalidJSON:
+        return "InvalidJSON";
+    case PatchApplyStatus::OutputQueueFull:
+        return "OutputQueueFull";
+    case PatchApplyStatus::ArenaExhausted:
+        return "ArenaExhausted";
+    }
+    return "Unknown";
+}
+
+const char* PatchMessageInTypeName(PatchMessageIn::Type type) {
+    switch (type) {
+    case PatchMessageIn::Type::LoadFromJSON:
+        return "LoadFromJSON";
+    case PatchMessageIn::Type::RevertAllToDefault:
+        return "RevertAllToDefault";
+    case PatchMessageIn::Type::SerializeToJSON:
+        return "SerializeToJSON";
+    }
+    return "Unknown";
+}
+
+const char* PatchCommandStatusName(PatchCommandStatus status) {
+    switch (status) {
+    case PatchCommandStatus::Ok:
+        return "Ok";
+    case PatchCommandStatus::Pending:
+        return "Pending";
+    case PatchCommandStatus::NoCompletion:
+        return "NoCompletion";
+    case PatchCommandStatus::Written:
+        return "Written";
+    case PatchCommandStatus::NeedsSaveAsPath:
+        return "NeedsSaveAsPath";
+    case PatchCommandStatus::Busy:
+        return "Busy";
+    case PatchCommandStatus::AlreadyExists:
+        return "AlreadyExists";
+    case PatchCommandStatus::NotFound:
+        return "NotFound";
+    case PatchCommandStatus::InvalidPatch:
+        return "InvalidPatch";
+    case PatchCommandStatus::QueueFull:
+        return "QueueFull";
+    case PatchCommandStatus::IOError:
+        return "IOError";
+    }
+    return "Unknown";
+}
+
 PatchManager::PatchManager(PatchMessageInBus* inputBus, MessageOutBus* outputBus,
                            std::size_t initialArenaCapacity)
     : inputBus_(inputBus),

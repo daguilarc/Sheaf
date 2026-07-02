@@ -149,6 +149,12 @@ PatchApplyStatus ApplyPatchMessage(
     MidiEndpointState& endpoints, const MidiEndpointState& defaultEndpoints,
     MessageOutBus& outputBus, PatchSerializationContext context = {});
 
+// Printf-safe (%s) status-name helpers for slog-7 INFO logging (Engine.hpp's
+// MessageThreadTick/ProcessBlock and the runtime shell's LogPatchCommand
+// share these rather than each maintaining their own switch).
+const char* PatchApplyStatusName(PatchApplyStatus status);
+const char* PatchMessageInTypeName(PatchMessageIn::Type type);
+
 enum class PatchCommandStatus {
     Ok,
     Pending,
@@ -168,6 +174,10 @@ struct PatchCommandResult {
     std::uint64_t requestId = 0;
     std::filesystem::path path;
 };
+
+// See the comment on PatchApplyStatusName above: shared by Engine.hpp's
+// slog-7 logging and the runtime shell's LogPatchCommand.
+const char* PatchCommandStatusName(PatchCommandStatus status);
 
 class PatchManager {
 public:

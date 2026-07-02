@@ -700,6 +700,88 @@ TEST_CASE(engine_tick_grows_arena_and_retries_stashed_patch_message) {
     std::filesystem::remove_all(saveDir);
 }
 
+TEST_CASE(engine_logs_patch_apply_and_storage_batch_activity_for_slog_7) {
+    // Regression for slog-7: the audio-thread patch drain (ProcessBlock) must
+    // INFO-log each ApplyPatchMessage outcome, and the message-thread tick
+    // must INFO-log storage-batch provisioning. Both run on ThreadId::Unknown
+    // in this JUCE-free test binary (no ScopedThreadId tagging here), so
+    // QueueSizeForTesting(ThreadId::Unknown) is where both land.
+    synth::AsyncLogQueue& log = synth::AsyncLogQueue::s_instance;
+    log.ResetForTesting();
+
+    // --- Patch apply outcome, logged from ProcessBlock's audio-thread drain ---
+    EngineTestApp::testPatchesRoot.clear();
+    EngineTestApp::processLiteAlpha = 1.0f;
+    synth::Engine<EngineTestApp> engine([] { return std::uint64_t{0}; });
+    engine.Initialize();
+    engine.Prepare(48000.0, 256);
+
+    // NewPatch() enqueues a RevertAllToDefault message onto patchInputBus_;
+    // ProcessBlock's drain applies it synchronously and must log the outcome.
+    const synth::PatchCommandResult newPatchResult = engine.Patches().NewPatch();
+    REQUIRE_TRUE(newPatchResult.status == synth::PatchCommandStatus::Ok);
+
+    const std::size_t queueSizeBeforePatchDrain = log.QueueSizeForTesting(synth::ThreadId::Unknown);
+    TestBlockBuffers buffers(2, 4);
+    {
+        synth::AudioBlock block = buffers.Block(4);
+        engine.ProcessBlock(block, /*timestamp=*/0);
+    }
+    REQUIRE_TRUE(log.QueueSizeForTesting(synth::ThreadId::Unknown) > queueSizeBeforePatchDrain);
+
+    // --- Storage-batch provisioning, logged from MessageThreadTick ---
+    struct TinyGroupApp {
+        static synth::RuntimeConfig Config() {
+            synth::RuntimeConfig config;
+            config.appName = "EngineLoggingTinyGroupTest";
+            config.numAudioOutputs = 2;
+            return config;
+        }
+        synth::AppContext* context = nullptr;
+        synth::ParameterGroup* group = nullptr;
+        synth::Bank* bank = nullptr;
+        synth::BankSlot* slot = nullptr;
+        synth::Parameter* carrier = nullptr;
+
+        void Init(synth::AppContext* ctx) {
+            context = ctx;
+            group = &ctx->parameterManager->CreateGroup(
+                {.numVoices = 1, .numModulators = 2, .numScenes = 1, .maxParameters = 2});
+            carrier = &ctx->parameterManager->CreateParameter(*group, {.name = "Carrier", .defaultValue = 0.5f});
+            auto& filler = ctx->parameterManager->CreateParameter(*group, {.name = "Filler", .defaultValue = 0.25f});
+            (void)filler;
+            bank = &ctx->parameterManager->CreateBank();
+            bank->AddMapping(1, *carrier);
+            bank->AddMapping(2, filler);
+            slot = &ctx->parameterManager->CreateBankSlot();
+            slot->AddPhysicalEncoder(1);
+            slot->AddPhysicalEncoder(2);
+            slot->AddPhysicalEncoder(3);
+            slot->SelectBank(bank);
+        }
+        void ProcessBlock(synth::AudioBlock&) {}
+    };
+
+    synth::Engine<TinyGroupApp> tinyEngine([] { return std::uint64_t{0}; });
+    tinyEngine.Initialize();
+    tinyEngine.Prepare(48000.0, 256);
+
+    synth::BankSlot* slot = tinyEngine.Application().slot;
+    slot->HandlePress(1);  // triggers the deferred-growth path (ParameterStorageBatchNeeded)
+
+    TestBlockBuffers tinyBuffers(2, 4);
+    {
+        synth::AudioBlock block = tinyBuffers.Block(4);
+        tinyEngine.ProcessBlock(block, /*timestamp=*/0);
+    }
+
+    const std::size_t queueSizeBeforeTick = log.QueueSizeForTesting(synth::ThreadId::Unknown);
+    tinyEngine.MessageThreadTick();  // drains parameterMessageOutBus_, logs storage-batch provisioning
+    REQUIRE_TRUE(log.QueueSizeForTesting(synth::ThreadId::Unknown) > queueSizeBeforeTick);
+
+    log.ResetForTesting();
+}
+
 namespace {
 
 // App variant exercising the optional HasProcessFrame<App> control-rate
