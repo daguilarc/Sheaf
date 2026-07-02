@@ -90,6 +90,48 @@ std::filesystem::path UseScratchPatchesRoot(const char* testName) {
     return root;
 }
 
+// Snapshot of a settled output window, used to prove a Turn actually changes
+// the AUDIBLE output (not just a tracked parameter value). Captured via
+// rig.ClearOutput() + rig.RunBlocks(count) + rig.Output(), copying every
+// frame/channel sample out before the rig's capture ring can evict them.
+using OutputWindow = std::vector<synth_rig::SynthRig<synth_miniapp::MiniAppCore>::OutputFrame>;
+
+OutputWindow CaptureSettledOutputWindow(synth_rig::SynthRig<synth_miniapp::MiniAppCore>& rig, std::size_t numBlocks) {
+    rig.ClearOutput();
+    rig.RunBlocks(numBlocks);
+    return rig.Output();
+}
+
+// True if any frame/channel sample differs by more than tolerance between the
+// two windows (same shape assumed -- both captured from the same rig/config).
+// Used to assert a Turn produces a materially different output signal, not
+// just a changed parameter value that never reaches the audio path.
+bool OutputWindowsDifferMaterially(const OutputWindow& before, const OutputWindow& after, float tolerance) {
+    const std::size_t frameCount = std::min(before.size(), after.size());
+    for (std::size_t frame = 0; frame < frameCount; ++frame) {
+        const auto& beforeChannels = before[frame].channels;
+        const auto& afterChannels = after[frame].channels;
+        const std::size_t channelCount = std::min(beforeChannels.size(), afterChannels.size());
+        for (std::size_t ch = 0; ch < channelCount; ++ch) {
+            if (std::fabs(afterChannels[ch] - beforeChannels[ch]) > tolerance) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+bool AllSamplesFinite(const OutputWindow& window) {
+    for (const auto& frame : window) {
+        for (const float sample : frame.channels) {
+            if (!std::isfinite(sample)) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 }  // namespace
 
 TEST_CASE(miniapp_rig_initializes_headlessly_and_runs) {
@@ -157,9 +199,23 @@ TEST_CASE(miniapp_rig_tune_turn_changes_output) {
     const synth::ParameterId tuneId = rig.Application().VcoParameterIds().tune;
     const float before = rig.ParameterValue(tuneId);
 
-    rig.Turn(kSlotIx, kTunePosition, 0.3f);
-    rig.RunBlocks(16);
+    // Capture a settled output window BEFORE the Turn, so the after-window
+    // comparison isolates the Turn's effect rather than startup transients.
+    const OutputWindow windowBefore = CaptureSettledOutputWindow(rig, 8);
 
+    rig.Turn(kSlotIx, kTunePosition, 0.3f);
+    rig.RunBlocks(16);  // let the parameter slew settle before capturing
+
+    const OutputWindow windowAfter = CaptureSettledOutputWindow(rig, 8);
+
+    // Primary assertion (the brief's actual requirement): Tune's Turn must
+    // audibly change the OUTPUT signal, not just the tracked parameter.
+    REQUIRE_TRUE(AllSamplesFinite(windowBefore));
+    REQUIRE_TRUE(AllSamplesFinite(windowAfter));
+    REQUIRE_TRUE(OutputWindowsDifferMaterially(windowBefore, windowAfter, 1e-4f));
+
+    // Secondary (parameter-value) checks, kept for regression coverage of
+    // the production Turn(slot, position) -> parameter routing path.
     const float after = rig.ParameterValue(tuneId);
     REQUIRE_TRUE(after != before);
     REQUIRE_NEAR(after, before + 0.3f, 1e-3f);
@@ -174,9 +230,24 @@ TEST_CASE(miniapp_rig_shape_turn_changes_output) {
     const synth::ParameterId shapeId = rig.Application().VcoParameterIds().shape;
     const float before = rig.ParameterValue(shapeId);
 
-    rig.Turn(kSlotIx, kShapePosition, 0.4f);
-    rig.RunBlocks(16);
+    // Capture a settled output window BEFORE the Turn, so the after-window
+    // comparison isolates the Turn's effect rather than startup transients.
+    const OutputWindow windowBefore = CaptureSettledOutputWindow(rig, 8);
 
+    rig.Turn(kSlotIx, kShapePosition, 0.4f);
+    rig.RunBlocks(16);  // let the parameter slew settle before capturing
+
+    const OutputWindow windowAfter = CaptureSettledOutputWindow(rig, 8);
+
+    // Primary assertion (the brief's actual requirement): Shape's Turn must
+    // audibly change the OUTPUT signal (waveshape), not just the tracked
+    // parameter.
+    REQUIRE_TRUE(AllSamplesFinite(windowBefore));
+    REQUIRE_TRUE(AllSamplesFinite(windowAfter));
+    REQUIRE_TRUE(OutputWindowsDifferMaterially(windowBefore, windowAfter, 1e-4f));
+
+    // Secondary (parameter-value) checks, kept for regression coverage of
+    // the production Turn(slot, position) -> parameter routing path.
     const float after = rig.ParameterValue(shapeId);
     REQUIRE_TRUE(after != before);
     REQUIRE_NEAR(after, before + 0.4f, 1e-3f);

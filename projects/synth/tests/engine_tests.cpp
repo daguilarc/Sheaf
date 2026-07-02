@@ -700,6 +700,61 @@ TEST_CASE(engine_tick_grows_arena_and_retries_stashed_patch_message) {
     std::filesystem::remove_all(saveDir);
 }
 
+TEST_CASE(engine_revert_all_to_default_restores_app_init_midi_profile_not_empty) {
+    // Regression for the default-MIDI-profile gap: Engine::Initialize() must
+    // snapshot defaultMidiProfileConfig_/defaultEndpoints_ from the live
+    // profile the app's Init() configured, BEFORE any startup patch applies.
+    // Without that snapshot, RevertAllToDefault (dispatched by
+    // Patches().NewPatch() below) resets midiProfileConfig_ to a
+    // default-constructed (empty) MidiControllerProfileConfig instead of
+    // back to the app's real default, silently dropping MIDI control
+    // surface responsiveness.
+    EngineTestApp::testPatchesRoot.clear();
+    EngineTestApp::processLiteAlpha = 1.0f;
+    EngineTestApp::wantEncoderMidiInput = true;  // Init() sets a non-empty live profile (encoderInput)
+
+    synth::Engine<EngineTestApp> engine([] { return std::uint64_t{0}; });
+    engine.Initialize();
+    engine.Prepare(48000.0, 256);
+
+    // Sanity: the live profile really is non-empty right after Initialize,
+    // matching what the app's Init() configured.
+    REQUIRE_TRUE(engine.Context().midiProfileConfig->encoderInput.has_value());
+
+    TestBlockBuffers buffers(2, 4);
+
+    // NewPatch() dispatches RevertAllToDefault onto patchInputBus_ (see
+    // PatchManager::NewPatch() in src/PatchPersistence.cpp); no patch is
+    // loaded/saved here, so this exercises the "brand new patch" / revert
+    // path directly against whatever Initialize() snapshotted as default.
+    // NewPatch() itself returns Ok synchronously (it only enqueues the
+    // message); the actual revert happens when ProcessBlock drains it below.
+    const synth::PatchCommandResult newPatchResult = engine.Patches().NewPatch();
+    REQUIRE_TRUE(newPatchResult.status == synth::PatchCommandStatus::Ok);
+
+    {
+        // ProcessBlock drains patchInputBus_ and applies RevertAllToDefault
+        // synchronously (no arena growth needed for this message type).
+        synth::AudioBlock block = buffers.Block(4);
+        engine.ProcessBlock(block, /*timestamp=*/0);
+    }
+    engine.MessageThreadTick();
+
+    // The live profile must still equal the app's Init-configured default --
+    // i.e. still have an encoderInput mapping -- NOT have been reset to an
+    // empty MidiControllerProfileConfig{}.
+    REQUIRE_TRUE(engine.Context().midiProfileConfig->encoderInput.has_value());
+
+    // Also confirm the default profile snapshot itself carries the mapping
+    // (not just that the live profile happens to still have it): the
+    // revert path copies defaultMidiProfileConfig_ into midiProfileConfig_,
+    // so if the snapshot were empty the assertion above would already have
+    // failed; this checks the snapshot directly for a clearer failure signal.
+    REQUIRE_TRUE(engine.Context().defaultMidiProfileConfig->encoderInput.has_value());
+
+    EngineTestApp::wantEncoderMidiInput = false;  // restore default for subsequent tests
+}
+
 int main() {
     int failed = 0;
     for (const auto& test : Registry()) {

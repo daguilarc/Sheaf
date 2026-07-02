@@ -91,6 +91,9 @@ public:
     //      is filled in here since it depends on the application)
     //   3. AsyncLogQueue::s_instance.SetSampleCounterSource(&sampleCounter_)
     //   4. app_.Init(&context_)                    -- context.uiState is null here
+    //   4a. snapshot defaultMidiProfileConfig_ = midiProfileConfig_ and
+    //       defaultEndpoints_ = endpoints_ (the app's Init-configured live
+    //       profile becomes the default profile revert/new-patch restore to)
     //   5. manager_.CaptureDefaultControlState()
     //   6. uiState_ = manager_.CreateUIState(); context_.uiState = uiState_.get()
     //   7. RebuildMidiProcessors() (silent: this first, pre-startup-patch
@@ -112,6 +115,18 @@ public:
         AsyncLogQueue::s_instance.SetSampleCounterSource(&sampleCounter_);
 
         app_.Init(&context_);
+
+        // Snapshot the app's Init-configured live MIDI profile/endpoints as
+        // the default profile BEFORE any startup patch applies. Without
+        // this, defaultMidiProfileConfig_/defaultEndpoints_ stay
+        // default-constructed (empty), so a later RevertAllToDefault (via
+        // NewPatch()/RevertPatch() with no saved patch) would reset MIDI
+        // routing to empty instead of back to the app's real default —
+        // mirroring the old miniapp's post-construction
+        // `defaultMidiProfileConfig_ = midiProfileConfig_;` snapshot (see
+        // projects/synth/miniapp/Main.cpp).
+        defaultMidiProfileConfig_ = midiProfileConfig_;
+        defaultEndpoints_ = endpoints_;
 
         manager_.CaptureDefaultControlState();
         uiState_ = manager_.CreateUIState();
@@ -491,8 +506,15 @@ private:
     MidiSender midiSender_;
     PatchManager patchManager_;
     MidiControllerProfileConfig midiProfileConfig_;
+    // Default = the app's Init-configured profile; revert/new restore this.
+    // Snapshotted from midiProfileConfig_ in Initialize(), immediately after
+    // app_.Init(&context_) returns and before any startup patch applies (see
+    // the Initialize() binding-order comment, step 4a).
     MidiControllerProfileConfig defaultMidiProfileConfig_;
     MidiEndpointState endpoints_;
+    // Default = the app's Init-configured endpoints; revert/new restore
+    // this. Snapshotted from endpoints_ alongside defaultMidiProfileConfig_
+    // in Initialize().
     MidiEndpointState defaultEndpoints_;
     JsonArena serializationArena_;
     PatchSerializationContext serializationContext_;
