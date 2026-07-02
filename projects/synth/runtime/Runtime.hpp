@@ -9,9 +9,14 @@
 // Startup/shutdown ordering here is binding; see the Task 2 brief
 // (.superpowers/sdd/p3-task-2-brief.md) for the full rationale. MIDI
 // endpoint (re)opening is owned by the MidiPanel member (midiPanel_, Task 3):
-// onMidiProcessorsRebuilt_ forwards to
-// midiPanel_->ReopenPersistedEndpoints() so a startup-patch or runtime-load
-// profile rebuild reopens the endpoints recorded in engine.Endpoints().
+// engine.SetMidiProcessorsWillRebuildCallback forwards directly to
+// midiPanel_->OnMidiProcessorsWillRebuild() (detaching the panel's
+// forwarding processor before the engine destroys the current MIDI
+// processor chain), and onMidiProcessorsRebuilt_ forwards to
+// midiPanel_->ReopenPersistedEndpoints() (re-attaching against the fresh
+// chain and reopening the endpoints recorded in engine.Endpoints()) so a
+// startup-patch or runtime-load profile rebuild never leaves a MIDI
+// callback pointing into a destroyed processor chain.
 
 #include "synth/AppConcepts.hpp"
 #include "synth/AsyncLogger.hpp"
@@ -71,6 +76,17 @@ public:
         : startTime_(std::chrono::steady_clock::now())
         , engine_([this]() -> std::uint64_t { return NowMicros(); })
         , midiPanel_(std::make_unique<MidiPanel<App>>(engine_)) {
+        // The engine invokes this synchronously, on whichever thread is
+        // performing a rebuild, immediately BEFORE midiProcessors_ is
+        // destroyed/replaced (Initialize()'s rebuilds and
+        // MessageThreadTick()'s rebuild all funnel through
+        // Engine::RebuildMidiProcessors()). Forwarding straight to
+        // midiPanel_ (rather than through a std::function indirection like
+        // onMidiProcessorsRebuilt_) is safe here because midiPanel_ is
+        // constructed above, in this same initializer list, before this
+        // lambda can ever run.
+        engine_.SetMidiProcessorsWillRebuildCallback([this] { midiPanel_->OnMidiProcessorsWillRebuild(); });
+
         // The engine invokes this (on the message thread, from
         // MessageThreadTick or the startup-patch path in Initialize())
         // whenever midiProcessors_ has just been rebuilt.

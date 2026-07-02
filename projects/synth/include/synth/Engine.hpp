@@ -59,7 +59,8 @@ public:
         , midiProcessors_()
         , timestampProvider_(std::move(timestampProvider))
         , sampleCounter_(0)
-        , midiProcessorsRebuiltCallback_() {
+        , midiProcessorsRebuiltCallback_()
+        , midiProcessorsWillRebuildCallback_() {
         manager_.SetParameterMessageOutBus(&parameterMessageOutBus_);
         patchManager_.SetBuses(&patchInputBus_, &patchOutputBus_);
         serializationContext_.arena = &serializationArena_;
@@ -284,6 +285,24 @@ public:
     void SetMidiProcessorsRebuiltCallback(std::function<void()> callback) {
         midiProcessorsRebuiltCallback_ = std::move(callback);
     }
+    // Host lifecycle hook: gives the host a chance to detach any external
+    // pointers into the current MIDI processor chain (e.g. device-callback
+    // forwarding targets) before the chain is destroyed. Called on the
+    // thread performing the rebuild.
+    void SetMidiProcessorsWillRebuildCallback(std::function<void()> callback) {
+        midiProcessorsWillRebuildCallback_ = std::move(callback);
+    }
+    // Message-thread only: iterates midiProcessors_.outputs calling Reset()
+    // on each. Forces a full LED/value resync on MIDI output hardware (e.g.
+    // after opening/reopening an output device). Must not be called from the
+    // audio thread — midiProcessors_ is only ever replaced on the thread
+    // performing a rebuild (Initialize()/MessageThreadTick(), both
+    // message-thread-only), so this has no synchronization of its own.
+    void ResetMidiOutputProcessors() {
+        for (auto& output : midiProcessors_.outputs) {
+            output->Reset();
+        }
+    }
     MidiEndpointState& Endpoints() { return endpoints_; }
     const RuntimeConfig& Config() const { return config_; }
     std::uint64_t SampleCount() const { return sampleCounter_.load(std::memory_order_relaxed); }
@@ -363,6 +382,16 @@ private:
     // function tolerates a null UIState* since CreateMidiControllerProfile
     // does.
     void RebuildMidiProcessors() {
+        // Give the host a chance to detach any external pointers into the
+        // current midiProcessors_ chain BEFORE it is destroyed/replaced
+        // below (see SetMidiProcessorsWillRebuildCallback's doc comment).
+        // This is the single call site for the midiProcessors_ assignment,
+        // so it covers every rebuild: Initialize()'s silent first rebuild,
+        // Initialize()'s startup-patch rebuild, and MessageThreadTick()'s
+        // rebuild.
+        if (midiProcessorsWillRebuildCallback_) {
+            midiProcessorsWillRebuildCallback_();
+        }
         midiProcessors_ = CreateMidiControllerProfile(midiProfileConfig_, &midiBus_, &midiSender_, uiState_.get(),
                                                        timestampProvider_);
     }
@@ -475,6 +504,10 @@ private:
     TimestampProvider timestampProvider_;
     std::atomic<std::uint64_t> sampleCounter_{0};
     std::function<void()> midiProcessorsRebuiltCallback_;
+    // Invoked synchronously immediately BEFORE midiProcessors_ is
+    // destroyed/replaced, from RebuildMidiProcessors() (the sole assignment
+    // site). See SetMidiProcessorsWillRebuildCallback's doc comment.
+    std::function<void()> midiProcessorsWillRebuildCallback_;
 
     double sampleRate_ = 0.0;
     int blockSize_ = 0;

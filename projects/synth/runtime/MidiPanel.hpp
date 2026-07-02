@@ -14,10 +14,20 @@
 //
 // Device open/close records identifiers into engine.Endpoints() so patches
 // persist them (spm-53). Runtime wires
+// engine.SetMidiProcessorsWillRebuildCallback([this]{ panel.OnMidiProcessorsWillRebuild(); })
+// and
 // engine.SetMidiProcessorsRebuiltCallback([this]{ panel.ReopenPersistedEndpoints(); })
-// so a startup-patch or runtime-load profile rebuild reopens the endpoints
-// recorded in engine.Endpoints() against the fresh profile; an absent device
-// leaves the panel closed with no failure (spp-5).
+// so a startup-patch or runtime-load profile rebuild detaches the panel's
+// forwarding processor before the old MIDI processor chain is destroyed,
+// then reopens the endpoints recorded in engine.Endpoints() against the
+// fresh profile once the rebuild completes; an absent device leaves the
+// panel closed with no failure (spp-5).
+//
+// Note (Task 3 review, Minor, intentionally left as-is): Runtime::Start()
+// unconditionally calls ReopenPersistedEndpoints() after Initialize(),
+// which redundantly closes/reopens devices a startup patch's own rebuild
+// callback may have just opened; harmless (idempotent) and matches the old
+// miniapp's always-reopen-at-startup behavior, so not changed here.
 
 #include "synth/Engine.hpp"
 #include "synth/MidiController.hpp"
@@ -36,28 +46,40 @@ namespace synth_runtime {
 namespace detail {
 
 // Bridges synth_juce::MidiInHandler (which owns a single
-// std::unique_ptr<synth::MidiInProcessor>) to the engine's own
-// MidiInputProcessor(), which the engine rebuilds out from under the panel
-// whenever midiRebuildPending_ fires. The handler's callback thread (JUCE's
-// MIDI input thread) is untagged by MidiHandlers.hpp, so this forwarding
-// Process() applies the synth::ScopedThreadId(MidiInput) tag itself, per the
-// Task 3 brief, without modifying the library header.
+// std::unique_ptr<synth::MidiInProcessor>) to a single, fixed
+// synth::MidiInProcessor* captured at construction time (a snapshot of
+// engine.MidiInputProcessor() taken immediately after a rebuild). The
+// handler's callback thread (JUCE's MIDI input thread) is untagged by
+// MidiHandlers.hpp, so this forwarding Process() applies the
+// synth::ScopedThreadId(MidiInput) tag itself, per the Task 3 brief, without
+// modifying the library header.
+//
+// Deliberately NOT re-read from a panel-owned raw pointer on every call: the
+// engine may destroy/replace midiProcessors_ (and thus the pointee) between
+// MIDI messages, and reading a panel-owned raw pointer from the MIDI
+// callback thread without synchronization is a use-after-free race (Task 3
+// review finding). Instead ALL forwarding goes through
+// synth_juce::MidiInHandler's own mutex-guarded processor_ slot: the panel
+// detaches it (SetProcessor(nullptr)) before the engine destroys
+// midiProcessors_ (via engine.SetMidiProcessorsWillRebuildCallback) and
+// installs a fresh instance of this class — wrapping the freshly rebuilt
+// target — only after the rebuild has completed. The panel never keeps its
+// own raw target pointer.
 class EngineForwardingMidiInProcessor final : public synth::MidiInProcessor {
 public:
-    explicit EngineForwardingMidiInProcessor(synth::MidiInProcessor** target) : target_(target) {}
+    explicit EngineForwardingMidiInProcessor(synth::MidiInProcessor* target) : target_(target) {}
 
     void Process(const synth::BasicMidi& midi) override {
         synth::ScopedThreadId tag(synth::ThreadId::MidiInput);
-        if (target_ != nullptr && *target_ != nullptr) {
-            (*target_)->Process(midi);
+        if (target_ != nullptr) {
+            target_->Process(midi);
         }
     }
 
 private:
-    // Non-owning; points at whatever engine.MidiInputProcessor() currently
-    // returns. Re-read on every call since the engine may rebuild
-    // midiProcessors_ (and thus swap the pointee) between MIDI messages.
-    synth::MidiInProcessor** target_ = nullptr;
+    // Non-owning; fixed for the lifetime of this instance (one instance per
+    // rebuild generation — see the class comment).
+    synth::MidiInProcessor* target_ = nullptr;
 };
 
 }  // namespace detail
@@ -87,12 +109,11 @@ public:
         statusLabel_.setJustificationType(juce::Justification::centredLeft);
         addAndMakeVisible(statusLabel_);
 
-        // The forwarding processor's target is re-read on every incoming
-        // MIDI message (see EngineForwardingMidiInProcessor::Process), so it
-        // is safe to install once here rather than reinstalling on every
-        // engine rebuild.
-        inHandler_.SetProcessor(std::make_unique<detail::EngineForwardingMidiInProcessor>(&inputTarget_));
-        inputTarget_ = engine_.MidiInputProcessor();
+        // Installs a fresh forwarding processor wrapping the engine's
+        // just-constructed MidiInputProcessor(), through inHandler_'s own
+        // mutex-guarded SetProcessor (see the detail namespace comment on
+        // why the panel never keeps its own raw target pointer).
+        InstallForwardingProcessor();
 
         if (synth::MidiSender* sender = engine_.Context().midiSender; sender != nullptr) {
             sender->SetSink(&outHandler_);
@@ -145,13 +166,28 @@ public:
         UpdateStatus();
     }
 
+    // Wired by Runtime as engine.SetMidiProcessorsWillRebuildCallback's
+    // target: called synchronously, on whichever thread is performing the
+    // rebuild (always the message thread in practice — see Engine.hpp),
+    // immediately BEFORE the engine destroys/replaces midiProcessors_.
+    // Detaches the forwarding processor from inHandler_ (mutex-guarded, so
+    // this is safe with respect to a concurrent MIDI callback) so no
+    // in-flight or subsequent MIDI callback can dereference a processor
+    // pointer into the chain that is about to be destroyed (Task 3 review
+    // finding: processor-swap race / use-after-free).
+    void OnMidiProcessorsWillRebuild() { inHandler_.SetProcessor(nullptr); }
+
     // Wired by Runtime as engine.SetMidiProcessorsRebuiltCallback's target
     // (via onMidiProcessorsRebuilt_): opens the endpoint identifiers
     // recorded in engine.Endpoints() when the corresponding device is
     // currently present; an absent device leaves the panel closed with no
     // failure (spp-5), mirroring the old miniapp's openSavedMidiDevices.
     void ReopenPersistedEndpoints() {
-        inputTarget_ = engine_.MidiInputProcessor();
+        // Re-point the forwarding processor at the freshly rebuilt
+        // MidiInputProcessor(). OnMidiProcessorsWillRebuild() already
+        // detached the previous (now-dangling) one before the engine
+        // destroyed the old chain.
+        InstallForwardingProcessor();
 
         inHandler_.Close();
         outHandler_.Close();
@@ -162,14 +198,30 @@ public:
         if (HasDeviceIdentifier(inputDevices_, endpoints.inputIdentifier)) {
             inHandler_.Open(ToJuceString(endpoints.inputIdentifier));
         }
-        if (HasDeviceIdentifier(outputDevices_, endpoints.outputIdentifier)) {
-            outHandler_.Open(ToJuceString(endpoints.outputIdentifier));
+        if (HasDeviceIdentifier(outputDevices_, endpoints.outputIdentifier) &&
+            outHandler_.Open(ToJuceString(endpoints.outputIdentifier))) {
+            // Parity with the old miniapp's openSavedMidiDevices (Main.cpp):
+            // force a full LED/value resync on the just-reopened output
+            // device (Task 3 review finding: output reset parity).
+            engine_.ResetMidiOutputProcessors();
         }
 
         UpdateStatus();
     }
 
 private:
+    // Installs a fresh EngineForwardingMidiInProcessor wrapping the
+    // engine's current MidiInputProcessor() into inHandler_, through its
+    // mutex-guarded SetProcessor. Must only be called when midiProcessors_
+    // is not mid-rebuild (i.e. either at construction time or after
+    // ReopenPersistedEndpoints() observes the rebuilt callback) — never
+    // between OnMidiProcessorsWillRebuild() and the matching rebuilt
+    // callback.
+    void InstallForwardingProcessor() {
+        inHandler_.SetProcessor(
+            std::make_unique<detail::EngineForwardingMidiInProcessor>(engine_.MidiInputProcessor()));
+    }
+
     static juce::String ToJuceString(std::string_view text) { return juce::String(std::string(text).c_str()); }
 
     static bool SelectDeviceByIdentifier(juce::ComboBox& box, const juce::Array<juce::MidiDeviceInfo>& devices,
@@ -238,6 +290,10 @@ private:
         const juce::String identifier = SelectedOutputIdentifier();
         if (identifier.isNotEmpty() && outHandler_.Open(identifier)) {
             engine_.Endpoints().outputIdentifier = identifier.toStdString();
+            // Parity with the old miniapp's toggleMidiOutput (Main.cpp):
+            // force a full LED/value resync on the just-opened output
+            // device (Task 3 review finding: output reset parity).
+            engine_.ResetMidiOutputProcessors();
         }
         UpdateStatus();
     }
@@ -270,14 +326,12 @@ private:
 
     synth::Engine<App>& engine_;
 
+    // No panel-owned raw pointer into the MIDI processor chain: all
+    // forwarding goes through inHandler_'s own mutex-guarded processor_
+    // slot (see the detail namespace comment and OnMidiProcessorsWillRebuild
+    // / InstallForwardingProcessor).
     synth_juce::MidiInHandler inHandler_;
     synth_juce::MidiOutputHandler outHandler_;
-
-    // Re-read by EngineForwardingMidiInProcessor::Process on every incoming
-    // MIDI message; refreshed whenever the engine may have rebuilt
-    // midiProcessors_ (ReopenPersistedEndpoints, i.e. the
-    // onMidiProcessorsRebuilt_ hook).
-    synth::MidiInProcessor* inputTarget_ = nullptr;
 
     juce::TextButton refreshButton_;
     juce::ComboBox inputBox_;
