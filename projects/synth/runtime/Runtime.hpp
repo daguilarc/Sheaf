@@ -201,6 +201,12 @@ public:
     // component alongside AppComponent().
     juce::Component& MidiPanelComponent() { return *midiPanel_; }
 
+    // Installs the shell's repaint hook (Task 4): invoked at the end of
+    // every timer tick, after the message-thread tick and before DoLog(),
+    // so the shell can repaint itself and the app component in lockstep
+    // with the engine's UI-state refresh.
+    void SetRepaintHook(std::function<void()> hook) { repaintHook_ = std::move(hook); }
+
     void NewPatch() {
         const synth::PatchCommandResult result = engine_.Patches().NewPatch();
         LogPatchCommand("NewPatch", result);

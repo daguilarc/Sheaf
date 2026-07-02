@@ -1,15 +1,16 @@
 // Compile-gate entry point for apps/miniapp.
 //
-// Instantiates synth_runtime::Runtime<PlaceholderApp> to prove the Runtime
-// shell (runtime/Runtime.hpp) compiles and links against the JUCE modules
-// wired up by runtime/juce_build.mk. PlaceholderApp is a trivial
-// synth::SynthApplication: it does nothing in Init/ProcessBlock and exposes
-// an empty juce::Component. Start() is deliberately NOT called here — that
-// would open a real audio device, which must not happen in CI. This file
-// will be replaced by the real miniapp UI in a later task (see
+// Uses SYNTH_RUNTIME_MAIN (runtime/Shell.hpp) to prove the runtime shell
+// (Runtime + ShellComponent + application wrapper) compiles and links
+// against the JUCE modules wired up by runtime/juce_build.mk.
+// PlaceholderApp is a trivial synth::SynthApplication: it does nothing in
+// Init/ProcessBlock and exposes an empty juce::Component. The gate here is
+// compile+link only — the app is deliberately not launched interactively in
+// CI (that would open a real audio device and window). This file will be
+// replaced by the real miniapp UI in a later task (see
 // .superpowers/sdd/p3-task-1-brief.md).
 
-#include "Runtime.hpp"
+#include "Shell.hpp"
 
 #include <juce_gui_extra/juce_gui_extra.h>
 
@@ -38,8 +39,4 @@ private:
 
 }  // namespace
 
-int main(int, char**) {
-    juce::ScopedJuceInitialiser_GUI juceInit;
-    synth_runtime::Runtime<PlaceholderApp> runtime;
-    return 0;
-}
+SYNTH_RUNTIME_MAIN(PlaceholderApp)
