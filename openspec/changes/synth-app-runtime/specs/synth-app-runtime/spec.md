@@ -229,3 +229,32 @@ WHEN the miniapp is ported, THE miniapp SHALL be structured as a JUCE-free appli
 #### Scenario: Headless patch round-trip
 - **WHEN** the rig test edits parameters, saves a patch, perturbs state, and loads the saved patch
 - **THEN** the loaded parameter values match the saved values through the production patch message flow
+
+### Requirement: sar-15 — Audio: device selection and patch persistence
+WHEN the runtime presents configuration UI, THE runtime SHALL provide audio device selection alongside the MIDI configuration (output device, and input device when the application requests inputs) instead of always using the system default; the selection SHALL be held as a JUCE-free audio device state (empty meaning system default) that persists in the patch document and round-trips through save and load like the MIDI endpoint state, with the engine snapshotting the post-`Init` state as the default restored by revert/new; WHEN a loaded or startup patch names an audio device, THE runtime SHALL switch to that device when it is present (re-preparing the engine with the new negotiated values) and SHALL keep the current device with a visible status, not a failure, when it is absent.
+
+#### Scenario: User selects a non-default interface
+- **WHEN** the user picks an audio output device from the runtime's device selector
+- **THEN** the audio device manager switches to that device on the message thread
+- **AND** the engine is re-prepared with the device's actual sample rate and block size
+
+#### Scenario: Device selection round-trips through a patch
+- **WHEN** a patch saved with a named output device is loaded while that device is present
+- **THEN** the runtime switches to the named device after applying the patch
+
+#### Scenario: Absent device degrades gracefully
+- **WHEN** a loaded patch names an audio device that is not currently present
+- **THEN** the current device keeps running and the status reports the missing device
+- **AND** the load itself succeeds
+
+### Requirement: sar-16 — Patches: message-side identity and save fallback
+WHEN the runtime tracks which patch is current, THE current patch identity (directory, name, and pending-save state) SHALL be owned by message-thread components (the patch manager and runtime shell) and SHALL NOT be cached on the audio side; THE runtime shell SHALL display the current patch name in its chrome, updating as commands complete; WHEN the user invokes Save while no current patch directory exists, THE shell SHALL fall through to the Save As flow rather than surfacing a needs-path failure.
+
+#### Scenario: Chrome shows the current patch
+- **WHEN** a patch is saved as or loaded from a directory
+- **THEN** the chrome displays that patch's name
+
+#### Scenario: First save falls through to Save As
+- **WHEN** the user presses Save before any patch directory exists
+- **THEN** the Save As chooser opens instead of a needs-path error
+- **AND** completing it writes the first version file and sets the current patch

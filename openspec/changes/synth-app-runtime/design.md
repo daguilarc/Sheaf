@@ -418,6 +418,37 @@ system end to end. The miniapp splits into a JUCE-free `MiniAppCore`
 modernizes `DemoModulationTests.cpp`'s role) and a thin `MiniApp` adding the
 UI component hook for the runtime.
 
+### D12 — Audio device config: patch-persisted selection, message-side patch identity
+
+Added after the initial implementation landed (user direction). Three parts:
+
+- **`AudioDeviceState`** (JUCE-free, `PatchPersistence.hpp`): mirrors
+  `MidiEndpointState` — `outputDeviceName` / `inputDeviceName` strings, empty
+  meaning "system default". It rides the patch document as an `audioDevice`
+  section (spp-2 delta), threads through `BuildPatchJSON`/`LoadPatchJSON`/
+  `ApplyPatchMessage` exactly like the MIDI endpoints (live + default pair;
+  revert restores the app default), and tolerates absent devices on load the
+  way MIDI endpoints do: keep the current device, report status, no failure.
+- **Runtime device selection**: an audio-device combo lives with the MIDI
+  panel chrome. Selection (message thread) switches the
+  `AudioDeviceManager` to the named device, which re-fires
+  `audioDeviceAboutToStart` → `engine.Prepare(actual values)`. When a patch
+  load (or startup load) carries a device name and that device is present,
+  the runtime applies it via the same path, notified from the engine's
+  consume side alongside the MIDI rebuild notification. The engine snapshots
+  the post-`Init` audio state as the default, like the MIDI profile (D10/D11
+  precedent).
+- **Patch identity is message-side state**: `PatchManager` already owns
+  `CurrentPatchDirectory()` on the message thread; the shell displays the
+  current patch name from it and never caches identity elsewhere. Save with
+  no current directory does not fail with `NeedsSaveAsPath` at the UI — the
+  shell falls through to the Save As chooser.
+
+Alternative considered for persistence location: an app-level config file
+(Smart Grid's `Configuration` + `FileManager` pattern) separate from
+patches — rejected per user direction: the audio interface is part of the
+rig setup a patch captures, exactly like which MIDI controller is attached.
+
 ### D9 — Miniapp port defines the pattern
 
 `apps/miniapp` keeps: the duophonic group config, `DualWavetableVcoModule`

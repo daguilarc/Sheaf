@@ -53,6 +53,14 @@ only the code that defines what it does.
   contract and a headless miniapp system test. Unlike the Smart Grid rig,
   which hand-replicates its production pump, this rig executes the identical
   engine code the runtime ships.
+- Add **audio device configuration** alongside the MIDI configuration: the
+  runtime lets the user select the audio interface (instead of always using
+  the system default), persists the selection in the patch document the same
+  way MIDI endpoints persist (applied when the device is present, silently
+  kept-default when absent), and re-prepares the engine on device switches.
+  Patch identity (current patch name/directory, pending-save state) is owned
+  by message-thread components; the chrome displays the current patch name,
+  and Save with no current patch falls through to the Save As flow.
 - Add an **applications directory** `projects/synth/apps/` with shared build
   scaffolding (JUCE module compilation extracted from the miniapp Makefile).
 - **Port the miniapp** to `projects/synth/apps/miniapp` as the first
