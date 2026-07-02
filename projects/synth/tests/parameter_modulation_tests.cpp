@@ -5472,6 +5472,8 @@ TEST_CASE(randomized_patch_lifecycle_simulation) {
         synth::MidiControllerProfileConfig profile = defaultProfile;
         synth::MidiEndpointState defaultEndpoints;
         synth::MidiEndpointState endpoints;
+        synth::AudioDeviceState defaultAudioDevice;
+        synth::AudioDeviceState audioDevice;
         synth::PatchMessageInBus inputBus(32);
         synth::MessageOutBus outputBus(32);
         synth::PatchManager patchManager(&inputBus, &outputBus);
@@ -5495,7 +5497,8 @@ TEST_CASE(randomized_patch_lifecycle_simulation) {
             while (inputBus.Pop(message)) {
                 const synth::PatchApplyStatus status =
                     synth::ApplyPatchMessage(message, manager, profile, defaultProfile,
-                                             endpoints, defaultEndpoints, outputBus);
+                                             endpoints, defaultEndpoints, audioDevice, defaultAudioDevice,
+                                             outputBus);
                 REQUIRE_TRUE(status == synth::PatchApplyStatus::Applied ||
                              status == synth::PatchApplyStatus::Reverted ||
                              status == synth::PatchApplyStatus::Serialized);
@@ -5823,6 +5826,8 @@ TEST_CASE(randomized_patch_lifecycle_preserves_recursive_local_modulation_depths
         synth::MidiControllerProfileConfig profile = defaultProfile;
         synth::MidiEndpointState defaultEndpoints;
         synth::MidiEndpointState endpoints;
+        synth::AudioDeviceState defaultAudioDevice;
+        synth::AudioDeviceState audioDevice;
         synth::PatchMessageInBus inputBus(32);
         synth::MessageOutBus outputBus(32);
         synth::PatchManager patchManager(&inputBus, &outputBus);
@@ -5839,7 +5844,8 @@ TEST_CASE(randomized_patch_lifecycle_preserves_recursive_local_modulation_depths
             while (inputBus.Pop(message)) {
                 const synth::PatchApplyStatus status =
                     synth::ApplyPatchMessage(message, manager, profile, defaultProfile,
-                                             endpoints, defaultEndpoints, outputBus);
+                                             endpoints, defaultEndpoints, audioDevice, defaultAudioDevice,
+                                             outputBus);
                 REQUIRE_TRUE(status == synth::PatchApplyStatus::Applied ||
                              status == synth::PatchApplyStatus::Reverted ||
                              status == synth::PatchApplyStatus::Serialized);
@@ -7172,6 +7178,103 @@ TEST_CASE(patch_json_loads_parameter_values_midi_profile_and_endpoint_identifier
     REQUIRE_TRUE(defaultedEndpoints.outputIdentifier.empty());
 }
 
+TEST_CASE(patch_json_round_trips_named_audio_device_selection) {
+    synth::ParameterManager source;
+    source.SetGestureCount(0);
+    auto& sourceGroup = source.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 0,
+        .numScenes = 1,
+        .maxParameters = 1,
+    });
+    source.CreateParameter(sourceGroup, {.name = "Cutoff", .defaultValue = 0.2f});
+
+    const synth::MidiControllerProfileConfig midiProfile = synth::WrldBldrDefaultProfileConfig({});
+    const synth::MidiEndpointState endpoints;
+    const synth::AudioDeviceState audioDevice{
+        .outputDeviceName = "Built-in Output",
+        .inputDeviceName = "Built-in Microphone",
+    };
+
+    synth::JsonArena arena(262144);
+    synth::JSON root = synth::BuildPatchJSON(arena, "Patch A", source, midiProfile, endpoints, audioDevice);
+    REQUIRE_TRUE(!arena.Failed());
+    REQUIRE_TRUE(std::string(root.Get("audioDevice").Get("outputDeviceName").StringValue()) == "Built-in Output");
+    REQUIRE_TRUE(std::string(root.Get("audioDevice").Get("inputDeviceName").StringValue()) == "Built-in Microphone");
+
+    synth::ParameterManager target;
+    target.SetGestureCount(0);
+    auto& targetGroup = target.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 0,
+        .numScenes = 1,
+        .maxParameters = 1,
+    });
+    target.CreateParameter(targetGroup, {.name = "Cutoff", .defaultValue = 0.2f});
+    synth::MidiControllerProfileConfig loadedProfile;
+    synth::AudioDeviceState loadedAudioDevice;
+
+    REQUIRE_TRUE(synth::LoadPatchJSON(root, target, loadedProfile, nullptr, &loadedAudioDevice));
+    REQUIRE_TRUE(loadedAudioDevice.outputDeviceName == "Built-in Output");
+    REQUIRE_TRUE(loadedAudioDevice.inputDeviceName == "Built-in Microphone");
+}
+
+TEST_CASE(patch_json_serialize_omits_audio_device_section_when_both_names_empty) {
+    synth::ParameterManager source;
+    source.SetGestureCount(0);
+    auto& sourceGroup = source.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 0,
+        .numScenes = 1,
+        .maxParameters = 1,
+    });
+    source.CreateParameter(sourceGroup, {.name = "Cutoff", .defaultValue = 0.2f});
+
+    const synth::MidiControllerProfileConfig midiProfile = synth::WrldBldrDefaultProfileConfig({});
+    const synth::AudioDeviceState emptyAudioDevice;
+
+    synth::JsonArena arena(262144);
+    synth::JSON root = synth::BuildPatchJSON(arena, "Patch A", source, midiProfile, {}, emptyAudioDevice);
+    REQUIRE_TRUE(!arena.Failed());
+    REQUIRE_TRUE(root.Get("audioDevice").IsNull());
+}
+
+TEST_CASE(patch_json_load_absent_audio_device_section_leaves_caller_state_untouched) {
+    synth::ParameterManager source;
+    source.SetGestureCount(0);
+    auto& sourceGroup = source.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 0,
+        .numScenes = 1,
+        .maxParameters = 1,
+    });
+    source.CreateParameter(sourceGroup, {.name = "Cutoff", .defaultValue = 0.2f});
+
+    const synth::MidiControllerProfileConfig midiProfile = synth::WrldBldrDefaultProfileConfig({});
+
+    synth::JsonArena arena(262144);
+    // Built without an audioDevice argument, both names default-empty, so no
+    // "audioDevice" key is written.
+    synth::JSON root = synth::BuildPatchJSON(arena, "Patch A", source, midiProfile);
+    REQUIRE_TRUE(root.Get("audioDevice").IsNull());
+
+    synth::ParameterManager target;
+    target.SetGestureCount(0);
+    auto& targetGroup = target.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 0,
+        .numScenes = 1,
+        .maxParameters = 1,
+    });
+    target.CreateParameter(targetGroup, {.name = "Cutoff", .defaultValue = 0.2f});
+    synth::MidiControllerProfileConfig loadedProfile;
+    synth::AudioDeviceState preexistingAudioDevice{.outputDeviceName = "Kept", .inputDeviceName = "AlsoKept"};
+
+    REQUIRE_TRUE(synth::LoadPatchJSON(root, target, loadedProfile, nullptr, &preexistingAudioDevice));
+    REQUIRE_TRUE(preexistingAudioDevice.outputDeviceName == "Kept");
+    REQUIRE_TRUE(preexistingAudioDevice.inputDeviceName == "AlsoKept");
+}
+
 TEST_CASE(patch_json_rejects_invalid_roots_without_mutating_profile_or_endpoints) {
     synth::ParameterManager manager;
     manager.SetGestureCount(0);
@@ -7419,41 +7522,96 @@ TEST_CASE(patch_messages_serialize_load_and_revert_initialized_state) {
     synth::MidiControllerProfileConfig profile = defaultProfile;
     synth::MidiEndpointState defaultEndpoints;
     synth::MidiEndpointState endpoints{.inputIdentifier = "in-a", .outputIdentifier = "out-a"};
+    synth::AudioDeviceState defaultAudioDevice;
+    synth::AudioDeviceState audioDevice{.outputDeviceName = "Speakers", .inputDeviceName = "Microphone"};
     synth::MessageOutBus outputBus(4);
 
     cutoff.SceneCenter(0) = 0.66f;
     const auto status = synth::ApplyPatchMessage(
         synth::PatchMessageIn::SerializeToJSON(42, "Patch A"), manager, profile, defaultProfile,
-        endpoints, defaultEndpoints, outputBus);
+        endpoints, defaultEndpoints, audioDevice, defaultAudioDevice, outputBus);
     REQUIRE_TRUE(status == synth::PatchApplyStatus::Serialized);
     synth::MessageOut out;
     REQUIRE_TRUE(outputBus.Pop(out));
     REQUIRE_TRUE(out.requestId == 42);
     REQUIRE_TRUE(out.document.arena != nullptr);
     REQUIRE_TRUE(synth::ValidatePatchJSON(out.document.root));
+    REQUIRE_TRUE(std::string(out.document.root.Get("audioDevice").Get("outputDeviceName").StringValue()) ==
+                 "Speakers");
     REQUIRE_TRUE(synth::ApplyPatchMessage(
                      synth::PatchMessageIn::SerializeToJSON(43, "Too Small"), manager, profile, defaultProfile,
-                     endpoints, defaultEndpoints, outputBus,
+                     endpoints, defaultEndpoints, audioDevice, defaultAudioDevice, outputBus,
                      synth::PatchSerializationContext{.initialArenaCapacity = 1, .maxArenaCapacity = 1}) ==
                  synth::PatchApplyStatus::ArenaExhausted);
 
     cutoff.SceneCenter(0) = 0.1f;
     endpoints.inputIdentifier = "changed";
+    audioDevice.outputDeviceName = "changed";
     REQUIRE_TRUE(synth::ApplyPatchMessage(
                      synth::PatchMessageIn::LoadFromJSON(out.document), manager, profile, defaultProfile,
-                     endpoints, defaultEndpoints, outputBus) == synth::PatchApplyStatus::Applied);
+                     endpoints, defaultEndpoints, audioDevice, defaultAudioDevice, outputBus) ==
+                 synth::PatchApplyStatus::Applied);
     REQUIRE_NEAR(cutoff.SceneCenter(0), 0.66f, 0.000001f);
     REQUIRE_TRUE(endpoints.inputIdentifier == "in-a");
+    REQUIRE_TRUE(audioDevice.outputDeviceName == "Speakers");
+    REQUIRE_TRUE(audioDevice.inputDeviceName == "Microphone");
 
     cutoff.SceneCenter(0) = 0.99f;
     endpoints.inputIdentifier = "changed";
+    audioDevice.outputDeviceName = "changed";
     REQUIRE_TRUE(synth::ApplyPatchMessage(
                      synth::PatchMessageIn::RevertAllToDefault(), manager, profile, defaultProfile,
-                     endpoints, defaultEndpoints, outputBus) == synth::PatchApplyStatus::Reverted);
+                     endpoints, defaultEndpoints, audioDevice, defaultAudioDevice, outputBus) ==
+                 synth::PatchApplyStatus::Reverted);
     REQUIRE_NEAR(cutoff.SceneCenter(0), 0.2f, 0.000001f);
     REQUIRE_TRUE(endpoints.inputIdentifier.empty());
+    REQUIRE_TRUE(audioDevice.outputDeviceName.empty());
+    REQUIRE_TRUE(audioDevice.inputDeviceName.empty());
     REQUIRE_TRUE(profile.encoderInput.has_value());
     REQUIRE_TRUE(profile.encoderInput->turns.size() == defaultProfile.encoderInput->turns.size());
+}
+
+TEST_CASE(apply_patch_message_load_absent_audio_device_section_leaves_state_untouched) {
+    synth::ParameterManager manager;
+    manager.SetGestureCount(1);
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 1,
+        .numScenes = 2,
+        .maxParameters = 2,
+    });
+    manager.CreateParameter(group, {.name = "Cutoff", .defaultValue = 0.2f});
+    manager.CaptureDefaultControlState();
+
+    synth::WrldBldrDefaultProfileOptions options;
+    options.visibleEncoderCount = 1;
+    options.sceneCount = 2;
+    options.bankButtonCount = 1;
+    options.gestureSelectorCount = 1;
+    const synth::MidiControllerProfileConfig defaultProfile = synth::WrldBldrDefaultProfileConfig(options);
+    synth::MidiControllerProfileConfig profile = defaultProfile;
+    synth::MidiEndpointState defaultEndpoints;
+    synth::MidiEndpointState endpoints;
+    synth::AudioDeviceState defaultAudioDevice;
+    // Both device names empty, so BuildPatchJSON omits the "audioDevice" key.
+    synth::AudioDeviceState emptyAudioDevice;
+    synth::MessageOutBus outputBus(4);
+
+    const auto serializeStatus = synth::ApplyPatchMessage(
+        synth::PatchMessageIn::SerializeToJSON(1, "No Device"), manager, profile, defaultProfile, endpoints,
+        defaultEndpoints, emptyAudioDevice, defaultAudioDevice, outputBus);
+    REQUIRE_TRUE(serializeStatus == synth::PatchApplyStatus::Serialized);
+    synth::MessageOut out;
+    REQUIRE_TRUE(outputBus.Pop(out));
+    REQUIRE_TRUE(out.document.root.Get("audioDevice").IsNull());
+
+    synth::AudioDeviceState untouchedAudioDevice{.outputDeviceName = "Preexisting", .inputDeviceName = "Existing"};
+    REQUIRE_TRUE(synth::ApplyPatchMessage(
+                     synth::PatchMessageIn::LoadFromJSON(out.document), manager, profile, defaultProfile,
+                     endpoints, defaultEndpoints, untouchedAudioDevice, defaultAudioDevice, outputBus) ==
+                 synth::PatchApplyStatus::Applied);
+    REQUIRE_TRUE(untouchedAudioDevice.outputDeviceName == "Preexisting");
+    REQUIRE_TRUE(untouchedAudioDevice.inputDeviceName == "Existing");
 }
 
 TEST_CASE(apply_patch_message_reuses_caller_arena) {
@@ -7477,6 +7635,8 @@ TEST_CASE(apply_patch_message_reuses_caller_arena) {
     synth::MidiControllerProfileConfig profile = defaultProfile;
     synth::MidiEndpointState defaultEndpoints;
     synth::MidiEndpointState endpoints{.inputIdentifier = "in-a", .outputIdentifier = "out-a"};
+    synth::AudioDeviceState defaultAudioDevice;
+    synth::AudioDeviceState audioDevice{.outputDeviceName = "Speakers", .inputDeviceName = "Microphone"};
     synth::MessageOutBus outputBus(4);
 
     synth::JsonArena arena(64 * 1024);
@@ -7488,7 +7648,7 @@ TEST_CASE(apply_patch_message_reuses_caller_arena) {
     // fully popped and read before the next call reuses the same arena.
     const auto first = synth::ApplyPatchMessage(
         synth::PatchMessageIn::SerializeToJSON(1, "A"), manager, profile, defaultProfile,
-        endpoints, defaultEndpoints, outputBus, context);
+        endpoints, defaultEndpoints, audioDevice, defaultAudioDevice, outputBus, context);
     REQUIRE_TRUE(first == synth::PatchApplyStatus::Serialized);
 
     synth::MessageOut out;
@@ -7499,7 +7659,7 @@ TEST_CASE(apply_patch_message_reuses_caller_arena) {
 
     const auto second = synth::ApplyPatchMessage(
         synth::PatchMessageIn::SerializeToJSON(2, "B"), manager, profile, defaultProfile,
-        endpoints, defaultEndpoints, outputBus, context);
+        endpoints, defaultEndpoints, audioDevice, defaultAudioDevice, outputBus, context);
     REQUIRE_TRUE(second == synth::PatchApplyStatus::Serialized);  // arena reused after prior document consumed
 
     REQUIRE_TRUE(outputBus.Pop(out));
@@ -7529,6 +7689,8 @@ TEST_CASE(apply_patch_message_reports_exhaustion_without_growing_caller_arena) {
     synth::MidiControllerProfileConfig profile = defaultProfile;
     synth::MidiEndpointState defaultEndpoints;
     synth::MidiEndpointState endpoints{.inputIdentifier = "in-a", .outputIdentifier = "out-a"};
+    synth::AudioDeviceState defaultAudioDevice;
+    synth::AudioDeviceState audioDevice{.outputDeviceName = "Speakers", .inputDeviceName = "Microphone"};
     synth::MessageOutBus outputBus(4);
 
     synth::JsonArena tiny(64);  // far too small for any patch document
@@ -7537,7 +7699,7 @@ TEST_CASE(apply_patch_message_reports_exhaustion_without_growing_caller_arena) {
 
     const auto status = synth::ApplyPatchMessage(
         synth::PatchMessageIn::SerializeToJSON(3, "C"), manager, profile, defaultProfile,
-        endpoints, defaultEndpoints, outputBus, context);
+        endpoints, defaultEndpoints, audioDevice, defaultAudioDevice, outputBus, context);
     REQUIRE_TRUE(status == synth::PatchApplyStatus::ArenaExhausted);
     REQUIRE_TRUE(tiny.Capacity() == 64);  // caller's arena was not grown/reallocated
 }
@@ -7562,6 +7724,8 @@ TEST_CASE(patch_manager_save_load_revert_lifecycle_uses_messages_and_current_dir
     synth::MidiControllerProfileConfig profile = defaultProfile;
     synth::MidiEndpointState defaultEndpoints;
     synth::MidiEndpointState endpoints;
+    synth::AudioDeviceState defaultAudioDevice;
+    synth::AudioDeviceState audioDevice;
 
     const auto tempRoot = std::filesystem::temp_directory_path() /
                           ("sheaf-synth-patch-manager-test-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
@@ -7582,7 +7746,7 @@ TEST_CASE(patch_manager_save_load_revert_lifecycle_uses_messages_and_current_dir
     REQUIRE_TRUE(message.type == synth::PatchMessageIn::Type::SerializeToJSON);
     REQUIRE_TRUE(message.requestId == saveAs.requestId);
     REQUIRE_TRUE(synth::ApplyPatchMessage(message, manager, profile, defaultProfile,
-                                          endpoints, defaultEndpoints, outputBus) == synth::PatchApplyStatus::Serialized);
+                                          endpoints, defaultEndpoints, audioDevice, defaultAudioDevice, outputBus) == synth::PatchApplyStatus::Serialized);
     synth::PatchCommandResult written = patchManager.ProcessResponses(std::chrono::system_clock::from_time_t(1700000100));
     REQUIRE_TRUE(written.status == synth::PatchCommandStatus::Written);
     REQUIRE_TRUE(patchManager.CurrentPatchDirectory().has_value());
@@ -7597,7 +7761,7 @@ TEST_CASE(patch_manager_save_load_revert_lifecycle_uses_messages_and_current_dir
     REQUIRE_TRUE(saveAs.status == synth::PatchCommandStatus::Pending);
     REQUIRE_TRUE(inputBus.Pop(message));
     REQUIRE_TRUE(synth::ApplyPatchMessage(message, manager, profile, defaultProfile,
-                                          endpoints, defaultEndpoints, outputBus) == synth::PatchApplyStatus::Serialized);
+                                          endpoints, defaultEndpoints, audioDevice, defaultAudioDevice, outputBus) == synth::PatchApplyStatus::Serialized);
     std::filesystem::create_directories(racedPatchDir);
     written = patchManager.ProcessResponses(std::chrono::system_clock::from_time_t(1700000100));
     REQUIRE_TRUE(written.status == synth::PatchCommandStatus::AlreadyExists);
@@ -7608,7 +7772,7 @@ TEST_CASE(patch_manager_save_load_revert_lifecycle_uses_messages_and_current_dir
     REQUIRE_TRUE(save.status == synth::PatchCommandStatus::Pending);
     REQUIRE_TRUE(inputBus.Pop(message));
     REQUIRE_TRUE(synth::ApplyPatchMessage(message, manager, profile, defaultProfile,
-                                          endpoints, defaultEndpoints, outputBus) == synth::PatchApplyStatus::Serialized);
+                                          endpoints, defaultEndpoints, audioDevice, defaultAudioDevice, outputBus) == synth::PatchApplyStatus::Serialized);
     written = patchManager.ProcessResponses(std::chrono::system_clock::from_time_t(1700000100));
     REQUIRE_TRUE(written.status == synth::PatchCommandStatus::Written);
     REQUIRE_TRUE(written.path != firstVersion);
@@ -7618,7 +7782,7 @@ TEST_CASE(patch_manager_save_load_revert_lifecycle_uses_messages_and_current_dir
     REQUIRE_TRUE(inputBus.Pop(message));
     REQUIRE_TRUE(message.type == synth::PatchMessageIn::Type::LoadFromJSON);
     REQUIRE_TRUE(synth::ApplyPatchMessage(message, manager, profile, defaultProfile,
-                                          endpoints, defaultEndpoints, outputBus) == synth::PatchApplyStatus::Applied);
+                                          endpoints, defaultEndpoints, audioDevice, defaultAudioDevice, outputBus) == synth::PatchApplyStatus::Applied);
     REQUIRE_NEAR(cutoff.SceneCenter(0), 0.72f, 0.000001f);
     REQUIRE_TRUE(*patchManager.CurrentPatchDirectory() == patchDir);
 
@@ -7639,7 +7803,7 @@ TEST_CASE(patch_manager_save_load_revert_lifecycle_uses_messages_and_current_dir
     REQUIRE_TRUE(inputBus.Pop(message));
     REQUIRE_TRUE(message.type == synth::PatchMessageIn::Type::LoadFromJSON);
     REQUIRE_TRUE(synth::ApplyPatchMessage(message, manager, profile, defaultProfile,
-                                          endpoints, defaultEndpoints, outputBus) == synth::PatchApplyStatus::Applied);
+                                          endpoints, defaultEndpoints, audioDevice, defaultAudioDevice, outputBus) == synth::PatchApplyStatus::Applied);
     REQUIRE_NEAR(cutoff.SceneCenter(0), 0.84f, 0.000001f);
 
     REQUIRE_TRUE(patchManager.NewPatch().status == synth::PatchCommandStatus::Ok);
@@ -7647,7 +7811,7 @@ TEST_CASE(patch_manager_save_load_revert_lifecycle_uses_messages_and_current_dir
     REQUIRE_TRUE(inputBus.Pop(message));
     REQUIRE_TRUE(message.type == synth::PatchMessageIn::Type::RevertAllToDefault);
     REQUIRE_TRUE(synth::ApplyPatchMessage(message, manager, profile, defaultProfile,
-                                          endpoints, defaultEndpoints, outputBus) == synth::PatchApplyStatus::Reverted);
+                                          endpoints, defaultEndpoints, audioDevice, defaultAudioDevice, outputBus) == synth::PatchApplyStatus::Reverted);
     REQUIRE_NEAR(cutoff.SceneCenter(0), 0.2f, 0.000001f);
 
     std::filesystem::remove_all(tempRoot);

@@ -21,13 +21,23 @@ struct MidiEndpointState {
 JSON ToJSON(JsonArena& arena, const MidiEndpointState& endpoints);
 bool FromJSON(JSON json, MidiEndpointState& endpoints);
 
+struct AudioDeviceState {
+    std::string outputDeviceName;  // empty = system default
+    std::string inputDeviceName;   // empty = system default
+};
+
+JSON ToJSON(JsonArena& arena, const AudioDeviceState& state);
+bool FromJSON(JSON json, AudioDeviceState& state);
+
 JSON BuildPatchJSON(JsonArena& arena, std::string_view patchName,
                     const ParameterManager& manager,
                     const MidiControllerProfileConfig& midiProfile,
-                    const MidiEndpointState& endpoints = {});
+                    const MidiEndpointState& endpoints = {},
+                    const AudioDeviceState& audioDevice = {});
 bool LoadPatchJSON(JSON root, ParameterManager& manager,
                    MidiControllerProfileConfig& midiProfile,
-                   MidiEndpointState* endpoints = nullptr);
+                   MidiEndpointState* endpoints = nullptr,
+                   AudioDeviceState* audioDevice = nullptr);
 bool ValidatePatchJSON(JSON root);
 
 std::string TimestampPatchFilename(std::chrono::system_clock::time_point now);
@@ -147,6 +157,7 @@ PatchApplyStatus ApplyPatchMessage(
     const PatchMessageIn& message, ParameterManager& manager,
     MidiControllerProfileConfig& midiProfile, const MidiControllerProfileConfig& defaultMidiProfile,
     MidiEndpointState& endpoints, const MidiEndpointState& defaultEndpoints,
+    AudioDeviceState& audioDevice, const AudioDeviceState& defaultAudioDevice,
     MessageOutBus& outputBus, PatchSerializationContext context = {});
 
 // Printf-safe (%s) status-name helpers for slog-7 INFO logging (Engine.hpp's

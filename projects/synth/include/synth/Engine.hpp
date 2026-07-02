@@ -214,7 +214,8 @@ public:
                 pendingPatchMessage_.reset();
                 const PatchApplyStatus retryStatus = ApplyPatchMessage(
                     stashed, manager_, midiProfileConfig_, defaultMidiProfileConfig_, endpoints_,
-                    defaultEndpoints_, patchOutputBus_, serializationContext_);
+                    defaultEndpoints_, audioDeviceState_, defaultAudioDeviceState_, patchOutputBus_,
+                    serializationContext_);
                 LogPatchApplyOutcome(stashed, retryStatus);
                 if (retryStatus == PatchApplyStatus::Applied || retryStatus == PatchApplyStatus::Reverted) {
                     midiRebuildPending_.store(true, std::memory_order_release);
@@ -445,7 +446,8 @@ private:
         while (patchInputBus_.Pop(patchMessage)) {
             const PatchApplyStatus status = ApplyPatchMessage(
                 patchMessage, manager_, midiProfileConfig_, defaultMidiProfileConfig_, endpoints_,
-                defaultEndpoints_, patchOutputBus_, serializationContext_);
+                defaultEndpoints_, audioDeviceState_, defaultAudioDeviceState_, patchOutputBus_,
+                serializationContext_);
             LogPatchApplyOutcome(patchMessage, status);
             if (status == PatchApplyStatus::Applied || status == PatchApplyStatus::Reverted) {
                 midiRebuildPending_.store(true, std::memory_order_release);
@@ -515,13 +517,15 @@ private:
         while (patchInputBus_.Pop(message)) {
             PatchApplyStatus status = ApplyPatchMessage(message, manager_, midiProfileConfig_,
                                                         defaultMidiProfileConfig_, endpoints_, defaultEndpoints_,
-                                                        patchOutputBus_, serializationContext_);
+                                                        audioDeviceState_, defaultAudioDeviceState_, patchOutputBus_,
+                                                        serializationContext_);
             if (status == PatchApplyStatus::ArenaExhausted) {
                 // Pre-audio only: growing here is safe because the audio
                 // thread has not started running ProcessBlock yet.
                 serializationArena_.GrowAndReset();
                 status = ApplyPatchMessage(message, manager_, midiProfileConfig_, defaultMidiProfileConfig_,
-                                           endpoints_, defaultEndpoints_, patchOutputBus_, serializationContext_);
+                                           endpoints_, defaultEndpoints_, audioDeviceState_,
+                                           defaultAudioDeviceState_, patchOutputBus_, serializationContext_);
             }
             if (status == PatchApplyStatus::Applied || status == PatchApplyStatus::Reverted) {
                 pendingRebuild = true;
@@ -551,6 +555,15 @@ private:
     // this. Snapshotted from endpoints_ alongside defaultMidiProfileConfig_
     // in Initialize().
     MidiEndpointState defaultEndpoints_;
+    // Task 2 wires up snapshotting this from the app's Init-configured audio
+    // device selection and notifying the host on rebuild; for now these
+    // members exist so Engine.hpp compiles against ApplyPatchMessage's
+    // AudioDeviceState parameters.
+    AudioDeviceState audioDeviceState_;
+    // Default = the app's Init-configured audio device selection; revert/new
+    // restore this. Snapshotted from audioDeviceState_ alongside
+    // defaultEndpoints_ in Initialize() (Task 2).
+    AudioDeviceState defaultAudioDeviceState_;
     JsonArena serializationArena_;
     PatchSerializationContext serializationContext_;
     RuntimeConfig config_;
