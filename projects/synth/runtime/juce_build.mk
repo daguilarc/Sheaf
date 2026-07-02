@@ -39,7 +39,7 @@ SYNTH_HEADERS := $(SYNTH_ROOT)/include/synth/ParameterModulation.hpp $(SYNTH_ROO
 	$(SYNTH_ROOT)/include/synth/DspScope.hpp \
 	$(SYNTH_ROOT)/include/synth/DspWavetable.hpp \
 	$(SYNTH_ROOT)/include/synth/DspOscillators.hpp
-SYNTH_JUCE_HEADERS := $(wildcard $(SYNTH_ROOT)/juce/*.hpp)
+SYNTH_JUCE_HEADERS := $(wildcard $(SYNTH_ROOT)/juce/*.hpp) $(SYNTH_ROOT)/runtime/Runtime.hpp
 
 JUCE_MODULE_SRC := \
 	$(JUCE_DIR)/modules/juce_audio_basics/juce_audio_basics.mm \
@@ -69,7 +69,7 @@ JUCE_C_MODULE_OBJ := $(BUILD_DIR)/juce_graphics_Sheenbidi.o
 CXXFLAGS ?= -std=c++20 -Wall -Wextra -Wpedantic -O2
 JUCE_CXXFLAGS := $(CXXFLAGS) -Wno-unused-but-set-variable
 CFLAGS ?= -Wall -Wextra -O2
-CPPFLAGS := -I$(SYNTH_ROOT)/include -I$(SYNTH_ROOT)/juce -I$(JUCE_DIR)/modules \
+CPPFLAGS := -I$(SYNTH_ROOT)/include -I$(SYNTH_ROOT)/juce -I$(SYNTH_ROOT)/runtime -I$(JUCE_DIR)/modules \
 	-DNDEBUG \
 	-DJUCE_GLOBAL_MODULE_SETTINGS_INCLUDED=1 \
 	-DJUCE_STANDALONE_APPLICATION=1 \
