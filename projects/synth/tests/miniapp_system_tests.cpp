@@ -191,67 +191,128 @@ TEST_CASE(miniapp_rig_zero_volume_yields_silence_and_turning_up_restores_signal)
     REQUIRE_TRUE(!rig.SawNaN());
 }
 
+// These "Turn changes output" tests must not compare two free-running output
+// windows captured at different times against the SAME rig: the VCOs are
+// free-running oscillators, so phase alone drifts the waveform from one
+// window to the next even when a Turn has zero effect on the audio path.
+// That would let a broken parameter->audio wire pass the test for the wrong
+// reason.
+//
+// Instead this leans on the engine's proven determinism (see
+// rig_two_identical_runs_are_deterministic in rig_tests.cpp): build TWO
+// rigs, script them through an IDENTICAL sequence of blocks/turns for N
+// blocks, then apply the Turn under test to ONLY rig B, run BOTH rigs for
+// the SAME further M blocks, and compare their captured output over that
+// same final-M-block range. With no turn applied, two identically-scripted
+// rigs produce bit-identical output (determinism), so this test's baseline
+// sanity check asserts the pre-turn windows from A and B match; any material
+// post-turn difference between A and B is then attributable ONLY to the
+// turn -- phase drift cannot explain it, because both rigs drift identically
+// from the same identical history.
 TEST_CASE(miniapp_rig_tune_turn_changes_output) {
     UseScratchPatchesRoot("tune_turn_changes_output");
-    synth_rig::SynthRig<synth_miniapp::MiniAppCore> rig;
-    rig.RunBlocks(4);
+    synth_rig::SynthRig<synth_miniapp::MiniAppCore> rigA;
+    UseScratchPatchesRoot("tune_turn_changes_output_b");
+    synth_rig::SynthRig<synth_miniapp::MiniAppCore> rigB;
 
-    const synth::ParameterId tuneId = rig.Application().VcoParameterIds().tune;
-    const float before = rig.ParameterValue(tuneId);
+    rigA.RunBlocks(4);
+    rigB.RunBlocks(4);
 
-    // Capture a settled output window BEFORE the Turn, so the after-window
-    // comparison isolates the Turn's effect rather than startup transients.
-    const OutputWindow windowBefore = CaptureSettledOutputWindow(rig, 8);
+    const synth::ParameterId tuneIdA = rigA.Application().VcoParameterIds().tune;
+    const synth::ParameterId tuneIdB = rigB.Application().VcoParameterIds().tune;
+    const float beforeA = rigA.ParameterValue(tuneIdA);
+    const float beforeB = rigB.ParameterValue(tuneIdB);
 
-    rig.Turn(kSlotIx, kTunePosition, 0.3f);
-    rig.RunBlocks(16);  // let the parameter slew settle before capturing
+    // Baseline sanity: with both rigs scripted identically so far and no
+    // turn applied yet, their settled output windows must be bit-identical
+    // (determinism). This proves the twin-rig setup itself is apples-to-
+    // apples before the turn is introduced.
+    const OutputWindow baselineA = CaptureSettledOutputWindow(rigA, 8);
+    const OutputWindow baselineB = CaptureSettledOutputWindow(rigB, 8);
+    REQUIRE_TRUE(AllSamplesFinite(baselineA));
+    REQUIRE_TRUE(AllSamplesFinite(baselineB));
+    REQUIRE_TRUE(!OutputWindowsDifferMaterially(baselineA, baselineB, 1e-4f));
 
-    const OutputWindow windowAfter = CaptureSettledOutputWindow(rig, 8);
+    // Apply the Turn under test to rig B only.
+    rigB.Turn(kSlotIx, kTunePosition, 0.3f);
+
+    rigA.RunBlocks(16);  // let the parameter slew settle before capturing
+    rigB.RunBlocks(16);
+
+    const OutputWindow afterA = CaptureSettledOutputWindow(rigA, 8);
+    const OutputWindow afterB = CaptureSettledOutputWindow(rigB, 8);
 
     // Primary assertion (the brief's actual requirement): Tune's Turn must
     // audibly change the OUTPUT signal, not just the tracked parameter.
-    REQUIRE_TRUE(AllSamplesFinite(windowBefore));
-    REQUIRE_TRUE(AllSamplesFinite(windowAfter));
-    REQUIRE_TRUE(OutputWindowsDifferMaterially(windowBefore, windowAfter, 1e-4f));
+    // Because rigA and rigB were scripted identically up to this point,
+    // determinism guarantees any material difference here comes from the
+    // turn, not from oscillator phase drift.
+    REQUIRE_TRUE(AllSamplesFinite(afterA));
+    REQUIRE_TRUE(AllSamplesFinite(afterB));
+    REQUIRE_TRUE(OutputWindowsDifferMaterially(afterA, afterB, 1e-4f));
 
     // Secondary (parameter-value) checks, kept for regression coverage of
     // the production Turn(slot, position) -> parameter routing path.
-    const float after = rig.ParameterValue(tuneId);
-    REQUIRE_TRUE(after != before);
-    REQUIRE_NEAR(after, before + 0.3f, 1e-3f);
-    REQUIRE_TRUE(!rig.SawNaN());
+    const float afterValueA = rigA.ParameterValue(tuneIdA);
+    const float afterValueB = rigB.ParameterValue(tuneIdB);
+    REQUIRE_NEAR(afterValueA, beforeA, 1e-3f);
+    REQUIRE_TRUE(afterValueB != beforeB);
+    REQUIRE_NEAR(afterValueB, beforeB + 0.3f, 1e-3f);
+    REQUIRE_TRUE(!rigA.SawNaN());
+    REQUIRE_TRUE(!rigB.SawNaN());
 }
 
 TEST_CASE(miniapp_rig_shape_turn_changes_output) {
     UseScratchPatchesRoot("shape_turn_changes_output");
-    synth_rig::SynthRig<synth_miniapp::MiniAppCore> rig;
-    rig.RunBlocks(4);
+    synth_rig::SynthRig<synth_miniapp::MiniAppCore> rigA;
+    UseScratchPatchesRoot("shape_turn_changes_output_b");
+    synth_rig::SynthRig<synth_miniapp::MiniAppCore> rigB;
 
-    const synth::ParameterId shapeId = rig.Application().VcoParameterIds().shape;
-    const float before = rig.ParameterValue(shapeId);
+    rigA.RunBlocks(4);
+    rigB.RunBlocks(4);
 
-    // Capture a settled output window BEFORE the Turn, so the after-window
-    // comparison isolates the Turn's effect rather than startup transients.
-    const OutputWindow windowBefore = CaptureSettledOutputWindow(rig, 8);
+    const synth::ParameterId shapeIdA = rigA.Application().VcoParameterIds().shape;
+    const synth::ParameterId shapeIdB = rigB.Application().VcoParameterIds().shape;
+    const float beforeA = rigA.ParameterValue(shapeIdA);
+    const float beforeB = rigB.ParameterValue(shapeIdB);
 
-    rig.Turn(kSlotIx, kShapePosition, 0.4f);
-    rig.RunBlocks(16);  // let the parameter slew settle before capturing
+    // Baseline sanity: with both rigs scripted identically so far and no
+    // turn applied yet, their settled output windows must be bit-identical
+    // (determinism). This proves the twin-rig setup itself is apples-to-
+    // apples before the turn is introduced.
+    const OutputWindow baselineA = CaptureSettledOutputWindow(rigA, 8);
+    const OutputWindow baselineB = CaptureSettledOutputWindow(rigB, 8);
+    REQUIRE_TRUE(AllSamplesFinite(baselineA));
+    REQUIRE_TRUE(AllSamplesFinite(baselineB));
+    REQUIRE_TRUE(!OutputWindowsDifferMaterially(baselineA, baselineB, 1e-4f));
 
-    const OutputWindow windowAfter = CaptureSettledOutputWindow(rig, 8);
+    // Apply the Turn under test to rig B only.
+    rigB.Turn(kSlotIx, kShapePosition, 0.4f);
+
+    rigA.RunBlocks(16);  // let the parameter slew settle before capturing
+    rigB.RunBlocks(16);
+
+    const OutputWindow afterA = CaptureSettledOutputWindow(rigA, 8);
+    const OutputWindow afterB = CaptureSettledOutputWindow(rigB, 8);
 
     // Primary assertion (the brief's actual requirement): Shape's Turn must
     // audibly change the OUTPUT signal (waveshape), not just the tracked
-    // parameter.
-    REQUIRE_TRUE(AllSamplesFinite(windowBefore));
-    REQUIRE_TRUE(AllSamplesFinite(windowAfter));
-    REQUIRE_TRUE(OutputWindowsDifferMaterially(windowBefore, windowAfter, 1e-4f));
+    // parameter. Because rigA and rigB were scripted identically up to this
+    // point, determinism guarantees any material difference here comes from
+    // the turn, not from oscillator phase drift.
+    REQUIRE_TRUE(AllSamplesFinite(afterA));
+    REQUIRE_TRUE(AllSamplesFinite(afterB));
+    REQUIRE_TRUE(OutputWindowsDifferMaterially(afterA, afterB, 1e-4f));
 
     // Secondary (parameter-value) checks, kept for regression coverage of
     // the production Turn(slot, position) -> parameter routing path.
-    const float after = rig.ParameterValue(shapeId);
-    REQUIRE_TRUE(after != before);
-    REQUIRE_NEAR(after, before + 0.4f, 1e-3f);
-    REQUIRE_TRUE(!rig.SawNaN());
+    const float afterValueA = rigA.ParameterValue(shapeIdA);
+    const float afterValueB = rigB.ParameterValue(shapeIdB);
+    REQUIRE_NEAR(afterValueA, beforeA, 1e-3f);
+    REQUIRE_TRUE(afterValueB != beforeB);
+    REQUIRE_NEAR(afterValueB, beforeB + 0.4f, 1e-3f);
+    REQUIRE_TRUE(!rigA.SawNaN());
+    REQUIRE_TRUE(!rigB.SawNaN());
 }
 
 TEST_CASE(miniapp_rig_patch_save_perturb_load_round_trip) {

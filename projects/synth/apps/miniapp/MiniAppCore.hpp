@@ -142,16 +142,13 @@ public:
         // MainComponent wired it via CreateMidiControllerProfile.
         //
         // context_->defaultMidiProfileConfig is `const*` -- Engine.hpp shows
-        // it points at Engine's private defaultMidiProfileConfig_ member,
-        // which the engine never assigns from the live profile anywhere
-        // (Initialize()/MessageThreadTick() only ever write midiProfileConfig_
-        // via RebuildMidiProcessors() and the patch-apply path). There is no
-        // app-facing setter for it. This core therefore cannot populate the
-        // DEFAULT profile from here; see the Task 5 report's "default-profile
-        // gap" note for the resulting behavior (patch revert-to-default
-        // reverts the MIDI profile to a default-constructed
-        // MidiControllerProfileConfig{}, not the WrldBldr default installed
-        // below).
+        // it points at Engine's private defaultMidiProfileConfig_ member.
+        // There is no app-facing setter for it, and none is needed: right
+        // after this Init() returns, Engine::Initialize() snapshots
+        // defaultMidiProfileConfig_ = midiProfileConfig_ (see Engine.hpp's
+        // binding-order comment, step 4a), so the WrldBldr profile installed
+        // below into the live midiProfileConfig becomes the default profile
+        // that revert/new-patch restore to.
         synth::WrldBldrDefaultProfileOptions profileOptions;
         profileOptions.visibleEncoderCount = slot_->PhysicalEncoders().size();
         profileOptions.sceneCount = 3;
