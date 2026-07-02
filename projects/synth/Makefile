@@ -7,6 +7,7 @@ LIB := $(BUILD_DIR)/libsynth.a
 TEST_BIN := $(BUILD_DIR)/parameter_modulation_tests
 DSP_TEST_BIN := $(BUILD_DIR)/dsp_tests
 MODULE_TEST_BIN := $(BUILD_DIR)/module_tests
+CONTRACT_TEST_BIN := $(BUILD_DIR)/contract_tests
 SRC := src/ParameterModulation.cpp src/MidiController.cpp src/PatchPersistence.cpp src/DspWavetable.cpp src/Modules.cpp
 OBJ := $(BUILD_DIR)/ParameterModulation.o $(BUILD_DIR)/MidiController.o $(BUILD_DIR)/PatchPersistence.o $(BUILD_DIR)/DspWavetable.o $(BUILD_DIR)/Modules.o
 DSP_HEADERS := include/synth/DspMath.hpp include/synth/DspNumbers.hpp include/synth/DspTransferFunction.hpp include/synth/DspFilters.hpp include/synth/DspScope.hpp include/synth/DspWavetable.hpp include/synth/DspOscillators.hpp
@@ -50,10 +51,14 @@ $(DSP_TEST_BIN): tests/dsp_tests.cpp $(LIB) $(DSP_HEADERS)
 $(MODULE_TEST_BIN): tests/module_tests.cpp $(LIB) include/synth/Modules.hpp
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< $(LIB) -o $@
 
-test: $(TEST_BIN) $(DSP_TEST_BIN) $(MODULE_TEST_BIN)
+$(CONTRACT_TEST_BIN): tests/contract_tests.cpp $(LIB) include/synth/AppContext.hpp
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< $(LIB) -o $@
+
+test: $(TEST_BIN) $(DSP_TEST_BIN) $(MODULE_TEST_BIN) $(CONTRACT_TEST_BIN)
 	$(TEST_BIN)
 	$(DSP_TEST_BIN)
 	$(MODULE_TEST_BIN)
+	$(CONTRACT_TEST_BIN)
 
 miniapp:
 	$(MAKE) -C $(MINIAPP_DIR)
