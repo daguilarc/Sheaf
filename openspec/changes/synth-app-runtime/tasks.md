@@ -44,8 +44,8 @@
 - [x] 6.3 Implement the message-thread timer: `engine.MessageThreadTick()`, MIDI device management, repaint trigger, then `AsyncLogQueue` drain as the final step (sar-7, slog-7)
 - [x] 6.4 Implement shutdown ordering: deregister audio callback → stop/join MIDI sender → close MIDI devices → final log drain → destroy engine (sar-5)
 - [x] 6.5 Move MIDI device enumeration/open/close/status into a runtime MIDI panel; rebuild processors through the engine after patch loads with endpoint reopen; tag MIDI callbacks and the `MidiSender` run loop with `ThreadId` (sar-8, sar-9, slog-2)
-- [ ] 6.6 Implement the runtime shell UI: JUCE application object, `DocumentWindow`, chrome (patch New/Save/SaveAs/Load/Revert buttons wired to the patch manager with `INFO` logging of results, MIDI panel, status), hosting/resizing of the app's UI component, repaint timer reading UIState atomics (sar-8, sar-10, slog-7)
-- [ ] 6.7 Add the `SYNTH_RUNTIME_MAIN(AppType)` entry-point macro (sar-10)
+- [x] 6.6 Implement the runtime shell UI: JUCE application object, `DocumentWindow`, chrome (patch New/Save/SaveAs/Load/Revert buttons wired to the patch manager with `INFO` logging of results, MIDI panel, status), hosting/resizing of the app's UI component, repaint timer reading UIState atomics (sar-8, sar-10, slog-7)
+- [x] 6.7 Add the `SYNTH_RUNTIME_MAIN(AppType)` entry-point macro (sar-10)
 
 ## 7. Miniapp port
 
