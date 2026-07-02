@@ -135,7 +135,11 @@ public:
         // always-reopen-at-startup behavior.
         midiPanel_->ReopenPersistedEndpoints();
 
-        deviceManager_.initialiseWithDefaultDevices(config.numAudioInputs, config.numAudioOutputs);
+        const juce::String initialiseError =
+            deviceManager_.initialiseWithDefaultDevices(config.numAudioInputs, config.numAudioOutputs);
+        if (initialiseError.isNotEmpty()) {
+            INFO("Audio device initialise FAILED: %s", initialiseError.toRawUTF8());
+        }
 
         juce::AudioDeviceManager::AudioDeviceSetup setup = deviceManager_.getAudioDeviceSetup();
         if (juce::AudioIODevice* device = deviceManager_.getCurrentAudioDevice(); device != nullptr) {
@@ -147,7 +151,14 @@ public:
             if (availableBufferSizes.contains(config.preferredBlockSize)) {
                 setup.bufferSize = config.preferredBlockSize;
             }
-            deviceManager_.setAudioDeviceSetup(setup, true);
+            const juce::String setupError = deviceManager_.setAudioDeviceSetup(setup, true);
+            if (setupError.isNotEmpty()) {
+                INFO("Audio device setup FAILED: %s", setupError.toRawUTF8());
+            }
+            INFO("Audio device state: open=%d playing=%d name=%s", device->isOpen() ? 1 : 0,
+                 device->isPlaying() ? 1 : 0, device->getName().toRawUTF8());
+        } else {
+            INFO("Audio device state: no current device after initialise");
         }
 
         if (synth::MidiSender* sender = engine_.Context().midiSender; sender != nullptr) {
