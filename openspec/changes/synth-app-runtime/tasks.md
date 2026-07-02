@@ -33,9 +33,9 @@
 
 ## 5. Runtime scaffolding and build
 
-- [ ] 5.1 Create `projects/synth/runtime/` with `juce_build.mk` extracted from the miniapp Makefile (JUCE module compilation rules, framework link flags, app-bundle rules, `check-juce`)
-- [ ] 5.2 Create `projects/synth/apps/` and an app Makefile pattern that includes `juce_build.mk`; keep `make miniapp` working from `projects/synth` (repointed later in task 8)
-- [ ] 5.3 Verify `make -C projects/synth build test` still builds only the core (no runtime/apps sources)
+- [x] 5.1 Create `projects/synth/runtime/` with `juce_build.mk` extracted from the miniapp Makefile (JUCE module compilation rules, framework link flags, app-bundle rules, `check-juce`)
+- [x] 5.2 Create `projects/synth/apps/` and an app Makefile pattern that includes `juce_build.mk`; keep `make miniapp` working from `projects/synth` (repointed later in task 8)
+- [x] 5.3 Verify `make -C projects/synth build test` still builds only the core (no runtime/apps sources)
 
 ## 6. Runtime shell (`synth_runtime::Runtime<App>`)
 
