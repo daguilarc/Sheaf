@@ -1,4 +1,5 @@
 #include "synth/CircularQueue.hpp"
+#include "synth/ThreadId.hpp"
 
 #ifdef JUCE_MAJOR_VERSION
 #error "synth logging tests must not see JUCE headers"
@@ -8,6 +9,7 @@
 #include <iostream>
 #include <sstream>
 #include <stdexcept>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -103,6 +105,40 @@ TEST_CASE(circular_queue_spsc_threads_deliver_in_order) {
         }
     }
     producer.join();
+}
+
+TEST_CASE(thread_id_defaults_to_unknown) {
+    REQUIRE_TRUE(synth::GetCurrentThreadId() == synth::ThreadId::Unknown);
+}
+
+TEST_CASE(scoped_thread_id_sets_and_restores) {
+    REQUIRE_TRUE(synth::GetCurrentThreadId() == synth::ThreadId::Unknown);
+    {
+        synth::ScopedThreadId scoped(synth::ThreadId::Audio);
+        REQUIRE_TRUE(synth::GetCurrentThreadId() == synth::ThreadId::Audio);
+        {
+            synth::ScopedThreadId nested(synth::ThreadId::MidiInput);
+            REQUIRE_TRUE(synth::GetCurrentThreadId() == synth::ThreadId::MidiInput);
+        }
+        REQUIRE_TRUE(synth::GetCurrentThreadId() == synth::ThreadId::Audio);
+    }
+    REQUIRE_TRUE(synth::GetCurrentThreadId() == synth::ThreadId::Unknown);
+}
+
+TEST_CASE(thread_id_is_thread_local) {
+    synth::SetCurrentThreadId(synth::ThreadId::Message);
+    synth::ThreadId seenOnOtherThread = synth::ThreadId::Message;
+    std::thread other([&seenOnOtherThread] { seenOnOtherThread = synth::GetCurrentThreadId(); });
+    other.join();
+    REQUIRE_TRUE(seenOnOtherThread == synth::ThreadId::Unknown);
+    synth::SetCurrentThreadId(synth::ThreadId::Unknown);  // restore for later cases
+}
+
+TEST_CASE(thread_id_names_and_indices) {
+    REQUIRE_TRUE(std::string(synth::ThreadIdToString(synth::ThreadId::Audio)) == "Audio");
+    REQUIRE_TRUE(std::string(synth::ThreadIdToString(synth::ThreadId::Unknown)) == "Unknown");
+    REQUIRE_TRUE(synth::ThreadIdToIndex(synth::ThreadId::Message) == 0);
+    REQUIRE_TRUE(synth::ThreadIdToIndex(synth::ThreadId::Unknown) == synth::kThreadIdCount - 1);
 }
 
 int main() {

@@ -55,7 +55,7 @@ $(MODULE_TEST_BIN): tests/module_tests.cpp $(LIB) include/synth/Modules.hpp
 $(CONTRACT_TEST_BIN): tests/contract_tests.cpp $(LIB) include/synth/AppContext.hpp
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< $(LIB) -o $@
 
-$(LOGGING_TEST_BIN): tests/logging_tests.cpp $(LIB) include/synth/CircularQueue.hpp
+$(LOGGING_TEST_BIN): tests/logging_tests.cpp $(LIB) include/synth/CircularQueue.hpp include/synth/ThreadId.hpp
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< $(LIB) -o $@
 
 test: $(TEST_BIN) $(DSP_TEST_BIN) $(MODULE_TEST_BIN) $(CONTRACT_TEST_BIN) $(LOGGING_TEST_BIN)
