@@ -8,15 +8,18 @@
 //
 // Startup/shutdown ordering here is binding; see the Task 2 brief
 // (.superpowers/sdd/p3-task-2-brief.md) for the full rationale. MIDI
-// endpoint (re)opening is Task 3's responsibility: this class only exposes
-// the named hook (onMidiProcessorsRebuilt_) that Task 3's panel wires up to
-// reopen endpoints whenever the engine rebuilds MIDI processors.
+// endpoint (re)opening is owned by the MidiPanel member (midiPanel_, Task 3):
+// onMidiProcessorsRebuilt_ forwards to
+// midiPanel_->ReopenPersistedEndpoints() so a startup-patch or runtime-load
+// profile rebuild reopens the endpoints recorded in engine.Endpoints().
 
 #include "synth/AppConcepts.hpp"
 #include "synth/AsyncLogger.hpp"
 #include "synth/Engine.hpp"
 #include "synth/PatchPersistence.hpp"
 #include "synth/ThreadId.hpp"
+
+#include "MidiPanel.hpp"
 
 #include <juce_audio_devices/juce_audio_devices.h>
 #include <juce_gui_extra/juce_gui_extra.h>
@@ -25,6 +28,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <memory>
 
 namespace synth_runtime {
 
@@ -65,12 +69,13 @@ class Runtime : private juce::AudioIODeviceCallback, private juce::Timer {
 public:
     Runtime()
         : startTime_(std::chrono::steady_clock::now())
-        , engine_([this]() -> std::uint64_t { return NowMicros(); }) {
-        // Named hook Task 3 forwards to the MIDI panel: the engine invokes
-        // this (on the message thread, from MessageThreadTick or the
-        // startup-patch path in Initialize()) whenever midiProcessors_ has
-        // just been rebuilt, so the panel knows to reopen endpoints against
-        // the fresh profile.
+        , engine_([this]() -> std::uint64_t { return NowMicros(); })
+        , midiPanel_(std::make_unique<MidiPanel<App>>(engine_)) {
+        // The engine invokes this (on the message thread, from
+        // MessageThreadTick or the startup-patch path in Initialize())
+        // whenever midiProcessors_ has just been rebuilt.
+        // onMidiProcessorsRebuilt_ (wired in Start(), before Initialize())
+        // forwards this to midiPanel_->ReopenPersistedEndpoints().
         engine_.SetMidiProcessorsRebuiltCallback([this] {
             if (onMidiProcessorsRebuilt_) {
                 onMidiProcessorsRebuilt_();
@@ -81,8 +86,14 @@ public:
     ~Runtime() override {
         deviceManager_.removeAudioCallback(this);
         stopTimer();
-        // engine_ teardown (its own destructor) handles the MIDI sender via
-        // its members; closing MIDI devices is Task 3's panel concern.
+        // Shutdown ordering (binding, per Task 3 brief): stop the MIDI
+        // sender before closing devices, so no in-flight enqueued MIDI is
+        // delivered to a sink that's about to be torn down; midiPanel_'s own
+        // destructor then closes the input/output devices.
+        if (synth::MidiSender* sender = engine_.Context().midiSender; sender != nullptr) {
+            sender->Stop();
+        }
+        midiPanel_.reset();
         synth::AsyncLogQueue::s_instance.DoLog();
     }
 
@@ -91,14 +102,19 @@ public:
     Runtime(Runtime&&) = delete;
     Runtime& operator=(Runtime&&) = delete;
 
-    // Startup ordering (binding, per Task 2 brief):
+    // Startup ordering (binding, per Task 2/3 briefs):
     //   1. configure log directory (create it first) when non-empty
-    //   2. engine_.Initialize()
-    //   3. MIDI endpoint reopen — Task 3 wires this via onMidiProcessorsRebuilt_
+    //   2. wire onMidiProcessorsRebuilt_ to midiPanel_->ReopenPersistedEndpoints()
+    //      (must precede Initialize(), since a startup-patch profile rebuild
+    //      inside Initialize() invokes the rebuilt callback synchronously)
+    //   3. engine_.Initialize()
     //   4. open the audio device, applying preferred rate/block where allowed
-    //   5. Prepare the engine via audioDeviceAboutToStart
-    //   6. register this as the audio callback
-    //   7. start the UI timer
+    //   5. start the MidiSender worker (before the audio callback is
+    //      registered, so the sink is draining before ProcessBlock/MIDI
+    //      output processors can enqueue into it)
+    //   6. Prepare the engine via audioDeviceAboutToStart
+    //   7. register this as the audio callback
+    //   8. start the UI timer
     void Start() {
         // engine_.Config() only becomes valid once Initialize() has stored
         // it, so read the log directory from App::Config() directly first —
@@ -112,12 +128,26 @@ public:
             synth::AsyncLogQueue::s_instance.ConfigureLogDirectory(appConfig.logsRoot.string().c_str());
         }
 
+        // Wired before Initialize(): Initialize()'s startup-patch path may
+        // rebuild MIDI processors and invoke midiProcessorsRebuiltCallback_
+        // synchronously, and the panel must be ready to reopen endpoints
+        // against the freshly loaded profile when that happens.
+        onMidiProcessorsRebuilt_ = [this] { midiPanel_->ReopenPersistedEndpoints(); };
+
         engine_.Initialize();
         const synth::RuntimeConfig& config = engine_.Config();
 
-        // MIDI endpoint reopen is Task 3's responsibility: the panel sets
-        // onMidiProcessorsRebuilt_ (forwarded to the engine's rebuilt
-        // callback in the constructor above) and reopens endpoints from it.
+        // Initialize()'s FIRST RebuildMidiProcessors() call (before any
+        // startup patch) is silent by design — it never invokes
+        // midiProcessorsRebuiltCallback_ (see Engine::Initialize's doc
+        // comment) — so when no startup patch applies, the panel is never
+        // notified and midiPanel_'s cached MidiInputProcessor() pointer
+        // would otherwise stay null forever. Reopening unconditionally here
+        // (idempotent: it re-reads MidiInputProcessor() and re-syncs against
+        // whatever engine_.Endpoints() currently holds even if a startup
+        // patch already triggered a reopen) matches the old miniapp's
+        // always-reopen-at-startup behavior.
+        midiPanel_->ReopenPersistedEndpoints();
 
         deviceManager_.initialiseWithDefaultDevices(config.numAudioInputs, config.numAudioOutputs);
 
@@ -134,6 +164,10 @@ public:
             deviceManager_.setAudioDeviceSetup(setup, true);
         }
 
+        if (synth::MidiSender* sender = engine_.Context().midiSender; sender != nullptr) {
+            sender->Start();
+        }
+
         // addAudioCallback() invokes audioDeviceAboutToStart(currentDevice)
         // synchronously here (the device is already open), which is what
         // actually calls engine_.Prepare() with the negotiated rate/block.
@@ -145,6 +179,11 @@ public:
     synth::Engine<App>& GetEngine() { return engine_; }
 
     juce::Component& AppComponent() { return engine_.Application().UIComponent(); }
+
+    // The MIDI device panel (Task 3): device combo boxes, open/close
+    // buttons, and a status label. The shell (next task) hosts this
+    // component alongside AppComponent().
+    juce::Component& MidiPanelComponent() { return *midiPanel_; }
 
     void NewPatch() {
         const synth::PatchCommandResult result = engine_.Patches().NewPatch();
@@ -227,8 +266,15 @@ private:
     juce::AudioDeviceManager deviceManager_;
     synth::Engine<App> engine_;
 
-    // Task 3 hook: forwards to the panel so it can reopen MIDI endpoints
-    // whenever the engine rebuilds MIDI processors.
+    // The MIDI device panel (Task 3). A unique_ptr because it must be
+    // constructed after engine_ (it holds a reference to it) and destroyed
+    // before engine_ is torn down; declaring it after engine_ gives it the
+    // correct construction/destruction order automatically.
+    std::unique_ptr<MidiPanel<App>> midiPanel_;
+
+    // Forwards to midiPanel_->ReopenPersistedEndpoints() (wired in Start(),
+    // before Initialize()) so the panel reopens MIDI endpoints whenever the
+    // engine rebuilds MIDI processors.
     std::function<void()> onMidiProcessorsRebuilt_;
 
     // Shell hook: set later by whatever owns the UI, invoked at the end of

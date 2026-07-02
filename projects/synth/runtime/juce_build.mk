@@ -39,7 +39,7 @@ SYNTH_HEADERS := $(SYNTH_ROOT)/include/synth/ParameterModulation.hpp $(SYNTH_ROO
 	$(SYNTH_ROOT)/include/synth/DspScope.hpp \
 	$(SYNTH_ROOT)/include/synth/DspWavetable.hpp \
 	$(SYNTH_ROOT)/include/synth/DspOscillators.hpp
-SYNTH_JUCE_HEADERS := $(wildcard $(SYNTH_ROOT)/juce/*.hpp) $(SYNTH_ROOT)/runtime/Runtime.hpp
+SYNTH_JUCE_HEADERS := $(wildcard $(SYNTH_ROOT)/juce/*.hpp) $(SYNTH_ROOT)/runtime/Runtime.hpp $(SYNTH_ROOT)/runtime/MidiPanel.hpp
 
 JUCE_MODULE_SRC := \
 	$(JUCE_DIR)/modules/juce_audio_basics/juce_audio_basics.mm \
