@@ -1,3 +1,4 @@
+#include "synth/AsyncLogger.hpp"
 #include "synth/CircularQueue.hpp"
 #include "synth/ThreadId.hpp"
 
@@ -5,8 +6,13 @@
 #error "synth logging tests must not see JUCE headers"
 #endif
 
+#include <atomic>
+#include <cstdint>
 #include <exception>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <iterator>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -139,6 +145,124 @@ TEST_CASE(thread_id_names_and_indices) {
     REQUIRE_TRUE(std::string(synth::ThreadIdToString(synth::ThreadId::Unknown)) == "Unknown");
     REQUIRE_TRUE(synth::ThreadIdToIndex(synth::ThreadId::Message) == 0);
     REQUIRE_TRUE(synth::ThreadIdToIndex(synth::ThreadId::Unknown) == synth::kThreadIdCount - 1);
+}
+
+TEST_CASE(logger_round_trips_a_message_through_drain) {
+    auto& log = synth::AsyncLogQueue::s_instance;
+    log.ResetForTesting();
+    {
+        synth::ScopedThreadId scoped(synth::ThreadId::Audio);
+        INFO("value is %d", 42);
+    }
+    REQUIRE_TRUE(log.QueueSizeForTesting(synth::ThreadId::Audio) == 1);
+    log.DoLog();
+    REQUIRE_TRUE(log.QueueSizeForTesting(synth::ThreadId::Audio) == 0);
+}
+
+TEST_CASE(logger_routes_by_thread_identity) {
+    auto& log = synth::AsyncLogQueue::s_instance;
+    log.ResetForTesting();
+    { synth::ScopedThreadId scoped(synth::ThreadId::Audio); INFO("from audio"); }
+    { synth::ScopedThreadId scoped(synth::ThreadId::Message); INFO("from message"); }
+    INFO("untagged");
+    REQUIRE_TRUE(log.QueueSizeForTesting(synth::ThreadId::Audio) == 1);
+    REQUIRE_TRUE(log.QueueSizeForTesting(synth::ThreadId::Message) == 1);
+    REQUIRE_TRUE(log.QueueSizeForTesting(synth::ThreadId::Unknown) == 1);
+    log.DoLog();
+}
+
+TEST_CASE(logger_overflow_drops_and_counts_missed) {
+    auto& log = synth::AsyncLogQueue::s_instance;
+    log.ResetForTesting();
+    synth::ScopedThreadId scoped(synth::ThreadId::Audio);
+    for (std::size_t i = 0; i < synth::AsyncLogQueue::kQueueSize + 10; ++i) {
+        INFO("burst %zu", i);
+    }
+    REQUIRE_TRUE(log.MissedCountForTesting(synth::ThreadId::Audio) >= 1);
+    log.DoLog();  // drains and reports the missed count
+    REQUIRE_TRUE(log.MissedCountForTesting(synth::ThreadId::Audio) == 0);
+}
+
+TEST_CASE(logger_truncates_long_messages) {
+    auto& log = synth::AsyncLogQueue::s_instance;
+    log.ResetForTesting();
+    const std::string huge(2 * synth::LogMessage::kMaxMessageLength, 'x');
+    INFO("%s", huge.c_str());
+    REQUIRE_TRUE(log.QueueSizeForTesting(synth::ThreadId::Unknown) == 1);  // queued, not crashed
+    log.DoLog();
+}
+
+TEST_CASE(logger_concurrent_distinct_identities_do_not_race) {
+    auto& log = synth::AsyncLogQueue::s_instance;
+    log.ResetForTesting();
+    constexpr int kPerThread = 2000;
+    std::thread audio([&] {
+        synth::ScopedThreadId scoped(synth::ThreadId::Audio);
+        for (int i = 0; i < kPerThread; ++i) { INFO("audio %d", i); }
+    });
+    std::thread midi([&] {
+        synth::ScopedThreadId scoped(synth::ThreadId::MidiInput);
+        for (int i = 0; i < kPerThread; ++i) { INFO("midi %d", i); }
+    });
+    audio.join();
+    midi.join();
+    const std::size_t audioTotal = log.QueueSizeForTesting(synth::ThreadId::Audio)
+                                 + log.MissedCountForTesting(synth::ThreadId::Audio);
+    const std::size_t midiTotal = log.QueueSizeForTesting(synth::ThreadId::MidiInput)
+                                + log.MissedCountForTesting(synth::ThreadId::MidiInput);
+    REQUIRE_TRUE(audioTotal == kPerThread);
+    REQUIRE_TRUE(midiTotal == kPerThread);
+    log.DoLog();
+}
+
+TEST_CASE(logger_session_file_created_once_and_appended) {
+    auto& log = synth::AsyncLogQueue::s_instance;
+    log.ResetForTesting();
+    const auto dir = std::filesystem::temp_directory_path() / "synth-logger-test";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    log.SetLogDirectoryForTesting(dir.string().c_str());
+    INFO("first line");
+    log.DoLog();
+    const std::string path = log.LogFilePathForTesting();
+    REQUIRE_TRUE(!path.empty());
+    INFO("second line");
+    log.DoLog();
+    REQUIRE_TRUE(log.LogFilePathForTesting() == path);  // same session file
+    std::ifstream in(path);
+    std::string contents((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    REQUIRE_TRUE(contents.find("first line") != std::string::npos);
+    REQUIRE_TRUE(contents.find("second line") != std::string::npos);
+    REQUIRE_TRUE(contents.find("Unknown") != std::string::npos);  // thread name in line
+    log.ResetForTesting();
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE(logger_without_directory_stays_stdout_only) {
+    auto& log = synth::AsyncLogQueue::s_instance;
+    log.ResetForTesting();
+    INFO("no directory configured");
+    log.DoLog();
+    REQUIRE_TRUE(log.LogFilePathForTesting().empty());
+}
+
+TEST_CASE(logger_sample_stamps_read_counter_source) {
+    auto& log = synth::AsyncLogQueue::s_instance;
+    log.ResetForTesting();
+    const auto dir = std::filesystem::temp_directory_path() / "synth-logger-stamp-test";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    log.SetLogDirectoryForTesting(dir.string().c_str());
+    std::atomic<std::uint64_t> counter{123456};
+    log.SetSampleCounterSource(&counter);
+    INFO("stamped");
+    log.DoLog();
+    std::ifstream in(log.LogFilePathForTesting());
+    std::string contents((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    REQUIRE_TRUE(contents.find("123456") != std::string::npos);
+    log.SetSampleCounterSource(nullptr);
+    log.ResetForTesting();
+    std::filesystem::remove_all(dir);
 }
 
 int main() {
