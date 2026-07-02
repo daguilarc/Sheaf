@@ -68,4 +68,4 @@
 - [x] 9.2 Engine ownership: live/default `AudioDeviceState` members, post-`Init` default snapshot, accessor + audio-state-changed notification to the host from the patch consume path, engine tests (sar-15)
 - [x] 9.3 Runtime: audio device selector in the config chrome, message-thread device switching with engine re-prepare, applying persisted selections after load/startup when present (absent → status, no failure) (sar-15)
 - [x] 9.4 Shell: current-patch-name display owned message-side, Save falling through to Save As when no current patch directory exists, README updates (sar-16)
-- [ ] 9.5 Verification: full suite + app build green; re-sync delta specs to main specs (spp-2, sar-15, sar-16)
+- [x] 9.5 Verification: full suite + app build green; re-sync delta specs to main specs (spp-2, sar-15, sar-16)

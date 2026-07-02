@@ -17,11 +17,12 @@ WHEN synth patch persistence needs JSON parsing or serialization, THE synth patc
 - **AND** callers can grow/reset the arena and retry the same operation
 
 ### Requirement: spp-2 — Patch document format
-WHEN a synth patch is saved, THE synth patch persistence system SHALL write a JSON object containing a synth patch schema identifier, schema version, patch name, recursive parameter values keyed by initialized parameter name, and the MIDI configuration profile, while excluding parameter definitions and synth topology from persisted JSON.
+WHEN a synth patch is saved, THE synth patch persistence system SHALL write a JSON object containing a synth patch schema identifier, schema version, patch name, recursive parameter values keyed by initialized parameter name, the MIDI configuration profile, and the audio device selection state, while excluding parameter definitions and synth topology from persisted JSON.
 
 #### Scenario: Patch root has required sections
 - **WHEN** a patch is serialized
 - **THEN** the JSON root contains `schema`, `schemaVersion`, `patchName`, `parameterValues`, and `midiProfile`
+- **AND** contains the audio device selection when one is set
 
 #### Scenario: Patch root scopes to one initialized manager
 - **WHEN** a patch document stores `parameterValues`
@@ -32,6 +33,10 @@ WHEN a synth patch is saved, THE synth patch persistence system SHALL write a JS
 - **WHEN** the patch stores `parameterValues`
 - **THEN** it stores value state for initialized parameters by name
 - **AND** it does not store groups, pages, banks, slots, modules, parameter names, colors, ranges, polarity, modulation-source metadata, or modulation assignments
+
+#### Scenario: Audio device state loads tolerantly
+- **WHEN** a patch without an audio device section is loaded
+- **THEN** the load succeeds and the current audio device state is unchanged
 
 ### Requirement: spp-3 — Patch file version history
 WHEN synth patch persistence saves patch JSON to disk, THE system SHALL store each patch in its own directory under a configurable patches root and SHALL create one new sortable JSON version file per save without overwriting older versions.
