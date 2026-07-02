@@ -41,9 +41,9 @@
 
 - [x] 6.1 Implement `Runtime<App>` over `Engine<App>`: construct engine with steady-clock timestamp provider, configure log directory from `RuntimeConfig.logsRoot`, tag the message thread, then engine `Initialize()` → reopen persisted MIDI endpoints (after any startup-patch profile rebuild) → open audio device (negotiate channel counts/rate/block from config) → `engine.Prepare(negotiated values)`, re-invoked on device change → register audio callback → start message-thread timer (sar-2, sar-5, sar-12, slog-7)
 - [x] 6.2 Implement the audio callback: `ScopedThreadId` audio tag, wrap device buffers in `synth::AudioBlock`, delegate to `engine.ProcessBlock` (sar-6, slog-2)
-- [ ] 6.3 Implement the message-thread timer: `engine.MessageThreadTick()`, MIDI device management, repaint trigger, then `AsyncLogQueue` drain as the final step (sar-7, slog-7)
-- [ ] 6.4 Implement shutdown ordering: deregister audio callback → stop/join MIDI sender → close MIDI devices → final log drain → destroy engine (sar-5)
-- [ ] 6.5 Move MIDI device enumeration/open/close/status into a runtime MIDI panel; rebuild processors through the engine after patch loads with endpoint reopen; tag MIDI callbacks and the `MidiSender` run loop with `ThreadId` (sar-8, sar-9, slog-2)
+- [x] 6.3 Implement the message-thread timer: `engine.MessageThreadTick()`, MIDI device management, repaint trigger, then `AsyncLogQueue` drain as the final step (sar-7, slog-7)
+- [x] 6.4 Implement shutdown ordering: deregister audio callback → stop/join MIDI sender → close MIDI devices → final log drain → destroy engine (sar-5)
+- [x] 6.5 Move MIDI device enumeration/open/close/status into a runtime MIDI panel; rebuild processors through the engine after patch loads with endpoint reopen; tag MIDI callbacks and the `MidiSender` run loop with `ThreadId` (sar-8, sar-9, slog-2)
 - [ ] 6.6 Implement the runtime shell UI: JUCE application object, `DocumentWindow`, chrome (patch New/Save/SaveAs/Load/Revert buttons wired to the patch manager with `INFO` logging of results, MIDI panel, status), hosting/resizing of the app's UI component, repaint timer reading UIState atomics (sar-8, sar-10, slog-7)
 - [ ] 6.7 Add the `SYNTH_RUNTIME_MAIN(AppType)` entry-point macro (sar-10)
 
