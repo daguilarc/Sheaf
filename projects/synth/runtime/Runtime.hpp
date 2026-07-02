@@ -518,16 +518,14 @@ private:
     // re-write the engine's audio device state (it's already the source of
     // truth here).
     void OnEngineAudioDeviceChanged() {
-        const juce::String outputName = juce::String(engine_.AudioDeviceSnapshot().outputDeviceName);
+        const synth::AudioDeviceState state = engine_.AudioDeviceSnapshot();
+        const juce::String outputName = juce::String(state.outputDeviceName);
         if (outputName.isEmpty()) {
             if (deviceManager_.getCurrentAudioDevice() != nullptr) {
                 SwitchOutputDevice(outputName, "patch");
             }
             audioPanel_->SetStatus("Audio: System Default");
-            audioPanel_->SyncSelection();
-            return;
-        }
-        if (!IsEnumeratedOutputDevice(outputName)) {
+        } else if (!IsEnumeratedOutputDevice(outputName)) {
             // Pre-device-open case (see this method's doc comment) also
             // lands here (no device type yet -> "not enumerated"), which is
             // correct: nothing to log as missing yet, Start()'s device-open
@@ -538,11 +536,41 @@ private:
                 INFO("%s", message.toRawUTF8());
                 audioPanel_->SetStatus(message);
             }
-            audioPanel_->SyncSelection();
-            return;
+        } else {
+            SwitchOutputDevice(outputName, "patch");
+            audioPanel_->SetStatus("Audio: " + outputName);
         }
-        SwitchOutputDevice(outputName, "patch");
-        audioPanel_->SetStatus("Audio: " + outputName);
+
+        // Input-side counterpart (Task 3 review round 2, Minor): the old
+        // implementation only ever applied outputDeviceName here, so a patch
+        // that changed just the input device would sync the combo's display
+        // (SyncSelection() below reads engine_.AudioDeviceSnapshot()
+        // directly) without ever actually switching the input device on
+        // deviceManager_. Apply it the same way ApplyAudioDeviceInputSelection
+        // does, via the AudioDeviceSetup.inputDeviceName path, still tolerant
+        // of the pre-device-open case (see this method's doc comment): an
+        // empty deviceManager_ device type makes IsEnumeratedInputDevice
+        // return false unconditionally, so this is a no-op until Start()'s
+        // own device-open step runs.
+        const juce::String inputName = juce::String(state.inputDeviceName);
+        if (inputName.isEmpty() || IsEnumeratedInputDevice(inputName)) {
+            if (deviceManager_.getCurrentAudioDevice() != nullptr) {
+                juce::AudioDeviceManager::AudioDeviceSetup setup = deviceManager_.getAudioDeviceSetup();
+                if (setup.inputDeviceName != inputName) {
+                    setup.inputDeviceName = inputName;
+                    const juce::String setupError = deviceManager_.setAudioDeviceSetup(setup, true);
+                    if (setupError.isNotEmpty()) {
+                        INFO("Audio input device switch (patch) FAILED: %s", setupError.toRawUTF8());
+                    }
+                    ApplyPreferredRateAndBlockSize();
+                }
+            }
+        } else if (deviceManager_.getCurrentAudioDevice() != nullptr) {
+            const juce::String message = "audio input device not found: " + inputName;
+            INFO("%s", message.toRawUTF8());
+            audioPanel_->SetStatus(message);
+        }
+
         audioPanel_->SyncSelection();
     }
 

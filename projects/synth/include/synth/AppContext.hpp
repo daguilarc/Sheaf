@@ -31,6 +31,15 @@ struct RuntimeConfig {
     int uiWidth = 900;
     int uiHeight = 560;
     int uiFrameHz = 30;
+    // Initial audio device preference (Task 3 review, Critical fix): empty =
+    // system default. Engine::Initialize() seeds its engine-owned
+    // audioDeviceState_ from these fields, before app_.Init() runs, so the
+    // app's preferred starting device lives in static config rather than
+    // being poked into engine-owned state through a mutable AppContext
+    // pointer after the fact (AppContext no longer exposes one). See
+    // Engine::Initialize()'s doc comment for the seeding step.
+    std::string preferredOutputDeviceName;
+    std::string preferredInputDeviceName;
 };
 
 // Non-owning view of one audio device block (sar-6). Channel counts are the
@@ -58,14 +67,6 @@ struct AppContext {
     MidiSender* midiSender = nullptr;               // enqueue from message thread; owned worker drains
     MidiControllerProfileConfig* midiProfileConfig = nullptr;              // message thread only
     const MidiControllerProfileConfig* defaultMidiProfileConfig = nullptr; // immutable after init
-    // Engine-owned audio device selection (Task 2). Message-thread only for
-    // writes before audio starts (e.g. an app's Init() choosing a default
-    // device); safe to read from the message thread at any time. Mirrors
-    // midiProfileConfig's thread role and wiring: the pointee is
-    // Engine::audioDeviceState_, wired in the Engine constructor, and an
-    // app's Init() may mutate *ctx->audioDeviceState directly the same way
-    // it mutates *ctx->midiProfileConfig.
-    AudioDeviceState* audioDeviceState = nullptr;
     const RuntimeConfig* config = nullptr;          // immutable after construction
     ParameterManager::UIState* uiState = nullptr;   // null during Init; set before MIDI/audio/UI start
 

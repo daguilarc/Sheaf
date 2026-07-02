@@ -75,11 +75,16 @@ struct EngineTestApp {
     // identity/ordering set this before constructing the Engine; default
     // false keeps every other test's profile empty, as before).
     static inline bool wantEncoderMidiInput = false;
-    // When non-empty, Init() writes this into *ctx->audioDeviceState (the
-    // same way it writes wantEncoderMidiInput into *ctx->midiProfileConfig),
-    // so tests can exercise a non-default app-configured audio device
-    // selection (e.g. the revert-restores-default test). Default-constructed
-    // (empty) leaves the engine's audioDeviceState_ untouched, as before.
+    // When non-empty, Config() reports these as
+    // preferredOutputDeviceName/preferredInputDeviceName (the same way
+    // RuntimeConfig fields are always reported), so Engine::Initialize()
+    // seeds its engine-owned audioDeviceState_ from them before Init() runs
+    // -- tests use this to exercise a non-default app-configured audio
+    // device selection (e.g. the revert-restores-default test).
+    // Default-constructed (empty) leaves audioDeviceState_ at its default, as
+    // before. Replaces the old *ctx->audioDeviceState write now that
+    // AppContext no longer exposes a mutable pointer into engine state (Task
+    // 3 review, Critical fix).
     static inline synth::AudioDeviceState initAudioDeviceState;
     synth::AppContext* context = nullptr;
     synth::ParameterId probeId = 0;
@@ -92,6 +97,8 @@ struct EngineTestApp {
         config.appName = "EngineTest";
         config.numAudioOutputs = 2;
         config.patchesRoot = testPatchesRoot;
+        config.preferredOutputDeviceName = initAudioDeviceState.outputDeviceName;
+        config.preferredInputDeviceName = initAudioDeviceState.inputDeviceName;
         return config;
     }
     void Init(synth::AppContext* ctx) {
@@ -100,10 +107,6 @@ struct EngineTestApp {
         sawNullUiStateDuringInit = (ctx->uiState == nullptr);
         if (wantEncoderMidiInput && ctx->midiProfileConfig != nullptr) {
             ctx->midiProfileConfig->encoderInput = synth::EncoderMidiInConfig{};
-        }
-        if (ctx->audioDeviceState != nullptr &&
-            (!initAudioDeviceState.outputDeviceName.empty() || !initAudioDeviceState.inputDeviceName.empty())) {
-            *ctx->audioDeviceState = initAudioDeviceState;
         }
         auto& group = ctx->parameterManager->CreateGroup({.numVoices = 1,
                                                            .numModulators = 0,
@@ -965,10 +968,11 @@ TEST_CASE(engine_revert_all_to_default_restores_app_init_midi_profile_not_empty)
 TEST_CASE(engine_revert_all_to_default_restores_app_init_audio_device_state) {
     // Task 2: mirrors engine_revert_all_to_default_restores_app_init_midi_profile_not_empty
     // but for AudioDeviceState. Engine::Initialize() must snapshot
-    // defaultAudioDeviceState_ from the live state the app's Init()
-    // configured (via *ctx->audioDeviceState), BEFORE any startup patch
-    // applies, so a later RevertAllToDefault restores that app-configured
-    // selection rather than an empty AudioDeviceState{}.
+    // defaultAudioDeviceState_ from the live state it seeded from
+    // config_.preferredOutputDeviceName/preferredInputDeviceName (Task 3
+    // review, Critical fix), BEFORE any startup patch applies, so a later
+    // RevertAllToDefault restores that app-configured selection rather than
+    // an empty AudioDeviceState{}.
     EngineTestApp::testPatchesRoot.clear();
     EngineTestApp::processLiteAlpha = 1.0f;
     EngineTestApp::initAudioDeviceState = synth::AudioDeviceState{.outputDeviceName = "Speakers", .inputDeviceName = "Mic"};

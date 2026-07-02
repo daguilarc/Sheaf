@@ -80,7 +80,6 @@ public:
         context_.midiSender = &midiSender_;
         context_.midiProfileConfig = &midiProfileConfig_;
         context_.defaultMidiProfileConfig = &defaultMidiProfileConfig_;
-        context_.audioDeviceState = &audioDeviceState_;
         context_.config = &config_;
         context_.uiState = nullptr;
         context_.now = timestampProvider_;
@@ -124,6 +123,22 @@ public:
         context_.config = &config_;
 
         AsyncLogQueue::s_instance.SetSampleCounterSource(&sampleCounter_);
+
+        {
+            // Seed audioDeviceState_ from the app's static config (Task 3
+            // review, Critical fix) BEFORE app_.Init() runs. This replaces
+            // the old mutable AppContext::audioDeviceState pointer, which let
+            // any retained context mutate engine-owned state without the
+            // lock or the lastNotifiedAudioDeviceState_ shadow -- see
+            // RuntimeConfig::preferredOutputDeviceName's doc comment.
+            // Pre-audio, single-threaded (no audio/message-thread
+            // concurrency exists yet): the lock here is uncontended, but
+            // held anyway for uniformity with every other touch point of
+            // audioDeviceState_ (see audioDeviceStateMutex_'s doc comment).
+            const std::lock_guard<std::mutex> lock(audioDeviceStateMutex_);
+            audioDeviceState_.outputDeviceName = config_.preferredOutputDeviceName;
+            audioDeviceState_.inputDeviceName = config_.preferredInputDeviceName;
+        }
 
         app_.Init(&context_);
 
@@ -170,11 +185,13 @@ public:
                 audioDeviceStateBeforeDrain = audioDeviceState_;
             }
             // ApplyPendingPatchMessages (via ApplyPatchMessage) mutates
-            // audioDeviceState_ itself; still pre-audio/single-threaded here
-            // (no ProcessBlock has run yet), so it does not need to hold
-            // audioDeviceStateMutex_ internally -- only the snapshot/compare
-            // bracketing it does, for consistency with the audio-thread
-            // drain's locking discipline.
+            // audioDeviceState_ itself. Still pre-audio/single-threaded here
+            // (no ProcessBlock has run yet), so the lock it now takes
+            // internally is uncontended -- held anyway for invariant
+            // uniformity with every other touch point of audioDeviceState_
+            // (Task 3 review finding: this call used to mutate the state
+            // without holding audioDeviceStateMutex_, contradicting that
+            // invariant even though nothing could race it pre-audio).
             const bool patchApplied = ApplyPendingPatchMessages();
             if (patchApplied) {
                 RebuildMidiProcessors();
@@ -661,21 +678,32 @@ private:
     // growth is illegal once the audio thread is running: ProcessBlock has
     // its own inline drain loop (not this helper) that stashes the message
     // and defers growth to MessageThreadTick (Task 5) instead.
+    //
+    // audioDeviceStateMutex_ is held around each ApplyPatchMessage call (Task
+    // 3 review finding: this used to mutate audioDeviceState_ without holding
+    // the lock, contradicting the invariant documented on
+    // audioDeviceStateMutex_ even though nothing can race it here --
+    // Initialize() runs pre-audio, single-threaded). The lock is uncontended
+    // in that window; held anyway for uniformity with every other touch point
+    // of audioDeviceState_.
     bool ApplyPendingPatchMessages() {
         bool pendingRebuild = false;
         PatchMessageIn message;
         while (patchInputBus_.Pop(message)) {
-            PatchApplyStatus status = ApplyPatchMessage(message, manager_, midiProfileConfig_,
-                                                        defaultMidiProfileConfig_, endpoints_, defaultEndpoints_,
-                                                        audioDeviceState_, defaultAudioDeviceState_, patchOutputBus_,
-                                                        serializationContext_);
-            if (status == PatchApplyStatus::ArenaExhausted) {
-                // Pre-audio only: growing here is safe because the audio
-                // thread has not started running ProcessBlock yet.
-                serializationArena_.GrowAndReset();
+            PatchApplyStatus status;
+            {
+                const std::lock_guard<std::mutex> lock(audioDeviceStateMutex_);
                 status = ApplyPatchMessage(message, manager_, midiProfileConfig_, defaultMidiProfileConfig_,
-                                           endpoints_, defaultEndpoints_, audioDeviceState_,
-                                           defaultAudioDeviceState_, patchOutputBus_, serializationContext_);
+                                           endpoints_, defaultEndpoints_, audioDeviceState_, defaultAudioDeviceState_,
+                                           patchOutputBus_, serializationContext_);
+                if (status == PatchApplyStatus::ArenaExhausted) {
+                    // Pre-audio only: growing here is safe because the audio
+                    // thread has not started running ProcessBlock yet.
+                    serializationArena_.GrowAndReset();
+                    status = ApplyPatchMessage(message, manager_, midiProfileConfig_, defaultMidiProfileConfig_,
+                                               endpoints_, defaultEndpoints_, audioDeviceState_,
+                                               defaultAudioDeviceState_, patchOutputBus_, serializationContext_);
+                }
             }
             if (status == PatchApplyStatus::Applied || status == PatchApplyStatus::Reverted) {
                 pendingRebuild = true;
@@ -708,34 +736,40 @@ private:
 
     // Guards audioDeviceState_ + lastNotifiedAudioDeviceState_ (the two
     // members below) against the data race between the message thread
-    // (host writes via SetAudioDeviceFromHost/AppContext.audioDeviceState
-    // during Init, reads via AudioDeviceSnapshot) and the audio thread
-    // (DrainPatchInputBus / ProcessBlock's stashed-message retry, which read
-    // AND write both members while applying a patch message).
+    // (host writes via SetAudioDeviceFromHost, reads via AudioDeviceSnapshot)
+    // and the audio thread (DrainPatchInputBus / ProcessBlock's
+    // stashed-message retry, which read AND write both members while
+    // applying a patch message). AppContext no longer exposes a mutable
+    // pointer into audioDeviceState_ (Task 3 review, Critical fix) -- the
+    // only writers are the Initialize()-time config seeding, patch
+    // application, and SetAudioDeviceFromHost, all of which hold this lock.
     //
-    // Touched ONLY at patch-message application (DrainPatchInputBus, the
-    // ProcessBlock stashed-message retry, ApplyPendingPatchMessages/the
-    // startup drain in Initialize()) and host operations
-    // (SetAudioDeviceFromHost, AudioDeviceSnapshot) -- never on the
-    // steady-state pump path when there is no pending patch message to
-    // apply (patchInputBus_.Pop() returning false costs nothing extra; see
-    // DrainPatchInputBus's doc comment). This is the same sanctioned
-    // patch-boundary non-RT exception LogPatchApplyOutcome's doc comment
-    // describes: patch commands are rare and user-initiated, and
+    // Touched ONLY at the Initialize()-time seeding step, patch-message
+    // application (DrainPatchInputBus, the ProcessBlock stashed-message
+    // retry, ApplyPendingPatchMessages/the startup drain in Initialize()),
+    // and host operations (SetAudioDeviceFromHost, AudioDeviceSnapshot) --
+    // never on the steady-state pump path when there is no pending patch
+    // message to apply (patchInputBus_.Pop() returning false costs nothing
+    // extra; see DrainPatchInputBus's doc comment). This is the same
+    // sanctioned patch-boundary non-RT exception LogPatchApplyOutcome's doc
+    // comment describes: patch commands are rare and user-initiated, and
     // ApplyPatchMessage itself already isn't lock/allocation-free on that
     // path, so a mutex acquisition confined to the same window adds no new
     // audio-thread hazard in steady state.
     mutable std::mutex audioDeviceStateMutex_;
 
-    // Engine-owned audio device selection (Task 2). Wired into
-    // context_.audioDeviceState in the constructor (apps mutate it directly
-    // during Init() -- pre-audio, single-threaded, before this mutex matters
-    // -- the same way they mutate *ctx->midiProfileConfig; see
-    // AppContext::audioDeviceState's doc comment for why post-Init mutation
-    // must go through SetAudioDeviceFromHost instead), and threaded through
+    // Engine-owned audio device selection (Task 2; seeding fixed in Task 3
+    // review). Seeded at the start of Initialize() from
+    // config_.preferredOutputDeviceName/preferredInputDeviceName (pre-audio,
+    // single-threaded, before this mutex matters), then threaded through
     // every ApplyPatchMessage call so patch load/revert can read and write
-    // it. All reads/writes past Init() must hold audioDeviceStateMutex_. See
-    // SetAudioDeviceFromHost/AudioDeviceSnapshot for the public API.
+    // it. There is no longer a mutable pointer into this member on
+    // AppContext -- a retained context could mutate it without the lock or
+    // the lastNotifiedAudioDeviceState_ shadow; see
+    // RuntimeConfig::preferredOutputDeviceName's doc comment for the fix. All
+    // reads/writes past the Initialize() seeding step must hold
+    // audioDeviceStateMutex_. See SetAudioDeviceFromHost/AudioDeviceSnapshot
+    // for the public API.
     AudioDeviceState audioDeviceState_;
     // Default = the app's Init-configured audio device selection; revert/new
     // restore this. Snapshotted from audioDeviceState_ alongside
