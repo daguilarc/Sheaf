@@ -7,15 +7,15 @@
 #   APP_SOURCES     - app-specific .cpp sources (main entry point etc.)
 #   APP_BUILD_DIR   - build output directory, must be distinct per app to
 #                      avoid object-file collisions between apps
-#   APP_INFO_PLIST  - path (relative to the including Makefile) to the
-#                      Info.plist to bundle
+#   APP_INFO_PLIST  - path to the Info.plist to bundle
 #
-# This file computes its own directory via $(lastword $(MAKEFILE_LIST)) so
-# that SYNTH_ROOT and JUCE module paths resolve correctly regardless of how
-# deep the including app directory is nested (e.g. apps/<name>/ vs miniapp/).
-# Do not rely on the including Makefile's relative-path assumptions.
+# Path anchoring: SYNTH_ROOT and all JUCE module paths are computed via
+# $(lastword $(MAKEFILE_LIST)) on the first line below (before any further
+# includes), so they resolve correctly regardless of the including Makefile's
+# directory nesting or the caller's cwd. This Makefile's own abspath is used,
+# not the includer's cwd. The includer should similarly anchor its own app paths.
 
-JUCE_BUILD_MK_DIR := $(patsubst %/,%,$(dir $(lastword $(MAKEFILE_LIST))))
+JUCE_BUILD_MK_DIR := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
 SYNTH_ROOT := $(JUCE_BUILD_MK_DIR)/..
 
 CXX ?= clang++
@@ -78,7 +78,7 @@ CPPFLAGS := -I$(SYNTH_ROOT)/include -I$(SYNTH_ROOT)/juce -I$(JUCE_DIR)/modules \
 
 LDFLAGS_DARWIN := -framework Cocoa -framework IOKit -framework CoreAudio -framework CoreMIDI -framework AudioToolbox -framework QuartzCore -framework Accelerate -framework Security
 
-.PHONY: all check-juce
+.PHONY: all check-juce clean
 
 all: check-juce $(APP_BUNDLE)
 
