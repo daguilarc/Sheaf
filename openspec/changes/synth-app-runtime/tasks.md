@@ -49,10 +49,10 @@
 
 ## 7. Miniapp port
 
-- [ ] 7.1 Create `projects/synth/apps/miniapp/` with a JUCE-free `MiniAppCore` (satisfies `SynthApplicationCore`): `RuntimeConfig` (0 in / 2 out, 48 kHz preferred, deterministic `/tmp` patches root, logs root), `Init` containing only group/VCO-module/LFO/pages/banks/slot/scope/gesture-metadata setup, prepare hook forwarding sample rate to `DualWavetableVcoModule` (sar-11, sar-14)
-- [ ] 7.2 Implement `MiniAppCore::ProcessBlock`: per-sample `ProcessLite`, module `SetInput`/`Process`, LFO advance, `UpdateModValues`, scope writes, and summed VCO voices written to device outputs (sar-6, sar-11)
+- [x] 7.1 Create `projects/synth/apps/miniapp/` with a JUCE-free `MiniAppCore` (satisfies `SynthApplicationCore`): `RuntimeConfig` (0 in / 2 out, 48 kHz preferred, deterministic `/tmp` patches root, logs root), `Init` containing only group/VCO-module/LFO/pages/banks/slot/scope/gesture-metadata setup, prepare hook forwarding sample rate to `DualWavetableVcoModule` (sar-11, sar-14)
+- [x] 7.2 Implement `MiniAppCore::ProcessBlock`: per-sample `ProcessLite`, module `SetInput`/`Process`, LFO advance, `UpdateModValues`, scope writes, and summed VCO voices written to device outputs (sar-6, sar-11)
 - [ ] 7.3 Add the thin `MiniApp` wrapper providing the UI component (encoders, buttons, sliders, waveform pane) over the core; keep `EncoderComponent::BindMessages` wiring to the UI bus (sar-10, sar-11)
-- [ ] 7.4 Move `DemoModulation.hpp` alongside the app; add the rig-hosted miniapp system test (init through engine, run blocks, drive encoders/scenes/gestures, assert non-NaN output with nonzero peak at raised volume, patch save/load round-trip) subsuming `DemoModulationTests.cpp`'s coverage while keeping its pure-math checks (sar-14)
+- [x] 7.4 Move `DemoModulation.hpp` alongside the app; add the rig-hosted miniapp system test (init through engine, run blocks, drive encoders/scenes/gestures, assert non-NaN output with nonzero peak at raised volume, patch save/load round-trip) subsuming `DemoModulationTests.cpp`'s coverage while keeping its pure-math checks (sar-14)
 - [ ] 7.5 Delete the miniapp's `appendPatchLog`/`patchLogPath` ad hoc logging along with the old `projects/synth/miniapp/` directory; repoint the `miniapp` Make target to `apps/miniapp`, update `projects/synth/README.md` and the app README (slog-7)
 
 ## 8. Verification and spec sync
