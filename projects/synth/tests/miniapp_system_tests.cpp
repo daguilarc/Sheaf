@@ -102,17 +102,35 @@ OutputWindow CaptureSettledOutputWindow(synth_rig::SynthRig<synth_miniapp::MiniA
     return rig.Output();
 }
 
+// Assert that two windows have exactly equal shape: same frame count and equal
+// per-frame channel counts. Used to guard value comparisons and fail clearly
+// on shape mismatches.
+void RequireEqualWindowShapes(const OutputWindow& a, const OutputWindow& b, const char* context) {
+    if (a.size() != b.size()) {
+        std::ostringstream oss;
+        oss << context << " frame count mismatch: " << a.size() << " vs " << b.size();
+        throw std::runtime_error(oss.str());
+    }
+    for (std::size_t i = 0; i < a.size(); ++i) {
+        if (a[i].channels.size() != b[i].channels.size()) {
+            std::ostringstream oss;
+            oss << context << " frame " << i << " channel count mismatch: "
+                << a[i].channels.size() << " vs " << b[i].channels.size();
+            throw std::runtime_error(oss.str());
+        }
+    }
+}
+
 // True if any frame/channel sample differs by more than tolerance between the
-// two windows (same shape assumed -- both captured from the same rig/config).
+// two windows. Requires equal shapes first (fails clearly on shape mismatch).
 // Used to assert a Turn produces a materially different output signal, not
 // just a changed parameter value that never reaches the audio path.
 bool OutputWindowsDifferMaterially(const OutputWindow& before, const OutputWindow& after, float tolerance) {
-    const std::size_t frameCount = std::min(before.size(), after.size());
-    for (std::size_t frame = 0; frame < frameCount; ++frame) {
+    RequireEqualWindowShapes(before, after, "OutputWindowsDifferMaterially");
+    for (std::size_t frame = 0; frame < before.size(); ++frame) {
         const auto& beforeChannels = before[frame].channels;
         const auto& afterChannels = after[frame].channels;
-        const std::size_t channelCount = std::min(beforeChannels.size(), afterChannels.size());
-        for (std::size_t ch = 0; ch < channelCount; ++ch) {
+        for (std::size_t ch = 0; ch < beforeChannels.size(); ++ch) {
             if (std::fabs(afterChannels[ch] - beforeChannels[ch]) > tolerance) {
                 return true;
             }
@@ -231,7 +249,12 @@ TEST_CASE(miniapp_rig_tune_turn_changes_output) {
     const OutputWindow baselineB = CaptureSettledOutputWindow(rigB, 8);
     REQUIRE_TRUE(AllSamplesFinite(baselineA));
     REQUIRE_TRUE(AllSamplesFinite(baselineB));
-    REQUIRE_TRUE(!OutputWindowsDifferMaterially(baselineA, baselineB, 1e-4f));
+    // Rigs are deterministic, so baseline windows must be EXACTLY equal.
+    RequireEqualWindowShapes(baselineA, baselineB, "miniapp_rig_tune_turn_changes_output baseline");
+    REQUIRE_TRUE(baselineA.size() == baselineB.size());
+    for (std::size_t i = 0; i < baselineA.size(); ++i) {
+        REQUIRE_TRUE(baselineA[i].channels == baselineB[i].channels);  // bit-identical
+    }
 
     // Apply the Turn under test to rig B only.
     rigB.Turn(kSlotIx, kTunePosition, 0.3f);
@@ -284,7 +307,12 @@ TEST_CASE(miniapp_rig_shape_turn_changes_output) {
     const OutputWindow baselineB = CaptureSettledOutputWindow(rigB, 8);
     REQUIRE_TRUE(AllSamplesFinite(baselineA));
     REQUIRE_TRUE(AllSamplesFinite(baselineB));
-    REQUIRE_TRUE(!OutputWindowsDifferMaterially(baselineA, baselineB, 1e-4f));
+    // Rigs are deterministic, so baseline windows must be EXACTLY equal.
+    RequireEqualWindowShapes(baselineA, baselineB, "miniapp_rig_shape_turn_changes_output baseline");
+    REQUIRE_TRUE(baselineA.size() == baselineB.size());
+    for (std::size_t i = 0; i < baselineA.size(); ++i) {
+        REQUIRE_TRUE(baselineA[i].channels == baselineB[i].channels);  // bit-identical
+    }
 
     // Apply the Turn under test to rig B only.
     rigB.Turn(kSlotIx, kShapePosition, 0.4f);
