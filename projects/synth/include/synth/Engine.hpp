@@ -256,7 +256,10 @@ public:
             GrowSerializationArenaForTick();
         }
 
-        patchManager_.ProcessResponses();
+        const PatchCommandResult patchResult = patchManager_.ProcessResponses();
+        if (patchResult.status != PatchCommandStatus::NoCompletion) {
+            lastTickPatchResult_ = patchResult;
+        }
 
         if (midiRebuildPending_.load(std::memory_order_acquire)) {
             RebuildMidiProcessors();
@@ -294,6 +297,15 @@ public:
     // barrier directly without depending on that unrelated bookkeeping.
     bool HasStashedPatchMessageForTest() const { return pendingPatchMessage_.has_value(); }
     bool IsArenaGrowPendingForTest() const { return arenaGrowPending_.load(std::memory_order_acquire); }
+
+    // Rig/test support: last non-NoCompletion patch response observed by
+    // MessageThreadTick. Reading clears it. The JUCE runtime shell reports
+    // patch results through its own PatchManager calls and does not use this.
+    std::optional<PatchCommandResult> ConsumeLastTickPatchResult() {
+        std::optional<PatchCommandResult> result = std::move(lastTickPatchResult_);
+        lastTickPatchResult_.reset();
+        return result;
+    }
 
     // Iterate immediate subdirectories of root; for each, LatestPatchVersion.
     // Select the directory whose latest version FILENAME is lexicographically
@@ -487,6 +499,11 @@ private:
     // only ProcessBlock (audio thread) reads, retries, or clears the stash.
     std::optional<PatchMessageIn> pendingPatchMessage_;
     std::atomic<bool> arenaGrowPending_{false};
+
+    // Rig/test support: last non-NoCompletion PatchCommandResult observed by
+    // MessageThreadTick's patchManager_.ProcessResponses() call. See
+    // ConsumeLastTickPatchResult().
+    std::optional<PatchCommandResult> lastTickPatchResult_;
 };
 
 }  // namespace synth

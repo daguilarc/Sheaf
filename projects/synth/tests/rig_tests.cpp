@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdint>
 #include <exception>
+#include <filesystem>
 #include <iostream>
 #include <sstream>
 #include <stdexcept>
@@ -162,6 +163,41 @@ TEST_CASE(rig_nan_flag_is_sticky) {
     REQUIRE_TRUE(rig.SawNaN());  // still true: sticky across subsequent clean blocks
     rig.ClearNaN();
     REQUIRE_TRUE(!rig.SawNaN());
+}
+
+// Regression test for the save-pump result race fixed via
+// Engine::ConsumeLastTickPatchResult(): RunBlocks(1) already drains the
+// pending save's response through MessageThreadTick()'s internal
+// ProcessResponses() call, so a rig that called ProcessResponses() again
+// afterward would only ever observe NoCompletion and report TimedOut even
+// though the save actually succeeded. This edits a parameter, saves via
+// SavePatchAs, and asserts the rig correctly reports Written with the
+// version file present on disk.
+TEST_CASE(rig_save_patch_as_reports_written_and_creates_version_file) {
+    const std::filesystem::path saveDir =
+        std::filesystem::temp_directory_path() / "rig-tests-save-patch-as-dir";
+    std::error_code ec;
+    std::filesystem::remove_all(saveDir, ec);
+
+    synth_rig::SynthRig<RigTestApp> rig;
+    rig.Turn(0, 0, 0.5f);  // Level encoder
+    rig.RunBlocks(4);      // let the edit land before saving
+
+    const synth_rig::RigPatchStatus status = rig.SavePatchAs(saveDir);
+    REQUIRE_TRUE(status == synth_rig::RigPatchStatus::Written);
+
+    bool foundVersionFile = false;
+    if (std::filesystem::is_directory(saveDir, ec)) {
+        for (const auto& entry : std::filesystem::directory_iterator(saveDir, ec)) {
+            if (entry.is_regular_file() && entry.path().extension() == ".json") {
+                foundVersionFile = true;
+                break;
+            }
+        }
+    }
+    REQUIRE_TRUE(foundVersionFile);
+
+    std::filesystem::remove_all(saveDir, ec);
 }
 
 int main() {

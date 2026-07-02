@@ -132,7 +132,7 @@ public:
     void SendMidi(const synth::BasicMidi& midi) {
         synth::MidiInProcessor* processor = engine_.MidiInputProcessor();
         if (processor == nullptr) {
-            sawNullMidiInputProcessor_ = true;
+            INFO("SynthRig::SendMidi: MidiInputProcessor is null; dropping MIDI message");
             return;
         }
         processor->Process(midi);
@@ -162,7 +162,6 @@ public:
     bool SawNaN() const { return sawNaN_; }
     void ClearOutput() { capturedOutput_.clear(); }
     void ClearNaN() { sawNaN_ = false; }
-    bool SawNullMidiInputProcessor() const { return sawNullMidiInputProcessor_; }
 
     App& Application() { return engine_.Application(); }
     synth::Engine<App>& Engine() { return engine_; }
@@ -208,10 +207,14 @@ private:
     }
 
     // Save-family commands (SavePatch/SavePatchAs) report Pending immediately
-    // and complete asynchronously via ProcessResponses(); this pumps blocks
-    // (and the message-thread tick, so arena growth/response draining make
-    // progress) until ProcessResponses() reports Written, or the block
-    // budget is exhausted.
+    // and complete asynchronously via ProcessResponses(); RunBlocks(1) already
+    // ends with Engine::MessageThreadTick(), whose internal
+    // patchManager_.ProcessResponses() call is the one that actually observes
+    // the completion (arena growth/response draining happen there). Calling
+    // ProcessResponses() again from here would only ever see NoCompletion
+    // (the tick already consumed the real result), so this reads the result
+    // the tick observed via ConsumeLastTickPatchResult() instead of calling
+    // ProcessResponses() a second time.
     RigPatchStatus PumpSaveLike(const synth::PatchCommandResult& dispatchResult) {
         if (IsImmediateFailure(dispatchResult.status)) {
             return RigPatchStatus::Failed;
@@ -224,11 +227,14 @@ private:
         }
         for (std::size_t i = 0; i < patchPumpBudgetBlocks_; ++i) {
             RunBlocks(1);
-            const synth::PatchCommandResult processed = engine_.Patches().ProcessResponses();
-            if (processed.status == synth::PatchCommandStatus::Written) {
+            const std::optional<synth::PatchCommandResult> tickResult = engine_.ConsumeLastTickPatchResult();
+            if (!tickResult.has_value()) {
+                continue;
+            }
+            if (tickResult->status == synth::PatchCommandStatus::Written) {
                 return RigPatchStatus::Written;
             }
-            if (IsImmediateFailure(processed.status)) {
+            if (IsImmediateFailure(tickResult->status)) {
                 return RigPatchStatus::Failed;
             }
         }
@@ -237,12 +243,14 @@ private:
 
     // Load-family commands (LoadPatch) report Ok immediately once the
     // parsed document is queued onto patchInputBus_; the actual apply
-    // happens asynchronously on the audio thread's drain phase. This pumps
-    // blocks, calling ProcessResponses() each iteration (per the brief:
-    // "ProcessResponses returns and the input bus is empty"), until the
-    // applied effect is visible — the input bus has drained and no message
-    // is stashed behind the arena-grow barrier — or the block budget is
-    // exhausted.
+    // happens asynchronously on the audio thread's drain phase. RunBlocks(1)
+    // already drives Engine::MessageThreadTick(), whose internal
+    // patchManager_.ProcessResponses() call is the one that observes any
+    // completion, so this pumps blocks and checks the tick-observed result
+    // (via ConsumeLastTickPatchResult()) for an immediate failure, or
+    // otherwise waits for the applied effect to become visible — the input
+    // bus has drained and no message is stashed behind the arena-grow
+    // barrier — until the block budget is exhausted.
     RigPatchStatus PumpLoadLike(const synth::PatchCommandResult& dispatchResult) {
         if (IsImmediateFailure(dispatchResult.status)) {
             return RigPatchStatus::Failed;
@@ -252,7 +260,10 @@ private:
         }
         for (std::size_t i = 0; i < patchPumpBudgetBlocks_; ++i) {
             RunBlocks(1);
-            engine_.Patches().ProcessResponses();
+            const std::optional<synth::PatchCommandResult> tickResult = engine_.ConsumeLastTickPatchResult();
+            if (tickResult.has_value() && IsImmediateFailure(tickResult->status)) {
+                return RigPatchStatus::Failed;
+            }
             const bool drained = engine_.Context().patchInputBus->Size() == 0 &&
                                  !engine_.HasStashedPatchMessageForTest();
             if (drained) {
@@ -264,11 +275,15 @@ private:
 
     // Revert/New-family commands (RevertPatch) also report Ok immediately
     // once queued, but unlike a fresh LoadPatch there is no new document to
-    // wait for landing in observable state beyond the drain itself: the
-    // brief's settle heuristic is two consecutive NoCompletion responses
-    // from ProcessResponses(), which is only reached once nothing is left
-    // in flight (no pending save, and the queued revert/new message has
-    // been drained and applied).
+    // wait for landing in observable state beyond the drain itself. Since
+    // RunBlocks(1) already drives MessageThreadTick()'s ProcessResponses()
+    // call, calling ProcessResponses() again here would only ever observe
+    // NoCompletion (the tick consumed the real result already), so the
+    // settle condition is expressed directly in terms of the deterministic,
+    // budget-bounded state RunBlocks(1) leaves behind: the input bus has
+    // drained and no message is stashed behind the arena-grow barrier (same
+    // terminal condition as PumpLoadLike), while any tick-observed result
+    // that is an immediate failure short-circuits the pump.
     RigPatchStatus PumpAcceptedLike(const synth::PatchCommandResult& dispatchResult) {
         if (IsImmediateFailure(dispatchResult.status)) {
             return RigPatchStatus::Failed;
@@ -276,20 +291,16 @@ private:
         if (dispatchResult.status != synth::PatchCommandStatus::Ok) {
             return RigPatchStatus::Failed;
         }
-        int consecutiveNoCompletion = 0;
         for (std::size_t i = 0; i < patchPumpBudgetBlocks_; ++i) {
             RunBlocks(1);
-            const synth::PatchCommandResult processed = engine_.Patches().ProcessResponses();
-            if (processed.status == synth::PatchCommandStatus::NoCompletion) {
-                ++consecutiveNoCompletion;
-                if (consecutiveNoCompletion >= 2) {
-                    return RigPatchStatus::Ok;
-                }
-            } else {
-                consecutiveNoCompletion = 0;
-                if (IsImmediateFailure(processed.status)) {
-                    return RigPatchStatus::Failed;
-                }
+            const std::optional<synth::PatchCommandResult> tickResult = engine_.ConsumeLastTickPatchResult();
+            if (tickResult.has_value() && IsImmediateFailure(tickResult->status)) {
+                return RigPatchStatus::Failed;
+            }
+            const bool drained = engine_.Context().patchInputBus->Size() == 0 &&
+                                 !engine_.HasStashedPatchMessageForTest();
+            if (drained) {
+                return RigPatchStatus::Ok;
             }
         }
         return RigPatchStatus::TimedOut;
@@ -353,7 +364,6 @@ private:
     std::vector<OutputFrame> capturedOutput_;
     float outputPeak_ = 0.0f;
     bool sawNaN_ = false;
-    bool sawNullMidiInputProcessor_ = false;
 };
 
 }  // namespace synth_rig
