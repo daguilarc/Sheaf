@@ -2,10 +2,11 @@
 
 // synth::Engine — the JUCE-free engine core that owns every framework object
 // an application touches (sar-3), wires AppContext, and drives the
-// application through its pre-audio lifecycle (sar-5). Task 4 (ProcessBlock)
-// and Task 5 (MessageThreadTick) fill in the audio-thread and message-thread
-// pumps; this task establishes construction, Initialize, Prepare, and
-// synchronous startup patch selection/loading.
+// application through its pre-audio lifecycle (sar-5) and its audio-thread
+// block pump (sar-6, Task 4). Task 5 (MessageThreadTick) fills in the
+// message-thread pump: rebuilding MIDI processors when midiRebuildPending_
+// is set, and growing serializationArena_ / retrying pendingPatchMessage_
+// when arenaGrowPending_ is set.
 
 #include "synth/AppConcepts.hpp"
 #include "synth/AppContext.hpp"
@@ -14,7 +15,9 @@
 #include "synth/ParameterModulation.hpp"
 #include "synth/PatchPersistence.hpp"
 
+#include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -119,25 +122,68 @@ public:
         }
     }
 
-    // Stores negotiated audio values, computes the UI-state throttle
-    // interval, and forwards to the application's PrepareToPlay hook when
-    // present.
+    // Stores negotiated audio values, computes the UI-state publish-throttle
+    // interval (in blocks), and forwards to the application's PrepareToPlay
+    // hook when present. uiPublishInterval_ = max(1, round(sampleRate /
+    // (uiFrameHz * blockSize))); before Prepare runs, the default of 1
+    // (publish every block) applies.
     void Prepare(double sampleRate, int blockSize) {
         sampleRate_ = sampleRate;
         blockSize_ = blockSize;
-        uiThrottleIntervalSamples_ =
-            sampleRate > 0.0 ? static_cast<std::uint64_t>(sampleRate / static_cast<double>(config_.uiFrameHz > 0 ? config_.uiFrameHz : 30))
-                              : 0;
+
+        const int uiFrameHz = config_.uiFrameHz > 0 ? config_.uiFrameHz : 30;
+        if (sampleRate > 0.0 && blockSize > 0) {
+            const long computed =
+                std::lround(sampleRate / (static_cast<double>(uiFrameHz) * static_cast<double>(blockSize)));
+            uiPublishInterval_ = static_cast<int>(std::max<long>(1, computed));
+        } else {
+            uiPublishInterval_ = 1;
+        }
 
         if constexpr (HasPrepareToPlay<App>) {
             app_.PrepareToPlay(sampleRate, blockSize);
         }
     }
 
-    // Task 4: audio-thread block processing. Minimal stub for this task.
+    // Task 4: audio-thread block pump (sar-6, binding order):
+    //   1. drain patchInputBus_ via ApplyPatchMessage using the engine
+    //      serialization context; Applied/Reverted set midiRebuildPending_
+    //      for MessageThreadTick (Task 5); ArenaExhausted stashes the popped
+    //      message in pendingPatchMessage_, sets arenaGrowPending_, and stops
+    //      draining for this block (never grows the arena on the audio path)
+    //   2. uiBus_.Process(timestamp)
+    //   3. midiBus_.Process(timestamp)
+    //   4. manager_.ComputeAllTargets() (never ComputeAllParameters here)
+    //   5. sampleCounter_.fetch_add(block.numFrames, relaxed)
+    //   6. app_.ProcessBlock(block) exactly once
+    //   7. throttled PopulateUIState every uiPublishInterval_ blocks
     void ProcessBlock(AudioBlock& block, std::uint64_t timestamp) {
-        (void)block;
-        (void)timestamp;
+        PatchMessageIn patchMessage;
+        while (patchInputBus_.Pop(patchMessage)) {
+            const PatchApplyStatus status = ApplyPatchMessage(
+                patchMessage, manager_, midiProfileConfig_, defaultMidiProfileConfig_, endpoints_,
+                defaultEndpoints_, patchOutputBus_, serializationContext_);
+            if (status == PatchApplyStatus::Applied || status == PatchApplyStatus::Reverted) {
+                midiRebuildPending_.store(true, std::memory_order_release);
+            } else if (status == PatchApplyStatus::ArenaExhausted) {
+                pendingPatchMessage_ = std::move(patchMessage);
+                arenaGrowPending_.store(true, std::memory_order_release);
+                break;
+            }
+        }
+
+        uiBus_.Process(timestamp);
+        midiBus_.Process(timestamp);
+        manager_.ComputeAllTargets();
+        sampleCounter_.fetch_add(block.numFrames, std::memory_order_relaxed);
+        app_.ProcessBlock(block);
+
+        if (++blocksSinceUiPublish_ >= uiPublishInterval_) {
+            blocksSinceUiPublish_ = 0;
+            if (uiState_ != nullptr) {
+                manager_.PopulateUIState(*uiState_);
+            }
+        }
     }
 
     // Task 5: message-thread pump. Minimal stub for this task.
@@ -209,16 +255,17 @@ private:
         }
     }
 
-    // Shared by Initialize (synchronous drain) and ProcessBlock (Task 4).
-    // Drains patchInputBus_ via ApplyPatchMessage using the engine's
-    // serialization context. Returns true if any drained message applied or
-    // reverted patch state (i.e. the caller should rebuild MIDI processors).
+    // Pre-audio-only synchronous drain, used by Initialize(). Drains
+    // patchInputBus_ via ApplyPatchMessage using the engine's serialization
+    // context. Returns true if any drained message applied or reverted patch
+    // state (i.e. the caller should rebuild MIDI processors).
     //
     // ArenaExhausted handling: during Initialize, audio has not started, so
     // on ArenaExhausted we simply grow serializationArena_ synchronously
-    // (heap allocation is safe pre-audio) and retry that message once. Once
-    // ProcessBlock (Task 4) also calls this on the audio thread, growth must
-    // not happen there; Task 4 is responsible for keeping that constraint.
+    // (heap allocation is safe pre-audio) and retry that message once. This
+    // growth is illegal once the audio thread is running: ProcessBlock has
+    // its own inline drain loop (not this helper) that stashes the message
+    // and defers growth to MessageThreadTick (Task 5) instead.
     bool ApplyPendingPatchMessages() {
         bool pendingRebuild = false;
         PatchMessageIn message;
@@ -265,10 +312,28 @@ private:
     std::atomic<std::uint64_t> sampleCounter_{0};
     std::function<void()> midiProcessorsRebuiltCallback_;
 
-    // Task 4/5 state, declared now, filled in by later tasks.
     double sampleRate_ = 0.0;
     int blockSize_ = 0;
-    std::uint64_t uiThrottleIntervalSamples_ = 0;
+
+    // UI-state publish throttle (Task 4): PopulateUIState runs every
+    // uiPublishInterval_ blocks. Prepare() computes uiPublishInterval_ =
+    // max(1, round(sampleRate / (uiFrameHz * blockSize))); the default of 1
+    // (publish every block) applies before Prepare runs.
+    int uiPublishInterval_ = 1;
+    int blocksSinceUiPublish_ = 0;
+
+    // Set by ProcessBlock (Task 4) when a drained patch message
+    // applied/reverted patch state; MessageThreadTick (Task 5) consumes this
+    // to know it should rebuild MIDI processors on the message thread.
+    std::atomic<bool> midiRebuildPending_{false};
+
+    // Audio-path ArenaExhausted handling (Task 4/5): ProcessBlock never grows
+    // serializationArena_ on the audio thread. On ArenaExhausted it stashes
+    // the popped message here and sets arenaGrowPending_ so MessageThreadTick
+    // (Task 5) can grow the arena and retry the stashed message off the
+    // audio thread, without losing it.
+    std::optional<PatchMessageIn> pendingPatchMessage_;
+    std::atomic<bool> arenaGrowPending_{false};
 };
 
 }  // namespace synth
