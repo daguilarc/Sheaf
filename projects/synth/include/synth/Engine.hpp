@@ -216,21 +216,51 @@ public:
         }
     }
 
-    // Task 5: message-thread pump. Minimal stub for this task, except for
-    // the arenaGrowPending_ half of the drain-barrier contract (needed so
-    // the barrier added in Task 4 is exercisable end-to-end): when
-    // arenaGrowPending_ is set, grow serializationArena_ (heap allocation is
-    // safe here — this runs off the audio thread) and clear the flag. This
-    // is the ENTIRE tick contract for these two flags: MessageThreadTick
-    // grows the arena and clears arenaGrowPending_; it must NOT touch
-    // pendingPatchMessage_. ProcessBlock alone owns retrying/clearing the
-    // stash, on the audio thread, so ordering against newly-queued patch
-    // messages is guaranteed by the audio thread's single-writer view of
-    // patchInputBus_ draining.
+    // Task 5: message-thread pump. Binding order:
+    //   1. parameter storage-batch replies — drain parameterMessageOutBus_
+    //      and reply to each ParameterStorageBatchNeeded request, mirroring
+    //      the miniapp's processParameterMessages pattern exactly.
+    //   2. arena grow (see the tick contract note on GrowSerializationArenaForTick):
+    //      MessageThreadTick grows the arena and clears arenaGrowPending_
+    //      ONLY (GrowSerializationArenaForTick clears the flag itself, in
+    //      both the ordinary-growth and drop-at-cap cases). It must NOT
+    //      touch pendingPatchMessage_ (except the documented drop-at-cap
+    //      carve-out) and must NOT re-push anything onto patchInputBus_ —
+    //      ProcessBlock alone owns retrying/clearing the stash, on the
+    //      audio thread, once it observes arenaGrowPending_ cleared.
+    //   3. patchManager_.ProcessResponses()
+    //   4. if midiRebuildPending_: RebuildMidiProcessors(), clear the flag,
+    //      then invoke midiProcessorsRebuiltCallback_ if set (so the
+    //      callback always observes the rebuilt processors).
+    //   5. each processor in midiProcessors_.outputs: Process().
     void MessageThreadTick() {
+        ParameterMessageOut parameterMessage;
+        while (parameterMessageOutBus_.Pop(parameterMessage)) {
+            if (parameterMessage.type != ParameterMessageOut::Type::ParameterStorageBatchNeeded ||
+                parameterMessage.group == nullptr) {
+                continue;
+            }
+            parameterMessage.group->AddParameterStorageBatch(MakeParameterStorageBatch(
+                parameterMessage.group->Config(), parameterMessage.group->GestureCount(),
+                parameterMessage.requestedParameters));
+        }
+
         if (arenaGrowPending_.load(std::memory_order_acquire)) {
             GrowSerializationArenaForTick();
-            arenaGrowPending_.store(false, std::memory_order_release);
+        }
+
+        patchManager_.ProcessResponses();
+
+        if (midiRebuildPending_.load(std::memory_order_acquire)) {
+            // RebuildMidiProcessors() invokes midiProcessorsRebuiltCallback_
+            // itself (see its definition below), always after the rebuild is
+            // complete, so no separate invocation is needed here.
+            RebuildMidiProcessors();
+            midiRebuildPending_.store(false, std::memory_order_release);
+        }
+
+        for (auto& output : midiProcessors_.outputs) {
+            output->Process();
         }
     }
 
@@ -336,10 +366,28 @@ private:
     // MessageThreadTick's (Task 5) sole responsibility for the drain
     // barrier: grow serializationArena_ off the audio thread. Heap
     // allocation here is safe because this never runs on the audio thread.
-    // Must NOT touch pendingPatchMessage_ — see the tick contract note on
-    // MessageThreadTick.
+    // Growth doubles the arena's current capacity, capped at
+    // serializationContext_.maxArenaCapacity. In the ordinary case (still
+    // under the cap) this must NOT touch pendingPatchMessage_ — see the
+    // tick contract note on MessageThreadTick. The one carve-out: if the
+    // arena is already at (or would only reach) the cap, growing further is
+    // pointless (the stash would just exhaust again forever), so this drops
+    // the stashed message, clears both the stash and arenaGrowPending_, and
+    // INFO-logs the failure instead of growing.
     void GrowSerializationArenaForTick() {
-        serializationArena_.GrowAndReset();
+        const std::size_t currentCapacity = serializationArena_.Capacity();
+        if (currentCapacity >= serializationContext_.maxArenaCapacity) {
+            INFO("MessageThreadTick: serialization arena at max capacity %zu; dropping stashed patch message",
+                 serializationContext_.maxArenaCapacity);
+            pendingPatchMessage_.reset();
+            arenaGrowPending_.store(false, std::memory_order_release);
+            return;
+        }
+
+        const std::size_t doubled = currentCapacity * 2;
+        const std::size_t nextCapacity = std::min(doubled, serializationContext_.maxArenaCapacity);
+        serializationArena_.Init(nextCapacity);
+        arenaGrowPending_.store(false, std::memory_order_release);
     }
 
     // Pre-audio-only synchronous drain, used by Initialize(). Drains
@@ -426,8 +474,11 @@ private:
     // arenaGrowPending_ reads false.
     //
     // Tick contract: MessageThreadTick grows the arena and clears
-    // arenaGrowPending_; it must NOT touch pendingPatchMessage_. Only
-    // ProcessBlock (audio thread) reads, retries, or clears the stash.
+    // arenaGrowPending_; it must NOT touch pendingPatchMessage_, except the
+    // documented drop-at-cap carve-out in GrowSerializationArenaForTick
+    // (arena already at serializationContext_.maxArenaCapacity: the stash
+    // is dropped there instead of retried forever). Outside that one case,
+    // only ProcessBlock (audio thread) reads, retries, or clears the stash.
     std::optional<PatchMessageIn> pendingPatchMessage_;
     std::atomic<bool> arenaGrowPending_{false};
 };

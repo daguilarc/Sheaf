@@ -69,6 +69,12 @@ struct EngineTestApp {
     // Init() when building the parameter group (must be set before
     // constructing the Engine, since Init() runs during Engine::Initialize).
     static inline float processLiteAlpha = 1.0f;
+    // When set, Init() installs a minimal encoder MIDI-input profile so
+    // RebuildMidiProcessors() produces a non-null, freshly-allocated
+    // MidiInProcessor each time it runs (tests that need to observe rebuild
+    // identity/ordering set this before constructing the Engine; default
+    // false keeps every other test's profile empty, as before).
+    static inline bool wantEncoderMidiInput = false;
     synth::AppContext* context = nullptr;
     synth::ParameterId probeId = 0;
     synth::BankSlot* probeSlot = nullptr;
@@ -86,6 +92,9 @@ struct EngineTestApp {
         ++initCalls;
         context = ctx;
         sawNullUiStateDuringInit = (ctx->uiState == nullptr);
+        if (wantEncoderMidiInput && ctx->midiProfileConfig != nullptr) {
+            ctx->midiProfileConfig->encoderInput = synth::EncoderMidiInConfig{};
+        }
         auto& group = ctx->parameterManager->CreateGroup({.numVoices = 1,
                                                            .numModulators = 0,
                                                            .numScenes = 1,
@@ -450,6 +459,200 @@ TEST_CASE(engine_pump_stash_is_a_drain_barrier_with_retry_first_ordering) {
     // continued past the retried stash in the same block): the probe is
     // back at its default.
     REQUIRE_NEAR(engine.Manager().ParameterById(engine.Application().probeId).Get(0), initial, 1e-4f);
+
+    std::filesystem::remove_all(saveDir);
+}
+
+TEST_CASE(engine_tick_rebuilds_midi_processors_after_patch_load_before_reopen_callback) {
+    EngineTestApp::testPatchesRoot.clear();
+    EngineTestApp::processLiteAlpha = 1.0f;
+    EngineTestApp::wantEncoderMidiInput = true;  // so MidiInputProcessor() is non-null and identity-observable
+    synth::Engine<EngineTestApp> engine([] { return std::uint64_t{0}; });
+    engine.Initialize();
+    engine.Prepare(48000.0, 256);
+
+    int callbackCalls = 0;
+    bool inputProcessorFreshAtCallback = false;
+    synth::MidiInProcessor* inputProcessorBeforeLoad = engine.MidiInputProcessor();
+    engine.SetMidiProcessorsRebuiltCallback([&]() {
+        ++callbackCalls;
+        // The rebuild must have already run by the time the callback fires:
+        // the input processor pointer should reflect the freshly-rebuilt
+        // profile, not the one captured before the load.
+        inputProcessorFreshAtCallback = engine.MidiInputProcessor() != inputProcessorBeforeLoad;
+    });
+
+    // Write a patch version (reusing Task 3's WriteProbePatchVersion helper)
+    // and enqueue it via PatchManager::LoadPatch, matching the brief's
+    // "helper like Task 3's" instruction.
+    const std::filesystem::path patchDir =
+        std::filesystem::temp_directory_path() / "engine-tick-rebuild-patch-dir";
+    std::filesystem::remove_all(patchDir);
+    WriteProbePatchVersion(patchDir, 0.9f, std::chrono::system_clock::now());
+
+    const synth::PatchCommandResult loadResult = engine.Patches().LoadPatch(patchDir);
+    REQUIRE_TRUE(loadResult.status == synth::PatchCommandStatus::Ok);
+
+    TestBlockBuffers buffers(2, 4);
+    {
+        // ProcessBlock drains patchInputBus_, applies the LoadFromJSON
+        // message, and sets midiRebuildPending_ for the tick to consume.
+        synth::AudioBlock block = buffers.Block(4);
+        engine.ProcessBlock(block, /*timestamp=*/0);
+    }
+    REQUIRE_NEAR(engine.Manager().ParameterById(engine.Application().probeId).Get(0), 0.9f, 1e-4f);
+    REQUIRE_TRUE(callbackCalls == 0);  // rebuild (and its callback) hasn't run yet: that's the tick's job
+
+    engine.MessageThreadTick();
+
+    REQUIRE_TRUE(callbackCalls == 1);  // fired exactly once
+    REQUIRE_TRUE(inputProcessorFreshAtCallback);  // and after the rebuild had already replaced the processors
+
+    // A second tick with nothing pending must not fire the callback again.
+    engine.MessageThreadTick();
+    REQUIRE_TRUE(callbackCalls == 1);
+
+    std::filesystem::remove_all(patchDir);
+    EngineTestApp::wantEncoderMidiInput = false;  // restore default for subsequent tests
+}
+
+TEST_CASE(engine_tick_replies_to_storage_batch_requests) {
+    // Dedicated test app variant with a tiny maxParameters group and two
+    // modulator slots, matching
+    // modulation_view_requests_storage_batch_and_succeeds_after_reinforcement's
+    // recipe in parameter_modulation_tests.cpp for provoking
+    // ParameterStorageBatchNeeded: a bank/slot mapped to a carrier
+    // parameter, with HandlePress(1) requesting the modulation view. The
+    // group's storage starts too small to hold the extra modulation-depth
+    // parameters, so the manager posts a ParameterStorageBatchNeeded
+    // request onto parameterMessageOutBus_ instead of materializing them.
+    struct TinyGroupApp {
+        static synth::RuntimeConfig Config() {
+            synth::RuntimeConfig config;
+            config.appName = "EngineTinyGroupTest";
+            config.numAudioOutputs = 2;
+            return config;
+        }
+        synth::AppContext* context = nullptr;
+        synth::ParameterGroup* group = nullptr;
+        synth::Bank* bank = nullptr;
+        synth::BankSlot* slot = nullptr;
+        synth::Parameter* carrier = nullptr;
+
+        void Init(synth::AppContext* ctx) {
+            context = ctx;
+            group = &ctx->parameterManager->CreateGroup(
+                {.numVoices = 1, .numModulators = 2, .numScenes = 1, .maxParameters = 2});
+            carrier = &ctx->parameterManager->CreateParameter(*group, {.name = "Carrier", .defaultValue = 0.5f});
+            auto& filler = ctx->parameterManager->CreateParameter(*group, {.name = "Filler", .defaultValue = 0.25f});
+            (void)filler;
+            bank = &ctx->parameterManager->CreateBank();
+            bank->AddMapping(1, *carrier);
+            bank->AddMapping(2, filler);
+            slot = &ctx->parameterManager->CreateBankSlot();
+            slot->AddPhysicalEncoder(1);
+            slot->AddPhysicalEncoder(2);
+            slot->AddPhysicalEncoder(3);
+            slot->SelectBank(bank);
+        }
+        void ProcessBlock(synth::AudioBlock&) {}
+    };
+
+    synth::Engine<TinyGroupApp> engine([] { return std::uint64_t{0}; });
+    engine.Initialize();
+    engine.Prepare(48000.0, 256);
+
+    synth::Bank* bank = engine.Application().bank;
+    synth::BankSlot* slot = engine.Application().slot;
+    REQUIRE_TRUE(!bank->ShowingModulation());
+
+    // Trigger the growth-request path: pressing the mapped encoder asks the
+    // manager to show the modulation view, which needs storage the tiny
+    // group doesn't have, so it posts ParameterStorageBatchNeeded instead of
+    // materializing the depth parameters.
+    slot->HandlePress(1);
+    REQUIRE_TRUE(!bank->ShowingModulation());  // materialization deferred: no room yet
+
+    TestBlockBuffers buffers(2, 4);
+    {
+        synth::AudioBlock block = buffers.Block(4);
+        engine.ProcessBlock(block, /*timestamp=*/0);
+    }
+
+    engine.MessageThreadTick();  // drains parameterMessageOutBus_, replies with a storage batch
+
+    // A subsequent registration/materialization now succeeds since the
+    // group has been reinforced with the storage batch the tick provided:
+    // re-pressing the same encoder materializes and shows the depth
+    // parameters instead of deferring again.
+    slot->HandlePress(1);
+    REQUIRE_TRUE(bank->ShowingModulation());
+    synth::Parameter* carrier = engine.Application().carrier;
+    REQUIRE_TRUE(carrier->ModulationDepthParameter(0) != nullptr);
+    REQUIRE_TRUE(carrier->ModulationDepthParameter(1) != nullptr);
+}
+
+TEST_CASE(engine_tick_grows_arena_and_retries_stashed_patch_message) {
+    EngineTestApp::testPatchesRoot.clear();
+    EngineTestApp::processLiteAlpha = 1.0f;
+
+    // Tiny starting arena (64 bytes), matching the brief's initialArenaCapacity
+    // constructor-parameter approach: far too small to serialize a patch
+    // document, so the first ProcessBlock after SavePatchAs is expected to
+    // exhaust and stash. Each MessageThreadTick doubles the arena
+    // (GrowSerializationArenaForTick), so this drives the real grow/retry
+    // loop end to end through the actual MessageThreadTick, bounded at 10
+    // iterations, until ProcessResponses reports Written and the version
+    // file exists on disk.
+    synth::Engine<EngineTestApp> engine([] { return std::uint64_t{0}; }, /*initialArenaCapacity=*/64);
+    engine.Initialize();
+    engine.Prepare(48000.0, 256);
+
+    const std::filesystem::path saveDir =
+        std::filesystem::temp_directory_path() / "engine-tick-arena-grow-save-dir";
+    std::filesystem::remove_all(saveDir);
+
+    const synth::PatchCommandResult saveResult = engine.Patches().SavePatchAs(saveDir);
+    REQUIRE_TRUE(saveResult.status == synth::PatchCommandStatus::Pending);
+
+    TestBlockBuffers buffers(2, 4);
+    bool written = false;
+    synth::PatchCommandResult processed;
+    for (int iteration = 0; iteration < 10 && !written; ++iteration) {
+        {
+            synth::AudioBlock block = buffers.Block(4);
+            engine.ProcessBlock(block, /*timestamp=*/0);
+        }
+        // ProcessBlock alone retries the stash (see the drain-barrier
+        // contract); once a retry succeeds, ApplyPatchMessage has already
+        // pushed the SerializedJSON response onto patchOutputBus_
+        // synchronously within this same ProcessBlock call, so check for it
+        // here, before MessageThreadTick runs. MessageThreadTick's own step
+        // 3 (patchManager_.ProcessResponses()) is still exercised every
+        // iteration below — it just won't find anything left to report on
+        // the iteration where this check already claimed the response.
+        processed = engine.Patches().ProcessResponses();
+        if (processed.status == synth::PatchCommandStatus::Written) {
+            written = true;
+            break;
+        }
+
+        // MessageThreadTick's step 2 grows the arena when grow-pending is
+        // set (clearing the barrier so the next ProcessBlock retries the
+        // stash), and its step 3 drains any response that arrived this
+        // tick — both real, unstubbed effects of the tick under test.
+        engine.MessageThreadTick();
+    }
+
+    REQUIRE_TRUE(written);
+    REQUIRE_TRUE(processed.status == synth::PatchCommandStatus::Written);
+    REQUIRE_TRUE(!engine.HasStashedPatchMessageForTest());
+    REQUIRE_TRUE(!engine.IsArenaGrowPendingForTest());
+
+    REQUIRE_TRUE(std::filesystem::exists(processed.path));
+    const auto latestVersion = synth::LatestPatchVersion(saveDir);
+    REQUIRE_TRUE(latestVersion.has_value());
+    REQUIRE_TRUE(std::filesystem::exists(*latestVersion));
 
     std::filesystem::remove_all(saveDir);
 }
