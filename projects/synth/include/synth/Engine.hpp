@@ -298,6 +298,17 @@ public:
     bool HasStashedPatchMessageForTest() const { return pendingPatchMessage_.has_value(); }
     bool IsArenaGrowPendingForTest() const { return arenaGrowPending_.load(std::memory_order_acquire); }
 
+    // Test-only hook: rebuild midiProcessors_ from the current
+    // midiProfileConfig_ on demand. Production code only ever rebuilds
+    // through the tick's midiRebuildPending_ path (Task 5) or the
+    // Initialize() startup-patch path; a headless rig that pokes
+    // Context().midiProfileConfig directly (bypassing the patch-apply flow
+    // entirely, since it isn't loading a patch) has no other way to make
+    // that edit take effect. Mirrors the same RebuildMidiProcessors() call
+    // those production paths use, so the observable result (a freshly
+    // constructed midiProcessors_ from midiProfileConfig_) is identical.
+    void RebuildMidiProcessorsForTest() { RebuildMidiProcessors(); }
+
     // Rig/test support: last non-NoCompletion patch response observed by
     // MessageThreadTick. Reading clears it. The JUCE runtime shell reports
     // patch results through its own PatchManager calls and does not use this.

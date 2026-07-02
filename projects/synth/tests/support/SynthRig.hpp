@@ -15,6 +15,11 @@
 // already pulls in (AppContext/AppConcepts/MidiController/
 // ParameterModulation/PatchPersistence): no JUCE, so this can run in plain
 // unit-test binaries.
+//
+// Test-support surface: InstallMidiProfileForTest() below (and the
+// Engine::RebuildMidiProcessorsForTest() hook it delegates to) exists solely
+// so system tests can install a MIDI controller profile without fabricating
+// a full patch document. No production caller uses either.
 
 #include "synth/Engine.hpp"
 
@@ -165,6 +170,21 @@ public:
 
     App& Application() { return engine_.Application(); }
     synth::Engine<App>& Engine() { return engine_; }
+
+    // Test-support: install a new MIDI controller profile and rebuild the
+    // MIDI processors from it immediately. Production code only ever
+    // rebuilds MIDI processors through the patch-apply flow (loading/
+    // reverting a patch triggers midiRebuildPending_, which the message-
+    // thread tick drains) or once at startup; there is no production path
+    // that edits Context().midiProfileConfig directly outside a patch
+    // message. This exists so tests can install a profile (e.g.
+    // synth::WrldBldrDefaultProfileConfig) without fabricating a full patch
+    // document, by delegating to Engine::RebuildMidiProcessorsForTest() (a
+    // matching test-only hook added alongside this method).
+    void InstallMidiProfileForTest(synth::MidiControllerProfileConfig config) {
+        *engine_.Context().midiProfileConfig = std::move(config);
+        engine_.RebuildMidiProcessorsForTest();
+    }
 
     // --- patches ----------------------------------------------------------
 

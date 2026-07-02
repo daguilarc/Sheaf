@@ -200,6 +200,166 @@ TEST_CASE(rig_save_patch_as_reports_written_and_creates_version_file) {
     std::filesystem::remove_all(saveDir, ec);
 }
 
+// Rig-driven system tests (Plan 2 Task 7). Each test drives RigTestApp
+// through synth_rig::SynthRig exactly as a production host would: no direct
+// pokes into engine internals beyond the documented test-support surface
+// (SynthRig::InstallMidiProfileForTest / Engine::RebuildMidiProcessorsForTest,
+// and AppContext::patchOutputBus, which is already a production-shaped
+// escape hatch on AppContext, not a new accessor).
+
+// MIDI CC -> profile -> parameter: install the default WrldBldr profile
+// (encoder turns on channel 0, CC 0..15 -> slot 0 positions 0..15, see
+// EncoderMidiInConfig::WrldBldrDefault / RowMajorInputDefault), then send a
+// correctly encoded relative +1 turn for slot 0 position 0 (Level's
+// physical encoder) and confirm the parameter actually rises once the
+// engine settles.
+TEST_CASE(rig_midi_cc_routes_through_profile_to_parameter) {
+    synth_rig::SynthRig<RigTestApp> rig;
+    rig.InstallMidiProfileForTest(synth::WrldBldrDefaultProfileConfig({}));
+
+    const float before = rig.ParameterValue(rig.Application().levelId);
+
+    synth::BasicMidi turn;
+    turn.timestamp = 0;
+    // Channel 0 (0xB0), CC 0 (slot 0 position 0's turn address), value 0x41
+    // (65). EncoderMidiInProcessor::DecodeDelta with the default
+    // EncoderRelativeMode::Signed7Bit computes ticks = value - 64, so 65 =>
+    // +1 tick => delta = +1 * turnStep (turnStep defaults to 1/128).
+    turn.raw = {0xB0, 0x00, 0x41};
+    rig.SendMidi(turn);
+    rig.RunBlocks(8);
+
+    REQUIRE_TRUE(rig.ParameterValue(rig.Application().levelId) > before);
+}
+
+// Determinism: two rigs driven through an identical script (turns, scene
+// selection/blend, more turns) must produce bit-identical captured output
+// and equal final parameter values. Nothing in the engine may depend on
+// wall-clock time, addresses, or other non-deterministic state.
+TEST_CASE(rig_two_identical_runs_are_deterministic) {
+    auto script = [](synth_rig::SynthRig<RigTestApp>& rig) {
+        rig.Turn(0, 0, 0.3f); rig.RunBlocks(3);
+        rig.SetSceneBlend(0.5f); rig.SelectScene(1); rig.RunBlocks(3);
+        rig.Turn(0, 1, -0.2f); rig.RunBlocks(3);
+    };
+    synth_rig::SynthRig<RigTestApp> a, b;
+    script(a); script(b);
+    REQUIRE_TRUE(a.Output().size() == b.Output().size());
+    for (std::size_t i = 0; i < a.Output().size(); ++i) {
+        REQUIRE_TRUE(a.Output()[i].channels == b.Output()[i].channels);  // bit-identical
+    }
+    REQUIRE_NEAR(a.ParameterValue(a.Application().levelId), b.ParameterValue(b.Application().levelId), 0.0f);
+}
+
+// Patch round-trip through the production save/revert/load flow.
+//
+// Deviation from the task brief's sketch, flagged per instructions: the
+// brief's sketch called RevertPatch() immediately after SavePatchAs() and
+// asserted the value snaps back to the factory default (0.25). That is not
+// what RevertPatch does once a current patch directory is set (which
+// SavePatchAs establishes on success): per PatchManager::RevertPatch (see
+// PatchPersistence.cpp) and openspec spp-6 scenario "Revert patch reloads
+// current latest or defaults", revert reloads the LATEST SAVED VERSION from
+// the current patch directory, not factory defaults, whenever a current
+// patch directory exists -- it only falls back to a full default reset when
+// no current patch directory is set yet (the same path NewPatch takes).
+// Asserting a snap to 0.25 right after a successful SavePatchAs would
+// therefore only pass by coincidence (if the saved value happened to equal
+// the default) and does not hold with the brief's own edited-before-save
+// script, as this was verified by running the brief's literal sketch here
+// first and observing the persisted edited value (0.65), not 0.25.
+//
+// This rewritten version keeps every command from the brief (SavePatchAs,
+// RevertPatch, LoadPatch) and keeps the same status/tolerance assertions,
+// but sequences the edits so each assertion is actually true of the
+// documented contract: save once at the factory default (establishing
+// Take1 with 0.25 as its latest version and setting the current patch
+// directory), edit, revert (reloads Take1's latest version, i.e. back to
+// 0.25 -- now correct because Take1 truly holds the default), edit again to
+// the same edited value and save over Take1 (SavePatch, not SaveAs, since
+// the current directory is already set), then reload Take1 by path and
+// confirm the edited value comes back.
+TEST_CASE(rig_patch_round_trip_through_production_flow) {
+    synth_rig::SynthRig<RigTestApp> rig;
+    const auto root = std::filesystem::temp_directory_path() / "rig-patch-roundtrip";
+    std::filesystem::remove_all(root); std::filesystem::create_directories(root);
+
+    const float defaultValue = rig.ParameterValue(rig.Application().levelId);
+    REQUIRE_TRUE(rig.SavePatchAs(root / "Take1") == synth_rig::RigPatchStatus::Written);
+
+    rig.Turn(0, 0, 0.4f); rig.RunBlocks(8);
+    const float edited = rig.ParameterValue(rig.Application().levelId);
+    REQUIRE_TRUE(edited > defaultValue + 1e-3f);
+
+    REQUIRE_TRUE(rig.RevertPatch() == synth_rig::RigPatchStatus::Ok);
+    rig.RunBlocks(4);
+    REQUIRE_NEAR(rig.ParameterValue(rig.Application().levelId), 0.25f, 1e-3f);
+
+    rig.Turn(0, 0, 0.4f); rig.RunBlocks(8);
+    REQUIRE_NEAR(rig.ParameterValue(rig.Application().levelId), edited, 1e-3f);
+    REQUIRE_TRUE(rig.SavePatch() == synth_rig::RigPatchStatus::Written);
+
+    REQUIRE_TRUE(rig.LoadPatch(root / "Take1") == synth_rig::RigPatchStatus::Ok);
+    rig.RunBlocks(8);
+    REQUIRE_NEAR(rig.ParameterValue(rig.Application().levelId), edited, 1e-3f);
+    std::filesystem::remove_all(root);
+}
+
+// Timeout instead of hang: with a small patch-pump budget, starve the
+// serialize response path by filling patchOutputBus_ to capacity through
+// AppContext::patchOutputBus (a production-shaped pointer already exposed
+// on AppContext; not a new accessor) so ApplyPatchMessage's SerializeToJSON
+// handling can never push its MessageOut::SerializedJSON response.
+// SavePatchAs must give up and report TimedOut once the budget is
+// exhausted, never hang.
+TEST_CASE(rig_patch_helper_times_out_instead_of_hanging) {
+    synth_rig::SynthRig<RigTestApp> rig(/*patchPumpBudgetBlocks=*/8);
+
+    synth::MessageOutBus& bus = *rig.Engine().Context().patchOutputBus;
+    while (bus.Push(synth::MessageOut{})) {}
+
+    const auto root = std::filesystem::temp_directory_path() / "rig-patch-timeout";
+    std::filesystem::create_directories(root);
+    REQUIRE_TRUE(rig.SavePatchAs(root / "Stuck") == synth_rig::RigPatchStatus::TimedOut);
+    std::filesystem::remove_all(root);
+}
+
+// Bus drain order: a patch message (RevertPatch's RevertAllToDefault) and a
+// UI turn queued for the same pending block must both take effect, with the
+// patch applying FIRST. Engine::ProcessBlock's binding order drains
+// patchInputBus_ before uiBus_.Process(), so queuing both without pumping
+// in between and then running exactly one block proves the ordering
+// directly: the final value is default (0.25) moved by the turn's slew
+// direction (upward, since the turn's delta is positive) -- not exactly
+// 0.25 (the turn was lost/ignored) and not the pre-revert edited value (the
+// turn applied before the revert).
+TEST_CASE(rig_bus_drain_order_patch_before_ui_before_midi) {
+    synth_rig::SynthRig<RigTestApp> rig;
+
+    // Establish an edited, non-default value so a "turn ignored" outcome
+    // (final value == pre-revert edited value) is distinguishable from a
+    // "revert ignored" outcome (final value == edited) and from the correct
+    // "patch-then-turn" outcome (final value == moved off default).
+    rig.Turn(0, 0, 0.4f);
+    rig.RunBlocks(8);
+    const float edited = rig.ParameterValue(rig.Application().levelId);
+    REQUIRE_TRUE(edited > 0.25f + 1e-3f);
+
+    // Queue a patch RevertPatch command (pushes RevertAllToDefault onto
+    // patchInputBus_) and a UI turn (pushes ParamIncDec onto uiBus_)
+    // without running any blocks in between, so both are pending for the
+    // same ProcessBlock call.
+    const synth::PatchCommandResult revertResult = rig.Engine().Patches().RevertPatch();
+    REQUIRE_TRUE(revertResult.status == synth::PatchCommandStatus::Ok);
+    rig.Turn(0, 0, 0.1f);
+
+    rig.RunBlocks(1);
+
+    const float afterOneBlock = rig.ParameterValue(rig.Application().levelId);
+    REQUIRE_TRUE(afterOneBlock > 0.25f);            // turn survived the revert
+    REQUIRE_TRUE(afterOneBlock < edited - 1e-3f);    // revert applied before the turn
+}
+
 int main() {
     int failed = 0;
     for (const auto& test : Registry()) {
