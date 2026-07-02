@@ -75,6 +75,12 @@ struct EngineTestApp {
     // identity/ordering set this before constructing the Engine; default
     // false keeps every other test's profile empty, as before).
     static inline bool wantEncoderMidiInput = false;
+    // When non-empty, Init() writes this into *ctx->audioDeviceState (the
+    // same way it writes wantEncoderMidiInput into *ctx->midiProfileConfig),
+    // so tests can exercise a non-default app-configured audio device
+    // selection (e.g. the revert-restores-default test). Default-constructed
+    // (empty) leaves the engine's audioDeviceState_ untouched, as before.
+    static inline synth::AudioDeviceState initAudioDeviceState;
     synth::AppContext* context = nullptr;
     synth::ParameterId probeId = 0;
     synth::BankSlot* probeSlot = nullptr;
@@ -94,6 +100,10 @@ struct EngineTestApp {
         sawNullUiStateDuringInit = (ctx->uiState == nullptr);
         if (wantEncoderMidiInput && ctx->midiProfileConfig != nullptr) {
             ctx->midiProfileConfig->encoderInput = synth::EncoderMidiInConfig{};
+        }
+        if (ctx->audioDeviceState != nullptr &&
+            (!initAudioDeviceState.outputDeviceName.empty() || !initAudioDeviceState.inputDeviceName.empty())) {
+            *ctx->audioDeviceState = initAudioDeviceState;
         }
         auto& group = ctx->parameterManager->CreateGroup({.numVoices = 1,
                                                            .numModulators = 0,
@@ -142,9 +152,14 @@ struct EngineTestApp {
 // Builds a patch JSON document (matching EngineTestApp's Init topology, i.e.
 // a single group with the "Probe" parameter) with Probe set to probeValue,
 // and writes it as a version file in patchDir via SavePatchVersionInDirectory
-// at the given time point.
+// at the given time point. audioDevice defaults to an empty AudioDeviceState,
+// which BuildPatchJSON omits from the document entirely (see its "not both
+// empty" guard), so callers that don't pass one get a patch with no
+// audioDevice section -- exactly what the "load without the section fires
+// nothing" tests need.
 void WriteProbePatchVersion(const std::filesystem::path& patchDir, float probeValue,
-                            std::chrono::system_clock::time_point when) {
+                            std::chrono::system_clock::time_point when,
+                            const synth::AudioDeviceState& audioDevice = {}) {
     synth::ParameterManager scratchManager;
     auto& group = scratchManager.CreateGroup(
         {.numVoices = 1, .numModulators = 0, .numScenes = 1, .maxParameters = 4, .processLiteAlpha = 1.0f});
@@ -155,7 +170,8 @@ void WriteProbePatchVersion(const std::filesystem::path& patchDir, float probeVa
 
     synth::MidiControllerProfileConfig midiProfile;
     synth::JsonArena arena(64 * 1024);
-    synth::JSON root = synth::BuildPatchJSON(arena, "Probe Patch", scratchManager, midiProfile);
+    synth::JSON root =
+        synth::BuildPatchJSON(arena, "Probe Patch", scratchManager, midiProfile, /*endpoints=*/{}, audioDevice);
     REQUIRE_TRUE(!root.IsNull());
     char* dumped = root.Dumps(JSON_ENCODE_ANY);
     REQUIRE_TRUE(dumped != nullptr);
@@ -944,6 +960,165 @@ TEST_CASE(engine_revert_all_to_default_restores_app_init_midi_profile_not_empty)
     REQUIRE_TRUE(engine.Context().defaultMidiProfileConfig->encoderInput.has_value());
 
     EngineTestApp::wantEncoderMidiInput = false;  // restore default for subsequent tests
+}
+
+TEST_CASE(engine_revert_all_to_default_restores_app_init_audio_device_state) {
+    // Task 2: mirrors engine_revert_all_to_default_restores_app_init_midi_profile_not_empty
+    // but for AudioDeviceState. Engine::Initialize() must snapshot
+    // defaultAudioDeviceState_ from the live state the app's Init()
+    // configured (via *ctx->audioDeviceState), BEFORE any startup patch
+    // applies, so a later RevertAllToDefault restores that app-configured
+    // selection rather than an empty AudioDeviceState{}.
+    EngineTestApp::testPatchesRoot.clear();
+    EngineTestApp::processLiteAlpha = 1.0f;
+    EngineTestApp::initAudioDeviceState = synth::AudioDeviceState{.outputDeviceName = "Speakers", .inputDeviceName = "Mic"};
+
+    synth::Engine<EngineTestApp> engine([] { return std::uint64_t{0}; });
+    engine.Initialize();
+    engine.Prepare(48000.0, 256);
+
+    // Sanity: the live audio device state really is the app-configured value
+    // right after Initialize.
+    REQUIRE_TRUE(engine.AudioDevice().outputDeviceName == "Speakers");
+    REQUIRE_TRUE(engine.AudioDevice().inputDeviceName == "Mic");
+
+    TestBlockBuffers buffers(2, 4);
+
+    // NewPatch() dispatches RevertAllToDefault onto patchInputBus_; no patch
+    // is loaded/saved here, so this exercises the "brand new patch" / revert
+    // path directly against whatever Initialize() snapshotted as default.
+    const synth::PatchCommandResult newPatchResult = engine.Patches().NewPatch();
+    REQUIRE_TRUE(newPatchResult.status == synth::PatchCommandStatus::Ok);
+
+    {
+        synth::AudioBlock block = buffers.Block(4);
+        engine.ProcessBlock(block, /*timestamp=*/0);
+    }
+    engine.MessageThreadTick();
+
+    // The live audio device state must still equal the app's Init-configured
+    // default -- NOT have been reset to an empty AudioDeviceState{}.
+    REQUIRE_TRUE(engine.AudioDevice().outputDeviceName == "Speakers");
+    REQUIRE_TRUE(engine.AudioDevice().inputDeviceName == "Mic");
+
+    EngineTestApp::initAudioDeviceState = synth::AudioDeviceState{};  // restore default for subsequent tests
+}
+
+TEST_CASE(engine_tick_fires_audio_device_changed_callback_once_when_load_changes_state) {
+    // A runtime patch load whose document carries a non-empty audioDevice
+    // section must change audioDeviceState_ and fire
+    // audioDeviceChangedCallback_ exactly once, via ProcessBlock (drain) +
+    // MessageThreadTick (callback), with the new state visible in both the
+    // callback and afterward.
+    EngineTestApp::testPatchesRoot.clear();
+    EngineTestApp::processLiteAlpha = 1.0f;
+    synth::Engine<EngineTestApp> engine([] { return std::uint64_t{0}; });
+    engine.Initialize();
+    engine.Prepare(48000.0, 256);
+
+    REQUIRE_TRUE(engine.AudioDevice().outputDeviceName.empty());  // sanity: starts empty
+
+    int callbackCalls = 0;
+    std::string outputNameAtCallback;
+    engine.SetAudioDeviceChangedCallback([&]() {
+        ++callbackCalls;
+        outputNameAtCallback = engine.AudioDevice().outputDeviceName;
+    });
+
+    const std::filesystem::path patchDir =
+        std::filesystem::temp_directory_path() / "engine-tick-audio-device-changed-patch-dir";
+    std::filesystem::remove_all(patchDir);
+    WriteProbePatchVersion(patchDir, 0.9f, std::chrono::system_clock::now(),
+                           synth::AudioDeviceState{.outputDeviceName = "Interface A", .inputDeviceName = ""});
+
+    const synth::PatchCommandResult loadResult = engine.Patches().LoadPatch(patchDir);
+    REQUIRE_TRUE(loadResult.status == synth::PatchCommandStatus::Ok);
+
+    TestBlockBuffers buffers(2, 4);
+    {
+        // ProcessBlock drains patchInputBus_, applies the LoadFromJSON
+        // message (changing audioDeviceState_), and sets
+        // audioDeviceChangedPending_ for the tick to consume.
+        synth::AudioBlock block = buffers.Block(4);
+        engine.ProcessBlock(block, /*timestamp=*/0);
+    }
+    REQUIRE_TRUE(engine.AudioDevice().outputDeviceName == "Interface A");  // state already applied
+    REQUIRE_TRUE(callbackCalls == 0);  // callback hasn't run yet: that's the tick's job
+
+    engine.MessageThreadTick();
+
+    REQUIRE_TRUE(callbackCalls == 1);  // fired exactly once
+    REQUIRE_TRUE(outputNameAtCallback == "Interface A");  // callback observed the already-applied new state
+
+    std::filesystem::remove_all(patchDir);
+}
+
+TEST_CASE(engine_tick_does_not_fire_audio_device_changed_callback_when_load_has_no_section) {
+    // A runtime patch load whose document has no audioDevice section leaves
+    // audioDeviceState_ untouched, so the callback must not fire.
+    EngineTestApp::testPatchesRoot.clear();
+    EngineTestApp::processLiteAlpha = 1.0f;
+    synth::Engine<EngineTestApp> engine([] { return std::uint64_t{0}; });
+    engine.Initialize();
+    engine.Prepare(48000.0, 256);
+
+    int callbackCalls = 0;
+    engine.SetAudioDeviceChangedCallback([&]() { ++callbackCalls; });
+
+    const std::filesystem::path patchDir =
+        std::filesystem::temp_directory_path() / "engine-tick-audio-device-unchanged-patch-dir";
+    std::filesystem::remove_all(patchDir);
+    WriteProbePatchVersion(patchDir, 0.9f, std::chrono::system_clock::now());  // no audioDevice section
+
+    const synth::PatchCommandResult loadResult = engine.Patches().LoadPatch(patchDir);
+    REQUIRE_TRUE(loadResult.status == synth::PatchCommandStatus::Ok);
+
+    TestBlockBuffers buffers(2, 4);
+    {
+        synth::AudioBlock block = buffers.Block(4);
+        engine.ProcessBlock(block, /*timestamp=*/0);
+    }
+    engine.MessageThreadTick();
+
+    REQUIRE_TRUE(callbackCalls == 0);
+    REQUIRE_TRUE(engine.AudioDevice().outputDeviceName.empty());
+
+    std::filesystem::remove_all(patchDir);
+}
+
+TEST_CASE(engine_initialize_fires_audio_device_changed_callback_for_startup_load) {
+    // A startup load (found via LatestPatchDirectory + synchronous drain
+    // inside Initialize()) whose document carries an audioDevice section
+    // must fire audioDeviceChangedCallback_ directly at the end of
+    // Initialize() -- mirroring how midiProcessorsRebuiltCallback_ behaves
+    // on startup loads. Hosts wire the callback before calling Initialize(),
+    // so it must be observable there.
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() / "engine-initialize-audio-device-callback-patch-root";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root);
+    WriteProbePatchVersion(root / "AAA", 0.75f, std::chrono::system_clock::now(),
+                           synth::AudioDeviceState{.outputDeviceName = "Startup Interface", .inputDeviceName = ""});
+
+    EngineTestApp::testPatchesRoot = root;
+    EngineTestApp::processLiteAlpha = 1.0f;
+    synth::Engine<EngineTestApp> engine([] { return std::uint64_t{0}; });
+
+    int callbackCalls = 0;
+    std::string outputNameAtCallback;
+    engine.SetAudioDeviceChangedCallback([&]() {
+        ++callbackCalls;
+        outputNameAtCallback = engine.AudioDevice().outputDeviceName;
+    });
+
+    engine.Initialize();
+
+    REQUIRE_TRUE(callbackCalls == 1);  // fired exactly once, during Initialize()
+    REQUIRE_TRUE(outputNameAtCallback == "Startup Interface");
+    REQUIRE_TRUE(engine.AudioDevice().outputDeviceName == "Startup Interface");
+
+    std::filesystem::remove_all(root);
+    EngineTestApp::testPatchesRoot.clear();
 }
 
 int main() {

@@ -58,6 +58,14 @@ struct AppContext {
     MidiSender* midiSender = nullptr;               // enqueue from message thread; owned worker drains
     MidiControllerProfileConfig* midiProfileConfig = nullptr;              // message thread only
     const MidiControllerProfileConfig* defaultMidiProfileConfig = nullptr; // immutable after init
+    // Engine-owned audio device selection (Task 2). Message-thread only for
+    // writes before audio starts (e.g. an app's Init() choosing a default
+    // device); safe to read from the message thread at any time. Mirrors
+    // midiProfileConfig's thread role and wiring: the pointee is
+    // Engine::audioDeviceState_, wired in the Engine constructor, and an
+    // app's Init() may mutate *ctx->audioDeviceState directly the same way
+    // it mutates *ctx->midiProfileConfig.
+    AudioDeviceState* audioDeviceState = nullptr;
     const RuntimeConfig* config = nullptr;          // immutable after construction
     ParameterManager::UIState* uiState = nullptr;   // null during Init; set before MIDI/audio/UI start
 

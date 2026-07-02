@@ -26,6 +26,15 @@ struct AudioDeviceState {
     std::string inputDeviceName;   // empty = system default
 };
 
+// Value equality (field-wise). Used by Engine's audio-side patch drain to
+// detect whether a consumed ApplyPatchMessage call actually changed
+// audioDevice_, so it can raise audioDeviceChangedPending_ only on a real
+// change (mirrors comparing before/after snapshots around the call).
+inline bool operator==(const AudioDeviceState& lhs, const AudioDeviceState& rhs) {
+    return lhs.outputDeviceName == rhs.outputDeviceName && lhs.inputDeviceName == rhs.inputDeviceName;
+}
+inline bool operator!=(const AudioDeviceState& lhs, const AudioDeviceState& rhs) { return !(lhs == rhs); }
+
 JSON ToJSON(JsonArena& arena, const AudioDeviceState& state);
 bool FromJSON(JSON json, AudioDeviceState& state);
 
