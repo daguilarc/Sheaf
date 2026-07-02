@@ -713,6 +713,7 @@ void Parameter::UIState::SetDisconnected() {
     modulatorsAffectingMask.store(0, std::memory_order_relaxed);
     gesturesAffectingMask.store(0, std::memory_order_relaxed);
     color.Store(Color::Off);
+    brightness.store(0.0f, std::memory_order_relaxed);
     shortName.store(nullptr, std::memory_order_relaxed);
     voiceCount.store(0, std::memory_order_relaxed);
     for (std::size_t voiceIx = 0; voiceIx < voiceCapacity; ++voiceIx) {
@@ -768,6 +769,7 @@ void Parameter::PopulateUIState(UIState& state) const {
     state.modulatorsAffectingMask.store(ModulatorsAffectingMask(), std::memory_order_relaxed);
     state.gesturesAffectingMask.store(GesturesAffectingMask(), std::memory_order_relaxed);
     state.color.Store(config_.color);
+    state.brightness.store(1.0f, std::memory_order_relaxed);
     state.shortName.store(config_.shortName.c_str(), std::memory_order_relaxed);
     state.voiceCount.store(voices, std::memory_order_relaxed);
     for (std::size_t voiceIx = 0; voiceIx < voices; ++voiceIx) {

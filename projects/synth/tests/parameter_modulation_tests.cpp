@@ -177,6 +177,16 @@ TEST_CASE(color_hsv_and_atomic_storage) {
     REQUIRE_TRUE(atomicColor.IsLockFree());
 }
 
+TEST_CASE(twister_color_helper_matches_smart_grid_hue_shape) {
+    REQUIRE_TRUE(synth::ColorToTwister(synth::Color::Off) == 0);
+    REQUIRE_TRUE(synth::ColorToTwister(synth::Color::Blue) == 8);
+    REQUIRE_TRUE(synth::ColorToTwister(synth::Color::Red) == 85);
+    REQUIRE_TRUE(synth::ColorToTwister(synth::Color::Green) == 35);
+    REQUIRE_TRUE(synth::ColorToTwister(synth::Color::Yellow) == 67);
+    REQUIRE_TRUE(synth::ColorToTwister(synth::Color::White) == 1);
+    REQUIRE_TRUE(synth::ColorToTwister(synth::Color::Grey) == 1);
+}
+
 TEST_CASE(manager_gesture_count_is_fixed_before_groups) {
     synth::ParameterManager manager;
     REQUIRE_TRUE(manager.GestureCount() == 0);
@@ -968,6 +978,28 @@ TEST_CASE(switch_metadata_and_buckets_use_unslewed_display_target) {
     REQUIRE_TRUE(ui.switchValue[0].load() == 0);
     REQUIRE_TRUE(ui.modulatorsAffectingMask.load() == 0);
     REQUIRE_TRUE(ui.gesturesAffectingMask.load() == 0);
+}
+
+TEST_CASE(parameter_ui_state_brightness_defaults_connected_and_disconnected) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numScenes = 1,
+        .maxParameters = 1,
+    });
+    auto& parameter = manager.CreateParameter(group, {
+        .name = "Level",
+        .defaultValue = 0.5f,
+    });
+    synth::Parameter::UIState state(1);
+
+    parameter.PopulateUIState(state);
+    REQUIRE_TRUE(state.connected.load(std::memory_order_relaxed));
+    REQUIRE_NEAR(state.brightness.load(std::memory_order_relaxed), 1.0f, 0.000001f);
+
+    state.SetDisconnected();
+    REQUIRE_TRUE(!state.connected.load(std::memory_order_relaxed));
+    REQUIRE_NEAR(state.brightness.load(std::memory_order_relaxed), 0.0f, 0.000001f);
 }
 
 TEST_CASE(ui_state_reports_affecting_masks_for_first_32_indices) {
@@ -3424,6 +3456,85 @@ TEST_CASE(wrld_bldr_default_profile_maps_encoders_analogs_and_system_buttons) {
     REQUIRE_TRUE(manager.Scene().rightScene == 0);
 }
 
+TEST_CASE(mf_twister_default_profile_maps_encoders_and_input_only_side_buttons) {
+    synth::MessageInBus bus(nullptr, 64);
+    synth::MfTwisterDefaultProfileOptions options;
+    options.visibleEncoderCount = 2;
+    options.sideButtons[0] = synth::MidiControllerSystemMessageAssociation{
+        .press = synth::MessageIn::SetShift(0, true),
+        .release = synth::MessageIn::SetShift(0, false),
+    };
+    options.sideButtons[5] = synth::MidiControllerSystemMessageAssociation{
+        .press = synth::MessageIn::SceneSelect(0, 1),
+    };
+
+    const synth::MidiControllerProfileConfig config = synth::MfTwisterDefaultProfileConfig(options);
+    REQUIRE_TRUE(config.encoderInput.has_value());
+    REQUIRE_TRUE(config.encoderOutput.has_value());
+    REQUIRE_TRUE(config.encoderOutput->protocol == synth::EncoderMidiOutProtocol::Twister);
+    REQUIRE_TRUE(!config.analogInput.has_value());
+    REQUIRE_TRUE(config.encoderInput->turns.size() == 2);
+    REQUIRE_TRUE(config.encoderInput->pushes.size() == 2);
+    REQUIRE_TRUE(config.encoderInput->turns[0].control.channel == 0);
+    REQUIRE_TRUE(config.encoderInput->turns[0].control.cc == 0);
+    REQUIRE_TRUE(config.encoderInput->turns[1].control.channel == 0);
+    REQUIRE_TRUE(config.encoderInput->turns[1].control.cc == 1);
+    REQUIRE_TRUE(config.encoderInput->pushes[0].control.channel == 1);
+    REQUIRE_TRUE(config.encoderInput->pushes[0].control.cc == 0);
+    REQUIRE_TRUE(config.encoderInput->pushes[1].control.channel == 1);
+    REQUIRE_TRUE(config.encoderInput->pushes[1].control.cc == 1);
+    REQUIRE_TRUE(config.systemMessages.size() == 2);
+    REQUIRE_TRUE(config.systemMessages[0].control.has_value());
+    REQUIRE_TRUE(config.systemMessages[0].control->channel == 3);
+    REQUIRE_TRUE(config.systemMessages[0].control->cc == 8);
+    REQUIRE_TRUE(!config.systemMessages[0].outputFeedback);
+    REQUIRE_TRUE(config.systemMessages[1].control.has_value());
+    REQUIRE_TRUE(config.systemMessages[1].control->channel == 3);
+    REQUIRE_TRUE(config.systemMessages[1].control->cc == 13);
+    REQUIRE_TRUE(!config.systemMessages[1].outputFeedback);
+
+    FakeMidiSink sink;
+    synth::MidiSender sender;
+    sender.SetSink(&sink);
+    sender.Start();
+    synth::ParameterManager::UIState ui;
+    ui.Configure(1, 2, 1, 0, 0);
+    synth::MidiControllerProfileResult profile =
+        synth::CreateMfTwisterDefaultProfile(options, &bus, &sender, &ui, [] { return 321; });
+    REQUIRE_TRUE(profile.input != nullptr);
+    REQUIRE_TRUE(profile.inputThru.size() == 1);
+    REQUIRE_TRUE(profile.outputs.size() == 1);
+    REQUIRE_TRUE(dynamic_cast<synth::TwisterMidiOutProcessor*>(profile.outputs[0].get()) != nullptr);
+
+    profile.input->Process(synth::BasicMidi::CC(0, 3, 8, 127));
+    synth::MessageIn message;
+    REQUIRE_TRUE(bus.Pop(message, 321));
+    REQUIRE_TRUE(message.type == synth::MessageIn::Type::ToggleShift);
+    REQUIRE_TRUE(message.hasBoolValue);
+    REQUIRE_TRUE(message.boolValue);
+
+    profile.input->Process(synth::BasicMidi::CC(0, 3, 8, 0));
+    REQUIRE_TRUE(bus.Pop(message, 321));
+    REQUIRE_TRUE(message.type == synth::MessageIn::Type::ToggleShift);
+    REQUIRE_TRUE(message.hasBoolValue);
+    REQUIRE_TRUE(!message.boolValue);
+
+    profile.input->Process(synth::BasicMidi::CC(0, 3, 13, 127));
+    REQUIRE_TRUE(bus.Pop(message, 321));
+    REQUIRE_TRUE(message.type == synth::MessageIn::Type::SceneSelect);
+    REQUIRE_TRUE(message.sceneIx == 1);
+
+    profile.input->Process(synth::BasicMidi::CC(0, 3, 9, 127));
+    REQUIRE_TRUE(!bus.Pop(message, 321));
+
+    profile.outputs[0]->Process();
+    sender.FlushForTests(std::chrono::milliseconds(500));
+    sender.Stop();
+    for (const synth::BasicMidi& midi : sink.sent) {
+        REQUIRE_TRUE(!(midi.IsCC() && midi.Channel() == 3 && midi.GetCC() >= 8 && midi.GetCC() <= 13));
+    }
+}
+
 TEST_CASE(wrld_bldr_default_profile_creates_encoder_and_system_outputs) {
     synth::ParameterManager::UIState ui;
     ui.Configure(0, 0, 0, 0, 0);
@@ -3648,14 +3759,18 @@ TEST_CASE(twister_output_debounces_reset_and_uses_channels) {
     synth::TwisterMidiOutProcessor processor(config, &sender, ui.get());
     processor.Process();
     sender.FlushForTests(std::chrono::milliseconds(500));
-    REQUIRE_TRUE(sink.sent.size() == 3);
+    REQUIRE_TRUE(sink.sent.size() == 5);
     REQUIRE_TRUE(sink.sent[0].Channel() == 1);
     REQUIRE_TRUE(sink.sent[0].GetCC() == 0);
     REQUIRE_TRUE(sink.sent[0].GetValue() != 0);
     REQUIRE_TRUE(sink.sent[1].Channel() == 2);
     REQUIRE_TRUE(sink.sent[1].GetValue() == synth::FullBrightnessAnimationValue());
-    REQUIRE_TRUE(sink.sent[2].Channel() == 0);
+    REQUIRE_TRUE(sink.sent[2].Channel() == 4);
     REQUIRE_TRUE(sink.sent[2].GetValue() == 64);
+    REQUIRE_TRUE(sink.sent[3].Channel() == 5);
+    REQUIRE_TRUE(sink.sent[3].GetValue() != 0);
+    REQUIRE_TRUE(sink.sent[4].Channel() == 0);
+    REQUIRE_TRUE(sink.sent[4].GetValue() == 64);
     const std::size_t afterFirst = sink.sent.size();
 
     processor.Process();
@@ -3665,7 +3780,7 @@ TEST_CASE(twister_output_debounces_reset_and_uses_channels) {
     processor.Reset();
     processor.Process();
     sender.FlushForTests(std::chrono::milliseconds(500));
-    REQUIRE_TRUE(sink.sent.size() == afterFirst + 3);
+    REQUIRE_TRUE(sink.sent.size() == afterFirst + 5);
     sender.Stop();
 }
 
@@ -3702,7 +3817,7 @@ TEST_CASE(twister_output_skips_unstable_snapshot_without_cache_update) {
     processor.Process();
     sender.FlushForTests(std::chrono::milliseconds(500));
     sender.Stop();
-    REQUIRE_TRUE(sink.sent.size() == 3);
+    REQUIRE_TRUE(sink.sent.size() == 5);
 }
 
 TEST_CASE(twister_output_blanks_disconnected_mapped_cells_once) {
@@ -3719,18 +3834,49 @@ TEST_CASE(twister_output_blanks_disconnected_mapped_cells_once) {
 
     processor.Process();
     sender.FlushForTests(std::chrono::milliseconds(500));
-    REQUIRE_TRUE(sink.sent.size() == 3);
+    REQUIRE_TRUE(sink.sent.size() == 5);
     REQUIRE_TRUE(sink.sent[0].Channel() == 1);
     REQUIRE_TRUE(sink.sent[0].GetValue() == 0);
     REQUIRE_TRUE(sink.sent[1].Channel() == 2);
     REQUIRE_TRUE(sink.sent[1].GetValue() == 0);
-    REQUIRE_TRUE(sink.sent[2].Channel() == 0);
+    REQUIRE_TRUE(sink.sent[2].Channel() == 4);
     REQUIRE_TRUE(sink.sent[2].GetValue() == 0);
+    REQUIRE_TRUE(sink.sent[3].Channel() == 5);
+    REQUIRE_TRUE(sink.sent[3].GetValue() == 0);
+    REQUIRE_TRUE(sink.sent[4].Channel() == 0);
+    REQUIRE_TRUE(sink.sent[4].GetValue() == 0);
 
     processor.Process();
     sender.FlushForTests(std::chrono::milliseconds(500));
     sender.Stop();
-    REQUIRE_TRUE(sink.sent.size() == 3);
+    REQUIRE_TRUE(sink.sent.size() == 5);
+}
+
+TEST_CASE(twister_output_uses_ui_state_brightness) {
+    synth::ParameterManager::UIState ui;
+    ui.Configure(1, 1, 1, 0);
+    auto& cell = ui.slots[0].cells[0];
+    cell.connected.store(true);
+    cell.voiceCount.store(1);
+    cell.values[0].store(0.25f);
+    cell.color.Store(synth::Color::Red);
+    cell.indicatorColors[0].Store(synth::Color::Cyan);
+    cell.brightness.store(0.5f);
+
+    FakeMidiSink sink;
+    synth::MidiSender sender;
+    sender.SetSink(&sink);
+    sender.Start();
+    auto config = synth::EncoderMidiOutConfig::TwisterDefault(0);
+    config.KeepFirstPositions(1);
+    synth::TwisterMidiOutProcessor processor(config, &sender, &ui);
+    processor.Process();
+    sender.FlushForTests(std::chrono::milliseconds(500));
+    sender.Stop();
+
+    REQUIRE_TRUE(sink.sent.size() == 5);
+    REQUIRE_TRUE(sink.sent[1].Channel() == 2);
+    REQUIRE_TRUE(sink.sent[1].GetValue() == 32);
 }
 
 TEST_CASE(wrld_bldr_output_sends_value_and_source_derived_sysex) {
@@ -3756,6 +3902,7 @@ TEST_CASE(wrld_bldr_output_sends_value_and_source_derived_sysex) {
     parameter.ProcessLite();
     auto ui = manager.CreateUIState();
     manager.PopulateUIState(*ui);
+    ui->slots[0].cells[0].brightness.store(0.5f);
 
     FakeMidiSink sink;
     synth::MidiSender sender;
@@ -3784,9 +3931,10 @@ TEST_CASE(wrld_bldr_output_sends_value_and_source_derived_sysex) {
     REQUIRE_TRUE(button.raw[7] == 0x20);
     REQUIRE_TRUE(button.raw[8] == 1);
     REQUIRE_TRUE(button.raw[9] == 0);
-    REQUIRE_TRUE(button.raw[10] == synth::Color::Orange.r / 2);
-    REQUIRE_TRUE(button.raw[11] == synth::Color::Orange.g / 2);
-    REQUIRE_TRUE(button.raw[12] == synth::Color::Orange.b / 2);
+    const synth::Color dimmedButtonColor = synth::Color::Orange.AdjustBrightness(0.5f);
+    REQUIRE_TRUE(button.raw[10] == dimmedButtonColor.r / 2);
+    REQUIRE_TRUE(button.raw[11] == dimmedButtonColor.g / 2);
+    REQUIRE_TRUE(button.raw[12] == dimmedButtonColor.b / 2);
     REQUIRE_TRUE(button.raw[13] == 0xF7);
 
     const synth::BasicMidi& indicator = sink.sent[2];
@@ -6643,6 +6791,102 @@ TEST_CASE(midi_profile_config_json_round_trips_wrld_bldr_defaults_and_rebuilds_p
     REQUIRE_TRUE(dynamic_cast<synth::WrldBldrSystemMidiOutProcessor*>(result.outputs[2].get()) != nullptr);
 }
 
+TEST_CASE(midi_profile_config_json_round_trips_mf_twister_side_buttons) {
+    synth::MfTwisterDefaultProfileOptions options;
+    options.visibleEncoderCount = 3;
+    options.sideButtons[0] = synth::MidiControllerSystemMessageAssociation{
+        .press = synth::MessageIn::SetShift(0, true),
+        .release = synth::MessageIn::SetShift(0, false),
+    };
+    options.sideButtons[5] = synth::MidiControllerSystemMessageAssociation{
+        .press = synth::MessageIn::SceneSelect(0, 2),
+    };
+    const synth::MidiControllerProfileConfig source = synth::MfTwisterDefaultProfileConfig(options);
+
+    synth::JsonArena arena(262144);
+    synth::JSON json = synth::ToJSON(arena, source);
+    REQUIRE_TRUE(!arena.Failed());
+    REQUIRE_TRUE(std::string(json.Get("encoderOutput").Get("protocol").StringValue()) == "twister");
+    REQUIRE_TRUE(!json.Get("systemMessages").GetAt(0).Get("outputFeedback").IsNull());
+    REQUIRE_TRUE(!json.Get("systemMessages").GetAt(0).Get("outputFeedback").BooleanValue());
+    REQUIRE_TRUE(!json.Get("systemMessages").GetAt(1).Get("outputFeedback").IsNull());
+    REQUIRE_TRUE(!json.Get("systemMessages").GetAt(1).Get("outputFeedback").BooleanValue());
+
+    synth::MidiControllerProfileConfig loaded;
+    REQUIRE_TRUE(synth::FromJSON(json, loaded));
+    REQUIRE_TRUE(loaded.encoderInput.has_value());
+    REQUIRE_TRUE(loaded.encoderOutput.has_value());
+    REQUIRE_TRUE(loaded.encoderOutput->protocol == synth::EncoderMidiOutProtocol::Twister);
+    REQUIRE_TRUE(!loaded.analogInput.has_value());
+    REQUIRE_TRUE(loaded.encoderInput->turns.size() == 3);
+    REQUIRE_TRUE(loaded.systemMessages.size() == 2);
+    REQUIRE_TRUE(loaded.systemMessages[0].control.has_value());
+    REQUIRE_TRUE(loaded.systemMessages[0].control->channel == 3);
+    REQUIRE_TRUE(loaded.systemMessages[0].control->cc == 8);
+    REQUIRE_TRUE(loaded.systemMessages[0].press.type == synth::MessageIn::Type::ToggleShift);
+    REQUIRE_TRUE(loaded.systemMessages[0].release.has_value());
+    REQUIRE_TRUE(loaded.systemMessages[1].control->cc == 13);
+    REQUIRE_TRUE(loaded.systemMessages[1].press.type == synth::MessageIn::Type::SceneSelect);
+    REQUIRE_TRUE(loaded.systemMessages[1].press.sceneIx == 2);
+    REQUIRE_TRUE(!loaded.systemMessages[0].outputFeedback);
+    REQUIRE_TRUE(!loaded.systemMessages[1].outputFeedback);
+
+    synth::MidiControllerProfileResult rebuilt =
+        synth::CreateMidiControllerProfile(loaded, nullptr, nullptr, nullptr, [] { return 0; });
+    REQUIRE_TRUE(dynamic_cast<synth::EncoderMidiInProcessor*>(rebuilt.input.get()) != nullptr);
+    REQUIRE_TRUE(rebuilt.inputThru.size() == 1);
+    REQUIRE_TRUE(dynamic_cast<synth::SystemButtonMidiInProcessor*>(rebuilt.inputThru[0].get()) != nullptr);
+    REQUIRE_TRUE(rebuilt.outputs.size() == 1);
+    REQUIRE_TRUE(dynamic_cast<synth::TwisterMidiOutProcessor*>(rebuilt.outputs[0].get()) != nullptr);
+    for (const auto& output : rebuilt.outputs) {
+        REQUIRE_TRUE(dynamic_cast<synth::SystemCcMidiOutProcessor*>(output.get()) == nullptr);
+    }
+}
+
+TEST_CASE(midi_profile_config_json_defaults_new_midi_fields_for_older_profiles) {
+    synth::JsonArena arena(262144);
+    synth::JSON root = arena.Object();
+    root.SetNew("schema", arena.String("synth.midiControllerProfileConfig"));
+    root.SetNew("schemaVersion", arena.Integer(1));
+    root.SetNew("encoderInput", arena.Null());
+
+    synth::JSON encoderOutput = arena.Object();
+    synth::JSON mappings = arena.Array();
+    synth::JSON mapping = arena.Object();
+    mapping.SetNew("slotIx", arena.Integer(0));
+    mapping.SetNew("position", arena.Integer(0));
+    mapping.SetNew("cc", arena.Integer(synth::EncoderPositionToCC(0)));
+    mappings.AppendNew(mapping);
+    encoderOutput.SetNew("mappings", mappings);
+    encoderOutput.SetNew("wrldBldrColorBudgetPerProcess", arena.Integer(4));
+    root.SetNew("encoderOutput", encoderOutput);
+    root.SetNew("analogInput", arena.Null());
+
+    synth::JSON systemMessages = arena.Array();
+    synth::JSON association = arena.Object();
+    association.SetNew("control", synth::ToJSON(arena, synth::MidiControlAddress{.channel = 5, .cc = 32}));
+    association.SetNew("wrldBldrPosition", arena.Null());
+    association.SetNew("launchpadPosition", arena.Null());
+    association.SetNew("press", synth::ToJSON(arena, synth::MessageIn::ToggleShift(0)));
+    association.SetNew("release", arena.Null());
+    association.SetNew("feedback", synth::ToJSON(arena, synth::MessageIn::SetShift(0, true)));
+    systemMessages.AppendNew(association);
+    root.SetNew("systemMessages", systemMessages);
+
+    synth::MidiControllerProfileConfig loaded;
+    REQUIRE_TRUE(synth::FromJSON(root, loaded));
+    REQUIRE_TRUE(loaded.encoderOutput.has_value());
+    REQUIRE_TRUE(loaded.encoderOutput->protocol == synth::EncoderMidiOutProtocol::WrldBldr);
+    REQUIRE_TRUE(loaded.systemMessages.size() == 1);
+    REQUIRE_TRUE(loaded.systemMessages[0].outputFeedback);
+
+    synth::MidiControllerProfileResult rebuilt =
+        synth::CreateMidiControllerProfile(loaded, nullptr, nullptr, nullptr, [] { return 0; });
+    REQUIRE_TRUE(rebuilt.outputs.size() == 2);
+    REQUIRE_TRUE(dynamic_cast<synth::WrldBldrMidiOutProcessor*>(rebuilt.outputs[0].get()) != nullptr);
+    REQUIRE_TRUE(dynamic_cast<synth::SystemCcMidiOutProcessor*>(rebuilt.outputs[1].get()) != nullptr);
+}
+
 TEST_CASE(midi_profile_config_json_round_trips_launchpad_system_positions) {
     synth::MidiControllerProfileConfig source;
     source.systemMessages.push_back({
@@ -6914,7 +7158,7 @@ TEST_CASE(patch_json_loads_parameter_values_midi_profile_and_endpoint_identifier
     REQUIRE_TRUE(loadedEndpoints.inputIdentifier == "input-device-id");
     REQUIRE_TRUE(loadedEndpoints.outputIdentifier == "output-device-id");
 
-    synth::JsonArena noEndpointArena(32768);
+    synth::JsonArena noEndpointArena(65536);
     synth::JSON noEndpointRoot = noEndpointArena.Object();
     noEndpointRoot.SetNew("schema", noEndpointArena.String("sheaf.synth.patch"));
     noEndpointRoot.SetNew("schemaVersion", noEndpointArena.Integer(1));

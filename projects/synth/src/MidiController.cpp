@@ -17,6 +17,14 @@ std::uint8_t FloatTo7Bit(float value) {
     return Clamp7Bit(static_cast<int>(std::lround(std::clamp(value, 0.0f, 1.0f) * 127.0f)));
 }
 
+std::uint8_t BrightnessToTwisterAnimationValue(float brightness) {
+    if (brightness <= 0.0f) {
+        return 0;
+    }
+    // MF Twister animation/brightness CCs use 17..47 for the connected brightness band.
+    return Clamp7Bit(static_cast<int>(std::lround(17.0f + std::clamp(brightness, 0.0f, 1.0f) * 30.0f)));
+}
+
 EncoderMidiInConfig RowMajorInputDefault(std::size_t slotIx) {
     EncoderMidiInConfig config;
     config.relativeMode = EncoderRelativeMode::Signed7Bit;
@@ -177,6 +185,28 @@ bool ParseMessageType(std::string_view value, MessageIn::Type& type) {
         return false;
     }
     return true;
+}
+
+const char* EncoderMidiOutProtocolName(EncoderMidiOutProtocol protocol) {
+    switch (protocol) {
+    case EncoderMidiOutProtocol::WrldBldr:
+        return "wrldBldr";
+    case EncoderMidiOutProtocol::Twister:
+        return "twister";
+    }
+    return "wrldBldr";
+}
+
+bool ParseEncoderMidiOutProtocol(std::string_view value, EncoderMidiOutProtocol& protocol) {
+    if (value == "wrldBldr") {
+        protocol = EncoderMidiOutProtocol::WrldBldr;
+        return true;
+    }
+    if (value == "twister") {
+        protocol = EncoderMidiOutProtocol::Twister;
+        return true;
+    }
+    return false;
 }
 
 template <typename T>
@@ -599,11 +629,15 @@ void MidiSender::Run() {
 }
 
 EncoderMidiOutConfig EncoderMidiOutConfig::TwisterDefault(std::size_t slotIx) {
-    return RowMajorOutputDefault(slotIx);
+    EncoderMidiOutConfig config = RowMajorOutputDefault(slotIx);
+    config.protocol = EncoderMidiOutProtocol::Twister;
+    return config;
 }
 
 EncoderMidiOutConfig EncoderMidiOutConfig::WrldBldrDefault(std::size_t slotIx) {
-    return RowMajorOutputDefault(slotIx);
+    EncoderMidiOutConfig config = RowMajorOutputDefault(slotIx);
+    config.protocol = EncoderMidiOutProtocol::WrldBldr;
+    return config;
 }
 
 void EncoderMidiOutConfig::KeepFirstPositions(std::size_t count) {
@@ -642,6 +676,7 @@ std::optional<MidiOutProcessor::CellSnapshot> MidiOutProcessor::LoadCellSnapshot
         snapshot.bipolar = state.bipolar.load(std::memory_order_relaxed);
         snapshot.voiceCount = std::min(state.voiceCount.load(std::memory_order_relaxed), state.voiceCapacity);
         snapshot.color = state.color.Load(std::memory_order_relaxed);
+        snapshot.brightness = state.brightness.load(std::memory_order_relaxed);
         if (snapshot.voiceCount > 0) {
             snapshot.value = state.values[0].load(std::memory_order_relaxed);
             snapshot.indicatorColor = state.indicatorColors[0].Load(std::memory_order_relaxed);
@@ -680,7 +715,10 @@ void TwisterMidiOutProcessor::Process() {
         const bool blank = !snapshot->connected || snapshot->voiceCount == 0;
         const std::uint8_t value = blank ? 0 : FloatTo7Bit(NormalizeForDisplay(snapshot->value, snapshot->bipolar));
         const std::uint8_t color = blank ? 0 : ColorToTwister(snapshot->color);
-        const std::uint8_t brightness = blank ? 0 : FullBrightnessAnimationValue();
+        const std::uint8_t brightness = blank ? 0 : BrightnessToTwisterAnimationValue(snapshot->brightness);
+        // Twister uses channel 4 for the indicator/ring position, mirroring the value ring.
+        const std::uint8_t indicatorValue = value;
+        const std::uint8_t indicatorColor = blank ? 0 : ColorToTwister(snapshot->indicatorColor);
         CacheEntry& cache = cache_[ix];
         if (!cache.valid || cache.color != color) {
             Enqueue(BasicMidi::CC(0, 1, mapping.cc, color));
@@ -688,10 +726,21 @@ void TwisterMidiOutProcessor::Process() {
         if (!cache.valid || cache.brightness != brightness) {
             Enqueue(BasicMidi::CC(0, 2, mapping.cc, brightness));
         }
+        if (!cache.valid || cache.indicatorValue != indicatorValue) {
+            Enqueue(BasicMidi::CC(0, 4, mapping.cc, indicatorValue));
+        }
+        if (!cache.valid || cache.indicatorColor != indicatorColor) {
+            Enqueue(BasicMidi::CC(0, 5, mapping.cc, indicatorColor));
+        }
         if (!cache.valid || cache.value != value) {
             Enqueue(BasicMidi::CC(0, 0, mapping.cc, value));
         }
-        cache = {.valid = true, .value = value, .color = color, .brightness = brightness};
+        cache = {.valid = true,
+                 .value = value,
+                 .color = color,
+                 .brightness = brightness,
+                 .indicatorValue = indicatorValue,
+                 .indicatorColor = indicatorColor};
     }
 }
 
@@ -715,7 +764,7 @@ void WrldBldrMidiOutProcessor::Process() {
 
         const bool blank = !snapshot->connected || snapshot->voiceCount == 0;
         const std::uint8_t value = blank ? 0 : FloatTo7Bit(NormalizeForDisplay(snapshot->value, snapshot->bipolar));
-        const Color buttonColor = blank ? Color::Off : snapshot->color;
+        const Color buttonColor = blank ? Color::Off : snapshot->color.AdjustBrightness(snapshot->brightness);
         const Color indicatorColor = blank ? Color::Off : snapshot->indicatorColor;
         CacheEntry& cache = cache_[ix];
         if (!cache.valid || cache.value != value) {
@@ -1102,6 +1151,7 @@ bool FromJSON(JSON json, EncoderMidiOutMapping& value) {
 
 JSON ToJSON(JsonArena& arena, const EncoderMidiOutConfig& value) {
     JSON json = arena.Object();
+    json.SetNew("protocol", arena.String(EncoderMidiOutProtocolName(value.protocol)));
     json.SetNew("mappings", VectorToJSON(arena, value.mappings));
     json.SetNew("wrldBldrColorBudgetPerProcess",
                 arena.Integer(static_cast<int64_t>(value.wrldBldrColorBudgetPerProcess)));
@@ -1115,6 +1165,11 @@ bool FromJSON(JSON json, EncoderMidiOutConfig& value) {
     EncoderMidiOutConfig parsed;
     if (!VectorFromJSON(json.Get("mappings"), parsed.mappings) ||
         !ReadSize(json.Get("wrldBldrColorBudgetPerProcess"), parsed.wrldBldrColorBudgetPerProcess)) {
+        return false;
+    }
+    const JSON protocol = json.Get("protocol");
+    if (!protocol.IsNull() &&
+        (!IsString(protocol) || !ParseEncoderMidiOutProtocol(protocol.StringValue(), parsed.protocol))) {
         return false;
     }
     value = std::move(parsed);
@@ -1254,6 +1309,7 @@ JSON ToJSON(JsonArena& arena, const MidiControllerSystemMessageAssociation& valu
         json.SetNew("release", arena.Null());
     }
     json.SetNew("feedback", ToJSON(arena, value.feedback));
+    json.SetNew("outputFeedback", arena.Boolean(value.outputFeedback));
     return json;
 }
 
@@ -1296,6 +1352,10 @@ bool FromJSON(JSON json, MidiControllerSystemMessageAssociation& value) {
             return false;
         }
         parsed.release = parsedRelease;
+    }
+    const JSON outputFeedback = json.Get("outputFeedback");
+    if (!outputFeedback.IsNull() && !ReadBool(outputFeedback, parsed.outputFeedback)) {
+        return false;
     }
     value = std::move(parsed);
     return true;
@@ -1409,7 +1469,14 @@ MidiControllerProfileResult CreateMidiControllerProfile(
     }
 
     if (config.encoderOutput.has_value()) {
-        result.outputs.push_back(std::make_unique<WrldBldrMidiOutProcessor>(*config.encoderOutput, sender, uiState));
+        switch (config.encoderOutput->protocol) {
+        case EncoderMidiOutProtocol::WrldBldr:
+            result.outputs.push_back(std::make_unique<WrldBldrMidiOutProcessor>(*config.encoderOutput, sender, uiState));
+            break;
+        case EncoderMidiOutProtocol::Twister:
+            result.outputs.push_back(std::make_unique<TwisterMidiOutProcessor>(*config.encoderOutput, sender, uiState));
+            break;
+        }
     }
 
     SystemCcMidiOutConfig ccOutput;
@@ -1429,7 +1496,8 @@ MidiControllerProfileResult CreateMidiControllerProfile(
         return launchpadXOutput;
     };
     for (const MidiControllerSystemMessageAssociation& association : config.systemMessages) {
-        if (association.control.has_value()) {
+        // MF Twister side buttons are CC input-only; position-based controllers still use their own output paths.
+        if (association.control.has_value() && association.outputFeedback) {
             ccOutput.associations.push_back({
                 .control = *association.control,
                 .message = association.feedback,
@@ -1535,6 +1603,34 @@ MidiControllerProfileResult CreateWrldBldrDefaultProfile(
     WrldBldrDefaultProfileOptions options, MessageInBus* bus, MidiSender* sender,
     ParameterManager::UIState* uiState, MidiInProcessor::TimestampProvider timestampProvider) {
     return CreateMidiControllerProfile(WrldBldrDefaultProfileConfig(options), bus, sender, uiState,
+                                       std::move(timestampProvider));
+}
+
+MidiControllerProfileConfig MfTwisterDefaultProfileConfig(MfTwisterDefaultProfileOptions options) {
+    MidiControllerProfileConfig config;
+    config.encoderInput = EncoderMidiInConfig::TwisterDefault(options.slotIx);
+    config.encoderInput->KeepFirstPositions(options.visibleEncoderCount);
+    config.encoderOutput = EncoderMidiOutConfig::TwisterDefault(options.slotIx);
+    config.encoderOutput->KeepFirstPositions(options.visibleEncoderCount);
+
+    for (std::size_t ix = 0; ix < options.sideButtons.size(); ++ix) {
+        if (!options.sideButtons[ix].has_value()) {
+            continue;
+        }
+        MidiControllerSystemMessageAssociation association = *options.sideButtons[ix];
+        association.control = MidiControlAddress{.channel = 3, .cc = static_cast<std::uint8_t>(8 + ix)};
+        association.wrldBldrPosition = std::nullopt;
+        association.launchpadPosition = std::nullopt;
+        association.outputFeedback = false;
+        config.systemMessages.push_back(std::move(association));
+    }
+    return config;
+}
+
+MidiControllerProfileResult CreateMfTwisterDefaultProfile(
+    MfTwisterDefaultProfileOptions options, MessageInBus* bus, MidiSender* sender,
+    ParameterManager::UIState* uiState, MidiInProcessor::TimestampProvider timestampProvider) {
+    return CreateMidiControllerProfile(MfTwisterDefaultProfileConfig(options), bus, sender, uiState,
                                        std::move(timestampProvider));
 }
 
@@ -1687,15 +1783,24 @@ std::uint8_t ColorToTwister(Color color) {
     if (color == Color::Off) {
         return 0;
     }
+    auto codeFromHue = [](float hue) {
+        // Smart Grid's MF Twister hue range is 1..126, anchored at 240-degree blue.
+        constexpr float h0 = 240.0f / 360.0f;
+        constexpr float step = 1.0f / 126.0f;
+        const float t = std::fmod(h0 - hue + 1.0f, 1.0f);
+        const int code = 1 + static_cast<int>(std::lround(t / step));
+        return static_cast<std::uint8_t>(std::clamp(code, 1, 126));
+    };
+
     const HSV hsv = ToHSV(color);
     if (hsv.s < 0.08f) {
-        return 1;
+        return codeFromHue(240.0f / 360.0f);
     }
-    return static_cast<std::uint8_t>(2 + std::clamp(static_cast<int>(std::lround(hsv.h * 64.0f)), 0, 63));
+    return codeFromHue(hsv.h);
 }
 
 std::uint8_t FullBrightnessAnimationValue() {
-    return 47;
+    return BrightnessToTwisterAnimationValue(1.0f);
 }
 
 BasicMidi WrldBldrColorSysex(std::uint64_t timestamp, std::uint8_t channel, std::uint8_t cc, Color color) {

@@ -2,6 +2,7 @@
 
 #include "synth/ParameterModulation.hpp"
 
+#include <array>
 #include <chrono>
 #include <condition_variable>
 #include <cstddef>
@@ -244,7 +245,13 @@ struct EncoderMidiOutMapping {
     std::uint8_t cc = 0;
 };
 
+enum class EncoderMidiOutProtocol {
+    WrldBldr,
+    Twister,
+};
+
 struct EncoderMidiOutConfig {
+    EncoderMidiOutProtocol protocol = EncoderMidiOutProtocol::WrldBldr;
     std::vector<EncoderMidiOutMapping> mappings;
     std::size_t wrldBldrColorBudgetPerProcess = 4;
 
@@ -272,6 +279,7 @@ protected:
         std::size_t voiceCount = 0;
         float value = 0.0f;
         Color color = Color::Off;
+        float brightness = 0.0f;
         Color indicatorColor = Color::Off;
     };
 
@@ -297,6 +305,8 @@ private:
         std::uint8_t value = 0;
         std::uint8_t color = 0;
         std::uint8_t brightness = 0;
+        std::uint8_t indicatorValue = 0;
+        std::uint8_t indicatorColor = 0;
     };
 
     std::vector<CacheEntry> cache_;
@@ -457,6 +467,7 @@ struct MidiControllerSystemMessageAssociation {
     MessageIn press;
     std::optional<MessageIn> release;
     MessageIn feedback;
+    bool outputFeedback = true;
 };
 
 struct MidiControllerProfileConfig {
@@ -487,6 +498,17 @@ struct WrldBldrDefaultProfileOptions {
 MidiControllerProfileConfig WrldBldrDefaultProfileConfig(WrldBldrDefaultProfileOptions options = {});
 MidiControllerProfileResult CreateWrldBldrDefaultProfile(
     WrldBldrDefaultProfileOptions options, MessageInBus* bus, MidiSender* sender,
+    ParameterManager::UIState* uiState, MidiInProcessor::TimestampProvider timestampProvider = {});
+
+struct MfTwisterDefaultProfileOptions {
+    std::size_t slotIx = 0;
+    std::size_t visibleEncoderCount = 16;
+    std::array<std::optional<MidiControllerSystemMessageAssociation>, 6> sideButtons{};
+};
+
+MidiControllerProfileConfig MfTwisterDefaultProfileConfig(MfTwisterDefaultProfileOptions options = {});
+MidiControllerProfileResult CreateMfTwisterDefaultProfile(
+    MfTwisterDefaultProfileOptions options, MessageInBus* bus, MidiSender* sender,
     ParameterManager::UIState* uiState, MidiInProcessor::TimestampProvider timestampProvider = {});
 
 struct LaunchpadDefaultProfileOptions {

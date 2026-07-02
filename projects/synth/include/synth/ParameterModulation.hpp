@@ -316,6 +316,7 @@ public:
         std::atomic<std::uint32_t> modulatorsAffectingMask{0};
         std::atomic<std::uint32_t> gesturesAffectingMask{0};
         AtomicColor color;
+        std::atomic<float> brightness{0.0f};
         std::atomic<const char*> shortName{nullptr};
         std::atomic<std::size_t> voiceCount{0};
         std::size_t voiceCapacity = 0;
