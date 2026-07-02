@@ -9,11 +9,24 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <type_traits>
 
 #include "synth/CircularQueue.hpp"
 #include "synth/ThreadId.hpp"
 
 namespace synth {
+
+// Printf-format-argument safety constraint: only scalar types (arithmetic,
+// enum, pointer, nullptr_t) may be forwarded to snprintf's variadic
+// parameters. Passing a non-trivial class type (e.g. std::string) by value
+// through "..." is undefined behavior, and by-value class arguments can
+// copy/allocate on the producer path, which must stay allocation-free. Pass
+// std::string via .c_str() instead.
+template <typename T>
+inline constexpr bool kIsPrintfSafe = std::is_arithmetic_v<std::decay_t<T>> ||
+    std::is_enum_v<std::decay_t<T>> ||
+    std::is_pointer_v<std::decay_t<T>> ||
+    std::is_null_pointer_v<std::decay_t<T>>;
 
 struct LogMessage {
     static constexpr std::size_t kMaxMessageLength = 256;
@@ -43,6 +56,9 @@ struct LogMessage {
 
     template <typename... Args>
     void Fill(ThreadId threadId, std::uint64_t sample, const char* format, Args... args) {
+        static_assert(
+            (kIsPrintfSafe<Args> && ...),
+            "INFO/Log arguments must be printf-compatible scalar types (arithmetic, enum, pointer); pass std::string via .c_str()");
         Clear();
         int written = snprintf(message_, kMaxMessageLength, format, args...);
         FinishFill(threadId, sample, written);
@@ -92,6 +108,9 @@ struct AsyncLogQueue {
     // CircularQueue.
     template <typename... Args>
     void Log(const char* format, Args... args) {
+        static_assert(
+            (kIsPrintfSafe<Args> && ...),
+            "INFO/Log arguments must be printf-compatible scalar types (arithmetic, enum, pointer); pass std::string via .c_str()");
         ThreadId threadId = GetCurrentThreadId();
         std::size_t queueIndex = ThreadIdToIndex(threadId);
         LogMessage* message = queues_[queueIndex].NextToPush();
@@ -196,6 +215,12 @@ struct AsyncLogQueue {
         return logFilePath_;
     }
 
+    // Runtime-only: s_instance is dynamically initialized (it owns
+    // std::string/std::ofstream members), so its initialization order
+    // relative to other translation units' static/global objects is
+    // unspecified. Do not call INFO (or otherwise touch s_instance) from
+    // static/global constructors, since s_instance may not be constructed
+    // yet at that point.
     static AsyncLogQueue s_instance;
 
 private:
@@ -298,4 +323,9 @@ inline AsyncLogQueue AsyncLogQueue::s_instance;
 
 } // namespace synth
 
+// Runtime-only: routes to synth::AsyncLogQueue::s_instance, which is
+// dynamically initialized and has unspecified initialization order relative
+// to static/global objects in other translation units. Do not call INFO
+// from static/global constructors (or any other code that may run before
+// s_instance is constructed).
 #define INFO(...) ::synth::AsyncLogQueue::s_instance.Log(__VA_ARGS__)

@@ -246,6 +246,22 @@ TEST_CASE(logger_without_directory_stays_stdout_only) {
     REQUIRE_TRUE(log.LogFilePathForTesting().empty());
 }
 
+TEST_CASE(logger_format_arguments_are_constrained_to_printf_safe_types) {
+    REQUIRE_TRUE(synth::kIsPrintfSafe<int>);
+    REQUIRE_TRUE(synth::kIsPrintfSafe<double>);
+    REQUIRE_TRUE(synth::kIsPrintfSafe<const char*>);
+    REQUIRE_TRUE(synth::kIsPrintfSafe<synth::ThreadId>);
+    REQUIRE_TRUE(!synth::kIsPrintfSafe<std::string>);
+    REQUIRE_TRUE(!synth::kIsPrintfSafe<std::string&>);
+    // and the safe usage still formats correctly:
+    auto& log = synth::AsyncLogQueue::s_instance;
+    log.ResetForTesting();
+    const std::string name = "probe";
+    INFO("name=%s value=%d", name.c_str(), 7);
+    REQUIRE_TRUE(log.QueueSizeForTesting(synth::ThreadId::Unknown) == 1);
+    log.DoLog();
+}
+
 TEST_CASE(logger_sample_stamps_read_counter_source) {
     auto& log = synth::AsyncLogQueue::s_instance;
     log.ResetForTesting();
