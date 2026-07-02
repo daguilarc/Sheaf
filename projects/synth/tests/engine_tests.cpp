@@ -1128,6 +1128,64 @@ TEST_CASE(engine_initialize_fires_audio_device_changed_callback_for_startup_load
     EngineTestApp::testPatchesRoot.clear();
 }
 
+TEST_CASE(engine_audio_state_shadow_synced_after_startup_drain) {
+    // Regression test for the audio-state shadow sync bug: when a startup
+    // patch changes audioDeviceState_, the lastNotifiedAudioDeviceState_
+    // shadow must be re-synced AFTER the drain completes. Otherwise, a
+    // subsequent runtime patch WITHOUT an audioDevice section will spuriously
+    // detect a change (because the shadow still holds the pre-drain state)
+    // and incorrectly fire the callback a second time.
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() / "engine-audio-state-shadow-sync-root";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root);
+    // Startup patch with audioDevice section
+    WriteProbePatchVersion(root / "AAA", 0.75f, std::chrono::system_clock::now(),
+                           synth::AudioDeviceState{.outputDeviceName = "Startup Device", .inputDeviceName = ""});
+
+    EngineTestApp::testPatchesRoot = root;
+    EngineTestApp::processLiteAlpha = 1.0f;
+    synth::Engine<EngineTestApp> engine([] { return std::uint64_t{0}; });
+
+    int callbackCalls = 0;
+    engine.SetAudioDeviceChangedCallback([&]() {
+        ++callbackCalls;
+    });
+
+    engine.Initialize();
+    REQUIRE_TRUE(callbackCalls == 1);  // fired once during Initialize for the startup patch
+
+    engine.Prepare(48000.0, 256);
+
+    // Now drive a runtime patch message WITHOUT an audioDevice section
+    // through ProcessBlock + MessageThreadTick twice. The callback should
+    // not fire again (shadow is already synced).
+    const std::filesystem::path runtimePatchDir =
+        std::filesystem::temp_directory_path() / "engine-audio-state-shadow-runtime-dir";
+    std::filesystem::remove_all(runtimePatchDir);
+    WriteProbePatchVersion(runtimePatchDir, 0.9f, std::chrono::system_clock::now());
+
+    const synth::PatchCommandResult loadResult = engine.Patches().LoadPatch(runtimePatchDir);
+    REQUIRE_TRUE(loadResult.status == synth::PatchCommandStatus::Ok);
+
+    TestBlockBuffers buffers(2, 4);
+    {
+        synth::AudioBlock block = buffers.Block(4);
+        engine.ProcessBlock(block, /*timestamp=*/0);
+    }
+    REQUIRE_TRUE(callbackCalls == 1);  // callback should NOT have fired yet
+
+    engine.MessageThreadTick();
+    REQUIRE_TRUE(callbackCalls == 1);  // callback must stay at 1 (no spurious change)
+
+    engine.MessageThreadTick();
+    REQUIRE_TRUE(callbackCalls == 1);  // second tick must also not fire it again
+
+    std::filesystem::remove_all(root);
+    std::filesystem::remove_all(runtimePatchDir);
+    EngineTestApp::testPatchesRoot.clear();
+}
+
 int main() {
     int failed = 0;
     for (const auto& test : Registry()) {

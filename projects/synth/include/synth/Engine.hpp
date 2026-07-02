@@ -167,6 +167,12 @@ public:
                 audioDeviceChangedCallback_();
             }
             patchManager_.ProcessResponses();
+            // Re-sync the audio-device-state shadow after the startup drain
+            // completes. The shadow (lastNotifiedAudioDeviceState_) must always
+            // equal the last state the host was told about. The startup
+            // callback (or lack thereof) represents the host's baseline for
+            // comparison in subsequent runtime patch messages.
+            lastNotifiedAudioDeviceState_ = audioDeviceState_;
         }
     }
 
