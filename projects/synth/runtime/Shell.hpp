@@ -38,6 +38,7 @@
 
 #include <juce_gui_extra/juce_gui_extra.h>
 
+#include <exception>
 #include <memory>
 
 namespace synth_runtime {
@@ -114,7 +115,7 @@ private:
                 return;
             }
             runtime_.SavePatchAs(result);
-            SetStatus("Saved As: " + result.getFullPathName());
+            SetStatus("Save As requested: " + result.getFullPathName());
         });
     }
 
@@ -128,7 +129,7 @@ private:
                 return;
             }
             runtime_.LoadPatch(result);
-            SetStatus("Loaded: " + result.getFullPathName());
+            SetStatus("Load requested: " + result.getFullPathName());
         });
     }
 
@@ -161,18 +162,40 @@ public:
     void initialise(const juce::String&) override {
         synth::SetCurrentThreadId(synth::ThreadId::Message);
 
-        runtime_ = std::make_unique<Runtime<App>>();
-        runtime_->Start();
+        // JUCE does not wrap initialise() in a try/catch, so an exception
+        // here would unwind straight out of the framework's call site and
+        // abort the process uncleanly. Catch, log, and fail the launch
+        // instead, tearing down any partially constructed members in the
+        // same safe order used by shutdown() below.
+        try {
+            runtime_ = std::make_unique<Runtime<App>>();
+            runtime_->Start();
 
-        const synth::RuntimeConfig config = App::Config();
-        window_ = std::make_unique<MainWindow>(juce::String(config.appName), config.uiWidth, config.uiHeight,
-                                               *runtime_);
+            const synth::RuntimeConfig config = App::Config();
+            window_ = std::make_unique<MainWindow>(juce::String(config.appName), config.uiWidth, config.uiHeight,
+                                                   *runtime_);
+        } catch (const std::exception& e) {
+            INFO("ShellApplication::initialise failed: %s", e.what());
+            if (runtime_) {
+                runtime_->SetRepaintHook({});
+            }
+            window_.reset();
+            runtime_.reset();
+            setApplicationReturnValue(1);
+            quit();
+        }
     }
 
     void shutdown() override {
-        // Destroy the window (and its owned ShellComponent, which holds
-        // references into runtime_) before the runtime itself, so no
-        // component outlives the Runtime it references.
+        // The runtime's timer-driven repaint hook captures the ShellComponent
+        // owned by window_. Clear the hook (and anything else referencing
+        // shell state) BEFORE window_.reset() destroys that component, so
+        // the timer can never fire into a dangling pointer between the two
+        // resets. Only then destroy the window, followed by the runtime
+        // itself, so no component outlives the Runtime it references.
+        if (runtime_) {
+            runtime_->SetRepaintHook({});
+        }
         window_.reset();
         runtime_.reset();
     }
