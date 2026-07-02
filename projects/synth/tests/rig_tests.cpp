@@ -252,33 +252,9 @@ TEST_CASE(rig_two_identical_runs_are_deterministic) {
 }
 
 // Patch round-trip through the production save/revert/load flow.
-//
-// Deviation from the task brief's sketch, flagged per instructions: the
-// brief's sketch called RevertPatch() immediately after SavePatchAs() and
-// asserted the value snaps back to the factory default (0.25). That is not
-// what RevertPatch does once a current patch directory is set (which
-// SavePatchAs establishes on success): per PatchManager::RevertPatch (see
-// PatchPersistence.cpp) and openspec spp-6 scenario "Revert patch reloads
-// current latest or defaults", revert reloads the LATEST SAVED VERSION from
-// the current patch directory, not factory defaults, whenever a current
-// patch directory exists -- it only falls back to a full default reset when
-// no current patch directory is set yet (the same path NewPatch takes).
-// Asserting a snap to 0.25 right after a successful SavePatchAs would
-// therefore only pass by coincidence (if the saved value happened to equal
-// the default) and does not hold with the brief's own edited-before-save
-// script, as this was verified by running the brief's literal sketch here
-// first and observing the persisted edited value (0.65), not 0.25.
-//
-// This rewritten version keeps every command from the brief (SavePatchAs,
-// RevertPatch, LoadPatch) and keeps the same status/tolerance assertions,
-// but sequences the edits so each assertion is actually true of the
-// documented contract: save once at the factory default (establishing
-// Take1 with 0.25 as its latest version and setting the current patch
-// directory), edit, revert (reloads Take1's latest version, i.e. back to
-// 0.25 -- now correct because Take1 truly holds the default), edit again to
-// the same edited value and save over Take1 (SavePatch, not SaveAs, since
-// the current directory is already set), then reload Take1 by path and
-// confirm the edited value comes back.
+// RevertPatch reloads the latest saved version from the current patch
+// directory once set (per spp-6); only resets to defaults when no current
+// patch directory exists yet.
 TEST_CASE(rig_patch_round_trip_through_production_flow) {
     synth_rig::SynthRig<RigTestApp> rig;
     const auto root = std::filesystem::temp_directory_path() / "rig-patch-roundtrip";
@@ -298,6 +274,12 @@ TEST_CASE(rig_patch_round_trip_through_production_flow) {
     rig.Turn(0, 0, 0.4f); rig.RunBlocks(8);
     REQUIRE_NEAR(rig.ParameterValue(rig.Application().levelId), edited, 1e-3f);
     REQUIRE_TRUE(rig.SavePatch() == synth_rig::RigPatchStatus::Written);
+
+    // Perturb state to ensure LoadPatch actually restores from disk,
+    // not just verifying it matches an already-cached value.
+    rig.Turn(0, 0, -0.3f); rig.RunBlocks(8);
+    const float perturbed = rig.ParameterValue(rig.Application().levelId);
+    REQUIRE_TRUE(perturbed < edited - 1e-3f);
 
     REQUIRE_TRUE(rig.LoadPatch(root / "Take1") == synth_rig::RigPatchStatus::Ok);
     rig.RunBlocks(8);

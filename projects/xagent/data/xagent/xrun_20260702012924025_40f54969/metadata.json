@@ -1,0 +1,16 @@
+{
+  "run_id": "xrun_20260702012924025_40f54969",
+  "harness": "codex",
+  "mode": "subagent",
+  "model": "gpt-5.5",
+  "thinking_level": "low",
+  "created_at": "2026-07-02T01:29:24.029Z",
+  "updated_at": "2026-07-02T01:29:24.188Z",
+  "exit_status": "completed",
+  "paths": {
+    "run_dir": "xrun_20260702012924025_40f54969",
+    "metadata": "xrun_20260702012924025_40f54969/metadata.json",
+    "normalized": "xrun_20260702012924025_40f54969/normalized.jsonl",
+    "raw_provider": "xrun_20260702012924025_40f54969/raw-provider.jsonl"
+  }
+}
