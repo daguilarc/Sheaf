@@ -357,6 +357,103 @@ TEST_CASE(engine_pump_populates_ui_state_at_throttle_cadence) {
     REQUIRE_NEAR(cell.values[0].load(), target, 1e-4f);
 }
 
+TEST_CASE(engine_pump_stash_is_a_drain_barrier_with_retry_first_ordering) {
+    EngineTestApp::testPatchesRoot.clear();
+    EngineTestApp::processLiteAlpha = 1.0f;  // snap immediately so applied/reverted values are visible this block
+
+    // Tiny arena: SerializeToJSON cannot fit a patch document (needs ~2KB;
+    // measured empirically against EngineTestApp's topology) in 1024 bytes,
+    // so ApplyPatchMessage reports ArenaExhausted on the first attempt. A
+    // single GrowAndReset() doubling (1024 -> 2048) is enough to fit it, so
+    // one MessageThreadTick() call is enough to clear the barrier below.
+    synth::Engine<EngineTestApp> engine([] { return std::uint64_t{0}; }, /*initialArenaCapacity=*/1024);
+    engine.Initialize();
+    engine.Prepare(48000.0, 256);
+
+    const float initial = engine.Manager().ParameterById(engine.Application().probeId).Get(0);
+    REQUIRE_NEAR(initial, 0.25f, 1e-5f);
+
+    TestBlockBuffers buffers(2, 4);
+
+    // Move the probe away from its default via a normal UI message so a
+    // later revert-to-default is visibly observable.
+    engine.UiBus().Push(synth::MessageIn::ParamIncDec(/*timestamp=*/0, /*slotIx=*/0, /*position=*/0, /*delta=*/0.3f));
+    {
+        synth::AudioBlock block = buffers.Block(4);
+        engine.ProcessBlock(block, /*timestamp=*/0);
+    }
+    const float moved = engine.Manager().ParameterById(engine.Application().probeId).Get(0);
+    REQUIRE_NEAR(moved, initial + 0.3f, 1e-4f);
+
+    // Enqueue a serialize request (SavePatchAs) via PatchManager. The next
+    // ProcessBlock will pop it, exhaust the tiny arena, stash it, and set
+    // the grow-pending flag; the drain phase stops for this block without
+    // touching anything else queued.
+    const std::filesystem::path saveDir =
+        std::filesystem::temp_directory_path() / "engine-drain-barrier-save-dir";
+    std::filesystem::remove_all(saveDir);
+    const synth::PatchCommandResult saveResult = engine.Patches().SavePatchAs(saveDir);
+    REQUIRE_TRUE(saveResult.status == synth::PatchCommandStatus::Pending);
+
+    {
+        synth::AudioBlock block = buffers.Block(4);
+        engine.ProcessBlock(block, /*timestamp=*/0);
+    }
+    REQUIRE_TRUE(engine.HasStashedPatchMessageForTest());  // exhausted and stashed
+    REQUIRE_TRUE(engine.IsArenaGrowPendingForTest());      // grow flag set: barrier is up
+
+    // Now enqueue a second patch command (revert to defaults) directly onto
+    // patchInputBus_ via the engine's AppContext, bypassing PatchManager's
+    // own SavePatchAs/RevertPatch bookkeeping entirely (which is orthogonal
+    // to — and would otherwise confound observing — the engine's drain
+    // barrier: e.g. PatchManager::RevertPatch()/NewPatch() reset
+    // PatchManager's pendingSave_ synchronously at dispatch time, regardless
+    // of whether the engine's drain has actually applied the pending save
+    // yet). If the drain barrier holds, this RevertAllToDefault message must
+    // NOT be applied while the stash is still pending: the probe value must
+    // stay at `moved`, not reset back to `initial`.
+    REQUIRE_TRUE(engine.Context().patchInputBus->Push(synth::PatchMessageIn::RevertAllToDefault()));
+
+    {
+        synth::AudioBlock block = buffers.Block(4);
+        engine.ProcessBlock(block, /*timestamp=*/0);
+    }
+
+    // Barrier held: the revert was not applied (probe still at `moved`), and
+    // the stash/grow-pending flag are still in force since MessageThreadTick
+    // has not run yet.
+    REQUIRE_NEAR(engine.Manager().ParameterById(engine.Application().probeId).Get(0), moved, 1e-4f);
+    REQUIRE_TRUE(engine.HasStashedPatchMessageForTest());
+    REQUIRE_TRUE(engine.IsArenaGrowPendingForTest());
+
+    // Simulate Task 5's tick contract: grow the arena and clear
+    // arenaGrowPending_ only (MessageThreadTick must not touch the stash
+    // itself per the documented contract).
+    engine.MessageThreadTick();
+    REQUIRE_TRUE(engine.HasStashedPatchMessageForTest());  // tick must not touch the stash
+    REQUIRE_TRUE(!engine.IsArenaGrowPendingForTest());     // tick cleared the grow flag
+
+    // Next block: ProcessBlock must retry the stashed serialize FIRST. It
+    // now fits in the grown arena, so it succeeds and the barrier lifts;
+    // draining continues in the same block, so the previously-blocked
+    // revert now applies too.
+    {
+        synth::AudioBlock block = buffers.Block(4);
+        engine.ProcessBlock(block, /*timestamp=*/0);
+    }
+
+    REQUIRE_TRUE(!engine.HasStashedPatchMessageForTest());  // stash retried and succeeded
+    const synth::PatchCommandResult processed = engine.Patches().ProcessResponses();
+    REQUIRE_TRUE(processed.status == synth::PatchCommandStatus::Written);  // serialize response was produced
+
+    // The revert queued behind the stash has now applied too (drain
+    // continued past the retried stash in the same block): the probe is
+    // back at its default.
+    REQUIRE_NEAR(engine.Manager().ParameterById(engine.Application().probeId).Get(0), initial, 1e-4f);
+
+    std::filesystem::remove_all(saveDir);
+}
+
 int main() {
     int failed = 0;
     for (const auto& test : Registry()) {

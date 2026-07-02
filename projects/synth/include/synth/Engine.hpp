@@ -5,8 +5,11 @@
 // application through its pre-audio lifecycle (sar-5) and its audio-thread
 // block pump (sar-6, Task 4). Task 5 (MessageThreadTick) fills in the
 // message-thread pump: rebuilding MIDI processors when midiRebuildPending_
-// is set, and growing serializationArena_ / retrying pendingPatchMessage_
-// when arenaGrowPending_ is set.
+// is set, and growing serializationArena_ when arenaGrowPending_ is set.
+// Retrying pendingPatchMessage_ is NOT the tick's job — ProcessBlock alone
+// retries the stash (first, before draining anything newer) once the tick
+// has cleared arenaGrowPending_; see the tick contract note on
+// MessageThreadTick.
 
 #include "synth/AppConcepts.hpp"
 #include "synth/AppContext.hpp"
@@ -139,6 +142,7 @@ public:
         } else {
             uiPublishInterval_ = 1;
         }
+        blocksSinceUiPublish_ = 0;
 
         if constexpr (HasPrepareToPlay<App>) {
             app_.PrepareToPlay(sampleRate, blockSize);
@@ -146,7 +150,17 @@ public:
     }
 
     // Task 4: audio-thread block pump (sar-6, binding order):
-    //   1. drain patchInputBus_ via ApplyPatchMessage using the engine
+    //   1. patch-drain phase (drain barrier): if a message is stashed in
+    //      pendingPatchMessage_ AND arenaGrowPending_ is still set, the
+    //      arena has not been grown yet — skip draining patchInputBus_
+    //      entirely this block (never lose the stash, never reorder a
+    //      newer message ahead of it). If a message is stashed but
+    //      arenaGrowPending_ has been cleared (MessageThreadTick grew the
+    //      arena), retry the stashed message FIRST: on success clear the
+    //      stash and fall through to draining patchInputBus_ normally; on
+    //      ArenaExhausted again, re-stash/re-set the flag and stop (skip
+    //      draining new messages this block too). Otherwise (no stash),
+    //      drain patchInputBus_ via ApplyPatchMessage using the engine
     //      serialization context; Applied/Reverted set midiRebuildPending_
     //      for MessageThreadTick (Task 5); ArenaExhausted stashes the popped
     //      message in pendingPatchMessage_, sets arenaGrowPending_, and stops
@@ -158,18 +172,34 @@ public:
     //   6. app_.ProcessBlock(block) exactly once
     //   7. throttled PopulateUIState every uiPublishInterval_ blocks
     void ProcessBlock(AudioBlock& block, std::uint64_t timestamp) {
-        PatchMessageIn patchMessage;
-        while (patchInputBus_.Pop(patchMessage)) {
-            const PatchApplyStatus status = ApplyPatchMessage(
-                patchMessage, manager_, midiProfileConfig_, defaultMidiProfileConfig_, endpoints_,
-                defaultEndpoints_, patchOutputBus_, serializationContext_);
-            if (status == PatchApplyStatus::Applied || status == PatchApplyStatus::Reverted) {
-                midiRebuildPending_.store(true, std::memory_order_release);
-            } else if (status == PatchApplyStatus::ArenaExhausted) {
-                pendingPatchMessage_ = std::move(patchMessage);
-                arenaGrowPending_.store(true, std::memory_order_release);
-                break;
+        if (pendingPatchMessage_.has_value()) {
+            if (arenaGrowPending_.load(std::memory_order_acquire)) {
+                // Barrier still up: MessageThreadTick has not grown the
+                // arena yet. Skip the entire patch-drain phase this block so
+                // no newer message can apply ahead of the stash and nothing
+                // overwrites it.
+            } else {
+                // Barrier cleared: the tick grew the arena. Retry the
+                // stashed message first, before draining anything new.
+                PatchMessageIn stashed = std::move(*pendingPatchMessage_);
+                pendingPatchMessage_.reset();
+                const PatchApplyStatus retryStatus = ApplyPatchMessage(
+                    stashed, manager_, midiProfileConfig_, defaultMidiProfileConfig_, endpoints_,
+                    defaultEndpoints_, patchOutputBus_, serializationContext_);
+                if (retryStatus == PatchApplyStatus::Applied || retryStatus == PatchApplyStatus::Reverted) {
+                    midiRebuildPending_.store(true, std::memory_order_release);
+                    DrainPatchInputBus();
+                } else if (retryStatus == PatchApplyStatus::ArenaExhausted) {
+                    pendingPatchMessage_ = std::move(stashed);
+                    arenaGrowPending_.store(true, std::memory_order_release);
+                } else {
+                    // Serialized/InvalidJSON/OutputQueueFull are terminal for
+                    // this message; continue draining any newer messages.
+                    DrainPatchInputBus();
+                }
             }
+        } else {
+            DrainPatchInputBus();
         }
 
         uiBus_.Process(timestamp);
@@ -186,8 +216,23 @@ public:
         }
     }
 
-    // Task 5: message-thread pump. Minimal stub for this task.
-    void MessageThreadTick() {}
+    // Task 5: message-thread pump. Minimal stub for this task, except for
+    // the arenaGrowPending_ half of the drain-barrier contract (needed so
+    // the barrier added in Task 4 is exercisable end-to-end): when
+    // arenaGrowPending_ is set, grow serializationArena_ (heap allocation is
+    // safe here — this runs off the audio thread) and clear the flag. This
+    // is the ENTIRE tick contract for these two flags: MessageThreadTick
+    // grows the arena and clears arenaGrowPending_; it must NOT touch
+    // pendingPatchMessage_. ProcessBlock alone owns retrying/clearing the
+    // stash, on the audio thread, so ordering against newly-queued patch
+    // messages is guaranteed by the audio thread's single-writer view of
+    // patchInputBus_ draining.
+    void MessageThreadTick() {
+        if (arenaGrowPending_.load(std::memory_order_acquire)) {
+            GrowSerializationArenaForTick();
+            arenaGrowPending_.store(false, std::memory_order_release);
+        }
+    }
 
     App& Application() { return app_; }
     AppContext& Context() { return context_; }
@@ -202,6 +247,16 @@ public:
     MidiEndpointState& Endpoints() { return endpoints_; }
     const RuntimeConfig& Config() const { return config_; }
     std::uint64_t SampleCount() const { return sampleCounter_.load(std::memory_order_relaxed); }
+
+    // Test-only accessors for the ProcessBlock drain-barrier state
+    // (pendingPatchMessage_/arenaGrowPending_). PatchManager::HasPendingSave()
+    // is not a substitute: it reflects PatchManager's own dispatch-time
+    // bookkeeping (reset as soon as a new patch command is enqueued, e.g. by
+    // RevertPatch()/NewPatch()), not whether the engine's drain has actually
+    // applied the queued message yet. Exposed so tests can observe the
+    // barrier directly without depending on that unrelated bookkeeping.
+    bool HasStashedPatchMessageForTest() const { return pendingPatchMessage_.has_value(); }
+    bool IsArenaGrowPendingForTest() const { return arenaGrowPending_.load(std::memory_order_acquire); }
 
     // Iterate immediate subdirectories of root; for each, LatestPatchVersion.
     // Select the directory whose latest version FILENAME is lexicographically
@@ -253,6 +308,38 @@ private:
         if (midiProcessorsRebuiltCallback_) {
             midiProcessorsRebuiltCallback_();
         }
+    }
+
+    // Audio-thread drain loop shared by ProcessBlock's no-stash path and its
+    // post-retry continuation. Drains patchInputBus_ via ApplyPatchMessage;
+    // Applied/Reverted set midiRebuildPending_; ArenaExhausted stashes the
+    // popped message in pendingPatchMessage_, sets arenaGrowPending_, and
+    // stops draining for this block (never grows the arena on the audio
+    // path — see the ArenaExhausted handling note above
+    // ApplyPendingPatchMessages).
+    void DrainPatchInputBus() {
+        PatchMessageIn patchMessage;
+        while (patchInputBus_.Pop(patchMessage)) {
+            const PatchApplyStatus status = ApplyPatchMessage(
+                patchMessage, manager_, midiProfileConfig_, defaultMidiProfileConfig_, endpoints_,
+                defaultEndpoints_, patchOutputBus_, serializationContext_);
+            if (status == PatchApplyStatus::Applied || status == PatchApplyStatus::Reverted) {
+                midiRebuildPending_.store(true, std::memory_order_release);
+            } else if (status == PatchApplyStatus::ArenaExhausted) {
+                pendingPatchMessage_ = std::move(patchMessage);
+                arenaGrowPending_.store(true, std::memory_order_release);
+                break;
+            }
+        }
+    }
+
+    // MessageThreadTick's (Task 5) sole responsibility for the drain
+    // barrier: grow serializationArena_ off the audio thread. Heap
+    // allocation here is safe because this never runs on the audio thread.
+    // Must NOT touch pendingPatchMessage_ — see the tick contract note on
+    // MessageThreadTick.
+    void GrowSerializationArenaForTick() {
+        serializationArena_.GrowAndReset();
     }
 
     // Pre-audio-only synchronous drain, used by Initialize(). Drains
@@ -327,11 +414,20 @@ private:
     // to know it should rebuild MIDI processors on the message thread.
     std::atomic<bool> midiRebuildPending_{false};
 
-    // Audio-path ArenaExhausted handling (Task 4/5): ProcessBlock never grows
-    // serializationArena_ on the audio thread. On ArenaExhausted it stashes
-    // the popped message here and sets arenaGrowPending_ so MessageThreadTick
-    // (Task 5) can grow the arena and retry the stashed message off the
-    // audio thread, without losing it.
+    // Audio-path ArenaExhausted handling / drain barrier (Task 4/5):
+    // ProcessBlock never grows serializationArena_ on the audio thread. On
+    // ArenaExhausted it stashes the popped message here and sets
+    // arenaGrowPending_, which bars the ENTIRE patch-drain phase (not just
+    // growth) for subsequent blocks: while pendingPatchMessage_ holds a
+    // value, ProcessBlock does not pop any further messages from
+    // patchInputBus_, preventing a second exhaustion from clobbering the
+    // stash and preventing newer messages from applying out of order ahead
+    // of it. ProcessBlock retries the stash itself, first, as soon as
+    // arenaGrowPending_ reads false.
+    //
+    // Tick contract: MessageThreadTick grows the arena and clears
+    // arenaGrowPending_; it must NOT touch pendingPatchMessage_. Only
+    // ProcessBlock (audio thread) reads, retries, or clears the stash.
     std::optional<PatchMessageIn> pendingPatchMessage_;
     std::atomic<bool> arenaGrowPending_{false};
 };
