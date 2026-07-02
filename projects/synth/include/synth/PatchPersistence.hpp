@@ -118,6 +118,19 @@ struct PatchSerializationContext {
     // of its own. On exhaustion it reports PatchApplyStatus::ArenaExhausted
     // without growing the arena — growing a caller-owned arena is the caller's
     // (message-thread) responsibility.
+    //
+    // Lifetime contract: the MessageOut::document produced by a caller-arena
+    // serialize aliases this arena non-owningly (see JsonDocument's aliased
+    // shared_ptr in the .cpp). The caller MUST fully consume that document —
+    // pop it off the output bus and finish reading/writing it out — before
+    // making the next ApplyPatchMessage call that reuses this same arena,
+    // since that call resets the arena and clobbers the previous document's
+    // backing memory. The caller must also keep the arena alive until the
+    // document has been consumed. PatchManager satisfies this automatically
+    // via its single-pending-save gate (HasPendingSave()/pendingSave_), which
+    // never issues a new serialize request while a prior one is outstanding —
+    // as long as all serialize requests flow through PatchManager, this
+    // ordering is guaranteed for you.
     JsonArena* arena = nullptr;
 };
 

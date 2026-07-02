@@ -7482,22 +7482,29 @@ TEST_CASE(apply_patch_message_reuses_caller_arena) {
     synth::PatchSerializationContext context;
     context.arena = &arena;
 
+    // Consume-before-reuse: the caller-owned arena is reset on every
+    // ApplyPatchMessage call, so the document from a prior serialize must be
+    // fully popped and read before the next call reuses the same arena.
     const auto first = synth::ApplyPatchMessage(
         synth::PatchMessageIn::SerializeToJSON(1, "A"), manager, profile, defaultProfile,
         endpoints, defaultEndpoints, outputBus, context);
     REQUIRE_TRUE(first == synth::PatchApplyStatus::Serialized);
-    const auto second = synth::ApplyPatchMessage(
-        synth::PatchMessageIn::SerializeToJSON(2, "B"), manager, profile, defaultProfile,
-        endpoints, defaultEndpoints, outputBus, context);
-    REQUIRE_TRUE(second == synth::PatchApplyStatus::Serialized);  // arena reused, both succeed
 
     synth::MessageOut out;
     REQUIRE_TRUE(outputBus.Pop(out));
     REQUIRE_TRUE(out.requestId == 1);
     REQUIRE_TRUE(synth::ValidatePatchJSON(out.document.root));
+    REQUIRE_TRUE(std::string(out.document.root.Get("patchName").StringValue()) == "A");
+
+    const auto second = synth::ApplyPatchMessage(
+        synth::PatchMessageIn::SerializeToJSON(2, "B"), manager, profile, defaultProfile,
+        endpoints, defaultEndpoints, outputBus, context);
+    REQUIRE_TRUE(second == synth::PatchApplyStatus::Serialized);  // arena reused after prior document consumed
+
     REQUIRE_TRUE(outputBus.Pop(out));
     REQUIRE_TRUE(out.requestId == 2);
     REQUIRE_TRUE(synth::ValidatePatchJSON(out.document.root));
+    REQUIRE_TRUE(std::string(out.document.root.Get("patchName").StringValue()) == "B");
 }
 
 TEST_CASE(apply_patch_message_reports_exhaustion_without_growing_caller_arena) {

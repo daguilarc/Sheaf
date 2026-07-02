@@ -356,6 +356,19 @@ PatchApplyStatus ApplyPatchMessage(
             // Caller-owned arena: reuse it in place (audio-thread-safe pointer
             // rewind) and never grow or reallocate it here. Growth on
             // exhaustion is the caller's (message-thread) responsibility.
+            //
+            // Lifetime contract: Reset() below rewinds the arena and
+            // invalidates any JSON previously built in it. The MessageOut we
+            // push aliases context.arena non-owningly (see aliasedArena
+            // below), so the caller MUST pop and fully consume (finish
+            // reading/writing out) that document before calling
+            // ApplyPatchMessage again with a context that reuses this same
+            // arena — otherwise the next Reset() clobbers the still-queued
+            // document's backing memory. The caller must also keep the arena
+            // alive until the document is consumed. See the doc comment on
+            // PatchSerializationContext::arena for the full contract;
+            // PatchManager's single-pending-save gate provides this ordering
+            // for all serialize requests that flow through it.
             context.arena->Reset();
             const JSON root = BuildPatchJSON(*context.arena, patchName, manager, midiProfile, endpoints);
             if (root.IsNull() || context.arena->Failed()) {
