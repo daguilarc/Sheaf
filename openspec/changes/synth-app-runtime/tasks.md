@@ -58,6 +58,6 @@
 ## 8. Verification and spec sync
 
 - [ ] 8.1 Run `make -C projects/synth all` (core + logger + engine + rig + miniapp system tests) and the miniapp build; launch the miniapp and verify behavior parity scenario-by-scenario: encoder grid/pages/scenes/gestures, modulation view double-click, MIDI preset + device open/close + feedback, patch new/save/save-as/load/revert with version files, waveform pane — plus audible VCO output at the negotiated sample rate
-- [ ] 8.2 Verify threading contract in a debug build (thread-tag assertions clean while turning encoders, sending MIDI, and loading patches during audio)
-- [ ] 8.3 Verify logging end-to-end: exactly one session file per launch under the miniapp logs root, lines carry wall-clock/sample/thread prefixes, audio-thread `INFO` calls appear, patch activity is logged, stdout mirrors the file
+- [x] 8.2 Verify threading contract in a debug build (thread-tag assertions clean while turning encoders, sending MIDI, and loading patches during audio)
+- [x] 8.3 Verify logging end-to-end: exactly one session file per launch under the miniapp logs root, lines carry wall-clock/sample/thread prefixes, audio-thread `INFO` calls appear, patch activity is logged, stdout mirrors the file
 - [ ] 8.4 Sync delta specs to main specs (`synth-app-runtime` and `synth-async-logging` new; spm-26/spm-37, sdsp-1, spp-8 modified) and update `projects/synth` docs to describe the runtime/apps layout, engine/rig split, and logging interface
