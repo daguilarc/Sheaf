@@ -614,7 +614,7 @@ WHEN automated tests cover the external synth parameter control surface, THE tes
 - **THEN** the failure output includes seed, step number, message/action, and the mismatched expected and actual UI or model field
 
 ### Requirement: spm-26 — Miniapp: JUCE external control probe
-WHEN the synth external UI/message layer, DSP miniapp integration, and module-backed VCO patch are implemented, THE repository SHALL contain a `projects/synth/miniapp` JUCE application that demonstrates the parameter system, MIDI message routing, DSP-backed module parameters, scope UI-state snapshots, and reusable JUCE components while keeping JUCE code outside core synth library headers and sources.
+WHEN the synth external UI/message layer, DSP miniapp integration, and module-backed VCO patch are implemented, THE repository SHALL contain a `projects/synth/apps/miniapp` JUCE application, hosted by the synth application runtime, that demonstrates the parameter system, MIDI message routing, DSP-backed module parameters, scope UI-state snapshots, and reusable JUCE components while keeping JUCE code outside core synth library headers and sources.
 
 #### Scenario: Miniapp shows current feature set
 - **WHEN** the miniapp runs
@@ -908,12 +908,12 @@ WHEN Wrld.Bldr encoder MIDI output is processed, THE synth parameter modulation 
 - **AND** continues emitting remaining changed cells on later process calls
 
 ### Requirement: spm-37 — Miniapp: MIDI controller configuration
-WHEN the synth miniapp runs with the MIDI controller change, THE miniapp SHALL expose a simple configuration page that lets the user choose a controller preset, choose MIDI input and output devices, open or close those devices, register the real synth MIDI processors against a MIDI-specific `MessageInBus` and `ParameterManager::UIState`, shut down MIDI sender/device resources cleanly, and render disconnected slot positions as empty space rather than inactive controller chrome.
+WHEN the synth miniapp runs with the MIDI controller change, THE miniapp SHALL expose, through the synth application runtime's shell, a simple configuration page that lets the user choose a controller preset, choose MIDI input and output devices, open or close those devices, register the real synth MIDI processors against a MIDI-specific `MessageInBus` and `ParameterManager::UIState`, shut down MIDI sender/device resources cleanly, and render disconnected slot positions as empty space rather than inactive controller chrome.
 
 #### Scenario: Miniapp preset controls visible encoders
 - **WHEN** the user selects the Twister or Wrld.Bldr preset and opens a matching MIDI input device
 - **AND** the hardware sends a mapped encoder turn CC for a visible miniapp slot position
-- **THEN** the miniapp processes a scaled `ParamIncDec` through the MIDI input bus on the next timer tick
+- **THEN** the miniapp processes a scaled `ParamIncDec` through the MIDI input bus on the next runtime bus-processing pass
 - **AND** the visible encoder value changes according to the selected bank and slot-position mapping
 
 #### Scenario: Miniapp push opens modulation view
@@ -936,7 +936,7 @@ WHEN the synth miniapp runs with the MIDI controller change, THE miniapp SHALL e
 - **WHEN** the miniapp has both on-screen controls and MIDI input enabled
 - **THEN** on-screen controls push only to the existing UI message bus
 - **AND** MIDI callbacks push only to the MIDI input bus
-- **AND** the timer drains both buses into the same parameter manager
+- **AND** the runtime's audio-thread pump drains both buses into the same parameter manager
 
 #### Scenario: Unassigned slot position leaves space
 - **WHEN** a visible slot position has no assigned parameter

@@ -1,0 +1,238 @@
+# synth-app-runtime Specification
+
+Project: `projects/synth`. ID prefix: `sar`.
+
+## Purpose
+
+Define the synth application/runtime architecture: the JUCE-free application
+contract (RuntimeConfig, AppContext, concepts), the shared Engine assembly and
+pump, the JUCE runtime shell, runtime patch/MIDI/UI orchestration, the
+headless SynthRig test harness, and the miniapp as the reference
+runtime-hosted application.
+
+## Requirements
+### Requirement: sar-1 — Project: runtime and application layout
+WHEN the synth application runtime capability is implemented, THE repository SHALL provide a JUCE-dependent runtime layer under `projects/synth/runtime` in namespace `synth_runtime`, an applications directory `projects/synth/apps` with one subdirectory per application, JUCE-free application contract headers (`RuntimeConfig`, `AppContext`, `AudioBlock`) under `projects/synth/include/synth` in namespace `synth`, and shared JUCE-module build rules in a makefile fragment included by each application's Makefile; the JUCE-free core library build and tests SHALL remain free of runtime and JUCE dependencies.
+
+#### Scenario: Contract headers compile without JUCE
+- **WHEN** a JUCE-free synth test includes the application contract headers
+- **THEN** the test compiles without seeing `JUCE_MAJOR_VERSION`
+
+#### Scenario: Application builds through shared scaffolding
+- **WHEN** a developer runs the miniapp build target from `projects/synth`
+- **THEN** the application under `projects/synth/apps/miniapp` builds using the shared JUCE build fragment and the runtime headers
+
+#### Scenario: Core library unaffected
+- **WHEN** a developer runs `make -C projects/synth build test`
+- **THEN** the core library and its JUCE-free tests build and pass without compiling runtime or apps sources
+
+### Requirement: sar-2 — Configuration: runtime config supplied by the application
+WHEN a synth application is defined, THE application SHALL supply a JUCE-free `RuntimeConfig` value declaring at minimum the application name, audio input count, audio output count, preferred sample rate, preferred block size, patches root directory, and UI shell dimensions/frame rate; THE runtime SHALL treat audio fields as a request, negotiate actual values with the audio device, and report the negotiated sample rate and block size to the application before audio processing starts.
+
+#### Scenario: Config drives device request
+- **WHEN** the runtime starts an application whose config requests 0 inputs, 2 outputs, and 48000 Hz
+- **THEN** the runtime requests those settings when opening the audio device
+
+#### Scenario: Negotiated values reported to the application
+- **WHEN** the audio device opens with a sample rate or block size different from the preferred values
+- **THEN** the application receives the actual negotiated sample rate and block size through its prepare hook before its first `ProcessBlock` call
+
+### Requirement: sar-3 — Context: application access to managers and configuration
+WHEN the runtime initializes an application, THE runtime SHALL pass a pointer to an `AppContext` holding non-owning, address-stable pointers to the parameter manager, patch manager, UI message input bus, MIDI message input bus, parameter message output bus, patch message input and output buses, MIDI sender, live and default MIDI controller profile configs, the runtime configuration, and the host's shared monotonic timestamp provider (so application UI code timestamps messages from the same clock as the engine); the context's UI-state pointer SHALL be null during `Init` and SHALL be populated before MIDI processors, audio, or UI processing begin; all pointees SHALL remain valid for the application's lifetime.
+
+#### Scenario: Context grants manager access during Init
+- **WHEN** the application's `Init(AppContext*)` runs
+- **THEN** the application can create groups, register modules and parameters, and configure pages and banks through the context's parameter manager pointer
+
+#### Scenario: Context pointers remain stable
+- **WHEN** the application stores the context pointer during `Init` and dereferences a member from a hook permitted to touch that member under the sar-7 threading contract
+- **THEN** every pointer refers to the same live object the runtime constructed
+- **AND** the context documentation names the thread role permitted to use each member
+
+#### Scenario: UI state populated after topology lock
+- **WHEN** application initialization completes and the runtime creates the manager UI state
+- **THEN** the context's UI-state pointer is set before the first MIDI processor rebuild, audio callback, or UI frame
+
+### Requirement: sar-4 — Application contract: compile-time interface
+WHEN an application type is passed to the runtime template, THE runtime SHALL be a class template parameterized on the application type and SHALL verify at compile time (via C++20 concepts or equivalent static checks) a layered contract: a JUCE-free application-core concept requiring a runtime-config accessor, `Init(AppContext*)`, and a block-processing function, and a full application concept additionally requiring a UI-component hook; the JUCE runtime SHALL require the full concept while the engine and test rig SHALL require only the core concept; optional hooks (including the prepare hook and a control-rate frame hook) SHALL be detected at compile time and skipped when absent, and a type missing a required member SHALL fail compilation with a diagnostic naming the missing member.
+
+#### Scenario: Conforming application instantiates
+- **WHEN** the runtime template is instantiated with an application providing the required members
+- **THEN** the program compiles and the runtime drives the application through its hooks
+
+#### Scenario: Missing required member fails compilation
+- **WHEN** the runtime template is instantiated with a type lacking `Init` or the block-processing function
+- **THEN** compilation fails with a concept/static-assert diagnostic identifying the unmet requirement
+
+#### Scenario: UI-less core is engine-hostable
+- **WHEN** an application core type without a UI hook is passed to the engine or test rig
+- **THEN** it compiles and runs headlessly
+- **AND** passing the same type to the JUCE runtime fails compilation naming the missing UI hook
+
+### Requirement: sar-5 — Lifecycle: construction, init ordering, and shutdown
+WHEN the runtime starts, THE runtime SHALL construct the framework objects and application, then perform in order: application `Init(AppContext*)`; capture of default control state; creation and publication of the manager UI state; MIDI processor construction from the live profile config; startup patch application, including the same MIDI-processor rebuild that runtime patch loads trigger when the loaded patch changes the profile; reopening of persisted MIDI endpoints only after any such rebuild; audio device opening and invocation of the application prepare hook with the negotiated values; and only then registration of the audio callback and start of UI/message-thread timers. WHEN the runtime shuts down, THE runtime SHALL stop the audio callback before destroying the application, stop and join the MIDI sender worker, and close open MIDI devices.
+
+#### Scenario: Init precedes UI state and patch load
+- **WHEN** the runtime starts an application
+- **THEN** all parameter/module/page/bank registration performed by `Init` completes before the manager UI state is created
+- **AND** the startup patch is applied after default control state capture
+
+#### Scenario: Audio starts last
+- **WHEN** the runtime finishes startup
+- **THEN** the first audio callback runs only after init, UI-state creation, MIDI processor construction, and startup patch application have completed
+
+#### Scenario: Patched profile installed before devices reopen
+- **WHEN** the startup patch carries a MIDI profile config different from the application default
+- **THEN** MIDI processors are rebuilt from the patched profile before persisted MIDI endpoints are reopened
+
+#### Scenario: Clean shutdown ordering
+- **WHEN** the runtime shuts down
+- **THEN** the audio callback is deregistered before the application and managers are destroyed
+- **AND** the MIDI sender worker thread is stopped and joined
+- **AND** open MIDI input and output devices are closed
+
+### Requirement: sar-6 — Audio: device ownership and block delegation
+WHEN audio is running, THE runtime SHALL own the JUCE audio device and its callback, and per device block SHALL apply pending patch messages (using an engine-owned preallocated patch serialization context whose arena growth and retry are owned by the message thread), process the UI and MIDI message buses into the parameter manager, run control-rate target computation that preserves the `ProcessLite` slew path (current values SHALL NOT be snapped to targets during the steady-state pump), and call the application's block-processing function exactly once with a JUCE-free audio block view exposing input pointers, output pointers, actual channel counts, and frame count; THE runtime SHALL NOT call `Process` on any DSP module or perform per-sample parameter processing — per-sample work (parameter `ProcessLite`, modulation-source updates, module processing, output writes) SHALL be owned by the application's block-processing function.
+
+#### Scenario: Runtime pumps then delegates
+- **WHEN** an audio device block is processed
+- **THEN** queued patch, UI, and MIDI messages are applied to the manager and control-rate target computation runs before the application's block-processing function is called
+- **AND** the application's block-processing function is called exactly once for that block
+
+#### Scenario: Control edits slew rather than snap
+- **WHEN** an encoder message changes a parameter target while audio runs
+- **THEN** the parameter's audible value approaches the new target through `ProcessLite` slewing over subsequent samples rather than jumping in one block
+
+#### Scenario: Application owns per-sample processing
+- **WHEN** the application's block-processing function runs
+- **THEN** module processing, `ProcessLite`, and modulation-source updates are invoked by application code, not by runtime code
+
+#### Scenario: Block view is JUCE-free
+- **WHEN** the application's block-processing code is compiled in a JUCE-free translation unit
+- **THEN** the audio block view type compiles without JUCE headers
+
+### Requirement: sar-7 — Threading: ownership and queue handoff
+WHILE audio is running, THE runtime SHALL treat the audio thread as the sole consumer of the UI, MIDI, and patch input buses and the sole thread that mutates or reads the parameter manager (including UI-state population at a throttled control cadence), SHALL keep the message thread as the sole producer of the UI and patch input buses and the sole thread performing parameter-storage-batch replies, patch manager responses and file IO, MIDI output processor polling, and MIDI device management, and SHALL keep MIDI input callbacks as the sole producer of the MIDI input bus; UI- and MIDI-originated messages SHALL be timestamped from one shared monotonic timestamp provider owned by the runtime, with timestamp-gated ordering guaranteed within each bus (cross-bus application order is by bus drain order within a block, not global timestamp order); patch command application MAY perform bounded non-real-time work (arena JSON serialization or parse, message payload destruction) at the block boundary as an accepted, user-initiated exception to the steady-state pump's allocation-free contract.
+
+#### Scenario: Buses drained on the audio thread
+- **WHEN** on-screen controls and MIDI hardware both enqueue messages while audio runs
+- **THEN** both buses are processed into the parameter manager from the audio callback
+- **AND** no message-thread code applies bus messages to the manager
+
+#### Scenario: Storage growth handled off the audio thread
+- **WHEN** the parameter message output bus reports a storage batch request
+- **THEN** the message thread allocates and delivers the storage batch
+
+#### Scenario: Shared timestamps order producers within a bus
+- **WHEN** a UI control and a MIDI encoder produce messages in sequence
+- **THEN** both messages carry timestamps from the runtime's shared monotonic provider
+- **AND** each bus applies its own messages in timestamp order under the bus visibility rules
+
+### Requirement: sar-8 — Patches: runtime startup load and command orchestration
+WHEN the runtime starts, THE runtime SHALL attempt to load the most recent patch under the configured patches root, selected deterministically by the library's sortable version-file naming — the patch directory containing the lexicographically greatest version filename, ties broken by directory name — and SHALL fall back silently to the application's initialized defaults when none exists; WHILE running, THE runtime SHALL expose new/save/save-as/load/revert patch commands through the patch manager, write and read version files only through library persistence helpers, and after consuming a patch load SHALL rebuild MIDI processors from the loaded profile config and reopen persisted MIDI endpoints.
+
+#### Scenario: Startup loads the latest patch
+- **WHEN** the runtime starts and the patches root contains saved patch directories
+- **THEN** the parameter values and MIDI profile from the version file with the lexicographically greatest name across patch directories are applied before audio starts
+
+#### Scenario: Startup selection is deterministic under ties
+- **WHEN** two patch directories contain version files with identical names
+- **THEN** the directory with the lexicographically greater name is selected
+
+#### Scenario: Missing startup patch keeps defaults
+- **WHEN** the runtime starts with an empty patches root
+- **THEN** the application's `Init` defaults remain in effect and no persistence failure is reported
+
+#### Scenario: Load rebuilds MIDI wiring
+- **WHEN** a patch load message is consumed at runtime
+- **THEN** the runtime rebuilds MIDI processors from the loaded profile config
+- **AND** reopens the persisted MIDI input/output endpoints when they are available
+
+### Requirement: sar-9 — MIDI: runtime device and profile management
+WHEN an application runs under the runtime, THE runtime SHALL own the MIDI sender lifecycle, MIDI device enumeration and open/close handling, and construction of MIDI input/output processors from the live controller profile config via the library profile factory, registering them against the MIDI message input bus and the manager UI state; applications SHALL NOT construct MIDI device handlers or processor chains directly.
+
+#### Scenario: Profile factory wires processors
+- **WHEN** the runtime builds MIDI processors
+- **THEN** they are created through the library controller-profile factory from the context's live profile config
+- **AND** registered against the MIDI input bus and the manager UI state
+
+#### Scenario: Application stays free of device glue
+- **WHEN** the miniapp application is inspected
+- **THEN** it contains no MIDI device enumeration, open/close, or processor construction code
+
+### Requirement: sar-10 — UI: runtime shell hosting an application component
+WHEN the runtime presents UI, THE runtime SHALL own the JUCE application object, main window, and a shell providing generic chrome (patch commands, MIDI device/profile configuration, status), SHALL host the component returned by the application's UI hook inside the shell, and SHALL drive chrome and application repaint from manager UI-state atomics on a message-thread timer at the configured frame rate; an entry-point macro SHALL let an application define its executable by naming only its application type.
+
+#### Scenario: Shell hosts the application component
+- **WHEN** the runtime window opens
+- **THEN** the application's component is displayed inside the runtime shell alongside the generic patch and MIDI chrome
+
+#### Scenario: Repaint reads UI-state atomics
+- **WHEN** the UI timer fires
+- **THEN** chrome and application widgets render from the published manager UI state without touching the parameter manager directly
+
+#### Scenario: One-line application entry point
+- **WHEN** an application translation unit invokes the runtime entry-point macro with its application type
+- **THEN** the build produces a runnable JUCE application hosting that application
+
+### Requirement: sar-11 — Miniapp: runtime-hosted reference application
+WHEN the miniapp is ported to the runtime, THE miniapp application at `projects/synth/apps/miniapp` SHALL contain only application-specific content — runtime config, duophonic group and module/LFO setup, page/bank/slot layout, scope wiring, per-sample block processing, and its bespoke widgets — SHALL preserve the existing specced miniapp behaviors (encoder grid, pages, scenes, gestures, MIDI controller configuration, patch commands, waveform pane), and SHALL write its processed VCO output to the negotiated audio device outputs using the device-provided sample rate.
+
+#### Scenario: Miniapp init is application content only
+- **WHEN** the miniapp sources are inspected
+- **THEN** manager/bus/patch-manager construction, message pumping, MIDI device glue, and patch orchestration are absent, provided instead by the runtime
+
+#### Scenario: Miniapp produces audible output
+- **WHEN** the miniapp runs with an output-capable audio device
+- **THEN** the summed VCO voices are written to the device output channels
+- **AND** the VCO module uses the negotiated device sample rate
+
+#### Scenario: Behavior parity with the probe app
+- **WHEN** the ported miniapp runs
+- **THEN** the existing miniapp scenarios for encoders, modulation views, scenes, gestures, MIDI configuration, and patch save/load continue to hold
+
+### Requirement: sar-12 — Engine: shared JUCE-free assembly and pump
+WHEN the runtime layer is implemented, THE system SHALL factor all non-JUCE-bound runtime behavior into a JUCE-free engine class template under `projects/synth/include/synth` that owns the framework objects, application instance, context, and sample counter, and exposes the initialization lifecycle (excluding device, window, and MIDI-device steps), a separate prepare entry point that the host invokes with negotiated (or, for headless hosts, configured) sample rate and block size after device negotiation, the per-block audio pump, and the message-side tick (storage-batch replies, patch responses, MIDI output polling) with an injectable timestamp provider; THE JUCE runtime SHALL delegate its audio callback and message-thread duties to this engine so runtime and headless hosts execute identical production code.
+
+#### Scenario: Engine compiles without JUCE
+- **WHEN** a JUCE-free test includes the engine header and instantiates it with an application core
+- **THEN** it compiles and initializes without seeing `JUCE_MAJOR_VERSION`
+
+#### Scenario: Runtime delegates to the engine
+- **WHEN** the JUCE runtime processes an audio device block or a message-thread timer tick
+- **THEN** the block pump and message-side duties execute through the engine's entry points rather than duplicated runtime code
+
+### Requirement: sar-13 — Test rig: headless SynthRig harness
+WHEN system-level tests need to drive an assembled application, THE repository SHALL provide a JUCE-free `SynthRig` test harness under `projects/synth/tests/support` that wraps the engine with an application core and provides: deterministic time driving (`RunBlocks`, `RunSamples`, `RunSeconds`) that pumps audio blocks with block-derived timestamps and runs the message-side tick each block on the single test thread; message injection through production paths (encoder turn/press/shift, gesture, scene, and blend messages onto the UI bus, and raw MIDI messages through the engine's MIDI input processor chain into the MIDI bus); observation of manager UI state, parameter values, and captured output with sticky NaN/Inf and peak invariants over every output sample; and patch save/load/revert helpers that issue patch manager commands and pump for a bounded number of blocks, returning a status that distinguishes success, command failure, and timeout rather than hanging.
+
+#### Scenario: Rig drives production engine code
+- **WHEN** a rig test runs blocks
+- **THEN** the same engine pump the JUCE runtime uses processes the buses, control-rate computation, and the application block hook
+
+#### Scenario: Injected MIDI exercises real routing
+- **WHEN** a rig test sends a raw MIDI message matching the active controller profile
+- **THEN** the message flows through the MIDI input processor chain and MIDI bus into the manager
+- **AND** the affected parameter's readback reflects the mapped change after settling
+
+#### Scenario: Output invariants are sticky
+- **WHEN** any processed sample contains NaN or Inf
+- **THEN** the rig's NaN flag reports true for the remainder of the test until explicitly cleared
+
+#### Scenario: Rig runs are deterministic
+- **WHEN** the same rig test executes twice with the same seeds
+- **THEN** injected message timestamps, block boundaries, and observed state sequences are identical
+
+#### Scenario: Patch helpers cannot hang
+- **WHEN** a rig patch helper issues a command whose response never arrives (dropped or invalid)
+- **THEN** the helper returns a timeout/failure status after its bounded block budget instead of pumping forever
+
+### Requirement: sar-14 — Miniapp: headless system-test coverage
+WHEN the miniapp is ported, THE miniapp SHALL be structured as a JUCE-free application core plus a thin UI wrapper, and THE synth test suite SHALL include a rig-hosted miniapp system test that initializes the core through the engine, runs blocks, drives encoder and scene/gesture messages, verifies audio output renders without NaN with nonzero peak when the VCO volume is raised, and round-trips a patch save/load through the production message flow.
+
+#### Scenario: Miniapp core tests run JUCE-free
+- **WHEN** a developer runs `make -C projects/synth test`
+- **THEN** the rig-hosted miniapp system test builds without JUCE and passes as part of the suite
+
+#### Scenario: Headless patch round-trip
+- **WHEN** the rig test edits parameters, saves a patch, perturbs state, and loads the saved patch
+- **THEN** the loaded parameter values match the saved values through the production patch message flow

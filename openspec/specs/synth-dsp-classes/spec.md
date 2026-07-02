@@ -5,7 +5,7 @@ Reusable Sheaf synth DSP class patterns, math, multichannel values, filters, sco
 ## Requirements
 
 ### Requirement: sdsp-1 — Project: synth DSP modules
-WHEN the synth DSP classes capability is implemented, THE repository SHALL provide JUCE-free C++20 synth DSP modules under `projects/synth/include/synth` and `projects/synth/src`, SHALL include those modules in the `projects/synth` library build, and SHALL keep JUCE-dependent waveform rendering in `projects/synth/juce` or `projects/synth/miniapp` rather than in JUCE-free DSP headers.
+WHEN the synth DSP classes capability is implemented, THE repository SHALL provide JUCE-free C++20 synth DSP modules under `projects/synth/include/synth` and `projects/synth/src`, SHALL include those modules in the `projects/synth` library build, and SHALL keep JUCE-dependent waveform rendering in `projects/synth/juce`, `projects/synth/runtime`, or `projects/synth/apps` rather than in JUCE-free DSP headers.
 
 #### Scenario: DSP code builds in synth library
 - **WHEN** a developer runs `make -C projects/synth build`
