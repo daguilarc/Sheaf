@@ -16,8 +16,9 @@ OBJ := $(BUILD_DIR)/ParameterModulation.o $(BUILD_DIR)/MidiController.o $(BUILD_
 DSP_HEADERS := include/synth/DspMath.hpp include/synth/DspNumbers.hpp include/synth/DspTransferFunction.hpp include/synth/DspFilters.hpp include/synth/DspScope.hpp include/synth/DspWavetable.hpp include/synth/DspOscillators.hpp
 MINIAPP_DIR := miniapp
 MINIAPP_MAKEFILE := $(MINIAPP_DIR)/Makefile
+APPS_DIR := apps
 
-.PHONY: all build test miniapp clean
+.PHONY: all build test miniapp apps clean
 
 all: build test
 
@@ -77,6 +78,9 @@ test: $(TEST_BIN) $(DSP_TEST_BIN) $(MODULE_TEST_BIN) $(CONTRACT_TEST_BIN) $(LOGG
 
 miniapp:
 	$(MAKE) -C $(MINIAPP_DIR)
+
+apps:
+	$(MAKE) -C $(APPS_DIR)/miniapp
 
 clean:
 	rm -rf $(BUILD_DIR)
