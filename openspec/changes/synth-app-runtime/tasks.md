@@ -16,7 +16,7 @@
 
 ## 3. Engine (JUCE-free shared assembly)
 
-- [ ] 3.1 Define the layered concepts: JUCE-free `SynthApplicationCore` (config accessor, `Init(AppContext*)`, block processing) and `SynthApplication` (core + UI hook), with optional-hook detection (`PrepareToPlay`, control-rate frame hook) and static-assert diagnostics naming missing members (sar-4)
+- [x] 3.1 Define the layered concepts: JUCE-free `SynthApplicationCore` (config accessor, `Init(AppContext*)`, block processing) and `SynthApplication` (core + UI hook), with optional-hook detection (`PrepareToPlay`, control-rate frame hook) and static-assert diagnostics naming missing members (sar-4)
 - [ ] 3.2 Implement `synth::Engine<App>` construction in `include/synth/Engine.hpp`: managers, five buses, MIDI sender, patch manager, injectable timestamp provider, runtime-owned atomic sample counter, app held by value, `AppContext` wiring (sar-12)
 - [x] 3.3 Add `ParameterManager::ComputeAllTargets()` (compute without `SnapCurrentToTarget`, preserving the `ProcessLite` slew path) with a unit test proving an edit slews over samples instead of snapping; keep snapping for init/load/revert moments (sar-6)
 - [ ] 3.4 Implement `Engine::Initialize()`: app `Init` → `CaptureDefaultControlState` → `CreateUIState` + publish into context → MIDI processor build from live profile → startup patch application (selected by lexicographically greatest sortable version filename, ties by directory name; silent fallback to defaults) with the load-consumption MIDI-processor rebuild running before the host reopens endpoints; plus a separate `Engine::Prepare(sampleRate, blockSize)` forwarding to the app prepare hook, called by the host after device negotiation (sar-5, sar-8, sar-12)
