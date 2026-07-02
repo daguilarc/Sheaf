@@ -31,7 +31,7 @@ WHEN a synth application is defined, THE application SHALL supply a JUCE-free `R
 - **THEN** the application receives the actual negotiated sample rate and block size through its prepare hook before its first `ProcessBlock` call
 
 ### Requirement: sar-3 — Context: application access to managers and configuration
-WHEN the runtime initializes an application, THE runtime SHALL pass a pointer to an `AppContext` holding non-owning, address-stable pointers to the parameter manager, patch manager, UI message input bus, MIDI message input bus, parameter message output bus, patch message input and output buses, MIDI sender, live and default MIDI controller profile configs, and the runtime configuration; the context's UI-state pointer SHALL be null during `Init` and SHALL be populated before MIDI processors, audio, or UI processing begin; all pointees SHALL remain valid for the application's lifetime.
+WHEN the runtime initializes an application, THE runtime SHALL pass a pointer to an `AppContext` holding non-owning, address-stable pointers to the parameter manager, patch manager, UI message input bus, MIDI message input bus, parameter message output bus, patch message input and output buses, MIDI sender, live and default MIDI controller profile configs, the runtime configuration, and the host's shared monotonic timestamp provider (so application UI code timestamps messages from the same clock as the engine); the context's UI-state pointer SHALL be null during `Init` and SHALL be populated before MIDI processors, audio, or UI processing begin; all pointees SHALL remain valid for the application's lifetime.
 
 #### Scenario: Context grants manager access during Init
 - **WHEN** the application's `Init(AppContext*)` runs
