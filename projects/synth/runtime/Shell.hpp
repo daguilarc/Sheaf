@@ -10,7 +10,14 @@
 //     rooted at Runtime::GetEngine().Config().patchesRoot (launched async,
 //     per modern JUCE idiom — see FileChooser::launchAsync's docs: the
 //     chooser must outlive the async operation, so it's held in a
-//     member unique_ptr recreated on each launch)
+//     member unique_ptr recreated on each launch); Save falls through to
+//     the same Save As chooser when no patch is current (Plan 4 Task 4;
+//     see the saveButton_.onClick handler below)
+//   - a patch-name label (Plan 4 Task 4) showing the current patch's
+//     directory name, or "(no patch)" — refreshed every repaint tick from
+//     runtime_.GetEngine().Patches().CurrentPatchDirectory(), the
+//     message-side PatchManager's own state (sar-16: identity is read from
+//     that owner every tick, never cached here or touched audio-side)
 //   - the MidiPanel (Task 3)
 //   - the AudioPanel (Plan 4 Task 3): output-device combo + status label
 //   - a status label reflecting the last patch command's result
@@ -53,7 +60,19 @@ public:
         addAndMakeVisible(newButton_);
 
         saveButton_.setButtonText("Save");
-        saveButton_.onClick = [this] { runtime_.SavePatch(); };
+        saveButton_.onClick = [this] {
+            // Falls through to the Save As chooser when no patch is current
+            // (Plan 4 Task 4): dispatching SavePatch() with no current patch
+            // directory is doomed to come back NeedsSaveAsPath, so check
+            // here first and open the chooser directly instead. Runtime's
+            // NeedsSaveAsPath handling (LogPatchCommand) stays as a
+            // backstop for any SavePatch that still returns it.
+            if (runtime_.GetEngine().Patches().CurrentPatchDirectory().has_value()) {
+                runtime_.SavePatch();
+            } else {
+                LaunchSaveAsChooser();
+            }
+        };
         addAndMakeVisible(saveButton_);
 
         saveAsButton_.setButtonText("Save As");
@@ -68,6 +87,11 @@ public:
         revertButton_.onClick = [this] { runtime_.RevertPatch(); };
         addAndMakeVisible(revertButton_);
 
+        patchNameLabel_.setColour(juce::Label::textColourId, juce::Colours::white);
+        patchNameLabel_.setJustificationType(juce::Justification::centredLeft);
+        addAndMakeVisible(patchNameLabel_);
+        RefreshPatchNameLabel();
+
         statusLabel_.setColour(juce::Label::textColourId, juce::Colours::white);
         statusLabel_.setJustificationType(juce::Justification::centredLeft);
         statusLabel_.setText("Ready", juce::dontSendNotification);
@@ -81,6 +105,7 @@ public:
     // Called by Runtime's timer-driven repaint hook (wired in the
     // application wrapper's initialise(), after Start()) once per UI frame.
     void RepaintAll() {
+        RefreshPatchNameLabel();
         repaint();
         runtime_.MidiPanelComponent().repaint();
         runtime_.AudioPanelComponent().repaint();
@@ -97,6 +122,7 @@ public:
         saveAsButton_.setBounds(patchRow.removeFromLeft(patchButtonWidth).reduced(4));
         loadButton_.setBounds(patchRow.removeFromLeft(patchButtonWidth).reduced(4));
         revertButton_.setBounds(patchRow.removeFromLeft(patchButtonWidth).reduced(4));
+        patchNameLabel_.setBounds(patchRow.removeFromLeft(160).reduced(4));
         statusLabel_.setBounds(patchRow.reduced(4));
 
         runtime_.MidiPanelComponent().setBounds(area.removeFromTop(56));
@@ -107,6 +133,20 @@ public:
 
 private:
     void SetStatus(const juce::String& text) { statusLabel_.setText(text, juce::dontSendNotification); }
+
+    // Reads the current patch identity straight from the message-side
+    // owner (engine.Patches(), a synth::PatchManager) every call — sar-16:
+    // never cached anywhere else in the shell, never touched from the audio
+    // side. CurrentPatchDirectory() is the patch directory's full path;
+    // the label shows just its filename (the directory's own name), or
+    // "(no patch)" when no patch is current.
+    void RefreshPatchNameLabel() {
+        const auto& currentPatchDirectory = runtime_.GetEngine().Patches().CurrentPatchDirectory();
+        const juce::String text = currentPatchDirectory.has_value()
+                                       ? juce::String(currentPatchDirectory->filename().string())
+                                       : juce::String("(no patch)");
+        patchNameLabel_.setText(text, juce::dontSendNotification);
+    }
 
     void LaunchSaveAsChooser() {
         const juce::File root(runtime_.GetEngine().Config().patchesRoot.string());
@@ -144,6 +184,7 @@ private:
     juce::TextButton saveAsButton_;
     juce::TextButton loadButton_;
     juce::TextButton revertButton_;
+    juce::Label patchNameLabel_;
     juce::Label statusLabel_;
 
     // Held so the chooser survives until its async callback fires (modern

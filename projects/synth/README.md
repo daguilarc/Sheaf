@@ -178,6 +178,15 @@ runtime itself, at INFO level through `synth::AsyncLogQueue`
 (`synth_runtime::Runtime::LogPatchCommand`) — apps do not write their own
 patch log files.
 
+The shell chrome also shows the current patch's name (the patch directory's
+filename, or "(no patch)" when none is current), read fresh every repaint
+tick from `Runtime::GetEngine().Patches().CurrentPatchDirectory()` — the
+message-side `PatchManager`'s own state, never cached elsewhere and never
+touched from the audio thread. The Save button checks the same state before
+dispatching: with no current patch it falls through to the Save As chooser
+instead of sending a `SavePatch()` doomed to return `NeedsSaveAsPath`
+(that status is still logged as a backstop if it ever occurs).
+
 Build an app from `projects/synth`:
 
 ```text

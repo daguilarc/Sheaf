@@ -28,10 +28,19 @@ its own bespoke JUCE shell.
 This app does **not** provide patch load/save buttons or MIDI device
 selection UI. Those are owned by the runtime shell:
 
-- Patch commands (New/Save/Save As/Load/Revert) and the patch status label
-  come from `synth_runtime::ShellComponent` (`projects/synth/runtime/Shell.hpp`).
+- Patch commands (New/Save/Save As/Load/Revert), the current-patch-name
+  label, and the patch status label come from `synth_runtime::ShellComponent`
+  (`projects/synth/runtime/Shell.hpp`).
 - MIDI device combo boxes, open/close buttons, and the MIDI status label
   come from `synth_runtime::MidiPanel` (`projects/synth/runtime/MidiPanel.hpp`).
+
+The patch-name label shows the current patch directory's name (or
+"(no patch)" when none is current), read fresh from
+`Runtime::GetEngine().Patches().CurrentPatchDirectory()` on every repaint
+tick — never cached in the shell. The Save button checks the same state
+before dispatching: with no current patch it opens the Save As chooser
+directly instead of sending a `SavePatch()` that would only come back
+`NeedsSaveAsPath`.
 
 `MiniApp::UIComponent()` only returns this app's own widget tree; the shell
 hosts it alongside the patch row and MIDI panel.
