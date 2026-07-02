@@ -15,9 +15,8 @@ MINIAPP_SYSTEM_TEST_BIN := $(BUILD_DIR)/miniapp_system_tests
 SRC := src/ParameterModulation.cpp src/MidiController.cpp src/PatchPersistence.cpp src/DspWavetable.cpp src/Modules.cpp
 OBJ := $(BUILD_DIR)/ParameterModulation.o $(BUILD_DIR)/MidiController.o $(BUILD_DIR)/PatchPersistence.o $(BUILD_DIR)/DspWavetable.o $(BUILD_DIR)/Modules.o
 DSP_HEADERS := include/synth/DspMath.hpp include/synth/DspNumbers.hpp include/synth/DspTransferFunction.hpp include/synth/DspFilters.hpp include/synth/DspScope.hpp include/synth/DspWavetable.hpp include/synth/DspOscillators.hpp
-MINIAPP_DIR := miniapp
-MINIAPP_MAKEFILE := $(MINIAPP_DIR)/Makefile
 APPS_DIR := apps
+MINIAPP_DIR := $(APPS_DIR)/miniapp
 
 .PHONY: all build test miniapp apps clean
 
@@ -53,8 +52,17 @@ $(TEST_BIN): tests/parameter_modulation_tests.cpp include/synth/Json.hpp include
 $(DSP_TEST_BIN): tests/dsp_tests.cpp $(LIB) $(DSP_HEADERS)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< $(LIB) -o $@
 
-$(MODULE_TEST_BIN): tests/module_tests.cpp $(LIB) include/synth/Modules.hpp
-	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< $(LIB) -o $@
+# -Iapps/miniapp is added for this rule only: DemoModulation.hpp lives under
+# apps/miniapp/ (JUCE-free). module_tests.cpp includes it directly for pure-
+# math coverage (UnipolarSineModulator/LfoPhaseStep/BipolarAudioToModulator/
+# ThreePhaseVoiceOffset/PublishVcoModulators/ProcessLiteParameters), moved
+# here from the old top-level miniapp/'s DemoModulationTests.cpp when that
+# directory was removed (Plan 3 Task 6) -- this binary was already the
+# JUCE-free home for synth::Modules-adjacent coverage, so the demo helpers
+# (used exclusively by apps/miniapp/MiniAppCore.hpp) join it rather than
+# getting a ninth standalone test binary.
+$(MODULE_TEST_BIN): tests/module_tests.cpp apps/miniapp/DemoModulation.hpp $(LIB) include/synth/Modules.hpp include/synth/ParameterModulation.hpp
+	$(CXX) $(CPPFLAGS) -Iapps/miniapp $(CXXFLAGS) $< $(LIB) -o $@
 
 $(CONTRACT_TEST_BIN): tests/contract_tests.cpp $(LIB) include/synth/AppContext.hpp include/synth/AppConcepts.hpp
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< $(LIB) -o $@
@@ -93,4 +101,4 @@ apps:
 
 clean:
 	rm -rf $(BUILD_DIR)
-	if [ -f "$(MINIAPP_MAKEFILE)" ]; then $(MAKE) -C $(MINIAPP_DIR) clean; fi
+	if [ -f "$(MINIAPP_DIR)/Makefile" ]; then $(MAKE) -C $(MINIAPP_DIR) clean; fi

@@ -78,6 +78,7 @@ public:
         context_.defaultMidiProfileConfig = &defaultMidiProfileConfig_;
         context_.config = &config_;
         context_.uiState = nullptr;
+        context_.now = timestampProvider_;
     }
 
     Engine(const Engine&) = delete;

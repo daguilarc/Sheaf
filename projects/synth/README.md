@@ -131,7 +131,7 @@ values and off colors; parameter UI state does not encode page/navigation roles.
 `showingModulationView` flag. `ParameterManager::UIState` includes slot state,
 manager-owned gesture values/selection, scene endpoints/blend, and shift-held
 state. Core synth code uses `synth::Color`; JUCE color conversion is only for
-miniapp/UI code.
+app/UI code (e.g. `projects/synth/apps/miniapp/MiniApp.hpp`).
 
 External actions are represented as timestamped `MessageIn` values. The
 bounded `MessageInBus` is single-producer/single-consumer: one producer may
@@ -154,3 +154,45 @@ Scene endpoint changes should use `SetSceneEndpoints(left, right)`, which
 rejects endpoints that are invalid for any existing group and leaves prior
 scene state unchanged. `SetSceneBlend(blend)` clamps and updates blend
 independently.
+
+## Layout: runtime vs apps
+
+`projects/synth/runtime/` is the shared, app-agnostic JUCE application
+runtime (`synth_runtime::Runtime<App>`, `synth_runtime::ShellComponent<App>`,
+`synth_runtime::MidiPanel<App>`, the `SYNTH_RUNTIME_MAIN` macro). It owns the
+audio device, the message-thread tick, the MIDI device panel, and the
+patch-command chrome (New/Save/Save As/Load/Revert) that every app built on
+it gets for free.
+
+`projects/synth/apps/<name>/` holds one runtime application each. An app
+provides a JUCE-free core satisfying `synth::SynthApplicationCore` (so it can
+also run headless under `synth_rig::SynthRig` in tests) plus a JUCE-facing UI
+wrapper satisfying `synth::SynthApplication` (adds `UIComponent()`), and a
+`Main.cpp` that is just `SYNTH_RUNTIME_MAIN(AppType)`. The app's own UI
+component should contain only its bespoke widgets; patch buttons and MIDI
+device selection are runtime-owned chrome, not app code (see
+`projects/synth/apps/miniapp/README.md` for a concrete example).
+
+Patch command results (New/Save/Save As/Load/Revert) are logged by the
+runtime itself, at INFO level through `synth::AsyncLogQueue`
+(`synth_runtime::Runtime::LogPatchCommand`) — apps do not write their own
+patch log files.
+
+Build an app from `projects/synth`:
+
+```text
+make -C apps/<name>
+```
+
+or, for the miniapp specifically, via the root Makefile's convenience
+targets:
+
+```text
+make miniapp   # delegates to `make -C apps/miniapp`
+make apps      # same thing, explicit about the apps/ layout
+```
+
+Building any app requires a local JUCE checkout (`JUCE_DIR`, defaulting to
+`~/JUCE`); `make all`/`make test` at this directory's root do not require
+JUCE, since the JUCE-free library and test binaries build independently of
+any app.

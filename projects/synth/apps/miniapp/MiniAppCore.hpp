@@ -30,6 +30,7 @@
 #include <array>
 #include <cstddef>
 #include <filesystem>
+#include <optional>
 #include <vector>
 
 namespace synth_miniapp {
@@ -162,6 +163,24 @@ public:
     }
 
     void ProcessBlock(synth::AudioBlock& block) {
+        // Old MainComponent::timerCallback's step 5 (manager_.SetActivePage
+        // follows the selected bank) ported here rather than into the UI
+        // wrapper: bank selection changes come in over context_->uiBus,
+        // which is only drained on the audio thread (uiBus_.Process() runs
+        // inside Engine::ProcessBlock, before app_.ProcessBlock() — see
+        // Engine.hpp's binding-order comment), and
+        // context_->parameterManager is audio-thread-owned once running
+        // (AppContext.hpp's thread-role comment). So this manager mutation
+        // belongs here, alongside the other per-block manager work, not in
+        // paint/refresh code on the message thread. The comparison is cheap
+        // (pointer equality) and only actually calls SetActivePage when the
+        // selected bank differs from the page it implies, so a steady state
+        // costs one branch per block.
+        const auto desiredPage = static_cast<synth::PageOrdinal>(slot_->SelectedBank() == lfoBank_ ? 1 : 0);
+        if (context_->parameterManager->ActivePageOrdinal() != std::optional<synth::PageOrdinal>(desiredPage)) {
+            context_->parameterManager->SetActivePage(desiredPage);
+        }
+
         for (std::size_t frame = 0; frame < block.numFrames; ++frame) {
             ProcessLiteParameters(parameters_);
             vcoModule_.SetInput(*context_->parameterManager);
@@ -202,6 +221,12 @@ public:
     synth::BankSlot* Slot() const { return slot_; }
 
     const synth::DualWavetableVcoModule::UIState& VcoUiState() const { return vcoUiStates_; }
+    // Non-const overload for the UI wrapper: synth_juce::VcoWaveformComponent
+    // (juce/WaveformComponents.hpp) stores non-owning
+    // DefaultWavetableVco::UIState* pointers and reads their atomics each
+    // paint, never writing through them; it needs a mutable pointer only
+    // because SetUIStates()'s signature predates this const accessor.
+    synth::DualWavetableVcoModule::UIState& VcoUiState() { return vcoUiStates_; }
     const synth::ScopeWriter& Scope() const { return scopeWriter_; }
     const std::array<synth::ScopeWriterHolder, 2>& ScopeHolders() const { return scopeHolders_; }
 

@@ -1,5 +1,17 @@
 #include "synth/Modules.hpp"
 
+// DemoModulation.hpp lives under apps/miniapp/ (JUCE-free); built with
+// -Iapps/miniapp (see the root Makefile's rule for this binary) so this
+// resolves without duplicating the header. Coverage for its pure-math
+// helpers (UnipolarSineModulator/LfoPhaseStep/BipolarAudioToModulator/
+// ThreePhaseVoiceOffset/PublishVcoModulators/ProcessLiteParameters) moved
+// here from the old top-level miniapp/'s DemoModulationTests.cpp when that
+// directory was removed (Plan 3 Task 6) -- this binary was already the
+// JUCE-free home for synth::Modules-adjacent coverage, so the demo helpers
+// (used exclusively by apps/miniapp/MiniAppCore.hpp) join it rather than
+// getting a ninth standalone test binary.
+#include "DemoModulation.hpp"
+
 #ifdef JUCE_MAJOR_VERSION
 #error "synth module tests must not see JUCE headers"
 #endif
@@ -360,6 +372,115 @@ TEST_CASE(dual_vco_ui_state_exposes_both_vco_traces) {
     REQUIRE_TRUE(ui.vcos[1].scopeChannel.load() == second.FlatChan());
     REQUIRE_TRUE(ui.vcos[0].color.Load() == synth::Color::Cyan);
     REQUIRE_TRUE(ui.vcos[1].color.Load() == synth::Color::Orange);
+}
+
+TEST_CASE(demo_modulation_unipolar_sine_modulator_matches_known_phase_points) {
+    constexpr float pi = 3.14159265358979323846f;
+    constexpr float tolerance = 0.0001f;
+
+    REQUIRE_NEAR(synth_miniapp::UnipolarSineModulator(0.0f), 0.5f, tolerance);
+    REQUIRE_NEAR(synth_miniapp::UnipolarSineModulator(pi * 0.5f), 1.0f, tolerance);
+    REQUIRE_NEAR(synth_miniapp::UnipolarSineModulator(pi), 0.5f, tolerance);
+    REQUIRE_NEAR(synth_miniapp::UnipolarSineModulator(pi * 1.5f), 0.0f, tolerance);
+    REQUIRE_NEAR(synth_miniapp::UnipolarSineModulator(0.0f, pi * 0.5f), 1.0f, tolerance);
+}
+
+TEST_CASE(demo_modulation_lfo_phase_step_scales_with_speed) {
+    constexpr float tolerance = 0.0001f;
+
+    REQUIRE_NEAR(synth_miniapp::LfoPhaseStep(0.0f), 0.01f, tolerance);
+    REQUIRE_NEAR(synth_miniapp::LfoPhaseStep(1.0f), 0.17f, tolerance);
+}
+
+TEST_CASE(demo_modulation_bipolar_audio_to_modulator_clamps_and_maps) {
+    constexpr float tolerance = 0.0001f;
+
+    REQUIRE_NEAR(synth_miniapp::BipolarAudioToModulator(-2.0f), 0.0f, tolerance);
+    REQUIRE_NEAR(synth_miniapp::BipolarAudioToModulator(-1.0f), 0.0f, tolerance);
+    REQUIRE_NEAR(synth_miniapp::BipolarAudioToModulator(0.0f), 0.5f, tolerance);
+    REQUIRE_NEAR(synth_miniapp::BipolarAudioToModulator(1.0f), 1.0f, tolerance);
+    REQUIRE_NEAR(synth_miniapp::BipolarAudioToModulator(2.0f), 1.0f, tolerance);
+}
+
+TEST_CASE(demo_modulation_three_phase_voice_offset_wraps_every_three_voices) {
+    constexpr float pi = 3.14159265358979323846f;
+    constexpr float tolerance = 0.0001f;
+
+    REQUIRE_NEAR(synth_miniapp::ThreePhaseVoiceOffset(0), 0.0f, tolerance);
+    REQUIRE_NEAR(synth_miniapp::ThreePhaseVoiceOffset(1), 2.0f * pi / 3.0f, tolerance);
+    REQUIRE_NEAR(synth_miniapp::ThreePhaseVoiceOffset(2), 4.0f * pi / 3.0f, tolerance);
+    REQUIRE_NEAR(synth_miniapp::ThreePhaseVoiceOffset(3), 0.0f, tolerance);
+}
+
+TEST_CASE(demo_modulation_process_lite_parameters_applies_direct_vco_modulation) {
+    constexpr float tolerance = 0.0001f;
+
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 2,
+        .numModulators = 3,
+        .numScenes = 1,
+        .maxParameters = 4,
+        .processLiteAlpha = 1.0f,
+    });
+    auto& phase = manager.CreateParameter(group, {.name = "Phase", .defaultValue = 0.0f});
+    auto& directDepth = manager.CreateParameter(group, {
+        .name = "Phase Direct Depth",
+        .defaultValue = 1.0f,
+    });
+    REQUIRE_TRUE(phase.AssignModulationDepth(0, &directDepth));
+    phase.Compute(manager.Scene());
+    directDepth.Compute(manager.Scene());
+
+    std::vector<synth::Parameter*> parameters{&phase, &directDepth};
+    synth_miniapp::PublishVcoModulators(group.GetModulators(), -1.0f, 1.0f);
+    synth_miniapp::ProcessLiteParameters(parameters);
+    REQUIRE_NEAR(phase.Get(0), 0.0f, tolerance);
+    REQUIRE_NEAR(phase.Get(1), 1.0f, tolerance);
+
+    synth_miniapp::PublishVcoModulators(group.GetModulators(), 1.0f, -1.0f);
+    synth_miniapp::ProcessLiteParameters(parameters);
+    REQUIRE_NEAR(phase.Get(0), 1.0f, tolerance);
+    REQUIRE_NEAR(phase.Get(1), 0.0f, tolerance);
+}
+
+TEST_CASE(demo_modulation_publish_vco_modulators_matches_dual_vco_module_sources) {
+    constexpr float tolerance = 0.0001f;
+
+    synth::ParameterManager moduleManager;
+    auto& moduleGroup = moduleManager.CreateGroup({
+        .numVoices = 2,
+        .numModulators = 3,
+        .numScenes = 1,
+        .maxParameters = 4,
+        .processLiteAlpha = 1.0f,
+    });
+    synth::DualWavetableVcoModule module;
+    module.RegisterParameters(moduleManager, moduleGroup, "Osc");
+    module.RegisterModulationSources(moduleGroup, 0, 1);
+    float lfo0 = 0.25f;
+    float lfo1 = 0.75f;
+    std::array<float*, 2> lfoSources{&lfo0, &lfo1};
+    moduleGroup.SetModulationSource(2, lfoSources, {
+                                                     .name = "Sine LFO",
+                                                     .shortName = "LFO",
+                                                     .color = synth::Color::Green,
+                                                     .connected = true,
+                                                 });
+    module.CurrentInput().voices[0].vco.freq = 0.125;
+    module.CurrentInput().voices[0].vco.maxFreq = 0.5f;
+    module.CurrentInput().voices[1].vco.freq = 0.125;
+    module.CurrentInput().voices[1].vco.phaseOffset = 0.25f;
+    module.CurrentInput().voices[1].vco.maxFreq = 0.5f;
+    module.Process();
+    moduleManager.UpdateModValues(moduleGroup);
+
+    REQUIRE_NEAR(moduleGroup.GetModulators().Value(0, 0), module.DirectModulationSources()[0], tolerance);
+    REQUIRE_NEAR(moduleGroup.GetModulators().Value(1, 0), module.DirectModulationSources()[1], tolerance);
+    REQUIRE_NEAR(moduleGroup.GetModulators().Value(0, 1), module.SwappedModulationSources()[0], tolerance);
+    REQUIRE_NEAR(moduleGroup.GetModulators().Value(1, 1), module.SwappedModulationSources()[1], tolerance);
+    REQUIRE_NEAR(moduleGroup.GetModulators().Value(0, 2), 0.25f, tolerance);
+    REQUIRE_NEAR(moduleGroup.GetModulators().Value(1, 2), 0.75f, tolerance);
 }
 
 int main() {

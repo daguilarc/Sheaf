@@ -10,7 +10,9 @@
 
 #include <atomic>
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <string>
 
 namespace synth {
@@ -58,6 +60,16 @@ struct AppContext {
     const MidiControllerProfileConfig* defaultMidiProfileConfig = nullptr; // immutable after init
     const RuntimeConfig* config = nullptr;          // immutable after construction
     ParameterManager::UIState* uiState = nullptr;   // null during Init; set before MIDI/audio/UI start
+
+    // Shared monotonic timestamp source, the same one passed to the owning
+    // synth::Engine<App>'s constructor (Runtime.hpp's NowMicros() under the
+    // JUCE shell, SynthRig's NextTimestamp() under the headless test rig).
+    // Callable from any thread; exists so a UI wrapper can stamp MessageIn
+    // values it pushes onto uiBus (encoder drags, button presses) without
+    // inventing a second, divergent clock. Null only in contexts that never
+    // construct a real Engine (there are none today); UI code should treat a
+    // null now as "unavailable" rather than crash.
+    std::function<std::uint64_t()> now;
 };
 
 }  // namespace synth
