@@ -110,6 +110,7 @@ public:
             sender->Stop();
         }
         midiPanel_.reset();
+        INFO("Runtime shutting down: %s", engine_.Config().appName.c_str());
         synth::AsyncLogQueue::s_instance.DoLog();
     }
 
@@ -151,6 +152,7 @@ public:
         onMidiProcessorsRebuilt_ = [this] { midiPanel_->ReopenPersistedEndpoints(); };
 
         engine_.Initialize();
+        INFO("Runtime started: %s", appConfig.appName.c_str());
         const synth::RuntimeConfig& config = engine_.Config();
 
         // Initialize()'s FIRST RebuildMidiProcessors() call (before any
@@ -251,7 +253,12 @@ private:
 
     void audioDeviceAboutToStart(juce::AudioIODevice* device) override {
         if (device != nullptr) {
-            engine_.Prepare(device->getCurrentSampleRate(), device->getCurrentBufferSizeSamples());
+            double sampleRate = device->getCurrentSampleRate();
+            int blockSize = device->getCurrentBufferSizeSamples();
+            engine_.Prepare(sampleRate, blockSize);
+            int numInputChannels = device->getActiveInputChannels().countNumberOfSetBits();
+            int numOutputChannels = device->getActiveOutputChannels().countNumberOfSetBits();
+            INFO("Audio prepared: %.0f Hz, %d frames, %d in / %d out", sampleRate, blockSize, numInputChannels, numOutputChannels);
         }
     }
 
