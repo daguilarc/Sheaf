@@ -463,7 +463,56 @@ TEST_CASE(engine_pump_stash_is_a_drain_barrier_with_retry_first_ordering) {
     std::filesystem::remove_all(saveDir);
 }
 
+TEST_CASE(engine_initialize_without_startup_patch_never_fires_rebuilt_callback) {
+    // Property 1: Initialize()'s first, pre-startup-patch RebuildMidiProcessors()
+    // call (sar-5 step 7) must never invoke midiProcessorsRebuiltCallback_,
+    // and with no patchesRoot configured there is no startup patch to apply
+    // either, so the callback must not fire at all across Initialize().
+    EngineTestApp::testPatchesRoot.clear();
+    EngineTestApp::processLiteAlpha = 1.0f;
+    synth::Engine<EngineTestApp> engine([] { return std::uint64_t{0}; });
+
+    int callbackCalls = 0;
+    engine.SetMidiProcessorsRebuiltCallback([&]() { ++callbackCalls; });
+
+    engine.Initialize();
+
+    REQUIRE_TRUE(callbackCalls == 0);
+}
+
+TEST_CASE(engine_initialize_fires_rebuilt_callback_exactly_once_when_startup_patch_applies) {
+    // Property 2: when Initialize() finds and applies a startup patch, the
+    // second (post-apply) RebuildMidiProcessors() call must be followed by
+    // exactly one callback invocation -- not zero (the pre-patch rebuild
+    // must stay silent) and not two (no double-fire from the two rebuilds).
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() / "engine-initialize-callback-patch-root";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root);
+    WriteProbePatchVersion(root / "AAA", 0.75f, std::chrono::system_clock::now());
+
+    EngineTestApp::testPatchesRoot = root;
+    EngineTestApp::processLiteAlpha = 1.0f;
+    synth::Engine<EngineTestApp> engine([] { return std::uint64_t{0}; });
+
+    int callbackCalls = 0;
+    engine.SetMidiProcessorsRebuiltCallback([&]() { ++callbackCalls; });
+
+    engine.Initialize();
+
+    REQUIRE_NEAR(engine.Manager().ParameterById(engine.Application().probeId).Get(0), 0.75f, 1e-5f);
+    REQUIRE_TRUE(callbackCalls == 1);  // fired exactly once: not zero, not double-fired
+
+    std::filesystem::remove_all(root);
+    EngineTestApp::testPatchesRoot.clear();
+}
+
 TEST_CASE(engine_tick_rebuilds_midi_processors_after_patch_load_before_reopen_callback) {
+    // Property 3: a runtime patch load consumed by MessageThreadTick must
+    // rebuild the MIDI processors and clear midiRebuildPending_ BEFORE the
+    // callback fires -- the callback must never fire early (e.g. still
+    // inside RebuildMidiProcessors() itself) and must observe the
+    // freshly-rebuilt processors when it runs.
     EngineTestApp::testPatchesRoot.clear();
     EngineTestApp::processLiteAlpha = 1.0f;
     EngineTestApp::wantEncoderMidiInput = true;  // so MidiInputProcessor() is non-null and identity-observable
@@ -505,7 +554,7 @@ TEST_CASE(engine_tick_rebuilds_midi_processors_after_patch_load_before_reopen_ca
 
     engine.MessageThreadTick();
 
-    REQUIRE_TRUE(callbackCalls == 1);  // fired exactly once
+    REQUIRE_TRUE(callbackCalls == 1);  // fired exactly once, and after (not before) the tick's rebuild
     REQUIRE_TRUE(inputProcessorFreshAtCallback);  // and after the rebuild had already replaced the processors
 
     // A second tick with nothing pending must not fire the callback again.
@@ -602,8 +651,13 @@ TEST_CASE(engine_tick_grows_arena_and_retries_stashed_patch_message) {
     // exhaust and stash. Each MessageThreadTick doubles the arena
     // (GrowSerializationArenaForTick), so this drives the real grow/retry
     // loop end to end through the actual MessageThreadTick, bounded at 10
-    // iterations, until ProcessResponses reports Written and the version
-    // file exists on disk.
+    // iterations, until the version file appears on disk under saveDir.
+    //
+    // Deliberately does NOT call patchManager_.ProcessResponses() directly
+    // anywhere in this loop: MessageThreadTick's own step 3 is the only
+    // thing that drains patchOutputBus_ here, so if the tick ever skipped
+    // response processing, this test would stall out and fail the
+    // iteration bound rather than passing vacuously.
     synth::Engine<EngineTestApp> engine([] { return std::uint64_t{0}; }, /*initialArenaCapacity=*/64);
     engine.Initialize();
     engine.Prepare(48000.0, 256);
@@ -617,39 +671,28 @@ TEST_CASE(engine_tick_grows_arena_and_retries_stashed_patch_message) {
 
     TestBlockBuffers buffers(2, 4);
     bool written = false;
-    synth::PatchCommandResult processed;
     for (int iteration = 0; iteration < 10 && !written; ++iteration) {
         {
             synth::AudioBlock block = buffers.Block(4);
             engine.ProcessBlock(block, /*timestamp=*/0);
         }
-        // ProcessBlock alone retries the stash (see the drain-barrier
-        // contract); once a retry succeeds, ApplyPatchMessage has already
-        // pushed the SerializedJSON response onto patchOutputBus_
-        // synchronously within this same ProcessBlock call, so check for it
-        // here, before MessageThreadTick runs. MessageThreadTick's own step
-        // 3 (patchManager_.ProcessResponses()) is still exercised every
-        // iteration below — it just won't find anything left to report on
-        // the iteration where this check already claimed the response.
-        processed = engine.Patches().ProcessResponses();
-        if (processed.status == synth::PatchCommandStatus::Written) {
-            written = true;
-            break;
-        }
 
         // MessageThreadTick's step 2 grows the arena when grow-pending is
         // set (clearing the barrier so the next ProcessBlock retries the
-        // stash), and its step 3 drains any response that arrived this
-        // tick — both real, unstubbed effects of the tick under test.
+        // stash), and its step 3 (patchManager_.ProcessResponses()) drains
+        // whatever response arrived this tick -- including the
+        // SerializedJSON response a successful retry inside the preceding
+        // ProcessBlock pushed onto patchOutputBus_. The tick is the only
+        // thing under test that can make the version file show up on disk.
         engine.MessageThreadTick();
+
+        written = synth::LatestPatchVersion(saveDir).has_value();
     }
 
     REQUIRE_TRUE(written);
-    REQUIRE_TRUE(processed.status == synth::PatchCommandStatus::Written);
     REQUIRE_TRUE(!engine.HasStashedPatchMessageForTest());
     REQUIRE_TRUE(!engine.IsArenaGrowPendingForTest());
 
-    REQUIRE_TRUE(std::filesystem::exists(processed.path));
     const auto latestVersion = synth::LatestPatchVersion(saveDir);
     REQUIRE_TRUE(latestVersion.has_value());
     REQUIRE_TRUE(std::filesystem::exists(*latestVersion));

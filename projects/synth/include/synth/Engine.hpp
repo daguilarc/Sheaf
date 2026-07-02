@@ -92,14 +92,18 @@ public:
     //   4. app_.Init(&context_)                    -- context.uiState is null here
     //   5. manager_.CaptureDefaultControlState()
     //   6. uiState_ = manager_.CreateUIState(); context_.uiState = uiState_.get()
-    //   7. RebuildMidiProcessors()
+    //   7. RebuildMidiProcessors() (silent: this first, pre-startup-patch
+    //      rebuild never invokes midiProcessorsRebuiltCallback_, since there
+    //      is nothing new for a host to react to yet)
     //   8. startup patch: find LatestPatchDirectory(config_.patchesRoot); if
     //      found, patchManager_.LoadPatch(dir), then ApplyPendingPatchMessages()
-    //      (drains patchInputBus_ synchronously); if that load applied a
-    //      patch, RebuildMidiProcessors() again BEFORE the rebuilt callback
-    //      fires, so a patched MIDI profile is installed before the host
-    //      reopens endpoints; finally patchManager_.ProcessResponses().
-    //      A missing/empty patchesRoot is skipped silently.
+    //      (drains patchInputBus_ synchronously); if and only if that load
+    //      applied a patch, RebuildMidiProcessors() again and THEN invoke
+    //      midiProcessorsRebuiltCallback_ if set, so a patched MIDI profile
+    //      is installed and the host reopens endpoints against it; finally
+    //      patchManager_.ProcessResponses(). A missing/empty patchesRoot, or
+    //      a startup patch that fails to apply, is skipped silently with no
+    //      callback invocation.
     void Initialize() {
         config_ = App::Config();
         context_.config = &config_;
@@ -120,6 +124,9 @@ public:
             const bool patchApplied = ApplyPendingPatchMessages();
             if (patchApplied) {
                 RebuildMidiProcessors();
+                if (midiProcessorsRebuiltCallback_) {
+                    midiProcessorsRebuiltCallback_();
+                }
             }
             patchManager_.ProcessResponses();
         }
@@ -252,11 +259,11 @@ public:
         patchManager_.ProcessResponses();
 
         if (midiRebuildPending_.load(std::memory_order_acquire)) {
-            // RebuildMidiProcessors() invokes midiProcessorsRebuiltCallback_
-            // itself (see its definition below), always after the rebuild is
-            // complete, so no separate invocation is needed here.
             RebuildMidiProcessors();
             midiRebuildPending_.store(false, std::memory_order_release);
+            if (midiProcessorsRebuiltCallback_) {
+                midiProcessorsRebuiltCallback_();
+            }
         }
 
         for (auto& output : midiProcessors_.outputs) {
@@ -335,9 +342,6 @@ private:
     void RebuildMidiProcessors() {
         midiProcessors_ = CreateMidiControllerProfile(midiProfileConfig_, &midiBus_, &midiSender_, uiState_.get(),
                                                        timestampProvider_);
-        if (midiProcessorsRebuiltCallback_) {
-            midiProcessorsRebuiltCallback_();
-        }
     }
 
     // Audio-thread drain loop shared by ProcessBlock's no-stash path and its
@@ -370,10 +374,12 @@ private:
     // serializationContext_.maxArenaCapacity. In the ordinary case (still
     // under the cap) this must NOT touch pendingPatchMessage_ — see the
     // tick contract note on MessageThreadTick. The one carve-out: if the
-    // arena is already at (or would only reach) the cap, growing further is
-    // pointless (the stash would just exhaust again forever), so this drops
-    // the stashed message, clears both the stash and arenaGrowPending_, and
-    // INFO-logs the failure instead of growing.
+    // arena is already at the cap (currentCapacity >= maxArenaCapacity),
+    // growing further is pointless (the stash would just exhaust again
+    // forever), so this drops the stashed message, clears both the stash
+    // and arenaGrowPending_, and INFO-logs the failure instead of growing.
+    // A capacity that is merely below the cap but would double past it is
+    // NOT dropped: it still grows once more, clamped to maxArenaCapacity.
     void GrowSerializationArenaForTick() {
         const std::size_t currentCapacity = serializationArena_.Capacity();
         if (currentCapacity >= serializationContext_.maxArenaCapacity) {
