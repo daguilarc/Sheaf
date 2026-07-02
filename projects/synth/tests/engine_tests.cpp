@@ -700,6 +700,115 @@ TEST_CASE(engine_tick_grows_arena_and_retries_stashed_patch_message) {
     std::filesystem::remove_all(saveDir);
 }
 
+namespace {
+
+// App variant exercising the optional HasProcessFrame<App> control-rate
+// hook (Engine::ProcessBlock step 4a): ProcessFrame() must run exactly once
+// per block, after ComputeAllTargets() has applied this block's messages
+// (so it observes post-message-manager state) and before the app's own
+// ProcessBlock(block) call.
+struct ProcessFrameApp {
+    static synth::RuntimeConfig Config() {
+        synth::RuntimeConfig config;
+        config.appName = "EngineProcessFrameTest";
+        config.numAudioOutputs = 2;
+        return config;
+    }
+    synth::AppContext* context = nullptr;
+    synth::ParameterId probeId = 0;
+    int processFrameCalls = 0;
+    int processBlockCalls = 0;
+    // Set by ProcessFrame() each call: the probe's freshly-computed target
+    // value (post ComputeAllTargets(), i.e. reflects this block's applied
+    // messages) as observed from inside the hook.
+    float probeTargetDuringProcessFrame = -1.0f;
+    // Sequence-order flag: true only while ProcessFrame() is executing, and
+    // observed (then cleared) by ProcessBlock() -- proves ProcessFrame() ran
+    // BEFORE ProcessBlock() for the same block, not merely that both ran.
+    bool insideProcessFrame = false;
+    bool processFrameRanBeforeProcessBlockThisCall = false;
+
+    void Init(synth::AppContext* ctx) {
+        context = ctx;
+        auto& group = ctx->parameterManager->CreateGroup(
+            {.numVoices = 1, .numModulators = 0, .numScenes = 1, .maxParameters = 4, .processLiteAlpha = 1.0f});
+        auto& probe = ctx->parameterManager->CreateParameter(group, {.name = "Probe", .defaultValue = 0.25f});
+        probeId = probe.Id();
+
+        auto& bank = ctx->parameterManager->CreateBank();
+        bank.AddMapping(/*encoderId=*/0, probe);
+        auto& slot = ctx->parameterManager->CreateBankSlot();
+        slot.AddPhysicalEncoder(/*encoderId=*/0);
+        slot.SelectBank(&bank);
+    }
+    void ProcessFrame() {
+        ++processFrameCalls;
+        insideProcessFrame = true;
+        // uiBus_.Process(timestamp) (message-manager application) runs
+        // earlier in Engine::ProcessBlock's binding order than ProcessFrame()
+        // (uiBus_.Process -> midiBus_.Process -> ComputeAllTargets() ->
+        // ProcessFrame() -> app_.ProcessBlock()), so SceneCenter(0) (which
+        // MessageInBus::Apply's ParamIncDec handling writes directly, via
+        // Parameter::HandleIncDec) already reflects any message applied
+        // earlier in this same block -- this is the "post-message-manager
+        // state" the hook is documented to observe.
+        probeTargetDuringProcessFrame = context->parameterManager->ParameterById(probeId).SceneCenter(0);
+        insideProcessFrame = false;
+    }
+    void ProcessBlock(synth::AudioBlock& block) {
+        ++processBlockCalls;
+        // ProcessFrame() for this block must already have run (and returned)
+        // by the time ProcessBlock() is called.
+        processFrameRanBeforeProcessBlockThisCall = (processFrameCalls == processBlockCalls) && !insideProcessFrame;
+        for (int channel = 0; channel < block.numOutputChannels; ++channel) {
+            float* out = block.outputs[channel];
+            if (out == nullptr) {
+                continue;
+            }
+            for (std::size_t frame = 0; frame < block.numFrames; ++frame) {
+                out[frame] = 0.0f;
+            }
+        }
+    }
+};
+
+}  // namespace
+
+TEST_CASE(engine_process_frame_hook_runs_once_per_block_after_targets_before_process_block) {
+    REQUIRE_TRUE(synth::HasProcessFrame<ProcessFrameApp>);
+    REQUIRE_TRUE(!synth::HasProcessFrame<EngineTestApp>);  // EngineTestApp opts out: concept must not false-positive
+
+    synth::Engine<ProcessFrameApp> engine([] { return std::uint64_t{0}; });
+    engine.Initialize();
+    engine.Prepare(48000.0, 256);
+
+    // Push a message so this block's ComputeAllTargets() has something new
+    // to apply, so ProcessFrame() observing the post-target value is a
+    // meaningful check (not just reading the untouched default).
+    engine.UiBus().Push(synth::MessageIn::ParamIncDec(/*timestamp=*/0, /*slotIx=*/0, /*position=*/0, /*delta=*/0.3f));
+
+    TestBlockBuffers buffers(2, 4);
+    {
+        synth::AudioBlock block = buffers.Block(4);
+        engine.ProcessBlock(block, /*timestamp=*/0);
+    }
+
+    REQUIRE_TRUE(engine.Application().processFrameCalls == 1);
+    REQUIRE_TRUE(engine.Application().processBlockCalls == 1);
+    REQUIRE_TRUE(engine.Application().processFrameRanBeforeProcessBlockThisCall);
+    REQUIRE_NEAR(engine.Application().probeTargetDuringProcessFrame, 0.55f, 1e-4f);
+
+    // A second block: call counts stay in lockstep (exactly once per block
+    // each), reconfirming the once-per-block contract, not a one-shot fluke.
+    {
+        synth::AudioBlock block = buffers.Block(4);
+        engine.ProcessBlock(block, /*timestamp=*/1);
+    }
+    REQUIRE_TRUE(engine.Application().processFrameCalls == 2);
+    REQUIRE_TRUE(engine.Application().processBlockCalls == 2);
+    REQUIRE_TRUE(engine.Application().processFrameRanBeforeProcessBlockThisCall);
+}
+
 TEST_CASE(engine_revert_all_to_default_restores_app_init_midi_profile_not_empty) {
     // Regression for the default-MIDI-profile gap: Engine::Initialize() must
     // snapshot defaultMidiProfileConfig_/defaultEndpoints_ from the live
