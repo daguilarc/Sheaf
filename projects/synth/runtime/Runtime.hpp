@@ -208,6 +208,28 @@ public:
                 audioPanel_->SetStatus(message);
             }
         }
+
+        // Apply startup-patch-carried input device (same contract as output,
+        // above). config.numAudioInputs > 0 gates input selection availability.
+        if (config.numAudioInputs > 0) {
+            const juce::String wantedInputName = juce::String(engine_.AudioDeviceSnapshot().inputDeviceName);
+            if (wantedInputName.isNotEmpty() && IsEnumeratedInputDevice(wantedInputName)) {
+                juce::AudioDeviceManager::AudioDeviceSetup setup = deviceManager_.getAudioDeviceSetup();
+                setup.inputDeviceName = wantedInputName;
+                const juce::String setupError = deviceManager_.setAudioDeviceSetup(setup, true);
+                if (setupError.isNotEmpty()) {
+                    INFO("Audio input device startup switch FAILED: %s", setupError.toRawUTF8());
+                }
+                ApplyPreferredRateAndBlockSize();
+            } else {
+                if (wantedInputName.isNotEmpty()) {
+                    const juce::String message = "audio input device not found: " + wantedInputName;
+                    INFO("%s", message.toRawUTF8());
+                    audioPanel_->SetStatus(message);
+                }
+            }
+        }
+
         // Refresh() re-enumerates output devices and re-syncs the combo's
         // selection to engine.AudioDeviceSnapshot() as it now stands (post
         // startup-preference handling above). INFO-logged explicitly (not
