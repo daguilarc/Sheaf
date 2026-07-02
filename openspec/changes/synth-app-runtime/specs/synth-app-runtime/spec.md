@@ -20,7 +20,7 @@ WHEN the synth application runtime capability is implemented, THE repository SHA
 - **THEN** the core library and its JUCE-free tests build and pass without compiling runtime or apps sources
 
 ### Requirement: sar-2 — Configuration: runtime config supplied by the application
-WHEN a synth application is defined, THE application SHALL supply a JUCE-free `RuntimeConfig` value declaring at minimum the application name, audio input count, audio output count, preferred sample rate, preferred block size, patches root directory, and UI shell dimensions/frame rate; THE runtime SHALL treat audio fields as a request, negotiate actual values with the audio device, and report the negotiated sample rate and block size to the application before audio processing starts.
+WHEN a synth application is defined, THE application SHALL supply a JUCE-free `RuntimeConfig` value declaring at minimum the application name, audio input count, audio output count, preferred sample rate, preferred block size, preferred output/input audio device names (empty meaning system default), patches root directory, and UI shell dimensions/frame rate; THE runtime SHALL treat audio fields as a request, negotiate actual values with the audio device, and report the negotiated sample rate and block size to the application before audio processing starts.
 
 #### Scenario: Config drives device request
 - **WHEN** the runtime starts an application whose config requests 0 inputs, 2 outputs, and 48000 Hz
