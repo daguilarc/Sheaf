@@ -50,6 +50,8 @@
 #include <juce_audio_devices/juce_audio_devices.h>
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include <functional>
+#include <memory>
 #include <string_view>
 
 namespace synth_runtime {
@@ -411,6 +413,157 @@ private:
     juce::Label statusLabel_;
     juce::Array<juce::MidiDeviceInfo> inputDevices_;
     juce::Array<juce::MidiDeviceInfo> outputDevices_;
+};
+
+// synth_runtime::AudioPanel — the runtime audio output-device selector (Plan
+// 4 Task 3). A small sibling to MidiPanel living in the same chrome row: a
+// "System Default" + enumerated-output-device combo (input combo added only
+// when App::Config().numAudioInputs > 0 — the miniapp requests 0 inputs, so
+// it's typically absent) plus a status label. Unlike MidiPanel, AudioPanel
+// does not own the JUCE device manager or the engine's device-switch logic
+// itself; Runtime owns deviceManager_ (it's also the AudioIODeviceCallback
+// target) and the actual switch implementation (Runtime::SwitchOutputDevice:
+// AudioDeviceSetup mutation + setAudioDeviceSetup + logging), so AudioPanel
+// is constructed with a reference to it and to synth::Engine<App> for
+// read-only queries (AudioDevice(), getDeviceNames) and forwards user
+// selections through onOutputSelected, a callback Runtime wires to its own
+// ApplyAudioDeviceSelection (which itself calls SwitchOutputDevice) so both
+// the user-driven path and the apply-on-load callback path (Runtime::Start,
+// wired before engine_.Initialize()) funnel through the one switch
+// implementation.
+//
+// Ordering note (binding, see Runtime::Start's doc comment): the engine's
+// audioDeviceChangedCallback_ can fire from Initialize(), i.e. BEFORE
+// deviceManager_ has been initialised at all (a startup patch may carry a
+// device name). AudioPanel::SyncSelection tolerates this: it only touches
+// deviceManager_.getCurrentDeviceTypeObject() when a device type is already
+// current, and otherwise just leaves the combo showing "System Default"/no
+// selection — Runtime's own device-open step (later in Start()) is what
+// actually prefers engine.AudioDevice().outputDeviceName once the device
+// manager exists, and calls SyncSelection() again afterwards.
+template <synth::SynthApplication App>
+class AudioPanel : public juce::Component {
+public:
+    static constexpr int kSystemDefaultItemId = 1;
+
+    AudioPanel(synth::Engine<App>& engine, juce::AudioDeviceManager& deviceManager)
+        : engine_(engine), deviceManager_(deviceManager) {
+        outputBox_.setTextWhenNoChoicesAvailable("No outputs");
+        outputBox_.setTextWhenNothingSelected("Audio output");
+        addAndMakeVisible(outputBox_);
+        outputBox_.onChange = [this] {
+            if (applyingSelection_) {
+                return;
+            }
+            if (onOutputSelected) {
+                onOutputSelected(SelectedOutputDeviceName());
+            }
+        };
+
+        // Input combo only when the app actually requests audio input
+        // channels (Task 3 brief: miniapp requests 0, so this stays absent
+        // there). Built once at construction since RuntimeConfig is fixed
+        // per-app.
+        if (App::Config().numAudioInputs > 0) {
+            inputBox_ = std::make_unique<juce::ComboBox>();
+            inputBox_->setTextWhenNoChoicesAvailable("No inputs");
+            inputBox_->setTextWhenNothingSelected("Audio input");
+            addAndMakeVisible(*inputBox_);
+        }
+
+        statusLabel_.setColour(juce::Label::textColourId, juce::Colours::white);
+        statusLabel_.setJustificationType(juce::Justification::centredLeft);
+        addAndMakeVisible(statusLabel_);
+
+        Refresh();
+    }
+
+    AudioPanel(const AudioPanel&) = delete;
+    AudioPanel& operator=(const AudioPanel&) = delete;
+
+    void resized() override {
+        auto area = getLocalBounds().reduced(4);
+        const int comboWidth = juce::jmax(120, area.getWidth() / 4);
+        outputBox_.setBounds(area.removeFromLeft(comboWidth).reduced(4));
+        if (inputBox_) {
+            inputBox_->setBounds(area.removeFromLeft(comboWidth).reduced(4));
+        }
+        statusLabel_.setBounds(area.reduced(4));
+    }
+
+    // Re-enumerates output device names from
+    // deviceManager_.getCurrentDeviceTypeObject() and repopulates the combo
+    // ("System Default" first, empty name, then each enumerated device),
+    // then re-syncs the selection to whatever engine.AudioDevice() currently
+    // holds. Safe to call at any point in Runtime::Start's ordering,
+    // including before the device manager itself has been initialised (see
+    // the class doc comment) — getCurrentDeviceTypeObject() returning
+    // nullptr just yields an output-only "System Default" entry.
+    void Refresh() {
+        outputBox_.clear(juce::dontSendNotification);
+        outputBox_.addItem("System Default", kSystemDefaultItemId);
+        outputNames_.clear();
+        if (juce::AudioIODeviceType* deviceType = deviceManager_.getCurrentDeviceTypeObject();
+            deviceType != nullptr) {
+            outputNames_ = deviceType->getDeviceNames(false);
+            for (int ix = 0; ix < outputNames_.size(); ++ix) {
+                outputBox_.addItem(outputNames_[ix], kSystemDefaultItemId + ix + 1);
+            }
+        }
+        SyncSelection();
+    }
+
+    // Re-syncs the combo's selection to engine.AudioDevice().outputDeviceName
+    // without applying anything (no device switch, no notification) — used
+    // both after Refresh() and by Runtime after it applies a device. Empty
+    // name selects "System Default"; a name not currently enumerated leaves
+    // the combo on "System Default" too (the status label is the source of
+    // truth for "device not found", set by Runtime).
+    void SyncSelection() {
+        const juce::ScopedValueSetter<bool> guard(applyingSelection_, true);
+        const juce::String wanted = juce::String(engine_.AudioDevice().outputDeviceName);
+        if (wanted.isEmpty()) {
+            outputBox_.setSelectedId(kSystemDefaultItemId, juce::dontSendNotification);
+            return;
+        }
+        const int ix = outputNames_.indexOf(wanted);
+        outputBox_.setSelectedId(ix >= 0 ? kSystemDefaultItemId + ix + 1 : kSystemDefaultItemId,
+                                 juce::dontSendNotification);
+    }
+
+    void SetStatus(const juce::String& text) { statusLabel_.setText(text, juce::dontSendNotification); }
+
+    // The output device name currently selected in the combo ("" for System
+    // Default). Used by Runtime's onChange handler.
+    juce::String SelectedOutputDeviceName() const {
+        const int ix = outputBox_.getSelectedId() - kSystemDefaultItemId - 1;
+        return ix >= 0 && ix < outputNames_.size() ? outputNames_[ix] : juce::String();
+    }
+
+    // Wired by Runtime (constructor) to Runtime::ApplyAudioDeviceSelection.
+    // Invoked on the message thread (JUCE combo box callbacks run there)
+    // with the newly selected output device name ("" for System Default)
+    // whenever the user changes the combo directly — never invoked by
+    // SyncSelection()/Refresh()'s own dontSendNotification updates.
+    std::function<void(const juce::String&)> onOutputSelected;
+
+private:
+    synth::Engine<App>& engine_;
+    juce::AudioDeviceManager& deviceManager_;
+
+    juce::ComboBox outputBox_;
+    // Present only when App::Config().numAudioInputs > 0; unlike MidiPanel's
+    // always-present combos, most apps (e.g. the miniapp) never show an
+    // audio input combo at all.
+    std::unique_ptr<juce::ComboBox> inputBox_;
+    juce::Label statusLabel_;
+    juce::StringArray outputNames_;
+
+    // Guards SyncSelection()'s setSelectedId(..., dontSendNotification) —
+    // belt-and-suspenders against onChange firing re-entrantly; JUCE's
+    // dontSendNotification already suppresses onChange, but this also
+    // protects a future switch to sendNotificationSync.
+    bool applyingSelection_ = false;
 };
 
 }  // namespace synth_runtime

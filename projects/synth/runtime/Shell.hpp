@@ -12,6 +12,7 @@
 //     chooser must outlive the async operation, so it's held in a
 //     member unique_ptr recreated on each launch)
 //   - the MidiPanel (Task 3)
+//   - the AudioPanel (Plan 4 Task 3): output-device combo + status label
 //   - a status label reflecting the last patch command's result
 //   - the app's own UIComponent(), filling the remainder of the window
 //
@@ -73,6 +74,7 @@ public:
         addAndMakeVisible(statusLabel_);
 
         addAndMakeVisible(runtime_.MidiPanelComponent());
+        addAndMakeVisible(runtime_.AudioPanelComponent());
         addAndMakeVisible(runtime_.AppComponent());
     }
 
@@ -81,6 +83,7 @@ public:
     void RepaintAll() {
         repaint();
         runtime_.MidiPanelComponent().repaint();
+        runtime_.AudioPanelComponent().repaint();
         runtime_.AppComponent().repaint();
     }
 
@@ -97,6 +100,7 @@ public:
         statusLabel_.setBounds(patchRow.reduced(4));
 
         runtime_.MidiPanelComponent().setBounds(area.removeFromTop(56));
+        runtime_.AudioPanelComponent().setBounds(area.removeFromTop(32));
 
         runtime_.AppComponent().setBounds(area);
     }
