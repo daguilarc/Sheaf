@@ -1,6 +1,6 @@
 # apps/miniapp — the real SynthMiniapp app (Plan 3 Task 6), built on the
 # shared runtime shell (runtime/Runtime.hpp, runtime/Shell.hpp,
-# runtime/MidiPanel.hpp) rather than the bespoke JUCE app the old top-level
+# runtime/MainPane.hpp) rather than the bespoke JUCE app the old top-level
 # miniapp/ directory used to build.
 #
 # Sets the parameters expected by runtime/juce_build.mk and includes it.

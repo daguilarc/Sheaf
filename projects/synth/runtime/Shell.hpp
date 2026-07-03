@@ -10,13 +10,11 @@
 // row (New/Save/Save As/Load/Revert + patch name + status label), the
 // MidiPanel strip, and the AudioPanel strip are gone from this layout --
 // MainPane's sidebar (Audio/Controllers/File) and content host are the only
-// chrome now. As of Task 3 of Plan 4, MainPane's Audio and File pages
-// (AudioConfigPage.hpp / FilePage.hpp) are real, re-homing AudioPanel's and
-// the old patch-command row's logic respectively (AudioPanel itself was
-// deleted from MidiPanel.hpp this task); Controllers remains a placeholder
-// until the next task lands ControllersPage. MidiPanelComponent()
-// (Runtime.hpp) still constructs that component, just unparented from the
-// shell, until ControllersPage re-homes its logic too.
+// chrome now. MainPane's Audio, File, and Controllers pages
+// (AudioConfigPage.hpp / FilePage.hpp / ControllersPage.hpp) are all real as
+// of Task 4 of Plan 4, which also deleted MidiPanel.hpp outright -- Runtime
+// no longer constructs or owns any MIDI UI component (see Runtime.hpp's
+// MidiConnections() accessor, which ControllersPage reads directly).
 //
 // Runtime's timer-driven repaint hook (Runtime::Start() calls it at the end
 // of every tick) is wired to repaint the shell, which now just means
@@ -39,7 +37,6 @@
 #include "synth/ThreadId.hpp"
 
 #include "MainPane.hpp"
-#include "MidiPanel.hpp"
 #include "Runtime.hpp"
 
 #include <juce_gui_extra/juce_gui_extra.h>

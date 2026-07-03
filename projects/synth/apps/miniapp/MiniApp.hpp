@@ -13,11 +13,11 @@
 // deliberately does NOT port:
 //
 //   - Patch buttons (New/Save/Save As/Load/Revert) and the patch status
-//     label: synth_runtime::ShellComponent already provides these, wired
-//     straight to Runtime's patch methods (spm-37 delta).
+//     label: synth_runtime::MainPane's FilePage already provides these,
+//     wired straight to Runtime's patch methods (spm-37 delta).
 //   - MIDI device combo boxes / open-close buttons / status label:
-//     synth_runtime::MidiPanel already provides these, hosted by
-//     ShellComponent alongside this app's UIComponent() (Task 3).
+//     synth_runtime::MainPane's ControllersPage already provides these,
+//     hosted alongside this app's UIComponent() (Plan 4 Task 4).
 //   - appendPatchLog/patchLogPath/logPatchCommand and any other ofstream
 //     patch-log file: the runtime INFO-logs every patch command result
 //     itself (Runtime::LogPatchCommand); no app code writes a log file
@@ -85,7 +85,7 @@ public:
 private:
     // The bespoke widget tree, ported verbatim (layout/behavior) from the
     // old MainComponent, minus patch buttons and MIDI controls (now owned
-    // by the runtime shell/MidiPanel).
+    // by the runtime shell's FilePage/ControllersPage).
     class Ui final : public juce::Component {
     public:
         Ui() {

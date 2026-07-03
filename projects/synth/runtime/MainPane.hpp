@@ -8,20 +8,19 @@
 // ShellComponent (Shell.hpp) now hosts a MainPane<App> as its only child;
 // the former patch chrome row / MidiPanel strip / AudioPanel strip layout is
 // gone from the shell (sru-3/sru-4 moved MidiPanel/AudioPanel's logic into
-// ControllersPage/AudioConfigPage; sru-6 moved the patch row into FilePage --
-// both done in Task 3). Audio and File now show real pages
-// (AudioConfigPage.hpp / FilePage.hpp); Controllers stays a placeholder
-// (juce::Label naming the page plus a Back button) until the next task lands
-// ControllersPage.
+// ControllersPage/AudioConfigPage; sru-6 moved the patch row into FilePage).
+// Audio, File, and Controllers all show real pages (AudioConfigPage.hpp /
+// FilePage.hpp / ControllersPage.hpp) as of Task 4 of Plan 4, which deleted
+// the last placeholder (a juce::Label naming the page plus a Back button).
 //
 // Content-host visibility (sru-1, binding): switching pages toggles
 // juce::Component::setVisible on the app component and whichever of
-// {audioPage_, filePage_, placeholderLabel_} is relevant, it never
+// {audioPage_, filePage_, controllersPage_} is relevant, it never
 // destroys/reconstructs the app component -- its state (audio keeps running
 // regardless; this is purely a UI-visibility concern) is retained across
-// page navigation. audioPage_/filePage_ are likewise constructed once (in
-// MainPane's constructor) and never destroyed/reconstructed across
-// navigation -- only setVisible toggles.
+// page navigation. audioPage_/filePage_/controllersPage_ are likewise
+// constructed once (in MainPane's constructor) and never
+// destroyed/reconstructed across navigation -- only setVisible toggles.
 //
 // Deadline readout (sru-2, binding): Runtime's UI timer calls
 // WriteDeadlineSample(deviceManager_.getCpuUsage() * 100.0f) once per tick
@@ -30,18 +29,23 @@
 // synth::RollingMax256 (JUCE-free, MidiConfigViewModel.hpp) and the sidebar
 // paints its rolling-max label as "%.1f%%" on every repaint.
 //
-// Per-tick page refresh (Task 3): RefreshOnTick() calls
-// audioPage_.RefreshOnTick()/filePage_.RefreshOnTick() unconditionally every
-// tick, regardless of which page is currently shown -- FilePage's patch-name
-// label and AudioConfigPage's negotiated-values status both need to reflect
-// state that can change without going through either page's own controls
-// (a patch load changing the current patch directory or the audio device).
-// ShellComponent::RepaintAll (Shell.hpp) calls this before repainting.
+// Per-tick page refresh (Task 3, extended Task 4): RefreshOnTick() calls
+// audioPage_.RefreshOnTick()/filePage_.RefreshOnTick()/
+// controllersPage_.RefreshOnTick() unconditionally every tick, regardless of
+// which page is currently shown -- FilePage's patch-name label and
+// AudioConfigPage's negotiated-values status both need to reflect state that
+// can change without going through either page's own controls (a patch load
+// changing the current patch directory or the audio device), and
+// ControllersPage's own RefreshOnTick() only actually rebuilds its view
+// model when its internal dirty flag is set (see ControllersPage.hpp), so
+// calling it unconditionally here is cheap. ShellComponent::RepaintAll
+// (Shell.hpp) calls this before repainting.
 
 #include "synth/AppConcepts.hpp"
 #include "synth/MidiConfigViewModel.hpp"
 
 #include "AudioConfigPage.hpp"
+#include "ControllersPage.hpp"
 #include "FilePage.hpp"
 
 #include <juce_gui_basics/juce_gui_basics.h>
@@ -114,27 +118,21 @@ class MainPane : public juce::Component {
 public:
     enum class Page { None, Audio, Controllers, File };
 
-    explicit MainPane(Runtime<App>& runtime) : runtime_(runtime), audioPage_(runtime), filePage_(runtime) {
+    explicit MainPane(Runtime<App>& runtime)
+        : runtime_(runtime), audioPage_(runtime), filePage_(runtime), controllersPage_(runtime) {
         sidebar_.audioButton_.onClick = [this] { ShowPage(Page::Audio); };
         sidebar_.controllersButton_.onClick = [this] { ShowPage(Page::Controllers); };
         sidebar_.fileButton_.onClick = [this] { ShowPage(Page::File); };
         addAndMakeVisible(sidebar_);
-
-        // Controllers stays a placeholder (Back button + label) until the
-        // next task lands ControllersPage.
-        backButton_.setButtonText("Back");
-        backButton_.onClick = [this] { ShowPage(Page::None); };
-        addChildComponent(backButton_);
-
-        placeholderLabel_.setColour(juce::Label::textColourId, juce::Colours::white);
-        placeholderLabel_.setJustificationType(juce::Justification::centred);
-        addChildComponent(placeholderLabel_);
 
         audioPage_.onBack = [this] { ShowPage(Page::None); };
         addChildComponent(audioPage_);
 
         filePage_.onBack = [this] { ShowPage(Page::None); };
         addChildComponent(filePage_);
+
+        controllersPage_.onBack = [this] { ShowPage(Page::None); };
+        addChildComponent(controllersPage_);
 
         addAndMakeVisible(runtime_.AppComponent());
 
@@ -144,23 +142,15 @@ public:
     // Swaps content-host visibility between the app component (None) and
     // the named page (sru-1: exactly one visible at a time; the app
     // component's own state is retained via setVisible(false), never
-    // destroyed/reconstructed -- see this header's doc comment). Controllers
-    // still shows the shared placeholder (backButton_ + placeholderLabel_)
-    // until the next task lands ControllersPage.
+    // destroyed/reconstructed -- see this header's doc comment).
     void ShowPage(Page page) {
         currentPage_ = page;
 
         const bool showingApp = (page == Page::None);
-        const bool showingPlaceholder = (page == Page::Controllers);
         runtime_.AppComponent().setVisible(showingApp);
-        backButton_.setVisible(showingPlaceholder);
-        placeholderLabel_.setVisible(showingPlaceholder);
         audioPage_.setVisible(page == Page::Audio);
         filePage_.setVisible(page == Page::File);
-
-        if (showingPlaceholder) {
-            placeholderLabel_.setText(PageName(page), juce::dontSendNotification);
-        }
+        controllersPage_.setVisible(page == Page::Controllers);
 
         resized();
     }
@@ -178,11 +168,13 @@ public:
     }
 
     // Called once per UI timer tick (see this header's doc comment) so
-    // FilePage's patch-name label and AudioConfigPage's negotiated-values
-    // status stay current regardless of which page is currently shown.
+    // FilePage's patch-name label, AudioConfigPage's negotiated-values
+    // status, and ControllersPage's view model stay current regardless of
+    // which page is currently shown.
     void RefreshOnTick() {
         audioPage_.RefreshOnTick();
         filePage_.RefreshOnTick();
+        controllersPage_.RefreshOnTick();
     }
 
     void resized() override {
@@ -191,42 +183,22 @@ public:
 
         // Content host: the remaining area, shared by the app component and
         // whichever page is showing. Back sits at the top of the page area
-        // (binding: "Back control at the top of every page") -- the
-        // placeholder's Back button is laid out here; audioPage_/filePage_
-        // each lay out their own Back button internally within this same
-        // area.
-        auto contentArea = area;
-        auto backArea = contentArea.removeFromTop(32);
-        backButton_.setBounds(backArea.removeFromLeft(80).reduced(4));
-        placeholderLabel_.setBounds(contentArea);
-
+        // (binding: "Back control at the top of every page") --
+        // audioPage_/filePage_/controllersPage_ each lay out their own Back
+        // button internally within this same area.
         audioPage_.setBounds(area);
         filePage_.setBounds(area);
+        controllersPage_.setBounds(area);
 
         runtime_.AppComponent().setBounds(area);
     }
 
 private:
-    static const char* PageName(Page page) {
-        switch (page) {
-            case Page::Audio:
-                return "Audio";
-            case Page::Controllers:
-                return "Controllers";
-            case Page::File:
-                return "File";
-            case Page::None:
-                break;
-        }
-        return "";
-    }
-
     Runtime<App>& runtime_;
     Sidebar sidebar_;
-    juce::TextButton backButton_;
-    juce::Label placeholderLabel_;
     AudioConfigPage<App> audioPage_;
     FilePage<App> filePage_;
+    ControllersPage<App> controllersPage_;
     Page currentPage_ = Page::None;
     synth::RollingMax256 deadlineMax_;
 };

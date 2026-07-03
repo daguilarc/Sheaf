@@ -160,10 +160,11 @@ independently.
 
 `projects/synth/runtime/` is the shared, app-agnostic JUCE application
 runtime (`synth_runtime::Runtime<App>`, `synth_runtime::ShellComponent<App>`,
-`synth_runtime::MidiPanel<App>`, the `SYNTH_RUNTIME_MAIN` macro). It owns the
-audio device, the message-thread tick, the MIDI device panel, and the
-patch-command chrome (New/Save/Save As/Load/Revert) that every app built on
-it gets for free.
+`synth_runtime::MainPane<App>` and its Audio/Controllers/File pages, the
+`SYNTH_RUNTIME_MAIN` macro). It owns the audio device, the message-thread
+tick, per-controller MIDI connection management, and the patch-command
+chrome (New/Save/Save As/Load/Revert) that every app built on it gets for
+free.
 
 `projects/synth/apps/<name>/` holds one runtime application each. An app
 provides a JUCE-free core satisfying `synth::SynthApplicationCore` (so it can
