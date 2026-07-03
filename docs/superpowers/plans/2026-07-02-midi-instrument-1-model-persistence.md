@@ -131,8 +131,9 @@ JSON BuildPatchJSON(JsonArena& arena, std::string_view patchName,
                     const ParameterManager& manager,
                     const MidiInstrumentConfig& instrument,
                     const AudioDeviceState& audioDevice = {});
-// LoadPatchJSON gains `MidiInstrumentConfig* instrument` (REQUIRED section: load
-// fails when absent or invalid); ValidatePatchJSON requires a valid
+// LoadPatchJSON gains `MidiInstrumentConfig& instrument` (REQUIRED section: load
+// fails when absent or invalid — reference, not pointer: the out-param is not
+// optional); ValidatePatchJSON requires a valid
 // `midiInstrument` object; ApplyPatchMessage signature swaps the profile+endpoint
 // parameters for `MidiInstrumentConfig& instrument, const MidiInstrumentConfig&
 // defaultInstrument` (RevertAllToDefault restores the default instrument;
