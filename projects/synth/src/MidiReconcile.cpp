@@ -117,6 +117,10 @@ std::unordered_set<std::size_t> PlanEndpointPass(const MidiInstrumentConfig& ins
         }
 
         // No claimable match (either absent entirely, or lost contention to an earlier slot).
+        // The ref IS configured, so this endpoint SHALL end Offline -- including from
+        // Unconfigured connection status (the startup shape: empty/default connection state,
+        // device absent). Close* is only emitted when something is actually open (Online); the
+        // Unconfigured->Offline transition has nothing to close.
         if (connection.status == MidiEndpointStatus::Online) {
             ReconcileAction close;
             close.type = closeType;
@@ -128,8 +132,13 @@ std::unordered_set<std::size_t> PlanEndpointPass(const MidiInstrumentConfig& ins
             offline.type = offlineType;
             offline.controllerIx = ix;
             plan.actions.push_back(offline);
+        } else if (connection.status == MidiEndpointStatus::Unconfigured) {
+            ReconcileAction offline;
+            offline.type = offlineType;
+            offline.controllerIx = ix;
+            plan.actions.push_back(offline);
         }
-        // Already-Offline (or Unconfigured connection state) with no claim: idempotent, no action.
+        // Already-Offline with no claim: idempotent, no action.
     }
 
     return opened;
@@ -253,6 +262,13 @@ MidiConnectionResizePlan PlanMidiConnectionResize(std::size_t oldCount, std::siz
         plan.growingIx.push_back(ix);
     }
     return plan;
+}
+
+MidiRebuildResponse PlanMidiRebuildResponse(bool started, std::size_t oldCount, std::size_t newCount) {
+    MidiRebuildResponse response;
+    response.resizePlan = PlanMidiConnectionResize(oldCount, newCount);
+    response.reconcile = started;
+    return response;
 }
 
 } // namespace synth

@@ -266,6 +266,25 @@ public:
     // snapshot for the actual reconcile -- see MidiDevicePoller's class doc
     // comment: the poller exists purely to wake us, not to be the source of
     // truth) and runs one reconcile pass.
+    //
+    // Degraded-mode tick cost (Task 3 review, Minor): in degraded mode (see
+    // detail::ForceDirtyEnumerate()'s doc comment) the poller's dirty flag
+    // is set unconditionally every ~5 s, so this still calls Reconcile()
+    // every tick even when the OS device list has not changed -- this
+    // method deliberately does NOT skip planning/execution on an unchanged
+    // list (unlike the alternative the brief allows: "skip planning
+    // entirely when the list is unchanged"). Rationale: PlanMidiReconciliation
+    // + ExecuteReconcilePlan are cheap, pure-over-small-vectors operations
+    // (a handful of controller slots, not device-count-scaling work) that
+    // already no-op correctly on a converged/unchanged state (see
+    // converged_state_produces_empty_plan in reconcile_tests.cpp) -- adding
+    // a second "did the list change" short-circuit here would duplicate
+    // logic the planner already provides for free, for no measurable benefit
+    // on this data size. What WAS worth fixing is the unconditional log
+    // line on every one of those no-op ticks -- Reconcile()'s own
+    // lastEnumerated_ snapshot (see that member's doc comment) suppresses
+    // exactly that noise, without skipping the (harmless, idempotent) work
+    // itself.
     void OnTimerTick() {
         synth::MidiDeviceList latest;
         if (poller_.ConsumeChange(latest)) {
@@ -293,26 +312,42 @@ public:
     // already in flight -- see the class doc comment's EditInstrument
     // re-entrancy paragraph.
     //
-    // started_ gate (Task 2 review, Important): this callback is wired
-    // unconditionally in the host's constructor (see Runtime.hpp), i.e.
-    // BEFORE Runtime::Start() ever calls StartupReconcile(). A startup
-    // patch's own processor rebuild inside engine.Initialize() therefore
-    // fires this method while started_ is still false. Per p3-globals.md's
-    // binding startup order ("engine init -> startup patch -> processor
-    // rebuild -> ONE synchronous reconcile -> start poller -> ..."), that
-    // pre-startup rebuild must NOT itself run a reconcile pass -- only
-    // StartupReconcile()'s own call does, immediately afterward, against
-    // whatever the resize below just produced. Skipping the reconcile here
-    // pre-startup is safe: the resize (handler/state vector sizing +
-    // forwarding-processor installation) still happens unconditionally, so
-    // by the time StartupReconcile() runs its Reconcile() call, the vectors
-    // are already correctly sized -- nothing is lost, only the redundant
-    // early reconcile pass is skipped. Once started_ is true (post-startup
-    // patch loads, preset changes, etc., per sar-8), this method reconciles
-    // exactly as before.
+    // started_ gate (Task 2 review, Important; Task 3 review, Important: the
+    // gate decision itself -- resize always, reconcile only once started --
+    // is now pinned by synth::PlanMidiRebuildResponse, a pure JUCE-free
+    // function unit-tested directly in reconcile_executor_tests.cpp
+    // (rebuild_response_* cases), instead of living only as inline logic
+    // here that only a full JUCE runtime build would exercise). This
+    // callback is wired unconditionally in the host's constructor (see
+    // Runtime.hpp), i.e. BEFORE Runtime::Start() ever calls
+    // StartupReconcile(). A startup patch's own processor rebuild inside
+    // engine.Initialize() therefore fires this method while started_ is
+    // still false. Per p3-globals.md's binding startup order ("engine init
+    // -> startup patch -> processor rebuild -> ONE synchronous reconcile ->
+    // start poller -> ..."), that pre-startup rebuild must NOT itself run a
+    // reconcile pass -- only StartupReconcile()'s own call does, immediately
+    // afterward, against whatever the resize below just produced. Skipping
+    // the reconcile here pre-startup is safe: the resize (handler/state
+    // vector sizing + forwarding-processor installation) still happens
+    // unconditionally, so by the time StartupReconcile() runs its
+    // Reconcile() call, the vectors are already correctly sized -- nothing
+    // is lost, only the redundant early reconcile pass is skipped. Once
+    // started_ is true (post-startup patch loads, preset changes, etc., per
+    // sar-8), this method reconciles exactly as before. The `response` value
+    // itself is used only for its `reconcile` flag here -- the resize
+    // execution still goes through ResizeToControllerCount() (which
+    // independently calls PlanMidiConnectionResize with the same
+    // oldCount/newCount this computes), since PlanMidiRebuildResponse's
+    // resizePlan describes JUCE-free bookkeeping only and this method needs
+    // the JUCE handler-construction side effects ResizeToControllerCount()
+    // performs.
     void OnInstrumentRebuilt() {
+        const std::size_t oldCount = inputHandlers_.size();
+        const std::size_t newCount = engine_.MidiControllerCount();
+        const synth::MidiRebuildResponse response = synth::PlanMidiRebuildResponse(started_, oldCount, newCount);
+
         ResizeToControllerCount();
-        if (!started_ || reconciling_) {
+        if (!response.reconcile || reconciling_) {
             return;
         }
         Reconcile(detail::EnumerateDevices());
@@ -552,8 +587,22 @@ private:
         state_ = synth::ExecuteReconcilePlan(plan, state_, ops);
         reconciling_ = false;
 
-        INFO("MIDI reconcile: plan=%zu opens=%zu closes=%zu offline=%zu resyncs=%zu", plan.actions.size(), opens,
-             closes, offline, resyncs);
+        // Log-quiet (Task 3 review, Minor): skip the summary line only when
+        // the plan was empty AND the device list itself is unchanged since
+        // the last reconcile pass -- in degraded mode, this is the common
+        // case on every ~5 s forced-dirty tick when no MIDI device has
+        // actually changed. Any non-empty plan, or any actual list change
+        // (present != lastEnumerated_), still logs -- including a list
+        // change that happens to converge to an empty plan, so a device
+        // appearing/disappearing is never silently dropped from the log.
+        const bool listUnchanged = hasLastEnumerated_ && present == lastEnumerated_;
+        if (!plan.actions.empty() || !listUnchanged) {
+            INFO("MIDI reconcile: plan=%zu opens=%zu closes=%zu offline=%zu resyncs=%zu", plan.actions.size(),
+                 opens, closes, offline, resyncs);
+        }
+
+        lastEnumerated_ = present;
+        hasLastEnumerated_ = true;
     }
 
     bool OpenInput(std::size_t ix, const std::string& identifier) {
@@ -653,6 +702,29 @@ private:
     // updateInputRef/updateOutputRef ops) fires the rebuilt callback
     // synchronously. See the class doc comment's re-entrancy paragraph.
     bool reconciling_ = false;
+
+    // Last message-thread-authoritative device list Reconcile() ran a plan
+    // against (Task 3 review, Minor: degraded-mode log noise). In degraded
+    // mode (see detail::ForceDirtyEnumerate()'s doc comment) the poller sets
+    // the dirty flag every ~5 s unconditionally, so OnTimerTick() calls
+    // Reconcile() every tick even when nothing has actually changed on the
+    // OS device list -- without this, every one of those ticks would log an
+    // INFO line, in perpetuity, on a system with no MIDI activity at all.
+    // Reconcile() skips its summary INFO line only when BOTH the plan is
+    // empty (no action happened) AND `present` equals this snapshot (the
+    // device list itself is unchanged since the last converged pass); any
+    // non-empty plan, or any actual device-list change (even one that
+    // happens to converge to an empty plan), still logs.
+    //
+    // hasLastEnumerated_ distinguishes "never reconciled yet" from "last
+    // reconcile saw zero devices" -- both leave lastEnumerated_ as a
+    // default-constructed (empty) MidiDeviceList, but only the latter should
+    // ever suppress a log line; the very first Reconcile() call must always
+    // log regardless of whether `present` happens to be empty too. Both
+    // members are updated unconditionally at the end of every Reconcile()
+    // call.
+    bool hasLastEnumerated_ = false;
+    synth::MidiDeviceList lastEnumerated_;
 
     // True once StartupReconcile() has run its one synchronous startup
     // reconcile pass (Task 2 review, Important). Before that,

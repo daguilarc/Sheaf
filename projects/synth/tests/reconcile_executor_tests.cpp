@@ -429,6 +429,43 @@ TEST_CASE(resize_plan_closing_indices_are_sorted_ascending) {
     }
 }
 
+// PlanMidiRebuildResponse (Task 3 review, Important): pins the
+// MidiConnectionManager::OnInstrumentRebuilt() gate decision -- a pre-startup
+// rebuild (started=false) must resize but must NOT reconcile; a post-startup
+// rebuild (started=true) must resize AND reconcile. This is a regression
+// guard: if someone removes/inverts the `started_` check in
+// OnInstrumentRebuilt(), this test fails without needing a full JUCE runtime
+// build to notice.
+using synth::PlanMidiRebuildResponse;
+
+TEST_CASE(rebuild_response_not_started_resizes_only_no_reconcile) {
+    const auto response = PlanMidiRebuildResponse(/*started=*/false, /*oldCount=*/1, /*newCount=*/2);
+    REQUIRE_TRUE(response.reconcile == false);
+    REQUIRE_TRUE(response.resizePlan.growingIx.size() == 1);
+    REQUIRE_TRUE(response.resizePlan.growingIx[0] == 1);
+    REQUIRE_TRUE(response.resizePlan.closingIx.empty());
+}
+
+TEST_CASE(rebuild_response_started_resizes_and_reconciles) {
+    const auto response = PlanMidiRebuildResponse(/*started=*/true, /*oldCount=*/1, /*newCount=*/2);
+    REQUIRE_TRUE(response.reconcile == true);
+    REQUIRE_TRUE(response.resizePlan.growingIx.size() == 1);
+    REQUIRE_TRUE(response.resizePlan.growingIx[0] == 1);
+    REQUIRE_TRUE(response.resizePlan.closingIx.empty());
+}
+
+// The resize decision itself is unaffected by `started` -- only the
+// `reconcile` flag depends on it; the resize plan is exactly
+// PlanMidiConnectionResize(oldCount, newCount) either way.
+TEST_CASE(rebuild_response_resize_plan_independent_of_started) {
+    const auto notStarted = PlanMidiRebuildResponse(/*started=*/false, /*oldCount=*/3, /*newCount=*/1);
+    const auto started = PlanMidiRebuildResponse(/*started=*/true, /*oldCount=*/3, /*newCount=*/1);
+    REQUIRE_TRUE(notStarted.resizePlan.closingIx == started.resizePlan.closingIx);
+    REQUIRE_TRUE(notStarted.resizePlan.growingIx == started.resizePlan.growingIx);
+    REQUIRE_TRUE(notStarted.reconcile == false);
+    REQUIRE_TRUE(started.reconcile == true);
+}
+
 int main() {
     int failed = 0;
     for (const auto& test : Registry()) {

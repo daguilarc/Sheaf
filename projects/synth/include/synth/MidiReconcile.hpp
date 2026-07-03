@@ -18,8 +18,23 @@ struct MidiEndpointConnection {
 struct MidiControllerConnection { MidiEndpointConnection input; MidiEndpointConnection output; };
 struct MidiConnectionState { std::vector<MidiControllerConnection> controllers; };
 
-struct MidiDeviceInfoRef { std::string identifier; std::string name; };
-struct MidiDeviceList { std::vector<MidiDeviceInfoRef> inputs; std::vector<MidiDeviceInfoRef> outputs; };
+struct MidiDeviceInfoRef {
+    std::string identifier;
+    std::string name;
+    friend bool operator==(const MidiDeviceInfoRef&, const MidiDeviceInfoRef&) = default;
+};
+struct MidiDeviceList {
+    std::vector<MidiDeviceInfoRef> inputs;
+    std::vector<MidiDeviceInfoRef> outputs;
+    // Exact order-sensitive equality (Task 3 review, Minor: lets
+    // MidiConnectionManager::Reconcile() quiet its per-tick INFO log when the
+    // enumerated device list is unchanged since the last converged pass --
+    // see lastEnumerated_'s doc comment). Present devices are enumerated in
+    // JUCE's own AvailableDevices() order, which is stable call-to-call when
+    // the actual device set hasn't changed, so this is not a false-negative
+    // hazard in practice.
+    friend bool operator==(const MidiDeviceList&, const MidiDeviceList&) = default;
+};
 
 struct ReconcileAction {
     enum class Type {
@@ -59,11 +74,16 @@ struct ReconcilePlan { std::vector<ReconcileAction> actions; };
 // the first matching slot claims the device; a losing slot that was
 // previously Online also gets a Close* (then Mark*Offline). An unconfigured
 // ref (!IsConfigured()) is inert: no open/close/offline/update action is ever
-// produced for it, and its status stays Unconfigured. An Online endpoint
-// whose openIdentifier is no longer present is closed and marked offline. An
-// already-Offline endpoint whose device remains absent produces no actions.
-// Exactly one Resync is emitted per controller per plan, and only when the
-// plan opens that controller's OUTPUT endpoint.
+// produced for it, and its status stays Unconfigured. A CONFIGURED ref that
+// matches no present device SHALL end Offline regardless of its current
+// connection status: an Online endpoint whose openIdentifier is no longer
+// present is closed and marked offline; an Unconfigured connection status
+// (the startup shape -- a configured ref with no prior open/close history,
+// e.g. before the first reconcile pass) is marked offline directly, with no
+// Close* (there is nothing open to close). An already-Offline endpoint whose
+// device remains absent produces no actions (idempotence). Exactly one
+// Resync is emitted per controller per plan, and only when the plan opens
+// that controller's OUTPUT endpoint.
 ReconcilePlan PlanMidiReconciliation(const MidiInstrumentConfig& instrument,
                                      const MidiDeviceList& present,
                                      const MidiConnectionState& current);
@@ -156,5 +176,37 @@ struct MidiConnectionResizePlan {
 };
 
 MidiConnectionResizePlan PlanMidiConnectionResize(std::size_t oldCount, std::size_t newCount);
+
+// Pure, JUCE-free decision for MidiConnectionManager::OnInstrumentRebuilt()
+// (Task 3 review, Important: the `started_` gate that suppresses a reconcile
+// pass for a pre-startup rebuild was previously inline logic in a JUCE
+// template method and had no dedicated test -- a refactor that dropped or
+// inverted the `!started` check would have shipped silently, since nothing
+// but a full JUCE runtime build would exercise it). Folds the resize
+// decision (PlanMidiConnectionResize, above) together with the reconcile
+// gate so OnInstrumentRebuilt() has exactly one call to make.
+//
+// `started` mirrors MidiConnectionManager::started_: false until
+// StartupReconcile() has run its one synchronous startup reconcile pass. A
+// rebuild that fires before that point (e.g. a startup patch's own processor
+// rebuild inside engine.Initialize(), which runs before Runtime::Start()
+// reaches StartupReconcile()) must resize the handler/state vectors -- the
+// vectors need to be correctly sized regardless of what ran before -- but
+// must NOT also run a reconcile pass, or the binding startup order ("engine
+// init -> startup patch -> processor rebuild -> ONE synchronous reconcile ->
+// start poller -> ...") would be violated by an extra early reconcile. Once
+// `started` is true, every rebuild (post-startup patch loads, preset
+// changes, manual ref updates, etc., per sar-8) both resizes and reconciles.
+//
+// This function does not know about reconciling_ (MidiConnectionManager's
+// separate EditInstrument-re-entrancy guard) -- that guard is orthogonal
+// (it suppresses a reconcile pass that would otherwise nest inside an
+// in-flight one) and stays the caller's responsibility, exactly as before.
+struct MidiRebuildResponse {
+    MidiConnectionResizePlan resizePlan;
+    bool reconcile = false;
+};
+
+MidiRebuildResponse PlanMidiRebuildResponse(bool started, std::size_t oldCount, std::size_t newCount);
 
 } // namespace synth
