@@ -4,9 +4,11 @@
 // content host (Plan 4 Task 3). Re-homes AudioPanel's logic (deleted from
 // MidiPanel.hpp this task): a Back button at the top of the page (binding,
 // p4-globals.md), a "System Default" + enumerated-output-device combo, an
-// input combo present only when App::Config().numAudioInputs > 0, and a
-// status label showing the current device plus its negotiated sample
-// rate/block size.
+// input combo present only when App::Config().numAudioInputs > 0, and two
+// status lines: deviceLine_ (current device + negotiated sample rate/block
+// size, routine, refreshed every tick) and statusLine_ (the last
+// runtime-reported event message, sticky -- see the "Two-line status split"
+// comment further down).
 //
 // This page does not own the JUCE device manager or the engine's
 // device-switch logic; Runtime still owns deviceManager_ (it's also the
@@ -48,6 +50,26 @@
 // -- wired via RefreshOnTick(), which MainPane calls unconditionally each
 // tick regardless of which page is currently shown, matching FilePage's own
 // per-tick patch-name refresh.
+//
+// Two-line status split (Task 3 review, Important finding: runtime-reported
+// event messages -- e.g. "audio device not found: ..." from
+// SetAudioStatus() -- were being overwritten before a user could ever read
+// them, because SetAudioStatus() is immediately followed by
+// SyncAudioSelection() at every call site in Runtime.hpp, which invokes this
+// page's sync hook -> Refresh() -> RefreshStatus(), replacing the message
+// with the routine negotiated-device text; RefreshOnTick() then re-clobbered
+// it every frame). Fixed by splitting the single statusLabel_ into two:
+//   - deviceLine_: the routine "current device + negotiated rate/block"
+//     text. Owned by RefreshStatus(), refreshed on every Refresh() call and
+//     every RefreshOnTick() call -- exactly the old statusLabel_ behavior,
+//     just renamed.
+//   - statusLine_: the last runtime-reported event message. Owned
+//     exclusively by SetStatus() (Runtime's status hook target) and by this
+//     page's own user-initiated actions (e.g. a future "switching..."
+//     message set directly from a combo onChange). STICKY: RefreshStatus(),
+//     Refresh(), and RefreshOnTick() never write to it, so a "device not
+//     found" message now survives the SyncAudioSelection() call that
+//     follows it and stays visible until the next real event.
 
 #include "synth/AppConcepts.hpp"
 #include "synth/Engine.hpp"
@@ -103,9 +125,13 @@ public:
             addAndMakeVisible(*inputBox_);
         }
 
-        statusLabel_.setColour(juce::Label::textColourId, juce::Colours::white);
-        statusLabel_.setJustificationType(juce::Justification::centredLeft);
-        addAndMakeVisible(statusLabel_);
+        deviceLine_.setColour(juce::Label::textColourId, juce::Colours::white);
+        deviceLine_.setJustificationType(juce::Justification::centredLeft);
+        addAndMakeVisible(deviceLine_);
+
+        statusLine_.setColour(juce::Label::textColourId, juce::Colours::white);
+        statusLine_.setJustificationType(juce::Justification::centredLeft);
+        addAndMakeVisible(statusLine_);
 
         // Install this page's status/re-sync hooks on Runtime (see the
         // class doc comment) before the first Refresh(), so any status text
@@ -142,7 +168,8 @@ public:
             inputBox_->setBounds(row.removeFromLeft(comboWidth).reduced(4));
         }
 
-        statusLabel_.setBounds(area.removeFromTop(32).reduced(4));
+        deviceLine_.setBounds(area.removeFromTop(32).reduced(4));
+        statusLine_.setBounds(area.removeFromTop(32).reduced(4));
     }
 
     // Re-enumerates output (and, when present, input) device names from
@@ -189,8 +216,10 @@ public:
     // engine.AudioDeviceSnapshot().outputDeviceName/inputDeviceName without
     // applying anything (no device switch, no notification). Empty name
     // selects "System Default"; a name not currently enumerated leaves the
-    // combo on "System Default" too (the status label is the source of
-    // truth for "device not found", set by Runtime via SetStatus()).
+    // combo on "System Default" too (statusLine_ is the source of truth for
+    // "device not found", set by Runtime via SetStatus() -- and, unlike
+    // deviceLine_, is NOT touched by this method or by Refresh()/
+    // RefreshOnTick(), so that message stays visible here).
     void SyncSelection() {
         const juce::ScopedValueSetter<bool> guard(applyingSelection_, true);
         const synth::AudioDeviceState state = runtime_.GetEngine().AudioDeviceSnapshot();
@@ -216,32 +245,41 @@ public:
         }
     }
 
-    // Overwrites the status label with `text` (Runtime's status hook target,
-    // e.g. "audio device not found: ..." or "Audio: <name>").
-    void SetStatus(const juce::String& text) { statusLabel_.setText(text, juce::dontSendNotification); }
+    // Overwrites statusLine_ with `text` (Runtime's status hook target, e.g.
+    // "audio device not found: ..." or "Audio: <name>"). STICKY: this is the
+    // only method (besides a future user-initiated action on this page)
+    // that writes statusLine_ -- Refresh()/RefreshStatus()/RefreshOnTick()
+    // never touch it, so the message stays visible until the next real
+    // event, instead of being clobbered by the routine per-tick/per-sync
+    // device-line refresh (Task 3 review, Important finding).
+    void SetStatus(const juce::String& text) { statusLine_.setText(text, juce::dontSendNotification); }
 
-    // Refreshes the status label to show the current device's name plus its
+    // Refreshes deviceLine_ to show the current device's name plus its
     // negotiated sample rate/block size (Task 3 brief: "status label showing
     // current device + negotiated values"), read straight from
     // runtime_.DeviceManager().getCurrentAudioDevice(). Called by Refresh()
     // and by RefreshOnTick() every repaint tick, so the negotiated values
     // stay current even if they change without going through this page's
-    // own combo (e.g. the device itself renegotiating).
+    // own combo (e.g. the device itself renegotiating). Deliberately never
+    // touches statusLine_ (see that field's doc comment) -- this is the
+    // routine line, not the event line.
     void RefreshStatus() {
         juce::AudioIODevice* device = runtime_.DeviceManager().getCurrentAudioDevice();
         if (device == nullptr) {
-            statusLabel_.setText("No audio device", juce::dontSendNotification);
+            deviceLine_.setText("No audio device", juce::dontSendNotification);
             return;
         }
         const juce::String text = device->getName() + juce::String(": ") +
                                   juce::String(device->getCurrentSampleRate(), 0) + " Hz, " +
                                   juce::String(device->getCurrentBufferSizeSamples()) + " frames";
-        statusLabel_.setText(text, juce::dontSendNotification);
+        deviceLine_.setText(text, juce::dontSendNotification);
     }
 
     // Called once per UI timer tick by MainPane (mirrors FilePage's own
-    // per-tick patch-name refresh) so the negotiated-values status stays
-    // current without requiring a combo change.
+    // per-tick patch-name refresh) so the negotiated-values deviceLine_
+    // stays current without requiring a combo change. Does not touch
+    // statusLine_ (see that field's doc comment) -- the sticky event message
+    // must survive repaint ticks, not just a single Refresh() call.
     void RefreshOnTick() { RefreshStatus(); }
 
     // Back control at the top of the page (binding, p4-globals.md): wired by
@@ -272,7 +310,14 @@ private:
     juce::ComboBox outputBox_;
     // Present only when App::Config().numAudioInputs > 0.
     std::unique_ptr<juce::ComboBox> inputBox_;
-    juce::Label statusLabel_;
+    // Routine "current device + negotiated rate/block" text, rewritten by
+    // RefreshStatus() on every Refresh()/RefreshOnTick() call.
+    juce::Label deviceLine_;
+    // The last runtime-reported event message (e.g. "audio device not
+    // found: ..."), written only by SetStatus() -- STICKY, never touched by
+    // Refresh()/RefreshStatus()/RefreshOnTick() (Task 3 review, Important
+    // finding: see the class doc comment's "Two-line status split").
+    juce::Label statusLine_;
     juce::StringArray outputNames_;
     // Parallel to outputNames_, populated only when inputBox_ exists.
     juce::StringArray inputNames_;
