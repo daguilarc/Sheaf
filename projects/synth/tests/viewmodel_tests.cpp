@@ -57,6 +57,7 @@ using synth::MidiInstrumentConfig;
 using synth::MidiMappingRowVM;
 using synth::MidiProfileKind;
 using synth::RollingMax256;
+using synth::SystemMessageCatalog;
 
 MidiControllerSlot MakeWrldBldrSlot(const char* name) {
     MidiControllerSlot slot;
@@ -467,6 +468,408 @@ TEST_CASE(RollingMax256KeepsSpikeUntilEvicted) {
 
     rolling.Write(0.0f);  // 257th write wraps around and evicts the spike.
     REQUIRE_TRUE(rolling.Max() == 0.0f);
+}
+
+// --- Finding 1: catalog-based PressMessage/ReleaseMessage editing ---------
+
+TEST_CASE(SystemMessageCatalogStartsWithNoneAndHasNoDuplicateLabels) {
+    const auto& catalog = SystemMessageCatalog();
+    REQUIRE_TRUE(!catalog.empty());
+    REQUIRE_TRUE(catalog[0].label == "None");
+    for (std::size_t ix = 0; ix < catalog.size(); ++ix) {
+        for (std::size_t jx = ix + 1; jx < catalog.size(); ++jx) {
+            REQUIRE_TRUE(catalog[ix].label != catalog[jx].label);
+        }
+    }
+}
+
+TEST_CASE(EveryWrldBldrDefaultProfileRowPressAndReleaseRoundTripsToACatalogIndex) {
+    MidiConfigViewModel vm;
+    MidiInstrumentConfig instrument = MakeFourKindInstrument();
+    vm.Rebuild(instrument, MakeFourKindConnection());
+
+    const std::size_t rowCount = instrument.controllers[0].config.systemMessages.size();
+    REQUIRE_TRUE(rowCount > 0);
+    for (std::size_t rowIx = 0; rowIx < rowCount; ++rowIx) {
+        const int pressIx = vm.SystemMessageChoiceIndex(0, MidiConfigSection::SystemMessages, rowIx,
+                                                         MidiMappingRowVM::Field::PressMessage);
+        REQUIRE_TRUE(pressIx > 0);  // never "None" -- press is not optional
+
+        const bool hasRelease = instrument.controllers[0].config.systemMessages[rowIx].release.has_value();
+        const int releaseIx = vm.SystemMessageChoiceIndex(0, MidiConfigSection::SystemMessages, rowIx,
+                                                           MidiMappingRowVM::Field::ReleaseMessage);
+        if (hasRelease) {
+            REQUIRE_TRUE(releaseIx > 0);
+        } else {
+            REQUIRE_TRUE(releaseIx == 0);  // "None"
+        }
+    }
+}
+
+TEST_CASE(EveryLaunchpadDefaultProfileRowPressAndReleaseRoundTripsToACatalogIndex) {
+    MidiConfigViewModel vm;
+    MidiInstrumentConfig instrument = MakeFourKindInstrument();
+    vm.Rebuild(instrument, MakeFourKindConnection());
+
+    const std::size_t rowCount = instrument.controllers[2].config.systemMessages.size();
+    REQUIRE_TRUE(rowCount > 0);
+    for (std::size_t rowIx = 0; rowIx < rowCount; ++rowIx) {
+        const int pressIx = vm.SystemMessageChoiceIndex(2, MidiConfigSection::SystemMessages, rowIx,
+                                                         MidiMappingRowVM::Field::PressMessage);
+        REQUIRE_TRUE(pressIx > 0);
+    }
+}
+
+TEST_CASE(ApplyMappingEditPressMessageAppliesCatalogChoice) {
+    MidiConfigViewModel vm;
+    MidiInstrumentConfig instrument = MakeFourKindInstrument();
+    vm.Rebuild(instrument, MakeFourKindConnection());
+
+    // wrld row 0 defaults to Shift press (catalog index 1); switch it to
+    // "Scene select 3".
+    const auto& catalog = SystemMessageCatalog();
+    std::size_t sceneThreeIx = 0;
+    for (std::size_t ix = 0; ix < catalog.size(); ++ix) {
+        if (catalog[ix].label == "Scene select 3") {
+            sceneThreeIx = ix;
+            break;
+        }
+    }
+    REQUIRE_TRUE(sceneThreeIx != 0);
+
+    MidiInstrumentConfig out;
+    std::string reason;
+    const bool ok = vm.ApplyMappingEdit(0, MidiConfigSection::SystemMessages, 0, MidiMappingRowVM::Field::PressMessage,
+                                        static_cast<double>(sceneThreeIx), out, &reason);
+    REQUIRE_TRUE(ok);
+    REQUIRE_TRUE(reason.empty());
+    REQUIRE_TRUE(out.controllers[0].config.systemMessages[0].press.type == synth::MessageIn::Type::SceneSelect);
+    REQUIRE_TRUE(out.controllers[0].config.systemMessages[0].press.sceneIx == 3);
+}
+
+TEST_CASE(ApplyMappingEditReleaseMessageNoneClearsOptional) {
+    MidiConfigViewModel vm;
+    MidiInstrumentConfig instrument = MakeFourKindInstrument();
+    vm.Rebuild(instrument, MakeFourKindConnection());
+
+    // wrld row 0 has a release (Shift release) by default.
+    REQUIRE_TRUE(instrument.controllers[0].config.systemMessages[0].release.has_value());
+
+    MidiInstrumentConfig out;
+    std::string reason;
+    const bool ok = vm.ApplyMappingEdit(0, MidiConfigSection::SystemMessages, 0,
+                                        MidiMappingRowVM::Field::ReleaseMessage, 0.0, out, &reason);
+    REQUIRE_TRUE(ok);
+    REQUIRE_TRUE(!out.controllers[0].config.systemMessages[0].release.has_value());
+}
+
+TEST_CASE(ApplyMappingEditPressMessageNoneIsRefused) {
+    MidiConfigViewModel vm;
+    MidiInstrumentConfig instrument = MakeFourKindInstrument();
+    vm.Rebuild(instrument, MakeFourKindConnection());
+
+    MidiInstrumentConfig out;
+    std::string reason;
+    const bool ok = vm.ApplyMappingEdit(0, MidiConfigSection::SystemMessages, 0, MidiMappingRowVM::Field::PressMessage,
+                                        0.0, out, &reason);
+    REQUIRE_TRUE(!ok);
+    REQUIRE_TRUE(!reason.empty());
+}
+
+TEST_CASE(ApplyMappingEditMessageChoiceOutOfRangeIsRefused) {
+    MidiConfigViewModel vm;
+    MidiInstrumentConfig instrument = MakeFourKindInstrument();
+    vm.Rebuild(instrument, MakeFourKindConnection());
+
+    const auto& catalog = SystemMessageCatalog();
+    MidiInstrumentConfig out;
+    std::string reason;
+    const bool ok = vm.ApplyMappingEdit(0, MidiConfigSection::SystemMessages, 0, MidiMappingRowVM::Field::PressMessage,
+                                        static_cast<double>(catalog.size()), out, &reason);
+    REQUIRE_TRUE(!ok);
+    REQUIRE_TRUE(!reason.empty());
+}
+
+// --- Finding 2: WrldBldrX/Y edits keep position and control address paired ---
+
+TEST_CASE(WrldBldrXEditUpdatesBothPositionAndControlAddress) {
+    MidiConfigViewModel vm;
+    MidiInstrumentConfig instrument = MakeFourKindInstrument();
+    vm.Rebuild(instrument, MakeFourKindConnection());
+
+    // Row 1 (index 1) is a scene-select button at (0,6) in the default
+    // profile (see probe output captured while building this fix).
+    const auto& before = instrument.controllers[0].config.systemMessages[1];
+    REQUIRE_TRUE(before.wrldBldrPosition.has_value());
+    REQUIRE_TRUE(before.wrldBldrPosition->x == 0);
+
+    MidiInstrumentConfig out;
+    std::string reason;
+    const bool ok = vm.ApplyMappingEdit(0, MidiConfigSection::SystemMessages, 1, MidiMappingRowVM::Field::WrldBldrX,
+                                        5.0, out, &reason);
+    REQUIRE_TRUE(ok);
+    REQUIRE_TRUE(reason.empty());
+
+    const auto& after = out.controllers[0].config.systemMessages[1];
+    REQUIRE_TRUE(after.wrldBldrPosition.has_value());
+    REQUIRE_TRUE(after.wrldBldrPosition->x == 5);
+    REQUIRE_TRUE(after.wrldBldrPosition->y == before.wrldBldrPosition->y);
+
+    // The paired control address must match the new position via
+    // WrldBldrPositionToCC, since SystemButtonMidiInProcessor matches
+    // incoming MIDI by `control`, not by `wrldBldrPosition`.
+    REQUIRE_TRUE(after.control.has_value());
+    REQUIRE_TRUE(after.control->channel == after.wrldBldrPosition->channel);
+    REQUIRE_TRUE(after.control->cc ==
+                synth::WrldBldrPositionToCC(after.wrldBldrPosition->x, after.wrldBldrPosition->y));
+    // And it must have actually changed from the stale pre-edit address.
+    REQUIRE_TRUE(after.control->cc != before.control->cc);
+}
+
+TEST_CASE(WrldBldrYEditUpdatesBothPositionAndControlAddress) {
+    MidiConfigViewModel vm;
+    MidiInstrumentConfig instrument = MakeFourKindInstrument();
+    vm.Rebuild(instrument, MakeFourKindConnection());
+
+    MidiInstrumentConfig out;
+    std::string reason;
+    const bool ok = vm.ApplyMappingEdit(0, MidiConfigSection::SystemMessages, 1, MidiMappingRowVM::Field::WrldBldrY,
+                                        3.0, out, &reason);
+    REQUIRE_TRUE(ok);
+
+    const auto& after = out.controllers[0].config.systemMessages[1];
+    REQUIRE_TRUE(after.wrldBldrPosition->y == 3);
+    REQUIRE_TRUE(after.control->cc ==
+                synth::WrldBldrPositionToCC(after.wrldBldrPosition->x, after.wrldBldrPosition->y));
+}
+
+// --- Finding 3: unchecked numeric casts / validation -----------------------
+
+TEST_CASE(ApplyMappingEditNegativeChannelIsRefused) {
+    MidiConfigViewModel vm;
+    MidiInstrumentConfig instrument = MakeFourKindInstrument();
+    vm.Rebuild(instrument, MakeFourKindConnection());
+
+    MidiInstrumentConfig out;
+    std::string reason;
+    const bool ok = vm.ApplyMappingEdit(0, MidiConfigSection::Encoders, 0, MidiMappingRowVM::Field::Channel, -1.0,
+                                        out, &reason);
+    REQUIRE_TRUE(!ok);
+    REQUIRE_TRUE(!reason.empty());
+}
+
+TEST_CASE(ApplyMappingEditCc128IsRefused) {
+    MidiConfigViewModel vm;
+    MidiInstrumentConfig instrument = MakeFourKindInstrument();
+    vm.Rebuild(instrument, MakeFourKindConnection());
+
+    MidiInstrumentConfig out;
+    std::string reason;
+    const bool ok =
+        vm.ApplyMappingEdit(0, MidiConfigSection::Encoders, 0, MidiMappingRowVM::Field::Cc, 128.0, out, &reason);
+    REQUIRE_TRUE(!ok);
+    REQUIRE_TRUE(!reason.empty());
+}
+
+TEST_CASE(ApplyMappingEditFractionalPositionIsRefused) {
+    MidiConfigViewModel vm;
+    MidiInstrumentConfig instrument = MakeFourKindInstrument();
+    vm.Rebuild(instrument, MakeFourKindConnection());
+
+    MidiInstrumentConfig out;
+    std::string reason;
+    const bool ok =
+        vm.ApplyMappingEdit(0, MidiConfigSection::Encoders, 0, MidiMappingRowVM::Field::Position, 2.5, out, &reason);
+    REQUIRE_TRUE(!ok);
+    REQUIRE_TRUE(!reason.empty());
+}
+
+TEST_CASE(ApplyMappingEditNegativeSlotIxIsRefused) {
+    MidiConfigViewModel vm;
+    MidiInstrumentConfig instrument = MakeFourKindInstrument();
+    vm.Rebuild(instrument, MakeFourKindConnection());
+
+    MidiInstrumentConfig out;
+    std::string reason;
+    const bool ok =
+        vm.ApplyMappingEdit(0, MidiConfigSection::Encoders, 0, MidiMappingRowVM::Field::SlotIx, -3.0, out, &reason);
+    REQUIRE_TRUE(!ok);
+    REQUIRE_TRUE(!reason.empty());
+}
+
+TEST_CASE(ApplyMappingEditWrldBldrCoordinateOutOfGridIsRefused) {
+    MidiConfigViewModel vm;
+    MidiInstrumentConfig instrument = MakeFourKindInstrument();
+    vm.Rebuild(instrument, MakeFourKindConnection());
+
+    MidiInstrumentConfig out;
+    std::string reason;
+    const bool ok =
+        vm.ApplyMappingEdit(0, MidiConfigSection::SystemMessages, 1, MidiMappingRowVM::Field::WrldBldrX, 8.0, out,
+                            &reason);
+    REQUIRE_TRUE(!ok);
+    REQUIRE_TRUE(!reason.empty());
+}
+
+TEST_CASE(ApplyMappingEditLaunchpadCoordinateOutOfShapeIsRefused) {
+    MidiConfigViewModel vm;
+    MidiInstrumentConfig instrument = MakeFourKindInstrument();
+    vm.Rebuild(instrument, MakeFourKindConnection());
+
+    // "pads" row 0 is LaunchpadX at (0,-1); y=8 is outside LaunchpadX's shape
+    // (LaunchpadShapeSupports allows y in [-1, 8) for LaunchpadX).
+    MidiInstrumentConfig out;
+    std::string reason;
+    const bool ok =
+        vm.ApplyMappingEdit(2, MidiConfigSection::SystemMessages, 0, MidiMappingRowVM::Field::LaunchpadY, 8.0, out,
+                            &reason);
+    REQUIRE_TRUE(!ok);
+    REQUIRE_TRUE(!reason.empty());
+}
+
+TEST_CASE(ApplyMappingEditTurnStepMustBePositive) {
+    MidiConfigViewModel vm;
+    MidiInstrumentConfig instrument = MakeFourKindInstrument();
+    vm.Rebuild(instrument, MakeFourKindConnection());
+
+    const auto rows = vm.SectionRows(0, MidiConfigSection::Encoders);
+    // Config-level rows are last: RelativeMode then TurnStep (see
+    // ForEachEncoderRow).
+    const std::size_t turnStepRowIx = rows.size() - 1;
+    REQUIRE_TRUE(rows[turnStepRowIx].label.rfind("turn step", 0) == 0);
+
+    MidiInstrumentConfig out;
+    std::string reason;
+    const bool negativeOk = vm.ApplyMappingEdit(0, MidiConfigSection::Encoders, turnStepRowIx,
+                                                MidiMappingRowVM::Field::TurnStep, -0.5, out, &reason);
+    REQUIRE_TRUE(!negativeOk);
+    REQUIRE_TRUE(!reason.empty());
+
+    const bool zeroOk = vm.ApplyMappingEdit(0, MidiConfigSection::Encoders, turnStepRowIx,
+                                            MidiMappingRowVM::Field::TurnStep, 0.0, out, &reason);
+    REQUIRE_TRUE(!zeroOk);
+}
+
+TEST_CASE(ApplyMappingEditValidEditsStillCommit) {
+    MidiConfigViewModel vm;
+    MidiInstrumentConfig instrument = MakeFourKindInstrument();
+    vm.Rebuild(instrument, MakeFourKindConnection());
+
+    MidiInstrumentConfig out;
+    std::string reason;
+    REQUIRE_TRUE(
+        vm.ApplyMappingEdit(0, MidiConfigSection::Encoders, 0, MidiMappingRowVM::Field::Channel, 15.0, out, &reason));
+    REQUIRE_TRUE(reason.empty());
+    REQUIRE_TRUE(out.controllers[0].config.encoderInput->turns[0].control.channel == 15);
+
+    REQUIRE_TRUE(
+        vm.ApplyMappingEdit(0, MidiConfigSection::Encoders, 0, MidiMappingRowVM::Field::Cc, 127.0, out, &reason));
+    REQUIRE_TRUE(out.controllers[0].config.encoderInput->turns[0].control.cc == 127);
+
+    REQUIRE_TRUE(
+        vm.ApplyMappingEdit(0, MidiConfigSection::Encoders, 0, MidiMappingRowVM::Field::SlotIx, 2.0, out, &reason));
+    REQUIRE_TRUE(out.controllers[0].config.encoderInput->turns[0].slotIx == 2);
+}
+
+// --- Finding 4: every editableFields entry actually succeeds ---------------
+
+// Applies a "safe" valid value for `field` against `rowIx` in the given
+// section/controller and asserts ApplyMappingEdit succeeds -- pins finding 1
+// (PressMessage/ReleaseMessage) permanently alongside the older numeric
+// fields, for every row of every section on all four default profile kinds.
+double SafeValueFor(MidiMappingRowVM::Field field) {
+    using Field = MidiMappingRowVM::Field;
+    switch (field) {
+        case Field::Channel:
+            return 1.0;
+        case Field::Cc:
+            return 10.0;
+        case Field::SlotIx:
+            return 0.0;
+        case Field::Position:
+            return 0.0;
+        case Field::RelativeMode:
+            return 1.0;
+        case Field::TurnStep:
+            return 0.5;
+        case Field::PressMessage:
+            return 1.0;  // "Shift press" -- always present, never "None"
+        case Field::ReleaseMessage:
+            return 2.0;  // "Shift release"
+        case Field::LaunchpadX:
+            return 0.0;
+        case Field::LaunchpadY:
+            return 0.0;
+        case Field::WrldBldrX:
+            return 0.0;
+        case Field::WrldBldrY:
+            return 0.0;
+        case Field::GestureIx:
+            return 0.0;
+        case Field::SceneBlend:
+            return 10.0;
+    }
+    return 0.0;
+}
+
+void RequireEveryEditableFieldSucceeds(MidiConfigViewModel& vm, std::size_t controllerIx, MidiConfigSection section) {
+    const auto rows = vm.SectionRows(controllerIx, section);
+    for (std::size_t rowIx = 0; rowIx < rows.size(); ++rowIx) {
+        for (MidiMappingRowVM::Field field : rows[rowIx].editableFields) {
+            MidiInstrumentConfig out;
+            std::string reason;
+            const bool ok =
+                vm.ApplyMappingEdit(controllerIx, section, rowIx, field, SafeValueFor(field), out, &reason);
+            if (!ok) {
+                std::ostringstream oss;
+                oss << "controller " << controllerIx << " section " << static_cast<int>(section) << " row " << rowIx
+                    << " field " << static_cast<int>(field) << " failed: " << reason;
+                throw std::runtime_error(oss.str());
+            }
+        }
+    }
+}
+
+TEST_CASE(TwisterSideButtonRowChannelCcAndMessageFieldsAllSucceed) {
+    // MfTwister side-button associations use a plain MidiControlAddress (no
+    // launchpad/wrldbldr position) -- the "else" branch of both SectionRows'
+    // and ApplyMappingEdit's SystemMessages handling. The zero-arg
+    // MfTwisterDefaultProfileConfig() used elsewhere in this file has no
+    // side buttons configured, so exercise that branch directly here (this
+    // options shape mirrors mf_twister_default_profile_maps_encoders_and_
+    // input_only_side_buttons in parameter_modulation_tests.cpp).
+    synth::MfTwisterDefaultProfileOptions options;
+    options.sideButtons[0] = MidiControllerSystemMessageAssociation{
+        .press = synth::MessageIn::SetShift(0, true),
+        .release = synth::MessageIn::SetShift(0, false),
+    };
+
+    MidiControllerSlot slot;
+    slot.name = "twist2";
+    slot.kind = MidiProfileKind::MfTwister;
+    slot.config = synth::MfTwisterDefaultProfileConfig(options);
+    REQUIRE_TRUE(!slot.config.systemMessages.empty());
+
+    MidiInstrumentConfig instrument;
+    REQUIRE_TRUE(instrument.AddController(slot));
+    MidiConnectionState connection;
+    connection.controllers.push_back(MidiControllerConnection{});
+
+    MidiConfigViewModel vm;
+    vm.Rebuild(instrument, connection);
+    RequireEveryEditableFieldSucceeds(vm, 0, MidiConfigSection::SystemMessages);
+}
+
+TEST_CASE(EveryEditableFieldOnEveryDefaultProfileRowSucceeds) {
+    MidiConfigViewModel vm;
+    MidiInstrumentConfig instrument = MakeFourKindInstrument();
+    vm.Rebuild(instrument, MakeFourKindConnection());
+
+    for (std::size_t controllerIx = 0; controllerIx < vm.Controllers().size(); ++controllerIx) {
+        for (MidiConfigSection section : vm.Controllers()[controllerIx].sections) {
+            RequireEveryEditableFieldSucceeds(vm, controllerIx, section);
+        }
+    }
 }
 
 int Main() {

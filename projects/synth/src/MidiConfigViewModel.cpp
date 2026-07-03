@@ -1,5 +1,7 @@
 #include "synth/MidiConfigViewModel.hpp"
 
+#include <cmath>
+#include <limits>
 #include <sstream>
 
 namespace synth {
@@ -7,6 +9,104 @@ namespace synth {
 namespace {
 
 using Field = MidiMappingRowVM::Field;
+
+// Number of SceneSelect/SelectParamBank/gesture-select catalog entries.
+// Sized to cover every default profile factory's default options
+// (WrldBldrDefaultProfileOptions/LaunchpadDefaultProfileOptions in
+// MidiController.hpp): sceneCount defaults to 8 for both WrldBldr and
+// Launchpad; bankButtonCount defaults to 16 for WrldBldr (the wider of the
+// two); gestureSelectorCount defaults to 0 for both but the option exists up
+// to a small controller-driven count, so 8 slots of headroom are offered.
+// SelectParamBank entries all target slotIx 0, matching every default
+// profile factory's default WrldBldrDefaultProfileOptions::slotIx /
+// LaunchpadDefaultProfileOptions::slotIx (0).
+constexpr std::size_t kCatalogSceneCount = 8;
+constexpr std::size_t kCatalogBankCount = 16;
+constexpr std::size_t kCatalogGestureCount = 8;
+constexpr std::size_t kCatalogSelectParamBankSlotIx = 0;
+
+// Compares the fields relevant to system-message dispatch (ignores
+// `timestamp`, which carries no meaning until dispatch time -- every
+// default-profile factory constructs its MessageIns with timestamp 0, same
+// as the catalog's Build() functions).
+bool MessageInEquivalent(const MessageIn& a, const MessageIn& b) {
+    if (a.type != b.type) {
+        return false;
+    }
+    switch (a.type) {
+        case MessageIn::Type::ParamIncDec:
+            return a.slotIx == b.slotIx && a.position == b.position && a.delta == b.delta;
+        case MessageIn::Type::ParamPush:
+            return a.slotIx == b.slotIx && a.position == b.position;
+        case MessageIn::Type::ToggleShift:
+        case MessageIn::Type::Start:
+        case MessageIn::Type::Stop:
+        case MessageIn::Type::Clock:
+            return true;
+        case MessageIn::Type::ToggleGestureSelect:
+            return a.gestureIx == b.gestureIx;
+        case MessageIn::Type::SetGestureSelect:
+            return a.gestureIx == b.gestureIx && a.boolValue == b.boolValue;
+        case MessageIn::Type::SelectParamBank:
+            return a.slotIx == b.slotIx && a.bankIx == b.bankIx;
+        case MessageIn::Type::SetGestureValue:
+            return a.gestureIx == b.gestureIx && a.value == b.value;
+        case MessageIn::Type::SceneSelect:
+            return a.sceneIx == b.sceneIx;
+        case MessageIn::Type::SetSceneBlend:
+            return a.value == b.value;
+    }
+    return false;
+}
+
+}  // namespace
+
+const std::vector<SystemMessageChoice>& SystemMessageCatalog() {
+    static const std::vector<SystemMessageChoice> catalog = [] {
+        std::vector<SystemMessageChoice> entries;
+        // Index 0: "None" -- only legal for ReleaseMessage, where it clears
+        // the association's optional release. Its build() is never actually
+        // committed anywhere (ApplyMappingEdit special-cases index 0 for
+        // ReleaseMessage before calling build()), but every entry carries one
+        // for a uniform table -- Clock is an arbitrary, harmless default.
+        entries.push_back({"None", [] { return MessageIn::Clock(0); }});
+
+        entries.push_back({"Shift press", [] { return MessageIn::SetShift(0, true); }});
+        entries.push_back({"Shift release", [] { return MessageIn::SetShift(0, false); }});
+
+        for (std::size_t sceneIx = 0; sceneIx < kCatalogSceneCount; ++sceneIx) {
+            std::ostringstream label;
+            label << "Scene select " << sceneIx;
+            entries.push_back({label.str(), [sceneIx] { return MessageIn::SceneSelect(0, sceneIx); }});
+        }
+
+        for (std::size_t bankIx = 0; bankIx < kCatalogBankCount; ++bankIx) {
+            std::ostringstream label;
+            label << "Select param bank " << bankIx;
+            entries.push_back({label.str(), [bankIx] {
+                                   return MessageIn::SelectParamBank(0, kCatalogSelectParamBankSlotIx, bankIx);
+                               }});
+        }
+
+        for (std::size_t gestureIx = 0; gestureIx < kCatalogGestureCount; ++gestureIx) {
+            std::ostringstream label;
+            label << "Gesture select " << gestureIx << " press";
+            entries.push_back(
+                {label.str(), [gestureIx] { return MessageIn::SetGestureSelect(0, gestureIx, true); }});
+        }
+        for (std::size_t gestureIx = 0; gestureIx < kCatalogGestureCount; ++gestureIx) {
+            std::ostringstream label;
+            label << "Gesture select " << gestureIx << " release";
+            entries.push_back(
+                {label.str(), [gestureIx] { return MessageIn::SetGestureSelect(0, gestureIx, false); }});
+        }
+
+        return entries;
+    }();
+    return catalog;
+}
+
+namespace {
 
 std::string DeviceLabel(const MidiEndpointRef& ref, MidiEndpointStatus status) {
     // Present device name when online; stored ref name (falling back to
@@ -350,6 +450,51 @@ std::vector<MidiMappingRowVM> MidiConfigViewModel::SectionRows(std::size_t contr
     return rows;
 }
 
+namespace {
+
+// True when `value` is representable as a non-negative integer -- the
+// baseline domain check for SlotIx/Position/GestureIx/bank & scene indices
+// and catalog indices (brief finding 3: "integral (value == floor(value)),
+// within the field's domain ... at minimum non-negative").
+bool IsNonNegativeInteger(double value) {
+    return std::isfinite(value) && value >= 0.0 && value == std::floor(value);
+}
+
+bool IsIntegerInRange(double value, double lo, double hi) {
+    return std::isfinite(value) && value == std::floor(value) && value >= lo && value <= hi;
+}
+
+}  // namespace
+
+int MidiConfigViewModel::SystemMessageChoiceIndex(std::size_t controllerIx, MidiConfigSection section,
+                                                   std::size_t rowIx, MidiMappingRowVM::Field field) const {
+    if (section != MidiConfigSection::SystemMessages ||
+        (field != Field::PressMessage && field != Field::ReleaseMessage)) {
+        return -1;
+    }
+    if (controllerIx >= instrument_.controllers.size()) {
+        return -1;
+    }
+    const MidiControllerSlot& slot = instrument_.controllers[controllerIx];
+    if (rowIx >= slot.config.systemMessages.size()) {
+        return -1;
+    }
+    const MidiControllerSystemMessageAssociation& association = slot.config.systemMessages[rowIx];
+
+    if (field == Field::ReleaseMessage && !association.release.has_value()) {
+        return 0;  // "None"
+    }
+    const MessageIn& message = field == Field::PressMessage ? association.press : *association.release;
+
+    const std::vector<SystemMessageChoice>& catalog = SystemMessageCatalog();
+    for (std::size_t ix = 1; ix < catalog.size(); ++ix) {
+        if (MessageInEquivalent(message, catalog[ix].build())) {
+            return static_cast<int>(ix);
+        }
+    }
+    return -1;
+}
+
 bool MidiConfigViewModel::ApplyMappingEdit(std::size_t controllerIx, MidiConfigSection section, std::size_t rowIx,
                                            MidiMappingRowVM::Field field, double value, MidiInstrumentConfig& out,
                                            std::string* reason) const {
@@ -365,22 +510,42 @@ bool MidiConfigViewModel::ApplyMappingEdit(std::size_t controllerIx, MidiConfigS
 
     bool found = false;
     bool fieldValid = false;
+    // Set alongside fieldValid=false when the field IS editable on this row
+    // but `value` fails domain validation, so the caller gets a precise
+    // reason instead of the generic "field is not editable" one.
+    std::string validationError;
 
     auto applyEncoderMapping = [&](EncoderMidiMapping& mapping) {
         switch (field) {
             case Field::Channel:
+                if (!IsIntegerInRange(value, 0.0, 15.0)) {
+                    validationError = "channel must be an integer 0-15";
+                    return;
+                }
                 mapping.control.channel = static_cast<std::uint8_t>(value);
                 fieldValid = true;
                 break;
             case Field::Cc:
+                if (!IsIntegerInRange(value, 0.0, 127.0)) {
+                    validationError = "cc must be an integer 0-127";
+                    return;
+                }
                 mapping.control.cc = static_cast<std::uint8_t>(value);
                 fieldValid = true;
                 break;
             case Field::SlotIx:
+                if (!IsNonNegativeInteger(value)) {
+                    validationError = "slot index must be a non-negative integer";
+                    return;
+                }
                 mapping.slotIx = static_cast<std::size_t>(value);
                 fieldValid = true;
                 break;
             case Field::Position:
+                if (!IsNonNegativeInteger(value)) {
+                    validationError = "position must be a non-negative integer";
+                    return;
+                }
                 mapping.position = static_cast<std::size_t>(value);
                 fieldValid = true;
                 break;
@@ -405,8 +570,12 @@ bool MidiConfigViewModel::ApplyMappingEdit(std::size_t controllerIx, MidiConfigS
                             value != 0.0 ? EncoderRelativeMode::DirectionOnly : EncoderRelativeMode::Signed7Bit;
                         fieldValid = true;
                     } else if (ref.isTurnStep && field == Field::TurnStep) {
-                        slot.config.encoderInput->turnStep = static_cast<float>(value);
-                        fieldValid = true;
+                        if (!std::isfinite(value) || value <= 0.0) {
+                            validationError = "turn step must be a positive finite number";
+                        } else {
+                            slot.config.encoderInput->turnStep = static_cast<float>(value);
+                            fieldValid = true;
+                        }
                     }
                 }
                 ++ix;
@@ -424,14 +593,26 @@ bool MidiConfigViewModel::ApplyMappingEdit(std::size_t controllerIx, MidiConfigS
                     if (ref.mapping != nullptr) {
                         switch (field) {
                             case Field::Channel:
+                                if (!IsIntegerInRange(value, 0.0, 15.0)) {
+                                    validationError = "channel must be an integer 0-15";
+                                    break;
+                                }
                                 ref.mapping->control.channel = static_cast<std::uint8_t>(value);
                                 fieldValid = true;
                                 break;
                             case Field::Cc:
+                                if (!IsIntegerInRange(value, 0.0, 127.0)) {
+                                    validationError = "cc must be an integer 0-127";
+                                    break;
+                                }
                                 ref.mapping->control.cc = static_cast<std::uint8_t>(value);
                                 fieldValid = true;
                                 break;
                             case Field::GestureIx:
+                                if (!IsNonNegativeInteger(value)) {
+                                    validationError = "gesture index must be a non-negative integer";
+                                    break;
+                                }
                                 ref.mapping->gestureIx = static_cast<std::size_t>(value);
                                 fieldValid = true;
                                 break;
@@ -439,10 +620,15 @@ bool MidiConfigViewModel::ApplyMappingEdit(std::size_t controllerIx, MidiConfigS
                                 break;
                         }
                     } else if (ref.isSceneBlend && field == Field::SceneBlend) {
-                        MidiControlAddress address = slot.config.analogInput->sceneBlend.value_or(MidiControlAddress{});
-                        address.cc = static_cast<std::uint8_t>(value);
-                        slot.config.analogInput->sceneBlend = address;
-                        fieldValid = true;
+                        if (!IsIntegerInRange(value, 0.0, 127.0)) {
+                            validationError = "cc must be an integer 0-127";
+                        } else {
+                            MidiControlAddress address =
+                                slot.config.analogInput->sceneBlend.value_or(MidiControlAddress{});
+                            address.cc = static_cast<std::uint8_t>(value);
+                            slot.config.analogInput->sceneBlend = address;
+                            fieldValid = true;
+                        }
                     }
                 }
                 ++ix;
@@ -455,41 +641,109 @@ bool MidiConfigViewModel::ApplyMappingEdit(std::size_t controllerIx, MidiConfigS
                 MidiControllerSystemMessageAssociation& association = slot.config.systemMessages[rowIx];
                 switch (field) {
                     case Field::Channel:
-                        if (association.control.has_value()) {
-                            association.control->channel = static_cast<std::uint8_t>(value);
-                            fieldValid = true;
+                        if (!association.control.has_value()) {
+                            break;
                         }
+                        if (!IsIntegerInRange(value, 0.0, 15.0)) {
+                            validationError = "channel must be an integer 0-15";
+                            break;
+                        }
+                        association.control->channel = static_cast<std::uint8_t>(value);
+                        fieldValid = true;
                         break;
                     case Field::Cc:
-                        if (association.control.has_value()) {
-                            association.control->cc = static_cast<std::uint8_t>(value);
-                            fieldValid = true;
+                        if (!association.control.has_value()) {
+                            break;
                         }
+                        if (!IsIntegerInRange(value, 0.0, 127.0)) {
+                            validationError = "cc must be an integer 0-127";
+                            break;
+                        }
+                        association.control->cc = static_cast<std::uint8_t>(value);
+                        fieldValid = true;
                         break;
                     case Field::LaunchpadX:
-                        if (association.launchpadPosition.has_value()) {
-                            association.launchpadPosition->x = static_cast<int>(value);
-                            fieldValid = true;
+                    case Field::LaunchpadY: {
+                        if (!association.launchpadPosition.has_value()) {
+                            break;
                         }
-                        break;
-                    case Field::LaunchpadY:
-                        if (association.launchpadPosition.has_value()) {
-                            association.launchpadPosition->y = static_cast<int>(value);
-                            fieldValid = true;
+                        if (!IsIntegerInRange(value, static_cast<double>(std::numeric_limits<int>::min()),
+                                              static_cast<double>(std::numeric_limits<int>::max()))) {
+                            validationError = "launchpad coordinate must be an integer";
+                            break;
                         }
+                        LaunchpadGridPosition candidate = *association.launchpadPosition;
+                        const int coordinate = static_cast<int>(value);
+                        if (field == Field::LaunchpadX) {
+                            candidate.x = coordinate;
+                        } else {
+                            candidate.y = coordinate;
+                        }
+                        if (!LaunchpadShapeSupports(candidate.controller, candidate.x, candidate.y)) {
+                            validationError = "launchpad coordinate is outside this controller's grid";
+                            break;
+                        }
+                        association.launchpadPosition = candidate;
+                        fieldValid = true;
                         break;
+                    }
                     case Field::WrldBldrX:
-                        if (association.wrldBldrPosition.has_value()) {
-                            association.wrldBldrPosition->x = static_cast<std::uint8_t>(value);
-                            fieldValid = true;
+                    case Field::WrldBldrY: {
+                        if (!association.wrldBldrPosition.has_value()) {
+                            break;
                         }
-                        break;
-                    case Field::WrldBldrY:
-                        if (association.wrldBldrPosition.has_value()) {
-                            association.wrldBldrPosition->y = static_cast<std::uint8_t>(value);
-                            fieldValid = true;
+                        // WrldBldrPositionToCC packs x/y into a 7-bit CC as
+                        // y*8+x, so both coordinates must stay within 0-7 for
+                        // the packed value to round-trip (finding 3).
+                        if (!IsIntegerInRange(value, 0.0, 7.0)) {
+                            validationError = "WRLD.Bldr coordinate must be an integer 0-7";
+                            break;
                         }
+                        WrldBldrSystemPosition candidate = *association.wrldBldrPosition;
+                        const std::uint8_t coordinate = static_cast<std::uint8_t>(value);
+                        if (field == Field::WrldBldrX) {
+                            candidate.x = coordinate;
+                        } else {
+                            candidate.y = coordinate;
+                        }
+                        association.wrldBldrPosition = candidate;
+                        // Finding 2: keep the paired control address (what
+                        // the input processor actually matches on) coherent
+                        // with the position the UI displays.
+                        association.control =
+                            MidiControlAddress{.channel = candidate.channel,
+                                               .cc = WrldBldrPositionToCC(candidate.x, candidate.y)};
+                        fieldValid = true;
                         break;
+                    }
+                    case Field::PressMessage:
+                    case Field::ReleaseMessage: {
+                        if (!IsNonNegativeInteger(value)) {
+                            validationError = "message choice must be a non-negative integer catalog index";
+                            break;
+                        }
+                        const std::vector<SystemMessageChoice>& catalog = SystemMessageCatalog();
+                        const auto choiceIx = static_cast<std::size_t>(value);
+                        if (choiceIx >= catalog.size()) {
+                            validationError = "message choice index out of range";
+                            break;
+                        }
+                        if (field == Field::PressMessage) {
+                            if (choiceIx == 0) {
+                                validationError = "press message cannot be \"None\"";
+                                break;
+                            }
+                            association.press = catalog[choiceIx].build();
+                        } else {
+                            if (choiceIx == 0) {
+                                association.release = std::nullopt;
+                            } else {
+                                association.release = catalog[choiceIx].build();
+                            }
+                        }
+                        fieldValid = true;
+                        break;
+                    }
                     default:
                         break;
                 }
@@ -506,7 +760,7 @@ bool MidiConfigViewModel::ApplyMappingEdit(std::size_t controllerIx, MidiConfigS
     }
     if (!fieldValid) {
         if (reason != nullptr) {
-            *reason = "field is not editable on this row";
+            *reason = !validationError.empty() ? validationError : "field is not editable on this row";
         }
         return false;
     }
