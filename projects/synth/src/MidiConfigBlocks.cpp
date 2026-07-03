@@ -1,6 +1,7 @@
 #include "synth/MidiConfigBlocks.hpp"
 
 #include <algorithm>
+#include <limits>
 #include <tuple>
 
 namespace synth {
@@ -165,6 +166,47 @@ std::size_t RectangleCellCount(int startX, int endX, int startY, int endY) {
     return width * height;
 }
 
+// D3: expansion mirrors the edit rules (ApplyMappingEdit refuses channel
+// outside 0-15 for every kind that carries a MIDI channel).
+bool ChannelValid(std::uint8_t channel) {
+    return channel <= 15;
+}
+
+// Finding 3: a block's start argument/position/index plus its cell count
+// must stay within a sane domain -- otherwise the per-cell `start + index`
+// arithmetic in the Expand* loops below can wrap std::size_t (SIZE_MAX ->
+// 0), silently producing a small index instead of failing. Reuses the same
+// 2^53 "largest exactly-representable double integer" cap the view model's
+// IsNonNegativeInteger applies to every numeric field edit (see
+// MidiConfigViewModel.cpp) -- any block field wide enough to reach this cap
+// could not have been entered through the numeric field editor anyway, so
+// this is not a tighter restriction in practice, just an explicit guard at
+// the library boundary for blocks constructed directly (as tests, or a
+// future non-UI caller, might).
+constexpr std::size_t kMaxBlockDomain = 9007199254740992ULL;  // 2^53
+
+// True when `start + count` would exceed kMaxBlockDomain OR wrap std::size_t
+// -- the single check that makes every per-cell `start + index` in the
+// Expand* loops below well-defined and within the documented domain cap.
+bool StartPlusCountExceedsDomain(std::size_t start, std::size_t count) {
+    if (start > kMaxBlockDomain || count > kMaxBlockDomain) {
+        return true;
+    }
+    return kMaxBlockDomain - start < count;
+}
+
+// Finding 3: `cur == prev + 1` computed as written wraps std::size_t
+// (SIZE_MAX -> 0) when prev == SIZE_MAX, which would make an unrelated
+// `cur == 0` cell look like a consecutive successor. Reconstruction must
+// treat that as a run break, never a match -- so guard the overflow
+// explicitly rather than computing `prev + 1` at all.
+bool IsWrapSafeSuccessor(std::size_t prev, std::size_t cur) {
+    if (prev == std::numeric_limits<std::size_t>::max()) {
+        return false;
+    }
+    return cur == prev + 1;
+}
+
 }  // namespace
 
 std::size_t SystemBlock::CellCount() const {
@@ -184,6 +226,14 @@ bool ExpandEncoderBlock(const EncoderBlock& block, std::vector<EncoderMidiMappin
     }
     if (block.endCc - 1 > 127 || block.startCc > 127) {
         SetReason(reason, "encoder block cc range must fit the 0-127 MIDI CC domain");
+        return false;
+    }
+    if (!ChannelValid(block.channel)) {
+        SetReason(reason, "encoder block channel must be an integer 0-15");
+        return false;
+    }
+    if (StartPlusCountExceedsDomain(block.startPosition, static_cast<std::size_t>(block.endCc) - block.startCc)) {
+        SetReason(reason, "encoder block start position is too large for its cell count");
         return false;
     }
 
@@ -209,6 +259,14 @@ bool ExpandAnalogBlock(const AnalogBlock& block, std::vector<AnalogMidiMapping>&
     }
     if (block.endCc - 1 > 127 || block.startCc > 127) {
         SetReason(reason, "analog block cc range must fit the 0-127 MIDI CC domain");
+        return false;
+    }
+    if (!ChannelValid(block.channel)) {
+        SetReason(reason, "analog block channel must be an integer 0-15");
+        return false;
+    }
+    if (StartPlusCountExceedsDomain(block.startGestureIx, static_cast<std::size_t>(block.endCc) - block.startCc)) {
+        SetReason(reason, "analog block start gesture index is too large for its cell count");
         return false;
     }
 
@@ -292,6 +350,20 @@ bool ExpandSystemBlock(const SystemBlock& block, std::vector<MidiControllerSyste
         SetReason(reason, "twister system messages never block (single side buttons only)");
         return false;
     }
+    // Finding 2: expansion mirrors the edit rules -- refuse channel > 15
+    // all-or-nothing. Launchpad's form carries no channel field at all, so
+    // this only applies to WrldBldr and Generic.
+    if (block.kind != MidiProfileKind::Launchpad && !ChannelValid(block.channel)) {
+        SetReason(reason, "system block channel must be an integer 0-15");
+        return false;
+    }
+    // Finding 3: startArg + cellIndex can wrap std::size_t across the whole
+    // cell range -- refuse up front rather than risk a wrapped arg on some
+    // interior cell.
+    if (StartPlusCountExceedsDomain(block.startArg, block.CellCount())) {
+        SetReason(reason, "system block start argument is too large for its cell count");
+        return false;
+    }
 
     std::vector<MidiControllerSystemMessageAssociation> result;
 
@@ -329,25 +401,21 @@ bool ExpandSystemBlock(const SystemBlock& block, std::vector<MidiControllerSyste
                                            .cc = WrldBldrPositionToCC(position.x, position.y)};
                     result.push_back(std::move(association));
                 } else {
-                    // SystemBlock (D3) carries no LaunchpadController field --
-                    // shape-checked against LaunchpadX, the widest/most
-                    // permissive of the three variants' near-identical grids
-                    // (LaunchpadShapeSupports: X/MiniMk3 share one shape,
-                    // ProMk3 is a superset). Task group 2 (the view model,
-                    // which already preserves an existing association's own
-                    // stored `controller` across edits -- see
-                    // ApplyMappingEdit's LaunchpadX/Y case in
-                    // MidiConfigViewModel.cpp) is expected to re-stamp the
-                    // slot's actual controller variant onto the expansion
-                    // before committing, the same way it does for other
-                    // fields today.
-                    if (!LaunchpadShapeSupports(LaunchpadController::LaunchpadX, x, y)) {
+                    // Finding 4: shape-checked against and stamped with the
+                    // block's own launchpadController variant -- previously
+                    // hardcoded to LaunchpadX regardless of the block's
+                    // actual variant, so e.g. ProMk3-only edge coordinates
+                    // (x=-1, or y=-1 at x=8/9) were wrongly rejected for a
+                    // ProMk3 block, and a LaunchpadX/MiniMk3 block could
+                    // wrongly accept coordinates the slot's real controller
+                    // doesn't support.
+                    if (!LaunchpadShapeSupports(block.launchpadController, x, y)) {
                         coordinatesValid = false;
                         return;
                     }
                     MidiControllerSystemMessageAssociation association = buildCell(cellIndex);
                     association.launchpadPosition =
-                        LaunchpadGridPosition{.controller = LaunchpadController::LaunchpadX, .x = x, .y = y};
+                        LaunchpadGridPosition{.controller = block.launchpadController, .x = x, .y = y};
                     result.push_back(std::move(association));
                 }
             });
@@ -414,7 +482,7 @@ std::vector<ReconstructedEncoderRow> ReconstructEncoderBlocks(const std::vector<
             const EncoderMidiMapping& prev = mappings[runEnd - 1];
             const EncoderMidiMapping& cur = mappings[runEnd];
             const bool continues = cur.slotIx == prev.slotIx && cur.control.channel == prev.control.channel &&
-                                   cur.position == prev.position + 1 &&
+                                   IsWrapSafeSuccessor(prev.position, cur.position) &&
                                    static_cast<int>(cur.control.cc) == static_cast<int>(prev.control.cc) + 1;
             if (!continues) {
                 break;
@@ -456,7 +524,7 @@ std::vector<ReconstructedAnalogRow> ReconstructAnalogBlocks(const std::vector<An
             const AnalogMidiMapping& prev = mappings[runEnd - 1];
             const AnalogMidiMapping& cur = mappings[runEnd];
             const bool continues = cur.control.channel == prev.control.channel &&
-                                   cur.gestureIx == prev.gestureIx + 1 &&
+                                   IsWrapSafeSuccessor(prev.gestureIx, cur.gestureIx) &&
                                    static_cast<int>(cur.control.cc) == static_cast<int>(prev.control.cc) + 1;
             if (!continues) {
                 break;
@@ -525,7 +593,11 @@ bool ContinuesCandidateRun(const MidiControllerSystemMessageAssociation& prev,
                            const MidiControllerSystemMessageAssociation& cur, BlockableMessage message) {
     const std::size_t prevArg = BlockableArg(prev, message);
     const std::size_t curArg = BlockableArg(cur, message);
-    if (curArg != prevArg + 1) {
+    // Finding 3: guard against `prevArg + 1` wrapping std::size_t (this
+    // path is unreachable through ReconstructSystemBlocks's own defensive
+    // sort, which always places a SIZE_MAX arg last, but the guard keeps
+    // this shared helper correct independent of caller sort order).
+    if (!IsWrapSafeSuccessor(prevArg, curArg)) {
         return false;
     }
     if (message == BlockableMessage::BankSelect && prev.press.slotIx != cur.press.slotIx) {
@@ -564,6 +636,9 @@ bool CellSatisfiesRunPattern(const MidiControllerSystemMessageAssociation& assoc
             }
             break;
         case BlockableMessage::GestureSelect:
+            if (!press.hasBoolValue || press.boolValue != true) {
+                return false;  // press must be the set-TRUE variant
+            }
             if (feedback.gestureIx != press.gestureIx || feedback.boolValue != press.boolValue) {
                 return false;
             }
@@ -644,6 +719,14 @@ void FitRectangles(const std::vector<MidiControllerSystemMessageAssociation>& so
     auto channelOf = [&](std::size_t ix) -> std::uint8_t {
         return sorted[ix].control.has_value() ? sorted[ix].control->channel : 0;
     };
+    // Finding 4: Launchpad cells also carry a controller variant
+    // (LaunchpadGridPosition::controller); a run/rectangle requires it
+    // constant throughout, same as x/y/channel -- mixed variants stay
+    // individual. Meaningless (always LaunchpadX, ignored) for WrldBldr.
+    auto launchpadControllerOf = [&](std::size_t ix) -> LaunchpadController {
+        return kind == MidiProfileKind::Launchpad ? sorted[ix].launchpadPosition->controller
+                                                  : LaunchpadController::LaunchpadX;
+    };
 
     struct Row {
         std::size_t start;  // index into `sorted`
@@ -651,6 +734,7 @@ void FitRectangles(const std::vector<MidiControllerSystemMessageAssociation>& so
         int x0;
         int y;
         std::uint8_t channel;
+        LaunchpadController launchpadController;
     };
     std::vector<Row> physicalRows;
     {
@@ -658,10 +742,11 @@ void FitRectangles(const std::vector<MidiControllerSystemMessageAssociation>& so
         while (ix < runEnd) {
             std::size_t stripEnd = ix + 1;
             while (stripEnd < runEnd && yOf(stripEnd) == yOf(ix) && channelOf(stripEnd) == channelOf(ix) &&
+                  launchpadControllerOf(stripEnd) == launchpadControllerOf(ix) &&
                   xOf(stripEnd) == xOf(stripEnd - 1) + 1) {
                 ++stripEnd;
             }
-            physicalRows.push_back({ix, stripEnd - ix, xOf(ix), yOf(ix), channelOf(ix)});
+            physicalRows.push_back({ix, stripEnd - ix, xOf(ix), yOf(ix), channelOf(ix), launchpadControllerOf(ix)});
             ix = stripEnd;
         }
     }
@@ -675,7 +760,7 @@ void FitRectangles(const std::vector<MidiControllerSystemMessageAssociation>& so
             const Row& second = physicalRows[rowIx + 1];
             const int delta = static_cast<int>(second.y) - static_cast<int>(first.y);
             if (second.count == first.count && second.x0 == first.x0 && second.channel == first.channel &&
-                (delta == 1 || delta == -1)) {
+                second.launchpadController == first.launchpadController && (delta == 1 || delta == -1)) {
                 yDir = delta;
                 height = 2;
                 std::size_t nextRowIx = rowIx + 2;
@@ -684,7 +769,8 @@ void FitRectangles(const std::vector<MidiControllerSystemMessageAssociation>& so
                     const Row& prevRow = physicalRows[nextRowIx - 1];
                     const int candidateDelta = static_cast<int>(candidate.y) - static_cast<int>(prevRow.y);
                     if (candidate.count == first.count && candidate.x0 == first.x0 &&
-                        candidate.channel == first.channel && candidateDelta == yDir) {
+                        candidate.channel == first.channel &&
+                        candidate.launchpadController == first.launchpadController && candidateDelta == yDir) {
                         ++height;
                         ++nextRowIx;
                     } else {
@@ -706,6 +792,7 @@ void FitRectangles(const std::vector<MidiControllerSystemMessageAssociation>& so
             row.block.rowMajor = true;
             row.block.outputFeedback = sorted[first.start].outputFeedback;
             row.block.channel = first.channel;
+            row.block.launchpadController = first.launchpadController;
             row.block.startX = first.x0;
             row.block.endX = first.x0 + static_cast<int>(width) - 1;
             row.block.startY = first.y;

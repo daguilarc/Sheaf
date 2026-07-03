@@ -235,6 +235,56 @@ TEST_CASE(SlotValidForKindAcceptsTwisterSideButtonCcAssociation) {
     REQUIRE_TRUE(synth::SlotValidForKind(slot, &reason));
 }
 
+TEST_CASE(SlotValidForKindRejectsTwisterAssociationWithWrongChannel) {
+    // Finding 5: MfTwister system associations must carry the fixed
+    // hardware channel 3 -- SlotValidForKind previously accepted any
+    // control-address association regardless of channel/cc, so a
+    // malformed/externally-authored association with e.g. channel 5 (a
+    // shape the twister hardware cannot produce) silently passed.
+    MidiControllerSlot slot = MakeGenericSlot("twist");
+    slot.kind = MidiProfileKind::MfTwister;
+    MidiControllerSystemMessageAssociation association = MakeControlOnlyAssociation();
+    association.control->channel = 5;  // twister side buttons are fixed to channel 3
+    slot.config.systemMessages.push_back(association);
+
+    std::string reason;
+    REQUIRE_TRUE(!synth::SlotValidForKind(slot, &reason));
+    REQUIRE_TRUE(!reason.empty());
+}
+
+TEST_CASE(SlotValidForKindRejectsTwisterAssociationWithCcOutsideSideButtonRange) {
+    // The physical MF Twister side buttons are cc 8..13 (6 buttons) on
+    // channel 3 -- a cc outside that range cannot come from real hardware.
+    MidiControllerSlot slot = MakeGenericSlot("twist");
+    slot.kind = MidiProfileKind::MfTwister;
+    MidiControllerSystemMessageAssociation association = MakeControlOnlyAssociation();
+    association.control->cc = 20;  // outside 8..13
+    slot.config.systemMessages.push_back(association);
+
+    std::string reason;
+    REQUIRE_TRUE(!synth::SlotValidForKind(slot, &reason));
+    REQUIRE_TRUE(!reason.empty());
+}
+
+TEST_CASE(SlotValidForKindAcceptsFullyPopulatedTwisterSideButtons) {
+    // All 6 physical side buttons (cc 8..13) populated -- confirms the
+    // default factory's real shape still passes after finding 5's
+    // tightened validation.
+    synth::MfTwisterDefaultProfileOptions options;
+    for (std::size_t ix = 0; ix < options.sideButtons.size(); ++ix) {
+        options.sideButtons[ix] = MidiControllerSystemMessageAssociation{
+            .press = synth::MessageIn::SceneSelect(0, ix),
+            .feedback = synth::MessageIn::SceneSelect(0, ix),
+        };
+    }
+    MidiControllerSlot slot = MakeGenericSlot("twist");
+    slot.kind = MidiProfileKind::MfTwister;
+    slot.config = synth::MfTwisterDefaultProfileConfig(options);
+
+    std::string reason;
+    REQUIRE_TRUE(synth::SlotValidForKind(slot, &reason));
+}
+
 TEST_CASE(SlotValidForKindAcceptsWrldBldrDefaultProfile) {
     MidiControllerSlot slot = MakeGenericSlot("wrld");
     slot.kind = MidiProfileKind::WrldBldr;

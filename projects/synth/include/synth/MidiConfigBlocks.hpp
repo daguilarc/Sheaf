@@ -157,6 +157,14 @@ struct SystemBlock {
     // usage stays within its own 0-7 grid regardless.
     int startX = 0, startY = 0;
     int endX = 0, endY = 0;
+    // Launchpad form only: the controller variant every expanded cell's
+    // launchpadPosition.controller is stamped with, and the shape
+    // ExpandSystemBlock validates every cell's (x,y) against via
+    // LaunchpadShapeSupports (finding 4 -- previously hardcoded to
+    // LaunchpadX regardless of the slot's actual controller, so e.g. a
+    // ProMk3-only edge coordinate like (x=8, y=-1) was wrongly rejected).
+    // Irrelevant for other kinds.
+    LaunchpadController launchpadController = LaunchpadController::LaunchpadX;
 
     // Number of cells this block denotes (endCc - startCc for the generic
     // form; the inclusive rectangle's cell count for the 2-D forms).

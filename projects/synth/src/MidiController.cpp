@@ -1970,6 +1970,21 @@ bool SlotValidForKind(const MidiControllerSlot& slot, std::string* reason) {
             if (!association.control.has_value()) {
                 return Fail(reason, "this controller kind requires a control address for system-message entries");
             }
+            if (slot.kind == MidiProfileKind::MfTwister) {
+                // Finding 5: the physical MF Twister side buttons are a
+                // fixed hardware shape -- channel 3, cc 8..13 (6 logical
+                // buttons, control->cc = 8 + button per D1) -- not an
+                // arbitrary chan/cc pair. An association outside that shape
+                // cannot come from real hardware and would render as a
+                // bogus/unreadable button number (see RowFieldValue's
+                // Field::Button case).
+                if (association.control->channel != 3) {
+                    return Fail(reason, "twister system-message entries must use the fixed hardware channel 3");
+                }
+                if (association.control->cc < 8 || association.control->cc > 13) {
+                    return Fail(reason, "twister system-message entries must use cc 8-13 (side buttons 0-5)");
+                }
+            }
         }
     }
 

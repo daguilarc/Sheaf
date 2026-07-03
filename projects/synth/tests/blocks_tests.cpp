@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <iostream>
+#include <limits>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -52,6 +53,8 @@ using synth::EncoderMidiMapping;
 using synth::ExpandAnalogBlock;
 using synth::ExpandEncoderBlock;
 using synth::ExpandSystemBlock;
+using synth::LaunchpadController;
+using synth::LaunchpadShapeSupports;
 using synth::MessageIn;
 using synth::MidiControlAddress;
 using synth::MidiControllerSystemMessageAssociation;
@@ -70,6 +73,110 @@ using synth::SystemBlock;
 using synth::SystemMessageSortKey;
 using synth::WrldBldrPositionToCC;
 using synth::WrldBldrSystemPosition;
+
+// --- Finding 6: full structural equality helper for round-trip tests -------
+//
+// Every prior round-trip assertion in this file only checked press.type and
+// (when present) control -- e.g. it would never have caught finding 1
+// (press.boolValue silently flipped by expansion) or a release/feedback/
+// address mismatch. This helper compares EVERY field that participates in
+// an association's meaning: all three address variants (control,
+// wrldBldrPosition incl. its own channel, launchpadPosition incl. its
+// controller variant), press/release/feedback (per-type semantic fields,
+// mirroring MidiConfigViewModel.cpp's MessageInEquivalent, which
+// deliberately excludes `timestamp` -- every default factory and every
+// Expand* function constructs MessageIns with timestamp 0, so timestamp
+// carries no round-trip-relevant meaning here either), and outputFeedback.
+
+bool MessageInFullyEquivalent(const MessageIn& a, const MessageIn& b) {
+    if (a.type != b.type) {
+        return false;
+    }
+    switch (a.type) {
+        case MessageIn::Type::ParamIncDec:
+            return a.slotIx == b.slotIx && a.position == b.position && a.delta == b.delta;
+        case MessageIn::Type::ParamPush:
+            return a.slotIx == b.slotIx && a.position == b.position;
+        case MessageIn::Type::ToggleReset:
+        case MessageIn::Type::ToggleRandom:
+        case MessageIn::Type::ToggleRandomMod:
+            return a.hasBoolValue == b.hasBoolValue && (!a.hasBoolValue || a.boolValue == b.boolValue);
+        case MessageIn::Type::Start:
+        case MessageIn::Type::Stop:
+        case MessageIn::Type::Clock:
+            return true;
+        case MessageIn::Type::ToggleGestureSelect:
+            return a.gestureIx == b.gestureIx;
+        case MessageIn::Type::SetGestureSelect:
+            // Finding 1's regression is caught HERE: boolValue must match.
+            return a.gestureIx == b.gestureIx && a.hasBoolValue == b.hasBoolValue && a.boolValue == b.boolValue;
+        case MessageIn::Type::SelectParamBank:
+            return a.slotIx == b.slotIx && a.bankIx == b.bankIx;
+        case MessageIn::Type::SetGestureValue:
+            return a.gestureIx == b.gestureIx && a.value == b.value;
+        case MessageIn::Type::SceneSelect:
+            return a.sceneIx == b.sceneIx;
+        case MessageIn::Type::SetSceneBlend:
+            return a.value == b.value;
+    }
+    return false;
+}
+
+bool OptionalMessageInFullyEquivalent(const std::optional<MessageIn>& a, const std::optional<MessageIn>& b) {
+    if (a.has_value() != b.has_value()) {
+        return false;
+    }
+    return !a.has_value() || MessageInFullyEquivalent(*a, *b);
+}
+
+// Full structural equality over a system-message association: every address
+// variant, press/release/feedback, and outputFeedback -- the "element-by-
+// element" comparison finding 6 asks Expand(Reconstruct(x)) == x round-trips
+// to use, rather than the previous checks (size + press.type + control).
+bool AssociationEqual(const MidiControllerSystemMessageAssociation& a,
+                      const MidiControllerSystemMessageAssociation& b) {
+    if (a.control.has_value() != b.control.has_value()) {
+        return false;
+    }
+    if (a.control.has_value() && !(*a.control == *b.control)) {
+        return false;
+    }
+    if (a.wrldBldrPosition.has_value() != b.wrldBldrPosition.has_value()) {
+        return false;
+    }
+    if (a.wrldBldrPosition.has_value() &&
+        !(a.wrldBldrPosition->channel == b.wrldBldrPosition->channel && a.wrldBldrPosition->x == b.wrldBldrPosition->x &&
+          a.wrldBldrPosition->y == b.wrldBldrPosition->y)) {
+        return false;
+    }
+    if (a.launchpadPosition.has_value() != b.launchpadPosition.has_value()) {
+        return false;
+    }
+    if (a.launchpadPosition.has_value() && !(*a.launchpadPosition == *b.launchpadPosition)) {
+        return false;
+    }
+    if (!MessageInFullyEquivalent(a.press, b.press)) {
+        return false;
+    }
+    if (!OptionalMessageInFullyEquivalent(a.release, b.release)) {
+        return false;
+    }
+    if (!MessageInFullyEquivalent(a.feedback, b.feedback)) {
+        return false;
+    }
+    if (a.outputFeedback != b.outputFeedback) {
+        return false;
+    }
+    return true;
+}
+
+void RequireAssociationsEqual(const std::vector<MidiControllerSystemMessageAssociation>& actual,
+                              const std::vector<MidiControllerSystemMessageAssociation>& expected) {
+    REQUIRE_TRUE(actual.size() == expected.size());
+    for (std::size_t ix = 0; ix < expected.size(); ++ix) {
+        REQUIRE_TRUE(AssociationEqual(actual[ix], expected[ix]));
+    }
+}
 
 // --- D1: SystemAddressSchema ------------------------------------------------
 
@@ -298,6 +405,40 @@ TEST_CASE(ExpandEncoderBlockRejectsCcOutsideMidiDomain) {
     REQUIRE_TRUE(!reason.empty());
 }
 
+TEST_CASE(ExpandEncoderBlockRejectsStartPositionNearSizeMaxThatWouldWrap) {
+    // Finding 3: startPosition + index can wrap SIZE_MAX -> 0. Expansion
+    // must refuse a block whose startPosition + cellCount would exceed a
+    // sane domain cap rather than silently wrapping.
+    EncoderBlock block;
+    block.channel = 0;
+    block.startCc = 0;
+    block.endCc = 4;  // 4 cells
+    block.slotIx = 0;
+    block.startPosition = std::numeric_limits<std::size_t>::max() - 1;  // + 4 would wrap
+
+    std::vector<EncoderMidiMapping> out;
+    std::string reason;
+    REQUIRE_TRUE(!ExpandEncoderBlock(block, out, &reason));
+    REQUIRE_TRUE(!reason.empty());
+    REQUIRE_TRUE(out.empty());
+}
+
+TEST_CASE(ExpandEncoderBlockRejectsChannelAbove15) {
+    // D3: expansion mirrors the edit rules (ApplyMappingEdit refuses channel
+    // outside 0-15) -- all-or-nothing, with a reason.
+    EncoderBlock block;
+    block.channel = 16;  // one past the valid 0-15 MIDI channel domain
+    block.startCc = 0;
+    block.endCc = 4;
+    block.slotIx = 0;
+    block.startPosition = 0;
+    std::vector<EncoderMidiMapping> out;
+    std::string reason;
+    REQUIRE_TRUE(!ExpandEncoderBlock(block, out, &reason));
+    REQUIRE_TRUE(!reason.empty());
+    REQUIRE_TRUE(out.empty());
+}
+
 // --- D3: ExpandAnalogBlock -----------------------------------------------
 
 TEST_CASE(ExpandAnalogBlockProducesConsecutiveCcToGestureMapping) {
@@ -325,6 +466,33 @@ TEST_CASE(ExpandAnalogBlockRejectsSingleCellRangeIsStillValidButEmptyIsNot) {
     std::vector<AnalogMidiMapping> out;
     std::string reason;
     REQUIRE_TRUE(!ExpandAnalogBlock(block, out, &reason));
+}
+
+TEST_CASE(ExpandAnalogBlockRejectsStartGestureIxNearSizeMaxThatWouldWrap) {
+    AnalogBlock block;
+    block.channel = 0;
+    block.startCc = 0;
+    block.endCc = 4;  // 4 cells
+    block.startGestureIx = std::numeric_limits<std::size_t>::max() - 1;  // + 4 would wrap
+
+    std::vector<AnalogMidiMapping> out;
+    std::string reason;
+    REQUIRE_TRUE(!ExpandAnalogBlock(block, out, &reason));
+    REQUIRE_TRUE(!reason.empty());
+    REQUIRE_TRUE(out.empty());
+}
+
+TEST_CASE(ExpandAnalogBlockRejectsChannelAbove15) {
+    AnalogBlock block;
+    block.channel = 200;
+    block.startCc = 0;
+    block.endCc = 3;
+    block.startGestureIx = 0;
+    std::vector<AnalogMidiMapping> out;
+    std::string reason;
+    REQUIRE_TRUE(!ExpandAnalogBlock(block, out, &reason));
+    REQUIRE_TRUE(!reason.empty());
+    REQUIRE_TRUE(out.empty());
 }
 
 // --- D3: ExpandSystemBlock: generic (1-D cc run) --------------------------
@@ -513,6 +681,135 @@ TEST_CASE(ExpandSystemBlockLaunchpadHasNoChannelField) {
     }
 }
 
+TEST_CASE(ExpandSystemBlockLaunchpadStampsCellsWithTheBlocksControllerVariant) {
+    // Finding 4: SystemBlock::launchpadController selects which variant
+    // every expanded cell's launchpadPosition.controller is stamped with
+    // (and which variant's shape validates the coordinates) -- not a
+    // hardcoded LaunchpadX regardless of the block's actual variant.
+    SystemBlock block;
+    block.kind = MidiProfileKind::Launchpad;
+    block.message = BlockableMessage::SceneSelect;
+    block.launchpadController = LaunchpadController::LaunchpadMiniMk3;
+    block.startArg = 0;
+    block.startX = 0;
+    block.startY = 0;
+    block.endX = 1;
+    block.endY = 0;
+    block.rowMajor = true;
+
+    std::vector<MidiControllerSystemMessageAssociation> out;
+    std::string reason;
+    REQUIRE_TRUE(ExpandSystemBlock(block, out, &reason));
+    REQUIRE_TRUE(out.size() == 2);
+    for (const auto& assoc : out) {
+        REQUIRE_TRUE(assoc.launchpadPosition->controller == LaunchpadController::LaunchpadMiniMk3);
+    }
+}
+
+TEST_CASE(ExpandSystemBlockLaunchpadProMk3AcceptsEdgeCoordinatesLaunchpadXRejects) {
+    // ProMk3's shape is a strict superset of LaunchpadX/MiniMk3's -- e.g.
+    // x=8 at y=-1 is valid on ProMk3 (LaunchpadShapeSupports: x in -1..8)
+    // but outside LaunchpadX's x in 0..8 range combined with... actually
+    // LaunchpadX supports x=8 too; use y=-1,x=-1 (ProMk3-only: x >= -1)
+    // which LaunchpadX (x >= 0) rejects outright, proving the block's own
+    // variant -- not a hardcoded LaunchpadX -- gates validation.
+    REQUIRE_TRUE(LaunchpadShapeSupports(LaunchpadController::LaunchpadProMk3, -1, -1));
+    REQUIRE_TRUE(!LaunchpadShapeSupports(LaunchpadController::LaunchpadX, -1, -1));
+
+    SystemBlock block;
+    block.kind = MidiProfileKind::Launchpad;
+    block.message = BlockableMessage::SceneSelect;
+    block.launchpadController = LaunchpadController::LaunchpadProMk3;
+    block.startArg = 0;
+    block.startX = -1;
+    block.startY = -1;
+    block.endX = 0;
+    block.endY = -1;
+    block.rowMajor = true;
+
+    std::vector<MidiControllerSystemMessageAssociation> out;
+    std::string reason;
+    REQUIRE_TRUE(ExpandSystemBlock(block, out, &reason));
+    REQUIRE_TRUE(out.size() == 2);
+    REQUIRE_TRUE(out[0].launchpadPosition->x == -1 && out[0].launchpadPosition->y == -1);
+    REQUIRE_TRUE(out[0].launchpadPosition->controller == LaunchpadController::LaunchpadProMk3);
+}
+
+TEST_CASE(ExpandSystemBlockLaunchpadXRejectsProMk3OnlyCoordinates) {
+    // The same rectangle, but with the default LaunchpadX variant -- must
+    // be rejected since x=-1 is outside LaunchpadX's shape.
+    SystemBlock block;
+    block.kind = MidiProfileKind::Launchpad;
+    block.message = BlockableMessage::SceneSelect;
+    block.launchpadController = LaunchpadController::LaunchpadX;
+    block.startArg = 0;
+    block.startX = -1;
+    block.startY = -1;
+    block.endX = 0;
+    block.endY = -1;
+    block.rowMajor = true;
+
+    std::vector<MidiControllerSystemMessageAssociation> out;
+    std::string reason;
+    REQUIRE_TRUE(!ExpandSystemBlock(block, out, &reason));
+    REQUIRE_TRUE(!reason.empty());
+}
+
+TEST_CASE(ReconstructOfExpandedLaunchpadProMk3EdgeBlockRoundTrips) {
+    // sru-10 round-trip property, specifically for the ProMk3 edge
+    // coordinates called out in finding 4: (y=-1, x=8) must round-trip
+    // through a ProMk3 block, both as a coordinate a non-ProMk3 block could
+    // never validly reach and as a reconstruction identity check.
+    SystemBlock block;
+    block.kind = MidiProfileKind::Launchpad;
+    block.message = BlockableMessage::SceneSelect;
+    block.launchpadController = LaunchpadController::LaunchpadProMk3;
+    block.startArg = 0;
+    block.startX = 7;
+    block.startY = -1;
+    block.endX = 8;
+    block.endY = -1;  // 2 cells: (7,-1) and (8,-1)
+    block.rowMajor = true;
+
+    std::vector<MidiControllerSystemMessageAssociation> expanded;
+    std::string reason;
+    REQUIRE_TRUE(ExpandSystemBlock(block, expanded, &reason));
+    REQUIRE_TRUE(expanded.size() == 2);
+    REQUIRE_TRUE(expanded[1].launchpadPosition->x == 8 && expanded[1].launchpadPosition->y == -1);
+    REQUIRE_TRUE(expanded[1].launchpadPosition->controller == LaunchpadController::LaunchpadProMk3);
+
+    const auto rows = ReconstructSystemBlocks(expanded, MidiProfileKind::Launchpad);
+    REQUIRE_TRUE(rows.size() == 1);
+    REQUIRE_TRUE(rows[0].isBlock);
+    REQUIRE_TRUE(rows[0].block.launchpadController == LaunchpadController::LaunchpadProMk3);
+    REQUIRE_TRUE(rows[0].block.startX == 7 && rows[0].block.endX == 8);
+    REQUIRE_TRUE(rows[0].block.startY == -1 && rows[0].block.endY == -1);
+}
+
+TEST_CASE(ReconstructSystemBlocksMixedLaunchpadVariantsStayIndividual) {
+    // A run whose cells carry different LaunchpadController variants at
+    // otherwise-consecutive positions must NOT reconstruct as one block --
+    // ReconstructSystemBlocks requires a consistent variant across the run.
+    std::vector<MidiControllerSystemMessageAssociation> associations;
+    for (std::uint8_t x = 0; x < 4; ++x) {
+        MidiControllerSystemMessageAssociation a;
+        a.launchpadPosition = synth::LaunchpadGridPosition{
+            .controller = (x == 2) ? LaunchpadController::LaunchpadMiniMk3 : LaunchpadController::LaunchpadX,
+            .x = x,
+            .y = 0};
+        a.press = MessageIn::SceneSelect(0, x);
+        a.feedback = a.press;
+        associations.push_back(a);
+    }
+    const auto rows = ReconstructSystemBlocks(associations, MidiProfileKind::Launchpad);
+    // No single block may span all 4 cells (the variant changes at x=2).
+    for (const auto& row : rows) {
+        if (row.isBlock) {
+            REQUIRE_TRUE(row.indices.size() < 4);
+        }
+    }
+}
+
 TEST_CASE(ExpandSystemBlockTwisterAlwaysRejected) {
     // Twister never blocks (D4 point 3) -- ExpandSystemBlock refuses a
     // twister-kind block outright rather than producing cells nothing can
@@ -560,6 +857,58 @@ TEST_CASE(ExpandSystemBlockWrldBldrRejectsOutOfGridCoordinates) {
     std::string reason;
     REQUIRE_TRUE(!ExpandSystemBlock(block, out, &reason));
     REQUIRE_TRUE(!reason.empty());
+}
+
+TEST_CASE(ExpandSystemBlockWrldBldrRejectsChannelAbove15) {
+    // D3: expansion mirrors the edit rules -- channel > 15 is refused
+    // all-or-nothing, with a reason, even when every coordinate is valid.
+    SystemBlock block;
+    block.kind = MidiProfileKind::WrldBldr;
+    block.message = BlockableMessage::SceneSelect;
+    block.channel = 16;
+    block.startX = 0;
+    block.startY = 0;
+    block.endX = 1;
+    block.endY = 0;
+    block.rowMajor = true;
+
+    std::vector<MidiControllerSystemMessageAssociation> out;
+    std::string reason;
+    REQUIRE_TRUE(!ExpandSystemBlock(block, out, &reason));
+    REQUIRE_TRUE(!reason.empty());
+    REQUIRE_TRUE(out.empty());
+}
+
+TEST_CASE(ExpandSystemBlockRejectsStartArgNearSizeMaxThatWouldWrap) {
+    // Finding 3: startArg + cellIndex can wrap SIZE_MAX -> 0.
+    SystemBlock block;
+    block.kind = MidiProfileKind::Generic;
+    block.message = BlockableMessage::SceneSelect;
+    block.channel = 0;
+    block.startCc = 0;
+    block.endCc = 4;  // 4 cells
+    block.startArg = std::numeric_limits<std::size_t>::max() - 1;  // + 4 would wrap
+
+    std::vector<MidiControllerSystemMessageAssociation> out;
+    std::string reason;
+    REQUIRE_TRUE(!ExpandSystemBlock(block, out, &reason));
+    REQUIRE_TRUE(!reason.empty());
+    REQUIRE_TRUE(out.empty());
+}
+
+TEST_CASE(ExpandSystemBlockGenericRejectsChannelAbove15) {
+    SystemBlock block;
+    block.kind = MidiProfileKind::Generic;
+    block.message = BlockableMessage::SceneSelect;
+    block.channel = 255;
+    block.startCc = 0;
+    block.endCc = 3;
+
+    std::vector<MidiControllerSystemMessageAssociation> out;
+    std::string reason;
+    REQUIRE_TRUE(!ExpandSystemBlock(block, out, &reason));
+    REQUIRE_TRUE(!reason.empty());
+    REQUIRE_TRUE(out.empty());
 }
 
 TEST_CASE(ExpandSystemBlockLaunchpadRejectsShapeUnsupportedCoordinates) {
@@ -667,6 +1016,25 @@ TEST_CASE(ReconstructEncoderBlocksRequiresConstantCcOffset) {
     }
 }
 
+TEST_CASE(ReconstructEncoderBlocksTreatsPositionWrapAsRunBreakNotMatch) {
+    // Finding 3: `prev.position + 1` computed in unsigned arithmetic wraps
+    // SIZE_MAX -> 0. Without an explicit check, a cell at position SIZE_MAX
+    // followed by a cell at position 0 would look "consecutive" and merge
+    // into a block -- reconstruction must instead treat this as a run
+    // break, never a match.
+    std::vector<EncoderMidiMapping> mappings = {
+        {.control = {.channel = 0, .cc = 0},
+         .slotIx = 0,
+         .position = std::numeric_limits<std::size_t>::max()},
+        {.control = {.channel = 0, .cc = 1}, .slotIx = 0, .position = 0},  // would "wrap-match" prev+1
+    };
+    const auto rows = ReconstructEncoderBlocks(mappings, false);
+    REQUIRE_TRUE(rows.size() == 2);
+    for (const auto& row : rows) {
+        REQUIRE_TRUE(!row.isBlock);
+    }
+}
+
 // --- D4: ReconstructAnalogBlocks ------------------------------------------
 
 TEST_CASE(ReconstructAnalogBlocksMergesConsecutiveGestures) {
@@ -680,6 +1048,18 @@ TEST_CASE(ReconstructAnalogBlocksMergesConsecutiveGestures) {
     REQUIRE_TRUE(rows[0].block.startGestureIx == 0);
     REQUIRE_TRUE(rows[0].block.startCc == 0);
     REQUIRE_TRUE(rows[0].block.endCc == 4);
+}
+
+TEST_CASE(ReconstructAnalogBlocksTreatsGestureIxWrapAsRunBreakNotMatch) {
+    std::vector<AnalogMidiMapping> mappings = {
+        {.control = {.channel = 0, .cc = 0}, .gestureIx = std::numeric_limits<std::size_t>::max()},
+        {.control = {.channel = 0, .cc = 1}, .gestureIx = 0},  // would "wrap-match" prev+1
+    };
+    const auto rows = ReconstructAnalogBlocks(mappings);
+    REQUIRE_TRUE(rows.size() == 2);
+    for (const auto& row : rows) {
+        REQUIRE_TRUE(!row.isBlock);
+    }
 }
 
 // --- D4: ReconstructSystemBlocks: generic (1-D) ---------------------------
@@ -953,14 +1333,10 @@ TEST_CASE(RoundTripDefaultWrldBldrProfileEncodersAndSystemMessages) {
             }
         }
     }
-    REQUIRE_TRUE(flattened.size() == sortedConfig.systemMessages.size());
-    for (std::size_t ix = 0; ix < flattened.size(); ++ix) {
-        REQUIRE_TRUE(flattened[ix].press.type == sortedConfig.systemMessages[ix].press.type);
-        REQUIRE_TRUE(flattened[ix].control.has_value() == sortedConfig.systemMessages[ix].control.has_value());
-        if (flattened[ix].control.has_value()) {
-            REQUIRE_TRUE(*flattened[ix].control == *sortedConfig.systemMessages[ix].control);
-        }
-    }
+    // Finding 6: full structural equality, not just press.type + control --
+    // catches address-variant, release, feedback, or outputFeedback drift
+    // that a press.type-only comparison would miss.
+    RequireAssociationsEqual(flattened, sortedConfig.systemMessages);
 
     // Explicitly confirm the descending 8x2 bank block (sru-10 scenario):
     // banks 0..7 at y=3, banks 8..15 at y=2, one block, startArg 0.
@@ -1002,7 +1378,9 @@ TEST_CASE(RoundTripDefaultLaunchpadProfileSystemMessages) {
             }
         }
     }
-    REQUIRE_TRUE(flattened.size() == sortedConfig.systemMessages.size());
+    // Finding 6: full structural equality (address incl. launchpadPosition's
+    // controller variant, press/release/feedback, outputFeedback).
+    RequireAssociationsEqual(flattened, sortedConfig.systemMessages);
 }
 
 TEST_CASE(RoundTripDefaultTwisterProfileSystemMessagesAllIndividual) {
@@ -1079,6 +1457,70 @@ TEST_CASE(ReconstructSystemBlocksRejectsMixedReleasePattern) {
     }
 }
 
+TEST_CASE(ReconstructSystemBlocksRejectsGestureCellWherePressCarriesFalse) {
+    // Finding 1: a gesture-select cell is blockable ONLY when press =
+    // SetGestureSelect(arg,true) AND release = SetGestureSelect(arg,false).
+    // CellSatisfiesRunPattern's GestureSelect case checked that `release`
+    // carries boolValue=false (the "paired set-false variant") but never
+    // checked that `press` carries boolValue=true -- so a cell storing the
+    // release-sense message as its PRESS (with a redundant boolValue=false
+    // "release") wrongly passed the pattern. Expand(Reconstruct(config))
+    // would then change behavior: ExpandSystemBlock always emits
+    // press=SetGestureSelect(arg,true), silently flipping this cell's sense.
+    std::vector<MidiControllerSystemMessageAssociation> associations;
+    for (std::size_t ix = 0; ix < 4; ++ix) {
+        MidiControllerSystemMessageAssociation a;
+        a.control = MidiControlAddress{.channel = 1, .cc = static_cast<std::uint8_t>(ix)};
+        a.press = MessageIn::SetGestureSelect(0, ix, false);    // press carries boolValue=false (bug trigger)
+        a.release = MessageIn::SetGestureSelect(0, ix, false);  // "paired set-false" check alone would accept this
+        a.feedback = a.press;
+        associations.push_back(a);
+    }
+    const auto rows = ReconstructSystemBlocks(associations, MidiProfileKind::Generic);
+    // Every cell must stay individual -- none of these satisfy the run
+    // pattern (press.boolValue must be true), so no block should form.
+    for (const auto& row : rows) {
+        REQUIRE_TRUE(!row.isBlock);
+    }
+}
+
+TEST_CASE(ExpandOfReconstructedGestureRunNeverFlipsPressReleaseSense) {
+    // Companion round-trip check for finding 1: build a run whose PRESS
+    // carries boolValue=false; reconstruct, expand every row, and confirm
+    // the flattened result equals the sorted input exactly -- if
+    // CellSatisfiesRunPattern wrongly accepted these as a block,
+    // ExpandSystemBlock would emit press.boolValue=true for every cell,
+    // silently flipping the stored sense (Expand(Reconstruct(x)) != x).
+    std::vector<MidiControllerSystemMessageAssociation> associations;
+    for (std::size_t ix = 0; ix < 4; ++ix) {
+        MidiControllerSystemMessageAssociation a;
+        a.control = MidiControlAddress{.channel = 1, .cc = static_cast<std::uint8_t>(ix)};
+        a.press = MessageIn::SetGestureSelect(0, ix, false);
+        a.release = MessageIn::SetGestureSelect(0, ix, false);
+        a.feedback = a.press;
+        associations.push_back(a);
+    }
+
+    MidiControllerProfileConfig sortedConfig;
+    sortedConfig.systemMessages = associations;
+    NormalizeMidiProfileConfig(sortedConfig, MidiProfileKind::Generic);
+
+    const auto rows = ReconstructSystemBlocks(associations, MidiProfileKind::Generic);
+    std::vector<MidiControllerSystemMessageAssociation> flattened;
+    for (const auto& row : rows) {
+        REQUIRE_TRUE(!row.isBlock);  // must stay individual (see prior test)
+        for (std::size_t ix : row.indices) {
+            flattened.push_back(sortedConfig.systemMessages[ix]);
+        }
+    }
+    // Finding 6: full structural equality -- this is the fixture finding 1's
+    // bug must be caught by (verified by temporarily reverting the
+    // CellSatisfiesRunPattern fix: without it, this run wrongly blocks and
+    // ExpandSystemBlock flips press.boolValue to true, which
+    // RequireAssociationsEqual's MessageInFullyEquivalent detects.
+    RequireAssociationsEqual(flattened, sortedConfig.systemMessages);
+}
+
 TEST_CASE(ReconstructSystemBlocksRejectsBankRunSpanningTwoSlots) {
     std::vector<MidiControllerSystemMessageAssociation> associations;
     for (std::size_t ix = 0; ix < 4; ++ix) {
@@ -1095,6 +1537,19 @@ TEST_CASE(ReconstructSystemBlocksRejectsBankRunSpanningTwoSlots) {
         }
     }
 }
+
+// Note: ReconstructSystemBlocks defensively sorts its input by
+// SystemMessageSortKey (ascending arg) before ContinuesCandidateRun ever
+// runs (sru-9), so a SIZE_MAX-then-0 arg pair can never end up adjacent in
+// the sorted view -- SIZE_MAX always sorts last. ContinuesCandidateRun's
+// `prevArg + 1` wrap guard (finding 3) is therefore unreachable through this
+// public API, but the guard stays as defense-in-depth for the shared helper
+// pattern; ExpandSystemBlockRejectsStartArgNearSizeMaxThatWouldWrap above
+// covers the reachable system-block wrap case (expansion's startArg +
+// cellIndex), and ReconstructEncoderBlocksTreatsPositionWrapAsRunBreakNotMatch
+// / ReconstructAnalogBlocksTreatsGestureIxWrapAsRunBreakNotMatch cover the
+// analogous (and reachable, since those reconstructors take no defensive
+// sorting pass) wrap guard for the identical `prev + 1` pattern.
 
 TEST_CASE(ReconstructSystemBlocksDuplicateAddressesStayIndividual) {
     std::vector<MidiControllerSystemMessageAssociation> associations;
@@ -1189,7 +1644,8 @@ TEST_CASE(RoundTripExpandReconstructSystemBlocksIncludingDuplicates) {
             }
         }
     }
-    REQUIRE_TRUE(flattened.size() == sortedConfig.systemMessages.size());
+    // Finding 6: full structural equality, element-by-element.
+    RequireAssociationsEqual(flattened, sortedConfig.systemMessages);
 }
 
 // --- D4: Reconstruct(Expand(block)) == block, for reconstruction-producible blocks --

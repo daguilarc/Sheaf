@@ -728,8 +728,14 @@ bool MidiConfigViewModel::RowFieldValue(std::size_t controllerIx, MidiConfigSect
                     case Field::Button:
                         // Twister's sole address field: control->cc = 8 +
                         // button (D1) -- reads back the logical button
-                        // number, not the raw cc.
-                        if (!association.control.has_value() || association.control->cc < 8) {
+                        // number, not the raw cc. The physical side buttons
+                        // only cover cc 8..13 (6 buttons); a stored cc
+                        // outside that range doesn't fit the field at all
+                        // (finding 5) -- unreadable, same as every other
+                        // case above returning found=false when the stored
+                        // data doesn't match the field's shape.
+                        if (!association.control.has_value() || association.control->cc < 8 ||
+                            association.control->cc > 13) {
                             found = false;
                             break;
                         }

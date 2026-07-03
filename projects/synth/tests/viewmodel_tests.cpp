@@ -442,6 +442,45 @@ TEST_CASE(RowFieldValueReadsTwisterSystemMessageButtonOnly) {
         !vm.RowFieldValue(0, MidiConfigSection::SystemMessages, 0, MidiMappingRowVM::Field::WrldBldrX, value));
 }
 
+TEST_CASE(RowFieldValueRejectsTwisterButtonWhenStoredCcIsOutsideThePhysicalShape) {
+    // Finding 5: RowFieldValue's Field::Button case only rejected cc < 8,
+    // so a stored cc of e.g. 20 (outside the twister's physical 8..13 side
+    // button range) read back as "button 12" instead of being treated as
+    // unreadable -- matching how every other RowFieldValue case returns
+    // false when the stored data doesn't fit the field it's asked to read
+    // (e.g. Field::Channel/Cc return false when association.control has no
+    // value at all). A field this out-of-shape must render as blank/dash,
+    // not a bogus button number.
+    //
+    // SlotValidForKind now refuses this shape at AddController time (see
+    // the instrument_tests.cpp SlotValidForKind* tests), so to exercise
+    // RowFieldValue's own defense independent of that write-path gate --
+    // e.g. against data that reached the view model through some other
+    // path that didn't re-validate -- add a valid association first, then
+    // mutate the in-memory config directly to the out-of-shape cc.
+    MidiControllerSlot slot;
+    slot.name = "twist3";
+    slot.kind = MidiProfileKind::MfTwister;
+    MidiControllerSystemMessageAssociation association;
+    association.control = MidiControlAddress{.channel = 3, .cc = 8};  // valid shape, mutated below
+    association.press = synth::MessageIn::SetReset(0, true);
+    association.release = synth::MessageIn::SetReset(0, false);
+    association.feedback = association.press;
+    slot.config.systemMessages.push_back(association);
+
+    MidiInstrumentConfig instrument;
+    REQUIRE_TRUE(instrument.AddController(slot));
+    instrument.controllers[0].config.systemMessages[0].control->cc = 20;  // outside 8..13
+    MidiConnectionState connection;
+    connection.controllers.push_back(MidiControllerConnection{});
+
+    MidiConfigViewModel vm;
+    vm.Rebuild(instrument, connection);
+
+    double value = -1.0;
+    REQUIRE_TRUE(!vm.RowFieldValue(0, MidiConfigSection::SystemMessages, 0, MidiMappingRowVM::Field::Button, value));
+}
+
 TEST_CASE(ApplyMappingEditTwisterButtonWritesCcAndRefusesOutOfRange) {
     synth::MfTwisterDefaultProfileOptions options;
     options.sideButtons[0] = MidiControllerSystemMessageAssociation{
