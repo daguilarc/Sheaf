@@ -113,9 +113,11 @@ struct SystemBlock {
     bool outputFeedback = true;     // applied to every expanded cell
     std::uint8_t channel = 0;       // wrldbldr + generic forms
     std::uint8_t startCc = 0, endCc = 0;      // generic (1-D) form, [start, end)
-    std::uint8_t startX = 0, startY = 0;      // 2-D forms, inclusive corners;
-    std::uint8_t endX = 0, endY = 0;          //   endY may be < startY (rows
-                                              //   traverse toward endY, ±1)
+    int startX = 0, startY = 0;     // 2-D forms, inclusive corners; int, not
+    int endX = 0, endY = 0;         //   uint8: Launchpad legitimately uses
+                                    //   y = -1 and x = 8 edge positions.
+                                    //   endY may be < startY (rows traverse
+                                    //   toward endY, ±1)
 };
 ```
 
