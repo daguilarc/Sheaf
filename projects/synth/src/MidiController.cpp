@@ -1710,6 +1710,156 @@ MidiControllerProfileResult CreateLaunchpadDefaultProfile(
                                        std::move(timestampProvider));
 }
 
+const char* MidiProfileKindName(MidiProfileKind kind) {
+    switch (kind) {
+        case MidiProfileKind::WrldBldr: return "wrldbldr";
+        case MidiProfileKind::MfTwister: return "twister";
+        case MidiProfileKind::Launchpad: return "launchpad";
+        case MidiProfileKind::Generic: return "generic";
+    }
+    return "generic";
+}
+
+bool MidiProfileKindFromName(std::string_view name, MidiProfileKind& out) {
+    if (name == "wrldbldr") {
+        out = MidiProfileKind::WrldBldr;
+        return true;
+    }
+    if (name == "twister") {
+        out = MidiProfileKind::MfTwister;
+        return true;
+    }
+    if (name == "launchpad") {
+        out = MidiProfileKind::Launchpad;
+        return true;
+    }
+    if (name == "generic") {
+        out = MidiProfileKind::Generic;
+        return true;
+    }
+    return false;
+}
+
+MidiKindSupport KindSupport(MidiProfileKind kind) {
+    switch (kind) {
+        case MidiProfileKind::WrldBldr:
+            return MidiKindSupport{.encoders = true, .systemMessages = true, .analogs = true};
+        case MidiProfileKind::MfTwister:
+            return MidiKindSupport{.encoders = true, .systemMessages = true, .analogs = false};
+        case MidiProfileKind::Launchpad:
+            return MidiKindSupport{.encoders = false, .systemMessages = true, .analogs = false};
+        case MidiProfileKind::Generic:
+            return MidiKindSupport{.encoders = true, .systemMessages = true, .analogs = true};
+    }
+    return MidiKindSupport{.encoders = false, .systemMessages = false, .analogs = false};
+}
+
+namespace {
+
+bool Fail(std::string* reason, const char* message) {
+    if (reason != nullptr) {
+        *reason = message;
+    }
+    return false;
+}
+
+} // namespace
+
+bool SlotValidForKind(const MidiControllerSlot& slot, std::string* reason) {
+    const MidiKindSupport support = KindSupport(slot.kind);
+
+    if (!support.encoders && (slot.config.encoderInput.has_value() || slot.config.encoderOutput.has_value())) {
+        return Fail(reason, "encoders not supported by this controller kind");
+    }
+    if (!support.analogs && slot.config.analogInput.has_value()) {
+        return Fail(reason, "analog input not supported by this controller kind");
+    }
+    if (!support.systemMessages && !slot.config.systemMessages.empty()) {
+        return Fail(reason, "system messages not supported by this controller kind");
+    }
+
+    for (const MidiControllerSystemMessageAssociation& association : slot.config.systemMessages) {
+        if (slot.kind == MidiProfileKind::Launchpad) {
+            if (!association.launchpadPosition.has_value()) {
+                return Fail(reason, "launchpad system-message entries must carry a launchpad position");
+            }
+            if (association.control.has_value()) {
+                return Fail(reason, "launchpad system-message entries must not carry a control address");
+            }
+            if (association.wrldBldrPosition.has_value()) {
+                return Fail(reason, "launchpad system-message entries must not carry a WRLD.Bldr position");
+            }
+        } else if (slot.kind == MidiProfileKind::WrldBldr) {
+            if (association.launchpadPosition.has_value()) {
+                return Fail(reason, "wrldbldr system-message entries must not carry a launchpad position");
+            }
+        } else {
+            // MfTwister and Generic: chan/CC addresses only, no positions of either kind.
+            if (association.launchpadPosition.has_value()) {
+                return Fail(reason, "this controller kind does not support launchpad positions");
+            }
+            if (association.wrldBldrPosition.has_value()) {
+                return Fail(reason, "this controller kind does not support WRLD.Bldr positions");
+            }
+        }
+    }
+
+    return true;
+}
+
+bool MidiInstrumentConfig::AddController(MidiControllerSlot slot) {
+    if (FindController(slot.name) != nullptr) {
+        return false;
+    }
+    if (!SlotValidForKind(slot)) {
+        return false;
+    }
+    controllers.push_back(std::move(slot));
+    return true;
+}
+
+bool MidiInstrumentConfig::RenameController(std::size_t ix, std::string name) {
+    if (ix >= controllers.size()) {
+        return false;
+    }
+    if (controllers[ix].name != name && FindController(name) != nullptr) {
+        return false;
+    }
+    controllers[ix].name = std::move(name);
+    return true;
+}
+
+bool MidiInstrumentConfig::ReplaceController(std::size_t ix, MidiControllerSlot slot) {
+    if (ix >= controllers.size()) {
+        return false;
+    }
+    const MidiControllerSlot* existingWithName = FindController(slot.name);
+    if (existingWithName != nullptr && existingWithName != &controllers[ix]) {
+        return false;
+    }
+    if (!SlotValidForKind(slot)) {
+        return false;
+    }
+    controllers[ix] = std::move(slot);
+    return true;
+}
+
+void MidiInstrumentConfig::RemoveController(std::size_t ix) {
+    if (ix >= controllers.size()) {
+        return;
+    }
+    controllers.erase(controllers.begin() + static_cast<std::ptrdiff_t>(ix));
+}
+
+const MidiControllerSlot* MidiInstrumentConfig::FindController(std::string_view name) const {
+    for (const MidiControllerSlot& slot : controllers) {
+        if (slot.name == name) {
+            return &slot;
+        }
+    }
+    return nullptr;
+}
+
 std::uint8_t EncoderPositionToCC(std::size_t position) {
     return static_cast<std::uint8_t>(position % 16);
 }

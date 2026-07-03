@@ -11,6 +11,8 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -481,6 +483,47 @@ struct MidiControllerProfileResult {
     std::unique_ptr<MidiInProcessor> input;
     std::vector<std::unique_ptr<MidiInProcessor>> inputThru;
     std::vector<std::unique_ptr<MidiOutputProcessor>> outputs;
+};
+
+enum class MidiProfileKind { WrldBldr, MfTwister, Launchpad, Generic };
+
+const char* MidiProfileKindName(MidiProfileKind kind);
+bool MidiProfileKindFromName(std::string_view name, MidiProfileKind& out);
+
+struct MidiKindSupport {
+    bool encoders;
+    bool systemMessages;
+    bool analogs;
+};
+
+MidiKindSupport KindSupport(MidiProfileKind kind);
+
+struct MidiEndpointRef {
+    std::string identifier;   // empty = unconfigured
+    std::string name;         // device display name captured at match time
+    bool IsConfigured() const { return !identifier.empty() || !name.empty(); }
+};
+
+struct MidiControllerSlot {
+    std::string name;
+    MidiProfileKind kind = MidiProfileKind::Generic;
+    MidiControllerProfileConfig config;
+    MidiEndpointRef input;
+    MidiEndpointRef output;
+};
+
+// Sections + address variants (Global Constraints matrices). Returns false and
+// fills `reason` (for UI/status) when invalid.
+bool SlotValidForKind(const MidiControllerSlot& slot, std::string* reason = nullptr);
+
+struct MidiInstrumentConfig {
+    std::vector<MidiControllerSlot> controllers;
+
+    bool AddController(MidiControllerSlot slot);
+    bool RenameController(std::size_t ix, std::string name);
+    bool ReplaceController(std::size_t ix, MidiControllerSlot slot);
+    void RemoveController(std::size_t ix);
+    const MidiControllerSlot* FindController(std::string_view name) const;
 };
 
 MidiControllerProfileResult CreateMidiControllerProfile(
