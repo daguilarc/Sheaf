@@ -27,11 +27,11 @@
 
 ## 5. Runtime connection lifecycle
 
-- [ ] 5.1 Add `ThreadId::IoPoll`; implement runtime `MidiDevicePoller` thread (5 s cadence, snapshot compare, atomic dirty flag + list handoff, no device/engine access) with clean start/stop/join (smi-4)
-- [ ] 5.2 Message-thread reconciliation executor: consume dirty flag from the runtime timer, re-enumerate, run planner, execute plan via per-controller `MidiInHandler`/`MidiOutputHandler` open/close, forwarding-processor swap, and output cache `Reset()` resync (smi-4, smi-5)
-- [ ] 5.3 Generalize startup endpoint reopen to connect all mapped controllers after processor rebuild; absent devices mark offline without failing startup; start poller after initial connect; shutdown joins poller before device close (smi-6, sar-5)
-- [ ] 5.4 Patch load path: rebuild per-controller processors from loaded instrument, then reconcile connections (sar-8, smi-8)
-- [ ] 5.5 Tests: rig-level simulated reconnect (execute a plan against fake handlers) proves input flows and first post-reconnect output pass resends full feedback; unrelated controllers untouched (smi-5); runtime startup/shutdown poller lifecycle smoke (no leaks, TSan if available) (smi-4)
+- [x] 5.1 Add `ThreadId::IoPoll`; implement runtime `MidiDevicePoller` thread (5 s cadence, snapshot compare, atomic dirty flag + list handoff, no device/engine access) with clean start/stop/join (smi-4)
+- [x] 5.2 Message-thread reconciliation executor: consume dirty flag from the runtime timer, re-enumerate, run planner, execute plan via per-controller `MidiInHandler`/`MidiOutputHandler` open/close, forwarding-processor swap, and output cache `Reset()` resync (smi-4, smi-5)
+- [x] 5.3 Generalize startup endpoint reopen to connect all mapped controllers after processor rebuild; absent devices mark offline without failing startup; start poller after initial connect; shutdown joins poller before device close (smi-6, sar-5)
+- [x] 5.4 Patch load path: rebuild per-controller processors from loaded instrument, then reconcile connections (sar-8, smi-8)
+- [x] 5.5 Tests: rig-level simulated reconnect (execute a plan against fake handlers) proves input flows and first post-reconnect output pass resends full feedback; unrelated controllers untouched (smi-5); runtime startup/shutdown poller lifecycle smoke (no leaks, TSan if available) (smi-4)
 
 ## 6. UI framework: main pane, sidebar, pages
 
