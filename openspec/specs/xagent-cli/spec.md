@@ -176,11 +176,16 @@ WHILE the process remains active, THE xagent CLI SHALL preserve the provider thr
 - **THEN** the CLI closes the harness session if needed, writes `session.ended`, and exits zero unless an active turn failed during shutdown
 
 ### Requirement: xa-9 — Offline logs and inspection commands
-WHEN `xagent run` starts, THE xagent CLI SHALL create a run directory under repo-local `data/xagent/` containing a normalized JSONL log and a raw provider JSONL log, and offline commands `xagent list` and `xagent logs <run_id>` SHALL read only those persisted files without requiring a live daemon or server.
+WHEN `xagent run` starts without an explicit log-root override, THE xagent CLI SHALL create a run directory under the Sheaf repository root's top-level `data/xagent/` directory, including when the CLI process is launched from `projects/xagent`, and offline commands `xagent list` and `xagent logs <run_id>` SHALL read only those persisted files without requiring a live daemon or server.
 
 #### Scenario: Run log created
-- **WHEN** `xagent run --harness codex --subagent` starts
+- **WHEN** `xagent run --harness codex --subagent` starts from the Sheaf repository root
 - **THEN** the CLI creates a persistent run record under `data/xagent/` containing `run_id`, `harness`, `mode`, timestamps, exit status, and log paths
+
+#### Scenario: Package directory launch uses top-level data directory
+- **WHEN** `xagent run --harness fake --subagent` starts with the current working directory set to `projects/xagent`
+- **THEN** the CLI creates the persistent run record under the Sheaf repository root's `data/xagent/`
+- **AND** the CLI does not create a persistent run record under `projects/xagent/data/xagent/`
 
 #### Scenario: Offline list
 - **WHEN** the user runs `xagent list`

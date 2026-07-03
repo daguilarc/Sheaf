@@ -1,3 +1,4 @@
+import { stat } from "node:fs/promises";
 import { Readable, type Writable } from "node:stream";
 import path from "node:path";
 
@@ -76,7 +77,7 @@ export async function main(
 ): Promise<CliResult> {
   const command = parseArgs(argv);
   const adapterFactory = dependencies.createAdapter ?? createCliAdapter;
-  const logRoot = resolveLogRoot(cwd);
+  const logRoot = await resolveLogRoot(cwd);
 
   if (command.command === "run") {
     return runSession({
@@ -108,12 +109,40 @@ export async function main(
   return { exitCode: 0 };
 }
 
-function resolveLogRoot(cwd: string): string {
+async function resolveLogRoot(cwd: string): Promise<string> {
   const configured = process.env.XAGENT_LOG_ROOT?.trim();
   if (configured !== undefined && configured.length > 0) {
     return path.resolve(configured);
   }
-  return getDefaultLogRoot(cwd);
+  return getDefaultLogRoot(await findRepoRoot(cwd));
+}
+
+async function findRepoRoot(cwd: string): Promise<string> {
+  let current = path.resolve(cwd);
+
+  while (true) {
+    if (await pathExists(path.join(current, ".git"))) {
+      return current;
+    }
+
+    const parent = path.dirname(current);
+    if (parent === current) {
+      return path.resolve(cwd);
+    }
+    current = parent;
+  }
+}
+
+async function pathExists(candidate: string): Promise<boolean> {
+  try {
+    await stat(candidate);
+    return true;
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      return false;
+    }
+    throw error;
+  }
 }
 
 function createCliAdapter(harness: HarnessName): HarnessAdapter {

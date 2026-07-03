@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Readable, Writable } from "node:stream";
@@ -337,12 +337,66 @@ test("logs command reads persisted normalized logs and rejects traversal", async
   assert.equal((await readFile(path.join(record.runDir, "normalized.jsonl"), "utf8")).includes("hello"), true);
 });
 
+test("default log root resolves to top-level data when launched from package directory", async () => {
+  const repoRoot = await mkdtemp(path.join(tmpdir(), "xagent-cli-"));
+  const packageDir = path.join(repoRoot, "projects", "xagent");
+  await mkdir(path.join(repoRoot, ".git"), { recursive: true });
+  await mkdir(packageDir, { recursive: true });
+
+  const runStdout = new MemoryWritable();
+  const runStderr = new MemoryWritable();
+  const runResult = await main(
+    ["run", "--harness", "codex", "--subagent"],
+    Readable.from([JSON.stringify({ type: "control.exit" }), "\n"]),
+    runStdout,
+    runStderr,
+    packageDir,
+    { createAdapter: () => new FakeHarnessAdapter() },
+  );
+
+  assert.deepEqual(runResult, { exitCode: 0 });
+  assert.equal(runStderr.text, "");
+
+  const topLevelRuns = await listRuns(getDefaultLogRoot(repoRoot));
+  assert.equal(topLevelRuns.length, 1);
+  assert.equal(await exists(path.join(packageDir, "data", "xagent")), false);
+
+  const listStdout = new MemoryWritable();
+  const listStderr = new MemoryWritable();
+  const listResult = await main(["list"], Readable.from([]), listStdout, listStderr, packageDir);
+
+  assert.deepEqual(listResult, { exitCode: 0 });
+  assert.equal(listStderr.text, "");
+  const listedRuns = JSON.parse(listStdout.text) as Array<{ run_id: string }>;
+  assert.equal(listedRuns[0]?.run_id, topLevelRuns[0]?.run_id);
+
+  const logsStdout = new MemoryWritable();
+  const logsStderr = new MemoryWritable();
+  const logsResult = await main(["logs", topLevelRuns[0]?.run_id ?? ""], Readable.from([]), logsStdout, logsStderr, packageDir);
+
+  assert.deepEqual(logsResult, { exitCode: 0 });
+  assert.equal(logsStderr.text, "");
+  assert.match(logsStdout.text, /session\.started/);
+});
+
 class MemoryWritable extends Writable {
   text = "";
 
   override _write(chunk: Buffer | string, _encoding: BufferEncoding, callback: (error?: Error | null) => void): void {
     this.text += chunk.toString();
     callback();
+  }
+}
+
+async function exists(filePath: string): Promise<boolean> {
+  try {
+    await stat(filePath);
+    return true;
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      return false;
+    }
+    throw error;
   }
 }
 

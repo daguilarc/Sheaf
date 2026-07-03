@@ -1,3 +1,4 @@
+import { stat } from "node:fs/promises";
 import { Readable } from "node:stream";
 import path from "node:path";
 import { harnessNames, thinkingLevels, } from "./events.js";
@@ -33,7 +34,7 @@ export function parseArgs(argv) {
 export async function main(argv, stdin, stdout, stderr, cwd, dependencies = {}) {
     const command = parseArgs(argv);
     const adapterFactory = dependencies.createAdapter ?? createCliAdapter;
-    const logRoot = resolveLogRoot(cwd);
+    const logRoot = await resolveLogRoot(cwd);
     if (command.command === "run") {
         return runSession({
             harness: command.harness,
@@ -60,12 +61,37 @@ export async function main(argv, stdin, stdout, stderr, cwd, dependencies = {}) 
     stdout.write(await readNormalizedLog(logRoot, command.runId));
     return { exitCode: 0 };
 }
-function resolveLogRoot(cwd) {
+async function resolveLogRoot(cwd) {
     const configured = process.env.XAGENT_LOG_ROOT?.trim();
     if (configured !== undefined && configured.length > 0) {
         return path.resolve(configured);
     }
-    return getDefaultLogRoot(cwd);
+    return getDefaultLogRoot(await findRepoRoot(cwd));
+}
+async function findRepoRoot(cwd) {
+    let current = path.resolve(cwd);
+    while (true) {
+        if (await pathExists(path.join(current, ".git"))) {
+            return current;
+        }
+        const parent = path.dirname(current);
+        if (parent === current) {
+            return path.resolve(cwd);
+        }
+        current = parent;
+    }
+}
+async function pathExists(candidate) {
+    try {
+        await stat(candidate);
+        return true;
+    }
+    catch (error) {
+        if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+            return false;
+        }
+        throw error;
+    }
 }
 function createCliAdapter(harness) {
     if (process.env.XAGENT_TEST_ADAPTER === "fake") {
