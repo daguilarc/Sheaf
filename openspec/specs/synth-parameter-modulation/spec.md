@@ -1013,29 +1013,28 @@ WHEN Wrld.Bldr encoder MIDI output is processed, THE synth parameter modulation 
 - **AND** continues emitting remaining changed cells on later process calls
 
 ### Requirement: spm-37 — Miniapp: MIDI controller configuration
-WHEN the synth miniapp runs with the MIDI controller change, THE miniapp SHALL expose, through the synth application runtime's shell, a simple configuration page that lets the user choose a controller preset, choose MIDI input and output devices, open or close those devices, register the real synth MIDI processors against a MIDI-specific `MessageInBus` and `ParameterManager::UIState`, shut down MIDI sender/device resources cleanly, and render disconnected slot positions as empty space rather than inactive controller chrome.
+WHEN the synth miniapp runs, THE miniapp SHALL expose MIDI configuration exclusively through the library Controllers and Audio pages (sru-3, sru-4, sru-5) hosted by the runtime main pane: the configured controllers come from the instrument configuration, device selection is per controller, and connection is automatic through reconciliation (smi-3, smi-4) rather than manual open/close; the miniapp front page SHALL contain no MIDI or file configuration UI; the real synth MIDI processors SHALL be registered against a MIDI-specific `MessageInBus` and `ParameterManager::UIState` by the runtime, MIDI sender/device resources SHALL shut down cleanly, and disconnected slot positions SHALL render as empty space rather than inactive controller chrome.
 
-#### Scenario: Miniapp preset controls visible encoders
-- **WHEN** the user selects the Twister or Wrld.Bldr preset and opens a matching MIDI input device
+#### Scenario: Miniapp instrument controls visible encoders
+- **WHEN** the instrument configuration contains a twister or wrldbldr controller whose device is connected
 - **AND** the hardware sends a mapped encoder turn CC for a visible miniapp slot position
 - **THEN** the miniapp processes a scaled `ParamIncDec` through the MIDI input bus on the next runtime bus-processing pass
 - **AND** the visible encoder value changes according to the selected bank and slot-position mapping
 
 #### Scenario: Miniapp push opens modulation view
-- **WHEN** the user opens a MIDI input device with a selected preset
-- **AND** the hardware sends a mapped pushbutton CC for a top-level miniapp parameter
+- **WHEN** a connected controller sends a mapped pushbutton CC for a top-level miniapp parameter
 - **THEN** the miniapp processes a `ParamPush` through `MessageInBus`
 - **AND** the visible encoder grid updates to the modulation view
 
 #### Scenario: Miniapp output follows UI state
-- **WHEN** the user opens a MIDI output device with a selected preset
+- **WHEN** a controller with an open output device is configured
 - **AND** miniapp UI-state values or colors change
 - **THEN** the registered MIDI output processor enqueues the corresponding hardware feedback messages through the MIDI sender
 
 #### Scenario: Miniapp remains usable without MIDI hardware
-- **WHEN** no MIDI input or output device is opened
+- **WHEN** no mapped controller device is present
 - **THEN** the existing on-screen miniapp controls continue to work through `MessageInBus`
-- **AND** the app reports the MIDI devices as closed rather than failing to start
+- **AND** the Controllers page reports the controllers as offline rather than the app failing to start
 
 #### Scenario: Miniapp keeps bus producers isolated
 - **WHEN** the miniapp has both on-screen controls and MIDI input enabled
@@ -1048,8 +1047,12 @@ WHEN the synth miniapp runs with the MIDI controller change, THE miniapp SHALL e
 - **THEN** the miniapp leaves that encoder position visually empty
 - **AND** does not draw the encoder controller body for that position
 
+#### Scenario: Miniapp front page is config-free
+- **WHEN** the miniapp front page is inspected
+- **THEN** it contains no MIDI device, controller, patch, or file configuration controls
+
 #### Scenario: Miniapp shuts MIDI down cleanly
-- **WHEN** the miniapp closes or the user disables MIDI output
+- **WHEN** the miniapp closes
 - **THEN** the MIDI sender stops and joins its worker thread
 - **AND** open JUCE MIDI input and output devices are closed
 
@@ -1302,7 +1305,7 @@ WHEN a MIDI controller profile is created, THE synth parameter modulation system
 - **THEN** JUCE input and output handlers remain responsible for opening, closing, and reporting MIDI device state
 
 ### Requirement: spm-45 — MIDI controller profiles: default WRLD.Bldr and miniapp use
-WHEN the default WRLD.Bldr MIDI controller profile is requested, THE synth parameter modulation system SHALL build Smart Grid-derived encoder, analog, reset, random, random-mod, system button, and system output defaults for the WRLD.Bldr controller; the synth miniapp SHALL use that profile instead of constructing individual encoder processors directly.
+WHEN the default WRLD.Bldr MIDI controller profile is requested, THE synth parameter modulation system SHALL build Smart Grid-derived encoder, analog, reset, random, random-mod, system button, and system output defaults for the WRLD.Bldr controller; the synth miniapp's default instrument configuration SHALL contain one WRLD.Bldr controller seeded with that profile instead of constructing individual encoder processors directly.
 
 #### Scenario: Default WRLD.Bldr profile maps encoders
 - **WHEN** the default WRLD.Bldr profile is created for slot `0`
@@ -1333,14 +1336,13 @@ WHEN the default WRLD.Bldr MIDI controller profile is requested, THE synth param
 - **AND** those buttons are pressed without an effective modifier
 - **THEN** bus processing ignores the missing-bank messages without changing current app state
 
-#### Scenario: Miniapp creates WRLD.Bldr profile
-- **WHEN** the synth miniapp configures MIDI processors
-- **THEN** it creates the default WRLD.Bldr profile for its manager, MIDI bus, UI state, sender, one gesture, and visible encoder count
-- **AND** installs the profile-created input chain into the MIDI input handler
-- **AND** invokes each profile-created output processor after `PopulateUIState`
+#### Scenario: Miniapp default instrument carries WRLD.Bldr
+- **WHEN** the synth miniapp initializes its default instrument configuration
+- **THEN** it contains a named WRLD.Bldr controller whose profile is the default WRLD.Bldr profile for its manager, one gesture, and visible encoder count
+- **AND** the runtime builds that controller's input chain and output processors from the instrument configuration
 
 #### Scenario: Miniapp hardware controls exercise profile
-- **WHEN** the miniapp runs with the WRLD.Bldr profile and a matching controller is opened
+- **WHEN** the miniapp runs with the WRLD.Bldr controller connected
 - **THEN** the first gesture button can momentarily select gesture `0`
 - **AND** the gesture analog CC can set gesture `0` value
 - **AND** the scene blend analog CC can set scene blend
@@ -1721,18 +1723,6 @@ WHEN MIDI controller profile configuration is saved, THE synth parameter modulat
 - **WHEN** MIDI profile JSON contains WRLD.Bldr system associations and no Launchpad positions or MF Twister-specific associations
 - **THEN** loading that JSON succeeds
 - **AND** the loaded config preserves WRLD.Bldr behavior
-
-### Requirement: spm-53 — Persistence: MIDI device selection
-WHEN app MIDI endpoint state is saved, THE synth parameter modulation system SHALL persist generic selected input and output endpoint identifiers separately from processor profile config and SHALL return those selections on load without requiring unavailable devices to open successfully.
-
-#### Scenario: Device identifiers restore selection
-- **WHEN** saved MIDI state contains input and output device identifiers that are present on the current machine
-- **THEN** an app such as the miniapp can select those devices for later open/close operations
-
-#### Scenario: Missing device remains closed
-- **WHEN** saved MIDI state references a device identifier that is not present
-- **THEN** load preserves the saved identifier as best-effort state where possible
-- **AND** it leaves the corresponding MIDI handler closed rather than failing patch value load
 
 ### Requirement: spm-60 — UI State: encoder brightness snapshot
 WHEN visible parameter-cell UI state is populated for MIDI hardware feedback, THE synth parameter modulation system SHALL publish a per-cell atomic brightness value in `Parameter::UIState`, set connected cells to full brightness `1.0` unless another producer explicitly supplies a different normalized brightness, set disconnected cells to `0.0`, and load that value through the same stable revision snapshot protocol used for value and color feedback.

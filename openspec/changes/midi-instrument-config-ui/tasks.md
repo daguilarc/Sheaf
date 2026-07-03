@@ -35,23 +35,23 @@
 
 ## 6. UI framework: main pane, sidebar, pages
 
-- [ ] 6.1 Build `MainPane` (content host + right sidebar, resize handling, page open/dismiss returning to app UI) and rework `ShellComponent` to host it, deleting the patch chrome row (sru-1, sar-10)
-- [ ] 6.2 Sidebar with Audio/Controllers/File entries and max-recent-deadline readout (rolling max of audio callback load over recent UI frames, UI-timer driven) (sru-2)
-- [ ] 6.3 `AudioConfigPage`: re-home `AudioPanel` device selection (output always, input when requested), status line, selection applies through existing runtime switching (sru-3, sar-15)
-- [ ] 6.4 `FilePage`: patch commands, current patch name, status, Save→Save As fall-through; remove those from shell chrome (sru-6, sar-16)
+- [x] 6.1 Build `MainPane` (content host + right sidebar, resize handling, page open/dismiss returning to app UI) and rework `ShellComponent` to host it, deleting the patch chrome row (sru-1, sar-10)
+- [x] 6.2 Sidebar with Audio/Controllers/File entries and max-recent-deadline readout (rolling max of audio callback load over recent UI frames, UI-timer driven) (sru-2)
+- [x] 6.3 `AudioConfigPage`: re-home `AudioPanel` device selection (output always, input when requested), status line, selection applies through existing runtime switching (sru-3, sar-15)
+- [x] 6.4 `FilePage`: patch commands, current patch name, status, Save→Save As fall-through; remove those from shell chrome (sru-6, sar-16)
 
 ## 7. Controllers page
 
-- [ ] 7.1 JUCE-free view model in `include/synth`: row tree (controller rows, kind-filtered submenus, expand/collapse state, mapping row values) built from instrument config + connection state; edit application back onto the config (sru-7)
-- [ ] 7.2 Unit tests: view model with 4 controllers across all kinds and dozens of mappings — sections match the kind matrix, collapsed defaults, edits round-trip (sru-7, sru-5)
-- [ ] 7.3 `ControllersPage` JUCE renderer: scrollable controller list with name, kind, connection state, input/output device combos (present devices + absent preference), expandable config with encoders/system-messages/analogs submenus, all collapsed by default (sru-4, sru-5)
-- [ ] 7.4 Mapping list editors (encoder chan/cc→slot/position + relative mode/turn step; system addresses→press/release messages; analog chan/cc→gesture/scene-blend) with commit-time apply through the live-edit rebuild path (sru-5, smi-8)
-- [ ] 7.5 Add-controller ("+") flow: name + kind, seeded from kind default profile factory, live rebuild + reconcile (sru-4, smi-8)
-- [ ] 7.6 Device selection on the page updates endpoint preferences and triggers reconciliation (sru-4)
+- [x] 7.1 JUCE-free view model in `include/synth`: row tree (controller rows, kind-filtered submenus, expand/collapse state, mapping row values) built from instrument config + connection state; edit application back onto the config (sru-7)
+- [x] 7.2 Unit tests: view model with 4 controllers across all kinds and dozens of mappings — sections match the kind matrix, collapsed defaults, edits round-trip (sru-7, sru-5)
+- [x] 7.3 `ControllersPage` JUCE renderer: scrollable controller list with name, kind, connection state, input/output device combos (present devices + absent preference), expandable config with encoders/system-messages/analogs submenus, all collapsed by default (sru-4, sru-5)
+- [x] 7.4 Mapping list editors (encoder chan/cc→slot/position + relative mode/turn step; system addresses→press/release messages; analog chan/cc→gesture/scene-blend) with commit-time apply through the live-edit rebuild path (sru-5, smi-8)
+- [x] 7.5 Add-controller ("+") flow: name + kind, seeded from kind default profile factory, live rebuild + reconcile (sru-4, smi-8)
+- [x] 7.6 Device selection on the page updates endpoint preferences and triggers reconciliation (sru-4)
 
 ## 8. Miniapp adoption and end-to-end verification
 
-- [ ] 8.1 Miniapp default instrument: one named WRLD.Bldr controller seeded from the default profile; remove remaining MIDI/preset config from the app surface (spm-45, spm-37)
-- [ ] 8.2 Verify miniapp front page is config-free and hosts through `MainPane`; update miniapp system tests for the new document format and instrument default (spm-37, sar-11)
-- [ ] 8.3 Full test suite passes: `make -C projects/synth build test` plus runtime/app builds
+- [x] 8.1 Miniapp default instrument: one named WRLD.Bldr controller seeded from the default profile; remove remaining MIDI/preset config from the app surface (spm-45, spm-37)
+- [x] 8.2 Verify miniapp front page is config-free and hosts through `MainPane`; update miniapp system tests for the new document format and instrument default (spm-37, sar-11)
+- [x] 8.3 Full test suite passes: `make -C projects/synth build test` plus runtime/app builds
 - [ ] 8.4 Manual smoke checklist with real hardware: cold start attached and detached, unplug→offline within ~5 s, replug→reconnect + LED resync, two controllers simultaneously, add controller via "+", mapping edit takes effect live, audio/file pages round-trip; user sign-off
