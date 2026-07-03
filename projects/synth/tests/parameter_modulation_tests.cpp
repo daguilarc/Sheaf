@@ -1344,6 +1344,77 @@ TEST_CASE(selected_gesture_activation_snapshots_parent_value) {
     REQUIRE_NEAR(parameter.GestureValue(1, 0), 0.9f, 0.0001f);
 }
 
+TEST_CASE(selected_inactive_gesture_first_turn_arms_without_applying_delta) {
+    synth::ParameterManager manager;
+    manager.SetGestureCount(1);
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 0,
+        .numScenes = 1,
+        .maxParameters = 1,
+    });
+    auto& parameter = manager.CreateParameter(group, {.name = "Gesture", .defaultValue = 0.25f});
+    parameter.SceneCenter(0) = 0.25f;
+    parameter.GestureValue(0, 0) = 1.0f;
+    manager.SetGestureValue(0, 1.0f);
+    manager.SelectGesture(0);
+
+    const synth::SceneState scene{.leftScene = 0, .rightScene = 0, .blend = 0.0f};
+    parameter.HandleIncDec(scene, 0.2f);
+
+    REQUIRE_TRUE(parameter.GestureActive(0, 0));
+    REQUIRE_NEAR(parameter.SceneCenter(0), 0.25f, 0.0001f);
+    REQUIRE_NEAR(parameter.GestureValue(0, 0), 0.25f, 0.0001f);
+}
+
+TEST_CASE(selected_zero_weight_gesture_first_turn_arms_without_applying_delta) {
+    synth::ParameterManager manager;
+    manager.SetGestureCount(1);
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 0,
+        .numScenes = 1,
+        .maxParameters = 1,
+    });
+    auto& parameter = manager.CreateParameter(group, {.name = "Gesture", .defaultValue = 0.25f});
+    parameter.SceneCenter(0) = 0.25f;
+    parameter.GestureValue(0, 0) = 0.9f;
+    manager.SetGestureValue(0, 0.0f);
+    manager.SelectGesture(0);
+
+    const synth::SceneState scene{.leftScene = 0, .rightScene = 0, .blend = 0.0f};
+    parameter.HandleIncDec(scene, 0.2f);
+
+    REQUIRE_TRUE(parameter.GestureActive(0, 0));
+    REQUIRE_NEAR(parameter.SceneCenter(0), 0.25f, 0.0001f);
+    REQUIRE_NEAR(parameter.GestureValue(0, 0), 0.25f, 0.0001f);
+}
+
+TEST_CASE(active_high_gesture_distributes_after_deselection) {
+    synth::ParameterManager manager;
+    manager.SetGestureCount(1);
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 0,
+        .numScenes = 1,
+        .maxParameters = 1,
+    });
+    auto& parameter = manager.CreateParameter(group, {.name = "Gesture", .defaultValue = 0.25f});
+    parameter.SceneCenter(0) = 0.25f;
+    parameter.GestureValue(0, 0) = 0.9f;
+    parameter.SetGestureActive(0, 0, true);
+    manager.SetGestureValue(0, 1.0f);
+    manager.DeselectGesture(0);
+
+    const synth::SceneState scene{.leftScene = 0, .rightScene = 0, .blend = 0.0f};
+    parameter.HandleIncDec(scene, 0.2f);
+
+    REQUIRE_TRUE(parameter.GestureActive(0, 0));
+    REQUIRE_TRUE(!manager.GestureSelected(0));
+    REQUIRE_NEAR(parameter.SceneCenter(0), 0.25f, 0.0001f);
+    REQUIRE_NEAR(parameter.GestureValue(0, 0), 1.0f, 0.0001f);
+}
+
 TEST_CASE(selected_gesture_weight_one_edits_gesture_without_moving_base) {
     synth::ParameterManager manager;
     manager.SetGestureCount(2);
@@ -1356,7 +1427,7 @@ TEST_CASE(selected_gesture_weight_one_edits_gesture_without_moving_base) {
     auto& parameter = manager.CreateParameter(group, {.name = "Gesture", .defaultValue = 0.5f});
     parameter.SceneCenter(0) = 0.5f;
     parameter.GestureValue(0, 0) = 0.5f;
-    manager.SelectGesture(0);
+    parameter.SetGestureActive(0, 0, true);
     manager.SetGestureValue(0, 1.0f);
 
     const synth::SceneState scene{.leftScene = 0, .rightScene = 0, .blend = 0.0f};
@@ -1380,7 +1451,7 @@ TEST_CASE(selected_gesture_weight_biases_gesture_edit_over_base_edit) {
     auto& parameter = manager.CreateParameter(group, {.name = "Gesture", .defaultValue = 0.5f});
     parameter.SceneCenter(0) = 0.5f;
     parameter.GestureValue(0, 0) = 0.5f;
-    manager.SelectGesture(0);
+    parameter.SetGestureActive(0, 0, true);
     manager.SetGestureValue(0, 0.75f);
 
     parameter.HandleIncDec({.leftScene = 0, .rightScene = 0, .blend = 0.0f}, 0.2f);
@@ -1389,7 +1460,7 @@ TEST_CASE(selected_gesture_weight_biases_gesture_edit_over_base_edit) {
     REQUIRE_NEAR(parameter.GestureValue(0, 0), 0.65f, 0.0001f);
 }
 
-TEST_CASE(selected_gesture_mid_blend_activates_both_scenes) {
+TEST_CASE(selected_gesture_mid_blend_arms_both_scenes_without_applying_delta) {
     synth::ParameterManager manager;
     manager.SetGestureCount(2);
     auto& group = manager.CreateGroup({
@@ -1401,18 +1472,22 @@ TEST_CASE(selected_gesture_mid_blend_activates_both_scenes) {
     auto& parameter = manager.CreateParameter(group, {.name = "Gesture", .defaultValue = 0.5f});
     parameter.SceneCenter(0) = 0.2f;
     parameter.SceneCenter(1) = 0.8f;
+    parameter.GestureValue(0, 0) = 1.0f;
+    parameter.GestureValue(1, 0) = 0.0f;
     manager.SelectGesture(0);
     manager.SetGestureValue(0, 0.5f);
 
-    parameter.HandleIncDec({.leftScene = 0, .rightScene = 1, .blend = 0.5f}, 0.0f);
+    parameter.HandleIncDec({.leftScene = 0, .rightScene = 1, .blend = 0.5f}, 0.4f);
 
     REQUIRE_TRUE(parameter.GestureActive(0, 0));
     REQUIRE_TRUE(parameter.GestureActive(1, 0));
+    REQUIRE_NEAR(parameter.SceneCenter(0), 0.2f, 0.0001f);
+    REQUIRE_NEAR(parameter.SceneCenter(1), 0.8f, 0.0001f);
     REQUIRE_NEAR(parameter.GestureValue(0, 0), 0.2f, 0.0001f);
     REQUIRE_NEAR(parameter.GestureValue(1, 0), 0.8f, 0.0001f);
 }
 
-TEST_CASE(selected_gesture_weight_sum_over_one_leaves_base_unmoved) {
+TEST_CASE(active_gesture_distribution_ignores_current_selection) {
     synth::ParameterManager manager;
     manager.SetGestureCount(2);
     auto& group = manager.CreateGroup({
@@ -1422,16 +1497,78 @@ TEST_CASE(selected_gesture_weight_sum_over_one_leaves_base_unmoved) {
         .maxParameters = 1,
     });
     auto& parameter = manager.CreateParameter(group, {.name = "Gesture", .defaultValue = 0.5f});
-    manager.SelectGesture(0);
-    manager.SelectGesture(1);
+    parameter.GestureValue(0, 0) = 0.5f;
+    parameter.GestureValue(0, 1) = 0.5f;
+    parameter.SetGestureActive(0, 0, true);
+    parameter.SetGestureActive(0, 1, true);
     manager.SetGestureValue(0, 0.8f);
-    manager.SetGestureValue(1, 0.7f);
+    manager.SetGestureValue(1, 0.4f);
+    manager.DeselectGesture(0);
+    manager.DeselectGesture(1);
 
     parameter.HandleIncDec({.leftScene = 0, .rightScene = 0, .blend = 0.0f}, 0.3f);
 
-    REQUIRE_NEAR(parameter.SceneCenter(0), 0.5f, 0.0001f);
+    REQUIRE_TRUE(!manager.GestureSelected(0));
+    REQUIRE_TRUE(!manager.GestureSelected(1));
+    REQUIRE_NEAR(parameter.SceneCenter(0), 0.6f, 0.0001f);
     REQUIRE_NEAR(parameter.GestureValue(0, 0), 0.66f, 0.0001f);
-    REQUIRE_NEAR(parameter.GestureValue(0, 1), 0.64f, 0.0001f);
+    REQUIRE_NEAR(parameter.GestureValue(0, 1), 0.54f, 0.0001f);
+}
+
+TEST_CASE(selected_active_and_inactive_gestures_arm_before_distribution) {
+    synth::ParameterManager manager;
+    manager.SetGestureCount(2);
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 0,
+        .numScenes = 1,
+        .maxParameters = 1,
+    });
+    auto& parameter = manager.CreateParameter(group, {.name = "Gesture", .defaultValue = 0.4f});
+    parameter.SceneCenter(0) = 0.4f;
+    parameter.GestureValue(0, 0) = 0.6f;
+    parameter.GestureValue(0, 1) = 0.1f;
+    parameter.SetGestureActive(0, 0, true);
+    manager.SetGestureValue(0, 0.75f);
+    manager.SetGestureValue(1, 0.5f);
+    manager.SelectGesture(0);
+    manager.SelectGesture(1);
+
+    parameter.HandleIncDec({.leftScene = 0, .rightScene = 0, .blend = 0.0f}, 0.2f);
+
+    REQUIRE_TRUE(parameter.GestureActive(0, 0));
+    REQUIRE_TRUE(parameter.GestureActive(0, 1));
+    REQUIRE_NEAR(parameter.SceneCenter(0), 0.4f, 0.0001f);
+    REQUIRE_NEAR(parameter.GestureValue(0, 0), 0.6f, 0.0001f);
+    REQUIRE_NEAR(parameter.GestureValue(0, 1), 0.4f, 0.0001f);
+}
+
+TEST_CASE(active_gesture_mid_blend_distributes_across_both_scenes) {
+    synth::ParameterManager manager;
+    manager.SetGestureCount(1);
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 0,
+        .numScenes = 2,
+        .maxParameters = 1,
+    });
+    auto& parameter = manager.CreateParameter(group, {.name = "Gesture", .defaultValue = 0.5f});
+    parameter.SceneCenter(0) = 0.2f;
+    parameter.SceneCenter(1) = 0.8f;
+    parameter.GestureValue(0, 0) = 0.2f;
+    parameter.GestureValue(1, 0) = 0.8f;
+    parameter.SetGestureActive(0, 0, true);
+    parameter.SetGestureActive(1, 0, true);
+    manager.SetGestureValue(0, 0.5f);
+    manager.DeselectGesture(0);
+
+    parameter.HandleIncDec({.leftScene = 0, .rightScene = 1, .blend = 0.5f}, 0.2f);
+
+    REQUIRE_TRUE(!manager.GestureSelected(0));
+    REQUIRE_NEAR(parameter.SceneCenter(0), 0.25f, 0.0001f);
+    REQUIRE_NEAR(parameter.SceneCenter(1), 0.85f, 0.0001f);
+    REQUIRE_NEAR(parameter.GestureValue(0, 0), 0.25f, 0.0001f);
+    REQUIRE_NEAR(parameter.GestureValue(1, 0), 0.85f, 0.0001f);
 }
 
 TEST_CASE(handle_inc_dec_negative_saturates_lower_bound) {
@@ -4041,9 +4178,10 @@ TEST_CASE(clear_gesture_active_flags_for_active_scene_selection) {
     auto& group = manager.CreateGroup({
         .numVoices = 1,
         .numScenes = 3,
-        .maxParameters = 2,
+        .maxParameters = 1,
     });
     auto& first = manager.CreateParameter(group, {.name = "First", .defaultValue = 0.2f});
+    group.AddParameterStorageBatch(synth::MakeParameterStorageBatch(group.Config(), group.GestureCount(), 1));
     auto& second = manager.CreateParameter(group, {.name = "Second", .defaultValue = 0.3f});
     first.SetGestureActive(0, 0, true);
     first.SetGestureActive(1, 0, true);
@@ -4430,57 +4568,64 @@ void SimOpenModulationView(SimOracle& oracle, SimBank& bank, int paramIx) {
     });
 }
 
-void SimActivateGestureForScene(SimParam& parameter, std::size_t sceneIx, std::size_t gestureIx) {
-    if (!parameter.gestureActive[sceneIx][gestureIx]) {
-        parameter.gestureValue[sceneIx][gestureIx] = parameter.sceneCenter[sceneIx];
-        parameter.gestureActive[sceneIx][gestureIx] = true;
-    }
-}
-
 void SimHandleIncDec(SimOracle& oracle, SimParam& parameter, float delta) {
     const float blend = std::clamp(oracle.scene.blend, 0.0f, 1.0f);
-    bool hasSelectedGesture = false;
-    float selectedEffectiveWeightSum = 0.0f;
+    auto armSelectedGesture = [&](std::size_t sceneIx, std::size_t gestureIx) {
+        if (parameter.gestureActive[sceneIx][gestureIx]) {
+            return false;
+        }
+        parameter.gestureValue[sceneIx][gestureIx] = parameter.sceneCenter[sceneIx];
+        parameter.gestureActive[sceneIx][gestureIx] = true;
+        return true;
+    };
+
+    bool armedGesture = false;
     for (std::size_t gestureIx = 0; gestureIx < kSimGestures; ++gestureIx) {
         if (!oracle.gestureSelected[gestureIx]) {
             continue;
         }
-        hasSelectedGesture = true;
         if (blend <= 0.0f) {
-            SimActivateGestureForScene(parameter, oracle.scene.leftScene, gestureIx);
+            armedGesture = armSelectedGesture(oracle.scene.leftScene, gestureIx) || armedGesture;
         } else if (blend >= 1.0f) {
-            SimActivateGestureForScene(parameter, oracle.scene.rightScene, gestureIx);
+            armedGesture = armSelectedGesture(oracle.scene.rightScene, gestureIx) || armedGesture;
         } else {
-            SimActivateGestureForScene(parameter, oracle.scene.leftScene, gestureIx);
+            armedGesture = armSelectedGesture(oracle.scene.leftScene, gestureIx) || armedGesture;
             if (oracle.scene.rightScene != oracle.scene.leftScene) {
-                SimActivateGestureForScene(parameter, oracle.scene.rightScene, gestureIx);
+                armedGesture = armSelectedGesture(oracle.scene.rightScene, gestureIx) || armedGesture;
             }
         }
-        selectedEffectiveWeightSum += SimEffectiveGestureWeight(oracle, parameter, gestureIx);
     }
 
-    if (!hasSelectedGesture) {
+    if (armedGesture) {
+        return;
+    }
+
+    float activeEffectiveWeightSum = 0.0f;
+    float baseShareNumerator = 0.0f;
+    for (std::size_t gestureIx = 0; gestureIx < kSimGestures; ++gestureIx) {
+        const float effectiveWeight = SimEffectiveGestureWeight(oracle, parameter, gestureIx);
+        if (effectiveWeight == 0.0f) {
+            continue;
+        }
+        activeEffectiveWeightSum += effectiveWeight;
+        baseShareNumerator += effectiveWeight * (1.0f - effectiveWeight);
+    }
+
+    if (activeEffectiveWeightSum == 0.0f) {
         SimApplySceneDistribution(parameter.sceneCenter[oracle.scene.leftScene],
                                   parameter.sceneCenter[oracle.scene.rightScene], blend, delta, parameter.range);
         return;
     }
 
-    const float gestureEditWeight = std::clamp(selectedEffectiveWeightSum, 0.0f, 1.0f);
     SimApplySceneDistribution(parameter.sceneCenter[oracle.scene.leftScene], parameter.sceneCenter[oracle.scene.rightScene],
-                              blend, delta * (1.0f - gestureEditWeight), parameter.range);
-    if (selectedEffectiveWeightSum == 0.0f) {
-        return;
-    }
+                              blend, delta * (baseShareNumerator / activeEffectiveWeightSum), parameter.range);
 
     for (std::size_t gestureIx = 0; gestureIx < kSimGestures; ++gestureIx) {
-        if (!oracle.gestureSelected[gestureIx]) {
-            continue;
-        }
         const float effectiveWeight = SimEffectiveGestureWeight(oracle, parameter, gestureIx);
         if (effectiveWeight == 0.0f) {
             continue;
         }
-        const float gestureDelta = delta * gestureEditWeight * (effectiveWeight / selectedEffectiveWeightSum);
+        const float gestureDelta = delta * ((effectiveWeight * effectiveWeight) / activeEffectiveWeightSum);
         SimApplySceneDistribution(parameter.gestureValue[oracle.scene.leftScene][gestureIx],
                                   parameter.gestureValue[oracle.scene.rightScene][gestureIx], blend, gestureDelta,
                                   parameter.range);

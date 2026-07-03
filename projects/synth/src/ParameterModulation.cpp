@@ -936,52 +936,63 @@ void Parameter::HandleIncDec(const SceneState& scene, float delta) {
     ValidateSceneEndpoints(scene);
     const float blend = std::clamp(scene.blend, 0.0f, 1.0f);
 
-    bool hasSelectedGesture = false;
-    float selectedEffectiveWeightSum = 0.0f;
+    auto armSelectedGesture = [&](std::size_t sceneIx, std::size_t gestureIx) {
+        if (GestureActive(sceneIx, gestureIx)) {
+            return false;
+        }
+        GestureValue(sceneIx, gestureIx) = SceneCenter(sceneIx);
+        SetGestureActive(sceneIx, gestureIx, true);
+        return true;
+    };
+
+    bool armedGesture = false;
     for (std::size_t gestureIx = 0; gestureIx < group_.GestureCount(); ++gestureIx) {
         if (!group_.Manager().GestureSelected(gestureIx)) {
             continue;
         }
 
-        hasSelectedGesture = true;
         if (blend <= 0.0f) {
-            ActivateGestureForScene(scene.leftScene, gestureIx);
+            armedGesture = armSelectedGesture(scene.leftScene, gestureIx) || armedGesture;
         } else if (blend >= 1.0f) {
-            ActivateGestureForScene(scene.rightScene, gestureIx);
+            armedGesture = armSelectedGesture(scene.rightScene, gestureIx) || armedGesture;
         } else {
-            ActivateGestureForScene(scene.leftScene, gestureIx);
+            armedGesture = armSelectedGesture(scene.leftScene, gestureIx) || armedGesture;
             if (scene.rightScene != scene.leftScene) {
-                ActivateGestureForScene(scene.rightScene, gestureIx);
+                armedGesture = armSelectedGesture(scene.rightScene, gestureIx) || armedGesture;
             }
         }
-
-        selectedEffectiveWeightSum += EffectiveGestureWeight(scene, gestureIx, blend);
     }
 
-    if (!hasSelectedGesture) {
+    if (armedGesture) {
+        return;
+    }
+
+    float activeEffectiveWeightSum = 0.0f;
+    float baseShareNumerator = 0.0f;
+    for (std::size_t gestureIx = 0; gestureIx < group_.GestureCount(); ++gestureIx) {
+        const float effectiveWeight = EffectiveGestureWeight(scene, gestureIx, blend);
+        if (effectiveWeight == 0.0f) {
+            continue;
+        }
+        activeEffectiveWeightSum += effectiveWeight;
+        baseShareNumerator += effectiveWeight * (1.0f - effectiveWeight);
+    }
+
+    if (activeEffectiveWeightSum == 0.0f) {
         ApplySceneDistribution(SceneCenter(scene.leftScene), SceneCenter(scene.rightScene), blend, delta, config_.range);
         return;
     }
 
-    const float gestureEditWeight = std::clamp(selectedEffectiveWeightSum, 0.0f, 1.0f);
     ApplySceneDistribution(SceneCenter(scene.leftScene), SceneCenter(scene.rightScene), blend,
-                           delta * (1.0f - gestureEditWeight), config_.range);
-
-    if (selectedEffectiveWeightSum == 0.0f) {
-        return;
-    }
+                           delta * (baseShareNumerator / activeEffectiveWeightSum), config_.range);
 
     for (std::size_t gestureIx = 0; gestureIx < group_.GestureCount(); ++gestureIx) {
-        if (!group_.Manager().GestureSelected(gestureIx)) {
-            continue;
-        }
-
         const float effectiveWeight = EffectiveGestureWeight(scene, gestureIx, blend);
         if (effectiveWeight == 0.0f) {
             continue;
         }
 
-        const float gestureDelta = delta * gestureEditWeight * (effectiveWeight / selectedEffectiveWeightSum);
+        const float gestureDelta = delta * ((effectiveWeight * effectiveWeight) / activeEffectiveWeightSum);
         ApplySceneDistribution(GestureValue(scene.leftScene, gestureIx), GestureValue(scene.rightScene, gestureIx),
                                blend, gestureDelta, config_.range);
     }
@@ -1256,13 +1267,6 @@ float Parameter::EffectiveGestureWeight(const SceneState& scene, std::size_t ges
     const float leftWeight = GestureActive(scene.leftScene, gestureIx) ? groupWeight * (1.0f - clampedBlend) : 0.0f;
     const float rightWeight = GestureActive(scene.rightScene, gestureIx) ? groupWeight * clampedBlend : 0.0f;
     return leftWeight + rightWeight;
-}
-
-void Parameter::ActivateGestureForScene(std::size_t sceneIx, std::size_t gestureIx) {
-    if (!GestureActive(sceneIx, gestureIx)) {
-        GestureValue(sceneIx, gestureIx) = SceneCenter(sceneIx);
-        SetGestureActive(sceneIx, gestureIx, true);
-    }
 }
 
 void Parameter::ResetSceneToDefault(std::size_t sceneIx, float defaultValue) {
@@ -1601,16 +1605,25 @@ void ParameterGroup::ClearGestureActiveFlagsForActiveSceneSelection(const SceneS
     }
 
     const float blend = std::clamp(scene.blend, 0.0f, 1.0f);
-    for (const auto& parameter : parameters_) {
+    auto clearParameter = [&](Parameter& parameter) {
         if (blend <= 0.0f) {
-            parameter->SetGestureActive(scene.leftScene, gestureIx, false);
+            parameter.SetGestureActive(scene.leftScene, gestureIx, false);
         } else if (blend >= 1.0f) {
-            parameter->SetGestureActive(scene.rightScene, gestureIx, false);
+            parameter.SetGestureActive(scene.rightScene, gestureIx, false);
         } else {
-            parameter->SetGestureActive(scene.leftScene, gestureIx, false);
+            parameter.SetGestureActive(scene.leftScene, gestureIx, false);
             if (scene.rightScene != scene.leftScene) {
-                parameter->SetGestureActive(scene.rightScene, gestureIx, false);
+                parameter.SetGestureActive(scene.rightScene, gestureIx, false);
             }
+        }
+    };
+
+    for (const auto& parameter : parameters_) {
+        clearParameter(*parameter);
+    }
+    for (const auto& batch : extraStorageBatches_) {
+        for (const auto& parameter : batch->parameters) {
+            clearParameter(*parameter);
         }
     }
 }

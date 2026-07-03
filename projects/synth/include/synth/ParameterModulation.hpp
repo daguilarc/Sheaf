@@ -383,7 +383,6 @@ private:
     std::size_t SceneGestureIndex(std::size_t sceneIx, std::size_t gestureIx) const;
     void ValidateSceneEndpoints(const SceneState& scene) const;
     float EffectiveGestureWeight(const SceneState& scene, std::size_t gestureIx, float blend) const;
-    void ActivateGestureForScene(std::size_t sceneIx, std::size_t gestureIx);
     void ResetSceneToDefault(std::size_t sceneIx, float defaultValue);
     void ResetModulationDepthToNeutral(const SceneState& scene);
     float ComputeRawCenter(const SceneState& scene) const;

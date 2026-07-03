@@ -173,16 +173,32 @@ WHEN the audio engine reads a parameter, THE parameter's `Get(voiceIx)` SHALL re
 - **THEN** one `ProcessLite()` call sets current center scale for voice 0 to `0.875`
 
 ### Requirement: spm-12 — Edits: HandleIncDec scene and gesture distribution
-WHEN `Parameter::HandleIncDec(delta)` is called, THE parameter SHALL apply the delta to the active scene center value when blend is at one scene endpoint, SHALL distribute the delta across the two active scene center values when blend is between scenes using the Smart Grid scene distribution formula, SHALL activate selected gestures for active scenes before editing gesture values, SHALL snapshot the parent scene value into a newly activated gesture value, and SHALL distribute the delta between active selected gesture values and base scene values according to effective gesture weights.
+WHEN `Parameter::HandleIncDec(delta)` is called, THE parameter SHALL apply the delta to the active scene center value when blend is at one scene endpoint and no gesture distribution is active, SHALL distribute the delta across the two active scene center values when blend is between scenes using the Smart Grid scene distribution formula, SHALL treat the first turn for any selected inactive gesture as an arming turn that activates the gesture for the touched scene endpoints and snapshots each touched parent scene value into the matching gesture value without applying the delta, and SHALL distribute non-arming turns between active gesture values and base scene values according to Smart Grid-style effective gesture weights regardless of current gesture selection.
 
 #### Scenario: Endpoint scene edit
 - **WHEN** blend is `0`, left scene is active, and `HandleIncDec(0.1)` is called
 - **THEN** only the left scene center value is incremented and clamped to the parameter range
 
-#### Scenario: Selected gesture activation
+#### Scenario: Selected inactive gesture arming
 - **WHEN** a selected gesture is inactive for the current scene and `HandleIncDec(delta)` is called
-- **THEN** the gesture becomes active for that scene before the edit is applied
-- **AND** its gesture value starts from the current parent scene value
+- **THEN** the gesture becomes active for that scene
+- **AND** its gesture value is copied from the current parent scene value
+- **AND** the delta is not applied to the parent scene value or to the newly activated gesture value on that call
+
+#### Scenario: Active high gesture edit after deselection
+- **WHEN** a gesture is already active for the current scene
+- **AND** the gesture is not currently selected
+- **AND** the manager-owned gesture weight is `1.0`
+- **AND** the gesture value is above the parent scene value
+- **THEN** `HandleIncDec(delta)` applies the full clamped delta to the gesture value
+- **AND** leaves the parent scene value unchanged
+
+#### Scenario: Active gesture distribution
+- **WHEN** one or more gestures are already active for the current scene selection
+- **AND** their active effective weight sum is greater than zero
+- **THEN** `HandleIncDec(delta)` distributes the gesture portion as `delta * weight * weight / activeEffectiveWeightSum` for each active gesture
+- **AND** distributes the base portion as `delta * sum(weight * (1 - weight)) / activeEffectiveWeightSum`
+- **AND** applies each portion through the scene distribution formula for the active scene blend
 
 ### Requirement: spm-13 — Revert: defaults and modulation clearing
 WHEN a parameter is reverted to default for the current scene selection, THE parameter SHALL clear all modulation-depth parameter assignments, zero current and target modulation depth arrays, set applicable scene center values to the default normalized value, set applicable scene gesture active flags to false, and update current/target center consistently with the owning group's slew and recursion-depth rules.
@@ -1661,4 +1677,3 @@ WHEN the default MF Twister MIDI controller profile is requested, THE synth para
 - **WHEN** a caller creates an MF Twister profile with fewer than six configured side-button messages
 - **THEN** the profile remains valid
 - **AND** only configured side buttons emit input messages
-
