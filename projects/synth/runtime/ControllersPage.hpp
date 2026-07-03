@@ -116,10 +116,13 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include <cmath>
 #include <cstddef>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace synth_runtime {
@@ -263,6 +266,17 @@ private:
 
     // ---- Nested renderer components -------------------------------------
 
+    // Formats `value` for display: integer fields (issue #9 -- Channel, Cc,
+    // SlotIx, Position, GestureIx, LaunchpadX/Y, WrldBldrX/Y, SceneBlend)
+    // render with no decimal places ("3", not "3.0000"); every other numeric
+    // field (currently only TurnStep) keeps the prior 4-decimal display.
+    static juce::String FormatFieldValue(synth::MidiMappingRowVM::Field field, double value) {
+        if (synth::FieldIsInteger(field)) {
+            return juce::String(static_cast<juce::int64>(std::llround(value)));
+        }
+        return juce::String(value, 4);
+    }
+
     // One editable numeric field (juce::TextEditor) bound to a single
     // (controllerIx, section, rowIx, Field) edit target. Commits on
     // focus-loss/return (binding, p4-globals.md), never per keystroke.
@@ -271,7 +285,7 @@ private:
         NumericFieldEditor(ControllersPage& page, std::size_t controllerIx, synth::MidiConfigSection section,
                            std::size_t rowIx, synth::MidiMappingRowVM::Field field, double initialValue)
             : page_(page), controllerIx_(controllerIx), section_(section), rowIx_(rowIx), field_(field) {
-            setText(juce::String(initialValue, 4), juce::dontSendNotification);
+            setText(FormatFieldValue(field_, initialValue), juce::dontSendNotification);
             setSelectAllWhenFocused(true);
             addListener(this);
         }
@@ -325,7 +339,7 @@ private:
                 // value even for the remainder of this focus session.
                 double reverted = 0.0;
                 page_.vm_.RowFieldValue(controllerIx_, section_, rowIx_, field_, reverted);
-                setText(juce::String(reverted, 4), juce::dontSendNotification);
+                setText(FormatFieldValue(field_, reverted), juce::dontSendNotification);
             }
         }
 
@@ -392,6 +406,57 @@ private:
         synth::MidiMappingRowVM::Field field_;
     };
 
+    // A ComboBox over RelativeModeCatalog() for the Encoders section's
+    // Field::RelativeMode pseudo-row (issue #9 -- Mode is a dropdown, not a
+    // numeric editor). Selection index maps 1:1 to a RelativeModeCatalog()
+    // index (item ids are 1-based, catalog indices 0-based, same convention
+    // SystemMessageFieldEditor uses above). Commits immediately on
+    // selection, same as SystemMessageFieldEditor.
+    class RelativeModeFieldEditor : public juce::ComboBox {
+    public:
+        RelativeModeFieldEditor(ControllersPage& page, std::size_t controllerIx, synth::MidiConfigSection section,
+                                std::size_t rowIx)
+            : page_(page), controllerIx_(controllerIx), section_(section), rowIx_(rowIx) {
+            const auto& catalog = synth::RelativeModeCatalog();
+            for (int ix = 0; ix < static_cast<int>(catalog.size()); ++ix) {
+                addItem(juce::String(catalog[ix]), ix + 1);
+            }
+            double current = 0.0;
+            if (page_.vm_.RowFieldValue(controllerIx_, section_, rowIx_, synth::MidiMappingRowVM::Field::RelativeMode,
+                                        current)) {
+                setSelectedId(static_cast<int>(current) + 1, juce::dontSendNotification);
+            }
+            onChange = [this] { Commit(); };
+        }
+
+    private:
+        void Commit() {
+            const int choiceIx = getSelectedId() - 1;
+            if (choiceIx < 0) {
+                return;
+            }
+            synth::MidiInstrumentConfig out;
+            std::string reason;
+            if (page_.vm_.ApplyMappingEdit(controllerIx_, section_, rowIx_, synth::MidiMappingRowVM::Field::RelativeMode,
+                                           static_cast<double>(choiceIx), out, &reason)) {
+                page_.SetStatus("OK");
+                page_.Commit(std::move(out));
+            } else {
+                page_.SetStatus(juce::String("Refused: ") + juce::String(reason));
+                double current = 0.0;
+                if (page_.vm_.RowFieldValue(controllerIx_, section_, rowIx_,
+                                            synth::MidiMappingRowVM::Field::RelativeMode, current)) {
+                    setSelectedId(static_cast<int>(current) + 1, juce::dontSendNotification);
+                }
+            }
+        }
+
+        ControllersPage& page_;
+        std::size_t controllerIx_;
+        synth::MidiConfigSection section_;
+        std::size_t rowIx_;
+    };
+
     // One mapping-list row: a label plus editors for its editableFields.
     class MappingRow : public juce::Component {
     public:
@@ -411,6 +476,12 @@ private:
                     auto editor = std::make_unique<SystemMessageFieldEditor>(page, controllerIx, rowIx, field);
                     addAndMakeVisible(*editor);
                     systemMessageEditors_.push_back(std::move(editor));
+                } else if (field == synth::MidiMappingRowVM::Field::RelativeMode) {
+                    // Issue #9: Mode is a dropdown over RelativeModeCatalog(),
+                    // not a numeric editor.
+                    auto editor = std::make_unique<RelativeModeFieldEditor>(page, controllerIx, section, rowIx);
+                    addAndMakeVisible(*editor);
+                    relativeModeEditors_.push_back(std::move(editor));
                 } else {
                     double initial = 0.0;
                     page.vm_.RowFieldValue(controllerIx, section, rowIx, field, initial);
@@ -433,6 +504,11 @@ private:
                     return true;
                 }
             }
+            for (const auto& editor : relativeModeEditors_) {
+                if (editor->hasKeyboardFocus(true)) {
+                    return true;
+                }
+            }
             return false;
         }
 
@@ -446,31 +522,132 @@ private:
             for (auto& editor : systemMessageEditors_) {
                 editor->setBounds(area.removeFromLeft(2 * kEditorWidth).reduced(2));
             }
+            for (auto& editor : relativeModeEditors_) {
+                editor->setBounds(area.removeFromLeft(2 * kEditorWidth).reduced(2));
+            }
         }
 
     private:
         juce::Label label_;
         std::vector<std::unique_ptr<NumericFieldEditor>> numericEditors_;
         std::vector<std::unique_ptr<SystemMessageFieldEditor>> systemMessageEditors_;
+        std::vector<std::unique_ptr<RelativeModeFieldEditor>> relativeModeEditors_;
+    };
+
+    // A thin divider + column-header row inserted above each contiguous run
+    // of same-`RowGroup` rows (issue #9 -- "each contiguous group of
+    // same-schema rows gets a header row naming its columns"; issue #11 --
+    // the scene-blend group additionally gets a distinct caption so it reads
+    // as clearly separate from the gesture rows above it, not just another
+    // row in the same list). Column labels come from FieldShortLabel() over
+    // the first row of the group's editableFields -- the single source of
+    // truth for both what a row renders and what its header calls it, so
+    // the two can never drift apart. Mode/Step/SceneBlend groups (which are
+    // not tabular chan/cc/... rows) show a short caption instead of/beside
+    // column labels.
+    class RowGroupHeader : public juce::Component {
+    public:
+        static constexpr int kHeight = 22;
+
+        RowGroupHeader(synth::MidiMappingRowVM::RowGroup group, const std::vector<synth::MidiMappingRowVM::Field>& fields) {
+            juce::String caption;
+            switch (group) {
+                case synth::MidiMappingRowVM::RowGroup::EncoderTurn:
+                    caption = "Turn";
+                    break;
+                case synth::MidiMappingRowVM::RowGroup::EncoderPush:
+                    caption = "Push";
+                    break;
+                case synth::MidiMappingRowVM::RowGroup::EncoderMode:
+                    caption = "Mode";
+                    break;
+                case synth::MidiMappingRowVM::RowGroup::EncoderStep:
+                    caption = "Step";
+                    break;
+                case synth::MidiMappingRowVM::RowGroup::AnalogGesture:
+                    caption = "Gestures";
+                    break;
+                case synth::MidiMappingRowVM::RowGroup::AnalogSceneBlend:
+                    caption = "Scene blend";
+                    break;
+                case synth::MidiMappingRowVM::RowGroup::System:
+                    break;
+            }
+            captionLabel_.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
+            captionLabel_.setFont(juce::Font(juce::FontOptions(13.0f, juce::Font::bold)));
+            captionLabel_.setJustificationType(juce::Justification::centredLeft);
+            captionLabel_.setText(caption, juce::dontSendNotification);
+            addAndMakeVisible(captionLabel_);
+
+            for (const synth::MidiMappingRowVM::Field field : fields) {
+                if (field == synth::MidiMappingRowVM::Field::PressMessage ||
+                    field == synth::MidiMappingRowVM::Field::ReleaseMessage ||
+                    field == synth::MidiMappingRowVM::Field::RelativeMode) {
+                    continue;  // wide combo columns aren't given a short header cell
+                }
+                auto label = std::make_unique<juce::Label>();
+                label->setColour(juce::Label::textColourId, juce::Colours::grey);
+                label->setFont(juce::Font(juce::FontOptions(12.0f)));
+                label->setJustificationType(juce::Justification::centred);
+                label->setText(synth::FieldShortLabel(field), juce::dontSendNotification);
+                addAndMakeVisible(*label);
+                columnLabels_.push_back(std::move(label));
+            }
+        }
+
+        void paint(juce::Graphics& g) override {
+            g.setColour(juce::Colours::darkgrey);
+            g.fillRect(0, 0, getWidth(), 1);
+        }
+
+        void resized() override {
+            auto area = getLocalBounds();
+            area.removeFromTop(2);  // clears the divider rule painted at y=0
+            captionLabel_.setBounds(area.removeFromLeft(juce::jmax(160, area.getWidth() / 3)));
+            constexpr int kEditorWidth = 90;
+            for (auto& label : columnLabels_) {
+                label->setBounds(area.removeFromLeft(kEditorWidth).reduced(2));
+            }
+        }
+
+    private:
+        juce::Label captionLabel_;
+        std::vector<std::unique_ptr<juce::Label>> columnLabels_;
     };
 
     // A section's body: its own inner juce::Viewport over a stack of
-    // MappingRows (binding: "Mapping lists live inside juce::Viewports").
+    // MappingRows, with a RowGroupHeader (divider + column labels) inserted
+    // wherever a row's `group` differs from the previous row's (issue #9's
+    // headers/dividers, issue #11's scene-blend separation) -- see
+    // RowGroupHeader's doc comment (binding: "Mapping lists live inside
+    // juce::Viewports").
     class SectionBody : public juce::Component {
     public:
         static constexpr int kMaxVisibleHeight = 220;
 
         SectionBody(ControllersPage& page, std::size_t controllerIx, synth::MidiConfigSection section) {
             const std::vector<synth::MidiMappingRowVM> rows = page.vm_.SectionRows(controllerIx, section);
-            rowsHost_.setSize(1, static_cast<int>(rows.size()) * MappingRow::kHeight);
-            int y = 0;
+
+            int totalHeight = 0;
+            std::optional<synth::MidiMappingRowVM::RowGroup> previousGroup;
             for (std::size_t rowIx = 0; rowIx < rows.size(); ++rowIx) {
+                if (!previousGroup.has_value() || *previousGroup != rows[rowIx].group) {
+                    auto header = std::make_unique<RowGroupHeader>(rows[rowIx].group, rows[rowIx].editableFields);
+                    rowsHost_.addAndMakeVisible(*header);
+                    layout_.push_back({header.get(), RowGroupHeader::kHeight});
+                    headers_.push_back(std::move(header));
+                    totalHeight += RowGroupHeader::kHeight;
+                    previousGroup = rows[rowIx].group;
+                }
                 auto row = std::make_unique<MappingRow>(page, controllerIx, section, rowIx, rows[rowIx]);
-                row->setBounds(0, y, rowsHost_.getWidth(), MappingRow::kHeight);
                 rowsHost_.addAndMakeVisible(*row);
-                y += MappingRow::kHeight;
+                layout_.push_back({row.get(), MappingRow::kHeight});
+                totalHeight += MappingRow::kHeight;
                 rows_.push_back(std::move(row));
             }
+            rowsHost_.setSize(1, totalHeight);
+            LayoutRows();
+
             viewport_.setViewedComponent(&rowsHost_, false);
             viewport_.setScrollBarsShown(true, false);
             addAndMakeVisible(viewport_);
@@ -490,17 +667,27 @@ private:
         void resized() override {
             viewport_.setBounds(getLocalBounds());
             rowsHost_.setSize(getWidth() - viewport_.getScrollBarThickness(), rowsHost_.getHeight());
-            int y = 0;
-            for (auto& row : rows_) {
-                row->setBounds(0, y, rowsHost_.getWidth(), MappingRow::kHeight);
-                y += MappingRow::kHeight;
-            }
+            LayoutRows();
         }
 
     private:
+        // Lays out `layout_` (headers interleaved with MappingRows, in the
+        // exact order they were constructed) top-down at the current
+        // rowsHost_ width -- shared by the constructor's initial layout and
+        // resized()'s relayout so the two can never drift apart.
+        void LayoutRows() {
+            int y = 0;
+            for (auto& [component, height] : layout_) {
+                component->setBounds(0, y, rowsHost_.getWidth(), height);
+                y += height;
+            }
+        }
+
         juce::Viewport viewport_;
         juce::Component rowsHost_;
+        std::vector<std::unique_ptr<RowGroupHeader>> headers_;
         std::vector<std::unique_ptr<MappingRow>> rows_;
+        std::vector<std::pair<juce::Component*, int>> layout_;
     };
 
     // One controller row: name/kind/status dots/device combos/disclosure,
