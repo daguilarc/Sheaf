@@ -290,14 +290,29 @@ public:
     juce::Component& AppComponent() { return engine_.Application().UIComponent(); }
 
     // The MIDI device panel (Task 3): device combo boxes, open/close
-    // buttons, and a status label. The shell (next task) hosts this
-    // component alongside AppComponent().
+    // buttons, and a status label. As of Plan 4 Task 2, the shell no longer
+    // parents this component directly (its layout moved into MainPane's
+    // content host, which shows only the app component or a single library
+    // page) -- this component stays constructed and functional, just
+    // unparented/invisible, until Plan 4 Task 3 re-homes its logic into
+    // ControllersPage.
     juce::Component& MidiPanelComponent() { return *midiPanel_; }
 
     // The audio output-device selector panel (Task 3 of Plan 4): a
     // System-Default + enumerated-output-device combo and a status label.
-    // The shell hosts this alongside MidiPanelComponent()/AppComponent().
+    // Same status as MidiPanelComponent() above (Plan 4 Task 2): unparented
+    // from the shell until Task 4 re-homes it into AudioConfigPage.
     juce::Component& AudioPanelComponent() { return *audioPanel_; }
+
+    // The current audio callback load, as a percentage (Plan 4 Task 2,
+    // sru-2 binding: "RollingMax256 of deviceManager_.getCpuUsage() * 100.0,
+    // written once per UI timer tick"). The shell's MainPane<App> writes
+    // this into its RollingMax256 from the timer-driven repaint hook (see
+    // ShellComponent::RepaintAll in Shell.hpp) -- Runtime itself has no
+    // MainPane reference (MainPane owns a Runtime reference, not the other
+    // way around), so it exposes the raw sample here rather than writing
+    // into the pane directly.
+    float DeadlineSamplePct() const { return static_cast<float>(deviceManager_.getCpuUsage() * 100.0); }
 
     // Installs the shell's repaint hook (Task 4): invoked at the end of
     // every timer tick, after the message-thread tick and before DoLog(),

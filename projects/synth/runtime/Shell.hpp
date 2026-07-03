@@ -1,32 +1,36 @@
 #pragma once
 
 // synth_runtime::ShellComponent / SYNTH_RUNTIME_MAIN — the generic JUCE
-// window chrome that wraps a synth_runtime::Runtime<App> (Task 2) and its
-// MidiPanel (Task 3) into a runnable application (Plan 3 Task 4).
+// window chrome that wraps a synth_runtime::Runtime<App> (Task 2) into a
+// runnable application (Plan 3 Task 4).
 //
-// ShellComponent hosts, top to bottom:
-//   - a patch-command row (New/Save/Save As/Load/Revert), wired straight to
-//     Runtime's patch methods; Save As and Load open a juce::FileChooser
-//     rooted at Runtime::GetEngine().Config().patchesRoot (launched async,
-//     per modern JUCE idiom — see FileChooser::launchAsync's docs: the
-//     chooser must outlive the async operation, so it's held in a
-//     member unique_ptr recreated on each launch); Save falls through to
-//     the same Save As chooser when no patch is current (Plan 4 Task 4;
-//     see the saveButton_.onClick handler below)
-//   - a patch-name label (Plan 4 Task 4) showing the current patch's
-//     directory name, or "(no patch)" — refreshed every repaint tick from
-//     runtime_.GetEngine().Patches().CurrentPatchDirectory(), the
-//     message-side PatchManager's own state (sar-16: identity is read from
-//     that owner every tick, never cached here or touched audio-side)
-//   - the MidiPanel (Task 3)
-//   - the AudioPanel (Plan 4 Task 3): output-device combo + status label
-//   - a status label reflecting the last patch command's result
-//   - the app's own UIComponent(), filling the remainder of the window
+// ShellComponent is now a thin MainPane<App> host (Plan 4 Task 2, sru-1):
+// it constructs a single MainPane<App>, `addAndMakeVisible`s it, and its
+// resized() fills the shell's full bounds with it. The former patch-command
+// row (New/Save/Save As/Load/Revert + patch name + status label), the
+// MidiPanel strip, and the AudioPanel strip are gone from this layout --
+// MainPane's sidebar (Audio/Controllers/File) and content host are the only
+// chrome now. MidiPanelComponent()/AudioPanelComponent() (Runtime.hpp)
+// still construct those components, just unparented from the shell; Tasks
+// 3-4 re-home their logic into ControllersPage/AudioConfigPage/FilePage.
+//
+// Patch-command handlers (LaunchSaveAsChooser/LaunchLoadChooser and the
+// New/Save/SaveAs/Load/Revert wiring they'd back) are intentionally NOT
+// re-created here: this task has no chrome row and no FilePage yet to host
+// them, so patch commands are the one piece of functionality with no UI for
+// the duration of this task (see the task brief: "patch commands
+// temporarily have no UI (acceptable this task only)"). Runtime<App> still
+// exposes NewPatch()/SavePatch()/SavePatchAs()/LoadPatch()/RevertPatch()
+// unchanged (Runtime.hpp) -- Task 4's FilePage is what re-wires buttons and
+// a juce::FileChooser onto them, lifting the exact chooser pattern (async
+// launch rooted at Config().patchesRoot, held in a member unique_ptr so it
+// outlives the async operation) this file used before this rework; see this
+// commit's history for that code if a reference implementation helps.
 //
 // Runtime's timer-driven repaint hook (Runtime::Start() calls it at the end
-// of every tick) is wired to repaint both the shell chrome and the app
-// component, so app UI redraws stay driven by the same single timer as the
-// engine's message-thread tick.
+// of every tick) is wired to repaint the shell, which now just means
+// repainting the MainPane (which itself repaints its sidebar and whichever
+// of {app component, open page} is currently visible).
 //
 // SYNTH_RUNTIME_MAIN(AppType) expands to a full juce::JUCEApplication
 // wrapper (ShellApplication<AppType>) plus a START_JUCE_APPLICATION
@@ -41,6 +45,7 @@
 #include "synth/PatchPersistence.hpp"
 #include "synth/ThreadId.hpp"
 
+#include "MainPane.hpp"
 #include "MidiPanel.hpp"
 #include "Runtime.hpp"
 
@@ -54,144 +59,27 @@ namespace synth_runtime {
 template <synth::SynthApplication App>
 class ShellComponent : public juce::Component {
 public:
-    explicit ShellComponent(Runtime<App>& runtime) : runtime_(runtime) {
-        newButton_.setButtonText("New");
-        newButton_.onClick = [this] { runtime_.NewPatch(); };
-        addAndMakeVisible(newButton_);
-
-        saveButton_.setButtonText("Save");
-        saveButton_.onClick = [this] {
-            // Falls through to the Save As chooser when no patch is current
-            // (Plan 4 Task 4): dispatching SavePatch() with no current patch
-            // directory is doomed to come back NeedsSaveAsPath, so check
-            // here first and open the chooser directly instead. Runtime's
-            // NeedsSaveAsPath handling (LogPatchCommand) stays as a
-            // backstop for any SavePatch that still returns it.
-            if (runtime_.GetEngine().Patches().CurrentPatchDirectory().has_value()) {
-                runtime_.SavePatch();
-            } else {
-                LaunchSaveAsChooser();
-            }
-        };
-        addAndMakeVisible(saveButton_);
-
-        saveAsButton_.setButtonText("Save As");
-        saveAsButton_.onClick = [this] { LaunchSaveAsChooser(); };
-        addAndMakeVisible(saveAsButton_);
-
-        loadButton_.setButtonText("Load");
-        loadButton_.onClick = [this] { LaunchLoadChooser(); };
-        addAndMakeVisible(loadButton_);
-
-        revertButton_.setButtonText("Revert");
-        revertButton_.onClick = [this] { runtime_.RevertPatch(); };
-        addAndMakeVisible(revertButton_);
-
-        patchNameLabel_.setColour(juce::Label::textColourId, juce::Colours::white);
-        patchNameLabel_.setJustificationType(juce::Justification::centredLeft);
-        addAndMakeVisible(patchNameLabel_);
-        RefreshPatchNameLabel();
-
-        statusLabel_.setColour(juce::Label::textColourId, juce::Colours::white);
-        statusLabel_.setJustificationType(juce::Justification::centredLeft);
-        statusLabel_.setText("Ready", juce::dontSendNotification);
-        addAndMakeVisible(statusLabel_);
-
-        addAndMakeVisible(runtime_.MidiPanelComponent());
-        addAndMakeVisible(runtime_.AudioPanelComponent());
-        addAndMakeVisible(runtime_.AppComponent());
+    explicit ShellComponent(Runtime<App>& runtime) : runtime_(runtime), mainPane_(runtime) {
+        addAndMakeVisible(mainPane_);
     }
 
     // Called by Runtime's timer-driven repaint hook (wired in the
     // application wrapper's initialise(), after Start()) once per UI frame.
+    // Writes this tick's deadline sample (sru-2 binding) before repainting,
+    // so the sidebar's rolling-max label is always current by the time this
+    // hook's repaint takes effect.
     void RepaintAll() {
-        RefreshPatchNameLabel();
-        repaint();
-        runtime_.MidiPanelComponent().repaint();
-        runtime_.AudioPanelComponent().repaint();
-        runtime_.AppComponent().repaint();
+        mainPane_.WriteDeadlineSample(runtime_.DeadlineSamplePct());
+        mainPane_.repaint();
     }
 
-    void resized() override {
-        auto area = getLocalBounds();
+    void resized() override { mainPane_.setBounds(getLocalBounds()); }
 
-        auto patchRow = area.removeFromTop(36);
-        const int patchButtonWidth = 84;
-        newButton_.setBounds(patchRow.removeFromLeft(patchButtonWidth).reduced(4));
-        saveButton_.setBounds(patchRow.removeFromLeft(patchButtonWidth).reduced(4));
-        saveAsButton_.setBounds(patchRow.removeFromLeft(patchButtonWidth).reduced(4));
-        loadButton_.setBounds(patchRow.removeFromLeft(patchButtonWidth).reduced(4));
-        revertButton_.setBounds(patchRow.removeFromLeft(patchButtonWidth).reduced(4));
-        patchNameLabel_.setBounds(patchRow.removeFromLeft(160).reduced(4));
-        statusLabel_.setBounds(patchRow.reduced(4));
-
-        runtime_.MidiPanelComponent().setBounds(area.removeFromTop(56));
-        runtime_.AudioPanelComponent().setBounds(area.removeFromTop(32));
-
-        runtime_.AppComponent().setBounds(area);
-    }
+    MainPane<App>& GetMainPane() { return mainPane_; }
 
 private:
-    void SetStatus(const juce::String& text) { statusLabel_.setText(text, juce::dontSendNotification); }
-
-    // Reads the current patch identity straight from the message-side
-    // owner (engine.Patches(), a synth::PatchManager) every call — sar-16:
-    // never cached anywhere else in the shell, never touched from the audio
-    // side. CurrentPatchDirectory() is the patch directory's full path;
-    // the label shows just its filename (the directory's own name), or
-    // "(no patch)" when no patch is current.
-    void RefreshPatchNameLabel() {
-        const auto& currentPatchDirectory = runtime_.GetEngine().Patches().CurrentPatchDirectory();
-        const juce::String text = currentPatchDirectory.has_value()
-                                       ? juce::String(currentPatchDirectory->filename().string())
-                                       : juce::String("(no patch)");
-        patchNameLabel_.setText(text, juce::dontSendNotification);
-    }
-
-    void LaunchSaveAsChooser() {
-        const juce::File root(runtime_.GetEngine().Config().patchesRoot.string());
-        fileChooser_ = std::make_unique<juce::FileChooser>("Save Patch As", root);
-        const auto flags = juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectDirectories |
-                            juce::FileBrowserComponent::warnAboutOverwriting;
-        fileChooser_->launchAsync(flags, [this](const juce::FileChooser& chooser) {
-            const juce::File result = chooser.getResult();
-            if (result == juce::File{}) {
-                return;
-            }
-            runtime_.SavePatchAs(result);
-            SetStatus("Save As requested: " + result.getFullPathName());
-        });
-    }
-
-    void LaunchLoadChooser() {
-        const juce::File root(runtime_.GetEngine().Config().patchesRoot.string());
-        fileChooser_ = std::make_unique<juce::FileChooser>("Load Patch", root);
-        const auto flags = juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories;
-        fileChooser_->launchAsync(flags, [this](const juce::FileChooser& chooser) {
-            const juce::File result = chooser.getResult();
-            if (result == juce::File{}) {
-                return;
-            }
-            runtime_.LoadPatch(result);
-            SetStatus("Load requested: " + result.getFullPathName());
-        });
-    }
-
     Runtime<App>& runtime_;
-
-    juce::TextButton newButton_;
-    juce::TextButton saveButton_;
-    juce::TextButton saveAsButton_;
-    juce::TextButton loadButton_;
-    juce::TextButton revertButton_;
-    juce::Label patchNameLabel_;
-    juce::Label statusLabel_;
-
-    // Held so the chooser survives until its async callback fires (modern
-    // JUCE idiom: FileChooser::launchAsync requires the chooser object to
-    // stay alive for the duration of the operation). Recreated on each
-    // launch, which destroys any previous (already-completed) chooser.
-    std::unique_ptr<juce::FileChooser> fileChooser_;
+    MainPane<App> mainPane_;
 };
 
 // The application wrapper instantiated by SYNTH_RUNTIME_MAIN(AppType). Owns
