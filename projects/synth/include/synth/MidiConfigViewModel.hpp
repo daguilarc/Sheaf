@@ -80,12 +80,29 @@ struct MidiMappingRowVM {
         SceneBlend,
     };
 
+    // Groups rows into contiguous runs of the same on-screen schema, so the
+    // renderer can insert a column-header row (and, for the non-tabular
+    // Encoder groups / the scene-blend group, a divider + short caption)
+    // whenever `group` changes from the previous row in a section's row
+    // list. See ColumnHeadersForGroup()/FieldShortLabel() for the header
+    // strings and FieldIsInteger() for how individual cells format.
+    enum class RowGroup {
+        EncoderTurn,
+        EncoderPush,
+        EncoderMode,
+        EncoderStep,
+        AnalogGesture,
+        AnalogSceneBlend,
+        System,
+    };
+
     std::string label;  // e.g. "turn ch0 cc12 -> slot 0 pos 3"
     // Fields this row exposes for editing, in display order. ApplyMappingEdit
     // rejects a (Field) not present in a given row's editable set (the JUCE
     // page is expected to only render controls for fields present here, but
     // the view model itself is the source of truth for what's legal).
     std::vector<Field> editableFields;
+    RowGroup group = RowGroup::System;
 };
 
 enum class MidiConfigSection { Encoders, SystemMessages, Analogs };
@@ -114,6 +131,30 @@ struct SystemMessageChoice {
 // always "None" (release-only, see above); indices are otherwise stable for
 // the lifetime of the catalog (UI code may cache them across a session).
 const std::vector<SystemMessageChoice>& SystemMessageCatalog();
+
+// True for every field the renderer formats as a plain integer (no decimal
+// places -- Channel, Cc, SlotIx, Position, GestureIx, LaunchpadX/Y,
+// WrldBldrX/Y). False for TurnStep (a decimal float) and for the
+// non-numeric-editor fields (RelativeMode, PressMessage, ReleaseMessage --
+// RelativeMode renders as a combo box via RelativeModeCatalog(), and
+// Press/ReleaseMessage render as combos over SystemMessageCatalog()).
+bool FieldIsInteger(MidiMappingRowVM::Field field);
+
+// Display names for EncoderRelativeMode, indexed by the enum's declaration
+// order (index 0 == EncoderRelativeMode::Signed7Bit, index 1 ==
+// EncoderRelativeMode::DirectionOnly). ApplyMappingEdit's Field::RelativeMode
+// case treats its `value` as an index into this catalog (see that method's
+// doc comment); RowFieldValue's Field::RelativeMode case returns the current
+// mode's index here, so a JUCE combo's selection and this catalog can never
+// drift apart.
+const std::vector<std::string>& RelativeModeCatalog();
+
+// Short column-header label for a single field ("Ch", "CC", "Slot", "Pos",
+// "Gesture", "X", "Y", "Step", "Mode", "Press", "Release") -- the single
+// source of truth the renderer uses to build a header row from a group of
+// rows' shared editableFields, so header text can never drift from what a
+// row actually renders.
+const char* FieldShortLabel(MidiMappingRowVM::Field field);
 
 struct MidiControllerRowVM {
     std::string name;
@@ -157,7 +198,10 @@ public:
     // editableFields (see SectionRows()), or PressMessage/ReleaseMessage
     // (those have no single numeric value -- callers use
     // SystemMessageChoiceIndex() instead); otherwise writes the field's
-    // current value into `out` and returns true.
+    // current value into `out` and returns true. For Field::RelativeMode,
+    // `out` is the current mode's index into RelativeModeCatalog() (not the
+    // raw enum value), matching ApplyMappingEdit's index-based contract for
+    // that field below.
     bool RowFieldValue(std::size_t controllerIx, MidiConfigSection section, std::size_t rowIx,
                        MidiMappingRowVM::Field field, double& out) const;
 
@@ -184,22 +228,26 @@ public:
     // that fail this field's validation -- see the .cpp for the exact domain
     // checked per Field: Channel 0-15, Cc 0-127, SlotIx/Position/GestureIx/
     // bank & scene indices non-negative integers, TurnStep a positive finite
-    // float, LaunchpadX/Y validated via LaunchpadShapeSupports for the row's
-    // launchpad controller, WrldBldrX/Y within WrldBldrPositionToCC's 0-7
-    // grid, PressMessage/ReleaseMessage a valid SystemMessageCatalog() index
+    // float, RelativeMode a valid RelativeModeCatalog() index, LaunchpadX/Y
+    // validated via LaunchpadShapeSupports for the row's launchpad
+    // controller, WrldBldrX/Y within WrldBldrPositionToCC's 0-7 grid,
+    // PressMessage/ReleaseMessage a valid SystemMessageCatalog() index
     // (ReleaseMessage additionally accepts index 0/"None" to clear the
     // optional release)). `value`'s domain check requires it be integral
     // (value == std::floor(value)) for every field above except TurnStep;
-    // every index-shaped field (SlotIx/Position/GestureIx/PressMessage/
-    // ReleaseMessage) additionally caps `value` at min(2^53,
+    // every index-shaped field (SlotIx/Position/GestureIx/RelativeMode/
+    // PressMessage/ReleaseMessage) additionally caps `value` at min(2^53,
     // size_t(-1)) so it survives the later static_cast<std::size_t> without
     // undefined behavior. Before any of the above, `field` is checked against
     // this row's SectionRows() editableFields and refused with "field not
-    // editable for this row" if absent -- e.g. WRLD.Bldr/Launchpad
-    // SystemMessages rows only advertise their position fields plus
-    // PressMessage/ReleaseMessage, so a direct Channel/Cc edit on them is
-    // refused here (their paired `control` address is only ever writable via
-    // the WrldBldrX/Y or LaunchpadX/Y path, keeping it consistent).
+    // editable for this row" if absent -- e.g. Launchpad SystemMessages rows
+    // only advertise their position fields plus PressMessage/ReleaseMessage,
+    // so a direct Channel/Cc edit on them is refused here (their paired
+    // `control` address is only ever writable via the LaunchpadX/Y path,
+    // keeping it consistent). WRLD.Bldr SystemMessages rows advertise
+    // Channel (writable directly against association.control->channel) plus
+    // WrldBldrX/WrldBldrY (which write both `wrldBldrPosition` and
+    // `control->cc` together) and PressMessage/ReleaseMessage.
     bool ApplyMappingEdit(std::size_t controllerIx, MidiConfigSection section, std::size_t rowIx,
                           MidiMappingRowVM::Field field, double value, MidiInstrumentConfig& out,
                           std::string* reason = nullptr) const;

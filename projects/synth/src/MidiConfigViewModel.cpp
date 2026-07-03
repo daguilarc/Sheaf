@@ -68,6 +68,73 @@ bool MessageInEquivalent(const MessageIn& a, const MessageIn& b) {
 
 }  // namespace
 
+using Field = MidiMappingRowVM::Field;
+
+bool FieldIsInteger(MidiMappingRowVM::Field field) {
+    switch (field) {
+        case Field::Channel:
+        case Field::Cc:
+        case Field::SlotIx:
+        case Field::Position:
+        case Field::GestureIx:
+        case Field::LaunchpadX:
+        case Field::LaunchpadY:
+        case Field::WrldBldrX:
+        case Field::WrldBldrY:
+        case Field::SceneBlend:
+            return true;
+        case Field::TurnStep:
+        case Field::RelativeMode:
+        case Field::PressMessage:
+        case Field::ReleaseMessage:
+            return false;
+    }
+    return false;
+}
+
+const std::vector<std::string>& RelativeModeCatalog() {
+    // Indexed by EncoderRelativeMode's declaration order (MidiController.hpp):
+    // 0 = Signed7Bit, 1 = DirectionOnly. ApplyMappingEdit's Field::RelativeMode
+    // case and RowFieldValue's Field::RelativeMode case both treat their
+    // double as/return an index into this vector, so a JUCE combo box's
+    // selection and this catalog can never drift apart -- see this
+    // function's header doc comment.
+    static const std::vector<std::string> catalog = {"Signed 7-bit", "Direction only"};
+    return catalog;
+}
+
+const char* FieldShortLabel(MidiMappingRowVM::Field field) {
+    switch (field) {
+        case Field::Channel:
+            return "Ch";
+        case Field::Cc:
+            return "CC";
+        case Field::SlotIx:
+            return "Slot";
+        case Field::Position:
+            return "Pos";
+        case Field::RelativeMode:
+            return "Mode";
+        case Field::TurnStep:
+            return "Step";
+        case Field::PressMessage:
+            return "Press";
+        case Field::ReleaseMessage:
+            return "Release";
+        case Field::LaunchpadX:
+        case Field::WrldBldrX:
+            return "X";
+        case Field::LaunchpadY:
+        case Field::WrldBldrY:
+            return "Y";
+        case Field::GestureIx:
+            return "Gesture";
+        case Field::SceneBlend:
+            return "CC";
+    }
+    return "";
+}
+
 const std::vector<SystemMessageChoice>& SystemMessageCatalog() {
     static const std::vector<SystemMessageChoice> catalog = [] {
         std::vector<SystemMessageChoice> entries;
@@ -238,11 +305,15 @@ std::string GestureLabel(const AnalogMidiMapping& mapping) {
 }
 
 std::string SceneBlendLabel(const std::optional<MidiControlAddress>& address) {
+    // Issue #11: this row must read as clearly and distinctly "Scene blend"
+    // -- not just another gesture -- since the renderer visually separates
+    // it (RowGroup::AnalogSceneBlend, a divider + caption) from the
+    // AnalogGesture rows above it.
     if (!address.has_value()) {
-        return "scene blend: (unassigned)";
+        return "Scene blend (unassigned)";
     }
     std::ostringstream oss;
-    oss << "scene blend ch" << static_cast<int>(address->channel) << " cc" << static_cast<int>(address->cc);
+    oss << "Scene blend  ch" << static_cast<int>(address->channel) << " cc" << static_cast<int>(address->cc);
     return oss.str();
 }
 
@@ -425,10 +496,14 @@ std::vector<MidiMappingRowVM> MidiConfigViewModel::SectionRows(std::size_t contr
                 row.label = std::move(label);
                 if (ref.mapping != nullptr) {
                     row.editableFields = {Field::Channel, Field::Cc, Field::SlotIx, Field::Position};
+                    row.group = ref.isPush ? MidiMappingRowVM::RowGroup::EncoderPush
+                                           : MidiMappingRowVM::RowGroup::EncoderTurn;
                 } else if (ref.isRelativeMode) {
                     row.editableFields = {Field::RelativeMode};
+                    row.group = MidiMappingRowVM::RowGroup::EncoderMode;
                 } else if (ref.isTurnStep) {
                     row.editableFields = {Field::TurnStep};
+                    row.group = MidiMappingRowVM::RowGroup::EncoderStep;
                 }
                 rows.push_back(std::move(row));
             });
@@ -440,8 +515,10 @@ std::vector<MidiMappingRowVM> MidiConfigViewModel::SectionRows(std::size_t contr
                 row.label = std::move(label);
                 if (ref.mapping != nullptr) {
                     row.editableFields = {Field::Channel, Field::Cc, Field::GestureIx};
+                    row.group = MidiMappingRowVM::RowGroup::AnalogGesture;
                 } else if (ref.isSceneBlend) {
                     row.editableFields = {Field::SceneBlend};
+                    row.group = MidiMappingRowVM::RowGroup::AnalogSceneBlend;
                 }
                 rows.push_back(std::move(row));
             });
@@ -451,11 +528,18 @@ std::vector<MidiMappingRowVM> MidiConfigViewModel::SectionRows(std::size_t contr
             for (const MidiControllerSystemMessageAssociation& association : slot.config.systemMessages) {
                 MidiMappingRowVM row;
                 row.label = SystemMessageLabel(association, slot.kind);
+                row.group = MidiMappingRowVM::RowGroup::System;
                 if (slot.kind == MidiProfileKind::Launchpad) {
                     row.editableFields = {Field::LaunchpadX, Field::LaunchpadY, Field::PressMessage,
                                           Field::ReleaseMessage};
                 } else if (slot.kind == MidiProfileKind::WrldBldr) {
-                    row.editableFields = {Field::WrldBldrX, Field::WrldBldrY, Field::PressMessage,
+                    // Issue #10: chan/x/y, so the slot's MIDI channel is
+                    // editable alongside its grid position. Channel writes
+                    // only association.control->channel (ApplyMappingEdit);
+                    // WrldBldrX/Y keep wrldBldrPosition and control->cc in
+                    // sync via WrldBldrPositionToCC, untouched by a Channel
+                    // edit.
+                    row.editableFields = {Field::Channel, Field::WrldBldrX, Field::WrldBldrY, Field::PressMessage,
                                           Field::ReleaseMessage};
                 } else {
                     row.editableFields = {Field::Channel, Field::Cc, Field::PressMessage, Field::ReleaseMessage};
@@ -527,6 +611,9 @@ bool MidiConfigViewModel::RowFieldValue(std::size_t controllerIx, MidiConfigSect
                                 break;
                         }
                     } else if (ref.isRelativeMode && field == Field::RelativeMode) {
+                        // Index into RelativeModeCatalog(), matching
+                        // ApplyMappingEdit's index-based Field::RelativeMode
+                        // contract (0 = Signed7Bit, 1 = DirectionOnly).
                         out = slot.config.encoderInput->relativeMode == EncoderRelativeMode::DirectionOnly ? 1.0
                                                                                                             : 0.0;
                     } else if (ref.isTurnStep && field == Field::TurnStep) {
@@ -789,9 +876,20 @@ bool MidiConfigViewModel::ApplyMappingEdit(std::size_t controllerIx, MidiConfigS
                     if (ref.mapping != nullptr) {
                         applyEncoderMapping(*ref.mapping);
                     } else if (ref.isRelativeMode && field == Field::RelativeMode) {
-                        slot.config.encoderInput->relativeMode =
-                            value != 0.0 ? EncoderRelativeMode::DirectionOnly : EncoderRelativeMode::Signed7Bit;
-                        fieldValid = true;
+                        // Index-based: `value` selects RelativeModeCatalog()
+                        // by position (0 = Signed7Bit, 1 = DirectionOnly --
+                        // EncoderRelativeMode's declaration order), not a raw
+                        // enum value, so a JUCE combo box can drive this
+                        // directly off its selected index.
+                        const std::vector<std::string>& catalog = RelativeModeCatalog();
+                        if (!IsIntegerInRange(value, 0.0, static_cast<double>(catalog.size() - 1))) {
+                            validationError = "relative mode index out of range";
+                        } else {
+                            const auto index = static_cast<std::size_t>(value);
+                            slot.config.encoderInput->relativeMode =
+                                index == 1 ? EncoderRelativeMode::DirectionOnly : EncoderRelativeMode::Signed7Bit;
+                            fieldValid = true;
+                        }
                     } else if (ref.isTurnStep && field == Field::TurnStep) {
                         if (!std::isfinite(value) || value <= 0.0 || value > double(std::numeric_limits<float>::max())) {
                             validationError = "turn step out of range";
@@ -864,6 +962,13 @@ bool MidiConfigViewModel::ApplyMappingEdit(std::size_t controllerIx, MidiConfigS
                 MidiControllerSystemMessageAssociation& association = slot.config.systemMessages[rowIx];
                 switch (field) {
                     case Field::Channel:
+                        // Shared by generic/MfTwister rows (plain
+                        // control-address addressing) and WRLD.Bldr rows
+                        // (issue #10: chan/x/y) -- both carry a `control`
+                        // with a channel. Writes ONLY control->channel; for
+                        // a WRLD.Bldr row, control->cc and wrldBldrPosition
+                        // stay untouched here (only the WrldBldrX/Y cases
+                        // below touch those, keeping position+cc paired).
                         if (!association.control.has_value()) {
                             break;
                         }

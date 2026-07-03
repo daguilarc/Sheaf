@@ -50,12 +50,16 @@ using synth::MidiControllerConnection;
 using synth::MidiControllerSlot;
 using synth::MidiControllerSystemMessageAssociation;
 using synth::MidiControlAddress;
+using synth::EncoderRelativeMode;
+using synth::FieldIsInteger;
+using synth::FieldShortLabel;
 using synth::MidiEndpointConnection;
 using synth::MidiEndpointRef;
 using synth::MidiEndpointStatus;
 using synth::MidiInstrumentConfig;
 using synth::MidiMappingRowVM;
 using synth::MidiProfileKind;
+using synth::RelativeModeCatalog;
 using synth::RollingMax256;
 using synth::SystemMessageCatalog;
 
@@ -368,10 +372,12 @@ TEST_CASE(RowFieldValueReadsWrldBldrSystemMessagePositions) {
     REQUIRE_TRUE(vm.RowFieldValue(0, MidiConfigSection::SystemMessages, 0, MidiMappingRowVM::Field::WrldBldrY, value));
     REQUIRE_TRUE(value == static_cast<double>(association.wrldBldrPosition->y));
 
-    // Channel/Cc are not in this row's editableFields (WRLD.Bldr system rows
-    // only advertise WrldBldrX/Y + Press/ReleaseMessage) -- must return false,
-    // mirroring ApplyMappingEditChannelOnWrldBldrSystemRowIsRefused.
-    REQUIRE_TRUE(!vm.RowFieldValue(0, MidiConfigSection::SystemMessages, 0, MidiMappingRowVM::Field::Channel, value));
+    // Channel IS in this row's editableFields (issue #10 -- WRLD.Bldr system
+    // rows expose chan/x/y), reading the paired control address's channel.
+    // Cc remains NOT advertised: the row's cc is always derived from x/y via
+    // WrldBldrPositionToCC, so there is no direct Cc editor.
+    REQUIRE_TRUE(vm.RowFieldValue(0, MidiConfigSection::SystemMessages, 0, MidiMappingRowVM::Field::Channel, value));
+    REQUIRE_TRUE(value == static_cast<double>(association.control->channel));
     REQUIRE_TRUE(!vm.RowFieldValue(0, MidiConfigSection::SystemMessages, 0, MidiMappingRowVM::Field::Cc, value));
 }
 
@@ -515,32 +521,64 @@ TEST_CASE(ApplyMappingEditRejectingIllegalEditLeavesOutUntouched) {
     REQUIRE_TRUE(out.controllers[0].name == "sentinel");
 }
 
-// --- Finding 1: ApplyMappingEdit refuses fields not in editableFields ------
+// --- Issue #10: WRLD.Bldr system rows expose an editable Channel ----------
 //
-// WRLD.Bldr system-message rows only advertise WrldBldrX/WrldBldrY/
-// PressMessage/ReleaseMessage (see SectionRows' SystemMessages case): the
-// paired `control` address is only ever writable through the WrldBldrX/Y
-// path (which keeps position and control in sync -- finding 2's fix). A
-// direct Channel/Cc edit on such a row must be refused up front by the new
-// editableFields gate, not silently ignored (which is what let the desync
-// happen before this fix): previously, Channel/Cc on a WrldBldr row fell
-// into the `if (!association.control.has_value()) break;` branch and simply
-// left `fieldValid` false without ever consulting editableFields.
-TEST_CASE(ApplyMappingEditChannelOnWrldBldrSystemRowIsRefused) {
+// WRLD.Bldr system-message rows advertise Channel alongside WrldBldrX/
+// WrldBldrY/PressMessage/ReleaseMessage (see SectionRows' SystemMessages
+// case) so the slot reads chan/x/y, matching how the association's `control`
+// carries both a channel and a (position-derived) cc. Channel edits write
+// only `association.control->channel`; `wrldBldrPosition` and `control->cc`
+// (which WrldBldrX/Y edits keep in sync via WrldBldrPositionToCC) must stay
+// untouched -- this was previously refused entirely (see git history), which
+// is now wrong: the user needs to retarget a slot's MIDI channel without
+// also having to touch its x/y position.
+TEST_CASE(ApplyMappingEditChannelOnWrldBldrSystemRowIsAccepted) {
     MidiConfigViewModel vm;
     MidiInstrumentConfig instrument = MakeFourKindInstrument();
     vm.Rebuild(instrument, MakeFourKindConnection());
 
     const auto rows = vm.SectionRows(0, MidiConfigSection::SystemMessages);
     REQUIRE_TRUE(!rows.empty());
+    bool hasChannel = false;
     for (const auto& field : rows[0].editableFields) {
-        REQUIRE_TRUE(field != MidiMappingRowVM::Field::Channel);
+        if (field == MidiMappingRowVM::Field::Channel) {
+            hasChannel = true;
+        }
     }
+    REQUIRE_TRUE(hasChannel);
+
+    const auto& before = instrument.controllers[0].config.systemMessages[0];
+    REQUIRE_TRUE(before.wrldBldrPosition.has_value());
+    const auto beforePosition = *before.wrldBldrPosition;
+    const auto beforeCc = before.control->cc;
 
     MidiInstrumentConfig out;
     std::string reason;
     const bool ok =
         vm.ApplyMappingEdit(0, MidiConfigSection::SystemMessages, 0, MidiMappingRowVM::Field::Channel, 5.0, out,
+                            &reason);
+    REQUIRE_TRUE(ok);
+    REQUIRE_TRUE(reason.empty());
+
+    const auto& after = out.controllers[0].config.systemMessages[0];
+    REQUIRE_TRUE(after.control.has_value());
+    REQUIRE_TRUE(after.control->channel == 5);
+    REQUIRE_TRUE(after.control->cc == beforeCc);
+    REQUIRE_TRUE(after.wrldBldrPosition.has_value());
+    REQUIRE_TRUE(after.wrldBldrPosition->x == beforePosition.x);
+    REQUIRE_TRUE(after.wrldBldrPosition->y == beforePosition.y);
+    REQUIRE_TRUE(after.wrldBldrPosition->channel == beforePosition.channel);
+}
+
+TEST_CASE(ApplyMappingEditChannelOnWrldBldrSystemRowValidatesRange) {
+    MidiConfigViewModel vm;
+    MidiInstrumentConfig instrument = MakeFourKindInstrument();
+    vm.Rebuild(instrument, MakeFourKindConnection());
+
+    MidiInstrumentConfig out;
+    std::string reason;
+    const bool ok =
+        vm.ApplyMappingEdit(0, MidiConfigSection::SystemMessages, 0, MidiMappingRowVM::Field::Channel, 16.0, out,
                             &reason);
     REQUIRE_TRUE(!ok);
     REQUIRE_TRUE(!reason.empty());
@@ -1163,6 +1201,174 @@ TEST_CASE(EveryEditableFieldOnEveryDefaultProfileRowSucceeds) {
             RequireEveryEditableFieldSucceeds(vm, controllerIx, section);
         }
     }
+}
+
+// --- Issue #9: FieldIsInteger / RelativeModeCatalog / FieldShortLabel -----
+
+TEST_CASE(FieldIsIntegerTrueForIndexAndCoordinateFields) {
+    using Field = MidiMappingRowVM::Field;
+    REQUIRE_TRUE(FieldIsInteger(Field::Channel));
+    REQUIRE_TRUE(FieldIsInteger(Field::Cc));
+    REQUIRE_TRUE(FieldIsInteger(Field::SlotIx));
+    REQUIRE_TRUE(FieldIsInteger(Field::Position));
+    REQUIRE_TRUE(FieldIsInteger(Field::GestureIx));
+    REQUIRE_TRUE(FieldIsInteger(Field::LaunchpadX));
+    REQUIRE_TRUE(FieldIsInteger(Field::LaunchpadY));
+    REQUIRE_TRUE(FieldIsInteger(Field::WrldBldrX));
+    REQUIRE_TRUE(FieldIsInteger(Field::WrldBldrY));
+    REQUIRE_TRUE(FieldIsInteger(Field::SceneBlend));
+}
+
+TEST_CASE(FieldIsIntegerFalseForTurnStepAndNonNumericEditorFields) {
+    using Field = MidiMappingRowVM::Field;
+    REQUIRE_TRUE(!FieldIsInteger(Field::TurnStep));
+    REQUIRE_TRUE(!FieldIsInteger(Field::RelativeMode));
+    REQUIRE_TRUE(!FieldIsInteger(Field::PressMessage));
+    REQUIRE_TRUE(!FieldIsInteger(Field::ReleaseMessage));
+}
+
+TEST_CASE(RelativeModeCatalogHasOneEntryPerEnumValueInDeclarationOrder) {
+    const std::vector<std::string>& catalog = RelativeModeCatalog();
+    REQUIRE_TRUE(catalog.size() == 2);
+    REQUIRE_TRUE(!catalog[0].empty());
+    REQUIRE_TRUE(!catalog[1].empty());
+    REQUIRE_TRUE(catalog[0] != catalog[1]);
+}
+
+TEST_CASE(RelativeModeIndexRoundTripsThroughApplyMappingEditAndRowFieldValue) {
+    MidiConfigViewModel vm;
+    MidiInstrumentConfig instrument = MakeFourKindInstrument();
+    vm.Rebuild(instrument, MakeFourKindConnection());
+
+    const auto rows = vm.SectionRows(0, MidiConfigSection::Encoders);
+    const std::size_t relativeModeRowIx = rows.size() - 2;
+
+    // Index 1 == DirectionOnly (declaration order: Signed7Bit=0,
+    // DirectionOnly=1 -- see EncoderRelativeMode in MidiController.hpp).
+    MidiInstrumentConfig out;
+    std::string reason;
+    REQUIRE_TRUE(vm.ApplyMappingEdit(0, MidiConfigSection::Encoders, relativeModeRowIx,
+                                     MidiMappingRowVM::Field::RelativeMode, 1.0, out, &reason));
+    REQUIRE_TRUE(out.controllers[0].config.encoderInput->relativeMode == EncoderRelativeMode::DirectionOnly);
+
+    MidiConfigViewModel vmAfter;
+    vmAfter.Rebuild(out, MakeFourKindConnection());
+    double value = -1.0;
+    REQUIRE_TRUE(vmAfter.RowFieldValue(0, MidiConfigSection::Encoders, relativeModeRowIx,
+                                       MidiMappingRowVM::Field::RelativeMode, value));
+    REQUIRE_TRUE(value == 1.0);
+
+    // Index 0 == Signed7Bit, round-tripping back the other way.
+    MidiInstrumentConfig out2;
+    REQUIRE_TRUE(vmAfter.ApplyMappingEdit(0, MidiConfigSection::Encoders, relativeModeRowIx,
+                                          MidiMappingRowVM::Field::RelativeMode, 0.0, out2, &reason));
+    REQUIRE_TRUE(out2.controllers[0].config.encoderInput->relativeMode == EncoderRelativeMode::Signed7Bit);
+}
+
+TEST_CASE(RelativeModeIndexOutOfRangeIsRefused) {
+    MidiConfigViewModel vm;
+    MidiInstrumentConfig instrument = MakeFourKindInstrument();
+    vm.Rebuild(instrument, MakeFourKindConnection());
+
+    const auto rows = vm.SectionRows(0, MidiConfigSection::Encoders);
+    const std::size_t relativeModeRowIx = rows.size() - 2;
+
+    MidiInstrumentConfig out;
+    std::string reason;
+    const bool ok = vm.ApplyMappingEdit(0, MidiConfigSection::Encoders, relativeModeRowIx,
+                                        MidiMappingRowVM::Field::RelativeMode, 2.0, out, &reason);
+    REQUIRE_TRUE(!ok);
+    REQUIRE_TRUE(!reason.empty());
+}
+
+TEST_CASE(FieldShortLabelIsNonEmptyAndDistinctPerField) {
+    using Field = MidiMappingRowVM::Field;
+    const std::vector<Field> fields = {
+        Field::Channel,     Field::Cc,     Field::SlotIx,      Field::Position,       Field::GestureIx,
+        Field::LaunchpadX,  Field::LaunchpadY, Field::WrldBldrX, Field::WrldBldrY,     Field::TurnStep,
+        Field::RelativeMode, Field::PressMessage, Field::ReleaseMessage, Field::SceneBlend,
+    };
+    std::vector<std::string> seen;
+    for (Field field : fields) {
+        const char* label = FieldShortLabel(field);
+        REQUIRE_TRUE(label != nullptr);
+        REQUIRE_TRUE(*label != '\0');
+        seen.push_back(label);
+    }
+    // Not asserting global uniqueness (X/Y are legitimately reused between
+    // Launchpad and WRLD.Bldr coordinate fields), just that the helper
+    // returns a real label for every field the renderer might ask about.
+}
+
+// --- Issue #9/#11: RowGroup assignment --------------------------------
+
+TEST_CASE(EncoderRowsAreGroupedTurnPushModeStep) {
+    MidiConfigViewModel vm;
+    vm.Rebuild(MakeFourKindInstrument(), MakeFourKindConnection());
+
+    const std::vector<MidiMappingRowVM> rows = vm.SectionRows(0, MidiConfigSection::Encoders);
+    // 16 turns, 16 pushes, 1 mode row, 1 step row (see
+    // WrldBldrEncoderSectionListsSixteenTurnsAndPushes for the row-count
+    // derivation).
+    REQUIRE_TRUE(rows.size() == 34);
+    for (std::size_t ix = 0; ix < 16; ++ix) {
+        REQUIRE_TRUE(rows[ix].group == MidiMappingRowVM::RowGroup::EncoderTurn);
+    }
+    for (std::size_t ix = 16; ix < 32; ++ix) {
+        REQUIRE_TRUE(rows[ix].group == MidiMappingRowVM::RowGroup::EncoderPush);
+    }
+    REQUIRE_TRUE(rows[32].group == MidiMappingRowVM::RowGroup::EncoderMode);
+    REQUIRE_TRUE(rows[33].group == MidiMappingRowVM::RowGroup::EncoderStep);
+}
+
+TEST_CASE(AnalogRowsAreGroupedGestureThenSceneBlend) {
+    MidiConfigViewModel vm;
+    vm.Rebuild(MakeFourKindInstrument(), MakeFourKindConnection());
+
+    const std::vector<MidiMappingRowVM> rows = vm.SectionRows(0, MidiConfigSection::Analogs);
+    REQUIRE_TRUE(rows.size() >= 2);
+    for (std::size_t ix = 0; ix + 1 < rows.size(); ++ix) {
+        REQUIRE_TRUE(rows[ix].group == MidiMappingRowVM::RowGroup::AnalogGesture);
+    }
+    REQUIRE_TRUE(rows.back().group == MidiMappingRowVM::RowGroup::AnalogSceneBlend);
+}
+
+TEST_CASE(SystemMessageRowsAreGroupedSystem) {
+    MidiConfigViewModel vm;
+    vm.Rebuild(MakeFourKindInstrument(), MakeFourKindConnection());
+
+    const std::vector<MidiMappingRowVM> rows = vm.SectionRows(0, MidiConfigSection::SystemMessages);
+    REQUIRE_TRUE(!rows.empty());
+    for (const auto& row : rows) {
+        REQUIRE_TRUE(row.group == MidiMappingRowVM::RowGroup::System);
+    }
+}
+
+// --- Issue #11: scene blend label reads clearly ----------------------------
+
+TEST_CASE(SceneBlendLabelReadsClearlyWhenAssignedAndUnassigned) {
+    MidiConfigViewModel vm;
+    MidiInstrumentConfig instrument = MakeFourKindInstrument();
+    vm.Rebuild(instrument, MakeFourKindConnection());
+
+    const std::vector<MidiMappingRowVM> rows = vm.SectionRows(0, MidiConfigSection::Analogs);
+    REQUIRE_TRUE(rows.back().group == MidiMappingRowVM::RowGroup::AnalogSceneBlend);
+    REQUIRE_TRUE(rows.back().label.find("Scene blend") != std::string::npos ||
+                rows.back().label.find("scene blend") != std::string::npos);
+
+    // Force an unassigned sceneBlend and confirm the label still reads
+    // clearly (not just a bare "(unassigned)" with no context).
+    MidiControllerSlot slot = instrument.controllers[0];
+    slot.config.analogInput->sceneBlend = std::nullopt;
+    MidiInstrumentConfig unassignedInstrument;
+    unassignedInstrument.controllers.push_back(slot);
+    for (std::size_t ix = 1; ix < instrument.controllers.size(); ++ix) {
+        unassignedInstrument.controllers.push_back(instrument.controllers[ix]);
+    }
+    MidiConfigViewModel vmUnassigned;
+    vmUnassigned.Rebuild(unassignedInstrument, MakeFourKindConnection());
+    const std::vector<MidiMappingRowVM> unassignedRows = vmUnassigned.SectionRows(0, MidiConfigSection::Analogs);
+    REQUIRE_TRUE(unassignedRows.back().label.find("unassigned") != std::string::npos);
 }
 
 int Main() {
