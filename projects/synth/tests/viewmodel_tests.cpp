@@ -2807,6 +2807,9 @@ TEST_CASE(GroupSupportsAddAndBlocksMatchesAddSingleAddBlockDispatch) {
                 const bool addSucceeded = vm.AddSingle(controllerIx, section, group, addOut, &addReason);
                 if (!expectAdd) {
                     REQUIRE_TRUE(!addSucceeded);
+                    // GroupSupportsAdd returns false iff the dispatch doesn't match,
+                    // so the refusal must be dispatch-level.
+                    REQUIRE_TRUE(addReason == kAddDispatchRefusal);
                 } else if (!addSucceeded) {
                     // Dispatch still agreed (matched a real branch); only a
                     // documented in-branch runtime refusal is tolerated here.
@@ -2818,6 +2821,18 @@ TEST_CASE(GroupSupportsAddAndBlocksMatchesAddSingleAddBlockDispatch) {
                 const bool blockSucceeded = vm.AddBlock(controllerIx, section, group, blockOut, &blockReason);
                 if (!expectBlocks) {
                     REQUIRE_TRUE(!blockSucceeded);
+                    // GroupSupportsBlocks returns false iff either GroupSupportsAdd is
+                    // false (dispatch mismatch, so dispatch-level refusal) OR the dispatch
+                    // matches but there's an early return like Twister system messages.
+                    // Only the first case should have dispatch-level refusal.
+                    if (expectAdd) {
+                        // Dispatch matched (it's a supported Add), so any Block failure
+                        // must be an in-branch refusal (e.g., Twister's "never block").
+                        REQUIRE_TRUE(blockReason != kBlockDispatchRefusal);
+                    } else {
+                        // Dispatch doesn't match, so it must be dispatch-level.
+                        REQUIRE_TRUE(blockReason == kBlockDispatchRefusal);
+                    }
                 } else if (!blockSucceeded) {
                     REQUIRE_TRUE(blockReason != kBlockDispatchRefusal);
                 }
