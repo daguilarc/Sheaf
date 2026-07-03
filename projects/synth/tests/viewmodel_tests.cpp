@@ -2685,6 +2685,127 @@ TEST_CASE(DeleteRowCommitNormalizes) {
     REQUIRE_TRUE(messages[1].press.sceneIx == 5);
 }
 
+// Reviewer finding 2 (D6 "renderer stays thin; all decisions from the view
+// model"): GroupSupportsAdd/GroupSupportsBlocks are the single source of
+// truth for the page's "+"/"+B" gating, replacing what used to be a
+// page-local reimplementation of AddSingle/AddBlock's own dispatch rules
+// (SectionBody::AddableGroup/GroupSupportsBlocks in ControllersPage.hpp).
+// These JUCE-free tests cover the exact matrix called out in that finding:
+// wrldbldr turn/push/system/gesture true/true; twister system true/false
+// (D4 point 3's twister-never-blocks rule); config-level groups (encoder
+// mode/step, analog scene blend) false/false; launchpad system true/true;
+// analog(wrldbldr) gesture true/true; scene-blend false/false.
+TEST_CASE(GroupSupportsAddAndBlocksMatchesAddSingleAddBlockDispatch) {
+    MidiConfigViewModel vm;
+    const MidiInstrumentConfig instrument = MakeFourKindInstrument();  // wrld=0, twist=1, pads=2, blank=3
+    const MidiConnectionState connection = MakeFourKindConnection();
+    vm.Rebuild(instrument, connection);
+
+    using Group = MidiMappingRowVM::RowGroup;
+
+    // wrldbldr (controllerIx 0): turn/push/system/gesture all true/true.
+    REQUIRE_TRUE(vm.GroupSupportsAdd(0, MidiConfigSection::Encoders, Group::EncoderTurn));
+    REQUIRE_TRUE(vm.GroupSupportsBlocks(0, MidiConfigSection::Encoders, Group::EncoderTurn));
+    REQUIRE_TRUE(vm.GroupSupportsAdd(0, MidiConfigSection::Encoders, Group::EncoderPush));
+    REQUIRE_TRUE(vm.GroupSupportsBlocks(0, MidiConfigSection::Encoders, Group::EncoderPush));
+    REQUIRE_TRUE(vm.GroupSupportsAdd(0, MidiConfigSection::SystemMessages, Group::System));
+    REQUIRE_TRUE(vm.GroupSupportsBlocks(0, MidiConfigSection::SystemMessages, Group::System));
+    REQUIRE_TRUE(vm.GroupSupportsAdd(0, MidiConfigSection::Analogs, Group::AnalogGesture));
+    REQUIRE_TRUE(vm.GroupSupportsBlocks(0, MidiConfigSection::Analogs, Group::AnalogGesture));
+
+    // twister (controllerIx 1): system supports "+" but never "+B" (D4
+    // point 3 -- AddBlock's own MfTwister refusal).
+    REQUIRE_TRUE(vm.GroupSupportsAdd(1, MidiConfigSection::SystemMessages, Group::System));
+    REQUIRE_TRUE(!vm.GroupSupportsBlocks(1, MidiConfigSection::SystemMessages, Group::System));
+
+    // config-level groups are never addable, on any controller/section:
+    // encoder mode/step and analog scene blend.
+    REQUIRE_TRUE(!vm.GroupSupportsAdd(0, MidiConfigSection::Encoders, Group::EncoderMode));
+    REQUIRE_TRUE(!vm.GroupSupportsBlocks(0, MidiConfigSection::Encoders, Group::EncoderMode));
+    REQUIRE_TRUE(!vm.GroupSupportsAdd(0, MidiConfigSection::Encoders, Group::EncoderStep));
+    REQUIRE_TRUE(!vm.GroupSupportsBlocks(0, MidiConfigSection::Encoders, Group::EncoderStep));
+    REQUIRE_TRUE(!vm.GroupSupportsAdd(0, MidiConfigSection::Analogs, Group::AnalogSceneBlend));
+    REQUIRE_TRUE(!vm.GroupSupportsBlocks(0, MidiConfigSection::Analogs, Group::AnalogSceneBlend));
+
+    // launchpad (controllerIx 2): system true/true (blocks apply -- only
+    // MfTwister is special-cased out).
+    REQUIRE_TRUE(vm.GroupSupportsAdd(2, MidiConfigSection::SystemMessages, Group::System));
+    REQUIRE_TRUE(vm.GroupSupportsBlocks(2, MidiConfigSection::SystemMessages, Group::System));
+
+    // analog (wrldbldr) gesture true/true; scene-blend false/false -- same
+    // assertions as above, restated here to match the finding's exact list.
+    REQUIRE_TRUE(vm.GroupSupportsAdd(0, MidiConfigSection::Analogs, Group::AnalogGesture));
+    REQUIRE_TRUE(vm.GroupSupportsBlocks(0, MidiConfigSection::Analogs, Group::AnalogGesture));
+    REQUIRE_TRUE(!vm.GroupSupportsAdd(0, MidiConfigSection::Analogs, Group::AnalogSceneBlend));
+    REQUIRE_TRUE(!vm.GroupSupportsBlocks(0, MidiConfigSection::Analogs, Group::AnalogSceneBlend));
+}
+
+TEST_CASE(GroupSupportsAddOutOfRangeControllerIxReturnsFalse) {
+    MidiConfigViewModel vm;
+    const MidiInstrumentConfig instrument = MakeFourKindInstrument();
+    const MidiConnectionState connection = MakeFourKindConnection();
+    vm.Rebuild(instrument, connection);
+
+    REQUIRE_TRUE(!vm.GroupSupportsAdd(99, MidiConfigSection::SystemMessages, MidiMappingRowVM::RowGroup::System));
+    REQUIRE_TRUE(!vm.GroupSupportsBlocks(99, MidiConfigSection::SystemMessages, MidiMappingRowVM::RowGroup::System));
+}
+
+// Reviewer finding 1: two rows sharing (RowGroup, Kind) can still disagree
+// on editableFields (a System Block run mixing a BankSelect block --
+// editableFields includes Field::BlockBankSlotIx -- with a SceneSelect/
+// GestureSelect block, which doesn't). This test drives that scenario
+// through the actual VM (AddBlock twice, editing the second block's message
+// type to BankSelect via ApplyMappingEdit) and asserts SectionRows() surfaces
+// the differing editableFields the renderer must split its header run on --
+// the JUCE-free half of the fix; ControllersPage.hpp's SectionBody grouping
+// loop (now comparing full editableFields vectors, not just RowGroup/Kind)
+// is exercised only by the launch smoke test, not by these headless tests.
+TEST_CASE(BankSelectBlockEditableFieldsDifferFromSceneSelectBlockInSameGroup) {
+    MidiConfigViewModel vm;
+    const MidiInstrumentConfig instrument = MakeFourKindInstrument();
+    vm.Rebuild(instrument, MakeFourKindConnection());
+
+    // "wrld"'s default profile (WrldBldrDefaultProfileConfig, see
+    // src/MidiController.cpp) already reconstructs multiple System::Block
+    // rows in the same RowGroup: a scene-select block, a bank-select block,
+    // and a gesture-select block, all contiguous in sort order and none
+    // requiring any AddBlock call here. Find one of each of the two whose
+    // editableFields the finding says must differ.
+    const std::vector<MidiMappingRowVM> rows = vm.SectionRows(0, MidiConfigSection::SystemMessages);
+    std::size_t bankBlockIx = SIZE_MAX;
+    std::size_t sceneBlockIx = SIZE_MAX;
+    for (std::size_t ix = 0; ix < rows.size(); ++ix) {
+        if (rows[ix].group != MidiMappingRowVM::RowGroup::System || rows[ix].kind != MidiMappingRowVM::Kind::Block) {
+            continue;
+        }
+        if (rows[ix].label.rfind("bank select block", 0) == 0) {
+            bankBlockIx = ix;
+        } else if (rows[ix].label.rfind("scene select block", 0) == 0) {
+            sceneBlockIx = ix;
+        }
+    }
+    REQUIRE_TRUE(bankBlockIx != SIZE_MAX);
+    REQUIRE_TRUE(sceneBlockIx != SIZE_MAX);
+
+    const std::vector<MidiMappingRowVM::Field>& bankFields = rows[bankBlockIx].editableFields;
+    const std::vector<MidiMappingRowVM::Field>& sceneFields = rows[sceneBlockIx].editableFields;
+    REQUIRE_TRUE(bankFields != sceneFields);
+    // Specifically: the BankSelect block carries BlockBankSlotIx; the
+    // SceneSelect block does not (SystemBlockEditableFields in
+    // MidiConfigViewModel.cpp only appends it for BlockableMessage::
+    // BankSelect).
+    auto hasBankSlot = [](const std::vector<MidiMappingRowVM::Field>& fields) {
+        for (const MidiMappingRowVM::Field field : fields) {
+            if (field == MidiMappingRowVM::Field::BlockBankSlotIx) {
+                return true;
+            }
+        }
+        return false;
+    };
+    REQUIRE_TRUE(!hasBankSlot(sceneFields));
+    REQUIRE_TRUE(hasBankSlot(bankFields));
+}
+
 int Main() {
     int failed = 0;
     for (const auto& test : Registry()) {

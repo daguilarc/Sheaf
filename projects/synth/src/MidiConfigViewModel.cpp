@@ -3077,4 +3077,51 @@ bool MidiConfigViewModel::AddBlock(std::size_t controllerIx, MidiConfigSection s
     }
 }
 
+// Reviewer finding 2 (D6): the renderer's "+" gating used to reimplement
+// this dispatch itself (SectionBody::AddableGroup in ControllersPage.hpp);
+// that page-local copy could silently drift from AddSingle's actual switch
+// above. This is the single source of truth both now share -- kept
+// literally adjacent to AddSingle/AddBlock so a future group added to one
+// dispatch is impossible to add to the other without touching this
+// function too.
+bool MidiConfigViewModel::GroupSupportsAdd(std::size_t controllerIx, MidiConfigSection section,
+                                           MidiMappingRowVM::RowGroup group) const {
+    if (controllerIx >= instrument_.controllers.size()) {
+        return false;
+    }
+    using RowGroup = MidiMappingRowVM::RowGroup;
+    switch (group) {
+        case RowGroup::EncoderTurn:
+        case RowGroup::EncoderPush:
+            return section == MidiConfigSection::Encoders;
+        case RowGroup::AnalogGesture:
+            return section == MidiConfigSection::Analogs;
+        case RowGroup::System:
+            return section == MidiConfigSection::SystemMessages;
+        case RowGroup::EncoderMode:
+        case RowGroup::EncoderStep:
+        case RowGroup::AnalogSceneBlend:
+            return false;
+    }
+    return false;
+}
+
+// Reviewer finding 2 (D6): the renderer's "+B" gating used to reimplement
+// this dispatch itself (SectionBody::GroupSupportsBlocks in
+// ControllersPage.hpp, including the twister no-block special case); this
+// is now the single source of truth, mirroring AddBlock's own dispatch
+// above (including its MfTwister refusal, D4 point 3) so the two can never
+// drift apart.
+bool MidiConfigViewModel::GroupSupportsBlocks(std::size_t controllerIx, MidiConfigSection section,
+                                              MidiMappingRowVM::RowGroup group) const {
+    if (!GroupSupportsAdd(controllerIx, section, group)) {
+        return false;
+    }
+    using RowGroup = MidiMappingRowVM::RowGroup;
+    if (section == MidiConfigSection::SystemMessages && group == RowGroup::System) {
+        return instrument_.controllers[controllerIx].kind != MidiProfileKind::MfTwister;
+    }
+    return true;
+}
+
 } // namespace synth

@@ -523,6 +523,38 @@ public:
     bool AddBlock(std::size_t controllerIx, MidiConfigSection section, MidiMappingRowVM::RowGroup group,
                  MidiInstrumentConfig& out, std::string* reason = nullptr) const;
 
+    // Whether AddSingle(controllerIx, section, group, ...) could possibly
+    // succeed for this (section, group) pair -- i.e. the group/section
+    // combination AddSingle's own dispatch recognizes at all (encoder turn/
+    // push, analog gesture, or system), independent of any per-controller
+    // runtime state (missing encoder/analog input, no free address, etc.,
+    // which AddSingle still checks and can still refuse for). Design D6
+    // ("renderer stays thin; all decisions from the view model"), reviewer
+    // finding 2: this is the single source of truth the renderer queries to
+    // decide whether to paint a "+" affordance at all, so that decision can
+    // never drift from AddSingle's actual dispatch the way a page-local
+    // reimplementation could. `controllerIx` is accepted (and validated) for
+    // symmetry with every other per-controller query on this class and to
+    // leave room for a future controller-kind-dependent AddSingle rule, but
+    // today's dispatch does not vary by kind -- only GroupSupportsBlocks()
+    // does (see below). Out-of-range controllerIx returns false.
+    bool GroupSupportsAdd(std::size_t controllerIx, MidiConfigSection section,
+                          MidiMappingRowVM::RowGroup group) const;
+
+    // Whether AddBlock(controllerIx, section, group, ...) could possibly
+    // succeed for this (controllerIx, section, group) -- the AddBlock
+    // counterpart to GroupSupportsAdd() above (reviewer finding 2). False
+    // for every group GroupSupportsAdd() itself refuses (a group with no
+    // individual-row affordance has no block affordance either), and also
+    // false for the System group on a MidiProfileKind::MfTwister controller
+    // (D4 point 3, "twister system messages never block" -- mirrors
+    // AddBlock's own MfTwister refusal). Unlike GroupSupportsAdd(), this
+    // DOES depend on controllerIx (to read the controller's kind), so an
+    // out-of-range controllerIx returns false here for a real reason, not
+    // just for API symmetry.
+    bool GroupSupportsBlocks(std::size_t controllerIx, MidiConfigSection section,
+                             MidiMappingRowVM::RowGroup group) const;
+
 private:
     struct ExpandState {
         bool configExpanded = false;

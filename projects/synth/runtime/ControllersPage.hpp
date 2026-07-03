@@ -278,6 +278,38 @@ private:
         return juce::String(value, 4);
     }
 
+    // Reviewer finding 3: the single source of truth for how wide ONE
+    // editable field's control is, in row-layout units (kBaseEditorWidth ==
+    // the width MappingRow::resized()/RowGroupHeader::resized()/
+    // RequiredRowWidth() all previously hardcoded as a separate local
+    // `kEditorWidth` constant, one copy per site). PressMessage/
+    // ReleaseMessage/RelativeMode/BlockMessageType each render as a wide
+    // combo box (SystemMessageFieldEditor/RelativeModeFieldEditor/
+    // BlockMessageTypeFieldEditor -- see MappingRow's constructor) and need
+    // double width; every other field (a NumericFieldEditor or a
+    // BlockToggleFieldEditor) is single-width. Used by BOTH the row's own
+    // editor layout (MappingRow::resized()) and the header's column-label
+    // layout (RowGroupHeader::resized()), plus the width budget
+    // (SectionBody::RequiredRowWidth()) that sizes the section's scrollable
+    // content to fit -- before this fix, RowGroupHeader laid out every
+    // column label at the single-width regardless of field, so a header run
+    // that included Field::BlockMessageType (a double-width row editor)
+    // rendered its OWN label too narrow and shifted every later header label
+    // in that run out of alignment with the row below it.
+    static constexpr int kBaseEditorWidth = 90;
+    static int FieldEditorWidth(synth::MidiMappingRowVM::Field field) {
+        using Field = synth::MidiMappingRowVM::Field;
+        switch (field) {
+            case Field::PressMessage:
+            case Field::ReleaseMessage:
+            case Field::RelativeMode:
+            case Field::BlockMessageType:
+                return 2 * kBaseEditorWidth;
+            default:
+                return kBaseEditorWidth;
+        }
+    }
+
     // One editable numeric field (juce::TextEditor) bound to a single
     // (controllerIx, section, rowIx, Field) edit target. Commits on
     // focus-loss/return (binding, p4-globals.md), never per keystroke.
@@ -679,21 +711,29 @@ private:
                 deleteButton_->setBounds(area.removeFromRight(kDeleteButtonWidth).reduced(2));
             }
             label_.setBounds(area.removeFromLeft(juce::jmax(160, area.getWidth() / 3)));
-            constexpr int kEditorWidth = 90;
+            // Widths come from the single shared FieldEditorWidth() helper
+            // (reviewer finding 3) so this row's editors and its
+            // RowGroupHeader's column labels can never disagree on how wide
+            // a given field is.
             for (auto& editor : numericEditors_) {
-                editor->setBounds(area.removeFromLeft(kEditorWidth).reduced(2));
+                editor->setBounds(
+                    area.removeFromLeft(FieldEditorWidth(synth::MidiMappingRowVM::Field::Channel)).reduced(2));
             }
             for (auto& editor : systemMessageEditors_) {
-                editor->setBounds(area.removeFromLeft(2 * kEditorWidth).reduced(2));
+                editor->setBounds(
+                    area.removeFromLeft(FieldEditorWidth(synth::MidiMappingRowVM::Field::PressMessage)).reduced(2));
             }
             for (auto& editor : relativeModeEditors_) {
-                editor->setBounds(area.removeFromLeft(2 * kEditorWidth).reduced(2));
+                editor->setBounds(
+                    area.removeFromLeft(FieldEditorWidth(synth::MidiMappingRowVM::Field::RelativeMode)).reduced(2));
             }
             for (auto& editor : blockMessageTypeEditors_) {
-                editor->setBounds(area.removeFromLeft(2 * kEditorWidth).reduced(2));
+                editor->setBounds(
+                    area.removeFromLeft(FieldEditorWidth(synth::MidiMappingRowVM::Field::BlockMessageType)).reduced(2));
             }
             for (auto& editor : toggleEditors_) {
-                editor->setBounds(area.removeFromLeft(kEditorWidth).reduced(2));
+                editor->setBounds(
+                    area.removeFromLeft(FieldEditorWidth(synth::MidiMappingRowVM::Field::BlockRowMajor)).reduced(2));
             }
         }
 
@@ -708,20 +748,28 @@ private:
     };
 
     // A thin divider + column-header row inserted above each contiguous run
-    // of same-(RowGroup, row Kind) rows (issue #9 -- "each contiguous group
-    // of same-schema rows gets a header row naming its columns"; issue #11 --
-    // the scene-blend group additionally gets a distinct caption so it reads
-    // as clearly separate from the gesture rows above it, not just another
-    // row in the same list). Keying on row Kind too (not just RowGroup) is
-    // task group 3's addition: a group can interleave Individual and Block
-    // runs (e.g. a WRLD.Bldr turn group that's one 16-cell block plus a
-    // stray individual turn), and a Block row's editableFields is a
-    // completely different shape from an Individual row's in the same group
-    // (BlockStartCc/BlockEndCc/BlockStartPos vs Cc/Position) -- see
-    // SectionBody's grouping loop. Column labels come from FieldShortLabel()
-    // over the run's first row's editableFields -- the single source of
-    // truth for both what a row renders and what its header calls it, so the
-    // two can never drift apart. Mode/Step/SceneBlend groups (which are not
+    // of same-(RowGroup, editableFields) rows (issue #9 -- "each contiguous
+    // group of same-schema rows gets a header row naming its columns";
+    // issue #11 -- the scene-blend group additionally gets a distinct
+    // caption so it reads as clearly separate from the gesture rows above
+    // it, not just another row in the same list). Splitting on the FULL
+    // editableFields vector (not just RowGroup/Kind) is reviewer finding 1's
+    // fix: two rows can share the same (RowGroup, Kind) yet still disagree
+    // on editableFields -- e.g. two System Block rows in the same group both
+    // have Kind::Block, but a BankSelect block's SystemBlockEditableFields()
+    // adds Field::BlockBankSlotIx that a SceneSelect/GestureSelect block in
+    // the same run doesn't have (see SystemBlockEditableFields in
+    // MidiConfigViewModel.cpp) -- splitting on Kind alone would keep both
+    // under one header sized for the first row's fields, silently mislabeling
+    // (or omitting a header cell for) the second row's extra column. A plain
+    // RowGroup/Kind change (e.g. a WRLD.Bldr turn group that's one 16-cell
+    // block plus a stray individual turn -- BlockStartCc/BlockEndCc/
+    // BlockStartPos vs Cc/Position) still splits too, since editableFields
+    // necessarily differs whenever Kind does -- see SectionBody's grouping
+    // loop. Column labels come from FieldShortLabel() over the run's first
+    // row's editableFields -- the single source of truth for both what a row
+    // renders and what its header calls it, so the two can never drift
+    // apart. Mode/Step/SceneBlend groups (which are not
     // tabular chan/cc/... rows) show a short caption instead of/beside
     // column labels.
     //
@@ -783,6 +831,16 @@ private:
                 label->setText(synth::FieldShortLabel(field), juce::dontSendNotification);
                 addAndMakeVisible(*label);
                 columnLabels_.push_back(std::move(label));
+                // Reviewer finding 3: BlockMessageType DOES get a header
+                // cell here (unlike Press/Release/RelativeMode above, which
+                // are skipped entirely) but renders as a double-width combo
+                // in the row (MappingRow's blockMessageTypeEditors_) -- this
+                // per-field width, read back in resized() below via
+                // FieldEditorWidth(), is what keeps this cell (and every
+                // later cell in the same header) aligned with the row under
+                // it instead of assuming every column label is
+                // kBaseEditorWidth wide.
+                columnFieldWidths_.push_back(FieldEditorWidth(field));
             }
 
             if (addSingle) {
@@ -813,15 +871,23 @@ private:
                 addButton_->setBounds(area.removeFromRight(kAddButtonWidth).reduced(2));
             }
             captionLabel_.setBounds(area.removeFromLeft(juce::jmax(160, area.getWidth() / 3)));
-            constexpr int kEditorWidth = 90;
-            for (auto& label : columnLabels_) {
-                label->setBounds(area.removeFromLeft(kEditorWidth).reduced(2));
+            // Reviewer finding 3: each label's width comes from the SAME
+            // per-field width (columnFieldWidths_, populated via
+            // FieldEditorWidth() in the constructor above) that
+            // MappingRow::resized() uses for that field's actual editor --
+            // previously every header cell was hardcoded to the single-width
+            // kEditorWidth even for a double-width field like
+            // Field::BlockMessageType, shifting every later header label out
+            // of alignment with the row beneath it.
+            for (std::size_t ix = 0; ix < columnLabels_.size(); ++ix) {
+                columnLabels_[ix]->setBounds(area.removeFromLeft(columnFieldWidths_[ix]).reduced(2));
             }
         }
 
     private:
         juce::Label captionLabel_;
         std::vector<std::unique_ptr<juce::Label>> columnLabels_;
+        std::vector<int> columnFieldWidths_;
         std::unique_ptr<juce::TextButton> addButton_;
         std::unique_ptr<juce::TextButton> addBlockButton_;
     };
@@ -829,37 +895,48 @@ private:
     // A section's body: its own inner juce::Viewport over a stack of
     // MappingRows, with a RowGroupHeader (divider + column labels, plus
     // "+"/"+B" on the first header of each group) inserted wherever a row's
-    // `group` OR `kind` differs from the previous row's (issue #9's
-    // headers/dividers, issue #11's scene-blend separation, task group 3's
-    // Block-run splitting) -- see RowGroupHeader's doc comment (binding:
-    // "Mapping lists live inside juce::Viewports").
+    // `group` OR its full `editableFields` differs from the previous row's
+    // (issue #9's headers/dividers, issue #11's scene-blend separation, task
+    // group 3's Block-run splitting, reviewer finding 1's editableFields-
+    // vector comparison) -- see RowGroupHeader's doc comment (binding:
+    // "Mapping lists live inside juce::Viewports"). Whether a group's "+"/
+    // "+B" affordance is shown at all is answered by the VM
+    // (GroupSupportsAdd/GroupSupportsBlocks, D6 "renderer stays thin; all
+    // decisions from the view model" -- reviewer finding 2), not by any
+    // page-local gate.
     class SectionBody : public juce::Component {
     public:
         static constexpr int kMaxVisibleHeight = 220;
 
-        SectionBody(ControllersPage& page, std::size_t controllerIx, synth::MidiConfigSection section,
-                   synth::MidiProfileKind controllerKind) {
+        SectionBody(ControllersPage& page, std::size_t controllerIx, synth::MidiConfigSection section) {
             const std::vector<synth::MidiMappingRowVM> rows = page.vm_.SectionRows(controllerIx, section);
 
             int totalHeight = 0;
             int minContentWidth = 0;
             std::optional<synth::MidiMappingRowVM::RowGroup> previousGroup;
-            std::optional<synth::MidiMappingRowVM::Kind> previousKind;
+            std::optional<std::vector<synth::MidiMappingRowVM::Field>> previousFields;
             std::set<synth::MidiMappingRowVM::RowGroup> seenGroups;
             for (std::size_t rowIx = 0; rowIx < rows.size(); ++rowIx) {
                 minContentWidth = juce::jmax(minContentWidth, RequiredRowWidth(rows[rowIx].editableFields));
                 const synth::MidiMappingRowVM::RowGroup group = rows[rowIx].group;
-                // Split on a RowGroup change (as before) OR a row-Kind change
-                // within the same group -- a group can interleave Individual
-                // and Block runs, and their editableFields shapes differ (see
-                // RowGroupHeader's doc comment above).
-                if (!previousGroup.has_value() || *previousGroup != group || *previousKind != rows[rowIx].kind) {
+                // Split on a RowGroup change OR a change in the FULL
+                // editableFields sequence within the same group (reviewer
+                // finding 1) -- schema-blind splitting on just (RowGroup,
+                // Kind) mislabels e.g. a run of System Block rows where one
+                // is a BankSelect block (editableFields includes
+                // Field::BlockBankSlotIx) and another isn't, since both share
+                // Kind::Block. Comparing the whole vector also still splits
+                // on every Kind change (Individual/Block editableFields
+                // shapes never coincide), so this subsumes the prior
+                // Kind-based check. See RowGroupHeader's doc comment above.
+                if (!previousGroup.has_value() || *previousGroup != group ||
+                    *previousFields != rows[rowIx].editableFields) {
                     const bool isFirstHeaderForGroup = seenGroups.insert(group).second;
                     std::function<void()> addSingle;
                     std::function<void()> addBlock;
-                    if (isFirstHeaderForGroup && AddableGroup(group)) {
+                    if (isFirstHeaderForGroup && page.vm_.GroupSupportsAdd(controllerIx, section, group)) {
                         addSingle = MakeAddCallback(page, controllerIx, section, group, /*asBlock=*/false);
-                        if (GroupSupportsBlocks(group, section, controllerKind)) {
+                        if (page.vm_.GroupSupportsBlocks(controllerIx, section, group)) {
                             addBlock = MakeAddCallback(page, controllerIx, section, group, /*asBlock=*/true);
                         }
                     }
@@ -870,7 +947,7 @@ private:
                     headers_.push_back(std::move(header));
                     totalHeight += RowGroupHeader::kHeight;
                     previousGroup = group;
-                    previousKind = rows[rowIx].kind;
+                    previousFields = rows[rowIx].editableFields;
                 }
                 auto row = std::make_unique<MappingRow>(page, controllerIx, section, rowIx, rows[rowIx]);
                 rowsHost_.addAndMakeVisible(*row);
@@ -929,65 +1006,17 @@ private:
         // show, rather than every editor being squashed into an unreadable
         // sliver.
         static int RequiredRowWidth(const std::vector<synth::MidiMappingRowVM::Field>& fields) {
-            using Field = synth::MidiMappingRowVM::Field;
             constexpr int kLabelWidth = 160;
-            constexpr int kEditorWidth = 90;
             constexpr int kDeleteButtonWidth = 22;
             int width = kLabelWidth + kDeleteButtonWidth;
-            for (const Field field : fields) {
-                switch (field) {
-                    case Field::PressMessage:
-                    case Field::ReleaseMessage:
-                    case Field::RelativeMode:
-                    case Field::BlockMessageType:
-                        width += 2 * kEditorWidth;
-                        break;
-                    default:
-                        width += kEditorWidth;
-                        break;
-                }
+            for (const synth::MidiMappingRowVM::Field field : fields) {
+                // Reviewer finding 3: same FieldEditorWidth() helper
+                // MappingRow::resized()/RowGroupHeader::resized() use, so
+                // this width budget can never drift from what those two
+                // actually lay out.
+                width += FieldEditorWidth(field);
             }
             return width;
-        }
-
-        // Groups AddSingle/AddBlock accept (sru-11's addable groups, per
-        // MidiConfigViewModel::AddSingle's own dispatch -- EncoderMode/
-        // EncoderStep/AnalogSceneBlend are config-level and refused there, so
-        // no page-local schema logic is invented here beyond mirroring that
-        // dispatch's group set).
-        static bool AddableGroup(synth::MidiMappingRowVM::RowGroup group) {
-            using RowGroup = synth::MidiMappingRowVM::RowGroup;
-            switch (group) {
-                case RowGroup::EncoderTurn:
-                case RowGroup::EncoderPush:
-                case RowGroup::AnalogGesture:
-                case RowGroup::System:
-                    return true;
-                case RowGroup::EncoderMode:
-                case RowGroup::EncoderStep:
-                case RowGroup::AnalogSceneBlend:
-                    return false;
-            }
-            return false;
-        }
-
-        // Where "+B" applies (sru-11: "where blocks apply") -- mirrors
-        // MidiConfigViewModel::AddBlock's own dispatch: encoder/analog groups
-        // always support blocks; the System group does too EXCEPT for
-        // MfTwister (D4 point 3, "twister system messages never block" --
-        // AddBlock refuses it with that exact reason). Asking the VM's own
-        // dispatch shape rather than hardcoding a parallel table keeps this
-        // in sync with AddBlock without a page-local schema.
-        static bool GroupSupportsBlocks(synth::MidiMappingRowVM::RowGroup group, synth::MidiConfigSection section,
-                                        synth::MidiProfileKind controllerKind) {
-            using RowGroup = synth::MidiMappingRowVM::RowGroup;
-            if (!AddableGroup(group)) {
-                return false;
-            }
-            if (section == synth::MidiConfigSection::SystemMessages && group == RowGroup::System) {
-                return controllerKind != synth::MidiProfileKind::MfTwister;
-            }
-            return true;
         }
 
         // Builds the deferred AddSingle/AddBlock click callback shared by
@@ -1121,7 +1150,7 @@ private:
                     sectionButtons_.push_back(std::move(sectionButton));
 
                     if (expanded) {
-                        auto body = std::make_unique<SectionBody>(page_, controllerIx_, section, rowVm.kind);
+                        auto body = std::make_unique<SectionBody>(page_, controllerIx_, section);
                         addAndMakeVisible(*body);
                         sectionBodies_.push_back(std::move(body));
                     } else {
