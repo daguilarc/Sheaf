@@ -15,14 +15,17 @@
 // calls Rebuild() again with the freshly reconciled state; this view model
 // never assumes its own snapshot changed just because an edit returned true.
 
+#include "synth/MidiConfigBlocks.hpp"
 #include "synth/MidiController.hpp"
 #include "synth/MidiReconcile.hpp"
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <map>
 #include <string>
+#include <variant>
 #include <vector>
 
 namespace synth {
@@ -62,6 +65,21 @@ private:
 };
 
 // One editable row rendered inside a section's mapping list.
+//
+// Presentation (midi-config-blocks change, task group 2 / design.md D5): a
+// row is one of three kinds (see `kind` below) --
+//   Individual  -- one config element (an encoder turn/push mapping, an
+//                  analog gesture mapping, or a system-message association).
+//   Block       -- a run of >=2 config elements presented/edited as a single
+//                  block (EncoderBlock/AnalogBlock/SystemBlock, per
+//                  MidiConfigBlocks.hpp); editableFields exposes the BLOCK's
+//                  own fields (BlockStartCc/BlockEndCc/... below), not the
+//                  individual cells'.
+//   ConfigLevel -- relative mode, turn step, or scene blend: exactly as
+//                  before, never deletable, never part of a block.
+// `deletable` is the renderer's single source of truth for whether to show a
+// delete ("x") affordance -- true for Individual and Block rows, false for
+// ConfigLevel (sru-11's "config-level rows are not deletable").
 struct MidiMappingRowVM {
     enum class Field {
         Channel,
@@ -85,6 +103,39 @@ struct MidiMappingRowVM {
         // else) so its 0..5 validation domain and "Btn" label can't be
         // confused with a generic Cc editor.
         Button,
+        // --- Block-row fields (kind == Block only; task group 2 / D3/D6) ---
+        // A block row's editableFields is drawn from this subset, per its
+        // form (EncoderBlock/AnalogBlock/SystemBlock 1-D generic/2-D
+        // wrldbldr-launchpad):
+        //   EncoderBlock:  Channel, BlockStartCc, BlockEndCc, SlotIx,
+        //                  BlockStartPos
+        //   AnalogBlock:   Channel, BlockStartCc, BlockEndCc, BlockStartArg
+        //                  (start gesture index)
+        //   SystemBlock generic (1-D):   BlockMessageType, Channel,
+        //                  BlockStartCc, BlockEndCc, BlockStartArg,
+        //                  BlockOutputFeedback (BlockBankSlotIx too when
+        //                  BlockMessageType == BankSelect)
+        //   SystemBlock wrldbldr/launchpad (2-D): BlockMessageType,
+        //                  [Channel -- wrldbldr only], BlockStartX,
+        //                  BlockStartY, BlockEndX, BlockEndY,
+        //                  BlockStartArg, BlockRowMajor,
+        //                  BlockOutputFeedback (+ BlockBankSlotIx for
+        //                  BankSelect)
+        // BlockStartCc/BlockEndCc reuse none of Cc's semantics (Cc means "one
+        // mapping's raw cc"); kept distinct so a block's [start,end) pair
+        // can't be confused with an individual row's single Cc field.
+        BlockStartCc,
+        BlockEndCc,
+        BlockStartPos,     // EncoderBlock::startPosition
+        BlockStartArg,     // AnalogBlock::startGestureIx or SystemBlock::startArg
+        BlockBankSlotIx,   // SystemBlock::bankSlotIx (BankSelect message type only)
+        BlockStartX,
+        BlockStartY,
+        BlockEndX,
+        BlockEndY,
+        BlockRowMajor,        // 0/1 toggle (SystemBlock::rowMajor)
+        BlockOutputFeedback,  // 0/1 toggle (SystemBlock::outputFeedback)
+        BlockMessageType,     // index into BlockableMessageCatalog() (3 entries)
     };
 
     // Groups rows into contiguous runs of the same on-screen schema, so the
@@ -103,13 +154,17 @@ struct MidiMappingRowVM {
         System,
     };
 
-    std::string label;  // e.g. "turn ch0 cc12 -> slot 0 pos 3"
+    enum class Kind { Individual, Block, ConfigLevel };
+
+    std::string label;  // e.g. "turn ch0 cc12 -> slot 0 pos 3", or a block summary
     // Fields this row exposes for editing, in display order. ApplyMappingEdit
     // rejects a (Field) not present in a given row's editable set (the JUCE
     // page is expected to only render controls for fields present here, but
     // the view model itself is the source of truth for what's legal).
     std::vector<Field> editableFields;
     RowGroup group = RowGroup::System;
+    Kind kind = Kind::Individual;
+    bool deletable = false;  // CanDeleteRow()'s cached answer for this row; see that method's doc comment
 };
 
 enum class MidiConfigSection { Encoders, SystemMessages, Analogs };
@@ -163,6 +218,15 @@ const std::vector<std::string>& RelativeModeCatalog();
 // row actually renders.
 const char* FieldShortLabel(MidiMappingRowVM::Field field);
 
+// The fixed 3-entry catalog backing a system Block row's BlockMessageType
+// field/combo -- one entry per BlockableMessage value (MidiConfigBlocks.hpp),
+// in that enum's declaration order (0 = SceneSelect, 1 = BankSelect,
+// 2 = GestureSelect). ApplyMappingEdit's BlockMessageType case and
+// RowFieldValue's BlockMessageType case both treat their double as/return an
+// index into this vector, matching the RelativeModeCatalog/
+// SystemMessageCatalog index convention used elsewhere on this page.
+const std::vector<std::string>& BlockableMessageCatalog();
+
 struct MidiControllerRowVM {
     std::string name;
     MidiProfileKind kind = MidiProfileKind::Generic;
@@ -173,6 +237,75 @@ struct MidiControllerRowVM {
     bool configExpanded = false;    // starts false
     std::vector<MidiConfigSection> sections;  // kind-filtered via KindSupport, each starts collapsed
 };
+
+// --- Presentation identity (task group 2 / design.md D5) -------------------
+//
+// Internal to MidiConfigViewModel -- exposed at namespace (not class) scope,
+// in a `detail` sub-namespace, purely so the .cpp's free helper functions
+// (identity computation/resolution, presentation building) can name these
+// types without becoming member functions; nothing outside
+// MidiConfigViewModel.cpp is expected to use `detail::` directly. A row's
+// identity survives a Rebuild() (index-shifting, canonical re-sort included)
+// by naming WHAT a row is about rather than WHERE it currently sits in the
+// config's vectors. `RowIdentity` is the discriminated union of the three
+// per-section identity shapes sru-11 specifies; `PresentationRow` pairs one
+// (or, for a block, several) identity with the row's on-screen kind/group
+// and -- for a block row -- the block struct itself (kept authoritative
+// between edits so the row can re-render without re-deriving the block from
+// its covered cells).
+namespace detail {
+
+struct EncoderIdentity {
+    bool isPush = false;
+    std::size_t slotIx = 0;
+    std::size_t position = 0;
+    friend bool operator==(const EncoderIdentity&, const EncoderIdentity&) = default;
+};
+struct AnalogIdentity {
+    bool isSceneBlend = false;  // true: the (at most one) scene-blend config-level row
+    std::size_t gestureIx = 0;  // meaningful iff !isSceneBlend
+    friend bool operator==(const AnalogIdentity&, const AnalogIdentity&) = default;
+};
+struct SystemIdentity {
+    SystemMessageSortKey key;
+    std::size_t occurrenceOrdinal = 0;  // breaks ties among cells sharing an identical key
+    friend bool operator==(const SystemIdentity&, const SystemIdentity&) = default;
+};
+using RowIdentity = std::variant<EncoderIdentity, AnalogIdentity, SystemIdentity>;
+
+struct PresentationRow {
+    MidiMappingRowVM::Kind kind = MidiMappingRowVM::Kind::Individual;
+    MidiMappingRowVM::RowGroup group = MidiMappingRowVM::RowGroup::System;
+    // Individual/ConfigLevel: exactly one identity. Block: one identity per
+    // covered cell, in the block's own traversal order (matches Expand*'s
+    // cell order) -- re-resolved as a set on Rebuild(); if ANY covered
+    // identity fails to resolve the whole block row drops (a block is one
+    // edit/delete unit, so a partially-resolved block would silently
+    // discard cells the user never asked to remove).
+    std::vector<RowIdentity> identities;
+    // Block rows only: the reconstructed (or last-committed-edit's) block
+    // struct, re-synced from the live config on every Rebuild() via the
+    // covered identities above (never grouped/re-derived from scratch --
+    // D5's "stable ... without re-grouping").
+    std::variant<std::monostate, EncoderBlock, AnalogBlock, SystemBlock> block;
+};
+
+// One controller+section's presentation: built (via MidiConfigBlocks.hpp
+// Reconstruct*) the first time SectionRows() is read for a (controllerIx,
+// section) with no existing entry here -- which in practice IS "the
+// collapsed->expanded transition" (D5), since the renderer only ever reads
+// SectionRows() for an expanded section -- and discarded by ToggleSection()
+// on an expanded->collapsed flip. While an entry exists, Rebuild()
+// re-resolves its rows' identities against the fresh snapshot (dropping
+// unresolvable ones, appending new config-only identities as individual rows
+// at their group's end) but never re-partitions rows into new blocks
+// (D5/sru-11's stability guarantee) -- see RebuildPresentationFor() in the
+// .cpp.
+struct SectionPresentation {
+    std::vector<PresentationRow> rows;
+};
+
+}  // namespace detail
 
 // JUCE-free view model driving the Controllers page. Rebuild() is a pure
 // data transform from the Plan 1 model (MidiInstrumentConfig) and the
@@ -265,6 +398,66 @@ public:
     bool SetEndpointRef(std::size_t controllerIx, bool output, MidiEndpointRef ref,
                         MidiInstrumentConfig& out) const;
 
+    // --- Presentation: add/delete (task group 2 / design.md D5, sru-11) ----
+    //
+    // Every mutating presentation method below shares ApplyMappingEdit's
+    // contract: `out` is populated (and normalized via
+    // NormalizeMidiProfileConfig, sru-9) only on success; on failure `out` is
+    // untouched and `reason` (if non-null) explains why. None of them mutate
+    // this view model's own snapshot or presentation state -- exactly like
+    // ApplyMappingEdit, the host commits `out` and calls Rebuild() again.
+    // rowIx always means "presentation-row index" (SectionRows()' index
+    // space), the same convention ApplyMappingEdit/RowFieldValue already use.
+
+    // True iff the row at (controllerIx, section, rowIx) may be deleted --
+    // Individual and Block rows (MidiMappingRowVM::Kind), never ConfigLevel
+    // (relative mode/turn step/scene blend, sru-11's "config-level rows are
+    // not deletable"). Mirrors (and is the single source of truth behind)
+    // each SectionRows() row's own cached `deletable` field -- exposed
+    // separately so the renderer can query it without re-deriving the whole
+    // row list, e.g. to decide whether to paint a delete button before the
+    // row itself is constructed.
+    bool CanDeleteRow(std::size_t controllerIx, MidiConfigSection section, std::size_t rowIx) const;
+
+    // Deletes the row at (controllerIx, section, rowIx): for an Individual
+    // row, removes that one config element (encoder mapping / analog gesture
+    // mapping / system-message association); for a Block row, removes every
+    // config element the block covers in the SAME commit (sru-11's "a block
+    // delete removes all its cells in one commit"). Refused (false, `out`
+    // untouched) for a ConfigLevel row, an out-of-range (controllerIx,
+    // rowIx), or a row whose identity no longer resolves against the current
+    // snapshot (should not happen for a freshly-read SectionRows() index,
+    // but guarded the same way every other index-taking method here is).
+    bool DeleteRow(std::size_t controllerIx, MidiConfigSection section, std::size_t rowIx, MidiInstrumentConfig& out,
+                   std::string* reason = nullptr) const;
+
+    // Appends one new Individual row to `group` with kind-appropriate
+    // "next-free" defaults (sru-11's "+": the lowest address/argument not
+    // already used by that group -- see the .cpp's NextFree* helpers for the
+    // exact per-group rule) and commits it. `group` must be one of the row
+    // groups SectionRows() can produce for `section` on this controller's
+    // kind (EncoderTurn/EncoderPush for Encoders; AnalogGesture for Analogs;
+    // System for SystemMessages -- EncoderMode/EncoderStep/AnalogSceneBlend
+    // are config-level, never addable, and refused here) -- refused
+    // otherwise. The section need not be expanded first; this call also
+    // works against a section whose presentation has not yet been built
+    // (SectionRows() lazily builds on first read either way, per this
+    // class's presentation doc comment above ToggleSection()).
+    bool AddSingle(std::size_t controllerIx, MidiConfigSection section, MidiMappingRowVM::RowGroup group,
+                   MidiInstrumentConfig& out, std::string* reason = nullptr) const;
+
+    // Appends one new Block row to `group`, seeded from the next free
+    // address/argument range (same "next free" rule AddSingle uses, sized to
+    // a small default run -- see the .cpp), committing its expansion in one
+    // shot (sru-11's "+B": "append a block, committed as its expansion").
+    // Only legal where blocks apply (EncoderTurn/EncoderPush/AnalogGesture,
+    // and System for a kind/message combination that supports blocking --
+    // never MfTwister, D4 point 3); refused with a reason otherwise
+    // (including "no room for a default block" if no >=2-wide free range
+    // exists in the group's domain).
+    bool AddBlock(std::size_t controllerIx, MidiConfigSection section, MidiMappingRowVM::RowGroup group,
+                 MidiInstrumentConfig& out, std::string* reason = nullptr) const;
+
 private:
     struct ExpandState {
         bool configExpanded = false;
@@ -274,10 +467,27 @@ private:
     ExpandState& StateFor(const std::string& name);
     const ExpandState* StateForConst(const std::string& name) const;
 
+    // Keyed by (controller name, section) so presentation survives a
+    // Rebuild() the same way ExpandState does (name-keyed, reorder-stable).
+    using PresentationKey = std::pair<std::string, MidiConfigSection>;
+
+    std::vector<MidiMappingRowVM> BuildSectionRows(std::size_t controllerIx, MidiConfigSection section) const;
+    detail::SectionPresentation& PresentationFor(std::size_t controllerIx, MidiConfigSection section) const;
+    void DiscardPresentation(const std::string& name, MidiConfigSection section);
+    void RebuildPresentationFor(detail::SectionPresentation& presentation, const MidiControllerProfileConfig& config,
+                               MidiProfileKind kind, MidiConfigSection section) const;
+
     MidiInstrumentConfig instrument_;
     MidiConnectionState connection_;
     std::vector<MidiControllerRowVM> controllers_;
     std::map<std::string, ExpandState> expandState_;
+    // `mutable`: SectionRows() is const (matching its pre-existing contract
+    // used throughout the renderer/tests) but must lazily build a missing
+    // presentation entry on first read -- the lazy-build is an internal
+    // caching detail, not an observable state change (the built presentation
+    // is a pure function of instrument_ at read time), same justification as
+    // any other const-correct memoization.
+    mutable std::map<PresentationKey, detail::SectionPresentation> presentations_;
 };
 
 } // namespace synth
