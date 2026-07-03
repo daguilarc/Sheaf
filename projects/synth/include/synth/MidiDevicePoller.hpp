@@ -89,18 +89,15 @@ private:
 
     // Request/completion sequence numbers for PollNowForTests. Each call
     // takes `target = ++forceRequested_` under the mutex, pokes the worker,
-    // and waits until `forceCompleted_ >= target`. The worker, after running
-    // a forced poll cycle, sets `forceCompleted_ = forceRequested_` (i.e.
-    // completes ALL requests pending at the time the cycle started) -- this
-    // is safe because a single poll cycle observes the current device list
-    // at the time it runs, so it satisfies every request that was pending
-    // before it started, including ones made concurrently right up until the
-    // worker re-locks the mutex after enumerate() returns. Because
-    // `forceCompleted_` is only ever assigned from `forceRequested_` (never
-    // incremented past it independently), and each PollNowForTests call
-    // reads its own `target` before the worker can have already completed
-    // it, every caller is guaranteed a cycle whose enumerate() call started
-    // strictly after their request was recorded.
+    // and waits until `forceCompleted_ >= target`. The worker captures
+    // `forceRequested_` into `requestToComplete` BEFORE calling enumerate(),
+    // then after the cycle completes, sets `forceCompleted_ = requestToComplete`
+    // (completing all requests that arrived before the cycle started). Requests
+    // that arrive during an in-flight enumerate() are not part of that cycle's
+    // completion; instead, the worker loops immediately and those requests are
+    // satisfied by the next poll cycle. This means every PollNowForTests caller
+    // is guaranteed a poll cycle whose enumerate() call started strictly after
+    // their request was recorded.
     std::uint64_t forceRequested_ = 0;
     std::uint64_t forceCompleted_ = 0;
     std::condition_variable forceDoneCv_;

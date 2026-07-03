@@ -111,15 +111,13 @@ void MidiDevicePoller::Run() {
 
         // Either the interval elapsed (spurious wake included -- wait_for's
         // predicate handles that) or a forced poll was requested; either way
-        // we run exactly one poll cycle now. Snapshot the current
-        // forceRequested_ value BEFORE calling out to enumerate() -- once
-        // this cycle finishes it satisfies every request pending as of this
-        // moment, including ones added while enumerate() was running (a
-        // single poll observes the current device list, so it answers for
-        // all of them). A concurrent PollNowForTests that arrives after we
-        // snapshot but before we complete still gets folded into this same
-        // cycle's completion, which is fine per the header's documented
-        // "complete all pending with one poll" semantics.
+        // we run exactly one poll cycle now. Capture the current forceRequested_
+        // value BEFORE calling out to enumerate() so that once enumerate()
+        // returns and we re-lock the mutex, we can complete all requests that
+        // were pending before the cycle started. Requests arriving DURING the
+        // in-flight enumerate() are not completed by this cycle; instead, the
+        // worker loops again immediately and those requests get completed by
+        // the next poll cycle.
         const std::uint64_t requestToComplete = forceRequested_;
         Enumerate enumerate = enumerate_;
         lock.unlock();
