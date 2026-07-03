@@ -72,36 +72,6 @@ std::string ReadWholeFile(const std::filesystem::path& path) {
 
 } // namespace
 
-JSON ToJSON(JsonArena& arena, const MidiEndpointState& endpoints) {
-    JSON json = arena.Object();
-    json.SetNew("inputIdentifier", arena.String(endpoints.inputIdentifier.c_str()));
-    json.SetNew("outputIdentifier", arena.String(endpoints.outputIdentifier.c_str()));
-    return json;
-}
-
-bool FromJSON(JSON json, MidiEndpointState& endpoints) {
-    if (!IsObject(json)) {
-        return false;
-    }
-    MidiEndpointState parsed;
-    const JSON input = json.Get("inputIdentifier");
-    const JSON output = json.Get("outputIdentifier");
-    if (!input.IsNull()) {
-        if (!IsString(input)) {
-            return false;
-        }
-        parsed.inputIdentifier = input.StringValue();
-    }
-    if (!output.IsNull()) {
-        if (!IsString(output)) {
-            return false;
-        }
-        parsed.outputIdentifier = output.StringValue();
-    }
-    endpoints = std::move(parsed);
-    return true;
-}
-
 JSON ToJSON(JsonArena& arena, const AudioDeviceState& state) {
     JSON json = arena.Object();
     json.SetNew("outputDeviceName", arena.String(state.outputDeviceName.c_str()));
@@ -134,8 +104,7 @@ bool FromJSON(JSON json, AudioDeviceState& state) {
 
 JSON BuildPatchJSON(JsonArena& arena, std::string_view patchName,
                     const ParameterManager& manager,
-                    const MidiControllerProfileConfig& midiProfile,
-                    const MidiEndpointState& endpoints,
+                    const MidiInstrumentConfig& instrument,
                     const AudioDeviceState& audioDevice) {
     JSON root = arena.Object();
     root.SetNew("schema", arena.String("sheaf.synth.patch"));
@@ -143,8 +112,7 @@ JSON BuildPatchJSON(JsonArena& arena, std::string_view patchName,
     const std::string patchNameText(patchName);
     root.SetNew("patchName", arena.String(patchNameText.c_str()));
     root.SetNew("parameterValues", manager.ParameterValuesToJSON(arena));
-    root.SetNew("midiProfile", ToJSON(arena, midiProfile));
-    root.SetNew("midiEndpoints", ToJSON(arena, endpoints));
+    root.SetNew("midiInstrument", ToJSON(arena, instrument));
     if (!audioDevice.outputDeviceName.empty() || !audioDevice.inputDeviceName.empty()) {
         root.SetNew("audioDevice", ToJSON(arena, audioDevice));
     }
@@ -152,8 +120,7 @@ JSON BuildPatchJSON(JsonArena& arena, std::string_view patchName,
 }
 
 bool LoadPatchJSON(JSON root, ParameterManager& manager,
-                   MidiControllerProfileConfig& midiProfile,
-                   MidiEndpointState* endpoints,
+                   MidiInstrumentConfig& instrument,
                    AudioDeviceState* audioDevice) {
     if (!ValidPatchRoot(root) || !IsString(root.Get("patchName"))) {
         return false;
@@ -164,14 +131,10 @@ bool LoadPatchJSON(JSON root, ParameterManager& manager,
         return false;
     }
 
-    MidiControllerProfileConfig parsedProfile;
-    if (!FromJSON(root.Get("midiProfile"), parsedProfile)) {
-        return false;
-    }
-
-    MidiEndpointState parsedEndpoints;
-    const JSON endpointJson = root.Get("midiEndpoints");
-    if (!endpointJson.IsNull() && !FromJSON(endpointJson, parsedEndpoints)) {
+    // midiInstrument is REQUIRED: parse into a scratch so a missing/invalid
+    // section fails without mutating the caller's instrument.
+    MidiInstrumentConfig parsedInstrument;
+    if (!FromJSON(root.Get("midiInstrument"), parsedInstrument)) {
         return false;
     }
 
@@ -183,10 +146,7 @@ bool LoadPatchJSON(JSON root, ParameterManager& manager,
 
     manager.LoadParameterValuesFromJSON(parameterValues);
 
-    midiProfile = std::move(parsedProfile);
-    if (endpoints != nullptr) {
-        *endpoints = std::move(parsedEndpoints);
-    }
+    instrument = std::move(parsedInstrument);
     if (audioDevice != nullptr && !audioDeviceJson.IsNull()) {
         *audioDevice = std::move(parsedAudioDevice);
     }
@@ -197,16 +157,9 @@ bool ValidatePatchJSON(JSON root) {
     if (!ValidPatchRoot(root) || !IsString(root.Get("patchName")) || !IsObject(root.Get("parameterValues"))) {
         return false;
     }
-    MidiControllerProfileConfig profile;
-    if (!FromJSON(root.Get("midiProfile"), profile)) {
+    MidiInstrumentConfig instrument;
+    if (!FromJSON(root.Get("midiInstrument"), instrument)) {
         return false;
-    }
-    const JSON endpointJson = root.Get("midiEndpoints");
-    if (!endpointJson.IsNull()) {
-        MidiEndpointState endpoints;
-        if (!FromJSON(endpointJson, endpoints)) {
-            return false;
-        }
     }
     const JSON audioDeviceJson = root.Get("audioDevice");
     if (!audioDeviceJson.IsNull()) {
@@ -386,21 +339,19 @@ bool MessageOutBus::Pop(MessageOut& message) {
 
 PatchApplyStatus ApplyPatchMessage(
     const PatchMessageIn& message, ParameterManager& manager,
-    MidiControllerProfileConfig& midiProfile, const MidiControllerProfileConfig& defaultMidiProfile,
-    MidiEndpointState& endpoints, const MidiEndpointState& defaultEndpoints,
+    MidiInstrumentConfig& instrument, const MidiInstrumentConfig& defaultInstrument,
     AudioDeviceState& audioDevice, const AudioDeviceState& defaultAudioDevice,
     MessageOutBus& outputBus, PatchSerializationContext context) {
     switch (message.type) {
     case PatchMessageIn::Type::LoadFromJSON:
         if (message.document.root.IsNull() ||
-            !LoadPatchJSON(message.document.root, manager, midiProfile, &endpoints, &audioDevice)) {
+            !LoadPatchJSON(message.document.root, manager, instrument, &audioDevice)) {
             return PatchApplyStatus::InvalidJSON;
         }
         return PatchApplyStatus::Applied;
     case PatchMessageIn::Type::RevertAllToDefault:
         manager.RevertAllToDefaults();
-        midiProfile = defaultMidiProfile;
-        endpoints = defaultEndpoints;
+        instrument = defaultInstrument;
         audioDevice = defaultAudioDevice;
         return PatchApplyStatus::Reverted;
     case PatchMessageIn::Type::SerializeToJSON: {
@@ -423,7 +374,7 @@ PatchApplyStatus ApplyPatchMessage(
             // PatchManager's single-pending-save gate provides this ordering
             // for all serialize requests that flow through it.
             context.arena->Reset();
-            const JSON root = BuildPatchJSON(*context.arena, patchName, manager, midiProfile, endpoints, audioDevice);
+            const JSON root = BuildPatchJSON(*context.arena, patchName, manager, instrument, audioDevice);
             if (root.IsNull() || context.arena->Failed()) {
                 return PatchApplyStatus::ArenaExhausted;
             }
@@ -441,7 +392,7 @@ PatchApplyStatus ApplyPatchMessage(
         auto arena = std::make_shared<JsonArena>(context.initialArenaCapacity);
         JSON root;
         for (;;) {
-            root = BuildPatchJSON(*arena, patchName, manager, midiProfile, endpoints, audioDevice);
+            root = BuildPatchJSON(*arena, patchName, manager, instrument, audioDevice);
             if (!root.IsNull() && !arena->Failed()) {
                 break;
             }

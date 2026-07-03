@@ -49,8 +49,8 @@ public:
         , patchManager_(&patchInputBus_, &patchOutputBus_, initialArenaCapacity)
         , midiProfileConfig_()
         , defaultMidiProfileConfig_()
-        , endpoints_()
-        , defaultEndpoints_()
+        , instrumentConfig_()
+        , defaultInstrumentConfig_()
         , audioDeviceState_()
         , defaultAudioDeviceState_()
         , lastNotifiedAudioDeviceState_()
@@ -97,9 +97,10 @@ public:
     //   3. AsyncLogQueue::s_instance.SetSampleCounterSource(&sampleCounter_)
     //   4. app_.Init(&context_)                    -- context.uiState is null here
     //   4a. snapshot defaultMidiProfileConfig_ = midiProfileConfig_,
-    //       defaultEndpoints_ = endpoints_, and defaultAudioDeviceState_ =
-    //       audioDeviceState_ (the app's Init-configured live profile/audio
-    //       device becomes the default that revert/new-patch restore to)
+    //       defaultInstrumentConfig_ = instrumentConfig_, and
+    //       defaultAudioDeviceState_ = audioDeviceState_ (the app's
+    //       Init-configured live profile/instrument/audio device becomes the
+    //       default that revert/new-patch restore to)
     //   5. manager_.CaptureDefaultControlState()
     //   6. uiState_ = manager_.CreateUIState(); context_.uiState = uiState_.get()
     //   7. RebuildMidiProcessors() (silent: this first, pre-startup-patch
@@ -142,18 +143,23 @@ public:
 
         app_.Init(&context_);
 
-        // Snapshot the app's Init-configured live MIDI profile/endpoints/audio
-        // device as the default BEFORE any startup patch applies. Without
-        // this, defaultMidiProfileConfig_/defaultEndpoints_/
-        // defaultAudioDeviceState_ stay default-constructed (empty), so a
-        // later RevertAllToDefault (via NewPatch()/RevertPatch() with no
-        // saved patch) would reset MIDI routing/audio device selection to
-        // empty instead of back to the app's real default — mirroring the
-        // old miniapp's post-construction
+        // Snapshot the app's Init-configured live MIDI profile/audio device as
+        // the default BEFORE any startup patch applies. Without this,
+        // defaultMidiProfileConfig_/defaultAudioDeviceState_ stay
+        // default-constructed (empty), so a later RevertAllToDefault (via
+        // NewPatch()/RevertPatch() with no saved patch) would reset MIDI
+        // routing/audio device selection to empty instead of back to the
+        // app's real default — mirroring the old miniapp's post-construction
         // `defaultMidiProfileConfig_ = midiProfileConfig_;` snapshot (see
         // projects/synth/miniapp/Main.cpp).
         defaultMidiProfileConfig_ = midiProfileConfig_;
-        defaultEndpoints_ = endpoints_;
+        // instrumentConfig_ has no app-level Init-time configuration point
+        // yet (no application populates it): defaultInstrumentConfig_ stays
+        // the default-constructed (zero-controller, valid) MidiInstrumentConfig
+        // snapshotted here for symmetry with the other default-state
+        // snapshots. A later task's EditInstrument entry point is expected to
+        // be the real way instrumentConfig_ gets populated in a running app.
+        defaultInstrumentConfig_ = instrumentConfig_;
         {
             // Pre-audio, single-threaded (no audio/message-thread
             // concurrency exists yet): the lock here is uncontended, but
@@ -298,9 +304,9 @@ public:
                     // stashed message. See audioDeviceStateMutex_'s doc
                     // comment.
                     const std::lock_guard<std::mutex> lock(audioDeviceStateMutex_);
-                    retryStatus = ApplyPatchMessage(stashed, manager_, midiProfileConfig_, defaultMidiProfileConfig_,
-                                                    endpoints_, defaultEndpoints_, audioDeviceState_,
-                                                    defaultAudioDeviceState_, patchOutputBus_, serializationContext_);
+                    retryStatus = ApplyPatchMessage(stashed, manager_, instrumentConfig_, defaultInstrumentConfig_,
+                                                    audioDeviceState_, defaultAudioDeviceState_, patchOutputBus_,
+                                                    serializationContext_);
                     if (!(audioDeviceState_ == lastNotifiedAudioDeviceState_)) {
                         audioDeviceChangedPending_.store(true, std::memory_order_release);
                         lastNotifiedAudioDeviceState_ = audioDeviceState_;
@@ -452,8 +458,6 @@ public:
             output->Reset();
         }
     }
-    MidiEndpointState& Endpoints() { return endpoints_; }
-
     // Host API, message-thread only: records a host-initiated audio device
     // change (e.g. a UI combo selection) into BOTH the live state and the
     // audio-side shadow (lastNotifiedAudioDeviceState_), under
@@ -607,9 +611,9 @@ private:
             PatchApplyStatus status;
             {
                 const std::lock_guard<std::mutex> lock(audioDeviceStateMutex_);
-                status = ApplyPatchMessage(patchMessage, manager_, midiProfileConfig_, defaultMidiProfileConfig_,
-                                           endpoints_, defaultEndpoints_, audioDeviceState_, defaultAudioDeviceState_,
-                                           patchOutputBus_, serializationContext_);
+                status = ApplyPatchMessage(patchMessage, manager_, instrumentConfig_, defaultInstrumentConfig_,
+                                           audioDeviceState_, defaultAudioDeviceState_, patchOutputBus_,
+                                           serializationContext_);
                 if (!(audioDeviceState_ == lastNotifiedAudioDeviceState_)) {
                     audioDeviceChangedPending_.store(true, std::memory_order_release);
                     lastNotifiedAudioDeviceState_ = audioDeviceState_;
@@ -693,16 +697,16 @@ private:
             PatchApplyStatus status;
             {
                 const std::lock_guard<std::mutex> lock(audioDeviceStateMutex_);
-                status = ApplyPatchMessage(message, manager_, midiProfileConfig_, defaultMidiProfileConfig_,
-                                           endpoints_, defaultEndpoints_, audioDeviceState_, defaultAudioDeviceState_,
-                                           patchOutputBus_, serializationContext_);
+                status = ApplyPatchMessage(message, manager_, instrumentConfig_, defaultInstrumentConfig_,
+                                           audioDeviceState_, defaultAudioDeviceState_, patchOutputBus_,
+                                           serializationContext_);
                 if (status == PatchApplyStatus::ArenaExhausted) {
                     // Pre-audio only: growing here is safe because the audio
                     // thread has not started running ProcessBlock yet.
                     serializationArena_.GrowAndReset();
-                    status = ApplyPatchMessage(message, manager_, midiProfileConfig_, defaultMidiProfileConfig_,
-                                               endpoints_, defaultEndpoints_, audioDeviceState_,
-                                               defaultAudioDeviceState_, patchOutputBus_, serializationContext_);
+                    status = ApplyPatchMessage(message, manager_, instrumentConfig_, defaultInstrumentConfig_,
+                                               audioDeviceState_, defaultAudioDeviceState_, patchOutputBus_,
+                                               serializationContext_);
                 }
             }
             if (status == PatchApplyStatus::Applied || status == PatchApplyStatus::Reverted) {
@@ -722,17 +726,30 @@ private:
     MessageOutBus patchOutputBus_;
     MidiSender midiSender_;
     PatchManager patchManager_;
+    // Single-controller MIDI profile driving actual MIDI processor
+    // construction (RebuildMidiProcessors/CreateMidiControllerProfile) and
+    // exposed to applications through AppContext::midiProfileConfig. Distinct
+    // from instrumentConfig_ below (the persisted multi-controller
+    // MidiInstrumentConfig ApplyPatchMessage threads through patch
+    // load/revert/serialize) -- the two are not yet unified; that unification
+    // is a later task's job (see the plan's EditInstrument entry point).
     MidiControllerProfileConfig midiProfileConfig_;
     // Default = the app's Init-configured profile; revert/new restore this.
     // Snapshotted from midiProfileConfig_ in Initialize(), immediately after
     // app_.Init(&context_) returns and before any startup patch applies (see
     // the Initialize() binding-order comment, step 4a).
     MidiControllerProfileConfig defaultMidiProfileConfig_;
-    MidiEndpointState endpoints_;
-    // Default = the app's Init-configured endpoints; revert/new restore
-    // this. Snapshotted from endpoints_ alongside defaultMidiProfileConfig_
-    // in Initialize().
-    MidiEndpointState defaultEndpoints_;
+    // Live MIDI instrument config threaded through ApplyPatchMessage
+    // (LoadFromJSON/RevertAllToDefault/SerializeToJSON) -- the required
+    // `midiInstrument` patch section's in-memory counterpart. No application
+    // populates this yet (no Init-time configuration point exists), so it
+    // stays a default-constructed (zero-controller, valid) MidiInstrumentConfig
+    // until a later task's EditInstrument entry point lets a host mutate it.
+    MidiInstrumentConfig instrumentConfig_;
+    // Default = instrumentConfig_ as of Initialize(), snapshotted alongside
+    // defaultMidiProfileConfig_ (see the Initialize() binding-order comment,
+    // step 4a); revert/new restore this.
+    MidiInstrumentConfig defaultInstrumentConfig_;
 
     // Guards audioDeviceState_ + lastNotifiedAudioDeviceState_ (the two
     // members below) against the data race between the message thread
@@ -773,7 +790,7 @@ private:
     AudioDeviceState audioDeviceState_;
     // Default = the app's Init-configured audio device selection; revert/new
     // restore this. Snapshotted from audioDeviceState_ alongside
-    // defaultEndpoints_ in Initialize().
+    // defaultInstrumentConfig_ in Initialize().
     AudioDeviceState defaultAudioDeviceState_;
     // Shadow of the last audioDeviceState_ value the host was told about --
     // either via audioDeviceChangedCallback_ (a patch-driven change) or via

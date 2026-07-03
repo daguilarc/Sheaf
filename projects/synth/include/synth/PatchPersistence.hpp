@@ -13,14 +13,6 @@
 
 namespace synth {
 
-struct MidiEndpointState {
-    std::string inputIdentifier;
-    std::string outputIdentifier;
-};
-
-JSON ToJSON(JsonArena& arena, const MidiEndpointState& endpoints);
-bool FromJSON(JSON json, MidiEndpointState& endpoints);
-
 struct AudioDeviceState {
     std::string outputDeviceName;  // empty = system default
     std::string inputDeviceName;   // empty = system default
@@ -40,12 +32,15 @@ bool FromJSON(JSON json, AudioDeviceState& state);
 
 JSON BuildPatchJSON(JsonArena& arena, std::string_view patchName,
                     const ParameterManager& manager,
-                    const MidiControllerProfileConfig& midiProfile,
-                    const MidiEndpointState& endpoints = {},
+                    const MidiInstrumentConfig& instrument,
                     const AudioDeviceState& audioDevice = {});
+// midiInstrument is a REQUIRED section: load fails (returns false, target
+// state left untouched -- parsed into a scratch, swapped on success only) if
+// the section is absent or fails MidiInstrumentConfig's FromJSON (unknown
+// kind, duplicate name, invalid slot, bad schema). A `midiInstrument` object
+// with zero controllers is valid and yields an empty MidiInstrumentConfig.
 bool LoadPatchJSON(JSON root, ParameterManager& manager,
-                   MidiControllerProfileConfig& midiProfile,
-                   MidiEndpointState* endpoints = nullptr,
+                   MidiInstrumentConfig& instrument,
                    AudioDeviceState* audioDevice = nullptr);
 bool ValidatePatchJSON(JSON root);
 
@@ -164,8 +159,7 @@ enum class PatchApplyStatus {
 
 PatchApplyStatus ApplyPatchMessage(
     const PatchMessageIn& message, ParameterManager& manager,
-    MidiControllerProfileConfig& midiProfile, const MidiControllerProfileConfig& defaultMidiProfile,
-    MidiEndpointState& endpoints, const MidiEndpointState& defaultEndpoints,
+    MidiInstrumentConfig& instrument, const MidiInstrumentConfig& defaultInstrument,
     AudioDeviceState& audioDevice, const AudioDeviceState& defaultAudioDevice,
     MessageOutBus& outputBus, PatchSerializationContext context = {});
 

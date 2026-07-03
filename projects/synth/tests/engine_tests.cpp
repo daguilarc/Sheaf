@@ -171,10 +171,9 @@ void WriteProbePatchVersion(const std::filesystem::path& patchDir, float probeVa
     scratchManager.CaptureDefaultControlState();
     scratchManager.ComputeAllParameters();
 
-    synth::MidiControllerProfileConfig midiProfile;
+    const synth::MidiInstrumentConfig instrument;  // zero controllers: valid
     synth::JsonArena arena(64 * 1024);
-    synth::JSON root =
-        synth::BuildPatchJSON(arena, "Probe Patch", scratchManager, midiProfile, /*endpoints=*/{}, audioDevice);
+    synth::JSON root = synth::BuildPatchJSON(arena, "Probe Patch", scratchManager, instrument, audioDevice);
     REQUIRE_TRUE(!root.IsNull());
     char* dumped = root.Dumps(JSON_ENCODE_ANY);
     REQUIRE_TRUE(dumped != nullptr);
