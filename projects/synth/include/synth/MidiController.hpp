@@ -597,6 +597,15 @@ bool FromJSON(JSON json, MidiControllerSystemMessageAssociation& value);
 JSON ToJSON(JsonArena& arena, const MidiControllerProfileConfig& value);
 bool FromJSON(JSON json, MidiControllerProfileConfig& value);
 
+inline constexpr const char* kMidiInstrumentSchema = "synth.midiInstrument";
+inline constexpr int kMidiInstrumentSchemaVersion = 1;
+JSON ToJSON(JsonArena& arena, const MidiEndpointRef& value);
+bool FromJSON(JSON json, MidiEndpointRef& value);
+JSON ToJSON(JsonArena& arena, const MidiControllerSlot& value);
+bool FromJSON(JSON json, MidiControllerSlot& value);
+JSON ToJSON(JsonArena& arena, const MidiInstrumentConfig& instrument);
+bool FromJSON(JSON json, MidiInstrumentConfig& out); // false: unknown kind, dup name, invalid slot, bad schema
+
 std::uint8_t EncoderPositionToCC(std::size_t position);
 std::uint8_t WrldBldrPositionToCC(std::uint8_t x, std::uint8_t y);
 std::uint8_t ColorToTwister(Color color);

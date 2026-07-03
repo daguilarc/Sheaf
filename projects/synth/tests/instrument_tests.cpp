@@ -363,6 +363,262 @@ TEST_CASE(MidiEndpointRefIsConfigured) {
     REQUIRE_TRUE(withName.IsConfigured());
 }
 
+MidiControllerSlot MakeWrldBldrSlot(const char* name) {
+    MidiControllerSlot slot;
+    slot.name = name;
+    slot.kind = MidiProfileKind::WrldBldr;
+    slot.config = synth::WrldBldrDefaultProfileConfig();
+    slot.input.identifier = "wrldbldr-in-id";
+    slot.input.name = "WRLD.Bldr In";
+    slot.output.identifier = "wrldbldr-out-id";
+    slot.output.name = "WRLD.Bldr Out";
+    return slot;
+}
+
+MidiControllerSlot MakeTwisterSlot(const char* name) {
+    MidiControllerSlot slot;
+    slot.name = name;
+    slot.kind = MidiProfileKind::MfTwister;
+    slot.config = synth::MfTwisterDefaultProfileConfig();
+    slot.input.identifier = "twister-in-id";
+    slot.input.name = "MF Twister In";
+    slot.output.identifier = "twister-out-id";
+    slot.output.name = "MF Twister Out";
+    return slot;
+}
+
+MidiControllerSlot MakeLaunchpadSlot(const char* name) {
+    MidiControllerSlot slot;
+    slot.name = name;
+    slot.kind = MidiProfileKind::Launchpad;
+    slot.config = synth::LaunchpadDefaultProfileConfig();
+    // Endpoint refs intentionally left unconfigured (empty identifier + name)
+    // to cover the "unconfigured endpoint round-trips" case.
+    return slot;
+}
+
+TEST_CASE(InstrumentJsonRoundTripsControllersInOrder) {
+    MidiInstrumentConfig instrument;
+    REQUIRE_TRUE(instrument.AddController(MakeWrldBldrSlot("wrld")));
+    REQUIRE_TRUE(instrument.AddController(MakeTwisterSlot("twist")));
+    REQUIRE_TRUE(instrument.AddController(MakeLaunchpadSlot("left pad")));
+    REQUIRE_TRUE(instrument.AddController(MakeLaunchpadSlot("right pad")));
+
+    synth::JsonArena arena(1024 * 1024);
+    const synth::JSON json = synth::ToJSON(arena, instrument);
+    REQUIRE_TRUE(!json.IsNull());
+
+    MidiInstrumentConfig loaded;
+    REQUIRE_TRUE(synth::FromJSON(json, loaded));
+
+    REQUIRE_TRUE(loaded.controllers.size() == 4);
+    REQUIRE_TRUE(loaded.controllers[0].name == "wrld");
+    REQUIRE_TRUE(loaded.controllers[0].kind == MidiProfileKind::WrldBldr);
+    REQUIRE_TRUE(loaded.controllers[0].input.identifier == "wrldbldr-in-id");
+    REQUIRE_TRUE(loaded.controllers[0].input.name == "WRLD.Bldr In");
+    REQUIRE_TRUE(loaded.controllers[0].output.identifier == "wrldbldr-out-id");
+    REQUIRE_TRUE(loaded.controllers[0].output.name == "WRLD.Bldr Out");
+    REQUIRE_TRUE(loaded.controllers[0].config.encoderInput.has_value());
+    REQUIRE_TRUE(loaded.controllers[0].config.encoderInput->turns.size() ==
+                 instrument.controllers[0].config.encoderInput->turns.size());
+
+    REQUIRE_TRUE(loaded.controllers[1].name == "twist");
+    REQUIRE_TRUE(loaded.controllers[1].kind == MidiProfileKind::MfTwister);
+    REQUIRE_TRUE(loaded.controllers[1].input.identifier == "twister-in-id");
+    REQUIRE_TRUE(loaded.controllers[1].output.name == "MF Twister Out");
+
+    REQUIRE_TRUE(loaded.controllers[2].name == "left pad");
+    REQUIRE_TRUE(loaded.controllers[2].kind == MidiProfileKind::Launchpad);
+    // Unconfigured endpoint refs (empty identifier + name) round-trip as unconfigured.
+    REQUIRE_TRUE(!loaded.controllers[2].input.IsConfigured());
+    REQUIRE_TRUE(!loaded.controllers[2].output.IsConfigured());
+
+    REQUIRE_TRUE(loaded.controllers[3].name == "right pad");
+    REQUIRE_TRUE(loaded.controllers[3].kind == MidiProfileKind::Launchpad);
+}
+
+TEST_CASE(InstrumentJsonEmptyControllersRoundTrips) {
+    MidiInstrumentConfig instrument;
+
+    synth::JsonArena arena(1024 * 1024);
+    const synth::JSON json = synth::ToJSON(arena, instrument);
+    REQUIRE_TRUE(!json.IsNull());
+
+    MidiInstrumentConfig loaded;
+    REQUIRE_TRUE(synth::FromJSON(json, loaded));
+    REQUIRE_TRUE(loaded.controllers.empty());
+}
+
+TEST_CASE(InstrumentJsonRejectsUnknownKind) {
+    synth::JsonArena arena(1024 * 1024);
+    synth::JSON controller = arena.Object();
+    controller.SetNew("name", arena.String("pad"));
+    controller.SetNew("kind", arena.String("theremin"));
+    controller.SetNew("input", synth::ToJSON(arena, MidiEndpointRef{}));
+    controller.SetNew("output", synth::ToJSON(arena, MidiEndpointRef{}));
+    controller.SetNew("profile", synth::ToJSON(arena, MidiControllerProfileConfig{}));
+
+    synth::JSON controllers = arena.Array();
+    controllers.AppendNew(controller);
+
+    synth::JSON json = arena.Object();
+    json.SetNew("schema", arena.String(synth::kMidiInstrumentSchema));
+    json.SetNew("schemaVersion", arena.Integer(synth::kMidiInstrumentSchemaVersion));
+    json.SetNew("controllers", controllers);
+
+    MidiInstrumentConfig target;
+    REQUIRE_TRUE(target.AddController(MakeGenericSlot("existing")));
+    REQUIRE_TRUE(!synth::FromJSON(json, target));
+    REQUIRE_TRUE(target.controllers.size() == 1);
+    REQUIRE_TRUE(target.controllers[0].name == "existing");
+}
+
+TEST_CASE(InstrumentJsonRejectsDuplicateNames) {
+    MidiInstrumentConfig instrument;
+    REQUIRE_TRUE(instrument.AddController(MakeGenericSlot("pad")));
+
+    synth::JsonArena arena(1024 * 1024);
+    synth::JSON controller = synth::ToJSON(arena, instrument.controllers[0]);
+    synth::JSON duplicate = synth::ToJSON(arena, instrument.controllers[0]);
+
+    synth::JSON controllers = arena.Array();
+    controllers.AppendNew(controller);
+    controllers.AppendNew(duplicate);
+
+    synth::JSON json = arena.Object();
+    json.SetNew("schema", arena.String(synth::kMidiInstrumentSchema));
+    json.SetNew("schemaVersion", arena.Integer(synth::kMidiInstrumentSchemaVersion));
+    json.SetNew("controllers", controllers);
+
+    MidiInstrumentConfig target;
+    REQUIRE_TRUE(target.AddController(MakeGenericSlot("existing")));
+    REQUIRE_TRUE(!synth::FromJSON(json, target));
+    REQUIRE_TRUE(target.controllers.size() == 1);
+    REQUIRE_TRUE(target.controllers[0].name == "existing");
+}
+
+// Builds a "profile" JSON object directly (bypassing MidiControllerProfileConfig's
+// ToJSON) so tests can construct shapes that SlotValidForKind must reject on load
+// — the in-memory types can't represent these illegal combinations directly.
+// NOTE: JSON::Get returns the first match for a repeated key, so each field must be
+// set exactly once here.
+synth::JSON MakeProfileJson(synth::JsonArena& arena, synth::JSON encoderInput, synth::JSON systemMessages) {
+    synth::JSON profile = arena.Object();
+    profile.SetNew("schema", arena.String("synth.midiControllerProfileConfig"));
+    profile.SetNew("schemaVersion", arena.Integer(1));
+    profile.SetNew("encoderInput", encoderInput);
+    profile.SetNew("encoderOutput", arena.Null());
+    profile.SetNew("analogInput", arena.Null());
+    profile.SetNew("systemMessages", systemMessages);
+    return profile;
+}
+
+synth::JSON MakeProfileJsonWithSystemMessages(synth::JsonArena& arena, synth::JSON systemMessages) {
+    return MakeProfileJson(arena, arena.Null(), systemMessages);
+}
+
+synth::JSON MakeInstrumentControllerJson(synth::JsonArena& arena, const char* name, const char* kind,
+                                         synth::JSON profile) {
+    synth::JSON controller = arena.Object();
+    controller.SetNew("name", arena.String(name));
+    controller.SetNew("kind", arena.String(kind));
+    controller.SetNew("input", synth::ToJSON(arena, MidiEndpointRef{}));
+    controller.SetNew("output", synth::ToJSON(arena, MidiEndpointRef{}));
+    controller.SetNew("profile", profile);
+    return controller;
+}
+
+synth::JSON MakeInstrumentJson(synth::JsonArena& arena, synth::JSON controllers) {
+    synth::JSON json = arena.Object();
+    json.SetNew("schema", arena.String(synth::kMidiInstrumentSchema));
+    json.SetNew("schemaVersion", arena.Integer(synth::kMidiInstrumentSchemaVersion));
+    json.SetNew("controllers", controllers);
+    return json;
+}
+
+TEST_CASE(InstrumentJsonRejectsLaunchpadWithEncoderMappings) {
+    synth::JsonArena arena(1024 * 1024);
+    // Launchpad profile with an illegal encoderInput — launchpad supports no encoders.
+    synth::JSON profile =
+        MakeProfileJson(arena, synth::ToJSON(arena, synth::EncoderMidiInConfig{}), arena.Array());
+    synth::JSON controller = MakeInstrumentControllerJson(arena, "pad", "launchpad", profile);
+
+    synth::JSON controllers = arena.Array();
+    controllers.AppendNew(controller);
+    synth::JSON json = MakeInstrumentJson(arena, controllers);
+
+    MidiInstrumentConfig target;
+    REQUIRE_TRUE(target.AddController(MakeGenericSlot("existing")));
+    REQUIRE_TRUE(!synth::FromJSON(json, target));
+    REQUIRE_TRUE(target.controllers.size() == 1);
+    REQUIRE_TRUE(target.controllers[0].name == "existing");
+}
+
+TEST_CASE(InstrumentJsonRejectsLaunchpadWithWrldBldrPosition) {
+    synth::JsonArena arena(1024 * 1024);
+    // A system-message entry that illegally carries both a launchpad position and a
+    // WRLD.Bldr position; launchpad kind must reject the WRLD.Bldr position.
+    synth::JSON association = arena.Object();
+    association.SetNew("control", arena.Null());
+    association.SetNew("wrldBldrPosition",
+                        synth::ToJSON(arena, WrldBldrSystemPosition{.channel = 5, .x = 0, .y = 0}));
+    association.SetNew("launchpadPosition",
+                        synth::ToJSON(arena, synth::LaunchpadGridPosition{
+                                                  .controller = synth::LaunchpadController::LaunchpadX,
+                                                  .x = 0,
+                                                  .y = 0}));
+    association.SetNew("press", synth::ToJSON(arena, synth::MessageIn::SetShift(0, true)));
+    association.SetNew("release", arena.Null());
+    association.SetNew("feedback", synth::ToJSON(arena, synth::MessageIn::SetShift(0, true)));
+    association.SetNew("outputFeedback", arena.Boolean(true));
+
+    synth::JSON systemMessages = arena.Array();
+    systemMessages.AppendNew(association);
+    synth::JSON profile = MakeProfileJsonWithSystemMessages(arena, systemMessages);
+    synth::JSON controller = MakeInstrumentControllerJson(arena, "pad", "launchpad", profile);
+
+    synth::JSON controllers = arena.Array();
+    controllers.AppendNew(controller);
+    synth::JSON json = MakeInstrumentJson(arena, controllers);
+
+    MidiInstrumentConfig target;
+    REQUIRE_TRUE(target.AddController(MakeGenericSlot("existing")));
+    REQUIRE_TRUE(!synth::FromJSON(json, target));
+    REQUIRE_TRUE(target.controllers.size() == 1);
+    REQUIRE_TRUE(target.controllers[0].name == "existing");
+}
+
+TEST_CASE(InstrumentJsonRejectsBadSchema) {
+    synth::JsonArena arena(1024 * 1024);
+    synth::JSON json = arena.Object();
+    json.SetNew("schema", arena.String("not.the.right.schema"));
+    json.SetNew("schemaVersion", arena.Integer(synth::kMidiInstrumentSchemaVersion));
+    json.SetNew("controllers", arena.Array());
+
+    MidiInstrumentConfig target;
+    REQUIRE_TRUE(target.AddController(MakeGenericSlot("existing")));
+    REQUIRE_TRUE(!synth::FromJSON(json, target));
+    REQUIRE_TRUE(target.controllers.size() == 1);
+    REQUIRE_TRUE(target.controllers[0].name == "existing");
+}
+
+TEST_CASE(InstrumentJsonUnconfiguredEndpointRoundTrips) {
+    MidiInstrumentConfig instrument;
+    REQUIRE_TRUE(instrument.AddController(MakeGenericSlot("gen")));
+    REQUIRE_TRUE(!instrument.controllers[0].input.IsConfigured());
+    REQUIRE_TRUE(!instrument.controllers[0].output.IsConfigured());
+
+    synth::JsonArena arena(1024 * 1024);
+    const synth::JSON json = synth::ToJSON(arena, instrument);
+
+    MidiInstrumentConfig loaded;
+    REQUIRE_TRUE(synth::FromJSON(json, loaded));
+    REQUIRE_TRUE(!loaded.controllers[0].input.IsConfigured());
+    REQUIRE_TRUE(!loaded.controllers[0].output.IsConfigured());
+    REQUIRE_TRUE(loaded.controllers[0].input.identifier.empty());
+    REQUIRE_TRUE(loaded.controllers[0].input.name.empty());
+}
+
 } // namespace
 
 int main() {
