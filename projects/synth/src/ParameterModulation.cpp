@@ -2264,16 +2264,24 @@ float ParameterManager::GetBipolarLinear(float maxAbsValue, std::size_t voiceIx,
     if (maxAbsValue < 0.0f) {
         throw std::invalid_argument("bipolar linear maximum must be non-negative");
     }
-    const float bipolar = std::clamp(ParameterById(id).Get(voiceIx), 0.0f, 1.0f) * 2.0f - 1.0f;
+    const Parameter& parameter = ParameterById(id);
+    if (parameter.Range() != RangeKind::Bipolar) {
+        throw std::invalid_argument("bipolar mapping requires a bipolar parameter");
+    }
+    const float bipolar = std::clamp(parameter.Get(voiceIx), -1.0f, 1.0f);
     return bipolar * maxAbsValue;
 }
 
 float ParameterManager::GetBipolarExponential(float minAbsValue, float maxAbsValue, std::size_t voiceIx,
                                               ParameterId id) const {
-    if (minAbsValue <= 0.0f || maxAbsValue <= 0.0f) {
+    if (!(minAbsValue > 0.0f) || !(maxAbsValue > 0.0f)) {
         throw std::invalid_argument("bipolar exponential endpoints must be positive");
     }
-    const float bipolar = std::clamp(ParameterById(id).Get(voiceIx), 0.0f, 1.0f) * 2.0f - 1.0f;
+    const Parameter& parameter = ParameterById(id);
+    if (parameter.Range() != RangeKind::Bipolar) {
+        throw std::invalid_argument("bipolar mapping requires a bipolar parameter");
+    }
+    const float bipolar = std::clamp(parameter.Get(voiceIx), -1.0f, 1.0f);
     if (bipolar == 0.0f) {
         return 0.0f;
     }
@@ -2281,12 +2289,32 @@ float ParameterManager::GetBipolarExponential(float minAbsValue, float maxAbsVal
     return std::copysign(magnitude, bipolar);
 }
 
+float ParameterManager::GetBipolarExponential(float leftValue, float centerValue, float rightValue,
+                                              std::size_t voiceIx, ParameterId id) const {
+    if (!(leftValue > 0.0f) || !(centerValue > 0.0f) || !(rightValue > 0.0f)) {
+        throw std::invalid_argument("centered bipolar exponential values must be positive");
+    }
+    const Parameter& parameter = ParameterById(id);
+    if (parameter.Range() != RangeKind::Bipolar) {
+        throw std::invalid_argument("bipolar mapping requires a bipolar parameter");
+    }
+    const float knob = std::clamp(parameter.Get(voiceIx), -1.0f, 1.0f);
+    if (knob < 0.0f) {
+        return centerValue * std::pow(leftValue / centerValue, -knob);
+    }
+    return centerValue * std::pow(rightValue / centerValue, knob);
+}
+
 float ParameterManager::GetBipolarZeroBasedExponential(float maxAbsValue, float midpointAbsValue,
                                                        std::size_t voiceIx, ParameterId id) const {
-    if (maxAbsValue <= 0.0f || midpointAbsValue <= 0.0f || midpointAbsValue >= maxAbsValue) {
+    if (!(maxAbsValue > 0.0f) || !(midpointAbsValue > 0.0f) || midpointAbsValue >= maxAbsValue) {
         throw std::invalid_argument("zero-based exponential mapping requires 0 < midpoint < max");
     }
-    const float bipolar = std::clamp(ParameterById(id).Get(voiceIx), 0.0f, 1.0f) * 2.0f - 1.0f;
+    const Parameter& parameter = ParameterById(id);
+    if (parameter.Range() != RangeKind::Bipolar) {
+        throw std::invalid_argument("bipolar mapping requires a bipolar parameter");
+    }
+    const float bipolar = std::clamp(parameter.Get(voiceIx), -1.0f, 1.0f);
     if (bipolar == 0.0f) {
         return 0.0f;
     }

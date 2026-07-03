@@ -75,4 +75,46 @@ private:
     std::vector<VcoUIState*> uiStates_;
 };
 
+class LfoWaveformComponent final : public juce::Component {
+public:
+    using LfoUIState = synth::BasicLFOProcessor::UIState;
+
+    LfoWaveformComponent() = default;
+
+    explicit LfoWaveformComponent(std::span<LfoUIState* const> states) {
+        uiStates_.assign(states.begin(), states.end());
+    }
+
+    explicit LfoWaveformComponent(std::vector<LfoUIState*> states)
+        : uiStates_(std::move(states)) {}
+
+    void SetUIStates(std::span<LfoUIState* const> states) {
+        uiStates_.assign(states.begin(), states.end());
+        repaint();
+    }
+
+    void paint(juce::Graphics& g) override {
+        const auto bounds = getLocalBounds().toFloat().reduced(4.0f);
+        g.fillAll(juce::Colour(12, 14, 16));
+        g.setColour(juce::Colour(42, 46, 48));
+        g.drawLine(bounds.getX(), bounds.getCentreY(), bounds.getRight(), bounds.getCentreY(), 1.0f);
+
+        for (const auto* state : uiStates_) {
+            if (state == nullptr || !state->connected.load()) {
+                continue;
+            }
+            const auto* scope = state->scope.load();
+            if (scope == nullptr) {
+                continue;
+            }
+            synth::ScopeReader reader(scope, state->scopeChannel.load(), kNumSamples, 1);
+            DrawWaveformFromScope(g, reader, state->color.Load(), 0.0f, 1.0f, true, bounds);
+        }
+    }
+
+private:
+    static constexpr std::size_t kNumSamples = 1024;
+    std::vector<LfoUIState*> uiStates_;
+};
+
 } // namespace synth_juce

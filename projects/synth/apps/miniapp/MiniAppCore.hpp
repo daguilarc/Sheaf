@@ -37,6 +37,11 @@ namespace synth_miniapp {
 
 class MiniAppCore {
 public:
+    static constexpr std::size_t kVoiceCount = 2;
+    static constexpr std::size_t kScopeFrames = 6'553'600;
+    using VcoModule = synth::WavetableVcoModule<kVoiceCount>;
+    using LfoModule = synth::BasicLfoModule<kVoiceCount>;
+
     // Test-support hook, mirroring EngineTestApp's testPatchesRoot pattern
     // (tests/engine_tests.cpp): when set, Config() reports these roots
     // instead of the deterministic temp-directory defaults, so
@@ -85,23 +90,23 @@ public:
         context_->parameterManager->GestureMetadataAt(0).color = synth::Color::Orange;
 
         vcoModule_.RegisterParameters(*context_->parameterManager, group);
+        lfoModule_.RegisterParameters(*context_->parameterManager, group, "LFO");
         vcoModule_.RegisterModulationSources(group, 0, 1);
-
-        std::array<float*, 2> lfoSources{&lfoModulators_[0], &lfoModulators_[1]};
-        group.SetModulationSource(2, lfoSources, {
-                                                   .name = "Sine LFO",
-                                                   .shortName = "LFO",
-                                                   .color = synth::Color::Green,
-                                                   .connected = true,
-                                               });
+        lfoModule_.RegisterModulationSource(group, 2);
 
         tune_ = &context_->parameterManager->ParameterById(vcoModule_.Parameters().tune);
         shape_ = &context_->parameterManager->ParameterById(vcoModule_.Parameters().shape);
         phaseParam_ = &context_->parameterManager->ParameterById(vcoModule_.Parameters().phase);
         volume_ = &context_->parameterManager->ParameterById(vcoModule_.Parameters().volume);
-        lfoSpeed_ = &context_->parameterManager->CreateParameter(
-            group, {.name = "LFO Speed", .shortName = "Spd", .defaultValue = 0.35f, .color = synth::Color::Green});
-        parameters_ = {tune_, phaseParam_, shape_, volume_, lfoSpeed_};
+        lfoFrequency_ = &context_->parameterManager->ParameterById(lfoModule_.Parameters().frequency);
+        lfoShape_ = &context_->parameterManager->ParameterById(lfoModule_.Parameters().shape);
+        lfoPhaseOffset_ = &context_->parameterManager->ParameterById(lfoModule_.Parameters().phaseOffset);
+        lfoSkew_ = &context_->parameterManager->ParameterById(lfoModule_.Parameters().skew);
+        lfoExponent_ = &context_->parameterManager->ParameterById(lfoModule_.Parameters().exponent);
+        parameters_ = {
+            tune_,        phaseParam_,     shape_,   volume_, lfoFrequency_,
+            lfoShape_,    lfoPhaseOffset_, lfoSkew_, lfoExponent_,
+        };
 
         tune_->SetGestureActive(0, 0, true);
         tune_->SetGestureActive(1, 0, true);
@@ -112,29 +117,41 @@ public:
         context_->parameterManager->AssignParameterToPage(vcoPage.ordinal, *shape_);
         context_->parameterManager->AssignParameterToPage(vcoPage.ordinal, *volume_);
         auto& lfoPage = context_->parameterManager->CreatePage("LFO");
-        context_->parameterManager->AssignParameterToPage(lfoPage.ordinal, *lfoSpeed_);
+        context_->parameterManager->AssignParameterToPage(lfoPage.ordinal, *lfoFrequency_);
+        context_->parameterManager->AssignParameterToPage(lfoPage.ordinal, *lfoShape_);
+        context_->parameterManager->AssignParameterToPage(lfoPage.ordinal, *lfoPhaseOffset_);
+        context_->parameterManager->AssignParameterToPage(lfoPage.ordinal, *lfoSkew_);
+        context_->parameterManager->AssignParameterToPage(lfoPage.ordinal, *lfoExponent_);
 
         vcoBank_ = &context_->parameterManager->CreateBank();
         vcoBank_->SetColor(synth::Color::Cyan);
         lfoBank_ = &context_->parameterManager->CreateBank();
         lfoBank_->SetColor(synth::Color::Green);
-        lfoBank_->AddMapping(10, *lfoSpeed_);
         slot_ = &context_->parameterManager->CreateBankSlot();
-        for (auto encoder : {10u, 11u, 12u, 13u}) {
+        for (auto encoder : {10u, 11u, 12u, 13u, 14u}) {
             slot_->AddPhysicalEncoder(encoder);
         }
         slot_->SelectBank(vcoBank_);
         vcoModule_.RegisterToBank(*vcoBank_, 0);
+        slot_->SelectBank(lfoBank_);
+        lfoModule_.RegisterToBank(*lfoBank_, 0);
+        slot_->SelectBank(vcoBank_);
 
         context_->parameterManager->SetActivePage(0);
         context_->parameterManager->SetSceneEndpoints(0, 1);
 
         scopeHolders_[0] = scopeWriter_.ReserveChans(1);
         scopeHolders_[1] = scopeWriter_.ReserveChans(1);
+        scopeHolders_[2] = scopeWriter_.ReserveChans(1);
+        scopeHolders_[3] = scopeWriter_.ReserveChans(1);
         vcoModule_.SetScopeWriterHolder(0, &scopeHolders_[0]);
         vcoModule_.SetScopeWriterHolder(1, &scopeHolders_[1]);
+        lfoModule_.SetScopeWriterHolder(0, &scopeHolders_[2]);
+        lfoModule_.SetScopeWriterHolder(1, &scopeHolders_[3]);
         vcoModule_.SetColor(0, synth::Color::Cyan);
         vcoModule_.SetColor(1, synth::Color::Orange);
+        lfoModule_.SetColor(0, synth::Color::Green);
+        lfoModule_.SetColor(1, synth::Color::Yellow);
 
         // Default WrldBldr MIDI controller profile. context_->midiProfileConfig
         // is the live, message-thread-owned profile (mutable); write it there
@@ -159,6 +176,7 @@ public:
 
     void PrepareToPlay(double sampleRate, int /*blockSize*/) {
         vcoModule_.SetSampleRate(static_cast<float>(sampleRate));
+        lfoModule_.SetSampleRate(static_cast<float>(sampleRate));
     }
 
     void ProcessBlock(synth::AudioBlock& block) {
@@ -184,11 +202,8 @@ public:
             ProcessLiteParameters(parameters_);
             vcoModule_.SetInput(*context_->parameterManager);
             vcoModule_.Process();
-            scopeWriter_.AdvanceIndex();
-
-            phase_ += LfoPhaseStep(lfoSpeed_->Get(0));
-            lfoModulators_[0] = UnipolarSineModulator(phase_);
-            lfoModulators_[1] = UnipolarSineModulator(phase_, kHalfPi);
+            lfoModule_.SetInput(*context_->parameterManager);
+            lfoModule_.Process();
 
             context_->parameterManager->UpdateModValues(*group_);
 
@@ -200,10 +215,12 @@ public:
                 }
                 out[frame] = mixed;
             }
+            scopeWriter_.AdvanceIndex();
         }
 
         scopeWriter_.Publish();
         vcoModule_.PopulateUIState(vcoUiStates_);
+        lfoModule_.PopulateUIState(lfoUiStates_);
     }
 
     // --- accessors for the UI wrapper (next task) --------------------------
@@ -211,48 +228,52 @@ public:
     synth::AppContext* Context() const { return context_; }
     synth::ParameterGroup* Group() const { return group_; }
 
-    const synth::DualWavetableVcoModule::ParameterIds& VcoParameterIds() const { return vcoModule_.Parameters(); }
-    synth::ParameterId LfoSpeedParameterId() const { return lfoSpeed_->Id(); }
+    const VcoModule::ParameterIds& VcoParameterIds() const { return vcoModule_.Parameters(); }
+    const LfoModule::ParameterIds& LfoParameterIds() const { return lfoModule_.Parameters(); }
     const std::vector<synth::Parameter*>& Parameters() const { return parameters_; }
 
     synth::Bank* VcoBank() const { return vcoBank_; }
     synth::Bank* LfoBank() const { return lfoBank_; }
     synth::BankSlot* Slot() const { return slot_; }
 
-    const synth::DualWavetableVcoModule::UIState& VcoUiState() const { return vcoUiStates_; }
+    const VcoModule::UIState& VcoUiState() const { return vcoUiStates_; }
     // Non-const overload for the UI wrapper: synth_juce::VcoWaveformComponent
     // (juce/WaveformComponents.hpp) stores non-owning
     // DefaultWavetableVco::UIState* pointers and reads their atomics each
     // paint, never writing through them; it needs a mutable pointer only
     // because SetUIStates()'s signature predates this const accessor.
-    synth::DualWavetableVcoModule::UIState& VcoUiState() { return vcoUiStates_; }
+    VcoModule::UIState& VcoUiState() { return vcoUiStates_; }
+    const LfoModule::UIState& LfoUiState() const { return lfoUiStates_; }
+    LfoModule::UIState& LfoUiState() { return lfoUiStates_; }
     const synth::ScopeWriter& Scope() const { return scopeWriter_; }
-    const std::array<synth::ScopeWriterHolder, 2>& ScopeHolders() const { return scopeHolders_; }
+    const std::array<synth::ScopeWriterHolder, 4>& ScopeHolders() const { return scopeHolders_; }
 
-    synth::DualWavetableVcoModule& VcoModule() { return vcoModule_; }
+    VcoModule& VcoModuleInstance() { return vcoModule_; }
+    LfoModule& LfoModuleInstance() { return lfoModule_; }
 
 private:
-    static constexpr float kHalfPi = 1.57079632679489661923f;
-
     synth::AppContext* context_ = nullptr;
     synth::ParameterGroup* group_ = nullptr;
     synth::Parameter* tune_ = nullptr;
     synth::Parameter* phaseParam_ = nullptr;
     synth::Parameter* shape_ = nullptr;
     synth::Parameter* volume_ = nullptr;
-    synth::Parameter* lfoSpeed_ = nullptr;
+    synth::Parameter* lfoFrequency_ = nullptr;
+    synth::Parameter* lfoShape_ = nullptr;
+    synth::Parameter* lfoPhaseOffset_ = nullptr;
+    synth::Parameter* lfoSkew_ = nullptr;
+    synth::Parameter* lfoExponent_ = nullptr;
     std::vector<synth::Parameter*> parameters_;
     synth::Bank* vcoBank_ = nullptr;
     synth::Bank* lfoBank_ = nullptr;
     synth::BankSlot* slot_ = nullptr;
 
-    synth::ScopeWriter scopeWriter_{2, 4096};
-    std::array<synth::ScopeWriterHolder, 2> scopeHolders_;
-    synth::DualWavetableVcoModule vcoModule_;
-    synth::DualWavetableVcoModule::UIState vcoUiStates_;
-
-    float phase_ = 0.0f;
-    std::array<float, 2> lfoModulators_{};
+    synth::ScopeWriter scopeWriter_{4, kScopeFrames};
+    std::array<synth::ScopeWriterHolder, 4> scopeHolders_;
+    VcoModule vcoModule_;
+    LfoModule lfoModule_;
+    VcoModule::UIState vcoUiStates_;
+    LfoModule::UIState lfoUiStates_;
 };
 
 }  // namespace synth_miniapp

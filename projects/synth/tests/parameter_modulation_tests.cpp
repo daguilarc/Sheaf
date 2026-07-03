@@ -1209,17 +1209,23 @@ TEST_CASE(manager_bipolar_mapping_helpers_return_signed_values) {
         .maxParameters = 1,
         .processLiteAlpha = 1.0f,
     });
-    const synth::ParameterId paramId = manager.RegisterParameter(group, {.name = "Amount", .defaultValue = 0.0f});
+    const synth::ParameterId paramId = manager.RegisterParameter(
+        group, {.name = "Amount", .defaultValue = 0.0f, .range = synth::RangeKind::Bipolar});
     auto& parameter = manager.ParameterById(paramId);
 
-    parameter.SceneCenter(0) = 0.0f;
+    parameter.SceneCenter(0) = -1.0f;
     parameter.Compute(manager.Scene());
     parameter.ProcessLite();
     REQUIRE_NEAR(manager.GetBipolarLinear(2.0f, 0, paramId), -2.0f, 0.0001f);
     REQUIRE_NEAR(manager.GetBipolarExponential(0.25f, 4.0f, 0, paramId), -4.0f, 0.0001f);
     REQUIRE_NEAR(manager.GetBipolarZeroBasedExponential(1.0f, 0.1f, 0, paramId), -1.0f, 0.0001f);
 
-    parameter.SceneCenter(0) = 0.5f;
+    parameter.SceneCenter(0) = -0.5f;
+    parameter.Compute(manager.Scene());
+    parameter.ProcessLite();
+    REQUIRE_NEAR(manager.GetBipolarExponential(0.25f, 4.0f, 0, paramId), -1.0f, 0.0001f);
+
+    parameter.SceneCenter(0) = 0.0f;
     parameter.Compute(manager.Scene());
     parameter.ProcessLite();
     REQUIRE_NEAR(manager.GetBipolarLinear(2.0f, 0, paramId), 0.0f, 0.0001f);
@@ -1233,11 +1239,176 @@ TEST_CASE(manager_bipolar_mapping_helpers_return_signed_values) {
     }
     REQUIRE_TRUE(threw);
 
+    parameter.SceneCenter(0) = 0.5f;
+    parameter.Compute(manager.Scene());
+    parameter.ProcessLite();
+    REQUIRE_NEAR(manager.GetBipolarExponential(0.25f, 4.0f, 0, paramId), 1.0f, 0.0001f);
+
     parameter.SceneCenter(0) = 1.0f;
     parameter.Compute(manager.Scene());
     parameter.ProcessLite();
     REQUIRE_NEAR(manager.GetBipolarLinear(2.0f, 0, paramId), 2.0f, 0.0001f);
     REQUIRE_NEAR(manager.GetBipolarExponential(0.25f, 4.0f, 0, paramId), 4.0f, 0.0001f);
+    REQUIRE_NEAR(manager.GetBipolarZeroBasedExponential(1.0f, 0.1f, 0, paramId), 1.0f, 0.0001f);
+}
+
+TEST_CASE(manager_bipolar_mapping_helpers_reject_unipolar_parameters) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numScenes = 1,
+        .maxParameters = 1,
+        .processLiteAlpha = 1.0f,
+    });
+    const synth::ParameterId paramId =
+        manager.RegisterParameter(group, {.name = "Amount", .defaultValue = 0.5f});
+    auto& parameter = manager.ParameterById(paramId);
+    parameter.Compute(manager.Scene());
+    parameter.ProcessLite();
+
+    bool threw = false;
+    try {
+        (void)manager.GetBipolarLinear(1.0f, 0, paramId);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    REQUIRE_TRUE(threw);
+
+    threw = false;
+    try {
+        (void)manager.GetBipolarExponential(0.25f, 4.0f, 0, paramId);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    REQUIRE_TRUE(threw);
+
+    threw = false;
+    try {
+        (void)manager.GetBipolarExponential(0.2f, 1.0f, 5.0f, 0, paramId);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    REQUIRE_TRUE(threw);
+
+    threw = false;
+    try {
+        (void)manager.GetBipolarZeroBasedExponential(1.0f, 0.1f, 0, paramId);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    REQUIRE_TRUE(threw);
+}
+
+TEST_CASE(manager_centered_bipolar_exponential_maps_left_center_and_right_from_bipolar_knob) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numScenes = 1,
+        .maxParameters = 1,
+        .processLiteAlpha = 1.0f,
+    });
+    const synth::ParameterId paramId = manager.RegisterParameter(
+        group, {.name = "Exponent", .defaultValue = 0.0f, .range = synth::RangeKind::Bipolar});
+    auto& parameter = manager.ParameterById(paramId);
+
+    parameter.SceneCenter(0) = -1.0f;
+    parameter.Compute(manager.Scene());
+    parameter.ProcessLite();
+    REQUIRE_NEAR(manager.GetBipolarExponential(0.2f, 1.0f, 5.0f, 0, paramId), 0.2f, 0.0001f);
+
+    parameter.SceneCenter(0) = 0.0f;
+    parameter.Compute(manager.Scene());
+    parameter.ProcessLite();
+    REQUIRE_NEAR(manager.GetBipolarExponential(0.2f, 1.0f, 5.0f, 0, paramId), 1.0f, 0.0001f);
+
+    parameter.SceneCenter(0) = 1.0f;
+    parameter.Compute(manager.Scene());
+    parameter.ProcessLite();
+    REQUIRE_NEAR(manager.GetBipolarExponential(0.2f, 1.0f, 5.0f, 0, paramId), 5.0f, 0.0001f);
+
+    parameter.SceneCenter(0) = -0.5f;
+    parameter.Compute(manager.Scene());
+    parameter.ProcessLite();
+    REQUIRE_NEAR(manager.GetBipolarExponential(0.25f, 2.0f, 32.0f, 0, paramId),
+                 2.0f * std::sqrt(0.25f / 2.0f), 0.0001f);
+
+    parameter.SceneCenter(0) = 0.5f;
+    parameter.Compute(manager.Scene());
+    parameter.ProcessLite();
+    REQUIRE_NEAR(manager.GetBipolarExponential(0.25f, 2.0f, 32.0f, 0, paramId),
+                 2.0f * std::sqrt(32.0f / 2.0f), 0.0001f);
+}
+
+TEST_CASE(manager_centered_bipolar_exponential_rejects_invalid_values) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numScenes = 1,
+        .maxParameters = 1,
+    });
+    const synth::ParameterId paramId = manager.RegisterParameter(
+        group, {.name = "Exponent", .defaultValue = 0.0f, .range = synth::RangeKind::Bipolar});
+
+    bool threw = false;
+    try {
+        (void)manager.GetBipolarExponential(0.0f, 1.0f, 5.0f, 0, paramId);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    REQUIRE_TRUE(threw);
+
+    threw = false;
+    try {
+        (void)manager.GetBipolarExponential(0.2f, 0.0f, 5.0f, 0, paramId);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    REQUIRE_TRUE(threw);
+
+    threw = false;
+    try {
+        (void)manager.GetBipolarExponential(0.2f, 1.0f, -5.0f, 0, paramId);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    REQUIRE_TRUE(threw);
+}
+
+TEST_CASE(manager_bipolar_zero_based_exponential_uses_signed_bipolar_knob) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numScenes = 1,
+        .maxParameters = 1,
+        .processLiteAlpha = 1.0f,
+    });
+    const synth::ParameterId paramId = manager.RegisterParameter(
+        group, {.name = "Amount", .defaultValue = 0.0f, .range = synth::RangeKind::Bipolar});
+    auto& parameter = manager.ParameterById(paramId);
+
+    parameter.SceneCenter(0) = -1.0f;
+    parameter.Compute(manager.Scene());
+    parameter.ProcessLite();
+    REQUIRE_NEAR(manager.GetBipolarZeroBasedExponential(1.0f, 0.1f, 0, paramId), -1.0f, 0.0001f);
+
+    parameter.SceneCenter(0) = -0.5f;
+    parameter.Compute(manager.Scene());
+    parameter.ProcessLite();
+    REQUIRE_NEAR(manager.GetBipolarZeroBasedExponential(1.0f, 0.1f, 0, paramId), -0.1f, 0.0001f);
+
+    parameter.SceneCenter(0) = 0.0f;
+    parameter.Compute(manager.Scene());
+    parameter.ProcessLite();
+    REQUIRE_NEAR(manager.GetBipolarZeroBasedExponential(1.0f, 0.1f, 0, paramId), 0.0f, 0.0001f);
+
+    parameter.SceneCenter(0) = 0.5f;
+    parameter.Compute(manager.Scene());
+    parameter.ProcessLite();
+    REQUIRE_NEAR(manager.GetBipolarZeroBasedExponential(1.0f, 0.1f, 0, paramId), 0.1f, 0.0001f);
+
+    parameter.SceneCenter(0) = 1.0f;
+    parameter.Compute(manager.Scene());
+    parameter.ProcessLite();
     REQUIRE_NEAR(manager.GetBipolarZeroBasedExponential(1.0f, 0.1f, 0, paramId), 1.0f, 0.0001f);
 }
 
@@ -1250,8 +1421,8 @@ TEST_CASE(manager_mapping_helpers_use_parameter_get_for_voice_value) {
         .maxParameters = 2,
         .processLiteAlpha = 1.0f,
     });
-    const synth::ParameterId carrierId =
-        manager.RegisterParameter(group, {.name = "Carrier", .defaultValue = 0.2f});
+    const synth::ParameterId carrierId = manager.RegisterParameter(
+        group, {.name = "Carrier", .defaultValue = 0.2f, .range = synth::RangeKind::Bipolar});
     const synth::ParameterId depthId = manager.RegisterParameter(group, {.name = "Depth", .defaultValue = 0.5f});
     auto& carrier = manager.ParameterById(carrierId);
     auto& depth = manager.ParameterById(depthId);
@@ -1263,7 +1434,9 @@ TEST_CASE(manager_mapping_helpers_use_parameter_get_for_voice_value) {
 
     REQUIRE_NEAR(carrier.Get(0), 0.6f, 0.0001f);
     REQUIRE_NEAR(manager.GetLinear(10.0f, 20.0f, 0, carrierId), 16.0f, 0.0001f);
-    REQUIRE_NEAR(manager.GetBipolarLinear(2.0f, 0, carrierId), 0.4f, 0.0001f);
+    REQUIRE_NEAR(manager.GetBipolarLinear(2.0f, 0, carrierId), 1.2f, 0.0001f);
+    REQUIRE_NEAR(manager.GetBipolarExponential(0.25f, 1.0f, 4.0f, 0, carrierId), std::pow(4.0f, 0.6f),
+                 0.0001f);
 }
 
 TEST_CASE(handle_inc_dec_endpoint_scene) {

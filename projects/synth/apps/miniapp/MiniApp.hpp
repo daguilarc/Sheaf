@@ -80,6 +80,7 @@ private:
             }
 
             addAndMakeVisible(waveformComponent_);
+            addAndMakeVisible(lfoWaveformComponent_);
 
             AddButton(bankAButton_, "VCO", [this] { SelectPage(0); });
             AddButton(bankBButton_, "LFO", [this] { SelectPage(1); });
@@ -122,9 +123,12 @@ private:
                 encoders_[ix].BindMessages(context_->uiBus, 0, ix);
             }
 
-            synth::DualWavetableVcoModule::UIState& vcoUiState = core->VcoUiState();
+            MiniAppCore::VcoModule::UIState& vcoUiState = core->VcoUiState();
             waveformUiStates_ = {&vcoUiState.vcos[0], &vcoUiState.vcos[1]};
             waveformComponent_.SetUIStates(waveformUiStates_);
+            MiniAppCore::LfoModule::UIState& lfoUiState = core->LfoUiState();
+            lfoWaveformUiStates_ = {&lfoUiState.lfos[0], &lfoUiState.lfos[1]};
+            lfoWaveformComponent_.SetUIStates(lfoWaveformUiStates_);
 
             setSize(context_->config->uiWidth, context_->config->uiHeight);
         }
@@ -185,7 +189,9 @@ private:
             for (auto& encoder : encoders_) {
                 encoder.setBounds(encoderRow.removeFromLeft(132).reduced(10));
             }
-            waveformComponent_.setBounds(encoderRow.reduced(8));
+            auto waveformRow = area.removeFromTop(130);
+            waveformComponent_.setBounds(waveformRow.removeFromLeft(waveformRow.getWidth() / 2).reduced(8));
+            lfoWaveformComponent_.setBounds(waveformRow.reduced(8));
             auto controls = area.removeFromTop(92);
             auto modifierRow = controls.removeFromTop(46);
             std::array<juce::TextButton*, 6> modifierButtons{
@@ -283,9 +289,11 @@ private:
         synth::AppContext* context_ = nullptr;
         mutable std::uint64_t fallbackTimestamp_ = 1;
 
-        std::array<synth_juce::EncoderComponent, 4> encoders_;
+        std::array<synth_juce::EncoderComponent, 5> encoders_;
         synth_juce::VcoWaveformComponent waveformComponent_;
+        synth_juce::LfoWaveformComponent lfoWaveformComponent_;
         std::array<synth::DefaultWavetableVco::UIState*, 2> waveformUiStates_{};
+        std::array<synth::BasicLFOProcessor::UIState*, 2> lfoWaveformUiStates_{};
 
         juce::TextButton bankAButton_;
         juce::TextButton bankBButton_;

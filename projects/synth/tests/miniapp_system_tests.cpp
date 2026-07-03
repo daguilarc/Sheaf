@@ -57,16 +57,22 @@ void RequireNear(float actual, float expected, float tolerance, const char* expr
 
 #define REQUIRE_NEAR(actual, expected, tolerance) RequireNear((actual), (expected), (tolerance), #actual)
 
-// Volume is the fourth parameter DualWavetableVcoModule::RegisterParameters
+// Volume is the fourth parameter WavetableVcoModule<2>::RegisterParameters
 // registers (Tune, Phase, Shape, Volume, in that order -- see
-// src/Modules.cpp), and RegisterToBank(vcoBank, /*offset=*/0) maps them onto
+// synth/Modules.hpp), and RegisterToBank(vcoBank, /*offset=*/0) maps them onto
 // bank positions offset+0..offset+3 in the same order, so Volume lands on
 // bank position 3.
 constexpr std::size_t kSlotIx = 0;
+constexpr std::size_t kLfoBankIx = 1;
 constexpr std::size_t kTunePosition = 0;
 constexpr std::size_t kPhasePosition = 1;
 constexpr std::size_t kShapePosition = 2;
 constexpr std::size_t kVolumePosition = 3;
+constexpr std::size_t kLfoFrequencyPosition = 0;
+constexpr std::size_t kLfoShapePosition = 1;
+constexpr std::size_t kLfoPhaseOffsetPosition = 2;
+constexpr std::size_t kLfoSkewPosition = 3;
+constexpr std::size_t kLfoExponentPosition = 4;
 
 // Points MiniAppCore::testPatchesRoot (the static test hook mirroring
 // EngineTestApp::testPatchesRoot in tests/engine_tests.cpp) at a fresh, empty
@@ -150,6 +156,19 @@ bool AllSamplesFinite(const OutputWindow& window) {
     return true;
 }
 
+bool ValuesDifferMaterially(const std::vector<float>& values, float tolerance) {
+    if (values.empty()) {
+        return false;
+    }
+    const float first = values.front();
+    for (const float value : values) {
+        if (std::fabs(value - first) > tolerance) {
+            return true;
+        }
+    }
+    return false;
+}
+
 float OutputWindowPeak(const OutputWindow& window) {
     float peak = 0.0f;
     for (const auto& frame : window) {
@@ -193,6 +212,53 @@ TEST_CASE(miniapp_rig_raising_volume_yields_nonzero_output_peak) {
     REQUIRE_TRUE(rig.OutputPeak() > 0.0f);
 }
 
+TEST_CASE(miniapp_rig_lfo_bank_exposes_five_module_parameters) {
+    UseScratchPatchesRoot("lfo_bank_exposes_five_module_parameters");
+    synth_rig::SynthRig<synth_miniapp::MiniAppCore> rig;
+    rig.RunBlocks(1);
+
+    REQUIRE_TRUE(rig.Application().Parameters().size() == 9);
+    const auto lfoIds = rig.Application().LfoParameterIds();
+    const float beforeFrequency = rig.ParameterValue(lfoIds.frequency);
+    const float beforeShape = rig.ParameterValue(lfoIds.shape);
+    const float beforePhaseOffset = rig.ParameterValue(lfoIds.phaseOffset);
+    const float beforeSkew = rig.ParameterValue(lfoIds.skew);
+    const float beforeExponent = rig.ParameterValue(lfoIds.exponent);
+
+    rig.SelectBank(kSlotIx, kLfoBankIx);
+    rig.RunBlocks(1);
+    rig.Turn(kSlotIx, kLfoFrequencyPosition, 0.10f);
+    rig.Turn(kSlotIx, kLfoShapePosition, -0.10f);
+    rig.Turn(kSlotIx, kLfoPhaseOffsetPosition, 0.20f);
+    rig.Turn(kSlotIx, kLfoSkewPosition, -0.20f);
+    rig.Turn(kSlotIx, kLfoExponentPosition, 0.15f);
+    rig.RunBlocks(16);
+
+    REQUIRE_NEAR(rig.ParameterValue(lfoIds.frequency), beforeFrequency + 0.10f, 1e-3f);
+    REQUIRE_NEAR(rig.ParameterValue(lfoIds.shape), beforeShape - 0.10f, 1e-3f);
+    REQUIRE_NEAR(rig.ParameterValue(lfoIds.phaseOffset), beforePhaseOffset + 0.20f, 1e-3f);
+    REQUIRE_NEAR(rig.ParameterValue(lfoIds.skew), beforeSkew - 0.20f, 1e-3f);
+    REQUIRE_NEAR(rig.ParameterValue(lfoIds.exponent), beforeExponent + 0.15f, 1e-3f);
+    REQUIRE_TRUE(!rig.SawNaN());
+}
+
+TEST_CASE(miniapp_rig_lfo_modulation_source_changes_from_module_processing) {
+    UseScratchPatchesRoot("lfo_modulation_source_changes_from_module_processing");
+    synth_rig::SynthRig<synth_miniapp::MiniAppCore> rig;
+    std::vector<float> voice0Values;
+    std::vector<float> voice1Values;
+
+    for (int i = 0; i < 8; ++i) {
+        rig.RunBlocks(8);
+        voice0Values.push_back(rig.Application().Group()->GetModulators().Value(0, 2));
+        voice1Values.push_back(rig.Application().Group()->GetModulators().Value(1, 2));
+    }
+
+    REQUIRE_TRUE(ValuesDifferMaterially(voice0Values, 1e-4f));
+    REQUIRE_TRUE(ValuesDifferMaterially(voice1Values, 1e-4f));
+    REQUIRE_TRUE(!rig.SawNaN());
+}
+
 TEST_CASE(miniapp_rig_zero_volume_yields_silence_and_turning_up_restores_signal) {
     UseScratchPatchesRoot("zero_volume_yields_silence_and_turning_up_restores_signal");
     synth_rig::SynthRig<synth_miniapp::MiniAppCore> rig;
@@ -200,7 +266,7 @@ TEST_CASE(miniapp_rig_zero_volume_yields_silence_and_turning_up_restores_signal)
     // Drive Volume down to (near) zero via repeated turns on its bank
     // position, then confirm the output peak collapses -- proving the
     // production Turn(slot, position) path for kVolumePosition actually
-    // reaches DualWavetableVcoModule's Volume parameter and audibly changes
+    // reaches WavetableVcoModule<2>'s Volume parameter and audibly changes
     // the mixed output, not just that output happens to be nonzero already.
     for (int i = 0; i < 40; ++i) {
         rig.Turn(kSlotIx, kVolumePosition, -0.1f);

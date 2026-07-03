@@ -632,6 +632,8 @@ public:
     float GetZeroBasedExponential(float maxValue, float midpointValue, std::size_t voiceIx, ParameterId id) const;
     float GetBipolarLinear(float maxAbsValue, std::size_t voiceIx, ParameterId id) const;
     float GetBipolarExponential(float minAbsValue, float maxAbsValue, std::size_t voiceIx, ParameterId id) const;
+    float GetBipolarExponential(float leftValue, float centerValue, float rightValue, std::size_t voiceIx,
+                                ParameterId id) const;
     float GetBipolarZeroBasedExponential(float maxAbsValue, float midpointAbsValue, std::size_t voiceIx,
                                          ParameterId id) const;
     void UpdateModValues(ParameterGroup& group);

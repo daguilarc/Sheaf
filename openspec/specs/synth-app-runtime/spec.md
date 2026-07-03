@@ -9,7 +9,6 @@ contract (RuntimeConfig, AppContext, concepts), the shared Engine assembly and
 pump, the JUCE runtime shell, runtime patch/MIDI/audio-device orchestration,
 the headless SynthRig test harness, and the miniapp as the reference
 runtime-hosted application.
-
 ## Requirements
 ### Requirement: sar-1 — Project: runtime and application layout
 WHEN the synth application runtime capability is implemented, THE repository SHALL provide a JUCE-dependent runtime layer under `projects/synth/runtime` in namespace `synth_runtime`, an applications directory `projects/synth/apps` with one subdirectory per application, JUCE-free application contract headers (`RuntimeConfig`, `AppContext`, `AudioBlock`) under `projects/synth/include/synth` in namespace `synth`, and shared JUCE-module build rules in a makefile fragment included by each application's Makefile; the JUCE-free core library build and tests SHALL remain free of runtime and JUCE dependencies.
@@ -176,7 +175,7 @@ WHEN the runtime presents UI, THE runtime SHALL own the JUCE application object,
 - **THEN** the build produces a runnable JUCE application hosting that application
 
 ### Requirement: sar-11 — Miniapp: runtime-hosted reference application
-WHEN the miniapp is ported to the runtime, THE miniapp application at `projects/synth/apps/miniapp` SHALL contain only application-specific content — runtime config, duophonic group and module/LFO setup, page/bank/slot layout, scope wiring, per-sample block processing, and its bespoke widgets — SHALL preserve the existing specced miniapp behaviors (encoder grid, pages, scenes, gestures, MIDI controller configuration, patch commands, waveform pane), and SHALL write its processed VCO output to the negotiated audio device outputs using the device-provided sample rate.
+WHEN the miniapp is ported to the runtime, THE miniapp application at `projects/synth/apps/miniapp` SHALL contain only application-specific content — runtime config, duophonic group and VCO/LFO module setup, page/bank/slot layout, scope wiring, per-sample block processing, and its bespoke widgets — SHALL preserve the existing specced miniapp behaviors (encoder grid, pages, scenes, gestures, MIDI controller configuration, patch commands, waveform pane), SHALL expose the LFO page as five module-backed parameters, and SHALL write its processed VCO output to the negotiated audio device outputs using the device-provided sample rate.
 
 #### Scenario: Miniapp init is application content only
 - **WHEN** the miniapp sources are inspected
@@ -186,6 +185,11 @@ WHEN the miniapp is ported to the runtime, THE miniapp application at `projects/
 - **WHEN** the miniapp runs with an output-capable audio device
 - **THEN** the summed VCO voices are written to the device output channels
 - **AND** the VCO module uses the negotiated device sample rate
+
+#### Scenario: Miniapp LFO page is module-backed
+- **WHEN** the miniapp LFO page is active
+- **THEN** the selected slot exposes Frequency, Shape, Phase Offset, Skew, and Exponent from `BasicLfoModule<2>`
+- **AND** the LFO modulation source is produced by that module during per-sample block processing
 
 #### Scenario: Behavior parity with the probe app
 - **WHEN** the ported miniapp runs
@@ -227,11 +231,16 @@ WHEN system-level tests need to drive an assembled application, THE repository S
 - **THEN** the helper returns a timeout/failure status after its bounded block budget instead of pumping forever
 
 ### Requirement: sar-14 — Miniapp: headless system-test coverage
-WHEN the miniapp is ported, THE miniapp SHALL be structured as a JUCE-free application core plus a thin UI wrapper, and THE synth test suite SHALL include a rig-hosted miniapp system test that initializes the core through the engine, runs blocks, drives encoder and scene/gesture messages, verifies audio output renders without NaN with nonzero peak when the VCO volume is raised, and round-trips a patch save/load through the production message flow.
+WHEN the miniapp is ported, THE miniapp SHALL be structured as a JUCE-free application core plus a thin UI wrapper, and THE synth test suite SHALL include a rig-hosted miniapp system test that initializes the core through the engine, runs blocks, drives encoder and scene/gesture messages, verifies audio output renders without NaN with nonzero peak when the VCO volume is raised, verifies the module-backed LFO page exposes and routes five parameters, and round-trips a patch save/load through the production message flow.
 
 #### Scenario: Miniapp core tests run JUCE-free
 - **WHEN** a developer runs `make -C projects/synth test`
 - **THEN** the rig-hosted miniapp system test builds without JUCE and passes as part of the suite
+
+#### Scenario: Headless LFO page routes five parameters
+- **WHEN** the rig selects the LFO page
+- **THEN** the selected slot contains Frequency, Shape, Phase Offset, Skew, and Exponent controls
+- **AND** turning each visible LFO control changes the corresponding parameter value through the production message path
 
 #### Scenario: Headless patch round-trip
 - **WHEN** the rig test edits parameters, saves a patch, perturbs state, and loads the saved patch
@@ -265,3 +274,4 @@ WHEN the runtime tracks which patch is current, THE current patch identity (dire
 - **WHEN** the user presses Save before any patch directory exists
 - **THEN** the Save As chooser opens instead of a needs-path error
 - **AND** completing it writes the first version file and sets the current patch
+

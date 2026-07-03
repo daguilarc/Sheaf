@@ -53,14 +53,8 @@ $(DSP_TEST_BIN): tests/dsp_tests.cpp $(LIB) $(DSP_HEADERS)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< $(LIB) -o $@
 
 # -Iapps/miniapp is added for this rule only: DemoModulation.hpp lives under
-# apps/miniapp/ (JUCE-free). module_tests.cpp includes it directly for pure-
-# math coverage (UnipolarSineModulator/LfoPhaseStep/BipolarAudioToModulator/
-# ThreePhaseVoiceOffset/PublishVcoModulators/ProcessLiteParameters), moved
-# here from the old top-level miniapp/'s DemoModulationTests.cpp when that
-# directory was removed (Plan 3 Task 6) -- this binary was already the
-# JUCE-free home for synth::Modules-adjacent coverage, so the demo helpers
-# (used exclusively by apps/miniapp/MiniAppCore.hpp) join it rather than
-# getting a ninth standalone test binary.
+# apps/miniapp/ (JUCE-free), and MiniAppCore still uses its per-sample
+# ProcessLite helper.
 $(MODULE_TEST_BIN): tests/module_tests.cpp apps/miniapp/DemoModulation.hpp $(LIB) include/synth/Modules.hpp include/synth/ParameterModulation.hpp
 	$(CXX) $(CPPFLAGS) -Iapps/miniapp $(CXXFLAGS) $< $(LIB) -o $@
 

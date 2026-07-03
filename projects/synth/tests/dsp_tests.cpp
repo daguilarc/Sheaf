@@ -263,6 +263,85 @@ TEST_CASE(incrementer_reports_fractional_top_offset) {
     REQUIRE_NEAR(static_cast<float>(incrementer.m_topOffset), 0.5f, 0.0001f);
 }
 
+TEST_CASE(lfo_shape_processes_triangle_shape_phase_distortion_wrap_and_exponent) {
+    REQUIRE_NEAR(synth::LFOShape::Tri(0.0f), 0.0f, 0.0001f);
+    REQUIRE_NEAR(synth::LFOShape::Tri(0.5f), 1.0f, 0.0001f);
+    REQUIRE_NEAR(synth::LFOShape::Tri(1.0f), 0.0f, 0.0001f);
+
+    const float curved = synth::LFOShape::Shape(0.0f, 0.5f);
+    REQUIRE_NEAR(curved, std::sin(3.14159265358979323846f * 0.25f), 0.0001f);
+    REQUIRE_NEAR(synth::LFOShape::Shape(0.5f, 0.25f), 0.25f, 0.0001f);
+    REQUIRE_NEAR(synth::LFOShape::Shape(0.999f, 0.25f), 0.0f, 0.0001f);
+    REQUIRE_NEAR(synth::LFOShape::Shape(0.999f, 0.75f), 1.0f, 0.0001f);
+
+    REQUIRE_NEAR(synth::LFOShape::PD(0.5f, 0.25f), 0.25f, 0.0001f);
+    const float earlyPeak = synth::LFOShape::Process({
+        .inPhase = 0.25f,
+        .shape = 0.5f,
+        .phaseOffset = 0.0f,
+        .skew = 0.25f,
+        .exponent = 1.0f,
+    });
+    REQUIRE_NEAR(earlyPeak, 1.0f, 0.0001f);
+
+    const float wrappedNegative = synth::LFOShape::Process({
+        .inPhase = -0.25f,
+        .shape = 0.5f,
+        .phaseOffset = 0.0f,
+        .skew = 0.5f,
+        .exponent = 1.0f,
+    });
+    REQUIRE_NEAR(wrappedNegative, 0.5f, 0.0001f);
+
+    const float squared = synth::LFOShape::Process({
+        .inPhase = 0.125f,
+        .shape = 0.5f,
+        .phaseOffset = 0.0f,
+        .skew = 0.5f,
+        .exponent = 2.0f,
+    });
+    REQUIRE_NEAR(squared, 0.0625f, 0.0001f);
+}
+
+TEST_CASE(basic_lfo_processor_advances_writes_scope_markers_and_publishes_ui_state) {
+    synth::ScopeWriter writer(1, 32);
+    auto holder = writer.ReserveChans(1);
+    synth::BasicLFOProcessor lfo;
+    lfo.SetScopeWriterHolder(&holder);
+    lfo.SetColor(synth::Color::Yellow);
+
+    synth::BasicLFOProcessor::Input input{
+        .frequency = 0.25,
+        .shape = {
+            .inPhase = 0.0f,
+            .shape = 0.5f,
+            .phaseOffset = 0.0f,
+            .skew = 0.5f,
+            .exponent = 1.0f,
+        },
+    };
+
+    REQUIRE_NEAR(lfo.Process(input), 0.5f, 0.0001f);
+    REQUIRE_NEAR(writer.ReadSample(holder.FlatChan(), 0), 0.5f, 0.0001f);
+    writer.AdvanceIndex();
+    REQUIRE_NEAR(lfo.Process(input), 1.0f, 0.0001f);
+    writer.AdvanceIndex();
+    REQUIRE_NEAR(lfo.Process(input), 0.5f, 0.0001f);
+    writer.AdvanceIndex();
+    REQUIRE_NEAR(lfo.Process(input), 0.0f, 0.0001f);
+
+    double latestStart = -1.0;
+    REQUIRE_TRUE(writer.LatestStart(holder.FlatChan(), latestStart));
+    REQUIRE_NEAR(static_cast<float>(latestStart), 3.0f, 0.0001f);
+
+    synth::BasicLFOProcessor::UIState ui;
+    lfo.PopulateUIState(ui);
+    REQUIRE_TRUE(ui.connected.load());
+    REQUIRE_TRUE(ui.scope.load() == &writer);
+    REQUIRE_TRUE(ui.scopeChannel.load() == holder.FlatChan());
+    REQUIRE_TRUE(ui.color.Load() == synth::Color::Yellow);
+}
+
 TEST_CASE(wavetable_vco_records_top_marker_at_true_cycle_boundary) {
     synth::ScopeWriter writer(2, 32);
     auto holder = writer.ReserveChans(1);
