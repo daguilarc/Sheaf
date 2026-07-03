@@ -483,8 +483,56 @@ private:
                     addAndMakeVisible(*editor);
                     relativeModeEditors_.push_back(std::move(editor));
                 } else {
+                    // Finding 4 (block-type-conversion review): RowFieldValue
+                    // returns false for a field it cannot render as a single
+                    // numeric value -- e.g. Field::BlockMessageType (a system
+                    // Block row's message type is an enum choice, not a
+                    // number; see MidiConfigViewModel.cpp's RowFieldValue,
+                    // which special-cases it out alongside PressMessage/
+                    // ReleaseMessage). Building a NumericFieldEditor anyway
+                    // used to silently initialize it to 0.0000 and commit
+                    // that on any edit -- converting e.g. a bank-select or
+                    // gesture-select block to SceneSelect (index 0) without
+                    // the user ever choosing that. Until task group 3 adds a
+                    // proper 3-choice combo for BlockMessageType, skip
+                    // creating an editor entirely for any field
+                    // RowFieldValue can't read -- the row's `label` already
+                    // names the block's message type (see
+                    // SystemBlockLabel()/EncoderBlockLabel()/
+                    // AnalogBlockLabel() in MidiConfigViewModel.cpp), so the
+                    // value stays visible, just not editable from here.
+                    //
+                    // Audited (finding 4 review) every field any
+                    // *EditableFields() table can advertise: besides
+                    // BlockMessageType, RowFieldValue could ALSO fail for an
+                    // AnalogSceneBlend row's Field::SceneBlend when
+                    // sceneBlend was unassigned -- unlike BlockMessageType,
+                    // that IS a legitimately assignable field in that state
+                    // (ApplyMappingEdit accepts it, defaulting the address),
+                    // so leaving it skipped here would have made an
+                    // unassigned scene blend permanently unassignable from
+                    // the UI. Fixed at the SOURCE instead
+                    // (RowFieldValue now returns a stable 0.0 default for an
+                    // unassigned SceneBlend, matching ApplyMappingEdit's own
+                    // default) rather than special-casing it here, so this
+                    // generic skip-on-false guard stays correct for every
+                    // field without per-field renderer logic. A system row's
+                    // Channel/Cc/LaunchpadX/Y/WrldBldrX/Y/Button CAN
+                    // theoretically still fail RowFieldValue if a
+                    // hand-edited/corrupted patch JSON loaded an association
+                    // missing its kind-required address (PatchPersistence's
+                    // FromJSON treats control/wrldBldrPosition/
+                    // launchpadPosition as optional on parse, unlike
+                    // SlotValidForKind, which ApplyMappingEdit enforces on
+                    // every COMMIT but load does not enforce on READ) --
+                    // skipping the editor for that malformed case is the
+                    // safe outcome (not editable is strictly better than
+                    // silently-0-and-committable), and no normal UI-driven
+                    // edit can ever produce it in the first place.
                     double initial = 0.0;
-                    page.vm_.RowFieldValue(controllerIx, section, rowIx, field, initial);
+                    if (!page.vm_.RowFieldValue(controllerIx, section, rowIx, field, initial)) {
+                        continue;
+                    }
                     auto editor =
                         std::make_unique<NumericFieldEditor>(page, controllerIx, section, rowIx, field, initial);
                     addAndMakeVisible(*editor);

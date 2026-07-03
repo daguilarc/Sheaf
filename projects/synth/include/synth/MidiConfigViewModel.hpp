@@ -301,6 +301,37 @@ struct PresentationRow {
 // at their group's end) but never re-partitions rows into new blocks
 // (D5/sru-11's stability guarantee) -- see RebuildPresentationFor() in the
 // .cpp.
+//
+// Block-commit staging (review findings 1/2): a block row's identities name
+// its COVERED CELLS (see PresentationRow::identities above), so an edit that
+// changes those cells' addresses/positions/arguments (ApplyMappingEdit's
+// Block branch) or an AddBlock append changes what a subsequent
+// RebuildPresentationFor() needs to re-resolve against. Per this class's
+// edit contract (top of file / ApplyMappingEdit's doc comment below): the
+// edit methods populate `out` for the HOST to commit, and never assume it
+// landed. To still satisfy sru-11's "the block row stays in place with
+// updated values" / "+B ... the block row appears at the end of the group"
+// once the host DOES commit `out` and calls Rebuild() again (the only
+// pattern any current caller -- ControllersPage.hpp -- uses),
+// ApplyMappingEdit/AddBlock optimistically write the new block struct +
+// identities into THIS view model's own `presentations_` entry at the same
+// time they populate `out` (see MidiConfigViewModel.cpp's
+// IdentitiesForEncoderExpansion/IdentitiesForAnalogExpansion/
+// IdentitiesForSystemExpansion and their call sites). This is a same-
+// instance cache-priming hint, not a claim that the edit landed: if the
+// host discards `out`, the next real Rebuild() re-resolves this row's
+// now-wrong identities against whatever config actually exists and
+// self-heals via the ordinary drop/append rule below -- it cannot corrupt
+// anything, it just misses the "stayed in place" optimization for that one
+// discarded edit.
+//
+// Erasure on controller removal (review finding 5): Rebuild() ERASES (not
+// just empties) the SectionPresentation entry for a controller name that no
+// longer resolves, and the matching ExpandState entry in expandState_ below
+// -- so a LATER controller reusing that same name (remove, then re-add) is
+// treated as a genuinely fresh appearance (lazy-rebuilds its presentation
+// from scratch on next expand, starts fully collapsed) rather than
+// inheriting the old, now-meaningless entry.
 struct SectionPresentation {
     std::vector<PresentationRow> rows;
 };

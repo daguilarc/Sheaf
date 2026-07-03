@@ -381,6 +381,46 @@ TEST_CASE(RowFieldValueReadsAnalogGestureFieldsAndSceneBlend) {
     REQUIRE_TRUE(value == static_cast<double>(analogInput.sceneBlend->cc));
 }
 
+TEST_CASE(RowFieldValueReadsSceneBlendWhenUnassigned) {
+    // Finding 4 review fallout: RowFieldValue used to return false for an
+    // UNASSIGNED sceneBlend even though the ConfigLevel row always
+    // advertises Field::SceneBlend as editable and ApplyMappingEdit
+    // genuinely accepts assigning it (see that method's AnalogSceneBlend
+    // case, which value_or(MidiControlAddress{})-defaults an absent
+    // sceneBlend rather than refusing). ControllersPage.hpp's renderer
+    // (finding 4's own fix) now skips building an editor entirely for any
+    // field RowFieldValue can't read -- so if this case still returned
+    // false, an unassigned scene blend would become permanently
+    // unassignable from the UI. Must return true with a stable default (0.0
+    // -- matching ApplyMappingEdit's own default-construction value) so the
+    // renderer still builds an editor for it.
+    MidiConfigViewModel vm;
+    MidiInstrumentConfig instrument;
+    MidiControllerSlot slot = MakeWrldBldrSlot("wrld");
+    slot.config.analogInput->sceneBlend = std::nullopt;
+    REQUIRE_TRUE(instrument.AddController(std::move(slot)));
+    MidiConnectionState connection;
+    connection.controllers.push_back(MidiControllerConnection{});
+    vm.Rebuild(instrument, connection);
+
+    const std::vector<MidiMappingRowVM> rows = vm.SectionRows(0, MidiConfigSection::Analogs);
+    const std::size_t sceneBlendRowIx = rows.size() - 1;
+    REQUIRE_TRUE(rows[sceneBlendRowIx].group == MidiMappingRowVM::RowGroup::AnalogSceneBlend);
+
+    double value = -1.0;
+    REQUIRE_TRUE(vm.RowFieldValue(0, MidiConfigSection::Analogs, sceneBlendRowIx, MidiMappingRowVM::Field::SceneBlend,
+                                  value));
+    REQUIRE_TRUE(value == 0.0);
+
+    // And the field is genuinely assignable from that seeded state.
+    MidiInstrumentConfig out;
+    std::string reason;
+    REQUIRE_TRUE(vm.ApplyMappingEdit(0, MidiConfigSection::Analogs, sceneBlendRowIx,
+                                     MidiMappingRowVM::Field::SceneBlend, 42.0, out, &reason));
+    REQUIRE_TRUE(out.controllers[0].config.analogInput->sceneBlend.has_value());
+    REQUIRE_TRUE(out.controllers[0].config.analogInput->sceneBlend->cc == 42);
+}
+
 TEST_CASE(RowFieldValueReadsWrldBldrSystemMessagePositions) {
     MidiConfigViewModel vm;
     MidiInstrumentConfig instrument = MakeFourKindInstrument();
@@ -1364,36 +1404,87 @@ double SafeValueFor(MidiMappingRowVM::Field field) {
 // e.g. a launchpad bank-select block can start at x=8, so a fixed
 // BlockEndX=1 would make endX < startX and legitimately fail validation.
 // Reads the row's current start value via RowFieldValue and returns
-// max(SafeValueFor(field), that start) for the four End* fields; every
-// other field is unaffected.
+// max(SafeValueFor(field), that start) for the four End* fields.
+//
+// Block start-coordinate fields (finding 3 fallout): a fixed SafeValueFor
+// constant can walk a 2-D system block's START clean off its own footprint
+// while its END stays put (this helper only edits ONE field at a time,
+// mirroring "every field independently succeeds") -- e.g. moving a
+// scene-select block's BlockStartY from 6 to a fixed 0 while BlockEndY
+// stays 6 turns a 1-row block into a 7-row rectangle that sweeps through
+// OTHER rows' addresses (the WrldBldr default profile's bank-select block
+// and reset/random rows sit at y=2..4), which finding 3's new
+// duplicate-address check correctly refuses -- a real bug in the FIXED
+// TEST CONSTANT, not in the view model. Kept at the row's own current
+// value (a same-value "no-op" edit, still a genuine ApplyMappingEdit
+// round-trip) for BlockStartX/BlockStartY/BlockStartCc so this test keeps
+// verifying "the field accepts SOME legal value" without depending on a
+// magic constant staying collision-free against every default profile's
+// address layout.
 double SafeValueForRow(MidiConfigViewModel& vm, std::size_t controllerIx, MidiConfigSection section,
                        std::size_t rowIx, MidiMappingRowVM::Field field) {
     using Field = MidiMappingRowVM::Field;
-    MidiMappingRowVM::Field startField;
+    MidiMappingRowVM::Field pairedField;
+    bool wantMax = false;  // true: End* (>= paired start); false: Start* (== current value)
     switch (field) {
         case Field::BlockEndCc:
-            startField = Field::BlockStartCc;
+            pairedField = Field::BlockStartCc;
+            wantMax = true;
             break;
         case Field::BlockEndX:
-            startField = Field::BlockStartX;
+            pairedField = Field::BlockStartX;
+            wantMax = true;
             break;
         case Field::BlockEndY:
-            startField = Field::BlockStartY;
+            pairedField = Field::BlockStartY;
+            wantMax = true;
+            break;
+        case Field::BlockStartX:
+        case Field::BlockStartY:
+        case Field::BlockStartCc:
+            pairedField = field;
             break;
         default:
             return SafeValueFor(field);
     }
-    double start = 0.0;
-    if (vm.RowFieldValue(controllerIx, section, rowIx, startField, start)) {
-        return std::max(SafeValueFor(field), start);
+    double current = 0.0;
+    if (vm.RowFieldValue(controllerIx, section, rowIx, pairedField, current)) {
+        return wantMax ? std::max(SafeValueFor(field), current) : current;
     }
     return SafeValueFor(field);
 }
 
-void RequireEveryEditableFieldSucceeds(MidiConfigViewModel& vm, std::size_t controllerIx, MidiConfigSection section) {
-    const auto rows = vm.SectionRows(controllerIx, section);
+// `baseInstrument`/`connection` (findings 1/2 fallout): each (row, field)
+// pair is applied against a FRESH view model Rebuild()'t from
+// `baseInstrument`, rather than accumulating edits across fields/rows on one
+// shared `vm`. This isolates each field's "can it be successfully applied
+// from this row's ORIGINAL state" check from every other field/row's edit,
+// which is this test's actual intent (per its header comment: "every
+// editableFields entry actually succeeds") -- not a claim that arbitrarily
+// chained edits compose. Chaining used to accidentally "work" only because
+// a block row's presentation never updated after a commit (findings 1/2's
+// bug): editing BlockMessageType away from BankSelect genuinely drops
+// BlockBankSlotIx from that SAME row's editableFields on the next read now
+// that the fix keeps the presentation live (matching what a real host sees
+// after committing `out` and calling Rebuild() again) -- so testing "does
+// BlockBankSlotIx succeed" must start from the row's original BankSelect
+// state, not from whatever an earlier field in this same loop left behind.
+// Individual (non-block) rows have a pre-existing, out-of-scope version of
+// the same non-independence (an identity-changing edit, e.g. Channel on a
+// system row, reorders the canonical sort and shifts OTHER rows' indices on
+// Rebuild -- accepted existing behavior, see RowDroppedWhenIdentityNoLonger
+// Resolves) -- isolating per-field also sidesteps that, rather than
+// depending on it.
+void RequireEveryEditableFieldSucceeds(const MidiInstrumentConfig& baseInstrument,
+                                       const MidiConnectionState& connection, std::size_t controllerIx,
+                                       MidiConfigSection section) {
+    MidiConfigViewModel probe;
+    probe.Rebuild(baseInstrument, connection);
+    const auto rows = probe.SectionRows(controllerIx, section);
     for (std::size_t rowIx = 0; rowIx < rows.size(); ++rowIx) {
         for (MidiMappingRowVM::Field field : rows[rowIx].editableFields) {
+            MidiConfigViewModel vm;
+            vm.Rebuild(baseInstrument, connection);
             MidiInstrumentConfig out;
             std::string reason;
             const bool ok = vm.ApplyMappingEdit(controllerIx, section, rowIx, field,
@@ -1434,19 +1525,18 @@ TEST_CASE(TwisterSideButtonRowButtonAndMessageFieldsAllSucceed) {
     MidiConnectionState connection;
     connection.controllers.push_back(MidiControllerConnection{});
 
-    MidiConfigViewModel vm;
-    vm.Rebuild(instrument, connection);
-    RequireEveryEditableFieldSucceeds(vm, 0, MidiConfigSection::SystemMessages);
+    RequireEveryEditableFieldSucceeds(instrument, connection, 0, MidiConfigSection::SystemMessages);
 }
 
 TEST_CASE(EveryEditableFieldOnEveryDefaultProfileRowSucceeds) {
     MidiConfigViewModel vm;
     MidiInstrumentConfig instrument = MakeFourKindInstrument();
-    vm.Rebuild(instrument, MakeFourKindConnection());
+    const MidiConnectionState connection = MakeFourKindConnection();
+    vm.Rebuild(instrument, connection);
 
     for (std::size_t controllerIx = 0; controllerIx < vm.Controllers().size(); ++controllerIx) {
         for (MidiConfigSection section : vm.Controllers()[controllerIx].sections) {
-            RequireEveryEditableFieldSucceeds(vm, controllerIx, section);
+            RequireEveryEditableFieldSucceeds(instrument, connection, controllerIx, section);
         }
     }
 }
@@ -1835,12 +1925,83 @@ TEST_CASE(AllRowsDroppedWhenEncoderInputVanishesEntirely) {
     REQUIRE_TRUE(rows.empty());
 }
 
+TEST_CASE(SameNameReaddAfterRemovalGetsFreshPresentation) {
+    // Finding 5: Rebuild() used to keep the presentation map entry alive
+    // (rows cleared in place, not erased) once a controller's name vanished
+    // from the instrument -- a re-added controller reusing that SAME name
+    // would then find the stale, still-present-but-empty entry via
+    // PresentationFor()'s find()-hit path and serve an emptied presentation
+    // forever, never lazily reconstructing from the reappeared controller's
+    // actual config (BuildFreshPresentation only runs on a find()-MISS).
+    // TDD per the task brief: remove controller, Rebuild, re-add same name,
+    // Rebuild, expand -> fresh reconstruction.
+    MidiConfigViewModel vm;
+    MidiInstrumentConfig instrument = MakeSingleTurnWrldBldrInstrument();  // "wrld", one turn mapping
+    MidiConnectionState connection = MakeSingleControllerConnection();
+    vm.Rebuild(instrument, connection);
+
+    // Expand (builds the presentation entry for ("wrld", Encoders)) and also
+    // expand the CONFIG section (ToggleConfig) -- both are name-keyed
+    // expand state that should reset on a same-name readd (finding 5's
+    // "expand-state entry if appropriate").
+    std::vector<MidiMappingRowVM> rows = vm.SectionRows(0, MidiConfigSection::Encoders);
+    REQUIRE_TRUE(rows[0].kind == MidiMappingRowVM::Kind::Individual);
+    vm.ToggleConfig(0);
+    REQUIRE_TRUE(vm.Controllers()[0].configExpanded == true);
+
+    // Remove the controller entirely and Rebuild -- the presentation AND
+    // expand-state entries are now orphaned (name "wrld" no longer
+    // resolves).
+    MidiInstrumentConfig removed;
+    MidiConnectionState emptyConnection;
+    vm.Rebuild(removed, emptyConnection);
+    REQUIRE_TRUE(vm.Controllers().empty());
+
+    // Re-add a DIFFERENT controller also named "wrld", with a full 16-turn
+    // WRLD.Bldr default profile this time (deliberately different content
+    // from the single-turn original, so "fresh reconstruction" is
+    // observable, not just "happens to look the same").
+    MidiInstrumentConfig readded;
+    REQUIRE_TRUE(readded.AddController(MakeWrldBldrSlot("wrld")));
+    MidiConnectionState readdedConnection = MakeSingleControllerConnection();
+    vm.Rebuild(readded, readdedConnection);
+    REQUIRE_TRUE(vm.Controllers().size() == 1);
+    REQUIRE_TRUE(vm.Controllers()[0].name == "wrld");
+    // Fresh appearance -> starts fully collapsed again, not inheriting the
+    // OLD "wrld" controller's expanded config state.
+    REQUIRE_TRUE(vm.Controllers()[0].configExpanded == false);
+
+    // Expand again: must reconstruct FRESH from the reappeared controller's
+    // actual (16-turn, block-forming) config -- one turn block + one push
+    // block + mode + step, NOT the stale single-individual-row presentation
+    // (or worse, an empty one) the old "wrld" entry would have served.
+    rows = vm.SectionRows(0, MidiConfigSection::Encoders);
+    REQUIRE_TRUE(rows.size() == 1 + 1 + 2);
+    REQUIRE_TRUE(rows[0].kind == MidiMappingRowVM::Kind::Block);
+    REQUIRE_TRUE(rows[0].group == MidiMappingRowVM::RowGroup::EncoderTurn);
+    REQUIRE_TRUE(rows[1].kind == MidiMappingRowVM::Kind::Block);
+    REQUIRE_TRUE(rows[1].group == MidiMappingRowVM::RowGroup::EncoderPush);
+}
+
 // --- sru-10/sru-11: block editing (replace-cells commit) --------------------
 
 TEST_CASE(BlockEditReplacesStartArgumentKeepingRowInPlace) {
+    // Findings 1/2 regression coverage: this MUST exercise the SAME view
+    // model instance across expand -> block edit -> simulated host commit
+    // (Rebuild with the edited instrument), matching the real
+    // ControllersPage.hpp call sequence (MappingRow::Commit() calls
+    // page_.Commit(std::move(out)), which re-Rebuild()s the SAME vm_ member
+    // -- see runtime/ControllersPage.hpp). A fresh second view model would
+    // only ever exercise BuildFreshPresentation's reconstruction path (which
+    // always groups correctly since it re-derives blocks from scratch), not
+    // RebuildPresentationFor's re-resolve-without-re-grouping path -- the
+    // one findings 1/2 were actually broken in (the identity-changing edit
+    // made the block's old identities fail to resolve on the SAME vm,
+    // dropping the row and re-appending its cells as 16 individual rows).
     MidiConfigViewModel vm;
     MidiInstrumentConfig instrument = MakeFourKindInstrument();
-    vm.Rebuild(instrument, MakeFourKindConnection());
+    const MidiConnectionState connection = MakeFourKindConnection();
+    vm.Rebuild(instrument, connection);
 
     const std::vector<MidiMappingRowVM> before = vm.SectionRows(0, MidiConfigSection::Encoders);
     REQUIRE_TRUE(before[0].kind == MidiMappingRowVM::Kind::Block);  // turn block, startPosition 0
@@ -1864,13 +2025,27 @@ TEST_CASE(BlockEditReplacesStartArgumentKeepingRowInPlace) {
     REQUIRE_TRUE(minPos == 20);
     REQUIRE_TRUE(maxPos == 35);
 
-    // Re-Rebuild and confirm the block row stays in place at index 0,
-    // updated.
-    MidiConfigViewModel vmAfter;
-    vmAfter.Rebuild(out, MakeFourKindConnection());
-    const std::vector<MidiMappingRowVM> after = vmAfter.SectionRows(0, MidiConfigSection::Encoders);
+    // Simulate the host committing `out` and calling Rebuild() again on the
+    // SAME vm (this class's documented edit contract) -- the block row must
+    // stay in place at index 0, still ONE block row (not 16 individuals),
+    // with updated values and its identity set re-synced to the new
+    // positions (sru-11 "the block row stays in place with updated values").
+    vm.Rebuild(out, connection);
+    const std::vector<MidiMappingRowVM> after = vm.SectionRows(0, MidiConfigSection::Encoders);
+    REQUIRE_TRUE(after.size() == before.size());  // still 1 turn block + 1 push block + mode + step, not 16+ rows
     REQUIRE_TRUE(after[0].kind == MidiMappingRowVM::Kind::Block);
+    REQUIRE_TRUE(after[0].group == MidiMappingRowVM::RowGroup::EncoderTurn);
     REQUIRE_TRUE(after[0].label.find("pos 20") != std::string::npos);
+
+    // A further Rebuild() with the SAME `out` (no-op re-resolve) must still
+    // find the row in place -- proves the re-synced identities genuinely
+    // resolve against the committed config, not just an artifact of the
+    // single transition.
+    vm.Rebuild(out, connection);
+    const std::vector<MidiMappingRowVM> stable = vm.SectionRows(0, MidiConfigSection::Encoders);
+    REQUIRE_TRUE(stable.size() == before.size());
+    REQUIRE_TRUE(stable[0].kind == MidiMappingRowVM::Kind::Block);
+    REQUIRE_TRUE(stable[0].label.find("pos 20") != std::string::npos);
 }
 
 TEST_CASE(BlockEditAllOrNothingRefusalLeavesConfigUnchanged) {
@@ -1897,6 +2072,75 @@ TEST_CASE(BlockEditAllOrNothingRefusalLeavesConfigUnchanged) {
     // reads) is also unaffected -- still 16 turns, block intact.
     const std::vector<MidiMappingRowVM> stillThere = vm.SectionRows(0, MidiConfigSection::Encoders);
     REQUIRE_TRUE(stillThere[0].kind == MidiMappingRowVM::Kind::Block);
+}
+
+TEST_CASE(BlockEditOverlappingExistingSceneButtonRefused) {
+    // Finding 3 / sru-10 "block commit is all-or-nothing ... duplicate
+    // address": a block edit whose new expansion collides with an address
+    // some OTHER, unrelated mapping already occupies must be refused with a
+    // reason, config completely unchanged -- Expand*Block only validates a
+    // block's OWN cells are self-consistent; it has no visibility into the
+    // rest of the config, so this check has to live in ApplyMappingEdit
+    // itself (see HasDuplicateSystemAddress).
+    MidiConfigViewModel vm;
+    MidiInstrumentConfig instrument = MakeFourKindInstrument();  // "wrld" at index 0
+    const MidiConnectionState connection = MakeFourKindConnection();
+    vm.Rebuild(instrument, connection);
+
+    // Add an individual scene-select button at the next-free WRLD.Bldr grid
+    // position -- (x=0, y=0), sceneIx 8 (the default profile's existing
+    // scene-select block already claims sceneIx 0..7).
+    MidiInstrumentConfig afterAdd;
+    std::string reason;
+    REQUIRE_TRUE(vm.AddSingle(0, MidiConfigSection::SystemMessages, MidiMappingRowVM::RowGroup::System, afterAdd,
+                              &reason));
+    vm.Rebuild(afterAdd, connection);
+    const std::size_t associationCountBeforeEdit = afterAdd.controllers[0].config.systemMessages.size();
+
+    // Locate the scene-select block row (still (0,6)..(7,6), untouched by
+    // the add above) and the new individual scene button at (0,0).
+    const std::vector<MidiMappingRowVM> rows = vm.SectionRows(0, MidiConfigSection::SystemMessages);
+    std::size_t sceneBlockIx = SIZE_MAX;
+    std::size_t sceneButtonIx = SIZE_MAX;
+    for (std::size_t ix = 0; ix < rows.size(); ++ix) {
+        if (rows[ix].kind == MidiMappingRowVM::Kind::Block && rows[ix].label.rfind("scene select block", 0) == 0) {
+            sceneBlockIx = ix;
+        }
+        if (rows[ix].kind == MidiMappingRowVM::Kind::Individual && rows[ix].label.find("scene select 8") != std::string::npos) {
+            sceneButtonIx = ix;
+        }
+    }
+    REQUIRE_TRUE(sceneBlockIx != SIZE_MAX);
+    REQUIRE_TRUE(sceneButtonIx != SIZE_MAX);
+
+    // Move the scene-select block's row from y=6 down to y=0 -- its
+    // x-range (0..7) now covers (0,0), the new individual button's address,
+    // even though BOTH the block's own expansion (self-consistent) and the
+    // individual button (unchanged) are independently valid.
+    MidiInstrumentConfig sentinel;
+    sentinel.controllers.push_back(MakeGenericSlot("sentinel"));  // prove untouched on refusal
+    bool ok = vm.ApplyMappingEdit(0, MidiConfigSection::SystemMessages, sceneBlockIx,
+                                  MidiMappingRowVM::Field::BlockStartY, 0.0, sentinel, &reason);
+    REQUIRE_TRUE(!ok);
+    REQUIRE_TRUE(!reason.empty());
+    // `out` (aliased here as `sentinel`) is untouched -- still just the
+    // sentinel controller, not a copy of the real instrument.
+    REQUIRE_TRUE(sentinel.controllers.size() == 1);
+    REQUIRE_TRUE(sentinel.controllers[0].name == "sentinel");
+
+    ok = vm.ApplyMappingEdit(0, MidiConfigSection::SystemMessages, sceneBlockIx, MidiMappingRowVM::Field::BlockEndY,
+                             0.0, sentinel, &reason);
+    REQUIRE_TRUE(!ok);  // BlockEndY alone also collides once paired with the unchanged BlockStartY=6 -- ambiguous
+                        // rectangle aside, this just confirms the check fires on either edited field.
+
+    // The view model's OWN snapshot is unaffected: the block row is still
+    // at (0,6)..(7,6), the config still has exactly the same number of
+    // associations as right after the AddSingle commit (no partial
+    // mutation).
+    const std::vector<MidiMappingRowVM> stillThere = vm.SectionRows(0, MidiConfigSection::SystemMessages);
+    REQUIRE_TRUE(stillThere[sceneBlockIx].kind == MidiMappingRowVM::Kind::Block);
+    REQUIRE_TRUE(stillThere[sceneBlockIx].label.rfind("scene select block (0,6)..(7,6)", 0) == 0);
+    REQUIRE_TRUE(afterAdd.controllers[0].config.systemMessages.size() == associationCountBeforeEdit);
 }
 
 TEST_CASE(SystemBlockEditChangesMessageTypeAndCommitsExpansion) {
@@ -1958,27 +2202,52 @@ TEST_CASE(AddSingleAppendsAtGroupEndWithNextFreeDefaults) {
 
 TEST_CASE(AddBlockAppendsCommittedExpansion) {
     // sru-11 scenario: "+B" on a launchpad's system group appends the
-    // block's cells in one commit.
+    // block's cells in one commit. Findings 1/2 regression coverage: this
+    // MUST exercise the SAME view model instance -- expand (first
+    // SectionRows() read), AddBlock, then simulate the host committing `out`
+    // via Rebuild() on the SAME vm (ControllersPage.hpp's real
+    // AddButton-equivalent call sequence: commit then re-Rebuild the one
+    // vm_ member) -- not a fresh second view model, which would only ever
+    // exercise BuildFreshPresentation's from-scratch reconstruction (always
+    // correct) rather than RebuildPresentationFor's re-resolve-without-
+    // re-grouping path (the one findings 1/2 were broken in: the new cells'
+    // identities didn't match anything already in the presentation, so they
+    // fell through to AppendUnresolvedSystemIdentities as loose individual
+    // rows instead of showing up as the appended block).
     MidiConfigViewModel vm;
     MidiInstrumentConfig instrument;
     instrument.AddController(MakeLaunchpadSlot("pads"));
     MidiConnectionState connection = MakeSingleControllerConnection();
     vm.Rebuild(instrument, connection);
 
-    const std::size_t before = instrument.controllers[0].config.systemMessages.size();
+    // Expand (first read) before AddBlock, per D5's "collapsed->expanded
+    // transition" -- this is the scenario a real host hits: the section is
+    // already open when the user presses "+B".
+    const std::vector<MidiMappingRowVM> before = vm.SectionRows(0, MidiConfigSection::SystemMessages);
+    const std::size_t beforeRowCount = before.size();
+    const std::size_t beforeAssociationCount = instrument.controllers[0].config.systemMessages.size();
 
     MidiInstrumentConfig out;
     std::string reason;
     REQUIRE_TRUE(vm.AddBlock(0, MidiConfigSection::SystemMessages, MidiMappingRowVM::RowGroup::System, out, &reason));
     REQUIRE_TRUE(reason.empty());
     // Default block width is 2 -- exactly 2 new associations appear.
-    REQUIRE_TRUE(out.controllers[0].config.systemMessages.size() == before + 2);
+    REQUIRE_TRUE(out.controllers[0].config.systemMessages.size() == beforeAssociationCount + 2);
 
-    // The new block appears at the end of the System group when re-read.
-    MidiConfigViewModel vmAfter;
-    vmAfter.Rebuild(out, connection);
-    const std::vector<MidiMappingRowVM> rows = vmAfter.SectionRows(0, MidiConfigSection::SystemMessages);
-    REQUIRE_TRUE(rows.back().kind == MidiMappingRowVM::Kind::Block);
+    // Simulate the host committing `out` and calling Rebuild() again on the
+    // SAME vm -- the new block must appear as ONE block row at the end of
+    // the System group (not 2 individual rows).
+    vm.Rebuild(out, connection);
+    const std::vector<MidiMappingRowVM> after = vm.SectionRows(0, MidiConfigSection::SystemMessages);
+    REQUIRE_TRUE(after.size() == beforeRowCount + 1);  // one new row: the block
+    REQUIRE_TRUE(after.back().kind == MidiMappingRowVM::Kind::Block);
+    REQUIRE_TRUE(after.back().group == MidiMappingRowVM::RowGroup::System);
+
+    // Stable on a further no-op Rebuild() too.
+    vm.Rebuild(out, connection);
+    const std::vector<MidiMappingRowVM> stable = vm.SectionRows(0, MidiConfigSection::SystemMessages);
+    REQUIRE_TRUE(stable.size() == beforeRowCount + 1);
+    REQUIRE_TRUE(stable.back().kind == MidiMappingRowVM::Kind::Block);
 }
 
 TEST_CASE(AddBlockRefusedForTwister) {

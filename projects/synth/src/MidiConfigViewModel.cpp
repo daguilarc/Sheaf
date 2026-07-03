@@ -513,19 +513,60 @@ void MidiConfigViewModel::Rebuild(const MidiInstrumentConfig& instrument, const 
         controllers_.push_back(std::move(row));
     }
 
+    // Finding 5: erase expand-state entries for controller names no longer
+    // present, for the same reason presentation entries are erased below --
+    // a same-name readd should start "fully collapsed" like any other
+    // first-ever appearance (this class's own doc comment above, and
+    // Rebuild()'s "first appearance starts fully collapsed" comment just
+    // above), not silently inherit whatever expand/section state the OLD,
+    // now-gone controller of that name was left in. Does NOT affect
+    // ToggleStateKeyedByNameSurvivesReordering (which keeps the same set of
+    // names present, just reordered -- no name here is ever missing from
+    // `instrument_.controllers`, so ExpandStateNamesStillPresent below never
+    // erases anything that test relies on).
+    std::vector<std::string> expandStateNamesToErase;
+    for (const auto& [name, state] : expandState_) {
+        (void)state;
+        if (instrument_.FindController(name) == nullptr) {
+            expandStateNamesToErase.push_back(name);
+        }
+    }
+    for (const std::string& name : expandStateNamesToErase) {
+        expandState_.erase(name);
+    }
+
     // Re-resolve every EXISTING presentation entry (D5: "view-model rebuilds
-    // re-resolve rows by identity ... without re-grouping") -- entries for
-    // controllers no longer present are left as harmless orphans (keyed by
-    // name; DiscardPresentation/ToggleSection clean them up on collapse, and
-    // a name that never reappears simply never gets read again).
+    // re-resolve rows by identity ... without re-grouping").
+    //
+    // Finding 5: entries for controllers no longer present in this
+    // instrument are ERASED (not just cleared to empty rows) -- a stale
+    // empty-but-present map entry would make a LATER PresentationFor() call
+    // for a same-named controller that reappears (remove, then re-add with
+    // the same name -- e.g. undo/redo, or a deliberate re-add in one
+    // session) find that stale entry via presentations_.find() and treat it
+    // as "already built" (a presentation with zero rows), rather than
+    // lazily building a fresh reconstruction from the reappeared
+    // controller's actual config. Erasing lets PresentationFor's
+    // find()-miss -> BuildFreshPresentation() path run again for that name,
+    // matching sru-11 "re-expanding presents the fresh minimal
+    // reconstruction" (a same-name readd is, presentation-wise, exactly
+    // like a fresh expand -- the OLD controller's identity space is gone).
+    // Collects orphaned keys first and erases in a second pass, since
+    // erasing a std::map entry while range-for is iterating that SAME
+    // element is undefined behavior; this stays correct without relying on
+    // erase-during-iteration guarantees.
+    std::vector<PresentationKey> orphanedKeys;
     for (auto& [presentationKey, presentation] : presentations_) {
         const auto& [name, section] = presentationKey;
         const MidiControllerSlot* slot = instrument_.FindController(name);
         if (slot == nullptr) {
-            presentation.rows.clear();  // controller removed: nothing left to resolve
+            orphanedKeys.push_back(presentationKey);
             continue;
         }
         RebuildPresentationFor(presentation, slot->config, slot->kind, section);
+    }
+    for (const PresentationKey& key : orphanedKeys) {
+        presentations_.erase(key);
     }
 }
 
@@ -866,6 +907,26 @@ std::size_t InsertionIndexForGroup(const SectionPresentation& presentation, RowG
         return lastOfGroup;
     }
     return firstOfLaterGroup;
+}
+
+// Finding 2: appends a new Block row (from a just-committed AddBlock) at the
+// end of its group, matching InsertionIndexForGroup -- same "cache-priming
+// hint on THIS view model instance's presentation" reasoning as the
+// block-edit path documented in ApplyMappingEdit (option (a) from the task
+// brief): AddBlock's `out` is committed by the host and Rebuild() is called
+// again, and this staged row lets that Rebuild() re-resolve the new cells'
+// identities to an EXISTING (this) row instead of appending them as loose
+// individuals (sru-11 "the block row appears at the end of the group").
+template <typename BlockT>
+void AppendBlockPresentationRow(SectionPresentation& presentation, RowGroup group, const BlockT& block,
+                                std::vector<RowIdentity> identities) {
+    const std::size_t insertAt = InsertionIndexForGroup(presentation, group);
+    PresentationRow row;
+    row.kind = RowKind::Block;
+    row.group = group;
+    row.block = block;
+    row.identities = std::move(identities);
+    presentation.rows.insert(presentation.rows.begin() + static_cast<std::ptrdiff_t>(insertAt), std::move(row));
 }
 
 // Appends Individual rows, at the end of their group, for every raw config
@@ -1219,9 +1280,27 @@ bool MidiConfigViewModel::RowFieldValue(std::size_t controllerIx, MidiConfigSect
             out = static_cast<double>(slot.config.encoderInput->turnStep);
             return true;
         }
-        if (presentationRow.group == RowGroup::AnalogSceneBlend && field == Field::SceneBlend &&
-            slot.config.analogInput->sceneBlend.has_value()) {
-            out = static_cast<double>(slot.config.analogInput->sceneBlend->cc);
+        if (presentationRow.group == RowGroup::AnalogSceneBlend && field == Field::SceneBlend) {
+            // Finding 4 audit fallout: an unassigned sceneBlend (a common,
+            // valid state -- SlotValidForKind places no requirement on it,
+            // see SceneBlendLabelReadsClearlyWhenAssignedAndUnassigned)
+            // used to make THIS return false even though the row always
+            // advertises SceneBlend as editable and ApplyMappingEdit
+            // genuinely accepts assigning it (defaulting the address via
+            // value_or(MidiControlAddress{})). Returning false here made
+            // ControllersPage.hpp's renderer skip building an editor
+            // entirely for this row once it started checking
+            // RowFieldValue's return value (finding 4's fix), which would
+            // have made an unassigned scene blend permanently unassignable
+            // from the UI -- a real regression the finding's own goal
+            // ("visible but not silently corruptible") doesn't intend.
+            // 0.0 (cc 0) matches ApplyMappingEdit's own default-construction
+            // value for the same unassigned case, so a freshly-seeded
+            // editor and a freshly-committed edit agree on what "unassigned,
+            // about to be assigned" starts from.
+            out = slot.config.analogInput->sceneBlend.has_value()
+                     ? static_cast<double>(slot.config.analogInput->sceneBlend->cc)
+                     : 0.0;
             return true;
         }
         return false;
@@ -1586,6 +1665,143 @@ bool ApplySystemBlockField(SystemBlock& block, Field field, double value, std::s
     }
 }
 
+// --- Finding 3: duplicate-address refusal for block commits -----------------
+//
+// sru-10's "block commit is all-or-nothing" scenario explicitly lists
+// "duplicate address" as a validation failure a block commit must refuse
+// (alongside address-out-of-shape/argument-out-of-domain, which
+// Expand*Block already rejects internally -- these three checks together
+// cover the whole scenario). Expand*Block only validates the block's OWN
+// cells are self-consistent; it has no visibility into the rest of the
+// config, so an edit/AddBlock that (after removing the block's own old
+// cells) expands into an address some OTHER surviving mapping/association
+// already occupies would silently create a duplicate address without this
+// check. Applied against the CANDIDATE collection (old cells already
+// removed, new expansion already inserted) so a cell colliding with one of
+// the block's OWN other cells is caught too (Expand*Block guarantees no
+// self-collision within a single block's cells, but that guarantee doesn't
+// extend to a block colliding with itself pre-removal, hence checking the
+// post-removal candidate).
+//
+// Individual-row address edits (Field::Channel/Cc/LaunchpadX/Y/WrldBldrX/Y/
+// Button on a non-block row) do NOT get this check -- historically allowed
+// (no prior test or spec scenario pins refusal there), and sru-10's
+// all-or-nothing/duplicate-address language is scoped to "a block edit" /
+// "block commit" specifically. Unifying the two would be a behavior change
+// beyond this fix's brief; left as a documented judgment call (task brief
+// finding 3: "keep individual edits as-is unless trivially unifiable,
+// DOCUMENT the choice").
+bool HasDuplicateEncoderAddress(const std::vector<EncoderMidiMapping>& mappings) {
+    for (std::size_t ix = 0; ix < mappings.size(); ++ix) {
+        for (std::size_t jx = ix + 1; jx < mappings.size(); ++jx) {
+            if (mappings[ix].control == mappings[jx].control) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+bool HasDuplicateAnalogAddress(const std::vector<AnalogMidiMapping>& mappings) {
+    for (std::size_t ix = 0; ix < mappings.size(); ++ix) {
+        for (std::size_t jx = ix + 1; jx < mappings.size(); ++jx) {
+            if (mappings[ix].control == mappings[jx].control) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+// One association's address tuple per the kind's schema (D1) -- the same
+// fields SystemAddressSchema(kind) names, flattened to a comparable form.
+// Twister's address is its `control` (channel 3, cc 8-13) same as generic;
+// distinguishing twister isn't needed here since MfTwister never blocks
+// (D4) and AddSingle is the only twister caller, which already refuses via
+// NextFreeTwisterButton exhaustion before reaching this check.
+bool SameSystemAddress(const MidiControllerSystemMessageAssociation& a,
+                       const MidiControllerSystemMessageAssociation& b, MidiProfileKind kind) {
+    if (kind == MidiProfileKind::Launchpad) {
+        return a.launchpadPosition.has_value() && b.launchpadPosition.has_value() &&
+              *a.launchpadPosition == *b.launchpadPosition;
+    }
+    if (kind == MidiProfileKind::WrldBldr) {
+        return a.control.has_value() && b.control.has_value() && *a.control == *b.control;
+    }
+    // MfTwister and Generic: (channel, cc) via `control`.
+    return a.control.has_value() && b.control.has_value() && *a.control == *b.control;
+}
+
+bool HasDuplicateSystemAddress(const std::vector<MidiControllerSystemMessageAssociation>& associations,
+                               MidiProfileKind kind) {
+    for (std::size_t ix = 0; ix < associations.size(); ++ix) {
+        for (std::size_t jx = ix + 1; jx < associations.size(); ++jx) {
+            if (SameSystemAddress(associations[ix], associations[jx], kind)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+// --- Findings 1/2: identities for a just-committed block expansion ---------
+//
+// After a block commit (edit or AddBlock) builds `expansion` (the new
+// cells) and inserts them into the candidate config, these compute the
+// RowIdentity set the presentation row should adopt so a subsequent
+// Rebuild() on the SAME view model (once the host commits `out` and calls
+// Rebuild() again, per this class's documented edit contract) re-resolves
+// the row IN PLACE with its new grouping/values instead of dropping it and
+// re-appending the new cells as individuals (sru-11 "the block row stays in
+// place with updated values"). See MidiConfigViewModel.hpp's
+// ApplyMappingEdit/AddBlock doc comments for why this is safe even though
+// the view model's own snapshot is untouched until the next Rebuild(): the
+// optimistic identities are just a cache-priming hint for THIS view model
+// instance's presentation map -- if the host never commits `out` (or
+// commits something else entirely), the next real Rebuild() re-resolves
+// every row against whatever config actually landed, self-healing to
+// dropped/appended rows exactly as it always has for any other stale
+// identity (RebuildPresentationFor's existing drop/append rule, unchanged).
+std::vector<RowIdentity> IdentitiesForEncoderExpansion(const std::vector<EncoderMidiMapping>& expansion,
+                                                       bool isPush) {
+    std::vector<RowIdentity> identities;
+    identities.reserve(expansion.size());
+    for (const EncoderMidiMapping& mapping : expansion) {
+        identities.push_back(IdentityOf(mapping, isPush));
+    }
+    return identities;
+}
+
+std::vector<RowIdentity> IdentitiesForAnalogExpansion(const std::vector<AnalogMidiMapping>& expansion) {
+    std::vector<RowIdentity> identities;
+    identities.reserve(expansion.size());
+    for (const AnalogMidiMapping& mapping : expansion) {
+        identities.push_back(IdentityOf(mapping));
+    }
+    return identities;
+}
+
+// System identities need the occurrence ordinal SystemIdentityAt/
+// ResolveSystemIdentity define: "how many EARLIER elements in the sorted
+// view share this exact key" -- i.e. 0 for a key that occurs exactly once,
+// REGARDLESS of where in the final committed config that one occurrence
+// happens to sit (ordinal is not an array position/index). Finding 3's
+// uniqueness check guarantees every expansion cell's key (which includes
+// the address tie-break, D2) is unique across the whole committed config,
+// so every cell's ordinal is unconditionally 0 -- a caller-provided sorted
+// view isn't needed to establish that (unlike SystemIdentityAt, which
+// computes ix's ordinal from its ACTUAL position among possible
+// duplicates; here there provably are none).
+std::vector<RowIdentity> IdentitiesForSystemExpansion(const std::vector<MidiControllerSystemMessageAssociation>& expansion,
+                                                      MidiProfileKind kind) {
+    std::vector<RowIdentity> identities;
+    identities.reserve(expansion.size());
+    for (const MidiControllerSystemMessageAssociation& cell : expansion) {
+        identities.push_back(SystemIdentity{.key = ComputeSystemMessageSortKey(cell, kind), .occurrenceOrdinal = 0});
+    }
+    return identities;
+}
+
 // Removes every encoder mapping whose identity is in `identities` from
 // `mappings` (block-edit/delete "replace cells"/"delete all its cells" --
 // sru-10/sru-11).
@@ -1692,6 +1908,35 @@ bool MidiConfigViewModel::ApplyMappingEdit(std::size_t controllerIx, MidiConfigS
     // commit"). ---
     if (presentationRow.kind == RowKind::Block) {
         std::string validationError;
+        // Findings 1/2: staged optimistic presentation update. `out` is
+        // populated for the HOST to commit (this class's documented
+        // contract -- see the header's top-of-file comment and
+        // ApplyMappingEdit's own doc comment: the view model's own snapshot
+        // is untouched, and it never assumes an edit landed just because it
+        // returned true). Individual-row edits already tolerate this: their
+        // identity is re-resolved fresh against whatever the next Rebuild()
+        // actually receives, dropping/re-appending if it doesn't match
+        // (RebuildPresentationFor). A block row needs MORE than that --
+        // sru-11 requires it stay the SAME row, in place, not drop-and-
+        // reappend-as-individuals -- so here we ALSO prime this view
+        // model's own `presentations_` entry with the new block struct and
+        // the new cells' identities, matching option (a) from the task
+        // brief: update the presentation row optimistically when producing
+        // `out`. This is purely a same-instance cache hint: if the host
+        // discards `out` (never commits) or commits something else, the
+        // next real Rebuild() re-resolves this row's (now-wrong) identities
+        // against whatever config actually landed and self-heals via the
+        // ordinary drop/append rule -- it does not corrupt anything, it
+        // just misses the "stayed in place" optimization for that one
+        // discarded edit. A host that always commits `out` before its next
+        // Rebuild() (the only pattern any current caller uses --
+        // ControllersPage.hpp's MappingRow::Commit()) sees the row stay put
+        // every time.
+        detail::PresentationRow* mutableRow = nullptr;
+        {
+            detail::SectionPresentation& presentation = PresentationFor(controllerIx, section);
+            mutableRow = &presentation.rows[rowIx];
+        }
         if (const auto* encoderBlockConst = std::get_if<EncoderBlock>(&presentationRow.block)) {
             EncoderBlock block = *encoderBlockConst;
             if (!ApplyEncoderBlockField(block, field, value, validationError)) {
@@ -1708,7 +1953,23 @@ bool MidiConfigViewModel::ApplyMappingEdit(std::size_t controllerIx, MidiConfigS
             std::vector<EncoderMidiMapping>& mappings = isPush ? slot.config.encoderInput->pushes
                                                                 : slot.config.encoderInput->turns;
             RemoveEncoderIdentities(mappings, presentationRow.identities, isPush);
-            mappings.insert(mappings.end(), expansion.begin(), expansion.end());
+            // Finding 3: refuse if the new expansion collides with an
+            // address some OTHER surviving mapping already occupies (the
+            // block's own old cells were just removed above, so a
+            // collision here is against unrelated rows, or -- degenerate --
+            // within the new expansion itself, though Expand* already rules
+            // that out for a single block).
+            std::vector<EncoderMidiMapping> candidate = mappings;
+            candidate.insert(candidate.end(), expansion.begin(), expansion.end());
+            if (HasDuplicateEncoderAddress(candidate)) {
+                if (reason != nullptr) {
+                    *reason = "block edit would create a duplicate (channel, cc) address";
+                }
+                return false;
+            }
+            mappings = std::move(candidate);
+            mutableRow->block = block;
+            mutableRow->identities = IdentitiesForEncoderExpansion(expansion, isPush);
         } else if (const auto* analogBlockConst = std::get_if<AnalogBlock>(&presentationRow.block)) {
             AnalogBlock block = *analogBlockConst;
             if (!ApplyAnalogBlockField(block, field, value, validationError)) {
@@ -1722,8 +1983,17 @@ bool MidiConfigViewModel::ApplyMappingEdit(std::size_t controllerIx, MidiConfigS
                 return false;
             }
             RemoveAnalogIdentities(slot.config.analogInput->gestures, presentationRow.identities);
-            slot.config.analogInput->gestures.insert(slot.config.analogInput->gestures.end(), expansion.begin(),
-                                                      expansion.end());
+            std::vector<AnalogMidiMapping> candidate = slot.config.analogInput->gestures;
+            candidate.insert(candidate.end(), expansion.begin(), expansion.end());
+            if (HasDuplicateAnalogAddress(candidate)) {
+                if (reason != nullptr) {
+                    *reason = "block edit would create a duplicate (channel, cc) address";
+                }
+                return false;
+            }
+            slot.config.analogInput->gestures = std::move(candidate);
+            mutableRow->block = block;
+            mutableRow->identities = IdentitiesForAnalogExpansion(expansion);
         } else if (const auto* systemBlockConst = std::get_if<SystemBlock>(&presentationRow.block)) {
             SystemBlock block = *systemBlockConst;
             if (!ApplySystemBlockField(block, field, value, validationError)) {
@@ -1737,7 +2007,23 @@ bool MidiConfigViewModel::ApplyMappingEdit(std::size_t controllerIx, MidiConfigS
                 return false;
             }
             RemoveSystemIdentities(slot.config.systemMessages, presentationRow.identities, slot.kind);
-            slot.config.systemMessages.insert(slot.config.systemMessages.end(), expansion.begin(), expansion.end());
+            std::vector<MidiControllerSystemMessageAssociation> candidate = slot.config.systemMessages;
+            candidate.insert(candidate.end(), expansion.begin(), expansion.end());
+            if (HasDuplicateSystemAddress(candidate, slot.kind)) {
+                if (reason != nullptr) {
+                    *reason = "block edit would create a duplicate address";
+                }
+                return false;
+            }
+            slot.config.systemMessages = std::move(candidate);
+            NormalizeMidiProfileConfig(slot.config, slot.kind);
+            mutableRow->block = block;
+            mutableRow->identities = IdentitiesForSystemExpansion(expansion, slot.kind);
+            if (!SlotValidForKind(slot, reason)) {
+                return false;
+            }
+            out = std::move(scratch);
+            return true;
         } else {
             if (reason != nullptr) {
                 *reason = "row has no block data";
@@ -2438,6 +2724,38 @@ bool MidiConfigViewModel::AddSingle(std::size_t controllerIx, MidiConfigSection 
         return false;
     }
 
+    // Finding 3: defensive duplicate-address check. Every branch above picks
+    // its new element's address via a "next free" scan of the EXISTING
+    // config (NextFreeCc/NextFreeGestureIx/NextFreeWrldBldrPosition/etc.),
+    // so a collision should be structurally unreachable here -- but the
+    // check is cheap and guards against any future "next free" helper
+    // developing a bug, matching AddBlock's check below and the block-edit
+    // paths in ApplyMappingEdit (both genuinely reachable, since a block's
+    // edited range can walk into occupied territory).
+    if (section == MidiConfigSection::Encoders) {
+        const std::vector<EncoderMidiMapping>& mappings =
+            group == RowGroup::EncoderPush ? slot.config.encoderInput->pushes : slot.config.encoderInput->turns;
+        if (HasDuplicateEncoderAddress(mappings)) {
+            if (reason != nullptr) {
+                *reason = "new row would create a duplicate (channel, cc) address";
+            }
+            return false;
+        }
+    } else if (section == MidiConfigSection::Analogs) {
+        if (HasDuplicateAnalogAddress(slot.config.analogInput->gestures)) {
+            if (reason != nullptr) {
+                *reason = "new row would create a duplicate (channel, cc) address";
+            }
+            return false;
+        }
+    } else if (section == MidiConfigSection::SystemMessages &&
+              HasDuplicateSystemAddress(slot.config.systemMessages, slot.kind)) {
+        if (reason != nullptr) {
+            *reason = "new row would create a duplicate address";
+        }
+        return false;
+    }
+
     NormalizeMidiProfileConfig(slot.config, slot.kind);
     if (!SlotValidForKind(slot, reason)) {
         return false;
@@ -2486,7 +2804,28 @@ bool MidiConfigViewModel::AddBlock(std::size_t controllerIx, MidiConfigSection s
         if (!ExpandEncoderBlock(block, expansion, reason)) {
             return false;
         }
-        mappings.insert(mappings.end(), expansion.begin(), expansion.end());
+        // Finding 3: refuse if the new block's expansion collides with an
+        // existing mapping's address (reachable here, unlike AddSingle's
+        // next-free scan, because the block's END cc/position may walk past
+        // what NextFreeCc/NextFreeEncoderPosition individually guaranteed
+        // free for the START cell only).
+        std::vector<EncoderMidiMapping> candidate = mappings;
+        candidate.insert(candidate.end(), expansion.begin(), expansion.end());
+        if (HasDuplicateEncoderAddress(candidate)) {
+            if (reason != nullptr) {
+                *reason = "new block would create a duplicate (channel, cc) address";
+            }
+            return false;
+        }
+        mappings = std::move(candidate);
+        NormalizeMidiProfileConfig(slot.config, slot.kind);
+        if (!SlotValidForKind(slot, reason)) {
+            return false;
+        }
+        AppendBlockPresentationRow(PresentationFor(controllerIx, section), group, block,
+                                   IdentitiesForEncoderExpansion(expansion, isPush));
+        out = std::move(scratch);
+        return true;
     } else if (section == MidiConfigSection::Analogs && group == RowGroup::AnalogGesture) {
         if (!slot.config.analogInput.has_value()) {
             if (reason != nullptr) {
@@ -2506,7 +2845,23 @@ bool MidiConfigViewModel::AddBlock(std::size_t controllerIx, MidiConfigSection s
         if (!ExpandAnalogBlock(block, expansion, reason)) {
             return false;
         }
-        mappings.insert(mappings.end(), expansion.begin(), expansion.end());
+        std::vector<AnalogMidiMapping> candidate = mappings;
+        candidate.insert(candidate.end(), expansion.begin(), expansion.end());
+        if (HasDuplicateAnalogAddress(candidate)) {
+            if (reason != nullptr) {
+                *reason = "new block would create a duplicate (channel, cc) address";
+            }
+            return false;
+        }
+        mappings = std::move(candidate);
+        NormalizeMidiProfileConfig(slot.config, slot.kind);
+        if (!SlotValidForKind(slot, reason)) {
+            return false;
+        }
+        AppendBlockPresentationRow(PresentationFor(controllerIx, section), group, block,
+                                   IdentitiesForAnalogExpansion(expansion));
+        out = std::move(scratch);
+        return true;
     } else if (section == MidiConfigSection::SystemMessages && group == RowGroup::System) {
         if (slot.kind == MidiProfileKind::MfTwister) {
             if (reason != nullptr) {
@@ -2559,20 +2914,29 @@ bool MidiConfigViewModel::AddBlock(std::size_t controllerIx, MidiConfigSection s
         if (!ExpandSystemBlock(block, expansion, reason)) {
             return false;
         }
-        slot.config.systemMessages.insert(slot.config.systemMessages.end(), expansion.begin(), expansion.end());
+        std::vector<MidiControllerSystemMessageAssociation> candidate = slot.config.systemMessages;
+        candidate.insert(candidate.end(), expansion.begin(), expansion.end());
+        if (HasDuplicateSystemAddress(candidate, slot.kind)) {
+            if (reason != nullptr) {
+                *reason = "new block would create a duplicate address";
+            }
+            return false;
+        }
+        slot.config.systemMessages = std::move(candidate);
+        NormalizeMidiProfileConfig(slot.config, slot.kind);
+        if (!SlotValidForKind(slot, reason)) {
+            return false;
+        }
+        AppendBlockPresentationRow(PresentationFor(controllerIx, section), group, block,
+                                   IdentitiesForSystemExpansion(expansion, slot.kind));
+        out = std::move(scratch);
+        return true;
     } else {
         if (reason != nullptr) {
             *reason = "this group does not support adding a block";
         }
         return false;
     }
-
-    NormalizeMidiProfileConfig(slot.config, slot.kind);
-    if (!SlotValidForKind(slot, reason)) {
-        return false;
-    }
-    out = std::move(scratch);
-    return true;
 }
 
 } // namespace synth
