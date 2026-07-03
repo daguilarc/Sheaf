@@ -14,8 +14,9 @@ ENGINE_TEST_BIN := $(BUILD_DIR)/engine_tests
 RIG_TEST_BIN := $(BUILD_DIR)/rig_tests
 MINIAPP_SYSTEM_TEST_BIN := $(BUILD_DIR)/miniapp_system_tests
 RECONCILE_TEST_BIN := $(BUILD_DIR)/reconcile_tests
-SRC := src/ParameterModulation.cpp src/MidiController.cpp src/PatchPersistence.cpp src/DspWavetable.cpp src/Modules.cpp src/MidiReconcile.cpp
-OBJ := $(BUILD_DIR)/ParameterModulation.o $(BUILD_DIR)/MidiController.o $(BUILD_DIR)/PatchPersistence.o $(BUILD_DIR)/DspWavetable.o $(BUILD_DIR)/Modules.o $(BUILD_DIR)/MidiReconcile.o
+POLLER_TEST_BIN := $(BUILD_DIR)/poller_tests
+SRC := src/ParameterModulation.cpp src/MidiController.cpp src/PatchPersistence.cpp src/DspWavetable.cpp src/Modules.cpp src/MidiReconcile.cpp src/MidiDevicePoller.cpp
+OBJ := $(BUILD_DIR)/ParameterModulation.o $(BUILD_DIR)/MidiController.o $(BUILD_DIR)/PatchPersistence.o $(BUILD_DIR)/DspWavetable.o $(BUILD_DIR)/Modules.o $(BUILD_DIR)/MidiReconcile.o $(BUILD_DIR)/MidiDevicePoller.o
 DSP_HEADERS := include/synth/DspMath.hpp include/synth/DspNumbers.hpp include/synth/DspTransferFunction.hpp include/synth/DspFilters.hpp include/synth/DspScope.hpp include/synth/DspWavetable.hpp include/synth/DspOscillators.hpp
 APPS_DIR := apps
 MINIAPP_DIR := $(APPS_DIR)/miniapp
@@ -46,6 +47,9 @@ $(BUILD_DIR)/Modules.o: src/Modules.cpp include/synth/Modules.hpp include/synth/
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/MidiReconcile.o: src/MidiReconcile.cpp include/synth/MidiReconcile.hpp include/synth/MidiController.hpp | $(BUILD_SENTINEL)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/MidiDevicePoller.o: src/MidiDevicePoller.cpp include/synth/MidiDevicePoller.hpp include/synth/MidiReconcile.hpp include/synth/ThreadId.hpp include/synth/AsyncLogger.hpp | $(BUILD_SENTINEL)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
 
 $(LIB): $(OBJ)
@@ -88,7 +92,10 @@ $(MINIAPP_SYSTEM_TEST_BIN): tests/miniapp_system_tests.cpp tests/support/SynthRi
 $(RECONCILE_TEST_BIN): tests/reconcile_tests.cpp $(LIB) include/synth/MidiReconcile.hpp include/synth/MidiController.hpp
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< $(LIB) -o $@
 
-test: $(TEST_BIN) $(DSP_TEST_BIN) $(MODULE_TEST_BIN) $(INSTRUMENT_TEST_BIN) $(CONTRACT_TEST_BIN) $(LOGGING_TEST_BIN) $(ENGINE_TEST_BIN) $(RIG_TEST_BIN) $(MINIAPP_SYSTEM_TEST_BIN) $(RECONCILE_TEST_BIN)
+$(POLLER_TEST_BIN): tests/poller_tests.cpp $(LIB) include/synth/MidiDevicePoller.hpp include/synth/MidiReconcile.hpp include/synth/ThreadId.hpp
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< $(LIB) -o $@
+
+test: $(TEST_BIN) $(DSP_TEST_BIN) $(MODULE_TEST_BIN) $(INSTRUMENT_TEST_BIN) $(CONTRACT_TEST_BIN) $(LOGGING_TEST_BIN) $(ENGINE_TEST_BIN) $(RIG_TEST_BIN) $(MINIAPP_SYSTEM_TEST_BIN) $(RECONCILE_TEST_BIN) $(POLLER_TEST_BIN)
 	$(TEST_BIN)
 	$(DSP_TEST_BIN)
 	$(MODULE_TEST_BIN)
@@ -99,6 +106,7 @@ test: $(TEST_BIN) $(DSP_TEST_BIN) $(MODULE_TEST_BIN) $(INSTRUMENT_TEST_BIN) $(CO
 	$(RIG_TEST_BIN)
 	$(MINIAPP_SYSTEM_TEST_BIN)
 	$(RECONCILE_TEST_BIN)
+	$(POLLER_TEST_BIN)
 
 miniapp:
 	$(MAKE) -C $(MINIAPP_DIR)

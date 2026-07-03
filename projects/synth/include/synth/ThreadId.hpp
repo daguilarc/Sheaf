@@ -4,7 +4,7 @@
 
 namespace synth {
 
-enum class ThreadId : int { Message = 0, Audio, MidiInput, MidiSender, Unknown, Count };
+enum class ThreadId : int { Message = 0, Audio, MidiInput, MidiSender, IoPoll, Unknown, Count };
 
 inline constexpr std::size_t kThreadIdCount = static_cast<std::size_t>(ThreadId::Count);
 
@@ -32,6 +32,7 @@ inline const char* ThreadIdToString(ThreadId id) {
         case ThreadId::Audio: return "Audio";
         case ThreadId::MidiInput: return "MidiInput";
         case ThreadId::MidiSender: return "MidiSender";
+        case ThreadId::IoPoll: return "IoPoll";
         case ThreadId::Unknown: return "Unknown";
         case ThreadId::Count: return "Count";
     }
