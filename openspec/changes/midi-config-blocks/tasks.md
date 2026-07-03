@@ -9,10 +9,10 @@
 
 ## 2. View model: presentation state and operations
 
-- [ ] 2.1 Presentation state per (controller, section): built at expand transition, identity-keyed re-resolve on Rebuild without re-grouping, discarded on collapse; block rows expose their form's fields; stability tests (sru-11)
-- [ ] 2.2 Block row editing: whole-block validate → replace-cells commit (delete old identities, insert expansion, normalize) keeping the row in place; tests (sru-10, sru-11)
-- [ ] 2.3 Add "+" (next-free single config per group) and "+B" (block with next-free seed, committed as expansion), appending without re-grouping; delete for individual and block rows, none for config-level rows; tests (sru-11)
-- [ ] 2.4 Commit paths all normalize (sru-9); existing viewmodel tests updated for schema/ordering changes
+- [x] 2.1 Presentation state per (controller, section): built at expand transition, identity-keyed re-resolve on Rebuild without re-grouping, discarded on collapse; block rows expose their form's fields; stability tests (sru-11)
+- [x] 2.2 Block row editing: whole-block validate → replace-cells commit (delete old identities, insert expansion, normalize) keeping the row in place; tests (sru-10, sru-11)
+- [x] 2.3 Add "+" (next-free single config per group) and "+B" (block with next-free seed, committed as expansion), appending without re-grouping; delete for individual and block rows, none for config-level rows; tests (sru-11)
+- [x] 2.4 Commit paths all normalize (sru-9); existing viewmodel tests updated for schema/ordering changes
 
 ## 3. Renderer and verification
 
