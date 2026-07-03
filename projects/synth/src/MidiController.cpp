@@ -1793,6 +1793,9 @@ bool SlotValidForKind(const MidiControllerSlot& slot, std::string* reason) {
             if (association.launchpadPosition.has_value()) {
                 return Fail(reason, "wrldbldr system-message entries must not carry a launchpad position");
             }
+            if (!association.control.has_value()) {
+                return Fail(reason, "wrldbldr system-message entries must carry a control address");
+            }
         } else {
             // MfTwister and Generic: chan/CC addresses only, no positions of either kind.
             if (association.launchpadPosition.has_value()) {
@@ -1800,6 +1803,9 @@ bool SlotValidForKind(const MidiControllerSlot& slot, std::string* reason) {
             }
             if (association.wrldBldrPosition.has_value()) {
                 return Fail(reason, "this controller kind does not support WRLD.Bldr positions");
+            }
+            if (!association.control.has_value()) {
+                return Fail(reason, "this controller kind requires a control address for system-message entries");
             }
         }
     }

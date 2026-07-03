@@ -78,6 +78,21 @@ MidiControllerSystemMessageAssociation MakeLaunchpadAssociation() {
     return association;
 }
 
+MidiControllerSystemMessageAssociation MakeNoAddressAssociation() {
+    MidiControllerSystemMessageAssociation association;
+    association.press = synth::MessageIn::SetShift(0, true);
+    association.feedback = association.press;
+    return association;
+}
+
+MidiControllerSystemMessageAssociation MakeWrldBldrPositionOnlyAssociation() {
+    MidiControllerSystemMessageAssociation association;
+    association.wrldBldrPosition = WrldBldrSystemPosition{.channel = 5, .x = 0, .y = 0};
+    association.press = synth::MessageIn::SetShift(0, true);
+    association.feedback = association.press;
+    return association;
+}
+
 MidiControllerSlot MakeGenericSlot(const char* name) {
     MidiControllerSlot slot;
     slot.name = name;
@@ -176,6 +191,26 @@ TEST_CASE(SlotValidForKindRejectsGenericWithLaunchpadPosition) {
     MidiControllerSlot slot = MakeGenericSlot("gen");
     slot.kind = MidiProfileKind::Generic;
     slot.config.systemMessages.push_back(MakeLaunchpadAssociation());
+
+    std::string reason;
+    REQUIRE_TRUE(!synth::SlotValidForKind(slot, &reason));
+    REQUIRE_TRUE(!reason.empty());
+}
+
+TEST_CASE(SlotValidForKindRejectsTwisterWithNoAddress) {
+    MidiControllerSlot slot = MakeGenericSlot("twist");
+    slot.kind = MidiProfileKind::MfTwister;
+    slot.config.systemMessages.push_back(MakeNoAddressAssociation());
+
+    std::string reason;
+    REQUIRE_TRUE(!synth::SlotValidForKind(slot, &reason));
+    REQUIRE_TRUE(!reason.empty());
+}
+
+TEST_CASE(SlotValidForKindRejectsWrldBldrWithWrldBldrPositionOnly) {
+    MidiControllerSlot slot = MakeGenericSlot("wrld");
+    slot.kind = MidiProfileKind::WrldBldr;
+    slot.config.systemMessages.push_back(MakeWrldBldrPositionOnlyAssociation());
 
     std::string reason;
     REQUIRE_TRUE(!synth::SlotValidForKind(slot, &reason));
