@@ -162,25 +162,32 @@ public:
         lfoModule_.SetColor(0, synth::Color::Green);
         lfoModule_.SetColor(1, synth::Color::Yellow);
 
-        // Default WrldBldr MIDI controller profile. context_->midiProfileConfig
-        // is the live, message-thread-owned profile (mutable); write it there
-        // so a real host's MIDI input is routed the same way the old
-        // MainComponent wired it via CreateMidiControllerProfile.
+        // Default WrldBldr MIDI controller, installed as the instrument's
+        // single controller slot. context_->instrument is the live,
+        // message-thread-owned MidiInstrumentConfig (mutable); add the
+        // controller there so a real host's MIDI input is routed the same
+        // way the old MainComponent wired it via CreateMidiControllerProfile
+        // (Engine::RebuildMidiProcessors() builds midiProcessors_ from the
+        // first controller slot -- see its doc comment).
         //
-        // context_->defaultMidiProfileConfig is `const*` -- Engine.hpp shows
-        // it points at Engine's private defaultMidiProfileConfig_ member.
-        // There is no app-facing setter for it, and none is needed: right
-        // after this Init() returns, Engine::Initialize() snapshots
-        // defaultMidiProfileConfig_ = midiProfileConfig_ (see Engine.hpp's
-        // binding-order comment, step 4a), so the WrldBldr profile installed
-        // below into the live midiProfileConfig becomes the default profile
-        // that revert/new-patch restore to.
+        // context_->defaultInstrument is `const*` -- Engine.hpp shows it
+        // points at Engine's private defaultInstrumentConfig_ member. There
+        // is no app-facing setter for it, and none is needed: right after
+        // this Init() returns, Engine::Initialize() snapshots
+        // defaultInstrumentConfig_ = instrumentConfig_ (see Engine.hpp's
+        // binding-order comment, step 4a), so the controller added below
+        // becomes part of the default instrument that revert/new-patch
+        // restore to.
         synth::WrldBldrDefaultProfileOptions profileOptions;
         profileOptions.visibleEncoderCount = slot_->PhysicalEncoders().size();
         profileOptions.sceneCount = 3;
         profileOptions.bankButtonCount = 16;
         profileOptions.gestureSelectorCount = 1;
-        *context_->midiProfileConfig = synth::WrldBldrDefaultProfileConfig(profileOptions);
+        synth::MidiControllerSlot controllerSlot;
+        controllerSlot.name = "wrldbldr";
+        controllerSlot.kind = synth::MidiProfileKind::WrldBldr;
+        controllerSlot.config = synth::WrldBldrDefaultProfileConfig(profileOptions);
+        context_->instrument->AddController(std::move(controllerSlot));
     }
 
     void PrepareToPlay(double sampleRate, int /*blockSize*/) {

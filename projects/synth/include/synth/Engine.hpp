@@ -47,8 +47,6 @@ public:
         , patchOutputBus_()
         , midiSender_()
         , patchManager_(&patchInputBus_, &patchOutputBus_, initialArenaCapacity)
-        , midiProfileConfig_()
-        , defaultMidiProfileConfig_()
         , instrumentConfig_()
         , defaultInstrumentConfig_()
         , audioDeviceState_()
@@ -78,8 +76,8 @@ public:
         context_.patchInputBus = &patchInputBus_;
         context_.patchOutputBus = &patchOutputBus_;
         context_.midiSender = &midiSender_;
-        context_.midiProfileConfig = &midiProfileConfig_;
-        context_.defaultMidiProfileConfig = &defaultMidiProfileConfig_;
+        context_.instrument = &instrumentConfig_;
+        context_.defaultInstrument = &defaultInstrumentConfig_;
         context_.config = &config_;
         context_.uiState = nullptr;
         context_.now = timestampProvider_;
@@ -96,10 +94,9 @@ public:
     //      is filled in here since it depends on the application)
     //   3. AsyncLogQueue::s_instance.SetSampleCounterSource(&sampleCounter_)
     //   4. app_.Init(&context_)                    -- context.uiState is null here
-    //   4a. snapshot defaultMidiProfileConfig_ = midiProfileConfig_,
-    //       defaultInstrumentConfig_ = instrumentConfig_, and
+    //   4a. snapshot defaultInstrumentConfig_ = instrumentConfig_, and
     //       defaultAudioDeviceState_ = audioDeviceState_ (the app's
-    //       Init-configured live profile/instrument/audio device becomes the
+    //       Init-configured live instrument/audio device becomes the
     //       default that revert/new-patch restore to)
     //   5. manager_.CaptureDefaultControlState()
     //   6. uiState_ = manager_.CreateUIState(); context_.uiState = uiState_.get()
@@ -143,22 +140,15 @@ public:
 
         app_.Init(&context_);
 
-        // Snapshot the app's Init-configured live MIDI profile/audio device as
+        // Snapshot the app's Init-configured live instrument/audio device as
         // the default BEFORE any startup patch applies. Without this,
-        // defaultMidiProfileConfig_/defaultAudioDeviceState_ stay
+        // defaultInstrumentConfig_/defaultAudioDeviceState_ stay
         // default-constructed (empty), so a later RevertAllToDefault (via
         // NewPatch()/RevertPatch() with no saved patch) would reset MIDI
         // routing/audio device selection to empty instead of back to the
         // app's real default — mirroring the old miniapp's post-construction
         // `defaultMidiProfileConfig_ = midiProfileConfig_;` snapshot (see
-        // projects/synth/miniapp/Main.cpp).
-        defaultMidiProfileConfig_ = midiProfileConfig_;
-        // instrumentConfig_ has no app-level Init-time configuration point
-        // yet (no application populates it): defaultInstrumentConfig_ stays
-        // the default-constructed (zero-controller, valid) MidiInstrumentConfig
-        // snapshotted here for symmetry with the other default-state
-        // snapshots. A later task's EditInstrument entry point is expected to
-        // be the real way instrumentConfig_ gets populated in a running app.
+        // projects/synth/miniapp/Main.cpp, pre-instrument-model history).
         defaultInstrumentConfig_ = instrumentConfig_;
         {
             // Pre-audio, single-threaded (no audio/message-thread
@@ -428,6 +418,49 @@ public:
     MessageInBus& MidiBus() { return midiBus_; }
     PatchManager& Patches() { return patchManager_; }
     MidiInProcessor* MidiInputProcessor() { return midiProcessors_.input.get(); }
+
+    // Message-thread read of the live instrument (smi-8). Mirrors
+    // AppContext::instrument's thread-role contract (message thread only) —
+    // the audio thread only ever touches instrumentConfig_ through
+    // ApplyPatchMessage, under audioDeviceStateMutex_ (see DrainPatchInputBus
+    // and friends). A caller reading this concurrently with that drain
+    // without going through EditInstrument's lock is racing it; production
+    // callers that need a race-free mutation should use EditInstrument
+    // instead of mutating the reference this returns.
+    MidiInstrumentConfig& LiveInstrument() { return instrumentConfig_; }
+
+    // Post-Init() snapshot (see Initialize()'s binding-order comment, step
+    // 4a): the instrument revert/new-patch restores. Immutable after
+    // Initialize() returns.
+    const MidiInstrumentConfig& DefaultInstrument() const { return defaultInstrumentConfig_; }
+
+    // Serialized edit entry point (smi-8): applies `edit` to the live
+    // instrument such that it cannot race the audio-thread patch drain --
+    // same block-boundary handoff/lock discipline as audioDeviceStateMutex_
+    // guards for audioDeviceState_ (see that member's doc comment, and
+    // DrainPatchInputBus/the ProcessBlock stashed-message retry/
+    // ApplyPendingPatchMessages, all of which hold the lock around every
+    // ApplyPatchMessage call that touches instrumentConfig_). Message-thread
+    // only (mirrors MidiControllerProfileConfig's old message-thread-only
+    // contract). After the edit is applied, this rebuilds the MIDI
+    // processors and fires midiProcessorsRebuiltCallback_ (if set) — the
+    // same rebuilt-callback path RebuildMidiProcessors()'s callers already
+    // use — so a host reacts to an edited instrument (e.g. re-opening
+    // endpoints) exactly as it would to a patch-driven rebuild.
+    void EditInstrument(const std::function<void(MidiInstrumentConfig&)>& edit) {
+        if (!edit) {
+            return;
+        }
+        {
+            const std::lock_guard<std::mutex> lock(audioDeviceStateMutex_);
+            edit(instrumentConfig_);
+        }
+        RebuildMidiProcessors();
+        if (midiProcessorsRebuiltCallback_) {
+            midiProcessorsRebuiltCallback_();
+        }
+    }
+
     void SetMidiProcessorsRebuiltCallback(std::function<void()> callback) {
         midiProcessorsRebuiltCallback_ = std::move(callback);
     }
@@ -503,31 +536,42 @@ public:
     bool IsArenaGrowPendingForTest() const { return arenaGrowPending_.load(std::memory_order_acquire); }
 
     // Public host API: rebuild midiProcessors_ from the current
-    // midiProfileConfig_ on demand (e.g. after a host mutates
-    // Context().midiProfileConfig directly, such as switching MIDI
-    // controller presets — see MidiPanel). Runs
-    // midiProcessorsWillRebuildCallback_ (if set) synchronously, BEFORE the
-    // current midiProcessors_ chain is destroyed/replaced, then constructs a
-    // fresh chain via CreateMidiControllerProfile against midiBus_/uiState_
-    // (uiState_ may still be null the first time this runs, during
-    // Initialize(), before uiState_ is populated is not the case here, since
-    // Initialize() calls this after uiState_ is populated; the function
-    // tolerates a null UIState* regardless since CreateMidiControllerProfile
-    // does). This is the single call site for the midiProcessors_
-    // assignment, so it covers every rebuild: Initialize()'s silent first
-    // rebuild, Initialize()'s startup-patch rebuild, MessageThreadTick()'s
-    // patch-driven rebuild, and any host-initiated rebuild (e.g. a preset
-    // switch). Does NOT itself invoke midiProcessorsRebuiltCallback_ — the
-    // tick's midiRebuildPending_ path does that after clearing the flag;
-    // callers rebuilding directly on the message thread (like MidiPanel's
-    // preset switch) invoke midiProcessorsRebuiltCallback_ themselves, or
-    // otherwise handle the endpoint-reopen consequences of a fresh chain.
+    // instrumentConfig_ on demand (e.g. after a host mutates it via
+    // EditInstrument, such as switching MIDI controller presets — see
+    // MidiPanel). Runs midiProcessorsWillRebuildCallback_ (if set)
+    // synchronously, BEFORE the current midiProcessors_ chain is
+    // destroyed/replaced, then constructs a fresh chain via
+    // CreateMidiControllerProfile against midiBus_/uiState_ (uiState_ may
+    // still be null the first time this runs, during Initialize(), before
+    // uiState_ is populated is not the case here, since Initialize() calls
+    // this after uiState_ is populated; the function tolerates a null
+    // UIState* regardless since CreateMidiControllerProfile does). This is
+    // the single call site for the midiProcessors_ assignment, so it covers
+    // every rebuild: Initialize()'s silent first rebuild, Initialize()'s
+    // startup-patch rebuild, MessageThreadTick()'s patch-driven rebuild, and
+    // any host-initiated rebuild (e.g. a preset switch). Does NOT itself
+    // invoke midiProcessorsRebuiltCallback_ — the tick's midiRebuildPending_
+    // path does that after clearing the flag; EditInstrument does it after
+    // applying the edit; callers rebuilding directly on the message thread
+    // outside EditInstrument (like MidiPanel's preset switch, until it moves
+    // onto EditInstrument) invoke midiProcessorsRebuiltCallback_ themselves,
+    // or otherwise handle the endpoint-reopen consequences of a fresh chain.
+    //
+    // Processor construction is still single-chain (per-controller rebuild
+    // across multiple simultaneous controllers is a later plan's job): this
+    // builds from the FIRST controller slot's profile config
+    // (instrumentConfig_.controllers[0].config) when the instrument is
+    // non-empty, and builds an empty MidiControllerProfileResult (no
+    // processors) when it has zero controllers.
     void RebuildMidiProcessors() {
         if (midiProcessorsWillRebuildCallback_) {
             midiProcessorsWillRebuildCallback_();
         }
-        midiProcessors_ = CreateMidiControllerProfile(midiProfileConfig_, &midiBus_, &midiSender_, uiState_.get(),
-                                                       timestampProvider_);
+        static const MidiControllerProfileConfig kEmptyProfile{};
+        const MidiControllerProfileConfig& profile =
+            instrumentConfig_.controllers.empty() ? kEmptyProfile : instrumentConfig_.controllers.front().config;
+        midiProcessors_ =
+            CreateMidiControllerProfile(profile, &midiBus_, &midiSender_, uiState_.get(), timestampProvider_);
     }
 
     // Test-only alias for RebuildMidiProcessors(), kept for existing test
@@ -726,50 +770,45 @@ private:
     MessageOutBus patchOutputBus_;
     MidiSender midiSender_;
     PatchManager patchManager_;
-    // Single-controller MIDI profile driving actual MIDI processor
-    // construction (RebuildMidiProcessors/CreateMidiControllerProfile) and
-    // exposed to applications through AppContext::midiProfileConfig. Distinct
-    // from instrumentConfig_ below (the persisted multi-controller
-    // MidiInstrumentConfig ApplyPatchMessage threads through patch
-    // load/revert/serialize) -- the two are not yet unified; that unification
-    // is a later task's job (see the plan's EditInstrument entry point).
-    MidiControllerProfileConfig midiProfileConfig_;
-    // Default = the app's Init-configured profile; revert/new restore this.
-    // Snapshotted from midiProfileConfig_ in Initialize(), immediately after
-    // app_.Init(&context_) returns and before any startup patch applies (see
-    // the Initialize() binding-order comment, step 4a).
-    MidiControllerProfileConfig defaultMidiProfileConfig_;
-    // Live MIDI instrument config threaded through ApplyPatchMessage
-    // (LoadFromJSON/RevertAllToDefault/SerializeToJSON) -- the required
-    // `midiInstrument` patch section's in-memory counterpart. No application
-    // populates this yet (no Init-time configuration point exists), so it
-    // stays a default-constructed (zero-controller, valid) MidiInstrumentConfig
-    // until a later task's EditInstrument entry point lets a host mutate it.
+    // Engine-owned MIDI instrument (sar-3): threaded through ApplyPatchMessage
+    // (LoadFromJSON/RevertAllToDefault/SerializeToJSON) -- the in-memory
+    // counterpart of the required `midiInstrument` patch section -- AND the
+    // source RebuildMidiProcessors() builds midiProcessors_ from (the first
+    // controller slot's profile config; per-controller/multi-chain
+    // construction is a later plan's job). LiveInstrument()/EditInstrument()
+    // are the message-thread read/write surface; the audio-thread patch
+    // drain (DrainPatchInputBus and friends) is the only other writer,
+    // serialized against EditInstrument via audioDeviceStateMutex_.
     MidiInstrumentConfig instrumentConfig_;
-    // Default = instrumentConfig_ as of Initialize(), snapshotted alongside
-    // defaultMidiProfileConfig_ (see the Initialize() binding-order comment,
-    // step 4a); revert/new restore this.
+    // Default = the app's Init-configured instrument; revert/new restore
+    // this. Snapshotted from instrumentConfig_ in Initialize(), immediately
+    // after app_.Init(&context_) returns and before any startup patch applies
+    // (see the Initialize() binding-order comment, step 4a). Exposed
+    // read-only via DefaultInstrument().
     MidiInstrumentConfig defaultInstrumentConfig_;
 
     // Guards audioDeviceState_ + lastNotifiedAudioDeviceState_ (the two
-    // members below) against the data race between the message thread
-    // (host writes via SetAudioDeviceFromHost, reads via AudioDeviceSnapshot)
-    // and the audio thread (DrainPatchInputBus / ProcessBlock's
-    // stashed-message retry, which read AND write both members while
-    // applying a patch message). AppContext no longer exposes a mutable
-    // pointer into audioDeviceState_ (Task 3 review, Critical fix) -- the
-    // only writers are the Initialize()-time config seeding, patch
-    // application, and SetAudioDeviceFromHost, all of which hold this lock.
+    // members below) AND instrumentConfig_ against the data race between the
+    // message thread (host writes via SetAudioDeviceFromHost/EditInstrument,
+    // reads via AudioDeviceSnapshot/LiveInstrument) and the audio thread
+    // (DrainPatchInputBus / ProcessBlock's stashed-message retry, which read
+    // AND write audioDeviceState_/lastNotifiedAudioDeviceState_ AND
+    // instrumentConfig_ while applying a patch message). AppContext no
+    // longer exposes a mutable pointer into audioDeviceState_ (Task 3
+    // review, Critical fix) -- the only writers are the Initialize()-time
+    // config seeding, patch application, SetAudioDeviceFromHost, and
+    // EditInstrument, all of which hold this lock.
     //
     // Touched ONLY at the Initialize()-time seeding step, patch-message
     // application (DrainPatchInputBus, the ProcessBlock stashed-message
     // retry, ApplyPendingPatchMessages/the startup drain in Initialize()),
-    // and host operations (SetAudioDeviceFromHost, AudioDeviceSnapshot) --
-    // never on the steady-state pump path when there is no pending patch
-    // message to apply (patchInputBus_.Pop() returning false costs nothing
-    // extra; see DrainPatchInputBus's doc comment). This is the same
-    // sanctioned patch-boundary non-RT exception LogPatchApplyOutcome's doc
-    // comment describes: patch commands are rare and user-initiated, and
+    // and host operations (SetAudioDeviceFromHost, AudioDeviceSnapshot,
+    // EditInstrument) -- never on the steady-state pump path when there is
+    // no pending patch message to apply (patchInputBus_.Pop() returning
+    // false costs nothing extra; see DrainPatchInputBus's doc comment). This
+    // is the same sanctioned patch-boundary non-RT exception
+    // LogPatchApplyOutcome's doc comment describes: patch commands (and
+    // EditInstrument calls) are rare and user-initiated, and
     // ApplyPatchMessage itself already isn't lock/allocation-free on that
     // path, so a mutex acquisition confined to the same window adds no new
     // audio-thread hazard in steady state.

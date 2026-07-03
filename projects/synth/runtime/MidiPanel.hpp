@@ -12,26 +12,28 @@
 // engine's MidiSender at the open output device — it never builds a
 // MidiControllerProfileResult itself.
 //
-// Device open/close records identifiers into the panel's own endpoints_
-// (spm-53). Prior to the midiInstrument patch-document swap (see
-// PatchPersistence.hpp), this lived in engine.Endpoints() and was persisted
-// through the patch's midiEndpoints section; that section and Engine's
-// endpoints_/Endpoints() accessor are gone now that MidiInstrumentConfig owns
-// per-controller endpoint refs, and no production entry point populates
-// Engine's new instrumentConfig_ yet (a later task's EditInstrument is
-// expected to be that entry point, at which point this panel should route
-// through it instead of a private member). Until then, endpoints_ here is
-// panel-local, in-memory-only state -- it does NOT round-trip through
-// save/load like it used to; this is a known, temporary regression tracked
-// against that later task, not a design decision made here. Runtime wires
+// Device open/close records identifiers into slot 0 of the engine's live
+// instrument (engine.LiveInstrument().controllers[0].input/output), via
+// Engine::EditInstrument (spm-53). Prior to the midiInstrument
+// patch-document swap (see PatchPersistence.hpp), this lived in
+// engine.Endpoints() and was persisted through the patch's midiEndpoints
+// section; that section and Engine's endpoints_/Endpoints() accessor are
+// gone now that MidiInstrumentConfig owns per-controller endpoint refs.
+// EditInstrument is that entry point: endpoint selection now round-trips
+// through save/load like every other instrument field, closing the
+// panel-local-only regression an earlier task carried temporarily. Endpoint
+// refs live on controller slot 0 only for now (RebuildMidiProcessors()
+// itself only builds processors from slot 0 -- see its doc comment); a
+// later plan redesigns this panel for true per-controller endpoints. Runtime
+// wires
 // engine.SetMidiProcessorsWillRebuildCallback([this]{ panel.OnMidiProcessorsWillRebuild(); })
 // and
 // engine.SetMidiProcessorsRebuiltCallback([this]{ panel.ReopenPersistedEndpoints(); })
 // so a startup-patch or runtime-load profile rebuild detaches the panel's
 // forwarding processor before the old MIDI processor chain is destroyed,
-// then reopens the endpoints recorded in endpoints_ against the fresh
-// profile once the rebuild completes; an absent device leaves the panel
-// closed with no failure (spp-5).
+// then reopens the endpoints recorded on slot 0 against the fresh profile
+// once the rebuild completes; an absent device leaves the panel closed with
+// no failure (spp-5).
 //
 // Note (Task 3 review, Minor, intentionally left as-is): Runtime::Start()
 // unconditionally calls ReopenPersistedEndpoints() after Initialize(),
@@ -43,12 +45,13 @@
 // offers "Twister" and "WRLD.Bldr", ported from the pre-runtime miniapp's
 // controllerPresetBox_ (git history around 4240fce^). Unlike that miniapp
 // (which built processors directly), this panel is one of the "unlike the
-// old app" cases above: on selection it writes the chosen preset's
-// MidiControllerProfileConfig into *engine.Context().midiProfileConfig and
-// calls the engine's public Engine::RebuildMidiProcessors() (promoted from
-// the former test-only RebuildMidiProcessorsForTest() so a production UI
-// action has a documented, will-rebuild-safe way to trigger a rebuild) —
-// see OnPresetChanged().
+// old app" cases above: on selection it replaces slot 0's profile config
+// (preserving its name/endpoint refs where possible) via
+// engine.EditInstrument(...), which itself calls the engine's
+// RebuildMidiProcessors() and fires the rebuilt callback (promoted from the
+// former test-only RebuildMidiProcessorsForTest() so a production UI action
+// has a documented, will-rebuild-safe way to trigger a rebuild) — see
+// OnPresetChanged().
 
 #include "synth/Engine.hpp"
 #include "synth/MidiController.hpp"
@@ -62,6 +65,7 @@
 
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string_view>
 
 namespace synth_runtime {
@@ -186,48 +190,60 @@ public:
     }
 
     // Re-enumerates available devices, repopulates the combo boxes, and
-    // re-selects whatever identifier is currently recorded in endpoints_
-    // (ported verbatim from the old miniapp's refreshMidiDevices).
+    // re-selects whatever identifier is currently recorded on the engine's
+    // instrument slot 0 (ported from the old miniapp's refreshMidiDevices,
+    // adapted to read through Slot0Endpoints() instead of a panel-local
+    // pair).
     void Refresh() {
         inputDevices_ = synth_juce::MidiInHandler::AvailableDevices();
         outputDevices_ = synth_juce::MidiOutputHandler::AvailableDevices();
+
+        const Slot0EndpointsResult endpoints = Slot0Endpoints();
 
         inputBox_.clear(juce::dontSendNotification);
         for (int ix = 0; ix < inputDevices_.size(); ++ix) {
             inputBox_.addItem(inputDevices_[ix].name, ix + 1);
         }
-        SelectDeviceByIdentifier(inputBox_, inputDevices_, endpoints_.input.identifier);
+        SelectDeviceByIdentifier(inputBox_, inputDevices_, endpoints.input.identifier);
 
         outputBox_.clear(juce::dontSendNotification);
         for (int ix = 0; ix < outputDevices_.size(); ++ix) {
             outputBox_.addItem(outputDevices_[ix].name, ix + 1);
         }
-        SelectDeviceByIdentifier(outputBox_, outputDevices_, endpoints_.output.identifier);
+        SelectDeviceByIdentifier(outputBox_, outputDevices_, endpoints.output.identifier);
 
         UpdateStatus();
     }
 
     // presetBox_.onChange target (spm-37): builds the MidiControllerProfileConfig
-    // for the newly selected preset, installs it as the engine's live
-    // profile, and rebuilds the MIDI processor chain against it through the
-    // engine's public, will-rebuild-safe RebuildMidiProcessors() (the same
-    // call production code uses from Initialize()/MessageThreadTick() —
-    // Engine::RebuildMidiProcessorsForTest() is test-only and not
-    // appropriate for a production UI action). RebuildMidiProcessors()
-    // itself already invokes SetMidiProcessorsWillRebuildCallback's target
-    // (OnMidiProcessorsWillRebuild(), detaching the forwarding processor)
-    // before destroying the old chain; runs on the message thread (JUCE
-    // combo box callbacks run on the message thread), matching
-    // MidiControllerProfileConfig's documented message-thread-only contract.
-    // Called directly rather than via the engine's rebuilt callback (which
-    // isn't fired by a direct RebuildMidiProcessors() call — see its doc
-    // comment): ReopenPersistedEndpoints() performs the identical
-    // reopen-against-fresh-chain sequence the tick's rebuild path triggers
-    // through that callback.
+    // for the newly selected preset and installs it into slot 0 of the
+    // engine's live instrument via Engine::EditInstrument (creating slot 0
+    // if the instrument is currently empty, preserving its name/endpoint
+    // refs otherwise), which itself calls the engine's public
+    // RebuildMidiProcessors() and fires the rebuilt callback. Runs on the
+    // message thread (JUCE combo box callbacks run on the message thread),
+    // matching EditInstrument's documented message-thread-only contract.
+    // Called directly rather than relying solely on the engine's rebuilt
+    // callback: ReopenPersistedEndpoints() (wired as that callback's target)
+    // performs the identical reopen-against-fresh-chain sequence, so this
+    // just triggers EditInstrument and lets that callback do the reopening.
     void OnPresetChanged() {
-        *engine_.Context().midiProfileConfig = SelectedPresetConfig();
-        engine_.RebuildMidiProcessors();
-        ReopenPersistedEndpoints();
+        const synth::MidiProfileKind kind =
+            presetBox_.getSelectedId() == kTwisterItemId ? synth::MidiProfileKind::MfTwister
+                                                          : synth::MidiProfileKind::WrldBldr;
+        const synth::MidiControllerProfileConfig config = SelectedPresetConfig();
+        engine_.EditInstrument([&](synth::MidiInstrumentConfig& instrument) {
+            if (instrument.controllers.empty()) {
+                synth::MidiControllerSlot slot;
+                slot.name = "controller";
+                slot.kind = kind;
+                slot.config = config;
+                instrument.controllers.push_back(std::move(slot));
+            } else {
+                instrument.controllers[0].kind = kind;
+                instrument.controllers[0].config = config;
+            }
+        });
     }
 
     // Wired by Runtime as engine.SetMidiProcessorsWillRebuildCallback's
@@ -243,9 +259,9 @@ public:
 
     // Wired by Runtime as engine.SetMidiProcessorsRebuiltCallback's target
     // (via onMidiProcessorsRebuilt_): opens the endpoint identifiers recorded
-    // in endpoints_ when the corresponding device is currently present; an
-    // absent device leaves the panel closed with no failure (spp-5),
-    // mirroring the old miniapp's openSavedMidiDevices.
+    // on the engine's instrument slot 0 when the corresponding device is
+    // currently present; an absent device leaves the panel closed with no
+    // failure (spp-5), mirroring the old miniapp's openSavedMidiDevices.
     void ReopenPersistedEndpoints() {
         // Re-point the forwarding processor at the freshly rebuilt
         // MidiInputProcessor(). OnMidiProcessorsWillRebuild() already
@@ -258,11 +274,12 @@ public:
 
         Refresh();
 
-        if (HasDeviceIdentifier(inputDevices_, endpoints_.input.identifier)) {
-            inHandler_.Open(ToJuceString(endpoints_.input.identifier));
+        const Slot0EndpointsResult endpoints = Slot0Endpoints();
+        if (HasDeviceIdentifier(inputDevices_, endpoints.input.identifier)) {
+            inHandler_.Open(ToJuceString(endpoints.input.identifier));
         }
-        if (HasDeviceIdentifier(outputDevices_, endpoints_.output.identifier) &&
-            outHandler_.Open(ToJuceString(endpoints_.output.identifier))) {
+        if (HasDeviceIdentifier(outputDevices_, endpoints.output.identifier) &&
+            outHandler_.Open(ToJuceString(endpoints.output.identifier))) {
             // Parity with the old miniapp's openSavedMidiDevices (Main.cpp):
             // force a full LED/value resync on the just-reopened output
             // device (Task 3 review finding: output reset parity).
@@ -299,6 +316,50 @@ private:
     void InstallForwardingProcessor() {
         inHandler_.SetProcessor(
             std::make_unique<detail::EngineForwardingMidiInProcessor>(engine_.MidiInputProcessor()));
+    }
+
+    struct Slot0EndpointsResult {
+        synth::MidiEndpointRef input;
+        synth::MidiEndpointRef output;
+    };
+
+    // Message-thread read of controller slot 0's endpoint refs on the
+    // engine's live instrument. Returns a default-constructed (unconfigured)
+    // pair when the instrument has no controllers yet (e.g. before the
+    // app's Init() has run, or for an app that never adds one). Endpoint
+    // refs live on slot 0 only for now — see the class doc comment.
+    Slot0EndpointsResult Slot0Endpoints() const {
+        const synth::MidiInstrumentConfig& instrument = engine_.LiveInstrument();
+        if (instrument.controllers.empty()) {
+            return {};
+        }
+        return {instrument.controllers.front().input, instrument.controllers.front().output};
+    }
+
+    // Message-thread write of controller slot 0's endpoint refs via
+    // Engine::EditInstrument, serialized against the audio-thread patch
+    // drain the same way every other instrument mutation is. Silently does
+    // nothing if the instrument has no controller slot yet (there is no
+    // slot 0 to record an endpoint against) — mirrors Slot0Endpoints()'s
+    // empty-instrument tolerance. Does NOT rebuild MIDI processors even
+    // though EditInstrument always does: recording a device identifier does
+    // not change the profile shape RebuildMidiProcessors() builds from, so
+    // the rebuild this triggers is a harmless no-op replacement of the same
+    // processor chain (EditInstrument's contract does not offer a
+    // rebuild-free variant; see its doc comment).
+    void SetSlot0Endpoints(const std::optional<synth::MidiEndpointRef>& input,
+                           const std::optional<synth::MidiEndpointRef>& output) {
+        engine_.EditInstrument([&](synth::MidiInstrumentConfig& instrument) {
+            if (instrument.controllers.empty()) {
+                return;
+            }
+            if (input.has_value()) {
+                instrument.controllers.front().input = *input;
+            }
+            if (output.has_value()) {
+                instrument.controllers.front().output = *output;
+            }
+        });
     }
 
     static juce::String ToJuceString(std::string_view text) { return juce::String(std::string(text).c_str()); }
@@ -354,7 +415,9 @@ private:
         SyncEndpointStateFromSelection();
         const juce::String identifier = SelectedInputIdentifier();
         if (identifier.isNotEmpty() && inHandler_.Open(identifier)) {
-            endpoints_.input.identifier = identifier.toStdString();
+            synth::MidiEndpointRef ref;
+            ref.identifier = identifier.toStdString();
+            SetSlot0Endpoints(ref, std::nullopt);
         }
         UpdateStatus();
     }
@@ -368,7 +431,9 @@ private:
         SyncEndpointStateFromSelection();
         const juce::String identifier = SelectedOutputIdentifier();
         if (identifier.isNotEmpty() && outHandler_.Open(identifier)) {
-            endpoints_.output.identifier = identifier.toStdString();
+            synth::MidiEndpointRef ref;
+            ref.identifier = identifier.toStdString();
+            SetSlot0Endpoints(std::nullopt, ref);
             // Parity with the old miniapp's toggleMidiOutput (Main.cpp):
             // force a full LED/value resync on the just-opened output
             // device (Task 3 review finding: output reset parity).
@@ -380,12 +445,18 @@ private:
     void SyncEndpointStateFromSelection() {
         const juce::String input = SelectedInputIdentifier();
         const juce::String output = SelectedOutputIdentifier();
+        if (input.isEmpty() && output.isEmpty()) {
+            return;
+        }
+        std::optional<synth::MidiEndpointRef> inputRef;
+        std::optional<synth::MidiEndpointRef> outputRef;
         if (input.isNotEmpty()) {
-            endpoints_.input.identifier = input.toStdString();
+            inputRef = synth::MidiEndpointRef{.identifier = input.toStdString()};
         }
         if (output.isNotEmpty()) {
-            endpoints_.output.identifier = output.toStdString();
+            outputRef = synth::MidiEndpointRef{.identifier = output.toStdString()};
         }
+        SetSlot0Endpoints(inputRef, outputRef);
     }
 
     void UpdateStatus() {
@@ -411,17 +482,6 @@ private:
     // / InstallForwardingProcessor).
     synth_juce::MidiInHandler inHandler_;
     synth_juce::MidiOutputHandler outHandler_;
-
-    // Panel-local, in-memory-only device identifiers (see the class doc
-    // comment): Engine no longer owns raw endpoint state now that the
-    // midiInstrument patch section replaced the old midiProfile +
-    // MidiEndpointState pair. Reuses synth::MidiEndpointRef (the same type
-    // MidiControllerSlot uses for its per-controller endpoint refs) rather
-    // than inventing a parallel identifier/name pair here.
-    struct {
-        synth::MidiEndpointRef input;
-        synth::MidiEndpointRef output;
-    } endpoints_;
 
     juce::ComboBox presetBox_;
     juce::TextButton refreshButton_;

@@ -14,8 +14,8 @@
 // forwarding processor before the engine destroys the current MIDI
 // processor chain), and onMidiProcessorsRebuilt_ forwards to
 // midiPanel_->ReopenPersistedEndpoints() (re-attaching against the fresh
-// chain and reopening the endpoints recorded in the panel's own endpoints_
-// state -- see MidiPanel.hpp's class doc comment) so a startup-patch or
+// chain and reopening the endpoints recorded on the engine's instrument slot
+// 0 -- see MidiPanel.hpp's class doc comment) so a startup-patch or
 // runtime-load profile rebuild never leaves a MIDI callback pointing into a
 // destroyed processor chain.
 //
@@ -178,7 +178,7 @@ public:
         // notified and midiPanel_'s cached MidiInputProcessor() pointer
         // would otherwise stay null forever. Reopening unconditionally here
         // (idempotent: it re-reads MidiInputProcessor() and re-syncs against
-        // whatever the panel's own endpoints_ currently holds even if a
+        // whatever the engine's instrument slot 0 currently holds even if a
         // startup patch already triggered a reopen) matches the old
         // miniapp's always-reopen-at-startup behavior.
         midiPanel_->ReopenPersistedEndpoints();
@@ -444,7 +444,8 @@ private:
     // device in the combo, on the message thread (JUCE combo box callbacks
     // run there). Records the selection via engine_.SetAudioDeviceFromHost
     // (so it persists into the next saved patch, mirroring how MidiPanel
-    // records its own endpoints_ on selection, AND advances the engine's
+    // records endpoint selection into the engine's instrument via
+    // EditInstrument, AND advances the engine's
     // audio-device-state shadow so a later patch revert back to this exact
     // selection is correctly treated as "no change" -- see
     // SetAudioDeviceFromHost's doc comment; this replaces the old direct

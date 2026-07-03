@@ -105,8 +105,12 @@ struct EngineTestApp {
         ++initCalls;
         context = ctx;
         sawNullUiStateDuringInit = (ctx->uiState == nullptr);
-        if (wantEncoderMidiInput && ctx->midiProfileConfig != nullptr) {
-            ctx->midiProfileConfig->encoderInput = synth::EncoderMidiInConfig{};
+        if (wantEncoderMidiInput && ctx->instrument != nullptr) {
+            synth::MidiControllerSlot slot;
+            slot.name = "test";
+            slot.kind = synth::MidiProfileKind::Generic;
+            slot.config.encoderInput = synth::EncoderMidiInConfig{};
+            ctx->instrument->AddController(std::move(slot));
         }
         auto& group = ctx->parameterManager->CreateGroup({.numVoices = 1,
                                                            .numModulators = 0,
@@ -159,10 +163,13 @@ struct EngineTestApp {
 // which BuildPatchJSON omits from the document entirely (see its "not both
 // empty" guard), so callers that don't pass one get a patch with no
 // audioDevice section -- exactly what the "load without the section fires
-// nothing" tests need.
+// nothing" tests need. instrument defaults to a zero-controller
+// MidiInstrumentConfig (valid); callers exercising instrument round-tripping
+// pass a non-empty one.
 void WriteProbePatchVersion(const std::filesystem::path& patchDir, float probeValue,
                             std::chrono::system_clock::time_point when,
-                            const synth::AudioDeviceState& audioDevice = {}) {
+                            const synth::AudioDeviceState& audioDevice = {},
+                            const synth::MidiInstrumentConfig& instrument = {}) {
     synth::ParameterManager scratchManager;
     auto& group = scratchManager.CreateGroup(
         {.numVoices = 1, .numModulators = 0, .numScenes = 1, .maxParameters = 4, .processLiteAlpha = 1.0f});
@@ -171,7 +178,6 @@ void WriteProbePatchVersion(const std::filesystem::path& patchDir, float probeVa
     scratchManager.CaptureDefaultControlState();
     scratchManager.ComputeAllParameters();
 
-    const synth::MidiInstrumentConfig instrument;  // zero controllers: valid
     synth::JsonArena arena(64 * 1024);
     synth::JSON root = synth::BuildPatchJSON(arena, "Probe Patch", scratchManager, instrument, audioDevice);
     REQUIRE_TRUE(!root.IsNull());
@@ -911,24 +917,24 @@ TEST_CASE(engine_process_frame_hook_runs_once_per_block_after_targets_before_pro
 
 TEST_CASE(engine_revert_all_to_default_restores_app_init_midi_profile_not_empty) {
     // Regression for the default-MIDI-profile gap: Engine::Initialize() must
-    // snapshot defaultMidiProfileConfig_/defaultEndpoints_ from the live
-    // profile the app's Init() configured, BEFORE any startup patch applies.
-    // Without that snapshot, RevertAllToDefault (dispatched by
-    // Patches().NewPatch() below) resets midiProfileConfig_ to a
-    // default-constructed (empty) MidiControllerProfileConfig instead of
-    // back to the app's real default, silently dropping MIDI control
-    // surface responsiveness.
+    // snapshot defaultInstrumentConfig_ from the live instrument the app's
+    // Init() configured, BEFORE any startup patch applies. Without that
+    // snapshot, RevertAllToDefault (dispatched by Patches().NewPatch()
+    // below) resets instrumentConfig_ to a default-constructed (empty,
+    // zero-controller) MidiInstrumentConfig instead of back to the app's
+    // real default, silently dropping MIDI control surface responsiveness.
     EngineTestApp::testPatchesRoot.clear();
     EngineTestApp::processLiteAlpha = 1.0f;
-    EngineTestApp::wantEncoderMidiInput = true;  // Init() sets a non-empty live profile (encoderInput)
+    EngineTestApp::wantEncoderMidiInput = true;  // Init() adds a non-empty controller (encoderInput)
 
     synth::Engine<EngineTestApp> engine([] { return std::uint64_t{0}; });
     engine.Initialize();
     engine.Prepare(48000.0, 256);
 
-    // Sanity: the live profile really is non-empty right after Initialize,
-    // matching what the app's Init() configured.
-    REQUIRE_TRUE(engine.Context().midiProfileConfig->encoderInput.has_value());
+    // Sanity: the live instrument really is non-empty right after
+    // Initialize, matching what the app's Init() configured.
+    REQUIRE_TRUE(!engine.Context().instrument->controllers.empty());
+    REQUIRE_TRUE(engine.Context().instrument->controllers.front().config.encoderInput.has_value());
 
     TestBlockBuffers buffers(2, 4);
 
@@ -949,17 +955,20 @@ TEST_CASE(engine_revert_all_to_default_restores_app_init_midi_profile_not_empty)
     }
     engine.MessageThreadTick();
 
-    // The live profile must still equal the app's Init-configured default --
-    // i.e. still have an encoderInput mapping -- NOT have been reset to an
-    // empty MidiControllerProfileConfig{}.
-    REQUIRE_TRUE(engine.Context().midiProfileConfig->encoderInput.has_value());
+    // The live instrument must still equal the app's Init-configured default
+    // -- i.e. still have a controller with an encoderInput mapping -- NOT
+    // have been reset to an empty (zero-controller) MidiInstrumentConfig{}.
+    REQUIRE_TRUE(!engine.Context().instrument->controllers.empty());
+    REQUIRE_TRUE(engine.Context().instrument->controllers.front().config.encoderInput.has_value());
 
-    // Also confirm the default profile snapshot itself carries the mapping
-    // (not just that the live profile happens to still have it): the
-    // revert path copies defaultMidiProfileConfig_ into midiProfileConfig_,
-    // so if the snapshot were empty the assertion above would already have
-    // failed; this checks the snapshot directly for a clearer failure signal.
-    REQUIRE_TRUE(engine.Context().defaultMidiProfileConfig->encoderInput.has_value());
+    // Also confirm the default instrument snapshot itself carries the
+    // controller (not just that the live instrument happens to still have
+    // it): the revert path copies defaultInstrumentConfig_ into
+    // instrumentConfig_, so if the snapshot were empty the assertion above
+    // would already have failed; this checks the snapshot directly for a
+    // clearer failure signal.
+    REQUIRE_TRUE(!engine.Context().defaultInstrument->controllers.empty());
+    REQUIRE_TRUE(engine.Context().defaultInstrument->controllers.front().config.encoderInput.has_value());
 
     EngineTestApp::wantEncoderMidiInput = false;  // restore default for subsequent tests
 }
@@ -1277,6 +1286,249 @@ TEST_CASE(engine_set_audio_device_from_host_fires_no_callback) {
     REQUIRE_TRUE(callbackCalls == 0);
     engine.MessageThreadTick();
     REQUIRE_TRUE(callbackCalls == 0);
+}
+
+// ---------------------------------------------------------------------------
+// Task 4: engine-owned instrument with serialized edits (LiveInstrument(),
+// DefaultInstrument(), EditInstrument()).
+// ---------------------------------------------------------------------------
+
+TEST_CASE(engine_default_instrument_equals_app_seeded_instrument_after_initialize) {
+    // Property 1 (brief Step 1): the post-Init() default snapshot must equal
+    // the instrument the app's Init() actually seeded -- not an empty
+    // MidiInstrumentConfig{}. EngineTestApp::Init() adds a "test"/Generic
+    // controller with encoderInput set when wantEncoderMidiInput is true.
+    EngineTestApp::testPatchesRoot.clear();
+    EngineTestApp::processLiteAlpha = 1.0f;
+    EngineTestApp::wantEncoderMidiInput = true;
+
+    synth::Engine<EngineTestApp> engine([] { return std::uint64_t{0}; });
+    engine.Initialize();
+
+    const synth::MidiInstrumentConfig& live = engine.LiveInstrument();
+    const synth::MidiInstrumentConfig& def = engine.DefaultInstrument();
+
+    REQUIRE_TRUE(live.controllers.size() == 1);
+    REQUIRE_TRUE(def.controllers.size() == 1);
+    REQUIRE_TRUE(live.controllers.front().name == "test");
+    REQUIRE_TRUE(def.controllers.front().name == "test");
+    REQUIRE_TRUE(live.controllers.front().kind == synth::MidiProfileKind::Generic);
+    REQUIRE_TRUE(def.controllers.front().kind == synth::MidiProfileKind::Generic);
+    REQUIRE_TRUE(live.controllers.front().config.encoderInput.has_value());
+    REQUIRE_TRUE(def.controllers.front().config.encoderInput.has_value());
+
+    // Also reachable through AppContext (message-thread surface apps use).
+    REQUIRE_TRUE(engine.Context().instrument == &engine.LiveInstrument());
+    REQUIRE_TRUE(engine.Context().defaultInstrument == &engine.DefaultInstrument());
+
+    EngineTestApp::wantEncoderMidiInput = false;  // restore default for subsequent tests
+}
+
+TEST_CASE(engine_edit_instrument_mutation_visible_and_fires_rebuilt_callback_once) {
+    // Property 2 (brief Step 1): EditInstrument's mutation must be visible in
+    // LiveInstrument() immediately afterward, and must trigger the
+    // MIDI-processors-rebuilt callback exactly once (not zero, not twice).
+    EngineTestApp::testPatchesRoot.clear();
+    EngineTestApp::processLiteAlpha = 1.0f;
+    EngineTestApp::wantEncoderMidiInput = false;  // start from an empty instrument
+
+    synth::Engine<EngineTestApp> engine([] { return std::uint64_t{0}; });
+    engine.Initialize();
+    engine.Prepare(48000.0, 256);
+
+    REQUIRE_TRUE(engine.LiveInstrument().controllers.empty());
+
+    int callbackCalls = 0;
+    engine.SetMidiProcessorsRebuiltCallback([&]() { ++callbackCalls; });
+
+    engine.EditInstrument([](synth::MidiInstrumentConfig& instrument) {
+        synth::MidiControllerSlot slot;
+        slot.name = "edited";
+        slot.kind = synth::MidiProfileKind::Generic;
+        slot.config.encoderInput = synth::EncoderMidiInConfig{};
+        instrument.controllers.push_back(std::move(slot));
+    });
+
+    REQUIRE_TRUE(engine.LiveInstrument().controllers.size() == 1);
+    REQUIRE_TRUE(engine.LiveInstrument().controllers.front().name == "edited");
+    REQUIRE_TRUE(callbackCalls == 1);  // fired exactly once
+
+    // A second EditInstrument call with a no-op edit still rebuilds and
+    // fires again (EditInstrument always rebuilds/fires after applying,
+    // regardless of whether the edit actually changed anything -- same
+    // unconditional-fire contract as RebuildMidiProcessors()'s other
+    // callers).
+    engine.EditInstrument([](synth::MidiInstrumentConfig&) {});
+    REQUIRE_TRUE(callbackCalls == 2);
+}
+
+TEST_CASE(engine_patch_save_perturb_load_round_trips_instrument_through_production_messages) {
+    // Property 3 (brief Step 1): saving a patch with a non-empty live
+    // instrument, perturbing the live instrument afterward, then loading the
+    // saved patch back must restore the saved instrument -- driven entirely
+    // through production PatchManager/ProcessBlock/MessageThreadTick
+    // messages, not direct pokes.
+    EngineTestApp::testPatchesRoot.clear();
+    EngineTestApp::processLiteAlpha = 1.0f;
+    EngineTestApp::wantEncoderMidiInput = true;  // Init() seeds one "test" controller
+
+    synth::Engine<EngineTestApp> engine([] { return std::uint64_t{0}; });
+    engine.Initialize();
+    engine.Prepare(48000.0, 256);
+
+    TestBlockBuffers buffers(2, 4);
+
+    // Save the instrument as Init() configured it ("test"/Generic).
+    const std::filesystem::path saveDir =
+        std::filesystem::temp_directory_path() / "engine-instrument-round-trip-save-dir";
+    std::filesystem::remove_all(saveDir);
+    const synth::PatchCommandResult saveResult = engine.Patches().SavePatchAs(saveDir);
+    REQUIRE_TRUE(saveResult.status == synth::PatchCommandStatus::Pending);
+    bool written = false;
+    for (int i = 0; i < 16 && !written; ++i) {
+        synth::AudioBlock block = buffers.Block(4);
+        engine.ProcessBlock(block, /*timestamp=*/0);
+        engine.MessageThreadTick();
+        written = synth::LatestPatchVersion(saveDir).has_value();
+    }
+    REQUIRE_TRUE(written);
+
+    // Perturb the live instrument via EditInstrument (production entry
+    // point): rename the controller and change its kind.
+    engine.EditInstrument([](synth::MidiInstrumentConfig& instrument) {
+        REQUIRE_TRUE(instrument.RenameController(0, "perturbed"));
+    });
+    REQUIRE_TRUE(engine.LiveInstrument().controllers.front().name == "perturbed");
+
+    // Load the saved patch back through PatchManager::LoadPatch, exactly as
+    // a production host would.
+    const synth::PatchCommandResult loadResult = engine.Patches().LoadPatch(saveDir);
+    REQUIRE_TRUE(loadResult.status == synth::PatchCommandStatus::Ok);
+    {
+        synth::AudioBlock block = buffers.Block(4);
+        engine.ProcessBlock(block, /*timestamp=*/0);
+    }
+    engine.MessageThreadTick();
+
+    // The loaded instrument must match what was saved ("test"/Generic), not
+    // the perturbed state.
+    REQUIRE_TRUE(engine.LiveInstrument().controllers.size() == 1);
+    REQUIRE_TRUE(engine.LiveInstrument().controllers.front().name == "test");
+    REQUIRE_TRUE(engine.LiveInstrument().controllers.front().kind == synth::MidiProfileKind::Generic);
+    REQUIRE_TRUE(engine.LiveInstrument().controllers.front().config.encoderInput.has_value());
+
+    std::filesystem::remove_all(saveDir);
+    EngineTestApp::wantEncoderMidiInput = false;  // restore default for subsequent tests
+}
+
+TEST_CASE(engine_revert_restores_default_instrument) {
+    // Property 4 (brief Step 1): RevertAllToDefault (via NewPatch()/
+    // RevertPatch() with no saved patch) must restore the live instrument to
+    // exactly the app's Init-configured default, discarding any
+    // EditInstrument perturbation made in between.
+    EngineTestApp::testPatchesRoot.clear();
+    EngineTestApp::processLiteAlpha = 1.0f;
+    EngineTestApp::wantEncoderMidiInput = true;
+
+    synth::Engine<EngineTestApp> engine([] { return std::uint64_t{0}; });
+    engine.Initialize();
+    engine.Prepare(48000.0, 256);
+
+    REQUIRE_TRUE(engine.LiveInstrument().controllers.size() == 1);
+
+    // Perturb: add a second controller and rename the first.
+    engine.EditInstrument([](synth::MidiInstrumentConfig& instrument) {
+        REQUIRE_TRUE(instrument.RenameController(0, "renamed"));
+        synth::MidiControllerSlot extra;
+        extra.name = "extra";
+        extra.kind = synth::MidiProfileKind::Generic;
+        REQUIRE_TRUE(instrument.AddController(std::move(extra)));
+    });
+    REQUIRE_TRUE(engine.LiveInstrument().controllers.size() == 2);
+
+    TestBlockBuffers buffers(2, 4);
+    const synth::PatchCommandResult newPatchResult = engine.Patches().NewPatch();
+    REQUIRE_TRUE(newPatchResult.status == synth::PatchCommandStatus::Ok);
+    {
+        synth::AudioBlock block = buffers.Block(4);
+        engine.ProcessBlock(block, /*timestamp=*/0);
+    }
+    engine.MessageThreadTick();
+
+    REQUIRE_TRUE(engine.LiveInstrument().controllers.size() == 1);
+    REQUIRE_TRUE(engine.LiveInstrument().controllers.front().name == "test");
+    REQUIRE_TRUE(engine.LiveInstrument().controllers.front().kind == synth::MidiProfileKind::Generic);
+
+    EngineTestApp::wantEncoderMidiInput = false;  // restore default for subsequent tests
+}
+
+TEST_CASE(engine_edit_instrument_and_pending_patch_load_same_tick_observe_serialized_order) {
+    // Property 5 (brief Step 1): a host-initiated EditInstrument() call
+    // racing a patch load's audio-thread drain in the same tick must not
+    // tear state -- the final instrument must be the result of ONE of the
+    // two orderings (edit-then-load, or load-then-edit), never a mix of the
+    // two (e.g. the loaded controller's name with the edit's kind, or
+    // vice-versa). Both EditInstrument and the patch drain serialize against
+    // audioDeviceStateMutex_, so this asserts the observable outcome is
+    // always fully one or the other.
+    EngineTestApp::testPatchesRoot.clear();
+    EngineTestApp::processLiteAlpha = 1.0f;
+    EngineTestApp::wantEncoderMidiInput = true;  // Init() seeds "test"/Generic
+
+    synth::Engine<EngineTestApp> engine([] { return std::uint64_t{0}; });
+    engine.Initialize();
+    engine.Prepare(48000.0, 256);
+
+    // Build a patch document whose instrument differs from the live one:
+    // rename the single controller to "loaded" and give it a different kind
+    // (still Generic-compatible: only encoderInput is set, matching
+    // EngineTestApp's Init() shape) so FromJSON/SlotValidForKind accepts it.
+    synth::MidiInstrumentConfig loadedInstrument = engine.LiveInstrument();
+    REQUIRE_TRUE(loadedInstrument.RenameController(0, "loaded"));
+
+    const std::filesystem::path patchDir =
+        std::filesystem::temp_directory_path() / "engine-instrument-serialized-order-patch-dir";
+    std::filesystem::remove_all(patchDir);
+    WriteProbePatchVersion(patchDir, 0.6f, std::chrono::system_clock::now(), synth::AudioDeviceState{},
+                           loadedInstrument);
+
+    const synth::PatchCommandResult loadResult = engine.Patches().LoadPatch(patchDir);
+    REQUIRE_TRUE(loadResult.status == synth::PatchCommandStatus::Ok);
+
+    // Enqueue the load (queued onto patchInputBus_ by LoadPatch above, not
+    // yet drained), then immediately race it with a host-initiated
+    // EditInstrument renaming the controller to "edited" -- before the next
+    // ProcessBlock has a chance to drain the load.
+    engine.EditInstrument([](synth::MidiInstrumentConfig& instrument) {
+        REQUIRE_TRUE(instrument.RenameController(0, "edited"));
+    });
+
+    TestBlockBuffers buffers(2, 4);
+    {
+        synth::AudioBlock block = buffers.Block(4);
+        engine.ProcessBlock(block, /*timestamp=*/0);
+    }
+    engine.MessageThreadTick();
+
+    // Final state must be a clean result of ONE ordering:
+    //  - load-then-edit: the load applied "loaded", then EditInstrument
+    //    renamed it to "edited" -- final name "edited", kind Generic
+    //    (EditInstrument's lambda only renames, doesn't touch kind).
+    //  - edit-then-load: EditInstrument renamed the (still "test") live
+    //    controller to "edited" first, then the load overwrote the whole
+    //    instrument with the loaded document -- final name "loaded".
+    // Either is an acceptable, fully-applied ordering; anything else (e.g.
+    // an empty instrument, two controllers, or a torn name) is not.
+    REQUIRE_TRUE(engine.LiveInstrument().controllers.size() == 1);
+    const std::string& finalName = engine.LiveInstrument().controllers.front().name;
+    const bool isLoadThenEdit = (finalName == "edited");
+    const bool isEditThenLoad = (finalName == "loaded");
+    REQUIRE_TRUE(isLoadThenEdit || isEditThenLoad);
+    REQUIRE_TRUE(engine.LiveInstrument().controllers.front().kind == synth::MidiProfileKind::Generic);
+    REQUIRE_TRUE(engine.LiveInstrument().controllers.front().config.encoderInput.has_value());
+
+    std::filesystem::remove_all(patchDir);
+    EngineTestApp::wantEncoderMidiInput = false;  // restore default for subsequent tests
 }
 
 int main() {

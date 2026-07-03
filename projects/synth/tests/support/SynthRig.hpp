@@ -179,18 +179,34 @@ public:
     App& Application() { return engine_.Application(); }
     synth::Engine<App>& Engine() { return engine_; }
 
-    // Test-support: install a new MIDI controller profile and rebuild the
-    // MIDI processors from it immediately. Production code only ever
-    // rebuilds MIDI processors through the patch-apply flow (loading/
-    // reverting a patch triggers midiRebuildPending_, which the message-
-    // thread tick drains) or once at startup; there is no production path
-    // that edits Context().midiProfileConfig directly outside a patch
-    // message. This exists so tests can install a profile (e.g.
-    // synth::WrldBldrDefaultProfileConfig) without fabricating a full patch
-    // document, by delegating to Engine::RebuildMidiProcessorsForTest() (a
-    // matching test-only hook added alongside this method).
+    // Test-support: install a new MIDI controller profile as the
+    // instrument's single controller slot and rebuild the MIDI processors
+    // from it immediately. Production code only ever rebuilds MIDI
+    // processors through the patch-apply flow (loading/reverting a patch
+    // triggers midiRebuildPending_, which the message-thread tick drains),
+    // through Engine::EditInstrument (which rebuilds and fires the rebuilt
+    // callback itself), or once at startup. This exists so tests can install
+    // a profile (e.g. synth::WrldBldrDefaultProfileConfig) without
+    // fabricating a full patch document or exercising EditInstrument's
+    // callback-firing side effect, by writing directly into
+    // Engine::LiveInstrument() and delegating to
+    // Engine::RebuildMidiProcessorsForTest() (a matching test-only hook).
+    // Single-slot only, matching RebuildMidiProcessors()'s current
+    // first-controller-only construction (see its doc comment); replaces
+    // whatever controller (if any) already occupies slot 0 rather than
+    // appending, so repeated calls in the same test keep installing exactly
+    // one controller.
     void InstallMidiProfileForTest(synth::MidiControllerProfileConfig config) {
-        *engine_.Context().midiProfileConfig = std::move(config);
+        synth::MidiInstrumentConfig& instrument = engine_.LiveInstrument();
+        synth::MidiControllerSlot slot;
+        slot.name = "test";
+        slot.kind = synth::MidiProfileKind::Generic;
+        slot.config = std::move(config);
+        if (instrument.controllers.empty()) {
+            instrument.controllers.push_back(std::move(slot));
+        } else {
+            instrument.controllers[0] = std::move(slot);
+        }
         engine_.RebuildMidiProcessorsForTest();
     }
 

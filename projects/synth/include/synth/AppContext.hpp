@@ -65,8 +65,8 @@ struct AppContext {
     PatchMessageInBus* patchInputBus = nullptr;     // producer: message thread; consumer: audio thread
     MessageOutBus* patchOutputBus = nullptr;        // producer: audio; consumer: message thread
     MidiSender* midiSender = nullptr;               // enqueue from message thread; owned worker drains
-    MidiControllerProfileConfig* midiProfileConfig = nullptr;              // message thread only
-    const MidiControllerProfileConfig* defaultMidiProfileConfig = nullptr; // immutable after init
+    MidiInstrumentConfig* instrument = nullptr;              // message thread only
+    const MidiInstrumentConfig* defaultInstrument = nullptr; // immutable after init
     const RuntimeConfig* config = nullptr;          // immutable after construction
     ParameterManager::UIState* uiState = nullptr;   // null during Init; set before MIDI/audio/UI start
 

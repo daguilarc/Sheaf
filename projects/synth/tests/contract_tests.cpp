@@ -94,8 +94,8 @@ TEST_CASE(app_context_default_constructs_null) {
     REQUIRE_TRUE(context.patchInputBus == nullptr);
     REQUIRE_TRUE(context.patchOutputBus == nullptr);
     REQUIRE_TRUE(context.midiSender == nullptr);
-    REQUIRE_TRUE(context.midiProfileConfig == nullptr);
-    REQUIRE_TRUE(context.defaultMidiProfileConfig == nullptr);
+    REQUIRE_TRUE(context.instrument == nullptr);
+    REQUIRE_TRUE(context.defaultInstrument == nullptr);
     REQUIRE_TRUE(context.config == nullptr);
     REQUIRE_TRUE(context.uiState == nullptr);
 }
