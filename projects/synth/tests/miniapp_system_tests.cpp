@@ -621,7 +621,10 @@ TEST_CASE(miniapp_rig_default_instrument_has_single_wrldbldr_controller) {
     REQUIRE_TRUE(slot.name == "wrldbldr");
     REQUIRE_TRUE(slot.kind == synth::MidiProfileKind::WrldBldr);
 
-    constexpr std::size_t kVisibleEncoderCount = 4;  // slot_->PhysicalEncoders() == {10, 11, 12, 13}
+    // The default WRLD.Bldr profile maps all 16 physical encoders even though
+    // the app only realizes 4 on-screen (positions 4..15 are input-ignored and
+    // output-blanked). MiniAppCore::Init() sets visibleEncoderCount = 16.
+    constexpr std::size_t kVisibleEncoderCount = 16;
     synth::WrldBldrDefaultProfileOptions expectedOptions;
     expectedOptions.visibleEncoderCount = kVisibleEncoderCount;
     expectedOptions.sceneCount = 3;

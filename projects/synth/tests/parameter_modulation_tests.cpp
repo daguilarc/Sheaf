@@ -4685,6 +4685,47 @@ TEST_CASE(wrld_bldr_output_blanks_disconnected_mapped_cells_once) {
     REQUIRE_TRUE(sink.sent.size() == 3);
 }
 
+// A mapping whose position is beyond the slot's realized cell capacity (e.g. a
+// full 16-encoder profile hosted by an app with fewer physical encoders) has no
+// backing cell. It must be driven off -- a blank value CC per mapped position --
+// rather than left dark/stale by skipping it entirely.
+TEST_CASE(wrld_bldr_output_blanks_positions_beyond_cell_capacity) {
+    synth::ParameterManager::UIState ui;
+    ui.Configure(1, 1, 1, 0);  // one slot, one realized cell (positions >= 1 do not exist)
+
+    FakeMidiSink sink;
+    synth::MidiSender sender;
+    sender.SetSink(0, &sink);
+    sender.Start();
+    auto config = synth::EncoderMidiOutConfig::WrldBldrDefault(0);
+    config.KeepFirstPositions(2);  // positions 0 (exists, disconnected) and 1 (beyond capacity)
+    REQUIRE_TRUE(config.mappings.size() == 2);
+    const std::uint8_t cc0 = config.mappings[0].cc;
+    const std::uint8_t cc1 = config.mappings[1].cc;
+    synth::WrldBldrMidiOutProcessor processor(config, &sender, &ui);
+
+    processor.Process();
+    sender.FlushForTests(std::chrono::milliseconds(500));
+    sender.Stop();
+
+    // Both positions -- the disconnected realized cell AND the non-existent one
+    // -- emit a zero-value CC on channel 0 (status CC) at their mapped CC.
+    bool blanked0 = false;
+    bool blanked1 = false;
+    for (const auto& midi : sink.sent) {
+        if (midi.IsCC() && midi.Channel() == 0 && midi.GetValue() == 0) {
+            if (midi.raw[1] == cc0) {
+                blanked0 = true;
+            }
+            if (midi.raw[1] == cc1) {
+                blanked1 = true;
+            }
+        }
+    }
+    REQUIRE_TRUE(blanked0);
+    REQUIRE_TRUE(blanked1);
+}
+
 TEST_CASE(message_bus_single_producer_single_consumer_threaded_order) {
     constexpr std::size_t kMessages = 1000;
     synth::MessageInBus bus(nullptr, 64);

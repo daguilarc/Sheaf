@@ -179,7 +179,13 @@ public:
         // becomes part of the default instrument that revert/new-patch
         // restore to.
         synth::WrldBldrDefaultProfileOptions profileOptions;
-        profileOptions.visibleEncoderCount = slot_->PhysicalEncoders().size();
+        // Map all 16 physical WRLD.Bldr encoders even though this app only
+        // realizes 4 (positions 0..3). Positions 4..15 have no backing cell:
+        // the input path ignores their CCs like an out-of-range bank button
+        // (spm-38), and the output processor drives their hardware LEDs off
+        // (MidiOutProcessor::LoadCellSnapshot returns a blank snapshot for a
+        // position beyond the slot's cell capacity).
+        profileOptions.visibleEncoderCount = 16;
         profileOptions.sceneCount = 3;
         profileOptions.bankButtonCount = 16;
         profileOptions.gestureSelectorCount = 1;

@@ -712,12 +712,19 @@ void MidiOutProcessor::Reset() {}
 
 std::optional<MidiOutProcessor::CellSnapshot> MidiOutProcessor::LoadCellSnapshot(
     const EncoderMidiOutMapping& mapping) const {
+    // A mapping that targets a slot/position the app never realized (e.g. a
+    // full 16-encoder default profile hosted by an app with fewer physical
+    // encoders) has no backing cell. Such a position is legitimately a
+    // disconnected cell: return a default (blank) snapshot so the output
+    // processor drives its hardware LED off (color/indicator Off, brightness
+    // 0) rather than leaving it showing stale state. `std::nullopt` is
+    // reserved for transient torn reads, which callers skip and retry.
     if (uiState_ == nullptr || mapping.slotIx >= uiState_->slotCapacity) {
-        return std::nullopt;
+        return CellSnapshot{};
     }
     const BankSlot::UIState& slot = uiState_->slots[mapping.slotIx];
     if (mapping.position >= slot.cellCapacity) {
-        return std::nullopt;
+        return CellSnapshot{};
     }
     const Parameter::UIState& state = slot.cells[mapping.position];
     for (int attempt = 0; attempt < 4; ++attempt) {
