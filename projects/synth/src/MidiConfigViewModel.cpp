@@ -794,13 +794,12 @@ bool MidiConfigViewModel::ApplyMappingEdit(std::size_t controllerIx, MidiConfigS
     }
 
     // General gate: refuse any Field not advertised in this row's
-    // editableFields before touching the scratch config at all. This is what
-    // closes the WRLD.Bldr desync -- system rows advertise only
-    // WrldBldrX/WrldBldrY/PressMessage/ReleaseMessage (see SectionRows), so a
-    // direct Channel/Cc edit on one is refused here rather than silently
-    // no-op'ing deeper in the switch below (the paired `control` address
-    // stays consistent because it is only ever written via the WrldBldrX/Y
-    // path). SectionRows() is also the single source of truth row-ordering
+    // editableFields before touching the scratch config at all. WRLD.Bldr
+    // system rows advertise Channel/WrldBldrX/WrldBldrY/PressMessage/
+    // ReleaseMessage (see SectionRows); a Cc edit on one is refused here (its
+    // cc is derived from X/Y). The channel is kept coherent across the Channel
+    // and X/Y edit cases -- control->channel is authoritative and the position
+    // channel is synced to it. SectionRows() is also the single source of truth row-ordering
     // used below, so this reuses it rather than re-deriving row identity.
     {
         const std::vector<MidiMappingRowVM> rows = SectionRows(controllerIx, section);
