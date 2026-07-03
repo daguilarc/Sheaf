@@ -5,6 +5,7 @@
 #error "synth miniapp system tests must not see JUCE headers -- MiniAppCore must stay JUCE-free"
 #endif
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <exception>
@@ -589,6 +590,64 @@ TEST_CASE(miniapp_rig_patch_save_perturb_load_round_trip) {
     REQUIRE_TRUE(!rig.SawNaN());
 
     std::filesystem::remove_all(root);
+}
+
+// spm-45: post-Init the default instrument (Engine::LiveInstrument(), which
+// Engine::Initialize() snapshots into DefaultInstrument() right after
+// MiniAppCore::Init() returns -- see MiniAppCore.hpp's comment on the
+// controller-seeding block) must contain EXACTLY ONE controller slot, named
+// "wrldbldr", kind WrldBldr, built from WrldBldrDefaultProfileConfig() with
+// the same options MiniAppCore::Init() passes (visibleEncoderCount == the
+// slot's 4 physical encoders, sceneCount 3, bankButtonCount 16,
+// gestureSelectorCount 1). Spot-check the encoder input mapping rather than
+// comparing the whole config: turns live on channel 0, pushes on channel 1,
+// and CCs map onto positions 1:1 (EncoderPositionToCC(position) == position
+// for position < 16 -- see MidiController.cpp); this instrument's
+// KeepFirstPositions(4) trims the general 0..15 scheme down to positions
+// 0..3, matching the slot's 4 physical encoders.
+TEST_CASE(miniapp_rig_default_instrument_has_single_wrldbldr_controller) {
+    UseScratchPatchesRoot("default_instrument_has_single_wrldbldr_controller");
+    synth_rig::SynthRig<synth_miniapp::MiniAppCore> rig;
+
+    const synth::MidiInstrumentConfig& liveInstrument = rig.Engine().LiveInstrument();
+    REQUIRE_TRUE(liveInstrument.controllers.size() == 1);
+
+    const synth::MidiControllerSlot& slot = liveInstrument.controllers.front();
+    REQUIRE_TRUE(slot.name == "wrldbldr");
+    REQUIRE_TRUE(slot.kind == synth::MidiProfileKind::WrldBldr);
+
+    constexpr std::size_t kVisibleEncoderCount = 4;  // slot_->PhysicalEncoders() == {10, 11, 12, 13}
+    synth::WrldBldrDefaultProfileOptions expectedOptions;
+    expectedOptions.visibleEncoderCount = kVisibleEncoderCount;
+    expectedOptions.sceneCount = 3;
+    expectedOptions.bankButtonCount = 16;
+    expectedOptions.gestureSelectorCount = 1;
+    const synth::MidiControllerProfileConfig expectedConfig = synth::WrldBldrDefaultProfileConfig(expectedOptions);
+
+    REQUIRE_TRUE(slot.config.encoderInput.has_value());
+    REQUIRE_TRUE(expectedConfig.encoderInput.has_value());
+    REQUIRE_TRUE(slot.config.encoderInput->turns.size() == expectedConfig.encoderInput->turns.size());
+    REQUIRE_TRUE(slot.config.encoderInput->pushes.size() == expectedConfig.encoderInput->pushes.size());
+    REQUIRE_TRUE(slot.config.encoderInput->turns.size() == kVisibleEncoderCount);
+
+    // Encoder-mapping spot-checks (brief Step 1): turn channel 0, push
+    // channel 1, CCs 0..(visibleEncoderCount-1) -> positions
+    // 0..(visibleEncoderCount-1).
+    for (std::size_t position = 0; position < kVisibleEncoderCount; ++position) {
+        const auto turnIt = std::find_if(
+            slot.config.encoderInput->turns.begin(), slot.config.encoderInput->turns.end(),
+            [position](const synth::EncoderMidiMapping& mapping) { return mapping.position == position; });
+        REQUIRE_TRUE(turnIt != slot.config.encoderInput->turns.end());
+        REQUIRE_TRUE(turnIt->control.channel == 0);
+        REQUIRE_TRUE(turnIt->control.cc == static_cast<std::uint8_t>(position));
+
+        const auto pushIt = std::find_if(
+            slot.config.encoderInput->pushes.begin(), slot.config.encoderInput->pushes.end(),
+            [position](const synth::EncoderMidiMapping& mapping) { return mapping.position == position; });
+        REQUIRE_TRUE(pushIt != slot.config.encoderInput->pushes.end());
+        REQUIRE_TRUE(pushIt->control.channel == 1);
+        REQUIRE_TRUE(pushIt->control.cc == static_cast<std::uint8_t>(position));
+    }
 }
 
 TEST_CASE(miniapp_rig_no_nan_across_extended_run) {
