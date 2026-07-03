@@ -275,14 +275,38 @@ private:
         return ix >= 0 && ix < inputDevices_.size() ? inputDevices_[ix].identifier : juce::String();
     }
 
+    // Name counterpart of SelectedInputIdentifier (Task 2 review, Important):
+    // reads the display name of the same combo-box selection from
+    // inputDevices_, the enumerated juce::MidiDeviceInfo list Refresh() built
+    // the combo from -- so identifier and name always come from the same
+    // enumeration snapshot, never out of sync with each other. See
+    // ManualOpenInput's doc comment for why this must be threaded through
+    // rather than left empty.
+    juce::String SelectedInputName() const {
+        const int ix = inputBox_.getSelectedId() - 1;
+        return ix >= 0 && ix < inputDevices_.size() ? inputDevices_[ix].name : juce::String();
+    }
+
     juce::String SelectedOutputIdentifier() const {
         const int ix = outputBox_.getSelectedId() - 1;
         return ix >= 0 && ix < outputDevices_.size() ? outputDevices_[ix].identifier : juce::String();
     }
 
+    // Name counterpart of SelectedOutputIdentifier -- see SelectedInputName's
+    // doc comment.
+    juce::String SelectedOutputName() const {
+        const int ix = outputBox_.getSelectedId() - 1;
+        return ix >= 0 && ix < outputDevices_.size() ? outputDevices_[ix].name : juce::String();
+    }
+
     // Delegates the actual open/close to connections_ (which owns slot 0's
-    // handler, records the identifier into the engine's live instrument, and
-    // updates its own MidiConnectionState) -- see the class doc comment.
+    // handler, records the identifier+name into the engine's live
+    // instrument, and updates its own MidiConnectionState) -- see the class
+    // doc comment. The device name is threaded through alongside the
+    // identifier (Task 2 review, Important) so the stored ref can survive OS
+    // identifier churn via PlanMidiReconciliation's name-fallback matching --
+    // see ManualOpenInput/ManualOpenOutput's doc comments
+    // (MidiConnectionManager.hpp).
     void ToggleInput() {
         if (connections_.IsInputOpen(kSlot)) {
             connections_.ManualCloseInput(kSlot);
@@ -291,7 +315,7 @@ private:
         }
         const juce::String identifier = SelectedInputIdentifier();
         if (identifier.isNotEmpty()) {
-            connections_.ManualOpenInput(kSlot, identifier.toStdString());
+            connections_.ManualOpenInput(kSlot, identifier.toStdString(), SelectedInputName().toStdString());
         }
         UpdateStatus();
     }
@@ -304,7 +328,7 @@ private:
         }
         const juce::String identifier = SelectedOutputIdentifier();
         if (identifier.isNotEmpty()) {
-            connections_.ManualOpenOutput(kSlot, identifier.toStdString());
+            connections_.ManualOpenOutput(kSlot, identifier.toStdString(), SelectedOutputName().toStdString());
         }
         UpdateStatus();
     }

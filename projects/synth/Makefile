@@ -16,6 +16,7 @@ MINIAPP_SYSTEM_TEST_BIN := $(BUILD_DIR)/miniapp_system_tests
 RECONCILE_TEST_BIN := $(BUILD_DIR)/reconcile_tests
 RECONCILE_EXECUTOR_TEST_BIN := $(BUILD_DIR)/reconcile_executor_tests
 POLLER_TEST_BIN := $(BUILD_DIR)/poller_tests
+MIDI_SENDER_TEST_BIN := $(BUILD_DIR)/midi_sender_tests
 SRC := src/ParameterModulation.cpp src/MidiController.cpp src/PatchPersistence.cpp src/DspWavetable.cpp src/Modules.cpp src/MidiReconcile.cpp src/MidiDevicePoller.cpp
 OBJ := $(BUILD_DIR)/ParameterModulation.o $(BUILD_DIR)/MidiController.o $(BUILD_DIR)/PatchPersistence.o $(BUILD_DIR)/DspWavetable.o $(BUILD_DIR)/Modules.o $(BUILD_DIR)/MidiReconcile.o $(BUILD_DIR)/MidiDevicePoller.o
 DSP_HEADERS := include/synth/DspMath.hpp include/synth/DspNumbers.hpp include/synth/DspTransferFunction.hpp include/synth/DspFilters.hpp include/synth/DspScope.hpp include/synth/DspWavetable.hpp include/synth/DspOscillators.hpp
@@ -99,7 +100,10 @@ $(RECONCILE_EXECUTOR_TEST_BIN): tests/reconcile_executor_tests.cpp $(LIB) includ
 $(POLLER_TEST_BIN): tests/poller_tests.cpp $(LIB) include/synth/MidiDevicePoller.hpp include/synth/MidiReconcile.hpp include/synth/ThreadId.hpp
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< $(LIB) -o $@
 
-test: $(TEST_BIN) $(DSP_TEST_BIN) $(MODULE_TEST_BIN) $(INSTRUMENT_TEST_BIN) $(CONTRACT_TEST_BIN) $(LOGGING_TEST_BIN) $(ENGINE_TEST_BIN) $(RIG_TEST_BIN) $(MINIAPP_SYSTEM_TEST_BIN) $(RECONCILE_TEST_BIN) $(RECONCILE_EXECUTOR_TEST_BIN) $(POLLER_TEST_BIN)
+$(MIDI_SENDER_TEST_BIN): tests/midi_sender_tests.cpp $(LIB) include/synth/MidiController.hpp include/synth/ParameterModulation.hpp
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< $(LIB) -o $@
+
+test: $(TEST_BIN) $(DSP_TEST_BIN) $(MODULE_TEST_BIN) $(INSTRUMENT_TEST_BIN) $(CONTRACT_TEST_BIN) $(LOGGING_TEST_BIN) $(ENGINE_TEST_BIN) $(RIG_TEST_BIN) $(MINIAPP_SYSTEM_TEST_BIN) $(RECONCILE_TEST_BIN) $(RECONCILE_EXECUTOR_TEST_BIN) $(POLLER_TEST_BIN) $(MIDI_SENDER_TEST_BIN)
 	$(TEST_BIN)
 	$(DSP_TEST_BIN)
 	$(MODULE_TEST_BIN)
@@ -112,6 +116,7 @@ test: $(TEST_BIN) $(DSP_TEST_BIN) $(MODULE_TEST_BIN) $(INSTRUMENT_TEST_BIN) $(CO
 	$(RECONCILE_TEST_BIN)
 	$(RECONCILE_EXECUTOR_TEST_BIN)
 	$(POLLER_TEST_BIN)
+	$(MIDI_SENDER_TEST_BIN)
 
 miniapp:
 	$(MAKE) -C $(MINIAPP_DIR)

@@ -44,6 +44,23 @@
 // trigger, and the plan currently executing already IS that pass for this
 // trigger -- a nested call has nothing new to reconcile.
 //
+// Startup double-reconcile gate (binding, see p3-globals.md's startup-order
+// paragraph: "engine init -> startup patch -> processor rebuild -> ONE
+// synchronous reconcile -> start poller -> ..."): the host wires
+// OnInstrumentRebuilt() as the rebuilt-callback target unconditionally, in
+// its own constructor -- before it ever calls StartupReconcile() (typically
+// from a later Start() method). A startup patch loaded inside
+// engine.Initialize() rebuilds MIDI processors and fires that callback
+// synchronously, which would otherwise run a reconcile pass BEFORE
+// StartupReconcile()'s own "ONE synchronous startup reconcile" runs --
+// violating the binding. started_ (false until StartupReconcile() sets it)
+// gates this: OnInstrumentRebuilt() always resizes handler/state vectors
+// (cheap, and StartupReconcile()'s own resize call needs the current
+// controller count regardless of what ran before it), but only runs
+// Reconcile() when started_ is already true. See OnInstrumentRebuilt()'s doc
+// comment for the post-startup behavior (patch loads, preset changes, sar-8)
+// once started_ is true.
+//
 // Ownership handoff from MidiPanel (binding, see p3-globals.md's
 // architecture paragraph: "The runtime replaces MidiPanel's single handler
 // pair with a per-controller vector..."): this manager is now the sole owner
@@ -133,8 +150,14 @@ public:
         }
         for (std::size_t ix = 0; ix < outputHandlers_.size(); ++ix) {
             if (outputHandlers_[ix]) {
+                // ClearSinkSync (not SetSink(ix, nullptr)) -- blocks until the
+                // sender worker is not (and will never again be) mid-Send()
+                // on this sink, which is required here because the handler
+                // is about to be Close()'d and then destroyed by this
+                // destructor. See ClearSinkSync's doc comment and the class
+                // doc comment's sink-use-after-free note.
                 if (synth::MidiSender* sender = engine_.Context().midiSender; sender != nullptr) {
-                    sender->SetSink(ix, nullptr);
+                    sender->ClearSinkSync(ix);
                 }
                 outputHandlers_[ix]->Close();
             }
@@ -156,10 +179,16 @@ public:
     // record -- only the instrument's configured refs and present devices
     // matter for whether an Open* action is planned); an absent device
     // simply goes offline, never a startup failure. Starts the poller
-    // afterward.
+    // afterward. Sets started_ = true (see the class doc comment's
+    // ONE-synchronous-startup-reconcile paragraph) so any rebuilt-callback
+    // that fired before this point -- e.g. a startup-patch rebuild inside
+    // engine.Initialize(), which runs and fires
+    // SetMidiProcessorsRebuiltCallback synchronously BEFORE Runtime::Start()
+    // reaches this call -- did not also run a reconcile pass of its own.
     void StartupReconcile() {
         ResizeToControllerCount();
         Reconcile(detail::EnumerateDevices());
+        started_ = true;
         poller_.Start([] { return detail::EnumerateDevices(); });
     }
 
@@ -195,9 +224,27 @@ public:
     // path OnTimerTick uses). No-ops (beyond the resize) when a reconcile is
     // already in flight -- see the class doc comment's EditInstrument
     // re-entrancy paragraph.
+    //
+    // started_ gate (Task 2 review, Important): this callback is wired
+    // unconditionally in the host's constructor (see Runtime.hpp), i.e.
+    // BEFORE Runtime::Start() ever calls StartupReconcile(). A startup
+    // patch's own processor rebuild inside engine.Initialize() therefore
+    // fires this method while started_ is still false. Per p3-globals.md's
+    // binding startup order ("engine init -> startup patch -> processor
+    // rebuild -> ONE synchronous reconcile -> start poller -> ..."), that
+    // pre-startup rebuild must NOT itself run a reconcile pass -- only
+    // StartupReconcile()'s own call does, immediately afterward, against
+    // whatever the resize below just produced. Skipping the reconcile here
+    // pre-startup is safe: the resize (handler/state vector sizing +
+    // forwarding-processor installation) still happens unconditionally, so
+    // by the time StartupReconcile() runs its Reconcile() call, the vectors
+    // are already correctly sized -- nothing is lost, only the redundant
+    // early reconcile pass is skipped. Once started_ is true (post-startup
+    // patch loads, preset changes, etc., per sar-8), this method reconciles
+    // exactly as before.
     void OnInstrumentRebuilt() {
         ResizeToControllerCount();
-        if (reconciling_) {
+        if (!started_ || reconciling_) {
             return;
         }
         Reconcile(detail::EnumerateDevices());
@@ -212,8 +259,8 @@ public:
     // comment). Unlike the plan executor's Open*/Close* ops (invoked only
     // from within Reconcile(), always paired with a status transition the
     // plan already decided on), these are host-initiated: a manual open also
-    // records the opened identifier into the engine's live instrument via
-    // EditInstrument (mirroring MidiPanel's old SetSlot0Endpoints/
+    // records the opened identifier+name into the engine's live instrument
+    // via EditInstrument (mirroring MidiPanel's old SetSlot0Endpoints/
     // SyncEndpointStateFromSelection contract) and updates state_ directly,
     // the same way ExecuteReconcilePlan would for an OpenInput/OpenOutput
     // action -- so the next poll/rebuild reconcile sees a consistent,
@@ -222,6 +269,20 @@ public:
     // range or the open itself fails; the caller (MidiPanel) is responsible
     // for surfacing failure via its own status label, the same way it always
     // has via the handler's LastError().
+    //
+    // `name` (Task 2 review, Important): the device's display name, as
+    // enumerated by the caller (MidiPanel reads it from the same
+    // AvailableDevices() list it built its combo box from -- see
+    // MidiPanel.hpp's ToggleInput/ToggleOutput). This is stored into the
+    // endpoint ref alongside identifier, NOT left empty: PlanMidiReconciliation's
+    // name-fallback matching (smi-3, see MidiReconcile.hpp's doc comment) is
+    // how a manually-opened device survives OS identifier churn (the same
+    // physical device re-enumerating under a new identifier after a
+    // replug/reboot) -- a ref stored with name="" can never match by name,
+    // permanently losing self-healing for that slot until the user reopens
+    // it by hand again. An empty `name` is tolerated (stored as-is) for
+    // callers that genuinely don't have one, but every current caller
+    // supplies it.
     //
     // Guarded by reconciling_ around the EditInstrument call (same flag
     // Reconcile() uses, see the class doc comment's re-entrancy paragraph):
@@ -232,7 +293,7 @@ public:
     // work, and it would call InstallForwardingProcessor(ix) a second time.
     // The guard is set/cleared here rather than left to Reconcile() because
     // this path never calls Reconcile() itself.
-    bool ManualOpenInput(std::size_t ix, const std::string& identifier) {
+    bool ManualOpenInput(std::size_t ix, const std::string& identifier, const std::string& name = std::string()) {
         if (ix >= inputHandlers_.size() || identifier.empty()) {
             return false;
         }
@@ -242,13 +303,13 @@ public:
             state_.controllers[ix].input.status = synth::MidiEndpointStatus::Online;
             state_.controllers[ix].input.openIdentifier = identifier;
             reconciling_ = true;
-            UpdateRef(ix, identifier, /*name=*/std::string(), /*isInput=*/true);
+            UpdateRef(ix, identifier, name, /*isInput=*/true);
             reconciling_ = false;
         }
         return opened;
     }
 
-    bool ManualOpenOutput(std::size_t ix, const std::string& identifier) {
+    bool ManualOpenOutput(std::size_t ix, const std::string& identifier, const std::string& name = std::string()) {
         if (ix >= outputHandlers_.size() || identifier.empty()) {
             return false;
         }
@@ -258,7 +319,7 @@ public:
             state_.controllers[ix].output.status = synth::MidiEndpointStatus::Online;
             state_.controllers[ix].output.openIdentifier = identifier;
             reconciling_ = true;
-            UpdateRef(ix, identifier, /*name=*/std::string(), /*isInput=*/false);
+            UpdateRef(ix, identifier, name, /*isInput=*/false);
             reconciling_ = false;
             engine_.ResetMidiOutputProcessors(ix);
         }
@@ -314,39 +375,48 @@ private:
     // (possibly rebuilt) MidiInputProcessor(ix) -- safe to call outside the
     // will-rebuild/rebuilt window too (e.g. from StartupReconcile(), where
     // there is no "prior" chain to race).
+    //
+    // The WHICH-indices-close / WHICH-indices-grow decision itself is
+    // delegated to synth::PlanMidiConnectionResize (Task 2 review, Minor:
+    // extracted into a pure, JUCE-free, independently unit-tested helper --
+    // see MidiReconcile.hpp's doc comment on that function and
+    // reconcile_executor_tests.cpp's PlanMidiConnectionResize cases). This
+    // method only executes the plan: for closingIx, ClearSinkSync (not
+    // SetSink(ix, nullptr) -- Task 2 review, Critical, see ClearSinkSync's
+    // doc comment) the output sink before Close()ing both handlers, since the
+    // vector resize immediately below destroys them; for growingIx (after the
+    // resize), construct fresh handlers.
     void ResizeToControllerCount() {
-        const std::size_t count = engine_.MidiControllerCount();
+        const std::size_t oldCount = inputHandlers_.size();
+        const std::size_t newCount = engine_.MidiControllerCount();
+        const synth::MidiConnectionResizePlan resizePlan = synth::PlanMidiConnectionResize(oldCount, newCount);
 
-        for (std::size_t ix = count; ix < inputHandlers_.size(); ++ix) {
-            if (inputHandlers_[ix]) {
+        for (const std::size_t ix : resizePlan.closingIx) {
+            if (ix < inputHandlers_.size() && inputHandlers_[ix]) {
                 inputHandlers_[ix]->SetProcessor(nullptr);
                 inputHandlers_[ix]->Close();
             }
-        }
-        for (std::size_t ix = count; ix < outputHandlers_.size(); ++ix) {
-            if (outputHandlers_[ix]) {
+            if (ix < outputHandlers_.size() && outputHandlers_[ix]) {
                 if (synth::MidiSender* sender = engine_.Context().midiSender; sender != nullptr) {
-                    sender->SetSink(ix, nullptr);
+                    sender->ClearSinkSync(ix);
                 }
                 outputHandlers_[ix]->Close();
             }
         }
 
-        inputHandlers_.resize(count);
-        outputHandlers_.resize(count);
-        state_.controllers.resize(count);
+        inputHandlers_.resize(newCount);
+        outputHandlers_.resize(newCount);
+        state_.controllers.resize(newCount);
 
-        for (std::size_t ix = 0; ix < count; ++ix) {
-            if (!inputHandlers_[ix]) {
-                inputHandlers_[ix] = std::make_unique<synth_juce::MidiInHandler>();
-            }
-            if (!outputHandlers_[ix]) {
-                outputHandlers_[ix] = std::make_unique<synth_juce::MidiOutputHandler>();
-            }
+        for (const std::size_t ix : resizePlan.growingIx) {
+            inputHandlers_[ix] = std::make_unique<synth_juce::MidiInHandler>();
+            outputHandlers_[ix] = std::make_unique<synth_juce::MidiOutputHandler>();
+        }
+        for (std::size_t ix = 0; ix < newCount; ++ix) {
             InstallForwardingProcessor(ix);
         }
 
-        INFO("MidiConnectionManager resized to %zu controller(s)", count);
+        INFO("MidiConnectionManager resized to %zu controller(s)", newCount);
     }
 
     void InstallForwardingProcessor(std::size_t ix) {
@@ -515,6 +585,17 @@ private:
     // updateInputRef/updateOutputRef ops) fires the rebuilt callback
     // synchronously. See the class doc comment's re-entrancy paragraph.
     bool reconciling_ = false;
+
+    // True once StartupReconcile() has run its one synchronous startup
+    // reconcile pass (Task 2 review, Important). Before that,
+    // OnInstrumentRebuilt() (wired unconditionally in the host's
+    // constructor, so it can fire from a startup-patch rebuild inside
+    // engine.Initialize() -- well before Runtime::Start() calls
+    // StartupReconcile()) only resizes handler/state vectors and does NOT
+    // run a reconcile pass, preserving the binding "ONE synchronous startup
+    // reconcile, then poller" ordering. See OnInstrumentRebuilt()'s doc
+    // comment.
+    bool started_ = false;
 };
 
 }  // namespace synth_runtime

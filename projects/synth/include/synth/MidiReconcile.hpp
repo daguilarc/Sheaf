@@ -123,4 +123,38 @@ struct MidiEndpointOps {
 MidiConnectionState ExecuteReconcilePlan(const ReconcilePlan& plan, const MidiConnectionState& current,
                                          const MidiEndpointOps& ops);
 
+// Pure, JUCE-free bookkeeping decision for MidiConnectionManager's
+// controller-count resize (Task 2 review, Minor: extracted so it can be unit
+// tested without a JUCE handler vector or a live synth::Engine<App>). Given
+// the OLD handler-vector size and the NEW controller count
+// (engine.MidiControllerCount()), decides which controller indices must be
+// torn down (closed, and -- for outputs -- have their MidiSender sink
+// cleared) before the handler vectors are resized, and which indices are
+// newly grown (need a fresh handler constructed) after the resize.
+//
+// Semantics, mirroring MidiConnectionManager::ResizeToControllerCount's
+// pre-extraction behavior exactly:
+//   - Growth (newCount > oldCount): closingIx is empty; growingIx is
+//     [oldCount, newCount).
+//   - Shrink (newCount < oldCount): closingIx is [newCount, oldCount)  --
+//     every trailing index being dropped, both input and output (a shrink
+//     never keeps an input handler for an index whose output handler is
+//     dropped, or vice versa: the two vectors are always resized to the same
+//     count); growingIx is empty.
+//   - Same size (newCount == oldCount): both closingIx and growingIx are
+//     empty -- a true no-op, not just "nothing observable happens" but
+//     literally zero close/construct work planned.
+// closingIx is always sorted ascending (matches the loop order
+// ResizeToControllerCount used, index 0 upward), and is the set of indices
+// whose OUTPUT sink must be cleared via MidiSender::ClearSinkSync (not
+// SetSink(ix, nullptr) -- see that method's doc comment) before the caller
+// destroys the handler at that index, since the handler vectors are resized
+// (destroying trailing unique_ptrs) immediately after teardown.
+struct MidiConnectionResizePlan {
+    std::vector<std::size_t> closingIx;
+    std::vector<std::size_t> growingIx;
+};
+
+MidiConnectionResizePlan PlanMidiConnectionResize(std::size_t oldCount, std::size_t newCount);
+
 } // namespace synth

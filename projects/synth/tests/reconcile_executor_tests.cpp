@@ -363,6 +363,72 @@ TEST_CASE(null_op_is_skipped_without_crashing) {
     ExecuteReconcilePlan(plan, current, ops);
 }
 
+// PlanMidiConnectionResize (Task 2 review, Minor): the pure resize-decision
+// helper MidiConnectionManager::ResizeToControllerCount delegates to. These
+// cases pin down its contract independent of any JUCE handler vector.
+using synth::MidiConnectionResizePlan;
+using synth::PlanMidiConnectionResize;
+
+TEST_CASE(resize_plan_grow_from_zero_has_no_closes_and_grows_every_index) {
+    const MidiConnectionResizePlan plan = PlanMidiConnectionResize(/*oldCount=*/0, /*newCount=*/3);
+    REQUIRE_TRUE(plan.closingIx.empty());
+    REQUIRE_TRUE(plan.growingIx.size() == 3);
+    REQUIRE_TRUE(plan.growingIx[0] == 0);
+    REQUIRE_TRUE(plan.growingIx[1] == 1);
+    REQUIRE_TRUE(plan.growingIx[2] == 2);
+}
+
+TEST_CASE(resize_plan_grow_from_nonzero_only_grows_new_trailing_indices) {
+    const MidiConnectionResizePlan plan = PlanMidiConnectionResize(/*oldCount=*/2, /*newCount=*/5);
+    REQUIRE_TRUE(plan.closingIx.empty());
+    REQUIRE_TRUE(plan.growingIx.size() == 3);
+    REQUIRE_TRUE(plan.growingIx[0] == 2);
+    REQUIRE_TRUE(plan.growingIx[1] == 3);
+    REQUIRE_TRUE(plan.growingIx[2] == 4);
+}
+
+TEST_CASE(resize_plan_shrink_closes_every_dropped_trailing_index_and_grows_nothing) {
+    const MidiConnectionResizePlan plan = PlanMidiConnectionResize(/*oldCount=*/5, /*newCount=*/2);
+    REQUIRE_TRUE(plan.growingIx.empty());
+    REQUIRE_TRUE(plan.closingIx.size() == 3);
+    REQUIRE_TRUE(plan.closingIx[0] == 2);
+    REQUIRE_TRUE(plan.closingIx[1] == 3);
+    REQUIRE_TRUE(plan.closingIx[2] == 4);
+}
+
+TEST_CASE(resize_plan_shrink_to_zero_closes_every_index) {
+    const MidiConnectionResizePlan plan = PlanMidiConnectionResize(/*oldCount=*/4, /*newCount=*/0);
+    REQUIRE_TRUE(plan.growingIx.empty());
+    REQUIRE_TRUE(plan.closingIx.size() == 4);
+    REQUIRE_TRUE(plan.closingIx[0] == 0);
+    REQUIRE_TRUE(plan.closingIx[3] == 3);
+}
+
+TEST_CASE(resize_plan_same_size_is_a_true_no_op) {
+    const MidiConnectionResizePlan plan = PlanMidiConnectionResize(/*oldCount=*/3, /*newCount=*/3);
+    REQUIRE_TRUE(plan.closingIx.empty());
+    REQUIRE_TRUE(plan.growingIx.empty());
+}
+
+TEST_CASE(resize_plan_zero_to_zero_is_a_true_no_op) {
+    const MidiConnectionResizePlan plan = PlanMidiConnectionResize(/*oldCount=*/0, /*newCount=*/0);
+    REQUIRE_TRUE(plan.closingIx.empty());
+    REQUIRE_TRUE(plan.growingIx.empty());
+}
+
+TEST_CASE(resize_plan_closing_indices_are_sorted_ascending) {
+    // Not just "correct membership" -- the manager's caller relies on
+    // ascending order to match the loop order the pre-extraction code used
+    // (index 0 upward), so a ClearSinkSync on index 2 is never attempted
+    // before index 1's teardown in the same pass finishes, even though
+    // ClearSinkSync itself doesn't require ordering between different sinks.
+    const MidiConnectionResizePlan plan = PlanMidiConnectionResize(/*oldCount=*/6, /*newCount=*/1);
+    REQUIRE_TRUE(plan.closingIx.size() == 5);
+    for (std::size_t i = 1; i < plan.closingIx.size(); ++i) {
+        REQUIRE_TRUE(plan.closingIx[i - 1] < plan.closingIx[i]);
+    }
+}
+
 int main() {
     int failed = 0;
     for (const auto& test : Registry()) {

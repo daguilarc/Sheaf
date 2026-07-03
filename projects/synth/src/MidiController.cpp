@@ -554,6 +554,22 @@ void MidiSender::SetSink(std::size_t sinkIx, IMidiOutputSink* sink) {
     sinks_[sinkIx] = sink;
 }
 
+void MidiSender::ClearSinkSync(std::size_t sinkIx) {
+    if (sinkIx >= kMaxSinks) {
+        return;
+    }
+    std::unique_lock lock(mutex_);
+    // Clear the pointer first (under the lock) so the worker can never start
+    // a NEW Send() against this sink after this point: Run() reads
+    // sinks_[entry.sinkIx] under the same lock right before it records
+    // sendingSinkIx_ and releases the lock to call Send(). Then wait for any
+    // Send() the worker had already started (and thus already captured the
+    // old sink pointer for, in its local `sink` variable) before we cleared
+    // sinks_ above -- sendingSinkIx_ == sinkIx is exactly that case.
+    sinks_[sinkIx] = nullptr;
+    sendingCv_.wait(lock, [this, sinkIx] { return sendingSinkIx_ != sinkIx; });
+}
+
 void MidiSender::Start() {
     std::lock_guard lock(mutex_);
     if (running_) {
@@ -614,6 +630,7 @@ void MidiSender::Run() {
     for (;;) {
         BasicMidi midi;
         IMidiOutputSink* sink = nullptr;
+        std::size_t sinkIx = kMaxSinks;
         {
             std::unique_lock lock(mutex_);
             cv_.wait(lock, [this] { return stopRequested_ || size_ > 0; });
@@ -622,10 +639,20 @@ void MidiSender::Run() {
             }
             const QueueEntry& entry = queue_[head_];
             midi = entry.midi;
-            sink = sinks_[entry.sinkIx];
+            sinkIx = entry.sinkIx;
+            sink = sinks_[sinkIx];
             head_ = (head_ + 1) % queue_.size();
             --size_;
             ++inFlight_;
+            // Record which sink Send() is about to be called for, still
+            // under the lock, BEFORE releasing it -- this is what lets
+            // ClearSinkSync (which clears sinks_[sinkIx] then waits for
+            // sendingSinkIx_ to stop naming that index) observe an in-flight
+            // Send() it must wait out, even though sink was already read
+            // above and the lock is about to be dropped.
+            if (sink != nullptr) {
+                sendingSinkIx_ = sinkIx;
+            }
         }
         if (sink != nullptr) {
             sink->Send(midi);
@@ -633,16 +660,24 @@ void MidiSender::Run() {
         {
             std::lock_guard lock(mutex_);
             --inFlight_;
+            if (sink != nullptr) {
+                sendingSinkIx_ = kMaxSinks;
+            }
             if (size_ == 0 && inFlight_ == 0) {
                 drainedCv_.notify_all();
             }
         }
+        // Notified outside the lock (harmless either way, but keeps the
+        // critical section minimal): wakes any ClearSinkSync waiting on this
+        // sinkIx now that sendingSinkIx_ no longer names it.
+        sendingCv_.notify_all();
     }
     {
         std::lock_guard lock(mutex_);
         running_ = false;
     }
     drainedCv_.notify_all();
+    sendingCv_.notify_all();
 }
 
 EncoderMidiOutConfig EncoderMidiOutConfig::TwisterDefault(std::size_t slotIx) {

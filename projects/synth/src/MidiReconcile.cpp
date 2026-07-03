@@ -244,4 +244,15 @@ MidiConnectionState ExecuteReconcilePlan(const ReconcilePlan& plan, const MidiCo
     return state;
 }
 
+MidiConnectionResizePlan PlanMidiConnectionResize(std::size_t oldCount, std::size_t newCount) {
+    MidiConnectionResizePlan plan;
+    for (std::size_t ix = newCount; ix < oldCount; ++ix) {
+        plan.closingIx.push_back(ix);
+    }
+    for (std::size_t ix = oldCount; ix < newCount; ++ix) {
+        plan.growingIx.push_back(ix);
+    }
+    return plan;
+}
+
 } // namespace synth

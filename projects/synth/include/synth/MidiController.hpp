@@ -220,8 +220,26 @@ public:
     MidiSender(const MidiSender&) = delete;
     MidiSender& operator=(const MidiSender&) = delete;
 
-    // nullptr clears the sink at sinkIx; sinkIx >= kMaxSinks is ignored.
+    // nullptr clears the sink at sinkIx; sinkIx >= kMaxSinks is ignored. Does
+    // NOT synchronize with an in-flight Send() on that sink -- a Send() the
+    // worker already dequeued and started before this call may still be
+    // executing against the old pointer after SetSink returns. Callers that
+    // are about to destroy the sink object MUST use ClearSinkSync instead
+    // (see its doc comment); SetSink remains safe for registering a new sink,
+    // or clearing one whose destruction is not imminent.
     void SetSink(std::size_t sinkIx, IMidiOutputSink* sink);
+    // Clears the sink at sinkIx (as SetSink(sinkIx, nullptr) would) and BLOCKS
+    // until the worker thread is not, and will never again be, mid-Send() on
+    // that sink. Guarantee: once ClearSinkSync returns, the worker will never
+    // call that sink again -- it is then safe for the caller to destroy the
+    // sink object. This synchronizes only against the specific sinkIx being
+    // cleared; the worker remains free to run Send() for other sinks
+    // concurrently with a ClearSinkSync call (Send() itself always executes
+    // outside the lock). Safe to call from any thread; sinkIx >= kMaxSinks is
+    // a no-op. Must not be called from within the sink's own Send()
+    // implementation (the worker thread) -- that would deadlock waiting on
+    // itself.
+    void ClearSinkSync(std::size_t sinkIx);
     void Start();
     void Stop();
     // false when the queue is full or sinkIx >= kMaxSinks. A queued message
@@ -243,6 +261,12 @@ private:
     mutable std::mutex mutex_;
     std::condition_variable cv_;
     std::condition_variable drainedCv_;
+    // Notified whenever sendingSinkIx_ changes (a Send() begins or ends) --
+    // separate from drainedCv_ (which only fires when the whole queue is
+    // idle) so ClearSinkSync can wait on the narrower "not sending THIS sink
+    // right now" condition without waiting for unrelated sinks' traffic to
+    // drain too.
+    std::condition_variable sendingCv_;
     std::vector<QueueEntry> queue_;
     std::size_t head_ = 0;
     std::size_t size_ = 0;
@@ -250,6 +274,15 @@ private:
     bool running_ = false;
     bool stopRequested_ = false;
     std::array<IMidiOutputSink*, kMaxSinks> sinks_{};
+    // The sink index the worker is currently inside sink->Send() for, or
+    // kMaxSinks when the worker is not in the middle of a Send() call. Set
+    // (under mutex_) immediately before Send() is invoked (outside the lock)
+    // and cleared (under mutex_, with sendingCv_ notified) immediately after
+    // Send() returns. ClearSinkSync waits on sendingCv_ until this no longer
+    // equals the sink it is clearing, which -- combined with clearing
+    // sinks_[sinkIx] first, under the same lock -- guarantees the worker can
+    // never dequeue a fresh entry for that sink after the clear either.
+    std::size_t sendingSinkIx_ = kMaxSinks;
     std::thread thread_;
 };
 
