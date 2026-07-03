@@ -87,7 +87,9 @@
 
 #include <juce_audio_devices/juce_audio_devices.h>
 
+#include <atomic>
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -119,6 +121,38 @@ private:
     synth::MidiInProcessor* target_ = nullptr;
 };
 
+// The single JUCE device-enumeration helper (Task 3 brief): builds a
+// synth::MidiDeviceList from juce::MidiInput::getAvailableDevices() +
+// juce::MidiOutput::getAvailableDevices(). This is the function the
+// message-thread authoritative re-enumeration (Reconcile(), called from
+// StartupReconcile()/OnTimerTick()/OnInstrumentRebuilt(), all of which run on
+// the message thread) always calls.
+//
+// Degraded-mode decision (Task 3 brief, p3-globals.md design D4): this
+// function must NOT be called off the message thread on macOS. JUCE's
+// CoreMidi backend (juce_CoreMidi_mac.mm, CoreMidiHelpers::findDevices(),
+// called by both MidiInput::getAvailableDevices() and
+// MidiOutput::getAvailableDevices()) opens with an unconditional
+// JUCE_ASSERT_MESSAGE_THREAD on every call, with the accompanying comment
+// "It seems that OSX can be a bit picky about the thread that's first used to
+// search for devices. It's safest to use the message thread for calling
+// this." -- i.e. this is not merely a theoretical hazard, it is JUCE's own
+// documented+asserted contract. MidiDevicePoller's worker thread runs under
+// ThreadId::IoPoll, never the message thread, so handing this function
+// directly to poller_.Start() as the injected Enumerate callback would fire
+// that assertion on every poll cycle in a debug JUCE build. Per the
+// accepted-degraded-mode fallback: the poller's injected enumerate callback
+// is ForceDirtyEnumerate() below (a synthetic, ever-changing payload that
+// makes MidiDevicePoller's own snapshot-compare see a "change" every cycle,
+// unconditionally, without calling any JUCE API off the message thread), and
+// OnTimerTick() -- already, independent of this decision -- discards the
+// poller's reported `latest` list and re-enumerates authoritatively via this
+// function on the message thread before reconciling. That "discard and
+// re-enumerate" shape was already the binding message-thread-executor
+// contract (see this class's OnTimerTick() doc comment: "never trusts the
+// poller's own snapshot for the actual reconcile"), so degraded mode changes
+// nothing about the reconcile path itself -- only what the poller thread is
+// allowed to touch.
 inline synth::MidiDeviceList EnumerateDevices() {
     synth::MidiDeviceList list;
     for (const auto& device : synth_juce::MidiInHandler::AvailableDevices()) {
@@ -127,6 +161,29 @@ inline synth::MidiDeviceList EnumerateDevices() {
     for (const auto& device : synth_juce::MidiOutputHandler::AvailableDevices()) {
         list.outputs.push_back({device.identifier.toStdString(), device.name.toStdString()});
     }
+    return list;
+}
+
+// Degraded-mode poll-thread enumerate callback (see EnumerateDevices()'s doc
+// comment above for why this exists instead of handing the poller
+// EnumerateDevices() directly). Never touches any JUCE API -- runs entirely
+// on the IoPoll background thread, exactly as MidiDevicePoller's contract
+// requires ("bounded/non-blocking", no platform dependency). Returns a
+// single-entry synthetic input list whose identifier changes every call (a
+// monotonically incrementing counter), which is guaranteed to differ from
+// the previous cycle's snapshot under MidiDevicePoller::SnapshotChanged's
+// exact vector-equality comparison -- so every poll cycle after the first
+// (the first only primes the snapshot; priming is never a change, per
+// MidiDevicePoller's own contract) sets the poller's dirty flag
+// unconditionally. This is exactly "the poller ticks the dirty flag every
+// 5 s unconditionally" from the design D4 fallback description. The
+// synthetic payload itself is never read by anything: OnTimerTick() ignores
+// ConsumeChange's `latest` output entirely and re-enumerates authoritatively
+// via EnumerateDevices() on the message thread instead.
+inline synth::MidiDeviceList ForceDirtyEnumerate() {
+    static std::atomic<std::uint64_t> counter{0};
+    synth::MidiDeviceList list;
+    list.inputs.push_back({std::to_string(counter.fetch_add(1, std::memory_order_relaxed)), std::string()});
     return list;
 }
 
@@ -189,7 +246,18 @@ public:
         ResizeToControllerCount();
         Reconcile(detail::EnumerateDevices());
         started_ = true;
-        poller_.Start([] { return detail::EnumerateDevices(); });
+        // Degraded mode (see detail::EnumerateDevices()'s doc comment): the
+        // poller's injected enumerate callback is NOT the real JUCE
+        // enumeration function -- juce::MidiInput/Output::getAvailableDevices()
+        // must only ever be called on the message thread on macOS (JUCE
+        // itself asserts this), and the poller's worker runs under
+        // ThreadId::IoPoll, never the message thread. detail::ForceDirtyEnumerate()
+        // never touches JUCE; it makes the poller report a change every
+        // interval unconditionally, and OnTimerTick() below re-enumerates
+        // authoritatively via detail::EnumerateDevices() on the message
+        // thread when that happens (it already ignored the poller's reported
+        // list even before this decision -- see OnTimerTick()'s doc comment).
+        poller_.Start([] { return detail::ForceDirtyEnumerate(); });
     }
 
     // Wired to the runtime's existing message-thread timer tick. Consumes

@@ -522,6 +522,82 @@ TEST_CASE(mixed_match_contention_name_fallback_slot_wins_over_later_identifier_m
     REQUIRE_TRUE(plan.actions[3].controllerIx == 1);
 }
 
+// startup-shaped reconcile (Plan 3 Task 3, sar-5): mirrors exactly what
+// MidiConnectionManager::StartupReconcile() drives. StartupReconcile() first
+// calls ResizeToControllerCount() (which sizes state_.controllers to the
+// current controller count, every entry default/Unconfigured -- "the empty
+// MidiConnectionState{} the brief describes as `current`", per
+// MidiConnectionManager.hpp's own doc comment) and only THEN runs Reconcile()
+// -- so by the time PlanMidiReconciliation/ExecuteReconcilePlan actually run,
+// `current` already has one Unconfigured/Unconfigured entry per controller,
+// not zero entries. This test reproduces exactly that: a two-controller
+// instrument where only controller 0's device is currently present, against
+// a `current` pre-sized to two Unconfigured entries. Controller 0 must plan
+// an open (-> Online once executed); controller 1's ref is configured but its
+// device is absent, so it must plan NO actions at all (never a MarkOffline:
+// there is nothing to close, and an absent-and-never-opened endpoint is not
+// a startup failure -- it simply stays Offline/Unconfigured, per
+// PlanMidiReconciliation's precondition-tolerance contract already pinned by
+// state_size_mismatch_treated_as_unconfigured_no_crash above). Executing the
+// plan via ExecuteReconcilePlan (the same call StartupReconcile() makes
+// through MidiConnectionManager::Reconcile()) must land controller 0 Online
+// and controller 1 NOT Online (still its pre-execution Unconfigured status,
+// untouched -- consistent with ExecuteReconcilePlan's documented "returns a
+// new state with only PLANNED actions' effects applied" contract, exercised
+// elsewhere by missing_current_entry_is_tolerated above), with zero op
+// failures reported for either controller.
+TEST_CASE(startup_shaped_reconcile_one_of_two_controllers_present_no_failure) {
+    MidiInstrumentConfig instrument;
+    instrument.controllers.push_back(Slot("Present", Ref("dev-0", "Controller0"), MidiEndpointRef{}));
+    instrument.controllers.push_back(Slot("Absent", Ref("dev-1", "Controller1"), MidiEndpointRef{}));
+
+    MidiDeviceList present;
+    present.inputs.push_back({"dev-0", "Controller0"});
+    // dev-1 (controller 1's configured device) is NOT present.
+
+    MidiConnectionState current;  // ResizeToControllerCount()'s post-resize shape:
+    current.controllers.resize(2);  // two default (Unconfigured/Unconfigured) entries
+
+    ReconcilePlan plan = PlanMidiReconciliation(instrument, present, current);
+
+    // Controller 0: exactly one action, an OpenInput for dev-0.
+    REQUIRE_TRUE(CountActions(plan, ReconcileAction::Type::OpenInput) == 1);
+    const auto* open = FindAction(plan, ReconcileAction::Type::OpenInput);
+    REQUIRE_TRUE(open != nullptr);
+    REQUIRE_TRUE(open->controllerIx == 0);
+    REQUIRE_TRUE(open->identifier == "dev-0");
+
+    // Controller 1: its device is absent AND it was never open (Unconfigured
+    // connection status) -- nothing to close, so no MarkInputOffline/
+    // CloseInput action is planned for it either. This is "absent -> offline,
+    // never a startup failure", not "absent -> explicit offline transition
+    // every time".
+    for (const auto& action : plan.actions) {
+        REQUIRE_TRUE(action.controllerIx != 1);
+    }
+
+    synth::MidiEndpointOps ops;
+    std::size_t openInputCalls = 0;
+    ops.openInput = [&](std::size_t ix, const std::string& identifier) {
+        ++openInputCalls;
+        REQUIRE_TRUE(ix == 0);
+        REQUIRE_TRUE(identifier == "dev-0");
+        return true;  // controller 0's device opens successfully
+    };
+
+    MidiConnectionState result = synth::ExecuteReconcilePlan(plan, current, ops);
+
+    REQUIRE_TRUE(openInputCalls == 1);
+    REQUIRE_TRUE(result.controllers.size() == 2);
+    REQUIRE_TRUE(result.controllers[0].input.status == MidiEndpointStatus::Online);
+    REQUIRE_TRUE(result.controllers[0].input.openIdentifier == "dev-0");
+    // Controller 1 was never touched by any action -- still Unconfigured
+    // (its pre-execution status), definitely not Online, and definitely not
+    // a reported failure (openInputCalls == 1, never called for ix == 1).
+    REQUIRE_TRUE(result.controllers[1].input.status == MidiEndpointStatus::Unconfigured);
+    REQUIRE_TRUE(result.controllers[1].input.status != MidiEndpointStatus::Online);
+}
+
 int main() {
     int failed = 0;
     for (const auto& test : Registry()) {
