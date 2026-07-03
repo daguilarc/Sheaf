@@ -3,7 +3,7 @@
 // synth_rig::SynthRig — a headless, JUCE-free test harness that drives a
 // synth::Engine<App> the same way the JUCE runtime shell would: it owns the
 // audio-thread block pump (RunBlocks/RunSamples/RunSeconds), injects
-// production-bus messages (Turn/Press/ShiftPress/gesture/scene/bank
+// production-bus messages (Turn/Press/ResetPress/gesture/scene/bank
 // selection, SendMidi) exactly like a real control surface or MIDI input
 // would, and observes the engine's output the way an external harness must
 // (captured output frames, peak, sticky NaN/Inf, parameter values, UI
@@ -104,14 +104,22 @@ public:
         engine_.UiBus().Push(synth::MessageIn::ParamPush(NextTimestamp(), slotIx, position));
     }
 
-    void ShiftPress(std::size_t slotIx, std::size_t position) {
-        SetShift(true);
+    void ResetPress(std::size_t slotIx, std::size_t position) {
+        SetReset(true);
         engine_.UiBus().Push(synth::MessageIn::ParamPush(NextTimestamp(), slotIx, position));
-        SetShift(false);
+        SetReset(false);
     }
 
-    void SetShift(bool held) {
-        engine_.UiBus().Push(synth::MessageIn::SetShift(NextTimestamp(), held));
+    void SetReset(bool held) {
+        engine_.UiBus().Push(synth::MessageIn::SetReset(NextTimestamp(), held));
+    }
+
+    void SetRandom(bool held) {
+        engine_.UiBus().Push(synth::MessageIn::SetRandom(NextTimestamp(), held));
+    }
+
+    void SetRandomMod(bool held) {
+        engine_.UiBus().Push(synth::MessageIn::SetRandomMod(NextTimestamp(), held));
     }
 
     void SelectGesture(std::size_t gestureIx, bool selected) {

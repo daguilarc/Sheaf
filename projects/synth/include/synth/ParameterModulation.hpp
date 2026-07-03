@@ -3,8 +3,10 @@
 #include <cstddef>
 #include <cstdint>
 #include <atomic>
+#include <functional>
 #include <memory>
 #include <optional>
+#include <random>
 #include <span>
 #include <string>
 #include <string_view>
@@ -84,6 +86,16 @@ enum class Status {
     OutOfRange,
     Exhausted,
 };
+
+enum class Modifier {
+    None,
+    Reset,
+    Random,
+    RandomMod,
+};
+
+using ParameterRandomFloat = std::function<float()>;
+using ParameterRandomIndex = std::function<std::size_t(std::size_t)>;
 
 struct SceneState {
     std::size_t leftScene = 0;
@@ -344,6 +356,7 @@ public:
     // Audio-rate helper: no graph traversal or allocation.
     void ProcessLite();
     void HandleIncDec(const SceneState& scene, float delta);
+    void RandomizeVisibleValue(const SceneState& scene, float normalized);
     void RevertToDefault(const SceneState& scene);
     void RevertAllToDefault();
 
@@ -435,8 +448,8 @@ public:
     bool OwnsVisible(PhysicalEncoderId encoderId) const;
     void HandlePress(PhysicalEncoderId encoderId);
     void HandlePress(PhysicalEncoderId encoderId, std::span<const PhysicalEncoderId> physicalLayout);
-    void HandleShiftPress(PhysicalEncoderId encoderId, const SceneState& scene);
     void HandleTick(PhysicalEncoderId encoderId, const SceneState& scene, float delta);
+    void ApplyModifierToTopLevel(Modifier modifier, const SceneState& scene);
     void Deselect();
     bool ShowingModulation() const;
     void SetColor(Color color) { color_ = color; }
@@ -464,6 +477,8 @@ private:
     bool CanOpenModulationView(const Parameter& parameter) const;
     std::size_t MissingModulationDepthCount(const Parameter& parameter) const;
     void OpenModulationView(Parameter& parameter, std::span<const PhysicalEncoderId> physicalLayout);
+    void ApplyModifierToParameter(Parameter& parameter, Modifier modifier, const SceneState& scene);
+    void RandomizeModulationDepths(Parameter& parameter, const SceneState& scene);
     std::vector<PhysicalEncoderId> CompactPhysicalLayout() const;
 
     ParameterManager* manager_ = nullptr;
@@ -494,7 +509,6 @@ public:
     bool Owns(PhysicalEncoderId encoderId) const;
     void AddPhysicalEncoder(PhysicalEncoderId encoderId);
     void HandlePress(PhysicalEncoderId encoderId);
-    void HandleShiftPress(PhysicalEncoderId encoderId, const SceneState& scene);
     void HandleTick(PhysicalEncoderId encoderId, const SceneState& scene, float delta);
     Bank* SelectedBank() const { return selectedBank_; }
     std::span<const PhysicalEncoderId> PhysicalEncoders() const { return physicalEncoders_; }
@@ -577,7 +591,9 @@ public:
         std::atomic<std::size_t> leftScene{0};
         std::atomic<std::size_t> rightScene{0};
         std::atomic<float> sceneBlend{0.0f};
-        std::atomic<bool> shiftHeld{false};
+        std::atomic<bool> resetHeld{false};
+        std::atomic<bool> randomHeld{false};
+        std::atomic<bool> randomModHeld{false};
         std::size_t sceneCapacity = 0;
         std::size_t slotCapacity = 0;
         std::size_t bankCapacity = 0;
@@ -642,16 +658,30 @@ public:
     BankSlot* BankSlotAt(std::size_t slotIx);
     const BankSlot* BankSlotAt(std::size_t slotIx) const;
     void HandlePress(PhysicalEncoderId encoderId);
-    void HandleShiftPress(PhysicalEncoderId encoderId);
     void HandleTick(PhysicalEncoderId encoderId, float delta);
     void HandlePress(std::size_t slotIx, std::size_t position);
-    void HandleShiftPress(std::size_t slotIx, std::size_t position);
     void HandleTick(std::size_t slotIx, std::size_t position, float delta);
     bool SelectBankForSlot(std::size_t slotIx, std::size_t bankIx);
 
-    bool ShiftHeld() const { return shiftHeld_; }
-    void SetShiftHeld(bool held) { shiftHeld_ = held; }
-    void ToggleShiftHeld() { shiftHeld_ = !shiftHeld_; }
+    Modifier GetCurrentModifier() const;
+
+    bool ResetHeld() const { return resetHeld_; }
+    void SetResetHeld(bool held) { resetHeld_ = held; }
+    void ToggleResetHeld() { resetHeld_ = !resetHeld_; }
+
+    bool RandomHeld() const { return randomHeld_; }
+    void SetRandomHeld(bool held) { randomHeld_ = held; }
+    void ToggleRandomHeld() { randomHeld_ = !randomHeld_; }
+
+    bool RandomModHeld() const { return randomModHeld_; }
+    void SetRandomModHeld(bool held) { randomModHeld_ = held; }
+    void ToggleRandomModHeld() { randomModHeld_ = !randomModHeld_; }
+
+    void SetRandomSource(ParameterRandomFloat valueSource, ParameterRandomFloat coinSource,
+                         ParameterRandomIndex indexSource);
+    float NextRandomValue();
+    float NextRandomCoin();
+    std::size_t NextRandomIndex(std::size_t exclusiveMax);
 
     void SelectGesture(std::size_t gestureIx);
     void DeselectGesture(std::size_t gestureIx);
@@ -679,7 +709,9 @@ private:
 
     struct DefaultControlState {
         SceneState scene;
-        bool shiftHeld = false;
+        bool resetHeld = false;
+        bool randomHeld = false;
+        bool randomModHeld = false;
         std::vector<float> gestureValues;
         std::vector<bool> gestureSelected;
         std::optional<PageOrdinal> activePageOrdinal;
@@ -688,7 +720,13 @@ private:
     SceneState scene_;
     DefaultControlState defaultControlState_;
     Gestures gestures_;
-    bool shiftHeld_ = false;
+    bool resetHeld_ = false;
+    bool randomHeld_ = false;
+    bool randomModHeld_ = false;
+    ParameterRandomFloat randomValueSource_;
+    ParameterRandomFloat randomCoinSource_;
+    ParameterRandomIndex randomIndexSource_;
+    std::mt19937 randomEngine_{0x51EA5EEDu};
     std::vector<Parameter*> parameters_;
     std::vector<std::string> parameterNames_;
     std::vector<std::unique_ptr<ParameterGroup>> groups_;
@@ -703,7 +741,9 @@ struct MessageIn {
     enum class Type {
         ParamIncDec,
         ParamPush,
-        ToggleShift,
+        ToggleReset,
+        ToggleRandom,
+        ToggleRandomMod,
         ToggleGestureSelect,
         SetGestureSelect,
         SelectParamBank,
@@ -729,8 +769,12 @@ struct MessageIn {
 
     static MessageIn ParamIncDec(std::uint64_t timestamp, std::size_t slotIx, std::size_t position, float delta);
     static MessageIn ParamPush(std::uint64_t timestamp, std::size_t slotIx, std::size_t position);
-    static MessageIn ToggleShift(std::uint64_t timestamp);
-    static MessageIn SetShift(std::uint64_t timestamp, bool held);
+    static MessageIn ToggleReset(std::uint64_t timestamp);
+    static MessageIn SetReset(std::uint64_t timestamp, bool held);
+    static MessageIn ToggleRandom(std::uint64_t timestamp);
+    static MessageIn SetRandom(std::uint64_t timestamp, bool held);
+    static MessageIn ToggleRandomMod(std::uint64_t timestamp);
+    static MessageIn SetRandomMod(std::uint64_t timestamp, bool held);
     static MessageIn ToggleGestureSelect(std::uint64_t timestamp, std::size_t gestureIx);
     static MessageIn SetGestureSelect(std::uint64_t timestamp, std::size_t gestureIx, bool selected);
     static MessageIn SelectParamBank(std::uint64_t timestamp, std::size_t slotIx, std::size_t bankIx);

@@ -8,7 +8,8 @@
 // This header ports the OLD MainComponent's (projects/synth/miniapp/Main.cpp,
 // pre-swap) bespoke widgets: four EncoderComponents, the VCO waveform scope,
 // page/bank buttons, the gesture select button + value slider, three scene
-// buttons + blend slider, the shift latch, and start/stop buttons. What it
+// buttons + blend slider, reset/random modifier latches, and start/stop
+// buttons. What it
 // deliberately does NOT port:
 //
 //   - Patch buttons (New/Save/Save As/Load/Revert) and the patch status
@@ -88,7 +89,11 @@ private:
             AddButton(sceneAButton_, "S1", [this] { PushMessage(synth::MessageIn::SceneSelect(NowMicros(), 0)); });
             AddButton(sceneBButton_, "S2", [this] { PushMessage(synth::MessageIn::SceneSelect(NowMicros(), 1)); });
             AddButton(sceneCButton_, "S3", [this] { PushMessage(synth::MessageIn::SceneSelect(NowMicros(), 2)); });
-            AddButton(shiftButton_, "Shift", [this] { PushMessage(synth::MessageIn::ToggleShift(NowMicros())); });
+            AddButton(resetButton_, "Reset", [this] { PushMessage(synth::MessageIn::ToggleReset(NowMicros())); });
+            AddButton(randomButton_, "Random", [this] { PushMessage(synth::MessageIn::ToggleRandom(NowMicros())); });
+            AddButton(randomModButton_, "Random Mod", [this] {
+                PushMessage(synth::MessageIn::ToggleRandomMod(NowMicros()));
+            });
             AddButton(startButton_, "Start", [this] { PushMessage(synth::MessageIn::Start(NowMicros())); });
             AddButton(stopButton_, "Stop", [this] { PushMessage(synth::MessageIn::Stop(NowMicros())); });
 
@@ -148,7 +153,11 @@ private:
                                                   ? uiState.gestures.colors[0].Load(std::memory_order_relaxed)
                                                   : synth::Color::Orange;
             SetButtonLit(gestureButton_, gestureSelected, ToJuce(gestureColor));
-            SetButtonLit(shiftButton_, uiState.shiftHeld.load(std::memory_order_relaxed), juce::Colour(238, 226, 95));
+            SetButtonLit(resetButton_, uiState.resetHeld.load(std::memory_order_relaxed), juce::Colour(238, 226, 95));
+            SetButtonLit(randomButton_, uiState.randomHeld.load(std::memory_order_relaxed),
+                         juce::Colour(129, 214, 178));
+            SetButtonLit(randomModButton_, uiState.randomModHeld.load(std::memory_order_relaxed),
+                         juce::Colour(191, 159, 255));
 
             const std::size_t leftScene = uiState.leftScene.load(std::memory_order_relaxed);
             const std::size_t rightScene = uiState.rightScene.load(std::memory_order_relaxed);
@@ -177,14 +186,22 @@ private:
                 encoder.setBounds(encoderRow.removeFromLeft(132).reduced(10));
             }
             waveformComponent_.setBounds(encoderRow.reduced(8));
-            auto controls = area.removeFromTop(52);
-            std::array<juce::TextButton*, 9> buttons{
-                &bankAButton_, &bankBButton_, &gestureButton_, &shiftButton_, &sceneAButton_,
-                &sceneBButton_, &sceneCButton_, &startButton_, &stopButton_,
+            auto controls = area.removeFromTop(92);
+            auto modifierRow = controls.removeFromTop(46);
+            std::array<juce::TextButton*, 6> modifierButtons{
+                &bankAButton_, &bankBButton_, &gestureButton_, &resetButton_, &randomButton_, &randomModButton_,
             };
-            const int buttonWidth = controls.getWidth() / static_cast<int>(buttons.size());
-            for (auto* button : buttons) {
-                button->setBounds(controls.removeFromLeft(buttonWidth).reduced(4));
+            const int modifierButtonWidth = modifierRow.getWidth() / static_cast<int>(modifierButtons.size());
+            for (auto* button : modifierButtons) {
+                button->setBounds(modifierRow.removeFromLeft(modifierButtonWidth).reduced(4));
+            }
+            auto systemRow = controls.removeFromTop(46);
+            std::array<juce::TextButton*, 5> systemButtons{
+                &sceneAButton_, &sceneBButton_, &sceneCButton_, &startButton_, &stopButton_,
+            };
+            const int systemButtonWidth = systemRow.getWidth() / static_cast<int>(systemButtons.size());
+            for (auto* button : systemButtons) {
+                button->setBounds(systemRow.removeFromLeft(systemButtonWidth).reduced(4));
             }
             auto sliders = area.removeFromTop(80);
             gestureSlider_.setBounds(sliders.removeFromLeft(getWidth() / 2 - 24).reduced(8));
@@ -276,7 +293,9 @@ private:
         juce::TextButton sceneAButton_;
         juce::TextButton sceneBButton_;
         juce::TextButton sceneCButton_;
-        juce::TextButton shiftButton_;
+        juce::TextButton resetButton_;
+        juce::TextButton randomButton_;
+        juce::TextButton randomModButton_;
         juce::TextButton startButton_;
         juce::TextButton stopButton_;
         juce::Slider gestureSlider_;

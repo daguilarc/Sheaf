@@ -1960,7 +1960,9 @@ TEST_CASE(modulation_view_return_cell_uses_final_compact_fallback_position) {
     bank.HandleTick(12, {.leftScene = 0, .rightScene = 0, .blend = 0.0f}, 0.1f);
     REQUIRE_NEAR(parameter.SceneCenter(0), 0.9f, 0.0001f);
 
-    bank.HandleShiftPress(12, {.leftScene = 0, .rightScene = 0, .blend = 0.0f});
+    manager.SetResetHeld(true);
+    bank.HandlePress(12);
+    manager.SetResetHeld(false);
     REQUIRE_NEAR(parameter.SceneCenter(0), 0.4f, 0.0001f);
 
     bank.HandlePress(12);
@@ -2191,7 +2193,9 @@ TEST_CASE(modulation_view_keeps_owned_depth_parameter_after_reset) {
     REQUIRE_TRUE(bank.VisibleParameter(10) == &depth);
     REQUIRE_TRUE(bank.VisibleParameter(11) == &tune);
 
-    slot.HandleShiftPress(11, {.leftScene = 0, .rightScene = 0, .blend = 0.0f});
+    manager.SetResetHeld(true);
+    slot.HandlePress(11);
+    manager.SetResetHeld(false);
     REQUIRE_TRUE(tune.ModulationDepthParameter(0) == &depth);
     slot.HandlePress(11);
     REQUIRE_TRUE(!bank.ShowingModulation());
@@ -2322,7 +2326,7 @@ TEST_CASE(routed_tick_dispatches_to_selected_bank) {
     REQUIRE_NEAR(unselected.SceneCenter(0), 0.5f, 0.0001f);
 }
 
-TEST_CASE(shift_press_resets_visible_parameter_to_default) {
+TEST_CASE(reset_modifier_press_resets_visible_parameter_to_default) {
     synth::ParameterManager manager;
     manager.SetGestureCount(2);
     auto& group = manager.CreateGroup({.numVoices = 1, .numScenes = 1, .maxParameters = 1});
@@ -2334,10 +2338,188 @@ TEST_CASE(shift_press_resets_visible_parameter_to_default) {
     slot.AddPhysicalEncoder(4);
     slot.SelectBank(&bank);
 
-    manager.HandleShiftPress(4);
+    manager.SetResetHeld(true);
+    manager.HandlePress(4);
 
     REQUIRE_NEAR(parameter.SceneCenter(0), 0.35f, 0.0001f);
     REQUIRE_NEAR(parameter.CurrentCenter(), 0.35f, 0.0001f);
+}
+
+TEST_CASE(random_modifier_press_randomizes_visible_value_without_touching_mod_depths) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 1,
+        .numScenes = 1,
+        .maxParameters = 2,
+    });
+    auto& carrier = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.25f});
+    auto& depth = manager.CreateParameter(group, {
+        .name = "Depth",
+        .defaultValue = 0.0f,
+        .range = synth::RangeKind::Bipolar,
+    });
+    REQUIRE_TRUE(carrier.AssignModulationDepth(0, &depth));
+    carrier.SceneCenter(0) = 0.25f;
+    depth.SceneCenter(0) = 0.0f;
+    group.GetModulators().Value(0, 0) = 0.0f;
+    manager.ComputeAllParameters();
+
+    auto& bank = manager.CreateBank();
+    bank.AddMapping(10, carrier);
+    auto& slot = manager.CreateBankSlot();
+    slot.AddPhysicalEncoder(10);
+    slot.SelectBank(&bank);
+    manager.SetRandomSource([]() { return 0.75f; }, []() { return 1.0f; },
+                            [](std::size_t) { return std::size_t{0}; });
+    manager.SetRandomHeld(true);
+
+    manager.HandlePress(10);
+
+    REQUIRE_NEAR(carrier.SceneCenter(0), 0.75f, 0.0001f);
+    REQUIRE_NEAR(carrier.Get(0), 0.75f, 0.0001f);
+    REQUIRE_TRUE(carrier.ModulationDepthParameter(0) == &depth);
+    REQUIRE_NEAR(depth.SceneCenter(0), 0.0f, 0.0001f);
+    REQUIRE_TRUE(!bank.ShowingModulation());
+}
+
+TEST_CASE(random_mod_modifier_press_uses_geometric_slot_loop_with_replacement_and_stops_on_materialization_failure) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 3,
+        .numScenes = 1,
+        .maxParameters = 3,
+    });
+    group.GetModulators().Metadata(0).name = "LFO";
+    group.GetModulators().Metadata(1).name = "Env";
+    group.GetModulators().Metadata(2).name = "Vel";
+    auto& carrier = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.25f});
+    auto& bank = manager.CreateBank();
+    bank.AddMapping(10, carrier);
+    auto& slot = manager.CreateBankSlot();
+    slot.AddPhysicalEncoder(10);
+    slot.SelectBank(&bank);
+
+    std::vector<float> values{0.75f, 0.25f, 1.0f};
+    std::vector<float> coins{0.1f, 0.2f, 0.3f, 0.4f, 0.7f};
+    std::vector<std::size_t> indices{2, 2, 0, 1};
+    std::size_t valueIx = 0;
+    std::size_t coinIx = 0;
+    std::size_t indexIx = 0;
+    manager.SetRandomSource(
+        [&values, &valueIx]() { return values.at(valueIx++); },
+        [&coins, &coinIx]() { return coins.at(coinIx++); },
+        [&indices, &indexIx](std::size_t) { return indices.at(indexIx++); });
+    manager.SetRandomModHeld(true);
+
+    manager.HandlePress(10);
+
+    synth::Parameter* depth0 = carrier.ModulationDepthParameter(0);
+    synth::Parameter* depth1 = carrier.ModulationDepthParameter(1);
+    synth::Parameter* depth2 = carrier.ModulationDepthParameter(2);
+    REQUIRE_TRUE(depth0 != nullptr);
+    REQUIRE_TRUE(depth1 == nullptr);
+    REQUIRE_TRUE(depth2 != nullptr);
+    REQUIRE_NEAR(depth0->SceneCenter(0), 1.0f, 0.0001f);
+    REQUIRE_NEAR(depth2->SceneCenter(0), -0.5f, 0.0001f);
+    REQUIRE_TRUE(valueIx == 3);
+    REQUIRE_TRUE(indexIx == 4);
+    REQUIRE_TRUE(coinIx == 4);
+    REQUIRE_TRUE(!bank.ShowingModulation());
+}
+
+TEST_CASE(modified_bank_selection_applies_modifier_to_target_bank_without_switching_selected_bank) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 1,
+        .numScenes = 1,
+        .maxParameters = 7,
+    });
+    auto& selectedParam = manager.CreateParameter(group, {.name = "Selected", .defaultValue = 0.1f});
+    auto& resetTarget = manager.CreateParameter(group, {.name = "Reset Target", .defaultValue = 0.25f});
+    auto& randomTarget = manager.CreateParameter(group, {.name = "Random Target", .defaultValue = 0.35f});
+    auto& randomModTarget = manager.CreateParameter(group, {.name = "Random Mod Target", .defaultValue = 0.45f});
+
+    auto& selectedBank = manager.CreateBank();
+    selectedBank.AddMapping(10, selectedParam);
+    auto& targetBank = manager.CreateBank();
+    targetBank.AddMapping(10, resetTarget);
+    targetBank.AddMapping(11, randomTarget);
+    targetBank.AddMapping(12, randomModTarget);
+
+    auto& slot = manager.CreateBankSlot();
+    slot.AddPhysicalEncoder(10);
+    slot.AddPhysicalEncoder(11);
+    slot.AddPhysicalEncoder(12);
+    slot.SelectBank(&selectedBank);
+
+    resetTarget.SceneCenter(0) = 0.9f;
+    randomTarget.SceneCenter(0) = 0.1f;
+    randomModTarget.SceneCenter(0) = 0.2f;
+
+    manager.SetResetHeld(true);
+    REQUIRE_TRUE(manager.SelectBankForSlot(0, 1));
+    manager.SetResetHeld(false);
+    REQUIRE_TRUE(slot.SelectedBank() == &selectedBank);
+    REQUIRE_NEAR(resetTarget.SceneCenter(0), 0.25f, 0.0001f);
+    REQUIRE_NEAR(randomTarget.SceneCenter(0), 0.35f, 0.0001f);
+    REQUIRE_NEAR(randomModTarget.SceneCenter(0), 0.45f, 0.0001f);
+
+    std::vector<float> values{0.6f, 0.7f, 0.8f, 1.0f, 0.75f, 0.5f};
+    std::vector<float> coins{0.1f, 0.7f, 0.1f, 0.7f, 0.1f, 0.7f};
+    std::size_t valueIx = 0;
+    std::size_t coinIx = 0;
+    manager.SetRandomSource(
+        [&values, &valueIx]() { return values.at(valueIx++); },
+        [&coins, &coinIx]() { return coins.at(coinIx++); },
+        [](std::size_t) { return std::size_t{0}; });
+
+    manager.SetRandomHeld(true);
+    REQUIRE_TRUE(manager.SelectBankForSlot(0, 1));
+    manager.SetRandomHeld(false);
+    REQUIRE_TRUE(slot.SelectedBank() == &selectedBank);
+    REQUIRE_NEAR(resetTarget.SceneCenter(0), 0.6f, 0.0001f);
+    REQUIRE_NEAR(randomTarget.SceneCenter(0), 0.7f, 0.0001f);
+    REQUIRE_NEAR(randomModTarget.SceneCenter(0), 0.8f, 0.0001f);
+
+    manager.SetRandomModHeld(true);
+    REQUIRE_TRUE(manager.SelectBankForSlot(0, 1));
+    manager.SetRandomModHeld(false);
+    synth::Parameter* resetDepth = resetTarget.ModulationDepthParameter(0);
+    synth::Parameter* randomDepth = randomTarget.ModulationDepthParameter(0);
+    synth::Parameter* randomModDepth = randomModTarget.ModulationDepthParameter(0);
+    REQUIRE_TRUE(slot.SelectedBank() == &selectedBank);
+    REQUIRE_TRUE(resetDepth != nullptr);
+    REQUIRE_TRUE(randomDepth != nullptr);
+    REQUIRE_TRUE(randomModDepth != nullptr);
+    REQUIRE_NEAR(resetDepth->SceneCenter(0), 1.0f, 0.0001f);
+    REQUIRE_NEAR(randomDepth->SceneCenter(0), 0.5f, 0.0001f);
+    REQUIRE_NEAR(randomModDepth->SceneCenter(0), 0.0f, 0.0001f);
+}
+
+TEST_CASE(message_bus_param_inc_dec_ignores_ticks_while_any_modifier_is_active) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({.numVoices = 1, .numScenes = 1, .maxParameters = 1});
+    auto& parameter = manager.CreateParameter(group, {.name = "Stable", .defaultValue = 0.25f});
+    auto& bank = manager.CreateBank();
+    bank.AddMapping(10, parameter);
+    auto& slot = manager.CreateBankSlot();
+    slot.AddPhysicalEncoder(10);
+    slot.SelectBank(&bank);
+    synth::MessageInBus bus(&manager, 8);
+
+    REQUIRE_TRUE(bus.Push(synth::MessageIn::SetRandom(0, true)));
+    REQUIRE_TRUE(bus.Push(synth::MessageIn::ParamIncDec(0, 0, 0, 0.25f)));
+    REQUIRE_TRUE(bus.Push(synth::MessageIn::SetRandom(0, false)));
+    REQUIRE_TRUE(bus.Push(synth::MessageIn::SetRandomMod(0, true)));
+    REQUIRE_TRUE(bus.Push(synth::MessageIn::ParamIncDec(0, 0, 0, 0.25f)));
+    REQUIRE_TRUE(bus.Push(synth::MessageIn::SetRandomMod(0, false)));
+    REQUIRE_TRUE(bus.Push(synth::MessageIn::ParamIncDec(0, 0, 0, 0.25f)));
+    bus.Process(0);
+
+    REQUIRE_NEAR(parameter.SceneCenter(0), 0.5f, 0.0001f);
 }
 
 TEST_CASE(unmapped_encoder_ignored) {
@@ -2353,7 +2535,9 @@ TEST_CASE(unmapped_encoder_ignored) {
 
     manager.HandleTick(99, 0.5f);
     manager.HandlePress(99);
-    manager.HandleShiftPress(99);
+    manager.SetResetHeld(true);
+    manager.HandlePress(99);
+    manager.SetResetHeld(false);
 
     REQUIRE_NEAR(parameter.SceneCenter(0), 0.25f, 0.0001f);
     REQUIRE_TRUE(!bank.ShowingModulation());
@@ -2463,7 +2647,7 @@ TEST_CASE(message_bus_routes_external_messages_and_timestamps) {
     slot.AddPhysicalEncoder(10);
     slot.SelectBank(&bankA);
 
-    synth::MessageInBus bus(&manager, 3);
+    synth::MessageInBus bus(&manager, 4);
     auto ui = manager.CreateUIState();
     REQUIRE_TRUE(bus.Push(synth::MessageIn::ParamIncDec(10, 0, 0, 0.25f)));
     bus.Process(9);
@@ -2471,14 +2655,15 @@ TEST_CASE(message_bus_routes_external_messages_and_timestamps) {
     bus.Process(10);
     REQUIRE_NEAR(parameter.SceneCenter(0), 0.5f, 0.0001f);
 
-    REQUIRE_TRUE(bus.Push(synth::MessageIn::SetShift(11, true)));
+    REQUIRE_TRUE(bus.Push(synth::MessageIn::SetReset(11, true)));
     REQUIRE_TRUE(bus.Push(synth::MessageIn::ParamPush(11, 0, 0)));
     bus.Process(11);
-    REQUIRE_TRUE(manager.ShiftHeld());
+    REQUIRE_TRUE(manager.ResetHeld());
     REQUIRE_NEAR(parameter.SceneCenter(0), 0.25f, 0.0001f);
     manager.PopulateUIState(*ui);
-    REQUIRE_TRUE(ui->shiftHeld.load());
+    REQUIRE_TRUE(ui->resetHeld.load());
 
+    REQUIRE_TRUE(bus.Push(synth::MessageIn::SetReset(12, false)));
     REQUIRE_TRUE(bus.Push(synth::MessageIn::ToggleGestureSelect(12, 0)));
     REQUIRE_TRUE(bus.Push(synth::MessageIn::SetGestureValue(12, 0, 0.75f)));
     REQUIRE_TRUE(bus.Push(synth::MessageIn::SelectParamBank(12, 0, 1)));
@@ -2556,7 +2741,7 @@ TEST_CASE(message_bus_ignores_out_of_bounds_targets) {
     REQUIRE_NEAR(parameter.SceneCenter(0), 0.25f, 0.0001f);
 }
 
-TEST_CASE(message_bus_set_shift_and_set_gesture_select_are_idempotent) {
+TEST_CASE(message_bus_set_reset_and_set_gesture_select_are_idempotent) {
     synth::ParameterManager manager;
     manager.SetGestureCount(2);
     (void)manager.CreateGroup({
@@ -2566,14 +2751,89 @@ TEST_CASE(message_bus_set_shift_and_set_gesture_select_are_idempotent) {
     });
     synth::MessageInBus bus(&manager, 8);
 
-    REQUIRE_TRUE(bus.Push(synth::MessageIn::SetShift(0, true)));
-    REQUIRE_TRUE(bus.Push(synth::MessageIn::SetShift(0, true)));
+    REQUIRE_TRUE(bus.Push(synth::MessageIn::SetReset(0, true)));
+    REQUIRE_TRUE(bus.Push(synth::MessageIn::SetReset(0, true)));
     REQUIRE_TRUE(bus.Push(synth::MessageIn::SetGestureSelect(0, 1, true)));
     REQUIRE_TRUE(bus.Push(synth::MessageIn::SetGestureSelect(0, 1, false)));
     bus.Process(0);
 
-    REQUIRE_TRUE(manager.ShiftHeld());
+    REQUIRE_TRUE(manager.ResetHeld());
     REQUIRE_TRUE(!manager.GestureSelected(1));
+}
+
+TEST_CASE(manager_tracks_reset_random_and_random_mod_precedence) {
+    synth::ParameterManager manager;
+    REQUIRE_TRUE(manager.GetCurrentModifier() == synth::Modifier::None);
+
+    manager.SetResetHeld(true);
+    REQUIRE_TRUE(manager.ResetHeld());
+    REQUIRE_TRUE(manager.GetCurrentModifier() == synth::Modifier::Reset);
+
+    manager.SetRandomHeld(true);
+    REQUIRE_TRUE(manager.RandomHeld());
+    REQUIRE_TRUE(manager.GetCurrentModifier() == synth::Modifier::Random);
+
+    manager.SetRandomModHeld(true);
+    REQUIRE_TRUE(manager.RandomModHeld());
+    REQUIRE_TRUE(manager.GetCurrentModifier() == synth::Modifier::RandomMod);
+
+    manager.SetRandomModHeld(false);
+    REQUIRE_TRUE(manager.GetCurrentModifier() == synth::Modifier::Random);
+
+    manager.SetRandomHeld(false);
+    REQUIRE_TRUE(manager.GetCurrentModifier() == synth::Modifier::Reset);
+
+    manager.ToggleResetHeld();
+    REQUIRE_TRUE(manager.GetCurrentModifier() == synth::Modifier::None);
+}
+
+TEST_CASE(message_bus_sets_reset_random_and_random_mod_idempotently) {
+    synth::ParameterManager manager;
+    synth::MessageInBus bus(&manager, 16);
+
+    REQUIRE_TRUE(bus.Push(synth::MessageIn::SetReset(1, true)));
+    REQUIRE_TRUE(bus.Push(synth::MessageIn::SetRandom(2, true)));
+    REQUIRE_TRUE(bus.Push(synth::MessageIn::SetRandomMod(3, true)));
+    bus.Process(3);
+
+    REQUIRE_TRUE(manager.ResetHeld());
+    REQUIRE_TRUE(manager.RandomHeld());
+    REQUIRE_TRUE(manager.RandomModHeld());
+    REQUIRE_TRUE(manager.GetCurrentModifier() == synth::Modifier::RandomMod);
+
+    REQUIRE_TRUE(bus.Push(synth::MessageIn::SetRandomMod(4, false)));
+    REQUIRE_TRUE(bus.Push(synth::MessageIn::SetRandom(5, false)));
+    REQUIRE_TRUE(bus.Push(synth::MessageIn::SetReset(6, false)));
+    bus.Process(6);
+
+    REQUIRE_TRUE(!manager.ResetHeld());
+    REQUIRE_TRUE(!manager.RandomHeld());
+    REQUIRE_TRUE(!manager.RandomModHeld());
+    REQUIRE_TRUE(manager.GetCurrentModifier() == synth::Modifier::None);
+}
+
+TEST_CASE(manager_random_source_hooks_are_deterministic_and_bounded) {
+    synth::ParameterManager manager;
+    std::vector<float> values{1.25f, -0.5f, 0.4f};
+    std::vector<float> coins{0.8f, 0.2f};
+    std::vector<std::size_t> indices{7, 12};
+    std::size_t valueIx = 0;
+    std::size_t coinIx = 0;
+    std::size_t indexIx = 0;
+
+    manager.SetRandomSource(
+        [&values, &valueIx]() { return values.at(valueIx++); },
+        [&coins, &coinIx]() { return coins.at(coinIx++); },
+        [&indices, &indexIx](std::size_t) { return indices.at(indexIx++); });
+
+    REQUIRE_NEAR(manager.NextRandomValue(), 1.0f, 0.0001f);
+    REQUIRE_NEAR(manager.NextRandomValue(), 0.0f, 0.0001f);
+    REQUIRE_NEAR(manager.NextRandomValue(), 0.4f, 0.0001f);
+    REQUIRE_NEAR(manager.NextRandomCoin(), 0.8f, 0.0001f);
+    REQUIRE_NEAR(manager.NextRandomCoin(), 0.2f, 0.0001f);
+    REQUIRE_TRUE(manager.NextRandomIndex(5) == 2);
+    REQUIRE_TRUE(manager.NextRandomIndex(5) == 2);
+    REQUIRE_TRUE(manager.NextRandomIndex(0) == 0);
 }
 
 TEST_CASE(manager_ui_state_reports_bank_colors_selection_and_gesture_affecting) {
@@ -2664,9 +2924,9 @@ TEST_CASE(message_bus_routes_modulation_target_position_to_visible_parameter) {
     bus.Process(2);
     REQUIRE_NEAR(carrier.SceneCenter(0), 0.6f, 0.0001f);
 
-    REQUIRE_TRUE(bus.Push(synth::MessageIn::SetShift(3, true)));
+    REQUIRE_TRUE(bus.Push(synth::MessageIn::SetReset(3, true)));
     REQUIRE_TRUE(bus.Push(synth::MessageIn::ParamPush(4, 0, 1)));
-    REQUIRE_TRUE(bus.Push(synth::MessageIn::SetShift(5, false)));
+    REQUIRE_TRUE(bus.Push(synth::MessageIn::SetReset(5, false)));
     bus.Process(5);
     REQUIRE_TRUE(bank.ShowingModulation());
     REQUIRE_NEAR(carrier.SceneCenter(0), 0.4f, 0.0001f);
@@ -2875,8 +3135,8 @@ TEST_CASE(midi_system_button_input_maps_press_release_timestamps_and_thru) {
     synth::SystemButtonMidiInConfig config;
     config.associations.push_back({
         .control = synth::MidiControlAddress{.channel = 5, .cc = 32},
-        .press = synth::MessageIn::SetShift(1, true),
-        .release = synth::MessageIn::SetShift(1, false),
+        .press = synth::MessageIn::SetReset(1, true),
+        .release = synth::MessageIn::SetReset(1, false),
     });
     config.associations.push_back({
         .control = synth::MidiControlAddress{.channel = 5, .cc = 0},
@@ -2885,7 +3145,7 @@ TEST_CASE(midi_system_button_input_maps_press_release_timestamps_and_thru) {
     });
     config.associations.push_back({
         .control = synth::MidiControlAddress{.channel = 5, .cc = 33},
-        .press = synth::MessageIn::ToggleShift(1),
+        .press = synth::MessageIn::ToggleReset(1),
     });
     synth::SystemButtonMidiInProcessor processor(config, &bus);
     processor.SetTimestampProvider([] { return 77; });
@@ -2895,14 +3155,14 @@ TEST_CASE(midi_system_button_input_maps_press_release_timestamps_and_thru) {
     processor.Process(synth::BasicMidi::CC(999, 5, 32, 127));
     synth::MessageIn message;
     REQUIRE_TRUE(bus.Pop(message, 77));
-    REQUIRE_TRUE(message.type == synth::MessageIn::Type::ToggleShift);
+    REQUIRE_TRUE(message.type == synth::MessageIn::Type::ToggleReset);
     REQUIRE_TRUE(message.timestamp == 77);
     REQUIRE_TRUE(message.hasBoolValue);
     REQUIRE_TRUE(message.boolValue);
 
     processor.Process(synth::BasicMidi::CC(999, 5, 32, 0));
     REQUIRE_TRUE(bus.Pop(message, 77));
-    REQUIRE_TRUE(message.type == synth::MessageIn::Type::ToggleShift);
+    REQUIRE_TRUE(message.type == synth::MessageIn::Type::ToggleReset);
     REQUIRE_TRUE(message.timestamp == 77);
     REQUIRE_TRUE(message.hasBoolValue);
     REQUIRE_TRUE(!message.boolValue);
@@ -3165,7 +3425,7 @@ TEST_CASE(system_message_output_info_reports_colors_and_on_state) {
     ui.leftScene.store(0);
     ui.rightScene.store(1);
     ui.sceneBlend.store(0.25f);
-    ui.shiftHeld.store(true);
+    ui.resetHeld.store(true);
     ui.banks[0].connected.store(true);
     ui.banks[0].selected.store(true);
     ui.banks[0].color.Store(synth::Color::Green);
@@ -3195,11 +3455,29 @@ TEST_CASE(system_message_output_info_reports_colors_and_on_state) {
     REQUIRE_TRUE(!state.isOn);
     REQUIRE_TRUE(state.color == synth::Color::Off);
 
-    state = info.Evaluate(synth::MessageIn::ToggleShift(0));
+    state = info.Evaluate(synth::MessageIn::ToggleReset(0));
     REQUIRE_TRUE(state.isOn);
     REQUIRE_TRUE(state.color == synth::Color::White);
-    ui.shiftHeld.store(false);
-    state = info.Evaluate(synth::MessageIn::ToggleShift(0));
+    ui.resetHeld.store(false);
+    state = info.Evaluate(synth::MessageIn::ToggleReset(0));
+    REQUIRE_TRUE(!state.isOn);
+    REQUIRE_TRUE(state.color == synth::Color::Grey);
+
+    ui.randomHeld.store(true);
+    state = info.Evaluate(synth::MessageIn::ToggleRandom(0));
+    REQUIRE_TRUE(state.isOn);
+    REQUIRE_TRUE(state.color == synth::Color::White);
+    ui.randomHeld.store(false);
+    state = info.Evaluate(synth::MessageIn::ToggleRandom(0));
+    REQUIRE_TRUE(!state.isOn);
+    REQUIRE_TRUE(state.color == synth::Color::Grey);
+
+    ui.randomModHeld.store(true);
+    state = info.Evaluate(synth::MessageIn::ToggleRandomMod(0));
+    REQUIRE_TRUE(state.isOn);
+    REQUIRE_TRUE(state.color == synth::Color::White);
+    ui.randomModHeld.store(false);
+    state = info.Evaluate(synth::MessageIn::ToggleRandomMod(0));
     REQUIRE_TRUE(!state.isOn);
     REQUIRE_TRUE(state.color == synth::Color::Grey);
 
@@ -3242,7 +3520,7 @@ TEST_CASE(system_message_output_info_reports_colors_and_on_state) {
 TEST_CASE(system_output_processors_debounce_reset_and_render_cc_and_wrld_bldr) {
     synth::ParameterManager::UIState ui;
     ui.Configure(0, 0, 0, 0, 0);
-    ui.shiftHeld.store(true);
+    ui.resetHeld.store(true);
 
     FakeMidiSink sink;
     synth::MidiSender sender;
@@ -3252,7 +3530,7 @@ TEST_CASE(system_output_processors_debounce_reset_and_render_cc_and_wrld_bldr) {
     synth::SystemCcMidiOutConfig ccConfig;
     ccConfig.associations.push_back({
         .control = {.channel = 5, .cc = 32},
-        .message = synth::MessageIn::ToggleShift(0),
+        .message = synth::MessageIn::ToggleReset(0),
     });
     synth::SystemCcMidiOutProcessor ccProcessor(ccConfig, &sender, &ui);
     ccProcessor.Process();
@@ -3267,7 +3545,7 @@ TEST_CASE(system_output_processors_debounce_reset_and_render_cc_and_wrld_bldr) {
     sender.FlushForTests(std::chrono::milliseconds(500));
     REQUIRE_TRUE(sink.sent.size() == 1);
 
-    ui.shiftHeld.store(false);
+    ui.resetHeld.store(false);
     ccProcessor.Process();
     sender.FlushForTests(std::chrono::milliseconds(500));
     REQUIRE_TRUE(sink.sent.size() == 2);
@@ -3282,10 +3560,10 @@ TEST_CASE(system_output_processors_debounce_reset_and_render_cc_and_wrld_bldr) {
     synth::WrldBldrSystemMidiOutConfig wrldConfig;
     wrldConfig.associations.push_back({
         .position = {.channel = 5, .x = 0, .y = 4},
-        .message = synth::MessageIn::ToggleShift(0),
+        .message = synth::MessageIn::ToggleReset(0),
     });
     synth::WrldBldrSystemMidiOutProcessor wrldProcessor(wrldConfig, &sender, &ui);
-    ui.shiftHeld.store(true);
+    ui.resetHeld.store(true);
     wrldProcessor.Process();
     sender.FlushForTests(std::chrono::milliseconds(500));
     REQUIRE_TRUE(sink.sent.size() == 4);
@@ -3340,7 +3618,7 @@ TEST_CASE(launchpad_color_sysex_uses_controller_product_and_rgb_note) {
 TEST_CASE(launchpad_output_processor_debounces_reset_and_uses_system_info) {
     synth::ParameterManager::UIState ui;
     ui.Configure(0, 0, 0, 0, 0);
-    ui.shiftHeld.store(true);
+    ui.resetHeld.store(true);
 
     FakeMidiSink sink;
     synth::MidiSender sender;
@@ -3350,7 +3628,7 @@ TEST_CASE(launchpad_output_processor_debounces_reset_and_uses_system_info) {
     synth::LaunchpadGridMidiOutConfig config;
     config.associations.push_back({
         .position = {.controller = synth::LaunchpadController::LaunchpadX, .x = 0, .y = 7},
-        .message = synth::MessageIn::ToggleShift(0),
+        .message = synth::MessageIn::ToggleReset(0),
     });
     synth::LaunchpadGridMidiOutProcessor processor(config, &sender, &ui);
     processor.Process();
@@ -3363,7 +3641,7 @@ TEST_CASE(launchpad_output_processor_debounces_reset_and_uses_system_info) {
     sender.FlushForTests(std::chrono::milliseconds(500));
     REQUIRE_TRUE(sink.sent.size() == 1);
 
-    ui.shiftHeld.store(false);
+    ui.resetHeld.store(false);
     processor.Process();
     sender.FlushForTests(std::chrono::milliseconds(500));
     REQUIRE_TRUE(sink.sent.size() == 2);
@@ -3389,8 +3667,8 @@ TEST_CASE(midi_controller_profile_builds_chained_input_processors) {
     config.systemMessages.push_back({
         .control = synth::MidiControlAddress{.channel = 5, .cc = 32},
         .wrldBldrPosition = synth::WrldBldrSystemPosition{.channel = 5, .x = 0, .y = 4},
-        .press = synth::MessageIn::ToggleShift(0),
-        .feedback = synth::MessageIn::ToggleShift(0),
+        .press = synth::MessageIn::ToggleReset(0),
+        .feedback = synth::MessageIn::ToggleReset(0),
     });
 
     synth::MidiControllerProfileResult profile =
@@ -3416,7 +3694,7 @@ TEST_CASE(midi_controller_profile_builds_chained_input_processors) {
 
     profile.input->Process(synth::BasicMidi::CC(1, 5, 32, 1));
     REQUIRE_TRUE(bus.Pop(message, 88));
-    REQUIRE_TRUE(message.type == synth::MessageIn::Type::ToggleShift);
+    REQUIRE_TRUE(message.type == synth::MessageIn::Type::ToggleReset);
     REQUIRE_TRUE(message.timestamp == 88);
 }
 
@@ -3470,14 +3748,14 @@ TEST_CASE(midi_controller_profile_routes_launchpad_only_system_associations) {
 TEST_CASE(midi_controller_profile_builds_independent_outputs_from_shared_system_associations) {
     synth::ParameterManager::UIState ui;
     ui.Configure(0, 0, 0, 0, 0);
-    ui.shiftHeld.store(true);
+    ui.resetHeld.store(true);
 
     synth::MidiControllerProfileConfig config;
     config.systemMessages.push_back({
         .control = synth::MidiControlAddress{.channel = 5, .cc = 32},
         .wrldBldrPosition = synth::WrldBldrSystemPosition{.channel = 5, .x = 0, .y = 4},
-        .press = synth::MessageIn::ToggleShift(0),
-        .feedback = synth::MessageIn::ToggleShift(0),
+        .press = synth::MessageIn::ToggleReset(0),
+        .feedback = synth::MessageIn::ToggleReset(0),
     });
 
     FakeMidiSink sink;
@@ -3556,13 +3834,13 @@ TEST_CASE(wrld_bldr_default_profile_maps_encoders_analogs_and_system_buttons) {
 
     profile.input->Process(synth::BasicMidi::CC(0, 5, synth::WrldBldrPositionToCC(0, 4), 127));
     REQUIRE_TRUE(bus.Pop(message, 99));
-    REQUIRE_TRUE(message.type == synth::MessageIn::Type::ToggleShift);
+    REQUIRE_TRUE(message.type == synth::MessageIn::Type::ToggleReset);
     REQUIRE_TRUE(message.hasBoolValue);
     REQUIRE_TRUE(message.boolValue);
 
     profile.input->Process(synth::BasicMidi::CC(0, 5, synth::WrldBldrPositionToCC(0, 4), 0));
     REQUIRE_TRUE(bus.Pop(message, 99));
-    REQUIRE_TRUE(message.type == synth::MessageIn::Type::ToggleShift);
+    REQUIRE_TRUE(message.type == synth::MessageIn::Type::ToggleReset);
     REQUIRE_TRUE(message.hasBoolValue);
     REQUIRE_TRUE(!message.boolValue);
 
@@ -3599,8 +3877,8 @@ TEST_CASE(mf_twister_default_profile_maps_encoders_and_input_only_side_buttons) 
     synth::MfTwisterDefaultProfileOptions options;
     options.visibleEncoderCount = 2;
     options.sideButtons[0] = synth::MidiControllerSystemMessageAssociation{
-        .press = synth::MessageIn::SetShift(0, true),
-        .release = synth::MessageIn::SetShift(0, false),
+        .press = synth::MessageIn::SetReset(0, true),
+        .release = synth::MessageIn::SetReset(0, false),
     };
     options.sideButtons[5] = synth::MidiControllerSystemMessageAssociation{
         .press = synth::MessageIn::SceneSelect(0, 1),
@@ -3647,13 +3925,13 @@ TEST_CASE(mf_twister_default_profile_maps_encoders_and_input_only_side_buttons) 
     profile.input->Process(synth::BasicMidi::CC(0, 3, 8, 127));
     synth::MessageIn message;
     REQUIRE_TRUE(bus.Pop(message, 321));
-    REQUIRE_TRUE(message.type == synth::MessageIn::Type::ToggleShift);
+    REQUIRE_TRUE(message.type == synth::MessageIn::Type::ToggleReset);
     REQUIRE_TRUE(message.hasBoolValue);
     REQUIRE_TRUE(message.boolValue);
 
     profile.input->Process(synth::BasicMidi::CC(0, 3, 8, 0));
     REQUIRE_TRUE(bus.Pop(message, 321));
-    REQUIRE_TRUE(message.type == synth::MessageIn::Type::ToggleShift);
+    REQUIRE_TRUE(message.type == synth::MessageIn::Type::ToggleReset);
     REQUIRE_TRUE(message.hasBoolValue);
     REQUIRE_TRUE(!message.boolValue);
 
@@ -3676,7 +3954,7 @@ TEST_CASE(mf_twister_default_profile_maps_encoders_and_input_only_side_buttons) 
 TEST_CASE(wrld_bldr_default_profile_creates_encoder_and_system_outputs) {
     synth::ParameterManager::UIState ui;
     ui.Configure(0, 0, 0, 0, 0);
-    ui.shiftHeld.store(true);
+    ui.resetHeld.store(true);
 
     synth::WrldBldrDefaultProfileOptions options;
     options.visibleEncoderCount = 1;
@@ -3740,14 +4018,14 @@ TEST_CASE(launchpad_default_profile_creates_only_system_input_and_grid_output) {
     REQUIRE_TRUE(config.systemMessages[2].press.bankIx == 0);
     REQUIRE_TRUE(config.systemMessages[4].press.type == synth::MessageIn::Type::SetGestureSelect);
     REQUIRE_TRUE(config.systemMessages[4].release.has_value());
-    REQUIRE_TRUE(config.systemMessages[5].press.type == synth::MessageIn::Type::ToggleShift);
+    REQUIRE_TRUE(config.systemMessages[5].press.type == synth::MessageIn::Type::ToggleReset);
     REQUIRE_TRUE(config.systemMessages[5].press.hasBoolValue);
     REQUIRE_TRUE(config.systemMessages[5].press.boolValue);
     REQUIRE_TRUE(config.systemMessages[5].release.has_value());
-    REQUIRE_TRUE(config.systemMessages[5].release->type == synth::MessageIn::Type::ToggleShift);
+    REQUIRE_TRUE(config.systemMessages[5].release->type == synth::MessageIn::Type::ToggleReset);
     REQUIRE_TRUE(config.systemMessages[5].release->hasBoolValue);
     REQUIRE_TRUE(!config.systemMessages[5].release->boolValue);
-    REQUIRE_TRUE(config.systemMessages[5].feedback.type == synth::MessageIn::Type::ToggleShift);
+    REQUIRE_TRUE(config.systemMessages[5].feedback.type == synth::MessageIn::Type::ToggleReset);
 
     FakeMidiSink sink;
     synth::MidiSender sender;
@@ -3817,35 +4095,35 @@ TEST_CASE(launchpad_default_profiles_skip_unsupported_positions_for_each_control
     expectController(synth::LaunchpadController::LaunchpadMiniMk3, 27);
     expectController(synth::LaunchpadController::LaunchpadProMk3, 29);
 
-    synth::LaunchpadDefaultProfileOptions unsupportedShift;
-    unsupportedShift.controller = synth::LaunchpadController::LaunchpadX;
-    unsupportedShift.sceneCount = 0;
-    unsupportedShift.bankButtonCount = 0;
-    unsupportedShift.gestureSelectorCount = 0;
-    unsupportedShift.shiftPosition =
+    synth::LaunchpadDefaultProfileOptions unsupportedReset;
+    unsupportedReset.controller = synth::LaunchpadController::LaunchpadX;
+    unsupportedReset.sceneCount = 0;
+    unsupportedReset.bankButtonCount = 0;
+    unsupportedReset.gestureSelectorCount = 0;
+    unsupportedReset.resetPosition =
         synth::LaunchpadGridPosition{.controller = synth::LaunchpadController::LaunchpadX, .x = -1, .y = 0};
-    REQUIRE_TRUE(synth::LaunchpadDefaultProfileConfig(unsupportedShift).systemMessages.empty());
+    REQUIRE_TRUE(synth::LaunchpadDefaultProfileConfig(unsupportedReset).systemMessages.empty());
 
-    synth::LaunchpadDefaultProfileOptions mismatchedShift;
-    mismatchedShift.controller = synth::LaunchpadController::LaunchpadMiniMk3;
-    mismatchedShift.sceneCount = 0;
-    mismatchedShift.bankButtonCount = 0;
-    mismatchedShift.gestureSelectorCount = 0;
-    mismatchedShift.shiftPosition =
+    synth::LaunchpadDefaultProfileOptions mismatchedReset;
+    mismatchedReset.controller = synth::LaunchpadController::LaunchpadMiniMk3;
+    mismatchedReset.sceneCount = 0;
+    mismatchedReset.bankButtonCount = 0;
+    mismatchedReset.gestureSelectorCount = 0;
+    mismatchedReset.resetPosition =
         synth::LaunchpadGridPosition{.controller = synth::LaunchpadController::LaunchpadProMk3, .x = -1, .y = 0};
-    REQUIRE_TRUE(synth::LaunchpadDefaultProfileConfig(mismatchedShift).systemMessages.empty());
+    REQUIRE_TRUE(synth::LaunchpadDefaultProfileConfig(mismatchedReset).systemMessages.empty());
 
-    synth::LaunchpadDefaultProfileOptions proShift;
-    proShift.controller = synth::LaunchpadController::LaunchpadProMk3;
-    proShift.sceneCount = 0;
-    proShift.bankButtonCount = 0;
-    proShift.gestureSelectorCount = 0;
-    proShift.shiftPosition =
+    synth::LaunchpadDefaultProfileOptions proReset;
+    proReset.controller = synth::LaunchpadController::LaunchpadProMk3;
+    proReset.sceneCount = 0;
+    proReset.bankButtonCount = 0;
+    proReset.gestureSelectorCount = 0;
+    proReset.resetPosition =
         synth::LaunchpadGridPosition{.controller = synth::LaunchpadController::LaunchpadProMk3, .x = -1, .y = 0};
-    const synth::MidiControllerProfileConfig proShiftConfig = synth::LaunchpadDefaultProfileConfig(proShift);
-    REQUIRE_TRUE(proShiftConfig.systemMessages.size() == 1);
-    REQUIRE_TRUE(proShiftConfig.systemMessages[0].launchpadPosition->x == -1);
-    REQUIRE_TRUE(proShiftConfig.systemMessages[0].launchpadPosition->y == 0);
+    const synth::MidiControllerProfileConfig proResetConfig = synth::LaunchpadDefaultProfileConfig(proReset);
+    REQUIRE_TRUE(proResetConfig.systemMessages.size() == 1);
+    REQUIRE_TRUE(proResetConfig.systemMessages[0].launchpadPosition->x == -1);
+    REQUIRE_TRUE(proResetConfig.systemMessages[0].launchpadPosition->y == 0);
 }
 
 TEST_CASE(midi_sender_delivers_fifo_and_stops_cleanly) {
@@ -4244,12 +4522,89 @@ struct SimOracle {
     synth::SceneState scene{.leftScene = 0, .rightScene = 1, .blend = 0.25f};
     std::optional<synth::PageOrdinal> activePage = 0;
     int selectedBank = 0;
+    bool resetHeld = false;
+    bool randomHeld = false;
+    bool randomModHeld = false;
     std::array<SimBank, 2> banks;
     std::array<float, kSimGestures> gestureWeight{};
     std::array<bool, kSimGestures> gestureSelected{};
     std::array<std::array<float, kSimMods>, kSimVoices> modulatorValue{};
     std::array<SimParam, kSimParams> params;
 };
+
+struct SimRandomSamples {
+    std::vector<float> values;
+    std::vector<float> coins;
+    std::vector<std::size_t> indices;
+    std::size_t valueIx = 0;
+    std::size_t coinIx = 0;
+    std::size_t indexIx = 0;
+
+    void Clear() {
+        values.clear();
+        coins.clear();
+        indices.clear();
+        valueIx = 0;
+        coinIx = 0;
+        indexIx = 0;
+    }
+
+    float PopValue() {
+        if (valueIx >= values.size()) {
+            throw std::runtime_error("random value sample underflow");
+        }
+        return values[valueIx++];
+    }
+
+    float PopCoin() {
+        if (coinIx >= coins.size()) {
+            throw std::runtime_error("random coin sample underflow");
+        }
+        return coins[coinIx++];
+    }
+
+    std::size_t PopIndex(std::size_t) {
+        if (indexIx >= indices.size()) {
+            throw std::runtime_error("random index sample underflow");
+        }
+        return indices[indexIx++];
+    }
+
+    void RequireDrained(unsigned seed, int step, const std::string& action) const {
+        if (valueIx != values.size() || coinIx != coins.size() || indexIx != indices.size()) {
+            std::ostringstream oss;
+            oss << "seed " << seed << " step " << step << " action " << action
+                << " random samples not fully consumed values=" << valueIx << "/" << values.size()
+                << " coins=" << coinIx << "/" << coins.size()
+                << " indices=" << indexIx << "/" << indices.size();
+            throw std::runtime_error(oss.str());
+        }
+    }
+};
+
+synth::Modifier SimCurrentModifier(const SimOracle& oracle) {
+    if (oracle.randomModHeld) {
+        return synth::Modifier::RandomMod;
+    }
+    if (oracle.randomHeld) {
+        return synth::Modifier::Random;
+    }
+    if (oracle.resetHeld) {
+        return synth::Modifier::Reset;
+    }
+    return synth::Modifier::None;
+}
+
+std::string JoinSamples(const std::vector<std::string>& samples) {
+    std::ostringstream oss;
+    for (std::size_t ix = 0; ix < samples.size(); ++ix) {
+        if (ix > 0) {
+            oss << ",";
+        }
+        oss << samples[ix];
+    }
+    return oss.str();
+}
 
 float SimClamp(float value, synth::RangeKind range) {
     return synth::ClampToRange(value, range);
@@ -4261,6 +4616,10 @@ float SimRangeMin(synth::RangeKind range) {
 
 float SimBlend(float left, float right, float blend) {
     return left * (1.0f - blend) + right * blend;
+}
+
+float SimLinearMap(float minValue, float maxValue, float normalized) {
+    return minValue + (maxValue - minValue) * normalized;
 }
 
 void SimApplySceneDistribution(float& left, float& right, float blend, float delta, synth::RangeKind range) {
@@ -4522,6 +4881,24 @@ void SimComputeAll(SimOracle& oracle) {
     }
 }
 
+std::size_t SimParamIndex(const SimOracle& oracle, const SimParam& parameter) {
+    const SimParam* begin = oracle.params.data();
+    const SimParam* end = begin + oracle.params.size();
+    if (&parameter < begin || &parameter >= end) {
+        throw std::logic_error("simulation parameter does not belong to oracle");
+    }
+    return static_cast<std::size_t>(&parameter - begin);
+}
+
+void SimSnapParameterToTarget(SimParam& parameter) {
+    parameter.currentCenter = parameter.targetCenter;
+    parameter.currentCenterScale = parameter.targetCenterScale;
+    parameter.currentNormalizationOffset = parameter.targetNormalizationOffset;
+    parameter.currentMinValue = parameter.targetMinValue;
+    parameter.currentMaxValue = parameter.targetMaxValue;
+    parameter.currentDepth = parameter.targetDepth;
+}
+
 void SimProcessLiteAll(SimOracle& oracle) {
     constexpr float alpha = 0.25f;
     for (auto& parameter : oracle.params) {
@@ -4630,6 +5007,48 @@ void SimHandleIncDec(SimOracle& oracle, SimParam& parameter, float delta) {
                                   parameter.gestureValue[oracle.scene.rightScene][gestureIx], blend, gestureDelta,
                                   parameter.range);
     }
+}
+
+float SimDrawRandomValue(SimRandomSamples& randomSamples, std::mt19937& rng, std::vector<std::string>* samples) {
+    std::uniform_real_distribution<float> dist(0.0f, 1.0f);
+    const float value = dist(rng);
+    randomSamples.values.push_back(value);
+    if (samples != nullptr) {
+        samples->push_back("value=" + std::to_string(value));
+    }
+    return value;
+}
+
+float SimDrawRandomCoin(SimRandomSamples& randomSamples, std::mt19937& rng, std::vector<std::string>* samples) {
+    std::uniform_real_distribution<float> dist(0.0f, 1.0f);
+    const float coin = dist(rng);
+    randomSamples.coins.push_back(coin);
+    if (samples != nullptr) {
+        samples->push_back("coin=" + std::to_string(coin));
+    }
+    return coin;
+}
+
+std::size_t SimDrawRandomIndex(SimRandomSamples& randomSamples, std::mt19937& rng, std::size_t exclusiveMax,
+                               std::vector<std::string>* samples) {
+    const std::size_t rawIndex = static_cast<std::size_t>(rng());
+    randomSamples.indices.push_back(rawIndex);
+    const std::size_t index = exclusiveMax == 0 ? 0 : rawIndex % exclusiveMax;
+    if (samples != nullptr) {
+        samples->push_back("slot=" + std::to_string(index) + "/" + std::to_string(rawIndex));
+    }
+    return index;
+}
+
+void SimRandomizeValue(SimOracle& oracle, SimParam& parameter, float value) {
+    const std::size_t paramIx = SimParamIndex(oracle, parameter);
+    const float target = SimLinearMap(SimRangeMin(parameter.range), 1.0f, std::clamp(value, 0.0f, 1.0f));
+    SimComputeAtDepth(oracle, paramIx, 0);
+    SimSnapParameterToTarget(parameter);
+    const float delta = target - SimTargetGet(oracle, paramIx, 0);
+    SimHandleIncDec(oracle, parameter, delta);
+    SimComputeAtDepth(oracle, paramIx, 0);
+    SimSnapParameterToTarget(parameter);
 }
 
 void SimResetDepthToNeutral(SimOracle& oracle, SimParam& parameter) {
@@ -4753,7 +5172,25 @@ void SimHandleTick(SimOracle& oracle, synth::PhysicalEncoderId encoder, float de
     SimHandleIncDec(oracle, oracle.params[static_cast<std::size_t>(cell->parameter)], delta);
 }
 
-void SimHandleShiftPress(SimOracle& oracle, synth::PhysicalEncoderId encoder) {
+void SimRandomMod(SimOracle& oracle, SimParam& parameter, SimRandomSamples& randomSamples, std::mt19937& rng,
+                  std::vector<std::string>* samples) {
+    if (kSimMods == 0) {
+        return;
+    }
+
+    while (SimDrawRandomCoin(randomSamples, rng, samples) < 0.5f) {
+        const std::size_t modIx = SimDrawRandomIndex(randomSamples, rng, kSimMods, samples);
+        const int route = parameter.route[modIx];
+        if (route < 0) {
+            return;
+        }
+        SimRandomizeValue(oracle, oracle.params[static_cast<std::size_t>(route)],
+                          SimDrawRandomValue(randomSamples, rng, samples));
+    }
+}
+
+void SimHandleModifierPress(SimOracle& oracle, synth::PhysicalEncoderId encoder, SimRandomSamples& randomSamples,
+                            std::mt19937& rng, std::vector<std::string>* samples) {
     if (!SimEncoderIsPhysical(encoder)) {
         return;
     }
@@ -4762,7 +5199,45 @@ void SimHandleShiftPress(SimOracle& oracle, synth::PhysicalEncoderId encoder) {
     if (cell == nullptr || cell->parameter < 0) {
         return;
     }
-    SimRevertToDefault(oracle, oracle.params[static_cast<std::size_t>(cell->parameter)]);
+    SimParam& parameter = oracle.params[static_cast<std::size_t>(cell->parameter)];
+    switch (SimCurrentModifier(oracle)) {
+    case synth::Modifier::None:
+        break;
+    case synth::Modifier::Reset:
+        SimRevertToDefault(oracle, parameter);
+        break;
+    case synth::Modifier::Random:
+        SimRandomizeValue(oracle, parameter, SimDrawRandomValue(randomSamples, rng, samples));
+        break;
+    case synth::Modifier::RandomMod:
+        SimRandomMod(oracle, parameter, randomSamples, rng, samples);
+        break;
+    }
+}
+
+void SimApplyModifierToBank(SimOracle& oracle, int bankIx, SimRandomSamples& randomSamples, std::mt19937& rng,
+                            std::vector<std::string>* samples) {
+    std::vector<int> visited;
+    for (const SimCell& cell : oracle.banks[static_cast<std::size_t>(bankIx)].top) {
+        if (cell.parameter < 0 || std::find(visited.begin(), visited.end(), cell.parameter) != visited.end()) {
+            continue;
+        }
+        visited.push_back(cell.parameter);
+        SimParam& parameter = oracle.params[static_cast<std::size_t>(cell.parameter)];
+        switch (SimCurrentModifier(oracle)) {
+        case synth::Modifier::None:
+            break;
+        case synth::Modifier::Reset:
+            SimRevertToDefault(oracle, parameter);
+            break;
+        case synth::Modifier::Random:
+            SimRandomizeValue(oracle, parameter, SimDrawRandomValue(randomSamples, rng, samples));
+            break;
+        case synth::Modifier::RandomMod:
+            SimRandomMod(oracle, parameter, randomSamples, rng, samples);
+            break;
+        }
+    }
 }
 
 void SimSelectBank(SimOracle& oracle, int bankIx) {
@@ -4830,6 +5305,18 @@ void SimCheck(const SimOracle& oracle, const std::array<synth::Parameter*, kSimP
               const std::string& action) {
     if (manager.ActivePageOrdinal() != oracle.activePage) {
         SimFailBool(seed, step, action, "active page ordinal");
+    }
+    if (manager.ResetHeld() != oracle.resetHeld) {
+        SimFailBool(seed, step, action, "manager reset held");
+    }
+    if (manager.RandomHeld() != oracle.randomHeld) {
+        SimFailBool(seed, step, action, "manager random held");
+    }
+    if (manager.RandomModHeld() != oracle.randomModHeld) {
+        SimFailBool(seed, step, action, "manager random-mod held");
+    }
+    if (manager.GetCurrentModifier() != SimCurrentModifier(oracle)) {
+        SimFailBool(seed, step, action, "manager current modifier");
     }
     for (std::size_t gestureIx = 0; gestureIx < kSimGestures; ++gestureIx) {
         if (group.GestureSelected(gestureIx) != oracle.gestureSelected[gestureIx]) {
@@ -4934,8 +5421,14 @@ void SimCheckUIState(const SimOracle& oracle, const synth::ParameterManager::UIS
         SimFailBool(seed, step, action, "ui scene endpoints");
     }
     SimCheckNear(seed, step, action, "ui scene blend", oracle.scene.blend, ui.sceneBlend.load());
-    if (ui.shiftHeld.load()) {
-        SimFailBool(seed, step, action, "ui shift held");
+    if (ui.resetHeld.load(std::memory_order_relaxed) != oracle.resetHeld) {
+        SimFailBool(seed, step, action, "ui reset held");
+    }
+    if (ui.randomHeld.load(std::memory_order_relaxed) != oracle.randomHeld) {
+        SimFailBool(seed, step, action, "ui random held");
+    }
+    if (ui.randomModHeld.load(std::memory_order_relaxed) != oracle.randomModHeld) {
+        SimFailBool(seed, step, action, "ui random-mod held");
     }
 
     const SimBank& bank = oracle.banks[static_cast<std::size_t>(oracle.selectedBank)];
@@ -5015,6 +5508,10 @@ void SimCheckUIState(const SimOracle& oracle, const synth::ParameterManager::UIS
 }
 
 void SimInitializeOracle(SimOracle& oracle) {
+    oracle.selectedBank = 0;
+    oracle.resetHeld = false;
+    oracle.randomHeld = false;
+    oracle.randomModHeld = false;
     const std::array<float, kSimParams> defaults{0.35f, 0.1f, -0.2f};
     const std::array<synth::RangeKind, kSimParams> ranges{
         synth::RangeKind::Unipolar,
@@ -5219,12 +5716,73 @@ TEST_CASE(randomized_parameter_modulation_simulation) {
         std::uniform_real_distribution<float> bipolarDist(-1.0f, 1.0f);
         std::uniform_real_distribution<float> unipolarDist(0.0f, 1.0f);
         const std::array<synth::PhysicalEncoderId, 6> encoders{10, 11, 12, 20, 21, 99};
+        SimRandomSamples randomSamples;
+        std::mt19937 randomRng(seed ^ 0x5A17A11Du);
+        manager.SetRandomSource(
+            [&randomSamples]() { return randomSamples.PopValue(); },
+            [&randomSamples]() { return randomSamples.PopCoin(); },
+            [&randomSamples](std::size_t max) { return randomSamples.PopIndex(max); });
 
         SimCheck(oracle, params, banks, group, slot, manager, seed, -1, "initial");
 
         for (int step = 0; step < steps; ++step) {
             std::string action;
-            switch (rng() % 14) {
+            auto handlePress = [&](synth::PhysicalEncoderId encoder, const std::string& prefix) {
+                randomSamples.Clear();
+                std::vector<std::string> samples;
+                if (SimCurrentModifier(oracle) == synth::Modifier::None) {
+                    action = prefix + " press " + std::to_string(encoder);
+                    manager.HandlePress(encoder);
+                    SimHandlePress(oracle, encoder);
+                    return;
+                }
+                SimHandleModifierPress(oracle, encoder, randomSamples, randomRng, &samples);
+                action = prefix + " modifier press " + std::to_string(encoder) + " samples=" + JoinSamples(samples);
+                manager.HandlePress(encoder);
+                randomSamples.RequireDrained(seed, step, action);
+            };
+            auto handleMomentaryModifierPress = [&](synth::Modifier modifier, synth::PhysicalEncoderId encoder,
+                                                    const std::string& prefix) {
+                randomSamples.Clear();
+                std::vector<std::string> samples;
+                switch (modifier) {
+                case synth::Modifier::Reset:
+                    manager.SetResetHeld(true);
+                    oracle.resetHeld = true;
+                    break;
+                case synth::Modifier::Random:
+                    manager.SetRandomHeld(true);
+                    oracle.randomHeld = true;
+                    break;
+                case synth::Modifier::RandomMod:
+                    manager.SetRandomModHeld(true);
+                    oracle.randomModHeld = true;
+                    break;
+                case synth::Modifier::None:
+                    break;
+                }
+                SimHandleModifierPress(oracle, encoder, randomSamples, randomRng, &samples);
+                action = prefix + " press " + std::to_string(encoder) + " samples=" + JoinSamples(samples);
+                manager.HandlePress(encoder);
+                randomSamples.RequireDrained(seed, step, action);
+                switch (modifier) {
+                case synth::Modifier::Reset:
+                    manager.SetResetHeld(false);
+                    oracle.resetHeld = false;
+                    break;
+                case synth::Modifier::Random:
+                    manager.SetRandomHeld(false);
+                    oracle.randomHeld = false;
+                    break;
+                case synth::Modifier::RandomMod:
+                    manager.SetRandomModHeld(false);
+                    oracle.randomModHeld = false;
+                    break;
+                case synth::Modifier::None:
+                    break;
+                }
+            };
+            switch (rng() % 19) {
             case 0: {
                 const auto encoder = encoders[rng() % encoders.size()];
                 const float delta = deltaDist(rng);
@@ -5235,33 +5793,60 @@ TEST_CASE(randomized_parameter_modulation_simulation) {
             }
             case 1: {
                 const auto encoder = encoders[rng() % encoders.size()];
-                action = "press encoder " + std::to_string(encoder);
-                manager.HandlePress(encoder);
-                SimHandlePress(oracle, encoder);
+                handlePress(encoder, "encoder");
                 break;
             }
             case 2: {
                 const auto encoder = encoders[rng() % encoders.size()];
-                action = "shift press " + std::to_string(encoder);
-                manager.HandleShiftPress(encoder);
-                SimHandleShiftPress(oracle, encoder);
+                handleMomentaryModifierPress(synth::Modifier::Reset, encoder, "reset");
                 break;
             }
             case 3: {
+                const auto encoder = encoders[rng() % encoders.size()];
+                handleMomentaryModifierPress(synth::Modifier::Random, encoder, "random");
+                break;
+            }
+            case 4: {
+                const auto encoder = encoders[rng() % encoders.size()];
+                handleMomentaryModifierPress(synth::Modifier::RandomMod, encoder, "random-mod");
+                break;
+            }
+            case 5: {
+                const bool held = (rng() % 2) == 0;
+                action = std::string("set reset held ") + (held ? "true" : "false");
+                manager.SetResetHeld(held);
+                oracle.resetHeld = held;
+                break;
+            }
+            case 6: {
+                const bool held = (rng() % 2) == 0;
+                action = std::string("set random held ") + (held ? "true" : "false");
+                manager.SetRandomHeld(held);
+                oracle.randomHeld = held;
+                break;
+            }
+            case 7: {
+                const bool held = (rng() % 2) == 0;
+                action = std::string("set random-mod held ") + (held ? "true" : "false");
+                manager.SetRandomModHeld(held);
+                oracle.randomModHeld = held;
+                break;
+            }
+            case 8: {
                 const std::size_t gestureIx = rng() % kSimGestures;
                 action = "select gesture " + std::to_string(gestureIx);
                 manager.SelectGesture(gestureIx);
                 oracle.gestureSelected[gestureIx] = true;
                 break;
             }
-            case 4: {
+            case 9: {
                 const std::size_t gestureIx = rng() % kSimGestures;
                 action = "deselect gesture " + std::to_string(gestureIx);
                 manager.DeselectGesture(gestureIx);
                 oracle.gestureSelected[gestureIx] = false;
                 break;
             }
-            case 5: {
+            case 10: {
                 const std::size_t gestureIx = rng() % kSimGestures;
                 const float value = unipolarDist(rng);
                 action = "set gesture value " + std::to_string(gestureIx);
@@ -5269,21 +5854,30 @@ TEST_CASE(randomized_parameter_modulation_simulation) {
                 oracle.gestureWeight[gestureIx] = value;
                 break;
             }
-            case 6: {
+            case 11: {
                 const synth::PageOrdinal ordinal = rng() % 2 == 0 ? pageA.ordinal : pageB.ordinal;
                 action = "select page " + std::to_string(ordinal);
                 manager.SelectActivePage(ordinal);
                 oracle.activePage = ordinal;
                 break;
             }
-            case 7: {
+            case 12: {
                 const int bankIx = static_cast<int>(rng() % 2);
-                action = "select bank " + std::to_string(bankIx);
-                slot.SelectBank(banks[static_cast<std::size_t>(bankIx)]);
-                SimSelectBank(oracle, bankIx);
+                randomSamples.Clear();
+                std::vector<std::string> samples;
+                if (SimCurrentModifier(oracle) == synth::Modifier::None) {
+                    action = "select bank " + std::to_string(bankIx);
+                    REQUIRE_TRUE(manager.SelectBankForSlot(0, static_cast<std::size_t>(bankIx)));
+                    SimSelectBank(oracle, bankIx);
+                } else {
+                    SimApplyModifierToBank(oracle, bankIx, randomSamples, randomRng, &samples);
+                    action = "modified bank " + std::to_string(bankIx) + " samples=" + JoinSamples(samples);
+                    REQUIRE_TRUE(manager.SelectBankForSlot(0, static_cast<std::size_t>(bankIx)));
+                    randomSamples.RequireDrained(seed, step, action);
+                }
                 break;
             }
-            case 8: {
+            case 13: {
                 const std::size_t left = rng() % kSimScenes;
                 const std::size_t right = rng() % kSimScenes;
                 action = "change scene";
@@ -5292,14 +5886,14 @@ TEST_CASE(randomized_parameter_modulation_simulation) {
                 oracle.scene.rightScene = right;
                 break;
             }
-            case 9: {
+            case 14: {
                 const float blend = unipolarDist(rng);
                 action = "change blend";
                 manager.SetSceneBlend(blend);
                 oracle.scene.blend = blend;
                 break;
             }
-            case 10: {
+            case 15: {
                 const std::size_t voiceIx = rng() % kSimVoices;
                 const std::size_t modIx = rng() % kSimMods;
                 const float value = bipolarDist(rng);
@@ -5308,14 +5902,14 @@ TEST_CASE(randomized_parameter_modulation_simulation) {
                 oracle.modulatorValue[voiceIx][modIx] = value;
                 break;
             }
-            case 11:
+            case 16:
                 action = "compute";
                 for (synth::Parameter* parameter : params) {
                     parameter->Compute(manager.Scene());
                 }
                 SimComputeAll(oracle);
                 break;
-            case 12:
+            case 17:
                 action = "process lite";
                 for (synth::Parameter* parameter : params) {
                     parameter->ProcessLite();
@@ -5421,6 +6015,12 @@ TEST_CASE(randomized_message_bus_ui_state_simulation) {
         std::uniform_real_distribution<float> bipolarDist(-1.0f, 1.0f);
         std::uniform_real_distribution<float> unipolarDist(0.0f, 1.0f);
         std::uint64_t timestamp = 1;
+        SimRandomSamples randomSamples;
+        std::mt19937 randomRng(seed ^ 0xBADC0DEu);
+        manager.SetRandomSource(
+            [&randomSamples]() { return randomSamples.PopValue(); },
+            [&randomSamples]() { return randomSamples.PopCoin(); },
+            [&randomSamples](std::size_t max) { return randomSamples.PopIndex(max); });
 
         SimCheck(oracle, params, banks, group, slot, manager, seed, -1, "initial bus");
         manager.PopulateUIState(*ui);
@@ -5428,35 +6028,163 @@ TEST_CASE(randomized_message_bus_ui_state_simulation) {
 
         for (int step = 0; step < steps; ++step) {
             std::string action;
-            switch (rng() % 13) {
+            auto modifierName = [](synth::Modifier modifier) {
+                switch (modifier) {
+                case synth::Modifier::None:
+                    return "none";
+                case synth::Modifier::Reset:
+                    return "reset";
+                case synth::Modifier::Random:
+                    return "random";
+                case synth::Modifier::RandomMod:
+                    return "random-mod";
+                }
+                return "unknown";
+            };
+            auto setOracleHeld = [&](synth::Modifier modifier, bool held) {
+                switch (modifier) {
+                case synth::Modifier::Reset:
+                    oracle.resetHeld = held;
+                    break;
+                case synth::Modifier::Random:
+                    oracle.randomHeld = held;
+                    break;
+                case synth::Modifier::RandomMod:
+                    oracle.randomModHeld = held;
+                    break;
+                case synth::Modifier::None:
+                    break;
+                }
+            };
+            auto setMessage = [&](synth::Modifier modifier, bool held) {
+                switch (modifier) {
+                case synth::Modifier::Reset:
+                    return synth::MessageIn::SetReset(timestamp, held);
+                case synth::Modifier::Random:
+                    return synth::MessageIn::SetRandom(timestamp, held);
+                case synth::Modifier::RandomMod:
+                    return synth::MessageIn::SetRandomMod(timestamp, held);
+                case synth::Modifier::None:
+                    break;
+                }
+                return synth::MessageIn::Clock(timestamp);
+            };
+            auto handleBusPress = [&](std::size_t position, const std::string& prefix) {
+                randomSamples.Clear();
+                std::vector<std::string> samples;
+                const synth::Modifier modifier = SimCurrentModifier(oracle);
+                if (modifier == synth::Modifier::None) {
+                    action = prefix + " press position " + std::to_string(position);
+                    SimHandlePress(oracle, encoders[position]);
+                } else {
+                    SimHandleModifierPress(oracle, encoders[position], randomSamples, randomRng, &samples);
+                    action = prefix + " " + modifierName(modifier) + " press position " + std::to_string(position) +
+                             " samples=" + JoinSamples(samples);
+                }
+                REQUIRE_TRUE(bus.Push(synth::MessageIn::ParamPush(timestamp, 0, position)));
+                bus.Process(timestamp);
+                randomSamples.RequireDrained(seed, step, action);
+            };
+            auto handleMomentaryBusPress = [&](synth::Modifier modifier, std::size_t position) {
+                randomSamples.Clear();
+                std::vector<std::string> samples;
+                setOracleHeld(modifier, true);
+                SimHandleModifierPress(oracle, encoders[position], randomSamples, randomRng, &samples);
+                action = std::string("bus ") + modifierName(modifier) + " press position " +
+                         std::to_string(position) + " samples=" + JoinSamples(samples);
+                REQUIRE_TRUE(bus.Push(setMessage(modifier, true)));
+                REQUIRE_TRUE(bus.Push(synth::MessageIn::ParamPush(timestamp, 0, position)));
+                REQUIRE_TRUE(bus.Push(setMessage(modifier, false)));
+                bus.Process(timestamp);
+                randomSamples.RequireDrained(seed, step, action);
+                setOracleHeld(modifier, false);
+            };
+            auto handleMomentaryBusBank = [&](synth::Modifier modifier, int bankIx) {
+                randomSamples.Clear();
+                std::vector<std::string> samples;
+                setOracleHeld(modifier, true);
+                SimApplyModifierToBank(oracle, bankIx, randomSamples, randomRng, &samples);
+                action = std::string("bus ") + modifierName(modifier) + " modified bank " + std::to_string(bankIx) +
+                         " samples=" + JoinSamples(samples);
+                REQUIRE_TRUE(bus.Push(setMessage(modifier, true)));
+                REQUIRE_TRUE(bus.Push(synth::MessageIn::SelectParamBank(timestamp, 0, static_cast<std::size_t>(bankIx))));
+                REQUIRE_TRUE(bus.Push(setMessage(modifier, false)));
+                bus.Process(timestamp);
+                randomSamples.RequireDrained(seed, step, action);
+                setOracleHeld(modifier, false);
+            };
+            switch (rng() % 22) {
             case 0: {
                 const std::size_t position = rng() % encoders.size();
                 const float delta = deltaDist(rng);
                 action = "bus turn position " + std::to_string(position);
                 REQUIRE_TRUE(bus.Push(synth::MessageIn::ParamIncDec(timestamp, 0, position, delta)));
                 bus.Process(timestamp);
-                SimHandleTick(oracle, encoders[position], delta);
+                if (SimCurrentModifier(oracle) == synth::Modifier::None) {
+                    SimHandleTick(oracle, encoders[position], delta);
+                }
                 break;
             }
             case 1: {
                 const std::size_t position = rng() % encoders.size();
-                action = "bus press position " + std::to_string(position);
-                REQUIRE_TRUE(bus.Push(synth::MessageIn::ParamPush(timestamp, 0, position)));
-                bus.Process(timestamp);
-                SimHandlePress(oracle, encoders[position]);
+                handleBusPress(position, "bus");
                 break;
             }
             case 2: {
                 const std::size_t position = rng() % encoders.size();
-                action = "bus shift press position " + std::to_string(position);
-                REQUIRE_TRUE(bus.Push(synth::MessageIn::SetShift(timestamp, true)));
-                REQUIRE_TRUE(bus.Push(synth::MessageIn::ParamPush(timestamp, 0, position)));
-                REQUIRE_TRUE(bus.Push(synth::MessageIn::SetShift(timestamp, false)));
-                bus.Process(timestamp);
-                SimHandleShiftPress(oracle, encoders[position]);
+                handleMomentaryBusPress(synth::Modifier::Reset, position);
                 break;
             }
             case 3: {
+                const std::size_t position = rng() % encoders.size();
+                handleMomentaryBusPress(synth::Modifier::Random, position);
+                break;
+            }
+            case 4: {
+                const std::size_t position = rng() % encoders.size();
+                handleMomentaryBusPress(synth::Modifier::RandomMod, position);
+                break;
+            }
+            case 5: {
+                const int bankIx = static_cast<int>(rng() % 2);
+                handleMomentaryBusBank(synth::Modifier::Reset, bankIx);
+                break;
+            }
+            case 6: {
+                const int bankIx = static_cast<int>(rng() % 2);
+                handleMomentaryBusBank(synth::Modifier::Random, bankIx);
+                break;
+            }
+            case 7: {
+                const int bankIx = static_cast<int>(rng() % 2);
+                handleMomentaryBusBank(synth::Modifier::RandomMod, bankIx);
+                break;
+            }
+            case 8: {
+                const bool held = (rng() % 2) == 0;
+                action = std::string("bus set reset held ") + (held ? "true" : "false");
+                REQUIRE_TRUE(bus.Push(synth::MessageIn::SetReset(timestamp, held)));
+                bus.Process(timestamp);
+                oracle.resetHeld = held;
+                break;
+            }
+            case 9: {
+                const bool held = (rng() % 2) == 0;
+                action = std::string("bus set random held ") + (held ? "true" : "false");
+                REQUIRE_TRUE(bus.Push(synth::MessageIn::SetRandom(timestamp, held)));
+                bus.Process(timestamp);
+                oracle.randomHeld = held;
+                break;
+            }
+            case 10: {
+                const bool held = (rng() % 2) == 0;
+                action = std::string("bus set random-mod held ") + (held ? "true" : "false");
+                REQUIRE_TRUE(bus.Push(synth::MessageIn::SetRandomMod(timestamp, held)));
+                bus.Process(timestamp);
+                oracle.randomModHeld = held;
+                break;
+            }
+            case 11: {
                 const std::size_t gestureIx = rng() % kSimGestures;
                 action = "bus toggle gesture " + std::to_string(gestureIx);
                 REQUIRE_TRUE(bus.Push(synth::MessageIn::ToggleGestureSelect(timestamp, gestureIx)));
@@ -5464,7 +6192,7 @@ TEST_CASE(randomized_message_bus_ui_state_simulation) {
                 oracle.gestureSelected[gestureIx] = !oracle.gestureSelected[gestureIx];
                 break;
             }
-            case 4: {
+            case 12: {
                 const std::size_t gestureIx = rng() % kSimGestures;
                 const float value = unipolarDist(rng);
                 action = "bus set gesture value " + std::to_string(gestureIx);
@@ -5473,15 +6201,24 @@ TEST_CASE(randomized_message_bus_ui_state_simulation) {
                 oracle.gestureWeight[gestureIx] = value;
                 break;
             }
-            case 5: {
+            case 13: {
                 const int bankIx = static_cast<int>(rng() % 2);
-                action = "bus select bank " + std::to_string(bankIx);
+                randomSamples.Clear();
+                std::vector<std::string> samples;
+                if (SimCurrentModifier(oracle) == synth::Modifier::None) {
+                    action = "bus select bank " + std::to_string(bankIx);
+                    SimSelectBank(oracle, bankIx);
+                } else {
+                    SimApplyModifierToBank(oracle, bankIx, randomSamples, randomRng, &samples);
+                    action = std::string("bus ") + modifierName(SimCurrentModifier(oracle)) + " modified bank " +
+                             std::to_string(bankIx) + " samples=" + JoinSamples(samples);
+                }
                 REQUIRE_TRUE(bus.Push(synth::MessageIn::SelectParamBank(timestamp, 0, static_cast<std::size_t>(bankIx))));
                 bus.Process(timestamp);
-                SimSelectBank(oracle, bankIx);
+                randomSamples.RequireDrained(seed, step, action);
                 break;
             }
-            case 6: {
+            case 14: {
                 const std::size_t sceneIx = rng() % kSimScenes;
                 action = "bus scene";
                 REQUIRE_TRUE(bus.Push(synth::MessageIn::SceneSelect(timestamp, sceneIx)));
@@ -5489,7 +6226,7 @@ TEST_CASE(randomized_message_bus_ui_state_simulation) {
                 SimSetLessSelectedScene(oracle, sceneIx);
                 break;
             }
-            case 7: {
+            case 15: {
                 const float blend = unipolarDist(rng);
                 action = "bus blend";
                 REQUIRE_TRUE(bus.Push(synth::MessageIn::SetSceneBlend(timestamp, blend)));
@@ -5497,7 +6234,7 @@ TEST_CASE(randomized_message_bus_ui_state_simulation) {
                 oracle.scene.blend = blend;
                 break;
             }
-            case 8: {
+            case 16: {
                 const std::size_t voiceIx = rng() % kSimVoices;
                 const std::size_t modIx = rng() % kSimMods;
                 const float value = bipolarDist(rng);
@@ -5506,21 +6243,21 @@ TEST_CASE(randomized_message_bus_ui_state_simulation) {
                 oracle.modulatorValue[voiceIx][modIx] = value;
                 break;
             }
-            case 9:
+            case 17:
                 action = "compute";
                 for (synth::Parameter* parameter : params) {
                     parameter->Compute(manager.Scene());
                 }
                 SimComputeAll(oracle);
                 break;
-            case 10:
+            case 18:
                 action = "process lite";
                 for (synth::Parameter* parameter : params) {
                     parameter->ProcessLite();
                 }
                 SimProcessLiteAll(oracle);
                 break;
-            case 11: {
+            case 19: {
                 action = "bus inert transport";
                 REQUIRE_TRUE(bus.Push(synth::MessageIn::Clock(timestamp)));
                 REQUIRE_TRUE(bus.Push(synth::MessageIn::Start(timestamp)));
@@ -5528,7 +6265,7 @@ TEST_CASE(randomized_message_bus_ui_state_simulation) {
                 bus.Process(timestamp);
                 break;
             }
-            case 12: {
+            default: {
                 action = "bus invalid scene";
                 const std::size_t previousLeft = manager.Scene().leftScene;
                 const std::size_t previousRight = manager.Scene().rightScene;
@@ -5717,9 +6454,16 @@ TEST_CASE(randomized_patch_lifecycle_simulation) {
             }
             case 4: {
                 const auto encoder = encoders[rng() % encoders.size()];
-                action = "patch shift press " + std::to_string(encoder);
-                manager.HandleShiftPress(encoder);
-                SimHandleShiftPress(oracle, encoder);
+                action = "patch reset press " + std::to_string(encoder);
+                SimRandomSamples resetSamples;
+                std::mt19937 resetRng(seed ^ static_cast<unsigned>(step));
+                manager.SetResetHeld(true);
+                oracle.resetHeld = true;
+                SimHandleModifierPress(oracle, encoder, resetSamples, resetRng, nullptr);
+                manager.HandlePress(encoder);
+                resetSamples.RequireDrained(seed, step, action);
+                manager.SetResetHeld(false);
+                oracle.resetHeld = false;
                 break;
             }
             case 5: {
@@ -6443,9 +7187,11 @@ TEST_CASE(randomized_recursive_modulation_ui_tree_round_trips_into_fresh_initial
                 break;
             }
             case 6: {
-                action = "recursive ui shift press";
+                action = "recursive ui reset press";
                 const synth::PhysicalEncoderId encoder = encoders[rng() % encoders.size()];
-                source.slot->HandleShiftPress(encoder, source.manager.Scene());
+                source.manager.SetResetHeld(true);
+                source.slot->HandlePress(encoder);
+                source.manager.SetResetHeld(false);
                 source.manager.ComputeAllParameters();
                 break;
             }
@@ -6912,14 +7658,14 @@ TEST_CASE(midi_profile_config_json_round_trips_wrld_bldr_defaults_and_rebuilds_p
     REQUIRE_TRUE(loaded.analogInput->gestures[0].control.channel == 2);
     REQUIRE_TRUE(loaded.analogInput->gestures[0].control.cc == 1);
     REQUIRE_TRUE(loaded.analogInput->gestures[0].gestureIx == 0);
-    REQUIRE_TRUE(loaded.systemMessages.size() == 11);
+    REQUIRE_TRUE(loaded.systemMessages.size() == 13);
     REQUIRE_TRUE(loaded.systemMessages[0].control.has_value());
     REQUIRE_TRUE(loaded.systemMessages[0].control->channel == 5);
     REQUIRE_TRUE(loaded.systemMessages[0].wrldBldrPosition.has_value());
-    REQUIRE_TRUE(loaded.systemMessages[0].press.type == synth::MessageIn::Type::ToggleShift);
+    REQUIRE_TRUE(loaded.systemMessages[0].press.type == synth::MessageIn::Type::ToggleReset);
     REQUIRE_TRUE(loaded.systemMessages[0].release.has_value());
-    REQUIRE_TRUE(loaded.systemMessages[0].release->type == synth::MessageIn::Type::ToggleShift);
-    REQUIRE_TRUE(loaded.systemMessages[0].feedback.type == synth::MessageIn::Type::ToggleShift);
+    REQUIRE_TRUE(loaded.systemMessages[0].release->type == synth::MessageIn::Type::ToggleReset);
+    REQUIRE_TRUE(loaded.systemMessages[0].feedback.type == synth::MessageIn::Type::ToggleReset);
     REQUIRE_TRUE(loaded.systemMessages[0].feedback.hasBoolValue);
     REQUIRE_TRUE(loaded.systemMessages[0].feedback.boolValue);
     REQUIRE_TRUE(loaded.systemMessages.back().press.type == synth::MessageIn::Type::SetGestureSelect);
@@ -6943,12 +7689,64 @@ TEST_CASE(midi_profile_config_json_round_trips_wrld_bldr_defaults_and_rebuilds_p
     REQUIRE_TRUE(dynamic_cast<synth::WrldBldrSystemMidiOutProcessor*>(result.outputs[2].get()) != nullptr);
 }
 
+TEST_CASE(midi_profile_config_json_migrates_legacy_shift_actions_to_reset) {
+    synth::JsonArena arena(262144);
+    synth::MidiControllerProfileConfig profile = synth::WrldBldrDefaultProfileConfig({});
+    synth::JSON root = synth::ToJSON(arena, profile);
+    char* dumped = root.Dumps(JSON_ENCODE_ANY);
+    REQUIRE_TRUE(dumped != nullptr);
+    std::string text(dumped);
+    std::free(dumped);
+
+    std::size_t pos = text.find("toggleReset");
+    REQUIRE_TRUE(pos != std::string::npos);
+    text.replace(pos, std::string("toggleReset").size(), "toggleShift");
+
+    pos = text.find("toggleReset");
+    REQUIRE_TRUE(pos != std::string::npos);
+    text.replace(pos, std::string("toggleReset").size(), "setShift");
+
+    synth::JsonArena parseArena(262144);
+    synth::JSON parsed = parseArena.Loads(text.c_str());
+    while (parsed.IsNull() && parseArena.Failed()) {
+        parseArena.GrowAndReset();
+        parsed = parseArena.Loads(text.c_str());
+    }
+
+    synth::MidiControllerProfileConfig loaded;
+    REQUIRE_TRUE(synth::FromJSON(parsed, loaded));
+    REQUIRE_TRUE(!loaded.systemMessages.empty());
+    REQUIRE_TRUE(loaded.systemMessages.front().press.type == synth::MessageIn::Type::ToggleReset);
+    REQUIRE_TRUE(loaded.systemMessages.front().press.hasBoolValue);
+    REQUIRE_TRUE(loaded.systemMessages.front().press.boolValue);
+    REQUIRE_TRUE(loaded.systemMessages.front().release.has_value());
+    REQUIRE_TRUE(loaded.systemMessages.front().release->type == synth::MessageIn::Type::ToggleReset);
+    REQUIRE_TRUE(loaded.systemMessages.front().release->hasBoolValue);
+    REQUIRE_TRUE(!loaded.systemMessages.front().release->boolValue);
+}
+
+TEST_CASE(wrld_bldr_default_profile_maps_reset_random_and_random_mod_aux_buttons) {
+    synth::MidiControllerProfileConfig profile = synth::WrldBldrDefaultProfileConfig({});
+    auto hasMessageAt = [&](std::uint8_t x, std::uint8_t y, synth::MessageIn::Type type) {
+        const std::uint8_t cc = synth::WrldBldrPositionToCC(x, y);
+        return std::any_of(profile.systemMessages.begin(), profile.systemMessages.end(), [&](const auto& assoc) {
+            return assoc.control.has_value() && assoc.control->channel == 5 && assoc.control->cc == cc &&
+                   assoc.press.type == type && assoc.press.hasBoolValue && assoc.press.boolValue &&
+                   assoc.release.has_value() && assoc.release->type == type && assoc.release->hasBoolValue &&
+                   !assoc.release->boolValue;
+        });
+    };
+    REQUIRE_TRUE(hasMessageAt(0, 4, synth::MessageIn::Type::ToggleReset));
+    REQUIRE_TRUE(hasMessageAt(1, 4, synth::MessageIn::Type::ToggleRandom));
+    REQUIRE_TRUE(hasMessageAt(2, 4, synth::MessageIn::Type::ToggleRandomMod));
+}
+
 TEST_CASE(midi_profile_config_json_round_trips_mf_twister_side_buttons) {
     synth::MfTwisterDefaultProfileOptions options;
     options.visibleEncoderCount = 3;
     options.sideButtons[0] = synth::MidiControllerSystemMessageAssociation{
-        .press = synth::MessageIn::SetShift(0, true),
-        .release = synth::MessageIn::SetShift(0, false),
+        .press = synth::MessageIn::SetReset(0, true),
+        .release = synth::MessageIn::SetReset(0, false),
     };
     options.sideButtons[5] = synth::MidiControllerSystemMessageAssociation{
         .press = synth::MessageIn::SceneSelect(0, 2),
@@ -6975,7 +7773,7 @@ TEST_CASE(midi_profile_config_json_round_trips_mf_twister_side_buttons) {
     REQUIRE_TRUE(loaded.systemMessages[0].control.has_value());
     REQUIRE_TRUE(loaded.systemMessages[0].control->channel == 3);
     REQUIRE_TRUE(loaded.systemMessages[0].control->cc == 8);
-    REQUIRE_TRUE(loaded.systemMessages[0].press.type == synth::MessageIn::Type::ToggleShift);
+    REQUIRE_TRUE(loaded.systemMessages[0].press.type == synth::MessageIn::Type::ToggleReset);
     REQUIRE_TRUE(loaded.systemMessages[0].release.has_value());
     REQUIRE_TRUE(loaded.systemMessages[1].control->cc == 13);
     REQUIRE_TRUE(loaded.systemMessages[1].press.type == synth::MessageIn::Type::SceneSelect);
@@ -7019,9 +7817,9 @@ TEST_CASE(midi_profile_config_json_defaults_new_midi_fields_for_older_profiles) 
     association.SetNew("control", synth::ToJSON(arena, synth::MidiControlAddress{.channel = 5, .cc = 32}));
     association.SetNew("wrldBldrPosition", arena.Null());
     association.SetNew("launchpadPosition", arena.Null());
-    association.SetNew("press", synth::ToJSON(arena, synth::MessageIn::ToggleShift(0)));
+    association.SetNew("press", synth::ToJSON(arena, synth::MessageIn::ToggleReset(0)));
     association.SetNew("release", arena.Null());
-    association.SetNew("feedback", synth::ToJSON(arena, synth::MessageIn::SetShift(0, true)));
+    association.SetNew("feedback", synth::ToJSON(arena, synth::MessageIn::SetReset(0, true)));
     systemMessages.AppendNew(association);
     root.SetNew("systemMessages", systemMessages);
 
@@ -7058,9 +7856,9 @@ TEST_CASE(midi_profile_config_json_round_trips_launchpad_system_positions) {
             .x = -1,
             .y = 0,
         },
-        .press = synth::MessageIn::ToggleShift(0),
-        .release = synth::MessageIn::SetShift(0, false),
-        .feedback = synth::MessageIn::ToggleShift(0),
+        .press = synth::MessageIn::ToggleReset(0),
+        .release = synth::MessageIn::SetReset(0, false),
+        .feedback = synth::MessageIn::ToggleReset(0),
     });
 
     synth::JsonArena arena(262144);
@@ -7229,7 +8027,7 @@ TEST_CASE(midi_profile_config_json_rejects_invalid_values_without_mutating_targe
     synth::JSON association = systemArena.Object();
     association.SetNew("control", synth::ToJSON(systemArena, synth::MidiControlAddress{.channel = 5, .cc = 32}));
     association.SetNew("wrldBldrPosition", systemArena.Null());
-    association.SetNew("press", synth::ToJSON(systemArena, synth::MessageIn::ToggleShift(99)));
+    association.SetNew("press", synth::ToJSON(systemArena, synth::MessageIn::ToggleReset(99)));
     association.SetNew("release", systemArena.Null());
     synth::JSON badFeedback = systemArena.Object();
     badFeedback.SetNew("type", systemArena.String("notARealMessage"));
@@ -7306,7 +8104,7 @@ TEST_CASE(patch_json_loads_parameter_values_midi_profile_and_endpoint_identifier
     REQUIRE_NEAR(targetNewParameter.SceneCenter(0), 0.33f, 0.000001f);
     REQUIRE_TRUE(loadedProfile.encoderInput.has_value());
     REQUIRE_TRUE(loadedProfile.encoderInput->turns.size() == 2);
-    REQUIRE_TRUE(loadedProfile.systemMessages.size() == 6);
+    REQUIRE_TRUE(loadedProfile.systemMessages.size() == 8);
     REQUIRE_TRUE(loadedEndpoints.inputIdentifier == "input-device-id");
     REQUIRE_TRUE(loadedEndpoints.outputIdentifier == "output-device-id");
 
@@ -7626,7 +8424,7 @@ TEST_CASE(revert_all_to_defaults_resets_values_controls_and_existing_depths_only
     depth.SceneCenter(0) = 0.44f;
     depth.GestureValue(1, 0) = 0.22f;
     manager.SetSceneBlend(1.0f);
-    manager.SetShiftHeld(true);
+    manager.SetResetHeld(true);
     manager.DeselectGesture(0);
 
     manager.RevertAllToDefaults();
@@ -7641,7 +8439,7 @@ TEST_CASE(revert_all_to_defaults_resets_values_controls_and_existing_depths_only
     REQUIRE_TRUE(manager.Scene().leftScene == 0);
     REQUIRE_TRUE(manager.Scene().rightScene == 1);
     REQUIRE_NEAR(manager.Scene().blend, 0.35f, 0.000001f);
-    REQUIRE_TRUE(!manager.ShiftHeld());
+    REQUIRE_TRUE(!manager.ResetHeld());
     REQUIRE_TRUE(manager.GestureSelected(0));
     REQUIRE_NEAR(manager.GestureValue(0), 0.4f, 0.000001f);
 }

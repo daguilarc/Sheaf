@@ -103,7 +103,7 @@ parameters with default `0` when group capacity allows. The final visible bank
 cell is the selected target parameter, so an undersized bank shows as many depth
 cells as fit before the target. While the modulation view is open, the owning
 bank treats pressing that target cell as close-view navigation; tick and
-shift-press continue to route to the visible target parameter normally.
+reset-press continue to route to the visible target parameter normally.
 
 The randomized simulation test runs bounded default seeds during
 `make synth-test`. Larger runs can be requested with:
@@ -129,9 +129,10 @@ values and off colors; parameter UI state does not encode page/navigation roles.
 
 `BankSlot::UIState` exposes visible cells in `AddPhysicalEncoder` order and a
 `showingModulationView` flag. `ParameterManager::UIState` includes slot state,
-manager-owned gesture values/selection, scene endpoints/blend, and shift-held
-state. Core synth code uses `synth::Color`; JUCE color conversion is only for
-app/UI code (e.g. `projects/synth/apps/miniapp/MiniApp.hpp`).
+manager-owned gesture values/selection, scene endpoints/blend, and reset,
+random, and random-modifier held state. Core synth code uses `synth::Color`;
+JUCE color conversion is only for app/UI code (e.g.
+`projects/synth/apps/miniapp/MiniApp.hpp`).
 
 External actions are represented as timestamped `MessageIn` values. The
 bounded `MessageInBus` is single-producer/single-consumer: one producer may

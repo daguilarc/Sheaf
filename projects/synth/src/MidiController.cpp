@@ -133,8 +133,12 @@ const char* MessageTypeName(MessageIn::Type type) {
         return "paramIncDec";
     case MessageIn::Type::ParamPush:
         return "paramPush";
-    case MessageIn::Type::ToggleShift:
-        return "toggleShift";
+    case MessageIn::Type::ToggleReset:
+        return "toggleReset";
+    case MessageIn::Type::ToggleRandom:
+        return "toggleRandom";
+    case MessageIn::Type::ToggleRandomMod:
+        return "toggleRandomMod";
     case MessageIn::Type::ToggleGestureSelect:
         return "toggleGestureSelect";
     case MessageIn::Type::SetGestureSelect:
@@ -162,8 +166,12 @@ bool ParseMessageType(std::string_view value, MessageIn::Type& type) {
         type = MessageIn::Type::ParamIncDec;
     } else if (value == "paramPush") {
         type = MessageIn::Type::ParamPush;
-    } else if (value == "toggleShift") {
-        type = MessageIn::Type::ToggleShift;
+    } else if (value == "toggleReset" || value == "toggleShift" || value == "setReset" || value == "setShift") {
+        type = MessageIn::Type::ToggleReset;
+    } else if (value == "toggleRandom") {
+        type = MessageIn::Type::ToggleRandom;
+    } else if (value == "toggleRandomMod") {
+        type = MessageIn::Type::ToggleRandomMod;
     } else if (value == "toggleGestureSelect") {
         type = MessageIn::Type::ToggleGestureSelect;
     } else if (value == "setGestureSelect") {
@@ -817,8 +825,16 @@ SystemMessageOutputState SystemMessageOutputInfo::Evaluate(const MessageIn& mess
         const Color color = bank.color.Load(std::memory_order_relaxed);
         return {.color = selected ? color : color.AdjustBrightness(0.35f), .isOn = selected};
     }
-    case MessageIn::Type::ToggleShift: {
-        const bool held = uiState_->shiftHeld.load(std::memory_order_relaxed);
+    case MessageIn::Type::ToggleReset: {
+        const bool held = uiState_->resetHeld.load(std::memory_order_relaxed);
+        return {.color = held ? Color::White : Color::Grey, .isOn = held};
+    }
+    case MessageIn::Type::ToggleRandom: {
+        const bool held = uiState_->randomHeld.load(std::memory_order_relaxed);
+        return {.color = held ? Color::White : Color::Grey, .isOn = held};
+    }
+    case MessageIn::Type::ToggleRandomMod: {
+        const bool held = uiState_->randomModHeld.load(std::memory_order_relaxed);
         return {.color = held ? Color::White : Color::Grey, .isOn = held};
     }
     case MessageIn::Type::SceneSelect: {
@@ -1576,10 +1592,12 @@ MidiControllerProfileConfig WrldBldrDefaultProfileConfig(WrldBldrDefaultProfileO
     };
 
     // Source-derived from TheNonagonSquiggleBoyWrldBldr.hpp AuxGrid:
-    // channel 5 maps x = cc % 8, y = cc / 8; shift is (0,4),
-    // scene selectors live on row 6, gesture selectors on rows 0/1, and
-    // bank selectors occupy rows 3 (first eight) and 2 (second eight).
-    addSystemPosition(0, 4, MessageIn::SetShift(0, true), MessageIn::SetShift(0, false));
+    // channel 5 maps x = cc % 8, y = cc / 8; reset/random/random-mod begin
+    // at row 4, scene selectors live on row 6, gesture selectors on rows 0/1,
+    // and bank selectors occupy rows 3 (first eight) and 2 (second eight).
+    addSystemPosition(0, 4, MessageIn::SetReset(0, true), MessageIn::SetReset(0, false));
+    addSystemPosition(1, 4, MessageIn::SetRandom(0, true), MessageIn::SetRandom(0, false));
+    addSystemPosition(2, 4, MessageIn::SetRandomMod(0, true), MessageIn::SetRandomMod(0, false));
 
     for (std::size_t sceneIx = 0; sceneIx < options.sceneCount; ++sceneIx) {
         addSystemPosition(static_cast<std::uint8_t>(sceneIx % 8), 6, MessageIn::SceneSelect(0, sceneIx));
@@ -1672,14 +1690,14 @@ MidiControllerProfileConfig LaunchpadDefaultProfileConfig(LaunchpadDefaultProfil
                           MessageIn::SetGestureSelect(0, gestureIx, false));
     }
 
-    const LaunchpadGridPosition defaultShift = position(8, -1);
-    const LaunchpadGridPosition shiftPosition = options.shiftPosition.value_or(defaultShift);
-    const bool useShift =
-        options.shiftPosition.has_value() ? shiftPosition.controller == options.controller
-                                          : LaunchpadShapeSupports(defaultShift.controller, defaultShift.x, defaultShift.y);
-    if (useShift) {
-        addSystemPosition(shiftPosition, MessageIn::SetShift(0, true), MessageIn::SetShift(0, false),
-                          MessageIn::ToggleShift(0));
+    const LaunchpadGridPosition defaultReset = position(8, -1);
+    const LaunchpadGridPosition resetPosition = options.resetPosition.value_or(defaultReset);
+    const bool useReset =
+        options.resetPosition.has_value() ? resetPosition.controller == options.controller
+                                          : LaunchpadShapeSupports(defaultReset.controller, defaultReset.x, defaultReset.y);
+    if (useReset) {
+        addSystemPosition(resetPosition, MessageIn::SetReset(0, true), MessageIn::SetReset(0, false),
+                          MessageIn::ToggleReset(0));
     }
 
     return config;

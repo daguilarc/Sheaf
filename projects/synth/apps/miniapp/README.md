@@ -19,8 +19,8 @@ its own bespoke JUCE shell.
   extends `MiniAppCore`). Owns the app's bespoke widgets: four
   `synth_juce::EncoderComponent`s, the VCO waveform scope, page/bank
   buttons, the gesture select button + value slider, three scene buttons +
-  blend slider, the shift latch, and start/stop buttons. Satisfies
-  `synth::SynthApplication` (adds `UIComponent()`).
+  blend slider, reset/random/random-modifier latches, and start/stop
+  buttons. Satisfies `synth::SynthApplication` (adds `UIComponent()`).
 - `Main.cpp` — `SYNTH_RUNTIME_MAIN(synth_miniapp::MiniApp)`.
 
 ## Runtime-owned chrome

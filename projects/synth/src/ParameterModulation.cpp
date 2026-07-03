@@ -998,6 +998,18 @@ void Parameter::HandleIncDec(const SceneState& scene, float delta) {
     }
 }
 
+void Parameter::RandomizeVisibleValue(const SceneState& scene, float normalized) {
+    ValidateSceneEndpoints(scene);
+    const float target = LinearMap(RangeMin(config_.range), RangeMax(config_.range),
+                                   std::clamp(normalized, 0.0f, 1.0f));
+    Compute(scene);
+    SnapCurrentToTarget();
+    const float delta = target - TargetValue(0);
+    HandleIncDec(scene, delta);
+    Compute(scene);
+    SnapCurrentToTarget();
+}
+
 void Parameter::RevertToDefault(const SceneState& scene) {
     ValidateSceneEndpoints(scene);
     for (Parameter* depthParameter : modulationDepths_) {
@@ -1723,6 +1735,13 @@ void Bank::HandlePress(PhysicalEncoderId encoderId, std::span<const PhysicalEnco
     if (cell == nullptr) {
         return;
     }
+    const Modifier modifier = manager_ == nullptr ? Modifier::None : manager_->GetCurrentModifier();
+    if (modifier != Modifier::None) {
+        if (cell->parameter != nullptr) {
+            ApplyModifierToParameter(*cell->parameter, modifier, manager_->Scene());
+        }
+        return;
+    }
     if (ShowingModulation() && cell->parameter == selected_) {
         Deselect();
         return;
@@ -1732,20 +1751,27 @@ void Bank::HandlePress(PhysicalEncoderId encoderId, std::span<const PhysicalEnco
     }
 }
 
-void Bank::HandleShiftPress(PhysicalEncoderId encoderId, const SceneState& scene) {
-    Cell* cell = FindVisibleCell(encoderId);
-    if (cell == nullptr || cell->parameter == nullptr) {
-        return;
-    }
-    cell->parameter->RevertToDefault(scene);
-}
-
 void Bank::HandleTick(PhysicalEncoderId encoderId, const SceneState& scene, float delta) {
     Cell* cell = FindVisibleCell(encoderId);
     if (cell == nullptr || cell->parameter == nullptr) {
         return;
     }
     cell->parameter->HandleIncDec(scene, delta);
+}
+
+void Bank::ApplyModifierToTopLevel(Modifier modifier, const SceneState& scene) {
+    std::vector<Parameter*> visited;
+    visited.reserve(topLevel_.size());
+    for (Cell& cell : topLevel_) {
+        if (cell.parameter == nullptr) {
+            continue;
+        }
+        if (std::find(visited.begin(), visited.end(), cell.parameter) != visited.end()) {
+            continue;
+        }
+        visited.push_back(cell.parameter);
+        ApplyModifierToParameter(*cell.parameter, modifier, scene);
+    }
 }
 
 void Bank::Deselect() {
@@ -1885,6 +1911,47 @@ void Bank::OpenModulationView(Parameter& parameter, std::span<const PhysicalEnco
     parameter.Group().RequestParameterStorageBatchIfLow();
 }
 
+void Bank::ApplyModifierToParameter(Parameter& parameter, Modifier modifier, const SceneState& scene) {
+    if (manager_ == nullptr) {
+        return;
+    }
+
+    switch (modifier) {
+    case Modifier::None:
+        break;
+    case Modifier::Reset:
+        parameter.RevertToDefault(scene);
+        break;
+    case Modifier::Random:
+        parameter.RandomizeVisibleValue(scene, manager_->NextRandomValue());
+        break;
+    case Modifier::RandomMod:
+        RandomizeModulationDepths(parameter, scene);
+        break;
+    }
+}
+
+void Bank::RandomizeModulationDepths(Parameter& parameter, const SceneState& scene) {
+    if (manager_ == nullptr) {
+        return;
+    }
+
+    const std::size_t modulatorCount = parameter.Group().Config().numModulators;
+    if (modulatorCount == 0) {
+        return;
+    }
+
+    while (manager_->NextRandomCoin() < 0.5f) {
+        const std::size_t modIx = manager_->NextRandomIndex(modulatorCount);
+        Parameter* depthParameter = EnsureModulationDepthParameter(parameter, modIx);
+        if (depthParameter == nullptr) {
+            return;
+        }
+
+        depthParameter->RandomizeVisibleValue(scene, manager_->NextRandomValue());
+    }
+}
+
 std::vector<PhysicalEncoderId> Bank::CompactPhysicalLayout() const {
     std::vector<PhysicalEncoderId> layout;
     layout.reserve(topLevel_.size());
@@ -1918,12 +1985,6 @@ void BankSlot::AddPhysicalEncoder(PhysicalEncoderId encoderId) {
 void BankSlot::HandlePress(PhysicalEncoderId encoderId) {
     if (Owns(encoderId)) {
         selectedBank_->HandlePress(encoderId, physicalEncoders_);
-    }
-}
-
-void BankSlot::HandleShiftPress(PhysicalEncoderId encoderId, const SceneState& scene) {
-    if (Owns(encoderId)) {
-        selectedBank_->HandleShiftPress(encoderId, scene);
     }
 }
 
@@ -2131,7 +2192,9 @@ void ParameterManager::ComputeAllTargets() {
 
 void ParameterManager::CaptureDefaultControlState() {
     defaultControlState_.scene = scene_;
-    defaultControlState_.shiftHeld = shiftHeld_;
+    defaultControlState_.resetHeld = resetHeld_;
+    defaultControlState_.randomHeld = randomHeld_;
+    defaultControlState_.randomModHeld = randomModHeld_;
     defaultControlState_.activePageOrdinal = activePageOrdinal_;
     defaultControlState_.gestureValues.clear();
     defaultControlState_.gestureSelected.clear();
@@ -2156,7 +2219,9 @@ void ParameterManager::RevertAllToDefaults() {
         scene_ = {};
     }
     scene_.blend = std::clamp(scene_.blend, 0.0f, 1.0f);
-    shiftHeld_ = defaultControlState_.shiftHeld;
+    resetHeld_ = defaultControlState_.resetHeld;
+    randomHeld_ = defaultControlState_.randomHeld;
+    randomModHeld_ = defaultControlState_.randomModHeld;
     activePageOrdinal_ = defaultControlState_.activePageOrdinal;
     if (activePageOrdinal_.has_value() && FindPage(*activePageOrdinal_) == nullptr) {
         activePageOrdinal_.reset();
@@ -2371,15 +2436,6 @@ void ParameterManager::HandlePress(PhysicalEncoderId encoderId) {
     }
 }
 
-void ParameterManager::HandleShiftPress(PhysicalEncoderId encoderId) {
-    for (const auto& slot : slots_) {
-        if (slot->Owns(encoderId)) {
-            slot->HandleShiftPress(encoderId, scene_);
-            return;
-        }
-    }
-}
-
 void ParameterManager::HandleTick(PhysicalEncoderId encoderId, float delta) {
     for (const auto& slot : slots_) {
         if (slot->Owns(encoderId)) {
@@ -2397,14 +2453,6 @@ void ParameterManager::HandlePress(std::size_t slotIx, std::size_t position) {
     }
 }
 
-void ParameterManager::HandleShiftPress(std::size_t slotIx, std::size_t position) {
-    BankSlot* slot = BankSlotAt(slotIx);
-    PhysicalEncoderId encoderId = 0;
-    if (slot != nullptr && slot->ResolvePosition(position, encoderId)) {
-        slot->HandleShiftPress(encoderId, scene_);
-    }
-}
-
 void ParameterManager::HandleTick(std::size_t slotIx, std::size_t position, float delta) {
     BankSlot* slot = BankSlotAt(slotIx);
     PhysicalEncoderId encoderId = 0;
@@ -2419,8 +2467,58 @@ bool ParameterManager::SelectBankForSlot(std::size_t slotIx, std::size_t bankIx)
     if (slot == nullptr || bank == nullptr) {
         return false;
     }
+    const Modifier modifier = GetCurrentModifier();
+    if (modifier != Modifier::None) {
+        bank->ApplyModifierToTopLevel(modifier, scene_);
+        return true;
+    }
     slot->SelectBank(bank);
     return true;
+}
+
+Modifier ParameterManager::GetCurrentModifier() const {
+    if (randomModHeld_) {
+        return Modifier::RandomMod;
+    }
+    if (randomHeld_) {
+        return Modifier::Random;
+    }
+    if (resetHeld_) {
+        return Modifier::Reset;
+    }
+    return Modifier::None;
+}
+
+void ParameterManager::SetRandomSource(ParameterRandomFloat valueSource, ParameterRandomFloat coinSource,
+                                       ParameterRandomIndex indexSource) {
+    randomValueSource_ = std::move(valueSource);
+    randomCoinSource_ = std::move(coinSource);
+    randomIndexSource_ = std::move(indexSource);
+}
+
+float ParameterManager::NextRandomValue() {
+    if (randomValueSource_) {
+        return std::clamp(randomValueSource_(), 0.0f, 1.0f);
+    }
+    return std::generate_canonical<float, 24>(randomEngine_);
+}
+
+float ParameterManager::NextRandomCoin() {
+    if (randomCoinSource_) {
+        return randomCoinSource_();
+    }
+    return std::generate_canonical<float, 24>(randomEngine_);
+}
+
+std::size_t ParameterManager::NextRandomIndex(std::size_t exclusiveMax) {
+    if (exclusiveMax == 0) {
+        return 0;
+    }
+    if (randomIndexSource_) {
+        return randomIndexSource_(exclusiveMax) % exclusiveMax;
+    }
+    std::uniform_int_distribution<std::size_t> dist(0, exclusiveMax - 1);
+    return dist(randomEngine_);
 }
 
 void ParameterManager::SelectGesture(std::size_t gestureIx) {
@@ -2535,7 +2633,9 @@ void ParameterManager::PopulateUIState(UIState& state) const {
     state.leftScene.store(scene_.leftScene, std::memory_order_relaxed);
     state.rightScene.store(scene_.rightScene, std::memory_order_relaxed);
     state.sceneBlend.store(scene_.blend, std::memory_order_relaxed);
-    state.shiftHeld.store(shiftHeld_, std::memory_order_relaxed);
+    state.resetHeld.store(resetHeld_, std::memory_order_relaxed);
+    state.randomHeld.store(randomHeld_, std::memory_order_relaxed);
+    state.randomModHeld.store(randomModHeld_, std::memory_order_relaxed);
     state.sceneCapacity = SceneCapacity();
     for (std::size_t slotIx = 0; slotIx < state.slotCapacity; ++slotIx) {
         if (slotIx < slots_.size()) {
@@ -2627,15 +2727,43 @@ MessageIn MessageIn::ParamPush(std::uint64_t timestamp, std::size_t slotIx, std:
     return message;
 }
 
-MessageIn MessageIn::ToggleShift(std::uint64_t timestamp) {
+MessageIn MessageIn::ToggleReset(std::uint64_t timestamp) {
     MessageIn message;
     message.timestamp = timestamp;
-    message.type = Type::ToggleShift;
+    message.type = Type::ToggleReset;
     return message;
 }
 
-MessageIn MessageIn::SetShift(std::uint64_t timestamp, bool held) {
-    MessageIn message = ToggleShift(timestamp);
+MessageIn MessageIn::SetReset(std::uint64_t timestamp, bool held) {
+    MessageIn message = ToggleReset(timestamp);
+    message.boolValue = held;
+    message.hasBoolValue = true;
+    return message;
+}
+
+MessageIn MessageIn::ToggleRandom(std::uint64_t timestamp) {
+    MessageIn message;
+    message.timestamp = timestamp;
+    message.type = Type::ToggleRandom;
+    return message;
+}
+
+MessageIn MessageIn::SetRandom(std::uint64_t timestamp, bool held) {
+    MessageIn message = ToggleRandom(timestamp);
+    message.boolValue = held;
+    message.hasBoolValue = true;
+    return message;
+}
+
+MessageIn MessageIn::ToggleRandomMod(std::uint64_t timestamp) {
+    MessageIn message;
+    message.timestamp = timestamp;
+    message.type = Type::ToggleRandomMod;
+    return message;
+}
+
+MessageIn MessageIn::SetRandomMod(std::uint64_t timestamp, bool held) {
+    MessageIn message = ToggleRandomMod(timestamp);
     message.boolValue = held;
     message.hasBoolValue = true;
     return message;
@@ -2749,22 +2877,32 @@ void MessageInBus::Apply(const MessageIn& message) {
     }
     switch (message.type) {
     case MessageIn::Type::ParamIncDec:
-        if (!manager_->ShiftHeld()) {
+        if (manager_->GetCurrentModifier() == Modifier::None) {
             manager_->HandleTick(message.slotIx, message.position, message.delta);
         }
         break;
     case MessageIn::Type::ParamPush:
-        if (manager_->ShiftHeld()) {
-            manager_->HandleShiftPress(message.slotIx, message.position);
+        manager_->HandlePress(message.slotIx, message.position);
+        break;
+    case MessageIn::Type::ToggleReset:
+        if (message.hasBoolValue) {
+            manager_->SetResetHeld(message.boolValue);
         } else {
-            manager_->HandlePress(message.slotIx, message.position);
+            manager_->ToggleResetHeld();
         }
         break;
-    case MessageIn::Type::ToggleShift:
+    case MessageIn::Type::ToggleRandom:
         if (message.hasBoolValue) {
-            manager_->SetShiftHeld(message.boolValue);
+            manager_->SetRandomHeld(message.boolValue);
         } else {
-            manager_->ToggleShiftHeld();
+            manager_->ToggleRandomHeld();
+        }
+        break;
+    case MessageIn::Type::ToggleRandomMod:
+        if (message.hasBoolValue) {
+            manager_->SetRandomModHeld(message.boolValue);
+        } else {
+            manager_->ToggleRandomModHeld();
         }
         break;
     case MessageIn::Type::ToggleGestureSelect:

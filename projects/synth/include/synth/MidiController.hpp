@@ -517,7 +517,7 @@ struct LaunchpadDefaultProfileOptions {
     std::size_t sceneCount = 8;
     std::size_t bankButtonCount = 8;
     std::size_t gestureSelectorCount = 0;
-    std::optional<LaunchpadGridPosition> shiftPosition;
+    std::optional<LaunchpadGridPosition> resetPosition;
 };
 
 MidiControllerProfileConfig LaunchpadDefaultProfileConfig(LaunchpadDefaultProfileOptions options = {});
