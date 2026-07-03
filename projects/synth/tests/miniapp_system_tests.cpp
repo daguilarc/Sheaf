@@ -150,11 +150,23 @@ bool AllSamplesFinite(const OutputWindow& window) {
     return true;
 }
 
+float OutputWindowPeak(const OutputWindow& window) {
+    float peak = 0.0f;
+    for (const auto& frame : window) {
+        for (const float sample : frame.channels) {
+            peak = std::max(peak, std::fabs(sample));
+        }
+    }
+    return peak;
+}
+
 }  // namespace
 
 TEST_CASE(miniapp_rig_initializes_headlessly_and_runs) {
     UseScratchPatchesRoot("initializes_headlessly_and_runs");
     synth_rig::SynthRig<synth_miniapp::MiniAppCore> rig;
+    const float expectedDefaultAlpha = 0.1226942309f;  // one-pole 1 kHz cutoff at 48 kHz
+    REQUIRE_NEAR(rig.Application().Group()->Config().processLiteAlpha, expectedDefaultAlpha, 0.000001f);
     rig.RunBlocks(1);
     REQUIRE_TRUE(!rig.SawNaN());
 }
@@ -194,9 +206,8 @@ TEST_CASE(miniapp_rig_zero_volume_yields_silence_and_turning_up_restores_signal)
         rig.Turn(kSlotIx, kVolumePosition, -0.1f);
     }
     rig.RunBlocks(8);
-    rig.ClearOutput();
-    rig.RunSeconds(0.05);
-    const float quietPeak = rig.OutputPeak();
+    const OutputWindow quietWindow = CaptureSettledOutputWindow(rig, 10);
+    const float quietPeak = OutputWindowPeak(quietWindow);
     REQUIRE_TRUE(quietPeak < 0.02f);
 
     for (int i = 0; i < 40; ++i) {

@@ -78,7 +78,6 @@ public:
             .numModulators = 3,
             .numScenes = 3,
             .maxParameters = 24,
-            .processLiteAlpha = 1.0f,
             .voiceIndicatorColors = {synth::Color::Cyan, synth::Color::Orange},
         });
         group_ = &group;

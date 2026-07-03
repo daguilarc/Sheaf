@@ -1,3 +1,4 @@
+#include "synth/DspFilters.hpp"
 #include "synth/MidiController.hpp"
 #include "synth/Json.hpp"
 #include "synth/ParameterModulation.hpp"
@@ -133,6 +134,14 @@ TEST_CASE(json_arena_build_parse_dump_and_grow_retry) {
 }
 
 TEST_CASE(group_config_validation) {
+    const float expectedDefaultAlpha = synth::OnePoleLowPass::AlphaFromNatFreq(1000.0f / 48000.0f);
+    const synth::ParameterGroupConfig defaultAlpha{
+        .numVoices = 1,
+        .numScenes = 1,
+        .maxParameters = 1,
+    };
+    REQUIRE_NEAR(defaultAlpha.processLiteAlpha, expectedDefaultAlpha, 0.000001f);
+
     synth::ParameterGroupConfig valid{
         .numVoices = 4,
         .numModulators = 0,

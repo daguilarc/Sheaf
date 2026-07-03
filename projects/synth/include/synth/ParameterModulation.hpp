@@ -119,12 +119,14 @@ struct Page {
     std::vector<Parameter*> parameters;
 };
 
+inline constexpr float kDefaultProcessLiteAlpha = 0.1226942309f;  // 1 kHz one-pole cutoff at 48 kHz
+
 struct ParameterGroupConfig {
     std::size_t numVoices = 0;
     std::size_t numModulators = 0;
     std::size_t numScenes = 0;
     std::size_t maxParameters = 0;
-    float processLiteAlpha = 1.0f;
+    float processLiteAlpha = kDefaultProcessLiteAlpha;
     std::vector<Color> voiceIndicatorColors;
 
     bool IsValid() const;
