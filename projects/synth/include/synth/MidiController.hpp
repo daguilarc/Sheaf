@@ -212,32 +212,44 @@ public:
 
 class MidiSender {
 public:
+    static constexpr std::size_t kMaxSinks = 8;
+
     explicit MidiSender(std::size_t capacity = 4096);
     ~MidiSender();
 
     MidiSender(const MidiSender&) = delete;
     MidiSender& operator=(const MidiSender&) = delete;
 
-    void SetSink(IMidiOutputSink* sink);
+    // nullptr clears the sink at sinkIx; sinkIx >= kMaxSinks is ignored.
+    void SetSink(std::size_t sinkIx, IMidiOutputSink* sink);
     void Start();
     void Stop();
-    bool Enqueue(const BasicMidi& midi);
+    // false when the queue is full or sinkIx >= kMaxSinks. A queued message
+    // whose sink is null (or cleared before drain) at drain time is dropped
+    // silently by the worker (smi-7 offline drop) — it does not block the
+    // worker or affect other sinks' traffic.
+    bool Enqueue(std::size_t sinkIx, const BasicMidi& midi);
     bool IsRunning() const;
     bool FlushForTests(std::chrono::milliseconds timeout);
 
 private:
+    struct QueueEntry {
+        std::size_t sinkIx = 0;
+        BasicMidi midi;
+    };
+
     void Run();
 
     mutable std::mutex mutex_;
     std::condition_variable cv_;
     std::condition_variable drainedCv_;
-    std::vector<BasicMidi> queue_;
+    std::vector<QueueEntry> queue_;
     std::size_t head_ = 0;
     std::size_t size_ = 0;
     std::size_t inFlight_ = 0;
     bool running_ = false;
     bool stopRequested_ = false;
-    IMidiOutputSink* sink_ = nullptr;
+    std::array<IMidiOutputSink*, kMaxSinks> sinks_{};
     std::thread thread_;
 };
 

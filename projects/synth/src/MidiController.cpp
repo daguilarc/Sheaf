@@ -546,9 +546,12 @@ MidiSender::~MidiSender() {
     Stop();
 }
 
-void MidiSender::SetSink(IMidiOutputSink* sink) {
+void MidiSender::SetSink(std::size_t sinkIx, IMidiOutputSink* sink) {
+    if (sinkIx >= kMaxSinks) {
+        return;
+    }
     std::lock_guard lock(mutex_);
-    sink_ = sink;
+    sinks_[sinkIx] = sink;
 }
 
 void MidiSender::Start() {
@@ -581,13 +584,16 @@ void MidiSender::Stop() {
     drainedCv_.notify_all();
 }
 
-bool MidiSender::Enqueue(const BasicMidi& midi) {
+bool MidiSender::Enqueue(std::size_t sinkIx, const BasicMidi& midi) {
+    if (sinkIx >= kMaxSinks) {
+        return false;
+    }
     std::lock_guard lock(mutex_);
     if (size_ >= queue_.size()) {
         return false;
     }
     const std::size_t tail = (head_ + size_) % queue_.size();
-    queue_[tail] = midi;
+    queue_[tail] = QueueEntry{.sinkIx = sinkIx, .midi = midi};
     ++size_;
     cv_.notify_one();
     return true;
@@ -614,11 +620,12 @@ void MidiSender::Run() {
             if (stopRequested_ && size_ == 0) {
                 break;
             }
-            midi = queue_[head_];
+            const QueueEntry& entry = queue_[head_];
+            midi = entry.midi;
+            sink = sinks_[entry.sinkIx];
             head_ = (head_ + 1) % queue_.size();
             --size_;
             ++inFlight_;
-            sink = sink_;
         }
         if (sink != nullptr) {
             sink->Send(midi);
@@ -700,7 +707,9 @@ std::optional<MidiOutProcessor::CellSnapshot> MidiOutProcessor::LoadCellSnapshot
 }
 
 bool MidiOutProcessor::Enqueue(const BasicMidi& midi) {
-    return sender_ != nullptr && sender_->Enqueue(midi);
+    // Sink index 0: single-controller reality until per-controller
+    // processors land (see MidiSender's kMaxSinks routing).
+    return sender_ != nullptr && sender_->Enqueue(0, midi);
 }
 
 float MidiOutProcessor::NormalizeForDisplay(float value, bool bipolar) {
@@ -930,7 +939,9 @@ void SystemCcMidiOutProcessor::Process() {
 }
 
 bool SystemCcMidiOutProcessor::Enqueue(const BasicMidi& midi) {
-    return sender_ != nullptr && sender_->Enqueue(midi);
+    // Sink index 0: single-controller reality until per-controller
+    // processors land (see MidiSender's kMaxSinks routing).
+    return sender_ != nullptr && sender_->Enqueue(0, midi);
 }
 
 WrldBldrSystemMidiOutProcessor::WrldBldrSystemMidiOutProcessor(WrldBldrSystemMidiOutConfig config,
@@ -967,7 +978,9 @@ void WrldBldrSystemMidiOutProcessor::Process() {
 }
 
 bool WrldBldrSystemMidiOutProcessor::Enqueue(const BasicMidi& midi) {
-    return sender_ != nullptr && sender_->Enqueue(midi);
+    // Sink index 0: single-controller reality until per-controller
+    // processors land (see MidiSender's kMaxSinks routing).
+    return sender_ != nullptr && sender_->Enqueue(0, midi);
 }
 
 LaunchpadGridMidiOutProcessor::LaunchpadGridMidiOutProcessor(LaunchpadGridMidiOutConfig config,
@@ -1004,7 +1017,9 @@ void LaunchpadGridMidiOutProcessor::Process() {
 }
 
 bool LaunchpadGridMidiOutProcessor::Enqueue(const BasicMidi& midi) {
-    return sender_ != nullptr && !midi.raw.empty() && sender_->Enqueue(midi);
+    // Sink index 0: single-controller reality until per-controller
+    // processors land (see MidiSender's kMaxSinks routing).
+    return sender_ != nullptr && !midi.raw.empty() && sender_->Enqueue(0, midi);
 }
 
 JSON ToJSON(JsonArena& arena, EncoderRelativeMode value) {

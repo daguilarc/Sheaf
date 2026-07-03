@@ -3729,7 +3729,7 @@ TEST_CASE(system_output_processors_debounce_reset_and_render_cc_and_wrld_bldr) {
 
     FakeMidiSink sink;
     synth::MidiSender sender;
-    sender.SetSink(&sink);
+    sender.SetSink(0, &sink);
     sender.Start();
 
     synth::SystemCcMidiOutConfig ccConfig;
@@ -3827,7 +3827,7 @@ TEST_CASE(launchpad_output_processor_debounces_reset_and_uses_system_info) {
 
     FakeMidiSink sink;
     synth::MidiSender sender;
-    sender.SetSink(&sink);
+    sender.SetSink(0, &sink);
     sender.Start();
 
     synth::LaunchpadGridMidiOutConfig config;
@@ -3924,7 +3924,7 @@ TEST_CASE(midi_controller_profile_routes_launchpad_only_system_associations) {
 
     FakeMidiSink sink;
     synth::MidiSender sender;
-    sender.SetSink(&sink);
+    sender.SetSink(0, &sink);
     sender.Start();
     synth::MidiControllerProfileResult profile =
         synth::CreateMidiControllerProfile(config, &bus, &sender, &ui, [] { return 91; });
@@ -3965,7 +3965,7 @@ TEST_CASE(midi_controller_profile_builds_independent_outputs_from_shared_system_
 
     FakeMidiSink sink;
     synth::MidiSender sender;
-    sender.SetSink(&sink);
+    sender.SetSink(0, &sink);
     sender.Start();
     synth::MidiControllerProfileResult profile =
         synth::CreateMidiControllerProfile(config, nullptr, &sender, &ui);
@@ -4116,7 +4116,7 @@ TEST_CASE(mf_twister_default_profile_maps_encoders_and_input_only_side_buttons) 
 
     FakeMidiSink sink;
     synth::MidiSender sender;
-    sender.SetSink(&sink);
+    sender.SetSink(0, &sink);
     sender.Start();
     synth::ParameterManager::UIState ui;
     ui.Configure(1, 2, 1, 0, 0);
@@ -4168,7 +4168,7 @@ TEST_CASE(wrld_bldr_default_profile_creates_encoder_and_system_outputs) {
     options.gestureSelectorCount = 1;
     FakeMidiSink sink;
     synth::MidiSender sender;
-    sender.SetSink(&sink);
+    sender.SetSink(0, &sink);
     sender.Start();
     synth::MidiControllerProfileResult profile =
         synth::CreateWrldBldrDefaultProfile(options, nullptr, &sender, &ui);
@@ -4234,7 +4234,7 @@ TEST_CASE(launchpad_default_profile_creates_only_system_input_and_grid_output) {
 
     FakeMidiSink sink;
     synth::MidiSender sender;
-    sender.SetSink(&sink);
+    sender.SetSink(0, &sink);
     sender.Start();
     synth::MidiControllerProfileResult profile =
         synth::CreateLaunchpadDefaultProfile(options, &bus, &sender, &ui, [] { return 123; });
@@ -4334,16 +4334,89 @@ TEST_CASE(launchpad_default_profiles_skip_unsupported_positions_for_each_control
 TEST_CASE(midi_sender_delivers_fifo_and_stops_cleanly) {
     FakeMidiSink sink;
     synth::MidiSender sender;
-    sender.SetSink(&sink);
+    sender.SetSink(0, &sink);
     sender.Start();
-    REQUIRE_TRUE(sender.Enqueue(synth::BasicMidi::CC(0, 0, 1, 2)));
-    REQUIRE_TRUE(sender.Enqueue(synth::BasicMidi::CC(0, 0, 3, 4)));
+    REQUIRE_TRUE(sender.Enqueue(0, synth::BasicMidi::CC(0, 0, 1, 2)));
+    REQUIRE_TRUE(sender.Enqueue(0, synth::BasicMidi::CC(0, 0, 3, 4)));
     sender.FlushForTests(std::chrono::milliseconds(500));
     sender.Stop();
     sender.Stop();
     REQUIRE_TRUE(sink.sent.size() == 2);
     REQUIRE_TRUE(sink.sent[0].GetCC() == 1);
     REQUIRE_TRUE(sink.sent[1].GetCC() == 3);
+}
+
+TEST_CASE(midi_sender_routes_each_sink_index_to_its_own_sink_in_order) {
+    FakeMidiSink sinkA;
+    FakeMidiSink sinkB;
+    synth::MidiSender sender;
+    sender.SetSink(0, &sinkA);
+    sender.SetSink(1, &sinkB);
+    sender.Start();
+
+    REQUIRE_TRUE(sender.Enqueue(0, synth::BasicMidi::CC(0, 0, 1, 2)));
+    REQUIRE_TRUE(sender.Enqueue(1, synth::BasicMidi::CC(0, 0, 10, 20)));
+    REQUIRE_TRUE(sender.Enqueue(0, synth::BasicMidi::CC(0, 0, 3, 4)));
+    REQUIRE_TRUE(sender.Enqueue(1, synth::BasicMidi::CC(0, 0, 30, 40)));
+    sender.FlushForTests(std::chrono::milliseconds(500));
+    sender.Stop();
+
+    REQUIRE_TRUE(sinkA.sent.size() == 2);
+    REQUIRE_TRUE(sinkA.sent[0].GetCC() == 1);
+    REQUIRE_TRUE(sinkA.sent[1].GetCC() == 3);
+    REQUIRE_TRUE(sinkB.sent.size() == 2);
+    REQUIRE_TRUE(sinkB.sent[0].GetCC() == 10);
+    REQUIRE_TRUE(sinkB.sent[1].GetCC() == 30);
+}
+
+TEST_CASE(midi_sender_drops_messages_for_null_sink_without_blocking_others) {
+    FakeMidiSink sinkB;
+    synth::MidiSender sender;
+    // Sink 0 is intentionally left null (offline controller).
+    sender.SetSink(1, &sinkB);
+    sender.Start();
+
+    REQUIRE_TRUE(sender.Enqueue(0, synth::BasicMidi::CC(0, 0, 1, 2)));
+    REQUIRE_TRUE(sender.Enqueue(1, synth::BasicMidi::CC(0, 0, 10, 20)));
+    sender.FlushForTests(std::chrono::milliseconds(500));
+    sender.Stop();
+
+    REQUIRE_TRUE(sinkB.sent.size() == 1);
+    REQUIRE_TRUE(sinkB.sent[0].GetCC() == 10);
+}
+
+TEST_CASE(midi_sender_enqueue_rejects_out_of_range_sink_index) {
+    FakeMidiSink sink;
+    synth::MidiSender sender;
+    sender.SetSink(0, &sink);
+    sender.Start();
+
+    REQUIRE_TRUE(!sender.Enqueue(synth::MidiSender::kMaxSinks, synth::BasicMidi::CC(0, 0, 1, 2)));
+    sender.FlushForTests(std::chrono::milliseconds(200));
+    sender.Stop();
+
+    REQUIRE_TRUE(sink.sent.empty());
+}
+
+TEST_CASE(midi_sender_set_sink_swap_mid_stream_delivers_to_new_sink) {
+    FakeMidiSink sinkA;
+    FakeMidiSink sinkB;
+    synth::MidiSender sender;
+    sender.SetSink(0, &sinkA);
+    sender.Start();
+
+    REQUIRE_TRUE(sender.Enqueue(0, synth::BasicMidi::CC(0, 0, 1, 2)));
+    sender.FlushForTests(std::chrono::milliseconds(500));
+    REQUIRE_TRUE(sinkA.sent.size() == 1);
+
+    sender.SetSink(0, &sinkB);
+    REQUIRE_TRUE(sender.Enqueue(0, synth::BasicMidi::CC(0, 0, 3, 4)));
+    sender.FlushForTests(std::chrono::milliseconds(500));
+    sender.Stop();
+
+    REQUIRE_TRUE(sinkA.sent.size() == 1);
+    REQUIRE_TRUE(sinkB.sent.size() == 1);
+    REQUIRE_TRUE(sinkB.sent[0].GetCC() == 3);
 }
 
 TEST_CASE(twister_output_debounces_reset_and_uses_channels) {
@@ -4373,7 +4446,7 @@ TEST_CASE(twister_output_debounces_reset_and_uses_channels) {
 
     FakeMidiSink sink;
     synth::MidiSender sender;
-    sender.SetSink(&sink);
+    sender.SetSink(0, &sink);
     sender.Start();
     auto config = synth::EncoderMidiOutConfig::TwisterDefault(0);
     config.KeepFirstPositions(1);
@@ -4418,7 +4491,7 @@ TEST_CASE(twister_output_skips_unstable_snapshot_without_cache_update) {
 
     FakeMidiSink sink;
     synth::MidiSender sender;
-    sender.SetSink(&sink);
+    sender.SetSink(0, &sink);
     sender.Start();
     auto config = synth::EncoderMidiOutConfig::TwisterDefault(0);
     config.KeepFirstPositions(1);
@@ -4447,7 +4520,7 @@ TEST_CASE(twister_output_blanks_disconnected_mapped_cells_once) {
 
     FakeMidiSink sink;
     synth::MidiSender sender;
-    sender.SetSink(&sink);
+    sender.SetSink(0, &sink);
     sender.Start();
     auto config = synth::EncoderMidiOutConfig::TwisterDefault(0);
     config.KeepFirstPositions(1);
@@ -4486,7 +4559,7 @@ TEST_CASE(twister_output_uses_ui_state_brightness) {
 
     FakeMidiSink sink;
     synth::MidiSender sender;
-    sender.SetSink(&sink);
+    sender.SetSink(0, &sink);
     sender.Start();
     auto config = synth::EncoderMidiOutConfig::TwisterDefault(0);
     config.KeepFirstPositions(1);
@@ -4527,7 +4600,7 @@ TEST_CASE(wrld_bldr_output_sends_value_and_source_derived_sysex) {
 
     FakeMidiSink sink;
     synth::MidiSender sender;
-    sender.SetSink(&sink);
+    sender.SetSink(0, &sink);
     sender.Start();
     auto config = synth::EncoderMidiOutConfig::WrldBldrDefault(0);
     config.KeepFirstPositions(1);
@@ -4585,7 +4658,7 @@ TEST_CASE(wrld_bldr_output_blanks_disconnected_mapped_cells_once) {
 
     FakeMidiSink sink;
     synth::MidiSender sender;
-    sender.SetSink(&sink);
+    sender.SetSink(0, &sink);
     sender.Start();
     auto config = synth::EncoderMidiOutConfig::WrldBldrDefault(0);
     config.KeepFirstPositions(1);
@@ -9156,10 +9229,10 @@ struct RecordingMidiOutputSink final : synth::IMidiOutputSink {
 TEST_CASE(midi_sender_run_tags_worker_thread_with_midi_sender_id) {
     RecordingMidiOutputSink sink;
     synth::MidiSender sender;
-    sender.SetSink(&sink);
+    sender.SetSink(0, &sink);
     sender.Start();
 
-    REQUIRE_TRUE(sender.Enqueue(synth::BasicMidi::CC(0, 0, 1, 64)));
+    REQUIRE_TRUE(sender.Enqueue(0, synth::BasicMidi::CC(0, 0, 1, 64)));
     REQUIRE_TRUE(sender.FlushForTests(std::chrono::milliseconds(1000)));
 
     sender.Stop();

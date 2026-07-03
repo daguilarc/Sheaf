@@ -163,7 +163,9 @@ public:
         InstallForwardingProcessor();
 
         if (synth::MidiSender* sender = engine_.Context().midiSender; sender != nullptr) {
-            sender->SetSink(&outHandler_);
+            // Sink index 0: single-controller reality until per-controller
+            // processors land (see MidiSender's kMaxSinks routing).
+            sender->SetSink(0, &outHandler_);
         }
 
         Refresh();
