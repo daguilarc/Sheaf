@@ -320,6 +320,56 @@ TEST_CASE(ApplyMappingEditRejectingIllegalEditLeavesOutUntouched) {
     REQUIRE_TRUE(out.controllers[0].name == "sentinel");
 }
 
+// --- Finding 1: ApplyMappingEdit refuses fields not in editableFields ------
+//
+// WRLD.Bldr system-message rows only advertise WrldBldrX/WrldBldrY/
+// PressMessage/ReleaseMessage (see SectionRows' SystemMessages case): the
+// paired `control` address is only ever writable through the WrldBldrX/Y
+// path (which keeps position and control in sync -- finding 2's fix). A
+// direct Channel/Cc edit on such a row must be refused up front by the new
+// editableFields gate, not silently ignored (which is what let the desync
+// happen before this fix): previously, Channel/Cc on a WrldBldr row fell
+// into the `if (!association.control.has_value()) break;` branch and simply
+// left `fieldValid` false without ever consulting editableFields.
+TEST_CASE(ApplyMappingEditChannelOnWrldBldrSystemRowIsRefused) {
+    MidiConfigViewModel vm;
+    MidiInstrumentConfig instrument = MakeFourKindInstrument();
+    vm.Rebuild(instrument, MakeFourKindConnection());
+
+    const auto rows = vm.SectionRows(0, MidiConfigSection::SystemMessages);
+    REQUIRE_TRUE(!rows.empty());
+    for (const auto& field : rows[0].editableFields) {
+        REQUIRE_TRUE(field != MidiMappingRowVM::Field::Channel);
+    }
+
+    MidiInstrumentConfig out;
+    std::string reason;
+    const bool ok =
+        vm.ApplyMappingEdit(0, MidiConfigSection::SystemMessages, 0, MidiMappingRowVM::Field::Channel, 5.0, out,
+                            &reason);
+    REQUIRE_TRUE(!ok);
+    REQUIRE_TRUE(!reason.empty());
+}
+
+TEST_CASE(ApplyMappingEditCcOnLaunchpadSystemRowIsRefused) {
+    MidiConfigViewModel vm;
+    MidiInstrumentConfig instrument = MakeFourKindInstrument();
+    vm.Rebuild(instrument, MakeFourKindConnection());
+
+    const auto rows = vm.SectionRows(2, MidiConfigSection::SystemMessages);  // "pads" (launchpad)
+    REQUIRE_TRUE(!rows.empty());
+    for (const auto& field : rows[0].editableFields) {
+        REQUIRE_TRUE(field != MidiMappingRowVM::Field::Cc);
+    }
+
+    MidiInstrumentConfig out;
+    std::string reason;
+    const bool ok =
+        vm.ApplyMappingEdit(2, MidiConfigSection::SystemMessages, 0, MidiMappingRowVM::Field::Cc, 5.0, out, &reason);
+    REQUIRE_TRUE(!ok);
+    REQUIRE_TRUE(!reason.empty());
+}
+
 TEST_CASE(AddControllerDuplicateNameFails) {
     MidiConfigViewModel vm;
     vm.Rebuild(MakeFourKindInstrument(), MakeFourKindConnection());
@@ -693,6 +743,37 @@ TEST_CASE(ApplyMappingEditNegativeSlotIxIsRefused) {
     std::string reason;
     const bool ok =
         vm.ApplyMappingEdit(0, MidiConfigSection::Encoders, 0, MidiMappingRowVM::Field::SlotIx, -3.0, out, &reason);
+    REQUIRE_TRUE(!ok);
+    REQUIRE_TRUE(!reason.empty());
+}
+
+// --- Finding 2: index domain checks reject values too large to round-trip
+// through static_cast<std::size_t> (e.g. 1e300 is finite, non-negative, and
+// == std::floor(itself), but casting it to std::size_t is undefined
+// behavior) ---------------------------------------------------------------
+
+TEST_CASE(ApplyMappingEditHugeSlotIxIsRefused) {
+    MidiConfigViewModel vm;
+    MidiInstrumentConfig instrument = MakeFourKindInstrument();
+    vm.Rebuild(instrument, MakeFourKindConnection());
+
+    MidiInstrumentConfig out;
+    std::string reason;
+    const bool ok = vm.ApplyMappingEdit(0, MidiConfigSection::Encoders, 0, MidiMappingRowVM::Field::SlotIx, 1e300,
+                                        out, &reason);
+    REQUIRE_TRUE(!ok);
+    REQUIRE_TRUE(!reason.empty());
+}
+
+TEST_CASE(ApplyMappingEditHugePressMessageCatalogIndexIsRefused) {
+    MidiConfigViewModel vm;
+    MidiInstrumentConfig instrument = MakeFourKindInstrument();
+    vm.Rebuild(instrument, MakeFourKindConnection());
+
+    MidiInstrumentConfig out;
+    std::string reason;
+    const bool ok = vm.ApplyMappingEdit(0, MidiConfigSection::SystemMessages, 0,
+                                        MidiMappingRowVM::Field::PressMessage, 1e300, out, &reason);
     REQUIRE_TRUE(!ok);
     REQUIRE_TRUE(!reason.empty());
 }

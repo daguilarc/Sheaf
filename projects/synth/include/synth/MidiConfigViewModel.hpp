@@ -173,7 +173,17 @@ public:
     // grid, PressMessage/ReleaseMessage a valid SystemMessageCatalog() index
     // (ReleaseMessage additionally accepts index 0/"None" to clear the
     // optional release)). `value`'s domain check requires it be integral
-    // (value == std::floor(value)) for every field above except TurnStep.
+    // (value == std::floor(value)) for every field above except TurnStep;
+    // every index-shaped field (SlotIx/Position/GestureIx/PressMessage/
+    // ReleaseMessage) additionally caps `value` at min(2^53,
+    // size_t(-1)) so it survives the later static_cast<std::size_t> without
+    // undefined behavior. Before any of the above, `field` is checked against
+    // this row's SectionRows() editableFields and refused with "field not
+    // editable for this row" if absent -- e.g. WRLD.Bldr/Launchpad
+    // SystemMessages rows only advertise their position fields plus
+    // PressMessage/ReleaseMessage, so a direct Channel/Cc edit on them is
+    // refused here (their paired `control` address is only ever writable via
+    // the WrldBldrX/Y or LaunchpadX/Y path, keeping it consistent).
     bool ApplyMappingEdit(std::size_t controllerIx, MidiConfigSection section, std::size_t rowIx,
                           MidiMappingRowVM::Field field, double value, MidiInstrumentConfig& out,
                           std::string* reason = nullptr) const;

@@ -1,5 +1,6 @@
 #include "synth/MidiConfigViewModel.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <sstream>
@@ -456,8 +457,23 @@ namespace {
 // baseline domain check for SlotIx/Position/GestureIx/bank & scene indices
 // and catalog indices (brief finding 3: "integral (value == floor(value)),
 // within the field's domain ... at minimum non-negative").
+//
+// Also bounds `value` from above so every caller's later
+// `static_cast<std::size_t>(value)` is well-defined: without this, a value
+// like 1e300 passes isfinite/>=0/==floor but casting it to std::size_t is
+// undefined behavior (the double is far outside std::size_t's range). Two
+// bounds apply: 2^53 (kMaxSafeInteger), the largest integer every double
+// value up to it represents exactly (beyond it, doubles start skipping
+// integers, so "value == floor(value)" no longer guarantees `value` names a
+// specific integer); and std::numeric_limits<std::size_t>::max() converted
+// to double, in case size_t is narrower than 53 bits (e.g. a 32-bit
+// size_t). Domain-specific caps (e.g. Cc's 0-127, WrldBldrX/Y's 0-7) still
+// apply on top of this via IsIntegerInRange/other callers.
 bool IsNonNegativeInteger(double value) {
-    return std::isfinite(value) && value >= 0.0 && value == std::floor(value);
+    constexpr double kMaxSafeInteger = 9007199254740992.0;  // 2^53
+    const double maxSizeT = static_cast<double>(std::numeric_limits<std::size_t>::max());
+    const double upperBound = std::min(kMaxSafeInteger, maxSizeT);
+    return std::isfinite(value) && value >= 0.0 && value == std::floor(value) && value <= upperBound;
 }
 
 bool IsIntegerInRange(double value, double lo, double hi) {
@@ -503,6 +519,32 @@ bool MidiConfigViewModel::ApplyMappingEdit(std::size_t controllerIx, MidiConfigS
             *reason = "controller index out of range";
         }
         return false;
+    }
+
+    // General gate: refuse any Field not advertised in this row's
+    // editableFields before touching the scratch config at all. This is what
+    // closes the WRLD.Bldr desync -- system rows advertise only
+    // WrldBldrX/WrldBldrY/PressMessage/ReleaseMessage (see SectionRows), so a
+    // direct Channel/Cc edit on one is refused here rather than silently
+    // no-op'ing deeper in the switch below (the paired `control` address
+    // stays consistent because it is only ever written via the WrldBldrX/Y
+    // path). SectionRows() is also the single source of truth row-ordering
+    // used below, so this reuses it rather than re-deriving row identity.
+    {
+        const std::vector<MidiMappingRowVM> rows = SectionRows(controllerIx, section);
+        if (rowIx >= rows.size()) {
+            if (reason != nullptr) {
+                *reason = "row index out of range";
+            }
+            return false;
+        }
+        const std::vector<MidiMappingRowVM::Field>& editable = rows[rowIx].editableFields;
+        if (std::find(editable.begin(), editable.end(), field) == editable.end()) {
+            if (reason != nullptr) {
+                *reason = "field not editable for this row";
+            }
+            return false;
+        }
     }
 
     MidiInstrumentConfig scratch = instrument_;
