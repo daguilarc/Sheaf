@@ -1,6 +1,0 @@
-{"type":"session.started","harness":"codex","mode":"subagent","model":"gpt-5.5","thinking_level":"low","schema_version":1,"run_id":"xrun_20260702012924025_40f54969","sequence":1,"timestamp":"2026-07-02T01:29:24.031Z"}
-{"type":"session.ready","can_accept_input":true,"schema_version":1,"run_id":"xrun_20260702012924025_40f54969","sequence":2,"timestamp":"2026-07-02T01:29:24.032Z"}
-{"type":"turn.started","turn_id":"turn_1","input_sequence":1,"schema_version":1,"run_id":"xrun_20260702012924025_40f54969","sequence":3,"timestamp":"2026-07-02T01:29:24.034Z"}
-{"type":"turn.failed","turn_id":"turn_1","code":"harness_process_failed","message":"error: unexpected argument '--reasoning-effort' found\n\n  tip: to pass '--reasoning-effort' as a value, use '-- --reasoning-effort'\n\nUsage: codex exec [OPTIONS] [PROMPT]\n       codex exec [OPTIONS] <COMMAND> [ARGS]\n\nFor more information, try '--help'.","schema_version":1,"run_id":"xrun_20260702012924025_40f54969","sequence":4,"timestamp":"2026-07-02T01:29:24.187Z"}
-{"type":"session.ready","can_accept_input":true,"schema_version":1,"run_id":"xrun_20260702012924025_40f54969","sequence":5,"timestamp":"2026-07-02T01:29:24.188Z"}
-{"type":"session.ended","reason":"input_closed","exit_code":0,"schema_version":1,"run_id":"xrun_20260702012924025_40f54969","sequence":6,"timestamp":"2026-07-02T01:29:24.188Z"}

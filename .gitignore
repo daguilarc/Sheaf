@@ -22,6 +22,7 @@ projects/realtime-agent/src/vscode-extension/*.vsix
 # Runtime data
 data/**
 !data/.gitkeep
+projects/xagent/data/xagent/
 logs/**
 !logs/.gitkeep
 models/
