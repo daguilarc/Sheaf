@@ -2,10 +2,10 @@
 
 ## 1. Library: schema, ordering, blocks (JUCE-free)
 
-- [ ] 1.1 `SystemAddressSchema(kind)` shared table driving row fields/headers/block forms; twister's address becomes logical button 0..5 (stored `cc = 8 + button`, fixed ch3 display-only, out-of-range refused); update existing view-model tests (sru-8)
-- [ ] 1.2 `NormalizeMidiProfileConfig` (turns/pushes by slot,pos; system by the D2 total `SystemMessageSortKey` — every MessageIn type, then address tuple, then stable original order; gestures by ix); unit tests incl. stability, modifier set/release variants, and persistence-shape invariance (sru-9)
-- [ ] 1.3 `MidiConfigBlocks.hpp/.cpp`: EncoderBlock/AnalogBlock/SystemBlock structs (SystemBlock carries `outputFeedback` and directional inclusive rectangle corners) + Expand* functions with full validation (all-or-nothing), feedback = press per cell, release patterns per type; unit tests per form incl. row-major, column-major, and descending-row traversal (sru-10)
-- [ ] 1.4 Reconstruct* functions (greedy runs, ±y rectangles, ≥2 threshold, twister never blocks, non-blockable types individual, feedback/outputFeedback run consistency); round-trip property tests (Expand∘Reconstruct == sorted config for every config incl. duplicates; Reconstruct∘Expand == same block for any block reconstruction can itself produce), broken-run splits, 1×N/N×1, ragged remainders, the default WRLD.Bldr 8×2 descending bank grid (sru-10)
+- [x] 1.1 `SystemAddressSchema(kind)` shared table driving row fields/headers/block forms; twister's address becomes logical button 0..5 (stored `cc = 8 + button`, fixed ch3 display-only, out-of-range refused); update existing view-model tests (sru-8)
+- [x] 1.2 `NormalizeMidiProfileConfig` (turns/pushes by slot,pos; system by the D2 total `SystemMessageSortKey` — every MessageIn type, then address tuple, then stable original order; gestures by ix); unit tests incl. stability, modifier set/release variants, and persistence-shape invariance (sru-9)
+- [x] 1.3 `MidiConfigBlocks.hpp/.cpp`: EncoderBlock/AnalogBlock/SystemBlock structs (SystemBlock carries `outputFeedback` and directional inclusive rectangle corners) + Expand* functions with full validation (all-or-nothing), feedback = press per cell, release patterns per type; unit tests per form incl. row-major, column-major, and descending-row traversal (sru-10)
+- [x] 1.4 Reconstruct* functions (greedy runs, ±y rectangles, ≥2 threshold, twister never blocks, non-blockable types individual, feedback/outputFeedback run consistency); round-trip property tests (Expand∘Reconstruct == sorted config for every config incl. duplicates; Reconstruct∘Expand == same block for any block reconstruction can itself produce), broken-run splits, 1×N/N×1, ragged remainders, the default WRLD.Bldr 8×2 descending bank grid (sru-10)
 
 ## 2. View model: presentation state and operations
 
