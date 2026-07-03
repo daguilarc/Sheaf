@@ -612,8 +612,8 @@ bool MidiConfigViewModel::ApplyMappingEdit(std::size_t controllerIx, MidiConfigS
                             value != 0.0 ? EncoderRelativeMode::DirectionOnly : EncoderRelativeMode::Signed7Bit;
                         fieldValid = true;
                     } else if (ref.isTurnStep && field == Field::TurnStep) {
-                        if (!std::isfinite(value) || value <= 0.0) {
-                            validationError = "turn step must be a positive finite number";
+                        if (!std::isfinite(value) || value <= 0.0 || value > double(std::numeric_limits<float>::max())) {
+                            validationError = "turn step out of range";
                         } else {
                             slot.config.encoderInput->turnStep = static_cast<float>(value);
                             fieldValid = true;

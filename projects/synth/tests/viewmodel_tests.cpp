@@ -831,6 +831,23 @@ TEST_CASE(ApplyMappingEditTurnStepMustBePositive) {
     REQUIRE_TRUE(!zeroOk);
 }
 
+TEST_CASE(ApplyMappingEditTurnStepMustBeFiniteFloat) {
+    MidiConfigViewModel vm;
+    MidiInstrumentConfig instrument = MakeFourKindInstrument();
+    vm.Rebuild(instrument, MakeFourKindConnection());
+
+    const auto rows = vm.SectionRows(0, MidiConfigSection::Encoders);
+    const std::size_t turnStepRowIx = rows.size() - 1;
+    REQUIRE_TRUE(rows[turnStepRowIx].label.rfind("turn step", 0) == 0);
+
+    MidiInstrumentConfig out;
+    std::string reason;
+    const bool hugeOk = vm.ApplyMappingEdit(0, MidiConfigSection::Encoders, turnStepRowIx,
+                                            MidiMappingRowVM::Field::TurnStep, 1e300, out, &reason);
+    REQUIRE_TRUE(!hugeOk);
+    REQUIRE_TRUE(!reason.empty());
+}
+
 TEST_CASE(ApplyMappingEditValidEditsStillCommit) {
     MidiConfigViewModel vm;
     MidiInstrumentConfig instrument = MakeFourKindInstrument();
