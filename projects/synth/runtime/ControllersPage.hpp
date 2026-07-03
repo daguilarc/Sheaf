@@ -598,17 +598,35 @@ private:
             label_.setText(juce::String(rowVm.label), juce::dontSendNotification);
             addAndMakeVisible(label_);
 
+            // Reviewer finding 1: editors are laid out (resized(), below) in
+            // this SAME editableFields order via orderedEditors_, not bucketed
+            // by editor kind -- RowGroupHeader's column labels already follow
+            // editableFields order (see RowGroupHeader's constructor), so a
+            // row whose editableFields doesn't happen to sort all-numerics-
+            // then-combo-then-toggles (e.g. SystemBlockEditableFields() puts
+            // BlockMessageType first, then Channel/BlockStartCc/BlockEndCc,
+            // then BlockOutputFeedback last, or the wrldbldr/launchpad 2-D
+            // form which puts BlockRowMajor before the trailing
+            // BlockStartArg/BlockOutputFeedback fields) previously had its
+            // controls laid out in bucket order (all numerics, then the combo,
+            // then toggles) while the header above it laid out labels in
+            // editableFields order -- misaligning every column after the
+            // first field whose bucket differs from its position. Walking the
+            // same editableFields sequence for both header and row makes
+            // alignment structural rather than coincidental.
             for (const synth::MidiMappingRowVM::Field field : rowVm.editableFields) {
                 if (field == synth::MidiMappingRowVM::Field::PressMessage ||
                     field == synth::MidiMappingRowVM::Field::ReleaseMessage) {
                     auto editor = std::make_unique<SystemMessageFieldEditor>(page, controllerIx, rowIx, field);
                     addAndMakeVisible(*editor);
+                    orderedEditors_.emplace_back(field, editor.get());
                     systemMessageEditors_.push_back(std::move(editor));
                 } else if (field == synth::MidiMappingRowVM::Field::RelativeMode) {
                     // Issue #9: Mode is a dropdown over RelativeModeCatalog(),
                     // not a numeric editor.
                     auto editor = std::make_unique<RelativeModeFieldEditor>(page, controllerIx, section, rowIx);
                     addAndMakeVisible(*editor);
+                    orderedEditors_.emplace_back(field, editor.get());
                     relativeModeEditors_.push_back(std::move(editor));
                 } else if (field == synth::MidiMappingRowVM::Field::BlockMessageType) {
                     // D6: message type as a 3-choice combo of blockable
@@ -620,12 +638,14 @@ private:
                     // RowFieldValue()).
                     auto editor = std::make_unique<BlockMessageTypeFieldEditor>(page, controllerIx, rowIx);
                     addAndMakeVisible(*editor);
+                    orderedEditors_.emplace_back(field, editor.get());
                     blockMessageTypeEditors_.push_back(std::move(editor));
                 } else if (field == synth::MidiMappingRowVM::Field::BlockRowMajor ||
                           field == synth::MidiMappingRowVM::Field::BlockOutputFeedback) {
                     // D6: row-major (and output-feedback) as a 0/1 toggle.
                     auto editor = std::make_unique<BlockToggleFieldEditor>(page, controllerIx, section, rowIx, field);
                     addAndMakeVisible(*editor);
+                    orderedEditors_.emplace_back(field, editor.get());
                     toggleEditors_.push_back(std::move(editor));
                 } else {
                     // A system row's Channel/Cc/LaunchpadX/Y/WrldBldrX/Y/
@@ -648,6 +668,7 @@ private:
                     auto editor =
                         std::make_unique<NumericFieldEditor>(page, controllerIx, section, rowIx, field, initial);
                     addAndMakeVisible(*editor);
+                    orderedEditors_.emplace_back(field, editor.get());
                     numericEditors_.push_back(std::move(editor));
                 }
             }
@@ -680,24 +701,25 @@ private:
             }
         }
 
+        // Walks orderedEditors_ (every editor this row constructed, in
+        // editableFields order) rather than the per-kind vectors below --
+        // this is what makes "covers all editors" structural: a field kind
+        // added to the else-if chain in the constructor above without a
+        // matching push_back onto orderedEditors_ simply wouldn't compile
+        // (emplace_back happens right next to every addAndMakeVisible), so
+        // there's no separate list here that can silently fall out of sync
+        // with the constructor the way the old per-kind HasFocusedEditor()
+        // loops could (and did -- toggleEditors_/BlockToggleFieldEditor was
+        // never checked here pre-fix, so a focused row-major/output-feedback
+        // toggle didn't block RefreshOnTick()'s rebuild).
+        // juce::ToggleButton has no text caret, so hasKeyboardFocus(true)
+        // (self-or-child) is the right check for it same as the combo boxes;
+        // it's also a safe superset for the TextEditor/NumericFieldEditor
+        // case (no focusable children there), so a single uniform call
+        // works for every editor kind in the row.
         bool HasFocusedEditor() const {
-            for (const auto& editor : numericEditors_) {
-                if (editor->hasKeyboardFocus(false)) {
-                    return true;
-                }
-            }
-            for (const auto& editor : systemMessageEditors_) {
-                if (editor->hasKeyboardFocus(true)) {
-                    return true;
-                }
-            }
-            for (const auto& editor : relativeModeEditors_) {
-                if (editor->hasKeyboardFocus(true)) {
-                    return true;
-                }
-            }
-            for (const auto& editor : blockMessageTypeEditors_) {
-                if (editor->hasKeyboardFocus(true)) {
+            for (const auto& entry : orderedEditors_) {
+                if (entry.second->hasKeyboardFocus(true)) {
                     return true;
                 }
             }
@@ -711,29 +733,20 @@ private:
                 deleteButton_->setBounds(area.removeFromRight(kDeleteButtonWidth).reduced(2));
             }
             label_.setBounds(area.removeFromLeft(juce::jmax(160, area.getWidth() / 3)));
-            // Widths come from the single shared FieldEditorWidth() helper
-            // (reviewer finding 3) so this row's editors and its
-            // RowGroupHeader's column labels can never disagree on how wide
-            // a given field is.
-            for (auto& editor : numericEditors_) {
-                editor->setBounds(
-                    area.removeFromLeft(FieldEditorWidth(synth::MidiMappingRowVM::Field::Channel)).reduced(2));
-            }
-            for (auto& editor : systemMessageEditors_) {
-                editor->setBounds(
-                    area.removeFromLeft(FieldEditorWidth(synth::MidiMappingRowVM::Field::PressMessage)).reduced(2));
-            }
-            for (auto& editor : relativeModeEditors_) {
-                editor->setBounds(
-                    area.removeFromLeft(FieldEditorWidth(synth::MidiMappingRowVM::Field::RelativeMode)).reduced(2));
-            }
-            for (auto& editor : blockMessageTypeEditors_) {
-                editor->setBounds(
-                    area.removeFromLeft(FieldEditorWidth(synth::MidiMappingRowVM::Field::BlockMessageType)).reduced(2));
-            }
-            for (auto& editor : toggleEditors_) {
-                editor->setBounds(
-                    area.removeFromLeft(FieldEditorWidth(synth::MidiMappingRowVM::Field::BlockRowMajor)).reduced(2));
+            // Reviewer finding 1: walk orderedEditors_ -- the SAME
+            // editableFields-ordered sequence the constructor above built --
+            // rather than bucketing by editor kind (all numerics, then the
+            // combo, then toggles). RowGroupHeader::resized() lays out its
+            // column labels in editableFields order too (see that method),
+            // so walking the identical order here is what keeps a row's
+            // controls under the header's labels for every editableFields
+            // permutation, not just the ones where kind-bucket order happens
+            // to match field order. Widths still come from the single shared
+            // FieldEditorWidth() helper (reviewer finding 3) so this row's
+            // editors and its RowGroupHeader's column labels can never
+            // disagree on how wide a given field is.
+            for (auto& [field, editor] : orderedEditors_) {
+                editor->setBounds(area.removeFromLeft(FieldEditorWidth(field)).reduced(2));
             }
         }
 
@@ -744,6 +757,13 @@ private:
         std::vector<std::unique_ptr<RelativeModeFieldEditor>> relativeModeEditors_;
         std::vector<std::unique_ptr<BlockMessageTypeFieldEditor>> blockMessageTypeEditors_;
         std::vector<std::unique_ptr<BlockToggleFieldEditor>> toggleEditors_;
+        // Every editor above, paired with its Field and in editableFields
+        // construction order -- the single ordered collection resized() and
+        // HasFocusedEditor() both walk (reviewer finding 1). The typed
+        // vectors above remain the owners (unique_ptr); this holds
+        // non-owning observer pointers only, so it must never outlive them
+        // (it doesn't -- same object, same lifetime).
+        std::vector<std::pair<synth::MidiMappingRowVM::Field, juce::Component*>> orderedEditors_;
         std::unique_ptr<juce::TextButton> deleteButton_;
     };
 

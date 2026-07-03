@@ -2738,6 +2738,92 @@ TEST_CASE(GroupSupportsAddAndBlocksMatchesAddSingleAddBlockDispatch) {
     REQUIRE_TRUE(vm.GroupSupportsBlocks(0, MidiConfigSection::Analogs, Group::AnalogGesture));
     REQUIRE_TRUE(!vm.GroupSupportsAdd(0, MidiConfigSection::Analogs, Group::AnalogSceneBlend));
     REQUIRE_TRUE(!vm.GroupSupportsBlocks(0, MidiConfigSection::Analogs, Group::AnalogSceneBlend));
+
+    // Reviewer finding 2 (drift): the matrix above is a hardcoded restatement
+    // of what GroupSupportsAdd/GroupSupportsBlocks currently return -- it
+    // would keep passing even if GroupSupportsAdd/Blocks's dispatch (the
+    // switch in MidiConfigViewModel.cpp, kept "literally adjacent to
+    // AddSingle/AddBlock" per that function's doc comment specifically so a
+    // change to one can't silently skip the other) drifted out of sync with
+    // AddSingle/AddBlock's ACTUAL dispatch, since nothing here calls
+    // AddSingle/AddBlock at all. Close that gap directly: for every
+    // (controller, section, group) triple in the four-kind fixture, call
+    // AddSingle/AddBlock (both take no seed -- they self-generate a
+    // next-free-address default row/block from the controller's own config,
+    // see AddSingle/AddBlock's header doc comments) and require the actual
+    // outcome to agree with what GroupSupportsAdd/GroupSupportsBlocks
+    // predicted. AddSingle/AddBlock are const and write their result to a
+    // throwaway `out` rather than mutating `vm`, so one shared `vm` (already
+    // Rebuild()'t above) can be reused for every call below.
+    //
+    // GroupSupportsAdd/GroupSupportsBlocks's own doc comments are explicit
+    // that they answer "could possibly succeed" (dispatch-level: does this
+    // (section, group[, kind]) combination reach a real branch at all), NOT
+    // "will succeed" -- AddSingle/AddBlock's header doc comments likewise
+    // spell out that a dispatch-matched call can still be refused for
+    // per-controller runtime state: no encoder/analog input on this
+    // controller kind, no free address/grid position/twister button, or --
+    // AddBlock only, see the "Finding 3" comment on its Encoders branch -- a
+    // block wide enough to walk past what the single-cell next-free scan
+    // guaranteed free for the START cell only (caught by the
+    // HasDuplicate*Address backstop). So the equality this loop checks is
+    // asymmetric by design, not a loosened drift check:
+    //   - GroupSupports*==false must mean the Add* call refuses (dispatch
+    //     agreement is exact and unconditional -- this is the direction
+    //     finding 2 is actually about, and where a real drift bug would
+    //     show up as an unexpected `true`).
+    //   - GroupSupports*==true means the Add* call must have reached its
+    //     OWN matching dispatch branch -- i.e. its refusal reason (if any)
+    //     must not be the generic catch-all each function's dispatch itself
+    //     falls through to ("this group does not support adding
+    //     [a block/individual rows]"). Two concrete cases exercised by this
+    //     fixture below: AddSingle(twister, Analogs, AnalogGesture) refuses
+    //     with "controller has no analog input" (GroupSupportsAdd doesn't
+    //     vary by controller kind, per its own doc comment, even though
+    //     AddSingle obviously can't add an analog mapping to a twister,
+    //     which has no analogInput at all); AddBlock(wrldbldr, Analogs,
+    //     AnalogGesture) refuses with a duplicate-address reason (wrldbldr's
+    //     default profile densely packs gestureIx 0-15 across two channels,
+    //     leaving channel 2 cc0 -- the sceneBlend address, not a gesture --
+    //     as the lone free single cc; AddBlock's default 2-wide block then
+    //     walks into the already-occupied cc1). Both are genuine dispatch
+    //     agreement with a documented runtime refusal, not drift.
+    const std::size_t controllerCount = 4;  // wrld, twist, pads, blank
+    const MidiConfigSection sections[] = {MidiConfigSection::Encoders, MidiConfigSection::SystemMessages,
+                                          MidiConfigSection::Analogs};
+    const Group groups[] = {Group::EncoderTurn,     Group::EncoderPush,      Group::EncoderMode,
+                            Group::EncoderStep,     Group::AnalogGesture,    Group::AnalogSceneBlend,
+                            Group::System};
+    const std::string kAddDispatchRefusal = "this group does not support adding individual rows";
+    const std::string kBlockDispatchRefusal = "this group does not support adding a block";
+    for (std::size_t controllerIx = 0; controllerIx < controllerCount; ++controllerIx) {
+        for (const MidiConfigSection section : sections) {
+            for (const Group group : groups) {
+                const bool expectAdd = vm.GroupSupportsAdd(controllerIx, section, group);
+                const bool expectBlocks = vm.GroupSupportsBlocks(controllerIx, section, group);
+
+                MidiInstrumentConfig addOut;
+                std::string addReason;
+                const bool addSucceeded = vm.AddSingle(controllerIx, section, group, addOut, &addReason);
+                if (!expectAdd) {
+                    REQUIRE_TRUE(!addSucceeded);
+                } else if (!addSucceeded) {
+                    // Dispatch still agreed (matched a real branch); only a
+                    // documented in-branch runtime refusal is tolerated here.
+                    REQUIRE_TRUE(addReason != kAddDispatchRefusal);
+                }
+
+                MidiInstrumentConfig blockOut;
+                std::string blockReason;
+                const bool blockSucceeded = vm.AddBlock(controllerIx, section, group, blockOut, &blockReason);
+                if (!expectBlocks) {
+                    REQUIRE_TRUE(!blockSucceeded);
+                } else if (!blockSucceeded) {
+                    REQUIRE_TRUE(blockReason != kBlockDispatchRefusal);
+                }
+            }
+        }
+    }
 }
 
 TEST_CASE(GroupSupportsAddOutOfRangeControllerIxReturnsFalse) {
