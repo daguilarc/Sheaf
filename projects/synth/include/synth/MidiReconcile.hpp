@@ -47,12 +47,17 @@ struct ReconcilePlan { std::vector<ReconcileAction> actions; };
 //
 // Matching (smi-3): for each slot's ref, try an exact identifier match
 // against present devices first; if that misses, fall back to a stored-name
-// match. A name-fallback match emits an UpdateInputRef/UpdateOutputRef action
-// carrying the matched device's identifier+name. Each present device is
+// match, skipping devices already claimed by an earlier slot in this pass (so
+// two identically-named present devices can still serve two distinct slots,
+// deterministically in slot order). A name-fallback match ALWAYS emits an
+// UpdateInputRef/UpdateOutputRef action carrying the matched device's
+// identifier+name -- including when the endpoint is already Online on the
+// matched device (the connection is fine, but the stored ref is stale and
+// must be refreshed to an exact-identifier ref). Each present device is
 // assigned to at most one slot per plan -- slots are considered in order, and
 // the first matching slot claims the device; a losing slot that was
 // previously Online also gets a Close* (then Mark*Offline). An unconfigured
-// ref (!IsConfigured()) is inert: no open/close/offline action is ever
+// ref (!IsConfigured()) is inert: no open/close/offline/update action is ever
 // produced for it, and its status stays Unconfigured. An Online endpoint
 // whose openIdentifier is no longer present is closed and marked offline. An
 // already-Offline endpoint whose device remains absent produces no actions.

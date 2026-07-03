@@ -17,10 +17,14 @@ const MidiDeviceInfoRef* FindByIdentifier(const std::vector<MidiDeviceInfoRef>& 
     return nullptr;
 }
 
-// Finds a present device by exact stored-name match (fallback when identifier misses).
-const MidiDeviceInfoRef* FindByName(const std::vector<MidiDeviceInfoRef>& devices, const std::string& name) {
+// Finds a present device by exact stored-name match (fallback when identifier misses), skipping
+// devices already claimed by an earlier slot in this pass. This lets two identical-name devices
+// (distinct identifiers) serve two different slots deterministically in slot order, instead of
+// both slots' name-fallback racing to the same first name match.
+const MidiDeviceInfoRef* FindByName(const std::vector<MidiDeviceInfoRef>& devices, const std::string& name,
+                                    const std::unordered_set<std::string>& claimed) {
     for (const auto& device : devices) {
-        if (device.name == name) {
+        if (device.name == name && claimed.count(device.identifier) == 0) {
             return &device;
         }
     }
@@ -67,7 +71,7 @@ std::unordered_set<std::size_t> PlanEndpointPass(const MidiInstrumentConfig& ins
             match = FindByIdentifier(devices, ref.identifier);
         }
         if (match == nullptr && !ref.name.empty()) {
-            match = FindByName(devices, ref.name);
+            match = FindByName(devices, ref.name, claimed);
             viaNameFallback = match != nullptr;
         }
 
@@ -95,15 +99,19 @@ std::unordered_set<std::size_t> PlanEndpointPass(const MidiInstrumentConfig& ins
                 open.identifier = match->identifier;
                 plan.actions.push_back(open);
                 opened.insert(ix);
+            }
 
-                if (viaNameFallback) {
-                    ReconcileAction update;
-                    update.type = updateType;
-                    update.controllerIx = ix;
-                    update.identifier = match->identifier;
-                    update.name = match->name;
-                    plan.actions.push_back(update);
-                }
+            // A name-fallback match always rewrites the stale stored ref to the matched
+            // identifier+name -- even when the endpoint is already Online on that matched
+            // device (the connection itself is fine, but the stored ref is stale and must be
+            // refreshed so future reconciliations exact-match on identifier again).
+            if (viaNameFallback) {
+                ReconcileAction update;
+                update.type = updateType;
+                update.controllerIx = ix;
+                update.identifier = match->identifier;
+                update.name = match->name;
+                plan.actions.push_back(update);
             }
             continue;
         }

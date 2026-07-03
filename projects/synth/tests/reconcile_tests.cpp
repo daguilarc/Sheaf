@@ -387,6 +387,141 @@ TEST_CASE(state_size_mismatch_treated_as_unconfigured_no_crash) {
     REQUIRE_TRUE(CountActions(plan, ReconcileAction::Type::OpenOutput) == 1);
 }
 
+// name-fallback match that is ALREADY Online on the matched device -> UpdateInputRef only,
+// rewriting the stale stored ref to the matched identifier+name. No Open/Close: the endpoint is
+// already open on the right device, just the stored ref is stale.
+TEST_CASE(name_fallback_match_already_online_on_matched_device_only_updates_ref) {
+    MidiInstrumentConfig instrument;
+    instrument.controllers.push_back(Slot("Twister", Ref("old-id", "Twister"), MidiEndpointRef{}));
+
+    MidiDeviceList present;
+    present.inputs.push_back({"new-id", "Twister"});
+
+    MidiConnectionState current;
+    current.controllers.push_back(
+        {Conn(MidiEndpointStatus::Online, "new-id"), Conn(MidiEndpointStatus::Unconfigured)});
+
+    ReconcilePlan plan = PlanMidiReconciliation(instrument, present, current);
+
+    REQUIRE_TRUE(plan.actions.size() == 1);
+    REQUIRE_TRUE(plan.actions[0].type == ReconcileAction::Type::UpdateInputRef);
+    REQUIRE_TRUE(plan.actions[0].controllerIx == 0);
+    REQUIRE_TRUE(plan.actions[0].identifier == "new-id");
+    REQUIRE_TRUE(plan.actions[0].name == "Twister");
+}
+
+// two identical-name devices under distinct identifiers, two slots both relying on name-fallback
+// -> name-fallback scans for the first UNCLAIMED device with the matching name, so both slots
+// resolve deterministically in list order (slot 0 claims the first device, slot 1 claims the
+// second), rather than slot 1 failing because slot 0 already claimed the first name match.
+TEST_CASE(name_fallback_skips_claimed_devices_for_duplicate_names) {
+    MidiInstrumentConfig instrument;
+    instrument.controllers.push_back(Slot("First", Ref("missing-1", "Twister"), MidiEndpointRef{}));
+    instrument.controllers.push_back(Slot("Second", Ref("missing-2", "Twister"), MidiEndpointRef{}));
+
+    MidiDeviceList present;
+    present.inputs.push_back({"dev-a", "Twister"});
+    present.inputs.push_back({"dev-b", "Twister"});
+
+    MidiConnectionState current;
+    current.controllers.push_back({Conn(MidiEndpointStatus::Offline), Conn(MidiEndpointStatus::Unconfigured)});
+    current.controllers.push_back({Conn(MidiEndpointStatus::Offline), Conn(MidiEndpointStatus::Unconfigured)});
+
+    ReconcilePlan plan = PlanMidiReconciliation(instrument, present, current);
+
+    REQUIRE_TRUE(CountActions(plan, ReconcileAction::Type::OpenInput) == 2);
+    REQUIRE_TRUE(CountActions(plan, ReconcileAction::Type::UpdateInputRef) == 2);
+
+    std::string slot0Identifier;
+    std::string slot1Identifier;
+    for (const auto& action : plan.actions) {
+        if (action.type == ReconcileAction::Type::OpenInput && action.controllerIx == 0) {
+            slot0Identifier = action.identifier;
+        }
+        if (action.type == ReconcileAction::Type::OpenInput && action.controllerIx == 1) {
+            slot1Identifier = action.identifier;
+        }
+    }
+    REQUIRE_TRUE(slot0Identifier == "dev-a");
+    REQUIRE_TRUE(slot1Identifier == "dev-b");
+    REQUIRE_TRUE(slot0Identifier != slot1Identifier);
+}
+
+// full action-sequence pin: Online on X, ref matched to Y (both X and Y present) -> exactly
+// Close(X) then Open(Y) in that order, plus UpdateRef (name match) and Resync (output). The
+// stored ref's identifier ("stale-id") is absent from present devices, forcing a name-fallback
+// match onto Y ("new-id"); the endpoint is currently Online on a *different* present device X
+// ("other-dev-id") that the ref does not match at all, so X must be closed before Y opens.
+TEST_CASE(reopen_under_different_identifier_pins_close_then_open_then_update_then_resync_order) {
+    MidiInstrumentConfig instrument;
+    instrument.controllers.push_back(Slot("Twister", MidiEndpointRef{}, Ref("stale-id", "Twister")));
+
+    MidiDeviceList present;
+    present.outputs.push_back({"other-dev-id", "SomeOtherDevice"});   // device X: currently open, unrelated to ref
+    present.outputs.push_back({"new-id", "Twister"});                 // device Y: matches stored name
+
+    MidiConnectionState current;
+    current.controllers.push_back(
+        {Conn(MidiEndpointStatus::Unconfigured), Conn(MidiEndpointStatus::Online, "other-dev-id")});
+
+    ReconcilePlan plan = PlanMidiReconciliation(instrument, present, current);
+
+    REQUIRE_TRUE(plan.actions.size() == 4);
+    REQUIRE_TRUE(plan.actions[0].type == ReconcileAction::Type::CloseOutput);
+    REQUIRE_TRUE(plan.actions[0].controllerIx == 0);
+    REQUIRE_TRUE(plan.actions[0].identifier == "other-dev-id");
+
+    REQUIRE_TRUE(plan.actions[1].type == ReconcileAction::Type::OpenOutput);
+    REQUIRE_TRUE(plan.actions[1].controllerIx == 0);
+    REQUIRE_TRUE(plan.actions[1].identifier == "new-id");
+
+    REQUIRE_TRUE(plan.actions[2].type == ReconcileAction::Type::UpdateOutputRef);
+    REQUIRE_TRUE(plan.actions[2].controllerIx == 0);
+    REQUIRE_TRUE(plan.actions[2].identifier == "new-id");
+    REQUIRE_TRUE(plan.actions[2].name == "Twister");
+
+    REQUIRE_TRUE(plan.actions[3].type == ReconcileAction::Type::Resync);
+    REQUIRE_TRUE(plan.actions[3].controllerIx == 0);
+}
+
+// mixed-match contention: slot 0 name-fallbacks to device A while slot 1 exact-identifier-matches
+// A -> slot 0 (slot order) wins the claim, slot 1 loses and goes offline. Full plan pinned.
+TEST_CASE(mixed_match_contention_name_fallback_slot_wins_over_later_identifier_match_slot) {
+    MidiInstrumentConfig instrument;
+    // Slot 0: stored id is stale/missing, falls back to name "Twister" -> matches device A.
+    instrument.controllers.push_back(Slot("First", Ref("missing-id", "Twister"), MidiEndpointRef{}));
+    // Slot 1: stored id is an exact match for device A too.
+    instrument.controllers.push_back(Slot("Second", Ref("dev-a", "SomethingElse"), MidiEndpointRef{}));
+
+    MidiDeviceList present;
+    present.inputs.push_back({"dev-a", "Twister"});
+
+    MidiConnectionState current;
+    current.controllers.push_back({Conn(MidiEndpointStatus::Offline), Conn(MidiEndpointStatus::Unconfigured)});
+    current.controllers.push_back(
+        {Conn(MidiEndpointStatus::Online, "dev-a"), Conn(MidiEndpointStatus::Unconfigured)});
+
+    ReconcilePlan plan = PlanMidiReconciliation(instrument, present, current);
+
+    REQUIRE_TRUE(plan.actions.size() == 4);
+
+    REQUIRE_TRUE(plan.actions[0].type == ReconcileAction::Type::OpenInput);
+    REQUIRE_TRUE(plan.actions[0].controllerIx == 0);
+    REQUIRE_TRUE(plan.actions[0].identifier == "dev-a");
+
+    REQUIRE_TRUE(plan.actions[1].type == ReconcileAction::Type::UpdateInputRef);
+    REQUIRE_TRUE(plan.actions[1].controllerIx == 0);
+    REQUIRE_TRUE(plan.actions[1].identifier == "dev-a");
+    REQUIRE_TRUE(plan.actions[1].name == "Twister");
+
+    REQUIRE_TRUE(plan.actions[2].type == ReconcileAction::Type::CloseInput);
+    REQUIRE_TRUE(plan.actions[2].controllerIx == 1);
+    REQUIRE_TRUE(plan.actions[2].identifier == "dev-a");
+
+    REQUIRE_TRUE(plan.actions[3].type == ReconcileAction::Type::MarkInputOffline);
+    REQUIRE_TRUE(plan.actions[3].controllerIx == 1);
+}
+
 int main() {
     int failed = 0;
     for (const auto& test : Registry()) {
