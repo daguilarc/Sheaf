@@ -2347,6 +2347,65 @@ TEST_CASE(SystemBlockEditChangesMessageTypeAndCommitsExpansion) {
     REQUIRE_TRUE(anyBankSelect);
 }
 
+// Task group 3 (renderer): BlockMessageTypeIndex() is the dedicated accessor
+// a BlockMessageType combo box uses to preselect the row's current message
+// type -- RowFieldValue() deliberately refuses BlockMessageType (it is not a
+// single numeric value), mirroring how PressMessage/ReleaseMessage combos use
+// SystemMessageChoiceIndex() instead of RowFieldValue().
+TEST_CASE(BlockMessageTypeIndexReadsBankSelectForBankBlock) {
+    MidiConfigViewModel vm;
+    MidiInstrumentConfig instrument = MakeFourKindInstrument();
+    vm.Rebuild(instrument, MakeFourKindConnection());
+
+    const std::vector<MidiMappingRowVM> rows = vm.SectionRows(0, MidiConfigSection::SystemMessages);
+    std::size_t bankBlockIx = SIZE_MAX;
+    for (std::size_t ix = 0; ix < rows.size(); ++ix) {
+        if (rows[ix].kind == MidiMappingRowVM::Kind::Block && rows[ix].label.rfind("bank select block", 0) == 0) {
+            bankBlockIx = ix;
+        }
+    }
+    REQUIRE_TRUE(bankBlockIx != SIZE_MAX);
+
+    const int index = vm.BlockMessageTypeIndex(0, MidiConfigSection::SystemMessages, bankBlockIx);
+    REQUIRE_TRUE(index == 1);  // BlockableMessage::BankSelect's declaration-order index
+    REQUIRE_TRUE(synth::BlockableMessageCatalog()[static_cast<std::size_t>(index)] == "Bank select");
+}
+
+TEST_CASE(BlockMessageTypeIndexRefusedForNonSystemBlockRows) {
+    MidiConfigViewModel vm;
+    MidiInstrumentConfig instrument = MakeFourKindInstrument();
+    vm.Rebuild(instrument, MakeFourKindConnection());
+
+    // An encoder Block row (turn/push block) has no BlockMessageType field.
+    const std::vector<MidiMappingRowVM> encoderRows = vm.SectionRows(0, MidiConfigSection::Encoders);
+    std::size_t encoderBlockIx = SIZE_MAX;
+    for (std::size_t ix = 0; ix < encoderRows.size(); ++ix) {
+        if (encoderRows[ix].kind == MidiMappingRowVM::Kind::Block) {
+            encoderBlockIx = ix;
+            break;
+        }
+    }
+    REQUIRE_TRUE(encoderBlockIx != SIZE_MAX);
+    REQUIRE_TRUE(vm.BlockMessageTypeIndex(0, MidiConfigSection::Encoders, encoderBlockIx) == -1);
+
+    // An Individual system row also has no BlockMessageType field.
+    const std::vector<MidiMappingRowVM> systemRows = vm.SectionRows(0, MidiConfigSection::SystemMessages);
+    std::size_t individualIx = SIZE_MAX;
+    for (std::size_t ix = 0; ix < systemRows.size(); ++ix) {
+        if (systemRows[ix].kind == MidiMappingRowVM::Kind::Individual) {
+            individualIx = ix;
+            break;
+        }
+    }
+    REQUIRE_TRUE(individualIx != SIZE_MAX);
+    REQUIRE_TRUE(vm.BlockMessageTypeIndex(0, MidiConfigSection::SystemMessages, individualIx) == -1);
+
+    // Out-of-range row and non-SystemMessages/out-of-range controller both
+    // refuse too.
+    REQUIRE_TRUE(vm.BlockMessageTypeIndex(0, MidiConfigSection::SystemMessages, 9999) == -1);
+    REQUIRE_TRUE(vm.BlockMessageTypeIndex(9999, MidiConfigSection::SystemMessages, 0) == -1);
+}
+
 // --- sru-11: add ("+"/"+B") and delete --------------------------------------
 
 TEST_CASE(AddSingleAppendsAtGroupEndWithNextFreeDefaults) {

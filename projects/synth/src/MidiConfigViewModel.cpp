@@ -1599,6 +1599,25 @@ int MidiConfigViewModel::SystemMessageChoiceIndex(std::size_t controllerIx, Midi
     return -1;
 }
 
+int MidiConfigViewModel::BlockMessageTypeIndex(std::size_t controllerIx, MidiConfigSection section,
+                                               std::size_t rowIx) const {
+    if (section != MidiConfigSection::SystemMessages) {
+        return -1;
+    }
+    if (controllerIx >= instrument_.controllers.size()) {
+        return -1;
+    }
+    const SectionPresentation& presentation = PresentationFor(controllerIx, section);
+    if (rowIx >= presentation.rows.size() || presentation.rows[rowIx].kind != RowKind::Block) {
+        return -1;
+    }
+    const auto* systemBlock = std::get_if<SystemBlock>(&presentation.rows[rowIx].block);
+    if (systemBlock == nullptr) {
+        return -1;
+    }
+    return static_cast<int>(systemBlock->message);
+}
+
 namespace {
 
 // Applies a system Block row's field edit to a scratch copy of `block`,

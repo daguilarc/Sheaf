@@ -409,6 +409,19 @@ public:
     int SystemMessageChoiceIndex(std::size_t controllerIx, MidiConfigSection section, std::size_t rowIx,
                                  MidiMappingRowVM::Field field) const;
 
+    // Looks up a system Block row's current message type as an index into
+    // BlockableMessageCatalog(), so a JUCE combo box can preselect the row's
+    // current state -- the Field::BlockMessageType counterpart to
+    // SystemMessageChoiceIndex() above (RowFieldValue() deliberately refuses
+    // BlockMessageType, per its own doc comment, since a message type is not
+    // a single numeric value; this is the dedicated accessor callers use
+    // instead, mirroring the PressMessage/ReleaseMessage convention). Returns
+    // -1 for a non-SystemMessages section, an out-of-range (controllerIx,
+    // rowIx), or a row that is not a system Block row (an Individual/
+    // ConfigLevel row, or an Encoder/Analog Block row -- neither has a
+    // BlockMessageType).
+    int BlockMessageTypeIndex(std::size_t controllerIx, MidiConfigSection section, std::size_t rowIx) const;
+
     // Edits operate on a COPY of the last-Rebuild()'t instrument. On success,
     // `out` holds the fully edited instrument for the host to commit via
     // engine.EditInstrument (which triggers the runtime's reconcile pass);
