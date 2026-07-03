@@ -3,6 +3,7 @@
 #include "synth/MidiController.hpp"
 
 #include <cstddef>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -66,5 +67,60 @@ struct ReconcilePlan { std::vector<ReconcileAction> actions; };
 ReconcilePlan PlanMidiReconciliation(const MidiInstrumentConfig& instrument,
                                      const MidiDeviceList& present,
                                      const MidiConnectionState& current);
+
+// Abstract endpoint operations a plan executor invokes -- JUCE-free (no
+// dependency on synth_juce::MidiInHandler/MidiOutputHandler or the engine);
+// the runtime (synth_runtime::MidiConnectionManager) binds these to real
+// device handlers and Engine<App> calls. openInput/openOutput return false
+// on failure (device not found, open failed); all other ops are void because
+// ExecuteReconcilePlan has no fallback behavior for them -- a close/update/
+// resync that "fails" silently has nowhere else to go from here.
+struct MidiEndpointOps {
+    std::function<bool(std::size_t ix, const std::string& identifier)> openInput;
+    std::function<bool(std::size_t ix, const std::string& identifier)> openOutput;
+    std::function<void(std::size_t ix)> closeInput;
+    std::function<void(std::size_t ix)> closeOutput;
+    std::function<void(std::size_t ix, const std::string& id, const std::string& name)> updateInputRef;
+    std::function<void(std::size_t ix, const std::string& id, const std::string& name)> updateOutputRef;
+    std::function<void(std::size_t ix)> resync;
+};
+
+// Applies `plan` to `ops` strictly in list order (executors MUST NOT reorder
+// or batch actions -- see the planner's own doc comment: it emits Close*
+// before the matching Open* for a slot reopening under a different
+// identifier, and callers depend on that ordering being preserved through
+// execution). Returns a new MidiConnectionState derived from `current` with
+// each action's effect applied as it is processed, so the return value
+// reflects every open/close/mark/update in the order they were applied --
+// not just the plan's net intent.
+//
+// Per-action semantics:
+//   OpenInput/OpenOutput: calls ops.openInput/openOutput(ix, identifier). On
+//     success, the endpoint's status becomes Online with openIdentifier set
+//     to `identifier`. On failure (returns false), the endpoint's status
+//     becomes Offline (NOT Online, and openIdentifier is cleared) and
+//     execution continues with the remaining actions -- a failed open is
+//     never fatal to the rest of the plan.
+//   CloseInput/CloseOutput: calls ops.closeInput/closeOutput(ix). Does not,
+//     by itself, change status -- the planner always pairs a Close with a
+//     following Open or Mark*Offline action, so status transitions happen
+//     there.
+//   MarkInputOffline/MarkOutputOffline: sets the endpoint's status to
+//     Offline and clears openIdentifier, without calling any op (the
+//     preceding Close* action already performed the actual device close).
+//   UpdateInputRef/UpdateOutputRef: calls ops.updateInputRef/updateOutputRef
+//     with the new identifier+name. Stored-ref rewriting is the runtime's
+//     concern (via engine.EditInstrument); this executor does not track
+//     stored refs itself, only connection status.
+//   Resync: calls ops.resync(ix) exactly once, for that one action -- a plan
+//     with N Resync actions for the same controller (which the planner never
+//     produces, but this executor does not assume) invokes ops.resync N
+//     times, once per action, in order.
+//
+// A null std::function for any op used by the plan is simply not called
+// (target-less std::function is falsy); this lets tests exercise a subset of
+// actions without wiring every op.
+MidiConnectionState ExecuteReconcilePlan(const ReconcilePlan& plan, const MidiConnectionState& current,
+                                         const MidiEndpointOps& ops);
 
 } // namespace synth

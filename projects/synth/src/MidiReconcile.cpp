@@ -157,4 +157,91 @@ ReconcilePlan PlanMidiReconciliation(const MidiInstrumentConfig& instrument, con
     return plan;
 }
 
+namespace {
+
+// Grows `state.controllers` (default-constructed, i.e. all-Unconfigured
+// entries) so that index `ix` is valid, mirroring the planner's own
+// tolerance for a `current` state missing entries (see
+// PlanMidiReconciliation's doc comment: "entries missing from `current` are
+// treated as all-Unconfigured; this never crashes"). ExecuteReconcilePlan
+// extends this same tolerance to its own working copy of the state.
+void EnsureControllerSlot(MidiConnectionState& state, std::size_t ix) {
+    if (ix >= state.controllers.size()) {
+        state.controllers.resize(ix + 1);
+    }
+}
+
+} // namespace
+
+MidiConnectionState ExecuteReconcilePlan(const ReconcilePlan& plan, const MidiConnectionState& current,
+                                         const MidiEndpointOps& ops) {
+    using Type = ReconcileAction::Type;
+    MidiConnectionState state = current;
+
+    for (const ReconcileAction& action : plan.actions) {
+        EnsureControllerSlot(state, action.controllerIx);
+        MidiControllerConnection& controller = state.controllers[action.controllerIx];
+
+        switch (action.type) {
+            case Type::OpenInput: {
+                const bool opened = ops.openInput && ops.openInput(action.controllerIx, action.identifier);
+                if (opened) {
+                    controller.input.status = MidiEndpointStatus::Online;
+                    controller.input.openIdentifier = action.identifier;
+                } else {
+                    controller.input.status = MidiEndpointStatus::Offline;
+                    controller.input.openIdentifier.clear();
+                }
+                break;
+            }
+            case Type::OpenOutput: {
+                const bool opened = ops.openOutput && ops.openOutput(action.controllerIx, action.identifier);
+                if (opened) {
+                    controller.output.status = MidiEndpointStatus::Online;
+                    controller.output.openIdentifier = action.identifier;
+                } else {
+                    controller.output.status = MidiEndpointStatus::Offline;
+                    controller.output.openIdentifier.clear();
+                }
+                break;
+            }
+            case Type::CloseInput:
+                if (ops.closeInput) {
+                    ops.closeInput(action.controllerIx);
+                }
+                break;
+            case Type::CloseOutput:
+                if (ops.closeOutput) {
+                    ops.closeOutput(action.controllerIx);
+                }
+                break;
+            case Type::MarkInputOffline:
+                controller.input.status = MidiEndpointStatus::Offline;
+                controller.input.openIdentifier.clear();
+                break;
+            case Type::MarkOutputOffline:
+                controller.output.status = MidiEndpointStatus::Offline;
+                controller.output.openIdentifier.clear();
+                break;
+            case Type::UpdateInputRef:
+                if (ops.updateInputRef) {
+                    ops.updateInputRef(action.controllerIx, action.identifier, action.name);
+                }
+                break;
+            case Type::UpdateOutputRef:
+                if (ops.updateOutputRef) {
+                    ops.updateOutputRef(action.controllerIx, action.identifier, action.name);
+                }
+                break;
+            case Type::Resync:
+                if (ops.resync) {
+                    ops.resync(action.controllerIx);
+                }
+                break;
+        }
+    }
+
+    return state;
+}
+
 } // namespace synth

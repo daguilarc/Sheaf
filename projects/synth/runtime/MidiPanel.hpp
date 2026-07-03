@@ -1,69 +1,74 @@
 #pragma once
 
 // synth_runtime::MidiPanel — the JUCE-side MIDI device management panel for
-// the runtime shell (Plan 3 Task 3). Ports the old miniapp's device combo
-// boxes / open-close buttons / status label (Main.cpp's
-// configureMidiControls/refreshMidiDevices/toggleMidiInput/toggleMidiOutput/
-// updateMidiStatus/selectDeviceByIdentifier/openSavedMidiDevices) onto
-// synth::Engine<App>: unlike the old app, the engine owns MIDI processor
-// construction/rebuilding itself (Engine::RebuildMidiProcessors, driven by
-// midiRebuildPending_/the startup-patch path), so this panel only forwards
-// incoming device MIDI into engine.MidiInputProcessor(0) and points the
-// engine's MidiSender at the open output device — it never builds a
-// MidiControllerProfileResult itself. Per-controller rebuild (Task 2) made
-// MidiInputProcessor()/ResetMidiOutputProcessors() take a controllerIx; this
-// panel is still a single-device runtime shell (it only ever reads/writes
-// slot 0's endpoint refs -- see the note below), so every call site here
-// stays hardcoded to slot 0. A later plan gives this panel true
-// per-controller device management.
+// the runtime shell (Plan 3 Task 3, UI ownership updated Plan 3 Task 2). Ports
+// the old miniapp's device combo boxes / open-close buttons / status label
+// (Main.cpp's configureMidiControls/refreshMidiDevices/toggleMidiInput/
+// toggleMidiOutput/updateMidiStatus/selectDeviceByIdentifier/
+// openSavedMidiDevices) onto synth::Engine<App>.
 //
-// Device open/close records identifiers into slot 0 of the engine's live
-// instrument (controllers[0].input/output), via Engine::EditInstrument
-// (spm-53) for writes and Engine::InstrumentSnapshot() for message-thread
-// reads concurrent with running audio (see Slot0Endpoints()). Prior to the
-// midiInstrument patch-document swap (see PatchPersistence.hpp), this lived in
-// engine.Endpoints() and was persisted through the patch's midiEndpoints
-// section; that section and Engine's endpoints_/Endpoints() accessor are
-// gone now that MidiInstrumentConfig owns per-controller endpoint refs.
-// EditInstrument is that entry point: endpoint selection now round-trips
-// through save/load like every other instrument field, closing the
-// panel-local-only regression an earlier task carried temporarily. Endpoint
-// refs live on controller slot 0 only for now (RebuildMidiProcessors()
-// itself only builds processors from slot 0 -- see its doc comment); a
-// later plan redesigns this panel for true per-controller endpoints. Runtime
-// wires
-// engine.SetMidiProcessorsWillRebuildCallback([this]{ panel.OnMidiProcessorsWillRebuild(); })
-// and
-// engine.SetMidiProcessorsRebuiltCallback([this]{ panel.ReopenPersistedEndpoints(); })
-// so a startup-patch or runtime-load profile rebuild detaches the panel's
-// forwarding processor before the old MIDI processor chain is destroyed,
-// then reopens the endpoints recorded on slot 0 against the fresh profile
-// once the rebuild completes; an absent device leaves the panel closed with
-// no failure (spp-5).
+// Ownership (binding, changed by MidiConnectionManager.hpp, Task 2 of Plan
+// 3): this panel used to own a single MidiInHandler/MidiOutputHandler pair
+// and register itself as MidiSender sink 0 directly. That ownership has
+// moved into synth_runtime::MidiConnectionManager<App> (see that header's
+// class doc comment: "the runtime replaces MidiPanel's single handler pair
+// with a per-controller vector"), which is now the sole owner of every
+// controller slot's device handlers, including slot 0. This panel is
+// constructed with a reference to the host's MidiConnectionManager<App> and
+// is a thin UI shell over it: the combo boxes / open-close buttons / status
+// label all read and write through the manager's slot-0-scoped accessors
+// (ManualOpenInput/ManualOpenOutput/ManualCloseInput/ManualCloseOutput/
+// IsInputOpen/IsOutputOpen/InputDeviceName/OutputDeviceName/InputLastError/
+// OutputLastError/State()) instead of owning a handler pair itself. This
+// panel still only ever reads/writes controller slot 0 -- see the manager's
+// own doc comment for why slot 0 is (for now) the only slot with UI, and
+// note for a future plan: replacing this panel with a genuinely
+// per-controller UI (multiple slot rows) is the natural next step, at which
+// point this panel's slot-0-only methods are what get generalized/deleted.
+//
+// Endpoint identifiers persist into slot 0 of the engine's live instrument
+// (controllers[0].input/output) the same way they always have -- via
+// Engine::EditInstrument, now invoked from inside
+// MidiConnectionManager::ManualOpenInput/ManualOpenOutput rather than this
+// panel's own SetSlot0Endpoints -- so endpoint selection still round-trips
+// through save/load like every other instrument field. Engine::
+// InstrumentSnapshot() remains this panel's message-thread-safe read path
+// for slot 0's stored refs (see Slot0Endpoints()), concurrent with running
+// audio.
+//
+// Rebuild-callback wiring (Task 2 update): the manager, not this panel, is
+// now wired to engine.SetMidiProcessorsWillRebuildCallback/
+// SetMidiProcessorsRebuiltCallback (Runtime forwards both straight to the
+// manager's OnMidiProcessorsWillRebuild()/OnInstrumentRebuilt()). This panel
+// no longer implements its own will-rebuild detach or rebuilt-reopen logic;
+// Refresh() (called after every rebuild, via the same onMidiProcessorsRebuilt_
+// forwarding Runtime already had, now pointed at this panel's Refresh()) just
+// re-reads the manager's already-reopened state to repaint the combo
+// boxes/status label. An absent device still leaves the panel showing
+// "closed" with no failure (spp-5) -- that's the manager's reconcile
+// producing an Offline status, which Refresh() reflects unchanged.
 //
 // Note (Task 3 review, Minor, intentionally left as-is): Runtime::Start()
-// unconditionally calls ReopenPersistedEndpoints() after Initialize(),
-// which redundantly closes/reopens devices a startup patch's own rebuild
-// callback may have just opened; harmless (idempotent) and matches the old
-// miniapp's always-reopen-at-startup behavior, so not changed here.
+// unconditionally triggers a reopen after Initialize() (now via the
+// manager's StartupReconcile()), which redundantly closes/reopens devices a
+// startup patch's own rebuild callback may have just opened; harmless
+// (idempotent) and matches the old miniapp's always-reopen-at-startup
+// behavior, so not changed here.
 //
 // Controller preset selection (spm-37, final-review Finding 1): presetBox_
 // offers "Twister" and "WRLD.Bldr", ported from the pre-runtime miniapp's
-// controllerPresetBox_ (git history around 4240fce^). Unlike that miniapp
-// (which built processors directly), this panel is one of the "unlike the
-// old app" cases above: on selection it replaces slot 0's profile config
-// (preserving its name/endpoint refs where possible) via
-// engine.EditInstrument(...), which itself calls the engine's
-// RebuildMidiProcessors() and fires the rebuilt callback (promoted from the
-// former test-only RebuildMidiProcessorsForTest() so a production UI action
-// has a documented, will-rebuild-safe way to trigger a rebuild) — see
-// OnPresetChanged().
+// controllerPresetBox_ (git history around 4240fce^). On selection it
+// replaces slot 0's profile config (preserving its name/endpoint refs where
+// possible) via engine.EditInstrument(...), which itself calls the engine's
+// RebuildMidiProcessors() and fires the rebuilt callback -- routed to the
+// manager, which resizes/reinstalls forwarding and runs one reconcile pass
+// (see OnPresetChanged()).
 
 #include "synth/Engine.hpp"
 #include "synth/MidiController.hpp"
 #include "synth/PatchPersistence.hpp"
-#include "synth/ThreadId.hpp"
 
+#include "MidiConnectionManager.hpp"
 #include "MidiHandlers.hpp"
 
 #include <juce_audio_devices/juce_audio_devices.h>
@@ -71,59 +76,23 @@
 
 #include <functional>
 #include <memory>
-#include <optional>
 #include <string_view>
 
 namespace synth_runtime {
-
-namespace detail {
-
-// Bridges synth_juce::MidiInHandler (which owns a single
-// std::unique_ptr<synth::MidiInProcessor>) to a single, fixed
-// synth::MidiInProcessor* captured at construction time (a snapshot of
-// engine.MidiInputProcessor(0) taken immediately after a rebuild). The
-// handler's callback thread (JUCE's MIDI input thread) is untagged by
-// MidiHandlers.hpp, so this forwarding Process() applies the
-// synth::ScopedThreadId(MidiInput) tag itself, per the Task 3 brief, without
-// modifying the library header.
-//
-// Deliberately NOT re-read from a panel-owned raw pointer on every call: the
-// engine may destroy/replace midiProcessors_ (and thus the pointee) between
-// MIDI messages, and reading a panel-owned raw pointer from the MIDI
-// callback thread without synchronization is a use-after-free race (Task 3
-// review finding). Instead ALL forwarding goes through
-// synth_juce::MidiInHandler's own mutex-guarded processor_ slot: the panel
-// detaches it (SetProcessor(nullptr)) before the engine destroys
-// midiProcessors_ (via engine.SetMidiProcessorsWillRebuildCallback) and
-// installs a fresh instance of this class — wrapping the freshly rebuilt
-// target — only after the rebuild has completed. The panel never keeps its
-// own raw target pointer.
-class EngineForwardingMidiInProcessor final : public synth::MidiInProcessor {
-public:
-    explicit EngineForwardingMidiInProcessor(synth::MidiInProcessor* target) : target_(target) {}
-
-    void Process(const synth::BasicMidi& midi) override {
-        synth::ScopedThreadId tag(synth::ThreadId::MidiInput);
-        if (target_ != nullptr) {
-            target_->Process(midi);
-        }
-    }
-
-private:
-    // Non-owning; fixed for the lifetime of this instance (one instance per
-    // rebuild generation — see the class comment).
-    synth::MidiInProcessor* target_ = nullptr;
-};
-
-}  // namespace detail
 
 template <synth::SynthApplication App>
 class MidiPanel : public juce::Component {
 public:
     static constexpr int kTwisterItemId = 1;
     static constexpr int kWrldBldrItemId = 2;
+    // The only controller slot this panel currently manages -- see the class
+    // doc comment.
+    static constexpr std::size_t kSlot = 0;
 
-    explicit MidiPanel(synth::Engine<App>& engine) : engine_(engine) {
+    // `connections` must outlive this panel (Runtime owns both, constructing
+    // the manager first -- see Runtime.hpp).
+    MidiPanel(synth::Engine<App>& engine, MidiConnectionManager<App>& connections)
+        : engine_(engine), connections_(connections) {
         // Controller preset combo (spm-37): "Twister" and "WRLD.Bldr",
         // matching the pre-runtime miniapp's controllerPresetBox_ item text
         // exactly (see rebuildMidiProcessors/configureMidiControls in the
@@ -161,31 +130,10 @@ public:
         statusLabel_.setJustificationType(juce::Justification::centredLeft);
         addAndMakeVisible(statusLabel_);
 
-        // Installs a fresh forwarding processor wrapping the engine's
-        // just-constructed MidiInputProcessor(0), through inHandler_'s own
-        // mutex-guarded SetProcessor (see the detail namespace comment on
-        // why the panel never keeps its own raw target pointer).
-        InstallForwardingProcessor();
-
-        if (synth::MidiSender* sender = engine_.Context().midiSender; sender != nullptr) {
-            // Sink index 0: this panel is still a single-device runtime
-            // shell (see the class doc comment) -- it only ever manages
-            // controller slot 0's output device, so it only ever registers
-            // sink 0, even though per-controller processors (Task 2) now
-            // build each slot's outputs against its own sink index (see
-            // MidiSender's kMaxSinks routing).
-            sender->SetSink(0, &outHandler_);
-        }
-
         Refresh();
-        UpdateStatus();
     }
 
-    ~MidiPanel() override {
-        inHandler_.Close();
-        inHandler_.SetProcessor(nullptr);
-        outHandler_.Close();
-    }
+    ~MidiPanel() override = default;
 
     MidiPanel(const MidiPanel&) = delete;
     MidiPanel& operator=(const MidiPanel&) = delete;
@@ -233,13 +181,12 @@ public:
     // engine's live instrument via Engine::EditInstrument (creating slot 0
     // if the instrument is currently empty, preserving its name/endpoint
     // refs otherwise), which itself calls the engine's public
-    // RebuildMidiProcessors() and fires the rebuilt callback. Runs on the
-    // message thread (JUCE combo box callbacks run on the message thread),
-    // matching EditInstrument's documented message-thread-only contract.
-    // Called directly rather than relying solely on the engine's rebuilt
-    // callback: ReopenPersistedEndpoints() (wired as that callback's target)
-    // performs the identical reopen-against-fresh-chain sequence, so this
-    // just triggers EditInstrument and lets that callback do the reopening.
+    // RebuildMidiProcessors() and fires the rebuilt callback -- routed to
+    // connections_ (Runtime wires engine.SetMidiProcessorsRebuiltCallback to
+    // connections_.OnInstrumentRebuilt(), which resizes/reinstalls forwarding
+    // and reconciles), then to this panel's own Refresh() (Runtime also wires
+    // a second rebuilt observer -- see Runtime.hpp) so the combo boxes repaint
+    // against the manager's already-reopened state.
     void OnPresetChanged() {
         const synth::MidiProfileKind kind =
             presetBox_.getSelectedId() == kTwisterItemId ? synth::MidiProfileKind::MfTwister
@@ -259,50 +206,6 @@ public:
         });
     }
 
-    // Wired by Runtime as engine.SetMidiProcessorsWillRebuildCallback's
-    // target: called synchronously, on whichever thread is performing the
-    // rebuild (always the message thread in practice — see Engine.hpp),
-    // immediately BEFORE the engine destroys/replaces midiProcessors_.
-    // Detaches the forwarding processor from inHandler_ (mutex-guarded, so
-    // this is safe with respect to a concurrent MIDI callback) so no
-    // in-flight or subsequent MIDI callback can dereference a processor
-    // pointer into the chain that is about to be destroyed (Task 3 review
-    // finding: processor-swap race / use-after-free).
-    void OnMidiProcessorsWillRebuild() { inHandler_.SetProcessor(nullptr); }
-
-    // Wired by Runtime as engine.SetMidiProcessorsRebuiltCallback's target
-    // (via onMidiProcessorsRebuilt_): opens the endpoint identifiers recorded
-    // on the engine's instrument slot 0 when the corresponding device is
-    // currently present; an absent device leaves the panel closed with no
-    // failure (spp-5), mirroring the old miniapp's openSavedMidiDevices.
-    void ReopenPersistedEndpoints() {
-        // Re-point the forwarding processor at the freshly rebuilt
-        // MidiInputProcessor(0). OnMidiProcessorsWillRebuild() already
-        // detached the previous (now-dangling) one before the engine
-        // destroyed the old chain.
-        InstallForwardingProcessor();
-
-        inHandler_.Close();
-        outHandler_.Close();
-
-        Refresh();
-
-        const Slot0EndpointsResult endpoints = Slot0Endpoints();
-        if (HasDeviceIdentifier(inputDevices_, endpoints.input.identifier)) {
-            inHandler_.Open(ToJuceString(endpoints.input.identifier));
-        }
-        if (HasDeviceIdentifier(outputDevices_, endpoints.output.identifier) &&
-            outHandler_.Open(ToJuceString(endpoints.output.identifier))) {
-            // Parity with the old miniapp's openSavedMidiDevices (Main.cpp):
-            // force a full LED/value resync on the just-reopened output
-            // device (Task 3 review finding: output reset parity). Slot 0
-            // only -- see the class doc comment.
-            engine_.ResetMidiOutputProcessors(0);
-        }
-
-        UpdateStatus();
-    }
-
 private:
     // Builds the MidiControllerProfileConfig for whatever preset is
     // currently selected in presetBox_. WRLD.Bldr goes through
@@ -320,18 +223,6 @@ private:
         return synth::WrldBldrDefaultProfileConfig();
     }
 
-    // Installs a fresh EngineForwardingMidiInProcessor wrapping the
-    // engine's current MidiInputProcessor(0) into inHandler_, through its
-    // mutex-guarded SetProcessor. Must only be called when midiProcessors_
-    // is not mid-rebuild (i.e. either at construction time or after
-    // ReopenPersistedEndpoints() observes the rebuilt callback) — never
-    // between OnMidiProcessorsWillRebuild() and the matching rebuilt
-    // callback. Slot 0 only -- see the class doc comment.
-    void InstallForwardingProcessor() {
-        inHandler_.SetProcessor(
-            std::make_unique<detail::EngineForwardingMidiInProcessor>(engine_.MidiInputProcessor(0)));
-    }
-
     struct Slot0EndpointsResult {
         synth::MidiEndpointRef input;
         synth::MidiEndpointRef output;
@@ -343,45 +234,19 @@ private:
     // app's Init() has run, or for an app that never adds one). Endpoint
     // refs live on slot 0 only for now — see the class doc comment. Reads
     // through Engine::InstrumentSnapshot() (a locked copy), not
-    // Engine::LiveInstrument(): this is called from Refresh() and
-    // ReopenPersistedEndpoints(), both message-thread paths that can run
-    // while the audio thread is live and mutating instrumentConfig_ under
-    // audioDeviceStateMutex_ via ApplyPatchMessage -- reading the unlocked
-    // reference here would race that drain (Task 4 review, Critical: the same
-    // race class RebuildMidiProcessors() was fixed for, see
-    // Engine::LiveInstrument()'s doc comment).
+    // Engine::LiveInstrument(): this is called from Refresh(), a
+    // message-thread path that can run while the audio thread is live and
+    // mutating instrumentConfig_ under audioDeviceStateMutex_ via
+    // ApplyPatchMessage -- reading the unlocked reference here would race
+    // that drain (Task 4 review, Critical: the same race class
+    // RebuildMidiProcessors() was fixed for, see Engine::LiveInstrument()'s
+    // doc comment).
     Slot0EndpointsResult Slot0Endpoints() const {
         const synth::MidiInstrumentConfig instrument = engine_.InstrumentSnapshot();
         if (instrument.controllers.empty()) {
             return {};
         }
         return {instrument.controllers.front().input, instrument.controllers.front().output};
-    }
-
-    // Message-thread write of controller slot 0's endpoint refs via
-    // Engine::EditInstrument, serialized against the audio-thread patch
-    // drain the same way every other instrument mutation is. Silently does
-    // nothing if the instrument has no controller slot yet (there is no
-    // slot 0 to record an endpoint against) — mirrors Slot0Endpoints()'s
-    // empty-instrument tolerance. Does NOT rebuild MIDI processors even
-    // though EditInstrument always does: recording a device identifier does
-    // not change the profile shape RebuildMidiProcessors() builds from, so
-    // the rebuild this triggers is a harmless no-op replacement of the same
-    // processor chain (EditInstrument's contract does not offer a
-    // rebuild-free variant; see its doc comment).
-    void SetSlot0Endpoints(const std::optional<synth::MidiEndpointRef>& input,
-                           const std::optional<synth::MidiEndpointRef>& output) {
-        engine_.EditInstrument([&](synth::MidiInstrumentConfig& instrument) {
-            if (instrument.controllers.empty()) {
-                return;
-            }
-            if (input.has_value()) {
-                instrument.controllers.front().input = *input;
-            }
-            if (output.has_value()) {
-                instrument.controllers.front().output = *output;
-            }
-        });
     }
 
     static juce::String ToJuceString(std::string_view text) { return juce::String(std::string(text).c_str()); }
@@ -405,19 +270,6 @@ private:
         return false;
     }
 
-    static bool HasDeviceIdentifier(const juce::Array<juce::MidiDeviceInfo>& devices, std::string_view identifier) {
-        if (identifier.empty()) {
-            return false;
-        }
-        const juce::String juceIdentifier = ToJuceString(identifier);
-        for (const auto& device : devices) {
-            if (device.identifier == juceIdentifier) {
-                return true;
-            }
-        }
-        return false;
-    }
-
     juce::String SelectedInputIdentifier() const {
         const int ix = inputBox_.getSelectedId() - 1;
         return ix >= 0 && ix < inputDevices_.size() ? inputDevices_[ix].identifier : juce::String();
@@ -428,83 +280,54 @@ private:
         return ix >= 0 && ix < outputDevices_.size() ? outputDevices_[ix].identifier : juce::String();
     }
 
+    // Delegates the actual open/close to connections_ (which owns slot 0's
+    // handler, records the identifier into the engine's live instrument, and
+    // updates its own MidiConnectionState) -- see the class doc comment.
     void ToggleInput() {
-        if (inHandler_.IsOpen()) {
-            inHandler_.Close();
+        if (connections_.IsInputOpen(kSlot)) {
+            connections_.ManualCloseInput(kSlot);
             UpdateStatus();
             return;
         }
-        SyncEndpointStateFromSelection();
         const juce::String identifier = SelectedInputIdentifier();
-        if (identifier.isNotEmpty() && inHandler_.Open(identifier)) {
-            synth::MidiEndpointRef ref;
-            ref.identifier = identifier.toStdString();
-            SetSlot0Endpoints(ref, std::nullopt);
+        if (identifier.isNotEmpty()) {
+            connections_.ManualOpenInput(kSlot, identifier.toStdString());
         }
         UpdateStatus();
     }
 
     void ToggleOutput() {
-        if (outHandler_.IsOpen()) {
-            outHandler_.Close();
+        if (connections_.IsOutputOpen(kSlot)) {
+            connections_.ManualCloseOutput(kSlot);
             UpdateStatus();
             return;
         }
-        SyncEndpointStateFromSelection();
         const juce::String identifier = SelectedOutputIdentifier();
-        if (identifier.isNotEmpty() && outHandler_.Open(identifier)) {
-            synth::MidiEndpointRef ref;
-            ref.identifier = identifier.toStdString();
-            SetSlot0Endpoints(std::nullopt, ref);
-            // Parity with the old miniapp's toggleMidiOutput (Main.cpp):
-            // force a full LED/value resync on the just-opened output
-            // device (Task 3 review finding: output reset parity). Slot 0
-            // only -- see the class doc comment.
-            engine_.ResetMidiOutputProcessors(0);
+        if (identifier.isNotEmpty()) {
+            connections_.ManualOpenOutput(kSlot, identifier.toStdString());
         }
         UpdateStatus();
     }
 
-    void SyncEndpointStateFromSelection() {
-        const juce::String input = SelectedInputIdentifier();
-        const juce::String output = SelectedOutputIdentifier();
-        if (input.isEmpty() && output.isEmpty()) {
-            return;
-        }
-        std::optional<synth::MidiEndpointRef> inputRef;
-        std::optional<synth::MidiEndpointRef> outputRef;
-        if (input.isNotEmpty()) {
-            inputRef = synth::MidiEndpointRef{.identifier = input.toStdString()};
-        }
-        if (output.isNotEmpty()) {
-            outputRef = synth::MidiEndpointRef{.identifier = output.toStdString()};
-        }
-        SetSlot0Endpoints(inputRef, outputRef);
-    }
-
     void UpdateStatus() {
-        openInputButton_.setButtonText(inHandler_.IsOpen() ? "Close In" : "Open In");
-        openOutputButton_.setButtonText(outHandler_.IsOpen() ? "Close Out" : "Open Out");
-        juce::String status = inHandler_.IsOpen() ? "In " + inHandler_.DeviceName() : "In closed";
+        const bool inputOpen = connections_.IsInputOpen(kSlot);
+        const bool outputOpen = connections_.IsOutputOpen(kSlot);
+        openInputButton_.setButtonText(inputOpen ? "Close In" : "Open In");
+        openOutputButton_.setButtonText(outputOpen ? "Close Out" : "Open Out");
+        juce::String status = inputOpen ? "In " + connections_.InputDeviceName(kSlot) : "In closed";
         status += " / ";
-        status += outHandler_.IsOpen() ? "Out " + outHandler_.DeviceName() : "Out closed";
-        if (inHandler_.LastError().isNotEmpty()) {
-            status += " / " + inHandler_.LastError();
+        status += outputOpen ? "Out " + connections_.OutputDeviceName(kSlot) : "Out closed";
+        if (connections_.InputLastError(kSlot).isNotEmpty()) {
+            status += " / " + connections_.InputLastError(kSlot);
         }
-        if (outHandler_.LastError().isNotEmpty()) {
-            status += " / " + outHandler_.LastError();
+        if (connections_.OutputLastError(kSlot).isNotEmpty()) {
+            status += " / " + connections_.OutputLastError(kSlot);
         }
         statusLabel_.setText(status, juce::dontSendNotification);
     }
 
     synth::Engine<App>& engine_;
-
-    // No panel-owned raw pointer into the MIDI processor chain: all
-    // forwarding goes through inHandler_'s own mutex-guarded processor_
-    // slot (see the detail namespace comment and OnMidiProcessorsWillRebuild
-    // / InstallForwardingProcessor).
-    synth_juce::MidiInHandler inHandler_;
-    synth_juce::MidiOutputHandler outHandler_;
+    MidiConnectionManager<App>& connections_;
 
     juce::ComboBox presetBox_;
     juce::TextButton refreshButton_;
