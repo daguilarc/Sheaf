@@ -567,7 +567,37 @@ TEST_CASE(ApplyMappingEditChannelOnWrldBldrSystemRowIsAccepted) {
     REQUIRE_TRUE(after.wrldBldrPosition.has_value());
     REQUIRE_TRUE(after.wrldBldrPosition->x == beforePosition.x);
     REQUIRE_TRUE(after.wrldBldrPosition->y == beforePosition.y);
-    REQUIRE_TRUE(after.wrldBldrPosition->channel == beforePosition.channel);
+    // control->channel is authoritative; the position's channel is kept synced
+    // to it so a later X/Y edit (which repacks control from the channel) cannot
+    // silently restore the old channel.
+    REQUIRE_TRUE(after.wrldBldrPosition->channel == 5);
+}
+
+TEST_CASE(WrldBldrChannelEditSurvivesLaterXYEdit) {
+    MidiConfigViewModel vm;
+    MidiInstrumentConfig instrument = MakeFourKindInstrument();
+    vm.Rebuild(instrument, MakeFourKindConnection());
+
+    // Edit the channel to 5...
+    MidiInstrumentConfig afterChannel;
+    std::string reason;
+    REQUIRE_TRUE(vm.ApplyMappingEdit(0, MidiConfigSection::SystemMessages, 0, MidiMappingRowVM::Field::Channel, 5.0,
+                                     afterChannel, &reason));
+
+    // ...then edit X on the just-committed config. The channel must persist.
+    vm.Rebuild(afterChannel, MakeFourKindConnection());
+    MidiInstrumentConfig afterXY;
+    REQUIRE_TRUE(vm.ApplyMappingEdit(0, MidiConfigSection::SystemMessages, 0, MidiMappingRowVM::Field::WrldBldrX, 3.0,
+                                     afterXY, &reason));
+
+    const auto& after = afterXY.controllers[0].config.systemMessages[0];
+    REQUIRE_TRUE(after.control.has_value());
+    REQUIRE_TRUE(after.control->channel == 5);
+    REQUIRE_TRUE(after.wrldBldrPosition.has_value());
+    REQUIRE_TRUE(after.wrldBldrPosition->channel == 5);
+    REQUIRE_TRUE(after.wrldBldrPosition->x == 3);
+    // cc is repacked from the new (x,y) but the channel axis is preserved.
+    REQUIRE_TRUE(after.control->cc == synth::WrldBldrPositionToCC(after.wrldBldrPosition->x, after.wrldBldrPosition->y));
 }
 
 TEST_CASE(ApplyMappingEditChannelOnWrldBldrSystemRowValidatesRange) {

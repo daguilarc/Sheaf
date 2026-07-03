@@ -323,9 +323,13 @@ std::string SystemMessageAddressLabel(const MidiControllerSystemMessageAssociati
     if (kind == MidiProfileKind::Launchpad && association.launchpadPosition.has_value()) {
         oss << "pad (" << association.launchpadPosition->x << "," << association.launchpadPosition->y << ")";
     } else if (kind == MidiProfileKind::WrldBldr && association.wrldBldrPosition.has_value()) {
-        oss << "pos ch" << static_cast<int>(association.wrldBldrPosition->channel) << " ("
-            << static_cast<int>(association.wrldBldrPosition->x) << "," << static_cast<int>(association.wrldBldrPosition->y)
-            << ")";
+        // control->channel is authoritative for the channel (see the Channel /
+        // X/Y edit cases in ApplyMappingEdit); fall back to the position's own
+        // channel only when there is no control address.
+        const int channel = association.control.has_value() ? static_cast<int>(association.control->channel)
+                                                            : static_cast<int>(association.wrldBldrPosition->channel);
+        oss << "pos ch" << channel << " (" << static_cast<int>(association.wrldBldrPosition->x) << ","
+            << static_cast<int>(association.wrldBldrPosition->y) << ")";
     } else if (association.control.has_value()) {
         oss << "ch" << static_cast<int>(association.control->channel) << " cc"
             << static_cast<int>(association.control->cc);
@@ -977,6 +981,14 @@ bool MidiConfigViewModel::ApplyMappingEdit(std::size_t controllerIx, MidiConfigS
                             break;
                         }
                         association.control->channel = static_cast<std::uint8_t>(value);
+                        // control->channel is authoritative, but WrldBldr rows
+                        // also carry the channel on wrldBldrPosition (used by
+                        // the address label and the X/Y repack). Keep the two
+                        // coherent so a channel edit survives a later X/Y edit
+                        // and the label never shows a stale channel.
+                        if (association.wrldBldrPosition.has_value()) {
+                            association.wrldBldrPosition->channel = association.control->channel;
+                        }
                         fieldValid = true;
                         break;
                     case Field::Cc:
@@ -1034,12 +1046,19 @@ bool MidiConfigViewModel::ApplyMappingEdit(std::size_t controllerIx, MidiConfigS
                         } else {
                             candidate.y = coordinate;
                         }
+                        // control->channel is authoritative for the channel (a
+                        // prior Channel edit may have changed it without touching
+                        // the position). Preserve it here rather than pulling a
+                        // possibly-stale channel off the position.
+                        const std::uint8_t channel =
+                            association.control.has_value() ? association.control->channel : candidate.channel;
+                        candidate.channel = channel;
                         association.wrldBldrPosition = candidate;
                         // Finding 2: keep the paired control address (what
                         // the input processor actually matches on) coherent
                         // with the position the UI displays.
                         association.control =
-                            MidiControlAddress{.channel = candidate.channel,
+                            MidiControlAddress{.channel = channel,
                                                .cc = WrldBldrPositionToCC(candidate.x, candidate.y)};
                         fieldValid = true;
                         break;
