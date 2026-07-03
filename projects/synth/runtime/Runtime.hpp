@@ -290,11 +290,11 @@ public:
     juce::Component& AppComponent() { return engine_.Application().UIComponent(); }
 
     // The per-controller MIDI connection owner (Task 4 of Plan 4):
-    // ControllersPage reads EnumerateNow()/State() directly to populate its
-    // device combos/status dots and calls ManualOpenInput/ManualOpenOutput
-    // straight from a combo's onChange, the same direct-reference pattern
-    // AudioConfigPage uses for DeviceManager() (see this class's own doc
-    // comment).
+    // ControllersPage's device combo onChange → view-model SetEndpointRef()
+    // → engine.EditInstrument() commit → MIDI processors rebuilt callback →
+    // MidiConnectionManager reconciles opens/closes the device as needed,
+    // mirroring how engine.SetAudioDeviceFromHost works for the audio path
+    // (see ApplyAudioDeviceSelection's doc comment).
     MidiConnectionManager<App>& MidiConnections() { return *midiConnections_; }
 
     // The JUCE audio device manager this Runtime drives as
