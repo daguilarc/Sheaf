@@ -453,9 +453,11 @@ public:
     // under audioDeviceStateMutex_ (see DrainPatchInputBus and friends), so
     // ANY other running-state reader racing that drain must go through
     // InstrumentSnapshot() instead of this accessor -- see that method's doc
-    // comment (Task 4 review, Critical: MidiPanel::Slot0Endpoints() read this
-    // unlocked from message-thread paths concurrent with running audio,
-    // repeating the same race class RebuildMidiProcessors() was fixed for).
+    // comment (Task 4 review, Critical: an earlier UI-side endpoint reader --
+    // the single-slot MidiPanel component this file's ControllersPage
+    // replaced -- read this unlocked from message-thread paths concurrent
+    // with running audio, repeating the same race class
+    // RebuildMidiProcessors() was fixed for).
     // Test-support code driving the engine single-threaded (e.g.
     // tests/support/SynthRig.hpp's InstallInstrumentForTest, and
     // engine_tests.cpp's direct pokes) has no concurrent audio thread to race
@@ -468,9 +470,10 @@ public:
     // running-state counterpart of LiveInstrument() -- use this (not
     // LiveInstrument()) from any message-thread path that can run while audio
     // is live and does not already hold audioDeviceStateMutex_ (e.g.
-    // MidiPanel::Slot0Endpoints(), called from Refresh() and
-    // ReopenPersistedEndpoints()). Mirrors AudioDeviceSnapshot()'s pattern for
-    // audioDeviceState_.
+    // ControllersPage's per-tick RefreshOnTick(), which rebuilds
+    // synth::MidiConfigViewModel from a fresh snapshot -- see
+    // runtime/ControllersPage.hpp). Mirrors AudioDeviceSnapshot()'s pattern
+    // for audioDeviceState_.
     MidiInstrumentConfig InstrumentSnapshot() const {
         const std::lock_guard<std::mutex> lock(audioDeviceStateMutex_);
         return instrumentConfig_;
@@ -590,8 +593,8 @@ public:
 
     // Public host API: rebuild midiProcessors_ from the current
     // instrumentConfig_ on demand (e.g. after a host mutates it via
-    // EditInstrument, such as switching MIDI controller presets — see
-    // MidiPanel). Runs midiProcessorsWillRebuildCallback_ (if set)
+    // EditInstrument, such as ControllersPage adding/editing a controller —
+    // see runtime/ControllersPage.hpp). Runs midiProcessorsWillRebuildCallback_ (if set)
     // synchronously, BEFORE the current midiProcessors_ chains are
     // destroyed/replaced, then constructs one fresh chain per controller slot
     // via CreateMidiControllerProfile against midiBus_/uiState_ (uiState_ may
@@ -602,13 +605,15 @@ public:
     // the single call site for the midiProcessors_ assignment, so it covers
     // every rebuild: Initialize()'s silent first rebuild, Initialize()'s
     // startup-patch rebuild, MessageThreadTick()'s patch-driven rebuild, and
-    // any host-initiated rebuild (e.g. a preset switch). Does NOT itself
+    // any host-initiated rebuild (e.g. adding a controller). Does NOT itself
     // invoke midiProcessorsRebuiltCallback_ — the tick's midiRebuildPending_
     // path does that after clearing the flag; EditInstrument does it after
-    // applying the edit; callers rebuilding directly on the message thread
-    // outside EditInstrument (like MidiPanel's preset switch, until it moves
-    // onto EditInstrument) invoke midiProcessorsRebuiltCallback_ themselves,
-    // or otherwise handle the endpoint-reopen consequences of a fresh chain.
+    // applying the edit (the path every current caller uses -- e.g.
+    // ControllersPage's Commit(), MidiConnectionManager's UpdateRef()); a
+    // caller rebuilding directly on the message thread outside EditInstrument
+    // would need to invoke midiProcessorsRebuiltCallback_ itself, or
+    // otherwise handle the endpoint-reopen consequences of a fresh chain, but
+    // there is no such caller currently.
     //
     // Per-controller rebuild (Task 2): midiProcessors_ now holds one
     // MidiControllerProfileResult per controller slot, index-for-index with

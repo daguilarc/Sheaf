@@ -11,11 +11,10 @@
 //
 // Forwarding-processor swap safety (binding, see p3-globals.md): reopening
 // or rebuilding a controller's input device must never leave a MIDI callback
-// pointing at a destroyed processor chain. This class reuses the same
-// detach -> rebuild -> reattach discipline MidiPanel.hpp established
-// (MidiPanel.hpp:240-294, OnMidiProcessorsWillRebuild +
-// InstallForwardingProcessor), applied per controller instead of just slot
-// 0: engine.SetMidiProcessorsWillRebuildCallback must be wired (by the host,
+// pointing at a destroyed processor chain. This class follows a
+// detach -> rebuild -> reattach discipline (OnMidiProcessorsWillRebuild +
+// InstallForwardingProcessor), applied per controller (every slot, including
+// slot 0): engine.SetMidiProcessorsWillRebuildCallback must be wired (by the host,
 // e.g. Runtime) to call this class's OnMidiProcessorsWillRebuild() BEFORE
 // the engine destroys midiProcessors_, and the rebuilt callback should call
 // OnInstrumentRebuilt() afterward. Between those two calls, every input
@@ -61,21 +60,24 @@
 // comment for the post-startup behavior (patch loads, preset changes, sar-8)
 // once started_ is true.
 //
-// Ownership handoff from MidiPanel (binding, see p3-globals.md's
-// architecture paragraph: "The runtime replaces MidiPanel's single handler
-// pair with a per-controller vector..."): this manager is now the sole owner
-// of every controller slot's MidiInHandler/MidiOutputHandler, including slot
-// 0 -- MidiPanel.hpp no longer owns inHandler_/outHandler_ or registers a
-// sink itself (see that file's updated class doc comment). MidiPanel is a
-// thin UI shell: its combo boxes/buttons/status label read and write through
-// this manager's slot-scoped ManualOpenInput/ManualOpenOutput/
-// ManualCloseInput/ManualCloseOutput/IsInputOpen/IsOutputOpen/
-// InputDeviceName/OutputDeviceName/InputLastError/OutputLastError accessors
-// instead of owning handlers directly (currently only ever called for slot
-// 0), so there is exactly one owner per physical device and no sink/open
-// contention. A later plan is expected to replace MidiPanel with a genuinely
-// per-controller UI (multiple slot rows instead of one); until then,
-// MidiPanel keeps talking to this manager about slot 0 only.
+// Sole owner of every device handler (binding, see p3-globals.md's
+// architecture paragraph): this manager is the sole owner of every
+// controller slot's MidiInHandler/MidiOutputHandler, including slot 0 -- so
+// there is exactly one owner per physical device and no sink/open
+// contention. Task 4 of Plan 4 replaced the old single-slot MidiPanel UI
+// with ControllersPage.hpp, a genuinely per-controller UI; ControllersPage
+// does NOT call into this manager to open/close devices directly -- per
+// p4-globals.md's binding ("all page edits commit through
+// engine.EditInstrument + connectionManager_ reconcile -- never mutate
+// config or handlers directly from components"), a device combo selection on
+// that page writes the chosen (or cleared) MidiEndpointRef via
+// synth::MidiConfigViewModel::SetEndpointRef and commits it through
+// engine.EditInstrument; this manager's own rebuilt-callback handler
+// (OnInstrumentRebuilt(), wired by the host below) is what actually opens or
+// closes the device, via a normal reconcile pass -- the same self-healing
+// path a patch-carried endpoint ref takes on load. This manager exposes only
+// State()/EnumerateNow() as direct read accessors for a UI; there is no
+// UI-facing manual open/close entry point.
 #include "synth/AsyncLogger.hpp"
 #include "synth/Engine.hpp"
 #include "synth/MidiController.hpp"
@@ -98,14 +100,12 @@ namespace synth_runtime {
 
 namespace detail {
 
-// See MidiPanel.hpp's detail::EngineForwardingMidiInProcessor for the full
-// rationale (mutex-guarded target swap, MIDI-thread tagging). Duplicated
-// here (rather than shared) because MidiPanel.hpp's copy is scoped to a
-// single fixed target captured at construction; this manager needs the
-// identical shape per controller slot, and the two headers otherwise have no
-// dependency on each other -- Plan 4 is expected to delete MidiPanel's
-// single-slot copy once the panel itself moves onto this manager (see the
-// class doc comment on MidiPanel.hpp).
+// Forwards MIDI input to whatever the engine's current processor for this
+// controller slot is, retargetable via SetProcessor(nullptr) around a
+// midiProcessors_ rebuild (see this file's "Forwarding-processor swap
+// safety" doc comment above) without ever destroying/recreating the JUCE
+// device handler itself. One instance per controller slot (installed by
+// InstallForwardingProcessor(ix), below).
 class EngineForwardingMidiInProcessor final : public synth::MidiInProcessor {
 public:
     explicit EngineForwardingMidiInProcessor(synth::MidiInProcessor* target) : target_(target) {}
@@ -357,119 +357,7 @@ public:
 
     synth::MidiDeviceList EnumerateNow() const { return detail::EnumerateDevices(); }
 
-    // Manual UI-driven open/close for a single controller slot, used by
-    // MidiPanel's toggle buttons (currently slot 0 only -- see the class doc
-    // comment). Unlike the plan executor's Open*/Close* ops (invoked only
-    // from within Reconcile(), always paired with a status transition the
-    // plan already decided on), these are host-initiated: a manual open also
-    // records the opened identifier+name into the engine's live instrument
-    // via EditInstrument (mirroring MidiPanel's old SetSlot0Endpoints/
-    // SyncEndpointStateFromSelection contract) and updates state_ directly,
-    // the same way ExecuteReconcilePlan would for an OpenInput/OpenOutput
-    // action -- so the next poll/rebuild reconcile sees a consistent,
-    // already-Online state and does not redundantly reopen what the user
-    // just opened by hand. Returns false (no state change) when ix is out of
-    // range or the open itself fails; the caller (MidiPanel) is responsible
-    // for surfacing failure via its own status label, the same way it always
-    // has via the handler's LastError().
-    //
-    // `name` (Task 2 review, Important): the device's display name, as
-    // enumerated by the caller (MidiPanel reads it from the same
-    // AvailableDevices() list it built its combo box from -- see
-    // MidiPanel.hpp's ToggleInput/ToggleOutput). This is stored into the
-    // endpoint ref alongside identifier, NOT left empty: PlanMidiReconciliation's
-    // name-fallback matching (smi-3, see MidiReconcile.hpp's doc comment) is
-    // how a manually-opened device survives OS identifier churn (the same
-    // physical device re-enumerating under a new identifier after a
-    // replug/reboot) -- a ref stored with name="" can never match by name,
-    // permanently losing self-healing for that slot until the user reopens
-    // it by hand again. An empty `name` is tolerated (stored as-is) for
-    // callers that genuinely don't have one, but every current caller
-    // supplies it.
-    //
-    // Guarded by reconciling_ around the EditInstrument call (same flag
-    // Reconcile() uses, see the class doc comment's re-entrancy paragraph):
-    // EditInstrument's synchronous rebuilt callback would otherwise run a
-    // whole redundant OnInstrumentRebuilt()-driven reconcile pass on top of
-    // the state this method just set directly -- harmless (the pass would
-    // see everything already consistent and plan no actions) but wasted
-    // work, and it would call InstallForwardingProcessor(ix) a second time.
-    // The guard is set/cleared here rather than left to Reconcile() because
-    // this path never calls Reconcile() itself.
-    bool ManualOpenInput(std::size_t ix, const std::string& identifier, const std::string& name = std::string()) {
-        if (ix >= inputHandlers_.size() || identifier.empty()) {
-            return false;
-        }
-        const bool opened = OpenInput(ix, identifier);
-        EnsureStateSlot(ix);
-        if (opened) {
-            state_.controllers[ix].input.status = synth::MidiEndpointStatus::Online;
-            state_.controllers[ix].input.openIdentifier = identifier;
-            reconciling_ = true;
-            UpdateRef(ix, identifier, name, /*isInput=*/true);
-            reconciling_ = false;
-        }
-        return opened;
-    }
-
-    bool ManualOpenOutput(std::size_t ix, const std::string& identifier, const std::string& name = std::string()) {
-        if (ix >= outputHandlers_.size() || identifier.empty()) {
-            return false;
-        }
-        const bool opened = OpenOutput(ix, identifier);
-        EnsureStateSlot(ix);
-        if (opened) {
-            state_.controllers[ix].output.status = synth::MidiEndpointStatus::Online;
-            state_.controllers[ix].output.openIdentifier = identifier;
-            reconciling_ = true;
-            UpdateRef(ix, identifier, name, /*isInput=*/false);
-            reconciling_ = false;
-            engine_.ResetMidiOutputProcessors(ix);
-        }
-        return opened;
-    }
-
-    void ManualCloseInput(std::size_t ix) {
-        CloseInput(ix);
-        EnsureStateSlot(ix);
-        state_.controllers[ix].input.status = synth::MidiEndpointStatus::Offline;
-        state_.controllers[ix].input.openIdentifier.clear();
-    }
-
-    void ManualCloseOutput(std::size_t ix) {
-        CloseOutput(ix);
-        EnsureStateSlot(ix);
-        state_.controllers[ix].output.status = synth::MidiEndpointStatus::Offline;
-        state_.controllers[ix].output.openIdentifier.clear();
-    }
-
-    bool IsInputOpen(std::size_t ix) const {
-        return ix < inputHandlers_.size() && inputHandlers_[ix] && inputHandlers_[ix]->IsOpen();
-    }
-    bool IsOutputOpen(std::size_t ix) const {
-        return ix < outputHandlers_.size() && outputHandlers_[ix] && outputHandlers_[ix]->IsOpen();
-    }
-
-    juce::String InputDeviceName(std::size_t ix) const {
-        return ix < inputHandlers_.size() && inputHandlers_[ix] ? inputHandlers_[ix]->DeviceName() : juce::String();
-    }
-    juce::String OutputDeviceName(std::size_t ix) const {
-        return ix < outputHandlers_.size() && outputHandlers_[ix] ? outputHandlers_[ix]->DeviceName() : juce::String();
-    }
-    juce::String InputLastError(std::size_t ix) const {
-        return ix < inputHandlers_.size() && inputHandlers_[ix] ? inputHandlers_[ix]->LastError() : juce::String();
-    }
-    juce::String OutputLastError(std::size_t ix) const {
-        return ix < outputHandlers_.size() && outputHandlers_[ix] ? outputHandlers_[ix]->LastError() : juce::String();
-    }
-
 private:
-    void EnsureStateSlot(std::size_t ix) {
-        if (ix >= state_.controllers.size()) {
-            state_.controllers.resize(ix + 1);
-        }
-    }
-
     // Grows/shrinks inputHandlers_/outputHandlers_/state_.controllers to
     // engine_.MidiControllerCount(), preserving existing entries by index
     // (a shrink closes and drops the trailing handlers/sinks; a growth

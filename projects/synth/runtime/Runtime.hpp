@@ -25,8 +25,15 @@
 // the background device-list poller). As of Task 4 of Plan 4, Runtime owns
 // no MIDI UI component at all -- MidiConnections() exposes midiConnections_
 // directly so ControllersPage (runtime/ControllersPage.hpp) can read
-// EnumerateNow()/State() and drive ManualOpenInput/ManualOpenOutput itself,
-// the same way AudioConfigPage reads DeviceManager() directly.
+// EnumerateNow()/State() to populate its combos/status dots, the same way
+// AudioConfigPage reads DeviceManager() directly. ControllersPage never
+// calls into midiConnections_ to open/close a device itself, though (Task 4
+// review, Important finding 3): every device combo change writes through
+// synth::MidiConfigViewModel::SetEndpointRef and commits via
+// engine.EditInstrument, exactly like every other edit on that page; the
+// rebuilt callback below (SetMidiProcessorsRebuiltHook) is what lets the
+// page notice ANY instrument change -- including a patch load/revert, or a
+// reconcile-driven ref rewrite -- and re-derive its view model.
 //
 // Audio device selection (Task 3 of Plan 4): the actual switch
 // (AudioDeviceSetup mutation, setAudioDeviceSetup, logging) is implemented
@@ -54,10 +61,12 @@
 // with a genuinely per-controller UI, and its old preset combo is gone
 // entirely (kind defaults are now seeded via ControllersPage's "+" row, per
 // spm-37). Runtime no longer owns a MidiPanel instance; it exposes
-// MidiConnections() so ControllersPage can read EnumerateNow()/State() and
-// drive ManualOpenInput/ManualOpenOutput directly, the same way
-// AudioConfigPage reads DeviceManager() directly instead of Runtime owning
-// AudioPanel.
+// MidiConnections() so ControllersPage can read EnumerateNow()/State() for
+// display, the same way AudioConfigPage reads DeviceManager() directly
+// instead of Runtime owning AudioPanel -- all WRITES (device selection,
+// mapping edits, adding a controller) go through
+// synth::MidiConfigViewModel + engine.EditInstrument instead (see the
+// paragraph above and SetMidiProcessorsRebuiltHook's doc comment below).
 
 #include "synth/AppConcepts.hpp"
 #include "synth/AsyncLogger.hpp"
@@ -102,12 +111,14 @@ public:
         // midiConnections_->OnInstrumentRebuilt() resizes to the current
         // controller count, reinstalls forwarding, and runs one reconcile
         // pass (sar-8) -- the same executor path the timer-driven poll uses.
-        // onMidiProcessorsRebuilt_ (wired in Start(), before Initialize(),
-        // Task 4 of Plan 4: no longer targets a MidiPanel -- ControllersPage
-        // re-derives its own view model from InstrumentSnapshot()/State() on
-        // its own per-tick refresh, so this hook is left available for a
-        // future host that wants tighter rebuild-triggered repaint latency
-        // but is not required to be wired to anything).
+        // onMidiProcessorsRebuilt_ (wired by MainPane via
+        // SetMidiProcessorsRebuiltHook(), see that method's doc comment) is
+        // ControllersPage's subscription to EVERY rebuild -- not just its
+        // own edits -- so a patch load/revert or any other engine-driven
+        // instrument change also marks the page dirty (Task 4 review,
+        // Critical finding 1: a page that only dirtied on its own commits or
+        // a connection-status fingerprint missed exactly this class of
+        // change, letting a later edit commit from a stale snapshot).
         engine_.SetMidiProcessorsRebuiltCallback([this] {
             midiConnections_->OnInstrumentRebuilt();
             if (onMidiProcessorsRebuilt_) {
@@ -313,13 +324,31 @@ public:
     // way as the status hook.
     void SetAudioSyncHook(std::function<void()> hook) { audioSyncHook_ = std::move(hook); }
 
+    // Installs ControllersPage's rebuild-notification hook (Task 4 review,
+    // Critical finding 1): invoked at the end of
+    // engine_.SetMidiProcessorsRebuiltCallback's lambda (constructor, above),
+    // i.e. on EVERY MIDI-processor rebuild -- not just ones ControllersPage's
+    // own edits triggered. This is what closes the "missed instrument
+    // changes" gap: a patch load/revert (or any other engine-driven edit
+    // path) that changes controller mappings/names/kinds also rebuilds MIDI
+    // processors and fires this hook, so ControllersPage can mark itself
+    // dirty regardless of who caused the rebuild. Re-entrancy: when
+    // ControllersPage's OWN Commit() is what triggered this rebuild, the hook
+    // still fires and sets dirty_ again -- harmless, since dirty_ is a plain
+    // idempotent bool the page already sets itself in Commit() (see
+    // ControllersPage.hpp's Commit() doc comment). Cleared the same way as
+    // the audio hooks (an empty std::function on page teardown), via
+    // ControllersPage's destructor.
+    void SetMidiProcessorsRebuiltHook(std::function<void()> hook) { onMidiProcessorsRebuilt_ = std::move(hook); }
+
     // AudioConfigPage's output combo onChange target (sar-15 semantics
     // unchanged from the deleted AudioPanel::onOutputSelected path): the
     // user picked an output device in the combo, on the message thread
     // (JUCE combo box callbacks run there). Records the selection via
     // engine_.SetAudioDeviceFromHost (so it persists into the next saved
-    // patch, mirroring how MidiPanel records endpoint selection into the
-    // engine's instrument via EditInstrument, AND advances the engine's
+    // patch, mirroring how ControllersPage records endpoint selection into
+    // the engine's instrument via synth::MidiConfigViewModel::SetEndpointRef
+    // + EditInstrument), AND advances the engine's
     // audio-device-state shadow so a later patch revert back to this exact
     // selection is correctly treated as "no change" -- see
     // SetAudioDeviceFromHost's doc comment; this replaces the old direct
@@ -720,15 +749,13 @@ private:
     // engine_ is torn down.
     std::unique_ptr<MidiConnectionManager<App>> midiConnections_;
 
-    // Available for a future host that wants a hook invoked whenever the
-    // engine rebuilds MIDI processors (Task 4 of Plan 4 retired MidiPanel,
-    // the only prior subscriber); midiConnections_'s own rebuilt-callback
-    // handler (wired directly in the constructor, above) already
-    // reopens/reconciles every slot's connections regardless of whether this
-    // is set. ControllersPage does not use this -- it re-derives its own
-    // view model from InstrumentSnapshot()/MidiConnections().State() on its
-    // own per-tick refresh instead (see ControllersPage.hpp's class doc
-    // comment).
+    // ControllersPage's rebuild-notification hook (Task 4 review, Critical
+    // finding 1), installed via SetMidiProcessorsRebuiltHook() -- see that
+    // method's doc comment. Invoked at the end of every MIDI-processor
+    // rebuild, AFTER midiConnections_->OnInstrumentRebuilt() has already
+    // reopened/reconciled every slot's connections; empty (a no-op) until
+    // MainPane wires it, and cleared the same way the audio hooks are when
+    // the owning page is torn down.
     std::function<void()> onMidiProcessorsRebuilt_;
 
     // Shell hook: set later by whatever owns the UI, invoked at the end of

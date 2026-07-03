@@ -60,8 +60,26 @@ std::unordered_set<std::size_t> PlanEndpointPass(const MidiInstrumentConfig& ins
         const MidiEndpointConnection connection = ConnectionFor(current, ix, isInput);
 
         if (!ref.IsConfigured()) {
-            // Unconfigured refs are inert: no actions, regardless of connection state or
-            // device presence.
+            // An unconfigured ref is inert with respect to OPENING anything -- no
+            // Open*/UpdateRef is ever planned for it, regardless of device presence. But
+            // it is not unconditionally inert: a ref can become unconfigured while its
+            // endpoint is still Online (e.g. the UI clearing a device combo to "(none)"
+            // via SetEndpointRef{}), and that orphaned open device must be closed rather
+            // than left running forever. Mirror the "device now absent" handling below --
+            // Close* + Mark*Offline when currently Online, nothing when already
+            // Offline/Unconfigured (idempotent).
+            if (connection.status == MidiEndpointStatus::Online) {
+                ReconcileAction close;
+                close.type = closeType;
+                close.controllerIx = ix;
+                close.identifier = connection.openIdentifier;
+                plan.actions.push_back(close);
+
+                ReconcileAction offline;
+                offline.type = offlineType;
+                offline.controllerIx = ix;
+                plan.actions.push_back(offline);
+            }
             continue;
         }
 

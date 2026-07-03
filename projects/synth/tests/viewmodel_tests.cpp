@@ -277,6 +277,201 @@ TEST_CASE(WrldBldrEncoderSectionListsSixteenTurnsAndPushes) {
     REQUIRE_TRUE(pushCount == 16);
 }
 
+// --- Finding 2 (Task 4 review, Important): RowFieldValue() -----------------
+//
+// RowFieldValue is the VM-owned replacement for ControllersPage's old
+// page-local RowFieldCurrentValue walker -- it must read the exact same
+// value ApplyMappingEdit would accept/produce for that (controllerIx,
+// section, rowIx, field), across every field kind the default profiles
+// exercise, and return false for a field not advertised on a given row
+// (mirroring ApplyMappingEdit's own editableFields gate).
+
+TEST_CASE(RowFieldValueReadsEncoderTurnChannelCcSlotIxPosition) {
+    MidiConfigViewModel vm;
+    MidiInstrumentConfig instrument = MakeFourKindInstrument();
+    vm.Rebuild(instrument, MakeFourKindConnection());
+
+    const auto& turn = instrument.controllers[0].config.encoderInput->turns[0];
+    double value = -1.0;
+
+    REQUIRE_TRUE(vm.RowFieldValue(0, MidiConfigSection::Encoders, 0, MidiMappingRowVM::Field::Channel, value));
+    REQUIRE_TRUE(value == static_cast<double>(turn.control.channel));
+
+    REQUIRE_TRUE(vm.RowFieldValue(0, MidiConfigSection::Encoders, 0, MidiMappingRowVM::Field::Cc, value));
+    REQUIRE_TRUE(value == static_cast<double>(turn.control.cc));
+
+    REQUIRE_TRUE(vm.RowFieldValue(0, MidiConfigSection::Encoders, 0, MidiMappingRowVM::Field::SlotIx, value));
+    REQUIRE_TRUE(value == static_cast<double>(turn.slotIx));
+
+    REQUIRE_TRUE(vm.RowFieldValue(0, MidiConfigSection::Encoders, 0, MidiMappingRowVM::Field::Position, value));
+    REQUIRE_TRUE(value == static_cast<double>(turn.position));
+}
+
+TEST_CASE(RowFieldValueReadsEncoderConfigLevelRelativeModeAndTurnStep) {
+    MidiConfigViewModel vm;
+    MidiInstrumentConfig instrument = MakeFourKindInstrument();
+    vm.Rebuild(instrument, MakeFourKindConnection());
+
+    const auto& encoderInput = *instrument.controllers[0].config.encoderInput;
+    const std::vector<MidiMappingRowVM> rows = vm.SectionRows(0, MidiConfigSection::Encoders);
+    // Config-level rows are the last two: RelativeMode then TurnStep (see
+    // ForEachEncoderRow's visit order in the .cpp).
+    const std::size_t relativeModeRowIx = rows.size() - 2;
+    const std::size_t turnStepRowIx = rows.size() - 1;
+
+    double value = -1.0;
+    REQUIRE_TRUE(vm.RowFieldValue(0, MidiConfigSection::Encoders, relativeModeRowIx,
+                                  MidiMappingRowVM::Field::RelativeMode, value));
+    REQUIRE_TRUE(value == (encoderInput.relativeMode == synth::EncoderRelativeMode::DirectionOnly ? 1.0 : 0.0));
+
+    REQUIRE_TRUE(
+        vm.RowFieldValue(0, MidiConfigSection::Encoders, turnStepRowIx, MidiMappingRowVM::Field::TurnStep, value));
+    REQUIRE_TRUE(value == static_cast<double>(encoderInput.turnStep));
+}
+
+TEST_CASE(RowFieldValueReadsAnalogGestureFieldsAndSceneBlend) {
+    MidiConfigViewModel vm;
+    MidiInstrumentConfig instrument = MakeFourKindInstrument();
+    vm.Rebuild(instrument, MakeFourKindConnection());
+
+    const auto& analogInput = *instrument.controllers[0].config.analogInput;
+    const auto& gesture = analogInput.gestures[0];
+    double value = -1.0;
+
+    REQUIRE_TRUE(vm.RowFieldValue(0, MidiConfigSection::Analogs, 0, MidiMappingRowVM::Field::Channel, value));
+    REQUIRE_TRUE(value == static_cast<double>(gesture.control.channel));
+
+    REQUIRE_TRUE(vm.RowFieldValue(0, MidiConfigSection::Analogs, 0, MidiMappingRowVM::Field::Cc, value));
+    REQUIRE_TRUE(value == static_cast<double>(gesture.control.cc));
+
+    REQUIRE_TRUE(vm.RowFieldValue(0, MidiConfigSection::Analogs, 0, MidiMappingRowVM::Field::GestureIx, value));
+    REQUIRE_TRUE(value == static_cast<double>(gesture.gestureIx));
+
+    const std::vector<MidiMappingRowVM> rows = vm.SectionRows(0, MidiConfigSection::Analogs);
+    const std::size_t sceneBlendRowIx = rows.size() - 1;
+    REQUIRE_TRUE(vm.RowFieldValue(0, MidiConfigSection::Analogs, sceneBlendRowIx, MidiMappingRowVM::Field::SceneBlend,
+                                  value));
+    REQUIRE_TRUE(value == static_cast<double>(analogInput.sceneBlend->cc));
+}
+
+TEST_CASE(RowFieldValueReadsWrldBldrSystemMessagePositions) {
+    MidiConfigViewModel vm;
+    MidiInstrumentConfig instrument = MakeFourKindInstrument();
+    vm.Rebuild(instrument, MakeFourKindConnection());
+
+    const auto& association = instrument.controllers[0].config.systemMessages[0];
+    double value = -1.0;
+
+    REQUIRE_TRUE(vm.RowFieldValue(0, MidiConfigSection::SystemMessages, 0, MidiMappingRowVM::Field::WrldBldrX, value));
+    REQUIRE_TRUE(value == static_cast<double>(association.wrldBldrPosition->x));
+
+    REQUIRE_TRUE(vm.RowFieldValue(0, MidiConfigSection::SystemMessages, 0, MidiMappingRowVM::Field::WrldBldrY, value));
+    REQUIRE_TRUE(value == static_cast<double>(association.wrldBldrPosition->y));
+
+    // Channel/Cc are not in this row's editableFields (WRLD.Bldr system rows
+    // only advertise WrldBldrX/Y + Press/ReleaseMessage) -- must return false,
+    // mirroring ApplyMappingEditChannelOnWrldBldrSystemRowIsRefused.
+    REQUIRE_TRUE(!vm.RowFieldValue(0, MidiConfigSection::SystemMessages, 0, MidiMappingRowVM::Field::Channel, value));
+    REQUIRE_TRUE(!vm.RowFieldValue(0, MidiConfigSection::SystemMessages, 0, MidiMappingRowVM::Field::Cc, value));
+}
+
+TEST_CASE(RowFieldValueReadsLaunchpadSystemMessagePositions) {
+    MidiConfigViewModel vm;
+    MidiInstrumentConfig instrument = MakeFourKindInstrument();
+    vm.Rebuild(instrument, MakeFourKindConnection());
+
+    const auto& association = instrument.controllers[2].config.systemMessages[0];  // "pads"
+    double value = -1.0;
+
+    REQUIRE_TRUE(
+        vm.RowFieldValue(2, MidiConfigSection::SystemMessages, 0, MidiMappingRowVM::Field::LaunchpadX, value));
+    REQUIRE_TRUE(value == static_cast<double>(association.launchpadPosition->x));
+
+    REQUIRE_TRUE(
+        vm.RowFieldValue(2, MidiConfigSection::SystemMessages, 0, MidiMappingRowVM::Field::LaunchpadY, value));
+    REQUIRE_TRUE(value == static_cast<double>(association.launchpadPosition->y));
+
+    REQUIRE_TRUE(!vm.RowFieldValue(2, MidiConfigSection::SystemMessages, 0, MidiMappingRowVM::Field::Channel, value));
+}
+
+TEST_CASE(RowFieldValueReadsGenericSystemMessageChannelAndCc) {
+    // Plain Channel/Cc addressing (the SystemMessages "else" branch, neither
+    // launchpad nor wrldbldr) is exercised by MfTwister side-button rows --
+    // the zero-arg MfTwisterDefaultProfileConfig() used in MakeTwisterSlot()
+    // has no side buttons configured by default (see
+    // TwisterSideButtonRowChannelCcAndMessageFieldsAllSucceed's comment), so
+    // build one directly here with a side button set.
+    synth::MfTwisterDefaultProfileOptions options;
+    options.sideButtons[0] = MidiControllerSystemMessageAssociation{
+        .press = synth::MessageIn::SetShift(0, true),
+        .release = synth::MessageIn::SetShift(0, false),
+    };
+    MidiControllerSlot slot;
+    slot.name = "twist2";
+    slot.kind = MidiProfileKind::MfTwister;
+    slot.config = synth::MfTwisterDefaultProfileConfig(options);
+    REQUIRE_TRUE(!slot.config.systemMessages.empty());
+
+    MidiInstrumentConfig instrument;
+    REQUIRE_TRUE(instrument.AddController(slot));
+    MidiConnectionState connection;
+    connection.controllers.push_back(MidiControllerConnection{});
+
+    MidiConfigViewModel vm;
+    vm.Rebuild(instrument, connection);
+
+    const auto& association = instrument.controllers[0].config.systemMessages[0];
+    double value = -1.0;
+
+    REQUIRE_TRUE(vm.RowFieldValue(0, MidiConfigSection::SystemMessages, 0, MidiMappingRowVM::Field::Channel, value));
+    REQUIRE_TRUE(value == static_cast<double>(association.control->channel));
+
+    REQUIRE_TRUE(vm.RowFieldValue(0, MidiConfigSection::SystemMessages, 0, MidiMappingRowVM::Field::Cc, value));
+    REQUIRE_TRUE(value == static_cast<double>(association.control->cc));
+
+    REQUIRE_TRUE(
+        !vm.RowFieldValue(0, MidiConfigSection::SystemMessages, 0, MidiMappingRowVM::Field::WrldBldrX, value));
+}
+
+TEST_CASE(RowFieldValueReturnsFalseForPressReleaseMessageAndOutOfRange) {
+    MidiConfigViewModel vm;
+    vm.Rebuild(MakeFourKindInstrument(), MakeFourKindConnection());
+
+    double value = -1.0;
+    // PressMessage/ReleaseMessage have no single numeric value -- callers
+    // must use SystemMessageChoiceIndex() instead.
+    REQUIRE_TRUE(
+        !vm.RowFieldValue(0, MidiConfigSection::SystemMessages, 0, MidiMappingRowVM::Field::PressMessage, value));
+    REQUIRE_TRUE(
+        !vm.RowFieldValue(0, MidiConfigSection::SystemMessages, 0, MidiMappingRowVM::Field::ReleaseMessage, value));
+
+    // Out-of-range controllerIx/rowIx.
+    REQUIRE_TRUE(!vm.RowFieldValue(99, MidiConfigSection::Encoders, 0, MidiMappingRowVM::Field::Channel, value));
+    REQUIRE_TRUE(!vm.RowFieldValue(0, MidiConfigSection::Encoders, 9999, MidiMappingRowVM::Field::Channel, value));
+}
+
+TEST_CASE(RowFieldValueRoundTripsWithApplyMappingEdit) {
+    // For every field ApplyMappingEdit successfully applies, RowFieldValue
+    // must read back the same value from the resulting instrument, so a JUCE
+    // editor's "revert to VM's last-known value" path never shows something
+    // ApplyMappingEdit itself would disagree with.
+    MidiConfigViewModel vm;
+    MidiInstrumentConfig instrument = MakeFourKindInstrument();
+    vm.Rebuild(instrument, MakeFourKindConnection());
+
+    MidiInstrumentConfig edited;
+    std::string reason;
+    REQUIRE_TRUE(vm.ApplyMappingEdit(0, MidiConfigSection::Encoders, 0, MidiMappingRowVM::Field::Position, 7.0,
+                                     edited, &reason));
+
+    MidiConfigViewModel vmAfter;
+    vmAfter.Rebuild(edited, MakeFourKindConnection());
+    double value = -1.0;
+    REQUIRE_TRUE(
+        vmAfter.RowFieldValue(0, MidiConfigSection::Encoders, 0, MidiMappingRowVM::Field::Position, value));
+    REQUIRE_TRUE(value == 7.0);
+}
+
 TEST_CASE(ApplyMappingEditChangesOnlyTargetedField) {
     MidiConfigViewModel vm;
     MidiInstrumentConfig instrument = MakeFourKindInstrument();

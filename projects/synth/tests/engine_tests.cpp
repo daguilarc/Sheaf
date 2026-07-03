@@ -1583,9 +1583,9 @@ TEST_CASE(engine_rebuild_midi_processors_observes_fully_applied_edit_snapshot) {
 
 TEST_CASE(engine_instrument_snapshot_is_deep_copy_equal_to_live_instrument) {
     // Task 4 review, Critical fix regression: InstrumentSnapshot() is the
-    // locked running-state read surface MidiPanel::Slot0Endpoints() (and any
-    // other message-thread reader concurrent with running audio) must use
-    // instead of the unlocked LiveInstrument() reference -- see both
+    // locked running-state read surface any message-thread reader concurrent
+    // with running audio (e.g. ControllersPage's per-tick VM refresh) must
+    // use instead of the unlocked LiveInstrument() reference -- see both
     // methods' doc comments. This single-threaded harness cannot manufacture
     // a real data race, but it can assert the copy is (a) equal in content to
     // the live instrument at the moment of the call, and (b) a true deep

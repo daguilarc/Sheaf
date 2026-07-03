@@ -242,6 +242,78 @@ TEST_CASE(unconfigured_ref_produces_no_actions_even_with_devices_present) {
     REQUIRE_TRUE(plan.actions.empty());
 }
 
+// Finding 3 (Task 4 review, Important): a ref that was just cleared to
+// unconfigured (the UI's "(none)" selection, or SetEndpointRef{} generally)
+// while the endpoint is currently Online must still be closed -- an
+// unconfigured ref is only "inert" in the sense of never being *opened*; it
+// must not leave a stale device handle open forever. This is the truth
+// table the brief calls out: unconfigured-ref x {Online, Offline,
+// Unconfigured} connection status.
+TEST_CASE(unconfigured_ref_input_online_closes_and_marks_offline) {
+    MidiInstrumentConfig instrument;
+    instrument.controllers.push_back(Slot("Twister", MidiEndpointRef{}, MidiEndpointRef{}));
+
+    MidiDeviceList present;  // irrelevant to this case; ref is unconfigured either way
+    present.inputs.push_back({"dev-1", "Twister"});
+
+    MidiConnectionState current;
+    current.controllers.push_back(
+        {Conn(MidiEndpointStatus::Online, "dev-1"), Conn(MidiEndpointStatus::Unconfigured)});
+
+    ReconcilePlan plan = PlanMidiReconciliation(instrument, present, current);
+
+    REQUIRE_TRUE(plan.actions.size() == 2);
+    const auto* close = FindAction(plan, ReconcileAction::Type::CloseInput);
+    REQUIRE_TRUE(close != nullptr);
+    REQUIRE_TRUE(close->controllerIx == 0);
+    REQUIRE_TRUE(close->identifier == "dev-1");
+    const auto* offline = FindAction(plan, ReconcileAction::Type::MarkInputOffline);
+    REQUIRE_TRUE(offline != nullptr);
+    REQUIRE_TRUE(offline->controllerIx == 0);
+}
+
+TEST_CASE(unconfigured_ref_output_online_closes_and_marks_offline) {
+    MidiInstrumentConfig instrument;
+    instrument.controllers.push_back(Slot("Twister", MidiEndpointRef{}, MidiEndpointRef{}));
+
+    MidiDeviceList present;
+    present.outputs.push_back({"dev-2", "Twister"});
+
+    MidiConnectionState current;
+    current.controllers.push_back(
+        {Conn(MidiEndpointStatus::Unconfigured), Conn(MidiEndpointStatus::Online, "dev-2")});
+
+    ReconcilePlan plan = PlanMidiReconciliation(instrument, present, current);
+
+    REQUIRE_TRUE(plan.actions.size() == 2);
+    const auto* close = FindAction(plan, ReconcileAction::Type::CloseOutput);
+    REQUIRE_TRUE(close != nullptr);
+    REQUIRE_TRUE(close->controllerIx == 0);
+    REQUIRE_TRUE(close->identifier == "dev-2");
+    const auto* offline = FindAction(plan, ReconcileAction::Type::MarkOutputOffline);
+    REQUIRE_TRUE(offline != nullptr);
+    REQUIRE_TRUE(offline->controllerIx == 0);
+    // No Resync -- Resync only follows an OUTPUT *open*, never a close.
+    REQUIRE_TRUE(CountActions(plan, ReconcileAction::Type::Resync) == 0);
+}
+
+// unconfigured ref, already-Offline connection -> stays inert (idempotent),
+// same as before this finding -- an unconfigured ref never triggers a
+// Mark*Offline transition it doesn't need.
+TEST_CASE(unconfigured_ref_offline_connection_stays_inert) {
+    MidiInstrumentConfig instrument;
+    instrument.controllers.push_back(Slot("Twister", MidiEndpointRef{}, MidiEndpointRef{}));
+
+    MidiDeviceList present;
+
+    MidiConnectionState current;
+    current.controllers.push_back({Conn(MidiEndpointStatus::Offline), Conn(MidiEndpointStatus::Offline)});
+
+    ReconcilePlan plan = PlanMidiReconciliation(instrument, present, current);
+
+    REQUIRE_TRUE(plan.actions.empty());
+}
+
 // input-only slot (output ref unconfigured): full input lifecycle, never an output action,
 // never a resync from input reopen.
 TEST_CASE(input_only_slot_never_produces_output_action_or_resync) {

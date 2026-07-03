@@ -29,21 +29,28 @@ This app does **not** provide patch load/save buttons or MIDI device
 selection UI. Those are owned by the runtime shell:
 
 - Patch commands (New/Save/Save As/Load/Revert), the current-patch-name
-  label, and the patch status label come from `synth_runtime::ShellComponent`
-  (`projects/synth/runtime/Shell.hpp`).
-- MIDI device combo boxes, open/close buttons, and the MIDI status label
-  come from `synth_runtime::MidiPanel` (`projects/synth/runtime/MidiPanel.hpp`).
+  label, and the patch status label live on the File page
+  (`synth_runtime::FilePage`, `projects/synth/runtime/FilePage.hpp`), hosted
+  by the shell's `synth_runtime::MainPane`
+  (`projects/synth/runtime/MainPane.hpp`).
+- Per-controller MIDI device combo boxes, status dots, and mapping editors
+  live on the Controllers page (`synth_runtime::ControllersPage`,
+  `projects/synth/runtime/ControllersPage.hpp`), a thin renderer over the
+  JUCE-free `synth::MidiConfigViewModel`
+  (`projects/synth/include/synth/MidiConfigViewModel.hpp`).
 
-The patch-name label shows the current patch directory's name (or
-"(no patch)" when none is current), read fresh from
+The File page's patch-name label shows the current patch directory's name
+(or "(no patch)" when none is current), read fresh from
 `Runtime::GetEngine().Patches().CurrentPatchDirectory()` on every repaint
-tick — never cached in the shell. The Save button checks the same state
-before dispatching: with no current patch it opens the Save As chooser
-directly instead of sending a `SavePatch()` that would only come back
+tick — never cached. The Save button checks the same state before
+dispatching: with no current patch it opens the Save As chooser directly
+instead of sending a `SavePatch()` that would only come back
 `NeedsSaveAsPath`.
 
-`MiniApp::UIComponent()` only returns this app's own widget tree; the shell
-hosts it alongside the patch row and MIDI panel.
+`MiniApp::UIComponent()` only returns this app's own widget tree; `MainPane`
+hosts it alongside the Audio/Controllers/File pages and the sidebar (see
+`projects/synth/runtime/MainPane.hpp`), showing exactly one of the app or a
+library page at a time.
 
 ## Logging
 

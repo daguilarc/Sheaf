@@ -33,45 +33,78 @@
 // offending editor's displayed text instead (binding: "UI can never produce
 // an invalid slot -- refusals shown in a status label").
 //
-// Device-ref commit path (Task 4 brief step 2, "choose the honest wiring,
-// documenting it"): the brief allows either
-// MidiConnectionManager::ManualOpenInput/ManualOpenOutput (which opens the
-// device immediately, records the ref, AND updates connection state in one
-// call -- see that method's doc comment) or the plain VM
-// SetEndpointRef->EditInstrument commit (self-healing: the resulting ref
-// write triggers a reconcile pass via the rebuilt callback, which opens the
-// device itself as part of PlanMidiReconciliation's normal matching, exactly
-// like a patch-carried endpoint ref would be picked up on load). This page
-// uses ManualOpenInput/ManualOpenOutput for a combo selection that names an
-// enumerated (currently-present) device -- so the open happens synchronously
-// and status dots update on this same tick, matching the immediate feedback
-// a device combo implies -- and falls back to the ref-only
-// SetEndpointRef->EditInstrument path only for the synthetic "keep configured
-// (offline)" entry (selecting the stored-but-absent ref back after having
-// picked something else, or re-selecting "(none)" to clear it), where there
-// is no device to open. Both paths converge on the same
-// MidiConnectionManager-owned state and the same reconcile machinery, so
-// status dots are correct either way; ManualOpen* is simply the more direct
-// (and honest -- it's what the manager's own doc comment says UI-driven
-// opens should use) of the two for the common case.
+// Device-ref commit path (Task 4 review, Important finding 3): ALL device
+// combo changes -- selecting an enumerated (currently-present) device,
+// clearing to "(none)", or re-selecting the synthetic "keep configured
+// (offline)" entry -- go through the SAME VM SetEndpointRef -> EditInstrument
+// commit path every other edit on this page uses. There is no direct
+// MidiConnectionManager::ManualOpenInput/ManualOpenOutput call from this
+// page: writing the chosen ref (or an empty MidiEndpointRef{} for "(none)")
+// via SetEndpointRef and committing it through engine.EditInstrument is
+// exactly the specced "device choice triggers reconciliation" semantics --
+// the rebuilt callback + reconcile pass (Plan 3) then opens/closes the
+// device itself, self-healing exactly like a patch-carried endpoint ref
+// would be picked up on load. This also means an endpoint that was Online
+// and gets cleared to "(none)" is actually closed: PlanMidiReconciliation
+// treats a now-unconfigured ref whose connection is still Online as a
+// Close*+Mark*Offline case (see MidiReconcile.hpp's doc comment and
+// reconcile_tests.cpp's unconfigured_ref_*_online_closes_and_marks_offline
+// cases -- this was a planner gap fixed alongside this finding). The
+// synthetic "keep configured (offline)" entry alone stays a true no-op (see
+// OnDeviceSelected below): its ref is already what it was, so there is
+// nothing to commit.
 //
 // Refresh discipline (Task 4 brief step 4): RefreshOnTick() rebuilds the VM
 // from engine.InstrumentSnapshot() + connectionManager.State() only when
 // dirty_ is set. dirty_ starts true (first tick must build the initial
-// tree) and is set again by (a) the engine's rebuilt-callback (wired by
-// Runtime to also touch this page, via SetInstrumentChangedHook) and (b) a
-// per-tick comparison against a cheap MidiConnectionManager state change
+// tree) and is set again by (a) runtime_.SetMidiProcessorsRebuiltHook()'s
+// callback (installed in the constructor -- see Runtime.hpp's doc comment on
+// that method), which fires on EVERY MIDI-processor rebuild regardless of
+// cause (this page's own Commit(), a patch load/revert, or any other
+// engine-driven instrument edit -- Task 4 review, Critical finding 1: this
+// closes the gap where an out-of-band instrument change was missed) and (b)
+// a per-tick comparison against a cheap MidiConnectionManager state change
 // counter is unnecessary here -- MidiConnectionManager has no such counter,
 // so this page instead treats "connection state may have changed" the same
 // as every other page's per-tick refresh (AudioConfigPage/FilePage both
 // unconditionally re-read their own status every tick): it re-derives a
 // lightweight fingerprint (controller count + each slot's input/output
 // status) once per tick and only calls vm_.Rebuild() when that fingerprint
-// or the instrument-changed flag differs from last tick. This is the "cheap
-// change counter" the brief allows ("add a cheap change counter if needed").
-// Rebuild() is skipped entirely whenever any editor row currently has
-// keyboard focus (editorFocusGuard_), so in-progress typing is never
+// or the rebuilt-hook's dirty flag differs from last tick. This is the
+// "cheap change counter" the brief allows ("add a cheap change counter if
+// needed"). Rebuild() is skipped entirely whenever any editor row currently
+// has keyboard focus (editorFocusGuard_), so in-progress typing is never
 // clobbered -- see HasFocusedEditor().
+//
+// Focus-safe refresh (Task 4 review, Important finding 5 -- "focus
+// starvation"): a focus guard that blocks ALL rebuilds while ANY editor has
+// focus is only safe if a pending rebuild is guaranteed to land promptly
+// once focus is released, rather than staying blocked indefinitely because
+// the user "finished editing" a field without literally clicking away from
+// it:
+//   (a) NumericFieldEditor::textEditorReturnKeyPressed commits AND calls
+//       giveAwayKeyboardFocus() (see that method's doc comment) -- Return is
+//       the field's "I'm done" gesture, and a JUCE TextEditor does not lose
+//       keyboard focus from Return alone, so without this the page could
+//       stay starved as long as the caret sits in that field.
+//   (b) dirty_ stays latched (not cleared) whenever RefreshOnTick() skips a
+//       rebuild for focus (see the early `return` in the focus-guard branch,
+//       above dirty_'s only clearing assignment) -- the very next tick that
+//       finds no editor focused performs the deferred rebuild. No separate
+//       "pending" flag is needed; dirty_ itself already serves that role.
+//   (c) Status/connection dots are NOT refreshed independently of a full VM
+//       rebuild while a field elsewhere has focus: ControllerRow's status
+//       dots are painted from inputStatus_/outputStatus_, snapshotted once
+//       at ControllerRow construction time (RebuildRows()) rather than read
+//       live in paint() -- splitting "just the dots" out from the row's
+//       construction would mean duplicating (or restructuring) the row's
+//       state ownership for a cosmetic latency improvement on a background
+//       reconcile pass, which is not "trivially separable" per the brief's
+//       own carve-out. Documenting this instead: a status dot's flip during
+//       an in-progress edit elsewhere on the page is visible as soon as that
+//       edit commits or focus otherwise moves away (a) -- the same
+//       "refresh waits for focus loss" contract every other dirty-triggered
+//       change on this page already has.
 
 #include "synth/AppConcepts.hpp"
 #include "synth/Engine.hpp"
@@ -115,12 +148,29 @@ public:
         viewport_.setScrollBarsShown(true, false);
         addAndMakeVisible(viewport_);
 
+        // Subscribe to EVERY MIDI-processor rebuild (Task 4 review, Critical
+        // finding 1) -- not just this page's own edits. A patch load/revert
+        // (or any other engine-driven path) that changes controller
+        // mappings/names/kinds also rebuilds MIDI processors and fires this
+        // hook; without it, RefreshOnTick()'s dirty flag only ever tracked
+        // this page's own Commit() calls plus a connection-status
+        // fingerprint, so an out-of-band instrument change was silently
+        // missed and a later edit from this page could commit on top of a
+        // stale snapshot. Idempotent with Commit()'s own `dirty_ = true` --
+        // see SetMidiProcessorsRebuiltHook's doc comment in Runtime.hpp for
+        // the re-entrancy note (this page's own commits also fire this hook,
+        // harmlessly). Cleared in the destructor, mirroring
+        // AudioConfigPage's SetAudioStatusHook/SetAudioSyncHook teardown.
+        runtime_.SetMidiProcessorsRebuiltHook([this] { dirty_ = true; });
+
         dirty_ = true;
         RefreshOnTick();
     }
 
     ControllersPage(const ControllersPage&) = delete;
     ControllersPage& operator=(const ControllersPage&) = delete;
+
+    ~ControllersPage() override { runtime_.SetMidiProcessorsRebuiltHook({}); }
 
     void resized() override {
         auto area = getLocalBounds().reduced(4);
@@ -230,7 +280,32 @@ private:
 
     private:
         void textEditorFocusLost(juce::TextEditor&) override { Commit(); }
-        void textEditorReturnKeyPressed(juce::TextEditor&) override { Commit(); }
+
+        // Task 4 review, Important finding 5 ("focus starvation"):
+        // RefreshOnTick()'s focus guard (HasFocusedEditor()) blocks ALL VM
+        // rebuilds while any editor on this page has keyboard focus, so a
+        // pending dirty rebuild (e.g. another controller's status dot
+        // flipping, or -- post finding 1 -- an out-of-band instrument
+        // change) never lands while the user is mid-edit. A JUCE TextEditor
+        // does NOT lose keyboard focus merely because Return was pressed --
+        // textEditorFocusLost() only fires from an actual focus change
+        // (click elsewhere, Tab, etc.) -- so committing on Return without
+        // ALSO releasing focus would starve the page indefinitely whenever
+        // the user presses Return and then simply leaves the caret there
+        // (the common case: Return is the "I'm done editing this field"
+        // gesture). giveAwayKeyboardFocus() releases focus to no component
+        // in particular, so the pending dirty rebuild runs on the very next
+        // tick that finds no editor focused -- see RefreshOnTick()'s doc
+        // comment. This does asynchronously post a second focusLost-driven
+        // Commit() for this same field (JUCE's focusLost() dispatches
+        // textEditorFocusLost via an async command message, not
+        // synchronously here) -- harmless, since re-committing the same
+        // already-applied value is idempotent (ApplyMappingEdit has no
+        // "changed since" gate, only a "still valid" one).
+        void textEditorReturnKeyPressed(juce::TextEditor&) override {
+            Commit();
+            giveAwayKeyboardFocus();
+        }
 
         void Commit() {
             const double value = getText().getDoubleValue();
@@ -248,8 +323,9 @@ private:
                 // next non-focused tick) will also re-derive this from the
                 // VM, but reverting immediately avoids showing a rejected
                 // value even for the remainder of this focus session.
-                setText(juce::String(page_.RowFieldCurrentValue(controllerIx_, section_, rowIx_, field_), 4),
-                       juce::dontSendNotification);
+                double reverted = 0.0;
+                page_.vm_.RowFieldValue(controllerIx_, section_, rowIx_, field_, reverted);
+                setText(juce::String(reverted, 4), juce::dontSendNotification);
             }
         }
 
@@ -336,7 +412,8 @@ private:
                     addAndMakeVisible(*editor);
                     systemMessageEditors_.push_back(std::move(editor));
                 } else {
-                    const double initial = page.RowFieldCurrentValue(controllerIx, section, rowIx, field);
+                    double initial = 0.0;
+                    page.vm_.RowFieldValue(controllerIx, section, rowIx, field, initial);
                     auto editor =
                         std::make_unique<NumericFieldEditor>(page, controllerIx, section, rowIx, field, initial);
                     addAndMakeVisible(*editor);
@@ -614,9 +691,13 @@ private:
             const std::vector<synth::MidiDeviceInfoRef>& list = output ? devices.outputs : devices.inputs;
 
             if (selectedId == 1) {
-                // "(none)" -- clear the ref via the plain VM path (no device
-                // to open). See the class doc comment's "Device-ref commit
-                // path".
+                // "(none)" -- clear the ref via the VM path (see the class
+                // doc comment's "Device-ref commit path"): SetEndpointRef ->
+                // EditInstrument commit. The rebuilt callback + reconcile
+                // pass then closes whatever was open (PlanMidiReconciliation
+                // treats a newly-unconfigured ref that is currently Online as
+                // a Close*+Mark*Offline case -- Task 4 review, Important
+                // finding 3).
                 synth::MidiInstrumentConfig out;
                 if (page_.vm_.SetEndpointRef(controllerIx_, output, synth::MidiEndpointRef{}, out)) {
                     page_.Commit(std::move(out));
@@ -627,18 +708,26 @@ private:
 
             const int deviceIx = selectedId - 2;
             if (deviceIx >= 0 && deviceIx < static_cast<int>(list.size())) {
-                // Names an enumerated, currently-present device: open it
-                // directly via the manager (immediate feedback path -- see
-                // the class doc comment).
+                // Names an enumerated, currently-present device: route
+                // through the same VM SetEndpointRef -> EditInstrument commit
+                // path as every other edit on this page (class doc comment's
+                // "Device-ref commit path" -- Task 4 review, Important
+                // finding 3: ALL device combo changes go through the VM, not
+                // a direct MidiConnectionManager::ManualOpen* call). The
+                // rebuilt callback + reconcile pass opens the device itself,
+                // exactly like a patch-carried endpoint ref would be on load
+                // -- self-healing, and the single path this page's own
+                // rebuilt-hook subscription (finding 1) already dirties the
+                // page for.
                 const synth::MidiDeviceInfoRef& device = list[static_cast<std::size_t>(deviceIx)];
-                const bool opened = output
-                                        ? page_.runtime_.MidiConnections().ManualOpenOutput(controllerIx_, device.identifier,
-                                                                                            device.name)
-                                        : page_.runtime_.MidiConnections().ManualOpenInput(controllerIx_, device.identifier,
-                                                                                           device.name);
-                page_.dirty_ = true;
-                page_.SetStatus(opened ? juce::String("Opened ") + juce::String(device.name)
-                                       : juce::String("Failed to open ") + juce::String(device.name));
+                synth::MidiEndpointRef ref;
+                ref.identifier = device.identifier;
+                ref.name = device.name;
+                synth::MidiInstrumentConfig out;
+                if (page_.vm_.SetEndpointRef(controllerIx_, output, ref, out)) {
+                    page_.Commit(std::move(out));
+                    page_.SetStatus(juce::String("Selected ") + juce::String(device.name));
+                }
                 return;
             }
 
@@ -786,115 +875,6 @@ private:
         std::vector<std::unique_ptr<ControllerRow>> rows_;
         std::unique_ptr<AddControllerRow> addRow_;
     };
-
-    // Reads the current value of an editable numeric field straight off the
-    // VM's underlying instrument snapshot, for (re-)initializing a
-    // NumericFieldEditor's displayed text (both on first construction and
-    // after a refused edit reverts it). Goes through SectionRows'
-    // row-identification the same way ApplyMappingEdit does, but reads
-    // rather than writes -- there is no VM accessor for "current value of a
-    // single field" beyond SystemMessageChoiceIndex (Press/Release only), so
-    // this walks the same instrument snapshot structure ApplyMappingEdit's
-    // .cpp does, via a zero-effect probe edit: passing the field's own
-    // current value back into ApplyMappingEdit is not an option (it has no
-    // "read" mode), so this reconstructs the value directly.
-    double RowFieldCurrentValue(std::size_t controllerIx, synth::MidiConfigSection section, std::size_t rowIx,
-                                synth::MidiMappingRowVM::Field field) const {
-        const synth::MidiInstrumentConfig snapshot = runtime_.GetEngine().InstrumentSnapshot();
-        if (controllerIx >= snapshot.controllers.size()) {
-            return 0.0;
-        }
-        const synth::MidiControllerSlot& slot = snapshot.controllers[controllerIx];
-        using Field = synth::MidiMappingRowVM::Field;
-
-        if (section == synth::MidiConfigSection::Encoders && slot.config.encoderInput.has_value()) {
-            const auto& encoderInput = *slot.config.encoderInput;
-            std::size_t ix = 0;
-            for (const auto& mapping : encoderInput.turns) {
-                if (ix == rowIx) {
-                    return FieldFromEncoderMapping(mapping, field);
-                }
-                ++ix;
-            }
-            for (const auto& mapping : encoderInput.pushes) {
-                if (ix == rowIx) {
-                    return FieldFromEncoderMapping(mapping, field);
-                }
-                ++ix;
-            }
-            if (ix == rowIx && field == Field::RelativeMode) {
-                return encoderInput.relativeMode == synth::EncoderRelativeMode::DirectionOnly ? 1.0 : 0.0;
-            }
-            ++ix;
-            if (ix == rowIx && field == Field::TurnStep) {
-                return static_cast<double>(encoderInput.turnStep);
-            }
-        } else if (section == synth::MidiConfigSection::Analogs && slot.config.analogInput.has_value()) {
-            const auto& analogInput = *slot.config.analogInput;
-            std::size_t ix = 0;
-            for (const auto& mapping : analogInput.gestures) {
-                if (ix == rowIx) {
-                    if (field == Field::Channel) {
-                        return static_cast<double>(mapping.control.channel);
-                    }
-                    if (field == Field::Cc) {
-                        return static_cast<double>(mapping.control.cc);
-                    }
-                    if (field == Field::GestureIx) {
-                        return static_cast<double>(mapping.gestureIx);
-                    }
-                }
-                ++ix;
-            }
-            if (ix == rowIx && field == Field::SceneBlend && analogInput.sceneBlend.has_value()) {
-                return static_cast<double>(analogInput.sceneBlend->cc);
-            }
-        } else if (section == synth::MidiConfigSection::SystemMessages && rowIx < slot.config.systemMessages.size()) {
-            const auto& association = slot.config.systemMessages[rowIx];
-            switch (field) {
-                case Field::Channel:
-                    return association.control.has_value() ? static_cast<double>(association.control->channel) : 0.0;
-                case Field::Cc:
-                    return association.control.has_value() ? static_cast<double>(association.control->cc) : 0.0;
-                case Field::LaunchpadX:
-                    return association.launchpadPosition.has_value()
-                              ? static_cast<double>(association.launchpadPosition->x)
-                              : 0.0;
-                case Field::LaunchpadY:
-                    return association.launchpadPosition.has_value()
-                              ? static_cast<double>(association.launchpadPosition->y)
-                              : 0.0;
-                case Field::WrldBldrX:
-                    return association.wrldBldrPosition.has_value()
-                              ? static_cast<double>(association.wrldBldrPosition->x)
-                              : 0.0;
-                case Field::WrldBldrY:
-                    return association.wrldBldrPosition.has_value()
-                              ? static_cast<double>(association.wrldBldrPosition->y)
-                              : 0.0;
-                default:
-                    break;
-            }
-        }
-        return 0.0;
-    }
-
-    static double FieldFromEncoderMapping(const synth::EncoderMidiMapping& mapping,
-                                          synth::MidiMappingRowVM::Field field) {
-        using Field = synth::MidiMappingRowVM::Field;
-        switch (field) {
-            case Field::Channel:
-                return static_cast<double>(mapping.control.channel);
-            case Field::Cc:
-                return static_cast<double>(mapping.control.cc);
-            case Field::SlotIx:
-                return static_cast<double>(mapping.slotIx);
-            case Field::Position:
-                return static_cast<double>(mapping.position);
-            default:
-                return 0.0;
-        }
-    }
 
     Runtime<App>& runtime_;
     synth::MidiConfigViewModel vm_;

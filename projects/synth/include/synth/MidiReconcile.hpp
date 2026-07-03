@@ -73,9 +73,17 @@ struct ReconcilePlan { std::vector<ReconcileAction> actions; };
 // assigned to at most one slot per plan -- slots are considered in order, and
 // the first matching slot claims the device; a losing slot that was
 // previously Online also gets a Close* (then Mark*Offline). An unconfigured
-// ref (!IsConfigured()) is inert: no open/close/offline/update action is ever
-// produced for it, and its status stays Unconfigured. A CONFIGURED ref that
-// matches no present device SHALL end Offline regardless of its current
+// ref (!IsConfigured()) is inert with respect to OPENING anything: no
+// Open*/UpdateRef action is ever produced for it, regardless of device
+// presence. It is NOT unconditionally inert, though -- a ref can become
+// unconfigured while its endpoint is still Online (e.g. the UI clearing a
+// device combo to "(none)"/SetEndpointRef{}), and that orphaned open device
+// must be closed: an unconfigured ref whose connection status is Online gets
+// a Close* + Mark*Offline, exactly like a configured-but-now-absent ref
+// (below); an unconfigured ref whose connection status is already
+// Offline/Unconfigured produces no actions (idempotence -- nothing to close,
+// nothing to mark). A CONFIGURED ref that matches no present device SHALL
+// end Offline regardless of its current
 // connection status: an Online endpoint whose openIdentifier is no longer
 // present is closed and marked offline; an Unconfigured connection status
 // (the startup shape -- a configured ref with no prior open/close history,

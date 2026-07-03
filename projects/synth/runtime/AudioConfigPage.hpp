@@ -1,8 +1,8 @@
 #pragma once
 
 // synth_runtime::AudioConfigPage — the Audio page hosted by MainPane's
-// content host (Plan 4 Task 3). Re-homes AudioPanel's logic (deleted from
-// MidiPanel.hpp this task): a Back button at the top of the page (binding,
+// content host (Plan 4 Task 3). Re-homes the deleted AudioPanel's logic:
+// a Back button at the top of the page (binding,
 // p4-globals.md), a "System Default" + enumerated-output-device combo, an
 // input combo present only when App::Config().numAudioInputs > 0, and two
 // status lines: deviceLine_ (current device + negotiated sample rate/block

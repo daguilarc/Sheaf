@@ -145,6 +145,22 @@ public:
 
     std::vector<MidiMappingRowVM> SectionRows(std::size_t controllerIx, MidiConfigSection section) const;
 
+    // Reads the current value of a single editable field on a single row,
+    // identified the same way SectionRows()/ApplyMappingEdit() identify rows:
+    // (controllerIx, section, rowIx). Implemented next to SectionRows() (both
+    // walk the same row layout via ForEachEncoderRow/ForEachAnalogRow in the
+    // .cpp) so the two can never drift apart -- this is the single source of
+    // truth for "what does this row's field currently show," used both to
+    // seed a JUCE editor's initial displayed text and to revert it after a
+    // refused edit. Returns false (leaving `out` untouched) for an
+    // out-of-range controllerIx/rowIx, a field not advertised in this row's
+    // editableFields (see SectionRows()), or PressMessage/ReleaseMessage
+    // (those have no single numeric value -- callers use
+    // SystemMessageChoiceIndex() instead); otherwise writes the field's
+    // current value into `out` and returns true.
+    bool RowFieldValue(std::size_t controllerIx, MidiConfigSection section, std::size_t rowIx,
+                       MidiMappingRowVM::Field field, double& out) const;
+
     // Looks up the current press/release message of a SystemMessages row
     // (identified the same way ApplyMappingEdit/SectionRows identify rows:
     // (controllerIx, section, rowIx)) against SystemMessageCatalog() and

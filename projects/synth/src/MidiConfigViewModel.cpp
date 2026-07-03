@@ -451,6 +451,170 @@ std::vector<MidiMappingRowVM> MidiConfigViewModel::SectionRows(std::size_t contr
     return rows;
 }
 
+bool MidiConfigViewModel::RowFieldValue(std::size_t controllerIx, MidiConfigSection section, std::size_t rowIx,
+                                        MidiMappingRowVM::Field field, double& out) const {
+    if (controllerIx >= instrument_.controllers.size()) {
+        return false;
+    }
+
+    // Same gate ApplyMappingEdit applies before touching anything: refuse a
+    // field this row doesn't advertise (SectionRows() is the single source
+    // of truth for row identity/editable fields, reused here so the two can
+    // never drift -- see this method's header doc comment). This also
+    // naturally refuses PressMessage/ReleaseMessage (never in a numeric
+    // field's sense -- callers use SystemMessageChoiceIndex() for those) once
+    // a caller passes them for a row that only advertises them alongside
+    // position fields; for rows where Press/ReleaseMessage IS advertised,
+    // this function still refuses it below the row-lookup, since neither
+    // section branch ever assigns `out` for those fields.
+    const std::vector<MidiMappingRowVM> rows = SectionRows(controllerIx, section);
+    if (rowIx >= rows.size()) {
+        return false;
+    }
+    const std::vector<MidiMappingRowVM::Field>& editable = rows[rowIx].editableFields;
+    if (std::find(editable.begin(), editable.end(), field) == editable.end()) {
+        return false;
+    }
+    if (field == Field::PressMessage || field == Field::ReleaseMessage) {
+        return false;
+    }
+
+    const MidiControllerSlot& slot = instrument_.controllers[controllerIx];
+    bool found = false;
+
+    switch (section) {
+        case MidiConfigSection::Encoders: {
+            std::size_t ix = 0;
+            ForEachEncoderRow(slot.config, [&](const auto& ref, const std::string&) {
+                if (found) {
+                    return;
+                }
+                if (ix == rowIx) {
+                    found = true;
+                    if (ref.mapping != nullptr) {
+                        switch (field) {
+                            case Field::Channel:
+                                out = static_cast<double>(ref.mapping->control.channel);
+                                break;
+                            case Field::Cc:
+                                out = static_cast<double>(ref.mapping->control.cc);
+                                break;
+                            case Field::SlotIx:
+                                out = static_cast<double>(ref.mapping->slotIx);
+                                break;
+                            case Field::Position:
+                                out = static_cast<double>(ref.mapping->position);
+                                break;
+                            default:
+                                found = false;
+                                break;
+                        }
+                    } else if (ref.isRelativeMode && field == Field::RelativeMode) {
+                        out = slot.config.encoderInput->relativeMode == EncoderRelativeMode::DirectionOnly ? 1.0
+                                                                                                            : 0.0;
+                    } else if (ref.isTurnStep && field == Field::TurnStep) {
+                        out = static_cast<double>(slot.config.encoderInput->turnStep);
+                    } else {
+                        found = false;
+                    }
+                }
+                ++ix;
+            });
+            break;
+        }
+        case MidiConfigSection::Analogs: {
+            std::size_t ix = 0;
+            ForEachAnalogRow(slot.config, [&](const auto& ref, const std::string&) {
+                if (found) {
+                    return;
+                }
+                if (ix == rowIx) {
+                    found = true;
+                    if (ref.mapping != nullptr) {
+                        switch (field) {
+                            case Field::Channel:
+                                out = static_cast<double>(ref.mapping->control.channel);
+                                break;
+                            case Field::Cc:
+                                out = static_cast<double>(ref.mapping->control.cc);
+                                break;
+                            case Field::GestureIx:
+                                out = static_cast<double>(ref.mapping->gestureIx);
+                                break;
+                            default:
+                                found = false;
+                                break;
+                        }
+                    } else if (ref.isSceneBlend && field == Field::SceneBlend &&
+                              slot.config.analogInput->sceneBlend.has_value()) {
+                        out = static_cast<double>(slot.config.analogInput->sceneBlend->cc);
+                    } else {
+                        found = false;
+                    }
+                }
+                ++ix;
+            });
+            break;
+        }
+        case MidiConfigSection::SystemMessages: {
+            if (rowIx < slot.config.systemMessages.size()) {
+                found = true;
+                const MidiControllerSystemMessageAssociation& association = slot.config.systemMessages[rowIx];
+                switch (field) {
+                    case Field::Channel:
+                        if (!association.control.has_value()) {
+                            found = false;
+                            break;
+                        }
+                        out = static_cast<double>(association.control->channel);
+                        break;
+                    case Field::Cc:
+                        if (!association.control.has_value()) {
+                            found = false;
+                            break;
+                        }
+                        out = static_cast<double>(association.control->cc);
+                        break;
+                    case Field::LaunchpadX:
+                        if (!association.launchpadPosition.has_value()) {
+                            found = false;
+                            break;
+                        }
+                        out = static_cast<double>(association.launchpadPosition->x);
+                        break;
+                    case Field::LaunchpadY:
+                        if (!association.launchpadPosition.has_value()) {
+                            found = false;
+                            break;
+                        }
+                        out = static_cast<double>(association.launchpadPosition->y);
+                        break;
+                    case Field::WrldBldrX:
+                        if (!association.wrldBldrPosition.has_value()) {
+                            found = false;
+                            break;
+                        }
+                        out = static_cast<double>(association.wrldBldrPosition->x);
+                        break;
+                    case Field::WrldBldrY:
+                        if (!association.wrldBldrPosition.has_value()) {
+                            found = false;
+                            break;
+                        }
+                        out = static_cast<double>(association.wrldBldrPosition->y);
+                        break;
+                    default:
+                        found = false;
+                        break;
+                }
+            }
+            break;
+        }
+    }
+
+    return found;
+}
+
 namespace {
 
 // True when `value` is representable as a non-negative integer -- the
