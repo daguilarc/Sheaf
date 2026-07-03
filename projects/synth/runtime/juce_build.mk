@@ -27,7 +27,7 @@ APP_BUNDLE := $(BUILD_DIR)/$(APP_NAME).app
 APP_BUNDLE_BINARY := $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
 
 SYNTH_SRC := $(SYNTH_ROOT)/src/ParameterModulation.cpp $(SYNTH_ROOT)/src/MidiController.cpp $(SYNTH_ROOT)/src/PatchPersistence.cpp $(SYNTH_ROOT)/src/DspWavetable.cpp \
-	$(SYNTH_ROOT)/src/Modules.cpp $(SYNTH_ROOT)/src/MidiReconcile.cpp $(SYNTH_ROOT)/src/MidiDevicePoller.cpp $(SYNTH_ROOT)/src/MidiConfigViewModel.cpp
+	$(SYNTH_ROOT)/src/Modules.cpp $(SYNTH_ROOT)/src/MidiReconcile.cpp $(SYNTH_ROOT)/src/MidiDevicePoller.cpp $(SYNTH_ROOT)/src/MidiConfigViewModel.cpp $(SYNTH_ROOT)/src/MidiConfigBlocks.cpp
 SYNTH_HEADERS := $(SYNTH_ROOT)/include/synth/ParameterModulation.hpp $(SYNTH_ROOT)/include/synth/MidiController.hpp \
 	$(SYNTH_ROOT)/include/synth/Json.hpp \
 	$(SYNTH_ROOT)/include/synth/Modules.hpp \
@@ -41,7 +41,8 @@ SYNTH_HEADERS := $(SYNTH_ROOT)/include/synth/ParameterModulation.hpp $(SYNTH_ROO
 	$(SYNTH_ROOT)/include/synth/DspOscillators.hpp \
 	$(SYNTH_ROOT)/include/synth/MidiReconcile.hpp \
 	$(SYNTH_ROOT)/include/synth/MidiDevicePoller.hpp \
-	$(SYNTH_ROOT)/include/synth/MidiConfigViewModel.hpp
+	$(SYNTH_ROOT)/include/synth/MidiConfigViewModel.hpp \
+	$(SYNTH_ROOT)/include/synth/MidiConfigBlocks.hpp
 SYNTH_JUCE_HEADERS := $(wildcard $(SYNTH_ROOT)/juce/*.hpp) $(SYNTH_ROOT)/runtime/Runtime.hpp $(SYNTH_ROOT)/runtime/MidiConnectionManager.hpp $(SYNTH_ROOT)/runtime/Shell.hpp $(SYNTH_ROOT)/runtime/MainPane.hpp $(SYNTH_ROOT)/runtime/AudioConfigPage.hpp $(SYNTH_ROOT)/runtime/FilePage.hpp $(SYNTH_ROOT)/runtime/ControllersPage.hpp
 
 JUCE_MODULE_SRC := \
