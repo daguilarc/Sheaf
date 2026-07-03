@@ -661,10 +661,12 @@ void EncoderMidiOutConfig::KeepFirstPositions(std::size_t count) {
     std::erase_if(mappings, [count](const EncoderMidiOutMapping& mapping) { return !MappingIsFirstPosition(mapping, count); });
 }
 
-MidiOutProcessor::MidiOutProcessor(EncoderMidiOutConfig config, MidiSender* sender, ParameterManager::UIState* uiState)
+MidiOutProcessor::MidiOutProcessor(EncoderMidiOutConfig config, MidiSender* sender, ParameterManager::UIState* uiState,
+                                   std::size_t sinkIx)
     : config_(std::move(config)),
       sender_(sender),
-      uiState_(uiState) {}
+      uiState_(uiState),
+      sinkIx_(sinkIx) {}
 
 void MidiOutProcessor::SetConfig(EncoderMidiOutConfig config) {
     config_ = std::move(config);
@@ -707,9 +709,7 @@ std::optional<MidiOutProcessor::CellSnapshot> MidiOutProcessor::LoadCellSnapshot
 }
 
 bool MidiOutProcessor::Enqueue(const BasicMidi& midi) {
-    // Sink index 0: single-controller reality until per-controller
-    // processors land (see MidiSender's kMaxSinks routing).
-    return sender_ != nullptr && sender_->Enqueue(0, midi);
+    return sender_ != nullptr && sender_->Enqueue(sinkIx_, midi);
 }
 
 float MidiOutProcessor::NormalizeForDisplay(float value, bool bipolar) {
@@ -908,10 +908,11 @@ Color SystemMessageOutputInfo::GestureColor(std::size_t gestureIx) const {
 }
 
 SystemCcMidiOutProcessor::SystemCcMidiOutProcessor(SystemCcMidiOutConfig config, MidiSender* sender,
-                                                   ParameterManager::UIState* uiState)
+                                                   ParameterManager::UIState* uiState, std::size_t sinkIx)
     : config_(std::move(config)),
       sender_(sender),
-      info_(uiState) {}
+      info_(uiState),
+      sinkIx_(sinkIx) {}
 
 void SystemCcMidiOutProcessor::SetConfig(SystemCcMidiOutConfig config) {
     config_ = std::move(config);
@@ -939,17 +940,17 @@ void SystemCcMidiOutProcessor::Process() {
 }
 
 bool SystemCcMidiOutProcessor::Enqueue(const BasicMidi& midi) {
-    // Sink index 0: single-controller reality until per-controller
-    // processors land (see MidiSender's kMaxSinks routing).
-    return sender_ != nullptr && sender_->Enqueue(0, midi);
+    return sender_ != nullptr && sender_->Enqueue(sinkIx_, midi);
 }
 
 WrldBldrSystemMidiOutProcessor::WrldBldrSystemMidiOutProcessor(WrldBldrSystemMidiOutConfig config,
                                                                MidiSender* sender,
-                                                               ParameterManager::UIState* uiState)
+                                                               ParameterManager::UIState* uiState,
+                                                               std::size_t sinkIx)
     : config_(std::move(config)),
       sender_(sender),
-      info_(uiState) {}
+      info_(uiState),
+      sinkIx_(sinkIx) {}
 
 void WrldBldrSystemMidiOutProcessor::SetConfig(WrldBldrSystemMidiOutConfig config) {
     config_ = std::move(config);
@@ -978,17 +979,17 @@ void WrldBldrSystemMidiOutProcessor::Process() {
 }
 
 bool WrldBldrSystemMidiOutProcessor::Enqueue(const BasicMidi& midi) {
-    // Sink index 0: single-controller reality until per-controller
-    // processors land (see MidiSender's kMaxSinks routing).
-    return sender_ != nullptr && sender_->Enqueue(0, midi);
+    return sender_ != nullptr && sender_->Enqueue(sinkIx_, midi);
 }
 
 LaunchpadGridMidiOutProcessor::LaunchpadGridMidiOutProcessor(LaunchpadGridMidiOutConfig config,
                                                              MidiSender* sender,
-                                                             ParameterManager::UIState* uiState)
+                                                             ParameterManager::UIState* uiState,
+                                                             std::size_t sinkIx)
     : config_(std::move(config)),
       sender_(sender),
-      info_(uiState) {}
+      info_(uiState),
+      sinkIx_(sinkIx) {}
 
 void LaunchpadGridMidiOutProcessor::SetConfig(LaunchpadGridMidiOutConfig config) {
     config_ = std::move(config);
@@ -1017,9 +1018,7 @@ void LaunchpadGridMidiOutProcessor::Process() {
 }
 
 bool LaunchpadGridMidiOutProcessor::Enqueue(const BasicMidi& midi) {
-    // Sink index 0: single-controller reality until per-controller
-    // processors land (see MidiSender's kMaxSinks routing).
-    return sender_ != nullptr && !midi.raw.empty() && sender_->Enqueue(0, midi);
+    return sender_ != nullptr && !midi.raw.empty() && sender_->Enqueue(sinkIx_, midi);
 }
 
 JSON ToJSON(JsonArena& arena, EncoderRelativeMode value) {
@@ -1568,7 +1567,7 @@ bool FromJSON(JSON json, MidiInstrumentConfig& out) {
 
 MidiControllerProfileResult CreateMidiControllerProfile(
     const MidiControllerProfileConfig& config, MessageInBus* bus, MidiSender* sender,
-    ParameterManager::UIState* uiState, MidiInProcessor::TimestampProvider timestampProvider) {
+    ParameterManager::UIState* uiState, MidiInProcessor::TimestampProvider timestampProvider, std::size_t sinkIx) {
     MidiControllerProfileResult result;
     MidiInProcessor* tail = nullptr;
     auto appendInput = [&](std::unique_ptr<MidiInProcessor> processor) {
@@ -1607,10 +1606,12 @@ MidiControllerProfileResult CreateMidiControllerProfile(
     if (config.encoderOutput.has_value()) {
         switch (config.encoderOutput->protocol) {
         case EncoderMidiOutProtocol::WrldBldr:
-            result.outputs.push_back(std::make_unique<WrldBldrMidiOutProcessor>(*config.encoderOutput, sender, uiState));
+            result.outputs.push_back(
+                std::make_unique<WrldBldrMidiOutProcessor>(*config.encoderOutput, sender, uiState, sinkIx));
             break;
         case EncoderMidiOutProtocol::Twister:
-            result.outputs.push_back(std::make_unique<TwisterMidiOutProcessor>(*config.encoderOutput, sender, uiState));
+            result.outputs.push_back(
+                std::make_unique<TwisterMidiOutProcessor>(*config.encoderOutput, sender, uiState, sinkIx));
             break;
         }
     }
@@ -1653,22 +1654,24 @@ MidiControllerProfileResult CreateMidiControllerProfile(
         }
     }
     if (!ccOutput.associations.empty()) {
-        result.outputs.push_back(std::make_unique<SystemCcMidiOutProcessor>(std::move(ccOutput), sender, uiState));
+        result.outputs.push_back(
+            std::make_unique<SystemCcMidiOutProcessor>(std::move(ccOutput), sender, uiState, sinkIx));
     }
     if (!wrldOutput.associations.empty()) {
-        result.outputs.push_back(std::make_unique<WrldBldrSystemMidiOutProcessor>(std::move(wrldOutput), sender, uiState));
+        result.outputs.push_back(
+            std::make_unique<WrldBldrSystemMidiOutProcessor>(std::move(wrldOutput), sender, uiState, sinkIx));
     }
     if (!launchpadXOutput.associations.empty()) {
         result.outputs.push_back(
-            std::make_unique<LaunchpadGridMidiOutProcessor>(std::move(launchpadXOutput), sender, uiState));
+            std::make_unique<LaunchpadGridMidiOutProcessor>(std::move(launchpadXOutput), sender, uiState, sinkIx));
     }
     if (!launchpadProOutput.associations.empty()) {
         result.outputs.push_back(
-            std::make_unique<LaunchpadGridMidiOutProcessor>(std::move(launchpadProOutput), sender, uiState));
+            std::make_unique<LaunchpadGridMidiOutProcessor>(std::move(launchpadProOutput), sender, uiState, sinkIx));
     }
     if (!launchpadMiniOutput.associations.empty()) {
         result.outputs.push_back(
-            std::make_unique<LaunchpadGridMidiOutProcessor>(std::move(launchpadMiniOutput), sender, uiState));
+            std::make_unique<LaunchpadGridMidiOutProcessor>(std::move(launchpadMiniOutput), sender, uiState, sinkIx));
     }
 
     return result;

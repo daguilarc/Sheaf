@@ -539,20 +539,20 @@ TEST_CASE(engine_tick_rebuilds_midi_processors_after_patch_load_before_reopen_ca
     // freshly-rebuilt processors when it runs.
     EngineTestApp::testPatchesRoot.clear();
     EngineTestApp::processLiteAlpha = 1.0f;
-    EngineTestApp::wantEncoderMidiInput = true;  // so MidiInputProcessor() is non-null and identity-observable
+    EngineTestApp::wantEncoderMidiInput = true;  // so MidiInputProcessor(0) is non-null and identity-observable
     synth::Engine<EngineTestApp> engine([] { return std::uint64_t{0}; });
     engine.Initialize();
     engine.Prepare(48000.0, 256);
 
     int callbackCalls = 0;
     bool inputProcessorFreshAtCallback = false;
-    synth::MidiInProcessor* inputProcessorBeforeLoad = engine.MidiInputProcessor();
+    synth::MidiInProcessor* inputProcessorBeforeLoad = engine.MidiInputProcessor(0);
     engine.SetMidiProcessorsRebuiltCallback([&]() {
         ++callbackCalls;
         // The rebuild must have already run by the time the callback fires:
         // the input processor pointer should reflect the freshly-rebuilt
         // profile, not the one captured before the load.
-        inputProcessorFreshAtCallback = engine.MidiInputProcessor() != inputProcessorBeforeLoad;
+        inputProcessorFreshAtCallback = engine.MidiInputProcessor(0) != inputProcessorBeforeLoad;
     });
 
     // Write a patch version (reusing Task 3's WriteProbePatchVersion helper)
@@ -1533,7 +1533,7 @@ TEST_CASE(engine_edit_instrument_and_pending_patch_load_same_tick_observe_serial
 
 TEST_CASE(engine_rebuild_midi_processors_observes_fully_applied_edit_snapshot) {
     // Critical-fix regression (RebuildMidiProcessors() data race): the fix
-    // makes RebuildMidiProcessors() copy the profile config it needs out of
+    // makes RebuildMidiProcessors() copy the WHOLE controllers vector out of
     // instrumentConfig_ while holding audioDeviceStateMutex_, the same lock
     // EditInstrument()/the audio-thread patch drain hold while mutating that
     // member (see audioDeviceStateMutex_'s doc comment). This single-threaded
@@ -1541,9 +1541,9 @@ TEST_CASE(engine_rebuild_midi_processors_observes_fully_applied_edit_snapshot) {
     // snapshot-then-build sequence is internally consistent: a rebuild
     // immediately after a serialized EditInstrument mutation must reflect
     // that mutation's fully-applied result (never an empty or partially
-    // mutated profile), for both the empty-instrument and populated-instrument
-    // cases RebuildMidiProcessors() special-cases (kEmptyProfile vs
-    // controllers.front().config).
+    // mutated profile), for both the empty-instrument (midiProcessors_ has
+    // size 0) and populated-instrument (one result per controller slot)
+    // cases.
     EngineTestApp::testPatchesRoot.clear();
     EngineTestApp::processLiteAlpha = 1.0f;
     EngineTestApp::wantEncoderMidiInput = true;  // Init() seeds one "test"/Generic controller
@@ -1562,18 +1562,21 @@ TEST_CASE(engine_rebuild_midi_processors_observes_fully_applied_edit_snapshot) {
     REQUIRE_TRUE(engine.LiveInstrument().controllers.front().config.encoderOutput.has_value());
     engine.RebuildMidiProcessorsForTest();
     // A rebuilt processor chain must exist and reflect the edited (non-empty)
-    // profile: MidiInputProcessor() stays non-null because encoderInput is
+    // profile: MidiInputProcessor(0) stays non-null because encoderInput is
     // still set on the same controller slot.
-    REQUIRE_TRUE(engine.MidiInputProcessor() != nullptr);
+    REQUIRE_TRUE(engine.MidiControllerCount() == 1);
+    REQUIRE_TRUE(engine.MidiInputProcessor(0) != nullptr);
 
     // Empty case: remove the only controller, then rebuild again. The
     // snapshot copy must see the now-empty controllers list (not a stale or
-    // torn view of the prior populated state) and fall back to the empty
-    // profile, producing no input processor.
+    // torn view of the prior populated state) and yield zero processor
+    // chains, so both MidiControllerCount() and the slot-0 accessor reflect
+    // "no controllers".
     engine.EditInstrument([](synth::MidiInstrumentConfig& instrument) { instrument.controllers.clear(); });
     REQUIRE_TRUE(engine.LiveInstrument().controllers.empty());
     engine.RebuildMidiProcessorsForTest();
-    REQUIRE_TRUE(engine.MidiInputProcessor() == nullptr);
+    REQUIRE_TRUE(engine.MidiControllerCount() == 0);
+    REQUIRE_TRUE(engine.MidiInputProcessor(0) == nullptr);
 
     EngineTestApp::wantEncoderMidiInput = false;  // restore default for subsequent tests
 }

@@ -16,10 +16,11 @@
 // ParameterModulation/PatchPersistence): no JUCE, so this can run in plain
 // unit-test binaries.
 //
-// Test-support surface: InstallMidiProfileForTest() below (and the
+// Test-support surface: InstallInstrumentForTest() below (and the
 // Engine::RebuildMidiProcessorsForTest() hook it delegates to) exists solely
-// so system tests can install a MIDI controller profile without fabricating
-// a full patch document. No production caller uses either.
+// so system tests can install a MIDI instrument (any number of controller
+// slots) without fabricating a full patch document. No production caller
+// uses either.
 
 #include "synth/Engine.hpp"
 
@@ -142,10 +143,20 @@ public:
         engine_.UiBus().Push(synth::MessageIn::SelectParamBank(NextTimestamp(), slotIx, bankIx));
     }
 
-    void SendMidi(const synth::BasicMidi& midi) {
-        synth::MidiInProcessor* processor = engine_.MidiInputProcessor();
+    // Feeds midi into controller slot controllerIx's input processor chain
+    // (Engine::MidiInputProcessor(controllerIx)) -- per-controller rebuild
+    // (Task 2): every slot's chain still terminates in the same underlying
+    // MIDI input bus (the plan's single-bus global constraint), but which
+    // slot's chain decodes a given raw message is now caller-selected, the
+    // same way a real multi-device host would route each physical MIDI
+    // input's bytes to the processor built for that device's slot. Silently
+    // drops (with an INFO log) when controllerIx is out of range or that
+    // slot has no input chain, matching the prior single-controller
+    // null-check contract.
+    void SendMidi(std::size_t controllerIx, const synth::BasicMidi& midi) {
+        synth::MidiInProcessor* processor = engine_.MidiInputProcessor(controllerIx);
         if (processor == nullptr) {
-            INFO("SynthRig::SendMidi: MidiInputProcessor is null; dropping MIDI message");
+            INFO("SynthRig::SendMidi: MidiInputProcessor(%zu) is null; dropping MIDI message", controllerIx);
             return;
         }
         processor->Process(midi);
@@ -179,34 +190,25 @@ public:
     App& Application() { return engine_.Application(); }
     synth::Engine<App>& Engine() { return engine_; }
 
-    // Test-support: install a new MIDI controller profile as the
-    // instrument's single controller slot and rebuild the MIDI processors
+    // Test-support: install a full MIDI instrument (any number of controller
+    // slots) as the engine's live instrument and rebuild the MIDI processors
     // from it immediately. Production code only ever rebuilds MIDI
     // processors through the patch-apply flow (loading/reverting a patch
     // triggers midiRebuildPending_, which the message-thread tick drains),
     // through Engine::EditInstrument (which rebuilds and fires the rebuilt
     // callback itself), or once at startup. This exists so tests can install
-    // a profile (e.g. synth::WrldBldrDefaultProfileConfig) without
-    // fabricating a full patch document or exercising EditInstrument's
-    // callback-firing side effect, by writing directly into
+    // an instrument (e.g. built from synth::WrldBldrDefaultProfileConfig)
+    // without fabricating a full patch document or exercising
+    // EditInstrument's callback-firing side effect, by writing directly into
     // Engine::LiveInstrument() and delegating to
     // Engine::RebuildMidiProcessorsForTest() (a matching test-only hook).
-    // Single-slot only, matching RebuildMidiProcessors()'s current
-    // first-controller-only construction (see its doc comment); replaces
-    // whatever controller (if any) already occupies slot 0 rather than
-    // appending, so repeated calls in the same test keep installing exactly
-    // one controller.
-    void InstallMidiProfileForTest(synth::MidiControllerProfileConfig config) {
-        synth::MidiInstrumentConfig& instrument = engine_.LiveInstrument();
-        synth::MidiControllerSlot slot;
-        slot.name = "test";
-        slot.kind = synth::MidiProfileKind::Generic;
-        slot.config = std::move(config);
-        if (instrument.controllers.empty()) {
-            instrument.controllers.push_back(std::move(slot));
-        } else {
-            instrument.controllers[0] = std::move(slot);
-        }
+    // Replaces the entire controllers vector (per-controller rebuild, Task
+    // 2: RebuildMidiProcessors() now builds one processor chain per slot, so
+    // this installer is no longer single-slot-only -- see that method's doc
+    // comment); repeated calls in the same test each fully replace whatever
+    // instrument (if any) was installed before.
+    void InstallInstrumentForTest(synth::MidiInstrumentConfig instrument) {
+        engine_.LiveInstrument() = std::move(instrument);
         engine_.RebuildMidiProcessorsForTest();
     }
 

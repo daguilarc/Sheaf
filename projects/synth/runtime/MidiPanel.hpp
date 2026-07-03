@@ -8,9 +8,14 @@
 // synth::Engine<App>: unlike the old app, the engine owns MIDI processor
 // construction/rebuilding itself (Engine::RebuildMidiProcessors, driven by
 // midiRebuildPending_/the startup-patch path), so this panel only forwards
-// incoming device MIDI into engine.MidiInputProcessor() and points the
+// incoming device MIDI into engine.MidiInputProcessor(0) and points the
 // engine's MidiSender at the open output device — it never builds a
-// MidiControllerProfileResult itself.
+// MidiControllerProfileResult itself. Per-controller rebuild (Task 2) made
+// MidiInputProcessor()/ResetMidiOutputProcessors() take a controllerIx; this
+// panel is still a single-device runtime shell (it only ever reads/writes
+// slot 0's endpoint refs -- see the note below), so every call site here
+// stays hardcoded to slot 0. A later plan gives this panel true
+// per-controller device management.
 //
 // Device open/close records identifiers into slot 0 of the engine's live
 // instrument (controllers[0].input/output), via Engine::EditInstrument
@@ -76,7 +81,7 @@ namespace detail {
 // Bridges synth_juce::MidiInHandler (which owns a single
 // std::unique_ptr<synth::MidiInProcessor>) to a single, fixed
 // synth::MidiInProcessor* captured at construction time (a snapshot of
-// engine.MidiInputProcessor() taken immediately after a rebuild). The
+// engine.MidiInputProcessor(0) taken immediately after a rebuild). The
 // handler's callback thread (JUCE's MIDI input thread) is untagged by
 // MidiHandlers.hpp, so this forwarding Process() applies the
 // synth::ScopedThreadId(MidiInput) tag itself, per the Task 3 brief, without
@@ -157,14 +162,18 @@ public:
         addAndMakeVisible(statusLabel_);
 
         // Installs a fresh forwarding processor wrapping the engine's
-        // just-constructed MidiInputProcessor(), through inHandler_'s own
+        // just-constructed MidiInputProcessor(0), through inHandler_'s own
         // mutex-guarded SetProcessor (see the detail namespace comment on
         // why the panel never keeps its own raw target pointer).
         InstallForwardingProcessor();
 
         if (synth::MidiSender* sender = engine_.Context().midiSender; sender != nullptr) {
-            // Sink index 0: single-controller reality until per-controller
-            // processors land (see MidiSender's kMaxSinks routing).
+            // Sink index 0: this panel is still a single-device runtime
+            // shell (see the class doc comment) -- it only ever manages
+            // controller slot 0's output device, so it only ever registers
+            // sink 0, even though per-controller processors (Task 2) now
+            // build each slot's outputs against its own sink index (see
+            // MidiSender's kMaxSinks routing).
             sender->SetSink(0, &outHandler_);
         }
 
@@ -268,7 +277,7 @@ public:
     // failure (spp-5), mirroring the old miniapp's openSavedMidiDevices.
     void ReopenPersistedEndpoints() {
         // Re-point the forwarding processor at the freshly rebuilt
-        // MidiInputProcessor(). OnMidiProcessorsWillRebuild() already
+        // MidiInputProcessor(0). OnMidiProcessorsWillRebuild() already
         // detached the previous (now-dangling) one before the engine
         // destroyed the old chain.
         InstallForwardingProcessor();
@@ -286,8 +295,9 @@ public:
             outHandler_.Open(ToJuceString(endpoints.output.identifier))) {
             // Parity with the old miniapp's openSavedMidiDevices (Main.cpp):
             // force a full LED/value resync on the just-reopened output
-            // device (Task 3 review finding: output reset parity).
-            engine_.ResetMidiOutputProcessors();
+            // device (Task 3 review finding: output reset parity). Slot 0
+            // only -- see the class doc comment.
+            engine_.ResetMidiOutputProcessors(0);
         }
 
         UpdateStatus();
@@ -311,15 +321,15 @@ private:
     }
 
     // Installs a fresh EngineForwardingMidiInProcessor wrapping the
-    // engine's current MidiInputProcessor() into inHandler_, through its
+    // engine's current MidiInputProcessor(0) into inHandler_, through its
     // mutex-guarded SetProcessor. Must only be called when midiProcessors_
     // is not mid-rebuild (i.e. either at construction time or after
     // ReopenPersistedEndpoints() observes the rebuilt callback) — never
     // between OnMidiProcessorsWillRebuild() and the matching rebuilt
-    // callback.
+    // callback. Slot 0 only -- see the class doc comment.
     void InstallForwardingProcessor() {
         inHandler_.SetProcessor(
-            std::make_unique<detail::EngineForwardingMidiInProcessor>(engine_.MidiInputProcessor()));
+            std::make_unique<detail::EngineForwardingMidiInProcessor>(engine_.MidiInputProcessor(0)));
     }
 
     struct Slot0EndpointsResult {
@@ -448,8 +458,9 @@ private:
             SetSlot0Endpoints(std::nullopt, ref);
             // Parity with the old miniapp's toggleMidiOutput (Main.cpp):
             // force a full LED/value resync on the just-opened output
-            // device (Task 3 review finding: output reset parity).
-            engine_.ResetMidiOutputProcessors();
+            // device (Task 3 review finding: output reset parity). Slot 0
+            // only -- see the class doc comment.
+            engine_.ResetMidiOutputProcessors(0);
         }
         UpdateStatus();
     }

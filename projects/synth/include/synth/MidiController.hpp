@@ -276,11 +276,13 @@ struct EncoderMidiOutConfig {
 
 class MidiOutProcessor : public MidiOutputProcessor {
 public:
-    MidiOutProcessor(EncoderMidiOutConfig config, MidiSender* sender, ParameterManager::UIState* uiState);
+    MidiOutProcessor(EncoderMidiOutConfig config, MidiSender* sender, ParameterManager::UIState* uiState,
+                     std::size_t sinkIx = 0);
     virtual ~MidiOutProcessor() = default;
 
     void SetSender(MidiSender* sender) { sender_ = sender; }
     void SetUIState(ParameterManager::UIState* uiState) { uiState_ = uiState; }
+    void SetSinkIx(std::size_t sinkIx) { sinkIx_ = sinkIx; }
     void SetConfig(EncoderMidiOutConfig config);
     const EncoderMidiOutConfig& Config() const { return config_; }
 
@@ -304,6 +306,12 @@ protected:
     EncoderMidiOutConfig config_;
     MidiSender* sender_ = nullptr;
     ParameterManager::UIState* uiState_ = nullptr;
+    // Sink index this processor's Enqueue() routes to (MidiSender::kMaxSinks
+    // routing) -- the per-controller output-routing index
+    // CreateMidiControllerProfile threads through from the engine's per-slot
+    // rebuild. Defaults to 0 for every direct/legacy construction site that
+    // predates per-controller routing.
+    std::size_t sinkIx_ = 0;
 };
 
 class TwisterMidiOutProcessor final : public MidiOutProcessor {
@@ -375,10 +383,12 @@ struct SystemCcMidiOutConfig {
 
 class SystemCcMidiOutProcessor final : public MidiOutputProcessor {
 public:
-    SystemCcMidiOutProcessor(SystemCcMidiOutConfig config, MidiSender* sender, ParameterManager::UIState* uiState);
+    SystemCcMidiOutProcessor(SystemCcMidiOutConfig config, MidiSender* sender, ParameterManager::UIState* uiState,
+                             std::size_t sinkIx = 0);
 
     void SetSender(MidiSender* sender) { sender_ = sender; }
     void SetUIState(ParameterManager::UIState* uiState) { info_.SetUIState(uiState); }
+    void SetSinkIx(std::size_t sinkIx) { sinkIx_ = sinkIx; }
     void SetConfig(SystemCcMidiOutConfig config);
     const SystemCcMidiOutConfig& Config() const { return config_; }
     void Reset() override;
@@ -396,6 +406,7 @@ private:
     MidiSender* sender_ = nullptr;
     SystemMessageOutputInfo info_;
     std::vector<CacheEntry> cache_;
+    std::size_t sinkIx_ = 0;
 };
 
 struct WrldBldrSystemPosition {
@@ -416,10 +427,11 @@ struct WrldBldrSystemMidiOutConfig {
 class WrldBldrSystemMidiOutProcessor final : public MidiOutputProcessor {
 public:
     WrldBldrSystemMidiOutProcessor(WrldBldrSystemMidiOutConfig config, MidiSender* sender,
-                                   ParameterManager::UIState* uiState);
+                                   ParameterManager::UIState* uiState, std::size_t sinkIx = 0);
 
     void SetSender(MidiSender* sender) { sender_ = sender; }
     void SetUIState(ParameterManager::UIState* uiState) { info_.SetUIState(uiState); }
+    void SetSinkIx(std::size_t sinkIx) { sinkIx_ = sinkIx; }
     void SetConfig(WrldBldrSystemMidiOutConfig config);
     const WrldBldrSystemMidiOutConfig& Config() const { return config_; }
     void Reset() override;
@@ -437,6 +449,7 @@ private:
     MidiSender* sender_ = nullptr;
     SystemMessageOutputInfo info_;
     std::vector<CacheEntry> cache_;
+    std::size_t sinkIx_ = 0;
 };
 
 struct LaunchpadGridMidiOutAssociation {
@@ -451,10 +464,11 @@ struct LaunchpadGridMidiOutConfig {
 class LaunchpadGridMidiOutProcessor final : public MidiOutputProcessor {
 public:
     LaunchpadGridMidiOutProcessor(LaunchpadGridMidiOutConfig config, MidiSender* sender,
-                                  ParameterManager::UIState* uiState);
+                                  ParameterManager::UIState* uiState, std::size_t sinkIx = 0);
 
     void SetSender(MidiSender* sender) { sender_ = sender; }
     void SetUIState(ParameterManager::UIState* uiState) { info_.SetUIState(uiState); }
+    void SetSinkIx(std::size_t sinkIx) { sinkIx_ = sinkIx; }
     void SetConfig(LaunchpadGridMidiOutConfig config);
     const LaunchpadGridMidiOutConfig& Config() const { return config_; }
     void Reset() override;
@@ -472,6 +486,7 @@ private:
     MidiSender* sender_ = nullptr;
     SystemMessageOutputInfo info_;
     std::vector<CacheEntry> cache_;
+    std::size_t sinkIx_ = 0;
 };
 
 struct MidiControllerSystemMessageAssociation {
@@ -538,9 +553,16 @@ struct MidiInstrumentConfig {
     const MidiControllerSlot* FindController(std::string_view name) const;
 };
 
+// sinkIx: the MidiSender::kMaxSinks index every output processor built here
+// enqueues to (see MidiOutputProcessor-derived classes' sinkIx_ member).
+// Defaults to 0 for every caller that predates per-controller sink routing
+// (the three whole-profile factories below, and every direct test call);
+// Engine::RebuildMidiProcessors() is the only caller that passes a
+// controller-slot-specific index.
 MidiControllerProfileResult CreateMidiControllerProfile(
     const MidiControllerProfileConfig& config, MessageInBus* bus, MidiSender* sender,
-    ParameterManager::UIState* uiState, MidiInProcessor::TimestampProvider timestampProvider = {});
+    ParameterManager::UIState* uiState, MidiInProcessor::TimestampProvider timestampProvider = {},
+    std::size_t sinkIx = 0);
 
 struct WrldBldrDefaultProfileOptions {
     std::size_t slotIx = 0;

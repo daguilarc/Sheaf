@@ -4,6 +4,7 @@
 #error "synth rig tests must not see JUCE headers"
 #endif
 
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <exception>
@@ -127,6 +128,137 @@ struct RigTestApp {
     }
 };
 
+// Records every BasicMidi handed to it via IMidiOutputSink::Send, tagged
+// with a fixed sinkLabel so a test can distinguish which fake sink (i.e.
+// which controller slot's MidiSender::SetSink registration) actually
+// received a given message -- the whole point of the per-controller sink
+// routing under test.
+struct FakeSink final : synth::IMidiOutputSink {
+    std::vector<synth::BasicMidi> received;
+
+    void Send(const synth::BasicMidi& midi) override {
+        received.push_back(midi);
+    }
+};
+
+// Two-controller app (Task 2 Step 1): two independent bank slots (slotIx 0
+// and 1), each with its own parameter ("Alpha"/"Beta") mapped to physical
+// encoder 0 of its own bank slot, so a controller's encoder turn can be
+// routed at MidiInstrumentConfig-build time to drive exactly one parameter.
+// ProcessBlock mirrors RigTestApp's minimal per-frame slew pump but has no
+// audio-output dependency on either parameter (these tests only care about
+// parameter/UI-state observation, not captured audio).
+struct TwoControllerRigApp {
+    synth::AppContext* context = nullptr;
+    synth::ParameterId alphaId = 0;
+    synth::ParameterId betaId = 0;
+
+    static synth::RuntimeConfig Config() {
+        synth::RuntimeConfig config;
+        config.appName = "TwoControllerRigTest";
+        config.numAudioInputs = 0;
+        config.numAudioOutputs = 2;
+        config.preferredSampleRate = 48000.0;
+        config.preferredBlockSize = 32;
+        return config;
+    }
+
+    void Init(synth::AppContext* ctx) {
+        context = ctx;
+        auto& group = ctx->parameterManager->CreateGroup({.numVoices = 1,
+                                                           .numModulators = 0,
+                                                           .numScenes = 1,
+                                                           .maxParameters = 4,
+                                                           .processLiteAlpha = 1.0f});
+        auto& alpha = ctx->parameterManager->CreateParameter(group, {.name = "Alpha", .defaultValue = 0.25f});
+        auto& beta = ctx->parameterManager->CreateParameter(group, {.name = "Beta", .defaultValue = 0.25f});
+        alphaId = alpha.Id();
+        betaId = beta.Id();
+
+        auto& bankA = ctx->parameterManager->CreateBank();
+        bankA.AddMapping(/*encoderId=*/0, alpha);
+        auto& slotA = ctx->parameterManager->CreateBankSlot();
+        slotA.AddPhysicalEncoder(/*encoderId=*/0);
+        slotA.SelectBank(&bankA);
+
+        auto& bankB = ctx->parameterManager->CreateBank();
+        bankB.AddMapping(/*encoderId=*/0, beta);
+        auto& slotB = ctx->parameterManager->CreateBankSlot();
+        slotB.AddPhysicalEncoder(/*encoderId=*/0);
+        slotB.SelectBank(&bankB);
+    }
+
+    void ProcessBlock(synth::AudioBlock& block) {
+        for (std::size_t frame = 0; frame < block.numFrames; ++frame) {
+            context->parameterManager->ParameterById(alphaId).ProcessLite();
+            context->parameterManager->ParameterById(betaId).ProcessLite();
+        }
+        for (int channel = 0; channel < block.numOutputChannels; ++channel) {
+            float* out = block.outputs[channel];
+            if (out == nullptr) {
+                continue;
+            }
+            for (std::size_t frame = 0; frame < block.numFrames; ++frame) {
+                out[frame] = 0.0f;
+            }
+        }
+    }
+};
+
+// Builds a two-controller instrument for TwoControllerRigApp: slot 0 drives
+// bank slot 0 (Alpha) via a minimal encoder-input config on channel 0 CC 0,
+// plus a system CC association (channel 4 CC 10) whose feedback is
+// ToggleShift -- genuinely global UI state (uiState_->shiftHeld), so
+// toggling it is observable independent of any bank/gesture wiring. Slot 1
+// is the same encoder-input shape shifted onto bank slot 1 (Beta) and a
+// distinct system CC address (channel 4 CC 11), but its feedback is
+// ToggleGestureSelect(gestureIx=0) instead of ToggleShift: TwoControllerRigApp
+// never configures any gestures, so SystemMessageOutputInfo::Evaluate's
+// ToggleGestureSelect/SetGestureSelect case always short-circuits to {} (its
+// gestureCapacity guard is never satisfied) -- controller 1's cached feedback
+// is therefore stable (never re-emits after its first Process() pass)
+// regardless of what controller 0's shift toggling does. This deliberately
+// gives the two controllers' feedback triggers independent state so a
+// per-sink-routing test can toggle ONE controller's feedback and assert the
+// OTHER controller's sink stays silent, without the "isolation" being
+// confounded by both associations happening to watch the same UI-state bit.
+// Both controllers' encoderOutput stays unset (deliberately): the
+// WrldBldr/Twister encoder-out cell-cache tests belong to
+// CreateMidiControllerProfile's own unit tests; this rig-level instrument
+// only needs the simpler always-cache-driven system CC feedback path to
+// exercise per-sink routing/reset end to end.
+synth::MidiInstrumentConfig TwoControllerInstrument() {
+    synth::MidiInstrumentConfig instrument;
+
+    synth::MidiControllerSlot slot0;
+    slot0.name = "controller-0";
+    slot0.kind = synth::MidiProfileKind::Generic;
+    slot0.config.encoderInput = synth::EncoderMidiInConfig{};
+    slot0.config.encoderInput->turns.push_back(
+        {.control = {.channel = 0, .cc = 0}, .slotIx = 0, .position = 0});
+    slot0.config.systemMessages.push_back({
+        .control = synth::MidiControlAddress{.channel = 4, .cc = 10},
+        .press = synth::MessageIn::ToggleShift(0),
+        .feedback = synth::MessageIn::ToggleShift(0),
+    });
+    instrument.controllers.push_back(std::move(slot0));
+
+    synth::MidiControllerSlot slot1;
+    slot1.name = "controller-1";
+    slot1.kind = synth::MidiProfileKind::Generic;
+    slot1.config.encoderInput = synth::EncoderMidiInConfig{};
+    slot1.config.encoderInput->turns.push_back(
+        {.control = {.channel = 0, .cc = 0}, .slotIx = 1, .position = 0});
+    slot1.config.systemMessages.push_back({
+        .control = synth::MidiControlAddress{.channel = 4, .cc = 11},
+        .press = synth::MessageIn::ToggleGestureSelect(0, 0),
+        .feedback = synth::MessageIn::ToggleGestureSelect(0, 0),
+    });
+    instrument.controllers.push_back(std::move(slot1));
+
+    return instrument;
+}
+
 }  // namespace
 
 TEST_CASE(rig_runs_blocks_and_captures_output) {
@@ -203,9 +335,22 @@ TEST_CASE(rig_save_patch_as_reports_written_and_creates_version_file) {
 // Rig-driven system tests (Plan 2 Task 7). Each test drives RigTestApp
 // through synth_rig::SynthRig exactly as a production host would: no direct
 // pokes into engine internals beyond the documented test-support surface
-// (SynthRig::InstallMidiProfileForTest / Engine::RebuildMidiProcessorsForTest,
+// (SynthRig::InstallInstrumentForTest / Engine::RebuildMidiProcessorsForTest,
 // and AppContext::patchOutputBus, which is already a production-shaped
 // escape hatch on AppContext, not a new accessor).
+
+// Wraps a single MidiControllerProfileConfig into a one-controller
+// MidiInstrumentConfig, matching the pre-Task-2 InstallMidiProfileForTest
+// helper's single-slot shape for tests that only need one controller.
+synth::MidiInstrumentConfig SingleControllerInstrument(synth::MidiControllerProfileConfig config) {
+    synth::MidiInstrumentConfig instrument;
+    synth::MidiControllerSlot slot;
+    slot.name = "test";
+    slot.kind = synth::MidiProfileKind::Generic;
+    slot.config = std::move(config);
+    instrument.controllers.push_back(std::move(slot));
+    return instrument;
+}
 
 // MIDI CC -> profile -> parameter: install the default WrldBldr profile
 // (encoder turns on channel 0, CC 0..15 -> slot 0 positions 0..15, see
@@ -215,7 +360,7 @@ TEST_CASE(rig_save_patch_as_reports_written_and_creates_version_file) {
 // engine settles.
 TEST_CASE(rig_midi_cc_routes_through_profile_to_parameter) {
     synth_rig::SynthRig<RigTestApp> rig;
-    rig.InstallMidiProfileForTest(synth::WrldBldrDefaultProfileConfig({}));
+    rig.InstallInstrumentForTest(SingleControllerInstrument(synth::WrldBldrDefaultProfileConfig({})));
 
     const float before = rig.ParameterValue(rig.Application().levelId);
 
@@ -226,7 +371,7 @@ TEST_CASE(rig_midi_cc_routes_through_profile_to_parameter) {
     // EncoderRelativeMode::Signed7Bit computes ticks = value - 64, so 65 =>
     // +1 tick => delta = +1 * turnStep (turnStep defaults to 1/128).
     turn.raw = {0xB0, 0x00, 0x41};
-    rig.SendMidi(turn);
+    rig.SendMidi(0, turn);
     rig.RunBlocks(8);
 
     REQUIRE_TRUE(rig.ParameterValue(rig.Application().levelId) > before);
@@ -340,6 +485,161 @@ TEST_CASE(rig_bus_drain_order_patch_before_ui_before_midi) {
     const float afterOneBlock = rig.ParameterValue(rig.Application().levelId);
     REQUIRE_TRUE(afterOneBlock > 0.25f);            // turn survived the revert
     REQUIRE_TRUE(afterOneBlock < edited - 1e-3f);    // revert applied before the turn
+}
+
+// Task 2 Step 1 (per-controller MIDI processor rebuild): a two-controller
+// instrument produces two independent processor chains, both fed by the
+// SINGLE MIDI input bus (per the plan's global constraint) but each with its
+// own MidiInputProcessor(ix) and its own output sink. A mapped encoder turn
+// sent through controller 0's chain drives Alpha (bank slot 0); the
+// identically-encoded turn sent through controller 1's chain drives Beta
+// (bank slot 1) instead -- proving the two chains are wired to distinct
+// parameter routing despite decoding the same raw MIDI bytes.
+TEST_CASE(rig_two_controllers_both_drive_parameters_through_single_bus) {
+    synth_rig::SynthRig<TwoControllerRigApp> rig;
+    rig.InstallInstrumentForTest(TwoControllerInstrument());
+
+    REQUIRE_TRUE(rig.Engine().MidiControllerCount() == 2);
+    REQUIRE_TRUE(rig.Engine().MidiInputProcessor(0) != nullptr);
+    REQUIRE_TRUE(rig.Engine().MidiInputProcessor(1) != nullptr);
+
+    const float alphaBefore = rig.ParameterValue(rig.Application().alphaId);
+    const float betaBefore = rig.ParameterValue(rig.Application().betaId);
+
+    // Channel 0 (0xB0), CC 0, value 0x41 (65): a +1 relative tick under the
+    // default Signed7Bit decode (see rig_midi_cc_routes_through_profile_to_parameter).
+    synth::BasicMidi turn;
+    turn.timestamp = 0;
+    turn.raw = {0xB0, 0x00, 0x41};
+
+    rig.SendMidi(0, turn);
+    rig.RunBlocks(8);
+    REQUIRE_TRUE(rig.ParameterValue(rig.Application().alphaId) > alphaBefore);
+    REQUIRE_TRUE(rig.ParameterValue(rig.Application().betaId) == betaBefore);  // controller 1 untouched
+
+    rig.SendMidi(1, turn);
+    rig.RunBlocks(8);
+    REQUIRE_TRUE(rig.ParameterValue(rig.Application().betaId) > betaBefore);
+}
+
+// Per-sink feedback isolation: each controller's output feedback must land
+// only on its own registered sink index, never on another controller's sink.
+// Controller 0's feedback watches uiState_->shiftHeld (genuinely global UI
+// state); controller 1's watches ToggleGestureSelect(0), which
+// TwoControllerRigApp never wires up, so SystemMessageOutputInfo::Evaluate
+// always returns {} for it -- controller 1's cache is stable once primed, no
+// matter what controller 0's shift toggling does (see TwoControllerInstrument()'s
+// doc comment). The very first Process() pass after install primes BOTH
+// caches (cache.valid starts false for every mapped association, regardless
+// of the value it observes) and emits on both sinks once -- that priming
+// round is not what's under test. What IS under test: toggling shift via
+// controller 0's press must resend feedback on sink 0 only, once the
+// publish-throttled UIState snapshot actually reflects the toggle (see
+// uiPublishInterval_'s doc comment -- RunBlocks must cross at least one
+// publish boundary for uiState_->shiftHeld to update); sink 1 has nothing new
+// to report and must stay silent throughout.
+TEST_CASE(rig_two_controllers_output_feedback_isolated_per_sink) {
+    synth_rig::SynthRig<TwoControllerRigApp> rig;
+    rig.InstallInstrumentForTest(TwoControllerInstrument());
+
+    FakeSink sink0;
+    FakeSink sink1;
+    synth::MidiSender* sender = rig.Engine().Context().midiSender;
+    REQUIRE_TRUE(sender != nullptr);
+    sender->SetSink(0, &sink0);
+    sender->SetSink(1, &sink1);
+    sender->Start();
+
+    // Priming round: both output processors report their initial (shift-off)
+    // state once, regardless of sink. Not part of the assertion below. Runs
+    // enough blocks to also clear the initial UIState publish so the
+    // subsequent press's effect is unambiguously the next observed change.
+    rig.RunBlocks(64);
+    sender->FlushForTests(std::chrono::milliseconds(500));
+    sink0.received.clear();
+    sink1.received.clear();
+
+    // Controller 0's system-CC press address: channel 4, CC 10, press value
+    // > 0 toggles shift (see TwoControllerInstrument()).
+    synth::BasicMidi press0;
+    press0.timestamp = 0;
+    press0.raw = {0xB4, 0x0A, 0x7F};
+    rig.SendMidi(0, press0);
+    // Run enough blocks to (a) apply the press (immediate, via midiBus_.Process
+    // inside the very next ProcessBlock) and (b) cross a UIState publish
+    // boundary so uiState_->shiftHeld actually reflects the toggle before the
+    // output processors' Process() pass evaluates it.
+    rig.RunBlocks(64);
+
+    sender->FlushForTests(std::chrono::milliseconds(500));
+    sender->Stop();
+
+    REQUIRE_TRUE(!sink0.received.empty());
+    REQUIRE_TRUE(sink1.received.empty());
+}
+
+// ResetMidiOutputProcessors(ix) is per-controller: forcing controller 1's
+// output caches to clear must resend all of controller 1's mapped feedback
+// on its next Process() pass, while controller 0's caches -- untouched --
+// suppress a redundant resend of a value it already reported.
+TEST_CASE(rig_reset_midi_output_processors_is_scoped_to_one_controller) {
+    synth_rig::SynthRig<TwoControllerRigApp> rig;
+    rig.InstallInstrumentForTest(TwoControllerInstrument());
+
+    FakeSink sink0;
+    FakeSink sink1;
+    synth::MidiSender* sender = rig.Engine().Context().midiSender;
+    REQUIRE_TRUE(sender != nullptr);
+    sender->SetSink(0, &sink0);
+    sender->SetSink(1, &sink1);
+    sender->Start();
+
+    // Toggle shift on (via controller 0's press) so both controllers' output
+    // processors have something to report, then let a tick flush the first
+    // (cache-priming) round of feedback through both sinks.
+    synth::BasicMidi press0;
+    press0.timestamp = 0;
+    press0.raw = {0xB4, 0x0A, 0x7F};
+    rig.SendMidi(0, press0);
+    rig.RunBlocks(1);
+    sender->FlushForTests(std::chrono::milliseconds(500));
+
+    REQUIRE_TRUE(!sink0.received.empty());
+    REQUIRE_TRUE(!sink1.received.empty());
+    sink0.received.clear();
+    sink1.received.clear();
+
+    // Steady state: shiftHeld hasn't changed, so an ordinary tick's output
+    // pass must not resend (both caches already reflect the current state).
+    rig.RunBlocks(1);
+    sender->FlushForTests(std::chrono::milliseconds(500));
+    REQUIRE_TRUE(sink0.received.empty());
+    REQUIRE_TRUE(sink1.received.empty());
+
+    // Force controller 1's cache to clear; controller 0's cache stays warm.
+    rig.Engine().ResetMidiOutputProcessors(1);
+    rig.RunBlocks(1);
+    sender->FlushForTests(std::chrono::milliseconds(500));
+    sender->Stop();
+
+    REQUIRE_TRUE(sink0.received.empty());   // controller 0: no resend, cache untouched
+    REQUIRE_TRUE(!sink1.received.empty());  // controller 1: resent after its cache was cleared
+}
+
+// Removing a controller via EditInstrument shrinks MidiControllerCount() and
+// nulls the accessor for the removed slot -- the rebuild path that keeps
+// midiProcessors_ in lockstep with LiveInstrument().controllers.
+TEST_CASE(rig_edit_instrument_removing_controller_shrinks_count_and_nulls_accessor) {
+    synth_rig::SynthRig<TwoControllerRigApp> rig;
+    rig.InstallInstrumentForTest(TwoControllerInstrument());
+    REQUIRE_TRUE(rig.Engine().MidiControllerCount() == 2);
+    REQUIRE_TRUE(rig.Engine().MidiInputProcessor(1) != nullptr);
+
+    rig.Engine().EditInstrument([](synth::MidiInstrumentConfig& instrument) { instrument.RemoveController(1); });
+
+    REQUIRE_TRUE(rig.Engine().MidiControllerCount() == 1);
+    REQUIRE_TRUE(rig.Engine().MidiInputProcessor(0) != nullptr);
+    REQUIRE_TRUE(rig.Engine().MidiInputProcessor(1) == nullptr);
 }
 
 int main() {

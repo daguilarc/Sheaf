@@ -30,6 +30,7 @@
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace synth {
 
@@ -362,7 +363,10 @@ public:
     //      as the MIDI rebuilt callback — the callback always observes the
     //      already-changed state). Same exchange-based consume as
     //      midiRebuildPending_, for the same race reason.
-    //   6. each processor in midiProcessors_.outputs: Process().
+    //   6. each processor in every slot of midiProcessors_'s outputs: Process()
+    //      (per-controller rebuild, Task 2: midiProcessors_ is now one
+    //      MidiControllerProfileResult per controller slot; every slot's
+    //      outputs still get exactly one Process() call per tick).
     void MessageThreadTick() {
         ParameterMessageOut parameterMessage;
         while (parameterMessageOutBus_.Pop(parameterMessage)) {
@@ -407,8 +411,10 @@ public:
             }
         }
 
-        for (auto& output : midiProcessors_.outputs) {
-            output->Process();
+        for (MidiControllerProfileResult& processors : midiProcessors_) {
+            for (auto& output : processors.outputs) {
+                output->Process();
+            }
         }
     }
 
@@ -418,7 +424,24 @@ public:
     MessageInBus& UiBus() { return uiBus_; }
     MessageInBus& MidiBus() { return midiBus_; }
     PatchManager& Patches() { return patchManager_; }
-    MidiInProcessor* MidiInputProcessor() { return midiProcessors_.input.get(); }
+
+    // Number of per-controller processor chains currently built --
+    // == LiveInstrument().controllers.size() at the time of the last
+    // RebuildMidiProcessors() call (the two stay in lockstep: every rebuild
+    // resizes midiProcessors_ to match the snapshotted controller count).
+    std::size_t MidiControllerCount() const { return midiProcessors_.size(); }
+
+    // Input processor chain head for controller slot controllerIx, or
+    // nullptr when controllerIx is out of range (>= MidiControllerCount()) or
+    // that slot's profile has no input processors configured (mirrors the
+    // single-controller accessor's prior "empty profile -> nullptr"
+    // contract, now per-slot).
+    MidiInProcessor* MidiInputProcessor(std::size_t controllerIx) {
+        if (controllerIx >= midiProcessors_.size()) {
+            return nullptr;
+        }
+        return midiProcessors_[controllerIx].input.get();
+    }
 
     // Unlocked reference to the live instrument (smi-8). LEGAL ONLY: (1)
     // pre-audio initialization -- single-threaded app/engine setup before
@@ -434,7 +457,7 @@ public:
     // unlocked from message-thread paths concurrent with running audio,
     // repeating the same race class RebuildMidiProcessors() was fixed for).
     // Test-support code driving the engine single-threaded (e.g.
-    // tests/support/SynthRig.hpp's InstallMidiProfileForTest, and
+    // tests/support/SynthRig.hpp's InstallInstrumentForTest, and
     // engine_tests.cpp's direct pokes) has no concurrent audio thread to race
     // and may keep reading/writing through this reference directly.
     MidiInstrumentConfig& LiveInstrument() { return instrumentConfig_; }
@@ -504,14 +527,20 @@ public:
     void SetMidiProcessorsWillRebuildCallback(std::function<void()> callback) {
         midiProcessorsWillRebuildCallback_ = std::move(callback);
     }
-    // Message-thread only: iterates midiProcessors_.outputs calling Reset()
-    // on each. Forces a full LED/value resync on MIDI output hardware (e.g.
-    // after opening/reopening an output device). Must not be called from the
-    // audio thread — midiProcessors_ is only ever replaced on the thread
-    // performing a rebuild (Initialize()/MessageThreadTick(), both
-    // message-thread-only), so this has no synchronization of its own.
-    void ResetMidiOutputProcessors() {
-        for (auto& output : midiProcessors_.outputs) {
+    // Message-thread only: iterates controller slot controllerIx's outputs
+    // calling Reset() on each, clearing ONLY that controller's output caches
+    // (a no-op when controllerIx is out of range). Forces a full LED/value
+    // resync on that controller's MIDI output hardware (e.g. after
+    // opening/reopening an output device) without disturbing any other
+    // controller's already-warm caches. Must not be called from the audio
+    // thread — midiProcessors_ is only ever replaced on the thread performing
+    // a rebuild (Initialize()/MessageThreadTick(), both message-thread-only),
+    // so this has no synchronization of its own.
+    void ResetMidiOutputProcessors(std::size_t controllerIx) {
+        if (controllerIx >= midiProcessors_.size()) {
+            return;
+        }
+        for (auto& output : midiProcessors_[controllerIx].outputs) {
             output->Reset();
         }
     }
@@ -563,9 +592,9 @@ public:
     // instrumentConfig_ on demand (e.g. after a host mutates it via
     // EditInstrument, such as switching MIDI controller presets — see
     // MidiPanel). Runs midiProcessorsWillRebuildCallback_ (if set)
-    // synchronously, BEFORE the current midiProcessors_ chain is
-    // destroyed/replaced, then constructs a fresh chain via
-    // CreateMidiControllerProfile against midiBus_/uiState_ (uiState_ may
+    // synchronously, BEFORE the current midiProcessors_ chains are
+    // destroyed/replaced, then constructs one fresh chain per controller slot
+    // via CreateMidiControllerProfile against midiBus_/uiState_ (uiState_ may
     // still be null the first time this runs, during Initialize(), before
     // uiState_ is populated is not the case here, since Initialize() calls
     // this after uiState_ is populated; the function tolerates a null
@@ -581,42 +610,54 @@ public:
     // onto EditInstrument) invoke midiProcessorsRebuiltCallback_ themselves,
     // or otherwise handle the endpoint-reopen consequences of a fresh chain.
     //
-    // Processor construction is still single-chain (per-controller rebuild
-    // across multiple simultaneous controllers is a later plan's job): this
-    // builds from the FIRST controller slot's profile config
-    // (instrumentConfig_.controllers[0].config) when the instrument is
-    // non-empty, and builds an empty MidiControllerProfileResult (no
-    // processors) when it has zero controllers.
+    // Per-controller rebuild (Task 2): midiProcessors_ now holds one
+    // MidiControllerProfileResult per controller slot, index-for-index with
+    // instrumentConfig_.controllers. Slot i's output processors are built
+    // with sink index i (CreateMidiControllerProfile's sinkIx parameter),
+    // routing that slot's feedback onto MidiSender's sink i (see
+    // MidiSender::SetSink/Enqueue's kMaxSinks routing) -- independent of
+    // every other slot's sink, while ALL slots' input chains still feed the
+    // SAME midiBus_ (the single MIDI input bus; sar-7/the plan's global
+    // constraint is unchanged, only routing on the way OUT is per-slot). A
+    // zero-controller instrument yields an empty midiProcessors_ (size 0),
+    // matching the previous single-chain empty-profile case's "no
+    // processors" behavior but via an empty vector instead of one
+    // no-op-configured result.
     //
     // instrumentConfig_ is read under audioDeviceStateMutex_ (Task 3-style
-    // review fix, Critical): EditInstrument releases that lock before calling
-    // this, and the audio-thread patch drain (DrainPatchInputBus, the
-    // ProcessBlock stashed-message retry, ApplyPendingPatchMessages) mutates
-    // instrumentConfig_ WHILE holding it -- see audioDeviceStateMutex_'s doc
-    // comment, which already lists instrumentConfig_ among the members it
-    // guards. Reading instrumentConfig_.controllers here without the lock
-    // would race that drain. The lock is only held long enough to copy the
-    // (possibly absent) profile config into a local snapshot; the actual
-    // processor construction via CreateMidiControllerProfile happens outside
-    // the lock, since that work is heavier than the sanctioned
-    // patch-boundary non-RT window is meant to cover.
+    // review fix, Critical, preserved here): EditInstrument releases that
+    // lock before calling this, and the audio-thread patch drain
+    // (DrainPatchInputBus, the ProcessBlock stashed-message retry,
+    // ApplyPendingPatchMessages) mutates instrumentConfig_ WHILE holding it --
+    // see audioDeviceStateMutex_'s doc comment, which already lists
+    // instrumentConfig_ among the members it guards. Reading
+    // instrumentConfig_.controllers here without the lock would race that
+    // drain. The lock is only held long enough to copy the WHOLE controllers
+    // vector (every slot's config, not just one) into a local snapshot; the
+    // actual processor construction via CreateMidiControllerProfile --
+    // heavier now that it runs once per slot -- happens entirely outside the
+    // lock, since that work is heavier than the sanctioned patch-boundary
+    // non-RT window is meant to cover.
     void RebuildMidiProcessors() {
         if (midiProcessorsWillRebuildCallback_) {
             midiProcessorsWillRebuildCallback_();
         }
-        MidiControllerProfileConfig profile;
+        std::vector<MidiControllerSlot> controllers;
         {
             const std::lock_guard<std::mutex> lock(audioDeviceStateMutex_);
-            if (!instrumentConfig_.controllers.empty()) {
-                profile = instrumentConfig_.controllers.front().config;
-            }
+            controllers = instrumentConfig_.controllers;
         }
-        midiProcessors_ =
-            CreateMidiControllerProfile(profile, &midiBus_, &midiSender_, uiState_.get(), timestampProvider_);
+        std::vector<MidiControllerProfileResult> rebuilt;
+        rebuilt.reserve(controllers.size());
+        for (std::size_t ix = 0; ix < controllers.size(); ++ix) {
+            rebuilt.push_back(CreateMidiControllerProfile(controllers[ix].config, &midiBus_, &midiSender_,
+                                                           uiState_.get(), timestampProvider_, ix));
+        }
+        midiProcessors_ = std::move(rebuilt);
     }
 
     // Test-only alias for RebuildMidiProcessors(), kept for existing test
-    // call sites (e.g. SynthRig::InstallMidiProfileForTest). Prefer calling
+    // call sites (e.g. SynthRig::InstallInstrumentForTest). Prefer calling
     // RebuildMidiProcessors() directly in new code.
     void RebuildMidiProcessorsForTest() { RebuildMidiProcessors(); }
 
@@ -814,10 +855,11 @@ private:
     // Engine-owned MIDI instrument (sar-3): threaded through ApplyPatchMessage
     // (LoadFromJSON/RevertAllToDefault/SerializeToJSON) -- the in-memory
     // counterpart of the required `midiInstrument` patch section -- AND the
-    // source RebuildMidiProcessors() builds midiProcessors_ from (the first
-    // controller slot's profile config; per-controller/multi-chain
-    // construction is a later plan's job). LiveInstrument()/EditInstrument()
-    // are the pre-audio/locked read and message-thread write surface;
+    // source RebuildMidiProcessors() builds midiProcessors_ from (one
+    // MidiControllerProfileResult per controller slot, index-for-index --
+    // see RebuildMidiProcessors()'s doc comment). LiveInstrument()/
+    // EditInstrument() are the pre-audio/locked read and message-thread write
+    // surface;
     // InstrumentSnapshot() is the locked running-state read surface (use this
     // one once audio may be live); the audio-thread patch drain
     // (DrainPatchInputBus and friends) is the only other writer, serialized
@@ -902,7 +944,11 @@ private:
     AppContext context_;
     App app_;
     std::unique_ptr<ParameterManager::UIState> uiState_;
-    MidiControllerProfileResult midiProcessors_;
+    // One MidiControllerProfileResult per controller slot, index-for-index
+    // with instrumentConfig_.controllers as of the last RebuildMidiProcessors()
+    // call (see that method's doc comment for the per-controller sink-routing
+    // rebuild contract). Empty when the instrument has zero controllers.
+    std::vector<MidiControllerProfileResult> midiProcessors_;
     TimestampProvider timestampProvider_;
     std::atomic<std::uint64_t> sampleCounter_{0};
     std::function<void()> midiProcessorsRebuiltCallback_;
