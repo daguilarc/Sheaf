@@ -162,32 +162,45 @@ independently.
 runtime (`synth_runtime::Runtime<App>`, `synth_runtime::ShellComponent<App>`,
 `synth_runtime::MainPane<App>` and its Audio/Controllers/File pages, the
 `SYNTH_RUNTIME_MAIN` macro). It owns the audio device, the message-thread
-tick, per-controller MIDI connection management, and the patch-command
-chrome (New/Save/Save As/Load/Revert) that every app built on it gets for
-free.
+tick, and per-controller MIDI connection management that every app built on
+it gets for free.
+
+`MainPane` lays out a fixed-width right sidebar (Audio/Controllers/File
+buttons plus a rolling-max deadline readout) next to a content host that
+shows exactly one page at a time: `AudioConfigPage` (audio device
+selection/status), `ControllersPage` (per-controller MIDI device pickers and
+mapping edits), and `FilePage` (patch commands and patch identity). There is
+no separate shell chrome row — each page owns the state that used to live in
+the old MidiPanel/AudioPanel strips and the patch-command row.
 
 `projects/synth/apps/<name>/` holds one runtime application each. An app
 provides a JUCE-free core satisfying `synth::SynthApplicationCore` (so it can
 also run headless under `synth_rig::SynthRig` in tests) plus a JUCE-facing UI
 wrapper satisfying `synth::SynthApplication` (adds `UIComponent()`), and a
 `Main.cpp` that is just `SYNTH_RUNTIME_MAIN(AppType)`. The app's own UI
-component should contain only its bespoke widgets; patch buttons and MIDI
-device selection are runtime-owned chrome, not app code (see
+component should contain only its bespoke widgets; patch commands and MIDI
+device/controller configuration are runtime-owned pages, not app code (see
 `projects/synth/apps/miniapp/README.md` for a concrete example).
 
-Patch command results (New/Save/Save As/Load/Revert) are logged by the
-runtime itself, at INFO level through `synth::AsyncLogQueue`
-(`synth_runtime::Runtime::LogPatchCommand`) — apps do not write their own
-patch log files.
+`FilePage` (`projects/synth/runtime/FilePage.hpp`) hosts the patch-command
+row (New/Save/Save As/Load/Revert) and the patch identity label. Patch
+command results are logged by the runtime itself, at INFO level through
+`synth::AsyncLogQueue` (`synth_runtime::Runtime::LogPatchCommand`) — apps do
+not write their own patch log files. The page shows the current patch's name
+(the patch directory's filename, or "(no patch)" when none is current), read
+fresh every repaint tick from
+`Runtime::GetEngine().Patches().CurrentPatchDirectory()` — the message-side
+`PatchManager`'s own state, never cached elsewhere and never touched from
+the audio thread. The Save button checks the same state before dispatching:
+with no current patch it falls through to the Save As chooser instead of
+sending a `SavePatch()` doomed to return `NeedsSaveAsPath` (that status is
+still logged as a backstop if it ever occurs).
 
-The shell chrome also shows the current patch's name (the patch directory's
-filename, or "(no patch)" when none is current), read fresh every repaint
-tick from `Runtime::GetEngine().Patches().CurrentPatchDirectory()` — the
-message-side `PatchManager`'s own state, never cached elsewhere and never
-touched from the audio thread. The Save button checks the same state before
-dispatching: with no current patch it falls through to the Save As chooser
-instead of sending a `SavePatch()` doomed to return `NeedsSaveAsPath`
-(that status is still logged as a backstop if it ever occurs).
+`ControllersPage` (`projects/synth/runtime/ControllersPage.hpp`) hosts MIDI
+device selection and controller/mapping configuration, per controller slot.
+Page edits commit through `engine.EditInstrument` plus a
+`MidiConnectionManager` reconcile pass — the page never mutates config or
+device handlers directly.
 
 Build an app from `projects/synth`:
 

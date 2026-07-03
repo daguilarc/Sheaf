@@ -101,15 +101,16 @@ WHEN controller connections must be reconciled with the present device list, THE
 - **THEN** the returned plan contains no actions
 
 ### Requirement: smi-4 — Polling: IO poll thread and message-thread reconciliation
-WHILE the runtime is running, THE runtime SHALL run an IO poll thread with its own `ThreadId` that every 5 seconds checks the USB MIDI device list, compares it against the previous poll snapshot, and alerts the message thread when the list changed; the poll thread SHALL NOT open or close devices or mutate engine state; WHEN alerted, THE message thread SHALL re-enumerate devices, run the reconciliation planner, and execute the resulting plan (reconnects, offline marking, resyncs); the poll thread SHALL start only after startup controller connection completes and SHALL be stopped and joined before MIDI devices are closed at shutdown.
+WHILE the runtime is running, THE runtime SHALL run an IO poll thread with its own `ThreadId` that every 5 seconds checks the USB MIDI device list, compares it against the previous poll snapshot, and alerts the message thread when the list changed; WHERE platform constraints prevent safe device enumeration off the message thread (e.g. macOS CoreMIDI asserts the message thread), THE poll thread SHALL instead alert the message thread every interval (degraded mode) and THE message thread SHALL perform the bounded device enumeration and comparison itself; the poll thread SHALL NOT open or close devices or mutate engine state; WHEN the message thread observes a changed device list, THE message thread SHALL run the reconciliation planner and execute the resulting plan (reconnects, offline marking, resyncs); WHEN the device list is unchanged from the previous message-thread pass, THE message thread SHALL NOT run reconciliation planning or plan execution; the poll thread SHALL start only after startup controller connection completes and SHALL be stopped and joined before MIDI devices are closed at shutdown.
 
 #### Scenario: Device change triggers reconciliation
-- **WHEN** the poll thread observes a device list different from its previous snapshot
+- **WHEN** the poll thread (or, in degraded mode, the message-thread comparison) observes a device list different from its previous snapshot
 - **THEN** the message thread re-enumerates the devices and executes a reconciliation plan on its next processing opportunity
 
-#### Scenario: Unchanged list does no message-thread work
+#### Scenario: Unchanged list does no reconciliation work
 - **WHEN** consecutive polls observe identical device lists
-- **THEN** no reconciliation work is scheduled on the message thread
+- **THEN** no reconciliation planning or plan execution runs on the message thread
+- **AND** in degraded mode the message thread's per-interval work is limited to the bounded enumeration and comparison
 
 #### Scenario: Poll thread never touches devices
 - **WHEN** the poll thread code is inspected

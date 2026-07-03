@@ -466,6 +466,43 @@ TEST_CASE(rebuild_response_resize_plan_independent_of_started) {
     REQUIRE_TRUE(started.reconcile == true);
 }
 
+// PlanMidiTickResponse (smi-4, blocking): pins the
+// MidiConnectionManager::OnTimerTick() unchanged-list gate -- "WHEN the
+// device list is unchanged from the previous message-thread pass, THE
+// message thread SHALL NOT run reconciliation planning or plan execution."
+// A regression guard: if someone drops or inverts the listChanged/
+// rebuildPending check in OnTimerTick(), this test fails without needing a
+// full JUCE runtime build to notice.
+using synth::PlanMidiTickResponse;
+
+TEST_CASE(tick_response_poller_not_dirty_no_reconcile) {
+    // The poller itself observed no change -- nothing to even re-enumerate
+    // for, regardless of the other inputs.
+    const auto response = PlanMidiTickResponse(/*pollerDirty=*/false, /*listChanged=*/true, /*rebuildPending=*/true);
+    REQUIRE_TRUE(response.reconcile == false);
+}
+
+TEST_CASE(tick_response_dirty_but_list_unchanged_no_reconcile) {
+    // The blocking scenario: consecutive polls observe identical device
+    // lists -- no reconciliation planning or plan execution runs.
+    const auto response =
+        PlanMidiTickResponse(/*pollerDirty=*/true, /*listChanged=*/false, /*rebuildPending=*/false);
+    REQUIRE_TRUE(response.reconcile == false);
+}
+
+TEST_CASE(tick_response_dirty_and_list_changed_reconciles) {
+    const auto response = PlanMidiTickResponse(/*pollerDirty=*/true, /*listChanged=*/true, /*rebuildPending=*/false);
+    REQUIRE_TRUE(response.reconcile == true);
+}
+
+TEST_CASE(tick_response_rebuild_pending_forces_reconcile_even_if_list_unchanged) {
+    // Instrument-rebuild-triggered reconciles (patch load, UI edit) must NOT
+    // be skipped by this gate -- only poll-tick passes with an unchanged
+    // list.
+    const auto response = PlanMidiTickResponse(/*pollerDirty=*/true, /*listChanged=*/false, /*rebuildPending=*/true);
+    REQUIRE_TRUE(response.reconcile == true);
+}
+
 int main() {
     int failed = 0;
     for (const auto& test : Registry()) {

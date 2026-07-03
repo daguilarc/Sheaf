@@ -289,4 +289,10 @@ MidiRebuildResponse PlanMidiRebuildResponse(bool started, std::size_t oldCount, 
     return response;
 }
 
+MidiTickResponse PlanMidiTickResponse(bool pollerDirty, bool listChanged, bool rebuildPending) {
+    MidiTickResponse response;
+    response.reconcile = pollerDirty && (listChanged || rebuildPending);
+    return response;
+}
+
 } // namespace synth

@@ -217,4 +217,54 @@ struct MidiRebuildResponse {
 
 MidiRebuildResponse PlanMidiRebuildResponse(bool started, std::size_t oldCount, std::size_t newCount);
 
+// Pure, JUCE-free decision for MidiConnectionManager::OnTimerTick() (smi-4:
+// "WHEN the device list is unchanged from the previous message-thread pass,
+// THE message thread SHALL NOT run reconciliation planning or plan
+// execution"). Mirrors PlanMidiRebuildResponse's shape: a tiny pinned gate
+// function so the poll-tick skip decision is unit-testable headlessly,
+// instead of living only as inline logic in a JUCE template method that
+// only a full JUCE runtime build would exercise.
+//
+// Inputs:
+//   pollerDirty    -- MidiDevicePoller::ConsumeChange()'s return value for
+//                      this tick (false: the poller itself observed no
+//                      change since its last cycle -- including degraded
+//                      mode's own snapshot-compare -- so there is nothing
+//                      to even re-enumerate for).
+//   listChanged    -- true when the message thread's own authoritative
+//                      re-enumeration (EnumerateNow(), called only when
+//                      pollerDirty is true) differs from the previous
+//                      message-thread pass's list (MidiConnectionManager's
+//                      lastEnumerated_/hasLastEnumerated_).
+//   rebuildPending -- true when an instrument-rebuild-triggered reconcile
+//                      (patch load, UI edit, i.e. OnInstrumentRebuilt()) is
+//                      the reason this pass must not be skipped even though
+//                      the enumerated list itself is unchanged. On the
+//                      runtime's actual timer ordering (MessageThreadTick()
+//                      -- which drains any pending rebuild and runs its own
+//                      reconcile pass -- always runs before OnTimerTick() in
+//                      the same tick, per Runtime::timerCallback()), a
+//                      rebuild reconcile for this tick has always already
+//                      completed by the time OnTimerTick() runs; this
+//                      parameter exists so that invariant is an explicit,
+//                      tested input to the gate rather than an assumption
+//                      baked silently into the skip condition, and so a
+//                      caller on a different timer ordering (or a guard
+//                      flag like reconciling_) can still force a reconcile
+//                      through this same pure decision point.
+//
+// Reconciliation planning/execution SHALL run (reconcile=true) unless the
+// poller was not dirty, or the poller was dirty but the re-enumerated list
+// is unchanged from the previous pass AND no rebuild-triggered reconcile is
+// pending. A no-op tick still needs to re-enumerate (when the poller was
+// dirty) so the caller can refresh lastEnumerated_/hasLastEnumerated_ even
+// though it will not go on to plan/execute -- that decision (whether to
+// call EnumerateNow() at all) is `pollerDirty` itself, which the caller
+// already has before calling this function.
+struct MidiTickResponse {
+    bool reconcile = false;
+};
+
+MidiTickResponse PlanMidiTickResponse(bool pollerDirty, bool listChanged, bool rebuildPending);
+
 } // namespace synth

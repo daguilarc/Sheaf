@@ -265,31 +265,45 @@ public:
     // authoritatively on the message thread (never trusts the poller's own
     // snapshot for the actual reconcile -- see MidiDevicePoller's class doc
     // comment: the poller exists purely to wake us, not to be the source of
-    // truth) and runs one reconcile pass.
+    // truth), then gates whether to run reconciliation planning/execution at
+    // all through synth::PlanMidiTickResponse (smi-4: "WHEN the device list
+    // is unchanged from the previous message-thread pass, THE message
+    // thread SHALL NOT run reconciliation planning or plan execution").
     //
-    // Degraded-mode tick cost (Task 3 review, Minor): in degraded mode (see
-    // detail::ForceDirtyEnumerate()'s doc comment) the poller's dirty flag
-    // is set unconditionally every ~5 s, so this still calls Reconcile()
-    // every tick even when the OS device list has not changed -- this
-    // method deliberately does NOT skip planning/execution on an unchanged
-    // list (unlike the alternative the brief allows: "skip planning
-    // entirely when the list is unchanged"). Rationale: PlanMidiReconciliation
-    // + ExecuteReconcilePlan are cheap, pure-over-small-vectors operations
-    // (a handful of controller slots, not device-count-scaling work) that
-    // already no-op correctly on a converged/unchanged state (see
-    // converged_state_produces_empty_plan in reconcile_tests.cpp) -- adding
-    // a second "did the list change" short-circuit here would duplicate
-    // logic the planner already provides for free, for no measurable benefit
-    // on this data size. What WAS worth fixing is the unconditional log
-    // line on every one of those no-op ticks -- Reconcile()'s own
-    // lastEnumerated_ snapshot (see that member's doc comment) suppresses
-    // exactly that noise, without skipping the (harmless, idempotent) work
-    // itself.
+    // Unchanged-list gate (smi-4, binding; supersedes the prior
+    // always-reconcile design -- see PlanMidiTickResponse's own doc comment
+    // for the full rationale and the pinned unit tests in
+    // reconcile_executor_tests.cpp's tick_response_* cases): in degraded
+    // mode (see detail::ForceDirtyEnumerate()'s doc comment) the poller's
+    // dirty flag is set unconditionally every ~5 s, but that alone no longer
+    // triggers a reconcile pass -- only a re-enumerated list that actually
+    // differs from lastEnumerated_ does. rebuildPending is always false
+    // here: Runtime::timerCallback()'s binding order runs
+    // engine_.MessageThreadTick() (which drains any pending
+    // instrument-rebuild and runs OnInstrumentRebuilt()'s own reconcile pass
+    // synchronously) BEFORE OnTimerTick(), so any rebuild-triggered
+    // reconcile for this tick has always already completed by the time this
+    // method runs; reconciling_ is passed anyway (not a literal `false`) as
+    // a defensive belt-and-suspenders read of the actual re-entrancy guard,
+    // so this gate can never suppress a reconcile that a rebuild path still
+    // has in flight, even if that ordering invariant ever changes.
     void OnTimerTick() {
         synth::MidiDeviceList latest;
-        if (poller_.ConsumeChange(latest)) {
-            Reconcile(detail::EnumerateDevices());
+        if (!poller_.ConsumeChange(latest)) {
+            return;
         }
+
+        const synth::MidiDeviceList present = detail::EnumerateDevices();
+        const bool listChanged = !(hasLastEnumerated_ && present == lastEnumerated_);
+        const synth::MidiTickResponse response = synth::PlanMidiTickResponse(
+            /*pollerDirty=*/true, listChanged, /*rebuildPending=*/reconciling_);
+        if (!response.reconcile) {
+            lastEnumerated_ = present;
+            hasLastEnumerated_ = true;
+            return;
+        }
+
+        Reconcile(present);
     }
 
     // Wired to engine.SetMidiProcessorsWillRebuildCallback (forwarded by the
@@ -477,10 +491,13 @@ private:
 
         // Log-quiet (Task 3 review, Minor): skip the summary line only when
         // the plan was empty AND the device list itself is unchanged since
-        // the last reconcile pass -- in degraded mode, this is the common
-        // case on every ~5 s forced-dirty tick when no MIDI device has
-        // actually changed. Any non-empty plan, or any actual list change
-        // (present != lastEnumerated_), still logs -- including a list
+        // the last reconcile pass. Since smi-4's unchanged-list gate (see
+        // OnTimerTick()'s doc comment and synth::PlanMidiTickResponse),
+        // OnTimerTick() itself no longer calls Reconcile() at all on an
+        // unchanged list, so this condition now mainly guards
+        // rebuild-triggered reconciles (OnInstrumentRebuilt(),
+        // StartupReconcile()) that happen to converge against an unchanged
+        // list with an empty plan. Any non-empty plan, or any actual list
         // change that happens to converge to an empty plan, so a device
         // appearing/disappearing is never silently dropped from the log.
         const bool listUnchanged = hasLastEnumerated_ && present == lastEnumerated_;
