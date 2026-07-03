@@ -2,16 +2,16 @@
 
 ## 1. Instrument model (JUCE-free library)
 
-- [ ] 1.1 Add `MidiProfileKind` enum, kind section-support matrix helper, `MidiEndpointRef` (identifier + device name, empty = unconfigured), and `MidiControllerSlot` (name, kind, profile config, input/output endpoint refs) to `include/synth/MidiController.hpp` (smi-1)
-- [ ] 1.2 Add `MidiInstrumentConfig` (ordered slots, unique-name add/rename/remove API) with kind-validity enforcement (slot invalid if config populates a kind-unsupported section or a system-message association carries a kind-unsupported address/feedback variant) and unit tests covering ordering, name uniqueness, and the support matrix (smi-1)
-- [ ] 1.3 Implement instrument JSON serialize/load reusing profile-config JSON helpers; reject unknown kinds, duplicate names, kind-unsupported sections (e.g. launchpad with encoder mappings), and kind-incompatible address variants (e.g. launchpad entry with a WRLD.Bldr position); unit-test round-trip with all four kinds and multi-controller configs (smi-2)
+- [x] 1.1 Add `MidiProfileKind` enum, kind section-support matrix helper, `MidiEndpointRef` (identifier + device name, empty = unconfigured), and `MidiControllerSlot` (name, kind, profile config, input/output endpoint refs) to `include/synth/MidiController.hpp` (smi-1)
+- [x] 1.2 Add `MidiInstrumentConfig` (ordered slots, unique-name add/rename/remove API) with kind-validity enforcement (slot invalid if config populates a kind-unsupported section or a system-message association carries a kind-unsupported address/feedback variant) and unit tests covering ordering, name uniqueness, and the support matrix (smi-1)
+- [x] 1.3 Implement instrument JSON serialize/load reusing profile-config JSON helpers; reject unknown kinds, duplicate names, kind-unsupported sections (e.g. launchpad with encoder mappings), and kind-incompatible address variants (e.g. launchpad entry with a WRLD.Bldr position); unit-test round-trip with all four kinds and multi-controller configs (smi-2)
 
 ## 2. Persistence integration
 
-- [ ] 2.1 Replace `midiProfile` + endpoint state with `midiInstrument` in `BuildPatchJSON`/`LoadPatchJSON`/`ValidatePatchJSON`; a document without the section fails validation, zero-controller sections are valid (spp-2, spp-4)
-- [ ] 2.2 Update patch messages and the apply helper to carry/apply `MidiInstrumentConfig` (serialize includes per-controller endpoint refs; revert restores the default instrument) (spp-7)
-- [ ] 2.3 Update engine state: live `instrumentConfig_` + post-`Init` default snapshot; remove `MidiEndpointState` and its plumbing; add a message-thread instrument-edit entry point serialized against the audio-thread patch drain (block-boundary handoff or lock-guarded, mirroring the audio-device-state pattern) (spm-53 removal; sar-3, smi-8)
-- [ ] 2.4 Update existing library and rig tests for the new document format; add rig test: instrument round-trips through production save/load/revert messages (spp-5, sar-8)
+- [x] 2.1 Replace `midiProfile` + endpoint state with `midiInstrument` in `BuildPatchJSON`/`LoadPatchJSON`/`ValidatePatchJSON`; a document without the section fails validation, zero-controller sections are valid (spp-2, spp-4)
+- [x] 2.2 Update patch messages and the apply helper to carry/apply `MidiInstrumentConfig` (serialize includes per-controller endpoint refs; revert restores the default instrument) (spp-7)
+- [x] 2.3 Update engine state: live `instrumentConfig_` + post-`Init` default snapshot; remove `MidiEndpointState` and its plumbing; add a message-thread instrument-edit entry point serialized against the audio-thread patch drain (block-boundary handoff or lock-guarded, mirroring the audio-device-state pattern) (spm-53 removal; sar-3, smi-8)
+- [x] 2.4 Update existing library and rig tests for the new document format; add rig test: instrument round-trips through production save/load/revert messages (spp-5, sar-8)
 
 ## 3. Per-controller processors and sender routing
 
