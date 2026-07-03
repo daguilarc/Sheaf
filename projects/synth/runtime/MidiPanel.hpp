@@ -13,9 +13,10 @@
 // MidiControllerProfileResult itself.
 //
 // Device open/close records identifiers into slot 0 of the engine's live
-// instrument (engine.LiveInstrument().controllers[0].input/output), via
-// Engine::EditInstrument (spm-53). Prior to the midiInstrument
-// patch-document swap (see PatchPersistence.hpp), this lived in
+// instrument (controllers[0].input/output), via Engine::EditInstrument
+// (spm-53) for writes and Engine::InstrumentSnapshot() for message-thread
+// reads concurrent with running audio (see Slot0Endpoints()). Prior to the
+// midiInstrument patch-document swap (see PatchPersistence.hpp), this lived in
 // engine.Endpoints() and was persisted through the patch's midiEndpoints
 // section; that section and Engine's endpoints_/Endpoints() accessor are
 // gone now that MidiInstrumentConfig owns per-controller endpoint refs.
@@ -328,9 +329,17 @@ private:
     // engine's live instrument. Returns a default-constructed (unconfigured)
     // pair when the instrument has no controllers yet (e.g. before the
     // app's Init() has run, or for an app that never adds one). Endpoint
-    // refs live on slot 0 only for now — see the class doc comment.
+    // refs live on slot 0 only for now — see the class doc comment. Reads
+    // through Engine::InstrumentSnapshot() (a locked copy), not
+    // Engine::LiveInstrument(): this is called from Refresh() and
+    // ReopenPersistedEndpoints(), both message-thread paths that can run
+    // while the audio thread is live and mutating instrumentConfig_ under
+    // audioDeviceStateMutex_ via ApplyPatchMessage -- reading the unlocked
+    // reference here would race that drain (Task 4 review, Critical: the same
+    // race class RebuildMidiProcessors() was fixed for, see
+    // Engine::LiveInstrument()'s doc comment).
     Slot0EndpointsResult Slot0Endpoints() const {
-        const synth::MidiInstrumentConfig& instrument = engine_.LiveInstrument();
+        const synth::MidiInstrumentConfig instrument = engine_.InstrumentSnapshot();
         if (instrument.controllers.empty()) {
             return {};
         }

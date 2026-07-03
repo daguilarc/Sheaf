@@ -1578,6 +1578,61 @@ TEST_CASE(engine_rebuild_midi_processors_observes_fully_applied_edit_snapshot) {
     EngineTestApp::wantEncoderMidiInput = false;  // restore default for subsequent tests
 }
 
+TEST_CASE(engine_instrument_snapshot_is_deep_copy_equal_to_live_instrument) {
+    // Task 4 review, Critical fix regression: InstrumentSnapshot() is the
+    // locked running-state read surface MidiPanel::Slot0Endpoints() (and any
+    // other message-thread reader concurrent with running audio) must use
+    // instead of the unlocked LiveInstrument() reference -- see both
+    // methods' doc comments. This single-threaded harness cannot manufacture
+    // a real data race, but it can assert the copy is (a) equal in content to
+    // the live instrument at the moment of the call, and (b) a true deep
+    // copy: mutating the returned value must not alter instrumentConfig_
+    // (i.e. the snapshot does not alias the live controllers vector or its
+    // per-slot config/endpoint members).
+    EngineTestApp::testPatchesRoot.clear();
+    EngineTestApp::processLiteAlpha = 1.0f;
+    EngineTestApp::wantEncoderMidiInput = true;  // Init() seeds one "test"/Generic controller
+
+    synth::Engine<EngineTestApp> engine([] { return std::uint64_t{0}; });
+    engine.Initialize();
+
+    engine.EditInstrument([](synth::MidiInstrumentConfig& instrument) {
+        REQUIRE_TRUE(!instrument.controllers.empty());
+        instrument.controllers.front().input = synth::MidiEndpointRef{"in-id", "In Device"};
+        instrument.controllers.front().output = synth::MidiEndpointRef{"out-id", "Out Device"};
+    });
+
+    synth::MidiInstrumentConfig snapshot = engine.InstrumentSnapshot();
+
+    // (a) Equal in content to the live instrument at the time of the call.
+    const synth::MidiInstrumentConfig& live = engine.LiveInstrument();
+    REQUIRE_TRUE(snapshot.controllers.size() == live.controllers.size());
+    REQUIRE_TRUE(snapshot.controllers.front().name == live.controllers.front().name);
+    REQUIRE_TRUE(snapshot.controllers.front().kind == live.controllers.front().kind);
+    REQUIRE_TRUE(snapshot.controllers.front().config.encoderInput.has_value() ==
+                 live.controllers.front().config.encoderInput.has_value());
+    REQUIRE_TRUE(snapshot.controllers.front().input.identifier == live.controllers.front().input.identifier);
+    REQUIRE_TRUE(snapshot.controllers.front().input.name == live.controllers.front().input.name);
+    REQUIRE_TRUE(snapshot.controllers.front().output.identifier == live.controllers.front().output.identifier);
+    REQUIRE_TRUE(snapshot.controllers.front().output.name == live.controllers.front().output.name);
+
+    // (b) Deep copy: mutating the snapshot must not affect the live
+    // instrument, whether by appending a controller (would alias a shared
+    // vector buffer) or by editing a field on the existing slot (would alias
+    // a shared string/optional).
+    snapshot.controllers.front().input.identifier = "mutated-in-id";
+    snapshot.controllers.front().name = "mutated-name";
+    synth::MidiControllerSlot extra;
+    extra.name = "extra";
+    snapshot.controllers.push_back(std::move(extra));
+
+    REQUIRE_TRUE(engine.LiveInstrument().controllers.size() == 1);
+    REQUIRE_TRUE(engine.LiveInstrument().controllers.front().name == "test");
+    REQUIRE_TRUE(engine.LiveInstrument().controllers.front().input.identifier == "in-id");
+
+    EngineTestApp::wantEncoderMidiInput = false;  // restore default for subsequent tests
+}
+
 int main() {
     int failed = 0;
     for (const auto& test : Registry()) {

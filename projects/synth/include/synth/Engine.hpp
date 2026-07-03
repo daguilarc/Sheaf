@@ -420,15 +420,38 @@ public:
     PatchManager& Patches() { return patchManager_; }
     MidiInProcessor* MidiInputProcessor() { return midiProcessors_.input.get(); }
 
-    // Message-thread read of the live instrument (smi-8). Mirrors
-    // AppContext::instrument's thread-role contract (message thread only) —
-    // the audio thread only ever touches instrumentConfig_ through
-    // ApplyPatchMessage, under audioDeviceStateMutex_ (see DrainPatchInputBus
-    // and friends). A caller reading this concurrently with that drain
-    // without going through EditInstrument's lock is racing it; production
-    // callers that need a race-free mutation should use EditInstrument
-    // instead of mutating the reference this returns.
+    // Unlocked reference to the live instrument (smi-8). LEGAL ONLY: (1)
+    // pre-audio initialization -- single-threaded app/engine setup before
+    // Initialize() has started any concurrent activity (e.g. the app's own
+    // Init() populating its seed instrument); or (2) while the caller already
+    // holds audioDeviceStateMutex_ (e.g. inside EditInstrument's own lambda,
+    // or a future engine-internal caller taking the lock directly). The audio
+    // thread only ever touches instrumentConfig_ through ApplyPatchMessage,
+    // under audioDeviceStateMutex_ (see DrainPatchInputBus and friends), so
+    // ANY other running-state reader racing that drain must go through
+    // InstrumentSnapshot() instead of this accessor -- see that method's doc
+    // comment (Task 4 review, Critical: MidiPanel::Slot0Endpoints() read this
+    // unlocked from message-thread paths concurrent with running audio,
+    // repeating the same race class RebuildMidiProcessors() was fixed for).
+    // Test-support code driving the engine single-threaded (e.g.
+    // tests/support/SynthRig.hpp's InstallMidiProfileForTest, and
+    // engine_tests.cpp's direct pokes) has no concurrent audio thread to race
+    // and may keep reading/writing through this reference directly.
     MidiInstrumentConfig& LiveInstrument() { return instrumentConfig_; }
+
+    // Message-thread read of the live instrument, safe to call concurrently
+    // with the audio thread's patch drain: returns a locked deep copy of
+    // instrumentConfig_ rather than a reference into it. This is the
+    // running-state counterpart of LiveInstrument() -- use this (not
+    // LiveInstrument()) from any message-thread path that can run while audio
+    // is live and does not already hold audioDeviceStateMutex_ (e.g.
+    // MidiPanel::Slot0Endpoints(), called from Refresh() and
+    // ReopenPersistedEndpoints()). Mirrors AudioDeviceSnapshot()'s pattern for
+    // audioDeviceState_.
+    MidiInstrumentConfig InstrumentSnapshot() const {
+        const std::lock_guard<std::mutex> lock(audioDeviceStateMutex_);
+        return instrumentConfig_;
+    }
 
     // Post-Init() snapshot (see Initialize()'s binding-order comment, step
     // 4a): the instrument revert/new-patch restores. Immutable after
@@ -794,9 +817,11 @@ private:
     // source RebuildMidiProcessors() builds midiProcessors_ from (the first
     // controller slot's profile config; per-controller/multi-chain
     // construction is a later plan's job). LiveInstrument()/EditInstrument()
-    // are the message-thread read/write surface; the audio-thread patch
-    // drain (DrainPatchInputBus and friends) is the only other writer,
-    // serialized against EditInstrument via audioDeviceStateMutex_.
+    // are the pre-audio/locked read and message-thread write surface;
+    // InstrumentSnapshot() is the locked running-state read surface (use this
+    // one once audio may be live); the audio-thread patch drain
+    // (DrainPatchInputBus and friends) is the only other writer, serialized
+    // against EditInstrument/InstrumentSnapshot via audioDeviceStateMutex_.
     MidiInstrumentConfig instrumentConfig_;
     // Default = the app's Init-configured instrument; revert/new restore
     // this. Snapshotted from instrumentConfig_ in Initialize(), immediately
@@ -808,7 +833,7 @@ private:
     // Guards audioDeviceState_ + lastNotifiedAudioDeviceState_ (the two
     // members below) AND instrumentConfig_ against the data race between the
     // message thread (host writes via SetAudioDeviceFromHost/EditInstrument,
-    // reads via AudioDeviceSnapshot/LiveInstrument) and the audio thread
+    // reads via AudioDeviceSnapshot/InstrumentSnapshot) and the audio thread
     // (DrainPatchInputBus / ProcessBlock's stashed-message retry, which read
     // AND write audioDeviceState_/lastNotifiedAudioDeviceState_ AND
     // instrumentConfig_ while applying a patch message). AppContext no
