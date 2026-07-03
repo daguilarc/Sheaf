@@ -15,15 +15,15 @@
 
 ## 3. Per-controller processors and sender routing
 
-- [ ] 3.1 Rework `Engine::RebuildMidiProcessors` to build input chains and output processors per controller slot, all feeding the single MIDI bus and UI state; replace the single-controller engine surface (`MidiInputProcessor()` accessor, single `MidiControllerProfileResult`, global output reset) with per-controller equivalents and update all callers (sar-9, smi-8)
-- [ ] 3.2 Extend `MidiSender` to per-controller sink routing (`SetSink(ix, sink)`, `Enqueue(ix, midi)`); offline/unregistered sinks drop safely; unit tests for routing and drops (smi-7)
-- [ ] 3.3 Wire output processors to their controller's sink index; keep single worker thread lifecycle unchanged (smi-7)
-- [ ] 3.4 Rig test: two controllers' inputs both drive parameters; each controller's feedback reaches only its own sink (smi-7, sar-9)
+- [x] 3.1 Rework `Engine::RebuildMidiProcessors` to build input chains and output processors per controller slot, all feeding the single MIDI bus and UI state; replace the single-controller engine surface (`MidiInputProcessor()` accessor, single `MidiControllerProfileResult`, global output reset) with per-controller equivalents and update all callers (sar-9, smi-8)
+- [x] 3.2 Extend `MidiSender` to per-controller sink routing (`SetSink(ix, sink)`, `Enqueue(ix, midi)`); offline/unregistered sinks drop safely; unit tests for routing and drops (smi-7)
+- [x] 3.3 Wire output processors to their controller's sink index; keep single worker thread lifecycle unchanged (smi-7)
+- [x] 3.4 Rig test: two controllers' inputs both drive parameters; each controller's feedback reaches only its own sink (smi-7, sar-9)
 
 ## 4. Reconciliation planner (JUCE-free)
 
-- [ ] 4.1 Define `MidiDeviceList`, per-endpoint `MidiConnectionState`, `ReconcilePlan` action types (open/close per endpoint, offline/online marking, endpoint-ref update, resync) and implement `PlanMidiReconciliation` with identifier-then-stored-name matching, one-device-one-slot, unconfigured-ref inertness, resync on output open (smi-3)
-- [ ] 4.2 Unit-test the planner truth table: identifier match, name fallback emitting a ref-update action, duplicate-device contention, vanished device, input-only/output-only slots, unconfigured endpoints, input-only reopen without resync, converged-state empty plan, idempotence (smi-3)
+- [x] 4.1 Define `MidiDeviceList`, per-endpoint `MidiConnectionState`, `ReconcilePlan` action types (open/close per endpoint, offline/online marking, endpoint-ref update, resync) and implement `PlanMidiReconciliation` with identifier-then-stored-name matching, one-device-one-slot, unconfigured-ref inertness, resync on output open (smi-3)
+- [x] 4.2 Unit-test the planner truth table: identifier match, name fallback emitting a ref-update action, duplicate-device contention, vanished device, input-only/output-only slots, unconfigured endpoints, input-only reopen without resync, converged-state empty plan, idempotence (smi-3)
 
 ## 5. Runtime connection lifecycle
 
