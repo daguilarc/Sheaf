@@ -609,10 +609,15 @@ TEST_CASE(miniapp_rig_default_instrument_has_single_wrldbldr_controller) {
     UseScratchPatchesRoot("default_instrument_has_single_wrldbldr_controller");
     synth_rig::SynthRig<synth_miniapp::MiniAppCore> rig;
 
-    const synth::MidiInstrumentConfig& liveInstrument = rig.Engine().LiveInstrument();
-    REQUIRE_TRUE(liveInstrument.controllers.size() == 1);
+    // Pin the post-Init DEFAULT instrument (revert/new-patch restore value).
+    const synth::MidiInstrumentConfig& defaultInstrument = rig.Engine().DefaultInstrument();
+    REQUIRE_TRUE(defaultInstrument.controllers.size() == 1);
 
-    const synth::MidiControllerSlot& slot = liveInstrument.controllers.front();
+    // Assert the live instrument equals the default at startup.
+    const synth::MidiInstrumentConfig& liveInstrument = rig.Engine().LiveInstrument();
+    REQUIRE_TRUE(liveInstrument.controllers.size() == defaultInstrument.controllers.size());
+
+    const synth::MidiControllerSlot& slot = defaultInstrument.controllers.front();
     REQUIRE_TRUE(slot.name == "wrldbldr");
     REQUIRE_TRUE(slot.kind == synth::MidiProfileKind::WrldBldr);
 
@@ -629,6 +634,11 @@ TEST_CASE(miniapp_rig_default_instrument_has_single_wrldbldr_controller) {
     REQUIRE_TRUE(slot.config.encoderInput->turns.size() == expectedConfig.encoderInput->turns.size());
     REQUIRE_TRUE(slot.config.encoderInput->pushes.size() == expectedConfig.encoderInput->pushes.size());
     REQUIRE_TRUE(slot.config.encoderInput->turns.size() == kVisibleEncoderCount);
+
+    // Assert system association count. WrldBldrDefaultProfileConfig produces:
+    // 1 (shift) + sceneCount (3) + bankButtonCount (16) + gestureSelectorCount (1) = 21
+    REQUIRE_TRUE(slot.config.systemMessages.size() == expectedConfig.systemMessages.size());
+    REQUIRE_TRUE(slot.config.systemMessages.size() == 21);
 
     // Encoder-mapping spot-checks (brief Step 1): turn channel 0, push
     // channel 1, CCs 0..(visibleEncoderCount-1) -> positions
