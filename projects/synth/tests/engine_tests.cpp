@@ -1531,6 +1531,53 @@ TEST_CASE(engine_edit_instrument_and_pending_patch_load_same_tick_observe_serial
     EngineTestApp::wantEncoderMidiInput = false;  // restore default for subsequent tests
 }
 
+TEST_CASE(engine_rebuild_midi_processors_observes_fully_applied_edit_snapshot) {
+    // Critical-fix regression (RebuildMidiProcessors() data race): the fix
+    // makes RebuildMidiProcessors() copy the profile config it needs out of
+    // instrumentConfig_ while holding audioDeviceStateMutex_, the same lock
+    // EditInstrument()/the audio-thread patch drain hold while mutating that
+    // member (see audioDeviceStateMutex_'s doc comment). This single-threaded
+    // harness cannot manufacture a real data race, but it can assert the
+    // snapshot-then-build sequence is internally consistent: a rebuild
+    // immediately after a serialized EditInstrument mutation must reflect
+    // that mutation's fully-applied result (never an empty or partially
+    // mutated profile), for both the empty-instrument and populated-instrument
+    // cases RebuildMidiProcessors() special-cases (kEmptyProfile vs
+    // controllers.front().config).
+    EngineTestApp::testPatchesRoot.clear();
+    EngineTestApp::processLiteAlpha = 1.0f;
+    EngineTestApp::wantEncoderMidiInput = true;  // Init() seeds one "test"/Generic controller
+
+    synth::Engine<EngineTestApp> engine([] { return std::uint64_t{0}; });
+    engine.Initialize();
+
+    // Populated case: EditInstrument adds encoder-output config to the
+    // existing controller's profile, then explicitly rebuilds (mirroring
+    // EditInstrument's own post-edit rebuild, but isolating the call so this
+    // test documents RebuildMidiProcessors()'s contract directly).
+    engine.EditInstrument([](synth::MidiInstrumentConfig& instrument) {
+        REQUIRE_TRUE(!instrument.controllers.empty());
+        instrument.controllers.front().config.encoderOutput = synth::EncoderMidiOutConfig{};
+    });
+    REQUIRE_TRUE(engine.LiveInstrument().controllers.front().config.encoderOutput.has_value());
+    engine.RebuildMidiProcessorsForTest();
+    // A rebuilt processor chain must exist and reflect the edited (non-empty)
+    // profile: MidiInputProcessor() stays non-null because encoderInput is
+    // still set on the same controller slot.
+    REQUIRE_TRUE(engine.MidiInputProcessor() != nullptr);
+
+    // Empty case: remove the only controller, then rebuild again. The
+    // snapshot copy must see the now-empty controllers list (not a stale or
+    // torn view of the prior populated state) and fall back to the empty
+    // profile, producing no input processor.
+    engine.EditInstrument([](synth::MidiInstrumentConfig& instrument) { instrument.controllers.clear(); });
+    REQUIRE_TRUE(engine.LiveInstrument().controllers.empty());
+    engine.RebuildMidiProcessorsForTest();
+    REQUIRE_TRUE(engine.MidiInputProcessor() == nullptr);
+
+    EngineTestApp::wantEncoderMidiInput = false;  // restore default for subsequent tests
+}
+
 int main() {
     int failed = 0;
     for (const auto& test : Registry()) {

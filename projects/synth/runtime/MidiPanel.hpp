@@ -125,8 +125,9 @@ public:
         // selection is WRLD.Bldr (id 2), matching the app's Init-configured
         // default profile (WrldBldrDefaultProfileConfig) so the combo starts
         // in sync with what's actually live without needing to infer the
-        // preset from midiProfileConfig's shape (MidiControllerProfileConfig
-        // carries no controller-kind discriminator).
+        // preset from the live instrument's controller config shape
+        // (MidiControllerProfileConfig carries no controller-kind
+        // discriminator).
         presetBox_.addItem("Twister", kTwisterItemId);
         presetBox_.addItem("WRLD.Bldr", kWrldBldrItemId);
         presetBox_.setSelectedId(kWrldBldrItemId, juce::dontSendNotification);

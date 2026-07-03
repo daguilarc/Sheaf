@@ -147,8 +147,9 @@ public:
         // NewPatch()/RevertPatch() with no saved patch) would reset MIDI
         // routing/audio device selection to empty instead of back to the
         // app's real default — mirroring the old miniapp's post-construction
-        // `defaultMidiProfileConfig_ = midiProfileConfig_;` snapshot (see
-        // projects/synth/miniapp/Main.cpp, pre-instrument-model history).
+        // `defaultMidiProfileConfig_ = midiProfileConfig_;` snapshot (the
+        // pre-instrument-model predecessors of defaultInstrumentConfig_/
+        // instrumentConfig_; see projects/synth/miniapp/Main.cpp history).
         defaultInstrumentConfig_ = instrumentConfig_;
         {
             // Pre-audio, single-threaded (no audio/message-thread
@@ -563,13 +564,30 @@ public:
     // (instrumentConfig_.controllers[0].config) when the instrument is
     // non-empty, and builds an empty MidiControllerProfileResult (no
     // processors) when it has zero controllers.
+    //
+    // instrumentConfig_ is read under audioDeviceStateMutex_ (Task 3-style
+    // review fix, Critical): EditInstrument releases that lock before calling
+    // this, and the audio-thread patch drain (DrainPatchInputBus, the
+    // ProcessBlock stashed-message retry, ApplyPendingPatchMessages) mutates
+    // instrumentConfig_ WHILE holding it -- see audioDeviceStateMutex_'s doc
+    // comment, which already lists instrumentConfig_ among the members it
+    // guards. Reading instrumentConfig_.controllers here without the lock
+    // would race that drain. The lock is only held long enough to copy the
+    // (possibly absent) profile config into a local snapshot; the actual
+    // processor construction via CreateMidiControllerProfile happens outside
+    // the lock, since that work is heavier than the sanctioned
+    // patch-boundary non-RT window is meant to cover.
     void RebuildMidiProcessors() {
         if (midiProcessorsWillRebuildCallback_) {
             midiProcessorsWillRebuildCallback_();
         }
-        static const MidiControllerProfileConfig kEmptyProfile{};
-        const MidiControllerProfileConfig& profile =
-            instrumentConfig_.controllers.empty() ? kEmptyProfile : instrumentConfig_.controllers.front().config;
+        MidiControllerProfileConfig profile;
+        {
+            const std::lock_guard<std::mutex> lock(audioDeviceStateMutex_);
+            if (!instrumentConfig_.controllers.empty()) {
+                profile = instrumentConfig_.controllers.front().config;
+            }
+        }
         midiProcessors_ =
             CreateMidiControllerProfile(profile, &midiBus_, &midiSender_, uiState_.get(), timestampProvider_);
     }
