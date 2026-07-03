@@ -4,6 +4,7 @@
 
 #include <chrono>
 #include <condition_variable>
+#include <cstdint>
 #include <functional>
 #include <mutex>
 #include <thread>
@@ -27,9 +28,26 @@ namespace synth {
 // On a real difference, the latest list and a dirty flag are published under
 // a mutex. `ConsumeChange` (called from the message thread) copies the
 // latest list out under the mutex and clears the flag, returning true
-// exactly once per detected change. `PollNowForTests` pokes the CV and
-// blocks the calling thread until that poll cycle has completed, so tests
-// are deterministic instead of racing the worker's timer.
+// exactly once per detected change. `PollNowForTests` requests a poll cycle
+// and blocks the calling thread until a cycle that started AFTER the request
+// has completed, so tests are deterministic instead of racing the worker's
+// timer.
+//
+// Enumerate callback contract: the injected `enumerate` function must be
+// bounded/non-blocking (no indefinite waits) -- Stop() may block for at most
+// one in-flight `enumerate()` call before it can signal the worker to exit
+// and join it. There is no timeout machinery around the callback, so a
+// callback that never returns will make Stop() (and the destructor, which
+// calls Stop()) block indefinitely. If `enumerate` throws, the exception is
+// caught on the worker thread, logged via INFO under ThreadId::IoPoll, and
+// treated as a no-change cycle (the previous snapshot, if any, is kept);
+// polling continues on the next wake.
+//
+// Concurrency contract: the public API (Start/Stop/ConsumeChange/
+// PollNowForTests) is intended to be called from a single external thread
+// (the message thread). Only the background worker thread runs concurrently
+// with that caller -- there is no locking to protect against multiple
+// external threads calling these methods concurrently with each other.
 class MidiDevicePoller {
 public:
     using Enumerate = std::function<MidiDeviceList()>;
@@ -40,19 +58,24 @@ public:
     MidiDevicePoller(const MidiDevicePoller&) = delete;
     MidiDevicePoller& operator=(const MidiDevicePoller&) = delete;
 
+    // `enumerate` must be bounded/non-blocking -- see class comment.
     void Start(Enumerate enumerate);
-    void Stop();  // signals + joins; idempotent
+    void Stop();  // signals + joins; idempotent. Blocks for at most one in-flight enumerate() call.
 
     // Message thread: true once per detected change, copying the latest
     // list into `latest`. False (and `latest` left untouched) when no
     // change is pending.
     bool ConsumeChange(MidiDeviceList& latest);
 
-    // Forces one immediate poll cycle and blocks until it has completed.
+    // Forces one immediate poll cycle and blocks until a cycle that started
+    // after this call was made has completed. Two concurrent or sequential
+    // callers are each guaranteed their own such cycle -- see
+    // forceRequested_/forceCompleted_ below.
     void PollNowForTests();
 
 private:
     void Run();
+    void RunOnePollCycle(const Enumerate& enumerate, std::unique_lock<std::mutex>& lock, std::uint64_t requestToComplete);
     bool SnapshotChanged(const MidiDeviceList& next) const;
 
     std::chrono::milliseconds interval_;
@@ -64,12 +87,22 @@ private:
     bool running_ = false;
     bool stopRequested_ = false;
 
-    // Poke-and-wait support for PollNowForTests: forceRequested_ asks the
-    // worker to run a poll cycle immediately; forceGeneration_ increments
-    // once that cycle has completed so the caller can wait on it precisely
-    // (avoids racing multiple forced polls against each other).
-    bool forceRequested_ = false;
-    std::uint64_t forceGeneration_ = 0;
+    // Request/completion sequence numbers for PollNowForTests. Each call
+    // takes `target = ++forceRequested_` under the mutex, pokes the worker,
+    // and waits until `forceCompleted_ >= target`. The worker, after running
+    // a forced poll cycle, sets `forceCompleted_ = forceRequested_` (i.e.
+    // completes ALL requests pending at the time the cycle started) -- this
+    // is safe because a single poll cycle observes the current device list
+    // at the time it runs, so it satisfies every request that was pending
+    // before it started, including ones made concurrently right up until the
+    // worker re-locks the mutex after enumerate() returns. Because
+    // `forceCompleted_` is only ever assigned from `forceRequested_` (never
+    // incremented past it independently), and each PollNowForTests call
+    // reads its own `target` before the worker can have already completed
+    // it, every caller is guaranteed a cycle whose enumerate() call started
+    // strictly after their request was recorded.
+    std::uint64_t forceRequested_ = 0;
+    std::uint64_t forceCompleted_ = 0;
     std::condition_variable forceDoneCv_;
 
     bool hasSnapshot_ = false;

@@ -236,6 +236,100 @@ TEST_CASE(multiple_poll_now_calls_each_wait_for_their_own_cycle) {
     poller.Stop();
 }
 
+// A fake enumerate function that can be configured to throw on demand. Used
+// to verify that an exception escaping the injected Enumerate callback does
+// not terminate the worker thread or wedge PollNowForTests.
+class ThrowingEnumerate {
+public:
+    MidiDeviceList operator()() {
+        std::lock_guard<std::mutex> lock(mutex_);
+        ++callCount_;
+        if (shouldThrow_) {
+            throw std::runtime_error("enumerate exploded");
+        }
+        return list_;
+    }
+
+    void SetList(MidiDeviceList list) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        list_ = std::move(list);
+    }
+
+    void SetShouldThrow(bool shouldThrow) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        shouldThrow_ = shouldThrow;
+    }
+
+    int CallCount() {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return callCount_;
+    }
+
+private:
+    std::mutex mutex_;
+    MidiDeviceList list_;
+    bool shouldThrow_ = false;
+    int callCount_ = 0;
+};
+
+TEST_CASE(two_sequential_poll_now_calls_each_observe_a_post_call_cycle) {
+    // Regression test for the missed-generation race: each PollNowForTests
+    // caller must be guaranteed a poll cycle that started AFTER their call,
+    // not one that happened to be in flight already. We verify this
+    // indirectly: two sequential calls must each drive the fake's call count
+    // up by exactly one, and must never return before their own cycle's
+    // enumerate() call has actually happened.
+    MidiDevicePoller poller(std::chrono::seconds(5));
+    FakeEnumerate fake;
+    fake.SetList(ListA());
+
+    poller.Start([&fake] { return fake(); });
+
+    poller.PollNowForTests();
+    REQUIRE_TRUE(fake.CallCount() == 1);
+
+    poller.PollNowForTests();
+    REQUIRE_TRUE(fake.CallCount() == 2);
+
+    poller.Stop();
+}
+
+TEST_CASE(throwing_enumerate_does_not_terminate_or_hang) {
+    MidiDevicePoller poller(std::chrono::seconds(5));
+    ThrowingEnumerate fake;
+    fake.SetList(ListA());
+    fake.SetShouldThrow(true);
+
+    poller.Start([&fake] { return fake(); });
+
+    // Must return (not terminate the process, not hang) even though
+    // enumerate() throws every cycle.
+    poller.PollNowForTests();
+    REQUIRE_TRUE(fake.CallCount() == 1);
+
+    poller.PollNowForTests();
+    REQUIRE_TRUE(fake.CallCount() == 2);
+
+    // No change should ever be reported while enumerate keeps throwing --
+    // the previous snapshot (empty, since priming itself threw) is kept.
+    MidiDeviceList latest;
+    REQUIRE_TRUE(poller.ConsumeChange(latest) == false);
+
+    // Recovery: a subsequent good cycle should behave normally and detect
+    // changes relative to whatever snapshot state preceded it.
+    fake.SetShouldThrow(false);
+    fake.SetList(ListA());
+    poller.PollNowForTests();  // primes (since no snapshot was ever recorded)
+    REQUIRE_TRUE(poller.ConsumeChange(latest) == false);
+
+    fake.SetList(ListB());
+    poller.PollNowForTests();
+    REQUIRE_TRUE(poller.ConsumeChange(latest) == true);
+    REQUIRE_TRUE(latest.inputs.size() == 2);
+
+    poller.Stop();
+}
+
 int main() {
     int failed = 0;
     for (const auto& test : Registry()) {
