@@ -540,9 +540,22 @@ private:
 
             disclosureButton_.setButtonText(rowVm.configExpanded ? "v" : ">");
             disclosureButton_.onClick = [this] {
-                page_.vm_.ToggleConfig(controllerIx_);
-                page_.content_.RebuildRows();
-                page_.resized();
+                // RebuildRows() destroys this ControllerRow -- and the very
+                // button now mid-click -- so running it synchronously from the
+                // click callback is a use-after-free (JUCE keeps touching the
+                // freed button as the click unwinds). Defer until the click has
+                // returned; guard with a SafePointer in case the page itself
+                // goes away first.
+                juce::Component::SafePointer<ControllersPage> safePage(&page_);
+                const std::size_t ix = controllerIx_;
+                juce::MessageManager::callAsync([safePage, ix] {
+                    if (safePage == nullptr) {
+                        return;
+                    }
+                    safePage->vm_.ToggleConfig(ix);
+                    safePage->content_.RebuildRows();
+                    safePage->resized();
+                });
             };
             addAndMakeVisible(disclosureButton_);
 
@@ -552,9 +565,19 @@ private:
                     const bool expanded = page_.vm_.SectionExpanded(controllerIx_, section);
                     sectionButton->setButtonText(juce::String(SectionName(section)) + (expanded ? " v" : " >"));
                     sectionButton->onClick = [this, section] {
-                        page_.vm_.ToggleSection(controllerIx_, section);
-                        page_.content_.RebuildRows();
-                        page_.resized();
+                        // Same self-destruction hazard as the disclosure button
+                        // above: RebuildRows() frees this row and this button
+                        // mid-click. Defer past the click, SafePointer-guarded.
+                        juce::Component::SafePointer<ControllersPage> safePage(&page_);
+                        const std::size_t ix = controllerIx_;
+                        juce::MessageManager::callAsync([safePage, ix, section] {
+                            if (safePage == nullptr) {
+                                return;
+                            }
+                            safePage->vm_.ToggleSection(ix, section);
+                            safePage->content_.RebuildRows();
+                            safePage->resized();
+                        });
                     };
                     addAndMakeVisible(*sectionButton);
                     sectionButtons_.push_back(std::move(sectionButton));
