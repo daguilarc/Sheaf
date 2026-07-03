@@ -4,33 +4,26 @@
 // window chrome that wraps a synth_runtime::Runtime<App> (Task 2) into a
 // runnable application (Plan 3 Task 4).
 //
-// ShellComponent is now a thin MainPane<App> host (Plan 4 Task 2, sru-1):
-// it constructs a single MainPane<App>, `addAndMakeVisible`s it, and its
+// ShellComponent is a thin MainPane<App> host (Plan 4 Task 2, sru-1): it
+// constructs a single MainPane<App>, `addAndMakeVisible`s it, and its
 // resized() fills the shell's full bounds with it. The former patch-command
 // row (New/Save/Save As/Load/Revert + patch name + status label), the
 // MidiPanel strip, and the AudioPanel strip are gone from this layout --
 // MainPane's sidebar (Audio/Controllers/File) and content host are the only
-// chrome now. MidiPanelComponent()/AudioPanelComponent() (Runtime.hpp)
-// still construct those components, just unparented from the shell; Tasks
-// 3-4 re-home their logic into ControllersPage/AudioConfigPage/FilePage.
-//
-// Patch-command handlers (LaunchSaveAsChooser/LaunchLoadChooser and the
-// New/Save/SaveAs/Load/Revert wiring they'd back) are intentionally NOT
-// re-created here: this task has no chrome row and no FilePage yet to host
-// them, so patch commands are the one piece of functionality with no UI for
-// the duration of this task (see the task brief: "patch commands
-// temporarily have no UI (acceptable this task only)"). Runtime<App> still
-// exposes NewPatch()/SavePatch()/SavePatchAs()/LoadPatch()/RevertPatch()
-// unchanged (Runtime.hpp) -- Task 4's FilePage is what re-wires buttons and
-// a juce::FileChooser onto them, lifting the exact chooser pattern (async
-// launch rooted at Config().patchesRoot, held in a member unique_ptr so it
-// outlives the async operation) this file used before this rework; see this
-// commit's history for that code if a reference implementation helps.
+// chrome now. As of Task 3 of Plan 4, MainPane's Audio and File pages
+// (AudioConfigPage.hpp / FilePage.hpp) are real, re-homing AudioPanel's and
+// the old patch-command row's logic respectively (AudioPanel itself was
+// deleted from MidiPanel.hpp this task); Controllers remains a placeholder
+// until the next task lands ControllersPage. MidiPanelComponent()
+// (Runtime.hpp) still constructs that component, just unparented from the
+// shell, until ControllersPage re-homes its logic too.
 //
 // Runtime's timer-driven repaint hook (Runtime::Start() calls it at the end
 // of every tick) is wired to repaint the shell, which now just means
-// repainting the MainPane (which itself repaints its sidebar and whichever
-// of {app component, open page} is currently visible).
+// refreshing and repainting the MainPane (which itself refreshes/repaints
+// its sidebar and whichever of {app component, open page} is currently
+// visible -- see MainPane::RefreshOnTick's doc comment for why every page
+// gets refreshed regardless of visibility).
 //
 // SYNTH_RUNTIME_MAIN(AppType) expands to a full juce::JUCEApplication
 // wrapper (ShellApplication<AppType>) plus a START_JUCE_APPLICATION
@@ -70,6 +63,7 @@ public:
     // hook's repaint takes effect.
     void RepaintAll() {
         mainPane_.WriteDeadlineSample(runtime_.DeadlineSamplePct());
+        mainPane_.RefreshOnTick();
         mainPane_.repaint();
     }
 
