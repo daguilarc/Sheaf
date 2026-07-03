@@ -121,6 +121,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -457,6 +458,101 @@ private:
         std::size_t rowIx_;
     };
 
+    // A ComboBox over BlockableMessageCatalog() for a system Block row's
+    // Field::BlockMessageType (D6: "message type as a 3-choice combo of
+    // blockable types"). Mirrors RelativeModeFieldEditor's index convention
+    // (item ids 1-based, catalog indices 0-based), but reads its initial/
+    // reverted selection via the dedicated MidiConfigViewModel::
+    // BlockMessageTypeIndex() rather than RowFieldValue() -- RowFieldValue()
+    // deliberately refuses this field (a message type is not a single
+    // numeric value), the same reason PressMessage/ReleaseMessage use
+    // SystemMessageChoiceIndex() instead. Only ever constructed for
+    // MidiConfigSection::SystemMessages rows (the only section with system
+    // Block rows), so the section argument SystemMessageFieldEditor takes is
+    // hardcoded rather than threaded through.
+    class BlockMessageTypeFieldEditor : public juce::ComboBox {
+    public:
+        BlockMessageTypeFieldEditor(ControllersPage& page, std::size_t controllerIx, std::size_t rowIx)
+            : page_(page), controllerIx_(controllerIx), rowIx_(rowIx) {
+            const auto& catalog = synth::BlockableMessageCatalog();
+            for (int ix = 0; ix < static_cast<int>(catalog.size()); ++ix) {
+                addItem(juce::String(catalog[ix]), ix + 1);
+            }
+            const int current =
+                page_.vm_.BlockMessageTypeIndex(controllerIx_, synth::MidiConfigSection::SystemMessages, rowIx_);
+            if (current >= 0) {
+                setSelectedId(current + 1, juce::dontSendNotification);
+            }
+            onChange = [this] { Commit(); };
+        }
+
+    private:
+        void Commit() {
+            const int choiceIx = getSelectedId() - 1;
+            if (choiceIx < 0) {
+                return;
+            }
+            synth::MidiInstrumentConfig out;
+            std::string reason;
+            if (page_.vm_.ApplyMappingEdit(controllerIx_, synth::MidiConfigSection::SystemMessages, rowIx_,
+                                           synth::MidiMappingRowVM::Field::BlockMessageType,
+                                           static_cast<double>(choiceIx), out, &reason)) {
+                page_.SetStatus("OK");
+                page_.Commit(std::move(out));
+            } else {
+                page_.SetStatus(juce::String("Refused: ") + juce::String(reason));
+                const int current = page_.vm_.BlockMessageTypeIndex(controllerIx_,
+                                                                     synth::MidiConfigSection::SystemMessages, rowIx_);
+                setSelectedId(current >= 0 ? current + 1 : 0, juce::dontSendNotification);
+            }
+        }
+
+        ControllersPage& page_;
+        std::size_t controllerIx_;
+        std::size_t rowIx_;
+    };
+
+    // A ToggleButton for a 0/1 block field (Field::BlockRowMajor /
+    // Field::BlockOutputFeedback -- D6: "row-major as a toggle"). Commits
+    // immediately on click, same "selection is the commit gesture" contract
+    // SystemMessageFieldEditor/RelativeModeFieldEditor use for their combos.
+    class BlockToggleFieldEditor : public juce::ToggleButton {
+    public:
+        BlockToggleFieldEditor(ControllersPage& page, std::size_t controllerIx, synth::MidiConfigSection section,
+                               std::size_t rowIx, synth::MidiMappingRowVM::Field field)
+            : page_(page), controllerIx_(controllerIx), section_(section), rowIx_(rowIx), field_(field) {
+            setButtonText(synth::FieldShortLabel(field_));
+            double current = 0.0;
+            if (page_.vm_.RowFieldValue(controllerIx_, section_, rowIx_, field_, current)) {
+                setToggleState(current != 0.0, juce::dontSendNotification);
+            }
+            onClick = [this] { Commit(); };
+        }
+
+    private:
+        void Commit() {
+            synth::MidiInstrumentConfig out;
+            std::string reason;
+            const double value = getToggleState() ? 1.0 : 0.0;
+            if (page_.vm_.ApplyMappingEdit(controllerIx_, section_, rowIx_, field_, value, out, &reason)) {
+                page_.SetStatus("OK");
+                page_.Commit(std::move(out));
+            } else {
+                page_.SetStatus(juce::String("Refused: ") + juce::String(reason));
+                double current = 0.0;
+                if (page_.vm_.RowFieldValue(controllerIx_, section_, rowIx_, field_, current)) {
+                    setToggleState(current != 0.0, juce::dontSendNotification);
+                }
+            }
+        }
+
+        ControllersPage& page_;
+        std::size_t controllerIx_;
+        synth::MidiConfigSection section_;
+        std::size_t rowIx_;
+        synth::MidiMappingRowVM::Field field_;
+    };
+
     // One mapping-list row: a label plus editors for its editableFields.
     class MappingRow : public juce::Component {
     public:
@@ -482,43 +578,26 @@ private:
                     auto editor = std::make_unique<RelativeModeFieldEditor>(page, controllerIx, section, rowIx);
                     addAndMakeVisible(*editor);
                     relativeModeEditors_.push_back(std::move(editor));
+                } else if (field == synth::MidiMappingRowVM::Field::BlockMessageType) {
+                    // D6: message type as a 3-choice combo of blockable
+                    // types, over BlockableMessageCatalog() -- task group 3
+                    // replaces task group 2's "skip this field entirely"
+                    // interim behaviour (see BlockMessageTypeFieldEditor's
+                    // doc comment for why it reads its value via the
+                    // dedicated BlockMessageTypeIndex() rather than
+                    // RowFieldValue()).
+                    auto editor = std::make_unique<BlockMessageTypeFieldEditor>(page, controllerIx, rowIx);
+                    addAndMakeVisible(*editor);
+                    blockMessageTypeEditors_.push_back(std::move(editor));
+                } else if (field == synth::MidiMappingRowVM::Field::BlockRowMajor ||
+                          field == synth::MidiMappingRowVM::Field::BlockOutputFeedback) {
+                    // D6: row-major (and output-feedback) as a 0/1 toggle.
+                    auto editor = std::make_unique<BlockToggleFieldEditor>(page, controllerIx, section, rowIx, field);
+                    addAndMakeVisible(*editor);
+                    toggleEditors_.push_back(std::move(editor));
                 } else {
-                    // Finding 4 (block-type-conversion review): RowFieldValue
-                    // returns false for a field it cannot render as a single
-                    // numeric value -- e.g. Field::BlockMessageType (a system
-                    // Block row's message type is an enum choice, not a
-                    // number; see MidiConfigViewModel.cpp's RowFieldValue,
-                    // which special-cases it out alongside PressMessage/
-                    // ReleaseMessage). Building a NumericFieldEditor anyway
-                    // used to silently initialize it to 0.0000 and commit
-                    // that on any edit -- converting e.g. a bank-select or
-                    // gesture-select block to SceneSelect (index 0) without
-                    // the user ever choosing that. Until task group 3 adds a
-                    // proper 3-choice combo for BlockMessageType, skip
-                    // creating an editor entirely for any field
-                    // RowFieldValue can't read -- the row's `label` already
-                    // names the block's message type (see
-                    // SystemBlockLabel()/EncoderBlockLabel()/
-                    // AnalogBlockLabel() in MidiConfigViewModel.cpp), so the
-                    // value stays visible, just not editable from here.
-                    //
-                    // Audited (finding 4 review) every field any
-                    // *EditableFields() table can advertise: besides
-                    // BlockMessageType, RowFieldValue could ALSO fail for an
-                    // AnalogSceneBlend row's Field::SceneBlend when
-                    // sceneBlend was unassigned -- unlike BlockMessageType,
-                    // that IS a legitimately assignable field in that state
-                    // (ApplyMappingEdit accepts it, defaulting the address),
-                    // so leaving it skipped here would have made an
-                    // unassigned scene blend permanently unassignable from
-                    // the UI. Fixed at the SOURCE instead
-                    // (RowFieldValue now returns a stable 0.0 default for an
-                    // unassigned SceneBlend, matching ApplyMappingEdit's own
-                    // default) rather than special-casing it here, so this
-                    // generic skip-on-false guard stays correct for every
-                    // field without per-field renderer logic. A system row's
-                    // Channel/Cc/LaunchpadX/Y/WrldBldrX/Y/Button CAN
-                    // theoretically still fail RowFieldValue if a
+                    // A system row's Channel/Cc/LaunchpadX/Y/WrldBldrX/Y/
+                    // Button CAN theoretically still fail RowFieldValue if a
                     // hand-edited/corrupted patch JSON loaded an association
                     // missing its kind-required address (PatchPersistence's
                     // FromJSON treats control/wrldBldrPosition/
@@ -528,7 +607,8 @@ private:
                     // skipping the editor for that malformed case is the
                     // safe outcome (not editable is strictly better than
                     // silently-0-and-committable), and no normal UI-driven
-                    // edit can ever produce it in the first place.
+                    // edit can ever produce it in the first place (finding 4,
+                    // task group 2 review).
                     double initial = 0.0;
                     if (!page.vm_.RowFieldValue(controllerIx, section, rowIx, field, initial)) {
                         continue;
@@ -538,6 +618,33 @@ private:
                     addAndMakeVisible(*editor);
                     numericEditors_.push_back(std::move(editor));
                 }
+            }
+
+            if (rowVm.deletable) {
+                deleteButton_ = std::make_unique<juce::TextButton>("x");
+                deleteButton_->onClick = [&page, controllerIx, section, rowIx] {
+                    // DeleteRow's commit rebuilds the presentation (a row
+                    // vanishes), which in turn triggers Content::RebuildRows()
+                    // -- destroying this MappingRow and the very button mid-
+                    // click. Same self-destruction hazard as the disclosure/
+                    // section-toggle buttons below (ControllerRow), same
+                    // deferred-callAsync-with-SafePointer fix.
+                    juce::Component::SafePointer<ControllersPage> safePage(&page);
+                    juce::MessageManager::callAsync([safePage, controllerIx, section, rowIx] {
+                        if (safePage == nullptr) {
+                            return;
+                        }
+                        synth::MidiInstrumentConfig out;
+                        std::string reason;
+                        if (safePage->vm_.DeleteRow(controllerIx, section, rowIx, out, &reason)) {
+                            safePage->SetStatus("Deleted");
+                            safePage->Commit(std::move(out));
+                        } else {
+                            safePage->SetStatus(juce::String("Refused: ") + juce::String(reason));
+                        }
+                    });
+                };
+                addAndMakeVisible(*deleteButton_);
             }
         }
 
@@ -557,11 +664,20 @@ private:
                     return true;
                 }
             }
+            for (const auto& editor : blockMessageTypeEditors_) {
+                if (editor->hasKeyboardFocus(true)) {
+                    return true;
+                }
+            }
             return false;
         }
 
         void resized() override {
             auto area = getLocalBounds();
+            static constexpr int kDeleteButtonWidth = 22;
+            if (deleteButton_) {
+                deleteButton_->setBounds(area.removeFromRight(kDeleteButtonWidth).reduced(2));
+            }
             label_.setBounds(area.removeFromLeft(juce::jmax(160, area.getWidth() / 3)));
             constexpr int kEditorWidth = 90;
             for (auto& editor : numericEditors_) {
@@ -573,6 +689,12 @@ private:
             for (auto& editor : relativeModeEditors_) {
                 editor->setBounds(area.removeFromLeft(2 * kEditorWidth).reduced(2));
             }
+            for (auto& editor : blockMessageTypeEditors_) {
+                editor->setBounds(area.removeFromLeft(2 * kEditorWidth).reduced(2));
+            }
+            for (auto& editor : toggleEditors_) {
+                editor->setBounds(area.removeFromLeft(kEditorWidth).reduced(2));
+            }
         }
 
     private:
@@ -580,24 +702,45 @@ private:
         std::vector<std::unique_ptr<NumericFieldEditor>> numericEditors_;
         std::vector<std::unique_ptr<SystemMessageFieldEditor>> systemMessageEditors_;
         std::vector<std::unique_ptr<RelativeModeFieldEditor>> relativeModeEditors_;
+        std::vector<std::unique_ptr<BlockMessageTypeFieldEditor>> blockMessageTypeEditors_;
+        std::vector<std::unique_ptr<BlockToggleFieldEditor>> toggleEditors_;
+        std::unique_ptr<juce::TextButton> deleteButton_;
     };
 
     // A thin divider + column-header row inserted above each contiguous run
-    // of same-`RowGroup` rows (issue #9 -- "each contiguous group of
-    // same-schema rows gets a header row naming its columns"; issue #11 --
+    // of same-(RowGroup, row Kind) rows (issue #9 -- "each contiguous group
+    // of same-schema rows gets a header row naming its columns"; issue #11 --
     // the scene-blend group additionally gets a distinct caption so it reads
     // as clearly separate from the gesture rows above it, not just another
-    // row in the same list). Column labels come from FieldShortLabel() over
-    // the first row of the group's editableFields -- the single source of
-    // truth for both what a row renders and what its header calls it, so
-    // the two can never drift apart. Mode/Step/SceneBlend groups (which are
-    // not tabular chan/cc/... rows) show a short caption instead of/beside
+    // row in the same list). Keying on row Kind too (not just RowGroup) is
+    // task group 3's addition: a group can interleave Individual and Block
+    // runs (e.g. a WRLD.Bldr turn group that's one 16-cell block plus a
+    // stray individual turn), and a Block row's editableFields is a
+    // completely different shape from an Individual row's in the same group
+    // (BlockStartCc/BlockEndCc/BlockStartPos vs Cc/Position) -- see
+    // SectionBody's grouping loop. Column labels come from FieldShortLabel()
+    // over the run's first row's editableFields -- the single source of
+    // truth for both what a row renders and what its header calls it, so the
+    // two can never drift apart. Mode/Step/SceneBlend groups (which are not
+    // tabular chan/cc/... rows) show a short caption instead of/beside
     // column labels.
+    //
+    // "+"/"+B" (D6, sru-11): shown only on the FIRST header of a RowGroup
+    // within a section (SectionBody tracks this -- see its `seenGroups` set)
+    // since AddSingle/AddBlock always append at the group's END regardless of
+    // which contiguous run's header the user clicked; showing the buttons on
+    // every sub-run header of the same group would suggest they insert at
+    // that run's position, which they do not. `addSingle`/`addBlock` are
+    // null when this RowGroupHeader is not that first-in-group header, or
+    // (for addBlock) when the group/kind combination never supports blocks
+    // (sru-11: "where blocks apply") -- e.g. MfTwister's System group (D4
+    // point 3: "twister system messages never block").
     class RowGroupHeader : public juce::Component {
     public:
         static constexpr int kHeight = 22;
 
-        RowGroupHeader(synth::MidiMappingRowVM::RowGroup group, const std::vector<synth::MidiMappingRowVM::Field>& fields) {
+        RowGroupHeader(synth::MidiMappingRowVM::RowGroup group, const std::vector<synth::MidiMappingRowVM::Field>& fields,
+                      std::function<void()> addSingle, std::function<void()> addBlock) {
             juce::String caption;
             switch (group) {
                 case synth::MidiMappingRowVM::RowGroup::EncoderTurn:
@@ -641,6 +784,17 @@ private:
                 addAndMakeVisible(*label);
                 columnLabels_.push_back(std::move(label));
             }
+
+            if (addSingle) {
+                addButton_ = std::make_unique<juce::TextButton>("+");
+                addButton_->onClick = std::move(addSingle);
+                addAndMakeVisible(*addButton_);
+            }
+            if (addBlock) {
+                addBlockButton_ = std::make_unique<juce::TextButton>("+B");
+                addBlockButton_->onClick = std::move(addBlock);
+                addAndMakeVisible(*addBlockButton_);
+            }
         }
 
         void paint(juce::Graphics& g) override {
@@ -651,6 +805,13 @@ private:
         void resized() override {
             auto area = getLocalBounds();
             area.removeFromTop(2);  // clears the divider rule painted at y=0
+            static constexpr int kAddButtonWidth = 28;
+            if (addBlockButton_) {
+                addBlockButton_->setBounds(area.removeFromRight(kAddButtonWidth).reduced(2));
+            }
+            if (addButton_) {
+                addButton_->setBounds(area.removeFromRight(kAddButtonWidth).reduced(2));
+            }
             captionLabel_.setBounds(area.removeFromLeft(juce::jmax(160, area.getWidth() / 3)));
             constexpr int kEditorWidth = 90;
             for (auto& label : columnLabels_) {
@@ -661,31 +822,55 @@ private:
     private:
         juce::Label captionLabel_;
         std::vector<std::unique_ptr<juce::Label>> columnLabels_;
+        std::unique_ptr<juce::TextButton> addButton_;
+        std::unique_ptr<juce::TextButton> addBlockButton_;
     };
 
     // A section's body: its own inner juce::Viewport over a stack of
-    // MappingRows, with a RowGroupHeader (divider + column labels) inserted
-    // wherever a row's `group` differs from the previous row's (issue #9's
-    // headers/dividers, issue #11's scene-blend separation) -- see
-    // RowGroupHeader's doc comment (binding: "Mapping lists live inside
-    // juce::Viewports").
+    // MappingRows, with a RowGroupHeader (divider + column labels, plus
+    // "+"/"+B" on the first header of each group) inserted wherever a row's
+    // `group` OR `kind` differs from the previous row's (issue #9's
+    // headers/dividers, issue #11's scene-blend separation, task group 3's
+    // Block-run splitting) -- see RowGroupHeader's doc comment (binding:
+    // "Mapping lists live inside juce::Viewports").
     class SectionBody : public juce::Component {
     public:
         static constexpr int kMaxVisibleHeight = 220;
 
-        SectionBody(ControllersPage& page, std::size_t controllerIx, synth::MidiConfigSection section) {
+        SectionBody(ControllersPage& page, std::size_t controllerIx, synth::MidiConfigSection section,
+                   synth::MidiProfileKind controllerKind) {
             const std::vector<synth::MidiMappingRowVM> rows = page.vm_.SectionRows(controllerIx, section);
 
             int totalHeight = 0;
+            int minContentWidth = 0;
             std::optional<synth::MidiMappingRowVM::RowGroup> previousGroup;
+            std::optional<synth::MidiMappingRowVM::Kind> previousKind;
+            std::set<synth::MidiMappingRowVM::RowGroup> seenGroups;
             for (std::size_t rowIx = 0; rowIx < rows.size(); ++rowIx) {
-                if (!previousGroup.has_value() || *previousGroup != rows[rowIx].group) {
-                    auto header = std::make_unique<RowGroupHeader>(rows[rowIx].group, rows[rowIx].editableFields);
+                minContentWidth = juce::jmax(minContentWidth, RequiredRowWidth(rows[rowIx].editableFields));
+                const synth::MidiMappingRowVM::RowGroup group = rows[rowIx].group;
+                // Split on a RowGroup change (as before) OR a row-Kind change
+                // within the same group -- a group can interleave Individual
+                // and Block runs, and their editableFields shapes differ (see
+                // RowGroupHeader's doc comment above).
+                if (!previousGroup.has_value() || *previousGroup != group || *previousKind != rows[rowIx].kind) {
+                    const bool isFirstHeaderForGroup = seenGroups.insert(group).second;
+                    std::function<void()> addSingle;
+                    std::function<void()> addBlock;
+                    if (isFirstHeaderForGroup && AddableGroup(group)) {
+                        addSingle = MakeAddCallback(page, controllerIx, section, group, /*asBlock=*/false);
+                        if (GroupSupportsBlocks(group, section, controllerKind)) {
+                            addBlock = MakeAddCallback(page, controllerIx, section, group, /*asBlock=*/true);
+                        }
+                    }
+                    auto header = std::make_unique<RowGroupHeader>(group, rows[rowIx].editableFields,
+                                                                    std::move(addSingle), std::move(addBlock));
                     rowsHost_.addAndMakeVisible(*header);
                     layout_.push_back({header.get(), RowGroupHeader::kHeight});
                     headers_.push_back(std::move(header));
                     totalHeight += RowGroupHeader::kHeight;
-                    previousGroup = rows[rowIx].group;
+                    previousGroup = group;
+                    previousKind = rows[rowIx].kind;
                 }
                 auto row = std::make_unique<MappingRow>(page, controllerIx, section, rowIx, rows[rowIx]);
                 rowsHost_.addAndMakeVisible(*row);
@@ -693,11 +878,24 @@ private:
                 totalHeight += MappingRow::kHeight;
                 rows_.push_back(std::move(row));
             }
-            rowsHost_.setSize(1, totalHeight);
+            minContentWidth_ = minContentWidth;
+            rowsHost_.setSize(juce::jmax(1, minContentWidth_), totalHeight);
             LayoutRows();
 
             viewport_.setViewedComponent(&rowsHost_, false);
-            viewport_.setScrollBarsShown(true, false);
+            // Block rows can carry up to nine fields (e.g. a WRLD.Bldr
+            // bank-select block: type + channel + 4 coords + arg + bank slot
+            // + feedback) -- wider than the page's available horizontal
+            // space at typical window sizes. Rather than clipping/squashing
+            // those editors unreadably, enable the inner viewport's
+            // horizontal scrollbar too (the outer page viewport stays
+            // vertical-only, per the existing binding: only THIS section's
+            // own mapping list needs to scroll sideways) and size rowsHost_
+            // to each row's actual required width (see RequiredRowWidth) so
+            // a narrow section's rows still fill the available width exactly
+            // as before (resized() below re-clamps to
+            // max(available, minContentWidth_) on every relayout).
+            viewport_.setScrollBarsShown(true, true);
             addAndMakeVisible(viewport_);
         }
 
@@ -714,11 +912,115 @@ private:
 
         void resized() override {
             viewport_.setBounds(getLocalBounds());
-            rowsHost_.setSize(getWidth() - viewport_.getScrollBarThickness(), rowsHost_.getHeight());
+            const int available = getWidth() - viewport_.getScrollBarThickness();
+            rowsHost_.setSize(juce::jmax(available, minContentWidth_), rowsHost_.getHeight());
             LayoutRows();
         }
 
     private:
+        // The widest single-line width a row with these editableFields needs
+        // (label column + each editor's width, matching MappingRow::
+        // resized()'s own per-field widths exactly so the two can never
+        // drift apart) -- the basis for SectionBody's horizontal-overflow
+        // handling (see the constructor's doc comment above): a block row's
+        // wide field set (up to nine fields for a WRLD.Bldr bank-select
+        // block) gets the inner viewport's own width, with the horizontal
+        // scrollbar picking up whatever the page's available width can't
+        // show, rather than every editor being squashed into an unreadable
+        // sliver.
+        static int RequiredRowWidth(const std::vector<synth::MidiMappingRowVM::Field>& fields) {
+            using Field = synth::MidiMappingRowVM::Field;
+            constexpr int kLabelWidth = 160;
+            constexpr int kEditorWidth = 90;
+            constexpr int kDeleteButtonWidth = 22;
+            int width = kLabelWidth + kDeleteButtonWidth;
+            for (const Field field : fields) {
+                switch (field) {
+                    case Field::PressMessage:
+                    case Field::ReleaseMessage:
+                    case Field::RelativeMode:
+                    case Field::BlockMessageType:
+                        width += 2 * kEditorWidth;
+                        break;
+                    default:
+                        width += kEditorWidth;
+                        break;
+                }
+            }
+            return width;
+        }
+
+        // Groups AddSingle/AddBlock accept (sru-11's addable groups, per
+        // MidiConfigViewModel::AddSingle's own dispatch -- EncoderMode/
+        // EncoderStep/AnalogSceneBlend are config-level and refused there, so
+        // no page-local schema logic is invented here beyond mirroring that
+        // dispatch's group set).
+        static bool AddableGroup(synth::MidiMappingRowVM::RowGroup group) {
+            using RowGroup = synth::MidiMappingRowVM::RowGroup;
+            switch (group) {
+                case RowGroup::EncoderTurn:
+                case RowGroup::EncoderPush:
+                case RowGroup::AnalogGesture:
+                case RowGroup::System:
+                    return true;
+                case RowGroup::EncoderMode:
+                case RowGroup::EncoderStep:
+                case RowGroup::AnalogSceneBlend:
+                    return false;
+            }
+            return false;
+        }
+
+        // Where "+B" applies (sru-11: "where blocks apply") -- mirrors
+        // MidiConfigViewModel::AddBlock's own dispatch: encoder/analog groups
+        // always support blocks; the System group does too EXCEPT for
+        // MfTwister (D4 point 3, "twister system messages never block" --
+        // AddBlock refuses it with that exact reason). Asking the VM's own
+        // dispatch shape rather than hardcoding a parallel table keeps this
+        // in sync with AddBlock without a page-local schema.
+        static bool GroupSupportsBlocks(synth::MidiMappingRowVM::RowGroup group, synth::MidiConfigSection section,
+                                        synth::MidiProfileKind controllerKind) {
+            using RowGroup = synth::MidiMappingRowVM::RowGroup;
+            if (!AddableGroup(group)) {
+                return false;
+            }
+            if (section == synth::MidiConfigSection::SystemMessages && group == RowGroup::System) {
+                return controllerKind != synth::MidiProfileKind::MfTwister;
+            }
+            return true;
+        }
+
+        // Builds the deferred AddSingle/AddBlock click callback shared by
+        // every RowGroupHeader's "+"/"+B" button: same self-destruction
+        // hazard as the delete button (MappingRow) and the disclosure/
+        // section-toggle buttons (ControllerRow) -- a successful Add*
+        // commits, which rebuilds the presentation and, via
+        // Content::RebuildRows(), destroys this SectionBody and the very
+        // button mid-click. Deferred past the click via callAsync, guarded
+        // with a SafePointer.
+        static std::function<void()> MakeAddCallback(ControllersPage& page, std::size_t controllerIx,
+                                                      synth::MidiConfigSection section,
+                                                      synth::MidiMappingRowVM::RowGroup group, bool asBlock) {
+            return [&page, controllerIx, section, group, asBlock] {
+                juce::Component::SafePointer<ControllersPage> safePage(&page);
+                juce::MessageManager::callAsync([safePage, controllerIx, section, group, asBlock] {
+                    if (safePage == nullptr) {
+                        return;
+                    }
+                    synth::MidiInstrumentConfig out;
+                    std::string reason;
+                    const bool ok = asBlock ? safePage->vm_.AddBlock(controllerIx, section, group, out, &reason)
+                                            : safePage->vm_.AddSingle(controllerIx, section, group, out, &reason);
+                    if (ok) {
+                        safePage->SetStatus(asBlock ? "Added block" : "Added");
+                        safePage->Commit(std::move(out));
+                    } else {
+                        safePage->SetStatus(juce::String("Refused: ") + juce::String(reason));
+                    }
+                });
+            };
+        }
+
         // Lays out `layout_` (headers interleaved with MappingRows, in the
         // exact order they were constructed) top-down at the current
         // rowsHost_ width -- shared by the constructor's initial layout and
@@ -736,6 +1038,7 @@ private:
         std::vector<std::unique_ptr<RowGroupHeader>> headers_;
         std::vector<std::unique_ptr<MappingRow>> rows_;
         std::vector<std::pair<juce::Component*, int>> layout_;
+        int minContentWidth_ = 0;
     };
 
     // One controller row: name/kind/status dots/device combos/disclosure,
@@ -818,7 +1121,7 @@ private:
                     sectionButtons_.push_back(std::move(sectionButton));
 
                     if (expanded) {
-                        auto body = std::make_unique<SectionBody>(page_, controllerIx_, section);
+                        auto body = std::make_unique<SectionBody>(page_, controllerIx_, section, rowVm.kind);
                         addAndMakeVisible(*body);
                         sectionBodies_.push_back(std::move(body));
                     } else {
