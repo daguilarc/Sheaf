@@ -881,6 +881,105 @@ bool ReResolveRow(PresentationRow& row, const MidiControllerProfileConfig& confi
     return true;
 }
 
+// Review finding: optimistic staging (ApplyMappingEdit/AddBlock, see this
+// class's header doc comment above SectionPresentation) is only a same-
+// instance cache-priming hint -- it is NOT self-healing on its own for a
+// Block row whose identities still resolve but whose covered cells' VALUES
+// differ from what the row's staged `block` struct shows (host discarded
+// `out`, or a patch load happened to land different field values under the
+// same identities). ReResolveRow above only checks that identities resolve;
+// it never re-syncs the block struct's fields. This function is Rebuild()'s
+// authoritative re-derivation step, run only for rows ReResolveRow already
+// kept: gather this row's covered cells (by resolving each identity back to
+// its raw config index, same as ReResolveRow does) and re-run the section's
+// Reconstruct* over exactly that covered sub-range. If it still reconstructs
+// as ONE block (which, by construction, ALWAYS covers every index in the
+// sub-range it's given -- Reconstruct* partitions its whole input into
+// blocks/individuals with no gaps), overwrite the row's block struct with
+// the freshly-derived one -- config truth wins over whatever was staged.
+// If the covered cells no longer form a single block of the same
+// message/group shape (e.g. an address moved so they're no longer
+// consecutive), returns false so the caller drops the row the same way
+// ReResolveRow's failure path does -- RebuildPresentationFor's existing
+// AppendUnresolved*Identities pass then re-appends those now-uncovered cells
+// as individual rows (they are not covered by any surviving row's
+// identities once this one is dropped), so no cell silently vanishes from
+// the presentation.
+bool ReSyncBlockRow(PresentationRow& row, const MidiControllerProfileConfig& config,
+                    const std::vector<MidiControllerSystemMessageAssociation>& sortedSystem, MidiProfileKind kind) {
+    if (const auto* encoderBlock = std::get_if<EncoderBlock>(&row.block)) {
+        const bool isPush = encoderBlock->isPush;
+        const std::vector<EncoderMidiMapping>& mappings =
+            isPush ? config.encoderInput->pushes : config.encoderInput->turns;
+        std::vector<std::size_t> rawIndices;
+        rawIndices.reserve(row.identities.size());
+        for (const RowIdentity& identity : row.identities) {
+            const auto* enc = std::get_if<EncoderIdentity>(&identity);
+            rawIndices.push_back(ResolveEncoderIdentity(mappings, *enc));
+        }
+        std::sort(rawIndices.begin(), rawIndices.end());
+        std::vector<EncoderMidiMapping> covered;
+        covered.reserve(rawIndices.size());
+        for (std::size_t ix : rawIndices) {
+            covered.push_back(mappings[ix]);
+        }
+        const std::vector<ReconstructedEncoderRow> reconstructed = ReconstructEncoderBlocks(covered, isPush);
+        if (reconstructed.size() != 1 || !reconstructed.front().isBlock ||
+            reconstructed.front().indices.size() != covered.size()) {
+            return false;
+        }
+        row.block = reconstructed.front().block;
+        return true;
+    }
+    if (std::get_if<AnalogBlock>(&row.block) != nullptr) {
+        const std::vector<AnalogMidiMapping>& mappings = config.analogInput->gestures;
+        std::vector<std::size_t> rawIndices;
+        rawIndices.reserve(row.identities.size());
+        for (const RowIdentity& identity : row.identities) {
+            const auto* an = std::get_if<AnalogIdentity>(&identity);
+            rawIndices.push_back(ResolveAnalogIdentity(mappings, *an));
+        }
+        std::sort(rawIndices.begin(), rawIndices.end());
+        std::vector<AnalogMidiMapping> covered;
+        covered.reserve(rawIndices.size());
+        for (std::size_t ix : rawIndices) {
+            covered.push_back(mappings[ix]);
+        }
+        const std::vector<ReconstructedAnalogRow> reconstructed = ReconstructAnalogBlocks(covered);
+        if (reconstructed.size() != 1 || !reconstructed.front().isBlock ||
+            reconstructed.front().indices.size() != covered.size()) {
+            return false;
+        }
+        row.block = reconstructed.front().block;
+        return true;
+    }
+    if (std::get_if<SystemBlock>(&row.block) != nullptr) {
+        std::vector<std::size_t> rawIndices;
+        rawIndices.reserve(row.identities.size());
+        for (const RowIdentity& identity : row.identities) {
+            const auto* sys = std::get_if<SystemIdentity>(&identity);
+            rawIndices.push_back(ResolveSystemIdentity(sortedSystem, kind, *sys));
+        }
+        std::sort(rawIndices.begin(), rawIndices.end());
+        std::vector<MidiControllerSystemMessageAssociation> covered;
+        covered.reserve(rawIndices.size());
+        for (std::size_t ix : rawIndices) {
+            covered.push_back(sortedSystem[ix]);
+        }
+        // ReconstructSystemBlocks re-sorts defensively; `covered` is already
+        // a sorted sub-sequence of `sortedSystem` so this is a no-op sort,
+        // matching its documented contract.
+        const std::vector<ReconstructedSystemRow> reconstructed = ReconstructSystemBlocks(covered, kind);
+        if (reconstructed.size() != 1 || !reconstructed.front().isBlock ||
+            reconstructed.front().indices.size() != covered.size()) {
+            return false;
+        }
+        row.block = reconstructed.front().block;
+        return true;
+    }
+    return false;
+}
+
 // Where a new row of `group` should land: immediately after the last
 // EXISTING row of that group, if any; otherwise immediately before the
 // first row of the nearest LATER group in RowGroup's declaration order
@@ -1036,9 +1135,24 @@ void MidiConfigViewModel::RebuildPresentationFor(SectionPresentation& presentati
     NormalizeMidiProfileConfig(scratch, kind);
     const std::vector<MidiControllerSystemMessageAssociation>& sortedSystem = scratch.systemMessages;
 
-    // Drop rows whose identity no longer resolves (D5/sru-11).
-    std::erase_if(presentation.rows,
-                  [&](PresentationRow& row) { return !ReResolveRow(row, config, sortedSystem, kind); });
+    // Drop rows whose identity no longer resolves (D5/sru-11). For a Block
+    // row whose identities DO all resolve, also re-derive its block struct
+    // from the actual covered cells (ReSyncBlockRow) -- makes Rebuild()
+    // authoritative over whatever ApplyMappingEdit/AddBlock optimistically
+    // staged (see ReSyncBlockRow's doc comment above): if the covered cells
+    // still form exactly one block, config truth overwrites the staged
+    // struct; if they no longer do, the row is dropped exactly like a
+    // failed identity resolution, and its now-uncovered cells re-append as
+    // individual rows via the AppendUnresolved*Identities pass below.
+    std::erase_if(presentation.rows, [&](PresentationRow& row) {
+        if (!ReResolveRow(row, config, sortedSystem, kind)) {
+            return true;
+        }
+        if (row.kind == RowKind::Block) {
+            return !ReSyncBlockRow(row, config, sortedSystem, kind);
+        }
+        return false;
+    });
 
     // Append unknown identities as individual rows at their group's end
     // (D5/sru-11) -- config-level rows never need this (they either exist or
@@ -1924,10 +2038,15 @@ bool MidiConfigViewModel::ApplyMappingEdit(std::size_t controllerIx, MidiConfigS
         // brief: update the presentation row optimistically when producing
         // `out`. This is purely a same-instance cache hint: if the host
         // discards `out` (never commits) or commits something else, the
-        // next real Rebuild() re-resolves this row's (now-wrong) identities
-        // against whatever config actually landed and self-heals via the
-        // ordinary drop/append rule -- it does not corrupt anything, it
-        // just misses the "stayed in place" optimization for that one
+        // next real Rebuild() re-resolves this row's (now-possibly-wrong)
+        // identities against whatever config actually landed -- dropping
+        // and re-appending as individuals if they no longer resolve at all,
+        // or (PresentationRow::block's doc comment) re-deriving the block
+        // struct's field values from the actually-resolved cells if the
+        // identities still resolve but point at different values than this
+        // staged struct shows. Either path self-heals to config truth; it
+        // does not corrupt anything, it just misses the "stayed in place
+        // with these exact staged values" optimization for that one
         // discarded edit. A host that always commits `out` before its next
         // Rebuild() (the only pattern any current caller uses --
         // ControllersPage.hpp's MappingRow::Commit()) sees the row stay put

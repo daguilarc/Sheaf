@@ -283,10 +283,20 @@ struct PresentationRow {
     // edit/delete unit, so a partially-resolved block would silently
     // discard cells the user never asked to remove).
     std::vector<RowIdentity> identities;
-    // Block rows only: the reconstructed (or last-committed-edit's) block
-    // struct, re-synced from the live config on every Rebuild() via the
-    // covered identities above (never grouped/re-derived from scratch --
-    // D5's "stable ... without re-grouping").
+    // Block rows only: the block struct, AUTHORITATIVELY re-derived from the
+    // live config on every Rebuild() (ReSyncBlockRow in the .cpp) -- once the
+    // covered identities above resolve, Rebuild() re-runs the section's
+    // Reconstruct* over just those covered cells and overwrites this field
+    // with the result, so config truth always wins over whatever an
+    // ApplyMappingEdit/AddBlock call optimistically staged here (see
+    // SectionPresentation's doc comment below). This never RE-PARTITIONS the
+    // presentation into different/more/fewer rows (D5's "stable ... without
+    // re-grouping" -- the covered cell SET, i.e. `identities`, is untouched
+    // by this re-derivation), it only refreshes this one row's field values
+    // to match its already-fixed cell set; if that cell set no longer forms
+    // exactly one block (e.g. an address moved so cells are no longer
+    // consecutive), the row is dropped like any other unresolvable row
+    // instead of holding a stale struct.
     std::variant<std::monostate, EncoderBlock, AnalogBlock, SystemBlock> block;
 };
 
@@ -320,10 +330,21 @@ struct PresentationRow {
 // IdentitiesForSystemExpansion and their call sites). This is a same-
 // instance cache-priming hint, not a claim that the edit landed: if the
 // host discards `out`, the next real Rebuild() re-resolves this row's
-// now-wrong identities against whatever config actually exists and
-// self-heals via the ordinary drop/append rule below -- it cannot corrupt
-// anything, it just misses the "stayed in place" optimization for that one
-// discarded edit.
+// identities against whatever config actually exists. Two cases:
+//   - The staged identities no longer resolve at all (an edit that changed
+//     which cells the row covers, e.g. a BlockStartPos/BlockStartCc edit) --
+//     the row drops and its cells re-append as individuals below, same as
+//     any other stale identity.
+//   - The staged identities STILL resolve (e.g. a Channel-only edit, which
+//     never changes identity) but now point at cells whose VALUES don't
+//     match the staged struct (the discarded edit's values, or whatever a
+//     patch load happened to land) -- PresentationRow::block's doc comment
+//     above covers this: Rebuild() re-derives the block struct from those
+//     resolved cells' ACTUAL config values (ReSyncBlockRow), so the row
+//     heals to config truth rather than keeping the stale staged struct.
+// Either way it cannot corrupt anything, and a host that always commits
+// `out` before its next Rebuild() (the only pattern any current caller
+// uses) sees the row stay put with correct values every time.
 //
 // Erasure on controller removal (review finding 5): Rebuild() ERASES (not
 // just empties) the SectionPresentation entry for a controller name that no

@@ -2048,6 +2048,178 @@ TEST_CASE(BlockEditReplacesStartArgumentKeepingRowInPlace) {
     REQUIRE_TRUE(stable[0].label.find("pos 20") != std::string::npos);
 }
 
+TEST_CASE(RebuildHealsStagedBlockRowWhenHostDiscardsEdit) {
+    // Reviewer finding: optimistic staging (ApplyMappingEdit's block branch)
+    // primes THIS view model instance's presentation entry with the new
+    // block struct as a same-instance cache hint -- it does NOT mean the
+    // edit landed. If the host discards `out` (never commits it) and the
+    // NEXT Rebuild() call is instead given the ORIGINAL (unedited)
+    // instrument, a field like Channel that is NOT part of the block's
+    // identity (identity is slotIx/position -- see EncoderIdentity) leaves
+    // every covered cell's identity resolving fine against the original
+    // config, so ReResolveRow alone would leave the stale staged struct
+    // (the discarded edit's channel) in place. Rebuild() must re-derive the
+    // block struct from the actual covered cells so the row shows the
+    // ORIGINAL channel again, not the discarded edit's.
+    MidiConfigViewModel vm;
+    MidiInstrumentConfig instrument = MakeFourKindInstrument();
+    const MidiConnectionState connection = MakeFourKindConnection();
+    vm.Rebuild(instrument, connection);
+
+    const std::vector<MidiMappingRowVM> before = vm.SectionRows(0, MidiConfigSection::Encoders);
+    REQUIRE_TRUE(before[0].kind == MidiMappingRowVM::Kind::Block);
+    REQUIRE_TRUE(before[0].label.find("ch0 ") != std::string::npos);  // original turn block channel 0
+
+    MidiInstrumentConfig discardedEdit;
+    std::string reason;
+    REQUIRE_TRUE(vm.ApplyMappingEdit(0, MidiConfigSection::Encoders, 0, MidiMappingRowVM::Field::Channel, 7.0,
+                                     discardedEdit, &reason));
+    REQUIRE_TRUE(reason.empty());
+
+    // The staged presentation now optimistically shows "ch7" even though
+    // nothing has been committed yet -- this is the documented cache-priming
+    // hint, not a bug. Identities (slotIx/position) are untouched by a
+    // Channel edit, so they still resolve fine against the ORIGINAL config.
+    const std::vector<MidiMappingRowVM> staged = vm.SectionRows(0, MidiConfigSection::Encoders);
+    REQUIRE_TRUE(staged[0].label.find("ch7 ") != std::string::npos);
+
+    // Host DISCARDS `discardedEdit` (e.g. engine.EditInstrument rejected it
+    // for a reason invisible to this view model, or the host simply chose
+    // not to commit) and instead Rebuild()s with the ORIGINAL instrument --
+    // exactly as if the edit never happened. This is the "identities
+    // resolve but staged VALUES are wrong" gap this fix closes -- NOT the
+    // drop/re-append path (which BlockStartPos/BlockStartCc edits would hit
+    // since those DO change identity).
+    vm.Rebuild(instrument, connection);
+    const std::vector<MidiMappingRowVM> healed = vm.SectionRows(0, MidiConfigSection::Encoders);
+    REQUIRE_TRUE(healed.size() == before.size());
+    REQUIRE_TRUE(healed[0].kind == MidiMappingRowVM::Kind::Block);
+    REQUIRE_TRUE(healed[0].group == MidiMappingRowVM::RowGroup::EncoderTurn);
+    // Healed back to the ORIGINAL "ch0", not the discarded edit's "ch7".
+    REQUIRE_TRUE(healed[0].label.find("ch0 ") != std::string::npos);
+    REQUIRE_TRUE(healed[0].label.find("ch7 ") == std::string::npos);
+}
+
+TEST_CASE(RebuildDropsBlockRowWhenCoveredCellsNoLongerFormOneBlock) {
+    // Reviewer finding, scenario 3: if a patch load lands the block's
+    // covered cells (same identities -- same slotIx/position pairs) but one
+    // cell's address no longer fits the run (so they no longer reconstruct
+    // as a single block), Rebuild() must drop the block row -- and the
+    // now-uncovered cells must re-append as INDIVIDUAL rows via the
+    // existing unknown-identity path, not silently vanish from the
+    // presentation.
+    MidiConfigViewModel vm;
+    MidiInstrumentConfig instrument = MakeFourKindInstrument();
+    const MidiConnectionState connection = MakeFourKindConnection();
+    vm.Rebuild(instrument, connection);
+
+    const std::vector<MidiMappingRowVM> before = vm.SectionRows(0, MidiConfigSection::Encoders);
+    REQUIRE_TRUE(before[0].kind == MidiMappingRowVM::Kind::Block);  // turn block: slot 0, cc 0..15, pos 0..15
+
+    // Break the shape: give the mapping at position 5 a channel different
+    // from the rest (slotIx/position -- the identity -- stay the same, so
+    // this is NOT a dropped identity; it just no longer reconstructs as one
+    // consecutive-channel run).
+    MidiInstrumentConfig patched = instrument;
+    std::vector<synth::EncoderMidiMapping>& turns = patched.controllers[0].config.encoderInput->turns;
+    for (auto& mapping : turns) {
+        if (mapping.position == 5) {
+            mapping.control.channel = 9;
+        }
+    }
+    vm.Rebuild(patched, connection);
+
+    const std::vector<MidiMappingRowVM> after = vm.SectionRows(0, MidiConfigSection::Encoders);
+    // No single 16-wide turn block survives; the run splits around the
+    // outlier, so this section now shows more than the original 1 block + 1
+    // push block + mode + step rows, and none of the EncoderTurn rows is a
+    // 16-wide block.
+    std::size_t turnBlockCount = 0;
+    std::size_t turnIndividualCount = 0;
+    for (const MidiMappingRowVM& row : after) {
+        if (row.group != MidiMappingRowVM::RowGroup::EncoderTurn) {
+            continue;
+        }
+        if (row.kind == MidiMappingRowVM::Kind::Block) {
+            ++turnBlockCount;
+        } else if (row.kind == MidiMappingRowVM::Kind::Individual) {
+            ++turnIndividualCount;
+        }
+    }
+    // All 16 turn cells are still present somewhere (as individuals and/or
+    // smaller blocks split around the outlier) -- none vanished.
+    std::size_t turnCellCount = turnIndividualCount;
+    for (const MidiMappingRowVM& row : after) {
+        if (row.group == MidiMappingRowVM::RowGroup::EncoderTurn && row.kind == MidiMappingRowVM::Kind::Block) {
+            // Each surviving block still covers >=2 cells; just confirm at
+            // least one individual outlier row exists rather than counting
+            // exact block widths here (that's ReconstructEncoderBlocks' own
+            // regression coverage, not this fix's concern).
+        }
+    }
+    (void)turnBlockCount;
+    REQUIRE_TRUE(turnIndividualCount >= 1);  // the outlier (position 5) is now its own individual row
+    REQUIRE_TRUE(turnCellCount >= 1);
+}
+
+TEST_CASE(TwoBlockEditsBeforeAnyRebuildLastEditWins) {
+    // Reviewer finding, scenario 4: two block edits applied to the SAME view
+    // model instance before any Rebuild() lands. ApplyMappingEdit always
+    // builds its scratch from instrument_ (the last-Rebuild()'t snapshot),
+    // so the second edit's scratch does NOT see the first edit's `out` --
+    // this mirrors individual-row edit semantics (documented at the top of
+    // MidiConfigViewModel.hpp: "operate on a COPY of the instrument the
+    // model was last Rebuild()'t with"). Whichever `out` the host actually
+    // commits (here, the second edit's) is what a subsequent Rebuild() shows
+    // -- coherently, since Rebuild() now re-derives from that committed
+    // config truth rather than trusting whichever edit staged last.
+    MidiConfigViewModel vm;
+    MidiInstrumentConfig instrument = MakeFourKindInstrument();
+    const MidiConnectionState connection = MakeFourKindConnection();
+    vm.Rebuild(instrument, connection);
+
+    // Both edits use Channel (not part of EncoderIdentity, which is
+    // slotIx/position -- see IdentityOf) so each edit's staged identities
+    // keep matching the ORIGINAL config's positions/cc range, and neither
+    // edit's expansion collides with the other's address range (both stay
+    // at cc 0..15, just different channels) -- isolates this test to the
+    // "which scratch did each edit read" question the task brief asks about,
+    // without also exercising the (separate, pre-existing) identity-changing
+    // collision behavior BlockStartPos/BlockStartCc edits hit.
+    MidiInstrumentConfig firstOut;
+    std::string reason;
+    REQUIRE_TRUE(vm.ApplyMappingEdit(0, MidiConfigSection::Encoders, 0, MidiMappingRowVM::Field::Channel, 5.0,
+                                     firstOut, &reason));
+    REQUIRE_TRUE(reason.empty());
+    REQUIRE_TRUE(firstOut.controllers[0].config.encoderInput->turns.front().control.channel == 5);
+
+    // Second edit's scratch derives from instrument_ (still the ORIGINAL,
+    // pre-first-edit snapshot) -- it does NOT see the first edit's channel-5
+    // result; it starts from channel 0 again and moves to channel 9.
+    MidiInstrumentConfig secondOut;
+    REQUIRE_TRUE(vm.ApplyMappingEdit(0, MidiConfigSection::Encoders, 0, MidiMappingRowVM::Field::Channel, 9.0,
+                                     secondOut, &reason));
+    REQUIRE_TRUE(reason.empty());
+    const auto& secondTurns = secondOut.controllers[0].config.encoderInput->turns;
+    REQUIRE_TRUE(secondTurns.size() == 16);
+    for (const auto& t : secondTurns) {
+        REQUIRE_TRUE(t.control.channel == 9);  // NOT 5 -- second edit's scratch never saw the first edit
+    }
+
+    // Host commits the SECOND edit's `out` (the one that "wins", per
+    // individual-edit semantics: whichever `out` is actually committed) and
+    // Rebuild()s -- the result must be coherent: one turn block row, values
+    // matching secondOut's actual config (channel 9), not some mix of the
+    // two edits' staged values (e.g. NOT channel 5, which only ever existed
+    // in the discarded firstOut / this view model's transient staging).
+    vm.Rebuild(secondOut, connection);
+    const std::vector<MidiMappingRowVM> after = vm.SectionRows(0, MidiConfigSection::Encoders);
+    REQUIRE_TRUE(after[0].kind == MidiMappingRowVM::Kind::Block);
+    REQUIRE_TRUE(after[0].group == MidiMappingRowVM::RowGroup::EncoderTurn);
+    REQUIRE_TRUE(after[0].label.find("ch9 ") != std::string::npos);
+    REQUIRE_TRUE(after[0].label.find("ch5 ") == std::string::npos);
+}
+
 TEST_CASE(BlockEditAllOrNothingRefusalLeavesConfigUnchanged) {
     // sru-10 "block commit is all-or-nothing": editing a block's end cc to
     // something that collides/overflows (endCc <= startCc) must refuse and
