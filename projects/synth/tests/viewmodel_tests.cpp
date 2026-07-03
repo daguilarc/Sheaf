@@ -403,8 +403,8 @@ TEST_CASE(RowFieldValueReadsGenericSystemMessageChannelAndCc) {
     // build one directly here with a side button set.
     synth::MfTwisterDefaultProfileOptions options;
     options.sideButtons[0] = MidiControllerSystemMessageAssociation{
-        .press = synth::MessageIn::SetShift(0, true),
-        .release = synth::MessageIn::SetShift(0, false),
+        .press = synth::MessageIn::SetReset(0, true),
+        .release = synth::MessageIn::SetReset(0, false),
     };
     MidiControllerSlot slot;
     slot.name = "twist2";
@@ -770,7 +770,7 @@ TEST_CASE(ApplyMappingEditPressMessageAppliesCatalogChoice) {
     MidiInstrumentConfig instrument = MakeFourKindInstrument();
     vm.Rebuild(instrument, MakeFourKindConnection());
 
-    // wrld row 0 defaults to Shift press (catalog index 1); switch it to
+    // wrld row 0 defaults to Reset press (catalog index 1); switch it to
     // "Scene select 3".
     const auto& catalog = SystemMessageCatalog();
     std::size_t sceneThreeIx = 0;
@@ -797,7 +797,7 @@ TEST_CASE(ApplyMappingEditReleaseMessageNoneClearsOptional) {
     MidiInstrumentConfig instrument = MakeFourKindInstrument();
     vm.Rebuild(instrument, MakeFourKindConnection());
 
-    // wrld row 0 has a release (Shift release) by default.
+    // wrld row 0 has a release (Reset release) by default.
     REQUIRE_TRUE(instrument.controllers[0].config.systemMessages[0].release.has_value());
 
     MidiInstrumentConfig out;
@@ -842,20 +842,20 @@ TEST_CASE(WrldBldrXEditUpdatesBothPositionAndControlAddress) {
     MidiInstrumentConfig instrument = MakeFourKindInstrument();
     vm.Rebuild(instrument, MakeFourKindConnection());
 
-    // Row 1 (index 1) is a scene-select button at (0,6) in the default
-    // profile (see probe output captured while building this fix).
-    const auto& before = instrument.controllers[0].config.systemMessages[1];
+    // Row 0 (index 0) is the reset modifier button at (0,4) in the default
+    // profile (modifiers reset/random/random-mod lead the system-message list).
+    const auto& before = instrument.controllers[0].config.systemMessages[0];
     REQUIRE_TRUE(before.wrldBldrPosition.has_value());
     REQUIRE_TRUE(before.wrldBldrPosition->x == 0);
 
     MidiInstrumentConfig out;
     std::string reason;
-    const bool ok = vm.ApplyMappingEdit(0, MidiConfigSection::SystemMessages, 1, MidiMappingRowVM::Field::WrldBldrX,
+    const bool ok = vm.ApplyMappingEdit(0, MidiConfigSection::SystemMessages, 0, MidiMappingRowVM::Field::WrldBldrX,
                                         5.0, out, &reason);
     REQUIRE_TRUE(ok);
     REQUIRE_TRUE(reason.empty());
 
-    const auto& after = out.controllers[0].config.systemMessages[1];
+    const auto& after = out.controllers[0].config.systemMessages[0];
     REQUIRE_TRUE(after.wrldBldrPosition.has_value());
     REQUIRE_TRUE(after.wrldBldrPosition->x == 5);
     REQUIRE_TRUE(after.wrldBldrPosition->y == before.wrldBldrPosition->y);
@@ -1086,9 +1086,9 @@ double SafeValueFor(MidiMappingRowVM::Field field) {
         case Field::TurnStep:
             return 0.5;
         case Field::PressMessage:
-            return 1.0;  // "Shift press" -- always present, never "None"
+            return 1.0;  // "Reset press" -- always present, never "None"
         case Field::ReleaseMessage:
-            return 2.0;  // "Shift release"
+            return 2.0;  // "Reset release"
         case Field::LaunchpadX:
             return 0.0;
         case Field::LaunchpadY:
@@ -1133,8 +1133,8 @@ TEST_CASE(TwisterSideButtonRowChannelCcAndMessageFieldsAllSucceed) {
     // input_only_side_buttons in parameter_modulation_tests.cpp).
     synth::MfTwisterDefaultProfileOptions options;
     options.sideButtons[0] = MidiControllerSystemMessageAssociation{
-        .press = synth::MessageIn::SetShift(0, true),
-        .release = synth::MessageIn::SetShift(0, false),
+        .press = synth::MessageIn::SetReset(0, true),
+        .release = synth::MessageIn::SetReset(0, false),
     };
 
     MidiControllerSlot slot;

@@ -39,7 +39,13 @@ bool MessageInEquivalent(const MessageIn& a, const MessageIn& b) {
             return a.slotIx == b.slotIx && a.position == b.position && a.delta == b.delta;
         case MessageIn::Type::ParamPush:
             return a.slotIx == b.slotIx && a.position == b.position;
-        case MessageIn::Type::ToggleShift:
+        case MessageIn::Type::ToggleReset:
+        case MessageIn::Type::ToggleRandom:
+        case MessageIn::Type::ToggleRandomMod:
+            // SetReset/SetRandom/SetRandomMod share their toggle type but carry
+            // a held bool; plain toggles carry none. Equivalent only when both
+            // the held-ness and (when held) the bool match.
+            return a.hasBoolValue == b.hasBoolValue && (!a.hasBoolValue || a.boolValue == b.boolValue);
         case MessageIn::Type::Start:
         case MessageIn::Type::Stop:
         case MessageIn::Type::Clock:
@@ -72,8 +78,12 @@ const std::vector<SystemMessageChoice>& SystemMessageCatalog() {
         // for a uniform table -- Clock is an arbitrary, harmless default.
         entries.push_back({"None", [] { return MessageIn::Clock(0); }});
 
-        entries.push_back({"Shift press", [] { return MessageIn::SetShift(0, true); }});
-        entries.push_back({"Shift release", [] { return MessageIn::SetShift(0, false); }});
+        entries.push_back({"Reset press", [] { return MessageIn::SetReset(0, true); }});
+        entries.push_back({"Reset release", [] { return MessageIn::SetReset(0, false); }});
+        entries.push_back({"Random press", [] { return MessageIn::SetRandom(0, true); }});
+        entries.push_back({"Random release", [] { return MessageIn::SetRandom(0, false); }});
+        entries.push_back({"Random-mod press", [] { return MessageIn::SetRandomMod(0, true); }});
+        entries.push_back({"Random-mod release", [] { return MessageIn::SetRandomMod(0, false); }});
 
         for (std::size_t sceneIx = 0; sceneIx < kCatalogSceneCount; ++sceneIx) {
             std::ostringstream label;
@@ -155,8 +165,15 @@ std::string DescribeMessage(const MessageIn& message) {
         case MessageIn::Type::ParamPush:
             oss << "param push slot " << message.slotIx << " pos " << message.position;
             break;
-        case MessageIn::Type::ToggleShift:
-            oss << "toggle shift";
+        case MessageIn::Type::ToggleReset:
+            oss << (message.hasBoolValue ? (message.boolValue ? "reset on" : "reset off") : "toggle reset");
+            break;
+        case MessageIn::Type::ToggleRandom:
+            oss << (message.hasBoolValue ? (message.boolValue ? "random on" : "random off") : "toggle random");
+            break;
+        case MessageIn::Type::ToggleRandomMod:
+            oss << (message.hasBoolValue ? (message.boolValue ? "random-mod on" : "random-mod off")
+                                         : "toggle random-mod");
             break;
         case MessageIn::Type::ToggleGestureSelect:
             oss << "toggle gesture " << message.gestureIx;

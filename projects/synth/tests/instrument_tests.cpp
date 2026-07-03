@@ -55,7 +55,7 @@ using synth::WrldBldrSystemPosition;
 MidiControllerSystemMessageAssociation MakeControlOnlyAssociation() {
     MidiControllerSystemMessageAssociation association;
     association.control = MidiControlAddress{.channel = 3, .cc = 8};
-    association.press = synth::MessageIn::SetShift(0, true);
+    association.press = synth::MessageIn::SetReset(0, true);
     association.feedback = association.press;
     return association;
 }
@@ -64,7 +64,7 @@ MidiControllerSystemMessageAssociation MakeWrldBldrAssociation() {
     MidiControllerSystemMessageAssociation association;
     association.control = MidiControlAddress{.channel = 5, .cc = 0};
     association.wrldBldrPosition = WrldBldrSystemPosition{.channel = 5, .x = 0, .y = 0};
-    association.press = synth::MessageIn::SetShift(0, true);
+    association.press = synth::MessageIn::SetReset(0, true);
     association.feedback = association.press;
     return association;
 }
@@ -73,14 +73,14 @@ MidiControllerSystemMessageAssociation MakeLaunchpadAssociation() {
     MidiControllerSystemMessageAssociation association;
     association.launchpadPosition = synth::LaunchpadGridPosition{
         .controller = synth::LaunchpadController::LaunchpadX, .x = 0, .y = 0};
-    association.press = synth::MessageIn::SetShift(0, true);
+    association.press = synth::MessageIn::SetReset(0, true);
     association.feedback = association.press;
     return association;
 }
 
 MidiControllerSystemMessageAssociation MakeNoAddressAssociation() {
     MidiControllerSystemMessageAssociation association;
-    association.press = synth::MessageIn::SetShift(0, true);
+    association.press = synth::MessageIn::SetReset(0, true);
     association.feedback = association.press;
     return association;
 }
@@ -88,7 +88,7 @@ MidiControllerSystemMessageAssociation MakeNoAddressAssociation() {
 MidiControllerSystemMessageAssociation MakeWrldBldrPositionOnlyAssociation() {
     MidiControllerSystemMessageAssociation association;
     association.wrldBldrPosition = WrldBldrSystemPosition{.channel = 5, .x = 0, .y = 0};
-    association.press = synth::MessageIn::SetShift(0, true);
+    association.press = synth::MessageIn::SetReset(0, true);
     association.feedback = association.press;
     return association;
 }
@@ -567,9 +567,9 @@ TEST_CASE(InstrumentJsonRejectsLaunchpadWithWrldBldrPosition) {
                                                   .controller = synth::LaunchpadController::LaunchpadX,
                                                   .x = 0,
                                                   .y = 0}));
-    association.SetNew("press", synth::ToJSON(arena, synth::MessageIn::SetShift(0, true)));
+    association.SetNew("press", synth::ToJSON(arena, synth::MessageIn::SetReset(0, true)));
     association.SetNew("release", arena.Null());
-    association.SetNew("feedback", synth::ToJSON(arena, synth::MessageIn::SetShift(0, true)));
+    association.SetNew("feedback", synth::ToJSON(arena, synth::MessageIn::SetReset(0, true)));
     association.SetNew("outputFeedback", arena.Boolean(true));
 
     synth::JSON systemMessages = arena.Array();

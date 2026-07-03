@@ -208,16 +208,16 @@ struct TwoControllerRigApp {
 // Builds a two-controller instrument for TwoControllerRigApp: slot 0 drives
 // bank slot 0 (Alpha) via a minimal encoder-input config on channel 0 CC 0,
 // plus a system CC association (channel 4 CC 10) whose feedback is
-// ToggleShift -- genuinely global UI state (uiState_->shiftHeld), so
+// ToggleReset -- genuinely global UI state (uiState_->resetHeld), so
 // toggling it is observable independent of any bank/gesture wiring. Slot 1
 // is the same encoder-input shape shifted onto bank slot 1 (Beta) and a
 // distinct system CC address (channel 4 CC 11), but its feedback is
-// ToggleGestureSelect(gestureIx=0) instead of ToggleShift: TwoControllerRigApp
+// ToggleGestureSelect(gestureIx=0) instead of ToggleReset: TwoControllerRigApp
 // never configures any gestures, so SystemMessageOutputInfo::Evaluate's
 // ToggleGestureSelect/SetGestureSelect case always short-circuits to {} (its
 // gestureCapacity guard is never satisfied) -- controller 1's cached feedback
 // is therefore stable (never re-emits after its first Process() pass)
-// regardless of what controller 0's shift toggling does. This deliberately
+// regardless of what controller 0's reset toggling does. This deliberately
 // gives the two controllers' feedback triggers independent state so a
 // per-sink-routing test can toggle ONE controller's feedback and assert the
 // OTHER controller's sink stays silent, without the "isolation" being
@@ -238,8 +238,8 @@ synth::MidiInstrumentConfig TwoControllerInstrument() {
         {.control = {.channel = 0, .cc = 0}, .slotIx = 0, .position = 0});
     slot0.config.systemMessages.push_back({
         .control = synth::MidiControlAddress{.channel = 4, .cc = 10},
-        .press = synth::MessageIn::ToggleShift(0),
-        .feedback = synth::MessageIn::ToggleShift(0),
+        .press = synth::MessageIn::ToggleReset(0),
+        .feedback = synth::MessageIn::ToggleReset(0),
     });
     instrument.controllers.push_back(std::move(slot0));
 
@@ -528,7 +528,7 @@ TEST_CASE(rig_two_controllers_both_drive_parameters_through_single_bus) {
 // state); controller 1's watches ToggleGestureSelect(0), which
 // TwoControllerRigApp never wires up, so SystemMessageOutputInfo::Evaluate
 // always returns {} for it -- controller 1's cache is stable once primed, no
-// matter what controller 0's shift toggling does (see TwoControllerInstrument()'s
+// matter what controller 0's reset toggling does (see TwoControllerInstrument()'s
 // doc comment). The very first Process() pass after install primes BOTH
 // caches (cache.valid starts false for every mapped association, regardless
 // of the value it observes) and emits on both sinks once -- that priming

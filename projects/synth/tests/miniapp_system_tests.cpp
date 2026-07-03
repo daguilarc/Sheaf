@@ -636,9 +636,10 @@ TEST_CASE(miniapp_rig_default_instrument_has_single_wrldbldr_controller) {
     REQUIRE_TRUE(slot.config.encoderInput->turns.size() == kVisibleEncoderCount);
 
     // Assert system association count. WrldBldrDefaultProfileConfig produces:
-    // 1 (shift) + sceneCount (3) + bankButtonCount (16) + gestureSelectorCount (1) = 21
+    // 3 (reset/random/random-mod modifiers) + sceneCount (3) + bankButtonCount (16)
+    // + gestureSelectorCount (1) = 23
     REQUIRE_TRUE(slot.config.systemMessages.size() == expectedConfig.systemMessages.size());
-    REQUIRE_TRUE(slot.config.systemMessages.size() == 21);
+    REQUIRE_TRUE(slot.config.systemMessages.size() == 23);
 
     // Encoder-mapping spot-checks (brief Step 1): turn channel 0, push
     // channel 1, CCs 0..(visibleEncoderCount-1) -> positions
