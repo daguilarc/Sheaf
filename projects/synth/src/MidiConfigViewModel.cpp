@@ -82,6 +82,7 @@ bool FieldIsInteger(MidiMappingRowVM::Field field) {
         case Field::WrldBldrX:
         case Field::WrldBldrY:
         case Field::SceneBlend:
+        case Field::Button:
             return true;
         case Field::TurnStep:
         case Field::RelativeMode:
@@ -131,6 +132,8 @@ const char* FieldShortLabel(MidiMappingRowVM::Field field) {
             return "Gesture";
         case Field::SceneBlend:
             return "CC";
+        case Field::Button:
+            return "Btn";
     }
     return "";
 }
@@ -330,6 +333,11 @@ std::string SystemMessageAddressLabel(const MidiControllerSystemMessageAssociati
                                                             : static_cast<int>(association.wrldBldrPosition->channel);
         oss << "pos ch" << channel << " (" << static_cast<int>(association.wrldBldrPosition->x) << ","
             << static_cast<int>(association.wrldBldrPosition->y) << ")";
+    } else if (kind == MidiProfileKind::MfTwister && association.control.has_value()) {
+        // sru-8/D1: twister's sole address is the logical side button (cc -
+        // 8); the fixed channel 3 is shown read-only alongside it.
+        const int button = static_cast<int>(association.control->cc) - 8;
+        oss << "ch" << static_cast<int>(association.control->channel) << " btn" << button;
     } else if (association.control.has_value()) {
         oss << "ch" << static_cast<int>(association.control->channel) << " cc"
             << static_cast<int>(association.control->cc);
@@ -545,6 +553,12 @@ std::vector<MidiMappingRowVM> MidiConfigViewModel::SectionRows(std::size_t contr
                     // edit.
                     row.editableFields = {Field::Channel, Field::WrldBldrX, Field::WrldBldrY, Field::PressMessage,
                                           Field::ReleaseMessage};
+                } else if (slot.kind == MidiProfileKind::MfTwister) {
+                    // sru-8/D1: twister system rows advertise exactly one
+                    // address field -- the logical side button 0..5 (stored
+                    // as control->cc = 8 + button on the fixed channel 3,
+                    // display-only). No Channel or Cc field is shown.
+                    row.editableFields = {Field::Button, Field::PressMessage, Field::ReleaseMessage};
                 } else {
                     row.editableFields = {Field::Channel, Field::Cc, Field::PressMessage, Field::ReleaseMessage};
                 }
@@ -710,6 +724,16 @@ bool MidiConfigViewModel::RowFieldValue(std::size_t controllerIx, MidiConfigSect
                             break;
                         }
                         out = static_cast<double>(association.wrldBldrPosition->y);
+                        break;
+                    case Field::Button:
+                        // Twister's sole address field: control->cc = 8 +
+                        // button (D1) -- reads back the logical button
+                        // number, not the raw cc.
+                        if (!association.control.has_value() || association.control->cc < 8) {
+                            found = false;
+                            break;
+                        }
+                        out = static_cast<double>(association.control->cc - 8);
                         break;
                     default:
                         found = false;
@@ -1059,6 +1083,24 @@ bool MidiConfigViewModel::ApplyMappingEdit(std::size_t controllerIx, MidiConfigS
                         association.control =
                             MidiControlAddress{.channel = channel,
                                                .cc = WrldBldrPositionToCC(candidate.x, candidate.y)};
+                        fieldValid = true;
+                        break;
+                    }
+                    case Field::Button: {
+                        // sru-8/D1: the only editable address field on a
+                        // twister system row -- logical side button 0..5,
+                        // stored as control->cc = 8 + button on the fixed
+                        // channel 3 (untouched here; twister's channel is
+                        // display-only, never independently edited).
+                        if (!IsIntegerInRange(value, 0.0, 5.0)) {
+                            validationError = "side button must be an integer 0-5";
+                            break;
+                        }
+                        const std::uint8_t channel = association.control.has_value() ? association.control->channel
+                                                                                     : static_cast<std::uint8_t>(3);
+                        association.control =
+                            MidiControlAddress{.channel = channel,
+                                               .cc = static_cast<std::uint8_t>(8 + static_cast<int>(value))};
                         fieldValid = true;
                         break;
                     }

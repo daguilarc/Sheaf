@@ -400,13 +400,13 @@ TEST_CASE(RowFieldValueReadsLaunchpadSystemMessagePositions) {
     REQUIRE_TRUE(!vm.RowFieldValue(2, MidiConfigSection::SystemMessages, 0, MidiMappingRowVM::Field::Channel, value));
 }
 
-TEST_CASE(RowFieldValueReadsGenericSystemMessageChannelAndCc) {
-    // Plain Channel/Cc addressing (the SystemMessages "else" branch, neither
-    // launchpad nor wrldbldr) is exercised by MfTwister side-button rows --
-    // the zero-arg MfTwisterDefaultProfileConfig() used in MakeTwisterSlot()
-    // has no side buttons configured by default (see
-    // TwisterSideButtonRowChannelCcAndMessageFieldsAllSucceed's comment), so
-    // build one directly here with a side button set.
+TEST_CASE(RowFieldValueReadsTwisterSystemMessageButtonOnly) {
+    // sru-8/D1: twister system rows advertise exactly one editable address
+    // field -- the logical side button 0..5, persisted as control->cc = 8 +
+    // button on the fixed channel 3. The zero-arg MfTwisterDefaultProfileConfig()
+    // used in MakeTwisterSlot() has no side buttons configured by default
+    // (see TwisterSideButtonRowButtonAndMessageFieldsAllSucceed's comment),
+    // so build one directly here with a side button set.
     synth::MfTwisterDefaultProfileOptions options;
     options.sideButtons[0] = MidiControllerSystemMessageAssociation{
         .press = synth::MessageIn::SetReset(0, true),
@@ -427,16 +427,59 @@ TEST_CASE(RowFieldValueReadsGenericSystemMessageChannelAndCc) {
     vm.Rebuild(instrument, connection);
 
     const auto& association = instrument.controllers[0].config.systemMessages[0];
+    REQUIRE_TRUE(association.control->channel == 3);
+    REQUIRE_TRUE(association.control->cc == 8);  // side button 0 -> cc 8 + 0
+
     double value = -1.0;
+    REQUIRE_TRUE(vm.RowFieldValue(0, MidiConfigSection::SystemMessages, 0, MidiMappingRowVM::Field::Button, value));
+    REQUIRE_TRUE(value == 0.0);
 
-    REQUIRE_TRUE(vm.RowFieldValue(0, MidiConfigSection::SystemMessages, 0, MidiMappingRowVM::Field::Channel, value));
-    REQUIRE_TRUE(value == static_cast<double>(association.control->channel));
-
-    REQUIRE_TRUE(vm.RowFieldValue(0, MidiConfigSection::SystemMessages, 0, MidiMappingRowVM::Field::Cc, value));
-    REQUIRE_TRUE(value == static_cast<double>(association.control->cc));
-
+    // No editable Channel or Cc field -- the fixed channel is display-only
+    // and the button number is the only editable address field.
+    REQUIRE_TRUE(!vm.RowFieldValue(0, MidiConfigSection::SystemMessages, 0, MidiMappingRowVM::Field::Channel, value));
+    REQUIRE_TRUE(!vm.RowFieldValue(0, MidiConfigSection::SystemMessages, 0, MidiMappingRowVM::Field::Cc, value));
     REQUIRE_TRUE(
         !vm.RowFieldValue(0, MidiConfigSection::SystemMessages, 0, MidiMappingRowVM::Field::WrldBldrX, value));
+}
+
+TEST_CASE(ApplyMappingEditTwisterButtonWritesCcAndRefusesOutOfRange) {
+    synth::MfTwisterDefaultProfileOptions options;
+    options.sideButtons[0] = MidiControllerSystemMessageAssociation{
+        .press = synth::MessageIn::SetReset(0, true),
+        .release = synth::MessageIn::SetReset(0, false),
+    };
+    MidiControllerSlot slot;
+    slot.name = "twist2";
+    slot.kind = MidiProfileKind::MfTwister;
+    slot.config = synth::MfTwisterDefaultProfileConfig(options);
+
+    MidiInstrumentConfig instrument;
+    REQUIRE_TRUE(instrument.AddController(slot));
+    MidiConnectionState connection;
+    connection.controllers.push_back(MidiControllerConnection{});
+
+    MidiConfigViewModel vm;
+    vm.Rebuild(instrument, connection);
+
+    MidiInstrumentConfig out;
+    std::string reason;
+    REQUIRE_TRUE(vm.ApplyMappingEdit(0, MidiConfigSection::SystemMessages, 0, MidiMappingRowVM::Field::Button, 5.0,
+                                     out, &reason));
+    REQUIRE_TRUE(out.controllers[0].config.systemMessages[0].control->cc == 13);  // 8 + 5
+    REQUIRE_TRUE(out.controllers[0].config.systemMessages[0].control->channel == 3);  // unchanged, fixed
+
+    // Out-of-range button (only 0..5 valid) is refused with a reason.
+    MidiInstrumentConfig rejected;
+    std::string rejectReason;
+    REQUIRE_TRUE(!vm.ApplyMappingEdit(0, MidiConfigSection::SystemMessages, 0, MidiMappingRowVM::Field::Button, 6.0,
+                                      rejected, &rejectReason));
+    REQUIRE_TRUE(!rejectReason.empty());
+
+    MidiInstrumentConfig rejectedNegative;
+    std::string rejectReason2;
+    REQUIRE_TRUE(!vm.ApplyMappingEdit(0, MidiConfigSection::SystemMessages, 0, MidiMappingRowVM::Field::Button, -1.0,
+                                      rejectedNegative, &rejectReason2));
+    REQUIRE_TRUE(!rejectReason2.empty());
 }
 
 TEST_CASE(RowFieldValueReturnsFalseForPressReleaseMessageAndOutOfRange) {
@@ -1169,6 +1212,8 @@ double SafeValueFor(MidiMappingRowVM::Field field) {
             return 0.0;
         case Field::SceneBlend:
             return 10.0;
+        case Field::Button:
+            return 2.0;
     }
     return 0.0;
 }
@@ -1191,14 +1236,14 @@ void RequireEveryEditableFieldSucceeds(MidiConfigViewModel& vm, std::size_t cont
     }
 }
 
-TEST_CASE(TwisterSideButtonRowChannelCcAndMessageFieldsAllSucceed) {
-    // MfTwister side-button associations use a plain MidiControlAddress (no
-    // launchpad/wrldbldr position) -- the "else" branch of both SectionRows'
-    // and ApplyMappingEdit's SystemMessages handling. The zero-arg
-    // MfTwisterDefaultProfileConfig() used elsewhere in this file has no
-    // side buttons configured, so exercise that branch directly here (this
-    // options shape mirrors mf_twister_default_profile_maps_encoders_and_
-    // input_only_side_buttons in parameter_modulation_tests.cpp).
+TEST_CASE(TwisterSideButtonRowButtonAndMessageFieldsAllSucceed) {
+    // MfTwister side-button associations advertise a single Button field
+    // (sru-8/D1: logical side button 0..5, persisted as control->cc = 8 +
+    // button on the fixed channel 3) plus PressMessage/ReleaseMessage. The
+    // zero-arg MfTwisterDefaultProfileConfig() used elsewhere in this file
+    // has no side buttons configured, so exercise that branch directly here
+    // (this options shape mirrors mf_twister_default_profile_maps_encoders_
+    // and_input_only_side_buttons in parameter_modulation_tests.cpp).
     synth::MfTwisterDefaultProfileOptions options;
     options.sideButtons[0] = MidiControllerSystemMessageAssociation{
         .press = synth::MessageIn::SetReset(0, true),
@@ -1247,6 +1292,7 @@ TEST_CASE(FieldIsIntegerTrueForIndexAndCoordinateFields) {
     REQUIRE_TRUE(FieldIsInteger(Field::WrldBldrX));
     REQUIRE_TRUE(FieldIsInteger(Field::WrldBldrY));
     REQUIRE_TRUE(FieldIsInteger(Field::SceneBlend));
+    REQUIRE_TRUE(FieldIsInteger(Field::Button));
 }
 
 TEST_CASE(FieldIsIntegerFalseForTurnStepAndNonNumericEditorFields) {
@@ -1316,7 +1362,7 @@ TEST_CASE(FieldShortLabelIsNonEmptyAndDistinctPerField) {
     const std::vector<Field> fields = {
         Field::Channel,     Field::Cc,     Field::SlotIx,      Field::Position,       Field::GestureIx,
         Field::LaunchpadX,  Field::LaunchpadY, Field::WrldBldrX, Field::WrldBldrY,     Field::TurnStep,
-        Field::RelativeMode, Field::PressMessage, Field::ReleaseMessage, Field::SceneBlend,
+        Field::RelativeMode, Field::PressMessage, Field::ReleaseMessage, Field::SceneBlend, Field::Button,
     };
     std::vector<std::string> seen;
     for (Field field : fields) {

@@ -78,6 +78,13 @@ struct MidiMappingRowVM {
         WrldBldrY,
         GestureIx,
         SceneBlend,
+        // Twister side-button system rows only (sru-8/D1): the logical side
+        // button 0..5, persisted as control->cc = 8 + button on the fixed
+        // channel 3 (display-only, not independently editable). Kept
+        // distinct from Field::Cc (which means "raw CC 0-127" everywhere
+        // else) so its 0..5 validation domain and "Btn" label can't be
+        // confused with a generic Cc editor.
+        Button,
     };
 
     // Groups rows into contiguous runs of the same on-screen schema, so the
