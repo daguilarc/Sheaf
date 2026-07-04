@@ -18,4 +18,4 @@
 
 - [x] 3.1 ControllersPage renders presentation rows: block rows with their field set (message-type combo over the three blockable types, row-major toggle), group headers with +/+B, per-row delete buttons; deferred-commit discipline unchanged (sru-5)
 - [x] 3.2 Full suite + apps build green, zero warnings; launch smoke
-- [ ] 3.3 Sync delta specs to main specs; user visual check: default wrldbldr shows 1 turn block + 1 push block + bank/scene/gesture blocks + individual modifiers; collapse/re-expand reconstructs; +/+B/delete flows
+- [x] 3.3 Sync delta specs to main specs; user visual check: default wrldbldr shows 1 turn block + 1 push block + bank/scene/gesture blocks + individual modifiers; collapse/re-expand reconstructs; +/+B/delete flows

@@ -54,4 +54,4 @@
 - [x] 8.1 Miniapp default instrument: one named WRLD.Bldr controller seeded from the default profile; remove remaining MIDI/preset config from the app surface (spm-45, spm-37)
 - [x] 8.2 Verify miniapp front page is config-free and hosts through `MainPane`; update miniapp system tests for the new document format and instrument default (spm-37, sar-11)
 - [x] 8.3 Full test suite passes: `make -C projects/synth build test` plus runtime/app builds
-- [ ] 8.4 Manual smoke checklist with real hardware: cold start attached and detached, unplug→offline within ~5 s, replug→reconnect + LED resync, two controllers simultaneously, add controller via "+", mapping edit takes effect live, audio/file pages round-trip; user sign-off
+- [x] 8.4 Manual smoke checklist with real hardware: cold start attached and detached, unplug→offline within ~5 s, replug→reconnect + LED resync, two controllers simultaneously, add controller via "+", mapping edit takes effect live, audio/file pages round-trip; user sign-off
