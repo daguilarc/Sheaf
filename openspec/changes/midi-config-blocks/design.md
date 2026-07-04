@@ -113,11 +113,18 @@ struct SystemBlock {
     bool outputFeedback = true;     // applied to every expanded cell
     std::uint8_t channel = 0;       // wrldbldr + generic forms
     std::uint8_t startCc = 0, endCc = 0;      // generic (1-D) form, [start, end)
-    int startX = 0, startY = 0;     // 2-D forms, inclusive corners; int, not
-    int endX = 0, endY = 0;         //   uint8: Launchpad legitimately uses
-                                    //   y = -1 and x = 8 edge positions.
-                                    //   endY may be < startY (rows traverse
-                                    //   toward endY, ±1)
+    int startX = 0, startY = 0;     // 2-D forms, exclusive ends (matching the
+    int endX = 0, endY = 0;         //   1-D forms' [start, end) convention);
+                                    //   int, not uint8: Launchpad legitimately
+                                    //   uses y = -1 and x = 8 edge positions,
+                                    //   and an exclusive end can legitimately
+                                    //   reach 9 or -2. X always ascends:
+                                    //   endX = maxX + 1. Y steps in whichever
+                                    //   direction d ∈ {+1,-1} the run's second
+                                    //   row fixed: endY = lastY + d (a
+                                    //   single-row block uses d = +1, so
+                                    //   endY = startY + 1); endY may thus be
+                                    //   on either side of startY.
 };
 ```
 
@@ -125,9 +132,10 @@ Expansion functions return the exact individual configs a block denotes:
 - `ExpandEncoderBlock` → mappings cc→(slotIx, startPosition + (cc-startCc)).
 - `ExpandAnalogBlock` → gesture mappings analogous.
 - `ExpandSystemBlock` → one association per cell; cells enumerate the cc run
-  (generic) or the inclusive rectangle — x ascending within a row, rows
-  stepping from startY toward endY (±1) — in row-major (or column-major when
-  `rowMajor` is false) order; arg = startArg + cellIndex. Per cell:
+  (generic) or the exclusive-end rectangle [startX,endX) × rows(startY toward
+  endY, stepping d = sign(endY-startY), until reaching endY) — x ascending
+  within a row, rows stepping from startY toward endY — in row-major (or
+  column-major when `rowMajor` is false) order; arg = startArg + cellIndex. Per cell:
   press = the type's message (SceneSelect(arg) / SelectParamBank(bankSlotIx,
   arg) / SetGestureSelect(arg,true)); release = SetGestureSelect(arg,false)
   for GestureSelect, absent otherwise; `feedback` (a required field) = press,
@@ -160,10 +168,11 @@ length ≥ 2; otherwise rows stay individual.
    leading cells sharing startY with x consecutive from startX; the second
    row (if any) fixes the y direction (±1); height = the count of
    consecutive rows that repeat exactly that x-range with y stepping by
-   that direction; emit the width×height block if it covers ≥ 2 cells, then
-   continue after it. (The ±1 direction is required by the default
-   WRLD.Bldr bank layout: banks 0..7 on y=3, banks 8..15 on y=2 — an 8×2
-   block with endY < startY.) Generic kind fits maximal consecutive-cc
+   that direction; emit the width×height block (endX = maxX + 1, endY =
+   lastRowY + direction) if it covers ≥ 2 cells, then continue after it.
+   (The ±1 direction is required by the default WRLD.Bldr bank layout:
+   banks 0..7 on y=3, banks 8..15 on y=2 — an 8×2 block with startX=0,
+   endX=8, startY=3, endY=1.) Generic kind fits maximal consecutive-cc
    strips on one channel. Cells that fit no ≥2 rectangle emit as individual
    rows. Column-major-authored blocks (width > 1) therefore reconstruct as
    one block per column — the presentation is *minimal under this
