@@ -847,6 +847,7 @@ private:
                     caption = "Scene blend";
                     break;
                 case synth::MidiMappingRowVM::RowGroup::System:
+                    caption = "System";
                     break;
             }
             captionLabel_.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
