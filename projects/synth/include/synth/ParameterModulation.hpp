@@ -1,13 +1,16 @@
 #pragma once
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <atomic>
+#include <cmath>
 #include <functional>
 #include <memory>
 #include <optional>
 #include <random>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -80,6 +83,26 @@ enum class RangeKind {
 
 float ClampToRange(float value, RangeKind range);
 
+constexpr float ZeroBasedExponentialBaseFromMidpoint(float midpointValue, float maxValue) {
+    if (!(maxValue > 0.0f) || !(midpointValue > 0.0f) || !(midpointValue < maxValue)) {
+        throw std::invalid_argument("zero-based exponential mapping requires 0 < midpoint < max");
+    }
+    const float sqrtBase = (maxValue - midpointValue) / midpointValue;
+    return sqrtBase * sqrtBase;
+}
+
+inline float ZeroBasedExponentialMap(float normalized, float base, float maxValue) {
+    if (!(maxValue > 0.0f) || !(base > 0.0f)) {
+        throw std::invalid_argument("zero-based exponential mapping requires positive base and max");
+    }
+
+    const float knob = std::clamp(normalized, 0.0f, 1.0f);
+    if (std::fabs(base - 1.0f) <= 0.00001f) {
+        return maxValue * knob;
+    }
+    return maxValue * (std::pow(base, knob) - 1.0f) / (base - 1.0f);
+}
+
 enum class Status {
     Ok,
     InvalidConfig,
@@ -120,6 +143,8 @@ struct Page {
 };
 
 inline constexpr float kDefaultProcessLiteAlpha = 0.1226942309f;  // 1 kHz one-pole cutoff at 48 kHz
+inline constexpr float kDefaultUiDisplayCenterAlpha = 0.0013089969f;  // about 10 Hz at 48 kHz
+inline constexpr float kDefaultUiDisplaySpreadAlpha = 0.0013089969f;  // about 10 Hz at 48 kHz
 
 struct ParameterGroupConfig {
     std::size_t numVoices = 0;
@@ -127,6 +152,8 @@ struct ParameterGroupConfig {
     std::size_t numScenes = 0;
     std::size_t maxParameters = 0;
     float processLiteAlpha = kDefaultProcessLiteAlpha;
+    float uiDisplayCenterAlpha = kDefaultUiDisplayCenterAlpha;
+    float uiDisplaySpreadAlpha = kDefaultUiDisplaySpreadAlpha;
     std::vector<Color> voiceIndicatorColors;
 
     bool IsValid() const;
@@ -156,6 +183,9 @@ struct ParameterStorageBatch {
     std::vector<float> targetMaxValueArena;
     std::vector<float> currentDepthArena;
     std::vector<float> targetDepthArena;
+    std::vector<float> currentKnobValueArena;
+    std::vector<float> uiDisplayCenterArena;
+    std::vector<float> uiDisplaySpreadEnergyArena;
     std::vector<Parameter*> modulationDepthArena;
     std::vector<float> sceneCenterArena;
     std::vector<float> gestureValueArena;
@@ -302,6 +332,9 @@ private:
     std::vector<float> targetMaxValueArena_;
     std::vector<float> currentDepthArena_;
     std::vector<float> targetDepthArena_;
+    std::vector<float> currentKnobValueArena_;
+    std::vector<float> uiDisplayCenterArena_;
+    std::vector<float> uiDisplaySpreadEnergyArena_;
     std::vector<Parameter*> modulationDepthArena_;
     std::vector<float> sceneCenterArena_;
     std::vector<float> gestureValueArena_;
@@ -335,6 +368,7 @@ public:
         std::atomic<std::size_t> voiceCount{0};
         std::size_t voiceCapacity = 0;
         std::unique_ptr<std::atomic<float>[]> values;
+        std::unique_ptr<std::atomic<float>[]> spreadValues;
         std::unique_ptr<std::atomic<float>[]> minValues;
         std::unique_ptr<std::atomic<float>[]> maxValues;
         std::unique_ptr<std::atomic<std::size_t>[]> switchValue;
@@ -351,7 +385,10 @@ public:
     ParameterGroup& Group() { return group_; }
     const ParameterGroup& Group() const { return group_; }
 
-    float Get(std::size_t voiceIx) const;
+    float GetRaw(std::size_t voiceIx) const;
+    float CachedKnobValue(std::size_t voiceIx) const;
+    float UIDisplayCenter(std::size_t voiceIx) const;
+    float UIDisplaySpread(std::size_t voiceIx) const;
     std::size_t GetSwitchVal(std::size_t voiceIx) const;
     void PopulateUIState(UIState& state) const;
     void Compute(const SceneState& scene);
@@ -403,6 +440,7 @@ private:
     float ComputeRawCenter(const SceneState& scene) const;
     void ComputeAtDepth(const SceneState& scene, std::size_t recursionDepth);
     void SnapCurrentToTarget();
+    void SeedCachedKnobAndUiDisplayState();
     bool WouldCreateCycle(const Parameter* candidate) const;
     ParameterConfig ModulationDepthConfig(std::size_t modIx) const;
     float TargetValue(std::size_t voiceIx) const;
@@ -427,6 +465,9 @@ private:
     std::span<float> targetMaxValues_;
     std::span<float> currentDepths_;
     std::span<float> targetDepths_;
+    std::span<float> currentKnobValues_;
+    std::span<float> uiDisplayCenters_;
+    std::span<float> uiDisplaySpreadEnergies_;
     std::span<Parameter*> modulationDepths_;
     std::span<float> sceneCenters_;
     std::span<float> gestureValues_;
@@ -631,7 +672,6 @@ public:
     float GetExponential(float minValue, float maxValue, std::size_t voiceIx, ParameterId id) const;
     float GetZeroBasedExponential(float maxValue, float midpointValue, std::size_t voiceIx, ParameterId id) const;
     float GetBipolarLinear(float maxAbsValue, std::size_t voiceIx, ParameterId id) const;
-    float GetBipolarExponential(float minAbsValue, float maxAbsValue, std::size_t voiceIx, ParameterId id) const;
     float GetBipolarExponential(float leftValue, float centerValue, float rightValue, std::size_t voiceIx,
                                 ParameterId id) const;
     float GetBipolarZeroBasedExponential(float maxAbsValue, float midpointAbsValue, std::size_t voiceIx,

@@ -781,15 +781,15 @@ TEST_CASE(negative_modulation_depths_add_normalization_offset) {
 
     group.GetModulators().Value(0, 0) = 0.0f;
     group.GetModulators().Value(0, 1) = 0.0f;
-    REQUIRE_NEAR(parameter.Get(0), 0.625f, 0.0001f);
+    REQUIRE_NEAR(parameter.GetRaw(0), 0.625f, 0.0001f);
 
     group.GetModulators().Value(0, 0) = 1.0f;
     group.GetModulators().Value(0, 1) = 0.0f;
-    REQUIRE_NEAR(parameter.Get(0), 0.875f, 0.0001f);
+    REQUIRE_NEAR(parameter.GetRaw(0), 0.875f, 0.0001f);
 
     group.GetModulators().Value(0, 0) = 0.0f;
     group.GetModulators().Value(0, 1) = 1.0f;
-    REQUIRE_NEAR(parameter.Get(0), 0.125f, 0.0001f);
+    REQUIRE_NEAR(parameter.GetRaw(0), 0.125f, 0.0001f);
 }
 
 TEST_CASE(overfull_negative_modulation_offset_uses_normalized_depths) {
@@ -826,15 +826,41 @@ TEST_CASE(overfull_negative_modulation_offset_uses_normalized_depths) {
 
     group.GetModulators().Value(0, 0) = 0.0f;
     group.GetModulators().Value(0, 1) = 0.0f;
-    REQUIRE_NEAR(parameter.Get(0), 0.5f, 0.0001f);
+    REQUIRE_NEAR(parameter.GetRaw(0), 0.5f, 0.0001f);
 
     group.GetModulators().Value(0, 0) = 1.0f;
     group.GetModulators().Value(0, 1) = 0.0f;
-    REQUIRE_NEAR(parameter.Get(0), 1.0f, 0.0001f);
+    REQUIRE_NEAR(parameter.GetRaw(0), 1.0f, 0.0001f);
 
     group.GetModulators().Value(0, 0) = 0.0f;
     group.GetModulators().Value(0, 1) = 1.0f;
-    REQUIRE_NEAR(parameter.Get(0), 0.0f, 0.0001f);
+    REQUIRE_NEAR(parameter.GetRaw(0), 0.0f, 0.0001f);
+}
+
+TEST_CASE(parameter_get_raw_includes_normalization_offset) {
+    synth::ParameterManager manager;
+    synth::ParameterGroupConfig config{
+        .numVoices = 1,
+        .numModulators = 2,
+        .numScenes = 1,
+        .maxParameters = 8,
+        .processLiteAlpha = 1.0f,
+    };
+    synth::ParameterGroup& group = manager.CreateGroup(config);
+    float mod0 = 0.0f;
+    float mod1 = 0.0f;
+    std::array<float*, 1> source0{&mod0};
+    std::array<float*, 1> source1{&mod1};
+    group.SetModulationSource(0, source0, {.connected = true});
+    group.SetModulationSource(1, source1, {.connected = true});
+    synth::Parameter& parameter =
+        manager.CreateParameter(group, {.name = "Cutoff", .shortName = "Cut", .defaultValue = 0.5f});
+    parameter.EnsureModulationDepth(0)->SceneCenter(0) = 0.25f;
+    parameter.EnsureModulationDepth(1)->SceneCenter(0) = -0.5f;
+    manager.ComputeAllParameters();
+    group.UpdateModValues();
+    parameter.ProcessLite();
+    REQUIRE_NEAR(parameter.GetRaw(0), 0.625f, 0.0001f);
 }
 
 TEST_CASE(ui_state_min_max_reports_underfull_modulation_reachable_range) {
@@ -928,7 +954,7 @@ TEST_CASE(nested_depth_route_reads_get_and_bypasses_slew) {
 
     REQUIRE_TRUE(depth.RecursionDepth() == 1);
     REQUIRE_NEAR(depth.CurrentCenter(), 0.8f, 0.0001f);
-    REQUIRE_NEAR(depth.Get(0), 0.8f, 0.0001f);
+    REQUIRE_NEAR(depth.GetRaw(0), 0.8f, 0.0001f);
     REQUIRE_NEAR(carrier.TargetDepths(0)[0], 0.8f, 0.0001f);
     REQUIRE_NEAR(carrier.TargetCenterScale(0), 0.2f, 0.0001f);
 }
@@ -968,6 +994,204 @@ TEST_CASE(process_lite_slews_center_scale_offset_and_depths) {
     REQUIRE_NEAR(ui.maxValues[0].load(), 0.25f, 0.0001f);
 }
 
+TEST_CASE(process_lite_samples_cached_knob_after_slew) {
+    synth::ParameterManager manager;
+    synth::ParameterGroupConfig config{
+        .numVoices = 1,
+        .numModulators = 0,
+        .numScenes = 1,
+        .maxParameters = 2,
+        .processLiteAlpha = 0.25f,
+    };
+    synth::ParameterGroup& group = manager.CreateGroup(config);
+    synth::Parameter& parameter =
+        manager.CreateParameter(group, {.name = "Level", .shortName = "Lvl", .defaultValue = 0.0f});
+    manager.ComputeAllParameters();
+    parameter.SceneCenter(0) = 1.0f;
+    manager.ComputeAllTargets();
+    parameter.ProcessLite();
+    REQUIRE_NEAR(parameter.GetRaw(0), 0.25f, 0.0001f);
+    REQUIRE_NEAR(parameter.CachedKnobValue(0), 0.25f, 0.0001f);
+}
+
+TEST_CASE(mapping_helpers_use_cached_process_lite_knob_value) {
+    synth::ParameterManager manager;
+    synth::ParameterGroupConfig config{
+        .numVoices = 1,
+        .numModulators = 1,
+        .numScenes = 1,
+        .maxParameters = 4,
+        .processLiteAlpha = 1.0f,
+    };
+    synth::ParameterGroup& group = manager.CreateGroup(config);
+    float mod = 0.0f;
+    std::array<float*, 1> source{&mod};
+    group.SetModulationSource(0, source, {.connected = true});
+    synth::Parameter& parameter =
+        manager.CreateParameter(group, {.name = "Shape", .shortName = "Shp", .defaultValue = 0.0f});
+    const synth::ParameterId id = parameter.Id();
+    parameter.EnsureModulationDepth(0)->SceneCenter(0) = 1.0f;
+    synth::Parameter& bipolar = manager.CreateParameter(group, {
+        .name = "Amount",
+        .shortName = "Amt",
+        .defaultValue = 0.0f,
+        .range = synth::RangeKind::Bipolar,
+    });
+    const synth::ParameterId bipolarId = bipolar.Id();
+    bipolar.EnsureModulationDepth(0)->SceneCenter(0) = 1.0f;
+
+    manager.ComputeAllParameters();
+    group.UpdateModValues();
+    parameter.ProcessLite();
+    bipolar.ProcessLite();
+    REQUIRE_NEAR(manager.GetLinear(10.0f, 20.0f, 0, id), 10.0f, 0.0001f);
+    REQUIRE_NEAR(manager.GetExponential(10.0f, 40.0f, 0, id), 10.0f, 0.0001f);
+    REQUIRE_NEAR(manager.GetZeroBasedExponential(1.0f, 0.1f, 0, id), 0.0f, 0.0001f);
+    REQUIRE_NEAR(manager.GetBipolarLinear(2.0f, 0, bipolarId), 0.0f, 0.0001f);
+    REQUIRE_NEAR(manager.GetBipolarZeroBasedExponential(4.0f, 0.25f, 0, bipolarId), 0.0f, 0.0001f);
+    REQUIRE_NEAR(manager.GetBipolarExponential(0.25f, 1.0f, 4.0f, 0, bipolarId), 1.0f, 0.0001f);
+    REQUIRE_NEAR(manager.GetBipolarZeroBasedExponential(1.0f, 0.1f, 0, bipolarId), 0.0f, 0.0001f);
+
+    mod = 1.0f;
+    group.UpdateModValues();
+    REQUIRE_NEAR(parameter.GetRaw(0), 1.0f, 0.0001f);
+    REQUIRE_NEAR(bipolar.GetRaw(0), 1.0f, 0.0001f);
+    REQUIRE_NEAR(manager.GetLinear(10.0f, 20.0f, 0, id), 10.0f, 0.0001f);
+    REQUIRE_NEAR(manager.GetExponential(10.0f, 40.0f, 0, id), 10.0f, 0.0001f);
+    REQUIRE_NEAR(manager.GetZeroBasedExponential(1.0f, 0.1f, 0, id), 0.0f, 0.0001f);
+    REQUIRE_NEAR(manager.GetBipolarLinear(2.0f, 0, bipolarId), 0.0f, 0.0001f);
+    REQUIRE_NEAR(manager.GetBipolarZeroBasedExponential(4.0f, 0.25f, 0, bipolarId), 0.0f, 0.0001f);
+    REQUIRE_NEAR(manager.GetBipolarExponential(0.25f, 1.0f, 4.0f, 0, bipolarId), 1.0f, 0.0001f);
+    REQUIRE_NEAR(manager.GetBipolarZeroBasedExponential(1.0f, 0.1f, 0, bipolarId), 0.0f, 0.0001f);
+
+    parameter.ProcessLite();
+    bipolar.ProcessLite();
+    REQUIRE_NEAR(manager.GetLinear(10.0f, 20.0f, 0, id), 20.0f, 0.0001f);
+    REQUIRE_NEAR(manager.GetExponential(10.0f, 40.0f, 0, id), 40.0f, 0.0001f);
+    REQUIRE_NEAR(manager.GetZeroBasedExponential(1.0f, 0.1f, 0, id), 1.0f, 0.0001f);
+    REQUIRE_NEAR(manager.GetBipolarLinear(2.0f, 0, bipolarId), 2.0f, 0.0001f);
+    REQUIRE_NEAR(manager.GetBipolarZeroBasedExponential(4.0f, 0.25f, 0, bipolarId), 4.0f, 0.0001f);
+    REQUIRE_NEAR(manager.GetBipolarExponential(0.25f, 1.0f, 4.0f, 0, bipolarId), 4.0f, 0.0001f);
+    REQUIRE_NEAR(manager.GetBipolarZeroBasedExponential(1.0f, 0.1f, 0, bipolarId), 1.0f, 0.0001f);
+}
+
+TEST_CASE(process_lite_updates_ui_display_center_and_spread) {
+    synth::ParameterManager manager;
+    synth::ParameterGroupConfig config{
+        .numVoices = 1,
+        .numModulators = 0,
+        .numScenes = 1,
+        .maxParameters = 2,
+        .processLiteAlpha = 1.0f,
+        .uiDisplayCenterAlpha = 0.25f,
+        .uiDisplaySpreadAlpha = 0.5f,
+    };
+    synth::ParameterGroup& group = manager.CreateGroup(config);
+    synth::Parameter& parameter =
+        manager.CreateParameter(group, {.name = "Level", .shortName = "Lvl", .defaultValue = 0.0f});
+    manager.ComputeAllParameters();
+    parameter.SceneCenter(0) = 1.0f;
+    manager.ComputeAllTargets();
+    parameter.ProcessLite();
+    REQUIRE_NEAR(parameter.CachedKnobValue(0), 1.0f, 0.0001f);
+    REQUIRE_NEAR(parameter.UIDisplayCenter(0), 0.25f, 0.0001f);
+    REQUIRE_NEAR(parameter.UIDisplaySpread(0), std::sqrt(0.28125f), 0.0001f);
+}
+
+TEST_CASE(ui_display_center_and_spread_follow_cached_knob_order) {
+    synth::ParameterManager manager;
+    synth::ParameterGroupConfig config{
+        .numVoices = 1,
+        .numModulators = 0,
+        .numScenes = 1,
+        .maxParameters = 2,
+        .processLiteAlpha = 1.0f,
+        .uiDisplayCenterAlpha = 0.25f,
+        .uiDisplaySpreadAlpha = 0.5f,
+    };
+    synth::ParameterGroup& group = manager.CreateGroup(config);
+    synth::Parameter& parameter =
+        manager.CreateParameter(group, {.name = "Cutoff", .shortName = "Cut", .defaultValue = 0.0f});
+
+    manager.ComputeAllParameters();
+    parameter.SceneCenter(0) = 1.0f;
+    manager.ComputeAllTargets();
+    parameter.ProcessLite();
+
+    synth::Parameter::UIState ui(1);
+    parameter.PopulateUIState(ui);
+    REQUIRE_NEAR(ui.values[0].load(std::memory_order_relaxed), 0.25f, 0.0001f);
+    REQUIRE_NEAR(ui.spreadValues[0].load(std::memory_order_relaxed), std::sqrt(0.28125f), 0.0001f);
+}
+
+TEST_CASE(cached_knob_and_ui_display_state_seed_on_construction_and_revert) {
+    synth::ParameterManager manager;
+    synth::ParameterGroupConfig config{
+        .numVoices = 1,
+        .numModulators = 0,
+        .numScenes = 1,
+        .maxParameters = 2,
+        .processLiteAlpha = 1.0f,
+        .uiDisplayCenterAlpha = 0.25f,
+        .uiDisplaySpreadAlpha = 0.5f,
+    };
+    synth::ParameterGroup& group = manager.CreateGroup(config);
+    synth::Parameter& parameter =
+        manager.CreateParameter(group, {.name = "Level", .shortName = "Lvl", .defaultValue = 0.25f});
+
+    REQUIRE_NEAR(parameter.CachedKnobValue(0), parameter.GetRaw(0), 0.0001f);
+    REQUIRE_NEAR(parameter.UIDisplayCenter(0), parameter.GetRaw(0), 0.0001f);
+    REQUIRE_NEAR(parameter.UIDisplaySpread(0), 0.0f, 0.0001f);
+
+    parameter.SceneCenter(0) = 0.75f;
+    manager.ComputeAllParameters();
+    REQUIRE_NEAR(parameter.CachedKnobValue(0), parameter.GetRaw(0), 0.0001f);
+    REQUIRE_NEAR(parameter.UIDisplayCenter(0), parameter.GetRaw(0), 0.0001f);
+    REQUIRE_NEAR(parameter.UIDisplaySpread(0), 0.0f, 0.0001f);
+
+    parameter.SceneCenter(0) = 1.0f;
+    manager.ComputeAllTargets();
+    parameter.ProcessLite();
+    REQUIRE_TRUE(parameter.UIDisplaySpread(0) > 0.0f);
+
+    parameter.RevertToDefault(manager.Scene());
+    REQUIRE_NEAR(parameter.CachedKnobValue(0), parameter.GetRaw(0), 0.0001f);
+    REQUIRE_NEAR(parameter.UIDisplayCenter(0), parameter.GetRaw(0), 0.0001f);
+    REQUIRE_NEAR(parameter.UIDisplaySpread(0), 0.0f, 0.0001f);
+}
+
+TEST_CASE(nested_modulation_depth_ui_state_uses_true_value_without_motion) {
+    synth::ParameterManager manager;
+    synth::ParameterGroupConfig config{
+        .numVoices = 1,
+        .numModulators = 1,
+        .numScenes = 1,
+        .maxParameters = 4,
+        .processLiteAlpha = 1.0f,
+        .uiDisplayCenterAlpha = 0.25f,
+        .uiDisplaySpreadAlpha = 0.5f,
+    };
+    synth::ParameterGroup& group = manager.CreateGroup(config);
+    float modValue = 0.75f;
+    std::array<float*, 1> source{&modValue};
+    group.SetModulationSource(0, source, {.name = "VCO", .shortName = "VCO", .connected = true});
+
+    synth::Parameter& target =
+        manager.CreateParameter(group, {.name = "Phase", .shortName = "Phas", .defaultValue = 0.0f});
+    synth::Parameter* depth = target.EnsureModulationDepth(0);
+    REQUIRE_TRUE(depth != nullptr);
+
+    manager.ComputeAllParameters();
+    REQUIRE_NEAR(depth->UIDisplayCenter(0), depth->GetRaw(0), 0.0001f);
+
+    depth->SceneCenter(0) = 1.0f;
+    manager.ComputeAllTargets();
+
+    REQUIRE_NEAR(depth->GetRaw(0), 1.0f, 0.0001f);
+    REQUIRE_NEAR(depth->UIDisplayCenter(0), depth->GetRaw(0), 0.0001f);
+    REQUIRE_NEAR(depth->UIDisplaySpread(0), 0.0f, 0.0001f);
+}
+
 TEST_CASE(switch_metadata_and_buckets_use_unslewed_display_target) {
     synth::ParameterManager manager;
     auto& group = manager.CreateGroup({
@@ -988,7 +1212,7 @@ TEST_CASE(switch_metadata_and_buckets_use_unslewed_display_target) {
 
     REQUIRE_TRUE(stepped.SwitchValues() == 4);
     REQUIRE_TRUE(stepped.IsSwitch());
-    REQUIRE_NEAR(stepped.Get(0), 0.0f, 0.0001f);
+    REQUIRE_NEAR(stepped.GetRaw(0), 0.0f, 0.0001f);
     REQUIRE_TRUE(stepped.GetSwitchVal(0) == 3);
 
     auto& bipolar = manager.CreateParameter(group, {
@@ -1005,12 +1229,46 @@ TEST_CASE(switch_metadata_and_buckets_use_unslewed_display_target) {
     stepped.PopulateUIState(ui);
     REQUIRE_TRUE(ui.switchValues.load() == 4);
     REQUIRE_TRUE(ui.switchValue[0].load() == 3);
+    REQUIRE_NEAR(ui.spreadValues[0].load(std::memory_order_relaxed), 0.0f, 0.0001f);
 
     ui.SetDisconnected();
     REQUIRE_TRUE(ui.switchValues.load() == 0);
     REQUIRE_TRUE(ui.switchValue[0].load() == 0);
+    REQUIRE_NEAR(ui.spreadValues[0].load(std::memory_order_relaxed), 0.0f, 0.0001f);
     REQUIRE_TRUE(ui.modulatorsAffectingMask.load() == 0);
     REQUIRE_TRUE(ui.gesturesAffectingMask.load() == 0);
+}
+
+TEST_CASE(switch_value_uses_target_despite_process_lite_slew) {
+    synth::ParameterManager manager;
+    synth::ParameterGroupConfig config{
+        .numVoices = 1,
+        .numModulators = 0,
+        .numScenes = 1,
+        .maxParameters = 2,
+        .processLiteAlpha = 0.25f,
+        .uiDisplayCenterAlpha = 0.25f,
+        .uiDisplaySpreadAlpha = 0.5f,
+    };
+    synth::ParameterGroup& group = manager.CreateGroup(config);
+    synth::Parameter& stepped = manager.CreateParameter(group, {
+        .name = "Mode",
+        .shortName = "Mode",
+        .defaultValue = 0.0f,
+        .switchValues = 4,
+    });
+
+    manager.ComputeAllParameters();
+    stepped.SceneCenter(0) = 1.0f;
+    manager.ComputeAllTargets();
+    stepped.ProcessLite();
+
+    REQUIRE_NEAR(stepped.GetRaw(0), 0.25f, 0.0001f);
+    REQUIRE_TRUE(stepped.GetSwitchVal(0) == 3);
+
+    synth::Parameter::UIState ui(1);
+    stepped.PopulateUIState(ui);
+    REQUIRE_NEAR(ui.spreadValues[0].load(std::memory_order_relaxed), 0.0f, 0.0001f);
 }
 
 TEST_CASE(parameter_ui_state_brightness_defaults_connected_and_disconnected) {
@@ -1132,11 +1390,11 @@ TEST_CASE(get_clamps_and_rejects_out_of_range_voice) {
     parameter.TargetDepths(0)[0] = 1.0f;
     parameter.ProcessLite();
 
-    REQUIRE_NEAR(parameter.Get(0), 1.0f, 0.0001f);
+    REQUIRE_NEAR(parameter.GetRaw(0), 1.0f, 0.0001f);
 
     bool threw = false;
     try {
-        (void)parameter.Get(1);
+        (void)parameter.GetRaw(1);
     } catch (const std::out_of_range&) {
         threw = true;
     }
@@ -1224,6 +1482,18 @@ TEST_CASE(manager_zero_based_exponential_mapping_honors_midpoint) {
     REQUIRE_NEAR(manager.GetZeroBasedExponential(1.0f, 0.1f, 0, paramId), 1.0f, 0.0001f);
 }
 
+TEST_CASE(zero_based_exponential_base_helper_matches_midpoint_curve) {
+    const float maxValue = 2.0f;
+    const float midpointValue = 0.25f;
+    const float base = synth::ZeroBasedExponentialBaseFromMidpoint(midpointValue, maxValue);
+
+    REQUIRE_NEAR(synth::ZeroBasedExponentialMap(0.0f, base, maxValue), 0.0f, 0.0001f);
+    REQUIRE_NEAR(synth::ZeroBasedExponentialMap(0.5f, base, maxValue), midpointValue, 0.0001f);
+    REQUIRE_NEAR(synth::ZeroBasedExponentialMap(1.0f, base, maxValue), maxValue, 0.0001f);
+    REQUIRE_NEAR(synth::ZeroBasedExponentialBaseFromMidpoint(1.0f, 2.0f), 1.0f, 0.0001f);
+    REQUIRE_NEAR(synth::ZeroBasedExponentialMap(0.25f, 1.0f, maxValue), 0.5f, 0.0001f);
+}
+
 TEST_CASE(manager_bipolar_mapping_helpers_return_signed_values) {
     synth::ParameterManager manager;
     auto& group = manager.CreateGroup({
@@ -1240,19 +1510,19 @@ TEST_CASE(manager_bipolar_mapping_helpers_return_signed_values) {
     parameter.Compute(manager.Scene());
     parameter.ProcessLite();
     REQUIRE_NEAR(manager.GetBipolarLinear(2.0f, 0, paramId), -2.0f, 0.0001f);
-    REQUIRE_NEAR(manager.GetBipolarExponential(0.25f, 4.0f, 0, paramId), -4.0f, 0.0001f);
+    REQUIRE_NEAR(manager.GetBipolarZeroBasedExponential(4.0f, 0.25f, 0, paramId), -4.0f, 0.0001f);
     REQUIRE_NEAR(manager.GetBipolarZeroBasedExponential(1.0f, 0.1f, 0, paramId), -1.0f, 0.0001f);
 
     parameter.SceneCenter(0) = -0.5f;
     parameter.Compute(manager.Scene());
     parameter.ProcessLite();
-    REQUIRE_NEAR(manager.GetBipolarExponential(0.25f, 4.0f, 0, paramId), -1.0f, 0.0001f);
+    REQUIRE_NEAR(manager.GetBipolarZeroBasedExponential(4.0f, 0.25f, 0, paramId), -0.25f, 0.0001f);
 
     parameter.SceneCenter(0) = 0.0f;
     parameter.Compute(manager.Scene());
     parameter.ProcessLite();
     REQUIRE_NEAR(manager.GetBipolarLinear(2.0f, 0, paramId), 0.0f, 0.0001f);
-    REQUIRE_NEAR(manager.GetBipolarExponential(0.25f, 4.0f, 0, paramId), 0.0f, 0.0001f);
+    REQUIRE_NEAR(manager.GetBipolarZeroBasedExponential(4.0f, 0.25f, 0, paramId), 0.0f, 0.0001f);
     REQUIRE_NEAR(manager.GetBipolarZeroBasedExponential(1.0f, 0.1f, 0, paramId), 0.0f, 0.0001f);
     bool threw = false;
     try {
@@ -1265,14 +1535,47 @@ TEST_CASE(manager_bipolar_mapping_helpers_return_signed_values) {
     parameter.SceneCenter(0) = 0.5f;
     parameter.Compute(manager.Scene());
     parameter.ProcessLite();
-    REQUIRE_NEAR(manager.GetBipolarExponential(0.25f, 4.0f, 0, paramId), 1.0f, 0.0001f);
+    REQUIRE_NEAR(manager.GetBipolarZeroBasedExponential(4.0f, 0.25f, 0, paramId), 0.25f, 0.0001f);
 
     parameter.SceneCenter(0) = 1.0f;
     parameter.Compute(manager.Scene());
     parameter.ProcessLite();
     REQUIRE_NEAR(manager.GetBipolarLinear(2.0f, 0, paramId), 2.0f, 0.0001f);
-    REQUIRE_NEAR(manager.GetBipolarExponential(0.25f, 4.0f, 0, paramId), 4.0f, 0.0001f);
+    REQUIRE_NEAR(manager.GetBipolarZeroBasedExponential(4.0f, 0.25f, 0, paramId), 4.0f, 0.0001f);
     REQUIRE_NEAR(manager.GetBipolarZeroBasedExponential(1.0f, 0.1f, 0, paramId), 1.0f, 0.0001f);
+}
+
+TEST_CASE(manager_bipolar_zero_based_exponential_is_continuous_at_center) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numScenes = 1,
+        .maxParameters = 1,
+        .processLiteAlpha = 1.0f,
+    });
+    const synth::ParameterId paramId = manager.RegisterParameter(
+        group, {.name = "Amount", .defaultValue = 0.0f, .range = synth::RangeKind::Bipolar});
+    auto& parameter = manager.ParameterById(paramId);
+
+    parameter.SceneCenter(0) = 0.001f;
+    parameter.Compute(manager.Scene());
+    parameter.ProcessLite();
+    const float smallPositive = manager.GetBipolarZeroBasedExponential(4.0f, 0.25f, 0, paramId);
+
+    parameter.SceneCenter(0) = 0.0f;
+    parameter.Compute(manager.Scene());
+    parameter.ProcessLite();
+    const float center = manager.GetBipolarZeroBasedExponential(4.0f, 0.25f, 0, paramId);
+
+    parameter.SceneCenter(0) = -0.001f;
+    parameter.Compute(manager.Scene());
+    parameter.ProcessLite();
+    const float smallNegative = manager.GetBipolarZeroBasedExponential(4.0f, 0.25f, 0, paramId);
+
+    REQUIRE_NEAR(center, 0.0f, 0.0001f);
+    REQUIRE_TRUE(smallPositive > 0.0f);
+    REQUIRE_TRUE(smallPositive < 0.01f);
+    REQUIRE_NEAR(smallNegative, -smallPositive, 0.0001f);
 }
 
 TEST_CASE(manager_bipolar_mapping_helpers_reject_unipolar_parameters) {
@@ -1292,14 +1595,6 @@ TEST_CASE(manager_bipolar_mapping_helpers_reject_unipolar_parameters) {
     bool threw = false;
     try {
         (void)manager.GetBipolarLinear(1.0f, 0, paramId);
-    } catch (const std::invalid_argument&) {
-        threw = true;
-    }
-    REQUIRE_TRUE(threw);
-
-    threw = false;
-    try {
-        (void)manager.GetBipolarExponential(0.25f, 4.0f, 0, paramId);
     } catch (const std::invalid_argument&) {
         threw = true;
     }
@@ -1435,7 +1730,7 @@ TEST_CASE(manager_bipolar_zero_based_exponential_uses_signed_bipolar_knob) {
     REQUIRE_NEAR(manager.GetBipolarZeroBasedExponential(1.0f, 0.1f, 0, paramId), 1.0f, 0.0001f);
 }
 
-TEST_CASE(manager_mapping_helpers_use_parameter_get_for_voice_value) {
+TEST_CASE(manager_mapping_helpers_map_cached_voice_value) {
     synth::ParameterManager manager;
     auto& group = manager.CreateGroup({
         .numVoices = 1,
@@ -1455,7 +1750,7 @@ TEST_CASE(manager_mapping_helpers_use_parameter_get_for_voice_value) {
     carrier.Compute(manager.Scene());
     carrier.ProcessLite();
 
-    REQUIRE_NEAR(carrier.Get(0), 0.6f, 0.0001f);
+    REQUIRE_NEAR(carrier.GetRaw(0), 0.6f, 0.0001f);
     REQUIRE_NEAR(manager.GetLinear(10.0f, 20.0f, 0, carrierId), 16.0f, 0.0001f);
     REQUIRE_NEAR(manager.GetBipolarLinear(2.0f, 0, carrierId), 1.2f, 0.0001f);
     REQUIRE_NEAR(manager.GetBipolarExponential(0.25f, 1.0f, 4.0f, 0, carrierId), std::pow(4.0f, 0.6f),
@@ -1834,8 +2129,8 @@ TEST_CASE(revert_to_default_clears_modulation_and_gestures) {
     REQUIRE_NEAR(parameter.TargetCenter(), 0.4f, 0.0001f);
     REQUIRE_NEAR(parameter.CurrentCenterScale(0), 1.0f, 0.0001f);
     REQUIRE_NEAR(parameter.TargetCenterScale(1), 1.0f, 0.0001f);
-    REQUIRE_NEAR(parameter.Get(0), 0.4f, 0.0001f);
-    REQUIRE_NEAR(parameter.Get(1), 0.4f, 0.0001f);
+    REQUIRE_NEAR(parameter.GetRaw(0), 0.4f, 0.0001f);
+    REQUIRE_NEAR(parameter.GetRaw(1), 0.4f, 0.0001f);
 }
 
 TEST_CASE(revert_to_default_rejects_invalid_scene_without_mutation) {
@@ -2582,7 +2877,7 @@ TEST_CASE(random_modifier_press_randomizes_visible_value_without_touching_mod_de
     manager.HandlePress(10);
 
     REQUIRE_NEAR(carrier.SceneCenter(0), 0.75f, 0.0001f);
-    REQUIRE_NEAR(carrier.Get(0), 0.75f, 0.0001f);
+    REQUIRE_NEAR(carrier.GetRaw(0), 0.75f, 0.0001f);
     REQUIRE_TRUE(carrier.ModulationDepthParameter(0) == &depth);
     REQUIRE_NEAR(depth.SceneCenter(0), 0.0f, 0.0001f);
     REQUIRE_TRUE(!bank.ShowingModulation());
@@ -4835,6 +5130,9 @@ struct SimParam {
     std::array<float, kSimVoices> targetMaxValue{};
     std::array<std::array<float, kSimMods>, kSimVoices> currentDepth{};
     std::array<std::array<float, kSimMods>, kSimVoices> targetDepth{};
+    std::array<float, kSimVoices> cachedKnob{};
+    std::array<float, kSimVoices> uiDisplayCenter{};
+    std::array<float, kSimVoices> uiDisplaySpreadEnergy{};
 };
 
 struct SimOracle {
@@ -5029,7 +5327,7 @@ float SimRawCenter(const SimOracle& oracle, const SimParam& parameter) {
     return activeWeightSum == 0.0f ? base : weightedMixSum / activeWeightSum;
 }
 
-float SimGet(const SimOracle& oracle, std::size_t paramIx, std::size_t voiceIx) {
+float SimGetRaw(const SimOracle& oracle, std::size_t paramIx, std::size_t voiceIx) {
     const SimParam& parameter = oracle.params[paramIx];
     float value = parameter.currentCenter * parameter.currentCenterScale[voiceIx] +
                   parameter.currentNormalizationOffset[voiceIx];
@@ -5133,6 +5431,8 @@ std::uint32_t SimGesturesAffectingMask(const SimOracle& oracle, const SimParam& 
     return mask;
 }
 
+void SimSeedDisplayState(SimOracle& oracle, std::size_t paramIx);
+
 void SimComputeAtDepth(SimOracle& oracle, std::size_t paramIx, std::size_t recursionDepth) {
     SimParam& parameter = oracle.params[paramIx];
     parameter.targetCenter = SimClamp(SimRawCenter(oracle, parameter), parameter.range);
@@ -5147,7 +5447,7 @@ void SimComputeAtDepth(SimOracle& oracle, std::size_t paramIx, std::size_t recur
         float weightSum = 0.0f;
         for (std::size_t modIx = 0; modIx < kSimMods; ++modIx) {
             const int route = parameter.route[modIx];
-            const float depth = route < 0 ? 0.0f : SimGet(oracle, static_cast<std::size_t>(route), voiceIx);
+            const float depth = route < 0 ? 0.0f : SimGetRaw(oracle, static_cast<std::size_t>(route), voiceIx);
             parameter.targetDepth[voiceIx][modIx] = depth;
             weightSum += std::fabs(depth);
         }
@@ -5191,6 +5491,7 @@ void SimComputeAtDepth(SimOracle& oracle, std::size_t paramIx, std::size_t recur
         parameter.currentMinValue = parameter.targetMinValue;
         parameter.currentMaxValue = parameter.targetMaxValue;
         parameter.currentDepth = parameter.targetDepth;
+        SimSeedDisplayState(oracle, paramIx);
     }
 }
 
@@ -5209,32 +5510,62 @@ std::size_t SimParamIndex(const SimOracle& oracle, const SimParam& parameter) {
     return static_cast<std::size_t>(&parameter - begin);
 }
 
-void SimSnapParameterToTarget(SimParam& parameter) {
+void SimSeedDisplayState(SimOracle& oracle, std::size_t paramIx) {
+    SimParam& parameter = oracle.params[paramIx];
+    for (std::size_t voiceIx = 0; voiceIx < kSimVoices; ++voiceIx) {
+        parameter.cachedKnob[voiceIx] = SimGetRaw(oracle, paramIx, voiceIx);
+        parameter.uiDisplayCenter[voiceIx] = parameter.cachedKnob[voiceIx];
+        parameter.uiDisplaySpreadEnergy[voiceIx] = 0.0f;
+    }
+}
+
+void SimSeedDisplayState(SimOracle& oracle, SimParam& parameter) {
+    SimSeedDisplayState(oracle, SimParamIndex(oracle, parameter));
+}
+
+void SimSnapParameterToTarget(SimOracle& oracle, SimParam& parameter) {
     parameter.currentCenter = parameter.targetCenter;
     parameter.currentCenterScale = parameter.targetCenterScale;
     parameter.currentNormalizationOffset = parameter.targetNormalizationOffset;
     parameter.currentMinValue = parameter.targetMinValue;
     parameter.currentMaxValue = parameter.targetMaxValue;
     parameter.currentDepth = parameter.targetDepth;
+    SimSeedDisplayState(oracle, parameter);
+    for (const int route : parameter.route) {
+        if (route >= 0) {
+            SimSnapParameterToTarget(oracle, oracle.params[static_cast<std::size_t>(route)]);
+        }
+    }
 }
 
 void SimProcessLiteAll(SimOracle& oracle) {
     constexpr float alpha = 0.25f;
-    for (auto& parameter : oracle.params) {
+    constexpr float uiCenterAlpha = synth::kDefaultUiDisplayCenterAlpha;
+    constexpr float uiSpreadAlpha = synth::kDefaultUiDisplaySpreadAlpha;
+    for (std::size_t paramIx = 0; paramIx < oracle.params.size(); ++paramIx) {
+        SimParam& parameter = oracle.params[paramIx];
         parameter.currentCenter += alpha * (parameter.targetCenter - parameter.currentCenter);
         for (std::size_t voiceIx = 0; voiceIx < kSimVoices; ++voiceIx) {
-        parameter.currentCenterScale[voiceIx] +=
-            alpha * (parameter.targetCenterScale[voiceIx] - parameter.currentCenterScale[voiceIx]);
-        parameter.currentNormalizationOffset[voiceIx] +=
-            alpha * (parameter.targetNormalizationOffset[voiceIx] - parameter.currentNormalizationOffset[voiceIx]);
-        parameter.currentMinValue[voiceIx] +=
-            alpha * (parameter.targetMinValue[voiceIx] - parameter.currentMinValue[voiceIx]);
-        parameter.currentMaxValue[voiceIx] +=
-            alpha * (parameter.targetMaxValue[voiceIx] - parameter.currentMaxValue[voiceIx]);
-        for (std::size_t modIx = 0; modIx < kSimMods; ++modIx) {
-            parameter.currentDepth[voiceIx][modIx] +=
-                alpha * (parameter.targetDepth[voiceIx][modIx] - parameter.currentDepth[voiceIx][modIx]);
+            parameter.currentCenterScale[voiceIx] +=
+                alpha * (parameter.targetCenterScale[voiceIx] - parameter.currentCenterScale[voiceIx]);
+            parameter.currentNormalizationOffset[voiceIx] +=
+                alpha * (parameter.targetNormalizationOffset[voiceIx] - parameter.currentNormalizationOffset[voiceIx]);
+            parameter.currentMinValue[voiceIx] +=
+                alpha * (parameter.targetMinValue[voiceIx] - parameter.currentMinValue[voiceIx]);
+            parameter.currentMaxValue[voiceIx] +=
+                alpha * (parameter.targetMaxValue[voiceIx] - parameter.currentMaxValue[voiceIx]);
+            for (std::size_t modIx = 0; modIx < kSimMods; ++modIx) {
+                parameter.currentDepth[voiceIx][modIx] +=
+                    alpha * (parameter.targetDepth[voiceIx][modIx] - parameter.currentDepth[voiceIx][modIx]);
             }
+        }
+        for (std::size_t voiceIx = 0; voiceIx < kSimVoices; ++voiceIx) {
+            const float knob = SimGetRaw(oracle, paramIx, voiceIx);
+            parameter.cachedKnob[voiceIx] = knob;
+            parameter.uiDisplayCenter[voiceIx] += uiCenterAlpha * (knob - parameter.uiDisplayCenter[voiceIx]);
+            const float residual = knob - parameter.uiDisplayCenter[voiceIx];
+            parameter.uiDisplaySpreadEnergy[voiceIx] +=
+                uiSpreadAlpha * ((residual * residual) - parameter.uiDisplaySpreadEnergy[voiceIx]);
         }
     }
 }
@@ -5363,11 +5694,11 @@ void SimRandomizeValue(SimOracle& oracle, SimParam& parameter, float value) {
     const std::size_t paramIx = SimParamIndex(oracle, parameter);
     const float target = SimLinearMap(SimRangeMin(parameter.range), 1.0f, std::clamp(value, 0.0f, 1.0f));
     SimComputeAtDepth(oracle, paramIx, 0);
-    SimSnapParameterToTarget(parameter);
+    SimSnapParameterToTarget(oracle, parameter);
     const float delta = target - SimTargetGet(oracle, paramIx, 0);
     SimHandleIncDec(oracle, parameter, delta);
     SimComputeAtDepth(oracle, paramIx, 0);
-    SimSnapParameterToTarget(parameter);
+    SimSnapParameterToTarget(oracle, parameter);
 }
 
 void SimResetDepthToNeutral(SimOracle& oracle, SimParam& parameter) {
@@ -5411,6 +5742,7 @@ void SimResetDepthToNeutral(SimOracle& oracle, SimParam& parameter) {
     parameter.targetMinValue.fill(0.0f);
     parameter.currentMaxValue.fill(0.0f);
     parameter.targetMaxValue.fill(0.0f);
+    SimSeedDisplayState(oracle, parameter);
 }
 
 void SimRevertToDefault(SimOracle& oracle, SimParam& parameter) {
@@ -5455,6 +5787,7 @@ void SimRevertToDefault(SimOracle& oracle, SimParam& parameter) {
     parameter.targetMinValue.fill(defaultValue);
     parameter.currentMaxValue.fill(defaultValue);
     parameter.targetMaxValue.fill(defaultValue);
+    SimSeedDisplayState(oracle, parameter);
 }
 
 bool SimEncoderIsPhysical(synth::PhysicalEncoderId encoder) {
@@ -5705,8 +6038,15 @@ void SimCheck(const SimOracle& oracle, const std::array<synth::Parameter*, kSimP
                              expected.currentDepth[voiceIx][modIx],
                              actual.CurrentDepths(voiceIx)[modIx]);
             }
-            SimCheckNear(seed, step, action, SimParamField(actual, paramIx, voiceField + " get"),
-                         SimGet(oracle, paramIx, voiceIx), actual.Get(voiceIx));
+            SimCheckNear(seed, step, action, SimParamField(actual, paramIx, voiceField + " raw"),
+                         SimGetRaw(oracle, paramIx, voiceIx), actual.GetRaw(voiceIx));
+            SimCheckNear(seed, step, action, SimParamField(actual, paramIx, voiceField + " cached knob"),
+                         expected.cachedKnob[voiceIx], actual.CachedKnobValue(voiceIx));
+            SimCheckNear(seed, step, action, SimParamField(actual, paramIx, voiceField + " ui display center"),
+                         expected.uiDisplayCenter[voiceIx], actual.UIDisplayCenter(voiceIx));
+            SimCheckNear(seed, step, action, SimParamField(actual, paramIx, voiceField + " ui display spread"),
+                         std::sqrt(std::max(0.0f, expected.uiDisplaySpreadEnergy[voiceIx])),
+                         actual.UIDisplaySpread(voiceIx));
         }
     }
 
@@ -5794,8 +6134,14 @@ void SimCheckUIState(const SimOracle& oracle, const synth::ParameterManager::UIS
             for (std::size_t voiceIx = 0; voiceIx < kSimVoices; ++voiceIx) {
                 SimCheckNear(seed, step, action,
                              "ui position=" + std::to_string(position) + " voice=" + std::to_string(voiceIx),
-                             SimGet(oracle, paramIx, voiceIx),
+                             expected.uiDisplayCenter[voiceIx],
                              actual.values[voiceIx].load());
+                SimCheckNear(seed, step, action,
+                             "ui position=" + std::to_string(position) + " spread=" + std::to_string(voiceIx),
+                             expected.switchValues > 1
+                                 ? 0.0f
+                                 : std::sqrt(std::max(0.0f, expected.uiDisplaySpreadEnergy[voiceIx])),
+                             actual.spreadValues[voiceIx].load());
                 SimCheckNear(seed, step, action,
                              "ui position=" + std::to_string(position) + " min=" + std::to_string(voiceIx),
                              expected.currentMinValue[voiceIx], actual.minValues[voiceIx].load());
@@ -5885,6 +6231,9 @@ void SimInitializeOracle(SimOracle& oracle) {
     };
     SimDeselect(oracle.banks[0]);
     SimDeselect(oracle.banks[1]);
+    for (std::size_t paramIx = 0; paramIx < oracle.params.size(); ++paramIx) {
+        SimSeedDisplayState(oracle, paramIx);
+    }
 }
 
 void SimSetLessSelectedScene(SimOracle& oracle, std::size_t sceneIx) {
@@ -5900,13 +6249,8 @@ void SimSetLessSelectedScene(SimOracle& oracle, std::size_t sceneIx) {
 }
 
 void SimSnapAllToTarget(SimOracle& oracle) {
-    for (auto& parameter : oracle.params) {
-        parameter.currentCenter = parameter.targetCenter;
-        parameter.currentCenterScale = parameter.targetCenterScale;
-        parameter.currentNormalizationOffset = parameter.targetNormalizationOffset;
-        parameter.currentMinValue = parameter.targetMinValue;
-        parameter.currentMaxValue = parameter.targetMaxValue;
-        parameter.currentDepth = parameter.targetDepth;
+    for (std::size_t paramIx = 0; paramIx < oracle.params.size(); ++paramIx) {
+        SimSnapParameterToTarget(oracle, oracle.params[paramIx]);
     }
 }
 
@@ -7630,7 +7974,7 @@ TEST_CASE(parameter_values_json_round_trips_values_by_name_and_live_mod_slot) {
     REQUIRE_NEAR(targetDepth.GestureValue(1, 0), 0.81f, 0.000001f);
     REQUIRE_TRUE(targetDepth.GestureActive(1, 0));
     REQUIRE_NEAR(targetResonance.SceneCenter(0), 0.91f, 0.000001f);
-    REQUIRE_NEAR(targetResonance.Get(0), 0.91f, 0.000001f);
+    REQUIRE_NEAR(targetResonance.GetRaw(0), 0.91f, 0.000001f);
     synth::Parameter::UIState resonanceUI(1);
     targetResonance.PopulateUIState(resonanceUI);
     REQUIRE_NEAR(resonanceUI.values[0].load(), 0.91f, 0.000001f);
@@ -9231,21 +9575,21 @@ TEST_CASE(compute_all_targets_preserves_process_lite_slew) {
                                        .processLiteAlpha = 0.1f});
     auto& parameter = manager.CreateParameter(group, {.name = "SlewProbe", .defaultValue = 0.0f});
     manager.ComputeAllParameters();
-    REQUIRE_NEAR(parameter.Get(0), 0.0f, 1e-6f);
+    REQUIRE_NEAR(parameter.GetRaw(0), 0.0f, 1e-6f);
 
     parameter.SceneCenter(0) = 1.0f;
 
     manager.ComputeAllTargets();
-    const float afterTargets = parameter.Get(0);
+    const float afterTargets = parameter.GetRaw(0);
     REQUIRE_NEAR(afterTargets, 0.0f, 1e-6f);  // current not snapped
 
     parameter.ProcessLite();
-    const float afterOneSlew = parameter.Get(0);
+    const float afterOneSlew = parameter.GetRaw(0);
     REQUIRE_TRUE(afterOneSlew > 0.0f);
     REQUIRE_TRUE(afterOneSlew < 1.0f);        // approaching, not jumped
 
     manager.ComputeAllParameters();           // existing API still snaps
-    REQUIRE_NEAR(parameter.Get(0), 1.0f, 1e-4f);
+    REQUIRE_NEAR(parameter.GetRaw(0), 1.0f, 1e-4f);
 }
 
 namespace {

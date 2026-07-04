@@ -57,15 +57,9 @@ float ExponentialMap(float minValue, float maxValue, float normalized) {
     return minValue * std::pow(maxValue / minValue, normalized);
 }
 
-float ZeroBasedExponentialMap(float maxValue, float midpointValue, float normalized) {
-    if (maxValue <= 0.0f || midpointValue <= 0.0f || midpointValue >= maxValue) {
-        throw std::invalid_argument("zero-based exponential mapping requires 0 < midpoint < max");
-    }
-    if (normalized <= 0.0f) {
-        return 0.0f;
-    }
-    const float exponent = std::log(midpointValue / maxValue) / std::log(0.5f);
-    return maxValue * std::pow(normalized, exponent);
+float ZeroBasedExponentialMapFromMidpoint(float maxValue, float midpointValue, float normalized) {
+    const float base = ZeroBasedExponentialBaseFromMidpoint(midpointValue, maxValue);
+    return ZeroBasedExponentialMap(normalized, base, maxValue);
 }
 
 std::uint8_t ToByte(float value) {
@@ -251,7 +245,8 @@ float ClampToRange(float value, RangeKind range) {
 
 bool ParameterGroupConfig::IsValid() const {
     return numVoices > 0 && numScenes > 0 && maxParameters > 0 && processLiteAlpha >= 0.0f &&
-           processLiteAlpha <= 1.0f;
+           processLiteAlpha <= 1.0f && uiDisplayCenterAlpha >= 0.0f && uiDisplayCenterAlpha <= 1.0f &&
+           uiDisplaySpreadAlpha >= 0.0f && uiDisplaySpreadAlpha <= 1.0f;
 }
 
 ParameterStorageBatch::ParameterStorageBatch(const ParameterGroupConfig& config, std::size_t gestureCount,
@@ -271,6 +266,9 @@ ParameterStorageBatch::ParameterStorageBatch(const ParameterGroupConfig& config,
       targetMaxValueArena(capacity * config.numVoices),
       currentDepthArena(capacity * config.numVoices * config.numModulators),
       targetDepthArena(capacity * config.numVoices * config.numModulators),
+      currentKnobValueArena(capacity * config.numVoices),
+      uiDisplayCenterArena(capacity * config.numVoices),
+      uiDisplaySpreadEnergyArena(capacity * config.numVoices),
       modulationDepthArena(capacity * config.numModulators, nullptr),
       sceneCenterArena(capacity * config.numScenes),
       gestureValueArena(capacity * config.numScenes * gestureCount),
@@ -444,6 +442,9 @@ ParameterGroup::ParameterGroup(ParameterGroupConfig config, ParameterManager& ma
     targetMaxValueArena_.resize(config_.maxParameters * config_.numVoices);
     currentDepthArena_.resize(config_.maxParameters * config_.numVoices * config_.numModulators);
     targetDepthArena_.resize(config_.maxParameters * config_.numVoices * config_.numModulators);
+    currentKnobValueArena_.resize(config_.maxParameters * config_.numVoices);
+    uiDisplayCenterArena_.resize(config_.maxParameters * config_.numVoices);
+    uiDisplaySpreadEnergyArena_.resize(config_.maxParameters * config_.numVoices);
     modulationDepthArena_.resize(config_.maxParameters * config_.numModulators, nullptr);
     sceneCenterArena_.resize(config_.maxParameters * config_.numScenes);
     gestureValueArena_.resize(config_.maxParameters * config_.numScenes * gestureCount_);
@@ -605,6 +606,13 @@ Parameter::Parameter(ParameterId id, ParameterGroup& group, ParameterConfig conf
       targetDepths_(ArenaSlice(group_.targetDepthArena_,
                                slotIx_ * group_.Config().numVoices * group_.Config().numModulators,
                                group_.Config().numVoices * group_.Config().numModulators)),
+      currentKnobValues_(ArenaSlice(group_.currentKnobValueArena_, slotIx_ * group_.Config().numVoices,
+                                    group_.Config().numVoices)),
+      uiDisplayCenters_(ArenaSlice(group_.uiDisplayCenterArena_, slotIx_ * group_.Config().numVoices,
+                                   group_.Config().numVoices)),
+      uiDisplaySpreadEnergies_(ArenaSlice(group_.uiDisplaySpreadEnergyArena_,
+                                          slotIx_ * group_.Config().numVoices,
+                                          group_.Config().numVoices)),
       modulationDepths_(ArenaSlice(group_.modulationDepthArena_, slotIx_ * group_.Config().numModulators,
                                    group_.Config().numModulators)),
       sceneCenters_(ArenaSlice(group_.sceneCenterArena_, slotIx_ * group_.Config().numScenes,
@@ -629,6 +637,7 @@ Parameter::Parameter(ParameterId id, ParameterGroup& group, ParameterConfig conf
     std::fill(sceneCenters_.begin(), sceneCenters_.end(), currentCenter_);
     std::fill(gestureValues_.begin(), gestureValues_.end(), currentCenter_);
     std::fill(gestureActive_.begin(), gestureActive_.end(), 0);
+    SeedCachedKnobAndUiDisplayState();
 }
 
 Parameter::Parameter(ParameterId id, ParameterGroup& group, ParameterConfig config,
@@ -667,6 +676,13 @@ Parameter::Parameter(ParameterId id, ParameterGroup& group, ParameterConfig conf
       targetDepths_(ArenaSlice(storageBatch.targetDepthArena,
                                slotIx_ * group_.Config().numVoices * group_.Config().numModulators,
                                group_.Config().numVoices * group_.Config().numModulators)),
+      currentKnobValues_(ArenaSlice(storageBatch.currentKnobValueArena, slotIx_ * group_.Config().numVoices,
+                                    group_.Config().numVoices)),
+      uiDisplayCenters_(ArenaSlice(storageBatch.uiDisplayCenterArena, slotIx_ * group_.Config().numVoices,
+                                   group_.Config().numVoices)),
+      uiDisplaySpreadEnergies_(ArenaSlice(storageBatch.uiDisplaySpreadEnergyArena,
+                                          slotIx_ * group_.Config().numVoices,
+                                          group_.Config().numVoices)),
       modulationDepths_(ArenaSlice(storageBatch.modulationDepthArena, slotIx_ * group_.Config().numModulators,
                                    group_.Config().numModulators)),
       sceneCenters_(ArenaSlice(storageBatch.sceneCenterArena, slotIx_ * group_.Config().numScenes,
@@ -691,6 +707,7 @@ Parameter::Parameter(ParameterId id, ParameterGroup& group, ParameterConfig conf
     std::fill(sceneCenters_.begin(), sceneCenters_.end(), currentCenter_);
     std::fill(gestureValues_.begin(), gestureValues_.end(), currentCenter_);
     std::fill(gestureActive_.begin(), gestureActive_.end(), 0);
+    SeedCachedKnobAndUiDisplayState();
 }
 
 ParameterStorageBatch::~ParameterStorageBatch() = default;
@@ -698,6 +715,7 @@ ParameterStorageBatch::~ParameterStorageBatch() = default;
 void Parameter::UIState::Configure(std::size_t newVoiceCapacity) {
     voiceCapacity = newVoiceCapacity;
     values = std::make_unique<std::atomic<float>[]>(voiceCapacity);
+    spreadValues = std::make_unique<std::atomic<float>[]>(voiceCapacity);
     minValues = std::make_unique<std::atomic<float>[]>(voiceCapacity);
     maxValues = std::make_unique<std::atomic<float>[]>(voiceCapacity);
     switchValue = std::make_unique<std::atomic<std::size_t>[]>(voiceCapacity);
@@ -718,6 +736,7 @@ void Parameter::UIState::SetDisconnected() {
     voiceCount.store(0, std::memory_order_relaxed);
     for (std::size_t voiceIx = 0; voiceIx < voiceCapacity; ++voiceIx) {
         values[voiceIx].store(0.0f, std::memory_order_relaxed);
+        spreadValues[voiceIx].store(0.0f, std::memory_order_relaxed);
         minValues[voiceIx].store(0.0f, std::memory_order_relaxed);
         maxValues[voiceIx].store(0.0f, std::memory_order_relaxed);
         switchValue[voiceIx].store(0, std::memory_order_relaxed);
@@ -734,13 +753,34 @@ bool Parameter::IsSwitch() const {
     return config_.switchValues > 1;
 }
 
-float Parameter::Get(std::size_t voiceIx) const {
+float Parameter::GetRaw(std::size_t voiceIx) const {
     if (voiceIx >= group_.Config().numVoices) {
         throw std::out_of_range("parameter voice index out of range");
     }
     return ClampToRange(currentCenter_ * currentCenterScales_[voiceIx] + currentNormalizationOffsets_[voiceIx] +
                             group_.GetModulators().Apply(voiceIx, CurrentDepths(voiceIx)),
                         config_.range);
+}
+
+float Parameter::CachedKnobValue(std::size_t voiceIx) const {
+    if (voiceIx >= currentKnobValues_.size()) {
+        throw std::out_of_range("parameter voice index out of range");
+    }
+    return currentKnobValues_[voiceIx];
+}
+
+float Parameter::UIDisplayCenter(std::size_t voiceIx) const {
+    if (voiceIx >= uiDisplayCenters_.size()) {
+        throw std::out_of_range("parameter voice index out of range");
+    }
+    return uiDisplayCenters_[voiceIx];
+}
+
+float Parameter::UIDisplaySpread(std::size_t voiceIx) const {
+    if (voiceIx >= uiDisplaySpreadEnergies_.size()) {
+        throw std::out_of_range("parameter voice index out of range");
+    }
+    return std::sqrt(std::max(0.0f, uiDisplaySpreadEnergies_[voiceIx]));
 }
 
 std::size_t Parameter::GetSwitchVal(std::size_t voiceIx) const {
@@ -773,7 +813,8 @@ void Parameter::PopulateUIState(UIState& state) const {
     state.shortName.store(config_.shortName.c_str(), std::memory_order_relaxed);
     state.voiceCount.store(voices, std::memory_order_relaxed);
     for (std::size_t voiceIx = 0; voiceIx < voices; ++voiceIx) {
-        state.values[voiceIx].store(Get(voiceIx), std::memory_order_relaxed);
+        state.values[voiceIx].store(UIDisplayCenter(voiceIx), std::memory_order_relaxed);
+        state.spreadValues[voiceIx].store(IsSwitch() ? 0.0f : UIDisplaySpread(voiceIx), std::memory_order_relaxed);
         state.minValues[voiceIx].store(currentMinValues_[voiceIx], std::memory_order_relaxed);
         state.maxValues[voiceIx].store(currentMaxValues_[voiceIx], std::memory_order_relaxed);
         state.switchValue[voiceIx].store(GetSwitchVal(voiceIx), std::memory_order_relaxed);
@@ -781,6 +822,7 @@ void Parameter::PopulateUIState(UIState& state) const {
     }
     for (std::size_t voiceIx = voices; voiceIx < state.voiceCapacity; ++voiceIx) {
         state.values[voiceIx].store(0.0f, std::memory_order_relaxed);
+        state.spreadValues[voiceIx].store(0.0f, std::memory_order_relaxed);
         state.minValues[voiceIx].store(0.0f, std::memory_order_relaxed);
         state.maxValues[voiceIx].store(0.0f, std::memory_order_relaxed);
         state.switchValue[voiceIx].store(0, std::memory_order_relaxed);
@@ -930,6 +972,14 @@ void Parameter::ProcessLite() {
     for (std::size_t ix = 0; ix < currentDepths_.size(); ++ix) {
         currentDepths_[ix] += alpha * (targetDepths_[ix] - currentDepths_[ix]);
     }
+    for (std::size_t voiceIx = 0; voiceIx < currentKnobValues_.size(); ++voiceIx) {
+        const float knob = GetRaw(voiceIx);
+        currentKnobValues_[voiceIx] = knob;
+        uiDisplayCenters_[voiceIx] += group_.Config().uiDisplayCenterAlpha * (knob - uiDisplayCenters_[voiceIx]);
+        const float residual = knob - uiDisplayCenters_[voiceIx];
+        uiDisplaySpreadEnergies_[voiceIx] +=
+            group_.Config().uiDisplaySpreadAlpha * ((residual * residual) - uiDisplaySpreadEnergies_[voiceIx]);
+    }
 }
 
 void Parameter::HandleIncDec(const SceneState& scene, float delta) {
@@ -1043,6 +1093,7 @@ void Parameter::RevertToDefault(const SceneState& scene) {
     std::fill(targetMinValues_.begin(), targetMinValues_.end(), defaultValue);
     std::fill(currentMaxValues_.begin(), currentMaxValues_.end(), defaultValue);
     std::fill(targetMaxValues_.begin(), targetMaxValues_.end(), defaultValue);
+    SeedCachedKnobAndUiDisplayState();
 }
 
 void Parameter::RevertAllToDefault() {
@@ -1072,6 +1123,7 @@ void Parameter::RevertAllToDefault() {
     std::fill(targetMinValues_.begin(), targetMinValues_.end(), defaultValue);
     std::fill(currentMaxValues_.begin(), currentMaxValues_.end(), defaultValue);
     std::fill(targetMaxValues_.begin(), targetMaxValues_.end(), defaultValue);
+    SeedCachedKnobAndUiDisplayState();
 }
 
 bool Parameter::AssignModulationDepth(std::size_t modIx, Parameter* parameter) {
@@ -1321,6 +1373,7 @@ void Parameter::ResetModulationDepthToNeutral(const SceneState& scene) {
     std::fill(targetMaxValues_.begin(), targetMaxValues_.end(), neutralDepth);
     std::fill(currentDepths_.begin(), currentDepths_.end(), neutralDepth);
     std::fill(targetDepths_.begin(), targetDepths_.end(), neutralDepth);
+    SeedCachedKnobAndUiDisplayState();
 }
 
 float Parameter::ComputeRawCenter(const SceneState& scene) const {
@@ -1364,7 +1417,7 @@ void Parameter::ComputeAtDepth(const SceneState& scene, std::size_t recursionDep
         float weightSum = 0.0f;
         for (std::size_t modIx = 0; modIx < group_.Config().numModulators; ++modIx) {
             const Parameter* depthParameter = modulationDepths_[modIx];
-            const float depth = depthParameter == nullptr ? 0.0f : depthParameter->Get(voiceIx);
+            const float depth = depthParameter == nullptr ? 0.0f : depthParameter->GetRaw(voiceIx);
             targetDepths_[VoiceModIndex(voiceIx, modIx)] = depth;
             weightSum += std::fabs(depth);
         }
@@ -1409,6 +1462,7 @@ void Parameter::ComputeAtDepth(const SceneState& scene, std::size_t recursionDep
         std::copy(targetMinValues_.begin(), targetMinValues_.end(), currentMinValues_.begin());
         std::copy(targetMaxValues_.begin(), targetMaxValues_.end(), currentMaxValues_.begin());
         std::copy(targetDepths_.begin(), targetDepths_.end(), currentDepths_.begin());
+        SeedCachedKnobAndUiDisplayState();
     }
 }
 
@@ -1419,10 +1473,19 @@ void Parameter::SnapCurrentToTarget() {
     std::copy(targetMinValues_.begin(), targetMinValues_.end(), currentMinValues_.begin());
     std::copy(targetMaxValues_.begin(), targetMaxValues_.end(), currentMaxValues_.begin());
     std::copy(targetDepths_.begin(), targetDepths_.end(), currentDepths_.begin());
+    SeedCachedKnobAndUiDisplayState();
     for (Parameter* depthParameter : modulationDepths_) {
         if (depthParameter != nullptr) {
             depthParameter->SnapCurrentToTarget();
         }
+    }
+}
+
+void Parameter::SeedCachedKnobAndUiDisplayState() {
+    for (std::size_t voiceIx = 0; voiceIx < currentKnobValues_.size(); ++voiceIx) {
+        currentKnobValues_[voiceIx] = GetRaw(voiceIx);
+        uiDisplayCenters_[voiceIx] = currentKnobValues_[voiceIx];
+        uiDisplaySpreadEnergies_[voiceIx] = 0.0f;
     }
 }
 
@@ -2245,19 +2308,19 @@ void ParameterManager::RevertAllToDefaults() {
 }
 
 float ParameterManager::GetLinear(float minValue, float maxValue, std::size_t voiceIx, ParameterId id) const {
-    const float normalized = std::clamp(ParameterById(id).Get(voiceIx), 0.0f, 1.0f);
+    const float normalized = std::clamp(ParameterById(id).CachedKnobValue(voiceIx), 0.0f, 1.0f);
     return LinearMap(minValue, maxValue, normalized);
 }
 
 float ParameterManager::GetExponential(float minValue, float maxValue, std::size_t voiceIx, ParameterId id) const {
-    const float normalized = std::clamp(ParameterById(id).Get(voiceIx), 0.0f, 1.0f);
+    const float normalized = std::clamp(ParameterById(id).CachedKnobValue(voiceIx), 0.0f, 1.0f);
     return ExponentialMap(minValue, maxValue, normalized);
 }
 
 float ParameterManager::GetZeroBasedExponential(float maxValue, float midpointValue, std::size_t voiceIx,
                                                 ParameterId id) const {
-    const float normalized = std::clamp(ParameterById(id).Get(voiceIx), 0.0f, 1.0f);
-    return ZeroBasedExponentialMap(maxValue, midpointValue, normalized);
+    const float normalized = std::clamp(ParameterById(id).CachedKnobValue(voiceIx), 0.0f, 1.0f);
+    return ZeroBasedExponentialMapFromMidpoint(maxValue, midpointValue, normalized);
 }
 
 float ParameterManager::GetBipolarLinear(float maxAbsValue, std::size_t voiceIx, ParameterId id) const {
@@ -2268,25 +2331,8 @@ float ParameterManager::GetBipolarLinear(float maxAbsValue, std::size_t voiceIx,
     if (parameter.Range() != RangeKind::Bipolar) {
         throw std::invalid_argument("bipolar mapping requires a bipolar parameter");
     }
-    const float bipolar = std::clamp(parameter.Get(voiceIx), -1.0f, 1.0f);
+    const float bipolar = std::clamp(parameter.CachedKnobValue(voiceIx), -1.0f, 1.0f);
     return bipolar * maxAbsValue;
-}
-
-float ParameterManager::GetBipolarExponential(float minAbsValue, float maxAbsValue, std::size_t voiceIx,
-                                              ParameterId id) const {
-    if (!(minAbsValue > 0.0f) || !(maxAbsValue > 0.0f)) {
-        throw std::invalid_argument("bipolar exponential endpoints must be positive");
-    }
-    const Parameter& parameter = ParameterById(id);
-    if (parameter.Range() != RangeKind::Bipolar) {
-        throw std::invalid_argument("bipolar mapping requires a bipolar parameter");
-    }
-    const float bipolar = std::clamp(parameter.Get(voiceIx), -1.0f, 1.0f);
-    if (bipolar == 0.0f) {
-        return 0.0f;
-    }
-    const float magnitude = ExponentialMap(minAbsValue, maxAbsValue, std::fabs(bipolar));
-    return std::copysign(magnitude, bipolar);
 }
 
 float ParameterManager::GetBipolarExponential(float leftValue, float centerValue, float rightValue,
@@ -2298,7 +2344,7 @@ float ParameterManager::GetBipolarExponential(float leftValue, float centerValue
     if (parameter.Range() != RangeKind::Bipolar) {
         throw std::invalid_argument("bipolar mapping requires a bipolar parameter");
     }
-    const float knob = std::clamp(parameter.Get(voiceIx), -1.0f, 1.0f);
+    const float knob = std::clamp(parameter.CachedKnobValue(voiceIx), -1.0f, 1.0f);
     if (knob < 0.0f) {
         return centerValue * std::pow(leftValue / centerValue, -knob);
     }
@@ -2314,11 +2360,11 @@ float ParameterManager::GetBipolarZeroBasedExponential(float maxAbsValue, float 
     if (parameter.Range() != RangeKind::Bipolar) {
         throw std::invalid_argument("bipolar mapping requires a bipolar parameter");
     }
-    const float bipolar = std::clamp(parameter.Get(voiceIx), -1.0f, 1.0f);
+    const float bipolar = std::clamp(parameter.CachedKnobValue(voiceIx), -1.0f, 1.0f);
     if (bipolar == 0.0f) {
         return 0.0f;
     }
-    const float magnitude = ZeroBasedExponentialMap(maxAbsValue, midpointAbsValue, std::fabs(bipolar));
+    const float magnitude = ZeroBasedExponentialMapFromMidpoint(maxAbsValue, midpointAbsValue, std::fabs(bipolar));
     return std::copysign(magnitude, bipolar);
 }
 

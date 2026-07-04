@@ -109,7 +109,7 @@ struct RigTestApp {
             context->parameterManager->ParameterById(levelId).ProcessLite();
             context->parameterManager->ParameterById(toneId).ProcessLite();
         }
-        const float levelValue = context->parameterManager->ParameterById(levelId).Get(0);
+        const float levelValue = context->parameterManager->ParameterById(levelId).GetRaw(0);
         for (int channel = 0; channel < block.numOutputChannels; ++channel) {
             float* out = block.outputs[channel];
             if (out == nullptr) {

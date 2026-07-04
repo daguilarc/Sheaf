@@ -143,7 +143,7 @@ struct EngineTestApp {
         // pump applies patch/UI/MIDI messages and recomputes targets before
         // calling into the app, so the app's per-frame work is what makes
         // the new target audible/observable within this same block).
-        lastProbeDuringBlock = context->parameterManager->ParameterById(probeId).Get(0);
+        lastProbeDuringBlock = context->parameterManager->ParameterById(probeId).GetRaw(0);
         for (int channel = 0; channel < block.numOutputChannels; ++channel) {
             float* out = block.outputs[channel];
             if (out == nullptr) {
@@ -219,7 +219,7 @@ TEST_CASE(engine_missing_patches_root_keeps_defaults_silently) {
     std::filesystem::remove_all(EngineTestApp::testPatchesRoot);
     synth::Engine<EngineTestApp> engine([] { return std::uint64_t{0}; });
     engine.Initialize();  // must not throw or report failure
-    REQUIRE_NEAR(engine.Manager().ParameterById(engine.Application().probeId).Get(0), 0.25f, 1e-5f);
+    REQUIRE_NEAR(engine.Manager().ParameterById(engine.Application().probeId).GetRaw(0), 0.25f, 1e-5f);
 }
 
 TEST_CASE(engine_startup_loads_lexicographically_latest_patch) {
@@ -248,7 +248,7 @@ TEST_CASE(engine_startup_loads_lexicographically_latest_patch) {
     EngineTestApp::testPatchesRoot = root;
     synth::Engine<EngineTestApp> engine([] { return std::uint64_t{0}; });
     engine.Initialize();
-    REQUIRE_NEAR(engine.Manager().ParameterById(engine.Application().probeId).Get(0), 0.75f, 1e-5f);
+    REQUIRE_NEAR(engine.Manager().ParameterById(engine.Application().probeId).GetRaw(0), 0.75f, 1e-5f);
 
     std::filesystem::remove_all(root);
 }
@@ -291,7 +291,7 @@ TEST_CASE(engine_pump_applies_messages_before_app_block) {
     engine.Initialize();
     engine.Prepare(48000.0, 256);
 
-    const float before = engine.Manager().ParameterById(engine.Application().probeId).Get(0);
+    const float before = engine.Manager().ParameterById(engine.Application().probeId).GetRaw(0);
 
     // Push a ParamIncDec against the slot/position registered in Init (slot
     // 0, position 0 maps to the probe parameter via the bank/slot wiring).
@@ -313,7 +313,7 @@ TEST_CASE(engine_pump_preserves_slew_across_blocks) {
     engine.Initialize();
     engine.Prepare(48000.0, 256);
 
-    const float start = engine.Manager().ParameterById(engine.Application().probeId).Get(0);
+    const float start = engine.Manager().ParameterById(engine.Application().probeId).GetRaw(0);
     engine.UiBus().Push(synth::MessageIn::ParamIncDec(/*timestamp=*/1, /*slotIx=*/0, /*position=*/0, /*delta=*/0.5f));
     const float target = std::clamp(start + 0.5f, 0.0f, 1.0f);
 
@@ -367,6 +367,8 @@ TEST_CASE(engine_pump_populates_ui_state_at_throttle_cadence) {
 
     REQUIRE_TRUE(engine.Context().uiState != nullptr);
     auto& cell = engine.Context().uiState->slots[0].cells[0];
+    const float initialDisplayCenter =
+        engine.Manager().ParameterById(engine.Application().probeId).UIDisplayCenter(0);
 
     engine.UiBus().Push(synth::MessageIn::ParamIncDec(/*timestamp=*/5, /*slotIx=*/0, /*position=*/0, /*delta=*/0.4f));
 
@@ -387,7 +389,12 @@ TEST_CASE(engine_pump_populates_ui_state_at_throttle_cadence) {
     }
 
     const float target = std::clamp(0.25f + 0.4f, 0.0f, 1.0f);
-    REQUIRE_NEAR(cell.values[0].load(), target, 1e-4f);
+    float expectedDisplayCenter = initialDisplayCenter;
+    for (int sample = 0; sample < 6 * 4; ++sample) {
+        expectedDisplayCenter +=
+            synth::kDefaultUiDisplayCenterAlpha * (target - expectedDisplayCenter);
+    }
+    REQUIRE_NEAR(cell.values[0].load(), expectedDisplayCenter, 1e-4f);
 }
 
 TEST_CASE(engine_pump_stash_is_a_drain_barrier_with_retry_first_ordering) {
@@ -403,7 +410,7 @@ TEST_CASE(engine_pump_stash_is_a_drain_barrier_with_retry_first_ordering) {
     engine.Initialize();
     engine.Prepare(48000.0, 256);
 
-    const float initial = engine.Manager().ParameterById(engine.Application().probeId).Get(0);
+    const float initial = engine.Manager().ParameterById(engine.Application().probeId).GetRaw(0);
     REQUIRE_NEAR(initial, 0.25f, 1e-5f);
 
     TestBlockBuffers buffers(2, 4);
@@ -415,7 +422,7 @@ TEST_CASE(engine_pump_stash_is_a_drain_barrier_with_retry_first_ordering) {
         synth::AudioBlock block = buffers.Block(4);
         engine.ProcessBlock(block, /*timestamp=*/0);
     }
-    const float moved = engine.Manager().ParameterById(engine.Application().probeId).Get(0);
+    const float moved = engine.Manager().ParameterById(engine.Application().probeId).GetRaw(0);
     REQUIRE_NEAR(moved, initial + 0.3f, 1e-4f);
 
     // Enqueue a serialize request (SavePatchAs) via PatchManager. The next
@@ -455,7 +462,7 @@ TEST_CASE(engine_pump_stash_is_a_drain_barrier_with_retry_first_ordering) {
     // Barrier held: the revert was not applied (probe still at `moved`), and
     // the stash/grow-pending flag are still in force since MessageThreadTick
     // has not run yet.
-    REQUIRE_NEAR(engine.Manager().ParameterById(engine.Application().probeId).Get(0), moved, 1e-4f);
+    REQUIRE_NEAR(engine.Manager().ParameterById(engine.Application().probeId).GetRaw(0), moved, 1e-4f);
     REQUIRE_TRUE(engine.HasStashedPatchMessageForTest());
     REQUIRE_TRUE(engine.IsArenaGrowPendingForTest());
 
@@ -482,7 +489,7 @@ TEST_CASE(engine_pump_stash_is_a_drain_barrier_with_retry_first_ordering) {
     // The revert queued behind the stash has now applied too (drain
     // continued past the retried stash in the same block): the probe is
     // back at its default.
-    REQUIRE_NEAR(engine.Manager().ParameterById(engine.Application().probeId).Get(0), initial, 1e-4f);
+    REQUIRE_NEAR(engine.Manager().ParameterById(engine.Application().probeId).GetRaw(0), initial, 1e-4f);
 
     std::filesystem::remove_all(saveDir);
 }
@@ -524,7 +531,7 @@ TEST_CASE(engine_initialize_fires_rebuilt_callback_exactly_once_when_startup_pat
 
     engine.Initialize();
 
-    REQUIRE_NEAR(engine.Manager().ParameterById(engine.Application().probeId).Get(0), 0.75f, 1e-5f);
+    REQUIRE_NEAR(engine.Manager().ParameterById(engine.Application().probeId).GetRaw(0), 0.75f, 1e-5f);
     REQUIRE_TRUE(callbackCalls == 1);  // fired exactly once: not zero, not double-fired
 
     std::filesystem::remove_all(root);
@@ -573,7 +580,7 @@ TEST_CASE(engine_tick_rebuilds_midi_processors_after_patch_load_before_reopen_ca
         synth::AudioBlock block = buffers.Block(4);
         engine.ProcessBlock(block, /*timestamp=*/0);
     }
-    REQUIRE_NEAR(engine.Manager().ParameterById(engine.Application().probeId).Get(0), 0.9f, 1e-4f);
+    REQUIRE_NEAR(engine.Manager().ParameterById(engine.Application().probeId).GetRaw(0), 0.9f, 1e-4f);
     REQUIRE_TRUE(callbackCalls == 0);  // rebuild (and its callback) hasn't run yet: that's the tick's job
 
     engine.MessageThreadTick();

@@ -170,7 +170,7 @@ public:
     }
 
     float ParameterValue(synth::ParameterId id, std::size_t voiceIx = 0) {
-        return engine_.Manager().ParameterById(id).Get(voiceIx);
+        return engine_.Manager().ParameterById(id).GetRaw(voiceIx);
     }
 
     const std::vector<OutputFrame>& Output() const { return capturedOutput_; }

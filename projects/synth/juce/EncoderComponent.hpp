@@ -104,6 +104,69 @@ public:
         return juce::jlimit(0.0f, 1.0f, normalized);
     }
 
+    static float IndicatorDotRadius(float radius) {
+        return juce::jlimit(3.0f, 8.0f, radius * 0.11f);
+    }
+
+    static float MotionBlurAmount(float displaySpread) {
+        constexpr float fullBlurSpread = 0.20f;
+        return juce::jlimit(0.0f, 1.0f, std::max(0.0f, displaySpread) / fullBlurSpread);
+    }
+
+    static float MotionBlurArcHalfValue(float radius, float displaySpread) {
+        constexpr float fullArcRadians = juce::MathConstants<float>::pi * 1.5f;
+        constexpr float probableSigma = 2.0f;
+        constexpr float collapsedHalfWidth = 0.35f;
+        const float collapsedHalfValue = collapsedHalfWidth / (radius * fullArcRadians);
+        return collapsedHalfValue + std::max(0.0f, displaySpread) * probableSigma;
+    }
+
+    static float MotionBlurOutlineAlpha(float motionAmount) {
+        const float motion = juce::jlimit(0.0f, 1.0f, motionAmount);
+        return 0.55f * (1.0f - 0.95f * motion * motion);
+    }
+
+    struct MotionIndicatorGeometry {
+        float centerAngle = 0.0f;
+        float arcHalfValue = 0.0f;
+        float startValue = 0.0f;
+        float endValue = 0.0f;
+        float outlineAlpha = 0.0f;
+        float outlineStrokeWidth = 0.0f;
+        float outerStrokeWidth = 0.0f;
+        float outerAlpha = 0.0f;
+        float midStrokeWidth = 0.0f;
+        float midAlpha = 0.0f;
+        float coreStrokeWidth = 0.0f;
+        float coreAlpha = 0.0f;
+    };
+
+    static MotionIndicatorGeometry MotionIndicatorGeometryFor(float radius, float value, float displaySpread) {
+        const float normalizedValue = juce::jlimit(0.0f, 1.0f, value);
+        const float dotRadius = IndicatorDotRadius(radius);
+        const float clampedDisplaySpread = std::max(0.0f, displaySpread);
+        const float motion = MotionBlurAmount(clampedDisplaySpread);
+        const float radialMotion = motion * motion;
+        const float halfValue = MotionBlurArcHalfValue(radius, clampedDisplaySpread);
+
+        MotionIndicatorGeometry geometry;
+        geometry.centerAngle = ValueToArcAngle(normalizedValue);
+        geometry.arcHalfValue = halfValue;
+        geometry.startValue = juce::jlimit(0.0f, 1.0f, normalizedValue - halfValue);
+        geometry.endValue = juce::jlimit(0.0f, 1.0f, normalizedValue + halfValue);
+        geometry.outlineAlpha = MotionBlurOutlineAlpha(motion);
+        geometry.outerStrokeWidth = dotRadius * 2.0f + radialMotion * radius * 0.30f;
+        geometry.midStrokeWidth = dotRadius * 1.35f + radialMotion * radius * 0.18f;
+        geometry.coreStrokeWidth =
+            std::max(dotRadius * 0.95f, dotRadius * (2.0f - motion * 0.85f) + radialMotion * radius * 0.05f);
+        geometry.outlineStrokeWidth =
+            geometry.coreStrokeWidth + 1.0f + motion * std::max(0.0f, geometry.outerStrokeWidth - geometry.coreStrokeWidth);
+        geometry.outerAlpha = motion * (0.10f + motion * 0.08f);
+        geometry.midAlpha = motion * (0.24f + motion * 0.16f);
+        geometry.coreAlpha = 0.96f - motion * 0.08f;
+        return geometry;
+    }
+
     static void GetSwitchValueRange(std::size_t switchVal, std::size_t switchValues, float& startValue, float& endValue) {
         if (switchValues <= 1) {
             startValue = 0.0f;
@@ -254,6 +317,7 @@ private:
         const char* shortName = nullptr;
         std::size_t voiceCount = 0;
         std::vector<float> values;
+        std::vector<float> spreadValues;
         std::vector<float> minValues;
         std::vector<float> maxValues;
         std::vector<std::size_t> switchValuesByVoice;
@@ -294,6 +358,7 @@ private:
         snapshot.voiceCount = std::min(state_->voiceCount.load(std::memory_order_relaxed), state_->voiceCapacity);
 
         snapshot.values.resize(snapshot.voiceCount, 0.0f);
+        snapshot.spreadValues.resize(snapshot.voiceCount, 0.0f);
         snapshot.minValues.resize(snapshot.voiceCount, 0.0f);
         snapshot.maxValues.resize(snapshot.voiceCount, snapshot.bipolar ? 1.0f : 0.0f);
         snapshot.switchValuesByVoice.resize(snapshot.voiceCount, 0);
@@ -301,6 +366,7 @@ private:
 
         for (std::size_t voiceIx = 0; voiceIx < snapshot.voiceCount; ++voiceIx) {
             snapshot.values[voiceIx] = state_->values[voiceIx].load(std::memory_order_relaxed);
+            snapshot.spreadValues[voiceIx] = state_->spreadValues[voiceIx].load(std::memory_order_relaxed);
             snapshot.minValues[voiceIx] = state_->minValues[voiceIx].load(std::memory_order_relaxed);
             snapshot.maxValues[voiceIx] = state_->maxValues[voiceIx].load(std::memory_order_relaxed);
             snapshot.switchValuesByVoice[voiceIx] = state_->switchValue[voiceIx].load(std::memory_order_relaxed);
@@ -456,15 +522,30 @@ private:
                                     snapshot.switchValues, startValue, endValue);
                 g.setColour(indicatorColor.brighter(0.35f));
                 DrawArcWithSwitchGaps(g, centerX, centerY, radius, startValue, endValue, snapshot.switchValues, 4.4f);
+            } else {
+                const float displaySpread = snapshot.bipolar ? snapshot.spreadValues[voiceIx] * 0.5f
+                                                             : snapshot.spreadValues[voiceIx];
+                DrawMotionIndicator(g, centerX, centerY, radius, value, displaySpread, indicatorColor);
             }
-
-            const float dotRadius = juce::jlimit(3.0f, 8.0f, radius * 0.11f);
-            const juce::Point<float> point = IndicatorPoint(centerX, centerY, radius, value);
-            g.setColour(indicatorColor);
-            g.fillEllipse(point.x - dotRadius, point.y - dotRadius, dotRadius * 2.0f, dotRadius * 2.0f);
-            g.setColour(juce::Colours::black.withAlpha(0.55f));
-            g.drawEllipse(point.x - dotRadius, point.y - dotRadius, dotRadius * 2.0f, dotRadius * 2.0f, 1.0f);
         }
+    }
+
+    void DrawMotionIndicator(juce::Graphics& g,
+                             float centerX,
+                             float centerY,
+                             float radius,
+                             float value,
+                             float displaySpread,
+                             juce::Colour indicatorColor) const {
+        const MotionIndicatorGeometry geometry = MotionIndicatorGeometryFor(radius, value, displaySpread);
+        g.setColour(juce::Colours::black.withAlpha(geometry.outlineAlpha));
+        DrawArc(g, centerX, centerY, radius, geometry.startValue, geometry.endValue, geometry.outlineStrokeWidth);
+        g.setColour(indicatorColor.withAlpha(geometry.outerAlpha));
+        DrawArc(g, centerX, centerY, radius, geometry.startValue, geometry.endValue, geometry.outerStrokeWidth);
+        g.setColour(indicatorColor.withAlpha(geometry.midAlpha));
+        DrawArc(g, centerX, centerY, radius, geometry.startValue, geometry.endValue, geometry.midStrokeWidth);
+        g.setColour(indicatorColor.withAlpha(geometry.coreAlpha));
+        DrawArc(g, centerX, centerY, radius, geometry.startValue, geometry.endValue, geometry.coreStrokeWidth);
     }
 
     void UpdateDisplayFromState() {

@@ -58,6 +58,44 @@ int main() {
     RequireNear(synth_juce::EncoderComponent::ValueToArcAngle(0.0f) -
                     synth_juce::EncoderComponent::ValueToIndicatorAngle(0.0f),
                 pi * 0.5f, tolerance, "arc/indicator phase offset");
+    RequireNear(synth_juce::EncoderComponent::MotionBlurAmount(0.0f), 0.0f, tolerance,
+                "zero spread has no motion blur");
+    RequireNear(synth_juce::EncoderComponent::MotionBlurAmount(1.0f), 1.0f, tolerance,
+                "large spread clamps motion blur");
+    RequireTrue(synth_juce::EncoderComponent::MotionBlurArcHalfValue(20.0f, 0.0f) < 0.01f,
+                "resting blur arc half value stays dot-like");
+    RequireTrue(synth_juce::EncoderComponent::MotionBlurArcHalfValue(40.0f, 0.5f) >
+                    synth_juce::EncoderComponent::MotionBlurArcHalfValue(40.0f, 0.0f),
+                "motion blur arc widens with motion");
+    RequireTrue(synth_juce::EncoderComponent::MotionBlurArcHalfValue(40.0f, 0.75f) >
+                    synth_juce::EncoderComponent::MotionBlurArcHalfValue(40.0f, 0.25f),
+                "motion blur arc stays monotonic inside range");
+    RequireNear(synth_juce::EncoderComponent::MotionBlurOutlineAlpha(0.0f), 0.55f, tolerance,
+                "resting outline alpha matches existing dot");
+    RequireTrue(synth_juce::EncoderComponent::MotionBlurOutlineAlpha(0.5f) <
+                    synth_juce::EncoderComponent::MotionBlurOutlineAlpha(0.0f),
+                "motion blur outline fades with motion");
+    RequireTrue(synth_juce::EncoderComponent::MotionBlurOutlineAlpha(0.75f) <
+                    synth_juce::EncoderComponent::MotionBlurOutlineAlpha(0.25f),
+                "motion blur outline fade stays monotonic inside range");
+    const auto restingBlur = synth_juce::EncoderComponent::MotionIndicatorGeometryFor(40.0f, 0.25f, 0.0f);
+    const auto tinyBlur = synth_juce::EncoderComponent::MotionIndicatorGeometryFor(40.0f, 0.25f, 0.0001f);
+    const auto widerBlur = synth_juce::EncoderComponent::MotionIndicatorGeometryFor(40.0f, 0.25f, 0.10f);
+    RequireNear(restingBlur.centerAngle, synth_juce::EncoderComponent::ValueToArcAngle(0.25f), tolerance,
+                "motion blur centers on the range arc coordinate system");
+    RequireNear(tinyBlur.centerAngle, restingBlur.centerAngle, tolerance,
+                "tiny motion does not switch to a different angular coordinate system");
+    RequireTrue(tinyBlur.arcHalfValue > restingBlur.arcHalfValue,
+                "tiny motion expands the same geometry continuously");
+    RequireTrue(tinyBlur.outerStrokeWidth > restingBlur.outerStrokeWidth,
+                "tiny motion thickens the same geometry continuously");
+    RequireNear(widerBlur.arcHalfValue - restingBlur.arcHalfValue, 0.20f, tolerance,
+                "motion blur arc width tracks probable spread");
+    RequireNear(widerBlur.startValue, 0.25f - widerBlur.arcHalfValue, tolerance,
+                "motion blur probable band starts around center minus spread");
+    RequireNear(widerBlur.endValue, 0.25f + widerBlur.arcHalfValue, tolerance,
+                "motion blur probable band ends around center plus spread");
+    RequireTrue(widerBlur.outlineAlpha < tinyBlur.outlineAlpha, "wider motion has fainter outline than tiny motion");
 
     const juce::Point<float> zeroPoint = synth_juce::EncoderComponent::IndicatorPoint(100.0f, 100.0f, 20.0f, 0.0f);
     RequireNear(zeroPoint.x, 100.0f + 20.0f * std::cos(pi * 0.75f), tolerance, "indicator x at zero");

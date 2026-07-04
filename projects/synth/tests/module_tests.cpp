@@ -893,14 +893,14 @@ TEST_CASE(demo_modulation_process_lite_parameters_applies_direct_vco_modulation)
     group.GetModulators().Value(0, 0) = 0.0f;
     group.GetModulators().Value(1, 0) = 1.0f;
     synth_miniapp::ProcessLiteParameters(parameters);
-    REQUIRE_NEAR(phase.Get(0), 0.0f, tolerance);
-    REQUIRE_NEAR(phase.Get(1), 1.0f, tolerance);
+    REQUIRE_NEAR(phase.GetRaw(0), 0.0f, tolerance);
+    REQUIRE_NEAR(phase.GetRaw(1), 1.0f, tolerance);
 
     group.GetModulators().Value(0, 0) = 1.0f;
     group.GetModulators().Value(1, 0) = 0.0f;
     synth_miniapp::ProcessLiteParameters(parameters);
-    REQUIRE_NEAR(phase.Get(0), 1.0f, tolerance);
-    REQUIRE_NEAR(phase.Get(1), 0.0f, tolerance);
+    REQUIRE_NEAR(phase.GetRaw(0), 1.0f, tolerance);
+    REQUIRE_NEAR(phase.GetRaw(1), 0.0f, tolerance);
 }
 
 int main() {

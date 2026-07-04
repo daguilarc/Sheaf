@@ -53,7 +53,7 @@ WHEN parameters are assigned to pages, THE manager SHALL maintain page ordinals 
 - **AND** existing parameter center, depth, scene, gesture, and modulator values remain unchanged
 
 ### Requirement: spm-4 — Group config: dynamic shape and upfront allocation
-WHEN a `ParameterGroup` is configured, THE group SHALL use runtime configuration for voice count, modulator count, scene count, maximum parameter count, process-lite alpha, and an optional voice indicator color palette; SHALL NOT accept an independent gesture count in group configuration; SHALL size parameter per-scene/per-gesture arrays from the owning manager's gesture count injected by `ParameterManager::CreateGroup`; SHALL allocate per-parameter subarrays upfront through a group-owned allocator; and SHALL perform no heap allocation during `Compute`, `ProcessLite`, `Get`, routed reset-modifier press, routed random-modifier press, routed tick handling, or routed unmodified press handling after any needed modulation-depth parameters for that view have already been materialized. Routed unmodified press and random-mod modifier operations MAY lazily materialize missing modulation-depth parameter objects from preconfigured group capacity.
+WHEN a `ParameterGroup` is configured, THE group SHALL use runtime configuration for voice count, modulator count, scene count, maximum parameter count, process-lite alpha, UI display-center alpha, UI display-spread alpha, and an optional voice indicator color palette; SHALL NOT accept an independent gesture count in group configuration; SHALL size parameter per-scene/per-gesture arrays from the owning manager's gesture count injected by `ParameterManager::CreateGroup`; SHALL allocate per-parameter subarrays upfront through a group-owned allocator; and SHALL perform no heap allocation during `Compute`, `ProcessLite`, `GetRaw`, cached knob reads, routed reset-modifier press, routed random-modifier press, routed tick handling, or routed unmodified press handling after any needed modulation-depth parameters for that view have already been materialized. Routed unmodified press and random-mod modifier operations MAY lazily materialize missing modulation-depth parameter objects from preconfigured group capacity.
 
 #### Scenario: Same-shaped group parameters
 - **WHEN** two parameters are created in the same group
@@ -64,18 +64,17 @@ WHEN a `ParameterGroup` is configured, THE group SHALL use runtime configuration
 - **THEN** creation fails without registering a partial parameter in the manager or any bank
 
 #### Scenario: Gesture count is not group-owned
-- **WHEN** a manager is configured with two gestures and creates parameters in multiple groups
-- **THEN** each parameter's per-scene/per-gesture arrays are sized for two gestures
-- **AND** no group can diverge to a separate gesture count
+- **WHEN** group configuration is inspected
+- **THEN** it contains no independent gesture count field
+- **AND** every parameter in the group uses the gesture count supplied by the manager
 
 #### Scenario: Voice indicator colors come from group palette
-- **WHEN** a group is configured with two voices and explicit voice indicator colors
+- **WHEN** a group is configured with explicit voice indicator colors
 - **THEN** parameter UI state for parameters in that group uses those colors for voice 0 and voice 1 indicators
 
 #### Scenario: Default voice indicator colors are deterministic
-- **WHEN** a group is configured without explicit voice indicator colors
-- **THEN** the group derives voice indicator colors from the ordered default palette `[Cyan, Orange, Green, Indigo, Yellow, Blue]`
-- **AND** voices beyond that palette use deterministic evenly spaced HSV hues
+- **WHEN** a group has more voices than configured voice indicator colors
+- **THEN** missing colors are filled from a deterministic default palette
 
 ### Requirement: spm-5 — Modulators: flat per-voice values and metadata
 WHEN a group owns modulators, THE `Modulators` struct SHALL store current modulator values in one flat row-major array indexed as `voiceIx * numModulators + modulatorIx`, store per-modulator metadata including name, short name, color, and connected flag, and provide an `Apply(voiceIx, depths)` function that returns only the dot product of that voice's modulator row and the supplied depth row.
@@ -158,11 +157,11 @@ WHEN `Parameter::Compute()` calculates per-voice modulation state, THE parameter
 - **AND** its UI-state maximum is `1.0`
 
 ### Requirement: spm-11 — Audio path: Get and ProcessLite
-WHEN the audio engine reads a parameter, THE parameter's `Get(voiceIx)` SHALL return the clamped normalized value `currentCenter * currentCenterScale[voiceIx] + group.modulators.Apply(voiceIx, currentDepthsForVoice)` without traversing manager, page, bank, slot, scene, gesture, or modulation route state; and `ProcessLite()` SHALL advance current center, current center scales, and current modulation depths toward targets using the one-pole formula `current += alpha * (target - current)` with the owning group's configured alpha.
+WHEN the audio engine samples a parameter, THE synth parameter modulation system SHALL provide `Parameter::GetRaw(voiceIx)` as the explicit raw normalized read path that returns the clamped value `currentCenter * currentCenterScale[voiceIx] + currentNormalizationOffset[voiceIx] + group.modulators.Apply(voiceIx, currentDepthsForVoice)` without traversing manager, page, bank, slot, scene, gesture, or modulation route state; `ProcessLite()` SHALL advance current center, current center scales, current normalization offsets, current min/max values, and current modulation depths toward targets using the one-pole formula `current += alpha * (target - current)` with the owning group's configured alpha, then SHALL sample and store each voice's current cached knob value from `GetRaw(voiceIx)`.
 
-#### Scenario: Get uses current state only
-- **WHEN** `Get(0)` is called after `Compute()` and `ProcessLite()`
-- **THEN** it uses only the parameter's current center, current center scale for voice 0, the current depth row for voice 0, and the group's current modulator row for voice 0
+#### Scenario: GetRaw uses current state only
+- **WHEN** `GetRaw(0)` is called after `Compute()` and `ProcessLite()`
+- **THEN** it uses only the parameter's current center, current center scale for voice 0, current normalization offset for voice 0, the current depth row for voice 0, and the group's current modulator row for voice 0
 
 #### Scenario: ProcessLite slews center
 - **WHEN** current center is `0.0`, target center is `1.0`, and alpha is `0.25`
@@ -171,6 +170,22 @@ WHEN the audio engine reads a parameter, THE parameter's `Get(voiceIx)` SHALL re
 #### Scenario: ProcessLite slews center scale
 - **WHEN** current center scale for voice 0 is `1.0`, target center scale for voice 0 is `0.5`, and alpha is `0.25`
 - **THEN** one `ProcessLite()` call sets current center scale for voice 0 to `0.875`
+
+#### Scenario: ProcessLite samples cached knob value
+- **WHEN** `ProcessLite()` has advanced the current center, center scale, normalization offset, and depth state for a voice
+- **THEN** it stores that voice's cached knob value from `GetRaw(voiceIx)` using the group's current modulator row
+
+#### Scenario: Cached knob formalizes one-sample modulation delay
+- **WHEN** mapped DSP reads consume a parameter after `ProcessLite()`
+- **AND** a modulation source updates the group's modulator row later in the same sample frame
+- **THEN** mapped DSP reads continue to use the cached knob value sampled by the earlier `ProcessLite()` call
+- **AND** the later modulator update is visible to the next sample frame's `ProcessLite()` cache refresh
+
+#### Scenario: Cached knob is seeded before steady-state ProcessLite
+- **WHEN** a parameter is constructed, snapped to target during initialization, loaded from patch values, or reverted through a snap-to-target path
+- **THEN** each voice's cached knob value is seeded from `GetRaw(voiceIx)`
+- **AND** each voice's UI display center is seeded to that cached knob value
+- **AND** each voice's UI display spread energy is seeded to `0`
 
 ### Requirement: spm-12 — Edits: HandleIncDec scene and gesture distribution
 WHEN `Parameter::HandleIncDec(delta)` is called, THE parameter SHALL apply the delta to the active scene center value when blend is at one scene endpoint and no gesture distribution is active, SHALL distribute the delta across the two active scene center values when blend is between scenes using the Smart Grid scene distribution formula, SHALL treat the first turn for any selected inactive gesture as an arming turn that activates the gesture for the touched scene endpoints and snapshots each touched parent scene value into the matching gesture value without applying the delta, and SHALL distribute non-arming turns between active gesture values and base scene values according to Smart Grid-style effective gesture weights regardless of current gesture selection.
@@ -206,7 +221,8 @@ WHEN a parameter is reverted to default for the current scene selection, THE par
 #### Scenario: Reset modifier clears modulation
 - **WHEN** a routed reset-modifier press resets a parameter
 - **THEN** the parameter has no non-null modulation-depth parameter pointers
-- **AND** `Get(voiceIx)` returns the default-centered value after compute/process settling with zero modulators
+- **AND** `GetRaw(voiceIx)` returns the default-centered value after compute/process settling with zero modulators
+- **AND** the cached knob value is seeded or slewed consistently with the current raw value through the applicable snap or `ProcessLite` path
 
 ### Requirement: spm-14 — Banks and slots: physical control mapping
 WHEN banks and bank slots are configured, THE system SHALL allow each bank to list parameter pointers and physical encoder IDs, allow banks to include parameters from different groups, allow each slot to select one bank at a time, and require slot bank selection to deselect any modulation view open on the previously selected bank before showing the newly selected bank.
@@ -335,7 +351,7 @@ WHEN automated tests cover the synth parameter modulation system, THE test suite
 
 #### Scenario: Random action loop checks invariants
 - **WHEN** a randomized simulation test runs one seed
-- **THEN** every action is followed by checks for expected page, bank, slot, scene, manager-owned gesture, modifier, parameter, modulation-route, target, current, and `Get(voiceIx)` state
+- **THEN** every action is followed by checks for expected page, bank, slot, scene, manager-owned gesture, modifier, parameter, modulation-route, target, current, `GetRaw(voiceIx)`, cached knob value, UI display center, and UI display spread state
 
 #### Scenario: Cross-group gesture invariants are checked
 - **WHEN** the randomized simulation includes parameters from multiple groups
@@ -350,9 +366,10 @@ WHEN automated tests cover the synth parameter modulation system, THE test suite
 - **THEN** the failure output includes seed, step number, action, affected parameter or physical encoder ID, random samples consumed for that action, and the mismatched expected and actual values
 
 #### Scenario: Default and stress modes
-- **WHEN** the normal synth test suite runs
-- **THEN** randomized tests use a bounded fixed seed set suitable for routine automation
-- **AND** the test binary provides an opt-in way to run larger seed and step counts locally
+- **WHEN** the test suite runs the randomized simulation in normal mode
+- **THEN** it runs a short deterministic seed set suitable for routine test runs
+- **WHEN** the stress environment is enabled
+- **THEN** it runs a larger deterministic seed set
 
 ### Requirement: spm-19 — Color: UI-safe RGB and HSV helpers
 WHEN external UI state or message-thread rendering needs colors from the synth parameter system, THE synth parameter modulation system SHALL provide a small trivially copyable 32-bit RGB color type with equality, brightness adjustment, named basic colors, `ToHSV`, and `FromHSV` helpers, without requiring JUCE or Smart Grid headers, and SHALL make color UI-state storage lock-free by storing colors as one atomic 32-bit value or an equivalently lock-free representation.
@@ -371,12 +388,18 @@ WHEN external UI state or message-thread rendering needs colors from the synth p
 - **THEN** color storage is represented as a lock-free atomic 32-bit value or equivalent
 
 ### Requirement: spm-20 — UI State: parameter and visible-cell snapshots
-WHEN a parameter or visible-cell UI snapshot is populated, THE synth parameter modulation system SHALL write a `Parameter::UIState` whose scalar fields are individually atomic and which contains the parameter color from `ParameterConfig`, connected state, bipolar flag, short name pointer or stable short name view, per-voice current values, per-voice minimum values, per-voice maximum values, per-voice switch bucket values, switch cardinality, synth-native modulator/gesture affecting bitmasks, and per-voice indicator colors from the owning group's voice indicator palette for every configured voice; disconnected visible cells SHALL use `connected=false` with neutral values and off colors instead of a separate page/navigation role; bipolar parameter UI values and min/max values SHALL be reported in `[-1, 1]`, while unipolar parameter UI values and min/max values SHALL be reported in `[0, 1]`.
+WHEN a parameter or visible-cell UI snapshot is populated, THE synth parameter modulation system SHALL write a `Parameter::UIState` whose scalar fields are individually atomic and which contains the parameter color from `ParameterConfig`, connected state, bipolar flag, short name pointer or stable short name view, per-voice display center values, per-voice display spread values, per-voice minimum values, per-voice maximum values, per-voice switch bucket values, switch cardinality, synth-native modulator/gesture affecting bitmasks, and per-voice indicator colors from the owning group's voice indicator palette for every configured voice; disconnected visible cells SHALL use `connected=false` with neutral values, zero spread, and off colors instead of a separate page/navigation role; bipolar parameter UI values and min/max values SHALL be reported in `[-1, 1]`, while unipolar parameter UI values and min/max values SHALL be reported in `[0, 1]`.
 
-#### Scenario: Parameter UI state reports current per-voice values
-- **WHEN** a parameter has two voices with different current modulator values
+#### Scenario: Parameter UI state reports smoothed per-voice display values
+- **WHEN** a parameter has two voices with different cached knob values
 - **AND** `Parameter::PopulateUIState` is called after compute/process work
-- **THEN** the UI state exposes the same per-voice values that `Parameter::Get(voiceIx)` returns
+- **THEN** the UI state exposes the parameter's per-voice smoothed display center values
+- **AND** it does not expose unsmoothed audio-rate cached knob values as the encoder indicator center
+
+#### Scenario: Parameter UI state reports display spread
+- **WHEN** audio-rate modulation causes a voice's cached knob value to vary around its smoothed display center
+- **AND** `Parameter::PopulateUIState` is called after process work
+- **THEN** the UI state exposes a non-negative per-voice display spread derived from the smoothed residual energy
 
 #### Scenario: Parameter UI state reports configured color
 - **WHEN** a parameter is configured with color `C`
@@ -390,10 +413,10 @@ WHEN a parameter or visible-cell UI snapshot is populated, THE synth parameter m
 - **AND** voice 1 indicator color is `B`
 
 #### Scenario: Bipolar UI state reports signed values
-- **WHEN** a bipolar parameter has current voice values `-0.5` and `0.75`
+- **WHEN** a bipolar parameter has smoothed display center values `-0.5` and `0.75`
 - **AND** `Parameter::PopulateUIState` is called
 - **THEN** the UI state reports the bipolar flag as true
-- **AND** reports per-voice values `-0.5` and `0.75`
+- **AND** reports per-voice display center values `-0.5` and `0.75`
 - **AND** reports minimum value `-1` and maximum value `1`
 
 #### Scenario: Unipolar UI state reports unipolar values
@@ -405,6 +428,7 @@ WHEN a parameter or visible-cell UI snapshot is populated, THE synth parameter m
 - **WHEN** a switch/discrete parameter UI state is populated
 - **THEN** the UI state reports the parameter's switch cardinality
 - **AND** reports each voice's precomputed switch bucket value using the same helper as `Parameter::GetSwitchVal(voiceIx)`
+- **AND** reports display spread `0` for each voice
 
 #### Scenario: Parameter UI state reports affecting masks
 - **WHEN** a parameter has active or assigned modulation/gesture relationships that should be visible to the external encoder renderer
@@ -417,12 +441,13 @@ WHEN a parameter or visible-cell UI snapshot is populated, THE synth parameter m
 #### Scenario: Unused UI state voices are disconnected or neutral
 - **WHEN** a UI state has capacity for more voices than the parameter group uses
 - **THEN** populated voice entries beyond the configured voice count are neutral and do not report stale values as connected
+- **AND** their display spread values are zero
 
 #### Scenario: Modulation target cell stays parameter-owned
 - **WHEN** a visible bank cell is the target encoder in an open modulation view
 - **AND** slot UI state is populated
 - **THEN** that reserved `Parameter::UIState` reports `connected=true`
-- **AND** it reports the target parameter's switch cardinality, per-voice switch buckets, affecting masks, color, short name, bipolar flag, and values exactly as the target parameter would outside the modulation view
+- **AND** it reports the target parameter's switch cardinality, per-voice switch buckets, affecting masks, color, short name, bipolar flag, display center values, display spread values, and min/max values exactly as the target parameter would outside the modulation view
 - **AND** renderers do not distinguish this cell from normal parameter cells through parameter UI-state page/navigation data
 
 #### Scenario: Short name lifetime is stable
@@ -699,11 +724,11 @@ WHEN automated tests cover the external synth parameter control surface, THE tes
 
 #### Scenario: UI state checks match oracle
 - **WHEN** the randomized simulation calls `PopulateUIState`
-- **THEN** every connected visible parameter UI cell matches the oracle's expected visible parameter, per-voice values, per-voice switch buckets when switch metadata is configured, bipolar flag, signed bipolar or unipolar min/max values, color, indicator colors, modulator/gesture affecting masks for the first 32 visible indices, manager-owned gesture values, selected flags, scene selection, scene blend, reset-held state, random-held state, and random-mod-held state
+- **THEN** every connected visible parameter UI cell matches the oracle's expected visible parameter, per-voice display center values, per-voice display spread values, per-voice switch buckets when switch metadata is configured, bipolar flag, signed bipolar or unipolar min/max values, color, indicator colors, modulator/gesture affecting masks for the first 32 visible indices, manager-owned gesture values, selected flags, scene selection, scene blend, reset-held state, random-held state, and random-mod-held state
 
 #### Scenario: Modifier random samples are modeled
-- **WHEN** the message-driven randomized simulation applies random or random-mod modifier behavior
-- **THEN** the oracle consumes the same random value, coin, and slot-selection samples as production behavior
+- **WHEN** a random or random-mod modifier action consumes random samples
+- **THEN** the randomized simulation oracle consumes the same number of samples in the same order
 
 #### Scenario: Existing randomized oracle is migrated to manager-owned gestures
 - **WHEN** the randomized simulation creates parameters in multiple groups
@@ -788,7 +813,7 @@ WHEN the synth external UI/message layer provides a JUCE encoder renderer, THE r
 - **AND** it does not derive navigation labels from parameter UI-state data
 
 ### Requirement: spm-28 — Switch/discrete parameter UI state
-WHEN synth parameters represent discrete or switch-like values, THE synth parameter modulation system SHALL expose the switch cardinality and per-voice switch bucket in parameter config, parameter API, and atomic UI state without introducing a separate discrete parameter type in this change.
+WHEN synth parameters represent discrete or switch-like values, THE synth parameter modulation system SHALL expose the switch cardinality and per-voice switch bucket in parameter config, parameter API, and atomic UI state without introducing a separate discrete parameter type in this change; switch/discrete parameters SHALL keep switch bucket computation based on the display-normalized unslewed target value and SHALL publish zero display spread.
 
 #### Scenario: Parameter exposes switch value
 - **WHEN** a parameter has `switchValues <= 1`
@@ -796,19 +821,19 @@ WHEN synth parameters represent discrete or switch-like values, THE synth parame
 - **AND** `Parameter::GetSwitchVal(voiceIx)` returns 0
 - **WHEN** a parameter has `switchValues > 1`
 - **THEN** `Parameter::IsSwitch()` is true
-- **AND** `Parameter::GetSwitchVal(voiceIx)` rounds the display-normalized unslewed value to `[0, switchValues - 1]`
+- **AND** `Parameter::GetSwitchVal(voiceIx)` rounds the display-normalized unslewed target value to `[0, switchValues - 1]`
 
 #### Scenario: UI state carries switch values
 - **WHEN** `Parameter::PopulateUIState` populates a connected parameter cell
 - **THEN** `Parameter::UIState::switchValues` stores that parameter's switch cardinality
 - **AND** per-voice switch bucket atomics store the values returned by `Parameter::GetSwitchVal(voiceIx)`
+- **AND** per-voice display spread atomics store `0` for switch parameters
 - **WHEN** a cell is disconnected or empty
 - **THEN** `switchValues` and per-voice switch bucket atomics are reset to 0
 
 #### Scenario: Switch values remain JUCE-free
 - **WHEN** switch metadata is added to the synth core
 - **THEN** it is represented only by core C++ parameter config/API/UI-state fields
-- **AND** no JUCE headers or types are introduced into core synth headers or sources
 
 ### Requirement: spm-29 — MIDI: Basic message model
 WHEN synth MIDI code exchanges raw MIDI messages, THE synth parameter modulation system SHALL provide a JUCE-free `BasicMidi` value type with timestamp, raw MIDI bytes, message size, status/channel/data accessors, CC/note/realtime constructors, and no route field.
@@ -1497,40 +1522,41 @@ WHEN modules or application code register top-level parameters, THE synth parame
 - **AND** previously returned top-level parameter IDs remain stable
 
 ### Requirement: spm-47 — Parameters: normalized mapping helpers
-WHEN modules map normalized parameter values into natural units from their `SetInput` functions, THE synth parameter modulation system SHALL provide manager-level helpers that read a parameter by voice ID and parameter ID and return mapped values for linear interpolation, exponential geometric interpolation, zero-based exponential interpolation with a specified midpoint value, and bipolar variants of each supported mapping.
+WHEN modules map normalized parameter values into natural units from their `SetInput` functions, THE synth parameter modulation system SHALL provide manager-level helpers that read a parameter by voice ID and parameter ID and return mapped values for linear interpolation, exponential geometric interpolation, zero-based exponential interpolation with a specified midpoint value, and bipolar variants of each supported mapping; those helpers SHALL map the parameter's cached knob value sampled by the most recent `ProcessLite()` call for that voice.
 
 #### Scenario: Linear mapping reaches endpoints
-- **WHEN** a unipolar parameter value is `0`
+- **WHEN** a unipolar parameter's cached knob value is `0`
 - **AND** code calls `GetLinear(minValue, maxValue, voiceIx, parameterId)`
 - **THEN** the helper returns `minValue`
-- **WHEN** the same parameter value is `1`
+- **WHEN** the same parameter's cached knob value is `1`
 - **THEN** the helper returns `maxValue`
 
 #### Scenario: Exponential mapping reaches endpoints
-- **WHEN** a unipolar parameter value is `0`
+- **WHEN** a unipolar parameter's cached knob value is `0`
 - **AND** code calls `GetExponential(minValue, maxValue, voiceIx, parameterId)` with positive endpoint values
 - **THEN** the helper returns `minValue`
-- **WHEN** the same parameter value is `1`
+- **WHEN** the same parameter's cached knob value is `1`
 - **THEN** the helper returns `maxValue`
 
 #### Scenario: Zero-based exponential honors midpoint
-- **WHEN** a unipolar parameter value is `0`
+- **WHEN** a unipolar parameter's cached knob value is `0`
 - **AND** code calls `GetZeroBasedExponential(maxValue, midpointValue, voiceIx, parameterId)`
 - **THEN** the helper returns `0`
-- **WHEN** the same parameter value is `0.5`
+- **WHEN** the same parameter's cached knob value is `0.5`
 - **THEN** the helper returns `midpointValue` within numeric tolerance
-- **WHEN** the same parameter value is `1`
+- **WHEN** the same parameter's cached knob value is `1`
 - **THEN** the helper returns `maxValue`
 
 #### Scenario: Bipolar mapping returns signed values
-- **WHEN** a bipolar mapping helper is called for normalized values below and above the center point
+- **WHEN** a bipolar mapping helper is called for cached knob values below and above the center point
 - **THEN** values below center map to negative natural-unit values
 - **AND** values above center map to positive natural-unit values
 - **AND** the center point maps to zero within numeric tolerance
 
-#### Scenario: Mapping helper uses parameter Get
+#### Scenario: Mapping helper uses cached ProcessLite value
 - **WHEN** a mapped parameter has current modulation applied for a voice
-- **THEN** each mapping helper maps the parameter's audio-rate `Get(voiceIx)` value rather than only the scene center value
+- **AND** `ProcessLite()` has sampled that voice's cached knob value
+- **THEN** each mapping helper maps the cached knob value rather than recomputing the raw expression at helper-call time
 
 ### Requirement: spm-48 — Banks: module slot registration safety
 WHEN module-level code registers visible parameters into a bank, THE synth parameter modulation system SHALL provide bank APIs, or equivalent safe registration helpers, in which a bank is durably associated with exactly one `BankSlot`, a bank slot owns the physical layout and MAY be associated with multiple page banks while selecting only one bank for runtime routing, and registration validates duplicate physical slots, duplicate visible parameter names within the registration operation, and the number of available physical positions before mutating the bank's visible mapping.
@@ -1842,57 +1868,95 @@ WHEN the synth parameter modulation system tracks control modifiers, THE `Parame
 - **THEN** random value samples, random-mod coin samples, and random-mod slot selections are reproducible for the same seed
 
 ### Requirement: spm-64 — Parameters: centered bipolar exponential mapping
-WHEN modules map signed bipolar parameter values into positive multiplicative natural units around a center, THE synth parameter modulation system SHALL provide a manager-level helper that reads a parameter by voice ID and parameter ID and returns a positive exponential value where signed `-1` maps to the supplied left value, signed `0` maps to the supplied center value, and signed `1` maps to the supplied right value.
+WHEN modules map signed bipolar parameter values into positive multiplicative natural units around a center, THE synth parameter modulation system SHALL provide a manager-level helper that reads a parameter by voice ID and parameter ID and returns a positive exponential value where signed cached knob value `-1` maps to the supplied left value, signed cached knob value `0` maps to the supplied center value, and signed cached knob value `1` maps to the supplied right value.
 
 #### Scenario: Centered bipolar exponential reaches left endpoint
-- **WHEN** a signed bipolar parameter value is `-1`
+- **WHEN** a signed bipolar parameter cached knob value is `-1`
 - **AND** code calls the centered bipolar exponential helper with left `0.2`, center `1`, and right `5`
 - **THEN** the helper returns `0.2` within numeric tolerance
 
 #### Scenario: Centered bipolar exponential maps center
-- **WHEN** a signed bipolar parameter value is `0`
+- **WHEN** a signed bipolar parameter cached knob value is `0`
 - **AND** code calls the centered bipolar exponential helper with left `0.2`, center `1`, and right `5`
 - **THEN** the helper returns `1` within numeric tolerance
 
 #### Scenario: Centered bipolar exponential reaches right endpoint
-- **WHEN** a signed bipolar parameter value is `1`
+- **WHEN** a signed bipolar parameter cached knob value is `1`
 - **AND** code calls the centered bipolar exponential helper with left `0.2`, center `1`, and right `5`
 - **THEN** the helper returns `5` within numeric tolerance
 
 #### Scenario: Centered bipolar exponential interpolates geometrically on each side
-- **WHEN** a signed bipolar parameter value is `-0.5`
+- **WHEN** a signed bipolar parameter cached knob value is `-0.5`
 - **AND** code calls the centered bipolar exponential helper with left `0.25`, center `2`, and right `32`
 - **THEN** the helper returns `2 * sqrt(0.25 / 2)` within numeric tolerance
-- **WHEN** a signed bipolar parameter value is `0.5`
+- **WHEN** a signed bipolar parameter cached knob value is `0.5`
 - **THEN** the helper returns `2 * sqrt(32 / 2)` within numeric tolerance
 
-#### Scenario: Centered bipolar exponential uses parameter Get
+#### Scenario: Centered bipolar exponential uses cached ProcessLite value
 - **WHEN** a mapped parameter has current modulation applied for a voice
-- **THEN** the centered bipolar exponential helper maps the parameter's audio-rate `Get(voiceIx)` value rather than only the scene center value
+- **AND** `ProcessLite()` has sampled that voice's cached knob value
+- **THEN** the centered bipolar exponential helper maps the cached knob value rather than only the scene center value or a raw expression recomputed at helper-call time
 
 #### Scenario: Invalid centered values are rejected
 - **WHEN** code calls the centered bipolar exponential helper with a left, center, or right value less than or equal to `0`
 - **THEN** the helper raises a coding error rather than returning an invalid mapping
 
 ### Requirement: spm-65 — Parameters: signed bipolar zero-based exponential mapping
-WHEN modules map signed bipolar parameter values into signed zero-centered natural units with exponential magnitude, THE synth parameter modulation system SHALL provide a manager-level helper that reads a parameter by voice ID and parameter ID and returns `sign(knob) * ZeroBasedExponential(abs(knob), maxAbsValue, midpointAbsValue)` for signed knob values in `[-1, 1]`.
+WHEN modules map signed bipolar parameter values into signed zero-centered natural units with exponential magnitude, THE synth parameter modulation system SHALL provide a manager-level helper that reads a parameter by voice ID and parameter ID and returns `sign(knob) * ZeroBasedExponential(abs(knob), maxAbsValue, midpointAbsValue)` for signed cached knob values in `[-1, 1]`.
 
 #### Scenario: Signed zero-based bipolar exponential reaches endpoints
-- **WHEN** a signed bipolar parameter value is `-1`
+- **WHEN** a signed bipolar parameter cached knob value is `-1`
 - **AND** code calls the signed zero-based bipolar exponential helper with max absolute value `1` and midpoint absolute value `0.1`
 - **THEN** the helper returns `-1` within numeric tolerance
-- **WHEN** the signed bipolar parameter value is `1`
+- **WHEN** the signed bipolar parameter cached knob value is `1`
 - **THEN** the helper returns `1` within numeric tolerance
 
 #### Scenario: Signed zero-based bipolar exponential reaches midpoints
-- **WHEN** a signed bipolar parameter value is `-0.5`
+- **WHEN** a signed bipolar parameter cached knob value is `-0.5`
 - **AND** code calls the signed zero-based bipolar exponential helper with max absolute value `1` and midpoint absolute value `0.1`
 - **THEN** the helper returns `-0.1` within numeric tolerance
-- **WHEN** the signed bipolar parameter value is `0.5`
+- **WHEN** the signed bipolar parameter cached knob value is `0.5`
 - **THEN** the helper returns `0.1` within numeric tolerance
 
 #### Scenario: Signed zero-based bipolar exponential maps center to zero
-- **WHEN** a signed bipolar parameter value is `0`
+- **WHEN** a signed bipolar parameter cached knob value is `0`
 - **AND** code calls the signed zero-based bipolar exponential helper
 - **THEN** the helper returns `0` within numeric tolerance
+
+#### Scenario: Signed zero-based bipolar exponential uses cached ProcessLite value
+- **WHEN** a mapped parameter has current modulation applied for a voice
+- **AND** `ProcessLite()` has sampled that voice's cached knob value
+- **THEN** the signed zero-based bipolar exponential helper maps the cached knob value rather than a raw expression recomputed at helper-call time
+
+### Requirement: spm-66 — UI State: smoothed parameter center and modulation spread
+WHEN `ProcessLite()` samples cached knob values for a parameter, THE synth parameter modulation system SHALL update per-voice UI display smoothing state by first applying a group-configured one-pole EMA to the cached knob value for display center, then applying a group-configured one-pole EMA to the squared residual between the cached knob value and the updated display center for spread energy, and publishing the display center plus the square root of spread energy through `Parameter::UIState`; switch/discrete parameters SHALL publish zero display spread.
+
+#### Scenario: Display center smooths cached knob value
+- **WHEN** a voice's cached knob value jumps from `0.0` to `1.0`
+- **AND** the group display-center alpha is `0.25`
+- **THEN** one `ProcessLite()` update sets that voice's display center to `0.25`
+
+#### Scenario: Display spread uses updated center residual
+- **WHEN** a voice's cached knob value is `1.0`
+- **AND** its prior display center is `0.0`
+- **AND** its prior spread energy is `0.0`
+- **AND** the group display-center alpha is `0.25`
+- **AND** the group display-spread alpha is `0.5`
+- **THEN** one `ProcessLite()` update sets that voice's display center to `0.25`
+- **AND** sets that voice's spread energy to `0.28125`
+- **AND** `Parameter::PopulateUIState` publishes display spread `sqrt(0.28125)` within numeric tolerance
+
+#### Scenario: Static parameter spread decays
+- **WHEN** a voice's cached knob value remains equal to its display center
+- **AND** the group spread alpha is greater than zero
+- **THEN** repeated `ProcessLite()` calls decay that voice's spread energy toward `0`
+
+#### Scenario: Switch parameter spread is zero
+- **WHEN** a switch/discrete parameter has a nonzero cached knob residual relative to its display center
+- **AND** `Parameter::PopulateUIState` is called
+- **THEN** the UI state publishes display spread `0` for that switch/discrete parameter voice
+
+#### Scenario: Encoder can render blur from UI state
+- **WHEN** a connected encoder cell has a nonzero UI display spread
+- **THEN** the JUCE encoder renderer can draw the voice indicator as a display center with a spread-proportional blur or cloud without reading live audio-rate parameter state
 
