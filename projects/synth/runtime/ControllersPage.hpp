@@ -1002,6 +1002,45 @@ private:
                 totalHeight += MappingRow::kHeight;
                 rows_.push_back(std::move(row));
             }
+
+            // sru-11 "empty group still offers add": the row walk above only
+            // ever emits a RowGroupHeader alongside an existing row, so a
+            // group with zero rows -- or a whole empty section, e.g. a
+            // freshly-added generic controller -- would otherwise have no
+            // header to hang "+"/"+B" off of. AddableGroups() (canonical
+            // order already, per its own doc comment) is the VM's list of
+            // every group this (controllerIx, section) could add into;
+            // append a header-only RowGroupHeader (no MappingRow beneath)
+            // for each one NOT already covered by a header from the walk
+            // above (`seenGroups`), using GroupColumnFields() for its column
+            // schema since there is no real row to read editableFields off
+            // of. These always land after every real row/header (canonical
+            // order still holds section-relative -- an empty group's natural
+            // position, between two populated groups, would require
+            // interleaving with the row walk above; simpler to append at the
+            // section's end, per this fix's own brief: "empty-group add-
+            // headers may sit at the section's end").
+            for (const synth::MidiMappingRowVM::RowGroup group : page.vm_.AddableGroups(controllerIx, section)) {
+                if (seenGroups.count(group) != 0) {
+                    continue;
+                }
+                const std::vector<synth::MidiMappingRowVM::Field> columnFields =
+                    page.vm_.GroupColumnFields(controllerIx, section, group);
+                minContentWidth = juce::jmax(minContentWidth, RequiredRowWidth(columnFields));
+                std::function<void()> addSingle = MakeAddCallback(page, controllerIx, section, group,
+                                                                   /*asBlock=*/false);
+                std::function<void()> addBlock;
+                if (page.vm_.GroupSupportsBlocks(controllerIx, section, group)) {
+                    addBlock = MakeAddCallback(page, controllerIx, section, group, /*asBlock=*/true);
+                }
+                auto header = std::make_unique<RowGroupHeader>(group, columnFields, std::move(addSingle),
+                                                                std::move(addBlock));
+                rowsHost_.addAndMakeVisible(*header);
+                layout_.push_back({header.get(), RowGroupHeader::kHeight});
+                headers_.push_back(std::move(header));
+                totalHeight += RowGroupHeader::kHeight;
+            }
+
             minContentWidth_ = minContentWidth;
             rowsHost_.setSize(juce::jmax(1, minContentWidth_), totalHeight);
             LayoutRows();
