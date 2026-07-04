@@ -124,6 +124,13 @@ const std::vector<std::string>& BlockableMessageCatalog() {
     return catalog;
 }
 
+const std::vector<std::string>& LaunchpadVariantCatalog() {
+    // Indexed by LaunchpadController's declaration order (MidiController.hpp):
+    // 0 = LaunchpadX, 1 = LaunchpadProMk3, 2 = LaunchpadMiniMk3.
+    static const std::vector<std::string> catalog = {"Launchpad X", "Launchpad Pro MK3", "Launchpad Mini MK3"};
+    return catalog;
+}
+
 const char* FieldShortLabel(MidiMappingRowVM::Field field) {
     switch (field) {
         case Field::Channel:
@@ -2720,6 +2727,23 @@ std::optional<std::pair<std::uint8_t, std::uint8_t>> NextFreeWrldBldrPosition(
     return std::nullopt;
 }
 
+// The slot's current Launchpad variant, read from the first launchpad
+// association's controller (default LaunchpadX when the slot has no
+// launchpad associations yet) -- the seed-site counterpart to
+// MidiConfigViewModel::LaunchpadVariantIndex() (same "first association
+// wins, default 0/LaunchpadX otherwise" rule), used by AddSingle/AddBlock's
+// launchpad branches below so a new row/block added to an already-
+// retargeted (e.g. Pro MK3) slot is seeded with THAT variant rather than a
+// hardcoded LaunchpadX (label-launchpad-brief.md Change 2).
+LaunchpadController CurrentLaunchpadVariant(const std::vector<MidiControllerSystemMessageAssociation>& associations) {
+    for (const MidiControllerSystemMessageAssociation& association : associations) {
+        if (association.launchpadPosition.has_value()) {
+            return association.launchpadPosition->controller;
+        }
+    }
+    return LaunchpadController::LaunchpadX;
+}
+
 // Lowest-unused Launchpad (x,y) within the given controller's shape,
 // row-major scan of a generous bounding box (Launchpad coordinates can be
 // -1..9 per LaunchpadShapeSupports).
@@ -2825,8 +2849,8 @@ bool MidiConfigViewModel::AddSingle(std::size_t controllerIx, MidiConfigSection 
                 break;
             }
             case MidiProfileKind::Launchpad: {
-                const auto position = NextFreeLaunchpadPosition(slot.config.systemMessages,
-                                                                 LaunchpadController::LaunchpadX);
+                const auto position = NextFreeLaunchpadPosition(
+                    slot.config.systemMessages, CurrentLaunchpadVariant(slot.config.systemMessages));
                 if (!position.has_value()) {
                     if (reason != nullptr) {
                         *reason = "no free launchpad grid position for a new system row";
@@ -3031,7 +3055,8 @@ bool MidiConfigViewModel::AddBlock(std::size_t controllerIx, MidiConfigSection s
             block.endX = std::min(8, position->first + static_cast<int>(kDefaultBlockWidth));
             block.endY = position->second + 1;
         } else if (slot.kind == MidiProfileKind::Launchpad) {
-            const auto position = NextFreeLaunchpadPosition(slot.config.systemMessages, LaunchpadController::LaunchpadX);
+            const auto position = NextFreeLaunchpadPosition(
+                slot.config.systemMessages, CurrentLaunchpadVariant(slot.config.systemMessages));
             if (!position.has_value()) {
                 if (reason != nullptr) {
                     *reason = "no free launchpad grid position for a new block";
@@ -3126,6 +3151,86 @@ bool MidiConfigViewModel::GroupSupportsBlocks(std::size_t controllerIx, MidiConf
     if (section == MidiConfigSection::SystemMessages && group == RowGroup::System) {
         return instrument_.controllers[controllerIx].kind != MidiProfileKind::MfTwister;
     }
+    return true;
+}
+
+int MidiConfigViewModel::LaunchpadVariantIndex(std::size_t controllerIx) const {
+    if (controllerIx >= instrument_.controllers.size()) {
+        return -1;
+    }
+    const MidiControllerSlot& slot = instrument_.controllers[controllerIx];
+    if (slot.kind != MidiProfileKind::Launchpad) {
+        return -1;
+    }
+    for (const MidiControllerSystemMessageAssociation& association : slot.config.systemMessages) {
+        if (association.launchpadPosition.has_value()) {
+            return static_cast<int>(association.launchpadPosition->controller);
+        }
+    }
+    // No launchpad associations at all (an empty system section) -- default
+    // to index 0 (LaunchpadX), per this method's header doc comment.
+    return 0;
+}
+
+bool MidiConfigViewModel::SetLaunchpadVariant(std::size_t controllerIx, int variantIndex, MidiInstrumentConfig& out,
+                                              std::string* reason) const {
+    if (controllerIx >= instrument_.controllers.size()) {
+        if (reason != nullptr) {
+            *reason = "controller index out of range";
+        }
+        return false;
+    }
+    const MidiControllerSlot& current = instrument_.controllers[controllerIx];
+    if (current.kind != MidiProfileKind::Launchpad) {
+        if (reason != nullptr) {
+            *reason = "this controller is not a Launchpad";
+        }
+        return false;
+    }
+    if (variantIndex < 0 || static_cast<std::size_t>(variantIndex) >= LaunchpadVariantCatalog().size()) {
+        if (reason != nullptr) {
+            *reason = "variant index out of range";
+        }
+        return false;
+    }
+    const LaunchpadController newController = static_cast<LaunchpadController>(variantIndex);
+
+    MidiInstrumentConfig scratch = instrument_;
+    MidiControllerSlot& slot = scratch.controllers[controllerIx];
+
+    // All-or-nothing (sru-10 convention): validate EVERY existing position
+    // against the new variant's shape before writing anything, so a shrink
+    // that would drop an edge button is refused wholesale rather than
+    // partially applied.
+    for (const MidiControllerSystemMessageAssociation& association : slot.config.systemMessages) {
+        if (!association.launchpadPosition.has_value()) {
+            continue;
+        }
+        const LaunchpadGridPosition& position = *association.launchpadPosition;
+        if (!LaunchpadShapeSupports(newController, position.x, position.y)) {
+            if (reason != nullptr) {
+                std::ostringstream oss;
+                oss << "position (" << position.x << "," << position.y << ") is not valid on "
+                    << LaunchpadVariantCatalog()[static_cast<std::size_t>(variantIndex)];
+                *reason = oss.str();
+            }
+            return false;
+        }
+    }
+
+    for (MidiControllerSystemMessageAssociation& association : slot.config.systemMessages) {
+        if (!association.launchpadPosition.has_value()) {
+            continue;
+        }
+        association.launchpadPosition->controller = newController;
+    }
+
+    NormalizeMidiProfileConfig(slot.config, slot.kind);
+    if (!SlotValidForKind(slot, reason)) {
+        return false;
+    }
+
+    out = std::move(scratch);
     return true;
 }
 

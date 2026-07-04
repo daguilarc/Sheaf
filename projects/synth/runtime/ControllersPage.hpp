@@ -1136,6 +1136,24 @@ private:
             kindLabel_.setText(juce::String(synth::MidiProfileKindName(rowVm.kind)), juce::dontSendNotification);
             addAndMakeVisible(kindLabel_);
 
+            // Launchpad controller-variant selector (label-launchpad-brief.md
+            // Change 2): launchpad-kind controllers only -- every other kind
+            // shows no such combo (variantBox_ stays null, skipped entirely
+            // in resized()/paint()).
+            if (rowVm.kind == synth::MidiProfileKind::Launchpad) {
+                variantBox_ = std::make_unique<juce::ComboBox>();
+                const auto& catalog = synth::LaunchpadVariantCatalog();
+                for (int ix = 0; ix < static_cast<int>(catalog.size()); ++ix) {
+                    variantBox_->addItem(juce::String(catalog[ix]), ix + 1);
+                }
+                const int current = page_.vm_.LaunchpadVariantIndex(controllerIx_);
+                if (current >= 0) {
+                    variantBox_->setSelectedId(current + 1, juce::dontSendNotification);
+                }
+                variantBox_->onChange = [this] { OnVariantSelected(); };
+                addAndMakeVisible(*variantBox_);
+            }
+
             inputStatus_ = rowVm.inputStatus;
             outputStatus_ = rowVm.outputStatus;
 
@@ -1232,6 +1250,15 @@ private:
             disclosureButton_.setBounds(header.removeFromLeft(24).reduced(2));
             nameLabel_.setBounds(header.removeFromLeft(juce::jmax(100, header.getWidth() / 6)));
             kindLabel_.setBounds(header.removeFromLeft(juce::jmax(80, header.getWidth() / 8)));
+            // Launchpad variant combo (label-launchpad-brief.md Change 2):
+            // reserved right after the kind label, only when present --
+            // VariantBoxWidth()'s 0-when-absent return is what keeps
+            // paint()'s status-dot offset (see VariantBoxWidth() doc
+            // comment) in sync with this reservation for every controller
+            // kind, launchpad or not.
+            if (variantBox_) {
+                variantBox_->setBounds(header.removeFromLeft(VariantBoxWidth()).reduced(2));
+            }
             // Status dots painted directly in paint() over a fixed-width gap
             // reserved here (see paint()).
             header.removeFromLeft(kStatusDotsWidth);
@@ -1253,8 +1280,11 @@ private:
             // Status dots (binding: "per-endpoint status dots (Online green
             // / Offline red / Unconfigured grey)"), painted just left of the
             // device combos at a fixed offset matching the gap reserved in
-            // resized().
-            const int disclosureAndLabels = 24 + juce::jmax(100, (getWidth() - 24) / 6) + juce::jmax(80, (getWidth() - 24) / 8);
+            // resized() -- including the variant combo's width (0 when this
+            // row has none, see VariantBoxWidth()) so non-launchpad rows'
+            // dot position is unaffected.
+            const int disclosureAndLabels = 24 + juce::jmax(100, (getWidth() - 24) / 6) +
+                                            juce::jmax(80, (getWidth() - 24) / 8) + VariantBoxWidth();
             const int dotY = kHeaderHeight / 2;
             g.setColour(StatusColour(inputStatus_));
             g.fillEllipse(static_cast<float>(disclosureAndLabels + 4), static_cast<float>(dotY - 4), 8.0f, 8.0f);
@@ -1264,6 +1294,15 @@ private:
 
     private:
         static constexpr int kStatusDotsWidth = 32;
+        static constexpr int kVariantBoxWidth = 140;
+
+        // Width reserved for the launchpad variant combo -- kVariantBoxWidth
+        // when this row has one (a Launchpad-kind controller), 0 otherwise.
+        // Single source of truth shared by resized() (the reservation) and
+        // paint() (the status-dot offset that must skip over it), so the two
+        // can never drift apart the way two independent hardcoded widths
+        // could.
+        int VariantBoxWidth() const { return variantBox_ ? kVariantBoxWidth : 0; }
 
         static const char* SectionName(synth::MidiConfigSection section) {
             switch (section) {
@@ -1373,10 +1412,40 @@ private:
             // currently-absent configuration). No commit needed.
         }
 
+        // Launchpad controller-variant combo's onChange (label-launchpad-
+        // brief.md Change 2). Commits synchronously, same as
+        // OnDeviceSelected()/every other combo on this page above -- this
+        // does NOT call content_.RebuildRows() directly (only the
+        // disclosure/section-toggle/add/delete buttons do that, which is
+        // what makes THEM need the callAsync+SafePointer deferral), so no
+        // self-destruction hazard here; the next RefreshOnTick() picks up
+        // the committed change and rebuilds normally.
+        void OnVariantSelected() {
+            const int variantIndex = variantBox_->getSelectedId() - 1;
+            if (variantIndex < 0) {
+                return;
+            }
+            synth::MidiInstrumentConfig out;
+            std::string reason;
+            if (page_.vm_.SetLaunchpadVariant(controllerIx_, variantIndex, out, &reason)) {
+                page_.Commit(std::move(out));
+                page_.SetStatus(juce::String("Selected ") + juce::String(synth::LaunchpadVariantCatalog()[static_cast<std::size_t>(variantIndex)]));
+            } else {
+                page_.SetStatus(juce::String("Refused: ") + juce::String(reason));
+                // Resync the combo to the VM's actual current variant (the
+                // refused selection must not stick displayed) -- same
+                // "revert on refusal" contract every other editor/combo on
+                // this page follows (see e.g. SystemMessageFieldEditor::Commit()).
+                const int current = page_.vm_.LaunchpadVariantIndex(controllerIx_);
+                variantBox_->setSelectedId(current >= 0 ? current + 1 : 0, juce::dontSendNotification);
+            }
+        }
+
         ControllersPage& page_;
         std::size_t controllerIx_;
         juce::Label nameLabel_;
         juce::Label kindLabel_;
+        std::unique_ptr<juce::ComboBox> variantBox_;  // launchpad-kind controllers only; null otherwise
         juce::ComboBox inputBox_;
         juce::ComboBox outputBox_;
         juce::TextButton disclosureButton_;
