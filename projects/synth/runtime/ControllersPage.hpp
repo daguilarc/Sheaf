@@ -585,19 +585,20 @@ private:
         synth::MidiMappingRowVM::Field field_;
     };
 
-    // One mapping-list row: a label plus editors for its editableFields.
+    // One mapping-list row: editors for its editableFields, laid out from the
+    // left edge. The row used to also render a left-hand prose label
+    // (`rowVm.label`, e.g. "turn ch0 cc12 -> slot 0 pos 3") duplicating
+    // information RowGroupHeader already conveys via its per-group caption
+    // (Turn/Push/Mode/.../System) plus its column labels (Ch/CC/Slot/Pos/...
+    // via FieldShortLabel) -- removed as redundant (label-launchpad-brief.md
+    // Change 1). `rowVm.label` itself is left in MidiMappingRowVM (harmless,
+    // still used elsewhere) -- only the rendering of it is gone.
     class MappingRow : public juce::Component {
     public:
         static constexpr int kHeight = 28;
 
         MappingRow(ControllersPage& page, std::size_t controllerIx, synth::MidiConfigSection section,
-                  std::size_t rowIx, const synth::MidiMappingRowVM& rowVm)
-            : label_() {
-            label_.setColour(juce::Label::textColourId, juce::Colours::white);
-            label_.setJustificationType(juce::Justification::centredLeft);
-            label_.setText(juce::String(rowVm.label), juce::dontSendNotification);
-            addAndMakeVisible(label_);
-
+                  std::size_t rowIx, const synth::MidiMappingRowVM& rowVm) {
             // Reviewer finding 1: editors are laid out (resized(), below) in
             // this SAME editableFields order via orderedEditors_, not bucketed
             // by editor kind -- RowGroupHeader's column labels already follow
@@ -732,7 +733,13 @@ private:
             if (deleteButton_) {
                 deleteButton_->setBounds(area.removeFromRight(kDeleteButtonWidth).reduced(2));
             }
-            label_.setBounds(area.removeFromLeft(juce::jmax(160, area.getWidth() / 3)));
+            // Fields now start at the left edge (label-launchpad-brief.md
+            // Change 1 removed the per-row prose label that used to be
+            // reserved here via area.removeFromLeft(...)); RowGroupHeader's
+            // column-label row (see its resized()) starts its own labels at
+            // this SAME left origin (no caption-width reservation there
+            // either, beyond the caption's own short line), so the two stay
+            // aligned.
             // Reviewer finding 1: walk orderedEditors_ -- the SAME
             // editableFields-ordered sequence the constructor above built --
             // rather than bucketing by editor kind (all numerics, then the
@@ -751,7 +758,6 @@ private:
         }
 
     private:
-        juce::Label label_;
         std::vector<std::unique_ptr<NumericFieldEditor>> numericEditors_;
         std::vector<std::unique_ptr<SystemMessageFieldEditor>> systemMessageEditors_;
         std::vector<std::unique_ptr<RelativeModeFieldEditor>> relativeModeEditors_;
@@ -803,9 +809,20 @@ private:
     // (for addBlock) when the group/kind combination never supports blocks
     // (sru-11: "where blocks apply") -- e.g. MfTwister's System group (D4
     // point 3: "twister system messages never block").
+    // Change 1 (label-launchpad-brief.md): now that MappingRow no longer
+    // reserves a left-hand label column, this header's own column labels
+    // start at the SAME left origin (x=0) the rows' editors now do -- but
+    // the per-group caption (Turn/Push/Mode/Step/Gestures/Scene blend) must
+    // stay visible too (every group must remain identifiable, brief Change
+    // 1's own requirement), so it now sits on its own short line ABOVE the
+    // column-label line rather than sharing a row with it at a reserved
+    // left-hand width. kHeight grows accordingly (kCaptionHeight +
+    // kColumnLabelHeight) to fit both lines.
     class RowGroupHeader : public juce::Component {
     public:
-        static constexpr int kHeight = 22;
+        static constexpr int kCaptionHeight = 14;
+        static constexpr int kColumnLabelHeight = 18;
+        static constexpr int kHeight = kCaptionHeight + kColumnLabelHeight + 2;  // +2 clears the divider rule
 
         RowGroupHeader(synth::MidiMappingRowVM::RowGroup group, const std::vector<synth::MidiMappingRowVM::Field>& fields,
                       std::function<void()> addSingle, std::function<void()> addBlock) {
@@ -883,14 +900,23 @@ private:
         void resized() override {
             auto area = getLocalBounds();
             area.removeFromTop(2);  // clears the divider rule painted at y=0
+            // Caption on its own short line, full width, left-justified text
+            // (Justification::centredLeft set in the constructor) -- no
+            // left-hand width reservation for it, since it no longer shares
+            // its line with the column labels.
+            captionLabel_.setBounds(area.removeFromTop(kCaptionHeight));
+
+            auto columnArea = area.removeFromTop(kColumnLabelHeight);
             static constexpr int kAddButtonWidth = 28;
             if (addBlockButton_) {
-                addBlockButton_->setBounds(area.removeFromRight(kAddButtonWidth).reduced(2));
+                addBlockButton_->setBounds(columnArea.removeFromRight(kAddButtonWidth).reduced(2));
             }
             if (addButton_) {
-                addButton_->setBounds(area.removeFromRight(kAddButtonWidth).reduced(2));
+                addButton_->setBounds(columnArea.removeFromRight(kAddButtonWidth).reduced(2));
             }
-            captionLabel_.setBounds(area.removeFromLeft(juce::jmax(160, area.getWidth() / 3)));
+            // Column labels start at the same left origin (x=0) MappingRow's
+            // editors now start at (Change 1 removed both the row's label
+            // column and this header's matching caption-width reservation).
             // Reviewer finding 3: each label's width comes from the SAME
             // per-field width (columnFieldWidths_, populated via
             // FieldEditorWidth() in the constructor above) that
@@ -900,7 +926,7 @@ private:
             // Field::BlockMessageType, shifting every later header label out
             // of alignment with the row beneath it.
             for (std::size_t ix = 0; ix < columnLabels_.size(); ++ix) {
-                columnLabels_[ix]->setBounds(area.removeFromLeft(columnFieldWidths_[ix]).reduced(2));
+                columnLabels_[ix]->setBounds(columnArea.removeFromLeft(columnFieldWidths_[ix]).reduced(2));
             }
         }
 
@@ -1016,19 +1042,19 @@ private:
 
     private:
         // The widest single-line width a row with these editableFields needs
-        // (label column + each editor's width, matching MappingRow::
-        // resized()'s own per-field widths exactly so the two can never
-        // drift apart) -- the basis for SectionBody's horizontal-overflow
-        // handling (see the constructor's doc comment above): a block row's
-        // wide field set (up to nine fields for a WRLD.Bldr bank-select
-        // block) gets the inner viewport's own width, with the horizontal
-        // scrollbar picking up whatever the page's available width can't
-        // show, rather than every editor being squashed into an unreadable
-        // sliver.
+        // (each editor's width, matching MappingRow::resized()'s own
+        // per-field widths exactly so the two can never drift apart) -- the
+        // basis for SectionBody's horizontal-overflow handling (see the
+        // constructor's doc comment above): a block row's wide field set (up
+        // to nine fields for a WRLD.Bldr bank-select block) gets the inner
+        // viewport's own width, with the horizontal scrollbar picking up
+        // whatever the page's available width can't show, rather than every
+        // editor being squashed into an unreadable sliver. No more label-
+        // column width here (Change 1 removed MappingRow's left-hand label
+        // column entirely; fields now start at the row's left edge).
         static int RequiredRowWidth(const std::vector<synth::MidiMappingRowVM::Field>& fields) {
-            constexpr int kLabelWidth = 160;
             constexpr int kDeleteButtonWidth = 22;
-            int width = kLabelWidth + kDeleteButtonWidth;
+            int width = kDeleteButtonWidth;
             for (const synth::MidiMappingRowVM::Field field : fields) {
                 // Reviewer finding 3: same FieldEditorWidth() helper
                 // MappingRow::resized()/RowGroupHeader::resized() use, so
