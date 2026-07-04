@@ -950,7 +950,7 @@ WHEN the JUCE synth layer connects MIDI input devices, THE system SHALL provide 
 - **AND** keeps the owned processor available for a later successful open
 
 ### Requirement: spm-34 — MIDI output: sender and processor contract
-WHEN synth code mirrors parameter UI state to MIDI hardware, THE synth parameter modulation system SHALL provide a sender queue and a `MidiOutProcessor` abstraction whose implementations read `ParameterManager::UIState` using the `Parameter::UIState::revision` snapshot protocol, debounce changed mapped encoder cells, enqueue outgoing `BasicMidi` to a MIDI sender from message-thread or UI refresh code, and actively blank mapped disconnected cells by emitting zero value, off color, and zero brightness feedback as appropriate for the selected controller.
+WHEN synth code mirrors parameter UI state to MIDI hardware, THE synth parameter modulation system SHALL provide a sender queue and a `MidiOutProcessor` abstraction whose implementations read `ParameterManager::UIState` using the `Parameter::UIState::revision` snapshot protocol, debounce changed mapped encoder cells, enqueue outgoing `BasicMidi` to a MIDI sender from message-thread or UI refresh code, and actively blank mapped disconnected cells by emitting zero value, off color, and controller-specific brightness-off feedback as appropriate for the selected controller.
 
 #### Scenario: Sender drains queued MIDI to sink
 - **WHEN** a `BasicMidi` message is enqueued to a MIDI sender with an output sink
@@ -981,7 +981,7 @@ WHEN synth code mirrors parameter UI state to MIDI hardware, THE synth parameter
 - **AND** repeated process calls without state changes emit no duplicate blank feedback
 
 ### Requirement: spm-35 — MIDI output: Twister encoder feedback
-WHEN Twister encoder MIDI output is processed, THE synth parameter modulation system SHALL provide a Twister output processor that maps configured slot positions to controller CCs and emits separate CC feedback for encoder value, parameter color, brightness, voice-0 indicator position, and voice-0 indicator color using the MIDI Fighter Twister manual and Smart Grid Twister channel conventions.
+WHEN Twister encoder MIDI output is processed, THE synth parameter modulation system SHALL provide a Twister output processor that maps configured slot positions to controller CCs and emits separate CC feedback for encoder value, parameter color, RGB brightness, voice-0 indicator position, and indicator brightness using the MIDI Fighter Twister manual and Smart Grid Twister channel conventions.
 
 #### Scenario: Twister value feedback uses channel 0
 - **WHEN** a mapped connected cell has voice-0 normalized value `0.5`
@@ -1001,15 +1001,15 @@ WHEN Twister encoder MIDI output is processed, THE synth parameter modulation sy
 
 #### Scenario: Twister disconnected cell blanks brightness
 - **WHEN** a mapped cell is disconnected
-- **THEN** the Twister output processor emits brightness value `0` for that cell rather than applying the connected-cell brightness formula
+- **THEN** the Twister output processor emits RGB brightness-off value `17` and indicator brightness-off value `65` for that cell rather than applying visible brightness
 
 #### Scenario: Twister indicator position uses voice-0 value
 - **WHEN** a mapped connected cell has voice-0 normalized value `0.25`
 - **THEN** the Twister output processor emits ring or indicator position feedback for that cell with a value near `32`
 
-#### Scenario: Twister indicator color uses voice-0 indicator color
-- **WHEN** a mapped connected cell's voice-0 indicator color changes
-- **THEN** the Twister output processor emits indicator or ring color feedback for that cell using the Twister color code derived from the voice-0 indicator color
+#### Scenario: Twister indicator brightness follows UI state
+- **WHEN** a mapped connected cell has UI-state brightness `0.5`
+- **THEN** the Twister output processor emits indicator brightness value derived from `65 + 0.5 * 30`
 
 #### Scenario: Twister color helper uses full hue range
 - **WHEN** a saturated synth color is converted to an MF Twister color code
@@ -1795,7 +1795,7 @@ WHEN the default MF Twister MIDI controller profile is requested, THE synth para
 - **THEN** encoder turn input uses zero-based channel `0`
 - **AND** encoder pushbutton input uses zero-based channel `1`
 - **AND** CCs `0..15` map to slot positions `0..15` in row-major order
-- **AND** encoder output maps the same positions for value, color, brightness, indicator position, and indicator color feedback
+- **AND** encoder output maps the same positions for value, color, RGB brightness, indicator position, and indicator brightness feedback
 
 #### Scenario: Default MF Twister profile exposes six side-button slots
 - **WHEN** the default MF Twister profile is created
@@ -1805,7 +1805,7 @@ WHEN the default MF Twister MIDI controller profile is requested, THE synth para
 #### Scenario: Profile factory builds MF Twister processors
 - **WHEN** a profile config contains MF Twister encoder mappings and side-button system-message associations
 - **THEN** the profile factory includes encoder input and system-button input in the input chain
-- **AND** creates Twister encoder output for encoder value, color, brightness, indicator position, and indicator color feedback
+- **AND** creates Twister encoder output for encoder value, color, RGB brightness, indicator position, and indicator brightness feedback
 - **AND** creates no side-button output processor for MF Twister side-button associations
 - **AND** callers can invoke each output processor independently without an output chain
 
@@ -1988,3 +1988,28 @@ WHEN `Parameter::Compute()` calculates per-voice modulation depths from recursiv
 - **AND** the modulator value for the same voice is `0.8`
 - **THEN** the modulation contribution from that route is `0.8 * 0.125` before final range clamping
 - **AND** no exponential mapping is applied to the modulator value itself
+
+### Requirement: spm-68 — MIDI output: Twister unbacked encoder brightness
+WHEN MF Twister encoder MIDI output is processed, THE synth parameter modulation system SHALL process only configured Twister output mappings, SHALL emit live feedback for mapped encoders whose target slot/position has a connected visible UI cell, SHALL emit MF Twister brightness-off animation values plus blank value, color, and indicator position feedback for mapped encoders whose target slot/position has no connected visible UI cell, and SHALL ignore physical encoders that have no configured output mapping.
+
+#### Scenario: Unused slot position blanks Twister brightness
+- **WHEN** a Twister output mapping targets a realized slot position whose visible cell is disconnected or empty
+- **THEN** the Twister output processor emits channel `2` RGB brightness-off value `17` for that encoder
+- **AND** it emits channel `5` indicator brightness-off value `65` for that encoder
+- **AND** it emits the controller-specific blank value, color, and indicator position feedback for that encoder
+
+#### Scenario: Mapping beyond visible-cell capacity blanks Twister brightness
+- **WHEN** a Twister output mapping targets a slot or position outside the current `ParameterManager::UIState` slot/cell capacity
+- **THEN** the Twister output processor treats that mapped hardware encoder as having blank feedback state instead of skipping it as an unstable UI-state read
+- **AND** it emits channel `2` RGB brightness-off value `17` for that encoder
+- **AND** it emits channel `5` indicator brightness-off value `65` for that encoder
+- **AND** it emits the controller-specific blank value, color, and indicator position feedback for that encoder
+
+#### Scenario: Unmapped Twister encoder is ignored
+- **WHEN** a Twister physical encoder has no configured output mapping
+- **THEN** the Twister output processor emits no feedback for that physical encoder
+- **AND** no blank feedback is required for that physical encoder
+
+#### Scenario: Disconnected Twister brightness remains debounced
+- **WHEN** a mapped Twister encoder is processed as disconnected and no relevant UI state or output cache reset occurs before the next process call
+- **THEN** the Twister output processor does not emit duplicate brightness-off feedback on the next process call

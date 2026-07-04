@@ -4861,7 +4861,7 @@ TEST_CASE(twister_output_debounces_reset_and_uses_channels) {
     REQUIRE_TRUE(sink.sent[2].Channel() == 4);
     REQUIRE_TRUE(sink.sent[2].GetValue() == 64);
     REQUIRE_TRUE(sink.sent[3].Channel() == 5);
-    REQUIRE_TRUE(sink.sent[3].GetValue() != 0);
+    REQUIRE_TRUE(sink.sent[3].GetValue() == 95);
     REQUIRE_TRUE(sink.sent[4].Channel() == 0);
     REQUIRE_TRUE(sink.sent[4].GetValue() == 64);
     const std::size_t afterFirst = sink.sent.size();
@@ -4913,7 +4913,7 @@ TEST_CASE(twister_output_skips_unstable_snapshot_without_cache_update) {
     REQUIRE_TRUE(sink.sent.size() == 5);
 }
 
-TEST_CASE(twister_output_blanks_disconnected_mapped_cells_once) {
+TEST_CASE(twister_output_blanks_disconnected_mapped_cells_with_brightness_off_values_once) {
     synth::ParameterManager::UIState ui;
     ui.Configure(1, 1, 1, 0);
 
@@ -4931,11 +4931,11 @@ TEST_CASE(twister_output_blanks_disconnected_mapped_cells_once) {
     REQUIRE_TRUE(sink.sent[0].Channel() == 1);
     REQUIRE_TRUE(sink.sent[0].GetValue() == 0);
     REQUIRE_TRUE(sink.sent[1].Channel() == 2);
-    REQUIRE_TRUE(sink.sent[1].GetValue() == 0);
+    REQUIRE_TRUE(sink.sent[1].GetValue() == 17);
     REQUIRE_TRUE(sink.sent[2].Channel() == 4);
     REQUIRE_TRUE(sink.sent[2].GetValue() == 0);
     REQUIRE_TRUE(sink.sent[3].Channel() == 5);
-    REQUIRE_TRUE(sink.sent[3].GetValue() == 0);
+    REQUIRE_TRUE(sink.sent[3].GetValue() == 65);
     REQUIRE_TRUE(sink.sent[4].Channel() == 0);
     REQUIRE_TRUE(sink.sent[4].GetValue() == 0);
 
@@ -4943,6 +4943,84 @@ TEST_CASE(twister_output_blanks_disconnected_mapped_cells_once) {
     sender.FlushForTests(std::chrono::milliseconds(500));
     sender.Stop();
     REQUIRE_TRUE(sink.sent.size() == 5);
+}
+
+TEST_CASE(twister_output_blanks_mapped_encoder_beyond_visible_cell_capacity_with_brightness_off_values_once) {
+    synth::ParameterManager::UIState ui;
+    ui.Configure(1, 1, 1, 0);
+    auto& liveCell = ui.slots[0].cells[0];
+    liveCell.connected.store(true);
+    liveCell.voiceCount.store(1);
+    liveCell.values[0].store(0.5f);
+    liveCell.color.Store(synth::Color::Green);
+    liveCell.indicatorColors[0].Store(synth::Color::Cyan);
+    liveCell.brightness.store(1.0f);
+
+    FakeMidiSink sink;
+    synth::MidiSender sender;
+    sender.SetSink(0, &sink);
+    sender.Start();
+    auto config = synth::EncoderMidiOutConfig::TwisterDefault(0);
+    config.KeepFirstPositions(2);
+    synth::TwisterMidiOutProcessor processor(config, &sender, &ui);
+
+    processor.Process();
+    sender.FlushForTests(std::chrono::milliseconds(500));
+    REQUIRE_TRUE(sink.sent.size() == 10);
+    REQUIRE_TRUE(sink.sent[0].GetCC() == 0);
+    REQUIRE_TRUE(sink.sent[0].GetValue() != 0);
+    REQUIRE_TRUE(sink.sent[1].Channel() == 2);
+    REQUIRE_TRUE(sink.sent[1].GetCC() == 0);
+    REQUIRE_TRUE(sink.sent[1].GetValue() == synth::FullBrightnessAnimationValue());
+    REQUIRE_TRUE(sink.sent[5].Channel() == 1);
+    REQUIRE_TRUE(sink.sent[5].GetCC() == 1);
+    REQUIRE_TRUE(sink.sent[5].GetValue() == 0);
+    REQUIRE_TRUE(sink.sent[6].Channel() == 2);
+    REQUIRE_TRUE(sink.sent[6].GetCC() == 1);
+    REQUIRE_TRUE(sink.sent[6].GetValue() == 17);
+    REQUIRE_TRUE(sink.sent[7].Channel() == 4);
+    REQUIRE_TRUE(sink.sent[7].GetCC() == 1);
+    REQUIRE_TRUE(sink.sent[7].GetValue() == 0);
+    REQUIRE_TRUE(sink.sent[8].Channel() == 5);
+    REQUIRE_TRUE(sink.sent[8].GetCC() == 1);
+    REQUIRE_TRUE(sink.sent[8].GetValue() == 65);
+    REQUIRE_TRUE(sink.sent[9].Channel() == 0);
+    REQUIRE_TRUE(sink.sent[9].GetCC() == 1);
+    REQUIRE_TRUE(sink.sent[9].GetValue() == 0);
+
+    processor.Process();
+    sender.FlushForTests(std::chrono::milliseconds(500));
+    sender.Stop();
+    REQUIRE_TRUE(sink.sent.size() == 10);
+}
+
+TEST_CASE(twister_output_ignores_unmapped_encoder_without_blanking) {
+    synth::ParameterManager::UIState ui;
+    ui.Configure(1, 2, 1, 0);
+    auto& mappedCell = ui.slots[0].cells[0];
+    mappedCell.connected.store(true);
+    mappedCell.voiceCount.store(1);
+    mappedCell.values[0].store(0.5f);
+    mappedCell.color.Store(synth::Color::Green);
+    mappedCell.indicatorColors[0].Store(synth::Color::Cyan);
+    mappedCell.brightness.store(1.0f);
+
+    FakeMidiSink sink;
+    synth::MidiSender sender;
+    sender.SetSink(0, &sink);
+    sender.Start();
+    auto config = synth::EncoderMidiOutConfig::TwisterDefault(0);
+    config.KeepFirstPositions(1);
+    synth::TwisterMidiOutProcessor processor(config, &sender, &ui);
+
+    processor.Process();
+    sender.FlushForTests(std::chrono::milliseconds(500));
+    sender.Stop();
+
+    REQUIRE_TRUE(sink.sent.size() == 5);
+    for (const synth::BasicMidi& message : sink.sent) {
+        REQUIRE_TRUE(message.GetCC() == 0);
+    }
 }
 
 TEST_CASE(twister_output_uses_ui_state_brightness) {
@@ -4970,6 +5048,8 @@ TEST_CASE(twister_output_uses_ui_state_brightness) {
     REQUIRE_TRUE(sink.sent.size() == 5);
     REQUIRE_TRUE(sink.sent[1].Channel() == 2);
     REQUIRE_TRUE(sink.sent[1].GetValue() == 32);
+    REQUIRE_TRUE(sink.sent[3].Channel() == 5);
+    REQUIRE_TRUE(sink.sent[3].GetValue() == 80);
 }
 
 TEST_CASE(wrld_bldr_output_sends_value_and_source_derived_sysex) {

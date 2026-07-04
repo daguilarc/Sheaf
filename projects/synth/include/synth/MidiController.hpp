@@ -361,7 +361,7 @@ private:
         std::uint8_t color = 0;
         std::uint8_t brightness = 0;
         std::uint8_t indicatorValue = 0;
-        std::uint8_t indicatorColor = 0;
+        std::uint8_t indicatorBrightness = 0;
     };
 
     std::vector<CacheEntry> cache_;

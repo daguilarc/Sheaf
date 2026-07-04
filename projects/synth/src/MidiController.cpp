@@ -18,12 +18,12 @@ std::uint8_t FloatTo7Bit(float value) {
     return Clamp7Bit(static_cast<int>(std::lround(std::clamp(value, 0.0f, 1.0f) * 127.0f)));
 }
 
-std::uint8_t BrightnessToTwisterAnimationValue(float brightness) {
-    if (brightness <= 0.0f) {
-        return 0;
-    }
-    // MF Twister animation/brightness CCs use 17..47 for the connected brightness band.
+std::uint8_t TwisterRgbBrightnessValue(float brightness) {
     return Clamp7Bit(static_cast<int>(std::lround(17.0f + std::clamp(brightness, 0.0f, 1.0f) * 30.0f)));
+}
+
+std::uint8_t TwisterIndicatorBrightnessValue(float brightness) {
+    return Clamp7Bit(static_cast<int>(std::lround(65.0f + std::clamp(brightness, 0.0f, 1.0f) * 30.0f)));
 }
 
 EncoderMidiInConfig RowMajorInputDefault(std::size_t slotIx) {
@@ -712,13 +712,11 @@ void MidiOutProcessor::Reset() {}
 
 std::optional<MidiOutProcessor::CellSnapshot> MidiOutProcessor::LoadCellSnapshot(
     const EncoderMidiOutMapping& mapping) const {
-    // A mapping that targets a slot/position the app never realized (e.g. a
-    // full 16-encoder default profile hosted by an app with fewer physical
-    // encoders) has no backing cell. Such a position is legitimately a
-    // disconnected cell: return a default (blank) snapshot so the output
-    // processor drives its hardware LED off (color/indicator Off, brightness
-    // 0) rather than leaving it showing stale state. `std::nullopt` is
-    // reserved for transient torn reads, which callers skip and retry.
+    // Configured output mappings are app-independent. When a mapped slot or
+    // position has no backing UI cell in the current view, treat that mapping
+    // as stable blank feedback so hardware does not keep showing stale state.
+    // `std::nullopt` is reserved for transient torn reads, which callers skip
+    // and retry.
     if (uiState_ == nullptr || mapping.slotIx >= uiState_->slotCapacity) {
         return CellSnapshot{};
     }
@@ -776,10 +774,10 @@ void TwisterMidiOutProcessor::Process() {
         const bool blank = !snapshot->connected || snapshot->voiceCount == 0;
         const std::uint8_t value = blank ? 0 : FloatTo7Bit(NormalizeForDisplay(snapshot->value, snapshot->bipolar));
         const std::uint8_t color = blank ? 0 : ColorToTwister(snapshot->color);
-        const std::uint8_t brightness = blank ? 0 : BrightnessToTwisterAnimationValue(snapshot->brightness);
+        const std::uint8_t brightness = TwisterRgbBrightnessValue(blank ? 0.0f : snapshot->brightness);
         // Twister uses channel 4 for the indicator/ring position, mirroring the value ring.
         const std::uint8_t indicatorValue = value;
-        const std::uint8_t indicatorColor = blank ? 0 : ColorToTwister(snapshot->indicatorColor);
+        const std::uint8_t indicatorBrightness = TwisterIndicatorBrightnessValue(blank ? 0.0f : snapshot->brightness);
         CacheEntry& cache = cache_[ix];
         if (!cache.valid || cache.color != color) {
             Enqueue(BasicMidi::CC(0, 1, mapping.cc, color));
@@ -790,8 +788,8 @@ void TwisterMidiOutProcessor::Process() {
         if (!cache.valid || cache.indicatorValue != indicatorValue) {
             Enqueue(BasicMidi::CC(0, 4, mapping.cc, indicatorValue));
         }
-        if (!cache.valid || cache.indicatorColor != indicatorColor) {
-            Enqueue(BasicMidi::CC(0, 5, mapping.cc, indicatorColor));
+        if (!cache.valid || cache.indicatorBrightness != indicatorBrightness) {
+            Enqueue(BasicMidi::CC(0, 5, mapping.cc, indicatorBrightness));
         }
         if (!cache.valid || cache.value != value) {
             Enqueue(BasicMidi::CC(0, 0, mapping.cc, value));
@@ -801,7 +799,7 @@ void TwisterMidiOutProcessor::Process() {
                  .color = color,
                  .brightness = brightness,
                  .indicatorValue = indicatorValue,
-                 .indicatorColor = indicatorColor};
+                 .indicatorBrightness = indicatorBrightness};
     }
 }
 
@@ -2154,7 +2152,7 @@ std::uint8_t ColorToTwister(Color color) {
 }
 
 std::uint8_t FullBrightnessAnimationValue() {
-    return BrightnessToTwisterAnimationValue(1.0f);
+    return TwisterRgbBrightnessValue(1.0f);
 }
 
 BasicMidi WrldBldrColorSysex(std::uint64_t timestamp, std::uint8_t channel, std::uint8_t cc, Color color) {
