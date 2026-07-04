@@ -83,7 +83,15 @@ WHEN a section is expanded, THE runtime library SHALL reconstruct, via pure JUCE
 - **THEN** the commit is refused with a reason and the config is unchanged
 
 ### Requirement: sru-11 — Controllers page: presentation stability, add, and delete
-WHILE a section is expanded, THE runtime library SHALL keep its presentation's grouping stable — reconstruction runs only at the collapsed-to-expanded transition, and view-model rebuilds re-resolve rows by identity (encoders: push-flag/slot/position; analog: gesture index plus a scene-blend sentinel; system: the press sort key including its address tuple, plus an occurrence ordinal so associations sharing both message and address still resolve to distinct rows) without re-grouping, dropping rows whose identity no longer resolves and appending unknown identities as individual rows; collapsing and re-expanding SHALL present the fresh minimal reconstruction; each mapping group SHALL offer "+" (append one config with next-free defaults) and, where blocks apply, "+B" (append a block, committed as its expansion) which append presentation rows in place without re-grouping; individual mapping rows and block rows SHALL be deletable (a block delete removes all its cells in one commit); config-level rows (relative mode, turn step, scene blend) SHALL NOT be deletable.
+WHILE a section is expanded, THE runtime library SHALL keep its presentation's grouping stable — reconstruction runs only at the collapsed-to-expanded transition, and view-model rebuilds re-resolve rows by identity (encoders: push-flag/slot/position; analog: gesture index plus a scene-blend sentinel; system: the press sort key including its address tuple, plus an occurrence ordinal so associations sharing both message and address still resolve to distinct rows) without re-grouping, dropping rows whose identity no longer resolves and appending unknown identities as individual rows; collapsing and re-expanding SHALL present the fresh minimal reconstruction; each addable mapping group SHALL offer "+" (append one config with next-free defaults) and, where blocks apply, "+B" (append a block, committed as its expansion) which append presentation rows in place without re-grouping — EVEN WHEN the group is currently empty, so an empty section is never a dead end, and adding the first mapping into a section whose profile-config container is absent (no encoder-input or analog-input) SHALL create that container as part of the commit; individual mapping rows and block rows SHALL be deletable (a block delete removes all its cells in one commit); config-level rows (relative mode, turn step, scene blend) SHALL NOT be deletable.
+
+#### Scenario: Empty group still offers add
+- **WHEN** a controller's section (e.g. system messages, or analog gestures) currently has zero mappings
+- **THEN** the section still shows the group's "+" (and "+B" where blocks apply) so the first mapping can be added
+
+#### Scenario: First add creates an absent container
+- **WHEN** the user adds the first encoder (or analog) mapping to a controller whose config has no encoder-input (or analog-input) container
+- **THEN** the commit creates the container and adds the mapping rather than refusing
 
 #### Scenario: Duplicate messages resolve distinctly
 - **WHEN** two associations at different addresses both send scene-select 0 and one is deleted
