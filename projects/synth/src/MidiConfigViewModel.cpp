@@ -2784,11 +2784,19 @@ bool MidiConfigViewModel::AddSingle(std::size_t controllerIx, MidiConfigSection 
     MidiControllerSlot& slot = scratch.controllers[controllerIx];
 
     if (section == MidiConfigSection::Encoders && (group == RowGroup::EncoderTurn || group == RowGroup::EncoderPush)) {
+        // sru-11 "first add creates an absent container": a controller kind
+        // that supports encoders (KindSupport) but hasn't been given an
+        // encoder-input container yet (e.g. a freshly-added generic
+        // controller, AddControllerGenericSeedsEmptyConfig) still offers
+        // "+"/"+B" on its (empty) Encoders section -- so create a fresh,
+        // default-constructed EncoderMidiInConfig here instead of refusing;
+        // default relativeMode/turnStep are fine starting points, same as
+        // any other freshly-seeded profile. SlotValidForKind below still
+        // guards a kind that genuinely doesn't support encoders (unreachable
+        // in practice since sections are kind-filtered, but belt-and-
+        // suspenders per this method's header doc comment).
         if (!slot.config.encoderInput.has_value()) {
-            if (reason != nullptr) {
-                *reason = "controller has no encoder input";
-            }
-            return false;
+            slot.config.encoderInput = EncoderMidiInConfig{};
         }
         const bool isPush = group == RowGroup::EncoderPush;
         std::vector<EncoderMidiMapping>& mappings = isPush ? slot.config.encoderInput->pushes
@@ -2802,11 +2810,10 @@ bool MidiConfigViewModel::AddSingle(std::size_t controllerIx, MidiConfigSection 
         mapping.position = NextFreeEncoderPosition(mappings);
         mappings.push_back(mapping);
     } else if (section == MidiConfigSection::Analogs && group == RowGroup::AnalogGesture) {
+        // Same "first add creates an absent container" rule as encoders
+        // above, for AnalogMidiInConfig.
         if (!slot.config.analogInput.has_value()) {
-            if (reason != nullptr) {
-                *reason = "controller has no analog input";
-            }
-            return false;
+            slot.config.analogInput = AnalogMidiInConfig{};
         }
         std::vector<AnalogMidiMapping>& mappings = slot.config.analogInput->gestures;
         const std::uint8_t channel = mappings.empty() ? std::uint8_t{0} : mappings.front().control.channel;
@@ -2943,11 +2950,10 @@ bool MidiConfigViewModel::AddBlock(std::size_t controllerIx, MidiConfigSection s
     constexpr std::size_t kDefaultBlockWidth = 2;
 
     if (section == MidiConfigSection::Encoders && (group == RowGroup::EncoderTurn || group == RowGroup::EncoderPush)) {
+        // sru-11 "first add creates an absent container" -- same rule as
+        // AddSingle's Encoders branch above, for a "+B" on an empty section.
         if (!slot.config.encoderInput.has_value()) {
-            if (reason != nullptr) {
-                *reason = "controller has no encoder input";
-            }
-            return false;
+            slot.config.encoderInput = EncoderMidiInConfig{};
         }
         const bool isPush = group == RowGroup::EncoderPush;
         std::vector<EncoderMidiMapping>& mappings = isPush ? slot.config.encoderInput->pushes
@@ -2989,11 +2995,10 @@ bool MidiConfigViewModel::AddBlock(std::size_t controllerIx, MidiConfigSection s
         out = std::move(scratch);
         return true;
     } else if (section == MidiConfigSection::Analogs && group == RowGroup::AnalogGesture) {
+        // Same "first add creates an absent container" rule as AddSingle's
+        // Analogs branch above.
         if (!slot.config.analogInput.has_value()) {
-            if (reason != nullptr) {
-                *reason = "controller has no analog input";
-            }
-            return false;
+            slot.config.analogInput = AnalogMidiInConfig{};
         }
         std::vector<AnalogMidiMapping>& mappings = slot.config.analogInput->gestures;
         const std::uint8_t channel = mappings.empty() ? std::uint8_t{0} : mappings.front().control.channel;

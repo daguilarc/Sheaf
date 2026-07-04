@@ -2768,6 +2768,107 @@ TEST_CASE(AddBlockRefusedForTwister) {
     REQUIRE_TRUE(!reason.empty());
 }
 
+// --- sru-11: first add creates an absent container --------------------------
+//
+// A Generic controller (MakeGenericSlot) starts with encoderInput and
+// analogInput both nullopt (AddControllerGenericSeedsEmptyConfig already
+// pins this). Before this fix, AddSingle/AddBlock's Encoders/Analogs
+// branches refused outright ("controller has no encoder/analog input") when
+// the container was absent -- making an empty section's "+"/"+B" a dead end
+// even though GroupSupportsAdd/GroupSupportsBlocks (dispatch-level, kind-only)
+// say the group IS addable. Fix: create a default-constructed container as
+// part of the commit, then add into it, exactly like a controller that
+// already had one.
+TEST_CASE(AddSingleEncoderTurnCreatesAbsentEncoderInputContainer) {
+    MidiConfigViewModel vm;
+    MidiInstrumentConfig instrument;
+    instrument.AddController(MakeGenericSlot("gen"));
+    MidiConnectionState connection = MakeSingleControllerConnection();
+    vm.Rebuild(instrument, connection);
+    REQUIRE_TRUE(!instrument.controllers[0].config.encoderInput.has_value());
+
+    MidiInstrumentConfig out;
+    std::string reason;
+    REQUIRE_TRUE(
+        vm.AddSingle(0, MidiConfigSection::Encoders, MidiMappingRowVM::RowGroup::EncoderTurn, out, &reason));
+    REQUIRE_TRUE(reason.empty());
+    REQUIRE_TRUE(out.controllers[0].config.encoderInput.has_value());
+    REQUIRE_TRUE(out.controllers[0].config.encoderInput->turns.size() == 1);
+    REQUIRE_TRUE(out.controllers[0].config.encoderInput->pushes.empty());
+    // Default-constructed relativeMode/turnStep are fine (brief: "default
+    // relativeMode/turnStep are fine").
+    REQUIRE_TRUE(out.controllers[0].config.encoderInput->relativeMode == EncoderRelativeMode::Signed7Bit);
+}
+
+TEST_CASE(AddSingleEncoderPushCreatesAbsentEncoderInputContainer) {
+    MidiConfigViewModel vm;
+    MidiInstrumentConfig instrument;
+    instrument.AddController(MakeGenericSlot("gen"));
+    MidiConnectionState connection = MakeSingleControllerConnection();
+    vm.Rebuild(instrument, connection);
+
+    MidiInstrumentConfig out;
+    std::string reason;
+    REQUIRE_TRUE(
+        vm.AddSingle(0, MidiConfigSection::Encoders, MidiMappingRowVM::RowGroup::EncoderPush, out, &reason));
+    REQUIRE_TRUE(reason.empty());
+    REQUIRE_TRUE(out.controllers[0].config.encoderInput.has_value());
+    REQUIRE_TRUE(out.controllers[0].config.encoderInput->pushes.size() == 1);
+    REQUIRE_TRUE(out.controllers[0].config.encoderInput->turns.empty());
+}
+
+TEST_CASE(AddSingleAnalogGestureCreatesAbsentAnalogInputContainer) {
+    MidiConfigViewModel vm;
+    MidiInstrumentConfig instrument;
+    instrument.AddController(MakeGenericSlot("gen"));
+    MidiConnectionState connection = MakeSingleControllerConnection();
+    vm.Rebuild(instrument, connection);
+    REQUIRE_TRUE(!instrument.controllers[0].config.analogInput.has_value());
+
+    MidiInstrumentConfig out;
+    std::string reason;
+    REQUIRE_TRUE(
+        vm.AddSingle(0, MidiConfigSection::Analogs, MidiMappingRowVM::RowGroup::AnalogGesture, out, &reason));
+    REQUIRE_TRUE(reason.empty());
+    REQUIRE_TRUE(out.controllers[0].config.analogInput.has_value());
+    REQUIRE_TRUE(out.controllers[0].config.analogInput->gestures.size() == 1);
+    // No scene blend seeded by this add -- absence is a valid, common state.
+    REQUIRE_TRUE(!out.controllers[0].config.analogInput->sceneBlend.has_value());
+}
+
+TEST_CASE(AddBlockEncoderTurnCreatesAbsentEncoderInputContainer) {
+    MidiConfigViewModel vm;
+    MidiInstrumentConfig instrument;
+    instrument.AddController(MakeGenericSlot("gen"));
+    MidiConnectionState connection = MakeSingleControllerConnection();
+    vm.Rebuild(instrument, connection);
+
+    MidiInstrumentConfig out;
+    std::string reason;
+    REQUIRE_TRUE(
+        vm.AddBlock(0, MidiConfigSection::Encoders, MidiMappingRowVM::RowGroup::EncoderTurn, out, &reason));
+    REQUIRE_TRUE(reason.empty());
+    REQUIRE_TRUE(out.controllers[0].config.encoderInput.has_value());
+    // Default block width is 2.
+    REQUIRE_TRUE(out.controllers[0].config.encoderInput->turns.size() == 2);
+}
+
+TEST_CASE(AddBlockAnalogGestureCreatesAbsentAnalogInputContainer) {
+    MidiConfigViewModel vm;
+    MidiInstrumentConfig instrument;
+    instrument.AddController(MakeGenericSlot("gen"));
+    MidiConnectionState connection = MakeSingleControllerConnection();
+    vm.Rebuild(instrument, connection);
+
+    MidiInstrumentConfig out;
+    std::string reason;
+    REQUIRE_TRUE(
+        vm.AddBlock(0, MidiConfigSection::Analogs, MidiMappingRowVM::RowGroup::AnalogGesture, out, &reason));
+    REQUIRE_TRUE(reason.empty());
+    REQUIRE_TRUE(out.controllers[0].config.analogInput.has_value());
+    REQUIRE_TRUE(out.controllers[0].config.analogInput->gestures.size() == 2);
+}
+
 TEST_CASE(DeleteIndividualRowRemovesExactlyThatConfigElement) {
     MidiConfigViewModel vm;
     MidiInstrumentConfig instrument = MakeSingleTurnWrldBldrInstrument();
@@ -2886,9 +2987,15 @@ TEST_CASE(AddSingleCommitNormalizes) {
 
     MidiInstrumentConfig out;
     std::string reason;
+    // "gen" has no analogInput container yet -- sru-11's "first add creates
+    // an absent container" means this now SUCCEEDS (creating a fresh
+    // AnalogMidiInConfig) rather than refusing; `out` from this call is
+    // discarded (SystemMessages is what this test actually cares about
+    // normalizing) but it must still commit cleanly.
     REQUIRE_TRUE(
-        vm.AddSingle(0, MidiConfigSection::Analogs, MidiMappingRowVM::RowGroup::AnalogGesture, out, &reason) ==
-        false);  // "gen" has no analogInput -- refused; use SystemMessages instead below
+        vm.AddSingle(0, MidiConfigSection::Analogs, MidiMappingRowVM::RowGroup::AnalogGesture, out, &reason));
+    REQUIRE_TRUE(reason.empty());
+    REQUIRE_TRUE(out.controllers[0].config.analogInput.has_value());
     REQUIRE_TRUE(
         vm.AddSingle(0, MidiConfigSection::SystemMessages, MidiMappingRowVM::RowGroup::System, out, &reason));
 
@@ -3048,18 +3155,21 @@ TEST_CASE(GroupSupportsAddAndBlocksMatchesAddSingleAddBlockDispatch) {
     //     OWN matching dispatch branch -- i.e. its refusal reason (if any)
     //     must not be the generic catch-all each function's dispatch itself
     //     falls through to ("this group does not support adding
-    //     [a block/individual rows]"). Two concrete cases exercised by this
-    //     fixture below: AddSingle(twister, Analogs, AnalogGesture) refuses
-    //     with "controller has no analog input" (GroupSupportsAdd doesn't
-    //     vary by controller kind, per its own doc comment, even though
-    //     AddSingle obviously can't add an analog mapping to a twister,
-    //     which has no analogInput at all); AddBlock(wrldbldr, Analogs,
-    //     AnalogGesture) refuses with a duplicate-address reason (wrldbldr's
-    //     default profile densely packs gestureIx 0-15 across two channels,
-    //     leaving channel 2 cc0 -- the sceneBlend address, not a gesture --
-    //     as the lone free single cc; AddBlock's default 2-wide block then
-    //     walks into the already-occupied cc1). Both are genuine dispatch
-    //     agreement with a documented runtime refusal, not drift.
+    //     [a block/individual rows]"). One concrete case exercised by this
+    //     fixture below: AddBlock(wrldbldr, Analogs, AnalogGesture) refuses
+    //     with a duplicate-address reason (wrldbldr's default profile
+    //     densely packs gestureIx 0-15 across two channels, leaving channel 2
+    //     cc0 -- the sceneBlend address, not a gesture -- as the lone free
+    //     single cc; AddBlock's default 2-wide block then walks into the
+    //     already-occupied cc1) -- a genuine dispatch agreement with a
+    //     documented runtime refusal, not drift. sru-11's "first add creates
+    //     an absent container" means AddSingle/AddBlock(twister, Analogs,
+    //     AnalogGesture) no longer refuse with "controller has no analog
+    //     input" -- they now CREATE the container and proceed, then refuse at
+    //     SlotValidForKind with "analog input not supported by this
+    //     controller kind" instead (MfTwister's KindSupport().analogs is
+    //     false) -- still a genuine in-branch runtime refusal, not the
+    //     dispatch catch-all, so this loop's assertions still hold.
     const std::size_t controllerCount = 4;  // wrld, twist, pads, blank
     const MidiConfigSection sections[] = {MidiConfigSection::Encoders, MidiConfigSection::SystemMessages,
                                           MidiConfigSection::Analogs};
