@@ -103,6 +103,21 @@ inline float ZeroBasedExponentialMap(float normalized, float base, float maxValu
     return maxValue * (std::pow(base, knob) - 1.0f) / (base - 1.0f);
 }
 
+inline constexpr float kModulationDepthTargetMaxAbs = 1.0f;
+inline constexpr float kModulationDepthTargetHalfpointAbs = 0.125f;
+inline constexpr float kModulationDepthTargetBase =
+    ZeroBasedExponentialBaseFromMidpoint(kModulationDepthTargetHalfpointAbs, kModulationDepthTargetMaxAbs);
+
+inline float ModulationDepthTargetFromKnob(float signedKnob) {
+    const float bipolar = std::clamp(signedKnob, -1.0f, 1.0f);
+    if (bipolar == 0.0f) {
+        return 0.0f;
+    }
+    const float magnitude =
+        ZeroBasedExponentialMap(std::fabs(bipolar), kModulationDepthTargetBase, kModulationDepthTargetMaxAbs);
+    return std::copysign(magnitude, bipolar);
+}
+
 enum class Status {
     Ok,
     InvalidConfig,

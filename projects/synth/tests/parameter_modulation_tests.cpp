@@ -712,8 +712,8 @@ TEST_CASE(modulation_normalization_under_one) {
 
     parameter.Compute({.leftScene = 0, .rightScene = 0, .blend = 0.0f});
 
-    REQUIRE_NEAR(parameter.TargetCenterScale(0), 0.75f, 0.0001f);
-    REQUIRE_NEAR(parameter.TargetDepths(0)[0], 0.25f, 0.0001f);
+    REQUIRE_NEAR(parameter.TargetCenterScale(0), 0.9657135f, 0.0001f);
+    REQUIRE_NEAR(parameter.TargetDepths(0)[0], 0.0342865f, 0.0001f);
 }
 
 TEST_CASE(modulation_normalization_over_one_preserves_sign) {
@@ -774,22 +774,22 @@ TEST_CASE(negative_modulation_depths_add_normalization_offset) {
     parameter.Compute({.leftScene = 0, .rightScene = 0, .blend = 0.0f});
     parameter.ProcessLite();
 
-    REQUIRE_NEAR(parameter.TargetCenterScale(0), 0.25f, 0.0001f);
-    REQUIRE_NEAR(parameter.TargetNormalizationOffset(0), 0.5f, 0.0001f);
-    REQUIRE_NEAR(parameter.TargetDepths(0)[0], 0.25f, 0.0001f);
-    REQUIRE_NEAR(parameter.TargetDepths(0)[1], -0.5f, 0.0001f);
+    REQUIRE_NEAR(parameter.TargetCenterScale(0), 0.8407135f, 0.0001f);
+    REQUIRE_NEAR(parameter.TargetNormalizationOffset(0), 0.125f, 0.0001f);
+    REQUIRE_NEAR(parameter.TargetDepths(0)[0], 0.0342865f, 0.0001f);
+    REQUIRE_NEAR(parameter.TargetDepths(0)[1], -0.125f, 0.0001f);
 
     group.GetModulators().Value(0, 0) = 0.0f;
     group.GetModulators().Value(0, 1) = 0.0f;
-    REQUIRE_NEAR(parameter.GetRaw(0), 0.625f, 0.0001f);
+    REQUIRE_NEAR(parameter.GetRaw(0), 0.5453568f, 0.0001f);
 
     group.GetModulators().Value(0, 0) = 1.0f;
     group.GetModulators().Value(0, 1) = 0.0f;
-    REQUIRE_NEAR(parameter.GetRaw(0), 0.875f, 0.0001f);
+    REQUIRE_NEAR(parameter.GetRaw(0), 0.5796432f, 0.0001f);
 
     group.GetModulators().Value(0, 0) = 0.0f;
     group.GetModulators().Value(0, 1) = 1.0f;
-    REQUIRE_NEAR(parameter.GetRaw(0), 0.125f, 0.0001f);
+    REQUIRE_NEAR(parameter.GetRaw(0), 0.4203568f, 0.0001f);
 }
 
 TEST_CASE(overfull_negative_modulation_offset_uses_normalized_depths) {
@@ -837,6 +837,110 @@ TEST_CASE(overfull_negative_modulation_offset_uses_normalized_depths) {
     REQUIRE_NEAR(parameter.GetRaw(0), 0.0f, 0.0001f);
 }
 
+TEST_CASE(recursive_modulation_depth_targets_use_bipolar_zero_based_exponential_curve) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 1,
+        .numScenes = 1,
+        .maxParameters = 2,
+    });
+
+    auto& carrier = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.5f});
+    synth::Parameter* depth = carrier.EnsureModulationDepth(0);
+    REQUIRE_TRUE(depth != nullptr);
+
+    struct Case {
+        float knob;
+        float expectedDepth;
+    };
+    const std::array<Case, 5> cases{{
+        {.knob = -1.0f, .expectedDepth = -1.0f},
+        {.knob = -0.5f, .expectedDepth = -0.125f},
+        {.knob = 0.0f, .expectedDepth = 0.0f},
+        {.knob = 0.5f, .expectedDepth = 0.125f},
+        {.knob = 1.0f, .expectedDepth = 1.0f},
+    }};
+
+    for (const Case& testCase : cases) {
+        depth->SceneCenter(0) = testCase.knob;
+        carrier.Compute({.leftScene = 0, .rightScene = 0, .blend = 0.0f});
+        REQUIRE_NEAR(depth->GetRaw(0), testCase.knob, 0.0001f);
+        REQUIRE_NEAR(carrier.TargetDepths(0)[0], testCase.expectedDepth, 0.0001f);
+    }
+}
+
+TEST_CASE(recursive_modulation_depth_half_turn_sets_one_eighth_raw_depth_before_normalization) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 1,
+        .numScenes = 1,
+        .maxParameters = 2,
+    });
+
+    auto& carrier = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.5f});
+    synth::Parameter* depth = carrier.EnsureModulationDepth(0);
+    REQUIRE_TRUE(depth != nullptr);
+    depth->SceneCenter(0) = 0.5f;
+
+    carrier.Compute({.leftScene = 0, .rightScene = 0, .blend = 0.0f});
+
+    REQUIRE_NEAR(carrier.TargetDepths(0)[0], 0.125f, 0.0001f);
+    REQUIRE_NEAR(carrier.TargetCenterScale(0), 0.875f, 0.0001f);
+    REQUIRE_NEAR(carrier.TargetNormalizationOffset(0), 0.0f, 0.0001f);
+}
+
+TEST_CASE(curved_modulation_depth_targets_still_use_signed_normalization) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 2,
+        .numScenes = 1,
+        .maxParameters = 3,
+        .processLiteAlpha = 1.0f,
+    });
+
+    auto& carrier = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.5f});
+    synth::Parameter* positive = carrier.EnsureModulationDepth(0);
+    synth::Parameter* negative = carrier.EnsureModulationDepth(1);
+    REQUIRE_TRUE(positive != nullptr);
+    REQUIRE_TRUE(negative != nullptr);
+    positive->SceneCenter(0) = 1.0f;
+    negative->SceneCenter(0) = -1.0f;
+
+    carrier.Compute({.leftScene = 0, .rightScene = 0, .blend = 0.0f});
+    carrier.ProcessLite();
+
+    REQUIRE_NEAR(carrier.TargetCenterScale(0), 0.0f, 0.0001f);
+    REQUIRE_NEAR(carrier.TargetNormalizationOffset(0), 0.5f, 0.0001f);
+    REQUIRE_NEAR(carrier.TargetDepths(0)[0], 0.5f, 0.0001f);
+    REQUIRE_NEAR(carrier.TargetDepths(0)[1], -0.5f, 0.0001f);
+}
+
+TEST_CASE(curved_modulation_depth_targets_keep_modulator_dot_product_linear) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 1,
+        .numScenes = 1,
+        .maxParameters = 2,
+        .processLiteAlpha = 1.0f,
+    });
+
+    auto& carrier = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.0f});
+    synth::Parameter* depth = carrier.EnsureModulationDepth(0);
+    REQUIRE_TRUE(depth != nullptr);
+    depth->SceneCenter(0) = 0.5f;
+
+    carrier.Compute({.leftScene = 0, .rightScene = 0, .blend = 0.0f});
+    carrier.ProcessLite();
+
+    group.GetModulators().Value(0, 0) = 0.8f;
+    REQUIRE_NEAR(carrier.CurrentDepths(0)[0], 0.125f, 0.0001f);
+    REQUIRE_NEAR(carrier.GetRaw(0), 0.1f, 0.0001f);
+}
+
 TEST_CASE(parameter_get_raw_includes_normalization_offset) {
     synth::ParameterManager manager;
     synth::ParameterGroupConfig config{
@@ -860,7 +964,7 @@ TEST_CASE(parameter_get_raw_includes_normalization_offset) {
     manager.ComputeAllParameters();
     group.UpdateModValues();
     parameter.ProcessLite();
-    REQUIRE_NEAR(parameter.GetRaw(0), 0.625f, 0.0001f);
+    REQUIRE_NEAR(parameter.GetRaw(0), 0.5453568f, 0.0001f);
 }
 
 TEST_CASE(ui_state_min_max_reports_underfull_modulation_reachable_range) {
@@ -892,8 +996,8 @@ TEST_CASE(ui_state_min_max_reports_underfull_modulation_reachable_range) {
 
     synth::Parameter::UIState ui(1);
     parameter.PopulateUIState(ui);
-    REQUIRE_NEAR(ui.minValues[0].load(), 0.125f, 0.0001f);
-    REQUIRE_NEAR(ui.maxValues[0].load(), 0.875f, 0.0001f);
+    REQUIRE_NEAR(ui.minValues[0].load(), 0.4203568f, 0.0001f);
+    REQUIRE_NEAR(ui.maxValues[0].load(), 0.5796432f, 0.0001f);
 }
 
 TEST_CASE(ui_state_min_max_reports_full_range_when_modulation_is_overfull) {
@@ -955,8 +1059,8 @@ TEST_CASE(nested_depth_route_reads_get_and_bypasses_slew) {
     REQUIRE_TRUE(depth.RecursionDepth() == 1);
     REQUIRE_NEAR(depth.CurrentCenter(), 0.8f, 0.0001f);
     REQUIRE_NEAR(depth.GetRaw(0), 0.8f, 0.0001f);
-    REQUIRE_NEAR(carrier.TargetDepths(0)[0], 0.8f, 0.0001f);
-    REQUIRE_NEAR(carrier.TargetCenterScale(0), 0.2f, 0.0001f);
+    REQUIRE_NEAR(carrier.TargetDepths(0)[0], 0.4478890f, 0.0001f);
+    REQUIRE_NEAR(carrier.TargetCenterScale(0), 0.5521110f, 0.0001f);
 }
 
 TEST_CASE(process_lite_slews_center_scale_offset_and_depths) {
@@ -984,13 +1088,13 @@ TEST_CASE(process_lite_slews_center_scale_offset_and_depths) {
     parameter.ProcessLite();
 
     REQUIRE_NEAR(parameter.CurrentCenter(), 0.25f, 0.0001f);
-    REQUIRE_NEAR(parameter.CurrentCenterScale(0), 0.875f, 0.0001f);
-    REQUIRE_NEAR(parameter.CurrentNormalizationOffset(0), 0.125f, 0.0001f);
-    REQUIRE_NEAR(parameter.CurrentDepths(0)[0], -0.125f, 0.0001f);
+    REQUIRE_NEAR(parameter.CurrentCenterScale(0), 0.96875f, 0.0001f);
+    REQUIRE_NEAR(parameter.CurrentNormalizationOffset(0), 0.03125f, 0.0001f);
+    REQUIRE_NEAR(parameter.CurrentDepths(0)[0], -0.03125f, 0.0001f);
 
     synth::Parameter::UIState ui(1);
     parameter.PopulateUIState(ui);
-    REQUIRE_NEAR(ui.minValues[0].load(), 0.125f, 0.0001f);
+    REQUIRE_NEAR(ui.minValues[0].load(), 0.21875f, 0.0001f);
     REQUIRE_NEAR(ui.maxValues[0].load(), 0.25f, 0.0001f);
 }
 
@@ -1750,10 +1854,10 @@ TEST_CASE(manager_mapping_helpers_map_cached_voice_value) {
     carrier.Compute(manager.Scene());
     carrier.ProcessLite();
 
-    REQUIRE_NEAR(carrier.GetRaw(0), 0.6f, 0.0001f);
-    REQUIRE_NEAR(manager.GetLinear(10.0f, 20.0f, 0, carrierId), 16.0f, 0.0001f);
-    REQUIRE_NEAR(manager.GetBipolarLinear(2.0f, 0, carrierId), 1.2f, 0.0001f);
-    REQUIRE_NEAR(manager.GetBipolarExponential(0.25f, 1.0f, 4.0f, 0, carrierId), std::pow(4.0f, 0.6f),
+    REQUIRE_NEAR(carrier.GetRaw(0), 0.3f, 0.0001f);
+    REQUIRE_NEAR(manager.GetLinear(10.0f, 20.0f, 0, carrierId), 13.0f, 0.0001f);
+    REQUIRE_NEAR(manager.GetBipolarLinear(2.0f, 0, carrierId), 0.6f, 0.0001f);
+    REQUIRE_NEAR(manager.GetBipolarExponential(0.25f, 1.0f, 4.0f, 0, carrierId), std::pow(4.0f, 0.3f),
                  0.0001f);
 }
 
@@ -5447,7 +5551,10 @@ void SimComputeAtDepth(SimOracle& oracle, std::size_t paramIx, std::size_t recur
         float weightSum = 0.0f;
         for (std::size_t modIx = 0; modIx < kSimMods; ++modIx) {
             const int route = parameter.route[modIx];
-            const float depth = route < 0 ? 0.0f : SimGetRaw(oracle, static_cast<std::size_t>(route), voiceIx);
+            const float depth =
+                route < 0 ? 0.0f
+                          : synth::ModulationDepthTargetFromKnob(
+                                SimGetRaw(oracle, static_cast<std::size_t>(route), voiceIx));
             parameter.targetDepth[voiceIx][modIx] = depth;
             weightSum += std::fabs(depth);
         }

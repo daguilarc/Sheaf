@@ -1417,7 +1417,8 @@ void Parameter::ComputeAtDepth(const SceneState& scene, std::size_t recursionDep
         float weightSum = 0.0f;
         for (std::size_t modIx = 0; modIx < group_.Config().numModulators; ++modIx) {
             const Parameter* depthParameter = modulationDepths_[modIx];
-            const float depth = depthParameter == nullptr ? 0.0f : depthParameter->GetRaw(voiceIx);
+            const float depth =
+                depthParameter == nullptr ? 0.0f : ModulationDepthTargetFromKnob(depthParameter->GetRaw(voiceIx));
             targetDepths_[VoiceModIndex(voiceIx, modIx)] = depth;
             weightSum += std::fabs(depth);
         }
