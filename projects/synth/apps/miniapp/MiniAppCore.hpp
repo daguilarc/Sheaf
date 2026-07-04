@@ -40,6 +40,7 @@ public:
     static constexpr std::size_t kVoiceCount = 2;
     static constexpr std::size_t kScopeFrames = 6'553'600;
     using VcoModule = synth::WavetableVcoModule<kVoiceCount>;
+    using FilterModule = synth::ClassicSvfModule<kVoiceCount>;
     using LfoModule = synth::BasicLfoModule<kVoiceCount>;
 
     // Test-support hook, mirroring EngineTestApp's testPatchesRoot pattern
@@ -90,6 +91,7 @@ public:
         context_->parameterManager->GestureMetadataAt(0).color = synth::Color::Orange;
 
         vcoModule_.RegisterParameters(*context_->parameterManager, group);
+        filterModule_.RegisterParameters(*context_->parameterManager, group, "Filter");
         lfoModule_.RegisterParameters(*context_->parameterManager, group, "LFO");
         vcoModule_.RegisterModulationSources(group, 0, 1);
         lfoModule_.RegisterModulationSource(group, 2);
@@ -98,14 +100,17 @@ public:
         shape_ = &context_->parameterManager->ParameterById(vcoModule_.Parameters().shape);
         phaseParam_ = &context_->parameterManager->ParameterById(vcoModule_.Parameters().phase);
         volume_ = &context_->parameterManager->ParameterById(vcoModule_.Parameters().volume);
+        filterCutoff_ = &context_->parameterManager->ParameterById(filterModule_.Parameters().cutoff);
+        filterResonance_ = &context_->parameterManager->ParameterById(filterModule_.Parameters().resonance);
+        filterBlend_ = &context_->parameterManager->ParameterById(filterModule_.Parameters().blend);
         lfoFrequency_ = &context_->parameterManager->ParameterById(lfoModule_.Parameters().frequency);
         lfoShape_ = &context_->parameterManager->ParameterById(lfoModule_.Parameters().shape);
         lfoPhaseOffset_ = &context_->parameterManager->ParameterById(lfoModule_.Parameters().phaseOffset);
         lfoSkew_ = &context_->parameterManager->ParameterById(lfoModule_.Parameters().skew);
         lfoExponent_ = &context_->parameterManager->ParameterById(lfoModule_.Parameters().exponent);
         parameters_ = {
-            tune_,        phaseParam_,     shape_,   volume_, lfoFrequency_,
-            lfoShape_,    lfoPhaseOffset_, lfoSkew_, lfoExponent_,
+            tune_,        phaseParam_,       shape_,        volume_,      filterCutoff_, filterResonance_,
+            filterBlend_, lfoFrequency_,     lfoShape_,     lfoPhaseOffset_, lfoSkew_,   lfoExponent_,
         };
 
         tune_->SetGestureActive(0, 0, true);
@@ -116,6 +121,9 @@ public:
         context_->parameterManager->AssignParameterToPage(vcoPage.ordinal, *phaseParam_);
         context_->parameterManager->AssignParameterToPage(vcoPage.ordinal, *shape_);
         context_->parameterManager->AssignParameterToPage(vcoPage.ordinal, *volume_);
+        context_->parameterManager->AssignParameterToPage(vcoPage.ordinal, *filterCutoff_);
+        context_->parameterManager->AssignParameterToPage(vcoPage.ordinal, *filterResonance_);
+        context_->parameterManager->AssignParameterToPage(vcoPage.ordinal, *filterBlend_);
         auto& lfoPage = context_->parameterManager->CreatePage("LFO");
         context_->parameterManager->AssignParameterToPage(lfoPage.ordinal, *lfoFrequency_);
         context_->parameterManager->AssignParameterToPage(lfoPage.ordinal, *lfoShape_);
@@ -128,11 +136,12 @@ public:
         lfoBank_ = &context_->parameterManager->CreateBank();
         lfoBank_->SetColor(synth::Color::Green);
         slot_ = &context_->parameterManager->CreateBankSlot();
-        for (auto encoder : {10u, 11u, 12u, 13u, 14u}) {
+        for (auto encoder : {10u, 11u, 12u, 13u, 14u, 15u, 16u}) {
             slot_->AddPhysicalEncoder(encoder);
         }
         slot_->SelectBank(vcoBank_);
         vcoModule_.RegisterToBank(*vcoBank_, 0);
+        filterModule_.RegisterToBank(*vcoBank_, 4);
         slot_->SelectBank(lfoBank_);
         lfoModule_.RegisterToBank(*lfoBank_, 0);
         slot_->SelectBank(vcoBank_);
@@ -176,6 +185,7 @@ public:
 
     void PrepareToPlay(double sampleRate, int /*blockSize*/) {
         vcoModule_.SetSampleRate(static_cast<float>(sampleRate));
+        filterModule_.SetSampleRate(static_cast<float>(sampleRate));
         lfoModule_.SetSampleRate(static_cast<float>(sampleRate));
     }
 
@@ -202,12 +212,17 @@ public:
             ProcessLiteParameters(parameters_);
             vcoModule_.SetInput(*context_->parameterManager);
             vcoModule_.Process();
+            filterModule_.SetInput(*context_->parameterManager);
+            for (std::size_t voiceIx = 0; voiceIx < kVoiceCount; ++voiceIx) {
+                filterModule_.SetVoiceInput(voiceIx, vcoModule_.Output(voiceIx));
+            }
+            filterModule_.Process();
             lfoModule_.SetInput(*context_->parameterManager);
             lfoModule_.Process();
 
             context_->parameterManager->UpdateModValues(*group_);
 
-            const float mixed = (vcoModule_.Output(0) + vcoModule_.Output(1)) * 0.5f;
+            const float mixed = (filterModule_.Output(0) + filterModule_.Output(1)) * 0.5f;
             for (int channel = 0; channel < block.numOutputChannels; ++channel) {
                 float* out = block.outputs[channel];
                 if (out == nullptr) {
@@ -220,6 +235,7 @@ public:
 
         scopeWriter_.Publish();
         vcoModule_.PopulateUIState(vcoUiStates_);
+        filterModule_.PopulateUIState(filterUiStates_);
         lfoModule_.PopulateUIState(lfoUiStates_);
     }
 
@@ -229,6 +245,7 @@ public:
     synth::ParameterGroup* Group() const { return group_; }
 
     const VcoModule::ParameterIds& VcoParameterIds() const { return vcoModule_.Parameters(); }
+    const FilterModule::ParameterIds& FilterParameterIds() const { return filterModule_.Parameters(); }
     const LfoModule::ParameterIds& LfoParameterIds() const { return lfoModule_.Parameters(); }
     const std::vector<synth::Parameter*>& Parameters() const { return parameters_; }
 
@@ -243,12 +260,15 @@ public:
     // paint, never writing through them; it needs a mutable pointer only
     // because SetUIStates()'s signature predates this const accessor.
     VcoModule::UIState& VcoUiState() { return vcoUiStates_; }
+    const FilterModule::UIState& FilterUiState() const { return filterUiStates_; }
+    FilterModule::UIState& FilterUiState() { return filterUiStates_; }
     const LfoModule::UIState& LfoUiState() const { return lfoUiStates_; }
     LfoModule::UIState& LfoUiState() { return lfoUiStates_; }
     const synth::ScopeWriter& Scope() const { return scopeWriter_; }
     const std::array<synth::ScopeWriterHolder, 4>& ScopeHolders() const { return scopeHolders_; }
 
     VcoModule& VcoModuleInstance() { return vcoModule_; }
+    FilterModule& FilterModuleInstance() { return filterModule_; }
     LfoModule& LfoModuleInstance() { return lfoModule_; }
 
 private:
@@ -258,6 +278,9 @@ private:
     synth::Parameter* phaseParam_ = nullptr;
     synth::Parameter* shape_ = nullptr;
     synth::Parameter* volume_ = nullptr;
+    synth::Parameter* filterCutoff_ = nullptr;
+    synth::Parameter* filterResonance_ = nullptr;
+    synth::Parameter* filterBlend_ = nullptr;
     synth::Parameter* lfoFrequency_ = nullptr;
     synth::Parameter* lfoShape_ = nullptr;
     synth::Parameter* lfoPhaseOffset_ = nullptr;
@@ -271,8 +294,10 @@ private:
     synth::ScopeWriter scopeWriter_{4, kScopeFrames};
     std::array<synth::ScopeWriterHolder, 4> scopeHolders_;
     VcoModule vcoModule_;
+    FilterModule filterModule_;
     LfoModule lfoModule_;
     VcoModule::UIState vcoUiStates_;
+    FilterModule::UIState filterUiStates_;
     LfoModule::UIState lfoUiStates_;
 };
 

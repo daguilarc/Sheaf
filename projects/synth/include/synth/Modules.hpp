@@ -1,5 +1,6 @@
 #pragma once
 
+#include "synth/DspFilters.hpp"
 #include "synth/DspOscillators.hpp"
 #include "synth/ParameterModulation.hpp"
 
@@ -476,6 +477,192 @@ private:
     std::array<BasicLFOProcessor, kVoiceCount> lfos_;
     std::array<float, kVoiceCount> outputs_{};
     std::array<float, kVoiceCount> modulationSources_{};
+};
+
+template<std::size_t Polyphony>
+class ClassicSvfModule {
+public:
+    static_assert(Polyphony > 0);
+
+    static constexpr std::size_t kVoiceCount = Polyphony;
+    static constexpr float kMinCutoffHz = 20.0f;
+    static constexpr float kMaxCutoffHz = 20000.0f;
+    static constexpr float kMinResonance = 0.5f;
+    static constexpr float kMaxResonance = 5.5f;
+
+    struct ParameterIds {
+        ParameterId cutoff = 0;
+        ParameterId resonance = 0;
+        ParameterId blend = 0;
+    };
+
+    struct VoiceInput {
+        ClassicStateVariableFilter::Input filter;
+    };
+
+    struct Input {
+        std::array<VoiceInput, kVoiceCount> voices{};
+    };
+
+    struct UIState {
+        std::array<ClassicStateVariableFilter::UIState, kVoiceCount> filters;
+    };
+
+    explicit ClassicSvfModule(float sampleRate = 48000.0f) {
+        SetSampleRate(sampleRate);
+    }
+    ClassicSvfModule(const ClassicSvfModule&) = delete;
+    ClassicSvfModule& operator=(const ClassicSvfModule&) = delete;
+    ClassicSvfModule(ClassicSvfModule&&) = delete;
+    ClassicSvfModule& operator=(ClassicSvfModule&&) = delete;
+
+    void RegisterParameters(ParameterManager& manager, ParameterGroup& group, std::string_view prefix = {}) {
+        if (registered_) {
+            throw std::logic_error("classic SVF module parameters already registered");
+        }
+
+        const std::array<std::string, 3> names{
+            EffectiveName(prefix, "Cutoff"),
+            EffectiveName(prefix, "Resonance"),
+            EffectiveName(prefix, "Blend"),
+        };
+        ValidateRegistration(manager, group, names, "classic SVF module");
+
+        parameterIds_.cutoff = manager.RegisterParameter(group, {
+                                                                    .name = names[0],
+                                                                    .shortName = "Cutoff",
+                                                                    .defaultValue = 1.0f,
+                                                                    .color = Color::Cyan,
+                                                                });
+        parameterIds_.resonance = manager.RegisterParameter(group, {
+                                                                       .name = names[1],
+                                                                       .shortName = "Res",
+                                                                       .defaultValue = 0.0f,
+                                                                       .color = Color::Yellow,
+                                                                   });
+        parameterIds_.blend = manager.RegisterParameter(group, {
+                                                                   .name = names[2],
+                                                                   .shortName = "Blend",
+                                                                   .defaultValue = -1.0f,
+                                                                   .range = RangeKind::Bipolar,
+                                                                   .color = Color::Orange,
+                                                               });
+        manager_ = &manager;
+        registered_ = true;
+    }
+
+    void RegisterToBank(Bank& bank, std::size_t offset) {
+        RequireRegistered();
+        std::array<Parameter*, 3> parameters{
+            &ParameterById(parameterIds_.cutoff),
+            &ParameterById(parameterIds_.resonance),
+            &ParameterById(parameterIds_.blend),
+        };
+        bank.RegisterParameters(parameters, offset);
+    }
+
+    void SetInput(ParameterManager& manager) {
+        RequireRegistered();
+        if (&manager != manager_) {
+            throw std::logic_error("classic SVF module used with a different parameter manager");
+        }
+
+        for (std::size_t voiceIx = 0; voiceIx < kVoiceCount; ++voiceIx) {
+            auto& filter = input_.voices[voiceIx].filter;
+            const float cutoffHz = manager.GetExponential(kMinCutoffHz, kMaxCutoffHz, voiceIx, parameterIds_.cutoff);
+            filter.cutoff = cutoffHz / sampleRate_;
+            filter.resonance = manager.GetExponential(kMinResonance, kMaxResonance, voiceIx,
+                                                      parameterIds_.resonance);
+            filter.blend = manager.GetBipolarLinear(1.0f, voiceIx, parameterIds_.blend);
+        }
+    }
+
+    void SetVoiceInput(std::size_t voiceIx, float value) {
+        if (voiceIx >= kVoiceCount) {
+            throw std::out_of_range("classic SVF voice index out of range");
+        }
+        input_.voices[voiceIx].filter.value = value;
+    }
+
+    void Process() {
+        for (std::size_t voiceIx = 0; voiceIx < kVoiceCount; ++voiceIx) {
+            outputs_[voiceIx] = filters_[voiceIx].Process(input_.voices[voiceIx].filter);
+        }
+    }
+
+    void PopulateUIState(UIState& state) const {
+        for (std::size_t voiceIx = 0; voiceIx < kVoiceCount; ++voiceIx) {
+            filters_[voiceIx].PopulateUIState(state.filters[voiceIx]);
+        }
+    }
+
+    void SetSampleRate(float sampleRate) {
+        if (sampleRate <= 0.0f) {
+            throw std::invalid_argument("classic SVF module sample rate must be positive");
+        }
+        sampleRate_ = sampleRate;
+    }
+
+    float SampleRate() const { return sampleRate_; }
+
+    bool Registered() const { return registered_; }
+    const ParameterIds& Parameters() const { return parameterIds_; }
+    const Input& CurrentInput() const { return input_; }
+    Input& CurrentInput() { return input_; }
+    float Output(std::size_t voiceIx) const { return outputs_.at(voiceIx); }
+
+private:
+    template<std::size_t Count>
+    static void ValidateRegistration(const ParameterManager& manager, const ParameterGroup& group,
+                                     const std::array<std::string, Count>& names, std::string_view moduleName) {
+        if (group.Config().maxParameters - group.ParameterCount() < names.size()) {
+            std::string message(moduleName);
+            message += " parameter capacity exhausted";
+            throw std::length_error(message);
+        }
+
+        for (const std::string& name : names) {
+            for (std::size_t paramIx = 0; paramIx < manager.ParameterCount(); ++paramIx) {
+                if (manager.ParameterById(static_cast<ParameterId>(paramIx)).Name() == name) {
+                    std::string message("duplicate ");
+                    message += moduleName;
+                    message += " parameter name";
+                    throw std::logic_error(message);
+                }
+            }
+        }
+    }
+
+    static std::string EffectiveName(std::string_view prefix, std::string_view name) {
+        if (prefix.empty()) {
+            return std::string(name);
+        }
+        std::string result(prefix);
+        result += " ";
+        result += name;
+        return result;
+    }
+
+    Parameter& ParameterById(ParameterId id) const {
+        if (manager_ == nullptr) {
+            throw std::logic_error("classic SVF module parameters are not registered");
+        }
+        return manager_->ParameterById(id);
+    }
+
+    void RequireRegistered() const {
+        if (!registered_ || manager_ == nullptr) {
+            throw std::logic_error("classic SVF module parameters are not registered");
+        }
+    }
+
+    float sampleRate_ = 48000.0f;
+    bool registered_ = false;
+    ParameterManager* manager_ = nullptr;
+    ParameterIds parameterIds_{};
+    Input input_{};
+    std::array<ClassicStateVariableFilter, kVoiceCount> filters_;
+    std::array<float, kVoiceCount> outputs_{};
 };
 
 } // namespace synth

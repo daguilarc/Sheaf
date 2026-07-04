@@ -6,7 +6,7 @@
 // runtime/Shell.hpp).
 //
 // This header ports the OLD MainComponent's (projects/synth/miniapp/Main.cpp,
-// pre-swap) bespoke widgets: four EncoderComponents, the VCO waveform scope,
+// pre-swap) bespoke widgets: seven EncoderComponents, the VCO waveform scope,
 // page/bank buttons, the gesture select button + value slider, three scene
 // buttons + blend slider, reset/random modifier latches, and start/stop
 // buttons. What it
@@ -55,6 +55,23 @@
 #include <functional>
 
 namespace synth_miniapp {
+
+struct EncoderGridLayout {
+    static constexpr std::size_t kEncoderCount = 7;
+    static constexpr std::size_t kFirstRowCount = 4;
+    static constexpr int kColumnWidth = 132;
+    static constexpr int kRowHeight = 150;
+    static constexpr int kTotalHeight = kRowHeight * 2;
+    static constexpr int kInset = 10;
+
+    static juce::Rectangle<int> BoundsForIndex(juce::Rectangle<int> area, std::size_t index) {
+        const std::size_t row = index < kFirstRowCount ? 0 : 1;
+        const std::size_t column = row == 0 ? index : index - kFirstRowCount;
+        return juce::Rectangle<int>(area.getX() + static_cast<int>(column) * kColumnWidth,
+                                    area.getY() + static_cast<int>(row) * kRowHeight, kColumnWidth, kRowHeight)
+            .reduced(kInset);
+    }
+};
 
 class MiniApp : public MiniAppCore {
 public:
@@ -185,9 +202,9 @@ private:
         void resized() override {
             auto area = getLocalBounds().reduced(16);
             area.removeFromTop(32);
-            auto encoderRow = area.removeFromTop(150);
-            for (auto& encoder : encoders_) {
-                encoder.setBounds(encoderRow.removeFromLeft(132).reduced(10));
+            auto encoderArea = area.removeFromTop(EncoderGridLayout::kTotalHeight);
+            for (std::size_t ix = 0; ix < encoders_.size(); ++ix) {
+                encoders_[ix].setBounds(EncoderGridLayout::BoundsForIndex(encoderArea, ix));
             }
             auto waveformRow = area.removeFromTop(130);
             waveformComponent_.setBounds(waveformRow.removeFromLeft(waveformRow.getWidth() / 2).reduced(8));
@@ -289,7 +306,7 @@ private:
         synth::AppContext* context_ = nullptr;
         mutable std::uint64_t fallbackTimestamp_ = 1;
 
-        std::array<synth_juce::EncoderComponent, 5> encoders_;
+        std::array<synth_juce::EncoderComponent, 7> encoders_;
         synth_juce::VcoWaveformComponent waveformComponent_;
         synth_juce::LfoWaveformComponent lfoWaveformComponent_;
         std::array<synth::DefaultWavetableVco::UIState*, 2> waveformUiStates_{};

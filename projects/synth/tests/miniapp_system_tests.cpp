@@ -68,6 +68,9 @@ constexpr std::size_t kTunePosition = 0;
 constexpr std::size_t kPhasePosition = 1;
 constexpr std::size_t kShapePosition = 2;
 constexpr std::size_t kVolumePosition = 3;
+constexpr std::size_t kFilterCutoffPosition = 4;
+constexpr std::size_t kFilterResonancePosition = 5;
+constexpr std::size_t kFilterBlendPosition = 6;
 constexpr std::size_t kLfoFrequencyPosition = 0;
 constexpr std::size_t kLfoShapePosition = 1;
 constexpr std::size_t kLfoPhaseOffsetPosition = 2;
@@ -179,6 +182,31 @@ float OutputWindowPeak(const OutputWindow& window) {
     return peak;
 }
 
+void RequireBankPosition(synth::BankSlot& slot, const synth::Bank& bank, std::size_t position,
+                         synth::ParameterId expectedId, const char* expectedName) {
+    synth::PhysicalEncoderId encoderId = 0;
+    REQUIRE_TRUE(slot.ResolvePosition(position, encoderId));
+    const synth::Parameter* parameter = bank.VisibleParameter(encoderId);
+    REQUIRE_TRUE(parameter != nullptr);
+    REQUIRE_TRUE(parameter->Id() == expectedId);
+    REQUIRE_TRUE(parameter->Name() == expectedName);
+}
+
+void RequirePagePosition(const synth::Page& page, std::size_t position,
+                         synth::ParameterId expectedId, const char* expectedName) {
+    REQUIRE_TRUE(position < page.parameters.size());
+    const synth::Parameter* parameter = page.parameters[position];
+    REQUIRE_TRUE(parameter != nullptr);
+    REQUIRE_TRUE(parameter->Id() == expectedId);
+    REQUIRE_TRUE(parameter->Name() == expectedName);
+}
+
+void RequireUnboundBankPosition(synth::BankSlot& slot, const synth::Bank& bank, std::size_t position) {
+    synth::PhysicalEncoderId encoderId = 0;
+    REQUIRE_TRUE(slot.ResolvePosition(position, encoderId));
+    REQUIRE_TRUE(bank.VisibleParameter(encoderId) == nullptr);
+}
+
 }  // namespace
 
 TEST_CASE(miniapp_rig_initializes_headlessly_and_runs) {
@@ -217,7 +245,7 @@ TEST_CASE(miniapp_rig_lfo_bank_exposes_five_module_parameters) {
     synth_rig::SynthRig<synth_miniapp::MiniAppCore> rig;
     rig.RunBlocks(1);
 
-    REQUIRE_TRUE(rig.Application().Parameters().size() == 9);
+    REQUIRE_TRUE(rig.Application().Parameters().size() == 12);
     const auto lfoIds = rig.Application().LfoParameterIds();
     const float beforeFrequency = rig.ParameterValue(lfoIds.frequency);
     const float beforeShape = rig.ParameterValue(lfoIds.shape);
@@ -227,6 +255,30 @@ TEST_CASE(miniapp_rig_lfo_bank_exposes_five_module_parameters) {
 
     rig.SelectBank(kSlotIx, kLfoBankIx);
     rig.RunBlocks(1);
+
+    const synth::Page* activePage = rig.Application().Context()->parameterManager->ActivePage();
+    REQUIRE_TRUE(activePage != nullptr);
+    REQUIRE_TRUE(activePage->name == "LFO");
+    REQUIRE_TRUE(activePage->parameters.size() == 5);
+    RequirePagePosition(*activePage, kLfoFrequencyPosition, lfoIds.frequency, "LFO Frequency");
+    RequirePagePosition(*activePage, kLfoShapePosition, lfoIds.shape, "LFO Shape");
+    RequirePagePosition(*activePage, kLfoPhaseOffsetPosition, lfoIds.phaseOffset, "LFO Phase Offset");
+    RequirePagePosition(*activePage, kLfoSkewPosition, lfoIds.skew, "LFO Skew");
+    RequirePagePosition(*activePage, kLfoExponentPosition, lfoIds.exponent, "LFO Exponent");
+
+    RequireBankPosition(*rig.Application().Slot(), *rig.Application().LfoBank(), kLfoFrequencyPosition,
+                        lfoIds.frequency, "LFO Frequency");
+    RequireBankPosition(*rig.Application().Slot(), *rig.Application().LfoBank(), kLfoShapePosition,
+                        lfoIds.shape, "LFO Shape");
+    RequireBankPosition(*rig.Application().Slot(), *rig.Application().LfoBank(), kLfoPhaseOffsetPosition,
+                        lfoIds.phaseOffset, "LFO Phase Offset");
+    RequireBankPosition(*rig.Application().Slot(), *rig.Application().LfoBank(), kLfoSkewPosition,
+                        lfoIds.skew, "LFO Skew");
+    RequireBankPosition(*rig.Application().Slot(), *rig.Application().LfoBank(), kLfoExponentPosition,
+                        lfoIds.exponent, "LFO Exponent");
+    RequireUnboundBankPosition(*rig.Application().Slot(), *rig.Application().LfoBank(), kFilterResonancePosition);
+    RequireUnboundBankPosition(*rig.Application().Slot(), *rig.Application().LfoBank(), kFilterBlendPosition);
+
     rig.Turn(kSlotIx, kLfoFrequencyPosition, 0.10f);
     rig.Turn(kSlotIx, kLfoShapePosition, -0.10f);
     rig.Turn(kSlotIx, kLfoPhaseOffsetPosition, 0.20f);
@@ -239,6 +291,44 @@ TEST_CASE(miniapp_rig_lfo_bank_exposes_five_module_parameters) {
     REQUIRE_NEAR(rig.ParameterValue(lfoIds.phaseOffset), beforePhaseOffset + 0.20f, 1e-3f);
     REQUIRE_NEAR(rig.ParameterValue(lfoIds.skew), beforeSkew - 0.20f, 1e-3f);
     REQUIRE_NEAR(rig.ParameterValue(lfoIds.exponent), beforeExponent + 0.15f, 1e-3f);
+    REQUIRE_TRUE(!rig.SawNaN());
+}
+
+TEST_CASE(miniapp_rig_vco_bank_exposes_vco_and_filter_parameters) {
+    UseScratchPatchesRoot("vco_bank_exposes_vco_and_filter_parameters");
+    synth_rig::SynthRig<synth_miniapp::MiniAppCore> rig;
+    rig.RunBlocks(1);
+
+    REQUIRE_TRUE(rig.Application().Parameters().size() == 12);
+    const auto vcoIds = rig.Application().VcoParameterIds();
+    const auto filterIds = rig.Application().FilterParameterIds();
+
+    const synth::Page* activePage = rig.Application().Context()->parameterManager->ActivePage();
+    REQUIRE_TRUE(activePage != nullptr);
+    REQUIRE_TRUE(activePage->name == "VCO");
+    REQUIRE_TRUE(activePage->parameters.size() == 7);
+    RequirePagePosition(*activePage, kTunePosition, vcoIds.tune, "Tune");
+    RequirePagePosition(*activePage, kPhasePosition, vcoIds.phase, "Phase");
+    RequirePagePosition(*activePage, kShapePosition, vcoIds.shape, "Shape");
+    RequirePagePosition(*activePage, kVolumePosition, vcoIds.volume, "Volume");
+    RequirePagePosition(*activePage, kFilterCutoffPosition, filterIds.cutoff, "Filter Cutoff");
+    RequirePagePosition(*activePage, kFilterResonancePosition, filterIds.resonance, "Filter Resonance");
+    RequirePagePosition(*activePage, kFilterBlendPosition, filterIds.blend, "Filter Blend");
+
+    RequireBankPosition(*rig.Application().Slot(), *rig.Application().VcoBank(), kTunePosition,
+                        vcoIds.tune, "Tune");
+    RequireBankPosition(*rig.Application().Slot(), *rig.Application().VcoBank(), kPhasePosition,
+                        vcoIds.phase, "Phase");
+    RequireBankPosition(*rig.Application().Slot(), *rig.Application().VcoBank(), kShapePosition,
+                        vcoIds.shape, "Shape");
+    RequireBankPosition(*rig.Application().Slot(), *rig.Application().VcoBank(), kVolumePosition,
+                        vcoIds.volume, "Volume");
+    RequireBankPosition(*rig.Application().Slot(), *rig.Application().VcoBank(), kFilterCutoffPosition,
+                        filterIds.cutoff, "Filter Cutoff");
+    RequireBankPosition(*rig.Application().Slot(), *rig.Application().VcoBank(), kFilterResonancePosition,
+                        filterIds.resonance, "Filter Resonance");
+    RequireBankPosition(*rig.Application().Slot(), *rig.Application().VcoBank(), kFilterBlendPosition,
+                        filterIds.blend, "Filter Blend");
     REQUIRE_TRUE(!rig.SawNaN());
 }
 
@@ -416,6 +506,50 @@ TEST_CASE(miniapp_rig_shape_turn_changes_output) {
     REQUIRE_NEAR(afterValueA, beforeA, 1e-3f);
     REQUIRE_TRUE(afterValueB != beforeB);
     REQUIRE_NEAR(afterValueB, beforeB + 0.4f, 1e-3f);
+    REQUIRE_TRUE(!rigA.SawNaN());
+    REQUIRE_TRUE(!rigB.SawNaN());
+}
+
+TEST_CASE(miniapp_rig_filter_blend_turn_changes_output) {
+    UseScratchPatchesRoot("filter_blend_turn_changes_output");
+    synth_rig::SynthRig<synth_miniapp::MiniAppCore> rigA;
+    UseScratchPatchesRoot("filter_blend_turn_changes_output_b");
+    synth_rig::SynthRig<synth_miniapp::MiniAppCore> rigB;
+
+    rigA.RunBlocks(4);
+    rigB.RunBlocks(4);
+
+    const synth::ParameterId blendIdA = rigA.Application().FilterParameterIds().blend;
+    const synth::ParameterId blendIdB = rigB.Application().FilterParameterIds().blend;
+    const float beforeA = rigA.ParameterValue(blendIdA);
+    const float beforeB = rigB.ParameterValue(blendIdB);
+
+    const OutputWindow baselineA = CaptureSettledOutputWindow(rigA, 8);
+    const OutputWindow baselineB = CaptureSettledOutputWindow(rigB, 8);
+    REQUIRE_TRUE(AllSamplesFinite(baselineA));
+    REQUIRE_TRUE(AllSamplesFinite(baselineB));
+    RequireEqualWindowShapes(baselineA, baselineB, "miniapp_rig_filter_blend_turn_changes_output baseline");
+    for (std::size_t i = 0; i < baselineA.size(); ++i) {
+        REQUIRE_TRUE(baselineA[i].channels == baselineB[i].channels);
+    }
+
+    rigB.Turn(kSlotIx, kFilterBlendPosition, 1.0f);
+
+    rigA.RunBlocks(32);
+    rigB.RunBlocks(32);
+
+    const OutputWindow afterA = CaptureSettledOutputWindow(rigA, 8);
+    const OutputWindow afterB = CaptureSettledOutputWindow(rigB, 8);
+
+    REQUIRE_TRUE(AllSamplesFinite(afterA));
+    REQUIRE_TRUE(AllSamplesFinite(afterB));
+    REQUIRE_TRUE(OutputWindowsDifferMaterially(afterA, afterB, 1e-4f));
+
+    const float afterValueA = rigA.ParameterValue(blendIdA);
+    const float afterValueB = rigB.ParameterValue(blendIdB);
+    REQUIRE_NEAR(afterValueA, beforeA, 1e-3f);
+    REQUIRE_TRUE(afterValueB != beforeB);
+    REQUIRE_TRUE(afterValueB > beforeB + 0.5f);
     REQUIRE_TRUE(!rigA.SawNaN());
     REQUIRE_TRUE(!rigB.SawNaN());
 }

@@ -78,6 +78,10 @@ static_assert(!std::is_copy_constructible_v<synth::BasicLfoModule<2>>);
 static_assert(!std::is_copy_assignable_v<synth::BasicLfoModule<2>>);
 static_assert(!std::is_move_constructible_v<synth::BasicLfoModule<2>>);
 static_assert(!std::is_move_assignable_v<synth::BasicLfoModule<2>>);
+static_assert(!std::is_copy_constructible_v<synth::ClassicSvfModule<2>>);
+static_assert(!std::is_copy_assignable_v<synth::ClassicSvfModule<2>>);
+static_assert(!std::is_move_constructible_v<synth::ClassicSvfModule<2>>);
+static_assert(!std::is_move_assignable_v<synth::ClassicSvfModule<2>>);
 
 TEST_CASE(wavetable_vco_registers_prefixed_parameters_and_rejects_repeat_registration) {
     synth::ParameterManager manager;
@@ -635,6 +639,234 @@ TEST_CASE(basic_lfo_template_supports_three_voice_phase_stagger_and_ui_state) {
     REQUIRE_TRUE(ui.lfos[2].scope.load() == &writer);
     REQUIRE_TRUE(ui.lfos[2].scopeChannel.load() == third.FlatChan());
     REQUIRE_TRUE(ui.lfos[2].color.Load() == synth::Color::Yellow);
+}
+
+TEST_CASE(classic_svf_registers_parameters_in_visible_order_and_rejects_repeat_registration) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 2,
+        .numScenes = 1,
+        .maxParameters = 6,
+        .processLiteAlpha = 1.0f,
+    });
+    synth::ClassicSvfModule<2> module;
+
+    module.RegisterParameters(manager, group, "Filter");
+
+    const auto ids = module.Parameters();
+    REQUIRE_TRUE(ids.cutoff == 0);
+    REQUIRE_TRUE(ids.resonance == 1);
+    REQUIRE_TRUE(ids.blend == 2);
+    REQUIRE_TRUE(manager.ParameterById(ids.cutoff).Name() == "Filter Cutoff");
+    REQUIRE_TRUE(manager.ParameterById(ids.resonance).Name() == "Filter Resonance");
+    REQUIRE_TRUE(manager.ParameterById(ids.blend).Name() == "Filter Blend");
+    REQUIRE_TRUE(manager.ParameterById(ids.blend).Range() == synth::RangeKind::Bipolar);
+    REQUIRE_NEAR(manager.ParameterById(ids.cutoff).SceneCenter(0), 1.0f, 0.0001f);
+    REQUIRE_NEAR(manager.ParameterById(ids.resonance).SceneCenter(0), 0.0f, 0.0001f);
+    REQUIRE_NEAR(manager.ParameterById(ids.blend).SceneCenter(0), -1.0f, 0.0001f);
+
+    bool threw = false;
+    try {
+        module.RegisterParameters(manager, group, "Filter");
+    } catch (const std::logic_error&) {
+        threw = true;
+    }
+    REQUIRE_TRUE(threw);
+}
+
+TEST_CASE(classic_svf_registration_rejects_capacity_and_duplicate_names_without_partial_parameters) {
+    {
+        synth::ParameterManager manager;
+        auto& group = manager.CreateGroup({.numVoices = 2, .numScenes = 1, .maxParameters = 2});
+        synth::ClassicSvfModule<2> module;
+
+        bool threw = false;
+        try {
+            module.RegisterParameters(manager, group, "Filter");
+        } catch (const std::length_error&) {
+            threw = true;
+        }
+        REQUIRE_TRUE(threw);
+        REQUIRE_TRUE(!module.Registered());
+        REQUIRE_TRUE(manager.ParameterCount() == 0);
+        REQUIRE_TRUE(group.ParameterCount() == 0);
+    }
+
+    {
+        synth::ParameterManager manager;
+        auto& group = manager.CreateGroup({.numVoices = 2, .numScenes = 1, .maxParameters = 4});
+        (void)manager.RegisterParameter(group, {.name = "Filter Resonance", .defaultValue = 0.0f});
+        synth::ClassicSvfModule<2> module;
+
+        bool threw = false;
+        try {
+            module.RegisterParameters(manager, group, "Filter");
+        } catch (const std::logic_error&) {
+            threw = true;
+        }
+        REQUIRE_TRUE(threw);
+        REQUIRE_TRUE(!module.Registered());
+        REQUIRE_TRUE(manager.ParameterCount() == 1);
+        REQUIRE_TRUE(group.ParameterCount() == 1);
+        REQUIRE_TRUE(manager.ParameterById(0).Name() == "Filter Resonance");
+    }
+}
+
+TEST_CASE(classic_svf_registers_visible_parameters_to_bank_offset) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({.numVoices = 2, .numScenes = 1, .maxParameters = 3});
+    synth::ClassicSvfModule<2> module;
+    module.RegisterParameters(manager, group, "Filter");
+
+    auto& bank = manager.CreateBank();
+    auto& slot = manager.CreateBankSlot();
+    for (const synth::PhysicalEncoderId encoder : {30u, 31u, 32u, 33u, 34u}) {
+        slot.AddPhysicalEncoder(encoder);
+    }
+    slot.SelectBank(&bank);
+
+    module.RegisterToBank(bank, 2);
+
+    REQUIRE_TRUE(bank.VisibleParameter(32) == &manager.ParameterById(module.Parameters().cutoff));
+    REQUIRE_TRUE(bank.VisibleParameter(33) == &manager.ParameterById(module.Parameters().resonance));
+    REQUIRE_TRUE(bank.VisibleParameter(34) == &manager.ParameterById(module.Parameters().blend));
+}
+
+TEST_CASE(classic_svf_rejects_bank_registration_before_parameter_registration) {
+    synth::ParameterManager manager;
+    auto& bank = manager.CreateBank();
+    synth::ClassicSvfModule<2> module;
+
+    bool threw = false;
+    try {
+        module.RegisterToBank(bank, 0);
+    } catch (const std::logic_error&) {
+        threw = true;
+    }
+
+    REQUIRE_TRUE(threw);
+}
+
+TEST_CASE(classic_svf_set_input_maps_parameters_to_filter_natural_units) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 2,
+        .numScenes = 1,
+        .maxParameters = 3,
+        .processLiteAlpha = 1.0f,
+    });
+    synth::ClassicSvfModule<2> module(48000.0f);
+    module.RegisterParameters(manager, group, "Filter");
+    const auto ids = module.Parameters();
+
+    SetAndSettle(manager, ids.cutoff, 0.0f);
+    SetAndSettle(manager, ids.resonance, 0.0f);
+    SetAndSettle(manager, ids.blend, -1.0f);
+    module.SetInput(manager);
+
+    REQUIRE_NEAR(module.CurrentInput().voices[0].filter.cutoff, 20.0f / 48000.0f, 0.000001f);
+    REQUIRE_NEAR(module.CurrentInput().voices[0].filter.resonance, 0.5f, 0.0001f);
+    REQUIRE_NEAR(module.CurrentInput().voices[0].filter.blend, -1.0f, 0.0001f);
+
+    SetAndSettle(manager, ids.blend, 0.0f);
+    module.SetInput(manager);
+    REQUIRE_NEAR(module.CurrentInput().voices[0].filter.blend, 0.0f, 0.0001f);
+
+    SetAndSettle(manager, ids.cutoff, 1.0f);
+    SetAndSettle(manager, ids.resonance, 1.0f);
+    SetAndSettle(manager, ids.blend, 1.0f);
+    module.SetInput(manager);
+
+    REQUIRE_NEAR(module.CurrentInput().voices[1].filter.cutoff, 20000.0f / 48000.0f, 0.0001f);
+    REQUIRE_NEAR(module.CurrentInput().voices[1].filter.resonance, 5.5f, 0.0001f);
+    REQUIRE_NEAR(module.CurrentInput().voices[1].filter.blend, 1.0f, 0.0001f);
+
+    module.SetSampleRate(96000.0f);
+    module.SetInput(manager);
+    REQUIRE_NEAR(module.CurrentInput().voices[1].filter.cutoff, 20000.0f / 96000.0f, 0.0001f);
+}
+
+TEST_CASE(classic_svf_rejects_set_input_with_different_manager) {
+    synth::ParameterManager firstManager;
+    auto& firstGroup = firstManager.CreateGroup({
+        .numVoices = 2,
+        .numScenes = 1,
+        .maxParameters = 3,
+    });
+    synth::ParameterManager secondManager;
+    (void)secondManager.CreateGroup({
+        .numVoices = 2,
+        .numScenes = 1,
+        .maxParameters = 3,
+    });
+    synth::ClassicSvfModule<2> module;
+    module.RegisterParameters(firstManager, firstGroup, "Filter");
+
+    bool threw = false;
+    try {
+        module.SetInput(secondManager);
+    } catch (const std::logic_error&) {
+        threw = true;
+    }
+
+    REQUIRE_TRUE(threw);
+}
+
+TEST_CASE(classic_svf_set_voice_input_writes_live_samples_and_rejects_invalid_indices) {
+    synth::ClassicSvfModule<2> module;
+
+    module.SetVoiceInput(0, 0.25f);
+    module.SetVoiceInput(1, -0.75f);
+
+    REQUIRE_NEAR(module.CurrentInput().voices[0].filter.value, 0.25f, 0.0001f);
+    REQUIRE_NEAR(module.CurrentInput().voices[1].filter.value, -0.75f, 0.0001f);
+
+    bool threw = false;
+    try {
+        module.SetVoiceInput(2, 0.0f);
+    } catch (const std::out_of_range&) {
+        threw = true;
+    }
+    REQUIRE_TRUE(threw);
+
+    threw = false;
+    try {
+        module.SetSampleRate(0.0f);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    REQUIRE_TRUE(threw);
+}
+
+TEST_CASE(classic_svf_processes_independent_voice_outputs_and_publishes_filter_ui_state) {
+    synth::ClassicSvfModule<2> module(48000.0f);
+    module.CurrentInput().voices[0].filter = {
+        .value = 1.0f,
+        .cutoff = 2000.0f / 48000.0f,
+        .resonance = 0.5f,
+        .blend = -1.0f,
+    };
+    module.CurrentInput().voices[1].filter = {
+        .value = -1.0f,
+        .cutoff = 2000.0f / 48000.0f,
+        .resonance = 0.5f,
+        .blend = -1.0f,
+    };
+
+    module.Process();
+
+    REQUIRE_TRUE(std::isfinite(module.Output(0)));
+    REQUIRE_TRUE(std::isfinite(module.Output(1)));
+    REQUIRE_TRUE(module.Output(0) != module.Output(1));
+
+    synth::ClassicSvfModule<2>::UIState ui;
+    module.PopulateUIState(ui);
+
+    static_assert(std::is_base_of_v<synth::TransferFunction, synth::ClassicStateVariableFilter::UIState>);
+    REQUIRE_NEAR(ui.filters[0].cutoff.load(), 2000.0f / 48000.0f, 0.0001f);
+    REQUIRE_NEAR(ui.filters[1].cutoff.load(), 2000.0f / 48000.0f, 0.0001f);
+    REQUIRE_TRUE(std::isfinite(ui.filters[0].FrequencyResponse(1000.0f / 48000.0f)));
+    REQUIRE_TRUE(std::isfinite(ui.filters[1].FrequencyResponse(1000.0f / 48000.0f)));
 }
 
 TEST_CASE(demo_modulation_process_lite_parameters_applies_direct_vco_modulation) {

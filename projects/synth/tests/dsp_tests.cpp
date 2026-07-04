@@ -89,6 +89,67 @@ TEST_CASE(nary_numbers_are_elementwise_and_have_aliases) {
     REQUIRE_TRUE(synth::QuadDouble::Count() == 4);
 }
 
+TEST_CASE(classic_svf_blend_selects_low_band_and_high_outputs) {
+    auto process = [](float blend) {
+        synth::ClassicStateVariableFilter filter;
+        filter.Process({.value = 0.75f, .cutoff = 0.05f, .resonance = 0.9f, .blend = blend});
+        return filter;
+    };
+
+    const auto low = process(-1.0f);
+    REQUIRE_NEAR(low.m_output, low.m_low, 0.0001f);
+
+    const auto band = process(0.0f);
+    REQUIRE_NEAR(band.m_output, band.m_band, 0.0001f);
+
+    const auto high = process(1.0f);
+    REQUIRE_NEAR(high.m_output, high.m_high, 0.0001f);
+
+    const auto lowBlend = process(-0.6f);
+    REQUIRE_NEAR(lowBlend.m_output, lowBlend.m_low * 0.6f + lowBlend.m_band * 0.8f, 0.0001f);
+
+    const auto highBlend = process(0.8f);
+    REQUIRE_NEAR(highBlend.m_output, highBlend.m_high * 0.8f + highBlend.m_band * 0.6f, 0.0001f);
+}
+
+TEST_CASE(classic_svf_low_pass_converges_and_high_resonance_stays_finite) {
+    synth::ClassicStateVariableFilter lowPass;
+    for (int i = 0; i < 2048; ++i) {
+        lowPass.Process({.value = 1.0f, .cutoff = 1000.0f / 48000.0f, .resonance = 0.707f, .blend = -1.0f});
+    }
+    REQUIRE_NEAR(lowPass.m_output, 1.0f, 0.01f);
+
+    for (const float cutoff : {20.0f / 48000.0f, 20000.0f / 48000.0f}) {
+        synth::ClassicStateVariableFilter filter;
+        for (int i = 0; i < 256; ++i) {
+            filter.Process({.value = 0.25f, .cutoff = cutoff, .resonance = 5.5f, .blend = 0.35f});
+            REQUIRE_TRUE(std::isfinite(filter.m_low));
+            REQUIRE_TRUE(std::isfinite(filter.m_band));
+            REQUIRE_TRUE(std::isfinite(filter.m_high));
+            REQUIRE_TRUE(std::isfinite(filter.m_output));
+        }
+    }
+}
+
+TEST_CASE(classic_svf_ui_state_publishes_finite_blended_transfer_function) {
+    synth::ClassicStateVariableFilter filter;
+    filter.Process({.value = 0.5f, .cutoff = 440.0f / 48000.0f, .resonance = 1.25f, .blend = -0.25f});
+
+    synth::ClassicStateVariableFilter::UIState ui;
+    filter.PopulateUIState(ui);
+    REQUIRE_NEAR(ui.cutoff.load(), filter.m_cutoff, 0.0001f);
+    REQUIRE_NEAR(ui.resonance.load(), filter.m_resonance, 0.0001f);
+    REQUIRE_NEAR(ui.blend.load(), filter.m_blend, 0.0001f);
+
+    for (const float frequency : {0.0f, 0.01f, 0.125f, 0.45f}) {
+        const float response = ui.FrequencyResponse(frequency);
+        const auto transfer = ui.TransferFunctionValue(frequency);
+        REQUIRE_TRUE(std::isfinite(response));
+        REQUIRE_TRUE(std::isfinite(transfer.real()));
+        REQUIRE_TRUE(std::isfinite(transfer.imag()));
+    }
+}
+
 TEST_CASE(one_pole_filters_and_tanh_follow_dsp_contract) {
     synth::OnePoleLowPass lp;
     synth::OnePoleLowPass::Input lpInput{.value = 1.0f, .cutoff = 0.05f};
