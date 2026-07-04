@@ -1399,12 +1399,14 @@ double SafeValueFor(MidiMappingRowVM::Field field) {
     return 0.0;
 }
 
-// Block end-coordinate/end-cc fields must stay >= the row's OWN current
-// start (SafeValueFor's fixed constants can't know that per-row) --
-// e.g. a launchpad bank-select block can start at x=8, so a fixed
-// BlockEndX=1 would make endX < startX and legitimately fail validation.
-// Reads the row's current start value via RowFieldValue and returns
-// max(SafeValueFor(field), that start) for the four End* fields.
+// Block end-coordinate/end-cc fields must stay strictly greater than (BlockEndCc/
+// BlockEndX) or different from (BlockEndY -- exclusive-end semantics allow the
+// y direction to descend) the row's OWN current start (SafeValueFor's fixed
+// constants can't know that per-row) -- e.g. a launchpad bank-select block can
+// start at x=8, so a fixed BlockEndX=1 would make endX <= startX and
+// legitimately fail validation. Reads the row's current start value via
+// RowFieldValue and returns a value guaranteed to satisfy each field's own
+// validity relation against that start.
 //
 // Block start-coordinate fields (finding 3 fallout): a fixed SafeValueFor
 // constant can walk a 2-D system block's START clean off its own footprint
@@ -1424,34 +1426,43 @@ double SafeValueFor(MidiMappingRowVM::Field field) {
 double SafeValueForRow(MidiConfigViewModel& vm, std::size_t controllerIx, MidiConfigSection section,
                        std::size_t rowIx, MidiMappingRowVM::Field field) {
     using Field = MidiMappingRowVM::Field;
-    MidiMappingRowVM::Field pairedField;
-    bool wantMax = false;  // true: End* (>= paired start); false: Start* (== current value)
     switch (field) {
-        case Field::BlockEndCc:
-            pairedField = Field::BlockStartCc;
-            wantMax = true;
-            break;
-        case Field::BlockEndX:
-            pairedField = Field::BlockStartX;
-            wantMax = true;
-            break;
-        case Field::BlockEndY:
-            pairedField = Field::BlockStartY;
-            wantMax = true;
-            break;
+        case Field::BlockEndCc: {
+            double current = 0.0;
+            if (vm.RowFieldValue(controllerIx, section, rowIx, Field::BlockStartCc, current)) {
+                return std::max(SafeValueFor(field), current + 1.0);
+            }
+            return SafeValueFor(field);
+        }
+        case Field::BlockEndX: {
+            // Exclusive end: endX must be > startX.
+            double current = 0.0;
+            if (vm.RowFieldValue(controllerIx, section, rowIx, Field::BlockStartX, current)) {
+                return std::max(SafeValueFor(field), current + 1.0);
+            }
+            return SafeValueFor(field);
+        }
+        case Field::BlockEndY: {
+            // Exclusive end: endY must differ from startY (either direction
+            // is legal) -- current + 1 always satisfies that.
+            double current = 0.0;
+            if (vm.RowFieldValue(controllerIx, section, rowIx, Field::BlockStartY, current)) {
+                return current + 1.0;
+            }
+            return SafeValueFor(field);
+        }
         case Field::BlockStartX:
         case Field::BlockStartY:
-        case Field::BlockStartCc:
-            pairedField = field;
-            break;
+        case Field::BlockStartCc: {
+            double current = 0.0;
+            if (vm.RowFieldValue(controllerIx, section, rowIx, field, current)) {
+                return current;
+            }
+            return SafeValueFor(field);
+        }
         default:
             return SafeValueFor(field);
     }
-    double current = 0.0;
-    if (vm.RowFieldValue(controllerIx, section, rowIx, pairedField, current)) {
-        return wantMax ? std::max(SafeValueFor(field), current) : current;
-    }
-    return SafeValueFor(field);
 }
 
 // `baseInstrument`/`connection` (findings 1/2 fallout): each (row, field)
@@ -2269,8 +2280,9 @@ TEST_CASE(BlockEditOverlappingExistingSceneButtonRefused) {
     vm.Rebuild(afterAdd, connection);
     const std::size_t associationCountBeforeEdit = afterAdd.controllers[0].config.systemMessages.size();
 
-    // Locate the scene-select block row (still (0,6)..(7,6), untouched by
-    // the add above) and the new individual scene button at (0,0).
+    // Locate the scene-select block row (still (0,6)..(8,7) in exclusive-end
+    // form, untouched by the add above) and the new individual scene button
+    // at (0,0).
     const std::vector<MidiMappingRowVM> rows = vm.SectionRows(0, MidiConfigSection::SystemMessages);
     std::size_t sceneBlockIx = SIZE_MAX;
     std::size_t sceneButtonIx = SIZE_MAX;
@@ -2306,12 +2318,12 @@ TEST_CASE(BlockEditOverlappingExistingSceneButtonRefused) {
                         // rectangle aside, this just confirms the check fires on either edited field.
 
     // The view model's OWN snapshot is unaffected: the block row is still
-    // at (0,6)..(7,6), the config still has exactly the same number of
-    // associations as right after the AddSingle commit (no partial
-    // mutation).
+    // at (0,6)..(8,7) (exclusive-end form), the config still has exactly the
+    // same number of associations as right after the AddSingle commit (no
+    // partial mutation).
     const std::vector<MidiMappingRowVM> stillThere = vm.SectionRows(0, MidiConfigSection::SystemMessages);
     REQUIRE_TRUE(stillThere[sceneBlockIx].kind == MidiMappingRowVM::Kind::Block);
-    REQUIRE_TRUE(stillThere[sceneBlockIx].label.rfind("scene select block (0,6)..(7,6)", 0) == 0);
+    REQUIRE_TRUE(stillThere[sceneBlockIx].label.rfind("scene select block (0,6)..(8,7)", 0) == 0);
     REQUIRE_TRUE(afterAdd.controllers[0].config.systemMessages.size() == associationCountBeforeEdit);
 }
 

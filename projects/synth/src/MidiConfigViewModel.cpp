@@ -3025,8 +3025,11 @@ bool MidiConfigViewModel::AddBlock(std::size_t controllerIx, MidiConfigSection s
             block.channel = 5;
             block.startX = position->first;
             block.startY = position->second;
-            block.endX = std::min(7, position->first + static_cast<int>(kDefaultBlockWidth) - 1);
-            block.endY = position->second;
+            // Exclusive ends: endX = min(8, startX + width) (8 = one past
+            // the WrldBldr grid's max index 7); a single-row default block
+            // uses y direction d = +1, so endY = startY + 1.
+            block.endX = std::min(8, position->first + static_cast<int>(kDefaultBlockWidth));
+            block.endY = position->second + 1;
         } else if (slot.kind == MidiProfileKind::Launchpad) {
             const auto position = NextFreeLaunchpadPosition(slot.config.systemMessages, LaunchpadController::LaunchpadX);
             if (!position.has_value()) {
@@ -3038,8 +3041,10 @@ bool MidiConfigViewModel::AddBlock(std::size_t controllerIx, MidiConfigSection s
             block.launchpadController = position->controller;
             block.startX = position->x;
             block.startY = position->y;
-            block.endX = position->x + static_cast<int>(kDefaultBlockWidth) - 1;
-            block.endY = position->y;
+            // Exclusive ends, no clamp (launchpad edge positions are legit,
+            // x can reach 9); single-row default block uses d = +1.
+            block.endX = position->x + static_cast<int>(kDefaultBlockWidth);
+            block.endY = position->y + 1;
         } else {
             const auto [channel, cc] = NextFreeGenericAddress(slot.config.systemMessages);
             block.channel = channel;

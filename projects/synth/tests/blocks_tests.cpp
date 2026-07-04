@@ -580,8 +580,8 @@ TEST_CASE(ExpandSystemBlockWrldBldrRowMajorTraversesXAscendingWithinRow) {
     block.channel = 5;
     block.startX = 0;
     block.startY = 0;
-    block.endX = 1;
-    block.endY = 1;  // 2x2 rectangle: (0,0)(1,0)(0,1)(1,1)
+    block.endX = 2;
+    block.endY = 2;  // 2x2 rectangle: (0,0)(1,0)(0,1)(1,1) -- exclusive ends
     block.rowMajor = true;
 
     std::vector<MidiControllerSystemMessageAssociation> out;
@@ -613,8 +613,8 @@ TEST_CASE(ExpandSystemBlockWrldBldrColumnMajorTraversesYWithinColumn) {
     block.channel = 5;
     block.startX = 0;
     block.startY = 0;
-    block.endX = 1;
-    block.endY = 1;
+    block.endX = 2;
+    block.endY = 2;
     block.rowMajor = false;
 
     std::vector<MidiControllerSystemMessageAssociation> out;
@@ -630,7 +630,9 @@ TEST_CASE(ExpandSystemBlockWrldBldrColumnMajorTraversesYWithinColumn) {
 
 TEST_CASE(ExpandSystemBlockWrldBldrDescendingRowTraversesYDownward) {
     // The default WRLD.Bldr bank grid: banks 0..7 at y=3, banks 8..15 at
-    // y=2 -- endY < startY, traversal steps -1.
+    // y=2 -- exclusive ends: endX = 8 (one past max x=7), endY = 1 (one past
+    // the descending traversal's last row y=2, stepping -1), so
+    // traversal covers y in {3,2}.
     SystemBlock block;
     block.kind = MidiProfileKind::WrldBldr;
     block.message = BlockableMessage::BankSelect;
@@ -639,8 +641,8 @@ TEST_CASE(ExpandSystemBlockWrldBldrDescendingRowTraversesYDownward) {
     block.channel = 5;
     block.startX = 0;
     block.startY = 3;
-    block.endX = 7;
-    block.endY = 2;
+    block.endX = 8;
+    block.endY = 1;
     block.rowMajor = true;
 
     std::vector<MidiControllerSystemMessageAssociation> out;
@@ -666,8 +668,8 @@ TEST_CASE(ExpandSystemBlockLaunchpadHasNoChannelField) {
     block.startArg = 0;
     block.startX = 0;
     block.startY = 0;
-    block.endX = 1;
-    block.endY = 0;
+    block.endX = 2;
+    block.endY = 1;
     block.rowMajor = true;
 
     std::vector<MidiControllerSystemMessageAssociation> out;
@@ -693,8 +695,8 @@ TEST_CASE(ExpandSystemBlockLaunchpadStampsCellsWithTheBlocksControllerVariant) {
     block.startArg = 0;
     block.startX = 0;
     block.startY = 0;
-    block.endX = 1;
-    block.endY = 0;
+    block.endX = 2;
+    block.endY = 1;
     block.rowMajor = true;
 
     std::vector<MidiControllerSystemMessageAssociation> out;
@@ -723,8 +725,8 @@ TEST_CASE(ExpandSystemBlockLaunchpadProMk3AcceptsEdgeCoordinatesLaunchpadXReject
     block.startArg = 0;
     block.startX = -1;
     block.startY = -1;
-    block.endX = 0;
-    block.endY = -1;
+    block.endX = 1;   // exclusive: one past x=0
+    block.endY = 0;    // exclusive: single row, d=+1, one past y=-1
     block.rowMajor = true;
 
     std::vector<MidiControllerSystemMessageAssociation> out;
@@ -745,8 +747,8 @@ TEST_CASE(ExpandSystemBlockLaunchpadXRejectsProMk3OnlyCoordinates) {
     block.startArg = 0;
     block.startX = -1;
     block.startY = -1;
-    block.endX = 0;
-    block.endY = -1;
+    block.endX = 1;
+    block.endY = 0;
     block.rowMajor = true;
 
     std::vector<MidiControllerSystemMessageAssociation> out;
@@ -767,8 +769,8 @@ TEST_CASE(ReconstructOfExpandedLaunchpadProMk3EdgeBlockRoundTrips) {
     block.startArg = 0;
     block.startX = 7;
     block.startY = -1;
-    block.endX = 8;
-    block.endY = -1;  // 2 cells: (7,-1) and (8,-1)
+    block.endX = 9;    // exclusive: one past x=8; 2 cells: (7,-1) and (8,-1)
+    block.endY = 0;     // exclusive: single row, d=+1, one past y=-1
     block.rowMajor = true;
 
     std::vector<MidiControllerSystemMessageAssociation> expanded;
@@ -782,8 +784,8 @@ TEST_CASE(ReconstructOfExpandedLaunchpadProMk3EdgeBlockRoundTrips) {
     REQUIRE_TRUE(rows.size() == 1);
     REQUIRE_TRUE(rows[0].isBlock);
     REQUIRE_TRUE(rows[0].block.launchpadController == LaunchpadController::LaunchpadProMk3);
-    REQUIRE_TRUE(rows[0].block.startX == 7 && rows[0].block.endX == 8);
-    REQUIRE_TRUE(rows[0].block.startY == -1 && rows[0].block.endY == -1);
+    REQUIRE_TRUE(rows[0].block.startX == 7 && rows[0].block.endX == 9);
+    REQUIRE_TRUE(rows[0].block.startY == -1 && rows[0].block.endY == 0);
 }
 
 TEST_CASE(ReconstructSystemBlocksMixedLaunchpadVariantsStayIndividual) {
@@ -849,8 +851,8 @@ TEST_CASE(ExpandSystemBlockWrldBldrRejectsOutOfGridCoordinates) {
     block.channel = 5;
     block.startX = 0;
     block.startY = 0;
-    block.endX = 8;  // out of the 0-7 grid
-    block.endY = 0;
+    block.endX = 9;  // exclusive: max x visited = 8, out of the 0-7 grid
+    block.endY = 1;   // exclusive: single row, d=+1
     block.rowMajor = true;
 
     std::vector<MidiControllerSystemMessageAssociation> out;
@@ -868,8 +870,8 @@ TEST_CASE(ExpandSystemBlockWrldBldrRejectsChannelAbove15) {
     block.channel = 16;
     block.startX = 0;
     block.startY = 0;
-    block.endX = 1;
-    block.endY = 0;
+    block.endX = 2;
+    block.endY = 1;
     block.rowMajor = true;
 
     std::vector<MidiControllerSystemMessageAssociation> out;
@@ -918,7 +920,7 @@ TEST_CASE(ExpandSystemBlockLaunchpadRejectsShapeUnsupportedCoordinates) {
     block.startX = 0;
     block.startY = 0;
     block.endX = 20;  // far outside any launchpad shape
-    block.endY = 0;
+    block.endY = 1;    // exclusive: single row, d=+1
 
     std::vector<MidiControllerSystemMessageAssociation> out;
     std::string reason;
@@ -937,10 +939,24 @@ TEST_CASE(SystemBlockCellCountMatchesRectangle) {
     SystemBlock block;
     block.kind = MidiProfileKind::WrldBldr;
     block.startX = 0;
-    block.endX = 7;
+    block.endX = 8;   // exclusive: one past max x=7
     block.startY = 3;
-    block.endY = 2;
+    block.endY = 1;    // exclusive: descending, one past y=2
     REQUIRE_TRUE(block.CellCount() == 16);  // 8 wide x 2 tall
+}
+
+TEST_CASE(SystemBlockEndXEndYAreExclusive) {
+    // A 2-column, 1-row block: endX = startX + 2 (exclusive, one past the
+    // last column), endY = startY + 1 (exclusive, single row, d=+1).
+    SystemBlock block;
+    block.kind = MidiProfileKind::WrldBldr;
+    block.startX = 3;
+    block.endX = 5;
+    block.startY = 0;
+    block.endY = 1;
+    REQUIRE_TRUE(block.CellCount() == 2);
+    REQUIRE_TRUE(block.endX == block.startX + 2);
+    REQUIRE_TRUE(block.endY == block.startY + 1);
 }
 
 // --- D4: ReconstructEncoderBlocks -----------------------------------------
@@ -1165,13 +1181,15 @@ TEST_CASE(ReconstructSystemBlocksWrldBldrOneRowNByOne) {
     const auto rows = ReconstructSystemBlocks(associations, MidiProfileKind::WrldBldr);
     REQUIRE_TRUE(rows.size() == 1);
     REQUIRE_TRUE(rows[0].isBlock);
-    REQUIRE_TRUE(rows[0].block.startX == 0 && rows[0].block.endX == 7);
-    REQUIRE_TRUE(rows[0].block.startY == 6 && rows[0].block.endY == 6);
+    REQUIRE_TRUE(rows[0].block.startX == 0 && rows[0].block.endX == 8);
+    REQUIRE_TRUE(rows[0].block.startY == 6 && rows[0].block.endY == 7);
 }
 
 TEST_CASE(ReconstructSystemBlocksWrldBldrBankRectangleDescendingRows) {
     // The default WRLD.Bldr profile's bank grid: banks 0..7 at y=3, banks
-    // 8..15 at y=2 -- an 8x2 rectangle with endY < startY (sru-10 scenario).
+    // 8..15 at y=2 -- an 8x2 rectangle, descending (sru-10 scenario):
+    // exclusive endX=8 (one past max x=7), exclusive endY=1 (one past y=2,
+    // stepping -1 from startY=3).
     std::vector<MidiControllerSystemMessageAssociation> associations;
     for (std::uint8_t x = 0; x < 8; ++x) {
         MidiControllerSystemMessageAssociation a;
@@ -1194,8 +1212,8 @@ TEST_CASE(ReconstructSystemBlocksWrldBldrBankRectangleDescendingRows) {
     REQUIRE_TRUE(rows.size() == 1);
     REQUIRE_TRUE(rows[0].isBlock);
     REQUIRE_TRUE(rows[0].block.message == BlockableMessage::BankSelect);
-    REQUIRE_TRUE(rows[0].block.startX == 0 && rows[0].block.endX == 7);
-    REQUIRE_TRUE(rows[0].block.startY == 3 && rows[0].block.endY == 2);
+    REQUIRE_TRUE(rows[0].block.startX == 0 && rows[0].block.endX == 8);
+    REQUIRE_TRUE(rows[0].block.startY == 3 && rows[0].block.endY == 1);
     REQUIRE_TRUE(rows[0].block.startArg == 0);
     REQUIRE_TRUE(rows[0].indices.size() == 16);
 }
@@ -1213,8 +1231,8 @@ TEST_CASE(ReconstructSystemBlocksWrldBldrOneColumnOneByN) {
     const auto rows = ReconstructSystemBlocks(associations, MidiProfileKind::WrldBldr);
     REQUIRE_TRUE(rows.size() == 1);
     REQUIRE_TRUE(rows[0].isBlock);
-    REQUIRE_TRUE(rows[0].block.startX == 2 && rows[0].block.endX == 2);
-    REQUIRE_TRUE(rows[0].block.startY == 0 && rows[0].block.endY == 2);
+    REQUIRE_TRUE(rows[0].block.startX == 2 && rows[0].block.endX == 3);
+    REQUIRE_TRUE(rows[0].block.startY == 0 && rows[0].block.endY == 3);
 }
 
 TEST_CASE(ReconstructSystemBlocksWrldBldrRaggedRemainderSplitsIntoTwoRowBlocks) {
@@ -1245,10 +1263,10 @@ TEST_CASE(ReconstructSystemBlocksWrldBldrRaggedRemainderSplitsIntoTwoRowBlocks) 
         if (!row.isBlock) {
             continue;
         }
-        if (row.block.startX == 0 && row.block.endX == 2 && row.block.startY == 0 && row.block.endY == 0) {
+        if (row.block.startX == 0 && row.block.endX == 3 && row.block.startY == 0 && row.block.endY == 1) {
             foundRow0Block = true;
         }
-        if (row.block.startX == 0 && row.block.endX == 5 && row.block.startY == 1 && row.block.endY == 1) {
+        if (row.block.startX == 0 && row.block.endX == 6 && row.block.startY == 1 && row.block.endY == 2) {
             foundRow1Block = true;
         }
     }
@@ -1339,12 +1357,13 @@ TEST_CASE(RoundTripDefaultWrldBldrProfileEncodersAndSystemMessages) {
     RequireAssociationsEqual(flattened, sortedConfig.systemMessages);
 
     // Explicitly confirm the descending 8x2 bank block (sru-10 scenario):
-    // banks 0..7 at y=3, banks 8..15 at y=2, one block, startArg 0.
+    // banks 0..7 at y=3, banks 8..15 at y=2, one block, startArg 0. Exclusive
+    // ends: endX=8 (one past max x=7), endY=1 (one past y=2, descending).
     bool foundBankBlock = false;
     for (const auto& row : systemRows) {
         if (row.isBlock && row.block.message == BlockableMessage::BankSelect) {
-            REQUIRE_TRUE(row.block.startX == 0 && row.block.endX == 7);
-            REQUIRE_TRUE(row.block.startY == 3 && row.block.endY == 2);
+            REQUIRE_TRUE(row.block.startX == 0 && row.block.endX == 8);
+            REQUIRE_TRUE(row.block.startY == 3 && row.block.endY == 1);
             REQUIRE_TRUE(row.block.startArg == 0);
             REQUIRE_TRUE(row.indices.size() == 16);
             foundBankBlock = true;
@@ -1708,8 +1727,8 @@ TEST_CASE(ReconstructOfExpandedSystemBlockYieldsSameBlockWrldBldrRectangle) {
     block.channel = 5;
     block.startX = 0;
     block.startY = 3;
-    block.endX = 7;
-    block.endY = 2;  // descending, matches the default WRLD.Bldr shape
+    block.endX = 8;   // exclusive: one past max x=7
+    block.endY = 1;    // exclusive: descending, one past y=2, matches the default WRLD.Bldr shape
     block.rowMajor = true;
 
     std::vector<MidiControllerSystemMessageAssociation> expanded;

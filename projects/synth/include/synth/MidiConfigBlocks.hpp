@@ -147,14 +147,20 @@ struct SystemBlock {
     bool outputFeedback = true;  // applied to every expanded cell
     std::uint8_t channel = 0;    // wrldbldr + generic forms
     std::uint8_t startCc = 0, endCc = 0;  // generic (1-D) form, [start, end)
-    // 2-D forms, inclusive corners; endY may be < startY (rows traverse
-    // toward endY, +-1). `int` (not uint8_t, per design.md D3's original
-    // sketch) because Launchpad grid coordinates legitimately go negative
-    // (LaunchpadGridPosition::x/y are `int`; the default profile factory's
-    // scene-select row sits at y=-1, its bank column at x=8, matching
-    // LaunchpadShapeSupports' -1..8/-1..9 domain) -- a uint8_t field could
-    // not represent that real, already-supported coordinate. WrldBldr's
-    // usage stays within its own 0-7 grid regardless.
+    // 2-D forms, half-open/exclusive ends -- matching the 1-D forms'
+    // [start, end) convention. X always traverses ascending: endX = maxX + 1
+    // (width = endX - startX, valid iff endX > startX). Y traverses in a
+    // direction d in {+1, -1} fixed by the run's second row: endY = lastY +
+    // d (height = abs(endY - startY), valid iff endY != startY); a
+    // single-row block uses d=+1 so endY = startY+1. `int` (not uint8_t, per
+    // design.md D3's original sketch) because Launchpad grid coordinates
+    // legitimately go negative (LaunchpadGridPosition::x/y are `int`; the
+    // default profile factory's scene-select row sits at y=-1, its bank
+    // column at x=8, matching LaunchpadShapeSupports' -1..8/-1..9 domain) --
+    // a uint8_t field could not represent that real, already-supported
+    // coordinate, and an exclusive end can legitimately reach 9 or -2. No
+    // clamping to 0..7 for launchpad. WrldBldr's usage stays within its own
+    // 0-7 grid regardless.
     int startX = 0, startY = 0;
     int endX = 0, endY = 0;
     // Launchpad form only: the controller variant every expanded cell's
@@ -167,7 +173,7 @@ struct SystemBlock {
     LaunchpadController launchpadController = LaunchpadController::LaunchpadX;
 
     // Number of cells this block denotes (endCc - startCc for the generic
-    // form; the inclusive rectangle's cell count for the 2-D forms).
+    // form; the exclusive-end rectangle's cell count for the 2-D forms).
     std::size_t CellCount() const;
 };
 

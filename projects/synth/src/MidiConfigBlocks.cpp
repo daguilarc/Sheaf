@@ -1,6 +1,7 @@
 #include "synth/MidiConfigBlocks.hpp"
 
 #include <algorithm>
+#include <cstdlib>
 #include <limits>
 #include <tuple>
 
@@ -153,16 +154,18 @@ void SetReason(std::string* reason, const char* message) {
     }
 }
 
-// Cell count for the 2-D inclusive-rectangle forms: width x height, where
-// height counts the rows from startY to endY stepping +-1 (endY may be <
-// startY -- the descending-row case, e.g. the default WRLD.Bldr bank grid).
+// Cell count for the 2-D exclusive-end rectangle forms: width x height.
+// X always traverses ascending, so width = endX - startX (valid iff endX >
+// startX). Y traverses in whichever direction d in {+1,-1} the run's second
+// row fixed, so height = abs(endY - startY) (endY may be on either side of
+// startY -- the descending-row case, e.g. the default WRLD.Bldr bank grid,
+// has startY=3, endY=1).
 std::size_t RectangleCellCount(int startX, int endX, int startY, int endY) {
-    if (endX < startX) {
+    if (endX <= startX || endY == startY) {
         return 0;
     }
-    const std::size_t width = static_cast<std::size_t>(endX - startX) + 1;
-    const std::size_t height =
-        (startY <= endY) ? (static_cast<std::size_t>(endY - startY) + 1) : (static_cast<std::size_t>(startY - endY) + 1);
+    const std::size_t width = static_cast<std::size_t>(endX - startX);
+    const std::size_t height = static_cast<std::size_t>(std::abs(endY - startY));
     return width * height;
 }
 
@@ -305,19 +308,19 @@ std::optional<MessageIn> ReleaseMessageFor(BlockableMessage message, std::size_t
     return std::nullopt;
 }
 
-// Enumerates the inclusive rectangle [startX,endX] x rows(startY..endY,
-// stepping +-1) in row-major (x ascending within a row, rows in traversal
-// order) or column-major (y within startY..endY for each x, x ascending)
-// order, invoking `visit(x, y, cellIndex)` for each cell.
+// Enumerates the exclusive-end rectangle [startX,endX) x rows(startY toward
+// endY, stepping d = sign(endY-startY), until reaching endY -- i.e. y !=
+// endY) in row-major (x ascending within a row, rows in traversal order) or
+// column-major (y from startY toward endY for each x, x ascending) order,
+// invoking `visit(x, y, cellIndex)` for each cell.
 template <typename Visit>
 bool VisitRectangle(int startX, int endX, int startY, int endY, bool rowMajor, Visit&& visit) {
-    if (endX < startX) {
+    if (endX <= startX || endY == startY) {
         return false;
     }
-    const int yDir = (startY <= endY) ? 1 : -1;
-    const std::size_t width = static_cast<std::size_t>(endX - startX) + 1;
-    const std::size_t height = (startY <= endY) ? (static_cast<std::size_t>(endY - startY) + 1)
-                                                 : (static_cast<std::size_t>(startY - endY) + 1);
+    const int yDir = (startY < endY) ? 1 : -1;
+    const std::size_t width = static_cast<std::size_t>(endX - startX);
+    const std::size_t height = static_cast<std::size_t>(std::abs(endY - startY));
 
     std::size_t cellIndex = 0;
     if (rowMajor) {
@@ -378,8 +381,12 @@ bool ExpandSystemBlock(const SystemBlock& block, std::vector<MidiControllerSyste
     };
 
     if (block.kind == MidiProfileKind::WrldBldr || block.kind == MidiProfileKind::Launchpad) {
-        if (block.endX < block.startX) {
-            SetReason(reason, "system block x range must be non-empty (endX >= startX)");
+        if (block.endX <= block.startX) {
+            SetReason(reason, "system block x range must be non-empty (endX > startX)");
+            return false;
+        }
+        if (block.endY == block.startY) {
+            SetReason(reason, "system block y range must be non-empty (endY != startY)");
             return false;
         }
         bool coordinatesValid = true;
@@ -793,10 +800,15 @@ void FitRectangles(const std::vector<MidiControllerSystemMessageAssociation>& so
             row.block.outputFeedback = sorted[first.start].outputFeedback;
             row.block.channel = first.channel;
             row.block.launchpadController = first.launchpadController;
+            // Exclusive ends: endX = maxX + 1 = x0 + width. endY = lastRowY +
+            // rowDir -- rowDir is 0 only when height == 1 (no second row set
+            // it), in which case a single-row block uses d = +1 (per D3's
+            // semantics), so endY = startY + 1.
+            const int rowDir = height == 1 ? 1 : yDir;
             row.block.startX = first.x0;
-            row.block.endX = first.x0 + static_cast<int>(width) - 1;
+            row.block.endX = first.x0 + static_cast<int>(width);
             row.block.startY = first.y;
-            row.block.endY = height == 1 ? first.y : first.y + yDir * static_cast<int>(height - 1);
+            row.block.endY = first.y + rowDir * static_cast<int>(height);
             for (std::size_t r = 0; r < height; ++r) {
                 const Row& physRow = physicalRows[rowIx + r];
                 for (std::size_t c = 0; c < physRow.count; ++c) {
