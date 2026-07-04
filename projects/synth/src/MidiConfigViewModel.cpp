@@ -3159,6 +3159,57 @@ bool MidiConfigViewModel::GroupSupportsBlocks(std::size_t controllerIx, MidiConf
     return true;
 }
 
+std::vector<MidiMappingRowVM::RowGroup> MidiConfigViewModel::AddableGroups(std::size_t controllerIx,
+                                                                          MidiConfigSection section) const {
+    if (controllerIx >= instrument_.controllers.size()) {
+        return {};
+    }
+    // RowGroup's declaration order IS the canonical order (matches
+    // InsertionIndexForGroup/SectionRows' own section-display order, per
+    // this method's header doc comment) -- walking the enum in that order
+    // and filtering through GroupSupportsAdd (the single dispatch source of
+    // truth AddSingle/AddBlock themselves share, reviewer finding 2) is the
+    // only way to build this list, so it can never drift from what
+    // GroupSupportsAdd itself would say for any individual group.
+    static constexpr MidiMappingRowVM::RowGroup kCanonicalOrder[] = {
+        MidiMappingRowVM::RowGroup::EncoderTurn,      MidiMappingRowVM::RowGroup::EncoderPush,
+        MidiMappingRowVM::RowGroup::EncoderMode,      MidiMappingRowVM::RowGroup::EncoderStep,
+        MidiMappingRowVM::RowGroup::AnalogGesture,    MidiMappingRowVM::RowGroup::AnalogSceneBlend,
+        MidiMappingRowVM::RowGroup::System,
+    };
+    std::vector<MidiMappingRowVM::RowGroup> groups;
+    for (const MidiMappingRowVM::RowGroup group : kCanonicalOrder) {
+        if (GroupSupportsAdd(controllerIx, section, group)) {
+            groups.push_back(group);
+        }
+    }
+    return groups;
+}
+
+std::vector<MidiMappingRowVM::Field> MidiConfigViewModel::GroupColumnFields(std::size_t controllerIx,
+                                                                            MidiConfigSection section,
+                                                                            MidiMappingRowVM::RowGroup group) const {
+    if (controllerIx >= instrument_.controllers.size()) {
+        return {};
+    }
+    using RowGroup = MidiMappingRowVM::RowGroup;
+    // Same per-group field tables BuildSectionRows()' Individual-row branch
+    // uses (EncoderBlockEditableFields/AnalogBlockEditableFields are the
+    // BLOCK forms -- deliberately not reused here, since this method answers
+    // "what would a fresh INDIVIDUAL row show," per its header doc comment).
+    if (section == MidiConfigSection::Encoders &&
+        (group == RowGroup::EncoderTurn || group == RowGroup::EncoderPush)) {
+        return {Field::Channel, Field::Cc, Field::SlotIx, Field::Position};
+    }
+    if (section == MidiConfigSection::Analogs && group == RowGroup::AnalogGesture) {
+        return {Field::Channel, Field::Cc, Field::GestureIx};
+    }
+    if (section == MidiConfigSection::SystemMessages && group == RowGroup::System) {
+        return SystemRowEditableFields(instrument_.controllers[controllerIx].kind);
+    }
+    return {};
+}
+
 int MidiConfigViewModel::LaunchpadVariantIndex(std::size_t controllerIx) const {
     if (controllerIx >= instrument_.controllers.size()) {
         return -1;

@@ -565,6 +565,50 @@ public:
     bool GroupSupportsBlocks(std::size_t controllerIx, MidiConfigSection section,
                              MidiMappingRowVM::RowGroup group) const;
 
+    // The addable row groups for (controllerIx, section), in RowGroup's
+    // canonical declaration order (EncoderTurn < EncoderPush < EncoderMode <
+    // EncoderStep < AnalogGesture < AnalogSceneBlend < System -- the same
+    // order SectionRows()/InsertionIndexForGroup use, matching section
+    // display order): every group for which GroupSupportsAdd(controllerIx,
+    // section, group) is true. Today that is exactly {EncoderTurn,
+    // EncoderPush} for Encoders, {AnalogGesture} for Analogs, and {System}
+    // for SystemMessages -- config-level groups (EncoderMode/EncoderStep/
+    // AnalogSceneBlend) never appear here, same as GroupSupportsAdd's own
+    // refusal for them.
+    //
+    // sru-11 "empty group still offers add": SectionRows()' row-walk in
+    // ControllersPage.hpp's SectionBody only emits a RowGroupHeader (and
+    // therefore a "+"/"+B" affordance) for a group that has at least one
+    // ROW -- so a group with zero existing mappings (or a whole empty
+    // section, e.g. a freshly-added generic controller) has no row to hang
+    // a header off of and was, before this method existed, a dead end. This
+    // is the single source of truth the renderer walks (independent of
+    // SectionRows()'s row list) to also emit a header-only affordance for
+    // every addable group NOT already covered by an existing row's header,
+    // so an empty group is never a dead end. Empty (not just per-group
+    // false) for an out-of-range controllerIx, matching every other
+    // per-controller query on this class.
+    std::vector<MidiMappingRowVM::RowGroup> AddableGroups(std::size_t controllerIx, MidiConfigSection section) const;
+
+    // The editableFields a FRESH Individual row in `group` would carry --
+    // i.e. exactly what SectionRows() would show for a first added row in
+    // that (section, group), so an empty-group's header-only affordance
+    // (AddableGroups above) renders the right columns even though no row
+    // exists yet to read them off of. Single source of truth shared with
+    // BuildSectionRows()'s own per-group field tables (encoders: Channel,
+    // Cc, SlotIx, Position; analog gesture: Channel, Cc, GestureIx; system:
+    // SystemRowEditableFields(kind), i.e. SystemAddressSchema(kind)'s fields
+    // plus PressMessage/ReleaseMessage) so the two can never drift apart.
+    // `group` need not be addable (AddableGroups/GroupSupportsAdd) -- this
+    // answers "what would this group's columns be," independent of whether
+    // adding into it is currently legal; callers needing the addable subset
+    // combine this with AddableGroups themselves (as SectionBody does).
+    // Empty for an out-of-range controllerIx or a group/section combination
+    // BuildSectionRows() never produces an Individual row for (EncoderMode/
+    // EncoderStep/AnalogSceneBlend, or a group not appropriate to `section`).
+    std::vector<MidiMappingRowVM::Field> GroupColumnFields(std::size_t controllerIx, MidiConfigSection section,
+                                                           MidiMappingRowVM::RowGroup group) const;
+
     // --- Launchpad controller-variant selector (label-launchpad-brief.md
     // Change 2) -----------------------------------------------------------
     //

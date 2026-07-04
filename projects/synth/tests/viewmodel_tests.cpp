@@ -3233,6 +3233,215 @@ TEST_CASE(GroupSupportsAddOutOfRangeControllerIxReturnsFalse) {
     REQUIRE_TRUE(!vm.GroupSupportsBlocks(99, MidiConfigSection::SystemMessages, MidiMappingRowVM::RowGroup::System));
 }
 
+// --- sru-11: AddableGroups / GroupColumnFields (empty-group add headers) ----
+
+TEST_CASE(AddableGroupsListsEncoderTurnThenPushInCanonicalOrder) {
+    MidiConfigViewModel vm;
+    vm.Rebuild(MakeFourKindInstrument(), MakeFourKindConnection());  // wrld=0
+
+    const auto groups = vm.AddableGroups(0, MidiConfigSection::Encoders);
+    REQUIRE_TRUE(groups.size() == 2);
+    REQUIRE_TRUE(groups[0] == MidiMappingRowVM::RowGroup::EncoderTurn);
+    REQUIRE_TRUE(groups[1] == MidiMappingRowVM::RowGroup::EncoderPush);
+}
+
+TEST_CASE(AddableGroupsListsAnalogGestureOnlyForAnalogsSection) {
+    MidiConfigViewModel vm;
+    vm.Rebuild(MakeFourKindInstrument(), MakeFourKindConnection());  // wrld=0
+
+    const auto groups = vm.AddableGroups(0, MidiConfigSection::Analogs);
+    REQUIRE_TRUE(groups.size() == 1);
+    REQUIRE_TRUE(groups[0] == MidiMappingRowVM::RowGroup::AnalogGesture);
+}
+
+TEST_CASE(AddableGroupsListsSystemOnlyForSystemMessagesSection) {
+    MidiConfigViewModel vm;
+    vm.Rebuild(MakeFourKindInstrument(), MakeFourKindConnection());  // wrld=0
+
+    const auto groups = vm.AddableGroups(0, MidiConfigSection::SystemMessages);
+    REQUIRE_TRUE(groups.size() == 1);
+    REQUIRE_TRUE(groups[0] == MidiMappingRowVM::RowGroup::System);
+}
+
+TEST_CASE(AddableGroupsNeverListsConfigLevelGroups) {
+    MidiConfigViewModel vm;
+    vm.Rebuild(MakeFourKindInstrument(), MakeFourKindConnection());
+
+    using Group = MidiMappingRowVM::RowGroup;
+    auto contains = [](const std::vector<Group>& groups, Group g) {
+        return std::find(groups.begin(), groups.end(), g) != groups.end();
+    };
+    REQUIRE_TRUE(!contains(vm.AddableGroups(0, MidiConfigSection::Encoders), Group::EncoderMode));
+    REQUIRE_TRUE(!contains(vm.AddableGroups(0, MidiConfigSection::Encoders), Group::EncoderStep));
+    REQUIRE_TRUE(!contains(vm.AddableGroups(0, MidiConfigSection::Analogs), Group::AnalogSceneBlend));
+}
+
+TEST_CASE(AddableGroupsEmptyForOutOfRangeControllerIx) {
+    MidiConfigViewModel vm;
+    vm.Rebuild(MakeFourKindInstrument(), MakeFourKindConnection());
+
+    REQUIRE_TRUE(vm.AddableGroups(99, MidiConfigSection::Encoders).empty());
+}
+
+// AddableGroups mirrors GroupSupportsAdd's own doc-commented contract: it is
+// dispatch-level (section/group only), NOT dependent on controller kind --
+// so, matching GroupSupportsAdd(0/1/2/3, Encoders, EncoderTurn) all being
+// true regardless of kind (GroupSupportsAddAndBlocksMatchesAddSingleAddBlock
+// Dispatch's own "today's dispatch does not vary by kind" doc comment),
+// AddableGroups(2 /*launchpad*/, Encoders) still lists EncoderTurn/EncoderPush
+// even though launchpad's KindSupport has no encoders -- the renderer never
+// actually calls this for a section absent from that controller's own
+// MidiControllerRowVM::sections (SectionsForKind-filtered, ControllerRow's
+// `for (const synth::MidiConfigSection section : rowVm.sections)` loop), so
+// this is unreachable in practice but must stay dispatch-consistent per
+// AddableGroups' own doc comment.
+TEST_CASE(AddableGroupsIsDispatchLevelNotKindFiltered) {
+    MidiConfigViewModel vm;
+    vm.Rebuild(MakeFourKindInstrument(), MakeFourKindConnection());
+
+    const auto encoderGroups = vm.AddableGroups(2, MidiConfigSection::Encoders);
+    REQUIRE_TRUE(encoderGroups.size() == 2);
+    const auto analogGroups = vm.AddableGroups(2, MidiConfigSection::Analogs);
+    REQUIRE_TRUE(analogGroups.size() == 1);
+    REQUIRE_TRUE(vm.AddableGroups(2, MidiConfigSection::SystemMessages).size() == 1);
+}
+
+// GroupColumnFields must match exactly what BuildSectionRows() gives a real
+// added Individual row in the same group -- the whole point of this method
+// is that an empty-group header renders the SAME columns a populated one
+// would, so add a row via AddSingle into an EMPTY group (post Fix A, this
+// now succeeds even from a nullopt container) and compare.
+TEST_CASE(GroupColumnFieldsMatchesWhatARealAddedEncoderTurnRowGets) {
+    MidiConfigViewModel vm;
+    MidiInstrumentConfig instrument;
+    instrument.AddController(MakeGenericSlot("gen"));
+    MidiConnectionState connection = MakeSingleControllerConnection();
+    vm.Rebuild(instrument, connection);
+
+    const auto columnFields =
+        vm.GroupColumnFields(0, MidiConfigSection::Encoders, MidiMappingRowVM::RowGroup::EncoderTurn);
+    REQUIRE_TRUE(!columnFields.empty());
+
+    MidiInstrumentConfig out;
+    std::string reason;
+    REQUIRE_TRUE(
+        vm.AddSingle(0, MidiConfigSection::Encoders, MidiMappingRowVM::RowGroup::EncoderTurn, out, &reason));
+    vm.Rebuild(out, connection);
+    const std::vector<MidiMappingRowVM> rows = vm.SectionRows(0, MidiConfigSection::Encoders);
+    REQUIRE_TRUE(!rows.empty());
+    REQUIRE_TRUE(rows.front().group == MidiMappingRowVM::RowGroup::EncoderTurn);
+    REQUIRE_TRUE(rows.front().editableFields == columnFields);
+}
+
+TEST_CASE(GroupColumnFieldsMatchesWhatARealAddedAnalogGestureRowGets) {
+    MidiConfigViewModel vm;
+    MidiInstrumentConfig instrument;
+    instrument.AddController(MakeGenericSlot("gen"));
+    MidiConnectionState connection = MakeSingleControllerConnection();
+    vm.Rebuild(instrument, connection);
+
+    const auto columnFields =
+        vm.GroupColumnFields(0, MidiConfigSection::Analogs, MidiMappingRowVM::RowGroup::AnalogGesture);
+    const std::vector<MidiMappingRowVM::Field> expectedColumnFields = {
+        MidiMappingRowVM::Field::Channel, MidiMappingRowVM::Field::Cc, MidiMappingRowVM::Field::GestureIx};
+    REQUIRE_TRUE(columnFields == expectedColumnFields);
+
+    MidiInstrumentConfig out;
+    std::string reason;
+    REQUIRE_TRUE(
+        vm.AddSingle(0, MidiConfigSection::Analogs, MidiMappingRowVM::RowGroup::AnalogGesture, out, &reason));
+    vm.Rebuild(out, connection);
+    const std::vector<MidiMappingRowVM> rows = vm.SectionRows(0, MidiConfigSection::Analogs);
+    REQUIRE_TRUE(!rows.empty());
+    REQUIRE_TRUE(rows.front().group == MidiMappingRowVM::RowGroup::AnalogGesture);
+    REQUIRE_TRUE(rows.front().editableFields == columnFields);
+}
+
+// System's schema is per-kind (sru-8) -- check every kind's empty-section
+// GroupColumnFields matches SystemRowEditableFields(kind) (the same table
+// BuildSectionRows()' Individual system-row case uses), via a real added row.
+TEST_CASE(GroupColumnFieldsMatchesWhatARealAddedSystemRowGetsPerKind) {
+    struct KindFixture {
+        MidiControllerSlot (*makeSlot)(const char*);
+        const char* name;
+    };
+    const KindFixture fixtures[] = {
+        {MakeWrldBldrSlot, "wrld"},
+        {MakeTwisterSlot, "twist"},
+        {MakeLaunchpadSlot, "pads"},
+        {MakeGenericSlot, "gen"},
+    };
+    for (const KindFixture& fixture : fixtures) {
+        MidiConfigViewModel vm;
+        MidiInstrumentConfig instrument;
+        instrument.AddController(fixture.makeSlot(fixture.name));
+        MidiConnectionState connection = MakeSingleControllerConnection();
+        vm.Rebuild(instrument, connection);
+
+        const auto columnFields =
+            vm.GroupColumnFields(0, MidiConfigSection::SystemMessages, MidiMappingRowVM::RowGroup::System);
+        REQUIRE_TRUE(!columnFields.empty());
+
+        // Clear this kind's default-profile system messages first so AddSingle
+        // is genuinely adding into an EMPTY group (matches the empty-section
+        // scenario this method exists for), then add one and compare.
+        MidiInstrumentConfig cleared = instrument;
+        cleared.controllers[0].config.systemMessages.clear();
+        vm.Rebuild(cleared, connection);
+
+        MidiInstrumentConfig out;
+        std::string reason;
+        REQUIRE_TRUE(
+            vm.AddSingle(0, MidiConfigSection::SystemMessages, MidiMappingRowVM::RowGroup::System, out, &reason));
+        vm.Rebuild(out, connection);
+        const std::vector<MidiMappingRowVM> rows = vm.SectionRows(0, MidiConfigSection::SystemMessages);
+        REQUIRE_TRUE(!rows.empty());
+        REQUIRE_TRUE(rows.front().group == MidiMappingRowVM::RowGroup::System);
+        REQUIRE_TRUE(rows.front().editableFields == columnFields);
+    }
+}
+
+TEST_CASE(GroupColumnFieldsEmptyForConfigLevelGroupsAndOutOfRangeControllerIx) {
+    MidiConfigViewModel vm;
+    vm.Rebuild(MakeFourKindInstrument(), MakeFourKindConnection());
+
+    REQUIRE_TRUE(
+        vm.GroupColumnFields(0, MidiConfigSection::Encoders, MidiMappingRowVM::RowGroup::EncoderMode).empty());
+    REQUIRE_TRUE(
+        vm.GroupColumnFields(0, MidiConfigSection::Encoders, MidiMappingRowVM::RowGroup::EncoderStep).empty());
+    REQUIRE_TRUE(
+        vm.GroupColumnFields(0, MidiConfigSection::Analogs, MidiMappingRowVM::RowGroup::AnalogSceneBlend).empty());
+    REQUIRE_TRUE(
+        vm.GroupColumnFields(99, MidiConfigSection::SystemMessages, MidiMappingRowVM::RowGroup::System).empty());
+}
+
+// Drift check mirroring GroupSupportsAddAndBlocksMatchesAddSingleAddBlockDispatch's
+// own rationale, applied to AddableGroups: every group it lists (or omits)
+// for a given (controllerIx, section) must agree with GroupSupportsAdd
+// itself, so a hardcoded expectation elsewhere in this file can never
+// silently diverge from AddableGroups' actual behavior.
+TEST_CASE(AddableGroupsAgreesWithGroupSupportsAddForEveryGroupAndSection) {
+    MidiConfigViewModel vm;
+    const MidiInstrumentConfig instrument = MakeFourKindInstrument();
+    vm.Rebuild(instrument, MakeFourKindConnection());
+
+    using Group = MidiMappingRowVM::RowGroup;
+    const MidiConfigSection sections[] = {MidiConfigSection::Encoders, MidiConfigSection::SystemMessages,
+                                          MidiConfigSection::Analogs};
+    const Group groups[] = {Group::EncoderTurn,     Group::EncoderPush,      Group::EncoderMode,
+                            Group::EncoderStep,     Group::AnalogGesture,    Group::AnalogSceneBlend,
+                            Group::System};
+    for (std::size_t controllerIx = 0; controllerIx < instrument.controllers.size(); ++controllerIx) {
+        for (const MidiConfigSection section : sections) {
+            const std::vector<Group> addable = vm.AddableGroups(controllerIx, section);
+            for (const Group group : groups) {
+                const bool listed = std::find(addable.begin(), addable.end(), group) != addable.end();
+                REQUIRE_TRUE(listed == vm.GroupSupportsAdd(controllerIx, section, group));
+            }
+        }
+    }
+}
+
 // Reviewer finding 1: two rows sharing (RowGroup, Kind) can still disagree
 // on editableFields (a System Block run mixing a BankSelect block --
 // editableFields includes Field::BlockBankSlotIx -- with a SceneSelect/
