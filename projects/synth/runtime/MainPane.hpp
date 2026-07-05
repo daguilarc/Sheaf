@@ -1,6 +1,6 @@
 #pragma once
 
-// synth_runtime::MainPane / Sidebar — the library's main pane (Plan 4 Task 2,
+// synth_runtime::MainPane / SidebarHost — the library's main pane (Plan 4 Task 2,
 // sru-1/sru-2): a fixed-width right sidebar (Audio/Controllers/File tabs plus
 // a max-recent-deadline readout) and a content host that shows exactly one of
 // the application's portable UI surface or a single library page at a time.
@@ -9,9 +9,10 @@
 // the former patch chrome row / MidiPanel strip / AudioPanel strip layout is
 // gone from the shell (sru-3/sru-4 moved MidiPanel/AudioPanel's logic into
 // ControllersPage/AudioConfigPage; sru-6 moved the patch row into FilePage).
-// Audio, File, and Controllers all show real pages (AudioConfigPage.hpp /
-// FilePage.hpp / ControllersPage.hpp) as of Task 4 of Plan 4, which deleted
-// the last placeholder (a juce::Label naming the page plus a Back button).
+// Audio and File pages render through portable semantic trees
+// (include/synth/RuntimePages.hpp) with JUCE backends in
+// projects/synth/juce/RuntimePagesJuce.hpp. ControllersPage remains a direct
+// JUCE renderer until task 5.x.
 //
 // Content-host visibility (sru-1, binding): switching pages toggles
 // juce::Component::setVisible on the portable app component and whichever of
@@ -49,86 +50,50 @@
 #include "FilePage.hpp"
 #include "synth/RuntimePagePolicy.hpp"
 #include "PortableJuceBackend.hpp"
+#include "RuntimePagesJuce.hpp"
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
-#include <cstdio>
 #include <functional>
 
 namespace synth_runtime {
 
-// Forward declaration; Runtime<App> is defined in Runtime.hpp, which
-// includes this header transitively through Shell.hpp -- MainPane only
-// needs a reference, so a forward declaration avoids a circular include.
 template <synth::SynthApplication App>
 class Runtime;
 
-// The fixed-width (96px, sru-2 binding) right-edge sidebar: Audio,
-// Controllers, and File buttons (96x40 each, top-down) followed by the
-// deadline readout label (96x40). Callbacks are wired by MainPane's
-// constructor straight into MainPane::ShowPage.
-class Sidebar : public juce::Component {
-public:
-    static constexpr int kWidth = 96;
-    static constexpr int kButtonHeight = 40;
-
-    Sidebar() {
-        audioButton_.setButtonText("Audio");
-        addAndMakeVisible(audioButton_);
-
-        controllersButton_.setButtonText("Controllers");
-        addAndMakeVisible(controllersButton_);
-
-        fileButton_.setButtonText("File");
-        addAndMakeVisible(fileButton_);
-
-        deadlineLabel_.setColour(juce::Label::textColourId, juce::Colours::white);
-        deadlineLabel_.setJustificationType(juce::Justification::centred);
-        deadlineLabel_.setText("0.0%", juce::dontSendNotification);
-        addAndMakeVisible(deadlineLabel_);
-    }
-
-    void resized() override {
-        auto area = getLocalBounds();
-        audioButton_.setBounds(area.removeFromTop(kButtonHeight));
-        controllersButton_.setBounds(area.removeFromTop(kButtonHeight));
-        fileButton_.setBounds(area.removeFromTop(kButtonHeight));
-        deadlineLabel_.setBounds(area.removeFromTop(kButtonHeight));
-    }
-
-    // Renders the current rolling-max deadline percentage, "%.1f%%" (sru-2
-    // binding). Called by MainPane after every WriteDeadlineSample.
-    void SetDeadlineText(float pct) {
-        char buffer[32];
-        std::snprintf(buffer, sizeof(buffer), "%.1f%%", static_cast<double>(pct));
-        deadlineLabel_.setText(juce::String(buffer), juce::dontSendNotification);
-    }
-
-    juce::TextButton audioButton_;
-    juce::TextButton controllersButton_;
-    juce::TextButton fileButton_;
-
-private:
-    juce::Label deadlineLabel_;
-};
-
-// The library main pane: Sidebar at the fixed right edge, a content host
-// filling the remainder showing either the application's portable surface or
-// exactly one library page (sru-1).
 template <synth::SynthApplication App>
-class MainPane : public juce::Component {
+class MainPane : public juce::Component
+{
 public:
-    enum class Page { None, Audio, Controllers, File };
+    enum class Page
+    {
+        None,
+        Audio,
+        Controllers,
+        File
+    };
 
     explicit MainPane(Runtime<App>& runtime)
         : runtime_(runtime)
         , appComponent_(runtime.AppSurface())
         , audioPage_(runtime)
         , filePage_(runtime)
-        , controllersPage_(runtime) {
-        sidebar_.audioButton_.onClick = [this] { ShowPage(Page::Audio); };
-        sidebar_.controllersButton_.onClick = [this] { ShowPage(Page::Controllers); };
-        sidebar_.fileButton_.onClick = [this] { ShowPage(Page::File); };
+        , controllersPage_(runtime)
+    {
+        sidebar_.onAction = [this](const synth::ui::Action& action) {
+            if (action.name == synth::runtime_ui::Actions::kSidebarAudio)
+            {
+                ShowPage(Page::Audio);
+            }
+            else if (action.name == synth::runtime_ui::Actions::kSidebarControllers)
+            {
+                ShowPage(Page::Controllers);
+            }
+            else if (action.name == synth::runtime_ui::Actions::kSidebarFile)
+            {
+                ShowPage(Page::File);
+            }
+        };
         addAndMakeVisible(sidebar_);
 
         audioPage_.onBack = [this] { ReturnFromPage(Page::Audio); };
@@ -146,11 +111,8 @@ public:
         ShowPage(Page::None);
     }
 
-    // Swaps content-host visibility between the app component (None) and
-    // the named page (sru-1: exactly one visible at a time; the app
-    // component's own state is retained via setVisible(false), never
-    // destroyed/reconstructed -- see this header's doc comment).
-    void ShowPage(Page page) {
+    void ShowPage(Page page)
+    {
         currentPage_ = page;
 
         const bool showingApp = (page == Page::None);
@@ -162,38 +124,30 @@ public:
         resized();
     }
 
-    Page CurrentPage() const { return currentPage_; }
-
-    // Runtime's UI timer calls this once per tick with
-    // deviceManager_.getCpuUsage() * 100.0f (sru-2 binding); forwarded into
-    // the JUCE-free rolling-max tracker and reflected into the sidebar
-    // label's text immediately (Runtime's repaint hook, invoked later in the
-    // same tick, repaints the sidebar so the new text actually appears).
-    void WriteDeadlineSample(float pct) {
-        deadlineMax_.Write(pct);
-        sidebar_.SetDeadlineText(deadlineMax_.Max());
+    Page CurrentPage() const
+    {
+        return currentPage_;
     }
 
-    // Called once per UI timer tick (see this header's doc comment) so
-    // FilePage's patch-name label, AudioConfigPage's negotiated-values
-    // status, and ControllersPage's view model stay current regardless of
-    // which page is currently shown.
-    void RefreshOnTick() {
+    void WriteDeadlineSample(float pct)
+    {
+        deadlineMax_.Write(pct);
+        sidebar_.SetDeadlinePercent(deadlineMax_.Max());
+    }
+
+    void RefreshOnTick()
+    {
         appComponent_.RefreshFromSurface();
         audioPage_.RefreshOnTick();
         filePage_.RefreshOnTick();
         controllersPage_.RefreshOnTick();
     }
 
-    void resized() override {
+    void resized() override
+    {
         auto area = getLocalBounds();
-        sidebar_.setBounds(area.removeFromRight(Sidebar::kWidth));
+        sidebar_.setBounds(area.removeFromRight(static_cast<int>(synth::runtime_ui::Layout::kSidebarWidth)));
 
-        // Content host: the remaining area, shared by the app component and
-        // whichever page is showing. Back sits at the top of the page area
-        // (binding: "Back control at the top of every page") --
-        // audioPage_/filePage_/controllersPage_ each lay out their own Back
-        // button internally within this same area.
         audioPage_.setBounds(area);
         filePage_.setBounds(area);
         controllersPage_.setBounds(area);
@@ -225,7 +179,7 @@ private:
 
     Runtime<App>& runtime_;
     synth_juce::PortableComponent appComponent_;
-    Sidebar sidebar_;
+    SidebarHost sidebar_;
     AudioConfigPage<App> audioPage_;
     FilePage<App> filePage_;
     ControllersPage<App> controllersPage_;

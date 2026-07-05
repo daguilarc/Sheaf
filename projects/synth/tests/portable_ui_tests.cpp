@@ -1,7 +1,9 @@
 #include "synth/AppConcepts.hpp"
 #include "synth/PortableUI.hpp"
 #include "synth/PortableUIBuilders.hpp"
+#include "synth/RuntimePages.hpp"
 
+#include <optional>
 #include <stdexcept>
 #include <string>
 
@@ -17,6 +19,18 @@ void Require(bool condition, const char* label)
     {
         throw std::runtime_error(label);
     }
+}
+
+const synth::ui::Node* FindNodeById(const synth::ui::NodeTree& tree, const char* id)
+{
+    for (const synth::ui::Node& node : tree.nodes)
+    {
+        if (node.id == synth::ui::NodeId(id))
+        {
+            return &node;
+        }
+    }
+    return nullptr;
 }
 
 struct TestSurface final : synth::ui::Surface
@@ -68,5 +82,79 @@ int main()
     Require(tree.nodes.size() == 8, "tree should contain root plus seven children");
     Require(tree.nodes[0].id == synth::ui::NodeId("root"), "root id");
     Require(tree.nodes[7].drawCommands.size() == 2, "draw commands");
+
+    synth::runtime_ui::SidebarSnapshot sidebarSnapshot;
+    sidebarSnapshot.deadlinePercent = 12.5f;
+    const synth::ui::NodeTree sidebarTree = synth::runtime_ui::BuildSidebarTree(sidebarSnapshot);
+    Require(FindNodeById(sidebarTree, synth::runtime_ui::NodeIds::kSidebarAudio) != nullptr, "sidebar audio node");
+    Require(FindNodeById(sidebarTree, synth::runtime_ui::NodeIds::kSidebarControllers) != nullptr,
+            "sidebar controllers node");
+    Require(FindNodeById(sidebarTree, synth::runtime_ui::NodeIds::kSidebarFile) != nullptr, "sidebar file node");
+    Require(FindNodeById(sidebarTree, synth::runtime_ui::NodeIds::kSidebarDeadline) != nullptr,
+            "sidebar deadline node");
+    const synth::ui::Node* deadlineNode = FindNodeById(sidebarTree, synth::runtime_ui::NodeIds::kSidebarDeadline);
+    Require(deadlineNode->text == "12.5%", "deadline readout text");
+
+    synth::runtime_ui::AudioPageSnapshot audioSnapshot;
+    audioSnapshot.outputOptions = synth::runtime_ui::Layout::BuildDeviceOptions({"Speakers", "Headphones"});
+    audioSnapshot.inputOptions = synth::runtime_ui::Layout::BuildDeviceOptions({"Mic"});
+    Require(synth::runtime_ui::Layout::SelectedDeviceOptionId("Headphones", audioSnapshot.outputOptions) ==
+                "Headphones",
+            "known audio device option stays selected");
+    Require(synth::runtime_ui::Layout::SelectedDeviceOptionId("Vanished Device", audioSnapshot.outputOptions) ==
+                synth::runtime_ui::kSystemDefaultOptionId,
+            "unknown audio device option falls back to system default");
+    audioSnapshot.selectedOutputId = "Speakers";
+    audioSnapshot.selectedInputId = synth::runtime_ui::kSystemDefaultOptionId;
+    audioSnapshot.showInputCombo = true;
+    audioSnapshot.deviceLineText = "Speakers: 48000 Hz, 512 frames";
+    audioSnapshot.statusLineText = "Audio: Speakers";
+    const synth::ui::NodeTree audioTree =
+        synth::runtime_ui::BuildAudioPageTree(audioSnapshot, synth::ui::Bounds{0.0f, 0.0f, 640.0f, 480.0f});
+    Require(FindNodeById(audioTree, synth::runtime_ui::NodeIds::kAudioBack) != nullptr, "audio back node");
+    Require(FindNodeById(audioTree, synth::runtime_ui::NodeIds::kAudioOutput) != nullptr, "audio output node");
+    Require(FindNodeById(audioTree, synth::runtime_ui::NodeIds::kAudioInput) != nullptr, "audio input node");
+    Require(FindNodeById(audioTree, synth::runtime_ui::NodeIds::kAudioDeviceLine) != nullptr, "audio device line");
+    Require(FindNodeById(audioTree, synth::runtime_ui::NodeIds::kAudioStatusLine) != nullptr, "audio status line");
+
+    synth::runtime_ui::FilePageSnapshot fileSnapshot;
+    fileSnapshot.patchNameText = "my_patch";
+    fileSnapshot.statusText = "Save requested";
+    fileSnapshot.hasCurrentPatch = true;
+    const synth::ui::NodeTree fileTree =
+        synth::runtime_ui::BuildFilePageTree(fileSnapshot, synth::ui::Bounds{0.0f, 0.0f, 640.0f, 480.0f});
+    Require(FindNodeById(fileTree, synth::runtime_ui::NodeIds::kFileBack) != nullptr, "file back node");
+    Require(FindNodeById(fileTree, synth::runtime_ui::NodeIds::kFileNew) != nullptr, "file new node");
+    Require(FindNodeById(fileTree, synth::runtime_ui::NodeIds::kFileSave) != nullptr, "file save node");
+    Require(FindNodeById(fileTree, synth::runtime_ui::NodeIds::kFileSaveAs) != nullptr, "file save as node");
+    Require(FindNodeById(fileTree, synth::runtime_ui::NodeIds::kFileLoad) != nullptr, "file load node");
+    Require(FindNodeById(fileTree, synth::runtime_ui::NodeIds::kFileRevert) != nullptr, "file revert node");
+    Require(FindNodeById(fileTree, synth::runtime_ui::NodeIds::kFilePatchName) != nullptr, "file patch name node");
+    Require(FindNodeById(fileTree, synth::runtime_ui::NodeIds::kFileStatus) != nullptr, "file status node");
+
+    synth::runtime_ui::SidebarSurface sidebarSurface;
+    sidebarSurface.SetDeadlinePercent(3.0f);
+    const synth::ui::NodeTree sidebarBuilt = sidebarSurface.BuildTree();
+    Require(FindNodeById(sidebarBuilt, synth::runtime_ui::NodeIds::kSidebarDeadline)->text == "3.0%",
+            "sidebar surface deadline refresh");
+
+    synth::runtime_ui::AudioPageSurface audioSurface;
+    audioSurface.Snapshot() = audioSnapshot;
+    audioSurface.SetContentBounds({0.0f, 0.0f, 640.0f, 480.0f});
+    Require(audioSurface.BuildTree().nodes.size() >= 5, "audio surface builds semantic tree");
+
+    synth::runtime_ui::FilePageSurface fileSurface;
+    fileSurface.Snapshot() = fileSnapshot;
+    fileSurface.SetContentBounds({0.0f, 0.0f, 640.0f, 480.0f});
+    fileSurface.SetStatus("Ready");
+    Require(FindNodeById(fileSurface.BuildTree(), synth::runtime_ui::NodeIds::kFileStatus)->text == "Ready",
+            "file surface status refresh");
+
+    const std::optional<synth::runtime_ui::FileChooserRequest> saveAsRequest =
+        synth::runtime_ui::ParseFileChooserRequest(
+            synth::ui::Action::WithValue(synth::runtime_ui::Actions::kFileChooserSaveAs, "/patches"));
+    Require(saveAsRequest.has_value(), "save-as chooser request parses");
+    Require(saveAsRequest->kind == synth::runtime_ui::FileChooserKind::SaveAs, "save-as chooser kind");
+
     return 0;
 }

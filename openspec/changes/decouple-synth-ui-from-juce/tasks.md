@@ -22,10 +22,10 @@
 
 ## 4. Runtime Pages
 
-- [ ] 4.1 Port the sidebar/main-pane content selection model to portable semantic nodes while keeping Audio/Controllers/File navigation and deadline readout behavior.
-- [ ] 4.2 Port the Audio page to portable semantic controls for output/input selection, current-device display, status text, and back navigation.
-- [ ] 4.3 Port the File page to portable semantic controls for New/Save/Save As/Load/Revert, current patch name, status text, file chooser handoff, and first-save fallback.
-- [ ] 4.4 Add regression tests covering page navigation, page state refresh, and desktop JUCE backend rendering of the runtime pages.
+- [x] 4.1 Port the sidebar/main-pane content selection model to portable semantic nodes while keeping Audio/Controllers/File navigation and deadline readout behavior.
+- [x] 4.2 Port the Audio page to portable semantic controls for output/input selection, current-device display, status text, and back navigation.
+- [x] 4.3 Port the File page to portable semantic controls for New/Save/Save As/Load/Revert, current patch name, status text, file chooser handoff, and first-save fallback.
+- [x] 4.4 Add regression tests covering page navigation, page state refresh, and desktop JUCE backend rendering of the runtime pages.
 
 ## 5. Controllers Page Semantic Tree
 
