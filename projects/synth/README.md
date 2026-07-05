@@ -156,6 +156,24 @@ rejects endpoints that are invalid for any existing group and leaves prior
 scene state unchanged. `SetSceneBlend(blend)` clamps and updates blend
 independently.
 
+## Portable UI Contract
+
+Headers under `projects/synth/include/synth/PortableUI.hpp` and
+`PortableUIBuilders.hpp` are JUCE-free. Applications satisfying
+`synth::SynthApplication` expose a `PortableSurface()` that returns a
+`synth::ui::Surface&`.
+
+`synth::ui::Surface::BuildTree()` runs on the host UI/message thread. Action
+handlers registered through `SetActionHandler()` also run on that thread.
+Application actions that affect DSP should enqueue `synth::MessageIn` values
+through `AppContext::uiBus` with timestamps from `AppContext::now`.
+
+Bespoke widgets (encoders, waveform scopes, segment displays) describe paint
+as bounded `synth::ui::DrawCommand` sequences on `NodeKind::Draw` nodes.
+Form-style runtime pages use semantic control nodes (`Label`, `Button`,
+`Toggle`, `Slider`, `ComboBox`, `TextField`, and related kinds) so a browser
+or other backend can map them to DOM controls without pulling in JUCE.
+
 ## Layout: runtime vs apps
 
 `projects/synth/runtime/` is the shared, app-agnostic JUCE application
@@ -176,7 +194,7 @@ the old MidiPanel/AudioPanel strips and the patch-command row.
 `projects/synth/apps/<name>/` holds one runtime application each. An app
 provides a JUCE-free core satisfying `synth::SynthApplicationCore` (so it can
 also run headless under `synth_rig::SynthRig` in tests) plus a JUCE-facing UI
-wrapper satisfying `synth::SynthApplication` (adds `UIComponent()`), and a
+wrapper satisfying `synth::SynthApplication` (adds `PortableSurface()`), and a
 `Main.cpp` that is just `SYNTH_RUNTIME_MAIN(AppType)`. The app's own UI
 component should contain only its bespoke widgets; patch commands and MIDI
 device/controller configuration are runtime-owned pages, not app code (see

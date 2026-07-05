@@ -196,8 +196,13 @@ struct ConceptCoreOnlyApp {
     void Init(synth::AppContext*) {}
     void ProcessBlock(synth::AudioBlock&) {}
 };
+struct StubSurface final : synth::ui::Surface {
+    synth::ui::NodeTree BuildTree() override { return {}; }
+    void SetActionHandler(ActionHandler) override {}
+};
 struct ConceptFullApp : ConceptCoreOnlyApp {
-    int UIComponent() { return 0; }  // stand-in; runtime consumes the real type
+    StubSurface surface;
+    synth::ui::Surface& PortableSurface() { return surface; }
     void PrepareToPlay(double, int) {}
 };
 struct ConceptNotAnApp {

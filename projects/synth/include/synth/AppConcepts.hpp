@@ -1,5 +1,6 @@
 #pragma once
 #include "synth/AppContext.hpp"
+#include "synth/PortableUI.hpp"
 #include <concepts>
 #include <utility>
 
@@ -14,12 +15,10 @@ concept SynthApplicationCore = requires(T app, AppContext* context, AudioBlock& 
     { app.ProcessBlock(block) } -> std::same_as<void>;
 };
 
-// Full application contract: core plus the UI-component hook. The hook's
-// return type is deliberately unconstrained here so this header stays
-// JUCE-free; the JUCE runtime consumes whatever component type it returns.
+// Full application contract: core plus the portable UI surface hook.
 template <typename T>
 concept SynthApplication = SynthApplicationCore<T> && requires(T app) {
-    app.UIComponent();
+    { app.PortableSurface() } -> std::same_as<synth::ui::Surface&>;
 };
 
 // Optional hooks, detected at compile time and skipped when absent.
