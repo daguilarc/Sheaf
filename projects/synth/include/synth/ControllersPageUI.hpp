@@ -162,6 +162,12 @@ inline constexpr float kDeleteButtonWidth = 22.0f;
 inline constexpr float kAddButtonWidth = 62.0f;
 inline constexpr float kVariantBoxWidth = 140.0f;
 inline constexpr float kStatusDotsWidth = 32.0f;
+inline constexpr float kHeaderControlsX = 256.0f;
+inline constexpr float kEndpointBoxWidth = 160.0f;
+inline constexpr float kEndpointBoxGap = 8.0f;
+inline constexpr float kControllerHeaderMinWidth =
+    kHeaderControlsX + kStatusDotsWidth + 4.0f + kEndpointBoxWidth + kEndpointBoxGap + kEndpointBoxWidth +
+    kEndpointBoxGap + kVariantBoxWidth;
 inline constexpr float kSectionMaxHeight = 220.0f;
 inline constexpr float kSectionPadding = 8.0f;
 
@@ -170,13 +176,9 @@ inline int FieldEditorWidth(MidiMappingRowVM::Field field)
     using Field = MidiMappingRowVM::Field;
     switch (field)
     {
-        case Field::PressMessage:
-        case Field::ReleaseMessage:
         case Field::MessageKind:
-        case Field::ReleaseKind:
             return 150;
         case Field::MessageArg:
-        case Field::ReleaseArg:
             return 74;
         case Field::RelativeMode:
         case Field::BlockMessageType:
@@ -869,10 +871,16 @@ private:
         }();
         MidiInstrumentConfig out;
         std::string reason;
-        if (m_vm.ApplyMappingEdit(controllerIx, *section, rowIx, *field, numericValue, out, &reason))
+        bool presentationChanged = false;
+        if (m_vm.ApplyMappingEdit(controllerIx, *section, rowIx, *field, numericValue, out, &reason,
+                                  &presentationChanged))
         {
             Commit(std::move(out));
             SetStatus("OK");
+        }
+        else if (presentationChanged)
+        {
+            SetStatus("Warning: " + reason);
         }
         else
         {
@@ -1003,14 +1011,14 @@ private:
         scrollArea.kind = ui::NodeKind::ScrollArea;
         const float scrollBottom = area.y + area.height - ControllersLayout::kStatusRowHeight - ControllersLayout::kRowGap - ControllersLayout::kPageMargin;
         scrollArea.bounds = {contentX, y, contentWidth, scrollBottom - y};
-        scrollArea.scrollContentWidth = contentWidth;
+        scrollArea.scrollContentWidth = std::max(contentWidth, ControllersLayout::kControllerHeaderMinWidth);
         scrollArea.scrollContentHeight = scrollArea.bounds.height;
         tree.nodes.front().children.push_back(scrollArea.id);
         const std::size_t scrollAreaIndex = tree.nodes.size();
         tree.nodes.push_back(scrollArea);
 
         float scrollY = 0.0f;
-        const float scrollWidth = contentWidth;
+        const float scrollWidth = tree.nodes[scrollAreaIndex].scrollContentWidth;
         auto appendScrollChild = [&](ui::Node node) {
             tree.nodes[scrollAreaIndex].children.push_back(node.id);
             tree.nodes.push_back(std::move(node));
@@ -1055,24 +1063,7 @@ private:
             kindLabel.bounds = {152.0f, 0.0f, 100.0f, ControllersLayout::kControllerHeaderHeight};
             appendControllerChild(std::move(kindLabel));
 
-            float headerX = 256.0f;
-            if (rowVm.kind == MidiProfileKind::Launchpad)
-            {
-                std::string selectedVariant;
-                const std::vector<ui::ControlOption> variantOptions =
-                    ControllersLayout::BuildLaunchpadVariantOptions(vm.LaunchpadVariantIndex(controllerIx), selectedVariant);
-                ui::Node variantCombo;
-                variantCombo.id = ui::NodeId(NodeIds::ControllerVariant(controllerIx));
-                variantCombo.kind = ui::NodeKind::ComboBox;
-                variantCombo.label = "Variant";
-                variantCombo.options = variantOptions;
-                variantCombo.selectedOption = selectedVariant;
-                variantCombo.bounds = {headerX, 0.0f, ControllersLayout::kVariantBoxWidth,
-                                       ControllersLayout::kControllerHeaderHeight};
-                variantCombo.action = ui::Action::WithValue(Actions::kVariantSelect, std::to_string(controllerIx));
-                appendControllerChild(std::move(variantCombo));
-                headerX += ControllersLayout::kVariantBoxWidth + 4.0f;
-            }
+            float headerX = ControllersLayout::kHeaderControlsX;
 
             ui::Node statusDots;
             statusDots.id = ui::NodeId(NodeIds::ControllerStatusDots(controllerIx));
@@ -1095,7 +1086,8 @@ private:
             inputCombo.options =
                 ControllersLayout::BuildEndpointOptions(devices.inputs, rowVm.inputStatus, rowVm.inputDeviceLabel, selectedInput);
             inputCombo.selectedOption = selectedInput;
-            inputCombo.bounds = {headerX, 0.0f, 160.0f, ControllersLayout::kControllerHeaderHeight};
+            inputCombo.bounds = {headerX, 0.0f, ControllersLayout::kEndpointBoxWidth,
+                                 ControllersLayout::kControllerHeaderHeight};
             inputCombo.action = ui::Action::WithValue(Actions::kEndpointSelect, std::to_string(controllerIx) + ":input");
             appendControllerChild(std::move(inputCombo));
 
@@ -1109,9 +1101,31 @@ private:
                                                              rowVm.outputDeviceLabel,
                                                              selectedOutput);
             outputCombo.selectedOption = selectedOutput;
-            outputCombo.bounds = {headerX + 168.0f, 0.0f, 160.0f, ControllersLayout::kControllerHeaderHeight};
+            outputCombo.bounds = {headerX + ControllersLayout::kEndpointBoxWidth + ControllersLayout::kEndpointBoxGap,
+                                  0.0f, ControllersLayout::kEndpointBoxWidth,
+                                  ControllersLayout::kControllerHeaderHeight};
             outputCombo.action = ui::Action::WithValue(Actions::kEndpointSelect, std::to_string(controllerIx) + ":output");
             appendControllerChild(std::move(outputCombo));
+
+            if (rowVm.kind == MidiProfileKind::Launchpad)
+            {
+                std::string selectedVariant;
+                const std::vector<ui::ControlOption> variantOptions =
+                    ControllersLayout::BuildLaunchpadVariantOptions(vm.LaunchpadVariantIndex(controllerIx), selectedVariant);
+                ui::Node variantCombo;
+                variantCombo.id = ui::NodeId(NodeIds::ControllerVariant(controllerIx));
+                variantCombo.kind = ui::NodeKind::ComboBox;
+                variantCombo.label = "Variant";
+                variantCombo.options = variantOptions;
+                variantCombo.selectedOption = selectedVariant;
+                variantCombo.bounds = {headerX + (ControllersLayout::kEndpointBoxWidth +
+                                                  ControllersLayout::kEndpointBoxGap) *
+                                                     2.0f,
+                                       0.0f, ControllersLayout::kVariantBoxWidth,
+                                       ControllersLayout::kControllerHeaderHeight};
+                variantCombo.action = ui::Action::WithValue(Actions::kVariantSelect, std::to_string(controllerIx));
+                appendControllerChild(std::move(variantCombo));
+            }
 
             scrollY += ControllersLayout::kControllerHeaderHeight + ControllersLayout::kRowGap;
 
@@ -1251,36 +1265,15 @@ private:
                         fieldNode.bounds = {fieldX, 0.0f, fieldWidth, ControllersLayout::kMappingRowHeight};
                         fieldX += fieldWidth;
 
-                        if (field == MidiMappingRowVM::Field::MessageKind ||
-                            field == MidiMappingRowVM::Field::ReleaseKind)
+                        if (field == MidiMappingRowVM::Field::MessageKind)
                         {
                             fieldNode.kind = ui::NodeKind::ComboBox;
-                            const auto& catalog = SystemMessageKindCatalog();
+                            const auto& catalog = UISystemMessageCatalog();
                             for (int ix = 0; ix < static_cast<int>(catalog.size()); ++ix)
                             {
-                                if (ix == 0 && field == MidiMappingRowVM::Field::MessageKind)
-                                {
-                                    continue;
-                                }
                                 fieldNode.options.push_back({std::to_string(ix), catalog[static_cast<std::size_t>(ix)].label});
                             }
-                            const int current = vm.SystemMessageKindIndex(controllerIx, section, mappingRowIx, field);
-                            fieldNode.selectedOption = current >= 0 ? std::to_string(current) : "0";
-                        }
-                        else if (field == MidiMappingRowVM::Field::PressMessage ||
-                            field == MidiMappingRowVM::Field::ReleaseMessage)
-                        {
-                            fieldNode.kind = ui::NodeKind::ComboBox;
-                            const auto& catalog = SystemMessageCatalog();
-                            for (int ix = 0; ix < static_cast<int>(catalog.size()); ++ix)
-                            {
-                                if (ix == 0 && field == MidiMappingRowVM::Field::PressMessage)
-                                {
-                                    continue;
-                                }
-                                fieldNode.options.push_back({std::to_string(ix), catalog[static_cast<std::size_t>(ix)].label});
-                            }
-                            const int current = vm.SystemMessageChoiceIndex(controllerIx, section, mappingRowIx, field);
+                            const int current = vm.UISystemMessageIndex(controllerIx, section, mappingRowIx);
                             fieldNode.selectedOption = current >= 0 ? std::to_string(current) : "0";
                         }
                         else if (field == MidiMappingRowVM::Field::RelativeMode)

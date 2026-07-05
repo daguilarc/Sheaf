@@ -24,8 +24,11 @@
 
 - [x] 4.1 Port the sidebar/main-pane content selection model to portable semantic nodes while keeping Audio/Controllers/File navigation and deadline readout behavior.
 - [x] 4.2 Port the Audio page to portable semantic controls for output/input selection, current-device display, status text, and back navigation.
-- [x] 4.3 Port the File page to portable semantic controls for New/Save/Save As/Load/Revert, current patch name, status text, file chooser handoff, and first-save fallback.
+- [x] 4.3 Port the File page to portable semantic controls for New/Save/Save As/Load/Revert, current patch name, status text, and first-save fallback.
 - [x] 4.4 Add regression tests covering page navigation, page state refresh, and desktop JUCE backend rendering of the runtime pages.
+- [x] 4.5 Replace File page OS chooser handoff with a portable in-page patch explorer over `synth::PatchBrowser`, including Save As name entry, Load directory selection, parent navigation, cancel/confirm actions, and root-constrained path validation.
+- [x] 4.6 Remove `juce::FileChooser` from `projects/synth/juce/RuntimePagesJuce.hpp`; the JUCE backend should render/dispatch the portable explorer nodes and call runtime save/load callbacks only after portable confirmation.
+- [x] 4.7 Add JUCE-free File page explorer tests plus JUCE backend rendering tests proving the explorer nodes render and no chooser handoff remains.
 
 ## 5. Controllers Page Semantic Tree
 
@@ -42,5 +45,5 @@
 - [x] 6.2 Add a source-boundary check with an explicit allowlist for desktop runtime host files that may keep JUCE, and fail if portable synth UI, app-facing miniapp UI, runtime page producers, or JUCE-free tests include JUCE headers or refer to `juce::`.
 - [x] 6.3 Run `make -C projects/synth test` and fix any JUCE-free compile/test regressions.
 - [x] 6.4 Run `make -C projects/synth/apps/miniapp test` and fix JUCE backend or geometry regressions.
-- [ ] 6.5 Build the miniapp desktop app and perform a manual smoke pass for visible miniapp parity and Controllers page functionality.
+- [x] 6.5 Build the miniapp desktop app and perform a manual smoke pass for visible miniapp parity and Controllers page functionality.
 - [x] 6.6 Update synth and miniapp documentation to describe the portable UI contract, JUCE backend role, and browser/Wasm follow-up boundary.

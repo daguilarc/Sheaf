@@ -6,9 +6,21 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 tmp="$(mktemp)"
 trap 'rm -f "$tmp"' EXIT
 
+if ! command -v rg >/dev/null 2>&1; then
+    printf 'check_ui_boundary.sh requires ripgrep (rg)\n' >&2
+    exit 2
+fi
+
+set +e
 rg -n --glob '*.hpp' --glob '*.h' --glob '*.cpp' --glob '*.mm' \
     --glob '!build/**' --glob '!apps/miniapp/build/**' \
-    '(#include[[:space:]]*<juce[^>]*>|(^|[^[:alnum:]_])juce::)' . >"$tmp" || true
+    '(#include[[:space:]]*<juce[^>]*>|(^|[^[:alnum:]_])juce::)' . >"$tmp"
+rg_status=$?
+set -e
+if [ "$rg_status" -gt 1 ]; then
+    printf 'check_ui_boundary.sh: ripgrep scan failed with status %s\n' "$rg_status" >&2
+    exit "$rg_status"
+fi
 
 failed=0
 while IFS=: read -r path line match; do

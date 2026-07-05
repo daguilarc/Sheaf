@@ -12,61 +12,6 @@ namespace {
 
 using Field = MidiMappingRowVM::Field;
 
-// Number of SceneSelect/SelectParamBank/gesture-select catalog entries.
-// Sized to cover every default profile factory's default options
-// (WrldBldrDefaultProfileOptions/LaunchpadDefaultProfileOptions in
-// MidiController.hpp): sceneCount defaults to 8 for both WrldBldr and
-// Launchpad; bankButtonCount defaults to 16 for WrldBldr (the wider of the
-// two); gestureSelectorCount defaults to 0 for both but the option exists up
-// to a small controller-driven count, so 8 slots of headroom are offered.
-// SelectParamBank entries all target slotIx 0, matching every default
-// profile factory's default WrldBldrDefaultProfileOptions::slotIx /
-// LaunchpadDefaultProfileOptions::slotIx (0).
-constexpr std::size_t kCatalogSceneCount = 8;
-constexpr std::size_t kCatalogBankCount = 16;
-constexpr std::size_t kCatalogGestureCount = 8;
-constexpr std::size_t kCatalogSelectParamBankSlotIx = 0;
-
-// Compares the fields relevant to system-message dispatch (ignores
-// `timestamp`, which carries no meaning until dispatch time -- every
-// default-profile factory constructs its MessageIns with timestamp 0, same
-// as the catalog's Build() functions).
-bool MessageInEquivalent(const MessageIn& a, const MessageIn& b) {
-    if (a.type != b.type) {
-        return false;
-    }
-    switch (a.type) {
-        case MessageIn::Type::ParamIncDec:
-            return a.slotIx == b.slotIx && a.position == b.position && a.delta == b.delta;
-        case MessageIn::Type::ParamPush:
-            return a.slotIx == b.slotIx && a.position == b.position;
-        case MessageIn::Type::ToggleReset:
-        case MessageIn::Type::ToggleRandom:
-        case MessageIn::Type::ToggleRandomMod:
-            // SetReset/SetRandom/SetRandomMod share their toggle type but carry
-            // a held bool; plain toggles carry none. Equivalent only when both
-            // the held-ness and (when held) the bool match.
-            return a.hasBoolValue == b.hasBoolValue && (!a.hasBoolValue || a.boolValue == b.boolValue);
-        case MessageIn::Type::Start:
-        case MessageIn::Type::Stop:
-        case MessageIn::Type::Clock:
-            return true;
-        case MessageIn::Type::ToggleGestureSelect:
-            return a.gestureIx == b.gestureIx;
-        case MessageIn::Type::SetGestureSelect:
-            return a.gestureIx == b.gestureIx && a.boolValue == b.boolValue;
-        case MessageIn::Type::SelectParamBank:
-            return a.slotIx == b.slotIx && a.bankIx == b.bankIx;
-        case MessageIn::Type::SetGestureValue:
-            return a.gestureIx == b.gestureIx && a.value == b.value;
-        case MessageIn::Type::SceneSelect:
-            return a.sceneIx == b.sceneIx;
-        case MessageIn::Type::SetSceneBlend:
-            return a.value == b.value;
-    }
-    return false;
-}
-
 std::optional<std::size_t> PrimaryMessageArg(const MessageIn& message) {
     switch (message.type) {
         case MessageIn::Type::ParamIncDec:
@@ -90,45 +35,6 @@ std::optional<std::size_t> PrimaryMessageArg(const MessageIn& message) {
             return std::nullopt;
     }
     return std::nullopt;
-}
-
-MessageIn WithMessageType(MessageIn::Type type, const MessageIn& previous, bool defaultBoolValue) {
-    switch (type) {
-        case MessageIn::Type::ParamIncDec:
-            return MessageIn::ParamIncDec(0, previous.slotIx, previous.position, previous.delta);
-        case MessageIn::Type::ParamPush:
-            return MessageIn::ParamPush(0, previous.slotIx, previous.position);
-        case MessageIn::Type::ToggleReset:
-            return MessageIn::SetReset(0, previous.type == type && previous.hasBoolValue ? previous.boolValue
-                                                                                          : defaultBoolValue);
-        case MessageIn::Type::ToggleRandom:
-            return MessageIn::SetRandom(0, previous.type == type && previous.hasBoolValue ? previous.boolValue
-                                                                                           : defaultBoolValue);
-        case MessageIn::Type::ToggleRandomMod:
-            return MessageIn::SetRandomMod(0, previous.type == type && previous.hasBoolValue ? previous.boolValue
-                                                                                              : defaultBoolValue);
-        case MessageIn::Type::ToggleGestureSelect:
-            return MessageIn::ToggleGestureSelect(0, previous.gestureIx);
-        case MessageIn::Type::SetGestureSelect:
-            return MessageIn::SetGestureSelect(0, previous.gestureIx,
-                                               previous.type == type && previous.hasBoolValue ? previous.boolValue
-                                                                                              : defaultBoolValue);
-        case MessageIn::Type::SelectParamBank:
-            return MessageIn::SelectParamBank(0, previous.slotIx, previous.bankIx);
-        case MessageIn::Type::Start:
-            return MessageIn::Start(0);
-        case MessageIn::Type::Stop:
-            return MessageIn::Stop(0);
-        case MessageIn::Type::Clock:
-            return MessageIn::Clock(0);
-        case MessageIn::Type::SetGestureValue:
-            return MessageIn::SetGestureValue(0, previous.gestureIx, previous.value);
-        case MessageIn::Type::SceneSelect:
-            return MessageIn::SceneSelect(0, previous.sceneIx);
-        case MessageIn::Type::SetSceneBlend:
-            return MessageIn::SetSceneBlend(0, previous.value);
-    }
-    return MessageIn::Clock(0);
 }
 
 bool SetPrimaryMessageArg(MessageIn& message, std::size_t arg) {
@@ -160,6 +66,167 @@ bool SetPrimaryMessageArg(MessageIn& message, std::size_t arg) {
     return false;
 }
 
+bool UISystemMessageHasArg(UISystemMessage message) {
+    switch (message) {
+        case UISystemMessage::ParamIncDec:
+        case UISystemMessage::ParamPush:
+        case UISystemMessage::ToggleGestureSelect:
+        case UISystemMessage::HoldGestureSelect:
+        case UISystemMessage::SelectParamBank:
+        case UISystemMessage::SetGestureValue:
+        case UISystemMessage::SceneSelect:
+            return true;
+        case UISystemMessage::ToggleReset:
+        case UISystemMessage::HoldReset:
+        case UISystemMessage::ToggleRandom:
+        case UISystemMessage::HoldRandom:
+        case UISystemMessage::ToggleRandomMod:
+        case UISystemMessage::HoldRandomMod:
+        case UISystemMessage::Start:
+        case UISystemMessage::Stop:
+        case UISystemMessage::Clock:
+        case UISystemMessage::SetSceneBlend:
+            return false;
+    }
+    return false;
+}
+
+std::size_t AssociationPrimaryArg(const MidiControllerSystemMessageAssociation& association) {
+    if (const std::optional<std::size_t> arg = PrimaryMessageArg(association.press)) {
+        return *arg;
+    }
+    if (association.release.has_value()) {
+        if (const std::optional<std::size_t> arg = PrimaryMessageArg(*association.release)) {
+            return *arg;
+        }
+    }
+    return 0;
+}
+
+UISystemMessage UISystemMessageForAssociation(const MidiControllerSystemMessageAssociation& association) {
+    const MessageIn& press = association.press;
+    switch (press.type) {
+        case MessageIn::Type::ParamIncDec:
+            return UISystemMessage::ParamIncDec;
+        case MessageIn::Type::ParamPush:
+            return UISystemMessage::ParamPush;
+        case MessageIn::Type::ToggleReset:
+            return press.hasBoolValue ? UISystemMessage::HoldReset : UISystemMessage::ToggleReset;
+        case MessageIn::Type::ToggleRandom:
+            return press.hasBoolValue ? UISystemMessage::HoldRandom : UISystemMessage::ToggleRandom;
+        case MessageIn::Type::ToggleRandomMod:
+            return press.hasBoolValue ? UISystemMessage::HoldRandomMod : UISystemMessage::ToggleRandomMod;
+        case MessageIn::Type::ToggleGestureSelect:
+            return UISystemMessage::ToggleGestureSelect;
+        case MessageIn::Type::SetGestureSelect:
+            return UISystemMessage::HoldGestureSelect;
+        case MessageIn::Type::SelectParamBank:
+            return UISystemMessage::SelectParamBank;
+        case MessageIn::Type::Start:
+            return UISystemMessage::Start;
+        case MessageIn::Type::Stop:
+            return UISystemMessage::Stop;
+        case MessageIn::Type::Clock:
+            return UISystemMessage::Clock;
+        case MessageIn::Type::SetGestureValue:
+            return UISystemMessage::SetGestureValue;
+        case MessageIn::Type::SceneSelect:
+            return UISystemMessage::SceneSelect;
+        case MessageIn::Type::SetSceneBlend:
+            return UISystemMessage::SetSceneBlend;
+    }
+    return UISystemMessage::Clock;
+}
+
+MessageIn PressForUISystemMessage(UISystemMessage message, const MidiControllerSystemMessageAssociation& previous) {
+    const std::size_t arg = AssociationPrimaryArg(previous);
+    switch (message) {
+        case UISystemMessage::ParamIncDec:
+            return MessageIn::ParamIncDec(0, previous.press.slotIx, arg, previous.press.delta);
+        case UISystemMessage::ParamPush:
+            return MessageIn::ParamPush(0, previous.press.slotIx, arg);
+        case UISystemMessage::ToggleReset:
+            return MessageIn::ToggleReset(0);
+        case UISystemMessage::HoldReset:
+            return MessageIn::SetReset(0, true);
+        case UISystemMessage::ToggleRandom:
+            return MessageIn::ToggleRandom(0);
+        case UISystemMessage::HoldRandom:
+            return MessageIn::SetRandom(0, true);
+        case UISystemMessage::ToggleRandomMod:
+            return MessageIn::ToggleRandomMod(0);
+        case UISystemMessage::HoldRandomMod:
+            return MessageIn::SetRandomMod(0, true);
+        case UISystemMessage::ToggleGestureSelect:
+            return MessageIn::ToggleGestureSelect(0, arg);
+        case UISystemMessage::HoldGestureSelect:
+            return MessageIn::SetGestureSelect(0, arg, true);
+        case UISystemMessage::SelectParamBank:
+            return MessageIn::SelectParamBank(0, previous.press.slotIx, arg);
+        case UISystemMessage::Start:
+            return MessageIn::Start(0);
+        case UISystemMessage::Stop:
+            return MessageIn::Stop(0);
+        case UISystemMessage::Clock:
+            return MessageIn::Clock(0);
+        case UISystemMessage::SetGestureValue:
+            return MessageIn::SetGestureValue(0, arg, previous.press.value);
+        case UISystemMessage::SceneSelect:
+            return MessageIn::SceneSelect(0, arg);
+        case UISystemMessage::SetSceneBlend:
+            return MessageIn::SetSceneBlend(0, previous.press.value);
+    }
+    return MessageIn::Clock(0);
+}
+
+std::optional<MessageIn> ReleaseForUISystemMessage(UISystemMessage message, const MessageIn& press) {
+    switch (message) {
+        case UISystemMessage::HoldReset:
+            return MessageIn::SetReset(0, false);
+        case UISystemMessage::HoldRandom:
+            return MessageIn::SetRandom(0, false);
+        case UISystemMessage::HoldRandomMod:
+            return MessageIn::SetRandomMod(0, false);
+        case UISystemMessage::HoldGestureSelect:
+            return MessageIn::SetGestureSelect(0, press.gestureIx, false);
+        case UISystemMessage::ParamIncDec:
+        case UISystemMessage::ParamPush:
+        case UISystemMessage::ToggleReset:
+        case UISystemMessage::ToggleRandom:
+        case UISystemMessage::ToggleRandomMod:
+        case UISystemMessage::ToggleGestureSelect:
+        case UISystemMessage::SelectParamBank:
+        case UISystemMessage::Start:
+        case UISystemMessage::Stop:
+        case UISystemMessage::Clock:
+        case UISystemMessage::SetGestureValue:
+        case UISystemMessage::SceneSelect:
+        case UISystemMessage::SetSceneBlend:
+            return std::nullopt;
+    }
+    return std::nullopt;
+}
+
+void ApplyUISystemMessage(MidiControllerSystemMessageAssociation& association, UISystemMessage message) {
+    association.press = PressForUISystemMessage(message, association);
+    association.release = ReleaseForUISystemMessage(message, association.press);
+    association.feedback = association.press;
+}
+
+bool SetUISystemMessageArg(MidiControllerSystemMessageAssociation& association, std::size_t arg) {
+    if (!UISystemMessageHasArg(UISystemMessageForAssociation(association))) {
+        return false;
+    }
+    if (!SetPrimaryMessageArg(association.press, arg)) {
+        return false;
+    }
+    if (association.release.has_value()) {
+        SetPrimaryMessageArg(*association.release, arg);
+    }
+    SetPrimaryMessageArg(association.feedback, arg);
+    return true;
+}
+
 }  // namespace
 
 using Field = MidiMappingRowVM::Field;
@@ -189,14 +256,10 @@ bool FieldIsInteger(MidiMappingRowVM::Field field) {
         case Field::BlockRowMajor:
         case Field::BlockOutputFeedback:
         case Field::MessageArg:
-        case Field::ReleaseArg:
             return true;
         case Field::TurnStep:
         case Field::RelativeMode:
-        case Field::PressMessage:
-        case Field::ReleaseMessage:
         case Field::MessageKind:
-        case Field::ReleaseKind:
         case Field::BlockMessageType:
             return false;
     }
@@ -242,18 +305,10 @@ const char* FieldShortLabel(MidiMappingRowVM::Field field) {
             return "Mode";
         case Field::TurnStep:
             return "Step";
-        case Field::PressMessage:
-            return "Press";
-        case Field::ReleaseMessage:
-            return "Release";
         case Field::MessageKind:
             return "Message";
         case Field::MessageArg:
             return "Arg";
-        case Field::ReleaseKind:
-            return "Rel";
-        case Field::ReleaseArg:
-            return "Rel Arg";
         case Field::LaunchpadX:
         case Field::WrldBldrX:
             return "X";
@@ -294,72 +349,25 @@ const char* FieldShortLabel(MidiMappingRowVM::Field field) {
     return "";
 }
 
-const std::vector<SystemMessageChoice>& SystemMessageCatalog() {
-    static const std::vector<SystemMessageChoice> catalog = [] {
-        std::vector<SystemMessageChoice> entries;
-        // Index 0: "None" -- only legal for ReleaseMessage, where it clears
-        // the association's optional release. Its build() is never actually
-        // committed anywhere (ApplyMappingEdit special-cases index 0 for
-        // ReleaseMessage before calling build()), but every entry carries one
-        // for a uniform table -- Clock is an arbitrary, harmless default.
-        entries.push_back({"None", [] { return MessageIn::Clock(0); }});
-
-        entries.push_back({"Reset press", [] { return MessageIn::SetReset(0, true); }});
-        entries.push_back({"Reset release", [] { return MessageIn::SetReset(0, false); }});
-        entries.push_back({"Random press", [] { return MessageIn::SetRandom(0, true); }});
-        entries.push_back({"Random release", [] { return MessageIn::SetRandom(0, false); }});
-        entries.push_back({"Random-mod press", [] { return MessageIn::SetRandomMod(0, true); }});
-        entries.push_back({"Random-mod release", [] { return MessageIn::SetRandomMod(0, false); }});
-
-        for (std::size_t sceneIx = 0; sceneIx < kCatalogSceneCount; ++sceneIx) {
-            std::ostringstream label;
-            label << "Scene select " << sceneIx;
-            entries.push_back({label.str(), [sceneIx] { return MessageIn::SceneSelect(0, sceneIx); }});
-        }
-
-        for (std::size_t bankIx = 0; bankIx < kCatalogBankCount; ++bankIx) {
-            std::ostringstream label;
-            label << "Select param bank " << bankIx;
-            entries.push_back({label.str(), [bankIx] {
-                                   return MessageIn::SelectParamBank(0, kCatalogSelectParamBankSlotIx, bankIx);
-                               }});
-        }
-
-        for (std::size_t gestureIx = 0; gestureIx < kCatalogGestureCount; ++gestureIx) {
-            std::ostringstream label;
-            label << "Gesture select " << gestureIx << " press";
-            entries.push_back(
-                {label.str(), [gestureIx] { return MessageIn::SetGestureSelect(0, gestureIx, true); }});
-        }
-        for (std::size_t gestureIx = 0; gestureIx < kCatalogGestureCount; ++gestureIx) {
-            std::ostringstream label;
-            label << "Gesture select " << gestureIx << " release";
-            entries.push_back(
-                {label.str(), [gestureIx] { return MessageIn::SetGestureSelect(0, gestureIx, false); }});
-        }
-
-        return entries;
-    }();
-    return catalog;
-}
-
-const std::vector<SystemMessageKindChoice>& SystemMessageKindCatalog() {
-    static const std::vector<SystemMessageKindChoice> catalog = {
-        {"None", MessageIn::Type::Clock},
-        {"Param Inc/Dec", MessageIn::Type::ParamIncDec},
-        {"Param Push", MessageIn::Type::ParamPush},
-        {"Reset", MessageIn::Type::ToggleReset},
-        {"Random", MessageIn::Type::ToggleRandom},
-        {"Random Mod", MessageIn::Type::ToggleRandomMod},
-        {"Gesture Toggle", MessageIn::Type::ToggleGestureSelect},
-        {"Gesture Select", MessageIn::Type::SetGestureSelect},
-        {"Bank Select", MessageIn::Type::SelectParamBank},
-        {"Start", MessageIn::Type::Start},
-        {"Stop", MessageIn::Type::Stop},
-        {"Clock", MessageIn::Type::Clock},
-        {"Gesture Value", MessageIn::Type::SetGestureValue},
-        {"Scene Select", MessageIn::Type::SceneSelect},
-        {"Scene Blend", MessageIn::Type::SetSceneBlend},
+const std::vector<UISystemMessageChoice>& UISystemMessageCatalog() {
+    static const std::vector<UISystemMessageChoice> catalog = {
+        {"Param Inc/Dec", UISystemMessage::ParamIncDec},
+        {"Param Push", UISystemMessage::ParamPush},
+        {"Toggle Reset", UISystemMessage::ToggleReset},
+        {"Hold Reset", UISystemMessage::HoldReset},
+        {"Toggle Random", UISystemMessage::ToggleRandom},
+        {"Hold Random", UISystemMessage::HoldRandom},
+        {"Toggle Random Mod", UISystemMessage::ToggleRandomMod},
+        {"Hold Random Mod", UISystemMessage::HoldRandomMod},
+        {"Toggle Gesture Select", UISystemMessage::ToggleGestureSelect},
+        {"Hold Gesture Select", UISystemMessage::HoldGestureSelect},
+        {"Bank Select", UISystemMessage::SelectParamBank},
+        {"Start", UISystemMessage::Start},
+        {"Stop", UISystemMessage::Stop},
+        {"Clock", UISystemMessage::Clock},
+        {"Gesture Value", UISystemMessage::SetGestureValue},
+        {"Scene Select", UISystemMessage::SceneSelect},
+        {"Scene Blend", UISystemMessage::SetSceneBlend},
     };
     return catalog;
 }
@@ -533,79 +541,15 @@ std::string SystemMessageLabel(const MidiControllerSystemMessageAssociation& ass
     return oss.str();
 }
 
-// --- Presentation identity (task group 2 / design.md D5) -------------------
+// --- Open section presentation (task group 2 / design.md D5) ---------------
 
-using EncoderIdentity = detail::EncoderIdentity;
-using AnalogIdentity = detail::AnalogIdentity;
-using SystemIdentity = detail::SystemIdentity;
-using RowIdentity = detail::RowIdentity;
 using PresentationRow = detail::PresentationRow;
 using SectionPresentation = detail::SectionPresentation;
+using EncoderModeRow = detail::EncoderModeRow;
+using EncoderStepRow = detail::EncoderStepRow;
+using AnalogSceneBlendRow = detail::AnalogSceneBlendRow;
 using RowKind = MidiMappingRowVM::Kind;
 using RowGroup = MidiMappingRowVM::RowGroup;
-
-EncoderIdentity IdentityOf(const EncoderMidiMapping& mapping, bool isPush) {
-    return EncoderIdentity{.isPush = isPush, .slotIx = mapping.slotIx, .position = mapping.position};
-}
-
-AnalogIdentity IdentityOf(const AnalogMidiMapping& mapping) {
-    return AnalogIdentity{.isSceneBlend = false, .gestureIx = mapping.gestureIx};
-}
-
-// Computes the SystemIdentity for `sorted[ix]` -- `sorted` MUST already be in
-// SystemMessageSortKey order (NormalizeMidiProfileConfig or equivalent),
-// matching ReconstructSystemBlocks' own defensive-sort contract. The
-// occurrence ordinal counts how many EARLIER elements in `sorted` share this
-// exact key (sru-11: "an occurrence ordinal so associations sharing both
-// message and address still resolve to distinct rows").
-SystemIdentity SystemIdentityAt(const std::vector<MidiControllerSystemMessageAssociation>& sorted, std::size_t ix,
-                                MidiProfileKind kind) {
-    const SystemMessageSortKey key = ComputeSystemMessageSortKey(sorted[ix], kind);
-    std::size_t ordinal = 0;
-    for (std::size_t j = 0; j < ix; ++j) {
-        if (ComputeSystemMessageSortKey(sorted[j], kind) == key) {
-            ++ordinal;
-        }
-    }
-    return SystemIdentity{.key = key, .occurrenceOrdinal = ordinal};
-}
-
-// Resolves a SystemIdentity back to an index in `sorted` (same sorted view
-// SystemIdentityAt was computed against), or npos if it no longer resolves
-// (sru-11: "dropping rows whose identity no longer resolves").
-constexpr std::size_t kNotFound = static_cast<std::size_t>(-1);
-
-std::size_t ResolveSystemIdentity(const std::vector<MidiControllerSystemMessageAssociation>& sorted,
-                                  MidiProfileKind kind, const SystemIdentity& identity) {
-    std::size_t ordinal = 0;
-    for (std::size_t ix = 0; ix < sorted.size(); ++ix) {
-        if (ComputeSystemMessageSortKey(sorted[ix], kind) == identity.key) {
-            if (ordinal == identity.occurrenceOrdinal) {
-                return ix;
-            }
-            ++ordinal;
-        }
-    }
-    return kNotFound;
-}
-
-std::size_t ResolveEncoderIdentity(const std::vector<EncoderMidiMapping>& mappings, const EncoderIdentity& identity) {
-    for (std::size_t ix = 0; ix < mappings.size(); ++ix) {
-        if (mappings[ix].slotIx == identity.slotIx && mappings[ix].position == identity.position) {
-            return ix;
-        }
-    }
-    return kNotFound;
-}
-
-std::size_t ResolveAnalogIdentity(const std::vector<AnalogMidiMapping>& mappings, const AnalogIdentity& identity) {
-    for (std::size_t ix = 0; ix < mappings.size(); ++ix) {
-        if (mappings[ix].gestureIx == identity.gestureIx) {
-            return ix;
-        }
-    }
-    return kNotFound;
-}
 
 } // namespace
 
@@ -668,10 +612,11 @@ void MidiConfigViewModel::Rebuild(const MidiInstrumentConfig& instrument, const 
         expandState_.erase(name);
     }
 
-    // Re-resolve every EXISTING presentation entry (D5: "view-model rebuilds
-    // re-resolve rows by identity ... without re-grouping").
+    // Existing presentation entries are kept verbatim while their controller
+    // still exists. Open rows are the UI-level representation; Rebuild() must
+    // not sort, regroup, drop, or append rows from persisted truth.
     //
-    // Finding 5: entries for controllers no longer present in this
+    // Entries for controllers no longer present in this
     // instrument are ERASED (not just cleared to empty rows) -- a stale
     // empty-but-present map entry would make a LATER PresentationFor() call
     // for a same-named controller that reappears (remove, then re-add with
@@ -683,20 +628,20 @@ void MidiConfigViewModel::Rebuild(const MidiInstrumentConfig& instrument, const 
     // find()-miss -> BuildFreshPresentation() path run again for that name,
     // matching sru-11 "re-expanding presents the fresh minimal
     // reconstruction" (a same-name readd is, presentation-wise, exactly
-    // like a fresh expand -- the OLD controller's identity space is gone).
+    // like a fresh expand).
     // Collects orphaned keys first and erases in a second pass, since
     // erasing a std::map entry while range-for is iterating that SAME
     // element is undefined behavior; this stays correct without relying on
     // erase-during-iteration guarantees.
     std::vector<PresentationKey> orphanedKeys;
-    for (auto& [presentationKey, presentation] : presentations_) {
+    for (const auto& [presentationKey, presentation] : presentations_) {
+        (void)presentation;
         const auto& [name, section] = presentationKey;
+        (void)section;
         const MidiControllerSlot* slot = instrument_.FindController(name);
         if (slot == nullptr) {
             orphanedKeys.push_back(presentationKey);
-            continue;
         }
-        RebuildPresentationFor(presentation, slot->config, slot->kind, section);
     }
     for (const PresentationKey& key : orphanedKeys) {
         presentations_.erase(key);
@@ -737,8 +682,8 @@ void MidiConfigViewModel::ToggleSection(std::size_t controllerIx, MidiConfigSect
     } else {
         // Opening a section starts the edit session immediately. Otherwise a
         // click on "+" before the renderer's first SectionRows() read would
-        // leave no presentation to re-resolve on the following Rebuild(), and
-        // the next lazy read would coalesce the just-added rows from scratch.
+        // leave no presentation to append into, and the next lazy read would
+        // coalesce the just-added rows from scratch.
         (void)PresentationFor(controllerIx, section);
     }
 }
@@ -760,37 +705,6 @@ namespace {
 // editableFields for an Individual SystemMessages row, per kind (D1/sru-8) --
 // factored out of the old SectionRows() SystemMessages case so
 // BuildFreshPresentation/BuildSectionRows share the exact same table.
-std::vector<Field> SystemRowEditableFields(MidiProfileKind kind) {
-    std::vector<Field> fields;
-    switch (kind) {
-        case MidiProfileKind::Launchpad:
-            fields = {Field::LaunchpadX, Field::LaunchpadY};
-            break;
-        case MidiProfileKind::WrldBldr:
-            // Issue #10: chan/x/y, so the slot's MIDI channel is editable
-            // alongside its grid position. Channel writes only
-            // association.control->channel (ApplyMappingEdit); WrldBldrX/Y
-            // keep wrldBldrPosition and control->cc in sync via
-            // WrldBldrPositionToCC, untouched by a Channel edit.
-            fields = {Field::Channel, Field::WrldBldrX, Field::WrldBldrY};
-            break;
-        case MidiProfileKind::MfTwister:
-            // sru-8/D1: twister system rows advertise exactly one address
-            // field -- the logical side button 0..5 (stored as
-            // control->cc = 8 + button on the fixed channel 3,
-            // display-only). No Channel or Cc field is shown.
-            fields = {Field::Button};
-            break;
-        case MidiProfileKind::Generic:
-            fields = {Field::Channel, Field::Cc};
-            break;
-    }
-    fields.push_back(Field::MessageKind);
-    fields.push_back(Field::MessageArg);
-    fields.push_back(Field::ReleaseKind);
-    return fields;
-}
-
 std::vector<Field> SystemRowEditableFields(MidiProfileKind kind,
                                            const MidiControllerSystemMessageAssociation& association) {
     std::vector<Field> fields;
@@ -809,12 +723,8 @@ std::vector<Field> SystemRowEditableFields(MidiProfileKind kind,
             break;
     }
     fields.push_back(Field::MessageKind);
-    if (PrimaryMessageArg(association.press).has_value()) {
+    if (UISystemMessageHasArg(UISystemMessageForAssociation(association))) {
         fields.push_back(Field::MessageArg);
-    }
-    fields.push_back(Field::ReleaseKind);
-    if (association.release.has_value() && PrimaryMessageArg(*association.release).has_value()) {
-        fields.push_back(Field::ReleaseArg);
     }
     return fields;
 }
@@ -905,10 +815,12 @@ SectionPresentation BuildFreshPresentation(const MidiControllerProfileConfig& co
 
     switch (section) {
         case MidiConfigSection::Encoders: {
-            if (!config.encoderInput.has_value()) {
+            MidiControllerProfileConfig scratch = config;
+            NormalizeMidiProfileConfig(scratch, kind);
+            if (!scratch.encoderInput.has_value()) {
                 return presentation;
             }
-            const auto& encoderInput = *config.encoderInput;
+            const auto& encoderInput = *scratch.encoderInput;
             for (bool isPush : {false, true}) {
                 const std::vector<EncoderMidiMapping>& mappings = isPush ? encoderInput.pushes : encoderInput.turns;
                 const RowGroup group = isPush ? RowGroup::EncoderPush : RowGroup::EncoderTurn;
@@ -918,12 +830,10 @@ SectionPresentation BuildFreshPresentation(const MidiControllerProfileConfig& co
                     if (reconstructed.isBlock) {
                         row.kind = RowKind::Block;
                         row.block = reconstructed.block;
-                        for (std::size_t ix : reconstructed.indices) {
-                            row.identities.push_back(IdentityOf(mappings[ix], isPush));
-                        }
                     } else {
                         row.kind = RowKind::Individual;
-                        row.identities.push_back(IdentityOf(mappings[reconstructed.indices.front()], isPush));
+                        const EncoderMidiMapping& mapping = mappings[reconstructed.indices.front()];
+                        row.data = mapping;
                     }
                     presentation.rows.push_back(std::move(row));
                 }
@@ -932,35 +842,35 @@ SectionPresentation BuildFreshPresentation(const MidiControllerProfileConfig& co
                 PresentationRow row;
                 row.kind = RowKind::ConfigLevel;
                 row.group = RowGroup::EncoderMode;
-                row.identities.push_back(EncoderIdentity{});  // unused placeholder identity; resolved specially
+                row.data = EncoderModeRow{.relativeMode = encoderInput.relativeMode};
                 presentation.rows.push_back(std::move(row));
             }
             {
                 PresentationRow row;
                 row.kind = RowKind::ConfigLevel;
                 row.group = RowGroup::EncoderStep;
-                row.identities.push_back(EncoderIdentity{});
+                row.data = EncoderStepRow{.turnStep = encoderInput.turnStep};
                 presentation.rows.push_back(std::move(row));
             }
             break;
         }
         case MidiConfigSection::Analogs: {
-            if (!config.analogInput.has_value()) {
+            MidiControllerProfileConfig scratch = config;
+            NormalizeMidiProfileConfig(scratch, kind);
+            if (!scratch.analogInput.has_value()) {
                 return presentation;
             }
-            const auto& analogInput = *config.analogInput;
+            const auto& analogInput = *scratch.analogInput;
             for (const ReconstructedAnalogRow& reconstructed : ReconstructAnalogBlocks(analogInput.gestures)) {
                 PresentationRow row;
                 row.group = RowGroup::AnalogGesture;
                 if (reconstructed.isBlock) {
                     row.kind = RowKind::Block;
                     row.block = reconstructed.block;
-                    for (std::size_t ix : reconstructed.indices) {
-                        row.identities.push_back(IdentityOf(analogInput.gestures[ix]));
-                    }
                 } else {
                     row.kind = RowKind::Individual;
-                    row.identities.push_back(IdentityOf(analogInput.gestures[reconstructed.indices.front()]));
+                    const AnalogMidiMapping& mapping = analogInput.gestures[reconstructed.indices.front()];
+                    row.data = mapping;
                 }
                 presentation.rows.push_back(std::move(row));
             }
@@ -968,7 +878,7 @@ SectionPresentation BuildFreshPresentation(const MidiControllerProfileConfig& co
                 PresentationRow row;
                 row.kind = RowKind::ConfigLevel;
                 row.group = RowGroup::AnalogSceneBlend;
-                row.identities.push_back(AnalogIdentity{.isSceneBlend = true});
+                row.data = AnalogSceneBlendRow{.sceneBlend = analogInput.sceneBlend};
                 presentation.rows.push_back(std::move(row));
             }
             break;
@@ -978,18 +888,16 @@ SectionPresentation BuildFreshPresentation(const MidiControllerProfileConfig& co
             scratch.systemMessages = config.systemMessages;
             NormalizeMidiProfileConfig(scratch, kind);
             const std::vector<MidiControllerSystemMessageAssociation>& sorted = scratch.systemMessages;
-            for (const ReconstructedSystemRow& reconstructed : ReconstructSystemBlocks(config.systemMessages, kind)) {
+            for (const ReconstructedSystemRow& reconstructed : ReconstructSystemBlocks(sorted, kind)) {
                 PresentationRow row;
                 row.group = RowGroup::System;
                 if (reconstructed.isBlock) {
                     row.kind = RowKind::Block;
                     row.block = reconstructed.block;
-                    for (std::size_t ix : reconstructed.indices) {
-                        row.identities.push_back(SystemIdentityAt(sorted, ix, kind));
-                    }
                 } else {
                     row.kind = RowKind::Individual;
-                    row.identities.push_back(SystemIdentityAt(sorted, reconstructed.indices.front(), kind));
+                    const std::size_t sortedIx = reconstructed.indices.front();
+                    row.data = sorted[sortedIx];
                 }
                 presentation.rows.push_back(std::move(row));
             }
@@ -1021,150 +929,15 @@ void MidiConfigViewModel::DiscardPresentation(const std::string& name, MidiConfi
 
 namespace {
 
-// Re-resolves one PresentationRow's identities against the live (sorted, for
-// system messages) config. Returns false if the row should be dropped (any
-// covered identity failed to resolve -- D5/sru-11: a block is one
-// resolve/drop unit).
-bool ReResolveRow(PresentationRow& row, const MidiControllerProfileConfig& config,
-                  const std::vector<MidiControllerSystemMessageAssociation>& sortedSystem, MidiProfileKind kind) {
-    for (const RowIdentity& identity : row.identities) {
-        bool resolved = false;
-        if (const auto* encoderIdentity = std::get_if<EncoderIdentity>(&identity)) {
-            if (row.kind == RowKind::ConfigLevel) {
-                resolved = config.encoderInput.has_value();  // RelativeMode/TurnStep rows: exist iff encoderInput does
-            } else if (config.encoderInput.has_value()) {
-                const std::vector<EncoderMidiMapping>& mappings =
-                    encoderIdentity->isPush ? config.encoderInput->pushes : config.encoderInput->turns;
-                resolved = ResolveEncoderIdentity(mappings, *encoderIdentity) != kNotFound;
-            }
-            // else: encoderInput vanished entirely (e.g. a patch load
-            // switched this controller to a kind/config with no encoders)
-            // -- resolved stays false, dropping the row (D5/sru-11).
-        } else if (const auto* analogIdentity = std::get_if<AnalogIdentity>(&identity)) {
-            if (analogIdentity->isSceneBlend) {
-                resolved = config.analogInput.has_value();  // scene-blend row always resolves while analogInput exists
-            } else if (config.analogInput.has_value()) {
-                resolved = ResolveAnalogIdentity(config.analogInput->gestures, *analogIdentity) != kNotFound;
-            }
-        } else if (const auto* systemIdentity = std::get_if<SystemIdentity>(&identity)) {
-            resolved = ResolveSystemIdentity(sortedSystem, kind, *systemIdentity) != kNotFound;
-        }
-        if (!resolved) {
-            return false;
-        }
-    }
-    return true;
-}
-
-// Review finding: optimistic staging (ApplyMappingEdit/AddBlock, see this
-// class's header doc comment above SectionPresentation) is only a same-
-// instance cache-priming hint -- it is NOT self-healing on its own for a
-// Block row whose identities still resolve but whose covered cells' VALUES
-// differ from what the row's staged `block` struct shows (host discarded
-// `out`, or a patch load happened to land different field values under the
-// same identities). ReResolveRow above only checks that identities resolve;
-// it never re-syncs the block struct's fields. This function is Rebuild()'s
-// authoritative re-derivation step, run only for rows ReResolveRow already
-// kept: gather this row's covered cells (by resolving each identity back to
-// its raw config index, same as ReResolveRow does) and re-run the section's
-// Reconstruct* over exactly that covered sub-range. If it still reconstructs
-// as ONE block (which, by construction, ALWAYS covers every index in the
-// sub-range it's given -- Reconstruct* partitions its whole input into
-// blocks/individuals with no gaps), overwrite the row's block struct with
-// the freshly-derived one -- config truth wins over whatever was staged.
-// If the covered cells no longer form a single block of the same
-// message/group shape (e.g. an address moved so they're no longer
-// consecutive), returns false so the caller drops the row the same way
-// ReResolveRow's failure path does -- RebuildPresentationFor's existing
-// AppendUnresolved*Identities pass then re-appends those now-uncovered cells
-// as individual rows (they are not covered by any surviving row's
-// identities once this one is dropped), so no cell silently vanishes from
-// the presentation.
-bool ReSyncBlockRow(PresentationRow& row, const MidiControllerProfileConfig& config,
-                    const std::vector<MidiControllerSystemMessageAssociation>& sortedSystem, MidiProfileKind kind) {
-    if (const auto* encoderBlock = std::get_if<EncoderBlock>(&row.block)) {
-        const bool isPush = encoderBlock->isPush;
-        const std::vector<EncoderMidiMapping>& mappings =
-            isPush ? config.encoderInput->pushes : config.encoderInput->turns;
-        std::vector<std::size_t> rawIndices;
-        rawIndices.reserve(row.identities.size());
-        for (const RowIdentity& identity : row.identities) {
-            const auto* enc = std::get_if<EncoderIdentity>(&identity);
-            rawIndices.push_back(ResolveEncoderIdentity(mappings, *enc));
-        }
-        std::sort(rawIndices.begin(), rawIndices.end());
-        std::vector<EncoderMidiMapping> covered;
-        covered.reserve(rawIndices.size());
-        for (std::size_t ix : rawIndices) {
-            covered.push_back(mappings[ix]);
-        }
-        const std::vector<ReconstructedEncoderRow> reconstructed = ReconstructEncoderBlocks(covered, isPush);
-        if (reconstructed.size() != 1 || !reconstructed.front().isBlock ||
-            reconstructed.front().indices.size() != covered.size()) {
-            return false;
-        }
-        row.block = reconstructed.front().block;
-        return true;
-    }
-    if (std::get_if<AnalogBlock>(&row.block) != nullptr) {
-        const std::vector<AnalogMidiMapping>& mappings = config.analogInput->gestures;
-        std::vector<std::size_t> rawIndices;
-        rawIndices.reserve(row.identities.size());
-        for (const RowIdentity& identity : row.identities) {
-            const auto* an = std::get_if<AnalogIdentity>(&identity);
-            rawIndices.push_back(ResolveAnalogIdentity(mappings, *an));
-        }
-        std::sort(rawIndices.begin(), rawIndices.end());
-        std::vector<AnalogMidiMapping> covered;
-        covered.reserve(rawIndices.size());
-        for (std::size_t ix : rawIndices) {
-            covered.push_back(mappings[ix]);
-        }
-        const std::vector<ReconstructedAnalogRow> reconstructed = ReconstructAnalogBlocks(covered);
-        if (reconstructed.size() != 1 || !reconstructed.front().isBlock ||
-            reconstructed.front().indices.size() != covered.size()) {
-            return false;
-        }
-        row.block = reconstructed.front().block;
-        return true;
-    }
-    if (std::get_if<SystemBlock>(&row.block) != nullptr) {
-        std::vector<std::size_t> rawIndices;
-        rawIndices.reserve(row.identities.size());
-        for (const RowIdentity& identity : row.identities) {
-            const auto* sys = std::get_if<SystemIdentity>(&identity);
-            rawIndices.push_back(ResolveSystemIdentity(sortedSystem, kind, *sys));
-        }
-        std::sort(rawIndices.begin(), rawIndices.end());
-        std::vector<MidiControllerSystemMessageAssociation> covered;
-        covered.reserve(rawIndices.size());
-        for (std::size_t ix : rawIndices) {
-            covered.push_back(sortedSystem[ix]);
-        }
-        // ReconstructSystemBlocks re-sorts defensively; `covered` is already
-        // a sorted sub-sequence of `sortedSystem` so this is a no-op sort,
-        // matching its documented contract.
-        const std::vector<ReconstructedSystemRow> reconstructed = ReconstructSystemBlocks(covered, kind);
-        if (reconstructed.size() != 1 || !reconstructed.front().isBlock ||
-            reconstructed.front().indices.size() != covered.size()) {
-            return false;
-        }
-        row.block = reconstructed.front().block;
-        return true;
-    }
-    return false;
-}
-
 // Where a new row of `group` should land: immediately after the last
 // EXISTING row of that group, if any; otherwise immediately before the
 // first row of the nearest LATER group in RowGroup's declaration order
 // (EncoderTurn < EncoderPush < EncoderMode < EncoderStep < AnalogGesture <
 // AnalogSceneBlend < System, which is exactly section display order); if
 // neither exists (no rows of this group AND no later-group rows either),
-// the very end of the presentation. Shared by AppendUnresolved*Identities
-// (sru-11 "appending unknown identities ... at their group's end") and
-// AddSingle/AddBlock (sru-11 "+"/"+B" append presentation rows at the end
-// of their group) so both paths agree on where "end of group" means -- a
+// the very end of the presentation. Shared by AddSingle/AddBlock (sru-11
+// "+"/"+B" append presentation rows at the end of their group) so both
+// paths agree on where "end of group" means -- a
 // group with zero existing rows still has a well-defined "end" (immediately
 // before mode/step/scene-blend), not the tail of the whole section.
 std::size_t InsertionIndexForGroup(const SectionPresentation& presentation, RowGroup group) {
@@ -1183,186 +956,25 @@ std::size_t InsertionIndexForGroup(const SectionPresentation& presentation, RowG
     return firstOfLaterGroup;
 }
 
-// Finding 2: appends a new Block row (from a just-committed AddBlock) at the
-// end of its group, matching InsertionIndexForGroup -- same "cache-priming
-// hint on THIS view model instance's presentation" reasoning as the
-// block-edit path documented in ApplyMappingEdit (option (a) from the task
-// brief): AddBlock's `out` is committed by the host and Rebuild() is called
-// again, and this staged row lets that Rebuild() re-resolve the new cells'
-// identities to an EXISTING (this) row instead of appending them as loose
-// individuals (sru-11 "the block row appears at the end of the group").
+// Appends a new Block row at the end of its group. The row itself is the
+// open-session representation; persisted truth is rewritten from this row,
+// and Rebuild() does not discover or reshape it from config storage.
 template <typename BlockT>
-void AppendBlockPresentationRow(SectionPresentation& presentation, RowGroup group, const BlockT& block,
-                                std::vector<RowIdentity> identities) {
+void AppendBlockPresentationRow(SectionPresentation& presentation, RowGroup group, const BlockT& block) {
     const std::size_t insertAt = InsertionIndexForGroup(presentation, group);
     PresentationRow row;
     row.kind = RowKind::Block;
     row.group = group;
     row.block = block;
-    row.identities = std::move(identities);
     presentation.rows.insert(presentation.rows.begin() + static_cast<std::ptrdiff_t>(insertAt), std::move(row));
 }
 
-// Appends Individual rows, at the end of their group, for every raw config
-// identity NOT already covered by some row in `presentation` (sru-11:
-// "appending unknown identities as individual rows") -- see
-// InsertionIndexForGroup for exactly where "end of group" lands.
-void AppendUnresolvedEncoderIdentities(SectionPresentation& presentation, const std::vector<EncoderMidiMapping>& mappings,
-                                       bool isPush) {
-    const RowGroup group = isPush ? RowGroup::EncoderPush : RowGroup::EncoderTurn;
-    for (const EncoderMidiMapping& mapping : mappings) {
-        const EncoderIdentity identity = IdentityOf(mapping, isPush);
-        bool covered = false;
-        for (const PresentationRow& row : presentation.rows) {
-            if (row.group != group) {
-                continue;
-            }
-            for (const RowIdentity& existing : row.identities) {
-                if (const auto* enc = std::get_if<EncoderIdentity>(&existing); enc != nullptr && *enc == identity) {
-                    covered = true;
-                    break;
-                }
-            }
-            if (covered) {
-                break;
-            }
-        }
-        if (covered) {
-            continue;
-        }
-        const std::size_t insertAt = InsertionIndexForGroup(presentation, group);
-        PresentationRow row;
-        row.kind = RowKind::Individual;
-        row.group = group;
-        row.identities.push_back(identity);
-        presentation.rows.insert(presentation.rows.begin() + static_cast<std::ptrdiff_t>(insertAt), std::move(row));
-    }
-}
-
-void AppendUnresolvedAnalogIdentities(SectionPresentation& presentation, const std::vector<AnalogMidiMapping>& mappings) {
-    constexpr RowGroup group = RowGroup::AnalogGesture;
-    for (const AnalogMidiMapping& mapping : mappings) {
-        const AnalogIdentity identity = IdentityOf(mapping);
-        bool covered = false;
-        for (const PresentationRow& row : presentation.rows) {
-            if (row.group != group) {
-                continue;
-            }
-            for (const RowIdentity& existing : row.identities) {
-                if (const auto* an = std::get_if<AnalogIdentity>(&existing); an != nullptr && *an == identity) {
-                    covered = true;
-                    break;
-                }
-            }
-            if (covered) {
-                break;
-            }
-        }
-        if (covered) {
-            continue;
-        }
-        const std::size_t insertAt = InsertionIndexForGroup(presentation, group);
-        PresentationRow row;
-        row.kind = RowKind::Individual;
-        row.group = group;
-        row.identities.push_back(identity);
-        presentation.rows.insert(presentation.rows.begin() + static_cast<std::ptrdiff_t>(insertAt), std::move(row));
-    }
-}
-
-void AppendUnresolvedSystemIdentities(SectionPresentation& presentation,
-                                      const std::vector<MidiControllerSystemMessageAssociation>& sorted,
-                                      MidiProfileKind kind) {
-    constexpr RowGroup group = RowGroup::System;
-    for (std::size_t ix = 0; ix < sorted.size(); ++ix) {
-        const SystemIdentity identity = SystemIdentityAt(sorted, ix, kind);
-        bool covered = false;
-        for (const PresentationRow& row : presentation.rows) {
-            for (const RowIdentity& existing : row.identities) {
-                if (const auto* sys = std::get_if<SystemIdentity>(&existing); sys != nullptr && *sys == identity) {
-                    covered = true;
-                    break;
-                }
-            }
-            if (covered) {
-                break;
-            }
-        }
-        if (covered) {
-            continue;
-        }
-        const std::size_t insertAt = InsertionIndexForGroup(presentation, group);
-        PresentationRow row;
-        row.kind = RowKind::Individual;
-        row.group = group;
-        row.identities.push_back(identity);
-        presentation.rows.insert(presentation.rows.begin() + static_cast<std::ptrdiff_t>(insertAt), std::move(row));
-    }
-}
-
 }  // namespace
-
-void MidiConfigViewModel::RebuildPresentationFor(SectionPresentation& presentation,
-                                                 const MidiControllerProfileConfig& config, MidiProfileKind kind,
-                                                 MidiConfigSection section) const {
-    MidiControllerProfileConfig scratch;
-    scratch.systemMessages = config.systemMessages;
-    NormalizeMidiProfileConfig(scratch, kind);
-    const std::vector<MidiControllerSystemMessageAssociation>& sortedSystem = scratch.systemMessages;
-
-    // Drop rows whose identity no longer resolves (D5/sru-11). For a Block
-    // row whose identities DO all resolve, also re-derive its block struct
-    // from the actual covered cells (ReSyncBlockRow) -- makes Rebuild()
-    // authoritative over whatever ApplyMappingEdit/AddBlock optimistically
-    // staged (see ReSyncBlockRow's doc comment above): if the covered cells
-    // still form exactly one block, config truth overwrites the staged
-    // struct; if they no longer do, the row is dropped exactly like a
-    // failed identity resolution, and its now-uncovered cells re-append as
-    // individual rows via the AppendUnresolved*Identities pass below.
-    std::erase_if(presentation.rows, [&](PresentationRow& row) {
-        if (!ReResolveRow(row, config, sortedSystem, kind)) {
-            return true;
-        }
-        if (row.kind == RowKind::Block) {
-            return !ReSyncBlockRow(row, config, sortedSystem, kind);
-        }
-        return false;
-    });
-
-    // Append unknown identities as individual rows at their group's end
-    // (D5/sru-11) -- config-level rows never need this (they either exist or
-    // the whole presentation was dropped above when encoderInput/analogInput
-    // vanished, which ReResolveRow already handles for the ConfigLevel rows
-    // themselves).
-    switch (section) {
-        case MidiConfigSection::Encoders:
-            if (config.encoderInput.has_value()) {
-                AppendUnresolvedEncoderIdentities(presentation, config.encoderInput->turns, false);
-                AppendUnresolvedEncoderIdentities(presentation, config.encoderInput->pushes, true);
-            }
-            break;
-        case MidiConfigSection::Analogs:
-            if (config.analogInput.has_value()) {
-                AppendUnresolvedAnalogIdentities(presentation, config.analogInput->gestures);
-            }
-            break;
-        case MidiConfigSection::SystemMessages:
-            AppendUnresolvedSystemIdentities(presentation, sortedSystem, kind);
-            break;
-    }
-}
 
 std::vector<MidiMappingRowVM> MidiConfigViewModel::BuildSectionRows(std::size_t controllerIx,
                                                                      MidiConfigSection section) const {
     const MidiControllerSlot& slot = instrument_.controllers[controllerIx];
     const SectionPresentation& presentation = PresentationFor(controllerIx, section);
-
-    MidiControllerProfileConfig sortedScratch;
-    sortedScratch.systemMessages = slot.config.systemMessages;
-    if (section == MidiConfigSection::SystemMessages) {
-        NormalizeMidiProfileConfig(sortedScratch, slot.kind);
-    }
-    const std::vector<MidiControllerSystemMessageAssociation>& sortedSystem = sortedScratch.systemMessages;
 
     std::vector<MidiMappingRowVM> rows;
     rows.reserve(presentation.rows.size());
@@ -1374,14 +986,17 @@ std::vector<MidiMappingRowVM> MidiConfigViewModel::BuildSectionRows(std::size_t 
 
         if (presentationRow.kind == RowKind::ConfigLevel) {
             if (presentationRow.group == RowGroup::EncoderMode) {
+                const auto* data = std::get_if<EncoderModeRow>(&presentationRow.data);
                 row.editableFields = {Field::RelativeMode};
-                row.label = RelativeModeLabel(slot.config.encoderInput->relativeMode);
+                row.label = RelativeModeLabel(data != nullptr ? data->relativeMode : EncoderRelativeMode::Signed7Bit);
             } else if (presentationRow.group == RowGroup::EncoderStep) {
+                const auto* data = std::get_if<EncoderStepRow>(&presentationRow.data);
                 row.editableFields = {Field::TurnStep};
-                row.label = TurnStepLabel(slot.config.encoderInput->turnStep);
+                row.label = TurnStepLabel(data != nullptr ? data->turnStep : 1.0f);
             } else if (presentationRow.group == RowGroup::AnalogSceneBlend) {
+                const auto* data = std::get_if<AnalogSceneBlendRow>(&presentationRow.data);
                 row.editableFields = {Field::SceneBlend};
-                row.label = SceneBlendLabel(slot.config.analogInput->sceneBlend);
+                row.label = SceneBlendLabel(data != nullptr ? data->sceneBlend : std::optional<MidiControlAddress>{});
             }
         } else if (presentationRow.kind == RowKind::Block) {
             if (const auto* encoderBlock = std::get_if<EncoderBlock>(&presentationRow.block)) {
@@ -1395,25 +1010,16 @@ std::vector<MidiMappingRowVM> MidiConfigViewModel::BuildSectionRows(std::size_t 
                 row.label = SystemBlockLabel(*systemBlock);
             }
         } else {
-            // Individual row: resolve its single identity to the underlying
-            // config element for the label/editableFields.
-            const RowIdentity& identity = presentationRow.identities.front();
-            if (const auto* encoderIdentity = std::get_if<EncoderIdentity>(&identity)) {
-                const std::vector<EncoderMidiMapping>& mappings =
-                    encoderIdentity->isPush ? slot.config.encoderInput->pushes : slot.config.encoderInput->turns;
-                const std::size_t rawIx = ResolveEncoderIdentity(mappings, *encoderIdentity);
-                const EncoderMidiMapping& mapping = mappings[rawIx];
+            if (const auto* mapping = std::get_if<EncoderMidiMapping>(&presentationRow.data)) {
                 row.editableFields = {Field::Channel, Field::Cc, Field::SlotIx, Field::Position};
-                row.label = encoderIdentity->isPush ? EncoderPushLabel(mapping) : EncoderTurnLabel(mapping);
-            } else if (const auto* analogIdentity = std::get_if<AnalogIdentity>(&identity)) {
-                const std::size_t rawIx = ResolveAnalogIdentity(slot.config.analogInput->gestures, *analogIdentity);
+                row.label = presentationRow.group == RowGroup::EncoderPush ? EncoderPushLabel(*mapping)
+                                                                            : EncoderTurnLabel(*mapping);
+            } else if (const auto* mapping = std::get_if<AnalogMidiMapping>(&presentationRow.data)) {
                 row.editableFields = {Field::Channel, Field::Cc, Field::GestureIx};
-                row.label = GestureLabel(slot.config.analogInput->gestures[rawIx]);
-            } else if (const auto* systemIdentity = std::get_if<SystemIdentity>(&identity)) {
-                const std::size_t rawIx = ResolveSystemIdentity(sortedSystem, slot.kind, *systemIdentity);
-                const MidiControllerSystemMessageAssociation& association = sortedSystem[rawIx];
-                row.editableFields = SystemRowEditableFields(slot.kind, association);
-                row.label = SystemMessageLabel(association, slot.kind);
+                row.label = GestureLabel(*mapping);
+            } else if (const auto* association = std::get_if<MidiControllerSystemMessageAssociation>(&presentationRow.data)) {
+                row.editableFields = SystemRowEditableFields(slot.kind, *association);
+                row.label = SystemMessageLabel(*association, slot.kind);
             }
         }
         rows.push_back(std::move(row));
@@ -1532,15 +1138,9 @@ bool MidiConfigViewModel::RowFieldValue(std::size_t controllerIx, MidiConfigSect
     }
 
     // Same gate ApplyMappingEdit applies before touching anything: refuse a
-    // field this row doesn't advertise (SectionRows() is the single source
-    // of truth for row identity/editable fields, reused here so the two can
-    // never drift -- see this method's header doc comment). This also
-    // naturally refuses PressMessage/ReleaseMessage (never in a numeric
-    // field's sense -- callers use SystemMessageChoiceIndex() for those) once
-    // a caller passes them for a row that only advertises them alongside
-    // position fields; for rows where Press/ReleaseMessage IS advertised,
-    // this function still refuses it below the row-lookup, since neither
-    // section branch ever assigns `out` for those fields.
+    // field this row doesn't advertise. SectionRows() is the single source
+    // of truth for row shape/editable fields, reused here so the two can
+    // never drift.
     const std::vector<MidiMappingRowVM> rows = SectionRows(controllerIx, section);
     if (rowIx >= rows.size()) {
         return false;
@@ -1549,12 +1149,10 @@ bool MidiConfigViewModel::RowFieldValue(std::size_t controllerIx, MidiConfigSect
     if (std::find(editable.begin(), editable.end(), field) == editable.end()) {
         return false;
     }
-    if (field == Field::PressMessage || field == Field::ReleaseMessage || field == Field::MessageKind ||
-        field == Field::ReleaseKind || field == Field::BlockMessageType) {
+    if (field == Field::MessageKind || field == Field::BlockMessageType) {
         return false;
     }
 
-    const MidiControllerSlot& slot = instrument_.controllers[controllerIx];
     const SectionPresentation& presentation = PresentationFor(controllerIx, section);
     const PresentationRow& presentationRow = presentation.rows[rowIx];
 
@@ -1563,11 +1161,16 @@ bool MidiConfigViewModel::RowFieldValue(std::size_t controllerIx, MidiConfigSect
     }
     if (presentationRow.kind == RowKind::ConfigLevel) {
         if (presentationRow.group == RowGroup::EncoderMode && field == Field::RelativeMode) {
-            out = slot.config.encoderInput->relativeMode == EncoderRelativeMode::DirectionOnly ? 1.0 : 0.0;
+            const auto* data = std::get_if<EncoderModeRow>(&presentationRow.data);
+            out = data != nullptr && data->relativeMode == EncoderRelativeMode::DirectionOnly ? 1.0 : 0.0;
             return true;
         }
         if (presentationRow.group == RowGroup::EncoderStep && field == Field::TurnStep) {
-            out = static_cast<double>(slot.config.encoderInput->turnStep);
+            const auto* data = std::get_if<EncoderStepRow>(&presentationRow.data);
+            if (data == nullptr) {
+                return false;
+            }
+            out = static_cast<double>(data->turnStep);
             return true;
         }
         if (presentationRow.group == RowGroup::AnalogSceneBlend && field == Field::SceneBlend) {
@@ -1588,131 +1191,96 @@ bool MidiConfigViewModel::RowFieldValue(std::size_t controllerIx, MidiConfigSect
             // value for the same unassigned case, so a freshly-seeded
             // editor and a freshly-committed edit agree on what "unassigned,
             // about to be assigned" starts from.
-            out = slot.config.analogInput->sceneBlend.has_value()
-                     ? static_cast<double>(slot.config.analogInput->sceneBlend->cc)
-                     : 0.0;
+            const auto* data = std::get_if<AnalogSceneBlendRow>(&presentationRow.data);
+            out = data != nullptr && data->sceneBlend.has_value() ? static_cast<double>(data->sceneBlend->cc) : 0.0;
             return true;
         }
         return false;
     }
 
-    // Individual row: resolve identity -> raw config element.
-    const RowIdentity& identity = presentationRow.identities.front();
-    if (const auto* encoderIdentity = std::get_if<EncoderIdentity>(&identity)) {
-        const std::vector<EncoderMidiMapping>& mappings =
-            encoderIdentity->isPush ? slot.config.encoderInput->pushes : slot.config.encoderInput->turns;
-        const std::size_t rawIx = ResolveEncoderIdentity(mappings, *encoderIdentity);
-        if (rawIx == kNotFound) {
-            return false;
-        }
-        const EncoderMidiMapping& mapping = mappings[rawIx];
+    if (const auto* mapping = std::get_if<EncoderMidiMapping>(&presentationRow.data)) {
         switch (field) {
             case Field::Channel:
-                out = static_cast<double>(mapping.control.channel);
+                out = static_cast<double>(mapping->control.channel);
                 return true;
             case Field::Cc:
-                out = static_cast<double>(mapping.control.cc);
+                out = static_cast<double>(mapping->control.cc);
                 return true;
             case Field::SlotIx:
-                out = static_cast<double>(mapping.slotIx);
+                out = static_cast<double>(mapping->slotIx);
                 return true;
             case Field::Position:
-                out = static_cast<double>(mapping.position);
+                out = static_cast<double>(mapping->position);
                 return true;
             default:
                 return false;
         }
     }
-    if (const auto* analogIdentity = std::get_if<AnalogIdentity>(&identity)) {
-        const std::size_t rawIx = ResolveAnalogIdentity(slot.config.analogInput->gestures, *analogIdentity);
-        if (rawIx == kNotFound) {
-            return false;
-        }
-        const AnalogMidiMapping& mapping = slot.config.analogInput->gestures[rawIx];
+    if (const auto* mapping = std::get_if<AnalogMidiMapping>(&presentationRow.data)) {
         switch (field) {
             case Field::Channel:
-                out = static_cast<double>(mapping.control.channel);
+                out = static_cast<double>(mapping->control.channel);
                 return true;
             case Field::Cc:
-                out = static_cast<double>(mapping.control.cc);
+                out = static_cast<double>(mapping->control.cc);
                 return true;
             case Field::GestureIx:
-                out = static_cast<double>(mapping.gestureIx);
+                out = static_cast<double>(mapping->gestureIx);
                 return true;
             default:
                 return false;
         }
     }
-    if (const auto* systemIdentity = std::get_if<SystemIdentity>(&identity)) {
-        MidiControllerProfileConfig sortedScratch;
-        sortedScratch.systemMessages = slot.config.systemMessages;
-        NormalizeMidiProfileConfig(sortedScratch, slot.kind);
-        const std::size_t rawIx = ResolveSystemIdentity(sortedScratch.systemMessages, slot.kind, *systemIdentity);
-        if (rawIx == kNotFound) {
-            return false;
-        }
-        const MidiControllerSystemMessageAssociation& association = sortedScratch.systemMessages[rawIx];
+    if (const auto* association = std::get_if<MidiControllerSystemMessageAssociation>(&presentationRow.data)) {
         switch (field) {
             case Field::Channel:
-                if (!association.control.has_value()) {
+                if (!association->control.has_value()) {
                     return false;
                 }
-                out = static_cast<double>(association.control->channel);
+                out = static_cast<double>(association->control->channel);
                 return true;
             case Field::Cc:
-                if (!association.control.has_value()) {
+                if (!association->control.has_value()) {
                     return false;
                 }
-                out = static_cast<double>(association.control->cc);
+                out = static_cast<double>(association->control->cc);
                 return true;
             case Field::LaunchpadX:
-                if (!association.launchpadPosition.has_value()) {
+                if (!association->launchpadPosition.has_value()) {
                     return false;
                 }
-                out = static_cast<double>(association.launchpadPosition->x);
+                out = static_cast<double>(association->launchpadPosition->x);
                 return true;
             case Field::LaunchpadY:
-                if (!association.launchpadPosition.has_value()) {
+                if (!association->launchpadPosition.has_value()) {
                     return false;
                 }
-                out = static_cast<double>(association.launchpadPosition->y);
+                out = static_cast<double>(association->launchpadPosition->y);
                 return true;
             case Field::WrldBldrX:
-                if (!association.wrldBldrPosition.has_value()) {
+                if (!association->wrldBldrPosition.has_value()) {
                     return false;
                 }
-                out = static_cast<double>(association.wrldBldrPosition->x);
+                out = static_cast<double>(association->wrldBldrPosition->x);
                 return true;
             case Field::WrldBldrY:
-                if (!association.wrldBldrPosition.has_value()) {
+                if (!association->wrldBldrPosition.has_value()) {
                     return false;
                 }
-                out = static_cast<double>(association.wrldBldrPosition->y);
+                out = static_cast<double>(association->wrldBldrPosition->y);
                 return true;
             case Field::Button:
-                if (!association.control.has_value() || association.control->cc < 8 ||
-                    association.control->cc > 13) {
+                if (!association->control.has_value() || association->control->cc < 8 ||
+                    association->control->cc > 13) {
                     return false;
                 }
-                out = static_cast<double>(association.control->cc - 8);
+                out = static_cast<double>(association->control->cc - 8);
                 return true;
             case Field::MessageArg: {
-                const std::optional<std::size_t> arg = PrimaryMessageArg(association.press);
-                if (!arg.has_value()) {
+                if (!UISystemMessageHasArg(UISystemMessageForAssociation(*association))) {
                     return false;
                 }
-                out = static_cast<double>(*arg);
-                return true;
-            }
-            case Field::ReleaseArg: {
-                if (!association.release.has_value()) {
-                    return false;
-                }
-                const std::optional<std::size_t> arg = PrimaryMessageArg(*association.release);
-                if (!arg.has_value()) {
-                    return false;
-                }
-                out = static_cast<double>(*arg);
+                out = static_cast<double>(AssociationPrimaryArg(*association));
                 return true;
             }
             default:
@@ -1753,81 +1321,28 @@ bool IsIntegerInRange(double value, double lo, double hi) {
 
 }  // namespace
 
-int MidiConfigViewModel::SystemMessageChoiceIndex(std::size_t controllerIx, MidiConfigSection section,
-                                                   std::size_t rowIx, MidiMappingRowVM::Field field) const {
-    if (section != MidiConfigSection::SystemMessages ||
-        (field != Field::PressMessage && field != Field::ReleaseMessage)) {
+int MidiConfigViewModel::UISystemMessageIndex(std::size_t controllerIx, MidiConfigSection section,
+                                              std::size_t rowIx) const {
+    if (section != MidiConfigSection::SystemMessages) {
         return -1;
     }
     if (controllerIx >= instrument_.controllers.size()) {
         return -1;
     }
-    const MidiControllerSlot& slot = instrument_.controllers[controllerIx];
-    const SectionPresentation& presentation = PresentationFor(controllerIx, section);
-    if (rowIx >= presentation.rows.size() || presentation.rows[rowIx].kind != RowKind::Individual) {
-        return -1;  // Block/ConfigLevel rows never advertise Press/ReleaseMessage.
-    }
-    const auto* systemIdentity = std::get_if<SystemIdentity>(&presentation.rows[rowIx].identities.front());
-    if (systemIdentity == nullptr) {
-        return -1;
-    }
-    MidiControllerProfileConfig sortedScratch;
-    sortedScratch.systemMessages = slot.config.systemMessages;
-    NormalizeMidiProfileConfig(sortedScratch, slot.kind);
-    const std::size_t rawIx = ResolveSystemIdentity(sortedScratch.systemMessages, slot.kind, *systemIdentity);
-    if (rawIx == kNotFound) {
-        return -1;
-    }
-    const MidiControllerSystemMessageAssociation& association = sortedScratch.systemMessages[rawIx];
-
-    if (field == Field::ReleaseMessage && !association.release.has_value()) {
-        return 0;  // "None"
-    }
-    const MessageIn& message = field == Field::PressMessage ? association.press : *association.release;
-
-    const std::vector<SystemMessageChoice>& catalog = SystemMessageCatalog();
-    for (std::size_t ix = 1; ix < catalog.size(); ++ix) {
-        if (MessageInEquivalent(message, catalog[ix].build())) {
-            return static_cast<int>(ix);
-        }
-    }
-    return -1;
-}
-
-int MidiConfigViewModel::SystemMessageKindIndex(std::size_t controllerIx, MidiConfigSection section,
-                                                std::size_t rowIx, MidiMappingRowVM::Field field) const {
-    if (section != MidiConfigSection::SystemMessages ||
-        (field != Field::MessageKind && field != Field::ReleaseKind)) {
-        return -1;
-    }
-    if (controllerIx >= instrument_.controllers.size()) {
-        return -1;
-    }
-    const MidiControllerSlot& slot = instrument_.controllers[controllerIx];
     const SectionPresentation& presentation = PresentationFor(controllerIx, section);
     if (rowIx >= presentation.rows.size() || presentation.rows[rowIx].kind != RowKind::Individual) {
         return -1;
     }
-    const auto* systemIdentity = std::get_if<SystemIdentity>(&presentation.rows[rowIx].identities.front());
-    if (systemIdentity == nullptr) {
-        return -1;
-    }
-    MidiControllerProfileConfig sortedScratch;
-    sortedScratch.systemMessages = slot.config.systemMessages;
-    NormalizeMidiProfileConfig(sortedScratch, slot.kind);
-    const std::size_t rawIx = ResolveSystemIdentity(sortedScratch.systemMessages, slot.kind, *systemIdentity);
-    if (rawIx == kNotFound) {
+    const auto* association =
+        std::get_if<MidiControllerSystemMessageAssociation>(&presentation.rows[rowIx].data);
+    if (association == nullptr) {
         return -1;
     }
 
-    const MidiControllerSystemMessageAssociation& association = sortedScratch.systemMessages[rawIx];
-    if (field == Field::ReleaseKind && !association.release.has_value()) {
-        return 0;
-    }
-    const MessageIn::Type type = field == Field::MessageKind ? association.press.type : association.release->type;
-    const auto& catalog = SystemMessageKindCatalog();
-    for (std::size_t ix = 1; ix < catalog.size(); ++ix) {
-        if (catalog[ix].type == type) {
+    const UISystemMessage message = UISystemMessageForAssociation(*association);
+    const auto& catalog = UISystemMessageCatalog();
+    for (std::size_t ix = 0; ix < catalog.size(); ++ix) {
+        if (catalog[ix].message == message) {
             return static_cast<int>(ix);
         }
     }
@@ -2033,32 +1548,14 @@ bool ApplySystemBlockField(SystemBlock& block, Field field, double value, std::s
     }
 }
 
-// --- Finding 3: duplicate-address refusal for block commits -----------------
-//
-// sru-10's "block commit is all-or-nothing" scenario explicitly lists
-// "duplicate address" as a validation failure a block commit must refuse
-// (alongside address-out-of-shape/argument-out-of-domain, which
-// Expand*Block already rejects internally -- these three checks together
-// cover the whole scenario). Expand*Block only validates the block's OWN
-// cells are self-consistent; it has no visibility into the rest of the
-// config, so an edit/AddBlock that (after removing the block's own old
-// cells) expands into an address some OTHER surviving mapping/association
-// already occupies would silently create a duplicate address without this
-// check. Applied against the CANDIDATE collection (old cells already
-// removed, new expansion already inserted) so a cell colliding with one of
-// the block's OWN other cells is caught too (Expand*Block guarantees no
-// self-collision within a single block's cells, but that guarantee doesn't
-// extend to a block colliding with itself pre-removal, hence checking the
-// post-removal candidate).
-//
-// Individual-row address edits (Field::Channel/Cc/LaunchpadX/Y/WrldBldrX/Y/
-// Button on a non-block row) do NOT get this check -- historically allowed
-// (no prior test or spec scenario pins refusal there), and sru-10's
-// all-or-nothing/duplicate-address language is scoped to "a block edit" /
-// "block commit" specifically. Unifying the two would be a behavior change
-// beyond this fix's brief; left as a documented judgment call (task brief
-// finding 3: "keep individual edits as-is unless trivially unifiable,
-// DOCUMENT the choice").
+// The section flush is the single commit path for every presentation edit:
+// individual rows, block rows, adds, deletes, and Launchpad variant rewrites
+// all serialize the open presentation into one candidate section and validate
+// that candidate before returning `out`. Duplicate MIDI addresses are refused
+// at this whole-section boundary, so a row edit that would collide with a
+// sibling row fails the same way a block edit/add that would expand into a
+// sibling address fails. This keeps persisted truth canonical without any
+// special block-only duplicate path.
 bool HasDuplicateEncoderAddress(const std::vector<EncoderMidiMapping>& mappings) {
     for (std::size_t ix = 0; ix < mappings.size(); ++ix) {
         for (std::size_t jx = ix + 1; jx < mappings.size(); ++jx) {
@@ -2112,133 +1609,143 @@ bool HasDuplicateSystemAddress(const std::vector<MidiControllerSystemMessageAsso
     return false;
 }
 
-// --- Findings 1/2: identities for a just-committed block expansion ---------
-//
-// After a block commit (edit or AddBlock) builds `expansion` (the new
-// cells) and inserts them into the candidate config, these compute the
-// RowIdentity set the presentation row should adopt so a subsequent
-// Rebuild() on the SAME view model (once the host commits `out` and calls
-// Rebuild() again, per this class's documented edit contract) re-resolves
-// the row IN PLACE with its new grouping/values instead of dropping it and
-// re-appending the new cells as individuals (sru-11 "the block row stays in
-// place with updated values"). See MidiConfigViewModel.hpp's
-// ApplyMappingEdit/AddBlock doc comments for why this is safe even though
-// the view model's own snapshot is untouched until the next Rebuild(): the
-// optimistic identities are just a cache-priming hint for THIS view model
-// instance's presentation map -- if the host never commits `out` (or
-// commits something else entirely), the next real Rebuild() re-resolves
-// every row against whatever config actually landed, self-healing to
-// dropped/appended rows exactly as it always has for any other stale
-// identity (RebuildPresentationFor's existing drop/append rule, unchanged).
-std::vector<RowIdentity> IdentitiesForEncoderExpansion(const std::vector<EncoderMidiMapping>& expansion,
-                                                       bool isPush) {
-    std::vector<RowIdentity> identities;
-    identities.reserve(expansion.size());
-    for (const EncoderMidiMapping& mapping : expansion) {
-        identities.push_back(IdentityOf(mapping, isPush));
-    }
-    return identities;
-}
-
-std::vector<RowIdentity> IdentitiesForAnalogExpansion(const std::vector<AnalogMidiMapping>& expansion) {
-    std::vector<RowIdentity> identities;
-    identities.reserve(expansion.size());
-    for (const AnalogMidiMapping& mapping : expansion) {
-        identities.push_back(IdentityOf(mapping));
-    }
-    return identities;
-}
-
-// System identities need the occurrence ordinal SystemIdentityAt/
-// ResolveSystemIdentity define: "how many EARLIER elements in the sorted
-// view share this exact key" -- i.e. 0 for a key that occurs exactly once,
-// REGARDLESS of where in the final committed config that one occurrence
-// happens to sit (ordinal is not an array position/index). Finding 3's
-// uniqueness check guarantees every expansion cell's key (which includes
-// the address tie-break, D2) is unique across the whole committed config,
-// so every cell's ordinal is unconditionally 0 -- a caller-provided sorted
-// view isn't needed to establish that (unlike SystemIdentityAt, which
-// computes ix's ordinal from its ACTUAL position among possible
-// duplicates; here there provably are none).
-std::vector<RowIdentity> IdentitiesForSystemExpansion(const std::vector<MidiControllerSystemMessageAssociation>& expansion,
-                                                      MidiProfileKind kind) {
-    std::vector<RowIdentity> identities;
-    identities.reserve(expansion.size());
-    for (const MidiControllerSystemMessageAssociation& cell : expansion) {
-        identities.push_back(SystemIdentity{.key = ComputeSystemMessageSortKey(cell, kind), .occurrenceOrdinal = 0});
-    }
-    return identities;
-}
-
-// Removes every encoder mapping whose identity is in `identities` from
-// `mappings` (block-edit/delete "replace cells"/"delete all its cells" --
-// sru-10/sru-11).
-// `isPush` identifies which vector `mappings` IS (turns or pushes) -- an
-// identity only matches a cell in the same vector (turn identities must
-// never remove push cells and vice versa, even when they happen to share
-// (slotIx, position): the default WrldBldr profile's turn and push at
-// position 0 are exactly such a case).
-void RemoveEncoderIdentities(std::vector<EncoderMidiMapping>& mappings, const std::vector<RowIdentity>& identities,
-                             bool isPush) {
-    std::erase_if(mappings, [&](const EncoderMidiMapping& mapping) {
-        for (const RowIdentity& identity : identities) {
-            const auto* enc = std::get_if<EncoderIdentity>(&identity);
-            if (enc != nullptr && enc->isPush == isPush && mapping.slotIx == enc->slotIx &&
-                mapping.position == enc->position) {
-                return true;
+bool FlushSectionPresentationToSlot(const SectionPresentation& presentation, MidiControllerSlot& slot,
+                                    MidiConfigSection section, std::string* reason) {
+    switch (section) {
+        case MidiConfigSection::Encoders: {
+            EncoderMidiInConfig next = slot.config.encoderInput.value_or(EncoderMidiInConfig{});
+            next.turns.clear();
+            next.pushes.clear();
+            for (const PresentationRow& row : presentation.rows) {
+                if (row.kind == RowKind::ConfigLevel) {
+                    if (const auto* mode = std::get_if<EncoderModeRow>(&row.data)) {
+                        next.relativeMode = mode->relativeMode;
+                    } else if (const auto* step = std::get_if<EncoderStepRow>(&row.data)) {
+                        next.turnStep = step->turnStep;
+                    }
+                } else if (row.kind == RowKind::Individual) {
+                    const auto* mapping = std::get_if<EncoderMidiMapping>(&row.data);
+                    if (mapping == nullptr) {
+                        if (reason != nullptr) {
+                            *reason = "encoder row has no mapping data";
+                        }
+                        return false;
+                    }
+                    if (row.group == RowGroup::EncoderPush) {
+                        next.pushes.push_back(*mapping);
+                    } else {
+                        next.turns.push_back(*mapping);
+                    }
+                } else if (const auto* block = std::get_if<EncoderBlock>(&row.block)) {
+                    std::vector<EncoderMidiMapping> expansion;
+                    if (!ExpandEncoderBlock(*block, expansion, reason)) {
+                        return false;
+                    }
+                    std::vector<EncoderMidiMapping>& target = block->isPush ? next.pushes : next.turns;
+                    target.insert(target.end(), expansion.begin(), expansion.end());
+                } else {
+                    if (reason != nullptr) {
+                        *reason = "encoder block row has no block data";
+                    }
+                    return false;
+                }
             }
-        }
-        return false;
-    });
-}
-
-void RemoveAnalogIdentities(std::vector<AnalogMidiMapping>& mappings, const std::vector<RowIdentity>& identities) {
-    std::erase_if(mappings, [&](const AnalogMidiMapping& mapping) {
-        for (const RowIdentity& identity : identities) {
-            const auto* an = std::get_if<AnalogIdentity>(&identity);
-            if (an != nullptr && !an->isSceneBlend && mapping.gestureIx == an->gestureIx) {
-                return true;
+            if (HasDuplicateEncoderAddress(next.turns) || HasDuplicateEncoderAddress(next.pushes)) {
+                if (reason != nullptr) {
+                    *reason = "section would create a duplicate (channel, cc) address";
+                }
+                return false;
             }
+            slot.config.encoderInput = std::move(next);
+            break;
         }
-        return false;
-    });
-}
-
-// Removes every system association whose identity is in `identities` from
-// `associations` (arbitrary order -- normalized right after by every caller).
-void RemoveSystemIdentities(std::vector<MidiControllerSystemMessageAssociation>& associations,
-                            const std::vector<RowIdentity>& identities, MidiProfileKind kind) {
-    MidiControllerProfileConfig sortedScratch;
-    sortedScratch.systemMessages = associations;
-    NormalizeMidiProfileConfig(sortedScratch, kind);
-    const std::vector<MidiControllerSystemMessageAssociation>& sorted = sortedScratch.systemMessages;
-
-    std::vector<bool> remove(sorted.size(), false);
-    for (const RowIdentity& identity : identities) {
-        const auto* sys = std::get_if<SystemIdentity>(&identity);
-        if (sys == nullptr) {
-            continue;
+        case MidiConfigSection::Analogs: {
+            AnalogMidiInConfig next = slot.config.analogInput.value_or(AnalogMidiInConfig{});
+            next.gestures.clear();
+            next.sceneBlend = std::nullopt;
+            for (const PresentationRow& row : presentation.rows) {
+                if (row.kind == RowKind::ConfigLevel) {
+                    if (const auto* sceneBlend = std::get_if<AnalogSceneBlendRow>(&row.data)) {
+                        next.sceneBlend = sceneBlend->sceneBlend;
+                    }
+                } else if (row.kind == RowKind::Individual) {
+                    const auto* mapping = std::get_if<AnalogMidiMapping>(&row.data);
+                    if (mapping == nullptr) {
+                        if (reason != nullptr) {
+                            *reason = "analog row has no mapping data";
+                        }
+                        return false;
+                    }
+                    next.gestures.push_back(*mapping);
+                } else if (const auto* block = std::get_if<AnalogBlock>(&row.block)) {
+                    std::vector<AnalogMidiMapping> expansion;
+                    if (!ExpandAnalogBlock(*block, expansion, reason)) {
+                        return false;
+                    }
+                    next.gestures.insert(next.gestures.end(), expansion.begin(), expansion.end());
+                } else {
+                    if (reason != nullptr) {
+                        *reason = "analog block row has no block data";
+                    }
+                    return false;
+                }
+            }
+            if (HasDuplicateAnalogAddress(next.gestures)) {
+                if (reason != nullptr) {
+                    *reason = "section would create a duplicate (channel, cc) address";
+                }
+                return false;
+            }
+            slot.config.analogInput = std::move(next);
+            break;
         }
-        const std::size_t rawIx = ResolveSystemIdentity(sorted, kind, *sys);
-        if (rawIx != kNotFound) {
-            remove[rawIx] = true;
+        case MidiConfigSection::SystemMessages: {
+            std::vector<MidiControllerSystemMessageAssociation> next;
+            for (const PresentationRow& row : presentation.rows) {
+                if (row.kind == RowKind::Individual) {
+                    const auto* association = std::get_if<MidiControllerSystemMessageAssociation>(&row.data);
+                    if (association == nullptr) {
+                        if (reason != nullptr) {
+                            *reason = "system row has no association data";
+                        }
+                        return false;
+                    }
+                    next.push_back(*association);
+                } else if (const auto* block = std::get_if<SystemBlock>(&row.block)) {
+                    std::vector<MidiControllerSystemMessageAssociation> expansion;
+                    if (!ExpandSystemBlock(*block, expansion, reason)) {
+                        return false;
+                    }
+                    next.insert(next.end(), expansion.begin(), expansion.end());
+                } else {
+                    if (reason != nullptr) {
+                        *reason = "system block row has no block data";
+                    }
+                    return false;
+                }
+            }
+            if (HasDuplicateSystemAddress(next, slot.kind)) {
+                if (reason != nullptr) {
+                    *reason = "section would create a duplicate address";
+                }
+                return false;
+            }
+            slot.config.systemMessages = std::move(next);
+            break;
         }
     }
-    std::vector<MidiControllerSystemMessageAssociation> kept;
-    kept.reserve(sorted.size());
-    for (std::size_t ix = 0; ix < sorted.size(); ++ix) {
-        if (!remove[ix]) {
-            kept.push_back(sorted[ix]);
-        }
-    }
-    associations = std::move(kept);
+    NormalizeMidiProfileConfig(slot.config, slot.kind);
+    return SlotValidForKind(slot, reason);
 }
 
 }  // namespace
 
 bool MidiConfigViewModel::ApplyMappingEdit(std::size_t controllerIx, MidiConfigSection section, std::size_t rowIx,
                                            MidiMappingRowVM::Field field, double value, MidiInstrumentConfig& out,
-                                           std::string* reason) const {
+                                           std::string* reason, bool* presentationChanged) const {
+    if (presentationChanged != nullptr) {
+        *presentationChanged = false;
+    }
     if (controllerIx >= instrument_.controllers.size()) {
         if (reason != nullptr) {
             *reason = "controller index out of range";
@@ -2246,175 +1753,26 @@ bool MidiConfigViewModel::ApplyMappingEdit(std::size_t controllerIx, MidiConfigS
         return false;
     }
 
-    const SectionPresentation* presentationConst = nullptr;
-    {
-        // General gate: refuse any Field not advertised in this row's
-        // editableFields before touching the scratch config at all.
-        const std::vector<MidiMappingRowVM> rows = SectionRows(controllerIx, section);
-        if (rowIx >= rows.size()) {
-            if (reason != nullptr) {
-                *reason = "row index out of range";
-            }
-            return false;
+    const std::vector<MidiMappingRowVM> rows = SectionRows(controllerIx, section);
+    if (rowIx >= rows.size()) {
+        if (reason != nullptr) {
+            *reason = "row index out of range";
         }
-        const std::vector<MidiMappingRowVM::Field>& editable = rows[rowIx].editableFields;
-        const bool legacySystemMessageCatalogField =
-            section == MidiConfigSection::SystemMessages &&
-            (field == Field::PressMessage || field == Field::ReleaseMessage);
-        if (std::find(editable.begin(), editable.end(), field) == editable.end() &&
-            !legacySystemMessageCatalogField) {
-            if (reason != nullptr) {
-                *reason = "field not editable for this row";
-            }
-            return false;
-        }
-        presentationConst = &PresentationFor(controllerIx, section);
+        return false;
     }
-    const PresentationRow& presentationRow = presentationConst->rows[rowIx];
+    const std::vector<MidiMappingRowVM::Field>& editable = rows[rowIx].editableFields;
+    if (std::find(editable.begin(), editable.end(), field) == editable.end()) {
+        if (reason != nullptr) {
+            *reason = "field not editable for this row";
+        }
+        return false;
+    }
+
+    SectionPresentation& presentation = PresentationFor(controllerIx, section);
+    PresentationRow& presentationRow = presentation.rows[rowIx];
 
     MidiInstrumentConfig scratch = instrument_;
     MidiControllerSlot& slot = scratch.controllers[controllerIx];
-
-    // --- Block row: whole-block validate -> replace-cells commit (sru-10's
-    // "block commit is all-or-nothing", D5's "block edit = replace-cells
-    // commit"). ---
-    if (presentationRow.kind == RowKind::Block) {
-        std::string validationError;
-        // Findings 1/2: staged optimistic presentation update. `out` is
-        // populated for the HOST to commit (this class's documented
-        // contract -- see the header's top-of-file comment and
-        // ApplyMappingEdit's own doc comment: the view model's own snapshot
-        // is untouched, and it never assumes an edit landed just because it
-        // returned true). Individual-row edits already tolerate this: their
-        // identity is re-resolved fresh against whatever the next Rebuild()
-        // actually receives, dropping/re-appending if it doesn't match
-        // (RebuildPresentationFor). A block row needs MORE than that --
-        // sru-11 requires it stay the SAME row, in place, not drop-and-
-        // reappend-as-individuals -- so here we ALSO prime this view
-        // model's own `presentations_` entry with the new block struct and
-        // the new cells' identities, matching option (a) from the task
-        // brief: update the presentation row optimistically when producing
-        // `out`. This is purely a same-instance cache hint: if the host
-        // discards `out` (never commits) or commits something else, the
-        // next real Rebuild() re-resolves this row's (now-possibly-wrong)
-        // identities against whatever config actually landed -- dropping
-        // and re-appending as individuals if they no longer resolve at all,
-        // or (PresentationRow::block's doc comment) re-deriving the block
-        // struct's field values from the actually-resolved cells if the
-        // identities still resolve but point at different values than this
-        // staged struct shows. Either path self-heals to config truth; it
-        // does not corrupt anything, it just misses the "stayed in place
-        // with these exact staged values" optimization for that one
-        // discarded edit. A host that always commits `out` before its next
-        // Rebuild() (the only pattern any current caller uses --
-        // ControllersPage.hpp's MappingRow::Commit()) sees the row stay put
-        // every time.
-        detail::PresentationRow* mutableRow = nullptr;
-        {
-            detail::SectionPresentation& presentation = PresentationFor(controllerIx, section);
-            mutableRow = &presentation.rows[rowIx];
-        }
-        if (const auto* encoderBlockConst = std::get_if<EncoderBlock>(&presentationRow.block)) {
-            EncoderBlock block = *encoderBlockConst;
-            if (!ApplyEncoderBlockField(block, field, value, validationError)) {
-                if (reason != nullptr) {
-                    *reason = !validationError.empty() ? validationError : "field is not editable on this row";
-                }
-                return false;
-            }
-            std::vector<EncoderMidiMapping> expansion;
-            if (!ExpandEncoderBlock(block, expansion, reason)) {
-                return false;
-            }
-            const bool isPush = block.isPush;
-            std::vector<EncoderMidiMapping>& mappings = isPush ? slot.config.encoderInput->pushes
-                                                                : slot.config.encoderInput->turns;
-            RemoveEncoderIdentities(mappings, presentationRow.identities, isPush);
-            // Finding 3: refuse if the new expansion collides with an
-            // address some OTHER surviving mapping already occupies (the
-            // block's own old cells were just removed above, so a
-            // collision here is against unrelated rows, or -- degenerate --
-            // within the new expansion itself, though Expand* already rules
-            // that out for a single block).
-            std::vector<EncoderMidiMapping> candidate = mappings;
-            candidate.insert(candidate.end(), expansion.begin(), expansion.end());
-            if (HasDuplicateEncoderAddress(candidate)) {
-                if (reason != nullptr) {
-                    *reason = "block edit would create a duplicate (channel, cc) address";
-                }
-                return false;
-            }
-            mappings = std::move(candidate);
-            mutableRow->block = block;
-            mutableRow->identities = IdentitiesForEncoderExpansion(expansion, isPush);
-        } else if (const auto* analogBlockConst = std::get_if<AnalogBlock>(&presentationRow.block)) {
-            AnalogBlock block = *analogBlockConst;
-            if (!ApplyAnalogBlockField(block, field, value, validationError)) {
-                if (reason != nullptr) {
-                    *reason = !validationError.empty() ? validationError : "field is not editable on this row";
-                }
-                return false;
-            }
-            std::vector<AnalogMidiMapping> expansion;
-            if (!ExpandAnalogBlock(block, expansion, reason)) {
-                return false;
-            }
-            RemoveAnalogIdentities(slot.config.analogInput->gestures, presentationRow.identities);
-            std::vector<AnalogMidiMapping> candidate = slot.config.analogInput->gestures;
-            candidate.insert(candidate.end(), expansion.begin(), expansion.end());
-            if (HasDuplicateAnalogAddress(candidate)) {
-                if (reason != nullptr) {
-                    *reason = "block edit would create a duplicate (channel, cc) address";
-                }
-                return false;
-            }
-            slot.config.analogInput->gestures = std::move(candidate);
-            mutableRow->block = block;
-            mutableRow->identities = IdentitiesForAnalogExpansion(expansion);
-        } else if (const auto* systemBlockConst = std::get_if<SystemBlock>(&presentationRow.block)) {
-            SystemBlock block = *systemBlockConst;
-            if (!ApplySystemBlockField(block, field, value, validationError)) {
-                if (reason != nullptr) {
-                    *reason = !validationError.empty() ? validationError : "field is not editable on this row";
-                }
-                return false;
-            }
-            std::vector<MidiControllerSystemMessageAssociation> expansion;
-            if (!ExpandSystemBlock(block, expansion, reason)) {
-                return false;
-            }
-            RemoveSystemIdentities(slot.config.systemMessages, presentationRow.identities, slot.kind);
-            std::vector<MidiControllerSystemMessageAssociation> candidate = slot.config.systemMessages;
-            candidate.insert(candidate.end(), expansion.begin(), expansion.end());
-            if (HasDuplicateSystemAddress(candidate, slot.kind)) {
-                if (reason != nullptr) {
-                    *reason = "block edit would create a duplicate address";
-                }
-                return false;
-            }
-            slot.config.systemMessages = std::move(candidate);
-            NormalizeMidiProfileConfig(slot.config, slot.kind);
-            mutableRow->block = block;
-            mutableRow->identities = IdentitiesForSystemExpansion(expansion, slot.kind);
-            if (!SlotValidForKind(slot, reason)) {
-                return false;
-            }
-            out = std::move(scratch);
-            return true;
-        } else {
-            if (reason != nullptr) {
-                *reason = "row has no block data";
-            }
-            return false;
-        }
-
-        NormalizeMidiProfileConfig(slot.config, slot.kind);
-        if (!SlotValidForKind(slot, reason)) {
-            return false;
-        }
-        out = std::move(scratch);
-        return true;
-    }
 
     bool fieldValid = false;
     // Set alongside fieldValid=false when the field IS editable on this row
@@ -2422,7 +1780,15 @@ bool MidiConfigViewModel::ApplyMappingEdit(std::size_t controllerIx, MidiConfigS
     // reason instead of the generic "field is not editable" one.
     std::string validationError;
 
-    if (presentationRow.kind == RowKind::ConfigLevel) {
+    if (presentationRow.kind == RowKind::Block) {
+        if (auto* encoderBlock = std::get_if<EncoderBlock>(&presentationRow.block)) {
+            fieldValid = ApplyEncoderBlockField(*encoderBlock, field, value, validationError);
+        } else if (auto* analogBlock = std::get_if<AnalogBlock>(&presentationRow.block)) {
+            fieldValid = ApplyAnalogBlockField(*analogBlock, field, value, validationError);
+        } else if (auto* systemBlock = std::get_if<SystemBlock>(&presentationRow.block)) {
+            fieldValid = ApplySystemBlockField(*systemBlock, field, value, validationError);
+        }
+    } else if (presentationRow.kind == RowKind::ConfigLevel) {
         if (presentationRow.group == RowGroup::EncoderMode && field == Field::RelativeMode) {
             // Index-based: `value` selects RelativeModeCatalog() by position
             // (0 = Signed7Bit, 1 = DirectionOnly -- EncoderRelativeMode's
@@ -2433,49 +1799,39 @@ bool MidiConfigViewModel::ApplyMappingEdit(std::size_t controllerIx, MidiConfigS
                 validationError = "relative mode index out of range";
             } else {
                 const auto index = static_cast<std::size_t>(value);
-                slot.config.encoderInput->relativeMode =
-                    index == 1 ? EncoderRelativeMode::DirectionOnly : EncoderRelativeMode::Signed7Bit;
+                presentationRow.data =
+                    EncoderModeRow{.relativeMode = index == 1 ? EncoderRelativeMode::DirectionOnly
+                                                              : EncoderRelativeMode::Signed7Bit};
                 fieldValid = true;
             }
         } else if (presentationRow.group == RowGroup::EncoderStep && field == Field::TurnStep) {
             if (!std::isfinite(value) || value <= 0.0 || value > double(std::numeric_limits<float>::max())) {
                 validationError = "turn step out of range";
             } else {
-                slot.config.encoderInput->turnStep = static_cast<float>(value);
+                presentationRow.data = EncoderStepRow{.turnStep = static_cast<float>(value)};
                 fieldValid = true;
             }
         } else if (presentationRow.group == RowGroup::AnalogSceneBlend && field == Field::SceneBlend) {
             if (!IsIntegerInRange(value, 0.0, 127.0)) {
                 validationError = "cc must be an integer 0-127";
             } else {
-                MidiControlAddress address = slot.config.analogInput->sceneBlend.value_or(MidiControlAddress{});
+                const auto* existing = std::get_if<AnalogSceneBlendRow>(&presentationRow.data);
+                MidiControlAddress address =
+                    existing != nullptr ? existing->sceneBlend.value_or(MidiControlAddress{}) : MidiControlAddress{};
                 address.cc = static_cast<std::uint8_t>(value);
-                slot.config.analogInput->sceneBlend = address;
+                presentationRow.data = AnalogSceneBlendRow{.sceneBlend = address};
                 fieldValid = true;
             }
         }
     } else {
-        // Individual row: resolve identity -> raw config element, then apply
-        // exactly the same per-field logic the pre-blocks implementation had.
-        const RowIdentity& identity = presentationRow.identities.front();
-        if (const auto* encoderIdentity = std::get_if<EncoderIdentity>(&identity)) {
-            std::vector<EncoderMidiMapping>& mappings =
-                encoderIdentity->isPush ? slot.config.encoderInput->pushes : slot.config.encoderInput->turns;
-            const std::size_t rawIx = ResolveEncoderIdentity(mappings, *encoderIdentity);
-            if (rawIx == kNotFound) {
-                if (reason != nullptr) {
-                    *reason = "row no longer resolves";
-                }
-                return false;
-            }
-            EncoderMidiMapping& mapping = mappings[rawIx];
+        if (auto* mapping = std::get_if<EncoderMidiMapping>(&presentationRow.data)) {
             switch (field) {
                 case Field::Channel:
                     if (!IsIntegerInRange(value, 0.0, 15.0)) {
                         validationError = "channel must be an integer 0-15";
                         break;
                     }
-                    mapping.control.channel = static_cast<std::uint8_t>(value);
+                    mapping->control.channel = static_cast<std::uint8_t>(value);
                     fieldValid = true;
                     break;
                 case Field::Cc:
@@ -2483,7 +1839,7 @@ bool MidiConfigViewModel::ApplyMappingEdit(std::size_t controllerIx, MidiConfigS
                         validationError = "cc must be an integer 0-127";
                         break;
                     }
-                    mapping.control.cc = static_cast<std::uint8_t>(value);
+                    mapping->control.cc = static_cast<std::uint8_t>(value);
                     fieldValid = true;
                     break;
                 case Field::SlotIx:
@@ -2491,7 +1847,7 @@ bool MidiConfigViewModel::ApplyMappingEdit(std::size_t controllerIx, MidiConfigS
                         validationError = "slot index must be a non-negative integer";
                         break;
                     }
-                    mapping.slotIx = static_cast<std::size_t>(value);
+                    mapping->slotIx = static_cast<std::size_t>(value);
                     fieldValid = true;
                     break;
                 case Field::Position:
@@ -2499,28 +1855,20 @@ bool MidiConfigViewModel::ApplyMappingEdit(std::size_t controllerIx, MidiConfigS
                         validationError = "position must be a non-negative integer";
                         break;
                     }
-                    mapping.position = static_cast<std::size_t>(value);
+                    mapping->position = static_cast<std::size_t>(value);
                     fieldValid = true;
                     break;
                 default:
                     break;
             }
-        } else if (const auto* analogIdentity = std::get_if<AnalogIdentity>(&identity)) {
-            const std::size_t rawIx = ResolveAnalogIdentity(slot.config.analogInput->gestures, *analogIdentity);
-            if (rawIx == kNotFound) {
-                if (reason != nullptr) {
-                    *reason = "row no longer resolves";
-                }
-                return false;
-            }
-            AnalogMidiMapping& mapping = slot.config.analogInput->gestures[rawIx];
+        } else if (auto* mapping = std::get_if<AnalogMidiMapping>(&presentationRow.data)) {
             switch (field) {
                 case Field::Channel:
                     if (!IsIntegerInRange(value, 0.0, 15.0)) {
                         validationError = "channel must be an integer 0-15";
                         break;
                     }
-                    mapping.control.channel = static_cast<std::uint8_t>(value);
+                    mapping->control.channel = static_cast<std::uint8_t>(value);
                     fieldValid = true;
                     break;
                 case Field::Cc:
@@ -2528,7 +1876,7 @@ bool MidiConfigViewModel::ApplyMappingEdit(std::size_t controllerIx, MidiConfigS
                         validationError = "cc must be an integer 0-127";
                         break;
                     }
-                    mapping.control.cc = static_cast<std::uint8_t>(value);
+                    mapping->control.cc = static_cast<std::uint8_t>(value);
                     fieldValid = true;
                     break;
                 case Field::GestureIx:
@@ -2536,64 +1884,42 @@ bool MidiConfigViewModel::ApplyMappingEdit(std::size_t controllerIx, MidiConfigS
                         validationError = "gesture index must be a non-negative integer";
                         break;
                     }
-                    mapping.gestureIx = static_cast<std::size_t>(value);
+                    mapping->gestureIx = static_cast<std::size_t>(value);
                     fieldValid = true;
                     break;
                 default:
                     break;
             }
-        } else if (const auto* systemIdentity = std::get_if<SystemIdentity>(&identity)) {
-            MidiControllerProfileConfig sortedScratch;
-            sortedScratch.systemMessages = slot.config.systemMessages;
-            NormalizeMidiProfileConfig(sortedScratch, slot.kind);
-            const std::size_t rawIx = ResolveSystemIdentity(sortedScratch.systemMessages, slot.kind, *systemIdentity);
-            if (rawIx == kNotFound) {
-                if (reason != nullptr) {
-                    *reason = "row no longer resolves";
-                }
-                return false;
-            }
-            // Edit against the ORIGINAL (unsorted) storage so we don't
-            // silently reorder unrelated elements -- find the same element
-            // by identity (control/position pointer equality isn't
-            // available across the copy, so match by value: the sorted
-            // scratch element IS a copy of some element in
-            // slot.config.systemMessages; find its index there by scanning
-            // for the first not-yet-claimed structurally-identical element.
-            // Simpler and robust: apply the edit to the sorted copy, then
-            // write the WHOLE systemMessages vector back from the sorted
-            // copy (normalizing is required on every commit anyway, sru-9,
-            // so this does not change the committed shape's canonicality).
-            MidiControllerSystemMessageAssociation& association = sortedScratch.systemMessages[rawIx];
+        } else if (auto* association = std::get_if<MidiControllerSystemMessageAssociation>(&presentationRow.data)) {
             switch (field) {
                 case Field::Channel:
-                    if (!association.control.has_value()) {
+                    if (!association->control.has_value()) {
                         break;
                     }
                     if (!IsIntegerInRange(value, 0.0, 15.0)) {
                         validationError = "channel must be an integer 0-15";
                         break;
                     }
-                    association.control->channel = static_cast<std::uint8_t>(value);
-                    if (association.wrldBldrPosition.has_value()) {
-                        association.wrldBldrPosition->channel = association.control->channel;
+                    association->control->channel = static_cast<std::uint8_t>(value);
+                    if (association->wrldBldrPosition.has_value()) {
+                        association->wrldBldrPosition->channel = association->control->channel;
                     }
                     fieldValid = true;
                     break;
                 case Field::Cc:
-                    if (!association.control.has_value()) {
+                    if (!association->control.has_value()) {
                         break;
                     }
                     if (!IsIntegerInRange(value, 0.0, 127.0)) {
                         validationError = "cc must be an integer 0-127";
                         break;
                     }
-                    association.control->cc = static_cast<std::uint8_t>(value);
+                    association->control->cc = static_cast<std::uint8_t>(value);
                     fieldValid = true;
                     break;
                 case Field::LaunchpadX:
                 case Field::LaunchpadY: {
-                    if (!association.launchpadPosition.has_value()) {
+                    if (!association->launchpadPosition.has_value()) {
                         break;
                     }
                     if (!IsIntegerInRange(value, static_cast<double>(std::numeric_limits<int>::min()),
@@ -2601,7 +1927,7 @@ bool MidiConfigViewModel::ApplyMappingEdit(std::size_t controllerIx, MidiConfigS
                         validationError = "launchpad coordinate must be an integer";
                         break;
                     }
-                    LaunchpadGridPosition candidate = *association.launchpadPosition;
+                    LaunchpadGridPosition candidate = *association->launchpadPosition;
                     const int coordinate = static_cast<int>(value);
                     if (field == Field::LaunchpadX) {
                         candidate.x = coordinate;
@@ -2612,20 +1938,20 @@ bool MidiConfigViewModel::ApplyMappingEdit(std::size_t controllerIx, MidiConfigS
                         validationError = "launchpad coordinate is outside this controller's grid";
                         break;
                     }
-                    association.launchpadPosition = candidate;
+                    association->launchpadPosition = candidate;
                     fieldValid = true;
                     break;
                 }
                 case Field::WrldBldrX:
                 case Field::WrldBldrY: {
-                    if (!association.wrldBldrPosition.has_value()) {
+                    if (!association->wrldBldrPosition.has_value()) {
                         break;
                     }
                     if (!IsIntegerInRange(value, 0.0, 7.0)) {
                         validationError = "WRLD.Bldr coordinate must be an integer 0-7";
                         break;
                     }
-                    WrldBldrSystemPosition candidate = *association.wrldBldrPosition;
+                    WrldBldrSystemPosition candidate = *association->wrldBldrPosition;
                     const std::uint8_t coordinate = static_cast<std::uint8_t>(value);
                     if (field == Field::WrldBldrX) {
                         candidate.x = coordinate;
@@ -2633,10 +1959,10 @@ bool MidiConfigViewModel::ApplyMappingEdit(std::size_t controllerIx, MidiConfigS
                         candidate.y = coordinate;
                     }
                     const std::uint8_t channel =
-                        association.control.has_value() ? association.control->channel : candidate.channel;
+                        association->control.has_value() ? association->control->channel : candidate.channel;
                     candidate.channel = channel;
-                    association.wrldBldrPosition = candidate;
-                    association.control =
+                    association->wrldBldrPosition = candidate;
+                    association->control =
                         MidiControlAddress{.channel = channel, .cc = WrldBldrPositionToCC(candidate.x, candidate.y)};
                     fieldValid = true;
                     break;
@@ -2646,85 +1972,35 @@ bool MidiConfigViewModel::ApplyMappingEdit(std::size_t controllerIx, MidiConfigS
                         validationError = "side button must be an integer 0-5";
                         break;
                     }
-                    const std::uint8_t channel = association.control.has_value() ? association.control->channel
+                    const std::uint8_t channel = association->control.has_value() ? association->control->channel
                                                                                  : static_cast<std::uint8_t>(3);
-                    association.control = MidiControlAddress{.channel = channel,
+                    association->control = MidiControlAddress{.channel = channel,
                                                               .cc = static_cast<std::uint8_t>(8 + static_cast<int>(value))};
                     fieldValid = true;
                     break;
                 }
-                case Field::PressMessage:
-                case Field::ReleaseMessage: {
-                    if (!IsNonNegativeInteger(value)) {
-                        validationError = "message choice must be a non-negative integer catalog index";
-                        break;
-                    }
-                    const std::vector<SystemMessageChoice>& catalog = SystemMessageCatalog();
-                    const auto choiceIx = static_cast<std::size_t>(value);
-                    if (choiceIx >= catalog.size()) {
-                        validationError = "message choice index out of range";
-                        break;
-                    }
-                    if (field == Field::PressMessage) {
-                        if (choiceIx == 0) {
-                            validationError = "press message cannot be \"None\"";
-                            break;
-                        }
-                        association.press = catalog[choiceIx].build();
-                    } else {
-                        if (choiceIx == 0) {
-                            association.release = std::nullopt;
-                        } else {
-                            association.release = catalog[choiceIx].build();
-                        }
-                    }
-                    fieldValid = true;
-                    break;
-                }
-                case Field::MessageKind:
-                case Field::ReleaseKind: {
+                case Field::MessageKind: {
                     if (!IsNonNegativeInteger(value)) {
                         validationError = "message kind must be a non-negative integer catalog index";
                         break;
                     }
-                    const auto& catalog = SystemMessageKindCatalog();
+                    const auto& catalog = UISystemMessageCatalog();
                     const auto choiceIx = static_cast<std::size_t>(value);
                     if (choiceIx >= catalog.size()) {
                         validationError = "message kind index out of range";
                         break;
                     }
-                    if (field == Field::MessageKind) {
-                        if (choiceIx == 0) {
-                            validationError = "press message cannot be \"None\"";
-                            break;
-                        }
-                        association.press = WithMessageType(catalog[choiceIx].type, association.press, true);
-                    } else {
-                        if (choiceIx == 0) {
-                            association.release = std::nullopt;
-                        } else {
-                            const MessageIn previous = association.release.value_or(association.press);
-                            association.release = WithMessageType(catalog[choiceIx].type, previous, false);
-                        }
-                    }
+                    ApplyUISystemMessage(*association, catalog[choiceIx].message);
                     fieldValid = true;
                     break;
                 }
-                case Field::MessageArg:
-                case Field::ReleaseArg: {
+                case Field::MessageArg: {
                     if (!IsNonNegativeInteger(value)) {
                         validationError = "message argument must be a non-negative integer";
                         break;
                     }
                     const auto arg = static_cast<std::size_t>(value);
-                    MessageIn* message = field == Field::MessageArg
-                                             ? &association.press
-                                             : (association.release.has_value() ? &*association.release : nullptr);
-                    if (message == nullptr) {
-                        validationError = "release message is None";
-                        break;
-                    }
-                    if (!SetPrimaryMessageArg(*message, arg)) {
+                    if (!SetUISystemMessageArg(*association, arg)) {
                         validationError = "message has no integer argument";
                         break;
                     }
@@ -2733,9 +2009,6 @@ bool MidiConfigViewModel::ApplyMappingEdit(std::size_t controllerIx, MidiConfigS
                 }
                 default:
                     break;
-            }
-            if (fieldValid) {
-                slot.config.systemMessages = std::move(sortedScratch.systemMessages);
             }
         }
     }
@@ -2747,8 +2020,11 @@ bool MidiConfigViewModel::ApplyMappingEdit(std::size_t controllerIx, MidiConfigS
         return false;
     }
 
-    NormalizeMidiProfileConfig(slot.config, slot.kind);
-    if (!SlotValidForKind(slot, reason)) {
+    if (presentationChanged != nullptr) {
+        *presentationChanged = true;
+    }
+
+    if (!FlushSectionPresentationToSlot(presentation, slot, section, reason)) {
         return false;
     }
 
@@ -2831,7 +2107,7 @@ bool MidiConfigViewModel::DeleteRow(std::size_t controllerIx, MidiConfigSection 
         }
         return false;
     }
-    const SectionPresentation& presentation = PresentationFor(controllerIx, section);
+    SectionPresentation& presentation = PresentationFor(controllerIx, section);
     if (rowIx >= presentation.rows.size()) {
         if (reason != nullptr) {
             *reason = "row index out of range";
@@ -2848,22 +2124,10 @@ bool MidiConfigViewModel::DeleteRow(std::size_t controllerIx, MidiConfigSection 
 
     MidiInstrumentConfig scratch = instrument_;
     MidiControllerSlot& slot = scratch.controllers[controllerIx];
-
-    switch (section) {
-        case MidiConfigSection::Encoders:
-            RemoveEncoderIdentities(slot.config.encoderInput->turns, presentationRow.identities, /*isPush=*/false);
-            RemoveEncoderIdentities(slot.config.encoderInput->pushes, presentationRow.identities, /*isPush=*/true);
-            break;
-        case MidiConfigSection::Analogs:
-            RemoveAnalogIdentities(slot.config.analogInput->gestures, presentationRow.identities);
-            break;
-        case MidiConfigSection::SystemMessages:
-            RemoveSystemIdentities(slot.config.systemMessages, presentationRow.identities, slot.kind);
-            break;
-    }
-
-    NormalizeMidiProfileConfig(slot.config, slot.kind);
-    if (!SlotValidForKind(slot, reason)) {
+    const PresentationRow rollback = presentationRow;
+    presentation.rows.erase(presentation.rows.begin() + static_cast<std::ptrdiff_t>(rowIx));
+    if (!FlushSectionPresentationToSlot(presentation, slot, section, reason)) {
+        presentation.rows.insert(presentation.rows.begin() + static_cast<std::ptrdiff_t>(rowIx), rollback);
         return false;
     }
     out = std::move(scratch);
@@ -3051,6 +2315,62 @@ std::optional<LaunchpadGridPosition> NextFreeLaunchpadPosition(
     return std::nullopt;
 }
 
+std::optional<LaunchpadController> CurrentLaunchpadVariant(const SectionPresentation& presentation) {
+    for (const PresentationRow& row : presentation.rows) {
+        if (const auto* association = std::get_if<MidiControllerSystemMessageAssociation>(&row.data)) {
+            if (association->launchpadPosition.has_value()) {
+                return association->launchpadPosition->controller;
+            }
+        }
+        if (const auto* block = std::get_if<SystemBlock>(&row.block)) {
+            if (block->kind == MidiProfileKind::Launchpad) {
+                return block->launchpadController;
+            }
+        }
+    }
+    return std::nullopt;
+}
+
+bool RewritePresentationLaunchpadVariant(SectionPresentation& presentation, LaunchpadController newController,
+                                         std::string* reason) {
+    SectionPresentation next = presentation;
+    for (PresentationRow& row : next.rows) {
+        if (auto* association = std::get_if<MidiControllerSystemMessageAssociation>(&row.data)) {
+            if (!association->launchpadPosition.has_value()) {
+                continue;
+            }
+            LaunchpadGridPosition position = *association->launchpadPosition;
+            if (!LaunchpadShapeSupports(newController, position.x, position.y)) {
+                if (reason != nullptr) {
+                    std::ostringstream oss;
+                    oss << "position (" << position.x << "," << position.y
+                        << ") is not valid on this Launchpad variant";
+                    *reason = oss.str();
+                }
+                return false;
+            }
+            position.controller = newController;
+            association->launchpadPosition = position;
+            continue;
+        }
+
+        if (auto* block = std::get_if<SystemBlock>(&row.block)) {
+            if (block->kind != MidiProfileKind::Launchpad) {
+                continue;
+            }
+            SystemBlock candidate = *block;
+            candidate.launchpadController = newController;
+            std::vector<MidiControllerSystemMessageAssociation> expansion;
+            if (!ExpandSystemBlock(candidate, expansion, reason)) {
+                return false;
+            }
+            *block = candidate;
+        }
+    }
+    presentation = std::move(next);
+    return true;
+}
+
 }  // namespace
 
 bool MidiConfigViewModel::AddSingle(std::size_t controllerIx, MidiConfigSection section,
@@ -3062,27 +2382,26 @@ bool MidiConfigViewModel::AddSingle(std::size_t controllerIx, MidiConfigSection 
         }
         return false;
     }
-    MidiInstrumentConfig scratch = instrument_;
-    MidiControllerSlot& slot = scratch.controllers[controllerIx];
+    if (!GroupSupportsAdd(controllerIx, section, group)) {
+        if (reason != nullptr) {
+            *reason = "this group does not support adding individual rows";
+        }
+        return false;
+    }
+    SectionPresentation& presentation = PresentationFor(controllerIx, section);
+    MidiControllerSlot visibleSlot = instrument_.controllers[controllerIx];
+    if (!FlushSectionPresentationToSlot(presentation, visibleSlot, section, reason)) {
+        return false;
+    }
 
+    PresentationRow rowToAppend;
     if (section == MidiConfigSection::Encoders && (group == RowGroup::EncoderTurn || group == RowGroup::EncoderPush)) {
-        // sru-11 "first add creates an absent container": a controller kind
-        // that supports encoders (KindSupport) but hasn't been given an
-        // encoder-input container yet (e.g. a freshly-added generic
-        // controller, AddControllerGenericSeedsEmptyConfig) still offers
-        // "+"/"+B" on its (empty) Encoders section -- so create a fresh,
-        // default-constructed EncoderMidiInConfig here instead of refusing;
-        // default relativeMode/turnStep are fine starting points, same as
-        // any other freshly-seeded profile. SlotValidForKind below still
-        // guards a kind that genuinely doesn't support encoders (unreachable
-        // in practice since sections are kind-filtered, but belt-and-
-        // suspenders per this method's header doc comment).
-        if (!slot.config.encoderInput.has_value()) {
-            slot.config.encoderInput = EncoderMidiInConfig{};
+        if (!visibleSlot.config.encoderInput.has_value()) {
+            visibleSlot.config.encoderInput = EncoderMidiInConfig{};
         }
         const bool isPush = group == RowGroup::EncoderPush;
-        std::vector<EncoderMidiMapping>& mappings = isPush ? slot.config.encoderInput->pushes
-                                                            : slot.config.encoderInput->turns;
+        const std::vector<EncoderMidiMapping>& mappings =
+            isPush ? visibleSlot.config.encoderInput->pushes : visibleSlot.config.encoderInput->turns;
         const std::uint8_t channel = mappings.empty() ? (isPush ? std::uint8_t{1} : std::uint8_t{0})
                                                        : mappings.front().control.channel;
         EncoderMidiMapping mapping;
@@ -3090,46 +2409,42 @@ bool MidiConfigViewModel::AddSingle(std::size_t controllerIx, MidiConfigSection 
         mapping.control.cc = NextFreeCc(mappings, channel);
         mapping.slotIx = mappings.empty() ? 0 : mappings.front().slotIx;
         mapping.position = NextFreeEncoderPosition(mappings);
-        mappings.push_back(mapping);
+        rowToAppend.kind = RowKind::Individual;
+        rowToAppend.group = group;
+        rowToAppend.data = mapping;
     } else if (section == MidiConfigSection::Analogs && group == RowGroup::AnalogGesture) {
-        // Same "first add creates an absent container" rule as encoders
-        // above, for AnalogMidiInConfig.
-        if (!slot.config.analogInput.has_value()) {
-            slot.config.analogInput = AnalogMidiInConfig{};
+        if (!visibleSlot.config.analogInput.has_value()) {
+            visibleSlot.config.analogInput = AnalogMidiInConfig{};
         }
-        std::vector<AnalogMidiMapping>& mappings = slot.config.analogInput->gestures;
+        const std::vector<AnalogMidiMapping>& mappings = visibleSlot.config.analogInput->gestures;
         const std::uint8_t channel = mappings.empty() ? std::uint8_t{0} : mappings.front().control.channel;
         AnalogMidiMapping mapping;
         mapping.control.channel = channel;
         mapping.control.cc = NextFreeCc(mappings, channel);
         mapping.gestureIx = NextFreeGestureIx(mappings);
-        mappings.push_back(mapping);
+        rowToAppend.kind = RowKind::Individual;
+        rowToAppend.group = group;
+        rowToAppend.data = mapping;
     } else if (section == MidiConfigSection::SystemMessages && group == RowGroup::System) {
-        // Default a new individual system row to a SceneSelect association
-        // at the next-free scene index and the next-free address for this
-        // kind's schema (D1) -- a deliberately simple, deterministic choice
-        // among the three blockable types (see this method's header doc
-        // comment); the renderer lets the user re-target press/release via
-        // the existing PressMessage/ReleaseMessage combos afterward.
-        const std::size_t sceneIx = NextFreeSystemArg(slot.config.systemMessages, BlockableMessage::SceneSelect);
+        const std::size_t sceneIx = NextFreeSystemArg(visibleSlot.config.systemMessages, BlockableMessage::SceneSelect);
         MidiControllerSystemMessageAssociation association;
         association.press = MessageIn::SceneSelect(0, sceneIx);
         association.feedback = association.press;
         association.outputFeedback = true;
 
-        switch (slot.kind) {
+        switch (visibleSlot.kind) {
             case MidiProfileKind::WrldBldr: {
-                const auto position = NextFreeWrldBldrPosition(slot.config.systemMessages);
+                const auto position = NextFreeWrldBldrPosition(visibleSlot.config.systemMessages);
                 if (!position.has_value()) {
                     if (reason != nullptr) {
                         *reason = "no free WRLD.Bldr grid position for a new system row";
                     }
                     return false;
                 }
-                const std::uint8_t channel = slot.config.systemMessages.empty()
+                const std::uint8_t channel = visibleSlot.config.systemMessages.empty()
                                                  ? std::uint8_t{5}
-                                                 : (slot.config.systemMessages.front().control.has_value()
-                                                       ? slot.config.systemMessages.front().control->channel
+                                                 : (visibleSlot.config.systemMessages.front().control.has_value()
+                                                       ? visibleSlot.config.systemMessages.front().control->channel
                                                        : std::uint8_t{5});
                 association.wrldBldrPosition =
                     WrldBldrSystemPosition{.channel = channel, .x = position->first, .y = position->second};
@@ -3139,7 +2454,7 @@ bool MidiConfigViewModel::AddSingle(std::size_t controllerIx, MidiConfigSection 
             }
             case MidiProfileKind::Launchpad: {
                 const auto position = NextFreeLaunchpadPosition(
-                    slot.config.systemMessages, CurrentLaunchpadVariant(slot.config.systemMessages));
+                    visibleSlot.config.systemMessages, CurrentLaunchpadVariant(visibleSlot.config.systemMessages));
                 if (!position.has_value()) {
                     if (reason != nullptr) {
                         *reason = "no free launchpad grid position for a new system row";
@@ -3150,7 +2465,7 @@ bool MidiConfigViewModel::AddSingle(std::size_t controllerIx, MidiConfigSection 
                 break;
             }
             case MidiProfileKind::MfTwister: {
-                const std::size_t button = NextFreeTwisterButton(slot.config.systemMessages);
+                const std::size_t button = NextFreeTwisterButton(visibleSlot.config.systemMessages);
                 if (button >= 6) {
                     if (reason != nullptr) {
                         *reason = "no free twister side button for a new system row";
@@ -3162,12 +2477,14 @@ bool MidiConfigViewModel::AddSingle(std::size_t controllerIx, MidiConfigSection 
                 break;
             }
             case MidiProfileKind::Generic: {
-                const auto [channel, cc] = NextFreeGenericAddress(slot.config.systemMessages);
+                const auto [channel, cc] = NextFreeGenericAddress(visibleSlot.config.systemMessages);
                 association.control = MidiControlAddress{.channel = channel, .cc = cc};
                 break;
             }
         }
-        slot.config.systemMessages.push_back(std::move(association));
+        rowToAppend.kind = RowKind::Individual;
+        rowToAppend.group = group;
+        rowToAppend.data = association;
     } else {
         if (reason != nullptr) {
             *reason = "this group does not support adding individual rows";
@@ -3175,40 +2492,15 @@ bool MidiConfigViewModel::AddSingle(std::size_t controllerIx, MidiConfigSection 
         return false;
     }
 
-    // Finding 3: defensive duplicate-address check. Every branch above picks
-    // its new element's address via a "next free" scan of the EXISTING
-    // config (NextFreeCc/NextFreeGestureIx/NextFreeWrldBldrPosition/etc.),
-    // so a collision should be structurally unreachable here -- but the
-    // check is cheap and guards against any future "next free" helper
-    // developing a bug, matching AddBlock's check below and the block-edit
-    // paths in ApplyMappingEdit (both genuinely reachable, since a block's
-    // edited range can walk into occupied territory).
-    if (section == MidiConfigSection::Encoders) {
-        const std::vector<EncoderMidiMapping>& mappings =
-            group == RowGroup::EncoderPush ? slot.config.encoderInput->pushes : slot.config.encoderInput->turns;
-        if (HasDuplicateEncoderAddress(mappings)) {
-            if (reason != nullptr) {
-                *reason = "new row would create a duplicate (channel, cc) address";
-            }
-            return false;
-        }
-    } else if (section == MidiConfigSection::Analogs) {
-        if (HasDuplicateAnalogAddress(slot.config.analogInput->gestures)) {
-            if (reason != nullptr) {
-                *reason = "new row would create a duplicate (channel, cc) address";
-            }
-            return false;
-        }
-    } else if (section == MidiConfigSection::SystemMessages &&
-              HasDuplicateSystemAddress(slot.config.systemMessages, slot.kind)) {
-        if (reason != nullptr) {
-            *reason = "new row would create a duplicate address";
-        }
-        return false;
-    }
+    const SectionPresentation rollback = presentation;
+    const std::size_t insertAt = InsertionIndexForGroup(presentation, group);
+    presentation.rows.insert(presentation.rows.begin() + static_cast<std::ptrdiff_t>(insertAt),
+                             std::move(rowToAppend));
 
-    NormalizeMidiProfileConfig(slot.config, slot.kind);
-    if (!SlotValidForKind(slot, reason)) {
+    MidiInstrumentConfig scratch = instrument_;
+    MidiControllerSlot& slot = scratch.controllers[controllerIx];
+    if (!FlushSectionPresentationToSlot(presentation, slot, section, reason)) {
+        presentation = rollback;
         return false;
     }
     out = std::move(scratch);
@@ -3224,22 +2516,38 @@ bool MidiConfigViewModel::AddBlock(std::size_t controllerIx, MidiConfigSection s
         }
         return false;
     }
-    MidiInstrumentConfig scratch = instrument_;
-    MidiControllerSlot& slot = scratch.controllers[controllerIx];
+    if (!GroupSupportsAdd(controllerIx, section, group)) {
+        if (reason != nullptr) {
+            *reason = "this group does not support adding a block";
+        }
+        return false;
+    }
+    if (section == MidiConfigSection::SystemMessages && group == RowGroup::System &&
+        instrument_.controllers[controllerIx].kind == MidiProfileKind::MfTwister) {
+        if (reason != nullptr) {
+            *reason = "twister system messages never block";
+        }
+        return false;
+    }
+    SectionPresentation& presentation = PresentationFor(controllerIx, section);
+    MidiControllerSlot visibleSlot = instrument_.controllers[controllerIx];
+    if (!FlushSectionPresentationToSlot(presentation, visibleSlot, section, reason)) {
+        return false;
+    }
+
     // Default block width (sru-11: "a small default run" -- see this
     // method's header doc comment); large enough to demonstrate a block (>=2
     // per D3/D4) without presuming a huge free range exists.
     constexpr std::size_t kDefaultBlockWidth = 2;
 
+    PresentationRow rowToAppend;
     if (section == MidiConfigSection::Encoders && (group == RowGroup::EncoderTurn || group == RowGroup::EncoderPush)) {
-        // sru-11 "first add creates an absent container" -- same rule as
-        // AddSingle's Encoders branch above, for a "+B" on an empty section.
-        if (!slot.config.encoderInput.has_value()) {
-            slot.config.encoderInput = EncoderMidiInConfig{};
+        if (!visibleSlot.config.encoderInput.has_value()) {
+            visibleSlot.config.encoderInput = EncoderMidiInConfig{};
         }
         const bool isPush = group == RowGroup::EncoderPush;
-        std::vector<EncoderMidiMapping>& mappings = isPush ? slot.config.encoderInput->pushes
-                                                            : slot.config.encoderInput->turns;
+        const std::vector<EncoderMidiMapping>& mappings =
+            isPush ? visibleSlot.config.encoderInput->pushes : visibleSlot.config.encoderInput->turns;
         const std::uint8_t channel = mappings.empty() ? (isPush ? std::uint8_t{1} : std::uint8_t{0})
                                                        : mappings.front().control.channel;
         EncoderBlock block;
@@ -3254,35 +2562,14 @@ bool MidiConfigViewModel::AddBlock(std::size_t controllerIx, MidiConfigSection s
         if (!ExpandEncoderBlock(block, expansion, reason)) {
             return false;
         }
-        // Finding 3: refuse if the new block's expansion collides with an
-        // existing mapping's address (reachable here, unlike AddSingle's
-        // next-free scan, because the block's END cc/position may walk past
-        // what NextFreeCc/NextFreeEncoderPosition individually guaranteed
-        // free for the START cell only).
-        std::vector<EncoderMidiMapping> candidate = mappings;
-        candidate.insert(candidate.end(), expansion.begin(), expansion.end());
-        if (HasDuplicateEncoderAddress(candidate)) {
-            if (reason != nullptr) {
-                *reason = "new block would create a duplicate (channel, cc) address";
-            }
-            return false;
-        }
-        mappings = std::move(candidate);
-        NormalizeMidiProfileConfig(slot.config, slot.kind);
-        if (!SlotValidForKind(slot, reason)) {
-            return false;
-        }
-        AppendBlockPresentationRow(PresentationFor(controllerIx, section), group, block,
-                                   IdentitiesForEncoderExpansion(expansion, isPush));
-        out = std::move(scratch);
-        return true;
+        rowToAppend.kind = RowKind::Block;
+        rowToAppend.group = group;
+        rowToAppend.block = block;
     } else if (section == MidiConfigSection::Analogs && group == RowGroup::AnalogGesture) {
-        // Same "first add creates an absent container" rule as AddSingle's
-        // Analogs branch above.
-        if (!slot.config.analogInput.has_value()) {
-            slot.config.analogInput = AnalogMidiInConfig{};
+        if (!visibleSlot.config.analogInput.has_value()) {
+            visibleSlot.config.analogInput = AnalogMidiInConfig{};
         }
-        std::vector<AnalogMidiMapping>& mappings = slot.config.analogInput->gestures;
+        const std::vector<AnalogMidiMapping>& mappings = visibleSlot.config.analogInput->gestures;
         const std::uint8_t channel = mappings.empty() ? std::uint8_t{0} : mappings.front().control.channel;
         AnalogBlock block;
         block.channel = channel;
@@ -3294,39 +2581,19 @@ bool MidiConfigViewModel::AddBlock(std::size_t controllerIx, MidiConfigSection s
         if (!ExpandAnalogBlock(block, expansion, reason)) {
             return false;
         }
-        std::vector<AnalogMidiMapping> candidate = mappings;
-        candidate.insert(candidate.end(), expansion.begin(), expansion.end());
-        if (HasDuplicateAnalogAddress(candidate)) {
-            if (reason != nullptr) {
-                *reason = "new block would create a duplicate (channel, cc) address";
-            }
-            return false;
-        }
-        mappings = std::move(candidate);
-        NormalizeMidiProfileConfig(slot.config, slot.kind);
-        if (!SlotValidForKind(slot, reason)) {
-            return false;
-        }
-        AppendBlockPresentationRow(PresentationFor(controllerIx, section), group, block,
-                                   IdentitiesForAnalogExpansion(expansion));
-        out = std::move(scratch);
-        return true;
+        rowToAppend.kind = RowKind::Block;
+        rowToAppend.group = group;
+        rowToAppend.block = block;
     } else if (section == MidiConfigSection::SystemMessages && group == RowGroup::System) {
-        if (slot.kind == MidiProfileKind::MfTwister) {
-            if (reason != nullptr) {
-                *reason = "twister system messages never block";
-            }
-            return false;
-        }
         SystemBlock block;
-        block.kind = slot.kind;
+        block.kind = visibleSlot.kind;
         block.message = BlockableMessage::SceneSelect;
-        block.startArg = NextFreeSystemArg(slot.config.systemMessages, BlockableMessage::SceneSelect);
+        block.startArg = NextFreeSystemArg(visibleSlot.config.systemMessages, BlockableMessage::SceneSelect);
         block.outputFeedback = true;
         block.rowMajor = true;
 
-        if (slot.kind == MidiProfileKind::WrldBldr) {
-            const auto position = NextFreeWrldBldrPosition(slot.config.systemMessages);
+        if (visibleSlot.kind == MidiProfileKind::WrldBldr) {
+            const auto position = NextFreeWrldBldrPosition(visibleSlot.config.systemMessages);
             if (!position.has_value()) {
                 if (reason != nullptr) {
                     *reason = "no free WRLD.Bldr grid position for a new block";
@@ -3341,9 +2608,9 @@ bool MidiConfigViewModel::AddBlock(std::size_t controllerIx, MidiConfigSection s
             // uses y direction d = +1, so endY = startY + 1.
             block.endX = std::min(8, position->first + static_cast<int>(kDefaultBlockWidth));
             block.endY = position->second + 1;
-        } else if (slot.kind == MidiProfileKind::Launchpad) {
+        } else if (visibleSlot.kind == MidiProfileKind::Launchpad) {
             const auto position = NextFreeLaunchpadPosition(
-                slot.config.systemMessages, CurrentLaunchpadVariant(slot.config.systemMessages));
+                visibleSlot.config.systemMessages, CurrentLaunchpadVariant(visibleSlot.config.systemMessages));
             if (!position.has_value()) {
                 if (reason != nullptr) {
                     *reason = "no free launchpad grid position for a new block";
@@ -3358,7 +2625,7 @@ bool MidiConfigViewModel::AddBlock(std::size_t controllerIx, MidiConfigSection s
             block.endX = position->x + static_cast<int>(kDefaultBlockWidth);
             block.endY = position->y + 1;
         } else {
-            const auto [channel, cc] = NextFreeGenericAddress(slot.config.systemMessages);
+            const auto [channel, cc] = NextFreeGenericAddress(visibleSlot.config.systemMessages);
             block.channel = channel;
             block.startCc = cc;
             block.endCc = static_cast<std::uint8_t>(
@@ -3369,29 +2636,29 @@ bool MidiConfigViewModel::AddBlock(std::size_t controllerIx, MidiConfigSection s
         if (!ExpandSystemBlock(block, expansion, reason)) {
             return false;
         }
-        std::vector<MidiControllerSystemMessageAssociation> candidate = slot.config.systemMessages;
-        candidate.insert(candidate.end(), expansion.begin(), expansion.end());
-        if (HasDuplicateSystemAddress(candidate, slot.kind)) {
-            if (reason != nullptr) {
-                *reason = "new block would create a duplicate address";
-            }
-            return false;
-        }
-        slot.config.systemMessages = std::move(candidate);
-        NormalizeMidiProfileConfig(slot.config, slot.kind);
-        if (!SlotValidForKind(slot, reason)) {
-            return false;
-        }
-        AppendBlockPresentationRow(PresentationFor(controllerIx, section), group, block,
-                                   IdentitiesForSystemExpansion(expansion, slot.kind));
-        out = std::move(scratch);
-        return true;
+        rowToAppend.kind = RowKind::Block;
+        rowToAppend.group = group;
+        rowToAppend.block = block;
     } else {
         if (reason != nullptr) {
             *reason = "this group does not support adding a block";
         }
         return false;
     }
+
+    const SectionPresentation rollback = presentation;
+    const std::size_t insertAt = InsertionIndexForGroup(presentation, group);
+    presentation.rows.insert(presentation.rows.begin() + static_cast<std::ptrdiff_t>(insertAt),
+                             std::move(rowToAppend));
+
+    MidiInstrumentConfig scratch = instrument_;
+    MidiControllerSlot& slot = scratch.controllers[controllerIx];
+    if (!FlushSectionPresentationToSlot(presentation, slot, section, reason)) {
+        presentation = rollback;
+        return false;
+    }
+    out = std::move(scratch);
+    return true;
 }
 
 // Reviewer finding 2 (D6): the renderer's "+" gating used to reimplement
@@ -3487,7 +2754,10 @@ std::vector<MidiMappingRowVM::Field> MidiConfigViewModel::GroupColumnFields(std:
         return {Field::Channel, Field::Cc, Field::GestureIx};
     }
     if (section == MidiConfigSection::SystemMessages && group == RowGroup::System) {
-        return SystemRowEditableFields(instrument_.controllers[controllerIx].kind);
+        MidiControllerSystemMessageAssociation association;
+        association.press = MessageIn::SceneSelect(0, 0);
+        association.feedback = association.press;
+        return SystemRowEditableFields(instrument_.controllers[controllerIx].kind, association);
     }
     return {};
 }
@@ -3499,6 +2769,14 @@ int MidiConfigViewModel::LaunchpadVariantIndex(std::size_t controllerIx) const {
     const MidiControllerSlot& slot = instrument_.controllers[controllerIx];
     if (slot.kind != MidiProfileKind::Launchpad) {
         return -1;
+    }
+    const PresentationKey key{slot.name, MidiConfigSection::SystemMessages};
+    const auto presentationIt = presentations_.find(key);
+    if (presentationIt != presentations_.end()) {
+        const std::optional<LaunchpadController> openVariant = CurrentLaunchpadVariant(presentationIt->second);
+        if (openVariant.has_value()) {
+            return static_cast<int>(*openVariant);
+        }
     }
     for (const MidiControllerSystemMessageAssociation& association : slot.config.systemMessages) {
         if (association.launchpadPosition.has_value()) {
@@ -3535,6 +2813,21 @@ bool MidiConfigViewModel::SetLaunchpadVariant(std::size_t controllerIx, int vari
 
     MidiInstrumentConfig scratch = instrument_;
     MidiControllerSlot& slot = scratch.controllers[controllerIx];
+    const PresentationKey key{current.name, MidiConfigSection::SystemMessages};
+    const auto presentationIt = presentations_.find(key);
+    if (presentationIt != presentations_.end()) {
+        SectionPresentation& presentation = presentationIt->second;
+        const SectionPresentation rollback = presentation;
+        if (!RewritePresentationLaunchpadVariant(presentation, newController, reason)) {
+            return false;
+        }
+        if (!FlushSectionPresentationToSlot(presentation, slot, MidiConfigSection::SystemMessages, reason)) {
+            presentation = rollback;
+            return false;
+        }
+        out = std::move(scratch);
+        return true;
+    }
 
     // All-or-nothing (sru-10 convention): validate EVERY existing position
     // against the new variant's shape before writing anything, so a shrink

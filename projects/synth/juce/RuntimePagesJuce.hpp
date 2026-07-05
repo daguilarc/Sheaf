@@ -10,8 +10,8 @@
 #include <juce_audio_devices/juce_audio_devices.h>
 #include <juce_gui_extra/juce_gui_extra.h>
 
+#include <filesystem>
 #include <functional>
-#include <memory>
 #include <string>
 #include <vector>
 
@@ -271,27 +271,24 @@ private:
         if (action.name == synth::runtime_ui::Actions::kFileSave)
         {
             RefreshPatchNameLabel();
-            if (m_surface.Snapshot().hasCurrentPatch)
-            {
-                m_runtime.SavePatch();
-                SetStatus("Save requested");
-            }
-            else
-            {
-                LaunchSaveAsChooser();
-            }
+            m_runtime.SavePatch();
+            SetStatus("Save requested");
             return;
         }
 
-        if (action.name == synth::runtime_ui::Actions::kFileSaveAs)
+        if (action.name == synth::runtime_ui::Actions::kFileConfirmedSaveAs)
         {
-            LaunchSaveAsChooser();
+            const std::filesystem::path path(action.value);
+            m_runtime.SavePatchAs(path);
+            SetStatus("Save As requested: " + action.value);
             return;
         }
 
-        if (action.name == synth::runtime_ui::Actions::kFileLoad)
+        if (action.name == synth::runtime_ui::Actions::kFileConfirmedLoad)
         {
-            LaunchLoadChooser();
+            const std::filesystem::path path(action.value);
+            m_runtime.LoadPatch(path);
+            SetStatus("Load requested: " + action.value);
             return;
         }
 
@@ -316,45 +313,12 @@ private:
         snapshot.patchNameText = currentPatchDirectory.has_value()
                                      ? currentPatchDirectory->filename().string()
                                      : "(no patch)";
-    }
-
-    void LaunchSaveAsChooser()
-    {
-        const juce::File root(m_runtime.GetEngine().Config().patchesRoot.string());
-        m_fileChooser = std::make_unique<juce::FileChooser>("Save Patch As", root);
-        const auto flags = juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectDirectories |
-                           juce::FileBrowserComponent::warnAboutOverwriting;
-        m_fileChooser->launchAsync(flags, [this](const juce::FileChooser& chooser) {
-            const juce::File result = chooser.getResult();
-            if (result == juce::File{})
-            {
-                return;
-            }
-            m_runtime.SavePatchAs(result);
-            SetStatus("Save As requested: " + result.getFullPathName());
-        });
-    }
-
-    void LaunchLoadChooser()
-    {
-        const juce::File root(m_runtime.GetEngine().Config().patchesRoot.string());
-        m_fileChooser = std::make_unique<juce::FileChooser>("Load Patch", root);
-        const auto flags = juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories;
-        m_fileChooser->launchAsync(flags, [this](const juce::FileChooser& chooser) {
-            const juce::File result = chooser.getResult();
-            if (result == juce::File{})
-            {
-                return;
-            }
-            m_runtime.LoadPatch(result);
-            SetStatus("Load requested: " + result.getFullPathName());
-        });
+        snapshot.patchesRoot = m_runtime.DataPaths().patchesRoot.string();
     }
 
     Runtime<App>& m_runtime;
     synth::runtime_ui::FilePageSurface m_surface;
     synth_juce::PortableComponent m_renderer;
-    std::unique_ptr<juce::FileChooser> m_fileChooser;
 };
 
 }  // namespace synth_runtime

@@ -62,3 +62,23 @@ WHEN the Controllers page is rendered, THE runtime UI layer SHALL derive a DOM-f
 - **WHEN** the JUCE backend renders the Controllers page semantic tree
 - **THEN** it may replace the current dense component layout with clearer visual layout grouping, spacing, headers, and form controls rather than preserving the current appearance for its own sake
 - **AND** every capability required by `sru-4` through `sru-11` remains available and testable
+
+### Requirement: sru-14 — File page: portable patch explorer
+WHEN the File page opens Save As or Load, THE runtime UI layer SHALL represent patch browsing and confirmation as a JUCE-free portable state machine over `synth::PatchBrowser`, including current relative path display, directory rows, selection, parent navigation, save-name entry for Save As, confirm/cancel actions, status text, and safe root-constrained path resolution; the JUCE desktop backend SHALL render and dispatch that semantic tree without using `juce::FileChooser`, and accepted confirmations SHALL call the runtime's existing `SavePatchAs` or `LoadPatch` paths.
+
+#### Scenario: Save As uses in-page browser state
+- **WHEN** the user chooses Save As from the File page
+- **THEN** the portable tree shows a Save As browser rooted at the runtime patches root
+- **AND** the user can type a patch name and confirm only when `PatchBrowser::ResolveSaveAsPath` accepts it
+- **AND** confirmation dispatches the resolved path through the host save callback
+
+#### Scenario: Load uses in-page browser state
+- **WHEN** the user chooses Load from the File page
+- **THEN** the portable tree shows a Load browser rooted at the runtime patches root
+- **AND** directory rows, parent navigation, and selected directory confirmation are represented by portable nodes/actions
+- **AND** confirmation dispatches the resolved directory through the host load callback
+
+#### Scenario: Browser state is backend-neutral
+- **WHEN** a JUCE-free test builds and drives the File page browser tree
+- **THEN** it can inspect rows, navigate, cancel, enter save names, and confirm valid paths without JUCE headers
+- **AND** the JUCE runtime File page host contains no `juce::FileChooser` usage

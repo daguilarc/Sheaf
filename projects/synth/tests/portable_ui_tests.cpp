@@ -5,6 +5,7 @@
 #include "synth/ControllersPageUI.hpp"
 #include "synth/MidiController.hpp"
 
+#include <filesystem>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -147,16 +148,48 @@ int main()
 
     synth::runtime_ui::FilePageSurface fileSurface;
     fileSurface.Snapshot() = fileSnapshot;
+    const std::filesystem::path patchRoot =
+        std::filesystem::temp_directory_path() / "sheaf_portable_file_page_test";
+    std::filesystem::remove_all(patchRoot);
+    std::filesystem::create_directories(patchRoot / "PatchA");
+    const std::filesystem::path canonicalPatchRoot = std::filesystem::weakly_canonical(patchRoot);
+    fileSurface.Snapshot().patchesRoot = patchRoot.string();
     fileSurface.SetContentBounds({0.0f, 0.0f, 640.0f, 480.0f});
     fileSurface.SetStatus("Ready");
     Require(FindNodeById(fileSurface.BuildTree(), synth::runtime_ui::NodeIds::kFileStatus)->text == "Ready",
             "file surface status refresh");
 
-    const std::optional<synth::runtime_ui::FileChooserRequest> saveAsRequest =
-        synth::runtime_ui::ParseFileChooserRequest(
-            synth::ui::Action::WithValue(synth::runtime_ui::Actions::kFileChooserSaveAs, "/patches"));
-    Require(saveAsRequest.has_value(), "save-as chooser request parses");
-    Require(saveAsRequest->kind == synth::runtime_ui::FileChooserKind::SaveAs, "save-as chooser kind");
+    synth::ui::Action lastFileAction;
+    fileSurface.SetActionHandler([&lastFileAction](const synth::ui::Action& action) {
+        lastFileAction = action;
+    });
+    fileSurface.DispatchAction(synth::ui::Action::Named(synth::runtime_ui::Actions::kFileSaveAs));
+    synth::ui::NodeTree saveAsTree = fileSurface.BuildTree();
+    Require(FindNodeById(saveAsTree, synth::runtime_ui::NodeIds::kFileBrowser) != nullptr,
+            "save-as browser opens in file page tree");
+    Require(FindNodeById(saveAsTree, synth::runtime_ui::NodeIds::kFileBrowserSaveName) != nullptr,
+            "save-as browser exposes patch-name field");
+    fileSurface.DispatchAction(
+        synth::ui::Action::WithValue(synth::runtime_ui::Actions::kFileBrowserSaveName, "New Patch"));
+    fileSurface.DispatchAction(synth::ui::Action::Named(synth::runtime_ui::Actions::kFileBrowserConfirm));
+    Require(lastFileAction.name == synth::runtime_ui::Actions::kFileConfirmedSaveAs,
+            "save-as browser confirms with resolved path action");
+    Require(lastFileAction.value == (canonicalPatchRoot / "New Patch").string(),
+            "save-as path resolves under patch root");
+
+    lastFileAction = {};
+    fileSurface.DispatchAction(synth::ui::Action::Named(synth::runtime_ui::Actions::kFileLoad));
+    synth::ui::NodeTree loadTree = fileSurface.BuildTree();
+    Require(FindNodeById(loadTree, synth::runtime_ui::NodeIds::FileBrowserEntry(0).c_str()) != nullptr,
+            "load browser lists patch directory");
+    fileSurface.DispatchAction(
+        synth::ui::Action::WithValue(synth::runtime_ui::Actions::kFileBrowserSelect, "0"));
+    fileSurface.DispatchAction(synth::ui::Action::Named(synth::runtime_ui::Actions::kFileBrowserConfirm));
+    Require(lastFileAction.name == synth::runtime_ui::Actions::kFileConfirmedLoad,
+            "load browser confirms with resolved path action");
+    Require(lastFileAction.value == (canonicalPatchRoot / "PatchA").string(),
+            "load path resolves selected patch directory");
+    std::filesystem::remove_all(patchRoot);
 
     synth::MidiInstrumentConfig controllerInstrument;
     synth::MidiControllerSlot wrldSlot;

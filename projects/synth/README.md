@@ -201,10 +201,11 @@ commands into canvas/WebGL drawing. Runtime pages and the Controllers page use
 semantic nodes, so a browser backend can map them to DOM controls and route DOM
 events back as `synth::ui::Action` values.
 
-Audio, MIDI, file chooser, and patch-storage integration remain host/runtime
+Audio, MIDI, and patch-storage integration remain host/runtime
 responsibilities. The browser runtime should reimplement those I/O adapters
 behind the same runtime object boundary used by the JUCE desktop host, while
-keeping synth core, app UI producers, and page producers JUCE-free.
+mapping the portable File page explorer to browser storage and keeping synth
+core, app UI producers, and page producers JUCE-free.
 
 ## Layout: runtime vs apps
 

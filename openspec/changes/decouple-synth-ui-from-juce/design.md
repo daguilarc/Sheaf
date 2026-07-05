@@ -19,7 +19,7 @@ The Wasm/browser direction changes the pressure on that boundary. A browser host
 
 - Build the Wasm host, Web Audio bridge, Web MIDI bridge, browser renderer, or IndexedDB-backed persistence in this change.
 - Redesign the miniapp's visual style or change its visible layout.
-- Remove JUCE from desktop runtime I/O, app/window lifecycle, file chooser, CoreAudio/CoreMIDI integration, or desktop build scaffolding.
+- Remove JUCE from desktop runtime I/O, app/window lifecycle, CoreAudio/CoreMIDI integration, or desktop build scaffolding.
 - Replace the existing `MidiConfigViewModel` logic or persistence formats.
 - Require every future UI backend to mimic JUCE's class hierarchy.
 
@@ -42,7 +42,7 @@ This avoids forcing form pages into a low-level canvas API while still preservin
 
 ### Decision 3: Keep host I/O separate from UI portability
 
-Desktop `Runtime<App>` can continue to own JUCE audio callbacks, MIDI device handlers, timers, file choosers, and window lifecycle. The portable UI contract should not pretend those are portable yet. Instead, desktop runtime code adapts portable UI nodes to JUCE components, while future browser runtime code will adapt the same application/core and UI nodes to Web Audio/Web MIDI/browser storage separately.
+Desktop `Runtime<App>` can continue to own JUCE audio callbacks, MIDI device handlers, timers, and window lifecycle. The portable UI contract should not pretend those are portable yet. Instead, desktop runtime code adapts portable UI nodes to JUCE components, while future browser runtime code will adapt the same application/core and UI nodes to Web Audio/Web MIDI/browser storage separately. Patch browsing itself is now part of the portable File page state machine; each host supplies the backing storage/root.
 
 The first JUCE backend implementation should live under `projects/synth/juce`. Runtime-specific JUCE adapters may exist there with clear names, but portable runtime headers and app-facing UI code should not accumulate JUCE-specific files under `projects/synth/runtime`.
 
@@ -62,7 +62,13 @@ The existing view model already owns the hard parts: controller rows, sections, 
 
 The JUCE backend then renders that tree with a more sophisticated component set, instead of embedding page workflow in one large JUCE header. The current Controllers page look and feel is not a parity target: functionality must be preserved, but the renderer should not do extra work to maintain the current dense presentation. Natural improvements to grouping, spacing, labels, and control choice are welcome as long as they do not make the page worse or remove workflows.
 
-### Decision 5: Preserve desktop behavior through a JUCE backend parity pass
+### Decision 5: Make Save As/Load exploration a portable File page state machine
+
+The File page's top-level patch buttons are already semantic controls. Save As and Load should follow the same rule instead of dropping into `juce::FileChooser`: opening either flow builds an in-page browser state from the JUCE-free `synth::PatchBrowser`, renders directory rows and command controls as portable nodes, and commits only through runtime callbacks when the user confirms a valid save/load target. The JUCE backend may render those nodes with native JUCE controls, but it must not own file-explorer behavior or include an OS chooser in the File page host.
+
+This keeps browser/Wasm natural: a browser backend can map the same tree to DOM controls and browser-backed storage, while the desktop backend maps it to JUCE widgets over the same `PatchBrowser` model.
+
+### Decision 6: Preserve desktop behavior through a JUCE backend parity pass
 
 The first backend is a JUCE implementation that consumes the portable model. For miniapp, parity means visual snapshots/geometry tests and interaction tests stay equivalent. For Controllers, parity means existing view-model tests still pass and renderer/system tests cover representative workflows: endpoint selection, edit refusal/revert, add controller, add/delete mapping rows, block rows, focus-safe refresh, and patch/out-of-band rebuild refresh.
 

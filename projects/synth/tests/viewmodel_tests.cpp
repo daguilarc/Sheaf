@@ -5,8 +5,10 @@
 #endif
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <iostream>
+#include <random>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -62,7 +64,7 @@ using synth::MidiMappingRowVM;
 using synth::MidiProfileKind;
 using synth::RelativeModeCatalog;
 using synth::RollingMax256;
-using synth::SystemMessageCatalog;
+using synth::UISystemMessage;
 
 MidiControllerSlot MakeWrldBldrSlot(const char* name) {
     MidiControllerSlot slot;
@@ -151,6 +153,16 @@ std::string DumpInstrument(const MidiInstrumentConfig& instrument) {
     std::string result = dumped != nullptr ? std::string(dumped) : std::string();
     std::free(dumped);
     return result;
+}
+
+int UISystemMessageIndex(UISystemMessage message) {
+    const std::vector<synth::UISystemMessageChoice>& catalog = synth::UISystemMessageCatalog();
+    for (std::size_t ix = 0; ix < catalog.size(); ++ix) {
+        if (catalog[ix].message == message) {
+            return static_cast<int>(ix);
+        }
+    }
+    return -1;
 }
 
 TEST_CASE(RebuildProducesRowsInOrder) {
@@ -589,17 +601,13 @@ TEST_CASE(ApplyMappingEditTwisterButtonWritesCcAndRefusesOutOfRange) {
     REQUIRE_TRUE(!rejectReason2.empty());
 }
 
-TEST_CASE(RowFieldValueReturnsFalseForPressReleaseMessageAndOutOfRange) {
+TEST_CASE(RowFieldValueReturnsFalseForCatalogAndOutOfRangeFields) {
     MidiConfigViewModel vm;
     vm.Rebuild(MakeFourKindInstrument(), MakeFourKindConnection());
 
     double value = -1.0;
-    // PressMessage/ReleaseMessage have no single numeric value -- callers
-    // must use SystemMessageChoiceIndex() instead.
     REQUIRE_TRUE(
-        !vm.RowFieldValue(0, MidiConfigSection::SystemMessages, 0, MidiMappingRowVM::Field::PressMessage, value));
-    REQUIRE_TRUE(
-        !vm.RowFieldValue(0, MidiConfigSection::SystemMessages, 0, MidiMappingRowVM::Field::ReleaseMessage, value));
+        !vm.RowFieldValue(0, MidiConfigSection::SystemMessages, 0, MidiMappingRowVM::Field::MessageKind, value));
 
     // Out-of-range controllerIx/rowIx.
     REQUIRE_TRUE(!vm.RowFieldValue(99, MidiConfigSection::Encoders, 0, MidiMappingRowVM::Field::Channel, value));
@@ -696,7 +704,7 @@ TEST_CASE(ApplyMappingEditRejectingIllegalEditLeavesOutUntouched) {
 // --- Issue #10: WRLD.Bldr system rows expose an editable Channel ----------
 //
 // WRLD.Bldr system-message rows advertise Channel alongside WrldBldrX/
-// WrldBldrY/PressMessage/ReleaseMessage (see SectionRows' SystemMessages
+// WrldBldrY and shared message kind/argument fields (see SectionRows' SystemMessages
 // case) so the slot reads chan/x/y, matching how the association's `control`
 // carries both a channel and a (position-derived) cc. Channel edits write
 // only `association.control->channel`; `wrldBldrPosition` and `control->cc`
@@ -906,6 +914,143 @@ TEST_CASE(SetLaunchpadVariantRewritesAllPositionsXToProMk3) {
     // confirms the slot-level index now reads Pro MK3.
     vm.Rebuild(out, MakeSingleControllerConnection());
     REQUIRE_TRUE(vm.LaunchpadVariantIndex(0) == 1);
+}
+
+TEST_CASE(SetLaunchpadVariantOpenPresentationSurvivesFollowingEdits) {
+    MidiInstrumentConfig instrument;
+    MidiControllerSlot slot = MakeLaunchpadSlot("pads");
+    slot.config.systemMessages.clear();
+    MidiControllerSystemMessageAssociation association;
+    association.launchpadPosition =
+        synth::LaunchpadGridPosition{.controller = synth::LaunchpadController::LaunchpadX, .x = 0, .y = 0};
+    association.press = synth::MessageIn::SceneSelect(0, 0);
+    association.feedback = association.press;
+    association.outputFeedback = true;
+    slot.config.systemMessages.push_back(association);
+    REQUIRE_TRUE(instrument.AddController(slot));
+
+    MidiConnectionState connection = MakeSingleControllerConnection();
+    MidiConfigViewModel vm;
+    vm.Rebuild(instrument, connection);
+    vm.ToggleConfig(0);
+    vm.ToggleSection(0, MidiConfigSection::SystemMessages);
+
+    REQUIRE_TRUE(vm.LaunchpadVariantIndex(0) == 0);
+    const std::vector<MidiMappingRowVM> rows = vm.SectionRows(0, MidiConfigSection::SystemMessages);
+    REQUIRE_TRUE(rows.size() == 1);
+    REQUIRE_TRUE(rows[0].kind == MidiMappingRowVM::Kind::Individual);
+
+    MidiInstrumentConfig afterVariant;
+    std::string reason;
+    REQUIRE_TRUE(vm.SetLaunchpadVariant(0, 1, afterVariant, &reason));  // -> Pro MK3
+    REQUIRE_TRUE(vm.LaunchpadVariantIndex(0) == 1);
+    REQUIRE_TRUE(afterVariant.controllers[0].config.systemMessages[0].launchpadPosition->controller ==
+                 synth::LaunchpadController::LaunchpadProMk3);
+
+    MidiInstrumentConfig afterCoordinate;
+    REQUIRE_TRUE(vm.ApplyMappingEdit(0, MidiConfigSection::SystemMessages, 0,
+                                     MidiMappingRowVM::Field::LaunchpadX, -1.0, afterCoordinate, &reason));
+    REQUIRE_TRUE(afterCoordinate.controllers[0].config.systemMessages.size() == 1);
+    const auto& moved = *afterCoordinate.controllers[0].config.systemMessages[0].launchpadPosition;
+    REQUIRE_TRUE(moved.controller == synth::LaunchpadController::LaunchpadProMk3);
+    REQUIRE_TRUE(moved.x == -1);
+    REQUIRE_TRUE(moved.y == 0);
+
+    vm.Rebuild(afterCoordinate, connection);
+    REQUIRE_TRUE(vm.LaunchpadVariantIndex(0) == 1);
+    MidiInstrumentConfig afterMessage;
+    REQUIRE_TRUE(vm.ApplyMappingEdit(0, MidiConfigSection::SystemMessages, 0,
+                                     MidiMappingRowVM::Field::MessageArg, 4.0, afterMessage, &reason));
+    REQUIRE_TRUE(afterMessage.controllers[0].config.systemMessages[0].launchpadPosition->controller ==
+                 synth::LaunchpadController::LaunchpadProMk3);
+    REQUIRE_TRUE(afterMessage.controllers[0].config.systemMessages[0].press.sceneIx == 4);
+}
+
+TEST_CASE(LaunchpadCoordinateConflictKeepsTemporaryPresentationUntilResolved) {
+    MidiInstrumentConfig instrument;
+    MidiControllerSlot slot = MakeLaunchpadSlot("pads");
+    slot.config.systemMessages.clear();
+
+    MidiControllerSystemMessageAssociation moving;
+    moving.launchpadPosition =
+        synth::LaunchpadGridPosition{.controller = synth::LaunchpadController::LaunchpadX, .x = 0, .y = 0};
+    moving.press = synth::MessageIn::SceneSelect(0, 0);
+    moving.feedback = moving.press;
+    moving.outputFeedback = true;
+    slot.config.systemMessages.push_back(moving);
+
+    MidiControllerSystemMessageAssociation blocker;
+    blocker.launchpadPosition =
+        synth::LaunchpadGridPosition{.controller = synth::LaunchpadController::LaunchpadX, .x = 1, .y = 0};
+    blocker.press = synth::MessageIn::ToggleReset(0);
+    blocker.feedback = blocker.press;
+    blocker.outputFeedback = true;
+    slot.config.systemMessages.push_back(blocker);
+    REQUIRE_TRUE(instrument.AddController(slot));
+
+    MidiConnectionState connection = MakeSingleControllerConnection();
+    MidiConfigViewModel vm;
+    vm.Rebuild(instrument, connection);
+    vm.ToggleConfig(0);
+    vm.ToggleSection(0, MidiConfigSection::SystemMessages);
+
+    auto findRowAt = [&](int expectedX, int expectedY) {
+        const std::vector<MidiMappingRowVM> rows = vm.SectionRows(0, MidiConfigSection::SystemMessages);
+        for (std::size_t ix = 0; ix < rows.size(); ++ix) {
+            if (rows[ix].kind != MidiMappingRowVM::Kind::Individual) {
+                continue;
+            }
+            double x = -1.0;
+            double y = -1.0;
+            if (vm.RowFieldValue(0, MidiConfigSection::SystemMessages, ix,
+                                 MidiMappingRowVM::Field::LaunchpadX, x) &&
+                vm.RowFieldValue(0, MidiConfigSection::SystemMessages, ix,
+                                 MidiMappingRowVM::Field::LaunchpadY, y) &&
+                x == static_cast<double>(expectedX) && y == static_cast<double>(expectedY)) {
+                return ix;
+            }
+        }
+        return SIZE_MAX;
+    };
+    const std::size_t movingIx = findRowAt(0, 0);
+    REQUIRE_TRUE(movingIx != SIZE_MAX);
+
+    MidiInstrumentConfig out;
+    std::string reason;
+    bool presentationChanged = false;
+    REQUIRE_TRUE(!vm.ApplyMappingEdit(0, MidiConfigSection::SystemMessages, movingIx,
+                                      MidiMappingRowVM::Field::LaunchpadX, 1.0, out, &reason,
+                                      &presentationChanged));
+    REQUIRE_TRUE(presentationChanged);
+    REQUIRE_TRUE(out.controllers.empty());
+    REQUIRE_TRUE(reason.find("duplicate") != std::string::npos);
+
+    double x = -1.0;
+    double y = -1.0;
+    REQUIRE_TRUE(vm.RowFieldValue(0, MidiConfigSection::SystemMessages, movingIx,
+                                  MidiMappingRowVM::Field::LaunchpadX, x));
+    REQUIRE_TRUE(vm.RowFieldValue(0, MidiConfigSection::SystemMessages, movingIx,
+                                  MidiMappingRowVM::Field::LaunchpadY, y));
+    REQUIRE_TRUE(x == 1.0);
+    REQUIRE_TRUE(y == 0.0);
+
+    MidiInstrumentConfig resolved;
+    REQUIRE_TRUE(vm.ApplyMappingEdit(0, MidiConfigSection::SystemMessages, movingIx,
+                                     MidiMappingRowVM::Field::LaunchpadY, 1.0, resolved, &reason,
+                                     &presentationChanged));
+    REQUIRE_TRUE(presentationChanged);
+    REQUIRE_TRUE(resolved.controllers[0].config.systemMessages.size() == 2);
+
+    bool sawMoved = false;
+    bool sawBlocker = false;
+    for (const MidiControllerSystemMessageAssociation& association :
+         resolved.controllers[0].config.systemMessages) {
+        REQUIRE_TRUE(association.launchpadPosition.has_value());
+        sawMoved = sawMoved || (association.launchpadPosition->x == 1 && association.launchpadPosition->y == 1);
+        sawBlocker = sawBlocker || (association.launchpadPosition->x == 1 && association.launchpadPosition->y == 0);
+    }
+    REQUIRE_TRUE(sawMoved);
+    REQUIRE_TRUE(sawBlocker);
 }
 
 TEST_CASE(SetLaunchpadVariantProMk3ToXRefusedWithProOnlyEdgeButton) {
@@ -1214,155 +1359,6 @@ TEST_CASE(RollingMax256KeepsSpikeUntilEvicted) {
     REQUIRE_TRUE(rolling.Max() == 0.0f);
 }
 
-// --- Finding 1: catalog-based PressMessage/ReleaseMessage editing ---------
-
-TEST_CASE(SystemMessageCatalogStartsWithNoneAndHasNoDuplicateLabels) {
-    const auto& catalog = SystemMessageCatalog();
-    REQUIRE_TRUE(!catalog.empty());
-    REQUIRE_TRUE(catalog[0].label == "None");
-    for (std::size_t ix = 0; ix < catalog.size(); ++ix) {
-        for (std::size_t jx = ix + 1; jx < catalog.size(); ++jx) {
-            REQUIRE_TRUE(catalog[ix].label != catalog[jx].label);
-        }
-    }
-}
-
-// Task group 2: some default-profile system rows now present as Block rows
-// (scene/bank selector runs), which never advertise PressMessage/
-// ReleaseMessage (SystemMessageChoiceIndex correctly returns -1 for them --
-// see that method's doc comment). These tests' original intent -- every
-// INDIVIDUAL row's press/release is representable in the catalog -- still
-// holds; skip Block rows explicitly rather than assuming presentation
-// rowCount matches raw config size.
-TEST_CASE(EveryWrldBldrDefaultProfileRowPressAndReleaseRoundTripsToACatalogIndex) {
-    MidiConfigViewModel vm;
-    MidiInstrumentConfig instrument = MakeFourKindInstrument();
-    vm.Rebuild(instrument, MakeFourKindConnection());
-
-    const std::vector<MidiMappingRowVM> rows = vm.SectionRows(0, MidiConfigSection::SystemMessages);
-    REQUIRE_TRUE(!rows.empty());
-    bool anyIndividual = false;
-    for (std::size_t rowIx = 0; rowIx < rows.size(); ++rowIx) {
-        if (rows[rowIx].kind != MidiMappingRowVM::Kind::Individual) {
-            continue;
-        }
-        anyIndividual = true;
-        const int pressIx = vm.SystemMessageChoiceIndex(0, MidiConfigSection::SystemMessages, rowIx,
-                                                         MidiMappingRowVM::Field::PressMessage);
-        REQUIRE_TRUE(pressIx > 0);  // never "None" -- press is not optional
-
-        const int releaseIx = vm.SystemMessageChoiceIndex(0, MidiConfigSection::SystemMessages, rowIx,
-                                                           MidiMappingRowVM::Field::ReleaseMessage);
-        REQUIRE_TRUE(releaseIx >= 0);  // either "None" (0) or a catalog entry
-    }
-    REQUIRE_TRUE(anyIndividual);
-}
-
-TEST_CASE(EveryLaunchpadDefaultProfileRowPressAndReleaseRoundTripsToACatalogIndex) {
-    MidiConfigViewModel vm;
-    MidiInstrumentConfig instrument = MakeFourKindInstrument();
-    vm.Rebuild(instrument, MakeFourKindConnection());
-
-    const std::vector<MidiMappingRowVM> rows = vm.SectionRows(2, MidiConfigSection::SystemMessages);
-    REQUIRE_TRUE(!rows.empty());
-    bool anyIndividual = false;
-    for (std::size_t rowIx = 0; rowIx < rows.size(); ++rowIx) {
-        if (rows[rowIx].kind != MidiMappingRowVM::Kind::Individual) {
-            continue;
-        }
-        anyIndividual = true;
-        const int pressIx = vm.SystemMessageChoiceIndex(2, MidiConfigSection::SystemMessages, rowIx,
-                                                         MidiMappingRowVM::Field::PressMessage);
-        REQUIRE_TRUE(pressIx > 0);
-    }
-    REQUIRE_TRUE(anyIndividual);
-}
-
-TEST_CASE(ApplyMappingEditPressMessageAppliesCatalogChoice) {
-    MidiConfigViewModel vm;
-    MidiInstrumentConfig instrument = MakeFourKindInstrument();
-    vm.Rebuild(instrument, MakeFourKindConnection());
-
-    // wrld row 0 defaults to Reset press (catalog index 1); switch it to
-    // "Scene select 3".
-    const auto& catalog = SystemMessageCatalog();
-    std::size_t sceneThreeIx = 0;
-    for (std::size_t ix = 0; ix < catalog.size(); ++ix) {
-        if (catalog[ix].label == "Scene select 3") {
-            sceneThreeIx = ix;
-            break;
-        }
-    }
-    REQUIRE_TRUE(sceneThreeIx != 0);
-
-    MidiInstrumentConfig out;
-    std::string reason;
-    const bool ok = vm.ApplyMappingEdit(0, MidiConfigSection::SystemMessages, 0, MidiMappingRowVM::Field::PressMessage,
-                                        static_cast<double>(sceneThreeIx), out, &reason);
-    REQUIRE_TRUE(ok);
-    REQUIRE_TRUE(reason.empty());
-
-    // The edit changes this association's sort key (Reset -> SceneSelect),
-    // so after commit-time normalization (sru-9) it may no longer sit at raw
-    // index 0 -- find it by content instead of assuming position.
-    bool found = false;
-    for (const auto& association : out.controllers[0].config.systemMessages) {
-        if (association.press.type == synth::MessageIn::Type::SceneSelect && association.press.sceneIx == 3) {
-            found = true;
-        }
-    }
-    REQUIRE_TRUE(found);
-    // The old Reset association is gone (replaced, not duplicated).
-    for (const auto& association : out.controllers[0].config.systemMessages) {
-        REQUIRE_TRUE(association.press.type != synth::MessageIn::Type::ToggleReset ||
-                    !association.press.hasBoolValue || association.press.boolValue != true ||
-                    association.wrldBldrPosition->x != 0 || association.wrldBldrPosition->y != 4);
-    }
-}
-
-TEST_CASE(ApplyMappingEditReleaseMessageNoneClearsOptional) {
-    MidiConfigViewModel vm;
-    MidiInstrumentConfig instrument = MakeFourKindInstrument();
-    vm.Rebuild(instrument, MakeFourKindConnection());
-
-    // wrld row 0 has a release (Reset release) by default.
-    REQUIRE_TRUE(instrument.controllers[0].config.systemMessages[0].release.has_value());
-
-    MidiInstrumentConfig out;
-    std::string reason;
-    const bool ok = vm.ApplyMappingEdit(0, MidiConfigSection::SystemMessages, 0,
-                                        MidiMappingRowVM::Field::ReleaseMessage, 0.0, out, &reason);
-    REQUIRE_TRUE(ok);
-    REQUIRE_TRUE(!out.controllers[0].config.systemMessages[0].release.has_value());
-}
-
-TEST_CASE(ApplyMappingEditPressMessageNoneIsRefused) {
-    MidiConfigViewModel vm;
-    MidiInstrumentConfig instrument = MakeFourKindInstrument();
-    vm.Rebuild(instrument, MakeFourKindConnection());
-
-    MidiInstrumentConfig out;
-    std::string reason;
-    const bool ok = vm.ApplyMappingEdit(0, MidiConfigSection::SystemMessages, 0, MidiMappingRowVM::Field::PressMessage,
-                                        0.0, out, &reason);
-    REQUIRE_TRUE(!ok);
-    REQUIRE_TRUE(!reason.empty());
-}
-
-TEST_CASE(ApplyMappingEditMessageChoiceOutOfRangeIsRefused) {
-    MidiConfigViewModel vm;
-    MidiInstrumentConfig instrument = MakeFourKindInstrument();
-    vm.Rebuild(instrument, MakeFourKindConnection());
-
-    const auto& catalog = SystemMessageCatalog();
-    MidiInstrumentConfig out;
-    std::string reason;
-    const bool ok = vm.ApplyMappingEdit(0, MidiConfigSection::SystemMessages, 0, MidiMappingRowVM::Field::PressMessage,
-                                        static_cast<double>(catalog.size()), out, &reason);
-    REQUIRE_TRUE(!ok);
-    REQUIRE_TRUE(!reason.empty());
-}
-
 // --- Finding 2: WrldBldrX/Y edits keep position and control address paired ---
 
 TEST_CASE(WrldBldrXEditUpdatesBothPositionAndControlAddress) {
@@ -1406,12 +1402,14 @@ TEST_CASE(WrldBldrYEditUpdatesBothPositionAndControlAddress) {
 
     MidiInstrumentConfig out;
     std::string reason;
-    const bool ok = vm.ApplyMappingEdit(0, MidiConfigSection::SystemMessages, 1, MidiMappingRowVM::Field::WrldBldrY,
-                                        3.0, out, &reason);
+    bool ok = false;
+    for (double y = 0.0; y <= 7.0 && !ok; y += 1.0) {
+        ok = vm.ApplyMappingEdit(0, MidiConfigSection::SystemMessages, 1, MidiMappingRowVM::Field::WrldBldrY, y,
+                                 out, &reason);
+    }
     REQUIRE_TRUE(ok);
 
     const auto& after = out.controllers[0].config.systemMessages[1];
-    REQUIRE_TRUE(after.wrldBldrPosition->y == 3);
     REQUIRE_TRUE(after.control->cc ==
                 synth::WrldBldrPositionToCC(after.wrldBldrPosition->x, after.wrldBldrPosition->y));
 }
@@ -1488,7 +1486,7 @@ TEST_CASE(ApplyMappingEditHugeSlotIxIsRefused) {
     REQUIRE_TRUE(!reason.empty());
 }
 
-TEST_CASE(ApplyMappingEditHugePressMessageCatalogIndexIsRefused) {
+TEST_CASE(ApplyMappingEditHugeMessageKindCatalogIndexIsRefused) {
     MidiConfigViewModel vm;
     MidiInstrumentConfig instrument = MakeFourKindInstrument();
     vm.Rebuild(instrument, MakeFourKindConnection());
@@ -1496,7 +1494,7 @@ TEST_CASE(ApplyMappingEditHugePressMessageCatalogIndexIsRefused) {
     MidiInstrumentConfig out;
     std::string reason;
     const bool ok = vm.ApplyMappingEdit(0, MidiConfigSection::SystemMessages, 0,
-                                        MidiMappingRowVM::Field::PressMessage, 1e300, out, &reason);
+                                        MidiMappingRowVM::Field::MessageKind, 1e300, out, &reason);
     REQUIRE_TRUE(!ok);
     REQUIRE_TRUE(!reason.empty());
 }
@@ -1595,9 +1593,8 @@ TEST_CASE(ApplyMappingEditValidEditsStillCommit) {
 // --- Finding 4: every editableFields entry actually succeeds ---------------
 
 // Applies a "safe" valid value for `field` against `rowIx` in the given
-// section/controller and asserts ApplyMappingEdit succeeds -- pins finding 1
-// (PressMessage/ReleaseMessage) permanently alongside the older numeric
-// fields, for every row of every section on all four default profile kinds.
+// section/controller and asserts ApplyMappingEdit succeeds for every row of
+// every section on all four default profile kinds.
 double SafeValueFor(MidiMappingRowVM::Field field) {
     using Field = MidiMappingRowVM::Field;
     switch (field) {
@@ -1613,17 +1610,9 @@ double SafeValueFor(MidiMappingRowVM::Field field) {
             return 1.0;
         case Field::TurnStep:
             return 0.5;
-        case Field::PressMessage:
-            return 1.0;  // "Reset press" -- always present, never "None"
-        case Field::ReleaseMessage:
-            return 2.0;  // "Reset release"
         case Field::MessageKind:
-            return 13.0;  // "Scene Select" -- always present, never "None"
+            return static_cast<double>(UISystemMessageIndex(UISystemMessage::SceneSelect));
         case Field::MessageArg:
-            return 0.0;
-        case Field::ReleaseKind:
-            return 3.0;  // "Reset"
-        case Field::ReleaseArg:
             return 0.0;
         case Field::LaunchpadX:
             return 0.0;
@@ -1690,32 +1679,32 @@ double SafeValueFor(MidiMappingRowVM::Field field) {
 // round-trip) for BlockStartX/BlockStartY/BlockStartCc so this test keeps
 // verifying "the field accepts SOME legal value" without depending on a
 // magic constant staying collision-free against every default profile's
-// address layout.
+// address layout. Address fields and block end fields use the same no-op
+// rule: moving an address or increasing a block end can sweep across a
+// sibling row's address or argument range, and duplicate-address validation
+// should refuse that.
 double SafeValueForRow(MidiConfigViewModel& vm, std::size_t controllerIx, MidiConfigSection section,
                        std::size_t rowIx, MidiMappingRowVM::Field field) {
     using Field = MidiMappingRowVM::Field;
     switch (field) {
         case Field::BlockEndCc: {
             double current = 0.0;
-            if (vm.RowFieldValue(controllerIx, section, rowIx, Field::BlockStartCc, current)) {
-                return std::max(SafeValueFor(field), current + 1.0);
+            if (vm.RowFieldValue(controllerIx, section, rowIx, field, current)) {
+                return current;
             }
             return SafeValueFor(field);
         }
         case Field::BlockEndX: {
-            // Exclusive end: endX must be > startX.
             double current = 0.0;
-            if (vm.RowFieldValue(controllerIx, section, rowIx, Field::BlockStartX, current)) {
-                return std::max(SafeValueFor(field), current + 1.0);
+            if (vm.RowFieldValue(controllerIx, section, rowIx, field, current)) {
+                return current;
             }
             return SafeValueFor(field);
         }
         case Field::BlockEndY: {
-            // Exclusive end: endY must differ from startY (either direction
-            // is legal) -- current + 1 always satisfies that.
             double current = 0.0;
-            if (vm.RowFieldValue(controllerIx, section, rowIx, Field::BlockStartY, current)) {
-                return current + 1.0;
+            if (vm.RowFieldValue(controllerIx, section, rowIx, field, current)) {
+                return current;
             }
             return SafeValueFor(field);
         }
@@ -1728,32 +1717,29 @@ double SafeValueForRow(MidiConfigViewModel& vm, std::size_t controllerIx, MidiCo
             }
             return SafeValueFor(field);
         }
+        case Field::Channel:
+        case Field::Cc:
+        case Field::LaunchpadX:
+        case Field::LaunchpadY:
+        case Field::WrldBldrX:
+        case Field::WrldBldrY:
+        case Field::Button: {
+            double current = 0.0;
+            if (vm.RowFieldValue(controllerIx, section, rowIx, field, current)) {
+                return current;
+            }
+            return SafeValueFor(field);
+        }
         default:
             return SafeValueFor(field);
     }
 }
 
-// `baseInstrument`/`connection` (findings 1/2 fallout): each (row, field)
-// pair is applied against a FRESH view model Rebuild()'t from
-// `baseInstrument`, rather than accumulating edits across fields/rows on one
-// shared `vm`. This isolates each field's "can it be successfully applied
-// from this row's ORIGINAL state" check from every other field/row's edit,
-// which is this test's actual intent (per its header comment: "every
-// editableFields entry actually succeeds") -- not a claim that arbitrarily
-// chained edits compose. Chaining used to accidentally "work" only because
-// a block row's presentation never updated after a commit (findings 1/2's
-// bug): editing BlockMessageType away from BankSelect genuinely drops
-// BlockBankSlotIx from that SAME row's editableFields on the next read now
-// that the fix keeps the presentation live (matching what a real host sees
-// after committing `out` and calling Rebuild() again) -- so testing "does
-// BlockBankSlotIx succeed" must start from the row's original BankSelect
-// state, not from whatever an earlier field in this same loop left behind.
-// Individual (non-block) rows have a pre-existing, out-of-scope version of
-// the same non-independence (an identity-changing edit, e.g. Channel on a
-// system row, reorders the canonical sort and shifts OTHER rows' indices on
-// Rebuild -- accepted existing behavior, see RowDroppedWhenIdentityNoLonger
-// Resolves) -- isolating per-field also sidesteps that, rather than
-// depending on it.
+// Each (row, field) pair is applied against a fresh view model rebuilt from
+// the same base instrument. This keeps the test focused on its contract:
+// every advertised field is individually writable from the row state that
+// advertised it. Arbitrary chained edits may legitimately change which fields
+// are visible on later reads, so this helper does not depend on edit ordering.
 void RequireEveryEditableFieldSucceeds(const MidiInstrumentConfig& baseInstrument,
                                        const MidiConnectionState& connection, std::size_t controllerIx,
                                        MidiConfigSection section) {
@@ -1782,7 +1768,7 @@ void RequireEveryEditableFieldSucceeds(const MidiInstrumentConfig& baseInstrumen
 TEST_CASE(TwisterSideButtonRowButtonAndMessageFieldsAllSucceed) {
     // MfTwister side-button associations advertise a single Button field
     // (sru-8/D1: logical side button 0..5, persisted as control->cc = 8 +
-    // button on the fixed channel 3) plus PressMessage/ReleaseMessage. The
+    // button on the fixed channel 3) plus shared message fields. The
     // zero-arg MfTwisterDefaultProfileConfig() used elsewhere in this file
     // has no side buttons configured, so exercise that branch directly here
     // (this options shape mirrors mf_twister_default_profile_maps_encoders_
@@ -1841,8 +1827,7 @@ TEST_CASE(FieldIsIntegerFalseForTurnStepAndNonNumericEditorFields) {
     using Field = MidiMappingRowVM::Field;
     REQUIRE_TRUE(!FieldIsInteger(Field::TurnStep));
     REQUIRE_TRUE(!FieldIsInteger(Field::RelativeMode));
-    REQUIRE_TRUE(!FieldIsInteger(Field::PressMessage));
-    REQUIRE_TRUE(!FieldIsInteger(Field::ReleaseMessage));
+    REQUIRE_TRUE(!FieldIsInteger(Field::MessageKind));
 }
 
 TEST_CASE(RelativeModeCatalogHasOneEntryPerEnumValueInDeclarationOrder) {
@@ -1904,7 +1889,8 @@ TEST_CASE(FieldShortLabelIsNonEmptyAndDistinctPerField) {
     const std::vector<Field> fields = {
         Field::Channel,     Field::Cc,     Field::SlotIx,      Field::Position,       Field::GestureIx,
         Field::LaunchpadX,  Field::LaunchpadY, Field::WrldBldrX, Field::WrldBldrY,     Field::TurnStep,
-        Field::RelativeMode, Field::PressMessage, Field::ReleaseMessage, Field::SceneBlend, Field::Button,
+        Field::RelativeMode, Field::MessageKind, Field::MessageArg,
+        Field::SceneBlend, Field::Button,
     };
     std::vector<std::string> seen;
     for (Field field : fields) {
@@ -2005,8 +1991,8 @@ TEST_CASE(PresentationStableAcrossRebuildWithNoChanges) {
     REQUIRE_TRUE(before.size() == 4);  // 1 turn block, 1 push block, mode, step
     REQUIRE_TRUE(before[0].kind == MidiMappingRowVM::Kind::Block);
 
-    // Rebuild with the exact same instrument -- re-resolve must NOT re-group
-    // or otherwise change the presentation's shape.
+    // Rebuild with the exact same instrument must not re-group or otherwise
+    // change an already-open presentation's shape.
     vm.Rebuild(instrument, MakeFourKindConnection());
     const std::vector<MidiMappingRowVM> after = vm.SectionRows(0, MidiConfigSection::Encoders);
     REQUIRE_TRUE(after.size() == before.size());
@@ -2050,9 +2036,8 @@ TEST_CASE(EditsDoNotRegroupWhileExpanded) {
                               &reason));
     vm.Rebuild(afterSecond, connection);
     rows = vm.SectionRows(0, MidiConfigSection::SystemMessages);
-    // Still two INDIVIDUAL rows -- the presentation was already built (first
-    // read above), so this Rebuild() only re-resolves/appends, never
-    // re-groups.
+    // Still two INDIVIDUAL rows. The presentation was already built, so
+    // Rebuild() leaves the open UI-level representation alone.
     REQUIRE_TRUE(rows.size() == 2);
     REQUIRE_TRUE(rows[0].kind == MidiMappingRowVM::Kind::Individual);
     REQUIRE_TRUE(rows[1].kind == MidiMappingRowVM::Kind::Individual);
@@ -2154,8 +2139,8 @@ TEST_CASE(DuplicateMessagesResolveDistinctlyOnDelete) {
     REQUIRE_TRUE(rows[1].kind == MidiMappingRowVM::Kind::Individual);
 
     // Both rows carry the identical message (SceneSelect 0); their addresses
-    // differ (cc 5 vs cc 9), so their identities differ despite the shared
-    // message -- deleting row 0 must remove exactly the cc-5 association.
+    // differ (cc 5 vs cc 9), so deleting row 0 must remove exactly the cc-5
+    // association.
     MidiInstrumentConfig out;
     std::string reason;
     REQUIRE_TRUE(vm.DeleteRow(0, MidiConfigSection::SystemMessages, 0, out, &reason));
@@ -2163,7 +2148,7 @@ TEST_CASE(DuplicateMessagesResolveDistinctlyOnDelete) {
     REQUIRE_TRUE(out.controllers[0].config.systemMessages[0].control->cc == 9);
 }
 
-TEST_CASE(RowDroppedWhenIdentityNoLongerResolves) {
+TEST_CASE(OpenRowSurvivesSourceTruthRemovalUntilReopen) {
     MidiConfigViewModel vm;
     MidiInstrumentConfig instrument = MakeSingleTurnWrldBldrInstrument();
     MidiConnectionState connection = MakeSingleControllerConnection();
@@ -2171,24 +2156,31 @@ TEST_CASE(RowDroppedWhenIdentityNoLongerResolves) {
 
     std::vector<MidiMappingRowVM> rows = vm.SectionRows(0, MidiConfigSection::Encoders);
     REQUIRE_TRUE(rows[0].kind == MidiMappingRowVM::Kind::Individual);  // the sole turn
+    const std::size_t originalOpenRowCount = rows.size();
 
     // Externally clear BOTH turns and pushes (simulating a patch load) and
-    // Rebuild() -- the row must disappear, not error or show stale data.
+    // Rebuild() while the presentation is open. The open UI-level
+    // representation is intentionally stable; it is not rebuilt from
+    // source truth until the section closes and reopens.
     MidiInstrumentConfig patched = instrument;
     patched.controllers[0].config.encoderInput->turns.clear();
     patched.controllers[0].config.encoderInput->pushes.clear();
     vm.Rebuild(patched, connection);
     rows = vm.SectionRows(0, MidiConfigSection::Encoders);
-    // Only mode+step remain.
+    REQUIRE_TRUE(rows.size() == originalOpenRowCount);
+    REQUIRE_TRUE(rows[0].kind == MidiMappingRowVM::Kind::Individual);
+
+    vm.ToggleSection(0, MidiConfigSection::Encoders);
+    vm.ToggleSection(0, MidiConfigSection::Encoders);
+    rows = vm.SectionRows(0, MidiConfigSection::Encoders);
     REQUIRE_TRUE(rows.size() == 2);
     REQUIRE_TRUE(rows[0].kind == MidiMappingRowVM::Kind::ConfigLevel);
 }
 
 TEST_CASE(AllRowsDroppedWhenEncoderInputVanishesEntirely) {
-    // A patch load could replace this controller's config wholesale (e.g. a
-    // kind switch) so encoderInput itself becomes nullopt, not just its
-    // turns/pushes vectors -- re-resolving an Individual encoder row's
-    // identity must not dereference a nullopt encoderInput.
+    // A patch load could replace this controller's config wholesale while the
+    // section is open. The old presentation remains visible until the user
+    // collapses and reopens the section.
     MidiConfigViewModel vm;
     MidiInstrumentConfig instrument = MakeSingleTurnWrldBldrInstrument();
     MidiConnectionState connection = MakeSingleControllerConnection();
@@ -2200,6 +2192,12 @@ TEST_CASE(AllRowsDroppedWhenEncoderInputVanishesEntirely) {
     MidiInstrumentConfig patched = instrument;
     patched.controllers[0].config.encoderInput = std::nullopt;
     vm.Rebuild(patched, connection);
+    rows = vm.SectionRows(0, MidiConfigSection::Encoders);
+    REQUIRE_TRUE(!rows.empty());
+    REQUIRE_TRUE(rows[0].kind == MidiMappingRowVM::Kind::Individual);
+
+    vm.ToggleSection(0, MidiConfigSection::Encoders);
+    vm.ToggleSection(0, MidiConfigSection::Encoders);
     rows = vm.SectionRows(0, MidiConfigSection::Encoders);
     REQUIRE_TRUE(rows.empty());
 }
@@ -2265,18 +2263,10 @@ TEST_CASE(SameNameReaddAfterRemovalGetsFreshPresentation) {
 // --- sru-10/sru-11: block editing (replace-cells commit) --------------------
 
 TEST_CASE(BlockEditReplacesStartArgumentKeepingRowInPlace) {
-    // Findings 1/2 regression coverage: this MUST exercise the SAME view
-    // model instance across expand -> block edit -> simulated host commit
-    // (Rebuild with the edited instrument), matching the real
-    // ControllersPage.hpp call sequence (MappingRow::Commit() calls
-    // page_.Commit(std::move(out)), which re-Rebuild()s the SAME vm_ member
-    // -- see runtime/ControllersPage.hpp). A fresh second view model would
-    // only ever exercise BuildFreshPresentation's reconstruction path (which
-    // always groups correctly since it re-derives blocks from scratch), not
-    // RebuildPresentationFor's re-resolve-without-re-grouping path -- the
-    // one findings 1/2 were actually broken in (the identity-changing edit
-    // made the block's old identities fail to resolve on the SAME vm,
-    // dropping the row and re-appending its cells as 16 individual rows).
+    // This uses the same view model instance across expand -> block edit ->
+    // simulated host commit, matching the real ControllersPage call sequence.
+    // The open presentation row is the editing surface and must stay in place;
+    // only collapse/reopen reconstructs from source truth.
     MidiConfigViewModel vm;
     MidiInstrumentConfig instrument = MakeFourKindInstrument();
     const MidiConnectionState connection = MakeFourKindConnection();
@@ -2305,10 +2295,8 @@ TEST_CASE(BlockEditReplacesStartArgumentKeepingRowInPlace) {
     REQUIRE_TRUE(maxPos == 35);
 
     // Simulate the host committing `out` and calling Rebuild() again on the
-    // SAME vm (this class's documented edit contract) -- the block row must
-    // stay in place at index 0, still ONE block row (not 16 individuals),
-    // with updated values and its identity set re-synced to the new
-    // positions (sru-11 "the block row stays in place with updated values").
+    // SAME vm. The block row must stay in place at index 0, still ONE block
+    // row (not 16 individuals), with updated values.
     vm.Rebuild(out, connection);
     const std::vector<MidiMappingRowVM> after = vm.SectionRows(0, MidiConfigSection::Encoders);
     REQUIRE_TRUE(after.size() == before.size());  // still 1 turn block + 1 push block + mode + step, not 16+ rows
@@ -2316,10 +2304,8 @@ TEST_CASE(BlockEditReplacesStartArgumentKeepingRowInPlace) {
     REQUIRE_TRUE(after[0].group == MidiMappingRowVM::RowGroup::EncoderTurn);
     REQUIRE_TRUE(after[0].label.find("pos 20") != std::string::npos);
 
-    // A further Rebuild() with the SAME `out` (no-op re-resolve) must still
-    // find the row in place -- proves the re-synced identities genuinely
-    // resolve against the committed config, not just an artifact of the
-    // single transition.
+    // A further Rebuild() with the SAME `out` must still leave the open row
+    // in place.
     vm.Rebuild(out, connection);
     const std::vector<MidiMappingRowVM> stable = vm.SectionRows(0, MidiConfigSection::Encoders);
     REQUIRE_TRUE(stable.size() == before.size());
@@ -2327,19 +2313,11 @@ TEST_CASE(BlockEditReplacesStartArgumentKeepingRowInPlace) {
     REQUIRE_TRUE(stable[0].label.find("pos 20") != std::string::npos);
 }
 
-TEST_CASE(RebuildHealsStagedBlockRowWhenHostDiscardsEdit) {
-    // Reviewer finding: optimistic staging (ApplyMappingEdit's block branch)
-    // primes THIS view model instance's presentation entry with the new
-    // block struct as a same-instance cache hint -- it does NOT mean the
-    // edit landed. If the host discards `out` (never commits it) and the
-    // NEXT Rebuild() call is instead given the ORIGINAL (unedited)
-    // instrument, a field like Channel that is NOT part of the block's
-    // identity (identity is slotIx/position -- see EncoderIdentity) leaves
-    // every covered cell's identity resolving fine against the original
-    // config, so ReResolveRow alone would leave the stale staged struct
-    // (the discarded edit's channel) in place. Rebuild() must re-derive the
-    // block struct from the actual covered cells so the row shows the
-    // ORIGINAL channel again, not the discarded edit's.
+TEST_CASE(RebuildDoesNotHealOpenBlockRowFromSourceTruth) {
+    // The open block row is the UI-level representation. Even if the host
+    // later Rebuild()s from an older source-of-truth snapshot, the open row
+    // must not be re-derived from that truth. Collapse/reopen is the only
+    // operation that reconstructs the minimal representation.
     MidiConfigViewModel vm;
     MidiInstrumentConfig instrument = MakeFourKindInstrument();
     const MidiConnectionState connection = MakeFourKindConnection();
@@ -2355,38 +2333,29 @@ TEST_CASE(RebuildHealsStagedBlockRowWhenHostDiscardsEdit) {
                                      discardedEdit, &reason));
     REQUIRE_TRUE(reason.empty());
 
-    // The staged presentation now optimistically shows "ch7" even though
-    // nothing has been committed yet -- this is the documented cache-priming
-    // hint, not a bug. Identities (slotIx/position) are untouched by a
-    // Channel edit, so they still resolve fine against the ORIGINAL config.
+    // The staged presentation now shows "ch7" because the open row is the
+    // authoritative editing surface. A Rebuild() from older truth must not
+    // overwrite it.
     const std::vector<MidiMappingRowVM> staged = vm.SectionRows(0, MidiConfigSection::Encoders);
     REQUIRE_TRUE(staged[0].label.find("ch7 ") != std::string::npos);
 
-    // Host DISCARDS `discardedEdit` (e.g. engine.EditInstrument rejected it
-    // for a reason invisible to this view model, or the host simply chose
-    // not to commit) and instead Rebuild()s with the ORIGINAL instrument --
-    // exactly as if the edit never happened. This is the "identities
-    // resolve but staged VALUES are wrong" gap this fix closes -- NOT the
-    // drop/re-append path (which BlockStartPos/BlockStartCc edits would hit
-    // since those DO change identity).
     vm.Rebuild(instrument, connection);
     const std::vector<MidiMappingRowVM> healed = vm.SectionRows(0, MidiConfigSection::Encoders);
     REQUIRE_TRUE(healed.size() == before.size());
     REQUIRE_TRUE(healed[0].kind == MidiMappingRowVM::Kind::Block);
     REQUIRE_TRUE(healed[0].group == MidiMappingRowVM::RowGroup::EncoderTurn);
-    // Healed back to the ORIGINAL "ch0", not the discarded edit's "ch7".
-    REQUIRE_TRUE(healed[0].label.find("ch0 ") != std::string::npos);
-    REQUIRE_TRUE(healed[0].label.find("ch7 ") == std::string::npos);
+    REQUIRE_TRUE(healed[0].label.find("ch7 ") != std::string::npos);
+
+    vm.ToggleSection(0, MidiConfigSection::Encoders);
+    vm.ToggleSection(0, MidiConfigSection::Encoders);
+    const std::vector<MidiMappingRowVM> reopened = vm.SectionRows(0, MidiConfigSection::Encoders);
+    REQUIRE_TRUE(reopened[0].label.find("ch0 ") != std::string::npos);
 }
 
-TEST_CASE(RebuildDropsBlockRowWhenCoveredCellsNoLongerFormOneBlock) {
-    // Reviewer finding, scenario 3: if a patch load lands the block's
-    // covered cells (same identities -- same slotIx/position pairs) but one
-    // cell's address no longer fits the run (so they no longer reconstruct
-    // as a single block), Rebuild() must drop the block row -- and the
-    // now-uncovered cells must re-append as INDIVIDUAL rows via the
-    // existing unknown-identity path, not silently vanish from the
-    // presentation.
+TEST_CASE(RebuildDoesNotDropOpenBlockRowWhenTruthNoLongerFormsOneBlock) {
+    // If source truth changes under an open block row, the open row is still
+    // stable. The split minimal representation appears only after close and
+    // reopen.
     MidiConfigViewModel vm;
     MidiInstrumentConfig instrument = MakeFourKindInstrument();
     const MidiConnectionState connection = MakeFourKindConnection();
@@ -2395,10 +2364,9 @@ TEST_CASE(RebuildDropsBlockRowWhenCoveredCellsNoLongerFormOneBlock) {
     const std::vector<MidiMappingRowVM> before = vm.SectionRows(0, MidiConfigSection::Encoders);
     REQUIRE_TRUE(before[0].kind == MidiMappingRowVM::Kind::Block);  // turn block: slot 0, cc 0..15, pos 0..15
 
-    // Break the shape: give the mapping at position 5 a channel different
-    // from the rest (slotIx/position -- the identity -- stay the same, so
-    // this is NOT a dropped identity; it just no longer reconstructs as one
-    // consecutive-channel run).
+    // Break the persisted shape: give the mapping at position 5 a channel
+    // different from the rest. The open row still stays stable; the split
+    // minimal representation appears only after close/reopen.
     MidiInstrumentConfig patched = instrument;
     std::vector<synth::EncoderMidiMapping>& turns = patched.controllers[0].config.encoderInput->turns;
     for (auto& mapping : turns) {
@@ -2409,13 +2377,15 @@ TEST_CASE(RebuildDropsBlockRowWhenCoveredCellsNoLongerFormOneBlock) {
     vm.Rebuild(patched, connection);
 
     const std::vector<MidiMappingRowVM> after = vm.SectionRows(0, MidiConfigSection::Encoders);
-    // No single 16-wide turn block survives; the run splits around the
-    // outlier, so this section now shows more than the original 1 block + 1
-    // push block + mode + step rows, and none of the EncoderTurn rows is a
-    // 16-wide block.
+    REQUIRE_TRUE(after.size() == before.size());
+    REQUIRE_TRUE(after[0].kind == MidiMappingRowVM::Kind::Block);
+
+    vm.ToggleSection(0, MidiConfigSection::Encoders);
+    vm.ToggleSection(0, MidiConfigSection::Encoders);
+    const std::vector<MidiMappingRowVM> reopened = vm.SectionRows(0, MidiConfigSection::Encoders);
     std::size_t turnBlockCount = 0;
     std::size_t turnIndividualCount = 0;
-    for (const MidiMappingRowVM& row : after) {
+    for (const MidiMappingRowVM& row : reopened) {
         if (row.group != MidiMappingRowVM::RowGroup::EncoderTurn) {
             continue;
         }
@@ -2425,46 +2395,22 @@ TEST_CASE(RebuildDropsBlockRowWhenCoveredCellsNoLongerFormOneBlock) {
             ++turnIndividualCount;
         }
     }
-    // All 16 turn cells are still present somewhere (as individuals and/or
-    // smaller blocks split around the outlier) -- none vanished.
-    std::size_t turnCellCount = turnIndividualCount;
-    for (const MidiMappingRowVM& row : after) {
-        if (row.group == MidiMappingRowVM::RowGroup::EncoderTurn && row.kind == MidiMappingRowVM::Kind::Block) {
-            // Each surviving block still covers >=2 cells; just confirm at
-            // least one individual outlier row exists rather than counting
-            // exact block widths here (that's ReconstructEncoderBlocks' own
-            // regression coverage, not this fix's concern).
-        }
-    }
     (void)turnBlockCount;
     REQUIRE_TRUE(turnIndividualCount >= 1);  // the outlier (position 5) is now its own individual row
-    REQUIRE_TRUE(turnCellCount >= 1);
 }
 
-TEST_CASE(TwoBlockEditsBeforeAnyRebuildLastEditWins) {
-    // Reviewer finding, scenario 4: two block edits applied to the SAME view
-    // model instance before any Rebuild() lands. ApplyMappingEdit always
-    // builds its scratch from instrument_ (the last-Rebuild()'t snapshot),
-    // so the second edit's scratch does NOT see the first edit's `out` --
-    // this mirrors individual-row edit semantics (documented at the top of
-    // MidiConfigViewModel.hpp: "operate on a COPY of the instrument the
-    // model was last Rebuild()'t with"). Whichever `out` the host actually
-    // commits (here, the second edit's) is what a subsequent Rebuild() shows
-    // -- coherently, since Rebuild() now re-derives from that committed
-    // config truth rather than trusting whichever edit staged last.
+TEST_CASE(TwoBlockEditsBeforeAnyRebuildAccumulateThroughOpenPresentation) {
+    // Two edits applied to the same open presentation before any Rebuild()
+    // lands must accumulate through that presentation. The view model's
+    // instrument_ snapshot is still the last committed truth, but the open
+    // presentation is authoritative while expanded; the second edit flushes
+    // the whole presentation, including the first edit's still-open row
+    // value, into its returned `out`.
     MidiConfigViewModel vm;
     MidiInstrumentConfig instrument = MakeFourKindInstrument();
     const MidiConnectionState connection = MakeFourKindConnection();
     vm.Rebuild(instrument, connection);
 
-    // Both edits use Channel (not part of EncoderIdentity, which is
-    // slotIx/position -- see IdentityOf) so each edit's staged identities
-    // keep matching the ORIGINAL config's positions/cc range, and neither
-    // edit's expansion collides with the other's address range (both stay
-    // at cc 0..15, just different channels) -- isolates this test to the
-    // "which scratch did each edit read" question the task brief asks about,
-    // without also exercising the (separate, pre-existing) identity-changing
-    // collision behavior BlockStartPos/BlockStartCc edits hit.
     MidiInstrumentConfig firstOut;
     std::string reason;
     REQUIRE_TRUE(vm.ApplyMappingEdit(0, MidiConfigSection::Encoders, 0, MidiMappingRowVM::Field::Channel, 5.0,
@@ -2472,31 +2418,29 @@ TEST_CASE(TwoBlockEditsBeforeAnyRebuildLastEditWins) {
     REQUIRE_TRUE(reason.empty());
     REQUIRE_TRUE(firstOut.controllers[0].config.encoderInput->turns.front().control.channel == 5);
 
-    // Second edit's scratch derives from instrument_ (still the ORIGINAL,
-    // pre-first-edit snapshot) -- it does NOT see the first edit's channel-5
-    // result; it starts from channel 0 again and moves to channel 9.
+    // The second edit touches a different field. If it rebuilt from
+    // instrument_ alone, the returned config would have channel 0 and start
+    // position 32. The intended model keeps the first edit's channel 5 in
+    // the open presentation and serializes both edited values.
     MidiInstrumentConfig secondOut;
-    REQUIRE_TRUE(vm.ApplyMappingEdit(0, MidiConfigSection::Encoders, 0, MidiMappingRowVM::Field::Channel, 9.0,
+    REQUIRE_TRUE(vm.ApplyMappingEdit(0, MidiConfigSection::Encoders, 0, MidiMappingRowVM::Field::BlockStartPos, 32.0,
                                      secondOut, &reason));
     REQUIRE_TRUE(reason.empty());
     const auto& secondTurns = secondOut.controllers[0].config.encoderInput->turns;
     REQUIRE_TRUE(secondTurns.size() == 16);
-    for (const auto& t : secondTurns) {
-        REQUIRE_TRUE(t.control.channel == 9);  // NOT 5 -- second edit's scratch never saw the first edit
+    for (std::size_t ix = 0; ix < secondTurns.size(); ++ix) {
+        REQUIRE_TRUE(secondTurns[ix].control.channel == 5);
+        REQUIRE_TRUE(secondTurns[ix].position == 32 + ix);
     }
 
-    // Host commits the SECOND edit's `out` (the one that "wins", per
-    // individual-edit semantics: whichever `out` is actually committed) and
-    // Rebuild()s -- the result must be coherent: one turn block row, values
-    // matching secondOut's actual config (channel 9), not some mix of the
-    // two edits' staged values (e.g. NOT channel 5, which only ever existed
-    // in the discarded firstOut / this view model's transient staging).
+    // Host commits the second edit's accumulated `out` and Rebuild()s. The
+    // open block row remains stable and displays both edited values.
     vm.Rebuild(secondOut, connection);
     const std::vector<MidiMappingRowVM> after = vm.SectionRows(0, MidiConfigSection::Encoders);
     REQUIRE_TRUE(after[0].kind == MidiMappingRowVM::Kind::Block);
     REQUIRE_TRUE(after[0].group == MidiMappingRowVM::RowGroup::EncoderTurn);
-    REQUIRE_TRUE(after[0].label.find("ch9 ") != std::string::npos);
-    REQUIRE_TRUE(after[0].label.find("ch5 ") == std::string::npos);
+    REQUIRE_TRUE(after[0].label.find("ch5 ") != std::string::npos);
+    REQUIRE_TRUE(after[0].label.find("pos 32..") != std::string::npos);
 }
 
 TEST_CASE(BlockEditAllOrNothingRefusalLeavesConfigUnchanged) {
@@ -2571,9 +2515,12 @@ TEST_CASE(BlockEditOverlappingExistingSceneButtonRefused) {
     // individual button (unchanged) are independently valid.
     MidiInstrumentConfig sentinel;
     sentinel.controllers.push_back(MakeGenericSlot("sentinel"));  // prove untouched on refusal
+    bool presentationChanged = false;
     bool ok = vm.ApplyMappingEdit(0, MidiConfigSection::SystemMessages, sceneBlockIx,
-                                  MidiMappingRowVM::Field::BlockStartY, 0.0, sentinel, &reason);
+                                  MidiMappingRowVM::Field::BlockStartY, 0.0, sentinel, &reason,
+                                  &presentationChanged);
     REQUIRE_TRUE(!ok);
+    REQUIRE_TRUE(presentationChanged);
     REQUIRE_TRUE(!reason.empty());
     // `out` (aliased here as `sentinel`) is untouched -- still just the
     // sentinel controller, not a copy of the real instrument.
@@ -2581,17 +2528,16 @@ TEST_CASE(BlockEditOverlappingExistingSceneButtonRefused) {
     REQUIRE_TRUE(sentinel.controllers[0].name == "sentinel");
 
     ok = vm.ApplyMappingEdit(0, MidiConfigSection::SystemMessages, sceneBlockIx, MidiMappingRowVM::Field::BlockEndY,
-                             0.0, sentinel, &reason);
-    REQUIRE_TRUE(!ok);  // BlockEndY alone also collides once paired with the unchanged BlockStartY=6 -- ambiguous
-                        // rectangle aside, this just confirms the check fires on either edited field.
+                             0.0, sentinel, &reason, &presentationChanged);
+    REQUIRE_TRUE(!ok);
+    REQUIRE_TRUE(presentationChanged);
 
-    // The view model's OWN snapshot is unaffected: the block row is still
-    // at (0,6)..(8,7) (exclusive-end form), the config still has exactly the
-    // same number of associations as right after the AddSingle commit (no
-    // partial mutation).
+    // The commit output is unaffected, but the open presentation keeps the
+    // temporarily-invalid edit visible so a later edit can repair it without
+    // snapping the row back to persisted truth.
     const std::vector<MidiMappingRowVM> stillThere = vm.SectionRows(0, MidiConfigSection::SystemMessages);
     REQUIRE_TRUE(stillThere[sceneBlockIx].kind == MidiMappingRowVM::Kind::Block);
-    REQUIRE_TRUE(stillThere[sceneBlockIx].label.rfind("scene select block (0,6)..(8,7)", 0) == 0);
+    REQUIRE_TRUE(stillThere[sceneBlockIx].label.rfind("scene select block (0,0)..(8,0)", 0) == 0);
     REQUIRE_TRUE(afterAdd.controllers[0].config.systemMessages.size() == associationCountBeforeEdit);
 }
 
@@ -2630,8 +2576,8 @@ TEST_CASE(SystemBlockEditChangesMessageTypeAndCommitsExpansion) {
 // Task group 3 (renderer): BlockMessageTypeIndex() is the dedicated accessor
 // a BlockMessageType combo box uses to preselect the row's current message
 // type -- RowFieldValue() deliberately refuses BlockMessageType (it is not a
-// single numeric value), mirroring how PressMessage/ReleaseMessage combos use
-// SystemMessageChoiceIndex() instead of RowFieldValue().
+// single numeric value), mirroring how MessageKind uses UISystemMessageIndex()
+// instead of RowFieldValue().
 TEST_CASE(BlockMessageTypeIndexReadsBankSelectForBankBlock) {
     MidiConfigViewModel vm;
     MidiInstrumentConfig instrument = MakeFourKindInstrument();
@@ -2712,19 +2658,9 @@ TEST_CASE(AddSingleAppendsAtGroupEndWithNextFreeDefaults) {
 }
 
 TEST_CASE(AddBlockAppendsCommittedExpansion) {
-    // sru-11 scenario: "+B" on a launchpad's system group appends the
-    // block's cells in one commit. Findings 1/2 regression coverage: this
-    // MUST exercise the SAME view model instance -- expand (first
-    // SectionRows() read), AddBlock, then simulate the host committing `out`
-    // via Rebuild() on the SAME vm (ControllersPage.hpp's real
-    // AddButton-equivalent call sequence: commit then re-Rebuild the one
-    // vm_ member) -- not a fresh second view model, which would only ever
-    // exercise BuildFreshPresentation's from-scratch reconstruction (always
-    // correct) rather than RebuildPresentationFor's re-resolve-without-
-    // re-grouping path (the one findings 1/2 were broken in: the new cells'
-    // identities didn't match anything already in the presentation, so they
-    // fell through to AppendUnresolvedSystemIdentities as loose individual
-    // rows instead of showing up as the appended block).
+    // sru-11 scenario: "+B" on a launchpad's system group appends the block
+    // as a stable presentation row in one commit, then the same view model is
+    // rebuilt to mirror the real ControllersPage flow.
     MidiConfigViewModel vm;
     MidiInstrumentConfig instrument;
     instrument.AddController(MakeLaunchpadSlot("pads"));
@@ -3043,21 +2979,13 @@ TEST_CASE(DeleteRowCommitNormalizes) {
     MidiConnectionState connection = MakeSingleControllerConnection();
     vm.Rebuild(instrument, connection);
 
-    // Delete the sceneIx=3 row (identified by its resolved presentation
-    // index -- find it first).
+    // Delete the sceneIx=3 row by its presentation label.
     const std::vector<MidiMappingRowVM> rows = vm.SectionRows(0, MidiConfigSection::SystemMessages);
     std::size_t targetIx = SIZE_MAX;
     for (std::size_t ix = 0; ix < rows.size(); ++ix) {
-        double value = -1.0;
-        if (vm.SystemMessageChoiceIndex(0, MidiConfigSection::SystemMessages, ix,
-                                        MidiMappingRowVM::Field::PressMessage) > 0) {
-            // Identify by re-reading via RowFieldValue is not directly
-            // possible for PressMessage; instead match by label content.
-        }
         if (rows[ix].label.find("scene select 3") != std::string::npos) {
             targetIx = ix;
         }
-        (void)value;
     }
     REQUIRE_TRUE(targetIx != SIZE_MAX);
 
@@ -3618,17 +3546,7 @@ TEST_CASE(SystemMessageRowsExposeKindAndArgumentSeparately) {
     REQUIRE_TRUE(sawKindAndArg);
 }
 
-TEST_CASE(SystemMessageKindIndexAndArgumentFieldsRoundTrip) {
-    auto kindIndex = [](synth::MessageIn::Type type) {
-        const std::vector<synth::SystemMessageKindChoice>& catalog = synth::SystemMessageKindCatalog();
-        for (std::size_t ix = 0; ix < catalog.size(); ++ix) {
-            if (catalog[ix].type == type) {
-                return static_cast<double>(ix);
-            }
-        }
-        return -1.0;
-    };
-
+TEST_CASE(UISystemMessageIndexAndArgumentFieldsRoundTrip) {
     MidiInstrumentConfig instrument;
     MidiControllerSlot slot = MakeGenericSlot("generic");
     slot.config.systemMessages.clear();
@@ -3648,11 +3566,8 @@ TEST_CASE(SystemMessageKindIndexAndArgumentFieldsRoundTrip) {
     vm.ToggleConfig(0);
     vm.ToggleSection(0, MidiConfigSection::SystemMessages);
 
-    REQUIRE_TRUE(vm.SystemMessageKindIndex(0, MidiConfigSection::SystemMessages, 0,
-                                           MidiMappingRowVM::Field::MessageKind) ==
-                 static_cast<int>(kindIndex(synth::MessageIn::Type::SceneSelect)));
-    REQUIRE_TRUE(vm.SystemMessageKindIndex(0, MidiConfigSection::SystemMessages, 0,
-                                           MidiMappingRowVM::Field::ReleaseKind) == 0);
+    REQUIRE_TRUE(vm.UISystemMessageIndex(0, MidiConfigSection::SystemMessages, 0) ==
+                 UISystemMessageIndex(UISystemMessage::SceneSelect));
 
     double value = 0.0;
     REQUIRE_TRUE(vm.RowFieldValue(0, MidiConfigSection::SystemMessages, 0,
@@ -3666,19 +3581,642 @@ TEST_CASE(SystemMessageKindIndexAndArgumentFieldsRoundTrip) {
     REQUIRE_TRUE(edited.controllers[0].config.systemMessages[0].press.type ==
                  synth::MessageIn::Type::SceneSelect);
     REQUIRE_TRUE(edited.controllers[0].config.systemMessages[0].press.sceneIx == 5);
+    REQUIRE_TRUE(!edited.controllers[0].config.systemMessages[0].release.has_value());
 
     vm.Rebuild(edited, connection);
-    MidiInstrumentConfig withRelease;
     REQUIRE_TRUE(vm.ApplyMappingEdit(0, MidiConfigSection::SystemMessages, 0,
-                                     MidiMappingRowVM::Field::ReleaseKind,
-                                     kindIndex(synth::MessageIn::Type::SetGestureSelect), withRelease, &reason));
-    vm.Rebuild(withRelease, connection);
+                                     MidiMappingRowVM::Field::MessageKind,
+                                     static_cast<double>(UISystemMessageIndex(UISystemMessage::HoldGestureSelect)),
+                                     edited, &reason));
+    vm.Rebuild(edited, connection);
     REQUIRE_TRUE(vm.ApplyMappingEdit(0, MidiConfigSection::SystemMessages, 0,
-                                     MidiMappingRowVM::Field::ReleaseArg, 4.0, edited, &reason));
+                                     MidiMappingRowVM::Field::MessageArg, 4.0, edited, &reason));
     REQUIRE_TRUE(edited.controllers[0].config.systemMessages[0].release.has_value());
     REQUIRE_TRUE(edited.controllers[0].config.systemMessages[0].release->type ==
                  synth::MessageIn::Type::SetGestureSelect);
     REQUIRE_TRUE(edited.controllers[0].config.systemMessages[0].release->gestureIx == 4);
+    REQUIRE_TRUE(edited.controllers[0].config.systemMessages[0].release->boolValue == false);
+    REQUIRE_TRUE(edited.controllers[0].config.systemMessages[0].press.boolValue == true);
+}
+
+TEST_CASE(UISystemMessageCatalogExpansionCoversPressAndReleaseSemantics) {
+    struct Expected {
+        UISystemMessage message;
+        synth::MessageIn::Type pressType;
+        bool pressBool;
+        bool hasRelease;
+        synth::MessageIn::Type releaseType;
+        bool releaseBool;
+        bool hasArg;
+    };
+
+    const Expected expected[] = {
+        {UISystemMessage::ParamIncDec, synth::MessageIn::Type::ParamIncDec, false, false,
+         synth::MessageIn::Type::Clock, false, true},
+        {UISystemMessage::ParamPush, synth::MessageIn::Type::ParamPush, false, false,
+         synth::MessageIn::Type::Clock, false, true},
+        {UISystemMessage::ToggleReset, synth::MessageIn::Type::ToggleReset, false, false,
+         synth::MessageIn::Type::Clock, false, false},
+        {UISystemMessage::HoldReset, synth::MessageIn::Type::ToggleReset, true, true,
+         synth::MessageIn::Type::ToggleReset, false, false},
+        {UISystemMessage::ToggleRandom, synth::MessageIn::Type::ToggleRandom, false, false,
+         synth::MessageIn::Type::Clock, false, false},
+        {UISystemMessage::HoldRandom, synth::MessageIn::Type::ToggleRandom, true, true,
+         synth::MessageIn::Type::ToggleRandom, false, false},
+        {UISystemMessage::ToggleRandomMod, synth::MessageIn::Type::ToggleRandomMod, false, false,
+         synth::MessageIn::Type::Clock, false, false},
+        {UISystemMessage::HoldRandomMod, synth::MessageIn::Type::ToggleRandomMod, true, true,
+         synth::MessageIn::Type::ToggleRandomMod, false, false},
+        {UISystemMessage::ToggleGestureSelect, synth::MessageIn::Type::ToggleGestureSelect, false, false,
+         synth::MessageIn::Type::Clock, false, true},
+        {UISystemMessage::HoldGestureSelect, synth::MessageIn::Type::SetGestureSelect, true, true,
+         synth::MessageIn::Type::SetGestureSelect, false, true},
+        {UISystemMessage::SelectParamBank, synth::MessageIn::Type::SelectParamBank, false, false,
+         synth::MessageIn::Type::Clock, false, true},
+        {UISystemMessage::Start, synth::MessageIn::Type::Start, false, false,
+         synth::MessageIn::Type::Clock, false, false},
+        {UISystemMessage::Stop, synth::MessageIn::Type::Stop, false, false,
+         synth::MessageIn::Type::Clock, false, false},
+        {UISystemMessage::Clock, synth::MessageIn::Type::Clock, false, false,
+         synth::MessageIn::Type::Clock, false, false},
+        {UISystemMessage::SetGestureValue, synth::MessageIn::Type::SetGestureValue, false, false,
+         synth::MessageIn::Type::Clock, false, true},
+        {UISystemMessage::SceneSelect, synth::MessageIn::Type::SceneSelect, false, false,
+         synth::MessageIn::Type::Clock, false, true},
+        {UISystemMessage::SetSceneBlend, synth::MessageIn::Type::SetSceneBlend, false, false,
+         synth::MessageIn::Type::Clock, false, false},
+    };
+
+    const std::vector<synth::UISystemMessageChoice>& catalog = synth::UISystemMessageCatalog();
+    REQUIRE_TRUE(catalog.size() == sizeof(expected) / sizeof(expected[0]));
+
+    for (std::size_t ix = 0; ix < catalog.size(); ++ix) {
+        REQUIRE_TRUE(catalog[ix].message == expected[ix].message);
+
+        MidiInstrumentConfig instrument;
+        MidiControllerSlot slot = MakeGenericSlot("generic");
+        slot.config.systemMessages.clear();
+        MidiControllerSystemMessageAssociation association;
+        association.control = MidiControlAddress{.channel = 2, .cc = 40};
+        association.press = synth::MessageIn::SceneSelect(0, 3);
+        association.feedback = association.press;
+        association.outputFeedback = true;
+        slot.config.systemMessages.push_back(association);
+        REQUIRE_TRUE(instrument.AddController(slot));
+
+        MidiConnectionState connection;
+        connection.controllers.push_back(MidiControllerConnection{});
+
+        MidiConfigViewModel vm;
+        vm.Rebuild(instrument, connection);
+        vm.ToggleConfig(0);
+        vm.ToggleSection(0, MidiConfigSection::SystemMessages);
+
+        MidiInstrumentConfig edited;
+        std::string reason;
+        REQUIRE_TRUE(vm.ApplyMappingEdit(0, MidiConfigSection::SystemMessages, 0,
+                                         MidiMappingRowVM::Field::MessageKind, static_cast<double>(ix), edited,
+                                         &reason));
+        const MidiControllerSystemMessageAssociation& out = edited.controllers[0].config.systemMessages[0];
+        REQUIRE_TRUE(out.press.type == expected[ix].pressType);
+        if (out.press.hasBoolValue) {
+            REQUIRE_TRUE(out.press.boolValue == expected[ix].pressBool);
+        }
+        REQUIRE_TRUE(out.release.has_value() == expected[ix].hasRelease);
+        if (expected[ix].hasRelease) {
+            REQUIRE_TRUE(out.release->type == expected[ix].releaseType);
+            REQUIRE_TRUE(out.release->boolValue == expected[ix].releaseBool);
+        }
+        REQUIRE_TRUE(vm.UISystemMessageIndex(0, MidiConfigSection::SystemMessages, 0) == static_cast<int>(ix));
+
+        const std::vector<MidiMappingRowVM> rows = vm.SectionRows(0, MidiConfigSection::SystemMessages);
+        REQUIRE_TRUE(!rows.empty());
+        const bool exposesArg = std::find(rows[0].editableFields.begin(), rows[0].editableFields.end(),
+                                          MidiMappingRowVM::Field::MessageArg) != rows[0].editableFields.end();
+        REQUIRE_TRUE(exposesArg == expected[ix].hasArg);
+    }
+}
+
+TEST_CASE(TwisterSystemMessageKindEditDoesNotReorderOpenRows) {
+    MidiInstrumentConfig instrument;
+    MidiControllerSlot slot = MakeTwisterSlot("twist");
+    slot.config.systemMessages.clear();
+    REQUIRE_TRUE(instrument.AddController(slot));
+
+    MidiConnectionState connection;
+    connection.controllers.push_back(MidiControllerConnection{});
+
+    MidiConfigViewModel vm;
+    vm.Rebuild(instrument, connection);
+    vm.ToggleConfig(0);
+    vm.ToggleSection(0, MidiConfigSection::SystemMessages);
+
+    std::string reason;
+    for (int ix = 0; ix < 6; ++ix) {
+        MidiInstrumentConfig added;
+        REQUIRE_TRUE(vm.AddSingle(0, MidiConfigSection::SystemMessages, MidiMappingRowVM::RowGroup::System,
+                                  added, &reason));
+        vm.Rebuild(added, connection);
+    }
+
+    const std::vector<MidiMappingRowVM> before = vm.SectionRows(0, MidiConfigSection::SystemMessages);
+    REQUIRE_TRUE(before.size() == 6);
+    for (std::size_t ix = 0; ix < before.size(); ++ix) {
+        double button = -1.0;
+        REQUIRE_TRUE(vm.RowFieldValue(0, MidiConfigSection::SystemMessages, ix,
+                                      MidiMappingRowVM::Field::Button, button));
+        REQUIRE_TRUE(button == static_cast<double>(ix));
+    }
+
+    MidiInstrumentConfig edited;
+    REQUIRE_TRUE(vm.ApplyMappingEdit(0, MidiConfigSection::SystemMessages, 0,
+                                     MidiMappingRowVM::Field::MessageKind,
+                                     static_cast<double>(UISystemMessageIndex(UISystemMessage::SelectParamBank)),
+                                     edited, &reason));
+    vm.Rebuild(edited, connection);
+
+    const std::vector<MidiMappingRowVM> after = vm.SectionRows(0, MidiConfigSection::SystemMessages);
+    REQUIRE_TRUE(after.size() == 6);
+    REQUIRE_TRUE(vm.UISystemMessageIndex(0, MidiConfigSection::SystemMessages, 0) ==
+                 UISystemMessageIndex(UISystemMessage::SelectParamBank));
+    for (std::size_t ix = 0; ix < after.size(); ++ix) {
+        double button = -1.0;
+        REQUIRE_TRUE(vm.RowFieldValue(0, MidiConfigSection::SystemMessages, ix,
+                                      MidiMappingRowVM::Field::Button, button));
+        REQUIRE_TRUE(button == static_cast<double>(ix));
+    }
+}
+
+TEST_CASE(TwisterSystemMessagesRandomizedOpenSessionOracle) {
+    struct OracleRow {
+        int button = 0;
+        UISystemMessage message = UISystemMessage::SceneSelect;
+        std::size_t arg = 0;
+    };
+
+    auto argOf = [](const synth::MessageIn& message) {
+        switch (message.type) {
+            case synth::MessageIn::Type::SceneSelect:
+                return message.sceneIx;
+            case synth::MessageIn::Type::SelectParamBank:
+                return message.bankIx;
+            case synth::MessageIn::Type::SetGestureSelect:
+                return message.gestureIx;
+            default:
+                return std::size_t{0};
+        }
+    };
+    auto uiMessageOf = [](const MidiControllerSystemMessageAssociation& association) {
+        switch (association.press.type) {
+            case synth::MessageIn::Type::SceneSelect:
+                return UISystemMessage::SceneSelect;
+            case synth::MessageIn::Type::SelectParamBank:
+                return UISystemMessage::SelectParamBank;
+            case synth::MessageIn::Type::SetGestureSelect:
+                return UISystemMessage::HoldGestureSelect;
+            default:
+                return UISystemMessage::Clock;
+        }
+    };
+    auto rowFromAssociation = [&](const MidiControllerSystemMessageAssociation& association) {
+        OracleRow row;
+        row.button = static_cast<int>(association.control->cc - 8);
+        row.message = uiMessageOf(association);
+        row.arg = argOf(association.press);
+        return row;
+    };
+    auto expectMatches = [&](MidiConfigViewModel& vm, const std::vector<OracleRow>& oracle) {
+        const std::vector<MidiMappingRowVM> rows = vm.SectionRows(0, MidiConfigSection::SystemMessages);
+        REQUIRE_TRUE(rows.size() == oracle.size());
+        for (std::size_t ix = 0; ix < oracle.size(); ++ix) {
+            REQUIRE_TRUE(rows[ix].kind == MidiMappingRowVM::Kind::Individual);
+            double button = -1.0;
+            REQUIRE_TRUE(vm.RowFieldValue(0, MidiConfigSection::SystemMessages, ix,
+                                          MidiMappingRowVM::Field::Button, button));
+            REQUIRE_TRUE(button == static_cast<double>(oracle[ix].button));
+            REQUIRE_TRUE(vm.UISystemMessageIndex(0, MidiConfigSection::SystemMessages, ix) ==
+                         UISystemMessageIndex(oracle[ix].message));
+            double arg = -1.0;
+            REQUIRE_TRUE(vm.RowFieldValue(0, MidiConfigSection::SystemMessages, ix,
+                                          MidiMappingRowVM::Field::MessageArg, arg));
+            REQUIRE_TRUE(arg == static_cast<double>(oracle[ix].arg));
+        }
+    };
+    auto expectTruthMatches = [&](const MidiInstrumentConfig& instrument, const std::vector<OracleRow>& oracle) {
+        const auto& messages = instrument.controllers[0].config.systemMessages;
+        REQUIRE_TRUE(messages.size() == oracle.size());
+        for (const OracleRow& row : oracle) {
+            bool found = false;
+            for (const MidiControllerSystemMessageAssociation& association : messages) {
+                if (!association.control.has_value()) {
+                    continue;
+                }
+                if (static_cast<int>(association.control->cc - 8) == row.button &&
+                    uiMessageOf(association) == row.message && argOf(association.press) == row.arg) {
+                    found = true;
+                    break;
+                }
+            }
+            REQUIRE_TRUE(found);
+        }
+    };
+    auto reopenOracleFromTruth = [&](const MidiInstrumentConfig& instrument) {
+        std::vector<OracleRow> rows;
+        for (const MidiControllerSystemMessageAssociation& association :
+             instrument.controllers[0].config.systemMessages) {
+            rows.push_back(rowFromAssociation(association));
+        }
+        return rows;
+    };
+    auto usedButton = [](const std::vector<OracleRow>& rows, int button) {
+        for (const OracleRow& row : rows) {
+            if (row.button == button) {
+                return true;
+            }
+        }
+        return false;
+    };
+
+    MidiInstrumentConfig instrument;
+    MidiControllerSlot slot = MakeTwisterSlot("twist");
+    slot.config.systemMessages.clear();
+    REQUIRE_TRUE(instrument.AddController(slot));
+    MidiConnectionState connection;
+    connection.controllers.push_back(MidiControllerConnection{});
+
+    MidiConfigViewModel vm;
+    vm.Rebuild(instrument, connection);
+    vm.ToggleConfig(0);
+    vm.ToggleSection(0, MidiConfigSection::SystemMessages);
+
+    std::vector<OracleRow> oracle;
+    std::mt19937 rng(0x5EAF);
+    const UISystemMessage messages[] = {
+        UISystemMessage::SceneSelect,
+        UISystemMessage::SelectParamBank,
+        UISystemMessage::HoldGestureSelect,
+    };
+
+    for (int step = 0; step < 400; ++step) {
+        const int action = static_cast<int>(rng() % 6);
+        std::string reason;
+        MidiInstrumentConfig out;
+        if (action == 0 && oracle.size() < 6) {
+            REQUIRE_TRUE(vm.AddSingle(0, MidiConfigSection::SystemMessages,
+                                      MidiMappingRowVM::RowGroup::System, out, &reason));
+            instrument = out;
+            vm.Rebuild(instrument, connection);
+            OracleRow row;
+            for (int button = 0; button < 6; ++button) {
+                if (!usedButton(oracle, button)) {
+                    row.button = button;
+                    break;
+                }
+            }
+            std::size_t nextArg = 0;
+            bool used = true;
+            while (used) {
+                used = false;
+                for (const OracleRow& existing : oracle) {
+                    if (existing.message == UISystemMessage::SceneSelect && existing.arg == nextArg) {
+                        used = true;
+                        ++nextArg;
+                        break;
+                    }
+                }
+            }
+            row.arg = nextArg;
+            oracle.push_back(row);
+        } else if (action == 1 && !oracle.empty()) {
+            const std::size_t ix = static_cast<std::size_t>(rng() % oracle.size());
+            const UISystemMessage message = messages[rng() % 3];
+            REQUIRE_TRUE(vm.ApplyMappingEdit(0, MidiConfigSection::SystemMessages, ix,
+                                             MidiMappingRowVM::Field::MessageKind,
+                                             static_cast<double>(UISystemMessageIndex(message)), out, &reason));
+            instrument = out;
+            vm.Rebuild(instrument, connection);
+            oracle[ix].message = message;
+        } else if (action == 2 && !oracle.empty()) {
+            const std::size_t ix = static_cast<std::size_t>(rng() % oracle.size());
+            const std::size_t arg = static_cast<std::size_t>(rng() % 9);
+            REQUIRE_TRUE(vm.ApplyMappingEdit(0, MidiConfigSection::SystemMessages, ix,
+                                             MidiMappingRowVM::Field::MessageArg,
+                                             static_cast<double>(arg), out, &reason));
+            instrument = out;
+            vm.Rebuild(instrument, connection);
+            oracle[ix].arg = arg;
+        } else if (action == 3 && !oracle.empty()) {
+            const std::size_t ix = static_cast<std::size_t>(rng() % oracle.size());
+            int button = oracle[ix].button;
+            for (int candidate = 0; candidate < 6; ++candidate) {
+                if (!usedButton(oracle, candidate) || candidate == oracle[ix].button) {
+                    button = candidate;
+                    break;
+                }
+            }
+            REQUIRE_TRUE(vm.ApplyMappingEdit(0, MidiConfigSection::SystemMessages, ix,
+                                             MidiMappingRowVM::Field::Button,
+                                             static_cast<double>(button), out, &reason));
+            instrument = out;
+            vm.Rebuild(instrument, connection);
+            oracle[ix].button = button;
+        } else if (action == 4 && !oracle.empty()) {
+            const std::size_t ix = static_cast<std::size_t>(rng() % oracle.size());
+            REQUIRE_TRUE(vm.DeleteRow(0, MidiConfigSection::SystemMessages, ix, out, &reason));
+            instrument = out;
+            vm.Rebuild(instrument, connection);
+            oracle.erase(oracle.begin() + static_cast<std::ptrdiff_t>(ix));
+        } else {
+            vm.ToggleSection(0, MidiConfigSection::SystemMessages);
+            vm.ToggleSection(0, MidiConfigSection::SystemMessages);
+            oracle = reopenOracleFromTruth(instrument);
+        }
+
+        expectMatches(vm, oracle);
+        expectTruthMatches(instrument, oracle);
+    }
+}
+
+TEST_CASE(GenericSystemBlocksRandomizedOpenSessionOracle) {
+    struct OracleBlock {
+        int startCc = 0;
+        int endCc = 0;
+        synth::BlockableMessage message = synth::BlockableMessage::SceneSelect;
+        std::size_t startArg = 0;
+    };
+
+    auto messageTypeIndex = [](synth::BlockableMessage message) {
+        switch (message) {
+            case synth::BlockableMessage::SceneSelect:
+                return 0;
+            case synth::BlockableMessage::BankSelect:
+                return 1;
+            case synth::BlockableMessage::GestureSelect:
+                return 2;
+        }
+        return 0;
+    };
+    auto tupleFor = [](synth::BlockableMessage message, std::size_t arg) {
+        struct Tuple {
+            synth::MessageIn::Type type;
+            std::size_t arg;
+        };
+        switch (message) {
+            case synth::BlockableMessage::SceneSelect:
+                return Tuple{synth::MessageIn::Type::SceneSelect, arg};
+            case synth::BlockableMessage::BankSelect:
+                return Tuple{synth::MessageIn::Type::SelectParamBank, arg};
+            case synth::BlockableMessage::GestureSelect:
+                return Tuple{synth::MessageIn::Type::SetGestureSelect, arg};
+        }
+        return Tuple{synth::MessageIn::Type::SceneSelect, arg};
+    };
+    auto argOf = [](const synth::MessageIn& message) {
+        switch (message.type) {
+            case synth::MessageIn::Type::SceneSelect:
+                return message.sceneIx;
+            case synth::MessageIn::Type::SelectParamBank:
+                return message.bankIx;
+            case synth::MessageIn::Type::SetGestureSelect:
+                return message.gestureIx;
+            default:
+                return std::size_t{0};
+        }
+    };
+    auto markUsed = [](const std::vector<OracleBlock>& oracle, std::size_t skipIx) {
+        std::array<bool, 128> used{};
+        for (std::size_t ix = 0; ix < oracle.size(); ++ix) {
+            if (ix == skipIx) {
+                continue;
+            }
+            for (int cc = oracle[ix].startCc; cc < oracle[ix].endCc; ++cc) {
+                if (cc >= 0 && cc < 128) {
+                    used[static_cast<std::size_t>(cc)] = true;
+                }
+            }
+        }
+        return used;
+    };
+    auto lowestFreeArg = [](const std::vector<OracleBlock>& oracle, synth::BlockableMessage message) {
+        std::vector<bool> used;
+        for (const OracleBlock& block : oracle) {
+            if (block.message != message) {
+                continue;
+            }
+            for (int offset = 0; offset < block.endCc - block.startCc; ++offset) {
+                const std::size_t arg = block.startArg + static_cast<std::size_t>(offset);
+                if (arg >= used.size()) {
+                    used.resize(arg + 1, false);
+                }
+                used[arg] = true;
+            }
+        }
+        for (std::size_t ix = 0; ix < used.size(); ++ix) {
+            if (!used[ix]) {
+                return ix;
+            }
+        }
+        return used.size();
+    };
+    auto argRangeFree = [](const std::vector<OracleBlock>& oracle, std::size_t skipIx,
+                           synth::BlockableMessage message, std::size_t startArg, std::size_t width) {
+        for (std::size_t ix = 0; ix < oracle.size(); ++ix) {
+            if (ix == skipIx || oracle[ix].message != message) {
+                continue;
+            }
+            const std::size_t otherStart = oracle[ix].startArg;
+            const std::size_t otherEnd =
+                oracle[ix].startArg + static_cast<std::size_t>(oracle[ix].endCc - oracle[ix].startCc);
+            const std::size_t endArg = startArg + width;
+            if (startArg < otherEnd && otherStart < endArg) {
+                return false;
+            }
+        }
+        return true;
+    };
+    auto lowestFreeTwoCc = [&](const std::vector<OracleBlock>& oracle) -> std::optional<int> {
+        const auto used = markUsed(oracle, SIZE_MAX);
+        for (int cc = 0; cc < 127; ++cc) {
+            if (!used[static_cast<std::size_t>(cc)] && !used[static_cast<std::size_t>(cc + 1)]) {
+                return cc;
+            }
+            if (!used[static_cast<std::size_t>(cc)]) {
+                return std::nullopt;
+            }
+        }
+        return std::nullopt;
+    };
+    auto truthMatches = [&](const MidiInstrumentConfig& instrument, const std::vector<OracleBlock>& oracle) {
+        std::vector<std::tuple<int, synth::MessageIn::Type, std::size_t>> expected;
+        for (const OracleBlock& block : oracle) {
+            for (int offset = 0; offset < block.endCc - block.startCc; ++offset) {
+                const auto tuple = tupleFor(block.message, block.startArg + static_cast<std::size_t>(offset));
+                expected.emplace_back(block.startCc + offset, tuple.type, tuple.arg);
+            }
+        }
+        const auto& messages = instrument.controllers[0].config.systemMessages;
+        REQUIRE_TRUE(messages.size() == expected.size());
+        for (const auto& [cc, type, arg] : expected) {
+            bool found = false;
+            for (const MidiControllerSystemMessageAssociation& association : messages) {
+                if (!association.control.has_value()) {
+                    continue;
+                }
+                if (association.control->channel == 0 && association.control->cc == cc &&
+                    association.press.type == type && argOf(association.press) == arg) {
+                    found = true;
+                    break;
+                }
+            }
+            REQUIRE_TRUE(found);
+        }
+    };
+    auto presentationMatches = [&](MidiConfigViewModel& vm, const std::vector<OracleBlock>& oracle) {
+        const std::vector<MidiMappingRowVM> rows = vm.SectionRows(0, MidiConfigSection::SystemMessages);
+        REQUIRE_TRUE(rows.size() == oracle.size());
+        for (std::size_t ix = 0; ix < oracle.size(); ++ix) {
+            REQUIRE_TRUE(rows[ix].kind == MidiMappingRowVM::Kind::Block);
+            double value = -1.0;
+            REQUIRE_TRUE(vm.RowFieldValue(0, MidiConfigSection::SystemMessages, ix,
+                                          MidiMappingRowVM::Field::BlockStartCc, value));
+            REQUIRE_TRUE(value == static_cast<double>(oracle[ix].startCc));
+            REQUIRE_TRUE(vm.RowFieldValue(0, MidiConfigSection::SystemMessages, ix,
+                                          MidiMappingRowVM::Field::BlockEndCc, value));
+            REQUIRE_TRUE(value == static_cast<double>(oracle[ix].endCc));
+            REQUIRE_TRUE(vm.RowFieldValue(0, MidiConfigSection::SystemMessages, ix,
+                                          MidiMappingRowVM::Field::BlockStartArg, value));
+            REQUIRE_TRUE(value == static_cast<double>(oracle[ix].startArg));
+            REQUIRE_TRUE(vm.BlockMessageTypeIndex(0, MidiConfigSection::SystemMessages, ix) ==
+                         messageTypeIndex(oracle[ix].message));
+        }
+    };
+    auto reopenOracleFromTruth = [&](const MidiInstrumentConfig& instrument) {
+        MidiConfigViewModel fresh;
+        fresh.Rebuild(instrument, MakeSingleControllerConnection());
+        const std::vector<MidiMappingRowVM> rows = fresh.SectionRows(0, MidiConfigSection::SystemMessages);
+        std::vector<OracleBlock> rebuilt;
+        for (std::size_t ix = 0; ix < rows.size(); ++ix) {
+            REQUIRE_TRUE(rows[ix].kind == MidiMappingRowVM::Kind::Block);
+            double value = 0.0;
+            REQUIRE_TRUE(fresh.RowFieldValue(0, MidiConfigSection::SystemMessages, ix,
+                                             MidiMappingRowVM::Field::BlockStartCc, value));
+            OracleBlock block;
+            block.startCc = static_cast<int>(value);
+            REQUIRE_TRUE(fresh.RowFieldValue(0, MidiConfigSection::SystemMessages, ix,
+                                             MidiMappingRowVM::Field::BlockEndCc, value));
+            block.endCc = static_cast<int>(value);
+            REQUIRE_TRUE(fresh.RowFieldValue(0, MidiConfigSection::SystemMessages, ix,
+                                             MidiMappingRowVM::Field::BlockStartArg, value));
+            block.startArg = static_cast<std::size_t>(value);
+            switch (fresh.BlockMessageTypeIndex(0, MidiConfigSection::SystemMessages, ix)) {
+                case 0:
+                    block.message = synth::BlockableMessage::SceneSelect;
+                    break;
+                case 1:
+                    block.message = synth::BlockableMessage::BankSelect;
+                    break;
+                case 2:
+                    block.message = synth::BlockableMessage::GestureSelect;
+                    break;
+                default:
+                    REQUIRE_TRUE(false);
+            }
+            rebuilt.push_back(block);
+        }
+        return rebuilt;
+    };
+
+    MidiInstrumentConfig instrument;
+    MidiControllerSlot slot = MakeGenericSlot("generic");
+    REQUIRE_TRUE(instrument.AddController(slot));
+    MidiConnectionState connection = MakeSingleControllerConnection();
+    MidiConfigViewModel vm;
+    vm.Rebuild(instrument, connection);
+    vm.ToggleConfig(0);
+    vm.ToggleSection(0, MidiConfigSection::SystemMessages);
+
+    std::vector<OracleBlock> oracle;
+    std::mt19937 rng(0xB10C);
+    for (int step = 0; step < 300; ++step) {
+        const int action = static_cast<int>(rng() % 6);
+        MidiInstrumentConfig out;
+        std::string reason;
+        if (action == 0 && oracle.size() < 12) {
+            const std::optional<int> startCc = lowestFreeTwoCc(oracle);
+            const std::size_t startArg = lowestFreeArg(oracle, synth::BlockableMessage::SceneSelect);
+            if (startCc.has_value() &&
+                argRangeFree(oracle, SIZE_MAX, synth::BlockableMessage::SceneSelect, startArg, 2)) {
+                REQUIRE_TRUE(vm.AddBlock(0, MidiConfigSection::SystemMessages,
+                                         MidiMappingRowVM::RowGroup::System, out, &reason));
+                instrument = out;
+                vm.Rebuild(instrument, connection);
+                oracle.push_back(OracleBlock{.startCc = *startCc,
+                                             .endCc = *startCc + 2,
+                                             .message = synth::BlockableMessage::SceneSelect,
+                                             .startArg = startArg});
+            }
+        } else if (action == 1 && !oracle.empty()) {
+            const std::size_t ix = static_cast<std::size_t>(rng() % oracle.size());
+            const std::size_t arg = static_cast<std::size_t>(rng() % 16);
+            const std::size_t width = static_cast<std::size_t>(oracle[ix].endCc - oracle[ix].startCc);
+            if (argRangeFree(oracle, ix, oracle[ix].message, arg, width)) {
+                REQUIRE_TRUE(vm.ApplyMappingEdit(0, MidiConfigSection::SystemMessages, ix,
+                                                 MidiMappingRowVM::Field::BlockStartArg,
+                                                 static_cast<double>(arg), out, &reason));
+                instrument = out;
+                vm.Rebuild(instrument, connection);
+                oracle[ix].startArg = arg;
+            }
+        } else if (action == 2 && !oracle.empty()) {
+            const std::size_t ix = static_cast<std::size_t>(rng() % oracle.size());
+            const auto message = static_cast<synth::BlockableMessage>(rng() % 3);
+            const std::size_t width = static_cast<std::size_t>(oracle[ix].endCc - oracle[ix].startCc);
+            if (argRangeFree(oracle, ix, message, oracle[ix].startArg, width)) {
+                REQUIRE_TRUE(vm.ApplyMappingEdit(0, MidiConfigSection::SystemMessages, ix,
+                                                 MidiMappingRowVM::Field::BlockMessageType,
+                                                 static_cast<double>(messageTypeIndex(message)), out, &reason));
+                instrument = out;
+                vm.Rebuild(instrument, connection);
+                oracle[ix].message = message;
+            }
+        } else if (action == 3 && !oracle.empty()) {
+            const std::size_t ix = static_cast<std::size_t>(rng() % oracle.size());
+            const auto used = markUsed(oracle, ix);
+            int newEnd = oracle[ix].startCc + 2 + static_cast<int>(rng() % 3);
+            newEnd = std::min(newEnd, 128);
+            bool valid = newEnd > oracle[ix].startCc;
+            for (int cc = oracle[ix].startCc; cc < newEnd; ++cc) {
+                if (used[static_cast<std::size_t>(cc)]) {
+                    valid = false;
+                }
+            }
+            const std::size_t width = static_cast<std::size_t>(newEnd - oracle[ix].startCc);
+            if (!argRangeFree(oracle, ix, oracle[ix].message, oracle[ix].startArg, width)) {
+                valid = false;
+            }
+            if (valid) {
+                REQUIRE_TRUE(vm.ApplyMappingEdit(0, MidiConfigSection::SystemMessages, ix,
+                                                 MidiMappingRowVM::Field::BlockEndCc,
+                                                 static_cast<double>(newEnd), out, &reason));
+                instrument = out;
+                vm.Rebuild(instrument, connection);
+                oracle[ix].endCc = newEnd;
+            }
+        } else if (action == 4 && !oracle.empty()) {
+            const std::size_t ix = static_cast<std::size_t>(rng() % oracle.size());
+            REQUIRE_TRUE(vm.DeleteRow(0, MidiConfigSection::SystemMessages, ix, out, &reason));
+            instrument = out;
+            vm.Rebuild(instrument, connection);
+            oracle.erase(oracle.begin() + static_cast<std::ptrdiff_t>(ix));
+        } else {
+            vm.ToggleSection(0, MidiConfigSection::SystemMessages);
+            vm.ToggleSection(0, MidiConfigSection::SystemMessages);
+            oracle = reopenOracleFromTruth(instrument);
+        }
+
+        presentationMatches(vm, oracle);
+        truthMatches(instrument, oracle);
+    }
 }
 
 TEST_CASE(SystemMessagePipelineSharesMessageFieldsAcrossKinds) {

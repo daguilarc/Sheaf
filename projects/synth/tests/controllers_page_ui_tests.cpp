@@ -132,6 +132,27 @@ int main()
     Require(FindNodeById(initialTree, synth::runtime_ui::NodeIds::kBack) != nullptr, "back button node");
     Require(FindNodeById(initialTree, synth::runtime_ui::NodeIds::kScroll) != nullptr, "scroll area node");
     Require(FindNodeById(initialTree, synth::runtime_ui::NodeIds::kAddButton) != nullptr, "add controller button");
+    const synth::ui::Node* wrldInput =
+        FindNodeById(initialTree, synth::runtime_ui::NodeIds::ControllerInput(0));
+    const synth::ui::Node* padsInput =
+        FindNodeById(initialTree, synth::runtime_ui::NodeIds::ControllerInput(1));
+    const synth::ui::Node* wrldOutput =
+        FindNodeById(initialTree, synth::runtime_ui::NodeIds::ControllerOutput(0));
+    const synth::ui::Node* padsOutput =
+        FindNodeById(initialTree, synth::runtime_ui::NodeIds::ControllerOutput(1));
+    const synth::ui::Node* padsVariant =
+        FindNodeById(initialTree, synth::runtime_ui::NodeIds::ControllerVariant(1));
+    const synth::ui::Node* scrollNode = FindNodeById(initialTree, synth::runtime_ui::NodeIds::kScroll);
+    Require(wrldInput != nullptr && padsInput != nullptr && wrldOutput != nullptr && padsOutput != nullptr,
+            "controller device controls render");
+    Require(padsVariant != nullptr, "launchpad variant selector renders");
+    Require(scrollNode != nullptr, "scroll area node still present");
+    Require(wrldInput->bounds.x == padsInput->bounds.x, "launchpad input aligns with other controller inputs");
+    Require(wrldOutput->bounds.x == padsOutput->bounds.x, "launchpad output aligns with other controller outputs");
+    Require(padsVariant->bounds.x > padsOutput->bounds.x + padsOutput->bounds.width,
+            "launchpad variant sits to the right of output");
+    Require(scrollNode->scrollContentWidth >= padsVariant->bounds.x + padsVariant->bounds.width,
+            "scroll content reserves launchpad variant width");
 
     surface.SetAddControllerDraft("newctl", "generic");
     surface.DispatchAction(

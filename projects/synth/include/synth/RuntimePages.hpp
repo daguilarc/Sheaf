@@ -3,9 +3,12 @@
 // JUCE-free runtime page models: sidebar, Audio page, and File page semantic
 // trees plus action names and layout helpers (OpenSpec tasks 4.1–4.3).
 
+#include "synth/PatchBrowser.hpp"
 #include "synth/PortableUI.hpp"
 
+#include <algorithm>
 #include <cstdio>
+#include <filesystem>
 #include <functional>
 #include <optional>
 #include <string>
@@ -41,6 +44,23 @@ inline constexpr const char* kFileLoad = "runtime.file.load";
 inline constexpr const char* kFileRevert = "runtime.file.revert";
 inline constexpr const char* kFilePatchName = "runtime.file.patch_name";
 inline constexpr const char* kFileStatus = "runtime.file.status";
+inline constexpr const char* kFileBrowser = "runtime.file.browser";
+inline constexpr const char* kFileBrowserTitle = "runtime.file.browser.title";
+inline constexpr const char* kFileBrowserCurrentPath = "runtime.file.browser.current_path";
+inline constexpr const char* kFileBrowserSaveName = "runtime.file.browser.save_name";
+inline constexpr const char* kFileBrowserParent = "runtime.file.browser.parent";
+inline constexpr const char* kFileBrowserConfirm = "runtime.file.browser.confirm";
+inline constexpr const char* kFileBrowserCancel = "runtime.file.browser.cancel";
+
+inline std::string FileBrowserEntry(std::size_t entryIx)
+{
+    return "runtime.file.browser.entry." + std::to_string(entryIx);
+}
+
+inline std::string FileBrowserEntryOpen(std::size_t entryIx)
+{
+    return FileBrowserEntry(entryIx) + ".open";
+}
 
 }  // namespace NodeIds
 
@@ -60,8 +80,14 @@ inline constexpr const char* kFileSave = "runtime.file.save";
 inline constexpr const char* kFileSaveAs = "runtime.file.save_as";
 inline constexpr const char* kFileLoad = "runtime.file.load";
 inline constexpr const char* kFileRevert = "runtime.file.revert";
-inline constexpr const char* kFileChooserSaveAs = "runtime.file.chooser.save_as";
-inline constexpr const char* kFileChooserLoad = "runtime.file.chooser.load";
+inline constexpr const char* kFileBrowserSaveName = "runtime.file.browser.save_name";
+inline constexpr const char* kFileBrowserSelect = "runtime.file.browser.select";
+inline constexpr const char* kFileBrowserOpen = "runtime.file.browser.open";
+inline constexpr const char* kFileBrowserParent = "runtime.file.browser.parent";
+inline constexpr const char* kFileBrowserConfirm = "runtime.file.browser.confirm";
+inline constexpr const char* kFileBrowserCancel = "runtime.file.browser.cancel";
+inline constexpr const char* kFileConfirmedSaveAs = "runtime.file.confirmed.save_as";
+inline constexpr const char* kFileConfirmedLoad = "runtime.file.confirmed.load";
 
 }  // namespace Actions
 
@@ -87,23 +113,29 @@ struct AudioPageSnapshot
     std::string statusLineText;
 };
 
-struct FilePageSnapshot
-{
-    std::string patchNameText = "(no patch)";
-    std::string statusText = "Ready";
-    bool hasCurrentPatch = false;
-};
-
-enum class FileChooserKind
+enum class FileBrowserKind
 {
     SaveAs,
     Load
 };
 
-struct FileChooserRequest
+struct FilePageSnapshot
 {
-    FileChooserKind kind = FileChooserKind::SaveAs;
+    std::string patchNameText = "(no patch)";
+    std::string statusText = "Ready";
+    bool hasCurrentPatch = false;
     std::string patchesRoot;
+    bool browserOpen = false;
+    FileBrowserKind browserKind = FileBrowserKind::SaveAs;
+    std::string browserCurrentPathText = "/";
+    std::string browserSaveName;
+    struct BrowserEntry
+    {
+        std::string name;
+        std::string relativePath;
+        bool selected = false;
+    };
+    std::vector<BrowserEntry> browserEntries;
 };
 
 namespace Layout {
@@ -119,6 +151,11 @@ inline constexpr float kStatusRowHeight = 32.0f;
 inline constexpr float kPatchButtonWidth = 84.0f;
 inline constexpr float kPatchRowHeight = 36.0f;
 inline constexpr float kPatchNameRowHeight = 28.0f;
+inline constexpr float kBrowserHeaderHeight = 30.0f;
+inline constexpr float kBrowserCommandHeight = 32.0f;
+inline constexpr float kBrowserRowHeight = 30.0f;
+inline constexpr float kBrowserButtonWidth = 78.0f;
+inline constexpr float kBrowserOpenButtonWidth = 58.0f;
 
 inline ui::Bounds SidebarRootBounds()
 {
@@ -388,26 +425,124 @@ inline ui::NodeTree BuildFilePageTree(const FilePageSnapshot& snapshot, ui::Boun
     status.bounds = {contentX, y, contentWidth, Layout::kPatchNameRowHeight};
     appendChild(std::move(status));
 
-    return tree;
-}
+    y += Layout::kPatchNameRowHeight + Layout::kRowGap;
 
-inline std::optional<FileChooserRequest> ParseFileChooserRequest(const ui::Action& action)
-{
-    if (action.name == Actions::kFileChooserSaveAs)
+    if (snapshot.browserOpen)
     {
-        FileChooserRequest request;
-        request.kind = FileChooserKind::SaveAs;
-        request.patchesRoot = action.value;
-        return request;
+        ui::Node browser;
+        browser.id = NodeIds::kFileBrowser;
+        browser.kind = ui::NodeKind::Section;
+        browser.bounds = {contentX, y, contentWidth,
+                          Layout::kBrowserHeaderHeight + Layout::kBrowserCommandHeight +
+                              Layout::kBrowserRowHeight *
+                                  static_cast<float>(std::max<std::size_t>(snapshot.browserEntries.size(), 1)) +
+                              Layout::kRowGap * 3.0f};
+        tree.nodes.front().children.push_back(browser.id);
+        const std::size_t browserIndex = tree.nodes.size();
+        tree.nodes.push_back(browser);
+
+        auto appendBrowserChild = [&](ui::Node node) {
+            node.bounds.x += contentX;
+            node.bounds.y += y;
+            tree.nodes[browserIndex].children.push_back(node.id);
+            tree.nodes.front().children.push_back(node.id);
+            tree.nodes.push_back(std::move(node));
+        };
+
+        float browserY = 0.0f;
+        ui::Node title;
+        title.id = NodeIds::kFileBrowserTitle;
+        title.kind = ui::NodeKind::Label;
+        title.text = snapshot.browserKind == FileBrowserKind::SaveAs ? "Save As" : "Load Patch";
+        title.bounds = {0.0f, browserY, contentWidth, Layout::kBrowserHeaderHeight};
+        appendBrowserChild(std::move(title));
+
+        browserY += Layout::kBrowserHeaderHeight;
+        ui::Node currentPath;
+        currentPath.id = NodeIds::kFileBrowserCurrentPath;
+        currentPath.kind = ui::NodeKind::StatusText;
+        currentPath.text = snapshot.browserCurrentPathText.empty() ? "/" : snapshot.browserCurrentPathText;
+        currentPath.bounds = {0.0f, browserY, contentWidth, Layout::kBrowserHeaderHeight};
+        appendBrowserChild(std::move(currentPath));
+
+        browserY += Layout::kBrowserHeaderHeight;
+        if (snapshot.browserKind == FileBrowserKind::SaveAs)
+        {
+            ui::Node saveName;
+            saveName.id = NodeIds::kFileBrowserSaveName;
+            saveName.kind = ui::NodeKind::TextField;
+            saveName.label = "Patch name";
+            saveName.text = snapshot.browserSaveName;
+            saveName.bounds = {0.0f, browserY, std::min(contentWidth, 260.0f), Layout::kBrowserCommandHeight};
+            saveName.action = ui::Action::Named(Actions::kFileBrowserSaveName);
+            appendBrowserChild(std::move(saveName));
+            browserY += Layout::kBrowserCommandHeight + Layout::kRowGap;
+        }
+
+        ui::Node parentButton;
+        parentButton.id = NodeIds::kFileBrowserParent;
+        parentButton.kind = ui::NodeKind::Button;
+        parentButton.label = "Parent";
+        parentButton.bounds = {0.0f, browserY, Layout::kBrowserButtonWidth, Layout::kBrowserCommandHeight};
+        parentButton.action = ui::Action::Named(Actions::kFileBrowserParent);
+        appendBrowserChild(std::move(parentButton));
+
+        ui::Node confirmButton;
+        confirmButton.id = NodeIds::kFileBrowserConfirm;
+        confirmButton.kind = ui::NodeKind::Button;
+        confirmButton.label = snapshot.browserKind == FileBrowserKind::SaveAs ? "Save" : "Load";
+        confirmButton.bounds = {Layout::kBrowserButtonWidth + Layout::kRowGap, browserY,
+                                Layout::kBrowserButtonWidth, Layout::kBrowserCommandHeight};
+        confirmButton.action = ui::Action::Named(Actions::kFileBrowserConfirm);
+        appendBrowserChild(std::move(confirmButton));
+
+        ui::Node cancelButton;
+        cancelButton.id = NodeIds::kFileBrowserCancel;
+        cancelButton.kind = ui::NodeKind::Button;
+        cancelButton.label = "Cancel";
+        cancelButton.bounds = {(Layout::kBrowserButtonWidth + Layout::kRowGap) * 2.0f, browserY,
+                               Layout::kBrowserButtonWidth, Layout::kBrowserCommandHeight};
+        cancelButton.action = ui::Action::Named(Actions::kFileBrowserCancel);
+        appendBrowserChild(std::move(cancelButton));
+
+        browserY += Layout::kBrowserCommandHeight + Layout::kRowGap;
+        if (snapshot.browserEntries.empty())
+        {
+            ui::Node empty;
+            empty.id = ui::NodeId(NodeIds::FileBrowserEntry(0));
+            empty.kind = ui::NodeKind::StatusText;
+            empty.text = "(no patch directories)";
+            empty.bounds = {0.0f, browserY, contentWidth, Layout::kBrowserRowHeight};
+            appendBrowserChild(std::move(empty));
+        }
+        else
+        {
+            for (std::size_t ix = 0; ix < snapshot.browserEntries.size(); ++ix)
+            {
+                const FilePageSnapshot::BrowserEntry& entry = snapshot.browserEntries[ix];
+                ui::Node entryButton;
+                entryButton.id = ui::NodeId(NodeIds::FileBrowserEntry(ix));
+                entryButton.kind = ui::NodeKind::Button;
+                entryButton.label = (entry.selected ? "* " : "") + entry.name;
+                entryButton.bounds = {0.0f, browserY, contentWidth - Layout::kBrowserOpenButtonWidth - Layout::kRowGap,
+                                      Layout::kBrowserRowHeight};
+                entryButton.action = ui::Action::WithValue(Actions::kFileBrowserSelect, std::to_string(ix));
+                appendBrowserChild(std::move(entryButton));
+
+                ui::Node openButton;
+                openButton.id = ui::NodeId(NodeIds::FileBrowserEntryOpen(ix));
+                openButton.kind = ui::NodeKind::Button;
+                openButton.label = "Open";
+                openButton.bounds = {contentWidth - Layout::kBrowserOpenButtonWidth, browserY,
+                                     Layout::kBrowserOpenButtonWidth, Layout::kBrowserRowHeight};
+                openButton.action = ui::Action::WithValue(Actions::kFileBrowserOpen, std::to_string(ix));
+                appendBrowserChild(std::move(openButton));
+                browserY += Layout::kBrowserRowHeight;
+            }
+        }
     }
-    if (action.name == Actions::kFileChooserLoad)
-    {
-        FileChooserRequest request;
-        request.kind = FileChooserKind::Load;
-        request.patchesRoot = action.value;
-        return request;
-    }
-    return std::nullopt;
+
+    return tree;
 }
 
 class SidebarSurface final : public ui::Surface
@@ -503,10 +638,26 @@ public:
 
     void DispatchAction(const ui::Action& action) override
     {
-        if (outerHandler_)
+        if (HandleBrowserAction(action))
         {
-            outerHandler_(action);
+            return;
         }
+        if (action.name == Actions::kFileSaveAs)
+        {
+            OpenBrowser(FileBrowserKind::SaveAs);
+            return;
+        }
+        if (action.name == Actions::kFileLoad)
+        {
+            OpenBrowser(FileBrowserKind::Load);
+            return;
+        }
+        if (action.name == Actions::kFileSave && !snapshot_.hasCurrentPatch)
+        {
+            OpenBrowser(FileBrowserKind::SaveAs);
+            return;
+        }
+        DispatchOut(action);
     }
 
     void SetContentBounds(ui::Bounds bounds)
@@ -530,9 +681,156 @@ public:
     }
 
 private:
+    void DispatchOut(const ui::Action& action)
+    {
+        if (outerHandler_)
+        {
+            outerHandler_(action);
+        }
+    }
+
+    bool HandleBrowserAction(const ui::Action& action)
+    {
+        if (action.name == Actions::kFileBrowserCancel)
+        {
+            CloseBrowser("Ready");
+            return true;
+        }
+        if (action.name == Actions::kFileBrowserSaveName)
+        {
+            snapshot_.browserSaveName = action.value;
+            return true;
+        }
+        if (action.name == Actions::kFileBrowserParent)
+        {
+            if (!browser_.EnterParent())
+            {
+                snapshot_.statusText = "Already at patch root";
+            }
+            SyncBrowserSnapshot();
+            return true;
+        }
+        if (action.name == Actions::kFileBrowserSelect)
+        {
+            browser_.Select(ParseIndex(action.value));
+            SyncBrowserSnapshot();
+            return true;
+        }
+        if (action.name == Actions::kFileBrowserOpen)
+        {
+            browser_.Select(ParseIndex(action.value));
+            if (!browser_.EnterSelected())
+            {
+                snapshot_.statusText = "Could not open patch directory";
+            }
+            SyncBrowserSnapshot();
+            return true;
+        }
+        if (action.name == Actions::kFileBrowserConfirm)
+        {
+            ConfirmBrowserSelection();
+            return true;
+        }
+        return false;
+    }
+
+    static std::size_t ParseIndex(const std::string& text)
+    {
+        try
+        {
+            return static_cast<std::size_t>(std::stoull(text));
+        }
+        catch (...)
+        {
+            return 0;
+        }
+    }
+
+    void OpenBrowser(FileBrowserKind kind)
+    {
+        if (snapshot_.patchesRoot.empty())
+        {
+            snapshot_.statusText = "Patch root is not configured";
+            return;
+        }
+        browser_.SetRoot(std::filesystem::path(snapshot_.patchesRoot));
+        snapshot_.browserOpen = true;
+        snapshot_.browserKind = kind;
+        if (kind == FileBrowserKind::SaveAs && snapshot_.browserSaveName.empty() &&
+            snapshot_.patchNameText != "(no patch)")
+        {
+            snapshot_.browserSaveName = snapshot_.patchNameText;
+        }
+        if (!browser_.Refresh())
+        {
+            snapshot_.statusText = "Could not read patch root";
+        }
+        else
+        {
+            snapshot_.statusText = kind == FileBrowserKind::SaveAs ? "Choose a patch name" : "Choose a patch";
+        }
+        SyncBrowserSnapshot();
+    }
+
+    void CloseBrowser(std::string status)
+    {
+        snapshot_.browserOpen = false;
+        snapshot_.browserEntries.clear();
+        snapshot_.browserCurrentPathText = "/";
+        snapshot_.statusText = std::move(status);
+    }
+
+    void SyncBrowserSnapshot()
+    {
+        snapshot_.browserCurrentPathText = browser_.CurrentRelativePath().empty()
+                                               ? "/"
+                                               : browser_.CurrentRelativePath().generic_string();
+        snapshot_.browserEntries.clear();
+        const std::vector<PatchBrowser::Entry>& entries = browser_.Entries();
+        snapshot_.browserEntries.reserve(entries.size());
+        for (std::size_t ix = 0; ix < entries.size(); ++ix)
+        {
+            snapshot_.browserEntries.push_back(FilePageSnapshot::BrowserEntry{
+                .name = entries[ix].name,
+                .relativePath = entries[ix].relativePath.generic_string(),
+                .selected = ix == browser_.SelectedIndex(),
+            });
+        }
+    }
+
+    void ConfirmBrowserSelection()
+    {
+        if (!snapshot_.browserOpen)
+        {
+            return;
+        }
+        if (snapshot_.browserKind == FileBrowserKind::SaveAs)
+        {
+            const std::optional<std::filesystem::path> path = browser_.ResolveSaveAsPath(snapshot_.browserSaveName);
+            if (!path.has_value())
+            {
+                snapshot_.statusText = "Enter a valid patch name";
+                return;
+            }
+            CloseBrowser("Save As requested: " + path->string());
+            DispatchOut(ui::Action::WithValue(Actions::kFileConfirmedSaveAs, path->string()));
+            return;
+        }
+
+        const std::optional<std::filesystem::path> path = browser_.SelectedLoadPath();
+        if (!path.has_value())
+        {
+            snapshot_.statusText = "Select a patch directory";
+            return;
+        }
+        CloseBrowser("Load requested: " + path->string());
+        DispatchOut(ui::Action::WithValue(Actions::kFileConfirmedLoad, path->string()));
+    }
+
     FilePageSnapshot snapshot_;
     ui::Bounds contentBounds_{0.0f, 0.0f, 640.0f, 480.0f};
     ActionHandler outerHandler_;
+    PatchBrowser browser_;
 };
 
 }  // namespace synth::runtime_ui

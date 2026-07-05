@@ -7,13 +7,13 @@
 // Task 1). Nothing here includes JUCE, so it is headlessly testable via
 // tests/viewmodel_tests.cpp.
 //
-// Edits (ApplyMappingEdit/AddController/SetEndpointRef) never mutate the
-// view model's own snapshot -- they operate on a COPY of the instrument the
-// model was last Rebuild() with, and only populate the `out` parameter when
-// the resulting instrument passes validity (SlotValidForKind + name
-// uniqueness). The host commits `out` via engine.EditInstrument and then
-// calls Rebuild() again with the freshly reconciled state; this view model
-// never assumes its own snapshot changed just because an edit returned true.
+// Edits operate through the open presentation when one exists. A section
+// opens by coalescing persisted truth into a stable, non-unique UI
+// representation; row edits mutate that representation and rewrite the
+// corresponding persisted section into `out`. Rebuild() updates the model's
+// persisted snapshot but does not reshape already-open rows. Closing a
+// section discards its presentation; reopening reconstructs the current
+// minimal presentation from persisted truth.
 
 #include "synth/MidiConfigBlocks.hpp"
 #include "synth/MidiController.hpp"
@@ -22,7 +22,6 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <functional>
 #include <map>
 #include <string>
 #include <variant>
@@ -88,12 +87,8 @@ struct MidiMappingRowVM {
         Position,
         RelativeMode,
         TurnStep,
-        PressMessage,
-        ReleaseMessage,
         MessageKind,
         MessageArg,
-        ReleaseKind,
-        ReleaseArg,
         LaunchpadX,
         LaunchpadY,
         WrldBldrX,
@@ -173,44 +168,38 @@ struct MidiMappingRowVM {
 
 enum class MidiConfigSection { Encoders, SystemMessages, Analogs };
 
-// One selectable entry in the system-message combo box rendered for a
-// SystemMessages row's PressMessage/ReleaseMessage fields. `label` is the
-// human-readable combo entry; `Build()` constructs the MessageIn this entry
-// represents (timestamp 0 -- system-message MessageIns carry no meaningful
-// timestamp until dispatched at runtime, matching how the default profile
-// factories in MidiController.cpp construct them). "None" (index 0) is only
-// legal for ReleaseMessage, where it clears the association's optional
-// release; applying it to PressMessage is refused by ApplyMappingEdit since
-// press is not optional.
-struct SystemMessageChoice {
-    std::string label;
-    std::function<MessageIn()> build;
+enum class UISystemMessage {
+    ParamIncDec,
+    ParamPush,
+    ToggleReset,
+    HoldReset,
+    ToggleRandom,
+    HoldRandom,
+    ToggleRandomMod,
+    HoldRandomMod,
+    ToggleGestureSelect,
+    HoldGestureSelect,
+    SelectParamBank,
+    Start,
+    Stop,
+    Clock,
+    SetGestureValue,
+    SceneSelect,
+    SetSceneBlend,
 };
 
-// The fixed catalog of system messages assignable via PressMessage/
-// ReleaseMessage edits. Covers every MessageIn kind and parameter the three
-// kind default-profile factories (WrldBldrDefaultProfileConfig,
-// MfTwisterDefaultProfileConfig, LaunchpadDefaultProfileConfig -- see
-// src/MidiController.cpp) actually construct with their default options, so
-// every default-profile system-message row's current press/release message
-// round-trips to a catalog index via SystemMessageChoiceIndex(). Index 0 is
-// always "None" (release-only, see above); indices are otherwise stable for
-// the lifetime of the catalog (UI code may cache them across a session).
-const std::vector<SystemMessageChoice>& SystemMessageCatalog();
-
-struct SystemMessageKindChoice {
+struct UISystemMessageChoice {
     std::string label;
-    MessageIn::Type type = MessageIn::Type::Clock;
+    UISystemMessage message = UISystemMessage::Clock;
 };
 
-const std::vector<SystemMessageKindChoice>& SystemMessageKindCatalog();
+const std::vector<UISystemMessageChoice>& UISystemMessageCatalog();
 
 // True for every field the renderer formats as a plain integer (no decimal
 // places -- Channel, Cc, SlotIx, Position, GestureIx, LaunchpadX/Y,
 // WrldBldrX/Y). False for TurnStep (a decimal float) and for the
-// non-numeric-editor fields (RelativeMode, PressMessage, ReleaseMessage --
-// RelativeMode renders as a combo box via RelativeModeCatalog(), and
-// Press/ReleaseMessage render as combos over SystemMessageCatalog()).
+// non-numeric-editor fields (RelativeMode, MessageKind, BlockMessageType).
+// MessageArg is a separate numeric field.
 bool FieldIsInteger(MidiMappingRowVM::Field field);
 
 // Display names for EncoderRelativeMode, indexed by the enum's declaration
@@ -223,7 +212,7 @@ bool FieldIsInteger(MidiMappingRowVM::Field field);
 const std::vector<std::string>& RelativeModeCatalog();
 
 // Short column-header label for a single field ("Ch", "CC", "Slot", "Pos",
-// "Gesture", "X", "Y", "Step", "Mode", "Press", "Release") -- the single
+// "Gesture", "X", "Y", "Step", "Mode", "Message") -- the single
 // source of truth the renderer uses to build a header row from a group of
 // rows' shared editableFields, so header text can never drift from what a
 // row actually renders.
@@ -234,8 +223,8 @@ const char* FieldShortLabel(MidiMappingRowVM::Field field);
 // in that enum's declaration order (0 = SceneSelect, 1 = BankSelect,
 // 2 = GestureSelect). ApplyMappingEdit's BlockMessageType case and
 // RowFieldValue's BlockMessageType case both treat their double as/return an
-// index into this vector, matching the RelativeModeCatalog/
-// SystemMessageCatalog index convention used elsewhere on this page.
+// index into this vector, matching the RelativeModeCatalog index convention
+// used elsewhere on this page.
 const std::vector<std::string>& BlockableMessageCatalog();
 
 // The fixed 3-entry catalog backing a Launchpad-kind controller row's
@@ -244,8 +233,8 @@ const std::vector<std::string>& BlockableMessageCatalog();
 // order (0 = LaunchpadX, 1 = LaunchpadProMk3, 2 = LaunchpadMiniMk3).
 // MidiConfigViewModel::LaunchpadVariantIndex()'s return value and
 // SetLaunchpadVariant()'s `variantIndex` parameter both index into this
-// vector, matching the RelativeModeCatalog/SystemMessageCatalog/
-// BlockableMessageCatalog index convention used elsewhere on this page.
+// vector, matching the RelativeModeCatalog/BlockableMessageCatalog index
+// convention used elsewhere on this page.
 const std::vector<std::string>& LaunchpadVariantCatalog();
 
 struct MidiControllerRowVM {
@@ -259,121 +248,47 @@ struct MidiControllerRowVM {
     std::vector<MidiConfigSection> sections;  // kind-filtered via KindSupport, each starts collapsed
 };
 
-// --- Presentation identity (task group 2 / design.md D5) -------------------
+// --- Open section presentation (task group 2 / design.md D5) ---------------
 //
 // Internal to MidiConfigViewModel -- exposed at namespace (not class) scope,
 // in a `detail` sub-namespace, purely so the .cpp's free helper functions
-// (identity computation/resolution, presentation building) can name these
-// types without becoming member functions; nothing outside
-// MidiConfigViewModel.cpp is expected to use `detail::` directly. A row's
-// identity survives a Rebuild() (index-shifting, canonical re-sort included)
-// by naming WHAT a row is about rather than WHERE it currently sits in the
-// config's vectors. `RowIdentity` is the discriminated union of the three
-// per-section identity shapes sru-11 specifies; `PresentationRow` pairs one
-// (or, for a block, several) identity with the row's on-screen kind/group
-// and -- for a block row -- the block struct itself (kept authoritative
-// between edits so the row can re-render without re-deriving the block from
-// its covered cells).
+// can name these types without becoming member functions; nothing outside
+// MidiConfigViewModel.cpp is expected to use `detail::` directly.
+// When a section opens, the persisted profile is coalesced into this
+// presentation. While it remains open, these rows are the authoritative
+// displayed representation. Edits mutate the rows and then rewrite the
+// persisted profile from them; Rebuild() does not rebuild these rows from
+// sorted profile truth. Closing the section discards this non-unique
+// representation, so reopening builds the current minimal representation
+// again from persisted truth.
 namespace detail {
 
-struct EncoderIdentity {
-    bool isPush = false;
-    std::size_t slotIx = 0;
-    std::size_t position = 0;
-    friend bool operator==(const EncoderIdentity&, const EncoderIdentity&) = default;
+struct EncoderModeRow {
+    EncoderRelativeMode relativeMode = EncoderRelativeMode::Signed7Bit;
 };
-struct AnalogIdentity {
-    bool isSceneBlend = false;  // true: the (at most one) scene-blend config-level row
-    std::size_t gestureIx = 0;  // meaningful iff !isSceneBlend
-    friend bool operator==(const AnalogIdentity&, const AnalogIdentity&) = default;
+
+struct EncoderStepRow {
+    float turnStep = 1.0f;
 };
-struct SystemIdentity {
-    SystemMessageSortKey key;
-    std::size_t occurrenceOrdinal = 0;  // breaks ties among cells sharing an identical key
-    friend bool operator==(const SystemIdentity&, const SystemIdentity&) = default;
+
+struct AnalogSceneBlendRow {
+    std::optional<MidiControlAddress> sceneBlend;
 };
-using RowIdentity = std::variant<EncoderIdentity, AnalogIdentity, SystemIdentity>;
+
+using PresentationRowData =
+    std::variant<std::monostate, EncoderMidiMapping, AnalogMidiMapping, MidiControllerSystemMessageAssociation,
+                 EncoderModeRow, EncoderStepRow, AnalogSceneBlendRow>;
 
 struct PresentationRow {
     MidiMappingRowVM::Kind kind = MidiMappingRowVM::Kind::Individual;
     MidiMappingRowVM::RowGroup group = MidiMappingRowVM::RowGroup::System;
-    // Individual/ConfigLevel: exactly one identity. Block: one identity per
-    // covered cell, in the block's own traversal order (matches Expand*'s
-    // cell order) -- re-resolved as a set on Rebuild(); if ANY covered
-    // identity fails to resolve the whole block row drops (a block is one
-    // edit/delete unit, so a partially-resolved block would silently
-    // discard cells the user never asked to remove).
-    std::vector<RowIdentity> identities;
-    // Block rows only: the block struct, AUTHORITATIVELY re-derived from the
-    // live config on every Rebuild() (ReSyncBlockRow in the .cpp) -- once the
-    // covered identities above resolve, Rebuild() re-runs the section's
-    // Reconstruct* over just those covered cells and overwrites this field
-    // with the result, so config truth always wins over whatever an
-    // ApplyMappingEdit/AddBlock call optimistically staged here (see
-    // SectionPresentation's doc comment below). This never RE-PARTITIONS the
-    // presentation into different/more/fewer rows (D5's "stable ... without
-    // re-grouping" -- the covered cell SET, i.e. `identities`, is untouched
-    // by this re-derivation), it only refreshes this one row's field values
-    // to match its already-fixed cell set; if that cell set no longer forms
-    // exactly one block (e.g. an address moved so cells are no longer
-    // consecutive), the row is dropped like any other unresolvable row
-    // instead of holding a stale struct.
+    // Individual/config rows carry their current values here. Block rows use
+    // `block`, because their UI representation is the block itself rather
+    // than each expanded cell.
+    PresentationRowData data;
     std::variant<std::monostate, EncoderBlock, AnalogBlock, SystemBlock> block;
 };
 
-// One controller+section's presentation: built (via MidiConfigBlocks.hpp
-// Reconstruct*) the first time SectionRows() is read for a (controllerIx,
-// section) with no existing entry here -- which in practice IS "the
-// collapsed->expanded transition" (D5), since the renderer only ever reads
-// SectionRows() for an expanded section -- and discarded by ToggleSection()
-// on an expanded->collapsed flip. While an entry exists, Rebuild()
-// re-resolves its rows' identities against the fresh snapshot (dropping
-// unresolvable ones, appending new config-only identities as individual rows
-// at their group's end) but never re-partitions rows into new blocks
-// (D5/sru-11's stability guarantee) -- see RebuildPresentationFor() in the
-// .cpp.
-//
-// Block-commit staging (review findings 1/2): a block row's identities name
-// its COVERED CELLS (see PresentationRow::identities above), so an edit that
-// changes those cells' addresses/positions/arguments (ApplyMappingEdit's
-// Block branch) or an AddBlock append changes what a subsequent
-// RebuildPresentationFor() needs to re-resolve against. Per this class's
-// edit contract (top of file / ApplyMappingEdit's doc comment below): the
-// edit methods populate `out` for the HOST to commit, and never assume it
-// landed. To still satisfy sru-11's "the block row stays in place with
-// updated values" / "+B ... the block row appears at the end of the group"
-// once the host DOES commit `out` and calls Rebuild() again (the only
-// pattern any current caller -- ControllersPage.hpp -- uses),
-// ApplyMappingEdit/AddBlock optimistically write the new block struct +
-// identities into THIS view model's own `presentations_` entry at the same
-// time they populate `out` (see MidiConfigViewModel.cpp's
-// IdentitiesForEncoderExpansion/IdentitiesForAnalogExpansion/
-// IdentitiesForSystemExpansion and their call sites). This is a same-
-// instance cache-priming hint, not a claim that the edit landed: if the
-// host discards `out`, the next real Rebuild() re-resolves this row's
-// identities against whatever config actually exists. Two cases:
-//   - The staged identities no longer resolve at all (an edit that changed
-//     which cells the row covers, e.g. a BlockStartPos/BlockStartCc edit) --
-//     the row drops and its cells re-append as individuals below, same as
-//     any other stale identity.
-//   - The staged identities STILL resolve (e.g. a Channel-only edit, which
-//     never changes identity) but now point at cells whose VALUES don't
-//     match the staged struct (the discarded edit's values, or whatever a
-//     patch load happened to land) -- PresentationRow::block's doc comment
-//     above covers this: Rebuild() re-derives the block struct from those
-//     resolved cells' ACTUAL config values (ReSyncBlockRow), so the row
-//     heals to config truth rather than keeping the stale staged struct.
-// Either way it cannot corrupt anything, and a host that always commits
-// `out` before its next Rebuild() (the only pattern any current caller
-// uses) sees the row stay put with correct values every time.
-//
-// Erasure on controller removal (review finding 5): Rebuild() ERASES (not
-// just empties) the SectionPresentation entry for a controller name that no
-// longer resolves, and the matching ExpandState entry in expandState_ below
-// -- so a LATER controller reusing that same name (remove, then re-add) is
-// treated as a genuinely fresh appearance (lazy-rebuilds its presentation
-// from scratch on next expand, starts fully collapsed) rather than
-// inheriting the old, now-meaningless entry.
 struct SectionPresentation {
     std::vector<PresentationRow> rows;
 };
@@ -408,9 +323,9 @@ public:
     // seed a JUCE editor's initial displayed text and to revert it after a
     // refused edit. Returns false (leaving `out` untouched) for an
     // out-of-range controllerIx/rowIx, a field not advertised in this row's
-    // editableFields (see SectionRows()), or PressMessage/ReleaseMessage
-    // (those have no single numeric value -- callers use
-    // SystemMessageChoiceIndex() instead); otherwise writes the field's
+    // editableFields (see SectionRows()), or fields represented by a
+    // dedicated catalog accessor rather than a numeric scalar (MessageKind,
+    // BlockMessageType); otherwise writes the field's
     // current value into `out` and returns true. For Field::RelativeMode,
     // `out` is the current mode's index into RelativeModeCatalog() (not the
     // raw enum value), matching ApplyMappingEdit's index-based contract for
@@ -418,68 +333,44 @@ public:
     bool RowFieldValue(std::size_t controllerIx, MidiConfigSection section, std::size_t rowIx,
                        MidiMappingRowVM::Field field, double& out) const;
 
-    // Looks up the current press/release message of a SystemMessages row
-    // (identified the same way ApplyMappingEdit/SectionRows identify rows:
-    // (controllerIx, section, rowIx)) against SystemMessageCatalog() and
-    // returns its index there, so a JUCE combo box can preselect the row's
-    // current state. `field` must be PressMessage or ReleaseMessage; any
-    // other field, an out-of-range (controllerIx, rowIx), a non-SystemMessages
-    // section, or a message that doesn't match any catalog entry all return
-    // -1. For ReleaseMessage, an absent `release` (std::nullopt) returns 0
-    // (the catalog's "None" entry).
-    int SystemMessageChoiceIndex(std::size_t controllerIx, MidiConfigSection section, std::size_t rowIx,
-                                 MidiMappingRowVM::Field field) const;
-
-    int SystemMessageKindIndex(std::size_t controllerIx, MidiConfigSection section, std::size_t rowIx,
-                               MidiMappingRowVM::Field field) const;
+    int UISystemMessageIndex(std::size_t controllerIx, MidiConfigSection section, std::size_t rowIx) const;
 
     // Looks up a system Block row's current message type as an index into
     // BlockableMessageCatalog(), so a JUCE combo box can preselect the row's
     // current state -- the Field::BlockMessageType counterpart to
-    // SystemMessageChoiceIndex() above (RowFieldValue() deliberately refuses
+    // UISystemMessageIndex() above (RowFieldValue() deliberately refuses
     // BlockMessageType, per its own doc comment, since a message type is not
     // a single numeric value; this is the dedicated accessor callers use
-    // instead, mirroring the PressMessage/ReleaseMessage convention). Returns
+    // instead). Returns
     // -1 for a non-SystemMessages section, an out-of-range (controllerIx,
     // rowIx), or a row that is not a system Block row (an Individual/
     // ConfigLevel row, or an Encoder/Analog Block row -- neither has a
     // BlockMessageType).
     int BlockMessageTypeIndex(std::size_t controllerIx, MidiConfigSection section, std::size_t rowIx) const;
 
-    // Edits operate on a COPY of the last-Rebuild()'t instrument. On success,
-    // `out` holds the fully edited instrument for the host to commit via
-    // engine.EditInstrument (which triggers the runtime's reconcile pass);
-    // the view model's own snapshot is untouched either way -- the host is
-    // expected to Rebuild() again once the commit lands. On failure, `out`
-    // is left untouched and, if `reason` is non-null, it is set to a
-    // human-readable explanation (from SlotValidForKind, or a view-model
-    // level message for e.g. duplicate names / out-of-range indices / values
-    // that fail this field's validation -- see the .cpp for the exact domain
-    // checked per Field: Channel 0-15, Cc 0-127, SlotIx/Position/GestureIx/
-    // bank & scene indices non-negative integers, TurnStep a positive finite
-    // float, RelativeMode a valid RelativeModeCatalog() index, LaunchpadX/Y
-    // validated via LaunchpadShapeSupports for the row's launchpad
-    // controller, WrldBldrX/Y within WrldBldrPositionToCC's 0-7 grid,
-    // PressMessage/ReleaseMessage a valid SystemMessageCatalog() index
-    // (ReleaseMessage additionally accepts index 0/"None" to clear the
-    // optional release)). `value`'s domain check requires it be integral
-    // (value == std::floor(value)) for every field above except TurnStep;
-    // every index-shaped field (SlotIx/Position/GestureIx/RelativeMode/
-    // PressMessage/ReleaseMessage) additionally caps `value` at min(2^53,
-    // size_t(-1)) so it survives the later static_cast<std::size_t> without
-    // undefined behavior. Before any of the above, `field` is checked against
-    // this row's SectionRows() editableFields and refused with "field not
-    // editable for this row" if absent -- e.g. Launchpad SystemMessages rows
-    // only advertise their position fields plus PressMessage/ReleaseMessage,
-    // so a direct Channel/Cc edit on them is refused here (their paired
-    // `control` address is only ever writable via the LaunchpadX/Y path,
-    // keeping it consistent). WRLD.Bldr SystemMessages rows advertise
-    // Channel (writable directly against association.control->channel) plus
-    // WrldBldrX/WrldBldrY (which write both `wrldBldrPosition` and
-    // `control->cc` together) and PressMessage/ReleaseMessage.
+    // Edits mutate the open presentation row first, then flush the entire
+    // section from that presentation into a copy of the last Rebuild()
+    // snapshot. On success, `out` holds the fully edited instrument for the
+    // host to commit via engine.EditInstrument; the open presentation remains
+    // in the edited shape and later Rebuild() calls do not reorder it. On
+    // failure, `out` is untouched. If the field value itself is malformed or
+    // not editable, the presentation row is rolled back and
+    // `presentationChanged` (when supplied) is false. If the field value is
+    // syntactically valid but the whole section is temporarily inconsistent
+    // (for example a duplicate address while moving X/Y one coordinate at a
+    // time), the presentation remains changed, `presentationChanged` is true,
+    // and the caller can surface a warning while waiting for a later edit to
+    // make the section committable.
+    // `field` must be present in this row's SectionRows() editableFields.
+    //
+    // Numeric domains are enforced here: Channel 0-15, Cc 0-127,
+    // SlotIx/Position/GestureIx and message arguments non-negative integers,
+    // TurnStep a positive finite float, RelativeMode/System message kind
+    // indexes valid catalog positions, LaunchpadX/Y valid for the row's
+    // current Launchpad variant, and WrldBldrX/Y in the 0-7 grid.
     bool ApplyMappingEdit(std::size_t controllerIx, MidiConfigSection section, std::size_t rowIx,
                           MidiMappingRowVM::Field field, double value, MidiInstrumentConfig& out,
-                          std::string* reason = nullptr) const;
+                          std::string* reason = nullptr, bool* presentationChanged = nullptr) const;
 
     bool AddController(std::string name, MidiProfileKind kind, MidiInstrumentConfig& out,
                        std::string* reason = nullptr) const;
@@ -492,11 +383,12 @@ public:
     // Every mutating presentation method below shares ApplyMappingEdit's
     // contract: `out` is populated (and normalized via
     // NormalizeMidiProfileConfig, sru-9) only on success; on failure `out` is
-    // untouched and `reason` (if non-null) explains why. None of them mutate
-    // this view model's own snapshot or presentation state -- exactly like
-    // ApplyMappingEdit, the host commits `out` and calls Rebuild() again.
-    // rowIx always means "presentation-row index" (SectionRows()' index
-    // space), the same convention ApplyMappingEdit/RowFieldValue already use.
+    // untouched and `reason` (if non-null) explains why. Successful calls
+    // also leave the open presentation in the edited shape; the host commits
+    // `out` and calls Rebuild() again, and that Rebuild() preserves already
+    // open rows exactly as displayed. rowIx always means "presentation-row
+    // index" (SectionRows()' index space), the same convention
+    // ApplyMappingEdit/RowFieldValue already use.
 
     // True iff the row at (controllerIx, section, rowIx) may be deleted --
     // Individual and Block rows (MidiMappingRowVM::Kind), never ConfigLevel
@@ -514,9 +406,7 @@ public:
     // config element the block covers in the SAME commit (sru-11's "a block
     // delete removes all its cells in one commit"). Refused (false, `out`
     // untouched) for a ConfigLevel row, an out-of-range (controllerIx,
-    // rowIx), or a row whose identity no longer resolves against the current
-    // snapshot (should not happen for a freshly-read SectionRows() index,
-    // but guarded the same way every other index-taking method here is).
+    // rowIx), or a resulting section that fails validation.
     bool DeleteRow(std::size_t controllerIx, MidiConfigSection section, std::size_t rowIx, MidiInstrumentConfig& out,
                    std::string* reason = nullptr) const;
 
@@ -612,7 +502,8 @@ public:
     // BuildSectionRows()'s own per-group field tables (encoders: Channel,
     // Cc, SlotIx, Position; analog gesture: Channel, Cc, GestureIx; system:
     // SystemRowEditableFields(kind), i.e. SystemAddressSchema(kind)'s fields
-    // plus PressMessage/ReleaseMessage) so the two can never drift apart.
+    // plus MessageKind/MessageArg) so the two can
+    // never drift apart.
     // `group` need not be addable (AddableGroups/GroupSupportsAdd) -- this
     // answers "what would this group's columns be," independent of whether
     // adding into it is currently legal; callers needing the addable subset
@@ -680,8 +571,6 @@ private:
     std::vector<MidiMappingRowVM> BuildSectionRows(std::size_t controllerIx, MidiConfigSection section) const;
     detail::SectionPresentation& PresentationFor(std::size_t controllerIx, MidiConfigSection section) const;
     void DiscardPresentation(const std::string& name, MidiConfigSection section);
-    void RebuildPresentationFor(detail::SectionPresentation& presentation, const MidiControllerProfileConfig& config,
-                               MidiProfileKind kind, MidiConfigSection section) const;
 
     MidiInstrumentConfig instrument_;
     MidiConnectionState connection_;

@@ -2,6 +2,7 @@
 
 #include "synth/RuntimePages.hpp"
 
+#include <filesystem>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -96,6 +97,11 @@ int main()
     synth::runtime_ui::FilePageSnapshot& fileSnapshot = fileSurface.Snapshot();
     fileSnapshot.patchNameText = "(no patch)";
     fileSnapshot.statusText = "Ready";
+    const std::filesystem::path patchRoot =
+        std::filesystem::temp_directory_path() / "sheaf_runtime_pages_juce_test";
+    std::filesystem::remove_all(patchRoot);
+    std::filesystem::create_directories(patchRoot / "DemoPatch");
+    fileSnapshot.patchesRoot = patchRoot.string();
     fileSurface.SetContentBounds({0.0f, 0.0f, 640.0f, 200.0f});
 
     synth_juce::PortableComponent fileRenderer(fileSurface);
@@ -111,6 +117,18 @@ int main()
     const synth::ui::Node* patchName =
         FindNodeById(refreshedFileTree, synth::runtime_ui::NodeIds::kFilePatchName);
     Require(patchName != nullptr && patchName->text == "demo_patch", "file page state refresh updates patch name");
+
+    fileSurface.DispatchAction(synth::ui::Action::Named(synth::runtime_ui::Actions::kFileLoad));
+    fileRenderer.setSize(640, 320);
+    fileSurface.SetContentBounds({0.0f, 0.0f, 640.0f, 320.0f});
+    fileRenderer.RefreshFromSurface();
+    Require(fileRenderer.FindByNodeId(synth::runtime_ui::NodeIds::kFileBrowserTitle) != nullptr,
+            "file browser title renders");
+    Require(fileRenderer.FindByNodeId(synth::runtime_ui::NodeIds::kFileBrowserCurrentPath) != nullptr,
+            "file browser current path renders");
+    Require(fileRenderer.FindByNodeId(synth::runtime_ui::NodeIds::FileBrowserEntry(0)) != nullptr,
+            "file browser entry renders");
+    std::filesystem::remove_all(patchRoot);
 
     std::cout << "RuntimePagesJuceTests passed\n";
     return 0;

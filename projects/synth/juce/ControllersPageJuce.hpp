@@ -31,7 +31,7 @@ public:
         : m_surface(surface)
     {
         m_viewport.setViewedComponent(&m_content, false);
-        m_viewport.setScrollBarsShown(true, false);
+        m_viewport.setScrollBarsShown(true, true);
         addAndMakeVisible(m_viewport);
         RefreshFromSurface();
     }

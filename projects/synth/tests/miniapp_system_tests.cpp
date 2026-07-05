@@ -232,7 +232,7 @@ bool PopNextMessage(synth::MessageInBus& uiBus, synth::MessageIn& message) {
 }  // namespace
 
 TEST_CASE(miniapp_portable_surface_exposes_stable_ids_and_routes_actions) {
-    UseScratchPatchesRoot("portable_surface_exposes_stable_ids_and_routes_actions");
+    (void)UseScratchRuntimeDataPaths("portable_surface_exposes_stable_ids_and_routes_actions");
 
     synth::ParameterManager manager;
     synth::MessageInBus uiBus(&manager);
@@ -336,7 +336,7 @@ TEST_CASE(miniapp_portable_surface_exposes_stable_ids_and_routes_actions) {
 }
 
 TEST_CASE(miniapp_ui_model_exposes_layout_scene_labels_and_dispatch) {
-    UseScratchPatchesRoot("ui_model_exposes_layout_scene_labels_and_dispatch");
+    (void)UseScratchRuntimeDataPaths("ui_model_exposes_layout_scene_labels_and_dispatch");
 
     REQUIRE_TRUE(synth_miniapp::SceneLabel(0) == std::string("S1"));
     REQUIRE_TRUE(synth_miniapp::SceneLabel(1) == std::string("S2"));
@@ -377,7 +377,7 @@ TEST_CASE(miniapp_ui_model_exposes_layout_scene_labels_and_dispatch) {
 }
 
 TEST_CASE(miniapp_ui_snapshot_reflects_runtime_state_in_tree) {
-    UseScratchPatchesRoot("ui_snapshot_reflects_runtime_state_in_tree");
+    (void)UseScratchRuntimeDataPaths("ui_snapshot_reflects_runtime_state_in_tree");
 
     synth_rig::SynthRig<synth_miniapp::MiniApp> rig;
     rig.SetReset(true);
