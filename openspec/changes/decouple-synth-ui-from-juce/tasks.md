@@ -38,9 +38,9 @@
 
 ## 6. Boundary Cleanup And Verification
 
-- [ ] 6.1 Move or rename remaining JUCE-dependent widget files so only explicitly JUCE-owned backend files under `projects/synth/juce` and desktop runtime host paths include JUCE headers.
-- [ ] 6.2 Add a source-boundary check with an explicit allowlist for desktop runtime host files that may keep JUCE, and fail if portable synth UI, app-facing miniapp UI, runtime page producers, or JUCE-free tests include JUCE headers or refer to `juce::`.
-- [ ] 6.3 Run `make -C projects/synth test` and fix any JUCE-free compile/test regressions.
-- [ ] 6.4 Run `make -C projects/synth/apps/miniapp test` and fix JUCE backend or geometry regressions.
+- [x] 6.1 Move or rename remaining JUCE-dependent widget files so only explicitly JUCE-owned backend files under `projects/synth/juce` and desktop runtime host paths include JUCE headers.
+- [x] 6.2 Add a source-boundary check with an explicit allowlist for desktop runtime host files that may keep JUCE, and fail if portable synth UI, app-facing miniapp UI, runtime page producers, or JUCE-free tests include JUCE headers or refer to `juce::`.
+- [x] 6.3 Run `make -C projects/synth test` and fix any JUCE-free compile/test regressions.
+- [x] 6.4 Run `make -C projects/synth/apps/miniapp test` and fix JUCE backend or geometry regressions.
 - [ ] 6.5 Build the miniapp desktop app and perform a manual smoke pass for visible miniapp parity and Controllers page functionality.
-- [ ] 6.6 Update synth and miniapp documentation to describe the portable UI contract, JUCE backend role, and browser/Wasm follow-up boundary.
+- [x] 6.6 Update synth and miniapp documentation to describe the portable UI contract, JUCE backend role, and browser/Wasm follow-up boundary.

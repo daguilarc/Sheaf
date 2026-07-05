@@ -27,11 +27,14 @@ DSP_HEADERS := include/synth/DspMath.hpp include/synth/DspNumbers.hpp include/sy
 APPS_DIR := apps
 MINIAPP_DIR := $(APPS_DIR)/miniapp
 
-.PHONY: all build test miniapp apps clean
+.PHONY: all build test check-ui-boundary miniapp apps clean
 
 all: build test
 
 build: $(LIB)
+
+check-ui-boundary:
+	bash scripts/check_ui_boundary.sh
 
 $(BUILD_SENTINEL):
 	mkdir -p $(BUILD_DIR)
@@ -125,7 +128,7 @@ $(PORTABLE_UI_TEST_BIN): tests/portable_ui_tests.cpp include/synth/PortableUI.hp
 $(CONTROLLERS_PAGE_UI_TEST_BIN): tests/controllers_page_ui_tests.cpp include/synth/ControllersPageUI.hpp include/synth/MidiConfigViewModel.hpp $(LIB)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< $(LIB) -o $@
 
-test: $(TEST_BIN) $(DSP_TEST_BIN) $(MODULE_TEST_BIN) $(INSTRUMENT_TEST_BIN) $(CONTRACT_TEST_BIN) $(LOGGING_TEST_BIN) $(ENGINE_TEST_BIN) $(RIG_TEST_BIN) $(MINIAPP_SYSTEM_TEST_BIN) $(RECONCILE_TEST_BIN) $(RECONCILE_EXECUTOR_TEST_BIN) $(POLLER_TEST_BIN) $(MIDI_SENDER_TEST_BIN) $(VIEWMODEL_TEST_BIN) $(BLOCKS_TEST_BIN) $(PORTABLE_UI_TEST_BIN) $(CONTROLLERS_PAGE_UI_TEST_BIN)
+test: check-ui-boundary $(TEST_BIN) $(DSP_TEST_BIN) $(MODULE_TEST_BIN) $(INSTRUMENT_TEST_BIN) $(CONTRACT_TEST_BIN) $(LOGGING_TEST_BIN) $(ENGINE_TEST_BIN) $(RIG_TEST_BIN) $(MINIAPP_SYSTEM_TEST_BIN) $(RECONCILE_TEST_BIN) $(RECONCILE_EXECUTOR_TEST_BIN) $(POLLER_TEST_BIN) $(MIDI_SENDER_TEST_BIN) $(VIEWMODEL_TEST_BIN) $(BLOCKS_TEST_BIN) $(PORTABLE_UI_TEST_BIN) $(CONTROLLERS_PAGE_UI_TEST_BIN)
 	$(TEST_BIN)
 	$(DSP_TEST_BIN)
 	$(MODULE_TEST_BIN)

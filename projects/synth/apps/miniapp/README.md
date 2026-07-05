@@ -72,6 +72,20 @@ The data root contains:
 Patch files contain synthesizer patch data only. MIDI and audio configuration
 are stored separately in `config.json`.
 
+## Portable UI boundary
+
+The app-facing UI files in this directory are intentionally JUCE-free. Desktop
+rendering is supplied by `projects/synth/juce`, and the boundary is checked by:
+
+```text
+make -C projects/synth check-ui-boundary
+```
+
+That same split is the intended browser/Wasm path: keep `MiniAppUI.hpp` and
+the runtime page producers as portable tree/draw-command producers, then add a
+browser backend that maps those nodes to canvas/DOM and supplies browser-native
+audio, MIDI, file, and storage adapters behind the runtime boundary.
+
 ## Logging
 
 Patch command results are logged by the runtime itself

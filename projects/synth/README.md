@@ -174,6 +174,38 @@ Form-style runtime pages use semantic control nodes (`Label`, `Button`,
 `Toggle`, `Slider`, `ComboBox`, `TextField`, and related kinds) so a browser
 or other backend can map them to DOM controls without pulling in JUCE.
 
+The desktop implementation of that contract lives under `projects/synth/juce`.
+`PortableJuceBackend.hpp` hosts generic portable surfaces, while
+`RuntimePagesJuce.hpp` and `ControllersPageJuce.hpp` render runtime-owned
+semantic pages. Those files are allowed to include JUCE and translate portable
+geometry, draw commands, focus, and actions into JUCE components.
+
+Portable producers must stay under `projects/synth/include/synth` or app code
+and must not include JUCE headers or expose `juce::` types. The root Makefile's
+`check-ui-boundary` target enforces that rule with an allowlist for
+`projects/synth/juce`, the desktop runtime host files, and app entry points:
+
+```text
+make -C projects/synth check-ui-boundary
+```
+
+`make -C projects/synth test` runs the same boundary check before the
+JUCE-free test binaries.
+
+## Browser/Wasm Follow-Up Boundary
+
+A browser build should add another backend for the same portable surfaces
+instead of changing app or runtime page producers. The bespoke miniapp widgets
+already describe their visuals as draw commands; a Wasm backend can batch those
+commands into canvas/WebGL drawing. Runtime pages and the Controllers page use
+semantic nodes, so a browser backend can map them to DOM controls and route DOM
+events back as `synth::ui::Action` values.
+
+Audio, MIDI, file chooser, and patch-storage integration remain host/runtime
+responsibilities. The browser runtime should reimplement those I/O adapters
+behind the same runtime object boundary used by the JUCE desktop host, while
+keeping synth core, app UI producers, and page producers JUCE-free.
+
 ## Layout: runtime vs apps
 
 `projects/synth/runtime/` is the shared, app-agnostic JUCE application
