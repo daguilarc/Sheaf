@@ -29,12 +29,12 @@
 
 ## 5. Controllers Page Semantic Tree
 
-- [ ] 5.1 Add a JUCE-free Controllers page presentation/action layer that derives a semantic tree from `MidiConfigViewModel` and connection state.
-- [ ] 5.2 Represent controller rows, endpoint selectors, connection states, expandable config sections, mapping tables, add/delete affordances, block rows, validation status, and focus/edit lifecycle as stable semantic nodes.
-- [ ] 5.3 Route every semantic action through existing `MidiConfigViewModel` APIs and commit accepted edits through `engine.EditInstrument`.
-- [ ] 5.4 Preserve dirty refresh behavior for MIDI processor rebuilds, patch load/revert changes, endpoint reconnects, and focus-safe deferred rebuilds.
-- [ ] 5.5 Implement the JUCE Controllers page renderer over the semantic tree, improving grouping, spacing, headers, and control presentation where natural without preserving the current dense look for its own sake or removing current functionality.
-- [ ] 5.6 Add workflow tests for add controller, endpoint selection, mapping edit acceptance/refusal, add/delete row, add/delete block, empty-group add affordances, launchpad variant selection, and out-of-band refresh.
+- [x] 5.1 Add a JUCE-free Controllers page presentation/action layer that derives a semantic tree from `MidiConfigViewModel` and connection state.
+- [x] 5.2 Represent controller rows, endpoint selectors, connection states, expandable config sections, mapping tables, add/delete affordances, block rows, validation status, and focus/edit lifecycle as stable semantic nodes.
+- [x] 5.3 Route every semantic action through existing `MidiConfigViewModel` APIs and commit accepted edits through `engine.EditInstrument`.
+- [x] 5.4 Preserve dirty refresh behavior for MIDI processor rebuilds, patch load/revert changes, endpoint reconnects, and focus-safe deferred rebuilds.
+- [x] 5.5 Implement the JUCE Controllers page renderer over the semantic tree, improving grouping, spacing, headers, and control presentation where natural without preserving the current dense look for its own sake or removing current functionality.
+- [x] 5.6 Add workflow tests for add controller, endpoint selection, mapping edit acceptance/refusal, add/delete row, add/delete block, empty-group add affordances, launchpad variant selection, and out-of-band refresh.
 
 ## 6. Boundary Cleanup And Verification
 

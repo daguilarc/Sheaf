@@ -2,6 +2,8 @@
 #include "synth/PortableUI.hpp"
 #include "synth/PortableUIBuilders.hpp"
 #include "synth/RuntimePages.hpp"
+#include "synth/ControllersPageUI.hpp"
+#include "synth/MidiController.hpp"
 
 #include <optional>
 #include <stdexcept>
@@ -155,6 +157,24 @@ int main()
             synth::ui::Action::WithValue(synth::runtime_ui::Actions::kFileChooserSaveAs, "/patches"));
     Require(saveAsRequest.has_value(), "save-as chooser request parses");
     Require(saveAsRequest->kind == synth::runtime_ui::FileChooserKind::SaveAs, "save-as chooser kind");
+
+    synth::MidiInstrumentConfig controllerInstrument;
+    synth::MidiControllerSlot wrldSlot;
+    wrldSlot.name = "wrld";
+    wrldSlot.kind = synth::MidiProfileKind::WrldBldr;
+    wrldSlot.config = synth::WrldBldrDefaultProfileConfig();
+    Require(controllerInstrument.AddController(std::move(wrldSlot)), "add wrld controller");
+    synth::MidiConnectionState controllerConnection;
+    controllerConnection.controllers.push_back({});
+
+    synth::runtime_ui::ControllersPageCallbacks controllerCallbacks;
+    controllerCallbacks.instrumentSnapshot = [&controllerInstrument] { return controllerInstrument; };
+    controllerCallbacks.connectionState = [&controllerConnection] { return controllerConnection; };
+    synth::runtime_ui::ControllersPageSurface controllersSurface(std::move(controllerCallbacks));
+    controllersSurface.SetContentBounds({0.0f, 0.0f, 800.0f, 600.0f});
+    controllersSurface.MarkDirty();
+    controllersSurface.RefreshOnTick();
+    Require(controllersSurface.BuildTree().nodes.size() >= 4, "controllers surface builds semantic tree");
 
     return 0;
 }

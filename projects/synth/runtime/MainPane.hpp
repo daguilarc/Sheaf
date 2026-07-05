@@ -11,8 +11,9 @@
 // ControllersPage/AudioConfigPage; sru-6 moved the patch row into FilePage).
 // Audio and File pages render through portable semantic trees
 // (include/synth/RuntimePages.hpp) with JUCE backends in
-// projects/synth/juce/RuntimePagesJuce.hpp. ControllersPage remains a direct
-// JUCE renderer until task 5.x.
+// projects/synth/juce/RuntimePagesJuce.hpp. Controllers uses
+// include/synth/ControllersPageUI.hpp with a JUCE backend in
+// projects/synth/juce/ControllersPageJuce.hpp.
 //
 // Content-host visibility (sru-1, binding): switching pages toggles
 // juce::Component::setVisible on the portable app component and whichever of
