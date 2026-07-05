@@ -3,7 +3,7 @@
 // synth_runtime::MainPane / Sidebar — the library's main pane (Plan 4 Task 2,
 // sru-1/sru-2): a fixed-width right sidebar (Audio/Controllers/File tabs plus
 // a max-recent-deadline readout) and a content host that shows exactly one of
-// the application's own UIComponent() or a single library page at a time.
+// the application's portable UI surface or a single library page at a time.
 //
 // ShellComponent (Shell.hpp) now hosts a MainPane<App> as its only child;
 // the former patch chrome row / MidiPanel strip / AudioPanel strip layout is
@@ -14,7 +14,7 @@
 // the last placeholder (a juce::Label naming the page plus a Back button).
 //
 // Content-host visibility (sru-1, binding): switching pages toggles
-// juce::Component::setVisible on the app component and whichever of
+// juce::Component::setVisible on the portable app component and whichever of
 // {audioPage_, filePage_, controllersPage_} is relevant, it never
 // destroys/reconstructs the app component -- its state (audio keeps running
 // regardless; this is purely a UI-visibility concern) is retained across
@@ -48,6 +48,7 @@
 #include "ControllersPage.hpp"
 #include "FilePage.hpp"
 #include "synth/RuntimePagePolicy.hpp"
+#include "PortableJuceBackend.hpp"
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
@@ -112,7 +113,7 @@ private:
 };
 
 // The library main pane: Sidebar at the fixed right edge, a content host
-// filling the remainder showing either the application's UIComponent() or
+// filling the remainder showing either the application's portable surface or
 // exactly one library page (sru-1).
 template <synth::SynthApplication App>
 class MainPane : public juce::Component {
@@ -120,7 +121,11 @@ public:
     enum class Page { None, Audio, Controllers, File };
 
     explicit MainPane(Runtime<App>& runtime)
-        : runtime_(runtime), audioPage_(runtime), filePage_(runtime), controllersPage_(runtime) {
+        : runtime_(runtime)
+        , appComponent_(runtime.AppSurface())
+        , audioPage_(runtime)
+        , filePage_(runtime)
+        , controllersPage_(runtime) {
         sidebar_.audioButton_.onClick = [this] { ShowPage(Page::Audio); };
         sidebar_.controllersButton_.onClick = [this] { ShowPage(Page::Controllers); };
         sidebar_.fileButton_.onClick = [this] { ShowPage(Page::File); };
@@ -135,7 +140,8 @@ public:
         controllersPage_.onBack = [this] { ReturnFromPage(Page::Controllers); };
         addChildComponent(controllersPage_);
 
-        addAndMakeVisible(runtime_.AppComponent());
+        addAndMakeVisible(appComponent_);
+        appComponent_.RefreshFromSurface();
 
         ShowPage(Page::None);
     }
@@ -148,7 +154,7 @@ public:
         currentPage_ = page;
 
         const bool showingApp = (page == Page::None);
-        runtime_.AppComponent().setVisible(showingApp);
+        appComponent_.setVisible(showingApp);
         audioPage_.setVisible(page == Page::Audio);
         filePage_.setVisible(page == Page::File);
         controllersPage_.setVisible(page == Page::Controllers);
@@ -173,6 +179,7 @@ public:
     // status, and ControllersPage's view model stay current regardless of
     // which page is currently shown.
     void RefreshOnTick() {
+        appComponent_.RefreshFromSurface();
         audioPage_.RefreshOnTick();
         filePage_.RefreshOnTick();
         controllersPage_.RefreshOnTick();
@@ -191,7 +198,7 @@ public:
         filePage_.setBounds(area);
         controllersPage_.setBounds(area);
 
-        runtime_.AppComponent().setBounds(area);
+        appComponent_.setBounds(area);
     }
 
 private:
@@ -217,6 +224,7 @@ private:
     }
 
     Runtime<App>& runtime_;
+    synth_juce::PortableComponent appComponent_;
     Sidebar sidebar_;
     AudioConfigPage<App> audioPage_;
     FilePage<App> filePage_;

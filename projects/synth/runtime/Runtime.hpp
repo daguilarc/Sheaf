@@ -76,6 +76,7 @@
 #include "synth/AsyncLogger.hpp"
 #include "synth/Engine.hpp"
 #include "synth/PatchPersistence.hpp"
+#include "synth/PortableUI.hpp"
 #include "synth/ThreadId.hpp"
 
 #include "MidiConnectionManager.hpp"
@@ -301,7 +302,7 @@ public:
 
     synth::Engine<App>& GetEngine() { return engine_; }
 
-    juce::Component& AppComponent() { return engine_.Application().UIComponent(); }
+    synth::ui::Surface& AppSurface() { return engine_.Application().PortableSurface(); }
 
     // The per-controller MIDI connection owner (Task 4 of Plan 4):
     // ControllersPage's device combo onChange → view-model SetEndpointRef()

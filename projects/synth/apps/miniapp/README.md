@@ -1,9 +1,9 @@
 # Synth Miniapp
 
-This directory contains the real SynthMiniapp application: a small JUCE probe
-app for the synth parameter/modulation external UI/message layer, built on
-top of the shared application runtime (`projects/synth/runtime/`) instead of
-its own bespoke JUCE shell.
+This directory contains the real SynthMiniapp application: a small probe app
+for the synth parameter/modulation external UI/message layer, built on top of
+the shared application runtime (`projects/synth/runtime/`) instead of its own
+bespoke JUCE shell.
 
 ## Layout
 
@@ -15,12 +15,11 @@ its own bespoke JUCE shell.
   sine modulator, etc.) used by `MiniAppCore`. Covered by test cases in the
   JUCE-free `module_tests` binary (`projects/synth/tests/module_tests.cpp`,
   built with `-Iapps/miniapp`).
-- `MiniApp.hpp` — the JUCE-facing UI wrapper (`synth_miniapp::MiniApp`,
-  extends `MiniAppCore`). Owns the app's bespoke widgets: four
-  `synth_juce::EncoderComponent`s, the VCO waveform scope, page/bank
-  buttons, the gesture select button + value slider, three scene buttons +
-  blend slider, reset/random/random-modifier latches, and start/stop
-  buttons. Satisfies `synth::SynthApplication` (adds `UIComponent()`).
+- `MiniAppUI.hpp` — JUCE-free portable UI surface, stable node IDs, layout
+  helpers, and action routing from portable actions to `MessageIn` values.
+- `MiniApp.hpp` — application wrapper (`synth_miniapp::MiniApp`, extends
+  `MiniAppCore`) that exposes `PortableSurface()`. Satisfies
+  `synth::SynthApplication` without owning JUCE widgets.
 - `Main.cpp` — `SYNTH_RUNTIME_MAIN(synth_miniapp::MiniApp)`.
 
 ## Runtime-owned chrome
@@ -47,10 +46,10 @@ dispatching: with no current patch it opens the in-app Save As browser
 directly instead of sending a `SavePatch()` that would only come back
 `NeedsSaveAsPath`.
 
-`MiniApp::UIComponent()` only returns this app's own widget tree; `MainPane`
-hosts it alongside the Audio/Controllers/File pages and the sidebar (see
-`projects/synth/runtime/MainPane.hpp`), showing exactly one of the app or a
-library page at a time.
+`MiniApp::PortableSurface()` returns this app's portable UI tree; `MainPane`
+hosts it through the JUCE backend adapter alongside the Audio/Controllers/File
+pages and the sidebar (see `projects/synth/runtime/MainPane.hpp`), showing
+exactly one of the app or a library page at a time.
 
 ## Runtime data
 
@@ -126,9 +125,9 @@ It creates one parameter group with two demo pages (VCO, LFO), two banks
 (VCO bank mapped to the dual-VCO module's parameters, LFO bank mapped to the
 LFO speed parameter), one bank slot with four physical encoders, one gesture,
 and three scenes with unipolar sine modulators driving the LFO sources.
-Encoders send `MessageIn` values through `context->uiBus`; painting reads
-`ParameterManager::UIState` atomics off `context->uiState` and converts
-`synth::Color` to `juce::Colour` only in this app's code (`MiniApp.hpp`).
-Selecting the VCO/LFO bank buttons pushes a `SelectParamBank` message onto
-`context->uiBus`; `MiniAppCore::ProcessBlock` keeps the active parameter page
-in sync with whichever bank ends up selected, once per audio block.
+Portable UI actions send `MessageIn` values through `context->uiBus`; the JUCE
+backend under `projects/synth/juce` turns portable nodes and draw commands
+into desktop widgets and graphics calls. Selecting the VCO/LFO bank buttons
+pushes a `SelectParamBank` message onto `context->uiBus`;
+`MiniAppCore::ProcessBlock` keeps the active parameter page in sync with
+whichever bank ends up selected, once per audio block.

@@ -7,9 +7,9 @@
 
 ## 2. JUCE Backend Adapter
 
-- [ ] 2.1 Create the JUCE desktop backend adapter under `projects/synth/juce` that turns portable UI nodes and draw commands into JUCE components, graphics calls, focus handling, and input events.
-- [ ] 2.2 Move JUCE-specific color/string/rectangle/event translation helpers into explicitly JUCE-owned backend files under `projects/synth/juce`.
-- [ ] 2.3 Update the runtime shell to host portable UI surfaces through the JUCE backend, and move MainPane/page behavior toward portable producers while preserving existing startup, repaint, and shutdown ordering.
+- [x] 2.1 Create the JUCE desktop backend adapter under `projects/synth/juce` that turns portable UI nodes and draw commands into JUCE components, graphics calls, focus handling, and input events.
+- [x] 2.2 Move JUCE-specific color/string/rectangle/event translation helpers into explicitly JUCE-owned backend files under `projects/synth/juce`.
+- [x] 2.3 Update the runtime shell to host portable UI surfaces through the JUCE backend, and move MainPane/page behavior toward portable producers while preserving existing startup, repaint, and shutdown ordering.
 - [ ] 2.4 Add backend tests or geometry tests for draw-command translation of arcs, paths, text, fills, and layout bounds used by existing synth widgets.
 
 ## 3. Miniapp UI Parity
