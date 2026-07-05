@@ -3498,6 +3498,171 @@ TEST_CASE(BankSelectBlockEditableFieldsDifferFromSceneSelectBlockInSameGroup) {
     REQUIRE_TRUE(hasBankSlot(bankFields));
 }
 
+TEST_CASE(SystemRowsDoNotCoalesceUntilSectionClosesAndReopens) {
+    MidiInstrumentConfig instrument;
+    REQUIRE_TRUE(instrument.AddController(MakeGenericSlot("generic")));
+
+    MidiConfigViewModel vm;
+    MidiConnectionState connection;
+    connection.controllers.push_back(MidiControllerConnection{});
+    vm.Rebuild(instrument, connection);
+    vm.ToggleConfig(0);
+    vm.ToggleSection(0, MidiConfigSection::SystemMessages);
+
+    MidiInstrumentConfig afterFirstAdd;
+    std::string reason;
+    REQUIRE_TRUE(vm.AddSingle(0, MidiConfigSection::SystemMessages, MidiMappingRowVM::RowGroup::System,
+                              afterFirstAdd, &reason));
+    vm.Rebuild(afterFirstAdd, connection);
+
+    MidiInstrumentConfig afterSecondAdd;
+    REQUIRE_TRUE(vm.AddSingle(0, MidiConfigSection::SystemMessages, MidiMappingRowVM::RowGroup::System,
+                              afterSecondAdd, &reason));
+    vm.Rebuild(afterSecondAdd, connection);
+
+    const std::vector<MidiMappingRowVM> openRows = vm.SectionRows(0, MidiConfigSection::SystemMessages);
+    std::size_t openSingles = 0;
+    for (const MidiMappingRowVM& row : openRows) {
+        if (row.group == MidiMappingRowVM::RowGroup::System && row.kind == MidiMappingRowVM::Kind::Individual) {
+            ++openSingles;
+        }
+    }
+    REQUIRE_TRUE(openSingles >= 2);
+
+    vm.ToggleSection(0, MidiConfigSection::SystemMessages);
+    vm.ToggleSection(0, MidiConfigSection::SystemMessages);
+    const std::vector<MidiMappingRowVM> reopenedRows = vm.SectionRows(0, MidiConfigSection::SystemMessages);
+    bool sawBlock = false;
+    for (const MidiMappingRowVM& row : reopenedRows) {
+        if (row.group == MidiMappingRowVM::RowGroup::System && row.kind == MidiMappingRowVM::Kind::Block) {
+            sawBlock = true;
+        }
+    }
+    REQUIRE_TRUE(sawBlock);
+}
+
+TEST_CASE(BlockEditFlushesWithoutVisibleRegrouping) {
+    MidiConfigViewModel vm;
+    MidiInstrumentConfig instrument = MakeFourKindInstrument();
+    MidiConnectionState connection = MakeFourKindConnection();
+    vm.Rebuild(instrument, connection);
+    vm.ToggleConfig(0);
+    vm.ToggleSection(0, MidiConfigSection::Encoders);
+
+    const std::vector<MidiMappingRowVM> before = vm.SectionRows(0, MidiConfigSection::Encoders);
+    std::size_t blockIx = SIZE_MAX;
+    for (std::size_t ix = 0; ix < before.size(); ++ix) {
+        if (before[ix].group == MidiMappingRowVM::RowGroup::EncoderTurn &&
+            before[ix].kind == MidiMappingRowVM::Kind::Block) {
+            blockIx = ix;
+            break;
+        }
+    }
+    REQUIRE_TRUE(blockIx != SIZE_MAX);
+
+    MidiInstrumentConfig edited;
+    std::string reason;
+    REQUIRE_TRUE(vm.ApplyMappingEdit(0, MidiConfigSection::Encoders, blockIx,
+                                     MidiMappingRowVM::Field::BlockStartPos, 1.0, edited, &reason));
+    vm.Rebuild(edited, connection);
+
+    const std::vector<MidiMappingRowVM> after = vm.SectionRows(0, MidiConfigSection::Encoders);
+    REQUIRE_TRUE(after.size() == before.size());
+    REQUIRE_TRUE(after[blockIx].group == MidiMappingRowVM::RowGroup::EncoderTurn);
+    REQUIRE_TRUE(after[blockIx].kind == MidiMappingRowVM::Kind::Block);
+}
+
+TEST_CASE(SystemMessageRowsExposeKindAndArgumentSeparately) {
+    MidiConfigViewModel vm;
+    MidiInstrumentConfig instrument = MakeFourKindInstrument();
+    MidiConnectionState connection = MakeFourKindConnection();
+    vm.Rebuild(instrument, connection);
+    vm.ToggleConfig(0);
+    vm.ToggleSection(0, MidiConfigSection::SystemMessages);
+
+    const std::vector<MidiMappingRowVM> rows = vm.SectionRows(0, MidiConfigSection::SystemMessages);
+    bool sawKindAndArg = false;
+    for (const MidiMappingRowVM& row : rows) {
+        if (row.group != MidiMappingRowVM::RowGroup::System ||
+            row.kind != MidiMappingRowVM::Kind::Individual) {
+            continue;
+        }
+        const bool hasKind = std::find(row.editableFields.begin(), row.editableFields.end(),
+                                       MidiMappingRowVM::Field::MessageKind) != row.editableFields.end();
+        const bool hasArg = std::find(row.editableFields.begin(), row.editableFields.end(),
+                                      MidiMappingRowVM::Field::MessageArg) != row.editableFields.end();
+        if (hasKind && hasArg) {
+            sawKindAndArg = true;
+            break;
+        }
+    }
+    REQUIRE_TRUE(sawKindAndArg);
+}
+
+TEST_CASE(SystemMessagePipelineSharesMessageFieldsAcrossKinds) {
+    struct Case {
+        MidiProfileKind kind;
+        MidiControllerSlot (*makeSlot)(const char*);
+        std::vector<MidiMappingRowVM::Field> addressFields;
+    };
+    const Case cases[] = {
+        {MidiProfileKind::WrldBldr, MakeWrldBldrSlot,
+         {MidiMappingRowVM::Field::Channel, MidiMappingRowVM::Field::WrldBldrX,
+          MidiMappingRowVM::Field::WrldBldrY}},
+        {MidiProfileKind::Launchpad, MakeLaunchpadSlot,
+         {MidiMappingRowVM::Field::LaunchpadX, MidiMappingRowVM::Field::LaunchpadY}},
+        {MidiProfileKind::MfTwister, MakeTwisterSlot, {MidiMappingRowVM::Field::Button}},
+        {MidiProfileKind::Generic, MakeGenericSlot,
+         {MidiMappingRowVM::Field::Channel, MidiMappingRowVM::Field::Cc}},
+    };
+
+    for (const Case& testCase : cases) {
+        MidiInstrumentConfig instrument;
+        MidiControllerSlot slot = testCase.makeSlot("ctl");
+        slot.config.systemMessages.clear();
+        MidiControllerSystemMessageAssociation association;
+        association.press = synth::MessageIn::SceneSelect(0, 3);
+        association.feedback = association.press;
+        association.outputFeedback = true;
+        switch (testCase.kind) {
+            case MidiProfileKind::WrldBldr:
+                association.wrldBldrPosition = synth::WrldBldrSystemPosition{.channel = 5, .x = 0, .y = 0};
+                association.control = MidiControlAddress{.channel = 5, .cc = synth::WrldBldrPositionToCC(0, 0)};
+                break;
+            case MidiProfileKind::Launchpad:
+                association.launchpadPosition =
+                    synth::LaunchpadGridPosition{.controller = synth::LaunchpadController::LaunchpadX,
+                                                 .x = 0,
+                                                 .y = 0};
+                break;
+            case MidiProfileKind::MfTwister:
+                association.control = MidiControlAddress{.channel = 3, .cc = 8};
+                break;
+            case MidiProfileKind::Generic:
+                association.control = MidiControlAddress{.channel = 0, .cc = 0};
+                break;
+        }
+        slot.config.systemMessages.push_back(association);
+        REQUIRE_TRUE(instrument.AddController(slot));
+
+        MidiConnectionState connection;
+        connection.controllers.push_back(MidiControllerConnection{});
+        MidiConfigViewModel vm;
+        vm.Rebuild(instrument, connection);
+        vm.ToggleConfig(0);
+        vm.ToggleSection(0, MidiConfigSection::SystemMessages);
+
+        const std::vector<MidiMappingRowVM> rows = vm.SectionRows(0, MidiConfigSection::SystemMessages);
+        REQUIRE_TRUE(!rows.empty());
+        const std::vector<MidiMappingRowVM::Field>& fields = rows[0].editableFields;
+        REQUIRE_TRUE(std::find(fields.begin(), fields.end(), MidiMappingRowVM::Field::MessageKind) != fields.end());
+        REQUIRE_TRUE(std::find(fields.begin(), fields.end(), MidiMappingRowVM::Field::MessageArg) != fields.end());
+        for (MidiMappingRowVM::Field addressField : testCase.addressFields) {
+            REQUIRE_TRUE(std::find(fields.begin(), fields.end(), addressField) != fields.end());
+        }
+    }
+}
+
 int Main() {
     int failed = 0;
     for (const auto& test : Registry()) {

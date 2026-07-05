@@ -5,6 +5,7 @@
 
 #include <iostream>
 #include <stdexcept>
+#include <vector>
 
 namespace {
 
@@ -81,6 +82,45 @@ int main()
             "controllers add action commits immediately");
     Require(renderer.FindByNodeId(synth::runtime_ui::NodeIds::ControllerRow(controllerCountBefore)) != nullptr,
             "controllers add action renders new controller immediately");
+
+    surface.SetContentBounds({0.0f, 0.0f, 900.0f, 260.0f});
+    surface.DispatchAction(synth::ui::Action::WithValue(synth::runtime_ui::Actions::kToggleSection,
+                                                        "0:system_messages"));
+    renderer.setSize(900, 260);
+    renderer.RefreshFromSurface();
+
+    const synth::ui::NodeTree smallTree = surface.BuildTree();
+    const synth::ui::Node* scrollNode = nullptr;
+    for (const synth::ui::Node& node : smallTree.nodes)
+    {
+        if (node.id.value == synth::runtime_ui::NodeIds::kScroll)
+        {
+            scrollNode = &node;
+            break;
+        }
+    }
+    Require(scrollNode != nullptr, "controllers scroll node still exists in small viewport");
+    Require(scrollNode->scrollContentHeight > scrollNode->bounds.height,
+            "controllers scroll node reports separate content extent");
+
+    const auto rows = surface.ViewModel().SectionRows(0, synth::MidiConfigSection::SystemMessages);
+    std::vector<juce::Component*> renderedRows;
+    for (std::size_t ix = 0; ix < rows.size(); ++ix)
+    {
+        if (juce::Component* row =
+                renderer.FindByNodeId(synth::runtime_ui::NodeIds::MappingRow(0, synth::MidiConfigSection::SystemMessages, ix)))
+        {
+            renderedRows.push_back(row);
+        }
+    }
+    Require(!renderedRows.empty(), "controllers system message rows render in JUCE");
+    int maxBottom = 0;
+    for (juce::Component* row : renderedRows)
+    {
+        maxBottom = std::max(maxBottom, row->getBottom());
+    }
+    Require(maxBottom <= static_cast<int>(scrollNode->scrollContentHeight),
+            "controllers final rendered row is inside scroll content extent");
 
     std::cout << "ControllersPageJuceTests passed\n";
     return 0;

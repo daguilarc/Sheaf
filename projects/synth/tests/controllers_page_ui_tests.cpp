@@ -295,6 +295,40 @@ int main()
     Require(surface.ViewModel().Controllers()[0].inputStatus == synth::MidiEndpointStatus::Offline,
             "deferred refresh after focus released");
 
+    surface.SetContentBounds({0.0f, 0.0f, 900.0f, 260.0f});
+    surface.ViewModel().ToggleSection(0, synth::MidiConfigSection::SystemMessages);
+    surface.MarkDirty();
+    surface.RefreshOnTick();
+    const synth::ui::NodeTree scrolledTree = surface.BuildTree();
+    const synth::ui::Node* scroll = FindNodeById(scrolledTree, synth::runtime_ui::NodeIds::kScroll);
+    Require(scroll != nullptr, "scroll node exists for small viewport");
+    Require(scroll->scrollContentHeight > scroll->bounds.height, "scroll content extent exceeds viewport height");
+
+    bool sawSystemMessageKindCombo = false;
+    for (const synth::ui::Node& node : scrolledTree.nodes)
+    {
+        if (node.kind != synth::ui::NodeKind::ComboBox)
+        {
+            continue;
+        }
+        bool hasSceneSelect = false;
+        for (const synth::ui::ControlOption& option : node.options)
+        {
+            Require(option.label.find("Scene Select ") == std::string::npos,
+                    "scene select combo label does not bake argument");
+            Require(option.label.find("Bank Select ") == std::string::npos,
+                    "bank select combo label does not bake argument");
+            Require(option.label.find("Gesture Select ") == std::string::npos,
+                    "gesture select combo label does not bake argument");
+            if (option.label == "Scene Select")
+            {
+                hasSceneSelect = true;
+            }
+        }
+        sawSystemMessageKindCombo = sawSystemMessageKindCombo || hasSceneSelect;
+    }
+    Require(sawSystemMessageKindCombo, "system message kind combo uses argument-free labels");
+
     std::cout << "controllers_page_ui_tests passed\n";
     return 0;
 }
