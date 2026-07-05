@@ -988,7 +988,7 @@ private:
             disclosure.id = ui::NodeId(NodeIds::ControllerDisclosure(controllerIx));
             disclosure.kind = ui::NodeKind::Button;
             disclosure.label = rowVm.configExpanded ? "v" : ">";
-            disclosure.bounds = {0.0f, scrollY, 24.0f, ControllersLayout::kControllerHeaderHeight};
+            disclosure.bounds = {0.0f, 0.0f, 24.0f, ControllersLayout::kControllerHeaderHeight};
             disclosure.action = ui::Action::WithValue(Actions::kToggleConfig, std::to_string(controllerIx));
             appendControllerChild(std::move(disclosure));
 
@@ -996,14 +996,14 @@ private:
             nameLabel.id = ui::NodeId(NodeIds::ControllerName(controllerIx));
             nameLabel.kind = ui::NodeKind::Label;
             nameLabel.text = rowVm.name;
-            nameLabel.bounds = {28.0f, scrollY, 120.0f, ControllersLayout::kControllerHeaderHeight};
+            nameLabel.bounds = {28.0f, 0.0f, 120.0f, ControllersLayout::kControllerHeaderHeight};
             appendControllerChild(std::move(nameLabel));
 
             ui::Node kindLabel;
             kindLabel.id = ui::NodeId(NodeIds::ControllerKind(controllerIx));
             kindLabel.kind = ui::NodeKind::Label;
             kindLabel.text = MidiProfileKindName(rowVm.kind);
-            kindLabel.bounds = {152.0f, scrollY, 100.0f, ControllersLayout::kControllerHeaderHeight};
+            kindLabel.bounds = {152.0f, 0.0f, 100.0f, ControllersLayout::kControllerHeaderHeight};
             appendControllerChild(std::move(kindLabel));
 
             float headerX = 256.0f;
@@ -1018,7 +1018,8 @@ private:
                 variantCombo.label = "Variant";
                 variantCombo.options = variantOptions;
                 variantCombo.selectedOption = selectedVariant;
-                variantCombo.bounds = {headerX, scrollY, ControllersLayout::kVariantBoxWidth, ControllersLayout::kControllerHeaderHeight};
+                variantCombo.bounds = {headerX, 0.0f, ControllersLayout::kVariantBoxWidth,
+                                       ControllersLayout::kControllerHeaderHeight};
                 variantCombo.action = ui::Action::WithValue(Actions::kVariantSelect, std::to_string(controllerIx));
                 appendControllerChild(std::move(variantCombo));
                 headerX += ControllersLayout::kVariantBoxWidth + 4.0f;
@@ -1027,7 +1028,7 @@ private:
             ui::Node statusDots;
             statusDots.id = ui::NodeId(NodeIds::ControllerStatusDots(controllerIx));
             statusDots.kind = ui::NodeKind::Draw;
-            statusDots.bounds = {headerX, scrollY + ControllersLayout::kControllerHeaderHeight * 0.5f - 4.0f,
+            statusDots.bounds = {headerX, ControllersLayout::kControllerHeaderHeight * 0.5f - 4.0f,
                                  ControllersLayout::kStatusDotsWidth, 8.0f};
             statusDots.drawCommands.push_back(ui::DrawCommand::FillEllipse(
                 {0.0f, 0.0f, 8.0f, 8.0f}, ControllersLayout::EndpointStatusColor(rowVm.inputStatus)));
@@ -1045,7 +1046,7 @@ private:
             inputCombo.options =
                 ControllersLayout::BuildEndpointOptions(devices.inputs, rowVm.inputStatus, rowVm.inputDeviceLabel, selectedInput);
             inputCombo.selectedOption = selectedInput;
-            inputCombo.bounds = {headerX, scrollY, 160.0f, ControllersLayout::kControllerHeaderHeight};
+            inputCombo.bounds = {headerX, 0.0f, 160.0f, ControllersLayout::kControllerHeaderHeight};
             inputCombo.action = ui::Action::WithValue(Actions::kEndpointSelect, std::to_string(controllerIx) + ":input");
             appendControllerChild(std::move(inputCombo));
 
@@ -1059,7 +1060,7 @@ private:
                                                              rowVm.outputDeviceLabel,
                                                              selectedOutput);
             outputCombo.selectedOption = selectedOutput;
-            outputCombo.bounds = {headerX + 168.0f, scrollY, 160.0f, ControllersLayout::kControllerHeaderHeight};
+            outputCombo.bounds = {headerX + 168.0f, 0.0f, 160.0f, ControllersLayout::kControllerHeaderHeight};
             outputCombo.action = ui::Action::WithValue(Actions::kEndpointSelect, std::to_string(controllerIx) + ":output");
             appendControllerChild(std::move(outputCombo));
 
@@ -1301,7 +1302,7 @@ private:
         addName.kind = ui::NodeKind::TextField;
         addName.label = "New controller name";
         addName.text = addControllerName;
-        addName.bounds = {0.0f, scrollY, 180.0f, ControllersLayout::kAddRowHeight};
+        addName.bounds = {0.0f, 0.0f, 180.0f, ControllersLayout::kAddRowHeight};
         appendAddRowChild(std::move(addName));
 
         ui::Node addKind;
@@ -1310,14 +1311,14 @@ private:
         addKind.label = "Kind";
         addKind.options = ControllersLayout::BuildAddControllerKindOptions();
         addKind.selectedOption = addControllerKindId.empty() ? "wrldbldr" : addControllerKindId;
-        addKind.bounds = {188.0f, scrollY, 140.0f, ControllersLayout::kAddRowHeight};
+        addKind.bounds = {188.0f, 0.0f, 140.0f, ControllersLayout::kAddRowHeight};
         appendAddRowChild(std::move(addKind));
 
         ui::Node addButton;
         addButton.id = NodeIds::kAddButton;
         addButton.kind = ui::NodeKind::Button;
         addButton.label = "Add";
-        addButton.bounds = {336.0f, scrollY, 72.0f, ControllersLayout::kAddRowHeight};
+        addButton.bounds = {336.0f, 0.0f, 72.0f, ControllersLayout::kAddRowHeight};
         addButton.action = ui::Action::Named(Actions::kAddController);
         appendAddRowChild(std::move(addButton));
 

@@ -26,8 +26,13 @@ int main()
     instrument.controllers[0].name = "wrld";
     instrument.controllers[0].kind = synth::MidiProfileKind::WrldBldr;
     instrument.controllers[0].config = synth::WrldBldrDefaultProfileConfig();
+    instrument.AddController(synth::MidiControllerSlot{});
+    instrument.controllers[1].name = "launch";
+    instrument.controllers[1].kind = synth::MidiProfileKind::Launchpad;
+    instrument.controllers[1].config = synth::LaunchpadDefaultProfileConfig();
 
     synth::MidiConnectionState connection;
+    connection.controllers.push_back({});
     connection.controllers.push_back({});
 
     synth::MidiDeviceList devices;
@@ -57,6 +62,21 @@ int main()
     Require(renderer.FindByNodeId(synth::runtime_ui::NodeIds::kAddButton) != nullptr, "controllers add renders");
     Require(renderer.FindByNodeId(synth::runtime_ui::NodeIds::ControllerInput(0)) != nullptr,
             "controllers endpoint combo renders");
+
+    auto* secondRow = renderer.FindByNodeId(synth::runtime_ui::NodeIds::ControllerRow(1));
+    auto* secondName = renderer.FindByNodeId(synth::runtime_ui::NodeIds::ControllerName(1));
+    auto* addRow = renderer.FindByNodeId(synth::runtime_ui::NodeIds::kAddRow);
+    auto* addButton = renderer.FindByNodeId(synth::runtime_ui::NodeIds::kAddButton);
+    Require(secondRow != nullptr, "controllers second row renders");
+    Require(secondName != nullptr, "controllers second name renders");
+    Require(secondName->getParentComponent() == secondRow, "controllers second name belongs to second row");
+    Require(secondName->getY() >= 0 && secondName->getBottom() <= secondRow->getHeight(),
+            "controllers second row children are visible inside row");
+    Require(addRow != nullptr, "controllers add row renders");
+    Require(addButton != nullptr, "controllers add button renders");
+    Require(addButton->getParentComponent() == addRow, "controllers add button belongs to add row");
+    Require(addButton->getY() >= 0 && addButton->getBottom() <= addRow->getHeight(),
+            "controllers add row children are visible inside row");
 
     auto* addName = dynamic_cast<juce::TextEditor*>(
         renderer.FindByNodeId(synth::runtime_ui::NodeIds::kAddName));
