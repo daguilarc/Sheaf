@@ -44,12 +44,6 @@ public:
             return;
         }
 
-        if (HasFocusedEditor() && !m_tree.nodes.empty())
-        {
-            LayoutFromTree();
-            return;
-        }
-
         m_tree = m_surface.BuildTree();
         m_renderedRevision = revision;
 

@@ -10,6 +10,7 @@
 #include "synth/MidiReconcile.hpp"
 #include "synth/PortableUI.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdint>
@@ -92,6 +93,12 @@ inline std::string GroupHeader(std::size_t controllerIx, MidiConfigSection secti
     return SectionBody(controllerIx, section) + ".header." + std::to_string(headerIx);
 }
 
+inline std::string GroupColumnLabel(std::size_t controllerIx, MidiConfigSection section, std::size_t headerIx,
+                                    std::size_t fieldIx)
+{
+    return GroupHeader(controllerIx, section, headerIx) + ".column." + std::to_string(fieldIx);
+}
+
 inline std::string MappingRow(std::size_t controllerIx, MidiConfigSection section, std::size_t rowIx)
 {
     return SectionBody(controllerIx, section) + ".mapping." + std::to_string(rowIx);
@@ -148,11 +155,11 @@ inline constexpr float kStatusRowHeight = 24.0f;
 inline constexpr float kControllerHeaderHeight = 36.0f;
 inline constexpr float kSectionHeaderHeight = 28.0f;
 inline constexpr float kMappingRowHeight = 30.0f;
-inline constexpr float kGroupHeaderHeight = 36.0f;
+inline constexpr float kGroupHeaderHeight = 42.0f;
 inline constexpr float kAddRowHeight = 40.0f;
 inline constexpr float kBaseEditorWidth = 90.0f;
 inline constexpr float kDeleteButtonWidth = 22.0f;
-inline constexpr float kAddButtonWidth = 28.0f;
+inline constexpr float kAddButtonWidth = 62.0f;
 inline constexpr float kVariantBoxWidth = 140.0f;
 inline constexpr float kStatusDotsWidth = 32.0f;
 inline constexpr float kSectionMaxHeight = 220.0f;
@@ -165,9 +172,38 @@ inline int FieldEditorWidth(MidiMappingRowVM::Field field)
     {
         case Field::PressMessage:
         case Field::ReleaseMessage:
+            return 150;
         case Field::RelativeMode:
         case Field::BlockMessageType:
-            return static_cast<int>(2.0f * kBaseEditorWidth);
+            return 132;
+        case Field::TurnStep:
+            return 74;
+        case Field::Channel:
+        case Field::Cc:
+        case Field::SlotIx:
+        case Field::Position:
+        case Field::LaunchpadX:
+        case Field::LaunchpadY:
+        case Field::WrldBldrX:
+        case Field::WrldBldrY:
+        case Field::Button:
+        case Field::BlockStartCc:
+        case Field::BlockEndCc:
+        case Field::BlockStartPos:
+        case Field::BlockStartArg:
+        case Field::BlockBankSlotIx:
+        case Field::BlockStartX:
+        case Field::BlockStartY:
+        case Field::BlockEndX:
+        case Field::BlockEndY:
+            return 58;
+        case Field::GestureIx:
+            return 72;
+        case Field::SceneBlend:
+            return 84;
+        case Field::BlockRowMajor:
+        case Field::BlockOutputFeedback:
+            return 82;
         default:
             return static_cast<int>(kBaseEditorWidth);
     }
@@ -451,6 +487,7 @@ public:
     void DispatchAction(const ui::Action& action) override
     {
         HandleAction(action);
+        RefreshOnTick(/*respectFocusGuard=*/false);
         ++m_treeRevision;
         if (m_outerHandler_)
         {
@@ -491,6 +528,11 @@ public:
 
     void RefreshOnTick()
     {
+        RefreshOnTick(/*respectFocusGuard=*/true);
+    }
+
+    void RefreshOnTick(bool respectFocusGuard)
+    {
         if (!m_callbacks.connectionState || !m_callbacks.instrumentSnapshot)
         {
             return;
@@ -508,7 +550,7 @@ public:
             return;
         }
 
-        if (m_focusGuard && m_focusGuard())
+        if (respectFocusGuard && m_focusGuard && m_focusGuard())
         {
             return;
         }
@@ -1093,6 +1135,30 @@ private:
                 ui::Node sectionBody;
                 sectionBody.id = ui::NodeId(NodeIds::SectionBody(controllerIx, section));
                 sectionBody.kind = ui::NodeKind::Section;
+                const std::vector<MidiMappingRowVM> rows = vm.SectionRows(controllerIx, section);
+                auto fieldsWidth = [](const std::vector<MidiMappingRowVM::Field>& fields) {
+                    float width = 0.0f;
+                    for (MidiMappingRowVM::Field field : fields)
+                    {
+                        width += static_cast<float>(ControllersLayout::FieldEditorWidth(field));
+                    }
+                    return width;
+                };
+                float desiredSectionWidth = 420.0f;
+                for (const MidiMappingRowVM& row : rows)
+                {
+                    desiredSectionWidth = std::max(desiredSectionWidth,
+                                                   fieldsWidth(row.editableFields) +
+                                                       (row.deletable ? ControllersLayout::kDeleteButtonWidth : 0.0f));
+                }
+                for (MidiMappingRowVM::RowGroup group : vm.AddableGroups(controllerIx, section))
+                {
+                    desiredSectionWidth = std::max(desiredSectionWidth,
+                                                   fieldsWidth(vm.GroupColumnFields(controllerIx, section, group)) +
+                                                       ControllersLayout::kAddButtonWidth * 2.0f + 16.0f);
+                }
+                const float sectionWidth = std::min(scrollWidth - ControllersLayout::kSectionPadding * 2.0f,
+                                                    desiredSectionWidth + 16.0f);
                 float sectionHeight = 0.0f;
                 std::size_t headerIx = 0;
                 std::size_t mappingRowIx = 0;
@@ -1100,27 +1166,42 @@ private:
                 std::optional<std::vector<MidiMappingRowVM::Field>> previousFields;
                 std::set<MidiMappingRowVM::RowGroup> seenGroups;
 
-                const std::vector<MidiMappingRowVM> rows = vm.SectionRows(controllerIx, section);
                 auto appendSectionChild = [&](ui::Node node) {
                     sectionBody.children.push_back(node.id);
                     tree.nodes.push_back(std::move(node));
                 };
 
-                auto appendGroupHeader = [&](MidiMappingRowVM::RowGroup group, bool isFirstHeaderForGroup) {
+                auto appendGroupHeader = [&](MidiMappingRowVM::RowGroup group,
+                                             const std::vector<MidiMappingRowVM::Field>& fields,
+                                             bool isFirstHeaderForGroup) {
                     ui::Node header;
                     header.id = ui::NodeId(NodeIds::GroupHeader(controllerIx, section, headerIx));
                     header.kind = ui::NodeKind::Row;
                     header.label = ControllersLayout::RowGroupCaption(group);
-                    header.bounds = {ControllersLayout::kSectionPadding, sectionHeight, scrollWidth - ControllersLayout::kSectionPadding * 2.0f,
-                                     ControllersLayout::kGroupHeaderHeight};
+                    header.bounds = {0.0f, sectionHeight, sectionWidth, ControllersLayout::kGroupHeaderHeight};
+                    float labelX = 0.0f;
+                    const bool showColumnLabels = fields.size() > 1;
+                    for (std::size_t fieldIx = 0; showColumnLabels && fieldIx < fields.size(); ++fieldIx)
+                    {
+                        const MidiMappingRowVM::Field field = fields[fieldIx];
+                        const float fieldWidth = static_cast<float>(ControllersLayout::FieldEditorWidth(field));
+                        ui::Node label;
+                        label.id = ui::NodeId(NodeIds::GroupColumnLabel(controllerIx, section, headerIx, fieldIx));
+                        label.kind = ui::NodeKind::Label;
+                        label.text = FieldShortLabel(field);
+                        label.bounds = {labelX + 4.0f, 21.0f, std::max(1.0f, fieldWidth - 8.0f), 16.0f};
+                        header.children.push_back(label.id);
+                        tree.nodes.push_back(std::move(label));
+                        labelX += fieldWidth;
+                    }
                     if (isFirstHeaderForGroup && vm.GroupSupportsAdd(controllerIx, section, group))
                     {
                         ui::Node addSingle;
                         addSingle.id = ui::NodeId(NodeIds::GroupAddSingle(controllerIx, section, headerIx));
                         addSingle.kind = ui::NodeKind::Button;
-                        addSingle.label = "+";
-                        addSingle.bounds = {header.bounds.width - ControllersLayout::kAddButtonWidth * 2.0f - 4.0f, 0.0f,
-                                            ControllersLayout::kAddButtonWidth, ControllersLayout::kGroupHeaderHeight};
+                        addSingle.label = "Add";
+                        addSingle.bounds = {header.bounds.width - ControllersLayout::kAddButtonWidth * 2.0f - 8.0f, 5.0f,
+                                            ControllersLayout::kAddButtonWidth, 28.0f};
                         addSingle.action = ui::Action::WithValue(
                             Actions::kAddSingle,
                             std::to_string(controllerIx) + ":" + ControllersLayout::SectionToken(section) + ":" +
@@ -1133,9 +1214,9 @@ private:
                             ui::Node addBlock;
                             addBlock.id = ui::NodeId(NodeIds::GroupAddBlock(controllerIx, section, headerIx));
                             addBlock.kind = ui::NodeKind::Button;
-                            addBlock.label = "+B";
-                            addBlock.bounds = {header.bounds.width - ControllersLayout::kAddButtonWidth - 2.0f, 0.0f,
-                                               ControllersLayout::kAddButtonWidth, ControllersLayout::kGroupHeaderHeight};
+                            addBlock.label = "Block";
+                            addBlock.bounds = {header.bounds.width - ControllersLayout::kAddButtonWidth - 4.0f, 5.0f,
+                                               ControllersLayout::kAddButtonWidth, 28.0f};
                             addBlock.action = ui::Action::WithValue(
                                 Actions::kAddBlock,
                                 std::to_string(controllerIx) + ":" + ControllersLayout::SectionToken(section) + ":" +
@@ -1153,8 +1234,7 @@ private:
                     ui::Node mappingRow;
                     mappingRow.id = ui::NodeId(NodeIds::MappingRow(controllerIx, section, mappingRowIx));
                     mappingRow.kind = ui::NodeKind::Row;
-                    mappingRow.bounds = {ControllersLayout::kSectionPadding, sectionHeight,
-                                         scrollWidth - ControllersLayout::kSectionPadding * 2.0f, ControllersLayout::kMappingRowHeight};
+                    mappingRow.bounds = {0.0f, sectionHeight, sectionWidth, ControllersLayout::kMappingRowHeight};
                     float fieldX = 0.0f;
                     for (MidiMappingRowVM::Field field : rowVmRow.editableFields)
                     {
@@ -1262,7 +1342,7 @@ private:
                         *previousFields != rows[rowIx].editableFields)
                     {
                         const bool isFirstHeaderForGroup = seenGroups.insert(group).second;
-                        appendGroupHeader(group, isFirstHeaderForGroup);
+                        appendGroupHeader(group, rows[rowIx].editableFields, isFirstHeaderForGroup);
                         previousGroup = group;
                         previousFields = rows[rowIx].editableFields;
                     }
@@ -1275,11 +1355,10 @@ private:
                     {
                         continue;
                     }
-                    appendGroupHeader(group, true);
+                    appendGroupHeader(group, vm.GroupColumnFields(controllerIx, section, group), true);
                 }
 
-                sectionBody.bounds = {ControllersLayout::kSectionPadding, scrollY, scrollWidth - ControllersLayout::kSectionPadding * 2.0f,
-                                      sectionHeight};
+                sectionBody.bounds = {ControllersLayout::kSectionPadding, scrollY, sectionWidth, sectionHeight};
                 appendScrollChild(std::move(sectionBody));
                 scrollY += sectionHeight + ControllersLayout::kRowGap;
             }

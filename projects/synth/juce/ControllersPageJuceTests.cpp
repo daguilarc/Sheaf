@@ -1,4 +1,5 @@
 #include "ControllersPageJuce.hpp"
+#include "ControllersPageHarness.hpp"
 
 #include "synth/ControllersPageUI.hpp"
 
@@ -21,35 +22,9 @@ int main()
 {
     juce::ScopedJuceInitialiser_GUI juce;
 
-    synth::MidiInstrumentConfig instrument;
-    instrument.AddController(synth::MidiControllerSlot{});
-    instrument.controllers[0].name = "wrld";
-    instrument.controllers[0].kind = synth::MidiProfileKind::WrldBldr;
-    instrument.controllers[0].config = synth::WrldBldrDefaultProfileConfig();
-    instrument.AddController(synth::MidiControllerSlot{});
-    instrument.controllers[1].name = "launch";
-    instrument.controllers[1].kind = synth::MidiProfileKind::Launchpad;
-    instrument.controllers[1].config = synth::LaunchpadDefaultProfileConfig();
-
-    synth::MidiConnectionState connection;
-    connection.controllers.push_back({});
-    connection.controllers.push_back({});
-
-    synth::MidiDeviceList devices;
-    devices.inputs.push_back({"in-1", "Input One"});
-    devices.outputs.push_back({"out-1", "Output One"});
-
-    synth::runtime_ui::ControllersPageCallbacks callbacks;
-    synth::MidiInstrumentConfig liveInstrument = instrument;
-    callbacks.instrumentSnapshot = [&liveInstrument] { return liveInstrument; };
-    callbacks.connectionState = [&connection] { return connection; };
-    callbacks.enumerateDevices = [&devices] { return devices; };
-    callbacks.commitInstrument = [&liveInstrument](synth::MidiInstrumentConfig out) {
-        liveInstrument = std::move(out);
-    };
-
-    synth::runtime_ui::ControllersPageSurface surface(std::move(callbacks));
-    surface.SetEnumerateDevices(devices);
+    synth_runtime::test::ControllersHarnessFixture fixture;
+    synth::runtime_ui::ControllersPageSurface surface = fixture.MakeSurface();
+    surface.SetEnumerateDevices(fixture.state.devices);
     surface.SetContentBounds({0.0f, 0.0f, 900.0f, 700.0f});
     surface.MarkDirty();
     surface.RefreshOnTick();
@@ -70,12 +45,12 @@ int main()
     Require(secondRow != nullptr, "controllers second row renders");
     Require(secondName != nullptr, "controllers second name renders");
     Require(secondName->getParentComponent() == secondRow, "controllers second name belongs to second row");
-    Require(secondName->getY() >= 0 && secondName->getBottom() <= secondRow->getHeight(),
+    Require(synth_runtime::test::ComponentInsideParent(*secondName, *secondRow),
             "controllers second row children are visible inside row");
     Require(addRow != nullptr, "controllers add row renders");
     Require(addButton != nullptr, "controllers add button renders");
     Require(addButton->getParentComponent() == addRow, "controllers add button belongs to add row");
-    Require(addButton->getY() >= 0 && addButton->getBottom() <= addRow->getHeight(),
+    Require(synth_runtime::test::ComponentInsideParent(*addButton, *addRow),
             "controllers add row children are visible inside row");
 
     auto* addName = dynamic_cast<juce::TextEditor*>(
@@ -89,13 +64,23 @@ int main()
             "controllers no-op refresh preserves editor draft");
 
     surface.DispatchAction(synth::ui::Action::WithValue(synth::runtime_ui::Actions::kToggleConfig, "0"));
-    surface.DispatchAction(synth::ui::Action::WithValue(
-        synth::runtime_ui::Actions::kToggleSection,
-        "0:" + synth::runtime_ui::ControllersLayout::SectionToken(synth::MidiConfigSection::Encoders)));
     renderer.RefreshFromSurface();
-    Require(renderer.FindByNodeId(synth::runtime_ui::NodeIds::SectionBody(0, synth::MidiConfigSection::Encoders)) !=
+    Require(renderer.FindByNodeId(synth::runtime_ui::NodeIds::SectionToggle(0, synth::MidiConfigSection::Encoders)) !=
                 nullptr,
-            "controllers section body renders");
+            "controllers disclosure action expands sections immediately");
+
+    addName = dynamic_cast<juce::TextEditor*>(renderer.FindByNodeId(synth::runtime_ui::NodeIds::kAddName));
+    Require(addName != nullptr, "controllers add-name editor still renders after disclosure");
+    addName->setText("extra", juce::dontSendNotification);
+    const std::size_t controllerCountBefore = fixture.state.instrument.controllers.size();
+    surface.SetFocusGuard([] { return true; });
+    surface.SetAddControllerDraft(addName->getText().toStdString(), "generic");
+    surface.DispatchAction(synth::ui::Action::Named(synth::runtime_ui::Actions::kAddController));
+    renderer.RefreshFromSurface();
+    Require(fixture.state.instrument.controllers.size() == controllerCountBefore + 1,
+            "controllers add action commits immediately");
+    Require(renderer.FindByNodeId(synth::runtime_ui::NodeIds::ControllerRow(controllerCountBefore)) != nullptr,
+            "controllers add action renders new controller immediately");
 
     std::cout << "ControllersPageJuceTests passed\n";
     return 0;
