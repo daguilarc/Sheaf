@@ -26,6 +26,7 @@ struct TestSurface final : synth::ui::Surface
         return {};
     }
     void SetActionHandler(ActionHandler) override {}
+    void DispatchAction(const synth::ui::Action&) override {}
 };
 
 struct TestApp

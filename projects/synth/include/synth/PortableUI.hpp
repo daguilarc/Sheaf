@@ -140,7 +140,11 @@ public:
     using ActionHandler = std::function<void(const Action&)>;
     virtual ~Surface() = default;
     virtual NodeTree BuildTree() = 0;
+    // DispatchAction is the authoritative route for backend-originated UI
+    // actions. SetActionHandler registers an optional observer hook; it must
+    // not duplicate the surface's own action routing.
     virtual void SetActionHandler(ActionHandler handler) = 0;
+    virtual void DispatchAction(const Action& action) = 0;
 };
 
 inline DrawCommand DrawCommand::Fill(Color color) {

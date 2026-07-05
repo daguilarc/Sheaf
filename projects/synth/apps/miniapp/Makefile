@@ -25,7 +25,7 @@ include $(APP_DIR)/../../runtime/juce_build.mk
 # (that glob only covers projects/synth/juce/*.hpp and the runtime/ headers,
 # not this app's own MiniApp.hpp/MiniAppCore.hpp/DemoModulation.hpp), so a
 # rebuild is triggered when any of them change.
-APP_HEADERS := $(APP_DIR)/MiniApp.hpp $(APP_DIR)/MiniAppCore.hpp $(APP_DIR)/DemoModulation.hpp
+APP_HEADERS := $(APP_DIR)/MiniApp.hpp $(APP_DIR)/MiniAppUI.hpp $(APP_DIR)/MiniAppCore.hpp $(APP_DIR)/DemoModulation.hpp
 $(APP): $(APP_HEADERS)
 
 # EncoderComponentGeometryTests.cpp (projects/synth/juce/) is a pure-math

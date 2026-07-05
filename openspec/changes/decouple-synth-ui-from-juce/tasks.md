@@ -16,7 +16,7 @@
 
 - [ ] 3.1 Extract miniapp encoder-grid layout, button/slider metadata, scene labels, modifier state, and waveform draw descriptions into JUCE-free miniapp UI code.
 - [ ] 3.2 Port encoder, fourteen-segment display, VCO waveform, and LFO waveform rendering to emit portable draw commands while preserving existing geometry and colors.
-- [ ] 3.3 Replace direct miniapp usage of `juce::Component`, `juce::TextButton`, `juce::Slider`, `juce::Graphics`, and JUCE geometry types with portable UI nodes/events.
+- [x] 3.3 Replace direct miniapp usage of `juce::Component`, `juce::TextButton`, `juce::Slider`, `juce::Graphics`, and JUCE geometry types with portable UI nodes/events.
 - [ ] 3.4 Wire miniapp user actions through the portable event callbacks to the existing `MessageInBus` paths with the runtime timestamp provider.
 - [ ] 3.5 Add or update tests proving the miniapp application-facing UI headers compile without JUCE and that miniapp visible layout/interaction parity is preserved through the JUCE backend.
 

@@ -2,7 +2,9 @@
 #include "MidiHandlers.hpp"
 #include "PathDrawer.hpp"
 
-#include "../apps/miniapp/MiniApp.hpp"
+#include "../apps/miniapp/MiniAppUI.hpp"
+
+#include "synth/PortableUI.hpp"
 
 #include <cmath>
 #include <iostream>
@@ -31,16 +33,12 @@ void RequireTrue(bool condition, const char* label) {
     }
 }
 
-void RequireRectangle(juce::Rectangle<int> actual, juce::Rectangle<int> expected, const char* label) {
-    if (actual != expected) {
-        throw std::runtime_error(std::string(label) + " expected x=" + std::to_string(expected.getX()) +
-                                 " y=" + std::to_string(expected.getY()) +
-                                 " w=" + std::to_string(expected.getWidth()) +
-                                 " h=" + std::to_string(expected.getHeight()) + " got x=" +
-                                 std::to_string(actual.getX()) + " y=" + std::to_string(actual.getY()) +
-                                 " w=" + std::to_string(actual.getWidth()) +
-                                 " h=" + std::to_string(actual.getHeight()));
-    }
+
+void RequireBounds(synth::ui::Bounds actual, synth::ui::Bounds expected, const char* label) {
+    RequireNear(actual.x, expected.x, 0.0001f, label);
+    RequireNear(actual.y, expected.y, 0.0001f, label);
+    RequireNear(actual.width, expected.width, 0.0001f, label);
+    RequireNear(actual.height, expected.height, 0.0001f, label);
 }
 
 } // namespace
@@ -113,15 +111,15 @@ int main() {
     RequireTrue(!synth_juce::PathDrawer::ScopePointCrossesTransfer(synth_juce::PathDrawer::kNumPoints - 1, 10, 10.0),
                 "full-span transfer does not split path");
 
-    const juce::Rectangle<int> encoderArea(16, 48, 968, synth_miniapp::EncoderGridLayout::kTotalHeight);
-    RequireRectangle(synth_miniapp::EncoderGridLayout::BoundsForIndex(encoderArea, 0),
-                     juce::Rectangle<int>(26, 58, 112, 130), "encoder zero bounds");
-    RequireRectangle(synth_miniapp::EncoderGridLayout::BoundsForIndex(encoderArea, 3),
-                     juce::Rectangle<int>(422, 58, 112, 130), "encoder three bounds");
-    RequireRectangle(synth_miniapp::EncoderGridLayout::BoundsForIndex(encoderArea, 4),
-                     juce::Rectangle<int>(26, 208, 112, 130), "encoder four bounds");
-    RequireRectangle(synth_miniapp::EncoderGridLayout::BoundsForIndex(encoderArea, 6),
-                     juce::Rectangle<int>(290, 208, 112, 130), "encoder six bounds");
+    const synth::ui::Bounds encoderArea{16.0f, 48.0f, 968.0f, synth_miniapp::EncoderGridLayout::kTotalHeight};
+    RequireBounds(synth_miniapp::EncoderGridLayout::BoundsForIndex(encoderArea, 0),
+                  synth::ui::Bounds{26.0f, 58.0f, 112.0f, 130.0f}, "encoder zero bounds");
+    RequireBounds(synth_miniapp::EncoderGridLayout::BoundsForIndex(encoderArea, 3),
+                  synth::ui::Bounds{422.0f, 58.0f, 112.0f, 130.0f}, "encoder three bounds");
+    RequireBounds(synth_miniapp::EncoderGridLayout::BoundsForIndex(encoderArea, 4),
+                  synth::ui::Bounds{26.0f, 208.0f, 112.0f, 130.0f}, "encoder four bounds");
+    RequireBounds(synth_miniapp::EncoderGridLayout::BoundsForIndex(encoderArea, 6),
+                  synth::ui::Bounds{290.0f, 208.0f, 112.0f, 130.0f}, "encoder six bounds");
 
     synth_juce::MidiInHandler midiIn;
     if (midiIn.Open("__sheaf_missing_midi_input__") || midiIn.IsOpen()) {

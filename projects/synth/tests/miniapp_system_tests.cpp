@@ -1,6 +1,11 @@
+#include "MiniApp.hpp"
 #include "MiniAppCore.hpp"
-#include "synth/PatchBrowser.hpp"
+#include "MiniAppUI.hpp"
 #include "support/SynthRig.hpp"
+
+#include "synth/AppConcepts.hpp"
+#include "synth/PatchBrowser.hpp"
+#include "synth/PortableUI.hpp"
 
 #ifdef JUCE_MAJOR_VERSION
 #error "synth miniapp system tests must not see JUCE headers -- MiniAppCore must stay JUCE-free"
@@ -12,6 +17,7 @@
 #include <exception>
 #include <filesystem>
 #include <iostream>
+#include <limits>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -199,7 +205,87 @@ void RequireUnboundBankPosition(synth::BankSlot& slot, const synth::Bank& bank, 
     REQUIRE_TRUE(bank.VisibleParameter(encoderId) == nullptr);
 }
 
+const synth::ui::Node* FindNodeById(const synth::ui::NodeTree& tree, const char* id) {
+    for (const synth::ui::Node& node : tree.nodes) {
+        if (node.id == synth::ui::NodeId(id)) {
+            return &node;
+        }
+    }
+    return nullptr;
+}
+
+void RequireNodeId(const synth::ui::NodeTree& tree, const char* id) {
+    REQUIRE_TRUE(FindNodeById(tree, id) != nullptr);
+}
+
 }  // namespace
+
+TEST_CASE(miniapp_portable_surface_exposes_stable_ids_and_routes_actions) {
+    UseScratchPatchesRoot("portable_surface_exposes_stable_ids_and_routes_actions");
+
+    synth::ParameterManager manager;
+    synth::MessageInBus uiBus(&manager);
+    synth::RuntimeConfig config = synth_miniapp::MiniAppCore::Config();
+    synth::MidiInstrumentConfig instrument;
+    synth::AppContext context;
+    context.parameterManager = &manager;
+    context.uiBus = &uiBus;
+    context.config = &config;
+    context.instrument = &instrument;
+
+    std::uint64_t timestamp = 1000;
+    context.now = [&timestamp]() { return timestamp++; };
+
+    synth_miniapp::MiniApp app;
+    app.Init(&context);
+    synth::ui::Surface& surface = app.PortableSurface();
+
+    const synth::ui::NodeTree tree = surface.BuildTree();
+    RequireNodeId(tree, "miniapp.root");
+    RequireNodeId(tree, "miniapp.title");
+    RequireNodeId(tree, "miniapp.encoder.0");
+    RequireNodeId(tree, "miniapp.encoder.6");
+    RequireNodeId(tree, "miniapp.vco.scope");
+    RequireNodeId(tree, "miniapp.lfo.scope");
+    RequireNodeId(tree, "miniapp.bank.vco");
+    RequireNodeId(tree, "miniapp.bank.lfo");
+    RequireNodeId(tree, "miniapp.gesture.toggle");
+    RequireNodeId(tree, "miniapp.scene.0");
+    RequireNodeId(tree, "miniapp.scene.1");
+    RequireNodeId(tree, "miniapp.scene.2");
+    RequireNodeId(tree, "miniapp.reset");
+    RequireNodeId(tree, "miniapp.random");
+    RequireNodeId(tree, "miniapp.random_mod");
+    RequireNodeId(tree, "miniapp.start");
+    RequireNodeId(tree, "miniapp.stop");
+    RequireNodeId(tree, "miniapp.gesture.value");
+    RequireNodeId(tree, "miniapp.scene.blend");
+
+    const std::size_t queueBefore = uiBus.Size();
+    surface.DispatchAction(synth::ui::Action::Named("miniapp.start"));
+    REQUIRE_TRUE(uiBus.Size() == queueBefore + 1);
+    synth::MessageIn message;
+    REQUIRE_TRUE(uiBus.Pop(message, std::numeric_limits<std::uint64_t>::max()));
+    REQUIRE_TRUE(message.type == synth::MessageIn::Type::Start);
+
+    surface.DispatchAction(synth::ui::Action::Named("miniapp.stop"));
+    REQUIRE_TRUE(uiBus.Pop(message, std::numeric_limits<std::uint64_t>::max()));
+    REQUIRE_TRUE(message.type == synth::MessageIn::Type::Stop);
+
+    surface.DispatchAction(synth::ui::Action::WithValue("miniapp.bank.select", "1"));
+    REQUIRE_TRUE(uiBus.Pop(message, std::numeric_limits<std::uint64_t>::max()));
+    REQUIRE_TRUE(message.type == synth::MessageIn::Type::SelectParamBank);
+    REQUIRE_TRUE(message.slotIx == 0);
+    REQUIRE_TRUE(message.bankIx == 1);
+
+    surface.DispatchAction(synth::ui::Action::WithValue("miniapp.gesture.value", "0.42"));
+    REQUIRE_TRUE(uiBus.Pop(message, std::numeric_limits<std::uint64_t>::max()));
+    REQUIRE_TRUE(message.type == synth::MessageIn::Type::SetGestureValue);
+    REQUIRE_TRUE(message.gestureIx == 0);
+    REQUIRE_NEAR(message.value, 0.42f, 1e-4f);
+
+    static_assert(synth::SynthApplication<synth_miniapp::MiniApp>);
+}
 
 TEST_CASE(miniapp_rig_initializes_headlessly_and_runs) {
     synth_rig::SynthRig<synth_miniapp::MiniAppCore> rig(64, UseScratchRuntimeDataPaths("initializes_headlessly_and_runs"));

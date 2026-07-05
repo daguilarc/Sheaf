@@ -199,6 +199,7 @@ struct ConceptCoreOnlyApp {
 struct StubSurface final : synth::ui::Surface {
     synth::ui::NodeTree BuildTree() override { return {}; }
     void SetActionHandler(ActionHandler) override {}
+    void DispatchAction(const synth::ui::Action&) override {}
 };
 struct ConceptFullApp : ConceptCoreOnlyApp {
     StubSurface surface;
