@@ -90,6 +90,10 @@ struct MidiMappingRowVM {
         TurnStep,
         PressMessage,
         ReleaseMessage,
+        MessageKind,
+        MessageArg,
+        ReleaseKind,
+        ReleaseArg,
         LaunchpadX,
         LaunchpadY,
         WrldBldrX,
@@ -193,6 +197,13 @@ struct SystemMessageChoice {
 // always "None" (release-only, see above); indices are otherwise stable for
 // the lifetime of the catalog (UI code may cache them across a session).
 const std::vector<SystemMessageChoice>& SystemMessageCatalog();
+
+struct SystemMessageKindChoice {
+    std::string label;
+    MessageIn::Type type = MessageIn::Type::Clock;
+};
+
+const std::vector<SystemMessageKindChoice>& SystemMessageKindCatalog();
 
 // True for every field the renderer formats as a plain integer (no decimal
 // places -- Channel, Cc, SlotIx, Position, GestureIx, LaunchpadX/Y,
@@ -418,6 +429,9 @@ public:
     // (the catalog's "None" entry).
     int SystemMessageChoiceIndex(std::size_t controllerIx, MidiConfigSection section, std::size_t rowIx,
                                  MidiMappingRowVM::Field field) const;
+
+    int SystemMessageKindIndex(std::size_t controllerIx, MidiConfigSection section, std::size_t rowIx,
+                               MidiMappingRowVM::Field field) const;
 
     // Looks up a system Block row's current message type as an index into
     // BlockableMessageCatalog(), so a JUCE combo box can preselect the row's

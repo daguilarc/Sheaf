@@ -1617,6 +1617,14 @@ double SafeValueFor(MidiMappingRowVM::Field field) {
             return 1.0;  // "Reset press" -- always present, never "None"
         case Field::ReleaseMessage:
             return 2.0;  // "Reset release"
+        case Field::MessageKind:
+            return 13.0;  // "Scene Select" -- always present, never "None"
+        case Field::MessageArg:
+            return 0.0;
+        case Field::ReleaseKind:
+            return 3.0;  // "Reset"
+        case Field::ReleaseArg:
+            return 0.0;
         case Field::LaunchpadX:
             return 0.0;
         case Field::LaunchpadY:
@@ -3574,8 +3582,19 @@ TEST_CASE(BlockEditFlushesWithoutVisibleRegrouping) {
 
 TEST_CASE(SystemMessageRowsExposeKindAndArgumentSeparately) {
     MidiConfigViewModel vm;
-    MidiInstrumentConfig instrument = MakeFourKindInstrument();
-    MidiConnectionState connection = MakeFourKindConnection();
+    MidiInstrumentConfig instrument;
+    MidiControllerSlot slot = MakeGenericSlot("generic");
+    slot.config.systemMessages.clear();
+    MidiControllerSystemMessageAssociation association;
+    association.control = MidiControlAddress{.channel = 0, .cc = 10};
+    association.press = synth::MessageIn::SceneSelect(0, 3);
+    association.feedback = association.press;
+    association.outputFeedback = true;
+    slot.config.systemMessages.push_back(association);
+    REQUIRE_TRUE(instrument.AddController(slot));
+
+    MidiConnectionState connection;
+    connection.controllers.push_back(MidiControllerConnection{});
     vm.Rebuild(instrument, connection);
     vm.ToggleConfig(0);
     vm.ToggleSection(0, MidiConfigSection::SystemMessages);
@@ -3597,6 +3616,69 @@ TEST_CASE(SystemMessageRowsExposeKindAndArgumentSeparately) {
         }
     }
     REQUIRE_TRUE(sawKindAndArg);
+}
+
+TEST_CASE(SystemMessageKindIndexAndArgumentFieldsRoundTrip) {
+    auto kindIndex = [](synth::MessageIn::Type type) {
+        const std::vector<synth::SystemMessageKindChoice>& catalog = synth::SystemMessageKindCatalog();
+        for (std::size_t ix = 0; ix < catalog.size(); ++ix) {
+            if (catalog[ix].type == type) {
+                return static_cast<double>(ix);
+            }
+        }
+        return -1.0;
+    };
+
+    MidiInstrumentConfig instrument;
+    MidiControllerSlot slot = MakeGenericSlot("generic");
+    slot.config.systemMessages.clear();
+    MidiControllerSystemMessageAssociation association;
+    association.control = MidiControlAddress{.channel = 0, .cc = 10};
+    association.press = synth::MessageIn::SceneSelect(0, 3);
+    association.feedback = association.press;
+    association.outputFeedback = true;
+    slot.config.systemMessages.push_back(association);
+    REQUIRE_TRUE(instrument.AddController(slot));
+
+    MidiConnectionState connection;
+    connection.controllers.push_back(MidiControllerConnection{});
+
+    MidiConfigViewModel vm;
+    vm.Rebuild(instrument, connection);
+    vm.ToggleConfig(0);
+    vm.ToggleSection(0, MidiConfigSection::SystemMessages);
+
+    REQUIRE_TRUE(vm.SystemMessageKindIndex(0, MidiConfigSection::SystemMessages, 0,
+                                           MidiMappingRowVM::Field::MessageKind) ==
+                 static_cast<int>(kindIndex(synth::MessageIn::Type::SceneSelect)));
+    REQUIRE_TRUE(vm.SystemMessageKindIndex(0, MidiConfigSection::SystemMessages, 0,
+                                           MidiMappingRowVM::Field::ReleaseKind) == 0);
+
+    double value = 0.0;
+    REQUIRE_TRUE(vm.RowFieldValue(0, MidiConfigSection::SystemMessages, 0,
+                                  MidiMappingRowVM::Field::MessageArg, value));
+    REQUIRE_TRUE(value == 3.0);
+
+    MidiInstrumentConfig edited;
+    std::string reason;
+    REQUIRE_TRUE(vm.ApplyMappingEdit(0, MidiConfigSection::SystemMessages, 0,
+                                     MidiMappingRowVM::Field::MessageArg, 5.0, edited, &reason));
+    REQUIRE_TRUE(edited.controllers[0].config.systemMessages[0].press.type ==
+                 synth::MessageIn::Type::SceneSelect);
+    REQUIRE_TRUE(edited.controllers[0].config.systemMessages[0].press.sceneIx == 5);
+
+    vm.Rebuild(edited, connection);
+    MidiInstrumentConfig withRelease;
+    REQUIRE_TRUE(vm.ApplyMappingEdit(0, MidiConfigSection::SystemMessages, 0,
+                                     MidiMappingRowVM::Field::ReleaseKind,
+                                     kindIndex(synth::MessageIn::Type::SetGestureSelect), withRelease, &reason));
+    vm.Rebuild(withRelease, connection);
+    REQUIRE_TRUE(vm.ApplyMappingEdit(0, MidiConfigSection::SystemMessages, 0,
+                                     MidiMappingRowVM::Field::ReleaseArg, 4.0, edited, &reason));
+    REQUIRE_TRUE(edited.controllers[0].config.systemMessages[0].release.has_value());
+    REQUIRE_TRUE(edited.controllers[0].config.systemMessages[0].release->type ==
+                 synth::MessageIn::Type::SetGestureSelect);
+    REQUIRE_TRUE(edited.controllers[0].config.systemMessages[0].release->gestureIx == 4);
 }
 
 TEST_CASE(SystemMessagePipelineSharesMessageFieldsAcrossKinds) {

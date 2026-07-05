@@ -172,7 +172,12 @@ inline int FieldEditorWidth(MidiMappingRowVM::Field field)
     {
         case Field::PressMessage:
         case Field::ReleaseMessage:
+        case Field::MessageKind:
+        case Field::ReleaseKind:
             return 150;
+        case Field::MessageArg:
+        case Field::ReleaseArg:
+            return 74;
         case Field::RelativeMode:
         case Field::BlockMessageType:
             return 132;
@@ -998,6 +1003,8 @@ private:
         scrollArea.kind = ui::NodeKind::ScrollArea;
         const float scrollBottom = area.y + area.height - ControllersLayout::kStatusRowHeight - ControllersLayout::kRowGap - ControllersLayout::kPageMargin;
         scrollArea.bounds = {contentX, y, contentWidth, scrollBottom - y};
+        scrollArea.scrollContentWidth = contentWidth;
+        scrollArea.scrollContentHeight = scrollArea.bounds.height;
         tree.nodes.front().children.push_back(scrollArea.id);
         const std::size_t scrollAreaIndex = tree.nodes.size();
         tree.nodes.push_back(scrollArea);
@@ -1244,7 +1251,23 @@ private:
                         fieldNode.bounds = {fieldX, 0.0f, fieldWidth, ControllersLayout::kMappingRowHeight};
                         fieldX += fieldWidth;
 
-                        if (field == MidiMappingRowVM::Field::PressMessage ||
+                        if (field == MidiMappingRowVM::Field::MessageKind ||
+                            field == MidiMappingRowVM::Field::ReleaseKind)
+                        {
+                            fieldNode.kind = ui::NodeKind::ComboBox;
+                            const auto& catalog = SystemMessageKindCatalog();
+                            for (int ix = 0; ix < static_cast<int>(catalog.size()); ++ix)
+                            {
+                                if (ix == 0 && field == MidiMappingRowVM::Field::MessageKind)
+                                {
+                                    continue;
+                                }
+                                fieldNode.options.push_back({std::to_string(ix), catalog[static_cast<std::size_t>(ix)].label});
+                            }
+                            const int current = vm.SystemMessageKindIndex(controllerIx, section, mappingRowIx, field);
+                            fieldNode.selectedOption = current >= 0 ? std::to_string(current) : "0";
+                        }
+                        else if (field == MidiMappingRowVM::Field::PressMessage ||
                             field == MidiMappingRowVM::Field::ReleaseMessage)
                         {
                             fieldNode.kind = ui::NodeKind::ComboBox;
@@ -1402,7 +1425,8 @@ private:
         appendAddRowChild(std::move(addButton));
 
         scrollY += ControllersLayout::kAddRowHeight;
-        tree.nodes[scrollAreaIndex].bounds.height = scrollY;
+        tree.nodes[scrollAreaIndex].scrollContentWidth = scrollWidth;
+        tree.nodes[scrollAreaIndex].scrollContentHeight = std::max(tree.nodes[scrollAreaIndex].bounds.height, scrollY);
 
         ui::Node statusLine;
         statusLine.id = NodeIds::kStatus;

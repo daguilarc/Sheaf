@@ -67,6 +67,99 @@ bool MessageInEquivalent(const MessageIn& a, const MessageIn& b) {
     return false;
 }
 
+std::optional<std::size_t> PrimaryMessageArg(const MessageIn& message) {
+    switch (message.type) {
+        case MessageIn::Type::ParamIncDec:
+        case MessageIn::Type::ParamPush:
+            return message.position;
+        case MessageIn::Type::ToggleGestureSelect:
+        case MessageIn::Type::SetGestureSelect:
+        case MessageIn::Type::SetGestureValue:
+            return message.gestureIx;
+        case MessageIn::Type::SelectParamBank:
+            return message.bankIx;
+        case MessageIn::Type::SceneSelect:
+            return message.sceneIx;
+        case MessageIn::Type::ToggleReset:
+        case MessageIn::Type::ToggleRandom:
+        case MessageIn::Type::ToggleRandomMod:
+        case MessageIn::Type::Start:
+        case MessageIn::Type::Stop:
+        case MessageIn::Type::Clock:
+        case MessageIn::Type::SetSceneBlend:
+            return std::nullopt;
+    }
+    return std::nullopt;
+}
+
+MessageIn WithMessageType(MessageIn::Type type, const MessageIn& previous, bool defaultBoolValue) {
+    switch (type) {
+        case MessageIn::Type::ParamIncDec:
+            return MessageIn::ParamIncDec(0, previous.slotIx, previous.position, previous.delta);
+        case MessageIn::Type::ParamPush:
+            return MessageIn::ParamPush(0, previous.slotIx, previous.position);
+        case MessageIn::Type::ToggleReset:
+            return MessageIn::SetReset(0, previous.type == type && previous.hasBoolValue ? previous.boolValue
+                                                                                          : defaultBoolValue);
+        case MessageIn::Type::ToggleRandom:
+            return MessageIn::SetRandom(0, previous.type == type && previous.hasBoolValue ? previous.boolValue
+                                                                                           : defaultBoolValue);
+        case MessageIn::Type::ToggleRandomMod:
+            return MessageIn::SetRandomMod(0, previous.type == type && previous.hasBoolValue ? previous.boolValue
+                                                                                              : defaultBoolValue);
+        case MessageIn::Type::ToggleGestureSelect:
+            return MessageIn::ToggleGestureSelect(0, previous.gestureIx);
+        case MessageIn::Type::SetGestureSelect:
+            return MessageIn::SetGestureSelect(0, previous.gestureIx,
+                                               previous.type == type && previous.hasBoolValue ? previous.boolValue
+                                                                                              : defaultBoolValue);
+        case MessageIn::Type::SelectParamBank:
+            return MessageIn::SelectParamBank(0, previous.slotIx, previous.bankIx);
+        case MessageIn::Type::Start:
+            return MessageIn::Start(0);
+        case MessageIn::Type::Stop:
+            return MessageIn::Stop(0);
+        case MessageIn::Type::Clock:
+            return MessageIn::Clock(0);
+        case MessageIn::Type::SetGestureValue:
+            return MessageIn::SetGestureValue(0, previous.gestureIx, previous.value);
+        case MessageIn::Type::SceneSelect:
+            return MessageIn::SceneSelect(0, previous.sceneIx);
+        case MessageIn::Type::SetSceneBlend:
+            return MessageIn::SetSceneBlend(0, previous.value);
+    }
+    return MessageIn::Clock(0);
+}
+
+bool SetPrimaryMessageArg(MessageIn& message, std::size_t arg) {
+    switch (message.type) {
+        case MessageIn::Type::ParamIncDec:
+        case MessageIn::Type::ParamPush:
+            message.position = arg;
+            return true;
+        case MessageIn::Type::ToggleGestureSelect:
+        case MessageIn::Type::SetGestureSelect:
+        case MessageIn::Type::SetGestureValue:
+            message.gestureIx = arg;
+            return true;
+        case MessageIn::Type::SelectParamBank:
+            message.bankIx = arg;
+            return true;
+        case MessageIn::Type::SceneSelect:
+            message.sceneIx = arg;
+            return true;
+        case MessageIn::Type::ToggleReset:
+        case MessageIn::Type::ToggleRandom:
+        case MessageIn::Type::ToggleRandomMod:
+        case MessageIn::Type::Start:
+        case MessageIn::Type::Stop:
+        case MessageIn::Type::Clock:
+        case MessageIn::Type::SetSceneBlend:
+            return false;
+    }
+    return false;
+}
+
 }  // namespace
 
 using Field = MidiMappingRowVM::Field;
@@ -95,11 +188,15 @@ bool FieldIsInteger(MidiMappingRowVM::Field field) {
         case Field::BlockEndY:
         case Field::BlockRowMajor:
         case Field::BlockOutputFeedback:
+        case Field::MessageArg:
+        case Field::ReleaseArg:
             return true;
         case Field::TurnStep:
         case Field::RelativeMode:
         case Field::PressMessage:
         case Field::ReleaseMessage:
+        case Field::MessageKind:
+        case Field::ReleaseKind:
         case Field::BlockMessageType:
             return false;
     }
@@ -149,6 +246,14 @@ const char* FieldShortLabel(MidiMappingRowVM::Field field) {
             return "Press";
         case Field::ReleaseMessage:
             return "Release";
+        case Field::MessageKind:
+            return "Message";
+        case Field::MessageArg:
+            return "Arg";
+        case Field::ReleaseKind:
+            return "Rel";
+        case Field::ReleaseArg:
+            return "Rel Arg";
         case Field::LaunchpadX:
         case Field::WrldBldrX:
             return "X";
@@ -235,6 +340,27 @@ const std::vector<SystemMessageChoice>& SystemMessageCatalog() {
 
         return entries;
     }();
+    return catalog;
+}
+
+const std::vector<SystemMessageKindChoice>& SystemMessageKindCatalog() {
+    static const std::vector<SystemMessageKindChoice> catalog = {
+        {"None", MessageIn::Type::Clock},
+        {"Param Inc/Dec", MessageIn::Type::ParamIncDec},
+        {"Param Push", MessageIn::Type::ParamPush},
+        {"Reset", MessageIn::Type::ToggleReset},
+        {"Random", MessageIn::Type::ToggleRandom},
+        {"Random Mod", MessageIn::Type::ToggleRandomMod},
+        {"Gesture Toggle", MessageIn::Type::ToggleGestureSelect},
+        {"Gesture Select", MessageIn::Type::SetGestureSelect},
+        {"Bank Select", MessageIn::Type::SelectParamBank},
+        {"Start", MessageIn::Type::Start},
+        {"Stop", MessageIn::Type::Stop},
+        {"Clock", MessageIn::Type::Clock},
+        {"Gesture Value", MessageIn::Type::SetGestureValue},
+        {"Scene Select", MessageIn::Type::SceneSelect},
+        {"Scene Blend", MessageIn::Type::SetSceneBlend},
+    };
     return catalog;
 }
 
@@ -608,6 +734,12 @@ void MidiConfigViewModel::ToggleSection(std::size_t controllerIx, MidiConfigSect
         // a fresh minimal reconstruction (sru-11's "collapsing and
         // re-expanding present the fresh minimal reconstruction").
         DiscardPresentation(name, section);
+    } else {
+        // Opening a section starts the edit session immediately. Otherwise a
+        // click on "+" before the renderer's first SectionRows() read would
+        // leave no presentation to re-resolve on the following Rebuild(), and
+        // the next lazy read would coalesce the just-added rows from scratch.
+        (void)PresentationFor(controllerIx, section);
     }
 }
 
@@ -629,26 +761,62 @@ namespace {
 // factored out of the old SectionRows() SystemMessages case so
 // BuildFreshPresentation/BuildSectionRows share the exact same table.
 std::vector<Field> SystemRowEditableFields(MidiProfileKind kind) {
+    std::vector<Field> fields;
     switch (kind) {
         case MidiProfileKind::Launchpad:
-            return {Field::LaunchpadX, Field::LaunchpadY, Field::PressMessage, Field::ReleaseMessage};
+            fields = {Field::LaunchpadX, Field::LaunchpadY};
+            break;
         case MidiProfileKind::WrldBldr:
             // Issue #10: chan/x/y, so the slot's MIDI channel is editable
             // alongside its grid position. Channel writes only
             // association.control->channel (ApplyMappingEdit); WrldBldrX/Y
             // keep wrldBldrPosition and control->cc in sync via
             // WrldBldrPositionToCC, untouched by a Channel edit.
-            return {Field::Channel, Field::WrldBldrX, Field::WrldBldrY, Field::PressMessage, Field::ReleaseMessage};
+            fields = {Field::Channel, Field::WrldBldrX, Field::WrldBldrY};
+            break;
         case MidiProfileKind::MfTwister:
             // sru-8/D1: twister system rows advertise exactly one address
             // field -- the logical side button 0..5 (stored as
             // control->cc = 8 + button on the fixed channel 3,
             // display-only). No Channel or Cc field is shown.
-            return {Field::Button, Field::PressMessage, Field::ReleaseMessage};
+            fields = {Field::Button};
+            break;
         case MidiProfileKind::Generic:
-            return {Field::Channel, Field::Cc, Field::PressMessage, Field::ReleaseMessage};
+            fields = {Field::Channel, Field::Cc};
+            break;
     }
-    return {};
+    fields.push_back(Field::MessageKind);
+    fields.push_back(Field::MessageArg);
+    fields.push_back(Field::ReleaseKind);
+    return fields;
+}
+
+std::vector<Field> SystemRowEditableFields(MidiProfileKind kind,
+                                           const MidiControllerSystemMessageAssociation& association) {
+    std::vector<Field> fields;
+    switch (kind) {
+        case MidiProfileKind::Launchpad:
+            fields = {Field::LaunchpadX, Field::LaunchpadY};
+            break;
+        case MidiProfileKind::WrldBldr:
+            fields = {Field::Channel, Field::WrldBldrX, Field::WrldBldrY};
+            break;
+        case MidiProfileKind::MfTwister:
+            fields = {Field::Button};
+            break;
+        case MidiProfileKind::Generic:
+            fields = {Field::Channel, Field::Cc};
+            break;
+    }
+    fields.push_back(Field::MessageKind);
+    if (PrimaryMessageArg(association.press).has_value()) {
+        fields.push_back(Field::MessageArg);
+    }
+    fields.push_back(Field::ReleaseKind);
+    if (association.release.has_value() && PrimaryMessageArg(*association.release).has_value()) {
+        fields.push_back(Field::ReleaseArg);
+    }
+    return fields;
 }
 
 // editableFields for a Block row, per its form (D1/D3/D6 -- see
@@ -1244,7 +1412,7 @@ std::vector<MidiMappingRowVM> MidiConfigViewModel::BuildSectionRows(std::size_t 
             } else if (const auto* systemIdentity = std::get_if<SystemIdentity>(&identity)) {
                 const std::size_t rawIx = ResolveSystemIdentity(sortedSystem, slot.kind, *systemIdentity);
                 const MidiControllerSystemMessageAssociation& association = sortedSystem[rawIx];
-                row.editableFields = SystemRowEditableFields(slot.kind);
+                row.editableFields = SystemRowEditableFields(slot.kind, association);
                 row.label = SystemMessageLabel(association, slot.kind);
             }
         }
@@ -1381,7 +1549,8 @@ bool MidiConfigViewModel::RowFieldValue(std::size_t controllerIx, MidiConfigSect
     if (std::find(editable.begin(), editable.end(), field) == editable.end()) {
         return false;
     }
-    if (field == Field::PressMessage || field == Field::ReleaseMessage || field == Field::BlockMessageType) {
+    if (field == Field::PressMessage || field == Field::ReleaseMessage || field == Field::MessageKind ||
+        field == Field::ReleaseKind || field == Field::BlockMessageType) {
         return false;
     }
 
@@ -1527,6 +1696,25 @@ bool MidiConfigViewModel::RowFieldValue(std::size_t controllerIx, MidiConfigSect
                 }
                 out = static_cast<double>(association.control->cc - 8);
                 return true;
+            case Field::MessageArg: {
+                const std::optional<std::size_t> arg = PrimaryMessageArg(association.press);
+                if (!arg.has_value()) {
+                    return false;
+                }
+                out = static_cast<double>(*arg);
+                return true;
+            }
+            case Field::ReleaseArg: {
+                if (!association.release.has_value()) {
+                    return false;
+                }
+                const std::optional<std::size_t> arg = PrimaryMessageArg(*association.release);
+                if (!arg.has_value()) {
+                    return false;
+                }
+                out = static_cast<double>(*arg);
+                return true;
+            }
             default:
                 return false;
         }
@@ -1600,6 +1788,46 @@ int MidiConfigViewModel::SystemMessageChoiceIndex(std::size_t controllerIx, Midi
     const std::vector<SystemMessageChoice>& catalog = SystemMessageCatalog();
     for (std::size_t ix = 1; ix < catalog.size(); ++ix) {
         if (MessageInEquivalent(message, catalog[ix].build())) {
+            return static_cast<int>(ix);
+        }
+    }
+    return -1;
+}
+
+int MidiConfigViewModel::SystemMessageKindIndex(std::size_t controllerIx, MidiConfigSection section,
+                                                std::size_t rowIx, MidiMappingRowVM::Field field) const {
+    if (section != MidiConfigSection::SystemMessages ||
+        (field != Field::MessageKind && field != Field::ReleaseKind)) {
+        return -1;
+    }
+    if (controllerIx >= instrument_.controllers.size()) {
+        return -1;
+    }
+    const MidiControllerSlot& slot = instrument_.controllers[controllerIx];
+    const SectionPresentation& presentation = PresentationFor(controllerIx, section);
+    if (rowIx >= presentation.rows.size() || presentation.rows[rowIx].kind != RowKind::Individual) {
+        return -1;
+    }
+    const auto* systemIdentity = std::get_if<SystemIdentity>(&presentation.rows[rowIx].identities.front());
+    if (systemIdentity == nullptr) {
+        return -1;
+    }
+    MidiControllerProfileConfig sortedScratch;
+    sortedScratch.systemMessages = slot.config.systemMessages;
+    NormalizeMidiProfileConfig(sortedScratch, slot.kind);
+    const std::size_t rawIx = ResolveSystemIdentity(sortedScratch.systemMessages, slot.kind, *systemIdentity);
+    if (rawIx == kNotFound) {
+        return -1;
+    }
+
+    const MidiControllerSystemMessageAssociation& association = sortedScratch.systemMessages[rawIx];
+    if (field == Field::ReleaseKind && !association.release.has_value()) {
+        return 0;
+    }
+    const MessageIn::Type type = field == Field::MessageKind ? association.press.type : association.release->type;
+    const auto& catalog = SystemMessageKindCatalog();
+    for (std::size_t ix = 1; ix < catalog.size(); ++ix) {
+        if (catalog[ix].type == type) {
             return static_cast<int>(ix);
         }
     }
@@ -2030,7 +2258,11 @@ bool MidiConfigViewModel::ApplyMappingEdit(std::size_t controllerIx, MidiConfigS
             return false;
         }
         const std::vector<MidiMappingRowVM::Field>& editable = rows[rowIx].editableFields;
-        if (std::find(editable.begin(), editable.end(), field) == editable.end()) {
+        const bool legacySystemMessageCatalogField =
+            section == MidiConfigSection::SystemMessages &&
+            (field == Field::PressMessage || field == Field::ReleaseMessage);
+        if (std::find(editable.begin(), editable.end(), field) == editable.end() &&
+            !legacySystemMessageCatalogField) {
             if (reason != nullptr) {
                 *reason = "field not editable for this row";
             }
@@ -2445,6 +2677,56 @@ bool MidiConfigViewModel::ApplyMappingEdit(std::size_t controllerIx, MidiConfigS
                         } else {
                             association.release = catalog[choiceIx].build();
                         }
+                    }
+                    fieldValid = true;
+                    break;
+                }
+                case Field::MessageKind:
+                case Field::ReleaseKind: {
+                    if (!IsNonNegativeInteger(value)) {
+                        validationError = "message kind must be a non-negative integer catalog index";
+                        break;
+                    }
+                    const auto& catalog = SystemMessageKindCatalog();
+                    const auto choiceIx = static_cast<std::size_t>(value);
+                    if (choiceIx >= catalog.size()) {
+                        validationError = "message kind index out of range";
+                        break;
+                    }
+                    if (field == Field::MessageKind) {
+                        if (choiceIx == 0) {
+                            validationError = "press message cannot be \"None\"";
+                            break;
+                        }
+                        association.press = WithMessageType(catalog[choiceIx].type, association.press, true);
+                    } else {
+                        if (choiceIx == 0) {
+                            association.release = std::nullopt;
+                        } else {
+                            const MessageIn previous = association.release.value_or(association.press);
+                            association.release = WithMessageType(catalog[choiceIx].type, previous, false);
+                        }
+                    }
+                    fieldValid = true;
+                    break;
+                }
+                case Field::MessageArg:
+                case Field::ReleaseArg: {
+                    if (!IsNonNegativeInteger(value)) {
+                        validationError = "message argument must be a non-negative integer";
+                        break;
+                    }
+                    const auto arg = static_cast<std::size_t>(value);
+                    MessageIn* message = field == Field::MessageArg
+                                             ? &association.press
+                                             : (association.release.has_value() ? &*association.release : nullptr);
+                    if (message == nullptr) {
+                        validationError = "release message is None";
+                        break;
+                    }
+                    if (!SetPrimaryMessageArg(*message, arg)) {
+                        validationError = "message has no integer argument";
+                        break;
                     }
                     fieldValid = true;
                     break;

@@ -11,6 +11,7 @@
 #include <juce_gui_extra/juce_gui_extra.h>
 
 #include <cstdint>
+#include <cmath>
 #include <functional>
 #include <memory>
 #include <string>
@@ -178,7 +179,12 @@ private:
             {
                 m_viewport.setBounds(synth_juce::UiToJuceRect(child->bounds));
                 const int viewportWidth = juce::jmax(1, m_viewport.getWidth() - m_viewport.getScrollBarThickness());
-                m_content.setSize(viewportWidth, static_cast<int>(child->bounds.height));
+                const int contentWidth = juce::jmax(
+                    viewportWidth, static_cast<int>(std::ceil(child->scrollContentWidth)));
+                const int contentHeight = juce::jmax(
+                    1, static_cast<int>(std::ceil(child->scrollContentHeight > 0.0f ? child->scrollContentHeight
+                                                                                     : child->bounds.height)));
+                m_content.setSize(contentWidth, contentHeight);
                 LayoutNodeChildren(*child, {0, 0}, viewportWidth);
                 continue;
             }

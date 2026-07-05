@@ -296,7 +296,14 @@ int main()
             "deferred refresh after focus released");
 
     surface.SetContentBounds({0.0f, 0.0f, 900.0f, 260.0f});
-    surface.ViewModel().ToggleSection(0, synth::MidiConfigSection::SystemMessages);
+    if (!surface.ViewModel().Controllers()[0].configExpanded)
+    {
+        surface.ViewModel().ToggleConfig(0);
+    }
+    if (!surface.ViewModel().SectionExpanded(0, synth::MidiConfigSection::SystemMessages))
+    {
+        surface.ViewModel().ToggleSection(0, synth::MidiConfigSection::SystemMessages);
+    }
     surface.MarkDirty();
     surface.RefreshOnTick();
     const synth::ui::NodeTree scrolledTree = surface.BuildTree();

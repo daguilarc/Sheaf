@@ -139,6 +139,8 @@ struct Node {
     float minValue = 0.0f;
     float maxValue = 1.0f;
     float step = 0.001f;
+    float scrollContentWidth = 0.0f;
+    float scrollContentHeight = 0.0f;
     std::vector<ControlOption> options;
     std::string selectedOption;
     std::optional<Action> action;
