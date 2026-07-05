@@ -36,11 +36,10 @@
 //
 // Combo re-sync (Task 3 brief: "combo re-syncs when the engine's
 // audio-device-changed callback fires"): Runtime's OnEngineAudioDeviceChanged
-// (Runtime.hpp) calls SyncAudioSelection() after applying a patch-carried
+// (Runtime.hpp) calls SyncAudioSelection() after applying an engine-sourced
 // device change, which invokes this page's installed sync hook -> Refresh(),
 // re-enumerating devices and re-selecting the combo entry matching
-// engine.AudioDeviceSnapshot() -- the same path a startup patch load or a
-// runtime patch revert takes.
+// engine.AudioDeviceSnapshot().
 //
 // Status refresh (Task 3 brief: "status label showing current device +
 // negotiated values"): RefreshStatus() reads deviceManager_.getCurrentAudioDevice()
@@ -177,9 +176,8 @@ public:
     // the combo ("System Default" first, empty name, then each enumerated
     // device), then re-syncs the selection to whatever
     // engine.AudioDeviceSnapshot() currently holds, and refreshes the status
-    // label. Called on construction, whenever Runtime's sync hook fires (a
-    // startup or runtime patch changed the device), and is safe to call at
-    // any point -- getCurrentDeviceTypeObject() returning nullptr just
+    // label. Called on construction, whenever Runtime's sync hook fires, and is
+    // safe to call at any point -- getCurrentDeviceTypeObject() returning nullptr just
     // yields an output-only/input-only "System Default" entry.
     void Refresh() {
         juce::AudioDeviceManager& deviceManager = runtime_.DeviceManager();

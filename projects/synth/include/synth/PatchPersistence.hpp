@@ -18,10 +18,8 @@ struct AudioDeviceState {
     std::string inputDeviceName;   // empty = system default
 };
 
-// Value equality (field-wise). Used by Engine's audio-side patch drain to
-// detect whether a consumed ApplyPatchMessage call actually changed
-// audioDevice_, so it can raise audioDeviceChangedPending_ only on a real
-// change (mirrors comparing before/after snapshots around the call).
+// Value equality (field-wise). Used by runtime/config persistence code to
+// compare host-visible audio device selections.
 inline bool operator==(const AudioDeviceState& lhs, const AudioDeviceState& rhs) {
     return lhs.outputDeviceName == rhs.outputDeviceName && lhs.inputDeviceName == rhs.inputDeviceName;
 }
@@ -30,15 +28,42 @@ inline bool operator!=(const AudioDeviceState& lhs, const AudioDeviceState& rhs)
 JSON ToJSON(JsonArena& arena, const AudioDeviceState& state);
 bool FromJSON(JSON json, AudioDeviceState& state);
 
+inline constexpr const char* kRuntimeConfigSchema = "sheaf.synth.runtime-config";
+inline constexpr int kRuntimeConfigSchemaVersion = 1;
+
+JSON BuildRuntimeConfigJSON(JsonArena& arena,
+                            const MidiInstrumentConfig& instrument,
+                            const AudioDeviceState& audioDevice);
+bool LoadRuntimeConfigJSON(JSON root,
+                           MidiInstrumentConfig& instrument,
+                           AudioDeviceState& audioDevice);
+bool ValidateRuntimeConfigJSON(JSON root);
+
+enum class RuntimeConfigFileStatus {
+    Ok,
+    Missing,
+    Invalid,
+    IOError,
+};
+
+RuntimeConfigFileStatus LoadRuntimeConfigFile(const std::filesystem::path& configFile,
+                                              MidiInstrumentConfig& instrument,
+                                              AudioDeviceState& audioDevice);
+RuntimeConfigFileStatus SaveRuntimeConfigFile(const std::filesystem::path& configFile,
+                                              const MidiInstrumentConfig& instrument,
+                                              const AudioDeviceState& audioDevice);
+const char* RuntimeConfigFileStatusName(RuntimeConfigFileStatus status);
+
 JSON BuildPatchJSON(JsonArena& arena, std::string_view patchName,
                     const ParameterManager& manager,
                     const MidiInstrumentConfig& instrument,
                     const AudioDeviceState& audioDevice = {});
-// midiInstrument is a REQUIRED section: load fails (returns false, target
-// state left untouched -- parsed into a scratch, swapped on success only) if
-// the section is absent or fails MidiInstrumentConfig's FromJSON (unknown
-// kind, duplicate name, invalid slot, bad schema). A `midiInstrument` object
-// with zero controllers is valid and yields an empty MidiInstrumentConfig.
+// MIDI/audio arguments are retained for source compatibility with existing
+// callers, but patch JSON is parameter-only. Runtime MIDI/audio configuration
+// is persisted separately through BuildRuntimeConfigJSON/LoadRuntimeConfigJSON.
+// Legacy midiInstrument/audioDevice sections in patch JSON are tolerated and
+// ignored. Patch load applies parameter values only and leaves runtime
+// MIDI/audio state untouched.
 bool LoadPatchJSON(JSON root, ParameterManager& manager,
                    MidiInstrumentConfig& instrument,
                    AudioDeviceState* audioDevice = nullptr);

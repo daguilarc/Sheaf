@@ -43,8 +43,8 @@
 // via SetEndpointRef and committing it through engine.EditInstrument is
 // exactly the specced "device choice triggers reconciliation" semantics --
 // the rebuilt callback + reconcile pass (Plan 3) then opens/closes the
-// device itself, self-healing exactly like a patch-carried endpoint ref
-// would be picked up on load. This also means an endpoint that was Online
+// device itself, self-healing exactly like a persisted runtime-config endpoint
+// ref would be picked up on load. This also means an endpoint that was Online
 // and gets cleared to "(none)" is actually closed: PlanMidiReconciliation
 // treats a now-unconfigured ref whose connection is still Online as a
 // Close*+Mark*Offline case (see MidiReconcile.hpp's doc comment and
@@ -60,7 +60,7 @@
 // tree) and is set again by (a) runtime_.SetMidiProcessorsRebuiltHook()'s
 // callback (installed in the constructor -- see Runtime.hpp's doc comment on
 // that method), which fires on EVERY MIDI-processor rebuild regardless of
-// cause (this page's own Commit(), a patch load/revert, or any other
+// cause (this page's own Commit(), runtime config loading, or any other
 // engine-driven instrument edit -- Task 4 review, Critical finding 1: this
 // closes the gap where an out-of-band instrument change was missed) and (b)
 // a per-tick comparison against a cheap MidiConnectionManager state change
@@ -153,7 +153,7 @@ public:
         addAndMakeVisible(viewport_);
 
         // Subscribe to EVERY MIDI-processor rebuild (Task 4 review, Critical
-        // finding 1) -- not just this page's own edits. A patch load/revert
+        // finding 1) -- not just this page's own edits. Runtime config loading
         // (or any other engine-driven path) that changes controller
         // mappings/names/kinds also rebuilds MIDI processors and fires this
         // hook; without it, RefreshOnTick()'s dirty flag only ever tracked
@@ -1430,7 +1430,7 @@ private:
                 // finding 3: ALL device combo changes go through the VM, not
                 // a direct MidiConnectionManager::ManualOpen* call). The
                 // rebuilt callback + reconcile pass opens the device itself,
-                // exactly like a patch-carried endpoint ref would be on load
+                // exactly like a persisted runtime-config endpoint ref would be on load
                 // -- self-healing, and the single path this page's own
                 // rebuilt-hook subscription (finding 1) already dirties the
                 // page for.

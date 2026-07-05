@@ -14,6 +14,7 @@
 #include <filesystem>
 #include <functional>
 #include <string>
+#include <utility>
 
 namespace synth {
 
@@ -26,20 +27,27 @@ struct RuntimeConfig {
     int numAudioOutputs = 2;
     double preferredSampleRate = 48000.0;
     int preferredBlockSize = 256;
-    std::filesystem::path patchesRoot;  // patch directories live here
-    std::filesystem::path logsRoot;     // session log files; empty = stdout only
     int uiWidth = 900;
     int uiHeight = 560;
     int uiFrameHz = 30;
-    // Initial audio device preference (Task 3 review, Critical fix): empty =
-    // system default. Engine::Initialize() seeds its engine-owned
-    // audioDeviceState_ from these fields, before app_.Init() runs, so the
-    // app's preferred starting device lives in static config rather than
-    // being poked into engine-owned state through a mutable AppContext
-    // pointer after the fact (AppContext no longer exposes one). See
-    // Engine::Initialize()'s doc comment for the seeding step.
-    std::string preferredOutputDeviceName;
-    std::string preferredInputDeviceName;
+};
+
+// Runtime-owned persistent data paths (sar-17). Applications do not choose
+// production persistence roots; hosts resolve and inject these paths.
+struct RuntimeDataPaths {
+    std::filesystem::path dataRoot;
+    std::filesystem::path patchesRoot;
+    std::filesystem::path logsRoot;
+    std::filesystem::path configFile;
+
+    static RuntimeDataPaths FromDataRoot(std::filesystem::path root) {
+        RuntimeDataPaths paths;
+        paths.dataRoot = std::move(root);
+        paths.patchesRoot = paths.dataRoot / "patches";
+        paths.logsRoot = paths.dataRoot / "logs";
+        paths.configFile = paths.dataRoot / "config.json";
+        return paths;
+    }
 };
 
 // Non-owning view of one audio device block (sar-6). Channel counts are the

@@ -404,9 +404,21 @@ TEST_CASE(rig_patch_round_trip_through_production_flow) {
     synth_rig::SynthRig<RigTestApp> rig;
     const auto root = std::filesystem::temp_directory_path() / "rig-patch-roundtrip";
     std::filesystem::remove_all(root); std::filesystem::create_directories(root);
+    rig.InstallInstrumentForTest(SingleControllerInstrument(synth::WrldBldrDefaultProfileConfig({})));
+    rig.Engine().SetAudioDeviceFromHost(synth::AudioDeviceState{
+        .outputDeviceName = "Saved Out",
+        .inputDeviceName = "Saved In",
+    });
 
     const float defaultValue = rig.ParameterValue(rig.Application().levelId);
     REQUIRE_TRUE(rig.SavePatchAs(root / "Take1") == synth_rig::RigPatchStatus::Written);
+    rig.Engine().EditInstrument([](synth::MidiInstrumentConfig& instrument) {
+        REQUIRE_TRUE(instrument.RenameController(0, "runtime-edited"));
+    });
+    rig.Engine().SetAudioDeviceFromHost(synth::AudioDeviceState{
+        .outputDeviceName = "Runtime Out",
+        .inputDeviceName = "Runtime In",
+    });
 
     rig.Turn(0, 0, 0.4f); rig.RunBlocks(8);
     const float edited = rig.ParameterValue(rig.Application().levelId);
@@ -429,6 +441,10 @@ TEST_CASE(rig_patch_round_trip_through_production_flow) {
     REQUIRE_TRUE(rig.LoadPatch(root / "Take1") == synth_rig::RigPatchStatus::Ok);
     rig.RunBlocks(8);
     REQUIRE_NEAR(rig.ParameterValue(rig.Application().levelId), edited, 1e-3f);
+    REQUIRE_TRUE(rig.Engine().InstrumentSnapshot().controllers.size() == 1);
+    REQUIRE_TRUE(rig.Engine().InstrumentSnapshot().controllers[0].name == "runtime-edited");
+    REQUIRE_TRUE(rig.Engine().AudioDeviceSnapshot().outputDeviceName == "Runtime Out");
+    REQUIRE_TRUE(rig.Engine().AudioDeviceSnapshot().inputDeviceName == "Runtime In");
     std::filesystem::remove_all(root);
 }
 

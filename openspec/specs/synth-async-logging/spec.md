@@ -8,7 +8,6 @@ Define the JUCE-free thread-aware async logging library: thread identity,
 the audio-thread-safe INFO producer interface, per-identity bounded queues
 with drop-and-count overflow, round-robin draining to stdout and per-session
 log files, block-accurate audio-position stamps, and runtime integration.
-
 ## Requirements
 ### Requirement: slog-1 — Project: JUCE-free async logging library
 WHEN the synth async logging capability is implemented, THE repository SHALL provide JUCE-free C++20 logging headers under `projects/synth/include/synth` — an async log queue with its fixed-size log message type and `INFO(...)` macro, a lock-free bounded `CircularQueue<T, N>` ring buffer, and a `ThreadId` thread-identity utility — ported from The All Electric Smart Grid's thread-aware async logging system, included in the `projects/synth` library build and its JUCE-free test suite.
@@ -88,7 +87,7 @@ WHEN a message is filled, THE async log queue SHALL capture the current sample c
 - **THEN** the message is queued and drained normally with a sample stamp of zero
 
 ### Requirement: slog-7 — Runtime integration: configuration, drain cadence, and ad hoc log replacement
-WHEN the runtime starts, THE runtime SHALL configure the async log queue's directory from the application's configured logs root before other startup logging is drained, and SHALL call the drain entry point as the final step of each message-thread timer tick; WHEN runtime patch orchestration reports command results, message application, or storage-batch provisioning, THE runtime SHALL log them through `INFO`, and the miniapp SHALL contain no ad hoc file-writing log path.
+WHEN the runtime starts, THE runtime SHALL configure the async log queue's directory from the runtime-owned persistent logs root before other startup logging is drained, and SHALL call the drain entry point as the final step of each message-thread timer tick; WHEN runtime patch orchestration reports command results, message application, runtime-configuration load/save results, or storage-batch provisioning, THE runtime SHALL log them through `INFO`, and the miniapp SHALL contain no ad hoc file-writing log path.
 
 #### Scenario: Runtime drains every tick
 - **WHEN** the message-thread timer fires
@@ -98,6 +97,15 @@ WHEN the runtime starts, THE runtime SHALL configure the async log queue's direc
 - **WHEN** a patch command completes or a patch message is applied
 - **THEN** the outcome is recorded via `INFO` and appears in the session log
 - **AND** the ported miniapp contains no per-line `std::ofstream` logging code
+
+#### Scenario: Configuration activity logs through the async logger
+- **WHEN** runtime configuration is loaded, ignored as invalid, or saved
+- **THEN** the outcome is recorded via `INFO` and appears in the session log
+
+#### Scenario: Log directory comes from runtime data paths
+- **WHEN** the runtime resolves persistent data paths for an application
+- **THEN** it configures the async logger with `logs/` from those paths
+- **AND** it does not read a log root from application-owned runtime config
 
 ### Requirement: slog-8 — Tests: JUCE-free coverage of the production logger
 WHEN the synth test suite runs, THE logging library SHALL be covered by JUCE-free unit tests exercising the production producer and drain paths through test hooks (reset, queue-size and missed-count inspection, test-controlled log directory, session-file path inspection), including enqueue/drain round-trip, overflow missed-count behavior, truncation, and session-file creation.
@@ -109,3 +117,4 @@ WHEN the synth test suite runs, THE logging library SHALL be covered by JUCE-fre
 #### Scenario: Tests use isolated directories
 - **WHEN** logger tests need file output
 - **THEN** they configure a test-controlled directory and inspect the session file path through test hooks
+

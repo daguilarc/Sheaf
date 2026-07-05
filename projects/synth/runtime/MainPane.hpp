@@ -47,6 +47,7 @@
 #include "AudioConfigPage.hpp"
 #include "ControllersPage.hpp"
 #include "FilePage.hpp"
+#include "synth/RuntimePagePolicy.hpp"
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
@@ -125,13 +126,13 @@ public:
         sidebar_.fileButton_.onClick = [this] { ShowPage(Page::File); };
         addAndMakeVisible(sidebar_);
 
-        audioPage_.onBack = [this] { ShowPage(Page::None); };
+        audioPage_.onBack = [this] { ReturnFromPage(Page::Audio); };
         addChildComponent(audioPage_);
 
-        filePage_.onBack = [this] { ShowPage(Page::None); };
+        filePage_.onBack = [this] { ReturnFromPage(Page::File); };
         addChildComponent(filePage_);
 
-        controllersPage_.onBack = [this] { ShowPage(Page::None); };
+        controllersPage_.onBack = [this] { ReturnFromPage(Page::Controllers); };
         addChildComponent(controllersPage_);
 
         addAndMakeVisible(runtime_.AppComponent());
@@ -194,6 +195,27 @@ public:
     }
 
 private:
+    static synth::RuntimePageKind ToRuntimePageKind(Page page) {
+        switch (page) {
+            case Page::Audio:
+                return synth::RuntimePageKind::Audio;
+            case Page::Controllers:
+                return synth::RuntimePageKind::Controllers;
+            case Page::File:
+                return synth::RuntimePageKind::File;
+            case Page::None:
+                return synth::RuntimePageKind::None;
+        }
+        return synth::RuntimePageKind::None;
+    }
+
+    void ReturnFromPage(Page page) {
+        if (synth::RuntimePageBackSavesConfiguration(ToRuntimePageKind(page))) {
+            runtime_.SaveRuntimeConfiguration();
+        }
+        ShowPage(Page::None);
+    }
+
     Runtime<App>& runtime_;
     Sidebar sidebar_;
     AudioConfigPage<App> audioPage_;

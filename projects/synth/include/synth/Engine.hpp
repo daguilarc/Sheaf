@@ -4,8 +4,8 @@
 // an application touches (sar-3), wires AppContext, and drives the
 // application through its pre-audio lifecycle (sar-5) and its audio-thread
 // block pump (sar-6, Task 4). Task 5 (MessageThreadTick) fills in the
-// message-thread pump: rebuilding MIDI processors when midiRebuildPending_
-// is set, and growing serializationArena_ when arenaGrowPending_ is set.
+// message-thread pump: growing serializationArena_ when arenaGrowPending_ is set
+// and completing patch/storage responses.
 // Retrying pendingPatchMessage_ is NOT the tick's job — ProcessBlock alone
 // retries the stash (first, before draining anything newer) once the tick
 // has cleared arenaGrowPending_; see the tick contract note on
@@ -99,45 +99,28 @@ public:
     //       defaultAudioDeviceState_ = audioDeviceState_ (the app's
     //       Init-configured live instrument/audio device becomes the
     //       default that revert/new-patch restore to)
+    //   4b. load runtime config from dataPaths_.configFile when present.
+    //       Valid config replaces the live MIDI instrument/audio selection
+    //       before MIDI processors or host startup reconciliation exist;
+    //       missing/invalid config preserves the app defaults above.
     //   5. manager_.CaptureDefaultControlState()
     //   6. uiState_ = manager_.CreateUIState(); context_.uiState = uiState_.get()
     //   7. RebuildMidiProcessors() (silent: this first, pre-startup-patch
     //      rebuild never invokes midiProcessorsRebuiltCallback_, since there
     //      is nothing new for a host to react to yet)
-    //   8. startup patch: find LatestPatchDirectory(config_.patchesRoot); if
+    //   8. startup patch: find LatestPatchDirectory(dataPaths_.patchesRoot); if
     //      found, patchManager_.LoadPatch(dir), then ApplyPendingPatchMessages()
-    //      (drains patchInputBus_ synchronously); if and only if that load
-    //      applied a patch, RebuildMidiProcessors() again and THEN invoke
-    //      midiProcessorsRebuiltCallback_ if set, so a patched MIDI profile
-    //      is installed and the host reopens endpoints against it; if that
-    //      same drain changed audioDeviceState_ (compared against the
-    //      pre-drain snapshot), invoke audioDeviceChangedCallback_ if set —
-    //      same fire-after-fully-applied discipline as the MIDI callback,
-    //      just without a rebuild step in between; finally
-    //      patchManager_.ProcessResponses(). A missing/empty patchesRoot, or
-    //      a startup patch that fails to apply, is skipped silently with no
-    //      callback invocation.
+    //      (drains patchInputBus_ synchronously). Patch files contain
+    //      synthesizer parameter values only; MIDI/audio configuration is loaded
+    //      separately from runtime config, so startup patch load does not rebuild
+    //      MIDI processors or fire host reopen/audio callbacks. Finally
+    //      patchManager_.ProcessResponses(). A missing/empty patchesRoot, or a
+    //      startup patch that fails to apply, is skipped silently.
     void Initialize() {
         config_ = App::Config();
         context_.config = &config_;
 
         AsyncLogQueue::s_instance.SetSampleCounterSource(&sampleCounter_);
-
-        {
-            // Seed audioDeviceState_ from the app's static config (Task 3
-            // review, Critical fix) BEFORE app_.Init() runs. This replaces
-            // the old mutable AppContext::audioDeviceState pointer, which let
-            // any retained context mutate engine-owned state without the
-            // lock or the lastNotifiedAudioDeviceState_ shadow -- see
-            // RuntimeConfig::preferredOutputDeviceName's doc comment.
-            // Pre-audio, single-threaded (no audio/message-thread
-            // concurrency exists yet): the lock here is uncontended, but
-            // held anyway for uniformity with every other touch point of
-            // audioDeviceState_ (see audioDeviceStateMutex_'s doc comment).
-            const std::lock_guard<std::mutex> lock(audioDeviceStateMutex_);
-            audioDeviceState_.outputDeviceName = config_.preferredOutputDeviceName;
-            audioDeviceState_.inputDeviceName = config_.preferredInputDeviceName;
-        }
 
         app_.Init(&context_);
 
@@ -160,13 +143,13 @@ public:
             // audioDeviceStateMutex_'s doc comment).
             const std::lock_guard<std::mutex> lock(audioDeviceStateMutex_);
             defaultAudioDeviceState_ = audioDeviceState_;
-            // Audio-side shadow of audioDeviceState_ used to detect real
-            // changes without copying two std::strings before every
-            // ApplyPatchMessage (see lastNotifiedAudioDeviceState_'s member
-            // doc comment). Seeded from the same post-Init snapshot so
-            // steady-state comparisons start from a true baseline.
+            // Seed the host-visible audio-device shadow from the same post-Init
+            // snapshot. Runtime configuration loading may update this later;
+            // patch files are parameter-only.
             lastNotifiedAudioDeviceState_ = audioDeviceState_;
         }
+
+        LoadRuntimeConfiguration();
 
         manager_.CaptureDefaultControlState();
         uiState_ = manager_.CreateUIState();
@@ -174,44 +157,10 @@ public:
 
         RebuildMidiProcessors();
 
-        const std::optional<std::filesystem::path> patchDir = LatestPatchDirectory(config_.patchesRoot);
+        const std::optional<std::filesystem::path> patchDir = LatestPatchDirectory(dataPaths_.patchesRoot);
         if (patchDir.has_value()) {
             patchManager_.LoadPatch(*patchDir);
-            AudioDeviceState audioDeviceStateBeforeDrain;
-            {
-                const std::lock_guard<std::mutex> lock(audioDeviceStateMutex_);
-                audioDeviceStateBeforeDrain = audioDeviceState_;
-            }
-            // ApplyPendingPatchMessages (via ApplyPatchMessage) mutates
-            // audioDeviceState_ itself. Still pre-audio/single-threaded here
-            // (no ProcessBlock has run yet), so the lock it now takes
-            // internally is uncontended -- held anyway for invariant
-            // uniformity with every other touch point of audioDeviceState_
-            // (Task 3 review finding: this call used to mutate the state
-            // without holding audioDeviceStateMutex_, contradicting that
-            // invariant even though nothing could race it pre-audio).
-            const bool patchApplied = ApplyPendingPatchMessages();
-            if (patchApplied) {
-                RebuildMidiProcessors();
-                if (midiProcessorsRebuiltCallback_) {
-                    midiProcessorsRebuiltCallback_();
-                }
-            }
-            bool deviceChanged = false;
-            {
-                const std::lock_guard<std::mutex> lock(audioDeviceStateMutex_);
-                deviceChanged = audioDeviceState_ != audioDeviceStateBeforeDrain;
-                // Re-sync the audio-device-state shadow after the startup
-                // drain completes. The shadow (lastNotifiedAudioDeviceState_)
-                // must always equal the last state the host was told about.
-                // The startup callback (or lack thereof) represents the
-                // host's baseline for comparison in subsequent runtime patch
-                // messages.
-                lastNotifiedAudioDeviceState_ = audioDeviceState_;
-            }
-            if (deviceChanged && audioDeviceChangedCallback_) {
-                audioDeviceChangedCallback_();
-            }
+            ApplyPendingPatchMessages();
             patchManager_.ProcessResponses();
         }
     }
@@ -252,16 +201,10 @@ public:
     //      ArenaExhausted again, re-stash/re-set the flag and stop (skip
     //      draining new messages this block too). Otherwise (no stash),
     //      drain patchInputBus_ via ApplyPatchMessage using the engine
-    //      serialization context; Applied/Reverted set midiRebuildPending_
-    //      for MessageThreadTick (Task 5); ArenaExhausted stashes the popped
+    //      serialization context; Applied/Reverted patch messages change
+    //      synthesizer parameter values only. ArenaExhausted stashes the popped
     //      message in pendingPatchMessage_, sets arenaGrowPending_, and stops
     //      draining for this block (never grows the arena on the audio path).
-    //      After each ApplyPatchMessage call, audioDeviceState_ is compared
-    //      (AudioDeviceState's operator==) against the persistent
-    //      lastNotifiedAudioDeviceState_ shadow (no per-call before/after
-    //      copy — see that member's doc comment); a real change sets
-    //      audioDeviceChangedPending_ for MessageThreadTick (Task 5) the same
-    //      way midiRebuildPending_ is set, and updates the shadow.
     //   2. uiBus_.Process(timestamp)
     //   3. midiBus_.Process(timestamp)
     //   4. manager_.ComputeAllTargets() (never ComputeAllParameters here)
@@ -299,14 +242,9 @@ public:
                     retryStatus = ApplyPatchMessage(stashed, manager_, instrumentConfig_, defaultInstrumentConfig_,
                                                     audioDeviceState_, defaultAudioDeviceState_, patchOutputBus_,
                                                     serializationContext_);
-                    if (!(audioDeviceState_ == lastNotifiedAudioDeviceState_)) {
-                        audioDeviceChangedPending_.store(true, std::memory_order_release);
-                        lastNotifiedAudioDeviceState_ = audioDeviceState_;
-                    }
                 }
                 LogPatchApplyOutcome(stashed, retryStatus);
                 if (retryStatus == PatchApplyStatus::Applied || retryStatus == PatchApplyStatus::Reverted) {
-                    midiRebuildPending_.store(true, std::memory_order_release);
                     DrainPatchInputBus();
                 } else if (retryStatus == PatchApplyStatus::ArenaExhausted) {
                     pendingPatchMessage_ = std::move(stashed);
@@ -351,19 +289,7 @@ public:
     //      ProcessBlock alone owns retrying/clearing the stash, on the
     //      audio thread, once it observes arenaGrowPending_ cleared.
     //   3. patchManager_.ProcessResponses()
-    //   4. if midiRebuildPending_.exchange(false) was true:
-    //      RebuildMidiProcessors(), then invoke midiProcessorsRebuiltCallback_
-    //      if set (so the callback always observes the rebuilt processors).
-    //      The flag is consumed via exchange (not load-then-store) so an
-    //      audio-thread store(true) landing between the two can't be erased
-    //      — see the member's doc comment.
-    //   5. if audioDeviceChangedPending_.exchange(false) was true: invoke
-    //      audioDeviceChangedCallback_ if set (fired AFTER audioDeviceState_
-    //      was fully applied on the audio thread, same ordering discipline
-    //      as the MIDI rebuilt callback — the callback always observes the
-    //      already-changed state). Same exchange-based consume as
-    //      midiRebuildPending_, for the same race reason.
-    //   6. each processor in every slot of midiProcessors_'s outputs: Process()
+    //   4. each processor in every slot of midiProcessors_'s outputs: Process()
     //      (per-controller rebuild, Task 2: midiProcessors_ is now one
     //      MidiControllerProfileResult per controller slot; every slot's
     //      outputs still get exactly one Process() call per tick).
@@ -398,19 +324,6 @@ public:
                  PatchCommandStatusName(patchResult.status), patchResult.path.string().c_str());
         }
 
-        if (midiRebuildPending_.exchange(false, std::memory_order_acq_rel)) {
-            RebuildMidiProcessors();
-            if (midiProcessorsRebuiltCallback_) {
-                midiProcessorsRebuiltCallback_();
-            }
-        }
-
-        if (audioDeviceChangedPending_.exchange(false, std::memory_order_acq_rel)) {
-            if (audioDeviceChangedCallback_) {
-                audioDeviceChangedCallback_();
-            }
-        }
-
         for (MidiControllerProfileResult& processors : midiProcessors_) {
             for (auto& output : processors.outputs) {
                 output->Process();
@@ -424,6 +337,51 @@ public:
     MessageInBus& UiBus() { return uiBus_; }
     MessageInBus& MidiBus() { return midiBus_; }
     PatchManager& Patches() { return patchManager_; }
+
+    // Must be called before Initialize(); startup patch/config discovery reads
+    // these paths during initialization.
+    void SetRuntimeDataPaths(RuntimeDataPaths paths) { dataPaths_ = std::move(paths); }
+    const RuntimeDataPaths& DataPaths() const { return dataPaths_; }
+
+    // Startup-only: call before audio/message-thread editing begins so the
+    // file IO window cannot overwrite a concurrent configuration edit.
+    RuntimeConfigFileStatus LoadRuntimeConfiguration() {
+        MidiInstrumentConfig loadedInstrument;
+        AudioDeviceState loadedAudioDevice;
+        {
+            const std::lock_guard<std::mutex> lock(audioDeviceStateMutex_);
+            loadedInstrument = instrumentConfig_;
+            loadedAudioDevice = audioDeviceState_;
+        }
+
+        const RuntimeConfigFileStatus status =
+            LoadRuntimeConfigFile(dataPaths_.configFile, loadedInstrument, loadedAudioDevice);
+        if (status == RuntimeConfigFileStatus::Ok) {
+            const std::lock_guard<std::mutex> lock(audioDeviceStateMutex_);
+            instrumentConfig_ = std::move(loadedInstrument);
+            audioDeviceState_ = loadedAudioDevice;
+            lastNotifiedAudioDeviceState_ = loadedAudioDevice;
+        }
+        const std::string path = dataPaths_.configFile.string();
+        INFO("Runtime config load status=%s path=%s", RuntimeConfigFileStatusName(status), path.c_str());
+        return status;
+    }
+
+    RuntimeConfigFileStatus SaveRuntimeConfiguration() const {
+        MidiInstrumentConfig instrument;
+        AudioDeviceState audioDevice;
+        {
+            const std::lock_guard<std::mutex> lock(audioDeviceStateMutex_);
+            instrument = instrumentConfig_;
+            audioDevice = audioDeviceState_;
+        }
+
+        const RuntimeConfigFileStatus status =
+            SaveRuntimeConfigFile(dataPaths_.configFile, instrument, audioDevice);
+        const std::string path = dataPaths_.configFile.string();
+        INFO("Runtime config save status=%s path=%s", RuntimeConfigFileStatusName(status), path.c_str());
+        return status;
+    }
 
     // Number of per-controller processor chains currently built --
     // == LiveInstrument().controllers.size() at the time of the last
@@ -449,10 +407,11 @@ public:
     // Init() populating its seed instrument); or (2) while the caller already
     // holds audioDeviceStateMutex_ (e.g. inside EditInstrument's own lambda,
     // or a future engine-internal caller taking the lock directly). The audio
-    // thread only ever touches instrumentConfig_ through ApplyPatchMessage,
-    // under audioDeviceStateMutex_ (see DrainPatchInputBus and friends), so
-    // ANY other running-state reader racing that drain must go through
-    // InstrumentSnapshot() instead of this accessor -- see that method's doc
+    // thread does not mutate instrumentConfig_; the lock is still the boundary
+    // for future engine-internal callers that need a coherent instrument
+    // snapshot while audio may be live. Any running-state reader that does not
+    // already hold the lock must go through InstrumentSnapshot() instead of this
+    // accessor -- see that method's doc
     // comment (Task 4 review, Critical: an earlier UI-side endpoint reader --
     // the single-slot MidiPanel component this file's ControllersPage
     // replaced -- read this unlocked from message-thread paths concurrent
@@ -465,7 +424,7 @@ public:
     MidiInstrumentConfig& LiveInstrument() { return instrumentConfig_; }
 
     // Message-thread read of the live instrument, safe to call concurrently
-    // with the audio thread's patch drain: returns a locked deep copy of
+    // with future locked engine-internal updates: returns a locked deep copy of
     // instrumentConfig_ rather than a reference into it. This is the
     // running-state counterpart of LiveInstrument() -- use this (not
     // LiveInstrument()) from any message-thread path that can run while audio
@@ -485,18 +444,14 @@ public:
     const MidiInstrumentConfig& DefaultInstrument() const { return defaultInstrumentConfig_; }
 
     // Serialized edit entry point (smi-8): applies `edit` to the live
-    // instrument such that it cannot race the audio-thread patch drain --
-    // same block-boundary handoff/lock discipline as audioDeviceStateMutex_
-    // guards for audioDeviceState_ (see that member's doc comment, and
-    // DrainPatchInputBus/the ProcessBlock stashed-message retry/
-    // ApplyPendingPatchMessages, all of which hold the lock around every
-    // ApplyPatchMessage call that touches instrumentConfig_). Message-thread
-    // only (mirrors MidiControllerProfileConfig's old message-thread-only
+    // instrument under the same lock used for coherent snapshots of instrument
+    // and audio-device state. Message-thread only (mirrors
+    // MidiControllerProfileConfig's old message-thread-only
     // contract). After the edit is applied, this rebuilds the MIDI
     // processors and fires midiProcessorsRebuiltCallback_ (if set) — the
     // same rebuilt-callback path RebuildMidiProcessors()'s callers already
     // use — so a host reacts to an edited instrument (e.g. re-opening
-    // endpoints) exactly as it would to a patch-driven rebuild.
+    // endpoints) after host-initiated instrument edits.
     void EditInstrument(const std::function<void(MidiInstrumentConfig&)>& edit) {
         if (!edit) {
             return;
@@ -514,12 +469,9 @@ public:
     void SetMidiProcessorsRebuiltCallback(std::function<void()> callback) {
         midiProcessorsRebuiltCallback_ = std::move(callback);
     }
-    // Invoked from the message thread (MessageThreadTick, or directly from
-    // Initialize() for a startup load) whenever a consumed patch message
-    // changed audioDeviceState_ — fired AFTER the state is fully applied,
-    // mirroring SetMidiProcessorsRebuiltCallback's ordering discipline.
-    // Hosts wire this before calling Initialize() so a startup-load change
-    // is observed.
+    // Reserved for host notification when engine-owned runtime configuration
+    // changes audioDeviceState_ without being initiated by the host. Patch
+    // files are parameter-only and never fire this callback.
     void SetAudioDeviceChangedCallback(std::function<void()> callback) {
         audioDeviceChangedCallback_ = std::move(callback);
     }
@@ -549,19 +501,11 @@ public:
     }
     // Host API, message-thread only: records a host-initiated audio device
     // change (e.g. a UI combo selection) into BOTH the live state and the
-    // audio-side shadow (lastNotifiedAudioDeviceState_), under
-    // audioDeviceStateMutex_. Host-initiated changes are by definition
-    // already known to the host that just made them, so this deliberately
-    // does NOT set audioDeviceChangedPending_/invoke
-    // audioDeviceChangedCallback_ -- that callback exists solely to tell the
-    // host about changes IT did not originate (patch load/revert). Advancing
-    // the shadow here is what makes a later patch revert back to this exact
-    // state correctly detect "no change" (no spurious callback) while a
-    // revert to any OTHER state still fires (see
-    // AudioDeviceSnapshot/DrainPatchInputBus). Replaces the old mutable
-    // AudioDevice() accessor, which let a host write audioDeviceState_
-    // directly without advancing the shadow or taking the lock -- see the
-    // Task 3 review finding this API was introduced to fix.
+    // last-notified shadow under audioDeviceStateMutex_. Host-initiated changes
+    // are by definition already known to the host that just made them, so this
+    // deliberately does NOT invoke audioDeviceChangedCallback_. Replaces the old
+    // mutable AudioDevice() accessor, which let a host write audioDeviceState_
+    // directly without advancing the shadow or taking the lock.
     void SetAudioDeviceFromHost(const AudioDeviceState& state) {
         const std::lock_guard<std::mutex> lock(audioDeviceStateMutex_);
         audioDeviceState_ = state;
@@ -603,13 +547,11 @@ public:
     // this after uiState_ is populated; the function tolerates a null
     // UIState* regardless since CreateMidiControllerProfile does). This is
     // the single call site for the midiProcessors_ assignment, so it covers
-    // every rebuild: Initialize()'s silent first rebuild, Initialize()'s
-    // startup-patch rebuild, MessageThreadTick()'s patch-driven rebuild, and
-    // any host-initiated rebuild (e.g. adding a controller). Does NOT itself
-    // invoke midiProcessorsRebuiltCallback_ — the tick's midiRebuildPending_
-    // path does that after clearing the flag; EditInstrument does it after
-    // applying the edit (the path every current caller uses -- e.g.
-    // ControllersPage's Commit(), MidiConnectionManager's UpdateRef()); a
+    // every rebuild: Initialize()'s silent first rebuild and any host-initiated
+    // rebuild (e.g. adding a controller). Does NOT itself invoke
+    // midiProcessorsRebuiltCallback_; EditInstrument does that after applying
+    // the edit (the path every current caller uses -- e.g. ControllersPage's
+    // Commit(), MidiConnectionManager's UpdateRef()). A
     // caller rebuilding directly on the message thread outside EditInstrument
     // would need to invoke midiProcessorsRebuiltCallback_ itself, or
     // otherwise handle the endpoint-reopen consequences of a fresh chain, but
@@ -716,17 +658,11 @@ public:
 private:
     // Audio-thread drain loop shared by ProcessBlock's no-stash path and its
     // post-retry continuation. Drains patchInputBus_ via ApplyPatchMessage;
-    // Applied/Reverted set midiRebuildPending_; ArenaExhausted stashes the
-    // popped message in pendingPatchMessage_, sets arenaGrowPending_, and
-    // stops draining for this block (never grows the arena on the audio
-    // path — see the ArenaExhausted handling note above
-    // ApplyPendingPatchMessages). Each call is followed by comparing
-    // audioDeviceState_ against the persistent lastNotifiedAudioDeviceState_
-    // shadow (no per-call copy — see that member's doc comment); a real
-    // change sets audioDeviceChangedPending_ for MessageThreadTick,
-    // independent of status (a change is a change whether or not it happened
-    // to be the last message in a Reverted/Applied outcome), and updates the
-    // shadow.
+    // Applied/Reverted patch messages update parameter values only.
+    // ArenaExhausted stashes the popped message in pendingPatchMessage_, sets
+    // arenaGrowPending_, and stops draining for this block (never grows the
+    // arena on the audio path — see the ArenaExhausted handling note above
+    // ApplyPendingPatchMessages).
     //
     // audioDeviceStateMutex_ is acquired ONLY inside the loop body, after a
     // message has actually been popped -- never around the
@@ -745,15 +681,9 @@ private:
                 status = ApplyPatchMessage(patchMessage, manager_, instrumentConfig_, defaultInstrumentConfig_,
                                            audioDeviceState_, defaultAudioDeviceState_, patchOutputBus_,
                                            serializationContext_);
-                if (!(audioDeviceState_ == lastNotifiedAudioDeviceState_)) {
-                    audioDeviceChangedPending_.store(true, std::memory_order_release);
-                    lastNotifiedAudioDeviceState_ = audioDeviceState_;
-                }
             }
             LogPatchApplyOutcome(patchMessage, status);
-            if (status == PatchApplyStatus::Applied || status == PatchApplyStatus::Reverted) {
-                midiRebuildPending_.store(true, std::memory_order_release);
-            } else if (status == PatchApplyStatus::ArenaExhausted) {
+            if (status == PatchApplyStatus::ArenaExhausted) {
                 pendingPatchMessage_ = std::move(patchMessage);
                 arenaGrowPending_.store(true, std::memory_order_release);
                 break;
@@ -804,8 +734,8 @@ private:
 
     // Pre-audio-only synchronous drain, used by Initialize(). Drains
     // patchInputBus_ via ApplyPatchMessage using the engine's serialization
-    // context. Returns true if any drained message applied or reverted patch
-    // state (i.e. the caller should rebuild MIDI processors).
+    // context. Patch messages are parameter-only, so applying/reverting here
+    // does not schedule MIDI rebuilds or audio-device callbacks.
     //
     // ArenaExhausted handling: during Initialize, audio has not started, so
     // on ArenaExhausted we simply grow serializationArena_ synchronously
@@ -821,8 +751,7 @@ private:
     // Initialize() runs pre-audio, single-threaded). The lock is uncontended
     // in that window; held anyway for uniformity with every other touch point
     // of audioDeviceState_.
-    bool ApplyPendingPatchMessages() {
-        bool pendingRebuild = false;
+    void ApplyPendingPatchMessages() {
         PatchMessageIn message;
         while (patchInputBus_.Pop(message)) {
             PatchApplyStatus status;
@@ -840,11 +769,7 @@ private:
                                                serializationContext_);
                 }
             }
-            if (status == PatchApplyStatus::Applied || status == PatchApplyStatus::Reverted) {
-                pendingRebuild = true;
-            }
         }
-        return pendingRebuild;
     }
 
     // Members are declared in dependency order: buses reference the manager,
@@ -857,18 +782,14 @@ private:
     MessageOutBus patchOutputBus_;
     MidiSender midiSender_;
     PatchManager patchManager_;
-    // Engine-owned MIDI instrument (sar-3): threaded through ApplyPatchMessage
-    // (LoadFromJSON/RevertAllToDefault/SerializeToJSON) -- the in-memory
-    // counterpart of the required `midiInstrument` patch section -- AND the
-    // source RebuildMidiProcessors() builds midiProcessors_ from (one
-    // MidiControllerProfileResult per controller slot, index-for-index --
-    // see RebuildMidiProcessors()'s doc comment). LiveInstrument()/
-    // EditInstrument() are the pre-audio/locked read and message-thread write
-    // surface;
+    // Engine-owned MIDI instrument (sar-3): the source
+    // RebuildMidiProcessors() builds midiProcessors_ from (one
+    // MidiControllerProfileResult per controller slot, index-for-index -- see
+    // RebuildMidiProcessors()'s doc comment). LiveInstrument()/EditInstrument()
+    // are the pre-audio/locked read and message-thread write surface;
     // InstrumentSnapshot() is the locked running-state read surface (use this
-    // one once audio may be live); the audio-thread patch drain
-    // (DrainPatchInputBus and friends) is the only other writer, serialized
-    // against EditInstrument/InstrumentSnapshot via audioDeviceStateMutex_.
+    // one once audio may be live). Patch files no longer contain active MIDI
+    // configuration, so patch load/revert leaves this member untouched.
     MidiInstrumentConfig instrumentConfig_;
     // Default = the app's Init-configured instrument; revert/new restore
     // this. Snapshotted from instrumentConfig_ in Initialize(), immediately
@@ -877,75 +798,40 @@ private:
     // read-only via DefaultInstrument().
     MidiInstrumentConfig defaultInstrumentConfig_;
 
-    // Guards audioDeviceState_ + lastNotifiedAudioDeviceState_ (the two
-    // members below) AND instrumentConfig_ against the data race between the
-    // message thread (host writes via SetAudioDeviceFromHost/EditInstrument,
-    // reads via AudioDeviceSnapshot/InstrumentSnapshot) and the audio thread
-    // (DrainPatchInputBus / ProcessBlock's stashed-message retry, which read
-    // AND write audioDeviceState_/lastNotifiedAudioDeviceState_ AND
-    // instrumentConfig_ while applying a patch message). AppContext no
-    // longer exposes a mutable pointer into audioDeviceState_ (Task 3
-    // review, Critical fix) -- the only writers are the Initialize()-time
-    // config seeding, patch application, SetAudioDeviceFromHost, and
-    // EditInstrument, all of which hold this lock.
+    // Guards audioDeviceState_ + lastNotifiedAudioDeviceState_ (the two members
+    // below) AND instrumentConfig_ for coherent host reads/writes. AppContext no
+    // longer exposes a mutable pointer into audioDeviceState_; the only current
+    // writers are SetAudioDeviceFromHost and EditInstrument, both of which hold
+    // this lock.
     //
-    // Touched ONLY at the Initialize()-time seeding step, patch-message
-    // application (DrainPatchInputBus, the ProcessBlock stashed-message
-    // retry, ApplyPendingPatchMessages/the startup drain in Initialize()),
-    // and host operations (SetAudioDeviceFromHost, AudioDeviceSnapshot,
-    // EditInstrument) -- never on the steady-state pump path when there is
-    // no pending patch message to apply (patchInputBus_.Pop() returning
-    // false costs nothing extra; see DrainPatchInputBus's doc comment). This
-    // is the same sanctioned patch-boundary non-RT exception
-    // LogPatchApplyOutcome's doc comment describes: patch commands (and
-    // EditInstrument calls) are rare and user-initiated, and
-    // ApplyPatchMessage itself already isn't lock/allocation-free on that
-    // path, so a mutex acquisition confined to the same window adds no new
-    // audio-thread hazard in steady state.
+    // Patch-message application still takes this lock while passing the
+    // instrument/audio state into compatibility APIs, but parameter-only patch
+    // load/revert does not mutate either member. The lock is never touched on
+    // the steady-state pump path when there is no pending patch message to apply
+    // (patchInputBus_.Pop() returning false costs nothing extra; see
+    // DrainPatchInputBus's doc comment).
     mutable std::mutex audioDeviceStateMutex_;
 
-    // Engine-owned audio device selection (Task 2; seeding fixed in Task 3
-    // review). Seeded at the start of Initialize() from
-    // config_.preferredOutputDeviceName/preferredInputDeviceName (pre-audio,
-    // single-threaded, before this mutex matters), then threaded through
-    // every ApplyPatchMessage call so patch load/revert can read and write
-    // it. There is no longer a mutable pointer into this member on
-    // AppContext -- a retained context could mutate it without the lock or
-    // the lastNotifiedAudioDeviceState_ shadow; see
-    // RuntimeConfig::preferredOutputDeviceName's doc comment for the fix. All
-    // reads/writes past the Initialize() seeding step must hold
-    // audioDeviceStateMutex_. See SetAudioDeviceFromHost/AudioDeviceSnapshot
-    // for the public API.
+    // Engine-owned audio device selection. Hosts update it through
+    // SetAudioDeviceFromHost; runtime configuration loading seeds it during
+    // Initialize(). There is no mutable pointer into this member on AppContext,
+    // so all reads/writes must hold audioDeviceStateMutex_. See
+    // SetAudioDeviceFromHost/AudioDeviceSnapshot for the public API.
     AudioDeviceState audioDeviceState_;
     // Default = the app's Init-configured audio device selection; revert/new
     // restore this. Snapshotted from audioDeviceState_ alongside
     // defaultInstrumentConfig_ in Initialize().
     AudioDeviceState defaultAudioDeviceState_;
-    // Shadow of the last audioDeviceState_ value the host was told about --
-    // either via audioDeviceChangedCallback_ (a patch-driven change) or via
-    // SetAudioDeviceFromHost (a host-driven change, which advances this
-    // shadow immediately since the host by definition already knows about
-    // its own change). Seeded from the post-Init default snapshot in
-    // Initialize(), immediately after defaultAudioDeviceState_ is captured.
-    // Guarded by audioDeviceStateMutex_ alongside audioDeviceState_ (Task 3
-    // review finding: this used to be audio-thread-exclusive, which raced
-    // with a host writing audioDeviceState_ directly and never advancing the
-    // shadow -- see SetAudioDeviceFromHost's doc comment). Exists so
-    // DrainPatchInputBus and ProcessBlock's stashed-message retry can detect
-    // a real change with a string COMPARISON after every ApplyPatchMessage
-    // call instead of copying two std::strings (audioDeviceState_) before
-    // every call — the old before/after-snapshot approach heap-allocated on
-    // the audio thread in steady state whenever either string was
-    // non-empty/non-SSO. The assignment here (`lastNotifiedAudioDeviceState_
-    // = audioDeviceState_`) still allocates, but only fires when a patch
-    // message actually changed the device, which happens inside the
-    // sanctioned patch-command non-RT window (the same window
-    // ApplyPatchMessage itself already allocates in), not on every
-    // steady-state block.
+    // Shadow of the last audioDeviceState_ value the host was told about.
+    // Host-driven changes advance this immediately because the host already
+    // knows about its own selection. Runtime configuration loading advances
+    // the same shadow before the device is opened. Patch files are
+    // parameter-only and never update audioDeviceState_.
     AudioDeviceState lastNotifiedAudioDeviceState_;
     JsonArena serializationArena_;
     PatchSerializationContext serializationContext_;
     RuntimeConfig config_;
+    RuntimeDataPaths dataPaths_;
     AppContext context_;
     App app_;
     std::unique_ptr<ParameterManager::UIState> uiState_;
@@ -973,25 +859,6 @@ private:
     // (publish every block) applies before Prepare runs.
     int uiPublishInterval_ = 1;
     int blocksSinceUiPublish_ = 0;
-
-    // Set by ProcessBlock (Task 4) when a drained patch message
-    // applied/reverted patch state; MessageThreadTick (Task 5) consumes this
-    // to know it should rebuild MIDI processors on the message thread.
-    // Consumed via exchange(false, acq_rel), NOT load-then-store: a plain
-    // load() followed by a separate store(false) leaves a window where an
-    // audio-thread store(true) landing between the two would be silently
-    // erased, dropping the notification. exchange() reads and clears
-    // atomically, closing that window.
-    std::atomic<bool> midiRebuildPending_{false};
-
-    // Set by ProcessBlock's patch drain (DrainPatchInputBus and the
-    // stashed-message retry) whenever a consumed ApplyPatchMessage call
-    // actually changed audioDeviceState_ (comparison against the persistent
-    // lastNotifiedAudioDeviceState_ shadow — see that member's doc comment).
-    // MessageThreadTick (Task 5) consumes this the same way it consumes
-    // midiRebuildPending_ — via exchange(false, acq_rel), for the identical
-    // drop-on-race reason — then invokes audioDeviceChangedCallback_ if set.
-    std::atomic<bool> audioDeviceChangedPending_{false};
 
     // Audio-path ArenaExhausted handling / drain barrier (Task 4/5):
     // ProcessBlock never grows serializationArena_ on the audio thread. On

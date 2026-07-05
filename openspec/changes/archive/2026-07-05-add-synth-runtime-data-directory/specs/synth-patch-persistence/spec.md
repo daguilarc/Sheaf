@@ -1,20 +1,8 @@
-# synth-patch-persistence Specification
+# synth-patch-persistence Delta
 
-## Purpose
-TBD - created by archiving change add-midi-profile-json-persistence. Update Purpose after archive.
-## Requirements
-### Requirement: spp-1 — JSON: arena-backed tree
-WHEN synth patch persistence needs JSON parsing or serialization, THE synth patch persistence system SHALL provide a JUCE-free arena-backed JSON library whose nodes, object members, array entries, object keys, and string values allocate only from a caller-owned `JsonArena`, whose build and read operations are null-tolerant after arena exhaustion, and whose parser and serializer round-trip standard patch JSON text.
+Project: `projects/synth`. ID prefix: `spp`.
 
-#### Scenario: Arena builds object tree
-- **WHEN** code builds an object with strings, integers, reals, booleans, arrays, and nested objects through `JsonArena`
-- **THEN** all JSON nodes and stored strings are allocated from that arena
-- **AND** the resulting tree can be serialized to valid JSON text
-
-#### Scenario: Exhaustion is recoverable
-- **WHEN** the arena is too small for a JSON build or parse
-- **THEN** the arena records failure without crashing
-- **AND** callers can grow/reset the arena and retry the same operation
+## MODIFIED Requirements
 
 ### Requirement: spp-2 — Patch document format
 WHEN a synth patch is saved, THE synth patch persistence system SHALL write a JSON object containing a synth patch schema identifier, schema version, patch name, and recursive parameter values keyed by initialized parameter name, while excluding MIDI instrument/controller configuration, audio device selection state, parameter definitions, and synth topology from persisted patch JSON; if legacy patch JSON contains MIDI or audio configuration sections, patch validation SHALL tolerate those extra sections without applying them as patch state.
@@ -38,27 +26,6 @@ WHEN a synth patch is saved, THE synth patch persistence system SHALL write a JS
 - **WHEN** a patch document contains legacy `midiInstrument` or `audioDevice` sections
 - **THEN** patch validation succeeds if the patch schema and parameter values are otherwise valid
 - **AND** loading the patch leaves current MIDI instrument configuration and audio device state unchanged
-
-### Requirement: spp-3 — Patch file version history
-WHEN synth patch persistence saves patch JSON to disk, THE system SHALL store each patch in its own directory under a configurable patches root and SHALL create one new sortable JSON version file per save without overwriting older versions.
-
-#### Scenario: Save creates version file
-- **WHEN** patch `BrightLead` is saved twice
-- **THEN** both saves are written under `patches/BrightLead/`
-- **AND** the second save does not overwrite the first save
-
-#### Scenario: Save explicit patch directory creates version file
-- **WHEN** a caller saves JSON text to an explicit patch directory
-- **THEN** the persistence system creates one version file directly in that directory
-- **AND** does not derive a second directory name from `patchName`
-
-#### Scenario: Latest load uses sortable filename
-- **WHEN** a patch directory contains multiple JSON version files
-- **THEN** loading the latest patch version selects the alphanumerically greatest version filename
-
-#### Scenario: Explicit version load
-- **WHEN** a caller provides an explicit patch version file path under a patch directory
-- **THEN** the persistence system loads that file rather than the latest version
 
 ### Requirement: spp-4 — Patch save and load APIs
 WHEN application code requests synth patch save or load without a UI, THE synth patch persistence system SHALL expose JUCE-free library APIs to serialize initialized parameter values to JSON, parse patch JSON with a caller-owned arena, and apply only matching named parameter values to an already initialized parameter manager.
@@ -88,58 +55,6 @@ WHEN the synth miniapp uses persistence, THE synth patch persistence system SHAL
 #### Scenario: Missing saved patch uses defaults
 - **WHEN** the miniapp starts and no patch file exists
 - **THEN** it initializes the default parameter values without reporting a patch persistence failure
-
-### Requirement: spp-6 — Patch lifecycle manager
-WHEN synth patch lifecycle operations are requested, THE synth patch persistence system SHALL provide a JUCE-free library `PatchManager` that tracks the current patch directory as nullable state, orchestrates new/save/save-as/load/revert commands, and delegates state mutation/serialization through patch messages rather than app-specific persistence code.
-
-#### Scenario: Current patch directory is nullable
-- **WHEN** no patch has been loaded or saved-as
-- **THEN** the patch manager reports no current patch directory
-- **AND** save reports that a save-as path is required
-
-#### Scenario: New patch clears current directory after reset
-- **WHEN** new patch is requested
-- **THEN** the patch manager dispatches a patch message requesting all values revert to defaults
-- **AND** clears the current patch directory
-
-#### Scenario: Save writes a new version for current patch
-- **WHEN** the patch manager has a current patch directory
-- **AND** save is requested
-- **THEN** it dispatches a patch message requesting JSON serialization
-- **AND** returns a pending status
-- **AND** when `ProcessResponses` receives a serialized JSON response with the matching request id, it writes a new JSON version file in that directory without overwriting earlier versions
-
-#### Scenario: Save is busy while serialization is pending
-- **WHEN** save or save-as has already dispatched a serialization request that has not completed
-- **THEN** another save or save-as request returns busy
-- **AND** does not dispatch another serialization request
-
-#### Scenario: Save-as requires a new directory
-- **WHEN** save-as is requested with a directory path that does not exist
-- **THEN** the patch manager dispatches a serialization request and returns pending
-- **AND** when a matching serialized JSON response is received, it creates the directory, writes the first JSON version file there, and records that directory as the current patch
-- **WHEN** save-as is requested with a target path that already exists as a file or directory
-- **THEN** the patch manager rejects the request without overwriting existing patch history
-
-#### Scenario: Load accepts directory or version path
-- **WHEN** load is requested with a patch directory
-- **THEN** the patch manager loads the latest sortable JSON version in that directory
-- **AND** records that directory as the current patch
-- **WHEN** load is requested with an explicit JSON version file
-- **THEN** the patch manager loads that file
-- **AND** records the containing directory as the current patch
-
-#### Scenario: Load failure preserves current patch
-- **WHEN** load is requested with a missing path, empty patch directory, corrupt JSON, unsupported patch schema, or a full patch-message queue
-- **THEN** load reports failure
-- **AND** the patch manager leaves its current patch directory unchanged
-
-#### Scenario: Revert patch reloads current latest or defaults
-- **WHEN** revert patch is requested and a current patch directory exists
-- **THEN** the patch manager loads and dispatches the latest JSON version from that directory
-- **AND** if the latest version cannot be read, parsed, validated, or dispatched, the current patch directory is left unchanged
-- **WHEN** revert patch is requested and no current patch directory exists
-- **THEN** it behaves like new patch by dispatching a full value reset and leaving the current directory unset
 
 ### Requirement: spp-7 — Patch message input/output buses
 WHEN patch lifecycle operations interact with initialized synth state, THE synth patch persistence system SHALL provide patch-specific input messages for `LoadFromJSON`, `RevertAllToDefault`, and `SerializeToJSON`, and `MessageOut`/`MessageOutBus` types that can carry serialized JSON responses back to the patch manager.
@@ -183,6 +98,8 @@ WHEN the synth miniapp is hosted by the synth application runtime, THE runtime S
 - **THEN** patch JSON load is delivered through `LoadFromJSON` or `RevertAllToDefault` patch messages
 - **AND** MIDI instrument configuration and audio device selection are left unchanged by the patch message
 
+## ADDED Requirements
+
 ### Requirement: spp-9 — Runtime configuration document
 WHEN synth runtime configuration is saved, THE synth persistence system SHALL provide JUCE-free helpers that write a JSON object containing a runtime configuration schema identifier, schema version, MIDI instrument/controller configuration, and audio device selection state to an explicit configuration file path, and SHALL load that document into scratch state before mutating the caller's live configuration.
 
@@ -200,4 +117,3 @@ WHEN synth runtime configuration is saved, THE synth persistence system SHALL pr
 - **WHEN** runtime configuration is saved to disk
 - **THEN** the helper writes through a temporary file and renames it into place
 - **AND** a failed write leaves the previous configuration file intact when one existed
-

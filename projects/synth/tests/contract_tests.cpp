@@ -1,5 +1,7 @@
 #include "synth/AppContext.hpp"
 #include "synth/AppConcepts.hpp"
+#include "synth/PatchBrowser.hpp"
+#include "synth/RuntimePagePolicy.hpp"
 
 #ifdef JUCE_MAJOR_VERSION
 #error "synth contract tests must not see JUCE headers"
@@ -8,6 +10,8 @@
 #include <algorithm>
 #include <cmath>
 #include <exception>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <sstream>
 #include <stdexcept>
@@ -65,11 +69,87 @@ TEST_CASE(runtime_config_defaults_are_sensible) {
     REQUIRE_TRUE(config.numAudioOutputs == 2);
     REQUIRE_NEAR(static_cast<float>(config.preferredSampleRate), 48000.0f, 1e-3f);
     REQUIRE_TRUE(config.preferredBlockSize == 256);
-    REQUIRE_TRUE(config.patchesRoot.empty());
-    REQUIRE_TRUE(config.logsRoot.empty());
     REQUIRE_TRUE(config.uiWidth == 900);
     REQUIRE_TRUE(config.uiHeight == 560);
     REQUIRE_TRUE(config.uiFrameHz == 30);
+}
+
+TEST_CASE(runtime_data_paths_default_empty_and_derive_children) {
+    const synth::RuntimeDataPaths paths;
+    REQUIRE_TRUE(paths.dataRoot.empty());
+    REQUIRE_TRUE(paths.patchesRoot.empty());
+    REQUIRE_TRUE(paths.logsRoot.empty());
+    REQUIRE_TRUE(paths.configFile.empty());
+
+    const auto derived = synth::RuntimeDataPaths::FromDataRoot("/tmp/sheaf-test-root");
+    REQUIRE_TRUE(derived.dataRoot == std::filesystem::path("/tmp/sheaf-test-root"));
+    REQUIRE_TRUE(derived.patchesRoot == std::filesystem::path("/tmp/sheaf-test-root") / "patches");
+    REQUIRE_TRUE(derived.logsRoot == std::filesystem::path("/tmp/sheaf-test-root") / "logs");
+    REQUIRE_TRUE(derived.configFile == std::filesystem::path("/tmp/sheaf-test-root") / "config.json");
+}
+
+TEST_CASE(patch_browser_lists_patch_directories_deterministically) {
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() / "sheaf-patch-browser-contract-list";
+    std::error_code ec;
+    std::filesystem::remove_all(root, ec);
+    std::filesystem::create_directories(root / "zeta", ec);
+    std::filesystem::create_directories(root / "alpha", ec);
+    std::filesystem::create_directories(root / "middle", ec);
+    std::ofstream(root / "not-a-patch.txt").put('x');
+
+    synth::PatchBrowser browser(root);
+    REQUIRE_TRUE(browser.Refresh());
+    REQUIRE_TRUE(browser.Entries().size() == 3);
+    REQUIRE_TRUE(browser.Entries()[0].name == "alpha");
+    REQUIRE_TRUE(browser.Entries()[1].name == "middle");
+    REQUIRE_TRUE(browser.Entries()[2].name == "zeta");
+
+    browser.Select(2);
+    REQUIRE_TRUE(browser.SelectedRelativePath() == std::filesystem::path("zeta"));
+
+    std::filesystem::remove_all(root, ec);
+}
+
+TEST_CASE(patch_browser_rejects_root_escape_paths) {
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() / "sheaf-patch-browser-contract-escape";
+    const std::filesystem::path outside =
+        std::filesystem::temp_directory_path() / "sheaf-patch-browser-contract-outside";
+    std::error_code ec;
+    std::filesystem::remove_all(root, ec);
+    std::filesystem::remove_all(outside, ec);
+    std::filesystem::create_directories(root, ec);
+    std::filesystem::create_directories(outside, ec);
+
+    synth::PatchBrowser browser(root);
+    REQUIRE_TRUE(!browser.ResolveLoadPath(std::filesystem::path("/tmp/not-a-patch")).has_value());
+    REQUIRE_TRUE(!browser.ResolveLoadPath(std::filesystem::path("../outside")).has_value());
+    REQUIRE_TRUE(!browser.ResolveSaveAsPath(".").has_value());
+    REQUIRE_TRUE(!browser.ResolveSaveAsPath("../outside").has_value());
+    REQUIRE_TRUE(!browser.ResolveSaveAsPath("nested/../../outside").has_value());
+    REQUIRE_TRUE(!browser.ResolveLoadPath(std::filesystem::relative(outside, root)).has_value());
+
+    std::filesystem::create_directory_symlink(outside, root / "outside-link", ec);
+    if (!ec) {
+        REQUIRE_TRUE(!browser.ResolveLoadPath("outside-link").has_value());
+        REQUIRE_TRUE(browser.Refresh());
+        REQUIRE_TRUE(browser.Entries().empty());
+    }
+
+    const auto savePath = browser.ResolveSaveAsPath("New Patch");
+    REQUIRE_TRUE(savePath.has_value());
+    REQUIRE_TRUE(*savePath == browser.RootPath() / "New Patch");
+
+    std::filesystem::remove_all(root, ec);
+    std::filesystem::remove_all(outside, ec);
+}
+
+TEST_CASE(runtime_page_back_save_policy_matches_configuration_pages) {
+    REQUIRE_TRUE(!synth::RuntimePageBackSavesConfiguration(synth::RuntimePageKind::None));
+    REQUIRE_TRUE(synth::RuntimePageBackSavesConfiguration(synth::RuntimePageKind::Audio));
+    REQUIRE_TRUE(synth::RuntimePageBackSavesConfiguration(synth::RuntimePageKind::Controllers));
+    REQUIRE_TRUE(!synth::RuntimePageBackSavesConfiguration(synth::RuntimePageKind::File));
 }
 
 TEST_CASE(audio_block_is_a_plain_view) {

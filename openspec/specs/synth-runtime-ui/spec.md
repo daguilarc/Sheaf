@@ -9,7 +9,6 @@ sidebar (Audio/Controllers/File entries and max-recent-deadline readout),
 the audio, controllers, and file pages, kind-driven expandable controller
 configuration with scrollable mapping editors, and the JUCE-free view
 model that page logic lives in.
-
 ## Requirements
 ### Requirement: sru-1 — Layout: main pane with sidebar and content host
 WHEN a runtime-hosted application presents UI, THE runtime library SHALL provide a main pane component composed of a right-hand sidebar menu subcomponent and a content host filling the remaining area; the content host SHALL display the application's UI override by default, SHALL display exactly one library page at a time when one is opened from the sidebar, SHALL return to the application's UI when the page is dismissed, and SHALL relayout the sidebar and content on window resize.
@@ -89,7 +88,7 @@ WHEN a controller row's config section is used, THE runtime library SHALL provid
 - **THEN** the 16 turn mappings present as one turn block row and the 16 push mappings as one push block row rather than 32 individual rows
 
 ### Requirement: sru-6 — File page: patch commands
-WHEN the File page is open, THE runtime library SHALL present the patch commands (new, save, save-as, load, revert) with the current patch name and last command status, replacing the former shell chrome row; Save with no current patch directory SHALL fall through to the Save As flow.
+WHEN the File page is open, THE runtime library SHALL present the patch commands (new, save, save-as, load, revert) with the current patch name and last command status, replacing the former shell chrome row; Save with no current patch directory SHALL fall through to the in-app Save As flow; Save As and Load SHALL use an in-app patch browser rooted at the runtime-owned `patches/` directory rather than an operating-system file explorer.
 
 #### Scenario: File page carries patch identity
 - **WHEN** a patch is saved-as or loaded
@@ -97,7 +96,12 @@ WHEN the File page is open, THE runtime library SHALL present the patch commands
 
 #### Scenario: First save falls through
 - **WHEN** the user presses Save before any patch directory exists
-- **THEN** the Save As chooser opens instead of an error
+- **THEN** the in-app Save As flow opens instead of an error
+
+#### Scenario: Patch browser stays under patches root
+- **WHEN** the user browses, saves-as, or loads from the File page
+- **THEN** every selectable or creatable patch directory is resolved under the runtime-owned `patches/` directory
+- **AND** the UI exposes no arbitrary absolute filesystem picker
 
 ### Requirement: sru-7 — View model: JUCE-free page logic
 WHEN the Controllers page builds or edits its content, THE row-tree construction (sections present per kind, labels, mapping row values, expand/collapse state) and edit application onto the instrument configuration SHALL live in JUCE-free library code, so page logic is unit-testable headlessly with multiple controllers and large mapping sets; JUCE components SHALL be thin renderers over this view model.
@@ -109,6 +113,7 @@ WHEN the Controllers page builds or edits its content, THE row-tree construction
 #### Scenario: Edits round-trip through the view model
 - **WHEN** a JUCE-free test applies an encoder-mapping edit through the view model
 - **THEN** the underlying instrument configuration reflects the edit and rebuilding the view model shows the new value
+
 ### Requirement: sru-8 — Controllers page: per-kind address schema
 WHEN system-message mappings are presented or edited, THE runtime library SHALL derive each kind's address fields from a single shared schema — wrldbldr: channel, x, y; launchpad: x, y; twister: logical side-button number 0..5 only (stored as its fixed channel-3 CC `8 + button`; the channel is display-only, not an editable column); generic: channel, cc — and SHALL use that schema for row fields, column headers, and block address forms, so no kind shows dead or inapplicable address columns.
 
@@ -196,3 +201,44 @@ WHILE a section is expanded, THE runtime library SHALL keep its presentation's g
 #### Scenario: Config-level rows are not deletable
 - **WHEN** the encoders section presents relative mode and turn step
 - **THEN** neither exposes a delete affordance
+
+### Requirement: sru-12 — Configuration pages: Back saves runtime configuration
+WHEN the user dismisses a runtime configuration page with Back, THE runtime library SHALL save the current runtime configuration before returning to the application view for pages that edit persistent configuration, including the Audio page and Controllers page.
+
+#### Scenario: Audio Back saves configuration
+- **WHEN** the user changes the audio device selection and presses Back on the Audio page
+- **THEN** the runtime saves a configuration document containing the current audio device state
+- **AND** returns to the application view
+
+#### Scenario: Controllers Back saves configuration
+- **WHEN** the user changes controller setup or mappings and presses Back on the Controllers page
+- **THEN** the runtime saves a configuration document containing the current MIDI instrument/controller configuration
+- **AND** returns to the application view
+
+#### Scenario: File Back does not save runtime configuration
+- **WHEN** the user presses Back on the File page
+- **THEN** the runtime returns to the application view without writing runtime configuration solely because the File page was dismissed
+
+### Requirement: sru-13 — File page: in-app patch browser
+WHEN the File page enters Save As or Load flow, THE runtime library SHALL render a root-scoped in-app patch browser over the runtime-owned `patches/` directory, listing patch directories in deterministic order, allowing relative navigation within that root, allowing creation of a named patch directory for Save As, and selecting an existing patch directory for Load.
+
+#### Scenario: Browser lists patch directories deterministically
+- **WHEN** the patch root contains multiple patch directories
+- **THEN** the in-app browser lists them in deterministic filename order
+- **AND** non-patch version files at the root are not presented as loadable patches
+
+#### Scenario: Save As creates patch directory under root
+- **WHEN** the user enters a new patch name in the in-app Save As flow
+- **THEN** the runtime creates the corresponding patch directory under the runtime-owned `patches/` directory
+- **AND** writes the first patch version file there through the patch manager
+
+#### Scenario: Load selects patch directory under root
+- **WHEN** the user confirms an existing patch directory in the in-app Load flow
+- **THEN** the runtime asks the patch manager to load that directory
+- **AND** the patch manager selects the latest sortable version file in that directory
+
+#### Scenario: Browser cannot escape root
+- **WHEN** a browser navigation or typed patch name contains an absolute path or `..`
+- **THEN** the runtime rejects that target
+- **AND** no file outside the runtime-owned `patches/` directory is read or written
+

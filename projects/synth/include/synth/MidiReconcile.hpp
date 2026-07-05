@@ -196,15 +196,13 @@ MidiConnectionResizePlan PlanMidiConnectionResize(std::size_t oldCount, std::siz
 //
 // `started` mirrors MidiConnectionManager::started_: false until
 // StartupReconcile() has run its one synchronous startup reconcile pass. A
-// rebuild that fires before that point (e.g. a startup patch's own processor
-// rebuild inside engine.Initialize(), which runs before Runtime::Start()
-// reaches StartupReconcile()) must resize the handler/state vectors -- the
-// vectors need to be correctly sized regardless of what ran before -- but
+// rebuild that fires before that point must resize the handler/state vectors --
+// the vectors need to be correctly sized regardless of what ran before -- but
 // must NOT also run a reconcile pass, or the binding startup order ("engine
-// init -> startup patch -> processor rebuild -> ONE synchronous reconcile ->
-// start poller -> ...") would be violated by an extra early reconcile. Once
-// `started` is true, every rebuild (post-startup patch loads, preset
-// changes, manual ref updates, etc., per sar-8) both resizes and reconciles.
+// init -> runtime config -> ONE synchronous reconcile -> start poller -> ...")
+// would be violated by an extra early reconcile. Once `started` is true, every
+// rebuild (runtime config changes, manual ref updates, etc., per sar-8) both
+// resizes and reconciles.
 //
 // This function does not know about reconciling_ (MidiConnectionManager's
 // separate EditInstrument-re-entrancy guard) -- that guard is orthogonal

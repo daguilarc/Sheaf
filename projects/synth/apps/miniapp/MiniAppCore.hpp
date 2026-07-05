@@ -29,7 +29,6 @@
 
 #include <array>
 #include <cstddef>
-#include <filesystem>
 #include <optional>
 #include <vector>
 
@@ -43,23 +42,6 @@ public:
     using FilterModule = synth::ClassicSvfModule<kVoiceCount>;
     using LfoModule = synth::BasicLfoModule<kVoiceCount>;
 
-    // Test-support hook, mirroring EngineTestApp's testPatchesRoot pattern
-    // (tests/engine_tests.cpp): when set, Config() reports these roots
-    // instead of the deterministic temp-directory defaults, so
-    // tests/miniapp_system_tests.cpp can point patch persistence at a
-    // scratch directory without touching the real default location. Empty
-    // (the default) means "use the deterministic production roots".
-    static inline std::filesystem::path testPatchesRoot;
-    static inline std::filesystem::path testLogsRoot;
-
-    static std::filesystem::path DefaultPatchesRoot() {
-        return std::filesystem::temp_directory_path() / "sheaf-synth-miniapp-patches";
-    }
-
-    static std::filesystem::path DefaultLogsRoot() {
-        return std::filesystem::temp_directory_path() / "sheaf-synth-miniapp-logs";
-    }
-
     static synth::RuntimeConfig Config() {
         synth::RuntimeConfig config;
         config.appName = "SynthMiniapp";
@@ -67,8 +49,6 @@ public:
         config.numAudioOutputs = 2;
         config.preferredSampleRate = 48000.0;
         config.preferredBlockSize = 256;
-        config.patchesRoot = testPatchesRoot.empty() ? DefaultPatchesRoot() : testPatchesRoot;
-        config.logsRoot = testLogsRoot.empty() ? DefaultLogsRoot() : testLogsRoot;
         config.uiWidth = 900;
         config.uiHeight = 560;
         config.uiFrameHz = 30;

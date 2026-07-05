@@ -18,6 +18,8 @@ namespace synth {
 namespace {
 
 constexpr std::string_view kPatchVersionSuffix = "-000.json";
+constexpr std::size_t kRuntimeConfigInitialArenaCapacity = 256 * 1024;
+constexpr std::size_t kRuntimeConfigMaxArenaCapacity = 8 * 1024 * 1024;
 
 bool IsObject(JSON json) {
     return json.m_node != nullptr && json.m_node->m_type == JsonType::Object;
@@ -39,6 +41,16 @@ bool ValidPatchRoot(JSON root) {
     const JSON version = root.Get("schemaVersion");
     return IsString(schema) && std::string_view(schema.StringValue()) == "sheaf.synth.patch" &&
            IsInteger(version) && version.IntegerValue() == 1;
+}
+
+bool ValidRuntimeConfigRoot(JSON root) {
+    if (!IsObject(root)) {
+        return false;
+    }
+    const JSON schema = root.Get("schema");
+    const JSON version = root.Get("schemaVersion");
+    return IsString(schema) && std::string_view(schema.StringValue()) == kRuntimeConfigSchema &&
+           IsInteger(version) && version.IntegerValue() == kRuntimeConfigSchemaVersion;
 }
 
 std::string SanitizePatchName(std::string_view patchName) {
@@ -68,6 +80,10 @@ std::string ReadWholeFile(const std::filesystem::path& path) {
     std::ostringstream contents;
     contents << in.rdbuf();
     return contents.str();
+}
+
+std::filesystem::path RuntimeConfigTempPath(const std::filesystem::path& configFile) {
+    return std::filesystem::path(configFile.string() + ".tmp");
 }
 
 } // namespace
@@ -102,26 +118,169 @@ bool FromJSON(JSON json, AudioDeviceState& state) {
     return true;
 }
 
+JSON BuildRuntimeConfigJSON(JsonArena& arena,
+                            const MidiInstrumentConfig& instrument,
+                            const AudioDeviceState& audioDevice) {
+    JSON root = arena.Object();
+    root.SetNew("schema", arena.String(kRuntimeConfigSchema));
+    root.SetNew("schemaVersion", arena.Integer(kRuntimeConfigSchemaVersion));
+    root.SetNew("midiInstrument", ToJSON(arena, instrument));
+    root.SetNew("audioDevice", ToJSON(arena, audioDevice));
+    return root;
+}
+
+bool LoadRuntimeConfigJSON(JSON root,
+                           MidiInstrumentConfig& instrument,
+                           AudioDeviceState& audioDevice) {
+    if (!ValidRuntimeConfigRoot(root)) {
+        return false;
+    }
+
+    MidiInstrumentConfig parsedInstrument;
+    if (!FromJSON(root.Get("midiInstrument"), parsedInstrument)) {
+        return false;
+    }
+
+    AudioDeviceState parsedAudioDevice;
+    if (!FromJSON(root.Get("audioDevice"), parsedAudioDevice)) {
+        return false;
+    }
+
+    instrument = std::move(parsedInstrument);
+    audioDevice = std::move(parsedAudioDevice);
+    return true;
+}
+
+bool ValidateRuntimeConfigJSON(JSON root) {
+    MidiInstrumentConfig instrument;
+    AudioDeviceState audioDevice;
+    return LoadRuntimeConfigJSON(root, instrument, audioDevice);
+}
+
+RuntimeConfigFileStatus LoadRuntimeConfigFile(const std::filesystem::path& configFile,
+                                              MidiInstrumentConfig& instrument,
+                                              AudioDeviceState& audioDevice) {
+    std::error_code ec;
+    if (!std::filesystem::exists(configFile, ec)) {
+        return ec ? RuntimeConfigFileStatus::IOError : RuntimeConfigFileStatus::Missing;
+    }
+    if (!std::filesystem::is_regular_file(configFile, ec) || ec) {
+        return RuntimeConfigFileStatus::IOError;
+    }
+
+    std::string text;
+    try {
+        text = ReadWholeFile(configFile);
+    } catch (const std::exception&) {
+        return RuntimeConfigFileStatus::IOError;
+    }
+
+    JsonArena arena(kRuntimeConfigInitialArenaCapacity);
+    JSON root = arena.Loads(text.c_str());
+    while (root.IsNull() && arena.Failed() && arena.Capacity() < kRuntimeConfigMaxArenaCapacity) {
+        arena.GrowAndReset();
+        root = arena.Loads(text.c_str());
+    }
+    if (root.IsNull() || arena.Failed()) {
+        return RuntimeConfigFileStatus::Invalid;
+    }
+
+    return LoadRuntimeConfigJSON(root, instrument, audioDevice)
+        ? RuntimeConfigFileStatus::Ok
+        : RuntimeConfigFileStatus::Invalid;
+}
+
+RuntimeConfigFileStatus SaveRuntimeConfigFile(const std::filesystem::path& configFile,
+                                              const MidiInstrumentConfig& instrument,
+                                              const AudioDeviceState& audioDevice) {
+    std::error_code ec;
+    const std::filesystem::path parent = configFile.parent_path();
+    if (!parent.empty()) {
+        std::filesystem::create_directories(parent, ec);
+        if (ec) {
+            return RuntimeConfigFileStatus::IOError;
+        }
+    }
+
+    JsonArena arena(kRuntimeConfigInitialArenaCapacity);
+    JSON root = BuildRuntimeConfigJSON(arena, instrument, audioDevice);
+    while ((root.IsNull() || arena.Failed()) && arena.Capacity() < kRuntimeConfigMaxArenaCapacity) {
+        arena.GrowAndReset();
+        root = BuildRuntimeConfigJSON(arena, instrument, audioDevice);
+    }
+    if (root.IsNull() || arena.Failed()) {
+        return RuntimeConfigFileStatus::Invalid;
+    }
+
+    char* dumped = root.Dumps(JSON_ENCODE_ANY);
+    if (dumped == nullptr) {
+        return RuntimeConfigFileStatus::Invalid;
+    }
+    const std::string jsonText(dumped);
+    std::free(dumped);
+
+    const std::filesystem::path tempFile = RuntimeConfigTempPath(configFile);
+    std::filesystem::remove(tempFile, ec);
+
+    std::ofstream out(tempFile, std::ios::binary | std::ios::trunc);
+    if (!out) {
+        std::filesystem::remove(tempFile, ec);
+        return RuntimeConfigFileStatus::IOError;
+    }
+    out << jsonText;
+    if (!out) {
+        out.close();
+        std::filesystem::remove(tempFile, ec);
+        return RuntimeConfigFileStatus::IOError;
+    }
+    out.close();
+    if (!out) {
+        std::filesystem::remove(tempFile, ec);
+        return RuntimeConfigFileStatus::IOError;
+    }
+
+    std::filesystem::rename(tempFile, configFile, ec);
+    if (ec) {
+        std::filesystem::remove(tempFile, ec);
+        return RuntimeConfigFileStatus::IOError;
+    }
+    return RuntimeConfigFileStatus::Ok;
+}
+
+const char* RuntimeConfigFileStatusName(RuntimeConfigFileStatus status) {
+    switch (status) {
+    case RuntimeConfigFileStatus::Ok:
+        return "Ok";
+    case RuntimeConfigFileStatus::Missing:
+        return "Missing";
+    case RuntimeConfigFileStatus::Invalid:
+        return "Invalid";
+    case RuntimeConfigFileStatus::IOError:
+        return "IOError";
+    }
+    return "Unknown";
+}
+
 JSON BuildPatchJSON(JsonArena& arena, std::string_view patchName,
                     const ParameterManager& manager,
                     const MidiInstrumentConfig& instrument,
                     const AudioDeviceState& audioDevice) {
+    (void)instrument;
+    (void)audioDevice;
     JSON root = arena.Object();
     root.SetNew("schema", arena.String("sheaf.synth.patch"));
     root.SetNew("schemaVersion", arena.Integer(1));
     const std::string patchNameText(patchName);
     root.SetNew("patchName", arena.String(patchNameText.c_str()));
     root.SetNew("parameterValues", manager.ParameterValuesToJSON(arena));
-    root.SetNew("midiInstrument", ToJSON(arena, instrument));
-    if (!audioDevice.outputDeviceName.empty() || !audioDevice.inputDeviceName.empty()) {
-        root.SetNew("audioDevice", ToJSON(arena, audioDevice));
-    }
     return root;
 }
 
 bool LoadPatchJSON(JSON root, ParameterManager& manager,
                    MidiInstrumentConfig& instrument,
                    AudioDeviceState* audioDevice) {
+    (void)instrument;
+    (void)audioDevice;
     if (!ValidPatchRoot(root) || !IsString(root.Get("patchName"))) {
         return false;
     }
@@ -131,44 +290,12 @@ bool LoadPatchJSON(JSON root, ParameterManager& manager,
         return false;
     }
 
-    // midiInstrument is REQUIRED: parse into a scratch so a missing/invalid
-    // section fails without mutating the caller's instrument.
-    MidiInstrumentConfig parsedInstrument;
-    if (!FromJSON(root.Get("midiInstrument"), parsedInstrument)) {
-        return false;
-    }
-
-    AudioDeviceState parsedAudioDevice;
-    const JSON audioDeviceJson = root.Get("audioDevice");
-    if (!audioDeviceJson.IsNull() && !FromJSON(audioDeviceJson, parsedAudioDevice)) {
-        return false;
-    }
-
     manager.LoadParameterValuesFromJSON(parameterValues);
-
-    instrument = std::move(parsedInstrument);
-    if (audioDevice != nullptr && !audioDeviceJson.IsNull()) {
-        *audioDevice = std::move(parsedAudioDevice);
-    }
     return true;
 }
 
 bool ValidatePatchJSON(JSON root) {
-    if (!ValidPatchRoot(root) || !IsString(root.Get("patchName")) || !IsObject(root.Get("parameterValues"))) {
-        return false;
-    }
-    MidiInstrumentConfig instrument;
-    if (!FromJSON(root.Get("midiInstrument"), instrument)) {
-        return false;
-    }
-    const JSON audioDeviceJson = root.Get("audioDevice");
-    if (!audioDeviceJson.IsNull()) {
-        AudioDeviceState audioDevice;
-        if (!FromJSON(audioDeviceJson, audioDevice)) {
-            return false;
-        }
-    }
-    return true;
+    return ValidPatchRoot(root) && IsString(root.Get("patchName")) && IsObject(root.Get("parameterValues"));
 }
 
 std::string TimestampPatchFilename(std::chrono::system_clock::time_point now) {
@@ -342,6 +469,8 @@ PatchApplyStatus ApplyPatchMessage(
     MidiInstrumentConfig& instrument, const MidiInstrumentConfig& defaultInstrument,
     AudioDeviceState& audioDevice, const AudioDeviceState& defaultAudioDevice,
     MessageOutBus& outputBus, PatchSerializationContext context) {
+    (void)defaultInstrument;
+    (void)defaultAudioDevice;
     switch (message.type) {
     case PatchMessageIn::Type::LoadFromJSON:
         if (message.document.root.IsNull() ||
@@ -351,8 +480,6 @@ PatchApplyStatus ApplyPatchMessage(
         return PatchApplyStatus::Applied;
     case PatchMessageIn::Type::RevertAllToDefault:
         manager.RevertAllToDefaults();
-        instrument = defaultInstrument;
-        audioDevice = defaultAudioDevice;
         return PatchApplyStatus::Reverted;
     case PatchMessageIn::Type::SerializeToJSON: {
         const std::string patchName = message.patchName.empty() ? std::string("Untitled") : message.patchName;

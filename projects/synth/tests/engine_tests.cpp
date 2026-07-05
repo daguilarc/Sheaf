@@ -1,4 +1,5 @@
 #include "synth/Engine.hpp"
+#include "synth/RuntimePagePolicy.hpp"
 
 #ifdef JUCE_MAJOR_VERSION
 #error "synth engine tests must not see JUCE headers"
@@ -64,7 +65,6 @@ struct EngineTestApp {
     static inline int initCalls = 0;
     static inline double preparedSampleRate = 0.0;
     static inline int preparedBlockSize = 0;
-    static inline std::filesystem::path testPatchesRoot;
     // processLiteAlpha is configurable per-test via this static, read by
     // Init() when building the parameter group (must be set before
     // constructing the Engine, since Init() runs during Engine::Initialize).
@@ -75,17 +75,6 @@ struct EngineTestApp {
     // identity/ordering set this before constructing the Engine; default
     // false keeps every other test's profile empty, as before).
     static inline bool wantEncoderMidiInput = false;
-    // When non-empty, Config() reports these as
-    // preferredOutputDeviceName/preferredInputDeviceName (the same way
-    // RuntimeConfig fields are always reported), so Engine::Initialize()
-    // seeds its engine-owned audioDeviceState_ from them before Init() runs
-    // -- tests use this to exercise a non-default app-configured audio
-    // device selection (e.g. the revert-restores-default test).
-    // Default-constructed (empty) leaves audioDeviceState_ at its default, as
-    // before. Replaces the old *ctx->audioDeviceState write now that
-    // AppContext no longer exposes a mutable pointer into engine state (Task
-    // 3 review, Critical fix).
-    static inline synth::AudioDeviceState initAudioDeviceState;
     synth::AppContext* context = nullptr;
     synth::ParameterId probeId = 0;
     synth::BankSlot* probeSlot = nullptr;
@@ -96,9 +85,6 @@ struct EngineTestApp {
         synth::RuntimeConfig config;
         config.appName = "EngineTest";
         config.numAudioOutputs = 2;
-        config.patchesRoot = testPatchesRoot;
-        config.preferredOutputDeviceName = initAudioDeviceState.outputDeviceName;
-        config.preferredInputDeviceName = initAudioDeviceState.inputDeviceName;
         return config;
     }
     void Init(synth::AppContext* ctx) {
@@ -159,13 +145,9 @@ struct EngineTestApp {
 // Builds a patch JSON document (matching EngineTestApp's Init topology, i.e.
 // a single group with the "Probe" parameter) with Probe set to probeValue,
 // and writes it as a version file in patchDir via SavePatchVersionInDirectory
-// at the given time point. audioDevice defaults to an empty AudioDeviceState,
-// which BuildPatchJSON omits from the document entirely (see its "not both
-// empty" guard), so callers that don't pass one get a patch with no
-// audioDevice section -- exactly what the "load without the section fires
-// nothing" tests need. instrument defaults to a zero-controller
-// MidiInstrumentConfig (valid); callers exercising instrument round-tripping
-// pass a non-empty one.
+// at the given time point. Some tests append legacy audio/instrument sections
+// after BuildPatchJSON to prove patch application ignores old runtime config
+// embedded in patch files.
 void WriteProbePatchVersion(const std::filesystem::path& patchDir, float probeValue,
                             std::chrono::system_clock::time_point when,
                             const synth::AudioDeviceState& audioDevice = {},
@@ -180,6 +162,12 @@ void WriteProbePatchVersion(const std::filesystem::path& patchDir, float probeVa
 
     synth::JsonArena arena(64 * 1024);
     synth::JSON root = synth::BuildPatchJSON(arena, "Probe Patch", scratchManager, instrument, audioDevice);
+    if (!instrument.controllers.empty()) {
+        root.SetNew("midiInstrument", synth::ToJSON(arena, instrument));
+    }
+    if (!audioDevice.outputDeviceName.empty() || !audioDevice.inputDeviceName.empty()) {
+        root.SetNew("audioDevice", synth::ToJSON(arena, audioDevice));
+    }
     REQUIRE_TRUE(!root.IsNull());
     char* dumped = root.Dumps(JSON_ENCODE_ANY);
     REQUIRE_TRUE(dumped != nullptr);
@@ -189,10 +177,26 @@ void WriteProbePatchVersion(const std::filesystem::path& patchDir, float probeVa
     synth::SavePatchVersionInDirectory(patchDir, jsonText, when);
 }
 
+synth::MidiInstrumentConfig MakeRuntimeConfigInstrument(std::string name) {
+    synth::MidiInstrumentConfig instrument;
+    synth::MidiControllerSlot slot;
+    slot.name = std::move(name);
+    slot.kind = synth::MidiProfileKind::Generic;
+    slot.config.encoderInput = synth::EncoderMidiInConfig{};
+    REQUIRE_TRUE(instrument.AddController(std::move(slot)));
+    return instrument;
+}
+
+void WriteRuntimeConfigFile(const std::filesystem::path& configFile,
+                            const synth::MidiInstrumentConfig& instrument,
+                            const synth::AudioDeviceState& audioDevice) {
+    const synth::RuntimeConfigFileStatus status = synth::SaveRuntimeConfigFile(configFile, instrument, audioDevice);
+    REQUIRE_TRUE(status == synth::RuntimeConfigFileStatus::Ok);
+}
+
 }  // namespace
 
 TEST_CASE(engine_initialize_orders_init_before_ui_state) {
-    EngineTestApp::testPatchesRoot.clear();
     synth::Engine<EngineTestApp> engine([] { return std::uint64_t{0}; });
     engine.Initialize();
     REQUIRE_TRUE(EngineTestApp::sawNullUiStateDuringInit);
@@ -201,7 +205,6 @@ TEST_CASE(engine_initialize_orders_init_before_ui_state) {
 }
 
 TEST_CASE(engine_prepare_forwards_negotiated_values) {
-    EngineTestApp::testPatchesRoot.clear();
     synth::Engine<EngineTestApp> engine([] { return std::uint64_t{0}; });
     engine.Initialize();
     engine.Prepare(44100.0, 128);
@@ -215,21 +218,23 @@ TEST_CASE(engine_full_concept_rejects_ui_less_core) {
 }
 
 TEST_CASE(engine_missing_patches_root_keeps_defaults_silently) {
-    EngineTestApp::testPatchesRoot = std::filesystem::temp_directory_path() / "engine-no-such-root";
-    std::filesystem::remove_all(EngineTestApp::testPatchesRoot);
+    const std::filesystem::path dataRoot = std::filesystem::temp_directory_path() / "engine-no-such-data-root";
+    std::filesystem::remove_all(dataRoot);
     synth::Engine<EngineTestApp> engine([] { return std::uint64_t{0}; });
+    engine.SetRuntimeDataPaths(synth::RuntimeDataPaths::FromDataRoot(dataRoot));
     engine.Initialize();  // must not throw or report failure
     REQUIRE_NEAR(engine.Manager().ParameterById(engine.Application().probeId).GetRaw(0), 0.25f, 1e-5f);
 }
 
 TEST_CASE(engine_startup_loads_lexicographically_latest_patch) {
-    const std::filesystem::path root =
-        std::filesystem::temp_directory_path() / "engine-startup-patch-root";
-    std::filesystem::remove_all(root);
-    std::filesystem::create_directories(root);
+    const std::filesystem::path dataRoot =
+        std::filesystem::temp_directory_path() / "engine-startup-data-root";
+    std::filesystem::remove_all(dataRoot);
+    const synth::RuntimeDataPaths paths = synth::RuntimeDataPaths::FromDataRoot(dataRoot);
+    std::filesystem::create_directories(paths.patchesRoot);
 
-    const std::filesystem::path dirAAA = root / "AAA";
-    const std::filesystem::path dirZZZ = root / "ZZZ";
+    const std::filesystem::path dirAAA = paths.patchesRoot / "AAA";
+    const std::filesystem::path dirZZZ = paths.patchesRoot / "ZZZ";
 
     // "AAA" gets the numerically later time point (greater version filename);
     // "ZZZ" gets the earlier one. The rule is greatest VERSION FILENAME wins,
@@ -241,16 +246,219 @@ TEST_CASE(engine_startup_loads_lexicographically_latest_patch) {
     WriteProbePatchVersion(dirZZZ, 0.5f, earlier);
     WriteProbePatchVersion(dirAAA, 0.75f, later);
 
-    const auto latestDir = synth::Engine<EngineTestApp>::LatestPatchDirectory(root);
+    const auto latestDir = synth::Engine<EngineTestApp>::LatestPatchDirectory(paths.patchesRoot);
     REQUIRE_TRUE(latestDir.has_value());
     REQUIRE_TRUE(latestDir->filename() == "AAA");
 
-    EngineTestApp::testPatchesRoot = root;
     synth::Engine<EngineTestApp> engine([] { return std::uint64_t{0}; });
+    engine.SetRuntimeDataPaths(paths);
     engine.Initialize();
     REQUIRE_NEAR(engine.Manager().ParameterById(engine.Application().probeId).GetRaw(0), 0.75f, 1e-5f);
 
-    std::filesystem::remove_all(root);
+    std::filesystem::remove_all(dataRoot);
+}
+
+TEST_CASE(engine_initialize_loads_runtime_config_before_midi_processors_and_then_startup_patch) {
+    const std::filesystem::path dataRoot =
+        std::filesystem::temp_directory_path() / "engine-runtime-config-before-midi-data-root";
+    std::filesystem::remove_all(dataRoot);
+    const synth::RuntimeDataPaths paths = synth::RuntimeDataPaths::FromDataRoot(dataRoot);
+    std::filesystem::create_directories(paths.patchesRoot);
+
+    const synth::MidiInstrumentConfig runtimeInstrument = MakeRuntimeConfigInstrument("runtime-loaded");
+    const synth::AudioDeviceState runtimeAudio{.outputDeviceName = "Runtime Output", .inputDeviceName = "Runtime Input"};
+    WriteRuntimeConfigFile(paths.configFile, runtimeInstrument, runtimeAudio);
+
+    const synth::MidiInstrumentConfig legacyPatchInstrument = MakeRuntimeConfigInstrument("legacy-patch");
+    WriteProbePatchVersion(paths.patchesRoot / "PatchA", 0.75f, std::chrono::system_clock::now(),
+                           synth::AudioDeviceState{.outputDeviceName = "Patch Output", .inputDeviceName = "Patch Input"},
+                           legacyPatchInstrument);
+
+    EngineTestApp::processLiteAlpha = 1.0f;
+    EngineTestApp::wantEncoderMidiInput = false;
+    synth::Engine<EngineTestApp> engine([] { return std::uint64_t{0}; });
+    engine.SetRuntimeDataPaths(paths);
+    engine.Initialize();
+
+    REQUIRE_TRUE(engine.DefaultInstrument().controllers.empty());
+    REQUIRE_TRUE(engine.LiveInstrument().controllers.size() == 1);
+    REQUIRE_TRUE(engine.LiveInstrument().controllers.front().name == "runtime-loaded");
+    REQUIRE_TRUE(engine.MidiControllerCount() == 1);
+    REQUIRE_TRUE(engine.MidiInputProcessor(0) != nullptr);
+    REQUIRE_TRUE(engine.AudioDeviceSnapshot().outputDeviceName == "Runtime Output");
+    REQUIRE_TRUE(engine.AudioDeviceSnapshot().inputDeviceName == "Runtime Input");
+    REQUIRE_NEAR(engine.Manager().ParameterById(engine.Application().probeId).GetRaw(0), 0.75f, 1e-5f);
+
+    std::filesystem::remove_all(dataRoot);
+}
+
+TEST_CASE(engine_initialize_ignores_invalid_runtime_config_and_still_loads_startup_patch) {
+    const std::filesystem::path dataRoot =
+        std::filesystem::temp_directory_path() / "engine-invalid-runtime-config-data-root";
+    std::filesystem::remove_all(dataRoot);
+    const synth::RuntimeDataPaths paths = synth::RuntimeDataPaths::FromDataRoot(dataRoot);
+    std::filesystem::create_directories(paths.dataRoot);
+    std::filesystem::create_directories(paths.patchesRoot);
+
+    {
+        std::ofstream out(paths.configFile, std::ios::binary | std::ios::trunc);
+        out << R"({"schema":"wrong","schemaVersion":1})";
+    }
+    WriteProbePatchVersion(paths.patchesRoot / "PatchA", 0.7f, std::chrono::system_clock::now());
+
+    EngineTestApp::processLiteAlpha = 1.0f;
+    EngineTestApp::wantEncoderMidiInput = true;
+    synth::Engine<EngineTestApp> engine([] { return std::uint64_t{0}; });
+    engine.SetRuntimeDataPaths(paths);
+    engine.Initialize();
+
+    REQUIRE_TRUE(engine.LiveInstrument().controllers.size() == 1);
+    REQUIRE_TRUE(engine.LiveInstrument().controllers.front().name == "test");
+    REQUIRE_TRUE(engine.MidiControllerCount() == 1);
+    REQUIRE_TRUE(engine.AudioDeviceSnapshot().outputDeviceName.empty());
+    REQUIRE_NEAR(engine.Manager().ParameterById(engine.Application().probeId).GetRaw(0), 0.7f, 1e-5f);
+
+    std::filesystem::remove_all(dataRoot);
+    EngineTestApp::wantEncoderMidiInput = false;
+}
+
+TEST_CASE(engine_initialize_treats_missing_runtime_config_as_defaults_and_still_loads_startup_patch) {
+    const std::filesystem::path dataRoot =
+        std::filesystem::temp_directory_path() / "engine-missing-runtime-config-data-root";
+    std::filesystem::remove_all(dataRoot);
+    const synth::RuntimeDataPaths paths = synth::RuntimeDataPaths::FromDataRoot(dataRoot);
+    std::filesystem::create_directories(paths.patchesRoot);
+    WriteProbePatchVersion(paths.patchesRoot / "PatchA", 0.8f, std::chrono::system_clock::now());
+
+    EngineTestApp::processLiteAlpha = 1.0f;
+    EngineTestApp::wantEncoderMidiInput = true;
+    synth::Engine<EngineTestApp> engine([] { return std::uint64_t{0}; });
+    engine.SetRuntimeDataPaths(paths);
+    engine.Initialize();
+
+    REQUIRE_TRUE(engine.LiveInstrument().controllers.size() == 1);
+    REQUIRE_TRUE(engine.LiveInstrument().controllers.front().name == "test");
+    REQUIRE_TRUE(engine.AudioDeviceSnapshot().outputDeviceName.empty());
+    REQUIRE_NEAR(engine.Manager().ParameterById(engine.Application().probeId).GetRaw(0), 0.8f, 1e-5f);
+
+    std::filesystem::remove_all(dataRoot);
+    EngineTestApp::wantEncoderMidiInput = false;
+}
+
+TEST_CASE(engine_save_runtime_configuration_snapshots_current_midi_and_audio_state) {
+    const std::filesystem::path dataRoot =
+        std::filesystem::temp_directory_path() / "engine-save-runtime-config-data-root";
+    std::filesystem::remove_all(dataRoot);
+    const synth::RuntimeDataPaths paths = synth::RuntimeDataPaths::FromDataRoot(dataRoot);
+
+    EngineTestApp::processLiteAlpha = 1.0f;
+    EngineTestApp::wantEncoderMidiInput = true;
+    synth::Engine<EngineTestApp> engine([] { return std::uint64_t{0}; });
+    engine.SetRuntimeDataPaths(paths);
+    engine.Initialize();
+    engine.EditInstrument([](synth::MidiInstrumentConfig& instrument) {
+        REQUIRE_TRUE(instrument.RenameController(0, "saved-controller"));
+    });
+    engine.SetAudioDeviceFromHost(synth::AudioDeviceState{.outputDeviceName = "Saved Output",
+                                                          .inputDeviceName = "Saved Input"});
+
+    const synth::RuntimeConfigFileStatus saveStatus = engine.SaveRuntimeConfiguration();
+    REQUIRE_TRUE(saveStatus == synth::RuntimeConfigFileStatus::Ok);
+
+    synth::MidiInstrumentConfig loadedInstrument;
+    synth::AudioDeviceState loadedAudio;
+    const synth::RuntimeConfigFileStatus loadStatus =
+        synth::LoadRuntimeConfigFile(paths.configFile, loadedInstrument, loadedAudio);
+    REQUIRE_TRUE(loadStatus == synth::RuntimeConfigFileStatus::Ok);
+    REQUIRE_TRUE(loadedInstrument.controllers.size() == 1);
+    REQUIRE_TRUE(loadedInstrument.controllers.front().name == "saved-controller");
+    REQUIRE_TRUE(loadedAudio.outputDeviceName == "Saved Output");
+    REQUIRE_TRUE(loadedAudio.inputDeviceName == "Saved Input");
+
+    std::filesystem::remove_all(dataRoot);
+    EngineTestApp::wantEncoderMidiInput = false;
+}
+
+TEST_CASE(engine_runtime_page_back_policy_saves_config_for_audio_and_controllers_only) {
+    const std::filesystem::path dataRoot =
+        std::filesystem::temp_directory_path() / "engine-runtime-page-back-save-data-root";
+    std::filesystem::remove_all(dataRoot);
+    const synth::RuntimeDataPaths paths = synth::RuntimeDataPaths::FromDataRoot(dataRoot);
+
+    EngineTestApp::processLiteAlpha = 1.0f;
+    EngineTestApp::wantEncoderMidiInput = true;
+    synth::Engine<EngineTestApp> engine([] { return std::uint64_t{0}; });
+    engine.SetRuntimeDataPaths(paths);
+    engine.Initialize();
+
+    auto simulateBack = [&](synth::RuntimePageKind page) {
+        if (synth::RuntimePageBackSavesConfiguration(page)) {
+            REQUIRE_TRUE(engine.SaveRuntimeConfiguration() == synth::RuntimeConfigFileStatus::Ok);
+        }
+    };
+
+    engine.EditInstrument([](synth::MidiInstrumentConfig& instrument) {
+        REQUIRE_TRUE(instrument.RenameController(0, "audio-back-controller"));
+    });
+    engine.SetAudioDeviceFromHost(synth::AudioDeviceState{.outputDeviceName = "Audio Back Output",
+                                                          .inputDeviceName = "Audio Back Input"});
+    simulateBack(synth::RuntimePageKind::Audio);
+
+    synth::MidiInstrumentConfig loadedInstrument;
+    synth::AudioDeviceState loadedAudio;
+    REQUIRE_TRUE(synth::LoadRuntimeConfigFile(paths.configFile, loadedInstrument, loadedAudio) ==
+                 synth::RuntimeConfigFileStatus::Ok);
+    REQUIRE_TRUE(loadedInstrument.controllers.front().name == "audio-back-controller");
+    REQUIRE_TRUE(loadedAudio.outputDeviceName == "Audio Back Output");
+    REQUIRE_TRUE(loadedAudio.inputDeviceName == "Audio Back Input");
+
+    std::filesystem::remove(paths.configFile);
+    simulateBack(synth::RuntimePageKind::File);
+    REQUIRE_TRUE(!std::filesystem::exists(paths.configFile));
+
+    engine.EditInstrument([](synth::MidiInstrumentConfig& instrument) {
+        REQUIRE_TRUE(instrument.RenameController(0, "controllers-back-controller"));
+    });
+    engine.SetAudioDeviceFromHost(synth::AudioDeviceState{.outputDeviceName = "Controllers Back Output",
+                                                          .inputDeviceName = "Controllers Back Input"});
+    simulateBack(synth::RuntimePageKind::Controllers);
+
+    REQUIRE_TRUE(synth::LoadRuntimeConfigFile(paths.configFile, loadedInstrument, loadedAudio) ==
+                 synth::RuntimeConfigFileStatus::Ok);
+    REQUIRE_TRUE(loadedInstrument.controllers.front().name == "controllers-back-controller");
+    REQUIRE_TRUE(loadedAudio.outputDeviceName == "Controllers Back Output");
+    REQUIRE_TRUE(loadedAudio.inputDeviceName == "Controllers Back Input");
+
+    std::filesystem::remove_all(dataRoot);
+    EngineTestApp::wantEncoderMidiInput = false;
+}
+
+TEST_CASE(engine_runtime_configuration_load_and_save_status_are_logged) {
+    const std::filesystem::path dataRoot =
+        std::filesystem::temp_directory_path() / "engine-runtime-config-logging-data-root";
+    std::filesystem::remove_all(dataRoot);
+    const synth::RuntimeDataPaths paths = synth::RuntimeDataPaths::FromDataRoot(dataRoot);
+
+    synth::AsyncLogQueue& log = synth::AsyncLogQueue::s_instance;
+    log.ResetForTesting();
+    log.SetLogDirectoryForTesting(paths.logsRoot.string().c_str());
+
+    EngineTestApp::processLiteAlpha = 1.0f;
+    EngineTestApp::wantEncoderMidiInput = false;
+    synth::Engine<EngineTestApp> engine([] { return std::uint64_t{0}; });
+    engine.SetRuntimeDataPaths(paths);
+    engine.Initialize();
+    REQUIRE_TRUE(engine.SaveRuntimeConfiguration() == synth::RuntimeConfigFileStatus::Ok);
+
+    log.DoLog();
+    std::ifstream in(log.LogFilePathForTesting());
+    const std::string contents((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    REQUIRE_TRUE(contents.find("Runtime config load status=Missing") != std::string::npos);
+    REQUIRE_TRUE(contents.find(paths.configFile.string()) != std::string::npos);
+    REQUIRE_TRUE(contents.find("Runtime config save status=Ok") != std::string::npos);
+
+    log.ResetForTesting();
+    std::filesystem::remove_all(dataRoot);
 }
 
 namespace {
@@ -285,7 +493,6 @@ struct TestBlockBuffers {
 }  // namespace
 
 TEST_CASE(engine_pump_applies_messages_before_app_block) {
-    EngineTestApp::testPatchesRoot.clear();
     EngineTestApp::processLiteAlpha = 1.0f;  // snap immediately so the applied message is visible this block
     synth::Engine<EngineTestApp> engine([] { return std::uint64_t{2}; });
     engine.Initialize();
@@ -307,7 +514,6 @@ TEST_CASE(engine_pump_applies_messages_before_app_block) {
 }
 
 TEST_CASE(engine_pump_preserves_slew_across_blocks) {
-    EngineTestApp::testPatchesRoot.clear();
     EngineTestApp::processLiteAlpha = 0.1f;
     synth::Engine<EngineTestApp> engine([] { return std::uint64_t{1}; });
     engine.Initialize();
@@ -336,7 +542,6 @@ TEST_CASE(engine_pump_preserves_slew_across_blocks) {
 }
 
 TEST_CASE(engine_pump_calls_app_exactly_once_per_block_and_advances_samples) {
-    EngineTestApp::testPatchesRoot.clear();
     EngineTestApp::processLiteAlpha = 1.0f;
     synth::Engine<EngineTestApp> engine([] { return std::uint64_t{0}; });
     engine.Initialize();
@@ -355,7 +560,6 @@ TEST_CASE(engine_pump_calls_app_exactly_once_per_block_and_advances_samples) {
 }
 
 TEST_CASE(engine_pump_populates_ui_state_at_throttle_cadence) {
-    EngineTestApp::testPatchesRoot.clear();
     EngineTestApp::processLiteAlpha = 1.0f;
     synth::Engine<EngineTestApp> engine([] { return std::uint64_t{5}; });
     engine.Initialize();
@@ -398,15 +602,13 @@ TEST_CASE(engine_pump_populates_ui_state_at_throttle_cadence) {
 }
 
 TEST_CASE(engine_pump_stash_is_a_drain_barrier_with_retry_first_ordering) {
-    EngineTestApp::testPatchesRoot.clear();
     EngineTestApp::processLiteAlpha = 1.0f;  // snap immediately so applied/reverted values are visible this block
 
-    // Tiny arena: SerializeToJSON cannot fit a patch document (needs ~2KB;
-    // measured empirically against EngineTestApp's topology) in 1024 bytes,
-    // so ApplyPatchMessage reports ArenaExhausted on the first attempt. A
-    // single GrowAndReset() doubling (1024 -> 2048) is enough to fit it, so
-    // one MessageThreadTick() call is enough to clear the barrier below.
-    synth::Engine<EngineTestApp> engine([] { return std::uint64_t{0}; }, /*initialArenaCapacity=*/1024);
+    // Tiny arena: SerializeToJSON cannot fit even the patch-only document in
+    // 512 bytes, so ApplyPatchMessage reports ArenaExhausted on the first
+    // attempt. A single GrowAndReset() doubling is enough to fit it, so one
+    // MessageThreadTick() call is enough to clear the barrier below.
+    synth::Engine<EngineTestApp> engine([] { return std::uint64_t{0}; }, /*initialArenaCapacity=*/512);
     engine.Initialize();
     engine.Prepare(48000.0, 256);
 
@@ -499,7 +701,6 @@ TEST_CASE(engine_initialize_without_startup_patch_never_fires_rebuilt_callback) 
     // call (sar-5 step 7) must never invoke midiProcessorsRebuiltCallback_,
     // and with no patchesRoot configured there is no startup patch to apply
     // either, so the callback must not fire at all across Initialize().
-    EngineTestApp::testPatchesRoot.clear();
     EngineTestApp::processLiteAlpha = 1.0f;
     synth::Engine<EngineTestApp> engine([] { return std::uint64_t{0}; });
 
@@ -511,20 +712,21 @@ TEST_CASE(engine_initialize_without_startup_patch_never_fires_rebuilt_callback) 
     REQUIRE_TRUE(callbackCalls == 0);
 }
 
-TEST_CASE(engine_initialize_fires_rebuilt_callback_exactly_once_when_startup_patch_applies) {
-    // Property 2: when Initialize() finds and applies a startup patch, the
-    // second (post-apply) RebuildMidiProcessors() call must be followed by
-    // exactly one callback invocation -- not zero (the pre-patch rebuild
-    // must stay silent) and not two (no double-fire from the two rebuilds).
-    const std::filesystem::path root =
-        std::filesystem::temp_directory_path() / "engine-initialize-callback-patch-root";
-    std::filesystem::remove_all(root);
-    std::filesystem::create_directories(root);
-    WriteProbePatchVersion(root / "AAA", 0.75f, std::chrono::system_clock::now());
+TEST_CASE(engine_initialize_applies_startup_patch_without_rebuilt_callback) {
+    // Startup patch load applies synthesizer parameter values only. MIDI/audio
+    // configuration now lives in the separate runtime config file, so applying
+    // a patch during Initialize() must not rebuild MIDI processors or fire the
+    // rebuilt callback.
+    const std::filesystem::path dataRoot =
+        std::filesystem::temp_directory_path() / "engine-initialize-callback-data-root";
+    std::filesystem::remove_all(dataRoot);
+    const synth::RuntimeDataPaths paths = synth::RuntimeDataPaths::FromDataRoot(dataRoot);
+    std::filesystem::create_directories(paths.patchesRoot);
+    WriteProbePatchVersion(paths.patchesRoot / "AAA", 0.75f, std::chrono::system_clock::now());
 
-    EngineTestApp::testPatchesRoot = root;
     EngineTestApp::processLiteAlpha = 1.0f;
     synth::Engine<EngineTestApp> engine([] { return std::uint64_t{0}; });
+    engine.SetRuntimeDataPaths(paths);
 
     int callbackCalls = 0;
     engine.SetMidiProcessorsRebuiltCallback([&]() { ++callbackCalls; });
@@ -532,19 +734,16 @@ TEST_CASE(engine_initialize_fires_rebuilt_callback_exactly_once_when_startup_pat
     engine.Initialize();
 
     REQUIRE_NEAR(engine.Manager().ParameterById(engine.Application().probeId).GetRaw(0), 0.75f, 1e-5f);
-    REQUIRE_TRUE(callbackCalls == 1);  // fired exactly once: not zero, not double-fired
+    REQUIRE_TRUE(callbackCalls == 0);
 
-    std::filesystem::remove_all(root);
-    EngineTestApp::testPatchesRoot.clear();
+    std::filesystem::remove_all(dataRoot);
 }
 
-TEST_CASE(engine_tick_rebuilds_midi_processors_after_patch_load_before_reopen_callback) {
-    // Property 3: a runtime patch load consumed by MessageThreadTick must
-    // rebuild the MIDI processors and clear midiRebuildPending_ BEFORE the
-    // callback fires -- the callback must never fire early (e.g. still
-    // inside RebuildMidiProcessors() itself) and must observe the
-    // freshly-rebuilt processors when it runs.
-    EngineTestApp::testPatchesRoot.clear();
+TEST_CASE(engine_tick_does_not_rebuild_midi_processors_after_parameter_patch_load) {
+    // Runtime patch load applies synthesizer parameter values only. The tick
+    // should keep processing MIDI controllers, but it must not perform a MIDI
+    // processor rebuild or call the host reopen callback for a parameter-only
+    // patch.
     EngineTestApp::processLiteAlpha = 1.0f;
     EngineTestApp::wantEncoderMidiInput = true;  // so MidiInputProcessor(0) is non-null and identity-observable
     synth::Engine<EngineTestApp> engine([] { return std::uint64_t{0}; });
@@ -552,14 +751,9 @@ TEST_CASE(engine_tick_rebuilds_midi_processors_after_patch_load_before_reopen_ca
     engine.Prepare(48000.0, 256);
 
     int callbackCalls = 0;
-    bool inputProcessorFreshAtCallback = false;
     synth::MidiInProcessor* inputProcessorBeforeLoad = engine.MidiInputProcessor(0);
     engine.SetMidiProcessorsRebuiltCallback([&]() {
         ++callbackCalls;
-        // The rebuild must have already run by the time the callback fires:
-        // the input processor pointer should reflect the freshly-rebuilt
-        // profile, not the one captured before the load.
-        inputProcessorFreshAtCallback = engine.MidiInputProcessor(0) != inputProcessorBeforeLoad;
     });
 
     // Write a patch version (reusing Task 3's WriteProbePatchVersion helper)
@@ -575,22 +769,22 @@ TEST_CASE(engine_tick_rebuilds_midi_processors_after_patch_load_before_reopen_ca
 
     TestBlockBuffers buffers(2, 4);
     {
-        // ProcessBlock drains patchInputBus_, applies the LoadFromJSON
-        // message, and sets midiRebuildPending_ for the tick to consume.
+        // ProcessBlock drains patchInputBus_ and applies the LoadFromJSON
+        // message without queuing MIDI/audio side effects.
         synth::AudioBlock block = buffers.Block(4);
         engine.ProcessBlock(block, /*timestamp=*/0);
     }
     REQUIRE_NEAR(engine.Manager().ParameterById(engine.Application().probeId).GetRaw(0), 0.9f, 1e-4f);
-    REQUIRE_TRUE(callbackCalls == 0);  // rebuild (and its callback) hasn't run yet: that's the tick's job
+    REQUIRE_TRUE(callbackCalls == 0);
 
     engine.MessageThreadTick();
 
-    REQUIRE_TRUE(callbackCalls == 1);  // fired exactly once, and after (not before) the tick's rebuild
-    REQUIRE_TRUE(inputProcessorFreshAtCallback);  // and after the rebuild had already replaced the processors
+    REQUIRE_TRUE(callbackCalls == 0);
+    REQUIRE_TRUE(engine.MidiInputProcessor(0) == inputProcessorBeforeLoad);
 
-    // A second tick with nothing pending must not fire the callback again.
+    // A second tick with nothing pending must not fire the callback either.
     engine.MessageThreadTick();
-    REQUIRE_TRUE(callbackCalls == 1);
+    REQUIRE_TRUE(callbackCalls == 0);
 
     std::filesystem::remove_all(patchDir);
     EngineTestApp::wantEncoderMidiInput = false;  // restore default for subsequent tests
@@ -673,7 +867,6 @@ TEST_CASE(engine_tick_replies_to_storage_batch_requests) {
 }
 
 TEST_CASE(engine_tick_grows_arena_and_retries_stashed_patch_message) {
-    EngineTestApp::testPatchesRoot.clear();
     EngineTestApp::processLiteAlpha = 1.0f;
 
     // Tiny starting arena (64 bytes), matching the brief's initialArenaCapacity
@@ -741,7 +934,6 @@ TEST_CASE(engine_logs_patch_apply_and_storage_batch_activity_for_slog_7) {
     log.ResetForTesting();
 
     // --- Patch apply outcome, logged from ProcessBlock's audio-thread drain ---
-    EngineTestApp::testPatchesRoot.clear();
     EngineTestApp::processLiteAlpha = 1.0f;
     synth::Engine<EngineTestApp> engine([] { return std::uint64_t{0}; });
     engine.Initialize();
@@ -930,7 +1122,6 @@ TEST_CASE(engine_revert_all_to_default_restores_app_init_midi_profile_not_empty)
     // below) resets instrumentConfig_ to a default-constructed (empty,
     // zero-controller) MidiInstrumentConfig instead of back to the app's
     // real default, silently dropping MIDI control surface responsiveness.
-    EngineTestApp::testPatchesRoot.clear();
     EngineTestApp::processLiteAlpha = 1.0f;
     EngineTestApp::wantEncoderMidiInput = true;  // Init() adds a non-empty controller (encoderInput)
 
@@ -980,24 +1171,18 @@ TEST_CASE(engine_revert_all_to_default_restores_app_init_midi_profile_not_empty)
     EngineTestApp::wantEncoderMidiInput = false;  // restore default for subsequent tests
 }
 
-TEST_CASE(engine_revert_all_to_default_restores_app_init_audio_device_state) {
-    // Task 2: mirrors engine_revert_all_to_default_restores_app_init_midi_profile_not_empty
-    // but for AudioDeviceState. Engine::Initialize() must snapshot
-    // defaultAudioDeviceState_ from the live state it seeded from
-    // config_.preferredOutputDeviceName/preferredInputDeviceName (Task 3
-    // review, Critical fix), BEFORE any startup patch applies, so a later
-    // RevertAllToDefault restores that app-configured selection rather than
-    // an empty AudioDeviceState{}.
-    EngineTestApp::testPatchesRoot.clear();
+TEST_CASE(engine_revert_all_to_default_preserves_host_audio_selection) {
+    // Patch new/revert is parameter-only: a host-selected audio device is
+    // runtime configuration and must survive RevertAllToDefault.
     EngineTestApp::processLiteAlpha = 1.0f;
-    EngineTestApp::initAudioDeviceState = synth::AudioDeviceState{.outputDeviceName = "Speakers", .inputDeviceName = "Mic"};
 
     synth::Engine<EngineTestApp> engine([] { return std::uint64_t{0}; });
     engine.Initialize();
+    engine.SetAudioDeviceFromHost(synth::AudioDeviceState{.outputDeviceName = "Speakers", .inputDeviceName = "Mic"});
     engine.Prepare(48000.0, 256);
 
-    // Sanity: the live audio device state really is the app-configured value
-    // right after Initialize.
+    // Sanity: the live audio device state carries the host-selected value
+    // after Initialize.
     REQUIRE_TRUE(engine.AudioDeviceSnapshot().outputDeviceName == "Speakers");
     REQUIRE_TRUE(engine.AudioDeviceSnapshot().inputDeviceName == "Mic");
 
@@ -1015,21 +1200,11 @@ TEST_CASE(engine_revert_all_to_default_restores_app_init_audio_device_state) {
     }
     engine.MessageThreadTick();
 
-    // The live audio device state must still equal the app's Init-configured
-    // default -- NOT have been reset to an empty AudioDeviceState{}.
     REQUIRE_TRUE(engine.AudioDeviceSnapshot().outputDeviceName == "Speakers");
     REQUIRE_TRUE(engine.AudioDeviceSnapshot().inputDeviceName == "Mic");
-
-    EngineTestApp::initAudioDeviceState = synth::AudioDeviceState{};  // restore default for subsequent tests
 }
 
-TEST_CASE(engine_tick_fires_audio_device_changed_callback_once_when_load_changes_state) {
-    // A runtime patch load whose document carries a non-empty audioDevice
-    // section must change audioDeviceState_ and fire
-    // audioDeviceChangedCallback_ exactly once, via ProcessBlock (drain) +
-    // MessageThreadTick (callback), with the new state visible in both the
-    // callback and afterward.
-    EngineTestApp::testPatchesRoot.clear();
+TEST_CASE(engine_tick_preserves_audio_device_when_patch_load_has_legacy_audio_section) {
     EngineTestApp::processLiteAlpha = 1.0f;
     synth::Engine<EngineTestApp> engine([] { return std::uint64_t{0}; });
     engine.Initialize();
@@ -1038,11 +1213,7 @@ TEST_CASE(engine_tick_fires_audio_device_changed_callback_once_when_load_changes
     REQUIRE_TRUE(engine.AudioDeviceSnapshot().outputDeviceName.empty());  // sanity: starts empty
 
     int callbackCalls = 0;
-    std::string outputNameAtCallback;
-    engine.SetAudioDeviceChangedCallback([&]() {
-        ++callbackCalls;
-        outputNameAtCallback = engine.AudioDeviceSnapshot().outputDeviceName;
-    });
+    engine.SetAudioDeviceChangedCallback([&]() { ++callbackCalls; });
 
     const std::filesystem::path patchDir =
         std::filesystem::temp_directory_path() / "engine-tick-audio-device-changed-patch-dir";
@@ -1055,26 +1226,16 @@ TEST_CASE(engine_tick_fires_audio_device_changed_callback_once_when_load_changes
 
     TestBlockBuffers buffers(2, 4);
     {
-        // ProcessBlock drains patchInputBus_, applies the LoadFromJSON
-        // message (changing audioDeviceState_), and sets
-        // audioDeviceChangedPending_ for the tick to consume.
         synth::AudioBlock block = buffers.Block(4);
         engine.ProcessBlock(block, /*timestamp=*/0);
     }
-    REQUIRE_TRUE(engine.AudioDeviceSnapshot().outputDeviceName == "Interface A");  // state already applied
-    REQUIRE_TRUE(callbackCalls == 0);  // callback hasn't run yet: that's the tick's job
+    REQUIRE_TRUE(engine.AudioDeviceSnapshot().outputDeviceName.empty());
+    REQUIRE_TRUE(engine.AudioDeviceSnapshot().inputDeviceName.empty());
 
     engine.MessageThreadTick();
-
-    REQUIRE_TRUE(callbackCalls == 1);  // fired exactly once
-    REQUIRE_TRUE(outputNameAtCallback == "Interface A");  // callback observed the already-applied new state
-
-    // A second tick with no new device-changing patch message must NOT
-    // fire again: audioDeviceChangedPending_ was consumed (exchanged false)
-    // by the first tick, so the flag must stay cleared here.
     engine.MessageThreadTick();
 
-    REQUIRE_TRUE(callbackCalls == 1);  // still exactly once: flag was consumed, not just observed
+    REQUIRE_TRUE(callbackCalls == 0);
 
     std::filesystem::remove_all(patchDir);
 }
@@ -1082,7 +1243,6 @@ TEST_CASE(engine_tick_fires_audio_device_changed_callback_once_when_load_changes
 TEST_CASE(engine_tick_does_not_fire_audio_device_changed_callback_when_load_has_no_section) {
     // A runtime patch load whose document has no audioDevice section leaves
     // audioDeviceState_ untouched, so the callback must not fire.
-    EngineTestApp::testPatchesRoot.clear();
     EngineTestApp::processLiteAlpha = 1.0f;
     synth::Engine<EngineTestApp> engine([] { return std::uint64_t{0}; });
     engine.Initialize();
@@ -1112,23 +1272,18 @@ TEST_CASE(engine_tick_does_not_fire_audio_device_changed_callback_when_load_has_
     std::filesystem::remove_all(patchDir);
 }
 
-TEST_CASE(engine_initialize_fires_audio_device_changed_callback_for_startup_load) {
-    // A startup load (found via LatestPatchDirectory + synchronous drain
-    // inside Initialize()) whose document carries an audioDevice section
-    // must fire audioDeviceChangedCallback_ directly at the end of
-    // Initialize() -- mirroring how midiProcessorsRebuiltCallback_ behaves
-    // on startup loads. Hosts wire the callback before calling Initialize(),
-    // so it must be observable there.
-    const std::filesystem::path root =
-        std::filesystem::temp_directory_path() / "engine-initialize-audio-device-callback-patch-root";
-    std::filesystem::remove_all(root);
-    std::filesystem::create_directories(root);
-    WriteProbePatchVersion(root / "AAA", 0.75f, std::chrono::system_clock::now(),
+TEST_CASE(engine_initialize_preserves_audio_device_for_startup_patch_load) {
+    const std::filesystem::path dataRoot =
+        std::filesystem::temp_directory_path() / "engine-initialize-audio-device-callback-data-root";
+    std::filesystem::remove_all(dataRoot);
+    const synth::RuntimeDataPaths paths = synth::RuntimeDataPaths::FromDataRoot(dataRoot);
+    std::filesystem::create_directories(paths.patchesRoot);
+    WriteProbePatchVersion(paths.patchesRoot / "AAA", 0.75f, std::chrono::system_clock::now(),
                            synth::AudioDeviceState{.outputDeviceName = "Startup Interface", .inputDeviceName = ""});
 
-    EngineTestApp::testPatchesRoot = root;
     EngineTestApp::processLiteAlpha = 1.0f;
     synth::Engine<EngineTestApp> engine([] { return std::uint64_t{0}; });
+    engine.SetRuntimeDataPaths(paths);
 
     int callbackCalls = 0;
     std::string outputNameAtCallback;
@@ -1139,32 +1294,26 @@ TEST_CASE(engine_initialize_fires_audio_device_changed_callback_for_startup_load
 
     engine.Initialize();
 
-    REQUIRE_TRUE(callbackCalls == 1);  // fired exactly once, during Initialize()
-    REQUIRE_TRUE(outputNameAtCallback == "Startup Interface");
-    REQUIRE_TRUE(engine.AudioDeviceSnapshot().outputDeviceName == "Startup Interface");
+    REQUIRE_TRUE(callbackCalls == 0);
+    REQUIRE_TRUE(outputNameAtCallback.empty());
+    REQUIRE_TRUE(engine.AudioDeviceSnapshot().outputDeviceName.empty());
 
-    std::filesystem::remove_all(root);
-    EngineTestApp::testPatchesRoot.clear();
+    std::filesystem::remove_all(dataRoot);
 }
 
-TEST_CASE(engine_audio_state_shadow_synced_after_startup_drain) {
-    // Regression test for the audio-state shadow sync bug: when a startup
-    // patch changes audioDeviceState_, the lastNotifiedAudioDeviceState_
-    // shadow must be re-synced AFTER the drain completes. Otherwise, a
-    // subsequent runtime patch WITHOUT an audioDevice section will spuriously
-    // detect a change (because the shadow still holds the pre-drain state)
-    // and incorrectly fire the callback a second time.
-    const std::filesystem::path root =
-        std::filesystem::temp_directory_path() / "engine-audio-state-shadow-sync-root";
-    std::filesystem::remove_all(root);
-    std::filesystem::create_directories(root);
+TEST_CASE(engine_startup_and_runtime_patch_loads_do_not_change_audio_device_shadow) {
+    const std::filesystem::path dataRoot =
+        std::filesystem::temp_directory_path() / "engine-audio-state-shadow-sync-data-root";
+    std::filesystem::remove_all(dataRoot);
+    const synth::RuntimeDataPaths paths = synth::RuntimeDataPaths::FromDataRoot(dataRoot);
+    std::filesystem::create_directories(paths.patchesRoot);
     // Startup patch with audioDevice section
-    WriteProbePatchVersion(root / "AAA", 0.75f, std::chrono::system_clock::now(),
+    WriteProbePatchVersion(paths.patchesRoot / "AAA", 0.75f, std::chrono::system_clock::now(),
                            synth::AudioDeviceState{.outputDeviceName = "Startup Device", .inputDeviceName = ""});
 
-    EngineTestApp::testPatchesRoot = root;
     EngineTestApp::processLiteAlpha = 1.0f;
     synth::Engine<EngineTestApp> engine([] { return std::uint64_t{0}; });
+    engine.SetRuntimeDataPaths(paths);
 
     int callbackCalls = 0;
     engine.SetAudioDeviceChangedCallback([&]() {
@@ -1172,7 +1321,8 @@ TEST_CASE(engine_audio_state_shadow_synced_after_startup_drain) {
     });
 
     engine.Initialize();
-    REQUIRE_TRUE(callbackCalls == 1);  // fired once during Initialize for the startup patch
+    REQUIRE_TRUE(callbackCalls == 0);
+    REQUIRE_TRUE(engine.AudioDeviceSnapshot().outputDeviceName.empty());
 
     engine.Prepare(48000.0, 256);
 
@@ -1192,31 +1342,19 @@ TEST_CASE(engine_audio_state_shadow_synced_after_startup_drain) {
         synth::AudioBlock block = buffers.Block(4);
         engine.ProcessBlock(block, /*timestamp=*/0);
     }
-    REQUIRE_TRUE(callbackCalls == 1);  // callback should NOT have fired yet
+    REQUIRE_TRUE(callbackCalls == 0);
 
     engine.MessageThreadTick();
-    REQUIRE_TRUE(callbackCalls == 1);  // callback must stay at 1 (no spurious change)
+    REQUIRE_TRUE(callbackCalls == 0);
 
     engine.MessageThreadTick();
-    REQUIRE_TRUE(callbackCalls == 1);  // second tick must also not fire it again
+    REQUIRE_TRUE(callbackCalls == 0);
 
-    std::filesystem::remove_all(root);
+    std::filesystem::remove_all(dataRoot);
     std::filesystem::remove_all(runtimePatchDir);
-    EngineTestApp::testPatchesRoot.clear();
 }
 
-TEST_CASE(engine_revert_after_host_selection_fires_changed_callback) {
-    // Regression test for the reviewer's scenario (Task 3 review, Critical
-    // Finding 1): a host-initiated selection (e.g. the runtime's audio-device
-    // combo) must advance BOTH the live state and the
-    // lastNotifiedAudioDeviceState_ shadow via SetAudioDeviceFromHost. If it
-    // only wrote the live state (the old `engine_.AudioDevice().outputDeviceName
-    // = ...` pattern), the shadow would stay stale at the pre-selection value,
-    // so a later revert back to that stale shadow value would be
-    // (incorrectly) treated as "no change" and never notify the host, leaving
-    // its JUCE device selection stuck on DeviceX even though the engine's
-    // state reverted to empty.
-    EngineTestApp::testPatchesRoot.clear();
+TEST_CASE(engine_revert_after_host_selection_preserves_audio_device) {
     EngineTestApp::processLiteAlpha = 1.0f;
     synth::Engine<EngineTestApp> engine([] { return std::uint64_t{0}; });
     engine.Initialize();
@@ -1240,10 +1378,7 @@ TEST_CASE(engine_revert_after_host_selection_fires_changed_callback) {
     REQUIRE_TRUE(engine.AudioDeviceSnapshot().outputDeviceName == "DeviceX");
     REQUIRE_TRUE(callbackCalls == 0);  // host-initiated changes never fire the callback (see (b) below)
 
-    // Drive a patch REVERT (no saved patch exists, so RevertPatch() falls
-    // back to NewPatch()'s RevertAllToDefault -- the default audio device
-    // state is empty, i.e. different from "DeviceX") through
-    // ProcessBlock + MessageThreadTick.
+    // Drive a patch REVERT through ProcessBlock + MessageThreadTick.
     const synth::PatchCommandResult revertResult = engine.Patches().RevertPatch();
     REQUIRE_TRUE(revertResult.status == synth::PatchCommandStatus::Ok);
 
@@ -1254,21 +1389,17 @@ TEST_CASE(engine_revert_after_host_selection_fires_changed_callback) {
     }
     engine.MessageThreadTick();
 
-    // The revert changed the state back to the default (empty), which is a
-    // real change relative to "DeviceX" -- the host MUST be told, so the
-    // callback fires and observes the reverted (empty) state.
-    REQUIRE_TRUE(callbackCalls == 1);
+    REQUIRE_TRUE(callbackCalls == 0);
     REQUIRE_TRUE(outputNameAtCallback.empty());
-    REQUIRE_TRUE(engine.AudioDeviceSnapshot().outputDeviceName.empty());
+    REQUIRE_TRUE(engine.AudioDeviceSnapshot().outputDeviceName == "DeviceX");
 }
 
 TEST_CASE(engine_set_audio_device_from_host_fires_no_callback) {
     // (b): SetAudioDeviceFromHost itself must never fire
     // audioDeviceChangedCallback_ -- host-initiated changes are by
     // definition already known to the host that just made them; the
-    // callback exists solely to notify the host of changes IT did not
-    // originate (patch load/revert).
-    EngineTestApp::testPatchesRoot.clear();
+    // callback exists solely to notify the host of future engine-sourced
+    // runtime configuration changes IT did not originate.
     EngineTestApp::processLiteAlpha = 1.0f;
     synth::Engine<EngineTestApp> engine([] { return std::uint64_t{0}; });
     engine.Initialize();
@@ -1305,7 +1436,6 @@ TEST_CASE(engine_default_instrument_equals_app_seeded_instrument_after_initializ
     // the instrument the app's Init() actually seeded -- not an empty
     // MidiInstrumentConfig{}. EngineTestApp::Init() adds a "test"/Generic
     // controller with encoderInput set when wantEncoderMidiInput is true.
-    EngineTestApp::testPatchesRoot.clear();
     EngineTestApp::processLiteAlpha = 1.0f;
     EngineTestApp::wantEncoderMidiInput = true;
 
@@ -1335,7 +1465,6 @@ TEST_CASE(engine_edit_instrument_mutation_visible_and_fires_rebuilt_callback_onc
     // Property 2 (brief Step 1): EditInstrument's mutation must be visible in
     // LiveInstrument() immediately afterward, and must trigger the
     // MIDI-processors-rebuilt callback exactly once (not zero, not twice).
-    EngineTestApp::testPatchesRoot.clear();
     EngineTestApp::processLiteAlpha = 1.0f;
     EngineTestApp::wantEncoderMidiInput = false;  // start from an empty instrument
 
@@ -1369,13 +1498,7 @@ TEST_CASE(engine_edit_instrument_mutation_visible_and_fires_rebuilt_callback_onc
     REQUIRE_TRUE(callbackCalls == 2);
 }
 
-TEST_CASE(engine_patch_save_perturb_load_round_trips_instrument_through_production_messages) {
-    // Property 3 (brief Step 1): saving a patch with a non-empty live
-    // instrument, perturbing the live instrument afterward, then loading the
-    // saved patch back must restore the saved instrument -- driven entirely
-    // through production PatchManager/ProcessBlock/MessageThreadTick
-    // messages, not direct pokes.
-    EngineTestApp::testPatchesRoot.clear();
+TEST_CASE(engine_patch_save_perturb_load_preserves_instrument_through_production_messages) {
     EngineTestApp::processLiteAlpha = 1.0f;
     EngineTestApp::wantEncoderMidiInput = true;  // Init() seeds one "test" controller
 
@@ -1385,7 +1508,7 @@ TEST_CASE(engine_patch_save_perturb_load_round_trips_instrument_through_producti
 
     TestBlockBuffers buffers(2, 4);
 
-    // Save the instrument as Init() configured it ("test"/Generic).
+    // Save a patch while the instrument is Init() configured ("test"/Generic).
     const std::filesystem::path saveDir =
         std::filesystem::temp_directory_path() / "engine-instrument-round-trip-save-dir";
     std::filesystem::remove_all(saveDir);
@@ -1417,10 +1540,10 @@ TEST_CASE(engine_patch_save_perturb_load_round_trips_instrument_through_producti
     }
     engine.MessageThreadTick();
 
-    // The loaded instrument must match what was saved ("test"/Generic), not
-    // the perturbed state.
+    // Patch load restores parameter state only; runtime MIDI configuration is
+    // still the host-perturbed state.
     REQUIRE_TRUE(engine.LiveInstrument().controllers.size() == 1);
-    REQUIRE_TRUE(engine.LiveInstrument().controllers.front().name == "test");
+    REQUIRE_TRUE(engine.LiveInstrument().controllers.front().name == "perturbed");
     REQUIRE_TRUE(engine.LiveInstrument().controllers.front().kind == synth::MidiProfileKind::Generic);
     REQUIRE_TRUE(engine.LiveInstrument().controllers.front().config.encoderInput.has_value());
 
@@ -1428,12 +1551,7 @@ TEST_CASE(engine_patch_save_perturb_load_round_trips_instrument_through_producti
     EngineTestApp::wantEncoderMidiInput = false;  // restore default for subsequent tests
 }
 
-TEST_CASE(engine_revert_restores_default_instrument) {
-    // Property 4 (brief Step 1): RevertAllToDefault (via NewPatch()/
-    // RevertPatch() with no saved patch) must restore the live instrument to
-    // exactly the app's Init-configured default, discarding any
-    // EditInstrument perturbation made in between.
-    EngineTestApp::testPatchesRoot.clear();
+TEST_CASE(engine_revert_preserves_current_instrument) {
     EngineTestApp::processLiteAlpha = 1.0f;
     EngineTestApp::wantEncoderMidiInput = true;
 
@@ -1462,23 +1580,14 @@ TEST_CASE(engine_revert_restores_default_instrument) {
     }
     engine.MessageThreadTick();
 
-    REQUIRE_TRUE(engine.LiveInstrument().controllers.size() == 1);
-    REQUIRE_TRUE(engine.LiveInstrument().controllers.front().name == "test");
+    REQUIRE_TRUE(engine.LiveInstrument().controllers.size() == 2);
+    REQUIRE_TRUE(engine.LiveInstrument().controllers.front().name == "renamed");
     REQUIRE_TRUE(engine.LiveInstrument().controllers.front().kind == synth::MidiProfileKind::Generic);
 
     EngineTestApp::wantEncoderMidiInput = false;  // restore default for subsequent tests
 }
 
-TEST_CASE(engine_edit_instrument_and_pending_patch_load_same_tick_observe_serialized_order) {
-    // Property 5 (brief Step 1): a host-initiated EditInstrument() call
-    // racing a patch load's audio-thread drain in the same tick must not
-    // tear state -- the final instrument must be the result of ONE of the
-    // two orderings (edit-then-load, or load-then-edit), never a mix of the
-    // two (e.g. the loaded controller's name with the edit's kind, or
-    // vice-versa). Both EditInstrument and the patch drain serialize against
-    // audioDeviceStateMutex_, so this asserts the observable outcome is
-    // always fully one or the other.
-    EngineTestApp::testPatchesRoot.clear();
+TEST_CASE(engine_edit_instrument_and_pending_patch_load_same_tick_preserves_edit) {
     EngineTestApp::processLiteAlpha = 1.0f;
     EngineTestApp::wantEncoderMidiInput = true;  // Init() seeds "test"/Generic
 
@@ -1517,20 +1626,11 @@ TEST_CASE(engine_edit_instrument_and_pending_patch_load_same_tick_observe_serial
     }
     engine.MessageThreadTick();
 
-    // Final state must be a clean result of ONE ordering:
-    //  - load-then-edit: the load applied "loaded", then EditInstrument
-    //    renamed it to "edited" -- final name "edited", kind Generic
-    //    (EditInstrument's lambda only renames, doesn't touch kind).
-    //  - edit-then-load: EditInstrument renamed the (still "test") live
-    //    controller to "edited" first, then the load overwrote the whole
-    //    instrument with the loaded document -- final name "loaded".
-    // Either is an acceptable, fully-applied ordering; anything else (e.g.
-    // an empty instrument, two controllers, or a torn name) is not.
+    // Patch load is parameter-only, so the host edit must remain the final
+    // runtime instrument state.
     REQUIRE_TRUE(engine.LiveInstrument().controllers.size() == 1);
     const std::string& finalName = engine.LiveInstrument().controllers.front().name;
-    const bool isLoadThenEdit = (finalName == "edited");
-    const bool isEditThenLoad = (finalName == "loaded");
-    REQUIRE_TRUE(isLoadThenEdit || isEditThenLoad);
+    REQUIRE_TRUE(finalName == "edited");
     REQUIRE_TRUE(engine.LiveInstrument().controllers.front().kind == synth::MidiProfileKind::Generic);
     REQUIRE_TRUE(engine.LiveInstrument().controllers.front().config.encoderInput.has_value());
 
@@ -1551,7 +1651,6 @@ TEST_CASE(engine_rebuild_midi_processors_observes_fully_applied_edit_snapshot) {
     // mutated profile), for both the empty-instrument (midiProcessors_ has
     // size 0) and populated-instrument (one result per controller slot)
     // cases.
-    EngineTestApp::testPatchesRoot.clear();
     EngineTestApp::processLiteAlpha = 1.0f;
     EngineTestApp::wantEncoderMidiInput = true;  // Init() seeds one "test"/Generic controller
 
@@ -1599,7 +1698,6 @@ TEST_CASE(engine_instrument_snapshot_is_deep_copy_equal_to_live_instrument) {
     // copy: mutating the returned value must not alter instrumentConfig_
     // (i.e. the snapshot does not alias the live controllers vector or its
     // per-slot config/endpoint members).
-    EngineTestApp::testPatchesRoot.clear();
     EngineTestApp::processLiteAlpha = 1.0f;
     EngineTestApp::wantEncoderMidiInput = true;  // Init() seeds one "test"/Generic controller
 

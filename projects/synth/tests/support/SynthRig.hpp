@@ -29,6 +29,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <utility>
 #include <vector>
 
 namespace synth_rig {
@@ -42,7 +43,7 @@ public:
         std::vector<float> channels;
     };
 
-    explicit SynthRig(std::size_t patchPumpBudgetBlocks = 64)
+    explicit SynthRig(std::size_t patchPumpBudgetBlocks = 64, synth::RuntimeDataPaths dataPaths = {})
         : patchPumpBudgetBlocks_(patchPumpBudgetBlocks)
         , engine_([this] { return NextTimestamp(); }) {
         const synth::RuntimeConfig config = App::Config();
@@ -64,6 +65,7 @@ public:
             outputPointers_[ch] = outputBuffers_[ch].data();
         }
 
+        engine_.SetRuntimeDataPaths(std::move(dataPaths));
         engine_.Initialize();
         engine_.Prepare(config.preferredSampleRate, config.preferredBlockSize);
     }
@@ -192,15 +194,12 @@ public:
 
     // Test-support: install a full MIDI instrument (any number of controller
     // slots) as the engine's live instrument and rebuild the MIDI processors
-    // from it immediately. Production code only ever rebuilds MIDI
-    // processors through the patch-apply flow (loading/reverting a patch
-    // triggers midiRebuildPending_, which the message-thread tick drains),
-    // through Engine::EditInstrument (which rebuilds and fires the rebuilt
-    // callback itself), or once at startup. This exists so tests can install
-    // an instrument (e.g. built from synth::WrldBldrDefaultProfileConfig)
-    // without fabricating a full patch document or exercising
-    // EditInstrument's callback-firing side effect, by writing directly into
-    // Engine::LiveInstrument() and delegating to
+    // from it immediately. Production code rebuilds MIDI processors through
+    // Engine::EditInstrument (which rebuilds and fires the rebuilt callback
+    // itself), or once at startup. This exists so tests can install an
+    // instrument (e.g. built from synth::WrldBldrDefaultProfileConfig) without
+    // exercising EditInstrument's callback-firing side effect, by writing
+    // directly into Engine::LiveInstrument() and delegating to
     // Engine::RebuildMidiProcessorsForTest() (a matching test-only hook).
     // Replaces the entire controllers vector (per-controller rebuild, Task
     // 2: RebuildMidiProcessors() now builds one processor chain per slot, so

@@ -43,14 +43,35 @@ The File page's patch-name label shows the current patch directory's name
 (or "(no patch)" when none is current), read fresh from
 `Runtime::GetEngine().Patches().CurrentPatchDirectory()` on every repaint
 tick — never cached. The Save button checks the same state before
-dispatching: with no current patch it opens the Save As chooser directly
-instead of sending a `SavePatch()` that would only come back
+dispatching: with no current patch it opens the in-app Save As browser
+directly instead of sending a `SavePatch()` that would only come back
 `NeedsSaveAsPath`.
 
 `MiniApp::UIComponent()` only returns this app's own widget tree; `MainPane`
 hosts it alongside the Audio/Controllers/File pages and the sidebar (see
 `projects/synth/runtime/MainPane.hpp`), showing exactly one of the app or a
 library page at a time.
+
+## Runtime data
+
+The shared runtime owns long-lived app data. In production it resolves an
+OS-appropriate user application data root under `Sheaf/SynthMiniapp`; tests can
+override this with `Runtime::SetRuntimeDataPathsForTesting(...)` and scratch
+`synth::RuntimeDataPaths`.
+
+The data root contains:
+
+- `patches/` — patch directories and their version files. The File page's
+  Save As and Load flows use an in-app browser rooted here, not the operating
+  system file explorer.
+- `logs/` — async session logs written by `synth::AsyncLogQueue`.
+- `config.json` — runtime configuration, currently MIDI controller/device
+  configuration plus audio input/output selection. Audio and Controllers page
+  Back buttons save this file before returning to the app view; File page Back
+  does not save it just because the File page was dismissed.
+
+Patch files contain synthesizer patch data only. MIDI and audio configuration
+are stored separately in `config.json`.
 
 ## Logging
 
@@ -60,16 +81,14 @@ Patch command results are logged by the runtime itself
 patch log — the old miniapp's `appendPatchLog`/`patchLogPath`/
 `logPatchCommand` functions were not ported.
 
-Log files are written under `MiniAppCore::Config().logsRoot`, which defaults
-to `$TMPDIR/sheaf-synth-miniapp-logs` (override for tests via
-`MiniAppCore::testLogsRoot`).
+Log files are written under `Runtime::DataPaths().logsRoot`, normally the
+`logs/` directory described above.
 
 ## Patch root
 
-Patches are written under `MiniAppCore::Config().patchesRoot`, which defaults
-to `$TMPDIR/sheaf-synth-miniapp-patches` (override for tests via
-`MiniAppCore::testPatchesRoot`). The runtime shell's Save As / Load file
-choosers are rooted there (`Runtime::GetEngine().Config().patchesRoot`).
+Patches are written under `Runtime::DataPaths().patchesRoot`, normally the
+`patches/` directory described above. Save As and Load use the runtime's
+in-app patch browser rooted there.
 
 ## Build
 

@@ -1,4 +1,5 @@
 #include "MiniAppCore.hpp"
+#include "synth/PatchBrowser.hpp"
 #include "support/SynthRig.hpp"
 
 #ifdef JUCE_MAJOR_VERSION
@@ -78,26 +79,16 @@ constexpr std::size_t kLfoPhaseOffsetPosition = 2;
 constexpr std::size_t kLfoSkewPosition = 3;
 constexpr std::size_t kLfoExponentPosition = 4;
 
-// Points MiniAppCore::testPatchesRoot (the static test hook mirroring
-// EngineTestApp::testPatchesRoot in tests/engine_tests.cpp) at a fresh, empty
-// scratch directory unique to the calling test, and returns it. Every test
-// below must call this -- leaving testPatchesRoot cleared would fall back to
-// MiniAppCore::DefaultPatchesRoot(), the same deterministic
-// /tmp/sheaf-synth-miniapp-patches root a real interactive host run (e.g.
-// apps/miniapp's JUCE build) writes patches into; Engine::Initialize()
-// auto-loads the latest patch found there, so a shared real host session's
-// saved modulation/parameter state would silently leak into these tests
-// (observed in practice: a stale saved patch there gave Shape/Phase
-// non-default modulation depths, breaking assumptions about their starting
-// values). Scoping every test to its own subdirectory keyed by test name
-// keeps runs isolated from both the real host and each other.
-std::filesystem::path UseScratchPatchesRoot(const char* testName) {
-    const std::filesystem::path root =
+// Builds fresh runtime-owned scratch data paths unique to the calling test.
+// Every test below injects these paths through SynthRig so startup patch
+// loading cannot observe a shared production location or another test's data.
+synth::RuntimeDataPaths UseScratchRuntimeDataPaths(const char* testName) {
+    const std::filesystem::path dataRoot =
         std::filesystem::temp_directory_path() / "sheaf-synth-miniapp-system-tests" / testName;
-    std::filesystem::remove_all(root);
-    std::filesystem::create_directories(root);
-    synth_miniapp::MiniAppCore::testPatchesRoot = root;
-    return root;
+    std::filesystem::remove_all(dataRoot);
+    synth::RuntimeDataPaths paths = synth::RuntimeDataPaths::FromDataRoot(dataRoot);
+    std::filesystem::create_directories(paths.patchesRoot);
+    return paths;
 }
 
 // Snapshot of a settled output window, used to prove a Turn actually changes
@@ -211,8 +202,7 @@ void RequireUnboundBankPosition(synth::BankSlot& slot, const synth::Bank& bank, 
 }  // namespace
 
 TEST_CASE(miniapp_rig_initializes_headlessly_and_runs) {
-    UseScratchPatchesRoot("initializes_headlessly_and_runs");
-    synth_rig::SynthRig<synth_miniapp::MiniAppCore> rig;
+    synth_rig::SynthRig<synth_miniapp::MiniAppCore> rig(64, UseScratchRuntimeDataPaths("initializes_headlessly_and_runs"));
     const float expectedDefaultAlpha = 0.1226942309f;  // one-pole 1 kHz cutoff at 48 kHz
     REQUIRE_NEAR(rig.Application().Group()->Config().processLiteAlpha, expectedDefaultAlpha, 0.000001f);
     rig.RunBlocks(1);
@@ -220,16 +210,14 @@ TEST_CASE(miniapp_rig_initializes_headlessly_and_runs) {
 }
 
 TEST_CASE(miniapp_rig_run_seconds_produces_finite_output) {
-    UseScratchPatchesRoot("run_seconds_produces_finite_output");
-    synth_rig::SynthRig<synth_miniapp::MiniAppCore> rig;
+    synth_rig::SynthRig<synth_miniapp::MiniAppCore> rig(64, UseScratchRuntimeDataPaths("run_seconds_produces_finite_output"));
     rig.RunSeconds(0.1);
     REQUIRE_TRUE(!rig.SawNaN());
     REQUIRE_TRUE(!rig.Output().empty());
 }
 
 TEST_CASE(miniapp_rig_raising_volume_yields_nonzero_output_peak) {
-    UseScratchPatchesRoot("raising_volume_yields_nonzero_output_peak");
-    synth_rig::SynthRig<synth_miniapp::MiniAppCore> rig;
+    synth_rig::SynthRig<synth_miniapp::MiniAppCore> rig(64, UseScratchRuntimeDataPaths("raising_volume_yields_nonzero_output_peak"));
 
     // Volume defaults to 1.0 (see Modules.cpp), so peak should already be
     // nonzero after a short run; still exercise Turn on the production bus
@@ -242,8 +230,7 @@ TEST_CASE(miniapp_rig_raising_volume_yields_nonzero_output_peak) {
 }
 
 TEST_CASE(miniapp_rig_lfo_bank_exposes_five_module_parameters) {
-    UseScratchPatchesRoot("lfo_bank_exposes_five_module_parameters");
-    synth_rig::SynthRig<synth_miniapp::MiniAppCore> rig;
+    synth_rig::SynthRig<synth_miniapp::MiniAppCore> rig(64, UseScratchRuntimeDataPaths("lfo_bank_exposes_five_module_parameters"));
     rig.RunBlocks(1);
 
     REQUIRE_TRUE(rig.Application().Parameters().size() == 12);
@@ -296,8 +283,7 @@ TEST_CASE(miniapp_rig_lfo_bank_exposes_five_module_parameters) {
 }
 
 TEST_CASE(miniapp_rig_vco_bank_exposes_vco_and_filter_parameters) {
-    UseScratchPatchesRoot("vco_bank_exposes_vco_and_filter_parameters");
-    synth_rig::SynthRig<synth_miniapp::MiniAppCore> rig;
+    synth_rig::SynthRig<synth_miniapp::MiniAppCore> rig(64, UseScratchRuntimeDataPaths("vco_bank_exposes_vco_and_filter_parameters"));
     rig.RunBlocks(1);
 
     REQUIRE_TRUE(rig.Application().Parameters().size() == 12);
@@ -334,8 +320,7 @@ TEST_CASE(miniapp_rig_vco_bank_exposes_vco_and_filter_parameters) {
 }
 
 TEST_CASE(miniapp_rig_lfo_modulation_source_changes_from_module_processing) {
-    UseScratchPatchesRoot("lfo_modulation_source_changes_from_module_processing");
-    synth_rig::SynthRig<synth_miniapp::MiniAppCore> rig;
+    synth_rig::SynthRig<synth_miniapp::MiniAppCore> rig(64, UseScratchRuntimeDataPaths("lfo_modulation_source_changes_from_module_processing"));
     std::vector<float> voice0Values;
     std::vector<float> voice1Values;
 
@@ -351,8 +336,7 @@ TEST_CASE(miniapp_rig_lfo_modulation_source_changes_from_module_processing) {
 }
 
 TEST_CASE(miniapp_rig_zero_volume_yields_silence_and_turning_up_restores_signal) {
-    UseScratchPatchesRoot("zero_volume_yields_silence_and_turning_up_restores_signal");
-    synth_rig::SynthRig<synth_miniapp::MiniAppCore> rig;
+    synth_rig::SynthRig<synth_miniapp::MiniAppCore> rig(64, UseScratchRuntimeDataPaths("zero_volume_yields_silence_and_turning_up_restores_signal"));
 
     // Drive Volume down to (near) zero via repeated turns on its bank
     // position, then confirm the output peak collapses -- proving the
@@ -396,10 +380,8 @@ TEST_CASE(miniapp_rig_zero_volume_yields_silence_and_turning_up_restores_signal)
 // turn -- phase drift cannot explain it, because both rigs drift identically
 // from the same identical history.
 TEST_CASE(miniapp_rig_tune_turn_changes_output) {
-    UseScratchPatchesRoot("tune_turn_changes_output");
-    synth_rig::SynthRig<synth_miniapp::MiniAppCore> rigA;
-    UseScratchPatchesRoot("tune_turn_changes_output_b");
-    synth_rig::SynthRig<synth_miniapp::MiniAppCore> rigB;
+    synth_rig::SynthRig<synth_miniapp::MiniAppCore> rigA(64, UseScratchRuntimeDataPaths("tune_turn_changes_output"));
+    synth_rig::SynthRig<synth_miniapp::MiniAppCore> rigB(64, UseScratchRuntimeDataPaths("tune_turn_changes_output_b"));
 
     rigA.RunBlocks(4);
     rigB.RunBlocks(4);
@@ -454,10 +436,8 @@ TEST_CASE(miniapp_rig_tune_turn_changes_output) {
 }
 
 TEST_CASE(miniapp_rig_shape_turn_changes_output) {
-    UseScratchPatchesRoot("shape_turn_changes_output");
-    synth_rig::SynthRig<synth_miniapp::MiniAppCore> rigA;
-    UseScratchPatchesRoot("shape_turn_changes_output_b");
-    synth_rig::SynthRig<synth_miniapp::MiniAppCore> rigB;
+    synth_rig::SynthRig<synth_miniapp::MiniAppCore> rigA(64, UseScratchRuntimeDataPaths("shape_turn_changes_output"));
+    synth_rig::SynthRig<synth_miniapp::MiniAppCore> rigB(64, UseScratchRuntimeDataPaths("shape_turn_changes_output_b"));
 
     rigA.RunBlocks(4);
     rigB.RunBlocks(4);
@@ -512,10 +492,8 @@ TEST_CASE(miniapp_rig_shape_turn_changes_output) {
 }
 
 TEST_CASE(miniapp_rig_filter_blend_turn_changes_output) {
-    UseScratchPatchesRoot("filter_blend_turn_changes_output");
-    synth_rig::SynthRig<synth_miniapp::MiniAppCore> rigA;
-    UseScratchPatchesRoot("filter_blend_turn_changes_output_b");
-    synth_rig::SynthRig<synth_miniapp::MiniAppCore> rigB;
+    synth_rig::SynthRig<synth_miniapp::MiniAppCore> rigA(64, UseScratchRuntimeDataPaths("filter_blend_turn_changes_output"));
+    synth_rig::SynthRig<synth_miniapp::MiniAppCore> rigB(64, UseScratchRuntimeDataPaths("filter_blend_turn_changes_output_b"));
 
     rigA.RunBlocks(4);
     rigB.RunBlocks(4);
@@ -556,9 +534,9 @@ TEST_CASE(miniapp_rig_filter_blend_turn_changes_output) {
 }
 
 TEST_CASE(miniapp_rig_patch_save_perturb_load_round_trip) {
-    const std::filesystem::path root = UseScratchPatchesRoot("patch_save_perturb_load_round_trip");
+    const synth::RuntimeDataPaths paths = UseScratchRuntimeDataPaths("patch_save_perturb_load_round_trip");
 
-    synth_rig::SynthRig<synth_miniapp::MiniAppCore> rig;
+    synth_rig::SynthRig<synth_miniapp::MiniAppCore> rig(64, paths);
     rig.RunBlocks(4);
 
     const synth::ParameterId tuneId = rig.Application().VcoParameterIds().tune;
@@ -571,8 +549,15 @@ TEST_CASE(miniapp_rig_patch_save_perturb_load_round_trip) {
     const float savedTune = rig.ParameterValue(tuneId);
     const float savedShape = rig.ParameterValue(shapeId);
 
-    const std::filesystem::path patchDir = root / "Take1";
+    const std::filesystem::path patchDir = paths.patchesRoot / "Take1";
     REQUIRE_TRUE(rig.SavePatchAs(patchDir) == synth_rig::RigPatchStatus::Written);
+    rig.Engine().EditInstrument([](synth::MidiInstrumentConfig& instrument) {
+        REQUIRE_TRUE(instrument.RenameController(0, "runtime-edited"));
+    });
+    rig.Engine().SetAudioDeviceFromHost(synth::AudioDeviceState{
+        .outputDeviceName = "Runtime Out",
+        .inputDeviceName = "Runtime In",
+    });
 
     // Perturb: move both parameters away from the saved values.
     rig.Turn(kSlotIx, kTunePosition, -0.4f);
@@ -587,9 +572,49 @@ TEST_CASE(miniapp_rig_patch_save_perturb_load_round_trip) {
 
     REQUIRE_NEAR(rig.ParameterValue(tuneId), savedTune, 1e-3f);
     REQUIRE_NEAR(rig.ParameterValue(shapeId), savedShape, 1e-3f);
+    REQUIRE_TRUE(rig.Engine().InstrumentSnapshot().controllers.size() == 1);
+    REQUIRE_TRUE(rig.Engine().InstrumentSnapshot().controllers[0].name == "runtime-edited");
+    REQUIRE_TRUE(rig.Engine().AudioDeviceSnapshot().outputDeviceName == "Runtime Out");
+    REQUIRE_TRUE(rig.Engine().AudioDeviceSnapshot().inputDeviceName == "Runtime In");
     REQUIRE_TRUE(!rig.SawNaN());
 
-    std::filesystem::remove_all(root);
+    std::filesystem::remove_all(paths.dataRoot);
+}
+
+TEST_CASE(miniapp_patch_browser_save_as_path_writes_patch_and_load_selection_reads_it) {
+    const synth::RuntimeDataPaths paths = UseScratchRuntimeDataPaths("patch_browser_save_load");
+    synth::PatchBrowser browser(paths.patchesRoot);
+
+    const auto savePath = browser.ResolveSaveAsPath("Browser Patch");
+    REQUIRE_TRUE(savePath.has_value());
+
+    synth_rig::SynthRig<synth_miniapp::MiniAppCore> rig(64, paths);
+    rig.RunBlocks(4);
+
+    const synth::ParameterId volumeId = rig.Application().VcoParameterIds().volume;
+    rig.Turn(kSlotIx, kVolumePosition, -0.35f);
+    rig.RunBlocks(16);
+    const float savedVolume = rig.ParameterValue(volumeId);
+
+    REQUIRE_TRUE(rig.SavePatchAs(*savePath) == synth_rig::RigPatchStatus::Written);
+    REQUIRE_TRUE(std::filesystem::is_directory(*savePath));
+
+    REQUIRE_TRUE(browser.Refresh());
+    REQUIRE_TRUE(browser.Entries().size() == 1);
+    REQUIRE_TRUE(browser.Entries()[0].name == "Browser Patch");
+    browser.Select(0);
+
+    rig.Turn(kSlotIx, kVolumePosition, 0.35f);
+    rig.RunBlocks(16);
+    REQUIRE_TRUE(std::fabs(rig.ParameterValue(volumeId) - savedVolume) > 1e-3f);
+
+    const auto loadPath = browser.SelectedLoadPath();
+    REQUIRE_TRUE(loadPath.has_value());
+    REQUIRE_TRUE(rig.LoadPatch(*loadPath) == synth_rig::RigPatchStatus::Ok);
+    rig.RunBlocks(16);
+    REQUIRE_NEAR(rig.ParameterValue(volumeId), savedVolume, 1e-3f);
+
+    std::filesystem::remove_all(paths.dataRoot);
 }
 
 // spm-45: post-Init the default instrument (Engine::LiveInstrument(), which
@@ -606,8 +631,7 @@ TEST_CASE(miniapp_rig_patch_save_perturb_load_round_trip) {
 // KeepFirstPositions(4) trims the general 0..15 scheme down to positions
 // 0..3, matching the slot's 4 physical encoders.
 TEST_CASE(miniapp_rig_default_instrument_has_single_wrldbldr_controller) {
-    UseScratchPatchesRoot("default_instrument_has_single_wrldbldr_controller");
-    synth_rig::SynthRig<synth_miniapp::MiniAppCore> rig;
+    synth_rig::SynthRig<synth_miniapp::MiniAppCore> rig(64, UseScratchRuntimeDataPaths("default_instrument_has_single_wrldbldr_controller"));
 
     // Pin the post-Init DEFAULT instrument (revert/new-patch restore value).
     const synth::MidiInstrumentConfig& defaultInstrument = rig.Engine().DefaultInstrument();
@@ -665,8 +689,7 @@ TEST_CASE(miniapp_rig_default_instrument_has_single_wrldbldr_controller) {
 }
 
 TEST_CASE(miniapp_rig_no_nan_across_extended_run) {
-    UseScratchPatchesRoot("no_nan_across_extended_run");
-    synth_rig::SynthRig<synth_miniapp::MiniAppCore> rig;
+    synth_rig::SynthRig<synth_miniapp::MiniAppCore> rig(64, UseScratchRuntimeDataPaths("no_nan_across_extended_run"));
 
     rig.Turn(kSlotIx, kTunePosition, 0.2f);
     rig.Turn(kSlotIx, kShapePosition, 0.3f);

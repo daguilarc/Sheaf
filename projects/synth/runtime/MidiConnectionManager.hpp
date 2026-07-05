@@ -43,22 +43,15 @@
 // trigger, and the plan currently executing already IS that pass for this
 // trigger -- a nested call has nothing new to reconcile.
 //
-// Startup double-reconcile gate (binding, see p3-globals.md's startup-order
-// paragraph: "engine init -> startup patch -> processor rebuild -> ONE
-// synchronous reconcile -> start poller -> ..."): the host wires
-// OnInstrumentRebuilt() as the rebuilt-callback target unconditionally, in
-// its own constructor -- before it ever calls StartupReconcile() (typically
-// from a later Start() method). A startup patch loaded inside
-// engine.Initialize() rebuilds MIDI processors and fires that callback
-// synchronously, which would otherwise run a reconcile pass BEFORE
-// StartupReconcile()'s own "ONE synchronous startup reconcile" runs --
-// violating the binding. started_ (false until StartupReconcile() sets it)
+// Startup double-reconcile gate (binding): the host wires
+// OnInstrumentRebuilt() as the rebuilt-callback target unconditionally, in its
+// own constructor -- before it ever calls StartupReconcile() (typically from a
+// later Start() method). started_ (false until StartupReconcile() sets it)
 // gates this: OnInstrumentRebuilt() always resizes handler/state vectors
-// (cheap, and StartupReconcile()'s own resize call needs the current
-// controller count regardless of what ran before it), but only runs
-// Reconcile() when started_ is already true. See OnInstrumentRebuilt()'s doc
-// comment for the post-startup behavior (patch loads, preset changes, sar-8)
-// once started_ is true.
+// (cheap, and StartupReconcile()'s own resize call needs the current controller
+// count regardless of what ran before it), but only runs Reconcile() when
+// started_ is already true. See OnInstrumentRebuilt()'s doc comment for the
+// post-startup behavior once started_ is true.
 //
 // Sole owner of every device handler (binding, see p3-globals.md's
 // architecture paragraph): this manager is the sole owner of every
@@ -74,8 +67,8 @@
 // synth::MidiConfigViewModel::SetEndpointRef and commits it through
 // engine.EditInstrument; this manager's own rebuilt-callback handler
 // (OnInstrumentRebuilt(), wired by the host below) is what actually opens or
-// closes the device, via a normal reconcile pass -- the same self-healing
-// path a patch-carried endpoint ref takes on load. This manager exposes only
+// closes the device, via a normal reconcile pass -- the same self-healing path
+// persisted runtime configuration takes on load. This manager exposes only
 // State()/EnumerateNow() as direct read accessors for a UI; there is no
 // UI-facing manual open/close entry point.
 #include "synth/AsyncLogger.hpp"
@@ -225,7 +218,7 @@ public:
     MidiConnectionManager& operator=(const MidiConnectionManager&) = delete;
 
     // Startup order (sar-5, binding): call once after processors have been
-    // built (post startup-patch rebuild), BEFORE starting the poller. Resizes
+    // built, BEFORE starting the poller. Resizes
     // handler vectors to the current controller count (state_ starts out
     // default-constructed, i.e. every entry status-unconfigured -- the
     // "empty MidiConnectionState{}" the brief describes as `current`), then
@@ -237,11 +230,8 @@ public:
     // matter for whether an Open* action is planned); an absent device
     // simply goes offline, never a startup failure. Starts the poller
     // afterward. Sets started_ = true (see the class doc comment's
-    // ONE-synchronous-startup-reconcile paragraph) so any rebuilt-callback
-    // that fired before this point -- e.g. a startup-patch rebuild inside
-    // engine.Initialize(), which runs and fires
-    // SetMidiProcessorsRebuiltCallback synchronously BEFORE Runtime::Start()
-    // reaches this call -- did not also run a reconcile pass of its own.
+    // ONE-synchronous-startup-reconcile paragraph) so any rebuilt-callback that
+    // fired before this point did not also run a reconcile pass of its own.
     void StartupReconcile() {
         ResizeToControllerCount();
         Reconcile(detail::EnumerateDevices());
@@ -334,20 +324,15 @@ public:
     // here that only a full JUCE runtime build would exercise). This
     // callback is wired unconditionally in the host's constructor (see
     // Runtime.hpp), i.e. BEFORE Runtime::Start() ever calls
-    // StartupReconcile(). A startup patch's own processor rebuild inside
-    // engine.Initialize() therefore fires this method while started_ is
-    // still false. Per p3-globals.md's binding startup order ("engine init
-    // -> startup patch -> processor rebuild -> ONE synchronous reconcile ->
-    // start poller -> ..."), that pre-startup rebuild must NOT itself run a
-    // reconcile pass -- only StartupReconcile()'s own call does, immediately
-    // afterward, against whatever the resize below just produced. Skipping
-    // the reconcile here pre-startup is safe: the resize (handler/state
+    // StartupReconcile(). Any pre-startup instrument rebuild must NOT itself
+    // run a reconcile pass -- only StartupReconcile()'s own call does,
+    // immediately afterward, against whatever the resize below just produced.
+    // Skipping the reconcile here pre-startup is safe: the resize (handler/state
     // vector sizing + forwarding-processor installation) still happens
-    // unconditionally, so by the time StartupReconcile() runs its
-    // Reconcile() call, the vectors are already correctly sized -- nothing
-    // is lost, only the redundant early reconcile pass is skipped. Once
-    // started_ is true (post-startup patch loads, preset changes, etc., per
-    // sar-8), this method reconciles exactly as before. The `response` value
+    // unconditionally, so by the time StartupReconcile() runs its Reconcile()
+    // call, the vectors are already correctly sized -- nothing is lost, only
+    // the redundant early reconcile pass is skipped. Once started_ is true,
+    // this method reconciles exactly as before. The `response` value
     // itself is used only for its `reconcile` flag here -- the resize
     // execution still goes through ResizeToControllerCount() (which
     // independently calls PlanMidiConnectionResize with the same
@@ -634,8 +619,7 @@ private:
     // True once StartupReconcile() has run its one synchronous startup
     // reconcile pass (Task 2 review, Important). Before that,
     // OnInstrumentRebuilt() (wired unconditionally in the host's
-    // constructor, so it can fire from a startup-patch rebuild inside
-    // engine.Initialize() -- well before Runtime::Start() calls
+    // constructor, so it can fire before Runtime::Start() calls
     // StartupReconcile()) only resizes handler/state vectors and does NOT
     // run a reconcile pass, preserving the binding "ONE synchronous startup
     // reconcile, then poller" ordering. See OnInstrumentRebuilt()'s doc

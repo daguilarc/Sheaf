@@ -32,19 +32,16 @@
 // synth::MidiConfigViewModel::SetEndpointRef and commits via
 // engine.EditInstrument, exactly like every other edit on that page; the
 // rebuilt callback below (SetMidiProcessorsRebuiltHook) is what lets the
-// page notice ANY instrument change -- including a patch load/revert, or a
+// page notice ANY runtime-config/instrument change -- including a
 // reconcile-driven ref rewrite -- and re-derive its view model.
 //
 // Audio device selection (Task 3 of Plan 4): the actual switch
 // (AudioDeviceSetup mutation, setAudioDeviceSetup, logging) is implemented
 // once, in ApplyAudioDeviceSelection()/ApplyAudioDeviceInputSelection(), and
-// reached from two paths: (a) the user changing AudioConfigPage's combo
+// reached from the user changing AudioConfigPage's combo
 // (AudioConfigPage.hpp calls these methods straight from its combo's
-// onChange) and (b) a startup or runtime patch changing the engine's audio
-// device state (observed via engine.AudioDeviceSnapshot()), via
-// engine_.SetAudioDeviceChangedCallback (wired in Start(), BEFORE
-// Initialize() — see Start()'s doc comment for why the callback must
-// tolerate firing before deviceManager_ is initialised).
+// onChange). Runtime configuration loading will seed the engine's audio
+// device state separately from patch data.
 //
 // Runtime no longer owns a UI component for this (Task 3 of Plan 4 deleted
 // AudioPanel): it exposes DeviceManager() so AudioConfigPage can read
@@ -54,6 +51,13 @@
 // selection" notifications to whichever page instance is currently alive,
 // without Runtime holding a reference to it (MainPane/pages are constructed
 // after Runtime, and can be torn down/rebuilt independently of it).
+//
+// Runtime owns persistent data paths. Production apps resolve an
+// OS-appropriate user application data root under Sheaf/<appName>, then use
+// RuntimeDataPaths children for patches/, logs/, and config.json. Patch
+// documents stay parameter-only; runtime configuration stores MIDI and audio
+// selection separately in config.json and is saved from the configuration-page
+// Back flows.
 //
 // MidiPanel retirement (Task 4 of Plan 4): the single-slot MidiPanel
 // component is deleted -- ControllersPage.hpp (a thin JUCE renderer over the
@@ -84,6 +88,7 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <optional>
 
 namespace synth_runtime {
 
@@ -106,19 +111,18 @@ public:
         engine_.SetMidiProcessorsWillRebuildCallback([this] { midiConnections_->OnMidiProcessorsWillRebuild(); });
 
         // The engine invokes this (on the message thread, from
-        // MessageThreadTick or the startup-patch path in Initialize())
-        // whenever midiProcessors_ has just been rebuilt.
+        // EditInstrument whenever midiProcessors_ has just been rebuilt.
         // midiConnections_->OnInstrumentRebuilt() resizes to the current
         // controller count, reinstalls forwarding, and runs one reconcile
         // pass (sar-8) -- the same executor path the timer-driven poll uses.
         // onMidiProcessorsRebuilt_ (wired by MainPane via
         // SetMidiProcessorsRebuiltHook(), see that method's doc comment) is
         // ControllersPage's subscription to EVERY rebuild -- not just its
-        // own edits -- so a patch load/revert or any other engine-driven
-        // instrument change also marks the page dirty (Task 4 review,
-        // Critical finding 1: a page that only dirtied on its own commits or
-        // a connection-status fingerprint missed exactly this class of
-        // change, letting a later edit commit from a stale snapshot).
+        // own edits -- so runtime-config or other engine-driven instrument
+        // changes also mark the page dirty (Task 4 review, Critical finding 1:
+        // a page that only dirtied on its own commits or a connection-status
+        // fingerprint missed exactly this class of change, letting a later edit
+        // commit from a stale snapshot).
         engine_.SetMidiProcessorsRebuiltCallback([this] {
             midiConnections_->OnInstrumentRebuilt();
             if (onMidiProcessorsRebuilt_) {
@@ -149,21 +153,28 @@ public:
     Runtime(Runtime&&) = delete;
     Runtime& operator=(Runtime&&) = delete;
 
+    static synth::RuntimeDataPaths DefaultDataPathsForApp(const synth::RuntimeConfig& config) {
+        const juce::File dataRoot =
+            juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
+                .getChildFile("Sheaf")
+                .getChildFile(config.appName.empty() ? "SynthApp" : config.appName);
+        return synth::RuntimeDataPaths::FromDataRoot(
+            std::filesystem::path(dataRoot.getFullPathName().toStdString()));
+    }
+
+    void SetRuntimeDataPathsForTesting(synth::RuntimeDataPaths paths) { dataPathsOverride_ = std::move(paths); }
+    const synth::RuntimeDataPaths& DataPaths() const { return dataPaths_; }
+
     // Startup ordering (binding, per Task 2/3/4 briefs):
-    //   1. configure log directory (create it first) when non-empty
+    //   1. resolve/create runtime data paths and configure log directory
     //   2a. wire engine_.SetAudioDeviceChangedCallback to
-    //       OnEngineAudioDeviceChanged (must also precede Initialize(), for
-    //       the identical reason: a startup patch's drain inside
-    //       Initialize() can change audioDeviceState_ and fire the callback
-    //       synchronously, before deviceManager_ has been touched at all)
+    //       OnEngineAudioDeviceChanged for future runtime-config-initiated
+    //       audio changes
     //   3. engine_.Initialize()
     //   4. open the audio device, applying preferred rate/block where
     //      allowed, PREFERRING engine.AudioDeviceSnapshot().outputDeviceName
     //      over the platform default when it names a currently-enumerated device
-    //      (Task 4 brief: this is what makes a startup-patch-carried device
-    //      actually take effect, since step 2a's callback necessarily fires
-    //      too early to open anything itself — see the callback's own doc
-    //      comment for the full ordering rationale)
+    //      (runtime configuration seeds this value before device open)
     //   5. start the MidiSender worker (before the audio callback is
     //      registered, so the sink is draining before ProcessBlock/MIDI
     //      output processors can enqueue into it)
@@ -171,24 +182,32 @@ public:
     //   7. register this as the audio callback
     //   8. start the UI timer
     void Start() {
-        // engine_.Config() only becomes valid once Initialize() has stored
-        // it, so read the log directory from App::Config() directly first —
-        // it must be created before Initialize() runs, since Initialize()
-        // is what first touches AsyncLogQueue::s_instance (via
-        // SetSampleCounterSource/INFO).
         const synth::RuntimeConfig appConfig = App::Config();
-        if (!appConfig.logsRoot.empty()) {
-            std::error_code ec;
-            std::filesystem::create_directories(appConfig.logsRoot, ec);
-            synth::AsyncLogQueue::s_instance.ConfigureLogDirectory(appConfig.logsRoot.string().c_str());
+        dataPaths_ = dataPathsOverride_.has_value() ? *dataPathsOverride_ : DefaultDataPathsForApp(appConfig);
+        synth::AsyncLogQueue::s_instance.ConfigureLogDirectory(dataPaths_.logsRoot.string().c_str());
+        std::error_code ec;
+        std::filesystem::create_directories(dataPaths_.dataRoot, ec);
+        if (ec) {
+            INFO("Runtime data root create FAILED: path=%s error=%s", dataPaths_.dataRoot.string().c_str(),
+                 ec.message().c_str());
         }
+        ec.clear();
+        std::filesystem::create_directories(dataPaths_.patchesRoot, ec);
+        if (ec) {
+            INFO("Runtime patches root create FAILED: path=%s error=%s", dataPaths_.patchesRoot.string().c_str(),
+                 ec.message().c_str());
+        }
+        ec.clear();
+        std::filesystem::create_directories(dataPaths_.logsRoot, ec);
+        if (ec) {
+            INFO("Runtime logs root create FAILED: path=%s error=%s", dataPaths_.logsRoot.string().c_str(),
+                 ec.message().c_str());
+        }
+        engine_.SetRuntimeDataPaths(dataPaths_);
 
-        // Wired before Initialize() for the identical reason (see Start()'s
-        // doc comment, step 2a): a startup patch's drain inside Initialize()
-        // can change audioDeviceState_ and fire this synchronously, before
-        // deviceManager_.initialiseWithDefaultDevices() below has even run.
-        // OnEngineAudioDeviceChanged tolerates that (see its own doc
-        // comment) — it never assumes a current device exists.
+        // Wired before Initialize() so future runtime-config-initiated audio
+        // changes can be applied through the same host path. Patch load/revert
+        // is parameter-only and never fires this callback.
         engine_.SetAudioDeviceChangedCallback([this] { OnEngineAudioDeviceChanged(); });
 
         engine_.Initialize();
@@ -196,18 +215,17 @@ public:
         const synth::RuntimeConfig& config = engine_.Config();
 
         // Startup order (sar-5, binding, per p3-globals.md): engine init ->
-        // startup patch -> processor rebuild -> ONE synchronous reconcile ->
+        // startup/runtime config applied -> ONE synchronous reconcile ->
         // start poller -> audio device -> ... StartupReconcile() is that
         // synchronous reconcile: it resizes midiConnections_ to the current
         // controller count, reconciles every configured ref against
         // currently-present devices (absent -> offline, never a startup
         // failure), and starts the background poller. Called unconditionally
-        // here (idempotent, same as the old always-reopen-at-startup
-        // behavior) because Initialize()'s FIRST RebuildMidiProcessors() call
-        // (before any startup patch) is silent by design — it never invokes
-        // midiProcessorsRebuiltCallback_ (see Engine::Initialize's doc
-        // comment) — so when no startup patch applies, midiConnections_ is
-        // never notified and its handler vectors would otherwise stay
+        // here (idempotent, same as the old always-reopen-at-startup behavior)
+        // because Initialize()'s first RebuildMidiProcessors() call is silent
+        // by design — it never invokes midiProcessorsRebuiltCallback_ (see
+        // Engine::Initialize's doc comment) — so midiConnections_ is never
+        // notified during startup and its handler vectors would otherwise stay
         // unsized.
         midiConnections_->StartupReconcile();
 
@@ -217,15 +235,11 @@ public:
             INFO("Audio device initialise FAILED: %s", initialiseError.toRawUTF8());
         }
 
-        // Prefer a startup-patch-carried output device over the platform
-        // default (Task 4 brief), but only when it's actually present among
+        // Prefer the persisted output device over the platform default, but
+        // only when it's actually present among
         // the currently enumerated output devices — an absent device leaves
         // the just-initialised default device alone, no failure, matching
         // OnEngineAudioDeviceChanged's "absent -> keep current" contract.
-        // engine_.AudioDeviceSnapshot() already holds the startup patch's
-        // value here (Initialize() applied it above; OnEngineAudioDeviceChanged
-        // fired too early, before deviceManager_ existed, to act on it itself —
-        // see that method's doc comment).
         const juce::String wantedOutputName = juce::String(engine_.AudioDeviceSnapshot().outputDeviceName);
         if (wantedOutputName.isNotEmpty() && IsEnumeratedOutputDevice(wantedOutputName)) {
             SwitchOutputDevice(wantedOutputName, "startup");
@@ -238,8 +252,8 @@ public:
             }
         }
 
-        // Apply startup-patch-carried input device (same contract as output,
-        // above). config.numAudioInputs > 0 gates input selection availability.
+        // Apply persisted input device (same contract as output, above).
+        // config.numAudioInputs > 0 gates input selection availability.
         if (config.numAudioInputs > 0) {
             const juce::String wantedInputName = juce::String(engine_.AudioDeviceSnapshot().inputDeviceName);
             if (wantedInputName.isNotEmpty() && IsEnumeratedInputDevice(wantedInputName)) {
@@ -316,8 +330,8 @@ public:
 
     // Installs AudioConfigPage's re-sync hook (Task 3 of Plan 4): invoked
     // whenever Runtime has changed the audio device state out from under a
-    // live page (startup preference handling, a runtime patch load/revert
-    // via OnEngineAudioDeviceChanged) so the page can re-enumerate devices
+    // live page (startup preference handling or OnEngineAudioDeviceChanged)
+    // so the page can re-enumerate devices
     // and re-select the combo entry matching engine.AudioDeviceSnapshot()
     // without applying anything itself (no device switch, no notification --
     // mirrors AudioPanel::SyncSelection's old contract). Cleared the same
@@ -329,10 +343,10 @@ public:
     // engine_.SetMidiProcessorsRebuiltCallback's lambda (constructor, above),
     // i.e. on EVERY MIDI-processor rebuild -- not just ones ControllersPage's
     // own edits triggered. This is what closes the "missed instrument
-    // changes" gap: a patch load/revert (or any other engine-driven edit
-    // path) that changes controller mappings/names/kinds also rebuilds MIDI
-    // processors and fires this hook, so ControllersPage can mark itself
-    // dirty regardless of who caused the rebuild. Re-entrancy: when
+    // changes" gap: runtime-config or any other engine-driven edit path that
+    // changes controller mappings/names/kinds also rebuilds MIDI processors and
+    // fires this hook, so ControllersPage can mark itself dirty regardless of
+    // who caused the rebuild. Re-entrancy: when
     // ControllersPage's OWN Commit() is what triggered this rebuild, the hook
     // still fires and sets dirty_ again -- harmless, since dirty_ is a plain
     // idempotent bool the page already sets itself in Commit() (see
@@ -346,15 +360,15 @@ public:
     // user picked an output device in the combo, on the message thread
     // (JUCE combo box callbacks run there). Records the selection via
     // engine_.SetAudioDeviceFromHost (so it persists into the next saved
-    // patch, mirroring how ControllersPage records endpoint selection into
+    // runtime configuration, mirroring how ControllersPage records endpoint selection into
     // the engine's instrument via synth::MidiConfigViewModel::SetEndpointRef
     // + EditInstrument), AND advances the engine's
-    // audio-device-state shadow so a later patch revert back to this exact
-    // selection is correctly treated as "no change" -- see
+    // audio-device-state shadow so a later engine-side sync to this exact
+    // selection is correctly treated as "already known" -- see
     // SetAudioDeviceFromHost's doc comment; this replaces the old direct
     // `engine_.AudioDevice().outputDeviceName = ...` write, which left the
-    // shadow stale and raced with the audio-thread patch drain -- Task 3
-    // review findings 1/2) THEN applies the switch. "System Default" (empty
+    // shadow stale -- Task 3 review findings 1/2) THEN applies the switch.
+    // "System Default" (empty
     // name) clears deviceManager_'s outputDeviceName preference the same
     // way, via the same AudioDeviceSetup path (an empty outputDeviceName +
     // useDefaultOutputDevice==false is what JUCE treats as "we picked no
@@ -430,6 +444,10 @@ public:
     // with the engine's UI-state refresh.
     void SetRepaintHook(std::function<void()> hook) { repaintHook_ = std::move(hook); }
 
+    synth::RuntimeConfigFileStatus SaveRuntimeConfiguration() {
+        return engine_.SaveRuntimeConfiguration();
+    }
+
     void NewPatch() {
         const synth::PatchCommandResult result = engine_.Patches().NewPatch();
         LogPatchCommand("NewPatch", result);
@@ -440,17 +458,21 @@ public:
         LogPatchCommand("SavePatch", result);
     }
 
-    void SavePatchAs(const juce::File& file) {
-        const synth::PatchCommandResult result =
-            engine_.Patches().SavePatchAs(std::filesystem::path(file.getFullPathName().toStdString()));
+    void SavePatchAs(const std::filesystem::path& path) {
+        const synth::PatchCommandResult result = engine_.Patches().SavePatchAs(path);
         LogPatchCommand("SavePatchAs", result);
     }
 
-    void LoadPatch(const juce::File& file) {
-        const synth::PatchCommandResult result =
-            engine_.Patches().LoadPatch(std::filesystem::path(file.getFullPathName().toStdString()));
+    void SavePatchAs(const juce::File& file) {
+        SavePatchAs(std::filesystem::path(file.getFullPathName().toStdString()));
+    }
+
+    void LoadPatch(const std::filesystem::path& path) {
+        const synth::PatchCommandResult result = engine_.Patches().LoadPatch(path);
         LogPatchCommand("LoadPatch", result);
     }
+
+    void LoadPatch(const juce::File& file) { LoadPatch(std::filesystem::path(file.getFullPathName().toStdString())); }
 
     void RevertPatch() {
         const synth::PatchCommandResult result = engine_.Patches().RevertPatch();
@@ -613,43 +635,18 @@ private:
         }
     }
 
-    // engine_.SetAudioDeviceChangedCallback's target (wired in Start(),
-    // BEFORE engine_.Initialize() — see Start()'s doc comment). Invoked on
-    // the message thread whenever a consumed patch message changed the
-    // engine's audio device state, AFTER the state is fully applied
-    // engine-side.
-    //
-    // Ordering hazard (binding, Task 4 brief): this callback can fire
-    // DURING engine_.Initialize() itself (a startup patch's synchronous
-    // drain), which runs BEFORE Start() has called
-    // deviceManager_.initialiseWithDefaultDevices() — i.e. deviceManager_ has
-    // no current device, possibly no current device TYPE, at all yet.
-    // IsEnumeratedOutputDevice()/getCurrentAudioDevice() below tolerate that
-    // (nullptr device type -> "not enumerated"; nullptr device -> logged and
-    // skipped), so this callback never crashes or misbehaves when invoked
-    // pre-device-open; it just can't actually switch anything yet in that
-    // case. That's fine: Start()'s own device-open step (later in Start(),
-    // after Initialize() returns) is what applies the startup-carried
-    // device for real, by reading engine_.AudioDeviceSnapshot().outputDeviceName
-    // itself once deviceManager_ exists (see the "Prefer a
-    // startup-patch-carried output device" comment there) — this callback
-    // firing early is a no-op in that case, not a missed update, because the
-    // desired name is already recorded in the engine's audio device state
-    // for Start() to read afterwards.
-    //
-    // For a RUNTIME patch load/revert (the callback firing after Start()
-    // has completed and deviceManager_ is fully up), this callback is the
-    // only path that applies the change — it behaves exactly like
-    // ApplyAudioDeviceSelection's switch, just sourced from
-    // engine.AudioDeviceSnapshot() instead of a combo pick, and does NOT
-    // re-write the engine's audio device state (it's already the source of
-    // truth here).
+    // engine_.SetAudioDeviceChangedCallback's target. Patch load/revert is
+    // parameter-only and never reaches this path; it is reserved for
+    // runtime-config-initiated audio changes that are sourced from
+    // engine.AudioDeviceSnapshot() instead of a combo pick. The callback
+    // tolerates running before a current device exists, which keeps startup
+    // ordering flexible for persisted configuration loading.
     void OnEngineAudioDeviceChanged() {
         const synth::AudioDeviceState state = engine_.AudioDeviceSnapshot();
         const juce::String outputName = juce::String(state.outputDeviceName);
         if (outputName.isEmpty()) {
             if (deviceManager_.getCurrentAudioDevice() != nullptr) {
-                SwitchOutputDevice(outputName, "patch");
+                SwitchOutputDevice(outputName, "engine");
             }
             SetAudioStatus("Audio: System Default");
         } else if (!IsEnumeratedOutputDevice(outputName)) {
@@ -664,7 +661,7 @@ private:
                 SetAudioStatus(message);
             }
         } else {
-            SwitchOutputDevice(outputName, "patch");
+            SwitchOutputDevice(outputName, "engine");
             SetAudioStatus("Audio: " + outputName);
         }
 
@@ -741,6 +738,8 @@ private:
     std::chrono::steady_clock::time_point startTime_;
     juce::AudioDeviceManager deviceManager_;
     synth::Engine<App> engine_;
+    synth::RuntimeDataPaths dataPaths_;
+    std::optional<synth::RuntimeDataPaths> dataPathsOverride_;
 
     // Owns every controller slot's MIDI device handlers, connection state,
     // and background poller (Task 2 of Plan 3) -- see MidiConnectionManager

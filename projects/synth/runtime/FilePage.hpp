@@ -5,15 +5,16 @@
 // Shell.hpp in commit 2ec3f2f (see `git show 2ec3f2f^:projects/synth/runtime/Shell.hpp`
 // for the reference implementation this was lifted from): a Back button at
 // the top of the page (binding, p4-globals.md), New/Save/Save As/Load/Revert
-// buttons wired straight to Runtime's patch methods, a patch-name label
-// showing the current patch's directory name (or "(no patch)"), and a
+// buttons wired straight to Runtime's patch methods, an in-app patch browser
+// rooted at RuntimeDataPaths::patchesRoot for Save As/Load, a patch-name
+// label showing the current patch's directory name (or "(no patch)"), and a
 // status label reflecting the last patch command's result.
 //
-// Save->SaveAs fallthrough (sar-16, preserved verbatim from the deleted
+// Save->SaveAs fallthrough (sar-16, preserved from the deleted
 // chrome): dispatching SavePatch() with no current patch directory is
 // doomed to come back NeedsSaveAsPath, so saveButton_'s handler checks
 // runtime_.GetEngine().Patches().CurrentPatchDirectory().has_value() first
-// and opens the Save As chooser directly instead when it's unset.
+// and opens the in-app Save As browser directly instead when it's unset.
 //
 // Patch identity (sar-16): the patch-name label reads
 // runtime_.GetEngine().Patches().CurrentPatchDirectory() -- the
@@ -22,20 +23,14 @@
 // (MainPane calls this unconditionally every tick, mirroring
 // AudioConfigPage's own per-tick status refresh).
 //
-// FileChooser lifetime (async idiom, unchanged from the deleted chrome):
-// juce::FileChooser::launchAsync requires the chooser object to stay alive
-// for the duration of the operation, so it's held in a member unique_ptr,
-// recreated on each launch (destroying any previous, already-completed
-// chooser).
-
 #include "synth/AppConcepts.hpp"
 #include "synth/Engine.hpp"
+#include "synth/PatchBrowser.hpp"
 #include "synth/PatchPersistence.hpp"
 
 #include <juce_gui_extra/juce_gui_extra.h>
 
 #include <functional>
-#include <memory>
 
 namespace synth_runtime {
 
@@ -43,11 +38,12 @@ template <synth::SynthApplication App>
 class Runtime;
 
 template <synth::SynthApplication App>
-class FilePage : public juce::Component {
+class FilePage : public juce::Component, private juce::ListBoxModel {
 public:
     explicit FilePage(Runtime<App>& runtime) : runtime_(runtime) {
         backButton_.setButtonText("Back");
         backButton_.onClick = [this] {
+            CloseBrowser();
             if (onBack) {
                 onBack();
             }
@@ -63,24 +59,24 @@ public:
 
         saveButton_.setButtonText("Save");
         saveButton_.onClick = [this] {
-            // Falls through to the Save As chooser when no patch is current
+            // Falls through to the in-app Save As browser when no patch is current
             // (sar-16, preserved verbatim from the deleted chrome): see the
             // class doc comment above.
             if (runtime_.GetEngine().Patches().CurrentPatchDirectory().has_value()) {
                 runtime_.SavePatch();
                 SetStatus("Save requested");
             } else {
-                LaunchSaveAsChooser();
+                BeginBrowser(BrowserMode::SaveAs);
             }
         };
         addAndMakeVisible(saveButton_);
 
         saveAsButton_.setButtonText("Save As");
-        saveAsButton_.onClick = [this] { LaunchSaveAsChooser(); };
+        saveAsButton_.onClick = [this] { BeginBrowser(BrowserMode::SaveAs); };
         addAndMakeVisible(saveAsButton_);
 
         loadButton_.setButtonText("Load");
-        loadButton_.onClick = [this] { LaunchLoadChooser(); };
+        loadButton_.onClick = [this] { BeginBrowser(BrowserMode::Load); };
         addAndMakeVisible(loadButton_);
 
         revertButton_.setButtonText("Revert");
@@ -99,6 +95,52 @@ public:
         statusLabel_.setJustificationType(juce::Justification::centredLeft);
         statusLabel_.setText("Ready", juce::dontSendNotification);
         addAndMakeVisible(statusLabel_);
+
+        browserTitleLabel_.setColour(juce::Label::textColourId, juce::Colours::white);
+        browserTitleLabel_.setJustificationType(juce::Justification::centredLeft);
+        addChildComponent(browserTitleLabel_);
+
+        browserPathLabel_.setColour(juce::Label::textColourId, juce::Colours::white);
+        browserPathLabel_.setJustificationType(juce::Justification::centredLeft);
+        addChildComponent(browserPathLabel_);
+
+        saveNameEditor_.setMultiLine(false);
+        saveNameEditor_.setReturnKeyStartsNewLine(false);
+        saveNameEditor_.setText("NewPatch", false);
+        saveNameEditor_.onReturnKey = [this] { ConfirmBrowserSelection(); };
+        addChildComponent(saveNameEditor_);
+
+        patchList_.setModel(this);
+        patchList_.setRowHeight(28);
+        patchList_.setColour(juce::ListBox::backgroundColourId, juce::Colours::darkgrey);
+        addChildComponent(patchList_);
+
+        browserUpButton_.setButtonText("Up");
+        browserUpButton_.onClick = [this] {
+            if (patchBrowser_.EnterParent()) {
+                RefreshBrowserView();
+            }
+        };
+        addChildComponent(browserUpButton_);
+
+        browserEnterButton_.setButtonText("Enter");
+        browserEnterButton_.onClick = [this] {
+            if (patchBrowser_.EnterSelected()) {
+                RefreshBrowserView();
+            }
+        };
+        addChildComponent(browserEnterButton_);
+
+        browserOkButton_.setButtonText("OK");
+        browserOkButton_.onClick = [this] { ConfirmBrowserSelection(); };
+        addChildComponent(browserOkButton_);
+
+        browserCancelButton_.setButtonText("Cancel");
+        browserCancelButton_.onClick = [this] {
+            CloseBrowser();
+            SetStatus("Patch browser cancelled");
+        };
+        addChildComponent(browserCancelButton_);
     }
 
     FilePage(const FilePage&) = delete;
@@ -120,6 +162,26 @@ public:
 
         patchNameLabel_.setBounds(area.removeFromTop(28).reduced(4));
         statusLabel_.setBounds(area.removeFromTop(28).reduced(4));
+
+        if (browserMode_ == BrowserMode::Closed) {
+            return;
+        }
+
+        area.removeFromTop(4);
+        browserTitleLabel_.setBounds(area.removeFromTop(24).reduced(4));
+        if (browserMode_ == BrowserMode::SaveAs) {
+            saveNameEditor_.setBounds(area.removeFromTop(32).reduced(4));
+        }
+        browserPathLabel_.setBounds(area.removeFromTop(24).reduced(4));
+
+        auto buttons = area.removeFromBottom(36);
+        const int browserButtonWidth = 76;
+        browserUpButton_.setBounds(buttons.removeFromLeft(browserButtonWidth).reduced(4));
+        browserEnterButton_.setBounds(buttons.removeFromLeft(browserButtonWidth).reduced(4));
+        browserOkButton_.setBounds(buttons.removeFromRight(browserButtonWidth).reduced(4));
+        browserCancelButton_.setBounds(buttons.removeFromRight(browserButtonWidth).reduced(4));
+
+        patchList_.setBounds(area.reduced(4));
     }
 
     // Called once per UI timer tick by MainPane so the patch-name label
@@ -132,6 +194,12 @@ public:
     std::function<void()> onBack;
 
 private:
+    enum class BrowserMode {
+        Closed,
+        SaveAs,
+        Load,
+    };
+
     void SetStatus(const juce::String& text) { statusLabel_.setText(text, juce::dontSendNotification); }
 
     // Reads the current patch identity straight from the message-side
@@ -148,33 +216,126 @@ private:
         patchNameLabel_.setText(text, juce::dontSendNotification);
     }
 
-    void LaunchSaveAsChooser() {
-        const juce::File root(runtime_.GetEngine().Config().patchesRoot.string());
-        fileChooser_ = std::make_unique<juce::FileChooser>("Save Patch As", root);
-        const auto flags = juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectDirectories |
-                            juce::FileBrowserComponent::warnAboutOverwriting;
-        fileChooser_->launchAsync(flags, [this](const juce::FileChooser& chooser) {
-            const juce::File result = chooser.getResult();
-            if (result == juce::File{}) {
-                return;
-            }
-            runtime_.SavePatchAs(result);
-            SetStatus("Save As requested: " + result.getFullPathName());
-        });
+    void BeginBrowser(BrowserMode mode) {
+        browserMode_ = mode;
+        patchBrowser_.SetRoot(runtime_.DataPaths().patchesRoot);
+        if (!patchBrowser_.Refresh()) {
+            SetStatus("Patch browser failed: " + juce::String(runtime_.DataPaths().patchesRoot.string()));
+        }
+
+        browserTitleLabel_.setText(mode == BrowserMode::SaveAs ? "Save Patch As" : "Load Patch",
+                                   juce::dontSendNotification);
+        if (mode == BrowserMode::SaveAs) {
+            saveNameEditor_.setVisible(true);
+            const auto& currentPatchDirectory = runtime_.GetEngine().Patches().CurrentPatchDirectory();
+            saveNameEditor_.setText(currentPatchDirectory.has_value()
+                                        ? juce::String(currentPatchDirectory->filename().string())
+                                        : juce::String("NewPatch"),
+                                    false);
+            saveNameEditor_.selectAll();
+            saveNameEditor_.grabKeyboardFocus();
+        } else {
+            saveNameEditor_.setVisible(false);
+        }
+
+        SetBrowserControlsVisible(true);
+        RefreshBrowserView();
+        resized();
     }
 
-    void LaunchLoadChooser() {
-        const juce::File root(runtime_.GetEngine().Config().patchesRoot.string());
-        fileChooser_ = std::make_unique<juce::FileChooser>("Load Patch", root);
-        const auto flags = juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories;
-        fileChooser_->launchAsync(flags, [this](const juce::FileChooser& chooser) {
-            const juce::File result = chooser.getResult();
-            if (result == juce::File{}) {
+    void CloseBrowser() {
+        browserMode_ = BrowserMode::Closed;
+        SetBrowserControlsVisible(false);
+        patchList_.updateContent();
+        resized();
+    }
+
+    void SetBrowserControlsVisible(bool visible) {
+        browserTitleLabel_.setVisible(visible);
+        browserPathLabel_.setVisible(visible);
+        patchList_.setVisible(visible);
+        browserUpButton_.setVisible(visible);
+        browserEnterButton_.setVisible(visible);
+        browserOkButton_.setVisible(visible);
+        browserCancelButton_.setVisible(visible);
+        saveNameEditor_.setVisible(visible && browserMode_ == BrowserMode::SaveAs);
+    }
+
+    void RefreshBrowserView() {
+        patchList_.updateContent();
+        if (!patchBrowser_.Entries().empty()) {
+            patchList_.selectRow(static_cast<int>(patchBrowser_.SelectedIndex()));
+        } else {
+            patchList_.deselectAllRows();
+        }
+
+        const std::filesystem::path relative = patchBrowser_.CurrentRelativePath();
+        browserPathLabel_.setText(relative.empty() ? juce::String("/") : juce::String(relative.generic_string()),
+                                  juce::dontSendNotification);
+        browserEnterButton_.setEnabled(!patchBrowser_.Entries().empty());
+        browserUpButton_.setEnabled(!relative.empty());
+    }
+
+    void ConfirmBrowserSelection() {
+        if (browserMode_ == BrowserMode::SaveAs) {
+            const auto path = patchBrowser_.ResolveSaveAsPath(saveNameEditor_.getText().toStdString());
+            if (!path.has_value()) {
+                SetStatus("Invalid patch name");
                 return;
             }
-            runtime_.LoadPatch(result);
-            SetStatus("Load requested: " + result.getFullPathName());
-        });
+            runtime_.SavePatchAs(*path);
+            SetStatus("Save As requested: " + juce::String(path->string()));
+            CloseBrowser();
+            return;
+        }
+
+        if (browserMode_ == BrowserMode::Load) {
+            const auto path = patchBrowser_.SelectedLoadPath();
+            if (!path.has_value()) {
+                SetStatus("No patch selected");
+                return;
+            }
+            runtime_.LoadPatch(*path);
+            SetStatus("Load requested: " + juce::String(path->string()));
+            CloseBrowser();
+        }
+    }
+
+    int getNumRows() override { return static_cast<int>(patchBrowser_.Entries().size()); }
+
+    void paintListBoxItem(int rowNumber, juce::Graphics& g, int width, int height, bool rowIsSelected) override {
+        g.fillAll(rowIsSelected ? juce::Colours::darkblue : juce::Colours::darkgrey);
+        g.setColour(juce::Colours::white);
+        g.setFont(juce::FontOptions(14.0f));
+        const auto& entries = patchBrowser_.Entries();
+        if (rowNumber >= 0 && static_cast<std::size_t>(rowNumber) < entries.size()) {
+            g.drawText(entries[static_cast<std::size_t>(rowNumber)].name, 8, 0, width - 16, height,
+                       juce::Justification::centredLeft);
+        }
+    }
+
+    void listBoxItemClicked(int row, const juce::MouseEvent&) override {
+        if (row < 0) {
+            return;
+        }
+        patchBrowser_.Select(static_cast<std::size_t>(row));
+        if (browserMode_ == BrowserMode::SaveAs && static_cast<std::size_t>(row) < patchBrowser_.Entries().size()) {
+            saveNameEditor_.setText(juce::String(patchBrowser_.Entries()[static_cast<std::size_t>(row)].name), false);
+        }
+        RefreshBrowserView();
+    }
+
+    void listBoxItemDoubleClicked(int row, const juce::MouseEvent&) override {
+        if (row < 0) {
+            return;
+        }
+        patchBrowser_.Select(static_cast<std::size_t>(row));
+        if (browserMode_ == BrowserMode::Load) {
+            ConfirmBrowserSelection();
+        } else if (browserMode_ == BrowserMode::SaveAs &&
+                   static_cast<std::size_t>(row) < patchBrowser_.Entries().size()) {
+            saveNameEditor_.setText(juce::String(patchBrowser_.Entries()[static_cast<std::size_t>(row)].name), false);
+        }
     }
 
     Runtime<App>& runtime_;
@@ -187,12 +348,16 @@ private:
     juce::TextButton revertButton_;
     juce::Label patchNameLabel_;
     juce::Label statusLabel_;
-
-    // Held so the chooser survives until its async callback fires (modern
-    // JUCE idiom: FileChooser::launchAsync requires the chooser object to
-    // stay alive for the duration of the operation). Recreated on each
-    // launch, which destroys any previous (already-completed) chooser.
-    std::unique_ptr<juce::FileChooser> fileChooser_;
+    juce::Label browserTitleLabel_;
+    juce::Label browserPathLabel_;
+    juce::TextEditor saveNameEditor_;
+    juce::ListBox patchList_{"Patches", this};
+    juce::TextButton browserUpButton_;
+    juce::TextButton browserEnterButton_;
+    juce::TextButton browserOkButton_;
+    juce::TextButton browserCancelButton_;
+    synth::PatchBrowser patchBrowser_;
+    BrowserMode browserMode_ = BrowserMode::Closed;
 };
 
 }  // namespace synth_runtime

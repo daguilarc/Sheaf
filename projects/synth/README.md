@@ -182,25 +182,38 @@ component should contain only its bespoke widgets; patch commands and MIDI
 device/controller configuration are runtime-owned pages, not app code (see
 `projects/synth/apps/miniapp/README.md` for a concrete example).
 
+The runtime owns long-lived app data through `synth::RuntimeDataPaths`. In
+production `Runtime<App>` resolves an OS application-data root under
+`Sheaf/<appName>` and creates `patches/`, `logs/`, and `config.json`. Tests can
+inject scratch paths. `patches/` contains synthesizer patch directories and
+version files; `logs/` contains async session logs; `config.json` stores MIDI
+controller/device configuration plus audio input/output selection. Patch files
+do not carry MIDI/audio configuration.
+
 `FilePage` (`projects/synth/runtime/FilePage.hpp`) hosts the patch-command
-row (New/Save/Save As/Load/Revert) and the patch identity label. Patch
-command results are logged by the runtime itself, at INFO level through
-`synth::AsyncLogQueue` (`synth_runtime::Runtime::LogPatchCommand`) — apps do
-not write their own patch log files. The page shows the current patch's name
-(the patch directory's filename, or "(no patch)" when none is current), read
-fresh every repaint tick from
-`Runtime::GetEngine().Patches().CurrentPatchDirectory()` — the message-side
-`PatchManager`'s own state, never cached elsewhere and never touched from
-the audio thread. The Save button checks the same state before dispatching:
-with no current patch it falls through to the Save As chooser instead of
-sending a `SavePatch()` doomed to return `NeedsSaveAsPath` (that status is
-still logged as a backstop if it ever occurs).
+row (New/Save/Save As/Load/Revert), an in-app patch browser rooted at
+`Runtime::DataPaths().patchesRoot`, and the patch identity label. It does not
+use the operating system file explorer. Patch command results are logged by the
+runtime itself, at INFO level through `synth::AsyncLogQueue`
+(`synth_runtime::Runtime::LogPatchCommand`) — apps do not write their own patch
+log files. The page shows the current patch's name (the patch directory's
+filename, or "(no patch)" when none is current), read fresh every repaint tick
+from `Runtime::GetEngine().Patches().CurrentPatchDirectory()` — the
+message-side `PatchManager`'s own state, never cached elsewhere and never
+touched from the audio thread. The Save button checks the same state before
+dispatching: with no current patch it falls through to the in-app Save As
+browser instead of sending a `SavePatch()` doomed to return `NeedsSaveAsPath`
+(that status is still logged as a backstop if it ever occurs).
 
 `ControllersPage` (`projects/synth/runtime/ControllersPage.hpp`) hosts MIDI
 device selection and controller/mapping configuration, per controller slot.
 Page edits commit through `engine.EditInstrument` plus a
 `MidiConnectionManager` reconcile pass — the page never mutates config or
 device handlers directly.
+
+Audio and Controllers page Back buttons save `config.json` before returning to
+the app view. File page Back only dismisses the File page; patch save/load
+commands are explicit.
 
 Build an app from `projects/synth`:
 
