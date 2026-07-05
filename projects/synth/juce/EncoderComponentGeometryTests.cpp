@@ -3,7 +3,7 @@
 #include "PathDrawer.hpp"
 
 #include "../apps/miniapp/MiniAppDraw.hpp"
-#include "../apps/miniapp/MiniAppUI.hpp"
+#include "../apps/miniapp/MiniAppUiModel.hpp"
 
 #include "synth/PortableUI.hpp"
 

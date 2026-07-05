@@ -1,6 +1,7 @@
 #include "MiniApp.hpp"
 #include "MiniAppCore.hpp"
 #include "MiniAppUI.hpp"
+#include "MiniAppUiModel.hpp"
 #include "support/SynthRig.hpp"
 
 #include "synth/AppConcepts.hpp"
@@ -218,6 +219,16 @@ void RequireNodeId(const synth::ui::NodeTree& tree, const char* id) {
     REQUIRE_TRUE(FindNodeById(tree, id) != nullptr);
 }
 
+void RequireNodeKind(const synth::ui::NodeTree& tree, const char* id, synth::ui::NodeKind kind) {
+    const synth::ui::Node* node = FindNodeById(tree, id);
+    REQUIRE_TRUE(node != nullptr);
+    REQUIRE_TRUE(node->kind == kind);
+}
+
+bool PopNextMessage(synth::MessageInBus& uiBus, synth::MessageIn& message) {
+    return uiBus.Pop(message, std::numeric_limits<std::uint64_t>::max());
+}
+
 }  // namespace
 
 TEST_CASE(miniapp_portable_surface_exposes_stable_ids_and_routes_actions) {
@@ -265,26 +276,159 @@ TEST_CASE(miniapp_portable_surface_exposes_stable_ids_and_routes_actions) {
     surface.DispatchAction(synth::ui::Action::Named("miniapp.start"));
     REQUIRE_TRUE(uiBus.Size() == queueBefore + 1);
     synth::MessageIn message;
-    REQUIRE_TRUE(uiBus.Pop(message, std::numeric_limits<std::uint64_t>::max()));
+    REQUIRE_TRUE(PopNextMessage(uiBus, message));
     REQUIRE_TRUE(message.type == synth::MessageIn::Type::Start);
+    REQUIRE_TRUE(message.timestamp == 1000);
 
     surface.DispatchAction(synth::ui::Action::Named("miniapp.stop"));
-    REQUIRE_TRUE(uiBus.Pop(message, std::numeric_limits<std::uint64_t>::max()));
+    REQUIRE_TRUE(PopNextMessage(uiBus, message));
     REQUIRE_TRUE(message.type == synth::MessageIn::Type::Stop);
+    REQUIRE_TRUE(message.timestamp == 1001);
 
     surface.DispatchAction(synth::ui::Action::WithValue("miniapp.bank.select", "1"));
-    REQUIRE_TRUE(uiBus.Pop(message, std::numeric_limits<std::uint64_t>::max()));
+    REQUIRE_TRUE(PopNextMessage(uiBus, message));
     REQUIRE_TRUE(message.type == synth::MessageIn::Type::SelectParamBank);
     REQUIRE_TRUE(message.slotIx == 0);
     REQUIRE_TRUE(message.bankIx == 1);
+    REQUIRE_TRUE(message.timestamp == 1002);
 
     surface.DispatchAction(synth::ui::Action::WithValue("miniapp.gesture.value", "0.42"));
-    REQUIRE_TRUE(uiBus.Pop(message, std::numeric_limits<std::uint64_t>::max()));
+    REQUIRE_TRUE(PopNextMessage(uiBus, message));
     REQUIRE_TRUE(message.type == synth::MessageIn::Type::SetGestureValue);
     REQUIRE_TRUE(message.gestureIx == 0);
     REQUIRE_NEAR(message.value, 0.42f, 1e-4f);
+    REQUIRE_TRUE(message.timestamp == 1003);
+
+    surface.DispatchAction(synth::ui::Action::Named("miniapp.gesture.toggle"));
+    REQUIRE_TRUE(PopNextMessage(uiBus, message));
+    REQUIRE_TRUE(message.type == synth::MessageIn::Type::ToggleGestureSelect);
+    REQUIRE_TRUE(message.gestureIx == 0);
+    REQUIRE_TRUE(message.timestamp == 1004);
+
+    surface.DispatchAction(synth::ui::Action::WithValue("miniapp.scene.select", "2"));
+    REQUIRE_TRUE(PopNextMessage(uiBus, message));
+    REQUIRE_TRUE(message.type == synth::MessageIn::Type::SceneSelect);
+    REQUIRE_TRUE(message.sceneIx == 2);
+    REQUIRE_TRUE(message.timestamp == 1005);
+
+    surface.DispatchAction(synth::ui::Action::WithValue("miniapp.scene.blend", "0.75"));
+    REQUIRE_TRUE(PopNextMessage(uiBus, message));
+    REQUIRE_TRUE(message.type == synth::MessageIn::Type::SetSceneBlend);
+    REQUIRE_NEAR(message.value, 0.75f, 1e-4f);
+    REQUIRE_TRUE(message.timestamp == 1006);
+
+    surface.DispatchAction(synth::ui::Action::Named("miniapp.reset"));
+    REQUIRE_TRUE(PopNextMessage(uiBus, message));
+    REQUIRE_TRUE(message.type == synth::MessageIn::Type::ToggleReset);
+    REQUIRE_TRUE(message.timestamp == 1007);
+
+    surface.DispatchAction(synth::ui::Action::Named("miniapp.random"));
+    REQUIRE_TRUE(PopNextMessage(uiBus, message));
+    REQUIRE_TRUE(message.type == synth::MessageIn::Type::ToggleRandom);
+    REQUIRE_TRUE(message.timestamp == 1008);
+
+    surface.DispatchAction(synth::ui::Action::Named("miniapp.random_mod"));
+    REQUIRE_TRUE(PopNextMessage(uiBus, message));
+    REQUIRE_TRUE(message.type == synth::MessageIn::Type::ToggleRandomMod);
+    REQUIRE_TRUE(message.timestamp == 1009);
 
     static_assert(synth::SynthApplication<synth_miniapp::MiniApp>);
+}
+
+TEST_CASE(miniapp_ui_model_exposes_layout_scene_labels_and_dispatch) {
+    UseScratchPatchesRoot("ui_model_exposes_layout_scene_labels_and_dispatch");
+
+    REQUIRE_TRUE(synth_miniapp::SceneLabel(0) == std::string("S1"));
+    REQUIRE_TRUE(synth_miniapp::SceneLabel(1) == std::string("S2"));
+    REQUIRE_TRUE(synth_miniapp::SceneLabel(2) == std::string("S3"));
+    REQUIRE_TRUE(synth_miniapp::SceneButtonLabel(0, 0, 1) == std::string("S1 L"));
+    REQUIRE_TRUE(synth_miniapp::SceneButtonLabel(1, 0, 1) == std::string("S2 R"));
+    REQUIRE_TRUE(synth_miniapp::SceneButtonLabel(2, 2, 2) == std::string("S3 L R"));
+
+    const synth::ui::Bounds encoderArea{16.0f, 48.0f, 968.0f, synth_miniapp::EncoderGridLayout::kTotalHeight};
+    const synth::ui::Bounds encoderZero = synth_miniapp::EncoderGridLayout::BoundsForIndex(encoderArea, 0);
+    RequireNear(encoderZero.x, 26.0f, 0.0001f, "encoder zero x");
+    RequireNear(encoderZero.y, 58.0f, 0.0001f, "encoder zero y");
+    RequireNear(encoderZero.width, 112.0f, 0.0001f, "encoder zero width");
+    RequireNear(encoderZero.height, 130.0f, 0.0001f, "encoder zero height");
+
+    synth::ParameterManager manager;
+    synth::MessageInBus uiBus(&manager);
+    std::uint64_t timestamp = 42;
+    bool dispatched = synth_miniapp::DispatchMiniAppAction(
+        nullptr,
+        timestamp,
+        synth::ui::Action::Named(synth_miniapp::MiniAppActions::kStart),
+        [](const synth::MessageIn&) {});
+    REQUIRE_TRUE(!dispatched);
+
+    synth::AppContext context;
+    context.uiBus = &uiBus;
+    dispatched = synth_miniapp::DispatchMiniAppAction(
+        &context,
+        timestamp,
+        synth::ui::Action::Named(synth_miniapp::MiniAppActions::kStart),
+        [&uiBus](const synth::MessageIn& message) { uiBus.Push(message); });
+    REQUIRE_TRUE(dispatched);
+    synth::MessageIn message;
+    REQUIRE_TRUE(PopNextMessage(uiBus, message));
+    REQUIRE_TRUE(message.type == synth::MessageIn::Type::Start);
+    REQUIRE_TRUE(message.timestamp == 42);
+}
+
+TEST_CASE(miniapp_ui_snapshot_reflects_runtime_state_in_tree) {
+    UseScratchPatchesRoot("ui_snapshot_reflects_runtime_state_in_tree");
+
+    synth_rig::SynthRig<synth_miniapp::MiniApp> rig;
+    rig.SetReset(true);
+    rig.SetRandom(true);
+    rig.SetRandomMod(true);
+    rig.SelectGesture(0, true);
+    rig.SetGestureValue(0, 0.33f);
+    rig.SetSceneBlend(0.66f);
+    rig.SelectScene(2);
+    rig.RunBlocks(1);
+    rig.UIState();
+
+    synth::ui::Surface& surface = rig.Application().PortableSurface();
+    const synth::ui::NodeTree tree = surface.BuildTree();
+
+    const synth::ui::Node* gestureToggle = FindNodeById(tree, synth_miniapp::MiniAppNodeIds::kGestureToggle);
+    REQUIRE_TRUE(gestureToggle != nullptr);
+    REQUIRE_TRUE(gestureToggle->kind == synth::ui::NodeKind::Toggle);
+    REQUIRE_TRUE(gestureToggle->checked);
+
+    const synth::ui::Node* resetToggle = FindNodeById(tree, synth_miniapp::MiniAppNodeIds::kReset);
+    REQUIRE_TRUE(resetToggle != nullptr);
+    REQUIRE_TRUE(resetToggle->kind == synth::ui::NodeKind::Toggle);
+    REQUIRE_TRUE(resetToggle->checked);
+
+    const synth::ui::Node* randomToggle = FindNodeById(tree, synth_miniapp::MiniAppNodeIds::kRandom);
+    REQUIRE_TRUE(randomToggle != nullptr);
+    REQUIRE_TRUE(randomToggle->checked);
+
+    const synth::ui::Node* randomModToggle = FindNodeById(tree, synth_miniapp::MiniAppNodeIds::kRandomMod);
+    REQUIRE_TRUE(randomModToggle != nullptr);
+    REQUIRE_TRUE(randomModToggle->checked);
+
+    const synth::ui::Node* gestureSlider = FindNodeById(tree, synth_miniapp::MiniAppNodeIds::kGestureValue);
+    REQUIRE_TRUE(gestureSlider != nullptr);
+    REQUIRE_NEAR(gestureSlider->value, 0.33f, 1e-4f);
+
+    const synth::ui::Node* blendSlider = FindNodeById(tree, synth_miniapp::MiniAppNodeIds::kSceneBlend);
+    REQUIRE_TRUE(blendSlider != nullptr);
+    REQUIRE_NEAR(blendSlider->value, 0.66f, 1e-4f);
+
+    RequireNodeKind(tree, synth_miniapp::MiniAppNodeIds::SceneButton(0).c_str(), synth::ui::NodeKind::Button);
+    const synth::ui::Node* sceneOne = FindNodeById(tree, synth_miniapp::MiniAppNodeIds::SceneButton(0).c_str());
+    REQUIRE_TRUE(sceneOne != nullptr);
+    REQUIRE_TRUE(sceneOne->label == "S1");
+    const synth::ui::Node* sceneTwo = FindNodeById(tree, synth_miniapp::MiniAppNodeIds::SceneButton(1).c_str());
+    REQUIRE_TRUE(sceneTwo != nullptr);
+    REQUIRE_TRUE(sceneTwo->label == "S2 R");
+    const synth::ui::Node* sceneThree = FindNodeById(tree, synth_miniapp::MiniAppNodeIds::SceneButton(2).c_str());
+    REQUIRE_TRUE(sceneThree != nullptr);
+    REQUIRE_TRUE(sceneThree->label == "S3 L");
 }
 
 TEST_CASE(miniapp_rig_initializes_headlessly_and_runs) {

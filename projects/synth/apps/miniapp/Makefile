@@ -25,7 +25,7 @@ include $(APP_DIR)/../../runtime/juce_build.mk
 # (that glob only covers projects/synth/juce/*.hpp and the runtime/ headers,
 # not this app's own MiniApp.hpp/MiniAppCore.hpp/DemoModulation.hpp), so a
 # rebuild is triggered when any of them change.
-APP_HEADERS := $(APP_DIR)/MiniApp.hpp $(APP_DIR)/MiniAppUI.hpp $(APP_DIR)/MiniAppDraw.hpp $(APP_DIR)/MiniAppCore.hpp $(APP_DIR)/DemoModulation.hpp
+APP_HEADERS := $(APP_DIR)/MiniApp.hpp $(APP_DIR)/MiniAppUI.hpp $(APP_DIR)/MiniAppUiModel.hpp $(APP_DIR)/MiniAppDraw.hpp $(APP_DIR)/MiniAppCore.hpp $(APP_DIR)/DemoModulation.hpp
 $(APP): $(APP_HEADERS)
 
 # EncoderComponentGeometryTests.cpp (projects/synth/juce/) is a pure-math
@@ -42,6 +42,8 @@ GEOMETRY_TEST_SRC := $(SYNTH_ROOT)/juce/EncoderComponentGeometryTests.cpp
 GEOMETRY_TEST := $(BUILD_DIR)/encoder_component_geometry_tests
 PORTABLE_BACKEND_TEST_SRC := $(SYNTH_ROOT)/juce/PortableJuceBackendTests.cpp
 PORTABLE_BACKEND_TEST := $(BUILD_DIR)/portable_juce_backend_tests
+MINIAPP_PARITY_TEST_SRC := $(SYNTH_ROOT)/juce/MiniAppJuceBackendParityTests.cpp
+MINIAPP_PARITY_TEST := $(BUILD_DIR)/miniapp_juce_backend_parity_tests
 
 .PHONY: test
 
@@ -51,6 +53,10 @@ $(GEOMETRY_TEST): $(GEOMETRY_TEST_SRC) $(SYNTH_SRC) $(SYNTH_HEADERS) $(SYNTH_JUC
 $(PORTABLE_BACKEND_TEST): $(PORTABLE_BACKEND_TEST_SRC) $(SYNTH_SRC) $(SYNTH_HEADERS) $(SYNTH_JUCE_HEADERS) $(JUCE_MODULE_OBJ) $(JUCE_C_MODULE_OBJ) | $(BUILD_DIR)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(PORTABLE_BACKEND_TEST_SRC) $(SYNTH_SRC) $(JUCE_MODULE_OBJ) $(JUCE_C_MODULE_OBJ) -o $@ $(LDFLAGS_DARWIN)
 
-test: check-juce $(GEOMETRY_TEST) $(PORTABLE_BACKEND_TEST)
+$(MINIAPP_PARITY_TEST): $(MINIAPP_PARITY_TEST_SRC) $(APP_HEADERS) $(SYNTH_SRC) $(SYNTH_HEADERS) $(SYNTH_JUCE_HEADERS) $(JUCE_MODULE_OBJ) $(JUCE_C_MODULE_OBJ) | $(BUILD_DIR)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(MINIAPP_PARITY_TEST_SRC) $(SYNTH_SRC) $(JUCE_MODULE_OBJ) $(JUCE_C_MODULE_OBJ) -o $@ $(LDFLAGS_DARWIN)
+
+test: check-juce $(GEOMETRY_TEST) $(PORTABLE_BACKEND_TEST) $(MINIAPP_PARITY_TEST)
 	$(GEOMETRY_TEST)
 	$(PORTABLE_BACKEND_TEST)
+	$(MINIAPP_PARITY_TEST)
