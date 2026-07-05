@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../apps/miniapp/MiniAppDraw.hpp"
 #include "synth/DspScope.hpp"
 
 #include <juce_graphics/juce_graphics.h>
@@ -14,7 +15,7 @@ namespace synth_juce {
 
 class PathDrawer {
 public:
-    static constexpr std::size_t kNumPoints = 1024;
+    static constexpr std::size_t kNumPoints = synth_miniapp::ScopePathMath::x_NumPoints;
 
     PathDrawer() {
         ComputeBucketExpX();
@@ -26,16 +27,11 @@ public:
     }
 
     static double ScopeSampleForPoint(std::size_t point, std::size_t numXSamples) {
-        return static_cast<double>(point) * static_cast<double>(numXSamples) / static_cast<double>(kNumPoints - 1);
+        return synth_miniapp::ScopePathMath::ScopeSampleForPoint(point, numXSamples);
     }
 
     static bool ScopePointCrossesTransfer(std::size_t point, std::size_t numXSamples, double transferSample) {
-        if (point == 0 || transferSample <= 0.0 || transferSample >= static_cast<double>(numXSamples)) {
-            return false;
-        }
-        const double previousSample = ScopeSampleForPoint(point - 1, numXSamples);
-        const double sample = ScopeSampleForPoint(point, numXSamples);
-        return previousSample < transferSample && sample >= transferSample;
+        return synth_miniapp::ScopePathMath::ScopePointCrossesTransfer(point, numXSamples, transferSample);
     }
 
     void SetBounds(juce::Rectangle<float> bounds) {

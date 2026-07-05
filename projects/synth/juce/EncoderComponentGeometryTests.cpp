@@ -2,6 +2,7 @@
 #include "MidiHandlers.hpp"
 #include "PathDrawer.hpp"
 
+#include "../apps/miniapp/MiniAppDraw.hpp"
 #include "../apps/miniapp/MiniAppUI.hpp"
 
 #include "synth/PortableUI.hpp"
@@ -10,6 +11,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -31,6 +33,39 @@ void RequireTrue(bool condition, const char* label) {
     if (!condition) {
         throw std::runtime_error(std::string(label) + " expected true");
     }
+}
+
+void RequireColor(synth::ui::Color actual, synth::ui::Color expected, const char* label) {
+    if (actual.r != expected.r || actual.g != expected.g || actual.b != expected.b || actual.a != expected.a) {
+        throw std::runtime_error(std::string(label) + " expected rgba(" +
+                                 std::to_string(expected.r) + "," + std::to_string(expected.g) + "," +
+                                 std::to_string(expected.b) + "," + std::to_string(expected.a) + ") got rgba(" +
+                                 std::to_string(actual.r) + "," + std::to_string(actual.g) + "," +
+                                 std::to_string(actual.b) + "," + std::to_string(actual.a) + ")");
+    }
+}
+
+bool SameColor(synth::ui::Color lhs, synth::ui::Color rhs) {
+    return lhs.r == rhs.r && lhs.g == rhs.g && lhs.b == rhs.b && lhs.a == rhs.a;
+}
+
+bool HasDrawKind(const std::vector<synth::ui::DrawCommand>& commands, synth::ui::DrawCommand::Kind kind) {
+    for (const synth::ui::DrawCommand& command : commands) {
+        if (command.kind == kind) {
+            return true;
+        }
+    }
+    return false;
+}
+
+const synth::ui::DrawCommand* FindFirstDrawKind(const std::vector<synth::ui::DrawCommand>& commands,
+                                                synth::ui::DrawCommand::Kind kind) {
+    for (const synth::ui::DrawCommand& command : commands) {
+        if (command.kind == kind) {
+            return &command;
+        }
+    }
+    return nullptr;
 }
 
 
@@ -120,6 +155,102 @@ int main() {
                   synth::ui::Bounds{26.0f, 208.0f, 112.0f, 130.0f}, "encoder four bounds");
     RequireBounds(synth_miniapp::EncoderGridLayout::BoundsForIndex(encoderArea, 6),
                   synth::ui::Bounds{290.0f, 208.0f, 112.0f, 130.0f}, "encoder six bounds");
+
+    synth_miniapp::EncoderDrawState encoderState;
+    encoderState.connected = true;
+    encoderState.color = synth::Color::Cyan;
+    encoderState.shortLabel = "tune";
+    encoderState.modulatorsAffectingMask = 1u;
+    encoderState.voiceCount = 1;
+    encoderState.voices.push_back({.value = 0.25f,
+                                   .spreadValue = 0.10f,
+                                   .minValue = 0.1f,
+                                   .maxValue = 0.9f,
+                                   .indicatorColor = synth::Color::Orange});
+    const synth::ui::Bounds encoderNode{0.0f, 0.0f, 128.0f, 128.0f};
+    const std::vector<synth::ui::DrawCommand> encoderCommands =
+        synth_miniapp::BuildEncoderDrawCommands(encoderState, encoderNode);
+    RequireTrue(!encoderCommands.empty(), "encoder draw commands should not be empty");
+    RequireTrue(HasDrawKind(encoderCommands, synth::ui::DrawCommand::Kind::FillEllipse),
+                "encoder draw commands include fill ellipse background");
+    RequireTrue(HasDrawKind(encoderCommands, synth::ui::DrawCommand::Kind::Arc),
+                "encoder draw commands include arc geometry");
+    RequireTrue(HasDrawKind(encoderCommands, synth::ui::DrawCommand::Kind::StrokeRoundedRect),
+                "encoder draw commands include rounded frame and badge outlines");
+    RequireTrue(HasDrawKind(encoderCommands, synth::ui::DrawCommand::Kind::FillPolygon),
+                "encoder draw commands include fourteen-segment polygons");
+    RequireTrue(HasDrawKind(encoderCommands, synth::ui::DrawCommand::Kind::Text),
+                "encoder draw commands include badge text");
+
+    const auto* motionArc = FindFirstDrawKind(encoderCommands, synth::ui::DrawCommand::Kind::Arc);
+    RequireTrue(motionArc != nullptr, "encoder includes at least one arc");
+    constexpr float x_Inset = 4.0f;
+    const float innerWidth = encoderNode.width - x_Inset * 2.0f;
+    const float innerHeight = encoderNode.height - x_Inset * 2.0f;
+    const float baseRadius = std::min(innerWidth, innerHeight) * 0.43f;
+    const auto motionGeometry = synth_miniapp::EncoderGeometry::MotionIndicatorGeometryFor(baseRadius, 0.25f, 0.10f);
+    const float expectedStart = synth_miniapp::EncoderGeometry::ValueToArcAngle(motionGeometry.startValue);
+    const float expectedEnd = synth_miniapp::EncoderGeometry::ValueToArcAngle(motionGeometry.endValue);
+    bool foundMotionArc = false;
+    for (const synth::ui::DrawCommand& command : encoderCommands)
+    {
+        if (command.kind == synth::ui::DrawCommand::Kind::Arc &&
+            std::fabs(command.startRadians - expectedStart) <= tolerance &&
+            std::fabs(command.endRadians - expectedEnd) <= tolerance)
+        {
+            foundMotionArc = true;
+            break;
+        }
+    }
+    RequireTrue(foundMotionArc, "portable motion arc matches encoder geometry band");
+
+    RequireColor(synth_miniapp::BrighterUiColor(synth::ui::Color::Rgba(100, 128, 200, 180), 0.45f),
+                 synth::ui::Color::Rgba(148, 167, 217, 180),
+                 "portable brighter color matches JUCE brighter interpolation");
+
+    const synth::ui::Color expectedOnColor = synth_miniapp::BrighterUiColor(synth::ui::Color::Rgb(0, 255, 255), 0.45f);
+    bool foundLabelTopSegment = false;
+    float labelTopY = 0.0f;
+    bool foundBadgeOutline = false;
+    for (const synth::ui::DrawCommand& command : encoderCommands) {
+        if (!foundLabelTopSegment && command.kind == synth::ui::DrawCommand::Kind::FillPolygon &&
+            SameColor(command.color, expectedOnColor) && !command.points.empty()) {
+            labelTopY = command.points.front().y;
+            foundLabelTopSegment = true;
+        }
+        if (command.kind == synth::ui::DrawCommand::Kind::StrokeRoundedRect &&
+            command.color.a == 140 && command.color.r == 0 && command.color.g == 0 && command.color.b == 0) {
+            foundBadgeOutline = true;
+        }
+    }
+    const float displayHeight = synth_miniapp::Clamp(baseRadius * 0.34f, 14.0f, 24.0f);
+    const float displayWidth = displayHeight * 3.3f;
+    const float charWidth = displayWidth / 4.0f;
+    const float expectedLabelTopY = encoderNode.y + encoderNode.height * 0.5f + baseRadius * 0.54f + charWidth * 0.05f;
+    RequireTrue(foundLabelTopSegment, "encoder label includes an on-color top segment");
+    RequireNear(labelTopY, expectedLabelTopY, tolerance, "encoder label vertical position matches legacy layout");
+    RequireTrue(foundBadgeOutline, "badge outline alpha matches legacy black alpha");
+
+    const std::vector<synth::ui::DrawCommand> segmentCommands = synth_miniapp::BuildFourteenSegmentCommands(
+        "A1",
+        synth::ui::Bounds{0.0f, 0.0f, 80.0f, 24.0f},
+        synth::ui::Color::Rgb(255, 128, 64),
+        synth::ui::Color::Rgb(36, 40, 42));
+    RequireTrue(HasDrawKind(segmentCommands, synth::ui::DrawCommand::Kind::FillPolygon),
+                "fourteen-segment commands include fill polygons");
+
+    synth_miniapp::VcoWaveformDrawState vcoState;
+    vcoState.layers.push_back({.connected = false});
+    const std::vector<synth::ui::DrawCommand> vcoCommands =
+        synth_miniapp::BuildVcoWaveformCommands(vcoState, synth::ui::Bounds{0.0f, 0.0f, 200.0f, 100.0f});
+    RequireTrue(HasDrawKind(vcoCommands, synth::ui::DrawCommand::Kind::Fill), "vco waveform includes background fill");
+    RequireTrue(HasDrawKind(vcoCommands, synth::ui::DrawCommand::Kind::Line),
+                "vco waveform includes center axis line");
+
+    RequireNear(synth_miniapp::EncoderGeometry::ValueToIndicatorAngle(0.0f), pi * 0.75f, tolerance,
+                "portable indicator angle at zero");
+    RequireNear(synth_miniapp::ScopePathMath::ScopeSampleForPoint(1, 10), 10.0 / 1023.0, 0.000001,
+                "portable scope sample remains fractional");
 
     synth_juce::MidiInHandler midiIn;
     if (midiIn.Open("__sheaf_missing_midi_input__") || midiIn.IsOpen()) {

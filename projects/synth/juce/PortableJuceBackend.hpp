@@ -36,6 +36,11 @@ inline juce::Rectangle<float> UiToJuceRectF(const synth::ui::Bounds& bounds)
     return juce::Rectangle<float>(bounds.x, bounds.y, bounds.width, bounds.height);
 }
 
+inline synth::ui::Bounds JuceToUiBounds(juce::Rectangle<float> bounds)
+{
+    return {bounds.getX(), bounds.getY(), bounds.getWidth(), bounds.getHeight()};
+}
+
 inline juce::Justification ToJuceJustification(synth::ui::TextAlign align)
 {
     switch (align)
@@ -99,7 +104,10 @@ inline void PaintDrawCommand(juce::Graphics& graphics,
                                command.startRadians,
                                command.endRadians,
                                true);
-            graphics.strokePath(path, juce::PathStrokeType(command.strokeWidth));
+            graphics.strokePath(path,
+                                juce::PathStrokeType(command.strokeWidth,
+                                                     juce::PathStrokeType::curved,
+                                                     juce::PathStrokeType::rounded));
             break;
         }
         case synth::ui::DrawCommand::Kind::Text:
@@ -111,6 +119,67 @@ inline void PaintDrawCommand(juce::Graphics& graphics,
                               rect,
                               ToJuceJustification(command.textStyle.align),
                               false);
+            break;
+        }
+        case synth::ui::DrawCommand::Kind::FillEllipse:
+        {
+            graphics.setColour(UiToJuceColour(command.color));
+            const auto rect = HasExplicitBounds(command.bounds) ? UiToJuceRectF(command.bounds) : nodeBounds;
+            graphics.fillEllipse(rect);
+            break;
+        }
+        case synth::ui::DrawCommand::Kind::StrokeEllipse:
+        {
+            graphics.setColour(UiToJuceColour(command.color));
+            const auto rect = UiToJuceRectF(command.bounds);
+            graphics.drawEllipse(rect, command.strokeWidth);
+            break;
+        }
+        case synth::ui::DrawCommand::Kind::FillRoundedRect:
+        {
+            graphics.setColour(UiToJuceColour(command.color));
+            const auto rect = UiToJuceRectF(command.bounds);
+            graphics.fillRoundedRectangle(rect, command.cornerRadius);
+            break;
+        }
+        case synth::ui::DrawCommand::Kind::StrokeRoundedRect:
+        {
+            graphics.setColour(UiToJuceColour(command.color));
+            const auto rect = UiToJuceRectF(command.bounds);
+            graphics.drawRoundedRectangle(rect, command.cornerRadius, command.strokeWidth);
+            break;
+        }
+        case synth::ui::DrawCommand::Kind::Polyline:
+        {
+            if (command.points.size() < 2)
+            {
+                break;
+            }
+            graphics.setColour(UiToJuceColour(command.color));
+            juce::Path path;
+            path.startNewSubPath(command.points.front().x, command.points.front().y);
+            for (std::size_t pointIx = 1; pointIx < command.points.size(); ++pointIx)
+            {
+                path.lineTo(command.points[pointIx].x, command.points[pointIx].y);
+            }
+            graphics.strokePath(path, juce::PathStrokeType(command.strokeWidth));
+            break;
+        }
+        case synth::ui::DrawCommand::Kind::FillPolygon:
+        {
+            if (command.points.size() < 3)
+            {
+                break;
+            }
+            graphics.setColour(UiToJuceColour(command.color));
+            juce::Path path;
+            path.startNewSubPath(command.points.front().x, command.points.front().y);
+            for (std::size_t pointIx = 1; pointIx < command.points.size(); ++pointIx)
+            {
+                path.lineTo(command.points[pointIx].x, command.points[pointIx].y);
+            }
+            path.closeSubPath();
+            graphics.fillPath(path);
             break;
         }
     }

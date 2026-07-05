@@ -4,6 +4,7 @@
 // and MessageIn routing for the portable UI contract (Task 2).
 
 #include "MiniAppCore.hpp"
+#include "MiniAppDraw.hpp"
 
 #include "synth/PortableUI.hpp"
 #include "synth/PortableUIBuilders.hpp"
@@ -70,10 +71,39 @@ public:
         synth::ui::Bounds encoderArea = content;
         encoderArea.y += 32.0f;
         encoderArea.height = EncoderGridLayout::kTotalHeight;
+
+        std::vector<synth::Color> modulatorColors;
+        std::vector<synth::Color> gestureColors;
+        if (core_ != nullptr && core_->Group() != nullptr)
+        {
+            for (const synth::ModulatorMetadata& metadata : core_->Group()->GetModulators().Metadata())
+            {
+                modulatorColors.push_back(metadata.color);
+            }
+        }
+        if (context_ != nullptr && context_->parameterManager != nullptr)
+        {
+            for (std::size_t gestureIx = 0; gestureIx < context_->parameterManager->GestureCount(); ++gestureIx)
+            {
+                gestureColors.push_back(context_->parameterManager->GestureMetadataAt(gestureIx).color);
+            }
+        }
+
         for (std::size_t ix = 0; ix < EncoderGridLayout::kEncoderCount; ++ix)
         {
             const synth::ui::Bounds encoderBounds = EncoderGridLayout::BoundsForIndex(encoderArea, ix);
-            builder.Draw("miniapp.encoder." + std::to_string(ix), encoderBounds, {});
+            std::vector<synth::ui::DrawCommand> drawCommands;
+            if (context_ != nullptr && context_->uiState != nullptr && context_->uiState->slotCapacity > 0)
+            {
+                const synth::BankSlot::UIState& slotState = context_->uiState->slots[0];
+                if (ix < slotState.cellCapacity)
+                {
+                    const EncoderDrawState encoderState = EncoderDrawStateFromParameter(
+                        slotState.cells[ix], modulatorColors, gestureColors);
+                    drawCommands = BuildEncoderDrawCommands(encoderState, encoderBounds);
+                }
+            }
+            builder.Draw("miniapp.encoder." + std::to_string(ix), encoderBounds, std::move(drawCommands));
         }
 
         synth::ui::Bounds belowEncoders = content;
@@ -95,8 +125,8 @@ public:
             halfWaveformWidth - 16.0f,
             waveformRow.height - 16.0f
         };
-        builder.Draw("miniapp.vco.scope", vcoScopeBounds, {});
-        builder.Draw("miniapp.lfo.scope", lfoScopeBounds, {});
+        builder.Draw("miniapp.vco.scope", vcoScopeBounds, BuildVcoScopeCommands(vcoScopeBounds));
+        builder.Draw("miniapp.lfo.scope", lfoScopeBounds, BuildLfoScopeCommands(lfoScopeBounds));
 
         builder.Button("miniapp.bank.vco", "VCO", synth::ui::Action::WithValue("miniapp.bank.select", "0"));
         builder.Button("miniapp.bank.lfo", "LFO", synth::ui::Action::WithValue("miniapp.bank.select", "1"));
@@ -135,6 +165,46 @@ public:
     }
 
 private:
+    std::vector<synth::ui::DrawCommand> BuildVcoScopeCommands(synth::ui::Bounds bounds) const
+    {
+        if (core_ == nullptr)
+        {
+            return {};
+        }
+
+        VcoWaveformDrawState state;
+        for (const auto& vco : core_->VcoUiState().vcos)
+        {
+            WaveformLayerDrawState layer;
+            layer.connected = vco.connected.load(std::memory_order_relaxed);
+            layer.color = vco.color.Load(std::memory_order_relaxed);
+            layer.scope = vco.scope.load(std::memory_order_relaxed);
+            layer.scopeChannel = vco.scopeChannel.load(std::memory_order_relaxed);
+            state.layers.push_back(layer);
+        }
+        return BuildVcoWaveformCommands(state, bounds);
+    }
+
+    std::vector<synth::ui::DrawCommand> BuildLfoScopeCommands(synth::ui::Bounds bounds) const
+    {
+        if (core_ == nullptr)
+        {
+            return {};
+        }
+
+        LfoWaveformDrawState state;
+        for (const auto& lfo : core_->LfoUiState().lfos)
+        {
+            WaveformLayerDrawState layer;
+            layer.connected = lfo.connected.load(std::memory_order_relaxed);
+            layer.color = lfo.color.Load(std::memory_order_relaxed);
+            layer.scope = lfo.scope.load(std::memory_order_relaxed);
+            layer.scopeChannel = lfo.scopeChannel.load(std::memory_order_relaxed);
+            state.layers.push_back(layer);
+        }
+        return BuildLfoWaveformCommands(state, bounds);
+    }
+
     void HandleAction(const synth::ui::Action& action)
     {
         if (context_ == nullptr || context_->uiBus == nullptr)

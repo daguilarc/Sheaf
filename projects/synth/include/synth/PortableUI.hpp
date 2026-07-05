@@ -78,7 +78,13 @@ struct DrawCommand {
         StrokeRect,
         Line,
         Arc,
-        Text
+        Text,
+        FillEllipse,
+        StrokeEllipse,
+        FillRoundedRect,
+        StrokeRoundedRect,
+        Polyline,
+        FillPolygon
     };
     Kind kind = Kind::Fill;
     Bounds bounds{};
@@ -88,14 +94,23 @@ struct DrawCommand {
     float strokeWidth = 1.0f;
     float startRadians = 0.0f;
     float endRadians = 0.0f;
+    float cornerRadius = 0.0f;
     std::string text;
     TextStyle textStyle{};
+    std::vector<Point> points{};
 
     static DrawCommand Fill(Color color);
+    static DrawCommand Fill(Bounds bounds, Color color);
     static DrawCommand StrokeRect(Bounds bounds, Color color, float strokeWidth);
     static DrawCommand Line(Point from, Point to, Color color, float strokeWidth);
     static DrawCommand Arc(Bounds bounds, float startRadians, float endRadians, Color color, float strokeWidth);
     static DrawCommand Text(Bounds bounds, std::string text, TextStyle style);
+    static DrawCommand FillEllipse(Bounds bounds, Color color);
+    static DrawCommand StrokeEllipse(Bounds bounds, Color color, float strokeWidth);
+    static DrawCommand FillRoundedRect(Bounds bounds, float cornerRadius, Color color);
+    static DrawCommand StrokeRoundedRect(Bounds bounds, float cornerRadius, Color color, float strokeWidth);
+    static DrawCommand Polyline(std::vector<Point> points, Color color, float strokeWidth);
+    static DrawCommand FillPolygon(std::vector<Point> points, Color color);
 };
 
 enum class NodeKind {
@@ -154,6 +169,14 @@ inline DrawCommand DrawCommand::Fill(Color color) {
     return command;
 }
 
+inline DrawCommand DrawCommand::Fill(Bounds bounds, Color color) {
+    DrawCommand command;
+    command.kind = Kind::Fill;
+    command.bounds = bounds;
+    command.color = color;
+    return command;
+}
+
 inline DrawCommand DrawCommand::StrokeRect(Bounds bounds, Color color, float strokeWidth) {
     DrawCommand command;
     command.kind = Kind::StrokeRect;
@@ -190,6 +213,59 @@ inline DrawCommand DrawCommand::Text(Bounds bounds, std::string text, TextStyle 
     command.bounds = bounds;
     command.text = std::move(text);
     command.textStyle = style;
+    return command;
+}
+
+inline DrawCommand DrawCommand::FillEllipse(Bounds bounds, Color color) {
+    DrawCommand command;
+    command.kind = Kind::FillEllipse;
+    command.bounds = bounds;
+    command.color = color;
+    return command;
+}
+
+inline DrawCommand DrawCommand::StrokeEllipse(Bounds bounds, Color color, float strokeWidth) {
+    DrawCommand command;
+    command.kind = Kind::StrokeEllipse;
+    command.bounds = bounds;
+    command.color = color;
+    command.strokeWidth = strokeWidth;
+    return command;
+}
+
+inline DrawCommand DrawCommand::FillRoundedRect(Bounds bounds, float cornerRadius, Color color) {
+    DrawCommand command;
+    command.kind = Kind::FillRoundedRect;
+    command.bounds = bounds;
+    command.cornerRadius = cornerRadius;
+    command.color = color;
+    return command;
+}
+
+inline DrawCommand DrawCommand::StrokeRoundedRect(Bounds bounds, float cornerRadius, Color color, float strokeWidth) {
+    DrawCommand command;
+    command.kind = Kind::StrokeRoundedRect;
+    command.bounds = bounds;
+    command.cornerRadius = cornerRadius;
+    command.color = color;
+    command.strokeWidth = strokeWidth;
+    return command;
+}
+
+inline DrawCommand DrawCommand::Polyline(std::vector<Point> points, Color color, float strokeWidth) {
+    DrawCommand command;
+    command.kind = Kind::Polyline;
+    command.points = std::move(points);
+    command.color = color;
+    command.strokeWidth = strokeWidth;
+    return command;
+}
+
+inline DrawCommand DrawCommand::FillPolygon(std::vector<Point> points, Color color) {
+    DrawCommand command;
+    command.kind = Kind::FillPolygon;
+    command.points = std::move(points);
+    command.color = color;
     return command;
 }
 

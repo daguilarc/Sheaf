@@ -7,6 +7,7 @@
 #include <initializer_list>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace synth::ui {
 
@@ -111,11 +112,15 @@ public:
     }
 
     Builder& Draw(std::string id, Bounds bounds, std::initializer_list<DrawCommand> commands) {
+        return Draw(std::move(id), bounds, std::vector<DrawCommand>(commands.begin(), commands.end()));
+    }
+
+    Builder& Draw(std::string id, Bounds bounds, std::vector<DrawCommand> commands) {
         Node node;
         node.id = NodeId(std::move(id));
         node.kind = NodeKind::Draw;
         node.bounds = bounds;
-        node.drawCommands.assign(commands.begin(), commands.end());
+        node.drawCommands = std::move(commands);
         AppendChild(node);
         return *this;
     }
