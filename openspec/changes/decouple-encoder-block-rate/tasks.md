@@ -22,6 +22,6 @@
 
 ## 4. Verification
 
-- [ ] 4.1 Run the focused synth parameter modulation, engine, rig, and mini app system tests.
-- [ ] 4.2 Run the full synth test target from `projects/synth`.
-- [ ] 4.3 Run `openspec status --change decouple-encoder-block-rate` and confirm all proposal artifacts are complete.
+- [x] 4.1 Run the focused synth parameter modulation, engine, rig, and mini app system tests.
+- [x] 4.2 Run the full synth test target from `projects/synth`.
+- [x] 4.3 Run `openspec status --change decouple-encoder-block-rate` and confirm all proposal artifacts are complete.

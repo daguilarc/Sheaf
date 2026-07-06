@@ -77,3 +77,22 @@ Commands run:
    - Result: exit `0`
    - Summary: full synth test target completed successfully; final output ended
      with `controllers_page_ui_tests passed`.
+
+## Final verification rerun
+
+After the verification fix commit, reran the complete Task 4 gate:
+
+```bash
+make -C projects/synth build/parameter_modulation_tests build/engine_tests build/rig_tests build/miniapp_system_tests && \
+projects/synth/build/parameter_modulation_tests && \
+projects/synth/build/engine_tests && \
+projects/synth/build/rig_tests && \
+projects/synth/build/miniapp_system_tests && \
+make -C projects/synth test && \
+openspec validate --strict decouple-encoder-block-rate && \
+openspec status --change decouple-encoder-block-rate
+```
+
+Result: exit `0`. Focused binaries passed, the full synth test target passed,
+strict OpenSpec validation passed, and `openspec status` reported all four
+artifacts complete.
