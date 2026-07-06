@@ -26,8 +26,9 @@ OBJ := $(BUILD_DIR)/ParameterModulation.o $(BUILD_DIR)/MidiController.o $(BUILD_
 DSP_HEADERS := include/synth/DspMath.hpp include/synth/DspNumbers.hpp include/synth/DspTransferFunction.hpp include/synth/DspFilters.hpp include/synth/DspScope.hpp include/synth/DspWavetable.hpp include/synth/DspOscillators.hpp
 APPS_DIR := apps
 MINIAPP_DIR := $(APPS_DIR)/miniapp
+SHEAF_PATCH_DIR := $(APPS_DIR)/sheaf-patch
 
-.PHONY: all build test check-ui-boundary miniapp apps clean
+.PHONY: all build test check-ui-boundary miniapp sheaf-patch apps clean
 
 all: build test
 
@@ -85,13 +86,13 @@ $(MODULE_TEST_BIN): tests/module_tests.cpp apps/miniapp/DemoModulation.hpp $(LIB
 $(INSTRUMENT_TEST_BIN): tests/instrument_tests.cpp $(LIB) include/synth/MidiController.hpp include/synth/ParameterModulation.hpp
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< $(LIB) -o $@
 
-$(CONTRACT_TEST_BIN): tests/contract_tests.cpp $(LIB) include/synth/AppContext.hpp include/synth/AppConcepts.hpp include/synth/PatchBrowser.hpp include/synth/RuntimePagePolicy.hpp
+$(CONTRACT_TEST_BIN): tests/contract_tests.cpp $(LIB) include/synth/AppContext.hpp include/synth/AppConcepts.hpp include/synth/AppRegistry.hpp include/synth/PatchBrowser.hpp include/synth/RuntimePagePolicy.hpp
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< $(LIB) -o $@
 
 $(LOGGING_TEST_BIN): tests/logging_tests.cpp $(LIB) include/synth/AsyncLogger.hpp include/synth/CircularQueue.hpp include/synth/ThreadId.hpp
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< $(LIB) -o $@
 
-$(ENGINE_TEST_BIN): tests/engine_tests.cpp $(LIB) include/synth/Engine.hpp include/synth/AppContext.hpp include/synth/AppConcepts.hpp include/synth/AsyncLogger.hpp include/synth/MidiController.hpp include/synth/ParameterModulation.hpp include/synth/PatchPersistence.hpp include/synth/RuntimePagePolicy.hpp include/synth/Json.hpp
+$(ENGINE_TEST_BIN): tests/engine_tests.cpp $(LIB) include/synth/Engine.hpp include/synth/AppContext.hpp include/synth/AppConcepts.hpp include/synth/AppRegistry.hpp include/synth/AsyncLogger.hpp include/synth/MidiController.hpp include/synth/ParameterModulation.hpp include/synth/PatchPersistence.hpp include/synth/RuntimePagePolicy.hpp include/synth/Json.hpp
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< $(LIB) -o $@
 
 $(RIG_TEST_BIN): tests/rig_tests.cpp tests/support/SynthRig.hpp $(LIB) include/synth/Engine.hpp include/synth/AppContext.hpp include/synth/AppConcepts.hpp include/synth/AsyncLogger.hpp include/synth/MidiController.hpp include/synth/ParameterModulation.hpp include/synth/PatchPersistence.hpp include/synth/Json.hpp
@@ -101,7 +102,7 @@ $(RIG_TEST_BIN): tests/rig_tests.cpp tests/support/SynthRig.hpp $(LIB) include/s
 # live under apps/miniapp/ (JUCE-free), and this is the one JUCE-free test
 # binary that includes them across directories. Building this target proves
 # MiniAppCore compiles and links with no JUCE include paths at all.
-$(MINIAPP_SYSTEM_TEST_BIN): tests/miniapp_system_tests.cpp tests/support/SynthRig.hpp apps/miniapp/MiniApp.hpp apps/miniapp/MiniAppUI.hpp apps/miniapp/MiniAppUiModel.hpp apps/miniapp/MiniAppDraw.hpp apps/miniapp/MiniAppCore.hpp apps/miniapp/DemoModulation.hpp include/synth/PortableUI.hpp include/synth/PortableUIBuilders.hpp $(LIB) include/synth/Engine.hpp include/synth/AppContext.hpp include/synth/AppConcepts.hpp include/synth/AsyncLogger.hpp include/synth/MidiController.hpp include/synth/Modules.hpp include/synth/ParameterModulation.hpp include/synth/PatchPersistence.hpp include/synth/PatchBrowser.hpp include/synth/DspScope.hpp include/synth/Json.hpp
+$(MINIAPP_SYSTEM_TEST_BIN): tests/miniapp_system_tests.cpp tests/support/SynthRig.hpp apps/miniapp/MiniApp.hpp apps/miniapp/MiniAppRegistration.hpp apps/miniapp/MiniAppUI.hpp apps/miniapp/MiniAppUiModel.hpp apps/miniapp/MiniAppDraw.hpp apps/miniapp/MiniAppCore.hpp apps/miniapp/DemoModulation.hpp include/synth/PortableUI.hpp include/synth/PortableUIBuilders.hpp $(LIB) include/synth/Engine.hpp include/synth/AppContext.hpp include/synth/AppConcepts.hpp include/synth/AppRegistry.hpp include/synth/AsyncLogger.hpp include/synth/MidiController.hpp include/synth/Modules.hpp include/synth/ParameterModulation.hpp include/synth/PatchPersistence.hpp include/synth/PatchBrowser.hpp include/synth/DspScope.hpp include/synth/Json.hpp
 	$(CXX) $(CPPFLAGS) -Iapps/miniapp $(CXXFLAGS) $< $(LIB) -o $@
 
 $(RECONCILE_TEST_BIN): tests/reconcile_tests.cpp $(LIB) include/synth/MidiReconcile.hpp include/synth/MidiController.hpp
@@ -150,9 +151,14 @@ test: check-ui-boundary $(TEST_BIN) $(DSP_TEST_BIN) $(MODULE_TEST_BIN) $(INSTRUM
 miniapp:
 	$(MAKE) -C $(MINIAPP_DIR)
 
+sheaf-patch:
+	$(MAKE) -C $(SHEAF_PATCH_DIR)
+
 apps:
 	$(MAKE) -C $(APPS_DIR)/miniapp
+	$(MAKE) -C $(SHEAF_PATCH_DIR)
 
 clean:
 	rm -rf $(BUILD_DIR)
 	if [ -f "$(MINIAPP_DIR)/Makefile" ]; then $(MAKE) -C $(MINIAPP_DIR) clean; fi
+	if [ -f "$(SHEAF_PATCH_DIR)/Makefile" ]; then $(MAKE) -C $(SHEAF_PATCH_DIR) clean; fi

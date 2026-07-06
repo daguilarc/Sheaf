@@ -79,6 +79,7 @@
 #include "synth/PortableUI.hpp"
 #include "synth/ThreadId.hpp"
 
+#include "HostDataPaths.hpp"
 #include "MidiConnectionManager.hpp"
 
 #include <juce_audio_devices/juce_audio_devices.h>
@@ -155,15 +156,10 @@ public:
     Runtime& operator=(Runtime&&) = delete;
 
     static synth::RuntimeDataPaths DefaultDataPathsForApp(const synth::RuntimeConfig& config) {
-        const juce::File dataRoot =
-            juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
-                .getChildFile("Sheaf")
-                .getChildFile(config.appName.empty() ? "SynthApp" : config.appName);
-        return synth::RuntimeDataPaths::FromDataRoot(
-            std::filesystem::path(dataRoot.getFullPathName().toStdString()));
+        return synth_runtime::DefaultDataPathsForApp(config);
     }
 
-    void SetRuntimeDataPathsForTesting(synth::RuntimeDataPaths paths) { dataPathsOverride_ = std::move(paths); }
+    void SetRuntimeDataPathsOverride(synth::RuntimeDataPaths paths) { dataPathsOverride_ = std::move(paths); }
     const synth::RuntimeDataPaths& DataPaths() const { return dataPaths_; }
 
     // Startup ordering (binding, per Task 2/3/4 briefs):

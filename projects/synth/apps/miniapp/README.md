@@ -55,7 +55,7 @@ exactly one of the app or a library page at a time.
 
 The shared runtime owns long-lived app data. In production it resolves an
 OS-appropriate user application data root under `Sheaf/SynthMiniapp`; tests can
-override this with `Runtime::SetRuntimeDataPathsForTesting(...)` and scratch
+override this with `Runtime::SetRuntimeDataPathsOverride(...)` and scratch
 `synth::RuntimeDataPaths`.
 
 The data root contains:

@@ -1,5 +1,6 @@
 #include "MiniApp.hpp"
 #include "MiniAppCore.hpp"
+#include "MiniAppRegistration.hpp"
 #include "MiniAppUI.hpp"
 #include "MiniAppUiModel.hpp"
 #include "support/SynthRig.hpp"
@@ -91,7 +92,7 @@ constexpr std::size_t kLfoExponentPosition = 4;
 // loading cannot observe a shared production location or another test's data.
 synth::RuntimeDataPaths UseScratchRuntimeDataPaths(const char* testName) {
     const std::filesystem::path dataRoot =
-        std::filesystem::temp_directory_path() / "sheaf-synth-miniapp-system-tests" / testName;
+        std::filesystem::temp_directory_path() / "sheaf-patch-miniapp-system-tests" / testName;
     std::filesystem::remove_all(dataRoot);
     synth::RuntimeDataPaths paths = synth::RuntimeDataPaths::FromDataRoot(dataRoot);
     std::filesystem::create_directories(paths.patchesRoot);
@@ -230,6 +231,27 @@ bool PopNextMessage(synth::MessageInBus& uiBus, synth::MessageIn& message) {
 }
 
 }  // namespace
+
+TEST_CASE(miniapp_registration_declares_launcher_metadata_and_launch_callable) {
+    bool launched = false;
+    synth::RuntimeDataPaths launchedPaths;
+    const auto registration = synth_miniapp::MakeMiniAppRegistration(
+        [&](synth::RuntimeDataPaths paths) {
+            launched = true;
+            launchedPaths = std::move(paths);
+        });
+
+    REQUIRE_TRUE(registration.manifest.appId == "miniapp");
+    REQUIRE_TRUE(registration.manifest.displayName == "Mini App");
+    REQUIRE_TRUE(registration.manifest.author == "Sheaf");
+    REQUIRE_TRUE(registration.manifest.category == "test");
+    REQUIRE_TRUE(registration.manifest.hardware.minEncoders == 16);
+    REQUIRE_TRUE(static_cast<bool>(registration.launch));
+
+    registration.launch(synth::RuntimeDataPaths::FromDataRoot("/tmp/sheaf-miniapp-registration-test"));
+    REQUIRE_TRUE(launched);
+    REQUIRE_TRUE(launchedPaths.dataRoot == std::filesystem::path("/tmp/sheaf-miniapp-registration-test"));
+}
 
 TEST_CASE(miniapp_portable_surface_exposes_stable_ids_and_routes_actions) {
     (void)UseScratchRuntimeDataPaths("portable_surface_exposes_stable_ids_and_routes_actions");

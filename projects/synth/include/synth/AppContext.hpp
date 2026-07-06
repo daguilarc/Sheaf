@@ -48,6 +48,18 @@ struct RuntimeDataPaths {
         paths.configFile = paths.dataRoot / "config.json";
         return paths;
     }
+
+    static RuntimeDataPaths FromRoots(std::filesystem::path dataRoot,
+                                      std::filesystem::path patchesRoot,
+                                      std::filesystem::path logsRoot,
+                                      std::filesystem::path configFile) {
+        RuntimeDataPaths paths;
+        paths.dataRoot = std::move(dataRoot);
+        paths.patchesRoot = std::move(patchesRoot);
+        paths.logsRoot = std::move(logsRoot);
+        paths.configFile = std::move(configFile);
+        return paths;
+    }
 };
 
 // Non-owning view of one audio device block (sar-6). Channel counts are the

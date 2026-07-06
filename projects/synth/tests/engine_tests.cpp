@@ -1,3 +1,4 @@
+#include "synth/AppRegistry.hpp"
 #include "synth/Engine.hpp"
 #include "synth/RuntimePagePolicy.hpp"
 
@@ -192,6 +193,14 @@ void WriteRuntimeConfigFile(const std::filesystem::path& configFile,
                             const synth::AudioDeviceState& audioDevice) {
     const synth::RuntimeConfigFileStatus status = synth::SaveRuntimeConfigFile(configFile, instrument, audioDevice);
     REQUIRE_TRUE(status == synth::RuntimeConfigFileStatus::Ok);
+}
+
+std::string ReadTextFile(const std::filesystem::path& path) {
+    std::ifstream in(path, std::ios::binary);
+    REQUIRE_TRUE(static_cast<bool>(in));
+    std::ostringstream out;
+    out << in.rdbuf();
+    return out.str();
 }
 
 }  // namespace
@@ -491,6 +500,105 @@ struct TestBlockBuffers {
 };
 
 }  // namespace
+
+TEST_CASE(sheaf_patch_runtime_configuration_saves_shared_config_without_patch_values) {
+    const std::filesystem::path dataRoot =
+        std::filesystem::temp_directory_path() / "engine-sheaf-patch-runtime-config-data-root";
+    std::filesystem::remove_all(dataRoot);
+    const synth::RuntimeDataPaths paths = synth::SheafPatchDataPathsForApp(dataRoot, "miniapp");
+
+    EngineTestApp::processLiteAlpha = 1.0f;
+    EngineTestApp::wantEncoderMidiInput = true;
+    synth::Engine<EngineTestApp> engine([] { return std::uint64_t{0}; });
+    engine.SetRuntimeDataPaths(paths);
+    engine.Initialize();
+    engine.Prepare(48000.0, 256);
+
+    engine.EditInstrument([](synth::MidiInstrumentConfig& instrument) {
+        REQUIRE_TRUE(instrument.RenameController(0, "sheaf-controller"));
+    });
+    engine.SetAudioDeviceFromHost(synth::AudioDeviceState{.outputDeviceName = "Sheaf Output",
+                                                          .inputDeviceName = "Sheaf Input"});
+
+    TestBlockBuffers buffers(2, 4);
+    engine.UiBus().Push(synth::MessageIn::ParamIncDec(/*timestamp=*/0, /*slotIx=*/0, /*position=*/0, /*delta=*/0.3f));
+    {
+        synth::AudioBlock block = buffers.Block(4);
+        engine.ProcessBlock(block, /*timestamp=*/0);
+    }
+    REQUIRE_NEAR(engine.Manager().ParameterById(engine.Application().probeId).GetRaw(0), 0.55f, 1e-4f);
+
+    REQUIRE_TRUE(engine.SaveRuntimeConfiguration() == synth::RuntimeConfigFileStatus::Ok);
+    REQUIRE_TRUE(std::filesystem::exists(paths.configFile));
+    REQUIRE_TRUE(paths.configFile == dataRoot / "synth" / "sheaf-patch" / "config");
+    REQUIRE_TRUE(!std::filesystem::exists(paths.dataRoot / "config.json"));
+
+    const std::string contents = ReadTextFile(paths.configFile);
+    REQUIRE_TRUE(contents.find("sheaf-controller") != std::string::npos);
+    REQUIRE_TRUE(contents.find("Sheaf Output") != std::string::npos);
+    REQUIRE_TRUE(contents.find("Probe") == std::string::npos);
+    REQUIRE_TRUE(contents.find("parameters") == std::string::npos);
+    REQUIRE_TRUE(contents.find("0.55") == std::string::npos);
+
+    std::filesystem::remove_all(dataRoot);
+    EngineTestApp::wantEncoderMidiInput = false;
+}
+
+TEST_CASE(sheaf_patch_startup_discovers_only_selected_app_patch_root) {
+    const std::filesystem::path dataRoot =
+        std::filesystem::temp_directory_path() / "engine-sheaf-patch-patch-isolation-data-root";
+    std::filesystem::remove_all(dataRoot);
+    const synth::RuntimeDataPaths miniappPaths = synth::SheafPatchDataPathsForApp(dataRoot, "miniapp");
+    const synth::RuntimeDataPaths otherAppPaths = synth::SheafPatchDataPathsForApp(dataRoot, "otherapp");
+    std::filesystem::create_directories(miniappPaths.patchesRoot);
+    std::filesystem::create_directories(otherAppPaths.patchesRoot);
+
+    const auto earlier = std::chrono::system_clock::from_time_t(1700000000);
+    const auto later = earlier + std::chrono::seconds(2);
+    WriteProbePatchVersion(miniappPaths.patchesRoot / "MiniPatch", 0.75f, earlier);
+    WriteProbePatchVersion(otherAppPaths.patchesRoot / "OtherPatch", 0.95f, later);
+
+    EngineTestApp::processLiteAlpha = 1.0f;
+    synth::Engine<EngineTestApp> engine([] { return std::uint64_t{0}; });
+    engine.SetRuntimeDataPaths(miniappPaths);
+    engine.Initialize();
+    REQUIRE_NEAR(engine.Manager().ParameterById(engine.Application().probeId).GetRaw(0), 0.75f, 1e-5f);
+
+    std::filesystem::remove_all(dataRoot);
+}
+
+TEST_CASE(sheaf_patch_patch_save_as_writes_under_selected_app_patch_root) {
+    const std::filesystem::path dataRoot =
+        std::filesystem::temp_directory_path() / "engine-sheaf-patch-patch-save-data-root";
+    std::filesystem::remove_all(dataRoot);
+    const synth::RuntimeDataPaths miniappPaths = synth::SheafPatchDataPathsForApp(dataRoot, "miniapp");
+    const synth::RuntimeDataPaths otherAppPaths = synth::SheafPatchDataPathsForApp(dataRoot, "otherapp");
+
+    EngineTestApp::processLiteAlpha = 1.0f;
+    synth::Engine<EngineTestApp> engine([] { return std::uint64_t{0}; });
+    engine.SetRuntimeDataPaths(miniappPaths);
+    engine.Initialize();
+    engine.Prepare(48000.0, 256);
+
+    const std::filesystem::path saveDir = miniappPaths.patchesRoot / "SavedPatch";
+    const synth::PatchCommandResult saveResult = engine.Patches().SavePatchAs(saveDir);
+    REQUIRE_TRUE(saveResult.status == synth::PatchCommandStatus::Pending);
+
+    TestBlockBuffers buffers(2, 4);
+    bool written = false;
+    for (int iteration = 0; iteration < 16 && !written; ++iteration) {
+        synth::AudioBlock block = buffers.Block(4);
+        engine.ProcessBlock(block, /*timestamp=*/0);
+        engine.MessageThreadTick();
+        written = synth::LatestPatchVersion(saveDir).has_value();
+    }
+
+    REQUIRE_TRUE(written);
+    REQUIRE_TRUE(saveDir.parent_path() == miniappPaths.patchesRoot);
+    REQUIRE_TRUE(!std::filesystem::exists(otherAppPaths.patchesRoot));
+
+    std::filesystem::remove_all(dataRoot);
+}
 
 TEST_CASE(engine_pump_applies_messages_before_app_block) {
     EngineTestApp::processLiteAlpha = 1.0f;  // snap immediately so the applied message is visible this block

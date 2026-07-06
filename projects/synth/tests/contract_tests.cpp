@@ -1,5 +1,6 @@
 #include "synth/AppContext.hpp"
 #include "synth/AppConcepts.hpp"
+#include "synth/AppRegistry.hpp"
 #include "synth/PatchBrowser.hpp"
 #include "synth/RuntimePagePolicy.hpp"
 
@@ -15,7 +16,9 @@
 #include <iostream>
 #include <sstream>
 #include <stdexcept>
+#include <string>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -86,6 +89,73 @@ TEST_CASE(runtime_data_paths_default_empty_and_derive_children) {
     REQUIRE_TRUE(derived.patchesRoot == std::filesystem::path("/tmp/sheaf-test-root") / "patches");
     REQUIRE_TRUE(derived.logsRoot == std::filesystem::path("/tmp/sheaf-test-root") / "logs");
     REQUIRE_TRUE(derived.configFile == std::filesystem::path("/tmp/sheaf-test-root") / "config.json");
+}
+
+TEST_CASE(runtime_data_paths_can_split_roots) {
+    const auto paths = synth::RuntimeDataPaths::FromRoots(
+        "/tmp/sheaf-patch-data",
+        "/tmp/sheaf-patch-data/patches/miniapp",
+        "/tmp/sheaf-patch-data/logs",
+        "/tmp/sheaf-patch-data/config");
+    REQUIRE_TRUE(paths.dataRoot == std::filesystem::path("/tmp/sheaf-patch-data"));
+    REQUIRE_TRUE(paths.patchesRoot == std::filesystem::path("/tmp/sheaf-patch-data/patches/miniapp"));
+    REQUIRE_TRUE(paths.logsRoot == std::filesystem::path("/tmp/sheaf-patch-data/logs"));
+    REQUIRE_TRUE(paths.configFile == std::filesystem::path("/tmp/sheaf-patch-data/config"));
+}
+
+TEST_CASE(app_manifest_validates_stable_app_id) {
+    REQUIRE_TRUE(synth::IsValidSynthAppId("miniapp"));
+    REQUIRE_TRUE(synth::IsValidSynthAppId("wrld-bldr"));
+    REQUIRE_TRUE(!synth::IsValidSynthAppId(""));
+    REQUIRE_TRUE(!synth::IsValidSynthAppId("Mini App"));
+    REQUIRE_TRUE(!synth::IsValidSynthAppId("../escape"));
+}
+
+TEST_CASE(app_registry_sorts_by_stable_app_id) {
+    synth::SynthAppRegistration z;
+    z.manifest.appId = "zeta";
+    z.manifest.displayName = "Zeta";
+    synth::SynthAppRegistration a;
+    a.manifest.appId = "alpha";
+    a.manifest.displayName = "Alpha";
+    std::vector<synth::SynthAppRegistration> apps{z, a};
+    synth::SortSynthAppRegistrationsById(apps);
+    REQUIRE_TRUE(apps[0].manifest.appId == "alpha");
+    REQUIRE_TRUE(apps[1].manifest.appId == "zeta");
+}
+
+TEST_CASE(sheaf_patch_data_paths_use_shared_config_and_app_patch_root) {
+    const auto paths = synth::SheafPatchDataPathsForApp("/tmp/sheaf-repo-data", "miniapp");
+    REQUIRE_TRUE(paths.dataRoot == std::filesystem::path("/tmp/sheaf-repo-data/synth/sheaf-patch"));
+    REQUIRE_TRUE(paths.configFile == std::filesystem::path("/tmp/sheaf-repo-data/synth/sheaf-patch/config"));
+    REQUIRE_TRUE(paths.patchesRoot == std::filesystem::path("/tmp/sheaf-repo-data/synth/sheaf-patch/patches/miniapp"));
+    REQUIRE_TRUE(paths.logsRoot == std::filesystem::path("/tmp/sheaf-repo-data/synth/sheaf-patch/logs"));
+}
+
+TEST_CASE(sheaf_patch_data_paths_reject_empty_app_id) {
+    bool threwInvalidArgument = false;
+    try {
+        (void)synth::SheafPatchDataPathsForApp("/tmp/sheaf-repo-data", "");
+    } catch (const std::invalid_argument& ex) {
+        const std::string message = ex.what();
+        threwInvalidArgument =
+            message.find("appId") != std::string::npos && message.find("''") != std::string::npos;
+    }
+
+    REQUIRE_TRUE(threwInvalidArgument);
+}
+
+TEST_CASE(sheaf_patch_data_paths_reject_traversal_app_id) {
+    bool threwInvalidArgument = false;
+    try {
+        (void)synth::SheafPatchDataPathsForApp("/tmp/sheaf-repo-data", "../escape");
+    } catch (const std::invalid_argument& ex) {
+        const std::string message = ex.what();
+        threwInvalidArgument =
+            message.find("appId") != std::string::npos && message.find("../escape") != std::string::npos;
+    }
+
+    REQUIRE_TRUE(threwInvalidArgument);
 }
 
 TEST_CASE(patch_browser_lists_patch_directories_deterministically) {
@@ -243,6 +313,51 @@ TEST_CASE(application_concepts_gate_correctly) {
     REQUIRE_TRUE(!synth::HasPrepareToPlay<ConceptCoreOnlyApp>);
     REQUIRE_TRUE(synth::HasPrepareToPlay<ConceptFullApp>);
     REQUIRE_TRUE(!synth::HasProcessFrame<ConceptFullApp>);
+}
+
+TEST_CASE(app_registration_binds_manifest_to_launch_callable) {
+    bool launched = false;
+    synth::RuntimeDataPaths launchedPaths;
+    synth::SynthAppManifest manifest;
+    manifest.appId = "miniapp";
+    manifest.displayName = "Mini App";
+    manifest.author = "Sheaf";
+    manifest.category = "test";
+    manifest.hardware.minEncoders = 8;
+
+    auto registration = synth::MakeSynthAppRegistration<ConceptFullApp>(
+        manifest,
+        [&](synth::RuntimeDataPaths paths) {
+            launched = true;
+            launchedPaths = std::move(paths);
+        });
+    registration.launch(synth::RuntimeDataPaths::FromDataRoot("/tmp/sheaf-launch-test"));
+
+    REQUIRE_TRUE(registration.manifest.appId == "miniapp");
+    REQUIRE_TRUE(registration.manifest.displayName == "Mini App");
+    REQUIRE_TRUE(registration.manifest.author == "Sheaf");
+    REQUIRE_TRUE(registration.manifest.category == "test");
+    REQUIRE_TRUE(registration.manifest.hardware.minEncoders == 8);
+    REQUIRE_TRUE(launched);
+    REQUIRE_TRUE(launchedPaths.dataRoot == std::filesystem::path("/tmp/sheaf-launch-test"));
+}
+
+TEST_CASE(app_registration_rejects_empty_stable_app_id) {
+    synth::SynthAppManifest manifest;
+    manifest.displayName = "Invalid App";
+    manifest.author = "Sheaf";
+    manifest.category = "test";
+
+    bool threwInvalidArgument = false;
+    try {
+        (void)synth::MakeSynthAppRegistration<ConceptFullApp>(
+            manifest,
+            [](synth::RuntimeDataPaths) {});
+    } catch (const std::invalid_argument& ex) {
+        threwInvalidArgument = std::string(ex.what()).find("appId") != std::string::npos;
+    }
+
+    REQUIRE_TRUE(threwInvalidArgument);
 }
 
 int main() {

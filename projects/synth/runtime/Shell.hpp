@@ -43,6 +43,7 @@
 
 #include <exception>
 #include <memory>
+#include <optional>
 
 namespace synth_runtime {
 
@@ -71,6 +72,41 @@ public:
 private:
     Runtime<App>& runtime_;
     MainPane<App> mainPane_;
+};
+
+template <synth::SynthApplication App>
+class RuntimeShellSession {
+public:
+    // Launcher-side shell seam for apps that need caller-supplied data paths.
+    // Call from the JUCE message thread after synth::SetCurrentThreadId has
+    // identified it as synth::ThreadId::Message.
+    explicit RuntimeShellSession(std::optional<synth::RuntimeDataPaths> paths = std::nullopt) {
+        runtime_ = std::make_unique<Runtime<App>>();
+        if (paths.has_value()) {
+            runtime_->SetRuntimeDataPathsOverride(std::move(*paths));
+        }
+        runtime_->Start();
+        shell_ = std::make_unique<ShellComponent<App>>(*runtime_);
+        runtime_->SetRepaintHook([shell = shell_.get()] { shell->RepaintAll(); });
+    }
+
+    ~RuntimeShellSession() {
+        if (runtime_) {
+            runtime_->SetRepaintHook({});
+        }
+    }
+
+    RuntimeShellSession(const RuntimeShellSession&) = delete;
+    RuntimeShellSession& operator=(const RuntimeShellSession&) = delete;
+    RuntimeShellSession(RuntimeShellSession&&) = delete;
+    RuntimeShellSession& operator=(RuntimeShellSession&&) = delete;
+
+    juce::Component& Component() { return *shell_; }
+    Runtime<App>& GetRuntime() { return *runtime_; }
+
+private:
+    std::unique_ptr<Runtime<App>> runtime_;
+    std::unique_ptr<ShellComponent<App>> shell_;
 };
 
 // The application wrapper instantiated by SYNTH_RUNTIME_MAIN(AppType). Owns

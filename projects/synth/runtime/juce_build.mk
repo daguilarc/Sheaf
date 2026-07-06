@@ -28,6 +28,7 @@ APP_BUNDLE_BINARY := $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
 
 SYNTH_SRC := $(SYNTH_ROOT)/src/ParameterModulation.cpp $(SYNTH_ROOT)/src/MidiController.cpp $(SYNTH_ROOT)/src/PatchPersistence.cpp $(SYNTH_ROOT)/src/DspWavetable.cpp \
 	$(SYNTH_ROOT)/src/Modules.cpp $(SYNTH_ROOT)/src/MidiReconcile.cpp $(SYNTH_ROOT)/src/MidiDevicePoller.cpp $(SYNTH_ROOT)/src/MidiConfigViewModel.cpp $(SYNTH_ROOT)/src/MidiConfigBlocks.cpp
+SYNTH_RUNTIME_SRC := $(SYNTH_ROOT)/runtime/HostDataPaths.cpp
 SYNTH_HEADERS := $(SYNTH_ROOT)/include/synth/ParameterModulation.hpp $(SYNTH_ROOT)/include/synth/MidiController.hpp \
 	$(SYNTH_ROOT)/include/synth/Json.hpp \
 	$(SYNTH_ROOT)/include/synth/Modules.hpp \
@@ -47,7 +48,7 @@ SYNTH_HEADERS := $(SYNTH_ROOT)/include/synth/ParameterModulation.hpp $(SYNTH_ROO
 	$(SYNTH_ROOT)/include/synth/PortableUIBuilders.hpp \
 	$(SYNTH_ROOT)/include/synth/RuntimePages.hpp \
 	$(SYNTH_ROOT)/include/synth/ControllersPageUI.hpp
-SYNTH_JUCE_HEADERS := $(wildcard $(SYNTH_ROOT)/juce/*.hpp) $(SYNTH_ROOT)/runtime/Runtime.hpp $(SYNTH_ROOT)/runtime/MidiConnectionManager.hpp $(SYNTH_ROOT)/runtime/Shell.hpp $(SYNTH_ROOT)/runtime/MainPane.hpp $(SYNTH_ROOT)/runtime/AudioConfigPage.hpp $(SYNTH_ROOT)/runtime/FilePage.hpp $(SYNTH_ROOT)/runtime/ControllersPage.hpp
+SYNTH_JUCE_HEADERS := $(wildcard $(SYNTH_ROOT)/juce/*.hpp) $(SYNTH_ROOT)/runtime/Runtime.hpp $(SYNTH_ROOT)/runtime/HostDataPaths.hpp $(SYNTH_ROOT)/runtime/MidiConnectionManager.hpp $(SYNTH_ROOT)/runtime/Shell.hpp $(SYNTH_ROOT)/runtime/MainPane.hpp $(SYNTH_ROOT)/runtime/AudioConfigPage.hpp $(SYNTH_ROOT)/runtime/FilePage.hpp $(SYNTH_ROOT)/runtime/ControllersPage.hpp
 
 JUCE_MODULE_SRC := \
 	$(JUCE_DIR)/modules/juce_audio_basics/juce_audio_basics.mm \
@@ -129,8 +130,8 @@ $(BUILD_DIR)/juce_gui_basics.o: $(JUCE_DIR)/modules/juce_gui_basics/juce_gui_bas
 $(BUILD_DIR)/juce_gui_extra.o: $(JUCE_DIR)/modules/juce_gui_extra/juce_gui_extra.mm | $(BUILD_DIR)
 	$(CXX) $(CPPFLAGS) $(JUCE_CXXFLAGS) -c $< -o $@
 
-$(APP): $(APP_SOURCES) $(SYNTH_SRC) $(SYNTH_HEADERS) $(SYNTH_JUCE_HEADERS) $(JUCE_MODULE_OBJ) $(JUCE_C_MODULE_OBJ) | $(BUILD_DIR)
-	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(APP_SOURCES) $(SYNTH_SRC) $(JUCE_MODULE_OBJ) $(JUCE_C_MODULE_OBJ) -o $@ $(LDFLAGS_DARWIN)
+$(APP): $(APP_SOURCES) $(SYNTH_SRC) $(SYNTH_RUNTIME_SRC) $(SYNTH_HEADERS) $(SYNTH_JUCE_HEADERS) $(JUCE_MODULE_OBJ) $(JUCE_C_MODULE_OBJ) | $(BUILD_DIR)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(APP_SOURCES) $(SYNTH_SRC) $(SYNTH_RUNTIME_SRC) $(JUCE_MODULE_OBJ) $(JUCE_C_MODULE_OBJ) -o $@ $(LDFLAGS_DARWIN)
 
 $(APP_BUNDLE): $(APP) $(APP_INFO_PLIST)
 	mkdir -p "$(APP_BUNDLE)/Contents/MacOS"

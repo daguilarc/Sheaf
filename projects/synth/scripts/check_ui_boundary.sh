@@ -13,7 +13,7 @@ fi
 
 set +e
 rg -n --glob '*.hpp' --glob '*.h' --glob '*.cpp' --glob '*.mm' \
-    --glob '!build/**' --glob '!apps/miniapp/build/**' \
+    --glob '!build/**' --glob '!apps/miniapp/build/**' --glob '!apps/sheaf-patch/build/**' \
     '(#include[[:space:]]*<juce[^>]*>|(^|[^[:alnum:]_])juce::)' . >"$tmp"
 rg_status=$?
 set -e
@@ -35,11 +35,15 @@ while IFS=: read -r path line match; do
         runtime/AudioConfigPage.hpp|\
         runtime/ControllersPage.hpp|\
         runtime/FilePage.hpp|\
+        runtime/HostDataPaths.cpp|\
         runtime/MainPane.hpp|\
         runtime/MidiConnectionManager.hpp|\
         runtime/Runtime.hpp|\
         runtime/Shell.hpp|\
-        apps/miniapp/Main.cpp)
+        apps/miniapp/Main.cpp|\
+        apps/sheaf-patch/Launcher.hpp|\
+        apps/sheaf-patch/LauncherHarnessTests.cpp|\
+        apps/sheaf-patch/Main.cpp)
             ;;
         *)
             printf 'JUCE boundary violation: %s:%s:%s\n' "$path" "$line" "$match" >&2
