@@ -78,8 +78,8 @@ $(DSP_TEST_BIN): tests/dsp_tests.cpp $(LIB) $(DSP_HEADERS)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< $(LIB) -o $@
 
 # -Iapps/miniapp is added for this rule only: DemoModulation.hpp lives under
-# apps/miniapp/ (JUCE-free), and MiniAppCore still uses its per-sample
-# ProcessLite helper.
+# apps/miniapp/ (JUCE-free), and MiniAppCore uses its group-level per-sample
+# parameter processing helper.
 $(MODULE_TEST_BIN): tests/module_tests.cpp apps/miniapp/DemoModulation.hpp $(LIB) include/synth/Modules.hpp include/synth/ParameterModulation.hpp
 	$(CXX) $(CPPFLAGS) -Iapps/miniapp $(CXXFLAGS) $< $(LIB) -o $@
 

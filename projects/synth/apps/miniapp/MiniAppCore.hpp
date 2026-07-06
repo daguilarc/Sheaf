@@ -13,11 +13,9 @@
 // topology and runs the per-sample DSP. The UI wrapper (a later task) will
 // own the JUCE-facing pieces and read this core's public accessors.
 //
-// Per-parameter Compute() is no longer this file's job: synth::Engine's
-// ProcessBlock calls manager_.ComputeAllTargets() once per block before
-// invoking ProcessBlock(AudioBlock&) here (see Engine.hpp's binding order),
-// so this core only does the per-frame ProcessLite() slewing the old
-// MainComponent::processDspFrame did.
+// Group-level per-sample parameter processing is owned here, before module
+// processing, so target recompute cadence follows absolute audio sample time
+// instead of host block boundaries.
 
 #include "DemoModulation.hpp"
 
@@ -202,7 +200,7 @@ public:
         }
 
         for (std::size_t frame = 0; frame < block.numFrames; ++frame) {
-            ProcessLiteParameters(parameters_);
+            ProcessParameters(*group_, block.startSample + frame);
             vcoModule_.SetInput(*context_->parameterManager);
             vcoModule_.Process();
             filterModule_.SetInput(*context_->parameterManager);
