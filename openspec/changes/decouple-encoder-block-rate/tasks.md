@@ -8,11 +8,11 @@
 
 ## 2. Runtime Sample Position
 
-- [ ] 2.1 Add engine or rig tests proving consecutive `AudioBlock` values expose monotonic `startSample` values, including a block size that is not a multiple of 16.
-- [ ] 2.2 Add or update engine tests proving steady-state `Engine::ProcessBlock()` no longer runs `ComputeAllTargets()` once per host block.
-- [ ] 2.3 Update the `ProcessFrame()` hook test/contract so it only asserts post-message-drain, pre-`ProcessBlock()` ordering and no longer depends on freshly computed parameter targets.
-- [ ] 2.4 Add `AudioBlock::startSample` and set it from the engine's sample counter before application delegation.
-- [ ] 2.5 Remove the steady-state `ComputeAllTargets()` call from the engine block pump while preserving patch/UI/MIDI drain ordering, app delegation, sample-counter publication, and UI-state throttling.
+- [x] 2.1 Add engine or rig tests proving consecutive `AudioBlock` values expose monotonic `startSample` values, including a block size that is not a multiple of 16.
+- [x] 2.2 Add or update engine tests proving steady-state `Engine::ProcessBlock()` no longer runs `ComputeAllTargets()` once per host block.
+- [x] 2.3 Update the `ProcessFrame()` hook test/contract so it only asserts post-message-drain, pre-`ProcessBlock()` ordering and no longer depends on freshly computed parameter targets.
+- [x] 2.4 Add `AudioBlock::startSample` and set it from the engine's sample counter before application delegation.
+- [x] 2.5 Remove the steady-state `ComputeAllTargets()` call from the engine block pump while preserving patch/UI/MIDI drain ordering, app delegation, sample-counter publication, and UI-state throttling.
 
 ## 3. Mini App Migration
 
