@@ -70,6 +70,7 @@ struct AudioBlock {
     int numInputChannels = 0;
     int numOutputChannels = 0;
     std::size_t numFrames = 0;
+    std::uint64_t startSample = 0;
 };
 
 // Non-owning pointers to every framework object an application may touch

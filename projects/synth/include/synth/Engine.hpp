@@ -207,13 +207,14 @@ public:
     //      draining for this block (never grows the arena on the audio path).
     //   2. uiBus_.Process(timestamp)
     //   3. midiBus_.Process(timestamp)
-    //   4. manager_.ComputeAllTargets() (never ComputeAllParameters here)
-    //   4a. if the app opts in via the HasProcessFrame concept, app_.ProcessFrame()
-    //       exactly once: the optional once-per-block control-rate hook. Runs
-    //       after ComputeAllTargets() (so it observes post-message-drain,
-    //       freshly-computed target state) and before app_.ProcessBlock (so
-    //       any control-rate state it updates is visible to that call).
-    //   5. sampleCounter_.fetch_add(block.numFrames, relaxed)
+    //   4. if the app opts in via the HasProcessFrame concept, app_.ProcessFrame()
+    //      exactly once: the optional once-per-block control-rate hook. Runs
+    //      after message drains (so it observes post-message-manager state) and
+    //      before app_.ProcessBlock (so any control-rate state it updates is
+    //      visible to that call).
+    //   5. sampleCounter_.fetch_add(block.numFrames, relaxed), storing the
+    //      returned pre-increment value as block.startSample for applications
+    //      that need a monotonic runtime sample position.
     //   6. app_.ProcessBlock(block) exactly once
     //   7. throttled PopulateUIState every uiPublishInterval_ blocks
     void ProcessBlock(AudioBlock& block, std::uint64_t timestamp) {
@@ -261,11 +262,12 @@ public:
 
         uiBus_.Process(timestamp);
         midiBus_.Process(timestamp);
-        manager_.ComputeAllTargets();
         if constexpr (HasProcessFrame<App>) {
             app_.ProcessFrame();
         }
-        sampleCounter_.fetch_add(block.numFrames, std::memory_order_relaxed);
+        const std::uint64_t blockStartSample =
+            sampleCounter_.fetch_add(block.numFrames, std::memory_order_relaxed);
+        block.startSample = blockStartSample;
         app_.ProcessBlock(block);
 
         if (++blocksSinceUiPublish_ >= uiPublishInterval_) {

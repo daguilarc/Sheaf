@@ -81,6 +81,8 @@ struct EngineTestApp {
     synth::BankSlot* probeSlot = nullptr;
     int processBlockCalls = 0;
     float lastProbeDuringBlock = -1.0f;
+    float lastProbeSceneCenterDuringBlock = -1.0f;
+    std::uint64_t lastBlockStartSample = 0;
 
     static synth::RuntimeConfig Config() {
         synth::RuntimeConfig config;
@@ -122,15 +124,16 @@ struct EngineTestApp {
     }
     void ProcessBlock(synth::AudioBlock& block) {
         ++processBlockCalls;
+        lastBlockStartSample = block.startSample;
         for (std::size_t frame = 0; frame < block.numFrames; ++frame) {
             context->parameterManager->ParameterById(probeId).ProcessLite();
         }
-        // Read after the per-frame slewing above so lastProbeDuringBlock
-        // reflects this block's post-message, post-slew value (the engine
-        // pump applies patch/UI/MIDI messages and recomputes targets before
-        // calling into the app, so the app's per-frame work is what makes
-        // the new target audible/observable within this same block).
-        lastProbeDuringBlock = context->parameterManager->ParameterById(probeId).GetRaw(0);
+        // Read after the per-frame slewing above. The engine pump applies
+        // patch/UI/MIDI messages before calling into the app, but it no
+        // longer recomputes parameter targets at the host block boundary.
+        auto& probe = context->parameterManager->ParameterById(probeId);
+        lastProbeDuringBlock = probe.CurrentCenter();
+        lastProbeSceneCenterDuringBlock = probe.SceneCenter(0);
         for (int channel = 0; channel < block.numOutputChannels; ++channel) {
             float* out = block.outputs[channel];
             if (out == nullptr) {
@@ -526,7 +529,7 @@ TEST_CASE(sheaf_patch_runtime_configuration_saves_shared_config_without_patch_va
         synth::AudioBlock block = buffers.Block(4);
         engine.ProcessBlock(block, /*timestamp=*/0);
     }
-    REQUIRE_NEAR(engine.Manager().ParameterById(engine.Application().probeId).GetRaw(0), 0.55f, 1e-4f);
+    REQUIRE_NEAR(engine.Manager().ParameterById(engine.Application().probeId).SceneCenter(0), 0.55f, 1e-4f);
 
     REQUIRE_TRUE(engine.SaveRuntimeConfiguration() == synth::RuntimeConfigFileStatus::Ok);
     REQUIRE_TRUE(std::filesystem::exists(paths.configFile));
@@ -601,12 +604,12 @@ TEST_CASE(sheaf_patch_patch_save_as_writes_under_selected_app_patch_root) {
 }
 
 TEST_CASE(engine_pump_applies_messages_before_app_block) {
-    EngineTestApp::processLiteAlpha = 1.0f;  // snap immediately so the applied message is visible this block
+    EngineTestApp::processLiteAlpha = 1.0f;
     synth::Engine<EngineTestApp> engine([] { return std::uint64_t{2}; });
     engine.Initialize();
     engine.Prepare(48000.0, 256);
 
-    const float before = engine.Manager().ParameterById(engine.Application().probeId).GetRaw(0);
+    const float before = engine.Manager().ParameterById(engine.Application().probeId).SceneCenter(0);
 
     // Push a ParamIncDec against the slot/position registered in Init (slot
     // 0, position 0 maps to the probe parameter via the bank/slot wiring).
@@ -617,17 +620,58 @@ TEST_CASE(engine_pump_applies_messages_before_app_block) {
     engine.ProcessBlock(block, /*timestamp=*/2);
 
     REQUIRE_TRUE(engine.Application().processBlockCalls == 1);
-    REQUIRE_TRUE(engine.Application().lastProbeDuringBlock != before);
-    REQUIRE_NEAR(engine.Application().lastProbeDuringBlock, before + 0.3f, 1e-4f);
+    REQUIRE_TRUE(engine.Application().lastProbeSceneCenterDuringBlock != before);
+    REQUIRE_NEAR(engine.Application().lastProbeSceneCenterDuringBlock, before + 0.3f, 1e-4f);
+    REQUIRE_NEAR(engine.Application().lastProbeDuringBlock, before, 1e-4f);
 }
 
-TEST_CASE(engine_pump_preserves_slew_across_blocks) {
+TEST_CASE(engine_audio_block_exposes_monotonic_start_sample) {
+    synth::Engine<EngineTestApp> engine([] { return std::uint64_t{0}; });
+    engine.Initialize();
+    engine.Prepare(48000.0, 10);
+
+    TestBlockBuffers buffers(2, 10);
+    {
+        synth::AudioBlock block = buffers.Block(10);
+        engine.ProcessBlock(block, /*timestamp=*/0);
+    }
+    REQUIRE_TRUE(engine.Application().lastBlockStartSample == 0);
+
+    {
+        synth::AudioBlock block = buffers.Block(10);
+        engine.ProcessBlock(block, /*timestamp=*/1);
+    }
+    REQUIRE_TRUE(engine.Application().lastBlockStartSample == 10);
+}
+
+TEST_CASE(engine_process_block_does_not_compute_targets_at_host_block_boundary) {
+    EngineTestApp::processLiteAlpha = 1.0f;
+    synth::Engine<EngineTestApp> engine([] { return std::uint64_t{0}; });
+    engine.Initialize();
+    engine.Prepare(48000.0, 10);
+
+    engine.UiBus().Push(synth::MessageIn::ParamIncDec(/*timestamp=*/0, /*slotIx=*/0, /*position=*/0, /*delta=*/0.3f));
+
+    TestBlockBuffers buffers(2, 10);
+    {
+        synth::AudioBlock block = buffers.Block(10);
+        engine.ProcessBlock(block, /*timestamp=*/0);
+    }
+
+    REQUIRE_NEAR(engine.Application().lastProbeDuringBlock, 0.25f, 1e-4f);
+    engine.Application().context->parameterManager->ParameterById(engine.Application().probeId).ProcessSample(0);
+    REQUIRE_NEAR(engine.Application().context->parameterManager->ParameterById(engine.Application().probeId).CurrentCenter(),
+                 0.55f, 1e-4f);
+}
+
+TEST_CASE(engine_process_sample_preserves_slew_after_engine_message_pump) {
     EngineTestApp::processLiteAlpha = 0.1f;
     synth::Engine<EngineTestApp> engine([] { return std::uint64_t{1}; });
     engine.Initialize();
     engine.Prepare(48000.0, 256);
 
-    const float start = engine.Manager().ParameterById(engine.Application().probeId).GetRaw(0);
+    auto& probe = engine.Manager().ParameterById(engine.Application().probeId);
+    const float start = probe.CurrentCenter();
     engine.UiBus().Push(synth::MessageIn::ParamIncDec(/*timestamp=*/1, /*slotIx=*/0, /*position=*/0, /*delta=*/0.5f));
     const float target = std::clamp(start + 0.5f, 0.0f, 1.0f);
 
@@ -635,14 +679,15 @@ TEST_CASE(engine_pump_preserves_slew_across_blocks) {
 
     synth::AudioBlock firstBlock = buffers.Block(4);
     engine.ProcessBlock(firstBlock, /*timestamp=*/1);
-    const float afterFirst = engine.Application().lastProbeDuringBlock;
+    REQUIRE_NEAR(engine.Application().lastProbeDuringBlock, start, 1e-6f);
+    probe.ProcessSample(0);
+    const float afterFirst = probe.CurrentCenter();
     REQUIRE_TRUE(afterFirst != target);  // no snap: slewed value must not equal target yet
 
     float previous = afterFirst;
-    for (int i = 0; i < 20; ++i) {
-        synth::AudioBlock block = buffers.Block(4);
-        engine.ProcessBlock(block, /*timestamp=*/1);
-        const float current = engine.Application().lastProbeDuringBlock;
+    for (std::uint64_t sample = 1; sample < 64; ++sample) {
+        probe.ProcessSample(sample);
+        const float current = probe.CurrentCenter();
         REQUIRE_TRUE(current >= previous - 1e-6f);  // approaches monotonically
         previous = current;
     }
@@ -700,13 +745,8 @@ TEST_CASE(engine_pump_populates_ui_state_at_throttle_cadence) {
         engine.ProcessBlock(block, /*timestamp=*/5);
     }
 
-    const float target = std::clamp(0.25f + 0.4f, 0.0f, 1.0f);
-    float expectedDisplayCenter = initialDisplayCenter;
-    for (int sample = 0; sample < 6 * 4; ++sample) {
-        expectedDisplayCenter +=
-            synth::kDefaultUiDisplayCenterAlpha * (target - expectedDisplayCenter);
-    }
-    REQUIRE_NEAR(cell.values[0].load(), expectedDisplayCenter, 1e-4f);
+    REQUIRE_NEAR(engine.Manager().ParameterById(engine.Application().probeId).SceneCenter(0), 0.65f, 1e-4f);
+    REQUIRE_NEAR(cell.values[0].load(), initialDisplayCenter, 1e-4f);
 }
 
 TEST_CASE(engine_pump_stash_is_a_drain_barrier_with_retry_first_ordering) {
@@ -720,7 +760,7 @@ TEST_CASE(engine_pump_stash_is_a_drain_barrier_with_retry_first_ordering) {
     engine.Initialize();
     engine.Prepare(48000.0, 256);
 
-    const float initial = engine.Manager().ParameterById(engine.Application().probeId).GetRaw(0);
+    const float initial = engine.Manager().ParameterById(engine.Application().probeId).SceneCenter(0);
     REQUIRE_NEAR(initial, 0.25f, 1e-5f);
 
     TestBlockBuffers buffers(2, 4);
@@ -732,7 +772,7 @@ TEST_CASE(engine_pump_stash_is_a_drain_barrier_with_retry_first_ordering) {
         synth::AudioBlock block = buffers.Block(4);
         engine.ProcessBlock(block, /*timestamp=*/0);
     }
-    const float moved = engine.Manager().ParameterById(engine.Application().probeId).GetRaw(0);
+    const float moved = engine.Manager().ParameterById(engine.Application().probeId).SceneCenter(0);
     REQUIRE_NEAR(moved, initial + 0.3f, 1e-4f);
 
     // Enqueue a serialize request (SavePatchAs) via PatchManager. The next
@@ -772,7 +812,7 @@ TEST_CASE(engine_pump_stash_is_a_drain_barrier_with_retry_first_ordering) {
     // Barrier held: the revert was not applied (probe still at `moved`), and
     // the stash/grow-pending flag are still in force since MessageThreadTick
     // has not run yet.
-    REQUIRE_NEAR(engine.Manager().ParameterById(engine.Application().probeId).GetRaw(0), moved, 1e-4f);
+    REQUIRE_NEAR(engine.Manager().ParameterById(engine.Application().probeId).SceneCenter(0), moved, 1e-4f);
     REQUIRE_TRUE(engine.HasStashedPatchMessageForTest());
     REQUIRE_TRUE(engine.IsArenaGrowPendingForTest());
 
@@ -799,7 +839,7 @@ TEST_CASE(engine_pump_stash_is_a_drain_barrier_with_retry_first_ordering) {
     // The revert queued behind the stash has now applied too (drain
     // continued past the retried stash in the same block): the probe is
     // back at its default.
-    REQUIRE_NEAR(engine.Manager().ParameterById(engine.Application().probeId).GetRaw(0), initial, 1e-4f);
+    REQUIRE_NEAR(engine.Manager().ParameterById(engine.Application().probeId).SceneCenter(0), initial, 1e-4f);
 
     std::filesystem::remove_all(saveDir);
 }
@@ -1117,9 +1157,9 @@ namespace {
 
 // App variant exercising the optional HasProcessFrame<App> control-rate
 // hook (Engine::ProcessBlock step 4a): ProcessFrame() must run exactly once
-// per block, after ComputeAllTargets() has applied this block's messages
-// (so it observes post-message-manager state) and before the app's own
-// ProcessBlock(block) call.
+// per block, after this block's messages have been applied (so it observes
+// post-message-manager state) and before the app's own ProcessBlock(block)
+// call.
 struct ProcessFrameApp {
     static synth::RuntimeConfig Config() {
         synth::RuntimeConfig config;
@@ -1131,10 +1171,9 @@ struct ProcessFrameApp {
     synth::ParameterId probeId = 0;
     int processFrameCalls = 0;
     int processBlockCalls = 0;
-    // Set by ProcessFrame() each call: the probe's freshly-computed target
-    // value (post ComputeAllTargets(), i.e. reflects this block's applied
-    // messages) as observed from inside the hook.
-    float probeTargetDuringProcessFrame = -1.0f;
+    // Set by ProcessFrame() each call: the probe scene center after this
+    // block's messages have been applied, as observed from inside the hook.
+    float probeSceneCenterDuringProcessFrame = -1.0f;
     // Sequence-order flag: true only while ProcessFrame() is executing, and
     // observed (then cleared) by ProcessBlock() -- proves ProcessFrame() ran
     // BEFORE ProcessBlock() for the same block, not merely that both ran.
@@ -1159,13 +1198,13 @@ struct ProcessFrameApp {
         insideProcessFrame = true;
         // uiBus_.Process(timestamp) (message-manager application) runs
         // earlier in Engine::ProcessBlock's binding order than ProcessFrame()
-        // (uiBus_.Process -> midiBus_.Process -> ComputeAllTargets() ->
-        // ProcessFrame() -> app_.ProcessBlock()), so SceneCenter(0) (which
-        // MessageInBus::Apply's ParamIncDec handling writes directly, via
-        // Parameter::HandleIncDec) already reflects any message applied
-        // earlier in this same block -- this is the "post-message-manager
-        // state" the hook is documented to observe.
-        probeTargetDuringProcessFrame = context->parameterManager->ParameterById(probeId).SceneCenter(0);
+        // (uiBus_.Process -> midiBus_.Process -> ProcessFrame() ->
+        // app_.ProcessBlock()), so SceneCenter(0) (which MessageInBus::Apply's
+        // ParamIncDec handling writes directly, via Parameter::HandleIncDec)
+        // already reflects any message applied earlier in this same block --
+        // this is the "post-message-manager state" the hook is documented to
+        // observe.
+        probeSceneCenterDuringProcessFrame = context->parameterManager->ParameterById(probeId).SceneCenter(0);
         insideProcessFrame = false;
     }
     void ProcessBlock(synth::AudioBlock& block) {
@@ -1187,7 +1226,7 @@ struct ProcessFrameApp {
 
 }  // namespace
 
-TEST_CASE(engine_process_frame_hook_runs_once_per_block_after_targets_before_process_block) {
+TEST_CASE(engine_process_frame_hook_runs_once_per_block_after_messages_before_process_block) {
     REQUIRE_TRUE(synth::HasProcessFrame<ProcessFrameApp>);
     REQUIRE_TRUE(!synth::HasProcessFrame<EngineTestApp>);  // EngineTestApp opts out: concept must not false-positive
 
@@ -1195,9 +1234,8 @@ TEST_CASE(engine_process_frame_hook_runs_once_per_block_after_targets_before_pro
     engine.Initialize();
     engine.Prepare(48000.0, 256);
 
-    // Push a message so this block's ComputeAllTargets() has something new
-    // to apply, so ProcessFrame() observing the post-target value is a
-    // meaningful check (not just reading the untouched default).
+    // Push a message so ProcessFrame() observing the post-message scene
+    // center is a meaningful check (not just reading the untouched default).
     engine.UiBus().Push(synth::MessageIn::ParamIncDec(/*timestamp=*/0, /*slotIx=*/0, /*position=*/0, /*delta=*/0.3f));
 
     TestBlockBuffers buffers(2, 4);
@@ -1209,7 +1247,7 @@ TEST_CASE(engine_process_frame_hook_runs_once_per_block_after_targets_before_pro
     REQUIRE_TRUE(engine.Application().processFrameCalls == 1);
     REQUIRE_TRUE(engine.Application().processBlockCalls == 1);
     REQUIRE_TRUE(engine.Application().processFrameRanBeforeProcessBlockThisCall);
-    REQUIRE_NEAR(engine.Application().probeTargetDuringProcessFrame, 0.55f, 1e-4f);
+    REQUIRE_NEAR(engine.Application().probeSceneCenterDuringProcessFrame, 0.55f, 1e-4f);
 
     // A second block: call counts stay in lockstep (exactly once per block
     // each), reconfirming the once-per-block contract, not a one-shot fluke.
