@@ -455,7 +455,7 @@ TEST_CASE(miniapp_ui_snapshot_reflects_runtime_state_in_tree) {
 
 TEST_CASE(miniapp_rig_initializes_headlessly_and_runs) {
     synth_rig::SynthRig<synth_miniapp::MiniAppCore> rig(64, UseScratchRuntimeDataPaths("initializes_headlessly_and_runs"));
-    const float expectedDefaultAlpha = 0.1226942309f;
+    const float expectedDefaultAlpha = 0.1226942309f;  // one-pole 1 kHz cutoff at 48 kHz
     REQUIRE_NEAR(rig.Application().Group()->Config().processLiteAlpha, expectedDefaultAlpha, 0.000001f);
     REQUIRE_TRUE(rig.Application().Group()->Config().targetComputeIntervalSamples == 16);
     rig.RunBlocks(1);

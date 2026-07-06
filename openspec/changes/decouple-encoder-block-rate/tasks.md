@@ -16,9 +16,9 @@
 
 ## 3. Mini App Migration
 
-- [ ] 3.1 Update the mini app parameter helper to use the new group-level per-sample processing API with `block.startSample + frame`.
-- [ ] 3.2 Remove mini app reliance on runtime once-per-block target computation without changing module order, modulator update order, scope writing, or output writing.
-- [ ] 3.3 Update mini app system tests to assert the default target compute interval is 16 samples and that the mini app still initializes, routes pages/banks, produces finite nonzero output, and round-trips patches.
+- [x] 3.1 Update the mini app parameter helper to use the new group-level per-sample processing API with `block.startSample + frame`.
+- [x] 3.2 Remove mini app reliance on runtime once-per-block target computation without changing module order, modulator update order, scope writing, or output writing.
+- [x] 3.3 Update mini app system tests to assert the default target compute interval is 16 samples and that the mini app still initializes, routes pages/banks, produces finite nonzero output, and round-trips patches.
 
 ## 4. Verification
 
