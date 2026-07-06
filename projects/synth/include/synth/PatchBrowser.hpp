@@ -151,7 +151,7 @@ public:
         return candidate;
     }
 
-    std::optional<std::filesystem::path> ResolveSaveAsPath(const std::string& patchName) const {
+    std::optional<std::filesystem::path> ResolveSaveAsCandidate(const std::string& patchName) const {
         const std::string trimmed = Trim(patchName);
         if (trimmed.empty()) {
             return std::nullopt;
@@ -169,9 +169,29 @@ public:
         if (candidate == rootPath_ || !IsLexicallyUnderRoot(candidate)) {
             return std::nullopt;
         }
+        return candidate;
+    }
+
+    std::optional<std::filesystem::path> ResolveSaveAsPath(const std::string& patchName) const {
+        std::optional<std::filesystem::path> candidate = ResolveSaveAsCandidate(patchName);
+        if (!candidate.has_value()) {
+            return std::nullopt;
+        }
+        std::error_code ec;
+        if (std::filesystem::exists(*candidate, ec) && !IsExistingDirectoryUnderRoot(*candidate)) {
+            return std::nullopt;
+        }
+        return candidate;
+    }
+
+    std::optional<std::filesystem::path> ResolveNewSaveAsPath(const std::string& patchName) const {
+        std::optional<std::filesystem::path> candidate = ResolveSaveAsCandidate(patchName);
+        if (!candidate.has_value()) {
+            return std::nullopt;
+        }
 
         std::error_code ec;
-        if (std::filesystem::exists(candidate, ec) && !IsExistingDirectoryUnderRoot(candidate)) {
+        if (std::filesystem::exists(*candidate, ec) || ec) {
             return std::nullopt;
         }
         return candidate;

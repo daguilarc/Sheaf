@@ -145,6 +145,29 @@ TEST_CASE(patch_browser_rejects_root_escape_paths) {
     std::filesystem::remove_all(outside, ec);
 }
 
+TEST_CASE(patch_browser_resolves_only_new_save_as_targets) {
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() / "sheaf-patch-browser-contract-existing";
+    std::error_code ec;
+    std::filesystem::remove_all(root, ec);
+    std::filesystem::create_directories(root / "ExistingPatch", ec);
+    std::ofstream(root / "ExistingFile").put('x');
+
+    synth::PatchBrowser browser(root);
+    REQUIRE_TRUE(browser.ResolveSaveAsCandidate("FreshPatch").has_value());
+    REQUIRE_TRUE(browser.ResolveSaveAsCandidate("ExistingPatch").has_value());
+    REQUIRE_TRUE(browser.ResolveSaveAsCandidate("ExistingFile").has_value());
+    REQUIRE_TRUE(!browser.ResolveSaveAsCandidate("../Outside").has_value());
+    REQUIRE_TRUE(browser.ResolveSaveAsPath("FreshPatch").has_value());
+    REQUIRE_TRUE(browser.ResolveNewSaveAsPath("FreshPatch").has_value());
+    REQUIRE_TRUE(!browser.ResolveNewSaveAsPath("ExistingPatch").has_value());
+    REQUIRE_TRUE(!browser.ResolveNewSaveAsPath("ExistingFile").has_value());
+    REQUIRE_TRUE(!browser.ResolveNewSaveAsPath("../Outside").has_value());
+    REQUIRE_TRUE(!browser.ResolveNewSaveAsPath("nested/../../Outside").has_value());
+
+    std::filesystem::remove_all(root, ec);
+}
+
 TEST_CASE(runtime_page_back_save_policy_matches_configuration_pages) {
     REQUIRE_TRUE(!synth::RuntimePageBackSavesConfiguration(synth::RuntimePageKind::None));
     REQUIRE_TRUE(synth::RuntimePageBackSavesConfiguration(synth::RuntimePageKind::Audio));

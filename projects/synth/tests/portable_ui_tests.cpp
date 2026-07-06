@@ -5,7 +5,9 @@
 #include "synth/ControllersPageUI.hpp"
 #include "synth/MidiController.hpp"
 
+#include <algorithm>
 #include <filesystem>
+#include <fstream>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -34,6 +36,45 @@ const synth::ui::Node* FindNodeById(const synth::ui::NodeTree& tree, const char*
         }
     }
     return nullptr;
+}
+
+const synth::ui::Node* FindNodeById(const synth::ui::NodeTree& tree, const std::string& id)
+{
+    return FindNodeById(tree, id.c_str());
+}
+
+int CountRootNodes(const synth::ui::NodeTree& tree)
+{
+    int rootCount = 0;
+    for (const synth::ui::Node& node : tree.nodes)
+    {
+        if (node.kind == synth::ui::NodeKind::Root)
+        {
+            ++rootCount;
+        }
+    }
+    return rootCount;
+}
+
+bool NodeHasChild(const synth::ui::Node* parent, const synth::ui::NodeId& child)
+{
+    return parent != nullptr &&
+           std::find(parent->children.begin(), parent->children.end(), child) != parent->children.end();
+}
+
+void RequireBrowserIsRootlessDescendant(const synth::ui::NodeTree& tree)
+{
+    const synth::ui::Node* root = FindNodeById(tree, synth::runtime_ui::NodeIds::kFileRoot);
+    const synth::ui::Node* browser = FindNodeById(tree, synth::runtime_ui::NodeIds::kFileBrowser);
+    const synth::ui::Node* firstRow = FindNodeById(tree, synth::runtime_ui::NodeIds::FileBrowserEntry(0));
+    Require(CountRootNodes(tree) == 1, "file page tree has exactly one root");
+    Require(root != nullptr, "file page root exists");
+    Require(browser != nullptr, "browser section exists");
+    if (firstRow != nullptr)
+    {
+        Require(NodeHasChild(browser, firstRow->id), "browser row is a browser child");
+        Require(!NodeHasChild(root, firstRow->id), "browser row is not a direct file root child");
+    }
 }
 
 struct TestSurface final : synth::ui::Surface
@@ -169,6 +210,33 @@ int main()
             "save-as browser opens in file page tree");
     Require(FindNodeById(saveAsTree, synth::runtime_ui::NodeIds::kFileBrowserSaveName) != nullptr,
             "save-as browser exposes patch-name field");
+    RequireBrowserIsRootlessDescendant(saveAsTree);
+    Require(fileSurface.Snapshot().browserEntries.size() == 1, "save-as browser lists one patch directory");
+    Require(fileSurface.Snapshot().browserEntries[0].name == "PatchA", "save-as browser lists deterministic patch name");
+
+    fileSurface.DispatchAction(
+        synth::ui::Action::WithValue(synth::runtime_ui::Actions::kFileBrowserSaveName, "../Outside"));
+    fileSurface.DispatchAction(synth::ui::Action::Named(synth::runtime_ui::Actions::kFileBrowserConfirm));
+    Require(lastFileAction.name.empty(), "invalid save-as target does not dispatch");
+    Require(fileSurface.Snapshot().browserOpen, "invalid save-as target keeps browser open");
+
+    fileSurface.DispatchAction(
+        synth::ui::Action::WithValue(synth::runtime_ui::Actions::kFileBrowserSaveName, "PatchA"));
+    fileSurface.DispatchAction(synth::ui::Action::Named(synth::runtime_ui::Actions::kFileBrowserConfirm));
+    Require(lastFileAction.name.empty(), "existing save-as target does not dispatch");
+    Require(fileSurface.Snapshot().browserOpen, "existing save-as target keeps browser open");
+    Require(fileSurface.Snapshot().statusText.find("exists") != std::string::npos,
+            "existing save-as target reports exists status");
+
+    std::ofstream(patchRoot / "PatchFile").put('x');
+    fileSurface.DispatchAction(
+        synth::ui::Action::WithValue(synth::runtime_ui::Actions::kFileBrowserSaveName, "PatchFile"));
+    fileSurface.DispatchAction(synth::ui::Action::Named(synth::runtime_ui::Actions::kFileBrowserConfirm));
+    Require(lastFileAction.name.empty(), "existing save-as file target does not dispatch");
+    Require(fileSurface.Snapshot().browserOpen, "existing save-as file target keeps browser open");
+    Require(fileSurface.Snapshot().statusText.find("exists") != std::string::npos,
+            "existing save-as file target reports exists status");
+
     fileSurface.DispatchAction(
         synth::ui::Action::WithValue(synth::runtime_ui::Actions::kFileBrowserSaveName, "New Patch"));
     fileSurface.DispatchAction(synth::ui::Action::Named(synth::runtime_ui::Actions::kFileBrowserConfirm));
@@ -182,14 +250,119 @@ int main()
     synth::ui::NodeTree loadTree = fileSurface.BuildTree();
     Require(FindNodeById(loadTree, synth::runtime_ui::NodeIds::FileBrowserEntry(0).c_str()) != nullptr,
             "load browser lists patch directory");
+    RequireBrowserIsRootlessDescendant(loadTree);
     fileSurface.DispatchAction(
         synth::ui::Action::WithValue(synth::runtime_ui::Actions::kFileBrowserSelect, "0"));
+    Require(!fileSurface.Snapshot().browserEntries.empty() && fileSurface.Snapshot().browserEntries[0].selected,
+            "load browser exposes selected row state");
     fileSurface.DispatchAction(synth::ui::Action::Named(synth::runtime_ui::Actions::kFileBrowserConfirm));
     Require(lastFileAction.name == synth::runtime_ui::Actions::kFileConfirmedLoad,
             "load browser confirms with resolved path action");
     Require(lastFileAction.value == (canonicalPatchRoot / "PatchA").string(),
             "load path resolves selected patch directory");
+
+    lastFileAction = {};
+    fileSurface.DispatchAction(synth::ui::Action::Named(synth::runtime_ui::Actions::kFileLoad));
+    fileSurface.DispatchAction(synth::ui::Action::Named(synth::runtime_ui::Actions::kFileBrowserCancel));
+    Require(lastFileAction.name.empty(), "browser cancel closes without dispatch");
+    Require(!fileSurface.Snapshot().browserOpen, "browser cancel closes browser");
+
+    std::filesystem::create_directories(patchRoot / "Beta" / "Nested");
+    lastFileAction = {};
+    fileSurface.DispatchAction(synth::ui::Action::Named(synth::runtime_ui::Actions::kFileLoad));
+    Require(fileSurface.Snapshot().browserEntries.size() == 2, "load browser lists deterministic entries");
+    Require(fileSurface.Snapshot().browserEntries[0].name == "Beta", "load browser orders beta first");
+    Require(fileSurface.Snapshot().browserEntries[1].name == "PatchA", "load browser orders patch second");
+    const synth::ui::NodeTree flatLoadTree = fileSurface.BuildTree();
+    Require(FindNodeById(flatLoadTree, synth::runtime_ui::NodeIds::kFileBrowserParent) == nullptr,
+            "flat browser has no parent button");
+    Require(FindNodeById(flatLoadTree, synth::runtime_ui::NodeIds::FileBrowserEntryOpen(0)) == nullptr,
+            "flat browser has no open button");
+    const synth::ui::Node* firstLoadRow =
+        FindNodeById(flatLoadTree, synth::runtime_ui::NodeIds::FileBrowserEntry(0));
+    Require(firstLoadRow != nullptr && firstLoadRow->doubleClickAction.has_value(),
+            "load row exposes double-click action");
+    fileSurface.DispatchAction(*firstLoadRow->doubleClickAction);
+    Require(lastFileAction.name == synth::runtime_ui::Actions::kFileConfirmedLoad,
+            "load row double-click confirms selected patch");
+    Require(lastFileAction.value == (canonicalPatchRoot / "Beta").string(),
+            "load row double-click dispatches row patch directory");
+
+    lastFileAction = {};
+    fileSurface.DispatchAction(synth::ui::Action::Named(synth::runtime_ui::Actions::kFileSaveAs));
+    const synth::ui::NodeTree saveOverwriteTree = fileSurface.BuildTree();
+    const synth::ui::Node* firstSaveRow =
+        FindNodeById(saveOverwriteTree, synth::runtime_ui::NodeIds::FileBrowserEntry(0));
+    Require(firstSaveRow != nullptr && firstSaveRow->doubleClickAction.has_value(),
+            "save-as row exposes double-click overwrite action");
+    fileSurface.DispatchAction(*firstSaveRow->doubleClickAction);
+    Require(lastFileAction.name == synth::runtime_ui::Actions::kFileConfirmedOverwriteSaveAs,
+            "save-as row double-click confirms overwrite save-as");
+    Require(lastFileAction.value == (canonicalPatchRoot / "Beta").string(),
+            "save-as row double-click dispatches existing patch directory");
+
+    synth::runtime_ui::FilePageSurface versionsSurface;
+    versionsSurface.Snapshot().patchesRoot = patchRoot.string();
+    versionsSurface.Snapshot().hasCurrentPatch = true;
+    versionsSurface.Snapshot().patchNameText = "PatchA";
+    {
+        std::ofstream(patchRoot / "PatchA" / "20240101T010101Z-000.json").put('1');
+        std::ofstream(patchRoot / "PatchA" / "20240202T020202Z-000.json").put('2');
+    }
+    const synth::ui::NodeTree versionsTree = versionsSurface.BuildTree();
+    Require(FindNodeById(versionsTree, synth::runtime_ui::NodeIds::kFileVersions) != nullptr,
+            "current patch shows versions section");
+    const synth::ui::Node* newestVersion =
+        FindNodeById(versionsTree, synth::runtime_ui::NodeIds::FileVersionEntry(0));
+    Require(newestVersion != nullptr && newestVersion->text.find("20240202") != std::string::npos,
+            "versions list is newest first");
+    Require(newestVersion->doubleClickAction.has_value(), "version row exposes double-click load action");
+    synth::ui::Action versionAction;
+    versionsSurface.SetActionHandler([&versionAction](const synth::ui::Action& action) {
+        versionAction = action;
+    });
+    versionsSurface.DispatchAction(*newestVersion->doubleClickAction);
+    Require(versionAction.name == synth::runtime_ui::Actions::kFileConfirmedLoad,
+            "version double-click dispatches load");
+    Require(versionAction.value == (patchRoot / "PatchA" / "20240202T020202Z-000.json").string(),
+            "version double-click dispatches exact version file");
+
     std::filesystem::remove_all(patchRoot);
+
+    synth::runtime_ui::FilePageSurface emptyLoadSurface;
+    const std::filesystem::path emptyRoot =
+        std::filesystem::temp_directory_path() / "sheaf_portable_file_page_empty_load_test";
+    std::filesystem::remove_all(emptyRoot);
+    std::filesystem::create_directories(emptyRoot);
+    emptyLoadSurface.Snapshot().patchesRoot = emptyRoot.string();
+    synth::ui::Action emptyLoadAction;
+    emptyLoadSurface.SetActionHandler([&emptyLoadAction](const synth::ui::Action& action) {
+        emptyLoadAction = action;
+    });
+    emptyLoadSurface.DispatchAction(synth::ui::Action::Named(synth::runtime_ui::Actions::kFileLoad));
+    emptyLoadSurface.DispatchAction(synth::ui::Action::Named(synth::runtime_ui::Actions::kFileBrowserConfirm));
+    Require(emptyLoadAction.name.empty(), "missing load selection does not dispatch");
+    Require(emptyLoadSurface.Snapshot().browserOpen, "missing load selection keeps browser open");
+    std::filesystem::remove_all(emptyRoot);
+
+    synth::runtime_ui::FilePageSurface firstSaveSurface;
+    const std::filesystem::path firstSaveRoot =
+        std::filesystem::temp_directory_path() / "sheaf_portable_file_page_first_save_test";
+    std::filesystem::remove_all(firstSaveRoot);
+    std::filesystem::create_directories(firstSaveRoot);
+    firstSaveSurface.Snapshot().patchesRoot = firstSaveRoot.string();
+    synth::ui::Action firstSaveAction;
+    firstSaveSurface.SetActionHandler([&firstSaveAction](const synth::ui::Action& action) {
+        firstSaveAction = action;
+    });
+    firstSaveSurface.DispatchAction(synth::ui::Action::Named(synth::runtime_ui::Actions::kFileSave));
+    Require(firstSaveAction.name.empty(), "first save opens browser without dispatch");
+    Require(firstSaveSurface.Snapshot().browserOpen, "first save opens save-as browser");
+    Require(firstSaveSurface.Snapshot().browserKind == synth::runtime_ui::FileBrowserKind::SaveAs,
+            "first save uses save-as browser kind");
+    Require(FindNodeById(firstSaveSurface.BuildTree(), synth::runtime_ui::NodeIds::kFileBrowserSaveName) != nullptr,
+            "first save exposes save name field");
+    std::filesystem::remove_all(firstSaveRoot);
 
     synth::MidiInstrumentConfig controllerInstrument;
     synth::MidiControllerSlot wrldSlot;

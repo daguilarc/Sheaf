@@ -633,6 +633,17 @@ PatchCommandResult PatchManager::SavePatchAs(const std::filesystem::path& patchD
     return DispatchSerialize(PendingSave::Kind::SaveAs, patchDir);
 }
 
+PatchCommandResult PatchManager::SavePatchAsOverwrite(const std::filesystem::path& patchDir) {
+    if (pendingSave_.has_value()) {
+        return {.status = PatchCommandStatus::Busy, .requestId = pendingSave_->requestId, .path = pendingSave_->patchDir};
+    }
+    std::error_code ec;
+    if (!std::filesystem::is_directory(patchDir, ec) || ec) {
+        return {.status = ec ? PatchCommandStatus::IOError : PatchCommandStatus::NotFound, .path = patchDir};
+    }
+    return DispatchSerialize(PendingSave::Kind::SaveAsOverwrite, patchDir);
+}
+
 PatchCommandResult PatchManager::LoadPatch(const std::filesystem::path& path) {
     std::error_code ec;
     if (!std::filesystem::exists(path, ec)) {
@@ -697,7 +708,8 @@ PatchCommandResult PatchManager::ProcessResponses(std::chrono::system_clock::tim
 
         try {
             const std::filesystem::path versionFile = SavePatchVersionInDirectory(pending.patchDir, jsonText, now);
-            if (pending.kind == PendingSave::Kind::SaveAs) {
+            if (pending.kind == PendingSave::Kind::SaveAs ||
+                pending.kind == PendingSave::Kind::SaveAsOverwrite) {
                 currentPatchDirectory_ = pending.patchDir;
             }
             return {.status = PatchCommandStatus::Written, .requestId = pending.requestId, .path = versionFile};

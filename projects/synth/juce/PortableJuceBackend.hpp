@@ -11,6 +11,7 @@
 #include <cmath>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -275,6 +276,61 @@ private:
         bool previous_ = false;
     };
 
+    class SemanticPanelComponent final : public juce::Component
+    {
+    public:
+        void SetSemantics(std::string variant, bool selected)
+        {
+            variant_ = std::move(variant);
+            selected_ = selected;
+            repaint();
+        }
+
+        void paint(juce::Graphics& graphics) override
+        {
+            if (variant_.empty() || variant_ == "quiet" || variant_ == "panel")
+            {
+                return;
+            }
+
+            if (selected_)
+            {
+                graphics.setColour(juce::Colour(53, 80, 96));
+            }
+            else if (variant_ == "list-row")
+            {
+                graphics.setColour(juce::Colour(34, 39, 44));
+            }
+            else
+            {
+                graphics.setColour(juce::Colour(30, 34, 38));
+            }
+            graphics.fillRoundedRectangle(getLocalBounds().toFloat(), 5.0f);
+        }
+
+    private:
+        std::string variant_;
+        bool selected_ = false;
+    };
+
+    class SemanticTextButton final : public juce::TextButton
+    {
+    public:
+        using juce::TextButton::TextButton;
+
+        std::function<void()> onDoubleClick;
+
+        void mouseDoubleClick(const juce::MouseEvent& event) override
+        {
+            if (onDoubleClick)
+            {
+                onDoubleClick();
+                return;
+            }
+            juce::TextButton::mouseDoubleClick(event);
+        }
+    };
+
     const synth::ui::Node* RootNode() const
     {
         if (m_tree.nodes.empty())
@@ -313,6 +369,18 @@ private:
             return UiToJuceRect(node.bounds);
         }
         return {};
+    }
+
+    std::optional<std::size_t> FindNodeIndex(const synth::ui::NodeId& id) const
+    {
+        for (std::size_t ix = 0; ix < m_tree.nodes.size(); ++ix)
+        {
+            if (m_tree.nodes[ix].id == id)
+            {
+                return ix;
+            }
+        }
+        return std::nullopt;
     }
 
     juce::Rectangle<int> DefaultSizeForKind(synth::ui::NodeKind kind) const
@@ -377,6 +445,14 @@ private:
         }
     }
 
+    void DispatchCurrentNodeDoubleClickAction(const synth::ui::NodeId& id)
+    {
+        if (const synth::ui::Node* node = FindNode(id); node != nullptr && node->doubleClickAction.has_value())
+        {
+            DispatchBackendAction(*node->doubleClickAction);
+        }
+    }
+
     void RebuildControls()
     {
         m_drawNodeIndices.clear();
@@ -394,28 +470,13 @@ private:
         std::vector<PortableControlEntry> nextControls;
         nextControls.reserve(m_controls.size());
 
-        for (const synth::ui::NodeId& childId : root->children)
+        m_renderedNodeIds.clear();
+        CollectRenderableDescendants(*root);
+
+        for (const synth::ui::NodeId& nodeId : m_renderedNodeIds)
         {
-            const synth::ui::Node* node = FindNode(childId);
-            if (node == nullptr)
-            {
-                continue;
-            }
-
-            if (node->kind == synth::ui::NodeKind::Draw)
-            {
-                for (std::size_t ix = 0; ix < m_tree.nodes.size(); ++ix)
-                {
-                    if (m_tree.nodes[ix].id == node->id)
-                    {
-                        m_drawNodeIndices.push_back(ix);
-                        break;
-                    }
-                }
-                continue;
-            }
-
-            if (!IsInteractiveKind(node->kind))
+            const synth::ui::Node* node = FindNode(nodeId);
+            if (node == nullptr || !IsRenderableKind(node->kind))
             {
                 continue;
             }
@@ -436,6 +497,7 @@ private:
             entry.id = node->id;
             entry.kind = node->kind;
             entry.component = CreateControlForNode(*node);
+            UpdateControlFromNode(*entry.component, *node);
             nextControls.push_back(std::move(entry));
             newIndexById[node->id.value] = nextControls.size() - 1;
         }
@@ -482,10 +544,10 @@ private:
             return;
         }
 
-        for (const synth::ui::NodeId& childId : root->children)
+        for (const synth::ui::NodeId& nodeId : m_renderedNodeIds)
         {
-            const synth::ui::Node* node = FindNode(childId);
-            if (node == nullptr || node->kind == synth::ui::NodeKind::Draw || !IsInteractiveKind(node->kind))
+            const synth::ui::Node* node = FindNode(nodeId);
+            if (node == nullptr || !IsRenderableKind(node->kind))
             {
                 continue;
             }
@@ -515,10 +577,39 @@ private:
         }
     }
 
-    static bool IsInteractiveKind(synth::ui::NodeKind kind)
+    void CollectRenderableDescendants(const synth::ui::Node& parent)
+    {
+        for (const synth::ui::NodeId& childId : parent.children)
+        {
+            const synth::ui::Node* node = FindNode(childId);
+            if (node == nullptr)
+            {
+                continue;
+            }
+
+            if (node->kind == synth::ui::NodeKind::Draw)
+            {
+                if (const std::optional<std::size_t> nodeIndex = FindNodeIndex(node->id); nodeIndex.has_value())
+                {
+                    m_drawNodeIndices.push_back(*nodeIndex);
+                }
+            }
+            else if (IsRenderableKind(node->kind))
+            {
+                m_renderedNodeIds.push_back(node->id);
+            }
+
+            CollectRenderableDescendants(*node);
+        }
+    }
+
+    static bool IsRenderableKind(synth::ui::NodeKind kind)
     {
         switch (kind)
         {
+            case synth::ui::NodeKind::Row:
+            case synth::ui::NodeKind::Section:
+            case synth::ui::NodeKind::ScrollArea:
             case synth::ui::NodeKind::Label:
             case synth::ui::NodeKind::StatusText:
             case synth::ui::NodeKind::Button:
@@ -530,6 +621,48 @@ private:
             default:
                 return false;
         }
+    }
+
+    static juce::Colour TextColourForNode(const synth::ui::Node& node)
+    {
+        if (!node.enabled)
+        {
+            return juce::Colour(125, 132, 138);
+        }
+        if (node.variant == "danger")
+        {
+            return juce::Colour(255, 160, 148);
+        }
+        if (node.variant == "quiet" || node.variant == "muted")
+        {
+            return juce::Colour(178, 188, 196);
+        }
+        if (node.variant == "muted-title")
+        {
+            return juce::Colour(194, 202, 208);
+        }
+        return juce::Colours::white;
+    }
+
+    static juce::Colour ButtonColourForNode(const synth::ui::Node& node)
+    {
+        if (!node.enabled)
+        {
+            return juce::Colour(45, 49, 53);
+        }
+        if (node.selected)
+        {
+            return juce::Colour(54, 91, 110);
+        }
+        if (node.variant == "primary")
+        {
+            return juce::Colour(57, 106, 127);
+        }
+        if (node.variant == "list-row")
+        {
+            return juce::Colour(34, 39, 44);
+        }
+        return juce::Colour(42, 47, 52);
     }
 
     static bool ComboOptionsMatch(const juce::ComboBox& combo, const std::vector<synth::ui::ControlOption>& options)
@@ -568,18 +701,25 @@ private:
             case synth::ui::NodeKind::StatusText:
             {
                 auto label = std::make_unique<juce::Label>();
-                label->setColour(juce::Label::textColourId, juce::Colours::white);
                 label->setJustificationType(juce::Justification::centredLeft);
-                UpdateControlFromNode(*label, node);
                 return label;
+            }
+            case synth::ui::NodeKind::Row:
+            case synth::ui::NodeKind::Section:
+            case synth::ui::NodeKind::ScrollArea:
+            {
+                return std::make_unique<SemanticPanelComponent>();
             }
             case synth::ui::NodeKind::Button:
             {
-                auto button = std::make_unique<juce::TextButton>();
+                auto button = std::make_unique<SemanticTextButton>();
                 button->setButtonText(node.label);
                 const synth::ui::NodeId id = node.id;
                 button->onClick = [this, id] {
                     DispatchCurrentNodeAction(id);
+                };
+                button->onDoubleClick = [this, id] {
+                    DispatchCurrentNodeDoubleClickAction(id);
                 };
                 return button;
             }
@@ -684,19 +824,42 @@ private:
     void UpdateControlFromNode(juce::Component& component, const synth::ui::Node& node)
     {
         ScopedDispatchSuppression suppress(m_suppressActionDispatch);
+        component.setEnabled(node.enabled);
+        component.setAlpha(node.enabled ? 1.0f : 0.58f);
         switch (node.kind)
         {
+            case synth::ui::NodeKind::Row:
+            case synth::ui::NodeKind::Section:
+            case synth::ui::NodeKind::ScrollArea:
+            {
+                auto& panel = static_cast<SemanticPanelComponent&>(component);
+                panel.SetSemantics(node.variant, node.selected);
+                break;
+            }
             case synth::ui::NodeKind::Label:
             case synth::ui::NodeKind::StatusText:
             {
                 auto& label = static_cast<juce::Label&>(component);
                 label.setText(node.text.empty() ? node.label : node.text, juce::dontSendNotification);
+                label.setColour(juce::Label::textColourId, TextColourForNode(node));
+                if (node.variant == "title" || node.variant == "muted-title")
+                {
+                    label.setFont(juce::Font(juce::FontOptions(18.0f)));
+                }
+                else
+                {
+                    label.setFont(juce::Font(juce::FontOptions(13.0f)));
+                }
                 break;
             }
             case synth::ui::NodeKind::Button:
             {
                 auto& button = static_cast<juce::TextButton&>(component);
                 button.setButtonText(node.label);
+                button.setColour(juce::TextButton::buttonColourId, ButtonColourForNode(node));
+                button.setColour(juce::TextButton::buttonOnColourId, ButtonColourForNode(node).brighter(0.14f));
+                button.setColour(juce::TextButton::textColourOffId, TextColourForNode(node));
+                button.setColour(juce::TextButton::textColourOnId, juce::Colours::white);
                 break;
             }
             case synth::ui::NodeKind::Toggle:
@@ -736,6 +899,9 @@ private:
             case synth::ui::NodeKind::TextField:
             {
                 auto& editor = static_cast<juce::TextEditor&>(component);
+                editor.setColour(juce::TextEditor::backgroundColourId, juce::Colour(22, 25, 28));
+                editor.setColour(juce::TextEditor::textColourId, TextColourForNode(node));
+                editor.setColour(juce::TextEditor::outlineColourId, juce::Colour(72, 84, 94));
                 if (!editor.hasKeyboardFocus(true) && editor.getText() != juce::String(node.text))
                 {
                     editor.setText(node.text, juce::dontSendNotification);
@@ -752,6 +918,7 @@ private:
     std::vector<PortableControlEntry> m_controls;
     std::unordered_map<std::string, std::size_t> m_controlIndexById;
     std::vector<std::size_t> m_drawNodeIndices;
+    std::vector<synth::ui::NodeId> m_renderedNodeIds;
     bool m_suppressActionDispatch = false;
 };
 

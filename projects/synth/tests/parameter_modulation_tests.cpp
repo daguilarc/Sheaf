@@ -9752,6 +9752,20 @@ TEST_CASE(patch_manager_save_load_revert_lifecycle_uses_messages_and_current_dir
 
     REQUIRE_TRUE(patchManager.SavePatchAs(patchDir).status == synth::PatchCommandStatus::AlreadyExists);
 
+    cutoff.SceneCenter(0) = 0.81f;
+    synth::PatchCommandResult overwriteSaveAs = patchManager.SavePatchAsOverwrite(patchDir);
+    REQUIRE_TRUE(overwriteSaveAs.status == synth::PatchCommandStatus::Pending);
+    REQUIRE_TRUE(inputBus.Pop(message));
+    REQUIRE_TRUE(message.type == synth::PatchMessageIn::Type::SerializeToJSON);
+    REQUIRE_TRUE(message.requestId == overwriteSaveAs.requestId);
+    REQUIRE_TRUE(synth::ApplyPatchMessage(message, manager, instrument, defaultInstrument,
+                                          audioDevice, defaultAudioDevice, outputBus) == synth::PatchApplyStatus::Serialized);
+    written = patchManager.ProcessResponses(std::chrono::system_clock::from_time_t(1700000101));
+    REQUIRE_TRUE(written.status == synth::PatchCommandStatus::Written);
+    REQUIRE_TRUE(*patchManager.CurrentPatchDirectory() == patchDir);
+    REQUIRE_TRUE(std::filesystem::exists(written.path));
+    REQUIRE_TRUE(written.path.parent_path() == patchDir);
+
     const std::filesystem::path racedPatchDir = tempRoot / "Race Patch";
     saveAs = patchManager.SavePatchAs(racedPatchDir);
     REQUIRE_TRUE(saveAs.status == synth::PatchCommandStatus::Pending);
@@ -9759,7 +9773,7 @@ TEST_CASE(patch_manager_save_load_revert_lifecycle_uses_messages_and_current_dir
     REQUIRE_TRUE(synth::ApplyPatchMessage(message, manager, instrument, defaultInstrument,
                                           audioDevice, defaultAudioDevice, outputBus) == synth::PatchApplyStatus::Serialized);
     std::filesystem::create_directories(racedPatchDir);
-    written = patchManager.ProcessResponses(std::chrono::system_clock::from_time_t(1700000100));
+    written = patchManager.ProcessResponses(std::chrono::system_clock::from_time_t(1700000102));
     REQUIRE_TRUE(written.status == synth::PatchCommandStatus::AlreadyExists);
     REQUIRE_TRUE(*patchManager.CurrentPatchDirectory() == patchDir);
 
@@ -9769,7 +9783,7 @@ TEST_CASE(patch_manager_save_load_revert_lifecycle_uses_messages_and_current_dir
     REQUIRE_TRUE(inputBus.Pop(message));
     REQUIRE_TRUE(synth::ApplyPatchMessage(message, manager, instrument, defaultInstrument,
                                           audioDevice, defaultAudioDevice, outputBus) == synth::PatchApplyStatus::Serialized);
-    written = patchManager.ProcessResponses(std::chrono::system_clock::from_time_t(1700000100));
+    written = patchManager.ProcessResponses(std::chrono::system_clock::from_time_t(1700000102));
     REQUIRE_TRUE(written.status == synth::PatchCommandStatus::Written);
     REQUIRE_TRUE(written.path != firstVersion);
 

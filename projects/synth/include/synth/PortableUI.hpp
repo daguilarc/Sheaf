@@ -135,6 +135,8 @@ struct Node {
     std::string label;
     std::string text;
     bool checked = false;
+    bool selected = false;
+    bool enabled = true;
     float value = 0.0f;
     float minValue = 0.0f;
     float maxValue = 1.0f;
@@ -143,7 +145,9 @@ struct Node {
     float scrollContentHeight = 0.0f;
     std::vector<ControlOption> options;
     std::string selectedOption;
+    std::string variant;
     std::optional<Action> action;
+    std::optional<Action> doubleClickAction;
     std::vector<NodeId> children;
     std::vector<DrawCommand> drawCommands;
 };

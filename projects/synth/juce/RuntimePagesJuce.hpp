@@ -284,6 +284,14 @@ private:
             return;
         }
 
+        if (action.name == synth::runtime_ui::Actions::kFileConfirmedOverwriteSaveAs)
+        {
+            const std::filesystem::path path(action.value);
+            m_runtime.SavePatchAsOverwrite(path);
+            SetStatus("Save As requested: " + action.value);
+            return;
+        }
+
         if (action.name == synth::runtime_ui::Actions::kFileConfirmedLoad)
         {
             const std::filesystem::path path(action.value);

@@ -29,6 +29,16 @@ const synth::ui::Node* FindNodeById(const synth::ui::NodeTree& tree, const char*
     return nullptr;
 }
 
+void RequireInsideRoot(const synth_juce::PortableComponent& root,
+                       const juce::Component* component,
+                       const char* label)
+{
+    Require(component != nullptr, label);
+    const juce::Rectangle<int> boundsInRoot =
+        root.getLocalArea(component->getParentComponent(), component->getBounds());
+    Require(root.getLocalBounds().contains(boundsInRoot), label);
+}
+
 }  // namespace
 
 int main()
@@ -119,15 +129,50 @@ int main()
     Require(patchName != nullptr && patchName->text == "demo_patch", "file page state refresh updates patch name");
 
     fileSurface.DispatchAction(synth::ui::Action::Named(synth::runtime_ui::Actions::kFileLoad));
-    fileRenderer.setSize(640, 320);
-    fileSurface.SetContentBounds({0.0f, 0.0f, 640.0f, 320.0f});
+    fileSurface.SetContentBounds({0.0f, 0.0f, 760.0f, 420.0f});
+    fileRenderer.setSize(760, 420);
     fileRenderer.RefreshFromSurface();
+    Require(fileRenderer.FindByNodeId(synth::runtime_ui::NodeIds::kFileBrowser) != nullptr,
+            "browser viewer component renders");
     Require(fileRenderer.FindByNodeId(synth::runtime_ui::NodeIds::kFileBrowserTitle) != nullptr,
-            "file browser title renders");
-    Require(fileRenderer.FindByNodeId(synth::runtime_ui::NodeIds::kFileBrowserCurrentPath) != nullptr,
-            "file browser current path renders");
+            "browser title renders");
+    Require(fileRenderer.FindByNodeId(synth::runtime_ui::NodeIds::kFileBrowserCurrentPath) == nullptr,
+            "flat browser omits path control");
+    Require(fileRenderer.FindByNodeId(synth::runtime_ui::NodeIds::kFileBrowserParent) == nullptr,
+            "flat browser omits parent control");
+    Require(fileRenderer.FindByNodeId(synth::runtime_ui::NodeIds::FileBrowserEntryOpen(0)) == nullptr,
+            "flat browser omits per-row open control");
     Require(fileRenderer.FindByNodeId(synth::runtime_ui::NodeIds::FileBrowserEntry(0)) != nullptr,
-            "file browser entry renders");
+            "browser row renders");
+    const synth::ui::NodeTree openBrowserTree = fileSurface.BuildTree();
+    const std::string firstBrowserEntryId = synth::runtime_ui::NodeIds::FileBrowserEntry(0);
+    const synth::ui::Node* browserEntry =
+        FindNodeById(openBrowserTree, firstBrowserEntryId.c_str());
+    Require(browserEntry != nullptr &&
+                browserEntry->doubleClickAction.has_value() &&
+                browserEntry->doubleClickAction->name == synth::runtime_ui::Actions::kFileBrowserAccept,
+            "flat browser row double-click loads");
+    juce::Component* browser = fileRenderer.FindByNodeId(synth::runtime_ui::NodeIds::kFileBrowser);
+    juce::Component* row = fileRenderer.FindByNodeId(synth::runtime_ui::NodeIds::FileBrowserEntry(0));
+    Require(browser != nullptr && row != nullptr && browser->getBounds().contains(row->getBounds()),
+            "browser row is inside browser viewer bounds");
+
+    fileSurface.DispatchAction(synth::ui::Action::Named(synth::runtime_ui::Actions::kFileSaveAs));
+    fileSurface.SetContentBounds({0.0f, 0.0f, 360.0f, 360.0f});
+    fileRenderer.setSize(360, 360);
+    fileRenderer.RefreshFromSurface();
+    RequireInsideRoot(fileRenderer,
+                      fileRenderer.FindByNodeId(synth::runtime_ui::NodeIds::kFileBrowserSaveName),
+                      "narrow save-name field remains inside root bounds");
+    RequireInsideRoot(fileRenderer,
+                      fileRenderer.FindByNodeId(synth::runtime_ui::NodeIds::kFileStatus),
+                      "narrow status remains inside root bounds");
+    RequireInsideRoot(fileRenderer,
+                      fileRenderer.FindByNodeId(synth::runtime_ui::NodeIds::kFileBrowserConfirm),
+                      "narrow confirm remains inside root bounds");
+    RequireInsideRoot(fileRenderer,
+                      fileRenderer.FindByNodeId(synth::runtime_ui::NodeIds::kFileBrowserCancel),
+                      "narrow cancel remains inside root bounds");
     std::filesystem::remove_all(patchRoot);
 
     std::cout << "RuntimePagesJuceTests passed\n";

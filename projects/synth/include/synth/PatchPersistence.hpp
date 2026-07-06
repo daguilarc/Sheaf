@@ -230,6 +230,7 @@ public:
     PatchCommandResult NewPatch();
     PatchCommandResult SavePatch();
     PatchCommandResult SavePatchAs(const std::filesystem::path& patchDir);
+    PatchCommandResult SavePatchAsOverwrite(const std::filesystem::path& patchDir);
     PatchCommandResult LoadPatch(const std::filesystem::path& path);
     PatchCommandResult RevertPatch();
     PatchCommandResult ProcessResponses(std::chrono::system_clock::time_point now = std::chrono::system_clock::now());
@@ -239,6 +240,7 @@ private:
         enum class Kind {
             Save,
             SaveAs,
+            SaveAsOverwrite,
         };
         Kind kind = Kind::Save;
         std::uint64_t requestId = 0;

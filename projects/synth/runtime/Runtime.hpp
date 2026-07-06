@@ -464,6 +464,11 @@ public:
         LogPatchCommand("SavePatchAs", result);
     }
 
+    void SavePatchAsOverwrite(const std::filesystem::path& path) {
+        const synth::PatchCommandResult result = engine_.Patches().SavePatchAsOverwrite(path);
+        LogPatchCommand("SavePatchAsOverwrite", result);
+    }
+
     void SavePatchAs(const juce::File& file) {
         SavePatchAs(std::filesystem::path(file.getFullPathName().toStdString()));
     }
