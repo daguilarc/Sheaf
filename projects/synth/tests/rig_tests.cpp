@@ -59,10 +59,10 @@ void RequireNear(float actual, float expected, float tolerance, const char* expr
 
 // Minimal SynthApplicationCore used by the rig smoke tests: one group with
 // two parameters ("Level" default 0.25, "Tone" default 0.5) mapped to
-// physical encoders 0/1 through a single bank+slot. ProcessBlock calls
-// ProcessLite() on both parameters once per frame (so per-frame slewing is
-// exercised, matching the engine's own audio-thread contract), then writes
-// Level's post-slew value to every channel of every output frame.
+// physical encoders 0/1 through a single bank+slot. ProcessBlock processes
+// the group once per sample (so per-frame slewing is exercised, matching the
+// engine's own audio-thread contract), then writes Level's post-slew value to
+// every channel of every output frame.
 struct RigTestApp {
     // When set, ProcessBlock writes a NaN into the very first output frame
     // of the very next ProcessBlock call instead of the normal value, then
@@ -70,6 +70,7 @@ struct RigTestApp {
     static inline bool injectNanNextBlock = false;
 
     synth::AppContext* context = nullptr;
+    synth::ParameterGroup* group = nullptr;
     synth::ParameterId levelId = 0;
     synth::ParameterId toneId = 0;
 
@@ -85,13 +86,13 @@ struct RigTestApp {
 
     void Init(synth::AppContext* ctx) {
         context = ctx;
-        auto& group = ctx->parameterManager->CreateGroup({.numVoices = 1,
-                                                           .numModulators = 0,
-                                                           .numScenes = 2,
-                                                           .maxParameters = 8,
-                                                           .processLiteAlpha = 0.5f});
-        auto& level = ctx->parameterManager->CreateParameter(group, {.name = "Level", .defaultValue = 0.25f});
-        auto& tone = ctx->parameterManager->CreateParameter(group, {.name = "Tone", .defaultValue = 0.5f});
+        group = &ctx->parameterManager->CreateGroup({.numVoices = 1,
+                                                     .numModulators = 0,
+                                                     .numScenes = 2,
+                                                     .maxParameters = 8,
+                                                     .processLiteAlpha = 0.5f});
+        auto& level = ctx->parameterManager->CreateParameter(*group, {.name = "Level", .defaultValue = 0.25f});
+        auto& tone = ctx->parameterManager->CreateParameter(*group, {.name = "Tone", .defaultValue = 0.5f});
         levelId = level.Id();
         toneId = tone.Id();
 
@@ -106,8 +107,7 @@ struct RigTestApp {
 
     void ProcessBlock(synth::AudioBlock& block) {
         for (std::size_t frame = 0; frame < block.numFrames; ++frame) {
-            context->parameterManager->ParameterById(levelId).ProcessLite();
-            context->parameterManager->ParameterById(toneId).ProcessLite();
+            group->ProcessSample(block.startSample + frame);
         }
         const float levelValue = context->parameterManager->ParameterById(levelId).GetRaw(0);
         for (int channel = 0; channel < block.numOutputChannels; ++channel) {
@@ -145,11 +145,12 @@ struct FakeSink final : synth::IMidiOutputSink {
 // and 1), each with its own parameter ("Alpha"/"Beta") mapped to physical
 // encoder 0 of its own bank slot, so a controller's encoder turn can be
 // routed at MidiInstrumentConfig-build time to drive exactly one parameter.
-// ProcessBlock mirrors RigTestApp's minimal per-frame slew pump but has no
-// audio-output dependency on either parameter (these tests only care about
-// parameter/UI-state observation, not captured audio).
+// ProcessBlock mirrors RigTestApp's minimal per-sample group processing but
+// has no audio-output dependency on either parameter (these tests only care
+// about parameter/UI-state observation, not captured audio).
 struct TwoControllerRigApp {
     synth::AppContext* context = nullptr;
+    synth::ParameterGroup* group = nullptr;
     synth::ParameterId alphaId = 0;
     synth::ParameterId betaId = 0;
 
@@ -165,13 +166,13 @@ struct TwoControllerRigApp {
 
     void Init(synth::AppContext* ctx) {
         context = ctx;
-        auto& group = ctx->parameterManager->CreateGroup({.numVoices = 1,
-                                                           .numModulators = 0,
-                                                           .numScenes = 1,
-                                                           .maxParameters = 4,
-                                                           .processLiteAlpha = 1.0f});
-        auto& alpha = ctx->parameterManager->CreateParameter(group, {.name = "Alpha", .defaultValue = 0.25f});
-        auto& beta = ctx->parameterManager->CreateParameter(group, {.name = "Beta", .defaultValue = 0.25f});
+        group = &ctx->parameterManager->CreateGroup({.numVoices = 1,
+                                                     .numModulators = 0,
+                                                     .numScenes = 1,
+                                                     .maxParameters = 4,
+                                                     .processLiteAlpha = 1.0f});
+        auto& alpha = ctx->parameterManager->CreateParameter(*group, {.name = "Alpha", .defaultValue = 0.25f});
+        auto& beta = ctx->parameterManager->CreateParameter(*group, {.name = "Beta", .defaultValue = 0.25f});
         alphaId = alpha.Id();
         betaId = beta.Id();
 
@@ -190,8 +191,7 @@ struct TwoControllerRigApp {
 
     void ProcessBlock(synth::AudioBlock& block) {
         for (std::size_t frame = 0; frame < block.numFrames; ++frame) {
-            context->parameterManager->ParameterById(alphaId).ProcessLite();
-            context->parameterManager->ParameterById(betaId).ProcessLite();
+            group->ProcessSample(block.startSample + frame);
         }
         for (int channel = 0; channel < block.numOutputChannels; ++channel) {
             float* out = block.outputs[channel];

@@ -3,7 +3,7 @@
 // DemoModulation.hpp lives under apps/miniapp/ (JUCE-free); built with
 // -Iapps/miniapp (see the root Makefile's rule for this binary) so this
 // resolves without duplicating the header. The remaining helper is used by
-// MiniAppCore to slew module-owned parameters per sample.
+// MiniAppCore to process module-owned parameters per sample.
 #include "DemoModulation.hpp"
 
 #ifdef JUCE_MAJOR_VERSION
@@ -869,7 +869,7 @@ TEST_CASE(classic_svf_processes_independent_voice_outputs_and_publishes_filter_u
     REQUIRE_TRUE(std::isfinite(ui.filters[1].FrequencyResponse(1000.0f / 48000.0f)));
 }
 
-TEST_CASE(demo_modulation_process_lite_parameters_applies_direct_vco_modulation) {
+TEST_CASE(demo_modulation_process_parameters_applies_direct_vco_modulation) {
     constexpr float tolerance = 0.0001f;
 
     synth::ParameterManager manager;
@@ -889,16 +889,15 @@ TEST_CASE(demo_modulation_process_lite_parameters_applies_direct_vco_modulation)
     phase.Compute(manager.Scene());
     directDepth.Compute(manager.Scene());
 
-    std::vector<synth::Parameter*> parameters{&phase, &directDepth};
     group.GetModulators().Value(0, 0) = 0.0f;
     group.GetModulators().Value(1, 0) = 1.0f;
-    synth_miniapp::ProcessLiteParameters(parameters);
+    synth_miniapp::ProcessParameters(group, /*sampleIndex=*/0);
     REQUIRE_NEAR(phase.GetRaw(0), 0.0f, tolerance);
     REQUIRE_NEAR(phase.GetRaw(1), 1.0f, tolerance);
 
     group.GetModulators().Value(0, 0) = 1.0f;
     group.GetModulators().Value(1, 0) = 0.0f;
-    synth_miniapp::ProcessLiteParameters(parameters);
+    synth_miniapp::ProcessParameters(group, /*sampleIndex=*/1);
     REQUIRE_NEAR(phase.GetRaw(0), 1.0f, tolerance);
     REQUIRE_NEAR(phase.GetRaw(1), 0.0f, tolerance);
 }
