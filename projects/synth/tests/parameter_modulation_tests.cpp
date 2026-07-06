@@ -164,6 +164,7 @@ TEST_CASE(group_config_validation) {
         .maxParameters = 1,
     };
     REQUIRE_NEAR(defaultAlpha.processLiteAlpha, expectedDefaultAlpha, 0.000001f);
+    REQUIRE_TRUE(defaultAlpha.targetComputeIntervalSamples == 16);
 
     synth::ParameterGroupConfig valid{
         .numVoices = 4,
@@ -173,9 +174,17 @@ TEST_CASE(group_config_validation) {
         .processLiteAlpha = 0.5f,
     };
     REQUIRE_TRUE(valid.IsValid());
+    valid.targetComputeIntervalSamples = 32;
+    REQUIRE_TRUE(valid.IsValid());
     const synth::ParameterGroupConfig zeroVoices{.numVoices = 0, .numScenes = 1, .maxParameters = 1};
     const synth::ParameterGroupConfig zeroScenes{.numVoices = 1, .numScenes = 0, .maxParameters = 1};
     const synth::ParameterGroupConfig zeroMaxParameters{.numVoices = 1, .numScenes = 1, .maxParameters = 0};
+    const synth::ParameterGroupConfig zeroTargetInterval{
+        .numVoices = 1,
+        .numScenes = 1,
+        .maxParameters = 1,
+        .targetComputeIntervalSamples = 0,
+    };
     const synth::ParameterGroupConfig lowAlpha{
         .numVoices = 1,
         .numScenes = 1,
@@ -191,6 +200,7 @@ TEST_CASE(group_config_validation) {
     REQUIRE_TRUE(!zeroVoices.IsValid());
     REQUIRE_TRUE(!zeroScenes.IsValid());
     REQUIRE_TRUE(!zeroMaxParameters.IsValid());
+    REQUIRE_TRUE(!zeroTargetInterval.IsValid());
     REQUIRE_TRUE(!lowAlpha.IsValid());
     REQUIRE_TRUE(!highAlpha.IsValid());
 }
@@ -1116,6 +1126,59 @@ TEST_CASE(process_lite_samples_cached_knob_after_slew) {
     parameter.ProcessLite();
     REQUIRE_NEAR(parameter.GetRaw(0), 0.25f, 0.0001f);
     REQUIRE_NEAR(parameter.CachedKnobValue(0), 0.25f, 0.0001f);
+}
+
+TEST_CASE(parameter_process_sample_recomputes_on_configured_interval) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 0,
+        .numScenes = 1,
+        .maxParameters = 1,
+        .processLiteAlpha = 1.0f,
+        .targetComputeIntervalSamples = 16,
+    });
+    auto& parameter = manager.CreateParameter(group, {.name = "Probe", .defaultValue = 0.0f});
+
+    parameter.SceneCenter(0) = 0.25f;
+    parameter.ProcessSample(0);
+    REQUIRE_NEAR(parameter.TargetCenter(), 0.25f, 0.0001f);
+    REQUIRE_NEAR(parameter.CurrentCenter(), 0.25f, 0.0001f);
+
+    parameter.SceneCenter(0) = 0.75f;
+    parameter.ProcessSample(15);
+    REQUIRE_NEAR(parameter.TargetCenter(), 0.25f, 0.0001f);
+
+    parameter.ProcessSample(16);
+    REQUIRE_NEAR(parameter.TargetCenter(), 0.75f, 0.0001f);
+    REQUIRE_NEAR(parameter.CurrentCenter(), 0.75f, 0.0001f);
+}
+
+TEST_CASE(parameter_group_process_sample_covers_top_level_and_modulation_depth_targets) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 1,
+        .numScenes = 1,
+        .maxParameters = 4,
+        .processLiteAlpha = 1.0f,
+        .targetComputeIntervalSamples = 16,
+    });
+    auto& carrier = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.0f});
+    auto& sibling = manager.CreateParameter(group, {.name = "Sibling", .defaultValue = 0.1f});
+    synth::Parameter* depth = carrier.EnsureModulationDepth(0);
+    REQUIRE_TRUE(depth != nullptr);
+
+    carrier.SceneCenter(0) = 0.2f;
+    sibling.SceneCenter(0) = 0.4f;
+    depth->SceneCenter(0) = 0.5f;
+
+    group.ProcessSample(0);
+
+    REQUIRE_NEAR(carrier.TargetCenter(), 0.2f, 0.0001f);
+    REQUIRE_NEAR(sibling.TargetCenter(), 0.4f, 0.0001f);
+    REQUIRE_NEAR(depth->TargetCenter(), 0.5f, 0.0001f);
+    REQUIRE_NEAR(carrier.CurrentDepths(0)[0], 0.125f, 0.0001f);
 }
 
 TEST_CASE(mapping_helpers_use_cached_process_lite_knob_value) {

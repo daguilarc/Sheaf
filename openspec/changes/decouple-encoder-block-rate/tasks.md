@@ -1,10 +1,10 @@
 ## 1. Parameter Cadence
 
-- [ ] 1.1 Add parameter modulation tests for `ParameterGroupConfig::targetComputeIntervalSamples`: default is 16, zero is invalid, and configured positive values are preserved.
-- [ ] 1.2 Add parameter processing tests proving per-sample processing recomputes at sample index 0, skips target recompute before the configured interval, and recomputes from the owning manager scene at `sampleIndex % targetComputeIntervalSamples == 0`.
-- [ ] 1.3 Add group-level processing tests proving all top-level parameters in a group are processed for the same absolute sample index and modulation-depth child targets refresh through the recursive compute path.
-- [ ] 1.4 Implement `targetComputeIntervalSamples` on `ParameterGroupConfig`, validation, and default construction.
-- [ ] 1.5 Implement per-sample parameter and group processing helpers while leaving `ProcessLite()` as the slew-only helper.
+- [x] 1.1 Add parameter modulation tests for `ParameterGroupConfig::targetComputeIntervalSamples`: default is 16, zero is invalid, and configured positive values are preserved.
+- [x] 1.2 Add parameter processing tests proving per-sample processing recomputes at sample index 0, skips target recompute before the configured interval, and recomputes from the owning manager scene at `sampleIndex % targetComputeIntervalSamples == 0`.
+- [x] 1.3 Add group-level processing tests proving all top-level parameters in a group are processed for the same absolute sample index and modulation-depth child targets refresh through the recursive compute path.
+- [x] 1.4 Implement `targetComputeIntervalSamples` on `ParameterGroupConfig`, validation, and default construction.
+- [x] 1.5 Implement per-sample parameter and group processing helpers while leaving `ProcessLite()` as the slew-only helper.
 
 ## 2. Runtime Sample Position
 

@@ -244,9 +244,9 @@ float ClampToRange(float value, RangeKind range) {
 }
 
 bool ParameterGroupConfig::IsValid() const {
-    return numVoices > 0 && numScenes > 0 && maxParameters > 0 && processLiteAlpha >= 0.0f &&
-           processLiteAlpha <= 1.0f && uiDisplayCenterAlpha >= 0.0f && uiDisplayCenterAlpha <= 1.0f &&
-           uiDisplaySpreadAlpha >= 0.0f && uiDisplaySpreadAlpha <= 1.0f;
+    return numVoices > 0 && numScenes > 0 && maxParameters > 0 && targetComputeIntervalSamples > 0 &&
+           processLiteAlpha >= 0.0f && processLiteAlpha <= 1.0f && uiDisplayCenterAlpha >= 0.0f &&
+           uiDisplayCenterAlpha <= 1.0f && uiDisplaySpreadAlpha >= 0.0f && uiDisplaySpreadAlpha <= 1.0f;
 }
 
 ParameterStorageBatch::ParameterStorageBatch(const ParameterGroupConfig& config, std::size_t gestureCount,
@@ -569,6 +569,12 @@ void ParameterGroup::SetModulationSource(std::size_t modIx, std::span<float* con
 
 void ParameterGroup::UpdateModValues() {
     modulators_.UpdateModValues();
+}
+
+void ParameterGroup::ProcessSample(std::uint64_t sampleIndex) {
+    for (std::size_t localIx = 0; localIx < parameterCount_; ++localIx) {
+        ParameterByLocalIndex(localIx).ProcessSample(sampleIndex);
+    }
 }
 
 Parameter::Parameter(ParameterId id, ParameterGroup& group, ParameterConfig config, std::size_t slotIx)
@@ -980,6 +986,13 @@ void Parameter::ProcessLite() {
         uiDisplaySpreadEnergies_[voiceIx] +=
             group_.Config().uiDisplaySpreadAlpha * ((residual * residual) - uiDisplaySpreadEnergies_[voiceIx]);
     }
+}
+
+void Parameter::ProcessSample(std::uint64_t sampleIndex) {
+    if (sampleIndex % group_.Config().targetComputeIntervalSamples == 0) {
+        Compute(group_.Manager().Scene());
+    }
+    ProcessLite();
 }
 
 void Parameter::HandleIncDec(const SceneState& scene, float delta) {

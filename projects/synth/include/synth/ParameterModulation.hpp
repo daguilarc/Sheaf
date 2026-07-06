@@ -158,6 +158,7 @@ struct Page {
 };
 
 inline constexpr float kDefaultProcessLiteAlpha = 0.1226942309f;  // 1 kHz one-pole cutoff at 48 kHz
+inline constexpr std::size_t kDefaultTargetComputeIntervalSamples = 16;
 inline constexpr float kDefaultUiDisplayCenterAlpha = 0.0013089969f;  // about 10 Hz at 48 kHz
 inline constexpr float kDefaultUiDisplaySpreadAlpha = 0.0013089969f;  // about 10 Hz at 48 kHz
 
@@ -167,6 +168,7 @@ struct ParameterGroupConfig {
     std::size_t numScenes = 0;
     std::size_t maxParameters = 0;
     float processLiteAlpha = kDefaultProcessLiteAlpha;
+    std::size_t targetComputeIntervalSamples = kDefaultTargetComputeIntervalSamples;
     float uiDisplayCenterAlpha = kDefaultUiDisplayCenterAlpha;
     float uiDisplaySpreadAlpha = kDefaultUiDisplaySpreadAlpha;
     std::vector<Color> voiceIndicatorColors;
@@ -315,6 +317,7 @@ public:
     void SetGestureValue(std::size_t gestureIx, float value);
     float GestureValue(std::size_t gestureIx) const;
     void ClearGestureActiveFlagsForActiveSceneSelection(const SceneState& scene, std::size_t gestureIx);
+    void ProcessSample(std::uint64_t sampleIndex);
 
 private:
     friend class Parameter;
@@ -409,6 +412,7 @@ public:
     void Compute(const SceneState& scene);
     // Audio-rate helper: no graph traversal or allocation.
     void ProcessLite();
+    void ProcessSample(std::uint64_t sampleIndex);
     void HandleIncDec(const SceneState& scene, float delta);
     void RandomizeVisibleValue(const SceneState& scene, float normalized);
     void RevertToDefault(const SceneState& scene);
