@@ -740,13 +740,20 @@ TEST_CASE(engine_pump_populates_ui_state_at_throttle_cadence) {
     engine.ProcessBlock(block1, /*timestamp=*/5);
     REQUIRE_NEAR(cell.values[0].load(), publishedBeforeAnyBlock, 1e-6f);  // unchanged: cadence not hit
 
+    auto& probe = engine.Manager().ParameterById(engine.Application().probeId);
+    for (std::uint64_t sample = 0; sample < 8000; ++sample) {
+        probe.ProcessSample(sample);
+    }
+    const float advancedCurrentCenter = probe.CurrentCenter();
+    REQUIRE_TRUE(advancedCurrentCenter != initialDisplayCenter);
+
     for (int i = 0; i < 5; ++i) {  // blocks 2..6: the 6th block hits the cadence
         synth::AudioBlock block = buffers.Block(4);
         engine.ProcessBlock(block, /*timestamp=*/5);
     }
 
-    REQUIRE_NEAR(engine.Manager().ParameterById(engine.Application().probeId).SceneCenter(0), 0.65f, 1e-4f);
-    REQUIRE_NEAR(cell.values[0].load(), initialDisplayCenter, 1e-4f);
+    REQUIRE_NEAR(probe.SceneCenter(0), 0.65f, 1e-4f);
+    REQUIRE_NEAR(cell.values[0].load(), advancedCurrentCenter, 1e-4f);
 }
 
 TEST_CASE(engine_pump_stash_is_a_drain_barrier_with_retry_first_ordering) {

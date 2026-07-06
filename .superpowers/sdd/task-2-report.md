@@ -41,3 +41,14 @@ Result: all focused engine tests passed.
   - `SceneCenter` reflects those messages immediately.
   - `CurrentCenter`/UI display movement does not advance until sample-level processing runs.
 - OpenSpec tasks `2.1` through `2.5` were not marked complete because the brief says to do that after review approval.
+
+## Review fix
+
+- Updated `engine_pump_populates_ui_state_at_throttle_cadence` to call `ProcessSample(n)` before the throttle cadence publish, so the published UI cell is asserted against an advanced `CurrentCenter` instead of the initial display value.
+- Ran:
+
+```bash
+make -C projects/synth build/engine_tests && projects/synth/build/engine_tests
+```
+
+Result: all engine tests passed.
