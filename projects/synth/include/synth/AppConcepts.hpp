@@ -29,8 +29,7 @@ concept HasPrepareToPlay = requires(T app, double sampleRate, int blockSize) {
 
 // Optional once-per-block control-rate hook. When present, synth::Engine's
 // ProcessBlock invokes app.ProcessFrame() exactly once per block, after
-// ComputeAllTargets() (so it observes post-message-drain, freshly-computed
-// target state) and before the app's own ProcessBlock(block) call (so any
+// message drains and before the app's own ProcessBlock(block) call (so any
 // control-rate state ProcessFrame updates is visible there). Intended for
 // application-level work that only needs to run once per block rather than
 // once per sample, e.g. control-rate modulation bookkeeping.
