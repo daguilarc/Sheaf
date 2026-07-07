@@ -27,10 +27,10 @@
 
 ## 5. OLA and Spectral Model
 
-- [ ] 5.1 Add DSP tests for OLA overlap-add continuity, quad OLA writes, local-maximum atom extraction, atom tracking alphas, synthetic harmonic generation, residual cancellation, and residual envelope queries.
-- [ ] 5.2 Port OLA, DFT frame, and quad OLA helpers using Sheaf `BasicWavetable<Bits>`, `DiscreteFourierTransform<Bits>`, `NaryNumber`, and `DspMath<Bits>`.
-- [ ] 5.3 Port the spectral model with fixed-size atom storage, caller-supplied DSP-unit input arrays, local-maximum extraction, tracking/merge behavior, optional synthetic harmonics, and residual envelope processing.
-- [ ] 5.4 Remove Smart Grid `FrequencyDependentParameter`, `FixedAllocator`, `Array`, and `Slew` dependencies by either using Sheaf-native equivalents or adding small JUCE-free low-level helpers scoped to the DSP layer.
+- [x] 5.1 Add DSP tests for OLA overlap-add continuity, quad OLA writes, local-maximum atom extraction, atom tracking alphas, synthetic harmonic generation, residual cancellation, and residual envelope queries.
+- [x] 5.2 Port OLA, DFT frame, and quad OLA helpers using Sheaf `BasicWavetable<Bits>`, `DiscreteFourierTransform<Bits>`, `NaryNumber`, and `DspMath<Bits>`.
+- [x] 5.3 Port the spectral model with fixed-size atom storage, caller-supplied DSP-unit input arrays, local-maximum extraction, tracking/merge behavior, optional synthetic harmonics, and residual envelope processing.
+- [x] 5.4 Remove Smart Grid `FrequencyDependentParameter`, `FixedAllocator`, `Array`, and `Slew` dependencies by either using Sheaf-native equivalents or adding small JUCE-free low-level helpers scoped to the DSP layer.
 
 ## 6. OLA Resynthesizer
 
