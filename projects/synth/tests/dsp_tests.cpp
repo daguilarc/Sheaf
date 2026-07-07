@@ -1,8 +1,14 @@
+#include "synth/DspBuffers.hpp"
+#include "synth/DspDegrade.hpp"
 #include "synth/DspFilters.hpp"
 #include "synth/DspMath.hpp"
+#include "synth/DspMetering.hpp"
 #include "synth/DspNumbers.hpp"
+#include "synth/DspOla.hpp"
 #include "synth/DspOscillators.hpp"
+#include "synth/DspResynthesis.hpp"
 #include "synth/DspScope.hpp"
+#include "synth/DspSpectral.hpp"
 #include "synth/DspTransferFunction.hpp"
 #include "synth/DspWavetable.hpp"
 
@@ -11,6 +17,7 @@
 #endif
 
 #include <cmath>
+#include <complex>
 #include <exception>
 #include <iostream>
 #include <sstream>
@@ -51,7 +58,7 @@ struct Register {
         } \
     } while (false)
 
-void RequireNear(float actual, float expected, float tolerance, const char* expr) {
+void RequireNear(double actual, double expected, double tolerance, const char* expr) {
     if (std::fabs(actual - expected) > tolerance) {
         std::ostringstream oss;
         oss << expr << " expected " << expected << " got " << actual;
@@ -59,9 +66,36 @@ void RequireNear(float actual, float expected, float tolerance, const char* expr
     }
 }
 
+void RequireComplexNear(
+    std::complex<float> actual,
+    std::complex<float> expected,
+    float tolerance,
+    const char* expr) {
+    RequireNear(actual.real(), expected.real(), tolerance, expr);
+    RequireNear(actual.imag(), expected.imag(), tolerance, expr);
+}
+
+void RequireFinite(float actual, const char* expr) {
+    if (!std::isfinite(actual)) {
+        std::ostringstream oss;
+        oss << expr << " expected finite value got " << actual;
+        throw std::runtime_error(oss.str());
+    }
+}
+
 #define REQUIRE_NEAR(actual, expected, tolerance) RequireNear((actual), (expected), (tolerance), #actual)
 
 } // namespace
+
+TEST_CASE(smartgrid_dsp_public_headers_are_dependency_clean) {
+    #ifdef JUCE_MAJOR_VERSION
+    throw std::runtime_error("DSP headers must not include JUCE");
+    #endif
+    REQUIRE_TRUE(std::is_default_constructible_v<synth::BoundedAudioBuffer>);
+    REQUIRE_TRUE(std::is_default_constructible_v<synth::BitCrusher>);
+    REQUIRE_TRUE(std::is_default_constructible_v<synth::Meter>);
+    REQUIRE_TRUE(std::is_default_constructible_v<synth::Ola<12>>);
+}
 
 TEST_CASE(math_supports_multiple_precisions_and_periodic_trig) {
     REQUIRE_TRUE(synth::DspMath<8>::kTableSize == 256);
@@ -301,6 +335,54 @@ TEST_CASE(wavetables_wrap_adapt_morph_and_provide_defaults) {
 
     const auto defaultMorph = synth::MakeDefaultMorphingWavetable<8>();
     REQUIRE_TRUE(defaultMorph.Size() == 4);
+}
+
+TEST_CASE(discrete_fourier_transform_normalizes_aligned_cosine_bins) {
+    synth::BasicWavetable<10> table;
+    for (std::size_t i = 0; i < synth::DspMath<10>::kTableSize; ++i) {
+        const float phase = 8.0f * static_cast<float>(i) / static_cast<float>(synth::DspMath<10>::kTableSize);
+        table.Write(i, synth::DspMath<10>::Cos2Pi(phase));
+    }
+
+    synth::DiscreteFourierTransform<10> dft;
+    dft.Transform(table);
+
+    REQUIRE_TRUE(dft.kTableSize == synth::DspMath<10>::kTableSize);
+    REQUIRE_TRUE(dft.kMaxComponents == synth::DspMath<10>::kTableSize / 2);
+    RequireComplexNear(dft.m_components[8], {0.5f, 0.0f}, 0.002f, "dft.m_components[8]");
+    RequireNear(std::abs(dft.m_components[8]), 0.5f, 0.002f, "std::abs(dft.m_components[8])");
+}
+
+TEST_CASE(discrete_fourier_transform_inverse_reconstructs_aligned_cosine) {
+    synth::BasicWavetable<10> source;
+    for (std::size_t i = 0; i < synth::DspMath<10>::kTableSize; ++i) {
+        const float phase = 8.0f * static_cast<float>(i) / static_cast<float>(synth::DspMath<10>::kTableSize);
+        source.Write(i, synth::DspMath<10>::Cos2Pi(phase));
+    }
+
+    synth::DiscreteFourierTransform<10> dft;
+    dft.Init();
+    dft.Transform(source);
+
+    synth::BasicWavetable<10> reconstructed;
+    dft.InverseTransform(reconstructed, 8);
+
+    for (const std::size_t index : {std::size_t{0}, std::size_t{17}, std::size_t{128}, std::size_t{511}}) {
+        RequireNear(reconstructed.m_table[index], source.m_table[index], 0.002f, "reconstructed cosine sample");
+        RequireFinite(reconstructed.m_table[index], "reconstructed cosine sample");
+    }
+}
+
+TEST_CASE(discrete_fourier_transform_writes_windowed_partial_at_exact_bin) {
+    synth::DiscreteFourierTransform<10> dft;
+    dft.Init();
+    dft.WriteWindowedPartial(0.0f, 1.0f, 8.0f / static_cast<float>(synth::DspMath<10>::kTableSize));
+
+    RequireComplexNear(dft.m_components[8], {0.5f, 0.0f}, 0.002f, "dft.m_components[8]");
+
+    synth::BasicWavetable<10> table;
+    dft.InverseTransform(table, dft.kMaxComponents);
+    RequireFinite(table.m_table[0], "table.m_table[0]");
 }
 
 TEST_CASE(incrementer_accumulates_total_phase_and_reports_top) {
