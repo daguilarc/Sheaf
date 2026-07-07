@@ -19,11 +19,11 @@
 
 ## 4. Buffers, Resampling, Degradation, and Metering
 
-- [ ] 4.1 Add DSP tests for fractional buffer reads, section extrema, rolling min/max, same-rate resampling, downsample anti-alias behavior, bit-crusher pass-through/quantization, sample-rate reducer hold behavior, meter snapshots, and meter saturating-path gain reduction.
-- [ ] 4.2 Implement bounded audio buffer and rolling buffer utilities without WAV loading, directory-bank, async IO, `SampleTimer`, or UI snapshot dependencies.
-- [ ] 4.3 Implement offline or streaming upsampler/downsampler utilities with linear interpolation and Butterworth anti-alias filtering for downsampling.
-- [ ] 4.4 Port bit crusher and sample-rate reducer processors with Sheaf `Input` structs and finite-output behavior.
-- [ ] 4.5 Port mono and n-channel metering using Sheaf n-ary number types, the meter-owned saturating process path with gain-reduction tracking, and UI-readable atomic snapshots where needed.
+- [x] 4.1 Add DSP tests for fractional buffer reads, section extrema, rolling min/max, same-rate resampling, downsample anti-alias behavior, bit-crusher pass-through/quantization, sample-rate reducer hold behavior, meter snapshots, and meter saturating-path gain reduction.
+- [x] 4.2 Implement bounded audio buffer and rolling buffer utilities without WAV loading, directory-bank, async IO, `SampleTimer`, or UI snapshot dependencies.
+- [x] 4.3 Implement offline or streaming upsampler/downsampler utilities with linear interpolation and Butterworth anti-alias filtering for downsampling.
+- [x] 4.4 Port bit crusher and sample-rate reducer processors with Sheaf `Input` structs and finite-output behavior.
+- [x] 4.5 Port mono and n-channel metering using Sheaf n-ary number types, the meter-owned saturating process path with gain-reduction tracking, and UI-readable atomic snapshots where needed.
 
 ## 5. OLA and Spectral Model
 
