@@ -572,6 +572,147 @@ TEST_CASE(discrete_fourier_transform_writes_windowed_partial_at_exact_bin) {
     RequireFinite(table.m_table[0], "table.m_table[0]");
 }
 
+TEST_CASE(ola_overlap_add_outputs_finite_frame_and_clears_samples_after_read) {
+    synth::DiscreteFourierTransform<8> dft;
+    dft.Init();
+    dft.m_components[4] = {0.5f, 0.0f};
+
+    synth::Ola<8> ola;
+    ola.Write(dft);
+
+    REQUIRE_TRUE(synth::Ola<8>::kHopDenom == 4);
+    REQUIRE_TRUE(synth::Ola<8>::kTableSize == synth::DspMath<8>::kTableSize);
+    REQUIRE_TRUE(synth::Ola<8>::kHopSize == synth::Ola<8>::kTableSize / 4);
+    REQUIRE_NEAR(ola.Process(), 1.0f, 0.002f);
+    REQUIRE_NEAR(ola.Process(), synth::DspMath<8>::Cos2Pi(4.0f / static_cast<float>(synth::Ola<8>::kTableSize)), 0.002f);
+
+    for (std::size_t i = 2; i < synth::Ola<8>::kTableSize; ++i) {
+        RequireFinite(ola.Process(), "ola.Process()");
+    }
+    REQUIRE_NEAR(ola.Process(), 0.0f, 0.0001f);
+}
+
+TEST_CASE(nary_ola_preserves_channel_independence) {
+    synth::NaryDftFrame<8, 4> frame;
+    frame.Init();
+    frame.AddComponent(4, {0.5f, 0.0f}, synth::QuadFloat{{1.0f, 0.0f, 0.5f, -1.0f}});
+
+    synth::NaryOla<8, 4> ola;
+    ola.Write(frame);
+    const auto output = ola.Process();
+
+    REQUIRE_NEAR(output[0], 1.0f, 0.002f);
+    REQUIRE_NEAR(output[1], 0.0f, 0.002f);
+    REQUIRE_NEAR(output[2], 0.5f, 0.002f);
+    REQUIRE_NEAR(output[3], -1.0f, 0.002f);
+}
+
+TEST_CASE(spectral_model_extracts_local_maxima_as_tracked_atoms) {
+    synth::DiscreteFourierTransform<8> dft;
+    dft.Init();
+    dft.m_components[7] = {0.08f, 0.0f};
+    dft.m_components[8] = {0.5f, 0.0f};
+    dft.m_components[9] = {0.10f, 0.0f};
+    synth::BasicWavetable<8> table;
+    dft.InverseTransform(table, dft.kMaxComponents);
+
+    synth::SpectralModel<8> model;
+    synth::SpectralModel<8>::Input input;
+    input.m_gainThreshold = 0.05f;
+    input.m_numAtoms = 8;
+    input.m_slewUpAlpha = 1.0f;
+    input.m_slewDownAlpha = 1.0f;
+    input.m_omegaPortamentoAlpha = 1.0f;
+
+    model.ExtractAtoms(table, input);
+
+    REQUIRE_TRUE(!model.m_atoms.empty());
+    REQUIRE_NEAR(model.m_atoms.front().m_analysisOmega, 8.0f / static_cast<float>(synth::SpectralModel<8>::kTableSize), 0.001f);
+    REQUIRE_TRUE(model.m_atoms.front().m_analysisMagnitude > 0.45f);
+    REQUIRE_NEAR(model.m_atoms.front().m_synthesisMagnitude, model.m_atoms.front().m_analysisMagnitude, 0.0001f);
+}
+
+TEST_CASE(spectral_model_tracks_atoms_with_slew_and_portamento_alphas) {
+    synth::SpectralModel<8> model;
+    synth::SpectralModel<8>::Input input;
+    input.m_gainThreshold = 0.01f;
+    input.m_numAtoms = 4;
+    input.m_slewUpAlpha = 1.0f;
+    input.m_slewDownAlpha = 0.25f;
+    input.m_omegaPortamentoAlpha = 0.5f;
+    input.m_omegaDensity = 4.0f / static_cast<float>(synth::SpectralModel<8>::kTableSize);
+
+    auto makeFrame = [](std::size_t bin, float magnitude) {
+        synth::DiscreteFourierTransform<8> dft;
+        dft.Init();
+        dft.m_components[bin] = {magnitude, 0.0f};
+        synth::BasicWavetable<8> table;
+        dft.InverseTransform(table, dft.kMaxComponents);
+        return table;
+    };
+
+    model.ExtractAtoms(makeFrame(8, 0.5f), input);
+    REQUIRE_TRUE(!model.m_atoms.empty());
+    const float firstOmega = model.m_atoms.front().m_synthesisOmega;
+    model.ExtractAtoms(makeFrame(9, 0.25f), input);
+
+    REQUIRE_TRUE(model.m_atoms.size() == 1);
+    REQUIRE_NEAR(model.m_atoms.front().m_synthesisMagnitude, 0.4375f, 0.02f);
+    REQUIRE_TRUE(model.m_atoms.front().m_synthesisOmega > firstOmega);
+    REQUIRE_TRUE(model.m_atoms.front().m_synthesisOmega < 9.0f / static_cast<float>(synth::SpectralModel<8>::kTableSize));
+}
+
+TEST_CASE(spectral_model_adds_synthetic_harmonics_when_enabled) {
+    synth::DiscreteFourierTransform<8> dft;
+    dft.Init();
+    dft.m_components[6] = {0.5f, 0.0f};
+    synth::BasicWavetable<8> table;
+    dft.InverseTransform(table, dft.kMaxComponents);
+
+    synth::SpectralModel<8> model;
+    synth::SpectralModel<8>::Input input;
+    input.m_gainThreshold = 0.01f;
+    input.m_numAtoms = 8;
+    input.m_slewUpAlpha = 1.0f;
+    input.m_useSyntheticHarmonics = true;
+    input.m_syntheticHarmonics[0] = 0.5f;
+
+    model.ExtractAtoms(table, input);
+
+    bool sawSynthetic = false;
+    for (const auto& atom : model.m_atoms) {
+        if (atom.m_isSynthetic) {
+            sawSynthetic = true;
+            REQUIRE_NEAR(atom.m_analysisOmega, 12.0f / static_cast<float>(synth::SpectralModel<8>::kTableSize), 0.001f);
+            REQUIRE_TRUE(atom.m_analysisMagnitude > 0.20f);
+        }
+    }
+    REQUIRE_TRUE(sawSynthetic);
+}
+
+TEST_CASE(spectral_model_extracts_residual_after_canceling_detected_atoms) {
+    synth::DiscreteFourierTransform<8> dft;
+    dft.Init();
+    dft.m_components[8] = {0.5f, 0.0f};
+    dft.m_components[20] = {0.125f, 0.0f};
+    synth::BasicWavetable<8> table;
+    dft.InverseTransform(table, dft.kMaxComponents);
+
+    synth::SpectralModel<8> model;
+    synth::SpectralModel<8>::Input input;
+    input.m_gainThreshold = 0.25f;
+    input.m_numAtoms = 4;
+    input.m_slewUpAlpha = 1.0f;
+    input.m_slewDownAlpha = 1.0f;
+
+    model.ExtractAtomsAndResidual(table, input);
+
+    REQUIRE_TRUE(!model.m_atoms.empty());
+    REQUIRE_TRUE(model.m_residualModel.GetEnvelope(8) < 0.05f);
+    REQUIRE_TRUE(model.m_residualModel.GetEnvelope(20) > 0.10f);
+    RequireFinite(model.m_residualModel.GetEnvelope(20), "residual envelope");
+}
+
 TEST_CASE(incrementer_accumulates_total_phase_and_reports_top) {
     synth::Incrementer incrementer;
     incrementer.Process({.freq = 0.75});
