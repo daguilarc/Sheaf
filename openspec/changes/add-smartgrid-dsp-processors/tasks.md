@@ -1,14 +1,14 @@
 ## 1. Source Audit and Port Skeleton
 
 - [ ] 1.1 Inventory Smart Grid source headers and tests for `ButterworthFilter`, `LinkwitzRileyCrossover`, `BitCrush`, `BufferResampler`, `Metering`, `AudioBuffer`, `RollingBuffer`, `OLA`, `Resynthesis`, and `SpectralModel`, noting direct dependencies to keep, adapt, or exclude.
-- [ ] 1.2 Create or extend Sheaf DSP headers for filters, buffers, meters, OLA/resynthesis, and spectral model while keeping public includes JUCE-free.
-- [ ] 1.3 Add a compile/include dependency test that includes every new public DSP header and fails on accidental product dependencies such as `TheoryOfTime`, `FrequencyDependentParameter`, `ExpParam`, `SampleTimer`, JUCE symbols, `GrainManager`, `PartialMachine`, `PartialMachine.hpp`, or Smart Grid encoder/module wrappers.
+- [x] 1.2 Create or extend Sheaf DSP headers for filters, buffers, meters, OLA/resynthesis, and spectral model while keeping public includes JUCE-free.
+- [x] 1.3 Add a compile/include dependency test that includes every new public DSP header and fails on accidental product dependencies such as `TheoryOfTime`, `FrequencyDependentParameter`, `ExpParam`, `SampleTimer`, JUCE symbols, `GrainManager`, `PartialMachine`, `PartialMachine.hpp`, or Smart Grid encoder/module wrappers.
 
 ## 2. Math and Fourier Foundations
 
-- [ ] 2.1 Add DSP tests for FFT normalization, inverse reconstruction, finite partial writes, and templated precision usage.
-- [ ] 2.2 Reconcile `DiscreteFourierTransform<Bits>` and related helpers with Smart Grid expectations, adding missing APIs needed by OLA, spectral model, and resynthesizer.
-- [ ] 2.3 Audit templated math paths so code parameterized on `Bits` uses `DspMath<Bits>` rather than hard-coded aliases, then run focused math/Fourier tests.
+- [x] 2.1 Add DSP tests for FFT normalization, inverse reconstruction, finite partial writes, and templated precision usage.
+- [x] 2.2 Reconcile `DiscreteFourierTransform<Bits>` and related helpers with Smart Grid expectations, adding missing APIs needed by OLA, spectral model, and resynthesizer.
+- [x] 2.3 Audit templated math paths so code parameterized on `Bits` uses `DspMath<Bits>` rather than hard-coded aliases, then run focused math/Fourier tests.
 
 ## 3. Filters and Transfer Functions
 
