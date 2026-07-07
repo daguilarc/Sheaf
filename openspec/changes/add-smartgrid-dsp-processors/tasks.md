@@ -12,10 +12,10 @@
 
 ## 3. Filters and Transfer Functions
 
-- [ ] 3.1 Add DSP tests for biquad reset/history behavior, Butterworth attenuation, Linkwitz-Riley low/high outputs, finite transfer-function responses, and crossover reconstruction expectations.
-- [ ] 3.2 Port the reusable biquad section to Sheaf style with owned state, coefficient setup, reset, process, and static transfer-function helpers.
-- [ ] 3.3 Port the 8th-order Butterworth low-pass processor using four cascaded biquads and cutoff input in cycles per sample.
-- [ ] 3.4 Port the 4th-order Linkwitz-Riley crossover using low/high biquad cascades and low/high response helpers.
+- [x] 3.1 Add DSP tests for biquad reset/history behavior, Butterworth attenuation, Linkwitz-Riley low/high outputs, finite transfer-function responses, and crossover reconstruction expectations.
+- [x] 3.2 Port the reusable biquad section to Sheaf style with owned state, coefficient setup, reset, process, and static transfer-function helpers.
+- [x] 3.3 Port the 8th-order Butterworth low-pass processor using four cascaded biquads and cutoff input in cycles per sample.
+- [x] 3.4 Port the 4th-order Linkwitz-Riley crossover using low/high biquad cascades and low/high response helpers.
 
 ## 4. Buffers, Resampling, Degradation, and Metering
 
