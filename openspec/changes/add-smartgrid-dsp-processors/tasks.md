@@ -1,6 +1,6 @@
 ## 1. Source Audit and Port Skeleton
 
-- [ ] 1.1 Inventory Smart Grid source headers and tests for `ButterworthFilter`, `LinkwitzRileyCrossover`, `BitCrush`, `BufferResampler`, `Metering`, `AudioBuffer`, `RollingBuffer`, `OLA`, `Resynthesis`, and `SpectralModel`, noting direct dependencies to keep, adapt, or exclude.
+- [x] 1.1 Inventory Smart Grid source headers and tests for `ButterworthFilter`, `LinkwitzRileyCrossover`, `BitCrush`, `BufferResampler`, `Metering`, `AudioBuffer`, `RollingBuffer`, `OLA`, `Resynthesis`, and `SpectralModel`, noting direct dependencies to keep, adapt, or exclude.
 - [x] 1.2 Create or extend Sheaf DSP headers for filters, buffers, meters, OLA/resynthesis, and spectral model while keeping public includes JUCE-free.
 - [x] 1.3 Add a compile/include dependency test that includes every new public DSP header and fails on accidental product dependencies such as `TheoryOfTime`, `FrequencyDependentParameter`, `ExpParam`, `SampleTimer`, JUCE symbols, `GrainManager`, `PartialMachine`, `PartialMachine.hpp`, or Smart Grid encoder/module wrappers.
 
@@ -41,7 +41,7 @@
 
 ## 7. Verification and Cleanup
 
-- [ ] 7.1 Run focused synth DSP tests after each processor group and fix any numeric or dependency regressions.
-- [ ] 7.2 Run `make -C projects/synth test` and confirm the full synth test suite passes.
-- [ ] 7.3 Run a repository search over new DSP files for forbidden dependencies, `PartialMachine` symbols, and hard-coded templated math aliases, then remove any accidental imports.
-- [ ] 7.4 Review the OpenSpec delta against the implementation and update proposal, design, specs, or tasks if implementation reveals a contract mismatch.
+- [x] 7.1 Run focused synth DSP tests after each processor group and fix any numeric or dependency regressions.
+- [x] 7.2 Run `make -C projects/synth test` and confirm the full synth test suite passes.
+- [x] 7.3 Run a repository search over new DSP files for forbidden dependencies, `PartialMachine` symbols, and hard-coded templated math aliases, then remove any accidental imports.
+- [x] 7.4 Review the OpenSpec delta against the implementation and update proposal, design, specs, or tasks if implementation reveals a contract mismatch.
