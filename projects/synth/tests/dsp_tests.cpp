@@ -607,6 +607,141 @@ TEST_CASE(nary_ola_preserves_channel_independence) {
     REQUIRE_NEAR(output[3], -1.0f, 0.002f);
 }
 
+TEST_CASE(ola_resynthesizer_primes_finite_analysis_state) {
+    synth::BasicWavetable<8> previousFrame;
+    previousFrame.Write(0, 1.0f);
+    previousFrame.Write(1, 0.5f);
+
+    synth::OlaResynthesizer<8> resynth;
+    resynth.PrimeAnalysis(previousFrame);
+
+    REQUIRE_TRUE(synth::OlaResynthesizer<8>::kHopDenom == 4);
+    REQUIRE_TRUE(synth::OlaResynthesizer<8>::kHopSize == synth::Ola<8>::kHopSize);
+    for (std::size_t bin = 1; bin < synth::OlaResynthesizer<8>::kMaxComponents; ++bin) {
+        RequireFinite(resynth.m_prevAnalysisMagnitudes[bin], "resynth.m_prevAnalysisMagnitudes[bin]");
+        RequireFinite(resynth.m_prevAnalysisPhases[bin], "resynth.m_prevAnalysisPhases[bin]");
+    }
+}
+
+TEST_CASE(ola_resynthesizer_process_hop_writes_ola_frame) {
+    auto makeFrame = [](std::size_t bin) {
+        synth::DiscreteFourierTransform<8> dft;
+        dft.Init();
+        dft.m_components[bin] = {0.5f, 0.0f};
+        synth::BasicWavetable<8> frame;
+        dft.InverseTransform(frame, dft.kMaxComponents);
+        return frame;
+    };
+
+    synth::OlaResynthesizer<8> resynth;
+    synth::OlaResynthesizer<8>::Input input;
+    input.m_slewUpAlpha = 1.0f;
+    input.m_slewDownAlpha = 1.0f;
+    resynth.PrimeAnalysis(makeFrame(8));
+    resynth.ProcessHop(makeFrame(8), input);
+
+    REQUIRE_TRUE(std::abs(resynth.Process()) > 0.1f);
+    for (std::size_t i = 1; i < synth::OlaResynthesizer<8>::kTableSize; ++i) {
+        RequireFinite(resynth.Process(), "resynth.Process()");
+    }
+}
+
+TEST_CASE(ola_resynthesizer_uses_pitch_ratio_directly) {
+    auto makeFrame = [] {
+        synth::DiscreteFourierTransform<8> dft;
+        dft.Init();
+        dft.m_components[8] = {0.5f, 0.0f};
+        synth::BasicWavetable<8> frame;
+        dft.InverseTransform(frame, dft.kMaxComponents);
+        return frame;
+    };
+
+    synth::OlaResynthesizer<8> resynth;
+    synth::OlaResynthesizer<8>::Input input;
+    input.m_pitchRatio = 2.0f;
+    input.m_slewUpAlpha = 1.0f;
+    input.m_slewDownAlpha = 1.0f;
+    resynth.PrimeAnalysis(makeFrame());
+    resynth.ProcessHop(makeFrame(), input);
+
+    REQUIRE_TRUE(std::abs(resynth.m_lastSynthesisDft.m_components[16]) > 0.4f);
+    REQUIRE_TRUE(std::abs(resynth.m_lastSynthesisDft.m_components[8]) < 0.05f);
+}
+
+TEST_CASE(ola_resynthesizer_unison_outputs_remain_finite_with_gain) {
+    synth::BasicWavetable<8> frame = synth::BasicWavetable<8>::Sine();
+
+    synth::OlaResynthesizer<8> resynth;
+    synth::OlaResynthesizer<8>::Input input;
+    input.m_unisonGain = 0.75f;
+    input.m_unisonDetune = 1.01f;
+    input.m_slewUpAlpha = 1.0f;
+    input.m_slewDownAlpha = 1.0f;
+    resynth.PrimeAnalysis(frame);
+    resynth.ProcessHop(frame, input);
+
+    for (std::size_t i = 0; i < synth::OlaResynthesizer<8>::kHopSize * 2; ++i) {
+        RequireFinite(resynth.Process(), "resynth.Process()");
+    }
+}
+
+TEST_CASE(ola_resynthesizer_slews_magnitude_motion) {
+    auto makeFrame = [](float magnitude) {
+        synth::DiscreteFourierTransform<8> dft;
+        dft.Init();
+        dft.m_components[8] = {magnitude, 0.0f};
+        synth::BasicWavetable<8> frame;
+        dft.InverseTransform(frame, dft.kMaxComponents);
+        return frame;
+    };
+
+    synth::OlaResynthesizer<8> resynth;
+    synth::OlaResynthesizer<8>::Input input;
+    input.m_slewUpAlpha = 0.25f;
+    input.m_slewDownAlpha = 0.5f;
+
+    resynth.PrimeAnalysis(makeFrame(0.0f));
+    resynth.ProcessHop(makeFrame(0.5f), input);
+    REQUIRE_NEAR(resynth.m_synthesisMagnitudes[8], 0.125f, 0.01f);
+
+    resynth.ProcessHop(makeFrame(0.0f), input);
+    REQUIRE_NEAR(resynth.m_synthesisMagnitudes[8], 0.0625f, 0.01f);
+}
+
+TEST_CASE(ola_resynthesizer_spectral_distortion_outputs_finite_frame) {
+    synth::DiscreteFourierTransform<8> dft;
+    dft.Init();
+    dft.m_components[8] = {0.5f, 0.0f};
+    dft.m_components[16] = {0.25f, 0.0f};
+    synth::BasicWavetable<8> frame;
+    dft.InverseTransform(frame, dft.kMaxComponents);
+
+    synth::OlaResynthesizer<8> resynth;
+    synth::OlaResynthesizer<8>::Input input;
+    input.m_slewUpAlpha = 1.0f;
+    input.m_slewDownAlpha = 1.0f;
+    input.m_useSpectralDistortion = true;
+    input.m_spectralThreshold = 0.01f;
+    input.m_spectralQuiet = 0.5f;
+    input.m_spectralLoud = 0.5f;
+    input.m_spectralShiftAmount = 0.5f;
+    input.m_spectralShiftPitchRatio = 1.5f;
+    resynth.PrimeAnalysis(frame);
+    resynth.ProcessHop(frame, input);
+
+    for (std::size_t i = 0; i < synth::OlaResynthesizer<8>::kTableSize; ++i) {
+        RequireFinite(resynth.Process(), "resynth.Process()");
+    }
+}
+
+TEST_CASE(ola_resynthesizer_public_api_has_no_grain_dependencies) {
+    using Resynth = synth::OlaResynthesizer<8>;
+    static_assert(std::is_same_v<decltype(&Resynth::PrimeAnalysis), void (Resynth::*)(const synth::BasicWavetable<8>&)>);
+    static_assert(std::is_same_v<decltype(&Resynth::ProcessHop), void (Resynth::*)(const synth::BasicWavetable<8>&, const Resynth::Input&)>);
+    static_assert(std::is_same_v<decltype(&Resynth::Process), float (Resynth::*)()>);
+    REQUIRE_TRUE(std::is_default_constructible_v<Resynth::Input>);
+}
+
 TEST_CASE(spectral_model_extracts_local_maxima_as_tracked_atoms) {
     synth::DiscreteFourierTransform<8> dft;
     dft.Init();
