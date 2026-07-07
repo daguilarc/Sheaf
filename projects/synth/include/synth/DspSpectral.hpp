@@ -156,17 +156,6 @@ struct SpectralModel {
         };
 
         std::array<float, kNumBuckets> m_magnitudes{};
-        std::array<float, kNumBuckets> m_frequencies{};
-        std::array<float, kNumBuckets> m_logFrequencies{};
-
-        ResidualModel() {
-            for (std::size_t i = 0; i < kNumBuckets; ++i) {
-                m_frequencies[i] = static_cast<float>(i) / static_cast<float>(kTableSize);
-                const std::size_t parameterBucket = std::max<std::size_t>(i, 1);
-                const float parameterFrequency = static_cast<float>(parameterBucket) / static_cast<float>(kTableSize);
-                m_logFrequencies[i] = std::log2(parameterFrequency);
-            }
-        }
 
         float GetEnvelope(std::size_t bucketIndex) const {
             if (kNumBuckets <= bucketIndex) {
@@ -206,6 +195,7 @@ struct SpectralModel {
         typename ResidualModel::Input residualInput;
         for (const AnalysisAtom& analysisAtom : analysisAtoms) {
             if (!analysisAtom.m_isSynthetic) {
+                // Write a matching opposite-phase sinusoid to cancel modeled organic atoms from the residual.
                 dft.WriteWindowedPartial(
                     analysisAtom.m_analysisPhase + 0.5f,
                     analysisAtom.m_analysisMagnitude * 2.0f,

@@ -221,6 +221,18 @@ TEST_CASE(meter_tracks_rms_peak_snapshots_and_gain_reduction) {
     REQUIRE_NEAR(saturatedSnapshot.reduction, std::abs(expectedOutput) / 2.0f, 0.0001f);
 }
 
+TEST_CASE(meter_snapshot_rms_is_linear_amplitude_and_db_helpers_use_linear_inputs) {
+    synth::Meter meter;
+
+    meter.Process(0.5f);
+    const float expectedMeanSquare = 0.25f * synth::Meter::kSmoothingAlphaUp;
+    const synth::MeterSnapshot snapshot = meter.Snapshot();
+
+    REQUIRE_NEAR(snapshot.rms, std::sqrt(expectedMeanSquare), 0.0001f);
+    REQUIRE_NEAR(synth::Meter::RmsDbFS(0.5f), -6.0206f, 0.001f);
+    REQUIRE_NEAR(synth::Meter::PeakDbFS(0.5f), -6.0206f, 0.001f);
+}
+
 TEST_CASE(nary_meter_processes_channels_and_publishes_snapshots) {
     synth::NaryMeter<2> meter;
     synth::StereoFloat input{{0.25f, -0.75f}};

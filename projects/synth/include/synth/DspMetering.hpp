@@ -23,7 +23,7 @@ struct Meter {
     static constexpr std::size_t kPeakHistorySize = 48000;
     static constexpr float kEpsilon = 1.0e-11f;
 
-    float rms = 0.0f;
+    float meanSquare = 0.0f;
     float peak = 0.0f;
     float reduction = 1.0f;
     std::size_t samplesSincePeak = 0;
@@ -35,10 +35,10 @@ struct Meter {
     void Process(float input) {
         input = FiniteOr(input, 0.0f);
         const float inputSquared = input * input;
-        if (rms < inputSquared) {
-            rms = rms * (1.0f - kSmoothingAlphaUp) + inputSquared * kSmoothingAlphaUp;
+        if (meanSquare < inputSquared) {
+            meanSquare = meanSquare * (1.0f - kSmoothingAlphaUp) + inputSquared * kSmoothingAlphaUp;
         } else {
-            rms = rms * (1.0f - kSmoothingAlphaDown) + inputSquared * kSmoothingAlphaDown;
+            meanSquare = meanSquare * (1.0f - kSmoothingAlphaDown) + inputSquared * kSmoothingAlphaDown;
         }
 
         const float magnitude = std::abs(input);
@@ -62,11 +62,12 @@ struct Meter {
     }
 
     MeterSnapshot Snapshot() const {
-        return {.rms = rms, .peak = peak, .reduction = reduction};
+        // Plain-value snapshot; callers own any cross-thread publication/atomic handoff.
+        return {.rms = std::sqrt(std::max(0.0f, meanSquare)), .peak = peak, .reduction = reduction};
     }
 
-    static float RmsDbFS(float meanSquare) {
-        return 10.0f * std::log10(std::max(kEpsilon, meanSquare));
+    static float RmsDbFS(float linearRms) {
+        return 20.0f * std::log10(std::max(kEpsilon, linearRms));
     }
 
     static float PeakDbFS(float linearPeak) {

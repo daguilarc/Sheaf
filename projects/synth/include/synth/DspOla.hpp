@@ -32,6 +32,7 @@ struct Ola {
     void Write(const DiscreteFourierTransform<Bits>& dft) {
         BasicWavetable<Bits> buffer;
         dft.InverseTransform(buffer, kMaxComponents);
+        // This low-level OLA path intentionally leaves analysis/synthesis windowing and output calibration to callers.
         for (std::size_t i = 0; i < kTableSize; ++i) {
             const std::size_t index = (m_index + i) % kTableSize;
             m_buffer.m_table[index] += buffer.m_table[i];
