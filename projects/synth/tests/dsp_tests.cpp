@@ -184,6 +184,56 @@ TEST_CASE(classic_svf_ui_state_publishes_finite_blended_transfer_function) {
     }
 }
 
+TEST_CASE(biquad_section_reset_clears_delayed_state) {
+    synth::BiquadSection section;
+    section.SetLowPassCoefficients(0.08f, 0.70710678f);
+
+    section.Process({.value = 1.0f});
+    const float ringingOutput = section.Process({.value = 0.0f});
+    REQUIRE_TRUE(std::abs(ringingOutput) > 0.0001f);
+
+    section.Reset();
+    REQUIRE_NEAR(section.m_x1, 0.0f, 0.0001f);
+    REQUIRE_NEAR(section.m_x2, 0.0f, 0.0001f);
+    REQUIRE_NEAR(section.m_y1, 0.0f, 0.0001f);
+    REQUIRE_NEAR(section.m_y2, 0.0f, 0.0001f);
+    REQUIRE_NEAR(section.Process({.value = 0.0f}), 0.0f, 0.0001f);
+}
+
+TEST_CASE(butterworth_filter_attenuates_above_cutoff_more_than_below_cutoff) {
+    auto outputRms = [](float frequency) {
+        synth::ButterworthFilter filter;
+        filter.SetCutoff(0.08f);
+
+        double energy = 0.0;
+        int measured = 0;
+        for (int i = 0; i < 2048; ++i) {
+            const float sample = synth::DefaultDspMath::Sin2Pi(frequency * static_cast<float>(i));
+            const float output = filter.Process({.value = sample, .cutoff = 0.08f});
+            if (i >= 512) {
+                energy += static_cast<double>(output) * static_cast<double>(output);
+                ++measured;
+            }
+        }
+        return std::sqrt(energy / static_cast<double>(measured));
+    };
+
+    const double lowFrequencyRms = outputRms(0.02f);
+    const double highFrequencyRms = outputRms(0.30f);
+    REQUIRE_TRUE(lowFrequencyRms > highFrequencyRms * 20.0);
+}
+
+TEST_CASE(linkwitz_riley_crossover_transfer_function_recombines_to_unity) {
+    for (const float frequency : {0.01f, 0.05f, 0.10f, 0.20f, 0.40f}) {
+        const auto transfer = synth::LinkwitzRileyCrossover::TransferFunction(0.10f, frequency);
+        REQUIRE_TRUE(std::isfinite(transfer.lowPass.real()));
+        REQUIRE_TRUE(std::isfinite(transfer.lowPass.imag()));
+        REQUIRE_TRUE(std::isfinite(transfer.highPass.real()));
+        REQUIRE_TRUE(std::isfinite(transfer.highPass.imag()));
+        REQUIRE_NEAR(std::abs(transfer.lowPass + transfer.highPass), 1.0f, 0.015f);
+    }
+}
+
 TEST_CASE(one_pole_filters_and_tanh_follow_dsp_contract) {
     synth::OnePoleLowPass lp;
     synth::OnePoleLowPass::Input lpInput{.value = 1.0f, .cutoff = 0.05f};

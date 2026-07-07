@@ -258,6 +258,254 @@ private:
     float m_ic2eq = 0.0f;
 };
 
+struct BiquadSection {
+    static constexpr float kMinCutoff = 0.0001f;
+    static constexpr float kMaxCutoff = 0.499f;
+    static constexpr float kMinQ = 1.0e-6f;
+
+    struct Input {
+        float value = 0.0f;
+    };
+
+    float m_b0 = 1.0f;
+    float m_b1 = 0.0f;
+    float m_b2 = 0.0f;
+    float m_a1 = 0.0f;
+    float m_a2 = 0.0f;
+    float m_x1 = 0.0f;
+    float m_x2 = 0.0f;
+    float m_y1 = 0.0f;
+    float m_y2 = 0.0f;
+
+    static float ClampCutoff(float cyclesPerSample) {
+        if (!std::isfinite(cyclesPerSample)) {
+            return kMinCutoff;
+        }
+        return std::clamp(cyclesPerSample, kMinCutoff, kMaxCutoff);
+    }
+
+    static float ClampQ(float q) {
+        if (!std::isfinite(q)) {
+            return 1.0f;
+        }
+        return std::max(q, kMinQ);
+    }
+
+    static float ClampFrequency(float cyclesPerSample) {
+        if (!std::isfinite(cyclesPerSample)) {
+            return 0.0f;
+        }
+        return std::clamp(cyclesPerSample, 0.0f, kMaxCutoff);
+    }
+
+    float Process(float input) {
+        const float output = m_b0 * input + m_b1 * m_x1 + m_b2 * m_x2 - m_a1 * m_y1 - m_a2 * m_y2;
+
+        m_x2 = m_x1;
+        m_x1 = input;
+        m_y2 = m_y1;
+        m_y1 = output;
+
+        return output;
+    }
+
+    float Process(const Input& input) {
+        return Process(input.value);
+    }
+
+    void Reset() {
+        m_x1 = 0.0f;
+        m_x2 = 0.0f;
+        m_y1 = 0.0f;
+        m_y2 = 0.0f;
+    }
+
+    void SetLowPassCoefficients(float cyclesPerSample, float q) {
+        SetCoefficients(ClampCutoff(cyclesPerSample), ClampQ(q), false);
+    }
+
+    void SetHighPassCoefficients(float cyclesPerSample, float q) {
+        SetCoefficients(ClampCutoff(cyclesPerSample), ClampQ(q), true);
+    }
+
+    static std::complex<float> TransferFunction(
+        float cyclesPerSample,
+        float q,
+        float frequency,
+        bool isHighPass = false) {
+        BiquadSection section;
+        if (isHighPass) {
+            section.SetHighPassCoefficients(cyclesPerSample, q);
+        } else {
+            section.SetLowPassCoefficients(cyclesPerSample, q);
+        }
+        return section.TransferFunctionAt(frequency);
+    }
+
+private:
+    void SetCoefficients(float cyclesPerSample, float q, bool isHighPass) {
+        const float cosw = DefaultDspMath::Cos2Pi(cyclesPerSample);
+        const float sinw = DefaultDspMath::Sin2Pi(cyclesPerSample);
+        const float alpha = sinw / (2.0f * q);
+        const float a0 = 1.0f + alpha;
+        const float a2 = 1.0f - alpha;
+
+        float b0 = 0.0f;
+        float b1 = 0.0f;
+        float b2 = 0.0f;
+        if (isHighPass) {
+            b0 = (1.0f + cosw) * 0.5f;
+            b1 = -(1.0f + cosw);
+            b2 = (1.0f + cosw) * 0.5f;
+        } else {
+            b0 = (1.0f - cosw) * 0.5f;
+            b1 = 1.0f - cosw;
+            b2 = (1.0f - cosw) * 0.5f;
+        }
+
+        m_b0 = b0 / a0;
+        m_b1 = b1 / a0;
+        m_b2 = b2 / a0;
+        m_a1 = -2.0f * cosw / a0;
+        m_a2 = a2 / a0;
+    }
+
+    std::complex<float> TransferFunctionAt(float frequency) const {
+        frequency = ClampFrequency(frequency);
+        const float cosw = DefaultDspMath::Cos2Pi(frequency);
+        const float sinw = DefaultDspMath::Sin2Pi(frequency);
+        const float cos2w = DefaultDspMath::Cos2Pi(2.0f * frequency);
+        const float sin2w = DefaultDspMath::Sin2Pi(2.0f * frequency);
+
+        const std::complex<float> numerator(
+            m_b0 + m_b1 * cosw + m_b2 * cos2w,
+            -m_b1 * sinw - m_b2 * sin2w);
+        const std::complex<float> denominator(
+            1.0f + m_a1 * cosw + m_a2 * cos2w,
+            -m_a1 * sinw - m_a2 * sin2w);
+        return numerator / denominator;
+    }
+};
+
+struct ButterworthFilter {
+    static constexpr float kDefaultCutoff = 0.1f;
+
+    struct Input {
+        float value = 0.0f;
+        float cutoff = kDefaultCutoff;
+    };
+
+    BiquadSection m_biquad1;
+    BiquadSection m_biquad2;
+    BiquadSection m_biquad3;
+    BiquadSection m_biquad4;
+    float m_cutoff = kDefaultCutoff;
+
+    ButterworthFilter() {
+        SetCutoff(m_cutoff);
+    }
+
+    float Process(const Input& input) {
+        SetCutoff(input.cutoff);
+        const float stage1 = m_biquad1.Process(input.value);
+        const float stage2 = m_biquad2.Process(stage1);
+        const float stage3 = m_biquad3.Process(stage2);
+        return m_biquad4.Process(stage3);
+    }
+
+    void SetCutoff(float cyclesPerSample) {
+        m_cutoff = BiquadSection::ClampCutoff(cyclesPerSample);
+        m_biquad1.SetLowPassCoefficients(m_cutoff, ButterworthQ(1.0f / 32.0f));
+        m_biquad2.SetLowPassCoefficients(m_cutoff, ButterworthQ(3.0f / 32.0f));
+        m_biquad3.SetLowPassCoefficients(m_cutoff, ButterworthQ(5.0f / 32.0f));
+        m_biquad4.SetLowPassCoefficients(m_cutoff, ButterworthQ(7.0f / 32.0f));
+    }
+
+    void Reset() {
+        m_biquad1.Reset();
+        m_biquad2.Reset();
+        m_biquad3.Reset();
+        m_biquad4.Reset();
+    }
+
+private:
+    static float ButterworthQ(float phase) {
+        return 1.0f / (2.0f * DefaultDspMath::Cos2Pi(phase));
+    }
+};
+
+struct LinkwitzRileyCrossover {
+    static constexpr float kDefaultCutoff = 0.1f;
+
+    struct Input {
+        float value = 0.0f;
+        float cutoff = kDefaultCutoff;
+    };
+
+    struct Output {
+        float lowPass = 0.0f;
+        float highPass = 0.0f;
+    };
+
+    struct ComplexOutput {
+        std::complex<float> lowPass = {0.0f, 0.0f};
+        std::complex<float> highPass = {0.0f, 0.0f};
+    };
+
+    BiquadSection m_lowBiquad1;
+    BiquadSection m_lowBiquad2;
+    BiquadSection m_highBiquad1;
+    BiquadSection m_highBiquad2;
+    float m_cutoff = kDefaultCutoff;
+
+    LinkwitzRileyCrossover() {
+        SetCutoff(m_cutoff);
+    }
+
+    Output Process(const Input& input) {
+        SetCutoff(input.cutoff);
+
+        const float lowStage1 = m_lowBiquad1.Process(input.value);
+        const float lowPass = m_lowBiquad2.Process(lowStage1);
+        const float highStage1 = m_highBiquad1.Process(input.value);
+        const float highPass = m_highBiquad2.Process(highStage1);
+        return {.lowPass = lowPass, .highPass = highPass};
+    }
+
+    void SetCutoff(float cyclesPerSample) {
+        m_cutoff = BiquadSection::ClampCutoff(cyclesPerSample);
+        const float q = LinkwitzRileyQ();
+
+        m_lowBiquad1.SetLowPassCoefficients(m_cutoff, q);
+        m_lowBiquad2.SetLowPassCoefficients(m_cutoff, q);
+        m_highBiquad1.SetHighPassCoefficients(m_cutoff, q);
+        m_highBiquad2.SetHighPassCoefficients(m_cutoff, q);
+    }
+
+    void Reset() {
+        m_lowBiquad1.Reset();
+        m_lowBiquad2.Reset();
+        m_highBiquad1.Reset();
+        m_highBiquad2.Reset();
+    }
+
+    static ComplexOutput TransferFunction(float cutoff, float frequency) {
+        cutoff = BiquadSection::ClampCutoff(cutoff);
+        const float q = LinkwitzRileyQ();
+
+        const auto lowPass1 = BiquadSection::TransferFunction(cutoff, q, frequency);
+        const auto lowPass2 = BiquadSection::TransferFunction(cutoff, q, frequency);
+        const auto highPass1 = BiquadSection::TransferFunction(cutoff, q, frequency, true);
+        const auto highPass2 = BiquadSection::TransferFunction(cutoff, q, frequency, true);
+        return {.lowPass = lowPass1 * lowPass2, .highPass = highPass1 * highPass2};
+    }
+
+private:
+    static float LinkwitzRileyQ() {
+        return 1.0f / std::sqrt(2.0f);
+    }
+};
+
 template<bool Normalize = false>
 struct TanhSaturator {
     struct Input {
