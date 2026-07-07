@@ -34,10 +34,10 @@
 
 ## 6. OLA Resynthesizer
 
-- [ ] 6.1 Add DSP tests for finite phase-vocoder analysis state, OLA hop writes, pitch-ratio input behavior, unison/gain behavior, slew behavior, spectral distortion behavior, and absence of grain-manager scheduling.
-- [ ] 6.2 Port reusable phase-vocoder analysis and oscillator synthesis math from `Resynthesis.hpp` into an OLA-driven Sheaf processor.
-- [ ] 6.3 Replace old `Grain`/`GrainManager` launch behavior with an input-frame or streaming-hop API that writes synthesized DFT frames into OLA.
-- [ ] 6.4 Ensure resynthesizer inputs use DSP units and ratios directly, without product-level switch mappings or Smart Grid parameter objects.
+- [x] 6.1 Add DSP tests for finite phase-vocoder analysis state, OLA hop writes, pitch-ratio input behavior, unison/gain behavior, slew behavior, spectral distortion behavior, and absence of grain-manager scheduling.
+- [x] 6.2 Port reusable phase-vocoder analysis and oscillator synthesis math from `Resynthesis.hpp` into an OLA-driven Sheaf processor.
+- [x] 6.3 Replace old `Grain`/`GrainManager` launch behavior with an input-frame or streaming-hop API that writes synthesized DFT frames into OLA.
+- [x] 6.4 Ensure resynthesizer inputs use DSP units and ratios directly, without product-level switch mappings or Smart Grid parameter objects.
 
 ## 7. Verification and Cleanup
 
