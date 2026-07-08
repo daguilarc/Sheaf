@@ -252,6 +252,8 @@ private:
     static constexpr int kDefaultTextFieldWidth = 120;
     static constexpr int kControlGap = 8;
     static constexpr int kControlMargin = 12;
+    static constexpr float kPointerDragSensitivity = 0.0025f;
+    static constexpr float kPointerDragThreshold = 0.001f;
 
     class ScopedDispatchSuppression
     {
@@ -329,6 +331,60 @@ private:
             }
             juce::TextButton::mouseDoubleClick(event);
         }
+    };
+
+    class InteractiveDrawComponent final : public juce::Component
+    {
+    public:
+        explicit InteractiveDrawComponent(std::function<void(const synth::ui::NodeId&, float)> dragDispatch,
+                                          std::function<void(const synth::ui::NodeId&)> doubleClickDispatch)
+            : dragDispatch_(std::move(dragDispatch))
+            , doubleClickDispatch_(std::move(doubleClickDispatch))
+        {
+            setInterceptsMouseClicks(true, true);
+            setPaintingIsUnclipped(true);
+        }
+
+        void SetNodeId(synth::ui::NodeId id)
+        {
+            id_ = std::move(id);
+        }
+
+        void paint(juce::Graphics&) override {}
+
+        void mouseDown(const juce::MouseEvent& event) override
+        {
+            lastMousePosition_ = event.position;
+        }
+
+        void mouseDrag(const juce::MouseEvent& event) override
+        {
+            const auto deltaPoint = event.position - lastMousePosition_;
+            const float delta = (deltaPoint.x - deltaPoint.y) * kPointerDragSensitivity;
+            if (std::abs(delta) < kPointerDragThreshold)
+            {
+                return;
+            }
+            if (dragDispatch_)
+            {
+                dragDispatch_(id_, delta);
+            }
+            lastMousePosition_ = event.position;
+        }
+
+        void mouseDoubleClick(const juce::MouseEvent&) override
+        {
+            if (doubleClickDispatch_)
+            {
+                doubleClickDispatch_(id_);
+            }
+        }
+
+    private:
+        synth::ui::NodeId id_;
+        juce::Point<float> lastMousePosition_;
+        std::function<void(const synth::ui::NodeId&, float)> dragDispatch_;
+        std::function<void(const synth::ui::NodeId&)> doubleClickDispatch_;
     };
 
     const synth::ui::Node* RootNode() const
@@ -443,6 +499,25 @@ private:
             dispatched.value = std::move(value);
             DispatchBackendAction(dispatched);
         }
+    }
+
+    void DispatchCurrentNodePointerDragAction(const synth::ui::NodeId& id, float delta)
+    {
+        const synth::ui::Node* node = FindNode(id);
+        if (node == nullptr || !node->pointerDragAction.has_value())
+        {
+            return;
+        }
+        synth::ui::Action dispatched = *node->pointerDragAction;
+        if (!dispatched.value.empty())
+        {
+            const std::size_t lastColon = dispatched.value.rfind(':');
+            if (lastColon != std::string::npos)
+            {
+                dispatched.value = dispatched.value.substr(0, lastColon + 1) + std::to_string(delta);
+            }
+        }
+        DispatchBackendAction(dispatched);
     }
 
     void DispatchCurrentNodeDoubleClickAction(const synth::ui::NodeId& id)
@@ -593,6 +668,10 @@ private:
                 {
                     m_drawNodeIndices.push_back(*nodeIndex);
                 }
+                if (IsInteractiveDrawNode(*node))
+                {
+                    m_renderedNodeIds.push_back(node->id);
+                }
             }
             else if (IsRenderableKind(node->kind))
             {
@@ -601,6 +680,12 @@ private:
 
             CollectRenderableDescendants(*node);
         }
+    }
+
+    bool IsInteractiveDrawNode(const synth::ui::Node& node) const
+    {
+        return node.kind == synth::ui::NodeKind::Draw
+               && (node.pointerDragAction.has_value() || node.doubleClickAction.has_value());
     }
 
     static bool IsRenderableKind(synth::ui::NodeKind kind)
@@ -617,6 +702,7 @@ private:
             case synth::ui::NodeKind::Slider:
             case synth::ui::NodeKind::ComboBox:
             case synth::ui::NodeKind::TextField:
+            case synth::ui::NodeKind::Draw:
                 return true;
             default:
                 return false;
@@ -816,6 +902,18 @@ private:
                 };
                 return editor;
             }
+            case synth::ui::NodeKind::Draw:
+            {
+                auto overlay = std::make_unique<InteractiveDrawComponent>(
+                    [this](const synth::ui::NodeId& id, float delta) {
+                        DispatchCurrentNodePointerDragAction(id, delta);
+                    },
+                    [this](const synth::ui::NodeId& id) {
+                        DispatchCurrentNodeDoubleClickAction(id);
+                    });
+                overlay->SetNodeId(node.id);
+                return overlay;
+            }
             default:
                 return std::make_unique<juce::Component>();
         }
@@ -906,6 +1004,12 @@ private:
                 {
                     editor.setText(node.text, juce::dontSendNotification);
                 }
+                break;
+            }
+            case synth::ui::NodeKind::Draw:
+            {
+                auto& overlay = static_cast<InteractiveDrawComponent&>(component);
+                overlay.SetNodeId(node.id);
                 break;
             }
             default:

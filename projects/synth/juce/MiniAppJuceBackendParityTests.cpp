@@ -114,6 +114,57 @@ int main()
     Require(message.type == synth::MessageIn::Type::SetSceneBlend, "blend routes slider action");
     RequireNear(message.value, 0.25f, 0.001f, "blend slider value");
 
+    auto* encoder = component.FindByNodeId(synth_miniapp::MiniAppNodeIds::Encoder(0));
+    Require(encoder != nullptr, "encoder interactive overlay is hosted");
+    const juce::MouseInputSource mouseSource = juce::Desktop::getInstance().getMainMouseSource();
+    const juce::Point<float> downPoint(20.0f, 20.0f);
+    const juce::Point<float> dragPoint(30.0f, 10.0f);
+    juce::MouseEvent downEvent(mouseSource,
+                               downPoint,
+                               juce::ModifierKeys::leftButtonModifier,
+                               1.0f,
+                               1.0f,
+                               1.0f,
+                               1.0f,
+                               1.0f,
+                               encoder,
+                               encoder,
+                               juce::Time::getCurrentTime(),
+                               downPoint,
+                               juce::Time::getCurrentTime(),
+                               1,
+                               false);
+    encoder->mouseDown(downEvent);
+    juce::MouseEvent dragEvent(mouseSource,
+                               dragPoint,
+                               juce::ModifierKeys::leftButtonModifier,
+                               1.0f,
+                               1.0f,
+                               1.0f,
+                               1.0f,
+                               1.0f,
+                               encoder,
+                               encoder,
+                               juce::Time::getCurrentTime(),
+                               downPoint,
+                               juce::Time::getCurrentTime(),
+                               1,
+                               false);
+    encoder->mouseDrag(dragEvent);
+    Require(uiBus.Pop(message, std::numeric_limits<std::uint64_t>::max()), "encoder drag message is queued");
+    Require(message.type == synth::MessageIn::Type::ParamIncDec, "encoder drag routes inc/dec");
+    Require(message.slotIx == 0, "encoder drag slot");
+    Require(message.position == 0, "encoder drag position");
+    RequireNear(message.delta, 0.05f, 0.0001f, "encoder drag delta");
+    Require(message.timestamp == 503, "encoder drag uses timestamp provider");
+
+    encoder->mouseDoubleClick(downEvent);
+    Require(uiBus.Pop(message, std::numeric_limits<std::uint64_t>::max()), "encoder push message is queued");
+    Require(message.type == synth::MessageIn::Type::ParamPush, "encoder double-click routes push");
+    Require(message.slotIx == 0, "encoder push slot");
+    Require(message.position == 0, "encoder push position");
+    Require(message.timestamp == 504, "encoder push uses timestamp provider");
+
     std::cout << "MiniApp JUCE backend parity tests passed\n";
     return 0;
 }
