@@ -1,6 +1,6 @@
 ## ADDED Requirements
 
-### Requirement: sru-18 — Portable UI: encoder mouse interaction parity
+### Requirement: sru-20 — Portable UI: encoder mouse interaction parity
 WHEN a miniapp encoder is rendered through the portable UI layer on the JUCE desktop backend, THE runtime UI layer SHALL preserve the pre-abstraction encoder mouse interaction behavior: mouse drag over the encoder dispatches a relative parameter increment/decrement for that encoder's bound slot and position using the existing `(deltaX - deltaY) * sensitivity` gesture mapping, and mouse double-click dispatches the encoder push action for that same slot and position; the portable tree producer SHALL remain JUCE-free and the JUCE backend SHALL only translate toolkit mouse events into portable actions.
 
 #### Scenario: Mouse drag turns encoder
