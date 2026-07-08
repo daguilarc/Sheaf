@@ -441,6 +441,30 @@ inline bool DispatchMiniAppAction(synth::AppContext* context,
         pushMessage(synth::MessageIn::ToggleRandomMod(timestamp));
         return true;
     }
+    if (action.name == MiniAppActions::kEncoderDrag)
+    {
+        std::size_t slotIx = 0;
+        std::size_t position = 0;
+        float delta = 0.0f;
+        if (!ParseEncoderGestureValue(action.value, slotIx, position, delta) || std::fabs(delta) < 0.001f)
+        {
+            return false;
+        }
+        pushMessage(synth::MessageIn::ParamIncDec(timestamp, slotIx, position, delta));
+        return true;
+    }
+    if (action.name == MiniAppActions::kEncoderPush)
+    {
+        std::size_t slotIx = 0;
+        std::size_t position = 0;
+        float delta = 0.0f;
+        if (!ParseEncoderGestureValue(action.value, slotIx, position, delta))
+        {
+            return false;
+        }
+        pushMessage(synth::MessageIn::ParamPush(timestamp, slotIx, position));
+        return true;
+    }
 
     return false;
 }

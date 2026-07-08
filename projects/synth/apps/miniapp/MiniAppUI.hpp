@@ -70,7 +70,16 @@ public:
                     drawCommands = BuildEncoderDrawCommands(encoderState, encoderBounds);
                 }
             }
-            builder.Draw(MiniAppNodeIds::Encoder(ix), encoderBounds, std::move(drawCommands));
+            builder.DrawInteractive(
+                MiniAppNodeIds::Encoder(ix),
+                encoderBounds,
+                std::move(drawCommands),
+                synth::ui::Action::WithValue(
+                    MiniAppActions::kEncoderDrag,
+                    FormatEncoderGestureValue(0, ix, 0.0f)),
+                synth::ui::Action::WithValue(
+                    MiniAppActions::kEncoderPush,
+                    FormatEncoderGestureValue(0, ix, 0.0f)));
         }
 
         synth::ui::Bounds belowEncoders = content;
