@@ -5,6 +5,7 @@
 #include <cassert>
 #include <cstddef>
 #include <initializer_list>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -121,6 +122,22 @@ public:
         node.kind = NodeKind::Draw;
         node.bounds = bounds;
         node.drawCommands = std::move(commands);
+        AppendChild(node);
+        return *this;
+    }
+
+    Builder& DrawInteractive(std::string id,
+                             Bounds bounds,
+                             std::vector<DrawCommand> commands,
+                             Action pointerDragAction,
+                             std::optional<Action> doubleClickAction = std::nullopt) {
+        Node node;
+        node.id = NodeId(std::move(id));
+        node.kind = NodeKind::Draw;
+        node.bounds = bounds;
+        node.drawCommands = std::move(commands);
+        node.pointerDragAction = std::move(pointerDragAction);
+        node.doubleClickAction = std::move(doubleClickAction);
         AppendChild(node);
         return *this;
     }

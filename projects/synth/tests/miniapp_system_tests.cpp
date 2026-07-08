@@ -226,6 +226,12 @@ void RequireNodeKind(const synth::ui::NodeTree& tree, const char* id, synth::ui:
     REQUIRE_TRUE(node->kind == kind);
 }
 
+void RequireAction(const std::optional<synth::ui::Action>& action, const char* expectedName)
+{
+    REQUIRE_TRUE(action.has_value());
+    REQUIRE_TRUE(action->name == expectedName);
+}
+
 bool PopNextMessage(synth::MessageInBus& uiBus, synth::MessageIn& message) {
     return uiBus.Pop(message, std::numeric_limits<std::uint64_t>::max());
 }
@@ -294,6 +300,23 @@ TEST_CASE(miniapp_portable_surface_exposes_stable_ids_and_routes_actions) {
     RequireNodeId(tree, "miniapp.gesture.value");
     RequireNodeId(tree, "miniapp.scene.blend");
 
+    const synth::ui::Node* encoder0 = FindNodeById(tree, "miniapp.encoder.0");
+    REQUIRE_TRUE(encoder0 != nullptr);
+    REQUIRE_TRUE(encoder0->kind == synth::ui::NodeKind::Draw);
+    RequireAction(encoder0->pointerDragAction, synth_miniapp::MiniAppActions::kEncoderDrag);
+    RequireAction(encoder0->doubleClickAction, synth_miniapp::MiniAppActions::kEncoderPush);
+    std::size_t encodedSlot = 999;
+    std::size_t encodedPosition = 999;
+    float encodedDelta = 999.0f;
+    REQUIRE_TRUE(synth_miniapp::ParseEncoderGestureValue(
+        synth_miniapp::FormatEncoderGestureValue(0, 0, 0.25f),
+        encodedSlot,
+        encodedPosition,
+        encodedDelta));
+    REQUIRE_TRUE(encodedSlot == 0);
+    REQUIRE_TRUE(encodedPosition == 0);
+    REQUIRE_NEAR(encodedDelta, 0.25f, 1e-6f);
+
     const std::size_t queueBefore = uiBus.Size();
     surface.DispatchAction(synth::ui::Action::Named("miniapp.start"));
     REQUIRE_TRUE(uiBus.Size() == queueBefore + 1);
@@ -353,6 +376,25 @@ TEST_CASE(miniapp_portable_surface_exposes_stable_ids_and_routes_actions) {
     REQUIRE_TRUE(PopNextMessage(uiBus, message));
     REQUIRE_TRUE(message.type == synth::MessageIn::Type::ToggleRandomMod);
     REQUIRE_TRUE(message.timestamp == 1009);
+
+    surface.DispatchAction(synth::ui::Action::WithValue(
+        synth_miniapp::MiniAppActions::kEncoderDrag,
+        synth_miniapp::FormatEncoderGestureValue(0, 3, 0.125f)));
+    REQUIRE_TRUE(PopNextMessage(uiBus, message));
+    REQUIRE_TRUE(message.type == synth::MessageIn::Type::ParamIncDec);
+    REQUIRE_TRUE(message.slotIx == 0);
+    REQUIRE_TRUE(message.position == 3);
+    REQUIRE_NEAR(message.delta, 0.125f, 1e-6f);
+    REQUIRE_TRUE(message.timestamp == 1010);
+
+    surface.DispatchAction(synth::ui::Action::WithValue(
+        synth_miniapp::MiniAppActions::kEncoderPush,
+        synth_miniapp::FormatEncoderGestureValue(0, 3, 0.0f)));
+    REQUIRE_TRUE(PopNextMessage(uiBus, message));
+    REQUIRE_TRUE(message.type == synth::MessageIn::Type::ParamPush);
+    REQUIRE_TRUE(message.slotIx == 0);
+    REQUIRE_TRUE(message.position == 3);
+    REQUIRE_TRUE(message.timestamp == 1011);
 
     static_assert(synth::SynthApplication<synth_miniapp::MiniApp>);
 }

@@ -12,9 +12,11 @@
 #include "synth/PortableUI.hpp"
 #include "synth/PortableUIBuilders.hpp"
 
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <string>
 #include <utility>
 #include <vector>
@@ -65,6 +67,8 @@ inline constexpr const char* kRandom = "miniapp.random";
 inline constexpr const char* kRandomMod = "miniapp.random_mod";
 inline constexpr const char* kStart = "miniapp.start";
 inline constexpr const char* kStop = "miniapp.stop";
+inline constexpr const char* kEncoderDrag = "miniapp.encoder.drag";
+inline constexpr const char* kEncoderPush = "miniapp.encoder.push";
 
 }  // namespace MiniAppActions
 
@@ -331,6 +335,46 @@ inline float ParseFloat(const std::string& value, float fallback)
     {
         return fallback;
     }
+}
+
+inline std::string FormatEncoderGestureValue(std::size_t slotIx, std::size_t position, float delta)
+{
+    return std::to_string(slotIx) + ":" + std::to_string(position) + ":" + std::to_string(delta);
+}
+
+inline bool ParseEncoderGestureValue(const std::string& value,
+                                     std::size_t& slotIx,
+                                     std::size_t& position,
+                                     float& delta)
+{
+    const std::size_t first = value.find(':');
+    if (first == std::string::npos)
+    {
+        return false;
+    }
+    const std::size_t second = value.find(':', first + 1);
+    if (second == std::string::npos)
+    {
+        return false;
+    }
+
+    const std::string slotToken = value.substr(0, first);
+    const std::string positionToken = value.substr(first + 1, second - first - 1);
+    const std::string deltaToken = value.substr(second + 1);
+    const std::size_t parsedSlot = ParseSize(slotToken, std::numeric_limits<std::size_t>::max());
+    const std::size_t parsedPosition = ParseSize(positionToken, std::numeric_limits<std::size_t>::max());
+    const float parsedDelta = ParseFloat(deltaToken, std::numeric_limits<float>::quiet_NaN());
+    if (parsedSlot == std::numeric_limits<std::size_t>::max() ||
+        parsedPosition == std::numeric_limits<std::size_t>::max() ||
+        !std::isfinite(parsedDelta))
+    {
+        return false;
+    }
+
+    slotIx = parsedSlot;
+    position = parsedPosition;
+    delta = parsedDelta;
+    return true;
 }
 
 inline bool DispatchMiniAppAction(synth::AppContext* context,

@@ -147,6 +147,7 @@ struct Node {
     std::string selectedOption;
     std::string variant;
     std::optional<Action> action;
+    std::optional<Action> pointerDragAction;
     std::optional<Action> doubleClickAction;
     std::vector<NodeId> children;
     std::vector<DrawCommand> drawCommands;
