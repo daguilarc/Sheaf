@@ -117,6 +117,64 @@ int main()
     Require(surface.lastAction.name == "device.select.changed", "combo dispatches refreshed action name");
     Require(surface.lastAction.value == "b2", "combo dispatches refreshed option id");
 
+    {
+        RecordingSurface dragSurface;
+        synth::ui::Builder dragBuilder;
+        dragBuilder.Root("root", synth::ui::Bounds{0.0f, 0.0f, 320.0f, 240.0f})
+            .DrawInteractive("encoder",
+                             synth::ui::Bounds{16.0f, 24.0f, 80.0f, 80.0f},
+                             {},
+                             synth::ui::Action::WithValue("encoder.drag", "stale"));
+        dragSurface.tree = dragBuilder.Build();
+
+        synth_juce::PortableComponent dragComponent(dragSurface);
+        dragComponent.setSize(320, 240);
+        dragComponent.RefreshFromSurface();
+
+        auto* overlay = dragComponent.FindByNodeId("encoder");
+        Require(overlay != nullptr, "interactive draw overlay is hosted");
+        const juce::MouseInputSource mouseSource = juce::Desktop::getInstance().getMainMouseSource();
+        const juce::Point<float> downPoint(20.0f, 20.0f);
+        const juce::Point<float> dragPoint(30.0f, 10.0f);
+        juce::MouseEvent downEvent(mouseSource,
+                                   downPoint,
+                                   juce::ModifierKeys::leftButtonModifier,
+                                   1.0f,
+                                   1.0f,
+                                   1.0f,
+                                   1.0f,
+                                   1.0f,
+                                   overlay,
+                                   overlay,
+                                   juce::Time::getCurrentTime(),
+                                   downPoint,
+                                   juce::Time::getCurrentTime(),
+                                   1,
+                                   false);
+        overlay->mouseDown(downEvent);
+        juce::MouseEvent dragEvent(mouseSource,
+                                   dragPoint,
+                                   juce::ModifierKeys::leftButtonModifier,
+                                   1.0f,
+                                   1.0f,
+                                   1.0f,
+                                   1.0f,
+                                   1.0f,
+                                   overlay,
+                                   overlay,
+                                   juce::Time::getCurrentTime(),
+                                   downPoint,
+                                   juce::Time::getCurrentTime(),
+                                   1,
+                                   false);
+        overlay->mouseDrag(dragEvent);
+
+        Require(dragSurface.dispatchCount == 1, "interactive draw drag dispatches action");
+        Require(dragSurface.lastAction.name == "encoder.drag", "interactive draw drag action name");
+        Require(dragSurface.lastAction.value == std::to_string(0.05f),
+                "interactive draw drag replaces colon-free action value with delta");
+    }
+
     std::cout << "PortableJuceBackendTests passed\n";
     return 0;
 }

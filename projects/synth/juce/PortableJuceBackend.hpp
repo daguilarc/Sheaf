@@ -509,12 +509,21 @@ private:
             return;
         }
         synth::ui::Action dispatched = *node->pointerDragAction;
-        if (!dispatched.value.empty())
+        const std::string deltaValue = std::to_string(delta);
+        if (dispatched.value.empty())
+        {
+            dispatched.value = deltaValue;
+        }
+        else
         {
             const std::size_t lastColon = dispatched.value.rfind(':');
             if (lastColon != std::string::npos)
             {
-                dispatched.value = dispatched.value.substr(0, lastColon + 1) + std::to_string(delta);
+                dispatched.value = dispatched.value.substr(0, lastColon + 1) + deltaValue;
+            }
+            else
+            {
+                dispatched.value = deltaValue;
             }
         }
         DispatchBackendAction(dispatched);
