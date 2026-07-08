@@ -101,7 +101,7 @@ REQUIRE_TRUE(message.timestamp == 1011);
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `make -C projects/synth build projects/synth/build/miniapp_system_tests && projects/synth/build/miniapp_system_tests`
+Run: `make -C projects/synth build/miniapp_system_tests && projects/synth/build/miniapp_system_tests`
 
 Expected: compile failure mentioning missing `pointerDragAction`, `kEncoderDrag`, `kEncoderPush`, `FormatEncoderGestureValue`, or `ParseEncoderGestureValue`.
 
