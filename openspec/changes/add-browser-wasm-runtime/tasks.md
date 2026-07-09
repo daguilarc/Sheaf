@@ -43,12 +43,12 @@
 
 ## 6. Web MIDI Bridge
 
-- [ ] 6.1 Implement Web MIDI sysex permission request using `navigator.requestMIDIAccess({ sysex: true })`, port enumeration, statechange handling, and unavailable/denied status reporting.
-- [ ] 6.2 Implement a browser MIDI connection manager with one handler/sink binding per controller slot, multiple simultaneous input/output ports, stored endpoint references, and no app-specific routing.
-- [ ] 6.3 Add the browser MIDI poll loop so missed port changes are detected and configured devices reconnect/offline like the desktop runtime, reusing the existing JUCE-free MIDI reconcile core through generic browser runtime ABI operations for endpoint snapshots, endpoint actions, inbound bytes, and outbound-byte draining.
-- [ ] 6.4 Forward incoming browser MIDI bytes, including sysex, through the existing per-controller MIDI input processor chain into the engine MIDI bus.
-- [ ] 6.5 Forward engine-produced MIDI output bytes, including sysex, to the selected browser `MIDIOutput` for each controller slot.
-- [ ] 6.6 Add injectable Web MIDI tests for sysex permission denial, multiple devices, input message routing, output message routing, sysex round-trip visibility, polling recovery, and device connect/disconnect reconciliation.
+- [x] 6.1 Implement Web MIDI sysex permission request using `navigator.requestMIDIAccess({ sysex: true })`, port enumeration, statechange handling, and unavailable/denied status reporting.
+- [x] 6.2 Implement a browser MIDI connection manager with one handler/sink binding per controller slot, multiple simultaneous input/output ports, stored endpoint references, and no app-specific routing.
+- [x] 6.3 Add the browser MIDI poll loop so missed port changes are detected and configured devices reconnect/offline like the desktop runtime, reusing the existing JUCE-free MIDI reconcile core through generic browser runtime ABI operations for endpoint snapshots, endpoint actions, inbound bytes, and outbound-byte draining.
+- [x] 6.4 Forward incoming browser MIDI bytes, including sysex, through the existing per-controller MIDI input processor chain into the engine MIDI bus.
+- [x] 6.5 Forward engine-produced MIDI output bytes, including sysex, to the selected browser `MIDIOutput` for each controller slot.
+- [x] 6.6 Add injectable Web MIDI tests for sysex permission denial, multiple devices, input message routing, output message routing, sysex round-trip visibility, polling recovery, and device connect/disconnect reconciliation.
 
 ## 7. Browser Persistence
 
