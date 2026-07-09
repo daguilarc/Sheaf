@@ -456,21 +456,31 @@ Commit: `git add projects/synth/include/synth/browser/BrowserAudioDevices.hpp pr
 - Create: `projects/synth/tests/browser_midi_bridge_tests.cpp`
 - Create: `projects/synth/browser/src/midi.ts`
 - Create: `projects/synth/browser/tests/midi-flow.spec.ts`
+- Modify: `projects/synth/include/synth/browser/BrowserRuntime.hpp`
+- Modify: `projects/synth/browser/cpp/BrowserRuntimeAbi.cpp`
+- Modify: `projects/synth/browser/Makefile`
 - Modify: `projects/synth/browser/src/worker.ts`
 - Modify: `projects/synth/browser/src/protocol.ts`
 - Modify: `projects/synth/Makefile`
 
 **Interfaces:**
 - Consumes: `navigator.requestMIDIAccess({ sysex: true })`, `MIDIInput`, `MIDIOutput`, `MidiInstrumentConfig`, `PlanMidiReconciliation`, `ExecuteReconcilePlan`, engine MIDI buses and `MidiSender`.
-- Produces: `BrowserMidiBridge`, injectable Web MIDI test shim, bidirectional bytes including sysex, poll/reconnect/offline state.
+- Produces: `BrowserMidiBridge`, generic runtime/ABI MIDI operations, injectable Web MIDI test shim, bidirectional bytes including sysex, poll/reconnect/offline state.
 
 - [ ] **Step 1: Write failing C++ MIDI bridge tests**
 
 Assert the browser bridge plans open/close/update/resync through `PlanMidiReconciliation`/`ExecuteReconcilePlan`, keeps slots independent, routes incoming bytes to the selected controller slot, and exposes outgoing bytes per selected output slot.
 
-- [ ] **Step 2: Implement C++ bridge bindings**
+- [ ] **Step 2: Implement C++ bridge bindings and generic runtime ABI**
 
-Bind the reconcile core to abstract browser endpoint operations. Do not duplicate desktop reconcile policy in JS. If a needed operation cannot be represented over the ABI, stop and update the OpenSpec before continuing.
+Bind the reconcile core to abstract browser endpoint operations. Extend `synth_browser::Runtime<App>`, `RuntimeAbi`, `BrowserRuntimeAbi.cpp`, and the Emscripten export list with generic MIDI operations:
+
+- submit the current browser endpoint snapshot (`identifier`, `name`, input/output kind) and run `PlanMidiReconciliation`/`ExecuteReconcilePlan`;
+- return generic endpoint actions/status for the main thread to apply to Web MIDI port objects;
+- deliver inbound MIDI bytes, including sysex, to `Engine<App>::MidiInputProcessor(controllerIx)`;
+- attach per-controller output sinks to `Engine<App>::Context().midiSender` and expose a bounded drain/dequeue API returning `(controllerIx, bytes)` for JavaScript to send through `MIDIOutput.send()`.
+
+Do not duplicate desktop reconcile policy in JS. If a required operation still cannot be represented over this generic ABI, stop and update the OpenSpec before continuing.
 
 - [ ] **Step 3: Write failing Playwright MIDI tests**
 
@@ -488,7 +498,7 @@ Run: `npm --prefix projects/synth/browser test -- midi-flow.spec.ts`
 
 Expected: C++ bridge and Playwright MIDI tests pass.
 
-Commit: `git add projects/synth/include/synth/browser/BrowserMidiBridge.hpp projects/synth/tests/browser_midi_bridge_tests.cpp projects/synth/browser/src projects/synth/browser/tests projects/synth/Makefile && git commit -m "feat(synth): add sysex web midi bridge"`
+Commit: `git add projects/synth/include/synth/browser/BrowserMidiBridge.hpp projects/synth/include/synth/browser/BrowserRuntime.hpp projects/synth/browser/cpp/BrowserRuntimeAbi.cpp projects/synth/tests/browser_midi_bridge_tests.cpp projects/synth/browser/Makefile projects/synth/browser/src projects/synth/browser/tests projects/synth/Makefile && git commit -m "feat(synth): add sysex web midi bridge"`
 
 ---
 

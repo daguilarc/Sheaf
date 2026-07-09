@@ -194,6 +194,16 @@ JavaScript. Browser JavaScript timers replace the JUCE poll thread
 mechanically, but the observable runtime semantics are the same: polling keeps
 connection state fresh even when browser events are missed.
 
+The generic browser ABI is part of this bridge. It must expose C-callable,
+application-agnostic operations for: submitting a browser MIDI endpoint snapshot
+to the C++ reconcile bridge; returning generic endpoint actions/status for the
+main thread to apply to Web MIDI port objects; delivering inbound bytes plus a
+controller-slot index into the existing engine MIDI input processor chain; and
+draining engine-produced outbound bytes per controller slot for the main thread
+to send through `MIDIOutput.send()`. These operations are owned by
+`synth_browser::Runtime<App>`/`BrowserMidiBridge`, not by any concrete app entry
+point, and the Emscripten export list must include them.
+
 ### D6 — Serialize UI frames as compact binary command buffers
 
 The browser backend should not call into JavaScript or the browser per draw
