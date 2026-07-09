@@ -1,54 +1,67 @@
-# Task 2 Report: Runtime Monotonic Sample Position
+# Task 2 Report: JUCE-Free Browser Command Buffer Serialization
 
-## Summary
+## Implementation
 
-Implemented Task 2 for `decouple-encoder-block-rate`.
+- Added `synth_browser::CommandBuffer` and the JUCE-free, DOM-free
+  `SerializeNodeTree(const synth::ui::NodeTree&)` implementation.
+- Defined the version 1 `SBCB` little-endian buffer format. It contains
+  length-prefixed string, node, action, draw, and diagnostic sections.
+- Added explicit enum mapping for every current portable `NodeKind` and
+  `DrawCommand::Kind`. Unsupported values are skipped and recorded as the
+  generic `UnsupportedPortableFeature` diagnostic (`node kind` or `draw
+  command kind`); no app-specific fallback exists.
+- Added `DecodeCommandBuffer(std::span<const std::byte>)` as the C++ test
+  helper and decoder-parity reference for the upcoming TypeScript work.
+- Added the `browser-command-buffer-test` make target and included the binary
+  in the full synth `test` target.
 
-- Added `AudioBlock::startSample`.
-- Updated `Engine::ProcessBlock` to stamp each block with the monotonic pre-increment sample position.
-- Removed steady-state `manager_.ComputeAllTargets()` from the host block boundary.
-- Updated engine comments and tests to separate message application (`SceneCenter`) from target/current processing (`ProcessSample`).
-- Did not add engine-side per-slot `ProcessSample` calls, preserving the Task 1 reviewer constraint that the engine must not assume per-slot `ProcessSample` is O(1).
+## TDD Evidence
 
-## Red Verification
+1. Created `projects/synth/tests/browser_command_buffer_tests.cpp` before the
+   command-buffer header.
+2. Compiled the test directly with the synth include path. It failed as
+   expected because `synth/browser/BrowserCommandBuffer.hpp` did not exist.
+3. Implemented the header-only encoder, decoder, and initial tests. The direct
+   test compile/run passed.
+4. Added an unsupported-draw regression test. It failed before the fix with
+   `std::logic_error: missing command buffer string`, exposing that the
+   diagnostic string was added after string-table construction.
+5. Moved unsupported-draw diagnostic discovery into the pre-encode pass and
+   re-ran the direct test successfully.
 
-Ran:
+## Tests
 
-```bash
-make -C projects/synth build/engine_tests && projects/synth/build/engine_tests
-```
+- `make -C projects/synth browser-command-buffer-test` passed.
+- `make -C projects/synth test` passed.
+- `git diff --check` passed.
 
-Expected pre-implementation failure occurred:
+The focused test covers the `SBCB` magic and version, string/action/node/draw
+tables, Root, ScrollArea, Button, Slider, ComboBox, TextField, StatusText,
+Draw, bounds, options, actions, scroll extents, all current draw kinds,
+stable IDs across frames, and generic diagnostics for invalid node and draw
+kinds.
 
-```text
-tests/engine_tests.cpp:126:38: error: no member named 'startSample' in 'synth::AudioBlock'
-```
+## Changed Files
 
-## Green Verification
+- `projects/synth/include/synth/browser/BrowserCommandBuffer.hpp`
+- `projects/synth/tests/browser_command_buffer_tests.cpp`
+- `projects/synth/Makefile`
+- `.superpowers/sdd/task-2-report.md`
 
-Ran:
+## Self-Review
 
-```bash
-make -C projects/synth build/engine_tests && projects/synth/build/engine_tests
-```
+- The browser buffer includes only `PortableUI.hpp` and standard C++ headers;
+  it has no JUCE, DOM, browser JavaScript, or app-specific dependency.
+- Multi-byte integers and floating-point bit patterns are appended and decoded
+  explicitly in little-endian order rather than relying on host layout.
+- Node order and supplied child ID order are preserved. Node IDs are strings
+  from the portable tree and remain unchanged across frames.
+- Decode validates magic, version, section boundaries, table indexes, enum
+  ranges, and node draw ranges before returning a decoded view.
+- The unsupported paths produce portable-feature diagnostics and keep valid
+  nodes/draw commands serializable.
 
-Result: all focused engine tests passed.
+## Concerns
 
-## Notes
-
-- Existing engine tests that assumed block-boundary target computation were updated to assert the new contract:
-  - UI/MIDI/patch messages are still drained before `ProcessFrame` and `ProcessBlock`.
-  - `SceneCenter` reflects those messages immediately.
-  - `CurrentCenter`/UI display movement does not advance until sample-level processing runs.
-- OpenSpec tasks `2.1` through `2.5` were not marked complete because the brief says to do that after review approval.
-
-## Review fix
-
-- Updated `engine_pump_populates_ui_state_at_throttle_cadence` to call `ProcessSample(n)` before the throttle cadence publish, so the published UI cell is asserted against an advanced `CurrentCenter` instead of the initial display value.
-- Ran:
-
-```bash
-make -C projects/synth build/engine_tests && projects/synth/build/engine_tests
-```
-
-Result: all engine tests passed.
+None. TypeScript decoding and rendering remain intentionally out of scope for
+Task 3.
