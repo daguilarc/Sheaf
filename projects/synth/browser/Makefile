@@ -3,10 +3,13 @@ CXXFLAGS ?= -std=c++20 -O2
 CPPFLAGS := -I../include -I../apps/miniapp -Icpp
 BROWSER_BUILD_DIR := wasm-build
 
-.PHONY: build browser-fake-app browser-miniapp
+.PHONY: build test browser-fake-app browser-miniapp
 
 build:
 	npm run build
+
+test:
+	npm test
 
 browser-fake-app: $(BROWSER_BUILD_DIR)/fake_browser_app.wasm
 

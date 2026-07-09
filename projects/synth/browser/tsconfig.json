@@ -9,5 +9,5 @@
     "allowJs": true,
     "skipLibCheck": true
   },
-  "files": ["playwright.config.mjs"]
+  "include": ["src/**/*", "tests/**/*", "*.mjs"]
 }
