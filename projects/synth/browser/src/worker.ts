@@ -1,5 +1,7 @@
 import { SharedRingBuffer } from "./protocol.js";
 import type { AudioBridgeDescriptor, MidiAction, MidiEndpoint, MidiOutput } from "./protocol.js";
+import { BrowserPersistence } from "./persistence.js";
+import type { BrowserFileSystem, BrowserPersistenceFactory } from "./persistence.js";
 
 export type RuntimeCommand =
   | { type: "load"; moduleUrl?: string }
@@ -30,6 +32,7 @@ export type RuntimeResponse =
   | { type: "error"; error: string };
 
 export interface RuntimeModuleFacade {
+  filesystem?: BrowserFileSystem;
   create(): number;
   initialize(handle: number, dataRoot: string): number;
   prepare(handle: number, sampleRate: number, blockSize: number): number;
@@ -48,6 +51,8 @@ export interface RuntimeModuleFacade {
 export type RuntimeModuleLoader = (moduleUrl?: string) => Promise<RuntimeModuleFacade>;
 
 type EmscriptenModule = {
+  FS: Omit<BrowserFileSystem, "filesystems">;
+  IDBFS: unknown;
   HEAPU8: Uint8Array;
   HEAPF32: Float32Array;
   _malloc(size: number): number;
@@ -193,7 +198,13 @@ export const loadEmscriptenRuntime: RuntimeModuleLoader = async (moduleUrl) => {
   const imported = await import(moduleUrl) as { default?: () => Promise<EmscriptenModule>; createSynthBrowserModule?: () => Promise<EmscriptenModule> };
   const factory = imported.default ?? imported.createSynthBrowserModule;
   if (!factory) throw new Error("runtime module does not export an Emscripten factory");
-  return emscriptenRuntimeFacade(await factory());
+  const module = await factory();
+  return { ...emscriptenRuntimeFacade(module), filesystem: {
+    filesystems: { IDBFS: module.IDBFS },
+    mkdir: (path) => module.FS.mkdir(path),
+    mount: (type, options, path) => module.FS.mount(type, options, path),
+    syncfs: (populate, complete) => module.FS.syncfs(populate, complete),
+  } };
 };
 
 export class BrowserRuntimeWorker {
@@ -201,9 +212,13 @@ export class BrowserRuntimeWorker {
   private handleValue: number | undefined;
   private audioBridge: SharedRingBuffer | undefined;
   private audioBlockSize: number | undefined;
+  private persistence: BrowserPersistence | undefined;
   private destroyed = false;
 
-  constructor(private readonly loadModule: RuntimeModuleLoader = loadEmscriptenRuntime) {}
+  constructor(
+    private readonly loadModule: RuntimeModuleLoader = loadEmscriptenRuntime,
+    private readonly createPersistence: BrowserPersistenceFactory = (filesystem) => new BrowserPersistence(filesystem),
+  ) {}
 
   async handle(command: RuntimeCommand): Promise<RuntimeResponse> {
     try {
@@ -211,6 +226,7 @@ export class BrowserRuntimeWorker {
       switch (command.type) {
         case "load":
           this.module = await this.loadModule(command.moduleUrl);
+          this.persistence = this.module.filesystem ? this.createPersistence(this.module.filesystem) : undefined;
           return { type: "ok" };
         case "create": {
           if (!this.module) throw new Error("runtime module is not loaded");
@@ -219,8 +235,13 @@ export class BrowserRuntimeWorker {
           if (!this.handleValue) throw new Error("runtime creation failed");
           return { type: "created", handle: this.handleValue };
         }
-        case "initialize":
+        case "initialize": {
+          if (this.persistence) {
+            await this.persistence.start();
+            return this.call((module, handle) => module.initialize(handle, this.persistence!.paths.dataRoot));
+          }
           return this.call((module, handle) => module.initialize(handle, command.dataRoot));
+        }
         case "prepare":
           return this.call((module, handle) => module.prepare(handle, command.sampleRate, command.blockSize));
         case "process":
@@ -270,9 +291,11 @@ export class BrowserRuntimeWorker {
           return { type: "destroyed" };
         }
         case "persistence":
-          return { type: "status", status: `${command.type} forwarding is not available` };
+          if (!this.persistence) return { type: "status", status: "persistence unavailable" };
+          this.persistence.scheduleSync();
+          return { type: "status", status: this.persistence.status() };
         case "status":
-          return { type: "status", status: this.handleValue === undefined ? "not created" : "running" };
+          return { type: "status", status: this.persistence?.status() ?? (this.handleValue === undefined ? "not created" : "running") };
       }
     } catch (error) {
       return { type: "error", error: error instanceof Error ? error.message : "runtime operation failed" };

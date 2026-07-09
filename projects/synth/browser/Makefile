@@ -4,7 +4,7 @@ CPPFLAGS := -I../include -I../apps/miniapp -Icpp
 BROWSER_BUILD_DIR := wasm-build
 CORE_SOURCES := ../src/ParameterModulation.cpp ../src/MidiController.cpp ../src/PatchPersistence.cpp ../src/DspWavetable.cpp ../src/Modules.cpp ../src/MidiReconcile.cpp ../src/MidiDevicePoller.cpp ../src/MidiConfigViewModel.cpp ../src/MidiConfigBlocks.cpp
 EXPORTED_FUNCTIONS := '["_malloc","_free","_synth_browser_create","_synth_browser_initialize","_synth_browser_prepare","_synth_browser_process","_synth_browser_message_tick","_synth_browser_build_ui_frame","_synth_browser_dispatch_action","_synth_browser_submit_midi_endpoints","_synth_browser_dequeue_midi_action","_synth_browser_deliver_midi","_synth_browser_dequeue_midi_output","_synth_browser_destroy"]'
-EXPORTED_RUNTIME_METHODS := '["stringToUTF8","lengthBytesUTF8"]'
+EXPORTED_RUNTIME_METHODS := '["stringToUTF8","lengthBytesUTF8","FS","IDBFS"]'
 PTHREAD_FLAGS := -pthread -sUSE_PTHREADS=1 -sPTHREAD_POOL_SIZE=1
 
 .PHONY: build test browser-fake-app browser-miniapp

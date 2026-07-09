@@ -8,9 +8,9 @@ test("browser scaffold test runner is active", () => {
   assert.equal(typeof globalThis, "object");
 });
 
-test("emscripten runtime facade exports string helpers", async () => {
+test("emscripten runtime facade exports string and persistence helpers", async () => {
   const makefile = await readBrowserMakefile();
-  assert.match(makefile, /EXPORTED_RUNTIME_METHODS := '\["stringToUTF8","lengthBytesUTF8"\]'/);
+  assert.match(makefile, /EXPORTED_RUNTIME_METHODS := '\["stringToUTF8","lengthBytesUTF8","FS","IDBFS"\]'/);
   assert.equal((makefile.match(/-sEXPORTED_RUNTIME_METHODS=\$\(EXPORTED_RUNTIME_METHODS\)/g) ?? []).length, 2);
 });
 
