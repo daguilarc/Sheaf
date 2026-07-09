@@ -1,4 +1,5 @@
-import { AudioBridgeDescriptor, SharedRingBuffer } from "./protocol.js";
+import { SharedRingBuffer } from "./protocol.js";
+import type { AudioBridgeDescriptor, MidiAction, MidiEndpoint, MidiOutput } from "./protocol.js";
 
 export type RuntimeCommand =
   | { type: "load"; moduleUrl?: string }
@@ -12,7 +13,9 @@ export type RuntimeCommand =
   | { type: "build-ui-frame" }
   | { type: "dispatch-action"; name: string; value: string }
   | { type: "destroy" }
-  | { type: "midi"; bytes: number[] }
+  | { type: "midi-endpoints"; endpoints: MidiEndpoint[] }
+  | { type: "midi-input"; controllerIx: number; bytes: number[]; timestampMicros: number }
+  | { type: "drain-midi-output" }
   | { type: "persistence"; state: string }
   | { type: "status" };
 
@@ -21,6 +24,8 @@ export type RuntimeResponse =
   | { type: "created"; handle: number }
   | { type: "ui-frame"; frame: number[] }
   | { type: "destroyed" }
+  | { type: "midi-actions"; actions: MidiAction[] }
+  | { type: "midi-output"; output?: MidiOutput }
   | { type: "status"; status: string }
   | { type: "error"; error: string };
 
@@ -33,6 +38,10 @@ export interface RuntimeModuleFacade {
   messageTick(handle: number, timestampMicros: number): number;
   buildUiFrame(handle: number): ArrayBuffer;
   dispatchAction(handle: number, name: string, value: string): number;
+  submitMidiEndpoints(handle: number, endpoints: MidiEndpoint[]): number;
+  dequeueMidiAction(handle: number): MidiAction | undefined;
+  deliverMidi(handle: number, controllerIx: number, bytes: number[], timestampMicros: number): number;
+  dequeueMidiOutput(handle: number): MidiOutput | undefined;
   destroy(handle: number): void;
 }
 
@@ -52,6 +61,10 @@ type EmscriptenModule = {
   _synth_browser_message_tick(handle: number, timestampMicros: bigint): number;
   _synth_browser_build_ui_frame(handle: number, size: number): number;
   _synth_browser_dispatch_action(handle: number, name: number, value: number): number;
+  _synth_browser_submit_midi_endpoints(handle: number, endpoints: number, count: number): number;
+  _synth_browser_dequeue_midi_action(handle: number, action: number): number;
+  _synth_browser_deliver_midi(handle: number, controllerIx: number, bytes: number, size: number, timestampMicros: bigint): number;
+  _synth_browser_dequeue_midi_output(handle: number, controllerIx: number, size: number): number;
   _synth_browser_destroy(handle: number): void;
 };
 
@@ -63,6 +76,24 @@ function withUtf8<T>(module: EmscriptenModule, value: string, operation: (pointe
   } finally {
     module._free(pointer);
   }
+}
+
+function withBytes<T>(module: EmscriptenModule, bytes: Uint8Array, operation: (pointer: number) => T): T {
+  const pointer = bytes.length === 0 ? 0 : module._malloc(bytes.length);
+  try {
+    if (pointer !== 0) module.HEAPU8.set(bytes, pointer);
+    return operation(pointer);
+  } finally {
+    if (pointer !== 0) module._free(pointer);
+  }
+}
+
+const MIDI_ENDPOINT_SIZE = 20;
+const MIDI_ACTION_SIZE = 24;
+const MIDI_ACTION_TYPES: MidiAction["type"][] = ["open-input", "open-output", "close-input", "close-output", "update-input-ref", "update-output-ref", "resync"];
+
+function decodeUtf8(module: EmscriptenModule, pointer: number, size: number): string {
+  return new TextDecoder().decode(module.HEAPU8.slice(pointer, pointer + size));
 }
 
 export function emscriptenRuntimeFacade(module: EmscriptenModule): RuntimeModuleFacade {
@@ -97,6 +128,62 @@ export function emscriptenRuntimeFacade(module: EmscriptenModule): RuntimeModule
     },
     dispatchAction: (handle, name, value) => withUtf8(module, name, (namePointer) =>
       withUtf8(module, value, (valuePointer) => module._synth_browser_dispatch_action(handle, namePointer, valuePointer))),
+    submitMidiEndpoints: (handle, endpoints) => {
+      const encoded = endpoints.map((endpoint) => ({ ...endpoint, identifier: new TextEncoder().encode(endpoint.identifier), name: new TextEncoder().encode(endpoint.name) }));
+      const allocated = encoded.flatMap((endpoint) => [endpoint.identifier, endpoint.name]).map((bytes) => bytes.length === 0 ? 0 : module._malloc(bytes.length));
+      const endpointPointer = endpoints.length === 0 ? 0 : module._malloc(endpoints.length * MIDI_ENDPOINT_SIZE);
+      try {
+        const view = new DataView(module.HEAPU8.buffer);
+        for (let index = 0; index < encoded.length; index++) {
+          const endpoint = encoded[index];
+          const identifierPointer = allocated[index * 2];
+          const namePointer = allocated[index * 2 + 1];
+          if (identifierPointer !== 0) module.HEAPU8.set(endpoint.identifier, identifierPointer);
+          if (namePointer !== 0) module.HEAPU8.set(endpoint.name, namePointer);
+          const offset = endpointPointer + index * MIDI_ENDPOINT_SIZE;
+          view.setUint32(offset, identifierPointer, true);
+          view.setUint32(offset + 4, endpoint.identifier.length, true);
+          view.setUint32(offset + 8, namePointer, true);
+          view.setUint32(offset + 12, endpoint.name.length, true);
+          view.setUint32(offset + 16, endpoint.kind === "input" ? 0 : 1, true);
+        }
+        return module._synth_browser_submit_midi_endpoints(handle, endpointPointer, endpoints.length);
+      } finally {
+        if (endpointPointer !== 0) module._free(endpointPointer);
+        allocated.filter((pointer) => pointer !== 0).forEach((pointer) => module._free(pointer));
+      }
+    },
+    dequeueMidiAction: (handle) => {
+      const actionPointer = module._malloc(MIDI_ACTION_SIZE);
+      try {
+        const status = module._synth_browser_dequeue_midi_action(handle, actionPointer);
+        if (status === 0) return undefined;
+        if (status !== 1) throw new Error("runtime failed to dequeue MIDI action");
+        const view = new DataView(module.HEAPU8.buffer);
+        const type = MIDI_ACTION_TYPES[view.getUint32(actionPointer, true)];
+        if (!type) throw new Error("runtime returned invalid MIDI action");
+        const identifierPointer = view.getUint32(actionPointer + 8, true);
+        const identifierSize = view.getUint32(actionPointer + 12, true);
+        const namePointer = view.getUint32(actionPointer + 16, true);
+        const nameSize = view.getUint32(actionPointer + 20, true);
+        return { type, controllerIx: view.getUint32(actionPointer + 4, true), identifier: decodeUtf8(module, identifierPointer, identifierSize), name: decodeUtf8(module, namePointer, nameSize) };
+      } finally {
+        module._free(actionPointer);
+      }
+    },
+    deliverMidi: (handle, controllerIx, bytes, timestampMicros) => withBytes(module, Uint8Array.from(bytes), (pointer) =>
+      module._synth_browser_deliver_midi(handle, controllerIx, pointer, bytes.length, BigInt(timestampMicros))),
+    dequeueMidiOutput: (handle) => {
+      const metadata = module._malloc(8);
+      try {
+        const pointer = module._synth_browser_dequeue_midi_output(handle, metadata, metadata + 4);
+        const view = new DataView(module.HEAPU8.buffer);
+        const size = view.getUint32(metadata + 4, true);
+        return pointer === 0 ? undefined : { controllerIx: view.getUint32(metadata, true), bytes: Array.from(module.HEAPU8.slice(pointer, pointer + size)) };
+      } finally {
+        module._free(metadata);
+      }
+    },
     destroy: (handle) => module._synth_browser_destroy(handle),
   };
 }
@@ -162,6 +249,18 @@ export class BrowserRuntimeWorker {
         }
         case "dispatch-action":
           return this.call((module, handle) => module.dispatchAction(handle, command.name, command.value));
+        case "midi-endpoints": {
+          const module = this.requireModule();
+          const handle = this.requireHandle();
+          if (module.submitMidiEndpoints(handle, command.endpoints) !== 0) throw new Error("runtime operation failed");
+          const actions: MidiAction[] = [];
+          for (let action = module.dequeueMidiAction(handle); action !== undefined; action = module.dequeueMidiAction(handle)) actions.push(action);
+          return { type: "midi-actions", actions };
+        }
+        case "midi-input":
+          return this.call((module, handle) => module.deliverMidi(handle, command.controllerIx, command.bytes, command.timestampMicros));
+        case "drain-midi-output":
+          return { type: "midi-output", output: this.requireModule().dequeueMidiOutput(this.requireHandle()) };
         case "destroy": {
           const module = this.requireModule();
           const handle = this.requireHandle();
@@ -170,7 +269,6 @@ export class BrowserRuntimeWorker {
           this.destroyed = true;
           return { type: "destroyed" };
         }
-        case "midi":
         case "persistence":
           return { type: "status", status: `${command.type} forwarding is not available` };
         case "status":

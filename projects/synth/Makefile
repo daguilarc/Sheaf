@@ -24,6 +24,7 @@ CONTROLLERS_PAGE_UI_TEST_BIN := $(BUILD_DIR)/controllers_page_ui_tests
 BROWSER_CONTRACT_TEST_BIN := $(BUILD_DIR)/browser_runtime_contract_tests
 BROWSER_COMMAND_BUFFER_TEST_BIN := $(BUILD_DIR)/browser_command_buffer_tests
 BROWSER_AUDIO_DEVICE_TEST_BIN := $(BUILD_DIR)/browser_audio_device_tests
+BROWSER_MIDI_BRIDGE_TEST_BIN := $(BUILD_DIR)/browser_midi_bridge_tests
 SRC := src/ParameterModulation.cpp src/MidiController.cpp src/PatchPersistence.cpp src/DspWavetable.cpp src/Modules.cpp src/MidiReconcile.cpp src/MidiDevicePoller.cpp src/MidiConfigViewModel.cpp src/MidiConfigBlocks.cpp
 OBJ := $(BUILD_DIR)/ParameterModulation.o $(BUILD_DIR)/MidiController.o $(BUILD_DIR)/PatchPersistence.o $(BUILD_DIR)/DspWavetable.o $(BUILD_DIR)/Modules.o $(BUILD_DIR)/MidiReconcile.o $(BUILD_DIR)/MidiDevicePoller.o $(BUILD_DIR)/MidiConfigViewModel.o $(BUILD_DIR)/MidiConfigBlocks.o
 DSP_HEADERS := include/synth/DspMath.hpp include/synth/DspNumbers.hpp include/synth/DspTransferFunction.hpp include/synth/DspFilters.hpp include/synth/DspScope.hpp include/synth/DspWavetable.hpp include/synth/DspOscillators.hpp include/synth/DspBuffers.hpp include/synth/DspDegrade.hpp include/synth/DspMetering.hpp include/synth/DspOla.hpp include/synth/DspResynthesis.hpp include/synth/DspSpectral.hpp
@@ -31,7 +32,7 @@ APPS_DIR := apps
 MINIAPP_DIR := $(APPS_DIR)/miniapp
 SHEAF_PATCH_DIR := $(APPS_DIR)/sheaf-patch
 
-.PHONY: all build test check-ui-boundary miniapp sheaf-patch apps browser browser-unit-test browser-command-buffer-test browser-audio-device-test clean
+.PHONY: all build test check-ui-boundary miniapp sheaf-patch apps browser browser-unit-test browser-command-buffer-test browser-audio-device-test browser-midi-bridge-test clean
 
 all: build test
 
@@ -141,6 +142,9 @@ $(BROWSER_COMMAND_BUFFER_TEST_BIN): tests/browser_command_buffer_tests.cpp inclu
 $(BROWSER_AUDIO_DEVICE_TEST_BIN): tests/browser_audio_device_tests.cpp include/synth/browser/BrowserAudioDevices.hpp include/synth/RuntimePages.hpp include/synth/PatchPersistence.hpp $(LIB)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< $(LIB) -o $@
 
+$(BROWSER_MIDI_BRIDGE_TEST_BIN): tests/browser_midi_bridge_tests.cpp include/synth/browser/BrowserMidiBridge.hpp include/synth/MidiReconcile.hpp include/synth/MidiController.hpp $(LIB)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< $(LIB) -o $@
+
 browser-unit-test: $(BROWSER_CONTRACT_TEST_BIN)
 	$(BROWSER_CONTRACT_TEST_BIN)
 
@@ -149,6 +153,9 @@ browser-command-buffer-test: $(BROWSER_COMMAND_BUFFER_TEST_BIN)
 
 browser-audio-device-test: $(BROWSER_AUDIO_DEVICE_TEST_BIN)
 	$(BROWSER_AUDIO_DEVICE_TEST_BIN)
+
+browser-midi-bridge-test: $(BROWSER_MIDI_BRIDGE_TEST_BIN)
+	$(BROWSER_MIDI_BRIDGE_TEST_BIN)
 
 test: check-ui-boundary $(TEST_BIN) $(DSP_TEST_BIN) $(MODULE_TEST_BIN) $(INSTRUMENT_TEST_BIN) $(CONTRACT_TEST_BIN) $(LOGGING_TEST_BIN) $(ENGINE_TEST_BIN) $(RIG_TEST_BIN) $(MINIAPP_SYSTEM_TEST_BIN) $(RECONCILE_TEST_BIN) $(RECONCILE_EXECUTOR_TEST_BIN) $(POLLER_TEST_BIN) $(MIDI_SENDER_TEST_BIN) $(VIEWMODEL_TEST_BIN) $(BLOCKS_TEST_BIN) $(PORTABLE_UI_TEST_BIN) $(CONTROLLERS_PAGE_UI_TEST_BIN) $(BROWSER_COMMAND_BUFFER_TEST_BIN) $(BROWSER_AUDIO_DEVICE_TEST_BIN)
 	$(TEST_BIN)

@@ -17,6 +17,11 @@ export type AudioBridgeDescriptor = {
   state: SharedArrayBuffer;
 };
 
+export type MidiEndpoint = { identifier: string; name: string; kind: "input" | "output" };
+export type MidiActionType = "open-input" | "open-output" | "close-input" | "close-output" | "update-input-ref" | "update-output-ref" | "resync";
+export type MidiAction = { type: MidiActionType; controllerIx: number; identifier?: string; name?: string };
+export type MidiOutput = { controllerIx: number; bytes: number[] };
+
 export class SharedRingBuffer {
   private readonly sampleData: Float32Array;
   private readonly stateWords: Int32Array;

@@ -47,6 +47,34 @@ extern "C" int synth_browser_dispatch_action(synth_browser_runtime* runtime, con
     return RuntimeFor(runtime) == nullptr ? -1 : RuntimeFor(runtime)->DispatchAction(name, value);
 }
 
+extern "C" int synth_browser_submit_midi_endpoints(synth_browser_runtime* runtime,
+                                                     const synth_browser::MidiEndpointDescriptor* endpoints,
+                                                     std::uint32_t count)
+{
+    return RuntimeFor(runtime) == nullptr ? -1 : RuntimeFor(runtime)->SubmitMidiEndpoints(endpoints, count);
+}
+
+extern "C" int synth_browser_dequeue_midi_action(synth_browser_runtime* runtime,
+                                                  synth_browser::MidiActionDescriptor* action)
+{
+    return RuntimeFor(runtime) == nullptr ? -1 : RuntimeFor(runtime)->DequeueMidiAction(action);
+}
+
+extern "C" int synth_browser_deliver_midi(synth_browser_runtime* runtime, std::uint32_t controllerIx,
+                                            const std::uint8_t* bytes, std::uint32_t size,
+                                            std::uint64_t timestampMicros)
+{
+    return RuntimeFor(runtime) == nullptr
+               ? -1
+               : RuntimeFor(runtime)->DeliverMidi(controllerIx, bytes, size, timestampMicros);
+}
+
+extern "C" const std::uint8_t* synth_browser_dequeue_midi_output(synth_browser_runtime* runtime,
+                                                                    std::uint32_t* controllerIx, std::uint32_t* size)
+{
+    return RuntimeFor(runtime) == nullptr ? nullptr : RuntimeFor(runtime)->DequeueMidiOutput(controllerIx, size);
+}
+
 extern "C" void synth_browser_destroy(synth_browser_runtime* runtime)
 {
     if (RuntimeFor(runtime) != nullptr) {
