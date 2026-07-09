@@ -1,69 +1,114 @@
-# Task 1 Report: Parameter Group Cadence API
-
-## Scope
-
-Implemented Task 1 only for OpenSpec change `decouple-encoder-block-rate`.
-
-Modified files:
-- `projects/synth/include/synth/ParameterModulation.hpp`
-- `projects/synth/src/ParameterModulation.cpp`
-- `projects/synth/tests/parameter_modulation_tests.cpp`
-- `openspec/changes/decouple-encoder-block-rate/tasks.md`
-
-Ignored as requested:
-- `projects/synth/miniapp/`
+# Task 1 Report: Browser Build, Fake App, And Portability Gates
 
 ## Implementation
 
-- Added `synth::kDefaultTargetComputeIntervalSamples = 16`.
-- Added `ParameterGroupConfig::targetComputeIntervalSamples`, defaulting to 16.
-- Extended `ParameterGroupConfig::IsValid()` to reject zero target compute intervals.
-- Added `Parameter::ProcessSample(std::uint64_t sampleIndex)`.
-  - Recomputes targets from the owning manager scene when `sampleIndex % targetComputeIntervalSamples == 0`.
-  - Always runs `ProcessLite()` afterward.
-- Added `ParameterGroup::ProcessSample(std::uint64_t sampleIndex)`.
-  - Iterates all top-level parameters through `ParameterByLocalIndex()` so both initial and reinforced storage batches are covered.
-- Left `ProcessLite()` as the slew-only helper.
+- Added `synth_browser::BrowserApplication`, `BrowserAppBinding`, and the
+  `SYNTH_BROWSER_APP(AppType)` generic entry macro. The browser boundary is
+  defined solely in terms of `synth::SynthApplication`.
+- Added `FakeBrowserApp`, including a portable surface with one button, one
+  slider, and one draw node. Its audio callback writes a bounded 440 Hz sine
+  signal to every available output channel.
+- Added separate generic entry translation units for the fake app and
+  `synth_miniapp::MiniApp`. The miniapp entry only includes its existing
+  JUCE-free application header and invokes the generic macro; it contains no
+  miniapp-specific browser behavior.
+- Added the browser package scaffold, generic HTML root, TypeScript and
+  Playwright configurations, and Emscripten-oriented static targets
+  (`browser-fake-app` and `browser-miniapp`).
+- Added the focused browser runtime contract binary and root/project make
+  shortcuts.
 
-## Tests Added
+## TDD Evidence
 
-- Extended `group_config_validation` to cover:
-  - default target compute interval is 16,
-  - positive configured values remain valid,
-  - zero target compute interval is invalid.
-- Added `parameter_process_sample_recomputes_on_configured_interval`.
-- Added `parameter_group_process_sample_covers_top_level_and_modulation_depth_targets`.
+1. Added `projects/synth/tests/browser_runtime_contract_tests.cpp` before the
+   browser entry boundary.
+2. Ran `make -C projects/synth build/browser_runtime_contract_tests`.
+   It failed as expected because no rule existed for the requested focused
+   target.
+3. Implemented the generic boundary and focused make target.
+4. Ran `make -C projects/synth browser-unit-test`; it compiled and passed.
 
-## Red/Green Evidence
+## Verification
 
-Red run:
+- `make -C projects/synth browser-unit-test` passed.
+- `make -C projects/synth/browser build` passed.
+- Host C++ compilation of both `fake_app_entry.cpp` and `miniapp_entry.cpp`
+  with the browser include paths passed. This checks that the generic entry
+  points parse and satisfy their C++ constraints on the host compiler; it does
+  not verify an Emscripten build.
+- `make -C projects/synth/browser -n browser-fake-app` and
+  `make -C projects/synth/browser -n browser-miniapp` produced the expected
+  Emscripten WASM build commands.
+- `git diff --check` passed.
 
-```bash
-make -C projects/synth build/parameter_modulation_tests && projects/synth/build/parameter_modulation_tests
-```
+## Changed Files
 
-Result: failed to compile as expected before implementation because `ParameterGroupConfig::targetComputeIntervalSamples` was missing.
+- `Makefile`
+- `projects/synth/Makefile`
+- `projects/synth/browser/Makefile`
+- `projects/synth/browser/package.json`
+- `projects/synth/browser/tsconfig.json`
+- `projects/synth/browser/playwright.config.mjs`
+- `projects/synth/browser/public/index.html`
+- `projects/synth/browser/cpp/FakeBrowserApp.hpp`
+- `projects/synth/browser/cpp/fake_app_entry.cpp`
+- `projects/synth/browser/cpp/miniapp_entry.cpp`
+- `projects/synth/include/synth/browser/BrowserAppEntry.hpp`
+- `projects/synth/tests/browser_runtime_contract_tests.cpp`
 
-Green run:
+## Self-Review
 
-```bash
-make -C projects/synth build/parameter_modulation_tests && projects/synth/build/parameter_modulation_tests
-```
-
-Result: passed with exit code 0.
-
-## Notes
-
-- The brief's group-level test snippet expected `carrier.CurrentDepths(0)[0] == 0.5f` after setting the modulation-depth child scene center to `0.5f`.
-- Existing parameter modulation behavior maps modulation-depth knob values through `ModulationDepthTargetFromKnob`; existing tests assert a half-turn depth knob produces raw depth `0.125f`.
-- I preserved the new test's intent and asserted:
-  - the child depth target center refreshes to `0.5f`, and
-  - the carrier's raw current depth refreshes to the established mapped value `0.125f`.
-
-## OpenSpec Tasks
-
-Marked only tasks 1.1 through 1.5 complete in `openspec/changes/decouple-encoder-block-rate/tasks.md`.
+- The browser app concept aliases the existing full application concept, so it
+  neither weakens nor adds app-specific requirements.
+- `miniapp_entry.cpp` names `synth_miniapp::MiniApp` through the generic macro
+  without any miniapp browser backend, HTML, or JavaScript logic.
+- The browser Makefile keeps the TypeScript scaffold build independent of the
+  optional Emscripten artifact targets, allowing the required portability
+  checks to run without a WASM toolchain.
+- Generated `node_modules`, browser `dist`, and existing excluded OpenSpec and
+  plan artifacts are not staged or committed.
 
 ## Concerns
 
-None blocking. The only deviation from the literal brief snippet is the raw modulation-depth assertion described above, made to preserve the existing modulation-depth curve contract.
+- `em++` is not installed in this environment, so the two Emscripten targets
+  were dry-run only. Actual WASM binaries were not generated or verified here.
+
+## Review Fixes
+
+- Added a Node test-runner smoke test at
+  `projects/synth/browser/tests/scaffold.test.mjs`. `npm test` now builds the
+  TypeScript scaffold and runs that test, while the Playwright configuration
+  remains available for future browser specifications.
+- Replaced the restrictive TypeScript `files` list with include patterns for
+  `src`, `tests`, and root `.mjs` configuration files.
+- Added browser `dist/` and `wasm-build/` generated outputs to `.gitignore`.
+- Added browser `test-results/` generated Playwright output to `.gitignore`.
+- Added the missing browser Makefile `test` delegate used by
+  `make synth-browser-test`.
+- The entry macro now instantiates `BrowserAppBinding<AppType>`, so the public
+  generic binding boundary is exercised by each browser entry point.
+
+## Fix Verification
+
+- `make -C projects/synth browser-unit-test`: passed.
+- `make -C projects/synth/browser build`: passed.
+- `npm --prefix projects/synth/browser test`: passed; Node reported 1 test,
+  1 pass, and 0 failures.
+- `make synth-browser-test`: passed; it ran the C++ contract binary and the
+  same Node smoke test (1 pass, 0 failures).
+- Host `c++ -std=c++20` compilation of `fake_app_entry.cpp` and
+  `miniapp_entry.cpp`: passed as a C++ portability check only.
+- `git diff --check`: passed.
+- `em++` remains unavailable, so no actual WASM build was claimed or run.
+
+## Additional Controller Cleanup
+
+- Added `projects/synth/browser/test-results/` to `.gitignore` after the
+  scaffold checks produced Playwright metadata.
+- Re-ran `make -C projects/synth browser-unit-test`: passed.
+- Re-ran `make -C projects/synth/browser build`: passed.
+- Re-ran `npm --prefix projects/synth/browser test`: passed; Node reported
+  1 test, 1 pass, and 0 failures.
+- Re-ran `make synth-browser-test`: passed; it ran the C++ contract binary and
+  the browser package smoke test.
+- Re-ran `git diff --check`: passed.
