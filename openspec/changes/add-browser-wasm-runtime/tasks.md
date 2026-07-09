@@ -5,7 +5,7 @@
 - [x] 1.3 Add compile-time tests proving the browser runtime accepts the fake conforming app and rejects apps missing required config, init, process-block, or portable-surface hooks.
 - [x] 1.4 Add source-boundary checks or compile tests proving app-facing headers and browser targets do not include JUCE headers or browser APIs outside host/backend paths.
 - [x] 1.5 Add the browser app entry-point binding that names only the concrete application type.
-- [ ] 1.6 Package browser builds as static website artifacts containing only static HTML, JavaScript, WASM, worker, AudioWorklet, and asset files.
+- [x] 1.6 Package browser builds as static website artifacts containing only static HTML, JavaScript, WASM, worker, AudioWorklet, and asset files.
 - [x] 1.7 Add a static local server for Playwright that serves the browser build with required COOP/COEP and permissions-policy headers and no dynamic app API.
 
 ## 2. Portable UI Command Buffers
@@ -28,8 +28,8 @@
 
 - [x] 4.1 Implement `synth_browser::Runtime<App>` over `synth::Engine<App>` with generic start, stop, message tick, app surface, patch/config, and runtime data path access.
 - [x] 4.2 Mount or provide app-scoped browser persistent paths before engine initialization and call initial storage sync before startup config/patch load.
-- [ ] 4.3 Add browser runtime status plumbing for startup, persistence, MIDI availability, audio availability, and unsupported security gates.
-- [ ] 4.4 Add handwritten worker/main-thread message protocols around the Emscripten module for runtime start/stop, action dispatch, UI frame transfer, patch/config status, MIDI, audio status, and diagnostics.
+- [x] 4.3 Add browser runtime status plumbing for startup, persistence, MIDI availability, audio availability, and unsupported security gates.
+- [x] 4.4 Add handwritten worker/main-thread message protocols around the Emscripten module for runtime start/stop, action dispatch, UI frame transfer, patch/config status, MIDI, audio status, and diagnostics.
 - [x] 4.5 Add tests proving no browser runtime path branches on miniapp or any concrete application identity.
 
 ## 5. Web Audio Bridge
@@ -59,9 +59,9 @@
 
 ## 8. Generic And Miniapp Browser Validation
 
-- [ ] 8.1 Add the Playwright Chrome integration test runner and document required static-hosting secure-context, cross-origin-isolation, and permissions-policy headers.
-- [ ] 8.2 Run the generic fake-app Playwright test before any miniapp browser smoke test.
-- [ ] 8.3 Add a miniapp browser build using only the generic browser entry point and backend.
-- [ ] 8.4 Add miniapp Playwright smoke coverage for app open, audio flow, bidirectional MIDI flow through injectable ports, mouse gesture dispatch, UI command-buffer rendering, and absence of miniapp-specific browser glue.
-- [ ] 8.5 Add Playwright assertions that the browser app does not call dynamic HTTP APIs or WebSocket endpoints during normal audio, MIDI, UI, patch, or configuration flows.
-- [ ] 8.6 Run `make -C projects/synth test` and the browser test suite; document any browser-only prerequisites or skipped checks.
+- [x] 8.1 Add the Playwright Chrome integration test runner and document required static-hosting secure-context, cross-origin-isolation, and permissions-policy headers.
+- [x] 8.2 Run the generic fake-app Playwright test before any miniapp browser smoke test.
+- [x] 8.3 Add a miniapp browser build using only the generic browser entry point and backend.
+- [x] 8.4 Add miniapp Playwright smoke coverage for app open, audio flow, bidirectional MIDI flow through injectable ports, mouse gesture dispatch, UI command-buffer rendering, and absence of miniapp-specific browser glue.
+- [x] 8.5 Add Playwright assertions that the browser app does not call dynamic HTTP APIs or WebSocket endpoints during normal audio, MIDI, UI, patch, or configuration flows.
+- [x] 8.6 Run `make -C projects/synth test` and the browser test suite; document any browser-only prerequisites or skipped checks.
