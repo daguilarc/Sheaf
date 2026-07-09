@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "npm run build && node --test dist/tests/*.test.mjs && playwright test",
+    "test": "npm run build && npm run check:generic-runtime && node --test dist/tests/*.test.mjs && playwright test",
+    "check:generic-runtime": "! rg -n 'MiniApp|miniapp|synth_miniapp|Vco|FilterModule|LfoBank' src ../include/synth/browser cpp --glob '!cpp/miniapp_entry.cpp'",
     "test:unit": "npm run build && node --test dist/tests/*.test.mjs"
   },
   "devDependencies": {

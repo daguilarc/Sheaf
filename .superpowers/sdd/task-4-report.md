@@ -1,98 +1,52 @@
-# Task 4 Verification Report
+STATUS: DONE_WITH_CONCERNS
 
-## Commands Run
+# Task 4 Report: Generic Browser Runtime C++ Core And ABI
 
-1. `make -C projects/synth build/parameter_modulation_tests build/engine_tests build/rig_tests build/miniapp_system_tests`
-   - Result: exit `0`
-   - Summary: `parameter_modulation_tests`, `engine_tests`, and `miniapp_system_tests` were already up to date; `rig_tests` rebuilt successfully.
+## Files Changed
 
-2. `projects/synth/build/parameter_modulation_tests`
-   - Result: exit `0`
-   - Summary: all reported cases passed.
+- `projects/synth/include/synth/browser/BrowserRuntime.hpp`
+  - Adds `synth_browser::Runtime<App>` over `synth::Engine<App>` with runtime-data-path injection, start/stop, prepare, output-only processing, message ticks, portable UI command-buffer production, and surface action dispatch.
+  - Defines the opaque-handle ABI adapter, retaining each UI frame until the next frame request or destruction.
+- `projects/synth/include/synth/browser/BrowserAppEntry.hpp`
+  - Makes `SYNTH_BROWSER_APP(AppType)` the sole concrete-app binding point by instantiating a generic runtime adapter factory.
+- `projects/synth/browser/cpp/BrowserRuntimeAbi.cpp`
+  - Implements the generic C ABI: `synth_browser_create`, `synth_browser_initialize`, `synth_browser_prepare`, `synth_browser_process`, `synth_browser_message_tick`, `synth_browser_build_ui_frame`, `synth_browser_dispatch_action`, and `synth_browser_destroy`.
+- `projects/synth/browser/src/worker.ts`
+  - Adds the Emscripten facade, worker lifecycle protocol, UI-frame transfer, action/audio/message-tick forwarding, status messages, and post-destroy rejection.
+- `projects/synth/browser/tests/runtime-core.spec.ts`
+  - Covers fake ABI runtime lifecycle, portable action dispatch, UI frame retrieval, no concrete-app HTML, and rejection after destroy.
+- `projects/synth/browser/Makefile`
+  - Builds generic modularized Emscripten runtime modules with the ABI exports for both existing entry targets.
+- `projects/synth/browser/package.json`
+  - Adds the no-app-branch scan for browser source, headers, and generic ABI code.
 
-3. `projects/synth/build/engine_tests`
-   - Result: exit `0`
-   - Summary: all reported cases passed.
+## Commit Created
 
-4. `projects/synth/build/rig_tests`
-   - Result: exit `1`
-   - Summary: five cases failed:
-     - `rig_turn_reaches_parameter_through_production_bus`
-     - `rig_midi_cc_routes_through_profile_to_parameter`
-     - `rig_patch_round_trip_through_production_flow`
-     - `rig_bus_drain_order_patch_before_ui_before_midi`
-     - `rig_two_controllers_both_drive_parameters_through_single_bus`
+- `1a505a97 feat(synth): add generic browser runtime core`
 
-5. `projects/synth/build/miniapp_system_tests`
-   - Result: exit `0`
-   - Summary: all reported cases passed.
+## TDD Evidence
 
-6. `make -C projects/synth test`
-   - Result: exit `2`
-   - Summary: compilation failed in `tests/module_tests.cpp` because it still references `synth_miniapp::ProcessLiteParameters` at lines 895 and 901.
+- Red: `npm --prefix projects/synth/browser test -- runtime-core.spec.ts` failed before implementation with `TS2307: Cannot find module '../dist/src/worker.js'`.
+- Green: the same focused test command now passes all build, no-app-branch, Node, and Playwright checks.
 
-7. `openspec validate --strict decouple-encoder-block-rate`
-   - Result: exit `0`
-   - Summary: `Change 'decouple-encoder-block-rate' is valid`.
+## Tests Run
 
-8. `openspec status --change decouple-encoder-block-rate`
-   - Result: exit `0`
-   - Summary: status reported `Progress: 4/4 artifacts complete` and all artifacts complete.
+1. `clang++ -std=c++20 -Iprojects/synth/include -Iprojects/synth/browser/cpp -fsyntax-only projects/synth/browser/cpp/BrowserRuntimeAbi.cpp projects/synth/browser/cpp/fake_app_entry.cpp`
+   - Exit `0`; generic ABI and concrete entry binding compile together.
+2. `make -C projects/synth browser-unit-test`
+   - Exit `0`; `browser_runtime_contract_tests` rebuilt and ran.
+3. `npm --prefix projects/synth/browser test -- runtime-core.spec.ts`
+   - Exit `0`; generic source scan passed, Node scaffold test passed, and Playwright reported `2 passed`.
+4. `git diff --check`
+   - Exit `0`; no whitespace errors.
 
-## Result
+## Self-Review
 
-Verification did not pass. Per the task brief, tasks 4.1 through 4.3 were not marked complete in `openspec/changes/decouple-encoder-block-rate/tasks.md`.
+- `BrowserRuntimeAbi.cpp` contains no concrete application type; the type-erased factory is generated only by the browser entry macro.
+- The browser runtime and worker contain no miniapp or concrete-widget branch. The package scan enforces the forbidden identifiers.
+- Audio input is not introduced. The worker ABI process call remains output-only until the later audio bridge task.
+- UI frames are bounded-copy at the worker boundary and runtime-owned in the C++ ABI between frame requests.
 
-## Verification fix
+## Concerns
 
-Changed `projects/synth/tests/module_tests.cpp` to use the new miniapp helper
-`synth_miniapp::ProcessParameters(group, sampleIndex)` and renamed the
-regression test/comment away from the removed `ProcessLiteParameters` helper.
-The test now uses sample index `0` for the initial recompute/process pass and
-sample index `1` for the follow-up direct-modulation assertion.
-
-Changed `projects/synth/tests/rig_tests.cpp` so `RigTestApp` and
-`TwoControllerRigApp` keep the `ParameterGroup` they create during `Init()` and
-call `group->ProcessSample(block.startSample + frame)` once per frame in
-`ProcessBlock`, preserving their previous output behavior without per-parameter
-`ProcessLite()` calls.
-
-Commands run:
-
-1. `make -C projects/synth build/module_tests build/rig_tests`
-   - Result: exit `0`
-   - Summary: rebuilt `build/module_tests` and `build/rig_tests` successfully.
-
-2. `projects/synth/build/module_tests`
-   - Result: exit `0`
-   - Summary: all reported cases passed, including
-     `demo_modulation_process_parameters_applies_direct_vco_modulation`.
-
-3. `projects/synth/build/rig_tests`
-   - Result: exit `0`
-   - Summary: all reported cases passed, including the previously failing rig
-     parameter, MIDI, patch, drain-order, and two-controller cases.
-
-4. `make -C projects/synth test`
-   - Result: exit `0`
-   - Summary: full synth test target completed successfully; final output ended
-     with `controllers_page_ui_tests passed`.
-
-## Final verification rerun
-
-After the verification fix commit, reran the complete Task 4 gate:
-
-```bash
-make -C projects/synth build/parameter_modulation_tests build/engine_tests build/rig_tests build/miniapp_system_tests && \
-projects/synth/build/parameter_modulation_tests && \
-projects/synth/build/engine_tests && \
-projects/synth/build/rig_tests && \
-projects/synth/build/miniapp_system_tests && \
-make -C projects/synth test && \
-openspec validate --strict decouple-encoder-block-rate && \
-openspec status --change decouple-encoder-block-rate
-```
-
-Result: exit `0`. Focused binaries passed, the full synth test target passed,
-strict OpenSpec validation passed, and `openspec status` reported all four
-artifacts complete.
+- `em++` is not installed in this environment, so the modularized WASM artifacts were not produced here. The C++ ABI/entry boundary was syntax-compiled with `clang++`, and the focused required gates passed.
