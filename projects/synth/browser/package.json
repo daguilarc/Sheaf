@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "npm run build && node --test dist/tests/*.test.mjs",
+    "test": "npm run build && node --test dist/tests/*.test.mjs && playwright test",
     "test:unit": "npm run build && node --test dist/tests/*.test.mjs"
   },
   "devDependencies": {
