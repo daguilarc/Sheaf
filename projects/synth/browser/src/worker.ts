@@ -1,9 +1,13 @@
+import { AudioBridgeDescriptor, SharedRingBuffer } from "./protocol.js";
+
 export type RuntimeCommand =
   | { type: "load"; moduleUrl?: string }
   | { type: "create" }
   | { type: "initialize"; dataRoot: string }
   | { type: "prepare"; sampleRate: number; blockSize: number }
   | { type: "process"; frames: number; timestampMicros: number }
+  | { type: "configure-audio"; sampleRate: number; blockSize: number; bridge: AudioBridgeDescriptor }
+  | { type: "render-audio"; timestampMicros: number }
   | { type: "message-tick"; timestampMicros: number }
   | { type: "build-ui-frame" }
   | { type: "dispatch-action"; name: string; value: string }
@@ -25,6 +29,7 @@ export interface RuntimeModuleFacade {
   initialize(handle: number, dataRoot: string): number;
   prepare(handle: number, sampleRate: number, blockSize: number): number;
   process(handle: number, frames: number, timestampMicros: number): number;
+  renderAudio?(handle: number, channels: number, frames: number, timestampMicros: number): { status: number; outputs: Float32Array[] };
   messageTick(handle: number, timestampMicros: number): number;
   buildUiFrame(handle: number): ArrayBuffer;
   dispatchAction(handle: number, name: string, value: string): number;
@@ -35,6 +40,7 @@ export type RuntimeModuleLoader = (moduleUrl?: string) => Promise<RuntimeModuleF
 
 type EmscriptenModule = {
   HEAPU8: Uint8Array;
+  HEAPF32: Float32Array;
   _malloc(size: number): number;
   _free(pointer: number): void;
   lengthBytesUTF8(value: string): number;
@@ -65,6 +71,19 @@ export function emscriptenRuntimeFacade(module: EmscriptenModule): RuntimeModule
     initialize: (handle, dataRoot) => withUtf8(module, dataRoot, (root) => module._synth_browser_initialize(handle, root)),
     prepare: (handle, sampleRate, blockSize) => module._synth_browser_prepare(handle, sampleRate, blockSize),
     process: (handle, frames, timestampMicros) => module._synth_browser_process(handle, 0, frames, BigInt(timestampMicros)),
+    renderAudio: (handle, channels, frames, timestampMicros) => {
+      const outputPointers = module._malloc(channels * Uint32Array.BYTES_PER_ELEMENT);
+      const channelPointers = Array.from({ length: channels }, () => module._malloc(frames * Float32Array.BYTES_PER_ELEMENT));
+      try {
+        const pointers = new DataView(module.HEAPU8.buffer);
+        channelPointers.forEach((pointer, index) => pointers.setUint32(outputPointers + index * Uint32Array.BYTES_PER_ELEMENT, pointer, true));
+        const status = module._synth_browser_process(handle, outputPointers, frames, BigInt(timestampMicros));
+        return { status, outputs: channelPointers.map((pointer) => module.HEAPF32.slice(pointer / Float32Array.BYTES_PER_ELEMENT, pointer / Float32Array.BYTES_PER_ELEMENT + frames)) };
+      } finally {
+        channelPointers.forEach((pointer) => module._free(pointer));
+        module._free(outputPointers);
+      }
+    },
     messageTick: (handle, timestampMicros) => module._synth_browser_message_tick(handle, BigInt(timestampMicros)),
     buildUiFrame: (handle) => {
       const sizePointer = module._malloc(4);
@@ -93,6 +112,8 @@ export const loadEmscriptenRuntime: RuntimeModuleLoader = async (moduleUrl) => {
 export class BrowserRuntimeWorker {
   private module: RuntimeModuleFacade | undefined;
   private handleValue: number | undefined;
+  private audioBridge: SharedRingBuffer | undefined;
+  private audioBlockSize: number | undefined;
   private destroyed = false;
 
   constructor(private readonly loadModule: RuntimeModuleLoader = loadEmscriptenRuntime) {}
@@ -117,6 +138,22 @@ export class BrowserRuntimeWorker {
           return this.call((module, handle) => module.prepare(handle, command.sampleRate, command.blockSize));
         case "process":
           return this.call((module, handle) => module.process(handle, command.frames, command.timestampMicros));
+        case "configure-audio":
+          this.audioBridge = SharedRingBuffer.fromDescriptor(command.bridge);
+          this.audioBlockSize = command.blockSize;
+          return this.call((module, handle) => module.prepare(handle, command.sampleRate, command.blockSize));
+        case "render-audio": {
+          const bridge = this.audioBridge;
+          const frames = this.audioBlockSize;
+          if (!bridge || !frames) throw new Error("audio bridge is not configured");
+          const module = this.requireModule();
+          const handle = this.requireHandle();
+          if (!module.renderAudio) throw new Error("runtime does not support audio output buffers");
+          const rendered = module.renderAudio(handle, bridge.descriptor().channels, frames, command.timestampMicros);
+          if (rendered.status !== 0) throw new Error("runtime operation failed");
+          bridge.write(rendered.outputs, frames);
+          return { type: "ok" };
+        }
         case "message-tick":
           return this.call((module, handle) => module.messageTick(handle, command.timestampMicros));
         case "build-ui-frame": {
