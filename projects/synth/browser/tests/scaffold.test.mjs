@@ -9,12 +9,22 @@ test("browser scaffold test runner is active", () => {
 });
 
 test("emscripten runtime facade exports string helpers", async () => {
+  const makefile = await readBrowserMakefile();
+  assert.match(makefile, /EXPORTED_RUNTIME_METHODS := '\["stringToUTF8","lengthBytesUTF8"\]'/);
+  assert.equal((makefile.match(/-sEXPORTED_RUNTIME_METHODS=\$\(EXPORTED_RUNTIME_METHODS\)/g) ?? []).length, 2);
+});
+
+test("emscripten browser builds enable pthreads for engine midi sender", async () => {
+  const makefile = await readBrowserMakefile();
+  assert.match(makefile, /PTHREAD_FLAGS := -pthread -sUSE_PTHREADS=1 -sPTHREAD_POOL_SIZE=1/);
+  assert.equal((makefile.match(/\$\(PTHREAD_FLAGS\)/g) ?? []).length, 2);
+});
+
+async function readBrowserMakefile() {
   let directory = path.dirname(fileURLToPath(import.meta.url));
-  let makefile = "";
   for (;;) {
     try {
-      makefile = await readFile(path.join(directory, "Makefile"), "utf8");
-      break;
+      return await readFile(path.join(directory, "Makefile"), "utf8");
     } catch (error) {
       if (path.dirname(directory) === directory) {
         throw error;
@@ -22,6 +32,4 @@ test("emscripten runtime facade exports string helpers", async () => {
       directory = path.dirname(directory);
     }
   }
-  assert.match(makefile, /EXPORTED_RUNTIME_METHODS := '\["stringToUTF8","lengthBytesUTF8"\]'/);
-  assert.equal((makefile.match(/-sEXPORTED_RUNTIME_METHODS=\$\(EXPORTED_RUNTIME_METHODS\)/g) ?? []).length, 2);
-});
+}

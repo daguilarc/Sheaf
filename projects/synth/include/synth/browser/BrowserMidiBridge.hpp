@@ -252,6 +252,8 @@ private:
         } else if (count > outputSinks_.size()) {
             const std::size_t oldCount = outputSinks_.size();
             outputSinks_.resize(count);
+            // MidiSender exposes a fixed sink table; controller slots beyond
+            // that table can still receive input but cannot bind an output.
             const std::size_t supportedCount = std::min(count, synth::MidiSender::kMaxSinks);
             for (std::size_t ix = oldCount; ix < supportedCount; ++ix) {
                 outputSinks_[ix] = std::make_unique<OutputSink>();

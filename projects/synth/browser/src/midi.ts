@@ -89,6 +89,8 @@ export class BrowserMidiManager {
   }
 
   async drainOutputs(): Promise<void> {
+    // Bound each drain pass so a MIDI burst cannot monopolize the browser task;
+    // the poll/statechange loop will pick up any deferred messages.
     for (let count = 0; count < 256; count++) {
       const output = await this.runtime.dequeueMidiOutput();
       if (!output) return;
