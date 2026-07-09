@@ -4,15 +4,17 @@ test("syncs IDBFS before runtime initialization and flushes patch/config updates
   await page.goto("http://127.0.0.1:4173/public/index.html");
   const result = await page.evaluate(async () => {
     const { BrowserPersistence } = await (new Function("return import('/dist/src/persistence.js')")() as Promise<{
-      BrowserPersistence: new (filesystem: unknown, options: unknown) => {
+      BrowserPersistence: new (filesystem: unknown, options: unknown, reportStatus?: (status: string) => void) => {
         paths: unknown; start(): Promise<void>; scheduleSync(): void; status(): string; patchPath(path: string): string;
       };
     }>);
     const { BrowserRuntimeWorker } = await (new Function("return import('/dist/src/worker.js')")() as Promise<{
-      BrowserRuntimeWorker: new (loadModule: unknown, createPersistence: unknown) => { handle(command: unknown): Promise<unknown> };
+      BrowserRuntimeWorker: new (loadModule: unknown, createPersistence: unknown, emitStatus: unknown) => { handle(command: unknown): Promise<unknown> };
     }>);
     const calls: string[] = [];
+    const emitted: unknown[] = [];
     let flushCount = 0;
+    let persistence: InstanceType<typeof BrowserPersistence>;
     const filesystem = {
       filesystems: { IDBFS: "idbfs" },
       mkdir(path: string) { calls.push(`mkdir:${path}`); },
@@ -26,7 +28,6 @@ test("syncs IDBFS before runtime initialization and flushes patch/config updates
         }
       },
     };
-    const persistence = new BrowserPersistence(filesystem, { debounceMs: 0 });
     const worker = new BrowserRuntimeWorker(async () => ({
       filesystem,
       create: () => 3,
@@ -41,25 +42,31 @@ test("syncs IDBFS before runtime initialization and flushes patch/config updates
       deliverMidi: () => 0,
       dequeueMidiOutput: () => undefined,
       destroy: () => {},
-    }), () => persistence);
+    }), (_filesystem: unknown, reportStatus: (status: string) => void) => {
+      persistence = new BrowserPersistence(filesystem, { debounceMs: 0 }, reportStatus);
+      return persistence;
+    }, (status: unknown) => emitted.push(status));
 
     await worker.handle({ type: "load" });
     await worker.handle({ type: "create" });
     const initialized = await worker.handle({ type: "initialize", dataRoot: "/ignored-by-host" });
     const pending = await worker.handle({ type: "persistence", state: "patch saved" });
     await new Promise((resolve) => setTimeout(resolve, 10));
-    const settled = await worker.handle({ type: "status" });
+    const liveness = await worker.handle({ type: "status" });
+    const settled = await worker.handle({ type: "persistence-status" });
     return {
       calls,
+      emitted,
       initialized,
       pending,
+      liveness,
       settled,
       flushCount,
-      paths: persistence.paths,
-      patchPath: persistence.patchPath("presets/bright.json"),
+      paths: persistence!.paths,
+      patchPath: persistence!.patchPath("presets/bright.json"),
       rejectsEscape: (() => {
         try {
-          persistence.patchPath("../config.json");
+          persistence!.patchPath("../config.json");
           return false;
         } catch {
           return true;
@@ -72,8 +79,15 @@ test("syncs IDBFS before runtime initialization and flushes patch/config updates
   expect(result.calls).toEqual([
     "mkdir:/data", "mount:idbfs:/data", "mkdir:/data/patches", "mkdir:/data/logs", "sync:true", "initialize:/data", "sync:false",
   ]);
-  expect(result.pending).toEqual({ type: "status", status: "persistence pending" });
-  expect(result.settled).toEqual({ type: "status", status: "persistence succeeded" });
+  expect(result.emitted).toEqual([
+    { type: "page-status", path: "runtime.file.status", status: "persistence pending" },
+    { type: "page-status", path: "runtime.file.status", status: "persistence succeeded" },
+    { type: "page-status", path: "runtime.file.status", status: "persistence pending" },
+    { type: "page-status", path: "runtime.file.status", status: "persistence succeeded" },
+  ]);
+  expect(result.pending).toEqual({ type: "page-status", path: "runtime.file.status", status: "persistence pending" });
+  expect(result.liveness).toEqual({ type: "status", status: "running" });
+  expect(result.settled).toEqual({ type: "page-status", path: "runtime.file.status", status: "persistence succeeded" });
   expect(result.flushCount).toBe(1);
   expect(result.paths).toEqual({ dataRoot: "/data", patchesRoot: "/data/patches", logsRoot: "/data/logs", configFile: "/data/config.json" });
   expect(result.patchPath).toBe("/data/patches/presets/bright.json");

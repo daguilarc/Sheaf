@@ -3,6 +3,7 @@
 #include "synth/Engine.hpp"
 #include "synth/browser/BrowserCommandBuffer.hpp"
 #include "synth/browser/BrowserMidiBridge.hpp"
+#include "synth/browser/BrowserPersistence.hpp"
 
 #include <atomic>
 #include <cstddef>
@@ -187,7 +188,9 @@ public:
             return -1;
         }
         try {
-            runtime_.SetRuntimeDataPaths(synth::RuntimeDataPaths::FromDataRoot(dataRoot));
+            const std::string_view root{dataRoot};
+            runtime_.SetRuntimeDataPaths(root == kBrowserDataRoot ? BrowserPersistentDataPaths()
+                                                                  : synth::RuntimeDataPaths::FromDataRoot(dataRoot));
             runtime_.Start();
             return 0;
         } catch (const std::exception&) {

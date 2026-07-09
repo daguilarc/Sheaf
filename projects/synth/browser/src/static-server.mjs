@@ -62,6 +62,6 @@ export function createStaticServer({ isolated = true } = {}) {
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  createStaticServer({ isolated: false }).listen(4173, "127.0.0.1");
+  createStaticServer().listen(4173, "127.0.0.1");
   createStaticServer().listen(4174, "127.0.0.1");
 }

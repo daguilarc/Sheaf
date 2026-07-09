@@ -2,6 +2,11 @@ import { expect, test } from "@playwright/test";
 
 test("canonical static server applies browser isolation and MIDI sysex headers", async ({ request }) => {
   const { contentTypeForPath } = await import("../src/" + "static-server.mjs") as { contentTypeForPath(path: string): string };
+  const defaultPage = await request.get("http://127.0.0.1:4173/public/index.html");
+  expect(defaultPage.headers()["cross-origin-opener-policy"]).toBe("same-origin");
+  expect(defaultPage.headers()["cross-origin-embedder-policy"]).toBe("require-corp");
+  expect(defaultPage.headers()["permissions-policy"]).toContain("midi=(self)");
+
   const page = await request.get("http://127.0.0.1:4174/public/index.html");
   expect(page.status()).toBe(200);
   expect(page.headers()["cross-origin-opener-policy"]).toBe("same-origin");

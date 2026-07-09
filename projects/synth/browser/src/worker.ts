@@ -1,6 +1,6 @@
 import { SharedRingBuffer } from "./protocol.js";
 import type { AudioBridgeDescriptor, MidiAction, MidiEndpoint, MidiOutput } from "./protocol.js";
-import { BrowserPersistence } from "./persistence.js";
+import { BROWSER_PERSISTENCE_STATUS_PATH, BrowserPersistence } from "./persistence.js";
 import type { BrowserFileSystem, BrowserPersistenceFactory } from "./persistence.js";
 
 export type RuntimeCommand =
@@ -19,6 +19,7 @@ export type RuntimeCommand =
   | { type: "midi-input"; controllerIx: number; bytes: number[]; timestampMicros: number }
   | { type: "drain-midi-output" }
   | { type: "persistence"; state: string }
+  | { type: "persistence-status" }
   | { type: "status" };
 
 export type RuntimeResponse =
@@ -29,6 +30,7 @@ export type RuntimeResponse =
   | { type: "midi-actions"; actions: MidiAction[] }
   | { type: "midi-output"; output?: MidiOutput }
   | { type: "status"; status: string }
+  | { type: "page-status"; path: string; status: string }
   | { type: "error"; error: string };
 
 export interface RuntimeModuleFacade {
@@ -217,7 +219,8 @@ export class BrowserRuntimeWorker {
 
   constructor(
     private readonly loadModule: RuntimeModuleLoader = loadEmscriptenRuntime,
-    private readonly createPersistence: BrowserPersistenceFactory = (filesystem) => new BrowserPersistence(filesystem),
+    private readonly createPersistence: BrowserPersistenceFactory = (filesystem, reportStatus) => new BrowserPersistence(filesystem, {}, reportStatus),
+    private readonly emitStatus: (response: RuntimeResponse) => void = () => {},
   ) {}
 
   async handle(command: RuntimeCommand): Promise<RuntimeResponse> {
@@ -226,7 +229,9 @@ export class BrowserRuntimeWorker {
       switch (command.type) {
         case "load":
           this.module = await this.loadModule(command.moduleUrl);
-          this.persistence = this.module.filesystem ? this.createPersistence(this.module.filesystem) : undefined;
+          this.persistence = this.module.filesystem ? this.createPersistence(this.module.filesystem, (status) => {
+            this.emitStatus({ type: "page-status", path: BROWSER_PERSISTENCE_STATUS_PATH, status });
+          }) : undefined;
           return { type: "ok" };
         case "create": {
           if (!this.module) throw new Error("runtime module is not loaded");
@@ -293,9 +298,12 @@ export class BrowserRuntimeWorker {
         case "persistence":
           if (!this.persistence) return { type: "status", status: "persistence unavailable" };
           this.persistence.scheduleSync();
-          return { type: "status", status: this.persistence.status() };
+          return { type: "page-status", path: BROWSER_PERSISTENCE_STATUS_PATH, status: this.persistence.status() };
+        case "persistence-status":
+          if (!this.persistence) return { type: "status", status: "persistence unavailable" };
+          return { type: "page-status", path: BROWSER_PERSISTENCE_STATUS_PATH, status: this.persistence.status() };
         case "status":
-          return { type: "status", status: this.persistence?.status() ?? (this.handleValue === undefined ? "not created" : "running") };
+          return { type: "status", status: this.handleValue === undefined ? "not created" : "running" };
       }
     } catch (error) {
       return { type: "error", error: error instanceof Error ? error.message : "runtime operation failed" };
@@ -330,7 +338,11 @@ type WorkerScope = {
 };
 
 export function installBrowserRuntimeWorker(scope: WorkerScope, loadModule: RuntimeModuleLoader = loadEmscriptenRuntime) {
-  const runtime = new BrowserRuntimeWorker(loadModule);
+  const runtime = new BrowserRuntimeWorker(
+    loadModule,
+    (filesystem, reportStatus) => new BrowserPersistence(filesystem, {}, reportStatus),
+    (response) => scope.postMessage(response),
+  );
   scope.addEventListener("message", (event: MessageEvent<RuntimeCommand>) => {
     void runtime.handle(event.data).then((response) => scope.postMessage(response));
   });

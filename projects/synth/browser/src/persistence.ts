@@ -1,4 +1,5 @@
 export const BROWSER_DATA_ROOT = "/data";
+export const BROWSER_PERSISTENCE_STATUS_PATH = "runtime.file.status";
 
 export type BrowserPersistencePaths = {
   dataRoot: string;
@@ -16,7 +17,10 @@ export type BrowserFileSystem = {
 
 export type BrowserPersistenceStatus = "persistence pending" | "persistence succeeded" | "persistence failed";
 export type BrowserPersistenceOptions = { debounceMs?: number };
-export type BrowserPersistenceFactory = (filesystem: BrowserFileSystem) => BrowserPersistence;
+export type BrowserPersistenceFactory = (
+  filesystem: BrowserFileSystem,
+  reportStatus: (status: BrowserPersistenceStatus) => void,
+) => BrowserPersistence;
 
 function isAlreadyPresent(error: unknown): boolean {
   return error instanceof Error && /exist|busy/i.test(error.message);
