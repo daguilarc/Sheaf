@@ -15,7 +15,7 @@ PROJECTS := conductor web quest-runner dictator realtime-agent sheaf-chat agents
 .PHONY: agents-install-global agents-check-global agents-clean-global
 .PHONY: xagent-build xagent-test xagent-clean
 .PHONY: xagent-plugin-build xagent-plugin-test
-.PHONY: synth-build synth-test synth-clean
+.PHONY: synth-build synth-test synth-clean synth-browser-build synth-browser-test
 
 .DEFAULT_GOAL := all
 
@@ -165,6 +165,13 @@ synth-test:
 
 synth-clean:
 	$(MAKE) -C projects/synth clean
+
+synth-browser-build:
+	$(MAKE) -C projects/synth browser
+
+synth-browser-test:
+	$(MAKE) -C projects/synth browser-unit-test
+	$(MAKE) -C projects/synth/browser test
 
 help:
 	@echo "Repository targets:"
