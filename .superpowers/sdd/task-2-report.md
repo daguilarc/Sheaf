@@ -65,3 +65,22 @@ kinds.
 
 None. TypeScript decoding and rendering remain intentionally out of scope for
 Task 3.
+
+## Review Follow-Up
+
+- Pruned child references that point at nodes dropped for unsupported portable
+  node kinds. The encoder now emits a second generic
+  `UnsupportedPortableFeature` diagnostic with feature `child node` for that
+  hierarchy repair, so Task 3 consumers do not need to resolve child ids that
+  are absent from the node table.
+- Replaced duplicate linear string-table scans with an indexed string table
+  map shared by interning and lookup.
+- Updated `TestUnsupportedPortableFeatureIsGeneric` to assert both generic
+  diagnostics, absence of app-specific fallback wording, removal of the dropped
+  child id, and preservation of supported child ids.
+
+## Follow-Up Verification
+
+- `make -C projects/synth browser-command-buffer-test`: passed.
+- `make -C projects/synth test`: passed.
+- `git diff --check`: passed.

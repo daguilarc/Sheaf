@@ -152,11 +152,22 @@ void TestUnsupportedPortableFeatureIsGeneric()
     synth::ui::NodeTree tree = MakeCompleteTree();
     tree.nodes[1].kind = synth_browser::testing::UnsupportedNodeKind();
     const auto decoded = synth_browser::DecodeCommandBuffer(synth_browser::SerializeNodeTree(tree).bytes);
-    Require(decoded.diagnostics.size() == 1, "unsupported node diagnostic count");
-    Require(decoded.diagnostics[0].code == synth_browser::DiagnosticCode::UnsupportedPortableFeature,
-            "unsupported node diagnostic code");
-    Require(decoded.diagnostics[0].feature == "node kind", "generic unsupported feature name");
-    Require(decoded.diagnostics[0].feature.find("miniapp") == std::string::npos, "no app fallback diagnostic");
+    Require(decoded.diagnostics.size() == 2, "unsupported node diagnostic count");
+    const auto hasNodeKind = std::any_of(decoded.diagnostics.begin(), decoded.diagnostics.end(), [](const auto& diagnostic) {
+        return diagnostic.code == synth_browser::DiagnosticCode::UnsupportedPortableFeature && diagnostic.feature == "node kind";
+    });
+    const auto hasChildNode = std::any_of(decoded.diagnostics.begin(), decoded.diagnostics.end(), [](const auto& diagnostic) {
+        return diagnostic.code == synth_browser::DiagnosticCode::UnsupportedPortableFeature && diagnostic.feature == "child node";
+    });
+    Require(hasNodeKind, "generic unsupported feature name");
+    Require(hasChildNode, "generic child prune feature name");
+    for (const auto& diagnostic : decoded.diagnostics)
+        Require(diagnostic.feature.find("miniapp") == std::string::npos, "no app fallback diagnostic");
+    const auto& root = FindNode(decoded, "root");
+    Require(std::find(root.children.begin(), root.children.end(), "scroll") == root.children.end(),
+            "unsupported child id is pruned");
+    Require(std::find(root.children.begin(), root.children.end(), "button") != root.children.end(),
+            "supported child ids remain");
 }
 
 void TestUnsupportedDrawFeatureIsGeneric()

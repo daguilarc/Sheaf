@@ -10,6 +10,8 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -303,17 +305,19 @@ inline synth::ui::TextAlign DecodeTextAlign(std::uint8_t value)
 inline CommandBuffer SerializeNodeTree(const synth::ui::NodeTree& tree)
 {
     std::vector<std::string> strings;
-    auto intern = [&strings](const std::string& value) {
-        for (std::uint32_t index = 0; index < strings.size(); ++index)
-        {
-            if (strings[index] == value) return index;
-        }
+    std::unordered_map<std::string, std::uint32_t> stringIndices;
+    auto intern = [&strings, &stringIndices](const std::string& value) {
+        const auto found = stringIndices.find(value);
+        if (found != stringIndices.end()) return found->second;
         strings.push_back(value);
-        return static_cast<std::uint32_t>(strings.size() - 1);
+        const auto index = static_cast<std::uint32_t>(strings.size() - 1);
+        stringIndices.emplace(strings.back(), index);
+        return index;
     };
 
     std::vector<Diagnostic> diagnostics;
     std::vector<synth::ui::Node> supportedNodes;
+    std::unordered_set<std::string> droppedNodeIds;
     for (const auto& node : tree.nodes)
     {
         if (detail::MapNodeKind(node.kind))
@@ -330,7 +334,23 @@ inline CommandBuffer SerializeNodeTree(const synth::ui::NodeTree& tree)
         else
         {
             diagnostics.push_back({DiagnosticCode::UnsupportedPortableFeature, "node kind"});
+            droppedNodeIds.insert(node.id.value);
         }
+    }
+    for (auto& node : supportedNodes)
+    {
+        std::vector<synth::ui::NodeId> supportedChildren;
+        supportedChildren.reserve(node.children.size());
+        for (const auto& child : node.children)
+        {
+            if (droppedNodeIds.contains(child.value))
+            {
+                diagnostics.push_back({DiagnosticCode::UnsupportedPortableFeature, "child node"});
+                continue;
+            }
+            supportedChildren.push_back(child);
+        }
+        node.children = std::move(supportedChildren);
     }
 
     std::vector<DecodedAction> actions;
@@ -376,11 +396,9 @@ inline CommandBuffer SerializeNodeTree(const synth::ui::NodeTree& tree)
         for (const char character : value) detail::AppendU8(stringSection, static_cast<std::uint8_t>(character));
     }
 
-    auto stringIndex = [&strings](const std::string& value) {
-        for (std::uint32_t index = 0; index < strings.size(); ++index)
-        {
-            if (strings[index] == value) return index;
-        }
+    auto stringIndex = [&stringIndices](const std::string& value) {
+        const auto found = stringIndices.find(value);
+        if (found != stringIndices.end()) return found->second;
         throw std::logic_error("missing command buffer string");
     };
 
