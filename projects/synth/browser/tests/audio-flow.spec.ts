@@ -4,6 +4,7 @@ test("reports a cross-origin isolation diagnostic before creating audio", async 
   await page.goto("http://127.0.0.1:4173/public/index.html");
   const result = await page.evaluate(async () => {
     const { AudioBridge } = await (new Function("return import('/dist/src/audio.js')") as () => Promise<{ AudioBridge: new (worker: unknown) => { startFromUserActivation(): Promise<unknown> } }>)();
+    Object.defineProperty(globalThis, "SharedArrayBuffer", { configurable: true, value: undefined });
     const bridge = new AudioBridge({ postMessage() {} });
     return bridge.startFromUserActivation();
   });
