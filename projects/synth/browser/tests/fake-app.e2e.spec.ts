@@ -23,7 +23,9 @@ async function runFakeAppAcceptance(page: Page): Promise<void> {
   const sockets: string[] = [];
   page.on("request", (request) => {
     const url = new URL(request.url());
-    if (url.origin === "http://127.0.0.1:4174" && !url.pathname.startsWith("/dist/") && !url.pathname.startsWith("/public/"))
+    if (url.origin !== "http://127.0.0.1:4174")
+      dynamicRequests.push(url.href);
+    else if (!url.pathname.startsWith("/dist/") && !url.pathname.startsWith("/public/"))
       dynamicRequests.push(url.pathname);
   });
   page.on("websocket", (socket) => sockets.push(socket.url()));
