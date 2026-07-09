@@ -42,7 +42,7 @@ test("normal generic browser flows make no dynamic HTTP or WebSocket requests", 
     const persistence = new BrowserPersistence(filesystem, { debounceMs: 0 });
     const worker = new BrowserRuntimeWorker(async () => ({
       filesystem,
-      create: () => 1, initialize: () => 0, prepare: () => 0, process: () => 0, messageTick: () => 0,
+      create: () => 1, audioOutputChannels: () => 2, initialize: () => 0, prepare: () => 0, process: () => 0, messageTick: () => 0,
       buildUiFrame: () => new ArrayBuffer(0), dispatchAction: () => 0, submitMidiEndpoints: () => 0,
       dequeueMidiAction: () => undefined, deliverMidi: () => 0, dequeueMidiOutput: () => undefined, destroy: () => {},
     }), () => persistence);

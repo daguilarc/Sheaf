@@ -7,6 +7,7 @@ export type RuntimeCommand =
   | { type: "load"; moduleUrl?: string }
   | { type: "create" }
   | { type: "initialize"; dataRoot: string }
+  | { type: "audio-config" }
   | { type: "prepare"; sampleRate: number; blockSize: number }
   | { type: "process"; frames: number; timestampMicros: number }
   | { type: "configure-audio"; sampleRate: number; blockSize: number; bridge: AudioBridgeDescriptor }
@@ -25,6 +26,7 @@ export type RuntimeCommand =
 export type RuntimeResponse =
   | { type: "ok" }
   | { type: "created"; handle: number }
+  | { type: "audio-config"; channels: number }
   | { type: "ui-frame"; frame: number[] }
   | { type: "destroyed" }
   | { type: "midi-actions"; actions: MidiAction[] }
@@ -36,6 +38,7 @@ export type RuntimeResponse =
 export interface RuntimeModuleFacade {
   filesystem?: BrowserFileSystem;
   create(): number;
+  audioOutputChannels(handle: number): number;
   initialize(handle: number, dataRoot: string): number;
   prepare(handle: number, sampleRate: number, blockSize: number): number;
   process(handle: number, frames: number, timestampMicros: number): number;
@@ -62,9 +65,10 @@ type EmscriptenModule = {
   lengthBytesUTF8(value: string): number;
   stringToUTF8(value: string, pointer: number, maxBytesToWrite: number): void;
   _synth_browser_create(): number;
+  _synth_browser_audio_output_channels(handle: number): number;
   _synth_browser_initialize(handle: number, dataRoot: number): number;
   _synth_browser_prepare(handle: number, sampleRate: number, blockSize: number): number;
-  _synth_browser_process(handle: number, outputs: number, frames: number, timestampMicros: bigint): number;
+  _synth_browser_process(handle: number, outputs: number, outputChannels: number, frames: number, timestampMicros: bigint): number;
   _synth_browser_message_tick(handle: number, timestampMicros: bigint): number;
   _synth_browser_build_ui_frame(handle: number, size: number): number;
   _synth_browser_dispatch_action(handle: number, name: number, value: number): number;
@@ -106,16 +110,17 @@ function decodeUtf8(module: EmscriptenModule, pointer: number, size: number): st
 export function emscriptenRuntimeFacade(module: EmscriptenModule): RuntimeModuleFacade {
   return {
     create: () => module._synth_browser_create(),
+    audioOutputChannels: (handle) => module._synth_browser_audio_output_channels(handle),
     initialize: (handle, dataRoot) => withUtf8(module, dataRoot, (root) => module._synth_browser_initialize(handle, root)),
     prepare: (handle, sampleRate, blockSize) => module._synth_browser_prepare(handle, sampleRate, blockSize),
-    process: (handle, frames, timestampMicros) => module._synth_browser_process(handle, 0, frames, BigInt(timestampMicros)),
+    process: (handle, frames, timestampMicros) => module._synth_browser_process(handle, 0, 0, frames, BigInt(timestampMicros)),
     renderAudio: (handle, channels, frames, timestampMicros) => {
       const outputPointers = module._malloc(channels * Uint32Array.BYTES_PER_ELEMENT);
       const channelPointers = Array.from({ length: channels }, () => module._malloc(frames * Float32Array.BYTES_PER_ELEMENT));
       try {
         const pointers = new DataView(module.HEAPU8.buffer);
         channelPointers.forEach((pointer, index) => pointers.setUint32(outputPointers + index * Uint32Array.BYTES_PER_ELEMENT, pointer, true));
-        const status = module._synth_browser_process(handle, outputPointers, frames, BigInt(timestampMicros));
+        const status = module._synth_browser_process(handle, outputPointers, channels, frames, BigInt(timestampMicros));
         return { status, outputs: channelPointers.map((pointer) => module.HEAPF32.slice(pointer / Float32Array.BYTES_PER_ELEMENT, pointer / Float32Array.BYTES_PER_ELEMENT + frames)) };
       } finally {
         channelPointers.forEach((pointer) => module._free(pointer));
@@ -219,7 +224,7 @@ export class BrowserRuntimeWorker {
 
   constructor(
     private readonly loadModule: RuntimeModuleLoader = loadEmscriptenRuntime,
-    private readonly createPersistence: BrowserPersistenceFactory = (filesystem, reportStatus) => new BrowserPersistence(filesystem, {}, reportStatus),
+    private readonly createPersistence: BrowserPersistenceFactory | undefined = undefined,
     private readonly emitStatus: (response: RuntimeResponse) => void = () => {},
   ) {}
 
@@ -229,7 +234,7 @@ export class BrowserRuntimeWorker {
       switch (command.type) {
         case "load":
           this.module = await this.loadModule(command.moduleUrl);
-          this.persistence = this.module.filesystem ? this.createPersistence(this.module.filesystem, (status) => {
+          this.persistence = this.module.filesystem ? (this.createPersistence ?? defaultPersistenceFactory)(this.module.filesystem, (status) => {
             this.emitStatus({ type: "page-status", path: BROWSER_PERSISTENCE_STATUS_PATH, status });
           }) : undefined;
           return { type: "ok" };
@@ -247,6 +252,8 @@ export class BrowserRuntimeWorker {
           }
           return this.call((module, handle) => module.initialize(handle, command.dataRoot));
         }
+        case "audio-config":
+          return { type: "audio-config", channels: this.requireModule().audioOutputChannels(this.requireHandle()) };
         case "prepare":
           return this.call((module, handle) => module.prepare(handle, command.sampleRate, command.blockSize));
         case "process":
@@ -329,6 +336,10 @@ export class BrowserRuntimeWorker {
     if (this.handleValue === undefined) throw new Error("runtime is not created");
     return this.handleValue;
   }
+}
+
+function defaultPersistenceFactory(filesystem: BrowserFileSystem, reportStatus: (status: string) => void): BrowserPersistence {
+  return new BrowserPersistence(filesystem, {}, reportStatus);
 }
 
 type WorkerScope = {

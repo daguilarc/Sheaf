@@ -57,6 +57,7 @@ async function runFakeAppAcceptance(page: Page): Promise<void> {
     const module = {
       filesystem,
       create() { calls.lifecycle.push("create"); return 41; },
+      audioOutputChannels() { return 2; },
       initialize(_handle: number, dataRoot: string) { calls.lifecycle.push(`initialize:${dataRoot}`); return 0; },
       prepare(_handle: number, sampleRate: number, blockSize: number) { calls.lifecycle.push(`prepare:${sampleRate}:${blockSize}`); return 0; },
       process() { return 0; },

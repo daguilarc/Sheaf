@@ -15,6 +15,7 @@ test("routes a portable action through the runtime worker facade without app HTM
     let nextHandle = 1;
     const worker = new BrowserRuntimeWorker(async () => ({
       create() { calls.push(["create"]); return nextHandle++; },
+      audioOutputChannels(handle: number) { calls.push(["audioOutputChannels", handle]); return 2; },
       initialize(handle: number, dataRoot: string) { calls.push(["initialize", handle, dataRoot]); return 0; },
       prepare(handle: number, sampleRate: number, blockSize: number) { calls.push(["prepare", handle, sampleRate, blockSize]); return 0; },
       process(handle: number, frames: number, timestampMicros: number) { calls.push(["process", handle, frames, timestampMicros]); return 0; },
@@ -44,6 +45,68 @@ test("routes a portable action through the runtime worker facade without app HTM
   ]);
   expect(result.rejectedAfterDestroy).toEqual({ type: "error", error: "runtime is destroyed" });
   expect(result.html).not.toMatch(/miniapp|fake-browser/i);
+});
+
+test("main bootstrap composes runtime, UI, audio channels, and actions generically", async ({ page }) => {
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+  const frame = makeCommandBuffer([
+    { id: "root", kind: NodeKind.Root, bounds: [0, 0, 120, 50], children: ["button"] },
+    { id: "button", kind: NodeKind.Button, bounds: [0, 0, 120, 40], label: "Booted", action: { name: "generic.boot", value: "pressed" } },
+  ]);
+
+  const result = await page.evaluate(async (bytes) => {
+    const { installSynthBrowserApp } = await (new Function("return import('/dist/src/main.js')")() as Promise<any>);
+    const calls: Array<[string, ...unknown[]]> = [];
+    const app = await installSynthBrowserApp(document.querySelector("#synth-root")!, {
+      moduleUrl: "/dist/wasm/test-app.js",
+      frameIntervalMs: 100000,
+      runtimeModuleLoader: async () => ({
+        filesystem: {
+          filesystems: { IDBFS: "idbfs" },
+          mkdir() {},
+          mount() {},
+          syncfs(_populate: boolean, complete: () => void) { complete(); },
+        },
+        create() { calls.push(["create"]); return 11; },
+        audioOutputChannels(handle: number) { calls.push(["audioOutputChannels", handle]); return 1; },
+        initialize(handle: number, dataRoot: string) { calls.push(["initialize", handle, dataRoot]); return 0; },
+        prepare(handle: number, sampleRate: number, blockSize: number) { calls.push(["prepare", handle, sampleRate, blockSize]); return 0; },
+        process() { return 0; },
+        renderAudio(_handle: number, channels: number, frames: number) {
+          calls.push(["renderAudio", channels, frames]);
+          return { status: 0, outputs: [new Float32Array(frames).fill(0.125)] };
+        },
+        messageTick() { return 0; },
+        buildUiFrame(handle: number) { calls.push(["buildUiFrame", handle]); return Uint8Array.from(bytes).buffer; },
+        dispatchAction(handle: number, name: string, value: string) { calls.push(["dispatchAction", handle, name, value]); return 0; },
+        submitMidiEndpoints() { return 0; },
+        dequeueMidiAction() { return undefined; },
+        deliverMidi() { return 0; },
+        dequeueMidiOutput() { return undefined; },
+        destroy() {},
+      }),
+      audioOptions: {
+        audioContextFactory: () => ({
+          sampleRate: 48000,
+          destination: {},
+          audioWorklet: { addModule: async () => {} },
+          resume: async () => {},
+        }),
+        audioWorkletNodeFactory: () => ({ connect() {}, disconnect() {} }),
+      },
+    });
+    document.querySelector<HTMLElement>('[data-synth-node-id="button"]')!.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    app.stop();
+    return { calls, text: document.querySelector('[data-synth-node-id="button"]')?.textContent, status: (document.querySelector("#synth-root") as HTMLElement).dataset.synthStatus };
+  }, Array.from(new Uint8Array(frame)));
+
+  expect(result.text).toBe("Booted");
+  expect(result.status).toMatch(/audio:online; midi:(online|offline)/);
+  expect(result.calls).toContainEqual(["audioOutputChannels", 11]);
+  expect(result.calls).toContainEqual(["prepare", 11, 48000, 128]);
+  expect(result.calls).toContainEqual(["renderAudio", 1, 128]);
+  expect(result.calls).toContainEqual(["dispatchAction", 11, "generic.boot", "pressed"]);
 });
 
 test("browser worker contains no concrete application branch", async ({ page }) => {

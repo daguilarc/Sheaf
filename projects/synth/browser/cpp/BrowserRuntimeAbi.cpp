@@ -21,15 +21,21 @@ extern "C" int synth_browser_initialize(synth_browser_runtime* runtime, const ch
     return RuntimeFor(runtime) == nullptr ? -1 : RuntimeFor(runtime)->Initialize(dataRoot);
 }
 
+extern "C" std::size_t synth_browser_audio_output_channels(synth_browser_runtime* runtime)
+{
+    return RuntimeFor(runtime) == nullptr ? 0 : RuntimeFor(runtime)->AudioOutputChannels();
+}
+
 extern "C" int synth_browser_prepare(synth_browser_runtime* runtime, double sampleRate, std::size_t blockSize)
 {
     return RuntimeFor(runtime) == nullptr ? -1 : RuntimeFor(runtime)->Prepare(sampleRate, blockSize);
 }
 
-extern "C" int synth_browser_process(synth_browser_runtime* runtime, float** outputs, std::size_t frames,
-                                       std::uint64_t timestampMicros)
+extern "C" int synth_browser_process(synth_browser_runtime* runtime, float** outputs, std::size_t outputChannels,
+                                       std::size_t frames, std::uint64_t timestampMicros)
 {
-    return RuntimeFor(runtime) == nullptr ? -1 : RuntimeFor(runtime)->Process(outputs, frames, timestampMicros);
+    return RuntimeFor(runtime) == nullptr ? -1 : RuntimeFor(runtime)->Process(outputs, outputChannels, frames,
+                                                                               timestampMicros);
 }
 
 extern "C" int synth_browser_message_tick(synth_browser_runtime* runtime, std::uint64_t timestampMicros)

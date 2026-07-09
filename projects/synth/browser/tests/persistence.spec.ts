@@ -31,6 +31,7 @@ test("syncs IDBFS before runtime initialization and flushes patch/config updates
     const worker = new BrowserRuntimeWorker(async () => ({
       filesystem,
       create: () => 3,
+      audioOutputChannels: () => 2,
       initialize: (_handle: number, dataRoot: string) => { calls.push(`initialize:${dataRoot}`); return 0; },
       prepare: () => 0,
       process: () => 0,

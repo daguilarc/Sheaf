@@ -50,6 +50,7 @@ public:
     }
 
     bool IsRunning() const { return started_; }
+    std::size_t AudioOutputChannels() const { return engine_.Config().numAudioOutputs; }
 
     void Prepare(double sampleRate, std::size_t blockSize)
     {
@@ -60,13 +61,16 @@ public:
         engine_.Prepare(sampleRate, static_cast<int>(blockSize));
     }
 
-    void Process(float** outputs, std::size_t frames, std::uint64_t timestampMicros)
+    void Process(float** outputs, std::size_t outputChannels, std::size_t frames, std::uint64_t timestampMicros)
     {
         RequireStarted();
+        if (outputs != nullptr && outputChannels != engine_.Config().numAudioOutputs) {
+            throw std::invalid_argument("browser audio channel count does not match app config");
+        }
         this->timestampMicros_.store(timestampMicros, std::memory_order_relaxed);
         synth::AudioBlock block;
         block.outputs = outputs;
-        block.numOutputChannels = engine_.Config().numAudioOutputs;
+        block.numOutputChannels = outputs == nullptr ? 0 : outputChannels;
         block.numFrames = frames;
         engine_.ProcessBlock(block, timestampMicros);
     }
@@ -165,9 +169,11 @@ struct MidiActionDescriptor {
 class RuntimeAbi {
 public:
     virtual ~RuntimeAbi() = default;
+    virtual std::size_t AudioOutputChannels() const = 0;
     virtual int Initialize(const char* dataRoot) = 0;
     virtual int Prepare(double sampleRate, std::size_t blockSize) = 0;
-    virtual int Process(float** outputs, std::size_t frames, std::uint64_t timestampMicros) = 0;
+    virtual int Process(float** outputs, std::size_t outputChannels, std::size_t frames,
+                        std::uint64_t timestampMicros) = 0;
     virtual int MessageTick(std::uint64_t timestampMicros) = 0;
     virtual const std::uint8_t* BuildUiFrame(std::size_t* size) = 0;
     virtual int DispatchAction(const char* name, const char* value) = 0;
@@ -182,6 +188,8 @@ public:
 template <synth::SynthApplication App>
 class RuntimeAbiAdapter final : public RuntimeAbi {
 public:
+    std::size_t AudioOutputChannels() const override { return runtime_.AudioOutputChannels(); }
+
     int Initialize(const char* dataRoot) override
     {
         if (dataRoot == nullptr) {
@@ -203,9 +211,12 @@ public:
         return Invoke([this, sampleRate, blockSize] { runtime_.Prepare(sampleRate, blockSize); });
     }
 
-    int Process(float** outputs, std::size_t frames, std::uint64_t timestampMicros) override
+    int Process(float** outputs, std::size_t outputChannels, std::size_t frames,
+                std::uint64_t timestampMicros) override
     {
-        return Invoke([this, outputs, frames, timestampMicros] { runtime_.Process(outputs, frames, timestampMicros); });
+        return Invoke([this, outputs, outputChannels, frames, timestampMicros] {
+            runtime_.Process(outputs, outputChannels, frames, timestampMicros);
+        });
     }
 
     int MessageTick(std::uint64_t timestampMicros) override
@@ -350,9 +361,10 @@ struct synth_browser_runtime;
 
 synth_browser_runtime* synth_browser_create();
 int synth_browser_initialize(synth_browser_runtime* runtime, const char* dataRoot);
+std::size_t synth_browser_audio_output_channels(synth_browser_runtime* runtime);
 int synth_browser_prepare(synth_browser_runtime* runtime, double sampleRate, std::size_t blockSize);
-int synth_browser_process(synth_browser_runtime* runtime, float** outputs, std::size_t frames,
-                          std::uint64_t timestampMicros);
+int synth_browser_process(synth_browser_runtime* runtime, float** outputs, std::size_t outputChannels,
+                          std::size_t frames, std::uint64_t timestampMicros);
 int synth_browser_message_tick(synth_browser_runtime* runtime, std::uint64_t timestampMicros);
 const std::uint8_t* synth_browser_build_ui_frame(synth_browser_runtime* runtime, std::size_t* size);
 int synth_browser_dispatch_action(synth_browser_runtime* runtime, const char* name, const char* value);
