@@ -65,3 +65,24 @@ STATUS: DONE_WITH_CONCERNS
    - Escalated rerun exit `0`; TypeScript build passed, the generic runtime source scan passed, Node scaffold test passed, and Playwright reported `2 passed`.
 3. `git diff --check`
    - Exit `0`; no whitespace errors.
+
+## Claude Review Follow-Up
+
+- Claude Opus review found that the Emscripten commands did not export the runtime string helpers used by `worker.ts`. Added `EXPORTED_RUNTIME_METHODS := '["stringToUTF8","lengthBytesUTF8"]'` and applied it to both browser app targets.
+- Claude also found that the shell `! rg ...` generic-runtime guard would pass if `rg` were missing. Replaced it with `tests/check-generic-runtime.mjs`, a Node scanner that fails on forbidden concrete-app references and explicitly skips only `cpp/miniapp_entry.cpp`.
+- Added a Node regression test asserting the Makefile exports the runtime string helpers.
+
+Review-fix verification:
+
+1. `npm --prefix projects/synth/browser run build`
+   - Exit `0`; TypeScript/browser test sources compiled.
+2. `npm --prefix projects/synth/browser run check:generic-runtime`
+   - Exit `0`; Node scanner reported no concrete-app references.
+3. `node --test projects/synth/browser/dist/tests/*.test.mjs`
+   - Exit `0`; `2` Node tests passed.
+4. `npm --prefix projects/synth/browser test -- runtime-core.spec.ts`
+   - Exit `0` under Playwright/Chromium escalation; generic scan, Node tests, and `2` Playwright tests passed.
+5. `make -C projects/synth browser-unit-test`
+   - Exit `0`; browser contract test ran.
+6. `git diff --check`
+   - Exit `0`; no whitespace errors.
