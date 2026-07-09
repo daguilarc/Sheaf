@@ -1,13 +1,13 @@
 EMXX ?= em++
 CXXFLAGS ?= -std=c++20 -O2
 CPPFLAGS := -I../include -I../apps/miniapp -Icpp
-BROWSER_BUILD_DIR := wasm-build
+BROWSER_BUILD_DIR := dist/wasm
 CORE_SOURCES := ../src/ParameterModulation.cpp ../src/MidiController.cpp ../src/PatchPersistence.cpp ../src/DspWavetable.cpp ../src/Modules.cpp ../src/MidiReconcile.cpp ../src/MidiDevicePoller.cpp ../src/MidiConfigViewModel.cpp ../src/MidiConfigBlocks.cpp
 EXPORTED_FUNCTIONS := '["_malloc","_free","_synth_browser_create","_synth_browser_initialize","_synth_browser_prepare","_synth_browser_process","_synth_browser_message_tick","_synth_browser_build_ui_frame","_synth_browser_dispatch_action","_synth_browser_submit_midi_endpoints","_synth_browser_dequeue_midi_action","_synth_browser_deliver_midi","_synth_browser_dequeue_midi_output","_synth_browser_destroy"]'
 EXPORTED_RUNTIME_METHODS := '["stringToUTF8","lengthBytesUTF8","FS","IDBFS"]'
 PTHREAD_FLAGS := -pthread -sUSE_PTHREADS=1 -sPTHREAD_POOL_SIZE=1
 
-.PHONY: build test browser-fake-app browser-miniapp
+.PHONY: build test browser-fake-app browser-fake-app-test browser-miniapp browser-miniapp-smoke
 
 build:
 	npm run build
@@ -17,7 +17,15 @@ test:
 
 browser-fake-app: $(BROWSER_BUILD_DIR)/fake_browser_app.js
 
+browser-fake-app-test: build browser-fake-app
+	npm run check:generic-runtime
+	npx playwright test tests/fake-app.e2e.spec.ts
+
 browser-miniapp: $(BROWSER_BUILD_DIR)/miniapp.js
+
+browser-miniapp-smoke: browser-fake-app-test
+	$(MAKE) browser-miniapp
+	SYNTH_BROWSER_FAKE_GATE_CONFIRMED=1 npx playwright test tests/miniapp-smoke.spec.ts
 
 $(BROWSER_BUILD_DIR):
 	mkdir -p $@
