@@ -1,4 +1,4 @@
-import { AudioBridgeDescriptor, SharedRingBuffer } from "./protocol.js";
+import { AUDIO_RING_STATE, AudioBridgeDescriptor, SharedRingBuffer } from "./protocol.js";
 
 export type BrowserAudioWorker = {
   postMessage(message: { type: "configure-audio"; sampleRate: number; blockSize: number; bridge: AudioBridgeDescriptor } |
@@ -57,7 +57,7 @@ export class AudioBridge {
   }
 
   shutdown() {
-    if (this.ring) Atomics.store(new Int32Array(this.ring.descriptor().state), 4, 1);
+    if (this.ring) Atomics.store(new Int32Array(this.ring.descriptor().state), AUDIO_RING_STATE.shutdown, 1);
     if (this.renderTimer !== undefined) globalThis.clearInterval(this.renderTimer);
     this.renderTimer = undefined;
     this.node?.disconnect();
