@@ -6,7 +6,7 @@
 - [x] 1.4 Add source-boundary checks or compile tests proving app-facing headers and browser targets do not include JUCE headers or browser APIs outside host/backend paths.
 - [x] 1.5 Add the browser app entry-point binding that names only the concrete application type.
 - [ ] 1.6 Package browser builds as static website artifacts containing only static HTML, JavaScript, WASM, worker, AudioWorklet, and asset files.
-- [ ] 1.7 Add a static local server for Playwright that serves the browser build with required COOP/COEP and permissions-policy headers and no dynamic app API.
+- [x] 1.7 Add a static local server for Playwright that serves the browser build with required COOP/COEP and permissions-policy headers and no dynamic app API.
 
 ## 2. Portable UI Command Buffers
 
@@ -27,7 +27,7 @@
 ## 4. Browser Runtime Core
 
 - [x] 4.1 Implement `synth_browser::Runtime<App>` over `synth::Engine<App>` with generic start, stop, message tick, app surface, patch/config, and runtime data path access.
-- [ ] 4.2 Mount or provide app-scoped browser persistent paths before engine initialization and call initial storage sync before startup config/patch load.
+- [x] 4.2 Mount or provide app-scoped browser persistent paths before engine initialization and call initial storage sync before startup config/patch load.
 - [ ] 4.3 Add browser runtime status plumbing for startup, persistence, MIDI availability, audio availability, and unsupported security gates.
 - [ ] 4.4 Add handwritten worker/main-thread message protocols around the Emscripten module for runtime start/stop, action dispatch, UI frame transfer, patch/config status, MIDI, audio status, and diagnostics.
 - [x] 4.5 Add tests proving no browser runtime path branches on miniapp or any concrete application identity.
@@ -52,10 +52,10 @@
 
 ## 7. Browser Persistence
 
-- [ ] 7.1 Persist runtime configuration and patch files through IDBFS or an equivalent IndexedDB-backed app-scoped storage adapter.
-- [ ] 7.2 Synchronize browser storage after successful config save, patch save, save-as, overwrite-save-as, and load-related metadata updates.
-- [ ] 7.3 Surface pending/succeeded/failed browser persistence sync status through existing runtime page status paths.
-- [ ] 7.4 Add tests proving patch browsing/save/load paths remain under the app-scoped `patches/` root.
+- [x] 7.1 Persist runtime configuration and patch files through IDBFS or an equivalent IndexedDB-backed app-scoped storage adapter.
+- [x] 7.2 Synchronize browser storage after successful config save, patch save, save-as, overwrite-save-as, and load-related metadata updates.
+- [x] 7.3 Surface pending/succeeded/failed browser persistence sync status through existing runtime page status paths.
+- [x] 7.4 Add tests proving patch browsing/save/load paths remain under the app-scoped `patches/` root.
 
 ## 8. Generic And Miniapp Browser Validation
 
