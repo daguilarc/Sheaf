@@ -109,6 +109,53 @@ test("main bootstrap composes runtime, UI, audio channels, and actions generical
   expect(result.calls).toContainEqual(["dispatchAction", 11, "generic.boot", "pressed"]);
 });
 
+test("static auto boot uses the default worker runtime client and receives idle status", async ({ page }) => {
+  const frame = makeCommandBuffer([
+    { id: "root", kind: NodeKind.Root, bounds: [0, 0, 120, 50], children: ["button"] },
+    { id: "button", kind: NodeKind.Button, bounds: [0, 0, 120, 40], label: "Auto", action: { name: "generic.auto", value: "pressed" } },
+  ]);
+  await page.addInitScript(({ frameBytes }) => {
+    class FakeWorker extends EventTarget {
+      constructor(readonly url: string | URL, readonly options?: WorkerOptions) {
+        super();
+        (window as unknown as { __synthWorkerConstructed: unknown[] }).__synthWorkerConstructed = [String(url), options];
+      }
+
+      postMessage(command: { type: string }) {
+        const host = window as unknown as { __synthWorkerCommands?: string[] };
+        host.__synthWorkerCommands = [...(host.__synthWorkerCommands ?? []), command.type];
+        const respond = (data: unknown) => {
+          setTimeout(() => this.dispatchEvent(new MessageEvent("message", { data })), 0);
+        };
+        if (command.type === "load") respond({ type: "ok" });
+        else if (command.type === "create") respond({ type: "created", handle: 17 });
+        else if (command.type === "initialize") respond({ type: "ok" });
+        else if (command.type === "audio-config") respond({ type: "audio-config", channels: 1 });
+        else if (command.type === "build-ui-frame") {
+          respond({ type: "ui-frame", frame: frameBytes });
+          setTimeout(() => this.dispatchEvent(new MessageEvent("message", {
+            data: { type: "page-status", path: "/data/.browser-status", status: "idle-persisted" },
+          })), 20);
+        } else respond({ type: "ok" });
+      }
+
+      terminate() {}
+    }
+    Object.defineProperty(window, "Worker", { value: FakeWorker });
+  }, { frameBytes: Array.from(new Uint8Array(frame)) });
+
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+  await expect(page.locator('[data-synth-node-id="button"]')).toHaveText("Auto");
+  await expect(page.locator("#synth-root")).toHaveAttribute("data-synth-status", "idle-persisted");
+  const worker = await page.evaluate(() => ({
+    constructed: (window as unknown as { __synthWorkerConstructed?: unknown[] }).__synthWorkerConstructed,
+    commands: (window as unknown as { __synthWorkerCommands?: string[] }).__synthWorkerCommands,
+  }));
+  expect(worker.constructed).toEqual([expect.stringContaining("/dist/src/worker.js"), { type: "module" }]);
+  expect(worker.commands?.slice(0, 5)).toEqual(["load", "create", "initialize", "audio-config", "build-ui-frame"]);
+  expect(worker.commands?.slice(5).every((command) => command === "build-ui-frame")).toBe(true);
+});
+
 test("browser worker contains no concrete application branch", async ({ page }) => {
   const forbidden = /MiniApp|miniapp|synth_miniapp|Vco|FilterModule|LfoBank/;
   await page.goto("http://127.0.0.1:4173/public/index.html");

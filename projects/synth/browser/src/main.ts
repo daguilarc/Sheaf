@@ -40,13 +40,14 @@ export function createWorkerRuntimeClient(workerUrl = new URL("./worker.js", imp
   const statusHandlers = new Set<(response: RuntimeResponse) => void>();
   let queue: Promise<void> = Promise.resolve();
 
+  worker.addEventListener("message", (event: MessageEvent<RuntimeResponse>) => {
+    if (event.data.type === "page-status") statusHandlers.forEach((handler) => handler(event.data));
+  });
+
   const request = (command: RuntimeCommand): Promise<RuntimeResponse> => {
     const run = () => new Promise<RuntimeResponse>((resolve) => {
       const receive = (event: MessageEvent<RuntimeResponse>) => {
-        if (event.data.type === "page-status") {
-          statusHandlers.forEach((handler) => handler(event.data));
-          return;
-        }
+        if (event.data.type === "page-status") return;
         worker.removeEventListener("message", receive);
         resolve(event.data);
       };
@@ -92,7 +93,8 @@ export class SynthBrowserApp {
     await this.runtime.request({ type: "create" });
     await this.expectOk(await this.runtime.request({ type: "initialize", dataRoot: this.options.dataRoot }));
     const audioConfig = await this.runtime.request({ type: "audio-config" });
-    const channels = audioConfig.type === "audio-config" ? audioConfig.channels : 2;
+    if (audioConfig.type !== "audio-config") throw new Error("runtime did not return audio configuration");
+    const channels = audioConfig.channels;
     this.audio = new AudioBridge({
       postMessage: (message) => { void this.runtime.request(message); },
     } satisfies BrowserAudioWorker, { ...this.options.audioOptions, channels });
