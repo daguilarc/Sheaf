@@ -10,6 +10,7 @@ projects/conductor/dist/
 projects/xagent/dist/
 projects/synth/build/
 projects/synth/browser/dist/
+projects/synth/browser/test-results/
 projects/synth/browser/wasm-build/
 projects/synth/apps/*/build/
 projects/sheaf-chat/dist/
