@@ -75,6 +75,53 @@ test("dispatches controls and browser gestures without retaining drag state", as
   ]);
 });
 
+test("preserves focused edits while a stale frame is rendered", async ({ page }) => {
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+  await page.evaluate(async (bytes) => {
+    const { BrowserUiBackend } = await import("../dist/src/" + "ui.js");
+    const browserWindow = window as unknown as { backend: InstanceType<typeof BrowserUiBackend> };
+    browserWindow.backend = new BrowserUiBackend(document.querySelector("#synth-root")!);
+    browserWindow.backend.renderFrame(new Uint8Array(bytes).buffer);
+  }, Array.from(new Uint8Array(frame)));
+
+  const slider = page.locator('[data-synth-node-id="slider"] input');
+  const field = page.locator('[data-synth-node-id="field"] input');
+  await slider.focus();
+  await slider.fill("7");
+  await page.evaluate(async (bytes) => {
+    (window as unknown as { backend: { renderFrame(buffer: ArrayBuffer): void } }).backend.renderFrame(new Uint8Array(bytes).buffer);
+  }, Array.from(new Uint8Array(frame)));
+  await expect(slider).toHaveValue("7");
+
+  await field.focus();
+  await field.fill("after");
+  await page.evaluate(async (bytes) => {
+    (window as unknown as { backend: { renderFrame(buffer: ArrayBuffer): void } }).backend.renderFrame(new Uint8Array(bytes).buffer);
+  }, Array.from(new Uint8Array(frame)));
+  await expect(field).toHaveValue("after");
+});
+
+test("fills explicit draw bounds without changing whole-canvas fills", async ({ page }) => {
+  const fillFrame = makeCommandBuffer([
+    { id: "root", kind: NodeKind.Root, bounds: [0, 0, 20, 20], children: ["draw"] },
+    { id: "draw", kind: NodeKind.Draw, bounds: [0, 0, 20, 20], draws: [
+      { kind: DrawKind.Fill, color: [0, 0, 0, 255] },
+      { kind: DrawKind.Fill, bounds: [5, 5, 10, 10], color: [255, 0, 0, 255] },
+    ] },
+  ]);
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+  const pixels = await page.evaluate(async (bytes) => {
+    const { BrowserUiBackend } = await import("../dist/src/" + "ui.js");
+    new BrowserUiBackend(document.querySelector("#synth-root")!).renderFrame(new Uint8Array(bytes).buffer);
+    const context = document.querySelector<HTMLCanvasElement>('[data-synth-node-id="draw"] canvas')!.getContext("2d")!;
+    return {
+      outside: Array.from(context.getImageData(1, 1, 1, 1).data),
+      inside: Array.from(context.getImageData(6, 6, 1, 1).data),
+    };
+  }, Array.from(new Uint8Array(fillFrame)));
+  expect(pixels).toEqual({ outside: [0, 0, 0, 255], inside: [255, 0, 0, 255] });
+});
+
 test("preserves semantic nodes and reports structural buffer errors", () => {
   const decoded = decodeCommandBuffer(frame);
   expect(decoded.nodes).toHaveLength(10);

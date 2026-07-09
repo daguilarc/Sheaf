@@ -66,3 +66,19 @@ Implemented the browser-side SBCB v1 decoder and generic UI backend only. No run
 
 - `public/index.html` already references `dist/src/main.js`, which is not part of Task 3 ownership and does not exist in this worktree. The focused tests load that page and inject the backend as required; its expected main-module 404 is visible in the static-server log but does not affect the synthetic-buffer tests. A later integration task should supply that entry point.
 - Chromium needed to be installed and the Playwright command needed to run outside the filesystem sandbox because macOS Mach-port registration is denied inside it.
+
+## Review Fixes
+
+- `DrawKind.Fill` now follows JUCE bounds behavior: a command with positive width and height fills its supplied rectangle; otherwise it fills the complete draw canvas.
+- Focused slider and text-field inputs keep their browser-side values through a stale same-value frame, while retaining their existing action dispatch behavior and accepting backend values again after focus moves away.
+- Removed the dead non-synth sibling preservation path from structural child attachment. Structural node kinds do not create sibling controls, and scroll content is attached through its dedicated content wrapper.
+
+## Review Verification
+
+1. Added the Playwright regressions before changing production code.
+2. Red run: `npm --prefix projects/synth/browser test -- ui-backend.spec.ts`
+   - Focused slider expected `7` but received stale frame value `3`.
+   - Explicit fill drew red outside `[5, 5, 10, 10]`.
+3. Green run: `npm --prefix projects/synth/browser test -- ui-backend.spec.ts`
+   - Node smoke test: 1 passed.
+   - Playwright: 5 passed.

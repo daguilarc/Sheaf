@@ -70,17 +70,25 @@ export class BrowserUiBackend {
     if (node.kind === NodeKind.Button) { element.textContent = node.label; element.toggleAttribute("disabled", !node.enabled); }
     if (node.kind === NodeKind.Label || node.kind === NodeKind.StatusText) element.textContent = node.text || node.label;
     if (node.kind === NodeKind.Toggle) { const input = element.querySelector("input")!; input.checked = node.checked; input.disabled = !node.enabled; element.querySelector("span")!.textContent = node.label; }
-    if (node.kind === NodeKind.Slider) { const input = element.querySelector("input")!; input.min = String(node.minValue); input.max = String(node.maxValue); input.step = String(node.step); input.value = String(node.value); input.disabled = !node.enabled; }
+    if (node.kind === NodeKind.Slider) {
+      const input = element.querySelector("input")!;
+      input.min = String(node.minValue); input.max = String(node.maxValue); input.step = String(node.step);
+      if (document.activeElement !== input) input.value = String(node.value);
+      input.disabled = !node.enabled;
+    }
     if (node.kind === NodeKind.ComboBox) { const select = element.querySelector("select")!; select.replaceChildren(...node.options.map((option) => { const value = new Option(option.label, option.id); value.selected = option.id === node.selectedOption; return value; })); select.disabled = !node.enabled; }
-    if (node.kind === NodeKind.TextField) { const input = element.querySelector("input")!; input.value = node.text; input.disabled = !node.enabled; }
+    if (node.kind === NodeKind.TextField) {
+      const input = element.querySelector("input")!;
+      if (document.activeElement !== input) input.value = node.text;
+      input.disabled = !node.enabled;
+    }
     if (node.kind === NodeKind.ScrollArea && element.scrollContent) { element.scrollContent.style.width = `${Math.max(node.bounds.width, node.scrollContentWidth)}px`; element.scrollContent.style.height = `${Math.max(node.bounds.height, node.scrollContentHeight)}px`; }
   }
 
   private attachChildren(node: Node, nodes: Map<string, Node>) {
     const element = this.elementFor(node);
     const parent = element.scrollContent ?? element;
-    const controls = parent === element ? [...element.children].filter((child) => !(child instanceof HTMLElement && child.dataset.synthNodeId)) : [];
-    parent.replaceChildren(...controls, ...node.children.map((child) => this.elementFor(nodes.get(child)!)));
+    parent.replaceChildren(...node.children.map((child) => this.elementFor(nodes.get(child)!)));
   }
 
   private dispatchValue(element: NodeElement, value?: string) { const action = element.synthNode?.action; if (action) this.dispatchBrowserAction({ name: action.name, value: value ?? action.value }); }
@@ -97,9 +105,10 @@ export class BrowserUiBackend {
 
   private draw(context: CanvasRenderingContext2D, command: DrawCommand, width: number, height: number) {
     const fill = colorCss(command.color); const stroke = colorCss(command.color); const b = command.bounds;
+    const hasBounds = b.width > 0 && b.height > 0;
     context.fillStyle = fill; context.strokeStyle = stroke; context.lineWidth = command.strokeWidth;
     switch (command.kind) {
-      case DrawKind.Fill: context.fillRect(0, 0, width, height); break;
+      case DrawKind.Fill: context.fillRect(hasBounds ? b.x : 0, hasBounds ? b.y : 0, hasBounds ? b.width : width, hasBounds ? b.height : height); break;
       case DrawKind.StrokeRect: context.strokeRect(b.x, b.y, b.width, b.height); break;
       case DrawKind.Line: context.beginPath(); context.moveTo(command.from.x, command.from.y); context.lineTo(command.to.x, command.to.y); context.stroke(); break;
       case DrawKind.Arc: context.beginPath(); context.arc(b.x + b.width / 2, b.y + b.height / 2, Math.min(b.width, b.height) / 2, command.startRadians, command.endRadians); context.stroke(); break;
