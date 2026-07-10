@@ -19,6 +19,23 @@ test("canonical static server applies browser isolation and MIDI sysex headers",
   expect((await request.get("http://127.0.0.1:4174/not-an-asset")).status()).toBe(404);
 });
 
+test("static shell loads generic portable UI styling", async ({ page, request }) => {
+  const stylesheet = await request.get("http://127.0.0.1:4173/public/synth-browser.css");
+  expect(stylesheet.ok()).toBe(true);
+  expect(await stylesheet.text()).not.toMatch(/miniapp|fake-browser/i);
+
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+  expect(await page.locator("body > main, body > script").count()).toBe(2);
+  expect(await page.locator("#synth-root").evaluate((root) => root.childElementCount)).toBe(0);
+  expect(await page.locator("button, canvas, select, input").count()).toBe(0);
+  const styles = await page.evaluate(() => {
+    const body = getComputedStyle(document.body);
+    const root = getComputedStyle(document.querySelector("#synth-root")!);
+    return { bodyMargin: body.margin, bodyBackground: body.backgroundColor, rootColor: root.color };
+  });
+  expect(styles).toEqual({ bodyMargin: "0px", bodyBackground: "rgb(18, 20, 22)", rootColor: "rgb(229, 231, 235)" });
+});
+
 test("normal generic browser flows make no dynamic HTTP or WebSocket requests", async ({ page }) => {
   const dynamicRequests: string[] = [];
   const sockets: string[] = [];

@@ -55,7 +55,7 @@ test("renders portable controls, canvas draws, and reachable scroll content", as
   expect(await page.locator("[data-synth-node-id]").evaluateAll((nodes) => nodes.some((node) => /miniapp|fake/i.test(node.outerHTML)))).toBeFalsy();
 });
 
-test("dispatches controls and browser gestures without retaining drag state", async ({ page }) => {
+test("dispatches portable controls and double-click actions", async ({ page }) => {
   await page.goto("http://127.0.0.1:4173/public/index.html");
   const actions = await page.evaluate(async (bytes) => {
     const { BrowserUiBackend } = await import("../dist/src/" + "ui.js");
@@ -71,16 +71,111 @@ test("dispatches controls and browser gestures without retaining drag state", as
   await page.locator('[data-synth-node-id="slider"] input').fill("7");
   await page.locator('[data-synth-node-id="combo"] select').selectOption("two");
   await page.locator('[data-synth-node-id="field"] input').fill("after");
-  await page.locator('[data-synth-node-id="slider"]').dispatchEvent("pointerdown", { clientX: 20 });
-  await page.locator('[data-synth-node-id="slider"]').dispatchEvent("pointerup", { clientX: 26 });
   await page.locator('[data-synth-node-id="row"]').dblclick();
   await page.locator('[data-synth-node-id="draw"] canvas').dblclick();
   const dispatched = await page.evaluate(() => (window as unknown as { actions: unknown[] }).actions);
   expect(dispatched).toEqual([
     { name: "generic.button", value: "press" }, { name: "generic.toggle", value: "true" }, { name: "generic.slider", value: "7" },
-    { name: "generic.combo", value: "two" }, { name: "generic.text", value: "after" }, { name: "generic.drag", value: "axis:6" }, { name: "generic.row", value: "open" },
+    { name: "generic.combo", value: "two" }, { name: "generic.text", value: "after" }, { name: "generic.row", value: "open" },
     { name: "generic.draw", value: "open" },
   ]);
+});
+
+test("captures pointer drags and dispatches accepted incremental two-axis deltas", async ({ page }) => {
+  const dragFrame = makeCommandBuffer([
+    { id: "root", kind: NodeKind.Root, bounds: [0, 0, 200, 100], children: ["drag", "plain"] },
+    { id: "drag", kind: NodeKind.Draw, bounds: [10, 10, 40, 40], pointerDragAction: { name: "generic.drag", value: "0:3:0" } },
+    { id: "plain", kind: NodeKind.Button, bounds: [60, 10, 60, 30], label: "Plain" },
+  ]);
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+  const result = await page.evaluate(async (bytes) => {
+    const { BrowserUiBackend } = await import("../dist/src/" + "ui.js");
+    const actions: Array<{ name: string; value: string }> = [];
+    const backend = new BrowserUiBackend(document.querySelector("#synth-root")!, (action: { name: string; value: string }) => actions.push(action));
+    backend.renderFrame(new Uint8Array(bytes).buffer);
+    const drag = document.querySelector<HTMLElement>('[data-synth-node-id="drag"]')!;
+    const plain = document.querySelector<HTMLElement>('[data-synth-node-id="plain"]')!;
+    const captures: number[] = [];
+    const releases: number[] = [];
+    drag.setPointerCapture = (pointerId) => { captures.push(pointerId); };
+    drag.releasePointerCapture = (pointerId) => { releases.push(pointerId); };
+    plain.setPointerCapture = (pointerId) => { captures.push(pointerId + 100); };
+
+    plain.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 4, clientX: 1, clientY: 1 }));
+    drag.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 7, clientX: 10, clientY: 20 }));
+    drag.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, pointerId: 7, clientX: 18, clientY: 16 }));
+    drag.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, pointerId: 7, clientX: 20, clientY: 20 }));
+    drag.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, pointerId: 7, clientX: 20.2, clientY: 20 }));
+    drag.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, pointerId: 7, clientX: 20.6, clientY: 20 }));
+    drag.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 7, clientX: 20.6, clientY: 20 }));
+    return { actions, captures, releases };
+  }, Array.from(new Uint8Array(dragFrame)));
+
+  expect(result.captures).toEqual([7]);
+  expect(result.releases).toEqual([7]);
+  expect(result.actions).toHaveLength(3);
+  expect(result.actions[0]).toEqual({ name: "generic.drag", value: "0:3:0.03" });
+  expect(Number(result.actions[1].value.split(":").at(-1))).toBeCloseTo(-0.005, 10);
+  expect(Number(result.actions[2].value.split(":").at(-1))).toBeCloseTo(0.0015, 10);
+});
+
+test("compensates pointer movement for the current surface scale", async ({ page }) => {
+  const dragFrame = makeCommandBuffer([
+    { id: "root", kind: NodeKind.Root, bounds: [0, 0, 200, 100], children: ["drag"] },
+    { id: "drag", kind: NodeKind.Draw, bounds: [10, 10, 40, 40], pointerDragAction: { name: "generic.drag", value: "axis:0" } },
+  ]);
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+  const result = await page.evaluate(async (bytes) => {
+    const { BrowserUiBackend } = await import("../dist/src/" + "ui.js");
+    const host = document.querySelector<HTMLElement>("#synth-root")!;
+    host.style.width = "100px";
+    const actions: Array<{ name: string; value: string }> = [];
+    const backend = new BrowserUiBackend(host, (action: { name: string; value: string }) => actions.push(action));
+    backend.renderFrame(new Uint8Array(bytes).buffer);
+    const drag = document.querySelector<HTMLElement>('[data-synth-node-id="drag"]')!;
+    drag.setPointerCapture = () => {};
+    drag.releasePointerCapture = () => {};
+    drag.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 3, clientX: 10, clientY: 20 }));
+    drag.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, pointerId: 3, clientX: 14, clientY: 18 }));
+    return actions;
+  }, Array.from(new Uint8Array(dragFrame)));
+
+  expect(result).toEqual([{ name: "generic.drag", value: "axis:0.03" }]);
+});
+
+test("keeps captured drags alive outside and clears them on cancel and lost capture", async ({ page }) => {
+  const dragFrame = makeCommandBuffer([
+    { id: "root", kind: NodeKind.Root, bounds: [0, 0, 100, 100], children: ["drag"] },
+    { id: "drag", kind: NodeKind.Draw, bounds: [10, 10, 20, 20], pointerDragAction: { name: "generic.drag", value: "axis:0" } },
+  ]);
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+  const result = await page.evaluate(async (bytes) => {
+    const { BrowserUiBackend } = await import("../dist/src/" + "ui.js");
+    const actions: Array<{ name: string; value: string }> = [];
+    const backend = new BrowserUiBackend(document.querySelector("#synth-root")!, (action: { name: string; value: string }) => actions.push(action));
+    backend.renderFrame(new Uint8Array(bytes).buffer);
+    const drag = document.querySelector<HTMLElement>('[data-synth-node-id="drag"]')!;
+    const captures: number[] = [];
+    const releases: number[] = [];
+    drag.setPointerCapture = (pointerId) => { captures.push(pointerId); };
+    drag.releasePointerCapture = (pointerId) => { releases.push(pointerId); };
+    const send = (type: string, pointerId: number, clientX: number) =>
+      drag.dispatchEvent(new PointerEvent(type, { bubbles: true, pointerId, clientX, clientY: 10 }));
+
+    send("pointerdown", 1, 10);
+    send("pointermove", 1, 1000);
+    send("pointercancel", 1, 1000);
+    send("pointermove", 1, 1010);
+    send("pointerdown", 2, 10);
+    send("pointermove", 2, 20);
+    send("lostpointercapture", 2, 20);
+    send("pointermove", 2, 30);
+    return { actions, captures, releases };
+  }, Array.from(new Uint8Array(dragFrame)));
+
+  expect(result.actions).toHaveLength(2);
+  expect(result.captures).toEqual([1, 2]);
+  expect(result.releases).toEqual([1]);
 });
 
 test("preserves focused edits while a stale frame is rendered", async ({ page }) => {
@@ -128,6 +223,295 @@ test("fills explicit draw bounds without changing whole-canvas fills", async ({ 
     };
   }, Array.from(new Uint8Array(fillFrame)));
   expect(pixels).toEqual({ outside: [0, 0, 0, 255], inside: [255, 0, 0, 255] });
+});
+
+test("draws arcs with isolated round cap and join state", async ({ page }) => {
+  const arcFrame = makeCommandBuffer([
+    { id: "root", kind: NodeKind.Root, bounds: [0, 0, 40, 40], children: ["draw"] },
+    { id: "draw", kind: NodeKind.Draw, bounds: [0, 0, 40, 40], draws: [
+      { kind: DrawKind.Arc, bounds: [5, 5, 10, 10], startRadians: 0, endRadians: 0.0001 },
+      { kind: DrawKind.Line, from: { x: 0, y: 0 }, to: { x: 10, y: 10 } },
+    ] },
+  ]);
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+  const calls = await page.evaluate(async (bytes) => {
+    const calls: string[] = [];
+    let lineCap = "butt";
+    let lineJoin = "miter";
+    const stack: Array<[string, string]> = [];
+    const context = {
+      fillStyle: "", strokeStyle: "", lineWidth: 1, font: "", textAlign: "left",
+      get lineCap() { return lineCap; },
+      set lineCap(value: string) { lineCap = value; calls.push(`lineCap:${value}`); },
+      get lineJoin() { return lineJoin; },
+      set lineJoin(value: string) { lineJoin = value; calls.push(`lineJoin:${value}`); },
+      save() { stack.push([lineCap, lineJoin]); calls.push("save"); },
+      restore() { [lineCap, lineJoin] = stack.pop()!; calls.push("restore"); },
+      translate() {}, beginPath() {}, moveTo() {}, lineTo() {},
+      arc() { calls.push("arc"); },
+      stroke() { calls.push(`stroke:${lineCap}:${lineJoin}`); },
+      fillRect() {}, strokeRect() {}, fillText() {}, ellipse() {}, fill() {}, roundRect() {},
+    };
+    (HTMLCanvasElement.prototype as unknown as { getContext: () => unknown }).getContext = () => context;
+    const { BrowserUiBackend } = await import("../dist/src/" + "ui.js");
+    new BrowserUiBackend(document.querySelector("#synth-root")!).renderFrame(new Uint8Array(bytes).buffer);
+    return calls;
+  }, Array.from(new Uint8Array(arcFrame)));
+
+  expect(calls).toEqual([
+    "save", "lineCap:round", "lineJoin:round", "arc", "stroke:round:round", "restore", "stroke:butt:miter",
+  ]);
+});
+
+test("flows unbounded controls after explicit draw content", async ({ page }) => {
+  const layoutFrame = makeCommandBuffer([
+    { id: "root", kind: NodeKind.Root, bounds: [0, 0, 320, 240], children: ["draw", "label", "button", "slider"] },
+    { id: "draw", kind: NodeKind.Draw, bounds: [20, 16, 280, 80] },
+    { id: "label", kind: NodeKind.Label, text: "Controls" },
+    { id: "button", kind: NodeKind.Button, label: "Trigger" },
+    { id: "slider", kind: NodeKind.Slider, value: 0.5, minValue: 0, maxValue: 1, step: 0.01 },
+  ]);
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+  const bounds = await page.evaluate(async (bytes) => {
+    const { BrowserUiBackend } = await import("../dist/src/" + "ui.js");
+    new BrowserUiBackend(document.querySelector("#synth-root")!).renderFrame(new Uint8Array(bytes).buffer);
+    const read = (id: string) => {
+      const rect = document.querySelector(`[data-synth-node-id="${id}"]`)!.getBoundingClientRect();
+      return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+    };
+    return { root: read("root"), label: read("label"), button: read("button"), slider: read("slider") };
+  }, Array.from(new Uint8Array(layoutFrame)));
+
+  expect(bounds.root).toEqual({ x: 0, y: 0, width: 320, height: 240 });
+  expect(bounds.label).toEqual({ x: 12, y: 104, width: 120, height: 22 });
+  expect(bounds.button).toEqual({ x: 140, y: 104, width: 72, height: 28 });
+  expect(bounds.slider).toEqual({ x: 12, y: 140, width: 140, height: 28 });
+});
+
+test("auto-sized controls contain long generic labels", async ({ page }) => {
+  const labelFrame = makeCommandBuffer([
+    { id: "root", kind: NodeKind.Root, bounds: [0, 0, 320, 120], children: ["toggle", "button"] },
+    { id: "toggle", kind: NodeKind.Toggle, label: "Long Modifier", checked: false },
+    { id: "button", kind: NodeKind.Button, label: "Following" },
+  ]);
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+  const layout = await page.evaluate(async (bytes) => {
+    const { BrowserUiBackend } = await import("../dist/src/" + "ui.js");
+    new BrowserUiBackend(document.querySelector("#synth-root")!).renderFrame(new Uint8Array(bytes).buffer);
+    const toggle = document.querySelector('[data-synth-node-id="toggle"]')! as HTMLElement;
+    const button = document.querySelector('[data-synth-node-id="button"]')! as HTMLElement;
+    const toggleBounds = toggle.getBoundingClientRect();
+    const buttonBounds = button.getBoundingClientRect();
+    return {
+      toggleRight: toggleBounds.right,
+      buttonLeft: buttonBounds.left,
+      toggleClientWidth: toggle.clientWidth,
+      toggleScrollWidth: toggle.scrollWidth,
+    };
+  }, Array.from(new Uint8Array(labelFrame)));
+
+  expect(layout.toggleScrollWidth).toBeLessThanOrEqual(layout.toggleClientWidth);
+  expect(layout.toggleRight).toBeLessThanOrEqual(layout.buttonLeft);
+});
+
+test("sizes long status text within its nearest root before placing the next control", async ({ page }) => {
+  const text = "x".repeat(80);
+  const labelFrame = makeCommandBuffer([
+    { id: "root", kind: NodeKind.Root, bounds: [0, 0, 400, 60], children: ["status", "button"] },
+    { id: "status", kind: NodeKind.StatusText, text },
+    { id: "button", kind: NodeKind.Button, label: "Following" },
+  ]);
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+  const layout = await page.evaluate(async (bytes) => {
+    const { BrowserUiBackend } = await import("../dist/src/" + "ui.js");
+    new BrowserUiBackend(document.querySelector("#synth-root")!).renderFrame(new Uint8Array(bytes).buffer);
+    const status = document.querySelector<HTMLElement>('[data-synth-node-id="status"]')!.getBoundingClientRect();
+    const button = document.querySelector<HTMLElement>('[data-synth-node-id="button"]')!.getBoundingClientRect();
+    return {
+      status: { left: status.left, right: status.right, width: status.width, bottom: status.bottom },
+      button: { left: button.left, top: button.top },
+    };
+  }, Array.from(new Uint8Array(labelFrame)));
+
+  expect(layout.status.width).toBe(376);
+  expect(layout.status.right).toBeLessThanOrEqual(388);
+  expect(layout.button.top).toBeGreaterThanOrEqual(layout.status.bottom + 8);
+});
+
+test("includes auto-flow below a declared root in the resolved host height", async ({ page }) => {
+  const overflowFrame = makeCommandBuffer([
+    { id: "root", kind: NodeKind.Root, bounds: [0, 0, 200, 30], children: ["label", "button"] },
+    { id: "label", kind: NodeKind.Label, text: "A label that consumes the available row width" },
+    { id: "button", kind: NodeKind.Button, label: "Below" },
+  ]);
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+  const layout = await page.evaluate(async (bytes) => {
+    const { BrowserUiBackend } = await import("../dist/src/" + "ui.js");
+    new BrowserUiBackend(document.querySelector("#synth-root")!).renderFrame(new Uint8Array(bytes).buffer);
+    const host = document.querySelector<HTMLElement>("#synth-root")!.getBoundingClientRect();
+    const button = document.querySelector<HTMLElement>('[data-synth-node-id="button"]')!.getBoundingClientRect();
+    return { hostBottom: host.bottom, hostHeight: host.height, buttonBottom: button.bottom };
+  }, Array.from(new Uint8Array(overflowFrame)));
+
+  expect(layout.hostHeight).toBeGreaterThan(30);
+  expect(layout.hostBottom).toBeGreaterThanOrEqual(layout.buttonBottom);
+});
+
+test("keeps absolute surface bounds while nesting composite roots", async ({ page }) => {
+  const compositeFrame = makeCommandBuffer([
+    { id: "main", kind: NodeKind.Root, bounds: [0, 0, 996, 200], children: ["app", "sidebar"] },
+    { id: "app", kind: NodeKind.Root, bounds: [0, 0, 900, 200], children: ["app-status", "app-button"] },
+    { id: "app-status", kind: NodeKind.StatusText, text: "x".repeat(160) },
+    { id: "app-button", kind: NodeKind.Button, label: "Next" },
+    { id: "sidebar", kind: NodeKind.Root, bounds: [900, 0, 96, 200], children: ["side-button"] },
+    { id: "side-button", kind: NodeKind.Button, bounds: [900, 0, 96, 28], label: "Side" },
+  ]);
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+  const layout = await page.evaluate(async (bytes) => {
+    const { BrowserUiBackend } = await import("../dist/src/" + "ui.js");
+    new BrowserUiBackend(document.querySelector("#synth-root")!).renderFrame(new Uint8Array(bytes).buffer);
+    const read = (id: string) => {
+      const element = document.querySelector<HTMLElement>(`[data-synth-node-id="${id}"]`)!;
+      const rect = element.getBoundingClientRect();
+      return { styleLeft: element.style.left, left: rect.left, right: rect.right, top: rect.top };
+    };
+    return { main: read("main"), appStatus: read("app-status"), appButton: read("app-button"), sidebar: read("sidebar"), sideButton: read("side-button") };
+  }, Array.from(new Uint8Array(compositeFrame)));
+
+  expect(layout.sidebar.styleLeft).toBe("900px");
+  expect(layout.sideButton.styleLeft).toBe("0px");
+  expect(layout.sidebar.left).toBe(900);
+  expect(layout.sideButton.left).toBe(900);
+  expect(layout.appStatus.right).toBeLessThanOrEqual(900);
+  expect(layout.appButton.right).toBeLessThanOrEqual(900);
+  expect(layout.appButton.top).toBeGreaterThan(layout.appStatus.top);
+});
+
+test("keeps the scale transform only on the current parentless root", async ({ page }) => {
+  const firstFrame = makeCommandBuffer([
+    { id: "app", kind: NodeKind.Root, bounds: [0, 0, 200, 100] },
+  ]);
+  const compositeFrame = makeCommandBuffer([
+    { id: "main", kind: NodeKind.Root, bounds: [0, 0, 300, 100], children: ["app", "sidebar"] },
+    { id: "app", kind: NodeKind.Root, bounds: [0, 0, 200, 100] },
+    { id: "sidebar", kind: NodeKind.Root, bounds: [200, 0, 100, 100] },
+  ]);
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+  const transforms = await page.evaluate(async ({ first, composite }) => {
+    const { BrowserUiBackend } = await import("../dist/src/" + "ui.js");
+    const host = document.querySelector<HTMLElement>("#synth-root")!;
+    host.style.width = "100px";
+    const backend = new BrowserUiBackend(host);
+    backend.renderFrame(new Uint8Array(first).buffer);
+    const firstTransform = document.querySelector<HTMLElement>('[data-synth-node-id="app"]')!.style.transform;
+    backend.renderFrame(new Uint8Array(composite).buffer);
+    const main = document.querySelector<HTMLElement>('[data-synth-node-id="main"]')!;
+    const app = document.querySelector<HTMLElement>('[data-synth-node-id="app"]')!;
+    return { firstTransform, mainTransform: main.style.transform, appTransform: app.style.transform, appWidth: app.getBoundingClientRect().width };
+  }, { first: Array.from(new Uint8Array(firstFrame)), composite: Array.from(new Uint8Array(compositeFrame)) });
+
+  expect(transforms.firstTransform).toBe("scale(0.5)");
+  expect(transforms.mainTransform).toMatch(/^scale\(0\.333/);
+  expect(transforms.appTransform).toBe("");
+  expect(transforms.appWidth).toBeCloseTo(200 / 3, 4);
+});
+
+test("rejects cyclic node graphs without recursive overflow", async ({ page }) => {
+  const cyclicFrame = makeCommandBuffer([
+    { id: "root", kind: NodeKind.Root, bounds: [0, 0, 100, 100], children: ["a"] },
+    { id: "a", kind: NodeKind.Row, bounds: [0, 0, 10, 10], children: ["b"] },
+    { id: "b", kind: NodeKind.Row, bounds: [0, 0, 10, 10], children: ["a"] },
+  ]);
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+  const message = await page.evaluate(async (bytes) => {
+    const { BrowserUiBackend } = await import("../dist/src/" + "ui.js");
+    try {
+      new BrowserUiBackend(document.querySelector("#synth-root")!).renderFrame(new Uint8Array(bytes).buffer);
+      return "no error";
+    } catch (error) {
+      return error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+    }
+  }, Array.from(new Uint8Array(cyclicFrame)));
+
+  expect(message).toMatch(/cycle/i);
+});
+
+test("dispose disconnects resize observation and releases active pointer capture", async ({ page }) => {
+  const dragFrame = makeCommandBuffer([
+    { id: "root", kind: NodeKind.Root, bounds: [0, 0, 100, 100], children: ["drag"] },
+    { id: "drag", kind: NodeKind.Draw, bounds: [0, 0, 20, 20], pointerDragAction: { name: "generic.drag", value: "axis:0" } },
+  ]);
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+  const result = await page.evaluate(async (bytes) => {
+    let disconnects = 0;
+    class ResizeObserverSpy {
+      observe() {}
+      disconnect() { disconnects++; }
+    }
+    (window as unknown as { ResizeObserver: typeof ResizeObserver }).ResizeObserver = ResizeObserverSpy as unknown as typeof ResizeObserver;
+    const { BrowserUiBackend } = await import("../dist/src/" + "ui.js");
+    const actions: Array<{ name: string; value: string }> = [];
+    const backend = new BrowserUiBackend(document.querySelector("#synth-root")!, (action: { name: string; value: string }) => actions.push(action));
+    backend.renderFrame(new Uint8Array(bytes).buffer);
+    const drag = document.querySelector<HTMLElement>('[data-synth-node-id="drag"]')!;
+    const releases: number[] = [];
+    drag.setPointerCapture = () => {};
+    drag.releasePointerCapture = (pointerId) => { releases.push(pointerId); };
+    drag.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 9, clientX: 1, clientY: 1 }));
+    backend.dispose();
+    drag.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, pointerId: 9, clientX: 20, clientY: 1 }));
+    return { actions, disconnects, releases };
+  }, Array.from(new Uint8Array(dragFrame)));
+
+  expect(result).toEqual({ actions: [], disconnects: 1, releases: [9] });
+});
+
+test("paints surface-space draw commands into positioned canvases", async ({ page }) => {
+  const positionedFrame = makeCommandBuffer([
+    { id: "root", kind: NodeKind.Root, bounds: [0, 0, 100, 100], children: ["draw"] },
+    { id: "draw", kind: NodeKind.Draw, bounds: [40, 50, 20, 20], draws: [
+      { kind: DrawKind.Fill, bounds: [40, 50, 20, 20], color: [12, 34, 56, 255] },
+    ] },
+  ]);
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+  const pixel = await page.evaluate(async (bytes) => {
+    const { BrowserUiBackend } = await import("../dist/src/" + "ui.js");
+    new BrowserUiBackend(document.querySelector("#synth-root")!).renderFrame(new Uint8Array(bytes).buffer);
+    const context = document.querySelector<HTMLCanvasElement>('[data-synth-node-id="draw"] canvas')!.getContext("2d")!;
+    return Array.from(context.getImageData(1, 1, 1, 1).data);
+  }, Array.from(new Uint8Array(positionedFrame)));
+
+  expect(pixel).toEqual([12, 34, 56, 255]);
+});
+
+test("fits a fixed portable surface into a narrow browser viewport", async ({ page }) => {
+  await page.setViewportSize({ width: 342, height: 500 });
+  const fixedFrame = makeCommandBuffer([
+    { id: "root", kind: NodeKind.Root, bounds: [0, 0, 900, 560], children: ["button"] },
+    { id: "button", kind: NodeKind.Button, bounds: [780, 500, 100, 40], label: "Edge" },
+  ]);
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+  const bounds = await page.evaluate(async (bytes) => {
+    const { BrowserUiBackend } = await import("../dist/src/" + "ui.js");
+    new BrowserUiBackend(document.querySelector("#synth-root")!).renderFrame(new Uint8Array(bytes).buffer);
+    const root = document.querySelector('[data-synth-node-id="root"]')!.getBoundingClientRect();
+    const button = document.querySelector('[data-synth-node-id="button"]')!.getBoundingClientRect();
+    const host = document.querySelector("#synth-root")!.getBoundingClientRect();
+    return {
+      viewportWidth: window.innerWidth,
+      root: { left: root.left, right: root.right, width: root.width, height: root.height },
+      button: { right: button.right, bottom: button.bottom },
+      host: { width: host.width, height: host.height },
+    };
+  }, Array.from(new Uint8Array(fixedFrame)));
+
+  expect(bounds.root.left).toBe(0);
+  expect(bounds.root.right).toBeCloseTo(bounds.viewportWidth, 4);
+  expect(bounds.root.width).toBeCloseTo(342, 4);
+  expect(bounds.root.height).toBeCloseTo(560 * 342 / 900, 4);
+  expect(bounds.button.right).toBeLessThanOrEqual(bounds.root.right);
+  expect(bounds.button.bottom).toBeLessThanOrEqual(bounds.root.left + bounds.root.height);
+  expect(bounds.host.height).toBeCloseTo(bounds.root.height, 2);
 });
 
 test("preserves semantic nodes and reports structural buffer errors", () => {
