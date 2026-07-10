@@ -29,7 +29,7 @@ Partial RED-test slice only. No Dresden 4 core implementation was added in this 
 
 ## Commit hash
 
-- Pending at report-write time.
+- `1bd2ca0cb660f375a39f35409e7401acf59c62c5` (`test: add Dresden 4 core red tests`)
 
 ## RED command/result
 
