@@ -809,6 +809,39 @@ inline std::vector<synth::ui::DrawCommand> BuildEncoderDrawCommands(const Encode
 
 using WaveformLayerDrawState = synth::ui::WaveformLayerDrawState;
 
+namespace ScopePathMath {
+
+inline constexpr std::size_t x_NumPoints = synth::ui::waveform_detail::x_NumPoints;
+
+inline double ScopeSampleForPoint(std::size_t point, std::size_t numXSamples)
+{
+    return synth::ui::waveform_detail::ScopeSampleForPoint(point, numXSamples);
+}
+
+inline bool ScopePointCrossesTransfer(std::size_t point, std::size_t numXSamples, double transferSample)
+{
+    return synth::ui::waveform_detail::ScopePointCrossesTransfer(point, numXSamples, transferSample);
+}
+
+inline std::vector<std::vector<synth::ui::Point>> BuildScopePolylines(const synth::ScopeReader& scopeReader,
+                                                                      synth::ui::Bounds bounds,
+                                                                      float minY,
+                                                                      float maxY)
+{
+    return synth::ui::waveform_detail::BuildScopePolylines(scopeReader, bounds, minY, maxY);
+}
+
+inline synth::ui::Bounds ScopeMarkerBounds(const synth::ScopeReader& scopeReader,
+                                           synth::ui::Bounds bounds,
+                                           float minY,
+                                           float maxY,
+                                           float radius = 3.0f)
+{
+    return synth::ui::waveform_detail::ScopeMarkerBounds(scopeReader, bounds, minY, maxY, radius);
+}
+
+}  // namespace ScopePathMath
+
 struct VcoWaveformDrawState
 {
     std::vector<WaveformLayerDrawState> layers;
