@@ -15,6 +15,28 @@ namespace {
 // Local modulation-depth controls are intentionally not addressable through ParameterManager::ParameterById.
 constexpr ParameterId kLocalParameterId = std::numeric_limits<ParameterId>::max();
 
+void ValidateProcessingRates(double referenceRate, double processingRate) {
+    if (!(std::isfinite(referenceRate) && referenceRate > 0.0 && std::isfinite(processingRate) &&
+          processingRate > 0.0)) {
+        throw std::invalid_argument("processing timing rates must be positive and finite");
+    }
+}
+
+void ValidateOnePoleAlpha(float alpha) {
+    if (!(alpha >= 0.0f && alpha <= 1.0f)) {
+        throw std::invalid_argument("one-pole alpha must be in [0,1]");
+    }
+}
+
+void ValidateProcessingTiming(const ParameterProcessingTiming& timing) {
+    ValidateOnePoleAlpha(timing.processLiteAlpha);
+    ValidateOnePoleAlpha(timing.uiDisplayCenterAlpha);
+    ValidateOnePoleAlpha(timing.uiDisplaySpreadAlpha);
+    if (timing.targetComputeIntervalSamples == 0) {
+        throw std::invalid_argument("target compute interval must be positive");
+    }
+}
+
 ParameterGroupConfig ValidateConfig(ParameterGroupConfig config) {
     if (!config.IsValid()) {
         throw std::invalid_argument("invalid parameter group config");
@@ -152,6 +174,25 @@ const Color Color::Cyan{.r = 0, .g = 255, .b = 255, .a = 255};
 const Color Color::Blue{.r = 0, .g = 80, .b = 255, .a = 255};
 const Color Color::Indigo{.r = 75, .g = 0, .b = 130, .a = 255};
 const Color Color::Grey{.r = 128, .g = 128, .b = 128, .a = 255};
+
+float ConvertOnePoleAlpha(float referenceAlpha, double referenceRate, double processingRate) {
+    ValidateProcessingRates(referenceRate, processingRate);
+    ValidateOnePoleAlpha(referenceAlpha);
+    return static_cast<float>(1.0 - std::pow(1.0 - static_cast<double>(referenceAlpha),
+                                            referenceRate / processingRate));
+}
+
+std::size_t ConvertSampleInterval(std::size_t referenceInterval, double referenceRate, double processingRate) {
+    ValidateProcessingRates(referenceRate, processingRate);
+    if (referenceInterval == 0) {
+        throw std::invalid_argument("sample interval must be positive");
+    }
+    const double converted = std::round(static_cast<double>(referenceInterval) * processingRate / referenceRate);
+    if (!(std::isfinite(converted) && converted <= static_cast<double>(std::numeric_limits<std::size_t>::max()))) {
+        throw std::invalid_argument("sample interval conversion overflow");
+    }
+    return std::max<std::size_t>(1, static_cast<std::size_t>(converted));
+}
 
 std::uint32_t Color::Packed() const {
     return static_cast<std::uint32_t>(r) | (static_cast<std::uint32_t>(g) << 8) |
@@ -570,6 +611,14 @@ void ParameterGroup::SetModulationSource(std::size_t modIx, std::span<float* con
 
 void ParameterGroup::UpdateModValues() {
     modulators_.UpdateModValues();
+}
+
+void ParameterGroup::ConfigureProcessingTiming(const ParameterProcessingTiming& timing) {
+    ValidateProcessingTiming(timing);
+    config_.processLiteAlpha = timing.processLiteAlpha;
+    config_.targetComputeIntervalSamples = timing.targetComputeIntervalSamples;
+    config_.uiDisplayCenterAlpha = timing.uiDisplayCenterAlpha;
+    config_.uiDisplaySpreadAlpha = timing.uiDisplaySpreadAlpha;
 }
 
 void ParameterGroup::ProcessSample(std::uint64_t sampleIndex) {

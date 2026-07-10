@@ -224,6 +224,154 @@ TEST_CASE(group_config_validation) {
     REQUIRE_TRUE(!highTargetCenterAlpha.IsValid());
 }
 
+TEST_CASE(parameter_timing_alpha_conversion_preserves_wall_clock_response) {
+    const float a192 = synth::ConvertOnePoleAlpha(synth::kDefaultProcessLiteAlpha, 48000.0, 192000.0);
+    float y = 0.0f;
+    for (int i = 0; i < 4; ++i) {
+        y += a192 * (1.0f - y);
+    }
+    REQUIRE_TRUE(std::fabs(y - synth::kDefaultProcessLiteAlpha) < 1e-5f);
+}
+
+TEST_CASE(parameter_timing_interval_conversion_preserves_cadence) {
+    REQUIRE_TRUE(synth::ConvertSampleInterval(synth::kDefaultTargetComputeIntervalSamples, 48000.0, 192000.0) == 64);
+    REQUIRE_TRUE(synth::ConvertSampleInterval(16, 48000.0, 44100.0) == 15);
+    REQUIRE_TRUE(synth::ConvertSampleInterval(1, 48000.0, 8000.0) == 1);
+}
+
+TEST_CASE(parameter_timing_rejects_invalid_inputs_without_mutation) {
+    bool threw = false;
+    try {
+        (void)synth::ConvertOnePoleAlpha(1.01f, 48000.0, 192000.0);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    REQUIRE_TRUE(threw);
+
+    threw = false;
+    try {
+        (void)synth::ConvertOnePoleAlpha(0.5f, 0.0, 192000.0);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    REQUIRE_TRUE(threw);
+
+    threw = false;
+    try {
+        (void)synth::ConvertSampleInterval(0, 48000.0, 192000.0);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    REQUIRE_TRUE(threw);
+
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 1,
+        .numScenes = 1,
+        .maxParameters = 2,
+        .processLiteAlpha = 0.25f,
+        .targetComputeIntervalSamples = 16,
+        .uiDisplayCenterAlpha = 0.5f,
+        .uiDisplaySpreadAlpha = 0.75f,
+    });
+    const synth::ParameterGroupConfig before = group.Config();
+
+    threw = false;
+    try {
+        group.ConfigureProcessingTiming({
+            .processLiteAlpha = 1.5f,
+            .targetComputeIntervalSamples = 8,
+            .uiDisplayCenterAlpha = 0.25f,
+            .uiDisplaySpreadAlpha = 0.25f,
+        });
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    REQUIRE_TRUE(threw);
+    REQUIRE_NEAR(group.Config().processLiteAlpha, before.processLiteAlpha, 0.0001f);
+    REQUIRE_TRUE(group.Config().targetComputeIntervalSamples == before.targetComputeIntervalSamples);
+    REQUIRE_NEAR(group.Config().uiDisplayCenterAlpha, before.uiDisplayCenterAlpha, 0.0001f);
+    REQUIRE_NEAR(group.Config().uiDisplaySpreadAlpha, before.uiDisplaySpreadAlpha, 0.0001f);
+}
+
+TEST_CASE(parameter_group_timing_reconfiguration_preserves_topology_values_and_pointers) {
+    synth::ParameterManager manager;
+    manager.SetGestureCount(2);
+    auto& group = manager.CreateGroup({
+        .numVoices = 2,
+        .numModulators = 1,
+        .numScenes = 2,
+        .maxParameters = 4,
+        .processLiteAlpha = 0.25f,
+        .targetComputeIntervalSamples = 16,
+        .uiDisplayCenterAlpha = 0.5f,
+        .uiDisplaySpreadAlpha = 0.75f,
+    });
+    auto& carrier = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.25f});
+    synth::Parameter* depth = carrier.EnsureModulationDepth(0);
+    REQUIRE_TRUE(depth != nullptr);
+    carrier.SceneCenter(1) = 0.75f;
+    depth->SceneCenter(0) = 0.5f;
+    manager.ComputeAllTargets();
+    carrier.ProcessLite();
+
+    synth::Parameter* const carrierPointer = &carrier;
+    synth::Parameter* const depthPointer = depth;
+    float* const currentDepthPointer = carrier.CurrentDepths(0).data();
+    const float currentCenter = carrier.CurrentCenter();
+    const float currentDepth = carrier.CurrentDepths(0)[0];
+    const float sceneValue = carrier.SceneCenter(1);
+
+    group.ConfigureProcessingTiming({
+        .processLiteAlpha = 0.125f,
+        .targetComputeIntervalSamples = 64,
+        .uiDisplayCenterAlpha = 0.25f,
+        .uiDisplaySpreadAlpha = 0.5f,
+    });
+
+    REQUIRE_TRUE(&group.ParameterByLocalIndex(0) == carrierPointer);
+    REQUIRE_TRUE(carrier.ModulationDepthParameter(0) == depthPointer);
+    REQUIRE_TRUE(carrier.CurrentDepths(0).data() == currentDepthPointer);
+    REQUIRE_TRUE(group.Config().numVoices == 2);
+    REQUIRE_TRUE(group.Config().numModulators == 1);
+    REQUIRE_TRUE(group.Config().numScenes == 2);
+    REQUIRE_TRUE(group.Config().maxParameters == 4);
+    REQUIRE_NEAR(carrier.CurrentCenter(), currentCenter, 0.0001f);
+    REQUIRE_NEAR(carrier.CurrentDepths(0)[0], currentDepth, 0.0001f);
+    REQUIRE_NEAR(carrier.SceneCenter(1), sceneValue, 0.0001f);
+    REQUIRE_NEAR(group.Config().processLiteAlpha, 0.125f, 0.0001f);
+    REQUIRE_TRUE(group.Config().targetComputeIntervalSamples == 64);
+    REQUIRE_NEAR(group.Config().uiDisplayCenterAlpha, 0.25f, 0.0001f);
+    REQUIRE_NEAR(group.Config().uiDisplaySpreadAlpha, 0.5f, 0.0001f);
+}
+
+TEST_CASE(parameter_group_timing_reconfiguration_is_non_compounding) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 0,
+        .numScenes = 1,
+        .maxParameters = 1,
+    });
+
+    const synth::ParameterProcessingTiming timing{
+        .processLiteAlpha = synth::ConvertOnePoleAlpha(synth::kDefaultProcessLiteAlpha, 48000.0, 192000.0),
+        .targetComputeIntervalSamples =
+            synth::ConvertSampleInterval(synth::kDefaultTargetComputeIntervalSamples, 48000.0, 192000.0),
+        .uiDisplayCenterAlpha = synth::ConvertOnePoleAlpha(synth::kDefaultUiDisplayCenterAlpha, 48000.0, 192000.0),
+        .uiDisplaySpreadAlpha = synth::ConvertOnePoleAlpha(synth::kDefaultUiDisplaySpreadAlpha, 48000.0, 192000.0),
+    };
+
+    group.ConfigureProcessingTiming(timing);
+    group.ConfigureProcessingTiming(timing);
+
+    REQUIRE_NEAR(group.Config().processLiteAlpha, timing.processLiteAlpha, 0.000001f);
+    REQUIRE_TRUE(group.Config().targetComputeIntervalSamples == timing.targetComputeIntervalSamples);
+    REQUIRE_NEAR(group.Config().uiDisplayCenterAlpha, timing.uiDisplayCenterAlpha, 0.000001f);
+    REQUIRE_NEAR(group.Config().uiDisplaySpreadAlpha, timing.uiDisplaySpreadAlpha, 0.000001f);
+}
+
 TEST_CASE(color_hsv_and_atomic_storage) {
     const synth::Color color{.r = 64, .g = 128, .b = 255};
     const synth::HSV hsv = synth::ToHSV(color);

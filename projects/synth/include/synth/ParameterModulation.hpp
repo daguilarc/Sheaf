@@ -163,6 +163,16 @@ inline constexpr std::size_t kDefaultTargetComputeIntervalSamples = 16;
 inline constexpr float kDefaultUiDisplayCenterAlpha = 0.0013089969f;  // about 10 Hz at 48 kHz
 inline constexpr float kDefaultUiDisplaySpreadAlpha = 0.0013089969f;  // about 10 Hz at 48 kHz
 
+float ConvertOnePoleAlpha(float referenceAlpha, double referenceRate, double processingRate);
+std::size_t ConvertSampleInterval(std::size_t referenceInterval, double referenceRate, double processingRate);
+
+struct ParameterProcessingTiming {
+    float processLiteAlpha;
+    std::size_t targetComputeIntervalSamples;
+    float uiDisplayCenterAlpha;
+    float uiDisplaySpreadAlpha;
+};
+
 struct ParameterGroupConfig {
     std::size_t numVoices = 0;
     std::size_t numModulators = 0;
@@ -319,6 +329,7 @@ public:
     void SetGestureValue(std::size_t gestureIx, float value);
     float GestureValue(std::size_t gestureIx) const;
     void ClearGestureActiveFlagsForActiveSceneSelection(const SceneState& scene, std::size_t gestureIx);
+    void ConfigureProcessingTiming(const ParameterProcessingTiming& timing);
     void ProcessSample(std::uint64_t sampleIndex);
 
 private:
