@@ -97,7 +97,7 @@ public:
 
 - `BuildTree()` returns `runtime.main.root` first, app/page root second, then the sidebar tree with its root and every descendant translated by `App::Config().uiWidth`; all explicit bounds remain absolute surface coordinates.
 
-- [ ] **Step 1: Add the failing test binary and geometry/navigation tests**
+- [x] **Step 1: Add the failing test binary and geometry/navigation tests**
 
 Create a fake `SynthApplication`, one-node app surface, and fake services. Add named cases:
 
@@ -111,7 +111,7 @@ TestBackFromConfigurationPageSavesRuntimeConfiguration();
 
 Assert an app config of 900x560 yields root 996x560, app root 900x560 at zero, and sidebar root x 900. Assert `runtime.sidebar.audio`, `runtime.audio.back`, and an app action change only their expected state/counters.
 
-- [ ] **Step 2: Run the new target and confirm RED**
+- [x] **Step 2: Run the new target and confirm RED**
 
 Run:
 ```bash
@@ -120,11 +120,11 @@ make -C projects/synth build/runtime_main_component_tests
 
 Expected: compile failure because `synth/RuntimeMainComponent.hpp` and the Make target do not exist.
 
-- [ ] **Step 3: Implement the services concept and minimum composite surface**
+- [x] **Step 3: Implement the services concept and minimum composite surface**
 
 Implement the interface above. Reuse `SidebarSurface`, `AudioPageSurface`, `FilePageSurface`, `ControllersPageSurface`, `RuntimePageBackSavesConfiguration`, and `RollingMax256`. Wire surface handlers once in the constructor; `Refresh()` samples `DeadlineSamplePercent`, refreshes Audio/File, and calls `RefreshControllers`. `DispatchAction` routes by exact action-name ownership and sends unknown non-`runtime.` actions to `app.PortableSurface()`.
 
-- [ ] **Step 4: Add failing malformed-tree tests**
+- [x] **Step 4: Add failing malformed-tree tests**
 
 Add one test per diagnostic:
 ```cpp
@@ -137,13 +137,13 @@ TestRejectsAppRuntimeNamespace();
 
 Each builds the malformed tree and asserts `BuildTree()` throws `std::invalid_argument` whose message contains respectively `configured bounds`, `duplicate node id`, `unknown child`, `cycle`, or `reserved runtime namespace`.
 
-- [ ] **Step 5: Run malformed-tree tests and confirm RED**
+- [x] **Step 5: Run malformed-tree tests and confirm RED**
 
 Run `projects/synth/build/runtime_main_component_tests`.
 
 Expected: the new malformed cases fail because composition validation is missing.
 
-- [ ] **Step 6: Implement validation and rerun focused suites**
+- [x] **Step 6: Implement validation and rerun focused suites**
 
 Validate before composition using a node-ID index plus DFS states `{unvisited, visiting, visited}` from the sole parentless root. Require every node reachable exactly once and app root bounds equal `{0,0,float(config.uiWidth),float(config.uiHeight)}`.
 
@@ -156,7 +156,7 @@ projects/synth/build/portable_ui_tests
 
 Expected: both pass with no warnings.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 Commit message: `feat(synth): add portable runtime main component`.
 

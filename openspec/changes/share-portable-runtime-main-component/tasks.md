@@ -1,8 +1,8 @@
 ## 1. Shared Portable Main Component
 
-- [ ] 1.1 Add failing JUCE-free tests for composite root geometry, app-tree validation, page switching, action routing, and runtime namespace protection.
-- [ ] 1.2 Implement `RuntimeMainComponent<App, Services>` and its compile-time host services contract using the existing portable sidebar and runtime page surfaces.
-- [ ] 1.3 Add tree-composition validation for one config-sized app root, unique IDs, known children, acyclic reachability, and the reserved `runtime.*` namespace.
+- [x] 1.1 Add failing JUCE-free tests for composite root geometry, app-tree validation, page switching, action routing, and runtime namespace protection.
+- [x] 1.2 Implement `RuntimeMainComponent<App, Services>` and its compile-time host services contract using the existing portable sidebar and runtime page surfaces.
+- [x] 1.3 Add tree-composition validation for one config-sized app root, unique IDs, known children, acyclic reachability, and the reserved `runtime.*` namespace.
 
 ## 2. JUCE Host Integration
 
