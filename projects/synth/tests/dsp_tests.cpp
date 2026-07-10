@@ -16,8 +16,10 @@
 #error "synth DSP tests must not see JUCE headers"
 #endif
 
+#include <algorithm>
 #include <cmath>
 #include <complex>
+#include <cstdint>
 #include <exception>
 #include <iostream>
 #include <numbers>
@@ -1001,6 +1003,148 @@ TEST_CASE(wavetable_vco_uses_position_scope_and_ui_state) {
     REQUIRE_TRUE(ui.scope.load() == &writer);
     REQUIRE_TRUE(ui.scopeChannel.load() == holder.FlatChan());
     REQUIRE_TRUE(ui.color.Load() == synth::Color::Orange);
+}
+
+TEST_CASE(fir_decimator_factor_four_cadence_survives_block_splits) {
+    constexpr std::array<double, 1> coefficients{1.0};
+    synth::FirDecimator<4, 1, coefficients.size()> decimator(coefficients);
+
+    const std::array<std::size_t, 4> blockSizes{1, 3, 2, 4};
+    std::vector<float> emitted;
+    std::size_t inputIndex = 0;
+    for (const std::size_t blockSize : blockSizes) {
+        for (std::size_t i = 0; i < blockSize; ++i) {
+            const std::array<float, 1> input{static_cast<float>(inputIndex + 1)};
+            std::array<float, 1> output{0.0f};
+            if (decimator.ProcessFrame(input, output)) {
+                emitted.push_back(output[0]);
+            }
+            ++inputIndex;
+        }
+    }
+
+    REQUIRE_TRUE(emitted.size() == 2);
+    REQUIRE_NEAR(emitted[0], 4.0f, 0.0001f);
+    REQUIRE_NEAR(emitted[1], 8.0f, 0.0001f);
+}
+
+TEST_CASE(fir_decimator_stereo_history_is_independent_and_reset_deterministic) {
+    constexpr std::array<double, 3> previousSampleCoefficients{0.0, 1.0, 0.0};
+    synth::FirDecimator<2, 2, previousSampleCoefficients.size()> decimator(previousSampleCoefficients);
+
+    auto runSequence = [&decimator] {
+        std::vector<std::array<float, 2>> emitted;
+        for (std::size_t i = 0; i < 6; ++i) {
+            const std::array<float, 2> input{
+                10.0f + static_cast<float>(i),
+                -100.0f - static_cast<float>(i),
+            };
+            std::array<float, 2> output{0.0f, 0.0f};
+            if (decimator.ProcessFrame(input, output)) {
+                emitted.push_back(output);
+            }
+        }
+        return emitted;
+    };
+
+    const auto firstRun = runSequence();
+    REQUIRE_TRUE(firstRun.size() == 3);
+    REQUIRE_NEAR(firstRun[0][0], 10.0f, 0.0001f);
+    REQUIRE_NEAR(firstRun[0][1], -100.0f, 0.0001f);
+    REQUIRE_NEAR(firstRun[1][0], 12.0f, 0.0001f);
+    REQUIRE_NEAR(firstRun[1][1], -102.0f, 0.0001f);
+    REQUIRE_NEAR(firstRun[2][0], 14.0f, 0.0001f);
+    REQUIRE_NEAR(firstRun[2][1], -104.0f, 0.0001f);
+
+    decimator.Reset();
+    const auto secondRun = runSequence();
+    REQUIRE_TRUE(secondRun == firstRun);
+}
+
+TEST_CASE(fir_decimator_dresden_coefficients_are_symmetric_with_expected_group_delay) {
+    const auto coefficients = synth::Dresden4DecimatorCoefficients();
+    REQUIRE_TRUE(coefficients.size() == 287);
+
+    double dcGain = 0.0;
+    for (std::size_t i = 0; i < coefficients.size(); ++i) {
+        REQUIRE_NEAR(coefficients[i], coefficients[coefficients.size() - 1 - i], 1.0e-14);
+        dcGain += coefficients[i];
+    }
+
+    REQUIRE_NEAR(dcGain, 1.0, 1.0e-12);
+    REQUIRE_TRUE((coefficients.size() - 1) / 2 == 143);
+}
+
+TEST_CASE(fir_decimator_dresden_frequency_response_meets_spec) {
+    const auto coefficients = synth::Dresden4DecimatorCoefficients();
+    REQUIRE_TRUE(coefficients.size() == 287);
+
+    auto responseMagnitude = [coefficients](double normalizedFrequency) {
+        std::complex<double> response{0.0, 0.0};
+        for (std::size_t i = 0; i < coefficients.size(); ++i) {
+            const double phase = -2.0 * std::numbers::pi * normalizedFrequency * static_cast<double>(i);
+            response += coefficients[i] * std::complex<double>{std::cos(phase), std::sin(phase)};
+        }
+        return std::abs(response);
+    };
+
+    const double dcMagnitude = responseMagnitude(0.0);
+    double minPassbandDb = 0.0;
+    double maxPassbandDb = 0.0;
+    constexpr std::size_t kPassbandSamples = 256;
+    for (std::size_t i = 0; i <= kPassbandSamples; ++i) {
+        const double normalizedFrequency = (5.0 / 48.0) * static_cast<double>(i) / kPassbandSamples;
+        const double db = 20.0 * std::log10(responseMagnitude(normalizedFrequency) / dcMagnitude);
+        minPassbandDb = std::min(minPassbandDb, db);
+        maxPassbandDb = std::max(maxPassbandDb, db);
+    }
+
+    double maxStopbandDb = -1000.0;
+    constexpr std::size_t kStopbandSamples = 512;
+    for (std::size_t i = 0; i <= kStopbandSamples; ++i) {
+        const double normalizedFrequency = (1.0 / 8.0)
+            + (0.5 - (1.0 / 8.0)) * static_cast<double>(i) / kStopbandSamples;
+        const double magnitude = std::max(responseMagnitude(normalizedFrequency), 1.0e-300);
+        maxStopbandDb = std::max(maxStopbandDb, 20.0 * std::log10(magnitude / dcMagnitude));
+    }
+
+    REQUIRE_TRUE(maxPassbandDb - minPassbandDb <= 0.1);
+    REQUIRE_TRUE(maxStopbandDb <= -90.0);
+}
+
+TEST_CASE(oversampled_output_stage_calls_generator_with_exact_internal_indices) {
+    constexpr std::array<double, 1> coefficients{1.0};
+    using Decimator = synth::FirDecimator<4, 2, coefficients.size()>;
+    synth::OversampledOutputStage<4, 2, Decimator> outputStage{Decimator{coefficients}};
+
+    std::vector<std::uint64_t> visitedIndices;
+    const auto output = outputStage.ProcessHostFrame(7, [&visitedIndices](std::uint64_t internalIndex) {
+        visitedIndices.push_back(internalIndex);
+        return std::array<float, 2>{
+            static_cast<float>(internalIndex),
+            -static_cast<float>(internalIndex),
+        };
+    });
+
+    REQUIRE_TRUE((visitedIndices == std::vector<std::uint64_t>{28, 29, 30, 31}));
+    REQUIRE_NEAR(output[0], 31.0f, 0.0001f);
+    REQUIRE_NEAR(output[1], -31.0f, 0.0001f);
+}
+
+TEST_CASE(oversampled_output_stage_preserves_decimator_state_across_host_blocks) {
+    constexpr std::array<double, 5> fourSamplesAgoCoefficients{0.0, 0.0, 0.0, 0.0, 1.0};
+    using Decimator = synth::FirDecimator<4, 1, fourSamplesAgoCoefficients.size()>;
+    synth::OversampledOutputStage<4, 1, Decimator> outputStage{Decimator{fourSamplesAgoCoefficients}};
+
+    auto generator = [](std::uint64_t internalIndex) {
+        return std::array<float, 1>{static_cast<float>(internalIndex + 1)};
+    };
+
+    const auto first = outputStage.ProcessHostFrame(0, generator);
+    const auto second = outputStage.ProcessHostFrame(1, generator);
+
+    REQUIRE_NEAR(first[0], 0.0f, 0.0001f);
+    REQUIRE_NEAR(second[0], 4.0f, 0.0001f);
 }
 
 int main() {
