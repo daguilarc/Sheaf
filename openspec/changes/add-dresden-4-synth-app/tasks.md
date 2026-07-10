@@ -1,14 +1,14 @@
 ## 1. Reusable Bipolar Matrix Mixer
 
-- [ ] 1.1 Add failing module tests for `BipolarMatrixMixerModule<4>` row-major parameter names/order, bipolar metadata, `-1/-0.25/0/0.25/1` curve anchors, identity defaults, cross-routing, unclamped sums, stable output pointers, repeat-registration errors, compatible pre-populated mono-group registration, group-shape validation, and bank-capacity failures.
-- [ ] 1.2 Implement the positive-size `BipolarMatrixMixerModule<Size>` template in the JUCE-free module layer with fixed input/output arrays, monophonic parameter registration into any compatible group with sufficient capacity, identity defaults, row-major bank registration, natural gain mapping, and linear processing.
-- [ ] 1.3 Run the synth module test target and confirm all existing reusable-module behavior remains green.
+- [x] 1.1 Add failing module tests for `BipolarMatrixMixerModule<4>` row-major parameter names/order, bipolar metadata, `-1/-0.25/0/0.25/1` curve anchors, identity defaults, cross-routing, unclamped sums, stable output pointers, repeat-registration errors, compatible pre-populated mono-group registration, group-shape validation, and bank-capacity failures.
+- [x] 1.2 Implement the positive-size `BipolarMatrixMixerModule<Size>` template in the JUCE-free module layer with fixed input/output arrays, monophonic parameter registration into any compatible group with sufficient capacity, identity defaults, row-major bank registration, natural gain mapping, and linear processing.
+- [x] 1.3 Run the synth module test target and confirm all existing reusable-module behavior remains green.
 
 ## 2. Dresden 4 Reusable Module
 
-- [ ] 2.1 Add failing module tests for the `Dresden4VcoModule` three-group/two-scene registration contract, fourteen red parameters, zero-based bank positions with disconnected cells `2/3`, all parameter mapping anchors/ranges, registration atomicity/errors, sample-rate validation, per-VCO natural inputs, post-gain outputs, equal-power XY corners/center/squared-weight invariants, coherent-source gain behavior, and four scope/UI-state connections.
-- [ ] 2.2 Implement `Dresden4VcoModule` in the JUCE-free module layer with stored parameter IDs, explicit three-group/two-scene validation, sparse bank registration, four `DefaultWavetableVco` processors, Hz-to-cycles-per-sample conversion, cycle-domain `Phase * PM Index`, bipolar post-VCO Gain, four oscillator outputs, separable cosine/sine equal-power stereo XY output, scope-holder setters, and VCO UI-state publication; reserve `Dresden4LfoModule` as a future sibling name.
-- [ ] 2.3 Run module tests and add focused regression coverage proving negative Gain changes the matrix-facing sample while the raw scope remains connected to the pre-gain processor output.
+- [x] 2.1 Add failing module tests for the `Dresden4VcoModule` three-group/two-scene registration contract, fourteen red parameters, zero-based bank positions with disconnected cells `2/3`, all parameter mapping anchors/ranges, registration atomicity/errors, sample-rate validation, per-VCO natural inputs, post-gain outputs, equal-power XY corners/center/squared-weight invariants, coherent-source gain behavior, and four scope/UI-state connections.
+- [x] 2.2 Implement `Dresden4VcoModule` in the JUCE-free module layer with stored parameter IDs, explicit three-group/two-scene validation, sparse bank registration, four `DefaultWavetableVco` processors, Hz-to-cycles-per-sample conversion, cycle-domain `Phase * PM Index`, bipolar post-VCO Gain, four oscillator outputs, separable cosine/sine equal-power stereo XY output, scope-holder setters, and VCO UI-state publication; reserve `Dresden4LfoModule` as a future sibling name.
+- [x] 2.3 Run module tests and add focused regression coverage proving negative Gain changes the matrix-facing sample while the raw scope remains connected to the pre-gain processor output.
 
 ## 3. Reusable Oversampling, Decimation, and Parameter Timing
 

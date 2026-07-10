@@ -8,3 +8,4 @@ Branch: `codex/dresden-4`
 - Baseline: `make -C projects/synth test` exited 0 before implementation.
 - Task 1: complete (commits bae1f72..6181c62, focused test `make -C projects/synth build/parameter_modulation_tests && projects/synth/build/parameter_modulation_tests`, Claude Sonnet review approved; OpenSpec 3.7-3.8 checked).
 - Task 2: complete (commits 845aead..9e4d98f, focused test `make -C projects/synth build/dsp_tests && projects/synth/build/dsp_tests`, Claude Sonnet review approved after static decimator-shape fix; OpenSpec 3.1-3.6 checked).
+- Task 3: complete (commits 5bb5aa3..7c0136a, focused test `make -C projects/synth build/module_tests && projects/synth/build/module_tests`, Claude Sonnet review PASS with no Critical/Important findings; OpenSpec 1.1-1.3 and 2.1-2.3 checked).
