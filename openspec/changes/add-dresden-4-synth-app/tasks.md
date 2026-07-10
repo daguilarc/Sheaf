@@ -47,10 +47,10 @@
 
 ## 7. Generic Sheaf Patch Runtime Session Ownership
 
-- [ ] 7.1 Add failing launcher/runtime harness coverage proving MiniApp can be created, displayed, and destroyed through one type-erased session-owner interface while retaining typed `RuntimeShellSession<MiniApp>` behavior and existing shutdown order.
-- [ ] 7.2 Implement the minimal generic session-owner interface and templated holder/factory in the runtime layer, exposing component access and deterministic virtual destruction.
-- [ ] 7.3 Migrate `SheafPatchApplication` from its MiniApp-specific session member and launch method to one generic active-session pointer and registration-driven launch path.
-- [ ] 7.4 Run runtime shell/session and launcher harness tests before adding Dresden registration.
+- [x] 7.1 Add failing launcher/runtime harness coverage proving MiniApp can be created, displayed, and destroyed through one type-erased session-owner interface while retaining typed `RuntimeShellSession<MiniApp>` behavior and existing shutdown order.
+- [x] 7.2 Implement the minimal generic session-owner interface and templated holder/factory in the runtime layer, exposing component access and deterministic virtual destruction.
+- [x] 7.3 Migrate `SheafPatchApplication` from its MiniApp-specific session member and launch method to one generic active-session pointer and registration-driven launch path.
+- [x] 7.4 Run runtime shell/session and launcher harness tests before adding Dresden registration.
 
 ## 8. Dresden Registration and Sheaf Patch Integration
 
