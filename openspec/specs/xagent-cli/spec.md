@@ -139,7 +139,7 @@ WHEN the user selects a harness, THE xagent CLI SHALL support exactly the harnes
 
 #### Scenario: Claude Code harness selected
 - **WHEN** the user starts `xagent run --harness claude_code`
-- **THEN** the CLI starts a Claude Code session using `claude --print --output-format stream-json`
+- **THEN** the CLI starts a Claude Code session using `claude --print --output-format stream-json --permission-mode auto`
 
 #### Scenario: Harness unavailable
 - **WHEN** the selected harness binary or package is unavailable

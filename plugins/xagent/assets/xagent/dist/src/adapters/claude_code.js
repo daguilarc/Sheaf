@@ -17,7 +17,15 @@ export class ClaudeCodeAdapter {
     }
 }
 function buildClaudeCommand(context, state, options) {
-    const args = ["--print", "--output-format", "stream-json", "--include-partial-messages", "--verbose"];
+    const args = [
+        "--print",
+        "--output-format",
+        "stream-json",
+        "--include-partial-messages",
+        "--verbose",
+        "--permission-mode",
+        "auto",
+    ];
     if (state.providerThreadId !== undefined) {
         args.push("--resume", state.providerThreadId);
     }

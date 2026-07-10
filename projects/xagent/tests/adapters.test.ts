@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
 import type { AdapterEvent, AdapterTurnContext } from "../src/adapters/types.js";
 import { assertCommandAvailable, ProcessJsonlSession, type ProcessHarnessState } from "../src/adapters/process_jsonl.js";
-import { parseClaudeProviderEvent } from "../src/adapters/claude_code.js";
+import { ClaudeCodeAdapter, parseClaudeProviderEvent } from "../src/adapters/claude_code.js";
 import { buildCodexCommand, parseCodexProviderEvent } from "../src/adapters/codex.js";
 import { parseCursorProviderEvent } from "../src/adapters/cursor.js";
 import { createAdapter } from "../src/adapters/index.js";
@@ -39,6 +40,50 @@ test("claude code fixture maps provider events into normalized adapter events", 
   assertEventTypes(events, ["message.delta", "tool.started", "tool.completed", "message.completed", "turn.completed"]);
   assert.equal(events.find((event) => event.type === "message.completed")?.text, "Claude final");
   assert.equal(events.find((event) => event.type === "turn.completed")?.provider_thread_id, "claude-thread-1");
+});
+
+test("claude code adapter launches sessions with auto permission mode", async () => {
+  const binDir = await mkdtemp(path.join(tmpdir(), "xagent-claude-bin-"));
+  const fakeClaude = path.join(binDir, "claude");
+  await writeFile(
+    fakeClaude,
+    [
+      "#!/usr/bin/env node",
+      "console.log(JSON.stringify({ type: 'argv', argv: process.argv.slice(2), session_id: 'claude-thread-1' }))",
+      "console.log(JSON.stringify({ type: 'result', message_id: 'msg-1', result: 'done' }))",
+      "",
+    ].join("\n"),
+  );
+  await chmod(fakeClaude, 0o755);
+
+  const previousPath = process.env.PATH;
+  process.env.PATH = [binDir, previousPath].filter(Boolean).join(path.delimiter);
+  try {
+    const session = await new ClaudeCodeAdapter().start({ cwd: process.cwd(), model: "sonnet", thinkingLevel: "high" });
+    const events: AdapterEvent[] = [];
+    for await (const event of session.submit(context)) {
+      events.push(event);
+    }
+
+    const argvEvent = events.find((event) => event.type === "raw.provider" && isRecord(event.payload) && event.payload.type === "argv");
+    assert.ok(argvEvent?.type === "raw.provider" && isRecord(argvEvent.payload));
+    assert.deepEqual(argvEvent.payload.argv, [
+      "--print",
+      "--output-format",
+      "stream-json",
+      "--include-partial-messages",
+      "--verbose",
+      "--permission-mode",
+      "auto",
+      "--model",
+      "sonnet",
+      "--effort",
+      "high",
+      context.text,
+    ]);
+  } finally {
+    process.env.PATH = previousPath;
+  }
 });
 
 test("pi fixture maps provider events into normalized adapter events", async () => {
