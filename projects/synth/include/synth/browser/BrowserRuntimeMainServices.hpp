@@ -9,9 +9,7 @@
 #include <cstddef>
 #include <filesystem>
 #include <functional>
-#include <limits>
 #include <optional>
-#include <stdexcept>
 #include <string>
 #include <utility>
 
@@ -61,10 +59,6 @@ public:
 
     void RecordAudioNegotiation(double sampleRate, std::size_t blockSize)
     {
-        if (blockSize > static_cast<std::size_t>(std::numeric_limits<int>::max()))
-        {
-            throw std::out_of_range("browser block size exceeds audio page range");
-        }
         negotiatedSampleRate_ = sampleRate;
         negotiatedBlockSize_ = static_cast<int>(blockSize);
     }

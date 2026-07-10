@@ -11,10 +11,12 @@
 #endif
 
 #include <filesystem>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
 namespace {
 
@@ -38,6 +40,38 @@ const synth_browser::DecodedNode* FindNode(
         }
     }
     return nullptr;
+}
+
+bool HasOption(const synth_browser::DecodedNode& node, const char* id, const char* label)
+{
+    for (const synth_browser::DecodedOption& option : node.options)
+    {
+        if (option.id == id && option.label == label)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+std::size_t JsonFileCount(const std::filesystem::path& directory)
+{
+    std::error_code ec;
+    if (!std::filesystem::is_directory(directory, ec) || ec)
+    {
+        return 0;
+    }
+
+    std::size_t count = 0;
+    for (const std::filesystem::directory_entry& entry :
+         std::filesystem::directory_iterator(directory))
+    {
+        if (entry.is_regular_file() && entry.path().extension() == ".json")
+        {
+            ++count;
+        }
+    }
+    return count;
 }
 
 class ContractSurface final : public synth::ui::Surface
@@ -89,11 +123,46 @@ public:
         };
     }
 
-    void Init(synth::AppContext*) {}
+    void Init(synth::AppContext* context)
+    {
+        auto& group = context->parameterManager->CreateGroup({
+            .numVoices = 1,
+            .numModulators = 0,
+            .numScenes = 1,
+            .maxParameters = 1,
+            .processLiteAlpha = 1.0f,
+        });
+        probeId = context->parameterManager
+                      ->CreateParameter(group, {.name = "Probe", .defaultValue = 0.25f})
+                      .Id();
+
+        context->instrument->controllers = {
+            synth::MidiControllerSlot{
+                .name = "Controller A",
+                .kind = synth::MidiProfileKind::Generic,
+                .input = {.identifier = "in-a", .name = "Input A"},
+                .output = {.identifier = "out-a", .name = "Output A"},
+            },
+            synth::MidiControllerSlot{
+                .name = "Controller B",
+                .kind = synth::MidiProfileKind::Generic,
+                .input = {.identifier = "in-b", .name = "Input B"},
+                .output = {.identifier = "out-b", .name = "Output B"},
+            },
+        };
+    }
     void ProcessBlock(synth::AudioBlock&) {}
+    void PrepareToPlay(double sampleRate, int blockSize)
+    {
+        preparedSampleRate = sampleRate;
+        preparedBlockSize = blockSize;
+    }
     synth::ui::Surface& PortableSurface() { return surface; }
 
     ContractSurface surface;
+    synth::ParameterId probeId = 0;
+    double preparedSampleRate = 0.0;
+    int preparedBlockSize = 0;
 };
 
 class MissingSurface
@@ -110,7 +179,9 @@ public:
     RuntimeFixture()
     {
         std::filesystem::remove_all(dataRoot_);
-        runtime.SetRuntimeDataPaths(synth::RuntimeDataPaths::FromDataRoot(dataRoot_));
+        std::filesystem::create_directories(paths_.patchesRoot);
+        std::filesystem::create_directories(paths_.logsRoot);
+        runtime.SetRuntimeDataPaths(paths_);
         runtime.Start();
         runtime.MessageTick(1);
     }
@@ -127,11 +198,52 @@ public:
         return synth_browser::DecodeCommandBuffer(buffer.bytes);
     }
 
+    void Prepare(double sampleRate = 48000.0, std::size_t blockSize = 128)
+    {
+        runtime.Prepare(sampleRate, blockSize);
+    }
+
+    void PumpOnce()
+    {
+        runtime.Process(nullptr, 0, 64, nextTimestamp_++);
+        runtime.MessageTick(nextTimestamp_++);
+    }
+
+    void PumpUntilJsonCount(const std::filesystem::path& patchDirectory,
+                            std::size_t expectedCount)
+    {
+        for (int iteration = 0; iteration < 16 && JsonFileCount(patchDirectory) < expectedCount;
+             ++iteration)
+        {
+            PumpOnce();
+        }
+        Require(JsonFileCount(patchDirectory) == expectedCount,
+                "browser patch command reaches expected version count");
+    }
+
+    float ProbeCenter()
+    {
+        return runtime.Engine().Manager()
+            .ParameterById(runtime.Engine().Application().probeId)
+            .SceneCenter(0);
+    }
+
+    void SetProbeCenter(float value)
+    {
+        runtime.Engine().Manager()
+            .ParameterById(runtime.Engine().Application().probeId)
+            .SceneCenter(0) = value;
+    }
+
+    const synth::RuntimeDataPaths& Paths() const { return paths_; }
+
     synth_browser::Runtime<ValidApp> runtime;
 
 private:
     const std::filesystem::path dataRoot_ =
         std::filesystem::temp_directory_path() / "sheaf-browser-runtime-contract";
+    const synth::RuntimeDataPaths paths_ = synth::RuntimeDataPaths::FromDataRoot(dataRoot_);
+    std::uint64_t nextTimestamp_ = 2;
 };
 
 void TestBrowserRuntimeUsesSharedFrameAndActionRouting()
@@ -173,6 +285,192 @@ void TestBrowserRuntimeUsesSharedFrameAndActionRouting()
     Require(surface.lastValue == "17", "application receives action value");
 }
 
+void TestBrowserPrepareFeedsNegotiatedAudioPageAndRejectsOversizedBlocks()
+{
+    RuntimeFixture fixture;
+
+    bool rejected = false;
+    try
+    {
+        fixture.runtime.Prepare(
+            48000.0,
+            static_cast<std::size_t>(std::numeric_limits<int>::max()) + std::size_t{1});
+    }
+    catch (const std::out_of_range&)
+    {
+        rejected = true;
+    }
+    Require(rejected, "runtime rejects a browser block size outside the engine range");
+
+    fixture.Prepare(48000.0, 128);
+    fixture.runtime.MessageTick(2);
+    const ValidApp& app = fixture.runtime.Engine().Application();
+    Require(app.preparedSampleRate == 48000.0, "prepare reaches the generic application");
+    Require(app.preparedBlockSize == 128, "prepare preserves the negotiated block size");
+
+    fixture.runtime.DispatchAction(synth::runtime_ui::Actions::kSidebarAudio, "");
+    const synth_browser::DecodedCommandBuffer frame = fixture.Frame();
+    const synth_browser::DecodedNode* deviceLine =
+        FindNode(frame, synth::runtime_ui::NodeIds::kAudioDeviceLine);
+    Require(deviceLine != nullptr, "audio page exposes negotiated device line");
+    Require(deviceLine->text == "System Default: 48000 Hz, 128 frames",
+            "audio page reports the negotiated default output");
+}
+
+void TestSharedBrowserNavigationReplacesAndRestoresEveryRuntimePage()
+{
+    RuntimeFixture fixture;
+
+    fixture.runtime.DispatchAction(synth::runtime_ui::Actions::kSidebarControllers, "");
+    synth_browser::DecodedCommandBuffer frame = fixture.Frame();
+    Require(FindNode(frame, synth::runtime_ui::NodeIds::kRoot) != nullptr,
+            "controllers navigation displays shared controllers page");
+    Require(FindNode(frame, "contract.app.root") == nullptr,
+            "controllers page replaces application content");
+
+    fixture.runtime.DispatchAction(synth::runtime_ui::Actions::kBack, "");
+    frame = fixture.Frame();
+    Require(FindNode(frame, "contract.app.root") != nullptr,
+            "controllers Back restores application content");
+    Require(FindNode(frame, synth::runtime_ui::NodeIds::kRoot) == nullptr,
+            "controllers page is removed after Back");
+
+    fixture.runtime.DispatchAction(synth::runtime_ui::Actions::kSidebarFile, "");
+    frame = fixture.Frame();
+    Require(FindNode(frame, synth::runtime_ui::NodeIds::kFileRoot) != nullptr,
+            "file navigation displays shared file page");
+    Require(FindNode(frame, "contract.app.root") == nullptr,
+            "file page replaces application content");
+
+    fixture.runtime.DispatchAction(synth::runtime_ui::Actions::kFileBack, "");
+    frame = fixture.Frame();
+    Require(FindNode(frame, "contract.app.root") != nullptr,
+            "file Back restores application content");
+    Require(FindNode(frame, synth::runtime_ui::NodeIds::kFileRoot) == nullptr,
+            "file page is removed after Back");
+}
+
+void TestControllersUseLatestBridgeSnapshotCommitEditsAndSaveOnBack()
+{
+    RuntimeFixture fixture;
+    using Bridge = synth_browser::BrowserMidiBridge<synth::Engine<ValidApp>>;
+    fixture.runtime.SubmitMidiEndpoints({
+        {.identifier = "in-a", .name = "Input A", .kind = Bridge::EndpointKind::Input},
+        {.identifier = "out-a", .name = "Output A", .kind = Bridge::EndpointKind::Output},
+        {.identifier = "in-b", .name = "Input B", .kind = Bridge::EndpointKind::Input},
+        {.identifier = "out-b", .name = "Output B", .kind = Bridge::EndpointKind::Output},
+    });
+    fixture.runtime.MessageTick(2);
+    fixture.runtime.DispatchAction(synth::runtime_ui::Actions::kSidebarControllers, "");
+
+    synth_browser::DecodedCommandBuffer frame = fixture.Frame();
+    const synth_browser::DecodedNode* inputA = FindNode(
+        frame, synth::runtime_ui::NodeIds::ControllerInput(0).c_str());
+    const synth_browser::DecodedNode* outputB = FindNode(
+        frame, synth::runtime_ui::NodeIds::ControllerOutput(1).c_str());
+    Require(inputA != nullptr && outputB != nullptr,
+            "controllers snapshot contains both configured controller rows");
+    Require(HasOption(*inputA, "in-a", "Input A") &&
+                HasOption(*inputA, "in-b", "Input B"),
+            "controller input uses latest multi-device enumeration");
+    Require(HasOption(*outputB, "out-a", "Output A") &&
+                HasOption(*outputB, "out-b", "Output B"),
+            "controller output uses latest multi-device enumeration");
+    Require(inputA->selectedOption == "in-a" && outputB->selectedOption == "out-b",
+            "online connection snapshot selects each configured endpoint");
+
+    fixture.runtime.DispatchAction(
+        synth::runtime_ui::Actions::kEndpointSelect, "0:input:in-b");
+    fixture.runtime.MessageTick(3);
+    frame = fixture.Frame();
+    inputA = FindNode(frame, synth::runtime_ui::NodeIds::ControllerInput(0).c_str());
+    Require(inputA != nullptr && inputA->selectedOption == "in-b",
+            "controller commit is visible after services dirty refresh");
+    Require(fixture.runtime.Engine().InstrumentSnapshot().controllers[0].input.identifier ==
+                "in-b",
+            "controller edit commits through the browser services callback");
+
+    fixture.runtime.DispatchAction(synth::runtime_ui::Actions::kBack, "");
+    synth::MidiInstrumentConfig loadedInstrument;
+    synth::AudioDeviceState loadedAudio;
+    Require(synth::LoadRuntimeConfigFile(
+                fixture.Paths().configFile, loadedInstrument, loadedAudio) ==
+                synth::RuntimeConfigFileStatus::Ok,
+            "controllers Back persists runtime configuration");
+    Require(loadedInstrument.controllers.size() == 2,
+            "saved browser configuration retains every controller");
+    Require(loadedInstrument.controllers[0].input.identifier == "in-b",
+            "saved browser configuration contains the committed endpoint edit");
+}
+
+void TestFilePageDispatchesPatchLifecycleThroughBrowserRuntime()
+{
+    RuntimeFixture fixture;
+    fixture.Prepare();
+    fixture.runtime.DispatchAction(synth::runtime_ui::Actions::kSidebarFile, "");
+
+    const std::filesystem::path patchA = fixture.Paths().patchesRoot / "Patch A";
+    const std::filesystem::path patchB = fixture.Paths().patchesRoot / "Patch B";
+
+    fixture.runtime.DispatchAction(synth::runtime_ui::Actions::kFileSave, "");
+    fixture.PumpOnce();
+    Require(!fixture.runtime.Engine().Patches().CurrentPatchDirectory().has_value(),
+            "Save without a current patch preserves Save As requirement");
+    Require(JsonFileCount(patchA) == 0, "Save without a current patch writes nothing");
+
+    fixture.SetProbeCenter(0.4f);
+    fixture.runtime.DispatchAction(
+        synth::runtime_ui::Actions::kFileConfirmedSaveAs, patchA.string());
+    fixture.PumpUntilJsonCount(patchA, 1);
+    Require(fixture.runtime.Engine().Patches().CurrentPatchDirectory() == patchA,
+            "Save As selects the new patch directory");
+
+    fixture.SetProbeCenter(0.5f);
+    fixture.runtime.DispatchAction(synth::runtime_ui::Actions::kFileSave, "");
+    fixture.PumpUntilJsonCount(patchA, 2);
+
+    fixture.runtime.DispatchAction(
+        synth::runtime_ui::Actions::kFileConfirmedSaveAs, patchA.string());
+    fixture.PumpOnce();
+    Require(JsonFileCount(patchA) == 2,
+            "non-overwrite Save As does not replace an existing patch");
+
+    std::filesystem::create_directories(patchB);
+    fixture.SetProbeCenter(0.6f);
+    fixture.runtime.DispatchAction(
+        synth::runtime_ui::Actions::kFileConfirmedOverwriteSaveAs, patchB.string());
+    fixture.PumpUntilJsonCount(patchB, 1);
+    Require(fixture.runtime.Engine().Patches().CurrentPatchDirectory() == patchB,
+            "overwrite Save As selects the existing patch directory");
+
+    fixture.SetProbeCenter(0.9f);
+    fixture.runtime.DispatchAction(
+        synth::runtime_ui::Actions::kFileConfirmedLoad, patchA.string());
+    fixture.PumpOnce();
+    Require(fixture.runtime.Engine().Patches().CurrentPatchDirectory() == patchA,
+            "Load selects the requested patch directory");
+    Require(fixture.ProbeCenter() == 0.5f, "Load applies the latest saved patch state");
+
+    fixture.SetProbeCenter(0.8f);
+    fixture.runtime.DispatchAction(synth::runtime_ui::Actions::kFileRevert, "");
+    fixture.PumpOnce();
+    Require(fixture.ProbeCenter() == 0.5f, "Revert restores the current patch state");
+
+    fixture.SetProbeCenter(0.7f);
+    fixture.runtime.DispatchAction(synth::runtime_ui::Actions::kFileNew, "");
+    fixture.PumpOnce();
+    Require(!fixture.runtime.Engine().Patches().CurrentPatchDirectory().has_value(),
+            "New clears the current patch directory");
+    Require(fixture.ProbeCenter() == 0.25f, "New restores the generic app defaults");
+
+    fixture.runtime.MessageTick(100);
+    const synth_browser::DecodedCommandBuffer frame = fixture.Frame();
+    const synth_browser::DecodedNode* patchName =
+        FindNode(frame, synth::runtime_ui::NodeIds::kFilePatchName);
+    Require(patchName != nullptr && patchName->text == "(no patch)",
+            "file refresh reports the New patch state through the portable tree");
+}
+
 }  // namespace
 
 int main()
@@ -182,5 +480,9 @@ int main()
     static_assert(!synth_browser::BrowserApplication<MissingSurface>);
     static_assert(!synth::SynthApplication<MissingSurface>);
     TestBrowserRuntimeUsesSharedFrameAndActionRouting();
+    TestBrowserPrepareFeedsNegotiatedAudioPageAndRejectsOversizedBlocks();
+    TestSharedBrowserNavigationReplacesAndRestoresEveryRuntimePage();
+    TestControllersUseLatestBridgeSnapshotCommitEditsAndSaveOnBack();
+    TestFilePageDispatchesPatchLifecycleThroughBrowserRuntime();
     return 0;
 }
