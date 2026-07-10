@@ -181,7 +181,7 @@ Commit message: `feat(synth): add portable runtime main component`.
 - `MainPane::RefreshOnTick()` calls shared refresh then renderer refresh.
 - `MainPane::IntrinsicBounds()` returns the shared component bounds.
 
-- [ ] **Step 1: Write failing JUCE shell tests**
+- [x] **Step 1: Write failing JUCE shell tests**
 
 Extend `RuntimeShellSessionTests.cpp` to assert:
 - the content component width is `MiniApp::Config().uiWidth + 96`;
@@ -191,7 +191,7 @@ Extend `RuntimeShellSessionTests.cpp` to assert:
 
 Extend `PortableJuceBackendTests.cpp` with a composite tree containing a 900-pixel nested app root, unbounded app controls, and a sidebar at x 900; assert the controls wrap within the app root while the sidebar remains at x 900.
 
-- [ ] **Step 2: Run the JUCE shell target and confirm RED**
+- [x] **Step 2: Run the JUCE shell target and confirm RED**
 
 Run:
 ```bash
@@ -201,11 +201,11 @@ projects/synth/apps/miniapp/build/runtime_shell_session_tests
 
 Expected: assertions fail because `MainPane` still owns separate renderers and the shell width remains 900.
 
-- [ ] **Step 3: Implement `JuceRuntimeMainServices<App>`**
+- [x] **Step 3: Implement `JuceRuntimeMainServices<App>`**
 
 Move the behavior currently in `AudioPageHost`, `FilePageHost`, and `ControllersPageHost::MakeCallbacks` behind the services methods. Preserve audio status/sync and MIDI-rebuild hooks with RAII cleanup. `DeadlineSamplePercent` returns `Runtime::DeadlineSamplePct`; `RefreshAudio` enumerates JUCE devices and negotiated status; `DispatchAudio` calls existing selection methods; File delegates exact existing patch operations/status; Controllers callbacks use engine instrument snapshot/edit and MIDI connection state, while `RefreshControllers` applies enumeration, pending dirty state, and `ControllersPageSurface::RefreshOnTick` each UI tick.
 
-- [ ] **Step 4: Replace `MainPane` composition and make shell size additive**
+- [x] **Step 4: Replace `MainPane` composition and make shell size additive**
 
 Render only the shared surface. Update `ShellApplication::MainWindow` and `RuntimeShellSession` sizing to use `RuntimeMainComponent::IntrinsicBounds()` after runtime startup. Keep the existing `MainPane::Page`, `ShowPage(Page)`, and `CurrentPage()` public API as wrappers that delegate to `RuntimeMainComponent::ShowPage`/`CurrentPage`.
 
@@ -213,7 +213,7 @@ Remove `ShellComponent::RepaintAll`'s separate `WriteDeadlineSample(runtime_.Dea
 
 Update `PortableJuceBackend::LayoutControls` to maintain one flow cursor per nearest ancestor `NodeKind::Root`. Each cursor uses that root's absolute bounds; controls remain direct children of `PortableComponent` and receive resolved absolute bounds.
 
-- [ ] **Step 5: Run focused and full JUCE suites**
+- [x] **Step 5: Run focused and full JUCE suites**
 
 Run:
 ```bash
@@ -223,7 +223,7 @@ make -C projects/synth/apps/miniapp
 
 Expected: all eight JUCE test binaries pass and `SynthMiniapp.app` builds.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 Commit message: `refactor(synth): render shared runtime shell in JUCE`.
 

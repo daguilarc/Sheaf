@@ -6,9 +6,9 @@
 
 ## 2. JUCE Host Integration
 
-- [ ] 2.1 Add a JUCE runtime services adapter that preserves Audio, Controllers, File, deadline, configuration-save, and refresh behavior behind the shared component contract.
-- [ ] 2.2 Replace independent `MainPane` app/sidebar/page component ownership with one `PortableComponent` rendering `RuntimeMainComponent`, and make window size additive for the 96-pixel sidebar.
-- [ ] 2.3 Update JUCE runtime-shell and page tests to prove shared navigation, complete app bounds, refresh, and action parity.
+- [x] 2.1 Add a JUCE runtime services adapter that preserves Audio, Controllers, File, deadline, configuration-save, and refresh behavior behind the shared component contract.
+- [x] 2.2 Replace independent `MainPane` app/sidebar/page component ownership with one `PortableComponent` rendering `RuntimeMainComponent`, and make window size additive for the 96-pixel sidebar.
+- [x] 2.3 Update JUCE runtime-shell and page tests to prove shared navigation, complete app bounds, refresh, and action parity.
 
 ## 3. Browser Host Integration
 
