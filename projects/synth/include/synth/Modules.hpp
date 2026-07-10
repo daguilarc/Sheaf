@@ -263,6 +263,15 @@ public:
     BipolarMatrixMixerModule(BipolarMatrixMixerModule&&) = delete;
     BipolarMatrixMixerModule& operator=(BipolarMatrixMixerModule&&) = delete;
 
+    void SetColor(Color color) {
+        if (registered_) {
+            throw std::logic_error("bipolar matrix mixer module color must be set before registration");
+        }
+        color_ = color;
+    }
+
+    Color GetColor() const { return color_; }
+
     void RegisterParameters(ParameterManager& manager, ParameterGroup& group, std::string_view prefix = {}) {
         if (registered_) {
             throw std::logic_error("bipolar matrix mixer module parameters already registered");
@@ -289,7 +298,7 @@ public:
                                                                                          .shortName = MatrixShortName(row, column),
                                                                                          .defaultValue = row == column ? 1.0f : 0.0f,
                                                                                          .range = RangeKind::Bipolar,
-                                                                                         .color = Color::Red,
+                                                                                         .color = color_,
                                                                                      });
             }
         }
@@ -411,6 +420,7 @@ private:
 
     bool registered_ = false;
     ParameterManager* manager_ = nullptr;
+    Color color_ = Color::Grey;
     std::array<float, kSize> inputs_{};
     std::array<float, kSize> outputs_{};
     ParameterIds parameterIds_{};

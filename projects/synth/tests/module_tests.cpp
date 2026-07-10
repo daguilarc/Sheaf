@@ -897,6 +897,7 @@ TEST_CASE(bipolar_matrix_registers_row_major_identity_parameters_and_bank_cells)
     REQUIRE_TRUE(manager.ParameterById(ids[15]).Name() == "Matrix R4C4");
     REQUIRE_TRUE(manager.ParameterById(ids[0]).Range() == synth::RangeKind::Bipolar);
     REQUIRE_TRUE(manager.ParameterById(ids[1]).Range() == synth::RangeKind::Bipolar);
+    REQUIRE_TRUE(manager.ParameterById(ids[0]).ParamColor() == synth::Color::Grey);
     REQUIRE_NEAR(manager.ParameterById(ids[0]).SceneCenter(0), 1.0f, 0.0001f);
     REQUIRE_NEAR(manager.ParameterById(ids[5]).SceneCenter(0), 1.0f, 0.0001f);
     REQUIRE_NEAR(manager.ParameterById(ids[10]).SceneCenter(0), 1.0f, 0.0001f);
@@ -915,6 +916,27 @@ TEST_CASE(bipolar_matrix_registers_row_major_identity_parameters_and_bank_cells)
     REQUIRE_TRUE(bank.VisibleParameter(40) == &manager.ParameterById(ids[0]));
     REQUIRE_TRUE(bank.VisibleParameter(41) == &manager.ParameterById(ids[1]));
     REQUIRE_TRUE(bank.VisibleParameter(55) == &manager.ParameterById(ids[15]));
+}
+
+TEST_CASE(bipolar_matrix_supports_pre_registration_color_override) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({.numVoices = 1, .numScenes = 2, .maxParameters = 4});
+    synth::BipolarMatrixMixerModule<2> module;
+
+    module.SetColor(synth::Color::Red);
+    module.RegisterParameters(manager, group, "Matrix");
+
+    for (const synth::ParameterId id : module.Parameters()) {
+        REQUIRE_TRUE(manager.ParameterById(id).ParamColor() == synth::Color::Red);
+    }
+
+    bool threw = false;
+    try {
+        module.SetColor(synth::Color::Blue);
+    } catch (const std::logic_error&) {
+        threw = true;
+    }
+    REQUIRE_TRUE(threw);
 }
 
 TEST_CASE(bipolar_matrix_maps_bipolar_anchors_cross_routes_unclamped_sums_and_stable_outputs) {

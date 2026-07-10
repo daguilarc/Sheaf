@@ -16,6 +16,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <stdexcept>
 
 namespace synth_dresden4 {
@@ -25,6 +26,7 @@ public:
     static constexpr std::size_t kOscillatorCount = 4;
     static constexpr std::size_t kOversampleFactor = 4;
     static constexpr std::size_t kScopeFrames = 6'553'600;
+    static constexpr std::uint64_t kNoInternalSampleIndex = std::numeric_limits<std::uint64_t>::max();
 
     using VcoModule = synth::Dresden4VcoModule;
     using MatrixModuleType = synth::BipolarMatrixMixerModule<kOscillatorCount>;
@@ -37,6 +39,12 @@ public:
         std::uint64_t firstInternalSampleIndex = 0;
         std::uint64_t lastInternalSampleIndex = 0;
         std::uint64_t lastHostStartSample = 0;
+        std::uint64_t lastMatrixInputInternalIndex = kNoInternalSampleIndex;
+        std::uint64_t lastMatrixOutputPublicationInternalIndex = kNoInternalSampleIndex;
+        std::uint64_t lastMatrixModulatorConsumptionInternalIndex = kNoInternalSampleIndex;
+        std::uint64_t lastConsumedMatrixOutputPublicationInternalIndex = kNoInternalSampleIndex;
+        std::array<float, kOscillatorCount> lastMatrixInputs{};
+        std::array<float, kOscillatorCount> lastConsumedMatrixSources{};
     };
 
     static synth::RuntimeConfig Config() {
@@ -82,6 +90,7 @@ public:
         });
 
         dresdenModule_.RegisterParameters(manager, *stereoGroup_, *quadGroup_, *monoGroup_);
+        matrixModule_.SetColor(synth::Color::Red);
         matrixModule_.RegisterParameters(manager, *monoGroup_, "Dresden 4 Matrix");
         RegisterMatrixModulationSources();
 
@@ -210,9 +219,9 @@ private:
     }
 
     void ResetMatrixState() {
-        delayedOscillatorOutputs_.fill(0.0f);
         rawMatrixOutputs_.fill(0.0f);
         normalizedMatrixSources_.fill(0.5f);
+        matrixOutputPublicationInternalIndex_ = kNoInternalSampleIndex;
     }
 
     static float NormalizeMatrixOutput(float value) {
@@ -222,20 +231,28 @@ private:
     std::array<float, 2> ProcessInternalSubframe(std::uint64_t internalIndex) {
         ProcessParameters(internalIndex);
 
+        debugCounters_.lastMatrixModulatorConsumptionInternalIndex = internalIndex;
+        debugCounters_.lastConsumedMatrixOutputPublicationInternalIndex = matrixOutputPublicationInternalIndex_;
+        debugCounters_.lastConsumedMatrixSources = normalizedMatrixSources_;
         quadGroup_->UpdateModValues();
 
         dresdenModule_.SetInput(*context_->parameterManager);
         dresdenModule_.Process();
 
-        matrixModule_.Inputs() = delayedOscillatorOutputs_;
+        for (std::size_t oscIx = 0; oscIx < kOscillatorCount; ++oscIx) {
+            matrixModule_.Inputs()[oscIx] = dresdenModule_.OscillatorOutput(oscIx);
+        }
+        debugCounters_.lastMatrixInputs = matrixModule_.Inputs();
+        debugCounters_.lastMatrixInputInternalIndex = internalIndex;
         matrixModule_.SetInput(*context_->parameterManager);
         matrixModule_.Process();
 
         rawMatrixOutputs_ = matrixModule_.Outputs();
         for (std::size_t oscIx = 0; oscIx < kOscillatorCount; ++oscIx) {
             normalizedMatrixSources_[oscIx] = NormalizeMatrixOutput(rawMatrixOutputs_[oscIx]);
-            delayedOscillatorOutputs_[oscIx] = dresdenModule_.OscillatorOutput(oscIx);
         }
+        matrixOutputPublicationInternalIndex_ = internalIndex;
+        debugCounters_.lastMatrixOutputPublicationInternalIndex = internalIndex;
 
         scopeWriter_.AdvanceIndex();
         RecordInternalIndex(internalIndex);
@@ -289,9 +306,9 @@ private:
     VcoModule::UIState vcoUiState_;
     OutputStage outputStage_{Decimator{synth::Dresden4DecimatorCoefficients()}};
 
-    std::array<float, kOscillatorCount> delayedOscillatorOutputs_{};
     std::array<float, kOscillatorCount> rawMatrixOutputs_{};
     std::array<float, kOscillatorCount> normalizedMatrixSources_{0.5f, 0.5f, 0.5f, 0.5f};
+    std::uint64_t matrixOutputPublicationInternalIndex_ = kNoInternalSampleIndex;
     double hostSampleRate_ = 0.0;
     double internalSampleRate_ = 0.0;
     DebugCounterState debugCounters_;

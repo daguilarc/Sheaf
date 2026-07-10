@@ -10,6 +10,7 @@
 #error "Dresden 4 system tests must not see JUCE headers -- Dresden4Core must stay JUCE-free"
 #endif
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstddef>
@@ -19,6 +20,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -88,6 +90,54 @@ bool OutputHasNonSilentFiniteStereo(const std::vector<synth_rig::SynthRig<synth_
         }
     }
     return heardSignal;
+}
+
+struct EngineRunResult {
+    std::vector<std::vector<float>> channels;
+    synth_dresden4::Dresden4Core::DebugCounterState counters;
+};
+
+EngineRunResult RunFreshEngineSegments(int outputChannels, const std::vector<std::size_t>& segmentFrames) {
+    std::uint64_t timestamp = 0;
+    synth::Engine<synth_dresden4::Dresden4Core> engine([&timestamp] { return timestamp++; });
+    engine.Initialize();
+    engine.Prepare(synth_dresden4::Dresden4Core::Config().preferredSampleRate,
+                   synth_dresden4::Dresden4Core::Config().preferredBlockSize);
+
+    std::vector<std::vector<float>> captured(static_cast<std::size_t>(std::max(outputChannels, 0)));
+    for (const std::size_t frames : segmentFrames) {
+        std::vector<std::vector<float>> blockStorage(static_cast<std::size_t>(std::max(outputChannels, 0)),
+                                                     std::vector<float>(frames, 12345.0f));
+        std::vector<float*> outputs(blockStorage.size(), nullptr);
+        for (std::size_t channel = 0; channel < blockStorage.size(); ++channel) {
+            outputs[channel] = blockStorage[channel].data();
+        }
+
+        synth::AudioBlock block{
+            .outputs = outputs.empty() ? nullptr : outputs.data(),
+            .numOutputChannels = outputChannels,
+            .numFrames = frames,
+        };
+        engine.ProcessBlock(block, timestamp++);
+
+        for (std::size_t channel = 0; channel < blockStorage.size(); ++channel) {
+            captured[channel].insert(captured[channel].end(), blockStorage[channel].begin(), blockStorage[channel].end());
+        }
+    }
+
+    return {
+        .channels = std::move(captured),
+        .counters = engine.Application().DebugCounters(),
+    };
+}
+
+void SetScenePair(synth::ParameterManager& manager, synth::ParameterId id, float value) {
+    manager.ParameterById(id).SceneCenter(0) = value;
+    manager.ParameterById(id).SceneCenter(1) = value;
+}
+
+float Scene0(const synth::ParameterManager& manager, synth::ParameterId id) {
+    return manager.ParameterById(id).SceneCenter(0);
 }
 
 } // namespace
@@ -206,7 +256,6 @@ TEST_CASE(prepares_four_x_internal_rate_and_sequences_internal_subframes) {
         .outputs = outputs.data(),
         .numOutputChannels = 2,
         .numFrames = left.size(),
-        .startSample = 100,
     };
 
     engine.ProcessBlock(block, timestamp++);
@@ -215,6 +264,122 @@ TEST_CASE(prepares_four_x_internal_rate_and_sequences_internal_subframes) {
     REQUIRE_TRUE(counters.internalSubframesProcessed == left.size() * 4);
     REQUIRE_TRUE(counters.firstInternalSampleIndex == 0);
     REQUIRE_TRUE(counters.lastInternalSampleIndex == 31);
+}
+
+TEST_CASE(matrix_feedback_uses_current_vco_outputs_and_delays_only_modulator_consumption_one_internal_sample) {
+    std::uint64_t timestamp = 0;
+    synth::Engine<synth_dresden4::Dresden4Core> engine([&timestamp] { return timestamp++; });
+    engine.Initialize();
+    engine.Prepare(48000.0, 8);
+
+    std::array<float, 2> left{};
+    std::array<float, 2> right{};
+    std::array<float*, 2> outputs{left.data(), right.data()};
+    synth::AudioBlock block{
+        .outputs = outputs.data(),
+        .numOutputChannels = 2,
+        .numFrames = left.size(),
+    };
+
+    engine.ProcessBlock(block, timestamp++);
+    auto& core = engine.Application();
+    const auto& counters = core.DebugCounters();
+
+    REQUIRE_TRUE(counters.lastInternalSampleIndex == 7);
+    REQUIRE_TRUE(counters.lastMatrixInputInternalIndex == counters.lastInternalSampleIndex);
+    REQUIRE_TRUE(counters.lastMatrixOutputPublicationInternalIndex == counters.lastInternalSampleIndex);
+    REQUIRE_TRUE(counters.lastMatrixModulatorConsumptionInternalIndex == counters.lastInternalSampleIndex);
+    REQUIRE_TRUE(counters.lastConsumedMatrixOutputPublicationInternalIndex == counters.lastInternalSampleIndex - 1);
+    for (std::size_t oscIx = 0; oscIx < synth_dresden4::Dresden4Core::kOscillatorCount; ++oscIx) {
+        REQUIRE_NEAR(counters.lastMatrixInputs[oscIx], core.DresdenModule().OscillatorOutput(oscIx), 0.000001);
+        REQUIRE_NEAR(core.QuadGroup()->GetModulators().Value(oscIx, 0),
+                     counters.lastConsumedMatrixSources[oscIx],
+                     0.000001);
+    }
+}
+
+TEST_CASE(output_policy_handles_zero_mono_stereo_and_extra_channels) {
+    const auto zero = RunFreshEngineSegments(0, {8});
+    REQUIRE_TRUE(zero.channels.empty());
+    REQUIRE_TRUE(zero.counters.hostFramesProcessed == 8);
+
+    const auto stereo = RunFreshEngineSegments(2, {8});
+    const auto mono = RunFreshEngineSegments(1, {8});
+    REQUIRE_TRUE(stereo.channels.size() == 2);
+    REQUIRE_TRUE(mono.channels.size() == 1);
+    for (std::size_t frame = 0; frame < mono.channels[0].size(); ++frame) {
+        REQUIRE_NEAR(mono.channels[0][frame], 0.5f * (stereo.channels[0][frame] + stereo.channels[1][frame]), 0.000001);
+    }
+
+    const auto extra = RunFreshEngineSegments(3, {8});
+    REQUIRE_TRUE(extra.channels.size() == 3);
+    for (std::size_t frame = 0; frame < extra.channels[0].size(); ++frame) {
+        REQUIRE_NEAR(extra.channels[0][frame], stereo.channels[0][frame], 0.000001);
+        REQUIRE_NEAR(extra.channels[1][frame], stereo.channels[1][frame], 0.000001);
+        REQUIRE_NEAR(extra.channels[2][frame], 0.0f, 0.000001);
+    }
+}
+
+TEST_CASE(decimator_state_is_continuous_across_split_app_blocks) {
+    const auto contiguous = RunFreshEngineSegments(2, {16});
+    const auto split = RunFreshEngineSegments(2, {5, 7, 4});
+
+    REQUIRE_TRUE(contiguous.channels.size() == 2);
+    REQUIRE_TRUE(split.channels.size() == 2);
+    REQUIRE_TRUE(contiguous.channels[0].size() == split.channels[0].size());
+    for (std::size_t channel = 0; channel < contiguous.channels.size(); ++channel) {
+        for (std::size_t frame = 0; frame < contiguous.channels[channel].size(); ++frame) {
+            REQUIRE_NEAR(split.channels[channel][frame], contiguous.channels[channel][frame], 0.000001);
+        }
+    }
+}
+
+TEST_CASE(patch_save_perturb_load_round_trips_representative_dresden_and_matrix_values) {
+    const synth::RuntimeDataPaths paths =
+        UseScratchRuntimeDataPaths("patch_save_perturb_load_round_trips_representative_dresden_and_matrix_values");
+    synth_rig::SynthRig<synth_dresden4::Dresden4Core> rig(128, paths);
+    auto& manager = rig.Engine().Manager();
+    const auto dresdenIds = rig.Application().DresdenModule().Parameters();
+    const auto matrixIds = rig.Application().MatrixModule().Parameters();
+
+    SetScenePair(manager, dresdenIds.x, 0.20f);
+    SetScenePair(manager, dresdenIds.y, 0.80f);
+    SetScenePair(manager, dresdenIds.quad.phase, -0.30f);
+    SetScenePair(manager, dresdenIds.pmIndex[2], 0.70f);
+    SetScenePair(manager, dresdenIds.frequency[3], 0.40f);
+    SetScenePair(manager, matrixIds[0], 0.55f);
+    SetScenePair(manager, matrixIds[7], -0.45f);
+
+    const std::array<std::pair<synth::ParameterId, float>, 7> saved{{
+        {dresdenIds.x, Scene0(manager, dresdenIds.x)},
+        {dresdenIds.y, Scene0(manager, dresdenIds.y)},
+        {dresdenIds.quad.phase, Scene0(manager, dresdenIds.quad.phase)},
+        {dresdenIds.pmIndex[2], Scene0(manager, dresdenIds.pmIndex[2])},
+        {dresdenIds.frequency[3], Scene0(manager, dresdenIds.frequency[3])},
+        {matrixIds[0], Scene0(manager, matrixIds[0])},
+        {matrixIds[7], Scene0(manager, matrixIds[7])},
+    }};
+
+    const std::filesystem::path patchDir = paths.patchesRoot / "Take1";
+    REQUIRE_TRUE(rig.SavePatchAs(patchDir) == synth_rig::RigPatchStatus::Written);
+
+    SetScenePair(manager, dresdenIds.x, 0.90f);
+    SetScenePair(manager, dresdenIds.y, 0.10f);
+    SetScenePair(manager, dresdenIds.quad.phase, 0.30f);
+    SetScenePair(manager, dresdenIds.pmIndex[2], 0.10f);
+    SetScenePair(manager, dresdenIds.frequency[3], 0.90f);
+    SetScenePair(manager, matrixIds[0], -0.20f);
+    SetScenePair(manager, matrixIds[7], 0.35f);
+
+    REQUIRE_TRUE(std::fabs(Scene0(manager, dresdenIds.x) - saved[0].second) > 0.001f);
+    REQUIRE_TRUE(std::fabs(Scene0(manager, matrixIds[7]) - saved[6].second) > 0.001f);
+
+    REQUIRE_TRUE(rig.LoadPatch(patchDir) == synth_rig::RigPatchStatus::Ok);
+    rig.RunBlocks(4);
+
+    for (const auto& [id, expected] : saved) {
+        REQUIRE_NEAR(Scene0(manager, id), expected, 0.000001);
+    }
 }
 
 TEST_CASE(runs_finite_non_silent_stereo_audio_after_decimation) {
