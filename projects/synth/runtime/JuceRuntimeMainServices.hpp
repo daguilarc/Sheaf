@@ -27,10 +27,6 @@ public:
         runtime_.SetAudioSyncHook([this] { audioSyncPending_ = true; });
         runtime_.SetMidiProcessorsRebuiltHook([this] {
             controllersDirty_ = true;
-            if (controllersSurface_ != nullptr)
-            {
-                controllersSurface_->MarkDirty();
-            }
         });
     }
 
@@ -63,10 +59,6 @@ public:
                     current = std::move(instrument);
                 });
             controllersDirty_ = true;
-            if (controllersSurface_ != nullptr)
-            {
-                controllersSurface_->MarkDirty();
-            }
         };
         callbacks.setStatus = [](std::string) {};
         callbacks.onBack = std::move(onBack);
@@ -76,32 +68,37 @@ public:
     void RefreshAudio(synth::runtime_ui::AudioPageSnapshot& snapshot)
     {
         juce::AudioDeviceManager& deviceManager = runtime_.DeviceManager();
-        std::vector<std::string> outputNames;
-        if (juce::AudioIODeviceType* deviceType = deviceManager.getCurrentDeviceTypeObject();
-            deviceType != nullptr)
-        {
-            for (const juce::String& name : deviceType->getDeviceNames(false))
-            {
-                outputNames.push_back(name.toStdString());
-            }
-        }
-
         snapshot.showInputCombo = App::Config().numAudioInputs > 0;
-        std::vector<std::string> inputNames;
-        if (snapshot.showInputCombo)
+        if (audioSyncPending_)
         {
+            std::vector<std::string> outputNames;
             if (juce::AudioIODeviceType* deviceType = deviceManager.getCurrentDeviceTypeObject();
                 deviceType != nullptr)
             {
-                for (const juce::String& name : deviceType->getDeviceNames(true))
+                for (const juce::String& name : deviceType->getDeviceNames(false))
                 {
-                    inputNames.push_back(name.toStdString());
+                    outputNames.push_back(name.toStdString());
                 }
             }
+
+            std::vector<std::string> inputNames;
+            if (snapshot.showInputCombo)
+            {
+                if (juce::AudioIODeviceType* deviceType = deviceManager.getCurrentDeviceTypeObject();
+                    deviceType != nullptr)
+                {
+                    for (const juce::String& name : deviceType->getDeviceNames(true))
+                    {
+                        inputNames.push_back(name.toStdString());
+                    }
+                }
+            }
+
+            snapshot.outputOptions = synth::runtime_ui::Layout::BuildDeviceOptions(outputNames);
+            snapshot.inputOptions = synth::runtime_ui::Layout::BuildDeviceOptions(inputNames);
+            audioSyncPending_ = false;
         }
 
-        snapshot.outputOptions = synth::runtime_ui::Layout::BuildDeviceOptions(outputNames);
-        snapshot.inputOptions = synth::runtime_ui::Layout::BuildDeviceOptions(inputNames);
         const synth::AudioDeviceState state = runtime_.GetEngine().AudioDeviceSnapshot();
         snapshot.selectedOutputId = synth::runtime_ui::Layout::SelectedDeviceOptionId(
             state.outputDeviceName, snapshot.outputOptions);
@@ -124,7 +121,6 @@ public:
         {
             snapshot.statusLineText = *audioStatus_;
         }
-        audioSyncPending_ = false;
     }
 
     void DispatchAudio(const synth::ui::Action& action)
@@ -192,7 +188,6 @@ public:
 
     void RefreshControllers(synth::runtime_ui::ControllersPageSurface& surface)
     {
-        controllersSurface_ = &surface;
         surface.SetFocusGuard(focusGuard_);
         surface.SetEnumerateDevices(runtime_.MidiConnections().EnumerateNow());
         if (controllersDirty_)
@@ -216,19 +211,14 @@ public:
     void SetFocusGuard(std::function<bool()> guard)
     {
         focusGuard_ = std::move(guard);
-        if (controllersSurface_ != nullptr)
-        {
-            controllersSurface_->SetFocusGuard(focusGuard_);
-        }
     }
 
 private:
     Runtime<App>& runtime_;
-    synth::runtime_ui::ControllersPageSurface* controllersSurface_ = nullptr;
     std::function<bool()> focusGuard_;
     std::optional<std::string> audioStatus_;
     std::optional<std::string> fileStatus_;
-    bool audioSyncPending_ = false;
+    bool audioSyncPending_ = true;
     bool controllersDirty_ = true;
 };
 

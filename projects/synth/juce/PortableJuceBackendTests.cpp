@@ -121,7 +121,10 @@ int main()
         RecordingSurface compositeSurface;
         synth::ui::Builder compositeBuilder;
         compositeBuilder.Root("runtime.main.root", synth::ui::Bounds{0.0f, 0.0f, 996.0f, 240.0f})
-            .Root("app.root", synth::ui::Bounds{0.0f, 0.0f, 900.0f, 240.0f});
+            .Root("app.root", synth::ui::Bounds{0.0f, 0.0f, 900.0f, 240.0f})
+            .Draw("app.draw",
+                  synth::ui::Bounds{0.0f, 0.0f, 900.0f, 40.0f},
+                  {synth::ui::DrawCommand::Fill(synth::ui::Color::Rgb(1, 2, 3))});
         for (int index = 0; index < 12; ++index)
         {
             compositeBuilder.Button("app.control." + std::to_string(index),
@@ -129,6 +132,9 @@ int main()
                                     synth::ui::Action::Named("app.control"));
         }
         compositeBuilder.Root("runtime.sidebar.root", synth::ui::Bounds{900.0f, 0.0f, 96.0f, 240.0f})
+            .Draw("runtime.sidebar.draw",
+                  synth::ui::Bounds{900.0f, 0.0f, 96.0f, 120.0f},
+                  {synth::ui::DrawCommand::Fill(synth::ui::Color::Rgb(4, 5, 6))})
             .Button("runtime.sidebar.control", "Side", synth::ui::Action::Named("runtime.sidebar"));
         compositeSurface.tree = compositeBuilder.Build();
         compositeSurface.tree.nodes.front().children = {
@@ -143,11 +149,15 @@ int main()
         const juce::Component* sidebarControl = compositeComponent.FindByNodeId("runtime.sidebar.control");
         Require(firstAppControl != nullptr && wrappedAppControl != nullptr && sidebarControl != nullptr,
                 "composite controls are hosted");
+        Require(firstAppControl->getY() == 48,
+                "app draw offsets only the trailing controls in its nearest root");
         Require(wrappedAppControl->getX() == firstAppControl->getX() &&
                     wrappedAppControl->getY() > firstAppControl->getY(),
                 "unbounded app controls wrap within the nested 900-pixel app root");
         Require(sidebarControl->getX() == 900 + firstAppControl->getX(),
                 "unbounded sidebar control flows from the nested sidebar root at x 900");
+        Require(sidebarControl->getY() == 128,
+                "sibling-root draw filtering uses only the sidebar root's draw bounds");
     }
 
     {

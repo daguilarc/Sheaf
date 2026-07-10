@@ -32,8 +32,17 @@ public:
         , renderer_(mainComponent_)
     {
         services_.SetFocusGuard([this] { return renderer_.hasKeyboardFocus(true); });
+        mainComponent_.SetActionHandler([this](const synth::ui::Action&) {
+            renderer_.RefreshFromSurface();
+        });
         addAndMakeVisible(renderer_);
         RefreshOnTick();
+    }
+
+    ~MainPane() override
+    {
+        mainComponent_.SetActionHandler({});
+        services_.SetFocusGuard({});
     }
 
     void ShowPage(Page page)

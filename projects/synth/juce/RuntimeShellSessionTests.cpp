@@ -133,20 +133,14 @@ int main() {
         renderer.FindByNodeId(synth::runtime_ui::NodeIds::kSidebarAudio));
     Require(audioButton != nullptr, "audio sidebar control is a button");
     audioButton->onClick();
-    static_cast<synth_runtime::ShellComponent<synth_miniapp::MiniApp>&>(session.Component())
-        .GetMainPane()
-        .RefreshOnTick();
     Require(renderer.FindByNodeId(synth_miniapp::MiniAppNodeIds::Encoder(0)) == nullptr,
-            "audio click replaces app controls in the shared renderer");
+            "audio click synchronously replaces app controls in the shared renderer");
     auto* backButton = dynamic_cast<juce::TextButton*>(
         renderer.FindByNodeId(synth::runtime_ui::NodeIds::kAudioBack));
     Require(backButton != nullptr, "audio page back control is rendered");
     backButton->onClick();
-    static_cast<synth_runtime::ShellComponent<synth_miniapp::MiniApp>&>(session.Component())
-        .GetMainPane()
-        .RefreshOnTick();
     Require(renderer.FindByNodeId(synth_miniapp::MiniAppNodeIds::Encoder(0)) != nullptr,
-            "back restores app controls in the shared renderer");
+            "back synchronously restores app controls in the shared renderer");
     Require(&session.GetRuntime().AppSurface() == appSurface,
             "the app surface and its state survive runtime-page navigation");
 
