@@ -7,6 +7,7 @@
 #include <juce_gui_extra/juce_gui_extra.h>
 
 #include <filesystem>
+#include <functional>
 #include <iostream>
 #include <memory>
 #include <stdexcept>
@@ -55,8 +56,12 @@ int main() {
                 return synth_runtime::MakeRuntimeSessionOwner<synth_miniapp::MiniApp>(std::move(paths));
             };
 
-        Require(static_cast<bool>(miniappOwnerFactory),
-                "miniapp registration can bind through the generic runtime session owner factory");
+        auto owner = miniappOwnerFactory(synth::RuntimeDataPaths::FromDataRoot(
+            std::filesystem::temp_directory_path() / "sheaf-patch-launcher-owner-test"));
+        Require(owner != nullptr,
+                "miniapp registration can construct through the generic runtime session owner factory");
+        Require(dynamic_cast<synth_runtime::ShellComponent<synth_miniapp::MiniApp>*>(&owner->Component()) != nullptr,
+                "miniapp registration owner exposes a component through the generic interface");
     }
 
     {

@@ -77,8 +77,8 @@ private:
             const synth::RuntimeConfig config = App::Config();
 
             window_->setName(juce::String(config.appName));
+            window_->ShowContent(session->Component(), config.uiWidth, config.uiHeight);
             activeSession_ = std::move(session);
-            window_->ShowContent(activeSession_->Component(), config.uiWidth, config.uiHeight);
         } catch (const std::exception& e) {
             INFO("SheafPatchApplication::LaunchRegisteredApp failed: %s", e.what());
         }
