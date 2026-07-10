@@ -53,10 +53,10 @@ Implemented and locally verified.
 
 ## Commit hashes
 
-- RED tests: `1bd2ca0cb660f375a39f35409e7401acf59c62c5` (`test: add Dresden 4 core red tests`)
+- RED tests: `1bd2ca0c9fc416e6666f46a2018ba86fdcac45cd` (`test: add Dresden 4 core red tests`)
 - RED report: `cf12956e` (`docs: record Dresden 4 core red test report`)
-- Implementation: `97b50982ecdad61a1b033ad1aa96bd77720e1a8b` (`feat: add Dresden 4 core graph`)
-- Review fix: `fix: tighten Dresden core graph contracts` (hash reported by the fix-pass final response)
+- Implementation: `97b509828e3b606fb9e92d90d41856c84510d7f2` (`feat: add Dresden 4 core graph`)
+- Review fix: `b90fe556c97dca68f1b5226ab8077fd62142b006` (`fix: tighten Dresden core graph contracts`)
 
 ## Review findings and fixes
 
