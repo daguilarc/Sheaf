@@ -6,4 +6,4 @@ Branch: `codex/dresden-4`
 
 - Spec review: Claude Opus PASS after revisions for matrix modulation normalization, realtime/scope budget, and output-channel policy.
 - Baseline: `make -C projects/synth test` exited 0 before implementation.
-
+- Task 1: complete (commits bae1f72..6181c62, focused test `make -C projects/synth build/parameter_modulation_tests && projects/synth/build/parameter_modulation_tests`, Claude Sonnet review approved; OpenSpec 3.7-3.8 checked).

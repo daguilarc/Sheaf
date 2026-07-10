@@ -18,8 +18,8 @@
 - [ ] 3.4 Add the normalized Dresden coefficient table or pre-audio design helper, verify one coefficient set works unchanged at 44.1, 48, and 96 kHz host rates, and run the DSP test target.
 - [ ] 3.5 Add failing DSP tests for a reusable fixed-factor oversampled output stage: exact generator calls/indices `4H..4H+3`, one host frame per operation, decimator continuity across block splits, reset, statically bound heterogeneous generator types, and allocation-free processing.
 - [ ] 3.6 Implement the JUCE-free `OversampledOutputStage<Factor, Channels, Decimator>` (or equivalent composition) so clock/index/decimator mechanics are reusable while the caller-supplied templated generator owns internal graph ordering.
-- [ ] 3.7 Add failing parameter tests for reference-alpha/sample-interval rate conversion, invalid-rate rejection, 48→192 kHz anchors, valid timing installation, topology/value/storage preservation, repeated non-compounding prepare changes, and allocation freedom.
-- [ ] 3.8 Implement reusable parameter timing conversion helpers and a narrow pre-audio `ParameterGroup` timing reconfiguration API that mutates only the four processing-timing fields.
+- [x] 3.7 Add failing parameter tests for reference-alpha/sample-interval rate conversion, invalid-rate rejection, 48→192 kHz anchors, valid timing installation, topology/value/storage preservation, repeated non-compounding prepare changes, and allocation freedom.
+- [x] 3.8 Implement reusable parameter timing conversion helpers and a narrow pre-audio `ParameterGroup` timing reconfiguration API that mutates only the four processing-timing fields.
 
 ## 4. Shared Portable Waveform Drawing
 
