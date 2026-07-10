@@ -211,6 +211,10 @@ public:
 
     juce::Component* FindByNodeId(const std::string& id)
     {
+        if (const synth::ui::Node* root = RootNode(); root != nullptr && root->id.value == id)
+        {
+            return this;
+        }
         const auto it = m_controlIndexById.find(id);
         if (it == m_controlIndexById.end())
         {
@@ -459,12 +463,18 @@ private:
         }
     }
 
-    int AutoLayoutStartY() const
+    int AutoLayoutStartY(const synth::ui::NodeId& rootId,
+                         const juce::Rectangle<int>& rootBounds) const
     {
-        int maxDrawBottom = kControlMargin;
+        int maxDrawBottom = rootBounds.getY() + kControlMargin;
         for (const std::size_t nodeIndex : m_drawNodeIndices)
         {
             const synth::ui::Node& node = m_tree.nodes[nodeIndex];
+            const auto rootIt = m_nearestRootByNodeId.find(node.id.value);
+            if (rootIt == m_nearestRootByNodeId.end() || rootIt->second != rootId)
+            {
+                continue;
+            }
             if (HasExplicitBounds(node.bounds))
             {
                 maxDrawBottom = std::max(maxDrawBottom,
@@ -540,6 +550,7 @@ private:
     void RebuildControls()
     {
         m_drawNodeIndices.clear();
+        m_nearestRootByNodeId.clear();
 
         const synth::ui::Node* root = RootNode();
         if (root == nullptr)
@@ -555,7 +566,7 @@ private:
         nextControls.reserve(m_controls.size());
 
         m_renderedNodeIds.clear();
-        CollectRenderableDescendants(*root);
+        CollectRenderableDescendants(*root, root->id);
 
         for (const synth::ui::NodeId& nodeId : m_renderedNodeIds)
         {
@@ -617,16 +628,20 @@ private:
 
     void LayoutControls()
     {
-        const juce::Rectangle<int> content = ContentBounds();
-        int flowX = content.getX() + kControlMargin;
-        int flowY = content.getY() + AutoLayoutStartY();
-        int rowHeight = 0;
-
         const synth::ui::Node* root = RootNode();
         if (root == nullptr)
         {
             return;
         }
+
+        struct FlowCursor
+        {
+            juce::Rectangle<int> bounds;
+            int x = 0;
+            int y = 0;
+            int rowHeight = 0;
+        };
+        std::unordered_map<std::string, FlowCursor> cursors;
 
         for (const synth::ui::NodeId& nodeId : m_renderedNodeIds)
         {
@@ -646,22 +661,38 @@ private:
             juce::Rectangle<int> bounds = ResolveNodeBounds(*node);
             if (bounds.isEmpty())
             {
-                bounds = DefaultSizeForKind(node->kind);
-                if (flowX + bounds.getWidth() > content.getRight() - kControlMargin)
+                const auto nearestRootIt = m_nearestRootByNodeId.find(node->id.value);
+                const synth::ui::NodeId& nearestRootId =
+                    nearestRootIt != m_nearestRootByNodeId.end() ? nearestRootIt->second : root->id;
+                auto [cursorIt, inserted] = cursors.try_emplace(nearestRootId.value);
+                FlowCursor& cursor = cursorIt->second;
+                if (inserted)
                 {
-                    flowX = content.getX() + kControlMargin;
-                    flowY += rowHeight + kControlGap;
-                    rowHeight = 0;
+                    const synth::ui::Node* nearestRoot = FindNode(nearestRootId);
+                    cursor.bounds = nearestRoot != nullptr && HasExplicitBounds(nearestRoot->bounds)
+                                        ? UiToJuceRect(nearestRoot->bounds)
+                                        : ContentBounds();
+                    cursor.x = cursor.bounds.getX() + kControlMargin;
+                    cursor.y = AutoLayoutStartY(nearestRootId, cursor.bounds);
                 }
-                bounds.setPosition(flowX, flowY);
-                flowX += bounds.getWidth() + kControlGap;
-                rowHeight = std::max(rowHeight, bounds.getHeight());
+
+                bounds = DefaultSizeForKind(node->kind);
+                if (cursor.x + bounds.getWidth() > cursor.bounds.getRight() - kControlMargin)
+                {
+                    cursor.x = cursor.bounds.getX() + kControlMargin;
+                    cursor.y += cursor.rowHeight + kControlGap;
+                    cursor.rowHeight = 0;
+                }
+                bounds.setPosition(cursor.x, cursor.y);
+                cursor.x += bounds.getWidth() + kControlGap;
+                cursor.rowHeight = std::max(cursor.rowHeight, bounds.getHeight());
             }
             control.setBounds(bounds);
         }
     }
 
-    void CollectRenderableDescendants(const synth::ui::Node& parent)
+    void CollectRenderableDescendants(const synth::ui::Node& parent,
+                                      const synth::ui::NodeId& nearestRootId)
     {
         for (const synth::ui::NodeId& childId : parent.children)
         {
@@ -671,8 +702,12 @@ private:
                 continue;
             }
 
+            const synth::ui::NodeId& childRootId =
+                node->kind == synth::ui::NodeKind::Root ? node->id : nearestRootId;
+
             if (node->kind == synth::ui::NodeKind::Draw)
             {
+                m_nearestRootByNodeId[node->id.value] = childRootId;
                 if (const std::optional<std::size_t> nodeIndex = FindNodeIndex(node->id); nodeIndex.has_value())
                 {
                     m_drawNodeIndices.push_back(*nodeIndex);
@@ -684,10 +719,11 @@ private:
             }
             else if (IsRenderableKind(node->kind))
             {
+                m_nearestRootByNodeId[node->id.value] = childRootId;
                 m_renderedNodeIds.push_back(node->id);
             }
 
-            CollectRenderableDescendants(*node);
+            CollectRenderableDescendants(*node, childRootId);
         }
     }
 
@@ -1030,6 +1066,7 @@ private:
     synth::ui::NodeTree m_tree;
     std::vector<PortableControlEntry> m_controls;
     std::unordered_map<std::string, std::size_t> m_controlIndexById;
+    std::unordered_map<std::string, synth::ui::NodeId> m_nearestRootByNodeId;
     std::vector<std::size_t> m_drawNodeIndices;
     std::vector<synth::ui::NodeId> m_renderedNodeIds;
     bool m_suppressActionDispatch = false;

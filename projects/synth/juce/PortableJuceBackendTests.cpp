@@ -118,6 +118,39 @@ int main()
     Require(surface.lastAction.value == "b2", "combo dispatches refreshed option id");
 
     {
+        RecordingSurface compositeSurface;
+        synth::ui::Builder compositeBuilder;
+        compositeBuilder.Root("runtime.main.root", synth::ui::Bounds{0.0f, 0.0f, 996.0f, 240.0f})
+            .Root("app.root", synth::ui::Bounds{0.0f, 0.0f, 900.0f, 240.0f});
+        for (int index = 0; index < 12; ++index)
+        {
+            compositeBuilder.Button("app.control." + std::to_string(index),
+                                    "App",
+                                    synth::ui::Action::Named("app.control"));
+        }
+        compositeBuilder.Root("runtime.sidebar.root", synth::ui::Bounds{900.0f, 0.0f, 96.0f, 240.0f})
+            .Button("runtime.sidebar.control", "Side", synth::ui::Action::Named("runtime.sidebar"));
+        compositeSurface.tree = compositeBuilder.Build();
+        compositeSurface.tree.nodes.front().children = {
+            synth::ui::NodeId("app.root"), synth::ui::NodeId("runtime.sidebar.root")};
+
+        synth_juce::PortableComponent compositeComponent(compositeSurface);
+        compositeComponent.setSize(996, 240);
+        compositeComponent.RefreshFromSurface();
+
+        const juce::Component* firstAppControl = compositeComponent.FindByNodeId("app.control.0");
+        const juce::Component* wrappedAppControl = compositeComponent.FindByNodeId("app.control.11");
+        const juce::Component* sidebarControl = compositeComponent.FindByNodeId("runtime.sidebar.control");
+        Require(firstAppControl != nullptr && wrappedAppControl != nullptr && sidebarControl != nullptr,
+                "composite controls are hosted");
+        Require(wrappedAppControl->getX() == firstAppControl->getX() &&
+                    wrappedAppControl->getY() > firstAppControl->getY(),
+                "unbounded app controls wrap within the nested 900-pixel app root");
+        Require(sidebarControl->getX() == 900 + firstAppControl->getX(),
+                "unbounded sidebar control flows from the nested sidebar root at x 900");
+    }
+
+    {
         RecordingSurface dragSurface;
         synth::ui::Builder dragBuilder;
         dragBuilder.Root("root", synth::ui::Bounds{0.0f, 0.0f, 320.0f, 240.0f})

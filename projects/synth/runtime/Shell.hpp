@@ -50,17 +50,13 @@ namespace synth_runtime {
 template <synth::SynthApplication App>
 class ShellComponent : public juce::Component {
 public:
-    explicit ShellComponent(Runtime<App>& runtime) : runtime_(runtime), mainPane_(runtime) {
+    explicit ShellComponent(Runtime<App>& runtime) : mainPane_(runtime) {
         addAndMakeVisible(mainPane_);
     }
 
     // Called by Runtime's timer-driven repaint hook (wired in the
     // application wrapper's initialise(), after Start()) once per UI frame.
-    // Writes this tick's deadline sample (sru-2 binding) before repainting,
-    // so the sidebar's rolling-max label is always current by the time this
-    // hook's repaint takes effect.
     void RepaintAll() {
-        mainPane_.WriteDeadlineSample(runtime_.DeadlineSamplePct());
         mainPane_.RefreshOnTick();
         mainPane_.repaint();
     }
@@ -70,7 +66,6 @@ public:
     MainPane<App>& GetMainPane() { return mainPane_; }
 
 private:
-    Runtime<App>& runtime_;
     MainPane<App> mainPane_;
 };
 
@@ -87,6 +82,8 @@ public:
         }
         runtime_->Start();
         shell_ = std::make_unique<ShellComponent<App>>(*runtime_);
+        const synth::ui::Bounds bounds = shell_->GetMainPane().IntrinsicBounds();
+        shell_->setSize(static_cast<int>(bounds.width), static_cast<int>(bounds.height));
         runtime_->SetRepaintHook([shell = shell_.get()] { shell->RepaintAll(); });
     }
 
@@ -131,9 +128,7 @@ public:
             runtime_ = std::make_unique<Runtime<App>>();
             runtime_->Start();
 
-            const synth::RuntimeConfig config = App::Config();
-            window_ = std::make_unique<MainWindow>(juce::String(config.appName), config.uiWidth, config.uiHeight,
-                                                   *runtime_);
+            window_ = std::make_unique<MainWindow>(juce::String(App::Config().appName), *runtime_);
         } catch (const std::exception& e) {
             INFO("ShellApplication::initialise failed: %s", e.what());
             if (runtime_) {
@@ -166,11 +161,14 @@ public:
 private:
     class MainWindow final : public juce::DocumentWindow {
     public:
-        MainWindow(juce::String name, int width, int height, Runtime<App>& runtime)
+        MainWindow(juce::String name, Runtime<App>& runtime)
             : DocumentWindow(std::move(name), juce::Colours::black, DocumentWindow::allButtons) {
             setUsingNativeTitleBar(true);
             auto* shell = new ShellComponent<App>(runtime);
             setContentOwned(shell, false);
+            const synth::ui::Bounds bounds = shell->GetMainPane().IntrinsicBounds();
+            const int width = static_cast<int>(bounds.width);
+            const int height = static_cast<int>(bounds.height);
             setSize(width, height);
             centreWithSize(width, height);
             setVisible(true);
