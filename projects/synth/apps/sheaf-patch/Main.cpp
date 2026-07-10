@@ -1,4 +1,5 @@
 #include "Launcher.hpp"
+#include "Dresden4Registration.hpp"
 #include "HostDataPaths.hpp"
 #include "MiniAppRegistration.hpp"
 #include "Shell.hpp"
@@ -30,6 +31,9 @@ public:
             std::vector<synth::SynthAppRegistration> apps;
             apps.push_back(synth_miniapp::MakeMiniAppRegistration([this](synth::RuntimeDataPaths paths) {
                 LaunchRegisteredApp<synth_miniapp::MiniApp>(std::move(paths));
+            }));
+            apps.push_back(synth_dresden4::MakeDresden4Registration([this](synth::RuntimeDataPaths paths) {
+                LaunchRegisteredApp<synth_dresden4::Dresden4>(std::move(paths));
             }));
 
             launcher_ = std::make_unique<LauncherComponent>(std::move(apps), dataRoot_);

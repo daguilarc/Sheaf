@@ -1,5 +1,6 @@
 #include "Launcher.hpp"
 
+#include "Dresden4Registration.hpp"
 #include "MiniAppRegistration.hpp"
 #include "Shell.hpp"
 #include "synth/AppRegistry.hpp"
@@ -65,6 +66,35 @@ int main() {
     }
 
     {
+        const auto manifest = synth_dresden4::Dresden4Manifest();
+        Require(manifest.appId == "dresden-4", "dresden manifest exposes stable app id");
+        Require(manifest.displayName == "Dresden 4", "dresden manifest exposes display name");
+        Require(manifest.author == "Sheaf", "dresden manifest exposes author");
+        Require(manifest.category == "synth", "dresden manifest exposes category");
+        Require(manifest.hardware.minEncoders == 16, "dresden manifest exposes minimum encoders");
+    }
+
+    {
+        using Dresden4OwnerFactoryResult =
+            decltype(synth_runtime::MakeRuntimeSessionOwner<synth_dresden4::Dresden4>(
+                std::declval<synth::RuntimeDataPaths>()));
+        static_assert(std::is_same_v<Dresden4OwnerFactoryResult,
+                                     std::unique_ptr<synth_runtime::RuntimeSessionOwner>>);
+
+        std::function<std::unique_ptr<synth_runtime::RuntimeSessionOwner>(synth::RuntimeDataPaths)>
+            dresdenOwnerFactory = [](synth::RuntimeDataPaths paths) {
+                return synth_runtime::MakeRuntimeSessionOwner<synth_dresden4::Dresden4>(std::move(paths));
+            };
+
+        auto owner = dresdenOwnerFactory(synth::RuntimeDataPaths::FromDataRoot(
+            std::filesystem::temp_directory_path() / "sheaf-patch-dresden-owner-test"));
+        Require(owner != nullptr,
+                "dresden registration can construct through the generic runtime session owner factory");
+        Require(dynamic_cast<synth_runtime::ShellComponent<synth_dresden4::Dresden4>*>(&owner->Component()) != nullptr,
+                "dresden registration owner exposes a component through the generic interface");
+    }
+
+    {
         std::vector<synth::SynthAppRegistration> apps;
         apps.push_back(TestRegistration("zeta", "Zeta", "test"));
         apps.push_back(TestRegistration("alpha", "Alpha", "tools"));
@@ -102,6 +132,35 @@ int main() {
                 "launcher passes shared Sheaf Patch config path");
         Require(launchedPaths.patchesRoot == std::filesystem::path("data/synth/sheaf-patch/patches/miniapp"),
                 "launcher passes selected app patch root");
+    }
+
+    {
+        bool dresdenLaunched = false;
+        synth::RuntimeDataPaths dresdenPaths;
+        auto dresden = synth_dresden4::MakeDresden4Registration([&](synth::RuntimeDataPaths paths) {
+            dresdenLaunched = true;
+            dresdenPaths = std::move(paths);
+        });
+        auto miniapp = synth_miniapp::MakeMiniAppRegistration([](synth::RuntimeDataPaths) {});
+
+        synth_sheaf_patch::LauncherComponent launcher({std::move(miniapp), std::move(dresden)}, "data");
+        auto* row = launcher.RowButtonForTesting("dresden-4");
+
+        Require(launcher.AppCountForTesting() == 2, "sheaf patch launcher exposes miniapp and dresden");
+        Require(launcher.AppIdForTesting(0) == "dresden-4", "sheaf patch launcher sorts dresden before miniapp");
+        Require(launcher.AppIdForTesting(1) == "miniapp", "sheaf patch launcher keeps miniapp after dresden");
+        Require(row != nullptr, "dresden row button exists");
+        Require(launcher.RowTextForTesting("dresden-4") ==
+                    "Dresden 4 | Author: Sheaf | Category: synth | Minimum encoders: 16",
+                "dresden row shows formatted metadata");
+
+        row->onClick();
+
+        Require(dresdenLaunched, "dresden row activation invokes selected launch binding");
+        Require(dresdenPaths.configFile == std::filesystem::path("data/synth/sheaf-patch/config"),
+                "launcher passes shared Sheaf Patch config path for dresden");
+        Require(dresdenPaths.patchesRoot == std::filesystem::path("data/synth/sheaf-patch/patches/dresden-4"),
+                "launcher passes dresden app patch root");
     }
 
     std::cout << "LauncherHarnessTests passed\n";

@@ -233,6 +233,13 @@ component should contain only its bespoke widgets; patch commands and MIDI
 device/controller configuration are runtime-owned pages, not app code (see
 `projects/synth/apps/miniapp/README.md` for a concrete example).
 
+`projects/synth/apps/dresden-4/` is an exception to the standalone app target
+pattern: Dresden 4 is Sheaf Patch-only and is launched from the Sheaf Patch app
+registry rather than from its own `Main.cpp`/Makefile target. Its internal audio
+graph runs oscillator, modulation, and matrix processing at 4× the host sample
+rate, then applies the final 4:1 FIR decimation stage at the output edge before
+returning audio to the host-rate runtime.
+
 The runtime owns long-lived app data through `synth::RuntimeDataPaths`. In
 production `Runtime<App>` resolves an OS application-data root under
 `Sheaf/<appName>` and creates `patches/`, `logs/`, and `config.json`. Tests can
@@ -277,6 +284,7 @@ targets:
 
 ```text
 make miniapp   # delegates to `make -C apps/miniapp`
+make sheaf-patch
 make apps      # same thing, explicit about the apps/ layout
 ```
 
