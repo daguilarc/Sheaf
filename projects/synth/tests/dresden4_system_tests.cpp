@@ -109,7 +109,7 @@ TEST_CASE(initializes_parameter_groups_banks_slot_and_scene_endpoints) {
     synth_rig::SynthRig<synth_dresden4::Dresden4Core> rig(
         64,
         UseScratchRuntimeDataPaths("initializes_parameter_groups_banks_slot_and_scene_endpoints"));
-    auto& core = rig.Engine().App();
+    auto& core = rig.Engine().Application();
 
     REQUIRE_TRUE(rig.Engine().Manager().NumGroups() == 3);
     REQUIRE_TRUE(core.StereoGroup() != nullptr);
@@ -136,7 +136,7 @@ TEST_CASE(dresden_and_matrix_banks_expose_required_encoder_cells) {
     synth_rig::SynthRig<synth_dresden4::Dresden4Core> rig(
         64,
         UseScratchRuntimeDataPaths("dresden_and_matrix_banks_expose_required_encoder_cells"));
-    auto& core = rig.Engine().App();
+    auto& core = rig.Engine().Application();
     auto& slot = *core.BankSlot();
 
     REQUIRE_TRUE(core.MonoGroup()->ParameterCount() == 24);
@@ -149,12 +149,12 @@ TEST_CASE(dresden_and_matrix_banks_expose_required_encoder_cells) {
             REQUIRE_TRUE(dresdenParam == nullptr);
         } else {
             REQUIRE_TRUE(dresdenParam != nullptr);
-            REQUIRE_TRUE(dresdenParam->GetColor() == synth::Color::Red);
+            REQUIRE_TRUE(dresdenParam->ParamColor() == synth::Color::Red);
         }
 
         const synth::Parameter* matrixParam = core.MatrixBank()->VisibleParameter(encoderId);
         REQUIRE_TRUE(matrixParam != nullptr);
-        REQUIRE_TRUE(matrixParam->GetColor() == synth::Color::Red);
+        REQUIRE_TRUE(matrixParam->ParamColor() == synth::Color::Red);
     }
 
     REQUIRE_TRUE(core.MatrixModule().Parameters()[0] == core.MonoGroup()->ParameterByLocalIndex(8).Id());
@@ -165,7 +165,7 @@ TEST_CASE(matrix_sources_materialize_quad_modulator_values_for_four_voices) {
     synth_rig::SynthRig<synth_dresden4::Dresden4Core> rig(
         64,
         UseScratchRuntimeDataPaths("matrix_sources_materialize_quad_modulator_values_for_four_voices"));
-    auto& core = rig.Engine().App();
+    auto& core = rig.Engine().Application();
 
     core.SetRawMatrixOutputForTest(0, -2.0f);
     core.SetRawMatrixOutputForTest(1, -1.0f);
@@ -187,12 +187,13 @@ TEST_CASE(matrix_sources_materialize_quad_modulator_values_for_four_voices) {
 
 TEST_CASE(prepares_four_x_internal_rate_and_sequences_internal_subframes) {
     synth::RuntimeConfig config = synth_dresden4::Dresden4Core::Config();
-    synth::Engine<synth_dresden4::Dresden4Core> engine;
+    std::uint64_t timestamp = 0;
+    synth::Engine<synth_dresden4::Dresden4Core> engine([&timestamp] { return timestamp++; });
     engine.Initialize();
 
     for (const double hostRate : {44100.0, 48000.0, 96000.0}) {
         engine.Prepare(hostRate, config.preferredBlockSize);
-        auto& core = engine.App();
+        auto& core = engine.Application();
         REQUIRE_NEAR(core.HostSampleRate(), hostRate, 0.000001);
         REQUIRE_NEAR(core.InternalSampleRate(), hostRate * 4.0, 0.000001);
         REQUIRE_TRUE(core.DresdenModule().SampleRate() == static_cast<float>(hostRate * 4.0));
@@ -208,12 +209,12 @@ TEST_CASE(prepares_four_x_internal_rate_and_sequences_internal_subframes) {
         .startSample = 100,
     };
 
-    engine.Process(block);
-    const auto& counters = engine.App().DebugCounters();
+    engine.ProcessBlock(block, timestamp++);
+    const auto& counters = engine.Application().DebugCounters();
     REQUIRE_TRUE(counters.hostFramesProcessed == left.size());
     REQUIRE_TRUE(counters.internalSubframesProcessed == left.size() * 4);
-    REQUIRE_TRUE(counters.firstInternalSampleIndex == 400);
-    REQUIRE_TRUE(counters.lastInternalSampleIndex == 431);
+    REQUIRE_TRUE(counters.firstInternalSampleIndex == 0);
+    REQUIRE_TRUE(counters.lastInternalSampleIndex == 31);
 }
 
 TEST_CASE(runs_finite_non_silent_stereo_audio_after_decimation) {

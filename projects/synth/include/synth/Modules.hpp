@@ -289,7 +289,7 @@ public:
                                                                                          .shortName = MatrixShortName(row, column),
                                                                                          .defaultValue = row == column ? 1.0f : 0.0f,
                                                                                          .range = RangeKind::Bipolar,
-                                                                                         .color = Color::Grey,
+                                                                                         .color = Color::Red,
                                                                                      });
             }
         }
