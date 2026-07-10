@@ -199,6 +199,22 @@ void TestNameFallbackUpdatesStoredReferencesThroughTheBridge()
     bridge.Stop();
 }
 
+void TestLatestDeviceListMatchesSubmittedEndpoints()
+{
+    FakeEngine engine;
+    Bridge bridge(engine);
+
+    bridge.SubmitEndpoints(Endpoints());
+    const synth::MidiDeviceList devices = bridge.LatestDeviceList();
+
+    Require(devices.inputs.size() == 2, "latest device list retains both inputs");
+    Require(devices.outputs.size() == 2, "latest device list retains both outputs");
+    Require(devices.inputs[0].identifier == "in-a", "first input identifier retained");
+    Require(devices.inputs[1].name == "Input B", "second input name retained");
+    Require(devices.outputs[0].identifier == "out-a", "first output identifier retained");
+    Require(devices.outputs[1].name == "Output B", "second output name retained");
+}
+
 }  // namespace
 
 int main()
@@ -207,5 +223,6 @@ int main()
     TestIncomingAndOutgoingSysexStayOnSelectedControllerSlot();
     TestOfflineSlotDoesNotRemapAnotherSelectedSlot();
     TestNameFallbackUpdatesStoredReferencesThroughTheBridge();
+    TestLatestDeviceListMatchesSubmittedEndpoints();
     return 0;
 }

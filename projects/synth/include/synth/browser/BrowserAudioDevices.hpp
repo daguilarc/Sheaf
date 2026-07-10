@@ -3,6 +3,8 @@
 #include "synth/PatchPersistence.hpp"
 #include "synth/RuntimePages.hpp"
 
+#include <stdexcept>
+
 namespace synth_browser {
 
 inline synth::runtime_ui::AudioPageSnapshot BuildBrowserAudioSnapshot(const synth::AudioDeviceState&)
@@ -18,7 +20,11 @@ inline synth::runtime_ui::AudioPageSnapshot BuildBrowserAudioSnapshot(const synt
 
 inline std::string BrowserOutputDeviceName(const std::string& optionId)
 {
-    return synth::runtime_ui::Layout::DeviceNameFromOptionId(optionId);
+    if (optionId != synth::runtime_ui::kSystemDefaultOptionId)
+    {
+        throw std::invalid_argument("browser audio supports only system_default output");
+    }
+    return {};
 }
 
 }  // namespace synth_browser

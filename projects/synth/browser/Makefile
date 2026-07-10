@@ -37,10 +37,10 @@ browser-miniapp-smoke: browser-fake-app-test
 $(BROWSER_BUILD_DIR) $(EM_CACHE):
 	mkdir -p $@
 
-$(BROWSER_BUILD_DIR)/fake_browser_app.js: cpp/fake_app_entry.cpp cpp/BrowserRuntimeAbi.cpp cpp/FakeBrowserApp.hpp ../include/synth/browser/BrowserAppEntry.hpp ../include/synth/browser/BrowserRuntime.hpp ../include/synth/browser/BrowserCommandBuffer.hpp ../include/synth/browser/BrowserMidiBridge.hpp $(CORE_SOURCES) | $(BROWSER_BUILD_DIR) $(EM_CACHE)
+$(BROWSER_BUILD_DIR)/fake_browser_app.js: cpp/fake_app_entry.cpp cpp/BrowserRuntimeAbi.cpp cpp/FakeBrowserApp.hpp ../include/synth/browser/BrowserAppEntry.hpp ../include/synth/browser/BrowserRuntime.hpp ../include/synth/browser/BrowserRuntimeMainServices.hpp ../include/synth/browser/BrowserAudioDevices.hpp ../include/synth/browser/BrowserCommandBuffer.hpp ../include/synth/browser/BrowserMidiBridge.hpp ../include/synth/RuntimeMainComponent.hpp $(CORE_SOURCES) | $(BROWSER_BUILD_DIR) $(EM_CACHE)
 	EM_CACHE=$(EM_CACHE) $(EMXX) $(CPPFLAGS) $(CXXFLAGS) $(PTHREAD_FLAGS) $(FILESYSTEM_FLAGS) $(CORE_SOURCES) cpp/BrowserRuntimeAbi.cpp cpp/fake_app_entry.cpp -sMODULARIZE=1 -sEXPORT_ES6=1 -sENVIRONMENT=worker -sWASM_BIGINT -sEXPORTED_FUNCTIONS=$(EXPORTED_FUNCTIONS) -sEXPORTED_RUNTIME_METHODS=$(EXPORTED_RUNTIME_METHODS) -o $@
 	cp $@ $(BROWSER_BUILD_DIR)/app.js
 
-$(BROWSER_BUILD_DIR)/miniapp.js: cpp/miniapp_entry.cpp ../apps/miniapp/MiniApp.hpp cpp/BrowserRuntimeAbi.cpp ../include/synth/browser/BrowserAppEntry.hpp ../include/synth/browser/BrowserRuntime.hpp ../include/synth/browser/BrowserCommandBuffer.hpp ../include/synth/browser/BrowserMidiBridge.hpp $(CORE_SOURCES) | $(BROWSER_BUILD_DIR) $(EM_CACHE)
+$(BROWSER_BUILD_DIR)/miniapp.js: cpp/miniapp_entry.cpp ../apps/miniapp/MiniApp.hpp cpp/BrowserRuntimeAbi.cpp ../include/synth/browser/BrowserAppEntry.hpp ../include/synth/browser/BrowserRuntime.hpp ../include/synth/browser/BrowserRuntimeMainServices.hpp ../include/synth/browser/BrowserAudioDevices.hpp ../include/synth/browser/BrowserCommandBuffer.hpp ../include/synth/browser/BrowserMidiBridge.hpp ../include/synth/RuntimeMainComponent.hpp $(CORE_SOURCES) | $(BROWSER_BUILD_DIR) $(EM_CACHE)
 	EM_CACHE=$(EM_CACHE) $(EMXX) $(CPPFLAGS) $(CXXFLAGS) $(PTHREAD_FLAGS) $(FILESYSTEM_FLAGS) $(CORE_SOURCES) cpp/BrowserRuntimeAbi.cpp cpp/miniapp_entry.cpp -sMODULARIZE=1 -sEXPORT_ES6=1 -sENVIRONMENT=worker -sWASM_BIGINT -sEXPORTED_FUNCTIONS=$(EXPORTED_FUNCTIONS) -sEXPORTED_RUNTIME_METHODS=$(EXPORTED_RUNTIME_METHODS) -o $@
 	cp $@ $(BROWSER_BUILD_DIR)/app.js

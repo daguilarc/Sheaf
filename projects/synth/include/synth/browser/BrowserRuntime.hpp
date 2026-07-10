@@ -1,9 +1,11 @@
 #pragma once
 
 #include "synth/Engine.hpp"
+#include "synth/RuntimeMainComponent.hpp"
 #include "synth/browser/BrowserCommandBuffer.hpp"
 #include "synth/browser/BrowserMidiBridge.hpp"
 #include "synth/browser/BrowserPersistence.hpp"
+#include "synth/browser/BrowserRuntimeMainServices.hpp"
 
 #include <atomic>
 #include <cstddef>
@@ -22,6 +24,8 @@ public:
     Runtime()
         : engine_([this] { return timestampMicros_.load(std::memory_order_relaxed); })
         , midiBridge_(engine_)
+        , services_(engine_, midiBridge_)
+        , mainComponent_(engine_.Application(), services_)
     {
     }
 
@@ -59,6 +63,7 @@ public:
             throw std::out_of_range("browser block size exceeds engine range");
         }
         engine_.Prepare(sampleRate, static_cast<int>(blockSize));
+        services_.RecordAudioNegotiation(sampleRate, blockSize);
     }
 
     void Process(float** outputs, std::size_t outputChannels, std::size_t frames, std::uint64_t timestampMicros)
@@ -80,18 +85,19 @@ public:
         RequireStarted();
         this->timestampMicros_.store(timestampMicros, std::memory_order_relaxed);
         engine_.MessageThreadTick();
+        mainComponent_.Refresh();
     }
 
     CommandBuffer BuildUiFrame()
     {
         RequireStarted();
-        return SerializeNodeTree(engine_.Application().PortableSurface().BuildTree());
+        return SerializeNodeTree(mainComponent_.BuildTree());
     }
 
     void DispatchAction(std::string name, std::string value)
     {
         RequireStarted();
-        engine_.Application().PortableSurface().DispatchAction(
+        mainComponent_.DispatchAction(
             synth::ui::Action::WithValue(std::move(name), std::move(value)));
     }
 
@@ -139,6 +145,8 @@ private:
     std::atomic<std::uint64_t> timestampMicros_{0};
     synth::Engine<App> engine_;
     BrowserMidiBridge<synth::Engine<App>> midiBridge_;
+    BrowserRuntimeMainServices<App> services_;
+    synth::runtime_ui::RuntimeMainComponent<App, BrowserRuntimeMainServices<App>> mainComponent_;
     bool started_ = false;
     bool stopped_ = false;
 };

@@ -97,6 +97,7 @@ public:
                 present.outputs.push_back(ref);
             }
         }
+        latestDeviceList_ = present;
 
         const synth::ReconcilePlan plan = synth::PlanMidiReconciliation(instrument, present, state_);
         synth::MidiEndpointOps ops;
@@ -195,6 +196,7 @@ public:
     }
 
     const synth::MidiConnectionState& ConnectionState() const { return state_; }
+    synth::MidiDeviceList LatestDeviceList() const { return latestDeviceList_; }
 
 private:
     class OutputSink final : public synth::IMidiOutputSink {
@@ -268,6 +270,7 @@ private:
     }
 
     EngineType& engine_;
+    synth::MidiDeviceList latestDeviceList_;
     synth::MidiConnectionState state_;
     std::vector<std::unique_ptr<OutputSink>> outputSinks_;
     std::deque<Action> actions_;
