@@ -24,6 +24,14 @@ const frame = makeCommandBuffer([
   ] },
 ]);
 
+test.beforeEach(async ({ page }) => {
+  await page.route("**/dist/src/main.js", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/javascript",
+    body: "",
+  }));
+});
+
 test("renders portable controls, canvas draws, and reachable scroll content", async ({ page }) => {
   await page.goto("http://127.0.0.1:4173/public/index.html");
   await page.evaluate(async (bytes) => {

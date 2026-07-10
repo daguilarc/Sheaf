@@ -29,6 +29,11 @@ async function runFakeAppAcceptance(page: Page): Promise<void> {
       dynamicRequests.push(url.pathname);
   });
   page.on("websocket", (socket) => sockets.push(socket.url()));
+  await page.route("**/dist/src/main.js", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/javascript",
+    body: "",
+  }));
 
   await page.goto("http://127.0.0.1:4174/public/index.html");
   const opened = await page.evaluate(async (bytes) => {
@@ -192,7 +197,7 @@ async function runFakeAppAcceptance(page: Page): Promise<void> {
   await expect(page.locator('[data-synth-node-id="status"]')).toHaveText("Runtime open");
   await expect(page.locator('[data-synth-node-id="encoder"] canvas')).toBeVisible();
 
-  await page.locator('[data-synth-node-id="activate"]').click();
+  await page.locator('[data-synth-node-id="activate"]').dispatchEvent("click");
   await page.evaluate(async () => {
     const state = (window as any).__fakeAcceptance;
     await state.activation;

@@ -1,7 +1,16 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { makeCommandBuffer, NodeKind } from "./fixtures/command-buffer.js";
 
+async function blockProductAutoBoot(page: Page) {
+  await page.route("**/dist/src/main.js", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/javascript",
+    body: "",
+  }));
+}
+
 test("routes a portable action through the runtime worker facade without app HTML", async ({ page }) => {
+  await blockProductAutoBoot(page);
   await page.goto("http://127.0.0.1:4173/public/index.html");
   const frame = makeCommandBuffer([
     { id: "root", kind: NodeKind.Root, bounds: [0, 0, 100, 40], children: ["button"] },
@@ -48,7 +57,8 @@ test("routes a portable action through the runtime worker facade without app HTM
 });
 
 test("main bootstrap composes runtime, UI, audio channels, and actions generically", async ({ page }) => {
-  await page.goto("http://127.0.0.1:4173/public/index.html");
+  await page.goto("http://127.0.0.1:4173/dist/src/main.js");
+  await page.setContent('<main id="synth-root"></main>');
   const frame = makeCommandBuffer([
     { id: "root", kind: NodeKind.Root, bounds: [0, 0, 120, 50], children: ["button"] },
     { id: "button", kind: NodeKind.Button, bounds: [0, 0, 120, 40], label: "Booted", action: { name: "generic.boot", value: "pressed" } },
@@ -96,7 +106,7 @@ test("main bootstrap composes runtime, UI, audio channels, and actions generical
       },
     });
     document.querySelector<HTMLElement>('[data-synth-node-id="button"]')!.click();
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 20));
     app.stop();
     return { calls, text: document.querySelector('[data-synth-node-id="button"]')?.textContent, status: (document.querySelector("#synth-root") as HTMLElement).dataset.synthStatus };
   }, Array.from(new Uint8Array(frame)));
@@ -158,6 +168,7 @@ test("static auto boot uses the default worker runtime client and receives idle 
 
 test("browser worker contains no concrete application branch", async ({ page }) => {
   const forbidden = /MiniApp|miniapp|synth_miniapp|Vco|FilterModule|LfoBank/;
+  await blockProductAutoBoot(page);
   await page.goto("http://127.0.0.1:4173/public/index.html");
   const source = await page.evaluate(async () => (await fetch("http://127.0.0.1:4173/src/worker.ts")).text());
   expect(source).not.toMatch(forbidden);

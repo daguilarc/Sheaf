@@ -99,6 +99,11 @@ test("miniapp real-WASM smoke reuses only the generic browser runtime", async ({
   test.skip(artifact.status() === 404, "miniapp WASM artifact is unavailable; run make browser-miniapp-smoke with Emscripten");
   expect(artifact.ok()).toBe(true);
 
+  await page.route("**/dist/src/main.js", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/javascript",
+    body: "",
+  }));
   await page.goto("http://127.0.0.1:4174/public/index.html");
   const result = await page.evaluate(async () => {
     const { BrowserUiBackend, decodeCommandBuffer } = await (new Function("return import('/dist/src/ui.js')")() as Promise<any>);
@@ -111,7 +116,7 @@ test("miniapp real-WASM smoke reuses only the generic browser runtime", async ({
         if (event.data.type !== expected && event.data.type !== "error") return;
         clearTimeout(timer);
         runtime.removeEventListener("message", receive);
-        event.data.type === "error" ? reject(new Error(event.data.error)) : resolve(event.data);
+        event.data.type === "error" ? reject(new Error(`${(command as { type?: string }).type}: ${event.data.error}`)) : resolve(event.data);
       };
       runtime.addEventListener("message", receive);
       runtime.postMessage(command);

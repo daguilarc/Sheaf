@@ -56,8 +56,8 @@ export interface RuntimeModuleFacade {
 export type RuntimeModuleLoader = (moduleUrl?: string) => Promise<RuntimeModuleFacade>;
 
 type EmscriptenModule = {
-  FS: Omit<BrowserFileSystem, "filesystems">;
-  IDBFS: unknown;
+  FS: BrowserFileSystem;
+  IDBFS?: unknown;
   HEAPU8: Uint8Array;
   HEAPF32: Float32Array;
   _malloc(size: number): number;
@@ -206,8 +206,10 @@ export const loadEmscriptenRuntime: RuntimeModuleLoader = async (moduleUrl) => {
   const factory = imported.default ?? imported.createSynthBrowserModule;
   if (!factory) throw new Error("runtime module does not export an Emscripten factory");
   const module = await factory();
+  const idbfs = module.IDBFS ?? module.FS.filesystems?.IDBFS;
+  if (!idbfs) throw new Error("runtime module does not include IDBFS");
   return { ...emscriptenRuntimeFacade(module), filesystem: {
-    filesystems: { IDBFS: module.IDBFS },
+    filesystems: { IDBFS: idbfs },
     mkdir: (path) => module.FS.mkdir(path),
     mount: (type, options, path) => module.FS.mount(type, options, path),
     syncfs: (populate, complete) => module.FS.syncfs(populate, complete),
