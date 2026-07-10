@@ -278,12 +278,12 @@ export class BrowserRuntimeWorker {
         }
         case "message-tick":
           return this.call((module, handle) => module.messageTick(handle, command.timestampMicros));
-        case "build-ui-frame": {
-          const frame = await this.callValue((module, handle) => module.buildUiFrame(handle));
-          return { type: "ui-frame", frame: Array.from(new Uint8Array(frame)) };
+        case "build-ui-frame":
+          return this.buildUiFrameResponse();
+        case "dispatch-action": {
+          await this.call((module, handle) => module.dispatchAction(handle, command.name, command.value));
+          return this.buildUiFrameResponse();
         }
-        case "dispatch-action":
-          return this.call((module, handle) => module.dispatchAction(handle, command.name, command.value));
         case "midi-endpoints": {
           const module = this.requireModule();
           const handle = this.requireHandle();
@@ -326,6 +326,11 @@ export class BrowserRuntimeWorker {
 
   private async callValue<T>(operation: (module: RuntimeModuleFacade, handle: number) => T): Promise<T> {
     return operation(this.requireModule(), this.requireHandle());
+  }
+
+  private async buildUiFrameResponse(): Promise<RuntimeResponse> {
+    const frame = await this.callValue((module, handle) => module.buildUiFrame(handle));
+    return { type: "ui-frame", frame: Array.from(new Uint8Array(frame)) };
   }
 
   private requireModule(): RuntimeModuleFacade {

@@ -64,7 +64,7 @@ export class BrowserUiBackend {
       this.elements.delete(id);
     }
     const rootNode = resolved.rootId ? nodes.get(resolved.rootId) : undefined;
-    this.root.replaceChildren(...(rootNode ? [this.elementFor(rootNode)] : []));
+    this.replaceChildrenIfChanged(this.root, rootNode ? [this.elementFor(rootNode)] : []);
     for (const node of frame.nodes)
       if (node.kind === NodeKind.Root || node.kind === NodeKind.Row || node.kind === NodeKind.Section || node.kind === NodeKind.ScrollArea)
         this.attachChildren(node, nodes);
@@ -214,7 +214,13 @@ export class BrowserUiBackend {
   private attachChildren(node: Node, nodes: Map<string, Node>) {
     const element = this.elementFor(node);
     const parent = element.scrollContent ?? element;
-    parent.replaceChildren(...node.children.map((child) => this.elementFor(nodes.get(child)!)));
+    this.replaceChildrenIfChanged(parent, node.children.map((child) => this.elementFor(nodes.get(child)!)));
+  }
+
+  private replaceChildrenIfChanged(parent: HTMLElement, children: HTMLElement[]) {
+    const current = Array.from(parent.children);
+    if (current.length === children.length && current.every((child, index) => child === children[index])) return;
+    parent.replaceChildren(...children);
   }
 
   private dispatchValue(element: NodeElement, value?: string) { const action = element.synthNode?.action; if (action) this.dispatchBrowserAction({ name: action.name, value: value ?? action.value }); }

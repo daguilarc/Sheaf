@@ -64,3 +64,54 @@ test("starts a worklet from user activation and copies finite non-silent samples
   expect(result.samples.slice(3, 5)).toEqual([0, 0]);
   expect(result.available).toBe(0);
 });
+
+test("real miniapp WASM renders four finite non-silent audio blocks", async ({ page }) => {
+  await page.route("**/dist/src/main.js*", (route) => {
+    if (new URL(route.request().url()).search) return route.continue();
+    return route.fulfill({ status: 200, contentType: "application/javascript", body: "" });
+  });
+  await page.goto("http://127.0.0.1:4174/public/index.html");
+  const blocks = await page.evaluate(async () => {
+    const { SharedRingBuffer } = await (new Function("return import('/dist/src/protocol.js')")() as Promise<any>);
+    const worker = new Worker("/dist/src/worker.js", { type: "module" });
+    const request = (command: unknown, expected: string) => new Promise<any>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error(`timed out waiting for ${expected}`)), 10_000);
+      const receive = (event: MessageEvent<any>) => {
+        if (event.data.type === "page-status") return;
+        if (event.data.type !== expected && event.data.type !== "error") return;
+        clearTimeout(timeout);
+        worker.removeEventListener("message", receive);
+        event.data.type === "error" ? reject(new Error(event.data.error)) : resolve(event.data);
+      };
+      worker.addEventListener("message", receive);
+      worker.postMessage(command);
+    });
+    await request({ type: "load", moduleUrl: new URL("/dist/wasm/miniapp.js", location.href).href }, "ok");
+    await request({ type: "create" }, "created");
+    await request({ type: "initialize", dataRoot: "/data" }, "ok");
+    const ring = SharedRingBuffer.create(2, 1024);
+    await request({ type: "configure-audio", sampleRate: 48_000, blockSize: 128, bridge: ring.descriptor() }, "ok");
+    await request({ type: "midi-input", controllerIx: 0, bytes: [0x90, 60, 100], timestampMicros: 1_000 }, "ok");
+    for (let block = 0; block < 4; block += 1)
+      await request({ type: "render-audio", timestampMicros: 2_000 + block * 2_667 }, "ok");
+    const samples = new Float32Array(ring.descriptor().samples);
+    const rendered = Array.from({ length: 2 }, (_, channel) =>
+      Array.from({ length: 4 }, (_, block) => {
+        const start = channel * 1024 + block * 128;
+        return Array.from(samples.slice(start, start + 128));
+      }));
+    await request({ type: "destroy" }, "destroyed");
+    worker.terminate();
+    return rendered;
+  });
+
+  expect(blocks).toHaveLength(2);
+  for (const channel of blocks) {
+    expect(channel).toHaveLength(4);
+    for (const block of channel) {
+      expect(block).toHaveLength(128);
+      expect(block.every(Number.isFinite)).toBe(true);
+      expect(block.some((sample) => sample !== 0)).toBe(true);
+    }
+  }
+});

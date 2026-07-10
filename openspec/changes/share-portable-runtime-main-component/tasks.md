@@ -24,9 +24,9 @@
 
 ## 5. Browser Integration Verification
 
-- [ ] 5.1 Extend Playwright fake-app coverage for shared sidebar/page navigation, app actions, pointer gestures, desktop and narrow visual screenshots, and static-site-only startup.
-- [ ] 5.2 Extend real-WASM miniapp coverage to assert complete app/sidebar rendering, finite non-silent audio, bidirectional SysEx MIDI, multiple devices, polling/reconnect, and generic runtime reuse.
-- [ ] 5.3 Build the JUCE app and browser miniapp, compare fresh desktop/browser screenshots, and correct remaining generic layout or interaction discrepancies.
+- [x] 5.1 Extend Playwright fake-app coverage for shared sidebar/page navigation, app actions, pointer gestures, desktop and narrow visual screenshots, and static-site-only startup.
+- [x] 5.2 Extend real-WASM miniapp coverage to assert complete app/sidebar rendering, finite non-silent audio, bidirectional SysEx MIDI, multiple devices, polling/reconnect, and generic runtime reuse.
+- [x] 5.3 Build the JUCE app and browser miniapp, compare fresh desktop/browser screenshots, and correct remaining generic layout or interaction discrepancies.
 
 ## 6. Review and Documentation
 

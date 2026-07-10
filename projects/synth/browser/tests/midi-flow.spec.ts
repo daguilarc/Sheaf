@@ -206,3 +206,132 @@ test("polling recovers missed port changes without remapping another slot", asyn
   expect(result.slotAStillBoundAfterReconnect).toBe(true);
   expect(result.slotBRebound).toBe(true);
 });
+
+test("real miniapp WASM keeps two Web MIDI controller slots independent through reconnect", async ({ page }) => {
+  await page.route("**/dist/src/main.js*", (route) => {
+    if (new URL(route.request().url()).search) return route.continue();
+    return route.fulfill({ status: 200, contentType: "application/javascript", body: "" });
+  });
+  await page.goto("http://127.0.0.1:4174/public/index.html");
+  const result = await page.evaluate(async () => {
+    const { BrowserMidiManager, BrowserMidiWorkerRuntime } = await (new Function("return import('/dist/src/midi.js')")() as Promise<any>);
+    const worker = new Worker("/dist/src/worker.js", { type: "module" });
+    const observations: Array<{ command: any; response: any }> = [];
+    let queue: Promise<void> = Promise.resolve();
+    const request = (command: any): Promise<any> => {
+      const run = () => new Promise<any>((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error(`timed out waiting for ${command.type}`)), 10_000);
+        const receive = (event: MessageEvent<any>) => {
+          if (event.data.type === "page-status") return;
+          clearTimeout(timeout);
+          worker.removeEventListener("message", receive);
+          observations.push({ command, response: event.data });
+          event.data.type === "error" ? reject(new Error(`${command.type}: ${event.data.error}`)) : resolve(event.data);
+        };
+        worker.addEventListener("message", receive);
+        worker.postMessage(command);
+      });
+      const response = queue.then(run, run);
+      queue = response.then(() => {}, () => {});
+      return response;
+    };
+
+    await request({ type: "load", moduleUrl: new URL("/dist/wasm/miniapp.js", location.href).href });
+    await request({ type: "create" });
+    await request({ type: "initialize", dataRoot: "/data" });
+    const endpoints = [
+      { identifier: "in-a", name: "Input A", kind: "input" },
+      { identifier: "in-b", name: "Input B", kind: "input" },
+      { identifier: "out-a", name: "Output A", kind: "output" },
+      { identifier: "out-b", name: "Output B", kind: "output" },
+    ];
+    await request({ type: "midi-endpoints", endpoints });
+    await request({ type: "message-tick", timestampMicros: 1_000 });
+    // The shared controller page starts with slot 0; add slot 1 for the second device pair.
+    await request({ type: "dispatch-action", name: "runtime.controllers.add_controller", value: "peer:wrldbldr" });
+    for (const [controllerIx, input, output] of [[0, "in-a", "out-a"], [1, "in-b", "out-b"]] as const) {
+      await request({ type: "dispatch-action", name: "runtime.controllers.endpoint_select", value: `${controllerIx}:input:${input}` });
+      await request({ type: "dispatch-action", name: "runtime.controllers.endpoint_select", value: `${controllerIx}:output:${output}` });
+    }
+
+    class InputPort {
+      readonly type = "input";
+      state = "connected";
+      onmidimessage: ((event: { data: Uint8Array; timeStamp: number }) => void) | null = null;
+      constructor(readonly id: string, readonly name: string) {}
+      emit(bytes: number[]) { this.onmidimessage?.({ data: Uint8Array.from(bytes), timeStamp: 17 }); }
+    }
+    class OutputPort {
+      readonly type = "output";
+      state = "connected";
+      readonly sent: number[][] = [];
+      constructor(readonly id: string, readonly name: string) {}
+      send(bytes: number[] | Uint8Array) { this.sent.push(Array.from(bytes)); }
+    }
+    const inputA = new InputPort("in-a", "Input A");
+    const inputB = new InputPort("in-b", "Input B");
+    const outputA = new OutputPort("out-a", "Output A");
+    const outputB = new OutputPort("out-b", "Output B");
+    const access = {
+      inputs: new Map([[inputA.id, inputA], [inputB.id, inputB]]),
+      outputs: new Map([[outputA.id, outputA], [outputB.id, outputB]]),
+      onstatechange: null,
+    };
+    const permissions: unknown[] = [];
+    const manager = new BrowserMidiManager(new BrowserMidiWorkerRuntime(request), {
+      requestMIDIAccess: async (options: unknown) => { permissions.push(options); return access; },
+      setInterval: () => 1,
+      clearInterval: () => {},
+    });
+    const started = await manager.startFromUserActivation();
+    const boundAtStart = { slotA: inputA.onmidimessage !== null, slotB: inputB.onmidimessage !== null };
+    const endpointResponses = observations.filter(({ command }) => command.type === "midi-endpoints");
+    for (let pass = 0; pass < 10; pass += 1) {
+      await request({ type: "message-tick", timestampMicros: 2_000 + pass });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      await manager.drainOutputs();
+    }
+    outputA.sent.length = 0;
+    outputB.sent.length = 0;
+
+    inputB.emit([0xf0, 0x7d, 0x33, 0xf7]);
+    for (let attempt = 0; attempt < 100 && !observations.some(({ command }) => command.type === "midi-input"); attempt += 1)
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    const inbound = observations.filter(({ command }) => command.type === "midi-input").at(-1);
+
+    access.inputs.delete(inputB.id);
+    access.outputs.delete(outputB.id);
+    await manager.poll();
+    const afterDisconnect = {
+      slotAStillBound: inputA.onmidimessage !== null,
+      slotBWentOffline: inputB.onmidimessage === null,
+    };
+
+    access.inputs.set(inputB.id, inputB);
+    access.outputs.set(outputB.id, outputB);
+    await manager.poll();
+    const reconnected = { slotA: inputA.onmidimessage !== null, slotB: inputB.onmidimessage !== null };
+    await request({ type: "message-tick", timestampMicros: 3_000 });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await manager.drainOutputs();
+
+    const outboundA = outputA.sent.map((bytes) => bytes);
+    const outboundB = outputB.sent.map((bytes) => bytes);
+    manager.stop();
+    await request({ type: "destroy" });
+    worker.terminate();
+    return { permissions, started, boundAtStart, endpointResponses, inbound, afterDisconnect, reconnected, outboundA, outboundB };
+  });
+
+  expect(result.permissions).toEqual([{ sysex: true }]);
+  expect(result.started).toEqual({ status: "online" });
+  expect(result.boundAtStart, JSON.stringify(result.endpointResponses)).toEqual({ slotA: true, slotB: true });
+  expect(result.inbound).toBeDefined();
+  expect(result.inbound!.command).toMatchObject({ type: "midi-input", controllerIx: 1, bytes: [0xf0, 0x7d, 0x33, 0xf7] });
+  expect(result.inbound!.response).toEqual({ type: "ok" });
+  expect(result.afterDisconnect).toEqual({ slotAStillBound: true, slotBWentOffline: true });
+  expect(result.reconnected).toEqual({ slotA: true, slotB: true });
+  expect(result.outboundA).toEqual([]);
+  expect(result.outboundB.length).toBeGreaterThan(0);
+  expect(result.outboundB.some((bytes: number[]) => bytes[0] === 0xf0 && bytes.at(-1) === 0xf7)).toBe(true);
+});

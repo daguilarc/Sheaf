@@ -19,10 +19,15 @@ public:
             .Button("fake-browser-button", "Trigger", synth::ui::Action::Named("fake.trigger"))
             .Slider("fake-browser-slider", "Level", 0.5f, 0.0f, 1.0f, 0.001f,
                     synth::ui::Action::Named("fake.level"))
-            .Draw("fake-browser-draw", {24.0f, 120.0f, 320.0f, 120.0f},
-                  {synth::ui::DrawCommand::Fill(synth::ui::Color::Rgb(20, 24, 32)),
-                   synth::ui::DrawCommand::Line({0.0f, 60.0f}, {320.0f, 60.0f},
-                                                synth::ui::Color::Rgb(96, 220, 180), 2.0f)});
+            .DrawInteractive(
+                "fake-browser-draw", {24.0f, 120.0f, 320.0f, 120.0f},
+                {synth::ui::DrawCommand::Fill(synth::ui::Color::Rgb(20, 24, 32)),
+                 synth::ui::DrawCommand::Line({0.0f, 60.0f}, {320.0f, 60.0f},
+                                              synth::ui::Color::Rgb(96, 220, 180), 2.0f)},
+                synth::ui::Action::WithValue("fake.drag", "axis:0"),
+                synth::ui::Action::Named("fake.double_click"))
+            .StatusText("fake-browser-action-status",
+                        "Actions: " + std::to_string(actionCount_) + " " + lastActionName_);
         return builder.Build();
     }
 
@@ -33,6 +38,8 @@ public:
 
     void DispatchAction(const synth::ui::Action& action) override
     {
+        ++actionCount_;
+        lastActionName_ = action.name;
         if (handler_)
         {
             handler_(action);
@@ -40,6 +47,8 @@ public:
     }
 
 private:
+    std::size_t actionCount_ = 0;
+    std::string lastActionName_;
     ActionHandler handler_;
 };
 
@@ -47,7 +56,11 @@ class FakeBrowserApp {
 public:
     static synth::RuntimeConfig Config()
     {
-        return synth::RuntimeConfig{.appName = "FakeBrowserApp"};
+        return synth::RuntimeConfig{
+            .appName = "FakeBrowserApp",
+            .uiWidth = 640,
+            .uiHeight = 480,
+        };
     }
 
     void Init(synth::AppContext*) {}

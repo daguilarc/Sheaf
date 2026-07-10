@@ -80,7 +80,7 @@ export class SynthBrowserApp {
       Pick<SynthBrowserAppOptions, "audioOptions">,
   ) {
     this.ui = new BrowserUiBackend(root, (action) => {
-      void this.runtime.request({ type: "dispatch-action", ...action });
+      void this.dispatchAction(action);
       void this.startUserActivation();
     });
     this.midi = new BrowserMidiManager(new BrowserMidiWorkerRuntime((command) => this.runtime.request(command)));
@@ -120,6 +120,12 @@ export class SynthBrowserApp {
       this.midi.startFromUserActivation(),
     ]);
     this.renderStatus({ type: "status", status: `audio:${audio.started ? "online" : audio.diagnostic}; midi:${midi.status}` });
+  }
+
+  private async dispatchAction(action: { name: string; value: string }): Promise<void> {
+    const response = await this.runtime.request({ type: "dispatch-action", ...action });
+    if (response.type === "ui-frame") this.ui.renderFrame(Uint8Array.from(response.frame).buffer);
+    else if (response.type === "error") this.renderStatus({ type: "status", status: response.error });
   }
 
   private async renderFrame(): Promise<void> {

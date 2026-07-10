@@ -50,7 +50,8 @@ test("routes a portable action through the runtime worker facade without app HTM
   expect(result.uiFrame).toEqual({ type: "ui-frame", frame: Array.from(new Uint8Array(frame)) });
   expect(result.calls).toEqual([
     ["create"], ["initialize", 1, "/runtime-data"], ["prepare", 1, 48000, 128], ["process", 1, 128, 10],
-    ["messageTick", 1, 11], ["dispatchAction", 1, "generic.trigger", "pressed"], ["buildUiFrame", 1], ["destroy", 1],
+    ["messageTick", 1, 11], ["dispatchAction", 1, "generic.trigger", "pressed"],
+    ["buildUiFrame", 1], ["buildUiFrame", 1], ["destroy", 1],
   ]);
   expect(result.rejectedAfterDestroy).toEqual({ type: "error", error: "runtime is destroyed" });
   expect(result.html).not.toMatch(/miniapp|fake-browser/i);
