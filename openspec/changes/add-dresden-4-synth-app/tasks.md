@@ -41,9 +41,9 @@
 
 ## 6. Dresden 4 Portable Main Screen
 
-- [ ] 6.1 Add failing portable UI/layout tests for a complete 2x2 waveform grid, a complete 4x4 encoder grid, a global two-scene selector/blend strip, stable node IDs, slot `0` position `0..15` turn/push bindings, disconnected Dresden cells `2/3`, matrix-bank state reuse, and scene-state continuity across bank switches.
-- [ ] 6.2 Implement the Dresden portable surface with responsive non-scrolling bounds, four independently scoped waveform draw nodes ordered by XY corner, sixteen row-major encoder nodes, one global scene strip, and near-black/red astronomical styling.
-- [ ] 6.3 Add the Dresden test targets and dependencies to `projects/synth/Makefile` with app-local include paths only for those targets, and verify the core/UI compile with no JUCE include path.
+- [x] 6.1 Add failing portable UI/layout tests for a complete 2x2 waveform grid, a complete 4x4 encoder grid, a global two-scene selector/blend strip, stable node IDs, slot `0` position `0..15` turn/push bindings, disconnected Dresden cells `2/3`, matrix-bank state reuse, and scene-state continuity across bank switches.
+- [x] 6.2 Implement the Dresden portable surface with responsive non-scrolling bounds, four independently scoped waveform draw nodes ordered by XY corner, sixteen row-major encoder nodes, one global scene strip, and near-black/red astronomical styling.
+- [x] 6.3 Add the Dresden test targets and dependencies to `projects/synth/Makefile` with app-local include paths only for those targets, and verify the core/UI compile with no JUCE include path.
 
 ## 7. Generic Sheaf Patch Runtime Session Ownership
 
