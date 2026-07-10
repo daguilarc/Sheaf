@@ -18,9 +18,9 @@
 
 ## 4. Browser UI Parity
 
-- [ ] 4.1 Add failing TypeScript browser-backend tests for pointer capture, incremental two-axis drag math, threshold retention, scale compensation, and capture cleanup.
-- [ ] 4.2 Implement JUCE-equivalent pointer gesture dispatch and rounded, state-isolated Canvas arc strokes.
-- [ ] 4.3 Make portable bounds absolute in both backends by translating complete composed subtrees, resolving auto-flow per nearest nested root, and converting absolute child bounds to parent-relative DOM offsets; also correct resolved surface height, long label/status sizing, single-root scaling, cycle-safe traversal, and resize disposal.
+- [x] 4.1 Add failing TypeScript browser-backend tests for pointer capture, incremental two-axis drag math, threshold retention, scale compensation, and capture cleanup.
+- [x] 4.2 Implement JUCE-equivalent pointer gesture dispatch and rounded, state-isolated Canvas arc strokes.
+- [x] 4.3 Make portable bounds absolute in both backends by translating complete composed subtrees, resolving auto-flow per nearest nested root, and converting absolute child bounds to parent-relative DOM offsets; also correct resolved surface height, long label/status sizing, single-root scaling, cycle-safe traversal, and resize disposal.
 
 ## 5. Browser Integration Verification
 

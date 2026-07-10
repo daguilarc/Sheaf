@@ -298,7 +298,7 @@ Commit message: `feat(synth): expose shared runtime shell in browser`.
 - Pointer state is keyed by pointer ID and stores node ID plus accepted unscaled `clientX/clientY` anchor.
 - `resolveFrameBounds` returns absolute surface bounds for every node plus a resolved extent, uses the nearest nested `NodeKind::Root` as each unbounded control's flow boundary, and records parent IDs so DOM CSS offsets are `childAbsolute - parentAbsolute`.
 
-- [ ] **Step 1: Write failing pointer tests**
+- [x] **Step 1: Write failing pointer tests**
 
 Use real `PointerEvent`s and patched `setPointerCapture`/`releasePointerCapture` spies. Assert:
 - down `(10,20)`, move `(18,16)` dispatches `(8 - -4) * .0025 == .03`;
@@ -308,7 +308,7 @@ Use real `PointerEvent`s and patched `setPointerCapture`/`releasePointerCapture`
 - movement after leaving the element still dispatches until up/cancel/lost capture;
 - action value `0:3:0` becomes `0:3:<delta>`.
 
-- [ ] **Step 2: Run focused Playwright test and confirm RED**
+- [x] **Step 2: Run focused Playwright test and confirm RED**
 
 Run:
 ```bash
@@ -318,21 +318,21 @@ npx --prefix projects/synth/browser playwright test projects/synth/browser/tests
 
 Expected: pointer tests fail because dispatch occurs once on pointer up and ignores y/capture.
 
-- [ ] **Step 3: Implement incremental captured gestures**
+- [x] **Step 3: Implement incremental captured gestures**
 
 Attach pointer listeners only where `pointerDragAction` exists, call `setPointerCapture(event.pointerId)`, dispatch accepted move deltas immediately, and clear on `pointerup`, `pointercancel`, and `lostpointercapture`. Keep double click unchanged.
 
-- [ ] **Step 4: Write failing Canvas/layout tests**
+- [x] **Step 4: Write failing Canvas/layout tests**
 
 Instrument a fake 2D context and assert Arc calls are enclosed by `save`/`restore` with `lineCap == "round"` and `lineJoin == "round"`. Render an unbounded 80-character status node followed by a button and assert non-overlap. Render auto-flow below the explicit root and assert root host height reaches the resolved bottom. Render a graph with a cycle and assert `CommandBufferError`/generic error rather than recursion.
 
 Render a composite tree whose sidebar root and button both have absolute x coordinates at 900. Assert the sidebar element has CSS left 900, its nested button has CSS left 0, and both resolve to surface x 900. Assert unbounded app controls wrap before x 900 even though the composite root is 996 pixels wide.
 
-- [ ] **Step 5: Implement rounded arcs and resolved layout fixes**
+- [x] **Step 5: Implement rounded arcs and resolved layout fixes**
 
 Set arc stroke state inside `context.save()`/`restore()`. Add visited/visiting traversal guards. Resolve auto-flow separately for each nested root and measure default label/status width with `Math.max(120, text.length * 6.5 + 12)` capped to that root's available row width. Keep resolved bounds absolute, but subtract the resolved parent origin when assigning nested DOM `left`/`top`. Compute `surfaceHeight` from resolved descendant bounds, apply one transform to the single parentless composite root, and make `dispose()` disconnect the observer.
 
-- [ ] **Step 6: Verify TypeScript/static tests**
+- [x] **Step 6: Verify TypeScript/static tests**
 
 Run:
 ```bash
@@ -342,7 +342,7 @@ npx --prefix projects/synth/browser playwright test projects/synth/browser/tests
 
 Expected: all focused tests pass and static HTML contains only generic root/activation/status elements plus stylesheet/module references.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 Commit message: `fix(synth): match browser UI interaction and drawing parity`.
 
