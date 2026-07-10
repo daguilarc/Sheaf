@@ -12,9 +12,9 @@
 
 ## 3. Browser Host Integration
 
-- [ ] 3.1 Add a browser runtime services adapter for System Default audio, controller/MIDI state, engine patch operations, persistence status, deadline state, and runtime-configuration save.
-- [ ] 3.2 Route browser command-buffer construction and action dispatch through the shared main component without changing concrete app entry points.
-- [ ] 3.3 Add JUCE-free browser runtime tests for sidebar/page frames, System Default audio, app action routing, and no concrete-app source dependency.
+- [x] 3.1 Add a browser runtime services adapter for System Default audio, controller/MIDI state, engine patch operations, persistence status, deadline state, and runtime-configuration save.
+- [x] 3.2 Route browser command-buffer construction and action dispatch through the shared main component without changing concrete app entry points.
+- [x] 3.3 Add JUCE-free browser runtime tests for sidebar/page frames, System Default audio, app action routing, and no concrete-app source dependency.
 
 ## 4. Browser UI Parity
 

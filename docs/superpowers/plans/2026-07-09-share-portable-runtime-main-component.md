@@ -246,11 +246,11 @@ Commit message: `refactor(synth): render shared runtime shell in JUCE`.
 - `synth_browser::Runtime<App>` owns services before `RuntimeMainComponent`, calls `mainComponent_.Refresh()` from `MessageTick`, serializes `mainComponent_.BuildTree()`, and dispatches to `mainComponent_`.
 - `Prepare(sampleRate, blockSize)` records negotiated values for the Audio page but does not alter scheduling.
 
-- [ ] **Step 1: Add failing browser runtime shared-frame tests**
+- [x] **Step 1: Add failing browser runtime shared-frame tests**
 
 In `browser_runtime_contract_tests.cpp`, initialize the fake app runtime and decode/build its portable tree. Assert the first frame contains `runtime.main.root`, fake app node IDs, and sidebar nodes; dispatch Audio, assert the next frame contains `runtime.audio.root` and no app content; dispatch Back, assert app content returns; dispatch an app action, assert the fake app receives it.
 
-- [ ] **Step 2: Run browser C++ targets and confirm RED**
+- [x] **Step 2: Run browser C++ targets and confirm RED**
 
 Run:
 ```bash
@@ -259,15 +259,15 @@ make -C projects/synth browser-unit-test browser-audio-device-test browser-midi-
 
 Expected: shared-frame assertions fail because `BrowserRuntime` serializes only `PortableSurface()`.
 
-- [ ] **Step 3: Implement browser services**
+- [x] **Step 3: Implement browser services**
 
 Use `BuildBrowserAudioSnapshot(engine.AudioDeviceSnapshot())`, then populate a generic negotiated device line such as `System Default - 48000 Hz - 128 samples` after prepare. Audio selection accepts only `system_default` and persists the empty output name through `Engine::SetAudioDeviceFromHost`. File methods call the same `Engine::Patches()` operations and expose `engine.DataPaths().patchesRoot`. Controllers callbacks use engine instrument snapshot/edit plus `BrowserMidiBridge::ConnectionState`; store and expose the latest submitted `MidiDeviceList` from the bridge for `RefreshControllers`. Return `0.0f` for browser deadline load because no callback-load metric exists in this change.
 
-- [ ] **Step 4: Route browser frames/actions through the shared component**
+- [x] **Step 4: Route browser frames/actions through the shared component**
 
 Construct services and main component after engine/midi bridge members in declaration order. Replace only `BuildUiFrame`, `DispatchAction`, `Prepare`, and `MessageTick` behavior needed for shared UI. Do not edit JavaScript audio scheduling or WASM render-buffer allocation.
 
-- [ ] **Step 5: Run C++ and Emscripten generic gates**
+- [x] **Step 5: Run C++ and Emscripten generic gates**
 
 Run:
 ```bash
@@ -278,7 +278,7 @@ npm --prefix projects/synth/browser run check:generic-runtime
 
 Expected: all pass; generic-runtime checker finds no miniapp strings outside the typed miniapp entry.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 Commit message: `feat(synth): expose shared runtime shell in browser`.
 
