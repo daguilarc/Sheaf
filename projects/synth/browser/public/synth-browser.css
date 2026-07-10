@@ -31,8 +31,11 @@ body {
 #synth-root [data-synth-node-kind="status-text"] {
   display: flex;
   align-items: center;
+  overflow: hidden;
   color: #e5e7eb;
   font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 #synth-root button,

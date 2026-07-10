@@ -178,6 +178,96 @@ test("keeps captured drags alive outside and clears them on cancel and lost capt
   expect(result.releases).toEqual([1]);
 });
 
+test("does not begin a drag when pointer capture fails", async ({ page }) => {
+  const dragFrame = makeCommandBuffer([
+    { id: "root", kind: NodeKind.Root, bounds: [0, 0, 100, 100], children: ["drag"] },
+    { id: "drag", kind: NodeKind.Draw, bounds: [10, 10, 20, 20], pointerDragAction: { name: "generic.drag", value: "axis:0" } },
+  ]);
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+  const result = await page.evaluate(async (bytes) => {
+    const { BrowserUiBackend } = await import("../dist/src/" + "ui.js");
+    const actions: Array<{ name: string; value: string }> = [];
+    const errors: string[] = [];
+    window.addEventListener("error", (event) => { errors.push(event.message); event.preventDefault(); });
+    const backend = new BrowserUiBackend(document.querySelector("#synth-root")!, (action: { name: string; value: string }) => actions.push(action));
+    backend.renderFrame(new Uint8Array(bytes).buffer);
+    const drag = document.querySelector<HTMLElement>('[data-synth-node-id="drag"]')!;
+    drag.setPointerCapture = () => { throw new DOMException("capture unavailable", "InvalidStateError"); };
+    drag.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 4, clientX: 10, clientY: 10 }));
+    drag.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, pointerId: 4, clientX: 20, clientY: 10 }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    return { actions, errors };
+  }, Array.from(new Uint8Array(dragFrame)));
+
+  expect(result).toEqual({ actions: [], errors: [] });
+});
+
+test("allows only one pointer to drive each drag element", async ({ page }) => {
+  const dragFrame = makeCommandBuffer([
+    { id: "root", kind: NodeKind.Root, bounds: [0, 0, 100, 100], children: ["drag"] },
+    { id: "drag", kind: NodeKind.Draw, bounds: [10, 10, 20, 20], pointerDragAction: { name: "generic.drag", value: "axis:0" } },
+  ]);
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+  const result = await page.evaluate(async (bytes) => {
+    const { BrowserUiBackend } = await import("../dist/src/" + "ui.js");
+    const actions: Array<{ name: string; value: string }> = [];
+    const captures: number[] = [];
+    const releases: number[] = [];
+    const backend = new BrowserUiBackend(document.querySelector("#synth-root")!, (action: { name: string; value: string }) => actions.push(action));
+    backend.renderFrame(new Uint8Array(bytes).buffer);
+    const drag = document.querySelector<HTMLElement>('[data-synth-node-id="drag"]')!;
+    drag.setPointerCapture = (pointerId) => { captures.push(pointerId); };
+    drag.releasePointerCapture = (pointerId) => { releases.push(pointerId); };
+    const send = (type: string, pointerId: number, clientX: number) =>
+      drag.dispatchEvent(new PointerEvent(type, { bubbles: true, pointerId, clientX, clientY: 10 }));
+
+    send("pointerdown", 1, 10);
+    send("pointerdown", 2, 10);
+    send("pointermove", 2, 30);
+    send("pointermove", 1, 14);
+    send("pointerup", 2, 30);
+    send("pointerup", 1, 14);
+    return { actions, captures, releases };
+  }, Array.from(new Uint8Array(dragFrame)));
+
+  expect(result.captures).toEqual([1]);
+  expect(result.releases).toEqual([1]);
+  expect(result.actions).toEqual([{ name: "generic.drag", value: "axis:0.01" }]);
+});
+
+test("uses the current surface scale for each accepted drag increment", async ({ page }) => {
+  const dragFrame = makeCommandBuffer([
+    { id: "root", kind: NodeKind.Root, bounds: [0, 0, 200, 100], children: ["drag"] },
+    { id: "drag", kind: NodeKind.Draw, bounds: [10, 10, 20, 20], pointerDragAction: { name: "generic.drag", value: "axis:0" } },
+  ]);
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+  const actions = await page.evaluate(async (bytes) => {
+    let resize: ResizeObserverCallback = () => {};
+    class ResizeObserverSpy {
+      constructor(callback: ResizeObserverCallback) { resize = callback; }
+      observe() {}
+      disconnect() {}
+    }
+    (window as unknown as { ResizeObserver: typeof ResizeObserver }).ResizeObserver = ResizeObserverSpy as unknown as typeof ResizeObserver;
+    const { BrowserUiBackend } = await import("../dist/src/" + "ui.js");
+    const host = document.querySelector<HTMLElement>("#synth-root")!;
+    host.style.width = "200px";
+    const actions: Array<{ name: string; value: string }> = [];
+    const backend = new BrowserUiBackend(host, (action: { name: string; value: string }) => actions.push(action));
+    backend.renderFrame(new Uint8Array(bytes).buffer);
+    const drag = document.querySelector<HTMLElement>('[data-synth-node-id="drag"]')!;
+    drag.setPointerCapture = () => {};
+    drag.releasePointerCapture = () => {};
+    drag.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 8, clientX: 10, clientY: 5 }));
+    host.style.width = "100px";
+    resize([], {} as ResizeObserver);
+    drag.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, pointerId: 8, clientX: 14, clientY: 5 }));
+    return actions;
+  }, Array.from(new Uint8Array(dragFrame)));
+
+  expect(actions).toEqual([{ name: "generic.drag", value: "axis:0.02" }]);
+});
+
 test("preserves focused edits while a stale frame is rendered", async ({ page }) => {
   await page.goto("http://127.0.0.1:4173/public/index.html");
   await page.evaluate(async (bytes) => {
@@ -338,6 +428,40 @@ test("sizes long status text within its nearest root before placing the next con
   expect(layout.button.top).toBeGreaterThanOrEqual(layout.status.bottom + 8);
 });
 
+test("clips realistic label and status text to their fixed auto-layout height", async ({ page }) => {
+  const labelFrame = makeCommandBuffer([
+    { id: "root", kind: NodeKind.Root, bounds: [0, 0, 260, 120], children: ["label", "status", "button"] },
+    { id: "label", kind: NodeKind.Label, text: "MIDI OUTPUT DEVICE CONFIGURATION STATUS" },
+    { id: "status", kind: NodeKind.StatusText, text: "SYSTEM DEFAULT AUDIO OUTPUT IS READY FOR PERFORMANCE" },
+    { id: "button", kind: NodeKind.Button, label: "Following" },
+  ]);
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+  const layout = await page.evaluate(async (bytes) => {
+    const { BrowserUiBackend } = await import("../dist/src/" + "ui.js");
+    new BrowserUiBackend(document.querySelector("#synth-root")!).renderFrame(new Uint8Array(bytes).buffer);
+    const read = (id: string) => {
+      const element = document.querySelector<HTMLElement>(`[data-synth-node-id="${id}"]`)!;
+      const style = getComputedStyle(element);
+      const bounds = element.getBoundingClientRect();
+      return {
+        top: bounds.top, bottom: bounds.bottom,
+        clientHeight: element.clientHeight, scrollHeight: element.scrollHeight,
+        whiteSpace: style.whiteSpace, overflow: style.overflow, textOverflow: style.textOverflow,
+      };
+    };
+    return { label: read("label"), status: read("status"), button: read("button") };
+  }, Array.from(new Uint8Array(labelFrame)));
+
+  for (const text of [layout.label, layout.status]) {
+    expect(text.whiteSpace).toBe("nowrap");
+    expect(text.overflow).toBe("hidden");
+    expect(text.textOverflow).toBe("ellipsis");
+    expect(text.scrollHeight).toBeLessThanOrEqual(text.clientHeight);
+  }
+  expect(layout.status.top).toBeGreaterThanOrEqual(layout.label.bottom + 8);
+  expect(layout.button.top).toBeGreaterThanOrEqual(layout.status.bottom + 8);
+});
+
 test("includes auto-flow below a declared root in the resolved host height", async ({ page }) => {
   const overflowFrame = makeCommandBuffer([
     { id: "root", kind: NodeKind.Root, bounds: [0, 0, 200, 30], children: ["label", "button"] },
@@ -355,6 +479,34 @@ test("includes auto-flow below a declared root in the resolved host height", asy
 
   expect(layout.hostHeight).toBeGreaterThan(30);
   expect(layout.hostBottom).toBeGreaterThanOrEqual(layout.buttonBottom);
+});
+
+test("keeps scroll descendants out of the outer surface extent", async ({ page }) => {
+  const scrollFrame = makeCommandBuffer([
+    { id: "root", kind: NodeKind.Root, bounds: [0, 0, 300, 160], children: ["scroll"] },
+    { id: "scroll", kind: NodeKind.ScrollArea, bounds: [10, 10, 100, 100], scrollContentWidth: 100, scrollContentHeight: 2000, children: ["deep"] },
+    { id: "deep", kind: NodeKind.Label, bounds: [10, 1900, 80, 20], text: "Deep content" },
+  ]);
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+  const layout = await page.evaluate(async (bytes) => {
+    const { BrowserUiBackend } = await import("../dist/src/" + "ui.js");
+    new BrowserUiBackend(document.querySelector("#synth-root")!).renderFrame(new Uint8Array(bytes).buffer);
+    const host = document.querySelector<HTMLElement>("#synth-root")!;
+    const scroll = document.querySelector<HTMLElement>('[data-synth-node-id="scroll"]')!;
+    const deep = document.querySelector<HTMLElement>('[data-synth-node-id="deep"]')!;
+    scroll.scrollTop = deep.offsetTop;
+    const scrollBounds = scroll.getBoundingClientRect();
+    const deepBounds = deep.getBoundingClientRect();
+    return {
+      hostHeight: host.getBoundingClientRect().height,
+      scrollHeight: scroll.scrollHeight,
+      deepVisible: deepBounds.top >= scrollBounds.top && deepBounds.bottom <= scrollBounds.bottom,
+    };
+  }, Array.from(new Uint8Array(scrollFrame)));
+
+  expect(layout.hostHeight).toBe(160);
+  expect(layout.scrollHeight).toBe(2000);
+  expect(layout.deepVisible).toBeTruthy();
 });
 
 test("keeps absolute surface bounds while nesting composite roots", async ({ page }) => {
@@ -436,6 +588,63 @@ test("rejects cyclic node graphs without recursive overflow", async ({ page }) =
   expect(message).toMatch(/cycle/i);
 });
 
+test("reports stable generic errors for malformed node trees", async ({ page }) => {
+  const cases = [
+    {
+      expected: "duplicate node id (node 1)",
+      bytes: makeCommandBuffer([
+        { id: "same", kind: NodeKind.Root, bounds: [0, 0, 10, 10] },
+        { id: "same", kind: NodeKind.Root, bounds: [0, 0, 10, 10] },
+      ]),
+    },
+    {
+      expected: "unknown child node (node 0)",
+      bytes: makeCommandBuffer([{ id: "root", kind: NodeKind.Root, bounds: [0, 0, 10, 10], children: ["missing"] }]),
+    },
+    {
+      expected: "node child has multiple parents",
+      bytes: makeCommandBuffer([
+        { id: "root", kind: NodeKind.Root, bounds: [0, 0, 10, 10], children: ["a", "b"] },
+        { id: "a", kind: NodeKind.Row, bounds: [0, 0, 10, 10], children: ["child"] },
+        { id: "b", kind: NodeKind.Row, bounds: [0, 0, 10, 10], children: ["child"] },
+        { id: "child", kind: NodeKind.Label, bounds: [0, 0, 10, 10] },
+      ]),
+    },
+    {
+      expected: "browser UI frame requires one parentless root, found 2",
+      bytes: makeCommandBuffer([
+        { id: "one", kind: NodeKind.Root, bounds: [0, 0, 10, 10] },
+        { id: "two", kind: NodeKind.Root, bounds: [0, 0, 10, 10] },
+      ]),
+    },
+    {
+      expected: "browser UI frame requires one parentless root, found 0",
+      bytes: makeCommandBuffer([
+        { id: "a", kind: NodeKind.Row, bounds: [0, 0, 10, 10], children: ["b"] },
+        { id: "b", kind: NodeKind.Row, bounds: [0, 0, 10, 10], children: ["a"] },
+      ]),
+    },
+    {
+      expected: "parentless browser UI node must be a root",
+      bytes: makeCommandBuffer([{ id: "row", kind: NodeKind.Row, bounds: [0, 0, 10, 10] }]),
+    },
+  ];
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+  const messages = await page.evaluate(async (serializedCases) => {
+    const { BrowserUiBackend } = await import("../dist/src/" + "ui.js");
+    return serializedCases.map(({ bytes }) => {
+      try {
+        new BrowserUiBackend(document.querySelector("#synth-root")!).renderFrame(new Uint8Array(bytes).buffer);
+        return "no error";
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+      }
+    });
+  }, cases.map(({ bytes }) => ({ bytes: Array.from(new Uint8Array(bytes)) })));
+
+  expect(messages).toEqual(cases.map(({ expected }) => expected));
+});
+
 test("dispose disconnects resize observation and releases active pointer capture", async ({ page }) => {
   const dragFrame = makeCommandBuffer([
     { id: "root", kind: NodeKind.Root, bounds: [0, 0, 100, 100], children: ["drag"] },
@@ -464,6 +673,31 @@ test("dispose disconnects resize observation and releases active pointer capture
   }, Array.from(new Uint8Array(dragFrame)));
 
   expect(result).toEqual({ actions: [], disconnects: 1, releases: [9] });
+});
+
+test("dispose is idempotent and renderFrame cannot revive a disposed backend", async ({ page }) => {
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+  const result = await page.evaluate(async (bytes) => {
+    let disconnects = 0;
+    class ResizeObserverSpy {
+      observe() {}
+      disconnect() { disconnects++; }
+    }
+    (window as unknown as { ResizeObserver: typeof ResizeObserver }).ResizeObserver = ResizeObserverSpy as unknown as typeof ResizeObserver;
+    const { BrowserUiBackend } = await import("../dist/src/" + "ui.js");
+    const backend = new BrowserUiBackend(document.querySelector("#synth-root")!);
+    backend.dispose();
+    backend.dispose();
+    let message = "no error";
+    try {
+      backend.renderFrame(new Uint8Array(bytes).buffer);
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+    return { disconnects, message };
+  }, Array.from(new Uint8Array(frame)));
+
+  expect(result).toEqual({ disconnects: 1, message: "cannot render a disposed browser UI backend" });
 });
 
 test("paints surface-space draw commands into positioned canvases", async ({ page }) => {

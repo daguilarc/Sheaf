@@ -12,7 +12,7 @@ type PointerHandlers = {
   lostCapture: (event: PointerEvent) => void;
 };
 type NodeElement = HTMLElement & { synthNode?: Node; scrollContent?: HTMLElement; pointerHandlers?: PointerHandlers };
-type CapturedPointer = { element: NodeElement; nodeId: string; action: Action; anchorX: number; anchorY: number };
+type CapturedPointer = { element: NodeElement; action: Action; anchorClientX: number; anchorClientY: number };
 type ResolvedFrame = {
   bounds: Map<string, Bounds>;
   parents: Map<string, string>;
@@ -48,6 +48,7 @@ export class BrowserUiBackend {
   }
 
   renderFrame(buffer: ArrayBuffer | CommandBufferFrame) {
+    if (this.disposed) throw new Error("cannot render a disposed browser UI backend");
     const frame = buffer instanceof ArrayBuffer ? decodeCommandBuffer(buffer) : buffer;
     const nodes = new Map(frame.nodes.map((node) => [node.id, node]));
     const resolved = resolveFrameBounds(frame.nodes, nodes);
@@ -146,27 +147,27 @@ export class BrowserUiBackend {
   private beginPointerDrag(element: NodeElement, event: PointerEvent) {
     const action = element.synthNode?.pointerDragAction;
     if (!action) return;
+    for (const captured of this.capturedPointers.values())
+      if (captured.element === element) return;
     this.clearPointer(event.pointerId, true);
-    element.setPointerCapture(event.pointerId);
+    try { element.setPointerCapture(event.pointerId); } catch { return; }
     this.capturedPointers.set(event.pointerId, {
       element,
-      nodeId: element.synthNode!.id,
       action: { ...action },
-      anchorX: event.clientX / this.surfaceScale,
-      anchorY: event.clientY / this.surfaceScale,
+      anchorClientX: event.clientX,
+      anchorClientY: event.clientY,
     });
   }
 
   private continuePointerDrag(element: NodeElement, event: PointerEvent) {
     const captured = this.capturedPointers.get(event.pointerId);
     if (!captured || captured.element !== element) return;
-    const currentX = event.clientX / this.surfaceScale;
-    const currentY = event.clientY / this.surfaceScale;
-    const delta = ((currentX - captured.anchorX) - (currentY - captured.anchorY)) * 0.0025;
+    const delta = (((event.clientX - captured.anchorClientX) / this.surfaceScale) -
+      ((event.clientY - captured.anchorClientY) / this.surfaceScale)) * 0.0025;
     if (Math.abs(delta) < 0.001) return;
     this.dispatchDrag(captured.action, delta);
-    captured.anchorX = currentX;
-    captured.anchorY = currentY;
+    captured.anchorClientX = event.clientX;
+    captured.anchorClientY = event.clientY;
   }
 
   private clearPointer(pointerId: number, releaseCapture: boolean) {
@@ -271,6 +272,20 @@ export class BrowserUiBackend {
 
 function resolveFrameBounds(nodesInOrder: Node[], nodes: Map<string, Node>): ResolvedFrame {
   if (nodes.size !== nodesInOrder.length) throw new Error("duplicate node id in browser UI frame");
+  const parents = new Map<string, string>();
+  let multipleParentError: string | undefined;
+  for (const node of nodesInOrder) {
+    for (const childId of node.children) {
+      if (!nodes.has(childId)) throw new Error(`unknown child node ${childId}`);
+      const existing = parents.get(childId);
+      if (existing && existing !== node.id) multipleParentError ??= `node ${childId} has multiple parents`;
+      else parents.set(childId, node.id);
+    }
+  }
+  const roots = nodesInOrder.filter((node) => !parents.has(node.id));
+  if (nodesInOrder.length > 0 && roots.length !== 1) throw new Error(`browser UI frame requires one parentless root, found ${roots.length}`);
+  if (roots[0] && roots[0].kind !== NodeKind.Root) throw new Error("parentless browser UI node must be a root");
+
   const states = new Map<string, "visiting" | "visited">();
   const visit = (node: Node) => {
     const state = states.get(node.id);
@@ -285,18 +300,7 @@ function resolveFrameBounds(nodesInOrder: Node[], nodes: Map<string, Node>): Res
     states.set(node.id, "visited");
   };
   for (const node of nodesInOrder) visit(node);
-
-  const parents = new Map<string, string>();
-  for (const node of nodesInOrder) {
-    for (const childId of node.children) {
-      const existing = parents.get(childId);
-      if (existing && existing !== node.id) throw new Error(`node ${childId} has multiple parents`);
-      parents.set(childId, node.id);
-    }
-  }
-  const roots = nodesInOrder.filter((node) => !parents.has(node.id));
-  if (nodesInOrder.length > 0 && roots.length !== 1) throw new Error(`browser UI frame requires one parentless root, found ${roots.length}`);
-  if (roots[0] && roots[0].kind !== NodeKind.Root) throw new Error("parentless browser UI node must be a root");
+  if (multipleParentError) throw new Error(multipleParentError);
 
   const nearestRoots = new Map<string, string>();
   const assignNearestRoot = (node: Node, nearestRootId: string) => {
@@ -340,7 +344,16 @@ function resolveFrameBounds(nodesInOrder: Node[], nodes: Map<string, Node>): Res
 
   let width = 0;
   let height = 0;
-  for (const bounds of resolved.values()) {
+  const isInsideScrollArea = (nodeId: string) => {
+    let parentId = parents.get(nodeId);
+    while (parentId) {
+      if (nodes.get(parentId)?.kind === NodeKind.ScrollArea) return true;
+      parentId = parents.get(parentId);
+    }
+    return false;
+  };
+  for (const [nodeId, bounds] of resolved) {
+    if (isInsideScrollArea(nodeId)) continue;
     width = Math.max(width, bounds.x + bounds.width);
     height = Math.max(height, bounds.y + bounds.height);
   }
