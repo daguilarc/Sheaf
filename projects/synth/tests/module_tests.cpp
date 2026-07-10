@@ -82,6 +82,14 @@ static_assert(!std::is_copy_constructible_v<synth::ClassicSvfModule<2>>);
 static_assert(!std::is_copy_assignable_v<synth::ClassicSvfModule<2>>);
 static_assert(!std::is_move_constructible_v<synth::ClassicSvfModule<2>>);
 static_assert(!std::is_move_assignable_v<synth::ClassicSvfModule<2>>);
+static_assert(!std::is_copy_constructible_v<synth::BipolarMatrixMixerModule<4>>);
+static_assert(!std::is_copy_assignable_v<synth::BipolarMatrixMixerModule<4>>);
+static_assert(!std::is_move_constructible_v<synth::BipolarMatrixMixerModule<4>>);
+static_assert(!std::is_move_assignable_v<synth::BipolarMatrixMixerModule<4>>);
+static_assert(!std::is_copy_constructible_v<synth::Dresden4VcoModule>);
+static_assert(!std::is_copy_assignable_v<synth::Dresden4VcoModule>);
+static_assert(!std::is_move_constructible_v<synth::Dresden4VcoModule>);
+static_assert(!std::is_move_assignable_v<synth::Dresden4VcoModule>);
 
 TEST_CASE(wavetable_vco_registers_prefixed_parameters_and_rejects_repeat_registration) {
     synth::ParameterManager manager;
@@ -870,6 +878,436 @@ TEST_CASE(classic_svf_processes_independent_voice_outputs_and_publishes_filter_u
     REQUIRE_NEAR(ui.filters[1].cutoff.load(), 2000.0f / 48000.0f, 0.0001f);
     REQUIRE_TRUE(std::isfinite(ui.filters[0].FrequencyResponse(1000.0f / 48000.0f)));
     REQUIRE_TRUE(std::isfinite(ui.filters[1].FrequencyResponse(1000.0f / 48000.0f)));
+}
+
+TEST_CASE(bipolar_matrix_registers_row_major_identity_parameters_and_bank_cells) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({.numVoices = 1, .numScenes = 2, .maxParameters = 16});
+    synth::BipolarMatrixMixerModule<4> module;
+
+    module.RegisterParameters(manager, group, "Matrix");
+
+    const auto ids = module.Parameters();
+    REQUIRE_TRUE(ids[0] == 0);
+    REQUIRE_TRUE(ids[1] == 1);
+    REQUIRE_TRUE(ids[4] == 4);
+    REQUIRE_TRUE(ids[15] == 15);
+    REQUIRE_TRUE(manager.ParameterById(ids[0]).Name() == "Matrix R1C1");
+    REQUIRE_TRUE(manager.ParameterById(ids[1]).Name() == "Matrix R1C2");
+    REQUIRE_TRUE(manager.ParameterById(ids[15]).Name() == "Matrix R4C4");
+    REQUIRE_TRUE(manager.ParameterById(ids[0]).Range() == synth::RangeKind::Bipolar);
+    REQUIRE_TRUE(manager.ParameterById(ids[1]).Range() == synth::RangeKind::Bipolar);
+    REQUIRE_NEAR(manager.ParameterById(ids[0]).SceneCenter(0), 1.0f, 0.0001f);
+    REQUIRE_NEAR(manager.ParameterById(ids[5]).SceneCenter(0), 1.0f, 0.0001f);
+    REQUIRE_NEAR(manager.ParameterById(ids[10]).SceneCenter(0), 1.0f, 0.0001f);
+    REQUIRE_NEAR(manager.ParameterById(ids[15]).SceneCenter(0), 1.0f, 0.0001f);
+    REQUIRE_NEAR(manager.ParameterById(ids[1]).SceneCenter(0), 0.0f, 0.0001f);
+
+    auto& bank = manager.CreateBank();
+    auto& slot = manager.CreateBankSlot();
+    for (synth::PhysicalEncoderId encoder = 40; encoder < 56; ++encoder) {
+        slot.AddPhysicalEncoder(encoder);
+    }
+    slot.SelectBank(&bank);
+
+    module.RegisterToBank(bank, 0);
+
+    REQUIRE_TRUE(bank.VisibleParameter(40) == &manager.ParameterById(ids[0]));
+    REQUIRE_TRUE(bank.VisibleParameter(41) == &manager.ParameterById(ids[1]));
+    REQUIRE_TRUE(bank.VisibleParameter(55) == &manager.ParameterById(ids[15]));
+}
+
+TEST_CASE(bipolar_matrix_maps_bipolar_anchors_cross_routes_unclamped_sums_and_stable_outputs) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numScenes = 1,
+        .maxParameters = 4,
+        .processLiteAlpha = 1.0f,
+    });
+    synth::BipolarMatrixMixerModule<2> module;
+    module.RegisterParameters(manager, group, "Matrix");
+    const auto ids = module.Parameters();
+
+    SetAndSettle(manager, ids[0], -1.0f);
+    SetAndSettle(manager, ids[1], -0.5f);
+    SetAndSettle(manager, ids[2], 0.5f);
+    SetAndSettle(manager, ids[3], 1.0f);
+    module.SetInput(manager);
+    REQUIRE_NEAR(module.Gain(0, 0), -1.0f, 0.0001f);
+    REQUIRE_NEAR(module.Gain(0, 1), -0.25f, 0.0001f);
+    REQUIRE_NEAR(module.Gain(1, 0), 0.25f, 0.0001f);
+    REQUIRE_NEAR(module.Gain(1, 1), 1.0f, 0.0001f);
+
+    module.Inputs()[0] = 2.0f;
+    module.Inputs()[1] = -4.0f;
+    const float* output0 = &module.Outputs()[0];
+    const float* output1 = &module.Outputs()[1];
+    module.Process();
+
+    REQUIRE_NEAR(module.Output(0), -1.0f, 0.0001f);
+    REQUIRE_NEAR(module.Output(1), -3.5f, 0.0001f);
+    REQUIRE_TRUE(output0 == &module.Outputs()[0]);
+    REQUIRE_TRUE(output1 == &module.Outputs()[1]);
+}
+
+TEST_CASE(bipolar_matrix_accepts_dresden_mono_group_and_rejects_repeat_capacity_shape_and_bank_capacity) {
+    {
+        synth::ParameterManager manager;
+        auto& group = manager.CreateGroup({.numVoices = 1, .numScenes = 2, .maxParameters = 24});
+        for (int i = 0; i < 8; ++i) {
+            (void)manager.RegisterParameter(group, {.name = "Existing " + std::to_string(i), .defaultValue = 0.0f});
+        }
+        synth::BipolarMatrixMixerModule<4> module;
+
+        module.RegisterParameters(manager, group, "Matrix");
+
+        REQUIRE_TRUE(manager.ParameterCount() == 24);
+        REQUIRE_TRUE(group.ParameterCount() == 24);
+
+        bool threw = false;
+        try {
+            module.RegisterParameters(manager, group, "Matrix Again");
+        } catch (const std::logic_error&) {
+            threw = true;
+        }
+        REQUIRE_TRUE(threw);
+    }
+
+    {
+        synth::ParameterManager manager;
+        auto& group = manager.CreateGroup({.numVoices = 1, .numScenes = 2, .maxParameters = 15});
+        synth::BipolarMatrixMixerModule<4> module;
+
+        bool threw = false;
+        try {
+            module.RegisterParameters(manager, group, "Matrix");
+        } catch (const std::length_error&) {
+            threw = true;
+        }
+        REQUIRE_TRUE(threw);
+        REQUIRE_TRUE(manager.ParameterCount() == 0);
+    }
+
+    {
+        synth::ParameterManager manager;
+        auto& group = manager.CreateGroup({.numVoices = 2, .numScenes = 2, .maxParameters = 16});
+        synth::BipolarMatrixMixerModule<4> module;
+
+        bool threw = false;
+        try {
+            module.RegisterParameters(manager, group, "Matrix");
+        } catch (const std::logic_error&) {
+            threw = true;
+        }
+        REQUIRE_TRUE(threw);
+        REQUIRE_TRUE(manager.ParameterCount() == 0);
+    }
+
+    {
+        synth::ParameterManager manager;
+        auto& group = manager.CreateGroup({.numVoices = 1, .numScenes = 2, .maxParameters = 16});
+        synth::BipolarMatrixMixerModule<4> module;
+        module.RegisterParameters(manager, group, "Matrix");
+        auto& bank = manager.CreateBank();
+        auto& slot = manager.CreateBankSlot();
+        for (synth::PhysicalEncoderId encoder = 0; encoder < 15; ++encoder) {
+            slot.AddPhysicalEncoder(encoder);
+        }
+        slot.SelectBank(&bank);
+
+        bool threw = false;
+        try {
+            module.RegisterToBank(bank, 0);
+        } catch (const std::logic_error&) {
+            threw = true;
+        }
+        REQUIRE_TRUE(threw);
+    }
+}
+
+TEST_CASE(dresden_vco_registers_three_group_shapes_two_scenes_fourteen_red_parameters_and_sparse_bank) {
+    synth::ParameterManager manager;
+    auto& stereo = manager.CreateGroup({.numVoices = 2, .numScenes = 2, .maxParameters = 2});
+    auto& quad = manager.CreateGroup({.numVoices = 4, .numModulators = 1, .numScenes = 2, .maxParameters = 8});
+    auto& mono = manager.CreateGroup({.numVoices = 1, .numScenes = 2, .maxParameters = 8});
+    synth::Dresden4VcoModule module;
+
+    module.RegisterParameters(manager, stereo, quad, mono, "Dresden");
+
+    const auto ids = module.Parameters();
+    REQUIRE_TRUE(ids.x == 0);
+    REQUIRE_TRUE(ids.y == 1);
+    REQUIRE_TRUE(ids.quad.tune == 2);
+    REQUIRE_TRUE(ids.quad.phase == 3);
+    REQUIRE_TRUE(ids.quad.shape == 4);
+    REQUIRE_TRUE(ids.quad.gain == 5);
+    REQUIRE_TRUE(ids.pmIndex[0] == 6);
+    REQUIRE_TRUE(ids.pmIndex[3] == 9);
+    REQUIRE_TRUE(ids.frequency[0] == 10);
+    REQUIRE_TRUE(ids.frequency[3] == 13);
+    REQUIRE_TRUE(manager.ParameterCount() == 14);
+
+    for (synth::ParameterId id = 0; id < 14; ++id) {
+        REQUIRE_TRUE(manager.ParameterById(id).ParamColor() == synth::Color::Red);
+    }
+    REQUIRE_TRUE(manager.ParameterById(ids.quad.phase).Range() == synth::RangeKind::Bipolar);
+    REQUIRE_TRUE(manager.ParameterById(ids.quad.gain).Range() == synth::RangeKind::Bipolar);
+    REQUIRE_NEAR(manager.ParameterById(ids.x).SceneCenter(1), 0.5f, 0.0001f);
+    REQUIRE_NEAR(manager.ParameterById(ids.y).SceneCenter(1), 0.5f, 0.0001f);
+    REQUIRE_NEAR(manager.ParameterById(ids.quad.tune).SceneCenter(1), 0.5f, 0.0001f);
+    REQUIRE_NEAR(manager.ParameterById(ids.quad.phase).SceneCenter(1), 0.0f, 0.0001f);
+    REQUIRE_NEAR(manager.ParameterById(ids.quad.shape).SceneCenter(1), 0.0f, 0.0001f);
+    REQUIRE_NEAR(manager.ParameterById(ids.quad.gain).SceneCenter(1), 1.0f, 0.0001f);
+    REQUIRE_NEAR(manager.ParameterById(ids.pmIndex[0]).SceneCenter(1), 0.0f, 0.0001f);
+    REQUIRE_NEAR(manager.ParameterById(ids.frequency[0]).SceneCenter(1), 0.5f, 0.0001f);
+
+    auto& bank = manager.CreateBank();
+    auto& slot = manager.CreateBankSlot();
+    for (synth::PhysicalEncoderId encoder = 0; encoder < 16; ++encoder) {
+        slot.AddPhysicalEncoder(encoder);
+    }
+    slot.SelectBank(&bank);
+    module.RegisterToBank(bank);
+
+    REQUIRE_TRUE(bank.VisibleParameter(0) == &manager.ParameterById(ids.x));
+    REQUIRE_TRUE(bank.VisibleParameter(1) == &manager.ParameterById(ids.y));
+    REQUIRE_TRUE(bank.VisibleParameter(2) == nullptr);
+    REQUIRE_TRUE(bank.VisibleParameter(3) == nullptr);
+    REQUIRE_TRUE(bank.VisibleParameter(4) == &manager.ParameterById(ids.quad.tune));
+    REQUIRE_TRUE(bank.VisibleParameter(5) == &manager.ParameterById(ids.quad.phase));
+    REQUIRE_TRUE(bank.VisibleParameter(6) == &manager.ParameterById(ids.quad.shape));
+    REQUIRE_TRUE(bank.VisibleParameter(7) == &manager.ParameterById(ids.quad.gain));
+    REQUIRE_TRUE(bank.VisibleParameter(8) == &manager.ParameterById(ids.pmIndex[0]));
+    REQUIRE_TRUE(bank.VisibleParameter(11) == &manager.ParameterById(ids.pmIndex[3]));
+    REQUIRE_TRUE(bank.VisibleParameter(12) == &manager.ParameterById(ids.frequency[0]));
+    REQUIRE_TRUE(bank.VisibleParameter(15) == &manager.ParameterById(ids.frequency[3]));
+
+    bool threw = false;
+    try {
+        module.RegisterParameters(manager, stereo, quad, mono, "Dresden");
+    } catch (const std::logic_error&) {
+        threw = true;
+    }
+    REQUIRE_TRUE(threw);
+}
+
+TEST_CASE(dresden_vco_rejects_incompatible_groups_managers_sample_rates_and_bank_capacity) {
+    {
+        synth::ParameterManager manager;
+        auto& stereo = manager.CreateGroup({.numVoices = 1, .numScenes = 2, .maxParameters = 2});
+        auto& quad = manager.CreateGroup({.numVoices = 4, .numModulators = 1, .numScenes = 2, .maxParameters = 8});
+        auto& mono = manager.CreateGroup({.numVoices = 1, .numScenes = 2, .maxParameters = 8});
+        synth::Dresden4VcoModule module;
+
+        bool threw = false;
+        try {
+            module.RegisterParameters(manager, stereo, quad, mono, "Dresden");
+        } catch (const std::logic_error&) {
+            threw = true;
+        }
+        REQUIRE_TRUE(threw);
+        REQUIRE_TRUE(manager.ParameterCount() == 0);
+    }
+
+    {
+        synth::ParameterManager first;
+        synth::ParameterManager second;
+        auto& stereo = first.CreateGroup({.numVoices = 2, .numScenes = 2, .maxParameters = 2});
+        auto& quad = second.CreateGroup({.numVoices = 4, .numModulators = 1, .numScenes = 2, .maxParameters = 8});
+        auto& mono = first.CreateGroup({.numVoices = 1, .numScenes = 2, .maxParameters = 8});
+        synth::Dresden4VcoModule module;
+
+        bool threw = false;
+        try {
+            module.RegisterParameters(first, stereo, quad, mono, "Dresden");
+        } catch (const std::logic_error&) {
+            threw = true;
+        }
+        REQUIRE_TRUE(threw);
+        REQUIRE_TRUE(first.ParameterCount() == 0);
+        REQUIRE_TRUE(second.ParameterCount() == 0);
+    }
+
+    {
+        synth::Dresden4VcoModule module;
+        bool threw = false;
+        try {
+            module.SetSampleRate(0.0f);
+        } catch (const std::invalid_argument&) {
+            threw = true;
+        }
+        REQUIRE_TRUE(threw);
+    }
+
+    {
+        synth::ParameterManager manager;
+        auto& stereo = manager.CreateGroup({.numVoices = 2, .numScenes = 2, .maxParameters = 2});
+        auto& quad = manager.CreateGroup({.numVoices = 4, .numModulators = 1, .numScenes = 2, .maxParameters = 8});
+        auto& mono = manager.CreateGroup({.numVoices = 1, .numScenes = 2, .maxParameters = 8});
+        synth::Dresden4VcoModule module;
+        module.RegisterParameters(manager, stereo, quad, mono, "Dresden");
+        auto& bank = manager.CreateBank();
+        auto& slot = manager.CreateBankSlot();
+        for (synth::PhysicalEncoderId encoder = 0; encoder < 15; ++encoder) {
+            slot.AddPhysicalEncoder(encoder);
+        }
+        slot.SelectBank(&bank);
+
+        bool threw = false;
+        try {
+            module.RegisterToBank(bank);
+        } catch (const std::logic_error&) {
+            threw = true;
+        }
+        REQUIRE_TRUE(threw);
+    }
+}
+
+TEST_CASE(dresden_vco_maps_all_parameter_ranges_to_natural_vco_inputs) {
+    synth::ParameterManager manager;
+    auto& stereo = manager.CreateGroup({.numVoices = 2, .numScenes = 2, .maxParameters = 2, .processLiteAlpha = 1.0f});
+    auto& quad = manager.CreateGroup({
+        .numVoices = 4,
+        .numModulators = 1,
+        .numScenes = 2,
+        .maxParameters = 8,
+        .processLiteAlpha = 1.0f,
+    });
+    auto& mono = manager.CreateGroup({.numVoices = 1, .numScenes = 2, .maxParameters = 8, .processLiteAlpha = 1.0f});
+    synth::Dresden4VcoModule module(192000.0f);
+    module.RegisterParameters(manager, stereo, quad, mono, "Dresden");
+    const auto ids = module.Parameters();
+
+    SetAndSettle(manager, ids.x, 0.25f);
+    SetAndSettle(manager, ids.y, 0.75f);
+    SetAndSettle(manager, ids.quad.tune, 0.5f);
+    SetAndSettle(manager, ids.quad.phase, 0.5f);
+    SetAndSettle(manager, ids.quad.shape, 0.25f);
+    SetAndSettle(manager, ids.quad.gain, -0.5f);
+    SetAndSettle(manager, ids.pmIndex[0], 0.5f);
+    SetAndSettle(manager, ids.frequency[0], 0.0f);
+    SetAndSettle(manager, ids.frequency[1], 0.0f);
+    SetAndSettle(manager, ids.frequency[2], 0.0f);
+    SetAndSettle(manager, ids.frequency[3], 0.0f);
+    module.SetInput(manager);
+
+    REQUIRE_NEAR(module.CurrentInput().x[0], 0.25f, 0.0001f);
+    REQUIRE_NEAR(module.CurrentInput().y[0], 0.75f, 0.0001f);
+    REQUIRE_NEAR(module.CurrentInput().oscillators[0].tuneMultiplier, 1.0f, 0.0001f);
+    REQUIRE_NEAR(module.CurrentInput().oscillators[0].phaseCycles, 0.5f, 0.0001f);
+    REQUIRE_NEAR(module.CurrentInput().oscillators[0].shape, 0.25f, 0.0001f);
+    REQUIRE_NEAR(module.CurrentInput().oscillators[0].gain, -0.5f, 0.0001f);
+    REQUIRE_NEAR(module.CurrentInput().oscillators[0].pmIndex, 0.25f, 0.0001f);
+    REQUIRE_NEAR(module.CurrentInput().oscillators[0].baseFrequencyHz, 10.0f, 0.0001f);
+    REQUIRE_NEAR(module.CurrentInput().oscillators[1].baseFrequencyHz, 50.0f, 0.0001f);
+    REQUIRE_NEAR(module.CurrentInput().oscillators[2].baseFrequencyHz, 250.0f, 0.0001f);
+    REQUIRE_NEAR(module.CurrentInput().oscillators[3].baseFrequencyHz, 1000.0f, 0.0001f);
+    REQUIRE_NEAR(static_cast<float>(module.CurrentInput().oscillators[0].vco.freq), 10.0f / 192000.0f, 0.000001f);
+    REQUIRE_NEAR(module.CurrentInput().oscillators[0].vco.phaseOffset, 0.125f, 0.0001f);
+    REQUIRE_NEAR(module.CurrentInput().oscillators[0].vco.wavetablePosition, 0.25f, 0.0001f);
+    REQUIRE_NEAR(module.CurrentInput().oscillators[0].vco.maxFreq, 0.5f, 0.0001f);
+
+    SetAndSettle(manager, ids.quad.tune, 0.0f);
+    SetAndSettle(manager, ids.quad.phase, -1.0f);
+    SetAndSettle(manager, ids.quad.shape, 1.0f);
+    SetAndSettle(manager, ids.quad.gain, 1.0f);
+    SetAndSettle(manager, ids.pmIndex[0], 1.0f);
+    SetAndSettle(manager, ids.frequency[0], 1.0f);
+    SetAndSettle(manager, ids.frequency[1], 1.0f);
+    SetAndSettle(manager, ids.frequency[2], 1.0f);
+    SetAndSettle(manager, ids.frequency[3], 1.0f);
+    module.SetInput(manager);
+
+    REQUIRE_NEAR(module.CurrentInput().oscillators[0].tuneMultiplier, 0.5f, 0.0001f);
+    REQUIRE_NEAR(module.CurrentInput().oscillators[0].phaseCycles, -1.0f, 0.0001f);
+    REQUIRE_NEAR(module.CurrentInput().oscillators[0].shape, 1.0f, 0.0001f);
+    REQUIRE_NEAR(module.CurrentInput().oscillators[0].gain, 1.0f, 0.0001f);
+    REQUIRE_NEAR(module.CurrentInput().oscillators[0].pmIndex, 1.0f, 0.0001f);
+    REQUIRE_NEAR(module.CurrentInput().oscillators[0].baseFrequencyHz, 160.0f, 0.0001f);
+    REQUIRE_NEAR(module.CurrentInput().oscillators[1].baseFrequencyHz, 800.0f, 0.0001f);
+    REQUIRE_NEAR(module.CurrentInput().oscillators[2].baseFrequencyHz, 2000.0f, 0.0001f);
+    REQUIRE_NEAR(module.CurrentInput().oscillators[3].baseFrequencyHz, 16000.0f, 0.0001f);
+}
+
+TEST_CASE(dresden_vco_applies_post_gain_equal_power_xy_and_preserves_raw_scope_ui_connections) {
+    synth::ScopeWriter writer(4, 32);
+    auto first = writer.ReserveChans(1);
+    auto second = writer.ReserveChans(1);
+    auto third = writer.ReserveChans(1);
+    auto fourth = writer.ReserveChans(1);
+    synth::Dresden4VcoModule module(48000.0f);
+    module.SetScopeWriterHolder(0, &first);
+    module.SetScopeWriterHolder(1, &second);
+    module.SetScopeWriterHolder(2, &third);
+    module.SetScopeWriterHolder(3, &fourth);
+    module.SetColor(0, synth::Color::Cyan);
+    module.SetColor(1, synth::Color::Orange);
+    module.SetColor(2, synth::Color::Yellow);
+    module.SetColor(3, synth::Color::Green);
+
+    for (auto& oscillator : module.CurrentInput().oscillators) {
+        oscillator.vco = {
+            .freq = 0.25,
+            .phaseOffset = 0.0f,
+            .wavetablePosition = 0.0f,
+            .maxFreq = 0.5f,
+        };
+        oscillator.gain = 1.0f;
+    }
+    module.CurrentInput().oscillators[0].gain = -0.5f;
+    module.CurrentInput().x = {0.0f, 1.0f};
+    module.CurrentInput().y = {0.0f, 1.0f};
+    module.Process();
+
+    REQUIRE_NEAR(module.OscillatorOutput(0), module.RawOutput(0) * -0.5f, 0.0001f);
+    REQUIRE_NEAR(module.OutputLeft(), module.OscillatorOutput(0), 0.0001f);
+    REQUIRE_NEAR(module.OutputRight(), module.OscillatorOutput(3), 0.0001f);
+
+    module.CurrentInput().x = {0.5f, 0.5f};
+    module.CurrentInput().y = {0.5f, 0.5f};
+    module.Process();
+    const float expectedCenter = 0.5f * (module.OscillatorOutput(0) + module.OscillatorOutput(1)
+                                         + module.OscillatorOutput(2) + module.OscillatorOutput(3));
+    REQUIRE_NEAR(module.OutputLeft(), expectedCenter, 0.0001f);
+    REQUIRE_NEAR(module.OutputRight(), expectedCenter, 0.0001f);
+
+    synth::Dresden4VcoModule coherent;
+    for (auto& oscillator : coherent.CurrentInput().oscillators) {
+        oscillator.vco = {
+            .freq = 0.25,
+            .phaseOffset = 0.0f,
+            .wavetablePosition = 0.0f,
+            .maxFreq = 0.5f,
+        };
+        oscillator.gain = 1.0f;
+    }
+    coherent.CurrentInput().x = {0.5f, 0.5f};
+    coherent.CurrentInput().y = {0.5f, 0.5f};
+    coherent.Process();
+    REQUIRE_NEAR(coherent.RawOutput(0), coherent.RawOutput(1), 0.0001f);
+    REQUIRE_NEAR(coherent.RawOutput(0), coherent.RawOutput(2), 0.0001f);
+    REQUIRE_NEAR(coherent.RawOutput(0), coherent.RawOutput(3), 0.0001f);
+    REQUIRE_NEAR(coherent.OutputLeft(), 2.0f * coherent.RawOutput(0), 0.0001f);
+
+    synth::Dresden4VcoModule::UIState ui;
+    module.PopulateUIState(ui);
+    REQUIRE_TRUE(ui.vcos[0].connected.load());
+    REQUIRE_TRUE(ui.vcos[1].connected.load());
+    REQUIRE_TRUE(ui.vcos[2].connected.load());
+    REQUIRE_TRUE(ui.vcos[3].connected.load());
+    REQUIRE_TRUE(ui.vcos[0].scope.load() == &writer);
+    REQUIRE_TRUE(ui.vcos[1].scope.load() == &writer);
+    REQUIRE_TRUE(ui.vcos[2].scope.load() == &writer);
+    REQUIRE_TRUE(ui.vcos[3].scope.load() == &writer);
+    REQUIRE_TRUE(ui.vcos[0].scopeChannel.load() == first.FlatChan());
+    REQUIRE_TRUE(ui.vcos[1].scopeChannel.load() == second.FlatChan());
+    REQUIRE_TRUE(ui.vcos[2].scopeChannel.load() == third.FlatChan());
+    REQUIRE_TRUE(ui.vcos[3].scopeChannel.load() == fourth.FlatChan());
+    REQUIRE_TRUE(ui.vcos[0].color.Load() == synth::Color::Cyan);
+    REQUIRE_TRUE(ui.vcos[1].color.Load() == synth::Color::Orange);
+    REQUIRE_TRUE(ui.vcos[2].color.Load() == synth::Color::Yellow);
+    REQUIRE_TRUE(ui.vcos[3].color.Load() == synth::Color::Green);
 }
 
 TEST_CASE(demo_modulation_process_parameters_applies_direct_vco_modulation) {

@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <array>
 #include <cstddef>
+#include <cmath>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -245,6 +246,520 @@ private:
     std::array<float, kVoiceCount> outputs_{};
     std::array<float, kVoiceCount> directSources_{};
     std::array<float, kVoiceCount> swappedSources_{};
+};
+
+template<std::size_t Size>
+class BipolarMatrixMixerModule {
+public:
+    static_assert(Size > 0);
+
+    static constexpr std::size_t kSize = Size;
+
+    using ParameterIds = std::array<ParameterId, kSize * kSize>;
+
+    BipolarMatrixMixerModule() = default;
+    BipolarMatrixMixerModule(const BipolarMatrixMixerModule&) = delete;
+    BipolarMatrixMixerModule& operator=(const BipolarMatrixMixerModule&) = delete;
+    BipolarMatrixMixerModule(BipolarMatrixMixerModule&&) = delete;
+    BipolarMatrixMixerModule& operator=(BipolarMatrixMixerModule&&) = delete;
+
+    void RegisterParameters(ParameterManager& manager, ParameterGroup& group, std::string_view prefix = {}) {
+        if (registered_) {
+            throw std::logic_error("bipolar matrix mixer module parameters already registered");
+        }
+        if (&group.Manager() != &manager) {
+            throw std::logic_error("bipolar matrix mixer module group is not owned by manager");
+        }
+        if (group.Config().numVoices != 1) {
+            throw std::logic_error("bipolar matrix mixer module requires a mono parameter group");
+        }
+
+        std::array<std::string, kSize * kSize> names{};
+        for (std::size_t row = 0; row < kSize; ++row) {
+            for (std::size_t column = 0; column < kSize; ++column) {
+                names[Index(row, column)] = MatrixName(prefix, row, column);
+            }
+        }
+        ValidateRegistration(manager, group, names, "bipolar matrix mixer module");
+
+        for (std::size_t row = 0; row < kSize; ++row) {
+            for (std::size_t column = 0; column < kSize; ++column) {
+                parameterIds_[Index(row, column)] = manager.RegisterParameter(group, {
+                                                                                         .name = names[Index(row, column)],
+                                                                                         .shortName = MatrixShortName(row, column),
+                                                                                         .defaultValue = row == column ? 1.0f : 0.0f,
+                                                                                         .range = RangeKind::Bipolar,
+                                                                                         .color = Color::Grey,
+                                                                                     });
+            }
+        }
+
+        manager_ = &manager;
+        registered_ = true;
+    }
+
+    void RegisterToBank(Bank& bank, std::size_t offset) {
+        RequireRegistered();
+
+        std::array<Parameter*, kSize * kSize> parameters{};
+        for (std::size_t parameterIx = 0; parameterIx < parameters.size(); ++parameterIx) {
+            parameters[parameterIx] = &ParameterById(parameterIds_[parameterIx]);
+        }
+        bank.RegisterParameters(parameters, offset);
+    }
+
+    void SetInput(ParameterManager& manager) {
+        RequireRegistered();
+        if (&manager != manager_) {
+            throw std::logic_error("bipolar matrix mixer module used with a different parameter manager");
+        }
+
+        for (std::size_t row = 0; row < kSize; ++row) {
+            for (std::size_t column = 0; column < kSize; ++column) {
+                gains_[Index(row, column)] =
+                    manager.GetBipolarZeroBasedExponential(1.0f, 0.25f, 0, parameterIds_[Index(row, column)]);
+            }
+        }
+    }
+
+    void Process() {
+        for (std::size_t row = 0; row < kSize; ++row) {
+            float output = 0.0f;
+            for (std::size_t column = 0; column < kSize; ++column) {
+                output += inputs_[column] * gains_[Index(row, column)];
+            }
+            outputs_[row] = output;
+        }
+    }
+
+    bool Registered() const { return registered_; }
+    const ParameterIds& Parameters() const { return parameterIds_; }
+    std::array<float, kSize>& Inputs() { return inputs_; }
+    const std::array<float, kSize>& Inputs() const { return inputs_; }
+    const std::array<float, kSize>& Outputs() const { return outputs_; }
+    float Output(std::size_t row) const { return outputs_.at(row); }
+    float Gain(std::size_t row, std::size_t column) const { return gains_.at(Index(row, column)); }
+
+private:
+    static constexpr std::size_t Index(std::size_t row, std::size_t column) {
+        return row * kSize + column;
+    }
+
+    template<std::size_t Count>
+    static void ValidateRegistration(const ParameterManager& manager, const ParameterGroup& group,
+                                     const std::array<std::string, Count>& names, std::string_view moduleName) {
+        if (group.AvailableParameterSlots() < names.size()) {
+            std::string message(moduleName);
+            message += " parameter capacity exhausted";
+            throw std::length_error(message);
+        }
+
+        for (std::size_t nameIx = 0; nameIx < names.size(); ++nameIx) {
+            for (std::size_t otherIx = nameIx + 1; otherIx < names.size(); ++otherIx) {
+                if (names[nameIx] == names[otherIx]) {
+                    std::string message("duplicate ");
+                    message += moduleName;
+                    message += " parameter name";
+                    throw std::logic_error(message);
+                }
+            }
+            for (std::size_t paramIx = 0; paramIx < manager.ParameterCount(); ++paramIx) {
+                if (manager.ParameterById(static_cast<ParameterId>(paramIx)).Name() == names[nameIx]) {
+                    std::string message("duplicate ");
+                    message += moduleName;
+                    message += " parameter name";
+                    throw std::logic_error(message);
+                }
+            }
+        }
+    }
+
+    static std::string EffectiveName(std::string_view prefix, std::string_view name) {
+        if (prefix.empty()) {
+            return std::string(name);
+        }
+        std::string result(prefix);
+        result += " ";
+        result += name;
+        return result;
+    }
+
+    static std::string MatrixName(std::string_view prefix, std::size_t row, std::size_t column) {
+        return EffectiveName(prefix, MatrixShortName(row, column));
+    }
+
+    static std::string MatrixShortName(std::size_t row, std::size_t column) {
+        std::string result("R");
+        result += std::to_string(row + 1);
+        result += "C";
+        result += std::to_string(column + 1);
+        return result;
+    }
+
+    Parameter& ParameterById(ParameterId id) const {
+        if (manager_ == nullptr) {
+            throw std::logic_error("bipolar matrix mixer module parameters are not registered");
+        }
+        return manager_->ParameterById(id);
+    }
+
+    void RequireRegistered() const {
+        if (!registered_ || manager_ == nullptr) {
+            throw std::logic_error("bipolar matrix mixer module parameters are not registered");
+        }
+    }
+
+    bool registered_ = false;
+    ParameterManager* manager_ = nullptr;
+    std::array<float, kSize> inputs_{};
+    std::array<float, kSize> outputs_{};
+    ParameterIds parameterIds_{};
+    std::array<float, kSize * kSize> gains_{};
+};
+
+class Dresden4VcoModule {
+public:
+    static constexpr std::size_t kOscillatorCount = 4;
+    static constexpr std::size_t kStereoVoiceCount = 2;
+
+    struct QuadParameterIds {
+        ParameterId tune = 0;
+        ParameterId phase = 0;
+        ParameterId shape = 0;
+        ParameterId gain = 0;
+    };
+
+    struct ParameterIds {
+        ParameterId x = 0;
+        ParameterId y = 0;
+        QuadParameterIds quad{};
+        std::array<ParameterId, kOscillatorCount> pmIndex{};
+        std::array<ParameterId, kOscillatorCount> frequency{};
+    };
+
+    struct OscillatorInput {
+        DefaultWavetableVco::Input vco;
+        float tuneMultiplier = 1.0f;
+        float phaseCycles = 0.0f;
+        float shape = 0.0f;
+        float gain = 1.0f;
+        float pmIndex = 0.0f;
+        float baseFrequencyHz = 10.0f;
+    };
+
+    struct Input {
+        std::array<float, kStereoVoiceCount> x{0.5f, 0.5f};
+        std::array<float, kStereoVoiceCount> y{0.5f, 0.5f};
+        std::array<OscillatorInput, kOscillatorCount> oscillators{};
+    };
+
+    struct UIState {
+        std::array<DefaultWavetableVco::UIState, kOscillatorCount> vcos;
+    };
+
+    explicit Dresden4VcoModule(float sampleRate = 48000.0f) {
+        SetSampleRate(sampleRate);
+    }
+    Dresden4VcoModule(const Dresden4VcoModule&) = delete;
+    Dresden4VcoModule& operator=(const Dresden4VcoModule&) = delete;
+    Dresden4VcoModule(Dresden4VcoModule&&) = delete;
+    Dresden4VcoModule& operator=(Dresden4VcoModule&&) = delete;
+
+    void RegisterParameters(ParameterManager& manager, ParameterGroup& stereo, ParameterGroup& quad,
+                            ParameterGroup& mono, std::string_view prefix = "Dresden 4") {
+        if (registered_) {
+            throw std::logic_error("Dresden 4 VCO module parameters already registered");
+        }
+        ValidateGroupShapes(manager, stereo, quad, mono);
+
+        const std::array<std::string, 14> names = ParameterNames(prefix);
+        ValidateDuplicateNames(manager, names, "Dresden 4 VCO module");
+        ValidateCapacity(stereo, 2, "Dresden 4 VCO module stereo");
+        ValidateCapacity(quad, 4, "Dresden 4 VCO module quad");
+        ValidateCapacity(mono, 8, "Dresden 4 VCO module mono");
+
+        parameterIds_.x = manager.RegisterParameter(stereo, {
+                                                                .name = names[0],
+                                                                .shortName = "X",
+                                                                .defaultValue = 0.5f,
+                                                                .color = Color::Red,
+                                                            });
+        parameterIds_.y = manager.RegisterParameter(stereo, {
+                                                                .name = names[1],
+                                                                .shortName = "Y",
+                                                                .defaultValue = 0.5f,
+                                                                .color = Color::Red,
+                                                            });
+        parameterIds_.quad.tune = manager.RegisterParameter(quad, {
+                                                                      .name = names[2],
+                                                                      .shortName = "Tune",
+                                                                      .defaultValue = 0.5f,
+                                                                      .color = Color::Red,
+                                                                  });
+        parameterIds_.quad.phase = manager.RegisterParameter(quad, {
+                                                                       .name = names[3],
+                                                                       .shortName = "Phase",
+                                                                       .defaultValue = 0.0f,
+                                                                       .range = RangeKind::Bipolar,
+                                                                       .color = Color::Red,
+                                                                   });
+        parameterIds_.quad.shape = manager.RegisterParameter(quad, {
+                                                                       .name = names[4],
+                                                                       .shortName = "Shape",
+                                                                       .defaultValue = 0.0f,
+                                                                       .color = Color::Red,
+                                                                   });
+        parameterIds_.quad.gain = manager.RegisterParameter(quad, {
+                                                                      .name = names[5],
+                                                                      .shortName = "Gain",
+                                                                      .defaultValue = 1.0f,
+                                                                      .range = RangeKind::Bipolar,
+                                                                      .color = Color::Red,
+                                                                  });
+        for (std::size_t oscIx = 0; oscIx < kOscillatorCount; ++oscIx) {
+            parameterIds_.pmIndex[oscIx] = manager.RegisterParameter(mono, {
+                                                                               .name = names[6 + oscIx],
+                                                                               .shortName = OscillatorShortName("PM", oscIx),
+                                                                               .defaultValue = 0.0f,
+                                                                               .color = Color::Red,
+                                                                           });
+        }
+        for (std::size_t oscIx = 0; oscIx < kOscillatorCount; ++oscIx) {
+            parameterIds_.frequency[oscIx] = manager.RegisterParameter(mono, {
+                                                                                 .name = names[10 + oscIx],
+                                                                                 .shortName = OscillatorShortName("Freq", oscIx),
+                                                                                 .defaultValue = 0.5f,
+                                                                                 .color = Color::Red,
+                                                                             });
+        }
+
+        manager_ = &manager;
+        registered_ = true;
+    }
+
+    void RegisterToBank(Bank& bank) {
+        RequireRegistered();
+        if (bank.SlotCapacity() < 16) {
+            throw std::logic_error("Dresden 4 VCO module bank registration exceeds slot capacity");
+        }
+
+        bank.AddMapping(0, ParameterById(parameterIds_.x));
+        bank.AddMapping(1, ParameterById(parameterIds_.y));
+        bank.AddMapping(4, ParameterById(parameterIds_.quad.tune));
+        bank.AddMapping(5, ParameterById(parameterIds_.quad.phase));
+        bank.AddMapping(6, ParameterById(parameterIds_.quad.shape));
+        bank.AddMapping(7, ParameterById(parameterIds_.quad.gain));
+        for (std::size_t oscIx = 0; oscIx < kOscillatorCount; ++oscIx) {
+            bank.AddMapping(static_cast<PhysicalEncoderId>(8 + oscIx), ParameterById(parameterIds_.pmIndex[oscIx]));
+            bank.AddMapping(static_cast<PhysicalEncoderId>(12 + oscIx), ParameterById(parameterIds_.frequency[oscIx]));
+        }
+    }
+
+    void SetInput(ParameterManager& manager) {
+        RequireRegistered();
+        if (&manager != manager_) {
+            throw std::logic_error("Dresden 4 VCO module used with a different parameter manager");
+        }
+
+        for (std::size_t voiceIx = 0; voiceIx < kStereoVoiceCount; ++voiceIx) {
+            input_.x[voiceIx] = manager.GetLinear(0.0f, 1.0f, voiceIx, parameterIds_.x);
+            input_.y[voiceIx] = manager.GetLinear(0.0f, 1.0f, voiceIx, parameterIds_.y);
+        }
+
+        for (std::size_t oscIx = 0; oscIx < kOscillatorCount; ++oscIx) {
+            OscillatorInput& oscillator = input_.oscillators[oscIx];
+            oscillator.tuneMultiplier = manager.GetExponential(0.5f, 2.0f, oscIx, parameterIds_.quad.tune);
+            oscillator.phaseCycles = manager.GetBipolarLinear(1.0f, oscIx, parameterIds_.quad.phase);
+            oscillator.shape = manager.GetLinear(0.0f, 1.0f, oscIx, parameterIds_.quad.shape);
+            oscillator.gain = manager.GetBipolarLinear(1.0f, oscIx, parameterIds_.quad.gain);
+            oscillator.pmIndex = manager.GetZeroBasedExponential(1.0f, 0.25f, 0, parameterIds_.pmIndex[oscIx]);
+            oscillator.baseFrequencyHz = manager.GetExponential(kMinFrequencyHz[oscIx], kMaxFrequencyHz[oscIx], 0,
+                                                                parameterIds_.frequency[oscIx]);
+            oscillator.vco.freq = static_cast<double>(oscillator.baseFrequencyHz * oscillator.tuneMultiplier)
+                                  / static_cast<double>(sampleRate_);
+            oscillator.vco.phaseOffset = oscillator.phaseCycles * oscillator.pmIndex;
+            oscillator.vco.wavetablePosition = oscillator.shape;
+            oscillator.vco.maxFreq = 0.5f;
+        }
+    }
+
+    void Process() {
+        for (std::size_t oscIx = 0; oscIx < kOscillatorCount; ++oscIx) {
+            rawOutputs_[oscIx] = vcos_[oscIx].Process(input_.oscillators[oscIx].vco);
+            oscillatorOutputs_[oscIx] = rawOutputs_[oscIx] * input_.oscillators[oscIx].gain;
+        }
+        outputs_[0] = MixForPosition(input_.x[0], input_.y[0]);
+        outputs_[1] = MixForPosition(input_.x[1], input_.y[1]);
+    }
+
+    void PopulateUIState(UIState& state) const {
+        for (std::size_t oscIx = 0; oscIx < kOscillatorCount; ++oscIx) {
+            vcos_[oscIx].PopulateUIState(state.vcos[oscIx]);
+        }
+    }
+
+    void SetSampleRate(float sampleRate) {
+        if (sampleRate <= 0.0f) {
+            throw std::invalid_argument("Dresden 4 VCO module sample rate must be positive");
+        }
+        sampleRate_ = sampleRate;
+    }
+
+    float SampleRate() const { return sampleRate_; }
+
+    void SetScopeWriterHolder(std::size_t oscIx, ScopeWriterHolder* holder) {
+        if (oscIx >= kOscillatorCount) {
+            throw std::out_of_range("Dresden 4 VCO oscillator index out of range");
+        }
+        vcos_[oscIx].SetScopeWriterHolder(holder);
+    }
+
+    void SetColor(std::size_t oscIx, Color color) {
+        if (oscIx >= kOscillatorCount) {
+            throw std::out_of_range("Dresden 4 VCO oscillator index out of range");
+        }
+        vcos_[oscIx].SetColor(color);
+    }
+
+    bool Registered() const { return registered_; }
+    const ParameterIds& Parameters() const { return parameterIds_; }
+    const Input& CurrentInput() const { return input_; }
+    Input& CurrentInput() { return input_; }
+    float OutputLeft() const { return outputs_[0]; }
+    float OutputRight() const { return outputs_[1]; }
+    float OscillatorOutput(std::size_t oscIx) const { return oscillatorOutputs_.at(oscIx); }
+    float RawOutput(std::size_t oscIx) const { return rawOutputs_.at(oscIx); }
+
+private:
+    static constexpr std::array<float, kOscillatorCount> kMinFrequencyHz{10.0f, 50.0f, 250.0f, 1000.0f};
+    static constexpr std::array<float, kOscillatorCount> kMaxFrequencyHz{160.0f, 800.0f, 2000.0f, 16000.0f};
+
+    template<std::size_t Count>
+    static void ValidateDuplicateNames(const ParameterManager& manager, const std::array<std::string, Count>& names,
+                                       std::string_view moduleName) {
+        for (std::size_t nameIx = 0; nameIx < names.size(); ++nameIx) {
+            for (std::size_t otherIx = nameIx + 1; otherIx < names.size(); ++otherIx) {
+                if (names[nameIx] == names[otherIx]) {
+                    std::string message("duplicate ");
+                    message += moduleName;
+                    message += " parameter name";
+                    throw std::logic_error(message);
+                }
+            }
+            for (std::size_t paramIx = 0; paramIx < manager.ParameterCount(); ++paramIx) {
+                if (manager.ParameterById(static_cast<ParameterId>(paramIx)).Name() == names[nameIx]) {
+                    std::string message("duplicate ");
+                    message += moduleName;
+                    message += " parameter name";
+                    throw std::logic_error(message);
+                }
+            }
+        }
+    }
+
+    static void ValidateCapacity(const ParameterGroup& group, std::size_t required, std::string_view moduleName) {
+        if (group.AvailableParameterSlots() < required) {
+            std::string message(moduleName);
+            message += " parameter capacity exhausted";
+            throw std::length_error(message);
+        }
+    }
+
+    static void ValidateGroupShapes(const ParameterManager& manager, const ParameterGroup& stereo,
+                                    const ParameterGroup& quad, const ParameterGroup& mono) {
+        if (&stereo.Manager() != &manager || &quad.Manager() != &manager || &mono.Manager() != &manager) {
+            throw std::logic_error("Dresden 4 VCO module groups must belong to the supplied manager");
+        }
+        if (stereo.Config().numVoices != 2 || quad.Config().numVoices != 4 || mono.Config().numVoices != 1) {
+            throw std::logic_error("Dresden 4 VCO module parameter groups have incompatible voice counts");
+        }
+        if (quad.Config().numModulators < 1) {
+            throw std::logic_error("Dresden 4 VCO module quad group requires a modulation source slot");
+        }
+        if (stereo.Config().numScenes != quad.Config().numScenes || stereo.Config().numScenes != mono.Config().numScenes
+            || stereo.Config().numScenes == 0) {
+            throw std::logic_error("Dresden 4 VCO module parameter groups have incompatible scene counts");
+        }
+    }
+
+    static std::string EffectiveName(std::string_view prefix, std::string_view name) {
+        if (prefix.empty()) {
+            return std::string(name);
+        }
+        std::string result(prefix);
+        result += " ";
+        result += name;
+        return result;
+    }
+
+    static std::string OscillatorShortName(std::string_view base, std::size_t oscIx) {
+        std::string result(base);
+        result += " ";
+        result += std::to_string(oscIx + 1);
+        return result;
+    }
+
+    static std::array<std::string, 14> ParameterNames(std::string_view prefix) {
+        std::array<std::string, 14> names{
+            EffectiveName(prefix, "X"),
+            EffectiveName(prefix, "Y"),
+            EffectiveName(prefix, "Tune"),
+            EffectiveName(prefix, "Phase"),
+            EffectiveName(prefix, "Shape"),
+            EffectiveName(prefix, "Gain"),
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+        };
+        for (std::size_t oscIx = 0; oscIx < kOscillatorCount; ++oscIx) {
+            names[6 + oscIx] = EffectiveName(prefix, OscillatorShortName("PM Index", oscIx));
+            names[10 + oscIx] = EffectiveName(prefix, OscillatorShortName("Frequency", oscIx));
+        }
+        return names;
+    }
+
+    float MixForPosition(float x, float y) const {
+        constexpr float kHalfPi = 1.57079632679489661923f;
+        const float clampedX = std::clamp(x, 0.0f, 1.0f);
+        const float clampedY = std::clamp(y, 0.0f, 1.0f);
+        const float xLow = std::cos(clampedX * kHalfPi);
+        const float xHigh = std::sin(clampedX * kHalfPi);
+        const float yLow = std::cos(clampedY * kHalfPi);
+        const float yHigh = std::sin(clampedY * kHalfPi);
+
+        return oscillatorOutputs_[0] * xLow * yLow
+               + oscillatorOutputs_[1] * xHigh * yLow
+               + oscillatorOutputs_[2] * xLow * yHigh
+               + oscillatorOutputs_[3] * xHigh * yHigh;
+    }
+
+    Parameter& ParameterById(ParameterId id) const {
+        if (manager_ == nullptr) {
+            throw std::logic_error("Dresden 4 VCO module parameters are not registered");
+        }
+        return manager_->ParameterById(id);
+    }
+
+    void RequireRegistered() const {
+        if (!registered_ || manager_ == nullptr) {
+            throw std::logic_error("Dresden 4 VCO module parameters are not registered");
+        }
+    }
+
+    float sampleRate_ = 48000.0f;
+    bool registered_ = false;
+    ParameterManager* manager_ = nullptr;
+    ParameterIds parameterIds_{};
+    Input input_{};
+    std::array<DefaultWavetableVco, kOscillatorCount> vcos_;
+    std::array<float, kOscillatorCount> rawOutputs_{};
+    std::array<float, kOscillatorCount> oscillatorOutputs_{};
+    std::array<float, kStereoVoiceCount> outputs_{};
 };
 
 template<std::size_t Polyphony>
