@@ -112,7 +112,7 @@ $(RIG_TEST_BIN): tests/rig_tests.cpp tests/support/SynthRig.hpp $(LIB) include/s
 $(MINIAPP_SYSTEM_TEST_BIN): tests/miniapp_system_tests.cpp tests/support/SynthRig.hpp apps/miniapp/MiniApp.hpp apps/miniapp/MiniAppRegistration.hpp apps/miniapp/MiniAppUI.hpp apps/miniapp/MiniAppUiModel.hpp apps/miniapp/MiniAppDraw.hpp apps/miniapp/MiniAppCore.hpp apps/miniapp/DemoModulation.hpp include/synth/PortableUI.hpp include/synth/PortableUIBuilders.hpp $(LIB) include/synth/Engine.hpp include/synth/AppContext.hpp include/synth/AppConcepts.hpp include/synth/AppRegistry.hpp include/synth/AsyncLogger.hpp include/synth/MidiController.hpp include/synth/Modules.hpp include/synth/ParameterModulation.hpp include/synth/PatchPersistence.hpp include/synth/PatchBrowser.hpp include/synth/DspScope.hpp include/synth/Json.hpp
 	$(CXX) $(CPPFLAGS) -Iapps/miniapp $(CXXFLAGS) $< $(LIB) -o $@
 
-$(DRESDEN4_SYSTEM_TEST_BIN): tests/dresden4_system_tests.cpp tests/support/SynthRig.hpp $(LIB) include/synth/Engine.hpp include/synth/AppContext.hpp include/synth/AppConcepts.hpp include/synth/Modules.hpp include/synth/ParameterModulation.hpp include/synth/PatchPersistence.hpp include/synth/DspBuffers.hpp include/synth/DspScope.hpp include/synth/Json.hpp
+$(DRESDEN4_SYSTEM_TEST_BIN): tests/dresden4_system_tests.cpp tests/support/SynthRig.hpp apps/dresden-4/Dresden4.hpp apps/dresden-4/Dresden4UI.hpp apps/dresden-4/Dresden4UiModel.hpp apps/dresden-4/Dresden4Draw.hpp apps/dresden-4/Dresden4Core.hpp $(LIB) include/synth/Engine.hpp include/synth/AppContext.hpp include/synth/AppConcepts.hpp include/synth/Modules.hpp include/synth/ParameterModulation.hpp include/synth/PatchPersistence.hpp include/synth/PortableUI.hpp include/synth/PortableUIBuilders.hpp include/synth/DspBuffers.hpp include/synth/DspScope.hpp include/synth/Json.hpp
 	$(CXX) $(CPPFLAGS) -Iapps/dresden-4 $(CXXFLAGS) $< $(LIB) -o $@
 
 $(RECONCILE_TEST_BIN): tests/reconcile_tests.cpp $(LIB) include/synth/MidiReconcile.hpp include/synth/MidiController.hpp
@@ -133,7 +133,7 @@ $(VIEWMODEL_TEST_BIN): tests/viewmodel_tests.cpp $(LIB) include/synth/MidiConfig
 $(BLOCKS_TEST_BIN): tests/blocks_tests.cpp $(LIB) include/synth/MidiConfigBlocks.hpp include/synth/MidiController.hpp
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< $(LIB) -o $@
 
-$(PORTABLE_UI_TEST_BIN): tests/portable_ui_tests.cpp apps/miniapp/MiniAppDraw.hpp include/synth/PortableUI.hpp include/synth/PortableUIBuilders.hpp include/synth/RuntimePages.hpp include/synth/ControllersPageUI.hpp include/synth/AppConcepts.hpp $(LIB)
+$(PORTABLE_UI_TEST_BIN): tests/portable_ui_tests.cpp apps/miniapp/MiniAppDraw.hpp apps/dresden-4/Dresden4Draw.hpp apps/dresden-4/Dresden4UiModel.hpp apps/dresden-4/Dresden4Core.hpp include/synth/PortableUI.hpp include/synth/PortableUIBuilders.hpp include/synth/RuntimePages.hpp include/synth/ControllersPageUI.hpp include/synth/AppConcepts.hpp $(LIB)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< $(LIB) -o $@
 
 $(RUNTIME_MAIN_COMPONENT_TEST_BIN): tests/runtime_main_component_tests.cpp include/synth/RuntimeMainComponent.hpp include/synth/AppConcepts.hpp include/synth/ControllersPageUI.hpp include/synth/MidiConfigViewModel.hpp include/synth/RuntimePages.hpp include/synth/RuntimePagePolicy.hpp $(LIB)

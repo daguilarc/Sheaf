@@ -7,6 +7,8 @@
 #include "synth/MidiController.hpp"
 
 #include <algorithm>
+#include <cmath>
+#include <cstddef>
 #include <filesystem>
 #include <fstream>
 #include <optional>
@@ -14,6 +16,8 @@
 #include <string>
 #include <type_traits>
 
+#include "../apps/dresden-4/Dresden4Draw.hpp"
+#include "../apps/dresden-4/Dresden4UiModel.hpp"
 #include "../apps/miniapp/MiniAppDraw.hpp"
 
 #ifdef JUCE_MAJOR_VERSION
@@ -25,6 +29,14 @@ namespace {
 void Require(bool condition, const char* label)
 {
     if (!condition)
+    {
+        throw std::runtime_error(label);
+    }
+}
+
+void RequireNear(float actual, float expected, float tolerance, const char* label)
+{
+    if (std::fabs(actual - expected) > tolerance)
     {
         throw std::runtime_error(label);
     }
@@ -245,6 +257,67 @@ int main()
     Require(sharedLfo.front().bounds.width == miniLfo.front().bounds.width &&
                 sharedLfo.front().bounds.height == miniLfo.front().bounds.height,
             "miniapp lfo wrapper fill bounds match shared helper");
+
+    Require(synth_dresden4::Dresden4NodeIds::kRoot == std::string("dresden4.root"),
+            "dresden4 root stable id");
+    Require(synth_dresden4::Dresden4NodeIds::Scope(0) == "dresden4.scope.0",
+            "dresden4 scope zero stable id");
+    Require(synth_dresden4::Dresden4NodeIds::Scope(3) == "dresden4.scope.3",
+            "dresden4 scope three stable id");
+    Require(synth_dresden4::Dresden4NodeIds::Encoder(0) == "dresden4.encoder.0",
+            "dresden4 encoder zero stable id");
+    Require(synth_dresden4::Dresden4NodeIds::Encoder(15) == "dresden4.encoder.15",
+            "dresden4 encoder fifteen stable id");
+    Require(synth_dresden4::Dresden4NodeIds::SceneButton(0) == "dresden4.scene.0",
+            "dresden4 scene zero stable id");
+    Require(synth_dresden4::Dresden4NodeIds::SceneButton(1) == "dresden4.scene.1",
+            "dresden4 scene one stable id");
+    Require(synth_dresden4::Dresden4NodeIds::kSceneBlend == std::string("dresden4.scene.blend"),
+            "dresden4 scene blend stable id");
+
+    const synth::ui::Bounds dresdenRoot = synth_dresden4::Dresden4PageLayout::RootBounds(nullptr);
+    RequireNear(dresdenRoot.width, 900.0f, 0.0001f, "dresden4 default width");
+    RequireNear(dresdenRoot.height, 560.0f, 0.0001f, "dresden4 default height");
+
+    const synth::ui::Bounds dresdenContent = synth_dresden4::Dresden4PageLayout::ContentArea(dresdenRoot);
+    for (std::size_t scopeIx = 0; scopeIx < synth_dresden4::Dresden4PageLayout::kScopeCount; ++scopeIx)
+    {
+        Require(BoundsInside(synth_dresden4::Dresden4PageLayout::ScopeBounds(dresdenContent, scopeIx), dresdenRoot),
+                "dresden4 2x2 scope bounds stay inside default root");
+    }
+    for (std::size_t encoderIx = 0; encoderIx < synth_dresden4::Dresden4EncoderGridLayout::kEncoderCount; ++encoderIx)
+    {
+        Require(BoundsInside(synth_dresden4::Dresden4EncoderGridLayout::BoundsForIndex(
+                                 synth_dresden4::Dresden4PageLayout::EncoderArea(dresdenContent), encoderIx),
+                             dresdenRoot),
+                "dresden4 4x4 encoder bounds stay inside default root");
+    }
+    Require(BoundsInside(synth_dresden4::Dresden4PageLayout::SceneStripArea(dresdenContent), dresdenRoot),
+            "dresden4 scene strip stays inside default root");
+    Require(!synth_dresden4::Dresden4PageLayout::NeedsScrolling(dresdenRoot),
+            "dresden4 default layout does not need scrolling");
+
+    const auto disconnectedEncoderCommands = synth_dresden4::BuildDresden4EncoderCommands(
+        synth_dresden4::Dresden4EncoderDrawState{.connected = false, .label = "Cell 2"},
+        {10.0f, 10.0f, 92.0f, 92.0f});
+    Require(disconnectedEncoderCommands.size() >= 3, "dresden4 disconnected encoder has visible UI state");
+
+    const std::vector<synth::ui::WaveformLayerDrawState> dresdenScopeLayer{
+        {.connected = true, .color = synth::Color::Red, .scope = &scope, .scopeChannel = 0},
+    };
+    const synth::ui::Bounds dresdenScopeBounds{80.0f, 80.0f, 180.0f, 96.0f};
+    const auto sharedDresdenScope = synth::ui::BuildScopeWaveformCommands(
+        dresdenScopeLayer,
+        dresdenScopeBounds,
+        synth_dresden4::Dresden4ScopeDrawState::x_MinY,
+        synth_dresden4::Dresden4ScopeDrawState::x_MaxY,
+        synth_dresden4::Dresden4ScopeDrawState::x_NumSamples,
+        true);
+    const auto wrappedDresdenScope = synth_dresden4::BuildDresden4ScopeCommands(
+        synth_dresden4::Dresden4ScopeDrawState{.layers = dresdenScopeLayer},
+        dresdenScopeBounds);
+    Require(sharedDresdenScope.size() == wrappedDresdenScope.size(),
+            "dresden4 waveform wrapper uses shared scope helper");
 
     synth::ui::Builder builder;
     builder.Root("root", synth::ui::Bounds{0.0f, 0.0f, 640.0f, 480.0f})

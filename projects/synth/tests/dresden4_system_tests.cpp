@@ -17,6 +17,8 @@
 #include <exception>
 #include <filesystem>
 #include <iostream>
+#include <limits>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -140,10 +142,37 @@ float Scene0(const synth::ParameterManager& manager, synth::ParameterId id) {
     return manager.ParameterById(id).SceneCenter(0);
 }
 
+const synth::ui::Node* FindNodeById(const synth::ui::NodeTree& tree, const char* id) {
+    for (const synth::ui::Node& node : tree.nodes) {
+        if (node.id == synth::ui::NodeId(id)) {
+            return &node;
+        }
+    }
+    return nullptr;
+}
+
+const synth::ui::Node* FindNodeById(const synth::ui::NodeTree& tree, const std::string& id) {
+    return FindNodeById(tree, id.c_str());
+}
+
+void RequireNodeId(const synth::ui::NodeTree& tree, const char* id) {
+    REQUIRE_TRUE(FindNodeById(tree, id) != nullptr);
+}
+
+void RequireAction(const std::optional<synth::ui::Action>& action, const char* expectedName) {
+    REQUIRE_TRUE(action.has_value());
+    REQUIRE_TRUE(action->name == expectedName);
+}
+
+bool PopNextMessage(synth::MessageInBus& uiBus, synth::MessageIn& message) {
+    return uiBus.Pop(message, std::numeric_limits<std::uint64_t>::max());
+}
+
 } // namespace
 
 static_assert(synth::SynthApplicationCore<synth_dresden4::Dresden4Core>);
 static_assert(synth::SynthApplicationCore<synth_dresden4::Dresden4>);
+static_assert(synth::SynthApplication<synth_dresden4::Dresden4>);
 
 TEST_CASE(config_declares_patch_launchable_stereo_app) {
     const synth::RuntimeConfig config = synth_dresden4::Dresden4Core::Config();
@@ -209,6 +238,101 @@ TEST_CASE(dresden_and_matrix_banks_expose_required_encoder_cells) {
 
     REQUIRE_TRUE(core.MatrixModule().Parameters()[0] == core.MonoGroup()->ParameterByLocalIndex(8).Id());
     REQUIRE_TRUE(core.MatrixModule().Parameters()[15] == core.MonoGroup()->ParameterByLocalIndex(23).Id());
+}
+
+TEST_CASE(portable_surface_exposes_dresden_main_screen_and_routes_actions) {
+    synth::ParameterManager manager;
+    synth::MessageInBus uiBus(&manager);
+    synth::RuntimeConfig config = synth_dresden4::Dresden4::Config();
+    synth::AppContext context;
+    context.parameterManager = &manager;
+    context.uiBus = &uiBus;
+    context.config = &config;
+
+    std::uint64_t timestamp = 700;
+    context.now = [&timestamp]() { return timestamp++; };
+
+    synth_dresden4::Dresden4 app;
+    app.Init(&context);
+    auto uiState = manager.CreateUIState();
+    context.uiState = uiState.get();
+    manager.PopulateUIState(*context.uiState);
+
+    synth::ui::Surface& surface = app.PortableSurface();
+    const synth::ui::NodeTree dresdenTree = surface.BuildTree();
+
+    RequireNodeId(dresdenTree, "dresden4.root");
+    for (std::size_t scopeIx = 0; scopeIx < 4; ++scopeIx) {
+        const synth::ui::Node* scope = FindNodeById(dresdenTree, "dresden4.scope." + std::to_string(scopeIx));
+        REQUIRE_TRUE(scope != nullptr);
+        REQUIRE_TRUE(scope->kind == synth::ui::NodeKind::Draw);
+        REQUIRE_TRUE(!scope->drawCommands.empty());
+    }
+    for (std::size_t encoderIx = 0; encoderIx < 16; ++encoderIx) {
+        const synth::ui::Node* encoder = FindNodeById(dresdenTree, "dresden4.encoder." + std::to_string(encoderIx));
+        REQUIRE_TRUE(encoder != nullptr);
+        REQUIRE_TRUE(encoder->kind == synth::ui::NodeKind::Draw);
+        RequireAction(encoder->pointerDragAction, "dresden4.encoder.drag");
+        RequireAction(encoder->doubleClickAction, "dresden4.encoder.push");
+    }
+    RequireNodeId(dresdenTree, "dresden4.scene.0");
+    RequireNodeId(dresdenTree, "dresden4.scene.1");
+    const synth::ui::Node* blend = FindNodeById(dresdenTree, "dresden4.scene.blend");
+    REQUIRE_TRUE(blend != nullptr);
+    REQUIRE_TRUE(blend->kind == synth::ui::NodeKind::Slider);
+
+    const synth::ui::Node* disconnected2 = FindNodeById(dresdenTree, "dresden4.encoder.2");
+    const synth::ui::Node* disconnected3 = FindNodeById(dresdenTree, "dresden4.encoder.3");
+    REQUIRE_TRUE(disconnected2 != nullptr && disconnected2->text.find("Disconnected") != std::string::npos);
+    REQUIRE_TRUE(disconnected3 != nullptr && disconnected3->text.find("Disconnected") != std::string::npos);
+
+    surface.DispatchAction(synth::ui::Action::WithValue("dresden4.encoder.drag", "0:5:0.25"));
+    synth::MessageIn message;
+    REQUIRE_TRUE(PopNextMessage(uiBus, message));
+    REQUIRE_TRUE(message.type == synth::MessageIn::Type::ParamIncDec);
+    REQUIRE_TRUE(message.slotIx == 0);
+    REQUIRE_TRUE(message.position == 5);
+    REQUIRE_NEAR(message.delta, 0.25f, 0.000001);
+    REQUIRE_TRUE(message.timestamp == 700);
+
+    surface.DispatchAction(synth::ui::Action::WithValue("dresden4.encoder.push", "0:5:0"));
+    REQUIRE_TRUE(PopNextMessage(uiBus, message));
+    REQUIRE_TRUE(message.type == synth::MessageIn::Type::ParamPush);
+    REQUIRE_TRUE(message.slotIx == 0);
+    REQUIRE_TRUE(message.position == 5);
+    REQUIRE_TRUE(message.timestamp == 701);
+
+    surface.DispatchAction(synth::ui::Action::WithValue("dresden4.bank.select", "1"));
+    REQUIRE_TRUE(PopNextMessage(uiBus, message));
+    REQUIRE_TRUE(message.type == synth::MessageIn::Type::SelectParamBank);
+    REQUIRE_TRUE(message.slotIx == 0);
+    REQUIRE_TRUE(message.bankIx == 1);
+    REQUIRE_TRUE(message.timestamp == 702);
+
+    surface.DispatchAction(synth::ui::Action::WithValue("dresden4.scene.select", "1"));
+    REQUIRE_TRUE(PopNextMessage(uiBus, message));
+    REQUIRE_TRUE(message.type == synth::MessageIn::Type::SceneSelect);
+    REQUIRE_TRUE(message.sceneIx == 1);
+    REQUIRE_TRUE(message.timestamp == 703);
+
+    surface.DispatchAction(synth::ui::Action::WithValue("dresden4.scene.blend", "0.60"));
+    REQUIRE_TRUE(PopNextMessage(uiBus, message));
+    REQUIRE_TRUE(message.type == synth::MessageIn::Type::SetSceneBlend);
+    REQUIRE_NEAR(message.value, 0.60f, 0.000001);
+    REQUIRE_TRUE(message.timestamp == 704);
+
+    uiBus.Push(synth::MessageIn::SelectParamBank(800, 0, 1));
+    REQUIRE_TRUE(PopNextMessage(uiBus, message));
+    uiBus.Apply(message);
+    manager.PopulateUIState(*context.uiState);
+    const synth::ui::NodeTree matrixTree = surface.BuildTree();
+    for (std::size_t encoderIx = 0; encoderIx < 16; ++encoderIx) {
+        const synth::ui::Node* encoder = FindNodeById(matrixTree, "dresden4.encoder." + std::to_string(encoderIx));
+        REQUIRE_TRUE(encoder != nullptr);
+        REQUIRE_TRUE(encoder->kind == synth::ui::NodeKind::Draw);
+    }
+    REQUIRE_TRUE(FindNodeById(matrixTree, "dresden4.encoder.2")->text.find("Disconnected") == std::string::npos);
+    REQUIRE_TRUE(FindNodeById(matrixTree, "dresden4.encoder.3")->text.find("Disconnected") == std::string::npos);
 }
 
 TEST_CASE(matrix_sources_materialize_quad_modulator_values_for_four_voices) {
