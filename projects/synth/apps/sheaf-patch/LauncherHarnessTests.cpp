@@ -1,14 +1,18 @@
 #include "Launcher.hpp"
 
 #include "MiniAppRegistration.hpp"
+#include "Shell.hpp"
 #include "synth/AppRegistry.hpp"
 
 #include <juce_gui_extra/juce_gui_extra.h>
 
 #include <filesystem>
 #include <iostream>
+#include <memory>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -38,6 +42,22 @@ synth::SynthAppRegistration TestRegistration(std::string appId,
 
 int main() {
     juce::ScopedJuceInitialiser_GUI juce;
+
+    {
+        using MiniAppOwnerFactoryResult =
+            decltype(synth_runtime::MakeRuntimeSessionOwner<synth_miniapp::MiniApp>(
+                std::declval<synth::RuntimeDataPaths>()));
+        static_assert(std::is_same_v<MiniAppOwnerFactoryResult,
+                                     std::unique_ptr<synth_runtime::RuntimeSessionOwner>>);
+
+        std::function<std::unique_ptr<synth_runtime::RuntimeSessionOwner>(synth::RuntimeDataPaths)>
+            miniappOwnerFactory = [](synth::RuntimeDataPaths paths) {
+                return synth_runtime::MakeRuntimeSessionOwner<synth_miniapp::MiniApp>(std::move(paths));
+            };
+
+        Require(static_cast<bool>(miniappOwnerFactory),
+                "miniapp registration can bind through the generic runtime session owner factory");
+    }
 
     {
         std::vector<synth::SynthAppRegistration> apps;

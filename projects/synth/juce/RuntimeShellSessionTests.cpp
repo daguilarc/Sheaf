@@ -11,6 +11,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include <filesystem>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -154,6 +155,22 @@ int main() {
     juce::Component* wideDraw = wideRenderers.front()->FindByNodeId("wide.draw");
     Require(wideDraw != nullptr && wideDraw->getBounds().getRight() == 900,
             "full-width app draw reaches x 900 without clipping");
+
+    {
+        auto owner = synth_runtime::MakeRuntimeSessionOwner<synth_miniapp::MiniApp>(paths);
+        Require(owner != nullptr, "type-erased runtime session owner is constructed");
+
+        juce::Component parent;
+        parent.addAndMakeVisible(owner->Component());
+
+        Require(owner->Component().getParentComponent() == &parent,
+                "type-erased runtime session owner exposes a displayable component");
+        Require(dynamic_cast<synth_runtime::ShellComponent<synth_miniapp::MiniApp>*>(&owner->Component()) != nullptr,
+                "type-erased runtime session owner exposes the contained typed shell component");
+
+        parent.removeChildComponent(&owner->Component());
+        owner.reset();
+    }
 
     return 0;
 }

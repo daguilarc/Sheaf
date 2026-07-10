@@ -29,7 +29,7 @@ public:
 
             std::vector<synth::SynthAppRegistration> apps;
             apps.push_back(synth_miniapp::MakeMiniAppRegistration([this](synth::RuntimeDataPaths paths) {
-                LaunchMiniApp(std::move(paths));
+                LaunchRegisteredApp<synth_miniapp::MiniApp>(std::move(paths));
             }));
 
             launcher_ = std::make_unique<LauncherComponent>(std::move(apps), dataRoot_);
@@ -43,7 +43,7 @@ public:
 
     void shutdown() override {
         window_.reset();
-        miniappSession_.reset();
+        activeSession_.reset();
         launcher_.reset();
     }
 
@@ -70,24 +70,24 @@ private:
         void closeButtonPressed() override { juce::JUCEApplication::getInstance()->systemRequestedQuit(); }
     };
 
-    void LaunchMiniApp(synth::RuntimeDataPaths paths) {
+    template <synth::SynthApplication App>
+    void LaunchRegisteredApp(synth::RuntimeDataPaths paths) {
         try {
-            auto session =
-                std::make_unique<synth_runtime::RuntimeShellSession<synth_miniapp::MiniApp>>(std::move(paths));
-            const synth::RuntimeConfig config = synth_miniapp::MiniApp::Config();
+            auto session = synth_runtime::MakeRuntimeSessionOwner<App>(std::move(paths));
+            const synth::RuntimeConfig config = App::Config();
 
             window_->setName(juce::String(config.appName));
-            miniappSession_ = std::move(session);
-            window_->ShowContent(miniappSession_->Component(), config.uiWidth, config.uiHeight);
+            activeSession_ = std::move(session);
+            window_->ShowContent(activeSession_->Component(), config.uiWidth, config.uiHeight);
         } catch (const std::exception& e) {
-            INFO("SheafPatchApplication::LaunchMiniApp failed: %s", e.what());
+            INFO("SheafPatchApplication::LaunchRegisteredApp failed: %s", e.what());
         }
     }
 
     std::filesystem::path dataRoot_;
     std::unique_ptr<MainWindow> window_;
     std::unique_ptr<LauncherComponent> launcher_;
-    std::unique_ptr<synth_runtime::RuntimeShellSession<synth_miniapp::MiniApp>> miniappSession_;
+    std::unique_ptr<synth_runtime::RuntimeSessionOwner> activeSession_;
 };
 
 }  // namespace synth_sheaf_patch

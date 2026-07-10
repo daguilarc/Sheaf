@@ -44,6 +44,7 @@
 #include <exception>
 #include <memory>
 #include <optional>
+#include <utility>
 
 namespace synth_runtime {
 
@@ -105,6 +106,28 @@ private:
     std::unique_ptr<Runtime<App>> runtime_;
     std::unique_ptr<ShellComponent<App>> shell_;
 };
+
+class RuntimeSessionOwner {
+public:
+    virtual ~RuntimeSessionOwner() = default;
+    virtual juce::Component& Component() = 0;
+};
+
+template <synth::SynthApplication App>
+class RuntimeSessionOwnerFor final : public RuntimeSessionOwner {
+public:
+    explicit RuntimeSessionOwnerFor(synth::RuntimeDataPaths paths) : session_(std::move(paths)) {}
+
+    juce::Component& Component() override { return session_.Component(); }
+
+private:
+    RuntimeShellSession<App> session_;
+};
+
+template <synth::SynthApplication App>
+std::unique_ptr<RuntimeSessionOwner> MakeRuntimeSessionOwner(synth::RuntimeDataPaths paths) {
+    return std::make_unique<RuntimeSessionOwnerFor<App>>(std::move(paths));
+}
 
 // The application wrapper instantiated by SYNTH_RUNTIME_MAIN(AppType). Owns
 // the Runtime<App> and the top-level window, in construction/destruction
