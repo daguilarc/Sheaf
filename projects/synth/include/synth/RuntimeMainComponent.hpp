@@ -83,6 +83,11 @@ public:
         });
     }
 
+    RuntimeMainComponent(const RuntimeMainComponent&) = delete;
+    RuntimeMainComponent& operator=(const RuntimeMainComponent&) = delete;
+    RuntimeMainComponent(RuntimeMainComponent&&) = delete;
+    RuntimeMainComponent& operator=(RuntimeMainComponent&&) = delete;
+
     ui::NodeTree BuildTree() override
     {
         ui::NodeTree appTree = app_.PortableSurface().BuildTree();
@@ -340,6 +345,7 @@ private:
         }
 
         std::size_t rootIndex = tree.nodes.size();
+        // In an acyclic graph, one root and one parent per other node imply full reachability.
         for (std::size_t index = 0; index < parentCounts.size(); ++index)
         {
             if (parentCounts[index] != 0)
@@ -358,23 +364,9 @@ private:
             throw std::invalid_argument("application tree must have exactly one parentless root");
         }
 
-        std::vector<bool> reachable(tree.nodes.size(), false);
-        std::function<void(std::size_t)> markReachable = [&](std::size_t index) {
-            if (reachable[index])
-            {
-                throw std::invalid_argument(
-                    "application tree nodes must be reachable exactly once");
-            }
-            reachable[index] = true;
-            for (const ui::NodeId& child : tree.nodes[index].children)
-            {
-                markReachable(nodeIndex.at(child.value));
-            }
-        };
-        markReachable(rootIndex);
-        for (std::size_t index = 0; index < reachable.size(); ++index)
+        for (std::size_t index = 0; index < parentCounts.size(); ++index)
         {
-            if (!reachable[index] || (index != rootIndex && parentCounts[index] != 1))
+            if (index != rootIndex && parentCounts[index] != 1)
             {
                 throw std::invalid_argument(
                     "application tree nodes must be reachable exactly once");

@@ -4,6 +4,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <utility>
 
 #ifdef JUCE_MAJOR_VERSION
@@ -164,6 +165,11 @@ struct FakeServices
 };
 
 using MainComponent = synth::runtime_ui::RuntimeMainComponent<FakeApp, FakeServices>;
+
+static_assert(!std::is_copy_constructible_v<MainComponent>);
+static_assert(!std::is_copy_assignable_v<MainComponent>);
+static_assert(!std::is_move_constructible_v<MainComponent>);
+static_assert(!std::is_move_assignable_v<MainComponent>);
 
 struct Fixture
 {
@@ -359,6 +365,42 @@ void TestRejectsAppRuntimeNamespace()
     RequireInvalidTree(std::move(tree), "reserved runtime namespace");
 }
 
+void TestRejectsDisconnectedGraph()
+{
+    synth::ui::NodeTree tree = MakeValidAppTree();
+    synth::ui::Node disconnected;
+    disconnected.id = "app.disconnected";
+    disconnected.kind = synth::ui::NodeKind::Section;
+    tree.nodes.push_back(std::move(disconnected));
+    RequireInvalidTree(std::move(tree), "exactly one parentless root");
+}
+
+void TestRejectsMultiplyParentedDiamondGraph()
+{
+    synth::ui::NodeTree tree = MakeValidAppTree();
+    tree.nodes.front().children = {synth::ui::NodeId("app.left"),
+                                   synth::ui::NodeId("app.right")};
+
+    synth::ui::Node left;
+    left.id = "app.left";
+    left.kind = synth::ui::NodeKind::Section;
+    left.children.push_back(synth::ui::NodeId("app.shared"));
+    tree.nodes.push_back(std::move(left));
+
+    synth::ui::Node right;
+    right.id = "app.right";
+    right.kind = synth::ui::NodeKind::Section;
+    right.children.push_back(synth::ui::NodeId("app.shared"));
+    tree.nodes.push_back(std::move(right));
+
+    synth::ui::Node shared;
+    shared.id = "app.shared";
+    shared.kind = synth::ui::NodeKind::Label;
+    tree.nodes.push_back(std::move(shared));
+
+    RequireInvalidTree(std::move(tree), "reachable exactly once");
+}
+
 int failureCount = 0;
 
 template <typename Test>
@@ -397,5 +439,7 @@ int main()
     Run("TestRejectsUnknownChild", TestRejectsUnknownChild);
     Run("TestRejectsCycle", TestRejectsCycle);
     Run("TestRejectsAppRuntimeNamespace", TestRejectsAppRuntimeNamespace);
+    Run("TestRejectsDisconnectedGraph", TestRejectsDisconnectedGraph);
+    Run("TestRejectsMultiplyParentedDiamondGraph", TestRejectsMultiplyParentedDiamondGraph);
     return failureCount == 0 ? 0 : 1;
 }

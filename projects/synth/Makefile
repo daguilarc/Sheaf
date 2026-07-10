@@ -131,7 +131,7 @@ $(BLOCKS_TEST_BIN): tests/blocks_tests.cpp $(LIB) include/synth/MidiConfigBlocks
 $(PORTABLE_UI_TEST_BIN): tests/portable_ui_tests.cpp include/synth/PortableUI.hpp include/synth/PortableUIBuilders.hpp include/synth/RuntimePages.hpp include/synth/ControllersPageUI.hpp include/synth/AppConcepts.hpp $(LIB)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< $(LIB) -o $@
 
-$(RUNTIME_MAIN_COMPONENT_TEST_BIN): tests/runtime_main_component_tests.cpp include/synth/RuntimeMainComponent.hpp include/synth/AppConcepts.hpp include/synth/ControllersPageUI.hpp include/synth/RuntimePages.hpp include/synth/RuntimePagePolicy.hpp $(LIB)
+$(RUNTIME_MAIN_COMPONENT_TEST_BIN): tests/runtime_main_component_tests.cpp include/synth/RuntimeMainComponent.hpp include/synth/AppConcepts.hpp include/synth/ControllersPageUI.hpp include/synth/MidiConfigViewModel.hpp include/synth/RuntimePages.hpp include/synth/RuntimePagePolicy.hpp $(LIB)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< $(LIB) -o $@
 
 $(CONTROLLERS_PAGE_UI_TEST_BIN): tests/controllers_page_ui_tests.cpp include/synth/ControllersPageUI.hpp include/synth/MidiConfigViewModel.hpp $(LIB)
