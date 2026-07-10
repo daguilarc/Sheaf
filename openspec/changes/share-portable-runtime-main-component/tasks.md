@@ -30,6 +30,6 @@
 
 ## 6. Review and Documentation
 
-- [ ] 6.1 Record the deferred audio diagnosis: 48 kHz producer/consumer deficit, zero-fill underruns, and per-block allocation/copy pressure, with no audio code changes.
-- [ ] 6.2 Run per-task xagent Claude reviews and resolve all critical/important findings without adding application-specific logic.
-- [ ] 6.3 Run synth, JUCE, TypeScript, Playwright, generic-boundary, and OpenSpec validation suites and update coverage documentation.
+- [x] 6.1 Record the deferred audio diagnosis: 48 kHz producer/consumer deficit, zero-fill underruns, and per-block allocation/copy pressure, with no audio code changes.
+- [x] 6.2 Run per-task xagent Claude reviews and resolve all critical/important findings without adding application-specific logic.
+- [x] 6.3 Run synth, JUCE, TypeScript, Playwright, generic-boundary, and OpenSpec validation suites and update coverage documentation.

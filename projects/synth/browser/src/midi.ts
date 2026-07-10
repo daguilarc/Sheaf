@@ -44,6 +44,7 @@ export type BrowserMidiManagerOptions = {
   setInterval?: (handler: () => void, milliseconds: number) => ReturnType<typeof setInterval>;
   clearInterval?: (handle: ReturnType<typeof setInterval>) => void;
   pollIntervalMs?: number;
+  drainIntervalMs?: number;
   nowMicros?: () => number;
 };
 
@@ -53,10 +54,12 @@ type OutputBinding = { identifier: string; port: MidiOutputPort };
 export class BrowserMidiManager {
   private access: MidiAccess | undefined;
   private statusValue: BrowserMidiStatus = "offline";
-  private timer: ReturnType<typeof setInterval> | undefined;
+  private pollTimer: ReturnType<typeof setInterval> | undefined;
+  private drainTimer: ReturnType<typeof setInterval> | undefined;
   private readonly inputs = new Map<number, InputBinding>();
   private readonly outputs = new Map<number, OutputBinding>();
   private queue: Promise<void> = Promise.resolve();
+  private drainQueue: Promise<void> = Promise.resolve();
 
   constructor(private readonly runtime: BrowserMidiRuntime, private readonly options: BrowserMidiManagerOptions = {}) {}
 
@@ -71,7 +74,8 @@ export class BrowserMidiManager {
         : await (navigator.requestMIDIAccess({ sysex: true }) as unknown as Promise<MidiAccess>);
       this.access.onstatechange = () => { void this.poll(); };
       const schedule = this.options.setInterval ?? setInterval;
-      this.timer = schedule(() => { void this.poll(); }, this.options.pollIntervalMs ?? 500);
+      this.pollTimer = schedule(() => { void this.poll(); }, this.options.pollIntervalMs ?? 500);
+      this.drainTimer = schedule(() => { void this.drainOutputs(); }, this.options.drainIntervalMs ?? 16);
       await this.poll();
       this.statusValue = "online";
       return { status: this.statusValue };
@@ -89,25 +93,36 @@ export class BrowserMidiManager {
   }
 
   async drainOutputs(): Promise<void> {
-    // Bound each drain pass so a MIDI burst cannot monopolize the browser task;
-    // the poll/statechange loop will pick up any deferred messages.
-    for (let count = 0; count < 256; count++) {
-      const output = await this.runtime.dequeueMidiOutput();
-      if (!output) return;
-      this.outputs.get(output.controllerIx)?.port.send(output.bytes);
-    }
+    if (!this.access) return;
+    const next = this.drainQueue.then(() => this.drainOutputsNow(), () => this.drainOutputsNow());
+    this.drainQueue = next.catch(() => {});
+    return next;
   }
 
   stop(): void {
-    if (this.timer !== undefined) {
-      (this.options.clearInterval ?? clearInterval)(this.timer);
-      this.timer = undefined;
+    if (this.pollTimer !== undefined) {
+      (this.options.clearInterval ?? clearInterval)(this.pollTimer);
+      this.pollTimer = undefined;
+    }
+    if (this.drainTimer !== undefined) {
+      (this.options.clearInterval ?? clearInterval)(this.drainTimer);
+      this.drainTimer = undefined;
     }
     if (this.access) this.access.onstatechange = null;
     for (const controllerIx of this.inputs.keys()) this.closeInput(controllerIx);
     this.outputs.clear();
     this.access = undefined;
     this.statusValue = "offline";
+  }
+
+  private async drainOutputsNow(): Promise<void> {
+    // Bound each drain pass so a MIDI burst cannot monopolize the browser task;
+    // the drain timer will pick up any deferred messages.
+    for (let count = 0; count < 256; count++) {
+      const output = await this.runtime.dequeueMidiOutput();
+      if (!output) return;
+      this.outputs.get(output.controllerIx)?.port.send(output.bytes);
+    }
   }
 
   private async reconcile(): Promise<void> {

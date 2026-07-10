@@ -207,6 +207,54 @@ test("polling recovers missed port changes without remapping another slot", asyn
   expect(result.slotBRebound).toBe(true);
 });
 
+test("drains outbound MIDI on a fast cadence without polling endpoint snapshots", async ({ page }) => {
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+  const result = await page.evaluate(async () => {
+    const { BrowserMidiManager } = await (new Function("return import('/dist/src/midi.js')")() as Promise<{
+      BrowserMidiManager: new (runtime: unknown, options: unknown) => { startFromUserActivation(): Promise<unknown>; stop(): void };
+    }>);
+    class OutputPort {
+      readonly type = "output";
+      readonly state = "connected";
+      readonly sent: number[][] = [];
+      constructor(readonly id: string, readonly name: string) {}
+      send(bytes: number[] | Uint8Array) { this.sent.push(Array.from(bytes)); }
+    }
+    const output = new OutputPort("out-a", "Output A");
+    const access = { inputs: new Map(), outputs: new Map([[output.id, output]]), onstatechange: null };
+    const timers: Array<{ milliseconds: number; handler: () => void }> = [];
+    let endpointSnapshots = 0;
+    const outputQueue: Array<{ controllerIx: number; bytes: number[] }> = [];
+    const runtime = {
+      submitEndpoints: async () => {
+        endpointSnapshots += 1;
+        return [{ type: "open-output", controllerIx: 0, identifier: "out-a", name: "Output A" }];
+      },
+      deliverMidi: async () => {},
+      dequeueMidiOutput: async () => outputQueue.shift(),
+    };
+    const manager = new BrowserMidiManager(runtime, {
+      requestMIDIAccess: async () => access,
+      setInterval: (handler: () => void, milliseconds: number) => {
+        timers.push({ handler, milliseconds });
+        return timers.length;
+      },
+      clearInterval: () => {},
+    });
+    await manager.startFromUserActivation();
+    outputQueue.push({ controllerIx: 0, bytes: [0xf0, 0x7d, 0x66, 0xf7] });
+    const drainTimer = timers.find((timer) => timer.milliseconds === 16);
+    drainTimer?.handler();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    manager.stop();
+    return { timerIntervals: timers.map((timer) => timer.milliseconds), endpointSnapshots, sent: output.sent };
+  });
+
+  expect(result.timerIntervals).toEqual([500, 16]);
+  expect(result.endpointSnapshots).toBe(1);
+  expect(result.sent).toEqual([[0xf0, 0x7d, 0x66, 0xf7]]);
+});
+
 test("real miniapp WASM keeps two Web MIDI controller slots independent through reconnect", async ({ page }) => {
   await page.route("**/dist/src/main.js*", (route) => {
     if (new URL(route.request().url()).search) return route.continue();

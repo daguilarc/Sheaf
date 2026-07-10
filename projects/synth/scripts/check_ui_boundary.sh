@@ -36,6 +36,7 @@ while IFS=: read -r path line match; do
         runtime/ControllersPage.hpp|\
         runtime/FilePage.hpp|\
         runtime/HostDataPaths.cpp|\
+        runtime/JuceRuntimeMainServices.hpp|\
         runtime/MainPane.hpp|\
         runtime/MidiConnectionManager.hpp|\
         runtime/Runtime.hpp|\
