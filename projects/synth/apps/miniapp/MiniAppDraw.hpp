@@ -7,6 +7,7 @@
 #include "synth/DspScope.hpp"
 #include "synth/ParameterModulation.hpp"
 #include "synth/PortableUI.hpp"
+#include "synth/PortableUIBuilders.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -806,103 +807,7 @@ inline std::vector<synth::ui::DrawCommand> BuildEncoderDrawCommands(const Encode
     return commands;
 }
 
-namespace ScopePathMath {
-
-inline constexpr std::size_t x_NumPoints = 1024;
-
-inline double ScopeSampleForPoint(std::size_t point, std::size_t numXSamples)
-{
-    return static_cast<double>(point) * static_cast<double>(numXSamples) / static_cast<double>(x_NumPoints - 1);
-}
-
-inline bool ScopePointCrossesTransfer(std::size_t point, std::size_t numXSamples, double transferSample)
-{
-    if (point == 0 || transferSample <= 0.0 || transferSample >= static_cast<double>(numXSamples))
-    {
-        return false;
-    }
-    const double previousSample = ScopeSampleForPoint(point - 1, numXSamples);
-    const double sample = ScopeSampleForPoint(point, numXSamples);
-    return previousSample < transferSample && sample >= transferSample;
-}
-
-inline std::vector<std::vector<synth::ui::Point>> BuildScopePolylines(const synth::ScopeReader& scopeReader,
-                                                                      synth::ui::Bounds bounds,
-                                                                      float minY,
-                                                                      float maxY)
-{
-    std::vector<std::vector<synth::ui::Point>> polylines;
-    if (scopeReader.Empty())
-    {
-        return polylines;
-    }
-
-    const float denominator = std::max(1.0e-6f, maxY - minY);
-    const double transferSample = scopeReader.TransferXSample();
-    std::vector<synth::ui::Point> current;
-
-    for (std::size_t j = 0; j < x_NumPoints; ++j)
-    {
-        const double sample = ScopeSampleForPoint(j, scopeReader.NumXSamples());
-        const float y = (scopeReader.Get(sample) - minY) / denominator;
-        const float screenX = bounds.x + bounds.width * static_cast<float>(j) / static_cast<float>(x_NumPoints - 1);
-        const float screenY = bounds.y + bounds.height * (1.0f - Clamp(y, 0.0f, 1.0f));
-
-        if (j == 0 || ScopePointCrossesTransfer(j, scopeReader.NumXSamples(), transferSample))
-        {
-            if (!current.empty())
-            {
-                polylines.push_back(std::move(current));
-                current = {};
-            }
-            current.push_back({screenX, screenY});
-        }
-        else
-        {
-            current.push_back({screenX, screenY});
-        }
-    }
-
-    if (!current.empty())
-    {
-        polylines.push_back(std::move(current));
-    }
-
-    return polylines;
-}
-
-inline synth::ui::Bounds ScopeMarkerBounds(const synth::ScopeReader& scopeReader,
-                                           synth::ui::Bounds bounds,
-                                           float minY,
-                                           float maxY,
-                                           float radius = 3.0f)
-{
-    if (scopeReader.Empty() || scopeReader.NumXSamples() == 0)
-    {
-        return {};
-    }
-
-    const double sample = Clamp(
-        scopeReader.TransferXSample() > 0.0 ? scopeReader.TransferXSample() - 1.0 : 0.0,
-        0.0,
-        static_cast<double>(scopeReader.NumXSamples() - 1));
-    const float denominator = std::max(1.0e-6f, maxY - minY);
-    const float x = bounds.x + bounds.width * static_cast<float>(sample) /
-                                    static_cast<float>(scopeReader.NumXSamples() - 1);
-    const float normalizedY = (scopeReader.Get(sample) - minY) / denominator;
-    const float y = bounds.y + bounds.height * (1.0f - Clamp(normalizedY, 0.0f, 1.0f));
-    return {x - radius, y - radius, radius * 2.0f, radius * 2.0f};
-}
-
-}  // namespace ScopePathMath
-
-struct WaveformLayerDrawState
-{
-    bool connected = false;
-    synth::Color color = synth::Color::Off;
-    const synth::ScopeWriter* scope = nullptr;
-    std::size_t scopeChannel = 0;
-};
+using WaveformLayerDrawState = synth::ui::WaveformLayerDrawState;
 
 struct VcoWaveformDrawState
 {
@@ -927,60 +832,7 @@ inline std::vector<synth::ui::DrawCommand> BuildWaveformCommands(const std::vect
                                                                  std::size_t numSamples,
                                                                  bool drawIndicator)
 {
-    std::vector<synth::ui::DrawCommand> commands;
-
-    constexpr float x_Inset = 4.0f;
-    commands.push_back(synth::ui::DrawCommand::Fill(nodeBounds, synth::ui::Color::Rgb(12, 14, 16)));
-
-    synth::ui::Bounds bounds{
-        nodeBounds.x + x_Inset,
-        nodeBounds.y + x_Inset,
-        std::max(0.0f, nodeBounds.width - x_Inset * 2.0f),
-        std::max(0.0f, nodeBounds.height - x_Inset * 2.0f),
-    };
-
-    commands.push_back(synth::ui::DrawCommand::Line(
-        {bounds.x, bounds.y + bounds.height * 0.5f},
-        {bounds.x + bounds.width, bounds.y + bounds.height * 0.5f},
-        synth::ui::Color::Rgb(42, 46, 48),
-        1.0f));
-
-    for (const WaveformLayerDrawState& layer : layers)
-    {
-        if (!layer.connected || layer.scope == nullptr)
-        {
-            continue;
-        }
-
-        synth::ScopeReader reader(layer.scope, layer.scopeChannel, numSamples, 1);
-        if (reader.Empty())
-        {
-            continue;
-        }
-
-        const synth::ui::Color waveColor = ToUiColor(layer.color);
-        const auto polylines = ScopePathMath::BuildScopePolylines(reader, bounds, minY, maxY);
-        for (auto& polyline : polylines)
-        {
-            if (!polyline.empty())
-            {
-                commands.push_back(synth::ui::DrawCommand::Polyline(std::move(polyline), waveColor, 1.4f));
-            }
-        }
-
-        if (drawIndicator)
-        {
-            const synth::ui::Bounds marker =
-                ScopePathMath::ScopeMarkerBounds(reader, bounds, minY, maxY);
-            if (marker.width > 0.0f)
-            {
-                commands.push_back(
-                    synth::ui::DrawCommand::FillEllipse(marker, BrighterUiColor(waveColor, 0.45f)));
-            }
-        }
-    }
-
-    return commands;
+    return synth::ui::BuildScopeWaveformCommands(layers, nodeBounds, minY, maxY, numSamples, drawIndicator);
 }
 
 inline std::vector<synth::ui::DrawCommand> BuildVcoWaveformCommands(const VcoWaveformDrawState& state,

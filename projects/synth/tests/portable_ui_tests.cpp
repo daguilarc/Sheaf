@@ -3,6 +3,7 @@
 #include "synth/PortableUIBuilders.hpp"
 #include "synth/RuntimePages.hpp"
 #include "synth/ControllersPageUI.hpp"
+#include "synth/DspScope.hpp"
 #include "synth/MidiController.hpp"
 
 #include <algorithm>
@@ -11,6 +12,9 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
+
+#include "../apps/miniapp/MiniAppDraw.hpp"
 
 #ifdef JUCE_MAJOR_VERSION
 #error "portable UI tests must not see JUCE"
@@ -62,6 +66,68 @@ bool NodeHasChild(const synth::ui::Node* parent, const synth::ui::NodeId& child)
            std::find(parent->children.begin(), parent->children.end(), child) != parent->children.end();
 }
 
+bool PointInside(synth::ui::Point point, synth::ui::Bounds bounds)
+{
+    return point.x >= bounds.x && point.x <= bounds.x + bounds.width &&
+           point.y >= bounds.y && point.y <= bounds.y + bounds.height;
+}
+
+bool BoundsInside(synth::ui::Bounds inner, synth::ui::Bounds outer)
+{
+    return inner.x >= outer.x && inner.y >= outer.y &&
+           inner.x + inner.width <= outer.x + outer.width &&
+           inner.y + inner.height <= outer.y + outer.height;
+}
+
+void RequireWaveformGeometryInside(const std::vector<synth::ui::DrawCommand>& commands,
+                                   synth::ui::Bounds bounds,
+                                   const char* label)
+{
+    std::size_t polylines = 0;
+    std::size_t markers = 0;
+    for (const synth::ui::DrawCommand& command : commands)
+    {
+        if (command.kind == synth::ui::DrawCommand::Kind::Polyline)
+        {
+            ++polylines;
+            for (synth::ui::Point point : command.points)
+            {
+                Require(PointInside(point, bounds), label);
+            }
+        }
+        if (command.kind == synth::ui::DrawCommand::Kind::FillEllipse)
+        {
+            ++markers;
+            Require(BoundsInside(command.bounds, bounds), label);
+        }
+    }
+    Require(polylines > 0, label);
+    Require(markers > 0, label);
+}
+
+void FillScopeWriter(synth::ScopeWriter& writer, std::size_t channels)
+{
+    auto holder = writer.ReserveChans(channels);
+    for (std::size_t channel = 0; channel < channels; ++channel)
+    {
+        holder.RecordStart(channel);
+    }
+    for (std::size_t frame = 0; frame < 64; ++frame)
+    {
+        for (std::size_t channel = 0; channel < channels; ++channel)
+        {
+            const float normalized = static_cast<float>((frame + channel * 7) % 32) / 31.0f;
+            holder.Write(channel, normalized * 2.0f - 1.0f);
+        }
+        writer.AdvanceIndex();
+    }
+    for (std::size_t channel = 0; channel < channels; ++channel)
+    {
+        holder.RecordEnd(channel);
+    }
+    writer.Publish();
+}
+
 void RequireBrowserIsRootlessDescendant(const synth::ui::NodeTree& tree)
 {
     const synth::ui::Node* root = FindNodeById(tree, synth::runtime_ui::NodeIds::kFileRoot);
@@ -108,6 +174,77 @@ int main()
 {
     static_assert(synth::SynthApplication<TestApp>);
     static_assert(!synth::ui::kPortableUiUsesJuce);
+    static_assert(std::is_same_v<decltype(synth::ui::WaveformLayerDrawState::scope), const synth::ScopeWriter*>);
+    static_assert(std::is_same_v<synth_miniapp::WaveformLayerDrawState, synth::ui::WaveformLayerDrawState>);
+
+    synth::ScopeWriter scope(4, 128);
+    FillScopeWriter(scope, 4);
+    std::vector<synth::ui::WaveformLayerDrawState> waveformLayers{
+        {.connected = true, .color = synth::Color::Red, .scope = &scope, .scopeChannel = 0},
+        {.connected = true, .color = synth::Color::Cyan, .scope = &scope, .scopeChannel = 1},
+        {.connected = false, .color = synth::Color::Green, .scope = &scope, .scopeChannel = 2},
+    };
+    const auto leftWaveform = synth::ui::BuildScopeWaveformCommands(
+        waveformLayers, {10.0f, 20.0f, 180.0f, 90.0f}, -1.1f, 1.1f, 64, true);
+    const auto rightWaveform = synth::ui::BuildScopeWaveformCommands(
+        waveformLayers, {240.0f, 20.0f, 180.0f, 90.0f}, -1.1f, 1.1f, 64, true);
+    RequireWaveformGeometryInside(leftWaveform, {10.0f, 20.0f, 180.0f, 90.0f},
+                                  "left waveform geometry stays inside bounds");
+    RequireWaveformGeometryInside(rightWaveform, {240.0f, 20.0f, 180.0f, 90.0f},
+                                  "right waveform geometry stays inside bounds");
+
+    for (int cell = 0; cell < 4; ++cell)
+    {
+        std::vector<synth::ui::WaveformLayerDrawState> singleLayer{
+            {.connected = true,
+             .color = cell % 2 == 0 ? synth::Color::Yellow : synth::Color::Blue,
+             .scope = &scope,
+             .scopeChannel = static_cast<std::size_t>(cell)},
+        };
+        const synth::ui::Bounds cellBounds{
+            12.0f + static_cast<float>(cell % 2) * 160.0f,
+            160.0f + static_cast<float>(cell / 2) * 120.0f,
+            140.0f,
+            100.0f,
+        };
+        const auto commands = synth::ui::BuildScopeWaveformCommands(singleLayer, cellBounds, -1.1f, 1.1f, 64, true);
+        RequireWaveformGeometryInside(commands, cellBounds, "quad waveform geometry stays inside its cell");
+    }
+
+    synth_miniapp::VcoWaveformDrawState miniVcoState;
+    miniVcoState.layers = waveformLayers;
+    const synth::ui::Bounds wrapperBounds{30.0f, 300.0f, 240.0f, 120.0f};
+    const auto sharedVco = synth::ui::BuildScopeWaveformCommands(
+        waveformLayers,
+        wrapperBounds,
+        synth_miniapp::VcoWaveformDrawState::x_MinY,
+        synth_miniapp::VcoWaveformDrawState::x_MaxY,
+        synth_miniapp::VcoWaveformDrawState::x_NumSamples,
+        true);
+    const auto miniVco = synth_miniapp::BuildVcoWaveformCommands(miniVcoState, wrapperBounds);
+    Require(sharedVco.size() == miniVco.size(), "miniapp vco wrapper command count matches shared helper");
+    for (std::size_t i = 0; i < sharedVco.size(); ++i)
+    {
+        Require(sharedVco[i].kind == miniVco[i].kind, "miniapp vco wrapper command kind matches shared helper");
+        Require(sharedVco[i].color.r == miniVco[i].color.r && sharedVco[i].color.g == miniVco[i].color.g &&
+                    sharedVco[i].color.b == miniVco[i].color.b && sharedVco[i].color.a == miniVco[i].color.a,
+                "miniapp vco wrapper colors match shared helper");
+    }
+
+    synth_miniapp::LfoWaveformDrawState miniLfoState;
+    miniLfoState.layers = {{.connected = true, .color = synth::Color::Orange, .scope = &scope, .scopeChannel = 0}};
+    const auto sharedLfo = synth::ui::BuildScopeWaveformCommands(
+        miniLfoState.layers,
+        wrapperBounds,
+        synth_miniapp::LfoWaveformDrawState::x_MinY,
+        synth_miniapp::LfoWaveformDrawState::x_MaxY,
+        synth_miniapp::LfoWaveformDrawState::x_NumSamples,
+        true);
+    const auto miniLfo = synth_miniapp::BuildLfoWaveformCommands(miniLfoState, wrapperBounds);
+    Require(sharedLfo.size() == miniLfo.size(), "miniapp lfo wrapper command count matches shared helper");
+    Require(sharedLfo.front().bounds.width == miniLfo.front().bounds.width &&
+                sharedLfo.front().bounds.height == miniLfo.front().bounds.height,
+            "miniapp lfo wrapper fill bounds match shared helper");
 
     synth::ui::Builder builder;
     builder.Root("root", synth::ui::Bounds{0.0f, 0.0f, 640.0f, 480.0f})
