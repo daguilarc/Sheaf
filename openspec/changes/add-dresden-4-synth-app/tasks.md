@@ -23,10 +23,10 @@
 
 ## 4. Shared Portable Waveform Drawing
 
-- [ ] 4.1 Add failing JUCE-free portable UI tests that capture current MiniApp scope-path behavior and verify four scope channels rendered into four non-overlapping bounds remain independently clipped.
-- [ ] 4.2 Extract generic scope-channel-to-draw-command logic into the shared portable UI builder layer without introducing JUCE or app-specific includes.
-- [ ] 4.3 Migrate MiniApp waveform command construction and the JUCE waveform adapter to the shared helper while preserving existing draw snapshots and backend tests.
-- [ ] 4.4 Run portable UI, MiniApp system, and JUCE backend parity tests for the extraction.
+- [x] 4.1 Add failing JUCE-free portable UI tests that capture current MiniApp scope-path behavior and verify four scope channels rendered into four non-overlapping bounds remain independently clipped.
+- [x] 4.2 Extract generic scope-channel-to-draw-command logic into the shared portable UI builder layer without introducing JUCE or app-specific includes.
+- [x] 4.3 Migrate MiniApp waveform command construction and the JUCE waveform adapter to the shared helper while preserving existing draw snapshots and backend tests.
+- [x] 4.4 Run portable UI, MiniApp system, and JUCE backend parity tests for the extraction.
 
 ## 5. Dresden 4 JUCE-Free Application Core
 

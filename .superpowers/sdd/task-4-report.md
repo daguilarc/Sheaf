@@ -83,3 +83,99 @@ DONE
 - `npx --prefix projects/synth/browser playwright test projects/synth/browser/tests/ui-backend.spec.ts projects/synth/browser/tests/static-site.spec.ts`: 29 passed.
 - `npm --prefix projects/synth/browser run check:generic-runtime`: passed.
 - `git diff --check`: passed.
+
+# Task 4 Report: Shared Portable Waveform Drawing
+
+## Status
+
+Implemented and locally verified.
+
+## Summary
+
+- Extracted MiniApp scope waveform drawing into shared JUCE-free portable UI
+  code under `synth::ui`.
+- Added `synth::ui::WaveformLayerDrawState`.
+- Added `synth::ui::BuildScopeWaveformCommands(...)`, preserving the MiniApp
+  behavior for dark background fill, inset plotting bounds, centerline,
+  connected/scope filtering, transfer-split polylines, clamped Y positions,
+  and optional transfer markers.
+- Updated MiniApp compatibility names so existing VCO/LFO waveform builders
+  delegate to the shared helper.
+- Added portable UI tests covering shared helper compilation, separate-bounds
+  clipping, four-cell clipping, and MiniApp wrapper equivalence.
+- Added `apps/miniapp/MiniAppDraw.hpp` to the `portable_ui_tests` Makefile
+  dependency list because the wrapper-equivalence test now includes it.
+
+## Files changed
+
+- `projects/synth/include/synth/PortableUIBuilders.hpp`
+- `projects/synth/apps/miniapp/MiniAppDraw.hpp`
+- `projects/synth/tests/portable_ui_tests.cpp`
+- `projects/synth/Makefile`
+
+## RED command/result
+
+- `make -C projects/synth build/portable_ui_tests && projects/synth/build/portable_ui_tests`
+- Result: failed as expected before implementation because
+  `synth::ui::WaveformLayerDrawState` and
+  `synth::ui::BuildScopeWaveformCommands` did not exist. The initial RED also
+  exposed a test-helper mistake returning non-copyable `ScopeWriter`, which
+  was corrected while keeping the shared-API failures as the meaningful RED
+  signal.
+
+## GREEN commands/results
+
+- `make -C projects/synth build/portable_ui_tests && projects/synth/build/portable_ui_tests`
+  - Result: pass.
+- `make -C projects/synth build/miniapp_system_tests && projects/synth/build/miniapp_system_tests`
+  - Result: pass; all MiniApp system tests reported `[PASS]`.
+- `git diff --check -- projects/synth/include/synth/PortableUIBuilders.hpp projects/synth/apps/miniapp/MiniAppDraw.hpp projects/synth/apps/miniapp/MiniAppUiModel.hpp projects/synth/apps/miniapp/MiniAppUI.hpp projects/synth/juce/WaveformComponents.hpp projects/synth/tests/portable_ui_tests.cpp projects/synth/juce/MiniAppJuceBackendParityTests.cpp projects/synth/Makefile`
+  - Result: pass.
+- `rg -n "TODO|FIXME|NEEDS_CONTEXT|BLOCKED" projects/synth/include/synth/PortableUIBuilders.hpp projects/synth/apps/miniapp/MiniAppDraw.hpp projects/synth/tests/portable_ui_tests.cpp`
+  - Result: no matches.
+
+## Review finding and fix
+
+- Review verdict: `REVISE`.
+- Critical finding: removing `synth_miniapp::ScopePathMath` broke existing
+  JUCE-side consumers:
+  - `projects/synth/juce/PathDrawer.hpp`
+  - `projects/synth/juce/EncoderComponentGeometryTests.cpp`
+- Fix: restored `synth_miniapp::ScopePathMath` in `MiniAppDraw.hpp` as a
+  compatibility shim forwarding the previous constants/functions to the new
+  shared `synth::ui::waveform_detail` implementation.
+- Fix verification:
+  - `make -C projects/synth build/portable_ui_tests && projects/synth/build/portable_ui_tests`
+    - Result: pass.
+  - `make -C projects/synth build/miniapp_system_tests && projects/synth/build/miniapp_system_tests`
+    - Result: pass; all MiniApp system tests reported `[PASS]`.
+  - `make -C projects/synth/apps/miniapp /Users/joyo/.codex/worktrees/0546c445-dea2-4148-bd24-0451d943ed00/Sheaf/projects/synth/apps/miniapp/build/encoder_component_geometry_tests && projects/synth/apps/miniapp/build/encoder_component_geometry_tests`
+    - Result: pass; final output included `Encoder geometry tests passed`.
+      The run also printed the expected missing-device
+      `CoreMIDI error: 580 - 10000003` probe warning.
+
+## Self-review
+
+- Scope remained limited to shared portable waveform drawing and MiniApp
+  compatibility wrappers.
+- No Dresden core, UI, runtime, or oversampling wiring was added.
+- No Dresden-to-MiniApp dependency was introduced.
+- The shared helper still uses `synth::Color` for compatibility with current
+  module/UI state and converts to `synth::ui::Color` internally.
+- MiniApp wrapper command counts and colors are tested against the shared
+  helper, which guards against accidental divergence.
+
+## Concerns
+
+- `PortableUIBuilders.hpp` now depends on `DspScope.hpp` and
+  `ParameterModulation.hpp` for waveform drawing. This is appropriate for the
+  new shared helper, but if portable UI builders should stay semantically
+  lighter long-term, a future cleanup could split waveform drawing into a
+  dedicated portable waveform header.
+
+## Commit hash
+
+- `fe5e544e55abc32840fcf6d8d69477b56319e9e0`
+  (`refactor: share scope waveform drawing`)
+- `752d94758962f1f43b45df7c14a229a1cb5ffa96`
+  (`fix: preserve miniapp scope path compatibility`)
