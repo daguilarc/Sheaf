@@ -1061,6 +1061,14 @@ TEST_CASE(fir_decimator_stereo_history_is_independent_and_reset_deterministic) {
     REQUIRE_TRUE(secondRun == firstRun);
 }
 
+TEST_CASE(fir_decimator_exposes_compile_time_shape_contract) {
+    using Decimator = synth::FirDecimator<4, 2, 3>;
+
+    static_assert(Decimator::kFactor == 4);
+    static_assert(Decimator::kChannels == 2);
+    static_assert(Decimator::kTaps == 3);
+}
+
 TEST_CASE(fir_decimator_dresden_coefficients_are_symmetric_with_expected_group_delay) {
     const auto coefficients = synth::Dresden4DecimatorCoefficients();
     REQUIRE_TRUE(coefficients.size() == 287);

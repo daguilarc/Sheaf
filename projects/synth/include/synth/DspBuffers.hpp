@@ -214,6 +214,10 @@ class FirDecimator {
     static_assert(Taps > 0);
 
 public:
+    static constexpr std::size_t kFactor = Factor;
+    static constexpr std::size_t kChannels = Channels;
+    static constexpr std::size_t kTaps = Taps;
+
     constexpr explicit FirDecimator(std::span<const double, Taps> coefficients) {
         std::copy(coefficients.begin(), coefficients.end(), coefficients_.begin());
     }
@@ -262,6 +266,8 @@ template<std::size_t Factor, std::size_t Channels, typename Decimator>
 class OversampledOutputStage {
     static_assert(Factor > 0);
     static_assert(Channels > 0);
+    static_assert(Decimator::kFactor == Factor, "OversampledOutputStage factor must match Decimator::kFactor");
+    static_assert(Decimator::kChannels == Channels, "OversampledOutputStage channels must match Decimator::kChannels");
 
 public:
     constexpr explicit OversampledOutputStage(Decimator decimator)
