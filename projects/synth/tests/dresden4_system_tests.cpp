@@ -394,6 +394,16 @@ TEST_CASE(matrix_feedback_uses_current_vco_outputs_and_delays_only_modulator_con
     std::uint64_t timestamp = 0;
     synth::Engine<synth_dresden4::Dresden4Core> engine([&timestamp] { return timestamp++; });
     engine.Initialize();
+    auto& core = engine.Application();
+    synth::ParameterManager& manager = *core.Context()->parameterManager;
+    synth::Parameter& shape = manager.ParameterById(core.DresdenModule().Parameters().quad.shape);
+    shape.SceneCenter(0) = 0.0f;
+    shape.SceneCenter(1) = 0.0f;
+    synth::Parameter* shapeMatrixDepth = shape.EnsureModulationDepth(0);
+    REQUIRE_TRUE(shapeMatrixDepth != nullptr);
+    shapeMatrixDepth->SceneCenter(0) = 1.0f;
+    shapeMatrixDepth->SceneCenter(1) = 1.0f;
+
     engine.Prepare(48000.0, 8);
 
     std::array<float, 2> left{};
@@ -406,7 +416,6 @@ TEST_CASE(matrix_feedback_uses_current_vco_outputs_and_delays_only_modulator_con
     };
 
     engine.ProcessBlock(block, timestamp++);
-    auto& core = engine.Application();
     const auto& counters = core.DebugCounters();
 
     REQUIRE_TRUE(counters.lastInternalSampleIndex == 7);
@@ -418,6 +427,10 @@ TEST_CASE(matrix_feedback_uses_current_vco_outputs_and_delays_only_modulator_con
         REQUIRE_NEAR(counters.lastMatrixInputs[oscIx], core.DresdenModule().OscillatorOutput(oscIx), 0.000001);
         REQUIRE_NEAR(core.QuadGroup()->GetModulators().Value(oscIx, 0),
                      counters.lastConsumedMatrixSources[oscIx],
+                     0.000001);
+        REQUIRE_NEAR(shape.CachedKnobValue(oscIx), shape.GetRaw(oscIx), 0.000001);
+        REQUIRE_NEAR(core.DresdenModule().CurrentInput().oscillators[oscIx].shape,
+                     shape.CachedKnobValue(oscIx),
                      0.000001);
     }
 }

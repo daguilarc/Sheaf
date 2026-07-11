@@ -78,7 +78,7 @@ public:
             .numVoices = 4,
             .numModulators = 1,
             .numScenes = 2,
-            .maxParameters = 4,
+            .maxParameters = 8,
             .voiceIndicatorColors = {synth::Color::Red, synth::Color::Red, synth::Color::Red, synth::Color::Red},
         });
         monoGroup_ = &manager.CreateGroup({
@@ -229,12 +229,12 @@ private:
     }
 
     std::array<float, 2> ProcessInternalSubframe(std::uint64_t internalIndex) {
-        ProcessParameters(internalIndex);
-
         debugCounters_.lastMatrixModulatorConsumptionInternalIndex = internalIndex;
         debugCounters_.lastConsumedMatrixOutputPublicationInternalIndex = matrixOutputPublicationInternalIndex_;
         debugCounters_.lastConsumedMatrixSources = normalizedMatrixSources_;
         quadGroup_->UpdateModValues();
+
+        ProcessParameters(internalIndex);
 
         dresdenModule_.SetInput(*context_->parameterManager);
         dresdenModule_.Process();
