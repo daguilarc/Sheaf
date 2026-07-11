@@ -1120,6 +1120,53 @@ TEST_CASE(fir_decimator_dresden_frequency_response_meets_spec) {
     REQUIRE_TRUE(maxStopbandDb <= -90.0);
 }
 
+TEST_CASE(fir_decimator_dresden_runtime_path_meets_response_bounds) {
+    using Decimator = synth::FirDecimator<4, 1, synth::kDresden4DecimatorTaps>;
+
+    auto runtimeGain = [](double normalizedFrequency) {
+        constexpr std::size_t kWarmupInternalFrames = 48 * 64;
+        constexpr std::size_t kMeasuredInternalFrames = 48 * 256;
+        Decimator decimator{synth::Dresden4DecimatorCoefficients()};
+
+        double inputEnergy = 0.0;
+        double outputEnergy = 0.0;
+        std::size_t inputCount = 0;
+        std::size_t outputCount = 0;
+
+        for (std::size_t n = 0; n < kWarmupInternalFrames + kMeasuredInternalFrames; ++n) {
+            const float sample = static_cast<float>(
+                std::sin(2.0 * std::numbers::pi * normalizedFrequency * static_cast<double>(n)));
+            const std::array<float, 1> input{sample};
+            std::array<float, 1> output{0.0f};
+            const bool emitted = decimator.ProcessFrame(input, output);
+
+            if (n >= kWarmupInternalFrames) {
+                inputEnergy += static_cast<double>(sample) * static_cast<double>(sample);
+                ++inputCount;
+                if (emitted) {
+                    outputEnergy += static_cast<double>(output[0]) * static_cast<double>(output[0]);
+                    ++outputCount;
+                }
+            }
+        }
+
+        REQUIRE_TRUE(inputCount == kMeasuredInternalFrames);
+        REQUIRE_TRUE(outputCount == kMeasuredInternalFrames / Decimator::kFactor);
+        const double inputRms = std::sqrt(inputEnergy / static_cast<double>(inputCount));
+        const double outputRms = std::sqrt(outputEnergy / static_cast<double>(outputCount));
+        return outputRms / inputRms;
+    };
+
+    const double passbandEdgeGain = runtimeGain(5.0 / 48.0);
+    const double passbandEdgeDb = 20.0 * std::log10(passbandEdgeGain);
+    REQUIRE_TRUE(passbandEdgeDb >= -0.1);
+    REQUIRE_TRUE(passbandEdgeDb <= 0.1);
+
+    const double stopbandEdgeGain = runtimeGain(1.0 / 8.0);
+    const double stopbandEdgeDb = 20.0 * std::log10(std::max(stopbandEdgeGain, 1.0e-300));
+    REQUIRE_TRUE(stopbandEdgeDb <= -90.0);
+}
+
 TEST_CASE(oversampled_output_stage_calls_generator_with_exact_internal_indices) {
     constexpr std::array<double, 1> coefficients{1.0};
     using Decimator = synth::FirDecimator<4, 2, coefficients.size()>;
