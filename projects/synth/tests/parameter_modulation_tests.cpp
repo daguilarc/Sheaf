@@ -193,12 +193,14 @@ TEST_CASE(group_config_validation) {
         .numScenes = 1,
         .maxParameters = 1,
         .processLiteAlpha = -0.01f,
+        .targetCenterAlpha = 1.0f,
     };
     const synth::ParameterGroupConfig highAlpha{
         .numVoices = 1,
         .numScenes = 1,
         .maxParameters = 1,
         .processLiteAlpha = 1.01f,
+        .targetCenterAlpha = 1.0f,
     };
     const synth::ParameterGroupConfig lowTargetCenterAlpha{
         .numVoices = 1,
@@ -818,6 +820,7 @@ TEST_CASE(negative_modulation_depths_add_normalization_offset) {
         .numScenes = 1,
         .maxParameters = 3,
         .processLiteAlpha = 1.0f,
+        .targetCenterAlpha = 1.0f,
     });
 
     auto& parameter = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.5f});
@@ -863,6 +866,7 @@ TEST_CASE(overfull_negative_modulation_offset_uses_normalized_depths) {
         .numScenes = 1,
         .maxParameters = 3,
         .processLiteAlpha = 1.0f,
+        .targetCenterAlpha = 1.0f,
     });
 
     auto& parameter = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.5f});
@@ -985,6 +989,7 @@ TEST_CASE(curved_modulation_depth_targets_still_use_signed_normalization) {
         .numScenes = 1,
         .maxParameters = 3,
         .processLiteAlpha = 1.0f,
+        .targetCenterAlpha = 1.0f,
     });
 
     auto& carrier = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.5f});
@@ -1012,6 +1017,7 @@ TEST_CASE(curved_modulation_depth_targets_keep_modulator_dot_product_linear) {
         .numScenes = 1,
         .maxParameters = 2,
         .processLiteAlpha = 1.0f,
+        .targetCenterAlpha = 1.0f,
     });
 
     auto& carrier = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.0f});
@@ -1035,6 +1041,7 @@ TEST_CASE(parameter_get_raw_includes_normalization_offset) {
         .numScenes = 1,
         .maxParameters = 8,
         .processLiteAlpha = 1.0f,
+        .targetCenterAlpha = 1.0f,
     };
     synth::ParameterGroup& group = manager.CreateGroup(config);
     float mod0 = 0.0f;
@@ -1061,6 +1068,7 @@ TEST_CASE(ui_state_min_max_reports_underfull_modulation_reachable_range) {
         .numScenes = 1,
         .maxParameters = 3,
         .processLiteAlpha = 1.0f,
+        .targetCenterAlpha = 1.0f,
     });
 
     auto& parameter = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.5f});
@@ -1094,6 +1102,7 @@ TEST_CASE(ui_state_min_max_reports_full_range_when_modulation_is_overfull) {
         .numScenes = 1,
         .maxParameters = 3,
         .processLiteAlpha = 1.0f,
+        .targetCenterAlpha = 1.0f,
     });
 
     auto& parameter = manager.CreateParameter(group, {
@@ -1132,6 +1141,7 @@ TEST_CASE(nested_depth_route_reads_get_and_bypasses_slew) {
         .numScenes = 2,
         .maxParameters = 2,
         .processLiteAlpha = 0.1f,
+        .targetCenterAlpha = 1.0f,
     });
 
     auto& carrier = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.5f});
@@ -1158,6 +1168,7 @@ TEST_CASE(process_lite_slews_center_scale_offset_and_depths) {
         .numScenes = 2,
         .maxParameters = 2,
         .processLiteAlpha = 0.25f,
+        .targetCenterAlpha = 1.0f,
     });
 
     auto& parameter = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.0f});
@@ -1192,6 +1203,7 @@ TEST_CASE(process_lite_samples_cached_knob_after_slew) {
         .numScenes = 1,
         .maxParameters = 2,
         .processLiteAlpha = 0.25f,
+        .targetCenterAlpha = 1.0f,
     };
     synth::ParameterGroup& group = manager.CreateGroup(config);
     synth::Parameter& parameter =
@@ -1287,6 +1299,7 @@ TEST_CASE(mapping_helpers_use_cached_process_lite_knob_value) {
         .numScenes = 1,
         .maxParameters = 4,
         .processLiteAlpha = 1.0f,
+        .targetCenterAlpha = 1.0f,
     };
     synth::ParameterGroup& group = manager.CreateGroup(config);
     float mod = 0.0f;
@@ -1348,6 +1361,7 @@ TEST_CASE(process_lite_updates_ui_display_center_and_spread) {
         .numScenes = 1,
         .maxParameters = 2,
         .processLiteAlpha = 1.0f,
+        .targetCenterAlpha = 1.0f,
         .uiDisplayCenterAlpha = 0.25f,
         .uiDisplaySpreadAlpha = 0.5f,
     };
@@ -1371,6 +1385,7 @@ TEST_CASE(ui_display_center_and_spread_follow_cached_knob_order) {
         .numScenes = 1,
         .maxParameters = 2,
         .processLiteAlpha = 1.0f,
+        .targetCenterAlpha = 1.0f,
         .uiDisplayCenterAlpha = 0.25f,
         .uiDisplaySpreadAlpha = 0.5f,
     };
@@ -1397,6 +1412,7 @@ TEST_CASE(cached_knob_and_ui_display_state_seed_on_construction_and_revert) {
         .numScenes = 1,
         .maxParameters = 2,
         .processLiteAlpha = 1.0f,
+        .targetCenterAlpha = 1.0f,
         .uiDisplayCenterAlpha = 0.25f,
         .uiDisplaySpreadAlpha = 0.5f,
     };
@@ -1433,6 +1449,7 @@ TEST_CASE(nested_modulation_depth_ui_state_uses_true_value_without_motion) {
         .numScenes = 1,
         .maxParameters = 4,
         .processLiteAlpha = 1.0f,
+        .targetCenterAlpha = 1.0f,
         .uiDisplayCenterAlpha = 0.25f,
         .uiDisplaySpreadAlpha = 0.5f,
     };
@@ -1465,6 +1482,7 @@ TEST_CASE(switch_metadata_and_buckets_use_unslewed_display_target) {
         .numScenes = 2,
         .maxParameters = 2,
         .processLiteAlpha = 0.25f,
+        .targetCenterAlpha = 1.0f,
     });
 
     auto& stepped = manager.CreateParameter(group, {
@@ -1512,6 +1530,7 @@ TEST_CASE(switch_value_uses_target_despite_process_lite_slew) {
         .numScenes = 1,
         .maxParameters = 2,
         .processLiteAlpha = 0.25f,
+        .targetCenterAlpha = 1.0f,
         .uiDisplayCenterAlpha = 0.25f,
         .uiDisplaySpreadAlpha = 0.5f,
     };
@@ -1673,6 +1692,7 @@ TEST_CASE(manager_linear_mapping_reaches_endpoints) {
         .numScenes = 1,
         .maxParameters = 1,
         .processLiteAlpha = 1.0f,
+        .targetCenterAlpha = 1.0f,
     });
     const synth::ParameterId paramId = manager.RegisterParameter(group, {.name = "Level", .defaultValue = 0.0f});
     auto& parameter = manager.ParameterById(paramId);
@@ -1700,6 +1720,7 @@ TEST_CASE(manager_exponential_mapping_reaches_endpoints_and_midpoint) {
         .numScenes = 1,
         .maxParameters = 1,
         .processLiteAlpha = 1.0f,
+        .targetCenterAlpha = 1.0f,
     });
     const synth::ParameterId paramId = manager.RegisterParameter(group, {.name = "Frequency", .defaultValue = 0.0f});
     auto& parameter = manager.ParameterById(paramId);
@@ -1727,6 +1748,7 @@ TEST_CASE(manager_zero_based_exponential_mapping_honors_midpoint) {
         .numScenes = 1,
         .maxParameters = 1,
         .processLiteAlpha = 1.0f,
+        .targetCenterAlpha = 1.0f,
     });
     const synth::ParameterId paramId = manager.RegisterParameter(group, {.name = "Depth", .defaultValue = 0.0f});
     auto& parameter = manager.ParameterById(paramId);
@@ -1766,6 +1788,7 @@ TEST_CASE(manager_bipolar_mapping_helpers_return_signed_values) {
         .numScenes = 1,
         .maxParameters = 1,
         .processLiteAlpha = 1.0f,
+        .targetCenterAlpha = 1.0f,
     });
     const synth::ParameterId paramId = manager.RegisterParameter(
         group, {.name = "Amount", .defaultValue = 0.0f, .range = synth::RangeKind::Bipolar});
@@ -1817,6 +1840,7 @@ TEST_CASE(manager_bipolar_zero_based_exponential_is_continuous_at_center) {
         .numScenes = 1,
         .maxParameters = 1,
         .processLiteAlpha = 1.0f,
+        .targetCenterAlpha = 1.0f,
     });
     const synth::ParameterId paramId = manager.RegisterParameter(
         group, {.name = "Amount", .defaultValue = 0.0f, .range = synth::RangeKind::Bipolar});
@@ -1850,6 +1874,7 @@ TEST_CASE(manager_bipolar_mapping_helpers_reject_unipolar_parameters) {
         .numScenes = 1,
         .maxParameters = 1,
         .processLiteAlpha = 1.0f,
+        .targetCenterAlpha = 1.0f,
     });
     const synth::ParameterId paramId =
         manager.RegisterParameter(group, {.name = "Amount", .defaultValue = 0.5f});
@@ -1889,6 +1914,7 @@ TEST_CASE(manager_centered_bipolar_exponential_maps_left_center_and_right_from_b
         .numScenes = 1,
         .maxParameters = 1,
         .processLiteAlpha = 1.0f,
+        .targetCenterAlpha = 1.0f,
     });
     const synth::ParameterId paramId = manager.RegisterParameter(
         group, {.name = "Exponent", .defaultValue = 0.0f, .range = synth::RangeKind::Bipolar});
@@ -1964,6 +1990,7 @@ TEST_CASE(manager_bipolar_zero_based_exponential_uses_signed_bipolar_knob) {
         .numScenes = 1,
         .maxParameters = 1,
         .processLiteAlpha = 1.0f,
+        .targetCenterAlpha = 1.0f,
     });
     const synth::ParameterId paramId = manager.RegisterParameter(
         group, {.name = "Amount", .defaultValue = 0.0f, .range = synth::RangeKind::Bipolar});
@@ -2003,6 +2030,7 @@ TEST_CASE(manager_mapping_helpers_map_cached_voice_value) {
         .numScenes = 1,
         .maxParameters = 2,
         .processLiteAlpha = 1.0f,
+        .targetCenterAlpha = 1.0f,
     });
     const synth::ParameterId carrierId = manager.RegisterParameter(
         group, {.name = "Carrier", .defaultValue = 0.2f, .range = synth::RangeKind::Bipolar});
@@ -2191,6 +2219,7 @@ TEST_CASE(selected_gesture_weight_one_edits_gesture_without_moving_base) {
         .numModulators = 0,
         .numScenes = 1,
         .maxParameters = 1,
+        .targetCenterAlpha = 1.0f,
     });
     auto& parameter = manager.CreateParameter(group, {.name = "Gesture", .defaultValue = 0.5f});
     parameter.SceneCenter(0) = 0.5f;
@@ -3121,6 +3150,7 @@ TEST_CASE(random_modifier_press_randomizes_visible_value_without_touching_mod_de
         .numModulators = 1,
         .numScenes = 1,
         .maxParameters = 2,
+        .targetCenterAlpha = 1.0f,
     });
     auto& carrier = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.25f});
     auto& depth = manager.CreateParameter(group, {
@@ -3159,6 +3189,7 @@ TEST_CASE(random_mod_modifier_press_uses_geometric_slot_loop_with_replacement_an
         .numModulators = 3,
         .numScenes = 1,
         .maxParameters = 3,
+        .targetCenterAlpha = 1.0f,
     });
     group.GetModulators().Metadata(0).name = "LFO";
     group.GetModulators().Metadata(1).name = "Env";
@@ -3346,6 +3377,7 @@ TEST_CASE(parameter_and_slot_ui_state_reports_values_colors_and_target_cell_meta
         .numScenes = 1,
         .maxParameters = 4,
         .processLiteAlpha = 1.0f,
+        .targetCenterAlpha = 1.0f,
         .voiceIndicatorColors = {synth::Color::Cyan, synth::Color::Orange},
     });
     auto& parameter = manager.CreateParameter(group, {
@@ -4992,6 +5024,7 @@ TEST_CASE(twister_output_debounces_reset_and_uses_channels) {
         .numScenes = 2,
         .maxParameters = 4,
         .processLiteAlpha = 1.0f,
+        .targetCenterAlpha = 1.0f,
     });
     auto& parameter = manager.CreateParameter(group, {
         .name = "Cutoff",
@@ -5225,6 +5258,7 @@ TEST_CASE(wrld_bldr_output_sends_value_and_source_derived_sysex) {
         .numScenes = 1,
         .maxParameters = 1,
         .processLiteAlpha = 1.0f,
+        .targetCenterAlpha = 1.0f,
         .voiceIndicatorColors = {synth::Color::Cyan},
     });
     auto& parameter = manager.CreateParameter(group, {
@@ -6673,6 +6707,7 @@ TEST_CASE(randomized_parameter_modulation_simulation) {
             .numScenes = kSimScenes,
             .maxParameters = kSimParams,
             .processLiteAlpha = 0.25f,
+            .targetCenterAlpha = 1.0f,
         });
         auto& carrier = manager.CreateParameter(group, {
             .name = "Carrier",
@@ -6971,6 +7006,7 @@ TEST_CASE(randomized_message_bus_ui_state_simulation) {
             .numScenes = kSimScenes,
             .maxParameters = kSimParams,
             .processLiteAlpha = 0.25f,
+            .targetCenterAlpha = 1.0f,
         });
         auto& carrier = manager.CreateParameter(group, {
             .name = "Carrier",
@@ -7320,6 +7356,7 @@ TEST_CASE(randomized_patch_lifecycle_simulation) {
             .numScenes = kSimScenes,
             .maxParameters = kSimParams,
             .processLiteAlpha = 0.25f,
+            .targetCenterAlpha = 1.0f,
         });
         auto& carrier = manager.CreateParameter(group, {
             .name = "Carrier",
@@ -7700,6 +7737,7 @@ TEST_CASE(randomized_patch_lifecycle_preserves_recursive_local_modulation_depths
             .numScenes = kSimScenes,
             .maxParameters = 8,
             .processLiteAlpha = 0.25f,
+            .targetCenterAlpha = 1.0f,
         });
         auto& cutoff = manager.CreateParameter(group, {.name = "Cutoff", .defaultValue = 0.35f});
         auto& resonance = manager.CreateParameter(
@@ -8088,6 +8126,7 @@ TEST_CASE(randomized_recursive_modulation_ui_tree_round_trips_into_fresh_initial
             .numScenes = kSimScenes,
             .maxParameters = 2,
             .processLiteAlpha = 0.3f,
+            .targetCenterAlpha = 1.0f,
         });
         rig.group = &group;
         group.GetModulators().Metadata(0) = {
@@ -8261,6 +8300,7 @@ TEST_CASE(parameter_values_json_round_trips_values_by_name_and_live_mod_slot) {
         .numModulators = 2,
         .numScenes = 3,
         .maxParameters = 4,
+        .targetCenterAlpha = 1.0f,
     });
     auto& cutoff = source.CreateParameter(sourceGroup, {.name = "Cutoff", .defaultValue = 0.25f});
     auto& resonance = source.CreateParameter(sourceGroup, {.name = "Resonance", .defaultValue = 0.4f});
@@ -8299,6 +8339,7 @@ TEST_CASE(parameter_values_json_round_trips_values_by_name_and_live_mod_slot) {
         .numModulators = 2,
         .numScenes = 3,
         .maxParameters = 4,
+        .targetCenterAlpha = 1.0f,
     });
     auto& targetResonance = target.CreateParameter(targetGroup, {.name = "Resonance", .defaultValue = 0.4f});
     auto& targetCutoff = target.CreateParameter(targetGroup, {.name = "Cutoff", .defaultValue = 0.25f});
@@ -10047,7 +10088,8 @@ TEST_CASE(compute_all_targets_preserves_process_lite_slew) {
                                        .numModulators = 0,
                                        .numScenes = 1,
                                        .maxParameters = 4,
-                                       .processLiteAlpha = 0.1f});
+                                       .processLiteAlpha = 0.1f,
+                                       .targetCenterAlpha = 1.0f});
     auto& parameter = manager.CreateParameter(group, {.name = "SlewProbe", .defaultValue = 0.0f});
     manager.ComputeAllParameters();
     REQUIRE_NEAR(parameter.GetRaw(0), 0.0f, 1e-6f);

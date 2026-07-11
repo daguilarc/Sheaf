@@ -158,6 +158,7 @@ struct Page {
 };
 
 inline constexpr float kDefaultProcessLiteAlpha = 0.1226942309f;  // 1 kHz one-pole cutoff at 48 kHz
+inline constexpr float kDefaultTargetCenterAlpha = 0.0994231307f;  // about 50 Hz at 48 kHz / 16-sample target computes
 inline constexpr std::size_t kDefaultTargetComputeIntervalSamples = 16;
 inline constexpr float kDefaultUiDisplayCenterAlpha = 0.0013089969f;  // about 10 Hz at 48 kHz
 inline constexpr float kDefaultUiDisplaySpreadAlpha = 0.0013089969f;  // about 10 Hz at 48 kHz
@@ -168,6 +169,7 @@ struct ParameterGroupConfig {
     std::size_t numScenes = 0;
     std::size_t maxParameters = 0;
     float processLiteAlpha = kDefaultProcessLiteAlpha;
+    float targetCenterAlpha = kDefaultTargetCenterAlpha;
     std::size_t targetComputeIntervalSamples = kDefaultTargetComputeIntervalSamples;
     float uiDisplayCenterAlpha = kDefaultUiDisplayCenterAlpha;
     float uiDisplaySpreadAlpha = kDefaultUiDisplaySpreadAlpha;

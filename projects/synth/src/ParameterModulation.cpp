@@ -245,7 +245,8 @@ float ClampToRange(float value, RangeKind range) {
 
 bool ParameterGroupConfig::IsValid() const {
     return numVoices > 0 && numScenes > 0 && maxParameters > 0 && targetComputeIntervalSamples > 0 &&
-           processLiteAlpha >= 0.0f && processLiteAlpha <= 1.0f && uiDisplayCenterAlpha >= 0.0f &&
+           processLiteAlpha >= 0.0f && processLiteAlpha <= 1.0f && targetCenterAlpha >= 0.0f &&
+           targetCenterAlpha <= 1.0f && uiDisplayCenterAlpha >= 0.0f &&
            uiDisplayCenterAlpha <= 1.0f && uiDisplaySpreadAlpha >= 0.0f && uiDisplaySpreadAlpha <= 1.0f;
 }
 
@@ -1418,7 +1419,14 @@ float Parameter::ComputeRawCenter(const SceneState& scene) const {
 
 void Parameter::ComputeAtDepth(const SceneState& scene, std::size_t recursionDepth) {
     recursionDepth_ = recursionDepth;
-    targetCenter_ = ClampToRange(ComputeRawCenter(scene), config_.range);
+    const float rawCenter = ClampToRange(ComputeRawCenter(scene), config_.range);
+    if (recursionDepth == 0) {
+        const float alpha = group_.Config().targetCenterAlpha;
+        targetCenter_ += alpha * (rawCenter - targetCenter_);
+        targetCenter_ = ClampToRange(targetCenter_, config_.range);
+    } else {
+        targetCenter_ = rawCenter;
+    }
 
     for (Parameter* depthParameter : modulationDepths_) {
         if (depthParameter != nullptr) {
