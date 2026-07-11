@@ -4,9 +4,8 @@ Last investigated: 2026-07-10
 
 ## Finding
 
-At the current Chrome configuration, the browser producer is scheduled more
-slowly than the AudioWorklet consumes audio. At 48 kHz with 128-frame render
-blocks:
+The original JavaScript ring-producer path was scheduled more slowly than the
+AudioWorklet consumed audio. At 48 kHz with 128-frame render blocks:
 
 ```text
 consumer rate = 48,000 / 128 = 375 blocks/s
@@ -22,7 +21,7 @@ finishes on time. The current producer can request only 88.89% of the blocks
 that the worklet consumes. Main-thread timer jitter can only increase that
 deficit.
 
-The scheduling behavior is in
+That legacy scheduling behavior lives behind the fallback path in
 [`audio.ts`](../browser/src/audio.ts): startup requests one block and then uses
 a rounded millisecond `setInterval`. This provides only an initial one-block
 buffering target, rather than a render-ahead reserve. Because the audio context
@@ -47,18 +46,25 @@ allocations. That per-block allocation and copy work can worsen timing and
 jitter, but it is not needed to explain the deterministic 11.11% scheduling
 shortfall.
 
-## Scope And Follow-up
+## Resolution And Remaining Verification
 
-This branch intentionally makes **no audio scheduler, ring-buffer, sample-rate,
-DSP, or per-block allocation changes**. Its audio-flow tests establish that the
-WASM DSP can produce finite, non-silent samples; they do not claim realtime
-underrun safety.
+This branch replaces the static-site default audio path with a runtime-owned
+Emscripten Wasm AudioWorklet callback. Chrome creates the WebAudio context from
+the page-loaded WASM module, starts the Wasm AudioWorklet thread, and invokes
+the same generic `Runtime<App>::Process` path against the same runtime/engine
+state used by UI, MIDI, patch, and controller edits. The JavaScript
+ring-producer remains only as an injected-runtime fallback/diagnostic path.
 
-The follow-up should be a separate render-ahead/watermark scheduler design. It
-should prefill the ring before playback, observe available frames, and render
-enough blocks to restore a chosen high-water mark whenever the ring falls below
-a low-water mark. Scheduling from ring occupancy, instead of one rounded timer
-tick per block, removes the guaranteed rate mismatch and provides tolerance for
-browser wake-up jitter. That design should also evaluate persistent WASM output
-buffers so allocation and copy pressure is measured and addressed independently
-from the scheduler correction.
+The remaining verification gap is environmental: the real Chrome/Playwright
+callback test exists, but sandboxed Chromium fails before test code runs on
+macOS Mach-port registration in this harness, and unsandboxed launch approval
+is currently unavailable. Native contract tests, TypeScript builds, Node unit
+tests, and Emscripten miniapp/fake-app links cover the generic integration
+until that browser run can be repeated.
+
+Shutdown also keeps the erased C++ runtime object alive after a Wasm
+AudioWorklet has been scheduled. Emscripten's destroy path suspends/deletes the
+JavaScript WebAudio handles but does not expose a synchronous join for the Wasm
+AudioWorklet thread. Retaining the runtime and its worklet stack for the page
+lifetime avoids freeing callback userdata while late audio-thread callbacks may
+still be unwinding.

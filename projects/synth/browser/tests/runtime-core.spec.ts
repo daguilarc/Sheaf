@@ -28,6 +28,7 @@ test("routes a portable action through the runtime worker facade without app HTM
       initialize(handle: number, dataRoot: string) { calls.push(["initialize", handle, dataRoot]); return 0; },
       prepare(handle: number, sampleRate: number, blockSize: number) { calls.push(["prepare", handle, sampleRate, blockSize]); return 0; },
       process(handle: number, frames: number, timestampMicros: number) { calls.push(["process", handle, frames, timestampMicros]); return 0; },
+      startAudioWorklet(handle: number) { calls.push(["startAudioWorklet", handle]); return 0; },
       messageTick(handle: number, timestampMicros: number) { calls.push(["messageTick", handle, timestampMicros]); return 0; },
       buildUiFrame(handle: number) { calls.push(["buildUiFrame", handle]); return Uint8Array.from(bytes).buffer; },
       dispatchAction(handle: number, name: string, value: string) { calls.push(["dispatchAction", handle, name, value]); return 0; },
@@ -39,6 +40,7 @@ test("routes a portable action through the runtime worker facade without app HTM
     await worker.handle({ type: "initialize", dataRoot: "/runtime-data" });
     await worker.handle({ type: "prepare", sampleRate: 48000, blockSize: 128 });
     await worker.handle({ type: "process", frames: 128, timestampMicros: 10 });
+    await worker.handle({ type: "start-audio-worklet" });
     await worker.handle({ type: "message-tick", timestampMicros: 11 });
     await worker.handle({ type: "dispatch-action", name: "generic.trigger", value: "pressed" });
     const uiFrame = await worker.handle({ type: "build-ui-frame" });
@@ -50,6 +52,7 @@ test("routes a portable action through the runtime worker facade without app HTM
   expect(result.uiFrame).toEqual({ type: "ui-frame", frame: Array.from(new Uint8Array(frame)) });
   expect(result.calls).toEqual([
     ["create"], ["initialize", 1, "/runtime-data"], ["prepare", 1, 48000, 128], ["process", 1, 128, 10],
+    ["startAudioWorklet", 1],
     ["messageTick", 1, 11], ["dispatchAction", 1, "generic.trigger", "pressed"],
     ["buildUiFrame", 1], ["buildUiFrame", 1], ["destroy", 1],
   ]);
@@ -83,6 +86,7 @@ test("main bootstrap composes runtime, UI, audio channels, and actions generical
         initialize(handle: number, dataRoot: string) { calls.push(["initialize", handle, dataRoot]); return 0; },
         prepare(handle: number, sampleRate: number, blockSize: number) { calls.push(["prepare", handle, sampleRate, blockSize]); return 0; },
         process() { return 0; },
+        startAudioWorklet(handle: number) { calls.push(["startAudioWorklet", handle]); return 0; },
         renderAudio(_handle: number, channels: number, frames: number) {
           calls.push(["renderAudio", channels, frames]);
           return { status: 0, outputs: [new Float32Array(frames).fill(0.125)] };
@@ -94,7 +98,7 @@ test("main bootstrap composes runtime, UI, audio channels, and actions generical
         dequeueMidiAction() { return undefined; },
         deliverMidi() { return 0; },
         dequeueMidiOutput() { return undefined; },
-        destroy() {},
+        destroy(handle: number) { calls.push(["destroy", handle]); },
       }),
       audioOptions: {
         audioContextFactory: () => ({
@@ -109,62 +113,90 @@ test("main bootstrap composes runtime, UI, audio channels, and actions generical
     document.querySelector<HTMLElement>('[data-synth-node-id="button"]')!.click();
     await new Promise((resolve) => setTimeout(resolve, 20));
     app.stop();
+    await new Promise((resolve) => setTimeout(resolve, 0));
     return { calls, text: document.querySelector('[data-synth-node-id="button"]')?.textContent, status: (document.querySelector("#synth-root") as HTMLElement).dataset.synthStatus };
   }, Array.from(new Uint8Array(frame)));
 
   expect(result.text).toBe("Booted");
   expect(result.status).toMatch(/audio:online; midi:(online|offline)/);
   expect(result.calls).toContainEqual(["audioOutputChannels", 11]);
-  expect(result.calls).toContainEqual(["prepare", 11, 48000, 128]);
-  expect(result.calls).toContainEqual(["renderAudio", 1, 128]);
+  expect(result.calls).toContainEqual(["startAudioWorklet", 11]);
+  expect(result.calls).not.toContainEqual(["prepare", 11, 48000, 128]);
+  expect(result.calls).not.toContainEqual(["renderAudio", 1, 128]);
   expect(result.calls).toContainEqual(["dispatchAction", 11, "generic.boot", "pressed"]);
+  expect(result.calls).toContainEqual(["destroy", 11]);
 });
 
-test("static auto boot uses the default worker runtime client and receives idle status", async ({ page }) => {
+test("static auto boot uses the default direct runtime client", async ({ page }) => {
   const frame = makeCommandBuffer([
     { id: "root", kind: NodeKind.Root, bounds: [0, 0, 120, 50], children: ["button"] },
     { id: "button", kind: NodeKind.Button, bounds: [0, 0, 120, 40], label: "Auto", action: { name: "generic.auto", value: "pressed" } },
   ]);
-  await page.addInitScript(({ frameBytes }) => {
-    class FakeWorker extends EventTarget {
-      constructor(readonly url: string | URL, readonly options?: WorkerOptions) {
-        super();
-        (window as unknown as { __synthWorkerConstructed: unknown[] }).__synthWorkerConstructed = [String(url), options];
-      }
-
-      postMessage(command: { type: string }) {
-        const host = window as unknown as { __synthWorkerCommands?: string[] };
-        host.__synthWorkerCommands = [...(host.__synthWorkerCommands ?? []), command.type];
-        const respond = (data: unknown) => {
-          setTimeout(() => this.dispatchEvent(new MessageEvent("message", { data })), 0);
+  await page.route("**/dist/wasm/app.js", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/javascript",
+    body: `
+      export default async function createSynthBrowserModule() {
+        const heap = new ArrayBuffer(1024 * 1024);
+        const HEAPU8 = new Uint8Array(heap);
+        const HEAPF32 = new Float32Array(heap);
+        const view = new DataView(heap);
+        let next = 4096;
+        const frame = Uint8Array.from([${Array.from(new Uint8Array(frame)).join(",")}]);
+        const framePointer = next;
+        HEAPU8.set(frame, framePointer);
+        next += frame.length + 16;
+        globalThis.__synthModuleCalls = [];
+        const calls = globalThis.__synthModuleCalls;
+        const readString = (pointer) => {
+          let end = pointer;
+          while (HEAPU8[end] !== 0) end += 1;
+          return new TextDecoder().decode(HEAPU8.slice(pointer, end));
         };
-        if (command.type === "load") respond({ type: "ok" });
-        else if (command.type === "create") respond({ type: "created", handle: 17 });
-        else if (command.type === "initialize") respond({ type: "ok" });
-        else if (command.type === "audio-config") respond({ type: "audio-config", channels: 1 });
-        else if (command.type === "build-ui-frame") {
-          respond({ type: "ui-frame", frame: frameBytes });
-          setTimeout(() => this.dispatchEvent(new MessageEvent("message", {
-            data: { type: "page-status", path: "/data/.browser-status", status: "idle-persisted" },
-          })), 20);
-        } else respond({ type: "ok" });
+        return {
+          FS: { filesystems: { IDBFS: {} }, mkdir() {}, mount() {}, syncfs(_populate, complete) { complete(); } },
+          IDBFS: {},
+          HEAPU8,
+          HEAPF32,
+          _malloc(size) { const pointer = next; next += size + 16; return pointer; },
+          _free() {},
+          lengthBytesUTF8(value) { return new TextEncoder().encode(value).length; },
+          stringToUTF8(value, pointer) {
+            const bytes = new TextEncoder().encode(value);
+            HEAPU8.set(bytes, pointer);
+            HEAPU8[pointer + bytes.length] = 0;
+          },
+          _synth_browser_create() { calls.push(["create"]); return 17; },
+          _synth_browser_audio_output_channels(handle) { calls.push(["audioOutputChannels", handle]); return 1; },
+          _synth_browser_initialize(handle, dataRoot) { calls.push(["initialize", handle, readString(dataRoot)]); return 0; },
+          _synth_browser_prepare(handle, sampleRate, blockSize) { calls.push(["prepare", handle, sampleRate, blockSize]); return 0; },
+          _synth_browser_process(handle, _outputs, _channels, frames, timestamp) { calls.push(["process", handle, frames, Number(timestamp)]); return 0; },
+          _synth_browser_start_audio_worklet(handle) { calls.push(["startAudioWorklet", handle]); return 0; },
+          _synth_browser_message_tick(handle, timestamp) { calls.push(["messageTick", handle, Number(timestamp)]); return 0; },
+          _synth_browser_build_ui_frame(handle, sizePointer) { calls.push(["buildUiFrame", handle]); view.setUint32(sizePointer, frame.length, true); return framePointer; },
+          _synth_browser_dispatch_action(handle, name, value) { calls.push(["dispatchAction", handle, readString(name), readString(value)]); return 0; },
+          _synth_browser_submit_midi_endpoints() { return 0; },
+          _synth_browser_dequeue_midi_action() { return 0; },
+          _synth_browser_deliver_midi() { return 0; },
+          _synth_browser_dequeue_midi_output(_handle, _controllerIx, size) { view.setUint32(size, 0, true); return 0; },
+          _synth_browser_destroy(handle) { calls.push(["destroy", handle]); },
+        };
       }
-
-      terminate() {}
-    }
-    Object.defineProperty(window, "Worker", { value: FakeWorker });
-  }, { frameBytes: Array.from(new Uint8Array(frame)) });
+    `,
+  }));
 
   await page.goto("http://127.0.0.1:4173/public/index.html");
   await expect(page.locator('[data-synth-node-id="button"]')).toHaveText("Auto");
-  await expect(page.locator("#synth-root")).toHaveAttribute("data-synth-status", "idle-persisted");
-  const worker = await page.evaluate(() => ({
-    constructed: (window as unknown as { __synthWorkerConstructed?: unknown[] }).__synthWorkerConstructed,
-    commands: (window as unknown as { __synthWorkerCommands?: string[] }).__synthWorkerCommands,
-  }));
-  expect(worker.constructed).toEqual([expect.stringContaining("/dist/src/worker.js"), { type: "module" }]);
-  expect(worker.commands?.slice(0, 5)).toEqual(["load", "create", "initialize", "audio-config", "build-ui-frame"]);
-  expect(worker.commands?.slice(5).every((command) => command === "build-ui-frame")).toBe(true);
+  await expect(page.locator("#synth-root")).toHaveAttribute("data-synth-status", "running");
+  const calls = await page.evaluate(() => (window as unknown as { __synthModuleCalls?: unknown[] }).__synthModuleCalls);
+  expect(calls?.slice(0, 5)).toEqual([
+    ["create"],
+    ["initialize", 17, "/data"],
+    ["audioOutputChannels", 17],
+    ["messageTick", 17, expect.any(Number)],
+    ["buildUiFrame", 17],
+  ]);
+  expect(calls?.slice(5).every((call, index) => Array.isArray(call) && call[0] === (index % 2 === 0 ? "messageTick" : "buildUiFrame"))).toBe(true);
 });
 
 test("browser worker contains no concrete application branch", async ({ page }) => {

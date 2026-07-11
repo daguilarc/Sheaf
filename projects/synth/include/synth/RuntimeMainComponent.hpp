@@ -248,6 +248,8 @@ private:
                         Actions::kDeleteRow,
                         Actions::kAddSingle,
                         Actions::kAddBlock,
+                        Actions::kAddNameDraft,
+                        Actions::kAddKindDraft,
                         Actions::kAddController});
     }
 

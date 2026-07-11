@@ -61,9 +61,18 @@ WHEN the shared component needs audio, MIDI/controller, patch/file, deadline, or
 - **THEN** the active host services refresh the shared Controllers page surface and its device list
 - **AND** JUCE and browser hosts do not maintain separate controller page models
 
-#### Scenario: Browser deadline sample is explicitly unavailable
-- **WHEN** the browser host refreshes the sidebar before a browser callback-load metric has been designed
-- **THEN** its services adapter supplies 0.0 percent rather than deriving a misleading value from the audio render timer
+#### Scenario: File page patch semantics are shared
+- **WHEN** the shared File page dispatches direct or confirmed patch actions for New, Save, Revert, Confirmed Save As, Confirmed Overwrite Save As, or Confirmed Load
+- **THEN** one JUCE-free runtime-file helper maps those actions to host-provided patch operations and shared status text for both JUCE and browser services
+- **AND** raw Save As and Load actions remain shared File page surface actions that open the file browser/confirmation flow rather than invoking patch operations directly
+- **AND** the helper projects current patch directory, patch name, patches root, and status text into `FilePageSnapshot` for both hosts
+- **AND** host adapters provide only the backend-specific patch operation bindings and data paths, with JUCE patch bindings continuing to log their patch command results
+- **AND** neither host maintains an independent File action ladder with duplicated status strings
+
+#### Scenario: Browser deadline sample comes from the runtime-owned callback
+- **WHEN** the browser host refreshes the sidebar before a browser callback-load metric has been published
+- **THEN** its services adapter supplies 0.0 percent
+- **AND** after runtime-owned AudioWorklet callbacks have run, it supplies the averaged callback deadline percentage rather than deriving a misleading value from the legacy audio render timer
 - **AND** the JUCE host continues to supply its device-manager CPU usage percentage
 
 ### Requirement: sprs-4 — Interaction: browser pointer parity
@@ -126,3 +135,20 @@ WHEN the shared main component change is verified, THE synth project SHALL inclu
 - **WHEN** Playwright opens the built static site and activates the runtime
 - **THEN** screenshots show intact app content and the right sidebar
 - **AND** tests can open and return from runtime pages, drag and double-click app controls, observe finite non-silent audio, and verify MIDI bytes flow in both directions including SysEx
+
+### Requirement: sprs-8 — Browser audio: runtime-owned AudioWorklet callback
+WHEN the Chrome static site starts audio for any conforming browser-hosted application, THE browser runtime SHALL prefer a generic Emscripten Wasm AudioWorklet callback that invokes the C++ `Runtime<App>::Process` path against the same runtime/engine instance used by UI, MIDI, patch, and controller operations.
+
+#### Scenario: No duplicated application runtime
+- **WHEN** the browser audio path starts
+- **THEN** it does not construct a second application or runtime instance inside JavaScript or an AudioWorklet
+- **AND** it does not use concrete-application JavaScript, HTML, node IDs, actions, or layout
+
+#### Scenario: Diagnostic ring is fallback only
+- **WHEN** an injected runtime client does not expose the native AudioWorklet start hook
+- **THEN** the browser audio bridge may use the existing JavaScript ring-producer path as diagnostic fallback
+- **BUT** the default static-site runtime does not use the timer/ring producer for audio startup
+
+#### Scenario: Browser callback verification
+- **WHEN** Chromium can be launched with the required host permissions
+- **THEN** Playwright verifies the built miniapp WASM starts the runtime-owned AudioWorklet callback and observes multiple non-silent processed blocks from callback diagnostics

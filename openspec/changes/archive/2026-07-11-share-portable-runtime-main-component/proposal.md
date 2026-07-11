@@ -11,7 +11,8 @@ The browser runtime currently renders only the application's portable surface, w
 - Match JUCE pointer-drag semantics in the browser with pointer capture and incremental two-axis deltas, and match rounded JUCE arc stroke caps in Canvas.
 - Correct generic browser surface clipping, coordinate-space, and long-label sizing defects found during review.
 - Extend Playwright coverage for static-site startup, the shared sidebar and pages, audio flow, bidirectional SysEx MIDI, reconnect behavior, mouse gestures, and visual layout.
-- Leave the diagnosed browser audio render scheduler unchanged; its guaranteed underrun at 48 kHz is reported separately and requires a dedicated realtime-audio design.
+- Replace the browser static-site audio path with a generic runtime-owned Emscripten AudioWorklet callback while keeping the older JavaScript ring producer as injected-runtime diagnostic scaffolding.
+- Consolidate File page snapshot and action dispatch semantics into one JUCE-free helper so JUCE and browser services provide only host-specific patch operation bindings.
 
 ## Capabilities
 
@@ -24,4 +25,4 @@ The browser runtime currently renders only the application's portable surface, w
 
 ## Impact
 
-The change affects portable UI composition under `projects/synth/include/synth`, the JUCE runtime shell and page hosts, the browser WASM runtime and Canvas/DOM backend, browser tests and build targets, and OpenSpec coverage. It adds no application-specific browser code, no HTML fallback UI, no browser framework dependency, and no change to DSP or audio scheduling.
+The change affects portable UI composition under `projects/synth/include/synth`, the JUCE runtime shell and page hosts, the browser WASM runtime and Canvas/DOM backend, browser tests and build targets, and OpenSpec coverage. It adds no application-specific browser code, no HTML fallback UI, and no browser framework dependency. The remaining browser verification work must keep those same constraints and cannot duplicate app state in a browser-specific path.

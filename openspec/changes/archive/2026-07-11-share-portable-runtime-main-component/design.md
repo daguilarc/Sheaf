@@ -4,7 +4,9 @@ The application-facing UI boundary is already portable: every `synth::SynthAppli
 
 The browser backend has an in-progress generic layout correction that establishes one surface coordinate space, intrinsic layout for unbounded controls, and responsive whole-surface scaling. A fresh Claude review found three relevant gaps: auto-flow content can extend beyond the root height and be clipped, long labels retain a fixed 120-pixel width, and multiple roots can be transformed independently. The shared composite root eliminates the last issue; the browser backend must correct the first two.
 
-The browser audio bridge is intentionally outside this implementation. Investigation found that a 48 kHz AudioWorklet consumes 375 128-frame blocks per second while the rounded 3 ms main-thread timer requests at most about 333 blocks per second. The ring starts with only one block, and underflow is hard-filled with zero. Main-thread jitter and per-block WASM allocation/copy add pressure, but the timer deficit alone guarantees underruns. This change records that finding and does not alter audio scheduling.
+The original browser audio bridge was diagnostic scaffolding, not the final realtime architecture. Investigation found that a 48 kHz JavaScript AudioWorklet consumes 375 128-frame blocks per second while the rounded 3 ms main-thread timer requests at most about 333 blocks per second. The ring starts with only one block, and underflow is hard-filled with zero. Main-thread jitter and per-block WASM allocation/copy add pressure, but the timer deficit alone guarantees underruns.
+
+The implemented direction is a generic C++/Emscripten AudioWorklet callback owned by the browser runtime. The static-site default loads the WASM module directly on the page so Chrome can create the Emscripten WebAudio context, start the Wasm AudioWorklet thread, and call `Runtime<App>::Process` against the same `Runtime<App>` / `Engine<App>` instance used by UI, MIDI, patch, and controller edits. The older JavaScript ring producer remains only as a fallback/diagnostic path for injected worker runtimes. The implementation does not construct a second app/runtime instance in the worklet, does not make synchronous calls from `process()`, and does not add concrete-app JavaScript or HTML.
 
 ## Goals / Non-Goals
 
@@ -20,7 +22,6 @@ The browser audio bridge is intentionally outside this implementation. Investiga
 **Non-Goals:**
 
 - No miniapp-specific or other app-specific browser code, HTML, layout, actions, or tests that bypass the generic app contract.
-- No browser audio scheduler, ring-buffer, DSP, sample-rate, or allocation change.
 - No browser audio input or named output-device enumeration.
 - No redesign of runtime pages, controller mapping behavior, or patch persistence formats.
 - No requirement for pixel-identical native browser controls; geometry, visibility, interaction, and drawing semantics are the parity contract.
@@ -47,7 +48,9 @@ This changes desktop window width by adding the existing sidebar width rather th
 
 Define a narrow services concept consumed by `RuntimeMainComponent`: refresh and action hooks for Audio, Controllers, and File pages; controller-surface refresh; runtime-configuration save; current deadline sample; and lifecycle-safe callback registration where the host requires it. The component owns portable page state and navigation. `RuntimeMainComponent::Refresh()` asks services for the current deadline sample, writes it through `RollingMax256`, refreshes Audio/File snapshots, calls the controller refresh hook, and updates all page surfaces. Services own host APIs and mutate the shared engine/runtime through generic operations.
 
-The JUCE services adapter delegates to the existing `Runtime<App>` audio manager, MIDI connection manager, engine patch operations, and status hooks and returns `deviceManager_.getCpuUsage() * 100` as its deadline sample. The browser services adapter delegates to `Engine<App>`, `BrowserMidiBridge`, and browser persistence state. Its Audio snapshot always contains exactly `system_default` / `System Default`, suppresses input UI, and reports the current `AudioContext` sample rate and block size supplied through generic runtime state. Chrome has no equivalent callback-load value in the current bridge, so the browser adapter returns `0.0f` for the deadline sample until a separately designed realtime instrumentation path exists; it does not infer load from the known-broken render timer. No services method accepts or switches on a concrete app type.
+The JUCE services adapter delegates to the existing `Runtime<App>` audio manager, MIDI connection manager, engine patch operations, and status hooks and returns `deviceManager_.getCpuUsage() * 100` as its deadline sample. The browser services adapter delegates to `Engine<App>`, `BrowserMidiBridge`, and browser persistence state. Its Audio snapshot always contains exactly `system_default` / `System Default`, suppresses input UI, and reports the current `AudioContext` sample rate and block size supplied through generic runtime state. The browser adapter returns the averaged runtime-owned AudioWorklet callback load metric once audio has started, and `0.0f` before any callback-load sample has been published; it does not infer load from the legacy timer/ring diagnostic path. No services method accepts or switches on a concrete app type.
+
+File page semantics are host-neutral. The shared File page already owns browser/save/load confirmation UI and emits generic `runtime.file.*` actions; its snapshot projection and action-to-patch-operation mapping must also live in one JUCE-free helper. JUCE and browser services construct that helper with host-specific operations: JUCE calls the existing `Runtime<App>` patch wrappers so desktop logging remains intact, while browser calls `Engine<App>::Patches()` directly and relies on the browser runtime's existing tick-based persistence dirty detection. The helper owns current File page status text and the generic status strings. Adding a new File page action should require changing this helper and its tests, not separate JUCE and browser dispatch ladders.
 
 ### D4 - Both hosts render the composite surface
 
@@ -74,7 +77,7 @@ JUCE-free tests cover composite dimensions, page switching, action routing, name
 - [Moving JUCE page callbacks can regress page behavior] -> Reuse existing portable surfaces and move behavior behind services one page at a time with existing JUCE tests kept green.
 - [Controller services differ between JUCE devices and Web MIDI ports] -> Expose only generic endpoint snapshots, connection state, commits, and reconcile actions; keep browser port objects in JavaScript and browser bridge code.
 - [Large integrated refactor obscures the layout fixes] -> Land and review in small TDD tasks: composition, JUCE adapter, browser adapter/pages, pointer/Canvas, then Playwright integration.
-- [Audio artifacts remain audible] -> Report the measured producer deficit and zero-fill behavior prominently; schedule a separate realtime-audio change rather than mixing scheduler work into UI architecture.
+- [Audio callback browser verification is environment-sensitive] -> Keep native/TypeScript/Emscripten builds green and retain a Playwright real-Chrome callback test; run it unsandboxed because sandboxed Chromium cannot register the required macOS Mach port in this environment.
 
 ## Migration Plan
 
@@ -89,4 +92,4 @@ Rollback is a normal commit revert: the existing app surface, portable runtime p
 
 ## Open Questions
 
-None. Chrome remains primary, the sidebar remains fixed-width on the right, browser output remains System Default only, and the audio scheduler is explicitly deferred.
+None. Chrome remains primary, the sidebar remains fixed-width on the right, browser output remains System Default only, and the runtime-owned Emscripten AudioWorklet path is the generic static-site audio target.

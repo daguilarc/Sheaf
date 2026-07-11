@@ -141,6 +141,8 @@ inline constexpr const char* kMappingFieldCommit = "runtime.controllers.mapping_
 inline constexpr const char* kDeleteRow = "runtime.controllers.delete_row";
 inline constexpr const char* kAddSingle = "runtime.controllers.add_single";
 inline constexpr const char* kAddBlock = "runtime.controllers.add_block";
+inline constexpr const char* kAddNameDraft = "runtime.controllers.add_name_draft";
+inline constexpr const char* kAddKindDraft = "runtime.controllers.add_kind_draft";
 inline constexpr const char* kAddController = "runtime.controllers.add_controller";
 
 }  // namespace Actions
@@ -714,6 +716,18 @@ private:
         if (action.name == Actions::kAddBlock)
         {
             HandleAdd(action.value, /*asBlock=*/true);
+            return;
+        }
+
+        if (action.name == Actions::kAddNameDraft)
+        {
+            SetAddControllerDraft(action.value, m_addControllerKindId);
+            return;
+        }
+
+        if (action.name == Actions::kAddKindDraft)
+        {
+            SetAddControllerDraft(m_addControllerName, action.value);
             return;
         }
 
@@ -1398,6 +1412,7 @@ private:
         addName.label = "New controller name";
         addName.text = addControllerName;
         addName.bounds = {0.0f, 0.0f, 180.0f, ControllersLayout::kAddRowHeight};
+        addName.action = ui::Action::Named(Actions::kAddNameDraft);
         appendAddRowChild(std::move(addName));
 
         ui::Node addKind;
@@ -1407,6 +1422,7 @@ private:
         addKind.options = ControllersLayout::BuildAddControllerKindOptions();
         addKind.selectedOption = addControllerKindId.empty() ? "wrldbldr" : addControllerKindId;
         addKind.bounds = {188.0f, 0.0f, 140.0f, ControllersLayout::kAddRowHeight};
+        addKind.action = ui::Action::Named(Actions::kAddKindDraft);
         appendAddRowChild(std::move(addKind));
 
         ui::Node addButton;

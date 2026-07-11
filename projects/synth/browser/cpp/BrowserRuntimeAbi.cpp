@@ -38,6 +38,26 @@ extern "C" int synth_browser_process(synth_browser_runtime* runtime, float** out
                                                                                timestampMicros);
 }
 
+extern "C" int synth_browser_start_audio_worklet(synth_browser_runtime* runtime)
+{
+    return RuntimeFor(runtime) == nullptr ? -1 : RuntimeFor(runtime)->StartAudioWorklet();
+}
+
+extern "C" std::uint32_t synth_browser_audio_worklet_block_count(synth_browser_runtime* runtime)
+{
+    return RuntimeFor(runtime) == nullptr ? 0 : RuntimeFor(runtime)->AudioWorkletBlockCount();
+}
+
+extern "C" std::uint32_t synth_browser_audio_worklet_peak_microunits(synth_browser_runtime* runtime)
+{
+    return RuntimeFor(runtime) == nullptr ? 0 : RuntimeFor(runtime)->AudioWorkletPeakMicrounits();
+}
+
+extern "C" std::uint32_t synth_browser_audio_worklet_deadline_microunits(synth_browser_runtime* runtime)
+{
+    return RuntimeFor(runtime) == nullptr ? 0 : RuntimeFor(runtime)->AudioWorkletDeadlineMicrounits();
+}
+
 extern "C" int synth_browser_message_tick(synth_browser_runtime* runtime, std::uint64_t timestampMicros)
 {
     return RuntimeFor(runtime) == nullptr ? -1 : RuntimeFor(runtime)->MessageTick(timestampMicros);
@@ -51,6 +71,11 @@ extern "C" const std::uint8_t* synth_browser_build_ui_frame(synth_browser_runtim
 extern "C" int synth_browser_dispatch_action(synth_browser_runtime* runtime, const char* name, const char* value)
 {
     return RuntimeFor(runtime) == nullptr ? -1 : RuntimeFor(runtime)->DispatchAction(name, value);
+}
+
+extern "C" int synth_browser_consume_persistence_dirty(synth_browser_runtime* runtime)
+{
+    return RuntimeFor(runtime) != nullptr && RuntimeFor(runtime)->ConsumePersistenceDirty() ? 1 : 0;
 }
 
 extern "C" int synth_browser_submit_midi_endpoints(synth_browser_runtime* runtime,

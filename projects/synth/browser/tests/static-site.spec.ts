@@ -24,6 +24,11 @@ test("static shell loads generic portable UI styling", async ({ page, request })
   expect(stylesheet.ok()).toBe(true);
   expect(await stylesheet.text()).not.toMatch(/miniapp|fake-browser/i);
 
+  await page.route("**/dist/src/main.js", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/javascript",
+    body: "",
+  }));
   await page.goto("http://127.0.0.1:4173/public/index.html");
   expect(await page.locator("body > main, body > script").count()).toBe(2);
   expect(await page.locator("#synth-root").evaluate((root) => root.childElementCount)).toBe(0);

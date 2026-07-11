@@ -3,9 +3,10 @@ import { AUDIO_RING_STATE, AudioBridgeDescriptor, SharedRingBuffer } from "./pro
 export type BrowserAudioWorker = {
   postMessage(message: { type: "configure-audio"; sampleRate: number; blockSize: number; bridge: AudioBridgeDescriptor } |
                        { type: "render-audio"; timestampMicros: number }): void;
+  startAudioWorklet?: () => Promise<AudioBridgeStart>;
 };
 
-export type AudioBridgeStart = { started: true } | { started: false; diagnostic: "cross-origin-isolation-required" };
+export type AudioBridgeStart = { started: true } | { started: false; diagnostic: string };
 
 export type AudioBridgeOptions = {
   blockSize?: number;
@@ -34,6 +35,7 @@ export class AudioBridge {
     if (!globalThis.crossOriginIsolated || typeof SharedArrayBuffer === "undefined")
       return { started: false, diagnostic: "cross-origin-isolation-required" };
     if (this.context) return { started: true };
+    if (this.worker.startAudioWorklet) return this.worker.startAudioWorklet();
 
     const context = this.options.audioContextFactory?.() ?? new AudioContext();
     await context.audioWorklet.addModule(new URL("./audio-worklet.js", import.meta.url));

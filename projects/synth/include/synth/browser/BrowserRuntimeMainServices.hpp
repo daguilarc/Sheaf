@@ -2,6 +2,7 @@
 
 #include "synth/ControllersPageUI.hpp"
 #include "synth/Engine.hpp"
+#include "synth/RuntimeFileService.hpp"
 #include "synth/RuntimePages.hpp"
 #include "synth/browser/BrowserAudioDevices.hpp"
 #include "synth/browser/BrowserMidiBridge.hpp"
@@ -22,9 +23,13 @@ public:
     using EngineType = synth::Engine<App>;
     using MidiBridge = BrowserMidiBridge<EngineType>;
 
-    BrowserRuntimeMainServices(EngineType& engine, MidiBridge& midiBridge)
+    BrowserRuntimeMainServices(EngineType& engine,
+                               MidiBridge& midiBridge,
+                               std::function<float()> deadlineSampleProvider = {})
         : engine_(engine)
         , midiBridge_(midiBridge)
+        , fileService_(MakeFileCallbacks())
+        , deadlineSampleProvider_(std::move(deadlineSampleProvider))
     {
     }
 
@@ -98,50 +103,12 @@ public:
 
     void RefreshFile(synth::runtime_ui::FilePageSnapshot& snapshot)
     {
-        const auto& currentPatchDirectory = engine_.Patches().CurrentPatchDirectory();
-        snapshot.hasCurrentPatch = currentPatchDirectory.has_value();
-        snapshot.patchNameText = currentPatchDirectory.has_value()
-                                     ? currentPatchDirectory->filename().string()
-                                     : "(no patch)";
-        snapshot.patchesRoot = engine_.DataPaths().patchesRoot.string();
-        if (fileStatus_.has_value())
-        {
-            snapshot.statusText = *fileStatus_;
-        }
+        fileService_.Refresh(snapshot);
     }
 
     void DispatchFile(const synth::ui::Action& action)
     {
-        if (action.name == synth::runtime_ui::Actions::kFileNew)
-        {
-            engine_.Patches().NewPatch();
-            fileStatus_ = "New patch created";
-        }
-        else if (action.name == synth::runtime_ui::Actions::kFileSave)
-        {
-            engine_.Patches().SavePatch();
-            fileStatus_ = "Save requested";
-        }
-        else if (action.name == synth::runtime_ui::Actions::kFileConfirmedSaveAs)
-        {
-            engine_.Patches().SavePatchAs(std::filesystem::path(action.value));
-            fileStatus_ = "Save As requested: " + action.value;
-        }
-        else if (action.name == synth::runtime_ui::Actions::kFileConfirmedOverwriteSaveAs)
-        {
-            engine_.Patches().SavePatchAsOverwrite(std::filesystem::path(action.value));
-            fileStatus_ = "Save As requested: " + action.value;
-        }
-        else if (action.name == synth::runtime_ui::Actions::kFileConfirmedLoad)
-        {
-            engine_.Patches().LoadPatch(std::filesystem::path(action.value));
-            fileStatus_ = "Load requested: " + action.value;
-        }
-        else if (action.name == synth::runtime_ui::Actions::kFileRevert)
-        {
-            engine_.Patches().RevertPatch();
-            fileStatus_ = "Revert requested";
-        }
+        fileService_.Dispatch(action);
     }
 
     void RefreshControllers(synth::runtime_ui::ControllersPageSurface& surface)
@@ -157,22 +124,58 @@ public:
 
     float DeadlineSamplePercent() const
     {
-        return 0.0f;
+        return deadlineSampleProvider_ ? deadlineSampleProvider_() : 0.0f;
     }
 
     void SaveRuntimeConfiguration()
     {
-        engine_.SaveRuntimeConfiguration();
+        if (engine_.SaveRuntimeConfiguration() == synth::RuntimeConfigFileStatus::Ok)
+        {
+            persistenceDirty_ = true;
+        }
+    }
+
+    bool ConsumePersistenceDirty()
+    {
+        const bool dirty = persistenceDirty_;
+        persistenceDirty_ = false;
+        return dirty;
     }
 
 private:
+    synth::runtime_ui::RuntimeFileCallbacks MakeFileCallbacks()
+    {
+        synth::runtime_ui::RuntimeFileCallbacks callbacks;
+        callbacks.currentPatchDirectory = [this] {
+            return engine_.Patches().CurrentPatchDirectory();
+        };
+        callbacks.patchesRoot = [this] {
+            return engine_.DataPaths().patchesRoot;
+        };
+        callbacks.newPatch = [this] { engine_.Patches().NewPatch(); };
+        callbacks.savePatch = [this] { engine_.Patches().SavePatch(); };
+        callbacks.savePatchAs = [this](const std::filesystem::path& path) {
+            engine_.Patches().SavePatchAs(path);
+        };
+        callbacks.savePatchAsOverwrite = [this](const std::filesystem::path& path) {
+            engine_.Patches().SavePatchAsOverwrite(path);
+        };
+        callbacks.loadPatch = [this](const std::filesystem::path& path) {
+            engine_.Patches().LoadPatch(path);
+        };
+        callbacks.revertPatch = [this] { engine_.Patches().RevertPatch(); };
+        return callbacks;
+    }
+
     EngineType& engine_;
     MidiBridge& midiBridge_;
+    synth::runtime_ui::RuntimeFileService fileService_;
+    std::function<float()> deadlineSampleProvider_;
     std::optional<double> negotiatedSampleRate_;
     std::optional<int> negotiatedBlockSize_;
     std::optional<std::string> audioStatus_;
-    std::optional<std::string> fileStatus_;
     bool controllersDirty_ = true;
+    bool persistenceDirty_ = false;
 };
 
 }  // namespace synth_browser

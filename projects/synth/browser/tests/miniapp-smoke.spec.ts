@@ -27,32 +27,63 @@ test.beforeAll(async () => {
   throw new Error("generic fake-app acceptance did not succeed before miniapp smoke");
 });
 
-async function installRealMiniapp(page: Page): Promise<void> {
+async function installRealMiniapp(page: Page, options: { fakeMidi?: boolean; frameIntervalMs?: number } = {}): Promise<void> {
   await page.route("**/dist/src/main.js*", (route) => {
     if (new URL(route.request().url()).search) return route.continue();
     return route.fulfill({ status: 200, contentType: "application/javascript", body: "" });
   });
   await page.goto("http://127.0.0.1:4174/public/index.html");
-  await page.evaluate(async () => {
+  await page.evaluate(async ({ fakeMidi, frameIntervalMs }) => {
     document.querySelector<HTMLElement>("#synth-root")!.dataset.synthAuto = "false";
     const main = await (new Function("return import('/dist/src/main.js?task5-miniapp')")() as Promise<any>);
     const { decodeCommandBuffer } = await (new Function("return import('/dist/src/protocol.js')")() as Promise<any>);
+    if (fakeMidi) {
+      class InputPort {
+        readonly type = "input";
+        state = "connected";
+        onmidimessage: ((event: { data: Uint8Array; timeStamp: number }) => void) | null = null;
+        constructor(readonly id: string, readonly name: string) {}
+        emit(bytes: number[]) { this.onmidimessage?.({ data: Uint8Array.from(bytes), timeStamp: 17 }); }
+      }
+      class OutputPort {
+        readonly type = "output";
+        state = "connected";
+        readonly sent: number[][] = [];
+        constructor(readonly id: string, readonly name: string) {}
+        send(bytes: number[] | Uint8Array) { this.sent.push(Array.from(bytes)); }
+      }
+      const input = new InputPort("in-a", "Input A");
+      const output = new OutputPort("out-a", "Output A");
+      const access = { inputs: new Map([[input.id, input]]), outputs: new Map([[output.id, output]]), onstatechange: null };
+      Object.defineProperty(navigator, "requestMIDIAccess", {
+        configurable: true,
+        value: async (request: unknown) => {
+          (window as any).__task5MidiRequest = request;
+          return access;
+        },
+      });
+      (window as any).__task5MidiPorts = { input, output };
+    }
     const client = main.createWorkerRuntimeClient();
     const observations = {
       commands: [] as Array<{ type: string; name?: string; value?: string }>,
+      statuses: [] as Array<{ type: string; status?: string }>,
       frames: [] as FrameObservation[],
       terminated: false,
     };
     const runtimeClient = {
       async request(command: { type: string; name?: string; value?: string }) {
-        observations.commands.push({ type: command.type, name: command.name, value: command.value });
+        observations.commands.push({ ...command });
         const response = await client.request(command);
         if (response.type === "ui-frame") {
           observations.frames.push({ nodes: decodeCommandBuffer(Uint8Array.from(response.frame).buffer).nodes });
         }
         return response;
       },
-      onStatus: client.onStatus,
+      onStatus: (handler: (response: unknown) => void) => client.onStatus?.((response: { type: string; status?: string }) => {
+        observations.statuses.push(response);
+        handler(response);
+      }),
       terminate: () => {
         observations.terminated = true;
         client.terminate?.();
@@ -72,7 +103,7 @@ async function installRealMiniapp(page: Page): Promise<void> {
     }
     const app = await main.installSynthBrowserApp(document.querySelector("#synth-root")!, {
       moduleUrl: new URL("/dist/wasm/miniapp.js", location.href).href,
-      frameIntervalMs: 60_000,
+      frameIntervalMs: frameIntervalMs ?? 60_000,
       runtimeClient,
       audioOptions: {
         audioContextFactory: () => new TestAudioContext(),
@@ -81,10 +112,10 @@ async function installRealMiniapp(page: Page): Promise<void> {
     });
     if (observations.frames.length === 0) throw new Error("miniapp did not produce an initial UI frame");
     (window as any).__task5Miniapp = { app, observations };
-  });
+  }, options);
 }
 
-test.afterEach(async ({ page }) => {
+async function stopRealMiniapp(page: Page): Promise<void> {
   await page.evaluate(() => {
     const state = (window as any).__task5Miniapp;
     if (!state) return;
@@ -92,6 +123,10 @@ test.afterEach(async ({ page }) => {
     if (!state.observations.terminated) throw new Error("SynthBrowserApp.stop() did not terminate the runtime client");
     delete (window as any).__task5Miniapp;
   });
+}
+
+test.afterEach(async ({ page }) => {
+  await stopRealMiniapp(page);
 });
 
 async function settleVisuals(page: Page): Promise<void> {
@@ -180,6 +215,94 @@ test("real miniapp WASM preserves gestures across fresh frames", async ({ page }
   );
   expect(actions.filter((action: { name?: string }) => action.name === gesture.dragAction).length).toBeGreaterThanOrEqual(2);
   expect(actions.some((action: { name?: string }) => action.name === gesture.doubleClickAction)).toBe(true);
+});
+
+test("real miniapp controller page selects Web MIDI endpoints through visible controls", async ({ page }) => {
+  await installRealMiniapp(page, { fakeMidi: true, frameIntervalMs: 25 });
+  await page.locator('[data-synth-node-id="runtime.sidebar.controllers"]').click();
+  await expect(page.locator('[data-synth-node-id="runtime.controllers.root"]')).toBeVisible();
+  await expect.poll(() => page.evaluate(() => (window as any).__task5MidiRequest)).toEqual({ sysex: true });
+  await expect.poll(() => page.evaluate(() =>
+    (window as any).__task5Miniapp.observations.commands
+      .filter((command: { type: string }) => command.type === "midi-endpoints")
+      .flatMap((command: { endpoints?: Array<{ identifier: string }> }) => command.endpoints?.map((endpoint) => endpoint.identifier) ?? []),
+  )).toEqual(expect.arrayContaining(["in-a", "out-a"]));
+  await page.locator('[data-synth-node-id="runtime.controllers.add_name"] input').fill("webctl");
+  await page.locator('[data-synth-node-id="runtime.controllers.add_kind"] select').selectOption("generic");
+  await expect.poll(() => page.evaluate(() =>
+    (window as any).__task5Miniapp.observations.commands
+      .filter((command: { type: string }) => command.type === "dispatch-action")
+      .map((command: { name?: string; value?: string }) => [command.name, command.value]),
+  )).toEqual(expect.arrayContaining([
+    ["runtime.controllers.add_name_draft", "webctl"],
+    ["runtime.controllers.add_kind_draft", "generic"],
+  ]));
+  await page.locator('[data-synth-node-id="runtime.controllers.add_button"]').click();
+  await expect(page.locator('[data-synth-node-id="runtime.controllers.row.0.input"] select')).toBeVisible();
+  await expect(page.locator('[data-synth-node-id="runtime.controllers.row.0.input"] select')).toContainText("Input A");
+  await expect(page.locator('[data-synth-node-id="runtime.controllers.row.0.output"] select')).toContainText("Output A");
+
+  await page.locator('[data-synth-node-id="runtime.controllers.row.0.input"] select').selectOption("in-a");
+  await page.locator('[data-synth-node-id="runtime.controllers.row.0.output"] select').selectOption("out-a");
+  await expect.poll(() => page.locator('[data-synth-node-id="runtime.controllers.status"]').textContent())
+    .toMatch(/Selected (Input|Output) A/);
+
+  await page.locator('[data-synth-node-id="runtime.controllers.add_name"] input').fill("webpad");
+  await page.locator('[data-synth-node-id="runtime.controllers.add_kind"] select').selectOption("launchpad");
+  await expect.poll(() => page.evaluate(() =>
+    (window as any).__task5Miniapp.observations.commands
+      .filter((command: { type: string }) => command.type === "dispatch-action")
+      .map((command: { name?: string; value?: string }) => [command.name, command.value]),
+  )).toEqual(expect.arrayContaining([
+    ["runtime.controllers.add_name_draft", "webpad"],
+    ["runtime.controllers.add_kind_draft", "launchpad"],
+  ]));
+  await page.locator('[data-synth-node-id="runtime.controllers.add_button"]').click();
+  const variantSelect = page.locator('[data-synth-node-id^="runtime.controllers.row."][data-synth-node-id$=".variant"] select').last();
+  await expect(variantSelect).toBeVisible();
+  const variantNodeId = await variantSelect.locator("xpath=..").getAttribute("data-synth-node-id");
+  const variantControllerIx = variantNodeId?.match(/runtime\.controllers\.row\.(\d+)\.variant/)?.[1];
+  expect(variantControllerIx).toBeTruthy();
+  await variantSelect.selectOption("1");
+
+  await expect.poll(() => page.evaluate(() =>
+    (window as any).__task5Miniapp.observations.commands
+      .filter((command: { type: string }) => command.type === "dispatch-action")
+      .map((command: { name?: string; value?: string }) => [command.name, command.value]),
+  )).toEqual(expect.arrayContaining([
+    ["runtime.controllers.add_name_draft", "webctl"],
+    ["runtime.controllers.add_kind_draft", "generic"],
+    ["runtime.controllers.add_controller", ""],
+    ["runtime.controllers.endpoint_select", "0:input:in-a"],
+    ["runtime.controllers.endpoint_select", "0:output:out-a"],
+    ["runtime.controllers.add_name_draft", "webpad"],
+    ["runtime.controllers.add_kind_draft", "launchpad"],
+    ["runtime.controllers.variant_select", `${variantControllerIx}:1`],
+  ]));
+
+  await expect.poll(() => page.locator('[data-synth-node-id="runtime.controllers.status"]').textContent())
+    .toMatch(/Selected Launchpad/);
+});
+
+test("real miniapp patch saves survive browser runtime restart through IDBFS", async ({ page }) => {
+  const patchName = `codex-persist-${Date.now()}`;
+  await installRealMiniapp(page, { frameIntervalMs: 25 });
+  await page.locator('[data-synth-node-id="runtime.sidebar.file"]').click();
+  await page.locator('[data-synth-node-id="runtime.file.save_as"]').click();
+  await page.locator('[data-synth-node-id="runtime.file.browser.save_name"] input').fill(patchName);
+  await page.locator('[data-synth-node-id="runtime.file.browser.confirm"]').click();
+  await expect.poll(() => page.locator('[data-synth-node-id="runtime.file.patch_name"]').textContent())
+    .toBe(patchName);
+  await expect.poll(() => page.evaluate(() =>
+    (window as any).__task5Miniapp.observations.statuses
+      .filter((status: { type: string; status?: string }) => status.type === "page-status" && status.status === "persistence succeeded").length,
+  )).toBeGreaterThanOrEqual(2);
+
+  await stopRealMiniapp(page);
+  await installRealMiniapp(page, { frameIntervalMs: 25 });
+  await page.locator('[data-synth-node-id="runtime.sidebar.file"]').click();
+  await page.locator('[data-synth-node-id="runtime.file.load"]').click();
+  await expect(page.locator('[data-synth-node-id^="runtime.file.browser.entry."]').filter({ hasText: patchName }).first()).toBeVisible();
 });
 
 test("real miniapp shared shell scales as one non-overlapping narrow surface", async ({ page }) => {

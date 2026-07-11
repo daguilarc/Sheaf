@@ -12,6 +12,8 @@ export type RuntimeCommand =
   | { type: "process"; frames: number; timestampMicros: number }
   | { type: "configure-audio"; sampleRate: number; blockSize: number; bridge: AudioBridgeDescriptor }
   | { type: "render-audio"; timestampMicros: number }
+  | { type: "start-audio-worklet" }
+  | { type: "audio-worklet-stats" }
   | { type: "message-tick"; timestampMicros: number }
   | { type: "build-ui-frame" }
   | { type: "dispatch-action"; name: string; value: string }
@@ -27,6 +29,7 @@ export type RuntimeResponse =
   | { type: "ok" }
   | { type: "created"; handle: number }
   | { type: "audio-config"; channels: number }
+  | { type: "audio-worklet-stats"; blocks: number; peakMicrounits: number; deadlineMicrounits: number }
   | { type: "ui-frame"; frame: number[] }
   | { type: "destroyed" }
   | { type: "midi-actions"; actions: MidiAction[] }
@@ -43,9 +46,12 @@ export interface RuntimeModuleFacade {
   prepare(handle: number, sampleRate: number, blockSize: number): number;
   process(handle: number, frames: number, timestampMicros: number): number;
   renderAudio?(handle: number, channels: number, frames: number, timestampMicros: number): { status: number; outputs: Float32Array[] };
+  startAudioWorklet?(handle: number): number;
+  audioWorkletStats?(handle: number): { blocks: number; peakMicrounits: number; deadlineMicrounits: number };
   messageTick(handle: number, timestampMicros: number): number;
   buildUiFrame(handle: number): ArrayBuffer;
   dispatchAction(handle: number, name: string, value: string): number;
+  hasPersistenceChanges?(handle: number): boolean;
   submitMidiEndpoints(handle: number, endpoints: MidiEndpoint[]): number;
   dequeueMidiAction(handle: number): MidiAction | undefined;
   deliverMidi(handle: number, controllerIx: number, bytes: number[], timestampMicros: number): number;
@@ -69,9 +75,14 @@ type EmscriptenModule = {
   _synth_browser_initialize(handle: number, dataRoot: number): number;
   _synth_browser_prepare(handle: number, sampleRate: number, blockSize: number): number;
   _synth_browser_process(handle: number, outputs: number, outputChannels: number, frames: number, timestampMicros: bigint): number;
+  _synth_browser_start_audio_worklet?(handle: number): number;
+  _synth_browser_audio_worklet_block_count?(handle: number): number;
+  _synth_browser_audio_worklet_peak_microunits?(handle: number): number;
+  _synth_browser_audio_worklet_deadline_microunits?(handle: number): number;
   _synth_browser_message_tick(handle: number, timestampMicros: bigint): number;
   _synth_browser_build_ui_frame(handle: number, size: number): number;
   _synth_browser_dispatch_action(handle: number, name: number, value: number): number;
+  _synth_browser_consume_persistence_dirty?(handle: number): number;
   _synth_browser_submit_midi_endpoints(handle: number, endpoints: number, count: number): number;
   _synth_browser_dequeue_midi_action(handle: number, action: number): number;
   _synth_browser_deliver_midi(handle: number, controllerIx: number, bytes: number, size: number, timestampMicros: bigint): number;
@@ -114,6 +125,18 @@ export function emscriptenRuntimeFacade(module: EmscriptenModule): RuntimeModule
     initialize: (handle, dataRoot) => withUtf8(module, dataRoot, (root) => module._synth_browser_initialize(handle, root)),
     prepare: (handle, sampleRate, blockSize) => module._synth_browser_prepare(handle, sampleRate, blockSize),
     process: (handle, frames, timestampMicros) => module._synth_browser_process(handle, 0, 0, frames, BigInt(timestampMicros)),
+    startAudioWorklet: module._synth_browser_start_audio_worklet
+      ? (handle) => module._synth_browser_start_audio_worklet!(handle)
+      : undefined,
+    audioWorkletStats: module._synth_browser_audio_worklet_block_count &&
+      module._synth_browser_audio_worklet_peak_microunits &&
+      module._synth_browser_audio_worklet_deadline_microunits
+      ? (handle) => ({
+        blocks: module._synth_browser_audio_worklet_block_count!(handle),
+        peakMicrounits: module._synth_browser_audio_worklet_peak_microunits!(handle),
+        deadlineMicrounits: module._synth_browser_audio_worklet_deadline_microunits!(handle),
+      })
+      : undefined,
     renderAudio: (handle, channels, frames, timestampMicros) => {
       const outputPointers = module._malloc(channels * Uint32Array.BYTES_PER_ELEMENT);
       const channelPointers = Array.from({ length: channels }, () => module._malloc(frames * Float32Array.BYTES_PER_ELEMENT));
@@ -140,6 +163,9 @@ export function emscriptenRuntimeFacade(module: EmscriptenModule): RuntimeModule
     },
     dispatchAction: (handle, name, value) => withUtf8(module, name, (namePointer) =>
       withUtf8(module, value, (valuePointer) => module._synth_browser_dispatch_action(handle, namePointer, valuePointer))),
+    hasPersistenceChanges: module._synth_browser_consume_persistence_dirty
+      ? (handle) => module._synth_browser_consume_persistence_dirty!(handle) !== 0
+      : undefined,
     submitMidiEndpoints: (handle, endpoints) => {
       const encoded = endpoints.map((endpoint) => ({ ...endpoint, identifier: new TextEncoder().encode(endpoint.identifier), name: new TextEncoder().encode(endpoint.name) }));
       const allocated = encoded.flatMap((endpoint) => [endpoint.identifier, endpoint.name]).map((bytes) => bytes.length === 0 ? 0 : module._malloc(bytes.length));
@@ -276,12 +302,25 @@ export class BrowserRuntimeWorker {
           bridge.write(rendered.outputs, frames);
           return { type: "ok" };
         }
+        case "start-audio-worklet": {
+          const module = this.requireModule();
+          if (!module.startAudioWorklet) throw new Error("runtime does not support AudioWorklet callback");
+          return this.call((module, handle) => module.startAudioWorklet!(handle));
+        }
+        case "audio-worklet-stats": {
+          const module = this.requireModule();
+          if (!module.audioWorkletStats) throw new Error("runtime does not expose AudioWorklet stats");
+          return { type: "audio-worklet-stats", ...module.audioWorkletStats(this.requireHandle()) };
+        }
         case "message-tick":
-          return this.call((module, handle) => module.messageTick(handle, command.timestampMicros));
+          await this.call((module, handle) => module.messageTick(handle, command.timestampMicros));
+          this.syncPersistenceIfRuntimeDirty();
+          return { type: "ok" };
         case "build-ui-frame":
           return this.buildUiFrameResponse();
         case "dispatch-action": {
           await this.call((module, handle) => module.dispatchAction(handle, command.name, command.value));
+          this.syncPersistenceIfRuntimeDirty();
           return this.buildUiFrameResponse();
         }
         case "midi-endpoints": {
@@ -331,6 +370,12 @@ export class BrowserRuntimeWorker {
   private async buildUiFrameResponse(): Promise<RuntimeResponse> {
     const frame = await this.callValue((module, handle) => module.buildUiFrame(handle));
     return { type: "ui-frame", frame: Array.from(new Uint8Array(frame)) };
+  }
+
+  private syncPersistenceIfRuntimeDirty(): void {
+    const module = this.requireModule();
+    if (!this.persistence || !module.hasPersistenceChanges?.(this.requireHandle())) return;
+    this.persistence.scheduleSync();
   }
 
   private requireModule(): RuntimeModuleFacade {

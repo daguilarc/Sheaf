@@ -6,6 +6,7 @@ import { BrowserRuntimeWorker, loadEmscriptenRuntime } from "./worker.js";
 
 export type RuntimeClient = {
   request(command: RuntimeCommand): Promise<RuntimeResponse>;
+  startAudioWorklet?(): Promise<{ started: true } | { started: false; diagnostic: string }>;
   onStatus?(handler: (response: RuntimeResponse) => void): void;
   terminate?(): void;
 };
@@ -29,9 +30,24 @@ export function createDirectRuntimeClient(loadModule: RuntimeModuleLoader = load
     undefined,
     (response) => statusHandlers.forEach((handler) => handler(response)),
   );
+  let queue: Promise<void> = Promise.resolve();
+
+  const request = (command: RuntimeCommand): Promise<RuntimeResponse> => {
+    const run = () => runtime.handle(command);
+    const response = queue.then(run, run);
+    queue = response.then(() => {}, () => {});
+    return response;
+  };
+
   return {
-    request: (command) => runtime.handle(command),
+    request,
+    startAudioWorklet: async () => {
+      const response = await request({ type: "start-audio-worklet" });
+      if (response.type === "ok") return { started: true };
+      return { started: false, diagnostic: response.type === "error" ? response.error : "audio-worklet-start-failed" };
+    },
     onStatus: (handler) => { statusHandlers.add(handler); },
+    terminate: () => { void request({ type: "destroy" }); },
   };
 }
 
@@ -72,6 +88,8 @@ export class SynthBrowserApp {
   private readonly midi: BrowserMidiManager;
   private frameTimer: ReturnType<typeof setInterval> | undefined;
   private activationStarted = false;
+  private frameInFlight = false;
+  private frameRequested = false;
 
   constructor(
     private readonly root: HTMLElement,
@@ -95,11 +113,13 @@ export class SynthBrowserApp {
     const audioConfig = await this.runtime.request({ type: "audio-config" });
     if (audioConfig.type !== "audio-config") throw new Error("runtime did not return audio configuration");
     const channels = audioConfig.channels;
-    this.audio = new AudioBridge({
+    const audioWorker: BrowserAudioWorker = {
       postMessage: (message) => { void this.runtime.request(message); },
-    } satisfies BrowserAudioWorker, { ...this.options.audioOptions, channels });
+    };
+    if (this.runtime.startAudioWorklet) audioWorker.startAudioWorklet = () => this.runtime.startAudioWorklet!();
+    this.audio = new AudioBridge(audioWorker, { ...this.options.audioOptions, channels });
     await this.renderFrame();
-    this.frameTimer = setInterval(() => { void this.renderFrame(); }, this.options.frameIntervalMs);
+    this.frameTimer = setInterval(() => { this.requestFrame(); }, this.options.frameIntervalMs);
     this.renderStatus({ type: "status", status: "running" });
   }
 
@@ -128,7 +148,24 @@ export class SynthBrowserApp {
     else if (response.type === "error") this.renderStatus({ type: "status", status: response.error });
   }
 
+  private requestFrame(): void {
+    if (this.frameInFlight) {
+      this.frameRequested = true;
+      return;
+    }
+    this.frameInFlight = true;
+    void this.renderFrame()
+      .catch((error) => this.renderStatus({ type: "status", status: error instanceof Error ? error.message : "browser render failed" }))
+      .finally(() => {
+        this.frameInFlight = false;
+        if (!this.frameRequested) return;
+        this.frameRequested = false;
+        this.requestFrame();
+      });
+  }
+
   private async renderFrame(): Promise<void> {
+    await this.expectOk(await this.runtime.request({ type: "message-tick", timestampMicros: Math.round(performance.now() * 1000) }));
     const response = await this.runtime.request({ type: "build-ui-frame" });
     if (response.type === "ui-frame") this.ui.renderFrame(Uint8Array.from(response.frame).buffer);
     else if (response.type === "error") this.renderStatus({ type: "status", status: response.error });
@@ -148,7 +185,7 @@ export class SynthBrowserApp {
 export async function installSynthBrowserApp(root: HTMLElement, options: SynthBrowserAppOptions = {}): Promise<SynthBrowserApp> {
   const moduleUrl = options.moduleUrl ?? root.dataset.synthModule ?? DEFAULT_MODULE_URL;
   const dataRoot = options.dataRoot ?? DEFAULT_DATA_ROOT;
-  const runtime = options.runtimeClient ?? (options.runtimeModuleLoader ? createDirectRuntimeClient(options.runtimeModuleLoader) : createWorkerRuntimeClient());
+  const runtime = options.runtimeClient ?? createDirectRuntimeClient(options.runtimeModuleLoader ?? loadEmscriptenRuntime);
   const app = new SynthBrowserApp(root, runtime, {
     moduleUrl,
     dataRoot,

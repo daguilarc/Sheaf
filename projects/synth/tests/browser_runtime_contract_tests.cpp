@@ -317,6 +317,13 @@ void TestBrowserPrepareFeedsNegotiatedAudioPageAndRejectsOversizedBlocks()
             "audio page reports the negotiated default output");
 }
 
+void TestNativeBuildRejectsBrowserAudioWorkletStart()
+{
+    RuntimeFixture fixture;
+    Require(!fixture.runtime.StartAudioWorklet(),
+            "native browser runtime cannot start a WebAudio worklet");
+}
+
 void TestSharedBrowserNavigationReplacesAndRestoresEveryRuntimePage()
 {
     RuntimeFixture fixture;
@@ -391,6 +398,8 @@ void TestControllersUseLatestBridgeSnapshotCommitEditsAndSaveOnBack()
             "controller edit commits through the browser services callback");
 
     fixture.runtime.DispatchAction(synth::runtime_ui::Actions::kBack, "");
+    Require(fixture.runtime.ConsumePersistenceDirty(),
+            "controllers Back marks browser persistence dirty after saving runtime configuration");
     synth::MidiInstrumentConfig loadedInstrument;
     synth::AudioDeviceState loadedAudio;
     Require(synth::LoadRuntimeConfigFile(
@@ -422,12 +431,16 @@ void TestFilePageDispatchesPatchLifecycleThroughBrowserRuntime()
     fixture.runtime.DispatchAction(
         synth::runtime_ui::Actions::kFileConfirmedSaveAs, patchA.string());
     fixture.PumpUntilJsonCount(patchA, 1);
+    Require(fixture.runtime.ConsumePersistenceDirty(),
+            "completed browser Save As marks persistence dirty for host sync");
     Require(fixture.runtime.Engine().Patches().CurrentPatchDirectory() == patchA,
             "Save As selects the new patch directory");
 
     fixture.SetProbeCenter(0.5f);
     fixture.runtime.DispatchAction(synth::runtime_ui::Actions::kFileSave, "");
     fixture.PumpUntilJsonCount(patchA, 2);
+    Require(fixture.runtime.ConsumePersistenceDirty(),
+            "completed browser Save marks persistence dirty for host sync");
 
     fixture.runtime.DispatchAction(
         synth::runtime_ui::Actions::kFileConfirmedSaveAs, patchA.string());
@@ -471,6 +484,40 @@ void TestFilePageDispatchesPatchLifecycleThroughBrowserRuntime()
             "file refresh reports the New patch state through the portable tree");
 }
 
+void TestPersistenceDirtyConsumesRuntimeAndServicesSourcesTogether()
+{
+    RuntimeFixture fixture;
+    fixture.Prepare();
+
+    fixture.runtime.DispatchAction(synth::runtime_ui::Actions::kSidebarFile, "");
+    const std::filesystem::path patchA = fixture.Paths().patchesRoot / "Patch A";
+    fixture.SetProbeCenter(0.4f);
+    fixture.runtime.DispatchAction(
+        synth::runtime_ui::Actions::kFileConfirmedSaveAs, patchA.string());
+    fixture.PumpUntilJsonCount(patchA, 1);
+
+    fixture.runtime.DispatchAction(synth::runtime_ui::Actions::kSidebarControllers, "");
+    fixture.runtime.DispatchAction(synth::runtime_ui::Actions::kBack, "");
+
+    Require(fixture.runtime.ConsumePersistenceDirty(),
+            "combined patch and config persistence dirties are reported once");
+    Require(!fixture.runtime.ConsumePersistenceDirty(),
+            "combined patch and config persistence dirties are consumed together");
+}
+
+void TestAudioWorkletDeadlineMeterAveragesQuantizedTimerSamples()
+{
+    synth_browser::AudioWorkletDeadlineMeter meter;
+    for (int block = 0; block < 38; ++block)
+    {
+        meter.RecordCallbackMicros(block == 0 ? 1'000 : 0, 2'667);
+    }
+
+    const float percent = meter.SamplePercent();
+    Require(percent > 0.8f && percent < 1.2f,
+            "quantized callback timing is averaged over a window");
+}
+
 }  // namespace
 
 int main()
@@ -481,8 +528,11 @@ int main()
     static_assert(!synth::SynthApplication<MissingSurface>);
     TestBrowserRuntimeUsesSharedFrameAndActionRouting();
     TestBrowserPrepareFeedsNegotiatedAudioPageAndRejectsOversizedBlocks();
+    TestNativeBuildRejectsBrowserAudioWorkletStart();
     TestSharedBrowserNavigationReplacesAndRestoresEveryRuntimePage();
     TestControllersUseLatestBridgeSnapshotCommitEditsAndSaveOnBack();
     TestFilePageDispatchesPatchLifecycleThroughBrowserRuntime();
+    TestPersistenceDirtyConsumesRuntimeAndServicesSourcesTogether();
+    TestAudioWorkletDeadlineMeterAveragesQuantizedTimerSamples();
     return 0;
 }

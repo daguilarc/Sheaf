@@ -271,6 +271,27 @@ void TestRuntimeActionsRouteOnlyToOwningPageOrServices()
     Require(fixture.app.surface.dispatchCount == 0, "unknown runtime action stays reserved");
 }
 
+void TestControllerDraftActionsReachControllerSurface()
+{
+    Fixture fixture;
+
+    fixture.component.ShowPage(synth::runtime_ui::RuntimeMainPage::Controllers);
+    fixture.component.DispatchAction(
+        synth::ui::Action::WithValue(synth::runtime_ui::Actions::kAddNameDraft, "webctl"));
+    fixture.component.DispatchAction(
+        synth::ui::Action::WithValue(synth::runtime_ui::Actions::kAddKindDraft, "generic"));
+
+    const synth::ui::NodeTree tree = fixture.component.BuildTree();
+    const synth::ui::Node* addName =
+        FindNodeById(tree, synth::runtime_ui::NodeIds::kAddName);
+    const synth::ui::Node* addKind =
+        FindNodeById(tree, synth::runtime_ui::NodeIds::kAddKind);
+    Require(addName != nullptr && addName->text == "webctl",
+            "controller add-name draft routes through runtime component");
+    Require(addKind != nullptr && addKind->selectedOption == "generic",
+            "controller add-kind draft routes through runtime component");
+}
+
 void TestBackFromConfigurationPageSavesRuntimeConfiguration()
 {
     Fixture fixture;
@@ -430,6 +451,8 @@ int main()
     Run("TestAppActionsRouteOnlyToAppSurface", TestAppActionsRouteOnlyToAppSurface);
     Run("TestRuntimeActionsRouteOnlyToOwningPageOrServices",
         TestRuntimeActionsRouteOnlyToOwningPageOrServices);
+    Run("TestControllerDraftActionsReachControllerSurface",
+        TestControllerDraftActionsReachControllerSurface);
     Run("TestBackFromConfigurationPageSavesRuntimeConfiguration",
         TestBackFromConfigurationPageSavesRuntimeConfiguration);
     Run("TestRefreshUpdatesRuntimePageModelsAndRollingDeadline",

@@ -13,6 +13,7 @@ type PointerHandlers = {
 };
 type NodeElement = HTMLElement & { synthNode?: Node; scrollContent?: HTMLElement; pointerHandlers?: PointerHandlers };
 type CapturedPointer = { element: NodeElement; action: Action; anchorClientX: number; anchorClientY: number };
+type PendingDrag = { action: Action; delta: number };
 type ResolvedFrame = {
   bounds: Map<string, Bounds>;
   parents: Map<string, string>;
@@ -35,7 +36,9 @@ const CONTROL_MARGIN = 12;
 export class BrowserUiBackend {
   private readonly elements = new Map<string, NodeElement>();
   private readonly capturedPointers = new Map<number, CapturedPointer>();
+  private readonly pendingDrags = new Map<string, PendingDrag>();
   private readonly resizeObserver: ResizeObserver;
+  private dragFrame = 0;
   private surfaceRootId?: string;
   private surfaceWidth = 0;
   private surfaceHeight = 0;
@@ -81,6 +84,9 @@ export class BrowserUiBackend {
   dispose() {
     if (this.disposed) return;
     this.disposed = true;
+    if (this.dragFrame !== 0) cancelAnimationFrame(this.dragFrame);
+    this.dragFrame = 0;
+    this.pendingDrags.clear();
     this.resizeObserver.disconnect();
     for (const pointerId of [...this.capturedPointers.keys()]) this.clearPointer(pointerId, true);
     for (const element of this.elements.values()) this.removePointerGesture(element);
@@ -98,6 +104,9 @@ export class BrowserUiBackend {
     element.style.transformOrigin = "";
     element.style.width = bounds.width > 0 ? `${bounds.width}px` : "";
     element.style.height = bounds.height > 0 ? `${bounds.height}px` : "";
+    const acceptsPointer = acceptsPointerEvents(node);
+    element.style.pointerEvents = acceptsPointer ? "auto" : "none";
+    element.style.zIndex = acceptsPointer ? "1" : "0";
     element.toggleAttribute("aria-disabled", !node.enabled);
     this.updateControl(element, node);
     this.updatePointerGesture(element, node);
@@ -113,14 +122,14 @@ export class BrowserUiBackend {
 
   private createElement(node: Node): NodeElement {
     const element = document.createElement(node.kind === NodeKind.Button ? "button" : node.kind === NodeKind.Section ? "section" : "div") as NodeElement;
-    if (node.kind === NodeKind.Toggle) { const input = document.createElement("input"); input.type = "checkbox"; element.append(input, document.createElement("span")); input.addEventListener("change", () => this.dispatchValue(element, input.checked ? "true" : "false")); }
+    if (node.kind === NodeKind.Toggle) { const input = document.createElement("input"); input.type = "checkbox"; element.append(input, document.createElement("span")); input.addEventListener("change", () => this.dispatchValue(element, input.checked ? "1" : "0")); }
     if (node.kind === NodeKind.Slider) { const input = document.createElement("input"); input.type = "range"; element.append(input); input.addEventListener("input", () => this.dispatchValue(element, input.value)); }
     if (node.kind === NodeKind.ComboBox) { const select = document.createElement("select"); element.append(select); select.addEventListener("change", () => this.dispatchValue(element, select.value)); }
     if (node.kind === NodeKind.TextField) { const input = document.createElement("input"); input.type = "text"; element.append(input); input.addEventListener("input", () => this.dispatchValue(element, input.value)); }
-    if (node.kind === NodeKind.Draw) { const canvas = document.createElement("canvas"); element.append(canvas); canvas.addEventListener("dblclick", () => this.dispatchDoubleClick(element)); }
+    if (node.kind === NodeKind.Draw) { const canvas = document.createElement("canvas"); element.append(canvas); }
     if (node.kind === NodeKind.ScrollArea) { const content = document.createElement("div"); content.style.position = "relative"; element.scrollContent = content; element.append(content); element.style.overflow = "auto"; }
     if (node.kind === NodeKind.Button) element.addEventListener("click", () => this.dispatchValue(element));
-    if (node.kind === NodeKind.Row) element.addEventListener("dblclick", () => this.dispatchDoubleClick(element));
+    element.addEventListener("dblclick", () => this.dispatchDoubleClick(element));
     return element;
   }
 
@@ -177,6 +186,7 @@ export class BrowserUiBackend {
     if (releaseCapture) {
       try { captured.element.releasePointerCapture(pointerId); } catch { /* Capture may already have been released by the browser. */ }
     }
+    this.flushDrags();
   }
 
   private removePointerGesture(element: NodeElement) {
@@ -202,7 +212,15 @@ export class BrowserUiBackend {
       if (document.activeElement !== input) input.value = String(node.value);
       input.disabled = !node.enabled;
     }
-    if (node.kind === NodeKind.ComboBox) { const select = element.querySelector("select")!; select.replaceChildren(...node.options.map((option) => { const value = new Option(option.label, option.id); value.selected = option.id === node.selectedOption; return value; })); select.disabled = !node.enabled; }
+    if (node.kind === NodeKind.ComboBox) {
+      const select = element.querySelector("select")!;
+      const optionsChanged = select.options.length !== node.options.length ||
+        node.options.some((option, index) => select.options[index]?.value !== option.id || select.options[index]?.textContent !== option.label);
+      if (optionsChanged)
+        select.replaceChildren(...node.options.map((option) => new Option(option.label, option.id)));
+      if (document.activeElement !== select) select.value = node.selectedOption;
+      select.disabled = !node.enabled;
+    }
     if (node.kind === NodeKind.TextField) {
       const input = element.querySelector("input")!;
       if (document.activeElement !== input) input.value = node.text;
@@ -223,9 +241,36 @@ export class BrowserUiBackend {
     parent.replaceChildren(...children);
   }
 
-  private dispatchValue(element: NodeElement, value?: string) { const action = element.synthNode?.action; if (action) this.dispatchBrowserAction({ name: action.name, value: value ?? action.value }); }
+  private dispatchValue(element: NodeElement, value?: string) {
+    const action = element.synthNode?.action;
+    if (!action) return;
+    this.dispatchBrowserAction({ name: action.name, value: value === undefined ? action.value : appendActionValue(action.value, value) });
+  }
   private dispatchDoubleClick(element: NodeElement) { const action = element.synthNode?.doubleClickAction; if (action) this.dispatchBrowserAction(action); }
-  private dispatchDrag(action: Action, delta: number) { const separator = action.value.lastIndexOf(":"); this.dispatchBrowserAction({ name: action.name, value: separator < 0 ? String(delta) : `${action.value.slice(0, separator + 1)}${delta}` }); }
+  private dispatchDrag(action: Action, delta: number) {
+    const separator = action.value.lastIndexOf(":");
+    const prefix = separator < 0 ? "" : action.value.slice(0, separator + 1);
+    const key = `${action.name}\0${prefix}`;
+    const pending = this.pendingDrags.get(key);
+    if (pending) pending.delta += delta;
+    else this.pendingDrags.set(key, { action: { name: action.name, value: prefix }, delta });
+    if (this.dragFrame !== 0) return;
+    this.dragFrame = requestAnimationFrame(() => this.flushDrags());
+  }
+
+  private flushDrags() {
+    if (this.dragFrame !== 0) {
+      cancelAnimationFrame(this.dragFrame);
+      this.dragFrame = 0;
+    }
+    this.dragFrame = 0;
+    const drags = [...this.pendingDrags.values()];
+    this.pendingDrags.clear();
+    for (const drag of drags) {
+      if (Math.abs(drag.delta) < 0.001) continue;
+      this.dispatchBrowserAction({ name: drag.action.name, value: `${drag.action.value}${drag.delta}` });
+    }
+  }
 
   private fitSurface() {
     const availableWidth = this.root.clientWidth;
@@ -249,19 +294,23 @@ export class BrowserUiBackend {
   }
 
   private draw(context: CanvasRenderingContext2D, command: DrawCommand, nodeBounds: Bounds) {
-    const fill = colorCss(command.color); const stroke = colorCss(command.color); const b = command.bounds;
+    const fill = colorCss(command.color); const stroke = colorCss(command.color); const b = drawBounds(command.bounds, nodeBounds);
     const hasBounds = b.width > 0 && b.height > 0;
     context.fillStyle = fill; context.strokeStyle = stroke; context.lineWidth = command.strokeWidth;
     switch (command.kind) {
       case DrawKind.Fill: context.fillRect(hasBounds ? b.x : nodeBounds.x, hasBounds ? b.y : nodeBounds.y, hasBounds ? b.width : nodeBounds.width, hasBounds ? b.height : nodeBounds.height); break;
       case DrawKind.StrokeRect: context.strokeRect(b.x, b.y, b.width, b.height); break;
-      case DrawKind.Line: context.beginPath(); context.moveTo(command.from.x, command.from.y); context.lineTo(command.to.x, command.to.y); context.stroke(); break;
+      case DrawKind.Line: {
+        const from = drawPoint(command.from, nodeBounds);
+        const to = drawPoint(command.to, nodeBounds);
+        context.beginPath(); context.moveTo(from.x, from.y); context.lineTo(to.x, to.y); context.stroke(); break;
+      }
       case DrawKind.Arc:
         context.save();
         context.lineCap = "round";
         context.lineJoin = "round";
         context.beginPath();
-        context.arc(b.x + b.width / 2, b.y + b.height / 2, Math.min(b.width, b.height) / 2, command.startRadians, command.endRadians);
+        context.arc(b.x + b.width / 2, b.y + b.height / 2, Math.min(b.width, b.height) / 2, portableAngleToCanvas(command.startRadians), portableAngleToCanvas(command.endRadians));
         context.stroke();
         context.restore();
         break;
@@ -270,8 +319,8 @@ export class BrowserUiBackend {
       case DrawKind.StrokeEllipse: context.beginPath(); context.ellipse(b.x + b.width / 2, b.y + b.height / 2, b.width / 2, b.height / 2, 0, 0, Math.PI * 2); context.stroke(); break;
       case DrawKind.FillRoundedRect: roundedRect(context, b, command.cornerRadius); context.fill(); break;
       case DrawKind.StrokeRoundedRect: roundedRect(context, b, command.cornerRadius); context.stroke(); break;
-      case DrawKind.Polyline: path(context, command.points); context.stroke(); break;
-      case DrawKind.FillPolygon: path(context, command.points); context.fill(); break;
+      case DrawKind.Polyline: path(context, drawPoints(command.points, nodeBounds)); context.stroke(); break;
+      case DrawKind.FillPolygon: path(context, drawPoints(command.points, nodeBounds)); context.fill(); break;
     }
   }
 }
@@ -316,7 +365,25 @@ function resolveFrameBounds(nodesInOrder: Node[], nodes: Map<string, Node>): Res
   };
   if (roots[0]) assignNearestRoot(roots[0], roots[0].id);
 
-  const resolved = new Map(nodesInOrder.map((node) => [node.id, { ...node.bounds }]));
+  const explicitResolved = new Map<string, Bounds>();
+  const resolveExplicit = (node: Node): Bounds => {
+    const cached = explicitResolved.get(node.id);
+    if (cached) return cached;
+    const parent = parents.get(node.id);
+    if (!parent || node.kind === NodeKind.Root) {
+      const rootBounds = { ...node.bounds };
+      explicitResolved.set(node.id, rootBounds);
+      return rootBounds;
+    }
+    const parentNode = nodes.get(parent)!;
+    const parentBounds = resolveExplicit(parentNode);
+    const bounds = explicitBoundsAreParentLocal(node, parentNode)
+      ? { x: parentBounds.x + node.bounds.x, y: parentBounds.y + node.bounds.y, width: node.bounds.width, height: node.bounds.height }
+      : { ...node.bounds };
+    explicitResolved.set(node.id, bounds);
+    return bounds;
+  };
+  const resolved = new Map(nodesInOrder.map((node) => [node.id, (hasExplicitBounds(node.bounds) || node.kind === NodeKind.Root) ? resolveExplicit(node) : { ...node.bounds }]));
   const cursors = new Map<string, { x: number; y: number; rowHeight: number; right: number; availableWidth: number }>();
   for (const node of nodesInOrder) {
     if (hasExplicitBounds(node.bounds) || node.kind === NodeKind.Root) continue;
@@ -368,6 +435,14 @@ function resolveFrameBounds(nodesInOrder: Node[], nodes: Map<string, Node>): Res
 
 function hasExplicitBounds(bounds: Bounds) { return bounds.width > 0 && bounds.height > 0; }
 
+function explicitBoundsAreParentLocal(node: Node, parent: Node) {
+  const parentWidth = parent.kind === NodeKind.ScrollArea ? Math.max(parent.bounds.width, parent.scrollContentWidth) : parent.bounds.width;
+  const parentHeight = parent.kind === NodeKind.ScrollArea ? Math.max(parent.bounds.height, parent.scrollContentHeight) : parent.bounds.height;
+  return node.bounds.x >= 0 && node.bounds.y >= 0 &&
+    node.bounds.x + node.bounds.width <= parentWidth &&
+    node.bounds.y + node.bounds.height <= parentHeight;
+}
+
 function defaultSize(node: Node, availableWidth: number): Pick<Bounds, "width" | "height"> {
   switch (node.kind) {
     case NodeKind.Slider: return { width: DEFAULT_SLIDER_WIDTH, height: DEFAULT_SLIDER_HEIGHT };
@@ -382,5 +457,32 @@ function defaultSize(node: Node, availableWidth: number): Pick<Bounds, "width" |
 }
 
 function colorCss(color: Color) { return `rgba(${color.r}, ${color.g}, ${color.b}, ${color.a / 255})`; }
+function appendActionValue(prefix: string, value: string) { return prefix.length > 0 ? `${prefix}:${value}` : value; }
+function portableAngleToCanvas(radians: number) { return radians - Math.PI / 2; }
+function boundsLookLocal(bounds: Bounds, nodeBounds: Bounds) {
+  return bounds.width > 0 && bounds.height > 0 && bounds.x >= 0 && bounds.y >= 0 &&
+    bounds.x + bounds.width <= nodeBounds.width && bounds.y + bounds.height <= nodeBounds.height;
+}
+function drawBounds(bounds: Bounds, nodeBounds: Bounds): Bounds {
+  return boundsLookLocal(bounds, nodeBounds)
+    ? { x: nodeBounds.x + bounds.x, y: nodeBounds.y + bounds.y, width: bounds.width, height: bounds.height }
+    : bounds;
+}
+function pointLooksLocal(point: { x: number; y: number }, nodeBounds: Bounds) {
+  return point.x >= 0 && point.y >= 0 && point.x <= nodeBounds.width && point.y <= nodeBounds.height;
+}
+function drawPoint(point: { x: number; y: number }, nodeBounds: Bounds) {
+  return pointLooksLocal(point, nodeBounds) ? { x: nodeBounds.x + point.x, y: nodeBounds.y + point.y } : point;
+}
+function drawPoints(points: Array<{ x: number; y: number }>, nodeBounds: Bounds) {
+  return points.length > 0 && points.every((point) => pointLooksLocal(point, nodeBounds))
+    ? points.map((point) => ({ x: nodeBounds.x + point.x, y: nodeBounds.y + point.y }))
+    : points;
+}
+function acceptsPointerEvents(node: Node) {
+  return node.kind === NodeKind.Button || node.kind === NodeKind.Toggle || node.kind === NodeKind.Slider ||
+    node.kind === NodeKind.ComboBox || node.kind === NodeKind.TextField || node.kind === NodeKind.ScrollArea ||
+    Boolean(node.action || node.pointerDragAction || node.doubleClickAction);
+}
 function path(context: CanvasRenderingContext2D, points: Array<{ x: number; y: number }>) { context.beginPath(); if (points[0]) { context.moveTo(points[0].x, points[0].y); for (const point of points.slice(1)) context.lineTo(point.x, point.y); } }
 function roundedRect(context: CanvasRenderingContext2D, bounds: { x: number; y: number; width: number; height: number }, radius: number) { context.beginPath(); context.roundRect(bounds.x, bounds.y, bounds.width, bounds.height, radius); }

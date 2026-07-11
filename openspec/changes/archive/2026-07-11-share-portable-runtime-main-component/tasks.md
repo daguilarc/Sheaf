@@ -33,3 +33,14 @@
 - [x] 6.1 Record the deferred audio diagnosis: 48 kHz producer/consumer deficit, zero-fill underruns, and per-block allocation/copy pressure, with no audio code changes.
 - [x] 6.2 Run per-task xagent Claude reviews and resolve all critical/important findings without adding application-specific logic.
 - [x] 6.3 Run synth, JUCE, TypeScript, Playwright, generic-boundary, and OpenSpec validation suites and update coverage documentation.
+
+## 7. Realtime Audio Follow-Up
+
+- [x] 7.1 Replace the diagnostic timer/ring producer with a generic Emscripten AudioWorklet-owned DSP callback that calls the C++ process path on the audio thread against the same runtime/engine state. Do not implement this by duplicating a second app/runtime instance in the AudioWorklet, by synchronous worker calls, by a faster timer, or by app-specific JavaScript.
+- [x] 7.2 Run the real Chrome/Playwright AudioWorklet callback test after unsandboxed Chromium launch approval is available; sandboxed Chromium currently fails on macOS Mach-port registration before test code runs.
+
+## 8. Runtime File Page Consolidation
+
+- [x] 8.1 Add JUCE-free tests for a shared runtime-file helper that projects patch state into `FilePageSnapshot`, dispatches every confirmed File page action to host-provided patch operations, and owns the shared status strings.
+- [x] 8.2 Replace duplicated JUCE and browser `RefreshFile` / `DispatchFile` action ladders with the shared helper while preserving JUCE patch logging and browser persistence dirty behavior.
+- [x] 8.3 Run synth runtime/browser contract tests plus JUCE miniapp file-page tests to verify behavior remains identical across both runtimes.

@@ -179,20 +179,26 @@ WHEN an application runs under the runtime, THE runtime SHALL own the MIDI sende
 - **THEN** it contains no MIDI device enumeration, open/close, reconciliation, or processor construction code
 
 ### Requirement: sar-10 — UI: runtime shell hosting an application component
-WHEN the runtime presents UI, THE runtime SHALL own the JUCE application object, main window, and a shell that hosts the library main pane (sru-1): the sidebar with Audio/Controllers/File pages and deadline readout, and the application's portable UI surface adapted by the JUCE backend as the default content; THE runtime SHALL drive sidebar and application repaint from manager UI-state atomics on a message-thread timer at the configured frame rate; an entry-point macro SHALL let an application define its executable by naming only its application type.
+WHEN a JUCE or browser runtime presents UI, THE runtime SHALL own its host-specific application/window or browser integration and SHALL render one shared JUCE-free runtime main component templated on the application and host services; that component SHALL host the library sidebar with Audio/Controllers/File pages and deadline readout plus the application's portable UI surface as default content, the runtime SHALL drive shared component refresh from manager UI-state atomics at the configured frame rate, and each host entry point SHALL define its executable or static WASM application by naming only the application type.
 
-#### Scenario: Shell hosts the application surface
-- **WHEN** the runtime window opens
-- **THEN** the application's portable UI surface is adapted by the JUCE backend and displayed as the main pane content beside the sidebar
+#### Scenario: Shell hosts the complete application surface
+- **WHEN** the JUCE window or Chrome static site opens
+- **THEN** the application's complete portable UI surface is displayed as main-pane content beside the sidebar through the active backend
 - **AND** no patch or MIDI chrome row sits above it
+- **AND** the sidebar does not consume or clip the configured application content width
+
+#### Scenario: Both hosts share top-level behavior
+- **WHEN** sidebar navigation, runtime-page Back, or application actions are dispatched in JUCE and Chrome
+- **THEN** both hosts route them through the same portable runtime main component
+- **AND** host adapters contain no concrete-application UI behavior
 
 #### Scenario: Repaint reads UI-state atomics
 - **WHEN** the UI timer fires
 - **THEN** sidebar and application widgets render from the published manager UI state without touching the parameter manager directly
 
-#### Scenario: One-line application entry point
-- **WHEN** an application translation unit invokes the runtime entry-point macro with its application type
-- **THEN** the build produces a runnable JUCE application hosting that application
+#### Scenario: Typed application entry points
+- **WHEN** a JUCE or browser application entry point names a conforming application type
+- **THEN** the build produces the corresponding runtime-hosted application without application-specific host source
 
 ### Requirement: sar-11 — Miniapp: runtime-hosted reference application
 WHEN the miniapp is ported to the runtime, THE miniapp application at `projects/synth/apps/miniapp` SHALL contain only application-specific content — runtime config, duophonic group and VCO/LFO/filter module setup, page/bank/slot layout, scope wiring, per-sample block processing, and its bespoke widgets — SHALL preserve the existing specced miniapp behaviors (encoder grid, pages, scenes, gestures, MIDI controller configuration, patch commands, waveform pane), SHALL process its parameter group through the synth parameter system's group-level per-sample processing API using the audio block's monotonic sample index, SHALL expose the VCO page as module-backed VCO controls plus filter Cutoff, Resonance, and Blend controls, SHALL expose the LFO page as five module-backed parameters, and SHALL write its filtered VCO output to the negotiated audio device outputs using the device-provided sample rate.

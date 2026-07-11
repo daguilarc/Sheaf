@@ -132,6 +132,16 @@ int main()
     Require(FindNodeById(initialTree, synth::runtime_ui::NodeIds::kBack) != nullptr, "back button node");
     Require(FindNodeById(initialTree, synth::runtime_ui::NodeIds::kScroll) != nullptr, "scroll area node");
     Require(FindNodeById(initialTree, synth::runtime_ui::NodeIds::kAddButton) != nullptr, "add controller button");
+    const synth::ui::Node* addName =
+        FindNodeById(initialTree, synth::runtime_ui::NodeIds::kAddName);
+    const synth::ui::Node* addKind =
+        FindNodeById(initialTree, synth::runtime_ui::NodeIds::kAddKind);
+    Require(addName != nullptr && addName->action.has_value() &&
+                addName->action->name == "runtime.controllers.add_name_draft",
+            "add controller name edits dispatch a portable draft action");
+    Require(addKind != nullptr && addKind->action.has_value() &&
+                addKind->action->name == "runtime.controllers.add_kind_draft",
+            "add controller kind edits dispatch a portable draft action");
     const synth::ui::Node* wrldInput =
         FindNodeById(initialTree, synth::runtime_ui::NodeIds::ControllerInput(0));
     const synth::ui::Node* padsInput =
@@ -154,9 +164,11 @@ int main()
     Require(scrollNode->scrollContentWidth >= padsVariant->bounds.x + padsVariant->bounds.width,
             "scroll content reserves launchpad variant width");
 
-    surface.SetAddControllerDraft("newctl", "generic");
     surface.DispatchAction(
-        synth::ui::Action::WithValue(synth::runtime_ui::Actions::kAddController, "newctl:generic"));
+        synth::ui::Action::WithValue("runtime.controllers.add_name_draft", "newctl"));
+    surface.DispatchAction(
+        synth::ui::Action::WithValue("runtime.controllers.add_kind_draft", "generic"));
+    surface.DispatchAction(synth::ui::Action::Named(synth::runtime_ui::Actions::kAddController));
     Require(harness.commits == 1, "add controller commits");
     Require(harness.instrument.controllers.size() == 4, "add controller increases count");
     Require(harness.status.find("Added") != std::string::npos, "add controller status");

@@ -3,6 +3,7 @@
 #include "Runtime.hpp"
 
 #include "synth/ControllersPageUI.hpp"
+#include "synth/RuntimeFileService.hpp"
 #include "synth/RuntimePages.hpp"
 
 #include <filesystem>
@@ -20,6 +21,7 @@ class JuceRuntimeMainServices final
 public:
     explicit JuceRuntimeMainServices(Runtime<App>& runtime)
         : runtime_(runtime)
+        , fileService_(MakeFileCallbacks())
     {
         runtime_.SetAudioStatusHook([this](const juce::String& text) {
             audioStatus_ = text.toStdString();
@@ -139,51 +141,12 @@ public:
 
     void RefreshFile(synth::runtime_ui::FilePageSnapshot& snapshot)
     {
-        const auto& currentPatchDirectory =
-            runtime_.GetEngine().Patches().CurrentPatchDirectory();
-        snapshot.hasCurrentPatch = currentPatchDirectory.has_value();
-        snapshot.patchNameText = currentPatchDirectory.has_value()
-                                     ? currentPatchDirectory->filename().string()
-                                     : "(no patch)";
-        snapshot.patchesRoot = runtime_.DataPaths().patchesRoot.string();
-        if (fileStatus_.has_value())
-        {
-            snapshot.statusText = *fileStatus_;
-        }
+        fileService_.Refresh(snapshot);
     }
 
     void DispatchFile(const synth::ui::Action& action)
     {
-        if (action.name == synth::runtime_ui::Actions::kFileNew)
-        {
-            runtime_.NewPatch();
-            fileStatus_ = "New patch created";
-        }
-        else if (action.name == synth::runtime_ui::Actions::kFileSave)
-        {
-            runtime_.SavePatch();
-            fileStatus_ = "Save requested";
-        }
-        else if (action.name == synth::runtime_ui::Actions::kFileConfirmedSaveAs)
-        {
-            runtime_.SavePatchAs(std::filesystem::path(action.value));
-            fileStatus_ = "Save As requested: " + action.value;
-        }
-        else if (action.name == synth::runtime_ui::Actions::kFileConfirmedOverwriteSaveAs)
-        {
-            runtime_.SavePatchAsOverwrite(std::filesystem::path(action.value));
-            fileStatus_ = "Save As requested: " + action.value;
-        }
-        else if (action.name == synth::runtime_ui::Actions::kFileConfirmedLoad)
-        {
-            runtime_.LoadPatch(std::filesystem::path(action.value));
-            fileStatus_ = "Load requested: " + action.value;
-        }
-        else if (action.name == synth::runtime_ui::Actions::kFileRevert)
-        {
-            runtime_.RevertPatch();
-            fileStatus_ = "Revert requested";
-        }
+        fileService_.Dispatch(action);
     }
 
     void RefreshControllers(synth::runtime_ui::ControllersPageSurface& surface)
@@ -214,10 +177,34 @@ public:
     }
 
 private:
+    synth::runtime_ui::RuntimeFileCallbacks MakeFileCallbacks()
+    {
+        synth::runtime_ui::RuntimeFileCallbacks callbacks;
+        callbacks.currentPatchDirectory = [this] {
+            return runtime_.GetEngine().Patches().CurrentPatchDirectory();
+        };
+        callbacks.patchesRoot = [this] {
+            return runtime_.DataPaths().patchesRoot;
+        };
+        callbacks.newPatch = [this] { runtime_.NewPatch(); };
+        callbacks.savePatch = [this] { runtime_.SavePatch(); };
+        callbacks.savePatchAs = [this](const std::filesystem::path& path) {
+            runtime_.SavePatchAs(path);
+        };
+        callbacks.savePatchAsOverwrite = [this](const std::filesystem::path& path) {
+            runtime_.SavePatchAsOverwrite(path);
+        };
+        callbacks.loadPatch = [this](const std::filesystem::path& path) {
+            runtime_.LoadPatch(path);
+        };
+        callbacks.revertPatch = [this] { runtime_.RevertPatch(); };
+        return callbacks;
+    }
+
     Runtime<App>& runtime_;
+    synth::runtime_ui::RuntimeFileService fileService_;
     std::function<bool()> focusGuard_;
     std::optional<std::string> audioStatus_;
-    std::optional<std::string> fileStatus_;
     bool audioSyncPending_ = true;
     bool controllersDirty_ = true;
 };

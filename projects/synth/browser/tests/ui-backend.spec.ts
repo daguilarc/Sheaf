@@ -75,10 +75,125 @@ test("dispatches portable controls and double-click actions", async ({ page }) =
   await page.locator('[data-synth-node-id="draw"] canvas').dblclick();
   const dispatched = await page.evaluate(() => (window as unknown as { actions: unknown[] }).actions);
   expect(dispatched).toEqual([
-    { name: "generic.button", value: "press" }, { name: "generic.toggle", value: "true" }, { name: "generic.slider", value: "7" },
+    { name: "generic.button", value: "press" }, { name: "generic.toggle", value: "1" }, { name: "generic.slider", value: "7" },
     { name: "generic.combo", value: "two" }, { name: "generic.text", value: "after" }, { name: "generic.row", value: "open" },
     { name: "generic.draw", value: "open" },
   ]);
+});
+
+test("dispatches real mouse double-clicks on draggable draw controls", async ({ page }) => {
+  const encoderFrame = makeCommandBuffer([
+    { id: "root", kind: NodeKind.Root, bounds: [0, 0, 120, 120], children: ["encoder"] },
+    { id: "encoder", kind: NodeKind.Draw, bounds: [20, 20, 60, 60],
+      pointerDragAction: { name: "generic.drag", value: "axis:0" },
+      doubleClickAction: { name: "generic.reset", value: "axis" },
+      draws: [{ kind: DrawKind.FillEllipse, bounds: [20, 20, 60, 60], color: [20, 80, 90, 255] }] },
+  ]);
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+  await page.evaluate(async (bytes) => {
+    const { BrowserUiBackend } = await import("../dist/src/" + "ui.js");
+    const browserWindow = window as unknown as { actions: unknown[] };
+    browserWindow.actions = [];
+    const backend = new BrowserUiBackend(document.querySelector("#synth-root")!, (action: unknown) => browserWindow.actions.push(action));
+    backend.renderFrame(new Uint8Array(bytes).buffer);
+  }, Array.from(new Uint8Array(encoderFrame)));
+
+  const box = await page.locator('[data-synth-node-id="encoder"]').boundingBox();
+  expect(box).not.toBeNull();
+  await page.mouse.dblclick(box!.x + box!.width / 2, box!.y + box!.height / 2);
+
+  const dispatched = await page.evaluate(() => (window as unknown as { actions: unknown[] }).actions);
+  expect(dispatched).toEqual([{ name: "generic.reset", value: "axis" }]);
+});
+
+test("appends control values to action prefixes without losing option ids", async ({ page }) => {
+  const prefixedFrame = makeCommandBuffer([
+    { id: "root", kind: NodeKind.Root, bounds: [0, 0, 320, 120], children: ["combo", "field", "toggle"] },
+    { id: "combo", kind: NodeKind.ComboBox, bounds: [0, 0, 120, 24], selectedOption: "dev-a",
+      options: [{ id: "dev-a", label: "Device A" }, { id: "dev-b", label: "Device B" }],
+      action: { name: "controller.endpoint", value: "0:input" } },
+    { id: "field", kind: NodeKind.TextField, bounds: [0, 32, 120, 24], text: "",
+      action: { name: "mapping.value", value: "0:encoders:2:5" } },
+    { id: "toggle", kind: NodeKind.Toggle, bounds: [0, 64, 120, 24], label: "Feedback", checked: false,
+      action: { name: "mapping.value", value: "0:system_messages:1:25" } },
+  ]);
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+  await page.evaluate(async (bytes) => {
+    const { BrowserUiBackend } = await import("../dist/src/" + "ui.js");
+    const browserWindow = window as unknown as { actions: unknown[] };
+    browserWindow.actions = [];
+    const backend = new BrowserUiBackend(document.querySelector("#synth-root")!, (action: unknown) => browserWindow.actions.push(action));
+    backend.renderFrame(new Uint8Array(bytes).buffer);
+  }, Array.from(new Uint8Array(prefixedFrame)));
+  await page.locator('[data-synth-node-id="combo"] select').selectOption("dev-b");
+  await page.locator('[data-synth-node-id="field"] input').fill("42");
+  await page.locator('[data-synth-node-id="toggle"] input').check();
+  const dispatched = await page.evaluate(() => (window as unknown as { actions: unknown[] }).actions);
+  expect(dispatched).toEqual([
+    { name: "controller.endpoint", value: "0:input:dev-b" },
+    { name: "mapping.value", value: "0:encoders:2:5:42" },
+    { name: "mapping.value", value: "0:system_messages:1:25:1" },
+  ]);
+});
+
+test("preserves focused combo boxes across stale frame refreshes", async ({ page }) => {
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+  await page.evaluate(async (bytes) => {
+    const { BrowserUiBackend } = await import("../dist/src/" + "ui.js");
+    const browserWindow = window as unknown as { backend: InstanceType<typeof BrowserUiBackend> };
+    browserWindow.backend = new BrowserUiBackend(document.querySelector("#synth-root")!);
+    browserWindow.backend.renderFrame(new Uint8Array(bytes).buffer);
+  }, Array.from(new Uint8Array(frame)));
+
+  const snapshot = await page.evaluate((bytes) => {
+    const select = document.querySelector<HTMLSelectElement>('[data-synth-node-id="combo"] select')!;
+    select.focus();
+    select.value = "two";
+    const firstOption = select.options[0];
+    (window as unknown as { firstComboOption: HTMLOptionElement }).firstComboOption = firstOption;
+    const browserWindow = window as unknown as { backend: { renderFrame(buffer: ArrayBuffer): void } };
+    browserWindow.backend.renderFrame(new Uint8Array(bytes).buffer);
+    return {
+      value: select.value,
+      firstOptionPreserved: select.options[0] === (window as unknown as { firstComboOption: HTMLOptionElement }).firstComboOption,
+      optionLabels: Array.from(select.options).map((option) => option.textContent),
+    };
+  }, Array.from(new Uint8Array(frame)));
+
+  expect(snapshot).toEqual({
+    value: "two",
+    firstOptionPreserved: true,
+    optionLabels: ["One", "Two"],
+  });
+});
+
+test("maps portable arc angles into the canvas angle basis", async ({ page }) => {
+  const arcFrame = makeCommandBuffer([
+    { id: "root", kind: NodeKind.Root, bounds: [0, 0, 120, 120], children: ["draw"] },
+    { id: "draw", kind: NodeKind.Draw, bounds: [0, 0, 80, 80], draws: [
+      { kind: DrawKind.Arc, bounds: [10, 10, 40, 40], startRadians: 0, endRadians: Math.PI / 2 },
+    ] },
+  ]);
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+  const calls = await page.evaluate(async (bytes) => {
+    const arcCalls: Array<{ start: number; end: number }> = [];
+    const originalArc = CanvasRenderingContext2D.prototype.arc;
+    CanvasRenderingContext2D.prototype.arc = function(...args: Parameters<CanvasRenderingContext2D["arc"]>) {
+      arcCalls.push({ start: args[3], end: args[4] });
+      return originalArc.apply(this, args);
+    };
+    try {
+      const { BrowserUiBackend } = await import("../dist/src/" + "ui.js");
+      const backend = new BrowserUiBackend(document.querySelector("#synth-root")!);
+      backend.renderFrame(new Uint8Array(bytes).buffer);
+      return arcCalls;
+    } finally {
+      CanvasRenderingContext2D.prototype.arc = originalArc;
+    }
+  }, Array.from(new Uint8Array(arcFrame)));
+  expect(calls).toHaveLength(1);
+  expect(calls[0].start).toBeCloseTo(-Math.PI / 2, 6);
+  expect(calls[0].end).toBeCloseTo(0, 6);
 });
 
 test("captures pointer drags and dispatches accepted incremental two-axis deltas", async ({ page }) => {
@@ -113,10 +228,9 @@ test("captures pointer drags and dispatches accepted incremental two-axis deltas
 
   expect(result.captures).toEqual([7]);
   expect(result.releases).toEqual([7]);
-  expect(result.actions).toHaveLength(3);
-  expect(result.actions[0]).toEqual({ name: "generic.drag", value: "0:3:0.03" });
-  expect(Number(result.actions[1].value.split(":").at(-1))).toBeCloseTo(-0.005, 10);
-  expect(Number(result.actions[2].value.split(":").at(-1))).toBeCloseTo(0.0015, 10);
+  expect(result.actions).toHaveLength(1);
+  expect(result.actions[0].name).toBe("generic.drag");
+  expect(Number(result.actions[0].value.split(":").at(-1))).toBeCloseTo(0.0265, 10);
 });
 
 test("compensates pointer movement for the current surface scale", async ({ page }) => {
@@ -137,10 +251,13 @@ test("compensates pointer movement for the current surface scale", async ({ page
     drag.releasePointerCapture = () => {};
     drag.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 3, clientX: 10, clientY: 20 }));
     drag.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, pointerId: 3, clientX: 14, clientY: 18 }));
+    drag.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 3, clientX: 14, clientY: 18 }));
     return actions;
   }, Array.from(new Uint8Array(dragFrame)));
 
-  expect(result).toEqual([{ name: "generic.drag", value: "axis:0.03" }]);
+  expect(result).toHaveLength(1);
+  expect(result[0].name).toBe("generic.drag");
+  expect(Number(result[0].value.slice("axis:".length))).toBeCloseTo(0.03, 10);
 });
 
 test("keeps captured drags alive outside and clears them on cancel and lost capture", async ({ page }) => {
@@ -174,6 +291,8 @@ test("keeps captured drags alive outside and clears them on cancel and lost capt
   }, Array.from(new Uint8Array(dragFrame)));
 
   expect(result.actions).toHaveLength(2);
+  expect(Number(result.actions[0].value.slice("axis:".length))).toBeCloseTo(2.475, 10);
+  expect(Number(result.actions[1].value.slice("axis:".length))).toBeCloseTo(0.025, 10);
   expect(result.captures).toEqual([1, 2]);
   expect(result.releases).toEqual([1]);
 });
@@ -232,7 +351,9 @@ test("allows only one pointer to drive each drag element", async ({ page }) => {
 
   expect(result.captures).toEqual([1]);
   expect(result.releases).toEqual([1]);
-  expect(result.actions).toEqual([{ name: "generic.drag", value: "axis:0.01" }]);
+  expect(result.actions).toHaveLength(1);
+  expect(result.actions[0].name).toBe("generic.drag");
+  expect(Number(result.actions[0].value.slice("axis:".length))).toBeCloseTo(0.01, 10);
 });
 
 test("uses the current surface scale for each accepted drag increment", async ({ page }) => {
@@ -262,10 +383,13 @@ test("uses the current surface scale for each accepted drag increment", async ({
     host.style.width = "100px";
     resize([], {} as ResizeObserver);
     drag.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, pointerId: 8, clientX: 14, clientY: 5 }));
+    drag.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 8, clientX: 14, clientY: 5 }));
     return actions;
   }, Array.from(new Uint8Array(dragFrame)));
 
-  expect(actions).toEqual([{ name: "generic.drag", value: "axis:0.02" }]);
+  expect(actions).toHaveLength(1);
+  expect(actions[0].name).toBe("generic.drag");
+  expect(Number(actions[0].value.slice("axis:".length))).toBeCloseTo(0.02, 10);
 });
 
 test("preserves focused edits while a stale frame is rendered", async ({ page }) => {
