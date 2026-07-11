@@ -54,10 +54,10 @@
 
 ## 8. Dresden Registration and Sheaf Patch Integration
 
-- [ ] 8.1 Add failing registry/launcher tests for sorted `dresden-4` metadata (`Dresden 4`, `Sheaf`, `synth`, sixteen encoders), typed launch, shared config path, `patches/dresden-4` isolation, and the absence of hardware gating.
-- [ ] 8.2 Add the Dresden typed registration to Sheaf Patch, extend its header/build dependencies, and launch Dresden through the generic session factory without adding Dresden-specific runtime ownership to the launcher.
-- [ ] 8.3 Update synth app documentation/build descriptions to list Dresden as Sheaf Patch-only, state that no standalone target is supplied, and document four-times-host internal processing plus final 4:1 FIR decimation.
-- [ ] 8.4 Build the Sheaf Patch app and run its launcher harness with both MiniApp and Dresden registrations.
+- [x] 8.1 Add failing registry/launcher tests for sorted `dresden-4` metadata (`Dresden 4`, `Sheaf`, `synth`, sixteen encoders), typed launch, shared config path, `patches/dresden-4` isolation, and the absence of hardware gating.
+- [x] 8.2 Add the Dresden typed registration to Sheaf Patch, extend its header/build dependencies, and launch Dresden through the generic session factory without adding Dresden-specific runtime ownership to the launcher.
+- [x] 8.3 Update synth app documentation/build descriptions to list Dresden as Sheaf Patch-only, state that no standalone target is supplied, and document four-times-host internal processing plus final 4:1 FIR decimation.
+- [x] 8.4 Build the Sheaf Patch app and run its launcher harness with both MiniApp and Dresden registrations.
 
 ## 9. Verification and Spec Completion
 
