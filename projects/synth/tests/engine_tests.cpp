@@ -105,7 +105,8 @@ struct EngineTestApp {
                                                            .numModulators = 0,
                                                            .numScenes = 1,
                                                            .maxParameters = 4,
-                                                           .processLiteAlpha = processLiteAlpha});
+                                                           .processLiteAlpha = processLiteAlpha,
+                                                           .targetCenterAlpha = 1.0f});
         auto& probe = ctx->parameterManager->CreateParameter(group, {.name = "Probe", .defaultValue = 0.25f});
         probeId = probe.Id();
 

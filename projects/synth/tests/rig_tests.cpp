@@ -90,7 +90,8 @@ struct RigTestApp {
                                                      .numModulators = 0,
                                                      .numScenes = 2,
                                                      .maxParameters = 8,
-                                                     .processLiteAlpha = 0.5f});
+                                                     .processLiteAlpha = 0.5f,
+                                                     .targetCenterAlpha = 1.0f});
         auto& level = ctx->parameterManager->CreateParameter(*group, {.name = "Level", .defaultValue = 0.25f});
         auto& tone = ctx->parameterManager->CreateParameter(*group, {.name = "Tone", .defaultValue = 0.5f});
         levelId = level.Id();

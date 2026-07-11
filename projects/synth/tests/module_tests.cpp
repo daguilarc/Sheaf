@@ -223,6 +223,7 @@ TEST_CASE(wavetable_vco_set_input_maps_parameters_to_natural_units) {
         .numScenes = 1,
         .maxParameters = 4,
         .processLiteAlpha = 1.0f,
+        .targetCenterAlpha = 1.0f,
     });
     synth::WavetableVcoModule<2> module(48000.0f);
     module.RegisterParameters(manager, group, "Osc");
@@ -511,6 +512,7 @@ TEST_CASE(basic_lfo_set_input_maps_parameters_and_phase_stagger_to_natural_units
         .numScenes = 1,
         .maxParameters = 5,
         .processLiteAlpha = 1.0f,
+        .targetCenterAlpha = 1.0f,
     });
     synth::BasicLfoModule<2> module(1000.0f);
     module.RegisterParameters(manager, group, "LFO");
@@ -754,6 +756,7 @@ TEST_CASE(classic_svf_set_input_maps_parameters_to_filter_natural_units) {
         .numScenes = 1,
         .maxParameters = 3,
         .processLiteAlpha = 1.0f,
+        .targetCenterAlpha = 1.0f,
     });
     synth::ClassicSvfModule<2> module(48000.0f);
     module.RegisterParameters(manager, group, "Filter");

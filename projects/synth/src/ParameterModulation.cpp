@@ -840,7 +840,7 @@ void Parameter::PopulateUIState(UIState& state) const {
 }
 
 void Parameter::Compute(const SceneState& scene) {
-    ComputeAtDepth(scene, 0);
+    ComputeAtDepth(scene, 0, true);
 }
 
 JSON Parameter::ToValueJSON(JsonArena& arena) const {
@@ -1417,10 +1417,10 @@ float Parameter::ComputeRawCenter(const SceneState& scene) const {
     return weightedMixSum / activeWeightSum;
 }
 
-void Parameter::ComputeAtDepth(const SceneState& scene, std::size_t recursionDepth) {
+void Parameter::ComputeAtDepth(const SceneState& scene, std::size_t recursionDepth, bool smoothTargetCenter) {
     recursionDepth_ = recursionDepth;
     const float rawCenter = ClampToRange(ComputeRawCenter(scene), config_.range);
-    if (recursionDepth == 0) {
+    if (smoothTargetCenter && recursionDepth == 0) {
         const float alpha = group_.Config().targetCenterAlpha;
         targetCenter_ += alpha * (rawCenter - targetCenter_);
         targetCenter_ = ClampToRange(targetCenter_, config_.range);
@@ -1430,7 +1430,7 @@ void Parameter::ComputeAtDepth(const SceneState& scene, std::size_t recursionDep
 
     for (Parameter* depthParameter : modulationDepths_) {
         if (depthParameter != nullptr) {
-            depthParameter->ComputeAtDepth(scene, recursionDepth_ + 1);
+            depthParameter->ComputeAtDepth(scene, recursionDepth_ + 1, smoothTargetCenter);
         }
     }
 
@@ -2261,7 +2261,7 @@ void ParameterManager::ComputeAllParameters() {
         if (parameter == nullptr) {
             continue;
         }
-        parameter->Compute(scene_);
+        parameter->ComputeAtDepth(scene_, 0, false);
         parameter->SnapCurrentToTarget();
     }
 }

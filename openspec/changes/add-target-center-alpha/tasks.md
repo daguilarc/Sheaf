@@ -17,5 +17,5 @@
 ## 3. Verification
 
 - [x] 3.1 Run focused synth parameter modulation tests.
-- [ ] 3.2 Run the broader synth test target if focused tests pass.
-- [ ] 3.3 Run `openspec status --change add-target-center-alpha` and confirm the change remains apply-ready.
+- [x] 3.2 Run the broader synth test target if focused tests pass.
+- [x] 3.3 Run `openspec status --change add-target-center-alpha` and confirm the change remains apply-ready.
