@@ -164,6 +164,8 @@ TEST_CASE(group_config_validation) {
         .maxParameters = 1,
     };
     REQUIRE_NEAR(defaultAlpha.processLiteAlpha, expectedDefaultAlpha, 0.000001f);
+    const float expectedDefaultTargetCenterAlpha = 0.0994231307f;
+    REQUIRE_NEAR(defaultAlpha.targetCenterAlpha, expectedDefaultTargetCenterAlpha, 0.000001f);
     REQUIRE_TRUE(defaultAlpha.targetComputeIntervalSamples == 16);
 
     synth::ParameterGroupConfig valid{
@@ -172,6 +174,7 @@ TEST_CASE(group_config_validation) {
         .numScenes = 1,
         .maxParameters = 8,
         .processLiteAlpha = 0.5f,
+        .targetCenterAlpha = 0.5f,
     };
     REQUIRE_TRUE(valid.IsValid());
     valid.targetComputeIntervalSamples = 32;
@@ -197,12 +200,26 @@ TEST_CASE(group_config_validation) {
         .maxParameters = 1,
         .processLiteAlpha = 1.01f,
     };
+    const synth::ParameterGroupConfig lowTargetCenterAlpha{
+        .numVoices = 1,
+        .numScenes = 1,
+        .maxParameters = 1,
+        .targetCenterAlpha = -0.01f,
+    };
+    const synth::ParameterGroupConfig highTargetCenterAlpha{
+        .numVoices = 1,
+        .numScenes = 1,
+        .maxParameters = 1,
+        .targetCenterAlpha = 1.01f,
+    };
     REQUIRE_TRUE(!zeroVoices.IsValid());
     REQUIRE_TRUE(!zeroScenes.IsValid());
     REQUIRE_TRUE(!zeroMaxParameters.IsValid());
     REQUIRE_TRUE(!zeroTargetInterval.IsValid());
     REQUIRE_TRUE(!lowAlpha.IsValid());
     REQUIRE_TRUE(!highAlpha.IsValid());
+    REQUIRE_TRUE(!lowTargetCenterAlpha.IsValid());
+    REQUIRE_TRUE(!highTargetCenterAlpha.IsValid());
 }
 
 TEST_CASE(color_hsv_and_atomic_storage) {
@@ -682,6 +699,40 @@ TEST_CASE(scene_and_gesture_interpolation) {
     REQUIRE_NEAR(gesture.TargetCenter(), 0.65f, 0.0001f);
 }
 
+TEST_CASE(top_level_compute_slews_target_center_with_group_alpha) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 0,
+        .numScenes = 1,
+        .maxParameters = 1,
+        .targetCenterAlpha = 0.25f,
+    });
+    auto& parameter = manager.CreateParameter(group, {.name = "Smoothed", .defaultValue = 0.0f});
+
+    parameter.SceneCenter(0) = 1.0f;
+    parameter.Compute({.leftScene = 0, .rightScene = 0, .blend = 0.0f});
+
+    REQUIRE_NEAR(parameter.TargetCenter(), 0.25f, 0.0001f);
+}
+
+TEST_CASE(target_center_alpha_one_preserves_direct_top_level_assignment) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 0,
+        .numScenes = 1,
+        .maxParameters = 1,
+        .targetCenterAlpha = 1.0f,
+    });
+    auto& parameter = manager.CreateParameter(group, {.name = "Direct", .defaultValue = 0.0f});
+
+    parameter.SceneCenter(0) = 1.0f;
+    parameter.Compute({.leftScene = 0, .rightScene = 0, .blend = 0.0f});
+
+    REQUIRE_NEAR(parameter.TargetCenter(), 1.0f, 0.0001f);
+}
+
 TEST_CASE(multiple_gestures_use_effective_weighted_average) {
     synth::ParameterManager manager;
     manager.SetGestureCount(2);
@@ -878,6 +929,29 @@ TEST_CASE(recursive_modulation_depth_targets_use_bipolar_zero_based_exponential_
         REQUIRE_NEAR(depth->GetRaw(0), testCase.knob, 0.0001f);
         REQUIRE_NEAR(carrier.TargetDepths(0)[0], testCase.expectedDepth, 0.0001f);
     }
+}
+
+TEST_CASE(recursive_modulation_depth_compute_ignores_target_center_smoothing_for_parent_reads) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 1,
+        .numScenes = 1,
+        .maxParameters = 2,
+        .processLiteAlpha = 0.25f,
+        .targetCenterAlpha = 0.25f,
+    });
+    auto& carrier = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.5f});
+    synth::Parameter* depth = carrier.EnsureModulationDepth(0);
+    REQUIRE_TRUE(depth != nullptr);
+
+    depth->SceneCenter(0) = 1.0f;
+    carrier.Compute({.leftScene = 0, .rightScene = 0, .blend = 0.0f});
+
+    REQUIRE_NEAR(depth->TargetCenter(), 1.0f, 0.0001f);
+    REQUIRE_NEAR(depth->CurrentCenter(), 1.0f, 0.0001f);
+    REQUIRE_NEAR(depth->GetRaw(0), 1.0f, 0.0001f);
+    REQUIRE_NEAR(carrier.TargetDepths(0)[0], 1.0f, 0.0001f);
 }
 
 TEST_CASE(recursive_modulation_depth_half_turn_sets_one_eighth_raw_depth_before_normalization) {
@@ -1152,6 +1226,26 @@ TEST_CASE(parameter_process_sample_recomputes_on_configured_interval) {
     parameter.ProcessSample(16);
     REQUIRE_NEAR(parameter.TargetCenter(), 0.75f, 0.0001f);
     REQUIRE_NEAR(parameter.CurrentCenter(), 0.75f, 0.0001f);
+}
+
+TEST_CASE(parameter_process_sample_slews_target_center_before_process_lite) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 0,
+        .numScenes = 1,
+        .maxParameters = 1,
+        .processLiteAlpha = 0.5f,
+        .targetCenterAlpha = 0.25f,
+        .targetComputeIntervalSamples = 16,
+    });
+    auto& parameter = manager.CreateParameter(group, {.name = "Probe", .defaultValue = 0.0f});
+
+    parameter.SceneCenter(0) = 1.0f;
+    parameter.ProcessSample(16);
+
+    REQUIRE_NEAR(parameter.TargetCenter(), 0.25f, 0.0001f);
+    REQUIRE_NEAR(parameter.CurrentCenter(), 0.125f, 0.0001f);
 }
 
 TEST_CASE(parameter_group_process_sample_covers_top_level_and_modulation_depth_targets) {
