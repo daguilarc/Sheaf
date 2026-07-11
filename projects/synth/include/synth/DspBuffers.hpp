@@ -219,7 +219,9 @@ public:
     static constexpr std::size_t kTaps = Taps;
 
     constexpr explicit FirDecimator(std::span<const double, Taps> coefficients) {
-        std::copy(coefficients.begin(), coefficients.end(), coefficients_.begin());
+        for (std::size_t i = 0; i < Taps; ++i) {
+            coefficients_[i] = static_cast<float>(coefficients[i]);
+        }
     }
 
     constexpr explicit FirDecimator(const std::array<double, Taps>& coefficients)
@@ -246,9 +248,13 @@ public:
 
         for (std::size_t channel = 0; channel < Channels; ++channel) {
             double sum = 0.0;
+            std::size_t historyIndex = writeIndex_;
             for (std::size_t tap = 0; tap < Taps; ++tap) {
-                const std::size_t historyIndex = (writeIndex_ + Taps - 1 - tap) % Taps;
-                sum += coefficients_[tap] * static_cast<double>(history_[channel][historyIndex]);
+                if (historyIndex == 0) {
+                    historyIndex = Taps;
+                }
+                --historyIndex;
+                sum += static_cast<double>(coefficients_[tap] * history_[channel][historyIndex]);
             }
             output[channel] = static_cast<float>(sum);
         }
@@ -256,7 +262,7 @@ public:
     }
 
 private:
-    std::array<double, Taps> coefficients_{};
+    std::array<float, Taps> coefficients_{};
     std::array<std::array<float, Taps>, Channels> history_{};
     std::size_t writeIndex_ = 0;
     std::size_t phase_ = 0;

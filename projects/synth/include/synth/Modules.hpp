@@ -8,6 +8,7 @@
 #include <array>
 #include <cstddef>
 #include <cmath>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -571,20 +572,66 @@ public:
             throw std::logic_error("Dresden 4 VCO module used with a different parameter manager");
         }
 
+        auto linear = [&manager](ParameterId id, std::size_t voiceIx, float minValue, float maxValue,
+                                 float& previousRaw, float& previousMapped) {
+            const float raw = manager.ParameterById(id).CachedKnobValue(voiceIx);
+            if (raw != previousRaw) {
+                previousRaw = raw;
+                previousMapped = manager.GetLinear(minValue, maxValue, voiceIx, id);
+            }
+            return previousMapped;
+        };
+        auto bipolar = [&manager](ParameterId id, std::size_t voiceIx, float maxAbsValue,
+                                  float& previousRaw, float& previousMapped) {
+            const float raw = manager.ParameterById(id).CachedKnobValue(voiceIx);
+            if (raw != previousRaw) {
+                previousRaw = raw;
+                previousMapped = manager.GetBipolarLinear(maxAbsValue, voiceIx, id);
+            }
+            return previousMapped;
+        };
+        auto exponential = [&manager](ParameterId id, std::size_t voiceIx, float minValue, float maxValue,
+                                      float& previousRaw, float& previousMapped) {
+            const float raw = manager.ParameterById(id).CachedKnobValue(voiceIx);
+            if (raw != previousRaw) {
+                previousRaw = raw;
+                previousMapped = manager.GetExponential(minValue, maxValue, voiceIx, id);
+            }
+            return previousMapped;
+        };
+        auto zeroBasedExponential = [&manager](ParameterId id, std::size_t voiceIx, float maxValue,
+                                               float midpointValue, float& previousRaw, float& previousMapped) {
+            const float raw = manager.ParameterById(id).CachedKnobValue(voiceIx);
+            if (raw != previousRaw) {
+                previousRaw = raw;
+                previousMapped = manager.GetZeroBasedExponential(maxValue, midpointValue, voiceIx, id);
+            }
+            return previousMapped;
+        };
+
         for (std::size_t voiceIx = 0; voiceIx < kStereoVoiceCount; ++voiceIx) {
-            input_.x[voiceIx] = manager.GetLinear(0.0f, 1.0f, voiceIx, parameterIds_.x);
-            input_.y[voiceIx] = manager.GetLinear(0.0f, 1.0f, voiceIx, parameterIds_.y);
+            input_.x[voiceIx] = linear(parameterIds_.x, voiceIx, 0.0f, 1.0f,
+                                       cachedRaw_.x[voiceIx], cachedMapped_.x[voiceIx]);
+            input_.y[voiceIx] = linear(parameterIds_.y, voiceIx, 0.0f, 1.0f,
+                                       cachedRaw_.y[voiceIx], cachedMapped_.y[voiceIx]);
         }
 
         for (std::size_t oscIx = 0; oscIx < kOscillatorCount; ++oscIx) {
             OscillatorInput& oscillator = input_.oscillators[oscIx];
-            oscillator.tuneMultiplier = manager.GetExponential(0.5f, 2.0f, oscIx, parameterIds_.quad.tune);
-            oscillator.phaseCycles = manager.GetBipolarLinear(1.0f, oscIx, parameterIds_.quad.phase);
-            oscillator.shape = manager.GetLinear(0.0f, 1.0f, oscIx, parameterIds_.quad.shape);
-            oscillator.gain = manager.GetBipolarLinear(1.0f, oscIx, parameterIds_.quad.gain);
-            oscillator.pmIndex = manager.GetZeroBasedExponential(1.0f, 0.25f, 0, parameterIds_.pmIndex[oscIx]);
-            oscillator.baseFrequencyHz = manager.GetExponential(kMinFrequencyHz[oscIx], kMaxFrequencyHz[oscIx], 0,
-                                                                parameterIds_.frequency[oscIx]);
+            oscillator.tuneMultiplier = exponential(parameterIds_.quad.tune, oscIx, 0.5f, 2.0f,
+                                                    cachedRaw_.tune[oscIx], cachedMapped_.tune[oscIx]);
+            oscillator.phaseCycles = bipolar(parameterIds_.quad.phase, oscIx, 1.0f,
+                                             cachedRaw_.phase[oscIx], cachedMapped_.phase[oscIx]);
+            oscillator.shape = linear(parameterIds_.quad.shape, oscIx, 0.0f, 1.0f,
+                                      cachedRaw_.shape[oscIx], cachedMapped_.shape[oscIx]);
+            oscillator.gain = bipolar(parameterIds_.quad.gain, oscIx, 1.0f,
+                                      cachedRaw_.gain[oscIx], cachedMapped_.gain[oscIx]);
+            oscillator.pmIndex = zeroBasedExponential(parameterIds_.pmIndex[oscIx], 0, 1.0f, 0.25f,
+                                                      cachedRaw_.pmIndex[oscIx], cachedMapped_.pmIndex[oscIx]);
+            oscillator.baseFrequencyHz = exponential(parameterIds_.frequency[oscIx], 0,
+                                                     kMinFrequencyHz[oscIx], kMaxFrequencyHz[oscIx],
+                                                     cachedRaw_.frequency[oscIx],
+                                                     cachedMapped_.frequency[oscIx]);
             oscillator.vco.freq = static_cast<double>(oscillator.baseFrequencyHz * oscillator.tuneMultiplier)
                                   / static_cast<double>(sampleRate_);
             oscillator.vco.phaseOffset = oscillator.phaseCycles * oscillator.pmIndex;
@@ -766,6 +813,34 @@ private:
     ParameterManager* manager_ = nullptr;
     ParameterIds parameterIds_{};
     Input input_{};
+    struct CachedMappedInput {
+        std::array<float, kStereoVoiceCount> x{};
+        std::array<float, kStereoVoiceCount> y{};
+        std::array<float, kOscillatorCount> tune{};
+        std::array<float, kOscillatorCount> phase{};
+        std::array<float, kOscillatorCount> shape{};
+        std::array<float, kOscillatorCount> gain{};
+        std::array<float, kOscillatorCount> pmIndex{};
+        std::array<float, kOscillatorCount> frequency{};
+    };
+    struct CachedRawInput {
+        std::array<float, kStereoVoiceCount> x{FillNaN<kStereoVoiceCount>()};
+        std::array<float, kStereoVoiceCount> y{FillNaN<kStereoVoiceCount>()};
+        std::array<float, kOscillatorCount> tune{FillNaN<kOscillatorCount>()};
+        std::array<float, kOscillatorCount> phase{FillNaN<kOscillatorCount>()};
+        std::array<float, kOscillatorCount> shape{FillNaN<kOscillatorCount>()};
+        std::array<float, kOscillatorCount> gain{FillNaN<kOscillatorCount>()};
+        std::array<float, kOscillatorCount> pmIndex{FillNaN<kOscillatorCount>()};
+        std::array<float, kOscillatorCount> frequency{FillNaN<kOscillatorCount>()};
+    };
+    template<std::size_t Count>
+    static constexpr std::array<float, Count> FillNaN() {
+        std::array<float, Count> values{};
+        values.fill(std::numeric_limits<float>::quiet_NaN());
+        return values;
+    }
+    CachedRawInput cachedRaw_{};
+    CachedMappedInput cachedMapped_{};
     std::array<DefaultWavetableVco, kOscillatorCount> vcos_;
     std::array<float, kOscillatorCount> rawOutputs_{};
     std::array<float, kOscillatorCount> oscillatorOutputs_{};

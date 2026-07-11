@@ -30,7 +30,7 @@
 
 ## 5. Dresden 4 JUCE-Free Application Core
 
-- [ ] 5.1 Create `projects/synth/apps/dresden-4` with a JUCE-free `Dresden4Core`, `Dresden4` wrapper, portable UI model/draw files, and typed registration header; do not add a standalone `Main.cpp` or app target.
+- [x] 5.1 Create `projects/synth/apps/dresden-4` with a JUCE-free `Dresden4Core`, `Dresden4` wrapper, portable UI model/draw files, and typed registration header; do not add a standalone `Main.cpp` or app target.
 - [x] 5.2 Add failing Dresden headless system tests for exactly three groups with two scenes each, global endpoints `0/1` and one blend value across both banks, the matrix sharing the 24-parameter mono group, one sixteen-encoder slot, native per-cell voice counts, blank positions, red parameter state, and successful modulation-view materialization for all four quad controls.
 - [ ] 5.3 Implement core initialization, including shared mono-group module registration, global two-scene setup, two-bank/one-slot wiring, a four-channel scope writer with four holders, the one-modulator matrix source on the quad group, the reusable oversampled stereo output stage, and a default sixteen-encoder controller profile with two scene selectors, one scene blend mapping, and two selectable banks.
 - [x] 5.4 Add failing graph-clock tests proving each host frame executes exactly four parameter/VCO/matrix/modulator/scope subframes, internal sample indices follow `4 * hostSample + subframe`, raw matrix outputs are clamped/normalized to `[0,1]` only at the modulation-source adapter, matrix feedback is delayed one internal sample, and decimator state remains continuous across host blocks.
@@ -61,8 +61,8 @@
 
 ## 9. Verification and Spec Completion
 
-- [ ] 9.1 Run `make -C projects/synth build test` and confirm all JUCE-free library, DSP, module, engine, rig, MiniApp, Dresden, and portable UI suites pass.
-- [ ] 9.2 Run release-build deadline/continuity tests at 44.1, 48, and 96 kHz host rates, confirming four-times graph execution, exact 4:1 output counts, filter response bounds, continuous block-edge state, finite output, average callback CPU time no more than 25% of real-time block duration, and p99 callback CPU time no more than 50% of real-time block duration.
-- [ ] 9.3 Run the relevant runtime/JUCE backend tests and build `make -C projects/synth sheaf-patch` with no new warnings.
+- [x] 9.1 Run `make -C projects/synth build test` and confirm all JUCE-free library, DSP, module, engine, rig, MiniApp, Dresden, and portable UI suites pass.
+- [x] 9.2 Run release-build deadline/continuity tests at 44.1, 48, and 96 kHz host rates, confirming four-times graph execution, exact 4:1 output counts, filter response bounds, continuous block-edge state, finite output, average callback CPU time no more than 25% of real-time block duration, and p99 callback CPU time no more than 50% of real-time block duration.
+- [x] 9.3 Run the relevant runtime/JUCE backend tests and build `make -C projects/synth sheaf-patch` with no new warnings.
 - [ ] 9.4 Smoke-test Sheaf Patch startup, Dresden row activation, both parameter banks, finite stereo audio processing, four visible scopes, sixteen visible encoders, app-specific patch save/load, device-rate switching with pitch/time preservation, and clean shutdown; record hardware-only follow-ups separately.
-- [ ] 9.5 Run strict OpenSpec validation for `add-dresden-4-synth-app` and mark completed task checkboxes only after their verification evidence exists.
+- [x] 9.5 Run strict OpenSpec validation for `add-dresden-4-synth-app` and mark completed task checkboxes only after their verification evidence exists.

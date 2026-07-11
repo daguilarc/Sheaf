@@ -14,6 +14,7 @@ ENGINE_TEST_BIN := $(BUILD_DIR)/engine_tests
 RIG_TEST_BIN := $(BUILD_DIR)/rig_tests
 MINIAPP_SYSTEM_TEST_BIN := $(BUILD_DIR)/miniapp_system_tests
 DRESDEN4_SYSTEM_TEST_BIN := $(BUILD_DIR)/dresden4_system_tests
+DRESDEN4_DEADLINE_TEST_BIN := $(BUILD_DIR)/dresden4_deadline_tests
 RECONCILE_TEST_BIN := $(BUILD_DIR)/reconcile_tests
 RECONCILE_EXECUTOR_TEST_BIN := $(BUILD_DIR)/reconcile_executor_tests
 POLLER_TEST_BIN := $(BUILD_DIR)/poller_tests
@@ -115,6 +116,9 @@ $(MINIAPP_SYSTEM_TEST_BIN): tests/miniapp_system_tests.cpp tests/support/SynthRi
 $(DRESDEN4_SYSTEM_TEST_BIN): tests/dresden4_system_tests.cpp tests/support/SynthRig.hpp apps/dresden-4/Dresden4.hpp apps/dresden-4/Dresden4UI.hpp apps/dresden-4/Dresden4UiModel.hpp apps/dresden-4/Dresden4Draw.hpp apps/dresden-4/Dresden4Core.hpp $(LIB) include/synth/Engine.hpp include/synth/AppContext.hpp include/synth/AppConcepts.hpp include/synth/Modules.hpp include/synth/ParameterModulation.hpp include/synth/PatchPersistence.hpp include/synth/PortableUI.hpp include/synth/PortableUIBuilders.hpp include/synth/DspBuffers.hpp include/synth/DspScope.hpp include/synth/Json.hpp
 	$(CXX) $(CPPFLAGS) -Iapps/dresden-4 $(CXXFLAGS) $< $(LIB) -o $@
 
+$(DRESDEN4_DEADLINE_TEST_BIN): tests/dresden4_deadline_tests.cpp apps/dresden-4/Dresden4Core.hpp $(LIB) include/synth/Engine.hpp include/synth/AppContext.hpp include/synth/AppConcepts.hpp include/synth/Modules.hpp include/synth/ParameterModulation.hpp include/synth/DspBuffers.hpp include/synth/DspScope.hpp
+	$(CXX) $(CPPFLAGS) -Iapps/dresden-4 $(CXXFLAGS) $< $(LIB) -o $@
+
 $(RECONCILE_TEST_BIN): tests/reconcile_tests.cpp $(LIB) include/synth/MidiReconcile.hpp include/synth/MidiController.hpp
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< $(LIB) -o $@
 
@@ -169,7 +173,7 @@ browser-audio-device-test: $(BROWSER_AUDIO_DEVICE_TEST_BIN)
 browser-midi-bridge-test: $(BROWSER_MIDI_BRIDGE_TEST_BIN)
 	$(BROWSER_MIDI_BRIDGE_TEST_BIN)
 
-test: check-ui-boundary $(TEST_BIN) $(DSP_TEST_BIN) $(MODULE_TEST_BIN) $(INSTRUMENT_TEST_BIN) $(CONTRACT_TEST_BIN) $(LOGGING_TEST_BIN) $(ENGINE_TEST_BIN) $(RIG_TEST_BIN) $(MINIAPP_SYSTEM_TEST_BIN) $(DRESDEN4_SYSTEM_TEST_BIN) $(RECONCILE_TEST_BIN) $(RECONCILE_EXECUTOR_TEST_BIN) $(POLLER_TEST_BIN) $(MIDI_SENDER_TEST_BIN) $(VIEWMODEL_TEST_BIN) $(BLOCKS_TEST_BIN) $(PORTABLE_UI_TEST_BIN) $(RUNTIME_MAIN_COMPONENT_TEST_BIN) $(RUNTIME_FILE_SERVICE_TEST_BIN) $(CONTROLLERS_PAGE_UI_TEST_BIN) $(BROWSER_COMMAND_BUFFER_TEST_BIN) $(BROWSER_AUDIO_DEVICE_TEST_BIN)
+test: check-ui-boundary $(TEST_BIN) $(DSP_TEST_BIN) $(MODULE_TEST_BIN) $(INSTRUMENT_TEST_BIN) $(CONTRACT_TEST_BIN) $(LOGGING_TEST_BIN) $(ENGINE_TEST_BIN) $(RIG_TEST_BIN) $(MINIAPP_SYSTEM_TEST_BIN) $(DRESDEN4_SYSTEM_TEST_BIN) $(DRESDEN4_DEADLINE_TEST_BIN) $(RECONCILE_TEST_BIN) $(RECONCILE_EXECUTOR_TEST_BIN) $(POLLER_TEST_BIN) $(MIDI_SENDER_TEST_BIN) $(VIEWMODEL_TEST_BIN) $(BLOCKS_TEST_BIN) $(PORTABLE_UI_TEST_BIN) $(RUNTIME_MAIN_COMPONENT_TEST_BIN) $(RUNTIME_FILE_SERVICE_TEST_BIN) $(CONTROLLERS_PAGE_UI_TEST_BIN) $(BROWSER_COMMAND_BUFFER_TEST_BIN) $(BROWSER_AUDIO_DEVICE_TEST_BIN)
 	$(TEST_BIN)
 	$(DSP_TEST_BIN)
 	$(MODULE_TEST_BIN)
@@ -180,6 +184,7 @@ test: check-ui-boundary $(TEST_BIN) $(DSP_TEST_BIN) $(MODULE_TEST_BIN) $(INSTRUM
 	$(RIG_TEST_BIN)
 	$(MINIAPP_SYSTEM_TEST_BIN)
 	$(DRESDEN4_SYSTEM_TEST_BIN)
+	$(DRESDEN4_DEADLINE_TEST_BIN)
 	$(RECONCILE_TEST_BIN)
 	$(RECONCILE_EXECUTOR_TEST_BIN)
 	$(POLLER_TEST_BIN)
