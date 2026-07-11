@@ -54,3 +54,26 @@ Pre-existing unrelated untracked files were left untouched:
 
 No implementation concern for this TDD task. The focused binary cannot compile
 until the production `targetCenterAlpha` interface is added by a later task.
+
+## Review Fix
+
+- Added `.targetCenterAlpha = 1.0f` to legacy group configs whose direct
+  `TargetCenter()` assertions are unrelated to smoothing, including scene and
+  gesture interpolation, weighted gesture averaging, process-sample interval,
+  group process-sample coverage, edit handling, revert behavior, selected
+  gesture activation, and external gesture selection.
+- The new target-center smoothing tests were not changed.
+- Production code was not modified.
+
+## Review-Fix Test Evidence
+
+Command:
+
+```text
+make -C projects/synth build/parameter_modulation_tests && projects/synth/build/parameter_modulation_tests
+```
+
+Observed result: exit 2 during compilation, as expected before the production
+`targetCenterAlpha` field exists. The compiler reported 17 missing-member or
+invalid-designated-initializer errors for `targetCenterAlpha`. `git diff --check`
+passed.

@@ -679,6 +679,7 @@ TEST_CASE(scene_and_gesture_interpolation) {
         .numModulators = 0,
         .numScenes = 2,
         .maxParameters = 2,
+        .targetCenterAlpha = 1.0f,
     });
 
     auto& sceneOnly = manager.CreateParameter(group, {.name = "Scene", .defaultValue = 0.0f});
@@ -741,6 +742,7 @@ TEST_CASE(multiple_gestures_use_effective_weighted_average) {
         .numModulators = 0,
         .numScenes = 1,
         .maxParameters = 1,
+        .targetCenterAlpha = 1.0f,
     });
 
     auto& parameter = manager.CreateParameter(group, {.name = "GestureMix", .defaultValue = 0.0f});
@@ -1210,6 +1212,7 @@ TEST_CASE(parameter_process_sample_recomputes_on_configured_interval) {
         .numScenes = 1,
         .maxParameters = 1,
         .processLiteAlpha = 1.0f,
+        .targetCenterAlpha = 1.0f,
         .targetComputeIntervalSamples = 16,
     });
     auto& parameter = manager.CreateParameter(group, {.name = "Probe", .defaultValue = 0.0f});
@@ -1256,6 +1259,7 @@ TEST_CASE(parameter_group_process_sample_covers_top_level_and_modulation_depth_t
         .numScenes = 1,
         .maxParameters = 4,
         .processLiteAlpha = 1.0f,
+        .targetCenterAlpha = 1.0f,
         .targetComputeIntervalSamples = 16,
     });
     auto& carrier = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.0f});
@@ -2045,6 +2049,7 @@ TEST_CASE(handle_inc_dec_mid_blend_matches_smart_grid_attenuation) {
         .numModulators = 0,
         .numScenes = 2,
         .maxParameters = 1,
+        .targetCenterAlpha = 1.0f,
     });
     auto& parameter = manager.CreateParameter(group, {.name = "Edit", .defaultValue = 0.5f});
     parameter.SceneCenter(0) = 0.5f;
@@ -2067,6 +2072,7 @@ TEST_CASE(handle_inc_dec_saturation_solve_matches_smart_grid) {
         .numModulators = 0,
         .numScenes = 2,
         .maxParameters = 1,
+        .targetCenterAlpha = 1.0f,
     });
     auto& parameter = manager.CreateParameter(group, {.name = "Edit", .defaultValue = 0.5f});
     parameter.SceneCenter(0) = 0.9f;
@@ -2089,6 +2095,7 @@ TEST_CASE(selected_gesture_activation_snapshots_parent_value) {
         .numModulators = 0,
         .numScenes = 2,
         .maxParameters = 1,
+        .targetCenterAlpha = 1.0f,
     });
     auto& parameter = manager.CreateParameter(group, {.name = "Gesture", .defaultValue = 0.1f});
     parameter.SceneCenter(0) = 0.25f;
@@ -2357,6 +2364,7 @@ TEST_CASE(revert_to_default_clears_modulation_and_gestures) {
         .numModulators = 1,
         .numScenes = 2,
         .maxParameters = 2,
+        .targetCenterAlpha = 1.0f,
         .processLiteAlpha = 1.0f,
     });
     auto& parameter = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.4f});
@@ -3311,6 +3319,7 @@ TEST_CASE(external_gesture_selection_and_value_api) {
         .numVoices = 1,
         .numScenes = 1,
         .maxParameters = 1,
+        .targetCenterAlpha = 1.0f,
     });
     auto& parameter = manager.CreateParameter(group, {.name = "Gesture", .defaultValue = 0.2f});
     parameter.GestureValue(0, 0) = 1.0f;
