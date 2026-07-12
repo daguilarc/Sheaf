@@ -500,9 +500,17 @@ std::size_t NodeIndexById(const synth::ui::NodeTree& tree, const std::string& id
 }
 ```
 
-Add a test that will fail until MiniApp has visualizers wired:
+Add a test that manually injects a visualizer into the published UI-state cell so Task 3 can prove the surface composition behavior without depending on Task 4's MiniApp topology:
 
 ```cpp
+struct TestVisualizer final : synth::ui::Visualizer
+{
+    std::vector<synth::ui::DrawCommand> DrawVisible() const override
+    {
+        return {synth::ui::DrawCommand::Fill(GetBounds(), synth::Color::Cyan)};
+    }
+};
+
 TEST_CASE(miniapp_modulation_view_draws_visualizer_beneath_encoder) {
     synth_rig::SynthRig<synth_miniapp::MiniAppCore> rig(
         64,
@@ -512,6 +520,8 @@ TEST_CASE(miniapp_modulation_view_draws_visualizer_beneath_encoder) {
     auto ui = manager.CreateUIState();
     manager.BankSlotAt(kSlotIx)->FocusEncoder(kTunePosition);
     manager.PopulateUIState(*ui);
+    TestVisualizer injectedVisualizer;
+    ui->slots[0].cells[kTunePosition].visualizer.store(&injectedVisualizer, std::memory_order_relaxed);
 
     synth::AppContext context = rig.Engine().Context();
     context.uiState = ui.get();
@@ -566,7 +576,7 @@ TEST_CASE(braid4_modulation_view_remains_encoder_only_without_visualizers) {
 
 Run: `make -C projects/synth build/miniapp_system_tests build/braid4_system_tests && projects/synth/build/miniapp_system_tests && projects/synth/build/braid4_system_tests`
 
-Expected: MiniApp visualizer test fails until app topology Task 4 is implemented; Braid 4 test should pass or compile after helper adoption.
+Expected: MiniApp composition test fails because `MiniAppUiSurface::BuildTree()` does not yet read `Parameter::UIState::visualizer`; Braid 4 test should pass or compile after helper adoption.
 
 - [ ] **Step 5: Adopt builder helper in app surfaces**
 
@@ -604,7 +614,7 @@ In MiniApp, reuse the existing `slotState.cells[ix]`. In Braid 4, `SnapshotUiSta
 
 Run: `make -C projects/synth build/portable_ui_tests build/miniapp_system_tests build/braid4_system_tests && projects/synth/build/portable_ui_tests && projects/synth/build/miniapp_system_tests && projects/synth/build/braid4_system_tests`
 
-Expected: portable UI and Braid tests pass; MiniApp visualizer test may still fail only if Task 4 has not yet provided visualizer pointers. If it fails for missing MiniApp topology, record that in the task report and leave final green to Task 4.
+Expected: portable UI, MiniApp composition, and Braid tests pass with exit code 0.
 
 ---
 
@@ -824,4 +834,3 @@ git diff --stat
 ```
 
 Expected: only expected OpenSpec, synth portable/app/test/docs, `.superpowers` scratch, and plan/report files changed. Do not include unrelated `projects/synth/miniapp/` changes unless a prior task intentionally touched them.
-
