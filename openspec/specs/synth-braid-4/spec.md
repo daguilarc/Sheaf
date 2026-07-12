@@ -240,3 +240,16 @@ WHEN Braid 4 initializes, THE application SHALL create a second `Braid4VcoModule
 - **THEN** the final decimated audio output is still computed only from the audible Braid VCO module's left/right XY output
 - **AND** the LFO path affects audio only through assigned modulation depths in the parameter system
 
+### Requirement: d4-9 — Modulators: visualizer slots remain empty
+WHEN Braid 4 initializes its stereo, quad, and mono modulation sources, THE application SHALL leave every modulator's optional visualizer pointer null and SHALL continue rendering Braid 4 modulation-depth cells as encoder-only cells until a later change explicitly assigns visualizer instances.
+
+#### Scenario: All Braid 4 groups use null visualizers
+- **WHEN** Braid 4 initialization completes
+- **THEN** both modulators in the stereo group publish null visualizer pointers
+- **AND** both modulators in the quad group publish null visualizer pointers
+- **AND** both modulators in the mono group publish null visualizer pointers
+
+#### Scenario: Braid modulation view remains encoder-only
+- **WHEN** a Braid 4 modulation-depth view is rendered
+- **THEN** every visible depth cell contains its existing encoder node
+- **AND** no modulator visualizer node is added

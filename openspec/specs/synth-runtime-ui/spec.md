@@ -490,3 +490,47 @@ WHEN a portable synth surface builds an encoder, THE runtime UI layer SHALL deri
 - **WHEN** Braid 4 and MiniApp build encoders from visible slot cells
 - **THEN** both call the same reusable encoder-state and drawing functions
 - **AND** neither app contains a color reconstruction or post-snapshot override
+
+### Requirement: sru-24 — Modulation view: visualizer beneath encoder
+WHEN a portable encoder grid renders a connected modulation-depth cell whose complete `Parameter::UIState` publishes a non-null visible visualizer, THE runtime UI layer SHALL assign that visualizer bounds exactly equal to the encoder cell's square, append a stable visualizer draw node before the encoder node, and append the existing interactive encoder node above it using the portable tree contract that later overlapping nodes draw above earlier overlapping nodes; WHEN the published pointer is null or the visualizer is intrinsically hidden, THE runtime UI layer SHALL render only the existing encoder node.
+
+#### Scenario: Visualizer and encoder share a square
+- **WHEN** a visible modulation-depth cell has square encoder bounds and a visible visualizer
+- **THEN** the portable tree contains a visualizer draw node with exactly the encoder bounds
+- **AND** the encoder draw node follows it in stacking order with the same bounds
+
+#### Scenario: Encoder remains interactive above visualizer
+- **WHEN** a visualizer is rendered beneath an encoder
+- **THEN** the encoder retains its existing drag and double-click actions
+- **AND** the display-only visualizer exposes no competing pointer action
+
+#### Scenario: Missing visualizer preserves existing rendering
+- **WHEN** a visible modulation-depth cell publishes a null visualizer pointer
+- **THEN** the tree contains the same encoder node and encoder commands as before this capability
+- **AND** contains no visualizer node for that cell
+
+#### Scenario: Top-level cells do not infer source visualizers
+- **WHEN** the encoder grid shows an ordinary top-level parameter rather than a materialized modulation-depth control
+- **THEN** it renders the encoder without looking up or inferring a visualizer from group topology
+
+### Requirement: sru-25 — Encoder grid: translucent visualizer underlays
+WHEN a portable encoder grid renders an encoder node above a visible visualizer underlay, THE runtime UI layer SHALL request the shared encoder draw builder to use an underlay-aware body style whose central body fill is partially translucent while preserving the encoder's existing strokes, arcs, badges, labels, and pointer actions; WHEN no visible visualizer underlay is present, THE runtime UI layer SHALL preserve the existing opaque encoder body style.
+
+#### Scenario: Underlay-backed encoder body is translucent
+- **WHEN** a connected encoder draw state indicates a visible visualizer underlay
+- **THEN** the encoder draw commands use a partially transparent central body fill
+- **AND** retain the existing readable encoder outline and value commands
+
+#### Scenario: Ordinary encoder body remains opaque
+- **WHEN** a connected encoder draw state does not indicate a visible visualizer underlay
+- **THEN** the encoder draw commands preserve the existing opaque central body fill
+
+#### Scenario: Hidden visualizer does not affect encoder style
+- **WHEN** a cell publishes a visualizer pointer whose visualizer is hidden
+- **THEN** the portable encoder grid renders no visualizer node
+- **AND** requests the ordinary opaque encoder body style
+
+#### Scenario: Underlay styling is shared, not MiniApp drawing
+- **WHEN** MiniApp or Braid 4 builds an encoder cell with a visible visualizer pointer
+- **THEN** the app surface only marks the shared encoder draw state as having an underlay
+- **AND** the alpha choice remains inside shared portable encoder drawing code
