@@ -991,6 +991,7 @@ TEST_CASE(bipolar_matrix_maps_bipolar_anchors_cross_routes_unclamped_sums_and_st
         .numScenes = 1,
         .maxParameters = 4,
         .processLiteAlpha = 1.0f,
+        .targetCenterAlpha = 1.0f,
     });
     synth::BipolarMatrixMixerModule<2> module;
     module.RegisterParameters(manager, group, "Matrix");
@@ -1233,15 +1234,24 @@ TEST_CASE(braid_vco_rejects_incompatible_groups_managers_sample_rates_and_bank_c
 
 TEST_CASE(braid_vco_maps_all_parameter_ranges_to_natural_vco_inputs) {
     synth::ParameterManager manager;
-    auto& stereo = manager.CreateGroup({.numVoices = 2, .numScenes = 2, .maxParameters = 2, .processLiteAlpha = 1.0f});
+    auto& stereo = manager.CreateGroup({.numVoices = 2,
+                                        .numScenes = 2,
+                                        .maxParameters = 2,
+                                        .processLiteAlpha = 1.0f,
+                                        .targetCenterAlpha = 1.0f});
     auto& quad = manager.CreateGroup({
         .numVoices = 4,
         .numModulators = 1,
         .numScenes = 2,
         .maxParameters = 8,
         .processLiteAlpha = 1.0f,
+        .targetCenterAlpha = 1.0f,
     });
-    auto& mono = manager.CreateGroup({.numVoices = 1, .numScenes = 2, .maxParameters = 8, .processLiteAlpha = 1.0f});
+    auto& mono = manager.CreateGroup({.numVoices = 1,
+                                      .numScenes = 2,
+                                      .maxParameters = 8,
+                                      .processLiteAlpha = 1.0f,
+                                      .targetCenterAlpha = 1.0f});
     synth::Braid4VcoModule module(192000.0f);
     module.RegisterParameters(manager, stereo, quad, mono, "Braid");
     const auto ids = module.Parameters();
@@ -1299,15 +1309,24 @@ TEST_CASE(braid_vco_maps_all_parameter_ranges_to_natural_vco_inputs) {
 
 TEST_CASE(braid_vco_supports_frequency_octave_shift_and_parameter_colors) {
     synth::ParameterManager manager;
-    auto& stereo = manager.CreateGroup({.numVoices = 2, .numScenes = 2, .maxParameters = 2, .processLiteAlpha = 1.0f});
+    auto& stereo = manager.CreateGroup({.numVoices = 2,
+                                        .numScenes = 2,
+                                        .maxParameters = 2,
+                                        .processLiteAlpha = 1.0f,
+                                        .targetCenterAlpha = 1.0f});
     auto& quad = manager.CreateGroup({
         .numVoices = 4,
         .numModulators = 2,
         .numScenes = 2,
         .maxParameters = 8,
         .processLiteAlpha = 1.0f,
+        .targetCenterAlpha = 1.0f,
     });
-    auto& mono = manager.CreateGroup({.numVoices = 1, .numScenes = 2, .maxParameters = 8, .processLiteAlpha = 1.0f});
+    auto& mono = manager.CreateGroup({.numVoices = 1,
+                                      .numScenes = 2,
+                                      .maxParameters = 8,
+                                      .processLiteAlpha = 1.0f,
+                                      .targetCenterAlpha = 1.0f});
 
     const std::array<synth::Color, 4> greens{
         synth::Color::FromHsvDegrees(118.0f, 0.84f, 0.88f),

@@ -142,8 +142,8 @@ void SetScenePair(synth::ParameterManager& manager, synth::ParameterId id, float
 void SetScenePairAndSettle(synth::ParameterManager& manager, synth::ParameterId id, float value) {
     SetScenePair(manager, id, value);
     auto& parameter = manager.ParameterById(id);
-    parameter.Compute(manager.Scene());
     for (int ix = 0; ix < 2048; ++ix) {
+        parameter.Compute(manager.Scene());
         parameter.ProcessLite();
     }
 }
