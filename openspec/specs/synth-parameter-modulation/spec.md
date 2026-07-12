@@ -53,7 +53,7 @@ WHEN parameters are assigned to pages, THE manager SHALL maintain page ordinals 
 - **AND** existing parameter center, depth, scene, gesture, and modulator values remain unchanged
 
 ### Requirement: spm-4 — Group config: dynamic shape and upfront allocation
-WHEN a `ParameterGroup` is configured, THE group SHALL use runtime configuration for voice count, modulator count, scene count, maximum parameter count, process-lite alpha, target compute interval in samples, UI display-center alpha, UI display-spread alpha, and an optional voice indicator color palette; the target compute interval SHALL default to 16 samples and SHALL be positive; SHALL NOT accept an independent gesture count in group configuration; SHALL size parameter per-scene/per-gesture arrays from the owning manager's gesture count injected by `ParameterManager::CreateGroup`; SHALL allocate per-parameter subarrays upfront through a group-owned allocator; and SHALL perform no heap allocation during `Compute`, per-sample parameter processing, `ProcessLite`, `GetRaw`, cached knob reads, routed reset-modifier press, routed random-modifier press, routed tick handling, or routed unmodified press handling after any needed modulation-depth parameters for that view have already been materialized. Routed unmodified press and random-mod modifier operations MAY lazily materialize missing modulation-depth parameter objects from preconfigured group capacity.
+WHEN a `ParameterGroup` is configured, THE group SHALL use runtime configuration for voice count, modulator count, scene count, maximum parameter count, process-lite alpha, target-center alpha, target compute interval in samples, UI display-center alpha, UI display-spread alpha, and an optional voice indicator color palette; the target-center alpha SHALL default to a 50 Hz-style one-pole alpha at the default target-compute cadence; the target compute interval SHALL default to 16 samples and SHALL be positive; process-lite alpha, target-center alpha, UI display-center alpha, and UI display-spread alpha SHALL be in `[0, 1]`; SHALL NOT accept an independent gesture count in group configuration; SHALL size parameter per-scene/per-gesture arrays from the owning manager's gesture count injected by `ParameterManager::CreateGroup`; SHALL allocate per-parameter subarrays upfront through a group-owned allocator; and SHALL perform no heap allocation during `Compute`, per-sample parameter processing, `ProcessLite`, `GetRaw`, cached knob reads, routed reset-modifier press, routed random-modifier press, routed tick handling, or routed unmodified press handling after any needed modulation-depth parameters for that view have already been materialized. Routed unmodified press and random-mod modifier operations MAY lazily materialize missing modulation-depth parameter objects from preconfigured group capacity.
 
 #### Scenario: Same-shaped group parameters
 - **WHEN** two parameters are created in the same group
@@ -75,6 +75,14 @@ WHEN a `ParameterGroup` is configured, THE group SHALL use runtime configuration
 #### Scenario: Default voice indicator colors are deterministic
 - **WHEN** a group has more voices than configured voice indicator colors
 - **THEN** missing colors are filled from a deterministic default palette
+
+#### Scenario: Default target center alpha is configured
+- **WHEN** a group is created without overriding its target-center alpha
+- **THEN** the group configuration reports the default target-center alpha
+
+#### Scenario: Target center alpha must be normalized
+- **WHEN** a group is configured with target-center alpha less than `0` or greater than `1`
+- **THEN** group creation rejects the configuration
 
 #### Scenario: Default target compute interval is 16 samples
 - **WHEN** a group is created without overriding its target compute interval
@@ -120,21 +128,34 @@ WHEN a `Parameter` is created, THE parameter SHALL store name, short name, globa
 - **AND** its modulation-depth pointers are null
 - **AND** its current and target modulation depths are zero
 
-### Requirement: spm-8 — Compute: scene and gesture interpolation
-WHEN `Parameter::Compute()` calculates a target center, THE parameter SHALL first compute the base scene value as `sceneCenter[leftScene] * (1 - blend) + sceneCenter[rightScene] * blend`; SHALL compute each gesture's blended gesture value from the parameter's scene gesture values; SHALL compute each gesture's effective weight from the manager-owned gesture value where that gesture is active in the blended scenes; SHALL use the base scene value when no effective gesture weight is active; and SHALL otherwise use the weighted average of `base * (1 - weight) + gestureValue * weight` across active gestures.
+### Requirement: spm-8 — Compute: scene, gesture interpolation, and target-center smoothing
+WHEN `Parameter::Compute()` calculates target state, THE parameter SHALL first compute the raw center as `sceneCenter[leftScene] * (1 - blend) + sceneCenter[rightScene] * blend`; SHALL compute each gesture's blended gesture value from the parameter's scene gesture values; SHALL compute each gesture's effective weight from the manager-owned gesture value where that gesture is active in the blended scenes; SHALL use the base scene value as the raw center when no effective gesture weight is active; SHALL otherwise use the weighted average of `base * (1 - weight) + gestureValue * weight` across active gestures as the raw center; SHALL slew a top-level parameter's `targetCenter` toward the raw center using the owning group's target-center alpha and the one-pole formula `targetCenter += alpha * (rawCenter - targetCenter)`; and SHALL keep recursive modulation-depth computations assigning `targetCenter` from the raw center before snapping current state to target for parent consumption.
 
 #### Scenario: Scene blend without active gestures
 - **WHEN** left scene center is `0.2`, right scene center is `0.8`, blend is `0.25`, and no gesture has effective weight
-- **THEN** the raw target center is `0.35`
+- **THEN** the raw computed center is `0.35`
 
 #### Scenario: Active gesture blends from base to gesture value
 - **WHEN** base is `0.4`, one gesture has blended gesture value `0.9`, and its manager-owned effective weight is `0.5`
-- **THEN** the raw target center is `0.65`
+- **THEN** the raw computed center is `0.65`
 
 #### Scenario: Cross-group parameters use the same gesture weight
 - **WHEN** two parameters in different groups have gesture 1 active
 - **AND** the manager-owned gesture 1 value is `0.5`
 - **THEN** both parameters compute gesture 1's effective weight from the same manager-owned value
+
+#### Scenario: Top-level compute slews target center
+- **WHEN** a top-level parameter has target center `0.0`, raw computed center `1.0`, and group target-center alpha `0.25`
+- **THEN** one `Compute()` call sets target center to `0.25`
+
+#### Scenario: Target center alpha one snaps top-level target center
+- **WHEN** a top-level parameter has target center `0.0`, raw computed center `1.0`, and group target-center alpha `1.0`
+- **THEN** one `Compute()` call sets target center to `1.0`
+
+#### Scenario: Recursive modulation-depth compute remains immediate
+- **WHEN** a modulation-depth parameter is computed recursively for a parent parameter
+- **THEN** the modulation-depth parameter assigns its target center from the raw computed center for that recursive compute
+- **AND** the modulation-depth parameter snaps current center, center scales, normalization offsets, min/max values, and modulation depths to target before the parent reads the depth value
 
 ### Requirement: spm-9 — Compute: signed modulation normalization
 WHEN `Parameter::Compute()` calculates per-voice modulation depths, THE parameter SHALL derive the normalization factor from `sum(abs(rawDepth[voice][modIx]))`; SHALL use each raw depth unchanged when the factor is less than or equal to `1`; SHALL divide every raw depth by the factor when the factor is greater than `1`; SHALL set the per-voice center scale to `max(0, 1 - normalizationFactor)`; SHALL derive a per-voice normalization offset from the effective normalized depths as `-sum(min(0, effectiveDepth[voice][modIx]))`; and SHALL include that offset in both target and current audio-rate reads before adding the modulator dot product. `ProcessLite` SHALL slew the normalization offset with the same control-rate smoothing model as center scale and modulation depths.
@@ -165,7 +186,7 @@ WHEN `Parameter::Compute()` calculates per-voice modulation state, THE parameter
 - **AND** its UI-state maximum is `1.0`
 
 ### Requirement: spm-11 — Audio path: Get and ProcessLite
-WHEN the audio engine samples a parameter, THE synth parameter modulation system SHALL provide `Parameter::GetRaw(voiceIx)` as the explicit raw normalized read path that returns the clamped value `currentCenter * currentCenterScale[voiceIx] + currentNormalizationOffset[voiceIx] + group.modulators.Apply(voiceIx, currentDepthsForVoice)` without traversing manager, page, bank, slot, scene, gesture, or modulation route state; `ProcessLite()` SHALL advance current center, current center scales, current normalization offsets, current min/max values, and current modulation depths toward targets using the one-pole formula `current += alpha * (target - current)` with the owning group's configured alpha, then SHALL sample and store each voice's current cached knob value from `GetRaw(voiceIx)`; and per-sample parameter processing SHALL recompute targets from the owning manager's current scene when `sampleIndex % group.Config().targetComputeIntervalSamples == 0` before running `ProcessLite()`.
+WHEN the audio engine samples a parameter, THE synth parameter modulation system SHALL provide `Parameter::GetRaw(voiceIx)` as the explicit raw normalized read path that returns the clamped value `currentCenter * currentCenterScale[voiceIx] + currentNormalizationOffset[voiceIx] + group.modulators.Apply(voiceIx, currentDepthsForVoice)` without traversing manager, page, bank, slot, scene, gesture, or modulation route state; `ProcessLite()` SHALL advance current center, current center scales, current normalization offsets, current min/max values, and current modulation depths toward targets using the one-pole formula `current += alpha * (target - current)` with the owning group's configured process-lite alpha, then SHALL sample and store each voice's current cached knob value from `GetRaw(voiceIx)`; and per-sample parameter processing SHALL recompute target state from the owning manager's current scene when `sampleIndex % group.Config().targetComputeIntervalSamples == 0` before running `ProcessLite()`, including target-center smoothing for top-level parameters.
 
 #### Scenario: GetRaw uses current state only
 - **WHEN** `GetRaw(0)` is called after `Compute()` and `ProcessLite()`
@@ -193,6 +214,12 @@ WHEN the audio engine samples a parameter, THE synth parameter modulation system
 - **WHEN** a parameter's group target compute interval is 16 samples
 - **AND** per-sample parameter processing is called with sample index 0
 - **THEN** the call recomputes targets from the owning manager's current scene before running `ProcessLite()`
+
+#### Scenario: Per-sample recompute slews top-level target center
+- **WHEN** a top-level parameter's group target compute interval is 16 samples
+- **AND** the parameter has target center `0.0`, raw computed center `1.0`, and group target-center alpha `0.25`
+- **AND** per-sample parameter processing is called with sample index `16`
+- **THEN** the target recompute sets target center to `0.25` before `ProcessLite()` slews current center toward that target
 
 #### Scenario: Per-sample group processing covers group parameters
 - **WHEN** per-sample processing is invoked for a parameter group at an absolute sample index
