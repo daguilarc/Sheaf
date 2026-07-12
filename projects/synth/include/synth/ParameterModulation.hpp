@@ -69,12 +69,12 @@ inline float ZeroBasedExponentialMap(float normalized, float base, float maxValu
 }
 
 inline constexpr float kModulationDepthTargetMaxAbs = 1.0f;
-inline constexpr float kModulationDepthTargetHalfpointAbs = 0.125f;
+inline constexpr float kModulationDepthTargetHalfpointAbs = 0.25f;
 inline constexpr float kModulationDepthTargetBase =
     ZeroBasedExponentialBaseFromMidpoint(kModulationDepthTargetHalfpointAbs, kModulationDepthTargetMaxAbs);
 
-inline float ModulationDepthTargetFromKnob(float signedKnob) {
-    const float bipolar = std::clamp(signedKnob, -1.0f, 1.0f);
+inline float ModulationDepthTargetFromKnob(float normalizedKnob) {
+    const float bipolar = std::clamp(2.0f * std::clamp(normalizedKnob, 0.0f, 1.0f) - 1.0f, -1.0f, 1.0f);
     if (bipolar == 0.0f) {
         return 0.0f;
     }

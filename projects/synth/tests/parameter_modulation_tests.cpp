@@ -100,7 +100,7 @@ synth::MidiInstrumentConfig MakeInstrumentFromProfile(const synth::MidiControlle
 
 TEST_CASE(smoke_clamps_ranges) {
     REQUIRE_NEAR(synth::ClampToRange(2.0f, synth::RangeKind::Unipolar), 1.0f, 0.0001f);
-    REQUIRE_NEAR(synth::ClampToRange(-2.0f, synth::RangeKind::Bipolar), -1.0f, 0.0001f);
+    REQUIRE_NEAR(synth::ClampToRange(-2.0f, synth::RangeKind::Bipolar), 0.0f, 0.0001f);
 }
 
 TEST_CASE(json_arena_build_parse_dump_and_grow_retry) {
@@ -939,6 +939,41 @@ TEST_CASE(parameter_default_state) {
     REQUIRE_NEAR(parameter.TargetDepths(1)[1], 0.0f, 0.0001f);
 }
 
+TEST_CASE(bipolar_parameter_core_stores_normalized_center) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 0,
+        .numScenes = 2,
+        .maxParameters = 1,
+        .processLiteAlpha = 1.0f,
+        .targetCenterAlpha = 1.0f,
+    });
+
+    auto& parameter = manager.CreateParameter(group, {
+        .name = "Pan",
+        .defaultValue = 0.5f,
+        .range = synth::RangeKind::Bipolar,
+    });
+
+    REQUIRE_NEAR(parameter.SceneCenter(0), 0.5f, 0.0001f);
+    REQUIRE_NEAR(parameter.SceneCenter(1), 0.5f, 0.0001f);
+    REQUIRE_NEAR(parameter.CurrentCenter(), 0.5f, 0.0001f);
+    REQUIRE_NEAR(parameter.TargetCenter(), 0.5f, 0.0001f);
+    REQUIRE_NEAR(parameter.GetRaw(0), 0.5f, 0.0001f);
+    REQUIRE_NEAR(parameter.CachedKnobValue(0), 0.5f, 0.0001f);
+
+    parameter.SceneCenter(0) = 0.0f;
+    parameter.Compute({.leftScene = 0, .rightScene = 0, .blend = 0.0f});
+    parameter.ProcessLite();
+    REQUIRE_NEAR(parameter.GetRaw(0), 0.0f, 0.0001f);
+
+    parameter.SceneCenter(0) = 1.0f;
+    parameter.Compute({.leftScene = 0, .rightScene = 0, .blend = 0.0f});
+    parameter.ProcessLite();
+    REQUIRE_NEAR(parameter.GetRaw(0), 1.0f, 0.0001f);
+}
+
 TEST_CASE(allocator_exhaustion_does_not_register_partial_parameter) {
     synth::ParameterManager manager;
     manager.SetGestureCount(2);
@@ -1088,13 +1123,13 @@ TEST_CASE(modulation_normalization_under_one) {
     });
 
     auto& parameter = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.5f});
-    auto& depth = manager.CreateParameter(group, {.name = "Depth", .defaultValue = 0.25f});
+    auto& depth = manager.CreateParameter(group, {.name = "Depth", .defaultValue = 0.75f});
     REQUIRE_TRUE(parameter.AssignModulationDepth(0, &depth));
 
     parameter.Compute({.leftScene = 0, .rightScene = 0, .blend = 0.0f});
 
-    REQUIRE_NEAR(parameter.TargetCenterScale(0), 0.9657135f, 0.0001f);
-    REQUIRE_NEAR(parameter.TargetDepths(0)[0], 0.0342865f, 0.0001f);
+    REQUIRE_NEAR(parameter.TargetCenterScale(0), 0.75f, 0.0001f);
+    REQUIRE_NEAR(parameter.TargetDepths(0)[0], 0.25f, 0.0001f);
 }
 
 TEST_CASE(modulation_normalization_over_one_preserves_sign) {
@@ -1115,7 +1150,7 @@ TEST_CASE(modulation_normalization_over_one_preserves_sign) {
     });
     auto& negative = manager.CreateParameter(group, {
         .name = "Negative",
-        .defaultValue = -1.0f,
+        .defaultValue = 0.0f,
         .range = synth::RangeKind::Bipolar,
     });
     REQUIRE_TRUE(parameter.AssignModulationDepth(0, &positive));
@@ -1142,12 +1177,12 @@ TEST_CASE(negative_modulation_depths_add_normalization_offset) {
     auto& parameter = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.5f});
     auto& positive = manager.CreateParameter(group, {
         .name = "Positive",
-        .defaultValue = 0.25f,
+        .defaultValue = 0.75f,
         .range = synth::RangeKind::Bipolar,
     });
     auto& negative = manager.CreateParameter(group, {
         .name = "Negative",
-        .defaultValue = -0.5f,
+        .defaultValue = 0.25f,
         .range = synth::RangeKind::Bipolar,
     });
     REQUIRE_TRUE(parameter.AssignModulationDepth(0, &positive));
@@ -1156,22 +1191,22 @@ TEST_CASE(negative_modulation_depths_add_normalization_offset) {
     parameter.Compute({.leftScene = 0, .rightScene = 0, .blend = 0.0f});
     parameter.ProcessLite();
 
-    REQUIRE_NEAR(parameter.TargetCenterScale(0), 0.8407135f, 0.0001f);
-    REQUIRE_NEAR(parameter.TargetNormalizationOffset(0), 0.125f, 0.0001f);
-    REQUIRE_NEAR(parameter.TargetDepths(0)[0], 0.0342865f, 0.0001f);
-    REQUIRE_NEAR(parameter.TargetDepths(0)[1], -0.125f, 0.0001f);
+    REQUIRE_NEAR(parameter.TargetCenterScale(0), 0.5f, 0.0001f);
+    REQUIRE_NEAR(parameter.TargetNormalizationOffset(0), 0.25f, 0.0001f);
+    REQUIRE_NEAR(parameter.TargetDepths(0)[0], 0.25f, 0.0001f);
+    REQUIRE_NEAR(parameter.TargetDepths(0)[1], -0.25f, 0.0001f);
 
     group.GetModulators().Value(0, 0) = 0.0f;
     group.GetModulators().Value(0, 1) = 0.0f;
-    REQUIRE_NEAR(parameter.GetRaw(0), 0.5453568f, 0.0001f);
+    REQUIRE_NEAR(parameter.GetRaw(0), 0.5f, 0.0001f);
 
     group.GetModulators().Value(0, 0) = 1.0f;
     group.GetModulators().Value(0, 1) = 0.0f;
-    REQUIRE_NEAR(parameter.GetRaw(0), 0.5796432f, 0.0001f);
+    REQUIRE_NEAR(parameter.GetRaw(0), 0.75f, 0.0001f);
 
     group.GetModulators().Value(0, 0) = 0.0f;
     group.GetModulators().Value(0, 1) = 1.0f;
-    REQUIRE_NEAR(parameter.GetRaw(0), 0.4203568f, 0.0001f);
+    REQUIRE_NEAR(parameter.GetRaw(0), 0.25f, 0.0001f);
 }
 
 TEST_CASE(overfull_negative_modulation_offset_uses_normalized_depths) {
@@ -1193,7 +1228,7 @@ TEST_CASE(overfull_negative_modulation_offset_uses_normalized_depths) {
     });
     auto& negative = manager.CreateParameter(group, {
         .name = "Negative",
-        .defaultValue = -1.0f,
+        .defaultValue = 0.0f,
         .range = synth::RangeKind::Bipolar,
     });
     REQUIRE_TRUE(parameter.AssignModulationDepth(0, &positive));
@@ -1238,10 +1273,10 @@ TEST_CASE(recursive_modulation_depth_targets_use_bipolar_zero_based_exponential_
         float expectedDepth;
     };
     const std::array<Case, 5> cases{{
-        {.knob = -1.0f, .expectedDepth = -1.0f},
-        {.knob = -0.5f, .expectedDepth = -0.125f},
-        {.knob = 0.0f, .expectedDepth = 0.0f},
-        {.knob = 0.5f, .expectedDepth = 0.125f},
+        {.knob = 0.0f, .expectedDepth = -1.0f},
+        {.knob = 0.25f, .expectedDepth = -0.25f},
+        {.knob = 0.5f, .expectedDepth = 0.0f},
+        {.knob = 0.75f, .expectedDepth = 0.25f},
         {.knob = 1.0f, .expectedDepth = 1.0f},
     }};
 
@@ -1276,7 +1311,7 @@ TEST_CASE(recursive_modulation_depth_compute_ignores_target_center_smoothing_for
     REQUIRE_NEAR(carrier.TargetDepths(0)[0], 1.0f, 0.0001f);
 }
 
-TEST_CASE(recursive_modulation_depth_half_turn_sets_one_eighth_raw_depth_before_normalization) {
+TEST_CASE(recursive_modulation_depth_three_quarter_turn_sets_quarter_raw_depth_before_normalization) {
     synth::ParameterManager manager;
     auto& group = manager.CreateGroup({
         .numVoices = 1,
@@ -1288,12 +1323,12 @@ TEST_CASE(recursive_modulation_depth_half_turn_sets_one_eighth_raw_depth_before_
     auto& carrier = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.5f});
     synth::Parameter* depth = carrier.EnsureModulationDepth(0);
     REQUIRE_TRUE(depth != nullptr);
-    depth->SceneCenter(0) = 0.5f;
+    depth->SceneCenter(0) = 0.75f;
 
     carrier.Compute({.leftScene = 0, .rightScene = 0, .blend = 0.0f});
 
-    REQUIRE_NEAR(carrier.TargetDepths(0)[0], 0.125f, 0.0001f);
-    REQUIRE_NEAR(carrier.TargetCenterScale(0), 0.875f, 0.0001f);
+    REQUIRE_NEAR(carrier.TargetDepths(0)[0], 0.25f, 0.0001f);
+    REQUIRE_NEAR(carrier.TargetCenterScale(0), 0.75f, 0.0001f);
     REQUIRE_NEAR(carrier.TargetNormalizationOffset(0), 0.0f, 0.0001f);
 }
 
@@ -1314,7 +1349,7 @@ TEST_CASE(curved_modulation_depth_targets_still_use_signed_normalization) {
     REQUIRE_TRUE(positive != nullptr);
     REQUIRE_TRUE(negative != nullptr);
     positive->SceneCenter(0) = 1.0f;
-    negative->SceneCenter(0) = -1.0f;
+    negative->SceneCenter(0) = 0.0f;
 
     carrier.Compute({.leftScene = 0, .rightScene = 0, .blend = 0.0f});
     carrier.ProcessLite();
@@ -1339,14 +1374,14 @@ TEST_CASE(curved_modulation_depth_targets_keep_modulator_dot_product_linear) {
     auto& carrier = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.0f});
     synth::Parameter* depth = carrier.EnsureModulationDepth(0);
     REQUIRE_TRUE(depth != nullptr);
-    depth->SceneCenter(0) = 0.5f;
+    depth->SceneCenter(0) = 0.75f;
 
     carrier.Compute({.leftScene = 0, .rightScene = 0, .blend = 0.0f});
     carrier.ProcessLite();
 
     group.GetModulators().Value(0, 0) = 0.8f;
-    REQUIRE_NEAR(carrier.CurrentDepths(0)[0], 0.125f, 0.0001f);
-    REQUIRE_NEAR(carrier.GetRaw(0), 0.1f, 0.0001f);
+    REQUIRE_NEAR(carrier.CurrentDepths(0)[0], 0.25f, 0.0001f);
+    REQUIRE_NEAR(carrier.GetRaw(0), 0.2f, 0.0001f);
 }
 
 TEST_CASE(parameter_get_raw_includes_normalization_offset) {
@@ -1368,12 +1403,12 @@ TEST_CASE(parameter_get_raw_includes_normalization_offset) {
     group.SetModulationSource(1, source1, {.connected = true});
     synth::Parameter& parameter =
         manager.CreateParameter(group, {.name = "Cutoff", .shortName = "Cut", .defaultValue = 0.5f});
-    parameter.EnsureModulationDepth(0)->SceneCenter(0) = 0.25f;
-    parameter.EnsureModulationDepth(1)->SceneCenter(0) = -0.5f;
+    parameter.EnsureModulationDepth(0)->SceneCenter(0) = 0.75f;
+    parameter.EnsureModulationDepth(1)->SceneCenter(0) = 0.25f;
     manager.ComputeAllParameters();
     group.UpdateModValues();
     parameter.ProcessLite();
-    REQUIRE_NEAR(parameter.GetRaw(0), 0.5453568f, 0.0001f);
+    REQUIRE_NEAR(parameter.GetRaw(0), 0.5f, 0.0001f);
 }
 
 TEST_CASE(ui_state_min_max_reports_underfull_modulation_reachable_range) {
@@ -1395,7 +1430,7 @@ TEST_CASE(ui_state_min_max_reports_underfull_modulation_reachable_range) {
     });
     auto& negative = manager.CreateParameter(group, {
         .name = "Negative",
-        .defaultValue = -0.5f,
+        .defaultValue = 0.25f,
         .range = synth::RangeKind::Bipolar,
     });
     REQUIRE_TRUE(parameter.AssignModulationDepth(0, &positive));
@@ -1406,8 +1441,8 @@ TEST_CASE(ui_state_min_max_reports_underfull_modulation_reachable_range) {
 
     synth::Parameter::UIState ui(1);
     parameter.PopulateUIState(ui);
-    REQUIRE_NEAR(ui.minValues[0].load(), 0.4203568f, 0.0001f);
-    REQUIRE_NEAR(ui.maxValues[0].load(), 0.5796432f, 0.0001f);
+    REQUIRE_NEAR(ui.minValues[0].load(), 0.25f, 0.0001f);
+    REQUIRE_NEAR(ui.maxValues[0].load(), 0.75f, 0.0001f);
 }
 
 TEST_CASE(ui_state_min_max_reports_full_range_when_modulation_is_overfull) {
@@ -1423,7 +1458,7 @@ TEST_CASE(ui_state_min_max_reports_full_range_when_modulation_is_overfull) {
 
     auto& parameter = manager.CreateParameter(group, {
         .name = "Carrier",
-        .defaultValue = 0.0f,
+        .defaultValue = 0.5f,
         .range = synth::RangeKind::Bipolar,
     });
     auto& positive = manager.CreateParameter(group, {
@@ -1433,7 +1468,7 @@ TEST_CASE(ui_state_min_max_reports_full_range_when_modulation_is_overfull) {
     });
     auto& negative = manager.CreateParameter(group, {
         .name = "Negative",
-        .defaultValue = -1.0f,
+        .defaultValue = 0.0f,
         .range = synth::RangeKind::Bipolar,
     });
     REQUIRE_TRUE(parameter.AssignModulationDepth(0, &positive));
@@ -1471,8 +1506,8 @@ TEST_CASE(nested_depth_route_reads_get_and_bypasses_slew) {
     REQUIRE_TRUE(depth.RecursionDepth() == 1);
     REQUIRE_NEAR(depth.CurrentCenter(), 0.8f, 0.0001f);
     REQUIRE_NEAR(depth.GetRaw(0), 0.8f, 0.0001f);
-    REQUIRE_NEAR(carrier.TargetDepths(0)[0], 0.4478890f, 0.0001f);
-    REQUIRE_NEAR(carrier.TargetCenterScale(0), 0.5521110f, 0.0001f);
+    REQUIRE_NEAR(carrier.TargetDepths(0)[0], 0.3421493f, 0.0001f);
+    REQUIRE_NEAR(carrier.TargetCenterScale(0), 0.6578507f, 0.0001f);
 }
 
 TEST_CASE(process_lite_slews_center_scale_offset_and_depths) {
@@ -1490,7 +1525,7 @@ TEST_CASE(process_lite_slews_center_scale_offset_and_depths) {
     auto& parameter = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.0f});
     auto& depth = manager.CreateParameter(group, {
         .name = "Depth",
-        .defaultValue = -0.5f,
+        .defaultValue = 0.25f,
         .range = synth::RangeKind::Bipolar,
     });
     parameter.SceneCenter(0) = 1.0f;
@@ -1501,13 +1536,13 @@ TEST_CASE(process_lite_slews_center_scale_offset_and_depths) {
     parameter.ProcessLite();
 
     REQUIRE_NEAR(parameter.CurrentCenter(), 0.25f, 0.0001f);
-    REQUIRE_NEAR(parameter.CurrentCenterScale(0), 0.96875f, 0.0001f);
-    REQUIRE_NEAR(parameter.CurrentNormalizationOffset(0), 0.03125f, 0.0001f);
-    REQUIRE_NEAR(parameter.CurrentDepths(0)[0], -0.03125f, 0.0001f);
+    REQUIRE_NEAR(parameter.CurrentCenterScale(0), 0.9375f, 0.0001f);
+    REQUIRE_NEAR(parameter.CurrentNormalizationOffset(0), 0.0625f, 0.0001f);
+    REQUIRE_NEAR(parameter.CurrentDepths(0)[0], -0.0625f, 0.0001f);
 
     synth::Parameter::UIState ui(1);
     parameter.PopulateUIState(ui);
-    REQUIRE_NEAR(ui.minValues[0].load(), 0.21875f, 0.0001f);
+    REQUIRE_NEAR(ui.minValues[0].load(), 0.1875f, 0.0001f);
     REQUIRE_NEAR(ui.maxValues[0].load(), 0.25f, 0.0001f);
 }
 
@@ -1597,14 +1632,14 @@ TEST_CASE(parameter_group_process_sample_covers_top_level_and_modulation_depth_t
 
     carrier.SceneCenter(0) = 0.2f;
     sibling.SceneCenter(0) = 0.4f;
-    depth->SceneCenter(0) = 0.5f;
+    depth->SceneCenter(0) = 0.75f;
 
     group.ProcessSample(0);
 
     REQUIRE_NEAR(carrier.TargetCenter(), 0.2f, 0.0001f);
     REQUIRE_NEAR(sibling.TargetCenter(), 0.4f, 0.0001f);
-    REQUIRE_NEAR(depth->TargetCenter(), 0.5f, 0.0001f);
-    REQUIRE_NEAR(carrier.CurrentDepths(0)[0], 0.125f, 0.0001f);
+    REQUIRE_NEAR(depth->TargetCenter(), 0.75f, 0.0001f);
+    REQUIRE_NEAR(carrier.CurrentDepths(0)[0], 0.25f, 0.0001f);
 }
 
 TEST_CASE(mapping_helpers_use_cached_process_lite_knob_value) {
@@ -1628,7 +1663,7 @@ TEST_CASE(mapping_helpers_use_cached_process_lite_knob_value) {
     synth::Parameter& bipolar = manager.CreateParameter(group, {
         .name = "Amount",
         .shortName = "Amt",
-        .defaultValue = 0.0f,
+        .defaultValue = 0.5f,
         .range = synth::RangeKind::Bipolar,
     });
     const synth::ParameterId bipolarId = bipolar.Id();
@@ -1641,10 +1676,10 @@ TEST_CASE(mapping_helpers_use_cached_process_lite_knob_value) {
     REQUIRE_NEAR(manager.GetLinear(10.0f, 20.0f, 0, id), 10.0f, 0.0001f);
     REQUIRE_NEAR(manager.GetExponential(10.0f, 40.0f, 0, id), 10.0f, 0.0001f);
     REQUIRE_NEAR(manager.GetZeroBasedExponential(1.0f, 0.1f, 0, id), 0.0f, 0.0001f);
-    REQUIRE_NEAR(manager.GetBipolarLinear(2.0f, 0, bipolarId), 0.0f, 0.0001f);
-    REQUIRE_NEAR(manager.GetBipolarZeroBasedExponential(4.0f, 0.25f, 0, bipolarId), 0.0f, 0.0001f);
-    REQUIRE_NEAR(manager.GetBipolarExponential(0.25f, 1.0f, 4.0f, 0, bipolarId), 1.0f, 0.0001f);
-    REQUIRE_NEAR(manager.GetBipolarZeroBasedExponential(1.0f, 0.1f, 0, bipolarId), 0.0f, 0.0001f);
+    REQUIRE_NEAR(manager.GetBipolarLinear(2.0f, 0, bipolarId), -2.0f, 0.0001f);
+    REQUIRE_NEAR(manager.GetBipolarZeroBasedExponential(4.0f, 0.25f, 0, bipolarId), -4.0f, 0.0001f);
+    REQUIRE_NEAR(manager.GetBipolarExponential(0.25f, 1.0f, 4.0f, 0, bipolarId), 0.25f, 0.0001f);
+    REQUIRE_NEAR(manager.GetBipolarZeroBasedExponential(1.0f, 0.1f, 0, bipolarId), -1.0f, 0.0001f);
 
     mod = 1.0f;
     group.UpdateModValues();
@@ -1653,10 +1688,10 @@ TEST_CASE(mapping_helpers_use_cached_process_lite_knob_value) {
     REQUIRE_NEAR(manager.GetLinear(10.0f, 20.0f, 0, id), 10.0f, 0.0001f);
     REQUIRE_NEAR(manager.GetExponential(10.0f, 40.0f, 0, id), 10.0f, 0.0001f);
     REQUIRE_NEAR(manager.GetZeroBasedExponential(1.0f, 0.1f, 0, id), 0.0f, 0.0001f);
-    REQUIRE_NEAR(manager.GetBipolarLinear(2.0f, 0, bipolarId), 0.0f, 0.0001f);
-    REQUIRE_NEAR(manager.GetBipolarZeroBasedExponential(4.0f, 0.25f, 0, bipolarId), 0.0f, 0.0001f);
-    REQUIRE_NEAR(manager.GetBipolarExponential(0.25f, 1.0f, 4.0f, 0, bipolarId), 1.0f, 0.0001f);
-    REQUIRE_NEAR(manager.GetBipolarZeroBasedExponential(1.0f, 0.1f, 0, bipolarId), 0.0f, 0.0001f);
+    REQUIRE_NEAR(manager.GetBipolarLinear(2.0f, 0, bipolarId), -2.0f, 0.0001f);
+    REQUIRE_NEAR(manager.GetBipolarZeroBasedExponential(4.0f, 0.25f, 0, bipolarId), -4.0f, 0.0001f);
+    REQUIRE_NEAR(manager.GetBipolarExponential(0.25f, 1.0f, 4.0f, 0, bipolarId), 0.25f, 0.0001f);
+    REQUIRE_NEAR(manager.GetBipolarZeroBasedExponential(1.0f, 0.1f, 0, bipolarId), -1.0f, 0.0001f);
 
     parameter.ProcessLite();
     bipolar.ProcessLite();
@@ -1718,6 +1753,41 @@ TEST_CASE(ui_display_center_and_spread_follow_cached_knob_order) {
     parameter.PopulateUIState(ui);
     REQUIRE_NEAR(ui.values[0].load(std::memory_order_relaxed), 0.25f, 0.0001f);
     REQUIRE_NEAR(ui.spreadValues[0].load(std::memory_order_relaxed), std::sqrt(0.28125f), 0.0001f);
+}
+
+TEST_CASE(bipolar_ui_state_publishes_signed_center_range_and_spread) {
+    synth::ParameterManager manager;
+    synth::ParameterGroupConfig config{
+        .numVoices = 1,
+        .numModulators = 0,
+        .numScenes = 1,
+        .maxParameters = 1,
+        .processLiteAlpha = 1.0f,
+        .targetCenterAlpha = 1.0f,
+        .uiDisplayCenterAlpha = 0.25f,
+        .uiDisplaySpreadAlpha = 0.5f,
+    };
+    synth::ParameterGroup& group = manager.CreateGroup(config);
+    synth::Parameter& parameter = manager.CreateParameter(group, {
+        .name = "Pan",
+        .shortName = "Pan",
+        .defaultValue = 0.0f,
+        .range = synth::RangeKind::Bipolar,
+    });
+
+    manager.ComputeAllParameters();
+    parameter.SceneCenter(0) = 1.0f;
+    manager.ComputeAllTargets();
+    parameter.ProcessLite();
+
+    synth::Parameter::UIState ui(1);
+    parameter.PopulateUIState(ui);
+    REQUIRE_NEAR(parameter.UIDisplayCenter(0), 0.25f, 0.0001f);
+    REQUIRE_NEAR(parameter.UIDisplaySpread(0), std::sqrt(0.28125f), 0.0001f);
+    REQUIRE_NEAR(ui.values[0].load(std::memory_order_relaxed), -0.5f, 0.0001f);
+    REQUIRE_NEAR(ui.spreadValues[0].load(std::memory_order_relaxed), 2.0f * std::sqrt(0.28125f), 0.0001f);
+    REQUIRE_NEAR(ui.minValues[0].load(std::memory_order_relaxed), 1.0f, 0.0001f);
+    REQUIRE_NEAR(ui.maxValues[0].load(std::memory_order_relaxed), 1.0f, 0.0001f);
 }
 
 TEST_CASE(cached_knob_and_ui_display_state_seed_on_construction_and_revert) {
@@ -1816,11 +1886,11 @@ TEST_CASE(switch_metadata_and_buckets_use_unslewed_display_target) {
 
     auto& bipolar = manager.CreateParameter(group, {
         .name = "Bipolar",
-        .defaultValue = -1.0f,
+        .defaultValue = 0.0f,
         .range = synth::RangeKind::Bipolar,
         .switchValues = 4,
     });
-    bipolar.SceneCenter(1) = 0.0f;
+    bipolar.SceneCenter(1) = 0.5f;
     bipolar.Compute({.leftScene = 0, .rightScene = 1, .blend = 1.0f});
     REQUIRE_TRUE(bipolar.GetSwitchVal(0) == 2);
 
@@ -1913,6 +1983,7 @@ TEST_CASE(ui_state_reports_affecting_masks_for_first_32_indices) {
     auto& depth32 = manager.CreateParameter(group, {.name = "Depth32", .defaultValue = 0.25f});
     REQUIRE_TRUE(parameter.AssignModulationDepth(31, &depth31));
     REQUIRE_TRUE(parameter.AssignModulationDepth(32, &depth32));
+    depth31.SceneCenter(0) = 0.75f;
     parameter.SetGestureActive(0, 0, true);
     parameter.SetGestureActive(0, 31, true);
     parameter.SetGestureActive(0, 32, true);
@@ -1934,6 +2005,33 @@ TEST_CASE(ui_state_reports_affecting_masks_for_first_32_indices) {
     manager.SetSceneBlend(0.5f);
     parameter.PopulateUIState(ui);
     REQUIRE_TRUE(ui.gesturesAffectingMask.load() == ((1u << 0) | (1u << 1) | (1u << 31)));
+}
+
+TEST_CASE(ui_state_ignores_inactive_depth_gesture_values_for_modulator_mask) {
+    synth::ParameterManager manager;
+    manager.SetGestureCount(1);
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 1,
+        .numScenes = 1,
+        .maxParameters = 2,
+    });
+
+    auto& carrier = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.5f});
+    synth::Parameter* depth = carrier.EnsureModulationDepth(0);
+    depth->SceneCenter(0) = 0.75f;
+    depth->GestureValue(0, 0) = 0.75f;
+    depth->SetGestureActive(0, 0, true);
+
+    carrier.RevertToDefault(manager.Scene());
+
+    REQUIRE_NEAR(depth->SceneCenter(0), 0.5f, 0.0001f);
+    REQUIRE_NEAR(depth->GestureValue(0, 0), 0.75f, 0.0001f);
+    REQUIRE_TRUE(!depth->GestureActive(0, 0));
+
+    synth::Parameter::UIState ui(1);
+    carrier.PopulateUIState(ui);
+    REQUIRE_TRUE(ui.modulatorsAffectingMask.load() == 0);
 }
 
 TEST_CASE(cycle_rejection_direct_and_indirect) {
@@ -2112,22 +2210,22 @@ TEST_CASE(manager_bipolar_mapping_helpers_return_signed_values) {
         .targetCenterAlpha = 1.0f,
     });
     const synth::ParameterId paramId = manager.RegisterParameter(
-        group, {.name = "Amount", .defaultValue = 0.0f, .range = synth::RangeKind::Bipolar});
+        group, {.name = "Amount", .defaultValue = 0.5f, .range = synth::RangeKind::Bipolar});
     auto& parameter = manager.ParameterById(paramId);
 
-    parameter.SceneCenter(0) = -1.0f;
+    parameter.SceneCenter(0) = 0.0f;
     parameter.Compute(manager.Scene());
     parameter.ProcessLite();
     REQUIRE_NEAR(manager.GetBipolarLinear(2.0f, 0, paramId), -2.0f, 0.0001f);
     REQUIRE_NEAR(manager.GetBipolarZeroBasedExponential(4.0f, 0.25f, 0, paramId), -4.0f, 0.0001f);
     REQUIRE_NEAR(manager.GetBipolarZeroBasedExponential(1.0f, 0.1f, 0, paramId), -1.0f, 0.0001f);
 
-    parameter.SceneCenter(0) = -0.5f;
+    parameter.SceneCenter(0) = 0.25f;
     parameter.Compute(manager.Scene());
     parameter.ProcessLite();
     REQUIRE_NEAR(manager.GetBipolarZeroBasedExponential(4.0f, 0.25f, 0, paramId), -0.25f, 0.0001f);
 
-    parameter.SceneCenter(0) = 0.0f;
+    parameter.SceneCenter(0) = 0.5f;
     parameter.Compute(manager.Scene());
     parameter.ProcessLite();
     REQUIRE_NEAR(manager.GetBipolarLinear(2.0f, 0, paramId), 0.0f, 0.0001f);
@@ -2141,7 +2239,7 @@ TEST_CASE(manager_bipolar_mapping_helpers_return_signed_values) {
     }
     REQUIRE_TRUE(threw);
 
-    parameter.SceneCenter(0) = 0.5f;
+    parameter.SceneCenter(0) = 0.75f;
     parameter.Compute(manager.Scene());
     parameter.ProcessLite();
     REQUIRE_NEAR(manager.GetBipolarZeroBasedExponential(4.0f, 0.25f, 0, paramId), 0.25f, 0.0001f);
@@ -2164,20 +2262,20 @@ TEST_CASE(manager_bipolar_zero_based_exponential_is_continuous_at_center) {
         .targetCenterAlpha = 1.0f,
     });
     const synth::ParameterId paramId = manager.RegisterParameter(
-        group, {.name = "Amount", .defaultValue = 0.0f, .range = synth::RangeKind::Bipolar});
+        group, {.name = "Amount", .defaultValue = 0.5f, .range = synth::RangeKind::Bipolar});
     auto& parameter = manager.ParameterById(paramId);
 
-    parameter.SceneCenter(0) = 0.001f;
+    parameter.SceneCenter(0) = 0.5005f;
     parameter.Compute(manager.Scene());
     parameter.ProcessLite();
     const float smallPositive = manager.GetBipolarZeroBasedExponential(4.0f, 0.25f, 0, paramId);
 
-    parameter.SceneCenter(0) = 0.0f;
+    parameter.SceneCenter(0) = 0.5f;
     parameter.Compute(manager.Scene());
     parameter.ProcessLite();
     const float center = manager.GetBipolarZeroBasedExponential(4.0f, 0.25f, 0, paramId);
 
-    parameter.SceneCenter(0) = -0.001f;
+    parameter.SceneCenter(0) = 0.4995f;
     parameter.Compute(manager.Scene());
     parameter.ProcessLite();
     const float smallNegative = manager.GetBipolarZeroBasedExponential(4.0f, 0.25f, 0, paramId);
@@ -2238,15 +2336,15 @@ TEST_CASE(manager_centered_bipolar_exponential_maps_left_center_and_right_from_b
         .targetCenterAlpha = 1.0f,
     });
     const synth::ParameterId paramId = manager.RegisterParameter(
-        group, {.name = "Exponent", .defaultValue = 0.0f, .range = synth::RangeKind::Bipolar});
+        group, {.name = "Exponent", .defaultValue = 0.5f, .range = synth::RangeKind::Bipolar});
     auto& parameter = manager.ParameterById(paramId);
 
-    parameter.SceneCenter(0) = -1.0f;
+    parameter.SceneCenter(0) = 0.0f;
     parameter.Compute(manager.Scene());
     parameter.ProcessLite();
     REQUIRE_NEAR(manager.GetBipolarExponential(0.2f, 1.0f, 5.0f, 0, paramId), 0.2f, 0.0001f);
 
-    parameter.SceneCenter(0) = 0.0f;
+    parameter.SceneCenter(0) = 0.5f;
     parameter.Compute(manager.Scene());
     parameter.ProcessLite();
     REQUIRE_NEAR(manager.GetBipolarExponential(0.2f, 1.0f, 5.0f, 0, paramId), 1.0f, 0.0001f);
@@ -2256,13 +2354,13 @@ TEST_CASE(manager_centered_bipolar_exponential_maps_left_center_and_right_from_b
     parameter.ProcessLite();
     REQUIRE_NEAR(manager.GetBipolarExponential(0.2f, 1.0f, 5.0f, 0, paramId), 5.0f, 0.0001f);
 
-    parameter.SceneCenter(0) = -0.5f;
+    parameter.SceneCenter(0) = 0.25f;
     parameter.Compute(manager.Scene());
     parameter.ProcessLite();
     REQUIRE_NEAR(manager.GetBipolarExponential(0.25f, 2.0f, 32.0f, 0, paramId),
                  2.0f * std::sqrt(0.25f / 2.0f), 0.0001f);
 
-    parameter.SceneCenter(0) = 0.5f;
+    parameter.SceneCenter(0) = 0.75f;
     parameter.Compute(manager.Scene());
     parameter.ProcessLite();
     REQUIRE_NEAR(manager.GetBipolarExponential(0.25f, 2.0f, 32.0f, 0, paramId),
@@ -2277,7 +2375,7 @@ TEST_CASE(manager_centered_bipolar_exponential_rejects_invalid_values) {
         .maxParameters = 1,
     });
     const synth::ParameterId paramId = manager.RegisterParameter(
-        group, {.name = "Exponent", .defaultValue = 0.0f, .range = synth::RangeKind::Bipolar});
+        group, {.name = "Exponent", .defaultValue = 0.5f, .range = synth::RangeKind::Bipolar});
 
     bool threw = false;
     try {
@@ -2314,25 +2412,25 @@ TEST_CASE(manager_bipolar_zero_based_exponential_uses_signed_bipolar_knob) {
         .targetCenterAlpha = 1.0f,
     });
     const synth::ParameterId paramId = manager.RegisterParameter(
-        group, {.name = "Amount", .defaultValue = 0.0f, .range = synth::RangeKind::Bipolar});
+        group, {.name = "Amount", .defaultValue = 0.5f, .range = synth::RangeKind::Bipolar});
     auto& parameter = manager.ParameterById(paramId);
-
-    parameter.SceneCenter(0) = -1.0f;
-    parameter.Compute(manager.Scene());
-    parameter.ProcessLite();
-    REQUIRE_NEAR(manager.GetBipolarZeroBasedExponential(1.0f, 0.1f, 0, paramId), -1.0f, 0.0001f);
-
-    parameter.SceneCenter(0) = -0.5f;
-    parameter.Compute(manager.Scene());
-    parameter.ProcessLite();
-    REQUIRE_NEAR(manager.GetBipolarZeroBasedExponential(1.0f, 0.1f, 0, paramId), -0.1f, 0.0001f);
 
     parameter.SceneCenter(0) = 0.0f;
     parameter.Compute(manager.Scene());
     parameter.ProcessLite();
-    REQUIRE_NEAR(manager.GetBipolarZeroBasedExponential(1.0f, 0.1f, 0, paramId), 0.0f, 0.0001f);
+    REQUIRE_NEAR(manager.GetBipolarZeroBasedExponential(1.0f, 0.1f, 0, paramId), -1.0f, 0.0001f);
+
+    parameter.SceneCenter(0) = 0.25f;
+    parameter.Compute(manager.Scene());
+    parameter.ProcessLite();
+    REQUIRE_NEAR(manager.GetBipolarZeroBasedExponential(1.0f, 0.1f, 0, paramId), -0.1f, 0.0001f);
 
     parameter.SceneCenter(0) = 0.5f;
+    parameter.Compute(manager.Scene());
+    parameter.ProcessLite();
+    REQUIRE_NEAR(manager.GetBipolarZeroBasedExponential(1.0f, 0.1f, 0, paramId), 0.0f, 0.0001f);
+
+    parameter.SceneCenter(0) = 0.75f;
     parameter.Compute(manager.Scene());
     parameter.ProcessLite();
     REQUIRE_NEAR(manager.GetBipolarZeroBasedExponential(1.0f, 0.1f, 0, paramId), 0.1f, 0.0001f);
@@ -2354,8 +2452,8 @@ TEST_CASE(manager_mapping_helpers_map_cached_voice_value) {
         .targetCenterAlpha = 1.0f,
     });
     const synth::ParameterId carrierId = manager.RegisterParameter(
-        group, {.name = "Carrier", .defaultValue = 0.2f, .range = synth::RangeKind::Bipolar});
-    const synth::ParameterId depthId = manager.RegisterParameter(group, {.name = "Depth", .defaultValue = 0.5f});
+        group, {.name = "Carrier", .defaultValue = 0.6f, .range = synth::RangeKind::Bipolar});
+    const synth::ParameterId depthId = manager.RegisterParameter(group, {.name = "Depth", .defaultValue = 0.75f});
     auto& carrier = manager.ParameterById(carrierId);
     auto& depth = manager.ParameterById(depthId);
     REQUIRE_TRUE(carrier.AssignModulationDepth(0, &depth));
@@ -2364,10 +2462,10 @@ TEST_CASE(manager_mapping_helpers_map_cached_voice_value) {
     carrier.Compute(manager.Scene());
     carrier.ProcessLite();
 
-    REQUIRE_NEAR(carrier.GetRaw(0), 0.3f, 0.0001f);
-    REQUIRE_NEAR(manager.GetLinear(10.0f, 20.0f, 0, carrierId), 13.0f, 0.0001f);
-    REQUIRE_NEAR(manager.GetBipolarLinear(2.0f, 0, carrierId), 0.6f, 0.0001f);
-    REQUIRE_NEAR(manager.GetBipolarExponential(0.25f, 1.0f, 4.0f, 0, carrierId), std::pow(4.0f, 0.3f),
+    REQUIRE_NEAR(carrier.GetRaw(0), 0.7f, 0.0001f);
+    REQUIRE_NEAR(manager.GetLinear(10.0f, 20.0f, 0, carrierId), 17.0f, 0.0001f);
+    REQUIRE_NEAR(manager.GetBipolarLinear(2.0f, 0, carrierId), 0.8f, 0.0001f);
+    REQUIRE_NEAR(manager.GetBipolarExponential(0.25f, 1.0f, 4.0f, 0, carrierId), std::pow(4.0f, 0.4f),
                  0.0001f);
 }
 
@@ -2718,7 +2816,7 @@ TEST_CASE(revert_to_default_clears_modulation_and_gestures) {
         .processLiteAlpha = 1.0f,
     });
     auto& parameter = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.4f});
-    auto& depth = manager.CreateParameter(group, {.name = "Depth", .defaultValue = 1.0f});
+    auto& depth = manager.CreateParameter(group, {.name = "Depth", .defaultValue = 0.5f});
     parameter.SceneCenter(0) = 0.9f;
     parameter.SceneCenter(1) = 0.8f;
     parameter.GestureValue(0, 0) = 1.0f;
@@ -2736,8 +2834,8 @@ TEST_CASE(revert_to_default_clears_modulation_and_gestures) {
     parameter.ProcessLite();
 
     REQUIRE_TRUE(parameter.ModulationDepthParameter(0) == &depth);
-    REQUIRE_NEAR(depth.SceneCenter(0), 0.0f, 0.0001f);
-    REQUIRE_NEAR(depth.SceneCenter(1), 0.0f, 0.0001f);
+    REQUIRE_NEAR(depth.SceneCenter(0), 0.5f, 0.0001f);
+    REQUIRE_NEAR(depth.SceneCenter(1), 0.5f, 0.0001f);
     REQUIRE_NEAR(parameter.SceneCenter(0), 0.4f, 0.0001f);
     REQUIRE_NEAR(parameter.SceneCenter(1), 0.4f, 0.0001f);
     REQUIRE_TRUE(!parameter.GestureActive(0, 0));
@@ -3270,7 +3368,7 @@ TEST_CASE(modulation_view_materializes_all_missing_depth_parameters_when_capacit
     REQUIRE_TRUE(depth->ShortName() == "Env");
     REQUIRE_TRUE(depth->BaseColor() == synth::Color::Cyan);
     REQUIRE_TRUE(depth->Range() == synth::RangeKind::Bipolar);
-    REQUIRE_NEAR(depth->SceneCenter(0), 0.0f, 0.0001f);
+    REQUIRE_NEAR(depth->SceneCenter(0), 0.5f, 0.0001f);
     REQUIRE_TRUE(bank.VisibleParameter(1) == depth);
     REQUIRE_TRUE(bank.VisibleParameter(2) == secondDepth);
     REQUIRE_TRUE(bank.VisibleParameter(3) == &carrier);
@@ -3278,7 +3376,7 @@ TEST_CASE(modulation_view_materializes_all_missing_depth_parameters_when_capacit
 
     bank.HandleTick(1, {.leftScene = 0, .rightScene = 0, .blend = 0.0f}, 0.2f);
 
-    REQUIRE_NEAR(depth->SceneCenter(0), 0.2f, 0.0001f);
+    REQUIRE_NEAR(depth->SceneCenter(0), 0.7f, 0.0001f);
 }
 
 TEST_CASE(modulation_view_keeps_owned_depth_parameter_after_reset) {
@@ -3476,12 +3574,12 @@ TEST_CASE(random_modifier_press_randomizes_visible_value_without_touching_mod_de
     auto& carrier = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.25f});
     auto& depth = manager.CreateParameter(group, {
         .name = "Depth",
-        .defaultValue = 0.0f,
+        .defaultValue = 0.5f,
         .range = synth::RangeKind::Bipolar,
     });
     REQUIRE_TRUE(carrier.AssignModulationDepth(0, &depth));
     carrier.SceneCenter(0) = 0.25f;
-    depth.SceneCenter(0) = 0.0f;
+    depth.SceneCenter(0) = 0.5f;
     group.GetModulators().Value(0, 0) = 0.0f;
     manager.ComputeAllParameters();
 
@@ -3499,7 +3597,7 @@ TEST_CASE(random_modifier_press_randomizes_visible_value_without_touching_mod_de
     REQUIRE_NEAR(carrier.SceneCenter(0), 0.75f, 0.0001f);
     REQUIRE_NEAR(carrier.GetRaw(0), 0.75f, 0.0001f);
     REQUIRE_TRUE(carrier.ModulationDepthParameter(0) == &depth);
-    REQUIRE_NEAR(depth.SceneCenter(0), 0.0f, 0.0001f);
+    REQUIRE_NEAR(depth.SceneCenter(0), 0.5f, 0.0001f);
     REQUIRE_TRUE(!bank.ShowingModulation());
 }
 
@@ -3543,7 +3641,7 @@ TEST_CASE(random_mod_modifier_press_uses_geometric_slot_loop_with_replacement_an
     REQUIRE_TRUE(depth1 == nullptr);
     REQUIRE_TRUE(depth2 != nullptr);
     REQUIRE_NEAR(depth0->SceneCenter(0), 1.0f, 0.0001f);
-    REQUIRE_NEAR(depth2->SceneCenter(0), -0.5f, 0.0001f);
+    REQUIRE_NEAR(depth2->SceneCenter(0), 0.25f, 0.0001f);
     REQUIRE_TRUE(valueIx == 3);
     REQUIRE_TRUE(indexIx == 4);
     REQUIRE_TRUE(coinIx == 4);
@@ -3616,8 +3714,8 @@ TEST_CASE(modified_bank_selection_applies_modifier_to_target_bank_without_switch
     REQUIRE_TRUE(randomDepth != nullptr);
     REQUIRE_TRUE(randomModDepth != nullptr);
     REQUIRE_NEAR(resetDepth->SceneCenter(0), 1.0f, 0.0001f);
-    REQUIRE_NEAR(randomDepth->SceneCenter(0), 0.5f, 0.0001f);
-    REQUIRE_NEAR(randomModDepth->SceneCenter(0), 0.0f, 0.0001f);
+    REQUIRE_NEAR(randomDepth->SceneCenter(0), 0.75f, 0.0001f);
+    REQUIRE_NEAR(randomModDepth->SceneCenter(0), 0.5f, 0.0001f);
 }
 
 TEST_CASE(message_bus_param_inc_dec_ignores_ticks_while_any_modifier_is_active) {
@@ -3736,7 +3834,7 @@ TEST_CASE(parameter_and_slot_ui_state_reports_values_colors_and_target_cell_meta
     REQUIRE_TRUE(cell.baseColor.Load() == synth::Color::Green);
     REQUIRE_TRUE(cell.indicatorColors[0].Load() == synth::Color::Cyan);
     REQUIRE_TRUE(cell.indicatorColors[1].Load() == synth::Color::Orange);
-    REQUIRE_NEAR(cell.minValues[0].load(), 0.0f, 0.0001f);
+    REQUIRE_NEAR(cell.minValues[0].load(), -1.0f, 0.0001f);
     REQUIRE_NEAR(cell.maxValues[1].load(), 1.0f, 0.0001f);
 
     manager.HandlePress(0, 0);
@@ -3745,8 +3843,8 @@ TEST_CASE(parameter_and_slot_ui_state_reports_values_colors_and_target_cell_meta
     const synth::Parameter::UIState& targetCell = ui->slots[0].cells[1];
     REQUIRE_TRUE(targetCell.connected.load());
     REQUIRE_TRUE(targetCell.switchValues.load() == 5);
-    REQUIRE_TRUE(targetCell.switchValue[0].load() == 3);
-    REQUIRE_TRUE(targetCell.switchValue[1].load() == 4);
+    REQUIRE_TRUE(targetCell.switchValue[0].load() == 1);
+    REQUIRE_TRUE(targetCell.switchValue[1].load() == 3);
     REQUIRE_TRUE(targetCell.modulatorsAffectingMask.load() == 1u);
     REQUIRE_TRUE(targetCell.gesturesAffectingMask.load() == 0u);
     REQUIRE_TRUE(targetCell.baseColor.Load() == synth::Color::Green);
@@ -5931,7 +6029,20 @@ float SimClamp(float value, synth::RangeKind range) {
 }
 
 float SimRangeMin(synth::RangeKind range) {
-    return range == synth::RangeKind::Bipolar ? -1.0f : 0.0f;
+    (void)range;
+    return 0.0f;
+}
+
+float SimToBipolarPresentation(float normalized) {
+    return 2.0f * std::clamp(normalized, 0.0f, 1.0f) - 1.0f;
+}
+
+float SimToUIPresentation(float normalized, synth::RangeKind range) {
+    return range == synth::RangeKind::Bipolar ? SimToBipolarPresentation(normalized) : normalized;
+}
+
+float SimToUISpreadPresentation(float normalizedSpread, synth::RangeKind range) {
+    return range == synth::RangeKind::Bipolar ? 2.0f * normalizedSpread : normalizedSpread;
 }
 
 float SimBlend(float left, float right, float blend) {
@@ -6056,21 +6167,20 @@ std::size_t SimSwitchVal(const SimOracle& oracle, std::size_t paramIx, std::size
         return 0;
     }
     float normalized = SimTargetGet(oracle, paramIx, voiceIx);
-    if (parameter.range == synth::RangeKind::Bipolar) {
-        normalized = (normalized + 1.0f) * 0.5f;
-    }
     normalized = std::clamp(normalized, 0.0f, 1.0f);
     const double maxBucket = static_cast<double>(parameter.switchValues - 1);
     return static_cast<std::size_t>(std::clamp(std::round(static_cast<double>(normalized) * maxBucket), 0.0, maxBucket));
 }
 
-bool SimHasNonZeroState(const SimOracle& oracle, const SimParam& parameter) {
+bool SimHasNonNeutralDepthState(const SimOracle& oracle, const SimParam& parameter) {
     constexpr float tolerance = 0.000001f;
-    if (std::fabs(parameter.currentCenter) > tolerance || std::fabs(parameter.targetCenter) > tolerance) {
+    constexpr float neutralDepthCenter = 0.5f;
+    if (std::fabs(parameter.currentCenter - neutralDepthCenter) > tolerance ||
+        std::fabs(parameter.targetCenter - neutralDepthCenter) > tolerance) {
         return true;
     }
     for (const float center : parameter.sceneCenter) {
-        if (std::fabs(center) > tolerance) {
+        if (std::fabs(center - neutralDepthCenter) > tolerance) {
             return true;
         }
     }
@@ -6096,7 +6206,7 @@ bool SimHasNonZeroState(const SimOracle& oracle, const SimParam& parameter) {
         }
     }
     for (const int route : parameter.route) {
-        if (route >= 0 && SimHasNonZeroState(oracle, oracle.params[static_cast<std::size_t>(route)])) {
+        if (route >= 0 && SimHasNonNeutralDepthState(oracle, oracle.params[static_cast<std::size_t>(route)])) {
             return true;
         }
     }
@@ -6107,7 +6217,7 @@ std::uint32_t SimModulatorsAffectingMask(const SimOracle& oracle, const SimParam
     std::uint32_t mask = 0;
     for (std::size_t modIx = 0; modIx < std::min<std::size_t>(kSimMods, 32); ++modIx) {
         const int route = parameter.route[modIx];
-        if (route >= 0 && SimHasNonZeroState(oracle, oracle.params[static_cast<std::size_t>(route)])) {
+        if (route >= 0 && SimHasNonNeutralDepthState(oracle, oracle.params[static_cast<std::size_t>(route)])) {
             mask |= (std::uint32_t{1} << modIx);
         }
     }
@@ -6423,7 +6533,7 @@ void SimResetDepthToNeutral(SimOracle& oracle, SimParam& parameter) {
 
     const float blend = std::clamp(oracle.scene.blend, 0.0f, 1.0f);
     auto resetScene = [&](std::size_t sceneIx) {
-        parameter.sceneCenter[sceneIx] = 0.0f;
+        parameter.sceneCenter[sceneIx] = 0.5f;
         parameter.gestureActive[sceneIx].fill(false);
     };
 
@@ -6438,16 +6548,16 @@ void SimResetDepthToNeutral(SimOracle& oracle, SimParam& parameter) {
         }
     }
 
-    parameter.currentCenter = 0.0f;
-    parameter.targetCenter = 0.0f;
+    parameter.currentCenter = 0.5f;
+    parameter.targetCenter = 0.5f;
     parameter.currentCenterScale.fill(1.0f);
     parameter.targetCenterScale.fill(1.0f);
     parameter.currentNormalizationOffset.fill(0.0f);
     parameter.targetNormalizationOffset.fill(0.0f);
-    parameter.currentMinValue.fill(0.0f);
-    parameter.targetMinValue.fill(0.0f);
-    parameter.currentMaxValue.fill(0.0f);
-    parameter.targetMaxValue.fill(0.0f);
+    parameter.currentMinValue.fill(0.5f);
+    parameter.targetMinValue.fill(0.5f);
+    parameter.currentMaxValue.fill(0.5f);
+    parameter.targetMaxValue.fill(0.5f);
     SimSeedDisplayState(oracle, parameter);
 }
 
@@ -6836,20 +6946,25 @@ void SimCheckUIState(const SimOracle& oracle, const synth::ParameterManager::UIS
             for (std::size_t voiceIx = 0; voiceIx < kSimVoices; ++voiceIx) {
                 SimCheckNear(seed, step, action,
                              "ui position=" + std::to_string(position) + " voice=" + std::to_string(voiceIx),
-                             expected.uiDisplayCenter[voiceIx],
+                             SimToUIPresentation(expected.uiDisplayCenter[voiceIx], expected.range),
                              actual.values[voiceIx].load());
+                const float expectedSpread = expected.switchValues > 1
+                                                 ? 0.0f
+                                                 : SimToUISpreadPresentation(
+                                                       std::sqrt(std::max(0.0f, expected.uiDisplaySpreadEnergy[voiceIx])),
+                                                       expected.range);
                 SimCheckNear(seed, step, action,
                              "ui position=" + std::to_string(position) + " spread=" + std::to_string(voiceIx),
-                             expected.switchValues > 1
-                                 ? 0.0f
-                                 : std::sqrt(std::max(0.0f, expected.uiDisplaySpreadEnergy[voiceIx])),
+                             expectedSpread,
                              actual.spreadValues[voiceIx].load());
                 SimCheckNear(seed, step, action,
                              "ui position=" + std::to_string(position) + " min=" + std::to_string(voiceIx),
-                             expected.currentMinValue[voiceIx], actual.minValues[voiceIx].load());
+                             SimToUIPresentation(expected.currentMinValue[voiceIx], expected.range),
+                             actual.minValues[voiceIx].load());
                 SimCheckNear(seed, step, action,
                              "ui position=" + std::to_string(position) + " max=" + std::to_string(voiceIx),
-                             expected.currentMaxValue[voiceIx], actual.maxValues[voiceIx].load());
+                             SimToUIPresentation(expected.currentMaxValue[voiceIx], expected.range),
+                             actual.maxValues[voiceIx].load());
                 const std::size_t expectedSwitchValue = SimSwitchVal(oracle, paramIx, voiceIx);
                 if (actual.switchValue[voiceIx].load() != expectedSwitchValue) {
                     SimFailBool(seed, step, action,
@@ -6879,7 +6994,7 @@ void SimInitializeOracle(SimOracle& oracle) {
     oracle.resetHeld = false;
     oracle.randomHeld = false;
     oracle.randomModHeld = false;
-    const std::array<float, kSimParams> defaults{0.35f, 0.1f, -0.2f};
+    const std::array<float, kSimParams> defaults{0.35f, 0.55f, 0.4f};
     const std::array<synth::RangeKind, kSimParams> ranges{
         synth::RangeKind::Unipolar,
         synth::RangeKind::Bipolar,
@@ -7030,11 +7145,11 @@ TEST_CASE(randomized_parameter_modulation_simulation) {
             .switchValues = 5,
         });
         auto& depthA = manager.CreateParameter(
-            group, {.name = "DepthA", .defaultValue = 0.1f, .range = synth::RangeKind::Bipolar});
+            group, {.name = "DepthA", .defaultValue = 0.55f, .range = synth::RangeKind::Bipolar});
         auto& depthB = manager.CreateParameter(
             group, {
                 .name = "DepthB",
-                .defaultValue = -0.2f,
+                .defaultValue = 0.4f,
                 .range = synth::RangeKind::Bipolar,
                 .switchValues = 3,
             });
@@ -7079,7 +7194,6 @@ TEST_CASE(randomized_parameter_modulation_simulation) {
         const std::array<synth::Bank*, 2> banks{&bankA, &bankB};
         std::mt19937 rng(seed);
         std::uniform_real_distribution<float> deltaDist(-0.18f, 0.18f);
-        std::uniform_real_distribution<float> bipolarDist(-1.0f, 1.0f);
         std::uniform_real_distribution<float> unipolarDist(0.0f, 1.0f);
         const std::array<synth::PhysicalEncoderId, 6> encoders{10, 11, 12, 20, 21, 99};
         SimRandomSamples randomSamples;
@@ -7262,7 +7376,7 @@ TEST_CASE(randomized_parameter_modulation_simulation) {
             case 15: {
                 const std::size_t voiceIx = rng() % kSimVoices;
                 const std::size_t modIx = rng() % kSimMods;
-                const float value = bipolarDist(rng);
+                const float value = unipolarDist(rng);
                 action = "change modulator";
                 group.GetModulators().Value(voiceIx, modIx) = value;
                 oracle.modulatorValue[voiceIx][modIx] = value;
@@ -7329,11 +7443,11 @@ TEST_CASE(randomized_message_bus_ui_state_simulation) {
             .switchValues = 5,
         });
         auto& depthA = manager.CreateParameter(
-            group, {.name = "DepthA", .defaultValue = 0.1f, .range = synth::RangeKind::Bipolar});
+            group, {.name = "DepthA", .defaultValue = 0.55f, .range = synth::RangeKind::Bipolar});
         auto& depthB = manager.CreateParameter(
             group, {
                 .name = "DepthB",
-                .defaultValue = -0.2f,
+                .defaultValue = 0.4f,
                 .range = synth::RangeKind::Bipolar,
                 .switchValues = 3,
             });
@@ -7379,7 +7493,6 @@ TEST_CASE(randomized_message_bus_ui_state_simulation) {
         const std::array<synth::PhysicalEncoderId, 6> encoders{10, 11, 12, 20, 21, 99};
         std::mt19937 rng(seed ^ 0xB05u);
         std::uniform_real_distribution<float> deltaDist(-0.18f, 0.18f);
-        std::uniform_real_distribution<float> bipolarDist(-1.0f, 1.0f);
         std::uniform_real_distribution<float> unipolarDist(0.0f, 1.0f);
         std::uint64_t timestamp = 1;
         SimRandomSamples randomSamples;
@@ -7604,7 +7717,7 @@ TEST_CASE(randomized_message_bus_ui_state_simulation) {
             case 16: {
                 const std::size_t voiceIx = rng() % kSimVoices;
                 const std::size_t modIx = rng() % kSimMods;
-                const float value = bipolarDist(rng);
+                const float value = unipolarDist(rng);
                 action = "change modulator";
                 group.GetModulators().Value(voiceIx, modIx) = value;
                 oracle.modulatorValue[voiceIx][modIx] = value;
@@ -7679,11 +7792,11 @@ TEST_CASE(randomized_patch_lifecycle_simulation) {
             .switchValues = 5,
         });
         auto& depthA = manager.CreateParameter(
-            group, {.name = "DepthA", .defaultValue = 0.1f, .range = synth::RangeKind::Bipolar});
+            group, {.name = "DepthA", .defaultValue = 0.55f, .range = synth::RangeKind::Bipolar});
         auto& depthB = manager.CreateParameter(
             group, {
                 .name = "DepthB",
-                .defaultValue = -0.2f,
+                .defaultValue = 0.4f,
                 .range = synth::RangeKind::Bipolar,
                 .switchValues = 3,
             });
@@ -7736,7 +7849,6 @@ TEST_CASE(randomized_patch_lifecycle_simulation) {
         std::optional<std::filesystem::path> expectedCurrentPatchDir;
         std::mt19937 rng(seed ^ 0x9A7C4u);
         std::uniform_real_distribution<float> deltaDist(-0.24f, 0.24f);
-        std::uniform_real_distribution<float> bipolarDist(-1.0f, 1.0f);
         std::uniform_real_distribution<float> unipolarDist(0.0f, 1.0f);
         int patchNameCounter = 0;
         int writeCounter = 0;
@@ -7878,7 +7990,7 @@ TEST_CASE(randomized_patch_lifecycle_simulation) {
             case 11: {
                 const std::size_t voiceIx = rng() % kSimVoices;
                 const std::size_t modIx = rng() % kSimMods;
-                const float value = bipolarDist(rng);
+                const float value = unipolarDist(rng);
                 action = "patch modulator";
                 group.GetModulators().Value(voiceIx, modIx) = value;
                 oracle.modulatorValue[voiceIx][modIx] = value;
@@ -8056,15 +8168,15 @@ TEST_CASE(randomized_patch_lifecycle_preserves_recursive_local_modulation_depths
         });
         auto& cutoff = manager.CreateParameter(group, {.name = "Cutoff", .defaultValue = 0.35f});
         auto& resonance = manager.CreateParameter(
-            group, {.name = "Resonance", .defaultValue = 0.1f, .range = synth::RangeKind::Bipolar});
+            group, {.name = "Resonance", .defaultValue = 0.55f, .range = synth::RangeKind::Bipolar});
         auto& cutoffLfo = cutoff.EnsureModulationDepth(
-            0, {.name = "Cutoff LFO", .defaultValue = 0.0f, .range = synth::RangeKind::Bipolar});
+            0, {.name = "Cutoff LFO", .defaultValue = 0.5f, .range = synth::RangeKind::Bipolar});
         auto& cutoffEnv = cutoff.EnsureModulationDepth(
-            1, {.name = "Cutoff Env", .defaultValue = 0.0f, .range = synth::RangeKind::Bipolar});
+            1, {.name = "Cutoff Env", .defaultValue = 0.5f, .range = synth::RangeKind::Bipolar});
         auto& lfoCurve = cutoffLfo.EnsureModulationDepth(
-            2, {.name = "Cutoff LFO Curve", .defaultValue = 0.0f, .range = synth::RangeKind::Bipolar});
+            2, {.name = "Cutoff LFO Curve", .defaultValue = 0.5f, .range = synth::RangeKind::Bipolar});
         auto& resonanceLfo = resonance.EnsureModulationDepth(
-            0, {.name = "Resonance LFO", .defaultValue = 0.0f, .range = synth::RangeKind::Bipolar});
+            0, {.name = "Resonance LFO", .defaultValue = 0.5f, .range = synth::RangeKind::Bipolar});
         REQUIRE_TRUE(manager.SetSceneEndpoints(0, 1));
         manager.SetSceneBlend(0.25f);
         manager.CaptureDefaultControlState();
@@ -8089,7 +8201,6 @@ TEST_CASE(randomized_patch_lifecycle_preserves_recursive_local_modulation_depths
         std::vector<std::pair<std::filesystem::path, RecursivePatchSnapshot>> savedVersions;
         std::optional<std::filesystem::path> expectedCurrentPatchDir;
         std::mt19937 rng(seed ^ 0xD33F5u);
-        std::uniform_real_distribution<float> bipolarDist(-1.0f, 1.0f);
         std::uniform_real_distribution<float> unipolarDist(0.0f, 1.0f);
         int patchNameCounter = 0;
         int writeCounter = 0;
@@ -8143,7 +8254,7 @@ TEST_CASE(randomized_patch_lifecycle_preserves_recursive_local_modulation_depths
             case 2: {
                 const std::size_t paramIx = rng() % tracked.size();
                 const std::size_t sceneIx = rng() % kSimScenes;
-                const float value = paramIx < 2 ? unipolarDist(rng) : bipolarDist(rng);
+                const float value = unipolarDist(rng);
                 action = "recursive set scene";
                 tracked[paramIx]->SceneCenter(sceneIx) = value;
                 expected.values[paramIx].sceneCenter[sceneIx] = value;
@@ -8154,7 +8265,7 @@ TEST_CASE(randomized_patch_lifecycle_preserves_recursive_local_modulation_depths
                 const std::size_t paramIx = rng() % tracked.size();
                 const std::size_t sceneIx = rng() % kSimScenes;
                 const std::size_t gestureIx = rng() % kSimGestures;
-                const float value = paramIx < 2 ? unipolarDist(rng) : bipolarDist(rng);
+                const float value = unipolarDist(rng);
                 action = "recursive set gesture value";
                 tracked[paramIx]->GestureValue(sceneIx, gestureIx) = value;
                 expected.values[paramIx].gestureValue[sceneIx][gestureIx] = value;
@@ -8282,7 +8393,7 @@ TEST_CASE(randomized_recursive_modulation_ui_tree_round_trips_into_fresh_initial
         if (path == "1") {
             return 0.5f;
         }
-        return 0.0f;
+        return 0.5f;
     };
 
     auto parameterHasPersistedState = [&](auto& self, const synth::Parameter& parameter,
@@ -8499,9 +8610,9 @@ TEST_CASE(randomized_recursive_modulation_ui_tree_round_trips_into_fresh_initial
         REQUIRE_TRUE(shapeEnv != nullptr);
         rig.phase->SceneCenter(0) = 0.93f;
         phaseSweep->SceneCenter(0) = 0.81f;
-        phaseSweep->GestureValue(1, 0) = -0.47f;
+        phaseSweep->GestureValue(1, 0) = 0.265f;
         phaseSweep->SetGestureActive(1, 0, true);
-        phaseSweepLfo->SceneCenter(0) = -0.62f;
+        phaseSweepLfo->SceneCenter(0) = 0.19f;
         shapeEnv->SceneCenter(1) = 0.58f;
         rig.manager.ComputeAllParameters();
     };
@@ -8712,13 +8823,13 @@ TEST_CASE(parameter_values_json_materializes_saved_recursive_mod_depths_from_cod
     };
     auto& sourcePhase = source.CreateParameter(sourceGroup, {.name = "Osc Phase", .defaultValue = 0.25f});
     auto& sourceSweepDepth = sourcePhase.EnsureModulationDepth(
-        0, {.name = "Osc Phase Sweep", .shortName = "Swp", .defaultValue = 0.0f, .range = synth::RangeKind::Bipolar});
+        0, {.name = "Osc Phase Sweep", .shortName = "Swp", .defaultValue = 0.5f, .range = synth::RangeKind::Bipolar});
     auto& sourceNestedLfoDepth = sourceSweepDepth.EnsureModulationDepth(
-        2, {.name = "Osc Phase Sweep LFO", .shortName = "LFO", .defaultValue = 0.0f, .range = synth::RangeKind::Bipolar});
+        2, {.name = "Osc Phase Sweep LFO", .shortName = "LFO", .defaultValue = 0.5f, .range = synth::RangeKind::Bipolar});
     sourceSweepDepth.SceneCenter(0) = 0.45f;
-    sourceSweepDepth.SceneCenter(1) = -0.25f;
+    sourceSweepDepth.SceneCenter(1) = 0.375f;
     sourceNestedLfoDepth.SceneCenter(0) = 0.72f;
-    sourceNestedLfoDepth.GestureValue(1, 0) = -0.33f;
+    sourceNestedLfoDepth.GestureValue(1, 0) = 0.335f;
     sourceNestedLfoDepth.SetGestureActive(1, 0, true);
 
     synth::JsonArena arena(65536);
@@ -8747,9 +8858,9 @@ TEST_CASE(parameter_values_json_materializes_saved_recursive_mod_depths_from_cod
     REQUIRE_TRUE(targetSweepDepth->Name() == "Osc Phase Sweep");
     REQUIRE_TRUE(targetNestedLfoDepth->Name() == "Osc Phase Sweep LFO");
     REQUIRE_NEAR(targetSweepDepth->SceneCenter(0), 0.45f, 0.000001f);
-    REQUIRE_NEAR(targetSweepDepth->SceneCenter(1), -0.25f, 0.000001f);
+    REQUIRE_NEAR(targetSweepDepth->SceneCenter(1), 0.375f, 0.000001f);
     REQUIRE_NEAR(targetNestedLfoDepth->SceneCenter(0), 0.72f, 0.000001f);
-    REQUIRE_NEAR(targetNestedLfoDepth->GestureValue(1, 0), -0.33f, 0.000001f);
+    REQUIRE_NEAR(targetNestedLfoDepth->GestureValue(1, 0), 0.335f, 0.000001f);
     REQUIRE_TRUE(targetNestedLfoDepth->GestureActive(1, 0));
     synth::Parameter::UIState sweepDepthUI(1);
     targetSweepDepth->PopulateUIState(sweepDepthUI);
@@ -8786,24 +8897,24 @@ TEST_CASE(parameter_values_json_load_resets_dirty_lazy_modulation_branches_befor
     REQUIRE_TRUE(clean.Get("Osc Phase").Get("modDepths").Get("0").IsNull());
 
     auto& sweepDepth = phase.EnsureModulationDepth(
-        0, {.name = "Osc Phase Sweep", .shortName = "Swp", .defaultValue = 0.0f, .range = synth::RangeKind::Bipolar});
+        0, {.name = "Osc Phase Sweep", .shortName = "Swp", .defaultValue = 0.5f, .range = synth::RangeKind::Bipolar});
     auto& nestedLfoDepth = sweepDepth.EnsureModulationDepth(
-        2, {.name = "Osc Phase Sweep LFO", .shortName = "LFO", .defaultValue = 0.0f,
+        2, {.name = "Osc Phase Sweep LFO", .shortName = "LFO", .defaultValue = 0.5f,
             .range = synth::RangeKind::Bipolar});
     phase.SceneCenter(0) = 0.91f;
     sweepDepth.SceneCenter(0) = 0.77f;
     sweepDepth.SetGestureActive(1, 0, true);
-    sweepDepth.GestureValue(1, 0) = -0.44f;
-    nestedLfoDepth.SceneCenter(0) = -0.66f;
+    sweepDepth.GestureValue(1, 0) = 0.28f;
+    nestedLfoDepth.SceneCenter(0) = 0.17f;
 
     REQUIRE_TRUE(manager.LoadParameterValuesFromJSON(clean));
 
     REQUIRE_NEAR(phase.SceneCenter(0), 0.25f, 0.000001f);
-    REQUIRE_NEAR(sweepDepth.SceneCenter(0), 0.0f, 0.000001f);
-    REQUIRE_NEAR(sweepDepth.SceneCenter(1), 0.0f, 0.000001f);
+    REQUIRE_NEAR(sweepDepth.SceneCenter(0), 0.5f, 0.000001f);
+    REQUIRE_NEAR(sweepDepth.SceneCenter(1), 0.5f, 0.000001f);
     REQUIRE_TRUE(!sweepDepth.GestureActive(1, 0));
-    REQUIRE_NEAR(sweepDepth.GestureValue(1, 0), 0.0f, 0.000001f);
-    REQUIRE_NEAR(nestedLfoDepth.SceneCenter(0), 0.0f, 0.000001f);
+    REQUIRE_NEAR(sweepDepth.GestureValue(1, 0), 0.5f, 0.000001f);
+    REQUIRE_NEAR(nestedLfoDepth.SceneCenter(0), 0.5f, 0.000001f);
 
     synth::JsonArena afterLoadArena(65536);
     synth::JSON afterLoad = manager.ParameterValuesToJSON(afterLoadArena);
@@ -9693,7 +9804,7 @@ TEST_CASE(patch_file_round_trips_real_patch_json_through_latest_version) {
         .maxParameters = 2,
     });
     auto& cutoff = source.CreateParameter(sourceGroup, {.name = "Cutoff", .defaultValue = 0.2f});
-    auto& depth = cutoff.EnsureModulationDepth(0, {.name = "Cutoff LFO", .defaultValue = 0.0f});
+    auto& depth = cutoff.EnsureModulationDepth(0, {.name = "Cutoff LFO", .defaultValue = 0.5f});
     cutoff.SceneCenter(0) = 0.61f;
     cutoff.GestureValue(1, 0) = 0.72f;
     cutoff.SetGestureActive(1, 0, true);
@@ -9953,7 +10064,7 @@ TEST_CASE(revert_all_to_defaults_resets_values_controls_and_existing_depths_only
         .maxParameters = 2,
     });
     auto& cutoff = manager.CreateParameter(group, {.name = "Cutoff", .defaultValue = 0.25f});
-    auto& depth = cutoff.EnsureModulationDepth(0, {.name = "Cutoff LFO", .defaultValue = 0.0f});
+    auto& depth = cutoff.EnsureModulationDepth(0, {.name = "Cutoff LFO", .defaultValue = 0.5f});
     manager.SetSceneEndpoints(0, 1);
     manager.SetSceneBlend(0.35f);
     manager.SetGestureValue(0, 0.4f);
@@ -9975,8 +10086,8 @@ TEST_CASE(revert_all_to_defaults_resets_values_controls_and_existing_depths_only
     REQUIRE_NEAR(cutoff.SceneCenter(1), 0.25f, 0.000001f);
     REQUIRE_NEAR(cutoff.GestureValue(1, 0), 0.25f, 0.000001f);
     REQUIRE_TRUE(!cutoff.GestureActive(1, 0));
-    REQUIRE_NEAR(depth.SceneCenter(0), 0.0f, 0.000001f);
-    REQUIRE_NEAR(depth.GestureValue(1, 0), 0.0f, 0.000001f);
+    REQUIRE_NEAR(depth.SceneCenter(0), 0.5f, 0.000001f);
+    REQUIRE_NEAR(depth.GestureValue(1, 0), 0.5f, 0.000001f);
     REQUIRE_TRUE(cutoff.ModulationDepthParameter(1) == nullptr);
     REQUIRE_TRUE(manager.ParameterCount() == 1);
     REQUIRE_TRUE(manager.Scene().leftScene == 0);

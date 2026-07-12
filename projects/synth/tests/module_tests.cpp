@@ -484,7 +484,7 @@ TEST_CASE(basic_lfo_registers_parameters_in_visible_order_and_rejects_repeat_reg
     REQUIRE_TRUE(manager.ParameterById(ids.skew).Name() == "LFO Skew");
     REQUIRE_TRUE(manager.ParameterById(ids.exponent).Name() == "LFO Exponent");
     REQUIRE_TRUE(manager.ParameterById(ids.exponent).Range() == synth::RangeKind::Bipolar);
-    REQUIRE_NEAR(manager.ParameterById(ids.exponent).SceneCenter(0), 0.0f, 0.0001f);
+    REQUIRE_NEAR(manager.ParameterById(ids.exponent).SceneCenter(0), 0.5f, 0.0001f);
 
     bool threw = false;
     try {
@@ -571,7 +571,7 @@ TEST_CASE(basic_lfo_set_input_maps_parameters_and_phase_stagger_to_natural_units
     SetAndSettle(manager, ids.shape, 0.25f);
     SetAndSettle(manager, ids.phaseOffset, 0.0f);
     SetAndSettle(manager, ids.skew, 0.75f);
-    SetAndSettle(manager, ids.exponent, 0.0f);
+    SetAndSettle(manager, ids.exponent, 0.5f);
     module.SetInput(manager);
 
     REQUIRE_NEAR(static_cast<float>(module.CurrentInput().voices[0].lfo.frequency), 0.1f / 1000.0f, 0.000001f);
@@ -581,7 +581,7 @@ TEST_CASE(basic_lfo_set_input_maps_parameters_and_phase_stagger_to_natural_units
     REQUIRE_NEAR(module.CurrentInput().voices[0].lfo.shape.skew, 0.75f, 0.0001f);
     REQUIRE_NEAR(module.CurrentInput().voices[0].lfo.shape.exponent, 1.0f, 0.0001f);
 
-    SetAndSettle(manager, ids.exponent, -1.0f);
+    SetAndSettle(manager, ids.exponent, 0.0f);
     module.SetInput(manager);
     REQUIRE_NEAR(module.CurrentInput().voices[0].lfo.shape.exponent, 0.2f, 0.0001f);
 
@@ -714,7 +714,7 @@ TEST_CASE(classic_svf_registers_parameters_in_visible_order_and_rejects_repeat_r
     REQUIRE_TRUE(manager.ParameterById(ids.blend).Range() == synth::RangeKind::Bipolar);
     REQUIRE_NEAR(manager.ParameterById(ids.cutoff).SceneCenter(0), 1.0f, 0.0001f);
     REQUIRE_NEAR(manager.ParameterById(ids.resonance).SceneCenter(0), 0.0f, 0.0001f);
-    REQUIRE_NEAR(manager.ParameterById(ids.blend).SceneCenter(0), -1.0f, 0.0001f);
+    REQUIRE_NEAR(manager.ParameterById(ids.blend).SceneCenter(0), 0.0f, 0.0001f);
 
     bool threw = false;
     try {
@@ -813,14 +813,14 @@ TEST_CASE(classic_svf_set_input_maps_parameters_to_filter_natural_units) {
 
     SetAndSettle(manager, ids.cutoff, 0.0f);
     SetAndSettle(manager, ids.resonance, 0.0f);
-    SetAndSettle(manager, ids.blend, -1.0f);
+    SetAndSettle(manager, ids.blend, 0.0f);
     module.SetInput(manager);
 
     REQUIRE_NEAR(module.CurrentInput().voices[0].filter.cutoff, 20.0f / 48000.0f, 0.000001f);
     REQUIRE_NEAR(module.CurrentInput().voices[0].filter.resonance, 0.5f, 0.0001f);
     REQUIRE_NEAR(module.CurrentInput().voices[0].filter.blend, -1.0f, 0.0001f);
 
-    SetAndSettle(manager, ids.blend, 0.0f);
+    SetAndSettle(manager, ids.blend, 0.5f);
     module.SetInput(manager);
     REQUIRE_NEAR(module.CurrentInput().voices[0].filter.blend, 0.0f, 0.0001f);
 
@@ -943,7 +943,7 @@ TEST_CASE(bipolar_matrix_registers_row_major_identity_parameters_and_bank_cells)
     REQUIRE_NEAR(manager.ParameterById(ids[5]).SceneCenter(0), 1.0f, 0.0001f);
     REQUIRE_NEAR(manager.ParameterById(ids[10]).SceneCenter(0), 1.0f, 0.0001f);
     REQUIRE_NEAR(manager.ParameterById(ids[15]).SceneCenter(0), 1.0f, 0.0001f);
-    REQUIRE_NEAR(manager.ParameterById(ids[1]).SceneCenter(0), 0.0f, 0.0001f);
+    REQUIRE_NEAR(manager.ParameterById(ids[1]).SceneCenter(0), 0.5f, 0.0001f);
 
     auto& bank = manager.CreateBank();
     auto& slot = manager.CreateBankSlot();
@@ -997,9 +997,9 @@ TEST_CASE(bipolar_matrix_maps_bipolar_anchors_cross_routes_unclamped_sums_and_st
     module.RegisterParameters(manager, group, "Matrix");
     const auto ids = module.Parameters();
 
-    SetAndSettle(manager, ids[0], -1.0f);
-    SetAndSettle(manager, ids[1], -0.5f);
-    SetAndSettle(manager, ids[2], 0.5f);
+    SetAndSettle(manager, ids[0], 0.0f);
+    SetAndSettle(manager, ids[1], 0.25f);
+    SetAndSettle(manager, ids[2], 0.75f);
     SetAndSettle(manager, ids[3], 1.0f);
     module.SetInput(manager);
     REQUIRE_NEAR(module.Gain(0, 0), -1.0f, 0.0001f);
@@ -1124,7 +1124,7 @@ TEST_CASE(braid_vco_registers_three_group_shapes_two_scenes_fourteen_red_paramet
     REQUIRE_NEAR(manager.ParameterById(ids.x).SceneCenter(1), 0.5f, 0.0001f);
     REQUIRE_NEAR(manager.ParameterById(ids.y).SceneCenter(1), 0.5f, 0.0001f);
     REQUIRE_NEAR(manager.ParameterById(ids.quad.tune).SceneCenter(1), 0.5f, 0.0001f);
-    REQUIRE_NEAR(manager.ParameterById(ids.quad.phase).SceneCenter(1), 0.0f, 0.0001f);
+    REQUIRE_NEAR(manager.ParameterById(ids.quad.phase).SceneCenter(1), 0.5f, 0.0001f);
     REQUIRE_NEAR(manager.ParameterById(ids.quad.shape).SceneCenter(1), 0.0f, 0.0001f);
     REQUIRE_NEAR(manager.ParameterById(ids.quad.gain).SceneCenter(1), 1.0f, 0.0001f);
     REQUIRE_NEAR(manager.ParameterById(ids.pmIndex[0]).SceneCenter(1), 0.0f, 0.0001f);
@@ -1259,9 +1259,9 @@ TEST_CASE(braid_vco_maps_all_parameter_ranges_to_natural_vco_inputs) {
     SetAndSettle(manager, ids.x, 0.25f);
     SetAndSettle(manager, ids.y, 0.75f);
     SetAndSettle(manager, ids.quad.tune, 0.5f);
-    SetAndSettle(manager, ids.quad.phase, 0.5f);
+    SetAndSettle(manager, ids.quad.phase, 0.75f);
     SetAndSettle(manager, ids.quad.shape, 0.25f);
-    SetAndSettle(manager, ids.quad.gain, -0.5f);
+    SetAndSettle(manager, ids.quad.gain, 0.25f);
     SetAndSettle(manager, ids.pmIndex[0], 0.5f);
     SetAndSettle(manager, ids.frequency[0], 0.0f);
     SetAndSettle(manager, ids.frequency[1], 0.0f);
@@ -1286,7 +1286,7 @@ TEST_CASE(braid_vco_maps_all_parameter_ranges_to_natural_vco_inputs) {
     REQUIRE_NEAR(module.CurrentInput().oscillators[0].vco.maxFreq, 0.5f, 0.0001f);
 
     SetAndSettle(manager, ids.quad.tune, 0.0f);
-    SetAndSettle(manager, ids.quad.phase, -1.0f);
+    SetAndSettle(manager, ids.quad.phase, 0.0f);
     SetAndSettle(manager, ids.quad.shape, 1.0f);
     SetAndSettle(manager, ids.quad.gain, 1.0f);
     SetAndSettle(manager, ids.pmIndex[0], 1.0f);

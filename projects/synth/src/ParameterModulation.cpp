@@ -60,8 +60,8 @@ bool OutsideRange(float value, RangeKind range) {
     return ClampToRange(value, range) != value;
 }
 
-float RangeMin(RangeKind range) {
-    return range == RangeKind::Bipolar ? -1.0f : 0.0f;
+float RangeMin(RangeKind) {
+    return 0.0f;
 }
 
 float RangeMax(RangeKind) {
@@ -82,6 +82,18 @@ float ExponentialMap(float minValue, float maxValue, float normalized) {
 float ZeroBasedExponentialMapFromMidpoint(float maxValue, float midpointValue, float normalized) {
     const float base = ZeroBasedExponentialBaseFromMidpoint(midpointValue, maxValue);
     return ZeroBasedExponentialMap(normalized, base, maxValue);
+}
+
+float ToBipolarPresentation(float normalized) {
+    return 2.0f * std::clamp(normalized, 0.0f, 1.0f) - 1.0f;
+}
+
+float ToUIPresentation(float normalized, RangeKind range) {
+    return range == RangeKind::Bipolar ? ToBipolarPresentation(normalized) : normalized;
+}
+
+float ToUISpreadPresentation(float normalizedSpread, RangeKind range) {
+    return range == RangeKind::Bipolar ? 2.0f * normalizedSpread : normalizedSpread;
 }
 
 ParameterConfig ResolveParameterAppearance(ParameterConfig config, std::size_t numVoices) {
@@ -177,9 +189,7 @@ std::size_t ConvertSampleInterval(std::size_t referenceInterval, double referenc
 }
 
 float ClampToRange(float value, RangeKind range) {
-    if (range == RangeKind::Bipolar) {
-        return std::clamp(value, -1.0f, 1.0f);
-    }
+    (void)range;
     return std::clamp(value, 0.0f, 1.0f);
 }
 
@@ -751,9 +761,6 @@ std::size_t Parameter::GetSwitchVal(std::size_t voiceIx) const {
     }
 
     float normalized = TargetValue(voiceIx);
-    if (config_.range == RangeKind::Bipolar) {
-        normalized = (normalized + 1.0f) * 0.5f;
-    }
     normalized = std::clamp(normalized, 0.0f, 1.0f);
     const double maxBucket = static_cast<double>(config_.switchValues - 1);
     const double rounded = std::round(static_cast<double>(normalized) * maxBucket);
@@ -771,10 +778,15 @@ void Parameter::PopulateUIState(UIState& state) const {
     state.shortName.store(config_.shortName.c_str(), std::memory_order_relaxed);
     state.voiceCount.store(voices, std::memory_order_relaxed);
     for (std::size_t voiceIx = 0; voiceIx < voices; ++voiceIx) {
-        state.values[voiceIx].store(UIDisplayCenter(voiceIx), std::memory_order_relaxed);
-        state.spreadValues[voiceIx].store(IsSwitch() ? 0.0f : UIDisplaySpread(voiceIx), std::memory_order_relaxed);
-        state.minValues[voiceIx].store(currentMinValues_[voiceIx], std::memory_order_relaxed);
-        state.maxValues[voiceIx].store(currentMaxValues_[voiceIx], std::memory_order_relaxed);
+        state.values[voiceIx].store(ToUIPresentation(UIDisplayCenter(voiceIx), config_.range),
+                                    std::memory_order_relaxed);
+        state.spreadValues[voiceIx].store(
+            IsSwitch() ? 0.0f : ToUISpreadPresentation(UIDisplaySpread(voiceIx), config_.range),
+            std::memory_order_relaxed);
+        state.minValues[voiceIx].store(ToUIPresentation(currentMinValues_[voiceIx], config_.range),
+                                       std::memory_order_relaxed);
+        state.maxValues[voiceIx].store(ToUIPresentation(currentMaxValues_[voiceIx], config_.range),
+                                       std::memory_order_relaxed);
         state.switchValue[voiceIx].store(GetSwitchVal(voiceIx), std::memory_order_relaxed);
         state.indicatorColors[voiceIx].Store(config_.indicatorColors[voiceIx]);
     }
@@ -1173,7 +1185,7 @@ ParameterConfig Parameter::ModulationDepthConfig(std::size_t modIx) const {
                     ? Name() + " Mod Depth " + std::to_string(modIx + 1)
                     : Name() + " " + modulator.name,
         .shortName = modulator.shortName.empty() ? ShortName() : modulator.shortName,
-        .defaultValue = 0.0f,
+        .defaultValue = 0.5f,
         .range = RangeKind::Bipolar,
         .baseColor = modulator.sourceColor,
         .indicatorColors = config_.indicatorColors,
@@ -1331,7 +1343,7 @@ void Parameter::ResetModulationDepthToNeutral(const SceneState& scene) {
         }
     }
 
-    constexpr float neutralDepth = 0.0f;
+    constexpr float neutralDepth = 0.5f;
     const float blend = std::clamp(scene.blend, 0.0f, 1.0f);
     if (blend <= 0.0f) {
         ResetSceneToDefault(scene.leftScene, neutralDepth);
@@ -1354,8 +1366,8 @@ void Parameter::ResetModulationDepthToNeutral(const SceneState& scene) {
     std::fill(targetMinValues_.begin(), targetMinValues_.end(), neutralDepth);
     std::fill(currentMaxValues_.begin(), currentMaxValues_.end(), neutralDepth);
     std::fill(targetMaxValues_.begin(), targetMaxValues_.end(), neutralDepth);
-    std::fill(currentDepths_.begin(), currentDepths_.end(), neutralDepth);
-    std::fill(targetDepths_.begin(), targetDepths_.end(), neutralDepth);
+    std::fill(currentDepths_.begin(), currentDepths_.end(), 0.0f);
+    std::fill(targetDepths_.begin(), targetDepths_.end(), 0.0f);
     SeedCachedKnobAndUiDisplayState();
 }
 
@@ -1515,12 +1527,14 @@ std::uint32_t Parameter::ModulatorsAffectingMask() const {
 
 bool Parameter::HasNonZeroState() const {
     constexpr float tolerance = 0.000001f;
+    constexpr float neutralDepthCenter = 0.5f;
 
-    if (std::fabs(currentCenter_) > tolerance || std::fabs(targetCenter_) > tolerance) {
+    if (std::fabs(currentCenter_ - neutralDepthCenter) > tolerance ||
+        std::fabs(targetCenter_ - neutralDepthCenter) > tolerance) {
         return true;
     }
     for (const float center : sceneCenters_) {
-        if (std::fabs(center) > tolerance) {
+        if (std::fabs(center - neutralDepthCenter) > tolerance) {
             return true;
         }
     }
@@ -2324,7 +2338,7 @@ float ParameterManager::GetBipolarLinear(float maxAbsValue, std::size_t voiceIx,
     if (parameter.Range() != RangeKind::Bipolar) {
         throw std::invalid_argument("bipolar mapping requires a bipolar parameter");
     }
-    const float bipolar = std::clamp(parameter.CachedKnobValue(voiceIx), -1.0f, 1.0f);
+    const float bipolar = ToBipolarPresentation(parameter.CachedKnobValue(voiceIx));
     return bipolar * maxAbsValue;
 }
 
@@ -2337,7 +2351,7 @@ float ParameterManager::GetBipolarExponential(float leftValue, float centerValue
     if (parameter.Range() != RangeKind::Bipolar) {
         throw std::invalid_argument("bipolar mapping requires a bipolar parameter");
     }
-    const float knob = std::clamp(parameter.CachedKnobValue(voiceIx), -1.0f, 1.0f);
+    const float knob = ToBipolarPresentation(parameter.CachedKnobValue(voiceIx));
     if (knob < 0.0f) {
         return centerValue * std::pow(leftValue / centerValue, -knob);
     }
@@ -2353,7 +2367,7 @@ float ParameterManager::GetBipolarZeroBasedExponential(float maxAbsValue, float 
     if (parameter.Range() != RangeKind::Bipolar) {
         throw std::invalid_argument("bipolar mapping requires a bipolar parameter");
     }
-    const float bipolar = std::clamp(parameter.CachedKnobValue(voiceIx), -1.0f, 1.0f);
+    const float bipolar = ToBipolarPresentation(parameter.CachedKnobValue(voiceIx));
     if (bipolar == 0.0f) {
         return 0.0f;
     }

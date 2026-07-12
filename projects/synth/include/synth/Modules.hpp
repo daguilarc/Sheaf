@@ -310,7 +310,7 @@ public:
                 parameterIds_[Index(row, column)] = manager.RegisterParameter(group, {
                                                                                          .name = names[Index(row, column)],
                                                                                          .shortName = MatrixShortName(row, column),
-                                                                                         .defaultValue = row == column ? 1.0f : 0.0f,
+                                                                                         .defaultValue = row == column ? 1.0f : 0.5f,
                                                                                          .range = RangeKind::Bipolar,
                                                                                          .baseColor = row == column ? diagonalColor_ : offDiagonalColor_,
                                                                                      });
@@ -542,7 +542,7 @@ public:
         parameterIds_.quad.phase = manager.RegisterParameter(quad, {
                                                                        .name = names[3],
                                                                        .shortName = "Phase",
-                                                                       .defaultValue = 0.0f,
+                                                                       .defaultValue = 0.5f,
                                                                        .range = RangeKind::Bipolar,
                                                                        .baseColor = options.parameterBaseColor,
                                                                        .indicatorColors = std::vector<Color>(options.indicatorColors.begin(),
@@ -984,7 +984,7 @@ public:
         parameterIds_.exponent = manager.RegisterParameter(group, {
                                                                       .name = names[4],
                                                                       .shortName = "Exp",
-                                                                      .defaultValue = 0.0f,
+                                                                      .defaultValue = 0.5f,
                                                                       .range = RangeKind::Bipolar,
                                                                       .baseColor = Color::Yellow,
                                                                       .indicatorColors = options.indicatorColors,
@@ -1211,7 +1211,7 @@ public:
         parameterIds_.blend = manager.RegisterParameter(group, {
                                                                    .name = names[2],
                                                                    .shortName = "Blend",
-                                                                   .defaultValue = -1.0f,
+                                                                   .defaultValue = 0.0f,
                                                                    .range = RangeKind::Bipolar,
                                                                    .baseColor = Color::Orange,
                                                                    .indicatorColors = options.indicatorColors,
