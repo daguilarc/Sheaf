@@ -21,8 +21,8 @@
 
 - [x] 4.1 Add MiniApp initialization and system tests requiring three address-stable visualizer instances, distinct VCO visualizer addresses for modulators `0` and `1`, shared stable VCO model inputs where appropriate, and an LFO-state visualizer for modulator `2`.
 - [x] 4.2 Construct and retain two MiniApp VCO visualizers and one LFO visualizer after the UI-state members they reference, then register their distinct pointers with the three modulation sources.
-- [ ] 4.3 Add Braid 4 initialization and portable-tree tests proving all stereo, quad, and mono modulator visualizer pointers remain null and modulation views remain encoder-only.
-- [ ] 4.4 Keep Braid 4 source registration explicitly on the null-default path without constructing visualizer instances.
+- [x] 4.3 Add Braid 4 initialization and portable-tree tests proving all stereo, quad, and mono modulator visualizer pointers remain null and modulation views remain encoder-only.
+- [x] 4.4 Keep Braid 4 source registration explicitly on the null-default path without constructing visualizer instances.
 
 ## 5. Verification and Documentation
 

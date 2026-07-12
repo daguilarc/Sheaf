@@ -755,6 +755,23 @@ TEST_CASE(braid4_modulation_view_remains_encoder_only_without_visualizers) {
     REQUIRE_TRUE(FindNodeById(tree, encoderId + ".visualizer") == nullptr);
 }
 
+TEST_CASE(braid4_modulator_visualizer_pointers_remain_null) {
+    synth_rig::SynthRig<synth_braid4::Braid4Core> rig(
+        64,
+        UseScratchRuntimeDataPaths("braid4_modulator_visualizer_pointers_remain_null"));
+    const synth::ParameterGroup* groups[] = {
+        rig.Engine().Application().StereoGroup(),
+        rig.Engine().Application().QuadGroup(),
+        rig.Engine().Application().MonoGroup(),
+    };
+    for (const synth::ParameterGroup* group : groups) {
+        REQUIRE_TRUE(group != nullptr);
+        REQUIRE_TRUE(group->Config().numModulators == 2);
+        REQUIRE_TRUE(group->GetModulators().Metadata(0).visualizer == nullptr);
+        REQUIRE_TRUE(group->GetModulators().Metadata(1).visualizer == nullptr);
+    }
+}
+
 TEST_CASE(matrix_sources_materialize_quad_modulator_values_for_four_voices) {
     synth_rig::SynthRig<synth_braid4::Braid4Core> rig(
         64,
