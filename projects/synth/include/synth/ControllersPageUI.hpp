@@ -371,18 +371,18 @@ inline std::optional<MidiMappingRowVM::Field> ParseFieldToken(const std::string&
     }
 }
 
-inline ui::Color EndpointStatusColor(MidiEndpointStatus status)
+inline Color EndpointStatusColor(MidiEndpointStatus status)
 {
     switch (status)
     {
         case MidiEndpointStatus::Online:
-            return ui::Color::Rgb(50, 205, 50);
+            return Color::Rgb(50, 205, 50);
         case MidiEndpointStatus::Offline:
-            return ui::Color::Rgb(220, 20, 60);
+            return Color::Rgb(220, 20, 60);
         case MidiEndpointStatus::Unconfigured:
             break;
     }
-    return ui::Color::Rgb(128, 128, 128);
+    return Color::Rgb(128, 128, 128);
 }
 
 inline std::vector<ui::ControlOption> BuildEndpointOptions(const std::vector<MidiDeviceInfoRef>& devices,

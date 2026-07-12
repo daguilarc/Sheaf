@@ -5,6 +5,7 @@
 #include <cmath>
 #include <limits>
 #include <string_view>
+#include <utility>
 
 namespace synth {
 
@@ -734,8 +735,7 @@ std::optional<MidiOutProcessor::CellSnapshot> MidiOutProcessor::LoadCellSnapshot
         snapshot.connected = state.connected.load(std::memory_order_relaxed);
         snapshot.bipolar = state.bipolar.load(std::memory_order_relaxed);
         snapshot.voiceCount = std::min(state.voiceCount.load(std::memory_order_relaxed), state.voiceCapacity);
-        snapshot.color = state.color.Load(std::memory_order_relaxed);
-        snapshot.brightness = state.brightness.load(std::memory_order_relaxed);
+        snapshot.baseColor = state.baseColor.Load(std::memory_order_relaxed);
         if (snapshot.voiceCount > 0) {
             snapshot.value = state.values[0].load(std::memory_order_relaxed);
             snapshot.indicatorColor = state.indicatorColors[0].Load(std::memory_order_relaxed);
@@ -773,11 +773,11 @@ void TwisterMidiOutProcessor::Process() {
         }
         const bool blank = !snapshot->connected || snapshot->voiceCount == 0;
         const std::uint8_t value = blank ? 0 : FloatTo7Bit(NormalizeForDisplay(snapshot->value, snapshot->bipolar));
-        const std::uint8_t color = blank ? 0 : ColorToTwister(snapshot->color);
-        const std::uint8_t brightness = TwisterRgbBrightnessValue(blank ? 0.0f : snapshot->brightness);
+        const std::uint8_t color = blank ? 0 : ColorToTwister(snapshot->baseColor);
+        const std::uint8_t brightness = TwisterRgbBrightnessValue(blank ? 0.0f : 1.0f);
         // Twister uses channel 4 for the indicator/ring position, mirroring the value ring.
         const std::uint8_t indicatorValue = value;
-        const std::uint8_t indicatorBrightness = TwisterIndicatorBrightnessValue(blank ? 0.0f : snapshot->brightness);
+        const std::uint8_t indicatorBrightness = TwisterIndicatorBrightnessValue(blank ? 0.0f : 1.0f);
         CacheEntry& cache = cache_[ix];
         if (!cache.valid || cache.color != color) {
             Enqueue(BasicMidi::CC(0, 1, mapping.cc, color));
@@ -823,7 +823,7 @@ void WrldBldrMidiOutProcessor::Process() {
 
         const bool blank = !snapshot->connected || snapshot->voiceCount == 0;
         const std::uint8_t value = blank ? 0 : FloatTo7Bit(NormalizeForDisplay(snapshot->value, snapshot->bipolar));
-        const Color buttonColor = blank ? Color::Off : snapshot->color.AdjustBrightness(snapshot->brightness);
+        const Color buttonColor = blank ? Color::Off : snapshot->baseColor;
         const Color indicatorColor = blank ? Color::Off : snapshot->indicatorColor;
         CacheEntry& cache = cache_[ix];
         if (!cache.valid || cache.value != value) {
@@ -871,7 +871,7 @@ SystemMessageOutputState SystemMessageOutputInfo::Evaluate(const MessageIn& mess
             return {};
         }
         const bool selected = bank.selected.load(std::memory_order_relaxed);
-        const Color color = bank.color.Load(std::memory_order_relaxed);
+        const Color color = bank.bankColor.Load(std::memory_order_relaxed);
         return {.color = selected ? color : color.AdjustBrightness(0.35f), .isOn = selected};
     }
     case MessageIn::Type::ToggleReset: {
@@ -941,7 +941,7 @@ Color SystemMessageOutputInfo::GestureColor(std::size_t gestureIx) const {
             continue;
         }
         if (uiState_->banks[bankIx].connected.load(std::memory_order_relaxed)) {
-            return uiState_->banks[bankIx].color.Load(std::memory_order_relaxed);
+            return uiState_->banks[bankIx].bankColor.Load(std::memory_order_relaxed);
         }
     }
     return Color::Grey.AdjustBrightness(0.5f);
@@ -1780,6 +1780,20 @@ MidiControllerProfileConfig WrldBldrDefaultProfileConfig(WrldBldrDefaultProfileO
     return config;
 }
 
+MidiControllerSlot WrldBldrDefaultControllerSlot(std::string name, WrldBldrDefaultProfileOptions options) {
+    MidiControllerSlot slot;
+    slot.name = std::move(name);
+    slot.kind = MidiProfileKind::WrldBldr;
+    slot.config = WrldBldrDefaultProfileConfig(options);
+    return slot;
+}
+
+MidiInstrumentConfig DefaultMidiInstrumentConfig() {
+    MidiInstrumentConfig instrument;
+    instrument.AddController(WrldBldrDefaultControllerSlot());
+    return instrument;
+}
+
 MidiControllerProfileResult CreateWrldBldrDefaultProfile(
     WrldBldrDefaultProfileOptions options, MessageInBus* bus, MidiSender* sender,
     ParameterManager::UIState* uiState, MidiInProcessor::TimestampProvider timestampProvider) {
@@ -2144,11 +2158,11 @@ std::uint8_t ColorToTwister(Color color) {
         return static_cast<std::uint8_t>(std::clamp(code, 1, 126));
     };
 
-    const HSV hsv = ToHSV(color);
-    if (hsv.s < 0.08f) {
+    const HsvColor hsv = ToHsv(color);
+    if (hsv.saturation < 0.08f) {
         return codeFromHue(240.0f / 360.0f);
     }
-    return codeFromHue(hsv.h);
+    return codeFromHue(hsv.hueTurns);
 }
 
 std::uint8_t FullBrightnessAnimationValue() {

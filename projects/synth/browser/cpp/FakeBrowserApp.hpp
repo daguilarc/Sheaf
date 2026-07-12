@@ -21,9 +21,9 @@ public:
                     synth::ui::Action::Named("fake.level"))
             .DrawInteractive(
                 "fake-browser-draw", {24.0f, 120.0f, 320.0f, 120.0f},
-                {synth::ui::DrawCommand::Fill(synth::ui::Color::Rgb(20, 24, 32)),
+                {synth::ui::DrawCommand::Fill(synth::Color::Rgb(20, 24, 32)),
                  synth::ui::DrawCommand::Line({0.0f, 60.0f}, {320.0f, 60.0f},
-                                              synth::ui::Color::Rgb(96, 220, 180), 2.0f)},
+                                              synth::Color::Rgb(96, 220, 180), 2.0f)},
                 synth::ui::Action::WithValue("fake.drag", "axis:0"),
                 synth::ui::Action::Named("fake.double_click"))
             .StatusText("fake-browser-action-status",

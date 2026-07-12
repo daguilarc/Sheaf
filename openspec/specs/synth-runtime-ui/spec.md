@@ -273,7 +273,7 @@ WHEN the File page enters Save As or Load flow, THE runtime library SHALL render
 - **AND** it does not dispatch save-as or load callbacks until a valid target is available
 
 ### Requirement: sru-14 — Portable UI: semantic controls and drawing commands
-WHEN runtime UI pages or synth widgets render, THE runtime UI layer SHALL express their host-independent structure through a JUCE-free portable UI model that supports semantic controls (buttons, toggles, sliders, combo boxes, text fields, labels, rows, sections, scroll areas, and status text), stable node identities for stateful controls, input/action callbacks, and bounded drawing commands for bespoke visual widgets; JUCE renderers SHALL consume that model through backend adapters under `projects/synth/juce` rather than owning page behavior directly, and the model SHALL be shaped so neither the JUCE backend nor a future browser/DOM backend is forced through toolkit-awkward abstractions.
+WHEN runtime UI pages or synth widgets render, THE runtime UI layer SHALL express their host-independent structure through a JUCE-free portable UI model that supports semantic controls (buttons, toggles, sliders, combo boxes, text fields, labels, rows, sections, scroll areas, and status text), stable node identities for stateful controls, input/action callbacks, and bounded drawing commands for bespoke visual widgets using the canonical `synth::Color` RGBA type; JUCE renderers SHALL consume that model through backend adapters under `projects/synth/juce` rather than owning page behavior directly, and the model SHALL be shaped so neither the JUCE backend nor a future browser/DOM backend is forced through toolkit-awkward abstractions.
 
 #### Scenario: Portable UI model compiles without JUCE
 - **WHEN** a JUCE-free synth test includes the portable UI model and builds a representative miniapp/runtime page tree
@@ -282,7 +282,8 @@ WHEN runtime UI pages or synth widgets render, THE runtime UI layer SHALL expres
 
 #### Scenario: Bespoke widgets emit drawing commands
 - **WHEN** the miniapp encoder or waveform widget renders through the portable UI layer
-- **THEN** it emits host-neutral geometry, color, text, path/arc/line/fill, and interaction descriptions sufficient for the JUCE backend to reproduce the existing visual widget
+- **THEN** it emits host-neutral geometry, canonical `synth::Color` values, text, path/arc/line/fill, and interaction descriptions sufficient for the JUCE backend to reproduce the existing visual widget
+- **AND** no second portable RGBA type is required
 
 #### Scenario: Semantic controls remain backend-native
 - **WHEN** the Audio, File, or Controllers page renders a form-like control through the portable UI layer
@@ -426,3 +427,66 @@ WHEN a miniapp encoder is rendered through the portable UI layer on the JUCE des
 - **WHEN** a JUCE-free synth test includes the portable UI model and miniapp encoder tree builder
 - **THEN** it compiles without JUCE headers
 - **AND** it can inspect the encoder node's host-neutral drag and double-click action metadata
+
+### Requirement: sru-21 — Portable UI: reusable scope-waveform drawing
+WHEN a synth application needs to draw scope-backed waveforms, THE runtime UI layer SHALL provide JUCE-free shared portable drawing logic that converts a scope writer/channel, connection state, color, and target bounds into bounded waveform draw commands, and SHALL allow multiple applications to use that logic without including another application's headers or depending on a JUCE waveform component.
+
+#### Scenario: MiniApp preserves waveform behavior
+- **WHEN** MiniApp migrates from its app-local scope draw math to the shared helper
+- **THEN** equivalent scope snapshots and bounds produce equivalent waveform paths, colors, and clipping behavior
+
+#### Scenario: Braid uses independent waveform bounds
+- **WHEN** Braid supplies audible and LFO scope channels with non-overlapping panel bounds
+- **THEN** the helper produces independently bounded waveform command sets for every supplied channel
+- **AND** it does not overlay one channel into another channel's panel
+
+#### Scenario: Shared helper remains JUCE-free
+- **WHEN** a synth test includes the shared waveform builder and constructs commands from a fake scope snapshot
+- **THEN** it compiles and runs without JUCE headers
+
+### Requirement: sru-22 — Braid 4: waveform and encoder main screen
+WHEN the Braid 4 application surface is visible, THE runtime UI SHALL show four audible VCO waveform panels in a 2x2 grid stacked above four LFO waveform panels in a second 2x2 grid, all sixteen cells of its unique bank slot in a 4x4 encoder grid, and one compact global scene strip with selectors for scenes `0/1` plus the shared blend fader; SHALL bind encoder cells in row-major order to slot `0` positions `0..15`; SHALL reflect the currently selected Braid, matrix, LFO, or LFO matrix bank through the existing slot UI state; and SHALL keep both complete waveform grids, the encoder grid, and the scene strip visible without scrolling at the default application size.
+
+#### Scenario: Four waveforms occupy a 2x2 grid
+- **WHEN** Braid's default screen is built
+- **THEN** oscillator 1, 2, 3, and 4 draw in the top-left, top-right, bottom-left, and bottom-right waveform panels respectively
+- **AND** each panel reads its corresponding published VCO UI state and scope channel
+
+#### Scenario: Four LFO waveforms occupy a second 2x2 grid
+- **WHEN** Braid's default screen is built
+- **THEN** LFO oscillator 1, 2, 3, and 4 draw in a second 2x2 grid below the audible VCO grid
+- **AND** each panel reads its corresponding published LFO UI state and scope channel
+
+#### Scenario: Sixteen encoders occupy a 4x4 grid
+- **WHEN** Braid's default screen is built
+- **THEN** it contains sixteen encoder nodes arranged as four rows of four
+- **AND** node `n` dispatches turns and pushes to slot `0`, position `n`
+
+#### Scenario: Reserved positions use shared disconnected encoder state
+- **WHEN** the Braid bank is active
+- **THEN** encoder nodes `2` and `3` remain present and interactive for slot `0` positions `2` and `3`
+- **AND** they use the shared encoder renderer's empty disconnected draw-command state
+- **AND** the remaining fourteen nodes render their parameter names, configured color, value state, and native voice indicators
+
+#### Scenario: All four banks reuse the same encoder grid
+- **WHEN** any of the audible Braid, audible matrix, LFO Braid, or LFO matrix banks becomes active through the existing bank-selection message path
+- **THEN** all sixteen encoder nodes update to the active bank's parameters
+- **AND** no second encoder slot or second encoder grid is created
+
+#### Scenario: Scene strip remains global across banks
+- **WHEN** the user selects either scene or changes blend and then switches between Braid and matrix banks
+- **THEN** the same scene endpoints and blend remain displayed and active
+- **AND** the UI creates no bank-local scene selector or fader
+
+#### Scenario: Visual treatment carries astronomical character
+- **WHEN** Braid's surface draws its default background and panels
+- **THEN** it uses a near-black deep-space treatment with red audible VCO waveform/control accents, green LFO waveform/control accents, orange audible matrix accents, and yellow/green-yellow LFO matrix accents
+- **AND** all text and control state remain legible through the portable UI backend
+
+### Requirement: sru-23 — Portable encoder consumes complete parameter snapshot
+WHEN a portable synth surface builds an encoder, THE runtime UI layer SHALL derive its complete encoder draw state from one `Parameter::UIState` without app-supplied parameter, indicator, modulation-source, gesture, bank, or scope palette arguments.
+
+#### Scenario: Shared builder is app independent
+- **WHEN** Braid 4 and MiniApp build encoders from visible slot cells
+- **THEN** both call the same reusable encoder-state and drawing functions
+- **AND** neither app contains a color reconstruction or post-snapshot override

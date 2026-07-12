@@ -56,17 +56,17 @@ synth::ui::NodeTree MakeCompleteTree()
         Node{.id = NodeId("status"), .kind = NodeKind::StatusText, .bounds = {4, 122, 180, 20}, .text = "Ready"},
         Node{.id = NodeId("draw"), .kind = NodeKind::Draw, .bounds = {260, 8, 300, 200},
              .drawCommands = {
-                 DrawCommand::Fill({1, 2, 30, 40}, Color::Rgb(1, 2, 3)),
-                 DrawCommand::StrokeRect({4, 5, 6, 7}, Color::Rgb(4, 5, 6), 2),
-                 DrawCommand::Line({8, 9}, {10, 11}, Color::Rgb(7, 8, 9), 3),
-                 DrawCommand::Arc({12, 13, 14, 15}, 0.1f, 2.1f, Color::Rgb(10, 11, 12), 4),
-                 DrawCommand::Text({16, 17, 18, 19}, "Scope", TextStyle{15, Color::Rgb(13, 14, 15), TextAlign::Center}),
-                 DrawCommand::FillEllipse({20, 21, 22, 23}, Color::Rgb(16, 17, 18)),
-                 DrawCommand::StrokeEllipse({24, 25, 26, 27}, Color::Rgb(19, 20, 21), 5),
-                 DrawCommand::FillRoundedRect({28, 29, 30, 31}, 6, Color::Rgb(22, 23, 24)),
-                 DrawCommand::StrokeRoundedRect({32, 33, 34, 35}, 7, Color::Rgb(25, 26, 27), 8),
-                 DrawCommand::Polyline({{36, 37}, {38, 39}, {40, 41}}, Color::Rgb(28, 29, 30), 9),
-                 DrawCommand::FillPolygon({{42, 43}, {44, 45}, {46, 47}}, Color::Rgb(31, 32, 33)),
+                 DrawCommand::Fill({1, 2, 30, 40}, synth::Color::Rgb(1, 2, 3)),
+                 DrawCommand::StrokeRect({4, 5, 6, 7}, synth::Color::Rgb(4, 5, 6), 2),
+                 DrawCommand::Line({8, 9}, {10, 11}, synth::Color::Rgb(7, 8, 9), 3),
+                 DrawCommand::Arc({12, 13, 14, 15}, 0.1f, 2.1f, synth::Color::Rgb(10, 11, 12), 4),
+                 DrawCommand::Text({16, 17, 18, 19}, "Scope", TextStyle{15, synth::Color::Rgb(13, 14, 15), TextAlign::Center}),
+                 DrawCommand::FillEllipse({20, 21, 22, 23}, synth::Color::Rgb(16, 17, 18)),
+                 DrawCommand::StrokeEllipse({24, 25, 26, 27}, synth::Color::Rgb(19, 20, 21), 5),
+                 DrawCommand::FillRoundedRect({28, 29, 30, 31}, 6, synth::Color::Rgb(22, 23, 24)),
+                 DrawCommand::StrokeRoundedRect({32, 33, 34, 35}, 7, synth::Color::Rgb(25, 26, 27), 8),
+                 DrawCommand::Polyline({{36, 37}, {38, 39}, {40, 41}}, synth::Color::Rgb(28, 29, 30), 9),
+                 DrawCommand::FillPolygon({{42, 43}, {44, 45}, {46, 47}}, synth::Color::Rgb(31, 32, 33)),
              }},
     };
     return tree;
@@ -135,7 +135,7 @@ void TestNodeIdsAreStableAcrossFrames()
     synth::ui::NodeTree first = MakeCompleteTree();
     synth::ui::NodeTree second = first;
     second.nodes[3].value = 0.75f;
-    second.nodes[7].drawCommands[0] = synth::ui::DrawCommand::Fill(synth::ui::Color::Rgb(90, 91, 92));
+    second.nodes[7].drawCommands[0] = synth::ui::DrawCommand::Fill(synth::Color::Rgb(90, 91, 92));
 
     const auto firstDecoded = synth_browser::DecodeCommandBuffer(synth_browser::SerializeNodeTree(first).bytes);
     const auto secondDecoded = synth_browser::DecodeCommandBuffer(synth_browser::SerializeNodeTree(second).bytes);

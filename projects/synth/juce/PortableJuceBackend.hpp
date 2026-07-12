@@ -19,7 +19,7 @@
 
 namespace synth_juce {
 
-inline juce::Colour UiToJuceColour(synth::ui::Color color)
+inline juce::Colour UiToJuceColour(synth::Color color)
 {
     return juce::Colour(color.r, color.g, color.b, color.a);
 }

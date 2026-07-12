@@ -225,9 +225,9 @@ inline VcoWaveformDrawState VcoWaveformDrawStateFromCore(const MiniAppCore& core
     VcoWaveformDrawState state;
     for (const auto& vco : core.VcoUiState().vcos)
     {
-        WaveformLayerDrawState layer;
+        synth::ui::WaveformLayerDrawState layer;
         layer.connected = vco.connected.load(std::memory_order_relaxed);
-        layer.color = vco.color.Load(std::memory_order_relaxed);
+        layer.scopeColor = vco.scopeColor.Load(std::memory_order_relaxed);
         layer.scope = vco.scope.load(std::memory_order_relaxed);
         layer.scopeChannel = vco.scopeChannel.load(std::memory_order_relaxed);
         state.layers.push_back(layer);
@@ -240,9 +240,9 @@ inline LfoWaveformDrawState LfoWaveformDrawStateFromCore(const MiniAppCore& core
     LfoWaveformDrawState state;
     for (const auto& lfo : core.LfoUiState().lfos)
     {
-        WaveformLayerDrawState layer;
+        synth::ui::WaveformLayerDrawState layer;
         layer.connected = lfo.connected.load(std::memory_order_relaxed);
-        layer.color = lfo.color.Load(std::memory_order_relaxed);
+        layer.scopeColor = lfo.scopeColor.Load(std::memory_order_relaxed);
         layer.scope = lfo.scope.load(std::memory_order_relaxed);
         layer.scopeChannel = lfo.scopeChannel.load(std::memory_order_relaxed);
         state.layers.push_back(layer);

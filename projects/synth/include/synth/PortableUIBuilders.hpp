@@ -29,23 +29,6 @@ inline double Clamp(double value, double minValue, double maxValue)
     return std::max(minValue, std::min(maxValue, value));
 }
 
-inline Color ToUiColor(::synth::Color color, float alphaScale = 1.0f)
-{
-    const float scaledAlpha = Clamp(static_cast<float>(color.a) * alphaScale, 0.0f, 255.0f);
-    return Color::Rgba(color.r, color.g, color.b, static_cast<std::uint8_t>(scaledAlpha));
-}
-
-inline Color BrighterUiColor(Color color, float amount)
-{
-    const float clampedAmount = std::max(0.0f, amount);
-    const float factor = clampedAmount / (1.0f + clampedAmount);
-    const auto brighten = [factor](std::uint8_t value) {
-        return static_cast<std::uint8_t>(
-            Clamp(static_cast<float>(value) + (255.0f - static_cast<float>(value)) * factor, 0.0f, 255.0f));
-    };
-    return Color::Rgba(brighten(color.r), brighten(color.g), brighten(color.b), color.a);
-}
-
 inline constexpr std::size_t x_NumPoints = 1024;
 
 inline double ScopeSampleForPoint(std::size_t point, std::size_t numXSamples)
@@ -134,10 +117,43 @@ inline Bounds ScopeMarkerBounds(const ::synth::ScopeReader& scopeReader,
 
 }  // namespace waveform_detail
 
+namespace ScopePathMath {
+
+inline constexpr std::size_t x_NumPoints = waveform_detail::x_NumPoints;
+
+inline double ScopeSampleForPoint(std::size_t point, std::size_t numXSamples)
+{
+    return waveform_detail::ScopeSampleForPoint(point, numXSamples);
+}
+
+inline bool ScopePointCrossesTransfer(std::size_t point, std::size_t numXSamples, double transferSample)
+{
+    return waveform_detail::ScopePointCrossesTransfer(point, numXSamples, transferSample);
+}
+
+inline std::vector<std::vector<Point>> BuildScopePolylines(const ::synth::ScopeReader& scopeReader,
+                                                           Bounds bounds,
+                                                           float minY,
+                                                           float maxY)
+{
+    return waveform_detail::BuildScopePolylines(scopeReader, bounds, minY, maxY);
+}
+
+inline Bounds ScopeMarkerBounds(const ::synth::ScopeReader& scopeReader,
+                                Bounds bounds,
+                                float minY,
+                                float maxY,
+                                float radius = 3.0f)
+{
+    return waveform_detail::ScopeMarkerBounds(scopeReader, bounds, minY, maxY, radius);
+}
+
+}  // namespace ScopePathMath
+
 struct WaveformLayerDrawState
 {
     bool connected = false;
-    ::synth::Color color = ::synth::Color::Off;
+    ::synth::Color scopeColor = ::synth::Color::Off;
     const ::synth::ScopeWriter* scope = nullptr;
     std::size_t scopeChannel = 0;
 };
@@ -180,7 +196,7 @@ inline std::vector<DrawCommand> BuildScopeWaveformCommands(std::span<const Wavef
             continue;
         }
 
-        const Color waveColor = waveform_detail::ToUiColor(layer.color);
+        const Color waveColor = layer.scopeColor;
         const auto polylines = waveform_detail::BuildScopePolylines(reader, bounds, minY, maxY);
         for (auto& polyline : polylines)
         {
@@ -197,7 +213,7 @@ inline std::vector<DrawCommand> BuildScopeWaveformCommands(std::span<const Wavef
             {
                 commands.push_back(DrawCommand::FillEllipse(
                     marker,
-                    waveform_detail::BrighterUiColor(waveColor, 0.45f)));
+                    ::synth::Brighten(waveColor, 0.45f)));
             }
         }
     }

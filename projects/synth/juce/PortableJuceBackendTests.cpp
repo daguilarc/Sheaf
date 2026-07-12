@@ -49,7 +49,7 @@ int main()
 
     Require(synth_juce::UiToJuceRect(synth::ui::Bounds{1.0f, 2.0f, 3.0f, 4.0f}) == juce::Rectangle<int>(1, 2, 3, 4),
             "UiToJuceRect rounds bounds");
-    Require(synth_juce::UiToJuceColour(synth::ui::Color::Rgb(10, 20, 30)) == juce::Colour(10, 20, 30),
+    Require(synth_juce::UiToJuceColour(synth::Color::Rgb(10, 20, 30)) == juce::Colour(10, 20, 30),
             "UiToJuceColour maps RGB");
     Require(!synth_juce::HasExplicitBounds(synth::ui::Bounds{}), "zero bounds are not explicit");
     Require(synth_juce::HasExplicitBounds(synth::ui::Bounds{0.0f, 0.0f, 10.0f, 10.0f}),
@@ -66,8 +66,8 @@ int main()
                   synth::ui::Action::Named("device.select"))
         .Draw("scope",
               synth::ui::Bounds{8.0f, 8.0f, 64.0f, 48.0f},
-              {synth::ui::DrawCommand::Fill(synth::ui::Color::Rgb(1, 2, 3)),
-               synth::ui::DrawCommand::Line({0.0f, 0.0f}, {64.0f, 48.0f}, synth::ui::Color::Rgb(4, 5, 6), 1.0f)});
+              {synth::ui::DrawCommand::Fill(synth::Color::Rgb(1, 2, 3)),
+               synth::ui::DrawCommand::Line({0.0f, 0.0f}, {64.0f, 48.0f}, synth::Color::Rgb(4, 5, 6), 1.0f)});
     surface.tree = builder.Build();
 
     synth_juce::PortableComponent component(surface);
@@ -96,7 +96,7 @@ int main()
                       synth::ui::Action::Named("device.select.changed"))
             .Draw("scope",
                   synth::ui::Bounds{8.0f, 8.0f, 64.0f, 48.0f},
-                  {synth::ui::DrawCommand::Fill(synth::ui::Color::Rgb(7, 8, 9))});
+                  {synth::ui::DrawCommand::Fill(synth::Color::Rgb(7, 8, 9))});
         surface.tree = changedBuilder.Build();
     }
     component.RefreshFromSurface();
@@ -124,7 +124,7 @@ int main()
             .Root("app.root", synth::ui::Bounds{0.0f, 0.0f, 900.0f, 240.0f})
             .Draw("app.draw",
                   synth::ui::Bounds{0.0f, 0.0f, 900.0f, 40.0f},
-                  {synth::ui::DrawCommand::Fill(synth::ui::Color::Rgb(1, 2, 3))});
+                  {synth::ui::DrawCommand::Fill(synth::Color::Rgb(1, 2, 3))});
         for (int index = 0; index < 12; ++index)
         {
             compositeBuilder.Button("app.control." + std::to_string(index),
@@ -134,7 +134,7 @@ int main()
         compositeBuilder.Root("runtime.sidebar.root", synth::ui::Bounds{900.0f, 0.0f, 96.0f, 240.0f})
             .Draw("runtime.sidebar.draw",
                   synth::ui::Bounds{900.0f, 0.0f, 96.0f, 120.0f},
-                  {synth::ui::DrawCommand::Fill(synth::ui::Color::Rgb(4, 5, 6))})
+                  {synth::ui::DrawCommand::Fill(synth::Color::Rgb(4, 5, 6))})
             .Button("runtime.sidebar.control", "Side", synth::ui::Action::Named("runtime.sidebar"));
         compositeSurface.tree = compositeBuilder.Build();
         compositeSurface.tree.nodes.front().children = {

@@ -15,6 +15,7 @@
 #include <string_view>
 #include <vector>
 
+#include "synth/Color.hpp"
 #include "synth/Json.hpp"
 
 namespace synth {
@@ -22,42 +23,6 @@ namespace synth {
 using ParameterId = std::uint32_t;
 using PhysicalEncoderId = std::uint32_t;
 using PageOrdinal = std::uint32_t;
-
-struct Color {
-    std::uint8_t r = 0;
-    std::uint8_t g = 0;
-    std::uint8_t b = 0;
-    std::uint8_t a = 255;
-
-    bool operator==(const Color& other) const = default;
-
-    std::uint32_t Packed() const;
-    Color AdjustBrightness(float scale) const;
-
-    static Color FromPacked(std::uint32_t packed);
-    static Color FromHSV(float h, float s, float v);
-
-    static const Color Off;
-    static const Color White;
-    static const Color Red;
-    static const Color Orange;
-    static const Color Yellow;
-    static const Color Green;
-    static const Color Cyan;
-    static const Color Blue;
-    static const Color Indigo;
-    static const Color Grey;
-};
-
-static_assert(sizeof(Color) == sizeof(std::uint32_t));
-
-struct HSV {
-    float h = 0.0f;
-    float s = 0.0f;
-    float v = 0.0f;
-};
-
-HSV ToHSV(Color color);
 
 struct AtomicColor {
     AtomicColor() = default;
@@ -183,7 +148,6 @@ struct ParameterGroupConfig {
     std::size_t targetComputeIntervalSamples = kDefaultTargetComputeIntervalSamples;
     float uiDisplayCenterAlpha = kDefaultUiDisplayCenterAlpha;
     float uiDisplaySpreadAlpha = kDefaultUiDisplaySpreadAlpha;
-    std::vector<Color> voiceIndicatorColors;
 
     bool IsValid() const;
 };
@@ -228,13 +192,13 @@ std::unique_ptr<ParameterStorageBatch> MakeParameterStorageBatch(const Parameter
 struct ModulatorMetadata {
     std::string name;
     std::string shortName;
-    Color color;
+    Color sourceColor;
     bool connected = false;
 };
 
 struct GestureMetadata {
     std::string name;
-    Color color;
+    Color gestureColor;
 };
 
 struct ParameterConfig {
@@ -243,7 +207,8 @@ struct ParameterConfig {
     float defaultValue = 0.0f;
     RangeKind range = RangeKind::Unipolar;
     std::size_t switchValues = 0;
-    Color color = Color::Grey;
+    Color baseColor = Color::Grey;
+    std::vector<Color> indicatorColors;
 };
 
 class Modulators {
@@ -319,7 +284,6 @@ public:
     Parameter& ParameterByLocalIndex(std::size_t localIx);
     const Parameter& ParameterByLocalIndex(std::size_t localIx) const;
     std::size_t GestureCount() const { return gestureCount_; }
-    Color VoiceIndicatorColor(std::size_t voiceIx) const;
     void SetModulationSource(std::size_t modIx, std::span<float* const> sourcePointers,
                              ModulatorMetadata metadata);
     void UpdateModValues();
@@ -347,7 +311,6 @@ private:
     ParameterGroupConfig config_;
     ParameterManager* manager_ = nullptr;
     std::size_t gestureCount_ = 0;
-    std::vector<Color> voiceIndicatorColors_;
     Modulators modulators_;
     std::size_t parameterCount_ = 0;
     std::vector<std::unique_ptr<Parameter>> parameters_;
@@ -380,11 +343,15 @@ public:
 
     struct UIState {
         UIState() = default;
-        explicit UIState(std::size_t voiceCapacity) { Configure(voiceCapacity); }
+        explicit UIState(std::size_t voiceCapacity, std::size_t modulatorColorCapacity = 0,
+                         std::size_t gestureColorCapacity = 0) {
+            Configure(voiceCapacity, modulatorColorCapacity, gestureColorCapacity);
+        }
         UIState(const UIState&) = delete;
         UIState& operator=(const UIState&) = delete;
 
-        void Configure(std::size_t voiceCapacity);
+        void Configure(std::size_t voiceCapacity, std::size_t modulatorColorCapacity = 0,
+                       std::size_t gestureColorCapacity = 0);
         void SetDisconnected();
 
         std::atomic<std::uint32_t> revision{0};
@@ -393,11 +360,16 @@ public:
         std::atomic<std::size_t> switchValues{0};
         std::atomic<std::uint32_t> modulatorsAffectingMask{0};
         std::atomic<std::uint32_t> gesturesAffectingMask{0};
-        AtomicColor color;
-        std::atomic<float> brightness{0.0f};
+        AtomicColor baseColor;
         std::atomic<const char*> shortName{nullptr};
         std::atomic<std::size_t> voiceCount{0};
         std::size_t voiceCapacity = 0;
+        std::atomic<std::size_t> modulatorColorCount{0};
+        std::size_t modulatorColorCapacity = 0;
+        std::unique_ptr<AtomicColor[]> modulatorSourceColors;
+        std::atomic<std::size_t> gestureColorCount{0};
+        std::size_t gestureColorCapacity = 0;
+        std::unique_ptr<AtomicColor[]> gestureColors;
         std::unique_ptr<std::atomic<float>[]> values;
         std::unique_ptr<std::atomic<float>[]> spreadValues;
         std::unique_ptr<std::atomic<float>[]> minValues;
@@ -410,7 +382,8 @@ public:
     const std::string& Name() const { return config_.name; }
     const std::string& ShortName() const { return config_.shortName; }
     RangeKind Range() const { return config_.range; }
-    Color ParamColor() const { return config_.color; }
+    Color BaseColor() const { return config_.baseColor; }
+    Color IndicatorColor(std::size_t voiceIx) const;
     std::size_t SwitchValues() const;
     bool IsSwitch() const;
     ParameterGroup& Group() { return group_; }
@@ -527,8 +500,8 @@ public:
     void ApplyModifierToTopLevel(Modifier modifier, const SceneState& scene);
     void Deselect();
     bool ShowingModulation() const;
-    void SetColor(Color color) { color_ = color; }
-    Color GetColor() const { return color_; }
+    void SetBankColor(Color color) { bankColor_ = color; }
+    Color BankColor() const { return bankColor_; }
 
     std::size_t VisibleMappingCount() const;
     Parameter* VisibleParameter(PhysicalEncoderId encoderId) const;
@@ -558,7 +531,7 @@ private:
 
     ParameterManager* manager_ = nullptr;
     BankSlot* slot_ = nullptr;
-    Color color_ = Color::Grey;
+    Color bankColor_ = Color::Grey;
     std::vector<Cell> topLevel_;
     std::vector<Cell> visible_;
     Parameter* selected_ = nullptr;
@@ -568,11 +541,14 @@ class BankSlot {
 public:
     struct UIState {
         UIState() = default;
-        UIState(std::size_t cellCapacity, std::size_t voiceCapacity) { Configure(cellCapacity, voiceCapacity); }
+        UIState(std::size_t cellCapacity, std::size_t voiceCapacity) {
+            Configure(cellCapacity, voiceCapacity, 0, 0);
+        }
         UIState(const UIState&) = delete;
         UIState& operator=(const UIState&) = delete;
 
-        void Configure(std::size_t cellCapacity, std::size_t voiceCapacity);
+        void Configure(std::size_t cellCapacity, std::size_t voiceCapacity,
+                       std::size_t modulatorColorCapacity, std::size_t gestureColorCapacity);
 
         std::atomic<bool> connected{false};
         std::atomic<bool> showingModulationView{false};
@@ -652,7 +628,7 @@ public:
     struct BankUIState {
         std::atomic<bool> connected{false};
         std::atomic<bool> selected{false};
-        AtomicColor color;
+        AtomicColor bankColor;
     };
 
     struct UIState {
@@ -661,7 +637,8 @@ public:
         UIState& operator=(const UIState&) = delete;
 
         void Configure(std::size_t slotCapacity, std::size_t cellCapacity, std::size_t voiceCapacity,
-                       std::size_t gestureCapacity, std::size_t bankCapacity = 0);
+                       std::size_t modulatorColorCapacity, std::size_t gestureCapacity,
+                       std::size_t bankCapacity = 0);
 
         std::atomic<std::size_t> leftScene{0};
         std::atomic<std::size_t> rightScene{0};
@@ -781,6 +758,7 @@ private:
     bool OwnsGroup(const ParameterGroup& group) const;
     std::size_t SceneCapacity() const;
     std::size_t MaxVoiceCount() const;
+    std::size_t MaxModulatorCount() const;
     std::size_t MaxSlotCellCount() const;
 
     struct DefaultControlState {

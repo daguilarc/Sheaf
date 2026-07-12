@@ -120,7 +120,7 @@ public:
         std::atomic<bool> connected{false};
         std::atomic<const ScopeWriter*> scope{nullptr};
         std::atomic<std::size_t> scopeChannel{0};
-        AtomicColor color;
+        AtomicColor scopeColor;
     };
 
     explicit WavetableVco(const MorphingWavetable<Bits>& wavetable = GetDefaultMorphingWavetableForBits<Bits>())
@@ -134,8 +134,8 @@ public:
         m_scopeWriterHolder = holder;
     }
 
-    void SetColor(Color color) {
-        m_color = color;
+    void SetScopeColor(Color scopeColor) {
+        m_scopeColor = scopeColor;
     }
 
     float Process(const Input& input) {
@@ -163,7 +163,7 @@ public:
     }
 
     void PopulateUIState(UIState& state) const {
-        state.color.Store(m_color);
+        state.scopeColor.Store(m_scopeColor);
         const bool connected = m_scopeWriterHolder && m_scopeWriterHolder->Writer();
         state.connected.store(connected);
         state.scope.store(connected ? m_scopeWriterHolder->Writer() : nullptr);
@@ -173,9 +173,9 @@ public:
     Incrementer m_incrementer;
     float m_output = 0.0f;
     bool m_top = false;
-    Color m_color = Color::Cyan;
 
 private:
+    Color m_scopeColor = Color::Cyan;
     const MorphingWavetable<Bits>* m_wavetable = nullptr;
     ScopeWriterHolder* m_scopeWriterHolder = nullptr;
 };
@@ -193,15 +193,15 @@ public:
         std::atomic<bool> connected{false};
         std::atomic<const ScopeWriter*> scope{nullptr};
         std::atomic<std::size_t> scopeChannel{0};
-        AtomicColor color;
+        AtomicColor scopeColor;
     };
 
     void SetScopeWriterHolder(ScopeWriterHolder* holder) {
         m_scopeWriterHolder = holder;
     }
 
-    void SetColor(Color color) {
-        m_color = color;
+    void SetScopeColor(Color scopeColor) {
+        m_scopeColor = scopeColor;
     }
 
     float Process(const Input& input) {
@@ -225,7 +225,7 @@ public:
     }
 
     void PopulateUIState(UIState& state) const {
-        state.color.Store(m_color);
+        state.scopeColor.Store(m_scopeColor);
         const bool connected = m_scopeWriterHolder && m_scopeWriterHolder->Writer();
         state.connected.store(connected);
         state.scope.store(connected ? m_scopeWriterHolder->Writer() : nullptr);
@@ -235,9 +235,9 @@ public:
     Incrementer m_incrementer;
     float m_output = 0.0f;
     bool m_top = false;
-    Color m_color = Color::Cyan;
 
 private:
+    Color m_scopeColor = Color::Cyan;
     ScopeWriterHolder* m_scopeWriterHolder = nullptr;
 };
 

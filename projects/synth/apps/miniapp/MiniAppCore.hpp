@@ -62,15 +62,21 @@ public:
             .numModulators = 3,
             .numScenes = 3,
             .maxParameters = 24,
-            .voiceIndicatorColors = {synth::Color::Cyan, synth::Color::Orange},
         });
         group_ = &group;
         context_->parameterManager->GestureMetadataAt(0).name = "Gesture 1";
-        context_->parameterManager->GestureMetadataAt(0).color = synth::Color::Orange;
+        context_->parameterManager->GestureMetadataAt(0).gestureColor = synth::Color::Orange;
 
-        vcoModule_.RegisterParameters(*context_->parameterManager, group);
-        filterModule_.RegisterParameters(*context_->parameterManager, group, "Filter");
-        lfoModule_.RegisterParameters(*context_->parameterManager, group, "LFO");
+        const std::vector<synth::Color> indicatorColors{synth::Color::Cyan, synth::Color::Orange};
+        VcoModule::Options vcoOptions;
+        vcoOptions.indicatorColors = indicatorColors;
+        vcoModule_.RegisterParameters(*context_->parameterManager, group, {}, vcoOptions);
+        FilterModule::Options filterOptions;
+        filterOptions.indicatorColors = indicatorColors;
+        filterModule_.RegisterParameters(*context_->parameterManager, group, "Filter", filterOptions);
+        LfoModule::Options lfoOptions;
+        lfoOptions.indicatorColors = indicatorColors;
+        lfoModule_.RegisterParameters(*context_->parameterManager, group, "LFO", lfoOptions);
         vcoModule_.RegisterModulationSources(group, 0, 1);
         lfoModule_.RegisterModulationSource(group, 2);
 
@@ -110,9 +116,9 @@ public:
         context_->parameterManager->AssignParameterToPage(lfoPage.ordinal, *lfoExponent_);
 
         vcoBank_ = &context_->parameterManager->CreateBank();
-        vcoBank_->SetColor(synth::Color::Cyan);
+        vcoBank_->SetBankColor(synth::Color::Cyan);
         lfoBank_ = &context_->parameterManager->CreateBank();
-        lfoBank_->SetColor(synth::Color::Green);
+        lfoBank_->SetBankColor(synth::Color::Green);
         slot_ = &context_->parameterManager->CreateBankSlot();
         for (auto encoder : {10u, 11u, 12u, 13u, 14u, 15u, 16u}) {
             slot_->AddPhysicalEncoder(encoder);
@@ -135,43 +141,16 @@ public:
         vcoModule_.SetScopeWriterHolder(1, &scopeHolders_[1]);
         lfoModule_.SetScopeWriterHolder(0, &scopeHolders_[2]);
         lfoModule_.SetScopeWriterHolder(1, &scopeHolders_[3]);
-        vcoModule_.SetColor(0, synth::Color::Cyan);
-        vcoModule_.SetColor(1, synth::Color::Orange);
-        lfoModule_.SetColor(0, synth::Color::Green);
-        lfoModule_.SetColor(1, synth::Color::Yellow);
+        vcoModule_.SetScopeColor(0, synth::Color::Cyan);
+        vcoModule_.SetScopeColor(1, synth::Color::Orange);
+        lfoModule_.SetScopeColor(0, synth::Color::Green);
+        lfoModule_.SetScopeColor(1, synth::Color::Yellow);
 
-        // Default WrldBldr MIDI controller, installed as the instrument's
-        // single controller slot. context_->instrument is the live,
-        // message-thread-owned MidiInstrumentConfig (mutable); add the
-        // controller there so a real host's MIDI input is routed the same
-        // way the old MainComponent wired it via CreateMidiControllerProfile
-        // (Engine::RebuildMidiProcessors() builds midiProcessors_ from the
-        // first controller slot -- see its doc comment).
-        //
-        // context_->defaultInstrument is `const*` -- Engine.hpp shows it
-        // points at Engine's private defaultInstrumentConfig_ member. There
-        // is no app-facing setter for it, and none is needed: right after
-        // this Init() returns, Engine::Initialize() snapshots
-        // defaultInstrumentConfig_ = instrumentConfig_ (see Engine.hpp's
-        // binding-order comment, step 4a), so the controller added below
-        // becomes part of the default instrument that revert/new-patch
-        // restore to.
-        synth::WrldBldrDefaultProfileOptions profileOptions;
-        // Map all 16 physical WRLD.Bldr encoders even though this app only
-        // realizes 4 (positions 0..3). Positions 4..15 have no backing cell:
-        // the input path ignores their CCs like an out-of-range bank button
-        // (spm-38), and the output processor drives their hardware LEDs off
-        // (MidiOutProcessor::LoadCellSnapshot returns a blank snapshot for a
-        // position beyond the slot's cell capacity).
-        profileOptions.visibleEncoderCount = 16;
-        profileOptions.sceneCount = 3;
-        profileOptions.bankButtonCount = 16;
-        profileOptions.gestureSelectorCount = 1;
-        synth::MidiControllerSlot controllerSlot;
-        controllerSlot.name = "wrldbldr";
-        controllerSlot.kind = synth::MidiProfileKind::WrldBldr;
-        controllerSlot.config = synth::WrldBldrDefaultProfileConfig(profileOptions);
-        context_->instrument->AddController(std::move(controllerSlot));
+        // Install the shared default instrument. Apps may expose fewer scenes
+        // or on-screen encoders than the default WRLD.Bldr profile maps; the
+        // input path ignores out-of-range messages and output feedback blanks
+        // cells with no backing parameter.
+        *context_->instrument = synth::DefaultMidiInstrumentConfig();
     }
 
     void PrepareToPlay(double sampleRate, int /*blockSize*/) {
@@ -245,11 +224,6 @@ public:
     synth::BankSlot* Slot() const { return slot_; }
 
     const VcoModule::UIState& VcoUiState() const { return vcoUiStates_; }
-    // Non-const overload for the UI wrapper: synth_juce::VcoWaveformComponent
-    // (juce/WaveformComponents.hpp) stores non-owning
-    // DefaultWavetableVco::UIState* pointers and reads their atomics each
-    // paint, never writing through them; it needs a mutable pointer only
-    // because SetUIStates()'s signature predates this const accessor.
     VcoModule::UIState& VcoUiState() { return vcoUiStates_; }
     const FilterModule::UIState& FilterUiState() const { return filterUiStates_; }
     FilterModule::UIState& FilterUiState() { return filterUiStates_; }

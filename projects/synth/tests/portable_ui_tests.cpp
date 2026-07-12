@@ -16,8 +16,8 @@
 #include <string>
 #include <type_traits>
 
-#include "../apps/dresden-4/Dresden4Draw.hpp"
-#include "../apps/dresden-4/Dresden4UiModel.hpp"
+#include "../apps/braid-4/Braid4Draw.hpp"
+#include "../apps/braid-4/Braid4UiModel.hpp"
 #include "../apps/miniapp/MiniAppDraw.hpp"
 
 #ifdef JUCE_MAJOR_VERSION
@@ -184,17 +184,37 @@ struct TestApp
 
 int main()
 {
+    synth::Parameter::UIState parameterState(1, 1, 1);
+    parameterState.connected.store(true);
+    parameterState.voiceCount.store(1);
+    parameterState.baseColor.Store(synth::Color::Red);
+    parameterState.indicatorColors[0].Store(synth::Color::Blue);
+    parameterState.modulatorsAffectingMask.store(1u);
+    parameterState.gesturesAffectingMask.store(1u);
+    parameterState.modulatorColorCount.store(1);
+    parameterState.modulatorSourceColors[0].Store(synth::Color::Cyan);
+    parameterState.gestureColorCount.store(1);
+    parameterState.gestureColors[0].Store(synth::Color::Orange);
+    const synth::ui::EncoderDrawState snapshotEncoder =
+        synth::ui::EncoderDrawStateFromParameter(parameterState);
+    Require(snapshotEncoder.baseColor == synth::Color::Red, "encoder uses snapshot base color");
+    Require(snapshotEncoder.voices[0].indicatorColor == synth::Color::Blue,
+            "encoder uses snapshot voice-zero indicator color");
+    Require(snapshotEncoder.modulatorColors == std::vector<synth::Color>{synth::Color::Cyan},
+            "encoder uses snapshot source badge colors");
+    Require(snapshotEncoder.gestureColors == std::vector<synth::Color>{synth::Color::Orange},
+            "encoder uses snapshot gesture badge colors");
+
     static_assert(synth::SynthApplication<TestApp>);
     static_assert(!synth::ui::kPortableUiUsesJuce);
     static_assert(std::is_same_v<decltype(synth::ui::WaveformLayerDrawState::scope), const synth::ScopeWriter*>);
-    static_assert(std::is_same_v<synth_miniapp::WaveformLayerDrawState, synth::ui::WaveformLayerDrawState>);
 
     synth::ScopeWriter scope(4, 128);
     FillScopeWriter(scope, 4);
     std::vector<synth::ui::WaveformLayerDrawState> waveformLayers{
-        {.connected = true, .color = synth::Color::Red, .scope = &scope, .scopeChannel = 0},
-        {.connected = true, .color = synth::Color::Cyan, .scope = &scope, .scopeChannel = 1},
-        {.connected = false, .color = synth::Color::Green, .scope = &scope, .scopeChannel = 2},
+        {.connected = true, .scopeColor = synth::Color::Red, .scope = &scope, .scopeChannel = 0},
+        {.connected = true, .scopeColor = synth::Color::Cyan, .scope = &scope, .scopeChannel = 1},
+        {.connected = false, .scopeColor = synth::Color::Green, .scope = &scope, .scopeChannel = 2},
     };
     const auto leftWaveform = synth::ui::BuildScopeWaveformCommands(
         waveformLayers, {10.0f, 20.0f, 180.0f, 90.0f}, -1.1f, 1.1f, 64, true);
@@ -209,7 +229,7 @@ int main()
     {
         std::vector<synth::ui::WaveformLayerDrawState> singleLayer{
             {.connected = true,
-             .color = cell % 2 == 0 ? synth::Color::Yellow : synth::Color::Blue,
+             .scopeColor = cell % 2 == 0 ? synth::Color::Yellow : synth::Color::Blue,
              .scope = &scope,
              .scopeChannel = static_cast<std::size_t>(cell)},
         };
@@ -244,7 +264,7 @@ int main()
     }
 
     synth_miniapp::LfoWaveformDrawState miniLfoState;
-    miniLfoState.layers = {{.connected = true, .color = synth::Color::Orange, .scope = &scope, .scopeChannel = 0}};
+    miniLfoState.layers = {{.connected = true, .scopeColor = synth::Color::Orange, .scope = &scope, .scopeChannel = 0}};
     const auto sharedLfo = synth::ui::BuildScopeWaveformCommands(
         miniLfoState.layers,
         wrapperBounds,
@@ -258,66 +278,70 @@ int main()
                 sharedLfo.front().bounds.height == miniLfo.front().bounds.height,
             "miniapp lfo wrapper fill bounds match shared helper");
 
-    Require(synth_dresden4::Dresden4NodeIds::kRoot == std::string("dresden4.root"),
-            "dresden4 root stable id");
-    Require(synth_dresden4::Dresden4NodeIds::Scope(0) == "dresden4.scope.0",
-            "dresden4 scope zero stable id");
-    Require(synth_dresden4::Dresden4NodeIds::Scope(3) == "dresden4.scope.3",
-            "dresden4 scope three stable id");
-    Require(synth_dresden4::Dresden4NodeIds::Encoder(0) == "dresden4.encoder.0",
-            "dresden4 encoder zero stable id");
-    Require(synth_dresden4::Dresden4NodeIds::Encoder(15) == "dresden4.encoder.15",
-            "dresden4 encoder fifteen stable id");
-    Require(synth_dresden4::Dresden4NodeIds::SceneButton(0) == "dresden4.scene.0",
-            "dresden4 scene zero stable id");
-    Require(synth_dresden4::Dresden4NodeIds::SceneButton(1) == "dresden4.scene.1",
-            "dresden4 scene one stable id");
-    Require(synth_dresden4::Dresden4NodeIds::kSceneBlend == std::string("dresden4.scene.blend"),
-            "dresden4 scene blend stable id");
+    Require(synth_braid4::Braid4NodeIds::kRoot == std::string("braid4.root"),
+            "braid4 root stable id");
+    Require(synth_braid4::Braid4NodeIds::VcoScope(0) == "braid4.scope.vco.0",
+            "braid4 vco scope zero stable id");
+    Require(synth_braid4::Braid4NodeIds::VcoScope(3) == "braid4.scope.vco.3",
+            "braid4 vco scope three stable id");
+    Require(synth_braid4::Braid4NodeIds::LfoScope(0) == "braid4.scope.lfo.0",
+            "braid4 lfo scope zero stable id");
+    Require(synth_braid4::Braid4NodeIds::LfoScope(3) == "braid4.scope.lfo.3",
+            "braid4 lfo scope three stable id");
+    Require(synth_braid4::Braid4NodeIds::Encoder(0) == "braid4.encoder.0",
+            "braid4 encoder zero stable id");
+    Require(synth_braid4::Braid4NodeIds::Encoder(15) == "braid4.encoder.15",
+            "braid4 encoder fifteen stable id");
+    Require(synth_braid4::Braid4NodeIds::SceneButton(0) == "braid4.scene.0",
+            "braid4 scene zero stable id");
+    Require(synth_braid4::Braid4NodeIds::SceneButton(1) == "braid4.scene.1",
+            "braid4 scene one stable id");
+    Require(synth_braid4::Braid4NodeIds::kSceneBlend == std::string("braid4.scene.blend"),
+            "braid4 scene blend stable id");
 
-    const synth::ui::Bounds dresdenRoot = synth_dresden4::Dresden4PageLayout::RootBounds(nullptr);
-    RequireNear(dresdenRoot.width, 900.0f, 0.0001f, "dresden4 default width");
-    RequireNear(dresdenRoot.height, 560.0f, 0.0001f, "dresden4 default height");
+    const synth::ui::Bounds braidRoot = synth_braid4::Braid4PageLayout::RootBounds(nullptr);
+    RequireNear(braidRoot.width, 900.0f, 0.0001f, "braid4 default width");
+    RequireNear(braidRoot.height, 560.0f, 0.0001f, "braid4 default height");
 
-    const synth::ui::Bounds dresdenContent = synth_dresden4::Dresden4PageLayout::ContentArea(dresdenRoot);
-    for (std::size_t scopeIx = 0; scopeIx < synth_dresden4::Dresden4PageLayout::kScopeCount; ++scopeIx)
+    const synth::ui::Bounds braidContent = synth_braid4::Braid4PageLayout::ContentArea(braidRoot);
+    for (std::size_t scopeIx = 0; scopeIx < synth_braid4::Braid4PageLayout::kScopeCount; ++scopeIx)
     {
-        Require(BoundsInside(synth_dresden4::Dresden4PageLayout::ScopeBounds(dresdenContent, scopeIx), dresdenRoot),
-                "dresden4 2x2 scope bounds stay inside default root");
+        Require(BoundsInside(synth_braid4::Braid4PageLayout::ScopeBounds(braidContent, scopeIx), braidRoot),
+                "braid4 2x2 scope bounds stay inside default root");
     }
-    for (std::size_t encoderIx = 0; encoderIx < synth_dresden4::Dresden4EncoderGridLayout::kEncoderCount; ++encoderIx)
+    for (std::size_t encoderIx = 0; encoderIx < synth_braid4::Braid4EncoderGridLayout::kEncoderCount; ++encoderIx)
     {
-        Require(BoundsInside(synth_dresden4::Dresden4EncoderGridLayout::BoundsForIndex(
-                                 synth_dresden4::Dresden4PageLayout::EncoderArea(dresdenContent), encoderIx),
-                             dresdenRoot),
-                "dresden4 4x4 encoder bounds stay inside default root");
+        Require(BoundsInside(synth_braid4::Braid4EncoderGridLayout::BoundsForIndex(
+                                 synth_braid4::Braid4PageLayout::EncoderArea(braidContent), encoderIx),
+                             braidRoot),
+                "braid4 4x4 encoder bounds stay inside default root");
     }
-    Require(BoundsInside(synth_dresden4::Dresden4PageLayout::SceneStripArea(dresdenContent), dresdenRoot),
-            "dresden4 scene strip stays inside default root");
-    Require(!synth_dresden4::Dresden4PageLayout::NeedsScrolling(dresdenRoot),
-            "dresden4 default layout does not need scrolling");
+    Require(BoundsInside(synth_braid4::Braid4PageLayout::SceneStripArea(braidContent), braidRoot),
+            "braid4 scene strip stays inside default root");
+    Require(!synth_braid4::Braid4PageLayout::NeedsScrolling(braidRoot),
+            "braid4 default layout does not need scrolling");
 
-    const auto disconnectedEncoderCommands = synth_dresden4::BuildDresden4EncoderCommands(
-        synth_dresden4::Dresden4EncoderDrawState{.connected = false, .label = "Cell 2"},
+    const auto disconnectedEncoderCommands = synth::ui::BuildEncoderDrawCommands(
+        synth::ui::EncoderDrawState{.connected = false},
         {10.0f, 10.0f, 92.0f, 92.0f});
-    Require(disconnectedEncoderCommands.size() >= 3, "dresden4 disconnected encoder has visible UI state");
+    Require(disconnectedEncoderCommands.empty(), "braid4 disconnected encoder uses shared empty encoder state");
 
-    const std::vector<synth::ui::WaveformLayerDrawState> dresdenScopeLayer{
-        {.connected = true, .color = synth::Color::Red, .scope = &scope, .scopeChannel = 0},
+    const std::vector<synth::ui::WaveformLayerDrawState> braidScopeLayer{
+        {.connected = true, .scopeColor = synth::Color::Red, .scope = &scope, .scopeChannel = 0},
     };
-    const synth::ui::Bounds dresdenScopeBounds{80.0f, 80.0f, 180.0f, 96.0f};
-    const auto sharedDresdenScope = synth::ui::BuildScopeWaveformCommands(
-        dresdenScopeLayer,
-        dresdenScopeBounds,
-        synth_dresden4::Dresden4ScopeDrawState::x_MinY,
-        synth_dresden4::Dresden4ScopeDrawState::x_MaxY,
-        synth_dresden4::Dresden4ScopeDrawState::x_NumSamples,
+    const synth::ui::Bounds braidScopeBounds{80.0f, 80.0f, 180.0f, 96.0f};
+    const auto sharedBraidScope = synth::ui::BuildScopeWaveformCommands(
+        braidScopeLayer,
+        braidScopeBounds,
+        synth_braid4::Braid4ScopeDrawState::x_MinY,
+        synth_braid4::Braid4ScopeDrawState::x_MaxY,
+        synth_braid4::Braid4ScopeDrawState::x_NumSamples,
         true);
-    const auto wrappedDresdenScope = synth_dresden4::BuildDresden4ScopeCommands(
-        synth_dresden4::Dresden4ScopeDrawState{.layers = dresdenScopeLayer},
-        dresdenScopeBounds);
-    Require(sharedDresdenScope.size() == wrappedDresdenScope.size(),
-            "dresden4 waveform wrapper uses shared scope helper");
+    const auto wrappedBraidScope = synth_braid4::BuildBraid4ScopeCommands(
+        synth_braid4::Braid4ScopeDrawState{.layers = braidScopeLayer},
+        braidScopeBounds);
+    Require(sharedBraidScope.size() == wrappedBraidScope.size(),
+            "braid4 waveform wrapper uses shared scope helper");
 
     synth::ui::Builder builder;
     builder.Root("root", synth::ui::Bounds{0.0f, 0.0f, 640.0f, 480.0f})
@@ -329,8 +353,8 @@ int main()
                   synth::ui::Action::Named("device.select"))
         .TextField("value", "Value", "64", synth::ui::Action::Named("value.commit"))
         .Draw("scope", synth::ui::Bounds{10.0f, 10.0f, 100.0f, 80.0f},
-              {synth::ui::DrawCommand::Fill(synth::ui::Color::Rgb(24, 26, 28)),
-               synth::ui::DrawCommand::Line({0.0f, 0.0f}, {100.0f, 80.0f}, synth::ui::Color::Rgb(255, 255, 255), 1.0f)});
+              {synth::ui::DrawCommand::Fill(synth::Color::Rgb(24, 26, 28)),
+               synth::ui::DrawCommand::Line({0.0f, 0.0f}, {100.0f, 80.0f}, synth::Color::Rgb(255, 255, 255), 1.0f)});
 
     const synth::ui::NodeTree tree = builder.Build();
     Require(tree.nodes.size() == 8, "tree should contain root plus seven children");

@@ -28,18 +28,11 @@ include $(APP_DIR)/../../runtime/juce_build.mk
 APP_HEADERS := $(APP_DIR)/MiniApp.hpp $(APP_DIR)/MiniAppRegistration.hpp $(APP_DIR)/MiniAppUI.hpp $(APP_DIR)/MiniAppUiModel.hpp $(APP_DIR)/MiniAppDraw.hpp $(APP_DIR)/MiniAppCore.hpp $(APP_DIR)/DemoModulation.hpp
 $(APP): $(APP_HEADERS)
 
-# EncoderComponentGeometryTests.cpp (projects/synth/juce/) is a pure-math
-# test of synth_juce::EncoderComponent's angle/arc geometry helpers, but it
-# still #includes EncoderComponent.hpp, which pulls in juce_gui_basics -- so
-# it needs the same JUCE module objects as the app itself, not the JUCE-free
-# tests under projects/synth/tests/. The old top-level miniapp/Makefile was
-# the only build path for this test (grep confirms no other Makefile
-# references it); this target replaces that path so the test isn't orphaned
-# by miniapp/'s removal. Reuses juce_build.mk's JUCE_MODULE_OBJ/
-# JUCE_C_MODULE_OBJ/CPPFLAGS/CXXFLAGS/LDFLAGS_DARWIN/BUILD_DIR/check-juce,
-# set up by the include above.
-GEOMETRY_TEST_SRC := $(SYNTH_ROOT)/juce/EncoderComponentGeometryTests.cpp
-GEOMETRY_TEST := $(BUILD_DIR)/encoder_component_geometry_tests
+# PortableDrawGeometryTests.cpp covers shared synth::ui encoder, segment, and
+# scope draw math. It remains in this JUCE target only because it also
+# smoke-tests the JUCE MIDI handler adapters at the end.
+GEOMETRY_TEST_SRC := $(SYNTH_ROOT)/juce/PortableDrawGeometryTests.cpp
+GEOMETRY_TEST := $(BUILD_DIR)/portable_draw_geometry_tests
 PORTABLE_BACKEND_TEST_SRC := $(SYNTH_ROOT)/juce/PortableJuceBackendTests.cpp
 PORTABLE_BACKEND_TEST := $(BUILD_DIR)/portable_juce_backend_tests
 MINIAPP_PARITY_TEST_SRC := $(SYNTH_ROOT)/juce/MiniAppJuceBackendParityTests.cpp

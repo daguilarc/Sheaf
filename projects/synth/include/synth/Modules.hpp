@@ -12,6 +12,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace synth {
 
@@ -44,6 +45,10 @@ public:
         std::array<DefaultWavetableVco::UIState, kVoiceCount> vcos;
     };
 
+    struct Options {
+        std::vector<Color> indicatorColors;
+    };
+
     explicit WavetableVcoModule(float sampleRate = 48000.0f) {
         SetSampleRate(sampleRate);
     }
@@ -53,6 +58,11 @@ public:
     WavetableVcoModule& operator=(WavetableVcoModule&&) = delete;
 
     void RegisterParameters(ParameterManager& manager, ParameterGroup& group, std::string_view prefix = {}) {
+        RegisterParameters(manager, group, prefix, Options{});
+    }
+
+    void RegisterParameters(ParameterManager& manager, ParameterGroup& group, std::string_view prefix,
+                            const Options& options) {
         if (registered_) {
             throw std::logic_error("wavetable VCO module parameters already registered");
         }
@@ -69,25 +79,29 @@ public:
                                                                   .name = names[0],
                                                                   .shortName = "Tune",
                                                                   .defaultValue = 0.5f,
-                                                                  .color = Color::Cyan,
+                                                                  .baseColor = Color::Cyan,
+                                                                  .indicatorColors = options.indicatorColors,
                                                               });
         parameterIds_.phase = manager.RegisterParameter(group, {
                                                                    .name = names[1],
                                                                    .shortName = "Phase",
                                                                    .defaultValue = 0.0f,
-                                                                   .color = Color::Indigo,
+                                                                   .baseColor = Color::Indigo,
+                                                                   .indicatorColors = options.indicatorColors,
                                                                });
         parameterIds_.shape = manager.RegisterParameter(group, {
                                                                    .name = names[2],
                                                                    .shortName = "Shape",
                                                                    .defaultValue = 0.0f,
-                                                                   .color = Color::Orange,
+                                                                   .baseColor = Color::Orange,
+                                                                   .indicatorColors = options.indicatorColors,
                                                                });
         parameterIds_.volume = manager.RegisterParameter(group, {
                                                                     .name = names[3],
                                                                     .shortName = "Vol",
                                                                     .defaultValue = 1.0f,
-                                                                    .color = Color::Green,
+                                                                    .baseColor = Color::Green,
+                                                                    .indicatorColors = options.indicatorColors,
                                                                 });
         manager_ = &manager;
         registered_ = true;
@@ -143,13 +157,13 @@ public:
         group.SetModulationSource(directModIx, direct, {
                                                         .name = "VCO Direct",
                                                         .shortName = "VCO",
-                                                        .color = Color::Cyan,
+                                                        .sourceColor = Color::Cyan,
                                                         .connected = true,
                                                     });
         group.SetModulationSource(swappedModIx, swapped, {
                                                           .name = "VCO Swapped",
                                                           .shortName = "Swap",
-                                                          .color = Color::Orange,
+                                                          .sourceColor = Color::Orange,
                                                           .connected = true,
                                                       });
     }
@@ -176,11 +190,11 @@ public:
         vcos_[voiceIx].SetScopeWriterHolder(holder);
     }
 
-    void SetColor(std::size_t voiceIx, Color color) {
+    void SetScopeColor(std::size_t voiceIx, Color scopeColor) {
         if (voiceIx >= kVoiceCount) {
             throw std::out_of_range("wavetable VCO voice index out of range");
         }
-        vcos_[voiceIx].SetColor(color);
+        vcos_[voiceIx].SetScopeColor(scopeColor);
     }
 
     bool Registered() const { return registered_; }
@@ -264,14 +278,13 @@ public:
     BipolarMatrixMixerModule(BipolarMatrixMixerModule&&) = delete;
     BipolarMatrixMixerModule& operator=(BipolarMatrixMixerModule&&) = delete;
 
-    void SetColor(Color color) {
+    void SetParameterColors(Color diagonalColor, Color offDiagonalColor) {
         if (registered_) {
-            throw std::logic_error("bipolar matrix mixer module color must be set before registration");
+            throw std::logic_error("bipolar matrix mixer module colors must be set before registration");
         }
-        color_ = color;
+        diagonalColor_ = diagonalColor;
+        offDiagonalColor_ = offDiagonalColor;
     }
-
-    Color GetColor() const { return color_; }
 
     void RegisterParameters(ParameterManager& manager, ParameterGroup& group, std::string_view prefix = {}) {
         if (registered_) {
@@ -299,7 +312,7 @@ public:
                                                                                          .shortName = MatrixShortName(row, column),
                                                                                          .defaultValue = row == column ? 1.0f : 0.0f,
                                                                                          .range = RangeKind::Bipolar,
-                                                                                         .color = color_,
+                                                                                         .baseColor = row == column ? diagonalColor_ : offDiagonalColor_,
                                                                                      });
             }
         }
@@ -421,14 +434,15 @@ private:
 
     bool registered_ = false;
     ParameterManager* manager_ = nullptr;
-    Color color_ = Color::Grey;
+    Color diagonalColor_ = Color::Grey;
+    Color offDiagonalColor_ = Color::Grey;
     std::array<float, kSize> inputs_{};
     std::array<float, kSize> outputs_{};
     ParameterIds parameterIds_{};
     std::array<float, kSize * kSize> gains_{};
 };
 
-class Dresden4VcoModule {
+class Braid4VcoModule {
 public:
     static constexpr std::size_t kOscillatorCount = 4;
     static constexpr std::size_t kStereoVoiceCount = 2;
@@ -468,71 +482,96 @@ public:
         std::array<DefaultWavetableVco::UIState, kOscillatorCount> vcos;
     };
 
-    explicit Dresden4VcoModule(float sampleRate = 48000.0f) {
+    struct Options {
+        Color parameterBaseColor = Color::Red;
+        std::array<Color, kOscillatorCount> indicatorColors{Color::Red, Color::Red, Color::Red, Color::Red};
+        float frequencyOctaveShift = 0.0f;
+    };
+
+    explicit Braid4VcoModule(float sampleRate = 48000.0f) {
         SetSampleRate(sampleRate);
     }
-    Dresden4VcoModule(const Dresden4VcoModule&) = delete;
-    Dresden4VcoModule& operator=(const Dresden4VcoModule&) = delete;
-    Dresden4VcoModule(Dresden4VcoModule&&) = delete;
-    Dresden4VcoModule& operator=(Dresden4VcoModule&&) = delete;
+    Braid4VcoModule(const Braid4VcoModule&) = delete;
+    Braid4VcoModule& operator=(const Braid4VcoModule&) = delete;
+    Braid4VcoModule(Braid4VcoModule&&) = delete;
+    Braid4VcoModule& operator=(Braid4VcoModule&&) = delete;
 
     void RegisterParameters(ParameterManager& manager, ParameterGroup& stereo, ParameterGroup& quad,
-                            ParameterGroup& mono, std::string_view prefix = "Dresden 4") {
+                            ParameterGroup& mono, std::string_view prefix = "Braid 4") {
+        RegisterParameters(manager, stereo, quad, mono, prefix, Options{});
+    }
+
+    void RegisterParameters(ParameterManager& manager, ParameterGroup& stereo, ParameterGroup& quad,
+                            ParameterGroup& mono, std::string_view prefix, const Options& options) {
         if (registered_) {
-            throw std::logic_error("Dresden 4 VCO module parameters already registered");
+            throw std::logic_error("Braid 4 VCO module parameters already registered");
+        }
+        if (!std::isfinite(options.frequencyOctaveShift)) {
+            throw std::invalid_argument("Braid 4 VCO module frequency octave shift must be finite");
         }
         ValidateGroupShapes(manager, stereo, quad, mono);
 
         const std::array<std::string, 14> names = ParameterNames(prefix);
-        ValidateDuplicateNames(manager, names, "Dresden 4 VCO module");
-        ValidateCapacity(stereo, 2, "Dresden 4 VCO module stereo");
-        ValidateCapacity(quad, 4, "Dresden 4 VCO module quad");
-        ValidateCapacity(mono, 8, "Dresden 4 VCO module mono");
+        ValidateDuplicateNames(manager, names, "Braid 4 VCO module");
+        ValidateCapacity(stereo, 2, "Braid 4 VCO module stereo");
+        ValidateCapacity(quad, 4, "Braid 4 VCO module quad");
+        ValidateCapacity(mono, 8, "Braid 4 VCO module mono");
 
         parameterIds_.x = manager.RegisterParameter(stereo, {
                                                                 .name = names[0],
                                                                 .shortName = "X",
                                                                 .defaultValue = 0.5f,
-                                                                .color = Color::Red,
+                                                                .baseColor = options.parameterBaseColor,
+                                                                .indicatorColors = {options.parameterBaseColor},
                                                             });
         parameterIds_.y = manager.RegisterParameter(stereo, {
                                                                 .name = names[1],
                                                                 .shortName = "Y",
                                                                 .defaultValue = 0.5f,
-                                                                .color = Color::Red,
+                                                                .baseColor = options.parameterBaseColor,
+                                                                .indicatorColors = {options.parameterBaseColor},
                                                             });
         parameterIds_.quad.tune = manager.RegisterParameter(quad, {
                                                                       .name = names[2],
                                                                       .shortName = "Tune",
                                                                       .defaultValue = 0.5f,
-                                                                      .color = Color::Red,
+                                                                      .baseColor = options.parameterBaseColor,
+                                                                      .indicatorColors = std::vector<Color>(options.indicatorColors.begin(),
+                                                                                                             options.indicatorColors.end()),
                                                                   });
         parameterIds_.quad.phase = manager.RegisterParameter(quad, {
                                                                        .name = names[3],
                                                                        .shortName = "Phase",
                                                                        .defaultValue = 0.0f,
                                                                        .range = RangeKind::Bipolar,
-                                                                       .color = Color::Red,
+                                                                       .baseColor = options.parameterBaseColor,
+                                                                       .indicatorColors = std::vector<Color>(options.indicatorColors.begin(),
+                                                                                                              options.indicatorColors.end()),
                                                                    });
         parameterIds_.quad.shape = manager.RegisterParameter(quad, {
                                                                        .name = names[4],
                                                                        .shortName = "Shape",
                                                                        .defaultValue = 0.0f,
-                                                                       .color = Color::Red,
+                                                                       .baseColor = options.parameterBaseColor,
+                                                                       .indicatorColors = std::vector<Color>(options.indicatorColors.begin(),
+                                                                                                              options.indicatorColors.end()),
                                                                    });
         parameterIds_.quad.gain = manager.RegisterParameter(quad, {
                                                                       .name = names[5],
                                                                       .shortName = "Gain",
                                                                       .defaultValue = 1.0f,
                                                                       .range = RangeKind::Bipolar,
-                                                                      .color = Color::Red,
+                                                                      .baseColor = options.parameterBaseColor,
+                                                                      .indicatorColors = std::vector<Color>(options.indicatorColors.begin(),
+                                                                                                             options.indicatorColors.end()),
                                                                   });
         for (std::size_t oscIx = 0; oscIx < kOscillatorCount; ++oscIx) {
             parameterIds_.pmIndex[oscIx] = manager.RegisterParameter(mono, {
                                                                                .name = names[6 + oscIx],
                                                                                .shortName = OscillatorShortName("PM", oscIx),
                                                                                .defaultValue = 0.0f,
-                                                                               .color = Color::Red,
+                                                                               .baseColor = options.indicatorColors[oscIx],
+                                                                               .indicatorColors = {options.indicatorColors[oscIx]},
                                                                            });
         }
         for (std::size_t oscIx = 0; oscIx < kOscillatorCount; ++oscIx) {
@@ -540,10 +579,12 @@ public:
                                                                                  .name = names[10 + oscIx],
                                                                                  .shortName = OscillatorShortName("Freq", oscIx),
                                                                                  .defaultValue = 0.5f,
-                                                                                 .color = Color::Red,
+                                                                                 .baseColor = options.indicatorColors[oscIx],
+                                                                                 .indicatorColors = {options.indicatorColors[oscIx]},
                                                                              });
         }
 
+        frequencyScale_ = std::pow(2.0f, options.frequencyOctaveShift);
         manager_ = &manager;
         registered_ = true;
     }
@@ -551,7 +592,7 @@ public:
     void RegisterToBank(Bank& bank) {
         RequireRegistered();
         if (bank.SlotCapacity() < 16) {
-            throw std::logic_error("Dresden 4 VCO module bank registration exceeds slot capacity");
+            throw std::logic_error("Braid 4 VCO module bank registration exceeds slot capacity");
         }
 
         bank.AddMapping(0, ParameterById(parameterIds_.x));
@@ -569,7 +610,7 @@ public:
     void SetInput(ParameterManager& manager) {
         RequireRegistered();
         if (&manager != manager_) {
-            throw std::logic_error("Dresden 4 VCO module used with a different parameter manager");
+            throw std::logic_error("Braid 4 VCO module used with a different parameter manager");
         }
 
         auto linear = [&manager](ParameterId id, std::size_t voiceIx, float minValue, float maxValue,
@@ -631,7 +672,8 @@ public:
             oscillator.baseFrequencyHz = exponential(parameterIds_.frequency[oscIx], 0,
                                                      kMinFrequencyHz[oscIx], kMaxFrequencyHz[oscIx],
                                                      cachedRaw_.frequency[oscIx],
-                                                     cachedMapped_.frequency[oscIx]);
+                                                     cachedMapped_.frequency[oscIx])
+                                         * frequencyScale_;
             oscillator.vco.freq = static_cast<double>(oscillator.baseFrequencyHz * oscillator.tuneMultiplier)
                                   / static_cast<double>(sampleRate_);
             oscillator.vco.phaseOffset = oscillator.phaseCycles * oscillator.pmIndex;
@@ -657,7 +699,7 @@ public:
 
     void SetSampleRate(float sampleRate) {
         if (sampleRate <= 0.0f) {
-            throw std::invalid_argument("Dresden 4 VCO module sample rate must be positive");
+            throw std::invalid_argument("Braid 4 VCO module sample rate must be positive");
         }
         sampleRate_ = sampleRate;
     }
@@ -666,16 +708,16 @@ public:
 
     void SetScopeWriterHolder(std::size_t oscIx, ScopeWriterHolder* holder) {
         if (oscIx >= kOscillatorCount) {
-            throw std::out_of_range("Dresden 4 VCO oscillator index out of range");
+            throw std::out_of_range("Braid 4 VCO oscillator index out of range");
         }
         vcos_[oscIx].SetScopeWriterHolder(holder);
     }
 
-    void SetColor(std::size_t oscIx, Color color) {
+    void SetScopeColor(std::size_t oscIx, Color scopeColor) {
         if (oscIx >= kOscillatorCount) {
-            throw std::out_of_range("Dresden 4 VCO oscillator index out of range");
+            throw std::out_of_range("Braid 4 VCO oscillator index out of range");
         }
-        vcos_[oscIx].SetColor(color);
+        vcos_[oscIx].SetScopeColor(scopeColor);
     }
 
     bool Registered() const { return registered_; }
@@ -725,17 +767,17 @@ private:
     static void ValidateGroupShapes(const ParameterManager& manager, const ParameterGroup& stereo,
                                     const ParameterGroup& quad, const ParameterGroup& mono) {
         if (&stereo.Manager() != &manager || &quad.Manager() != &manager || &mono.Manager() != &manager) {
-            throw std::logic_error("Dresden 4 VCO module groups must belong to the supplied manager");
+            throw std::logic_error("Braid 4 VCO module groups must belong to the supplied manager");
         }
         if (stereo.Config().numVoices != 2 || quad.Config().numVoices != 4 || mono.Config().numVoices != 1) {
-            throw std::logic_error("Dresden 4 VCO module parameter groups have incompatible voice counts");
+            throw std::logic_error("Braid 4 VCO module parameter groups have incompatible voice counts");
         }
         if (quad.Config().numModulators < 1) {
-            throw std::logic_error("Dresden 4 VCO module quad group requires a modulation source slot");
+            throw std::logic_error("Braid 4 VCO module quad group requires a modulation source slot");
         }
         if (stereo.Config().numScenes != quad.Config().numScenes || stereo.Config().numScenes != mono.Config().numScenes
             || stereo.Config().numScenes == 0) {
-            throw std::logic_error("Dresden 4 VCO module parameter groups have incompatible scene counts");
+            throw std::logic_error("Braid 4 VCO module parameter groups have incompatible scene counts");
         }
     }
 
@@ -797,20 +839,21 @@ private:
 
     Parameter& ParameterById(ParameterId id) const {
         if (manager_ == nullptr) {
-            throw std::logic_error("Dresden 4 VCO module parameters are not registered");
+            throw std::logic_error("Braid 4 VCO module parameters are not registered");
         }
         return manager_->ParameterById(id);
     }
 
     void RequireRegistered() const {
         if (!registered_ || manager_ == nullptr) {
-            throw std::logic_error("Dresden 4 VCO module parameters are not registered");
+            throw std::logic_error("Braid 4 VCO module parameters are not registered");
         }
     }
 
     float sampleRate_ = 48000.0f;
     bool registered_ = false;
     ParameterManager* manager_ = nullptr;
+    float frequencyScale_ = 1.0f;
     ParameterIds parameterIds_{};
     Input input_{};
     struct CachedMappedInput {
@@ -879,6 +922,10 @@ public:
         std::array<BasicLFOProcessor::UIState, kVoiceCount> lfos;
     };
 
+    struct Options {
+        std::vector<Color> indicatorColors;
+    };
+
     explicit BasicLfoModule(float sampleRate = 48000.0f) {
         SetSampleRate(sampleRate);
     }
@@ -888,6 +935,11 @@ public:
     BasicLfoModule& operator=(BasicLfoModule&&) = delete;
 
     void RegisterParameters(ParameterManager& manager, ParameterGroup& group, std::string_view prefix = {}) {
+        RegisterParameters(manager, group, prefix, Options{});
+    }
+
+    void RegisterParameters(ParameterManager& manager, ParameterGroup& group, std::string_view prefix,
+                            const Options& options) {
         if (registered_) {
             throw std::logic_error("basic LFO module parameters already registered");
         }
@@ -905,32 +957,37 @@ public:
                                                                        .name = names[0],
                                                                        .shortName = "Freq",
                                                                        .defaultValue = 0.35f,
-                                                                       .color = Color::Green,
+                                                                       .baseColor = Color::Green,
+                                                                       .indicatorColors = options.indicatorColors,
                                                                    });
         parameterIds_.shape = manager.RegisterParameter(group, {
                                                                    .name = names[1],
                                                                    .shortName = "Shape",
                                                                    .defaultValue = 0.5f,
-                                                                   .color = Color::Cyan,
+                                                                   .baseColor = Color::Cyan,
+                                                                   .indicatorColors = options.indicatorColors,
                                                                });
         parameterIds_.phaseOffset = manager.RegisterParameter(group, {
                                                                          .name = names[2],
                                                                          .shortName = "Phase",
                                                                          .defaultValue = 0.0f,
-                                                                         .color = Color::Indigo,
+                                                                         .baseColor = Color::Indigo,
+                                                                         .indicatorColors = options.indicatorColors,
                                                                      });
         parameterIds_.skew = manager.RegisterParameter(group, {
                                                                   .name = names[3],
                                                                   .shortName = "Skew",
                                                                   .defaultValue = 0.5f,
-                                                                  .color = Color::Orange,
+                                                                  .baseColor = Color::Orange,
+                                                                  .indicatorColors = options.indicatorColors,
                                                               });
         parameterIds_.exponent = manager.RegisterParameter(group, {
                                                                       .name = names[4],
                                                                       .shortName = "Exp",
                                                                       .defaultValue = 0.0f,
                                                                       .range = RangeKind::Bipolar,
-                                                                      .color = Color::Yellow,
+                                                                      .baseColor = Color::Yellow,
+                                                                      .indicatorColors = options.indicatorColors,
                                                                   });
         manager_ = &manager;
         registered_ = true;
@@ -983,7 +1040,7 @@ public:
         group.SetModulationSource(modIx, sources, {
                                                     .name = "LFO",
                                                     .shortName = "LFO",
-                                                    .color = Color::Green,
+                                                    .sourceColor = Color::Green,
                                                     .connected = true,
                                                 });
     }
@@ -1010,11 +1067,11 @@ public:
         lfos_[voiceIx].SetScopeWriterHolder(holder);
     }
 
-    void SetColor(std::size_t voiceIx, Color color) {
+    void SetScopeColor(std::size_t voiceIx, Color scopeColor) {
         if (voiceIx >= kVoiceCount) {
             throw std::out_of_range("basic LFO voice index out of range");
         }
-        lfos_[voiceIx].SetColor(color);
+        lfos_[voiceIx].SetScopeColor(scopeColor);
     }
 
     bool Registered() const { return registered_; }
@@ -1108,6 +1165,10 @@ public:
         std::array<ClassicStateVariableFilter::UIState, kVoiceCount> filters;
     };
 
+    struct Options {
+        std::vector<Color> indicatorColors;
+    };
+
     explicit ClassicSvfModule(float sampleRate = 48000.0f) {
         SetSampleRate(sampleRate);
     }
@@ -1117,6 +1178,11 @@ public:
     ClassicSvfModule& operator=(ClassicSvfModule&&) = delete;
 
     void RegisterParameters(ParameterManager& manager, ParameterGroup& group, std::string_view prefix = {}) {
+        RegisterParameters(manager, group, prefix, Options{});
+    }
+
+    void RegisterParameters(ParameterManager& manager, ParameterGroup& group, std::string_view prefix,
+                            const Options& options) {
         if (registered_) {
             throw std::logic_error("classic SVF module parameters already registered");
         }
@@ -1132,20 +1198,23 @@ public:
                                                                     .name = names[0],
                                                                     .shortName = "Cutoff",
                                                                     .defaultValue = 1.0f,
-                                                                    .color = Color::Cyan,
+                                                                    .baseColor = Color::Cyan,
+                                                                    .indicatorColors = options.indicatorColors,
                                                                 });
         parameterIds_.resonance = manager.RegisterParameter(group, {
                                                                        .name = names[1],
                                                                        .shortName = "Res",
                                                                        .defaultValue = 0.0f,
-                                                                       .color = Color::Yellow,
+                                                                       .baseColor = Color::Yellow,
+                                                                       .indicatorColors = options.indicatorColors,
                                                                    });
         parameterIds_.blend = manager.RegisterParameter(group, {
                                                                    .name = names[2],
                                                                    .shortName = "Blend",
                                                                    .defaultValue = -1.0f,
                                                                    .range = RangeKind::Bipolar,
-                                                                   .color = Color::Orange,
+                                                                   .baseColor = Color::Orange,
+                                                                   .indicatorColors = options.indicatorColors,
                                                                });
         manager_ = &manager;
         registered_ = true;

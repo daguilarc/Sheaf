@@ -1,4 +1,5 @@
 #include "synth/DspFilters.hpp"
+#include "synth/EncoderDraw.hpp"
 #include "synth/MidiController.hpp"
 #include "synth/Json.hpp"
 #include "synth/ParameterModulation.hpp"
@@ -19,6 +20,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <mutex>
 #include <optional>
 #include <random>
@@ -374,17 +376,58 @@ TEST_CASE(parameter_group_timing_reconfiguration_is_non_compounding) {
 
 TEST_CASE(color_hsv_and_atomic_storage) {
     const synth::Color color{.r = 64, .g = 128, .b = 255};
-    const synth::HSV hsv = synth::ToHSV(color);
-    const synth::Color roundTrip = synth::Color::FromHSV(hsv.h, hsv.s, hsv.v);
+    const synth::HsvColor hsv = synth::ToHsv(color);
+    const synth::Color roundTrip =
+        synth::Color::FromHsvTurns(hsv.hueTurns, hsv.saturation, hsv.value);
     REQUIRE_TRUE(std::abs(static_cast<int>(roundTrip.r) - static_cast<int>(color.r)) <= 1);
     REQUIRE_TRUE(std::abs(static_cast<int>(roundTrip.g) - static_cast<int>(color.g)) <= 1);
     REQUIRE_TRUE(std::abs(static_cast<int>(roundTrip.b) - static_cast<int>(color.b)) <= 1);
     REQUIRE_TRUE(color.AdjustBrightness(0.5f).r == 32);
 
+    const synth::Color degreeGreen = synth::Color::FromHsvDegrees(120.0f, 1.0f, 1.0f);
+    const synth::Color turnGreen = synth::Color::FromHsvTurns(1.0f / 3.0f, 1.0f, 1.0f);
+    REQUIRE_TRUE(degreeGreen == synth::Color::Rgb(0, 255, 0));
+    REQUIRE_TRUE(turnGreen == synth::Color::Rgb(0, 255, 0));
+    bool rejectedDegreeAsTurns = false;
+    try {
+        (void)synth::Color::FromHsvTurns(120.0f, 1.0f, 1.0f);
+    } catch (const std::invalid_argument&) {
+        rejectedDegreeAsTurns = true;
+    }
+    REQUIRE_TRUE(rejectedDegreeAsTurns);
+
+    REQUIRE_TRUE(synth::ScaleAlpha(synth::Color::Rgba(10, 20, 30, 200), 0.5f) ==
+                 synth::Color::Rgba(10, 20, 30, 100));
+    REQUIRE_TRUE(synth::Darken(synth::Color::Rgba(100, 128, 200, 180), 0.5f) ==
+                 synth::Color::Rgba(50, 64, 100, 180));
+    REQUIRE_TRUE(synth::Brighten(synth::Color::Rgba(100, 128, 200, 180), 0.45f) ==
+                 synth::Color::Rgba(148, 167, 217, 180));
+
     synth::AtomicColor atomicColor;
     atomicColor.Store(synth::Color::Orange);
     REQUIRE_TRUE(atomicColor.Load() == synth::Color::Orange);
     REQUIRE_TRUE(atomicColor.IsLockFree());
+}
+
+TEST_CASE(color_rejects_non_finite_conversion_inputs) {
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    const float infinity = std::numeric_limits<float>::infinity();
+    const auto rejects = [](auto operation) {
+        try {
+            operation();
+        } catch (const std::invalid_argument&) {
+            return true;
+        }
+        return false;
+    };
+
+    REQUIRE_TRUE(rejects([&] { (void)synth::Color::FromHsvTurns(0.25f, nan, 0.5f); }));
+    REQUIRE_TRUE(rejects([&] { (void)synth::Color::FromHsvTurns(0.25f, 0.5f, infinity); }));
+    REQUIRE_TRUE(rejects([&] { (void)synth::Color::FromHsvDegrees(90.0f, infinity, 0.5f); }));
+    REQUIRE_TRUE(rejects([&] { (void)synth::Color::FromHsvDegrees(90.0f, 0.5f, nan); }));
+    REQUIRE_TRUE(rejects([&] { (void)synth::ScaleAlpha(synth::Color::White, nan); }));
+    REQUIRE_TRUE(rejects([&] { (void)synth::Darken(synth::Color::White, infinity); }));
+    REQUIRE_TRUE(rejects([&] { (void)synth::Brighten(synth::Color::White, nan); }));
 }
 
 TEST_CASE(twister_color_helper_matches_smart_grid_hue_shape) {
@@ -424,25 +467,150 @@ TEST_CASE(validated_scene_endpoint_setter_preserves_state_on_reject) {
     REQUIRE_NEAR(manager.Scene().blend, 0.25f, 0.0001f);
 }
 
-TEST_CASE(default_voice_indicator_colors_are_deterministic) {
+TEST_CASE(parameter_appearance_resolves_empty_single_and_exact_indicator_palettes) {
     synth::ParameterManager manager;
     auto& group = manager.CreateGroup({
-        .numVoices = 7,
+        .numVoices = 4,
+        .numScenes = 1,
+        .maxParameters = 3,
+    });
+    auto& empty = manager.CreateParameter(group, {
+        .name = "Empty",
+        .baseColor = synth::Color::Red,
+    });
+    auto& single = manager.CreateParameter(group, {
+        .name = "Single",
+        .baseColor = synth::Color::Green,
+        .indicatorColors = {synth::Color::Yellow},
+    });
+    auto& exact = manager.CreateParameter(group, {
+        .name = "Exact",
+        .baseColor = synth::Color::Blue,
+        .indicatorColors = {synth::Color::Cyan, synth::Color::Orange, synth::Color::Green, synth::Color::Indigo},
+    });
+
+    REQUIRE_TRUE(empty.BaseColor() == synth::Color::Red);
+    REQUIRE_TRUE(single.BaseColor() == synth::Color::Green);
+    REQUIRE_TRUE(exact.BaseColor() == synth::Color::Blue);
+    for (std::size_t voiceIx = 0; voiceIx < 4; ++voiceIx) {
+        REQUIRE_TRUE(empty.IndicatorColor(voiceIx) == synth::Color::Red);
+        REQUIRE_TRUE(single.IndicatorColor(voiceIx) == synth::Color::Yellow);
+    }
+    REQUIRE_TRUE(exact.IndicatorColor(0) == synth::Color::Cyan);
+    REQUIRE_TRUE(exact.IndicatorColor(1) == synth::Color::Orange);
+    REQUIRE_TRUE(exact.IndicatorColor(2) == synth::Color::Green);
+    REQUIRE_TRUE(exact.IndicatorColor(3) == synth::Color::Indigo);
+}
+
+TEST_CASE(invalid_parameter_indicator_cardinality_rejects_registration_atomically) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({.numVoices = 4, .numScenes = 1, .maxParameters = 2});
+
+    bool threw = false;
+    try {
+        (void)manager.CreateParameter(group, {
+            .name = "Invalid",
+            .baseColor = synth::Color::Red,
+            .indicatorColors = {synth::Color::Cyan, synth::Color::Orange},
+        });
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+
+    REQUIRE_TRUE(threw);
+    REQUIRE_TRUE(manager.ParameterCount() == 0);
+    REQUIRE_TRUE(group.ParameterCount() == 0);
+    REQUIRE_TRUE(manager.FindParameterByName("Invalid") == nullptr);
+    auto& valid = manager.CreateParameter(group, {.name = "Valid"});
+    REQUIRE_TRUE(valid.Id() == 0);
+}
+
+TEST_CASE(parameter_ui_snapshot_owns_parameter_source_and_gesture_colors) {
+    synth::ParameterManager manager;
+    manager.SetGestureCount(1);
+    manager.GestureMetadataAt(0).gestureColor = synth::Color::Orange;
+    auto& group = manager.CreateGroup({
+        .numVoices = 2,
+        .numModulators = 1,
+        .numScenes = 1,
+        .maxParameters = 3,
+    });
+    group.GetModulators().Metadata(0).sourceColor = synth::Color::Cyan;
+    auto& first = manager.CreateParameter(group, {
+        .name = "First",
+        .baseColor = synth::Color::Red,
+        .indicatorColors = {synth::Color::Green, synth::Color::Blue},
+    });
+    auto& second = manager.CreateParameter(group, {
+        .name = "Second",
+        .baseColor = synth::Color::Yellow,
+        .indicatorColors = {synth::Color::Indigo, synth::Color::Orange},
+    });
+
+    synth::Parameter::UIState firstState(2, 1, 1);
+    synth::Parameter::UIState secondState(2, 1, 1);
+    first.PopulateUIState(firstState);
+    second.PopulateUIState(secondState);
+    REQUIRE_TRUE(firstState.indicatorColors[0].Load() == synth::Color::Green);
+    REQUIRE_TRUE(firstState.indicatorColors[1].Load() == synth::Color::Blue);
+    REQUIRE_TRUE(secondState.indicatorColors[0].Load() == synth::Color::Indigo);
+    REQUIRE_TRUE(secondState.indicatorColors[1].Load() == synth::Color::Orange);
+    REQUIRE_TRUE(firstState.modulatorColorCount.load() == 1);
+    REQUIRE_TRUE(firstState.modulatorSourceColors[0].Load() == synth::Color::Cyan);
+    REQUIRE_TRUE(firstState.gestureColorCount.load() == 1);
+    REQUIRE_TRUE(firstState.gestureColors[0].Load() == synth::Color::Orange);
+
+    synth::Parameter* depth = first.EnsureModulationDepth(0);
+    REQUIRE_TRUE(depth != nullptr);
+    REQUIRE_TRUE(depth->BaseColor() == synth::Color::Cyan);
+    REQUIRE_TRUE(depth->IndicatorColor(0) == synth::Color::Green);
+    REQUIRE_TRUE(depth->IndicatorColor(1) == synth::Color::Blue);
+}
+
+TEST_CASE(manager_cells_use_max_source_capacity_and_clear_reused_higher_entries) {
+    synth::ParameterManager manager;
+    auto& smallGroup = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 1,
         .numScenes = 1,
         .maxParameters = 1,
     });
-    auto& parameter = manager.CreateParameter(group, {.name = "Voices", .defaultValue = 0.5f});
-    synth::Parameter::UIState ui(7);
-    parameter.PopulateUIState(ui);
+    auto& largeGroup = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 3,
+        .numScenes = 1,
+        .maxParameters = 1,
+    });
+    smallGroup.GetModulators().Metadata(0).sourceColor = synth::Color::Red;
+    largeGroup.GetModulators().Metadata(0).sourceColor = synth::Color::Cyan;
+    largeGroup.GetModulators().Metadata(1).sourceColor = synth::Color::Orange;
+    largeGroup.GetModulators().Metadata(2).sourceColor = synth::Color::Green;
+    auto& smallParameter = manager.CreateParameter(smallGroup, {.name = "Small"});
+    auto& largeParameter = manager.CreateParameter(largeGroup, {.name = "Large"});
+    auto& smallBank = manager.CreateBank();
+    auto& largeBank = manager.CreateBank();
+    smallBank.AddMapping(10, smallParameter);
+    largeBank.AddMapping(10, largeParameter);
+    auto& slot = manager.CreateBankSlot();
+    slot.AddPhysicalEncoder(10);
+    slot.SelectBank(&largeBank);
+    auto ui = manager.CreateUIState();
 
-    REQUIRE_TRUE(ui.indicatorColors[0].Load() == synth::Color::Cyan);
-    REQUIRE_TRUE(ui.indicatorColors[1].Load() == synth::Color::Orange);
-    REQUIRE_TRUE(ui.indicatorColors[2].Load() == synth::Color::Green);
-    REQUIRE_TRUE(ui.indicatorColors[3].Load() == synth::Color::Indigo);
-    REQUIRE_TRUE(ui.indicatorColors[4].Load() == synth::Color::Yellow);
-    REQUIRE_TRUE(ui.indicatorColors[5].Load() == synth::Color::Blue);
-    REQUIRE_TRUE(ui.indicatorColors[6].Load() != synth::Color::Off);
-    REQUIRE_TRUE(ui.indicatorColors[6].Load() != ui.indicatorColors[0].Load());
+    manager.PopulateUIState(*ui);
+    synth::Parameter::UIState& cell = ui->slots[0].cells[0];
+    REQUIRE_TRUE(cell.modulatorColorCapacity == 3);
+    REQUIRE_TRUE(cell.modulatorColorCount.load() == 3);
+    REQUIRE_TRUE(cell.modulatorSourceColors[0].Load() == synth::Color::Cyan);
+    REQUIRE_TRUE(cell.modulatorSourceColors[1].Load() == synth::Color::Orange);
+    REQUIRE_TRUE(cell.modulatorSourceColors[2].Load() == synth::Color::Green);
+
+    slot.SelectBank(&smallBank);
+    manager.PopulateUIState(*ui);
+    REQUIRE_TRUE(cell.modulatorColorCapacity == 3);
+    REQUIRE_TRUE(cell.modulatorColorCount.load() == 1);
+    REQUIRE_TRUE(cell.modulatorSourceColors[0].Load() == synth::Color::Red);
+    REQUIRE_TRUE(cell.modulatorSourceColors[1].Load() == synth::Color::Off);
+    REQUIRE_TRUE(cell.modulatorSourceColors[2].Load() == synth::Color::Off);
 }
 
 TEST_CASE(manager_assigns_unique_ids) {
@@ -549,7 +717,7 @@ TEST_CASE(modulator_metadata_is_not_per_voice) {
     synth::Modulators modulators(3, 2);
     modulators.Metadata(1).name = "LFO";
     modulators.Metadata(1).shortName = "LF";
-    modulators.Metadata(1).color = {.r = 12, .g = 34, .b = 56};
+    modulators.Metadata(1).sourceColor = {.r = 12, .g = 34, .b = 56};
     modulators.Metadata(1).connected = true;
 
     modulators.Value(0, 1) = 0.25f;
@@ -557,7 +725,7 @@ TEST_CASE(modulator_metadata_is_not_per_voice) {
 
     REQUIRE_TRUE(modulators.Metadata(1).name == "LFO");
     REQUIRE_TRUE(modulators.Metadata(1).shortName == "LF");
-    REQUIRE_TRUE(modulators.Metadata(1).color.g == 34);
+    REQUIRE_TRUE(modulators.Metadata(1).sourceColor.g == 34);
     REQUIRE_TRUE(modulators.Metadata(1).connected);
     REQUIRE_NEAR(modulators.Value(0, 1), 0.25f, 0.0001f);
     REQUIRE_NEAR(modulators.Value(2, 1), -0.75f, 0.0001f);
@@ -578,14 +746,14 @@ TEST_CASE(group_modulation_source_registration_stores_metadata) {
     group.SetModulationSource(0, sources, {
                                              .name = "VCO",
                                              .shortName = "VCO",
-                                             .color = synth::Color::Cyan,
+                                             .sourceColor = synth::Color::Cyan,
                                              .connected = true,
                                          });
 
     const synth::ModulatorMetadata& metadata = group.GetModulators().Metadata(0);
     REQUIRE_TRUE(metadata.name == "VCO");
     REQUIRE_TRUE(metadata.shortName == "VCO");
-    REQUIRE_TRUE(metadata.color == synth::Color::Cyan);
+    REQUIRE_TRUE(metadata.sourceColor == synth::Color::Cyan);
     REQUIRE_TRUE(metadata.connected);
 }
 
@@ -627,7 +795,7 @@ TEST_CASE(group_modulation_source_registration_rejects_invalid_inputs_without_mu
     group.SetModulationSource(0, validSources, {
                                                 .name = "Original",
                                                 .shortName = "Orig",
-                                                .color = synth::Color::Green,
+                                                .sourceColor = synth::Color::Green,
                                                 .connected = true,
                                             });
     group.UpdateModValues();
@@ -661,7 +829,7 @@ TEST_CASE(group_modulation_source_registration_rejects_invalid_inputs_without_mu
     const synth::ModulatorMetadata& metadata = group.GetModulators().Metadata(0);
     REQUIRE_TRUE(metadata.name == "Original");
     REQUIRE_TRUE(metadata.shortName == "Orig");
-    REQUIRE_TRUE(metadata.color == synth::Color::Green);
+    REQUIRE_TRUE(metadata.sourceColor == synth::Color::Green);
     REQUIRE_TRUE(metadata.connected);
 
     voice0 = 0.3f;
@@ -724,7 +892,7 @@ TEST_CASE(update_mod_values_copies_source_values_unchanged) {
 TEST_CASE(gestures_store_values_and_selection) {
     synth::Gestures gestures(2);
     gestures.Metadata(1).name = "Pressure";
-    gestures.Metadata(1).color = {.r = 200, .g = 20, .b = 30};
+    gestures.Metadata(1).gestureColor = {.r = 200, .g = 20, .b = 30};
 
     gestures.Value(1) = 0.75f;
     gestures.Select(1, true);
@@ -1703,7 +1871,7 @@ TEST_CASE(switch_value_uses_target_despite_process_lite_slew) {
     REQUIRE_NEAR(ui.spreadValues[0].load(std::memory_order_relaxed), 0.0f, 0.0001f);
 }
 
-TEST_CASE(parameter_ui_state_brightness_defaults_connected_and_disconnected) {
+TEST_CASE(parameter_ui_state_clears_semantic_colors_when_disconnected) {
     synth::ParameterManager manager;
     auto& group = manager.CreateGroup({
         .numVoices = 1,
@@ -1714,15 +1882,20 @@ TEST_CASE(parameter_ui_state_brightness_defaults_connected_and_disconnected) {
         .name = "Level",
         .defaultValue = 0.5f,
     });
-    synth::Parameter::UIState state(1);
+    synth::Parameter::UIState state(1, 1, 1);
 
     parameter.PopulateUIState(state);
     REQUIRE_TRUE(state.connected.load(std::memory_order_relaxed));
-    REQUIRE_NEAR(state.brightness.load(std::memory_order_relaxed), 1.0f, 0.000001f);
+    REQUIRE_TRUE(state.baseColor.Load() == synth::Color::Grey);
 
     state.SetDisconnected();
     REQUIRE_TRUE(!state.connected.load(std::memory_order_relaxed));
-    REQUIRE_NEAR(state.brightness.load(std::memory_order_relaxed), 0.0f, 0.000001f);
+    REQUIRE_TRUE(state.baseColor.Load() == synth::Color::Off);
+    REQUIRE_TRUE(state.indicatorColors[0].Load() == synth::Color::Off);
+    REQUIRE_TRUE(state.modulatorColorCount.load() == 0);
+    REQUIRE_TRUE(state.gestureColorCount.load() == 0);
+    REQUIRE_TRUE(state.modulatorSourceColors[0].Load() == synth::Color::Off);
+    REQUIRE_TRUE(state.gestureColors[0].Load() == synth::Color::Off);
 }
 
 TEST_CASE(ui_state_reports_affecting_masks_for_first_32_indices) {
@@ -2995,7 +3168,7 @@ TEST_CASE(modulation_view_open_is_noop_when_capacity_cannot_fill_all_modulators)
     auto& filler = manager.CreateParameter(group, {.name = "Filler", .defaultValue = 0.25f});
     group.GetModulators().Metadata(0).name = "Filter Env";
     group.GetModulators().Metadata(0).shortName = "Env";
-    group.GetModulators().Metadata(0).color = synth::Color::Cyan;
+    group.GetModulators().Metadata(0).sourceColor = synth::Color::Cyan;
     auto& bank = manager.CreateBank();
     bank.AddMapping(1, carrier);
     bank.AddMapping(2, filler);
@@ -3075,7 +3248,7 @@ TEST_CASE(modulation_view_materializes_all_missing_depth_parameters_when_capacit
     auto& filler = manager.CreateParameter(group, {.name = "Filler", .defaultValue = 0.25f});
     group.GetModulators().Metadata(0).name = "Filter Env";
     group.GetModulators().Metadata(0).shortName = "Env";
-    group.GetModulators().Metadata(0).color = synth::Color::Cyan;
+    group.GetModulators().Metadata(0).sourceColor = synth::Color::Cyan;
     auto& bank = manager.CreateBank();
     bank.AddMapping(1, carrier);
     bank.AddMapping(2, filler);
@@ -3095,7 +3268,7 @@ TEST_CASE(modulation_view_materializes_all_missing_depth_parameters_when_capacit
     REQUIRE_TRUE(manager.ParameterCount() == 2);
     REQUIRE_TRUE(depth->Name() == "Carrier Filter Env");
     REQUIRE_TRUE(depth->ShortName() == "Env");
-    REQUIRE_TRUE(depth->ParamColor() == synth::Color::Cyan);
+    REQUIRE_TRUE(depth->BaseColor() == synth::Color::Cyan);
     REQUIRE_TRUE(depth->Range() == synth::RangeKind::Bipolar);
     REQUIRE_NEAR(depth->SceneCenter(0), 0.0f, 0.0001f);
     REQUIRE_TRUE(bank.VisibleParameter(1) == depth);
@@ -3118,14 +3291,14 @@ TEST_CASE(modulation_view_keeps_owned_depth_parameter_after_reset) {
     });
     group.GetModulators().Metadata(0).name = "VCO Direct";
     group.GetModulators().Metadata(0).shortName = "VCO";
-    group.GetModulators().Metadata(0).color = synth::Color::Cyan;
+    group.GetModulators().Metadata(0).sourceColor = synth::Color::Cyan;
     auto& tune = manager.CreateParameter(group, {.name = "Tune", .defaultValue = 0.5f});
     auto& depth = tune.EnsureModulationDepth(0, {
         .name = "Tune VCO Direct",
         .shortName = "VCO",
         .defaultValue = 0.0f,
         .range = synth::RangeKind::Bipolar,
-        .color = synth::Color::Cyan,
+        .baseColor = synth::Color::Cyan,
     });
 
     auto& bank = manager.CreateBank();
@@ -3167,7 +3340,7 @@ TEST_CASE(modulation_view_lazy_depth_names_include_target_parameter_for_duplicat
     auto& second = manager.CreateParameter(group, {.name = "Carrier B", .defaultValue = 0.75f});
     group.GetModulators().Metadata(0).name = "Filter Env";
     group.GetModulators().Metadata(0).shortName = "Env";
-    group.GetModulators().Metadata(0).color = synth::Color::Cyan;
+    group.GetModulators().Metadata(0).sourceColor = synth::Color::Cyan;
 
     auto& bank = manager.CreateBank();
     bank.AddMapping(1, first);
@@ -3526,14 +3699,14 @@ TEST_CASE(parameter_and_slot_ui_state_reports_values_colors_and_target_cell_meta
         .maxParameters = 4,
         .processLiteAlpha = 1.0f,
         .targetCenterAlpha = 1.0f,
-        .voiceIndicatorColors = {synth::Color::Cyan, synth::Color::Orange},
     });
     auto& parameter = manager.CreateParameter(group, {
         .name = "Pan",
         .shortName = "Pan",
         .defaultValue = 0.0f,
         .range = synth::RangeKind::Bipolar,
-        .color = synth::Color::Green,
+        .baseColor = synth::Color::Green,
+        .indicatorColors = {synth::Color::Cyan, synth::Color::Orange},
         .switchValues = 5,
     });
     auto& bank = manager.CreateBank();
@@ -3560,7 +3733,7 @@ TEST_CASE(parameter_and_slot_ui_state_reports_values_colors_and_target_cell_meta
     const synth::Parameter::UIState& cell = ui->slots[0].cells[0];
     REQUIRE_TRUE(cell.connected.load());
     REQUIRE_TRUE(cell.bipolar.load());
-    REQUIRE_TRUE(cell.color.Load() == synth::Color::Green);
+    REQUIRE_TRUE(cell.baseColor.Load() == synth::Color::Green);
     REQUIRE_TRUE(cell.indicatorColors[0].Load() == synth::Color::Cyan);
     REQUIRE_TRUE(cell.indicatorColors[1].Load() == synth::Color::Orange);
     REQUIRE_NEAR(cell.minValues[0].load(), 0.0f, 0.0001f);
@@ -3576,7 +3749,7 @@ TEST_CASE(parameter_and_slot_ui_state_reports_values_colors_and_target_cell_meta
     REQUIRE_TRUE(targetCell.switchValue[1].load() == 4);
     REQUIRE_TRUE(targetCell.modulatorsAffectingMask.load() == 1u);
     REQUIRE_TRUE(targetCell.gesturesAffectingMask.load() == 0u);
-    REQUIRE_TRUE(targetCell.color.Load() == synth::Color::Green);
+    REQUIRE_TRUE(targetCell.baseColor.Load() == synth::Color::Green);
     REQUIRE_TRUE(targetCell.shortName.load() == parameter.ShortName().c_str());
 }
 
@@ -3802,14 +3975,14 @@ TEST_CASE(manager_ui_state_reports_bank_colors_selection_and_gesture_affecting) 
     drillHidden.SetGestureActive(0, 2, true);
 
     auto& bankA = manager.CreateBank();
-    bankA.SetColor(synth::Color::Green);
+    bankA.SetBankColor(synth::Color::Green);
     bankA.AddMapping(10, affected);
     bankA.AddMapping(13, drillHidden);
     auto& bankB = manager.CreateBank();
-    bankB.SetColor(synth::Color::Blue);
+    bankB.SetBankColor(synth::Color::Blue);
     bankB.AddMapping(11, unaffected);
     auto& bankC = manager.CreateBank();
-    bankC.SetColor(synth::Color::Red);
+    bankC.SetBankColor(synth::Color::Red);
     bankC.AddMapping(12, affected);
 
     auto& slot = manager.CreateBankSlot();
@@ -3820,22 +3993,22 @@ TEST_CASE(manager_ui_state_reports_bank_colors_selection_and_gesture_affecting) 
     REQUIRE_TRUE(bankA.ShowingModulation());
 
     synth::ParameterManager::UIState ui;
-    ui.Configure(1, 2, 1, 4, 4);
+    ui.Configure(1, 2, 1, 0, 4, 4);
     manager.PopulateUIState(ui);
 
     REQUIRE_TRUE(ui.bankCapacity == 4);
     REQUIRE_TRUE(ui.banks[0].connected.load());
     REQUIRE_TRUE(ui.banks[0].selected.load());
-    REQUIRE_TRUE(ui.banks[0].color.Load() == synth::Color::Green);
+    REQUIRE_TRUE(ui.banks[0].bankColor.Load() == synth::Color::Green);
     REQUIRE_TRUE(ui.banks[1].connected.load());
     REQUIRE_TRUE(!ui.banks[1].selected.load());
-    REQUIRE_TRUE(ui.banks[1].color.Load() == synth::Color::Blue);
+    REQUIRE_TRUE(ui.banks[1].bankColor.Load() == synth::Color::Blue);
     REQUIRE_TRUE(ui.banks[2].connected.load());
     REQUIRE_TRUE(!ui.banks[2].selected.load());
-    REQUIRE_TRUE(ui.banks[2].color.Load() == synth::Color::Red);
+    REQUIRE_TRUE(ui.banks[2].bankColor.Load() == synth::Color::Red);
     REQUIRE_TRUE(!ui.banks[3].connected.load());
     REQUIRE_TRUE(!ui.banks[3].selected.load());
-    REQUIRE_TRUE(ui.banks[3].color.Load() == synth::Color::Off);
+    REQUIRE_TRUE(ui.banks[3].bankColor.Load() == synth::Color::Off);
     REQUIRE_TRUE(ui.gestures.bankAffectingCount[0].load() == 2);
     REQUIRE_TRUE(ui.gestures.bankAffectingMask[0].load() == ((1u << 0u) | (1u << 2u)));
     REQUIRE_TRUE(ui.gestures.bankAffectingCount[1].load() == 1);
@@ -4370,7 +4543,7 @@ TEST_CASE(midi_encoder_input_supports_incomplete_and_multi_slot_maps) {
 
 TEST_CASE(system_message_output_info_reports_colors_and_on_state) {
     synth::ParameterManager::UIState ui;
-    ui.Configure(0, 0, 0, 4, 3);
+    ui.Configure(0, 0, 0, 0, 4, 3);
     ui.sceneCapacity = 2;
     ui.leftScene.store(0);
     ui.rightScene.store(1);
@@ -4378,10 +4551,10 @@ TEST_CASE(system_message_output_info_reports_colors_and_on_state) {
     ui.resetHeld.store(true);
     ui.banks[0].connected.store(true);
     ui.banks[0].selected.store(true);
-    ui.banks[0].color.Store(synth::Color::Green);
+    ui.banks[0].bankColor.Store(synth::Color::Green);
     ui.banks[1].connected.store(true);
     ui.banks[1].selected.store(false);
-    ui.banks[1].color.Store(synth::Color::Blue);
+    ui.banks[1].bankColor.Store(synth::Color::Blue);
     for (std::size_t gestureIx = 0; gestureIx < 4; ++gestureIx) {
         ui.gestures.connected[gestureIx].store(true);
         ui.gestures.selected[gestureIx].store(false);
@@ -4469,7 +4642,7 @@ TEST_CASE(system_message_output_info_reports_colors_and_on_state) {
 
 TEST_CASE(system_output_processors_debounce_reset_and_render_cc_and_wrld_bldr) {
     synth::ParameterManager::UIState ui;
-    ui.Configure(0, 0, 0, 0, 0);
+    ui.Configure(0, 0, 0, 0, 0, 0);
     ui.resetHeld.store(true);
 
     FakeMidiSink sink;
@@ -4567,7 +4740,7 @@ TEST_CASE(launchpad_color_sysex_uses_controller_product_and_rgb_note) {
 
 TEST_CASE(launchpad_output_processor_debounces_reset_and_uses_system_info) {
     synth::ParameterManager::UIState ui;
-    ui.Configure(0, 0, 0, 0, 0);
+    ui.Configure(0, 0, 0, 0, 0, 0);
     ui.resetHeld.store(true);
 
     FakeMidiSink sink;
@@ -4651,7 +4824,7 @@ TEST_CASE(midi_controller_profile_builds_chained_input_processors) {
 TEST_CASE(midi_controller_profile_routes_launchpad_only_system_associations) {
     synth::MessageInBus bus(nullptr, 16);
     synth::ParameterManager::UIState ui;
-    ui.Configure(0, 0, 0, 0, 0);
+    ui.Configure(0, 0, 0, 0, 0, 0);
     ui.sceneCapacity = 4;
     ui.leftScene.store(3);
     ui.rightScene.store(3);
@@ -4697,7 +4870,7 @@ TEST_CASE(midi_controller_profile_routes_launchpad_only_system_associations) {
 
 TEST_CASE(midi_controller_profile_builds_independent_outputs_from_shared_system_associations) {
     synth::ParameterManager::UIState ui;
-    ui.Configure(0, 0, 0, 0, 0);
+    ui.Configure(0, 0, 0, 0, 0, 0);
     ui.resetHeld.store(true);
 
     synth::MidiControllerProfileConfig config;
@@ -4864,7 +5037,7 @@ TEST_CASE(mf_twister_default_profile_maps_encoders_and_input_only_side_buttons) 
     sender.SetSink(0, &sink);
     sender.Start();
     synth::ParameterManager::UIState ui;
-    ui.Configure(1, 2, 1, 0, 0);
+    ui.Configure(1, 2, 1, 0, 0, 0);
     synth::MidiControllerProfileResult profile =
         synth::CreateMfTwisterDefaultProfile(options, &bus, &sender, &ui, [] { return 321; });
     REQUIRE_TRUE(profile.input != nullptr);
@@ -4903,7 +5076,7 @@ TEST_CASE(mf_twister_default_profile_maps_encoders_and_input_only_side_buttons) 
 
 TEST_CASE(wrld_bldr_default_profile_creates_encoder_and_system_outputs) {
     synth::ParameterManager::UIState ui;
-    ui.Configure(0, 0, 0, 0, 0);
+    ui.Configure(0, 0, 0, 0, 0, 0);
     ui.resetHeld.store(true);
 
     synth::WrldBldrDefaultProfileOptions options;
@@ -4937,7 +5110,7 @@ TEST_CASE(wrld_bldr_default_profile_creates_encoder_and_system_outputs) {
 TEST_CASE(launchpad_default_profile_creates_only_system_input_and_grid_output) {
     synth::MessageInBus bus(nullptr, 32);
     synth::ParameterManager::UIState ui;
-    ui.Configure(0, 0, 0, 1, 2);
+    ui.Configure(0, 0, 0, 0, 1, 2);
     ui.sceneCapacity = 2;
     ui.leftScene.store(1);
     ui.rightScene.store(1);
@@ -4946,7 +5119,7 @@ TEST_CASE(launchpad_default_profile_creates_only_system_input_and_grid_output) {
     ui.gestures.selected[0].store(true);
     ui.banks[0].connected.store(true);
     ui.banks[0].selected.store(true);
-    ui.banks[0].color.Store(synth::Color::Green);
+    ui.banks[0].bankColor.Store(synth::Color::Green);
 
     synth::LaunchpadDefaultProfileOptions options;
     options.controller = synth::LaunchpadController::LaunchpadMiniMk3;
@@ -5178,7 +5351,7 @@ TEST_CASE(twister_output_debounces_reset_and_uses_channels) {
         .name = "Cutoff",
         .shortName = "Cut",
         .defaultValue = 0.5f,
-        .color = synth::Color::Green,
+        .baseColor = synth::Color::Green,
     });
     auto& bank = manager.CreateBank();
     bank.AddMapping(10, parameter);
@@ -5189,7 +5362,6 @@ TEST_CASE(twister_output_debounces_reset_and_uses_channels) {
     parameter.ProcessLite();
     auto ui = manager.CreateUIState();
     manager.PopulateUIState(*ui);
-
     FakeMidiSink sink;
     synth::MidiSender sender;
     sender.SetSink(0, &sink);
@@ -5226,13 +5398,13 @@ TEST_CASE(twister_output_debounces_reset_and_uses_channels) {
 
 TEST_CASE(twister_output_skips_unstable_snapshot_without_cache_update) {
     synth::ParameterManager::UIState ui;
-    ui.Configure(1, 1, 1, 0);
+    ui.Configure(1, 1, 1, 0, 0);
     ui.slots[0].connected.store(true);
     ui.slots[0].cells[0].revision.store(1);
     ui.slots[0].cells[0].connected.store(true);
     ui.slots[0].cells[0].voiceCount.store(1);
     ui.slots[0].cells[0].values[0].store(0.25f);
-    ui.slots[0].cells[0].color.Store(synth::Color::Red);
+    ui.slots[0].cells[0].baseColor.Store(synth::Color::Red);
     ui.slots[0].cells[0].indicatorColors[0].Store(synth::Color::Cyan);
 
     FakeMidiSink sink;
@@ -5252,7 +5424,7 @@ TEST_CASE(twister_output_skips_unstable_snapshot_without_cache_update) {
     stableCell.connected.store(true);
     stableCell.voiceCount.store(1);
     stableCell.values[0].store(0.25f);
-    stableCell.color.Store(synth::Color::Red);
+    stableCell.baseColor.Store(synth::Color::Red);
     stableCell.indicatorColors[0].Store(synth::Color::Cyan);
     processor.Process();
     sender.FlushForTests(std::chrono::milliseconds(500));
@@ -5262,7 +5434,7 @@ TEST_CASE(twister_output_skips_unstable_snapshot_without_cache_update) {
 
 TEST_CASE(twister_output_blanks_disconnected_mapped_cells_with_brightness_off_values_once) {
     synth::ParameterManager::UIState ui;
-    ui.Configure(1, 1, 1, 0);
+    ui.Configure(1, 1, 1, 0, 0);
 
     FakeMidiSink sink;
     synth::MidiSender sender;
@@ -5294,14 +5466,13 @@ TEST_CASE(twister_output_blanks_disconnected_mapped_cells_with_brightness_off_va
 
 TEST_CASE(twister_output_blanks_mapped_encoder_beyond_visible_cell_capacity_with_brightness_off_values_once) {
     synth::ParameterManager::UIState ui;
-    ui.Configure(1, 1, 1, 0);
+    ui.Configure(1, 1, 1, 0, 0);
     auto& liveCell = ui.slots[0].cells[0];
     liveCell.connected.store(true);
     liveCell.voiceCount.store(1);
     liveCell.values[0].store(0.5f);
-    liveCell.color.Store(synth::Color::Green);
+    liveCell.baseColor.Store(synth::Color::Green);
     liveCell.indicatorColors[0].Store(synth::Color::Cyan);
-    liveCell.brightness.store(1.0f);
 
     FakeMidiSink sink;
     synth::MidiSender sender;
@@ -5343,14 +5514,13 @@ TEST_CASE(twister_output_blanks_mapped_encoder_beyond_visible_cell_capacity_with
 
 TEST_CASE(twister_output_ignores_unmapped_encoder_without_blanking) {
     synth::ParameterManager::UIState ui;
-    ui.Configure(1, 2, 1, 0);
+    ui.Configure(1, 2, 1, 0, 0);
     auto& mappedCell = ui.slots[0].cells[0];
     mappedCell.connected.store(true);
     mappedCell.voiceCount.store(1);
     mappedCell.values[0].store(0.5f);
-    mappedCell.color.Store(synth::Color::Green);
+    mappedCell.baseColor.Store(synth::Color::Green);
     mappedCell.indicatorColors[0].Store(synth::Color::Cyan);
-    mappedCell.brightness.store(1.0f);
 
     FakeMidiSink sink;
     synth::MidiSender sender;
@@ -5370,16 +5540,15 @@ TEST_CASE(twister_output_ignores_unmapped_encoder_without_blanking) {
     }
 }
 
-TEST_CASE(twister_output_uses_ui_state_brightness) {
+TEST_CASE(twister_output_uses_full_brightness_for_connected_cells) {
     synth::ParameterManager::UIState ui;
-    ui.Configure(1, 1, 1, 0);
+    ui.Configure(1, 1, 1, 0, 0);
     auto& cell = ui.slots[0].cells[0];
     cell.connected.store(true);
     cell.voiceCount.store(1);
     cell.values[0].store(0.25f);
-    cell.color.Store(synth::Color::Red);
+    cell.baseColor.Store(synth::Color::Red);
     cell.indicatorColors[0].Store(synth::Color::Cyan);
-    cell.brightness.store(0.5f);
 
     FakeMidiSink sink;
     synth::MidiSender sender;
@@ -5394,9 +5563,9 @@ TEST_CASE(twister_output_uses_ui_state_brightness) {
 
     REQUIRE_TRUE(sink.sent.size() == 5);
     REQUIRE_TRUE(sink.sent[1].Channel() == 2);
-    REQUIRE_TRUE(sink.sent[1].GetValue() == 32);
+    REQUIRE_TRUE(sink.sent[1].GetValue() == 47);
     REQUIRE_TRUE(sink.sent[3].Channel() == 5);
-    REQUIRE_TRUE(sink.sent[3].GetValue() == 80);
+    REQUIRE_TRUE(sink.sent[3].GetValue() == 95);
 }
 
 TEST_CASE(wrld_bldr_output_sends_value_and_source_derived_sysex) {
@@ -5407,12 +5576,12 @@ TEST_CASE(wrld_bldr_output_sends_value_and_source_derived_sysex) {
         .maxParameters = 1,
         .processLiteAlpha = 1.0f,
         .targetCenterAlpha = 1.0f,
-        .voiceIndicatorColors = {synth::Color::Cyan},
     });
     auto& parameter = manager.CreateParameter(group, {
         .name = "Gain",
         .defaultValue = 0.25f,
-        .color = synth::Color::Orange,
+        .baseColor = synth::Color::Orange,
+        .indicatorColors = {synth::Color::Cyan},
     });
     auto& bank = manager.CreateBank();
     bank.AddMapping(10, parameter);
@@ -5423,7 +5592,10 @@ TEST_CASE(wrld_bldr_output_sends_value_and_source_derived_sysex) {
     parameter.ProcessLite();
     auto ui = manager.CreateUIState();
     manager.PopulateUIState(*ui);
-    ui->slots[0].cells[0].brightness.store(0.5f);
+    const synth::ui::EncoderDrawState screenState =
+        synth::ui::EncoderDrawStateFromParameter(ui->slots[0].cells[0]);
+    REQUIRE_TRUE(screenState.baseColor == synth::Color::Orange);
+    REQUIRE_TRUE(screenState.voices[0].indicatorColor == synth::Color::Cyan);
 
     FakeMidiSink sink;
     synth::MidiSender sender;
@@ -5452,10 +5624,9 @@ TEST_CASE(wrld_bldr_output_sends_value_and_source_derived_sysex) {
     REQUIRE_TRUE(button.raw[7] == 0x20);
     REQUIRE_TRUE(button.raw[8] == 1);
     REQUIRE_TRUE(button.raw[9] == 0);
-    const synth::Color dimmedButtonColor = synth::Color::Orange.AdjustBrightness(0.5f);
-    REQUIRE_TRUE(button.raw[10] == dimmedButtonColor.r / 2);
-    REQUIRE_TRUE(button.raw[11] == dimmedButtonColor.g / 2);
-    REQUIRE_TRUE(button.raw[12] == dimmedButtonColor.b / 2);
+    REQUIRE_TRUE(button.raw[10] == synth::Color::Orange.r / 2);
+    REQUIRE_TRUE(button.raw[11] == synth::Color::Orange.g / 2);
+    REQUIRE_TRUE(button.raw[12] == synth::Color::Orange.b / 2);
     REQUIRE_TRUE(button.raw[13] == 0xF7);
 
     const synth::BasicMidi& indicator = sink.sent[2];
@@ -5481,7 +5652,7 @@ TEST_CASE(wrld_bldr_output_sends_value_and_source_derived_sysex) {
 
 TEST_CASE(wrld_bldr_output_blanks_disconnected_mapped_cells_once) {
     synth::ParameterManager::UIState ui;
-    ui.Configure(1, 1, 1, 0);
+    ui.Configure(1, 1, 1, 0, 0);
 
     FakeMidiSink sink;
     synth::MidiSender sender;
@@ -5518,7 +5689,7 @@ TEST_CASE(wrld_bldr_output_blanks_disconnected_mapped_cells_once) {
 // rather than left dark/stale by skipping it entirely.
 TEST_CASE(wrld_bldr_output_blanks_positions_beyond_cell_capacity) {
     synth::ParameterManager::UIState ui;
-    ui.Configure(1, 1, 1, 0);  // one slot, one realized cell (positions >= 1 do not exist)
+    ui.Configure(1, 1, 1, 0, 0);  // one slot, one realized cell (positions >= 1 do not exist)
 
     FakeMidiSink sink;
     synth::MidiSender sender;
@@ -6627,11 +6798,7 @@ void SimCheckUIState(const SimOracle& oracle, const synth::ParameterManager::UIS
 
     const SimBank& bank = oracle.banks[static_cast<std::size_t>(oracle.selectedBank)];
     const std::array<synth::Color, 4> defaultIndicators{
-        synth::Color::Cyan,
-        synth::Color::Orange,
-        synth::Color::Green,
-        synth::Color::Indigo,
-    };
+        synth::Color::Grey, synth::Color::Grey, synth::Color::Grey, synth::Color::Grey};
     for (std::size_t position = 0; position < kSimSlotEncoders.size(); ++position) {
         const SimCell* cell = SimFindCell(bank, kSimSlotEncoders[position]);
         const synth::Parameter::UIState& actual = ui.slots[0].cells[position];
@@ -6651,7 +6818,7 @@ void SimCheckUIState(const SimOracle& oracle, const synth::ParameterManager::UIS
             if (actual.bipolar.load() != (expected.range == synth::RangeKind::Bipolar)) {
                 SimFailBool(seed, step, action, "ui position=" + std::to_string(position) + " bipolar");
             }
-            if (actual.color.Load() != synth::Color::Grey) {
+            if (actual.baseColor.Load() != synth::Color::Grey) {
                 SimFailBool(seed, step, action, "ui position=" + std::to_string(position) + " color");
             }
             const std::size_t expectedSwitchValues = expected.switchValues;
@@ -8280,19 +8447,19 @@ TEST_CASE(randomized_recursive_modulation_ui_tree_round_trips_into_fresh_initial
         group.GetModulators().Metadata(0) = {
             .name = "Sweep",
             .shortName = "Swp",
-            .color = synth::Color::Cyan,
+            .sourceColor = synth::Color::Cyan,
             .connected = true,
         };
         group.GetModulators().Metadata(1) = {
             .name = "Envelope",
             .shortName = "Env",
-            .color = synth::Color::Orange,
+            .sourceColor = synth::Color::Orange,
             .connected = true,
         };
         group.GetModulators().Metadata(2) = {
             .name = "LFO",
             .shortName = "LFO",
-            .color = synth::Color::Green,
+            .sourceColor = synth::Color::Green,
             .connected = true,
         };
         rig.phase = &rig.manager.CreateParameter(group, {.name = "Osc Phase", .defaultValue = 0.25f});
@@ -8534,13 +8701,13 @@ TEST_CASE(parameter_values_json_materializes_saved_recursive_mod_depths_from_cod
     sourceGroup.GetModulators().Metadata(0) = {
         .name = "Sweep",
         .shortName = "Swp",
-        .color = synth::Color::Cyan,
+        .sourceColor = synth::Color::Cyan,
         .connected = true,
     };
     sourceGroup.GetModulators().Metadata(2) = {
         .name = "LFO",
         .shortName = "LFO",
-        .color = synth::Color::Green,
+        .sourceColor = synth::Color::Green,
         .connected = true,
     };
     auto& sourcePhase = source.CreateParameter(sourceGroup, {.name = "Osc Phase", .defaultValue = 0.25f});
@@ -8601,13 +8768,13 @@ TEST_CASE(parameter_values_json_load_resets_dirty_lazy_modulation_branches_befor
     group.GetModulators().Metadata(0) = {
         .name = "Sweep",
         .shortName = "Swp",
-        .color = synth::Color::Cyan,
+        .sourceColor = synth::Color::Cyan,
         .connected = true,
     };
     group.GetModulators().Metadata(2) = {
         .name = "LFO",
         .shortName = "LFO",
-        .color = synth::Color::Green,
+        .sourceColor = synth::Color::Green,
         .connected = true,
     };
     auto& phase = manager.CreateParameter(group, {.name = "Osc Phase", .defaultValue = 0.25f});
@@ -8656,7 +8823,7 @@ TEST_CASE(parameter_values_json_persists_inactive_depth_gesture_values) {
     sourceGroup.GetModulators().Metadata(0) = {
         .name = "Sweep",
         .shortName = "Swp",
-        .color = synth::Color::Cyan,
+        .sourceColor = synth::Color::Cyan,
         .connected = true,
     };
     auto& sourcePhase = source.CreateParameter(sourceGroup, {.name = "Osc Phase", .defaultValue = 0.25f});

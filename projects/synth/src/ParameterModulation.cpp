@@ -84,23 +84,16 @@ float ZeroBasedExponentialMapFromMidpoint(float maxValue, float midpointValue, f
     return ZeroBasedExponentialMap(normalized, base, maxValue);
 }
 
-std::uint8_t ToByte(float value) {
-    return static_cast<std::uint8_t>(std::clamp(std::round(value * 255.0f), 0.0f, 255.0f));
-}
-
-Color DefaultVoiceColor(std::size_t voiceIx) {
-    static constexpr std::array<Color, 6> kPalette = {
-        Color{.r = 0, .g = 255, .b = 255, .a = 255},
-        Color{.r = 255, .g = 128, .b = 0, .a = 255},
-        Color{.r = 0, .g = 200, .b = 80, .a = 255},
-        Color{.r = 75, .g = 0, .b = 130, .a = 255},
-        Color{.r = 255, .g = 220, .b = 0, .a = 255},
-        Color{.r = 0, .g = 80, .b = 255, .a = 255},
-    };
-    if (voiceIx < kPalette.size()) {
-        return kPalette[voiceIx];
+ParameterConfig ResolveParameterAppearance(ParameterConfig config, std::size_t numVoices) {
+    if (config.indicatorColors.empty()) {
+        config.indicatorColors.assign(numVoices, config.baseColor);
+    } else if (config.indicatorColors.size() == 1) {
+        const Color indicatorColor = config.indicatorColors.front();
+        config.indicatorColors.assign(numVoices, indicatorColor);
+    } else if (config.indicatorColors.size() != numVoices) {
+        throw std::invalid_argument("indicator color count must be zero, one, or the group voice count");
     }
-    return Color::FromHSV(std::fmod(static_cast<float>(voiceIx) * 0.61803398875f, 1.0f), 0.7f, 0.95f);
+    return config;
 }
 
 void ApplySceneDistribution(float& left, float& right, float blend, float delta, RangeKind range) {
@@ -164,17 +157,6 @@ bool ParseDecimalIndex(std::string_view text, std::size_t& result) {
 
 } // namespace
 
-const Color Color::Off{.r = 0, .g = 0, .b = 0, .a = 255};
-const Color Color::White{.r = 255, .g = 255, .b = 255, .a = 255};
-const Color Color::Red{.r = 255, .g = 0, .b = 0, .a = 255};
-const Color Color::Orange{.r = 255, .g = 128, .b = 0, .a = 255};
-const Color Color::Yellow{.r = 255, .g = 220, .b = 0, .a = 255};
-const Color Color::Green{.r = 0, .g = 200, .b = 80, .a = 255};
-const Color Color::Cyan{.r = 0, .g = 255, .b = 255, .a = 255};
-const Color Color::Blue{.r = 0, .g = 80, .b = 255, .a = 255};
-const Color Color::Indigo{.r = 75, .g = 0, .b = 130, .a = 255};
-const Color Color::Grey{.r = 128, .g = 128, .b = 128, .a = 255};
-
 float ConvertOnePoleAlpha(float referenceAlpha, double referenceRate, double processingRate) {
     ValidateProcessingRates(referenceRate, processingRate);
     ValidateOnePoleAlpha(referenceAlpha);
@@ -192,89 +174,6 @@ std::size_t ConvertSampleInterval(std::size_t referenceInterval, double referenc
         throw std::invalid_argument("sample interval conversion overflow");
     }
     return std::max<std::size_t>(1, static_cast<std::size_t>(converted));
-}
-
-std::uint32_t Color::Packed() const {
-    return static_cast<std::uint32_t>(r) | (static_cast<std::uint32_t>(g) << 8) |
-           (static_cast<std::uint32_t>(b) << 16) | (static_cast<std::uint32_t>(a) << 24);
-}
-
-Color Color::FromPacked(std::uint32_t packed) {
-    return {
-        .r = static_cast<std::uint8_t>(packed & 0xff),
-        .g = static_cast<std::uint8_t>((packed >> 8) & 0xff),
-        .b = static_cast<std::uint8_t>((packed >> 16) & 0xff),
-        .a = static_cast<std::uint8_t>((packed >> 24) & 0xff),
-    };
-}
-
-Color Color::AdjustBrightness(float scale) const {
-    return {
-        .r = static_cast<std::uint8_t>(std::clamp(std::round(static_cast<float>(r) * scale), 0.0f, 255.0f)),
-        .g = static_cast<std::uint8_t>(std::clamp(std::round(static_cast<float>(g) * scale), 0.0f, 255.0f)),
-        .b = static_cast<std::uint8_t>(std::clamp(std::round(static_cast<float>(b) * scale), 0.0f, 255.0f)),
-        .a = a,
-    };
-}
-
-Color Color::FromHSV(float h, float s, float v) {
-    h = std::fmod(h, 1.0f);
-    if (h < 0.0f) {
-        h += 1.0f;
-    }
-    s = std::clamp(s, 0.0f, 1.0f);
-    v = std::clamp(v, 0.0f, 1.0f);
-    const float c = v * s;
-    const float hPrime = h * 6.0f;
-    const float x = c * (1.0f - std::fabs(std::fmod(hPrime, 2.0f) - 1.0f));
-    float r = 0.0f;
-    float g = 0.0f;
-    float b = 0.0f;
-    if (hPrime < 1.0f) {
-        r = c;
-        g = x;
-    } else if (hPrime < 2.0f) {
-        r = x;
-        g = c;
-    } else if (hPrime < 3.0f) {
-        g = c;
-        b = x;
-    } else if (hPrime < 4.0f) {
-        g = x;
-        b = c;
-    } else if (hPrime < 5.0f) {
-        r = x;
-        b = c;
-    } else {
-        r = c;
-        b = x;
-    }
-    const float m = v - c;
-    return {.r = ToByte(r + m), .g = ToByte(g + m), .b = ToByte(b + m), .a = 255};
-}
-
-HSV ToHSV(Color color) {
-    const float r = static_cast<float>(color.r) / 255.0f;
-    const float g = static_cast<float>(color.g) / 255.0f;
-    const float b = static_cast<float>(color.b) / 255.0f;
-    const float maxValue = std::max({r, g, b});
-    const float minValue = std::min({r, g, b});
-    const float delta = maxValue - minValue;
-    float h = 0.0f;
-    if (delta != 0.0f) {
-        if (maxValue == r) {
-            h = std::fmod((g - b) / delta, 6.0f);
-        } else if (maxValue == g) {
-            h = ((b - r) / delta) + 2.0f;
-        } else {
-            h = ((r - g) / delta) + 4.0f;
-        }
-        h /= 6.0f;
-        if (h < 0.0f) {
-            h += 1.0f;
-        }
-    }
-    return {.h = h, .s = maxValue == 0.0f ? 0.0f : delta / maxValue, .v = maxValue};
 }
 
 float ClampToRange(float value, RangeKind range) {
@@ -463,16 +362,8 @@ ParameterGroup::ParameterGroup(ParameterGroupConfig config, ParameterManager& ma
     : config_(ValidateConfig(config)),
       manager_(&manager),
       gestureCount_(gestureCount),
-      voiceIndicatorColors_(config.voiceIndicatorColors),
       modulators_(config.numVoices, config.numModulators),
       parameterCount_(0) {
-    if (voiceIndicatorColors_.size() < config_.numVoices) {
-        const std::size_t existing = voiceIndicatorColors_.size();
-        voiceIndicatorColors_.resize(config_.numVoices);
-        for (std::size_t voiceIx = existing; voiceIx < config_.numVoices; ++voiceIx) {
-            voiceIndicatorColors_[voiceIx] = DefaultVoiceColor(voiceIx);
-        }
-    }
     parameters_.reserve(config_.maxParameters);
     currentCenterScaleArena_.resize(config_.maxParameters * config_.numVoices);
     targetCenterScaleArena_.resize(config_.maxParameters * config_.numVoices);
@@ -595,13 +486,6 @@ void ParameterGroup::RequestParameterStorageBatchIfLow() {
     if (available < lowWatermark) {
         RequestParameterStorageBatch(lowWatermark - available);
     }
-}
-
-Color ParameterGroup::VoiceIndicatorColor(std::size_t voiceIx) const {
-    if (voiceIx >= config_.numVoices) {
-        throw std::out_of_range("voice indicator index out of range");
-    }
-    return voiceIndicatorColors_[voiceIx];
 }
 
 void ParameterGroup::SetModulationSource(std::size_t modIx, std::span<float* const> sourcePointers,
@@ -768,14 +652,19 @@ Parameter::Parameter(ParameterId id, ParameterGroup& group, ParameterConfig conf
 
 ParameterStorageBatch::~ParameterStorageBatch() = default;
 
-void Parameter::UIState::Configure(std::size_t newVoiceCapacity) {
+void Parameter::UIState::Configure(std::size_t newVoiceCapacity, std::size_t newModulatorColorCapacity,
+                                   std::size_t newGestureColorCapacity) {
     voiceCapacity = newVoiceCapacity;
+    modulatorColorCapacity = newModulatorColorCapacity;
+    gestureColorCapacity = newGestureColorCapacity;
     values = std::make_unique<std::atomic<float>[]>(voiceCapacity);
     spreadValues = std::make_unique<std::atomic<float>[]>(voiceCapacity);
     minValues = std::make_unique<std::atomic<float>[]>(voiceCapacity);
     maxValues = std::make_unique<std::atomic<float>[]>(voiceCapacity);
     switchValue = std::make_unique<std::atomic<std::size_t>[]>(voiceCapacity);
     indicatorColors = std::make_unique<AtomicColor[]>(voiceCapacity);
+    modulatorSourceColors = std::make_unique<AtomicColor[]>(modulatorColorCapacity);
+    gestureColors = std::make_unique<AtomicColor[]>(gestureColorCapacity);
     SetDisconnected();
 }
 
@@ -786,10 +675,11 @@ void Parameter::UIState::SetDisconnected() {
     switchValues.store(0, std::memory_order_relaxed);
     modulatorsAffectingMask.store(0, std::memory_order_relaxed);
     gesturesAffectingMask.store(0, std::memory_order_relaxed);
-    color.Store(Color::Off);
-    brightness.store(0.0f, std::memory_order_relaxed);
+    baseColor.Store(Color::Off);
     shortName.store(nullptr, std::memory_order_relaxed);
     voiceCount.store(0, std::memory_order_relaxed);
+    modulatorColorCount.store(0, std::memory_order_relaxed);
+    gestureColorCount.store(0, std::memory_order_relaxed);
     for (std::size_t voiceIx = 0; voiceIx < voiceCapacity; ++voiceIx) {
         values[voiceIx].store(0.0f, std::memory_order_relaxed);
         spreadValues[voiceIx].store(0.0f, std::memory_order_relaxed);
@@ -797,6 +687,12 @@ void Parameter::UIState::SetDisconnected() {
         maxValues[voiceIx].store(0.0f, std::memory_order_relaxed);
         switchValue[voiceIx].store(0, std::memory_order_relaxed);
         indicatorColors[voiceIx].Store(Color::Off);
+    }
+    for (std::size_t modIx = 0; modIx < modulatorColorCapacity; ++modIx) {
+        modulatorSourceColors[modIx].Store(Color::Off);
+    }
+    for (std::size_t gestureIx = 0; gestureIx < gestureColorCapacity; ++gestureIx) {
+        gestureColors[gestureIx].Store(Color::Off);
     }
     revision.fetch_add(1, std::memory_order_release);
 }
@@ -807,6 +703,13 @@ std::size_t Parameter::SwitchValues() const {
 
 bool Parameter::IsSwitch() const {
     return config_.switchValues > 1;
+}
+
+Color Parameter::IndicatorColor(std::size_t voiceIx) const {
+    if (voiceIx >= config_.indicatorColors.size()) {
+        throw std::out_of_range("parameter indicator color index out of range");
+    }
+    return config_.indicatorColors[voiceIx];
 }
 
 float Parameter::GetRaw(std::size_t voiceIx) const {
@@ -864,8 +767,7 @@ void Parameter::PopulateUIState(UIState& state) const {
     state.switchValues.store(config_.switchValues, std::memory_order_relaxed);
     state.modulatorsAffectingMask.store(ModulatorsAffectingMask(), std::memory_order_relaxed);
     state.gesturesAffectingMask.store(GesturesAffectingMask(), std::memory_order_relaxed);
-    state.color.Store(config_.color);
-    state.brightness.store(1.0f, std::memory_order_relaxed);
+    state.baseColor.Store(config_.baseColor);
     state.shortName.store(config_.shortName.c_str(), std::memory_order_relaxed);
     state.voiceCount.store(voices, std::memory_order_relaxed);
     for (std::size_t voiceIx = 0; voiceIx < voices; ++voiceIx) {
@@ -874,7 +776,23 @@ void Parameter::PopulateUIState(UIState& state) const {
         state.minValues[voiceIx].store(currentMinValues_[voiceIx], std::memory_order_relaxed);
         state.maxValues[voiceIx].store(currentMaxValues_[voiceIx], std::memory_order_relaxed);
         state.switchValue[voiceIx].store(GetSwitchVal(voiceIx), std::memory_order_relaxed);
-        state.indicatorColors[voiceIx].Store(group_.VoiceIndicatorColor(voiceIx));
+        state.indicatorColors[voiceIx].Store(config_.indicatorColors[voiceIx]);
+    }
+    const std::size_t modulatorColors = std::min(state.modulatorColorCapacity, group_.Config().numModulators);
+    state.modulatorColorCount.store(modulatorColors, std::memory_order_relaxed);
+    for (std::size_t modIx = 0; modIx < modulatorColors; ++modIx) {
+        state.modulatorSourceColors[modIx].Store(group_.GetModulators().Metadata(modIx).sourceColor);
+    }
+    for (std::size_t modIx = modulatorColors; modIx < state.modulatorColorCapacity; ++modIx) {
+        state.modulatorSourceColors[modIx].Store(Color::Off);
+    }
+    const std::size_t gestureColors = std::min(state.gestureColorCapacity, group_.Manager().GestureCount());
+    state.gestureColorCount.store(gestureColors, std::memory_order_relaxed);
+    for (std::size_t gestureIx = 0; gestureIx < gestureColors; ++gestureIx) {
+        state.gestureColors[gestureIx].Store(group_.Manager().GestureMetadataAt(gestureIx).gestureColor);
+    }
+    for (std::size_t gestureIx = gestureColors; gestureIx < state.gestureColorCapacity; ++gestureIx) {
+        state.gestureColors[gestureIx].Store(Color::Off);
     }
     for (std::size_t voiceIx = voices; voiceIx < state.voiceCapacity; ++voiceIx) {
         state.values[voiceIx].store(0.0f, std::memory_order_relaxed);
@@ -1226,6 +1144,7 @@ Parameter& Parameter::EnsureModulationDepth(std::size_t modIx, ParameterConfig c
         return *existing;
     }
 
+    config = ResolveParameterAppearance(std::move(config), group_.Config().numVoices);
     Parameter& created = group_.CreateLocalParameter(std::move(config), kLocalParameterId);
     if (!AssignModulationDepth(modIx, &created)) {
         throw std::logic_error("created modulation depth could not be assigned");
@@ -1256,7 +1175,8 @@ ParameterConfig Parameter::ModulationDepthConfig(std::size_t modIx) const {
         .shortName = modulator.shortName.empty() ? ShortName() : modulator.shortName,
         .defaultValue = 0.0f,
         .range = RangeKind::Bipolar,
-        .color = modulator.color,
+        .baseColor = modulator.sourceColor,
+        .indicatorColors = config_.indicatorColors,
     };
 }
 
@@ -1950,11 +1870,12 @@ std::uint32_t Bank::GesturesAffectingMask() const {
     return mask;
 }
 
-void BankSlot::UIState::Configure(std::size_t newCellCapacity, std::size_t voiceCapacity) {
+void BankSlot::UIState::Configure(std::size_t newCellCapacity, std::size_t voiceCapacity,
+                                  std::size_t modulatorColorCapacity, std::size_t gestureColorCapacity) {
     cellCapacity = newCellCapacity;
     cells = std::make_unique<Parameter::UIState[]>(cellCapacity);
     for (std::size_t cellIx = 0; cellIx < cellCapacity; ++cellIx) {
-        cells[cellIx].Configure(voiceCapacity);
+        cells[cellIx].Configure(voiceCapacity, modulatorColorCapacity, gestureColorCapacity);
     }
     connected.store(false, std::memory_order_relaxed);
     showingModulationView.store(false, std::memory_order_relaxed);
@@ -2218,6 +2139,7 @@ ParameterId ParameterManager::RegisterParameter(ParameterGroup& group, Parameter
     if (config.name.empty()) {
         throw std::logic_error("parameter name must not be empty");
     }
+    config = ResolveParameterAppearance(std::move(config), group.Config().numVoices);
     if (std::find(parameterNames_.begin(), parameterNames_.end(), config.name) != parameterNames_.end()) {
         throw std::logic_error("duplicate parameter name");
     }
@@ -2712,6 +2634,14 @@ std::size_t ParameterManager::MaxVoiceCount() const {
     return result;
 }
 
+std::size_t ParameterManager::MaxModulatorCount() const {
+    std::size_t result = 0;
+    for (const auto& group : groups_) {
+        result = std::max(result, group->Config().numModulators);
+    }
+    return result;
+}
+
 std::size_t ParameterManager::SceneCapacity() const {
     if (groups_.empty()) {
         return 0;
@@ -2750,26 +2680,28 @@ void ParameterManager::GestureManagerUIState::Configure(std::size_t newGestureCa
 }
 
 void ParameterManager::UIState::Configure(std::size_t newSlotCapacity, std::size_t cellCapacity,
-                                          std::size_t voiceCapacity, std::size_t gestureCapacity,
+                                          std::size_t voiceCapacity, std::size_t modulatorColorCapacity,
+                                          std::size_t gestureCapacity,
                                           std::size_t newBankCapacity) {
     slotCapacity = newSlotCapacity;
     slots = std::make_unique<BankSlot::UIState[]>(slotCapacity);
     for (std::size_t slotIx = 0; slotIx < slotCapacity; ++slotIx) {
-        slots[slotIx].Configure(cellCapacity, voiceCapacity);
+        slots[slotIx].Configure(cellCapacity, voiceCapacity, modulatorColorCapacity, gestureCapacity);
     }
     bankCapacity = newBankCapacity;
     banks = std::make_unique<BankUIState[]>(bankCapacity);
     for (std::size_t bankIx = 0; bankIx < bankCapacity; ++bankIx) {
         banks[bankIx].connected.store(false, std::memory_order_relaxed);
         banks[bankIx].selected.store(false, std::memory_order_relaxed);
-        banks[bankIx].color.Store(Color::Off);
+        banks[bankIx].bankColor.Store(Color::Off);
     }
     gestures.Configure(gestureCapacity);
 }
 
 std::unique_ptr<ParameterManager::UIState> ParameterManager::CreateUIState() const {
     auto state = std::make_unique<UIState>();
-    state->Configure(slots_.size(), MaxSlotCellCount(), MaxVoiceCount(), gestures_.NumGestures(), banks_.size());
+    state->Configure(slots_.size(), MaxSlotCellCount(), MaxVoiceCount(), MaxModulatorCount(),
+                     gestures_.NumGestures(), banks_.size());
     state->sceneCapacity = SceneCapacity();
     return state;
 }
@@ -2797,7 +2729,7 @@ void ParameterManager::PopulateUIState(UIState& state) const {
         const bool connected = bankIx < banks_.size();
         state.banks[bankIx].connected.store(connected, std::memory_order_relaxed);
         state.banks[bankIx].selected.store(false, std::memory_order_relaxed);
-        state.banks[bankIx].color.Store(connected ? banks_[bankIx]->GetColor() : Color::Off);
+        state.banks[bankIx].bankColor.Store(connected ? banks_[bankIx]->BankColor() : Color::Off);
     }
     for (const auto& slot : slots_) {
         Bank* selectedBank = slot->SelectedBank();
@@ -2824,7 +2756,7 @@ void ParameterManager::PopulateUIState(UIState& state) const {
         }
         state.gestures.values[gestureIx].store(gestures_.Value(gestureIx), std::memory_order_relaxed);
         state.gestures.selected[gestureIx].store(gestures_.Selected(gestureIx), std::memory_order_relaxed);
-        state.gestures.colors[gestureIx].Store(gestures_.Metadata(gestureIx).color);
+        state.gestures.colors[gestureIx].Store(gestures_.Metadata(gestureIx).gestureColor);
     }
     const std::size_t compactBankCount = std::min<std::size_t>({state.bankCapacity, banks_.size(), 32});
     for (std::size_t bankIx = 0; bankIx < compactBankCount; ++bankIx) {

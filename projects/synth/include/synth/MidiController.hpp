@@ -327,8 +327,7 @@ protected:
         bool bipolar = false;
         std::size_t voiceCount = 0;
         float value = 0.0f;
-        Color color = Color::Off;
-        float brightness = 0.0f;
+        Color baseColor = Color::Off;
         Color indicatorColor = Color::Off;
     };
 
@@ -602,10 +601,13 @@ struct WrldBldrDefaultProfileOptions {
     std::size_t visibleEncoderCount = 16;
     std::size_t sceneCount = 8;
     std::size_t bankButtonCount = 16;
-    std::size_t gestureSelectorCount = 0;
+    std::size_t gestureSelectorCount = 1;
 };
 
 MidiControllerProfileConfig WrldBldrDefaultProfileConfig(WrldBldrDefaultProfileOptions options = {});
+MidiControllerSlot WrldBldrDefaultControllerSlot(std::string name = "wrldbldr",
+                                                 WrldBldrDefaultProfileOptions options = {});
+MidiInstrumentConfig DefaultMidiInstrumentConfig();
 MidiControllerProfileResult CreateWrldBldrDefaultProfile(
     WrldBldrDefaultProfileOptions options, MessageInBus* bus, MidiSender* sender,
     ParameterManager::UIState* uiState, MidiInProcessor::TimestampProvider timestampProvider = {});

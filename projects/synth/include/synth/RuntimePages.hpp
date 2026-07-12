@@ -429,7 +429,7 @@ inline ui::NodeTree BuildFilePageTree(const FilePageSnapshot& snapshot, ui::Boun
     background.kind = ui::NodeKind::Draw;
     background.bounds = area;
     background.drawCommands = {
-        ui::DrawCommand::Fill(area, ui::Color::Rgb(18, 20, 22)),
+        ui::DrawCommand::Fill(area, Color::Rgb(18, 20, 22)),
     };
     appendRootChild(std::move(background));
 
@@ -447,8 +447,8 @@ inline ui::NodeTree BuildFilePageTree(const FilePageSnapshot& snapshot, ui::Boun
     headerDraw.kind = ui::NodeKind::Draw;
     headerDraw.bounds = tree.nodes[headerIndex].bounds;
     headerDraw.drawCommands = {
-        ui::DrawCommand::FillRoundedRect(tree.nodes[headerIndex].bounds, 6.0f, ui::Color::Rgb(29, 33, 37)),
-        ui::DrawCommand::StrokeRoundedRect(tree.nodes[headerIndex].bounds, 6.0f, ui::Color::Rgb(54, 61, 68), 1.0f),
+        ui::DrawCommand::FillRoundedRect(tree.nodes[headerIndex].bounds, 6.0f, Color::Rgb(29, 33, 37)),
+        ui::DrawCommand::StrokeRoundedRect(tree.nodes[headerIndex].bounds, 6.0f, Color::Rgb(54, 61, 68), 1.0f),
     };
     appendChildTo(headerIndex, std::move(headerDraw));
 
@@ -534,8 +534,8 @@ inline ui::NodeTree BuildFilePageTree(const FilePageSnapshot& snapshot, ui::Boun
         browserDraw.kind = ui::NodeKind::Draw;
         browserDraw.bounds = tree.nodes[browserIndex].bounds;
         browserDraw.drawCommands = {
-            ui::DrawCommand::FillRoundedRect(tree.nodes[browserIndex].bounds, 6.0f, ui::Color::Rgb(24, 28, 32)),
-            ui::DrawCommand::StrokeRoundedRect(tree.nodes[browserIndex].bounds, 6.0f, ui::Color::Rgb(63, 73, 82), 1.0f),
+            ui::DrawCommand::FillRoundedRect(tree.nodes[browserIndex].bounds, 6.0f, Color::Rgb(24, 28, 32)),
+            ui::DrawCommand::StrokeRoundedRect(tree.nodes[browserIndex].bounds, 6.0f, Color::Rgb(63, 73, 82), 1.0f),
         };
         appendChildTo(browserIndex, std::move(browserDraw));
 
@@ -660,8 +660,8 @@ inline ui::NodeTree BuildFilePageTree(const FilePageSnapshot& snapshot, ui::Boun
         idleDraw.kind = ui::NodeKind::Draw;
         idleDraw.bounds = tree.nodes[idleIndex].bounds;
         idleDraw.drawCommands = {
-            ui::DrawCommand::FillRoundedRect(tree.nodes[idleIndex].bounds, 6.0f, ui::Color::Rgb(23, 26, 29)),
-            ui::DrawCommand::StrokeRoundedRect(tree.nodes[idleIndex].bounds, 6.0f, ui::Color::Rgb(48, 55, 62), 1.0f),
+            ui::DrawCommand::FillRoundedRect(tree.nodes[idleIndex].bounds, 6.0f, Color::Rgb(23, 26, 29)),
+            ui::DrawCommand::StrokeRoundedRect(tree.nodes[idleIndex].bounds, 6.0f, Color::Rgb(48, 55, 62), 1.0f),
         };
         appendChildTo(idleIndex, std::move(idleDraw));
 

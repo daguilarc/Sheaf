@@ -14,6 +14,7 @@
 #endif
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <exception>
@@ -21,6 +22,7 @@
 #include <iostream>
 #include <limits>
 #include <sstream>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -495,6 +497,76 @@ TEST_CASE(miniapp_ui_snapshot_reflects_runtime_state_in_tree) {
     REQUIRE_TRUE(sceneThree->label == "S3 L");
 }
 
+TEST_CASE(miniapp_color_flow_keeps_semantic_roles_independent) {
+    synth_rig::SynthRig<synth_miniapp::MiniAppCore> rig(
+        64, UseScratchRuntimeDataPaths("color_flow_keeps_semantic_roles_independent"));
+    rig.RunBlocks(1);
+
+    const std::array<synth::Color, 12> expectedBaseColors{
+        synth::Color::Cyan,
+        synth::Color::Indigo,
+        synth::Color::Orange,
+        synth::Color::Green,
+        synth::Color::Cyan,
+        synth::Color::Yellow,
+        synth::Color::Orange,
+        synth::Color::Green,
+        synth::Color::Cyan,
+        synth::Color::Indigo,
+        synth::Color::Orange,
+        synth::Color::Yellow,
+    };
+    const auto& parameters = rig.Application().Parameters();
+    REQUIRE_TRUE(parameters.size() == expectedBaseColors.size());
+    for (std::size_t parameterIx = 0; parameterIx < parameters.size(); ++parameterIx) {
+        REQUIRE_TRUE(parameters[parameterIx]->BaseColor() == expectedBaseColors[parameterIx]);
+        REQUIRE_TRUE(parameters[parameterIx]->IndicatorColor(0) == synth::Color::Cyan);
+        REQUIRE_TRUE(parameters[parameterIx]->IndicatorColor(1) == synth::Color::Orange);
+    }
+
+    REQUIRE_TRUE(rig.Application().VcoBank()->BankColor() == synth::Color::Cyan);
+    REQUIRE_TRUE(rig.Application().LfoBank()->BankColor() == synth::Color::Green);
+    const auto modulatorMetadata = rig.Application().Group()->GetModulators().Metadata();
+    REQUIRE_TRUE(modulatorMetadata.size() == 3);
+    REQUIRE_TRUE(modulatorMetadata[0].sourceColor == synth::Color::Cyan);
+    REQUIRE_TRUE(modulatorMetadata[1].sourceColor == synth::Color::Orange);
+    REQUIRE_TRUE(modulatorMetadata[2].sourceColor == synth::Color::Green);
+    REQUIRE_TRUE(rig.Application().Context()->parameterManager->GestureMetadataAt(0).gestureColor ==
+                 synth::Color::Orange);
+
+    const auto vcoScope = synth_miniapp::VcoWaveformDrawStateFromCore(rig.Application());
+    REQUIRE_TRUE(vcoScope.layers.size() == 2);
+    REQUIRE_TRUE(vcoScope.layers[0].scopeColor == synth::Color::Cyan);
+    REQUIRE_TRUE(vcoScope.layers[1].scopeColor == synth::Color::Orange);
+    const auto lfoScope = synth_miniapp::LfoWaveformDrawStateFromCore(rig.Application());
+    REQUIRE_TRUE(lfoScope.layers.size() == 2);
+    REQUIRE_TRUE(lfoScope.layers[0].scopeColor == synth::Color::Green);
+    REQUIRE_TRUE(lfoScope.layers[1].scopeColor == synth::Color::Yellow);
+
+    const std::vector<synth::Color> expectedModulatorColors{
+        synth::Color::Cyan, synth::Color::Orange, synth::Color::Green};
+    const auto requireVisibleCellColors = [&](std::size_t visibleCellCount,
+                                              std::span<const synth::Color> expectedCellBaseColors) {
+        const synth::ParameterManager::UIState& uiState = rig.UIState();
+        for (std::size_t cellIx = 0; cellIx < visibleCellCount; ++cellIx) {
+            const synth::Parameter::UIState& visibleCell = uiState.slots[0].cells[cellIx];
+            const synth::ui::EncoderDrawState encoder =
+                synth::ui::EncoderDrawStateFromParameter(visibleCell);
+            REQUIRE_TRUE(encoder.baseColor == expectedCellBaseColors[cellIx]);
+            REQUIRE_TRUE(encoder.voices.size() == 2);
+            REQUIRE_TRUE(encoder.voices[0].indicatorColor == synth::Color::Cyan);
+            REQUIRE_TRUE(encoder.voices[1].indicatorColor == synth::Color::Orange);
+            REQUIRE_TRUE(encoder.modulatorColors == expectedModulatorColors);
+            REQUIRE_TRUE(encoder.gestureColors == std::vector<synth::Color>{synth::Color::Orange});
+        }
+    };
+    requireVisibleCellColors(7, std::span<const synth::Color>(expectedBaseColors).first(7));
+
+    rig.SelectBank(kSlotIx, kLfoBankIx);
+    rig.RunBlocks(1);
+    requireVisibleCellColors(5, std::span<const synth::Color>(expectedBaseColors).subspan(7));
+}
+
 TEST_CASE(miniapp_rig_initializes_headlessly_and_runs) {
     synth_rig::SynthRig<synth_miniapp::MiniAppCore> rig(64, UseScratchRuntimeDataPaths("initializes_headlessly_and_runs"));
     const float expectedDefaultAlpha = 0.1226942309f;  // one-pole 1 kHz cutoff at 48 kHz
@@ -916,15 +988,12 @@ TEST_CASE(miniapp_patch_browser_save_as_path_writes_patch_and_load_selection_rea
 // Engine::Initialize() snapshots into DefaultInstrument() right after
 // MiniAppCore::Init() returns -- see MiniAppCore.hpp's comment on the
 // controller-seeding block) must contain EXACTLY ONE controller slot, named
-// "wrldbldr", kind WrldBldr, built from WrldBldrDefaultProfileConfig() with
-// the same options MiniAppCore::Init() passes (visibleEncoderCount == the
-// slot's 4 physical encoders, sceneCount 3, bankButtonCount 16,
-// gestureSelectorCount 1). Spot-check the encoder input mapping rather than
-// comparing the whole config: turns live on channel 0, pushes on channel 1,
-// and CCs map onto positions 1:1 (EncoderPositionToCC(position) == position
-// for position < 16 -- see MidiController.cpp); this instrument's
-// KeepFirstPositions(4) trims the general 0..15 scheme down to positions
-// 0..3, matching the slot's 4 physical encoders.
+// "wrldbldr", kind WrldBldr, built from the shared DefaultMidiInstrumentConfig().
+// The profile deliberately carries all 16 encoder positions and 8 scene
+// selector messages even when a specific app exposes fewer scenes or backing
+// cells. Spot-check the encoder input mapping rather than comparing the whole
+// config: turns live on channel 0, pushes on channel 1, and CCs map onto
+// positions 1:1 (EncoderPositionToCC(position) == position for position < 16).
 TEST_CASE(miniapp_rig_default_instrument_has_single_wrldbldr_controller) {
     synth_rig::SynthRig<synth_miniapp::MiniAppCore> rig(64, UseScratchRuntimeDataPaths("default_instrument_has_single_wrldbldr_controller"));
 
@@ -942,13 +1011,9 @@ TEST_CASE(miniapp_rig_default_instrument_has_single_wrldbldr_controller) {
 
     // The default WRLD.Bldr profile maps all 16 physical encoders even though
     // the app only realizes 4 on-screen (positions 4..15 are input-ignored and
-    // output-blanked). MiniAppCore::Init() sets visibleEncoderCount = 16.
+    // output-blanked).
     constexpr std::size_t kVisibleEncoderCount = 16;
     synth::WrldBldrDefaultProfileOptions expectedOptions;
-    expectedOptions.visibleEncoderCount = kVisibleEncoderCount;
-    expectedOptions.sceneCount = 3;
-    expectedOptions.bankButtonCount = 16;
-    expectedOptions.gestureSelectorCount = 1;
     const synth::MidiControllerProfileConfig expectedConfig = synth::WrldBldrDefaultProfileConfig(expectedOptions);
 
     REQUIRE_TRUE(slot.config.encoderInput.has_value());
@@ -958,10 +1023,10 @@ TEST_CASE(miniapp_rig_default_instrument_has_single_wrldbldr_controller) {
     REQUIRE_TRUE(slot.config.encoderInput->turns.size() == kVisibleEncoderCount);
 
     // Assert system association count. WrldBldrDefaultProfileConfig produces:
-    // 3 (reset/random/random-mod modifiers) + sceneCount (3) + bankButtonCount (16)
-    // + gestureSelectorCount (1) = 23
+    // 3 (reset/random/random-mod modifiers) + sceneCount (8) + bankButtonCount (16)
+    // + gestureSelectorCount (1) = 28
     REQUIRE_TRUE(slot.config.systemMessages.size() == expectedConfig.systemMessages.size());
-    REQUIRE_TRUE(slot.config.systemMessages.size() == 23);
+    REQUIRE_TRUE(slot.config.systemMessages.size() == 28);
 
     // Encoder-mapping spot-checks (brief Step 1): turn channel 0, push
     // channel 1, CCs 0..(visibleEncoderCount-1) -> positions

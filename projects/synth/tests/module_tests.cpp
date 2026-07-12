@@ -11,6 +11,7 @@
 #endif
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <exception>
 #include <iostream>
@@ -86,10 +87,10 @@ static_assert(!std::is_copy_constructible_v<synth::BipolarMatrixMixerModule<4>>)
 static_assert(!std::is_copy_assignable_v<synth::BipolarMatrixMixerModule<4>>);
 static_assert(!std::is_move_constructible_v<synth::BipolarMatrixMixerModule<4>>);
 static_assert(!std::is_move_assignable_v<synth::BipolarMatrixMixerModule<4>>);
-static_assert(!std::is_copy_constructible_v<synth::Dresden4VcoModule>);
-static_assert(!std::is_copy_assignable_v<synth::Dresden4VcoModule>);
-static_assert(!std::is_move_constructible_v<synth::Dresden4VcoModule>);
-static_assert(!std::is_move_assignable_v<synth::Dresden4VcoModule>);
+static_assert(!std::is_copy_constructible_v<synth::Braid4VcoModule>);
+static_assert(!std::is_copy_assignable_v<synth::Braid4VcoModule>);
+static_assert(!std::is_move_constructible_v<synth::Braid4VcoModule>);
+static_assert(!std::is_move_assignable_v<synth::Braid4VcoModule>);
 
 TEST_CASE(wavetable_vco_registers_prefixed_parameters_and_rejects_repeat_registration) {
     synth::ParameterManager manager;
@@ -125,6 +126,46 @@ TEST_CASE(wavetable_vco_registers_prefixed_parameters_and_rejects_repeat_registr
     second.RegisterParameters(manager, group, "Alt");
     REQUIRE_TRUE(manager.ParameterById(second.Parameters().tune).Name() == "Alt Tune");
     REQUIRE_TRUE(manager.ParameterCount() == 8);
+}
+
+TEST_CASE(reusable_modules_apply_caller_indicator_colors_to_every_parameter) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 2,
+        .numScenes = 1,
+        .maxParameters = 12,
+    });
+    const std::vector<synth::Color> indicators{synth::Color::Cyan, synth::Color::Orange};
+
+    synth::WavetableVcoModule<2> vco;
+    synth::WavetableVcoModule<2>::Options vcoOptions;
+    vcoOptions.indicatorColors = indicators;
+    vco.RegisterParameters(manager, group, "Osc", vcoOptions);
+
+    synth::ClassicSvfModule<2> filter;
+    synth::ClassicSvfModule<2>::Options filterOptions;
+    filterOptions.indicatorColors = indicators;
+    filter.RegisterParameters(manager, group, "Filter", filterOptions);
+
+    synth::BasicLfoModule<2> lfo;
+    synth::BasicLfoModule<2>::Options lfoOptions;
+    lfoOptions.indicatorColors = indicators;
+    lfo.RegisterParameters(manager, group, "LFO", lfoOptions);
+
+    const synth::Color tuneBaseBeforeScopeChange = manager.ParameterById(vco.Parameters().tune).BaseColor();
+    vco.SetScopeColor(0, synth::Color::Blue);
+    synth::WavetableVcoModule<2>::UIState scopeState;
+    vco.PopulateUIState(scopeState);
+    REQUIRE_TRUE(scopeState.vcos[0].scopeColor.Load() == synth::Color::Blue);
+    REQUIRE_TRUE(manager.ParameterById(vco.Parameters().tune).BaseColor() == tuneBaseBeforeScopeChange);
+    REQUIRE_TRUE(manager.ParameterById(vco.Parameters().tune).IndicatorColor(0) == synth::Color::Cyan);
+    REQUIRE_TRUE(manager.ParameterById(vco.Parameters().tune).IndicatorColor(1) == synth::Color::Orange);
+
+    for (synth::ParameterId id = 0; id < manager.ParameterCount(); ++id) {
+        const auto& parameter = manager.ParameterById(id);
+        REQUIRE_TRUE(parameter.IndicatorColor(0) == synth::Color::Cyan);
+        REQUIRE_TRUE(parameter.IndicatorColor(1) == synth::Color::Orange);
+    }
 }
 
 TEST_CASE(wavetable_vco_registration_rejects_insufficient_capacity_without_partial_parameters) {
@@ -307,7 +348,7 @@ TEST_CASE(wavetable_vco_rejects_invalid_sample_rate_and_voice_indices) {
 
     threw = false;
     try {
-        module.SetColor(2, synth::Color::Cyan);
+        module.SetScopeColor(2, synth::Color::Cyan);
     } catch (const std::out_of_range&) {
         threw = true;
     }
@@ -378,8 +419,8 @@ TEST_CASE(wavetable_vco_ui_state_exposes_both_vco_traces) {
     synth::WavetableVcoModule<2> module;
     module.SetScopeWriterHolder(0, &first);
     module.SetScopeWriterHolder(1, &second);
-    module.SetColor(0, synth::Color::Cyan);
-    module.SetColor(1, synth::Color::Orange);
+    module.SetScopeColor(0, synth::Color::Cyan);
+    module.SetScopeColor(1, synth::Color::Orange);
 
     module.CurrentInput().voices[0].vco.freq = 0.125;
     module.CurrentInput().voices[0].vco.maxFreq = 0.5f;
@@ -396,8 +437,8 @@ TEST_CASE(wavetable_vco_ui_state_exposes_both_vco_traces) {
     REQUIRE_TRUE(ui.vcos[1].scope.load() == &writer);
     REQUIRE_TRUE(ui.vcos[0].scopeChannel.load() == first.FlatChan());
     REQUIRE_TRUE(ui.vcos[1].scopeChannel.load() == second.FlatChan());
-    REQUIRE_TRUE(ui.vcos[0].color.Load() == synth::Color::Cyan);
-    REQUIRE_TRUE(ui.vcos[1].color.Load() == synth::Color::Orange);
+    REQUIRE_TRUE(ui.vcos[0].scopeColor.Load() == synth::Color::Cyan);
+    REQUIRE_TRUE(ui.vcos[1].scopeColor.Load() == synth::Color::Orange);
 }
 
 TEST_CASE(wavetable_vco_template_supports_single_voice_outputs_and_sources) {
@@ -576,7 +617,7 @@ TEST_CASE(basic_lfo_rejects_invalid_sample_rate_and_voice_indices) {
 
     threw = false;
     try {
-        module.SetColor(2, synth::Color::Green);
+        module.SetScopeColor(2, synth::Color::Green);
     } catch (const std::out_of_range&) {
         threw = true;
     }
@@ -630,7 +671,7 @@ TEST_CASE(basic_lfo_template_supports_three_voice_phase_stagger_and_ui_state) {
     module.SetScopeWriterHolder(0, &first);
     module.SetScopeWriterHolder(1, &second);
     module.SetScopeWriterHolder(2, &third);
-    module.SetColor(2, synth::Color::Yellow);
+    module.SetScopeColor(2, synth::Color::Yellow);
     module.RegisterParameters(manager, group, "LFO");
     SetAndSettle(manager, module.Parameters().phaseOffset, 0.0f);
     module.SetInput(manager);
@@ -648,7 +689,7 @@ TEST_CASE(basic_lfo_template_supports_three_voice_phase_stagger_and_ui_state) {
     REQUIRE_TRUE(ui.lfos[2].connected.load());
     REQUIRE_TRUE(ui.lfos[2].scope.load() == &writer);
     REQUIRE_TRUE(ui.lfos[2].scopeChannel.load() == third.FlatChan());
-    REQUIRE_TRUE(ui.lfos[2].color.Load() == synth::Color::Yellow);
+    REQUIRE_TRUE(ui.lfos[2].scopeColor.Load() == synth::Color::Yellow);
 }
 
 TEST_CASE(classic_svf_registers_parameters_in_visible_order_and_rejects_repeat_registration) {
@@ -897,7 +938,7 @@ TEST_CASE(bipolar_matrix_registers_row_major_identity_parameters_and_bank_cells)
     REQUIRE_TRUE(manager.ParameterById(ids[15]).Name() == "Matrix R4C4");
     REQUIRE_TRUE(manager.ParameterById(ids[0]).Range() == synth::RangeKind::Bipolar);
     REQUIRE_TRUE(manager.ParameterById(ids[1]).Range() == synth::RangeKind::Bipolar);
-    REQUIRE_TRUE(manager.ParameterById(ids[0]).ParamColor() == synth::Color::Grey);
+    REQUIRE_TRUE(manager.ParameterById(ids[0]).BaseColor() == synth::Color::Grey);
     REQUIRE_NEAR(manager.ParameterById(ids[0]).SceneCenter(0), 1.0f, 0.0001f);
     REQUIRE_NEAR(manager.ParameterById(ids[5]).SceneCenter(0), 1.0f, 0.0001f);
     REQUIRE_NEAR(manager.ParameterById(ids[10]).SceneCenter(0), 1.0f, 0.0001f);
@@ -918,21 +959,25 @@ TEST_CASE(bipolar_matrix_registers_row_major_identity_parameters_and_bank_cells)
     REQUIRE_TRUE(bank.VisibleParameter(55) == &manager.ParameterById(ids[15]));
 }
 
-TEST_CASE(bipolar_matrix_supports_pre_registration_color_override) {
+TEST_CASE(bipolar_matrix_registers_diagonal_and_off_diagonal_parameter_colors) {
     synth::ParameterManager manager;
     auto& group = manager.CreateGroup({.numVoices = 1, .numScenes = 2, .maxParameters = 4});
     synth::BipolarMatrixMixerModule<2> module;
 
-    module.SetColor(synth::Color::Red);
+    module.SetParameterColors(synth::Color::Red, synth::Color::Blue);
     module.RegisterParameters(manager, group, "Matrix");
 
-    for (const synth::ParameterId id : module.Parameters()) {
-        REQUIRE_TRUE(manager.ParameterById(id).ParamColor() == synth::Color::Red);
-    }
+    const auto ids = module.Parameters();
+    REQUIRE_TRUE(manager.ParameterById(ids[0]).BaseColor() == synth::Color::Red);
+    REQUIRE_TRUE(manager.ParameterById(ids[1]).BaseColor() == synth::Color::Blue);
+    REQUIRE_TRUE(manager.ParameterById(ids[2]).BaseColor() == synth::Color::Blue);
+    REQUIRE_TRUE(manager.ParameterById(ids[3]).BaseColor() == synth::Color::Red);
+    REQUIRE_TRUE(manager.ParameterById(ids[0]).IndicatorColor(0) == synth::Color::Red);
+    REQUIRE_TRUE(manager.ParameterById(ids[1]).IndicatorColor(0) == synth::Color::Blue);
 
     bool threw = false;
     try {
-        module.SetColor(synth::Color::Blue);
+        module.SetParameterColors(synth::Color::Blue, synth::Color::Red);
     } catch (const std::logic_error&) {
         threw = true;
     }
@@ -973,7 +1018,7 @@ TEST_CASE(bipolar_matrix_maps_bipolar_anchors_cross_routes_unclamped_sums_and_st
     REQUIRE_TRUE(output1 == &module.Outputs()[1]);
 }
 
-TEST_CASE(bipolar_matrix_accepts_dresden_mono_group_and_rejects_repeat_capacity_shape_and_bank_capacity) {
+TEST_CASE(bipolar_matrix_accepts_prepopulated_mono_group_and_rejects_repeat_capacity_shape_and_bank_capacity) {
     {
         synth::ParameterManager manager;
         auto& group = manager.CreateGroup({.numVoices = 1, .numScenes = 2, .maxParameters = 24});
@@ -1048,14 +1093,14 @@ TEST_CASE(bipolar_matrix_accepts_dresden_mono_group_and_rejects_repeat_capacity_
     }
 }
 
-TEST_CASE(dresden_vco_registers_three_group_shapes_two_scenes_fourteen_red_parameters_and_sparse_bank) {
+TEST_CASE(braid_vco_registers_three_group_shapes_two_scenes_fourteen_red_parameters_and_sparse_bank) {
     synth::ParameterManager manager;
     auto& stereo = manager.CreateGroup({.numVoices = 2, .numScenes = 2, .maxParameters = 2});
     auto& quad = manager.CreateGroup({.numVoices = 4, .numModulators = 1, .numScenes = 2, .maxParameters = 8});
     auto& mono = manager.CreateGroup({.numVoices = 1, .numScenes = 2, .maxParameters = 8});
-    synth::Dresden4VcoModule module;
+    synth::Braid4VcoModule module;
 
-    module.RegisterParameters(manager, stereo, quad, mono, "Dresden");
+    module.RegisterParameters(manager, stereo, quad, mono, "Braid");
 
     const auto ids = module.Parameters();
     REQUIRE_TRUE(ids.x == 0);
@@ -1071,7 +1116,7 @@ TEST_CASE(dresden_vco_registers_three_group_shapes_two_scenes_fourteen_red_param
     REQUIRE_TRUE(manager.ParameterCount() == 14);
 
     for (synth::ParameterId id = 0; id < 14; ++id) {
-        REQUIRE_TRUE(manager.ParameterById(id).ParamColor() == synth::Color::Red);
+        REQUIRE_TRUE(manager.ParameterById(id).BaseColor() == synth::Color::Red);
     }
     REQUIRE_TRUE(manager.ParameterById(ids.quad.phase).Range() == synth::RangeKind::Bipolar);
     REQUIRE_TRUE(manager.ParameterById(ids.quad.gain).Range() == synth::RangeKind::Bipolar);
@@ -1107,24 +1152,24 @@ TEST_CASE(dresden_vco_registers_three_group_shapes_two_scenes_fourteen_red_param
 
     bool threw = false;
     try {
-        module.RegisterParameters(manager, stereo, quad, mono, "Dresden");
+        module.RegisterParameters(manager, stereo, quad, mono, "Braid");
     } catch (const std::logic_error&) {
         threw = true;
     }
     REQUIRE_TRUE(threw);
 }
 
-TEST_CASE(dresden_vco_rejects_incompatible_groups_managers_sample_rates_and_bank_capacity) {
+TEST_CASE(braid_vco_rejects_incompatible_groups_managers_sample_rates_and_bank_capacity) {
     {
         synth::ParameterManager manager;
         auto& stereo = manager.CreateGroup({.numVoices = 1, .numScenes = 2, .maxParameters = 2});
         auto& quad = manager.CreateGroup({.numVoices = 4, .numModulators = 1, .numScenes = 2, .maxParameters = 8});
         auto& mono = manager.CreateGroup({.numVoices = 1, .numScenes = 2, .maxParameters = 8});
-        synth::Dresden4VcoModule module;
+        synth::Braid4VcoModule module;
 
         bool threw = false;
         try {
-            module.RegisterParameters(manager, stereo, quad, mono, "Dresden");
+            module.RegisterParameters(manager, stereo, quad, mono, "Braid");
         } catch (const std::logic_error&) {
             threw = true;
         }
@@ -1138,11 +1183,11 @@ TEST_CASE(dresden_vco_rejects_incompatible_groups_managers_sample_rates_and_bank
         auto& stereo = first.CreateGroup({.numVoices = 2, .numScenes = 2, .maxParameters = 2});
         auto& quad = second.CreateGroup({.numVoices = 4, .numModulators = 1, .numScenes = 2, .maxParameters = 8});
         auto& mono = first.CreateGroup({.numVoices = 1, .numScenes = 2, .maxParameters = 8});
-        synth::Dresden4VcoModule module;
+        synth::Braid4VcoModule module;
 
         bool threw = false;
         try {
-            module.RegisterParameters(first, stereo, quad, mono, "Dresden");
+            module.RegisterParameters(first, stereo, quad, mono, "Braid");
         } catch (const std::logic_error&) {
             threw = true;
         }
@@ -1152,7 +1197,7 @@ TEST_CASE(dresden_vco_rejects_incompatible_groups_managers_sample_rates_and_bank
     }
 
     {
-        synth::Dresden4VcoModule module;
+        synth::Braid4VcoModule module;
         bool threw = false;
         try {
             module.SetSampleRate(0.0f);
@@ -1167,8 +1212,8 @@ TEST_CASE(dresden_vco_rejects_incompatible_groups_managers_sample_rates_and_bank
         auto& stereo = manager.CreateGroup({.numVoices = 2, .numScenes = 2, .maxParameters = 2});
         auto& quad = manager.CreateGroup({.numVoices = 4, .numModulators = 1, .numScenes = 2, .maxParameters = 8});
         auto& mono = manager.CreateGroup({.numVoices = 1, .numScenes = 2, .maxParameters = 8});
-        synth::Dresden4VcoModule module;
-        module.RegisterParameters(manager, stereo, quad, mono, "Dresden");
+        synth::Braid4VcoModule module;
+        module.RegisterParameters(manager, stereo, quad, mono, "Braid");
         auto& bank = manager.CreateBank();
         auto& slot = manager.CreateBankSlot();
         for (synth::PhysicalEncoderId encoder = 0; encoder < 15; ++encoder) {
@@ -1186,7 +1231,7 @@ TEST_CASE(dresden_vco_rejects_incompatible_groups_managers_sample_rates_and_bank
     }
 }
 
-TEST_CASE(dresden_vco_maps_all_parameter_ranges_to_natural_vco_inputs) {
+TEST_CASE(braid_vco_maps_all_parameter_ranges_to_natural_vco_inputs) {
     synth::ParameterManager manager;
     auto& stereo = manager.CreateGroup({.numVoices = 2, .numScenes = 2, .maxParameters = 2, .processLiteAlpha = 1.0f});
     auto& quad = manager.CreateGroup({
@@ -1197,8 +1242,8 @@ TEST_CASE(dresden_vco_maps_all_parameter_ranges_to_natural_vco_inputs) {
         .processLiteAlpha = 1.0f,
     });
     auto& mono = manager.CreateGroup({.numVoices = 1, .numScenes = 2, .maxParameters = 8, .processLiteAlpha = 1.0f});
-    synth::Dresden4VcoModule module(192000.0f);
-    module.RegisterParameters(manager, stereo, quad, mono, "Dresden");
+    synth::Braid4VcoModule module(192000.0f);
+    module.RegisterParameters(manager, stereo, quad, mono, "Braid");
     const auto ids = module.Parameters();
 
     SetAndSettle(manager, ids.x, 0.25f);
@@ -1252,21 +1297,88 @@ TEST_CASE(dresden_vco_maps_all_parameter_ranges_to_natural_vco_inputs) {
     REQUIRE_NEAR(module.CurrentInput().oscillators[3].baseFrequencyHz, 16000.0f, 0.0001f);
 }
 
-TEST_CASE(dresden_vco_applies_post_gain_equal_power_xy_and_preserves_raw_scope_ui_connections) {
+TEST_CASE(braid_vco_supports_frequency_octave_shift_and_parameter_colors) {
+    synth::ParameterManager manager;
+    auto& stereo = manager.CreateGroup({.numVoices = 2, .numScenes = 2, .maxParameters = 2, .processLiteAlpha = 1.0f});
+    auto& quad = manager.CreateGroup({
+        .numVoices = 4,
+        .numModulators = 2,
+        .numScenes = 2,
+        .maxParameters = 8,
+        .processLiteAlpha = 1.0f,
+    });
+    auto& mono = manager.CreateGroup({.numVoices = 1, .numScenes = 2, .maxParameters = 8, .processLiteAlpha = 1.0f});
+
+    const std::array<synth::Color, 4> greens{
+        synth::Color::FromHsvDegrees(118.0f, 0.84f, 0.88f),
+        synth::Color::FromHsvDegrees(132.0f, 0.80f, 0.82f),
+        synth::Color::FromHsvDegrees(146.0f, 0.76f, 0.78f),
+        synth::Color::FromHsvDegrees(160.0f, 0.72f, 0.74f),
+    };
+    synth::Braid4VcoModule::Options options;
+    options.frequencyOctaveShift = -10.0f;
+    options.parameterBaseColor = synth::Color::Green;
+    options.indicatorColors = greens;
+
+    synth::Braid4VcoModule module(192000.0f);
+    module.RegisterParameters(manager, stereo, quad, mono, "LFO", options);
+    const auto ids = module.Parameters();
+
+    REQUIRE_TRUE(manager.ParameterById(ids.x).BaseColor() == synth::Color::Green);
+    REQUIRE_TRUE(manager.ParameterById(ids.y).BaseColor() == synth::Color::Green);
+    for (std::size_t voiceIx = 0; voiceIx < 2; ++voiceIx) {
+        REQUIRE_TRUE(manager.ParameterById(ids.x).IndicatorColor(voiceIx) == synth::Color::Green);
+        REQUIRE_TRUE(manager.ParameterById(ids.y).IndicatorColor(voiceIx) == synth::Color::Green);
+    }
+    for (std::size_t oscIx = 0; oscIx < synth::Braid4VcoModule::kOscillatorCount; ++oscIx) {
+        REQUIRE_TRUE(manager.ParameterById(ids.pmIndex[oscIx]).BaseColor() == greens[oscIx]);
+        REQUIRE_TRUE(manager.ParameterById(ids.frequency[oscIx]).BaseColor() == greens[oscIx]);
+        REQUIRE_TRUE(manager.ParameterById(ids.pmIndex[oscIx]).IndicatorColor(0) == greens[oscIx]);
+        REQUIRE_TRUE(manager.ParameterById(ids.frequency[oscIx]).IndicatorColor(0) == greens[oscIx]);
+    }
+    for (const synth::ParameterId id : {ids.quad.tune, ids.quad.phase, ids.quad.shape, ids.quad.gain}) {
+        REQUIRE_TRUE(manager.ParameterById(id).BaseColor() == synth::Color::Green);
+        for (std::size_t oscIx = 0; oscIx < synth::Braid4VcoModule::kOscillatorCount; ++oscIx) {
+            REQUIRE_TRUE(manager.ParameterById(id).IndicatorColor(oscIx) == greens[oscIx]);
+        }
+    }
+
+    for (std::size_t oscIx = 0; oscIx < synth::Braid4VcoModule::kOscillatorCount; ++oscIx) {
+        SetAndSettle(manager, ids.frequency[oscIx], 0.0f);
+    }
+    module.SetInput(manager);
+
+    REQUIRE_NEAR(module.CurrentInput().oscillators[0].baseFrequencyHz, 10.0f / 1024.0f, 0.000001f);
+    REQUIRE_NEAR(module.CurrentInput().oscillators[1].baseFrequencyHz, 50.0f / 1024.0f, 0.000001f);
+    REQUIRE_NEAR(module.CurrentInput().oscillators[2].baseFrequencyHz, 250.0f / 1024.0f, 0.000001f);
+    REQUIRE_NEAR(module.CurrentInput().oscillators[3].baseFrequencyHz, 1000.0f / 1024.0f, 0.000001f);
+
+    for (std::size_t oscIx = 0; oscIx < synth::Braid4VcoModule::kOscillatorCount; ++oscIx) {
+        SetAndSettle(manager, ids.frequency[oscIx], 1.0f);
+    }
+    module.SetInput(manager);
+
+    REQUIRE_NEAR(module.CurrentInput().oscillators[0].baseFrequencyHz, 160.0f / 1024.0f, 0.00001f);
+    REQUIRE_NEAR(module.CurrentInput().oscillators[1].baseFrequencyHz, 800.0f / 1024.0f, 0.00001f);
+    REQUIRE_NEAR(module.CurrentInput().oscillators[2].baseFrequencyHz, 2000.0f / 1024.0f, 0.00001f);
+    REQUIRE_NEAR(module.CurrentInput().oscillators[3].baseFrequencyHz, 16000.0f / 1024.0f, 0.00001f);
+}
+
+TEST_CASE(braid_vco_applies_post_gain_equal_power_xy_and_preserves_raw_scope_ui_connections) {
     synth::ScopeWriter writer(4, 32);
     auto first = writer.ReserveChans(1);
     auto second = writer.ReserveChans(1);
     auto third = writer.ReserveChans(1);
     auto fourth = writer.ReserveChans(1);
-    synth::Dresden4VcoModule module(48000.0f);
+    synth::Braid4VcoModule module(48000.0f);
     module.SetScopeWriterHolder(0, &first);
     module.SetScopeWriterHolder(1, &second);
     module.SetScopeWriterHolder(2, &third);
     module.SetScopeWriterHolder(3, &fourth);
-    module.SetColor(0, synth::Color::Cyan);
-    module.SetColor(1, synth::Color::Orange);
-    module.SetColor(2, synth::Color::Yellow);
-    module.SetColor(3, synth::Color::Green);
+    module.SetScopeColor(0, synth::Color::Cyan);
+    module.SetScopeColor(1, synth::Color::Orange);
+    module.SetScopeColor(2, synth::Color::Yellow);
+    module.SetScopeColor(3, synth::Color::Green);
 
     for (auto& oscillator : module.CurrentInput().oscillators) {
         oscillator.vco = {
@@ -1294,7 +1406,7 @@ TEST_CASE(dresden_vco_applies_post_gain_equal_power_xy_and_preserves_raw_scope_u
     REQUIRE_NEAR(module.OutputLeft(), expectedCenter, 0.0001f);
     REQUIRE_NEAR(module.OutputRight(), expectedCenter, 0.0001f);
 
-    synth::Dresden4VcoModule coherent;
+    synth::Braid4VcoModule coherent;
     for (auto& oscillator : coherent.CurrentInput().oscillators) {
         oscillator.vco = {
             .freq = 0.25,
@@ -1312,7 +1424,7 @@ TEST_CASE(dresden_vco_applies_post_gain_equal_power_xy_and_preserves_raw_scope_u
     REQUIRE_NEAR(coherent.RawOutput(0), coherent.RawOutput(3), 0.0001f);
     REQUIRE_NEAR(coherent.OutputLeft(), 2.0f * coherent.RawOutput(0), 0.0001f);
 
-    synth::Dresden4VcoModule::UIState ui;
+    synth::Braid4VcoModule::UIState ui;
     module.PopulateUIState(ui);
     REQUIRE_TRUE(ui.vcos[0].connected.load());
     REQUIRE_TRUE(ui.vcos[1].connected.load());
@@ -1326,10 +1438,10 @@ TEST_CASE(dresden_vco_applies_post_gain_equal_power_xy_and_preserves_raw_scope_u
     REQUIRE_TRUE(ui.vcos[1].scopeChannel.load() == second.FlatChan());
     REQUIRE_TRUE(ui.vcos[2].scopeChannel.load() == third.FlatChan());
     REQUIRE_TRUE(ui.vcos[3].scopeChannel.load() == fourth.FlatChan());
-    REQUIRE_TRUE(ui.vcos[0].color.Load() == synth::Color::Cyan);
-    REQUIRE_TRUE(ui.vcos[1].color.Load() == synth::Color::Orange);
-    REQUIRE_TRUE(ui.vcos[2].color.Load() == synth::Color::Yellow);
-    REQUIRE_TRUE(ui.vcos[3].color.Load() == synth::Color::Green);
+    REQUIRE_TRUE(ui.vcos[0].scopeColor.Load() == synth::Color::Cyan);
+    REQUIRE_TRUE(ui.vcos[1].scopeColor.Load() == synth::Color::Orange);
+    REQUIRE_TRUE(ui.vcos[2].scopeColor.Load() == synth::Color::Yellow);
+    REQUIRE_TRUE(ui.vcos[3].scopeColor.Load() == synth::Color::Green);
 }
 
 TEST_CASE(demo_modulation_process_parameters_applies_direct_vco_modulation) {

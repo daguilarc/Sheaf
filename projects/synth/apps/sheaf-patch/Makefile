@@ -8,15 +8,15 @@ APP_INFO_PLIST := $(APP_DIR)/Info.plist
 include $(APP_DIR)/../../runtime/juce_build.mk
 
 MINIAPP_DIR := $(APP_DIR)/../miniapp
-DRESDEN4_DIR := $(APP_DIR)/../dresden-4
-CPPFLAGS += -I$(DRESDEN4_DIR)
+BRAID4_DIR := $(APP_DIR)/../braid-4
+CPPFLAGS += -I$(BRAID4_DIR)
 APP_HEADERS := $(APP_DIR)/Launcher.hpp \
-	$(DRESDEN4_DIR)/Dresden4Registration.hpp \
-	$(DRESDEN4_DIR)/Dresden4.hpp \
-	$(DRESDEN4_DIR)/Dresden4UI.hpp \
-	$(DRESDEN4_DIR)/Dresden4UiModel.hpp \
-	$(DRESDEN4_DIR)/Dresden4Draw.hpp \
-	$(DRESDEN4_DIR)/Dresden4Core.hpp \
+	$(BRAID4_DIR)/Braid4Registration.hpp \
+	$(BRAID4_DIR)/Braid4.hpp \
+	$(BRAID4_DIR)/Braid4UI.hpp \
+	$(BRAID4_DIR)/Braid4UiModel.hpp \
+	$(BRAID4_DIR)/Braid4Draw.hpp \
+	$(BRAID4_DIR)/Braid4Core.hpp \
 	$(MINIAPP_DIR)/MiniAppRegistration.hpp \
 	$(MINIAPP_DIR)/MiniApp.hpp \
 	$(MINIAPP_DIR)/MiniAppUI.hpp \

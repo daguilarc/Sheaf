@@ -16,7 +16,7 @@ WHEN the synth parameter modulation capability is implemented, THE repository SH
 - **THEN** the synth parameter modulation test suite runs from `projects/synth`
 
 ### Requirement: spm-2 — Ownership: manager, groups, parameters, banks, and slots
-WHEN constructing the synth parameter system, THE system SHALL use a single `ParameterManager` to own global scene state, global gesture state, page state, parameter groups, banks, slots, and the global parameter ID space; the manager's gesture count SHALL default to zero and MAY be changed only before any group is created; `ParameterManager::CreateGroup` SHALL inject the manager's fixed gesture count and a non-owning manager pointer into each `ParameterGroup`; each `ParameterGroup` SHALL own its config, `Modulators`, voice indicator color palette, injected gesture count for arena sizing, non-owning manager pointer, and allocator, but SHALL NOT own gesture values, gesture selection, or gesture metadata; each `Parameter` SHALL be allocated by exactly one group and read runtime gesture values, selection, and metadata through the owning manager context rather than through group-local gesture state; banks and slots SHALL hold non-owning parameter pointers only.
+WHEN constructing the synth parameter system, THE system SHALL use a single `ParameterManager` to own global scene state, global gesture state, page state, parameter groups, banks, slots, and the global parameter ID space; the manager's gesture count SHALL default to zero and MAY be changed only before any group is created; `ParameterManager::CreateGroup` SHALL inject the manager's fixed gesture count and a non-owning manager pointer into each `ParameterGroup`; each `ParameterGroup` SHALL own its processing/storage config, `Modulators`, injected gesture count for arena sizing, non-owning manager pointer, and allocator, but SHALL NOT own gesture values, gesture selection, gesture metadata, parameter base colors, or parameter indicator palettes; each `Parameter` SHALL be allocated by exactly one group, own its resolved base/indicator appearance, and read runtime gesture values, selection, and metadata through the owning manager context rather than through group-local gesture state; banks and slots SHALL hold non-owning parameter pointers only.
 
 #### Scenario: Parameter receives globally unique ID
 - **WHEN** parameters are created across multiple groups
@@ -44,6 +44,11 @@ WHEN constructing the synth parameter system, THE system SHALL use a single `Par
 - **THEN** the group receives gesture count `2` from the manager
 - **AND** no `ParameterGroupConfig` field can override that count
 
+#### Scenario: Group cannot carry parameter appearance
+- **WHEN** two parameters share one group
+- **THEN** each parameter can own a different base color and per-voice indicator palette
+- **AND** no group field can override either appearance
+
 ### Requirement: spm-3 — Pages: assignment and active UI page
 WHEN parameters are assigned to pages, THE manager SHALL maintain page ordinals within the manager, allow each parameter to be assigned to zero or more pages, and expose exactly one active page for UI routing without changing parameter audio values, scene values, gesture values, or modulation routes.
 
@@ -53,7 +58,7 @@ WHEN parameters are assigned to pages, THE manager SHALL maintain page ordinals 
 - **AND** existing parameter center, depth, scene, gesture, and modulator values remain unchanged
 
 ### Requirement: spm-4 — Group config: dynamic shape and upfront allocation
-WHEN a `ParameterGroup` is configured, THE group SHALL use runtime configuration for voice count, modulator count, scene count, maximum parameter count, process-lite alpha, target-center alpha, target compute interval in samples, UI display-center alpha, UI display-spread alpha, and an optional voice indicator color palette; the target-center alpha SHALL default to a 50 Hz-style one-pole alpha at the default target-compute cadence; the target compute interval SHALL default to 16 samples and SHALL be positive; process-lite alpha, target-center alpha, UI display-center alpha, and UI display-spread alpha SHALL be in `[0, 1]`; SHALL NOT accept an independent gesture count in group configuration; SHALL size parameter per-scene/per-gesture arrays from the owning manager's gesture count injected by `ParameterManager::CreateGroup`; SHALL allocate per-parameter subarrays upfront through a group-owned allocator; and SHALL perform no heap allocation during `Compute`, per-sample parameter processing, `ProcessLite`, `GetRaw`, cached knob reads, routed reset-modifier press, routed random-modifier press, routed tick handling, or routed unmodified press handling after any needed modulation-depth parameters for that view have already been materialized. Routed unmodified press and random-mod modifier operations MAY lazily materialize missing modulation-depth parameter objects from preconfigured group capacity.
+WHEN a `ParameterGroup` is configured, THE group SHALL use runtime configuration for voice count, modulator count, scene count, maximum parameter count, process-lite alpha, target-center alpha, target compute interval in samples, UI display-center alpha, and UI display-spread alpha; SHALL NOT accept parameter base colors, voice indicator colors, a voice color palette, or an independent gesture count in group configuration; the target-center alpha SHALL default to a 50 Hz-style one-pole alpha at the default target-compute cadence; the target compute interval SHALL default to 16 samples and SHALL be positive; process-lite alpha, target-center alpha, UI display-center alpha, and UI display-spread alpha SHALL be in `[0, 1]`; SHALL size parameter per-scene/per-gesture arrays from the owning manager's gesture count injected by `ParameterManager::CreateGroup`; SHALL allocate per-parameter subarrays upfront through a group-owned allocator; and SHALL perform no heap allocation during `Compute`, per-sample parameter processing, `ProcessLite`, `GetRaw`, cached knob reads, routed reset-modifier press, routed random-modifier press, routed tick handling, or routed unmodified press handling after any needed modulation-depth parameters for that view have already been materialized. Routed unmodified press and random-mod modifier operations MAY lazily materialize missing modulation-depth parameter objects from preconfigured group capacity.
 
 #### Scenario: Same-shaped group parameters
 - **WHEN** two parameters are created in the same group
@@ -68,13 +73,10 @@ WHEN a `ParameterGroup` is configured, THE group SHALL use runtime configuration
 - **THEN** it contains no independent gesture count field
 - **AND** every parameter in the group uses the gesture count supplied by the manager
 
-#### Scenario: Voice indicator colors come from group palette
-- **WHEN** a group is configured with explicit voice indicator colors
-- **THEN** parameter UI state for parameters in that group uses those colors for voice 0 and voice 1 indicators
-
-#### Scenario: Default voice indicator colors are deterministic
-- **WHEN** a group has more voices than configured voice indicator colors
-- **THEN** missing colors are filled from a deterministic default palette
+#### Scenario: Voice indicator colors are not group-owned
+- **WHEN** group configuration is inspected
+- **THEN** it contains no voice indicator palette
+- **AND** parameter UI state obtains indicator colors from each parameter's resolved configuration
 
 #### Scenario: Default target center alpha is configured
 - **WHEN** a group is created without overriding its target-center alpha
@@ -427,23 +429,32 @@ WHEN automated tests cover the synth parameter modulation system, THE test suite
 - **THEN** it runs a larger deterministic seed set
 
 ### Requirement: spm-19 — Color: UI-safe RGB and HSV helpers
-WHEN external UI state or message-thread rendering needs colors from the synth parameter system, THE synth parameter modulation system SHALL provide a small trivially copyable 32-bit RGB color type with equality, brightness adjustment, named basic colors, `ToHSV`, and `FromHSV` helpers, without requiring JUCE or Smart Grid headers, and SHALL make color UI-state storage lock-free by storing colors as one atomic 32-bit value or an equivalently lock-free representation.
+WHEN external UI state or message-thread rendering needs colors from the synth parameter system, THE synth library SHALL provide one small trivially copyable 32-bit RGB/RGBA color type with equality, named basic colors, shared alpha/darkening/brightening helpers, `ToHsv` returning a unit-explicit `hueTurns` field, and separately named `FromHsvTurns` and `FromHsvDegrees` helpers, without requiring JUCE or Smart Grid headers; `FromHsvTurns` SHALL reject non-finite hue or hue outside `[0,1)`, `FromHsvDegrees` SHALL reject non-finite hue and wrap finite degrees modulo 360, and color UI-state storage SHALL be lock-free through one atomic 32-bit value or an equivalently lock-free representation.
 
-#### Scenario: Convert color through HSV
-- **WHEN** a synth color is converted to HSV and back to RGB
+#### Scenario: Convert color through hue turns
+- **WHEN** a synth color is converted to HSV turns and back to RGB
 - **THEN** the resulting color matches the original within one 8-bit channel step
+
+#### Scenario: Degree and turn constructors agree
+- **WHEN** one color is constructed at 120 degrees and another at one-third turn with equal saturation/value
+- **THEN** the resulting RGB channels match within one 8-bit channel step
+
+#### Scenario: Wrong hue unit fails loudly
+- **WHEN** hue `120` is passed to `FromHsvTurns`
+- **THEN** the call rejects the value rather than wrapping it to red
 
 #### Scenario: Core color has no JUCE dependency
 - **WHEN** the synth library is built without the miniapp target
 - **THEN** public synth headers expose synth color types only
 - **AND** do not include JUCE headers or expose `juce::Colour`
+- **AND** portable UI drawing uses the same synth color type rather than a second RGBA struct
 
 #### Scenario: Color atomics are lock-free
 - **WHEN** color UI state is compiled on the supported build target
 - **THEN** color storage is represented as a lock-free atomic 32-bit value or equivalent
 
 ### Requirement: spm-20 — UI State: parameter and visible-cell snapshots
-WHEN a parameter or visible-cell UI snapshot is populated, THE synth parameter modulation system SHALL write a `Parameter::UIState` whose scalar fields are individually atomic and which contains the parameter color from `ParameterConfig`, connected state, bipolar flag, short name pointer or stable short name view, per-voice display center values, per-voice display spread values, per-voice minimum values, per-voice maximum values, per-voice switch bucket values, switch cardinality, synth-native modulator/gesture affecting bitmasks, and per-voice indicator colors from the owning group's voice indicator palette for every configured voice; disconnected visible cells SHALL use `connected=false` with neutral values, zero spread, and off colors instead of a separate page/navigation role; bipolar parameter UI values and min/max values SHALL be reported in `[-1, 1]`, while unipolar parameter UI values and min/max values SHALL be reported in `[0, 1]`.
+WHEN a parameter or visible-cell UI snapshot is populated, THE synth parameter modulation system SHALL write a `Parameter::UIState` whose scalar fields are individually atomic and which contains the parameter base color and resolved per-voice indicator colors from `ParameterConfig`, connected state, bipolar flag, short name pointer or stable short name view, per-voice display center values, per-voice display spread values, per-voice minimum values, per-voice maximum values, per-voice switch bucket values, switch cardinality, synth-native modulator/gesture affecting bitmasks, source colors for the parameter's owning-group modulators, and manager-owned gesture colors; every color and count SHALL be inside the existing snapshot revision transaction; disconnected visible cells SHALL use `connected=false` with neutral values, zero spread, zero color counts, and off colors instead of a separate page/navigation role; bipolar parameter UI values and min/max values SHALL be reported in `[-1, 1]`, while unipolar parameter UI values and min/max values SHALL be reported in `[0, 1]`.
 
 #### Scenario: Parameter UI state reports smoothed per-voice display values
 - **WHEN** a parameter has two voices with different cached knob values
@@ -456,16 +467,22 @@ WHEN a parameter or visible-cell UI snapshot is populated, THE synth parameter m
 - **AND** `Parameter::PopulateUIState` is called after process work
 - **THEN** the UI state exposes a non-negative per-voice display spread derived from the smoothed residual energy
 
-#### Scenario: Parameter UI state reports configured color
-- **WHEN** a parameter is configured with color `C`
+#### Scenario: Parameter UI state reports configured base color
+- **WHEN** a parameter is configured with base color `C`
 - **AND** `Parameter::PopulateUIState` is called
-- **THEN** the UI state reports parameter color `C`
+- **THEN** the UI state reports parameter base color `C`
 
-#### Scenario: Parameter UI state reports group voice indicator colors
-- **WHEN** a parameter belongs to a group whose voice indicator palette contains colors `A` and `B`
+#### Scenario: Parameter UI state reports parameter indicator colors
+- **WHEN** a two-voice parameter resolves indicator colors `A` and `B`
 - **AND** `Parameter::PopulateUIState` is called
 - **THEN** voice 0 indicator color is `A`
 - **AND** voice 1 indicator color is `B`
+- **AND** another parameter in the same group may report different colors
+
+#### Scenario: Parameter UI state reports local source and global gesture colors
+- **WHEN** a parameter's group has source colors `M0` and `M1` and its manager has gesture color `G0`
+- **AND** `Parameter::PopulateUIState` is called
+- **THEN** the snapshot reports `M0`, `M1`, and `G0` in their indexed color arrays
 
 #### Scenario: Bipolar UI state reports signed values
 - **WHEN** a bipolar parameter has smoothed display center values `-0.5` and `0.75`
@@ -496,13 +513,13 @@ WHEN a parameter or visible-cell UI snapshot is populated, THE synth parameter m
 #### Scenario: Unused UI state voices are disconnected or neutral
 - **WHEN** a UI state has capacity for more voices than the parameter group uses
 - **THEN** populated voice entries beyond the configured voice count are neutral and do not report stale values as connected
-- **AND** their display spread values are zero
+- **AND** their display spread values and indicator colors are zero/off
 
 #### Scenario: Modulation target cell stays parameter-owned
 - **WHEN** a visible bank cell is the target encoder in an open modulation view
 - **AND** slot UI state is populated
 - **THEN** that reserved `Parameter::UIState` reports `connected=true`
-- **AND** it reports the target parameter's switch cardinality, per-voice switch buckets, affecting masks, color, short name, bipolar flag, display center values, display spread values, and min/max values exactly as the target parameter would outside the modulation view
+- **AND** it reports the target parameter's switch cardinality, per-voice switch buckets, affecting masks, base color, indicator colors, source colors, gesture colors, short name, bipolar flag, display center values, display spread values, and min/max values exactly as the target parameter would outside the modulation view
 - **AND** renderers do not distinguish this cell from normal parameter cells through parameter UI-state page/navigation data
 
 #### Scenario: Short name lifetime is stable
@@ -1384,8 +1401,8 @@ WHEN a MIDI controller profile is created, THE synth parameter modulation system
 - **WHEN** a profile creates processors for a controller
 - **THEN** JUCE input and output handlers remain responsible for opening, closing, and reporting MIDI device state
 
-### Requirement: spm-45 — MIDI controller profiles: default WRLD.Bldr and miniapp use
-WHEN the default WRLD.Bldr MIDI controller profile is requested, THE synth parameter modulation system SHALL build Smart Grid-derived encoder, analog, reset, random, random-mod, system button, and system output defaults for the WRLD.Bldr controller; the synth miniapp's default instrument configuration SHALL contain one WRLD.Bldr controller seeded with that profile instead of constructing individual encoder processors directly.
+### Requirement: spm-45 — MIDI controller profiles: default WRLD.Bldr and default instrument use
+WHEN the default WRLD.Bldr MIDI controller profile is requested, THE synth parameter modulation system SHALL build Smart Grid-derived encoder, analog, reset, random, random-mod, system button, and system output defaults for the WRLD.Bldr controller; and THE synth system SHALL provide one shared default instrument configuration containing one WRLD.Bldr controller seeded with that profile instead of having individual apps construct app-local default controller profiles.
 
 #### Scenario: Default WRLD.Bldr profile maps encoders
 - **WHEN** the default WRLD.Bldr profile is created for slot `0`
@@ -1416,9 +1433,9 @@ WHEN the default WRLD.Bldr MIDI controller profile is requested, THE synth param
 - **AND** those buttons are pressed without an effective modifier
 - **THEN** bus processing ignores the missing-bank messages without changing current app state
 
-#### Scenario: Miniapp default instrument carries WRLD.Bldr
-- **WHEN** the synth miniapp initializes its default instrument configuration
-- **THEN** it contains a named WRLD.Bldr controller whose profile is the default WRLD.Bldr profile for its manager, one gesture, and visible encoder count
+#### Scenario: Shared default instrument carries WRLD.Bldr
+- **WHEN** an app initializes from the shared default instrument configuration
+- **THEN** it contains a named WRLD.Bldr controller whose profile is the default WRLD.Bldr profile with sixteen visible encoder mappings, eight scene selectors, sixteen bank selectors, one gesture selector, and scene-blend analog input
 - **AND** the runtime builds that controller's input chain and output processors from the instrument configuration
 
 #### Scenario: Miniapp hardware controls exercise profile
@@ -2068,3 +2085,41 @@ WHEN MF Twister encoder MIDI output is processed, THE synth parameter modulation
 #### Scenario: Disconnected Twister brightness remains debounced
 - **WHEN** a mapped Twister encoder is processed as disconnected and no relevant UI state or output cache reset occurs before the next process call
 - **THEN** the Twister output processor does not emit duplicate brightness-off feedback on the next process call
+
+### Requirement: spm-69 — Processing: rate-aware parameter-group timing
+WHEN a parameter group is processed at a sample rate different from its reference rate, THE parameter modulation system SHALL provide pure helpers that convert a reference one-pole alpha `a` to `1 - pow(1 - a, referenceRate / processingRate)` and a positive reference sample interval to `max(1, round(referenceInterval * processingRate / referenceRate))`; and SHALL provide a pre-audio timing-reconfiguration API that updates only `processLiteAlpha`, `targetComputeIntervalSamples`, `uiDisplayCenterAlpha`, and `uiDisplaySpreadAlpha` for an existing group without changing its voice, modulator, scene, parameter-capacity, storage, routing, or value topology.
+
+#### Scenario: Alpha conversion preserves wall-clock response
+- **WHEN** a reference alpha is converted from 48 kHz to 192 kHz
+- **THEN** four consecutive 192 kHz one-pole updates have the same cumulative response as one 48 kHz update within numeric tolerance
+
+#### Scenario: Interval conversion preserves cadence
+- **WHEN** reference interval `16` at 48 kHz is converted to 192 kHz
+- **THEN** the returned interval is `64`
+- **AND** conversion at non-integer ratios rounds to the nearest positive sample count
+
+#### Scenario: Invalid rates and timing are rejected
+- **WHEN** a conversion or timing reconfiguration receives a non-positive or non-finite rate, an alpha outside `[0,1]`, or a zero interval
+- **THEN** it reports a coding/configuration error
+- **AND** the group remains unchanged
+
+#### Scenario: Reconfiguration preserves topology and values
+- **WHEN** a group with registered parameters, scene values, modulation depths, and storage batches receives valid new timing
+- **THEN** only its four processing-timing fields change
+- **AND** all parameter IDs, pointers, values, routes, storage spans, group shape, and capacity remain unchanged
+
+#### Scenario: Repeated prepare does not compound conversion
+- **WHEN** an application prepares the same group at multiple processing rates
+- **THEN** it can derive and install each timing configuration from fixed reference values
+- **AND** the result does not depend on the previously installed processing rate
+
+#### Scenario: Timing update is allocation-free
+- **WHEN** valid timing is installed while audio is stopped
+- **THEN** the operation performs no heap allocation and does not rebuild parameter storage
+
+### Requirement: spm-69 — Parameter appearance registration
+WHEN `ParameterManager` registers a parameter, THE manager SHALL resolve `ParameterConfig::indicatorColors` against the owning group's voice count by broadcasting the base color for an empty palette, broadcasting one explicit color, accepting exactly one color per voice, and rejecting any other nonzero cardinality atomically; modulation-depth parameters SHALL use their modulation source color as base and inherit their target parameter's resolved indicator colors.
+
+#### Scenario: Invalid indicator cardinality preserves registration state
+- **WHEN** a four-voice registration supplies two indicator colors
+- **THEN** registration throws before parameter count, group allocation count, name registry, or bank mappings change

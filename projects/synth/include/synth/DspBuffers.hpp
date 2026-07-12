@@ -199,12 +199,12 @@ constexpr std::array<double, Taps> MakeKaiserLowpass(double cutoff, double beta)
 
 } // namespace detail
 
-inline constexpr std::size_t kDresden4DecimatorTaps = 287;
-inline constexpr std::array<double, kDresden4DecimatorTaps> kDresden4DecimatorCoefficients =
-    detail::MakeKaiserLowpass<kDresden4DecimatorTaps>(11.0 / 96.0, 9.0);
+inline constexpr std::size_t kFourToOneDecimatorTaps = 287;
+inline constexpr std::array<double, kFourToOneDecimatorTaps> kFourToOneDecimatorCoefficients =
+    detail::MakeKaiserLowpass<kFourToOneDecimatorTaps>(11.0 / 96.0, 9.0);
 
-constexpr std::span<const double, kDresden4DecimatorTaps> Dresden4DecimatorCoefficients() {
-    return std::span<const double, kDresden4DecimatorTaps>{kDresden4DecimatorCoefficients};
+constexpr std::span<const double, kFourToOneDecimatorTaps> FourToOneDecimatorCoefficients() {
+    return std::span<const double, kFourToOneDecimatorTaps>{kFourToOneDecimatorCoefficients};
 }
 
 template<std::size_t Factor, std::size_t Channels, std::size_t Taps>

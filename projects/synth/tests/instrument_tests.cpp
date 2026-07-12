@@ -294,6 +294,22 @@ TEST_CASE(SlotValidForKindAcceptsWrldBldrDefaultProfile) {
     REQUIRE_TRUE(synth::SlotValidForKind(slot, &reason));
 }
 
+TEST_CASE(DefaultMidiInstrumentConfigCarriesSharedWrldBldrProfile) {
+    const synth::MidiInstrumentConfig instrument = synth::DefaultMidiInstrumentConfig();
+    REQUIRE_TRUE(instrument.controllers.size() == 1);
+
+    const synth::MidiControllerSlot& slot = instrument.controllers.front();
+    REQUIRE_TRUE(slot.name == "wrldbldr");
+    REQUIRE_TRUE(slot.kind == synth::MidiProfileKind::WrldBldr);
+
+    std::string reason;
+    REQUIRE_TRUE(synth::SlotValidForKind(slot, &reason));
+    REQUIRE_TRUE(slot.config.encoderInput.has_value());
+    REQUIRE_TRUE(slot.config.encoderInput->turns.size() == 16);
+    REQUIRE_TRUE(slot.config.encoderInput->pushes.size() == 16);
+    REQUIRE_TRUE(slot.config.systemMessages.size() == 28);
+}
+
 TEST_CASE(SlotValidForKindAcceptsMfTwisterDefaultProfile) {
     MidiControllerSlot slot = MakeGenericSlot("twist");
     slot.kind = MidiProfileKind::MfTwister;

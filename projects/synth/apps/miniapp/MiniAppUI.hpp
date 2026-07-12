@@ -7,6 +7,7 @@
 #include "MiniAppDraw.hpp"
 #include "MiniAppUiModel.hpp"
 
+#include "synth/EncoderDraw.hpp"
 #include "synth/PortableUI.hpp"
 #include "synth/PortableUIBuilders.hpp"
 
@@ -39,23 +40,6 @@ public:
 
         const synth::ui::Bounds encoderArea = MiniAppPageLayout::EncoderArea(content);
 
-        std::vector<synth::Color> modulatorColors;
-        std::vector<synth::Color> gestureColors;
-        if (core_ != nullptr && core_->Group() != nullptr)
-        {
-            for (const synth::ModulatorMetadata& metadata : core_->Group()->GetModulators().Metadata())
-            {
-                modulatorColors.push_back(metadata.color);
-            }
-        }
-        if (context_ != nullptr && context_->parameterManager != nullptr)
-        {
-            for (std::size_t gestureIx = 0; gestureIx < context_->parameterManager->GestureCount(); ++gestureIx)
-            {
-                gestureColors.push_back(context_->parameterManager->GestureMetadataAt(gestureIx).color);
-            }
-        }
-
         for (std::size_t ix = 0; ix < EncoderGridLayout::kEncoderCount; ++ix)
         {
             const synth::ui::Bounds encoderBounds = EncoderGridLayout::BoundsForIndex(encoderArea, ix);
@@ -65,9 +49,9 @@ public:
                 const synth::BankSlot::UIState& slotState = context_->uiState->slots[0];
                 if (ix < slotState.cellCapacity)
                 {
-                    const EncoderDrawState encoderState = EncoderDrawStateFromParameter(
-                        slotState.cells[ix], modulatorColors, gestureColors);
-                    drawCommands = BuildEncoderDrawCommands(encoderState, encoderBounds);
+                    const synth::ui::EncoderDrawState encoderState =
+                        synth::ui::EncoderDrawStateFromParameter(slotState.cells[ix]);
+                    drawCommands = synth::ui::BuildEncoderDrawCommands(encoderState, encoderBounds);
                 }
             }
             builder.DrawInteractive(

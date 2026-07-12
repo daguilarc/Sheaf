@@ -1,6 +1,6 @@
 #include "Launcher.hpp"
 
-#include "Dresden4Registration.hpp"
+#include "Braid4Registration.hpp"
 #include "MiniAppRegistration.hpp"
 #include "Shell.hpp"
 #include "synth/AppRegistry.hpp"
@@ -66,32 +66,32 @@ int main() {
     }
 
     {
-        const auto manifest = synth_dresden4::Dresden4Manifest();
-        Require(manifest.appId == "dresden-4", "dresden manifest exposes stable app id");
-        Require(manifest.displayName == "Dresden 4", "dresden manifest exposes display name");
-        Require(manifest.author == "Sheaf", "dresden manifest exposes author");
-        Require(manifest.category == "synth", "dresden manifest exposes category");
-        Require(manifest.hardware.minEncoders == 16, "dresden manifest exposes minimum encoders");
+        const auto manifest = synth_braid4::Braid4Manifest();
+        Require(manifest.appId == "braid-4", "braid manifest exposes stable app id");
+        Require(manifest.displayName == "Braid 4", "braid manifest exposes display name");
+        Require(manifest.author == "Sheaf", "braid manifest exposes author");
+        Require(manifest.category == "synth", "braid manifest exposes category");
+        Require(manifest.hardware.minEncoders == 16, "braid manifest exposes minimum encoders");
     }
 
     {
-        using Dresden4OwnerFactoryResult =
-            decltype(synth_runtime::MakeRuntimeSessionOwner<synth_dresden4::Dresden4>(
+        using Braid4OwnerFactoryResult =
+            decltype(synth_runtime::MakeRuntimeSessionOwner<synth_braid4::Braid4>(
                 std::declval<synth::RuntimeDataPaths>()));
-        static_assert(std::is_same_v<Dresden4OwnerFactoryResult,
+        static_assert(std::is_same_v<Braid4OwnerFactoryResult,
                                      std::unique_ptr<synth_runtime::RuntimeSessionOwner>>);
 
         std::function<std::unique_ptr<synth_runtime::RuntimeSessionOwner>(synth::RuntimeDataPaths)>
-            dresdenOwnerFactory = [](synth::RuntimeDataPaths paths) {
-                return synth_runtime::MakeRuntimeSessionOwner<synth_dresden4::Dresden4>(std::move(paths));
+            braidOwnerFactory = [](synth::RuntimeDataPaths paths) {
+                return synth_runtime::MakeRuntimeSessionOwner<synth_braid4::Braid4>(std::move(paths));
             };
 
-        auto owner = dresdenOwnerFactory(synth::RuntimeDataPaths::FromDataRoot(
-            std::filesystem::temp_directory_path() / "sheaf-patch-dresden-owner-test"));
+        auto owner = braidOwnerFactory(synth::RuntimeDataPaths::FromDataRoot(
+            std::filesystem::temp_directory_path() / "sheaf-patch-braid-owner-test"));
         Require(owner != nullptr,
-                "dresden registration can construct through the generic runtime session owner factory");
-        Require(dynamic_cast<synth_runtime::ShellComponent<synth_dresden4::Dresden4>*>(&owner->Component()) != nullptr,
-                "dresden registration owner exposes a component through the generic interface");
+                "braid registration can construct through the generic runtime session owner factory");
+        Require(dynamic_cast<synth_runtime::ShellComponent<synth_braid4::Braid4>*>(&owner->Component()) != nullptr,
+                "braid registration owner exposes a component through the generic interface");
     }
 
     {
@@ -135,32 +135,32 @@ int main() {
     }
 
     {
-        bool dresdenLaunched = false;
-        synth::RuntimeDataPaths dresdenPaths;
-        auto dresden = synth_dresden4::MakeDresden4Registration([&](synth::RuntimeDataPaths paths) {
-            dresdenLaunched = true;
-            dresdenPaths = std::move(paths);
+        bool braidLaunched = false;
+        synth::RuntimeDataPaths braidPaths;
+        auto braid = synth_braid4::MakeBraid4Registration([&](synth::RuntimeDataPaths paths) {
+            braidLaunched = true;
+            braidPaths = std::move(paths);
         });
         auto miniapp = synth_miniapp::MakeMiniAppRegistration([](synth::RuntimeDataPaths) {});
 
-        synth_sheaf_patch::LauncherComponent launcher({std::move(miniapp), std::move(dresden)}, "data");
-        auto* row = launcher.RowButtonForTesting("dresden-4");
+        synth_sheaf_patch::LauncherComponent launcher({std::move(miniapp), std::move(braid)}, "data");
+        auto* row = launcher.RowButtonForTesting("braid-4");
 
-        Require(launcher.AppCountForTesting() == 2, "sheaf patch launcher exposes miniapp and dresden");
-        Require(launcher.AppIdForTesting(0) == "dresden-4", "sheaf patch launcher sorts dresden before miniapp");
-        Require(launcher.AppIdForTesting(1) == "miniapp", "sheaf patch launcher keeps miniapp after dresden");
-        Require(row != nullptr, "dresden row button exists");
-        Require(launcher.RowTextForTesting("dresden-4") ==
-                    "Dresden 4 | Author: Sheaf | Category: synth | Minimum encoders: 16",
-                "dresden row shows formatted metadata");
+        Require(launcher.AppCountForTesting() == 2, "sheaf patch launcher exposes miniapp and braid");
+        Require(launcher.AppIdForTesting(0) == "braid-4", "sheaf patch launcher sorts braid before miniapp");
+        Require(launcher.AppIdForTesting(1) == "miniapp", "sheaf patch launcher keeps miniapp after braid");
+        Require(row != nullptr, "braid row button exists");
+        Require(launcher.RowTextForTesting("braid-4") ==
+                    "Braid 4 | Author: Sheaf | Category: synth | Minimum encoders: 16",
+                "braid row shows formatted metadata");
 
         row->onClick();
 
-        Require(dresdenLaunched, "dresden row activation invokes selected launch binding");
-        Require(dresdenPaths.configFile == std::filesystem::path("data/synth/sheaf-patch/config"),
-                "launcher passes shared Sheaf Patch config path for dresden");
-        Require(dresdenPaths.patchesRoot == std::filesystem::path("data/synth/sheaf-patch/patches/dresden-4"),
-                "launcher passes dresden app patch root");
+        Require(braidLaunched, "braid row activation invokes selected launch binding");
+        Require(braidPaths.configFile == std::filesystem::path("data/synth/sheaf-patch/config"),
+                "launcher passes shared Sheaf Patch config path for braid");
+        Require(braidPaths.patchesRoot == std::filesystem::path("data/synth/sheaf-patch/patches/braid-4"),
+                "launcher passes braid app patch root");
     }
 
     std::cout << "LauncherHarnessTests passed\n";

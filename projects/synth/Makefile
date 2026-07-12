@@ -13,8 +13,8 @@ LOGGING_TEST_BIN := $(BUILD_DIR)/logging_tests
 ENGINE_TEST_BIN := $(BUILD_DIR)/engine_tests
 RIG_TEST_BIN := $(BUILD_DIR)/rig_tests
 MINIAPP_SYSTEM_TEST_BIN := $(BUILD_DIR)/miniapp_system_tests
-DRESDEN4_SYSTEM_TEST_BIN := $(BUILD_DIR)/dresden4_system_tests
-DRESDEN4_DEADLINE_TEST_BIN := $(BUILD_DIR)/dresden4_deadline_tests
+BRAID4_SYSTEM_TEST_BIN := $(BUILD_DIR)/braid4_system_tests
+BRAID4_DEADLINE_TEST_BIN := $(BUILD_DIR)/braid4_deadline_tests
 RECONCILE_TEST_BIN := $(BUILD_DIR)/reconcile_tests
 RECONCILE_EXECUTOR_TEST_BIN := $(BUILD_DIR)/reconcile_executor_tests
 POLLER_TEST_BIN := $(BUILD_DIR)/poller_tests
@@ -110,14 +110,14 @@ $(RIG_TEST_BIN): tests/rig_tests.cpp tests/support/SynthRig.hpp $(LIB) include/s
 # live under apps/miniapp/ (JUCE-free), and this is the one JUCE-free test
 # binary that includes them across directories. Building this target proves
 # MiniAppCore compiles and links with no JUCE include paths at all.
-$(MINIAPP_SYSTEM_TEST_BIN): tests/miniapp_system_tests.cpp tests/support/SynthRig.hpp apps/miniapp/MiniApp.hpp apps/miniapp/MiniAppRegistration.hpp apps/miniapp/MiniAppUI.hpp apps/miniapp/MiniAppUiModel.hpp apps/miniapp/MiniAppDraw.hpp apps/miniapp/MiniAppCore.hpp apps/miniapp/DemoModulation.hpp include/synth/PortableUI.hpp include/synth/PortableUIBuilders.hpp $(LIB) include/synth/Engine.hpp include/synth/AppContext.hpp include/synth/AppConcepts.hpp include/synth/AppRegistry.hpp include/synth/AsyncLogger.hpp include/synth/MidiController.hpp include/synth/Modules.hpp include/synth/ParameterModulation.hpp include/synth/PatchPersistence.hpp include/synth/PatchBrowser.hpp include/synth/DspScope.hpp include/synth/Json.hpp
+$(MINIAPP_SYSTEM_TEST_BIN): tests/miniapp_system_tests.cpp tests/support/SynthRig.hpp apps/miniapp/MiniApp.hpp apps/miniapp/MiniAppRegistration.hpp apps/miniapp/MiniAppUI.hpp apps/miniapp/MiniAppUiModel.hpp apps/miniapp/MiniAppDraw.hpp apps/miniapp/MiniAppCore.hpp apps/miniapp/DemoModulation.hpp include/synth/EncoderDraw.hpp include/synth/PortableUI.hpp include/synth/PortableUIBuilders.hpp $(LIB) include/synth/Engine.hpp include/synth/AppContext.hpp include/synth/AppConcepts.hpp include/synth/AppRegistry.hpp include/synth/AsyncLogger.hpp include/synth/MidiController.hpp include/synth/Modules.hpp include/synth/ParameterModulation.hpp include/synth/PatchPersistence.hpp include/synth/PatchBrowser.hpp include/synth/DspScope.hpp include/synth/Json.hpp
 	$(CXX) $(CPPFLAGS) -Iapps/miniapp $(CXXFLAGS) $< $(LIB) -o $@
 
-$(DRESDEN4_SYSTEM_TEST_BIN): tests/dresden4_system_tests.cpp tests/support/SynthRig.hpp apps/dresden-4/Dresden4.hpp apps/dresden-4/Dresden4UI.hpp apps/dresden-4/Dresden4UiModel.hpp apps/dresden-4/Dresden4Draw.hpp apps/dresden-4/Dresden4Core.hpp $(LIB) include/synth/Engine.hpp include/synth/AppContext.hpp include/synth/AppConcepts.hpp include/synth/Modules.hpp include/synth/ParameterModulation.hpp include/synth/PatchPersistence.hpp include/synth/PortableUI.hpp include/synth/PortableUIBuilders.hpp include/synth/DspBuffers.hpp include/synth/DspScope.hpp include/synth/Json.hpp
-	$(CXX) $(CPPFLAGS) -Iapps/dresden-4 $(CXXFLAGS) $< $(LIB) -o $@
+$(BRAID4_SYSTEM_TEST_BIN): tests/braid4_system_tests.cpp tests/support/SynthRig.hpp apps/braid-4/Braid4.hpp apps/braid-4/Braid4UI.hpp apps/braid-4/Braid4UiModel.hpp apps/braid-4/Braid4Draw.hpp apps/braid-4/Braid4Core.hpp $(LIB) include/synth/Engine.hpp include/synth/AppContext.hpp include/synth/AppConcepts.hpp include/synth/Modules.hpp include/synth/ParameterModulation.hpp include/synth/PatchPersistence.hpp include/synth/EncoderDraw.hpp include/synth/PortableUI.hpp include/synth/PortableUIBuilders.hpp include/synth/DspBuffers.hpp include/synth/DspScope.hpp include/synth/Json.hpp
+	$(CXX) $(CPPFLAGS) -Iapps/braid-4 $(CXXFLAGS) $< $(LIB) -o $@
 
-$(DRESDEN4_DEADLINE_TEST_BIN): tests/dresden4_deadline_tests.cpp apps/dresden-4/Dresden4Core.hpp $(LIB) include/synth/Engine.hpp include/synth/AppContext.hpp include/synth/AppConcepts.hpp include/synth/Modules.hpp include/synth/ParameterModulation.hpp include/synth/DspBuffers.hpp include/synth/DspScope.hpp
-	$(CXX) $(CPPFLAGS) -Iapps/dresden-4 $(CXXFLAGS) $< $(LIB) -o $@
+$(BRAID4_DEADLINE_TEST_BIN): tests/braid4_deadline_tests.cpp apps/braid-4/Braid4Core.hpp $(LIB) include/synth/Engine.hpp include/synth/AppContext.hpp include/synth/AppConcepts.hpp include/synth/Modules.hpp include/synth/ParameterModulation.hpp include/synth/DspBuffers.hpp include/synth/DspScope.hpp
+	$(CXX) $(CPPFLAGS) -Iapps/braid-4 $(CXXFLAGS) $< $(LIB) -o $@
 
 $(RECONCILE_TEST_BIN): tests/reconcile_tests.cpp $(LIB) include/synth/MidiReconcile.hpp include/synth/MidiController.hpp
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< $(LIB) -o $@
@@ -137,7 +137,7 @@ $(VIEWMODEL_TEST_BIN): tests/viewmodel_tests.cpp $(LIB) include/synth/MidiConfig
 $(BLOCKS_TEST_BIN): tests/blocks_tests.cpp $(LIB) include/synth/MidiConfigBlocks.hpp include/synth/MidiController.hpp
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< $(LIB) -o $@
 
-$(PORTABLE_UI_TEST_BIN): tests/portable_ui_tests.cpp apps/miniapp/MiniAppDraw.hpp apps/dresden-4/Dresden4Draw.hpp apps/dresden-4/Dresden4UiModel.hpp apps/dresden-4/Dresden4Core.hpp include/synth/PortableUI.hpp include/synth/PortableUIBuilders.hpp include/synth/RuntimePages.hpp include/synth/ControllersPageUI.hpp include/synth/AppConcepts.hpp $(LIB)
+$(PORTABLE_UI_TEST_BIN): tests/portable_ui_tests.cpp apps/miniapp/MiniAppDraw.hpp apps/braid-4/Braid4Draw.hpp apps/braid-4/Braid4UiModel.hpp apps/braid-4/Braid4Core.hpp include/synth/EncoderDraw.hpp include/synth/PortableUI.hpp include/synth/PortableUIBuilders.hpp include/synth/RuntimePages.hpp include/synth/ControllersPageUI.hpp include/synth/AppConcepts.hpp $(LIB)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< $(LIB) -o $@
 
 $(RUNTIME_MAIN_COMPONENT_TEST_BIN): tests/runtime_main_component_tests.cpp include/synth/RuntimeMainComponent.hpp include/synth/AppConcepts.hpp include/synth/ControllersPageUI.hpp include/synth/MidiConfigViewModel.hpp include/synth/RuntimePages.hpp include/synth/RuntimePagePolicy.hpp $(LIB)
@@ -173,7 +173,7 @@ browser-audio-device-test: $(BROWSER_AUDIO_DEVICE_TEST_BIN)
 browser-midi-bridge-test: $(BROWSER_MIDI_BRIDGE_TEST_BIN)
 	$(BROWSER_MIDI_BRIDGE_TEST_BIN)
 
-test: check-ui-boundary $(TEST_BIN) $(DSP_TEST_BIN) $(MODULE_TEST_BIN) $(INSTRUMENT_TEST_BIN) $(CONTRACT_TEST_BIN) $(LOGGING_TEST_BIN) $(ENGINE_TEST_BIN) $(RIG_TEST_BIN) $(MINIAPP_SYSTEM_TEST_BIN) $(DRESDEN4_SYSTEM_TEST_BIN) $(DRESDEN4_DEADLINE_TEST_BIN) $(RECONCILE_TEST_BIN) $(RECONCILE_EXECUTOR_TEST_BIN) $(POLLER_TEST_BIN) $(MIDI_SENDER_TEST_BIN) $(VIEWMODEL_TEST_BIN) $(BLOCKS_TEST_BIN) $(PORTABLE_UI_TEST_BIN) $(RUNTIME_MAIN_COMPONENT_TEST_BIN) $(RUNTIME_FILE_SERVICE_TEST_BIN) $(CONTROLLERS_PAGE_UI_TEST_BIN) $(BROWSER_COMMAND_BUFFER_TEST_BIN) $(BROWSER_AUDIO_DEVICE_TEST_BIN)
+test: check-ui-boundary $(TEST_BIN) $(DSP_TEST_BIN) $(MODULE_TEST_BIN) $(INSTRUMENT_TEST_BIN) $(CONTRACT_TEST_BIN) $(LOGGING_TEST_BIN) $(ENGINE_TEST_BIN) $(RIG_TEST_BIN) $(MINIAPP_SYSTEM_TEST_BIN) $(BRAID4_SYSTEM_TEST_BIN) $(BRAID4_DEADLINE_TEST_BIN) $(RECONCILE_TEST_BIN) $(RECONCILE_EXECUTOR_TEST_BIN) $(POLLER_TEST_BIN) $(MIDI_SENDER_TEST_BIN) $(VIEWMODEL_TEST_BIN) $(BLOCKS_TEST_BIN) $(PORTABLE_UI_TEST_BIN) $(RUNTIME_MAIN_COMPONENT_TEST_BIN) $(RUNTIME_FILE_SERVICE_TEST_BIN) $(CONTROLLERS_PAGE_UI_TEST_BIN) $(BROWSER_COMMAND_BUFFER_TEST_BIN) $(BROWSER_AUDIO_DEVICE_TEST_BIN)
 	$(TEST_BIN)
 	$(DSP_TEST_BIN)
 	$(MODULE_TEST_BIN)
@@ -183,8 +183,8 @@ test: check-ui-boundary $(TEST_BIN) $(DSP_TEST_BIN) $(MODULE_TEST_BIN) $(INSTRUM
 	$(ENGINE_TEST_BIN)
 	$(RIG_TEST_BIN)
 	$(MINIAPP_SYSTEM_TEST_BIN)
-	$(DRESDEN4_SYSTEM_TEST_BIN)
-	$(DRESDEN4_DEADLINE_TEST_BIN)
+	$(BRAID4_SYSTEM_TEST_BIN)
+	$(BRAID4_DEADLINE_TEST_BIN)
 	$(RECONCILE_TEST_BIN)
 	$(RECONCILE_EXECUTOR_TEST_BIN)
 	$(POLLER_TEST_BIN)

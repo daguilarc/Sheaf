@@ -44,6 +44,7 @@ SYNTH_HEADERS := $(SYNTH_ROOT)/include/synth/ParameterModulation.hpp $(SYNTH_ROO
 	$(SYNTH_ROOT)/include/synth/MidiDevicePoller.hpp \
 	$(SYNTH_ROOT)/include/synth/MidiConfigViewModel.hpp \
 	$(SYNTH_ROOT)/include/synth/MidiConfigBlocks.hpp \
+	$(SYNTH_ROOT)/include/synth/EncoderDraw.hpp \
 	$(SYNTH_ROOT)/include/synth/PortableUI.hpp \
 	$(SYNTH_ROOT)/include/synth/PortableUIBuilders.hpp \
 	$(SYNTH_ROOT)/include/synth/RuntimePages.hpp \

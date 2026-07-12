@@ -121,8 +121,9 @@ stores into existing memory.
 
 `Parameter::UIState` reports:
 
-- connected state, bipolar flag, color, and stable short name pointer;
-- per-voice value, min/max range, and indicator color.
+- connected state, bipolar flag, parameter base color, and stable short name pointer;
+- per-voice value, min/max range, and parameter-owned indicator color;
+- bounded modulation-source and gesture color arrays with published counts.
 
 Disconnected slot positions are represented by `connected=false` with neutral
 values and off colors; parameter UI state does not encode page/navigation roles.
@@ -130,7 +131,9 @@ values and off colors; parameter UI state does not encode page/navigation roles.
 `BankSlot::UIState` exposes visible cells in `AddPhysicalEncoder` order and a
 `showingModulationView` flag. `ParameterManager::UIState` includes slot state,
 manager-owned gesture values/selection, scene endpoints/blend, and reset,
-random, and random-modifier held state. Core synth code uses `synth::Color`;
+random, and random-modifier held state. Parameter groups own processing/storage
+topology and no appearance palette. Core and portable UI code use the same
+canonical `synth::Color` RGBA type; hue constructors name degrees or turns;
 JUCE color conversion is only for app/UI code (e.g.
 `projects/synth/apps/miniapp/MiniApp.hpp`).
 
@@ -233,8 +236,8 @@ component should contain only its bespoke widgets; patch commands and MIDI
 device/controller configuration are runtime-owned pages, not app code (see
 `projects/synth/apps/miniapp/README.md` for a concrete example).
 
-`projects/synth/apps/dresden-4/` is an exception to the standalone app target
-pattern: Dresden 4 is Sheaf Patch-only and is launched from the Sheaf Patch app
+`projects/synth/apps/braid-4/` is an exception to the standalone app target
+pattern: Braid 4 is Sheaf Patch-only and is launched from the Sheaf Patch app
 registry rather than from its own `Main.cpp`/Makefile target. Its internal audio
 graph runs oscillator, modulation, and matrix processing at 4× the host sample
 rate, then applies the final 4:1 FIR decimation stage at the output edge before

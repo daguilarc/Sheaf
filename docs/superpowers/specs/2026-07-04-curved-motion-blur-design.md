@@ -84,19 +84,20 @@ The visual mapping should be monotonic and clamped:
   spread is halved once before helper calls, matching the existing display
   normalization.
 
-The exact constants can be tuned in `EncoderComponent` and covered by geometry
-tests rather than exposed as parameter-group config.
+The exact constants can be tuned in the shared `synth::ui` encoder draw helper
+and covered by portable draw geometry tests rather than exposed as
+parameter-group config.
 
 ## Files
 
 - `projects/synth/src/ParameterModulation.cpp`
   - Update recursive `ComputeAtDepth()` behavior so nested parameters seed UI
     center/spread from their true raw value.
-- `projects/synth/juce/EncoderComponent.hpp`
+- `projects/synth/include/synth/EncoderDraw.hpp`
   - Replace separate spread-arc drawing with curved melted-dot drawing.
   - Add small pure helper functions for motion normalization, arc width, and
     outline alpha.
-- `projects/synth/juce/EncoderComponentGeometryTests.cpp`
+- `projects/synth/juce/PortableDrawGeometryTests.cpp`
   - Replace the obsolete `DisplaySpreadToStrokeWidth` assertions with coverage
     for monotonic blur width and outline fade.
 - `projects/synth/tests/parameter_modulation_tests.cpp`

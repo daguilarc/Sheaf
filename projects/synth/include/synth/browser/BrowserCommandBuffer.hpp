@@ -73,7 +73,7 @@ struct DecodedDrawCommand {
     synth::ui::Bounds bounds{};
     synth::ui::Point from{};
     synth::ui::Point to{};
-    synth::ui::Color color{};
+    synth::Color color{};
     float strokeWidth = 1.0f;
     float startRadians = 0.0f;
     float endRadians = 0.0f;
@@ -170,7 +170,7 @@ inline void AppendPoint(std::vector<std::byte>& output, const synth::ui::Point& 
     AppendFloat(output, point.y);
 }
 
-inline void AppendColor(std::vector<std::byte>& output, synth::ui::Color color)
+inline void AppendColor(std::vector<std::byte>& output, synth::Color color)
 {
     AppendU8(output, color.r);
     AppendU8(output, color.g);
@@ -194,7 +194,7 @@ public:
     float Float() { return std::bit_cast<float>(U32()); }
     synth::ui::Bounds Bounds() { return {Float(), Float(), Float(), Float()}; }
     synth::ui::Point Point() { return {Float(), Float()}; }
-    synth::ui::Color Color() { return {U8(), U8(), U8(), U8()}; }
+    synth::Color Color() { return {U8(), U8(), U8(), U8()}; }
     std::span<const std::byte> Section(std::uint32_t size)
     {
         Require(size);

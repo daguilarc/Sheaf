@@ -1,5 +1,7 @@
 #pragma once
 
+#include "synth/Color.hpp"
+
 #include <cstdint>
 #include <functional>
 #include <optional>
@@ -29,19 +31,6 @@ struct Bounds {
     float y = 0.0f;
     float width = 0.0f;
     float height = 0.0f;
-};
-
-struct Color {
-    std::uint8_t r = 0;
-    std::uint8_t g = 0;
-    std::uint8_t b = 0;
-    std::uint8_t a = 255;
-    static constexpr Color Rgb(std::uint8_t red, std::uint8_t green, std::uint8_t blue) {
-        return Color{red, green, blue, 255};
-    }
-    static constexpr Color Rgba(std::uint8_t red, std::uint8_t green, std::uint8_t blue, std::uint8_t alpha) {
-        return Color{red, green, blue, alpha};
-    }
 };
 
 enum class TextAlign {

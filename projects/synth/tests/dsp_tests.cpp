@@ -31,6 +31,14 @@
 
 namespace {
 
+template<typename Processor>
+concept HasPublicScopeColorStorage = requires(Processor processor) {
+    processor.m_scopeColor;
+};
+
+static_assert(!HasPublicScopeColorStorage<synth::DefaultWavetableVco>);
+static_assert(!HasPublicScopeColorStorage<synth::BasicLFOProcessor>);
+
 struct TestCase {
     const char* name;
     void (*fn)();
@@ -928,7 +936,7 @@ TEST_CASE(basic_lfo_processor_advances_writes_scope_markers_and_publishes_ui_sta
     auto holder = writer.ReserveChans(1);
     synth::BasicLFOProcessor lfo;
     lfo.SetScopeWriterHolder(&holder);
-    lfo.SetColor(synth::Color::Yellow);
+    lfo.SetScopeColor(synth::Color::Yellow);
 
     synth::BasicLFOProcessor::Input input{
         .frequency = 0.25,
@@ -959,7 +967,7 @@ TEST_CASE(basic_lfo_processor_advances_writes_scope_markers_and_publishes_ui_sta
     REQUIRE_TRUE(ui.connected.load());
     REQUIRE_TRUE(ui.scope.load() == &writer);
     REQUIRE_TRUE(ui.scopeChannel.load() == holder.FlatChan());
-    REQUIRE_TRUE(ui.color.Load() == synth::Color::Yellow);
+    REQUIRE_TRUE(ui.scopeColor.Load() == synth::Color::Yellow);
 }
 
 TEST_CASE(wavetable_vco_records_top_marker_at_true_cycle_boundary) {
@@ -987,7 +995,7 @@ TEST_CASE(wavetable_vco_uses_position_scope_and_ui_state) {
     auto holder = writer.ReserveChans(1);
     synth::WavetableVco<8> vco;
     vco.SetScopeWriterHolder(&holder);
-    vco.SetColor(synth::Color::Orange);
+    vco.SetScopeColor(synth::Color::Orange);
 
     synth::WavetableVco<8>::Input input{.freq = 0.25, .phaseOffset = 0.0f, .wavetablePosition = 0.0f, .maxFreq = 0.5f};
     const float first = vco.Process(input);
@@ -1002,7 +1010,7 @@ TEST_CASE(wavetable_vco_uses_position_scope_and_ui_state) {
     REQUIRE_TRUE(ui.connected.load());
     REQUIRE_TRUE(ui.scope.load() == &writer);
     REQUIRE_TRUE(ui.scopeChannel.load() == holder.FlatChan());
-    REQUIRE_TRUE(ui.color.Load() == synth::Color::Orange);
+    REQUIRE_TRUE(ui.scopeColor.Load() == synth::Color::Orange);
 }
 
 TEST_CASE(fir_decimator_factor_four_cadence_survives_block_splits) {
@@ -1069,8 +1077,8 @@ TEST_CASE(fir_decimator_exposes_compile_time_shape_contract) {
     static_assert(Decimator::kTaps == 3);
 }
 
-TEST_CASE(fir_decimator_dresden_coefficients_are_symmetric_with_expected_group_delay) {
-    const auto coefficients = synth::Dresden4DecimatorCoefficients();
+TEST_CASE(fir_decimator_four_to_one_coefficients_are_symmetric_with_expected_group_delay) {
+    const auto coefficients = synth::FourToOneDecimatorCoefficients();
     REQUIRE_TRUE(coefficients.size() == 287);
 
     double dcGain = 0.0;
@@ -1083,8 +1091,8 @@ TEST_CASE(fir_decimator_dresden_coefficients_are_symmetric_with_expected_group_d
     REQUIRE_TRUE((coefficients.size() - 1) / 2 == 143);
 }
 
-TEST_CASE(fir_decimator_dresden_frequency_response_meets_spec) {
-    const auto coefficients = synth::Dresden4DecimatorCoefficients();
+TEST_CASE(fir_decimator_four_to_one_frequency_response_meets_spec) {
+    const auto coefficients = synth::FourToOneDecimatorCoefficients();
     REQUIRE_TRUE(coefficients.size() == 287);
 
     auto responseMagnitude = [coefficients](double normalizedFrequency) {
@@ -1120,13 +1128,13 @@ TEST_CASE(fir_decimator_dresden_frequency_response_meets_spec) {
     REQUIRE_TRUE(maxStopbandDb <= -90.0);
 }
 
-TEST_CASE(fir_decimator_dresden_runtime_path_meets_response_bounds) {
-    using Decimator = synth::FirDecimator<4, 1, synth::kDresden4DecimatorTaps>;
+TEST_CASE(fir_decimator_four_to_one_runtime_path_meets_response_bounds) {
+    using Decimator = synth::FirDecimator<4, 1, synth::kFourToOneDecimatorTaps>;
 
     auto runtimeGain = [](double normalizedFrequency) {
         constexpr std::size_t kWarmupInternalFrames = 48 * 64;
         constexpr std::size_t kMeasuredInternalFrames = 48 * 256;
-        Decimator decimator{synth::Dresden4DecimatorCoefficients()};
+        Decimator decimator{synth::FourToOneDecimatorCoefficients()};
 
         double inputEnergy = 0.0;
         double outputEnergy = 0.0;
