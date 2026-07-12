@@ -686,6 +686,7 @@ void Parameter::UIState::SetDisconnected() {
     modulatorsAffectingMask.store(0, std::memory_order_relaxed);
     gesturesAffectingMask.store(0, std::memory_order_relaxed);
     baseColor.Store(Color::Off);
+    visualizer.store(nullptr, std::memory_order_relaxed);
     shortName.store(nullptr, std::memory_order_relaxed);
     voiceCount.store(0, std::memory_order_relaxed);
     modulatorColorCount.store(0, std::memory_order_relaxed);
@@ -775,6 +776,7 @@ void Parameter::PopulateUIState(UIState& state) const {
     state.modulatorsAffectingMask.store(ModulatorsAffectingMask(), std::memory_order_relaxed);
     state.gesturesAffectingMask.store(GesturesAffectingMask(), std::memory_order_relaxed);
     state.baseColor.Store(config_.baseColor);
+    state.visualizer.store(config_.visualizer, std::memory_order_relaxed);
     state.shortName.store(config_.shortName.c_str(), std::memory_order_relaxed);
     state.voiceCount.store(voices, std::memory_order_relaxed);
     for (std::size_t voiceIx = 0; voiceIx < voices; ++voiceIx) {
@@ -1188,6 +1190,7 @@ ParameterConfig Parameter::ModulationDepthConfig(std::size_t modIx) const {
         .defaultValue = 0.5f,
         .range = RangeKind::Bipolar,
         .baseColor = modulator.sourceColor,
+        .visualizer = modulator.visualizer,
         .indicatorColors = config_.indicatorColors,
     };
 }

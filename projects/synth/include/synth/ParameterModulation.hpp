@@ -18,6 +18,10 @@
 #include "synth/Color.hpp"
 #include "synth/Json.hpp"
 
+namespace synth::ui {
+class Visualizer;
+}
+
 namespace synth {
 
 using ParameterId = std::uint32_t;
@@ -193,6 +197,7 @@ struct ModulatorMetadata {
     std::string name;
     std::string shortName;
     Color sourceColor;
+    synth::ui::Visualizer* visualizer = nullptr;
     bool connected = false;
 };
 
@@ -208,6 +213,7 @@ struct ParameterConfig {
     RangeKind range = RangeKind::Unipolar;
     std::size_t switchValues = 0;
     Color baseColor = Color::Grey;
+    synth::ui::Visualizer* visualizer = nullptr;
     std::vector<Color> indicatorColors;
 };
 
@@ -361,6 +367,7 @@ public:
         std::atomic<std::uint32_t> modulatorsAffectingMask{0};
         std::atomic<std::uint32_t> gesturesAffectingMask{0};
         AtomicColor baseColor;
+        std::atomic<synth::ui::Visualizer*> visualizer{nullptr};
         std::atomic<const char*> shortName{nullptr};
         std::atomic<std::size_t> voiceCount{0};
         std::size_t voiceCapacity = 0;

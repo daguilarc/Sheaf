@@ -4,6 +4,7 @@
 #include "synth/Json.hpp"
 #include "synth/ParameterModulation.hpp"
 #include "synth/PatchPersistence.hpp"
+#include "synth/PortableUI.hpp"
 #include "synth/ThreadId.hpp"
 
 #ifdef JUCE_MAJOR_VERSION
@@ -72,6 +73,18 @@ void RequireNear(float actual, float expected, float tolerance, const char* expr
 }
 
 #define REQUIRE_NEAR(actual, expected, tolerance) RequireNear((actual), (expected), (tolerance), #actual)
+
+struct TestVisualizer final : synth::ui::Visualizer {
+    std::vector<synth::ui::DrawCommand> DrawVisible() const override { return {}; }
+};
+
+std::string JsonToString(synth::JSON json) {
+    char* dumped = json.Dumps(JSON_ENCODE_ANY);
+    REQUIRE_TRUE(dumped != nullptr);
+    std::string text(dumped);
+    std::free(dumped);
+    return text;
+}
 
 // Wraps a single WrldBldr-kind MidiControllerProfileConfig (as produced by
 // WrldBldrDefaultProfileConfig, whose system-message associations always
@@ -565,6 +578,54 @@ TEST_CASE(parameter_ui_snapshot_owns_parameter_source_and_gesture_colors) {
     REQUIRE_TRUE(depth->BaseColor() == synth::Color::Cyan);
     REQUIRE_TRUE(depth->IndicatorColor(0) == synth::Color::Green);
     REQUIRE_TRUE(depth->IndicatorColor(1) == synth::Color::Blue);
+}
+
+TEST_CASE(modulation_depth_publishes_source_visualizer_topology) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 2,
+        .numScenes = 1,
+        .maxParameters = 4,
+    });
+    TestVisualizer visualizer;
+    group.GetModulators().Metadata(0).sourceColor = synth::Color::Cyan;
+    group.GetModulators().Metadata(0).visualizer = &visualizer;
+    auto& carrier = manager.CreateParameter(group, {.name = "Carrier"});
+
+    synth::Parameter* depth0 = carrier.EnsureModulationDepth(0);
+    REQUIRE_TRUE(depth0 != nullptr);
+    synth::Parameter::UIState depthState(1, 2, 0);
+    depth0->PopulateUIState(depthState);
+    REQUIRE_TRUE(depthState.visualizer.load(std::memory_order_relaxed) == &visualizer);
+
+    synth::Parameter* depth1 = carrier.EnsureModulationDepth(1);
+    REQUIRE_TRUE(depth1 != nullptr);
+    synth::Parameter::UIState nullDepthState(1, 2, 0);
+    depth1->PopulateUIState(nullDepthState);
+    REQUIRE_TRUE(nullDepthState.visualizer.load(std::memory_order_relaxed) == nullptr);
+
+    depthState.SetDisconnected();
+    REQUIRE_TRUE(depthState.visualizer.load(std::memory_order_relaxed) == nullptr);
+}
+
+TEST_CASE(visualizer_topology_is_not_serialized) {
+    synth::JsonArena arena(4096);
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 1,
+        .numScenes = 1,
+        .maxParameters = 4,
+    });
+    TestVisualizer visualizer;
+    group.GetModulators().Metadata(0).visualizer = &visualizer;
+    auto& carrier = manager.CreateParameter(group, {.name = "Carrier"});
+    REQUIRE_TRUE(carrier.EnsureModulationDepth(0) != nullptr);
+
+    const std::string json = JsonToString(carrier.ToValueJSON(arena));
+    REQUIRE_TRUE(json.find("visualizer") == std::string::npos);
+    REQUIRE_TRUE(json.find("Visualizer") == std::string::npos);
 }
 
 TEST_CASE(manager_cells_use_max_source_capacity_and_clear_reused_higher_entries) {

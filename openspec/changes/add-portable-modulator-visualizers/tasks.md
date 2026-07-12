@@ -7,9 +7,9 @@
 
 ## 2. Modulator-to-UI-State Publication
 
-- [ ] 2.1 Add parameter-modulation tests proving non-null and null visualizer associations flow from modulator metadata into materialized depth parameters and published cell UI state, disconnected cells clear the pointer, and save/load data contains no visualizer topology.
-- [ ] 2.2 Add nullable visualizer pointers to modulator metadata, parameter configuration, and atomic parameter UI state using forward declarations to preserve the JUCE-free dependency boundary.
-- [ ] 2.3 Copy each modulator visualizer into its materialized modulation-depth configuration, publish it inside the existing UI snapshot transaction, and preserve null defaults for ordinary parameters and existing callers.
+- [x] 2.1 Add parameter-modulation tests proving non-null and null visualizer associations flow from modulator metadata into materialized depth parameters and published cell UI state, disconnected cells clear the pointer, and save/load data contains no visualizer topology.
+- [x] 2.2 Add nullable visualizer pointers to modulator metadata, parameter configuration, and atomic parameter UI state using forward declarations to preserve the JUCE-free dependency boundary.
+- [x] 2.3 Copy each modulator visualizer into its materialized modulation-depth configuration, publish it inside the existing UI snapshot transaction, and preserve null defaults for ordinary parameters and existing callers.
 
 ## 3. Encoder Composition
 
