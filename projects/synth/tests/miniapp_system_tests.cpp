@@ -557,6 +557,27 @@ TEST_CASE(miniapp_modulation_view_draws_visualizer_beneath_encoder) {
     REQUIRE_TRUE(NodeIndexById(tree, visualizerId) < NodeIndexById(tree, encoderId));
 }
 
+TEST_CASE(miniapp_registers_distinct_scope_visualizers_for_modulators) {
+    synth_rig::SynthRig<synth_miniapp::MiniAppCore> rig(
+        64,
+        UseScratchRuntimeDataPaths("miniapp_registers_distinct_scope_visualizers_for_modulators"));
+    auto* group = rig.Engine().Application().Group();
+    REQUIRE_TRUE(group != nullptr);
+
+    const auto& modulators = group->GetModulators();
+    synth::ui::Visualizer* mod0 = modulators.Metadata(0).visualizer;
+    synth::ui::Visualizer* mod1 = modulators.Metadata(1).visualizer;
+    synth::ui::Visualizer* mod2 = modulators.Metadata(2).visualizer;
+
+    REQUIRE_TRUE(mod0 != nullptr);
+    REQUIRE_TRUE(mod1 != nullptr);
+    REQUIRE_TRUE(mod2 != nullptr);
+    REQUIRE_TRUE(mod0 != mod1);
+    REQUIRE_TRUE(mod0->Visible());
+    REQUIRE_TRUE(mod1->Visible());
+    REQUIRE_TRUE(mod2->Visible());
+}
+
 TEST_CASE(miniapp_color_flow_keeps_semantic_roles_independent) {
     synth_rig::SynthRig<synth_miniapp::MiniAppCore> rig(
         64, UseScratchRuntimeDataPaths("color_flow_keeps_semantic_roles_independent"));

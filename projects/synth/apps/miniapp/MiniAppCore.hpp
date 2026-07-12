@@ -18,6 +18,7 @@
 // instead of host block boundaries.
 
 #include "DemoModulation.hpp"
+#include "MiniAppDraw.hpp"
 
 #include "synth/AppContext.hpp"
 #include "synth/DspScope.hpp"
@@ -27,6 +28,7 @@
 
 #include <array>
 #include <cstddef>
+#include <memory>
 #include <optional>
 #include <vector>
 
@@ -39,6 +41,8 @@ public:
     using VcoModule = synth::WavetableVcoModule<kVoiceCount>;
     using FilterModule = synth::ClassicSvfModule<kVoiceCount>;
     using LfoModule = synth::BasicLfoModule<kVoiceCount>;
+    using VcoUiLayerState = synth::DefaultWavetableVco::UIState;
+    using LfoUiLayerState = synth::BasicLFOProcessor::UIState;
 
     static synth::RuntimeConfig Config() {
         synth::RuntimeConfig config;
@@ -79,6 +83,7 @@ public:
         lfoModule_.RegisterParameters(*context_->parameterManager, group, "LFO", lfoOptions);
         vcoModule_.RegisterModulationSources(group, 0, 1);
         lfoModule_.RegisterModulationSource(group, 2);
+        RegisterModulatorVisualizers(group);
 
         tune_ = &context_->parameterManager->ParameterById(vcoModule_.Parameters().tune);
         shape_ = &context_->parameterManager->ParameterById(vcoModule_.Parameters().shape);
@@ -264,6 +269,41 @@ private:
     VcoModule::UIState vcoUiStates_;
     FilterModule::UIState filterUiStates_;
     LfoModule::UIState lfoUiStates_;
+    std::unique_ptr<synth::ui::ScopeVisualizer<VcoUiLayerState>> vcoVisualizer0_;
+    std::unique_ptr<synth::ui::ScopeVisualizer<VcoUiLayerState>> vcoVisualizer1_;
+    std::unique_ptr<synth::ui::ScopeVisualizer<LfoUiLayerState>> lfoVisualizer_;
+
+    void RegisterModulatorVisualizers(synth::ParameterGroup& group) {
+        std::array<VcoUiLayerState*, kVoiceCount> vcoLayers{};
+        std::array<LfoUiLayerState*, kVoiceCount> lfoLayers{};
+        for (std::size_t voiceIx = 0; voiceIx < kVoiceCount; ++voiceIx) {
+            vcoLayers[voiceIx] = &vcoUiStates_.vcos[voiceIx];
+            lfoLayers[voiceIx] = &lfoUiStates_.lfos[voiceIx];
+        }
+
+        vcoVisualizer0_ = std::make_unique<synth::ui::ScopeVisualizer<VcoUiLayerState>>(
+            vcoLayers,
+            VcoWaveformDrawState::x_MinY,
+            VcoWaveformDrawState::x_MaxY,
+            VcoWaveformDrawState::x_NumSamples,
+            true);
+        vcoVisualizer1_ = std::make_unique<synth::ui::ScopeVisualizer<VcoUiLayerState>>(
+            vcoLayers,
+            VcoWaveformDrawState::x_MinY,
+            VcoWaveformDrawState::x_MaxY,
+            VcoWaveformDrawState::x_NumSamples,
+            true);
+        lfoVisualizer_ = std::make_unique<synth::ui::ScopeVisualizer<LfoUiLayerState>>(
+            lfoLayers,
+            LfoWaveformDrawState::x_MinY,
+            LfoWaveformDrawState::x_MaxY,
+            LfoWaveformDrawState::x_NumSamples,
+            true);
+
+        group.GetModulators().Metadata(0).visualizer = vcoVisualizer0_.get();
+        group.GetModulators().Metadata(1).visualizer = vcoVisualizer1_.get();
+        group.GetModulators().Metadata(2).visualizer = lfoVisualizer_.get();
+    }
 };
 
 }  // namespace synth_miniapp
