@@ -558,6 +558,10 @@ TEST_CASE(miniapp_modulation_view_draws_visualizer_beneath_encoder) {
     REQUIRE_TRUE(visualizer->doubleClickAction == std::nullopt);
     REQUIRE_TRUE(encoder->pointerDragAction.has_value());
     REQUIRE_TRUE(encoder->doubleClickAction.has_value());
+    REQUIRE_TRUE(!encoder->drawCommands.empty());
+    REQUIRE_TRUE(encoder->drawCommands.front().kind == synth::ui::DrawCommand::Kind::FillEllipse);
+    REQUIRE_TRUE(encoder->drawCommands.front().color.a > 0);
+    REQUIRE_TRUE(encoder->drawCommands.front().color.a < 255);
     REQUIRE_TRUE(visualizer->bounds.x == encoder->bounds.x);
     REQUIRE_TRUE(visualizer->bounds.y == encoder->bounds.y);
     REQUIRE_TRUE(visualizer->bounds.width == encoder->bounds.width);
@@ -576,6 +580,41 @@ TEST_CASE(miniapp_top_level_parameter_rendering_remains_encoder_only_without_vis
 
     REQUIRE_TRUE(FindNodeById(tree, encoderId) != nullptr);
     REQUIRE_TRUE(FindNodeById(tree, encoderId + ".visualizer") == nullptr);
+    const synth::ui::Node* encoder = FindNodeById(tree, encoderId);
+    REQUIRE_TRUE(encoder != nullptr);
+    REQUIRE_TRUE(!encoder->drawCommands.empty());
+    REQUIRE_TRUE(encoder->drawCommands.front().kind == synth::ui::DrawCommand::Kind::FillEllipse);
+    REQUIRE_TRUE(encoder->drawCommands.front().color.a == 255);
+}
+
+TEST_CASE(miniapp_hidden_visualizer_keeps_encoder_opaque_and_encoder_only) {
+    synth_rig::SynthRig<synth_miniapp::MiniAppCore> rig(
+        64,
+        UseScratchRuntimeDataPaths("miniapp_hidden_visualizer_keeps_encoder_opaque_and_encoder_only"));
+    rig.RunBlocks(4);
+    rig.Press(kSlotIx, kTunePosition);
+    rig.RunBlocks(1);
+
+    auto& manager = rig.Engine().Manager();
+    auto ui = manager.CreateUIState();
+    manager.PopulateUIState(*ui);
+    TestVisualizer hiddenVisualizer;
+    hiddenVisualizer.SetVisible(false);
+    ui->slots[0].cells[kTunePosition].visualizer.store(&hiddenVisualizer, std::memory_order_relaxed);
+
+    synth::AppContext context = rig.Engine().Context();
+    context.uiState = ui.get();
+    synth_miniapp::MiniAppUiSurface surface;
+    surface.Attach(&context, &rig.Engine().Application());
+    const synth::ui::NodeTree tree = surface.BuildTree();
+
+    const std::string encoderId = synth_miniapp::MiniAppNodeIds::Encoder(kTunePosition);
+    const synth::ui::Node* encoder = FindNodeById(tree, encoderId);
+    REQUIRE_TRUE(encoder != nullptr);
+    REQUIRE_TRUE(FindNodeById(tree, encoderId + ".visualizer") == nullptr);
+    REQUIRE_TRUE(!encoder->drawCommands.empty());
+    REQUIRE_TRUE(encoder->drawCommands.front().kind == synth::ui::DrawCommand::Kind::FillEllipse);
+    REQUIRE_TRUE(encoder->drawCommands.front().color.a == 255);
 }
 
 TEST_CASE(miniapp_bank_transition_clears_modulation_visualizer_underlay) {

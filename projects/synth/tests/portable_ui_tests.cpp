@@ -409,6 +409,45 @@ int main()
         {10.0f, 10.0f, 92.0f, 92.0f});
     Require(disconnectedEncoderCommands.empty(), "braid4 disconnected encoder uses shared empty encoder state");
 
+    synth::ui::EncoderDrawState ordinaryEncoder;
+    ordinaryEncoder.connected = true;
+    ordinaryEncoder.baseColor = synth::Color::Cyan;
+    ordinaryEncoder.voiceCount = 1;
+    ordinaryEncoder.voices.push_back({.value = 0.5f, .indicatorColor = synth::Color::Orange});
+    const auto ordinaryEncoderCommands = synth::ui::BuildEncoderDrawCommands(
+        ordinaryEncoder,
+        {10.0f, 10.0f, 92.0f, 92.0f});
+    Require(ordinaryEncoderCommands.size() > 4, "ordinary connected encoder emits body and value commands");
+    Require(ordinaryEncoderCommands[0].kind == synth::ui::DrawCommand::Kind::FillEllipse,
+            "ordinary encoder first command is body fill");
+    Require(ordinaryEncoderCommands[0].color.a == 255,
+            "ordinary encoder body fill remains opaque");
+
+    synth::ui::EncoderDrawState underlayEncoder = ordinaryEncoder;
+    underlayEncoder.hasVisualizerUnderlay = true;
+    const auto underlayEncoderCommands = synth::ui::BuildEncoderDrawCommands(
+        underlayEncoder,
+        {10.0f, 10.0f, 92.0f, 92.0f});
+    Require(underlayEncoderCommands.size() == ordinaryEncoderCommands.size(),
+            "underlay encoder preserves command count");
+    Require(underlayEncoderCommands[0].kind == synth::ui::DrawCommand::Kind::FillEllipse,
+            "underlay encoder first command is body fill");
+    Require(underlayEncoderCommands[0].color.a > 0 && underlayEncoderCommands[0].color.a < 255,
+            "underlay encoder body fill is translucent");
+    Require(underlayEncoderCommands[1].color.a < ordinaryEncoderCommands[1].color.a,
+            "underlay encoder inner color fill is also softened");
+    for (std::size_t commandIx = 2; commandIx < ordinaryEncoderCommands.size(); ++commandIx)
+    {
+        Require(underlayEncoderCommands[commandIx].kind == ordinaryEncoderCommands[commandIx].kind,
+                "underlay encoder preserves non-body command kinds");
+        Require(underlayEncoderCommands[commandIx].color == ordinaryEncoderCommands[commandIx].color,
+                "underlay encoder preserves non-body command colors");
+        RequireNear(underlayEncoderCommands[commandIx].strokeWidth,
+                    ordinaryEncoderCommands[commandIx].strokeWidth,
+                    0.0001f,
+                    "underlay encoder preserves non-body stroke widths");
+    }
+
     const std::vector<synth::ui::WaveformLayerDrawState> braidScopeLayer{
         {.connected = true, .scopeColor = synth::Color::Red, .scope = &scope, .scopeChannel = 0},
     };

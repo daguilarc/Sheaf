@@ -57,7 +57,7 @@ public:
         const synth::ui::Bounds encoderArea = Braid4PageLayout::EncoderArea(content);
         for (std::size_t ix = 0; ix < Braid4EncoderGridLayout::kEncoderCount; ++ix)
         {
-            const synth::ui::EncoderDrawState state =
+            synth::ui::EncoderDrawState state =
                 ix < snapshot.encoders.size() ? snapshot.encoders[ix] : synth::ui::EncoderDrawState{};
             const synth::ui::Bounds encoderBounds = Braid4EncoderGridLayout::BoundsForIndex(encoderArea, ix);
             synth::ui::Visualizer* visualizer = nullptr;
@@ -69,8 +69,9 @@ public:
                     visualizer = slotState.cells[ix].visualizer.load(std::memory_order_relaxed);
                 }
             }
+            state.hasVisualizerUnderlay = visualizer != nullptr && visualizer->Visible();
             const std::string encoderId = Braid4NodeIds::Encoder(ix);
-            if (visualizer != nullptr)
+            if (visualizer != nullptr && visualizer->Visible())
             {
                 visualizer->SetBounds(encoderBounds);
                 builder.Visualizer(encoderId + ".visualizer", visualizer);

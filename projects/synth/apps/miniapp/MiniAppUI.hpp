@@ -52,14 +52,15 @@ public:
                 if (ix < slotState.cellCapacity)
                 {
                     const synth::Parameter::UIState& cell = slotState.cells[ix];
-                    const synth::ui::EncoderDrawState encoderState =
+                    synth::ui::EncoderDrawState encoderState =
                         synth::ui::EncoderDrawStateFromParameter(cell);
-                    drawCommands = synth::ui::BuildEncoderDrawCommands(encoderState, encoderBounds);
                     visualizer = cell.visualizer.load(std::memory_order_relaxed);
+                    encoderState.hasVisualizerUnderlay = visualizer != nullptr && visualizer->Visible();
+                    drawCommands = synth::ui::BuildEncoderDrawCommands(encoderState, encoderBounds);
                 }
             }
             const std::string encoderId = MiniAppNodeIds::Encoder(ix);
-            if (visualizer != nullptr)
+            if (visualizer != nullptr && visualizer->Visible())
             {
                 visualizer->SetBounds(encoderBounds);
                 builder.Visualizer(encoderId + ".visualizer", visualizer);

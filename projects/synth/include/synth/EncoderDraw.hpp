@@ -285,6 +285,7 @@ struct EncoderVoiceDrawState
 struct EncoderDrawState
 {
     bool connected = false;
+    bool hasVisualizerUnderlay = false;
     bool bipolar = false;
     std::size_t switchValues = 0;
     std::uint32_t modulatorsAffectingMask = 0;
@@ -669,12 +670,14 @@ inline std::vector<DrawCommand> BuildEncoderDrawCommands(const EncoderDrawState&
         baseRadius * 2.16f,
         baseRadius * 2.16f,
     };
-    commands.push_back(DrawCommand::FillEllipse(body, Color::Rgb(18, 20, 22)));
+    commands.push_back(DrawCommand::FillEllipse(
+        body,
+        state.hasVisualizerUnderlay ? Color::Rgba(18, 20, 22, 150) : Color::Rgb(18, 20, 22)));
     {
         const float inset = baseRadius * 0.07f;
         commands.push_back(DrawCommand::FillEllipse(
             {body.x + inset, body.y + inset, body.width - inset * 2.0f, body.height - inset * 2.0f},
-            synth::ScaleAlpha(state.baseColor, 0.28f)));
+            synth::ScaleAlpha(state.baseColor, state.hasVisualizerUnderlay ? 0.14f : 0.28f)));
     }
     commands.push_back(DrawCommand::StrokeEllipse(body, synth::ScaleAlpha(state.baseColor, 0.9f), 1.5f));
     commands.push_back(DrawCommand::StrokeRoundedRect(
