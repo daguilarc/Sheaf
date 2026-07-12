@@ -102,6 +102,37 @@ struct DrawCommand {
     static DrawCommand FillPolygon(std::vector<Point> points, Color color);
 };
 
+class Visualizer {
+public:
+    Visualizer() = default;
+    virtual ~Visualizer() = default;
+    Visualizer(const Visualizer&) = delete;
+    Visualizer& operator=(const Visualizer&) = delete;
+    Visualizer(Visualizer&&) = delete;
+    Visualizer& operator=(Visualizer&&) = delete;
+
+    void SetBounds(Bounds bounds) { bounds_ = bounds; }
+    const Bounds& GetBounds() const { return bounds_; }
+    void SetVisible(bool visible) { visible_ = visible; }
+    bool Visible() const { return visible_; }
+
+    std::vector<DrawCommand> Draw() const
+    {
+        if (!visible_)
+        {
+            return {};
+        }
+        return DrawVisible();
+    }
+
+protected:
+    virtual std::vector<DrawCommand> DrawVisible() const = 0;
+
+private:
+    Bounds bounds_{};
+    bool visible_ = true;
+};
+
 enum class NodeKind {
     Root,
     Row,

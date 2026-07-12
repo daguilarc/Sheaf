@@ -1,9 +1,9 @@
 ## 1. Portable Visualizer Contract
 
-- [ ] 1.1 Add JUCE-free tests for visualizer bounds, visible/hidden behavior, non-copyable/non-movable identity, node emission, and absent hidden nodes.
-- [ ] 1.2 Implement the backend-agnostic `synth::ui::Visualizer` base and portable builder composition helper without changing any backend adapter.
-- [ ] 1.3 Add tests for a typed scope visualizer reading updated atomic scope UI state, skipping disconnected layers, and keeping all generated geometry inside its current bounds.
-- [ ] 1.4 Implement the reusable typed scope visualizer by adapting stable UI-state pointers to the existing shared scope-waveform command builder.
+- [x] 1.1 Add JUCE-free tests for visualizer bounds, visible/hidden behavior, non-copyable/non-movable identity, node emission, and absent hidden nodes.
+- [x] 1.2 Implement the backend-agnostic `synth::ui::Visualizer` base and portable builder composition helper without changing any backend adapter.
+- [x] 1.3 Add tests for a typed scope visualizer reading updated atomic scope UI state, skipping disconnected layers, and keeping all generated geometry inside its current bounds.
+- [x] 1.4 Implement the reusable typed scope visualizer by adapting stable UI-state pointers to the existing shared scope-waveform command builder.
 
 ## 2. Modulator-to-UI-State Publication
 

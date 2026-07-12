@@ -7,6 +7,8 @@
 #include "synth/MidiController.hpp"
 
 #include <algorithm>
+#include <array>
+#include <atomic>
 #include <cmath>
 #include <cstddef>
 #include <filesystem>
@@ -165,6 +167,22 @@ struct TestSurface final : synth::ui::Surface
     void DispatchAction(const synth::ui::Action&) override {}
 };
 
+struct TestVisualizer final : synth::ui::Visualizer
+{
+    std::vector<synth::ui::DrawCommand> DrawVisible() const override
+    {
+        return {synth::ui::DrawCommand::Fill(GetBounds(), synth::Color::Cyan)};
+    }
+};
+
+struct TestScopeLayerState
+{
+    std::atomic<bool> connected{false};
+    std::atomic<const synth::ScopeWriter*> scope{nullptr};
+    std::atomic<std::size_t> scopeChannel{0};
+    synth::AtomicColor scopeColor;
+};
+
 struct TestApp
 {
     static synth::RuntimeConfig Config()
@@ -208,6 +226,33 @@ int main()
     static_assert(synth::SynthApplication<TestApp>);
     static_assert(!synth::ui::kPortableUiUsesJuce);
     static_assert(std::is_same_v<decltype(synth::ui::WaveformLayerDrawState::scope), const synth::ScopeWriter*>);
+    static_assert(!std::is_copy_constructible_v<synth::ui::Visualizer>);
+    static_assert(!std::is_copy_assignable_v<synth::ui::Visualizer>);
+    static_assert(!std::is_move_constructible_v<synth::ui::Visualizer>);
+    static_assert(!std::is_move_assignable_v<synth::ui::Visualizer>);
+    TestVisualizer visualizer;
+    Require(visualizer.Visible(), "visualizer is visible by default");
+    visualizer.SetBounds({11.0f, 12.0f, 44.0f, 45.0f});
+    RequireNear(visualizer.GetBounds().x, 11.0f, 0.0001f, "visualizer stores bounds x");
+    RequireNear(visualizer.GetBounds().height, 45.0f, 0.0001f, "visualizer stores bounds height");
+    Require(visualizer.Draw().size() == 1, "visible visualizer emits commands");
+    visualizer.SetVisible(false);
+    Require(visualizer.Draw().empty(), "hidden visualizer emits no commands");
+    visualizer.SetVisible(true);
+    synth::ui::Builder visualizerBuilder;
+    visualizerBuilder.Root("viz.root", {0.0f, 0.0f, 100.0f, 100.0f})
+        .Visualizer("viz.node", &visualizer);
+    const synth::ui::NodeTree visualizerTree = visualizerBuilder.Build();
+    const synth::ui::Node* visualizerNode = FindNodeById(visualizerTree, "viz.node");
+    Require(visualizerNode != nullptr, "visible visualizer node exists");
+    Require(visualizerNode->kind == synth::ui::NodeKind::Draw, "visualizer node is a draw node");
+    RequireNear(visualizerNode->bounds.width, 44.0f, 0.0001f, "visualizer node uses stored bounds");
+    Require(visualizerNode->drawCommands.size() == 1, "visualizer node uses draw commands");
+    visualizer.SetVisible(false);
+    synth::ui::Builder hiddenBuilder;
+    hiddenBuilder.Root("viz.hidden.root", {0.0f, 0.0f, 100.0f, 100.0f})
+        .Visualizer("viz.hidden.node", &visualizer);
+    Require(FindNodeById(hiddenBuilder.Build(), "viz.hidden.node") == nullptr, "hidden visualizer node absent");
 
     synth::ScopeWriter scope(4, 128);
     FillScopeWriter(scope, 4);
@@ -277,6 +322,44 @@ int main()
     Require(sharedLfo.front().bounds.width == miniLfo.front().bounds.width &&
                 sharedLfo.front().bounds.height == miniLfo.front().bounds.height,
             "miniapp lfo wrapper fill bounds match shared helper");
+
+    TestScopeLayerState layerA;
+    TestScopeLayerState layerB;
+    layerA.connected.store(true);
+    layerA.scope.store(&scope);
+    layerA.scopeChannel.store(0);
+    layerA.scopeColor.Store(synth::Color::Red);
+    layerB.connected.store(false);
+    layerB.scope.store(&scope);
+    layerB.scopeChannel.store(1);
+    layerB.scopeColor.Store(synth::Color::Green);
+    std::array<TestScopeLayerState*, 2> scopeLayers{&layerA, &layerB};
+    synth::ui::ScopeVisualizer<TestScopeLayerState> scopeVisualizer(scopeLayers, -1.1f, 1.1f, 64, true);
+    scopeVisualizer.SetBounds({50.0f, 60.0f, 140.0f, 90.0f});
+    const auto scopeVisualizerCommands = scopeVisualizer.Draw();
+    RequireWaveformGeometryInside(scopeVisualizerCommands, scopeVisualizer.GetBounds(),
+                                  "scope visualizer geometry stays inside bounds");
+    const bool sawRed = std::any_of(scopeVisualizerCommands.begin(), scopeVisualizerCommands.end(),
+                                    [](const synth::ui::DrawCommand& command) {
+                                        return command.kind == synth::ui::DrawCommand::Kind::Polyline &&
+                                               command.color == synth::Color::Red;
+                                    });
+    Require(sawRed, "scope visualizer reads connected layer color");
+    const bool sawGreen = std::any_of(scopeVisualizerCommands.begin(), scopeVisualizerCommands.end(),
+                                      [](const synth::ui::DrawCommand& command) {
+                                          return command.kind == synth::ui::DrawCommand::Kind::Polyline &&
+                                                 command.color == synth::Color::Green;
+                                      });
+    Require(!sawGreen, "scope visualizer skips disconnected layer");
+    layerA.scopeChannel.store(1);
+    layerA.scopeColor.Store(synth::Color::Yellow);
+    const auto updatedScopeCommands = scopeVisualizer.Draw();
+    const bool sawYellow = std::any_of(updatedScopeCommands.begin(), updatedScopeCommands.end(),
+                                       [](const synth::ui::DrawCommand& command) {
+                                           return command.kind == synth::ui::DrawCommand::Kind::Polyline &&
+                                                  command.color == synth::Color::Yellow;
+                                       });
+    Require(sawYellow, "scope visualizer reads updated atomic color without reconstruction");
 
     Require(synth_braid4::Braid4NodeIds::kRoot == std::string("braid4.root"),
             "braid4 root stable id");

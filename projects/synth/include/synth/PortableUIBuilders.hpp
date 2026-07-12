@@ -5,6 +5,7 @@
 #include "synth/PortableUI.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cassert>
 #include <cmath>
 #include <cstddef>
@@ -221,6 +222,51 @@ inline std::vector<DrawCommand> BuildScopeWaveformCommands(std::span<const Wavef
     return commands;
 }
 
+template <typename LayerState>
+class ScopeVisualizer final : public Visualizer
+{
+public:
+    ScopeVisualizer(std::span<LayerState* const> layers,
+                    float minY,
+                    float maxY,
+                    std::size_t numSamples,
+                    bool drawMarkers)
+        : layers_(layers.begin(), layers.end()),
+          minY_(minY),
+          maxY_(maxY),
+          numSamples_(numSamples),
+          drawMarkers_(drawMarkers)
+    {}
+
+protected:
+    std::vector<DrawCommand> DrawVisible() const override
+    {
+        std::vector<WaveformLayerDrawState> snapshots;
+        snapshots.reserve(layers_.size());
+        for (const LayerState* layer : layers_)
+        {
+            if (layer == nullptr)
+            {
+                continue;
+            }
+            snapshots.push_back({
+                .connected = layer->connected.load(std::memory_order_relaxed),
+                .scopeColor = layer->scopeColor.Load(std::memory_order_relaxed),
+                .scope = layer->scope.load(std::memory_order_relaxed),
+                .scopeChannel = layer->scopeChannel.load(std::memory_order_relaxed),
+            });
+        }
+        return BuildScopeWaveformCommands(snapshots, GetBounds(), minY_, maxY_, numSamples_, drawMarkers_);
+    }
+
+private:
+    std::vector<LayerState*> layers_;
+    float minY_ = -1.0f;
+    float maxY_ = 1.0f;
+    std::size_t numSamples_ = 0;
+    bool drawMarkers_ = true;
+};
+
 class Builder {
 public:
     Builder& Root(std::string id, Bounds bounds) {
@@ -319,6 +365,13 @@ public:
         node.action = std::move(action);
         AppendChild(node);
         return *this;
+    }
+
+    Builder& Visualizer(std::string id, synth::ui::Visualizer* visualizer) {
+        if (visualizer == nullptr || !visualizer->Visible()) {
+            return *this;
+        }
+        return Draw(std::move(id), visualizer->GetBounds(), visualizer->Draw());
     }
 
     Builder& Draw(std::string id, Bounds bounds, std::initializer_list<DrawCommand> commands) {
