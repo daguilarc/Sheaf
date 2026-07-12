@@ -11,6 +11,7 @@
 #include "synth/PortableUI.hpp"
 #include "synth/PortableUIBuilders.hpp"
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -44,18 +45,27 @@ public:
         {
             const synth::ui::Bounds encoderBounds = EncoderGridLayout::BoundsForIndex(encoderArea, ix);
             std::vector<synth::ui::DrawCommand> drawCommands;
+            synth::ui::Visualizer* visualizer = nullptr;
             if (context_ != nullptr && context_->uiState != nullptr && context_->uiState->slotCapacity > 0)
             {
                 const synth::BankSlot::UIState& slotState = context_->uiState->slots[0];
                 if (ix < slotState.cellCapacity)
                 {
+                    const synth::Parameter::UIState& cell = slotState.cells[ix];
                     const synth::ui::EncoderDrawState encoderState =
-                        synth::ui::EncoderDrawStateFromParameter(slotState.cells[ix]);
+                        synth::ui::EncoderDrawStateFromParameter(cell);
                     drawCommands = synth::ui::BuildEncoderDrawCommands(encoderState, encoderBounds);
+                    visualizer = cell.visualizer.load(std::memory_order_relaxed);
                 }
             }
+            const std::string encoderId = MiniAppNodeIds::Encoder(ix);
+            if (visualizer != nullptr)
+            {
+                visualizer->SetBounds(encoderBounds);
+                builder.Visualizer(encoderId + ".visualizer", visualizer);
+            }
             builder.DrawInteractive(
-                MiniAppNodeIds::Encoder(ix),
+                encoderId,
                 encoderBounds,
                 std::move(drawCommands),
                 synth::ui::Action::WithValue(

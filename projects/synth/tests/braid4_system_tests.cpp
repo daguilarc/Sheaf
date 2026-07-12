@@ -733,6 +733,28 @@ TEST_CASE(portable_surface_exposes_braid_main_screen_and_routes_actions) {
     REQUIRE_TRUE(lfoMatrixSnapshot.encoders[1].voices[0].indicatorColor == lfoMatrixSnapshot.encoders[1].baseColor);
 }
 
+TEST_CASE(braid4_modulation_view_remains_encoder_only_without_visualizers) {
+    synth_rig::SynthRig<synth_braid4::Braid4Core> rig(
+        64,
+        UseScratchRuntimeDataPaths("braid4_modulation_view_remains_encoder_only_without_visualizers"));
+    rig.RunBlocks(4);
+    rig.Press(0, 0);
+    rig.RunBlocks(1);
+
+    auto& manager = rig.Engine().Manager();
+    auto ui = manager.CreateUIState();
+    manager.PopulateUIState(*ui);
+
+    synth::AppContext context = rig.Engine().Context();
+    context.uiState = ui.get();
+    synth_braid4::Braid4UiSurface surface;
+    surface.Attach(&context, &rig.Engine().Application());
+    const synth::ui::NodeTree tree = surface.BuildTree();
+    const std::string encoderId = synth_braid4::Braid4NodeIds::Encoder(0);
+    REQUIRE_TRUE(FindNodeById(tree, encoderId) != nullptr);
+    REQUIRE_TRUE(FindNodeById(tree, encoderId + ".visualizer") == nullptr);
+}
+
 TEST_CASE(matrix_sources_materialize_quad_modulator_values_for_four_voices) {
     synth_rig::SynthRig<synth_braid4::Braid4Core> rig(
         64,

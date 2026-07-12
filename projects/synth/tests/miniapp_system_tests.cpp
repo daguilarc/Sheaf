@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <exception>
@@ -218,6 +219,19 @@ const synth::ui::Node* FindNodeById(const synth::ui::NodeTree& tree, const char*
     return nullptr;
 }
 
+const synth::ui::Node* FindNodeById(const synth::ui::NodeTree& tree, const std::string& id) {
+    return FindNodeById(tree, id.c_str());
+}
+
+std::size_t NodeIndexById(const synth::ui::NodeTree& tree, const std::string& id) {
+    for (std::size_t ix = 0; ix < tree.nodes.size(); ++ix) {
+        if (tree.nodes[ix].id == synth::ui::NodeId(id)) {
+            return ix;
+        }
+    }
+    throw std::runtime_error("missing node " + id);
+}
+
 void RequireNodeId(const synth::ui::NodeTree& tree, const char* id) {
     REQUIRE_TRUE(FindNodeById(tree, id) != nullptr);
 }
@@ -237,6 +251,14 @@ void RequireAction(const std::optional<synth::ui::Action>& action, const char* e
 bool PopNextMessage(synth::MessageInBus& uiBus, synth::MessageIn& message) {
     return uiBus.Pop(message, std::numeric_limits<std::uint64_t>::max());
 }
+
+struct TestVisualizer final : synth::ui::Visualizer
+{
+    std::vector<synth::ui::DrawCommand> DrawVisible() const override
+    {
+        return {synth::ui::DrawCommand::Fill(GetBounds(), synth::Color::Cyan)};
+    }
+};
 
 }  // namespace
 
@@ -495,6 +517,44 @@ TEST_CASE(miniapp_ui_snapshot_reflects_runtime_state_in_tree) {
     const synth::ui::Node* sceneThree = FindNodeById(tree, synth_miniapp::MiniAppNodeIds::SceneButton(2).c_str());
     REQUIRE_TRUE(sceneThree != nullptr);
     REQUIRE_TRUE(sceneThree->label == "S3 L");
+}
+
+TEST_CASE(miniapp_modulation_view_draws_visualizer_beneath_encoder) {
+    synth_rig::SynthRig<synth_miniapp::MiniAppCore> rig(
+        64,
+        UseScratchRuntimeDataPaths("miniapp_modulation_view_draws_visualizer_beneath_encoder"));
+    rig.RunBlocks(4);
+    rig.Press(kSlotIx, kTunePosition);
+    rig.RunBlocks(1);
+
+    auto& manager = rig.Engine().Manager();
+    auto ui = manager.CreateUIState();
+    manager.PopulateUIState(*ui);
+    TestVisualizer injectedVisualizer;
+    ui->slots[0].cells[kTunePosition].visualizer.store(&injectedVisualizer, std::memory_order_relaxed);
+
+    synth::AppContext context = rig.Engine().Context();
+    context.uiState = ui.get();
+    synth_miniapp::MiniAppUiSurface surface;
+    surface.Attach(&context, &rig.Engine().Application());
+    const synth::ui::NodeTree tree = surface.BuildTree();
+
+    const std::string encoderId = synth_miniapp::MiniAppNodeIds::Encoder(kTunePosition);
+    const std::string visualizerId = encoderId + ".visualizer";
+    const synth::ui::Node* encoder = FindNodeById(tree, encoderId);
+    const synth::ui::Node* visualizer = FindNodeById(tree, visualizerId);
+    REQUIRE_TRUE(encoder != nullptr);
+    REQUIRE_TRUE(visualizer != nullptr);
+    REQUIRE_TRUE(visualizer->kind == synth::ui::NodeKind::Draw);
+    REQUIRE_TRUE(visualizer->pointerDragAction == std::nullopt);
+    REQUIRE_TRUE(visualizer->doubleClickAction == std::nullopt);
+    REQUIRE_TRUE(encoder->pointerDragAction.has_value());
+    REQUIRE_TRUE(encoder->doubleClickAction.has_value());
+    REQUIRE_TRUE(visualizer->bounds.x == encoder->bounds.x);
+    REQUIRE_TRUE(visualizer->bounds.y == encoder->bounds.y);
+    REQUIRE_TRUE(visualizer->bounds.width == encoder->bounds.width);
+    REQUIRE_TRUE(visualizer->bounds.height == encoder->bounds.height);
+    REQUIRE_TRUE(NodeIndexById(tree, visualizerId) < NodeIndexById(tree, encoderId));
 }
 
 TEST_CASE(miniapp_color_flow_keeps_semantic_roles_independent) {

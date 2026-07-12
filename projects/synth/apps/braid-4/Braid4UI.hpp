@@ -9,6 +9,7 @@
 #include "synth/PortableUI.hpp"
 #include "synth/PortableUIBuilders.hpp"
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -59,8 +60,23 @@ public:
             const synth::ui::EncoderDrawState state =
                 ix < snapshot.encoders.size() ? snapshot.encoders[ix] : synth::ui::EncoderDrawState{};
             const synth::ui::Bounds encoderBounds = Braid4EncoderGridLayout::BoundsForIndex(encoderArea, ix);
+            synth::ui::Visualizer* visualizer = nullptr;
+            if (context_ != nullptr && context_->uiState != nullptr && context_->uiState->slotCapacity > 0)
+            {
+                const synth::BankSlot::UIState& slotState = context_->uiState->slots[0];
+                if (ix < slotState.cellCapacity)
+                {
+                    visualizer = slotState.cells[ix].visualizer.load(std::memory_order_relaxed);
+                }
+            }
+            const std::string encoderId = Braid4NodeIds::Encoder(ix);
+            if (visualizer != nullptr)
+            {
+                visualizer->SetBounds(encoderBounds);
+                builder.Visualizer(encoderId + ".visualizer", visualizer);
+            }
             builder.DrawInteractive(
-                Braid4NodeIds::Encoder(ix),
+                encoderId,
                 encoderBounds,
                 synth::ui::BuildEncoderDrawCommands(state, encoderBounds),
                 synth::ui::Action::WithValue(Braid4Actions::kEncoderDrag, FormatEncoderGestureValue(0, ix, 0.0f)),

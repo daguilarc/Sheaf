@@ -13,9 +13,9 @@
 
 ## 3. Encoder Composition
 
-- [ ] 3.1 Add portable UI tests for a modulation-depth cell whose visualizer and encoder use identical square bounds, whose stable visualizer node precedes the encoder node, and whose encoder retains drag and double-click actions.
-- [ ] 3.2 Add null, intrinsically hidden, disconnected, top-level-parameter, and bank-transition tests proving encoder-only rendering remains unchanged when no visualizer is eligible.
-- [ ] 3.3 Add a portable builder composition helper and adopt it in each app surface's `BuildTree()` loop to set eligible visualizer bounds, append its display-only node first, and append the existing interactive encoder node above it.
+- [x] 3.1 Add portable UI tests for a modulation-depth cell whose visualizer and encoder use identical square bounds, whose stable visualizer node precedes the encoder node, and whose encoder retains drag and double-click actions.
+- [x] 3.2 Add null, intrinsically hidden, disconnected, top-level-parameter, and bank-transition tests proving encoder-only rendering remains unchanged when no visualizer is eligible.
+- [x] 3.3 Add a portable builder composition helper and adopt it in each app surface's `BuildTree()` loop to set eligible visualizer bounds, append its display-only node first, and append the existing interactive encoder node above it.
 
 ## 4. Application Topology
 

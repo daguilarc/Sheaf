@@ -444,6 +444,30 @@ int main()
     Require(tree.nodes[0].id == synth::ui::NodeId("root"), "root id");
     Require(tree.nodes[7].drawCommands.size() == 2, "draw commands");
 
+    TestVisualizer stackingVisualizer;
+    stackingVisualizer.SetBounds({20.0f, 20.0f, 64.0f, 64.0f});
+    synth::ui::Builder stackingBuilder;
+    stackingBuilder.Root("stack.root", {0.0f, 0.0f, 120.0f, 120.0f})
+        .Visualizer("stack.encoder.0.visualizer", &stackingVisualizer)
+        .DrawInteractive("stack.encoder.0",
+                         stackingVisualizer.GetBounds(),
+                         {synth::ui::DrawCommand::StrokeEllipse(stackingVisualizer.GetBounds(), synth::Color::White, 1.0f)},
+                         synth::ui::Action::Named("drag"),
+                         synth::ui::Action::Named("push"));
+    const synth::ui::NodeTree stackingTree = stackingBuilder.Build();
+    const synth::ui::Node* stackingRoot = FindNodeById(stackingTree, "stack.root");
+    Require(stackingRoot != nullptr, "stacking root exists");
+    Require(stackingRoot->children.size() == 2, "visualizer and encoder both appended");
+    Require(stackingRoot->children[0] == synth::ui::NodeId("stack.encoder.0.visualizer"),
+            "visualizer precedes encoder");
+    Require(stackingRoot->children[1] == synth::ui::NodeId("stack.encoder.0"),
+            "encoder follows visualizer");
+    const synth::ui::Node* stackingEncoder = FindNodeById(stackingTree, "stack.encoder.0");
+    Require(stackingEncoder != nullptr && stackingEncoder->pointerDragAction.has_value(),
+            "encoder retains drag action");
+    Require(stackingEncoder != nullptr && stackingEncoder->doubleClickAction.has_value(),
+            "encoder retains double-click action");
+
     synth::runtime_ui::SidebarSnapshot sidebarSnapshot;
     sidebarSnapshot.deadlinePercent = 12.5f;
     const synth::ui::NodeTree sidebarTree = synth::runtime_ui::BuildSidebarTree(sidebarSnapshot);
