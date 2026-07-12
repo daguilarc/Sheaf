@@ -260,6 +260,14 @@ struct TestVisualizer final : synth::ui::Visualizer
     }
 };
 
+synth::ui::NodeTree BuildMiniAppTree(synth_rig::SynthRig<synth_miniapp::MiniAppCore>& rig) {
+    rig.UIState();
+    synth::AppContext context = rig.Engine().Context();
+    synth_miniapp::MiniAppUiSurface surface;
+    surface.Attach(&context, &rig.Engine().Application());
+    return surface.BuildTree();
+}
+
 }  // namespace
 
 TEST_CASE(miniapp_registration_declares_launcher_metadata_and_launch_callable) {
@@ -555,6 +563,40 @@ TEST_CASE(miniapp_modulation_view_draws_visualizer_beneath_encoder) {
     REQUIRE_TRUE(visualizer->bounds.width == encoder->bounds.width);
     REQUIRE_TRUE(visualizer->bounds.height == encoder->bounds.height);
     REQUIRE_TRUE(NodeIndexById(tree, visualizerId) < NodeIndexById(tree, encoderId));
+}
+
+TEST_CASE(miniapp_top_level_parameter_rendering_remains_encoder_only_without_visualizer) {
+    synth_rig::SynthRig<synth_miniapp::MiniAppCore> rig(
+        64,
+        UseScratchRuntimeDataPaths("miniapp_top_level_parameter_rendering_remains_encoder_only_without_visualizer"));
+    rig.RunBlocks(1);
+
+    const synth::ui::NodeTree tree = BuildMiniAppTree(rig);
+    const std::string encoderId = synth_miniapp::MiniAppNodeIds::Encoder(kTunePosition);
+
+    REQUIRE_TRUE(FindNodeById(tree, encoderId) != nullptr);
+    REQUIRE_TRUE(FindNodeById(tree, encoderId + ".visualizer") == nullptr);
+}
+
+TEST_CASE(miniapp_bank_transition_clears_modulation_visualizer_underlay) {
+    synth_rig::SynthRig<synth_miniapp::MiniAppCore> rig(
+        64,
+        UseScratchRuntimeDataPaths("miniapp_bank_transition_clears_modulation_visualizer_underlay"));
+    rig.RunBlocks(1);
+    rig.Press(kSlotIx, kTunePosition);
+    rig.RunBlocks(1);
+
+    const std::string encoderId = synth_miniapp::MiniAppNodeIds::Encoder(0);
+    const synth::ui::NodeTree modulationTree = BuildMiniAppTree(rig);
+    REQUIRE_TRUE(FindNodeById(modulationTree, encoderId) != nullptr);
+    REQUIRE_TRUE(FindNodeById(modulationTree, encoderId + ".visualizer") != nullptr);
+
+    rig.SelectBank(kSlotIx, kLfoBankIx);
+    rig.RunBlocks(1);
+
+    const synth::ui::NodeTree lfoTree = BuildMiniAppTree(rig);
+    REQUIRE_TRUE(FindNodeById(lfoTree, encoderId) != nullptr);
+    REQUIRE_TRUE(FindNodeById(lfoTree, encoderId + ".visualizer") == nullptr);
 }
 
 TEST_CASE(miniapp_registers_distinct_scope_visualizers_for_modulators) {
