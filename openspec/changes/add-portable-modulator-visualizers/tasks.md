@@ -26,6 +26,6 @@
 
 ## 5. Verification and Documentation
 
-- [ ] 5.1 Run the focused portable UI, parameter modulation, MiniApp system, and Braid 4 system test targets and correct any contract failures.
-- [ ] 5.2 Run the complete JUCE-free synth test suite and UI-boundary check, confirming no file under `projects/synth/juce`, `projects/synth/browser`, or another backend implementation directory changed.
-- [ ] 5.3 Update synth coverage documentation to map `spv-1` through `spv-5`, `spm-70`, `sru-24`, `sdsp-33`, and `d4-9` to their tests.
+- [x] 5.1 Run the focused portable UI, parameter modulation, MiniApp system, and Braid 4 system test targets and correct any contract failures.
+- [x] 5.2 Run the complete JUCE-free synth test suite and UI-boundary check, confirming no file under `projects/synth/juce`, `projects/synth/browser`, or another backend implementation directory changed.
+- [x] 5.3 Update synth coverage documentation to map `spv-1` through `spv-5`, `spm-70`, `sru-24`, `sdsp-33`, and `d4-9` to their tests.
