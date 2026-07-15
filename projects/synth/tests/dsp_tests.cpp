@@ -3,6 +3,7 @@
 #include "synth/DspFilters.hpp"
 #include "synth/DspMath.hpp"
 #include "synth/DspMetering.hpp"
+#include "synth/DspNoise.hpp"
 #include "synth/DspNumbers.hpp"
 #include "synth/DspOla.hpp"
 #include "synth/DspOscillators.hpp"
@@ -12,6 +13,7 @@
 #include "synth/DspSpectral.hpp"
 #include "synth/DspTransferFunction.hpp"
 #include "synth/DspWavetable.hpp"
+#include "synth/ParameterModulation.hpp"
 
 #ifdef JUCE_MAJOR_VERSION
 #error "synth DSP tests must not see JUCE headers"
@@ -62,6 +64,11 @@ concept HasRecordedSampleStorage = requires(Snapshot snapshot) {
 
 static_assert(!HasPublicScopeColorStorage<synth::DefaultWavetableVco>);
 static_assert(!HasPublicScopeColorStorage<synth::BasicLFOProcessor>);
+static_assert(!std::is_copy_constructible_v<synth::NoiseModulatorProcessor>);
+static_assert(!std::is_copy_assignable_v<synth::NoiseModulatorProcessor>);
+static_assert(!std::is_move_constructible_v<synth::NoiseModulatorProcessor>);
+static_assert(!std::is_move_assignable_v<synth::NoiseModulatorProcessor>);
+static_assert(noexcept(std::declval<synth::NoiseModulatorProcessor&>().Process()));
 
 struct TestCase {
     const char* name;
@@ -176,6 +183,110 @@ TEST_CASE(smartgrid_dsp_public_headers_are_dependency_clean) {
     REQUIRE_TRUE(std::is_default_constructible_v<synth::BitCrusher>);
     REQUIRE_TRUE(std::is_default_constructible_v<synth::Meter>);
     REQUIRE_TRUE(std::is_default_constructible_v<synth::Ola<12>>);
+}
+
+TEST_CASE(noise_modulator_requires_positive_runtime_voice_count) {
+    bool threw = false;
+    try {
+        synth::NoiseModulatorProcessor processor(0, 1);
+        (void)processor;
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    REQUIRE_TRUE(threw);
+
+    synth::NoiseModulatorProcessor processor(3, 1);
+    REQUIRE_TRUE(processor.VoiceCount() == 3);
+    REQUIRE_TRUE(processor.Outputs().size() == 3);
+    REQUIRE_TRUE(processor.SourcePointers().size() == 3);
+}
+
+TEST_CASE(noise_modulator_output_inspection_is_bounds_checked) {
+    synth::NoiseModulatorProcessor processor(2, 1);
+    bool threw = false;
+    try {
+        (void)processor.Output(processor.VoiceCount());
+    } catch (const std::out_of_range&) {
+        threw = true;
+    }
+    REQUIRE_TRUE(threw);
+}
+
+TEST_CASE(noise_modulator_explicit_seed_is_repeatable_and_strictly_open) {
+    synth::NoiseModulatorProcessor left(4, 0x12345678ULL);
+    synth::NoiseModulatorProcessor right(4, 0x12345678ULL);
+    for (std::size_t sample = 0; sample < 4096; ++sample) {
+        left.Process();
+        right.Process();
+        for (std::size_t voice = 0; voice < left.VoiceCount(); ++voice) {
+            REQUIRE_TRUE(left.Output(voice) == right.Output(voice));
+            REQUIRE_TRUE(left.Output(voice) > 0.0f);
+            REQUIRE_TRUE(left.Output(voice) < 1.0f);
+        }
+    }
+}
+
+TEST_CASE(noise_modulator_advances_one_shared_word_per_voice) {
+    synth::NoiseModulatorProcessor stereo(2, 0x9abcdef0ULL);
+    synth::NoiseModulatorProcessor mono(1, 0x9abcdef0ULL);
+    stereo.Process();
+    mono.Process();
+    REQUIRE_TRUE(stereo.Output(0) == mono.Output(0));
+    mono.Process();
+    REQUIRE_TRUE(stereo.Output(1) == mono.Output(0));
+}
+
+TEST_CASE(noise_modulator_fixed_seed_has_sane_unipolar_distribution) {
+    synth::NoiseModulatorProcessor processor(1, 0xdecafbadULL);
+    std::array<std::size_t, 8> bins{};
+    double sum = 0.0;
+    constexpr std::size_t kSamples = 32768;
+    for (std::size_t sample = 0; sample < kSamples; ++sample) {
+        processor.Process();
+        const float value = processor.Output(0);
+        sum += value;
+        const std::size_t bin = std::min<std::size_t>(7, static_cast<std::size_t>(value * 8.0f));
+        ++bins[bin];
+    }
+    REQUIRE_NEAR(sum / static_cast<double>(kSamples), 0.5, 0.015);
+    for (const std::size_t count : bins) {
+        REQUIRE_TRUE(count > 3500);
+        REQUIRE_TRUE(count < 4700);
+    }
+}
+
+TEST_CASE(noise_modulator_keeps_registered_output_addresses_stable) {
+    synth::NoiseModulatorProcessor processor(2, 7);
+    const auto initialPointers = processor.SourcePointers();
+    float* const voice0 = initialPointers[0];
+    float* const voice1 = initialPointers[1];
+    for (std::size_t sample = 0; sample < 4096; ++sample) {
+        processor.Process();
+        REQUIRE_TRUE(processor.SourcePointers()[0] == voice0);
+        REQUIRE_TRUE(processor.SourcePointers()[1] == voice1);
+        REQUIRE_TRUE(*voice0 == processor.Output(0));
+        REQUIRE_TRUE(*voice1 == processor.Output(1));
+    }
+}
+
+TEST_CASE(noise_modulator_registers_directly_as_pointer_backed_group_source) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 2,
+        .numModulators = 1,
+        .numScenes = 1,
+        .maxParameters = 1,
+    });
+    synth::NoiseModulatorProcessor processor(2, 42);
+    group.SetModulationSource(0, processor.SourcePointers(), {
+        .name = "Noise",
+        .shortName = "Noise",
+        .connected = true,
+    });
+    processor.Process();
+    group.UpdateModValues();
+    REQUIRE_TRUE(group.GetModulators().Value(0, 0) == processor.Output(0));
+    REQUIRE_TRUE(group.GetModulators().Value(1, 0) == processor.Output(1));
 }
 
 TEST_CASE(bounded_audio_buffer_reads_fractional_midpoints_and_normalized_positions) {
