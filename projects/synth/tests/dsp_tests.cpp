@@ -1,4 +1,5 @@
 #include "synth/DspBuffers.hpp"
+#include "synth/DspConstant.hpp"
 #include "synth/DspDegrade.hpp"
 #include "synth/DspFilters.hpp"
 #include "synth/DspMath.hpp"
@@ -42,6 +43,9 @@ concept HasPublicScopeColorStorage = requires(Processor processor) {
     processor.m_scopeColor;
 };
 
+template<typename Processor>
+concept HasProcessMethod = requires(Processor& processor) { processor.Process(); };
+
 template<typename Snapshot>
 concept HasRecordedScopeStorage = requires(Snapshot snapshot) {
     snapshot.scope;
@@ -69,6 +73,11 @@ static_assert(!std::is_copy_assignable_v<synth::NoiseModulatorProcessor>);
 static_assert(!std::is_move_constructible_v<synth::NoiseModulatorProcessor>);
 static_assert(!std::is_move_assignable_v<synth::NoiseModulatorProcessor>);
 static_assert(noexcept(std::declval<synth::NoiseModulatorProcessor&>().Process()));
+static_assert(!std::is_copy_constructible_v<synth::ConstantModulatorProcessor>);
+static_assert(!std::is_copy_assignable_v<synth::ConstantModulatorProcessor>);
+static_assert(!std::is_move_constructible_v<synth::ConstantModulatorProcessor>);
+static_assert(!std::is_move_assignable_v<synth::ConstantModulatorProcessor>);
+static_assert(!HasProcessMethod<synth::ConstantModulatorProcessor>);
 
 struct TestCase {
     const char* name;
@@ -183,6 +192,105 @@ TEST_CASE(smartgrid_dsp_public_headers_are_dependency_clean) {
     REQUIRE_TRUE(std::is_default_constructible_v<synth::BitCrusher>);
     REQUIRE_TRUE(std::is_default_constructible_v<synth::Meter>);
     REQUIRE_TRUE(std::is_default_constructible_v<synth::Ola<12>>);
+}
+
+TEST_CASE(constant_modulator_validates_runtime_voice_count_and_bounds) {
+    bool rejectedZero = false;
+    try {
+        synth::ConstantModulatorProcessor invalid(0);
+        (void)invalid;
+    } catch (const std::invalid_argument&) {
+        rejectedZero = true;
+    }
+    REQUIRE_TRUE(rejectedZero);
+
+    synth::ConstantModulatorProcessor mono(1);
+    REQUIRE_TRUE(mono.VoiceCount() == 1);
+    REQUIRE_TRUE(mono.Outputs().size() == 1);
+    REQUIRE_TRUE(mono.SourcePointers().size() == 1);
+    REQUIRE_TRUE(mono.Output(0) == 0.0f);
+    bool rejectedPastEnd = false;
+    try {
+        (void)mono.Output(1);
+    } catch (const std::out_of_range&) {
+        rejectedPastEnd = true;
+    }
+    REQUIRE_TRUE(rejectedPastEnd);
+}
+
+TEST_CASE(constant_modulator_uses_exact_greedy_even_and_odd_assignments) {
+    const std::vector<std::vector<float>> expected{
+        {},
+        {0.0f},
+        {0.0f, 1.0f},
+        {0.0f, 0.5f, 1.0f},
+        {0.0f, 2.0f / 3.0f, 1.0f / 3.0f, 1.0f},
+        {0.0f, 0.5f, 0.75f, 0.25f, 1.0f},
+        {0.0f, 3.0f / 5.0f, 1.0f / 5.0f, 4.0f / 5.0f, 2.0f / 5.0f, 1.0f},
+        {0.0f, 0.5f, 2.0f / 3.0f, 1.0f / 6.0f,
+         5.0f / 6.0f, 1.0f / 3.0f, 1.0f},
+    };
+    for (std::size_t voices = 1; voices < expected.size(); ++voices) {
+        synth::ConstantModulatorProcessor processor(voices);
+        for (std::size_t voice = 0; voice < voices; ++voice) {
+            REQUIRE_NEAR(processor.Output(voice), expected[voices][voice], 1.0e-6f);
+        }
+    }
+}
+
+TEST_CASE(constant_modulator_covers_ranks_and_maximizes_cyclic_distance) {
+    for (std::size_t voices = 2; voices <= 16; ++voices) {
+        synth::ConstantModulatorProcessor processor(voices);
+        std::vector<std::size_t> ranks;
+        ranks.reserve(voices);
+        for (const float output : processor.Outputs()) {
+            ranks.push_back(static_cast<std::size_t>(
+                std::lround(output * static_cast<float>(voices - 1))));
+        }
+        auto sorted = ranks;
+        std::sort(sorted.begin(), sorted.end());
+        for (std::size_t rank = 0; rank < voices; ++rank) {
+            REQUIRE_TRUE(sorted[rank] == rank);
+        }
+        std::size_t distance = 0;
+        for (std::size_t voice = 0; voice < voices; ++voice) {
+            const std::size_t next = (voice + 1) % voices;
+            distance += ranks[voice] > ranks[next]
+                ? ranks[voice] - ranks[next]
+                : ranks[next] - ranks[voice];
+        }
+        REQUIRE_TRUE(distance == (voices * voices) / 2);
+    }
+}
+
+TEST_CASE(constant_modulator_keeps_values_and_registered_addresses_stable) {
+    synth::ConstantModulatorProcessor processor(4);
+    const auto pointers = processor.SourcePointers();
+    const std::array<float*, 4> initialPointers{pointers[0], pointers[1], pointers[2], pointers[3]};
+    const std::array<float, 4> initialValues{
+        processor.Output(0), processor.Output(1), processor.Output(2), processor.Output(3)};
+    for (std::size_t voice = 0; voice < processor.VoiceCount(); ++voice) {
+        REQUIRE_TRUE(processor.SourcePointers()[voice] == initialPointers[voice]);
+        REQUIRE_TRUE(*initialPointers[voice] == initialValues[voice]);
+        REQUIRE_TRUE(*initialPointers[voice] == processor.Output(voice));
+    }
+}
+
+TEST_CASE(constant_modulator_registers_directly_as_pointer_backed_group_source) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 4, .numModulators = 1, .numScenes = 1, .maxParameters = 1,
+    });
+    synth::ConstantModulatorProcessor processor(4);
+    group.SetModulationSource(0, processor.SourcePointers(), {
+        .name = "Constant", .shortName = "Const", .connected = true,
+    });
+    for (int update = 0; update < 2; ++update) {
+        group.UpdateModValues();
+        for (std::size_t voice = 0; voice < processor.VoiceCount(); ++voice) {
+            REQUIRE_TRUE(group.GetModulators().Value(voice, 0) == processor.Output(voice));
+        }
+    }
 }
 
 TEST_CASE(noise_modulator_requires_positive_runtime_voice_count) {

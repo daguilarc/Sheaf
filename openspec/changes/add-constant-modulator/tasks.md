@@ -1,8 +1,8 @@
 ## 1. Constant DSP Processor
 
-- [ ] 1.1 Add failing JUCE-free DSP tests for zero-voice rejection, one-voice zero, exact even and odd greedy assignments, floating-point-tolerant normalized rank coverage, representative cyclic-distance maxima, non-copyable/non-movable lifetime, bounds-checked inspection, and stable source-pointer addresses.
-- [ ] 1.2 Implement `ConstantModulatorProcessor` in a focused synth DSP header with constructor-only permutation/value/pointer initialization, immutable public inspection, no `Process()` operation, and no dependency on parameters or UI.
-- [ ] 1.3 Add a pointer-backed modulation integration test proving the processor's source-pointer span registers directly with an equal-voice-count `ParameterGroup` and publishes unchanged corresponding values across repeated modulation updates.
+- [x] 1.1 Add failing JUCE-free DSP tests for zero-voice rejection, one-voice zero, exact even and odd greedy assignments, floating-point-tolerant normalized rank coverage, representative cyclic-distance maxima, non-copyable/non-movable lifetime, bounds-checked inspection, and stable source-pointer addresses.
+- [x] 1.2 Implement `ConstantModulatorProcessor` in a focused synth DSP header with constructor-only permutation/value/pointer initialization, immutable public inspection, no `Process()` operation, and no dependency on parameters or UI.
+- [x] 1.3 Add a pointer-backed modulation integration test proving the processor's source-pointer span registers directly with an equal-voice-count `ParameterGroup` and publishes unchanged corresponding values across repeated modulation updates.
 
 ## 2. Portable Constant Visualizer
 
