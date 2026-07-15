@@ -1,9 +1,11 @@
 #pragma once
 
+#include "synth/Color.hpp"
 #include "synth/DspMath.hpp"
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -132,6 +134,120 @@ private:
     float m_output = 0.0f;
 };
 
+struct GangedRandomLfoVoiceSnapshot {
+    GangedRandomLfoVoice::State state = GangedRandomLfoVoice::State::Done;
+    double currentStateProgress = 0.0;
+    float source = 0.0f;
+    float target = 0.0f;
+    float output = 0.0f;
+    float shape = 0.0f;
+    double waitingIncrement = 0.0;
+    double movingIncrement = 0.0;
+    Color color = Color::Grey;
+};
+
+template<std::size_t VoiceCount>
+struct GangedRandomLfoSnapshot {
+    double sampleRate = 0.0;
+    double roundElapsedSamples = 0.0;
+    std::array<GangedRandomLfoVoiceSnapshot, VoiceCount> voices{};
+};
+
+struct GangedRandomLfoAtomicColor {
+    void Store(Color color, std::memory_order order = std::memory_order_relaxed) {
+        value.store(color.Packed(), order);
+    }
+
+    Color Load(std::memory_order order = std::memory_order_relaxed) const {
+        return Color::FromPacked(value.load(order));
+    }
+
+    std::atomic<std::uint32_t> value{Color::Grey.Packed()};
+};
+
+struct GangedRandomLfoVoiceUiState {
+    std::atomic<GangedRandomLfoVoice::State> state{GangedRandomLfoVoice::State::Done};
+    std::atomic<double> currentStateProgress{0.0};
+    std::atomic<float> source{0.0f};
+    std::atomic<float> target{0.0f};
+    std::atomic<float> output{0.0f};
+    std::atomic<float> shape{0.0f};
+    std::atomic<double> waitingIncrement{0.0};
+    std::atomic<double> movingIncrement{0.0};
+    GangedRandomLfoAtomicColor color;
+};
+
+template<std::size_t VoiceCount>
+struct GangedRandomLfoUiState {
+    GangedRandomLfoUiState() = default;
+    GangedRandomLfoUiState(const GangedRandomLfoUiState&) = delete;
+    GangedRandomLfoUiState& operator=(const GangedRandomLfoUiState&) = delete;
+
+    bool ReadSnapshot(
+        GangedRandomLfoSnapshot<VoiceCount>& snapshot,
+        unsigned maxRetries = 4) const;
+
+    std::atomic<std::uint32_t> revision{0};
+    std::atomic<double> sampleRate{0.0};
+    std::atomic<double> roundElapsedSamples{0.0};
+    std::array<GangedRandomLfoVoiceUiState, VoiceCount> voices{};
+};
+
+namespace detail {
+
+template<std::size_t VoiceCount, class AfterCopy>
+bool ReadGangedRandomLfoSnapshot(
+    const GangedRandomLfoUiState<VoiceCount>& state,
+    GangedRandomLfoSnapshot<VoiceCount>& snapshot,
+    unsigned maxRetries,
+    AfterCopy&& afterCopy) {
+    for (unsigned attempt = 0; attempt < maxRetries; ++attempt) {
+        const std::uint32_t startRevision = state.revision.load(std::memory_order_acquire);
+        if ((startRevision & 1u) != 0u) {
+            continue;
+        }
+
+        GangedRandomLfoSnapshot<VoiceCount> candidate;
+        candidate.sampleRate = state.sampleRate.load(std::memory_order_relaxed);
+        candidate.roundElapsedSamples = state.roundElapsedSamples.load(std::memory_order_relaxed);
+        for (std::size_t voice = 0; voice < VoiceCount; ++voice) {
+            const auto& source = state.voices[voice];
+            auto& destination = candidate.voices[voice];
+            destination.state = source.state.load(std::memory_order_relaxed);
+            destination.currentStateProgress =
+                source.currentStateProgress.load(std::memory_order_relaxed);
+            destination.source = source.source.load(std::memory_order_relaxed);
+            destination.target = source.target.load(std::memory_order_relaxed);
+            destination.output = source.output.load(std::memory_order_relaxed);
+            destination.shape = source.shape.load(std::memory_order_relaxed);
+            destination.waitingIncrement = source.waitingIncrement.load(std::memory_order_relaxed);
+            destination.movingIncrement = source.movingIncrement.load(std::memory_order_relaxed);
+            destination.color = source.color.Load(std::memory_order_relaxed);
+        }
+
+        std::forward<AfterCopy>(afterCopy)(attempt);
+        const std::uint32_t endRevision = state.revision.load(std::memory_order_acquire);
+        if (startRevision == endRevision && (endRevision & 1u) == 0u) {
+            snapshot = candidate;
+            return true;
+        }
+    }
+    return false;
+}
+
+} // namespace detail
+
+template<std::size_t VoiceCount>
+bool GangedRandomLfoUiState<VoiceCount>::ReadSnapshot(
+    GangedRandomLfoSnapshot<VoiceCount>& snapshot,
+    unsigned maxRetries) const {
+    return detail::ReadGangedRandomLfoSnapshot(
+        *this,
+        snapshot,
+        maxRetries,
+        [](unsigned) {});
+}
+
 struct GangedRandomLfoInput {
     RandomTimingConfig waiting;
     RandomTimingConfig moving;
@@ -214,6 +330,52 @@ public:
     double SampleRate() const { return m_sampleRate; }
     double RoundElapsedSamples() const { return m_roundElapsedSamples; }
 
+    void SetVoiceColor(std::size_t voice, Color color) {
+        if (voice >= VoiceCount) {
+            throw std::out_of_range("random LFO voice index out of range");
+        }
+        m_voiceColors[voice].Store(color, std::memory_order_relaxed);
+    }
+
+    Color VoiceColor(std::size_t voice) const {
+        if (voice >= VoiceCount) {
+            throw std::out_of_range("random LFO voice index out of range");
+        }
+        return m_voiceColors[voice].Load(std::memory_order_relaxed);
+    }
+
+    void PublishUiState() {
+        const std::uint32_t startRevision =
+            m_uiState.revision.fetch_add(1, std::memory_order_acq_rel);
+        m_uiState.sampleRate.store(m_sampleRate, std::memory_order_relaxed);
+        m_uiState.roundElapsedSamples.store(m_roundElapsedSamples, std::memory_order_relaxed);
+        for (std::size_t voice = 0; voice < VoiceCount; ++voice) {
+            const auto& source = m_voices[voice];
+            const auto& input = m_voiceInputs[voice];
+            auto& destination = m_uiState.voices[voice];
+            destination.state.store(source.GetState(), std::memory_order_relaxed);
+            destination.currentStateProgress.store(
+                source.CurrentStateProgress(),
+                std::memory_order_relaxed);
+            destination.source.store(source.Source(), std::memory_order_relaxed);
+            destination.target.store(source.Target(), std::memory_order_relaxed);
+            destination.output.store(source.Output(), std::memory_order_relaxed);
+            destination.shape.store(input.shape, std::memory_order_relaxed);
+            destination.waitingIncrement.store(input.waitingIncrement, std::memory_order_relaxed);
+            destination.movingIncrement.store(input.movingIncrement, std::memory_order_relaxed);
+            destination.color.Store(m_voiceColors[voice].Load(std::memory_order_relaxed));
+        }
+        m_uiState.revision.store(startRevision + 2u, std::memory_order_release);
+    }
+
+    bool ReadSnapshot(
+        GangedRandomLfoSnapshot<VoiceCount>& snapshot,
+        unsigned maxRetries = 4) const {
+        return m_uiState.ReadSnapshot(snapshot, maxRetries);
+    }
+
+    const GangedRandomLfoUiState<VoiceCount>& UiState() const { return m_uiState; }
+
     const std::array<GangedRandomLfoVoice, VoiceCount>& Voices() const {
         return m_voices;
     }
@@ -283,6 +445,8 @@ private:
 
     std::array<GangedRandomLfoVoice, VoiceCount> m_voices{};
     std::array<VoiceInput, VoiceCount> m_voiceInputs{};
+    std::array<GangedRandomLfoAtomicColor, VoiceCount> m_voiceColors{};
+    GangedRandomLfoUiState<VoiceCount> m_uiState;
     DrawSource m_draws{};
     double m_sampleRate = 0.0;
     double m_roundElapsedSamples = 0.0;

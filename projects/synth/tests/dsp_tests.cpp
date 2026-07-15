@@ -40,6 +40,26 @@ concept HasPublicScopeColorStorage = requires(Processor processor) {
     processor.m_scopeColor;
 };
 
+template<typename Snapshot>
+concept HasRecordedScopeStorage = requires(Snapshot snapshot) {
+    snapshot.scope;
+};
+
+template<typename Snapshot>
+concept HasRecordedScopeBufferStorage = requires(Snapshot snapshot) {
+    snapshot.scopeBuffer;
+};
+
+template<typename Snapshot>
+concept HasRecordedHistoryStorage = requires(Snapshot snapshot) {
+    snapshot.history;
+};
+
+template<typename Snapshot>
+concept HasRecordedSampleStorage = requires(Snapshot snapshot) {
+    snapshot.samples;
+};
+
 static_assert(!HasPublicScopeColorStorage<synth::DefaultWavetableVco>);
 static_assert(!HasPublicScopeColorStorage<synth::BasicLFOProcessor>);
 
@@ -676,6 +696,126 @@ TEST_CASE(ganged_random_lfo_validates_setup_and_uses_fixed_storage) {
         rejectedTargetSigma = true;
     }
     REQUIRE_TRUE(rejectedTargetSigma);
+}
+
+TEST_CASE(ganged_random_lfo_snapshot_publishes_every_live_field_and_assigned_color) {
+    using Processor = synth::GangedRandomLfoProcessor<2, ScriptedRandomLfoDrawSource>;
+    using Snapshot = synth::GangedRandomLfoSnapshot<2>;
+    static_assert(std::is_trivially_copyable_v<synth::GangedRandomLfoVoiceSnapshot>);
+    static_assert(std::is_trivially_copyable_v<Snapshot>);
+    static_assert(!HasRecordedScopeStorage<Snapshot>);
+    static_assert(!HasRecordedScopeBufferStorage<Snapshot>);
+    static_assert(!HasRecordedHistoryStorage<Snapshot>);
+    static_assert(!HasRecordedSampleStorage<Snapshot>);
+
+    ScriptedRandomLfoDrawSource draws{
+        .normalResults = {2.0, 0.4, 0.6, 4.0, 0.2, 0.3, 0.3, 0.7},
+        .uniformResults = {0.5f, 0.2f, 0.8f},
+    };
+    Processor gang{std::move(draws)};
+    gang.Prepare(10.0);
+    REQUIRE_TRUE(gang.VoiceColor(0) == synth::Color::Grey);
+    REQUIRE_TRUE(gang.VoiceColor(1) == synth::Color::Grey);
+    REQUIRE_TRUE(gang.VoiceColor(0) != synth::Color::Cyan);
+    REQUIRE_TRUE(gang.VoiceColor(1) != synth::Color::Orange);
+
+    const auto color0 = synth::Color::Rgba(7, 31, 83, 191);
+    const auto color1 = synth::Color::Rgba(211, 113, 19, 239);
+    gang.SetVoiceColor(0, color0);
+    gang.SetVoiceColor(1, color1);
+    const synth::GangedRandomLfoInput input{
+        .waiting = {.muSeconds = 2.0, .sigmaSeconds = 0.5, .internalSigmaHz = 0.125},
+        .moving = {.muSeconds = 4.0, .sigmaSeconds = 1.0, .internalSigmaHz = 0.25},
+        .targetInternalSigma = 0.25f,
+    };
+    gang.Process(input);
+    gang.Process(input);
+    REQUIRE_TRUE(gang.UiState().revision.load(std::memory_order_relaxed) == 0u);
+    gang.PublishUiState();
+    const auto publishedRevision = gang.UiState().revision.load(std::memory_order_acquire);
+    REQUIRE_TRUE(publishedRevision == 2u);
+    REQUIRE_TRUE((publishedRevision & 1u) == 0u);
+
+    Snapshot snapshot{};
+    REQUIRE_TRUE(gang.ReadSnapshot(snapshot));
+    REQUIRE_NEAR(snapshot.sampleRate, gang.SampleRate(), 0.0);
+    REQUIRE_NEAR(snapshot.roundElapsedSamples, gang.RoundElapsedSamples(), 0.0);
+    for (std::size_t voice = 0; voice < 2; ++voice) {
+        const auto& actualVoice = gang.Voices()[voice];
+        const auto& actualInput = gang.VoiceInputs()[voice];
+        const auto& published = snapshot.voices[voice];
+        REQUIRE_TRUE(published.state == actualVoice.GetState());
+        REQUIRE_NEAR(published.currentStateProgress, actualVoice.CurrentStateProgress(), 0.0);
+        REQUIRE_NEAR(published.source, actualVoice.Source(), 0.0f);
+        REQUIRE_NEAR(published.target, actualVoice.Target(), 0.0f);
+        REQUIRE_NEAR(published.output, actualVoice.Output(), 0.0f);
+        REQUIRE_NEAR(published.shape, actualInput.shape, 0.0f);
+        REQUIRE_NEAR(published.waitingIncrement, actualInput.waitingIncrement, 0.0);
+        REQUIRE_NEAR(published.movingIncrement, actualInput.movingIncrement, 0.0);
+        REQUIRE_TRUE(published.color == (voice == 0 ? color0 : color1));
+    }
+}
+
+TEST_CASE(ganged_random_lfo_snapshot_reader_rejects_odd_revision) {
+    synth::GangedRandomLfoUiState<1> state;
+    state.sampleRate.store(48000.0, std::memory_order_relaxed);
+    state.revision.store(1, std::memory_order_release);
+
+    synth::GangedRandomLfoSnapshot<1> snapshot{.sampleRate = -1.0};
+    REQUIRE_TRUE(!state.ReadSnapshot(snapshot));
+    REQUIRE_NEAR(snapshot.sampleRate, -1.0, 0.0);
+}
+
+TEST_CASE(ganged_random_lfo_snapshot_reader_retries_a_revision_change) {
+    synth::GangedRandomLfoUiState<1> state;
+    state.sampleRate.store(32000.0, std::memory_order_relaxed);
+    state.voices[0].output.store(0.25f, std::memory_order_relaxed);
+    state.revision.store(2, std::memory_order_release);
+
+    unsigned callbacks = 0;
+    synth::GangedRandomLfoSnapshot<1> snapshot{};
+    const bool read = synth::detail::ReadGangedRandomLfoSnapshot(
+        state,
+        snapshot,
+        4,
+        [&](unsigned attempt) {
+            ++callbacks;
+            if (attempt == 0) {
+                state.revision.store(3, std::memory_order_release);
+                state.sampleRate.store(96000.0, std::memory_order_relaxed);
+                state.voices[0].output.store(0.75f, std::memory_order_relaxed);
+                state.revision.store(4, std::memory_order_release);
+            }
+        });
+
+    REQUIRE_TRUE(read);
+    REQUIRE_TRUE(callbacks == 2);
+    REQUIRE_NEAR(snapshot.sampleRate, 96000.0, 0.0);
+    REQUIRE_NEAR(snapshot.voices[0].output, 0.75f, 0.0f);
+}
+
+TEST_CASE(ganged_random_lfo_snapshot_reader_exhausts_bounded_retries) {
+    synth::GangedRandomLfoUiState<1> state;
+    state.sampleRate.store(44100.0, std::memory_order_relaxed);
+    state.revision.store(2, std::memory_order_release);
+
+    constexpr unsigned retries = 3;
+    unsigned callbacks = 0;
+    synth::GangedRandomLfoSnapshot<1> snapshot{.sampleRate = -1.0};
+    const bool read = synth::detail::ReadGangedRandomLfoSnapshot(
+        state,
+        snapshot,
+        retries,
+        [&](unsigned) {
+            ++callbacks;
+            const auto revision = state.revision.load(std::memory_order_relaxed);
+            state.revision.store(revision + 2, std::memory_order_release);
+        });
+
+    REQUIRE_TRUE(!read);
+    REQUIRE_TRUE(callbacks == retries);
+    REQUIRE_NEAR(snapshot.sampleRate, -1.0, 0.0);
+    REQUIRE_TRUE(!state.ReadSnapshot(snapshot, 0));
 }
 
 TEST_CASE(nary_numbers_are_elementwise_and_have_aliases) {
