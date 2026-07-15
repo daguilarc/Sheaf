@@ -63,7 +63,7 @@ After each task's native implementation and verification pass, obtain Claude app
 
 **Interfaces:** Produce `GangedRandomLfoVoiceSnapshot` with state, double progress, float source/target/output/shape, double waiting/moving increments, and portable color; `GangedRandomLfoSnapshot<VoiceCount>` with double sample rate and round-elapsed samples; `PublishUiState()` and `bool ReadSnapshot(GangedRandomLfoSnapshot&, unsigned maxRetries = 4) const`. Writer revision is odd during copy and even when committed, with release/acquire ordering.
 
-- [ ] **Task 3 — implement OpenSpec 3.1–3.2 (snapshot portion of `sdsp-36`) test-first.**
+- [x] **Task 3 — implement OpenSpec 3.1–3.2 (snapshot portion of `sdsp-36`) test-first.**
 
   1. Add tests for every gang/voice field, arbitrary distinct assignable per-voice colors surviving publication, odd revision rejection, revision-change retry, bounded retry exhaustion, coherent success, and a type-level assertion that snapshots contain no scope buffer/history. Assert the generic gang does not hardcode MiniApp's cyan/orange choices.
   2. Red: run `make -C projects/synth build/dsp_tests`; expect snapshot/publication APIs to be absent.
