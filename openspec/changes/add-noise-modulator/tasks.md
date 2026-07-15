@@ -6,9 +6,9 @@
 
 ## 2. Portable Noise Visualizer
 
-- [ ] 2.1 Add failing portable UI tests for a model-free `NoiseWaveformVisualizer`: explicit-seed reproducibility, one monophonic polyline, one bounded random y position per covered integer x column, empty/invalid-bounds safety, and different geometry on consecutive draws.
-- [ ] 2.2 Implement the JUCE-free noise visualizer with retained color and private UI-only fast random state, fresh per-pixel geometry on every `DrawVisible()` call, no processor/UI-state/scope dependency, and no backend-specific types.
-- [ ] 2.3 Verify the visualizer continues to obey the base component contracts for stable identity, intrinsic visibility, exact assigned bounds, and draw-node composition beneath modulation-depth encoders.
+- [x] 2.1 Add failing portable UI tests for a model-free `NoiseWaveformVisualizer`: explicit-seed reproducibility, one monophonic polyline, one bounded random y position per covered integer x column, empty/invalid-bounds safety, and different geometry on consecutive draws.
+- [x] 2.2 Implement the JUCE-free noise visualizer with retained color and private UI-only fast random state, fresh per-pixel geometry on every `DrawVisible()` call, no processor/UI-state/scope dependency, and no backend-specific types.
+- [x] 2.3 Verify the visualizer continues to obey the base component contracts for stable identity, intrinsic visibility, exact assigned bounds, and draw-node composition beneath modulation-depth encoders.
 
 ## 3. MiniApp Fifth Modulator
 
