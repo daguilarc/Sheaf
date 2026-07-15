@@ -19,5 +19,5 @@ fi
 export PYTHONPATH="${SCRIPT_DIR}/src"
 cd "${REPO_ROOT}"
 
-exec "${VENV_DIR}/bin/python" -m quest_runner_service --port 9002 \
+exec "${VENV_DIR}/bin/python" -m quest_runner_service \
   >>"${STDOUT_LOG}" 2>>"${STDERR_LOG}"
