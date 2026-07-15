@@ -22,6 +22,7 @@
 
 #include "synth/AppContext.hpp"
 #include "synth/DspScope.hpp"
+#include "synth/GangedRandomLfoVisualizer.hpp"
 #include "synth/MidiController.hpp"
 #include "synth/Modules.hpp"
 #include "synth/ParameterModulation.hpp"
@@ -41,6 +42,8 @@ public:
     using VcoModule = synth::WavetableVcoModule<kVoiceCount>;
     using FilterModule = synth::ClassicSvfModule<kVoiceCount>;
     using LfoModule = synth::BasicLfoModule<kVoiceCount>;
+    using GangedRandomLfo = synth::GangedRandomLfoProcessor<kVoiceCount>;
+    using GangedRandomLfoVisualizer = synth::ui::GangedRandomLfoVisualizer<kVoiceCount>;
     using VcoUiLayerState = synth::DefaultWavetableVco::UIState;
     using LfoUiLayerState = synth::BasicLFOProcessor::UIState;
 
@@ -63,9 +66,9 @@ public:
         context_->parameterManager->SetGestureCount(1);
         auto& group = context_->parameterManager->CreateGroup({
             .numVoices = 2,
-            .numModulators = 3,
+            .numModulators = 4,
             .numScenes = 3,
-            .maxParameters = 24,
+            .maxParameters = 60,
         });
         group_ = &group;
         context_->parameterManager->GestureMetadataAt(0).name = "Gesture 1";
@@ -83,6 +86,9 @@ public:
         lfoModule_.RegisterParameters(*context_->parameterManager, group, "LFO", lfoOptions);
         vcoModule_.RegisterModulationSources(group, 0, 1);
         lfoModule_.RegisterModulationSource(group, 2);
+        gangedRandomLfo_.SetVoiceColor(0, synth::Color::Cyan);
+        gangedRandomLfo_.SetVoiceColor(1, synth::Color::Orange);
+        RegisterGangedRandomLfoSource(group);
         RegisterModulatorVisualizers(group);
 
         tune_ = &context_->parameterManager->ParameterById(vcoModule_.Parameters().tune);
@@ -162,6 +168,7 @@ public:
         vcoModule_.SetSampleRate(static_cast<float>(sampleRate));
         filterModule_.SetSampleRate(static_cast<float>(sampleRate));
         lfoModule_.SetSampleRate(static_cast<float>(sampleRate));
+        gangedRandomLfo_.Prepare(sampleRate);
     }
 
     void ProcessBlock(synth::AudioBlock& block) {
@@ -194,6 +201,10 @@ public:
             filterModule_.Process();
             lfoModule_.SetInput(*context_->parameterManager);
             lfoModule_.Process();
+            gangedRandomLfo_.Process(gangedRandomLfoInput_);
+            for (std::size_t voiceIx = 0; voiceIx < kVoiceCount; ++voiceIx) {
+                gangedRandomLfoModulationSources_[voiceIx] = gangedRandomLfo_.Output(voiceIx);
+            }
 
             context_->parameterManager->UpdateModValues(*group_);
 
@@ -212,6 +223,7 @@ public:
         vcoModule_.PopulateUIState(vcoUiStates_);
         filterModule_.PopulateUIState(filterUiStates_);
         lfoModule_.PopulateUIState(lfoUiStates_);
+        gangedRandomLfo_.PublishUiState();
     }
 
     // --- accessors for the UI wrapper (next task) --------------------------
@@ -240,6 +252,23 @@ public:
     VcoModule& VcoModuleInstance() { return vcoModule_; }
     FilterModule& FilterModuleInstance() { return filterModule_; }
     LfoModule& LfoModuleInstance() { return lfoModule_; }
+    GangedRandomLfo& GangedRandomLfoInstance() { return gangedRandomLfo_; }
+    const GangedRandomLfo& GangedRandomLfoInstance() const { return gangedRandomLfo_; }
+    const synth::GangedRandomLfoInput& GangedRandomLfoInputConfig() const {
+        return gangedRandomLfoInput_;
+    }
+    std::array<float, kVoiceCount>& GangedRandomLfoModulationSources() {
+        return gangedRandomLfoModulationSources_;
+    }
+    const std::array<float, kVoiceCount>& GangedRandomLfoModulationSources() const {
+        return gangedRandomLfoModulationSources_;
+    }
+    GangedRandomLfoVisualizer& GangedRandomLfoVisualizerInstance() {
+        return gangedRandomLfoVisualizer_;
+    }
+    const GangedRandomLfoVisualizer& GangedRandomLfoVisualizerInstance() const {
+        return gangedRandomLfoVisualizer_;
+    }
 
 private:
     synth::AppContext* context_ = nullptr;
@@ -266,12 +295,41 @@ private:
     VcoModule vcoModule_;
     FilterModule filterModule_;
     LfoModule lfoModule_;
+    GangedRandomLfo gangedRandomLfo_;
+    const synth::GangedRandomLfoInput gangedRandomLfoInput_{
+        .waiting = {
+            .muSeconds = 2.0,
+            .sigmaSeconds = 0.5,
+            .internalSigmaHz = 0.125,
+        },
+        .moving = {
+            .muSeconds = 2.0,
+            .sigmaSeconds = 0.5,
+            .internalSigmaHz = 0.125,
+        },
+        .targetInternalSigma = 0.1f,
+    };
+    std::array<float, kVoiceCount> gangedRandomLfoModulationSources_{};
+    GangedRandomLfoVisualizer gangedRandomLfoVisualizer_{gangedRandomLfo_.UiState()};
     VcoModule::UIState vcoUiStates_;
     FilterModule::UIState filterUiStates_;
     LfoModule::UIState lfoUiStates_;
     std::unique_ptr<synth::ui::ScopeVisualizer<VcoUiLayerState>> vcoVisualizer0_;
     std::unique_ptr<synth::ui::ScopeVisualizer<VcoUiLayerState>> vcoVisualizer1_;
     std::unique_ptr<synth::ui::ScopeVisualizer<LfoUiLayerState>> lfoVisualizer_;
+
+    void RegisterGangedRandomLfoSource(synth::ParameterGroup& group) {
+        std::array<float*, kVoiceCount> sources{};
+        for (std::size_t voiceIx = 0; voiceIx < kVoiceCount; ++voiceIx) {
+            sources[voiceIx] = &gangedRandomLfoModulationSources_[voiceIx];
+        }
+        group.SetModulationSource(3, sources, {
+            .name = "Ganged Random LFO",
+            .shortName = "Rand",
+            .sourceColor = synth::Color::Cyan,
+            .connected = true,
+        });
+    }
 
     void RegisterModulatorVisualizers(synth::ParameterGroup& group) {
         std::array<VcoUiLayerState*, kVoiceCount> vcoLayers{};
@@ -303,6 +361,7 @@ private:
         group.GetModulators().Metadata(0).visualizer = vcoVisualizer0_.get();
         group.GetModulators().Metadata(1).visualizer = vcoVisualizer1_.get();
         group.GetModulators().Metadata(2).visualizer = lfoVisualizer_.get();
+        group.GetModulators().Metadata(3).visualizer = &gangedRandomLfoVisualizer_;
     }
 };
 

@@ -649,14 +649,139 @@ TEST_CASE(miniapp_registers_distinct_scope_visualizers_for_modulators) {
     synth::ui::Visualizer* mod0 = modulators.Metadata(0).visualizer;
     synth::ui::Visualizer* mod1 = modulators.Metadata(1).visualizer;
     synth::ui::Visualizer* mod2 = modulators.Metadata(2).visualizer;
+    synth::ui::Visualizer* mod3 = modulators.Metadata(3).visualizer;
 
     REQUIRE_TRUE(mod0 != nullptr);
     REQUIRE_TRUE(mod1 != nullptr);
     REQUIRE_TRUE(mod2 != nullptr);
+    REQUIRE_TRUE(mod3 != nullptr);
     REQUIRE_TRUE(mod0 != mod1);
+    REQUIRE_TRUE(mod3 == &rig.Application().GangedRandomLfoVisualizerInstance());
     REQUIRE_TRUE(mod0->Visible());
     REQUIRE_TRUE(mod1->Visible());
     REQUIRE_TRUE(mod2->Visible());
+    REQUIRE_TRUE(mod3->Visible());
+}
+
+TEST_CASE(miniapp_registers_ganged_random_lfo_without_changing_performer_topology) {
+    synth_rig::SynthRig<synth_miniapp::MiniAppCore> rig(
+        64,
+        UseScratchRuntimeDataPaths("registers_ganged_random_lfo_without_changing_performer_topology"));
+
+    auto& core = rig.Application();
+    auto& manager = *core.Context()->parameterManager;
+    auto& group = *core.Group();
+    const auto& groupConfig = group.Config();
+    const auto& modulators = group.GetModulators();
+
+    REQUIRE_TRUE(groupConfig.numVoices == 2);
+    REQUIRE_TRUE(groupConfig.numModulators == 4);
+    REQUIRE_TRUE(groupConfig.numScenes == 3);
+    REQUIRE_TRUE(groupConfig.maxParameters == 60);
+    REQUIRE_TRUE(group.ParameterCount() == 12);
+    REQUIRE_TRUE(group.GestureCount() == 1);
+    REQUIRE_TRUE(manager.ParameterCount() == 12);
+    REQUIRE_TRUE(manager.NumGroups() == 1);
+    REQUIRE_TRUE(manager.GestureCount() == 1);
+    REQUIRE_TRUE(manager.Scene().leftScene == 0);
+    REQUIRE_TRUE(manager.Scene().rightScene == 1);
+    REQUIRE_TRUE(manager.BankAt(0) == core.VcoBank());
+    REQUIRE_TRUE(manager.BankAt(1) == core.LfoBank());
+    REQUIRE_TRUE(manager.BankAt(2) == nullptr);
+    REQUIRE_TRUE(manager.BankSlotAt(0) == core.Slot());
+    REQUIRE_TRUE(manager.BankSlotAt(1) == nullptr);
+
+    REQUIRE_TRUE(modulators.NumVoices() == 2);
+    REQUIRE_TRUE(modulators.NumModulators() == 4);
+    REQUIRE_TRUE(modulators.Metadata(0).name == "VCO Direct");
+    REQUIRE_TRUE(modulators.Metadata(0).sourceColor == synth::Color::Cyan);
+    REQUIRE_TRUE(modulators.Metadata(1).name == "VCO Swapped");
+    REQUIRE_TRUE(modulators.Metadata(1).sourceColor == synth::Color::Orange);
+    REQUIRE_TRUE(modulators.Metadata(2).name == "LFO");
+    REQUIRE_TRUE(modulators.Metadata(2).sourceColor == synth::Color::Green);
+    REQUIRE_TRUE(modulators.Metadata(3).name == "Ganged Random LFO");
+    REQUIRE_TRUE(modulators.Metadata(3).sourceColor == synth::Color::Cyan);
+    REQUIRE_TRUE(modulators.Metadata(3).connected);
+
+    const auto& input = core.GangedRandomLfoInputConfig();
+    REQUIRE_TRUE(input.waiting.muSeconds == 2.0);
+    REQUIRE_TRUE(input.waiting.sigmaSeconds == 0.5);
+    REQUIRE_TRUE(input.waiting.internalSigmaHz == 0.125);
+    REQUIRE_TRUE(input.moving.muSeconds == 2.0);
+    REQUIRE_TRUE(input.moving.sigmaSeconds == 0.5);
+    REQUIRE_TRUE(input.moving.internalSigmaHz == 0.125);
+    REQUIRE_TRUE(input.targetInternalSigma == 0.1f);
+    REQUIRE_TRUE(core.GangedRandomLfoInstance().VoiceColor(0) == synth::Color::Cyan);
+    REQUIRE_TRUE(core.GangedRandomLfoInstance().VoiceColor(1) == synth::Color::Orange);
+
+    synth::ui::Visualizer* const retainedVisualizer =
+        &core.GangedRandomLfoVisualizerInstance();
+    REQUIRE_TRUE(modulators.Metadata(3).visualizer == retainedVisualizer);
+    rig.RunBlocks(1);
+    REQUIRE_TRUE(modulators.Metadata(3).visualizer == retainedVisualizer);
+
+    rig.Press(kSlotIx, kTunePosition);
+    rig.RunBlocks(1);
+    const synth::ParameterManager::UIState& uiState = rig.UIState();
+    REQUIRE_TRUE(group.ParameterCount() == 16);
+    REQUIRE_TRUE(uiState.slots[0].cells[3].visualizer.load(std::memory_order_relaxed) ==
+                 retainedVisualizer);
+    REQUIRE_TRUE(modulators.Metadata(3).visualizer == retainedVisualizer);
+}
+
+TEST_CASE(miniapp_processes_and_publishes_ganged_random_lfo_at_audio_block_boundaries) {
+    synth_rig::SynthRig<synth_miniapp::MiniAppCore> rig(
+        64,
+        UseScratchRuntimeDataPaths("processes_and_publishes_ganged_random_lfo_at_audio_block_boundaries"));
+    constexpr double negotiatedSampleRate = 44100.0;
+    rig.Engine().Prepare(negotiatedSampleRate, synth_miniapp::MiniAppCore::Config().preferredBlockSize);
+
+    auto& core = rig.Application();
+    auto& gang = core.GangedRandomLfoInstance();
+    auto& sources = core.GangedRandomLfoModulationSources();
+    auto& modulators = core.Group()->GetModulators();
+    REQUIRE_TRUE(gang.SampleRate() == negotiatedSampleRate);
+
+    synth::GangedRandomLfoSnapshot<synth_miniapp::MiniAppCore::kVoiceCount> beforeBlock;
+    REQUIRE_TRUE(gang.ReadSnapshot(beforeBlock));
+    REQUIRE_TRUE(beforeBlock.sampleRate == 0.0);
+
+    // Sentinels distinguish process-before-update from update-before-process:
+    // the audio loop must replace these before UpdateModValues observes them.
+    sources[0] = -0.25f;
+    sources[1] = -0.75f;
+    rig.RunBlocks(1);
+
+    REQUIRE_TRUE(gang.RoundElapsedSamples() == 255.0);
+    for (std::size_t voice = 0; voice < synth_miniapp::MiniAppCore::kVoiceCount; ++voice) {
+        REQUIRE_TRUE(sources[voice] == gang.Output(voice));
+        REQUIRE_TRUE(modulators.Value(voice, 3) == sources[voice]);
+    }
+
+    synth::GangedRandomLfoSnapshot<synth_miniapp::MiniAppCore::kVoiceCount> published;
+    REQUIRE_TRUE(gang.ReadSnapshot(published));
+    REQUIRE_TRUE(published.sampleRate == negotiatedSampleRate);
+    REQUIRE_TRUE(published.roundElapsedSamples == gang.RoundElapsedSamples());
+    REQUIRE_TRUE(published.voices[0].color == synth::Color::Cyan);
+    REQUIRE_TRUE(published.voices[1].color == synth::Color::Orange);
+    for (std::size_t voice = 0; voice < synth_miniapp::MiniAppCore::kVoiceCount; ++voice) {
+        REQUIRE_TRUE(published.voices[voice].output == gang.Output(voice));
+        REQUIRE_TRUE(published.voices[voice].waitingIncrement == gang.VoiceInputs()[voice].waitingIncrement);
+        REQUIRE_TRUE(published.voices[voice].movingIncrement == gang.VoiceInputs()[voice].movingIncrement);
+        REQUIRE_TRUE(published.voices[voice].shape == gang.VoiceInputs()[voice].shape);
+    }
+
+    const double publishedElapsed = published.roundElapsedSamples;
+    gang.Process(core.GangedRandomLfoInputConfig());
+    synth::GangedRandomLfoSnapshot<synth_miniapp::MiniAppCore::kVoiceCount> stillPublished;
+    REQUIRE_TRUE(gang.ReadSnapshot(stillPublished));
+    REQUIRE_TRUE(stillPublished.roundElapsedSamples == publishedElapsed);
+
+    rig.RunBlocks(1);
+    synth::GangedRandomLfoSnapshot<synth_miniapp::MiniAppCore::kVoiceCount> nextPublished;
+    REQUIRE_TRUE(gang.ReadSnapshot(nextPublished));
+    REQUIRE_TRUE(nextPublished.roundElapsedSamples == gang.RoundElapsedSamples());
+    REQUIRE_TRUE(nextPublished.roundElapsedSamples > publishedElapsed);
 }
 
 TEST_CASE(miniapp_color_flow_keeps_semantic_roles_independent) {
@@ -689,10 +814,11 @@ TEST_CASE(miniapp_color_flow_keeps_semantic_roles_independent) {
     REQUIRE_TRUE(rig.Application().VcoBank()->BankColor() == synth::Color::Cyan);
     REQUIRE_TRUE(rig.Application().LfoBank()->BankColor() == synth::Color::Green);
     const auto modulatorMetadata = rig.Application().Group()->GetModulators().Metadata();
-    REQUIRE_TRUE(modulatorMetadata.size() == 3);
+    REQUIRE_TRUE(modulatorMetadata.size() == 4);
     REQUIRE_TRUE(modulatorMetadata[0].sourceColor == synth::Color::Cyan);
     REQUIRE_TRUE(modulatorMetadata[1].sourceColor == synth::Color::Orange);
     REQUIRE_TRUE(modulatorMetadata[2].sourceColor == synth::Color::Green);
+    REQUIRE_TRUE(modulatorMetadata[3].sourceColor == synth::Color::Cyan);
     REQUIRE_TRUE(rig.Application().Context()->parameterManager->GestureMetadataAt(0).gestureColor ==
                  synth::Color::Orange);
 
@@ -706,7 +832,7 @@ TEST_CASE(miniapp_color_flow_keeps_semantic_roles_independent) {
     REQUIRE_TRUE(lfoScope.layers[1].scopeColor == synth::Color::Yellow);
 
     const std::vector<synth::Color> expectedModulatorColors{
-        synth::Color::Cyan, synth::Color::Orange, synth::Color::Green};
+        synth::Color::Cyan, synth::Color::Orange, synth::Color::Green, synth::Color::Cyan};
     const auto requireVisibleCellColors = [&](std::size_t visibleCellCount,
                                               std::span<const synth::Color> expectedCellBaseColors) {
         const synth::ParameterManager::UIState& uiState = rig.UIState();
