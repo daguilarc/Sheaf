@@ -128,6 +128,8 @@ public:
     }
 
     void Publish() {
+        // Readers acquire marker counts before the sample boundary. Publishing
+        // the boundary first makes a newly observed marker count compatible.
         publishedIndex_.store(index_, std::memory_order_release);
         for (std::size_t channel = 0; channel < reservedChannels_; ++channel) {
             const std::size_t pending = pendingMarkerCounts_[channel];
@@ -157,6 +159,8 @@ public:
         if (count == 0) {
             return;
         }
+        // End markers retain their legacy live-update behavior; coherent
+        // publication covers cycle-start markers and their marker count.
         endMarkers_[channel][(count - 1) % kNumMarkerIndices] = static_cast<double>(index_) + uBlockOffset;
     }
 
@@ -254,6 +258,8 @@ inline ScopeReader::ScopeReader(const ScopeWriter* writer, std::size_t channel, 
     }
 
     writer_->CheckChannel(channel_);
+    // This load order pairs with Publish(): acquiring a new marker count also
+    // makes the earlier sample-boundary store visible to the following load.
     const std::size_t markerCount = writer_->markerWriteIndices_[channel_].load(std::memory_order_acquire);
     const std::size_t publishedIndex = writer_->publishedIndex_.load(std::memory_order_acquire);
     if (markerCount == 0) {

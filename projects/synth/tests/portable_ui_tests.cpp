@@ -502,6 +502,12 @@ int main()
     const std::vector<synth::ui::WaveformLayerDrawState> inFlightLayer{
         {.connected = true, .scopeColor = synth::Color::Red, .scope = &inFlightScope, .scopeChannel = 0},
     };
+    const auto publishedCommands = synth::ui::BuildScopeWaveformCommands(
+        inFlightLayer, {10.0f, 120.0f, 180.0f, 90.0f}, -1.1f, 1.1f, 64, true);
+    const bool publishedHasPolyline = std::any_of(
+        publishedCommands.begin(), publishedCommands.end(), [](const synth::ui::DrawCommand& command) {
+            return command.kind == synth::ui::DrawCommand::Kind::Polyline;
+        });
     inFlightHolder.RecordStart();
     inFlightHolder.Write(0.25f);
     inFlightScope.AdvanceIndex();
@@ -511,6 +517,7 @@ int main()
         inFlightCommands.begin(), inFlightCommands.end(), [](const synth::ui::DrawCommand& command) {
             return command.kind == synth::ui::DrawCommand::Kind::Polyline;
         });
+    Require(publishedHasPolyline, "published scope waveform is visible before the next marker");
     Require(inFlightHasPolyline, "scope waveform remains visible while a new marker is unpublished");
 
     for (int cell = 0; cell < 4; ++cell)

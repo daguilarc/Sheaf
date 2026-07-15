@@ -95,6 +95,12 @@ bool OutputHasNonSilentFiniteStereo(const std::vector<synth_rig::SynthRig<synth_
     return heardSignal;
 }
 
+bool HasPolyline(const std::vector<synth::ui::DrawCommand>& commands) {
+    return std::any_of(commands.begin(), commands.end(), [](const synth::ui::DrawCommand& command) {
+        return command.kind == synth::ui::DrawCommand::Kind::Polyline;
+    });
+}
+
 struct EngineRunResult {
     std::vector<std::vector<float>> channels;
     synth_braid4::Braid4Core::DebugCounterState counters;
@@ -314,6 +320,25 @@ TEST_CASE(initializes_parameter_groups_banks_slot_and_scene_endpoints) {
     REQUIRE_TRUE(core.BankSlot() == rig.Engine().Manager().BankSlotAt(0));
     REQUIRE_TRUE(rig.Engine().Manager().BankSlotAt(1) == nullptr);
     REQUIRE_TRUE(core.BankSlot()->PhysicalEncoders().size() == 16);
+}
+
+TEST_CASE(braid_scope_remains_visible_while_next_cycle_marker_is_unpublished) {
+    synth_rig::SynthRig<synth_braid4::Braid4Core> rig(
+        64,
+        UseScratchRuntimeDataPaths("braid_scope_remains_visible_while_next_cycle_marker_is_unpublished"));
+    rig.RunBlocks(8);
+    auto& core = rig.Engine().Application();
+
+    const synth::ui::Bounds bounds{10.0f, 20.0f, 180.0f, 90.0f};
+    const auto published = synth_braid4::BuildBraid4ScopeCommands(
+        synth_braid4::ScopeDrawStateFromCore(core, 0), bounds);
+    REQUIRE_TRUE(HasPolyline(published));
+
+    auto inFlightHolder = core.ScopeHolders()[0];
+    inFlightHolder.RecordStart();
+    const auto whileWriting = synth_braid4::BuildBraid4ScopeCommands(
+        synth_braid4::ScopeDrawStateFromCore(core, 0), bounds);
+    REQUIRE_TRUE(HasPolyline(whileWriting));
 }
 
 TEST_CASE(parallel_lfo_topology_banks_colors_and_modulator_slots) {
