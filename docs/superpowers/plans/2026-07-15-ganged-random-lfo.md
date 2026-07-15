@@ -91,7 +91,7 @@ After each task's native implementation and verification pass, obtain Claude app
 
 **Interfaces:** `MiniAppCore` owns `GangedRandomLfoProcessor<2>` and one address-stable `GangedRandomLfoVisualizer<2>`. `PrepareToPlay` supplies the negotiated sample rate; the per-sample loop calls gang `Process` before `UpdateModValues`; source 3 publishes outputs in voice order and the gang snapshot at the existing block boundary.
 
-- [ ] **Task 5 — implement OpenSpec 4.1–4.2 core behavior (`spm-71`) test-first.**
+- [x] **Task 5 — implement OpenSpec 4.1–4.2 core behavior (`spm-71`) test-first.**
 
   1. Add system tests asserting four sources, preserved indexes 0–2, two voice outputs at source 3, exact waiting/moving `(2.0,0.5,0.125)` and target `0.1`, negotiated sample rate, process-before-mod-update ordering, cyan/orange assignment, retained visualizer address, capacity growth, block-boundary publication, and unchanged parameter/page/bank/scene/gesture counts and mappings.
   2. Red: run `make -C projects/synth build/miniapp_system_tests`; expect source-count/index/config failures.
