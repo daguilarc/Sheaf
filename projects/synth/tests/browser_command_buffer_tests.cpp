@@ -1,4 +1,5 @@
 #include "synth/PortableUI.hpp"
+#include "synth/GangedRandomLfoVisualizer.hpp"
 #include "synth/browser/BrowserCommandBuffer.hpp"
 
 #include <algorithm>
@@ -181,6 +182,44 @@ void TestUnsupportedDrawFeatureIsGeneric()
     Require(decoded.diagnostics[0].feature == "draw command kind", "generic unsupported draw feature name");
 }
 
+void TestPredictiveGangedLfoUsesExistingDrawSchema()
+{
+    synth::GangedRandomLfoSnapshot<2> snapshot;
+    snapshot.sampleRate = 48000.0;
+    snapshot.roundElapsedSamples = 2.0;
+    snapshot.voices[0] = {.source = 0.0f, .target = 1.0f, .output = 0.8f, .shape = 0.0f,
+                          .waitingIncrement = 0.25, .movingIncrement = 0.5,
+                          .color = synth::Color::Cyan};
+    snapshot.voices[1] = {.source = 1.0f, .target = 0.0f, .output = 0.2f, .shape = 1.0f,
+                          .waitingIncrement = 0.125, .movingIncrement = 0.25,
+                          .color = synth::Color::Orange};
+    std::vector<synth::ui::DrawCommand> commands;
+    synth::ui::BuildGangedRandomLfoCommands(snapshot, {0, 0, 160, 80}, commands);
+
+    synth::ui::NodeTree tree;
+    tree.nodes = {
+        synth::ui::Node{.id = synth::ui::NodeId("root"), .kind = synth::ui::NodeKind::Root,
+                        .bounds = {0, 0, 160, 80}, .children = {synth::ui::NodeId("predictive")}},
+        synth::ui::Node{.id = synth::ui::NodeId("predictive"), .kind = synth::ui::NodeKind::Draw,
+                        .bounds = {0, 0, 160, 80}, .drawCommands = std::move(commands)},
+    };
+    const auto decoded = synth_browser::DecodeCommandBuffer(synth_browser::SerializeNodeTree(tree).bytes);
+    Require(decoded.version == synth_browser::kCommandBufferVersion,
+            "predictive geometry preserves browser schema version");
+    Require(decoded.diagnostics.empty(), "predictive geometry needs no browser protocol extension");
+    const auto& node = FindNode(decoded, "predictive");
+    std::size_t polylines = 0;
+    std::size_t ellipses = 0;
+    for (std::size_t index = 0; index < node.drawCount; ++index)
+    {
+        const auto kind = decoded.drawCommands[node.drawStart + index].kind;
+        polylines += kind == synth_browser::CommandDrawKind::Polyline ? 1u : 0u;
+        ellipses += kind == synth_browser::CommandDrawKind::FillEllipse ? 1u : 0u;
+    }
+    Require(polylines > 2, "browser consumes predictive polyline commands");
+    Require(ellipses == 2, "browser consumes predictive ellipse commands");
+}
+
 }  // namespace
 
 int main()
@@ -189,5 +228,6 @@ int main()
     TestNodeIdsAreStableAcrossFrames();
     TestUnsupportedPortableFeatureIsGeneric();
     TestUnsupportedDrawFeatureIsGeneric();
+    TestPredictiveGangedLfoUsesExistingDrawSchema();
     return 0;
 }

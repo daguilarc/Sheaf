@@ -4,6 +4,7 @@
 #include "../apps/miniapp/MiniAppUiModel.hpp"
 
 #include "synth/PortableUI.hpp"
+#include "synth/GangedRandomLfoVisualizer.hpp"
 
 #include <cmath>
 #include <iostream>
@@ -47,6 +48,31 @@ const synth::ui::Node* FindNodeById(const synth::ui::NodeTree& tree, const char*
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juce;
+
+    synth::GangedRandomLfoSnapshot<2> predictiveSnapshot;
+    predictiveSnapshot.sampleRate = 48000.0;
+    predictiveSnapshot.roundElapsedSamples = 3.0;
+    predictiveSnapshot.voices[0] = {.source = 0.1f, .target = 0.9f, .output = 0.2f, .shape = 0.0f,
+                                    .waitingIncrement = 0.25, .movingIncrement = 0.5,
+                                    .color = synth::Color::Cyan};
+    predictiveSnapshot.voices[1] = {.source = 0.8f, .target = 0.2f, .output = 0.7f, .shape = 1.0f,
+                                    .waitingIncrement = 0.125, .movingIncrement = 0.25,
+                                    .color = synth::Color::Orange};
+    std::vector<synth::ui::DrawCommand> predictiveCommands;
+    synth::ui::BuildGangedRandomLfoCommands(
+        predictiveSnapshot, {0.0f, 0.0f, 160.0f, 80.0f}, predictiveCommands);
+    juce::Image predictiveImage(juce::Image::ARGB, 160, 80, true);
+    juce::Graphics predictiveGraphics(predictiveImage);
+    std::size_t predictivePolylines = 0;
+    std::size_t predictiveDots = 0;
+    for (const auto& command : predictiveCommands)
+    {
+        synth_juce::PaintDrawCommand(predictiveGraphics, command, {0.0f, 0.0f, 160.0f, 80.0f});
+        predictivePolylines += command.kind == synth::ui::DrawCommand::Kind::Polyline ? 1u : 0u;
+        predictiveDots += command.kind == synth::ui::DrawCommand::Kind::FillEllipse ? 1u : 0u;
+    }
+    Require(predictivePolylines > 2, "JUCE consumes predictive polyline commands");
+    Require(predictiveDots == 2, "JUCE consumes predictive ellipse commands");
 
     synth::ParameterManager manager;
     synth::MessageInBus uiBus(&manager);

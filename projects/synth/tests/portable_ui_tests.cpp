@@ -4,6 +4,7 @@
 #include "synth/RuntimePages.hpp"
 #include "synth/ControllersPageUI.hpp"
 #include "synth/DspScope.hpp"
+#include "synth/GangedRandomLfoVisualizer.hpp"
 #include "synth/MidiController.hpp"
 
 #include <algorithm>
@@ -13,6 +14,7 @@
 #include <cstddef>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -198,10 +200,213 @@ struct TestApp
     TestSurface surface;
 };
 
+void TestGangedRandomLfoVisualizer()
+{
+    using synth::GangedRandomLfoSnapshot;
+    using synth::ui::Bounds;
+    using synth::ui::DrawCommand;
+
+    GangedRandomLfoSnapshot<2> snapshot;
+    snapshot.sampleRate = 8.0;
+    snapshot.roundElapsedSamples = 3.0;
+    snapshot.voices[0] = {
+        .source = 0.0f,
+        .target = 1.0f,
+        .output = 0.91f,
+        .shape = 0.0f,
+        .waitingIncrement = 0.25,
+        .movingIncrement = 0.5,
+        .color = synth::Color::Cyan,
+    };
+    snapshot.voices[1] = {
+        .source = 1.0f,
+        .target = 0.25f,
+        .output = 0.02f,
+        .shape = 1.0f,
+        .waitingIncrement = 0.125,
+        .movingIncrement = 0.25,
+        .color = synth::Color::Orange,
+    };
+
+    const Bounds bounds{10.0f, 20.0f, 180.0f, 90.0f};
+    std::vector<DrawCommand> commands;
+    synth::ui::BuildGangedRandomLfoCommands(snapshot, bounds, commands);
+    Require(commands.size() > 6, "ganged visualizer emits both paths");
+    Require(commands.size() <= synth::ui::GangedRandomLfoGeometry::MaximumCommandCount<2>(),
+            "ganged visualizer command count is fixed and bounded");
+    Require(commands[0].kind == DrawCommand::Kind::Fill && commands[1].kind == DrawCommand::Kind::Line,
+            "ganged visualizer starts with background and axis");
+
+    const float expectedPresentX = bounds.x + 4.0f + (bounds.width - 8.0f) * 3.0f / 12.0f;
+    std::array<std::size_t, 2> dots{};
+    bool sawCyanPast = false;
+    bool sawOrangePast = false;
+    bool sawDashedGap = false;
+    synth::ui::Point cyanPastEnd{};
+    synth::ui::Point cyanDotCenter{};
+    float previousFutureStart = -1.0f;
+    for (const DrawCommand& command : commands)
+    {
+        if (command.kind == DrawCommand::Kind::Polyline)
+        {
+            Require(command.points.size() >= 2, "ganged path polylines have drawable geometry");
+            for (const auto point : command.points)
+            {
+                Require(PointInside(point, bounds), "ganged path points are caller-clipped");
+            }
+            if (command.points.back().x <= expectedPresentX + 0.001f)
+            {
+                sawCyanPast = sawCyanPast || command.color == synth::Color::Cyan;
+                sawOrangePast = sawOrangePast || command.color == synth::Color::Orange;
+                if (command.color == synth::Color::Cyan)
+                {
+                    cyanPastEnd = command.points.back();
+                }
+            }
+            if (command.points.front().x >= expectedPresentX - 0.001f)
+            {
+                if (previousFutureStart >= 0.0f && command.points.front().x > previousFutureStart + 0.5f)
+                {
+                    sawDashedGap = true;
+                }
+                previousFutureStart = command.points.back().x;
+            }
+        }
+        else if (command.kind == DrawCommand::Kind::FillEllipse)
+        {
+            Require(BoundsInside(command.bounds, bounds), "ganged dot is caller-clipped");
+            const float centerX = command.bounds.x + command.bounds.width * 0.5f;
+            RequireNear(centerX, expectedPresentX, 0.001f, "all ganged dots share present x");
+            if (command.color == synth::Color::Cyan)
+            {
+                ++dots[0];
+                const float centerY = command.bounds.y + command.bounds.height * 0.5f;
+                cyanDotCenter = {centerX, centerY};
+                RequireNear(centerY, bounds.y + 4.0f + (bounds.height - 8.0f), 0.001f,
+                            "dot reconstructs source hold instead of snapshot output");
+            }
+            if (command.color == synth::Color::Orange)
+            {
+                ++dots[1];
+            }
+        }
+    }
+    Require(dots == std::array<std::size_t, 2>{1, 1}, "one independently colored dot per voice");
+    Require(sawCyanPast && sawOrangePast, "solid past uses each voice color");
+    RequireNear(cyanPastEnd.x, cyanDotCenter.x, 0.001f, "solid past ends at the present dot x");
+    RequireNear(cyanPastEnd.y, cyanDotCenter.y, 0.001f, "solid past ends at the reconstructed dot y");
+    Require(sawDashedGap, "future path uses alternating bounded segments");
+
+    // Voice zero lasts ceil(4) + ceil(2) = 6 samples, so its path must hold
+    // target to voice one's shared ceil(8) + ceil(4) = 12-sample endpoint.
+    bool cyanEndsAtTarget = false;
+    const float targetY = bounds.y + 4.0f;
+    for (const DrawCommand& command : commands)
+    {
+        if (command.kind == DrawCommand::Kind::Polyline && command.color == synth::Color::Cyan &&
+            !command.points.empty() && command.points.back().x > bounds.x + bounds.width - 8.0f)
+        {
+            cyanEndsAtTarget = std::fabs(command.points.back().y - targetY) < 0.01f;
+        }
+    }
+    Require(cyanEndsAtTarget, "early voice holds target through shared maximum duration");
+
+    auto movingSnapshot = snapshot;
+    movingSnapshot.roundElapsedSamples = 5.0;
+    movingSnapshot.voices[0].movingIncrement = 0.25;
+    movingSnapshot.voices[0].shape = 1.0f;
+    std::vector<DrawCommand> movingCommands;
+    synth::ui::BuildGangedRandomLfoCommands(movingSnapshot, bounds, movingCommands);
+    const auto movingDot = std::find_if(movingCommands.begin(), movingCommands.end(), [](const auto& command) {
+        return command.kind == DrawCommand::Kind::FillEllipse && command.color == synth::Color::Cyan;
+    });
+    Require(movingDot != movingCommands.end(), "moving interval has a present dot");
+    const float shapedQuarter = synth::ShapedInterpolate(0.0f, 1.0f, 1.0f, 0.25);
+    RequireNear(movingDot->bounds.y + movingDot->bounds.height * 0.5f,
+                bounds.y + 4.0f + (bounds.height - 8.0f) * (1.0f - shapedQuarter),
+                0.01f,
+                "moving path and dot use shared shaped interpolation");
+
+    auto boundarySnapshot = snapshot;
+    boundarySnapshot.roundElapsedSamples = 4.0;
+    boundarySnapshot.voices[0].waitingIncrement = 0.3;
+    boundarySnapshot.voices[0].movingIncrement = 0.6;
+    std::vector<DrawCommand> boundaryCommands;
+    synth::ui::BuildGangedRandomLfoCommands(boundarySnapshot, bounds, boundaryCommands);
+    const auto boundaryDot = std::find_if(boundaryCommands.begin(), boundaryCommands.end(), [](const auto& command) {
+        return command.kind == DrawCommand::Kind::FillEllipse && command.color == synth::Color::Cyan;
+    });
+    Require(boundaryDot != boundaryCommands.end(), "discarded-remainder boundary has a dot");
+    RequireNear(boundaryDot->bounds.y + boundaryDot->bounds.height * 0.5f,
+                bounds.y + 4.0f + (bounds.height - 8.0f),
+                0.01f,
+                "waiting boundary remains aligned after discarded remainder");
+    boundarySnapshot.roundElapsedSamples = 5.0;
+    boundaryCommands.clear();
+    synth::ui::BuildGangedRandomLfoCommands(boundarySnapshot, bounds, boundaryCommands);
+    const auto postBoundaryDot = std::find_if(
+        boundaryCommands.begin(), boundaryCommands.end(), [](const auto& command) {
+            return command.kind == DrawCommand::Kind::FillEllipse && command.color == synth::Color::Cyan;
+        });
+    Require(postBoundaryDot != boundaryCommands.end(), "post-boundary movement has a dot");
+    RequireNear(postBoundaryDot->bounds.y + postBoundaryDot->bounds.height * 0.5f,
+                bounds.y + 4.0f + (bounds.height - 8.0f) * 0.4f,
+                0.01f,
+                "discarded wait remainder does not shift moving interpolation");
+
+    const Bounds resized{1.0f, 2.0f, 37.0f, 23.0f};
+    std::vector<DrawCommand> resizedCommands;
+    auto veryLong = snapshot;
+    veryLong.voices[1].waitingIncrement = 1.0 / 1000000000.0;
+    synth::ui::BuildGangedRandomLfoCommands(veryLong, resized, resizedCommands);
+    Require(resizedCommands.size() <= synth::ui::GangedRandomLfoGeometry::MaximumCommandCount<2>(),
+            "geometry ceiling is independent of round duration");
+    for (const DrawCommand& command : resizedCommands)
+    {
+        if (command.kind == DrawCommand::Kind::Polyline)
+        {
+            Require(command.points.size() <= synth::ui::GangedRandomLfoGeometry::kPathSegments + 1,
+                    "ganged polyline point ceiling is fixed");
+            for (const auto point : command.points)
+            {
+                Require(PointInside(point, resized), "resized ganged geometry remains clipped");
+            }
+        }
+    }
+
+    auto invalid = snapshot;
+    invalid.voices[0].movingIncrement = 0.0;
+    std::vector<DrawCommand> invalidCommands;
+    synth::ui::BuildGangedRandomLfoCommands(invalid, bounds, invalidCommands);
+    Require(invalidCommands.size() == 2, "invalid increment fails closed to background and axis");
+    invalid = snapshot;
+    invalid.voices[0].source = std::numeric_limits<float>::quiet_NaN();
+    invalidCommands.clear();
+    synth::ui::BuildGangedRandomLfoCommands(invalid, bounds, invalidCommands);
+    Require(invalidCommands.size() == 2, "nonfinite value fails closed to background and axis");
+    invalid = snapshot;
+    invalid.sampleRate = 0.0;
+    invalidCommands.clear();
+    synth::ui::BuildGangedRandomLfoCommands(invalid, bounds, invalidCommands);
+    Require(invalidCommands.size() == 2, "nonpositive sample rate fails closed to background and axis");
+    invalid = snapshot;
+    invalid.voices[0].waitingIncrement = std::numeric_limits<double>::denorm_min();
+    invalidCommands.clear();
+    synth::ui::BuildGangedRandomLfoCommands(invalid, bounds, invalidCommands);
+    Require(invalidCommands.size() == 2, "nonfinite derived duration fails closed to background and axis");
+
+    synth::GangedRandomLfoUiState<2> retainedState;
+    retainedState.revision.store(1, std::memory_order_release);
+    synth::ui::GangedRandomLfoVisualizer<2> visualizer(retainedState);
+    visualizer.SetBounds(bounds);
+    Require(visualizer.Draw().size() == 2, "unstable retained state fails closed");
+}
+
 }  // namespace
 
 int main()
 {
+    TestGangedRandomLfoVisualizer();
     synth::Parameter::UIState parameterState(1, 1, 1);
     parameterState.connected.store(true);
     parameterState.voiceCount.store(1);
