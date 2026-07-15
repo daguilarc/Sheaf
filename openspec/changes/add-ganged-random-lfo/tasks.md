@@ -7,11 +7,11 @@
 
 ## 2. Voice and Ganged Processor
 
-- [ ] 2.1 Add failing state-machine tests for default-done construction, reset chaining, waiting holds/crossing, shaped movement, overshoot clamping, exact done output, and done holds.
-- [ ] 2.2 Implement the randomness-free `GangedRandomLfoVoice` with explicit waiting, moving, and done state and make its tests pass.
-- [ ] 2.3 Add failing ganged-processor tests for shared waiting/moving centers, shared target center, independent `[0,1]` uniform shapes, canonical logical RNG order (waiting center/rates, moving center/rates, target center/targets, shapes, each per-voice group in voice order), unipolar target clamping, heavy-tail epsilon bounds, slowest-voice round gating, first-process seeding, and reproducibility from a fixed test seed/source.
-- [ ] 2.4 Implement the fixed-array `GangedRandomLfoProcessor<VoiceCount>`, sample-rate/config validation, round elapsed tracking, random engine/test hook, and unipolar output accessors without a module wrapper.
-- [ ] 2.5 Add allocation/real-time structural coverage for repeated per-sample processing and round turnover, then remove any lock, I/O, logging, dynamic storage, or process-time allocation found.
+- [x] 2.1 Add failing state-machine tests for default-done construction, reset chaining, waiting holds/crossing, shaped movement, overshoot clamping, exact done output, and done holds.
+- [x] 2.2 Implement the randomness-free `GangedRandomLfoVoice` with explicit waiting, moving, and done state and make its tests pass.
+- [x] 2.3 Add failing ganged-processor tests for shared waiting/moving centers, shared target center, independent `[0,1]` uniform shapes, canonical logical RNG order (waiting center/rates, moving center/rates, target center/targets, shapes, each per-voice group in voice order), unipolar target clamping, heavy-tail epsilon bounds, slowest-voice round gating, first-process seeding, and reproducibility from a fixed test seed/source.
+- [x] 2.4 Implement the fixed-array `GangedRandomLfoProcessor<VoiceCount>`, sample-rate/config validation, round elapsed tracking, random engine/test hook, and unipolar output accessors without a module wrapper.
+- [x] 2.5 Add allocation/real-time structural coverage for repeated per-sample processing and round turnover, then remove any lock, I/O, logging, dynamic storage, or process-time allocation found.
 
 ## 3. Coherent UI State and Predictive Visualizer
 

@@ -49,7 +49,7 @@ After each task's native implementation and verification pass, obtain Claude app
 
 **Interfaces:** Produce `GangedRandomLfoVoice::State { Waiting, Moving, Done }`, `VoiceInput { double waitingIncrement; double movingIncrement; float shape; }`, `void Reset(float newTarget)`, `float Process(const VoiceInput&)`, and `template<size_t VoiceCount, class DrawSource = DefaultRandomDrawSource> class GangedRandomLfoProcessor`. The gang exposes `Prepare(double sampleRate)`, `Process(const GangedRandomLfoInput&)`, `float Output(size_t voice) const`, and fixed arrays of voices/inputs; its input contains waiting/moving `RandomTimingConfig` and `float targetInternalSigma`.
 
-- [ ] **Task 2 — implement OpenSpec 2.1–2.5 (`sdsp-35`, processor portion of `sdsp-36`) test-first.**
+- [x] **Task 2 — implement OpenSpec 2.1–2.5 (`sdsp-35`, processor portion of `sdsp-36`) test-first.**
 
   1. Add state-transition tests for default Done, Reset source chaining, waiting hold/crossing, shaped move, overshoot, exact target, and Done hold. Add gang tests whose injected draws assert the canonical sequence `waiting center, waiting rates[0..N), moving center, moving rates[0..N), target center, target deviations[0..N), shapes[0..N)`; cover `[0,1]` target clamp, uniform shapes, first-call seeding, fixed-seed reproduction, epsilon-bound heavy tails, and slowest-voice gating.
   2. Red: run `make -C projects/synth build/dsp_tests`; expect missing voice/gang APIs.
