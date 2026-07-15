@@ -105,7 +105,7 @@ After each task's native implementation and verification pass, obtain Claude app
 
 **Interfaces:** `MiniAppUiModel` carries the retained gang UI-state address/snapshot access. `MiniAppDraw` divides the waveform row into three bounded panels and directly calls the shared command builder for the third; `MiniAppUI` continues to expose the distinct retained visualizer only for modulation-depth underlays.
 
-- [ ] **Task 6 — implement OpenSpec 4.3–4.4 (remaining `spm-71`) test-first.**
+- [x] **Task 6 — implement OpenSpec 4.3–4.4 (remaining `spm-71`) test-first.**
 
   1. Add portable UI tests at default and resized bounds asserting bounded VCO, ordinary-LFO, and gang panels, cyan/orange full-round paths and dots, and no aliasing of the retained underlay visualizer as a second placement. Add JUCE/browser parity tests for three-panel command consumption and unchanged controls/topology.
   2. Red: run `make -C projects/synth build/portable_ui_tests`, `make -C projects/synth build/miniapp_system_tests`, `make -C projects/synth/apps/miniapp test`, and `make -C projects/synth/browser browser-miniapp`; expect two-panel layout or new JUCE/browser parity failures.

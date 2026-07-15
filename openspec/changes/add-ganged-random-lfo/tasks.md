@@ -25,8 +25,8 @@
 
 - [x] 4.1 Add failing MiniApp system tests for four modulation sources with existing indexes preserved, two ganged outputs at index `3`, the requested waiting/moving/target configuration, negotiated sample-rate setup, per-sample processing order, and unchanged parameter/page/bank/scene/gesture topology.
 - [x] 4.2 Integrate one `GangedRandomLfoProcessor<2>` into `MiniAppCore`, register its cyan/orange outputs and retained address-stable modulation-depth visualizer, recalculate group capacity, and publish its UI state at the existing block boundary.
-- [ ] 4.3 Add failing portable MiniApp UI tests for bounded VCO, ordinary LFO, and ganged-random-LFO main panels at default and resized bounds, including cyan/orange full-round paths and present dots.
-- [ ] 4.4 Update the MiniApp layout/model/surface to render the third main panel directly from the gang snapshot while retaining a distinct owned visualizer placement for modulation-depth underlays.
+- [x] 4.3 Add failing portable MiniApp UI tests for bounded VCO, ordinary LFO, and ganged-random-LFO main panels at default and resized bounds, including cyan/orange full-round paths and present dots.
+- [x] 4.4 Update the MiniApp layout/model/surface to render the third main panel directly from the gang snapshot while retaining a distinct owned visualizer placement for modulation-depth underlays.
 
 ## 5. Verification and Documentation
 
