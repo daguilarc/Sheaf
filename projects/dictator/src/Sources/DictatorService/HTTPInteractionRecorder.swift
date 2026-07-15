@@ -14,7 +14,8 @@ enum HTTPInteractionRecorder
             let systemPromptPath = runtimeConfig.systemPrompt
             let systemPromptBody = ResolvedSystemPromptBody(
                 runtimeConfig: runtimeConfig,
-                promptPath: systemPromptPath
+                promptPath: systemPromptPath,
+                rawTranscript: record.response.raw_transcript
             )
             var context = record.optionalContext ?? [:]
             context["request_source"] = "http"
@@ -36,6 +37,10 @@ enum HTTPInteractionRecorder
                 systemPromptBody: systemPromptBody,
                 model: effectiveModel,
                 provider: effectiveProvider,
+                reasoningEffort: ReasoningEffort(
+                    forProvider: effectiveProvider,
+                    runtimeConfiguration: runtimeConfiguration
+                ),
                 optionalContext: context,
                 editSummary: record.response.edit_summary,
                 uncertaintyFlags: record.response.uncertainty_flags,
@@ -63,7 +68,8 @@ enum HTTPInteractionRecorder
             let systemPromptPath = runtimeConfig.systemPrompt
             let systemPromptBody = ResolvedSystemPromptBody(
                 runtimeConfig: runtimeConfig,
-                promptPath: systemPromptPath
+                promptPath: systemPromptPath,
+                rawTranscript: ""
             )
             var context = record.optionalContext ?? [:]
             context["request_source"] = "http"
@@ -85,6 +91,10 @@ enum HTTPInteractionRecorder
                 systemPromptBody: systemPromptBody,
                 model: model,
                 provider: provider,
+                reasoningEffort: ReasoningEffort(
+                    forProvider: provider,
+                    runtimeConfiguration: runtimeConfiguration
+                ),
                 optionalContext: context,
                 editSummary: "Dictation pipeline failed.",
                 uncertaintyFlags: [],
@@ -101,11 +111,21 @@ enum HTTPInteractionRecorder
         }
     }
 
-    private static func ResolvedSystemPromptBody(runtimeConfig: RuntimeConfigFile, promptPath: String) -> String
+    private static func ResolvedSystemPromptBody(
+        runtimeConfig: RuntimeConfigFile,
+        promptPath: String,
+        rawTranscript: String
+    ) -> String
     {
-        SystemPromptCatalog(
+        let catalog = SystemPromptCatalog(
             directoryURL: runtimeConfig.resolvedSystemPromptsDirectoryURL()
-        ).resolvePrompt(named: promptPath)
+        )
+        return InjectableRulesPromptBuilder.buildSystemPrompt(
+            basePrompt: catalog.resolvePrompt(named: promptPath),
+            rawTranscript: rawTranscript,
+            injectableRules: runtimeConfig.injectableRules,
+            promptCatalog: catalog
+        )
     }
 
     private static func Model(
@@ -116,5 +136,17 @@ enum HTTPInteractionRecorder
         provider == LLMRuntimeConfiguration.Provider.openai.rawValue
             ? runtimeConfiguration.openAIModel
             : runtimeConfiguration.ollamaModel
+    }
+
+    private static func ReasoningEffort(
+        forProvider provider: String,
+        runtimeConfiguration: LLMRuntimeConfiguration
+    ) -> String?
+    {
+        guard provider == LLMRuntimeConfiguration.Provider.openai.rawValue else
+        {
+            return nil
+        }
+        return runtimeConfiguration.reasoningEffort?.rawValue
     }
 }

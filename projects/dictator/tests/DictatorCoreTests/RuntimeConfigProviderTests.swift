@@ -171,6 +171,65 @@ final class RuntimeConfigProviderTests: XCTestCase {
         XCTAssertEqual(decoded.dictatorServerPort, RuntimeConfigFile.defaultDictatorServerPort)
         XCTAssertEqual(decoded.dictatorServerEnabled, RuntimeConfigFile.defaultDictatorServerEnabled)
         XCTAssertEqual(decoded.injectableRules, [:])
+        XCTAssertNil(decoded.reasoningEffort)
+    }
+
+    func testRuntimeConfigDecodesAndEncodesReasoningEffort() throws {
+        let json = """
+        {
+          "version": 2,
+          "cloud_model": "gpt-5.6-luna",
+          "local_model": "qwen2.5:7b-instruct",
+          "reasoning_effort": "low",
+          "use_cloud": true,
+          "updated_at": "2026-07-13T00:00:00Z"
+        }
+        """.data(using: .utf8)!
+
+        let decoded = try JSONDecoder().decode(RuntimeConfigFile.self, from: json)
+        XCTAssertEqual(decoded.reasoningEffort, .low)
+
+        let encoded = try JSONEncoder().encode(decoded)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        XCTAssertEqual(object["reasoning_effort"] as? String, "low")
+    }
+
+    func testRuntimeConfigRejectsUnsupportedReasoningEffort() throws {
+        let json = """
+        {
+          "version": 2,
+          "cloud_model": "gpt-5.6-luna",
+          "local_model": "qwen2.5:7b-instruct",
+          "reasoning_effort": "ultra",
+          "use_cloud": true,
+          "updated_at": "2026-07-13T00:00:00Z"
+        }
+        """.data(using: .utf8)!
+
+        XCTAssertThrowsError(try JSONDecoder().decode(RuntimeConfigFile.self, from: json))
+    }
+
+    func testUnrelatedPatchPreservesReasoningEffort() async throws {
+        let tempDir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let fileURL = tempDir.appendingPathComponent("runtime-config.json")
+        let seed = RuntimeConfigFile(
+            version: 2,
+            cloudModel: "gpt-5.6-luna",
+            localModel: "qwen2.5:7b-instruct",
+            reasoningEffort: .low,
+            useCloud: true,
+            updatedAt: "2026-07-13T00:00:00Z"
+        )
+        let store = RuntimeConfigStore(fileURL: fileURL)
+        try store.save(seed)
+        let provider = RuntimeConfigProvider(store: store, defaultStore: nil)
+
+        let updated = try await provider.applyPatch(RuntimeConfigPatch(systemPrompt: "conservative.md"))
+
+        XCTAssertEqual(updated.reasoningEffort, .low)
+        XCTAssertEqual(try store.load()?.reasoningEffort, .low)
     }
 
     func testRuntimeConfigAudioInputDefaultsToNilWhenMissingNullOrBlank() throws {

@@ -40,6 +40,7 @@ public final class RuntimeConfigRefinementEngine: RefinementEngine {
                     ),
                     openAIEngine: OpenAIRefinementEngine(
                         model: configuration.openAIModel,
+                        reasoningEffort: configuration.reasoningEffort,
                         systemPrompt: systemPrompt,
                         secretStore: secretStore,
                         session: session

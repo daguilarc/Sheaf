@@ -36,6 +36,7 @@ per interaction (success or failure). Files are append-only runtime output
     "system_prompt_body": "<full prompt text snapshot>",
     "model": "qwen2.5:7b-instruct",
     "provider": "ollama",
+    "reasoning_effort": null,
     "optional_context": {
       "request_source": "http",
       "session_id": "session-1",
@@ -67,6 +68,7 @@ Field semantics:
 | `payload.final_output` | Refined/inserted text; on failures, the error description |
 | `payload.system_prompt_path` / `_body` | Prompt file used and a full body snapshot at interaction time |
 | `payload.provider` / `model` | Effective refinement provider (`openai` / `ollama`) and model, post-fallback |
+| `payload.reasoning_effort` | Effective OpenAI reasoning effort, or `null` for non-OpenAI/omitted effort |
 | `payload.optional_context` | String map: client context headers plus writer-added keys — `request_source` (`http` or `launchpad`), `session_id`, and for HTTP `request_id`, `sample_rate`, `locale`; Launchpad adds captured `selected_text` / `active_app` / `active_site` when present |
 | `payload.fallback_used` | `true` when Ollama→OpenAI fallback ran; absent/`null` when unknown |
 | `payload.error_message` | Set only on failure records; its presence is what the web API maps to `status: "error"` |

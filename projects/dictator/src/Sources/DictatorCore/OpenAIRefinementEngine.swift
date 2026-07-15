@@ -2,17 +2,20 @@ import Foundation
 
 public final class OpenAIRefinementEngine: RefinementEngine {
     private let model: String
+    private let reasoningEffort: OpenAIReasoningEffort?
     private let systemPrompt: String
     private let secretStore: SecretStore
     private let session: URLSession
 
     public init(
         model: String = "gpt-4.1-mini",
+        reasoningEffort: OpenAIReasoningEffort? = nil,
         systemPrompt: String? = nil,
         secretStore: SecretStore,
         session: URLSession = .shared
     ) {
         self.model = model
+        self.reasoningEffort = reasoningEffort
         self.systemPrompt = systemPrompt ?? RefinementPromptBuilder.fallbackInstructions
         self.secretStore = secretStore
         self.session = session
@@ -25,6 +28,7 @@ public final class OpenAIRefinementEngine: RefinementEngine {
 
         let payload = ResponsesPayload(
             model: model,
+            reasoning: reasoningEffort.map(ResponsesReasoning.init),
             instructions: systemPrompt,
             input: Self.buildInput(
                 rawTranscript: request.raw_transcript,
@@ -89,8 +93,13 @@ public final class OpenAIRefinementEngine: RefinementEngine {
 
     private struct ResponsesPayload: Encodable {
         let model: String
+        let reasoning: ResponsesReasoning?
         let instructions: String
         let input: String
+    }
+
+    private struct ResponsesReasoning: Encodable {
+        let effort: OpenAIReasoningEffort
     }
 
     private struct ResponsesOutput: Decodable {

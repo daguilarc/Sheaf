@@ -16,6 +16,7 @@ public struct LLMRuntimeConfiguration: Sendable {
     public let ollamaModel: String
     public let fallback: Fallback
     public let openAIModel: String
+    public let reasoningEffort: OpenAIReasoningEffort?
     public let systemPrompt: String
     public let ollamaBinPath: String
 
@@ -25,6 +26,7 @@ public struct LLMRuntimeConfiguration: Sendable {
         ollamaModel: String,
         fallback: Fallback,
         openAIModel: String,
+        reasoningEffort: OpenAIReasoningEffort? = nil,
         systemPrompt: String = SystemPromptCatalog.defaultPromptFile,
         ollamaBinPath: String = RuntimeConfigFile.defaultOllamaBinPath
     ) {
@@ -33,6 +35,7 @@ public struct LLMRuntimeConfiguration: Sendable {
         self.ollamaModel = ollamaModel
         self.fallback = fallback
         self.openAIModel = openAIModel
+        self.reasoningEffort = reasoningEffort
         self.systemPrompt = systemPrompt
         self.ollamaBinPath = ollamaBinPath
     }
@@ -44,6 +47,7 @@ public struct LLMRuntimeConfiguration: Sendable {
             ollamaModel: runtimeConfig.localModel,
             fallback: Fallback(rawValue: normalized(runtimeConfig.fallbackMode)) ?? .openai,
             openAIModel: runtimeConfig.cloudModel,
+            reasoningEffort: runtimeConfig.reasoningEffort,
             systemPrompt: runtimeConfig.systemPrompt,
             ollamaBinPath: runtimeConfig.ollamaBinPath
         )

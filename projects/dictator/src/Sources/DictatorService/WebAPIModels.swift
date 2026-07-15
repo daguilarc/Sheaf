@@ -201,6 +201,7 @@ struct WebAPIJSON
         let status: String
         let provider: String
         let model: String
+        let reasoning_effort: String?
         let system_prompt_path: String
         let system_prompt_body: String
         let whisper_output: String

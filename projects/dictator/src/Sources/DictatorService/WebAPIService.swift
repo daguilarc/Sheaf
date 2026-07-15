@@ -560,6 +560,7 @@ actor WebAPIService
             status: interaction.errorMessage == nil ? "success" : "error",
             provider: interaction.provider,
             model: interaction.model,
+            reasoning_effort: interaction.reasoningEffort,
             system_prompt_path: interaction.systemPromptPath,
             system_prompt_body: interaction.systemPromptBody,
             whisper_output: interaction.whisperOutput,

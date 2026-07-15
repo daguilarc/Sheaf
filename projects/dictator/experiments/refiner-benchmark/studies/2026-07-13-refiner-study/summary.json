@@ -1,0 +1,107 @@
+{
+  "categories": {
+    "analyses": {
+      "bytes": 2216439,
+      "files": 4,
+      "records": 2300
+    },
+    "inputs": {
+      "bytes": 1036520,
+      "files": 3,
+      "records": 927
+    },
+    "judgments": {
+      "bytes": 1470510,
+      "files": 6,
+      "records": 960
+    },
+    "runs": {
+      "bytes": 11291175,
+      "files": 49,
+      "records": 6267
+    }
+  },
+  "configurations": [
+    "gpt41-current",
+    "gpt41-v3",
+    "gpt41-v3-real160",
+    "gpt41-v4-full",
+    "gpt55-v3-none",
+    "gpt55-v3-none-real160",
+    "gpt55-v4-none",
+    "gpt55-v4-none-full",
+    "gpt55-v5-low",
+    "gpt55-v5-low-real-markers",
+    "gpt55-v5-low-t2",
+    "gpt55-v5-low-t3",
+    "gpt55-v5-low-t4",
+    "gpt55-v5-low-t5",
+    "gpt55-v5-none",
+    "luna-claude-v2-low-real160",
+    "luna-claude-v2-low-t1",
+    "luna-claude-v2-low-t2",
+    "luna-claude-v2-low-t3",
+    "luna-claude-v2-low-t4",
+    "luna-claude-v2-low-t5",
+    "luna-none-v2",
+    "luna-v3-low",
+    "luna-v3-low-real160",
+    "luna-v3-none",
+    "luna-v3-none-real160",
+    "luna-v4-low",
+    "luna-v4-low-full",
+    "luna-v4-none",
+    "luna-v4-none-full",
+    "luna-v4base-low",
+    "luna-v4base-low-full",
+    "luna-v4base-low-t2",
+    "luna-v4base-low-t3",
+    "luna-v4base-low-t4",
+    "luna-v4base-low-t5",
+    "luna-v5-low",
+    "luna-v5-low-real-markers",
+    "luna-v5-low-t2",
+    "luna-v5-low-t3",
+    "luna-v5-low-t4",
+    "luna-v5-low-t5",
+    "luna-v5-none",
+    "luna-v5base-low",
+    "luna-v5base-low-t2",
+    "luna-v5base-low-t3",
+    "luna-v5base-low-t4",
+    "luna-v5base-low-t5",
+    "terra-v3-none"
+  ],
+  "errors": 32,
+  "models": [
+    "gpt-4.1-mini",
+    "gpt-4.1-mini-2025-04-14",
+    "gpt-5.5",
+    "gpt-5.5-2026-04-23",
+    "gpt-5.6-luna",
+    "gpt-5.6-terra"
+  ],
+  "private_artifacts": 62,
+  "reasoning_efforts": [
+    "low",
+    "none",
+    "omit"
+  ],
+  "recommendation": {
+    "base_prompt": "projects/dictator/experiments/refiner-benchmark/prompts/conservative_v4.md",
+    "blark_prompt": "projects/dictator/experiments/refiner-benchmark/prompts/blark_v3.md",
+    "borg_prompt": "projects/dictator/experiments/refiner-benchmark/prompts/borg_v4.md",
+    "model": "gpt-5.6-luna",
+    "reasoning_effort": "low",
+    "status": "selected-for-rollout"
+  },
+  "reports": [
+    "projects/dictator/docs/experiments/2026-07-13-refiner-benchmark.md",
+    "projects/dictator/docs/experiments/2026-07-13-awkward-dictation-review.md",
+    "projects/dictator/docs/experiments/2026-07-15-luna-low-rollout.md",
+    "projects/dictator/docs/experiments/2026-07-15-marker-parser-design.md"
+  ],
+  "schema_version": 1,
+  "study_id": "2026-07-13-refiner-study",
+  "tracked_artifacts": 23
+}

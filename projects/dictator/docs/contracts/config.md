@@ -17,6 +17,7 @@ when a key is missing or, for strings, blank):
 | `version` | int | `1` when absent; bootstrap writes `2` | Config schema version |
 | `audio_input` | string or null | `null` | Dictator recording input selector; missing, null, or blank after trimming uses the system default input |
 | `cloud_model` | string | `gpt-4.1-mini` | OpenAI model when `use_cloud` |
+| `reasoning_effort` | string or absent | absent | Optional OpenAI reasoning effort: `none`, `low`, `medium`, `high`, `xhigh`, or `max`; omitted from the request when absent |
 | `local_model` | string | `qwen2.5:7b-instruct` | Ollama model otherwise |
 | `system_prompt` | string | `intent_refiner_v1.md` | Primary prompt file, relative to the prompts dir |
 | `auxiliary_system_prompt_1` | string | `intent_refiner_v1.md` | Launchpad auxiliary slot 1 |
@@ -39,6 +40,15 @@ when a key is missing or, for strings, blank):
 Decode leniency: only `use_cloud` and `updated_at` are required. A legacy
 `"model"` key (version-1 files) seeds both `cloud_model` and `local_model`
 when those are absent.
+
+`reasoning_effort` is validated as a closed vocabulary when configuration is
+decoded. When configured, it is sent to the OpenAI Responses API as
+`"reasoning": {"effort": "<value>"}` for both primary cloud refinement and
+Ollama-to-OpenAI fallback. When absent, Dictator omits the entire `reasoning`
+request member, preserving compatibility with models such as GPT-4.1-mini
+that do not accept reasoning configuration. Dictator does not maintain a
+model-to-effort compatibility table; unsupported combinations surface as an
+OpenAI request error.
 
 `audio_input` selects the macOS input used by Dictator recording surfaces,
 including the web dashboard and Launchpad record pad. Missing, `null`, or
@@ -132,5 +142,6 @@ writes key material, and key material never appears in any response.
 - `src/Sources/DictatorCore/APIKeysStore.swift`, `APIKeyResolver.swift` —
   secrets read path.
 - Tests: `tests/DictatorCoreTests/RuntimeConfigProviderTests.swift`,
-  `RuntimeConfigurationManagerTests.swift`, `APIKeysStoreTests.swift`,
+  `LLMRuntimeConfigurationTests.swift`, `OpenAIRefinementEngineTests.swift`,
+  `RuntimeConfigurationManagerTests.swift`, `APIKeysStoreTests.swift`, and
   `APIKeyResolverTests.swift`.

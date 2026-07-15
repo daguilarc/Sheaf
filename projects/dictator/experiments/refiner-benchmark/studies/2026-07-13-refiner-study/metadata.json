@@ -1,0 +1,46 @@
+{
+  "dataset_statuses": {
+    "inputs/": "distribution-sample",
+    "datasets/synthetic.jsonl": "synthetic-contract",
+    "datasets/reviewed/": "human-reviewed-only"
+  },
+  "recommendation": {
+    "base_prompt": "projects/dictator/experiments/refiner-benchmark/prompts/conservative_v4.md",
+    "blark_prompt": "projects/dictator/experiments/refiner-benchmark/prompts/blark_v3.md",
+    "borg_prompt": "projects/dictator/experiments/refiner-benchmark/prompts/borg_v4.md",
+    "model": "gpt-5.6-luna",
+    "reasoning_effort": "low",
+    "status": "selected-for-rollout"
+  },
+  "reports": [
+    "projects/dictator/docs/experiments/2026-07-13-refiner-benchmark.md",
+    "projects/dictator/docs/experiments/2026-07-13-awkward-dictation-review.md",
+    "projects/dictator/docs/experiments/2026-07-15-luna-low-rollout.md",
+    "projects/dictator/docs/experiments/2026-07-15-marker-parser-design.md"
+  ],
+  "tracked_paths": [
+    "projects/dictator/experiments/refiner-benchmark/README.md",
+    "projects/dictator/experiments/refiner-benchmark/benchmark.py",
+    "projects/dictator/experiments/refiner-benchmark/rank_awkwardness.py",
+    "projects/dictator/experiments/refiner-benchmark/review_cases.py",
+    "projects/dictator/experiments/refiner-benchmark/study_artifacts.py",
+    "projects/dictator/experiments/refiner-benchmark/test_review_cases.py",
+    "projects/dictator/experiments/refiner-benchmark/test_rollout_configuration.py",
+    "projects/dictator/experiments/refiner-benchmark/test_study_artifacts.py",
+    "projects/dictator/experiments/refiner-benchmark/datasets/synthetic.jsonl",
+    "projects/dictator/experiments/refiner-benchmark/datasets/reviewed/README.md",
+    "projects/dictator/experiments/refiner-benchmark/prompts/blark_v2.md",
+    "projects/dictator/experiments/refiner-benchmark/prompts/blark_v3.md",
+    "projects/dictator/experiments/refiner-benchmark/prompts/borg_v2.md",
+    "projects/dictator/experiments/refiner-benchmark/prompts/borg_v3.md",
+    "projects/dictator/experiments/refiner-benchmark/prompts/borg_v4.md",
+    "projects/dictator/experiments/refiner-benchmark/prompts/conservative_v2.md",
+    "projects/dictator/experiments/refiner-benchmark/prompts/conservative_v3.md",
+    "projects/dictator/experiments/refiner-benchmark/prompts/conservative_v4.md",
+    "projects/dictator/experiments/refiner-benchmark/prompts/conservative_v5.md",
+    "projects/dictator/docs/experiments/2026-07-13-refiner-benchmark.md",
+    "projects/dictator/docs/experiments/2026-07-13-awkward-dictation-review.md",
+    "projects/dictator/docs/experiments/2026-07-15-luna-low-rollout.md",
+    "projects/dictator/docs/experiments/2026-07-15-marker-parser-design.md"
+  ]
+}

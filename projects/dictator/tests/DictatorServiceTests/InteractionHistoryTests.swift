@@ -155,17 +155,66 @@ final class InteractionHistoryTests: XCTestCase {
         XCTAssertEqual(reloaded?.fallbackUsed, true)
     }
 
+    func testPersistenceRoundTripsReasoningEffortField() async throws {
+        let tempDir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let buffer = DictationInteractionBuffer(maxBytes: 1024 * 1024)
+        let store = InteractionHistoryStore(
+            buffer: buffer,
+            dataDirectoryURL: tempDir,
+            initialLoadBytes: 1024 * 1024,
+            onChanged: nil
+        )
+        await store.startInitialLoadIfNeeded()
+        await store.waitUntilReady()
+
+        let interaction = makeInteraction(
+            occurredAt: isoDate("2026-02-24T12:10:00Z"),
+            whisperOutput: "hello",
+            finalOutput: "Hello.",
+            provider: "openai",
+            model: "gpt-5.6-luna",
+            reasoningEffort: "low"
+        )
+        await store.append(interaction)
+
+        let reloadedBuffer = DictationInteractionBuffer(maxBytes: 1024 * 1024)
+        let reloadedStore = InteractionHistoryStore(
+            buffer: reloadedBuffer,
+            dataDirectoryURL: tempDir,
+            initialLoadBytes: 1024 * 1024,
+            onChanged: nil
+        )
+        await reloadedStore.startInitialLoadIfNeeded()
+        await reloadedStore.waitUntilReady()
+
+        XCTAssertEqual(reloadedBuffer.snapshot().first?.reasoningEffort, "low")
+    }
+
     func testHTTPSuccessRecorderUsesAuthoritativeProviderMetadata() async throws {
         let tempDir = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: tempDir) }
+        try "base prompt".write(
+            to: tempDir.appendingPathComponent("intent_refiner_v1.md"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try "Blark rule body".write(
+            to: tempDir.appendingPathComponent("blark.md"),
+            atomically: true,
+            encoding: .utf8
+        )
 
         let runtimeConfig = RuntimeConfigFile(
             cloudModel: "gpt-4.1-mini",
             localModel: "qwen2.5:7b-instruct",
+            reasoningEffort: .low,
             useCloud: false,
             fallbackMode: "openai",
             dataDir: tempDir.path,
             systemPromptsDir: tempDir.path,
+            injectableRules: ["blark": "blark.md"],
             updatedAt: "2026-02-24T12:00:00Z"
         )
         let configURL = tempDir.appendingPathComponent("dictator.json")
@@ -191,8 +240,8 @@ final class InteractionHistoryTests: XCTestCase {
         await handler(
             DictationHTTPSuccessRecord(
                 response: DictateResponse(
-                    raw_transcript: "hello",
-                    revised_text: "Hello.",
+                    raw_transcript: "blark hammer hello world blark",
+                    revised_text: "HelloWorld",
                     edit_summary: "capitalized without provider words",
                     uncertainty_flags: []
                 ),
@@ -215,6 +264,9 @@ final class InteractionHistoryTests: XCTestCase {
         let recorded = buffer.snapshot().first
         XCTAssertEqual(recorded?.provider, "openai")
         XCTAssertEqual(recorded?.model, "gpt-4.1-mini")
+        XCTAssertEqual(recorded?.reasoningEffort, "low")
+        XCTAssertTrue(recorded?.systemPromptBody.contains("Source: blark.md") == true)
+        XCTAssertTrue(recorded?.systemPromptBody.contains("Blark rule body") == true)
         XCTAssertEqual(recorded?.fallbackUsed, true)
         XCTAssertEqual(recorded?.editSummary, "capitalized without provider words")
     }
@@ -225,6 +277,7 @@ final class InteractionHistoryTests: XCTestCase {
         finalOutput: String,
         provider: String = "ollama",
         model: String = "qwen2.5:7b-instruct",
+        reasoningEffort: String? = nil,
         fallbackUsed: Bool? = nil,
         errorMessage: String? = nil
     ) -> DictationInteraction {
@@ -238,6 +291,7 @@ final class InteractionHistoryTests: XCTestCase {
             systemPromptBody: "prompt",
             model: model,
             provider: provider,
+            reasoningEffort: reasoningEffort,
             optionalContext: [:],
             editSummary: "summary",
             uncertaintyFlags: [],

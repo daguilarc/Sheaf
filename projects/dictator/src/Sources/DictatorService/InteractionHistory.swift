@@ -24,6 +24,7 @@ struct DictationInteraction: Sendable, Equatable {
     let systemPromptBody: String
     let model: String
     let provider: String
+    let reasoningEffort: String?
     let optionalContext: [String: String]
     let editSummary: String
     let uncertaintyFlags: [String]
@@ -42,6 +43,7 @@ struct DictationInteraction: Sendable, Equatable {
         systemPromptBody: String,
         model: String,
         provider: String,
+        reasoningEffort: String? = nil,
         optionalContext: [String: String],
         editSummary: String,
         uncertaintyFlags: [String],
@@ -58,6 +60,7 @@ struct DictationInteraction: Sendable, Equatable {
         self.systemPromptBody = systemPromptBody
         self.model = model
         self.provider = provider
+        self.reasoningEffort = reasoningEffort
         self.optionalContext = optionalContext
         self.editSummary = editSummary
         self.uncertaintyFlags = uncertaintyFlags
@@ -248,6 +251,7 @@ private struct StoredInteractionPayload: Codable {
     let systemPromptBody: String?
     let model: String?
     let provider: String?
+    let reasoningEffort: String?
     let optionalContext: [String: String]?
     let editSummary: String?
     let uncertaintyFlags: [String]?
@@ -265,6 +269,7 @@ private struct StoredInteractionPayload: Codable {
         case systemPromptBody = "system_prompt_body"
         case model
         case provider
+        case reasoningEffort = "reasoning_effort"
         case optionalContext = "optional_context"
         case editSummary = "edit_summary"
         case uncertaintyFlags = "uncertainty_flags"
@@ -283,6 +288,7 @@ private struct StoredInteractionPayload: Codable {
         systemPromptBody = interaction.systemPromptBody
         model = interaction.model
         provider = interaction.provider
+        reasoningEffort = interaction.reasoningEffort
         optionalContext = interaction.optionalContext
         editSummary = interaction.editSummary
         uncertaintyFlags = interaction.uncertaintyFlags
@@ -305,6 +311,7 @@ private struct StoredInteractionPayload: Codable {
             systemPromptBody: systemPromptBody ?? "",
             model: model ?? "unknown",
             provider: provider ?? "unknown",
+            reasoningEffort: reasoningEffort,
             optionalContext: optionalContext ?? [:],
             editSummary: editSummary ?? "",
             uncertaintyFlags: uncertaintyFlags ?? [],

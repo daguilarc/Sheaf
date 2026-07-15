@@ -515,6 +515,7 @@ final class LaunchpadServiceController
                     dictatedCall: dictatedCall,
                     optionalContext: requestContext,
                     runtimeConfiguration: runtimeConfiguration,
+                    runtimeConfig: runtimeConfig,
                     systemPromptPath: effectiveSystemPromptPath,
                     systemPromptBody: effectiveSystemPromptBody,
                     insertMs: insertMs,
@@ -820,6 +821,7 @@ final class LaunchpadServiceController
                     ),
                     openAIEngine: OpenAIRefinementEngine(
                         model: configurationOverride.openAIModel,
+                        reasoningEffort: configurationOverride.reasoningEffort,
                         systemPrompt: systemPrompt,
                         secretStore: secretStore
                     ),
@@ -856,6 +858,7 @@ final class LaunchpadServiceController
         dictatedCall: DictateCallResult,
         optionalContext: [String: String]?,
         runtimeConfiguration: LLMRuntimeConfiguration,
+        runtimeConfig: RuntimeConfigFile,
         systemPromptPath: String,
         systemPromptBody: String,
         insertMs: Int,
@@ -872,6 +875,15 @@ final class LaunchpadServiceController
             ?? runtimeConfiguration.provider.rawValue
         let effectiveModel = dictatedCall.providerMetadata?.model
             ?? model(forProvider: effectiveProvider, runtimeConfiguration: runtimeConfiguration)
+        let promptCatalog = SystemPromptCatalog(
+            directoryURL: runtimeConfig.resolvedSystemPromptsDirectoryURL(currentDirectoryPath: repoRoot.path)
+        )
+        let effectiveSystemPromptBody = InjectableRulesPromptBuilder.buildSystemPrompt(
+            basePrompt: systemPromptBody,
+            rawTranscript: response.raw_transcript,
+            injectableRules: runtimeConfig.injectableRules,
+            promptCatalog: promptCatalog
+        )
 
         let interaction = DictationInteraction(
             whisperOutput: response.raw_transcript,
@@ -883,9 +895,13 @@ final class LaunchpadServiceController
                 optionalContext: optionalContext
             ),
             systemPromptPath: systemPromptPath,
-            systemPromptBody: systemPromptBody,
+            systemPromptBody: effectiveSystemPromptBody,
             model: effectiveModel,
             provider: effectiveProvider,
+            reasoningEffort: reasoningEffort(
+                forProvider: effectiveProvider,
+                runtimeConfiguration: runtimeConfiguration
+            ),
             optionalContext: context,
             editSummary: response.edit_summary,
             uncertaintyFlags: response.uncertainty_flags,
@@ -921,6 +937,10 @@ final class LaunchpadServiceController
             systemPromptBody: systemPromptBody,
             model: model(forProvider: provider, runtimeConfiguration: runtimeConfiguration),
             provider: provider,
+            reasoningEffort: reasoningEffort(
+                forProvider: provider,
+                runtimeConfiguration: runtimeConfiguration
+            ),
             optionalContext: optionalContext ?? [:],
             editSummary: "Dictation pipeline failed.",
             uncertaintyFlags: ["pipeline_error"],
@@ -936,6 +956,18 @@ final class LaunchpadServiceController
         _ = sampleRate
         _ = locale
         await interactionStore.append(interaction)
+    }
+
+    private func reasoningEffort(
+        forProvider provider: String,
+        runtimeConfiguration: LLMRuntimeConfiguration
+    ) -> String?
+    {
+        guard provider == LLMRuntimeConfiguration.Provider.openai.rawValue else
+        {
+            return nil
+        }
+        return runtimeConfiguration.reasoningEffort?.rawValue
     }
 
     private func interactionHistoryMode(

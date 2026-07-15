@@ -26,6 +26,7 @@ final class LLMRuntimeConfigurationTests: XCTestCase {
             version: 2,
             cloudModel: "gpt-4.1",
             localModel: "qwen2.5-coder:7b",
+            reasoningEffort: .low,
             useCloud: true,
             fallbackMode: "none",
             ollamaHost: "http://localhost:11434/",
@@ -39,6 +40,20 @@ final class LLMRuntimeConfigurationTests: XCTestCase {
         XCTAssertEqual(config.ollamaModel, "qwen2.5-coder:7b")
         XCTAssertEqual(config.fallback, .none)
         XCTAssertEqual(config.openAIModel, "gpt-4.1")
+        XCTAssertEqual(config.reasoningEffort, .low)
         XCTAssertEqual(config.ollamaBinPath, "/tmp/ollama")
+    }
+
+    func testFromRuntimeConfigPreservesAbsentReasoningEffort() {
+        let runtime = RuntimeConfigFile(
+            version: 2,
+            cloudModel: "gpt-4.1-mini",
+            localModel: "qwen2.5:7b-instruct",
+            useCloud: true,
+            updatedAt: "2026-03-03T00:00:00Z"
+        )
+
+        let config = LLMRuntimeConfiguration.fromRuntimeConfig(runtime)
+        XCTAssertNil(config.reasoningEffort)
     }
 }

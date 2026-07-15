@@ -1,5 +1,14 @@
 import Foundation
 
+public enum OpenAIReasoningEffort: String, Codable, Sendable, CaseIterable {
+    case none
+    case low
+    case medium
+    case high
+    case xhigh
+    case max
+}
+
 public struct RuntimeConfigFile: Codable, Sendable, Equatable {
     public static let defaultInteractionsBufferBytes: Int = 100 * 1024 * 1024
     public static let defaultOllamaHost = "http://127.0.0.1:11434"
@@ -20,6 +29,7 @@ public struct RuntimeConfigFile: Codable, Sendable, Equatable {
     public let version: Int
     public let cloudModel: String
     public let localModel: String
+    public let reasoningEffort: OpenAIReasoningEffort?
     public let audioInput: String?
     public let systemPrompt: String
     public let auxiliarySystemPrompt1: String
@@ -47,6 +57,7 @@ public struct RuntimeConfigFile: Codable, Sendable, Equatable {
         version: Int = 2,
         cloudModel: String,
         localModel: String,
+        reasoningEffort: OpenAIReasoningEffort? = nil,
         audioInput: String? = Self.defaultAudioInput,
         systemPrompt: String = SystemPromptCatalog.defaultPromptFile,
         auxiliarySystemPrompt1: String = SystemPromptCatalog.defaultPromptFile,
@@ -69,6 +80,7 @@ public struct RuntimeConfigFile: Codable, Sendable, Equatable {
         self.version = version
         self.cloudModel = cloudModel
         self.localModel = localModel
+        self.reasoningEffort = reasoningEffort
         self.audioInput = Self.normalizedNonEmpty(audioInput)
         self.systemPrompt = systemPrompt
         self.auxiliarySystemPrompt1 = auxiliarySystemPrompt1
@@ -104,6 +116,7 @@ public struct RuntimeConfigFile: Codable, Sendable, Equatable {
         case model
         case cloudModel = "cloud_model"
         case localModel = "local_model"
+        case reasoningEffort = "reasoning_effort"
         case audioInput = "audio_input"
         case audioInputCamel = "audioInput"
         case systemPrompt = "system_prompt"
@@ -134,6 +147,7 @@ public struct RuntimeConfigFile: Codable, Sendable, Equatable {
 
         let cloudModel = try container.decodeIfPresent(String.self, forKey: .cloudModel)
         let localModel = try container.decodeIfPresent(String.self, forKey: .localModel)
+        let reasoningEffort = try container.decodeIfPresent(OpenAIReasoningEffort.self, forKey: .reasoningEffort)
         let audioInput = try container.decodeIfPresent(String.self, forKey: .audioInput)
             ?? container.decodeIfPresent(String.self, forKey: .audioInputCamel)
         let systemPrompt = try container.decodeIfPresent(String.self, forKey: .systemPrompt)
@@ -175,6 +189,7 @@ public struct RuntimeConfigFile: Codable, Sendable, Equatable {
             version: version,
             cloudModel: resolvedCloudModel,
             localModel: resolvedLocalModel,
+            reasoningEffort: reasoningEffort,
             audioInput: audioInput,
             systemPrompt: resolvedSystemPrompt,
             auxiliarySystemPrompt1: resolvedAuxiliarySystemPrompt1,
@@ -201,6 +216,7 @@ public struct RuntimeConfigFile: Codable, Sendable, Equatable {
         try container.encode(version, forKey: .version)
         try container.encode(cloudModel, forKey: .cloudModel)
         try container.encode(localModel, forKey: .localModel)
+        try container.encodeIfPresent(reasoningEffort, forKey: .reasoningEffort)
         try container.encodeIfPresent(audioInput, forKey: .audioInput)
         try container.encode(systemPrompt, forKey: .systemPrompt)
         try container.encode(auxiliarySystemPrompt1, forKey: .auxiliarySystemPrompt1)
@@ -608,6 +624,7 @@ public actor RuntimeConfigProvider {
             version: runtimeConfig.version,
             cloudModel: resolvedCloudModel,
             localModel: resolvedLocalModel,
+            reasoningEffort: runtimeConfig.reasoningEffort,
             audioInput: resolvedAudioInput,
             systemPrompt: resolvedSystemPrompt,
             auxiliarySystemPrompt1: resolvedAuxiliarySystemPrompt1,
@@ -651,6 +668,7 @@ public actor RuntimeConfigProvider {
             version: defaultConfig.version,
             cloudModel: defaultConfig.cloudModel,
             localModel: defaultConfig.localModel,
+            reasoningEffort: defaultConfig.reasoningEffort,
             audioInput: defaultConfig.audioInput,
             systemPrompt: defaultConfig.systemPrompt,
             auxiliarySystemPrompt1: defaultConfig.auxiliarySystemPrompt1,
