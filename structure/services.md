@@ -10,10 +10,10 @@ Not every project needs a service. CLI-only, library-only, documentation-only, o
 
 ```json
 {
-  "name": "example",
-  "host": "127.0.0.1",
-  "port": 9000,
-  "command": "node projects/example/src/server.js",
+  "name": "quest-runner",
+  "host": "0.0.0.0",
+  "port": 9002,
+  "command": "make quest-runner-run",
   "home_path": "/dashboard"
 }
 ```
@@ -29,7 +29,7 @@ Optional fields:
 
 - `home_path`: relative URL or URI for the service's main human-facing page, such as `/dashboard`.
 
-`home_path` should be relative to the service origin formed from `host` and `port`. For example, a service on `127.0.0.1:9000` with `home_path` set to `/dashboard` has a home page at `http://127.0.0.1:9000/dashboard`.
+`home_path` should be relative to the service origin formed from `host` and `port`. For example, the Quest Runner entry above is reachable locally at `http://127.0.0.1:9002/dashboard`; clients use a reachable loopback address in place of the `0.0.0.0` bind address.
 If a project exposes an optional web UI, set `home_path` to that UI path so command hub tools can link to it. See [Web UI](webui.md).
 
 ## Boot Rules

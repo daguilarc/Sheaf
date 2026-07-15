@@ -21,7 +21,7 @@ make quest-runner-test
 make quest-runner-run
 ```
 
-The service listens on port `9002`. Open the dashboard at
+The registered service listens on port `9002` by default. Open the dashboard at
 `http://localhost:9002/dashboard`.
 
 ## Documentation

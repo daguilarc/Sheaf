@@ -128,17 +128,20 @@ skill.
 the repository root, and execs:
 
 ```bash
-.venv/bin/python -m quest_runner_service --port 9002
+.venv/bin/python -m quest_runner_service
 ```
 
 stdout/stderr are appended to `logs/quest-runner/quest_runner_stdout.log` and
 `logs/quest-runner/quest_runner_stderr.log`; the rotating service log is
-`logs/quest-runner/quest-runner.log`. `python -m quest_runner_service` also
-accepts `--host` (default `0.0.0.0`).
+`logs/quest-runner/quest-runner.log`. On startup, the service reads the
+`quest-runner` host and port from `config/services.json`; startup fails if the
+registry or endpoint is missing or invalid. `python -m quest_runner_service`
+also accepts deliberate per-field `--host` and `--port` overrides.
 
 Registration: `config/services.json` declares the `quest-runner` service with
 port `9002`, `home_path` `/dashboard`, and command `make quest-runner-run`.
-The CLI resolves the service URL from this file.
+The service resolves its default bind endpoint from this entry, and the CLI
+resolves the service URL from it.
 
 Verify and stop:
 

@@ -30,11 +30,19 @@ WHEN `POST /exit` is received, THE service SHALL respond `200` with `{"status": 
 - **THEN** the service responds `200` with `{"status": "exiting"}` and terminates the process approximately 0.1 seconds later after the response is flushed
 
 ### Requirement: svc-3 — Startup and binding: start command
-THE service SHALL start via `python -m quest_runner_service`, binding the HTTP server to `--host` (default `0.0.0.0`) and `--port` (default `9002`).
+THE service SHALL start via `python -m quest_runner_service`, load `config/services.json` from its source repository, require exactly one `quest-runner` entry with a non-empty string `host` and an integer `port` from 1 through 65535 (booleans are invalid), and bind to that registered endpoint; IF the registry file is missing, unreadable, malformed, not an array, lacks the entry, duplicates the entry, or contains an invalid endpoint, THEN startup SHALL fail clearly without a fallback. Explicit `--host` and `--port` arguments SHALL override only their corresponding registered fields, and the final endpoint SHALL satisfy the same host and port validation.
 
-#### Scenario: Service started
+#### Scenario: Service started from registered endpoint
 - **WHEN** `python -m quest_runner_service` is invoked
-- **THEN** the HTTP server binds to `--host` (default `0.0.0.0`) and `--port` (default `9002`)
+- **THEN** the HTTP server binds to the host and port of the sole valid `quest-runner` entry in `config/services.json`
+
+#### Scenario: Registry cannot provide a valid endpoint
+- **WHEN** the registry is missing, unreadable, malformed, not an array, lacks the entry, duplicates the entry, or gives it an invalid host or port
+- **THEN** startup fails clearly without binding a fallback endpoint
+
+#### Scenario: One endpoint field is overridden
+- **WHEN** `--host <host>` or `--port <port>` is supplied with a valid registered endpoint
+- **THEN** the supplied field overrides its registered value and the other field retains its registered value
 
 ### Requirement: svc-4 — Startup and binding: repository root
 THE service SHALL operate on the repository checkout that contains its own source tree (the checkout root is derived from the package location, not from the working directory): quests are read from and written to that checkout's `projects/` tree and logs to its `logs/` tree.
@@ -44,11 +52,11 @@ THE service SHALL operate on the repository checkout that contains its own sourc
 - **THEN** it reads and writes quests from the checkout's `projects/` tree and logs to its `logs/` tree, with the root derived from the package location not the working directory
 
 ### Requirement: svc-5 — Startup and binding: launcher
-WHEN started with `start_quest_runner.sh` (equivalently `make -C projects/quest-runner run` or repo-root `make quest-runner-run`), THE launcher SHALL create `projects/quest-runner/.venv` if missing, install `requirements.txt` into it, and exec the service on port `9002` with stdout and stderr appended to `logs/quest-runner/quest_runner_stdout.log` and `logs/quest-runner/quest_runner_stderr.log`.
+WHEN started with `start_quest_runner.sh` (equivalently `make -C projects/quest-runner run` or repo-root `make quest-runner-run`), THE launcher SHALL create `projects/quest-runner/.venv` if missing, install `requirements.txt` into it, and exec the service without a host or port override, with stdout and stderr appended to `logs/quest-runner/quest_runner_stdout.log` and `logs/quest-runner/quest_runner_stderr.log`.
 
 #### Scenario: Launcher invoked
 - **WHEN** the service is started with `start_quest_runner.sh` (or equivalent `make` targets)
-- **THEN** the launcher creates `projects/quest-runner/.venv` if missing, installs `requirements.txt` into it, and execs the service on port `9002` with stdout and stderr appended to `logs/quest-runner/quest_runner_stdout.log` and `logs/quest-runner/quest_runner_stderr.log`
+- **THEN** the launcher creates `projects/quest-runner/.venv` if missing, installs `requirements.txt` into it, and execs the service without overriding the registered endpoint, with stdout and stderr appended to `logs/quest-runner/quest_runner_stdout.log` and `logs/quest-runner/quest_runner_stderr.log`
 
 ### Requirement: svc-6 — Startup and binding: application log
 THE service SHALL write its application log to `logs/quest-runner/quest-runner.log` (INFO level, rotated at 10 MiB with 5 backups) and SHALL log every HTTP request as `HTTP <METHOD> <path>`.
@@ -193,9 +201,10 @@ No request body required. Response `200`:
 
 ### Service process flags
 
-`python -m quest_runner_service [--port <int>] [--host <addr>]` — defaults
-`9002` and `0.0.0.0`. These are the only process flags; there is no flag for
-the repository root (svc-4).
+`python -m quest_runner_service [--port <int>] [--host <addr>]` — absent flags
+use the corresponding values from the registered `quest-runner` endpoint;
+present flags override their corresponding fields. These are the only process
+flags; there is no flag for the repository root (svc-4).
 
 ### CLI global flags
 
@@ -228,9 +237,9 @@ injected, used by tests).
 Because the service holds run locks, run tracking, and deferred re-run
 schedules purely in memory, a restart forgets active-run bookkeeping and any
 scheduled deferred runs; durable quest state lives only in the git checkouts
-(see [quest-lifecycle](../quest-runner-quest-lifecycle/spec.md)). The service does not read
-`config/services.json` on boot — its port comes from the start script — so the
-registry and the launcher must agree on `9002`.
+(see [quest-lifecycle](../quest-runner-quest-lifecycle/spec.md)). At boot,
+`_resolve_bind_endpoint` strictly loads the registered endpoint and applies
+optional per-field process overrides before the server is constructed.
 
 `start_quest_runner.sh` (project root) owns venv bootstrap and stdout/stderr
 redirection; `projects/quest-runner/Makefile` target `run` and repo-root
