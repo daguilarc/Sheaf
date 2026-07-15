@@ -6,6 +6,7 @@
 #include "synth/DspScope.hpp"
 #include "synth/GangedRandomLfoVisualizer.hpp"
 #include "synth/MidiController.hpp"
+#include "synth/NoiseWaveformVisualizer.hpp"
 
 #include <algorithm>
 #include <array>
@@ -466,6 +467,142 @@ int main()
     hiddenBuilder.Root("viz.hidden.root", {0.0f, 0.0f, 100.0f, 100.0f})
         .Visualizer("viz.hidden.node", &visualizer);
     Require(FindNodeById(hiddenBuilder.Build(), "viz.hidden.node") == nullptr, "hidden visualizer node absent");
+
+    {
+        synth::ui::NoiseWaveformVisualizer left(synth::Color::Yellow, 1234);
+        synth::ui::NoiseWaveformVisualizer right(synth::Color::Yellow, 1234);
+        const synth::ui::Bounds bounds{10.0f, 20.0f, 64.0f, 30.0f};
+        left.SetBounds(bounds);
+        right.SetBounds(bounds);
+        const auto leftCommands = left.Draw();
+        const auto rightCommands = right.Draw();
+        Require(leftCommands.size() == 1, "noise visualizer emits one polyline");
+        Require(rightCommands.size() == 1, "same seed emits one noise polyline");
+        Require(leftCommands[0].kind == synth::ui::DrawCommand::Kind::Polyline,
+                "noise visualizer command is a polyline");
+        Require(leftCommands[0].color == synth::Color::Yellow,
+                "noise visualizer retains its color");
+        Require(leftCommands[0].points.size() == 65,
+                "noise visualizer covers integer columns including both edges");
+        Require(leftCommands[0].points.size() == rightCommands[0].points.size(),
+                "same seed produces same point count");
+        for (std::size_t point = 0; point < leftCommands[0].points.size(); ++point)
+        {
+            RequireNear(leftCommands[0].points[point].x,
+                        bounds.x + static_cast<float>(point), 0.0001f,
+                        "noise visualizer x matches integer column");
+            RequireNear(leftCommands[0].points[point].x, rightCommands[0].points[point].x,
+                        0.0001f, "same seed reproduces x");
+            RequireNear(leftCommands[0].points[point].y, rightCommands[0].points[point].y,
+                        0.0001f, "same seed reproduces y");
+            Require(leftCommands[0].points[point].y > bounds.y,
+                    "noise visualizer y is above the open lower edge");
+            Require(leftCommands[0].points[point].y < bounds.y + bounds.height,
+                    "noise visualizer y is below the open upper edge");
+        }
+    }
+
+    {
+        synth::ui::NoiseWaveformVisualizer visualizer(synth::Color::White, 99);
+        visualizer.SetBounds({0.0f, 0.0f, 16.0f, 10.0f});
+        const auto first = visualizer.Draw();
+        const auto second = visualizer.Draw();
+        Require(first.size() == 1 && second.size() == 1,
+                "consecutive visible noise draws emit one polyline each");
+        bool differs = false;
+        for (std::size_t point = 0; point < first[0].points.size(); ++point)
+        {
+            differs = differs || first[0].points[point].y != second[0].points[point].y;
+        }
+        Require(differs, "noise visualizer regenerates geometry on every visible draw");
+    }
+
+    {
+        synth::ui::NoiseWaveformVisualizer visualizer(synth::Color::White, 7);
+        visualizer.SetBounds({3.0f, 4.0f, 8.0f, 9.0f});
+        Require(visualizer.Visible(), "noise visualizer is intrinsically visible");
+        Require(!visualizer.Draw().empty(), "visible noise visualizer draws");
+        visualizer.SetVisible(false);
+        Require(visualizer.Draw().empty(), "hidden noise visualizer does not draw");
+        visualizer.SetVisible(true);
+        for (const synth::ui::Bounds invalid : {
+                 synth::ui::Bounds{0.0f, 0.0f, 0.0f, 1.0f},
+                 synth::ui::Bounds{0.0f, 0.0f, 1.0f, 0.0f},
+                 synth::ui::Bounds{0.0f, 0.0f, -1.0f, 1.0f},
+                 synth::ui::Bounds{0.0f, 0.0f, std::numeric_limits<float>::infinity(), 1.0f},
+                 synth::ui::Bounds{0.0f, 0.0f, 1.0f, std::numeric_limits<float>::infinity()},
+                 synth::ui::Bounds{std::numeric_limits<float>::quiet_NaN(), 0.0f, 1.0f, 1.0f},
+                 synth::ui::Bounds{0.0f, std::numeric_limits<float>::quiet_NaN(), 1.0f, 1.0f}})
+        {
+            visualizer.SetBounds(invalid);
+            Require(visualizer.Draw().empty(), "invalid noise visualizer bounds are safe");
+        }
+    }
+
+    {
+        synth::ui::NoiseWaveformVisualizer visualizer(synth::Color::Cyan, 123);
+        const synth::ui::Bounds bounds{5.5f, 8.0f, 2.25f, 12.0f};
+        visualizer.SetBounds(bounds);
+        const auto commands = visualizer.Draw();
+        Require(commands.size() == 1, "fractional-width noise visualizer emits one polyline");
+        Require(commands[0].points.size() == 4,
+                "fractional-width noise visualizer covers columns and right edge");
+        const std::array<float, 4> expectedX{bounds.x, bounds.x + 1.0f,
+                                             bounds.x + 2.0f, bounds.x + bounds.width};
+        for (std::size_t point = 0; point < expectedX.size(); ++point)
+        {
+            RequireNear(commands[0].points[point].x, expectedX[point], 0.0001f,
+                        "fractional-width noise visualizer x matches expected coverage");
+            Require(PointInside(commands[0].points[point], bounds),
+                    "fractional-width noise visualizer point stays in bounds");
+            if (point > 0)
+            {
+                Require(commands[0].points[point - 1].x < commands[0].points[point].x,
+                        "fractional-width noise visualizer x coordinates are distinct");
+            }
+        }
+    }
+
+    {
+        static_assert(!std::is_copy_constructible_v<synth::ui::NoiseWaveformVisualizer>);
+        static_assert(!std::is_copy_assignable_v<synth::ui::NoiseWaveformVisualizer>);
+        static_assert(!std::is_move_constructible_v<synth::ui::NoiseWaveformVisualizer>);
+        static_assert(!std::is_move_assignable_v<synth::ui::NoiseWaveformVisualizer>);
+
+        synth::ui::NoiseWaveformVisualizer visualizer(synth::Color::Orange, 456);
+        const synth::ui::Bounds bounds{14.0f, 15.0f, 24.0f, 25.0f};
+        visualizer.SetBounds(bounds);
+        synth::ui::Visualizer* const stableAddress = &visualizer;
+        synth::ui::Builder builder;
+        builder.Root("noise.stack.root", {0.0f, 0.0f, 100.0f, 100.0f})
+            .Visualizer("noise.stack.visualizer", &visualizer)
+            .DrawInteractive("noise.stack.encoder", bounds,
+                             {synth::ui::DrawCommand::StrokeEllipse(bounds, synth::Color::White, 1.0f)},
+                             synth::ui::Action::Named("drag"));
+        const synth::ui::NodeTree tree = builder.Build();
+        Require(stableAddress == static_cast<synth::ui::Visualizer*>(&visualizer),
+                "noise visualizer remains address-stable through builder composition");
+        const synth::ui::Node* root = FindNodeById(tree, "noise.stack.root");
+        const synth::ui::Node* node = FindNodeById(tree, "noise.stack.visualizer");
+        Require(node != nullptr, "noise visualizer builder emits a draw node");
+        RequireNear(node->bounds.x, bounds.x, 0.0001f, "noise builder preserves bounds x");
+        RequireNear(node->bounds.y, bounds.y, 0.0001f, "noise builder preserves bounds y");
+        RequireNear(node->bounds.width, bounds.width, 0.0001f, "noise builder preserves bounds width");
+        RequireNear(node->bounds.height, bounds.height, 0.0001f, "noise builder preserves bounds height");
+        Require(root != nullptr && root->children.size() == 2,
+                "noise visualizer and encoder are both appended");
+        Require(root->children[0] == synth::ui::NodeId("noise.stack.visualizer"),
+                "noise visualizer draw node precedes encoder node");
+        Require(root->children[1] == synth::ui::NodeId("noise.stack.encoder"),
+                "noise encoder node follows visualizer draw node");
+
+        visualizer.SetVisible(false);
+        synth::ui::Builder hiddenBuilder;
+        hiddenBuilder.Root("noise.hidden.root", {0.0f, 0.0f, 100.0f, 100.0f})
+            .Visualizer("noise.hidden.visualizer", &visualizer);
+        Require(FindNodeById(hiddenBuilder.Build(), "noise.hidden.visualizer") == nullptr,
+                "hidden noise visualizer emits no builder node");
+    }
 
     synth::ScopeWriter scope(4, 128);
     FillScopeWriter(scope, 4);
