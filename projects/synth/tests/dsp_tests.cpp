@@ -6,6 +6,7 @@
 #include "synth/DspNumbers.hpp"
 #include "synth/DspOla.hpp"
 #include "synth/DspOscillators.hpp"
+#include "synth/DspRandomLfo.hpp"
 #include "synth/DspResynthesis.hpp"
 #include "synth/DspScope.hpp"
 #include "synth/DspSpectral.hpp"
@@ -22,6 +23,7 @@
 #include <cstdint>
 #include <exception>
 #include <iostream>
+#include <limits>
 #include <numbers>
 #include <sstream>
 #include <stdexcept>
@@ -95,6 +97,29 @@ void RequireFinite(float actual, const char* expr) {
 }
 
 #define REQUIRE_NEAR(actual, expected, tolerance) RequireNear((actual), (expected), (tolerance), #actual)
+
+struct ScriptedRandomLfoDrawSource {
+    struct NormalCall {
+        double mean = 0.0;
+        double sigma = 0.0;
+    };
+
+    std::vector<double> normalResults;
+    std::vector<NormalCall> normalCalls;
+    std::size_t nextNormalResult = 0;
+
+    double Normal(double mean, double sigma) {
+        normalCalls.push_back({mean, sigma});
+        if (nextNormalResult >= normalResults.size()) {
+            throw std::runtime_error("scripted normal draw exhausted");
+        }
+        return normalResults[nextNormalResult++];
+    }
+
+    float Uniform01() {
+        throw std::runtime_error("unexpected uniform draw");
+    }
+};
 
 } // namespace
 
@@ -266,6 +291,124 @@ TEST_CASE(math_supports_multiple_precisions_and_periodic_trig) {
     REQUIRE_NEAR(polar.real(), 2.0f, 0.0001f);
     REQUIRE_NEAR(std::abs(synth::DspMath<10>::RootOfUnityByIndex(0)), 1.0f, 0.0001f);
     REQUIRE_NEAR(synth::DspMath<10>::HannKernel(0.0f).real(), 0.5f, 0.001f);
+}
+
+TEST_CASE(shaped_interpolate_endpoints_and_landmarks) {
+    REQUIRE_NEAR(synth::ShapedInterpolate(-0.25f, 0.75f, 0.4f, 0.0), -0.25f, 0.000001f);
+    REQUIRE_NEAR(synth::ShapedInterpolate(-0.25f, 0.75f, 0.4f, 1.0), 0.75f, 0.000001f);
+
+    constexpr double t = 0.25;
+    REQUIRE_NEAR(synth::ShapedInterpolate(0.0f, 1.0f, 0.0f, t), 0.25f, 0.000001f);
+    const float smoothT = 0.5f
+        - 0.5f * synth::DefaultDspMath::Cos2Pi(0.5f * static_cast<float>(t));
+    REQUIRE_NEAR(synth::ShapedInterpolate(0.0f, 1.0f, 1.0f, t), smoothT, 0.000001f);
+    REQUIRE_NEAR(
+        synth::ShapedInterpolate(0.0f, 1.0f, 0.25f, t),
+        0.25f * smoothT + 0.75f * static_cast<float>(t),
+        0.000001f);
+
+    REQUIRE_NEAR(synth::ShapedInterpolate(0.0f, 1.0f, -2.0f, 0.25), 0.25f, 0.000001f);
+    REQUIRE_NEAR(synth::ShapedInterpolate(0.0f, 1.0f, 2.0f, 0.25), smoothT, 0.000001f);
+    REQUIRE_NEAR(synth::ShapedInterpolate(0.0f, 1.0f, 0.5f, -0.25), 0.0f, 0.000001f);
+    REQUIRE_NEAR(synth::ShapedInterpolate(0.0f, 1.0f, 0.5f, 1.25), 1.0f, 0.000001f);
+}
+
+TEST_CASE(shaped_interpolate_preserves_double_progress) {
+    using ShapedInterpolateFunction = float (*)(float, float, float, double);
+    static_assert(std::is_same_v<decltype(&synth::ShapedInterpolate), ShapedInterpolateFunction>);
+
+    const double progress = 0.123456789012345;
+    const double originalProgress = progress;
+    REQUIRE_TRUE(static_cast<double>(static_cast<float>(progress)) != progress);
+
+    const float narrowedProgress = static_cast<float>(std::clamp(progress, 0.0, 1.0));
+    const float smoothT = 0.5f - 0.5f * synth::DefaultDspMath::Cos2Pi(0.5f * narrowedProgress);
+    const float shapedT = 0.75f * smoothT + 0.25f * narrowedProgress;
+    const float expected = -0.5f * (1.0f - shapedT) + 0.5f * shapedT;
+    REQUIRE_NEAR(synth::ShapedInterpolate(-0.5f, 0.5f, 0.75f, progress), expected, 0.000001f);
+    REQUIRE_TRUE(progress == originalProgress);
+}
+
+TEST_CASE(correlated_increments_use_reciprocal_center_and_hz_sigma) {
+    ScriptedRandomLfoDrawSource draws{
+        .normalResults = {-2.0, 0.4, -0.6},
+    };
+    const synth::RandomTimingConfig config{
+        .muSeconds = 2.0,
+        .sigmaSeconds = 0.5,
+        .internalSigmaHz = 0.125,
+    };
+
+    const auto increments = synth::SampleCorrelatedIncrements<2>(10.0, config, draws);
+
+    REQUIRE_NEAR(increments[0], 0.04, 1.0e-12);
+    REQUIRE_NEAR(increments[1], 0.06, 1.0e-12);
+    REQUIRE_TRUE(draws.normalCalls.size() == 3);
+    REQUIRE_NEAR(draws.normalCalls[0].mean, 2.0, 0.0);
+    REQUIRE_NEAR(draws.normalCalls[0].sigma, 0.5, 0.0);
+    REQUIRE_NEAR(draws.normalCalls[1].mean, 0.5, 1.0e-12);
+    REQUIRE_NEAR(draws.normalCalls[1].sigma, 0.125, 0.0);
+    REQUIRE_NEAR(draws.normalCalls[2].mean, 0.5, 1.0e-12);
+    REQUIRE_NEAR(draws.normalCalls[2].sigma, 0.125, 0.0);
+}
+
+TEST_CASE(correlated_increments_floor_near_zero_rate) {
+    constexpr double sampleRate = 8.0;
+    ScriptedRandomLfoDrawSource draws{
+        .normalResults = {0.0, 0.0, 1.0e-30},
+    };
+    const synth::RandomTimingConfig config{
+        .muSeconds = 2.0,
+        .sigmaSeconds = 0.5,
+        .internalSigmaHz = 0.125,
+    };
+
+    const auto increments = synth::SampleCorrelatedIncrements<2>(sampleRate, config, draws);
+    const double epsilonIncrement = 1.0 / (sampleRate * 3600.0);
+
+    REQUIRE_NEAR(draws.normalCalls[1].mean, sampleRate, 0.0);
+    REQUIRE_NEAR(draws.normalCalls[2].mean, sampleRate, 0.0);
+    REQUIRE_NEAR(increments[0], epsilonIncrement, 0.0);
+    REQUIRE_NEAR(increments[1], epsilonIncrement, 0.0);
+    REQUIRE_TRUE(std::ceil(1.0 / epsilonIncrement) == std::ceil(sampleRate * 3600.0));
+}
+
+TEST_CASE(correlated_increments_reject_invalid_config) {
+    const synth::RandomTimingConfig valid{
+        .muSeconds = 2.0,
+        .sigmaSeconds = 0.5,
+        .internalSigmaHz = 0.125,
+    };
+    auto rejects = [](double sampleRate, const synth::RandomTimingConfig& config) {
+        ScriptedRandomLfoDrawSource draws{.normalResults = {2.0, 0.5}};
+        try {
+            (void)synth::SampleCorrelatedIncrements<1>(sampleRate, config, draws);
+        } catch (const std::invalid_argument&) {
+            return true;
+        }
+        return false;
+    };
+
+    REQUIRE_TRUE(rejects(0.0, valid));
+    REQUIRE_TRUE(rejects(-48000.0, valid));
+    REQUIRE_TRUE(rejects(std::numeric_limits<double>::infinity(), valid));
+    REQUIRE_TRUE(rejects(std::numeric_limits<double>::quiet_NaN(), valid));
+
+    auto invalid = valid;
+    invalid.muSeconds = std::numeric_limits<double>::quiet_NaN();
+    REQUIRE_TRUE(rejects(48000.0, invalid));
+    invalid = valid;
+    invalid.sigmaSeconds = -0.01;
+    REQUIRE_TRUE(rejects(48000.0, invalid));
+    invalid = valid;
+    invalid.sigmaSeconds = std::numeric_limits<double>::infinity();
+    REQUIRE_TRUE(rejects(48000.0, invalid));
+    invalid = valid;
+    invalid.internalSigmaHz = -0.01;
+    REQUIRE_TRUE(rejects(48000.0, invalid));
+    invalid = valid;
+    invalid.internalSigmaHz = std::numeric_limits<double>::quiet_NaN();
+    REQUIRE_TRUE(rejects(48000.0, invalid));
 }
 
 TEST_CASE(nary_numbers_are_elementwise_and_have_aliases) {

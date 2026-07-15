@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <complex>
@@ -134,5 +135,18 @@ struct DspMath {
 };
 
 using DefaultDspMath = DspMath<12>;
+
+inline float ShapedInterpolate(
+    float source,
+    float target,
+    float shape,
+    double t) {
+    const double clampedT = std::clamp(t, 0.0, 1.0);
+    const float outputT = static_cast<float>(clampedT);
+    const float clampedShape = std::clamp(shape, 0.0f, 1.0f);
+    const float smoothT = 0.5f - 0.5f * DefaultDspMath::Cos2Pi(0.5f * outputT);
+    const float shapedT = clampedShape * smoothT + (1.0f - clampedShape) * outputT;
+    return target * shapedT + (1.0f - shapedT) * source;
+}
 
 } // namespace synth
