@@ -17,9 +17,9 @@
 
 - [x] 3.1 Add failing snapshot tests for complete per-gang/per-voice actual state, assigned voice colors, odd/even revision publication, stable-read retry, and absence of scope/history storage.
 - [x] 3.2 Implement gang UI-state publication and the bounded coherent snapshot reader, and publish all state required to reconstruct the current round.
-- [ ] 3.3 Add failing JUCE-free geometry tests for `ceil(1 / increment)` max-duration x scaling, wait/move/early-finish path evaluation, shared present x, reconstructed-path dots at that x, solid-past/dashed-future segmentation, sub-sample/drawing tolerance at discarded-remainder state boundaries, per-voice colors, clipping, fixed geometry bounds, and invalid/unstable snapshot handling.
-- [ ] 3.4 Implement the shared predictive command builder and non-owning `GangedRandomLfoVisualizer` using existing polyline and ellipse commands plus the shared shaped-interpolation helper.
-- [ ] 3.5 Verify the predictive visualizer compiles and produces equivalent portable geometry through the existing JUCE and browser command consumers without extending the draw protocol.
+- [x] 3.3 Add failing JUCE-free geometry tests for `ceil(1 / increment)` max-duration x scaling, wait/move/early-finish path evaluation, shared present x, reconstructed-path dots at that x, solid-past/dashed-future segmentation, sub-sample/drawing tolerance at discarded-remainder state boundaries, per-voice colors, clipping, fixed geometry bounds, and invalid/unstable snapshot handling.
+- [x] 3.4 Implement the shared predictive command builder and non-owning `GangedRandomLfoVisualizer` using existing polyline and ellipse commands plus the shared shaped-interpolation helper.
+- [x] 3.5 Verify the predictive visualizer compiles and produces equivalent portable geometry through the existing JUCE and browser command consumers without extending the draw protocol.
 
 ## 4. MiniApp Integration
 

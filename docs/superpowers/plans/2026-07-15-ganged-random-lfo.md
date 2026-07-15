@@ -77,7 +77,7 @@ After each task's native implementation and verification pass, obtain Claude app
 
 **Interfaces:** Produce a non-owning `template<size_t VoiceCount> GangedRandomLfoVisualizer` referencing retained gang UI state and `BuildGangedRandomLfoCommands(snapshot, bounds, commandBuffer)`. Geometry uses existing polyline commands with caller-clipped point lists plus existing filled-ellipse commands, a fixed point/segment ceiling independent of audio duration, and the shared `ShapedInterpolate`. Path and dot colors come exclusively from each coherent voice snapshot.
 
-- [ ] **Task 4 — implement OpenSpec 3.3–3.5 (`spv-6`) test-first.**
+- [x] **Task 4 — implement OpenSpec 3.3–3.5 (`spv-6`) test-first.**
 
   1. Add portable tests for `ceil(1/increment)` wait/move counts, maximum shared duration, source/wait/move/target-hold evaluation, shared present x, reconstructed dot y, solid past, alternating bounded future segments, discarded-remainder tolerance, independent colors, clipping/resizing, bounded command count, and invalid/unstable snapshots producing background/axis only. Add JUCE and browser parity assertions that consume the same existing polyline/ellipse commands with no protocol extension.
   2. Red: run `make -C projects/synth build/portable_ui_tests`; expect missing builder/visualizer symbols. Run `make -C projects/synth browser-command-buffer-test`, `make -C projects/synth/apps/miniapp test`, and `make -C projects/synth/browser browser-miniapp`; expect the new browser/JUCE parity assertions to fail until the portable commands are implemented.
