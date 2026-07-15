@@ -12,9 +12,9 @@
 
 ## 3. MiniApp Fifth Modulator
 
-- [ ] 3.1 Add failing MiniApp system tests requiring a five-slot two-voice group, connected `Noise` metadata and two stable processor pointers at index `4`, a distinct retained noise visualizer at index `4`, and audio-rate per-voice value changes visible through the production modulation update path; do not encode a requirement that index `3` remain disconnected after parallel work lands.
-- [ ] 3.2 Update `MiniAppCore` to retain a two-voice noise processor and one noise visualizer, configure five modulator slots, register the processor outputs and visualizer only at index `4`, and process noise once per sample before `UpdateModValues` without adding parameters, banks, pages, scopes, or audio routing.
-- [ ] 3.3 Update existing MiniApp topology and visualizer tests so they preserve `sdsp-33` coverage for exactly three scope-backed VCO/LFO visualizers while separately covering the reserved index `3` integration boundary and model-free noise visualizer at index `4`.
+- [x] 3.1 Add failing MiniApp system tests requiring a five-slot two-voice group, connected `Noise` metadata and two stable processor pointers at index `4`, a distinct retained noise visualizer at index `4`, and audio-rate per-voice value changes visible through the production modulation update path; do not encode a requirement that index `3` remain disconnected after parallel work lands.
+- [x] 3.2 Update `MiniAppCore` to retain a two-voice noise processor and one noise visualizer, configure five modulator slots, register the processor outputs and visualizer only at index `4`, and process noise once per sample before `UpdateModValues` without adding parameters, banks, pages, scopes, or audio routing.
+- [x] 3.3 Update existing MiniApp topology and visualizer tests so they preserve `sdsp-33` coverage for exactly three scope-backed VCO/LFO visualizers while separately covering the reserved index `3` integration boundary and model-free noise visualizer at index `4`.
 
 ## 4. Verification and Documentation
 
