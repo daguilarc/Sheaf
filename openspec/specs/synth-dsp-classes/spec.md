@@ -109,9 +109,11 @@ WHEN waveform scope capture is needed, THE synth DSP system SHALL provide scope 
 - **WHEN** a holder with base channel `B` writes relative channel `1`
 - **THEN** the scope writer stores the sample in flat channel `B + 1`
 
-#### Scenario: Publish exposes stable read index
-- **WHEN** the scope writer advances and publishes after sample writes
-- **THEN** scope readers created after publish read from the published index rather than unpublished future writes
+#### Scenario: Publish exposes a coherent sample and cycle-start boundary
+- **WHEN** the scope writer records samples and cycle-start markers after its latest publish
+- **THEN** readers continue to observe the previously published sample boundary and marker count
+- **AND** a subsequent publish exposes the new sample boundary before exposing the pending marker-count advances
+- **AND** a reader uses one published marker count for every marker lookup in that reader snapshot
 
 #### Scenario: Top markers drive reader alignment
 - **WHEN** a holder records start and end markers for a channel

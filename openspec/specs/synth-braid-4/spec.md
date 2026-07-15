@@ -130,8 +130,14 @@ WHILE Braid processes its audible and LFO VCOs, THE application SHALL connect on
 - **THEN** the scope trace still represents the underlying VCO sample before that gain
 - **AND** the matrix and stereo paths use the post-gain sample
 
+#### Scenario: In-flight scope writes do not blank published traces
+- **WHEN** Braid has published audible and LFO scope history
+- **AND** a VCO records a new cycle-start marker while the next internal block is still in flight
+- **THEN** portable scope rendering continues to draw the last published waveform
+- **AND** the new cycle marker becomes visible only with a compatible published sample boundary
+
 ### Requirement: d4-6 — Verification: headless audio, control, modulation, and persistence coverage
-WHEN Braid 4 is added to the synth project, THE synth test suite SHALL run JUCE-free headless and portable-UI coverage for initialization, both bank layouts, parameter mappings, finite non-silent stereo processing, four-times-host processing at representative device rates, XY corner selection, matrix identity and cross-routing, matrix-source normalization anchors, the documented internal-sample modulation delay, decimator response/state, mono and extra-channel output policy, scope/UI publication, and patch save/load round trips across all three groups.
+WHEN Braid 4 is added to the synth project, THE synth test suite SHALL run JUCE-free headless and portable-UI coverage for initialization, both bank layouts, parameter mappings, finite non-silent stereo processing, four-times-host processing at representative device rates, XY corner selection, matrix identity and cross-routing, matrix-source normalization anchors, the documented internal-sample modulation delay, decimator response/state, mono and extra-channel output policy, coherent scope/UI publication during in-flight block writes, and patch save/load round trips across all three groups.
 
 #### Scenario: Core runs without JUCE
 - **WHEN** the Braid core and UI model are included by their synth test targets
