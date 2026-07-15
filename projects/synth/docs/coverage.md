@@ -1,6 +1,6 @@
 # Spec Coverage
 
-Last audit: ganged random LFO, 2026-07-15
+Last audit: ganged random LFO and noise modulator, 2026-07-15
 
 | Requirement | Status | Primary exact coverage |
 |---|---|---|
@@ -18,14 +18,18 @@ Last audit: ganged random LFO, 2026-07-15
 | `spv-3` | covered | `projects/synth/tests/portable_ui_tests.cpp` scope visualizer reads updated atomic model state without reconstruction; MiniApp retains app-owned instances |
 | `spv-4` | covered | `projects/synth/tests/portable_ui_tests.cpp` `Builder::Visualizer` emits visible node and omits hidden node |
 | `spv-5` | covered | `projects/synth/tests/portable_ui_tests.cpp` scope visualizer snapshots connected/color/scope/channel fields and keeps waveform geometry in bounds |
+| `spv-6` | covered | `portable_ui_tests` predictive round geometry and invalid-snapshot fallback; `miniapp_juce_backend_parity_tests` and `browser_command_buffer_tests` existing-backend command parity |
+| `spv-7` | covered | `projects/synth/tests/portable_ui_tests.cpp` fresh visible-draw noise path; `projects/synth/tests/miniapp_system_tests.cpp` five-slot topology and retained index-4 noise visualizer distinct from the three scope visualizers and index-3 ganged random LFO visualizer |
 | `spm-70` | covered | `projects/synth/tests/parameter_modulation_tests.cpp` visualizer topology flows metadata -> depth config -> UI state, clears on disconnect, and stays out of JSON |
 | `sru-24` | covered | `projects/synth/tests/miniapp_system_tests.cpp` visualizer node shares encoder bounds, precedes encoder, and encoder actions remain; top-level/bank-transition no-visualizer regressions; null/hidden paths in portable/Braid tests |
 | `sru-25` | covered | `projects/synth/tests/portable_ui_tests.cpp` shared encoder underlay body alpha and preserved non-body commands; `projects/synth/tests/miniapp_system_tests.cpp` visible and hidden visualizer underlay wiring |
-| `sdsp-33` | covered | `projects/synth/tests/miniapp_system_tests.cpp` MiniApp constructs visible distinct VCO visualizers and one LFO visualizer |
+| `sdsp-13` (modified) | covered | `projects/synth/tests/dsp_tests.cpp` deterministic seeded noise, strict open interval, one advance per voice, distribution sanity, stable pointers, and direct `ParameterGroup` publication |
+| `sdsp-33` (modified) | covered | `projects/synth/tests/miniapp_system_tests.cpp` exactly three distinct retained scope-backed MiniApp visualizers at indexes 0, 1, and 2, separately from model-free ganged-random-LFO and noise visualizers |
 | `sdsp-34` | covered | `dsp_tests` shaped interpolation, reciprocal-time correlated increments, Hz-domain voice spread, validation, precision, and one-hour increment floor cases |
 | `sdsp-35` | covered | `dsp_tests` deterministic voice wait/move/done transitions, exact and overshot boundaries, reset semantics, and double progress cases |
 | `sdsp-36` | covered | `dsp_tests` canonical random draw order, correlated gang turnover, fixed storage/seed, bounded coherent snapshots, complete live fields, and assigned voice colors |
-| `spv-6` | covered | `portable_ui_tests` predictive round geometry and invalid-snapshot fallback; `miniapp_juce_backend_parity_tests` and `browser_command_buffer_tests` existing-backend command parity |
+| `sdsp-37` | covered | `projects/synth/tests/dsp_tests.cpp` positive runtime voice count, zero rejection, non-copyable/non-movable lifetime, bounds-checked access, stable source pointers, and allocation-free/noexcept processing contract |
+| `sdsp-38` | covered | `projects/synth/tests/miniapp_system_tests.cpp` combined five-slot topology, ganged random LFO at index 3, connected noise at index 4, retained distinct visualizers, and per-sample noise publication before modulation update |
 | `spm-71` | covered | `miniapp_system_tests` source registration/configuration, audio-block processing/publishing, retained address-stable visualizer, and three-panel/underlay UI topology; JUCE/browser parity tests cover the same portable draw commands |
 | `d4-9` | covered | `projects/synth/tests/braid4_system_tests.cpp` all Braid 4 modulator visualizers are null and modulation view is encoder-only |
 

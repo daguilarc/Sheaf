@@ -1,6 +1,6 @@
 ## ADDED Requirements
 
-### Requirement: spv-6 — Noise visualizer: model-free redraw noise
+### Requirement: spv-7 — Noise visualizer: model-free redraw noise
 WHEN a noise modulation source needs an illustrative portable waveform, THE synth portable UI system SHALL provide a JUCE-free `NoiseWaveformVisualizer` that owns its own non-cryptographic pseudorandom state, requires no DSP or UI-state model, and emits one newly generated monophonic polyline on every visible draw with a random y position inside its bounds for every integer horizontal pixel column across positive drawing bounds.
 
 #### Scenario: Noise trace covers horizontal pixel positions

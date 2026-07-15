@@ -44,7 +44,7 @@ The synth DSP layer favors processors with natural-unit inputs and no awareness 
 
    The visualizer does not retain processor output pointers, publish or consume `UIState`, allocate scope channels, show multiple voices, or attempt to match audio history. Consecutive draws deliberately differ so the open modulation view flickers like real noise.
 
-   Existing requirement `sdsp-33` remains the contract for exactly three scope-backed MiniApp visualizer instances at indexes `0`, `1`, and `2`; its wording is updated to distinguish that scope-only count from the additional model-free noise visualizer governed by `sdsp-35` and `spv-6`.
+   Existing requirement `sdsp-33` remains the contract for exactly three scope-backed MiniApp visualizer instances at indexes `0`, `1`, and `2`; its wording is updated to distinguish that scope-only count from the additional model-free noise visualizer governed by `sdsp-38` and `spv-7`.
 
    Alternative considered: capture the actual processor output through `ScopeWriter`. That would consume polyphonic scope storage and imply historical accuracy the user explicitly does not need. Alternative considered: generate one random path at construction. That avoids redraw motion but does not provide the requested real-noise flicker.
 

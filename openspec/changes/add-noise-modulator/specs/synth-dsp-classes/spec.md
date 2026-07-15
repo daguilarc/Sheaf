@@ -55,11 +55,11 @@ WHEN MiniApp initializes its three scope-backed modulation sources at indexes `0
 #### Scenario: Non-scope noise visualizer has a separate contract
 - **WHEN** MiniApp attaches the model-free noise visualizer to modulator `4`
 - **THEN** that visualizer is not counted among the three scope visualizer instances
-- **AND** its behavior is governed by `sdsp-35` and `spv-6`
+- **AND** its behavior is governed by `sdsp-38` and `spv-7`
 
 ## ADDED Requirements
 
-### Requirement: sdsp-34 — Noise: runtime-sized modulation processor
+### Requirement: sdsp-37 — Noise: runtime-sized modulation processor
 WHEN applications need audio-rate white-noise modulation, THE synth DSP system SHALL provide a runtime-sized `NoiseModulatorProcessor` that is constructed with a positive voice count, owns address-stable output storage and source pointers for exactly those voices, produces one new pseudorandom float strictly inside `(0, 1)` for every voice on each process call, supports explicit deterministic seeding, and performs no allocation, locking, system-entropy access, or cryptographic operation while processing.
 
 #### Scenario: Construction establishes stable polyphonic storage
@@ -91,7 +91,7 @@ WHEN applications need audio-rate white-noise modulation, THE synth DSP system S
 - **THEN** subsequent modulation-value updates dereference the processor's latest per-voice outputs
 - **AND** the processor does not depend on parameter IDs, banks, pages, controller layout, or modulator index selection
 
-### Requirement: sdsp-35 — MiniApp: fifth-slot noise modulator
+### Requirement: sdsp-38 — MiniApp: fifth-slot noise modulator
 WHEN MiniApp publishes its simple noise modulation source, THE application SHALL configure its two-voice group with five modulator slots, retain one two-voice `NoiseModulatorProcessor`, register that processor's stable outputs as the connected `Noise` source at modulator index `4`, process it once per audio sample before updating group modulation values, attach one retained portable noise waveform visualizer to index `4`, and SHALL NOT claim modulator index `3` as part of this change.
 
 #### Scenario: Noise occupies the fifth modulator slot

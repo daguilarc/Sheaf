@@ -18,6 +18,6 @@
 
 ## 4. Verification and Documentation
 
-- [ ] 4.1 Update `projects/synth/docs/coverage.md` to map modified `sdsp-13` and `sdsp-33` plus new `sdsp-34`, `sdsp-35`, and `spv-6` to the DSP, portable UI, and MiniApp system tests.
-- [ ] 4.2 Run the focused DSP, portable UI, and MiniApp system test binaries during development, then run `make -C projects/synth test` and confirm the UI-boundary check and full JUCE-free suite pass.
-- [ ] 4.3 Run `openspec validate add-noise-modulator --strict` and `openspec status --change add-noise-modulator`, confirming every proposal artifact is valid and the change is apply-ready.
+- [x] 4.1 Update `projects/synth/docs/coverage.md` to map modified `sdsp-13` and `sdsp-33` plus new `sdsp-37`, `sdsp-38`, and `spv-7` to the DSP, portable UI, and MiniApp system tests.
+- [x] 4.2 Run the focused DSP, portable UI, and MiniApp system test binaries during development, then run `make -C projects/synth test` and confirm the UI-boundary check and full JUCE-free suite pass.
+- [x] 4.3 Run `openspec validate add-noise-modulator --strict` and `openspec status --change add-noise-modulator`, confirming every proposal artifact is valid and the change is apply-ready.

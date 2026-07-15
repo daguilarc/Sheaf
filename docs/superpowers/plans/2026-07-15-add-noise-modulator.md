@@ -34,7 +34,7 @@
 - Modify `projects/synth/apps/miniapp/MiniAppCore.hpp`: retain/register/process the two-voice noise source and retain/register its visualizer at modulator index `4`.
 - Modify `projects/synth/tests/miniapp_system_tests.cpp`: five-slot topology, noise metadata/visualizer, stable pointers, audio-rate publication, and preserved scope visualizer tests.
 - Modify `projects/synth/Makefile`: add the new headers to the exact focused test target dependency lists.
-- Modify `projects/synth/docs/coverage.md`: map `sdsp-13`, `sdsp-33`, `sdsp-34`, `sdsp-35`, and `spv-6` to exact tests.
+- Modify `projects/synth/docs/coverage.md`: map `sdsp-13`, `sdsp-33`, `sdsp-37`, `sdsp-38`, and `spv-7` to exact tests.
 - Modify `openspec/changes/add-noise-modulator/tasks.md`: mark each checklist item only after the corresponding task implementation, tests, and Claude review pass.
 
 ---
@@ -617,9 +617,9 @@ Update the coverage table with these meanings and exact owning tests:
 ```markdown
 | `sdsp-13` (modified) | covered | `projects/synth/tests/dsp_tests.cpp` deterministic seeded noise, strict open interval, one advance per voice, distribution sanity, stable pointers, and direct `ParameterGroup` publication |
 | `sdsp-33` (modified) | covered | `projects/synth/tests/miniapp_system_tests.cpp` exactly three distinct retained scope-backed MiniApp visualizers at indexes 0, 1, and 2, separately from model-free noise |
-| `sdsp-34` | covered | `projects/synth/tests/dsp_tests.cpp` positive runtime voice count, zero rejection, non-copyable/non-movable lifetime, bounds-checked access, stable source pointers, and allocation-free/noexcept processing contract |
-| `sdsp-35` | covered | `projects/synth/tests/portable_ui_tests.cpp` model-free independently seeded monophonic noise geometry, per-pixel bounds, consecutive redraw changes, and base visualizer contracts |
-| `spv-6` | covered | `projects/synth/tests/portable_ui_tests.cpp` fresh visible-draw noise path; `projects/synth/tests/miniapp_system_tests.cpp` retained index-4 noise visualizer distinct from the three scope visualizers |
+| `sdsp-37` | covered | `projects/synth/tests/dsp_tests.cpp` positive runtime voice count, zero rejection, non-copyable/non-movable lifetime, bounds-checked access, stable source pointers, and allocation-free/noexcept processing contract |
+| `sdsp-38` | covered | `projects/synth/tests/miniapp_system_tests.cpp` five-slot topology, connected noise at index 4, retained distinct visualizer, and per-sample noise publication before modulation update |
+| `spv-7` | covered | `projects/synth/tests/portable_ui_tests.cpp` fresh visible-draw noise path; `projects/synth/tests/miniapp_system_tests.cpp` retained index-4 noise visualizer distinct from the three scope visualizers |
 ```
 
 Replace the existing `sdsp-33` row rather than duplicating it.
