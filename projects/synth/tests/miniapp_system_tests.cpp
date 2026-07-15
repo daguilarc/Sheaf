@@ -252,6 +252,32 @@ bool PopNextMessage(synth::MessageInBus& uiBus, synth::MessageIn& message) {
     return uiBus.Pop(message, std::numeric_limits<std::uint64_t>::max());
 }
 
+bool BoundsInside(synth::ui::Bounds inner, synth::ui::Bounds outer) {
+    return inner.x >= outer.x && inner.y >= outer.y &&
+           inner.x + inner.width <= outer.x + outer.width &&
+           inner.y + inner.height <= outer.y + outer.height;
+}
+
+bool CommandGeometryInside(const synth::ui::DrawCommand& command, synth::ui::Bounds bounds) {
+    if (command.kind == synth::ui::DrawCommand::Kind::Polyline) {
+        return std::all_of(command.points.begin(), command.points.end(), [bounds](const auto point) {
+            return point.x >= bounds.x && point.x <= bounds.x + bounds.width &&
+                   point.y >= bounds.y && point.y <= bounds.y + bounds.height;
+        });
+    }
+    if (command.kind == synth::ui::DrawCommand::Kind::Fill ||
+        command.kind == synth::ui::DrawCommand::Kind::FillEllipse) {
+        return BoundsInside(command.bounds, bounds);
+    }
+    if (command.kind == synth::ui::DrawCommand::Kind::Line) {
+        return command.from.x >= bounds.x && command.from.x <= bounds.x + bounds.width &&
+               command.from.y >= bounds.y && command.from.y <= bounds.y + bounds.height &&
+               command.to.x >= bounds.x && command.to.x <= bounds.x + bounds.width &&
+               command.to.y >= bounds.y && command.to.y <= bounds.y + bounds.height;
+    }
+    return true;
+}
+
 struct TestVisualizer final : synth::ui::Visualizer
 {
     std::vector<synth::ui::DrawCommand> DrawVisible() const override
@@ -318,6 +344,7 @@ TEST_CASE(miniapp_portable_surface_exposes_stable_ids_and_routes_actions) {
     RequireNodeId(tree, "miniapp.encoder.6");
     RequireNodeId(tree, "miniapp.vco.scope");
     RequireNodeId(tree, "miniapp.lfo.scope");
+    RequireNodeId(tree, "miniapp.ganged_random_lfo.round");
     RequireNodeId(tree, "miniapp.bank.vco");
     RequireNodeId(tree, "miniapp.bank.lfo");
     RequireNodeId(tree, "miniapp.gesture.toggle");
@@ -429,6 +456,76 @@ TEST_CASE(miniapp_portable_surface_exposes_stable_ids_and_routes_actions) {
     REQUIRE_TRUE(message.timestamp == 1011);
 
     static_assert(synth::SynthApplication<synth_miniapp::MiniApp>);
+}
+
+TEST_CASE(miniapp_main_waveform_row_draws_three_distinct_bounded_panels) {
+    synth_rig::SynthRig<synth_miniapp::MiniAppCore> rig(
+        64,
+        UseScratchRuntimeDataPaths("main_waveform_row_draws_three_distinct_bounded_panels"));
+    rig.RunBlocks(2);
+
+    const auto requireThreePanels = [&](int width, int height) {
+        rig.UIState();
+        synth::RuntimeConfig sizedConfig = *rig.Engine().Context().config;
+        sizedConfig.uiWidth = width;
+        sizedConfig.uiHeight = height;
+        synth::AppContext context = rig.Engine().Context();
+        context.config = &sizedConfig;
+        synth_miniapp::MiniAppUiSurface surface;
+        surface.Attach(&context, &rig.Engine().Application());
+        const synth::ui::NodeTree tree = surface.BuildTree();
+
+        const synth::ui::Bounds root = synth_miniapp::MiniAppPageLayout::RootBounds(&context);
+        const synth::ui::Node* vco = FindNodeById(tree, synth_miniapp::MiniAppNodeIds::kVcoScope);
+        const synth::ui::Node* lfo = FindNodeById(tree, synth_miniapp::MiniAppNodeIds::kLfoScope);
+        const synth::ui::Node* gang = FindNodeById(tree, synth_miniapp::MiniAppNodeIds::kGangedRandomLfoRound);
+        REQUIRE_TRUE(vco != nullptr);
+        REQUIRE_TRUE(lfo != nullptr);
+        REQUIRE_TRUE(gang != nullptr);
+        REQUIRE_TRUE(BoundsInside(vco->bounds, root));
+        REQUIRE_TRUE(BoundsInside(lfo->bounds, root));
+        REQUIRE_TRUE(BoundsInside(gang->bounds, root));
+        REQUIRE_TRUE(vco->bounds.x + vco->bounds.width <= lfo->bounds.x);
+        REQUIRE_TRUE(lfo->bounds.x + lfo->bounds.width <= gang->bounds.x);
+        REQUIRE_TRUE(!gang->drawCommands.empty());
+        REQUIRE_TRUE(std::all_of(gang->drawCommands.begin(), gang->drawCommands.end(),
+                                 [gang](const auto& command) {
+                                     return CommandGeometryInside(command, gang->bounds);
+                                 }));
+        for (const synth::Color color : {synth::Color::Cyan, synth::Color::Orange}) {
+            REQUIRE_TRUE(std::any_of(gang->drawCommands.begin(), gang->drawCommands.end(),
+                                     [color](const auto& command) {
+                                         return command.kind == synth::ui::DrawCommand::Kind::Polyline &&
+                                                command.color == color;
+                                     }));
+            REQUIRE_TRUE(std::any_of(gang->drawCommands.begin(), gang->drawCommands.end(),
+                                     [color](const auto& command) {
+                                         return command.kind == synth::ui::DrawCommand::Kind::FillEllipse &&
+                                                command.color == color;
+                                     }));
+        }
+    };
+
+    requireThreePanels(synth_miniapp::MiniAppCore::Config().uiWidth,
+                       synth_miniapp::MiniAppCore::Config().uiHeight);
+    requireThreePanels(640, 480);
+
+    rig.Press(kSlotIx, kTunePosition);
+    rig.RunBlocks(1);
+    const synth::ui::NodeTree modulationTree = BuildMiniAppTree(rig);
+    const std::string underlayId = synth_miniapp::MiniAppNodeIds::Encoder(3) + ".visualizer";
+    const synth::ui::Node* underlay = FindNodeById(modulationTree, underlayId);
+    const synth::ui::Node* gang = FindNodeById(
+        modulationTree, synth_miniapp::MiniAppNodeIds::kGangedRandomLfoRound);
+    REQUIRE_TRUE(underlay != nullptr);
+    REQUIRE_TRUE(gang != nullptr);
+    REQUIRE_TRUE(underlay->bounds.x != gang->bounds.x || underlay->bounds.y != gang->bounds.y ||
+                 underlay->bounds.width != gang->bounds.width || underlay->bounds.height != gang->bounds.height);
+    const auto& retained = rig.Application().GangedRandomLfoVisualizerInstance();
+    REQUIRE_TRUE(retained.GetBounds().x == underlay->bounds.x);
+    REQUIRE_TRUE(retained.GetBounds().y == underlay->bounds.y);
+    REQUIRE_TRUE(retained.GetBounds().width == underlay->bounds.width);
+    REQUIRE_TRUE(retained.GetBounds().height == underlay->bounds.height);
 }
 
 TEST_CASE(miniapp_ui_model_exposes_layout_scene_labels_and_dispatch) {

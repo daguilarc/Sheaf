@@ -4,6 +4,7 @@
 
 #include "synth/DspOscillators.hpp"
 #include "synth/DspScope.hpp"
+#include "synth/GangedRandomLfoVisualizer.hpp"
 #include "synth/ParameterModulation.hpp"
 #include "synth/PortableUI.hpp"
 #include "synth/PortableUIBuilders.hpp"
@@ -41,6 +42,16 @@ inline std::vector<synth::ui::DrawCommand> BuildLfoWaveformCommands(const LfoWav
 {
     return synth::ui::BuildScopeWaveformCommands(
         state.layers, nodeBounds, LfoWaveformDrawState::x_MinY, LfoWaveformDrawState::x_MaxY, state.x_NumSamples, true);
+}
+
+inline std::vector<synth::ui::DrawCommand> BuildGangedRandomLfoPanelCommands(
+    const synth::GangedRandomLfoSnapshot<2>& snapshot,
+    synth::ui::Bounds nodeBounds)
+{
+    std::vector<synth::ui::DrawCommand> commands;
+    commands.reserve(synth::ui::GangedRandomLfoGeometry::MaximumCommandCount<2>());
+    synth::ui::BuildGangedRandomLfoCommands(snapshot, nodeBounds, commands);
+    return commands;
 }
 
 }  // namespace synth_miniapp

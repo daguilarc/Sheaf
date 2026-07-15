@@ -12,6 +12,7 @@
 #include "synth/PortableUI.hpp"
 #include "synth/PortableUIBuilders.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -35,6 +36,7 @@ inline std::string Encoder(std::size_t index)
 
 inline constexpr const char* kVcoScope = "miniapp.vco.scope";
 inline constexpr const char* kLfoScope = "miniapp.lfo.scope";
+inline constexpr const char* kGangedRandomLfoRound = "miniapp.ganged_random_lfo.round";
 
 inline constexpr const char* kBankVco = "miniapp.bank.vco";
 inline constexpr const char* kBankLfo = "miniapp.bank.lfo";
@@ -137,20 +139,31 @@ struct MiniAppPageLayout
         return encoderArea;
     }
 
-    static void WaveformScopeBounds(synth::ui::Bounds waveformRow, synth::ui::Bounds& vcoScope, synth::ui::Bounds& lfoScope)
+    static void WaveformScopeBounds(synth::ui::Bounds waveformRow,
+                                    synth::ui::Bounds& vcoScope,
+                                    synth::ui::Bounds& lfoScope,
+                                    synth::ui::Bounds& gangedRandomLfoRound)
     {
-        const float halfWaveformWidth = waveformRow.width * 0.5f;
+        const float panelWidth = waveformRow.width / 3.0f;
+        const float contentWidth = std::max(0.0f, panelWidth - kWaveformInset * 2.0f);
+        const float contentHeight = std::max(0.0f, waveformRow.height - kWaveformInset * 2.0f);
         vcoScope = {
             waveformRow.x + kWaveformInset,
             waveformRow.y + kWaveformInset,
-            halfWaveformWidth - kWaveformInset * 2.0f,
-            waveformRow.height - kWaveformInset * 2.0f
+            contentWidth,
+            contentHeight
         };
         lfoScope = {
-            waveformRow.x + halfWaveformWidth + kWaveformInset,
+            waveformRow.x + panelWidth + kWaveformInset,
             waveformRow.y + kWaveformInset,
-            halfWaveformWidth - kWaveformInset * 2.0f,
-            waveformRow.height - kWaveformInset * 2.0f
+            contentWidth,
+            contentHeight
+        };
+        gangedRandomLfoRound = {
+            waveformRow.x + panelWidth * 2.0f + kWaveformInset,
+            waveformRow.y + kWaveformInset,
+            contentWidth,
+            contentHeight
         };
     }
 };
@@ -248,6 +261,16 @@ inline LfoWaveformDrawState LfoWaveformDrawStateFromCore(const MiniAppCore& core
         state.layers.push_back(layer);
     }
     return state;
+}
+
+using MiniAppGangedRandomLfoSnapshot =
+    synth::GangedRandomLfoSnapshot<MiniAppCore::kVoiceCount>;
+
+inline bool ReadGangedRandomLfoSnapshotFromCore(
+    const MiniAppCore& core,
+    MiniAppGangedRandomLfoSnapshot& snapshot)
+{
+    return core.GangedRandomLfoInstance().ReadSnapshot(snapshot);
 }
 
 inline void AppendMiniAppControls(synth::ui::Builder& builder, const MiniAppUiSnapshot& snapshot)

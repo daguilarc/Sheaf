@@ -2,6 +2,8 @@
 #include "synth/GangedRandomLfoVisualizer.hpp"
 #include "synth/browser/BrowserCommandBuffer.hpp"
 
+#include "../apps/miniapp/MiniAppDraw.hpp"
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -220,6 +222,68 @@ void TestPredictiveGangedLfoUsesExistingDrawSchema()
     Require(ellipses == 2, "browser consumes predictive ellipse commands");
 }
 
+void TestMiniAppThreePanelCommandsUseExistingBrowserSchema()
+{
+    synth::ScopeWriter scope(2, 16);
+    for (std::size_t sample = 0; sample < 16; ++sample)
+    {
+        scope.Write(0, static_cast<float>(sample) / 15.0f);
+        scope.Write(1, 1.0f - static_cast<float>(sample) / 15.0f);
+    }
+    synth_miniapp::VcoWaveformDrawState vcoState;
+    vcoState.layers = {{.connected = true, .scopeColor = synth::Color::Cyan,
+                        .scope = &scope, .scopeChannel = 0}};
+    synth_miniapp::LfoWaveformDrawState lfoState;
+    lfoState.layers = {{.connected = true, .scopeColor = synth::Color::Green,
+                        .scope = &scope, .scopeChannel = 1}};
+    synth::GangedRandomLfoSnapshot<2> gangState;
+    gangState.sampleRate = 48000.0;
+    gangState.roundElapsedSamples = 3.0;
+    gangState.voices[0] = {.source = 0.0f, .target = 1.0f, .output = 0.5f, .shape = 0.0f,
+                           .waitingIncrement = 0.25, .movingIncrement = 0.5,
+                           .color = synth::Color::Cyan};
+    gangState.voices[1] = {.source = 1.0f, .target = 0.0f, .output = 0.5f, .shape = 1.0f,
+                           .waitingIncrement = 0.125, .movingIncrement = 0.25,
+                           .color = synth::Color::Orange};
+    const std::array<synth::ui::Bounds, 3> bounds{{
+        {8.0f, 8.0f, 144.0f, 64.0f},
+        {168.0f, 8.0f, 144.0f, 64.0f},
+        {328.0f, 8.0f, 144.0f, 64.0f},
+    }};
+    synth::ui::NodeTree tree;
+    tree.nodes = {
+        synth::ui::Node{.id = synth::ui::NodeId("root"), .kind = synth::ui::NodeKind::Root,
+                        .bounds = {0, 0, 480, 80},
+                        .children = {synth::ui::NodeId("vco"), synth::ui::NodeId("lfo"),
+                                     synth::ui::NodeId("gang")}},
+        synth::ui::Node{.id = synth::ui::NodeId("vco"), .kind = synth::ui::NodeKind::Draw,
+                        .bounds = bounds[0],
+                        .drawCommands = synth_miniapp::BuildVcoWaveformCommands(vcoState, bounds[0])},
+        synth::ui::Node{.id = synth::ui::NodeId("lfo"), .kind = synth::ui::NodeKind::Draw,
+                        .bounds = bounds[1],
+                        .drawCommands = synth_miniapp::BuildLfoWaveformCommands(lfoState, bounds[1])},
+        synth::ui::Node{.id = synth::ui::NodeId("gang"), .kind = synth::ui::NodeKind::Draw,
+                        .bounds = bounds[2],
+                        .drawCommands = synth_miniapp::BuildGangedRandomLfoPanelCommands(gangState, bounds[2])},
+    };
+    const auto decoded = synth_browser::DecodeCommandBuffer(synth_browser::SerializeNodeTree(tree).bytes);
+    Require(decoded.version == synth_browser::kCommandBufferVersion,
+            "three-panel MiniApp tree keeps browser command version");
+    Require(decoded.diagnostics.empty(), "three-panel MiniApp tree needs no browser fallback");
+    Require(FindNode(decoded, "vco").drawCount > 0, "browser consumes VCO panel commands");
+    Require(FindNode(decoded, "lfo").drawCount > 0, "browser consumes LFO panel commands");
+    const auto& gang = FindNode(decoded, "gang");
+    std::size_t gangDots = 0;
+    for (std::size_t index = 0; index < gang.drawCount; ++index)
+    {
+        gangDots += decoded.drawCommands[gang.drawStart + index].kind ==
+                            synth_browser::CommandDrawKind::FillEllipse
+                        ? 1u
+                        : 0u;
+    }
+    Require(gangDots == 2, "browser consumes both ganged present dots");
+}
+
 }  // namespace
 
 int main()
@@ -229,5 +293,6 @@ int main()
     TestUnsupportedPortableFeatureIsGeneric();
     TestUnsupportedDrawFeatureIsGeneric();
     TestPredictiveGangedLfoUsesExistingDrawSchema();
+    TestMiniAppThreePanelCommandsUseExistingBrowserSchema();
     return 0;
 }

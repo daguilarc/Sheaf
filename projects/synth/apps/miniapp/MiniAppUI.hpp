@@ -85,7 +85,9 @@ public:
         waveformRow.height = MiniAppPageLayout::kWaveformRowHeight;
         synth::ui::Bounds vcoScopeBounds;
         synth::ui::Bounds lfoScopeBounds;
-        MiniAppPageLayout::WaveformScopeBounds(waveformRow, vcoScopeBounds, lfoScopeBounds);
+        synth::ui::Bounds gangedRandomLfoRoundBounds;
+        MiniAppPageLayout::WaveformScopeBounds(
+            waveformRow, vcoScopeBounds, lfoScopeBounds, gangedRandomLfoRoundBounds);
 
         if (core_ != nullptr)
         {
@@ -95,11 +97,20 @@ public:
             builder.Draw(MiniAppNodeIds::kLfoScope,
                          lfoScopeBounds,
                          BuildLfoWaveformCommands(LfoWaveformDrawStateFromCore(*core_), lfoScopeBounds));
+            MiniAppGangedRandomLfoSnapshot gangedRandomLfoSnapshot;
+            ReadGangedRandomLfoSnapshotFromCore(*core_, gangedRandomLfoSnapshot);
+            builder.Draw(
+                MiniAppNodeIds::kGangedRandomLfoRound,
+                gangedRandomLfoRoundBounds,
+                BuildGangedRandomLfoPanelCommands(
+                    gangedRandomLfoSnapshot, gangedRandomLfoRoundBounds));
         }
         else
         {
             builder.Draw(MiniAppNodeIds::kVcoScope, vcoScopeBounds, {});
             builder.Draw(MiniAppNodeIds::kLfoScope, lfoScopeBounds, {});
+            builder.Draw(
+                MiniAppNodeIds::kGangedRandomLfoRound, gangedRandomLfoRoundBounds, {});
         }
 
         const MiniAppUiSnapshot snapshot = SnapshotUiState(context_);

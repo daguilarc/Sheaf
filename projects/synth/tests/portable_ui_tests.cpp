@@ -528,6 +528,42 @@ int main()
                 sharedLfo.front().bounds.height == miniLfo.front().bounds.height,
             "miniapp lfo wrapper fill bounds match shared helper");
 
+    synth::GangedRandomLfoSnapshot<2> miniGangState;
+    miniGangState.sampleRate = 48000.0;
+    miniGangState.roundElapsedSamples = 3.0;
+    miniGangState.voices[0] = {
+        .source = 0.0f,
+        .target = 1.0f,
+        .output = 0.5f,
+        .shape = 0.0f,
+        .waitingIncrement = 0.25,
+        .movingIncrement = 0.5,
+        .color = synth::Color::Cyan,
+    };
+    miniGangState.voices[1] = {
+        .source = 1.0f,
+        .target = 0.0f,
+        .output = 0.5f,
+        .shape = 1.0f,
+        .waitingIncrement = 0.125,
+        .movingIncrement = 0.25,
+        .color = synth::Color::Orange,
+    };
+    const auto miniGang = synth_miniapp::BuildGangedRandomLfoPanelCommands(miniGangState, wrapperBounds);
+    RequireWaveformGeometryInside(miniGang, wrapperBounds,
+                                  "miniapp ganged random LFO panel remains bounded");
+    for (const synth::Color color : {synth::Color::Cyan, synth::Color::Orange})
+    {
+        const bool sawPath = std::any_of(miniGang.begin(), miniGang.end(), [color](const auto& command) {
+            return command.kind == synth::ui::DrawCommand::Kind::Polyline && command.color == color;
+        });
+        const bool sawDot = std::any_of(miniGang.begin(), miniGang.end(), [color](const auto& command) {
+            return command.kind == synth::ui::DrawCommand::Kind::FillEllipse && command.color == color;
+        });
+        Require(sawPath, "miniapp ganged panel preserves each voice path color");
+        Require(sawDot, "miniapp ganged panel preserves each voice dot color");
+    }
+
     TestScopeLayerState layerA;
     TestScopeLayerState layerB;
     layerA.connected.store(true);

@@ -100,6 +100,27 @@ int main()
     Require(FindNodeById(tree, synth_miniapp::MiniAppNodeIds::Encoder(0).c_str()) != nullptr,
             "encoder draw node exists");
     Require(component.FindByNodeId(synth_miniapp::MiniAppNodeIds::kStart) != nullptr, "start control is hosted");
+    const synth::ui::Node* vcoPanel = FindNodeById(tree, synth_miniapp::MiniAppNodeIds::kVcoScope);
+    const synth::ui::Node* lfoPanel = FindNodeById(tree, synth_miniapp::MiniAppNodeIds::kLfoScope);
+    const synth::ui::Node* gangPanel = FindNodeById(tree, synth_miniapp::MiniAppNodeIds::kGangedRandomLfoRound);
+    Require(vcoPanel != nullptr && lfoPanel != nullptr && gangPanel != nullptr,
+            "JUCE receives all three MiniApp waveform panels");
+    Require(vcoPanel->bounds.x + vcoPanel->bounds.width <= lfoPanel->bounds.x &&
+                lfoPanel->bounds.x + lfoPanel->bounds.width <= gangPanel->bounds.x,
+            "JUCE tree preserves bounded three-panel ordering");
+    juce::Image panelImage(juce::Image::ARGB, config.uiWidth, config.uiHeight, true);
+    juce::Graphics panelGraphics(panelImage);
+    for (const synth::ui::Node* panel : {vcoPanel, lfoPanel, gangPanel})
+    {
+        Require(!panel->drawCommands.empty(), "each MiniApp panel supplies portable draw commands");
+        for (const auto& command : panel->drawCommands)
+        {
+            synth_juce::PaintDrawCommand(
+                panelGraphics,
+                command,
+                synth_juce::UiToJuceRectF(panel->bounds));
+        }
+    }
 
     const synth::ui::Bounds rootBounds = synth_miniapp::MiniAppPageLayout::RootBounds(&context);
     const synth::ui::Bounds encoderArea =
