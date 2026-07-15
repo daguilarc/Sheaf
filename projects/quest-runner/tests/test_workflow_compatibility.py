@@ -127,11 +127,12 @@ class DefaultWorkflowCompatibilityTests(unittest.TestCase):
         self.assertIn("workflow", cli_text)
         self.assertIn("--file", cli_text)
         self.assertNotIn("--scope physicalplan", cli_text)
-        api_text = (docs_root / "capabilities" / "experiments.md").read_text(
-            encoding="utf-8"
-        )
+        specs_root = self.repo_root.parents[1] / "openspec" / "specs"
+        api_text = (
+            specs_root / "quest-runner-experiments" / "spec.md"
+        ).read_text(encoding="utf-8")
         self.assertIn("workflow_path", api_text)
-        issues_text = (docs_root / "capabilities" / "issues.md").read_text(
+        issues_text = (specs_root / "quest-runner-issues" / "spec.md").read_text(
             encoding="utf-8"
         )
         self.assertIn("issue_file", issues_text)
