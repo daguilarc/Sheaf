@@ -21,6 +21,8 @@
 #include "MiniAppDraw.hpp"
 
 #include "synth/AppContext.hpp"
+#include "synth/ConstantBarVisualizer.hpp"
+#include "synth/DspConstant.hpp"
 #include "synth/DspNoise.hpp"
 #include "synth/DspRandomLfo.hpp"
 #include "synth/DspScope.hpp"
@@ -69,11 +71,11 @@ public:
         context_->parameterManager->SetGestureCount(1);
         auto& group = context_->parameterManager->CreateGroup({
             .numVoices = 2,
-            .numModulators = 5,
+            .numModulators = 6,
             .numScenes = 3,
-            // Twelve base values plus twelve values for each of five
-            // modulation sources: 12 + 12 * 5 = 72.
-            .maxParameters = 72,
+            // Twelve base values plus twelve values for each of six
+            // modulation sources: 12 + 12 * 6 = 84.
+            .maxParameters = 84,
         });
         group_ = &group;
         context_->parameterManager->GestureMetadataAt(0).name = "Gesture 1";
@@ -98,6 +100,12 @@ public:
             .name = "Noise",
             .shortName = "Noise",
             .sourceColor = synth::Color::White,
+            .connected = true,
+        });
+        group.SetModulationSource(5, constantModulator_.SourcePointers(), {
+            .name = "Constant",
+            .shortName = "Const",
+            .sourceColor = synth::Color::Yellow,
             .connected = true,
         });
         RegisterModulatorVisualizers(group);
@@ -281,6 +289,18 @@ public:
     const GangedRandomLfoVisualizer& GangedRandomLfoVisualizerInstance() const {
         return gangedRandomLfoVisualizer_;
     }
+    synth::ConstantModulatorProcessor& ConstantModulatorInstance() {
+        return constantModulator_;
+    }
+    const synth::ConstantModulatorProcessor& ConstantModulatorInstance() const {
+        return constantModulator_;
+    }
+    synth::ui::ConstantBarVisualizer& ConstantBarVisualizerInstance() {
+        return constantBarVisualizer_;
+    }
+    const synth::ui::ConstantBarVisualizer& ConstantBarVisualizerInstance() const {
+        return constantBarVisualizer_;
+    }
 
 private:
     synth::AppContext* context_ = nullptr;
@@ -331,6 +351,9 @@ private:
     std::unique_ptr<synth::ui::ScopeVisualizer<VcoUiLayerState>> vcoVisualizer1_;
     std::unique_ptr<synth::ui::ScopeVisualizer<LfoUiLayerState>> lfoVisualizer_;
     synth::ui::NoiseWaveformVisualizer noiseVisualizer_{synth::Color::White};
+    synth::ConstantModulatorProcessor constantModulator_{kVoiceCount};
+    synth::ui::ConstantBarVisualizer constantBarVisualizer_{
+        constantModulator_.Outputs(), synth::Color::Yellow};
 
     void RegisterGangedRandomLfoSource(synth::ParameterGroup& group) {
         std::array<float*, kVoiceCount> sources{};
@@ -377,6 +400,7 @@ private:
         group.GetModulators().Metadata(2).visualizer = lfoVisualizer_.get();
         group.GetModulators().Metadata(3).visualizer = &gangedRandomLfoVisualizer_;
         group.GetModulators().Metadata(4).visualizer = &noiseVisualizer_;
+        group.GetModulators().Metadata(5).visualizer = &constantBarVisualizer_;
     }
 };
 

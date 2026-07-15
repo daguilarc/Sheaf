@@ -764,23 +764,32 @@ TEST_CASE(miniapp_registers_distinct_scope_visualizers_for_modulators) {
     synth::ui::Visualizer* mod2 = modulators.Metadata(2).visualizer;
     synth::ui::Visualizer* mod3 = modulators.Metadata(3).visualizer;
     synth::ui::Visualizer* mod4 = modulators.Metadata(4).visualizer;
+    synth::ui::Visualizer* mod5 = modulators.Metadata(5).visualizer;
 
     REQUIRE_TRUE(mod0 != nullptr);
     REQUIRE_TRUE(mod1 != nullptr);
     REQUIRE_TRUE(mod2 != nullptr);
     REQUIRE_TRUE(mod3 != nullptr);
     REQUIRE_TRUE(mod4 != nullptr);
+    REQUIRE_TRUE(mod5 != nullptr);
     REQUIRE_TRUE(mod0 != mod1);
     REQUIRE_TRUE(mod3 == &rig.Application().GangedRandomLfoVisualizerInstance());
     REQUIRE_TRUE(mod4 != mod0);
     REQUIRE_TRUE(mod4 != mod1);
     REQUIRE_TRUE(mod4 != mod2);
     REQUIRE_TRUE(mod4 != mod3);
+    REQUIRE_TRUE(mod5 == &rig.Application().ConstantBarVisualizerInstance());
+    REQUIRE_TRUE(mod5 != mod0);
+    REQUIRE_TRUE(mod5 != mod1);
+    REQUIRE_TRUE(mod5 != mod2);
+    REQUIRE_TRUE(mod5 != mod3);
+    REQUIRE_TRUE(mod5 != mod4);
     REQUIRE_TRUE(mod0->Visible());
     REQUIRE_TRUE(mod1->Visible());
     REQUIRE_TRUE(mod2->Visible());
     REQUIRE_TRUE(mod3->Visible());
     REQUIRE_TRUE(mod4->Visible());
+    REQUIRE_TRUE(mod5->Visible());
 }
 
 TEST_CASE(miniapp_registers_ganged_random_lfo_without_changing_performer_topology) {
@@ -795,9 +804,9 @@ TEST_CASE(miniapp_registers_ganged_random_lfo_without_changing_performer_topolog
     const auto& modulators = group.GetModulators();
 
     REQUIRE_TRUE(groupConfig.numVoices == 2);
-    REQUIRE_TRUE(groupConfig.numModulators == 5);
+    REQUIRE_TRUE(groupConfig.numModulators == 6);
     REQUIRE_TRUE(groupConfig.numScenes == 3);
-    REQUIRE_TRUE(groupConfig.maxParameters == 72);
+    REQUIRE_TRUE(groupConfig.maxParameters == 84);
     REQUIRE_TRUE(group.ParameterCount() == 12);
     REQUIRE_TRUE(group.GestureCount() == 1);
     REQUIRE_TRUE(manager.ParameterCount() == 12);
@@ -812,7 +821,7 @@ TEST_CASE(miniapp_registers_ganged_random_lfo_without_changing_performer_topolog
     REQUIRE_TRUE(manager.BankSlotAt(1) == nullptr);
 
     REQUIRE_TRUE(modulators.NumVoices() == 2);
-    REQUIRE_TRUE(modulators.NumModulators() == 5);
+    REQUIRE_TRUE(modulators.NumModulators() == 6);
     REQUIRE_TRUE(modulators.Metadata(0).name == "VCO Direct");
     REQUIRE_TRUE(modulators.Metadata(0).sourceColor == synth::Color::Cyan);
     REQUIRE_TRUE(modulators.Metadata(1).name == "VCO Swapped");
@@ -822,6 +831,12 @@ TEST_CASE(miniapp_registers_ganged_random_lfo_without_changing_performer_topolog
     REQUIRE_TRUE(modulators.Metadata(3).name == "Ganged Random LFO");
     REQUIRE_TRUE(modulators.Metadata(3).sourceColor == synth::Color::Cyan);
     REQUIRE_TRUE(modulators.Metadata(3).connected);
+    REQUIRE_TRUE(modulators.Metadata(4).name == "Noise");
+    REQUIRE_TRUE(modulators.Metadata(4).sourceColor == synth::Color::White);
+    REQUIRE_TRUE(modulators.Metadata(4).connected);
+    REQUIRE_TRUE(modulators.Metadata(5).name == "Constant");
+    REQUIRE_TRUE(modulators.Metadata(5).sourceColor == synth::Color::Yellow);
+    REQUIRE_TRUE(modulators.Metadata(5).connected);
 
     const auto& input = core.GangedRandomLfoInputConfig();
     REQUIRE_TRUE(input.waiting.muSeconds == 2.0);
@@ -843,7 +858,7 @@ TEST_CASE(miniapp_registers_ganged_random_lfo_without_changing_performer_topolog
     rig.Press(kSlotIx, kTunePosition);
     rig.RunBlocks(1);
     const synth::ParameterManager::UIState& uiState = rig.UIState();
-    REQUIRE_TRUE(group.ParameterCount() == 17);
+    REQUIRE_TRUE(group.ParameterCount() == 18);
     REQUIRE_TRUE(uiState.slots[0].cells[3].visualizer.load(std::memory_order_relaxed) ==
                  retainedVisualizer);
     REQUIRE_TRUE(modulators.Metadata(3).visualizer == retainedVisualizer);
@@ -910,11 +925,11 @@ TEST_CASE(miniapp_registers_noise_as_the_fifth_modulator) {
     auto* group = rig.Engine().Application().Group();
     REQUIRE_TRUE(group != nullptr);
     REQUIRE_TRUE(group->Config().numVoices == 2);
-    REQUIRE_TRUE(group->Config().numModulators == 5);
+    REQUIRE_TRUE(group->Config().numModulators == 6);
 
     const auto& modulators = group->GetModulators();
     const auto metadata = modulators.Metadata();
-    REQUIRE_TRUE(metadata.size() == 5);
+    REQUIRE_TRUE(metadata.size() == 6);
     REQUIRE_TRUE(metadata[4].connected);
     REQUIRE_TRUE(metadata[4].name == "Noise");
     REQUIRE_TRUE(metadata[4].shortName == "Noise");
@@ -923,6 +938,42 @@ TEST_CASE(miniapp_registers_noise_as_the_fifth_modulator) {
     REQUIRE_TRUE(metadata[4].visualizer != metadata[0].visualizer);
     REQUIRE_TRUE(metadata[4].visualizer != metadata[1].visualizer);
     REQUIRE_TRUE(metadata[4].visualizer != metadata[2].visualizer);
+}
+
+TEST_CASE(miniapp_registers_constant_as_the_sixth_modulator_without_sample_work) {
+    synth_rig::SynthRig<synth_miniapp::MiniAppCore> rig(
+        8, UseScratchRuntimeDataPaths("miniapp_registers_constant_as_the_sixth_modulator"));
+    auto& core = rig.Application();
+    auto& group = *core.Group();
+    const auto& modulators = group.GetModulators();
+    const auto metadata = modulators.Metadata();
+
+    REQUIRE_TRUE(group.Config().numVoices == 2);
+    REQUIRE_TRUE(group.Config().numModulators == 6);
+    REQUIRE_TRUE(group.Config().maxParameters == 84);
+    REQUIRE_TRUE(metadata.size() == 6);
+    REQUIRE_TRUE(metadata[5].connected);
+    REQUIRE_TRUE(metadata[5].name == "Constant");
+    REQUIRE_TRUE(metadata[5].shortName == "Const");
+    REQUIRE_TRUE(metadata[5].sourceColor == synth::Color::Yellow);
+    REQUIRE_TRUE(metadata[5].visualizer == &core.ConstantBarVisualizerInstance());
+
+    const auto pointers = core.ConstantModulatorInstance().SourcePointers();
+    REQUIRE_TRUE(pointers.size() == 2);
+    REQUIRE_TRUE(*pointers[0] == 0.0f);
+    REQUIRE_TRUE(*pointers[1] == 1.0f);
+    float* const pointer0 = pointers[0];
+    float* const pointer1 = pointers[1];
+
+    rig.RunBlocks(1);
+    REQUIRE_TRUE(modulators.Value(0, 5) == 0.0f);
+    REQUIRE_TRUE(modulators.Value(1, 5) == 1.0f);
+    rig.RunBlocks(2);
+    REQUIRE_TRUE(core.ConstantModulatorInstance().SourcePointers()[0] == pointer0);
+    REQUIRE_TRUE(core.ConstantModulatorInstance().SourcePointers()[1] == pointer1);
+    REQUIRE_TRUE(*pointer0 == 0.0f && *pointer1 == 1.0f);
+    REQUIRE_TRUE(modulators.Value(0, 5) == 0.0f);
+    REQUIRE_TRUE(modulators.Value(1, 5) == 1.0f);
 }
 
 TEST_CASE(miniapp_publishes_new_noise_values_before_each_modulation_update) {
@@ -972,12 +1023,13 @@ TEST_CASE(miniapp_color_flow_keeps_semantic_roles_independent) {
     REQUIRE_TRUE(rig.Application().VcoBank()->BankColor() == synth::Color::Cyan);
     REQUIRE_TRUE(rig.Application().LfoBank()->BankColor() == synth::Color::Green);
     const auto modulatorMetadata = rig.Application().Group()->GetModulators().Metadata();
-    REQUIRE_TRUE(modulatorMetadata.size() == 5);
+    REQUIRE_TRUE(modulatorMetadata.size() == 6);
     REQUIRE_TRUE(modulatorMetadata[0].sourceColor == synth::Color::Cyan);
     REQUIRE_TRUE(modulatorMetadata[1].sourceColor == synth::Color::Orange);
     REQUIRE_TRUE(modulatorMetadata[2].sourceColor == synth::Color::Green);
     REQUIRE_TRUE(modulatorMetadata[3].sourceColor == synth::Color::Cyan);
     REQUIRE_TRUE(modulatorMetadata[4].sourceColor == synth::Color::White);
+    REQUIRE_TRUE(modulatorMetadata[5].sourceColor == synth::Color::Yellow);
     REQUIRE_TRUE(rig.Application().Context()->parameterManager->GestureMetadataAt(0).gestureColor ==
                  synth::Color::Orange);
 
@@ -1001,12 +1053,13 @@ TEST_CASE(miniapp_color_flow_keeps_semantic_roles_independent) {
             REQUIRE_TRUE(encoder.voices.size() == 2);
             REQUIRE_TRUE(encoder.voices[0].indicatorColor == synth::Color::Cyan);
             REQUIRE_TRUE(encoder.voices[1].indicatorColor == synth::Color::Orange);
-            REQUIRE_TRUE(encoder.modulatorColors.size() == 5);
+            REQUIRE_TRUE(encoder.modulatorColors.size() == 6);
             REQUIRE_TRUE(encoder.modulatorColors[0] == synth::Color::Cyan);
             REQUIRE_TRUE(encoder.modulatorColors[1] == synth::Color::Orange);
             REQUIRE_TRUE(encoder.modulatorColors[2] == synth::Color::Green);
             REQUIRE_TRUE(encoder.modulatorColors[3] == synth::Color::Cyan);
             REQUIRE_TRUE(encoder.modulatorColors[4] == synth::Color::White);
+            REQUIRE_TRUE(encoder.modulatorColors[5] == synth::Color::Yellow);
             REQUIRE_TRUE(encoder.gestureColors == std::vector<synth::Color>{synth::Color::Orange});
         }
     };

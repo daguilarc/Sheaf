@@ -12,12 +12,12 @@
 
 ## 3. MiniApp Sixth Modulator
 
-- [ ] 3.1 Add failing MiniApp system tests requiring a six-slot two-voice group with capacity 84, connected yellow `Constant` metadata and stable values `(0, 1)` at index `5`, a distinct retained constant bar visualizer, preservation of indexes `0` through `4`, and unchanged values across audio processing.
-- [ ] 3.2 Update `MiniAppCore` to retain a two-voice constant processor and its yellow bar visualizer, configure six modulator slots and capacity 84, and register the processor outputs and visualizer only at index `5` without adding a per-sample call or output copy.
-- [ ] 3.3 Update existing MiniApp topology, visualizer, encoder-color, and parameter-count assertions for the combined six-source system while preserving the separate three-instance scope-backed visualizer contract.
+- [x] 3.1 Add failing MiniApp system tests requiring a six-slot two-voice group with capacity 84, connected yellow `Constant` metadata and stable values `(0, 1)` at index `5`, a distinct retained constant bar visualizer, preservation of indexes `0` through `4`, and unchanged values across audio processing.
+- [x] 3.2 Update `MiniAppCore` to retain a two-voice constant processor and its yellow bar visualizer, configure six modulator slots and capacity 84, and register the processor outputs and visualizer only at index `5` without adding a per-sample call or output copy.
+- [x] 3.3 Update existing MiniApp topology, visualizer, encoder-color, and parameter-count assertions for the combined six-source system while preserving the separate three-instance scope-backed visualizer contract.
 
 ## 4. Verification and Documentation
 
-- [ ] 4.1 Update `projects/synth/docs/coverage.md` to map modified `sdsp-13` and `sdsp-33` plus new `sdsp-39`, `sdsp-40`, and `spv-8` to the DSP, portable UI, MiniApp system, and existing backend-parity tests.
-- [ ] 4.2 Run the focused DSP, portable UI, and MiniApp system test binaries during development, then run `make -C projects/synth test` and confirm the UI-boundary check and full JUCE-free suite pass.
-- [ ] 4.3 Run strict validation and status checks for both `add-noise-modulator` and `add-constant-modulator`, confirming the dependent active changes are valid and the constant change is apply-ready with every task complete.
+- [x] 4.1 Update `projects/synth/docs/coverage.md` to map modified `sdsp-13` and `sdsp-33` plus new `sdsp-39`, `sdsp-40`, and `spv-8` to the DSP, portable UI, MiniApp system, and existing backend-parity tests.
+- [x] 4.2 Run the focused DSP, portable UI, and MiniApp system test binaries during development, then run `make -C projects/synth test` and confirm the UI-boundary check and full JUCE-free suite pass.
+- [x] 4.3 Run strict validation and status checks for both `add-noise-modulator` and `add-constant-modulator`, confirming the dependent active changes are valid and the constant change is apply-ready with every task complete.
