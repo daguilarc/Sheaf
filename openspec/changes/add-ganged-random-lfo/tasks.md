@@ -30,6 +30,6 @@
 
 ## 5. Verification and Documentation
 
-- [ ] 5.1 Update `projects/synth/docs/coverage.md` to map `sdsp-34..36`, `spv-6`, and `spm-71` to their DSP, portable-geometry, backend, and MiniApp system tests.
-- [ ] 5.2 Run the focused synth DSP, portable UI/geometry, and MiniApp system test targets and fix all failures without weakening existing assertions.
-- [ ] 5.3 Run the full relevant synth test suite plus repository formatting/static checks, confirm no production JUCE dependency entered core headers, and verify the worktree contains no unintended changes to the existing untracked MiniApp artifacts.
+- [x] 5.1 Update `projects/synth/docs/coverage.md` to map `sdsp-34..36`, `spv-6`, and `spm-71` to their DSP, portable-geometry, backend, and MiniApp system tests.
+- [x] 5.2 Run the focused synth DSP, portable UI/geometry, and MiniApp system test targets and fix all failures without weakening existing assertions.
+- [x] 5.3 Run the full relevant synth test suite plus repository formatting/static checks, confirm no production JUCE dependency entered core headers, and verify the worktree contains no unintended changes to the existing untracked MiniApp artifacts.

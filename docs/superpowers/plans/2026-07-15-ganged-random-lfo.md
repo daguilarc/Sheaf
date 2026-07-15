@@ -119,7 +119,7 @@ After each task's native implementation and verification pass, obtain Claude app
 
 **Interfaces:** Existing focused targets must compile the new headers/tests in DSP, portable, JUCE, MiniApp, and browser builds without adding a draw protocol or a production core JUCE dependency.
 
-- [ ] **Task 7 — implement and close only OpenSpec 5.1–5.3.**
+- [x] **Task 7 — implement and close only OpenSpec 5.1–5.3.**
 
   1. Red/build discovery: run `make -C projects/synth build/dsp_tests`, `make -C projects/synth build/portable_ui_tests`, `make -C projects/synth build/miniapp_system_tests`, and `make -C projects/synth browser-command-buffer-test`; expect any unwired new header/import to fail.
   2. Wire only the required test/header dependencies in the synth Makefile, JUCE build fragment, and browser build/dependency files. Map `sdsp-34`, `sdsp-35`, `sdsp-36`, `spv-6`, and `spm-71` in `projects/synth/docs/coverage.md` to the named DSP, snapshot, portable geometry, JUCE/browser backend, MiniApp system, and MiniApp UI tests.
