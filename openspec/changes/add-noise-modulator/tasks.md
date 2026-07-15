@@ -1,8 +1,8 @@
 ## 1. Noise DSP Processor
 
-- [ ] 1.1 Add failing JUCE-free DSP tests for positive runtime voice-count construction, zero-voice rejection, non-copyable/non-movable lifetime, deterministic explicit seeding, strict `(0, 1)` values, one stream advance per voice, fixed-seed distribution sanity, and stable output/source-pointer addresses across processing.
-- [ ] 1.2 Implement a compact seedable PCG32-style generator and `NoiseModulatorProcessor` in a focused synth DSP header, including one-time normal seeding, the upper-23-bit open-interval conversion, constructor-only output/pointer allocation, bounds-checked inspection accessors, and allocation-free `Process()`.
-- [ ] 1.3 Add a pointer-backed modulation integration test proving the processor's source-pointer span registers directly with an equal-voice-count `ParameterGroup` and publishes the latest per-voice values without processor knowledge of group topology.
+- [x] 1.1 Add failing JUCE-free DSP tests for positive runtime voice-count construction, zero-voice rejection, non-copyable/non-movable lifetime, deterministic explicit seeding, strict `(0, 1)` values, one stream advance per voice, fixed-seed distribution sanity, and stable output/source-pointer addresses across processing.
+- [x] 1.2 Implement a compact seedable PCG32-style generator and `NoiseModulatorProcessor` in a focused synth DSP header, including one-time normal seeding, the upper-23-bit open-interval conversion, constructor-only output/pointer allocation, bounds-checked inspection accessors, and allocation-free `Process()`.
+- [x] 1.3 Add a pointer-backed modulation integration test proving the processor's source-pointer span registers directly with an equal-voice-count `ParameterGroup` and publishes the latest per-voice values without processor knowledge of group topology.
 
 ## 2. Portable Noise Visualizer
 
