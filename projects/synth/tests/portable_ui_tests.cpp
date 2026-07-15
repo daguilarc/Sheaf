@@ -483,6 +483,36 @@ int main()
     RequireWaveformGeometryInside(rightWaveform, {240.0f, 20.0f, 180.0f, 90.0f},
                                   "right waveform geometry stays inside bounds");
 
+    synth::ScopeWriter inFlightScope(1, 128);
+    auto inFlightHolder = inFlightScope.ReserveChans(1);
+    inFlightHolder.RecordStart();
+    for (std::size_t frame = 0; frame < 32; ++frame)
+    {
+        inFlightHolder.Write(std::sin(static_cast<float>(frame) * 0.2f));
+        inFlightScope.AdvanceIndex();
+    }
+    inFlightHolder.RecordStart();
+    for (std::size_t frame = 0; frame < 16; ++frame)
+    {
+        inFlightHolder.Write(std::sin(static_cast<float>(frame) * 0.2f));
+        inFlightScope.AdvanceIndex();
+    }
+    inFlightScope.Publish();
+
+    const std::vector<synth::ui::WaveformLayerDrawState> inFlightLayer{
+        {.connected = true, .scopeColor = synth::Color::Red, .scope = &inFlightScope, .scopeChannel = 0},
+    };
+    inFlightHolder.RecordStart();
+    inFlightHolder.Write(0.25f);
+    inFlightScope.AdvanceIndex();
+    const auto inFlightCommands = synth::ui::BuildScopeWaveformCommands(
+        inFlightLayer, {10.0f, 120.0f, 180.0f, 90.0f}, -1.1f, 1.1f, 64, true);
+    const bool inFlightHasPolyline = std::any_of(
+        inFlightCommands.begin(), inFlightCommands.end(), [](const synth::ui::DrawCommand& command) {
+            return command.kind == synth::ui::DrawCommand::Kind::Polyline;
+        });
+    Require(inFlightHasPolyline, "scope waveform remains visible while a new marker is unpublished");
+
     for (int cell = 0; cell < 4; ++cell)
     {
         std::vector<synth::ui::WaveformLayerDrawState> singleLayer{

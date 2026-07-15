@@ -83,7 +83,8 @@ public:
           buffer_(maxChannels * maxFrames, 0.0f),
           startMarkers_(maxChannels, std::vector<double>(kNumMarkerIndices, 0.0)),
           endMarkers_(maxChannels, std::vector<double>(kNumMarkerIndices, std::numeric_limits<double>::quiet_NaN())),
-          markerWriteIndices_(maxChannels) {}
+          markerWriteIndices_(maxChannels),
+          pendingMarkerCounts_(maxChannels, 0) {}
 
     ScopeWriterHolder ReserveChans(std::size_t numChans) {
         if (numChans == 0 || reservedChannels_ + numChans > maxChannels_) {
@@ -127,21 +128,32 @@ public:
     }
 
     void Publish() {
-        publishedIndex_.store(index_);
+        publishedIndex_.store(index_, std::memory_order_release);
+        for (std::size_t channel = 0; channel < reservedChannels_; ++channel) {
+            const std::size_t pending = pendingMarkerCounts_[channel];
+            if (pending == 0) {
+                continue;
+            }
+            const std::size_t published = markerWriteIndices_[channel].load(std::memory_order_relaxed);
+            markerWriteIndices_[channel].store(published + pending, std::memory_order_release);
+            pendingMarkerCounts_[channel] = 0;
+        }
     }
 
     void RecordStart(std::size_t channel, double uBlockOffset = 0.0) {
         CheckChannel(channel);
-        const std::size_t count = markerWriteIndices_[channel].load();
+        const std::size_t published = markerWriteIndices_[channel].load(std::memory_order_relaxed);
+        const std::size_t count = published + pendingMarkerCounts_[channel];
         const std::size_t markerIndex = count % kNumMarkerIndices;
         startMarkers_[channel][markerIndex] = static_cast<double>(index_) + uBlockOffset;
         endMarkers_[channel][markerIndex] = std::numeric_limits<double>::quiet_NaN();
-        markerWriteIndices_[channel].store(count + 1);
+        ++pendingMarkerCounts_[channel];
     }
 
     void RecordEnd(std::size_t channel, double uBlockOffset = 0.0) {
         CheckChannel(channel);
-        const std::size_t count = markerWriteIndices_[channel].load();
+        const std::size_t published = markerWriteIndices_[channel].load(std::memory_order_relaxed);
+        const std::size_t count = published + pendingMarkerCounts_[channel];
         if (count == 0) {
             return;
         }
@@ -201,6 +213,7 @@ private:
     std::vector<std::vector<double>> startMarkers_;
     std::vector<std::vector<double>> endMarkers_;
     std::vector<std::atomic<std::size_t>> markerWriteIndices_;
+    std::vector<std::size_t> pendingMarkerCounts_;
 };
 
 inline std::size_t ScopeWriterHolder::FlatChan(std::size_t relativeChan) const {
@@ -240,10 +253,10 @@ inline ScopeReader::ScopeReader(const ScopeWriter* writer, std::size_t channel, 
         return;
     }
 
-    double latestStart = 0.0;
-    double previousStart = 0.0;
-    if (!writer_->LatestStart(channel_, latestStart)) {
-        const std::size_t publishedIndex = writer_->PublishedIndex();
+    writer_->CheckChannel(channel_);
+    const std::size_t markerCount = writer_->markerWriteIndices_[channel_].load(std::memory_order_acquire);
+    const std::size_t publishedIndex = writer_->publishedIndex_.load(std::memory_order_acquire);
+    if (markerCount == 0) {
         endIndex_ = static_cast<double>(publishedIndex > 0 ? publishedIndex - 1 : 0);
         startIndex_ = endIndex_ > static_cast<double>(numXSamples_) ? endIndex_ - static_cast<double>(numXSamples_) : 0.0;
         transferXSample_ = static_cast<double>(numXSamples_);
@@ -252,16 +265,20 @@ inline ScopeReader::ScopeReader(const ScopeWriter* writer, std::size_t channel, 
         return;
     }
 
+    const double latestStart = writer_->startMarkers_[channel_][(markerCount - 1) % ScopeWriter::kNumMarkerIndices];
     startIndex_ = latestStart;
-    double latestEnd = 0.0;
-    if (writer_->LatestEnd(channel_, latestEnd) && latestEnd > latestStart) {
+    const double latestEnd = writer_->endMarkers_[channel_][(markerCount - 1) % ScopeWriter::kNumMarkerIndices];
+    if (!std::isnan(latestEnd) && latestEnd > latestStart) {
         endIndex_ = latestEnd;
     } else {
-        const std::size_t publishedIndex = writer_->PublishedIndex();
         endIndex_ = static_cast<double>(publishedIndex > 0 ? publishedIndex - 1 : 0);
     }
 
-    if (writer_->PreviousStart(channel_, previousStart) && previousStart < latestStart) {
+    const bool hasPreviousStart = markerCount >= 2;
+    const double previousStart = hasPreviousStart
+        ? writer_->startMarkers_[channel_][(markerCount - 2) % ScopeWriter::kNumMarkerIndices]
+        : 0.0;
+    if (hasPreviousStart && previousStart < latestStart) {
         const double cycleLength = std::max(1.0, latestStart - previousStart);
         const double elapsed = std::max(0.0, endIndex_ - latestStart);
         const double cycles = static_cast<double>(std::max<std::size_t>(1, numCycles));

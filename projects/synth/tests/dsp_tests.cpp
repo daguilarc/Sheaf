@@ -1061,6 +1061,42 @@ TEST_CASE(scope_reader_stitches_previous_cycle_after_latest_partial_cycle) {
     REQUIRE_NEAR(reader.Get(9), 9.0f, 0.0001f);
 }
 
+TEST_CASE(scope_reader_ignores_unpublished_cycle_start_markers) {
+    synth::ScopeWriter writer(1, 64);
+    auto holder = writer.ReserveChans(1);
+
+    holder.RecordStart();
+    for (std::size_t ix = 0; ix < 10; ++ix) {
+        holder.Write(static_cast<float>(ix));
+        writer.AdvanceIndex();
+    }
+    holder.RecordStart();
+    for (std::size_t ix = 10; ix < 15; ++ix) {
+        holder.Write(static_cast<float>(ix));
+        writer.AdvanceIndex();
+    }
+    writer.Publish();
+
+    const synth::ScopeReader published(&writer, holder.FlatChan(), 10);
+    REQUIRE_TRUE(!published.Empty());
+    REQUIRE_NEAR(published.Get(0), 10.0f, 0.0001f);
+
+    holder.RecordStart();
+    for (std::size_t ix = 15; ix < 18; ++ix) {
+        holder.Write(static_cast<float>(ix));
+        writer.AdvanceIndex();
+    }
+
+    const synth::ScopeReader whileWriting(&writer, holder.FlatChan(), 10);
+    REQUIRE_TRUE(!whileWriting.Empty());
+    REQUIRE_NEAR(whileWriting.Get(0), published.Get(0), 0.0001f);
+
+    writer.Publish();
+    const synth::ScopeReader afterPublish(&writer, holder.FlatChan(), 10);
+    REQUIRE_TRUE(!afterPublish.Empty());
+    REQUIRE_NEAR(afterPublish.Get(0), 15.0f, 0.0001f);
+}
+
 TEST_CASE(scope_reader_aligns_fractional_start_markers) {
     synth::ScopeWriter writer(1, 64);
     auto holder = writer.ReserveChans(1);
@@ -1519,6 +1555,8 @@ TEST_CASE(basic_lfo_processor_advances_writes_scope_markers_and_publishes_ui_sta
     REQUIRE_NEAR(lfo.Process(input), 0.0f, 0.0001f);
 
     double latestStart = -1.0;
+    REQUIRE_TRUE(!writer.LatestStart(holder.FlatChan(), latestStart));
+    writer.Publish();
     REQUIRE_TRUE(writer.LatestStart(holder.FlatChan(), latestStart));
     REQUIRE_NEAR(static_cast<float>(latestStart), 3.0f, 0.0001f);
 
