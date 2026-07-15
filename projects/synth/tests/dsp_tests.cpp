@@ -18,6 +18,7 @@
 #endif
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <complex>
 #include <cstdint>
@@ -29,6 +30,7 @@
 #include <stdexcept>
 #include <string>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -99,16 +101,25 @@ void RequireFinite(float actual, const char* expr) {
 #define REQUIRE_NEAR(actual, expected, tolerance) RequireNear((actual), (expected), (tolerance), #actual)
 
 struct ScriptedRandomLfoDrawSource {
+    enum class EventKind {
+        Normal,
+        Uniform,
+    };
+
     struct NormalCall {
         double mean = 0.0;
         double sigma = 0.0;
     };
 
     std::vector<double> normalResults;
+    std::vector<float> uniformResults;
     std::vector<NormalCall> normalCalls;
+    std::vector<EventKind> events;
     std::size_t nextNormalResult = 0;
+    std::size_t nextUniformResult = 0;
 
     double Normal(double mean, double sigma) {
+        events.push_back(EventKind::Normal);
         normalCalls.push_back({mean, sigma});
         if (nextNormalResult >= normalResults.size()) {
             throw std::runtime_error("scripted normal draw exhausted");
@@ -117,7 +128,21 @@ struct ScriptedRandomLfoDrawSource {
     }
 
     float Uniform01() {
-        throw std::runtime_error("unexpected uniform draw");
+        events.push_back(EventKind::Uniform);
+        if (nextUniformResult >= uniformResults.size()) {
+            throw std::runtime_error("scripted uniform draw exhausted");
+        }
+        return uniformResults[nextUniformResult++];
+    }
+};
+
+struct FixedRandomLfoDrawSource {
+    double Normal(double mean, double) {
+        return mean;
+    }
+
+    float Uniform01() {
+        return 0.5f;
     }
 };
 
@@ -409,6 +434,248 @@ TEST_CASE(correlated_increments_reject_invalid_config) {
     invalid = valid;
     invalid.internalSigmaHz = std::numeric_limits<double>::quiet_NaN();
     REQUIRE_TRUE(rejects(48000.0, invalid));
+}
+
+TEST_CASE(ganged_random_lfo_voice_runs_wait_move_and_done_states) {
+    synth::GangedRandomLfoVoice voice;
+    const synth::VoiceInput input{
+        .waitingIncrement = 0.4,
+        .movingIncrement = 0.25,
+        .shape = 0.0f,
+    };
+
+    REQUIRE_TRUE(voice.GetState() == synth::GangedRandomLfoVoice::State::Done);
+    REQUIRE_NEAR(voice.Output(), 0.0f, 0.0f);
+
+    voice.Reset(0.75f);
+    REQUIRE_TRUE(voice.GetState() == synth::GangedRandomLfoVoice::State::Waiting);
+    REQUIRE_NEAR(voice.CurrentStateProgress(), 0.0, 0.0);
+    REQUIRE_NEAR(voice.Source(), 0.0f, 0.0f);
+    REQUIRE_NEAR(voice.Target(), 0.75f, 0.0f);
+    REQUIRE_NEAR(voice.Output(), 0.0f, 0.0f);
+
+    REQUIRE_NEAR(voice.Process(input), 0.0f, 0.0f);
+    REQUIRE_NEAR(voice.CurrentStateProgress(), 0.4, 1.0e-15);
+    REQUIRE_NEAR(voice.Process(input), 0.0f, 0.0f);
+    REQUIRE_NEAR(voice.CurrentStateProgress(), 0.8, 1.0e-15);
+    REQUIRE_NEAR(voice.Process(input), 0.0f, 0.0f);
+    REQUIRE_TRUE(voice.GetState() == synth::GangedRandomLfoVoice::State::Moving);
+    REQUIRE_NEAR(voice.CurrentStateProgress(), 0.0, 0.0);
+
+    REQUIRE_NEAR(voice.Process(input), 0.1875f, 0.000001f);
+    REQUIRE_NEAR(voice.CurrentStateProgress(), 0.25, 0.0);
+
+    const synth::VoiceInput overshoot{
+        .waitingIncrement = 0.4,
+        .movingIncrement = 0.8,
+        .shape = 1.0f,
+    };
+    REQUIRE_NEAR(voice.Process(overshoot), 0.75f, 0.0f);
+    REQUIRE_TRUE(voice.GetState() == synth::GangedRandomLfoVoice::State::Done);
+    REQUIRE_TRUE(voice.CurrentStateProgress() > 1.0);
+    REQUIRE_NEAR(voice.Process(overshoot), 0.75f, 0.0f);
+
+    voice.Reset(0.5f);
+    const synth::VoiceInput exactBoundary{
+        .waitingIncrement = 1.0,
+        .movingIncrement = 1.0,
+        .shape = 0.5f,
+    };
+    REQUIRE_NEAR(voice.Process(exactBoundary), 0.75f, 0.0f);
+    REQUIRE_TRUE(voice.GetState() == synth::GangedRandomLfoVoice::State::Moving);
+    REQUIRE_NEAR(voice.Process(exactBoundary), 0.5f, 0.0f);
+    REQUIRE_TRUE(voice.GetState() == synth::GangedRandomLfoVoice::State::Done);
+    REQUIRE_NEAR(voice.CurrentStateProgress(), 1.0, 0.0);
+
+    voice.Reset(0.25f);
+    REQUIRE_NEAR(voice.Source(), 0.5f, 0.0f);
+    REQUIRE_NEAR(voice.Target(), 0.25f, 0.0f);
+    REQUIRE_NEAR(voice.Output(), 0.5f, 0.0f);
+}
+
+TEST_CASE(ganged_random_lfo_samples_round_in_canonical_logical_order) {
+    ScriptedRandomLfoDrawSource draws{
+        .normalResults = {2.0, 0.4, 0.6, 4.0, 0.2, 0.3, -0.2, 1.2},
+        .uniformResults = {0.5f, 0.1f, 0.9f},
+    };
+    synth::GangedRandomLfoProcessor<2, ScriptedRandomLfoDrawSource> gang{std::move(draws)};
+    gang.Prepare(10.0);
+    const synth::GangedRandomLfoInput input{
+        .waiting = {.muSeconds = 2.0, .sigmaSeconds = 0.5, .internalSigmaHz = 0.125},
+        .moving = {.muSeconds = 4.0, .sigmaSeconds = 1.0, .internalSigmaHz = 0.25},
+        .targetInternalSigma = 0.25f,
+    };
+
+    gang.Process(input);
+
+    REQUIRE_NEAR(gang.Output(0), 0.0f, 0.0f);
+    REQUIRE_NEAR(gang.Output(1), 0.0f, 0.0f);
+    REQUIRE_NEAR(gang.RoundElapsedSamples(), 0.0, 0.0);
+    REQUIRE_TRUE(gang.Voices()[0].GetState() == synth::GangedRandomLfoVoice::State::Waiting);
+    REQUIRE_TRUE(gang.Voices()[1].GetState() == synth::GangedRandomLfoVoice::State::Waiting);
+    REQUIRE_NEAR(gang.VoiceInputs()[0].waitingIncrement, 0.04, 1.0e-12);
+    REQUIRE_NEAR(gang.VoiceInputs()[1].waitingIncrement, 0.06, 1.0e-12);
+    REQUIRE_NEAR(gang.VoiceInputs()[0].movingIncrement, 0.02, 1.0e-12);
+    REQUIRE_NEAR(gang.VoiceInputs()[1].movingIncrement, 0.03, 1.0e-12);
+    REQUIRE_NEAR(gang.VoiceInputs()[0].shape, 0.1f, 0.0f);
+    REQUIRE_NEAR(gang.VoiceInputs()[1].shape, 0.9f, 0.0f);
+    REQUIRE_NEAR(gang.Voices()[0].Target(), 0.0f, 0.0f);
+    REQUIRE_NEAR(gang.Voices()[1].Target(), 1.0f, 0.0f);
+
+    const auto& observed = gang.RandomSource();
+    const std::vector<ScriptedRandomLfoDrawSource::EventKind> expectedEvents{
+        ScriptedRandomLfoDrawSource::EventKind::Normal,
+        ScriptedRandomLfoDrawSource::EventKind::Normal,
+        ScriptedRandomLfoDrawSource::EventKind::Normal,
+        ScriptedRandomLfoDrawSource::EventKind::Normal,
+        ScriptedRandomLfoDrawSource::EventKind::Normal,
+        ScriptedRandomLfoDrawSource::EventKind::Normal,
+        ScriptedRandomLfoDrawSource::EventKind::Uniform,
+        ScriptedRandomLfoDrawSource::EventKind::Normal,
+        ScriptedRandomLfoDrawSource::EventKind::Normal,
+        ScriptedRandomLfoDrawSource::EventKind::Uniform,
+        ScriptedRandomLfoDrawSource::EventKind::Uniform,
+    };
+    REQUIRE_TRUE(observed.events == expectedEvents);
+    REQUIRE_TRUE(observed.normalCalls.size() == 8);
+    REQUIRE_NEAR(observed.normalCalls[0].mean, 2.0, 0.0);
+    REQUIRE_NEAR(observed.normalCalls[3].mean, 4.0, 0.0);
+    REQUIRE_NEAR(observed.normalCalls[6].mean, 0.5, 0.0);
+    REQUIRE_NEAR(observed.normalCalls[7].mean, 0.5, 0.0);
+    REQUIRE_NEAR(observed.normalCalls[6].sigma, 0.25, 0.0);
+}
+
+TEST_CASE(ganged_random_lfo_slowest_voice_gates_round_turnover) {
+    ScriptedRandomLfoDrawSource draws{
+        .normalResults = {
+            1.0, 1.0, 0.5, 1.0, 1.0, 0.5, 0.25, 0.75,
+            1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.4, 0.6,
+        },
+        .uniformResults = {0.5f, 0.0f, 1.0f, 0.5f, 0.25f, 0.75f},
+    };
+    synth::GangedRandomLfoProcessor<2, ScriptedRandomLfoDrawSource> gang{std::move(draws)};
+    gang.Prepare(1.0);
+    const synth::GangedRandomLfoInput input{
+        .waiting = {.muSeconds = 1.0, .sigmaSeconds = 0.0, .internalSigmaHz = 0.0},
+        .moving = {.muSeconds = 1.0, .sigmaSeconds = 0.0, .internalSigmaHz = 0.0},
+        .targetInternalSigma = 0.2f,
+    };
+
+    gang.Process(input);
+    REQUIRE_TRUE(gang.RandomSource().nextNormalResult == 8);
+    gang.Process(input);
+    REQUIRE_TRUE(gang.Voices()[0].GetState() == synth::GangedRandomLfoVoice::State::Moving);
+    REQUIRE_TRUE(gang.Voices()[1].GetState() == synth::GangedRandomLfoVoice::State::Waiting);
+    gang.Process(input);
+    REQUIRE_TRUE(gang.Voices()[0].GetState() == synth::GangedRandomLfoVoice::State::Done);
+    REQUIRE_TRUE(gang.Voices()[1].GetState() == synth::GangedRandomLfoVoice::State::Moving);
+    REQUIRE_TRUE(gang.RandomSource().nextNormalResult == 8);
+    gang.Process(input);
+    REQUIRE_TRUE(gang.Voices()[0].GetState() == synth::GangedRandomLfoVoice::State::Done);
+    REQUIRE_TRUE(gang.RandomSource().nextNormalResult == 8);
+    gang.Process(input);
+    REQUIRE_TRUE(gang.Voices()[0].GetState() == synth::GangedRandomLfoVoice::State::Waiting);
+    REQUIRE_TRUE(gang.Voices()[1].GetState() == synth::GangedRandomLfoVoice::State::Waiting);
+    REQUIRE_TRUE(gang.RandomSource().nextNormalResult == 16);
+    REQUIRE_NEAR(gang.Output(0), 0.25f, 0.0f);
+    REQUIRE_NEAR(gang.Output(1), 0.75f, 0.0f);
+    REQUIRE_NEAR(gang.RoundElapsedSamples(), 0.0, 0.0);
+}
+
+TEST_CASE(ganged_random_lfo_floors_heavy_tail_increments) {
+    ScriptedRandomLfoDrawSource draws{
+        .normalResults = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.5},
+        .uniformResults = {0.5f, 0.5f, 0.5f},
+    };
+    synth::GangedRandomLfoProcessor<2, ScriptedRandomLfoDrawSource> gang{std::move(draws)};
+    constexpr double sampleRate = 8.0;
+    gang.Prepare(sampleRate);
+    const synth::GangedRandomLfoInput input{
+        .waiting = {.muSeconds = 0.0, .sigmaSeconds = 0.0, .internalSigmaHz = 0.0},
+        .moving = {.muSeconds = 0.0, .sigmaSeconds = 0.0, .internalSigmaHz = 0.0},
+        .targetInternalSigma = 0.0f,
+    };
+
+    gang.Process(input);
+
+    const double epsilon = 1.0 / (sampleRate * 3600.0);
+    for (const auto& voiceInput : gang.VoiceInputs()) {
+        REQUIRE_NEAR(voiceInput.waitingIncrement, epsilon, 0.0);
+        REQUIRE_NEAR(voiceInput.movingIncrement, epsilon, 0.0);
+        REQUIRE_TRUE(std::ceil(1.0 / voiceInput.waitingIncrement) == std::ceil(sampleRate * 3600.0));
+    }
+}
+
+TEST_CASE(ganged_random_lfo_fixed_seed_is_reproducible) {
+    synth::GangedRandomLfoProcessor<2> first{0x12345678u};
+    synth::GangedRandomLfoProcessor<2> second{0x12345678u};
+    first.Prepare(32.0);
+    second.Prepare(32.0);
+    const synth::GangedRandomLfoInput input{
+        .waiting = {.muSeconds = 0.1, .sigmaSeconds = 0.02, .internalSigmaHz = 0.5},
+        .moving = {.muSeconds = 0.1, .sigmaSeconds = 0.02, .internalSigmaHz = 0.5},
+        .targetInternalSigma = 0.1f,
+    };
+
+    for (int sample = 0; sample < 512; ++sample) {
+        first.Process(input);
+        second.Process(input);
+        for (std::size_t voice = 0; voice < 2; ++voice) {
+            REQUIRE_NEAR(first.Output(voice), second.Output(voice), 0.0f);
+            REQUIRE_NEAR(
+                first.VoiceInputs()[voice].waitingIncrement,
+                second.VoiceInputs()[voice].waitingIncrement,
+                0.0);
+            REQUIRE_NEAR(
+                first.VoiceInputs()[voice].movingIncrement,
+                second.VoiceInputs()[voice].movingIncrement,
+                0.0);
+        }
+    }
+}
+
+TEST_CASE(default_random_lfo_draw_source_supports_zero_sigma) {
+    synth::DefaultRandomDrawSource draws{123u};
+    REQUIRE_NEAR(draws.Normal(0.75, 0.0), 0.75, 0.0);
+}
+
+TEST_CASE(ganged_random_lfo_validates_setup_and_uses_fixed_storage) {
+    using Processor = synth::GangedRandomLfoProcessor<2, FixedRandomLfoDrawSource>;
+    static_assert(std::is_same_v<
+        decltype(std::declval<const Processor&>().Voices()),
+        const std::array<synth::GangedRandomLfoVoice, 2>&>);
+    static_assert(std::is_same_v<
+        decltype(std::declval<const Processor&>().VoiceInputs()),
+        const std::array<synth::VoiceInput, 2>&>);
+
+    Processor gang;
+    bool rejectedSampleRate = false;
+    try {
+        gang.Prepare(0.0);
+    } catch (const std::invalid_argument&) {
+        rejectedSampleRate = true;
+    }
+    REQUIRE_TRUE(rejectedSampleRate);
+
+    gang.Prepare(1.0);
+    synth::GangedRandomLfoInput input{
+        .waiting = {.muSeconds = 1.0, .sigmaSeconds = 0.0, .internalSigmaHz = 0.0},
+        .moving = {.muSeconds = 1.0, .sigmaSeconds = 0.0, .internalSigmaHz = 0.0},
+        .targetInternalSigma = 0.0f,
+    };
+    for (int sample = 0; sample < 10000; ++sample) {
+        gang.Process(input);
+    }
+    REQUIRE_TRUE(gang.RoundElapsedSamples() >= 0.0);
+
+    input.targetInternalSigma = -0.1f;
+    bool rejectedTargetSigma = false;
+    try {
+        gang.Process(input);
+    } catch (const std::invalid_argument&) {
+        rejectedTargetSigma = true;
+    }
+    REQUIRE_TRUE(rejectedTargetSigma);
 }
 
 TEST_CASE(nary_numbers_are_elementwise_and_have_aliases) {
