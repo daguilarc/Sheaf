@@ -374,6 +374,14 @@ void TestGangedRandomLfoVisualizer()
         }
     }
 
+    const Bounds tiny{2.0f, 3.0f, 7.0f, 7.0f};
+    std::vector<DrawCommand> tinyCommands;
+    synth::ui::BuildGangedRandomLfoCommands(snapshot, tiny, tinyCommands);
+    Require(std::none_of(tinyCommands.begin(), tinyCommands.end(), [](const DrawCommand& command) {
+                return command.kind == DrawCommand::Kind::FillEllipse;
+            }),
+            "sub-eight-pixel bounds do not emit zero-area present dots");
+
     auto invalid = snapshot;
     invalid.voices[0].movingIncrement = 0.0;
     std::vector<DrawCommand> invalidCommands;

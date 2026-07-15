@@ -165,6 +165,10 @@ struct GangedRandomLfoAtomicColor {
     std::atomic<std::uint32_t> value{Color::Grey.Packed()};
 };
 
+static_assert(
+    std::atomic<double>::is_always_lock_free,
+    "ganged random LFO UI snapshots require lock-free double atomics");
+
 struct GangedRandomLfoVoiceUiState {
     std::atomic<GangedRandomLfoVoice::State> state{GangedRandomLfoVoice::State::Done};
     std::atomic<double> currentStateProgress{0.0};

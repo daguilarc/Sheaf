@@ -263,14 +263,25 @@ inline LfoWaveformDrawState LfoWaveformDrawStateFromCore(const MiniAppCore& core
     return state;
 }
 
-using MiniAppGangedRandomLfoSnapshot =
-    synth::GangedRandomLfoSnapshot<MiniAppCore::kVoiceCount>;
-
 inline bool ReadGangedRandomLfoSnapshotFromCore(
     const MiniAppCore& core,
-    MiniAppGangedRandomLfoSnapshot& snapshot)
+    MiniAppGangedRandomLfoSnapshot& snapshot,
+    unsigned maxRetries = 4)
 {
-    return core.GangedRandomLfoInstance().ReadSnapshot(snapshot);
+    return core.GangedRandomLfoInstance().ReadSnapshot(snapshot, maxRetries);
+}
+
+inline std::vector<synth::ui::DrawCommand> BuildGangedRandomLfoPanelCommandsFromCore(
+    const MiniAppCore& core,
+    synth::ui::Bounds nodeBounds,
+    unsigned maxRetries = 4)
+{
+    MiniAppGangedRandomLfoSnapshot snapshot;
+    if (!ReadGangedRandomLfoSnapshotFromCore(core, snapshot, maxRetries))
+    {
+        snapshot.sampleRate = 0.0;
+    }
+    return BuildGangedRandomLfoPanelCommands(snapshot, nodeBounds);
 }
 
 inline void AppendMiniAppControls(synth::ui::Builder& builder, const MiniAppUiSnapshot& snapshot)

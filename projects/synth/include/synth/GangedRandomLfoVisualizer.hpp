@@ -236,9 +236,11 @@ void BuildGangedRandomLfoCommands(
 
         const Point dot = detail::PointAtSample(
             voice, timing, presentSamples, sharedDurationSamples, plot);
-        commandBuffer.push_back(DrawCommand::FillEllipse(
-            detail::ClippedDotBounds(dot, plot, bounds),
-            voice.color));
+        const Bounds dotBounds = detail::ClippedDotBounds(dot, plot, bounds);
+        if (dotBounds.width > 0.0f && dotBounds.height > 0.0f)
+        {
+            commandBuffer.push_back(DrawCommand::FillEllipse(dotBounds, voice.color));
+        }
     }
 }
 

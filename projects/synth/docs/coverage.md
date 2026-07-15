@@ -242,8 +242,9 @@ Last audit: ganged random LFO, 2026-07-15
   `TestGangedRandomLfoVisualizer` covers the shared maximum-duration axis,
   per-voice waiting/movement/hold paths, reconstructed present dots, solid past,
   dashed future, snapshot colors, fixed geometry bounds, and invalid snapshots.
-- [`MiniAppJuceBackendParityTests.cpp`](../juce/MiniAppJuceBackendParityTests.cpp)
-  renders the predictive polylines and dots through the existing JUCE backend.
+- [`MiniAppJuceBackendParityTests.cpp`](../juce/MiniAppJuceBackendParityTests.cpp):
+  `miniapp_juce_backend_parity_tests` renders the predictive polylines and dots
+  through the existing JUCE backend.
 - [`browser_command_buffer_tests.cpp`](../tests/browser_command_buffer_tests.cpp):
   `TestPredictiveGangedLfoUsesExistingDrawSchema` proves the browser consumes the
   same commands without a protocol-version change or diagnostic.
@@ -262,8 +263,9 @@ Last audit: ganged random LFO, 2026-07-15
   hidden, and bank-transition visualizer cases in that executable cover three
   distinct waveform panels, a separate retained address-stable modulator
   underlay, and unchanged performer controls, parameters, banks, and persistence.
-- [`MiniAppJuceBackendParityTests.cpp`](../juce/MiniAppJuceBackendParityTests.cpp)
-  and `TestMiniAppThreePanelCommandsUseExistingBrowserSchema` in
+- [`MiniAppJuceBackendParityTests.cpp`](../juce/MiniAppJuceBackendParityTests.cpp):
+  `miniapp_juce_backend_parity_tests` and
+  `TestMiniAppThreePanelCommandsUseExistingBrowserSchema` in
   [`browser_command_buffer_tests.cpp`](../tests/browser_command_buffer_tests.cpp)
   cover the three-panel commands in both production backends.
 

@@ -21,6 +21,7 @@
 #include "MiniAppDraw.hpp"
 
 #include "synth/AppContext.hpp"
+#include "synth/DspRandomLfo.hpp"
 #include "synth/DspScope.hpp"
 #include "synth/GangedRandomLfoVisualizer.hpp"
 #include "synth/MidiController.hpp"
@@ -37,7 +38,7 @@ namespace synth_miniapp {
 
 class MiniAppCore {
 public:
-    static constexpr std::size_t kVoiceCount = 2;
+    static constexpr std::size_t kVoiceCount = kGangedRandomLfoVoiceCount;
     static constexpr std::size_t kScopeFrames = 6'553'600;
     using VcoModule = synth::WavetableVcoModule<kVoiceCount>;
     using FilterModule = synth::ClassicSvfModule<kVoiceCount>;
@@ -68,6 +69,8 @@ public:
             .numVoices = 2,
             .numModulators = 4,
             .numScenes = 3,
+            // Twelve base values plus twelve values for each of four
+            // modulation sources: 12 + 12 * 4 = 60.
             .maxParameters = 60,
         });
         group_ = &group;

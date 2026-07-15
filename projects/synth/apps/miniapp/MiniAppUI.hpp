@@ -97,13 +97,11 @@ public:
             builder.Draw(MiniAppNodeIds::kLfoScope,
                          lfoScopeBounds,
                          BuildLfoWaveformCommands(LfoWaveformDrawStateFromCore(*core_), lfoScopeBounds));
-            MiniAppGangedRandomLfoSnapshot gangedRandomLfoSnapshot;
-            ReadGangedRandomLfoSnapshotFromCore(*core_, gangedRandomLfoSnapshot);
             builder.Draw(
                 MiniAppNodeIds::kGangedRandomLfoRound,
                 gangedRandomLfoRoundBounds,
-                BuildGangedRandomLfoPanelCommands(
-                    gangedRandomLfoSnapshot, gangedRandomLfoRoundBounds));
+                BuildGangedRandomLfoPanelCommandsFromCore(
+                    *core_, gangedRandomLfoRoundBounds));
         }
         else
         {

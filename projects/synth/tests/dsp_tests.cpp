@@ -442,6 +442,8 @@ TEST_CASE(correlated_increments_reject_invalid_config) {
     auto invalid = valid;
     invalid.muSeconds = std::numeric_limits<double>::quiet_NaN();
     REQUIRE_TRUE(rejects(48000.0, invalid));
+    invalid.muSeconds = std::numeric_limits<double>::infinity();
+    REQUIRE_TRUE(rejects(48000.0, invalid));
     invalid = valid;
     invalid.sigmaSeconds = -0.01;
     REQUIRE_TRUE(rejects(48000.0, invalid));
@@ -669,6 +671,14 @@ TEST_CASE(ganged_random_lfo_validates_setup_and_uses_fixed_storage) {
         const std::array<synth::VoiceInput, 2>&>);
 
     Processor gang;
+    bool rejectedVoiceIndex = false;
+    try {
+        (void)gang.Output(2);
+    } catch (const std::out_of_range&) {
+        rejectedVoiceIndex = true;
+    }
+    REQUIRE_TRUE(rejectedVoiceIndex);
+
     bool rejectedSampleRate = false;
     try {
         gang.Prepare(0.0);

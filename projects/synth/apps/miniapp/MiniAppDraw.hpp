@@ -14,6 +14,10 @@
 
 namespace synth_miniapp {
 
+inline constexpr std::size_t kGangedRandomLfoVoiceCount = 2;
+using MiniAppGangedRandomLfoSnapshot =
+    synth::GangedRandomLfoSnapshot<kGangedRandomLfoVoiceCount>;
+
 struct VcoWaveformDrawState
 {
     std::vector<synth::ui::WaveformLayerDrawState> layers;
@@ -45,11 +49,12 @@ inline std::vector<synth::ui::DrawCommand> BuildLfoWaveformCommands(const LfoWav
 }
 
 inline std::vector<synth::ui::DrawCommand> BuildGangedRandomLfoPanelCommands(
-    const synth::GangedRandomLfoSnapshot<2>& snapshot,
+    const MiniAppGangedRandomLfoSnapshot& snapshot,
     synth::ui::Bounds nodeBounds)
 {
     std::vector<synth::ui::DrawCommand> commands;
-    commands.reserve(synth::ui::GangedRandomLfoGeometry::MaximumCommandCount<2>());
+    commands.reserve(
+        synth::ui::GangedRandomLfoGeometry::MaximumCommandCount<kGangedRandomLfoVoiceCount>());
     synth::ui::BuildGangedRandomLfoCommands(snapshot, nodeBounds, commands);
     return commands;
 }

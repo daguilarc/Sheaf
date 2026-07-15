@@ -6,6 +6,7 @@
 #include "support/SynthRig.hpp"
 
 #include "synth/AppConcepts.hpp"
+#include "synth/DspRandomLfo.hpp"
 #include "synth/PatchBrowser.hpp"
 #include "synth/PortableUI.hpp"
 
@@ -526,6 +527,21 @@ TEST_CASE(miniapp_main_waveform_row_draws_three_distinct_bounded_panels) {
     REQUIRE_TRUE(retained.GetBounds().y == underlay->bounds.y);
     REQUIRE_TRUE(retained.GetBounds().width == underlay->bounds.width);
     REQUIRE_TRUE(retained.GetBounds().height == underlay->bounds.height);
+}
+
+TEST_CASE(miniapp_main_ganged_random_lfo_panel_fails_closed_when_snapshot_read_exhausts_retries) {
+    synth_rig::SynthRig<synth_miniapp::MiniAppCore> rig(
+        64,
+        UseScratchRuntimeDataPaths(
+            "main_ganged_random_lfo_panel_fails_closed_when_snapshot_read_exhausts_retries"));
+    rig.RunBlocks(1);
+
+    const synth::ui::Bounds bounds{10.0f, 20.0f, 180.0f, 90.0f};
+    const auto commands = synth_miniapp::BuildGangedRandomLfoPanelCommandsFromCore(
+        rig.Application(), bounds, 0);
+    REQUIRE_TRUE(commands.size() == 2);
+    REQUIRE_TRUE(commands[0].kind == synth::ui::DrawCommand::Kind::Fill);
+    REQUIRE_TRUE(commands[1].kind == synth::ui::DrawCommand::Kind::Line);
 }
 
 TEST_CASE(miniapp_ui_model_exposes_layout_scene_labels_and_dispatch) {
