@@ -286,6 +286,7 @@ struct EncoderDrawState
 {
     bool connected = false;
     bool hasVisualizerUnderlay = false;
+    bool wantsFrame = true;
     bool bipolar = false;
     std::size_t switchValues = 0;
     std::uint32_t modulatorsAffectingMask = 0;
@@ -680,11 +681,14 @@ inline std::vector<DrawCommand> BuildEncoderDrawCommands(const EncoderDrawState&
             synth::ScaleAlpha(state.baseColor, state.hasVisualizerUnderlay ? 0.14f : 0.28f)));
     }
     commands.push_back(DrawCommand::StrokeEllipse(body, synth::ScaleAlpha(state.baseColor, 0.9f), 1.5f));
-    commands.push_back(DrawCommand::StrokeRoundedRect(
-        {bounds.x + 1.0f, bounds.y + 1.0f, bounds.width - 2.0f, bounds.height - 2.0f},
-        6.0f,
-        Color::Rgb(8, 9, 10),
-        1.0f));
+    if (state.wantsFrame)
+    {
+        commands.push_back(DrawCommand::StrokeRoundedRect(
+            {bounds.x + 1.0f, bounds.y + 1.0f, bounds.width - 2.0f, bounds.height - 2.0f},
+            6.0f,
+            Color::Rgb(8, 9, 10),
+            1.0f));
+    }
 
     const auto drawBadges = [&](std::uint32_t mask, bool upper, bool modulator) {
         const std::vector<synth::Color>& colors = modulator ? state.modulatorColors : state.gestureColors;

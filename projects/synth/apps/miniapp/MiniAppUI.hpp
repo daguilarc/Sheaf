@@ -56,6 +56,10 @@ public:
                         synth::ui::EncoderDrawStateFromParameter(cell);
                     visualizer = cell.visualizer.load(std::memory_order_relaxed);
                     encoderState.hasVisualizerUnderlay = visualizer != nullptr && visualizer->Visible();
+                    if (encoderState.hasVisualizerUnderlay)
+                    {
+                        encoderState.wantsFrame = visualizer->WantsEncoderFrame();
+                    }
                     drawCommands = synth::ui::BuildEncoderDrawCommands(encoderState, encoderBounds);
                 }
             }

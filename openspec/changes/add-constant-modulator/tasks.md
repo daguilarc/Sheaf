@@ -21,3 +21,9 @@
 - [x] 4.1 Update `projects/synth/docs/coverage.md` to map modified `sdsp-13` and `sdsp-33` plus new `sdsp-39`, `sdsp-40`, and `spv-8` to the DSP, portable UI, MiniApp system, and existing backend-parity tests.
 - [x] 4.2 Run the focused DSP, portable UI, and MiniApp system test binaries during development, then run `make -C projects/synth test` and confirm the UI-boundary check and full JUCE-free suite pass.
 - [x] 4.3 Run strict validation and status checks for both `add-noise-modulator` and `add-constant-modulator`, confirming the dependent active changes are valid and the constant change is apply-ready with every task complete.
+
+## 5. Minimal Constant Presentation Polish
+
+- [x] 5.1 Add failing portable UI tests requiring centered bars at exactly half their previous post-gap width and a default-preserving constant-only encoder-frame preference.
+- [x] 5.2 Add failing encoder and MiniApp integration tests proving the constant chart omits exactly the outer rounded-rectangle frame while default visualizers retain it.
+- [x] 5.3 Implement the visualizer frame preference, constant override, centered half-width bars, and MiniApp encoder-state wiring without changing DSP or other visualizer presentation.

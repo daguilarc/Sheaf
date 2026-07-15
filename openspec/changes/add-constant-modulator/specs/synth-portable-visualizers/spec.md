@@ -21,9 +21,16 @@ WHEN a fixed polyphonic modulation source needs a portable representation, THE s
 
 #### Scenario: Bar geometry stays minimal and bounded
 - **WHEN** finite normalized values draw into positive finite bounds
-- **THEN** every rectangle has positive width after a slot-relative horizontal inset
+- **THEN** every rectangle has exactly half the positive width remaining after the slot-relative horizontal inset
+- **AND** every rectangle is centered in its assigned voice slot
 - **AND** every rectangle remains inside the assigned bounds
 - **AND** all bars use the visualizer's retained color
+
+#### Scenario: Constant chart omits the shared encoder frame
+- **WHEN** the constant visualizer is composed beneath a modulation-depth encoder
+- **THEN** the encoder omits its outer rounded-rectangle frame
+- **AND** retains its body, indicators, badges, and interactions
+- **AND** visualizers that do not request suppression retain the frame by default
 
 #### Scenario: Invalid drawing input is safe
 - **WHEN** the visualizer has an empty value span or non-finite or non-positive bounds

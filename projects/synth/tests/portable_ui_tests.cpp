@@ -475,7 +475,12 @@ int main()
         const synth::ui::Bounds bounds{10.0f, 20.0f, 80.0f, 120.0f};
         visualizer.SetBounds(bounds);
         const auto commands = visualizer.Draw();
+        Require(!visualizer.WantsEncoderFrame(),
+                "constant visualizer suppresses the shared encoder frame");
         Require(commands.size() == values.size(), "constant visualizer emits one command per voice");
+        const float slotWidth = bounds.width / static_cast<float>(values.size());
+        const float gap = std::min(2.0f, slotWidth * 0.2f);
+        const float expectedBarWidth = (slotWidth - gap) * 0.5f;
         for (std::size_t voice = 0; voice < values.size(); ++voice) {
             Require(commands[voice].kind == synth::ui::DrawCommand::Kind::Fill,
                     "constant visualizer emits only filled rectangles");
@@ -483,6 +488,12 @@ int main()
                     "constant visualizer retains source color");
             Require(commands[voice].bounds.width > 0.0f,
                     "constant visualizer keeps positive bar width");
+            RequireNear(commands[voice].bounds.width, expectedBarWidth, 0.0001f,
+                        "constant visualizer halves the post-gap bar width");
+            RequireNear(commands[voice].bounds.x + commands[voice].bounds.width * 0.5f,
+                        bounds.x + (static_cast<float>(voice) + 0.5f) * slotWidth,
+                        0.0001f,
+                        "constant visualizer centers each narrow bar in its voice slot");
             Require(commands[voice].bounds.x >= bounds.x &&
                     commands[voice].bounds.x + commands[voice].bounds.width <= bounds.x + bounds.width,
                     "constant visualizer bar stays horizontally bounded");
@@ -959,6 +970,11 @@ int main()
             "underlay encoder body fill is translucent");
     Require(underlayEncoderCommands[1].color.a < ordinaryEncoderCommands[1].color.a,
             "underlay encoder inner color fill is also softened");
+    Require(std::any_of(underlayEncoderCommands.begin(), underlayEncoderCommands.end(),
+                        [](const synth::ui::DrawCommand& command) {
+                            return command.kind == synth::ui::DrawCommand::Kind::StrokeRoundedRect;
+                        }),
+            "default visualizer underlay retains the rounded encoder frame");
     for (std::size_t commandIx = 2; commandIx < ordinaryEncoderCommands.size(); ++commandIx)
     {
         Require(underlayEncoderCommands[commandIx].kind == ordinaryEncoderCommands[commandIx].kind,
@@ -970,6 +986,19 @@ int main()
                     0.0001f,
                     "underlay encoder preserves non-body stroke widths");
     }
+
+    synth::ui::EncoderDrawState framelessUnderlayEncoder = underlayEncoder;
+    framelessUnderlayEncoder.wantsFrame = false;
+    const auto framelessUnderlayCommands = synth::ui::BuildEncoderDrawCommands(
+        framelessUnderlayEncoder,
+        {10.0f, 10.0f, 92.0f, 92.0f});
+    Require(framelessUnderlayCommands.size() + 1 == underlayEncoderCommands.size(),
+            "frameless visualizer removes exactly one encoder command");
+    Require(std::none_of(framelessUnderlayCommands.begin(), framelessUnderlayCommands.end(),
+                         [](const synth::ui::DrawCommand& command) {
+                             return command.kind == synth::ui::DrawCommand::Kind::StrokeRoundedRect;
+                         }),
+            "frameless visualizer removes the rounded encoder frame");
 
     const std::vector<synth::ui::WaveformLayerDrawState> braidScopeLayer{
         {.connected = true, .scopeColor = synth::Color::Red, .scope = &scope, .scopeChannel = 0},

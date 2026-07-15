@@ -84,11 +84,15 @@ audio/UI publication machinery.
 
    For finite positive bounds and a nonempty value span, divide the width into
    equal voice slots and emit one filled rectangle inside each slot. Small
-   horizontal insets separate bars. Map data range `[-0.1, 1.1]` to the full
+   horizontal insets separate bars; each bar uses exactly half the remaining
+   post-inset width and is centered in its slot. Map data range `[-0.1, 1.1]` to the full
    height, start each rectangle at the bottom (`-0.1`), and place its top at the
    clamped voice value. A zero value therefore fills `1/12` of the height and a
    one value fills `11/12`. No other draw command is emitted. Invalid bounds or
-   empty values emit nothing.
+   empty values emit nothing. The base visualizer contract retains the shared
+   encoder frame by default, while the constant visualizer requests that the
+   encoder omit only its outer rounded-rectangle stroke. MiniApp passes this
+   preference into the encoder draw state without checking the visualizer type.
 
    Alternative considered: let the visualizer recompute or copy assignments
    from a voice count. That creates a second source of truth. Alternative

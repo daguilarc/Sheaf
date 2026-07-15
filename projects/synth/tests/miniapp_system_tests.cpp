@@ -224,6 +224,25 @@ const synth::ui::Node* FindNodeById(const synth::ui::NodeTree& tree, const std::
     return FindNodeById(tree, id.c_str());
 }
 
+bool HasOuterEncoderFrame(const synth::ui::Node& encoder) {
+    constexpr float kTolerance = 0.0001f;
+    const synth::ui::Bounds expected{
+        encoder.bounds.x + 5.0f,
+        encoder.bounds.y + 5.0f,
+        encoder.bounds.width - 10.0f,
+        encoder.bounds.height - 10.0f,
+    };
+    return std::any_of(encoder.drawCommands.begin(), encoder.drawCommands.end(),
+                       [&](const synth::ui::DrawCommand& command) {
+                           return command.kind == synth::ui::DrawCommand::Kind::StrokeRoundedRect &&
+                                  std::fabs(command.bounds.x - expected.x) <= kTolerance &&
+                                  std::fabs(command.bounds.y - expected.y) <= kTolerance &&
+                                  std::fabs(command.bounds.width - expected.width) <= kTolerance &&
+                                  std::fabs(command.bounds.height - expected.height) <= kTolerance &&
+                                  std::fabs(command.cornerRadius - 6.0f) <= kTolerance;
+                       });
+}
+
 std::size_t NodeIndexById(const synth::ui::NodeTree& tree, const std::string& id) {
     for (std::size_t ix = 0; ix < tree.nodes.size(); ++ix) {
         if (tree.nodes[ix].id == synth::ui::NodeId(id)) {
@@ -675,11 +694,21 @@ TEST_CASE(miniapp_modulation_view_draws_visualizer_beneath_encoder) {
     REQUIRE_TRUE(encoder->drawCommands.front().kind == synth::ui::DrawCommand::Kind::FillEllipse);
     REQUIRE_TRUE(encoder->drawCommands.front().color.a > 0);
     REQUIRE_TRUE(encoder->drawCommands.front().color.a < 255);
+    REQUIRE_TRUE(HasOuterEncoderFrame(*encoder));
     REQUIRE_TRUE(visualizer->bounds.x == encoder->bounds.x);
     REQUIRE_TRUE(visualizer->bounds.y == encoder->bounds.y);
     REQUIRE_TRUE(visualizer->bounds.width == encoder->bounds.width);
     REQUIRE_TRUE(visualizer->bounds.height == encoder->bounds.height);
     REQUIRE_TRUE(NodeIndexById(tree, visualizerId) < NodeIndexById(tree, encoderId));
+
+    const std::array<float, 2> constantValues{0.0f, 1.0f};
+    synth::ui::ConstantBarVisualizer constantVisualizer(constantValues, synth::Color::Yellow);
+    ui->slots[0].cells[kTunePosition].visualizer.store(
+        &constantVisualizer, std::memory_order_relaxed);
+    const synth::ui::NodeTree constantTree = surface.BuildTree();
+    const synth::ui::Node* constantEncoder = FindNodeById(constantTree, encoderId);
+    REQUIRE_TRUE(constantEncoder != nullptr);
+    REQUIRE_TRUE(!HasOuterEncoderFrame(*constantEncoder));
 }
 
 TEST_CASE(miniapp_top_level_parameter_rendering_remains_encoder_only_without_visualizer) {

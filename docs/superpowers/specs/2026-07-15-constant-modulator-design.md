@@ -41,7 +41,9 @@ synchronization is needed.
 For positive finite bounds it emits exactly one filled rectangle per voice,
 left to right in voice order. Every bar uses the modulator color. There are no
 labels, ticks, axes, outlines, background panels, or other decoration. Small
-gaps distinguish adjacent bars.
+gaps distinguish adjacent bars; each centered bar uses half the post-gap width
+of its voice slot. The constant visualizer also suppresses the shared encoder's
+outer rounded-rectangle frame without changing the encoder body or interaction.
 
 The vertical data range is `[-0.1, 1.1]`. Each bar begins at the bottom edge,
 which represents `-0.1`, and ends at its voice value. Consequently the voice
@@ -73,4 +75,3 @@ six-slot topology, index-5 metadata and stable pointers, retained visualizer,
 yellow color flow, fixed values across audio processing, and the absence of a
 new per-sample processor call. Existing JUCE and browser parity tests verify
 that rectangle commands remain backend portable.
-

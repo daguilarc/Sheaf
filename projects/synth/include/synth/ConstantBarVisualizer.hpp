@@ -17,6 +17,8 @@ public:
         Color color = Color::White) noexcept
         : values_(values), color_(color) {}
 
+    bool WantsEncoderFrame() const noexcept override { return false; }
+
 protected:
     std::vector<DrawCommand> DrawVisible() const override {
         const Bounds bounds = GetBounds();
@@ -36,7 +38,7 @@ protected:
         constexpr float kRange = kMaximum - kMinimum;
         const float slotWidth = bounds.width / static_cast<float>(values_.size());
         const float gap = std::min(2.0f, slotWidth * 0.2f);
-        const float barWidth = slotWidth - gap;
+        const float barWidth = (slotWidth - gap) * 0.5f;
         const float bottom = bounds.y + bounds.height;
         std::vector<DrawCommand> commands;
         commands.reserve(values_.size());
@@ -44,7 +46,7 @@ protected:
             const float value = std::clamp(values_[voice], 0.0f, 1.0f);
             const float top = bounds.y + ((kMaximum - value) / kRange) * bounds.height;
             commands.push_back(DrawCommand::Fill({
-                bounds.x + static_cast<float>(voice) * slotWidth + gap * 0.5f,
+                bounds.x + static_cast<float>(voice) * slotWidth + (slotWidth - barWidth) * 0.5f,
                 top,
                 barWidth,
                 bottom - top,

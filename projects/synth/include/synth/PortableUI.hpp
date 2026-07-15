@@ -115,6 +115,7 @@ public:
     const Bounds& GetBounds() const { return bounds_; }
     void SetVisible(bool visible) { visible_ = visible; }
     bool Visible() const { return visible_; }
+    virtual bool WantsEncoderFrame() const noexcept { return true; }
 
     std::vector<DrawCommand> Draw() const
     {
