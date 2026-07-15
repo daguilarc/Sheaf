@@ -1,6 +1,6 @@
 # Spec Coverage
 
-Last audit: portable runtime main component, 2026-07-10
+Last audit: ganged random LFO, 2026-07-15
 
 | Requirement | Status | Primary exact coverage |
 |---|---|---|
@@ -22,6 +22,11 @@ Last audit: portable runtime main component, 2026-07-10
 | `sru-24` | covered | `projects/synth/tests/miniapp_system_tests.cpp` visualizer node shares encoder bounds, precedes encoder, and encoder actions remain; top-level/bank-transition no-visualizer regressions; null/hidden paths in portable/Braid tests |
 | `sru-25` | covered | `projects/synth/tests/portable_ui_tests.cpp` shared encoder underlay body alpha and preserved non-body commands; `projects/synth/tests/miniapp_system_tests.cpp` visible and hidden visualizer underlay wiring |
 | `sdsp-33` | covered | `projects/synth/tests/miniapp_system_tests.cpp` MiniApp constructs visible distinct VCO visualizers and one LFO visualizer |
+| `sdsp-34` | covered | `dsp_tests` shaped interpolation, reciprocal-time correlated increments, Hz-domain voice spread, validation, precision, and one-hour increment floor cases |
+| `sdsp-35` | covered | `dsp_tests` deterministic voice wait/move/done transitions, exact and overshot boundaries, reset semantics, and double progress cases |
+| `sdsp-36` | covered | `dsp_tests` canonical random draw order, correlated gang turnover, fixed storage/seed, bounded coherent snapshots, complete live fields, and assigned voice colors |
+| `spv-6` | covered | `portable_ui_tests` predictive round geometry and invalid-snapshot fallback; `miniapp_juce_backend_parity_tests` and `browser_command_buffer_tests` existing-backend command parity |
+| `spm-71` | covered | `miniapp_system_tests` source registration/configuration, audio-block processing/publishing, retained address-stable visualizer, and three-panel/underlay UI topology; JUCE/browser parity tests cover the same portable draw commands |
 | `d4-9` | covered | `projects/synth/tests/braid4_system_tests.cpp` all Braid 4 modulator visualizers are null and modulation view is encoder-only |
 
 ## Requirement Mappings
@@ -199,6 +204,68 @@ Last audit: portable runtime main component, 2026-07-10
   `miniapp smoke wiring keeps the generic fake-app gate first` verifies the typed
   browser entry names only the application type; the real-WASM shell and gesture
   cases verify the resulting host behavior.
+
+### `sdsp-34` - Shaped Interpolation And Correlated Increments
+
+- [`dsp_tests.cpp`](../tests/dsp_tests.cpp):
+  `shaped_interpolate_endpoints_and_landmarks`,
+  `shaped_interpolate_preserves_double_progress`,
+  `correlated_increments_use_reciprocal_center_and_hz_sigma`,
+  `correlated_increments_floor_near_zero_rate`, and
+  `correlated_increments_reject_invalid_config` cover cosine-table interpolation,
+  time-domain center sampling, rate-domain per-voice spread, precision, floors,
+  and invalid inputs.
+
+### `sdsp-35` - Deterministic Ganged Voice
+
+- [`dsp_tests.cpp`](../tests/dsp_tests.cpp):
+  `ganged_random_lfo_voice_runs_wait_move_and_done_states` covers default done,
+  waiting and moving increments, exact and overshot boundaries, output holds,
+  double progress, and reset source/target semantics.
+
+### `sdsp-36` - Ganged Random Processor And Coherent Snapshot
+
+- [`dsp_tests.cpp`](../tests/dsp_tests.cpp):
+  `ganged_random_lfo_samples_round_in_canonical_logical_order`,
+  `ganged_random_lfo_slowest_voice_gates_round_turnover`,
+  `ganged_random_lfo_floors_heavy_tail_increments`,
+  `ganged_random_lfo_fixed_seed_is_reproducible`, and
+  `ganged_random_lfo_validates_setup_and_uses_fixed_storage` cover correlation,
+  turnover, deterministic injection, validation, and realtime-safe fixed storage.
+- The `ganged_random_lfo_snapshot_*` cases in the same executable cover explicit
+  publication of every live field and voice color, no recorded history, odd or
+  changing revisions, bounded retries, and unchanged destination on failed read.
+
+### `spv-6` - Predictive Ganged-LFO Round Visualizer
+
+- [`portable_ui_tests.cpp`](../tests/portable_ui_tests.cpp):
+  `TestGangedRandomLfoVisualizer` covers the shared maximum-duration axis,
+  per-voice waiting/movement/hold paths, reconstructed present dots, solid past,
+  dashed future, snapshot colors, fixed geometry bounds, and invalid snapshots.
+- [`MiniAppJuceBackendParityTests.cpp`](../juce/MiniAppJuceBackendParityTests.cpp)
+  renders the predictive polylines and dots through the existing JUCE backend.
+- [`browser_command_buffer_tests.cpp`](../tests/browser_command_buffer_tests.cpp):
+  `TestPredictiveGangedLfoUsesExistingDrawSchema` proves the browser consumes the
+  same commands without a protocol-version change or diagnostic.
+
+### `spm-71` - MiniApp Ganged Random Modulation
+
+- [`miniapp_system_tests.cpp`](../tests/miniapp_system_tests.cpp):
+  `miniapp_registers_ganged_random_lfo_without_changing_performer_topology` and
+  `miniapp_processes_and_publishes_ganged_random_lfo_at_audio_block_boundaries`
+  cover source index 3, preserved sources 0--2, two-second/0.5-second/0.125-Hz
+  configuration, target sigma 0.1, cyan/orange voices, per-sample processing
+  before modulation update, negotiated sample rate, and block-boundary snapshot
+  publication.
+- `miniapp_main_waveform_row_draws_three_distinct_bounded_panels`,
+  `miniapp_modulation_view_draws_visualizer_beneath_encoder`, and the top-level,
+  hidden, and bank-transition visualizer cases in that executable cover three
+  distinct waveform panels, a separate retained address-stable modulator
+  underlay, and unchanged performer controls, parameters, banks, and persistence.
+- [`MiniAppJuceBackendParityTests.cpp`](../juce/MiniAppJuceBackendParityTests.cpp)
+  and `TestMiniAppThreePanelCommandsUseExistingBrowserSchema` in
+  [`browser_command_buffer_tests.cpp`](../tests/browser_command_buffer_tests.cpp)
+  cover the three-panel commands in both production backends.
 
 ## Known Gaps
 
