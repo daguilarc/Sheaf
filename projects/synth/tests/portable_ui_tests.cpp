@@ -3,6 +3,7 @@
 #include "synth/PortableUIBuilders.hpp"
 #include "synth/RuntimePages.hpp"
 #include "synth/ControllersPageUI.hpp"
+#include "synth/ConstantBarVisualizer.hpp"
 #include "synth/DspScope.hpp"
 #include "synth/GangedRandomLfoVisualizer.hpp"
 #include "synth/MidiController.hpp"
@@ -467,6 +468,105 @@ int main()
     hiddenBuilder.Root("viz.hidden.root", {0.0f, 0.0f, 100.0f, 100.0f})
         .Visualizer("viz.hidden.node", &visualizer);
     Require(FindNodeById(hiddenBuilder.Build(), "viz.hidden.node") == nullptr, "hidden visualizer node absent");
+
+    {
+        const std::array<float, 4> values{0.0f, 2.0f / 3.0f, 1.0f / 3.0f, 1.0f};
+        synth::ui::ConstantBarVisualizer visualizer(values, synth::Color::Yellow);
+        const synth::ui::Bounds bounds{10.0f, 20.0f, 80.0f, 120.0f};
+        visualizer.SetBounds(bounds);
+        const auto commands = visualizer.Draw();
+        Require(commands.size() == values.size(), "constant visualizer emits one command per voice");
+        for (std::size_t voice = 0; voice < values.size(); ++voice) {
+            Require(commands[voice].kind == synth::ui::DrawCommand::Kind::Fill,
+                    "constant visualizer emits only filled rectangles");
+            Require(commands[voice].color == synth::Color::Yellow,
+                    "constant visualizer retains source color");
+            Require(commands[voice].bounds.width > 0.0f,
+                    "constant visualizer keeps positive bar width");
+            Require(commands[voice].bounds.x >= bounds.x &&
+                    commands[voice].bounds.x + commands[voice].bounds.width <= bounds.x + bounds.width,
+                    "constant visualizer bar stays horizontally bounded");
+            RequireNear(commands[voice].bounds.y + commands[voice].bounds.height,
+                        bounds.y + bounds.height, 0.0001f,
+                        "constant visualizer bars share the bottom edge");
+        }
+        RequireNear(commands[0].bounds.height, bounds.height / 12.0f, 0.0001f,
+                    "zero voice remains visible");
+        RequireNear(commands[3].bounds.y, bounds.y + bounds.height / 12.0f, 0.0001f,
+                    "one voice keeps a top margin");
+        Require(commands[1].bounds.height > commands[2].bounds.height,
+                "bar heights retain voice-order values without sorting");
+        const auto repeated = visualizer.Draw();
+        for (std::size_t voice = 0; voice < values.size(); ++voice) {
+            RequireNear(repeated[voice].bounds.y, commands[voice].bounds.y, 0.0001f,
+                        "immutable repeated draw keeps bar geometry");
+        }
+    }
+
+    {
+        const std::array<float, 2> values{0.0f, 1.0f};
+        synth::ui::ConstantBarVisualizer narrow(values, synth::Color::Cyan);
+        narrow.SetBounds({1.0f, 2.0f, 0.5f, 3.0f});
+        const auto commands = narrow.Draw();
+        Require(commands.size() == 2, "narrow constant visualizer retains both bars");
+        Require(commands[0].bounds.width > 0.0f && commands[1].bounds.width > 0.0f,
+                "slot-relative gaps preserve positive width");
+
+        const std::span<const float> empty;
+        synth::ui::ConstantBarVisualizer emptyVisualizer(empty, synth::Color::White);
+        emptyVisualizer.SetBounds({0.0f, 0.0f, 10.0f, 10.0f});
+        Require(emptyVisualizer.Draw().empty(), "empty constant values draw nothing");
+        for (const synth::ui::Bounds invalid : {
+                 synth::ui::Bounds{0.0f, 0.0f, 0.0f, 1.0f},
+                 synth::ui::Bounds{0.0f, 0.0f, 1.0f, 0.0f},
+                 synth::ui::Bounds{0.0f, 0.0f, -1.0f, 1.0f},
+                 synth::ui::Bounds{0.0f, 0.0f, std::numeric_limits<float>::infinity(), 1.0f},
+                 synth::ui::Bounds{std::numeric_limits<float>::quiet_NaN(), 0.0f, 1.0f, 1.0f}}) {
+            narrow.SetBounds(invalid);
+            Require(narrow.Draw().empty(), "invalid constant visualizer bounds are safe");
+        }
+    }
+
+    {
+        static_assert(!std::is_copy_constructible_v<synth::ui::ConstantBarVisualizer>);
+        static_assert(!std::is_copy_assignable_v<synth::ui::ConstantBarVisualizer>);
+        static_assert(!std::is_move_constructible_v<synth::ui::ConstantBarVisualizer>);
+        static_assert(!std::is_move_assignable_v<synth::ui::ConstantBarVisualizer>);
+
+        const std::array<float, 2> stackValues{0.0f, 1.0f};
+        synth::ui::ConstantBarVisualizer stackingVisualizer(stackValues, synth::Color::Yellow);
+        const synth::ui::Bounds stackBounds{20.0f, 20.0f, 64.0f, 64.0f};
+        stackingVisualizer.SetBounds(stackBounds);
+        synth::ui::Visualizer* const stableAddress = &stackingVisualizer;
+        synth::ui::Builder builder;
+        builder.Root("constant.stack.root", {0.0f, 0.0f, 100.0f, 100.0f})
+            .Visualizer("constant.stack.visualizer", &stackingVisualizer)
+            .DrawInteractive("constant.stack.encoder", stackBounds,
+                             {synth::ui::DrawCommand::StrokeEllipse(
+                                 stackBounds, synth::Color::White, 1.0f)},
+                             synth::ui::Action::Named("drag"));
+        const synth::ui::NodeTree tree = builder.Build();
+        const synth::ui::Node* root = FindNodeById(tree, "constant.stack.root");
+        const synth::ui::Node* node = FindNodeById(tree, "constant.stack.visualizer");
+        Require(stableAddress == static_cast<synth::ui::Visualizer*>(&stackingVisualizer),
+                "constant visualizer remains address-stable");
+        Require(node != nullptr && node->drawCommands.size() == stackValues.size(),
+                "constant builder carries one bar per voice");
+        RequireNear(node->bounds.width, stackBounds.width, 0.0001f,
+                    "constant builder preserves bounds");
+        Require(root != nullptr && root->children.size() == 2,
+                "constant visualizer and encoder are both appended");
+        Require(root->children[0] == synth::ui::NodeId("constant.stack.visualizer"),
+                "constant visualizer precedes encoder");
+        Require(root->children[1] == synth::ui::NodeId("constant.stack.encoder"),
+                "constant encoder follows visualizer");
+        stackingVisualizer.SetVisible(false);
+        synth::ui::Builder hiddenBuilder;
+        hiddenBuilder.Root("constant.hidden.root", {0.0f, 0.0f, 100.0f, 100.0f})
+            .Visualizer("constant.hidden.visualizer", &stackingVisualizer);
+        Require(FindNodeById(hiddenBuilder.Build(), "constant.hidden.visualizer") == nullptr,
+                "hidden constant visualizer emits no builder node");
+    }
 
     {
         synth::ui::NoiseWaveformVisualizer left(synth::Color::Yellow, 1234);

@@ -6,9 +6,9 @@
 
 ## 2. Portable Constant Visualizer
 
-- [ ] 2.1 Add failing portable UI tests for `ConstantBarVisualizer`: one filled rectangle per value in voice order, no extra commands, exact `[-0.1, 1.1]` zero/one framing, bounded positive geometry with narrow slots, retained color, invalid-bounds safety, and empty-span safety.
-- [ ] 2.2 Implement the JUCE-free visualizer with a borrowed immutable value span, retained color, equal horizontal voice slots, slot-relative gaps, and no `UIState`, scope, synchronization, labels, axes, or backend-specific types.
-- [ ] 2.3 Verify the visualizer obeys base component contracts for stable identity, intrinsic visibility, exact assigned bounds, repeated immutable draws, and draw-node composition beneath modulation-depth encoders; retain existing JUCE/browser fill-command parity.
+- [x] 2.1 Add failing portable UI tests for `ConstantBarVisualizer`: one filled rectangle per value in voice order, no extra commands, exact `[-0.1, 1.1]` zero/one framing, bounded positive geometry with narrow slots, retained color, invalid-bounds safety, and empty-span safety.
+- [x] 2.2 Implement the JUCE-free visualizer with a borrowed immutable value span, retained color, equal horizontal voice slots, slot-relative gaps, and no `UIState`, scope, synchronization, labels, axes, or backend-specific types.
+- [x] 2.3 Verify the visualizer obeys base component contracts for stable identity, intrinsic visibility, exact assigned bounds, repeated immutable draws, and draw-node composition beneath modulation-depth encoders; retain existing JUCE/browser fill-command parity.
 
 ## 3. MiniApp Sixth Modulator
 
