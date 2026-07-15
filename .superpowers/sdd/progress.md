@@ -40,3 +40,4 @@ Workspace: managed linked worktree, detached HEAD
 - Spec review: xagent Claude Opus returned REVISE; all Critical/Important contract tightenings were incorporated and strict OpenSpec validation passed.
 - Baseline: focused DSP/portable/MiniApp/UI-boundary checks and `make -C projects/synth test` exited 0 before implementation.
 - Plan review: native Codex plan corrected against actual paths/targets; xagent Claude Sonnet returned REVISE, valid findings were incorporated, one color-ownership inference was rejected against authoritative design text, and focused Claude re-review returned PASS.
+- Task 1: complete (commit `8b5b1b3c`; required missing-header RED observed; full DSP binary GREEN independently reconfirmed; Claude Sonnet spec and quality verdicts PASS with no Critical/Important findings; OpenSpec 1.1–1.4 checked). Minor cleanup ledger: rename local `outputT` for clarity and add an explicit infinite-`muSeconds` rejection case before final review.

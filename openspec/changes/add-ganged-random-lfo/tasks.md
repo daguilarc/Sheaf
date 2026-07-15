@@ -1,9 +1,9 @@
 ## 1. Pure Math and Correlated Timing
 
-- [ ] 1.1 Add failing JUCE-free DSP tests for shaped-interpolation endpoints, linear/cosine landmarks, double-progress clamping, narrowing only at the float cosine/output boundary, and agreement with `DefaultDspMath::Cos2Pi`.
-- [ ] 1.2 Implement the pure `ShapedInterpolate` helper in the synth DSP layer and make the interpolation tests pass.
-- [ ] 1.3 Add failing deterministic tests for center-time draws, reciprocal center-rate conversion, per-voice normal rate draws using hertz internal sigma, cycles-per-sample conversion, the concrete `1 / (sampleRate * 3600)` epsilon and one-hour phase bound, double precision, and invalid configuration rejection.
-- [ ] 1.4 Implement the correlated center-time/per-voice-increment helper with an injectable deterministic draw path and make its tests pass.
+- [x] 1.1 Add failing JUCE-free DSP tests for shaped-interpolation endpoints, linear/cosine landmarks, double-progress clamping, narrowing only at the float cosine/output boundary, and agreement with `DefaultDspMath::Cos2Pi`.
+- [x] 1.2 Implement the pure `ShapedInterpolate` helper in the synth DSP layer and make the interpolation tests pass.
+- [x] 1.3 Add failing deterministic tests for center-time draws, reciprocal center-rate conversion, per-voice normal rate draws using hertz internal sigma, cycles-per-sample conversion, the concrete `1 / (sampleRate * 3600)` epsilon and one-hour phase bound, double precision, and invalid configuration rejection.
+- [x] 1.4 Implement the correlated center-time/per-voice-increment helper with an injectable deterministic draw path and make its tests pass.
 
 ## 2. Voice and Ganged Processor
 

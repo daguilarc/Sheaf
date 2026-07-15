@@ -35,7 +35,7 @@ After each task's native implementation and verification pass, obtain Claude app
 
 **Interfaces:** Produce `float ShapedInterpolate(float source, float target, float shape, double t)`, `RandomTimingConfig { double muSeconds; double sigmaSeconds; double internalSigmaHz; }`, and `template<size_t N, class DrawSource> std::array<double, N> SampleCorrelatedIncrements(double sampleRate, const RandomTimingConfig&, DrawSource&)`. `DrawSource` exposes `double Normal(double mean, double sigma)` and `float Uniform01()` so tests observe logical draws independently of standard-library engine consumption.
 
-- [ ] **Task 1 — implement OpenSpec 1.1–1.4 (`sdsp-34`) test-first.**
+- [x] **Task 1 — implement OpenSpec 1.1–1.4 (`sdsp-34`) test-first.**
 
   1. Add focused tests named `shaped_interpolate_endpoints_and_landmarks`, `shaped_interpolate_preserves_double_progress`, `correlated_increments_use_reciprocal_center_and_hz_sigma`, `correlated_increments_floor_near_zero_rate`, and `correlated_increments_reject_invalid_config`. The scripted draw source must record calls and return a center-seconds draw followed immediately by N rate draws.
   2. Red: run `make -C projects/synth build/dsp_tests`; expect compilation failure because the APIs are absent.
