@@ -20,7 +20,7 @@
 - Preserve the newly landed active-route processing, local-node pin/reclamation, and storage-batch behavior.
 - Production work follows TDD: record a focused RED result before implementation and GREEN results after implementation.
 - Each task is implemented by a fresh native Codex subagent, then passes Claude xagent spec-compliance review before Claude xagent code-quality review. Fix and re-review until both pass.
-- Do not modify or stage `.superpowers/sdd/progress.md`, `.superpowers/sdd/task-3-standard-modulators-report.md`, or the untracked `projects/synth/miniapp/` directory.
+- Preserve every existing line in `.superpowers/sdd/progress.md`; the SDD controller may append new disconnected-depth task entries but must never stage that ledger. Do not modify or stage `.superpowers/sdd/task-3-standard-modulators-report.md` or the untracked `projects/synth/miniapp/` directory.
 
 ---
 
