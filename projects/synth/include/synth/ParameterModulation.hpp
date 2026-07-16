@@ -760,6 +760,7 @@ public:
     void DeselectGesture(std::size_t gestureIx);
     void ToggleGestureSelected(std::size_t gestureIx);
     bool GestureSelected(std::size_t gestureIx) const;
+    GestureMask SelectedGestureMask() const { return gestures_.SelectedMask(); }
     void SetGestureValue(std::size_t gestureIx, float value);
     float GestureValue(std::size_t gestureIx) const;
     GestureMetadata& GestureMetadataAt(std::size_t gestureIx);
@@ -772,8 +773,6 @@ public:
     bool RequestParameterStorageBatch(ParameterGroup& group, std::size_t minimumAdditionalParameters);
 
 private:
-    friend class Parameter;
-
     Page* FindPage(PageOrdinal ordinal);
     const Page* FindPage(PageOrdinal ordinal) const;
     bool SceneEndpointsValid(std::size_t leftScene, std::size_t rightScene) const;

@@ -1024,7 +1024,7 @@ void Parameter::HandleIncDec(const SceneState& scene, float delta) {
     };
 
     bool armedGesture = false;
-    ForEachGestureBit(group_.Manager().gestures_.SelectedMask() & GestureCountMask(group_.GestureCount()),
+    ForEachGestureBit(group_.Manager().SelectedGestureMask() & GestureCountMask(group_.GestureCount()),
                       [&](std::size_t gestureIx) {
         if (blend <= 0.0f) {
             armedGesture = armSelectedGesture(scene.leftScene, gestureIx) || armedGesture;

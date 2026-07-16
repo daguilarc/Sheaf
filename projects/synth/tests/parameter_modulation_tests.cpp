@@ -482,6 +482,7 @@ TEST_CASE(manager_gesture_count_supports_zero_through_64_and_rejects_65_without_
     REQUIRE_TRUE(manager.SetGestureCount(64));
     manager.SelectGesture(63);
     REQUIRE_TRUE(manager.GestureSelected(63));
+    REQUIRE_TRUE(manager.SelectedGestureMask() == (synth::GestureMask{1} << 63));
     REQUIRE_TRUE(!manager.SetGestureCount(65));
     REQUIRE_TRUE(manager.GestureCount() == 64);
     REQUIRE_TRUE(manager.GestureSelected(63));
