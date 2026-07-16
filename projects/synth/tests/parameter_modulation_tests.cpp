@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <bit>
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
@@ -402,7 +403,7 @@ TEST_CASE(handle_set_absolute_arms_both_touched_endpoints_and_preserves_unrelate
     REQUIRE_NEAR(parameter.GestureValue(2, 1), 0.6f, 0.0f);
 }
 
-TEST_CASE(handle_set_absolute_clamps_normalized_input_maps_bipolar_storage_and_rejects_nonfinite) {
+TEST_CASE(handle_set_absolute_clamps_input_keeps_normalized_bipolar_storage_and_rejects_nonfinite) {
     synth::ParameterManager manager;
     manager.SetGestureCount(1);
     auto& group = manager.CreateGroup({
@@ -434,6 +435,371 @@ TEST_CASE(handle_set_absolute_clamps_normalized_input_maps_bipolar_storage_and_r
     REQUIRE_NEAR(parameter.SceneCenter(0), 0.4f, 0.0f);
     REQUIRE_NEAR(parameter.GestureValue(0, 0), 0.9f, 0.0f);
     REQUIRE_TRUE(!parameter.GestureActive(0, 0));
+}
+
+namespace {
+
+constexpr std::size_t kAbsolutePropertySceneCount = 3;
+constexpr std::size_t kAbsolutePropertyGestureCount = 4;
+constexpr std::size_t kAbsolutePropertyStorageCount =
+    kAbsolutePropertySceneCount * (1 + kAbsolutePropertyGestureCount);
+
+struct AbsolutePropertyCase {
+    synth::SceneState scene;
+    std::array<float, kAbsolutePropertySceneCount> centers{};
+    std::array<std::array<float, kAbsolutePropertyGestureCount>, kAbsolutePropertySceneCount>
+        gestureValues{};
+    std::array<std::array<bool, kAbsolutePropertyGestureCount>, kAbsolutePropertySceneCount>
+        active{};
+    std::array<float, kAbsolutePropertyGestureCount> weights{};
+    std::array<bool, kAbsolutePropertyGestureCount> selected{};
+    float target = 0.5f;
+    synth::RangeKind range = synth::RangeKind::Unipolar;
+    bool requireArming = false;
+    bool requireSaturation = false;
+};
+
+struct AbsolutePropertyOracle {
+    std::array<float, kAbsolutePropertyStorageCount> postArmingValues{};
+    std::array<double, kAbsolutePropertyStorageCount> coefficients{};
+    std::array<bool, kAbsolutePropertyStorageCount> armed{};
+    std::array<std::array<bool, kAbsolutePropertyGestureCount>, kAbsolutePropertySceneCount>
+        active{};
+};
+
+struct AbsolutePropertyResult {
+    std::array<float, kAbsolutePropertyStorageCount> values{};
+    std::array<std::array<bool, kAbsolutePropertyGestureCount>, kAbsolutePropertySceneCount>
+        active{};
+    float rawCenter = 0.0f;
+};
+
+constexpr std::size_t AbsoluteBaseStorage(std::size_t sceneIx) {
+    return sceneIx;
+}
+
+constexpr std::size_t AbsoluteGestureStorage(std::size_t sceneIx, std::size_t gestureIx) {
+    return kAbsolutePropertySceneCount + sceneIx * kAbsolutePropertyGestureCount + gestureIx;
+}
+
+void AccumulateAbsoluteOracleCoefficient(AbsolutePropertyOracle& oracle, std::size_t storageIx,
+                                         double coefficient) {
+    if (coefficient > 0.0) {
+        oracle.coefficients[storageIx] += coefficient;
+    }
+}
+
+AbsolutePropertyOracle BuildIndependentAbsoluteOracle(const AbsolutePropertyCase& testCase) {
+    AbsolutePropertyOracle oracle;
+    oracle.active = testCase.active;
+    for (std::size_t sceneIx = 0; sceneIx < kAbsolutePropertySceneCount; ++sceneIx) {
+        oracle.postArmingValues[AbsoluteBaseStorage(sceneIx)] = testCase.centers[sceneIx];
+        for (std::size_t gestureIx = 0; gestureIx < kAbsolutePropertyGestureCount; ++gestureIx) {
+            oracle.postArmingValues[AbsoluteGestureStorage(sceneIx, gestureIx)] =
+                testCase.gestureValues[sceneIx][gestureIx];
+        }
+    }
+
+    const double blend = std::clamp(static_cast<double>(testCase.scene.blend), 0.0, 1.0);
+    auto arm = [&](std::size_t sceneIx, std::size_t gestureIx) {
+        if (oracle.active[sceneIx][gestureIx]) {
+            return;
+        }
+        oracle.active[sceneIx][gestureIx] = true;
+        const std::size_t storageIx = AbsoluteGestureStorage(sceneIx, gestureIx);
+        oracle.postArmingValues[storageIx] = testCase.centers[sceneIx];
+        oracle.armed[storageIx] = true;
+    };
+    for (std::size_t gestureIx = 0; gestureIx < kAbsolutePropertyGestureCount; ++gestureIx) {
+        if (!testCase.selected[gestureIx]) {
+            continue;
+        }
+        if (blend <= 0.0) {
+            arm(testCase.scene.leftScene, gestureIx);
+        } else if (blend >= 1.0) {
+            arm(testCase.scene.rightScene, gestureIx);
+        } else {
+            arm(testCase.scene.leftScene, gestureIx);
+            if (testCase.scene.rightScene != testCase.scene.leftScene) {
+                arm(testCase.scene.rightScene, gestureIx);
+            }
+        }
+    }
+
+    std::array<double, kAbsolutePropertyGestureCount> effectiveWeights{};
+    double weightSum = 0.0;
+    double baseNumerator = 0.0;
+    for (std::size_t gestureIx = 0; gestureIx < kAbsolutePropertyGestureCount; ++gestureIx) {
+        const double weight = static_cast<double>(testCase.weights[gestureIx]);
+        const double leftShare = oracle.active[testCase.scene.leftScene][gestureIx]
+                                     ? 1.0 - blend
+                                     : 0.0;
+        const double rightShare = oracle.active[testCase.scene.rightScene][gestureIx]
+                                      ? blend
+                                      : 0.0;
+        const double effectiveWeight = weight * (leftShare + rightShare);
+        effectiveWeights[gestureIx] = effectiveWeight;
+        weightSum += effectiveWeight;
+        baseNumerator += effectiveWeight * (1.0 - effectiveWeight);
+    }
+
+    const double inverseBlend = 1.0 - blend;
+    const double baseCoefficient = weightSum == 0.0 ? 1.0 : baseNumerator / weightSum;
+    AccumulateAbsoluteOracleCoefficient(
+        oracle, AbsoluteBaseStorage(testCase.scene.leftScene), baseCoefficient * inverseBlend);
+    AccumulateAbsoluteOracleCoefficient(
+        oracle, AbsoluteBaseStorage(testCase.scene.rightScene), baseCoefficient * blend);
+    if (weightSum > 0.0) {
+        for (std::size_t gestureIx = 0; gestureIx < kAbsolutePropertyGestureCount; ++gestureIx) {
+            const double weight = effectiveWeights[gestureIx];
+            if (weight == 0.0) {
+                continue;
+            }
+            const double componentCoefficient = weight * weight / weightSum;
+            AccumulateAbsoluteOracleCoefficient(
+                oracle, AbsoluteGestureStorage(testCase.scene.leftScene, gestureIx),
+                componentCoefficient * inverseBlend);
+            AccumulateAbsoluteOracleCoefficient(
+                oracle, AbsoluteGestureStorage(testCase.scene.rightScene, gestureIx),
+                componentCoefficient * blend);
+        }
+    }
+
+    double coefficientSum = 0.0;
+    for (double coefficient : oracle.coefficients) {
+        REQUIRE_TRUE(coefficient >= 0.0);
+        coefficientSum += coefficient;
+    }
+    REQUIRE_TRUE(std::fabs(coefficientSum - 1.0) <= 1e-10);
+    return oracle;
+}
+
+std::array<float, kAbsolutePropertyStorageCount> SolveIndependentAbsoluteProjection(
+    const AbsolutePropertyOracle& oracle, double target) {
+    double lowerLambda = 0.0;
+    double upperLambda = 0.0;
+    bool haveContributor = false;
+    for (std::size_t storageIx = 0; storageIx < oracle.coefficients.size(); ++storageIx) {
+        const double coefficient = oracle.coefficients[storageIx];
+        if (coefficient == 0.0) {
+            continue;
+        }
+        const double value = oracle.postArmingValues[storageIx];
+        const double lower = -value / coefficient;
+        const double upper = (1.0 - value) / coefficient;
+        if (!haveContributor) {
+            lowerLambda = lower;
+            upperLambda = upper;
+            haveContributor = true;
+        } else {
+            lowerLambda = std::min(lowerLambda, lower);
+            upperLambda = std::max(upperLambda, upper);
+        }
+    }
+    REQUIRE_TRUE(haveContributor);
+
+    auto effectiveAt = [&](double lambda) {
+        double effective = 0.0;
+        for (std::size_t storageIx = 0; storageIx < oracle.coefficients.size(); ++storageIx) {
+            const double coefficient = oracle.coefficients[storageIx];
+            if (coefficient == 0.0) {
+                continue;
+            }
+            const double candidate = static_cast<double>(oracle.postArmingValues[storageIx]) +
+                                     lambda * coefficient;
+            effective += coefficient * std::clamp(candidate, 0.0, 1.0);
+        }
+        return effective;
+    };
+    for (int iteration = 0; iteration < 160; ++iteration) {
+        const double middle = (lowerLambda + upperLambda) * 0.5;
+        if (effectiveAt(middle) < target) {
+            lowerLambda = middle;
+        } else {
+            upperLambda = middle;
+        }
+    }
+    const double lambda = (lowerLambda + upperLambda) * 0.5;
+
+    auto expected = oracle.postArmingValues;
+    for (std::size_t storageIx = 0; storageIx < oracle.coefficients.size(); ++storageIx) {
+        if (oracle.coefficients[storageIx] > 0.0) {
+            expected[storageIx] = static_cast<float>(std::clamp(
+                static_cast<double>(oracle.postArmingValues[storageIx]) +
+                    lambda * oracle.coefficients[storageIx],
+                0.0, 1.0));
+        }
+    }
+    return expected;
+}
+
+AbsolutePropertyResult RunAbsolutePropertyCase(const AbsolutePropertyCase& testCase) {
+    synth::ParameterManager manager;
+    REQUIRE_TRUE(manager.SetGestureCount(kAbsolutePropertyGestureCount));
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 0,
+        .numScenes = kAbsolutePropertySceneCount,
+        .maxParameters = 1,
+        .targetCenterAlpha = 1.0f,
+    });
+    auto& parameter = manager.CreateParameter(
+        group, {.name = "Randomized absolute", .defaultValue = 0.5f, .range = testCase.range});
+    for (std::size_t gestureIx = 0; gestureIx < kAbsolutePropertyGestureCount; ++gestureIx) {
+        manager.SetGestureValue(gestureIx, testCase.weights[gestureIx]);
+        if (testCase.selected[gestureIx]) {
+            manager.SelectGesture(gestureIx);
+        } else {
+            manager.DeselectGesture(gestureIx);
+        }
+    }
+    for (std::size_t sceneIx = 0; sceneIx < kAbsolutePropertySceneCount; ++sceneIx) {
+        parameter.SceneCenter(sceneIx) = testCase.centers[sceneIx];
+        for (std::size_t gestureIx = 0; gestureIx < kAbsolutePropertyGestureCount; ++gestureIx) {
+            parameter.GestureValue(sceneIx, gestureIx) = testCase.gestureValues[sceneIx][gestureIx];
+            parameter.SetGestureActive(sceneIx, gestureIx, testCase.active[sceneIx][gestureIx]);
+        }
+    }
+
+    parameter.HandleSetAbsolute(testCase.scene, testCase.target);
+    parameter.Compute(testCase.scene);  // alpha=1 publishes the exact pre-slew raw center.
+
+    AbsolutePropertyResult result;
+    result.rawCenter = parameter.TargetCenter();
+    for (std::size_t sceneIx = 0; sceneIx < kAbsolutePropertySceneCount; ++sceneIx) {
+        result.values[AbsoluteBaseStorage(sceneIx)] = parameter.SceneCenter(sceneIx);
+        for (std::size_t gestureIx = 0; gestureIx < kAbsolutePropertyGestureCount; ++gestureIx) {
+            result.values[AbsoluteGestureStorage(sceneIx, gestureIx)] =
+                parameter.GestureValue(sceneIx, gestureIx);
+            result.active[sceneIx][gestureIx] = parameter.GestureActive(sceneIx, gestureIx);
+        }
+    }
+    return result;
+}
+
+void VerifyAbsolutePropertyCase(const AbsolutePropertyCase& testCase) {
+    const AbsolutePropertyOracle oracle = BuildIndependentAbsoluteOracle(testCase);
+    const auto expectedProjection = SolveIndependentAbsoluteProjection(oracle, testCase.target);
+    const AbsolutePropertyResult first = RunAbsolutePropertyCase(testCase);
+    const AbsolutePropertyResult second = RunAbsolutePropertyCase(testCase);
+
+    REQUIRE_TRUE(std::bit_cast<std::uint32_t>(first.rawCenter) ==
+                 std::bit_cast<std::uint32_t>(second.rawCenter));
+    bool armedAny = false;
+    bool saturatedAny = false;
+    double independentRawCenter = 0.0;
+    for (std::size_t storageIx = 0; storageIx < oracle.coefficients.size(); ++storageIx) {
+        REQUIRE_TRUE(first.values[storageIx] >= 0.0f && first.values[storageIx] <= 1.0f);
+        REQUIRE_TRUE(std::bit_cast<std::uint32_t>(first.values[storageIx]) ==
+                     std::bit_cast<std::uint32_t>(second.values[storageIx]));
+        if (oracle.coefficients[storageIx] > 0.0) {
+            REQUIRE_NEAR(first.values[storageIx], expectedProjection[storageIx], 0.00002f);
+            independentRawCenter +=
+                oracle.coefficients[storageIx] * static_cast<double>(first.values[storageIx]);
+            saturatedAny = saturatedAny || first.values[storageIx] == 0.0f ||
+                           first.values[storageIx] == 1.0f;
+        } else if (!oracle.armed[storageIx]) {
+            REQUIRE_TRUE(std::bit_cast<std::uint32_t>(first.values[storageIx]) ==
+                         std::bit_cast<std::uint32_t>(oracle.postArmingValues[storageIx]));
+        }
+        armedAny = armedAny || oracle.armed[storageIx];
+    }
+    for (std::size_t sceneIx = 0; sceneIx < kAbsolutePropertySceneCount; ++sceneIx) {
+        for (std::size_t gestureIx = 0; gestureIx < kAbsolutePropertyGestureCount; ++gestureIx) {
+            REQUIRE_TRUE(first.active[sceneIx][gestureIx] == oracle.active[sceneIx][gestureIx]);
+            REQUIRE_TRUE(second.active[sceneIx][gestureIx] == oracle.active[sceneIx][gestureIx]);
+        }
+    }
+    REQUIRE_TRUE(std::fabs(independentRawCenter - static_cast<double>(testCase.target)) <= 1e-5);
+    REQUIRE_NEAR(first.rawCenter, testCase.target, 0.00001f);
+    if (testCase.requireArming) {
+        REQUIRE_TRUE(armedAny);
+    }
+    if (testCase.requireSaturation) {
+        REQUIRE_TRUE(testCase.target > 0.0f && testCase.target < 1.0f);
+        REQUIRE_TRUE(saturatedAny);
+    }
+}
+
+}  // namespace
+
+TEST_CASE(handle_set_absolute_seeded_property_matches_independent_post_arming_model) {
+    std::vector<AbsolutePropertyCase> cases;
+
+    AbsolutePropertyCase leftEndpoint;
+    leftEndpoint.scene = {.leftScene = 0, .rightScene = 1, .blend = 0.0f};
+    leftEndpoint.centers = {0.2f, 0.8f, 0.3f};
+    leftEndpoint.target = 0.0f;
+    cases.push_back(leftEndpoint);
+
+    AbsolutePropertyCase rightEndpoint = leftEndpoint;
+    rightEndpoint.scene.blend = 1.0f;
+    rightEndpoint.target = 1.0f;
+    rightEndpoint.range = synth::RangeKind::Bipolar;
+    cases.push_back(rightEndpoint);
+
+    AbsolutePropertyCase aliased = leftEndpoint;
+    aliased.scene = {.leftScene = 1, .rightScene = 1, .blend = 0.37f};
+    aliased.target = 0.43f;
+    cases.push_back(aliased);
+
+    AbsolutePropertyCase zeroAndOneWeights = leftEndpoint;
+    zeroAndOneWeights.scene.blend = 0.4f;
+    zeroAndOneWeights.weights = {0.0f, 1.0f, 0.5f, 0.0f};
+    zeroAndOneWeights.active[0] = {true, true, false, true};
+    zeroAndOneWeights.active[1] = {true, true, true, false};
+    zeroAndOneWeights.gestureValues[0] = {0.9f, 0.1f, 0.8f, 0.7f};
+    zeroAndOneWeights.gestureValues[1] = {0.1f, 0.9f, 0.2f, 0.3f};
+    zeroAndOneWeights.target = 0.6f;
+    cases.push_back(zeroAndOneWeights);
+
+    AbsolutePropertyCase saturation = leftEndpoint;
+    saturation.scene.blend = 0.1f;
+    saturation.centers = {0.9f, 0.1f, 0.4f};
+    saturation.target = 0.95f;
+    saturation.requireSaturation = true;
+    cases.push_back(saturation);
+
+    AbsolutePropertyCase postArming = leftEndpoint;
+    postArming.scene = {.leftScene = 0, .rightScene = 0, .blend = 0.0f};
+    postArming.centers = {0.0f, 0.3f, 0.7f};
+    postArming.weights = {0.5f, 0.5f, 0.0f, 1.0f};
+    postArming.active[0][0] = true;
+    postArming.gestureValues[0][0] = 1.0f;
+    postArming.gestureValues[0][1] = 0.9f;
+    postArming.selected[1] = true;
+    postArming.target = 0.75f;
+    postArming.requireArming = true;
+    cases.push_back(postArming);
+
+    std::mt19937 rng(0xAB501U);
+    std::uniform_real_distribution<float> unit(0.0f, 1.0f);
+    std::bernoulli_distribution coin(0.5);
+    std::uniform_int_distribution<std::size_t> sceneIndex(0, kAbsolutePropertySceneCount - 1);
+    for (std::size_t caseIx = 0; caseIx < 192; ++caseIx) {
+        AbsolutePropertyCase randomized;
+        randomized.scene.leftScene = sceneIndex(rng);
+        randomized.scene.rightScene = caseIx % 11 == 0 ? randomized.scene.leftScene : sceneIndex(rng);
+        randomized.scene.blend = unit(rng);
+        randomized.target = unit(rng);
+        randomized.range = coin(rng) ? synth::RangeKind::Unipolar : synth::RangeKind::Bipolar;
+        for (float& center : randomized.centers) {
+            center = unit(rng);
+        }
+        for (std::size_t gestureIx = 0; gestureIx < kAbsolutePropertyGestureCount; ++gestureIx) {
+            randomized.weights[gestureIx] = unit(rng);
+            randomized.selected[gestureIx] = coin(rng);
+            for (std::size_t sceneIx = 0; sceneIx < kAbsolutePropertySceneCount; ++sceneIx) {
+                randomized.gestureValues[sceneIx][gestureIx] = unit(rng);
+                randomized.active[sceneIx][gestureIx] = coin(rng);
+            }
+        }
+        cases.push_back(randomized);
+    }
+
+    for (const AbsolutePropertyCase& testCase : cases) {
+        VerifyAbsolutePropertyCase(testCase);
+    }
 }
 
 TEST_CASE(smoke_clamps_ranges) {

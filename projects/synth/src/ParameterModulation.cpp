@@ -1528,6 +1528,9 @@ void Parameter::HandleSetAbsolute(const SceneState& scene, float normalizedTarge
     std::vector<detail::AbsoluteEditLocation> locations = detail::BuildAbsoluteEditLocations(
         SceneCenter(scene.leftScene), SceneCenter(scene.rightScene), static_cast<double>(blend),
         std::span<const detail::AbsoluteGestureContribution>(gestureContributions.data(), contributionCount));
+    // Arming above intentionally mutates topology before these proof-backed invariants are checked.
+    // A throw here is nontransactional, but unreachable for valid Parameter-owned normalized storage:
+    // the post-arming coefficients are positive and sum to one, and the clamped target is feasible.
     if (!detail::ProjectAbsoluteTarget(locations, static_cast<double>(RangeMin(config_.range)),
                                        static_cast<double>(RangeMax(config_.range)), target)) {
         throw std::logic_error("absolute parameter projection failed");
@@ -1538,7 +1541,6 @@ void Parameter::HandleSetAbsolute(const SceneState& scene, float normalizedTarge
     if (!std::isfinite(rawCenter) || std::fabs(rawCenter - target) > kRawCenterTolerance) {
         throw std::logic_error("absolute parameter edit did not reach its raw target");
     }
-    assert(std::fabs(rawCenter - target) <= kRawCenterTolerance);
 }
 
 void Parameter::RandomizeVisibleValue(const SceneState& scene, float normalized) {

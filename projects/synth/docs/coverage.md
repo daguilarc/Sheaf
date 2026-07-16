@@ -1,6 +1,6 @@
 # Spec Coverage
 
-Last audit: standard modulators, fifteen-source application adoption, and sparse modulation processing, 2026-07-16
+Last audit: standard modulators, fifteen-source application adoption, sparse modulation processing, absolute encoder mode, and exact parameter projection, 2026-07-16
 
 | Requirement | Status | Primary exact coverage |
 |---|---|---|
@@ -49,6 +49,11 @@ Last audit: standard modulators, fifteen-source application adoption, and sparse
 | `spm-73` | covered | 0--64 gesture boundary/sparse-mask tests, `ControllerGesture63SelectsAndEditsManagerGestureWhileBankMaskRemains32Bit`, portable bit-63 badge rendering, and randomized UI-state coverage |
 | `spm-74` | covered | neutral-leaf guard, bottom-up collapse, pin, settling/detach, bounded-reuse, patch-load, semantic-JSON, and randomized lifecycle cases in `parameter_modulation_tests` |
 | `spm-75` | covered | connected-only modulation-view materialization/capacity/randomization cases in `parameter_modulation_tests`, MiniApp and Braid4 sparse-position system assertions, and `TestBraid4StandardModulationViewsRemainPortable` |
+| `spm-31` (modified) | covered | relative decoder regressions plus `midi_encoder_input_absolute_maps_raw_positions_independent_of_turn_step` and absolute mapped/push/thru boundaries |
+| `spm-52` (modified) | covered | encoder-mode contract/migration JSON tests, `ParamSetAbsolute` message/association round trips, and existing profile/factory coverage |
+| `spm-76` | covered | pure coefficient/projection tests, focused handler cases, and `handle_set_absolute_seeded_property_matches_independent_post_arming_model` |
+| `spm-77` | covered | six `param_set_absolute_*` construction, association, visible-cell routing, modifier, and no-op boundary tests |
+| `sru-26` | covered | `EncoderModeCatalogExposesAllChoicesInDeclarationOrder`, absolute edit-session/live-rebuild tests, and portable Controllers action coverage |
 
 ## Requirement Mappings
 
@@ -529,6 +534,87 @@ Last audit: standard modulators, fifteen-source application adoption, and sparse
 - [`portable_ui_tests.cpp`](../tests/portable_ui_tests.cpp):
   `TestBraid4StandardModulationViewsRemainPortable` proves a disconnected
   modulation position has neither an encoder cell nor a visualizer node.
+
+### `spm-31` (modified) - Relative And Absolute Encoder Input
+
+- [`parameter_modulation_tests.cpp`](../tests/parameter_modulation_tests.cpp):
+  `midi_encoder_input_maps_scaled_turns_pushes_and_timestamps` and
+  `midi_encoder_input_direction_only_zero_and_thru_behavior` retain both
+  relative decoders. `midi_encoder_input_absolute_maps_raw_positions_independent_of_turn_step`
+  checks raw CC 0, 64, and 127, exact timestamps/addresses, and two distinct
+  stored turn steps. `midi_encoder_input_absolute_preserves_mapped_push_and_thru_boundaries`
+  covers mapped zero consumption, push press/release behavior, and thru.
+- `wrld_bldr_default_profile_maps_encoders_analogs_and_system_buttons`,
+  `mf_twister_default_profile_maps_encoders_and_input_only_side_buttons`,
+  `default_instrument_uses_shared_wrldbldr_default_profile`, and
+  `miniapp_rig_default_instrument_has_single_wrldbldr_controller` retain the
+  shipped relative defaults across library, Braid, and MiniApp boundaries.
+
+### `spm-52` (modified) - Encoder And Absolute-Message Persistence
+
+- [`parameter_modulation_tests.cpp`](../tests/parameter_modulation_tests.cpp):
+  `encoder_mode_contract_defaults_to_signed_7_bit`,
+  `encoder_mode_json_round_trips_absolute_and_writes_new_field_only`,
+  `encoder_mode_json_loads_legacy_field_and_migrates_on_save`, and
+  `encoder_mode_json_new_field_is_authoritative` cover the renamed contract,
+  all three modes, legacy fallback, new-field precedence, and migration.
+- `param_set_absolute_message_constructs_and_round_trips_exact_payload` and
+  `param_set_absolute_survives_controller_system_association_round_trip` cover
+  the new message name/payload through generic message and profile JSON. The
+  existing WRLD.Bldr, MF Twister, Launchpad, profile-factory, and invalid-load
+  tests retain the complete profile compatibility boundary.
+
+### `spm-76` - Exact Absolute Scene And Gesture Distribution
+
+- [`parameter_modulation_tests.cpp`](../tests/parameter_modulation_tests.cpp):
+  `absolute_edit_locations_form_the_independently_computed_convex_system` and
+  `absolute_edit_locations_cover_endpoints_no_gestures_and_aliased_storage`
+  independently check the scene/gesture coefficients and alias aggregation.
+  `absolute_projection_is_exact_minimum_change_and_redistributes_saturation`
+  and `absolute_projection_handles_noop_endpoints_bipolar_ranges_and_rejects_invalid_contracts`
+  cover the pure solver, true bipolar helper bounds, saturation, endpoints,
+  minimum change, and invalid contracts.
+- `handle_set_absolute_reaches_endpoint_mid_blend_and_aliased_scene_targets`,
+  `handle_set_absolute_arms_then_rebuilds_the_proof_counterexample`,
+  `handle_set_absolute_arms_both_touched_endpoints_and_preserves_unrelated_storage`,
+  and `handle_set_absolute_clamps_input_keeps_normalized_bipolar_storage_and_rejects_nonfinite`
+  cover focused production behavior, including normalized storage for bipolar
+  presentation parameters and raw-center-before-slew checks.
+- `handle_set_absolute_seeded_property_matches_independent_post_arming_model`
+  uses seed `0xAB501`, 192 randomized cases, and forced endpoint, aliased,
+  zero/one-weight, saturation, and post-arming topologies. Its oracle derives
+  coefficients directly from the specification and solves the projection with
+  independent bisection; it does not call either production math helper. Every
+  case checks same-call arming, deterministic repeated output, all storage
+  bounds, bitwise preservation of unrelated inactive storage, independent
+  minimum-change results, and production raw-center error at most `1e-5`.
+
+### `spm-77` - Absolute Message Routing
+
+- [`parameter_modulation_tests.cpp`](../tests/parameter_modulation_tests.cpp):
+  `param_set_absolute_message_constructs_and_round_trips_exact_payload`,
+  `param_set_absolute_survives_controller_system_association_round_trip`,
+  `param_set_absolute_routes_by_selected_bank_slot_position_and_physical_encoder`,
+  `param_set_absolute_edits_visible_modulation_depth_not_hidden_parent`,
+  `param_set_absolute_is_blocked_by_every_effective_modifier`, and
+  `param_set_absolute_unmapped_boundaries_are_no_ops` cover construction,
+  serialization, owning-scene routing, selected-bank and physical addressing,
+  visible modulation depths, every modifier, and all no-op lookups.
+
+### `sru-26` - Controllers Absolute Encoder Mode Editing
+
+- [`viewmodel_tests.cpp`](../tests/viewmodel_tests.cpp):
+  `EncoderModeCatalogExposesAllChoicesInDeclarationOrder`,
+  `AbsoluteEncoderModeHasItsOwnCatalogIndexAndRowValue`,
+  `AbsoluteEncoderModeCommitKeepsOpenRowsAndRestoresStoredRelativeStep`,
+  `EncoderModeIndexMustBeIntegralAndLeavesOutputUntouched`, and
+  `EncoderModeIndexOutOfRangeIsRefused` cover the three-entry catalog, checked
+  conversion, non-deletable stable session rows, retained relative-only step,
+  persisted absolute config, live processor rebuild, and switching back.
+- [`controllers_page_ui_tests.cpp`](../tests/controllers_page_ui_tests.cpp): the
+  portable Controllers action path checks declaration-order labels, the
+  relative-only step cue, structural non-deletability, commit/rebuild identity,
+  live absolute decoding, and restored relative decoding in one open session.
 
 ### Sparse-Modulation Timing Evidence
 
