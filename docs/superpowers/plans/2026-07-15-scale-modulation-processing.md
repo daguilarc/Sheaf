@@ -24,7 +24,7 @@
 
 ### Task 1: Test Observability and the Top-Level Processing Boundary
 
-**OpenSpec coverage:** tasks 1.1-1.3, 3.1-3.3; `spm-72` scenarios “Materialized local depth does not add ProcessLite work” and “Recursive compute still refreshes local depth state.”
+**OpenSpec coverage:** tasks 1.1, 1.3, and 3.1-3.3; `spm-72` scenarios “Materialized local depth does not add ProcessLite work” and “Recursive compute still refreshes local depth state.” Task 1.2 is implemented and closed with Task 3, where the oracle is first consumed.
 
 **Files:**
 - Modify: `projects/synth/include/synth/ParameterModulation.hpp` — `ParameterProcessingObserver`, `ParameterGroup`, `Parameter` test-observer hooks and root list.
@@ -242,7 +242,7 @@ Run the global Sonnet gate and record both passing verdicts.
 
 ### Task 3: Stable-Identity Active Modulation Route Prefixes
 
-**OpenSpec coverage:** tasks 4.1-4.5; remaining `spm-72` active-prefix scenarios. Task 1.2's full-scan oracle is consumed here but is not closed twice.
+**OpenSpec coverage:** tasks 1.2 and 4.1-4.5; remaining `spm-72` active-prefix scenarios. Task 1.2's full-scan oracle is implemented and closed here.
 
 **Files:**
 - Modify: `projects/synth/include/synth/ParameterModulation.hpp` — compact apply API, route permutation arenas/accessors.

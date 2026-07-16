@@ -1,8 +1,8 @@
 ## 1. Establish Sparse-Work Test Infrastructure
 
-- [ ] 1.1 Add test-only processing counters or observers for top-level `ProcessLite` calls, local recursive computes, active route visits, and active gesture visits without adding production audio-thread allocation.
+- [x] 1.1 Add test-only processing counters or observers for top-level `ProcessLite` calls, local recursive computes, active route visits, and active gesture visits without adding production audio-thread allocation.
 - [ ] 1.2 Add a deliberately source-indexed full-scan modulation/gesture oracle that can be compared sample-by-sample with the future sparse implementation.
-- [ ] 1.3 Add failing regression tests proving that materializing local modulation-depth nodes must not increase group-level `ProcessLite` call count and that nested local targets still recompute on cadence.
+- [x] 1.3 Add failing regression tests proving that materializing local modulation-depth nodes must not increase group-level `ProcessLite` call count and that nested local targets still recompute on cadence.
 
 ## 2. Implement 64-Bit Sparse Gestures
 
@@ -13,9 +13,9 @@
 
 ## 3. Restore the Top-Level Audio Processing Boundary
 
-- [ ] 3.1 Add an explicit dense top-level processing list to `ParameterGroup` and register only manager-owned top-level parameters in it.
-- [ ] 3.2 Change group per-sample processing to iterate the top-level list while retaining recursive control-rate compute; seed local cached/UI center state and reset local display spread at compute cadence, with tests pinning that intentional display-only behavior.
-- [ ] 3.3 Update parameter-group and Braid4 structural tests to prove that local materialization no longer changes per-sample parameter count or audio output semantics.
+- [x] 3.1 Add an explicit dense top-level processing list to `ParameterGroup` and register only manager-owned top-level parameters in it.
+- [x] 3.2 Change group per-sample processing to iterate the top-level list while retaining recursive control-rate compute; seed local cached/UI center state and reset local display spread at compute cadence, with tests pinning that intentional display-only behavior.
+- [x] 3.3 Update parameter-group and Braid4 structural tests to prove that local materialization no longer changes per-sample parameter count or audio output semantics.
 
 ## 4. Implement Active Modulation Route Prefixes
 
