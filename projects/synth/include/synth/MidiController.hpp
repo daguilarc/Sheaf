@@ -84,9 +84,10 @@ private:
     TimestampProvider timestampProvider_;
 };
 
-enum class EncoderRelativeMode {
+enum class EncoderMode {
     Signed7Bit,
     DirectionOnly,
+    Absolute,
 };
 
 struct MidiControlAddress {
@@ -103,7 +104,7 @@ struct EncoderMidiMapping {
 };
 
 struct EncoderMidiInConfig {
-    EncoderRelativeMode relativeMode = EncoderRelativeMode::Signed7Bit;
+    EncoderMode mode = EncoderMode::Signed7Bit;
     float turnStep = 1.0f / 128.0f;
     std::vector<EncoderMidiMapping> turns;
     std::vector<EncoderMidiMapping> pushes;
@@ -637,8 +638,8 @@ MidiControllerProfileResult CreateLaunchpadDefaultProfile(
     LaunchpadDefaultProfileOptions options, MessageInBus* bus, MidiSender* sender,
     ParameterManager::UIState* uiState, MidiInProcessor::TimestampProvider timestampProvider = {});
 
-JSON ToJSON(JsonArena& arena, EncoderRelativeMode value);
-bool FromJSON(JSON json, EncoderRelativeMode& value);
+JSON ToJSON(JsonArena& arena, EncoderMode value);
+bool FromJSON(JSON json, EncoderMode& value);
 JSON ToJSON(JsonArena& arena, const MidiControlAddress& value);
 bool FromJSON(JSON json, MidiControlAddress& value);
 JSON ToJSON(JsonArena& arena, const EncoderMidiMapping& value);

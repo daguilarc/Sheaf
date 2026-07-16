@@ -182,7 +182,7 @@ inline int FieldEditorWidth(MidiMappingRowVM::Field field)
             return 150;
         case Field::MessageArg:
             return 74;
-        case Field::RelativeMode:
+        case Field::EncoderMode:
         case Field::BlockMessageType:
             return 132;
         case Field::TurnStep:
@@ -1290,10 +1290,10 @@ private:
                             const int current = vm.UISystemMessageIndex(controllerIx, section, mappingRowIx);
                             fieldNode.selectedOption = current >= 0 ? std::to_string(current) : "0";
                         }
-                        else if (field == MidiMappingRowVM::Field::RelativeMode)
+                        else if (field == MidiMappingRowVM::Field::EncoderMode)
                         {
                             fieldNode.kind = ui::NodeKind::ComboBox;
-                            const auto& catalog = RelativeModeCatalog();
+                            const auto& catalog = EncoderModeCatalog();
                             for (int ix = 0; ix < static_cast<int>(catalog.size()); ++ix)
                             {
                                 fieldNode.options.push_back({std::to_string(ix), catalog[static_cast<std::size_t>(ix)]});

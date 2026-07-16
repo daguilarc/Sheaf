@@ -29,7 +29,7 @@ std::uint8_t TwisterIndicatorBrightnessValue(float brightness) {
 
 EncoderMidiInConfig RowMajorInputDefault(std::size_t slotIx) {
     EncoderMidiInConfig config;
-    config.relativeMode = EncoderRelativeMode::Signed7Bit;
+    config.mode = EncoderMode::Signed7Bit;
     for (std::size_t position = 0; position < 16; ++position) {
         const std::uint8_t cc = EncoderPositionToCC(position);
         config.turns.push_back({.control = {.channel = 0, .cc = cc}, .slotIx = slotIx, .position = position});
@@ -60,6 +60,20 @@ bool CacheNeedsResize(std::size_t size, std::size_t targetSize) {
 
 bool IsObject(JSON json) {
     return json.m_node != nullptr && json.m_node->m_type == JsonType::Object;
+}
+
+bool ObjectHasKey(JSON json, const char* key) {
+    if (!IsObject(json)) {
+        return false;
+    }
+    const JsonContainer& container = json.m_node->m_container;
+    const auto* members = static_cast<const JsonMember*>(container.m_entries);
+    for (std::uint32_t ix = 0; ix < container.m_size; ++ix) {
+        if (members[ix].m_key != nullptr && std::strcmp(members[ix].m_key, key) == 0) {
+            return true;
+        }
+    }
+    return false;
 }
 
 bool IsArray(JSON json) {
@@ -424,17 +438,19 @@ const EncoderMidiMapping* EncoderMidiInProcessor::FindPush(const BasicMidi& midi
 
 std::optional<float> EncoderMidiInProcessor::DecodeDelta(std::uint8_t value) const {
     int ticks = 0;
-    switch (config_.relativeMode) {
-    case EncoderRelativeMode::Signed7Bit:
+    switch (config_.mode) {
+    case EncoderMode::Signed7Bit:
         ticks = static_cast<int>(value) - 64;
         break;
-    case EncoderRelativeMode::DirectionOnly:
+    case EncoderMode::DirectionOnly:
         if (value > 64) {
             ticks = 1;
         } else if (value < 64) {
             ticks = -1;
         }
         break;
+    case EncoderMode::Absolute:
+        return std::nullopt;
     }
     if (ticks == 0) {
         return std::nullopt;
@@ -1061,27 +1077,33 @@ bool LaunchpadGridMidiOutProcessor::Enqueue(const BasicMidi& midi) {
     return sender_ != nullptr && !midi.raw.empty() && sender_->Enqueue(sinkIx_, midi);
 }
 
-JSON ToJSON(JsonArena& arena, EncoderRelativeMode value) {
+JSON ToJSON(JsonArena& arena, EncoderMode value) {
     switch (value) {
-    case EncoderRelativeMode::Signed7Bit:
+    case EncoderMode::Signed7Bit:
         return arena.String("signed7Bit");
-    case EncoderRelativeMode::DirectionOnly:
+    case EncoderMode::DirectionOnly:
         return arena.String("directionOnly");
+    case EncoderMode::Absolute:
+        return arena.String("absolute");
     }
     return arena.String("signed7Bit");
 }
 
-bool FromJSON(JSON json, EncoderRelativeMode& value) {
+bool FromJSON(JSON json, EncoderMode& value) {
     if (!IsString(json)) {
         return false;
     }
     const std::string_view mode(json.StringValue());
     if (mode == "signed7Bit") {
-        value = EncoderRelativeMode::Signed7Bit;
+        value = EncoderMode::Signed7Bit;
         return true;
     }
     if (mode == "directionOnly") {
-        value = EncoderRelativeMode::DirectionOnly;
+        value = EncoderMode::DirectionOnly;
+        return true;
+    }
+    if (mode == "absolute") {
+        value = EncoderMode::Absolute;
         return true;
     }
     return false;
@@ -1129,7 +1151,7 @@ bool FromJSON(JSON json, EncoderMidiMapping& value) {
 
 JSON ToJSON(JsonArena& arena, const EncoderMidiInConfig& value) {
     JSON json = arena.Object();
-    json.SetNew("relativeMode", ToJSON(arena, value.relativeMode));
+    json.SetNew("mode", ToJSON(arena, value.mode));
     json.SetNew("turnStep", arena.Real(value.turnStep));
     json.SetNew("turns", VectorToJSON(arena, value.turns));
     json.SetNew("pushes", VectorToJSON(arena, value.pushes));
@@ -1141,7 +1163,8 @@ bool FromJSON(JSON json, EncoderMidiInConfig& value) {
         return false;
     }
     EncoderMidiInConfig parsed;
-    if (!FromJSON(json.Get("relativeMode"), parsed.relativeMode) || !ReadFloat(json.Get("turnStep"), parsed.turnStep) ||
+    const JSON compatibleMode = ObjectHasKey(json, "mode") ? json.Get("mode") : json.Get("relativeMode");
+    if (!FromJSON(compatibleMode, parsed.mode) || !ReadFloat(json.Get("turnStep"), parsed.turnStep) ||
         !std::isfinite(parsed.turnStep) || parsed.turnStep <= 0.0f ||
         !VectorFromJSON(json.Get("turns"), parsed.turns) || !VectorFromJSON(json.Get("pushes"), parsed.pushes)) {
         return false;

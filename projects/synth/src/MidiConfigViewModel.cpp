@@ -258,7 +258,7 @@ bool FieldIsInteger(MidiMappingRowVM::Field field) {
         case Field::MessageArg:
             return true;
         case Field::TurnStep:
-        case Field::RelativeMode:
+        case Field::EncoderMode:
         case Field::MessageKind:
         case Field::BlockMessageType:
             return false;
@@ -266,13 +266,11 @@ bool FieldIsInteger(MidiMappingRowVM::Field field) {
     return false;
 }
 
-const std::vector<std::string>& RelativeModeCatalog() {
-    // Indexed by EncoderRelativeMode's declaration order (MidiController.hpp):
-    // 0 = Signed7Bit, 1 = DirectionOnly. ApplyMappingEdit's Field::RelativeMode
-    // case and RowFieldValue's Field::RelativeMode case both treat their
-    // double as/return an index into this vector, so a JUCE combo box's
-    // selection and this catalog can never drift apart -- see this
-    // function's header doc comment.
+const std::vector<std::string>& EncoderModeCatalog() {
+    // Relative EncoderMode choices, in declaration order (MidiController.hpp):
+    // 0 = Signed7Bit, 1 = DirectionOnly. ApplyMappingEdit's Field::EncoderMode
+    // case and RowFieldValue's Field::EncoderMode case use these indices for
+    // the existing relative choices.
     static const std::vector<std::string> catalog = {"Signed 7-bit", "Direction only"};
     return catalog;
 }
@@ -301,7 +299,7 @@ const char* FieldShortLabel(MidiMappingRowVM::Field field) {
             return "Slot";
         case Field::Position:
             return "Pos";
-        case Field::RelativeMode:
+        case Field::EncoderMode:
             return "Mode";
         case Field::TurnStep:
             return "Step";
@@ -475,8 +473,16 @@ std::string EncoderPushLabel(const EncoderMidiMapping& mapping) {
     return oss.str();
 }
 
-std::string RelativeModeLabel(EncoderRelativeMode mode) {
-    return mode == EncoderRelativeMode::Signed7Bit ? "relative mode: signed 7-bit" : "relative mode: direction only";
+std::string EncoderModeLabel(EncoderMode mode) {
+    switch (mode) {
+    case EncoderMode::Signed7Bit:
+        return "encoder mode: signed 7-bit";
+    case EncoderMode::DirectionOnly:
+        return "encoder mode: direction only";
+    case EncoderMode::Absolute:
+        return "encoder mode: absolute";
+    }
+    return "encoder mode";
 }
 
 std::string TurnStepLabel(float step) {
@@ -801,7 +807,7 @@ std::string SystemBlockLabel(const SystemBlock& block) {
 namespace {
 
 // Builds a FRESH presentation for one section from scratch: the config-level
-// rows (Encoders' RelativeMode/TurnStep, Analogs' SceneBlend) as individual
+// rows (Encoders' EncoderMode/TurnStep, Analogs' SceneBlend) as individual
 // ConfigLevel PresentationRows, and the blockable groups (encoder turns/
 // pushes, analog gestures, system messages) reconstructed via
 // MidiConfigBlocks.hpp's Reconstruct* (D5: "built ... at the collapsed ->
@@ -842,7 +848,7 @@ SectionPresentation BuildFreshPresentation(const MidiControllerProfileConfig& co
                 PresentationRow row;
                 row.kind = RowKind::ConfigLevel;
                 row.group = RowGroup::EncoderMode;
-                row.data = EncoderModeRow{.relativeMode = encoderInput.relativeMode};
+                row.data = EncoderModeRow{.mode = encoderInput.mode};
                 presentation.rows.push_back(std::move(row));
             }
             {
@@ -987,8 +993,8 @@ std::vector<MidiMappingRowVM> MidiConfigViewModel::BuildSectionRows(std::size_t 
         if (presentationRow.kind == RowKind::ConfigLevel) {
             if (presentationRow.group == RowGroup::EncoderMode) {
                 const auto* data = std::get_if<EncoderModeRow>(&presentationRow.data);
-                row.editableFields = {Field::RelativeMode};
-                row.label = RelativeModeLabel(data != nullptr ? data->relativeMode : EncoderRelativeMode::Signed7Bit);
+                row.editableFields = {Field::EncoderMode};
+                row.label = EncoderModeLabel(data != nullptr ? data->mode : EncoderMode::Signed7Bit);
             } else if (presentationRow.group == RowGroup::EncoderStep) {
                 const auto* data = std::get_if<EncoderStepRow>(&presentationRow.data);
                 row.editableFields = {Field::TurnStep};
@@ -1160,9 +1166,9 @@ bool MidiConfigViewModel::RowFieldValue(std::size_t controllerIx, MidiConfigSect
         return BlockFieldValue(presentationRow.block, field, out);
     }
     if (presentationRow.kind == RowKind::ConfigLevel) {
-        if (presentationRow.group == RowGroup::EncoderMode && field == Field::RelativeMode) {
+        if (presentationRow.group == RowGroup::EncoderMode && field == Field::EncoderMode) {
             const auto* data = std::get_if<EncoderModeRow>(&presentationRow.data);
-            out = data != nullptr && data->relativeMode == EncoderRelativeMode::DirectionOnly ? 1.0 : 0.0;
+            out = data != nullptr && data->mode == EncoderMode::DirectionOnly ? 1.0 : 0.0;
             return true;
         }
         if (presentationRow.group == RowGroup::EncoderStep && field == Field::TurnStep) {
@@ -1619,7 +1625,7 @@ bool FlushSectionPresentationToSlot(const SectionPresentation& presentation, Mid
             for (const PresentationRow& row : presentation.rows) {
                 if (row.kind == RowKind::ConfigLevel) {
                     if (const auto* mode = std::get_if<EncoderModeRow>(&row.data)) {
-                        next.relativeMode = mode->relativeMode;
+                        next.mode = mode->mode;
                     } else if (const auto* step = std::get_if<EncoderStepRow>(&row.data)) {
                         next.turnStep = step->turnStep;
                     }
@@ -1789,19 +1795,18 @@ bool MidiConfigViewModel::ApplyMappingEdit(std::size_t controllerIx, MidiConfigS
             fieldValid = ApplySystemBlockField(*systemBlock, field, value, validationError);
         }
     } else if (presentationRow.kind == RowKind::ConfigLevel) {
-        if (presentationRow.group == RowGroup::EncoderMode && field == Field::RelativeMode) {
-            // Index-based: `value` selects RelativeModeCatalog() by position
-            // (0 = Signed7Bit, 1 = DirectionOnly -- EncoderRelativeMode's
+        if (presentationRow.group == RowGroup::EncoderMode && field == Field::EncoderMode) {
+            // Index-based: `value` selects EncoderModeCatalog() by position
+            // (0 = Signed7Bit, 1 = DirectionOnly -- EncoderMode's
             // declaration order), not a raw enum value, so a JUCE combo box
             // can drive this directly off its selected index.
-            const std::vector<std::string>& catalog = RelativeModeCatalog();
+            const std::vector<std::string>& catalog = EncoderModeCatalog();
             if (!IsIntegerInRange(value, 0.0, static_cast<double>(catalog.size() - 1))) {
-                validationError = "relative mode index out of range";
+                validationError = "encoder mode index out of range";
             } else {
                 const auto index = static_cast<std::size_t>(value);
                 presentationRow.data =
-                    EncoderModeRow{.relativeMode = index == 1 ? EncoderRelativeMode::DirectionOnly
-                                                              : EncoderRelativeMode::Signed7Bit};
+                    EncoderModeRow{.mode = index == 1 ? EncoderMode::DirectionOnly : EncoderMode::Signed7Bit};
                 fieldValid = true;
             }
         } else if (presentationRow.group == RowGroup::EncoderStep && field == Field::TurnStep) {

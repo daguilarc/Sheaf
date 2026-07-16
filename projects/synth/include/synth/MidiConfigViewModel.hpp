@@ -85,7 +85,7 @@ struct MidiMappingRowVM {
         Cc,
         SlotIx,
         Position,
-        RelativeMode,
+        EncoderMode,
         TurnStep,
         MessageKind,
         MessageArg,
@@ -198,18 +198,15 @@ const std::vector<UISystemMessageChoice>& UISystemMessageCatalog();
 // True for every field the renderer formats as a plain integer (no decimal
 // places -- Channel, Cc, SlotIx, Position, GestureIx, LaunchpadX/Y,
 // WrldBldrX/Y). False for TurnStep (a decimal float) and for the
-// non-numeric-editor fields (RelativeMode, MessageKind, BlockMessageType).
+// non-numeric-editor fields (EncoderMode, MessageKind, BlockMessageType).
 // MessageArg is a separate numeric field.
 bool FieldIsInteger(MidiMappingRowVM::Field field);
 
-// Display names for EncoderRelativeMode, indexed by the enum's declaration
-// order (index 0 == EncoderRelativeMode::Signed7Bit, index 1 ==
-// EncoderRelativeMode::DirectionOnly). ApplyMappingEdit's Field::RelativeMode
-// case treats its `value` as an index into this catalog (see that method's
-// doc comment); RowFieldValue's Field::RelativeMode case returns the current
-// mode's index here, so a JUCE combo's selection and this catalog can never
-// drift apart.
-const std::vector<std::string>& RelativeModeCatalog();
+// Display names for the relative EncoderMode choices currently editable here
+// (index 0 == EncoderMode::Signed7Bit, index 1 ==
+// EncoderMode::DirectionOnly). ApplyMappingEdit and RowFieldValue use these
+// catalog indices for the two relative choices.
+const std::vector<std::string>& EncoderModeCatalog();
 
 // Short column-header label for a single field ("Ch", "CC", "Slot", "Pos",
 // "Gesture", "X", "Y", "Step", "Mode", "Message") -- the single
@@ -223,7 +220,7 @@ const char* FieldShortLabel(MidiMappingRowVM::Field field);
 // in that enum's declaration order (0 = SceneSelect, 1 = BankSelect,
 // 2 = GestureSelect). ApplyMappingEdit's BlockMessageType case and
 // RowFieldValue's BlockMessageType case both treat their double as/return an
-// index into this vector, matching the RelativeModeCatalog index convention
+// index into this vector, matching the EncoderModeCatalog index convention
 // used elsewhere on this page.
 const std::vector<std::string>& BlockableMessageCatalog();
 
@@ -233,7 +230,7 @@ const std::vector<std::string>& BlockableMessageCatalog();
 // order (0 = LaunchpadX, 1 = LaunchpadProMk3, 2 = LaunchpadMiniMk3).
 // MidiConfigViewModel::LaunchpadVariantIndex()'s return value and
 // SetLaunchpadVariant()'s `variantIndex` parameter both index into this
-// vector, matching the RelativeModeCatalog/BlockableMessageCatalog index
+// vector, matching the EncoderModeCatalog/BlockableMessageCatalog index
 // convention used elsewhere on this page.
 const std::vector<std::string>& LaunchpadVariantCatalog();
 
@@ -264,7 +261,7 @@ struct MidiControllerRowVM {
 namespace detail {
 
 struct EncoderModeRow {
-    EncoderRelativeMode relativeMode = EncoderRelativeMode::Signed7Bit;
+    EncoderMode mode = EncoderMode::Signed7Bit;
 };
 
 struct EncoderStepRow {
@@ -326,8 +323,8 @@ public:
     // editableFields (see SectionRows()), or fields represented by a
     // dedicated catalog accessor rather than a numeric scalar (MessageKind,
     // BlockMessageType); otherwise writes the field's
-    // current value into `out` and returns true. For Field::RelativeMode,
-    // `out` is the current mode's index into RelativeModeCatalog() (not the
+    // current value into `out` and returns true. For Field::EncoderMode,
+    // `out` is the current mode's index into EncoderModeCatalog() (not the
     // raw enum value), matching ApplyMappingEdit's index-based contract for
     // that field below.
     bool RowFieldValue(std::size_t controllerIx, MidiConfigSection section, std::size_t rowIx,
@@ -365,7 +362,7 @@ public:
     //
     // Numeric domains are enforced here: Channel 0-15, Cc 0-127,
     // SlotIx/Position/GestureIx and message arguments non-negative integers,
-    // TurnStep a positive finite float, RelativeMode/System message kind
+    // TurnStep a positive finite float, EncoderMode/System message kind
     // indexes valid catalog positions, LaunchpadX/Y valid for the row's
     // current Launchpad variant, and WrldBldrX/Y in the 0-7 grid.
     bool ApplyMappingEdit(std::size_t controllerIx, MidiConfigSection section, std::size_t rowIx,

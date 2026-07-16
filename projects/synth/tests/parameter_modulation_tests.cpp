@@ -4824,7 +4824,7 @@ TEST_CASE(midi_encoder_input_maps_scaled_turns_pushes_and_timestamps) {
 TEST_CASE(midi_encoder_input_direction_only_zero_and_thru_behavior) {
     synth::MessageInBus bus(nullptr, 16);
     synth::EncoderMidiInConfig config;
-    config.relativeMode = synth::EncoderRelativeMode::DirectionOnly;
+    config.mode = synth::EncoderMode::DirectionOnly;
     config.turnStep = 0.01f;
     config.turns.push_back({.control = {.channel = 0, .cc = 1}, .slotIx = 0, .position = 0});
     config.pushes.push_back({.control = {.channel = 1, .cc = 1}, .slotIx = 0, .position = 0});
@@ -5091,7 +5091,7 @@ TEST_CASE(midi_system_button_input_matches_launchpad_positions_generically) {
 
 TEST_CASE(midi_encoder_default_presets_map_row_major_and_trim) {
     synth::EncoderMidiInConfig twister = synth::EncoderMidiInConfig::TwisterDefault(2);
-    REQUIRE_TRUE(twister.relativeMode == synth::EncoderRelativeMode::Signed7Bit);
+    REQUIRE_TRUE(twister.mode == synth::EncoderMode::Signed7Bit);
     REQUIRE_NEAR(twister.turnStep, 1.0f / 128.0f, 0.000001f);
     REQUIRE_TRUE(twister.turns.size() == 16);
     REQUIRE_TRUE(twister.pushes.size() == 16);
@@ -10034,7 +10034,7 @@ TEST_CASE(midi_profile_config_json_round_trips_wrld_bldr_defaults_and_rebuilds_p
     REQUIRE_TRUE(loaded.encoderInput.has_value());
     REQUIRE_TRUE(loaded.encoderOutput.has_value());
     REQUIRE_TRUE(loaded.analogInput.has_value());
-    REQUIRE_TRUE(loaded.encoderInput->relativeMode == synth::EncoderRelativeMode::Signed7Bit);
+    REQUIRE_TRUE(loaded.encoderInput->mode == synth::EncoderMode::Signed7Bit);
     REQUIRE_TRUE(loaded.encoderInput->turns.size() == 4);
     REQUIRE_TRUE(loaded.encoderInput->pushes.size() == 4);
     REQUIRE_TRUE(loaded.encoderInput->turns[3].control.channel == 0);
@@ -10081,6 +10081,83 @@ TEST_CASE(midi_profile_config_json_round_trips_wrld_bldr_defaults_and_rebuilds_p
     REQUIRE_TRUE(dynamic_cast<synth::WrldBldrMidiOutProcessor*>(result.outputs[0].get()) != nullptr);
     REQUIRE_TRUE(dynamic_cast<synth::SystemCcMidiOutProcessor*>(result.outputs[1].get()) != nullptr);
     REQUIRE_TRUE(dynamic_cast<synth::WrldBldrSystemMidiOutProcessor*>(result.outputs[2].get()) != nullptr);
+}
+
+static_assert(static_cast<int>(synth::EncoderMode::Signed7Bit) == 0);
+static_assert(static_cast<int>(synth::EncoderMode::DirectionOnly) == 1);
+static_assert(static_cast<int>(synth::EncoderMode::Absolute) == 2);
+
+TEST_CASE(encoder_mode_contract_defaults_to_signed_7_bit) {
+    const synth::EncoderMidiInConfig config;
+    REQUIRE_TRUE(config.mode == synth::EncoderMode::Signed7Bit);
+    REQUIRE_NEAR(config.turnStep, 1.0f / 128.0f, 0.000001f);
+}
+
+TEST_CASE(encoder_mode_json_round_trips_absolute_and_writes_new_field_only) {
+    synth::EncoderMidiInConfig source;
+    source.mode = synth::EncoderMode::Absolute;
+    source.turnStep = 0.25f;
+
+    synth::JsonArena arena(4096);
+    const synth::JSON json = synth::ToJSON(arena, source);
+    REQUIRE_TRUE(!arena.Failed());
+    REQUIRE_TRUE(std::string_view(json.Get("mode").StringValue()) == "absolute");
+    REQUIRE_TRUE(json.Get("relativeMode").IsNull());
+
+    synth::EncoderMidiInConfig loaded;
+    REQUIRE_TRUE(synth::FromJSON(json, loaded));
+    REQUIRE_TRUE(loaded.mode == synth::EncoderMode::Absolute);
+    REQUIRE_NEAR(loaded.turnStep, 0.25f, 0.000001f);
+}
+
+TEST_CASE(encoder_mode_json_loads_legacy_field_and_migrates_on_save) {
+    synth::JsonArena arena(4096);
+    synth::JSON legacy = arena.Object();
+    legacy.SetNew("relativeMode", arena.String("directionOnly"));
+    legacy.SetNew("turnStep", arena.Real(0.125));
+    legacy.SetNew("turns", arena.Array());
+    legacy.SetNew("pushes", arena.Array());
+
+    synth::EncoderMidiInConfig loaded;
+    REQUIRE_TRUE(synth::FromJSON(legacy, loaded));
+    REQUIRE_TRUE(loaded.mode == synth::EncoderMode::DirectionOnly);
+
+    synth::JSON migrated = synth::ToJSON(arena, loaded);
+    REQUIRE_TRUE(std::string_view(migrated.Get("mode").StringValue()) == "directionOnly");
+    REQUIRE_TRUE(migrated.Get("relativeMode").IsNull());
+}
+
+TEST_CASE(encoder_mode_json_new_field_is_authoritative) {
+    synth::JsonArena arena(4096);
+    synth::JSON both = arena.Object();
+    both.SetNew("mode", arena.String("signed7Bit"));
+    both.SetNew("relativeMode", arena.String("directionOnly"));
+    both.SetNew("turnStep", arena.Real(0.125));
+    both.SetNew("turns", arena.Array());
+    both.SetNew("pushes", arena.Array());
+
+    synth::EncoderMidiInConfig loaded;
+    REQUIRE_TRUE(synth::FromJSON(both, loaded));
+    REQUIRE_TRUE(loaded.mode == synth::EncoderMode::Signed7Bit);
+
+    synth::JSON invalid = arena.Object();
+    invalid.SetNew("mode", arena.String("not-a-mode"));
+    invalid.SetNew("relativeMode", arena.String("directionOnly"));
+    invalid.SetNew("turnStep", arena.Real(0.125));
+    invalid.SetNew("turns", arena.Array());
+    invalid.SetNew("pushes", arena.Array());
+    loaded.mode = synth::EncoderMode::Absolute;
+    REQUIRE_TRUE(!synth::FromJSON(invalid, loaded));
+    REQUIRE_TRUE(loaded.mode == synth::EncoderMode::Absolute);
+
+    synth::JSON nullMode = arena.Object();
+    nullMode.SetNew("mode", arena.Null());
+    nullMode.SetNew("relativeMode", arena.String("directionOnly"));
+    nullMode.SetNew("turnStep", arena.Real(0.125));
+    nullMode.SetNew("turns", arena.Array());
+    nullMode.SetNew("pushes", arena.Array());
+    REQUIRE_TRUE(!synth::FromJSON(nullMode, loaded));
+    REQUIRE_TRUE(loaded.mode == synth::EncoderMode::Absolute);
 }
 
 TEST_CASE(midi_profile_config_json_migrates_legacy_shift_actions_to_reset) {

@@ -369,7 +369,7 @@ TEST_CASE(rig_midi_cc_routes_through_profile_to_parameter) {
     turn.timestamp = 0;
     // Channel 0 (0xB0), CC 0 (slot 0 position 0's turn address), value 0x41
     // (65). EncoderMidiInProcessor::DecodeDelta with the default
-    // EncoderRelativeMode::Signed7Bit computes ticks = value - 64, so 65 =>
+    // EncoderMode::Signed7Bit computes ticks = value - 64, so 65 =>
     // +1 tick => delta = +1 * turnStep (turnStep defaults to 1/128).
     turn.raw = {0xB0, 0x00, 0x41};
     rig.SendMidi(0, turn);

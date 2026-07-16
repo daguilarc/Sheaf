@@ -53,7 +53,7 @@ using synth::MidiControllerConnection;
 using synth::MidiControllerSlot;
 using synth::MidiControllerSystemMessageAssociation;
 using synth::MidiControlAddress;
-using synth::EncoderRelativeMode;
+using synth::EncoderMode;
 using synth::FieldIsInteger;
 using synth::FieldShortLabel;
 using synth::MidiEndpointConnection;
@@ -62,7 +62,7 @@ using synth::MidiEndpointStatus;
 using synth::MidiInstrumentConfig;
 using synth::MidiMappingRowVM;
 using synth::MidiProfileKind;
-using synth::RelativeModeCatalog;
+using synth::EncoderModeCatalog;
 using synth::RollingMax256;
 using synth::UISystemMessage;
 
@@ -280,7 +280,7 @@ TEST_CASE(WrldBldrEncoderSectionListsOneTurnBlockAndOnePushBlock) {
     vm.Rebuild(MakeFourKindInstrument(), MakeFourKindConnection());
 
     const std::vector<MidiMappingRowVM> rows = vm.SectionRows(0, MidiConfigSection::Encoders);
-    // 1 turn block + 1 push block + 2 config-level rows (RelativeMode, TurnStep).
+    // 1 turn block + 1 push block + 2 config-level rows (EncoderMode, TurnStep).
     REQUIRE_TRUE(rows.size() == 1 + 1 + 2);
 
     REQUIRE_TRUE(rows[0].kind == MidiMappingRowVM::Kind::Block);
@@ -334,22 +334,22 @@ TEST_CASE(RowFieldValueReadsEncoderTurnChannelCcSlotIxPosition) {
     REQUIRE_TRUE(value == static_cast<double>(turn.position));
 }
 
-TEST_CASE(RowFieldValueReadsEncoderConfigLevelRelativeModeAndTurnStep) {
+TEST_CASE(RowFieldValueReadsEncoderConfigLevelModeAndTurnStep) {
     MidiConfigViewModel vm;
     MidiInstrumentConfig instrument = MakeFourKindInstrument();
     vm.Rebuild(instrument, MakeFourKindConnection());
 
     const auto& encoderInput = *instrument.controllers[0].config.encoderInput;
     const std::vector<MidiMappingRowVM> rows = vm.SectionRows(0, MidiConfigSection::Encoders);
-    // Config-level rows are the last two: RelativeMode then TurnStep (see
+    // Config-level rows are the last two: EncoderMode then TurnStep (see
     // ForEachEncoderRow's visit order in the .cpp).
-    const std::size_t relativeModeRowIx = rows.size() - 2;
+    const std::size_t encoderModeRowIx = rows.size() - 2;
     const std::size_t turnStepRowIx = rows.size() - 1;
 
     double value = -1.0;
-    REQUIRE_TRUE(vm.RowFieldValue(0, MidiConfigSection::Encoders, relativeModeRowIx,
-                                  MidiMappingRowVM::Field::RelativeMode, value));
-    REQUIRE_TRUE(value == (encoderInput.relativeMode == synth::EncoderRelativeMode::DirectionOnly ? 1.0 : 0.0));
+    REQUIRE_TRUE(vm.RowFieldValue(0, MidiConfigSection::Encoders, encoderModeRowIx,
+                                  MidiMappingRowVM::Field::EncoderMode, value));
+    REQUIRE_TRUE(value == (encoderInput.mode == synth::EncoderMode::DirectionOnly ? 1.0 : 0.0));
 
     REQUIRE_TRUE(
         vm.RowFieldValue(0, MidiConfigSection::Encoders, turnStepRowIx, MidiMappingRowVM::Field::TurnStep, value));
@@ -1535,7 +1535,7 @@ TEST_CASE(ApplyMappingEditTurnStepMustBePositive) {
     vm.Rebuild(instrument, MakeFourKindConnection());
 
     const auto rows = vm.SectionRows(0, MidiConfigSection::Encoders);
-    // Config-level rows are last: RelativeMode then TurnStep (see
+    // Config-level rows are last: EncoderMode then TurnStep (see
     // ForEachEncoderRow).
     const std::size_t turnStepRowIx = rows.size() - 1;
     REQUIRE_TRUE(rows[turnStepRowIx].label.rfind("turn step", 0) == 0);
@@ -1606,7 +1606,7 @@ double SafeValueFor(MidiMappingRowVM::Field field) {
             return 0.0;
         case Field::Position:
             return 0.0;
-        case Field::RelativeMode:
+        case Field::EncoderMode:
             return 1.0;
         case Field::TurnStep:
             return 0.5;
@@ -1806,7 +1806,7 @@ TEST_CASE(EveryEditableFieldOnEveryDefaultProfileRowSucceeds) {
     }
 }
 
-// --- Issue #9: FieldIsInteger / RelativeModeCatalog / FieldShortLabel -----
+// --- Issue #9: FieldIsInteger / EncoderModeCatalog / FieldShortLabel -----
 
 TEST_CASE(FieldIsIntegerTrueForIndexAndCoordinateFields) {
     using Field = MidiMappingRowVM::Field;
@@ -1826,60 +1826,60 @@ TEST_CASE(FieldIsIntegerTrueForIndexAndCoordinateFields) {
 TEST_CASE(FieldIsIntegerFalseForTurnStepAndNonNumericEditorFields) {
     using Field = MidiMappingRowVM::Field;
     REQUIRE_TRUE(!FieldIsInteger(Field::TurnStep));
-    REQUIRE_TRUE(!FieldIsInteger(Field::RelativeMode));
+    REQUIRE_TRUE(!FieldIsInteger(Field::EncoderMode));
     REQUIRE_TRUE(!FieldIsInteger(Field::MessageKind));
 }
 
-TEST_CASE(RelativeModeCatalogHasOneEntryPerEnumValueInDeclarationOrder) {
-    const std::vector<std::string>& catalog = RelativeModeCatalog();
+TEST_CASE(EncoderModeCatalogExposesTheRenamedRelativeChoices) {
+    const std::vector<std::string>& catalog = EncoderModeCatalog();
     REQUIRE_TRUE(catalog.size() == 2);
     REQUIRE_TRUE(!catalog[0].empty());
     REQUIRE_TRUE(!catalog[1].empty());
     REQUIRE_TRUE(catalog[0] != catalog[1]);
 }
 
-TEST_CASE(RelativeModeIndexRoundTripsThroughApplyMappingEditAndRowFieldValue) {
+TEST_CASE(EncoderModeIndexRoundTripsThroughApplyMappingEditAndRowFieldValue) {
     MidiConfigViewModel vm;
     MidiInstrumentConfig instrument = MakeFourKindInstrument();
     vm.Rebuild(instrument, MakeFourKindConnection());
 
     const auto rows = vm.SectionRows(0, MidiConfigSection::Encoders);
-    const std::size_t relativeModeRowIx = rows.size() - 2;
+    const std::size_t encoderModeRowIx = rows.size() - 2;
 
     // Index 1 == DirectionOnly (declaration order: Signed7Bit=0,
-    // DirectionOnly=1 -- see EncoderRelativeMode in MidiController.hpp).
+    // DirectionOnly=1 -- see EncoderMode in MidiController.hpp).
     MidiInstrumentConfig out;
     std::string reason;
-    REQUIRE_TRUE(vm.ApplyMappingEdit(0, MidiConfigSection::Encoders, relativeModeRowIx,
-                                     MidiMappingRowVM::Field::RelativeMode, 1.0, out, &reason));
-    REQUIRE_TRUE(out.controllers[0].config.encoderInput->relativeMode == EncoderRelativeMode::DirectionOnly);
+    REQUIRE_TRUE(vm.ApplyMappingEdit(0, MidiConfigSection::Encoders, encoderModeRowIx,
+                                     MidiMappingRowVM::Field::EncoderMode, 1.0, out, &reason));
+    REQUIRE_TRUE(out.controllers[0].config.encoderInput->mode == EncoderMode::DirectionOnly);
 
     MidiConfigViewModel vmAfter;
     vmAfter.Rebuild(out, MakeFourKindConnection());
     double value = -1.0;
-    REQUIRE_TRUE(vmAfter.RowFieldValue(0, MidiConfigSection::Encoders, relativeModeRowIx,
-                                       MidiMappingRowVM::Field::RelativeMode, value));
+    REQUIRE_TRUE(vmAfter.RowFieldValue(0, MidiConfigSection::Encoders, encoderModeRowIx,
+                                       MidiMappingRowVM::Field::EncoderMode, value));
     REQUIRE_TRUE(value == 1.0);
 
     // Index 0 == Signed7Bit, round-tripping back the other way.
     MidiInstrumentConfig out2;
-    REQUIRE_TRUE(vmAfter.ApplyMappingEdit(0, MidiConfigSection::Encoders, relativeModeRowIx,
-                                          MidiMappingRowVM::Field::RelativeMode, 0.0, out2, &reason));
-    REQUIRE_TRUE(out2.controllers[0].config.encoderInput->relativeMode == EncoderRelativeMode::Signed7Bit);
+    REQUIRE_TRUE(vmAfter.ApplyMappingEdit(0, MidiConfigSection::Encoders, encoderModeRowIx,
+                                          MidiMappingRowVM::Field::EncoderMode, 0.0, out2, &reason));
+    REQUIRE_TRUE(out2.controllers[0].config.encoderInput->mode == EncoderMode::Signed7Bit);
 }
 
-TEST_CASE(RelativeModeIndexOutOfRangeIsRefused) {
+TEST_CASE(EncoderModeIndexOutOfRangeIsRefused) {
     MidiConfigViewModel vm;
     MidiInstrumentConfig instrument = MakeFourKindInstrument();
     vm.Rebuild(instrument, MakeFourKindConnection());
 
     const auto rows = vm.SectionRows(0, MidiConfigSection::Encoders);
-    const std::size_t relativeModeRowIx = rows.size() - 2;
+    const std::size_t encoderModeRowIx = rows.size() - 2;
 
     MidiInstrumentConfig out;
     std::string reason;
-    const bool ok = vm.ApplyMappingEdit(0, MidiConfigSection::Encoders, relativeModeRowIx,
-                                        MidiMappingRowVM::Field::RelativeMode, 2.0, out, &reason);
+    const bool ok = vm.ApplyMappingEdit(0, MidiConfigSection::Encoders, encoderModeRowIx,
+                                        MidiMappingRowVM::Field::EncoderMode, 2.0, out, &reason);
     REQUIRE_TRUE(!ok);
     REQUIRE_TRUE(!reason.empty());
 }
@@ -1889,7 +1889,7 @@ TEST_CASE(FieldShortLabelIsNonEmptyAndDistinctPerField) {
     const std::vector<Field> fields = {
         Field::Channel,     Field::Cc,     Field::SlotIx,      Field::Position,       Field::GestureIx,
         Field::LaunchpadX,  Field::LaunchpadY, Field::WrldBldrX, Field::WrldBldrY,     Field::TurnStep,
-        Field::RelativeMode, Field::MessageKind, Field::MessageArg,
+        Field::EncoderMode, Field::MessageKind, Field::MessageArg,
         Field::SceneBlend, Field::Button,
     };
     std::vector<std::string> seen;
@@ -2739,9 +2739,9 @@ TEST_CASE(AddSingleEncoderTurnCreatesAbsentEncoderInputContainer) {
     REQUIRE_TRUE(out.controllers[0].config.encoderInput.has_value());
     REQUIRE_TRUE(out.controllers[0].config.encoderInput->turns.size() == 1);
     REQUIRE_TRUE(out.controllers[0].config.encoderInput->pushes.empty());
-    // Default-constructed relativeMode/turnStep are fine (brief: "default
-    // relativeMode/turnStep are fine").
-    REQUIRE_TRUE(out.controllers[0].config.encoderInput->relativeMode == EncoderRelativeMode::Signed7Bit);
+    // Default-constructed mode/turnStep are fine (brief: "default
+    // mode/turnStep are fine").
+    REQUIRE_TRUE(out.controllers[0].config.encoderInput->mode == EncoderMode::Signed7Bit);
 }
 
 TEST_CASE(AddSingleEncoderPushCreatesAbsentEncoderInputContainer) {
