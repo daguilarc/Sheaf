@@ -53,6 +53,28 @@ enum class RangeKind {
 
 float ClampToRange(float value, RangeKind range);
 
+namespace detail {
+
+struct AbsoluteGestureContribution {
+    float* leftStorage = nullptr;
+    float* rightStorage = nullptr;
+    double effectiveWeight = 0.0;
+};
+
+struct AbsoluteEditLocation {
+    float* storage = nullptr;
+    double coefficient = 0.0;
+};
+
+std::vector<AbsoluteEditLocation> BuildAbsoluteEditLocations(
+    float& leftBaseStorage, float& rightBaseStorage, double sceneBlend,
+    std::span<const AbsoluteGestureContribution> gestures);
+
+bool ProjectAbsoluteTarget(std::span<AbsoluteEditLocation> locations,
+                           double minimum, double maximum, double target);
+
+}  // namespace detail
+
 constexpr float ZeroBasedExponentialBaseFromMidpoint(float midpointValue, float maxValue) {
     if (!(maxValue > 0.0f) || !(midpointValue > 0.0f) || !(midpointValue < maxValue)) {
         throw std::invalid_argument("zero-based exponential mapping requires 0 < midpoint < max");
@@ -441,6 +463,7 @@ public:
     void ProcessLite();
     void ProcessSample(std::uint64_t sampleIndex);
     void HandleIncDec(const SceneState& scene, float delta);
+    void HandleSetAbsolute(const SceneState& scene, float normalizedTarget);
     void RandomizeVisibleValue(const SceneState& scene, float normalized);
     void RevertToDefault(const SceneState& scene);
     void RevertAllToDefault();

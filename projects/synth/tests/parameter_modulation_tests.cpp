@@ -172,6 +172,270 @@ synth::MidiInstrumentConfig MakeInstrumentFromProfile(const synth::MidiControlle
 
 } // namespace
 
+TEST_CASE(absolute_edit_locations_form_the_independently_computed_convex_system) {
+    float leftBase = 0.2f;
+    float rightBase = 0.8f;
+    float leftGestureA = 0.1f;
+    float rightGestureA = 0.9f;
+    float leftGestureB = 0.3f;
+    float rightGestureB = 0.7f;
+    constexpr double blend = 0.25;
+    constexpr double gestureAWeight = 0.5;
+    constexpr double gestureBGroupWeight = 0.5;
+    constexpr bool gestureBActiveLeft = false;
+    constexpr bool gestureBActiveRight = true;
+    constexpr double gestureBWeight =
+        gestureBGroupWeight * ((gestureBActiveLeft ? 1.0 - blend : 0.0) +
+                               (gestureBActiveRight ? blend : 0.0));
+    const std::array gestures = {
+        synth::detail::AbsoluteGestureContribution{&leftGestureA, &rightGestureA, gestureAWeight},
+        synth::detail::AbsoluteGestureContribution{&leftGestureB, &rightGestureB, gestureBWeight},
+    };
+
+    const auto locations =
+        synth::detail::BuildAbsoluteEditLocations(leftBase, rightBase, blend, gestures);
+
+    const double weightSum = gestureAWeight + gestureBWeight;
+    const double expectedBase =
+        (gestureAWeight * (1.0 - gestureAWeight) + gestureBWeight * (1.0 - gestureBWeight)) /
+        weightSum;
+    const double expectedGestureA = gestureAWeight * gestureAWeight / weightSum;
+    const double expectedGestureB = gestureBWeight * gestureBWeight / weightSum;
+    const std::array expected = {
+        std::pair{&leftBase, expectedBase * (1.0 - blend)},
+        std::pair{&rightBase, expectedBase * blend},
+        std::pair{&leftGestureA, expectedGestureA * (1.0 - blend)},
+        std::pair{&rightGestureA, expectedGestureA * blend},
+        std::pair{&leftGestureB, expectedGestureB * (1.0 - blend)},
+        std::pair{&rightGestureB, expectedGestureB * blend},
+    };
+    REQUIRE_TRUE(locations.size() == expected.size());
+    double coefficientSum = 0.0;
+    for (const auto& [storage, coefficient] : expected) {
+        const auto found = std::find_if(locations.begin(), locations.end(),
+                                        [&](const auto& location) { return location.storage == storage; });
+        REQUIRE_TRUE(found != locations.end());
+        REQUIRE_TRUE(std::fabs(found->coefficient - coefficient) <= 1e-12);
+        coefficientSum += found->coefficient;
+    }
+    REQUIRE_TRUE(std::fabs(coefficientSum - 1.0) <= 1e-12);
+}
+
+TEST_CASE(absolute_edit_locations_cover_endpoints_no_gestures_and_aliased_storage) {
+    float left = 0.2f;
+    float right = 0.8f;
+    const std::span<const synth::detail::AbsoluteGestureContribution> noGestures;
+
+    const auto leftEndpoint = synth::detail::BuildAbsoluteEditLocations(left, right, 0.0, noGestures);
+    REQUIRE_TRUE(leftEndpoint.size() == 1);
+    REQUIRE_TRUE(leftEndpoint[0].storage == &left);
+    REQUIRE_TRUE(std::fabs(leftEndpoint[0].coefficient - 1.0) <= 1e-12);
+
+    const auto rightEndpoint = synth::detail::BuildAbsoluteEditLocations(left, right, 1.0, noGestures);
+    REQUIRE_TRUE(rightEndpoint.size() == 1);
+    REQUIRE_TRUE(rightEndpoint[0].storage == &right);
+    REQUIRE_TRUE(std::fabs(rightEndpoint[0].coefficient - 1.0) <= 1e-12);
+
+    const auto aliased = synth::detail::BuildAbsoluteEditLocations(left, left, 0.37, noGestures);
+    REQUIRE_TRUE(aliased.size() == 1);
+    REQUIRE_TRUE(aliased[0].storage == &left);
+    REQUIRE_TRUE(std::fabs(aliased[0].coefficient - 1.0) <= 1e-12);
+}
+
+TEST_CASE(absolute_projection_is_exact_minimum_change_and_redistributes_saturation) {
+    float first = 0.2f;
+    float second = 0.8f;
+    std::array locations = {
+        synth::detail::AbsoluteEditLocation{&first, 0.75},
+        synth::detail::AbsoluteEditLocation{&second, 0.25},
+    };
+
+    REQUIRE_TRUE(synth::detail::ProjectAbsoluteTarget(locations, 0.0, 1.0, 0.475));
+    REQUIRE_NEAR(first, 0.35f, 0.000001f);
+    REQUIRE_NEAR(second, 0.85f, 0.000001f);
+    REQUIRE_TRUE(std::fabs(0.75 * first + 0.25 * second - 0.475) <= 1e-5);
+
+    first = 0.9f;
+    second = 0.2f;
+    REQUIRE_TRUE(synth::detail::ProjectAbsoluteTarget(locations, 0.0, 1.0, 0.85));
+    REQUIRE_NEAR(first, 1.0f, 0.000001f);
+    REQUIRE_NEAR(second, 0.4f, 0.000001f);
+
+    first = 0.1f;
+    second = 0.8f;
+    REQUIRE_TRUE(synth::detail::ProjectAbsoluteTarget(locations, 0.0, 1.0, 0.15));
+    REQUIRE_NEAR(first, 0.0f, 0.000001f);
+    REQUIRE_NEAR(second, 0.6f, 0.000001f);
+}
+
+TEST_CASE(absolute_projection_handles_noop_endpoints_bipolar_ranges_and_rejects_invalid_contracts) {
+    float value = -0.25f;
+    std::array one = {synth::detail::AbsoluteEditLocation{&value, 1.0}};
+    REQUIRE_TRUE(synth::detail::ProjectAbsoluteTarget(one, -1.0, 1.0, -0.25));
+    REQUIRE_NEAR(value, -0.25f, 0.0f);
+    REQUIRE_TRUE(synth::detail::ProjectAbsoluteTarget(one, -1.0, 1.0, 1.0));
+    REQUIRE_NEAR(value, 1.0f, 0.0f);
+    REQUIRE_TRUE(synth::detail::ProjectAbsoluteTarget(one, -1.0, 1.0, -1.0));
+    REQUIRE_NEAR(value, -1.0f, 0.0f);
+
+    float aliased = 0.4f;
+    std::array duplicate = {
+        synth::detail::AbsoluteEditLocation{&aliased, 0.5},
+        synth::detail::AbsoluteEditLocation{&aliased, 0.5},
+    };
+    REQUIRE_TRUE(!synth::detail::ProjectAbsoluteTarget(duplicate, 0.0, 1.0, 0.75));
+    REQUIRE_NEAR(aliased, 0.4f, 0.0f);
+
+    float invalidSumValue = 0.4f;
+    std::array invalidSum = {synth::detail::AbsoluteEditLocation{&invalidSumValue, 0.75}};
+    REQUIRE_TRUE(!synth::detail::ProjectAbsoluteTarget(invalidSum, 0.0, 1.0, 0.5));
+    REQUIRE_NEAR(invalidSumValue, 0.4f, 0.0f);
+
+    float finiteValue = 0.4f;
+    std::array nonFinite = {synth::detail::AbsoluteEditLocation{&finiteValue, 1.0}};
+    REQUIRE_TRUE(!synth::detail::ProjectAbsoluteTarget(
+        nonFinite, 0.0, 1.0, std::numeric_limits<double>::quiet_NaN()));
+    REQUIRE_NEAR(finiteValue, 0.4f, 0.0f);
+}
+
+TEST_CASE(handle_set_absolute_reaches_endpoint_mid_blend_and_aliased_scene_targets) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 0,
+        .numScenes = 3,
+        .maxParameters = 1,
+        .targetCenterAlpha = 1.0f,
+    });
+    auto& parameter = manager.CreateParameter(group, {.name = "Absolute", .defaultValue = 0.5f});
+    parameter.SceneCenter(0) = 0.2f;
+    parameter.SceneCenter(1) = 0.8f;
+    parameter.SceneCenter(2) = 0.33f;
+
+    const synth::SceneState endpoint{.leftScene = 0, .rightScene = 1, .blend = 0.0f};
+    parameter.HandleSetAbsolute(endpoint, 0.75f);
+    parameter.Compute(endpoint);  // alpha=1 exposes the raw center before ordinary production slew.
+    REQUIRE_NEAR(parameter.TargetCenter(), 0.75f, 0.00001f);
+    REQUIRE_NEAR(parameter.SceneCenter(1), 0.8f, 0.0f);
+    REQUIRE_NEAR(parameter.SceneCenter(2), 0.33f, 0.0f);
+
+    parameter.SceneCenter(0) = 0.2f;
+    parameter.SceneCenter(1) = 0.8f;
+    const synth::SceneState middle{.leftScene = 0, .rightScene = 1, .blend = 0.25f};
+    parameter.HandleSetAbsolute(middle, 0.9f);
+    parameter.Compute(middle);
+    REQUIRE_NEAR(parameter.TargetCenter(), 0.9f, 0.00001f);
+    REQUIRE_NEAR(parameter.SceneCenter(0), 13.0f / 15.0f, 0.00001f);
+    REQUIRE_NEAR(parameter.SceneCenter(1), 1.0f, 0.00001f);
+    REQUIRE_NEAR(parameter.SceneCenter(2), 0.33f, 0.0f);
+
+    const synth::SceneState aliased{.leftScene = 1, .rightScene = 1, .blend = 0.5f};
+    parameter.HandleSetAbsolute(aliased, 0.4f);
+    parameter.Compute(aliased);
+    REQUIRE_NEAR(parameter.TargetCenter(), 0.4f, 0.00001f);
+    REQUIRE_NEAR(parameter.SceneCenter(1), 0.4f, 0.00001f);
+}
+
+TEST_CASE(handle_set_absolute_arms_then_rebuilds_the_proof_counterexample) {
+    synth::ParameterManager manager;
+    manager.SetGestureCount(2);
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 0,
+        .numScenes = 1,
+        .maxParameters = 1,
+        .targetCenterAlpha = 1.0f,
+    });
+    auto& parameter = manager.CreateParameter(group, {.name = "Counterexample", .defaultValue = 0.0f});
+    parameter.SceneCenter(0) = 0.0f;
+    parameter.GestureValue(0, 0) = 1.0f;
+    parameter.SetGestureActive(0, 0, true);
+    manager.SetGestureValue(0, 0.5f);
+    manager.DeselectGesture(0);
+    parameter.GestureValue(0, 1) = 0.9f;
+    manager.SetGestureValue(1, 0.5f);
+    manager.SelectGesture(1);
+    const synth::SceneState scene{.leftScene = 0, .rightScene = 0, .blend = 0.0f};
+
+    parameter.HandleSetAbsolute(scene, 0.75f);
+    parameter.Compute(scene);
+
+    REQUIRE_TRUE(parameter.GestureActive(0, 0));
+    REQUIRE_TRUE(!manager.GestureSelected(0));
+    REQUIRE_TRUE(parameter.GestureActive(0, 1));
+    REQUIRE_NEAR(parameter.TargetCenter(), 0.75f, 0.00001f);
+    REQUIRE_NEAR(parameter.SceneCenter(0), 0.8f, 0.00001f);
+    REQUIRE_NEAR(parameter.GestureValue(0, 0), 1.0f, 0.00001f);
+    REQUIRE_NEAR(parameter.GestureValue(0, 1), 0.4f, 0.00001f);
+}
+
+TEST_CASE(handle_set_absolute_arms_both_touched_endpoints_and_preserves_unrelated_storage) {
+    synth::ParameterManager manager;
+    manager.SetGestureCount(2);
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 0,
+        .numScenes = 3,
+        .maxParameters = 1,
+        .targetCenterAlpha = 1.0f,
+    });
+    auto& parameter = manager.CreateParameter(group, {.name = "Arming", .defaultValue = 0.5f});
+    parameter.SceneCenter(0) = 0.1f;
+    parameter.SceneCenter(1) = 0.9f;
+    parameter.SceneCenter(2) = 0.3f;
+    parameter.GestureValue(0, 0) = 0.8f;
+    parameter.GestureValue(1, 0) = 0.2f;
+    parameter.GestureValue(2, 0) = 0.7f;
+    parameter.GestureValue(2, 1) = 0.6f;
+    manager.SetGestureValue(0, 0.75f);
+    manager.SelectGesture(0);
+    const synth::SceneState scene{.leftScene = 0, .rightScene = 1, .blend = 0.5f};
+
+    parameter.HandleSetAbsolute(scene, 0.65f);
+    parameter.Compute(scene);
+
+    REQUIRE_TRUE(parameter.GestureActive(0, 0));
+    REQUIRE_TRUE(parameter.GestureActive(1, 0));
+    REQUIRE_NEAR(parameter.TargetCenter(), 0.65f, 0.00001f);
+    REQUIRE_NEAR(parameter.SceneCenter(2), 0.3f, 0.0f);
+    REQUIRE_NEAR(parameter.GestureValue(2, 0), 0.7f, 0.0f);
+    REQUIRE_NEAR(parameter.GestureValue(2, 1), 0.6f, 0.0f);
+}
+
+TEST_CASE(handle_set_absolute_clamps_normalized_input_maps_bipolar_storage_and_rejects_nonfinite) {
+    synth::ParameterManager manager;
+    manager.SetGestureCount(1);
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 0,
+        .numScenes = 1,
+        .maxParameters = 1,
+        .targetCenterAlpha = 1.0f,
+    });
+    auto& parameter = manager.CreateParameter(
+        group, {.name = "Bipolar", .defaultValue = 0.5f, .range = synth::RangeKind::Bipolar});
+    const synth::SceneState scene{.leftScene = 0, .rightScene = 0, .blend = 0.0f};
+
+    parameter.HandleSetAbsolute(scene, -3.0f);
+    parameter.Compute(scene);
+    REQUIRE_NEAR(parameter.TargetCenter(), 0.0f, 0.00001f);
+    parameter.HandleSetAbsolute(scene, 3.0f);
+    parameter.Compute(scene);
+    REQUIRE_NEAR(parameter.TargetCenter(), 1.0f, 0.00001f);
+    parameter.HandleSetAbsolute(scene, 0.25f);
+    parameter.Compute(scene);
+    REQUIRE_NEAR(parameter.TargetCenter(), 0.25f, 0.00001f);
+
+    parameter.SceneCenter(0) = 0.4f;
+    parameter.GestureValue(0, 0) = 0.9f;
+    manager.SetGestureValue(0, 1.0f);
+    manager.SelectGesture(0);
+    parameter.HandleSetAbsolute(scene, std::numeric_limits<float>::quiet_NaN());
+    REQUIRE_NEAR(parameter.SceneCenter(0), 0.4f, 0.0f);
+    REQUIRE_NEAR(parameter.GestureValue(0, 0), 0.9f, 0.0f);
+    REQUIRE_TRUE(!parameter.GestureActive(0, 0));
+}
+
 TEST_CASE(smoke_clamps_ranges) {
     REQUIRE_NEAR(synth::ClampToRange(2.0f, synth::RangeKind::Unipolar), 1.0f, 0.0001f);
     REQUIRE_NEAR(synth::ClampToRange(-2.0f, synth::RangeKind::Bipolar), 0.0f, 0.0001f);

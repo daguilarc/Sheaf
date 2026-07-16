@@ -7,10 +7,202 @@
 #include <charconv>
 #include <cmath>
 #include <limits>
+#include <numeric>
 #include <stdexcept>
 #include <utility>
 
 namespace synth {
+
+namespace detail {
+
+namespace {
+
+constexpr double kAbsoluteCoefficientTolerance = 1e-10;
+constexpr double kAbsoluteTargetTolerance = 1e-5;
+
+void AccumulateAbsoluteLocation(std::vector<AbsoluteEditLocation>& locations,
+                                float* storage, double coefficient) {
+    if (coefficient == 0.0) {
+        return;
+    }
+    const auto existing = std::find_if(locations.begin(), locations.end(),
+                                       [storage](const AbsoluteEditLocation& location) {
+                                           return location.storage == storage;
+                                       });
+    if (existing != locations.end()) {
+        existing->coefficient += coefficient;
+        return;
+    }
+    locations.push_back({storage, coefficient});
+}
+
+}  // namespace
+
+std::vector<AbsoluteEditLocation> BuildAbsoluteEditLocations(
+    float& leftBaseStorage, float& rightBaseStorage, double sceneBlend,
+    std::span<const AbsoluteGestureContribution> gestures) {
+    if (!std::isfinite(sceneBlend)) {
+        throw std::invalid_argument("absolute edit scene blend must be finite");
+    }
+    const double blend = std::clamp(sceneBlend, 0.0, 1.0);
+    const double inverseBlend = 1.0 - blend;
+
+    double activeWeightSum = 0.0;
+    double baseShareNumerator = 0.0;
+    for (const AbsoluteGestureContribution& gesture : gestures) {
+        if (gesture.leftStorage == nullptr || gesture.rightStorage == nullptr ||
+            !std::isfinite(gesture.effectiveWeight) || gesture.effectiveWeight < 0.0 ||
+            gesture.effectiveWeight > 1.0) {
+            throw std::invalid_argument("invalid absolute gesture contribution");
+        }
+        activeWeightSum += gesture.effectiveWeight;
+        baseShareNumerator += gesture.effectiveWeight * (1.0 - gesture.effectiveWeight);
+    }
+
+    std::vector<AbsoluteEditLocation> locations;
+    locations.reserve(2 + gestures.size() * 2);
+    const double baseCoefficient = activeWeightSum == 0.0 ? 1.0 : baseShareNumerator / activeWeightSum;
+    AccumulateAbsoluteLocation(locations, &leftBaseStorage, baseCoefficient * inverseBlend);
+    AccumulateAbsoluteLocation(locations, &rightBaseStorage, baseCoefficient * blend);
+
+    if (activeWeightSum != 0.0) {
+        for (const AbsoluteGestureContribution& gesture : gestures) {
+            const double gestureCoefficient =
+                gesture.effectiveWeight * gesture.effectiveWeight / activeWeightSum;
+            AccumulateAbsoluteLocation(locations, gesture.leftStorage, gestureCoefficient * inverseBlend);
+            AccumulateAbsoluteLocation(locations, gesture.rightStorage, gestureCoefficient * blend);
+        }
+    }
+
+    const double coefficientSum =
+        std::accumulate(locations.begin(), locations.end(), 0.0,
+                        [](double sum, const AbsoluteEditLocation& location) {
+                            return sum + location.coefficient;
+                        });
+    const bool locationsValid =
+        std::all_of(locations.begin(), locations.end(), [](const AbsoluteEditLocation& location) {
+            return location.storage != nullptr && std::isfinite(location.coefficient) &&
+                   location.coefficient > 0.0;
+        });
+    if (locations.empty() || !locationsValid || !std::isfinite(coefficientSum) ||
+        std::fabs(coefficientSum - 1.0) > kAbsoluteCoefficientTolerance) {
+        throw std::logic_error("absolute edit coefficients must form a convex combination");
+    }
+    return locations;
+}
+
+bool ProjectAbsoluteTarget(std::span<AbsoluteEditLocation> locations,
+                           double minimum, double maximum, double target) {
+    if (locations.empty() || !std::isfinite(minimum) || !std::isfinite(maximum) ||
+        !std::isfinite(target) || !(minimum < maximum) || target < minimum || target > maximum) {
+        return false;
+    }
+
+    double coefficientSum = 0.0;
+    double current = 0.0;
+    for (std::size_t ix = 0; ix < locations.size(); ++ix) {
+        const AbsoluteEditLocation& location = locations[ix];
+        if (location.storage == nullptr || !std::isfinite(location.coefficient) ||
+            !(location.coefficient > 0.0) || !std::isfinite(*location.storage) ||
+            *location.storage < minimum || *location.storage > maximum) {
+            return false;
+        }
+        for (std::size_t prior = 0; prior < ix; ++prior) {
+            if (locations[prior].storage == location.storage) {
+                return false;
+            }
+        }
+        coefficientSum += location.coefficient;
+        current += location.coefficient * static_cast<double>(*location.storage);
+    }
+    if (!std::isfinite(coefficientSum) ||
+        std::fabs(coefficientSum - 1.0) > kAbsoluteCoefficientTolerance) {
+        return false;
+    }
+
+    std::vector<double> result(locations.size());
+    std::vector<bool> fixed(locations.size(), false);
+    if (target == minimum || target == maximum) {
+        std::fill(result.begin(), result.end(), target);
+    } else if (target == current) {
+        for (std::size_t ix = 0; ix < locations.size(); ++ix) {
+            result[ix] = *locations[ix].storage;
+        }
+    } else {
+        const bool movingUp = target > current;
+        std::size_t freeCount = locations.size();
+        bool solved = false;
+        for (std::size_t iteration = 0; iteration <= locations.size(); ++iteration) {
+            double fixedContribution = 0.0;
+            double freeBaseContribution = 0.0;
+            double freeCoefficientSquareSum = 0.0;
+            for (std::size_t ix = 0; ix < locations.size(); ++ix) {
+                const double coefficient = locations[ix].coefficient;
+                if (fixed[ix]) {
+                    fixedContribution += coefficient * result[ix];
+                } else {
+                    freeBaseContribution += coefficient * static_cast<double>(*locations[ix].storage);
+                    freeCoefficientSquareSum += coefficient * coefficient;
+                }
+            }
+            if (freeCount == 0 || !(freeCoefficientSquareSum > 0.0) ||
+                !std::isfinite(freeCoefficientSquareSum)) {
+                break;
+            }
+
+            const double lambda =
+                (target - fixedContribution - freeBaseContribution) / freeCoefficientSquareSum;
+            if (!std::isfinite(lambda)) {
+                break;
+            }
+            bool saturated = false;
+            for (std::size_t ix = 0; ix < locations.size(); ++ix) {
+                if (fixed[ix]) {
+                    continue;
+                }
+                const double candidate = static_cast<double>(*locations[ix].storage) +
+                                         lambda * locations[ix].coefficient;
+                if ((movingUp && candidate > maximum) || (!movingUp && candidate < minimum)) {
+                    fixed[ix] = true;
+                    result[ix] = movingUp ? maximum : minimum;
+                    --freeCount;
+                    saturated = true;
+                } else {
+                    result[ix] = candidate;
+                }
+            }
+            if (!saturated) {
+                solved = true;
+                break;
+            }
+        }
+        if (!solved) {
+            return false;
+        }
+    }
+
+    double roundedEffective = 0.0;
+    std::vector<float> rounded(locations.size());
+    for (std::size_t ix = 0; ix < locations.size(); ++ix) {
+        if (!std::isfinite(result[ix]) || result[ix] < minimum || result[ix] > maximum) {
+            return false;
+        }
+        rounded[ix] = static_cast<float>(std::clamp(result[ix], minimum, maximum));
+        if (!std::isfinite(rounded[ix]) || rounded[ix] < minimum || rounded[ix] > maximum) {
+            return false;
+        }
+        roundedEffective += locations[ix].coefficient * static_cast<double>(rounded[ix]);
+    }
+    if (std::fabs(roundedEffective - target) > kAbsoluteTargetTolerance) {
+        return false;
+    }
+    for (std::size_t ix = 0; ix < locations.size(); ++ix) {
+        *locations[ix].storage = rounded[ix];
+    }
+    return true;
+}
+
+}  // namespace detail
 
 namespace {
 
@@ -1280,6 +1472,73 @@ void Parameter::HandleIncDec(const SceneState& scene, float delta) {
         ApplySceneDistribution(GestureValue(scene.leftScene, gestureIx), GestureValue(scene.rightScene, gestureIx),
                                blend, gestureDelta, config_.range);
     });
+}
+
+void Parameter::HandleSetAbsolute(const SceneState& scene, float normalizedTarget) {
+    ValidateSceneEndpoints(scene);
+    if (!std::isfinite(normalizedTarget)) {
+        return;
+    }
+
+    const float blend = std::clamp(scene.blend, 0.0f, 1.0f);
+    const double target = static_cast<double>(LinearMap(
+        RangeMin(config_.range), RangeMax(config_.range), std::clamp(normalizedTarget, 0.0f, 1.0f)));
+
+    auto armSelectedGesture = [&](std::size_t sceneIx, std::size_t gestureIx) {
+        if (GestureActive(sceneIx, gestureIx)) {
+            return;
+        }
+        GestureValue(sceneIx, gestureIx) = SceneCenter(sceneIx);
+        SetGestureActive(sceneIx, gestureIx, true);
+    };
+
+    ForEachGestureBit(group_.Manager().SelectedGestureMask() & GestureCountMask(group_.GestureCount()),
+                      [&](std::size_t gestureIx) {
+        if (blend <= 0.0f) {
+            armSelectedGesture(scene.leftScene, gestureIx);
+        } else if (blend >= 1.0f) {
+            armSelectedGesture(scene.rightScene, gestureIx);
+        } else {
+            armSelectedGesture(scene.leftScene, gestureIx);
+            if (scene.rightScene != scene.leftScene) {
+                armSelectedGesture(scene.rightScene, gestureIx);
+            }
+        }
+    });
+
+    std::array<detail::AbsoluteGestureContribution, std::numeric_limits<GestureMask>::digits>
+        gestureContributions;
+    std::size_t contributionCount = 0;
+    const GestureMask activeGestures =
+        (gestureActiveMasks_[scene.leftScene] | gestureActiveMasks_[scene.rightScene]) &
+        GestureCountMask(group_.GestureCount());
+    ForEachGestureBit(activeGestures, [&](std::size_t gestureIx) {
+        const double effectiveWeight =
+            static_cast<double>(EffectiveGestureWeight(scene, gestureIx, blend));
+        if (effectiveWeight <= 0.0) {
+            return;
+        }
+        gestureContributions[contributionCount++] = {
+            &GestureValue(scene.leftScene, gestureIx),
+            &GestureValue(scene.rightScene, gestureIx),
+            effectiveWeight,
+        };
+    });
+
+    std::vector<detail::AbsoluteEditLocation> locations = detail::BuildAbsoluteEditLocations(
+        SceneCenter(scene.leftScene), SceneCenter(scene.rightScene), static_cast<double>(blend),
+        std::span<const detail::AbsoluteGestureContribution>(gestureContributions.data(), contributionCount));
+    if (!detail::ProjectAbsoluteTarget(locations, static_cast<double>(RangeMin(config_.range)),
+                                       static_cast<double>(RangeMax(config_.range)), target)) {
+        throw std::logic_error("absolute parameter projection failed");
+    }
+
+    constexpr double kRawCenterTolerance = 1e-5;
+    const double rawCenter = static_cast<double>(ComputeRawCenter(scene));
+    if (!std::isfinite(rawCenter) || std::fabs(rawCenter - target) > kRawCenterTolerance) {
+        throw std::logic_error("absolute parameter edit did not reach its raw target");
+    }
+    assert(std::fabs(rawCenter - target) <= kRawCenterTolerance);
 }
 
 void Parameter::RandomizeVisibleValue(const SceneState& scene, float normalized) {
