@@ -1,5 +1,6 @@
 #include "synth/PortableUI.hpp"
 #include "synth/GangedRandomLfoVisualizer.hpp"
+#include "synth/StandardModulators.hpp"
 #include "synth/browser/BrowserCommandBuffer.hpp"
 
 #include "../apps/miniapp/MiniAppDraw.hpp"
@@ -284,6 +285,44 @@ void TestMiniAppThreePanelCommandsUseExistingBrowserSchema()
     Require(gangDots == 2, "browser consumes both ganged present dots");
 }
 
+void TestStandardModulatorUnderlaysUseExistingBrowserSchema()
+{
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({.numVoices = 2, .numModulators = 15, .numScenes = 1, .maxParameters = 16});
+    synth::StandardModulators<2> standard(group);
+    standard.Register();
+    standard.Prepare(48000.0);
+    standard.Process();
+    standard.PublishUiState();
+
+    const synth::ui::Bounds bounds{0.0f, 0.0f, 96.0f, 96.0f};
+    synth::ui::NodeTree tree;
+    tree.nodes.push_back(synth::ui::Node{
+        .id = synth::ui::NodeId("root"), .kind = synth::ui::NodeKind::Root,
+        .bounds = bounds,
+        .children = {synth::ui::NodeId("random"), synth::ui::NodeId("constant"), synth::ui::NodeId("noise")}});
+    for (synth::ui::Visualizer* visualizer : {
+             static_cast<synth::ui::Visualizer*>(&standard.RandomVisualizer(0)),
+             static_cast<synth::ui::Visualizer*>(&standard.ConstantVisualizer()),
+             static_cast<synth::ui::Visualizer*>(&standard.NoiseVisualizer())})
+    {
+        visualizer->SetBounds(bounds);
+    }
+    tree.nodes.push_back(synth::ui::Node{.id = synth::ui::NodeId("random"), .kind = synth::ui::NodeKind::Draw,
+                                         .bounds = bounds, .drawCommands = standard.RandomVisualizer(0).Draw()});
+    tree.nodes.push_back(synth::ui::Node{.id = synth::ui::NodeId("constant"), .kind = synth::ui::NodeKind::Draw,
+                                         .bounds = bounds, .drawCommands = standard.ConstantVisualizer().Draw()});
+    tree.nodes.push_back(synth::ui::Node{.id = synth::ui::NodeId("noise"), .kind = synth::ui::NodeKind::Draw,
+                                         .bounds = bounds, .drawCommands = standard.NoiseVisualizer().Draw()});
+    const auto decoded = synth_browser::DecodeCommandBuffer(synth_browser::SerializeNodeTree(tree).bytes);
+    Require(decoded.version == synth_browser::kCommandBufferVersion,
+            "standard underlays preserve browser command version");
+    Require(decoded.diagnostics.empty(), "standard underlays need no browser fallback");
+    Require(FindNode(decoded, "random").drawCount > 0, "browser consumes standard random underlay");
+    Require(FindNode(decoded, "constant").drawCount == 2, "browser consumes standard constant underlay");
+    Require(FindNode(decoded, "noise").drawCount == 1, "browser consumes standard noise underlay");
+}
+
 }  // namespace
 
 int main()
@@ -294,5 +333,6 @@ int main()
     TestUnsupportedDrawFeatureIsGeneric();
     TestPredictiveGangedLfoUsesExistingDrawSchema();
     TestMiniAppThreePanelCommandsUseExistingBrowserSchema();
+    TestStandardModulatorUnderlaysUseExistingBrowserSchema();
     return 0;
 }

@@ -8,6 +8,7 @@
 #include "synth/GangedRandomLfoVisualizer.hpp"
 #include "synth/MidiController.hpp"
 #include "synth/NoiseWaveformVisualizer.hpp"
+#include "synth/StandardModulators.hpp"
 
 #include <algorithm>
 #include <array>
@@ -412,11 +413,45 @@ void TestGangedRandomLfoVisualizer()
     Require(visualizer.Draw().size() == 2, "unstable retained state fails closed");
 }
 
+void TestStandardModulatorVisualizersRemainPortable()
+{
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 2,
+        .numModulators = 15,
+        .numScenes = 1,
+        .maxParameters = 16,
+    });
+    synth::StandardModulators<2> standard(group);
+    standard.Register();
+    standard.Prepare(48000.0);
+    standard.Process();
+    standard.PublishUiState();
+    const synth::ui::Bounds bounds{0.0f, 0.0f, 96.0f, 96.0f};
+    for (std::size_t random = 0; random < 4; ++random)
+    {
+        auto& visualizer = standard.RandomVisualizer(random);
+        visualizer.SetBounds(bounds);
+        Require(!visualizer.Draw().empty(), "standard random depth underlay is portable");
+        Require(group.GetModulators().Metadata(random).visualizer == &visualizer,
+                "standard random metadata retains portable underlay");
+    }
+    standard.ConstantVisualizer().SetBounds(bounds);
+    standard.NoiseVisualizer().SetBounds(bounds);
+    Require(!standard.ConstantVisualizer().Draw().empty(), "standard constant depth underlay is portable");
+    Require(!standard.NoiseVisualizer().Draw().empty(), "standard noise depth underlay is portable");
+    Require(group.GetModulators().Metadata(11).visualizer == &standard.ConstantVisualizer(),
+            "standard constant metadata retains portable underlay");
+    Require(group.GetModulators().Metadata(14).visualizer == &standard.NoiseVisualizer(),
+            "standard noise metadata retains portable underlay");
+}
+
 }  // namespace
 
 int main()
 {
     TestGangedRandomLfoVisualizer();
+    TestStandardModulatorVisualizersRemainPortable();
     synth::Parameter::UIState parameterState(1, 1, 1);
     parameterState.connected.store(true);
     parameterState.voiceCount.store(1);
