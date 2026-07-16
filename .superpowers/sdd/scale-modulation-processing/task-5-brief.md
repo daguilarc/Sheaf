@@ -57,4 +57,3 @@ git commit -m "test(synth): cover sparse modulation lifecycle end to end"
 If `browser_command_buffer_tests.cpp` is unchanged, omit it from `git add`. Run the global Sonnet gate and record both passing verdicts.
 
 ---
-

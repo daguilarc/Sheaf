@@ -100,4 +100,3 @@ git commit -m "perf(synth): traverse only active modulation routes"
 Run the global Opus gate. The review prompt must explicitly audit source identity through swaps, across-voice union semantics, normalization, and settling-tail removal. Record both passing verdicts.
 
 ---
-

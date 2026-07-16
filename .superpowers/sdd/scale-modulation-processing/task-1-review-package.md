@@ -18,14 +18,14 @@ index b474352b..72054230 100644
 @@ -135,20 +135,27 @@ inline constexpr float kDefaultUiDisplaySpreadAlpha = 0.0013089969f;  // about 1
  float ConvertOnePoleAlpha(float referenceAlpha, double referenceRate, double processingRate);
  std::size_t ConvertSampleInterval(std::size_t referenceInterval, double referenceRate, double processingRate);
- 
+
  struct ParameterProcessingTiming {
      float processLiteAlpha;
      std::size_t targetComputeIntervalSamples;
      float uiDisplayCenterAlpha;
      float uiDisplaySpreadAlpha;
  };
- 
+
 +struct ParameterProcessingObserver {
 +    std::size_t topLevelProcessLiteCalls = 0;
 +    std::size_t localRecursiveComputeCalls = 0;
@@ -55,17 +55,17 @@ index b474352b..72054230 100644
      void ConfigureProcessingTiming(const ParameterProcessingTiming& timing);
      void ProcessSample(std::uint64_t sampleIndex);
 +    void SetProcessingObserverForTests(ParameterProcessingObserver* observer) { processingObserver_ = observer; }
- 
+
  private:
      friend class Parameter;
      friend class ParameterManager;
      friend class Bank;
- 
+
      Parameter& CreateLocalParameter(ParameterConfig config, ParameterId id);
 +    void RegisterTopLevelParameter(Parameter& parameter);
      void RequestParameterStorageBatch(std::size_t minimumAdditionalParameters);
      void RequestParameterStorageBatchIfLow();
- 
+
      // Groups own parameter objects and all same-shaped per-parameter arenas.
      // Parameter instances hold spans into these arenas; callers must not move a
      // group after handing out Parameter references.
@@ -93,7 +93,7 @@ index 216cf708..926afb28 100644
 @@ -368,20 +368,21 @@ void Gestures::CheckIndex(std::size_t gestureIx) const {
      }
  }
- 
+
  ParameterGroup::ParameterGroup(ParameterGroupConfig config, ParameterManager& manager, std::size_t gestureCount)
      : config_(ValidateConfig(config)),
        manager_(&manager),
@@ -119,10 +119,10 @@ index 216cf708..926afb28 100644
          RequestParameterStorageBatchIfLow();
          return result;
      }
- 
+
      throw std::length_error("parameter group capacity exhausted");
  }
- 
+
 +void ParameterGroup::RegisterTopLevelParameter(Parameter& parameter) {
 +    topLevelParameters_.push_back(&parameter);
 +}
@@ -138,7 +138,7 @@ index 216cf708..926afb28 100644
          }
          remaining -= batch->parameters.size();
 @@ -509,22 +514,25 @@ void ParameterGroup::UpdateModValues() {
- 
+
  void ParameterGroup::ConfigureProcessingTiming(const ParameterProcessingTiming& timing) {
      ValidateProcessingTiming(timing);
      config_.processLiteAlpha = timing.processLiteAlpha;
@@ -146,7 +146,7 @@ index 216cf708..926afb28 100644
      config_.uiDisplayCenterAlpha = timing.uiDisplayCenterAlpha;
      config_.uiDisplaySpreadAlpha = timing.uiDisplaySpreadAlpha;
  }
- 
+
  void ParameterGroup::ProcessSample(std::uint64_t sampleIndex) {
 -    for (std::size_t localIx = 0; localIx < parameterCount_; ++localIx) {
 -        ParameterByLocalIndex(localIx).ProcessSample(sampleIndex);
@@ -157,7 +157,7 @@ index 216cf708..926afb28 100644
 +        }
      }
  }
- 
+
  Parameter::Parameter(ParameterId id, ParameterGroup& group, ParameterConfig config, std::size_t slotIx)
      : id_(id),
        group_(group),
@@ -167,13 +167,13 @@ index 216cf708..926afb28 100644
        targetCenter_(currentCenter_),
 @@ -1396,20 +1404,23 @@ float Parameter::ComputeRawCenter(const SceneState& scene) const {
      }
- 
+
      if (activeWeightSum == 0.0f) {
          return base;
      }
      return weightedMixSum / activeWeightSum;
  }
- 
+
  void Parameter::ComputeAtDepth(const SceneState& scene, std::size_t recursionDepth, bool smoothTargetCenter) {
      recursionDepth_ = recursionDepth;
 +    if (recursionDepth > 0 && group_.processingObserver_ != nullptr) {
@@ -187,13 +187,13 @@ index 216cf708..926afb28 100644
      } else {
          targetCenter_ = rawCenter;
      }
- 
+
      for (Parameter* depthParameter : modulationDepths_) {
 @@ -2166,20 +2177,21 @@ ParameterId ParameterManager::RegisterParameter(ParameterGroup& group, Parameter
      if (parameters_.size() >= static_cast<std::size_t>(kLocalParameterId)) {
          throw std::overflow_error("parameter ID space exhausted");
      }
- 
+
      const ParameterId id = static_cast<ParameterId>(parameters_.size());
      const std::string name = config.name;
      Parameter& created = group.CreateLocalParameter(std::move(config), id);
@@ -203,11 +203,11 @@ index 216cf708..926afb28 100644
 +    group.RegisterTopLevelParameter(created);
      return id;
  }
- 
+
  Parameter& ParameterManager::CreateParameter(ParameterGroup& group, ParameterConfig config) {
      return ParameterById(RegisterParameter(group, std::move(config)));
  }
- 
+
  Parameter& ParameterManager::ParameterById(ParameterId id) {
      return *parameters_.at(static_cast<std::size_t>(id));
  }
@@ -217,7 +217,7 @@ index 184b4e2a..3d62aa38 100644
 +++ b/projects/synth/tests/braid4_system_tests.cpp
 @@ -433,20 +433,51 @@ TEST_CASE(braid_and_matrix_banks_expose_required_encoder_cells) {
      }
- 
+
      REQUIRE_TRUE(core.MatrixModule().Parameters()[0] == core.MonoGroup()->ParameterByLocalIndex(8).Id());
      REQUIRE_TRUE(core.MatrixModule().Parameters()[15] == core.MonoGroup()->ParameterByLocalIndex(23).Id());
      REQUIRE_TRUE(core.LfoModule().Parameters().pmIndex[0] == core.MonoGroup()->ParameterByLocalIndex(24).Id());
@@ -225,7 +225,7 @@ index 184b4e2a..3d62aa38 100644
      REQUIRE_TRUE(core.LfoMatrixModule().Parameters()[0] == core.MonoGroup()->ParameterByLocalIndex(32).Id());
      REQUIRE_TRUE(core.LfoMatrixModule().Parameters()[15] == core.MonoGroup()->ParameterByLocalIndex(47).Id());
  }
- 
+
 +TEST_CASE(braid4_parameter_processing_ignores_materialized_local_depths) {
 +    synth_rig::SynthRig<synth_braid4::Braid4Core> rig(
 +        64,
@@ -273,15 +273,15 @@ index 9c7c98e9..597702eb 100644
 +++ b/projects/synth/tests/parameter_modulation_tests.cpp
 @@ -1696,20 +1696,68 @@ TEST_CASE(parameter_group_process_sample_covers_top_level_and_modulation_depth_t
      depth->SceneCenter(0) = 0.75f;
- 
+
      group.ProcessSample(0);
- 
+
      REQUIRE_NEAR(carrier.TargetCenter(), 0.2f, 0.0001f);
      REQUIRE_NEAR(sibling.TargetCenter(), 0.4f, 0.0001f);
      REQUIRE_NEAR(depth->TargetCenter(), 0.75f, 0.0001f);
      REQUIRE_NEAR(carrier.CurrentDepths(0)[0], 0.25f, 0.0001f);
  }
- 
+
 +TEST_CASE(group_process_sample_visits_only_registered_roots) {
 +    synth::ParameterManager manager;
 +    auto& group = manager.CreateGroup({

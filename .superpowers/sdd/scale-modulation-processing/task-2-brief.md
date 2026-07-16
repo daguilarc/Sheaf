@@ -102,4 +102,3 @@ git commit -m "feat(synth): support sparse 64-bit gestures"
 Run the global Sonnet gate and record both passing verdicts.
 
 ---
-

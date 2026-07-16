@@ -88,4 +88,3 @@ git commit -m "perf(synth): recycle neutral modulation controls"
 Run the global Opus gate. Require explicit review of raw-pointer lifetime, detach ordering, every stale-state field, backing-slot compatibility, high-water/index semantics, and absence of collection from the audio path. Record both passing verdicts.
 
 ---
-

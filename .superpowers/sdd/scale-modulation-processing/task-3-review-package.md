@@ -36,16 +36,16 @@ index 1a9a09c2..9e83531e 100644
      std::vector<float> gestureValueArena;
      std::vector<GestureMask> gestureActiveMaskArena;
  };
- 
+
  std::unique_ptr<ParameterStorageBatch> MakeParameterStorageBatch(const ParameterGroupConfig& config,
 @@ -225,20 +227,22 @@ struct ParameterConfig {
      std::vector<Color> indicatorColors;
  };
- 
+
  class Modulators {
  public:
      explicit Modulators(std::size_t voices = 0, std::size_t modulators = 0);
- 
+
      float& Value(std::size_t voiceIx, std::size_t modIx);
      float Value(std::size_t voiceIx, std::size_t modIx) const;
      float Apply(std::size_t voiceIx, std::span<const float> depths) const;
@@ -55,10 +55,10 @@ index 1a9a09c2..9e83531e 100644
      void SetModulationSource(std::size_t modIx, std::span<float* const> sourcePointers,
                               ModulatorMetadata metadata);
      void UpdateModValues();
- 
+
      std::size_t NumVoices() const { return numVoices_; }
      std::size_t NumModulators() const { return numModulators_; }
- 
+
      ModulatorMetadata& Metadata(std::size_t modIx);
      const ModulatorMetadata& Metadata(std::size_t modIx) const;
 @@ -338,20 +342,22 @@ private:
@@ -82,11 +82,11 @@ index 1a9a09c2..9e83531e 100644
      std::vector<float> gestureValueArena_;
      std::vector<GestureMask> gestureActiveMaskArena_;
  };
- 
+
  class Parameter {
 @@ -431,51 +437,64 @@ public:
      Parameter* ModulationDepthParameter(std::size_t modIx) const;
- 
+
      float& SceneCenter(std::size_t sceneIx);
      float SceneCenter(std::size_t sceneIx) const;
      float& GestureValue(std::size_t sceneIx, std::size_t gestureIx);
@@ -94,7 +94,7 @@ index 1a9a09c2..9e83531e 100644
      void SetGestureActive(std::size_t sceneIx, std::size_t gestureIx, bool active);
      bool GestureActive(std::size_t sceneIx, std::size_t gestureIx) const;
      GestureMask GesturesAffectingMask() const;
- 
+
 -    std::span<float> CurrentDepths(std::size_t voiceIx);
 -    std::span<const float> CurrentDepths(std::size_t voiceIx) const;
 -    std::span<float> TargetDepths(std::size_t voiceIx);
@@ -111,7 +111,7 @@ index 1a9a09c2..9e83531e 100644
 +    }
 +    std::size_t RouteSourceIndex(std::size_t slot) const;
 +    std::size_t RoutePositionForSource(std::size_t sourceIx) const;
- 
+
      float CurrentCenter() const { return currentCenter_; }
      float TargetCenter() const { return targetCenter_; }
      float CurrentCenterScale(std::size_t voiceIx) const;
@@ -121,10 +121,10 @@ index 1a9a09c2..9e83531e 100644
      std::size_t RecursionDepth() const { return recursionDepth_; }
      JSON ToValueJSON(JsonArena& arena) const;
      bool LoadValuesFromJSON(JSON json);
- 
+
  private:
      friend class ParameterManager;
- 
+
 -    std::size_t VoiceModIndex(std::size_t voiceIx, std::size_t modIx) const;
      std::size_t SceneGestureIndex(std::size_t sceneIx, std::size_t gestureIx) const;
      void ValidateSceneEndpoints(const SceneState& scene) const;
@@ -147,7 +147,7 @@ index 1a9a09c2..9e83531e 100644
      std::uint32_t ModulatorsAffectingMask() const;
      bool HasNonDefaultState() const;
      bool HasNonZeroState() const;
- 
+
      ParameterId id_;
      ParameterGroup& group_;
      ParameterConfig config_;
@@ -176,7 +176,7 @@ index 1a9a09c2..9e83531e 100644
      std::span<float> gestureValues_;
      std::span<GestureMask> gestureActiveMasks_;
  };
- 
+
  class Bank {
 diff --git a/projects/synth/src/ParameterModulation.cpp b/projects/synth/src/ParameterModulation.cpp
 index 3322b5fc..daaac76e 100644
@@ -184,7 +184,7 @@ index 3322b5fc..daaac76e 100644
 +++ b/projects/synth/src/ParameterModulation.cpp
 @@ -1,14 +1,15 @@
  #include "synth/ParameterModulation.hpp"
- 
+
  #include <algorithm>
  #include <array>
 +#include <cassert>
@@ -194,9 +194,9 @@ index 3322b5fc..daaac76e 100644
  #include <limits>
  #include <stdexcept>
  #include <utility>
- 
+
  namespace synth {
- 
+
  namespace {
 @@ -227,20 +228,22 @@ ParameterStorageBatch::ParameterStorageBatch(const ParameterGroupConfig& config,
        currentCenterScaleArena(capacity * config.numVoices),
@@ -220,10 +220,10 @@ index 3322b5fc..daaac76e 100644
        gestureActiveMaskArena(capacity * config.numScenes, 0) {
      parameters.reserve(capacity);
  }
- 
+
 @@ -279,20 +282,40 @@ float Modulators::Apply(std::size_t voiceIx, std::span<const float> depths) cons
      }
- 
+
      const std::size_t rowStart = voiceIx * numModulators_;
      float result = 0.0f;
      for (std::size_t modIx = 0; modIx < numModulators_; ++modIx) {
@@ -231,7 +231,7 @@ index 3322b5fc..daaac76e 100644
      }
      return result;
  }
- 
+
 +float Modulators::ApplyActive(std::size_t voiceIx, std::span<const float> activeDepths,
 +                              std::span<const std::size_t> sourceIndices) const {
 +    if (voiceIx >= numVoices_) {
@@ -283,7 +283,7 @@ index 3322b5fc..daaac76e 100644
      gestureValueArena_.resize(config_.maxParameters * config_.numScenes * gestureCount_);
      gestureActiveMaskArena_.resize(config_.maxParameters * config_.numScenes, 0);
  }
- 
+
  ParameterGroup::~ParameterGroup() = default;
 @@ -582,20 +607,26 @@ Parameter::Parameter(ParameterId id, ParameterGroup& group, ParameterConfig conf
                                     group_.Config().numVoices)),
@@ -333,7 +333,7 @@ index 3322b5fc..daaac76e 100644
      std::fill(gestureActiveMasks_.begin(), gestureActiveMasks_.end(), 0);
      SeedCachedKnobAndUiDisplayState();
  }
- 
+
  Parameter::Parameter(ParameterId id, ParameterGroup& group, ParameterConfig config,
                       ParameterStorageBatch& storageBatch, std::size_t slotIx)
      : id_(id),
@@ -385,16 +385,16 @@ index 3322b5fc..daaac76e 100644
      std::fill(gestureActiveMasks_.begin(), gestureActiveMasks_.end(), 0);
      SeedCachedKnobAndUiDisplayState();
  }
- 
+
  ParameterStorageBatch::~ParameterStorageBatch() = default;
- 
+
  void Parameter::UIState::Configure(std::size_t newVoiceCapacity, std::size_t newModulatorColorCapacity,
 @@ -754,21 +799,23 @@ Color Parameter::IndicatorColor(std::size_t voiceIx) const {
          throw std::out_of_range("parameter indicator color index out of range");
      }
      return config_.indicatorColors[voiceIx];
  }
- 
+
  float Parameter::GetRaw(std::size_t voiceIx) const {
      if (voiceIx >= group_.Config().numVoices) {
          throw std::out_of_range("parameter voice index out of range");
@@ -406,14 +406,14 @@ index 3322b5fc..daaac76e 100644
 +                                ActiveRouteSourceIndices()),
                          config_.range);
  }
- 
+
  float Parameter::CachedKnobValue(std::size_t voiceIx) const {
      if (voiceIx >= currentKnobValues_.size()) {
          throw std::out_of_range("parameter voice index out of range");
      }
      return currentKnobValues_[voiceIx];
  }
- 
+
 @@ -983,22 +1030,28 @@ void Parameter::ProcessLite() {
      const float alpha = group_.Config().processLiteAlpha;
      currentCenter_ += alpha * (targetCenter_ - currentCenter_);
@@ -446,7 +446,7 @@ index 3322b5fc..daaac76e 100644
      }
  }
 @@ -1090,20 +1143,21 @@ void Parameter::RandomizeVisibleValue(const SceneState& scene, float normalized)
- 
+
  void Parameter::RevertToDefault(const SceneState& scene) {
      ValidateSceneEndpoints(scene);
      for (Parameter* depthParameter : modulationDepths_) {
@@ -459,7 +459,7 @@ index 3322b5fc..daaac76e 100644
 +    activeRouteCount_ = 0;
      std::fill(currentNormalizationOffsets_.begin(), currentNormalizationOffsets_.end(), 0.0f);
      std::fill(targetNormalizationOffsets_.begin(), targetNormalizationOffsets_.end(), 0.0f);
- 
+
      const float defaultValue = ClampToRange(config_.defaultValue, config_.range);
      const float blend = std::clamp(scene.blend, 0.0f, 1.0f);
      if (blend <= 0.0f) {
@@ -469,7 +469,7 @@ index 3322b5fc..daaac76e 100644
      } else {
 @@ -1125,20 +1179,21 @@ void Parameter::RevertToDefault(const SceneState& scene) {
  }
- 
+
  void Parameter::RevertAllToDefault() {
      for (Parameter* depthParameter : modulationDepths_) {
          if (depthParameter != nullptr) {
@@ -481,7 +481,7 @@ index 3322b5fc..daaac76e 100644
 +    activeRouteCount_ = 0;
      std::fill(currentNormalizationOffsets_.begin(), currentNormalizationOffsets_.end(), 0.0f);
      std::fill(targetNormalizationOffsets_.begin(), targetNormalizationOffsets_.end(), 0.0f);
- 
+
      const float defaultValue = ClampToRange(config_.defaultValue, config_.range);
      for (std::size_t sceneIx = 0; sceneIx < group_.Config().numScenes; ++sceneIx) {
          ResetSceneToDefault(sceneIx, defaultValue);
@@ -494,12 +494,12 @@ index 3322b5fc..daaac76e 100644
          gestureActiveMasks_[sceneIx] &= ~bit;
      }
  }
- 
+
  bool Parameter::GestureActive(std::size_t sceneIx, std::size_t gestureIx) const {
      (void)SceneGestureIndex(sceneIx, gestureIx);
      return (gestureActiveMasks_[sceneIx] & (GestureMask{1} << gestureIx)) != 0;
  }
- 
+
 -std::span<float> Parameter::CurrentDepths(std::size_t voiceIx) {
 +std::span<float> Parameter::CurrentDepthSlots(std::size_t voiceIx) {
      if (voiceIx >= group_.Config().numVoices) {
@@ -511,7 +511,7 @@ index 3322b5fc..daaac76e 100644
      const std::size_t rowStart = voiceIx * group_.Config().numModulators;
      return std::span<float>(currentDepths_.data() + rowStart, group_.Config().numModulators);
  }
- 
+
 -std::span<const float> Parameter::CurrentDepths(std::size_t voiceIx) const {
 +std::span<const float> Parameter::CurrentDepthSlots(std::size_t voiceIx) const {
      if (voiceIx >= group_.Config().numVoices) {
@@ -523,7 +523,7 @@ index 3322b5fc..daaac76e 100644
      const std::size_t rowStart = voiceIx * group_.Config().numModulators;
      return std::span<const float>(currentDepths_.data() + rowStart, group_.Config().numModulators);
  }
- 
+
 -std::span<float> Parameter::TargetDepths(std::size_t voiceIx) {
 +std::span<float> Parameter::TargetDepthSlots(std::size_t voiceIx) {
      if (voiceIx >= group_.Config().numVoices) {
@@ -535,7 +535,7 @@ index 3322b5fc..daaac76e 100644
      const std::size_t rowStart = voiceIx * group_.Config().numModulators;
      return std::span<float>(targetDepths_.data() + rowStart, group_.Config().numModulators);
  }
- 
+
 -std::span<const float> Parameter::TargetDepths(std::size_t voiceIx) const {
 +std::span<const float> Parameter::TargetDepthSlots(std::size_t voiceIx) const {
      if (voiceIx >= group_.Config().numVoices) {
@@ -547,7 +547,7 @@ index 3322b5fc..daaac76e 100644
      const std::size_t rowStart = voiceIx * group_.Config().numModulators;
      return std::span<const float>(targetDepths_.data() + rowStart, group_.Config().numModulators);
  }
- 
+
 +float Parameter::CurrentDepthForSource(std::size_t voiceIx, std::size_t sourceIx) const {
 +    return currentDepths_[VoiceRouteIndex(voiceIx, RoutePositionForSource(sourceIx))];
 +}
@@ -576,21 +576,21 @@ index 3322b5fc..daaac76e 100644
      }
      return currentCenterScales_[voiceIx];
  }
- 
+
  float Parameter::TargetCenterScale(std::size_t voiceIx) const {
      if (voiceIx >= group_.Config().numVoices) {
          throw std::out_of_range("parameter voice index out of range");
 @@ -1330,28 +1407,110 @@ float Parameter::CurrentNormalizationOffset(std::size_t voiceIx) const {
      return currentNormalizationOffsets_[voiceIx];
  }
- 
+
  float Parameter::TargetNormalizationOffset(std::size_t voiceIx) const {
      if (voiceIx >= group_.Config().numVoices) {
          throw std::out_of_range("parameter voice index out of range");
      }
      return targetNormalizationOffsets_[voiceIx];
  }
- 
+
 -std::size_t Parameter::VoiceModIndex(std::size_t voiceIx, std::size_t modIx) const {
 +std::size_t Parameter::VoiceRouteIndex(std::size_t voiceIx, std::size_t routeSlot) const {
      if (voiceIx >= group_.Config().numVoices) {
@@ -685,7 +685,7 @@ index 3322b5fc..daaac76e 100644
 +        RemoveActiveRoute(routeSlot);
 +    }
  }
- 
+
  std::size_t Parameter::SceneGestureIndex(std::size_t sceneIx, std::size_t gestureIx) const {
      if (sceneIx >= group_.Config().numScenes) {
          throw std::out_of_range("parameter scene index out of range");
@@ -708,25 +708,25 @@ index 3322b5fc..daaac76e 100644
 +    activeRouteCount_ = 0;
      SeedCachedKnobAndUiDisplayState();
  }
- 
+
  float Parameter::ComputeRawCenter(const SceneState& scene) const {
      ValidateSceneEndpoints(scene);
      const float blend = std::clamp(scene.blend, 0.0f, 1.0f);
      const float inverseBlend = 1.0f - blend;
      const float base = SceneCenter(scene.leftScene) * inverseBlend + SceneCenter(scene.rightScene) * blend;
- 
+
      float weightedMixSum = 0.0f;
 @@ -1458,81 +1618,115 @@ void Parameter::ComputeAtDepth(const SceneState& scene, std::size_t recursionDep
      } else {
          targetCenter_ = rawCenter;
      }
- 
+
      for (Parameter* depthParameter : modulationDepths_) {
          if (depthParameter != nullptr) {
              depthParameter->ComputeAtDepth(scene, recursionDepth_ + 1, smoothTargetCenter);
          }
      }
- 
+
 +    constexpr float neutralTolerance = 0.000001f;
 +    for (std::size_t sourceIx = 0; sourceIx < group_.Config().numModulators; ++sourceIx) {
 +        const Parameter* depthParameter = modulationDepths_[sourceIx];
@@ -774,7 +774,7 @@ index 3322b5fc..daaac76e 100644
 +        for (std::size_t routeSlot = 0; routeSlot < activeRouteCount_; ++routeSlot) {
 +            weightSum += std::fabs(targetDepths_[VoiceRouteIndex(voiceIx, routeSlot)]);
          }
- 
+
          if (weightSum < 1.0f) {
              targetCenterScales_[voiceIx] = 1.0f - weightSum;
          } else {
@@ -785,7 +785,7 @@ index 3322b5fc..daaac76e 100644
 +                targetDepths_[VoiceRouteIndex(voiceIx, routeSlot)] /= weightSum;
              }
          }
- 
+
          float normalizationOffset = 0.0f;
 -        for (std::size_t modIx = 0; modIx < group_.Config().numModulators; ++modIx) {
 -            normalizationOffset -= std::min(0.0f, targetDepths_[VoiceModIndex(voiceIx, modIx)]);
@@ -793,7 +793,7 @@ index 3322b5fc..daaac76e 100644
 +            normalizationOffset -= std::min(0.0f, targetDepths_[VoiceRouteIndex(voiceIx, routeSlot)]);
          }
          targetNormalizationOffsets_[voiceIx] = normalizationOffset;
- 
+
          if (weightSum > 1.0f) {
              targetMinValues_[voiceIx] = RangeMin(config_.range);
              targetMaxValues_[voiceIx] = RangeMax(config_.range);
@@ -812,7 +812,7 @@ index 3322b5fc..daaac76e 100644
              targetMaxValues_[voiceIx] = ClampToRange(base + maxContribution, config_.range);
          }
      }
- 
+
      if (recursionDepth_ > 0) {
          currentCenter_ = targetCenter_;
          std::copy(targetCenterScales_.begin(), targetCenterScales_.end(), currentCenterScales_.begin());
@@ -825,7 +825,7 @@ index 3322b5fc..daaac76e 100644
      }
 +    PruneNeutralActiveRoutes();
  }
- 
+
  void Parameter::SnapCurrentToTarget() {
      currentCenter_ = targetCenter_;
      std::copy(targetCenterScales_.begin(), targetCenterScales_.end(), currentCenterScales_.begin());
@@ -841,7 +841,7 @@ index 3322b5fc..daaac76e 100644
          }
      }
  }
- 
+
  void Parameter::SeedCachedKnobAndUiDisplayState() {
      for (std::size_t voiceIx = 0; voiceIx < currentKnobValues_.size(); ++voiceIx) {
 @@ -1553,21 +1747,23 @@ bool Parameter::WouldCreateCycle(const Parameter* candidate) const {
@@ -849,7 +849,7 @@ index 3322b5fc..daaac76e 100644
      }
      return false;
  }
- 
+
  float Parameter::TargetValue(std::size_t voiceIx) const {
      if (voiceIx >= group_.Config().numVoices) {
          throw std::out_of_range("parameter voice index out of range");
@@ -861,7 +861,7 @@ index 3322b5fc..daaac76e 100644
 +                                ActiveRouteSourceIndices()),
                          config_.range);
  }
- 
+
  std::uint32_t Parameter::ModulatorsAffectingMask() const {
      std::uint32_t mask = 0;
      const std::size_t count = std::min<std::size_t>(modulationDepths_.size(), 32);
@@ -875,7 +875,7 @@ index e6a73de1..4295c7bc 100644
 +++ b/projects/synth/tests/module_tests.cpp
 @@ -1467,40 +1467,46 @@ TEST_CASE(demo_modulation_process_parameters_applies_direct_vco_modulation) {
      constexpr float tolerance = 0.0001f;
- 
+
      synth::ParameterManager manager;
      auto& group = manager.CreateGroup({
          .numVoices = 2,
@@ -894,7 +894,7 @@ index e6a73de1..4295c7bc 100644
      REQUIRE_TRUE(phase.AssignModulationDepth(0, &directDepth));
      phase.Compute(manager.Scene());
      directDepth.Compute(manager.Scene());
- 
+
      group.GetModulators().Value(0, 0) = 0.0f;
      group.GetModulators().Value(1, 0) = 1.0f;
      synth_miniapp::ProcessParameters(group, /*sampleIndex=*/0);
@@ -903,7 +903,7 @@ index e6a73de1..4295c7bc 100644
 +    REQUIRE_TRUE(phase.ActiveRouteCount() == 1);
 +    REQUIRE_TRUE(phase.ActiveRouteSourceIndices()[0] == 0);
 +    REQUIRE_TRUE(work.activeRouteVisits == 2);
- 
+
      group.GetModulators().Value(0, 0) = 1.0f;
      group.GetModulators().Value(1, 0) = 0.0f;
      synth_miniapp::ProcessParameters(group, /*sampleIndex=*/1);
@@ -911,7 +911,7 @@ index e6a73de1..4295c7bc 100644
      REQUIRE_NEAR(phase.GetRaw(1), 0.0f, tolerance);
 +    REQUIRE_TRUE(work.activeRouteVisits == 4);
  }
- 
+
  int main() {
      int failed = 0;
      for (const auto& test : Registry()) {
@@ -926,7 +926,7 @@ index 1133fe03..c5aac2c8 100644
 +++ b/projects/synth/tests/parameter_modulation_tests.cpp
 @@ -79,20 +79,22 @@ struct TestVisualizer final : synth::ui::Visualizer {
  };
- 
+
  std::string JsonToString(synth::JSON json) {
      char* dumped = json.Dumps(JSON_ENCODE_ANY);
      REQUIRE_TRUE(dumped != nullptr);
@@ -934,7 +934,7 @@ index 1133fe03..c5aac2c8 100644
      std::free(dumped);
      return text;
  }
- 
+
 +void RequireRouteBijection(const synth::Parameter& parameter, std::size_t sourceCount);
 +
  // Wraps a single WrldBldr-kind MidiControllerProfileConfig (as produced by
@@ -955,7 +955,7 @@ index 1133fe03..c5aac2c8 100644
      depth->SceneCenter(0) = 0.5f;
      manager.ComputeAllTargets();
      carrier.ProcessLite();
- 
+
      synth::Parameter* const carrierPointer = &carrier;
      synth::Parameter* const depthPointer = depth;
 -    float* const currentDepthPointer = carrier.CurrentDepths(0).data();
@@ -964,14 +964,14 @@ index 1133fe03..c5aac2c8 100644
 -    const float currentDepth = carrier.CurrentDepths(0)[0];
 +    const float currentDepth = carrier.CurrentDepthForSource(0, 0);
      const float sceneValue = carrier.SceneCenter(1);
- 
+
      group.ConfigureProcessingTiming({
          .processLiteAlpha = 0.125f,
          .targetComputeIntervalSamples = 64,
          .uiDisplayCenterAlpha = 0.25f,
          .uiDisplaySpreadAlpha = 0.5f,
      });
- 
+
      REQUIRE_TRUE(&group.ParameterByLocalIndex(0) == carrierPointer);
      REQUIRE_TRUE(carrier.ModulationDepthParameter(0) == depthPointer);
 -    REQUIRE_TRUE(carrier.CurrentDepths(0).data() == currentDepthPointer);
@@ -989,7 +989,7 @@ index 1133fe03..c5aac2c8 100644
      REQUIRE_NEAR(group.Config().uiDisplayCenterAlpha, 0.25f, 0.0001f);
      REQUIRE_NEAR(group.Config().uiDisplaySpreadAlpha, 0.5f, 0.0001f);
  }
- 
+
  TEST_CASE(parameter_group_timing_reconfiguration_is_non_compounding) {
      synth::ParameterManager manager;
      auto& group = manager.CreateGroup({
@@ -1009,7 +1009,7 @@ index 1133fe03..c5aac2c8 100644
 +    REQUIRE_NEAR(parameter.CurrentDepthForSource(0, 0), 0.0f, 0.0001f);
 +    REQUIRE_NEAR(parameter.TargetDepthForSource(1, 1), 0.0f, 0.0001f);
  }
- 
+
  TEST_CASE(bipolar_parameter_core_stores_normalized_center) {
      synth::ParameterManager manager;
      auto& group = manager.CreateGroup({
@@ -1021,18 +1021,18 @@ index 1133fe03..c5aac2c8 100644
 @@ -1240,21 +1242,21 @@ TEST_CASE(modulation_normalization_under_one) {
          .maxParameters = 2,
      });
- 
+
      auto& parameter = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.5f});
      auto& depth = manager.CreateParameter(group, {.name = "Depth", .defaultValue = 0.75f});
      REQUIRE_TRUE(parameter.AssignModulationDepth(0, &depth));
- 
+
      parameter.Compute({.leftScene = 0, .rightScene = 0, .blend = 0.0f});
- 
+
      REQUIRE_NEAR(parameter.TargetCenterScale(0), 0.75f, 0.0001f);
 -    REQUIRE_NEAR(parameter.TargetDepths(0)[0], 0.25f, 0.0001f);
 +    REQUIRE_NEAR(parameter.TargetDepthForSource(0, 0), 0.25f, 0.0001f);
  }
- 
+
  TEST_CASE(modulation_normalization_over_one_preserves_sign) {
      synth::ParameterManager manager;
      manager.SetGestureCount(2);
@@ -1048,16 +1048,16 @@ index 1133fe03..c5aac2c8 100644
      });
      REQUIRE_TRUE(parameter.AssignModulationDepth(0, &positive));
      REQUIRE_TRUE(parameter.AssignModulationDepth(1, &negative));
- 
+
      parameter.Compute({.leftScene = 0, .rightScene = 0, .blend = 0.0f});
- 
+
      REQUIRE_NEAR(parameter.TargetCenterScale(0), 0.0f, 0.0001f);
 -    REQUIRE_NEAR(parameter.TargetDepths(0)[0], 0.5f, 0.0001f);
 -    REQUIRE_NEAR(parameter.TargetDepths(0)[1], -0.5f, 0.0001f);
 +    REQUIRE_NEAR(parameter.TargetDepthForSource(0, 0), 0.5f, 0.0001f);
 +    REQUIRE_NEAR(parameter.TargetDepthForSource(0, 1), -0.5f, 0.0001f);
  }
- 
+
  TEST_CASE(negative_modulation_depths_add_normalization_offset) {
      synth::ParameterManager manager;
      auto& group = manager.CreateGroup({
@@ -1071,50 +1071,50 @@ index 1133fe03..c5aac2c8 100644
      });
      REQUIRE_TRUE(parameter.AssignModulationDepth(0, &positive));
      REQUIRE_TRUE(parameter.AssignModulationDepth(1, &negative));
- 
+
      parameter.Compute({.leftScene = 0, .rightScene = 0, .blend = 0.0f});
      parameter.ProcessLite();
- 
+
      REQUIRE_NEAR(parameter.TargetCenterScale(0), 0.5f, 0.0001f);
      REQUIRE_NEAR(parameter.TargetNormalizationOffset(0), 0.25f, 0.0001f);
 -    REQUIRE_NEAR(parameter.TargetDepths(0)[0], 0.25f, 0.0001f);
 -    REQUIRE_NEAR(parameter.TargetDepths(0)[1], -0.25f, 0.0001f);
 +    REQUIRE_NEAR(parameter.TargetDepthForSource(0, 0), 0.25f, 0.0001f);
 +    REQUIRE_NEAR(parameter.TargetDepthForSource(0, 1), -0.25f, 0.0001f);
- 
+
      group.GetModulators().Value(0, 0) = 0.0f;
      group.GetModulators().Value(0, 1) = 0.0f;
      REQUIRE_NEAR(parameter.GetRaw(0), 0.5f, 0.0001f);
- 
+
      group.GetModulators().Value(0, 0) = 1.0f;
      group.GetModulators().Value(0, 1) = 0.0f;
      REQUIRE_NEAR(parameter.GetRaw(0), 0.75f, 0.0001f);
- 
+
      group.GetModulators().Value(0, 0) = 0.0f;
 @@ -1350,22 +1352,22 @@ TEST_CASE(overfull_negative_modulation_offset_uses_normalized_depths) {
          .range = synth::RangeKind::Bipolar,
      });
      REQUIRE_TRUE(parameter.AssignModulationDepth(0, &positive));
      REQUIRE_TRUE(parameter.AssignModulationDepth(1, &negative));
- 
+
      parameter.Compute({.leftScene = 0, .rightScene = 0, .blend = 0.0f});
      parameter.ProcessLite();
- 
+
      REQUIRE_NEAR(parameter.TargetCenterScale(0), 0.0f, 0.0001f);
      REQUIRE_NEAR(parameter.TargetNormalizationOffset(0), 0.5f, 0.0001f);
 -    REQUIRE_NEAR(parameter.TargetDepths(0)[0], 0.5f, 0.0001f);
 -    REQUIRE_NEAR(parameter.TargetDepths(0)[1], -0.5f, 0.0001f);
 +    REQUIRE_NEAR(parameter.TargetDepthForSource(0, 0), 0.5f, 0.0001f);
 +    REQUIRE_NEAR(parameter.TargetDepthForSource(0, 1), -0.5f, 0.0001f);
- 
+
      group.GetModulators().Value(0, 0) = 0.0f;
      group.GetModulators().Value(0, 1) = 0.0f;
      REQUIRE_NEAR(parameter.GetRaw(0), 0.5f, 0.0001f);
- 
+
      group.GetModulators().Value(0, 0) = 1.0f;
      group.GetModulators().Value(0, 1) = 0.0f;
      REQUIRE_NEAR(parameter.GetRaw(0), 1.0f, 0.0001f);
- 
+
      group.GetModulators().Value(0, 0) = 0.0f;
 @@ -1395,21 +1397,21 @@ TEST_CASE(recursive_modulation_depth_targets_use_bipolar_zero_based_exponential_
          {.knob = 0.25f, .expectedDepth = -0.25f},
@@ -1122,7 +1122,7 @@ index 1133fe03..c5aac2c8 100644
          {.knob = 0.75f, .expectedDepth = 0.25f},
          {.knob = 1.0f, .expectedDepth = 1.0f},
      }};
- 
+
      for (const Case& testCase : cases) {
          depth->SceneCenter(0) = testCase.knob;
          carrier.Compute({.leftScene = 0, .rightScene = 0, .blend = 0.0f});
@@ -1131,7 +1131,7 @@ index 1133fe03..c5aac2c8 100644
 +        REQUIRE_NEAR(carrier.TargetDepthForSource(0, 0), testCase.expectedDepth, 0.0001f);
      }
  }
- 
+
  TEST_CASE(recursive_modulation_depth_compute_ignores_target_center_smoothing_for_parent_reads) {
      synth::ParameterManager manager;
      auto& group = manager.CreateGroup({
@@ -1143,17 +1143,17 @@ index 1133fe03..c5aac2c8 100644
      auto& carrier = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.5f});
      synth::Parameter* depth = carrier.EnsureModulationDepth(0);
      REQUIRE_TRUE(depth != nullptr);
- 
+
      depth->SceneCenter(0) = 1.0f;
      carrier.Compute({.leftScene = 0, .rightScene = 0, .blend = 0.0f});
- 
+
      REQUIRE_NEAR(depth->TargetCenter(), 1.0f, 0.0001f);
      REQUIRE_NEAR(depth->CurrentCenter(), 1.0f, 0.0001f);
      REQUIRE_NEAR(depth->GetRaw(0), 1.0f, 0.0001f);
 -    REQUIRE_NEAR(carrier.TargetDepths(0)[0], 1.0f, 0.0001f);
 +    REQUIRE_NEAR(carrier.TargetDepthForSource(0, 0), 1.0f, 0.0001f);
  }
- 
+
  TEST_CASE(recursive_modulation_depth_three_quarter_turn_sets_quarter_raw_depth_before_normalization) {
      synth::ParameterManager manager;
      auto& group = manager.CreateGroup({
@@ -1162,20 +1162,20 @@ index 1133fe03..c5aac2c8 100644
          .numScenes = 1,
          .maxParameters = 2,
      });
- 
+
      auto& carrier = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.5f});
      synth::Parameter* depth = carrier.EnsureModulationDepth(0);
      REQUIRE_TRUE(depth != nullptr);
      depth->SceneCenter(0) = 0.75f;
- 
+
      carrier.Compute({.leftScene = 0, .rightScene = 0, .blend = 0.0f});
- 
+
 -    REQUIRE_NEAR(carrier.TargetDepths(0)[0], 0.25f, 0.0001f);
 +    REQUIRE_NEAR(carrier.TargetDepthForSource(0, 0), 0.25f, 0.0001f);
      REQUIRE_NEAR(carrier.TargetCenterScale(0), 0.75f, 0.0001f);
      REQUIRE_NEAR(carrier.TargetNormalizationOffset(0), 0.0f, 0.0001f);
  }
- 
+
  TEST_CASE(curved_modulation_depth_targets_still_use_signed_normalization) {
      synth::ParameterManager manager;
      auto& group = manager.CreateGroup({
@@ -1187,10 +1187,10 @@ index 1133fe03..c5aac2c8 100644
      REQUIRE_TRUE(negative != nullptr);
      positive->SceneCenter(0) = 1.0f;
      negative->SceneCenter(0) = 0.0f;
- 
+
      carrier.Compute({.leftScene = 0, .rightScene = 0, .blend = 0.0f});
      carrier.ProcessLite();
- 
+
      REQUIRE_NEAR(carrier.TargetCenterScale(0), 0.0f, 0.0001f);
      REQUIRE_NEAR(carrier.TargetNormalizationOffset(0), 0.5f, 0.0001f);
 -    REQUIRE_NEAR(carrier.TargetDepths(0)[0], 0.5f, 0.0001f);
@@ -1198,7 +1198,7 @@ index 1133fe03..c5aac2c8 100644
 +    REQUIRE_NEAR(carrier.TargetDepthForSource(0, 0), 0.5f, 0.0001f);
 +    REQUIRE_NEAR(carrier.TargetDepthForSource(0, 1), -0.5f, 0.0001f);
  }
- 
+
  TEST_CASE(curved_modulation_depth_targets_keep_modulator_dot_product_linear) {
      synth::ParameterManager manager;
      auto& group = manager.CreateGroup({
@@ -1208,21 +1208,21 @@ index 1133fe03..c5aac2c8 100644
          .maxParameters = 2,
          .processLiteAlpha = 1.0f,
 @@ -1491,21 +1493,21 @@ TEST_CASE(curved_modulation_depth_targets_keep_modulator_dot_product_linear) {
- 
+
      auto& carrier = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.0f});
      synth::Parameter* depth = carrier.EnsureModulationDepth(0);
      REQUIRE_TRUE(depth != nullptr);
      depth->SceneCenter(0) = 0.75f;
- 
+
      carrier.Compute({.leftScene = 0, .rightScene = 0, .blend = 0.0f});
      carrier.ProcessLite();
- 
+
      group.GetModulators().Value(0, 0) = 0.8f;
 -    REQUIRE_NEAR(carrier.CurrentDepths(0)[0], 0.25f, 0.0001f);
 +    REQUIRE_NEAR(carrier.CurrentDepthForSource(0, 0), 0.25f, 0.0001f);
      REQUIRE_NEAR(carrier.GetRaw(0), 0.2f, 0.0001f);
  }
- 
+
  TEST_CASE(parameter_get_raw_includes_normalization_offset) {
      synth::ParameterManager manager;
      synth::ParameterGroupConfig config{
@@ -1235,9 +1235,9 @@ index 1133fe03..c5aac2c8 100644
      depth.SceneCenter(0) = 0.8f;
      depth.SceneCenter(1) = 0.8f;
      REQUIRE_TRUE(carrier.AssignModulationDepth(0, &depth));
- 
+
      carrier.Compute({.leftScene = 0, .rightScene = 1, .blend = 0.0f});
- 
+
      REQUIRE_TRUE(depth.RecursionDepth() == 1);
      REQUIRE_NEAR(depth.CurrentCenter(), 0.8f, 0.0001f);
      REQUIRE_NEAR(depth.GetRaw(0), 0.8f, 0.0001f);
@@ -1245,7 +1245,7 @@ index 1133fe03..c5aac2c8 100644
 +    REQUIRE_NEAR(carrier.TargetDepthForSource(0, 0), 0.3421493f, 0.0001f);
      REQUIRE_NEAR(carrier.TargetCenterScale(0), 0.6578507f, 0.0001f);
  }
- 
+
  TEST_CASE(process_lite_slews_center_scale_offset_and_depths) {
      synth::ParameterManager manager;
      manager.SetGestureCount(2);
@@ -1257,40 +1257,40 @@ index 1133fe03..c5aac2c8 100644
      parameter.SceneCenter(0) = 1.0f;
      parameter.SceneCenter(1) = 1.0f;
      REQUIRE_TRUE(parameter.AssignModulationDepth(0, &depth));
- 
+
      parameter.Compute({.leftScene = 0, .rightScene = 1, .blend = 0.0f});
      parameter.ProcessLite();
- 
+
      REQUIRE_NEAR(parameter.CurrentCenter(), 0.25f, 0.0001f);
      REQUIRE_NEAR(parameter.CurrentCenterScale(0), 0.9375f, 0.0001f);
      REQUIRE_NEAR(parameter.CurrentNormalizationOffset(0), 0.0625f, 0.0001f);
 -    REQUIRE_NEAR(parameter.CurrentDepths(0)[0], -0.0625f, 0.0001f);
 +    REQUIRE_NEAR(parameter.CurrentDepthForSource(0, 0), -0.0625f, 0.0001f);
- 
+
      synth::Parameter::UIState ui(1);
      parameter.PopulateUIState(ui);
      REQUIRE_NEAR(ui.minValues[0].load(), 0.1875f, 0.0001f);
      REQUIRE_NEAR(ui.maxValues[0].load(), 0.25f, 0.0001f);
  }
- 
+
  TEST_CASE(process_lite_samples_cached_knob_after_slew) {
      synth::ParameterManager manager;
      synth::ParameterGroupConfig config{
 @@ -1750,21 +1752,21 @@ TEST_CASE(parameter_group_process_sample_covers_top_level_and_modulation_depth_t
- 
+
      carrier.SceneCenter(0) = 0.2f;
      sibling.SceneCenter(0) = 0.4f;
      depth->SceneCenter(0) = 0.75f;
- 
+
      group.ProcessSample(0);
- 
+
      REQUIRE_NEAR(carrier.TargetCenter(), 0.2f, 0.0001f);
      REQUIRE_NEAR(sibling.TargetCenter(), 0.4f, 0.0001f);
      REQUIRE_NEAR(depth->TargetCenter(), 0.75f, 0.0001f);
 -    REQUIRE_NEAR(carrier.CurrentDepths(0)[0], 0.25f, 0.0001f);
 +    REQUIRE_NEAR(carrier.CurrentDepthForSource(0, 0), 0.25f, 0.0001f);
  }
- 
+
  TEST_CASE(group_process_sample_visits_only_registered_roots) {
      synth::ParameterManager manager;
      auto& group = manager.CreateGroup({
@@ -1302,7 +1302,7 @@ index 1133fe03..c5aac2c8 100644
 @@ -2254,26 +2256,28 @@ TEST_CASE(modulation_depth_assignment_rejects_cross_group_routes) {
      REQUIRE_TRUE(carrier.ModulationDepthParameter(0) == nullptr);
  }
- 
+
  TEST_CASE(get_clamps_and_rejects_out_of_range_voice) {
      synth::ParameterManager manager;
      manager.SetGestureCount(2);
@@ -1321,9 +1321,9 @@ index 1133fe03..c5aac2c8 100644
 -    parameter.TargetDepths(0)[0] = 1.0f;
 -    parameter.ProcessLite();
 +    manager.ComputeAllParameters();
- 
+
      REQUIRE_NEAR(parameter.GetRaw(0), 1.0f, 0.0001f);
- 
+
      bool threw = false;
      try {
          (void)parameter.GetRaw(1);
@@ -1334,7 +1334,7 @@ index 1133fe03..c5aac2c8 100644
 @@ -3008,22 +3012,22 @@ TEST_CASE(revert_to_default_clears_modulation_and_gestures) {
      parameter.Compute(scene);
      parameter.ProcessLite();
- 
+
      REQUIRE_TRUE(parameter.ModulationDepthParameter(0) == &depth);
      REQUIRE_NEAR(depth.SceneCenter(0), 0.5f, 0.0001f);
      REQUIRE_NEAR(depth.SceneCenter(1), 0.5f, 0.0001f);
@@ -1353,7 +1353,7 @@ index 1133fe03..c5aac2c8 100644
      REQUIRE_NEAR(parameter.GetRaw(0), 0.4f, 0.0001f);
      REQUIRE_NEAR(parameter.GetRaw(1), 0.4f, 0.0001f);
  }
- 
+
  TEST_CASE(revert_to_default_rejects_invalid_scene_without_mutation) {
      synth::ParameterManager manager;
 @@ -3032,36 +3036,39 @@ TEST_CASE(revert_to_default_rejects_invalid_scene_without_mutation) {
@@ -1374,14 +1374,14 @@ index 1133fe03..c5aac2c8 100644
 +    const std::size_t routeSlot = parameter.RoutePositionForSource(0);
 +    parameter.TargetDepthSlots(0)[routeSlot] = 0.75f;
 +    parameter.CurrentDepthSlots(0)[routeSlot] = 0.5f;
- 
+
      bool threw = false;
      try {
          parameter.RevertToDefault({.leftScene = 3, .rightScene = 0, .blend = 0.0f});
      } catch (const std::out_of_range&) {
          threw = true;
      }
- 
+
      REQUIRE_TRUE(threw);
      REQUIRE_TRUE(parameter.ModulationDepthParameter(0) == &depth);
      REQUIRE_NEAR(parameter.SceneCenter(0), 0.9f, 0.0001f);
@@ -1391,7 +1391,7 @@ index 1133fe03..c5aac2c8 100644
 +    REQUIRE_NEAR(parameter.TargetDepthForSource(0, 0), 0.75f, 0.0001f);
 +    REQUIRE_NEAR(parameter.CurrentDepthForSource(0, 0), 0.5f, 0.0001f);
  }
- 
+
  TEST_CASE(page_routing_changes_without_mutating_parameter_state) {
      synth::ParameterManager manager;
      manager.SetGestureCount(2);
@@ -1503,13 +1503,13 @@ index 1133fe03..c5aac2c8 100644
      const float afterOneSlew = parameter.GetRaw(0);
      REQUIRE_TRUE(afterOneSlew > 0.0f);
      REQUIRE_TRUE(afterOneSlew < 1.0f);        // approaching, not jumped
- 
+
      manager.ComputeAllParameters();           // existing API still snaps
      REQUIRE_NEAR(parameter.GetRaw(0), 1.0f, 1e-4f);
  }
- 
+
  namespace {
- 
+
 +float FullScanApply(const synth::Modulators& modulators, std::size_t voiceIx,
 +                    std::span<const float> depthsBySource) {
 +    float sum = 0.0f;
@@ -1741,5 +1741,5 @@ index 1133fe03..c5aac2c8 100644
  struct RecordingMidiOutputSink final : synth::IMidiOutputSink {
      std::mutex mutex;
      std::optional<synth::ThreadId> observedThreadId;
- 
+
      void Send(const synth::BasicMidi&) override {

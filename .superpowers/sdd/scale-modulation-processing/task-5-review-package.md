@@ -16,25 +16,25 @@ index b9525422..c13dc797 100644
 +++ b/projects/synth/tests/instrument_tests.cpp
 @@ -1,20 +1,21 @@
  #include "synth/MidiController.hpp"
- 
+
  #ifdef JUCE_MAJOR_VERSION
  #error "synth module tests must not see JUCE headers"
  #endif
- 
+
  #include <iostream>
  #include <sstream>
  #include <stdexcept>
  #include <string>
 +#include <type_traits>
  #include <vector>
- 
+
  namespace {
- 
+
  struct TestCase {
      const char* name;
      void (*fn)();
  };
- 
+
  std::vector<TestCase>& Registry() {
 @@ -122,20 +123,66 @@ TEST_CASE(MessageInJsonRoundTripsHighGestureIndex) {
      const synth::MessageIn source = synth::MessageIn::SetGestureSelect(17, 63, true);
@@ -46,7 +46,7 @@ index b9525422..c13dc797 100644
      REQUIRE_TRUE(target.boolValue);
      REQUIRE_TRUE(target.hasBoolValue);
  }
- 
+
 +TEST_CASE(ControllerGesture63SelectsAndEditsManagerGestureWhileBankMaskRemains32Bit) {
 +    synth::ParameterManager manager;
 +    REQUIRE_TRUE(manager.SetGestureCount(64));
@@ -99,7 +99,7 @@ index b9525422..c13dc797 100644
      REQUIRE_TRUE(!synth::MidiProfileKindFromName("", kind));
      REQUIRE_TRUE(!synth::MidiProfileKindFromName("WrldBldr", kind));
  }
- 
+
  TEST_CASE(KindSupportMatrix) {
      const MidiKindSupport wrldbldr = synth::KindSupport(MidiProfileKind::WrldBldr);
      REQUIRE_TRUE(wrldbldr.encoders);
@@ -112,9 +112,9 @@ index 98326aeb..d0e6fdda 100644
      REQUIRE_TRUE(!second.GestureActive(0, 0));
      REQUIRE_TRUE(!second.GestureActive(1, 0));
  }
- 
+
  namespace {
- 
+
  constexpr std::size_t kSimParams = 3;
  constexpr std::size_t kSimVoices = 4;
  constexpr std::size_t kSimMods = 3;
@@ -122,18 +122,18 @@ index 98326aeb..d0e6fdda 100644
 +constexpr std::size_t kSimGestures = 64;
  constexpr std::size_t kSimScenes = 3;
  constexpr std::array<synth::PhysicalEncoderId, 5> kSimSlotEncoders{10, 11, 12, 20, 21};
- 
+
  struct SimCell {
      synth::PhysicalEncoderId encoder = 0;
      int parameter = -1;
  };
- 
+
  struct SimBank {
      std::vector<SimCell> top;
      std::vector<SimCell> visible;
      int selectedParameter = -1;
  };
- 
+
  struct SimParam {
      synth::RangeKind range = synth::RangeKind::Unipolar;
      float defaultValue = 0.0f;
@@ -162,7 +162,7 @@ index 98326aeb..d0e6fdda 100644
      std::array<float, kSimVoices> uiDisplayCenter{};
      std::array<float, kSimVoices> uiDisplaySpreadEnergy{};
  };
- 
+
 +struct SimLocalSlot {
 +    std::size_t storageIdentity = 0;
 +    int parentParameter = -1;
@@ -189,7 +189,7 @@ index 98326aeb..d0e6fdda 100644
 +    std::size_t liveLocalCount = 0;
 +    std::size_t freeLocalCount = 0;
  };
- 
+
  struct SimRandomSamples {
      std::vector<float> values;
      std::vector<float> coins;
@@ -197,7 +197,7 @@ index 98326aeb..d0e6fdda 100644
      std::size_t valueIx = 0;
      std::size_t coinIx = 0;
      std::size_t indexIx = 0;
- 
+
 @@ -6277,22 +6292,103 @@ struct SimRandomSamples {
      void RequireDrained(unsigned seed, int step, const std::string& action) const {
          if (valueIx != values.size() || coinIx != coins.size() || indexIx != indices.size()) {
@@ -218,7 +218,7 @@ index 98326aeb..d0e6fdda 100644
 +        return oss.str();
 +    }
  };
- 
+
 +bool SimGestureActive(const SimParam& parameter, std::size_t sceneIx, std::size_t gestureIx) {
 +    return (parameter.gestureActiveMasks[sceneIx] & (synth::GestureMask{1} << gestureIx)) != 0;
 +}
@@ -309,7 +309,7 @@ index 98326aeb..d0e6fdda 100644
      }
      return nullptr;
  }
- 
+
  float SimEffectiveGestureWeight(const SimOracle& oracle, const SimParam& parameter, std::size_t gestureIx) {
      const float blend = std::clamp(oracle.scene.blend, 0.0f, 1.0f);
      const float leftWeight =
@@ -324,13 +324,13 @@ index 98326aeb..d0e6fdda 100644
 +                                                                        : 0.0f;
      return leftWeight + rightWeight;
  }
- 
+
  float SimRawCenter(const SimOracle& oracle, const SimParam& parameter) {
      const float blend = std::clamp(oracle.scene.blend, 0.0f, 1.0f);
      const float inverseBlend = 1.0f - blend;
      const float base =
          parameter.sceneCenter[oracle.scene.leftScene] * inverseBlend + parameter.sceneCenter[oracle.scene.rightScene] * blend;
- 
+
      float weightedMixSum = 0.0f;
 @@ -6463,25 +6561,23 @@ bool SimHasNonNeutralDepthState(const SimOracle& oracle, const SimParam& paramet
      constexpr float neutralDepthCenter = 0.5f;
@@ -368,7 +368,7 @@ index 98326aeb..d0e6fdda 100644
      }
      return mask;
  }
- 
+
  synth::GestureMask SimGesturesAffectingMask(const SimOracle& oracle, const SimParam& parameter) {
      synth::GestureMask mask = 0;
      const float blend = std::clamp(oracle.scene.blend, 0.0f, 1.0f);
@@ -393,19 +393,19 @@ index 98326aeb..d0e6fdda 100644
      }
      return mask;
  }
- 
+
  void SimSeedDisplayState(SimOracle& oracle, std::size_t paramIx);
- 
+
  void SimComputeAtDepth(SimOracle& oracle, std::size_t paramIx, std::size_t recursionDepth) {
      SimParam& parameter = oracle.params[paramIx];
      parameter.targetCenter = SimClamp(SimRawCenter(oracle, parameter), parameter.range);
- 
+
      for (const int route : parameter.route) {
          if (route >= 0) {
              SimComputeAtDepth(oracle, static_cast<std::size_t>(route), recursionDepth + 1);
          }
      }
- 
+
 +    constexpr float neutralTolerance = 0.000001f;
 +    for (std::size_t sourceIx = 0; sourceIx < kSimMods; ++sourceIx) {
 +        const int route = parameter.route[sourceIx];
@@ -444,7 +444,7 @@ index 98326aeb..d0e6fdda 100644
              parameter.targetDepth[voiceIx][modIx] = depth;
              weightSum += std::fabs(depth);
 @@ -6588,20 +6711,21 @@ void SimComputeAtDepth(SimOracle& oracle, std::size_t paramIx, std::size_t recur
- 
+
      if (recursionDepth > 0) {
          parameter.currentCenter = parameter.targetCenter;
          parameter.currentCenterScale = parameter.targetCenterScale;
@@ -456,19 +456,19 @@ index 98326aeb..d0e6fdda 100644
      }
 +    SimPruneNeutralActiveRoutes(parameter);
  }
- 
+
  void SimComputeAll(SimOracle& oracle) {
      for (std::size_t paramIx = 0; paramIx < kSimParams; ++paramIx) {
          SimComputeAtDepth(oracle, paramIx, 0);
      }
  }
- 
+
  std::size_t SimParamIndex(const SimOracle& oracle, const SimParam& parameter) {
      const SimParam* begin = oracle.params.data();
 @@ -6625,20 +6749,21 @@ void SimSeedDisplayState(SimOracle& oracle, SimParam& parameter) {
      SimSeedDisplayState(oracle, SimParamIndex(oracle, parameter));
  }
- 
+
  void SimSnapParameterToTarget(SimOracle& oracle, SimParam& parameter) {
      parameter.currentCenter = parameter.targetCenter;
      parameter.currentCenterScale = parameter.targetCenterScale;
@@ -484,7 +484,7 @@ index 98326aeb..d0e6fdda 100644
          }
      }
  }
- 
+
  void SimProcessLiteAll(SimOracle& oracle) {
      constexpr float alpha = 0.25f;
 @@ -6693,31 +6818,31 @@ void SimOpenModulationView(SimOracle& oracle, SimBank& bank, int paramIx) {
@@ -494,7 +494,7 @@ index 98326aeb..d0e6fdda 100644
          .parameter = paramIx,
      });
  }
- 
+
  void SimHandleIncDec(SimOracle& oracle, SimParam& parameter, float delta) {
      const float blend = std::clamp(oracle.scene.blend, 0.0f, 1.0f);
      auto armSelectedGesture = [&](std::size_t sceneIx, std::size_t gestureIx) {
@@ -507,7 +507,7 @@ index 98326aeb..d0e6fdda 100644
 +        SimSetGestureActive(parameter, sceneIx, gestureIx, true);
          return true;
      };
- 
+
      bool armedGesture = false;
      for (std::size_t gestureIx = 0; gestureIx < kSimGestures; ++gestureIx) {
 -        if (!oracle.gestureSelected[gestureIx]) {
@@ -526,7 +526,7 @@ index 98326aeb..d0e6fdda 100644
              SimResetDepthToNeutral(oracle, oracle.params[static_cast<std::size_t>(route)]);
          }
      }
- 
+
      for (auto& row : parameter.currentDepth) {
          row.fill(0.0f);
      }
@@ -534,14 +534,14 @@ index 98326aeb..d0e6fdda 100644
          row.fill(0.0f);
      }
 +    parameter.activeRouteCount = 0;
- 
+
      const float blend = std::clamp(oracle.scene.blend, 0.0f, 1.0f);
      auto resetScene = [&](std::size_t sceneIx) {
          parameter.sceneCenter[sceneIx] = 0.5f;
 -        parameter.gestureActive[sceneIx].fill(false);
 +        parameter.gestureActiveMasks[sceneIx] = 0;
      };
- 
+
      if (blend <= 0.0f) {
          resetScene(oracle.scene.leftScene);
      } else if (blend >= 1.0f) {
@@ -554,7 +554,7 @@ index 98326aeb..d0e6fdda 100644
              SimResetDepthToNeutral(oracle, oracle.params[static_cast<std::size_t>(route)]);
          }
      }
- 
+
      for (auto& row : parameter.currentDepth) {
          row.fill(0.0f);
      }
@@ -562,7 +562,7 @@ index 98326aeb..d0e6fdda 100644
          row.fill(0.0f);
      }
 +    parameter.activeRouteCount = 0;
- 
+
      const float defaultValue = SimClamp(parameter.defaultValue, parameter.range);
      const float blend = std::clamp(oracle.scene.blend, 0.0f, 1.0f);
      auto resetScene = [&](std::size_t sceneIx) {
@@ -570,7 +570,7 @@ index 98326aeb..d0e6fdda 100644
 -        parameter.gestureActive[sceneIx].fill(false);
 +        parameter.gestureActiveMasks[sceneIx] = 0;
      };
- 
+
      if (blend <= 0.0f) {
          resetScene(oracle.scene.leftScene);
      } else if (blend >= 1.0f) {
@@ -605,7 +605,7 @@ index 98326aeb..d0e6fdda 100644
      if (slot.SelectedBank() != banks[static_cast<std::size_t>(oracle.selectedBank)]) {
          SimFailBool(seed, step, action, "slot selectedBank=" + std::to_string(oracle.selectedBank));
      }
- 
+
 @@ -7093,60 +7220,60 @@ void SimCheck(const SimOracle& oracle, const std::array<synth::Parameter*, kSimP
          for (std::size_t sceneIx = 0; sceneIx < kSimScenes; ++sceneIx) {
              SimCheckNear(seed, step, action,
@@ -695,7 +695,7 @@ index 98326aeb..d0e6fdda 100644
      if (ui.randomModHeld.load(std::memory_order_relaxed) != oracle.randomModHeld) {
          SimFailBool(seed, step, action, "ui random-mod held");
      }
- 
+
      const SimBank& bank = oracle.banks[static_cast<std::size_t>(oracle.selectedBank)];
 +    if (!ui.slots[0].connected.load() ||
 +        ui.slots[0].showingModulationView.load() != (bank.selectedParameter >= 0)) {
@@ -774,7 +774,7 @@ index 98326aeb..d0e6fdda 100644
                       ui.gestures.values[gestureIx].load());
      }
  }
- 
+
  void SimInitializeOracle(SimOracle& oracle) {
      oracle.selectedBank = 0;
      oracle.resetHeld = false;
@@ -813,7 +813,7 @@ index 98326aeb..d0e6fdda 100644
  SimPatchSnapshot SimCapturePatchSnapshot(const SimOracle& oracle) {
      return {.params = oracle.params};
  }
- 
+
  void SimApplyPatchSnapshot(SimOracle& oracle, const SimPatchSnapshot& snapshot) {
      for (std::size_t paramIx = 0; paramIx < kSimParams; ++paramIx) {
          SimParam& target = oracle.params[paramIx];
@@ -825,7 +825,7 @@ index 98326aeb..d0e6fdda 100644
      }
      SimComputeAllAndSnap(oracle);
  }
- 
+
  void SimApplyNewPatch(SimOracle& oracle) {
      const auto banks = oracle.banks;
      const int selectedBank = oracle.selectedBank;
@@ -841,7 +841,7 @@ index 98326aeb..d0e6fdda 100644
 +    oracle.gestureSelectedMask = 0;
      SimComputeAllAndSnap(oracle);
  }
- 
+
  std::size_t SimFindLatestPatchInDirectory(
      const std::vector<std::pair<std::filesystem::path, SimPatchSnapshot>>& versions,
      const std::filesystem::path& patchDir) {
@@ -851,13 +851,13 @@ index 98326aeb..d0e6fdda 100644
              return ix;
 @@ -7434,21 +7591,21 @@ std::size_t SimFindLatestPatchInDirectory(
  }
- 
+
  } // namespace
- 
+
  TEST_CASE(randomized_parameter_modulation_simulation) {
      const std::vector<unsigned> seeds = SimSeedsFromEnvironment();
      const int steps = SimStepsFromEnvironment();
- 
+
      for (const unsigned seed : seeds) {
          synth::ParameterManager manager;
 -        manager.SetGestureCount(2);
@@ -931,7 +931,7 @@ index 98326aeb..d0e6fdda 100644
                  break;
              }
              }
- 
+
              SimCheck(oracle, params, banks, group, slot, manager, seed, step, action);
          }
      }
@@ -941,11 +941,11 @@ index 98326aeb..d0e6fdda 100644
              [&randomSamples]() { return randomSamples.PopValue(); },
              [&randomSamples]() { return randomSamples.PopCoin(); },
              [&randomSamples](std::size_t max) { return randomSamples.PopIndex(max); });
- 
+
          SimCheck(oracle, params, banks, group, slot, manager, seed, -1, "initial bus");
          manager.PopulateUIState(*ui);
          SimCheckUIState(oracle, *ui, seed, -1, "initial bus ui");
- 
+
 +        REQUIRE_TRUE(bus.Push(synth::MessageIn::SetGestureSelect(timestamp, 32, true)));
 +        REQUIRE_TRUE(bus.Push(synth::MessageIn::SetGestureValue(timestamp, 32, 0.4f)));
 +        REQUIRE_TRUE(bus.Push(synth::MessageIn::SetGestureSelect(timestamp, 63, true)));
@@ -1021,7 +1021,7 @@ index 98326aeb..d0e6fdda 100644
          }
      }
  }
- 
+
 +TEST_CASE(message_bus_sparse_lifecycle_model_tracks_pins_collection_reuse_and_patch_load) {
 +    constexpr unsigned seed = 0x5A17C0DEu;
 +    synth::ParameterManager manager;
@@ -1175,13 +1175,13 @@ index 98326aeb..d0e6fdda 100644
  TEST_CASE(randomized_patch_lifecycle_simulation) {
      const std::vector<unsigned> seeds = SimSeedsFromEnvironment();
      const int steps = SimStepsFromEnvironmentOrDefault(260);
- 
+
      for (const unsigned seed : seeds) {
          const std::filesystem::path tempRoot =
              std::filesystem::temp_directory_path() / ("sheaf-synth-patch-random-" + std::to_string(seed));
          std::filesystem::remove_all(tempRoot);
          std::filesystem::create_directories(tempRoot);
- 
+
 @@ -8252,28 +8580,28 @@ TEST_CASE(randomized_patch_lifecycle_simulation) {
                  manager.HandlePress(encoder);
                  resetSamples.RequireDrained(seed, step, action);
@@ -1256,7 +1256,7 @@ index 485fbd4f..179226f5 100644
              "encoder uses snapshot source badge colors");
      Require(snapshotEncoder.gestureColors == std::vector<synth::Color>{synth::Color::Orange},
              "encoder uses snapshot gesture badge colors");
- 
+
      Require(synth::ui::EncoderGeometry::BadgeText(false, 16) == "17", "gesture 16 badge is one-based");
      Require(synth::ui::EncoderGeometry::BadgeText(false, 62) == "63", "gesture 62 badge is one-based");
      Require(synth::ui::EncoderGeometry::BadgeText(false, 63) == "64", "gesture 63 badge is one-based");
@@ -1282,7 +1282,7 @@ index 485fbd4f..179226f5 100644
                  return command.kind == synth::ui::DrawCommand::Kind::Text && command.text == "64";
              }),
              "encoder renders gesture 63 as badge 64");
- 
+
      static_assert(synth::SynthApplication<TestApp>);
      static_assert(!synth::ui::kPortableUiUsesJuce);
      static_assert(std::is_same_v<decltype(synth::ui::WaveformLayerDrawState::scope), const synth::ScopeWriter*>);

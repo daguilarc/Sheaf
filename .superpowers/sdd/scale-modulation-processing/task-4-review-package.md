@@ -18,24 +18,24 @@ index 9e83531e..66bbe893 100644
 @@ -111,20 +111,21 @@ struct SceneState {
      float blend = 0.0f;
  };
- 
+
  struct PageDescriptor {
      PageOrdinal ordinal = 0;
      std::string name;
  };
- 
+
  class Parameter;
  class ParameterManager;
 +class Bank;
  class BankSlot;
  struct ParameterStorageBatch;
- 
+
  struct Page {
      PageOrdinal ordinal = 0;
      std::string name;
      std::vector<Parameter*> parameters;
  };
- 
+
  inline constexpr float kDefaultProcessLiteAlpha = 0.1226942309f;  // 1 kHz one-pole cutoff at 48 kHz
 @@ -293,20 +294,23 @@ public:
      const ParameterGroupConfig& Config() const { return config_; }
@@ -43,7 +43,7 @@ index 9e83531e..66bbe893 100644
      const Modulators& GetModulators() const { return modulators_; }
      ParameterManager& Manager() { return *manager_; }
      const ParameterManager& Manager() const { return *manager_; }
- 
+
      bool CanAllocate() const;
      std::size_t AvailableParameterSlots() const;
      void AddParameterStorageBatch(std::unique_ptr<ParameterStorageBatch> batch);
@@ -65,18 +65,18 @@ index 9e83531e..66bbe893 100644
      void ConfigureProcessingTiming(const ParameterProcessingTiming& timing);
      void ProcessSample(std::uint64_t sampleIndex);
      void SetProcessingObserverForTests(ParameterProcessingObserver* observer) { processingObserver_ = observer; }
- 
+
  private:
      friend class Parameter;
      friend class ParameterManager;
      friend class Bank;
- 
+
      Parameter& CreateLocalParameter(ParameterConfig config, ParameterId id);
 +    void RecycleLocalParameter(Parameter& parameter);
      void RegisterTopLevelParameter(Parameter& parameter);
      void RequestParameterStorageBatch(std::size_t minimumAdditionalParameters);
      void RequestParameterStorageBatchIfLow();
- 
+
      // Groups own parameter objects and all same-shaped per-parameter arenas.
      // Parameter instances hold spans into these arenas; callers must not move a
      // group after handing out Parameter references.
@@ -115,12 +115,12 @@ index 9e83531e..66bbe893 100644
      std::size_t RecursionDepth() const { return recursionDepth_; }
      JSON ToValueJSON(JsonArena& arena) const;
      bool LoadValuesFromJSON(JSON json);
- 
+
  private:
      friend class ParameterManager;
 +    friend class ParameterGroup;
 +    friend class Bank;
- 
+
      std::size_t SceneGestureIndex(std::size_t sceneIx, std::size_t gestureIx) const;
      void ValidateSceneEndpoints(const SceneState& scene) const;
      float EffectiveGestureWeight(const SceneState& scene, std::size_t gestureIx, float blend) const;
@@ -147,7 +147,7 @@ index 9e83531e..66bbe893 100644
      std::uint32_t ModulatorsAffectingMask() const;
      bool HasNonDefaultState() const;
      bool HasNonZeroState() const;
- 
+
      ParameterId id_;
      ParameterGroup& group_;
      ParameterConfig config_;
@@ -185,7 +185,7 @@ index 9e83531e..66bbe893 100644
      void ComputeAllTargets();
      void CaptureDefaultControlState();
      void RevertAllToDefaults();
- 
+
      float GetLinear(float minValue, float maxValue, std::size_t voiceIx, ParameterId id) const;
 diff --git a/projects/synth/src/ParameterModulation.cpp b/projects/synth/src/ParameterModulation.cpp
 index daaac76e..9382e9c1 100644
@@ -193,7 +193,7 @@ index daaac76e..9382e9c1 100644
 +++ b/projects/synth/src/ParameterModulation.cpp
 @@ -417,20 +417,21 @@ void Gestures::CheckIndex(std::size_t gestureIx) const {
  }
- 
+
  ParameterGroup::ParameterGroup(ParameterGroupConfig config, ParameterManager& manager, std::size_t gestureCount)
      : config_(ValidateConfig(config)),
        manager_(&manager),
@@ -217,7 +217,7 @@ index daaac76e..9382e9c1 100644
  bool ParameterGroup::CanAllocate() const {
      return AvailableParameterSlots() > 0;
  }
- 
+
  std::size_t ParameterGroup::AvailableParameterSlots() const {
      const std::size_t initialAllocated = std::min(parameterCount_, config_.maxParameters);
      std::size_t available = config_.maxParameters - initialAllocated;
@@ -227,7 +227,7 @@ index daaac76e..9382e9c1 100644
 -    return available;
 +    return available + recycledLocalSlots_.size();
  }
- 
+
  void ParameterGroup::AddParameterStorageBatch(std::unique_ptr<ParameterStorageBatch> batch) {
      if (batch == nullptr || !batch->Compatible(config_, gestureCount_)) {
          throw std::invalid_argument("parameter storage batch does not match group shape");
@@ -235,7 +235,7 @@ index daaac76e..9382e9c1 100644
      storageRequestPending_ = false;
      extraStorageBatches_.push_back(std::move(batch));
  }
- 
+
  Parameter& ParameterGroup::CreateLocalParameter(ParameterConfig config, ParameterId id) {
      if (config.name.empty()) {
          throw std::logic_error("parameter name must not be empty");
@@ -243,7 +243,7 @@ index daaac76e..9382e9c1 100644
      if (!CanAllocate()) {
          throw std::length_error("parameter group capacity exhausted");
      }
- 
+
 +    if (id == kLocalParameterId && !recycledLocalSlots_.empty()) {
 +        RecycledLocalSlot recycled = recycledLocalSlots_.back();
 +        recycledLocalSlots_.pop_back();
@@ -271,7 +271,7 @@ index daaac76e..9382e9c1 100644
          RequestParameterStorageBatchIfLow();
          return result;
      }
- 
+
      for (const auto& batch : extraStorageBatches_) {
          if (batch->Available() == 0) {
              continue;
@@ -287,10 +287,10 @@ index daaac76e..9382e9c1 100644
          RequestParameterStorageBatchIfLow();
          return result;
      }
- 
+
      throw std::length_error("parameter group capacity exhausted");
  }
- 
+
 +void ParameterGroup::RecycleLocalParameter(Parameter& parameter) {
 +    if (parameter.id_ != kLocalParameterId || parameter.localViewPinCount_ != 0) {
 +        throw std::logic_error("only unpinned local parameters can be recycled");
@@ -322,7 +322,7 @@ index daaac76e..9382e9c1 100644
  void ParameterGroup::RegisterTopLevelParameter(Parameter& parameter) {
      topLevelParameters_.push_back(&parameter);
  }
- 
+
  Parameter& ParameterGroup::ParameterByLocalIndex(std::size_t localIx) {
      if (localIx < parameters_.size()) {
          return *parameters_.at(localIx);
@@ -334,7 +334,7 @@ index daaac76e..9382e9c1 100644
          }
      }
  }
- 
+
  Parameter::Parameter(ParameterId id, ParameterGroup& group, ParameterConfig config, std::size_t slotIx)
      : id_(id),
        group_(group),
@@ -356,7 +356,7 @@ index daaac76e..9382e9c1 100644
      std::fill(gestureActiveMasks_.begin(), gestureActiveMasks_.end(), 0);
      SeedCachedKnobAndUiDisplayState();
  }
- 
+
  Parameter::Parameter(ParameterId id, ParameterGroup& group, ParameterConfig config,
                       ParameterStorageBatch& storageBatch, std::size_t slotIx)
      : id_(id),
@@ -383,9 +383,9 @@ index daaac76e..9382e9c1 100644
      std::fill(gestureActiveMasks_.begin(), gestureActiveMasks_.end(), 0);
      SeedCachedKnobAndUiDisplayState();
  }
- 
+
  ParameterStorageBatch::~ParameterStorageBatch() = default;
- 
+
 +void Parameter::PinLocalForView() {
 +    if (id_ == kLocalParameterId) {
 +        ++localViewPinCount_;
@@ -499,7 +499,7 @@ index daaac76e..9382e9c1 100644
          ApplyModifierToParameter(*cell.parameter, modifier, scene);
      }
  }
- 
+
  void Bank::Deselect() {
 -    selected_ = nullptr;
 +    ParameterGroup* affectedGroup = selected_ == nullptr ? nullptr : &selected_->Group();
@@ -517,26 +517,26 @@ index daaac76e..9382e9c1 100644
 +        affectedGroup->CollectNeutralLocalParameters();
 +    }
  }
- 
+
  bool Bank::ShowingModulation() const {
      return selected_ != nullptr;
  }
- 
+
  std::size_t Bank::VisibleMappingCount() const {
      return visible_.size();
  }
- 
+
 @@ -2194,55 +2354,73 @@ void Bank::OpenModulationView(Parameter& parameter, std::span<const PhysicalEnco
          throw std::logic_error("modulation view has more modulators than slot depth positions");
      }
- 
+
      const std::size_t missing = MissingModulationDepthCount(parameter);
      const std::size_t available = parameter.Group().AvailableParameterSlots();
      if (available < missing) {
          parameter.Group().RequestParameterStorageBatch(missing - available);
          return;
      }
- 
+
 +    if (selected_ != nullptr) {
 +        for (const Cell& cell : visible_) {
 +            if (cell.parameter != nullptr && cell.parameter != selected_) {
@@ -549,7 +549,7 @@ index daaac76e..9382e9c1 100644
      selected_ = &parameter;
 +    selected_->PinLocalForView();
      visible_.clear();
- 
+
      for (std::size_t cellIx = 0; cellIx < modulatorCount; ++cellIx) {
 +        Parameter* depthParameter = EnsureModulationDepthParameter(parameter, cellIx);
 +        if (depthParameter != nullptr) {
@@ -561,19 +561,19 @@ index daaac76e..9382e9c1 100644
 +            .parameter = depthParameter,
          });
      }
- 
+
      visible_.push_back({
          .encoderId = physicalLayout.back(),
          .parameter = &parameter,
      });
      parameter.Group().RequestParameterStorageBatchIfLow();
  }
- 
+
  void Bank::ApplyModifierToParameter(Parameter& parameter, Modifier modifier, const SceneState& scene) {
      if (manager_ == nullptr) {
          return;
      }
- 
+
 +    ParameterGroup* affectedGroup = &parameter.Group();
      switch (modifier) {
      case Modifier::None:
@@ -592,12 +592,12 @@ index daaac76e..9382e9c1 100644
 +        affectedGroup->CollectNeutralLocalParameters();
 +    }
  }
- 
+
  void Bank::RandomizeModulationDepths(Parameter& parameter, const SceneState& scene) {
      if (manager_ == nullptr) {
          return;
      }
- 
+
      const std::size_t modulatorCount = parameter.Group().Config().numModulators;
      if (modulatorCount == 0) {
          return;
@@ -607,11 +607,11 @@ index daaac76e..9382e9c1 100644
          }
          parameter->LoadValuesFromJSON(JSON(members[ix].m_value));
      }
- 
+
      ComputeAllParameters();
      return true;
  }
- 
+
 +std::size_t ParameterManager::CollectNeutralLocalParameters() {
 +    std::size_t collected = 0;
 +    for (const auto& group : groups_) {
@@ -629,7 +629,7 @@ index daaac76e..9382e9c1 100644
          parameter->SnapCurrentToTarget();
      }
  }
- 
+
 @@ -2544,20 +2730,21 @@ void ParameterManager::RevertAllToDefaults() {
          const bool selected = gestureIx < defaultControlState_.gestureSelected.size() &&
                                defaultControlState_.gestureSelected[gestureIx];
@@ -639,16 +639,16 @@ index daaac76e..9382e9c1 100644
              DeselectGesture(gestureIx);
          }
      }
- 
+
      ComputeAllParameters();
 +    CollectNeutralLocalParameters();
  }
- 
+
  float ParameterManager::GetLinear(float minValue, float maxValue, std::size_t voiceIx, ParameterId id) const {
      const float normalized = std::clamp(ParameterById(id).CachedKnobValue(voiceIx), 0.0f, 1.0f);
      return LinearMap(minValue, maxValue, normalized);
  }
- 
+
  float ParameterManager::GetExponential(float minValue, float maxValue, std::size_t voiceIx, ParameterId id) const {
      const float normalized = std::clamp(ParameterById(id).CachedKnobValue(voiceIx), 0.0f, 1.0f);
      return ExponentialMap(minValue, maxValue, normalized);
@@ -661,12 +661,12 @@ index e0f76629..ea3d7bbf 100644
      if (!ValidPatchRoot(root) || !IsString(root.Get("patchName"))) {
          return false;
      }
- 
+
      const JSON parameterValues = root.Get("parameterValues");
      if (!IsObject(parameterValues)) {
          return false;
      }
- 
+
 -    manager.LoadParameterValuesFromJSON(parameterValues);
 +    if (!manager.LoadParameterValuesFromJSON(parameterValues)) {
 +        return false;
@@ -674,11 +674,11 @@ index e0f76629..ea3d7bbf 100644
 +    manager.CollectNeutralLocalParameters();
      return true;
  }
- 
+
  bool ValidatePatchJSON(JSON root) {
      return ValidPatchRoot(root) && IsString(root.Get("patchName")) && IsObject(root.Get("parameterValues"));
  }
- 
+
  std::string TimestampPatchFilename(std::chrono::system_clock::time_point now) {
      const std::time_t time = std::chrono::system_clock::to_time_t(now);
      std::tm tm{};
@@ -688,7 +688,7 @@ index c5aac2c8..98326aeb 100644
 +++ b/projects/synth/tests/parameter_modulation_tests.cpp
 @@ -79,20 +79,73 @@ struct TestVisualizer final : synth::ui::Visualizer {
  };
- 
+
  std::string JsonToString(synth::JSON json) {
      char* dumped = json.Dumps(JSON_ENCODE_ANY);
      REQUIRE_TRUE(dumped != nullptr);
@@ -696,7 +696,7 @@ index c5aac2c8..98326aeb 100644
      std::free(dumped);
      return text;
  }
- 
+
 +bool JsonSemanticallyEqual(synth::JSON left, synth::JSON right) {
 +    if (left.IsNull() || right.IsNull()) {
 +        return left.IsNull() && right.IsNull();
@@ -751,7 +751,7 @@ index c5aac2c8..98326aeb 100644
 +}
 +
  void RequireRouteBijection(const synth::Parameter& parameter, std::size_t sourceCount);
- 
+
  // Wraps a single WrldBldr-kind MidiControllerProfileConfig (as produced by
  // WrldBldrDefaultProfileConfig, whose system-message associations always
  // carry both a control address and a wrldBldrPosition -- see
@@ -764,11 +764,11 @@ index c5aac2c8..98326aeb 100644
      slot.AddPhysicalEncoder(1);
      slot.AddPhysicalEncoder(2);
      slot.SelectBank(&bank);
- 
+
      slot.HandlePress(1);
      slot.HandlePress(2);
      slot.HandlePress(2);
- 
+
      synth::Parameter* firstDepth = first.ModulationDepthParameter(0);
      synth::Parameter* secondDepth = second.ModulationDepthParameter(0);
 -    REQUIRE_TRUE(firstDepth != nullptr);
@@ -790,7 +790,7 @@ index c5aac2c8..98326aeb 100644
 +    REQUIRE_TRUE(group.ParameterCount() == highWater);
      REQUIRE_TRUE(manager.ParameterCount() == 2);
  }
- 
+
  TEST_CASE(pressing_modulation_cell_opens_nested_modulation_view) {
      synth::ParameterManager manager;
      manager.SetGestureCount(2);
@@ -807,7 +807,7 @@ index c5aac2c8..98326aeb 100644
          REQUIRE_TRUE(manager.SetSceneEndpoints(0, 1));
          manager.SetSceneBlend(0.25f);
          manager.CaptureDefaultControlState();
- 
+
          std::vector<synth::Parameter*> tracked{&cutoff, &resonance, &cutoffLfo, &cutoffEnv, &lfoCurve, &resonanceLfo};
 +        auto refreshTrackedTopology = [&] {
 +            synth::Parameter* liveCutoffLfo = cutoff.EnsureModulationDepth(0);
@@ -822,7 +822,7 @@ index c5aac2c8..98326aeb 100644
 +        };
          RecursivePatchSnapshot expected = captureValues(tracked);
          const RecursivePatchSnapshot defaultExpected = expected;
- 
+
          synth::WrldBldrDefaultProfileOptions midiOptions;
          midiOptions.visibleEncoderCount = 5;
          midiOptions.sceneCount = kSimScenes;
@@ -843,7 +843,7 @@ index c5aac2c8..98326aeb 100644
              }
 +            refreshTrackedTopology();
          };
- 
+
          auto completePendingSave = [&](const RecursivePatchSnapshot& snapshot) {
              processPatchMessages();
              const auto now = std::chrono::system_clock::from_time_t(1700005000 + writeCounter++);
@@ -862,7 +862,7 @@ index c5aac2c8..98326aeb 100644
          RequireFullScanCurrentMatch(carrier);
      }
  }
- 
+
 +TEST_CASE(neutral_local_collection_reclaims_leaf_and_preserves_high_water_accounting) {
 +    synth::ParameterManager manager;
 +    manager.SetGestureCount(64);
@@ -1254,7 +1254,7 @@ index c5aac2c8..98326aeb 100644
 +}
 +
  namespace {
- 
+
  // Regression for slog-2: MidiSender's worker thread (Run()) must tag itself
  // with ThreadId::MidiSender so log messages produced while sending (and any
  // future thread-identity-sensitive code on that thread) observe the correct

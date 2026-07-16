@@ -110,4 +110,3 @@ git commit -m "perf(synth): process only top-level parameters per sample"
 Generate the review package from the task's starting commit through `HEAD`, run the global Sonnet gate, fix and re-review Critical/Important findings, and record both passing verdicts in `.superpowers/sdd/progress.md`.
 
 ---
-

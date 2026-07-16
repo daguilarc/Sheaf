@@ -23,12 +23,12 @@ index 67fa75f2..45c54471 100644
          {
              continue;
          }
- 
+
          commands.push_back(DrawCommand::Arc(
              ArcBoundsFor(centerX, centerY, radius), startAngle, endAngle, color, strokeWidth));
      }
  }
- 
+
 -inline std::size_t CountMaskBits(std::uint32_t mask)
 +inline std::size_t CountMaskBits(std::uint64_t mask)
  {
@@ -40,7 +40,7 @@ index 67fa75f2..45c54471 100644
      }
      return count;
  }
- 
+
 @@ -232,21 +232,25 @@ inline std::string BadgeText(bool modulator, std::size_t index)
  {
      if (modulator)
@@ -59,7 +59,7 @@ index 67fa75f2..45c54471 100644
 +    }
 +    return std::to_string(index + 1);
  }
- 
+
  inline void GetBadgePosition(float centerX,
                               float centerY,
                               float radius,
@@ -71,7 +71,7 @@ index 67fa75f2..45c54471 100644
 @@ -282,21 +286,21 @@ struct EncoderVoiceDrawState
      synth::Color indicatorColor = synth::Color::Grey;
  };
- 
+
  struct EncoderDrawState
  {
      bool connected = false;
@@ -88,7 +88,7 @@ index 67fa75f2..45c54471 100644
      std::vector<synth::Color> modulatorColors;
      std::vector<synth::Color> gestureColors;
  };
- 
+
  inline EncoderDrawState EncoderDrawStateFromParameter(const synth::Parameter::UIState& state)
  {
 @@ -679,32 +683,32 @@ inline std::vector<DrawCommand> BuildEncoderDrawCommands(const EncoderDrawState&
@@ -101,7 +101,7 @@ index 67fa75f2..45c54471 100644
          6.0f,
          Color::Rgb(8, 9, 10),
          1.0f));
- 
+
 -    const auto drawBadges = [&](std::uint32_t mask, bool upper, bool modulator) {
 +    const auto drawBadges = [&](std::uint64_t mask, bool upper, bool modulator) {
          const std::vector<synth::Color>& colors = modulator ? state.modulatorColors : state.gestureColors;
@@ -122,7 +122,7 @@ index 67fa75f2..45c54471 100644
              {
                  continue;
              }
- 
+
              float x = 0.0f;
              float y = 0.0f;
              float length = 0.0f;
@@ -134,24 +134,24 @@ index 72054230..1a9a09c2 100644
 --- a/projects/synth/include/synth/ParameterModulation.hpp
 +++ b/projects/synth/include/synth/ParameterModulation.hpp
 @@ -20,20 +20,21 @@
- 
+
  namespace synth::ui {
  class Visualizer;
  }
- 
+
  namespace synth {
- 
+
  using ParameterId = std::uint32_t;
  using PhysicalEncoderId = std::uint32_t;
  using PageOrdinal = std::uint32_t;
 +using GestureMask = std::uint64_t;
- 
+
  struct AtomicColor {
      AtomicColor() = default;
      explicit AtomicColor(Color color) { Store(color); }
      AtomicColor(const AtomicColor&) = delete;
      AtomicColor& operator=(const AtomicColor&) = delete;
- 
+
      void Store(Color color, std::memory_order order = std::memory_order_relaxed) {
          value.store(color.Packed(), order);
      }
@@ -169,50 +169,50 @@ index 72054230..1a9a09c2 100644
 -    std::vector<std::uint8_t> gestureActiveArena;
 +    std::vector<GestureMask> gestureActiveMaskArena;
  };
- 
+
  std::unique_ptr<ParameterStorageBatch> MakeParameterStorageBatch(const ParameterGroupConfig& config,
                                                                   std::size_t gestureCount,
                                                                   std::size_t capacity);
- 
+
  struct ModulatorMetadata {
      std::string name;
      std::string shortName;
      Color sourceColor;
 @@ -255,34 +256,35 @@ private:
  };
- 
+
  class Gestures {
  public:
      explicit Gestures(std::size_t gestures = 0);
- 
+
      float& Value(std::size_t gestureIx);
      float Value(std::size_t gestureIx) const;
      void Select(std::size_t gestureIx, bool selected);
      bool Selected(std::size_t gestureIx) const;
 +    GestureMask SelectedMask() const { return selectedMask_; }
      void ClearSelection();
- 
+
      std::size_t NumGestures() const { return values_.size(); }
- 
+
      GestureMetadata& Metadata(std::size_t gestureIx);
      const GestureMetadata& Metadata(std::size_t gestureIx) const;
      std::span<GestureMetadata> Metadata() { return metadata_; }
      std::span<const GestureMetadata> Metadata() const { return metadata_; }
- 
+
  private:
      void CheckIndex(std::size_t gestureIx) const;
- 
+
      std::vector<float> values_;
 -    std::vector<bool> selected_;
 +    GestureMask selectedMask_ = 0;
      std::vector<GestureMetadata> metadata_;
  };
- 
+
  class ParameterGroup {
  public:
      ParameterGroup(ParameterGroupConfig config, ParameterManager& manager, std::size_t gestureCount);
      ~ParameterGroup();
- 
+
      const ParameterGroupConfig& Config() const { return config_; }
      Modulators& GetModulators() { return modulators_; }
 @@ -342,21 +344,21 @@ private:
@@ -229,21 +229,21 @@ index 72054230..1a9a09c2 100644
 -    std::vector<std::uint8_t> gestureActiveArena_;
 +    std::vector<GestureMask> gestureActiveMaskArena_;
  };
- 
+
  class Parameter {
  public:
      Parameter(ParameterId id, ParameterGroup& group, ParameterConfig config, std::size_t slotIx);
      Parameter(ParameterId id, ParameterGroup& group, ParameterConfig config,
                ParameterStorageBatch& storageBatch, std::size_t slotIx);
- 
+
      struct UIState {
          UIState() = default;
 @@ -369,21 +371,21 @@ public:
- 
+
          void Configure(std::size_t voiceCapacity, std::size_t modulatorColorCapacity = 0,
                         std::size_t gestureColorCapacity = 0);
          void SetDisconnected();
- 
+
          std::atomic<std::uint32_t> revision{0};
          std::atomic<bool> connected{false};
          std::atomic<bool> bipolar{false};
@@ -265,7 +265,7 @@ index 72054230..1a9a09c2 100644
      Parameter& EnsureModulationDepth(std::size_t modIx, ParameterConfig config);
      void ClearModulationDepths();
      Parameter* ModulationDepthParameter(std::size_t modIx) const;
- 
+
      float& SceneCenter(std::size_t sceneIx);
      float SceneCenter(std::size_t sceneIx) const;
      float& GestureValue(std::size_t sceneIx, std::size_t gestureIx);
@@ -274,12 +274,12 @@ index 72054230..1a9a09c2 100644
      bool GestureActive(std::size_t sceneIx, std::size_t gestureIx) const;
 -    std::uint32_t GesturesAffectingMask() const;
 +    GestureMask GesturesAffectingMask() const;
- 
+
      std::span<float> CurrentDepths(std::size_t voiceIx);
      std::span<const float> CurrentDepths(std::size_t voiceIx) const;
      std::span<float> TargetDepths(std::size_t voiceIx);
      std::span<const float> TargetDepths(std::size_t voiceIx) const;
- 
+
      float CurrentCenter() const { return currentCenter_; }
      float TargetCenter() const { return targetCenter_; }
      float CurrentCenterScale(std::size_t voiceIx) const;
@@ -298,21 +298,21 @@ index 72054230..1a9a09c2 100644
 -    std::span<std::uint8_t> gestureActive_;
 +    std::span<GestureMask> gestureActiveMasks_;
  };
- 
+
  class Bank {
  public:
      explicit Bank(ParameterManager* manager = nullptr);
- 
+
      struct VisibleCell {
          Parameter* parameter = nullptr;
      };
- 
+
 @@ -519,21 +521,21 @@ public:
      void Deselect();
      bool ShowingModulation() const;
      void SetBankColor(Color color) { bankColor_ = color; }
      Color BankColor() const { return bankColor_; }
- 
+
      std::size_t VisibleMappingCount() const;
      Parameter* VisibleParameter(PhysicalEncoderId encoderId) const;
      VisibleCell VisibleCellFor(PhysicalEncoderId encoderId) const;
@@ -320,15 +320,15 @@ index 72054230..1a9a09c2 100644
      Parameter* TargetParameter() const;
 -    std::uint32_t GesturesAffectingMask() const;
 +    GestureMask GesturesAffectingMask() const;
- 
+
  private:
      friend class BankSlot;
- 
+
      struct Cell {
          PhysicalEncoderId encoderId = 0;
          Parameter* parameter = nullptr;
      };
- 
+
      void AssociateSlot(BankSlot& slot);
 @@ -751,20 +753,21 @@ public:
      void SetRandomSource(ParameterRandomFloat valueSource, ParameterRandomFloat coinSource,
@@ -336,7 +336,7 @@ index 72054230..1a9a09c2 100644
      float NextRandomValue();
      float NextRandomCoin();
      std::size_t NextRandomIndex(std::size_t exclusiveMax);
- 
+
      void SelectGesture(std::size_t gestureIx);
      void DeselectGesture(std::size_t gestureIx);
      void ToggleGestureSelected(std::size_t gestureIx);
@@ -347,7 +347,7 @@ index 72054230..1a9a09c2 100644
      GestureMetadata& GestureMetadataAt(std::size_t gestureIx);
      const GestureMetadata& GestureMetadataAt(std::size_t gestureIx) const;
      void ClearGestureActiveFlagsForActiveSceneSelection(std::size_t gestureIx);
- 
+
      std::unique_ptr<UIState> CreateUIState() const;
      void PopulateUIState(UIState& state) const;
      void SetParameterMessageOutBus(ParameterMessageOutBus* bus) { parameterMessageOutBus_ = bus; }
@@ -358,7 +358,7 @@ index 926afb28..3322b5fc 100644
 +++ b/projects/synth/src/ParameterModulation.cpp
 @@ -1,27 +1,44 @@
  #include "synth/ParameterModulation.hpp"
- 
+
  #include <algorithm>
  #include <array>
 +#include <bit>
@@ -367,14 +367,14 @@ index 926afb28..3322b5fc 100644
  #include <limits>
  #include <stdexcept>
  #include <utility>
- 
+
  namespace synth {
- 
+
  namespace {
- 
+
  // Local modulation-depth controls are intentionally not addressable through ParameterManager::ParameterById.
  constexpr ParameterId kLocalParameterId = std::numeric_limits<ParameterId>::max();
- 
+
 +GestureMask GestureCountMask(std::size_t count) {
 +    if (count >= std::numeric_limits<GestureMask>::digits) {
 +        return std::numeric_limits<GestureMask>::max();
@@ -397,7 +397,7 @@ index 926afb28..3322b5fc 100644
          throw std::invalid_argument("processing timing rates must be positive and finite");
      }
  }
- 
+
  void ValidateOnePoleAlpha(float alpha) {
      if (!(alpha >= 0.0f && alpha <= 1.0f)) {
          throw std::invalid_argument("one-pole alpha must be in [0,1]");
@@ -416,12 +416,12 @@ index 926afb28..3322b5fc 100644
 +      gestureActiveMaskArena(capacity * config.numScenes, 0) {
      parameters.reserve(capacity);
  }
- 
+
  bool ParameterStorageBatch::Compatible(const ParameterGroupConfig& config, std::size_t liveGestureCount) const {
      return numVoices == config.numVoices && numModulators == config.numModulators &&
             numScenes == config.numScenes && gestureCount == liveGestureCount && capacity > 0;
  }
- 
+
  std::unique_ptr<ParameterStorageBatch> MakeParameterStorageBatch(const ParameterGroupConfig& config,
                                                                   std::size_t gestureCount,
 @@ -318,45 +335,53 @@ std::size_t Modulators::Index(std::size_t voiceIx, std::size_t modIx) const {
@@ -432,7 +432,7 @@ index 926afb28..3322b5fc 100644
      }
      return voiceIx * numModulators_ + modIx;
  }
- 
+
  Gestures::Gestures(std::size_t gestures)
      : values_(gestures, 0.0f),
 -      selected_(gestures, false),
@@ -442,17 +442,17 @@ index 926afb28..3322b5fc 100644
 +        throw std::invalid_argument("gesture count exceeds 64-bit selector capacity");
 +    }
 +}
- 
+
  float& Gestures::Value(std::size_t gestureIx) {
      CheckIndex(gestureIx);
      return values_[gestureIx];
  }
- 
+
  float Gestures::Value(std::size_t gestureIx) const {
      CheckIndex(gestureIx);
      return values_[gestureIx];
  }
- 
+
  void Gestures::Select(std::size_t gestureIx, bool selected) {
      CheckIndex(gestureIx);
 -    selected_[gestureIx] = selected;
@@ -463,23 +463,23 @@ index 926afb28..3322b5fc 100644
 +        selectedMask_ &= ~bit;
 +    }
  }
- 
+
  bool Gestures::Selected(std::size_t gestureIx) const {
      CheckIndex(gestureIx);
 -    return selected_[gestureIx];
 +    return (selectedMask_ & (GestureMask{1} << gestureIx)) != 0;
  }
- 
+
  void Gestures::ClearSelection() {
 -    std::fill(selected_.begin(), selected_.end(), false);
 +    selectedMask_ = 0;
  }
- 
+
  GestureMetadata& Gestures::Metadata(std::size_t gestureIx) {
      CheckIndex(gestureIx);
      return metadata_[gestureIx];
  }
- 
+
  const GestureMetadata& Gestures::Metadata(std::size_t gestureIx) const {
      CheckIndex(gestureIx);
      return metadata_[gestureIx];
@@ -497,13 +497,13 @@ index 926afb28..3322b5fc 100644
 -    gestureActiveArena_.resize(config_.maxParameters * config_.numScenes * gestureCount_, 0);
 +    gestureActiveMaskArena_.resize(config_.maxParameters * config_.numScenes, 0);
  }
- 
+
  ParameterGroup::~ParameterGroup() = default;
- 
+
  bool ParameterGroup::CanAllocate() const {
      return AvailableParameterSlots() > 0;
  }
- 
+
  std::size_t ParameterGroup::AvailableParameterSlots() const {
      const std::size_t initialAllocated = std::min(parameterCount_, config_.maxParameters);
 @@ -571,37 +596,37 @@ Parameter::Parameter(ParameterId id, ParameterGroup& group, ParameterConfig conf
@@ -540,7 +540,7 @@ index 926afb28..3322b5fc 100644
 +    std::fill(gestureActiveMasks_.begin(), gestureActiveMasks_.end(), 0);
      SeedCachedKnobAndUiDisplayState();
  }
- 
+
  Parameter::Parameter(ParameterId id, ParameterGroup& group, ParameterConfig config,
                       ParameterStorageBatch& storageBatch, std::size_t slotIx)
      : id_(id),
@@ -582,9 +582,9 @@ index 926afb28..3322b5fc 100644
 +    std::fill(gestureActiveMasks_.begin(), gestureActiveMasks_.end(), 0);
      SeedCachedKnobAndUiDisplayState();
  }
- 
+
  ParameterStorageBatch::~ParameterStorageBatch() = default;
- 
+
  void Parameter::UIState::Configure(std::size_t newVoiceCapacity, std::size_t newModulatorColorCapacity,
                                     std::size_t newGestureColorCapacity) {
      voiceCapacity = newVoiceCapacity;
@@ -599,7 +599,7 @@ index 926afb28..3322b5fc 100644
          SetGestureActive(sceneIx, gestureIx, true);
          return true;
      };
- 
+
      bool armedGesture = false;
 -    for (std::size_t gestureIx = 0; gestureIx < group_.GestureCount(); ++gestureIx) {
 -        if (!group_.Manager().GestureSelected(gestureIx)) {
@@ -620,11 +620,11 @@ index 926afb28..3322b5fc 100644
          }
 -    }
 +    });
- 
+
      if (armedGesture) {
          return;
      }
- 
+
      float activeEffectiveWeightSum = 0.0f;
      float baseShareNumerator = 0.0f;
 -    for (std::size_t gestureIx = 0; gestureIx < group_.GestureCount(); ++gestureIx) {
@@ -641,15 +641,15 @@ index 926afb28..3322b5fc 100644
          baseShareNumerator += effectiveWeight * (1.0f - effectiveWeight);
 -    }
 +    });
- 
+
      if (activeEffectiveWeightSum == 0.0f) {
          ApplySceneDistribution(SceneCenter(scene.leftScene), SceneCenter(scene.rightScene), blend, delta, config_.range);
          return;
      }
- 
+
      ApplySceneDistribution(SceneCenter(scene.leftScene), SceneCenter(scene.rightScene), blend,
                             delta * (baseShareNumerator / activeEffectiveWeightSum), config_.range);
- 
+
 -    for (std::size_t gestureIx = 0; gestureIx < group_.GestureCount(); ++gestureIx) {
 +    ForEachGestureBit(activeGestures, [&](std::size_t gestureIx) {
          const float effectiveWeight = EffectiveGestureWeight(scene, gestureIx, blend);
@@ -657,14 +657,14 @@ index 926afb28..3322b5fc 100644
 -            continue;
 +            return;
          }
- 
+
          const float gestureDelta = delta * ((effectiveWeight * effectiveWeight) / activeEffectiveWeightSum);
          ApplySceneDistribution(GestureValue(scene.leftScene, gestureIx), GestureValue(scene.rightScene, gestureIx),
                                 blend, gestureDelta, config_.range);
 -    }
 +    });
  }
- 
+
  void Parameter::RandomizeVisibleValue(const SceneState& scene, float normalized) {
      ValidateSceneEndpoints(scene);
      const float target = LinearMap(RangeMin(config_.range), RangeMax(config_.range),
@@ -674,15 +674,15 @@ index 926afb28..3322b5fc 100644
      const float delta = target - TargetValue(0);
      HandleIncDec(scene, delta);
 @@ -1219,25 +1244,32 @@ float Parameter::SceneCenter(std::size_t sceneIx) const {
- 
+
  float& Parameter::GestureValue(std::size_t sceneIx, std::size_t gestureIx) {
      return gestureValues_[SceneGestureIndex(sceneIx, gestureIx)];
  }
- 
+
  float Parameter::GestureValue(std::size_t sceneIx, std::size_t gestureIx) const {
      return gestureValues_[SceneGestureIndex(sceneIx, gestureIx)];
  }
- 
+
  void Parameter::SetGestureActive(std::size_t sceneIx, std::size_t gestureIx, bool active) {
 -    gestureActive_[SceneGestureIndex(sceneIx, gestureIx)] = active ? 1 : 0;
 +    (void)SceneGestureIndex(sceneIx, gestureIx);
@@ -693,13 +693,13 @@ index 926afb28..3322b5fc 100644
 +        gestureActiveMasks_[sceneIx] &= ~bit;
 +    }
  }
- 
+
  bool Parameter::GestureActive(std::size_t sceneIx, std::size_t gestureIx) const {
 -    return gestureActive_[SceneGestureIndex(sceneIx, gestureIx)] != 0;
 +    (void)SceneGestureIndex(sceneIx, gestureIx);
 +    return (gestureActiveMasks_[sceneIx] & (GestureMask{1} << gestureIx)) != 0;
  }
- 
+
  std::span<float> Parameter::CurrentDepths(std::size_t voiceIx) {
      if (voiceIx >= group_.Config().numVoices) {
          throw std::out_of_range("parameter voice index out of range");
@@ -716,7 +716,7 @@ index 926afb28..3322b5fc 100644
      const float rightWeight = GestureActive(scene.rightScene, gestureIx) ? groupWeight * clampedBlend : 0.0f;
      return leftWeight + rightWeight;
  }
- 
+
  void Parameter::ResetSceneToDefault(std::size_t sceneIx, float defaultValue) {
      SceneCenter(sceneIx) = defaultValue;
 -    for (std::size_t gestureIx = 0; gestureIx < group_.GestureCount(); ++gestureIx) {
@@ -724,7 +724,7 @@ index 926afb28..3322b5fc 100644
 -    }
 +    gestureActiveMasks_[sceneIx] = 0;
  }
- 
+
  void Parameter::ResetModulationDepthToNeutral(const SceneState& scene) {
      ValidateSceneEndpoints(scene);
      for (Parameter* depthParameter : modulationDepths_) {
@@ -732,16 +732,16 @@ index 926afb28..3322b5fc 100644
              depthParameter->ResetModulationDepthToNeutral(scene);
          }
      }
- 
+
 @@ -1383,32 +1413,38 @@ void Parameter::ResetModulationDepthToNeutral(const SceneState& scene) {
  }
- 
+
  float Parameter::ComputeRawCenter(const SceneState& scene) const {
      ValidateSceneEndpoints(scene);
      const float blend = std::clamp(scene.blend, 0.0f, 1.0f);
      const float inverseBlend = 1.0f - blend;
      const float base = SceneCenter(scene.leftScene) * inverseBlend + SceneCenter(scene.rightScene) * blend;
- 
+
      float weightedMixSum = 0.0f;
      float activeWeightSum = 0.0f;
 -    for (std::size_t gestureIx = 0; gestureIx < group_.GestureCount(); ++gestureIx) {
@@ -757,7 +757,7 @@ index 926afb28..3322b5fc 100644
 -            continue;
 +            return;
          }
- 
+
          const float gestureValue = GestureValue(scene.leftScene, gestureIx) * inverseBlend +
                                     GestureValue(scene.rightScene, gestureIx) * blend;
          const float mix = base * (1.0f - effectiveWeight) + gestureValue * effectiveWeight;
@@ -765,18 +765,18 @@ index 926afb28..3322b5fc 100644
          activeWeightSum += effectiveWeight;
 -    }
 +    });
- 
+
      if (activeWeightSum == 0.0f) {
          return base;
      }
      return weightedMixSum / activeWeightSum;
  }
- 
+
  void Parameter::ComputeAtDepth(const SceneState& scene, std::size_t recursionDepth, bool smoothTargetCenter) {
      recursionDepth_ = recursionDepth;
      if (recursionDepth > 0 && group_.processingObserver_ != nullptr) {
 @@ -1545,22 +1581,22 @@ bool Parameter::HasNonZeroState() const {
- 
+
      if (std::fabs(currentCenter_ - neutralDepthCenter) > tolerance ||
          std::fabs(targetCenter_ - neutralDepthCenter) > tolerance) {
          return true;
@@ -835,7 +835,7 @@ index 926afb28..3322b5fc 100644
      }
      return false;
  }
- 
+
 -std::uint32_t Parameter::GesturesAffectingMask() const {
 -    std::uint32_t mask = 0;
 +GestureMask Parameter::GesturesAffectingMask() const {
@@ -868,26 +868,26 @@ index 926afb28..3322b5fc 100644
 +    const GestureMask rightMask = rightSceneValid ? gestureActiveMasks_[scene.rightScene] : 0;
 +    return (leftMask | rightMask) & GestureCountMask(group_.GestureCount());
  }
- 
+
  void ParameterGroup::SelectGesture(std::size_t gestureIx) {
      manager_->SelectGesture(gestureIx);
  }
- 
+
  void ParameterGroup::DeselectGesture(std::size_t gestureIx) {
      manager_->DeselectGesture(gestureIx);
  }
- 
+
 @@ -1881,22 +1909,22 @@ Bank::VisibleCell Bank::VisibleCellFor(PhysicalEncoderId encoderId) const {
      }
      return {
          .parameter = cell->parameter,
      };
  }
- 
+
  Parameter* Bank::TargetParameter() const {
      return ShowingModulation() ? selected_ : nullptr;
  }
- 
+
 -std::uint32_t Bank::GesturesAffectingMask() const {
 -    std::uint32_t mask = 0;
 +GestureMask Bank::GesturesAffectingMask() const {
@@ -899,7 +899,7 @@ index 926afb28..3322b5fc 100644
      }
      return mask;
  }
- 
+
  void BankSlot::UIState::Configure(std::size_t newCellCapacity, std::size_t voiceCapacity,
                                    std::size_t modulatorColorCapacity, std::size_t gestureColorCapacity) {
 @@ -2139,21 +2167,21 @@ bool ParameterMessageOutBus::Pop(ParameterMessageOut& message) {
@@ -911,7 +911,7 @@ index 926afb28..3322b5fc 100644
      size_.fetch_sub(1, std::memory_order_release);
      return true;
  }
- 
+
  bool ParameterManager::SetGestureCount(std::size_t count) {
 -    if (!groups_.empty()) {
 +    if (count > std::numeric_limits<GestureMask>::digits || !groups_.empty()) {
@@ -920,7 +920,7 @@ index 926afb28..3322b5fc 100644
      gestures_ = Gestures(count);
      return true;
  }
- 
+
  ParameterGroup& ParameterManager::CreateGroup(ParameterGroupConfig config) {
      auto group = std::make_unique<ParameterGroup>(std::move(config), *this, gestures_.NumGestures());
      ParameterGroup& result = *group;
@@ -953,7 +953,7 @@ index 926afb28..3322b5fc 100644
          }
      }
  }
- 
+
 diff --git a/projects/synth/tests/instrument_tests.cpp b/projects/synth/tests/instrument_tests.cpp
 index 3dbb6b3b..b9525422 100644
 --- a/projects/synth/tests/instrument_tests.cpp
@@ -968,7 +968,7 @@ index 3dbb6b3b..b9525422 100644
      REQUIRE_TRUE(synth::MidiProfileKindFromName("generic", kind));
      REQUIRE_TRUE(kind == MidiProfileKind::Generic);
  }
- 
+
 +TEST_CASE(MessageInJsonRoundTripsHighGestureIndex) {
 +    synth::JsonArena arena(4096);
 +    const synth::MessageIn source = synth::MessageIn::SetGestureSelect(17, 63, true);
@@ -987,7 +987,7 @@ index 3dbb6b3b..b9525422 100644
      REQUIRE_TRUE(!synth::MidiProfileKindFromName("", kind));
      REQUIRE_TRUE(!synth::MidiProfileKindFromName("WrldBldr", kind));
  }
- 
+
  TEST_CASE(KindSupportMatrix) {
      const MidiKindSupport wrldbldr = synth::KindSupport(MidiProfileKind::WrldBldr);
      REQUIRE_TRUE(wrldbldr.encoders);
@@ -1005,7 +1005,7 @@ index 597702eb..1133fe03 100644
      REQUIRE_TRUE(group.GestureCount() == 2);
      REQUIRE_TRUE(!manager.SetGestureCount(3));
  }
- 
+
 +TEST_CASE(manager_gesture_count_supports_zero_through_64_and_rejects_65_without_mutation) {
 +    for (const std::size_t count : {std::size_t{0}, std::size_t{1}, std::size_t{32},
 +                                    std::size_t{33}, std::size_t{64}}) {
@@ -1068,7 +1068,7 @@ index 597702eb..1133fe03 100644
      manager.SetGestureCount(1);
      (void)manager.CreateGroup({.numVoices = 1, .numScenes = 2, .maxParameters = 1});
      (void)manager.CreateGroup({.numVoices = 1, .numScenes = 1, .maxParameters = 1});
- 
+
      REQUIRE_TRUE(manager.SetSceneEndpoints(0, 0));
      manager.SetSceneBlend(0.25f);
      REQUIRE_TRUE(!manager.SetSceneEndpoints(1, 0));
@@ -1083,7 +1083,7 @@ index 597702eb..1133fe03 100644
      REQUIRE_TRUE(state.modulatorSourceColors[0].Load() == synth::Color::Off);
      REQUIRE_TRUE(state.gestureColors[0].Load() == synth::Color::Off);
  }
- 
+
 -TEST_CASE(ui_state_reports_affecting_masks_for_first_32_indices) {
 +TEST_CASE(ui_state_reports_affecting_masks_through_gesture_index_63) {
      synth::ParameterManager manager;
@@ -1095,7 +1095,7 @@ index 597702eb..1133fe03 100644
          .numScenes = 2,
          .maxParameters = 4,
      });
- 
+
      auto& parameter = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.5f});
      auto& depth31 = manager.CreateParameter(group, {.name = "Depth31", .defaultValue = 0.25f});
      auto& depth32 = manager.CreateParameter(group, {.name = "Depth32", .defaultValue = 0.25f});
@@ -1109,10 +1109,10 @@ index 597702eb..1133fe03 100644
      parameter.SetGestureActive(1, 1, true);
      parameter.SetGestureActive(1, 31, true);
 +    parameter.SetGestureActive(1, 32, true);
- 
+
      synth::Parameter::UIState ui(1);
      REQUIRE_TRUE(manager.SetSceneEndpoints(0, 1));
- 
+
      manager.SetSceneBlend(0.0f);
      parameter.PopulateUIState(ui);
      REQUIRE_TRUE(ui.modulatorsAffectingMask.load() == (1u << 31));
@@ -1120,14 +1120,14 @@ index 597702eb..1133fe03 100644
 +    REQUIRE_TRUE(ui.gesturesAffectingMask.load() ==
 +                 ((std::uint64_t{1} << 0) | (std::uint64_t{1} << 31) |
 +                  (std::uint64_t{1} << 32) | (std::uint64_t{1} << 63)));
- 
+
      manager.SetSceneBlend(1.0f);
      parameter.PopulateUIState(ui);
 -    REQUIRE_TRUE(ui.gesturesAffectingMask.load() == ((1u << 1) | (1u << 31)));
 +    REQUIRE_TRUE(ui.gesturesAffectingMask.load() ==
 +                 ((std::uint64_t{1} << 1) | (std::uint64_t{1} << 31) |
 +                  (std::uint64_t{1} << 32)));
- 
+
      manager.SetSceneBlend(0.5f);
      parameter.PopulateUIState(ui);
 -    REQUIRE_TRUE(ui.gesturesAffectingMask.load() == ((1u << 0) | (1u << 1) | (1u << 31)));
@@ -1136,7 +1136,7 @@ index 597702eb..1133fe03 100644
 +                  (std::uint64_t{1} << 31) | (std::uint64_t{1} << 32) |
 +                  (std::uint64_t{1} << 63)));
  }
- 
+
  TEST_CASE(ui_state_ignores_inactive_depth_gesture_values_for_modulator_mask) {
      synth::ParameterManager manager;
      manager.SetGestureCount(1);
@@ -1148,12 +1148,12 @@ index 597702eb..1133fe03 100644
 @@ -2638,41 +2704,41 @@ TEST_CASE(handle_inc_dec_saturation_solve_matches_smart_grid) {
      parameter.HandleIncDec(scene, 0.2f);
      parameter.Compute(scene);
- 
+
      REQUIRE_NEAR(parameter.SceneCenter(0), 1.0f, 0.0001f);
      REQUIRE_NEAR(parameter.SceneCenter(1), 0.7f, 0.0001f);
      REQUIRE_NEAR(parameter.TargetCenter(), 0.925f, 0.0001f);
  }
- 
+
  TEST_CASE(selected_gesture_activation_snapshots_parent_value) {
      synth::ParameterManager manager;
 -    manager.SetGestureCount(2);
@@ -1174,9 +1174,9 @@ index 597702eb..1133fe03 100644
 +    parameter.GestureValue(0, 63) = 0.9f;
 +    parameter.GestureValue(1, 63) = 0.9f;
 +    manager.SelectGesture(63);
- 
+
      parameter.HandleIncDec({.leftScene = 0, .rightScene = 1, .blend = 0.0f}, 0.0f);
- 
+
 -    REQUIRE_TRUE(parameter.GestureActive(0, 0));
 -    REQUIRE_TRUE(!parameter.GestureActive(1, 0));
 -    REQUIRE_NEAR(parameter.GestureValue(0, 0), 0.25f, 0.0001f);
@@ -1186,7 +1186,7 @@ index 597702eb..1133fe03 100644
 +    REQUIRE_NEAR(parameter.GestureValue(0, 63), 0.25f, 0.0001f);
 +    REQUIRE_NEAR(parameter.GestureValue(1, 63), 0.9f, 0.0001f);
  }
- 
+
  TEST_CASE(selected_inactive_gesture_first_turn_arms_without_applying_delta) {
      synth::ParameterManager manager;
      manager.SetGestureCount(1);
@@ -1198,12 +1198,12 @@ index 597702eb..1133fe03 100644
 @@ -2709,41 +2775,41 @@ TEST_CASE(selected_zero_weight_gesture_first_turn_arms_without_applying_delta) {
      const synth::SceneState scene{.leftScene = 0, .rightScene = 0, .blend = 0.0f};
      parameter.HandleIncDec(scene, 0.2f);
- 
+
      REQUIRE_TRUE(parameter.GestureActive(0, 0));
      REQUIRE_NEAR(parameter.SceneCenter(0), 0.25f, 0.0001f);
      REQUIRE_NEAR(parameter.GestureValue(0, 0), 0.25f, 0.0001f);
  }
- 
+
  TEST_CASE(active_high_gesture_distributes_after_deselection) {
      synth::ParameterManager manager;
 -    manager.SetGestureCount(1);
@@ -1224,10 +1224,10 @@ index 597702eb..1133fe03 100644
 +    parameter.SetGestureActive(0, 63, true);
 +    manager.SetGestureValue(63, 1.0f);
 +    manager.DeselectGesture(63);
- 
+
      const synth::SceneState scene{.leftScene = 0, .rightScene = 0, .blend = 0.0f};
      parameter.HandleIncDec(scene, 0.2f);
- 
+
 -    REQUIRE_TRUE(parameter.GestureActive(0, 0));
 -    REQUIRE_TRUE(!manager.GestureSelected(0));
 +    REQUIRE_TRUE(parameter.GestureActive(0, 63));
@@ -1236,7 +1236,7 @@ index 597702eb..1133fe03 100644
 -    REQUIRE_NEAR(parameter.GestureValue(0, 0), 1.0f, 0.0001f);
 +    REQUIRE_NEAR(parameter.GestureValue(0, 63), 1.0f, 0.0001f);
  }
- 
+
  TEST_CASE(selected_gesture_weight_one_edits_gesture_without_moving_base) {
      synth::ParameterManager manager;
      manager.SetGestureCount(2);
@@ -1251,11 +1251,11 @@ index 597702eb..1133fe03 100644
      REQUIRE_TRUE(bus.Push(synth::MessageIn::SetGestureSelect(0, 1, true)));
      REQUIRE_TRUE(bus.Push(synth::MessageIn::SetGestureSelect(0, 1, false)));
      bus.Process(0);
- 
+
      REQUIRE_TRUE(manager.ResetHeld());
      REQUIRE_TRUE(!manager.GestureSelected(1));
  }
- 
+
 +TEST_CASE(message_bus_and_patch_round_trip_gesture_indices_32_and_63) {
 +    synth::ParameterManager source;
 +    REQUIRE_TRUE(source.SetGestureCount(64));
@@ -1301,11 +1301,11 @@ index 597702eb..1133fe03 100644
  TEST_CASE(manager_tracks_reset_random_and_random_mod_precedence) {
      synth::ParameterManager manager;
      REQUIRE_TRUE(manager.GetCurrentModifier() == synth::Modifier::None);
- 
+
      manager.SetResetHeld(true);
      REQUIRE_TRUE(manager.ResetHeld());
      REQUIRE_TRUE(manager.GetCurrentModifier() == synth::Modifier::Reset);
- 
+
      manager.SetRandomHeld(true);
      REQUIRE_TRUE(manager.RandomHeld());
 @@ -4161,30 +4269,31 @@ TEST_CASE(manager_random_source_hooks_are_deterministic_and_bounded) {
@@ -1316,7 +1316,7 @@ index 597702eb..1133fe03 100644
      REQUIRE_TRUE(manager.NextRandomIndex(5) == 2);
      REQUIRE_TRUE(manager.NextRandomIndex(0) == 0);
  }
- 
+
  TEST_CASE(manager_ui_state_reports_bank_colors_selection_and_gesture_affecting) {
      synth::ParameterManager manager;
 -    manager.SetGestureCount(4);
@@ -1333,7 +1333,7 @@ index 597702eb..1133fe03 100644
 +    affected.SetGestureActive(0, 63, true);
      unaffected.SetGestureActive(0, 1, true);
      drillHidden.SetGestureActive(0, 2, true);
- 
+
      auto& bankA = manager.CreateBank();
      bankA.SetBankColor(synth::Color::Green);
      bankA.AddMapping(10, affected);
@@ -1343,19 +1343,19 @@ index 597702eb..1133fe03 100644
      bankB.AddMapping(11, unaffected);
 @@ -4193,21 +4302,21 @@ TEST_CASE(manager_ui_state_reports_bank_colors_selection_and_gesture_affecting)
      bankC.AddMapping(12, affected);
- 
+
      auto& slot = manager.CreateBankSlot();
      slot.AddPhysicalEncoder(10);
      slot.AddPhysicalEncoder(13);
      slot.SelectBank(&bankA);
      manager.HandlePress(0, 0);
      REQUIRE_TRUE(bankA.ShowingModulation());
- 
+
      synth::ParameterManager::UIState ui;
 -    ui.Configure(1, 2, 1, 0, 4, 4);
 +    ui.Configure(1, 2, 1, 0, 64, 4);
      manager.PopulateUIState(ui);
- 
+
      REQUIRE_TRUE(ui.bankCapacity == 4);
      REQUIRE_TRUE(ui.banks[0].connected.load());
      REQUIRE_TRUE(ui.banks[0].selected.load());
@@ -1378,7 +1378,7 @@ index 597702eb..1133fe03 100644
 +    REQUIRE_TRUE(ui.gestures.bankAffectingCount[63].load() == 2);
 +    REQUIRE_TRUE(ui.gestures.bankAffectingMask[63].load() == ((1u << 0u) | (1u << 2u)));
  }
- 
+
  TEST_CASE(message_bus_routes_modulation_target_position_to_visible_parameter) {
      synth::ParameterManager manager;
      manager.SetGestureCount(1);
@@ -1397,7 +1397,7 @@ index 597702eb..1133fe03 100644
      }
      return mask;
  }
- 
+
 -std::uint32_t SimGesturesAffectingMask(const SimOracle& oracle, const SimParam& parameter) {
 -    std::uint32_t mask = 0;
 +synth::GestureMask SimGesturesAffectingMask(const SimOracle& oracle, const SimParam& parameter) {
@@ -1420,9 +1420,9 @@ index 597702eb..1133fe03 100644
      }
      return mask;
  }
- 
+
  void SimSeedDisplayState(SimOracle& oracle, std::size_t paramIx);
- 
+
  void SimComputeAtDepth(SimOracle& oracle, std::size_t paramIx, std::size_t recursionDepth) {
      SimParam& parameter = oracle.params[paramIx];
      parameter.targetCenter = SimClamp(SimRawCenter(oracle, parameter), parameter.range);
@@ -1463,7 +1463,7 @@ index eace7945..485fbd4f 100644
              "encoder uses snapshot source badge colors");
      Require(snapshotEncoder.gestureColors == std::vector<synth::Color>{synth::Color::Orange},
              "encoder uses snapshot gesture badge colors");
- 
+
 +    Require(synth::ui::EncoderGeometry::BadgeText(false, 16) == "17", "gesture 16 badge is one-based");
 +    Require(synth::ui::EncoderGeometry::BadgeText(false, 62) == "63", "gesture 62 badge is one-based");
 +    Require(synth::ui::EncoderGeometry::BadgeText(false, 63) == "64", "gesture 63 badge is one-based");

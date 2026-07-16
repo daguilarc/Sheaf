@@ -16,10 +16,10 @@ index a6d0d1b7..87545b8f 100644
 +++ b/projects/synth/docs/coverage.md
 @@ -1,13 +1,13 @@
  # Spec Coverage
- 
+
 -Last audit: ganged random LFO, 2026-07-15
 +Last audit: sparse modulation processing, 2026-07-15
- 
+
  | Requirement | Status | Primary exact coverage |
  |---|---|---|
  | `sprs-1` | covered | `runtime_main_component_tests`, `browser_runtime_contract_tests`, `runtime_shell_session_tests`, fake-app/miniapp Playwright, generic-runtime scan |
@@ -45,11 +45,11 @@ index a6d0d1b7..87545b8f 100644
 +| `spm-72` | covered | `group_process_sample_visits_only_registered_roots`, `recursive_local_compute_seeds_display_without_audio_rate_processing`, active-route full-scan cases, and `braid4_sparse_work_counters_bound_inactive_capacity` |
 +| `spm-73` | covered | 0--64 gesture boundary/sparse-mask tests, `ControllerGesture63SelectsAndEditsManagerGestureWhileBankMaskRemains32Bit`, portable bit-63 badge rendering, and randomized UI-state coverage |
 +| `spm-74` | covered | neutral-leaf guard, bottom-up collapse, pin, settling/detach, bounded-reuse, patch-load, semantic-JSON, and randomized lifecycle cases in `parameter_modulation_tests` |
- 
+
  ## Requirement Mappings
- 
+
  ### `sprs-1` - Shared Portable Composition
- 
+
  - [`runtime_main_component_tests.cpp`](../tests/runtime_main_component_tests.cpp):
    `TestSidebarOpensEachPageAndBackRestoresApp`,
    `TestAppActionsRouteOnlyToAppSurface`, and
@@ -65,7 +65,7 @@ index a6d0d1b7..87545b8f 100644
    `TestMiniAppThreePanelCommandsUseExistingBrowserSchema` in
    [`browser_command_buffer_tests.cpp`](../tests/browser_command_buffer_tests.cpp)
    cover the three-panel commands in both production backends.
- 
+
 +### `spm-20` (modified) - 64-Bit Parameter UI Snapshots
 +
 +- [`parameter_modulation_tests.cpp`](../tests/parameter_modulation_tests.cpp):
@@ -163,7 +163,7 @@ index a6d0d1b7..87545b8f 100644
 +  not replace the deterministic work-count contract above.
 +
  ## Known Gaps
- 
+
  - Browser realtime audio underrun safety is intentionally not claimed by these
    mappings. The current deterministic scheduler deficit and the deferred
    render-ahead design are recorded in
@@ -184,9 +184,9 @@ index 3e4de797..b8a29e6b 100644
          throw std::runtime_error(oss.str());
      }
  }
- 
+
  #define REQUIRE_NEAR(actual, expected, tolerance) RequireNear((actual), (expected), (tolerance), #actual)
- 
+
 +enum class DeadlineScenario {
 +    Baseline,
 +    SparseActive,
@@ -231,7 +231,7 @@ index 3e4de797..b8a29e6b 100644
      }
      REQUIRE_TRUE(heardSignal);
  }
- 
+
 -std::array<std::vector<float>, 2> RunSegments(double sampleRate, const std::vector<std::size_t>& segmentFrames) {
 +std::array<std::vector<float>, 2> RunSegments(double sampleRate,
 +                                              const std::vector<std::size_t>& segmentFrames,
@@ -241,7 +241,7 @@ index 3e4de797..b8a29e6b 100644
      engine.Initialize();
      engine.Prepare(sampleRate, 256);
 +    ConfigureDeadlineScenario(engine, scenario);
- 
+
      std::array<std::vector<float>, 2> captured;
      for (const std::size_t frames : segmentFrames) {
          std::array<std::vector<float>, 2> blockStorage{{
@@ -255,25 +255,25 @@ index 3e4de797..b8a29e6b 100644
              .numFrames = frames,
          };
          engine.ProcessBlock(block, timestamp++);
- 
+
          captured[0].insert(captured[0].end(), blockStorage[0].begin(), blockStorage[0].end());
          captured[1].insert(captured[1].end(), blockStorage[1].begin(), blockStorage[1].end());
      }
      return captured;
  }
- 
+
 -DeadlineStats MeasureDeadline(double sampleRate) {
 +DeadlineStats MeasureDeadline(double sampleRate, DeadlineScenario scenario) {
      constexpr std::size_t kBlockFrames = 256;
      constexpr std::size_t kWarmupBlocks = 64;
      constexpr std::size_t kMeasuredBlocks = 512;
- 
+
      std::uint64_t timestamp = 0;
      synth::Engine<synth_braid4::Braid4Core> engine([&timestamp] { return timestamp++; });
      engine.Initialize();
      engine.Prepare(sampleRate, static_cast<int>(kBlockFrames));
 +    ConfigureDeadlineScenario(engine, scenario);
- 
+
      std::array<std::vector<float>, 2> blockStorage{{
          std::vector<float>(kBlockFrames, 0.0f),
          std::vector<float>(kBlockFrames, 0.0f),
@@ -288,19 +288,19 @@ index 3e4de797..b8a29e6b 100644
          const auto end = std::chrono::steady_clock::now();
          durations.push_back(std::chrono::duration<double>(end - start).count());
      }
- 
+
      std::vector<double> sorted = durations;
      std::sort(sorted.begin(), sorted.end());
      const std::size_t p99Index = static_cast<std::size_t>(
          std::ceil(static_cast<double>(sorted.size()) * 0.99)) - 1;
- 
+
 -    const auto contiguous = RunSegments(sampleRate, {kBlockFrames * 2});
 -    const auto split = RunSegments(sampleRate, {kBlockFrames, kBlockFrames});
 +    const auto contiguous = RunSegments(sampleRate, {kBlockFrames * 2}, scenario);
 +    const auto split = RunSegments(sampleRate, {kBlockFrames, kBlockFrames}, scenario);
      AssertFiniteStereo(contiguous);
      AssertFiniteStereo(split);
- 
+
      return {
 +        .scenario = scenario,
          .sampleRate = sampleRate,
@@ -315,33 +315,33 @@ index 3e4de797..b8a29e6b 100644
          .splitRight = split[1],
      };
  }
- 
+
 -void AssertDeadlineAndContinuity(double sampleRate) {
 -    const DeadlineStats stats = MeasureDeadline(sampleRate);
 +void AssertDeadlineAndContinuity(double sampleRate,
 +                                 DeadlineScenario scenario = DeadlineScenario::Baseline) {
 +    const DeadlineStats stats = MeasureDeadline(sampleRate, scenario);
- 
+
      constexpr std::size_t kBlockFrames = 256;
      constexpr std::size_t kMeasuredBlocks = 512;
      constexpr std::size_t kWarmupBlocks = 64;
      const std::size_t expectedProcessedHostFrames = (kWarmupBlocks + kMeasuredBlocks) * kBlockFrames;
- 
+
      REQUIRE_TRUE(stats.counters.hostFramesProcessed == expectedProcessedHostFrames);
      REQUIRE_TRUE(stats.counters.internalSubframesProcessed == expectedProcessedHostFrames * 4);
      REQUIRE_TRUE(stats.counters.lastInternalSampleIndex == expectedProcessedHostFrames * 4 - 1);
      REQUIRE_TRUE(stats.contiguousLeft.size() == kBlockFrames * 2);
 @@ -189,40 +218,49 @@ void AssertDeadlineAndContinuity(double sampleRate) {
      REQUIRE_TRUE(stats.splitRight.size() == stats.contiguousRight.size());
- 
+
      for (std::size_t frame = 0; frame < stats.contiguousLeft.size(); ++frame) {
          REQUIRE_NEAR(stats.splitLeft[frame], stats.contiguousLeft[frame], 0.000001);
          REQUIRE_NEAR(stats.splitRight[frame], stats.contiguousRight[frame], 0.000001);
      }
- 
+
      REQUIRE_TRUE(stats.averageSeconds <= stats.blockSeconds * 0.60);
      REQUIRE_TRUE(stats.p99Seconds <= stats.blockSeconds * 0.80);
- 
+
 -    std::cout << "[deadline] " << stats.sampleRate << "Hz avg="
 +    std::cout << "[deadline] " << DeadlineScenarioName(stats.scenario) << " "
 +              << stats.sampleRate << "Hz/" << (stats.sampleRate * 4.0) << "Hz-internal avg="
@@ -349,21 +349,21 @@ index 3e4de797..b8a29e6b 100644
                << (stats.p99Seconds * 1000.0) << "ms block="
                << (stats.blockSeconds * 1000.0) << "ms\n";
  }
- 
+
  } // namespace
- 
+
  TEST_CASE(braid4_meets_44100hz_256_frame_deadline_and_continuity) {
      AssertDeadlineAndContinuity(44100.0);
  }
- 
+
  TEST_CASE(braid4_meets_48000hz_256_frame_deadline_and_continuity) {
      AssertDeadlineAndContinuity(48000.0);
  }
- 
+
  TEST_CASE(braid4_meets_96000hz_256_frame_deadline_and_continuity) {
      AssertDeadlineAndContinuity(96000.0);
  }
- 
+
 +TEST_CASE(braid4_sparse_modulation_meets_48000hz_256_frame_deadline) {
 +    AssertDeadlineAndContinuity(48000.0, DeadlineScenario::SparseActive);
 +}
@@ -391,12 +391,12 @@ index 3d62aa38..c7bb1dc6 100644
          return command.kind == synth::ui::DrawCommand::Kind::Polyline;
      });
  }
- 
+
  struct EngineRunResult {
      std::vector<std::vector<float>> channels;
      synth_braid4::Braid4Core::DebugCounterState counters;
  };
- 
+
 +enum class Braid4WorkScenario {
 +    Baseline,
 +    MaterializedNeutral,
@@ -509,7 +509,7 @@ index 3d62aa38..c7bb1dc6 100644
      engine.Initialize();
      engine.Prepare(synth_braid4::Braid4Core::Config().preferredSampleRate,
                     synth_braid4::Braid4Core::Config().preferredBlockSize);
- 
+
      std::vector<std::vector<float>> captured(static_cast<std::size_t>(std::max(outputChannels, 0)));
      for (const std::size_t frames : segmentFrames) {
          std::vector<std::vector<float>> blockStorage(static_cast<std::size_t>(std::max(outputChannels, 0)),
@@ -517,13 +517,13 @@ index 3d62aa38..c7bb1dc6 100644
      for (synth::ParameterGroup* group : groups) {
          group->ProcessSample(1);
      }
- 
+
      const std::size_t visited = work[0].topLevelProcessLiteCalls +
                                  work[1].topLevelProcessLiteCalls +
                                  work[2].topLevelProcessLiteCalls;
      REQUIRE_TRUE(visited == rootCount);
  }
- 
+
 +TEST_CASE(braid4_sparse_work_counters_bound_inactive_capacity) {
 +    const Braid4WorkResult baseline = MeasureBraid4Work(Braid4WorkScenario::Baseline);
 +    const Braid4WorkResult neutral = MeasureBraid4Work(Braid4WorkScenario::MaterializedNeutral);
