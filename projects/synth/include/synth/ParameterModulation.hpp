@@ -118,6 +118,7 @@ struct PageDescriptor {
 
 class Parameter;
 class ParameterManager;
+class Bank;
 class BankSlot;
 struct ParameterStorageBatch;
 
@@ -300,6 +301,9 @@ public:
     std::size_t AvailableParameterSlots() const;
     void AddParameterStorageBatch(std::unique_ptr<ParameterStorageBatch> batch);
     std::size_t ParameterCount() const { return parameterCount_; }
+    std::size_t LiveLocalParameterCount() const { return liveLocalParameterCount_; }
+    std::size_t FreeLocalParameterSlotCount() const { return recycledLocalSlots_.size(); }
+    std::size_t CollectNeutralLocalParameters();
     Parameter& ParameterByLocalIndex(std::size_t localIx);
     const Parameter& ParameterByLocalIndex(std::size_t localIx) const;
     std::size_t GestureCount() const { return gestureCount_; }
@@ -322,6 +326,7 @@ private:
     friend class Bank;
 
     Parameter& CreateLocalParameter(ParameterConfig config, ParameterId id);
+    void RecycleLocalParameter(Parameter& parameter);
     void RegisterTopLevelParameter(Parameter& parameter);
     void RequestParameterStorageBatch(std::size_t minimumAdditionalParameters);
     void RequestParameterStorageBatchIfLow();
@@ -334,10 +339,18 @@ private:
     std::size_t gestureCount_ = 0;
     Modulators modulators_;
     std::size_t parameterCount_ = 0;
+    std::size_t liveLocalParameterCount_ = 0;
     std::vector<Parameter*> topLevelParameters_;
     ParameterProcessingObserver* processingObserver_ = nullptr;
     std::vector<std::unique_ptr<Parameter>> parameters_;
     std::vector<std::unique_ptr<ParameterStorageBatch>> extraStorageBatches_;
+    struct RecycledLocalSlot {
+        Parameter* parameter = nullptr;
+        ParameterStorageBatch* batch = nullptr;
+        std::size_t slotIx = 0;
+        std::size_t storageLocalIx = 0;
+    };
+    std::vector<RecycledLocalSlot> recycledLocalSlots_;
     bool storageRequestPending_ = false;
     std::vector<float> currentCenterScaleArena_;
     std::vector<float> targetCenterScaleArena_;
@@ -469,6 +482,8 @@ public:
 
 private:
     friend class ParameterManager;
+    friend class ParameterGroup;
+    friend class Bank;
 
     std::size_t SceneGestureIndex(std::size_t sceneIx, std::size_t gestureIx) const;
     void ValidateSceneEndpoints(const SceneState& scene) const;
@@ -488,6 +503,11 @@ private:
     bool RouteNeutralAcrossVoices(std::size_t routeSlot) const;
     void PruneNeutralActiveRoutes();
     void AssertRouteBijection() const;
+    void PinLocalForView();
+    void UnpinLocalForView();
+    bool CanRecycleLocal() const;
+    std::size_t CollectNeutralChildren();
+    void ResetLocalForReuse(ParameterId id, ParameterConfig config);
     std::uint32_t ModulatorsAffectingMask() const;
     bool HasNonDefaultState() const;
     bool HasNonZeroState() const;
@@ -495,7 +515,10 @@ private:
     ParameterId id_;
     ParameterGroup& group_;
     ParameterConfig config_;
+    ParameterStorageBatch* storageBatch_ = nullptr;
     std::size_t slotIx_ = 0;
+    std::size_t storageLocalIx_ = 0;
+    std::size_t localViewPinCount_ = 0;
     std::size_t recursionDepth_ = 0;
     float currentCenter_ = 0.0f;
     float targetCenter_ = 0.0f;
@@ -710,6 +733,7 @@ public:
     const Parameter* FindParameterByName(std::string_view name) const;
     JSON ParameterValuesToJSON(JsonArena& arena) const;
     bool LoadParameterValuesFromJSON(JSON json);
+    std::size_t CollectNeutralLocalParameters();
     void ComputeAllParameters();
     // Control-rate target computation for the steady-state audio pump:
     // Compute() every parameter without snapping current values, so

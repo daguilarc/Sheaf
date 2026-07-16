@@ -424,6 +424,7 @@ ParameterGroup::ParameterGroup(ParameterGroupConfig config, ParameterManager& ma
       parameterCount_(0) {
     parameters_.reserve(config_.maxParameters);
     topLevelParameters_.reserve(config_.maxParameters);
+    recycledLocalSlots_.reserve(config_.maxParameters);
     currentCenterScaleArena_.resize(config_.maxParameters * config_.numVoices);
     targetCenterScaleArena_.resize(config_.maxParameters * config_.numVoices);
     currentNormalizationOffsetArena_.resize(config_.maxParameters * config_.numVoices);
@@ -457,7 +458,7 @@ std::size_t ParameterGroup::AvailableParameterSlots() const {
     for (const auto& batch : extraStorageBatches_) {
         available += batch->Available();
     }
-    return available;
+    return available + recycledLocalSlots_.size();
 }
 
 void ParameterGroup::AddParameterStorageBatch(std::unique_ptr<ParameterStorageBatch> batch) {
@@ -476,11 +477,30 @@ Parameter& ParameterGroup::CreateLocalParameter(ParameterConfig config, Paramete
         throw std::length_error("parameter group capacity exhausted");
     }
 
+    if (id == kLocalParameterId && !recycledLocalSlots_.empty()) {
+        RecycledLocalSlot recycled = recycledLocalSlots_.back();
+        recycledLocalSlots_.pop_back();
+        if (recycled.parameter == nullptr || recycled.parameter->storageBatch_ != recycled.batch ||
+            recycled.parameter->slotIx_ != recycled.slotIx ||
+            recycled.parameter->storageLocalIx_ != recycled.storageLocalIx ||
+            &ParameterByLocalIndex(recycled.storageLocalIx) != recycled.parameter ||
+            (recycled.batch != nullptr && !recycled.batch->Compatible(config_, gestureCount_))) {
+            throw std::logic_error("recycled local parameter slot identity is invalid");
+        }
+        recycled.parameter->ResetLocalForReuse(id, std::move(config));
+        ++liveLocalParameterCount_;
+        RequestParameterStorageBatchIfLow();
+        return *recycled.parameter;
+    }
+
     if (parameterCount_ < config_.maxParameters) {
         auto parameter = std::make_unique<Parameter>(id, *this, std::move(config), parameterCount_);
         Parameter& result = *parameter;
         parameters_.push_back(std::move(parameter));
         ++parameterCount_;
+        if (id == kLocalParameterId) {
+            ++liveLocalParameterCount_;
+        }
         RequestParameterStorageBatchIfLow();
         return result;
     }
@@ -494,11 +514,42 @@ Parameter& ParameterGroup::CreateLocalParameter(ParameterConfig config, Paramete
         Parameter& result = *parameter;
         batch->parameters.push_back(std::move(parameter));
         ++parameterCount_;
+        if (id == kLocalParameterId) {
+            ++liveLocalParameterCount_;
+        }
         RequestParameterStorageBatchIfLow();
         return result;
     }
 
     throw std::length_error("parameter group capacity exhausted");
+}
+
+void ParameterGroup::RecycleLocalParameter(Parameter& parameter) {
+    if (parameter.id_ != kLocalParameterId || parameter.localViewPinCount_ != 0) {
+        throw std::logic_error("only unpinned local parameters can be recycled");
+    }
+    if (liveLocalParameterCount_ == 0) {
+        throw std::logic_error("local parameter accounting underflow");
+    }
+    if (parameter.storageLocalIx_ >= parameterCount_ ||
+        &ParameterByLocalIndex(parameter.storageLocalIx_) != &parameter) {
+        throw std::logic_error("local parameter storage identity is invalid");
+    }
+    recycledLocalSlots_.push_back({
+        .parameter = &parameter,
+        .batch = parameter.storageBatch_,
+        .slotIx = parameter.slotIx_,
+        .storageLocalIx = parameter.storageLocalIx_,
+    });
+    --liveLocalParameterCount_;
+}
+
+std::size_t ParameterGroup::CollectNeutralLocalParameters() {
+    std::size_t collected = 0;
+    for (Parameter* root : topLevelParameters_) {
+        collected += root->CollectNeutralChildren();
+    }
+    return collected;
 }
 
 void ParameterGroup::RegisterTopLevelParameter(Parameter& parameter) {
@@ -584,6 +635,7 @@ Parameter::Parameter(ParameterId id, ParameterGroup& group, ParameterConfig conf
       group_(group),
       config_(std::move(config)),
       slotIx_(slotIx),
+      storageLocalIx_(group.parameterCount_),
       currentCenter_(ClampToRange(config_.defaultValue, config_.range)),
       targetCenter_(currentCenter_),
       currentCenterScales_(ArenaSlice(group_.currentCenterScaleArena_, slotIx_ * group_.Config().numVoices,
@@ -663,7 +715,9 @@ Parameter::Parameter(ParameterId id, ParameterGroup& group, ParameterConfig conf
     : id_(id),
       group_(group),
       config_(std::move(config)),
+      storageBatch_(&storageBatch),
       slotIx_(slotIx),
+      storageLocalIx_(group.parameterCount_),
       currentCenter_(ClampToRange(config_.defaultValue, config_.range)),
       targetCenter_(currentCenter_),
       currentCenterScales_(ArenaSlice(storageBatch.currentCenterScaleArena, slotIx_ * group_.Config().numVoices,
@@ -739,6 +793,100 @@ Parameter::Parameter(ParameterId id, ParameterGroup& group, ParameterConfig conf
 }
 
 ParameterStorageBatch::~ParameterStorageBatch() = default;
+
+void Parameter::PinLocalForView() {
+    if (id_ == kLocalParameterId) {
+        ++localViewPinCount_;
+    }
+}
+
+void Parameter::UnpinLocalForView() {
+    if (id_ != kLocalParameterId) {
+        return;
+    }
+    if (localViewPinCount_ == 0) {
+        throw std::logic_error("local parameter view pin underflow");
+    }
+    --localViewPinCount_;
+}
+
+bool Parameter::CanRecycleLocal() const {
+    constexpr float tolerance = 0.000001f;
+    if (id_ != kLocalParameterId || localViewPinCount_ != 0 || activeRouteCount_ != 0 ||
+        HasNonDefaultState() || HasNonZeroState()) {
+        return false;
+    }
+    if (std::any_of(modulationDepths_.begin(), modulationDepths_.end(),
+                    [](const Parameter* child) { return child != nullptr; })) {
+        return false;
+    }
+
+    const float defaultValue = ClampToRange(config_.defaultValue, config_.range);
+    const auto allNear = [&](std::span<const float> values, float expected) {
+        return std::all_of(values.begin(), values.end(), [&](float value) {
+            return std::fabs(value - expected) <= tolerance;
+        });
+    };
+    return allNear(currentMinValues_, defaultValue) && allNear(targetMinValues_, defaultValue) &&
+           allNear(currentMaxValues_, defaultValue) && allNear(targetMaxValues_, defaultValue) &&
+           allNear(currentKnobValues_, defaultValue) && allNear(uiDisplayCenters_, defaultValue) &&
+           allNear(uiDisplaySpreadEnergies_, 0.0f);
+}
+
+std::size_t Parameter::CollectNeutralChildren() {
+    std::size_t collected = 0;
+    for (std::size_t sourceIx = 0; sourceIx < modulationDepths_.size(); ++sourceIx) {
+        Parameter* child = modulationDepths_[sourceIx];
+        if (child == nullptr) {
+            continue;
+        }
+        collected += child->CollectNeutralChildren();
+        if (!child->CanRecycleLocal()) {
+            continue;
+        }
+
+        modulationDepths_[sourceIx] = nullptr;
+        group_.RecycleLocalParameter(*child);
+        ++collected;
+    }
+    return collected;
+}
+
+void Parameter::ResetLocalForReuse(ParameterId id, ParameterConfig config) {
+    if (id != kLocalParameterId) {
+        throw std::logic_error("recycled parameter slots are local-only");
+    }
+    id_ = id;
+    config_ = std::move(config);
+    recursionDepth_ = 0;
+    localViewPinCount_ = 0;
+    const float defaultValue = ClampToRange(config_.defaultValue, config_.range);
+    currentCenter_ = defaultValue;
+    targetCenter_ = defaultValue;
+    std::fill(currentCenterScales_.begin(), currentCenterScales_.end(), 1.0f);
+    std::fill(targetCenterScales_.begin(), targetCenterScales_.end(), 1.0f);
+    std::fill(currentNormalizationOffsets_.begin(), currentNormalizationOffsets_.end(), 0.0f);
+    std::fill(targetNormalizationOffsets_.begin(), targetNormalizationOffsets_.end(), 0.0f);
+    std::fill(currentMinValues_.begin(), currentMinValues_.end(), defaultValue);
+    std::fill(targetMinValues_.begin(), targetMinValues_.end(), defaultValue);
+    std::fill(currentMaxValues_.begin(), currentMaxValues_.end(), defaultValue);
+    std::fill(targetMaxValues_.begin(), targetMaxValues_.end(), defaultValue);
+    std::fill(currentDepths_.begin(), currentDepths_.end(), 0.0f);
+    std::fill(targetDepths_.begin(), targetDepths_.end(), 0.0f);
+    for (std::size_t sourceIx = 0; sourceIx < routeSourceIndices_.size(); ++sourceIx) {
+        routeSourceIndices_[sourceIx] = sourceIx;
+        sourceRoutePositions_[sourceIx] = sourceIx;
+    }
+    activeRouteCount_ = 0;
+    std::fill(currentKnobValues_.begin(), currentKnobValues_.end(), defaultValue);
+    std::fill(uiDisplayCenters_.begin(), uiDisplayCenters_.end(), defaultValue);
+    std::fill(uiDisplaySpreadEnergies_.begin(), uiDisplaySpreadEnergies_.end(), 0.0f);
+    std::fill(modulationDepths_.begin(), modulationDepths_.end(), nullptr);
+    std::fill(sceneCenters_.begin(), sceneCenters_.end(), defaultValue);
+    std::fill(gestureValues_.begin(), gestureValues_.end(), defaultValue);
+    std::fill(gestureActiveMasks_.begin(), gestureActiveMasks_.end(), 0);
+    AssertRouteBijection();
+}
 
 void Parameter::UIState::Configure(std::size_t newVoiceCapacity, std::size_t newModulatorColorCapacity,
                                    std::size_t newGestureColorCapacity) {
@@ -2081,8 +2229,20 @@ void Bank::ApplyModifierToTopLevel(Modifier modifier, const SceneState& scene) {
 }
 
 void Bank::Deselect() {
-    selected_ = nullptr;
+    ParameterGroup* affectedGroup = selected_ == nullptr ? nullptr : &selected_->Group();
+    if (selected_ != nullptr) {
+        for (const Cell& cell : visible_) {
+            if (cell.parameter != nullptr && cell.parameter != selected_) {
+                cell.parameter->UnpinLocalForView();
+            }
+        }
+        selected_->UnpinLocalForView();
+    }
     visible_ = topLevel_;
+    selected_ = nullptr;
+    if (affectedGroup != nullptr) {
+        affectedGroup->CollectNeutralLocalParameters();
+    }
 }
 
 bool Bank::ShowingModulation() const {
@@ -2201,13 +2361,27 @@ void Bank::OpenModulationView(Parameter& parameter, std::span<const PhysicalEnco
         return;
     }
 
+    if (selected_ != nullptr) {
+        for (const Cell& cell : visible_) {
+            if (cell.parameter != nullptr && cell.parameter != selected_) {
+                cell.parameter->UnpinLocalForView();
+            }
+        }
+        selected_->UnpinLocalForView();
+    }
+
     selected_ = &parameter;
+    selected_->PinLocalForView();
     visible_.clear();
 
     for (std::size_t cellIx = 0; cellIx < modulatorCount; ++cellIx) {
+        Parameter* depthParameter = EnsureModulationDepthParameter(parameter, cellIx);
+        if (depthParameter != nullptr) {
+            depthParameter->PinLocalForView();
+        }
         visible_.push_back({
             .encoderId = physicalLayout[cellIx],
-            .parameter = EnsureModulationDepthParameter(parameter, cellIx),
+            .parameter = depthParameter,
         });
     }
 
@@ -2223,6 +2397,7 @@ void Bank::ApplyModifierToParameter(Parameter& parameter, Modifier modifier, con
         return;
     }
 
+    ParameterGroup* affectedGroup = &parameter.Group();
     switch (modifier) {
     case Modifier::None:
         break;
@@ -2235,6 +2410,9 @@ void Bank::ApplyModifierToParameter(Parameter& parameter, Modifier modifier, con
     case Modifier::RandomMod:
         RandomizeModulationDepths(parameter, scene);
         break;
+    }
+    if (modifier == Modifier::Reset) {
+        affectedGroup->CollectNeutralLocalParameters();
     }
 }
 
@@ -2480,6 +2658,14 @@ bool ParameterManager::LoadParameterValuesFromJSON(JSON json) {
     return true;
 }
 
+std::size_t ParameterManager::CollectNeutralLocalParameters() {
+    std::size_t collected = 0;
+    for (const auto& group : groups_) {
+        collected += group->CollectNeutralLocalParameters();
+    }
+    return collected;
+}
+
 void ParameterManager::ComputeAllParameters() {
     for (Parameter* parameter : parameters_) {
         if (parameter == nullptr) {
@@ -2551,6 +2737,7 @@ void ParameterManager::RevertAllToDefaults() {
     }
 
     ComputeAllParameters();
+    CollectNeutralLocalParameters();
 }
 
 float ParameterManager::GetLinear(float minValue, float maxValue, std::size_t voiceIx, ParameterId id) const {

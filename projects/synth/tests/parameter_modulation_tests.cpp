@@ -86,6 +86,59 @@ std::string JsonToString(synth::JSON json) {
     return text;
 }
 
+bool JsonSemanticallyEqual(synth::JSON left, synth::JSON right) {
+    if (left.IsNull() || right.IsNull()) {
+        return left.IsNull() && right.IsNull();
+    }
+    const synth::JsonType leftType = left.m_node->m_type;
+    const synth::JsonType rightType = right.m_node->m_type;
+    const bool leftNumber = leftType == synth::JsonType::Integer || leftType == synth::JsonType::Real;
+    const bool rightNumber = rightType == synth::JsonType::Integer || rightType == synth::JsonType::Real;
+    if (leftNumber || rightNumber) {
+        return leftNumber && rightNumber && left.NumberValue() == right.NumberValue();
+    }
+    if (leftType != rightType) {
+        return false;
+    }
+
+    switch (leftType) {
+    case synth::JsonType::Null:
+        return true;
+    case synth::JsonType::Object: {
+        if (left.Size() != right.Size()) {
+            return false;
+        }
+        const synth::JsonMember* members =
+            static_cast<const synth::JsonMember*>(left.m_node->m_container.m_entries);
+        for (std::size_t ix = 0; ix < left.Size(); ++ix) {
+            if (members[ix].m_key == nullptr ||
+                !JsonSemanticallyEqual(synth::JSON(members[ix].m_value), right.Get(members[ix].m_key))) {
+                return false;
+            }
+        }
+        return true;
+    }
+    case synth::JsonType::Array:
+        if (left.Size() != right.Size()) {
+            return false;
+        }
+        for (std::size_t ix = 0; ix < left.Size(); ++ix) {
+            if (!JsonSemanticallyEqual(left.GetAt(ix), right.GetAt(ix))) {
+                return false;
+            }
+        }
+        return true;
+    case synth::JsonType::String:
+        return std::string(left.StringValue()) == std::string(right.StringValue());
+    case synth::JsonType::Boolean:
+        return left.BooleanValue() == right.BooleanValue();
+    case synth::JsonType::Integer:
+    case synth::JsonType::Real:
+        return false;
+    }
+    return false;
+}
+
 void RequireRouteBijection(const synth::Parameter& parameter, std::size_t sourceCount);
 
 // Wraps a single WrldBldr-kind MidiControllerProfileConfig (as produced by
@@ -3636,13 +3689,19 @@ TEST_CASE(modulation_view_lazy_depth_names_include_target_parameter_for_duplicat
 
     synth::Parameter* firstDepth = first.ModulationDepthParameter(0);
     synth::Parameter* secondDepth = second.ModulationDepthParameter(0);
-    REQUIRE_TRUE(firstDepth != nullptr);
+    REQUIRE_TRUE(firstDepth == nullptr);
     REQUIRE_TRUE(secondDepth != nullptr);
-    REQUIRE_TRUE(firstDepth->Name() == "Carrier A Filter Env");
     REQUIRE_TRUE(secondDepth->Name() == "Carrier B Filter Env");
-    REQUIRE_TRUE(firstDepth->ShortName() == "Env");
     REQUIRE_TRUE(secondDepth->ShortName() == "Env");
-    REQUIRE_TRUE(group.ParameterCount() == 4);
+    const std::size_t highWater = group.ParameterCount();
+
+    bank.Deselect();
+    slot.HandlePress(1);
+    firstDepth = first.ModulationDepthParameter(0);
+    REQUIRE_TRUE(firstDepth != nullptr);
+    REQUIRE_TRUE(firstDepth->Name() == "Carrier A Filter Env");
+    REQUIRE_TRUE(firstDepth->ShortName() == "Env");
+    REQUIRE_TRUE(group.ParameterCount() == highWater);
     REQUIRE_TRUE(manager.ParameterCount() == 2);
 }
 
@@ -8434,6 +8493,17 @@ TEST_CASE(randomized_patch_lifecycle_preserves_recursive_local_modulation_depths
         manager.CaptureDefaultControlState();
 
         std::vector<synth::Parameter*> tracked{&cutoff, &resonance, &cutoffLfo, &cutoffEnv, &lfoCurve, &resonanceLfo};
+        auto refreshTrackedTopology = [&] {
+            synth::Parameter* liveCutoffLfo = cutoff.EnsureModulationDepth(0);
+            synth::Parameter* liveCutoffEnv = cutoff.EnsureModulationDepth(1);
+            synth::Parameter* liveResonanceLfo = resonance.EnsureModulationDepth(0);
+            REQUIRE_TRUE(liveCutoffLfo != nullptr);
+            REQUIRE_TRUE(liveCutoffEnv != nullptr);
+            REQUIRE_TRUE(liveResonanceLfo != nullptr);
+            synth::Parameter* liveLfoCurve = liveCutoffLfo->EnsureModulationDepth(2);
+            REQUIRE_TRUE(liveLfoCurve != nullptr);
+            tracked = {&cutoff, &resonance, liveCutoffLfo, liveCutoffEnv, liveLfoCurve, liveResonanceLfo};
+        };
         RecursivePatchSnapshot expected = captureValues(tracked);
         const RecursivePatchSnapshot defaultExpected = expected;
 
@@ -8467,6 +8537,7 @@ TEST_CASE(randomized_patch_lifecycle_preserves_recursive_local_modulation_depths
                              status == synth::PatchApplyStatus::Reverted ||
                              status == synth::PatchApplyStatus::Serialized);
             }
+            refreshTrackedTopology();
         };
 
         auto completePendingSave = [&](const RecursivePatchSnapshot& snapshot) {
@@ -11008,6 +11079,396 @@ TEST_CASE(active_modulation_routes_randomized_full_scan_oracle_and_work_bound) {
         REQUIRE_TRUE(work.activeRouteVisits - visitsBefore == carrier.ActiveRouteCount() * 2);
         RequireFullScanCurrentMatch(carrier);
     }
+}
+
+TEST_CASE(neutral_local_collection_reclaims_leaf_and_preserves_high_water_accounting) {
+    synth::ParameterManager manager;
+    manager.SetGestureCount(64);
+    auto& group = manager.CreateGroup({.numVoices = 1,
+                                       .numModulators = 2,
+                                       .numScenes = 1,
+                                       .maxParameters = 5});
+    group.GetModulators().Metadata(0) = {.name = "Old", .shortName = "Old", .sourceColor = synth::Color::Red};
+    group.GetModulators().Metadata(1) = {.name = "New", .shortName = "New", .sourceColor = synth::Color::Cyan};
+    auto& carrier = manager.CreateParameter(group, {.name = "Carrier", .shortName = "Car", .defaultValue = 0.4f});
+    auto& other = manager.CreateParameter(group, {.name = "Other", .shortName = "Oth", .defaultValue = 0.6f});
+    synth::Parameter* oldLocal = &carrier.EnsureModulationDepth(
+        0, {.name = "Old Local",
+            .shortName = "Old",
+            .defaultValue = 0.5f,
+            .range = synth::RangeKind::Bipolar,
+            .switchValues = 7,
+            .baseColor = synth::Color::Red,
+            .indicatorColors = {synth::Color::Orange}});
+    REQUIRE_TRUE(oldLocal != nullptr);
+    const synth::Parameter* carrierAddress = &carrier;
+    const synth::Parameter* otherAddress = &other;
+    const std::size_t recycledStorageIx = group.ParameterCount() - 1;
+    REQUIRE_TRUE(&group.ParameterByLocalIndex(recycledStorageIx) == oldLocal);
+
+    const std::size_t highWater = group.ParameterCount();
+    const std::size_t availableBefore = group.AvailableParameterSlots();
+    REQUIRE_TRUE(group.LiveLocalParameterCount() == 1);
+    REQUIRE_TRUE(group.CollectNeutralLocalParameters() == 1);
+    REQUIRE_TRUE(carrier.ModulationDepthParameter(0) == nullptr);
+    REQUIRE_TRUE(group.ParameterCount() == highWater);
+    REQUIRE_TRUE(group.LiveLocalParameterCount() == 0);
+    REQUIRE_TRUE(group.FreeLocalParameterSlotCount() == 1);
+    REQUIRE_TRUE(group.AvailableParameterSlots() == availableBefore + 1);
+
+    synth::Parameter* reused = other.EnsureModulationDepth(1);
+    REQUIRE_TRUE(reused != nullptr);
+    REQUIRE_TRUE(group.ParameterCount() == highWater);
+    REQUIRE_TRUE(group.LiveLocalParameterCount() == 1);
+    REQUIRE_TRUE(group.FreeLocalParameterSlotCount() == 0);
+    REQUIRE_TRUE(&carrier == carrierAddress);
+    REQUIRE_TRUE(&other == otherAddress);
+    REQUIRE_TRUE(&group.ParameterByLocalIndex(recycledStorageIx) == reused);
+    REQUIRE_TRUE(reused->Name() == "Other New");
+    REQUIRE_TRUE(reused->ShortName() == "New");
+    REQUIRE_TRUE(reused->BaseColor() == synth::Color::Cyan);
+    REQUIRE_TRUE(reused->Range() == synth::RangeKind::Bipolar);
+    REQUIRE_TRUE(reused->SwitchValues() == 0);
+    REQUIRE_NEAR(reused->SceneCenter(0), 0.5f, 0.000001f);
+    REQUIRE_NEAR(reused->CurrentCenter(), 0.5f, 0.000001f);
+    REQUIRE_NEAR(reused->TargetCenter(), 0.5f, 0.000001f);
+    REQUIRE_NEAR(reused->CurrentCenterScale(0), 1.0f, 0.000001f);
+    REQUIRE_NEAR(reused->TargetCenterScale(0), 1.0f, 0.000001f);
+    REQUIRE_NEAR(reused->CurrentNormalizationOffset(0), 0.0f, 0.000001f);
+    REQUIRE_NEAR(reused->TargetNormalizationOffset(0), 0.0f, 0.000001f);
+    REQUIRE_TRUE(reused->ActiveRouteCount() == 0);
+    REQUIRE_TRUE(reused->RouteSourceIndex(0) == 0);
+    REQUIRE_TRUE(reused->RouteSourceIndex(1) == 1);
+    REQUIRE_TRUE(reused->ModulationDepthParameter(0) == nullptr);
+    REQUIRE_TRUE(reused->ModulationDepthParameter(1) == nullptr);
+    REQUIRE_NEAR(reused->GestureValue(0, 32), 0.5f, 0.000001f);
+    REQUIRE_NEAR(reused->GestureValue(0, 63), 0.5f, 0.000001f);
+    REQUIRE_TRUE(!reused->GestureActive(0, 32));
+    REQUIRE_TRUE(!reused->GestureActive(0, 63));
+    synth::Parameter::UIState ui(1, 2, 64);
+    reused->PopulateUIState(ui);
+    REQUIRE_NEAR(ui.values[0].load(), 0.0f, 0.000001f);
+    REQUIRE_NEAR(ui.spreadValues[0].load(), 0.0f, 0.000001f);
+    REQUIRE_NEAR(ui.minValues[0].load(), 0.0f, 0.000001f);
+    REQUIRE_NEAR(ui.maxValues[0].load(), 0.0f, 0.000001f);
+    REQUIRE_TRUE(ui.modulatorsAffectingMask.load() == 0);
+    REQUIRE_TRUE(ui.gesturesAffectingMask.load() == 0);
+}
+
+TEST_CASE(neutral_local_collection_retains_non_default_scene_state) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({.numVoices = 1, .numModulators = 1, .numScenes = 2, .maxParameters = 2});
+    auto& carrier = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.4f});
+    auto* depth = carrier.EnsureModulationDepth(0);
+    REQUIRE_TRUE(depth != nullptr);
+    depth->SceneCenter(1) = 0.6f;
+
+    REQUIRE_TRUE(group.CollectNeutralLocalParameters() == 0);
+    REQUIRE_TRUE(carrier.ModulationDepthParameter(0) == depth);
+}
+
+TEST_CASE(neutral_local_collection_retains_inactive_latent_gesture_value) {
+    synth::ParameterManager manager;
+    manager.SetGestureCount(64);
+    auto& group = manager.CreateGroup({.numVoices = 1, .numModulators = 1, .numScenes = 1, .maxParameters = 2});
+    auto& carrier = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.4f});
+    auto* depth = carrier.EnsureModulationDepth(0);
+    REQUIRE_TRUE(depth != nullptr);
+    depth->GestureValue(0, 63) = 0.6f;
+    REQUIRE_TRUE(!depth->GestureActive(0, 63));
+
+    REQUIRE_TRUE(group.CollectNeutralLocalParameters() == 0);
+    REQUIRE_TRUE(carrier.ModulationDepthParameter(0) == depth);
+}
+
+TEST_CASE(neutral_local_collection_retains_active_gesture_at_default_value) {
+    synth::ParameterManager manager;
+    manager.SetGestureCount(64);
+    auto& group = manager.CreateGroup({.numVoices = 1, .numModulators = 1, .numScenes = 1, .maxParameters = 2});
+    auto& carrier = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.4f});
+    auto* depth = carrier.EnsureModulationDepth(0);
+    REQUIRE_TRUE(depth != nullptr);
+    depth->SetGestureActive(0, 32, true);
+
+    REQUIRE_TRUE(group.CollectNeutralLocalParameters() == 0);
+    REQUIRE_TRUE(carrier.ModulationDepthParameter(0) == depth);
+}
+
+TEST_CASE(neutral_local_collection_retains_unsnapped_runtime_state) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({.numVoices = 1,
+                                       .numModulators = 1,
+                                       .numScenes = 1,
+                                       .maxParameters = 2,
+                                       .targetCenterAlpha = 1.0f});
+    auto& carrier = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.4f});
+    auto* depth = carrier.EnsureModulationDepth(0);
+    REQUIRE_TRUE(depth != nullptr);
+    depth->SceneCenter(0) = 0.75f;
+    manager.ComputeAllParameters();
+    depth->SceneCenter(0) = 0.5f;
+
+    REQUIRE_TRUE(group.CollectNeutralLocalParameters() == 0);
+    REQUIRE_TRUE(carrier.ModulationDepthParameter(0) == depth);
+}
+
+TEST_CASE(neutral_local_collection_retains_nonzero_normalization_state) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({.numVoices = 1,
+                                       .numModulators = 1,
+                                       .numScenes = 1,
+                                       .maxParameters = 3,
+                                       .targetCenterAlpha = 1.0f});
+    group.GetModulators().Value(0, 0) = 1.0f;
+    auto& carrier = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.4f});
+    auto* depth = carrier.EnsureModulationDepth(0);
+    REQUIRE_TRUE(depth != nullptr);
+    auto* nested = depth->EnsureModulationDepth(0);
+    REQUIRE_TRUE(nested != nullptr);
+    nested->SceneCenter(0) = 0.25f;
+    manager.ComputeAllParameters();
+    REQUIRE_TRUE(depth->CurrentNormalizationOffset(0) > 0.0f);
+    REQUIRE_TRUE(depth->TargetNormalizationOffset(0) > 0.0f);
+
+    depth->ClearModulationDepths();
+    REQUIRE_TRUE(group.CollectNeutralLocalParameters() == 0);
+    REQUIRE_TRUE(carrier.ModulationDepthParameter(0) == depth);
+
+    REQUIRE_TRUE(depth->AssignModulationDepth(0, nested));
+    depth->RevertAllToDefault();
+    REQUIRE_TRUE(group.CollectNeutralLocalParameters() == 2);
+    REQUIRE_TRUE(carrier.ModulationDepthParameter(0) == nullptr);
+}
+
+TEST_CASE(neutral_local_collection_retains_parent_with_non_collectible_child) {
+    synth::ParameterManager manager;
+    manager.SetGestureCount(1);
+    auto& group = manager.CreateGroup({.numVoices = 1, .numModulators = 2, .numScenes = 1, .maxParameters = 3});
+    auto& carrier = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.4f});
+    auto* depth = carrier.EnsureModulationDepth(0);
+    REQUIRE_TRUE(depth != nullptr);
+    auto* nested = depth->EnsureModulationDepth(1);
+    REQUIRE_TRUE(nested != nullptr);
+    nested->GestureValue(0, 0) = 0.6f;
+
+    REQUIRE_TRUE(group.CollectNeutralLocalParameters() == 0);
+    REQUIRE_TRUE(carrier.ModulationDepthParameter(0) == depth);
+    REQUIRE_TRUE(depth->ModulationDepthParameter(1) == nested);
+}
+
+TEST_CASE(neutral_local_collection_collapses_recursive_subtree_bottom_up) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({.numVoices = 1, .numModulators = 2, .numScenes = 1, .maxParameters = 3});
+    auto& carrier = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.4f});
+    auto* depth = carrier.EnsureModulationDepth(0);
+    REQUIRE_TRUE(depth != nullptr);
+    REQUIRE_TRUE(depth->EnsureModulationDepth(1) != nullptr);
+    const std::size_t highWater = group.ParameterCount();
+
+    REQUIRE_TRUE(group.CollectNeutralLocalParameters() == 2);
+    REQUIRE_TRUE(carrier.ModulationDepthParameter(0) == nullptr);
+    REQUIRE_TRUE(group.ParameterCount() == highWater);
+    REQUIRE_TRUE(group.LiveLocalParameterCount() == 0);
+    REQUIRE_TRUE(group.FreeLocalParameterSlotCount() == 2);
+}
+
+TEST_CASE(neutral_local_collection_detaches_child_while_parent_route_finishes_settling) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({.numVoices = 1,
+                                       .numModulators = 1,
+                                       .numScenes = 1,
+                                       .maxParameters = 2,
+                                       .processLiteAlpha = 0.5f,
+                                       .targetCenterAlpha = 1.0f});
+    group.GetModulators().Value(0, 0) = 1.0f;
+    auto& carrier = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.4f});
+    auto* depth = carrier.EnsureModulationDepth(0);
+    REQUIRE_TRUE(depth != nullptr);
+    depth->SceneCenter(0) = 0.75f;
+    manager.ComputeAllParameters();
+    REQUIRE_TRUE(carrier.ActiveRouteCount() == 1);
+    REQUIRE_TRUE(std::fabs(carrier.CurrentDepthForSource(0, 0)) > 0.000001f);
+
+    depth->SceneCenter(0) = 0.5f;
+    manager.ComputeAllTargets();
+    REQUIRE_NEAR(carrier.TargetDepthForSource(0, 0), 0.0f, 0.000001f);
+    REQUIRE_TRUE(std::fabs(carrier.CurrentDepthForSource(0, 0)) > 0.000001f);
+    REQUIRE_TRUE(group.CollectNeutralLocalParameters() == 1);
+    REQUIRE_TRUE(carrier.ModulationDepthParameter(0) == nullptr);
+    REQUIRE_TRUE(carrier.ActiveRouteCount() == 1);
+
+    for (std::size_t step = 0; step < 32 && carrier.ActiveRouteCount() != 0; ++step) {
+        carrier.ProcessLite();
+        manager.ComputeAllTargets();
+    }
+    REQUIRE_TRUE(carrier.ActiveRouteCount() == 0);
+    REQUIRE_NEAR(carrier.CurrentDepthForSource(0, 0), 0.0f, 0.000001f);
+}
+
+TEST_CASE(modulation_view_pins_visible_locals_until_deselect_boundary) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({.numVoices = 1, .numModulators = 2, .numScenes = 1, .maxParameters = 3});
+    auto& carrier = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.4f});
+    auto& bank = manager.CreateBank();
+    bank.AddMapping(10, carrier);
+    auto& slot = manager.CreateBankSlot();
+    slot.AddPhysicalEncoder(10);
+    slot.AddPhysicalEncoder(11);
+    slot.AddPhysicalEncoder(12);
+    slot.SelectBank(&bank);
+
+    slot.HandlePress(10);
+    REQUIRE_TRUE(bank.ShowingModulation());
+    REQUIRE_TRUE(group.LiveLocalParameterCount() == 2);
+    REQUIRE_TRUE(group.CollectNeutralLocalParameters() == 0);
+    REQUIRE_TRUE(carrier.ModulationDepthParameter(0) == bank.VisibleParameter(10));
+    REQUIRE_TRUE(carrier.ModulationDepthParameter(1) == bank.VisibleParameter(11));
+
+    bank.Deselect();
+    REQUIRE_TRUE(!bank.ShowingModulation());
+    REQUIRE_TRUE(carrier.ModulationDepthParameter(0) == nullptr);
+    REQUIRE_TRUE(carrier.ModulationDepthParameter(1) == nullptr);
+    REQUIRE_TRUE(group.LiveLocalParameterCount() == 0);
+    REQUIRE_TRUE(group.FreeLocalParameterSlotCount() == 2);
+}
+
+TEST_CASE(revert_all_collects_neutral_local_topology_at_control_boundary) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({.numVoices = 1, .numModulators = 1, .numScenes = 1, .maxParameters = 2});
+    auto& carrier = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.4f});
+    manager.CaptureDefaultControlState();
+    auto* depth = carrier.EnsureModulationDepth(0);
+    REQUIRE_TRUE(depth != nullptr);
+    depth->SceneCenter(0) = 0.75f;
+
+    manager.RevertAllToDefaults();
+
+    REQUIRE_TRUE(carrier.ModulationDepthParameter(0) == nullptr);
+    REQUIRE_TRUE(group.LiveLocalParameterCount() == 0);
+    REQUIRE_TRUE(group.FreeLocalParameterSlotCount() == 1);
+}
+
+TEST_CASE(neutral_local_reuse_stays_bounded_beyond_configured_capacity) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({.numVoices = 1, .numModulators = 1, .numScenes = 1, .maxParameters = 2});
+    auto& first = manager.CreateParameter(group, {.name = "First", .defaultValue = 0.25f});
+    auto& second = manager.CreateParameter(group, {.name = "Second", .defaultValue = 0.75f});
+    group.AddParameterStorageBatch(synth::MakeParameterStorageBatch(group.Config(), group.GestureCount(), 1));
+
+    for (std::size_t iteration = 0; iteration < group.Config().maxParameters * 4; ++iteration) {
+        synth::Parameter& parent = (iteration & 1U) == 0 ? first : second;
+        REQUIRE_TRUE(parent.EnsureModulationDepth(0) != nullptr);
+        REQUIRE_TRUE(group.CollectNeutralLocalParameters() == 1);
+        REQUIRE_TRUE(parent.ModulationDepthParameter(0) == nullptr);
+    }
+    REQUIRE_TRUE(group.ParameterCount() == 3);
+    REQUIRE_TRUE(group.LiveLocalParameterCount() == 0);
+    REQUIRE_TRUE(group.FreeLocalParameterSlotCount() == 1);
+}
+
+TEST_CASE(randomized_neutral_local_collection_reuses_slots_without_stale_topology) {
+    synth::ParameterManager manager;
+    manager.SetGestureCount(64);
+    auto& group = manager.CreateGroup({.numVoices = 1, .numModulators = 2, .numScenes = 2, .maxParameters = 5});
+    auto& first = manager.CreateParameter(group, {.name = "First", .defaultValue = 0.25f});
+    auto& second = manager.CreateParameter(group, {.name = "Second", .defaultValue = 0.75f});
+    auto& third = manager.CreateParameter(group, {.name = "Third", .defaultValue = 0.5f});
+    std::array<synth::Parameter*, 3> parents = {&first, &second, &third};
+    std::mt19937 random(0x74c011ecU);
+
+    for (std::size_t step = 0; step < 128; ++step) {
+        synth::Parameter& parent = *parents[random() % parents.size()];
+        const std::size_t sourceIx = random() % 2;
+        synth::Parameter* local = parent.EnsureModulationDepth(sourceIx);
+        REQUIRE_TRUE(local != nullptr);
+        if ((random() & 3U) == 0) {
+            local->GestureValue(1, 63) = 0.75f;
+            REQUIRE_TRUE(group.CollectNeutralLocalParameters() == 0);
+            REQUIRE_TRUE(parent.ModulationDepthParameter(sourceIx) == local);
+            local->RevertAllToDefault();
+        }
+        REQUIRE_TRUE(group.CollectNeutralLocalParameters() == 1);
+        REQUIRE_TRUE(parent.ModulationDepthParameter(sourceIx) == nullptr);
+        REQUIRE_TRUE(group.LiveLocalParameterCount() == 0);
+        REQUIRE_TRUE(group.ParameterCount() <= 4);
+    }
+    REQUIRE_TRUE(group.FreeLocalParameterSlotCount() == 1);
+}
+
+TEST_CASE(patch_load_collection_preserves_high_gesture_nested_state_and_collects_default_omissions) {
+    synth::ParameterManager source;
+    source.SetGestureCount(64);
+    auto& sourceGroup = source.CreateGroup({.numVoices = 1, .numModulators = 2, .numScenes = 1, .maxParameters = 4});
+    auto& sourceCarrier = source.CreateParameter(sourceGroup, {.name = "Carrier", .defaultValue = 0.25f});
+    auto* sourceDepth = sourceCarrier.EnsureModulationDepth(0);
+    REQUIRE_TRUE(sourceDepth != nullptr);
+    auto* sourceNested = sourceDepth->EnsureModulationDepth(1);
+    REQUIRE_TRUE(sourceNested != nullptr);
+    sourceDepth->GestureValue(0, 32) = 0.7f;
+    sourceDepth->SetGestureActive(0, 32, true);
+    sourceNested->GestureValue(0, 63) = 0.8f;
+    sourceNested->SetGestureActive(0, 63, true);
+
+    synth::JsonArena patchArena(262144);
+    synth::MidiInstrumentConfig instrument;
+    synth::AudioDeviceState audio;
+    synth::JSON patch = synth::BuildPatchJSON(patchArena, "GC", source, instrument, audio);
+    REQUIRE_TRUE(!patchArena.Failed());
+
+    synth::ParameterManager target;
+    target.SetGestureCount(64);
+    auto& targetGroup = target.CreateGroup({.numVoices = 1, .numModulators = 2, .numScenes = 1, .maxParameters = 5});
+    auto& targetCarrier = target.CreateParameter(targetGroup, {.name = "Carrier", .defaultValue = 0.25f});
+    REQUIRE_TRUE(targetCarrier.EnsureModulationDepth(1) != nullptr);  // absent/default dirty topology
+    REQUIRE_TRUE(synth::LoadPatchJSON(patch, target, instrument, &audio));
+
+    auto* targetDepth = targetCarrier.ModulationDepthParameter(0);
+    REQUIRE_TRUE(targetDepth != nullptr);
+    auto* targetNested = targetDepth->ModulationDepthParameter(1);
+    REQUIRE_TRUE(targetNested != nullptr);
+    REQUIRE_NEAR(targetDepth->GestureValue(0, 32), 0.7f, 0.000001f);
+    REQUIRE_TRUE(targetDepth->GestureActive(0, 32));
+    REQUIRE_NEAR(targetNested->GestureValue(0, 63), 0.8f, 0.000001f);
+    REQUIRE_TRUE(targetNested->GestureActive(0, 63));
+    REQUIRE_TRUE(targetCarrier.ModulationDepthParameter(1) == nullptr);
+    REQUIRE_TRUE(targetGroup.LiveLocalParameterCount() == 2);
+
+    const float outputBeforeRematerialization = targetCarrier.GetRaw(0);
+    synth::Parameter* rematerialized = targetCarrier.EnsureModulationDepth(1);
+    REQUIRE_TRUE(rematerialized != nullptr);
+    target.ComputeAllParameters();
+    REQUIRE_NEAR(targetCarrier.GetRaw(0), outputBeforeRematerialization, 0.000001f);
+    REQUIRE_TRUE(rematerialized->Name() == "Carrier Mod Depth 2");
+    REQUIRE_NEAR(rematerialized->SceneCenter(0), 0.5f, 0.000001f);
+    REQUIRE_NEAR(rematerialized->GestureValue(0, 32), 0.5f, 0.000001f);
+    REQUIRE_NEAR(rematerialized->GestureValue(0, 63), 0.5f, 0.000001f);
+    REQUIRE_TRUE(!rematerialized->GestureActive(0, 32));
+    REQUIRE_TRUE(!rematerialized->GestureActive(0, 63));
+    REQUIRE_TRUE(rematerialized->ActiveRouteCount() == 0);
+    REQUIRE_TRUE(targetGroup.CollectNeutralLocalParameters() == 1);
+    REQUIRE_TRUE(targetCarrier.ModulationDepthParameter(1) == nullptr);
+    REQUIRE_TRUE(targetGroup.LiveLocalParameterCount() == 2);
+}
+
+TEST_CASE(eligible_collection_preserves_semantic_parameter_json) {
+    synth::ParameterManager manager;
+    manager.SetGestureCount(1);
+    auto& group = manager.CreateGroup({.numVoices = 1, .numModulators = 2, .numScenes = 1, .maxParameters = 4});
+    auto& carrier = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.25f});
+    auto* neutral = carrier.EnsureModulationDepth(0);
+    REQUIRE_TRUE(neutral != nullptr);
+    auto* retained = carrier.EnsureModulationDepth(1);
+    REQUIRE_TRUE(retained != nullptr);
+    retained->GestureValue(0, 0) = 0.75f;
+
+    synth::JsonArena beforeArena(65536);
+    const synth::JSON before = manager.ParameterValuesToJSON(beforeArena);
+    REQUIRE_TRUE(!beforeArena.Failed());
+    REQUIRE_TRUE(group.CollectNeutralLocalParameters() == 1);
+    synth::JsonArena afterArena(65536);
+    const synth::JSON after = manager.ParameterValuesToJSON(afterArena);
+    REQUIRE_TRUE(!afterArena.Failed());
+    REQUIRE_TRUE(JsonSemanticallyEqual(before, after));
 }
 
 namespace {

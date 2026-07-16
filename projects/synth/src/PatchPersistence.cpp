@@ -290,7 +290,10 @@ bool LoadPatchJSON(JSON root, ParameterManager& manager,
         return false;
     }
 
-    manager.LoadParameterValuesFromJSON(parameterValues);
+    if (!manager.LoadParameterValuesFromJSON(parameterValues)) {
+        return false;
+    }
+    manager.CollectNeutralLocalParameters();
     return true;
 }
 
