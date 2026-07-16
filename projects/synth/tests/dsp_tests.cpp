@@ -15,6 +15,7 @@
 #include "synth/DspTransferFunction.hpp"
 #include "synth/DspWavetable.hpp"
 #include "synth/ParameterModulation.hpp"
+#include "synth/StandardModulators.hpp"
 
 #ifdef JUCE_MAJOR_VERSION
 #error "synth DSP tests must not see JUCE headers"
@@ -78,6 +79,18 @@ static_assert(!std::is_copy_assignable_v<synth::ConstantModulatorProcessor>);
 static_assert(!std::is_move_constructible_v<synth::ConstantModulatorProcessor>);
 static_assert(!std::is_move_assignable_v<synth::ConstantModulatorProcessor>);
 static_assert(!HasProcessMethod<synth::ConstantModulatorProcessor>);
+static_assert(!std::is_copy_constructible_v<synth::StandardModulators<1>>);
+static_assert(!std::is_copy_assignable_v<synth::StandardModulators<1>>);
+static_assert(!std::is_move_constructible_v<synth::StandardModulators<1>>);
+static_assert(!std::is_move_assignable_v<synth::StandardModulators<1>>);
+static_assert(!std::is_copy_constructible_v<synth::StandardModulators<2>>);
+static_assert(!std::is_copy_assignable_v<synth::StandardModulators<2>>);
+static_assert(!std::is_move_constructible_v<synth::StandardModulators<2>>);
+static_assert(!std::is_move_assignable_v<synth::StandardModulators<2>>);
+static_assert(!std::is_copy_constructible_v<synth::StandardModulators<4>>);
+static_assert(!std::is_copy_assignable_v<synth::StandardModulators<4>>);
+static_assert(!std::is_move_constructible_v<synth::StandardModulators<4>>);
+static_assert(!std::is_move_assignable_v<synth::StandardModulators<4>>);
 
 struct TestCase {
     const char* name;
@@ -182,7 +195,502 @@ struct FixedRandomLfoDrawSource {
     }
 };
 
+template<std::size_t VoiceCount>
+synth::ParameterGroup& MakeStandardModulatorGroup(
+    synth::ParameterManager& manager,
+    std::size_t groupVoiceCount = VoiceCount,
+    std::size_t modulatorCount = 15) {
+    return manager.CreateGroup({
+        .numVoices = groupVoiceCount,
+        .numModulators = modulatorCount,
+        .numScenes = 1,
+        .maxParameters = 1,
+    });
+}
+
+void RequireDisconnected(const synth::ParameterGroup& group) {
+    for (const auto& metadata : group.GetModulators().Metadata()) {
+        REQUIRE_TRUE(!metadata.connected);
+        REQUIRE_TRUE(metadata.visualizer == nullptr);
+        REQUIRE_TRUE(metadata.name.empty());
+        REQUIRE_TRUE(metadata.shortName.empty());
+    }
+}
+
+template<typename Exception, typename Callable>
+void RequireThrows(Callable&& callable) {
+    bool threw = false;
+    try {
+        std::forward<Callable>(callable)();
+    } catch (const Exception&) {
+        threw = true;
+    }
+    REQUIRE_TRUE(threw);
+}
+
+template<std::size_t VoiceCount>
+void RequireStandardModulatorOwnedShape() {
+    synth::ParameterManager manager;
+    auto& group = MakeStandardModulatorGroup<VoiceCount>(manager);
+    synth::StandardModulators<VoiceCount> bundle(group);
+    static_assert(std::is_same_v<
+                  std::remove_reference_t<decltype(bundle.RandomProcessor(0))>,
+                  synth::GangedRandomLfoProcessor<VoiceCount>>);
+
+    REQUIRE_TRUE(&bundle.TargetGroup() == &group);
+    REQUIRE_TRUE(bundle.NoiseProcessor().VoiceCount() == VoiceCount);
+    REQUIRE_TRUE(bundle.ConstantProcessor().VoiceCount() == VoiceCount);
+    std::array<const float*, 4> outputAddresses{};
+    std::array<const synth::ui::Visualizer*, 6> visualizerAddresses{};
+    for (std::size_t random = 0; random < 4; ++random) {
+        REQUIRE_TRUE(bundle.RandomOutputRow(random).size() == VoiceCount);
+        REQUIRE_TRUE(bundle.RandomPointerRow(random).size() == VoiceCount);
+        outputAddresses[random] = bundle.RandomOutputRow(random).data();
+        for (std::size_t voice = 0; voice < VoiceCount; ++voice) {
+            REQUIRE_TRUE(bundle.RandomPointerRow(random)[voice] ==
+                         &bundle.RandomOutputRow(random)[voice]);
+            (void)bundle.RandomProcessor(random).Output(voice);
+        }
+        visualizerAddresses[random] = &bundle.RandomVisualizer(random);
+    }
+    visualizerAddresses[4] = &bundle.ConstantVisualizer();
+    visualizerAddresses[5] = &bundle.NoiseVisualizer();
+    for (std::size_t left = 0; left < visualizerAddresses.size(); ++left) {
+        for (std::size_t right = left + 1; right < visualizerAddresses.size(); ++right) {
+            REQUIRE_TRUE(visualizerAddresses[left] != visualizerAddresses[right]);
+        }
+    }
+
+    bundle.Register();
+    for (std::size_t random = 0; random < 4; ++random) {
+        REQUIRE_TRUE(bundle.RandomOutputRow(random).data() == outputAddresses[random]);
+        REQUIRE_TRUE(&bundle.RandomVisualizer(random) == visualizerAddresses[random]);
+    }
+    REQUIRE_TRUE(&bundle.ConstantVisualizer() == visualizerAddresses[4]);
+    REQUIRE_TRUE(&bundle.NoiseVisualizer() == visualizerAddresses[5]);
+}
+
 } // namespace
+
+TEST_CASE(standard_modulators_defaults_match_min16_contract) {
+    synth::ParameterManager manager;
+    auto& group = MakeStandardModulatorGroup<4>(manager);
+    synth::StandardModulators<4> bundle(group);
+    const auto& config = std::as_const(bundle).Config();
+
+    REQUIRE_TRUE((config.randomIndexes == std::array<std::size_t, 4>{0, 1, 2, 3}));
+    REQUIRE_TRUE(config.constantIndex == 11);
+    REQUIRE_TRUE(config.noiseIndex == 14);
+
+    const std::array<std::string, 4> expectedNames{
+        "Random 500 ms", "Random 2 s", "Random 6 s", "Random 16 s"};
+    const std::array<std::string, 4> expectedShortNames{
+        "Rnd .5", "Rnd 2", "Rnd 6", "Rnd 16"};
+    const std::array<synth::Color, 4> expectedSourceColors{
+        synth::Color::Cyan, synth::Color::Blue, synth::Color::Indigo, synth::Color::Orange};
+    const std::array<synth::Color, 4> expectedVoiceColors{
+        synth::Color::Cyan, synth::Color::Orange, synth::Color::Green, synth::Color::Yellow};
+    const std::array<double, 4> waitingMeans{0.5, 2.0, 6.0, 16.0};
+    const std::array<float, 4> targetSigmas{0.1f, 0.3f, 0.2f, 0.1f};
+
+    REQUIRE_TRUE(config.randomVoiceColors.size() == expectedVoiceColors.size());
+    for (std::size_t random = 0; random < 4; ++random) {
+        REQUIRE_TRUE(config.randomMetadata[random].name == expectedNames[random]);
+        REQUIRE_TRUE(config.randomMetadata[random].shortName == expectedShortNames[random]);
+        REQUIRE_TRUE(config.randomMetadata[random].sourceColor == expectedSourceColors[random]);
+        REQUIRE_TRUE(config.randomMetadata[random].visualizer == nullptr);
+        REQUIRE_TRUE(!config.randomMetadata[random].connected);
+        REQUIRE_TRUE(config.randomVoiceColors[random] == expectedVoiceColors[random]);
+
+        const double waitingMean = waitingMeans[random];
+        const auto& input = config.randomInputs[random];
+        REQUIRE_NEAR(input.waiting.muSeconds, waitingMean, 1.0e-12);
+        REQUIRE_NEAR(input.waiting.sigmaSeconds, 0.1 * waitingMean, 1.0e-12);
+        REQUIRE_NEAR(input.waiting.internalSigmaHz, 0.1 / waitingMean, 1.0e-12);
+        REQUIRE_NEAR(input.moving.muSeconds, waitingMean / 2.0, 1.0e-12);
+        REQUIRE_NEAR(input.moving.sigmaSeconds, 0.05 * waitingMean, 1.0e-12);
+        REQUIRE_NEAR(input.moving.internalSigmaHz, 0.2 / waitingMean, 1.0e-12);
+        REQUIRE_NEAR(input.targetInternalSigma, targetSigmas[random], 1.0e-7);
+    }
+
+    REQUIRE_TRUE(config.constantMetadata.name == "Constant");
+    REQUIRE_TRUE(config.constantMetadata.shortName == "Const");
+    REQUIRE_TRUE(config.constantMetadata.sourceColor == synth::Color::Yellow);
+    REQUIRE_TRUE(config.constantMetadata.visualizer == nullptr);
+    REQUIRE_TRUE(!config.constantMetadata.connected);
+    REQUIRE_TRUE(config.noiseMetadata.name == "Noise");
+    REQUIRE_TRUE(config.noiseMetadata.shortName == "Noise");
+    REQUIRE_TRUE(config.noiseMetadata.sourceColor == synth::Color::White);
+    REQUIRE_TRUE(config.noiseMetadata.visualizer == nullptr);
+    REQUIRE_TRUE(!config.noiseMetadata.connected);
+
+    bundle.Register();
+    for (std::size_t random = 0; random < 4; ++random) {
+        for (std::size_t voice = 0; voice < 4; ++voice) {
+            REQUIRE_TRUE(bundle.RandomProcessor(random).VoiceColor(voice) == expectedVoiceColors[voice]);
+        }
+    }
+
+    synth::ParameterManager monoManager;
+    auto& monoGroup = MakeStandardModulatorGroup<1>(monoManager);
+    synth::StandardModulators<1> mono(monoGroup);
+    REQUIRE_TRUE(std::as_const(mono).Config().randomVoiceColors ==
+                 std::vector<synth::Color>{synth::Color::Cyan});
+    mono.Register();
+    for (std::size_t random = 0; random < 4; ++random) {
+        REQUIRE_TRUE(mono.RandomProcessor(random).VoiceColor(0) == synth::Color::Cyan);
+    }
+
+    synth::ParameterManager stereoManager;
+    auto& stereoGroup = MakeStandardModulatorGroup<2>(stereoManager);
+    synth::StandardModulators<2> stereo(stereoGroup);
+    REQUIRE_TRUE(std::as_const(stereo).Config().randomVoiceColors ==
+                 (std::vector<synth::Color>{synth::Color::Cyan, synth::Color::Orange}));
+    stereo.Register();
+    for (std::size_t random = 0; random < 4; ++random) {
+        REQUIRE_TRUE(stereo.RandomProcessor(random).VoiceColor(0) == synth::Color::Cyan);
+        REQUIRE_TRUE(stereo.RandomProcessor(random).VoiceColor(1) == synth::Color::Orange);
+    }
+}
+
+TEST_CASE(standard_modulators_owns_address_stable_source_and_visualizer_storage) {
+    RequireStandardModulatorOwnedShape<1>();
+    RequireStandardModulatorOwnedShape<4>();
+
+    synth::ParameterManager manager;
+    auto& group = MakeStandardModulatorGroup<2>(manager);
+    synth::StandardModulators<2> bundle(group);
+
+    REQUIRE_TRUE(&bundle.TargetGroup() == &group);
+    REQUIRE_TRUE(bundle.NoiseProcessor().VoiceCount() == 2);
+    REQUIRE_TRUE(bundle.ConstantProcessor().VoiceCount() == 2);
+
+    std::array<const float*, 4> outputAddresses{};
+    std::array<const synth::ui::Visualizer*, 6> visualizerAddresses{};
+    for (std::size_t random = 0; random < 4; ++random) {
+        REQUIRE_TRUE(bundle.RandomOutputRow(random).size() == 2);
+        REQUIRE_TRUE(bundle.RandomPointerRow(random).size() == 2);
+        outputAddresses[random] = bundle.RandomOutputRow(random).data();
+        for (std::size_t voice = 0; voice < 2; ++voice) {
+            REQUIRE_TRUE(bundle.RandomPointerRow(random)[voice] ==
+                         &bundle.RandomOutputRow(random)[voice]);
+            (void)bundle.RandomProcessor(random).Output(voice);
+        }
+        visualizerAddresses[random] = &bundle.RandomVisualizer(random);
+    }
+    visualizerAddresses[4] = &bundle.ConstantVisualizer();
+    visualizerAddresses[5] = &bundle.NoiseVisualizer();
+    for (std::size_t left = 0; left < visualizerAddresses.size(); ++left) {
+        for (std::size_t right = left + 1; right < visualizerAddresses.size(); ++right) {
+            REQUIRE_TRUE(visualizerAddresses[left] != visualizerAddresses[right]);
+        }
+    }
+
+    bundle.Register();
+    for (std::size_t random = 0; random < 4; ++random) {
+        REQUIRE_TRUE(bundle.RandomOutputRow(random).data() == outputAddresses[random]);
+        REQUIRE_TRUE(&bundle.RandomVisualizer(random) == visualizerAddresses[random]);
+        const auto& metadata = group.GetModulators().Metadata(random);
+        REQUIRE_TRUE(metadata.visualizer == visualizerAddresses[random]);
+        REQUIRE_TRUE(metadata.connected);
+        for (std::size_t voice = 0; voice < 2; ++voice) {
+            bundle.RandomOutputRow(random)[voice] =
+                static_cast<float>(10 * random + voice + 1) / 100.0f;
+        }
+    }
+    REQUIRE_TRUE(group.GetModulators().Metadata(11).visualizer == visualizerAddresses[4]);
+    REQUIRE_TRUE(group.GetModulators().Metadata(14).visualizer == visualizerAddresses[5]);
+    bundle.NoiseProcessor().Process();
+    group.UpdateModValues();
+    for (std::size_t random = 0; random < 4; ++random) {
+        for (std::size_t voice = 0; voice < 2; ++voice) {
+            REQUIRE_TRUE(group.GetModulators().Value(voice, random) ==
+                         bundle.RandomOutputRow(random)[voice]);
+        }
+    }
+    for (std::size_t voice = 0; voice < 2; ++voice) {
+        REQUIRE_TRUE(group.GetModulators().Value(voice, 11) ==
+                     bundle.ConstantProcessor().Output(voice));
+        REQUIRE_TRUE(group.GetModulators().Value(voice, 14) ==
+                     bundle.NoiseProcessor().Output(voice));
+    }
+}
+
+TEST_CASE(standard_modulators_pre_registration_overrides_are_registered) {
+    synth::ParameterManager manager;
+    auto& group = MakeStandardModulatorGroup<2>(manager);
+    synth::StandardModulators<2> bundle(group);
+    auto& config = bundle.Config();
+    config.randomIndexes = {4, 5, 6, 7};
+    config.constantIndex = 12;
+    config.noiseIndex = 13;
+    const std::array<synth::Color, 4> sourceColors{
+        synth::Color::Red, synth::Color::Green, synth::Color::Yellow, synth::Color::White};
+    for (std::size_t random = 0; random < 4; ++random) {
+        config.randomMetadata[random].name = "Custom Random " + std::to_string(random);
+        config.randomMetadata[random].shortName = "CR" + std::to_string(random);
+        config.randomMetadata[random].sourceColor = sourceColors[random];
+    }
+    config.constantMetadata = {
+        .name = "Custom Constant",
+        .shortName = "CC",
+        .sourceColor = synth::Color::Indigo,
+    };
+    config.noiseMetadata = {
+        .name = "Custom Noise",
+        .shortName = "CN",
+        .sourceColor = synth::Color::Orange,
+    };
+    config.randomInputs[2].waiting.muSeconds = 9.0;
+    config.randomInputs[2].waiting.sigmaSeconds = 0.9;
+    config.randomInputs[2].waiting.internalSigmaHz = 1.0 / 90.0;
+    config.randomInputs[2].moving.muSeconds = 4.5;
+    config.randomInputs[2].moving.sigmaSeconds = 0.45;
+    config.randomInputs[2].moving.internalSigmaHz = 1.0 / 45.0;
+    config.randomInputs[2].targetInternalSigma = 0.25f;
+    config.randomVoiceColors = {synth::Color::Blue, synth::Color::Red};
+    config.randomMetadata[0].visualizer = &bundle.NoiseVisualizer();
+    config.randomMetadata[0].connected = true;
+    config.constantMetadata.visualizer = &bundle.NoiseVisualizer();
+    config.constantMetadata.connected = true;
+    config.noiseMetadata.visualizer = &bundle.ConstantVisualizer();
+    config.noiseMetadata.connected = true;
+
+    bundle.Register();
+
+    REQUIRE_TRUE(bundle.IsRegistered());
+    const auto& frozen = std::as_const(bundle).Config();
+    REQUIRE_NEAR(std::as_const(bundle).RandomInput(2).waiting.muSeconds, 9.0, 1.0e-12);
+    REQUIRE_NEAR(std::as_const(bundle).RandomInput(2).moving.muSeconds, 4.5, 1.0e-12);
+    REQUIRE_NEAR(std::as_const(bundle).RandomInput(2).targetInternalSigma, 0.25, 1.0e-7);
+    for (std::size_t random = 0; random < 4; ++random) {
+        const auto& metadata = group.GetModulators().Metadata(frozen.randomIndexes[random]);
+        REQUIRE_TRUE(metadata.name == frozen.randomMetadata[random].name);
+        REQUIRE_TRUE(metadata.shortName == frozen.randomMetadata[random].shortName);
+        REQUIRE_TRUE(metadata.sourceColor == frozen.randomMetadata[random].sourceColor);
+        REQUIRE_TRUE(metadata.visualizer == &bundle.RandomVisualizer(random));
+        REQUIRE_TRUE(metadata.connected);
+        REQUIRE_TRUE(bundle.RandomProcessor(random).VoiceColor(0) == synth::Color::Blue);
+        REQUIRE_TRUE(bundle.RandomProcessor(random).VoiceColor(1) == synth::Color::Red);
+    }
+    const auto& constantMetadata = group.GetModulators().Metadata(frozen.constantIndex);
+    REQUIRE_TRUE(constantMetadata.name == "Custom Constant");
+    REQUIRE_TRUE(constantMetadata.shortName == "CC");
+    REQUIRE_TRUE(constantMetadata.sourceColor == synth::Color::Indigo);
+    REQUIRE_TRUE(constantMetadata.visualizer == &bundle.ConstantVisualizer());
+    REQUIRE_TRUE(constantMetadata.connected);
+    const auto& noiseMetadata = group.GetModulators().Metadata(frozen.noiseIndex);
+    REQUIRE_TRUE(noiseMetadata.name == "Custom Noise");
+    REQUIRE_TRUE(noiseMetadata.shortName == "CN");
+    REQUIRE_TRUE(noiseMetadata.sourceColor == synth::Color::Orange);
+    REQUIRE_TRUE(noiseMetadata.visualizer == &bundle.NoiseVisualizer());
+    REQUIRE_TRUE(noiseMetadata.connected);
+    REQUIRE_TRUE(frozen.randomMetadata[0].visualizer == &bundle.NoiseVisualizer());
+    REQUIRE_TRUE(frozen.constantMetadata.visualizer == &bundle.NoiseVisualizer());
+    REQUIRE_TRUE(frozen.noiseMetadata.visualizer == &bundle.ConstantVisualizer());
+    for (const std::size_t disconnected : std::array<std::size_t, 6>{0, 1, 2, 3, 11, 14}) {
+        REQUIRE_TRUE(!group.GetModulators().Metadata(disconnected).connected);
+    }
+}
+
+TEST_CASE(standard_modulators_configuration_freezes_after_registration) {
+    synth::ParameterManager manager;
+    auto& group = MakeStandardModulatorGroup<2>(manager);
+    synth::StandardModulators<2> bundle(group);
+    bundle.Register();
+    const auto* randomVisualizer = group.GetModulators().Metadata(0).visualizer;
+
+    RequireThrows<std::logic_error>([&] { (void)bundle.Config(); });
+
+    REQUIRE_TRUE(std::as_const(bundle).Config().randomIndexes[0] == 0);
+    REQUIRE_TRUE(group.GetModulators().Metadata(0).visualizer == randomVisualizer);
+    REQUIRE_TRUE(group.GetModulators().Metadata(0).connected);
+}
+
+TEST_CASE(standard_modulators_rejects_each_out_of_range_active_index_atomically) {
+    for (std::size_t activeSource = 0; activeSource < 6; ++activeSource) {
+        synth::ParameterManager manager;
+        auto& group = MakeStandardModulatorGroup<2>(manager);
+        synth::StandardModulators<2> bundle(group);
+        if (activeSource < 4) {
+            bundle.Config().randomIndexes[activeSource] = 15;
+        } else if (activeSource == 4) {
+            bundle.Config().constantIndex = 15;
+        } else {
+            bundle.Config().noiseIndex = 15;
+        }
+
+        RequireThrows<std::invalid_argument>([&] { bundle.Register(); });
+        REQUIRE_TRUE(!bundle.IsRegistered());
+        RequireDisconnected(group);
+    }
+}
+
+TEST_CASE(standard_modulators_rejects_each_duplicate_active_index_atomically) {
+    for (std::size_t collidingSource = 1; collidingSource < 6; ++collidingSource) {
+        synth::ParameterManager manager;
+        auto& group = MakeStandardModulatorGroup<2>(manager);
+        synth::StandardModulators<2> bundle(group);
+        if (collidingSource < 4) {
+            bundle.Config().randomIndexes[collidingSource] = bundle.Config().randomIndexes[0];
+        } else if (collidingSource == 4) {
+            bundle.Config().constantIndex = bundle.Config().randomIndexes[0];
+        } else {
+            bundle.Config().noiseIndex = bundle.Config().randomIndexes[0];
+        }
+
+        RequireThrows<std::invalid_argument>([&] { bundle.Register(); });
+        REQUIRE_TRUE(!bundle.IsRegistered());
+        RequireDisconnected(group);
+    }
+}
+
+TEST_CASE(standard_modulators_rejects_invalid_random_timing_atomically) {
+    for (std::size_t random = 0; random < 4; ++random) {
+        synth::ParameterManager manager;
+        auto& group = MakeStandardModulatorGroup<2>(manager);
+        synth::StandardModulators<2> bundle(group);
+        bundle.Config().randomInputs[random].waiting.sigmaSeconds = -0.01;
+        RequireThrows<std::invalid_argument>([&] { bundle.Register(); });
+        RequireDisconnected(group);
+    }
+
+    for (std::size_t invalidField = 0; invalidField < 7; ++invalidField) {
+        synth::ParameterManager manager;
+        auto& group = MakeStandardModulatorGroup<2>(manager);
+        synth::StandardModulators<2> bundle(group);
+        auto& input = bundle.Config().randomInputs[0];
+        switch (invalidField) {
+        case 0: input.waiting.muSeconds = std::numeric_limits<double>::quiet_NaN(); break;
+        case 1: input.waiting.sigmaSeconds = std::numeric_limits<double>::infinity(); break;
+        case 2: input.waiting.internalSigmaHz = -0.1; break;
+        case 3: input.moving.muSeconds = std::numeric_limits<double>::quiet_NaN(); break;
+        case 4: input.moving.sigmaSeconds = -0.1; break;
+        case 5: input.moving.internalSigmaHz = std::numeric_limits<double>::infinity(); break;
+        case 6: input.targetInternalSigma = -0.1f; break;
+        }
+        RequireThrows<std::invalid_argument>([&] { bundle.Register(); });
+        RequireDisconnected(group);
+    }
+}
+
+TEST_CASE(standard_modulators_rejects_empty_active_metadata_atomically) {
+    for (std::size_t activeSource = 0; activeSource < 6; ++activeSource) {
+        for (bool clearShortName : {false, true}) {
+            synth::ParameterManager manager;
+            auto& group = MakeStandardModulatorGroup<2>(manager);
+            synth::StandardModulators<2> bundle(group);
+            auto clearField = [clearShortName](synth::ModulatorMetadata& metadata) {
+                (clearShortName ? metadata.shortName : metadata.name).clear();
+            };
+            if (activeSource < 4) {
+                clearField(bundle.Config().randomMetadata[activeSource]);
+            } else if (activeSource == 4) {
+                clearField(bundle.Config().constantMetadata);
+            } else {
+                clearField(bundle.Config().noiseMetadata);
+            }
+            RequireThrows<std::invalid_argument>([&] { bundle.Register(); });
+            RequireDisconnected(group);
+        }
+    }
+}
+
+TEST_CASE(standard_modulators_rejects_wrong_voice_palette_size_atomically) {
+    {
+        synth::ParameterManager manager;
+        auto& group = MakeStandardModulatorGroup<1>(manager);
+        synth::StandardModulators<1> bundle(group);
+        bundle.Config().randomVoiceColors.clear();
+        RequireThrows<std::invalid_argument>([&] { bundle.Register(); });
+        RequireDisconnected(group);
+    }
+    for (std::size_t size : {1u, 3u}) {
+        synth::ParameterManager manager;
+        auto& group = MakeStandardModulatorGroup<2>(manager);
+        synth::StandardModulators<2> bundle(group);
+        bundle.Config().randomVoiceColors.resize(size, synth::Color::Red);
+        RequireThrows<std::invalid_argument>([&] { bundle.Register(); });
+        RequireDisconnected(group);
+    }
+    for (std::size_t size : {3u, 5u}) {
+        synth::ParameterManager manager;
+        auto& group = MakeStandardModulatorGroup<4>(manager);
+        synth::StandardModulators<4> bundle(group);
+        bundle.Config().randomVoiceColors.resize(size, synth::Color::Red);
+        RequireThrows<std::invalid_argument>([&] { bundle.Register(); });
+        RequireDisconnected(group);
+    }
+}
+
+TEST_CASE(standard_modulators_rejects_mismatched_group_shape_atomically) {
+    {
+        synth::ParameterManager manager;
+        auto& group = MakeStandardModulatorGroup<2>(manager, 1, 15);
+        synth::StandardModulators<2> bundle(group);
+        RequireThrows<std::invalid_argument>([&] { bundle.Register(); });
+        RequireDisconnected(group);
+    }
+    {
+        synth::ParameterManager manager;
+        auto& group = MakeStandardModulatorGroup<2>(manager, 2, 14);
+        synth::StandardModulators<2> bundle(group);
+        RequireThrows<std::invalid_argument>([&] { bundle.Register(); });
+        RequireDisconnected(group);
+    }
+    {
+        synth::ParameterManager manager;
+        auto& group = MakeStandardModulatorGroup<2>(manager, 2, 16);
+        synth::StandardModulators<2> bundle(group);
+        RequireThrows<std::invalid_argument>([&] { bundle.Register(); });
+        RequireDisconnected(group);
+    }
+}
+
+TEST_CASE(standard_modulators_mono_omits_constant_and_ignores_constant_collision) {
+    synth::ParameterManager manager;
+    auto& group = MakeStandardModulatorGroup<1>(manager);
+    synth::StandardModulators<1> bundle(group);
+    bundle.Config().constantIndex = bundle.Config().randomIndexes[0];
+    bundle.Config().constantMetadata.name.clear();
+    bundle.Config().constantMetadata.shortName.clear();
+
+    bundle.Register();
+
+    for (std::size_t modulator = 0; modulator < 15; ++modulator) {
+        const bool shouldBeConnected = modulator < 4 || modulator == 14;
+        REQUIRE_TRUE(group.GetModulators().Metadata(modulator).connected == shouldBeConnected);
+        if (!shouldBeConnected) {
+            REQUIRE_TRUE(group.GetModulators().Metadata(modulator).visualizer == nullptr);
+        }
+    }
+
+    synth::ParameterManager outOfRangeManager;
+    auto& outOfRangeGroup = MakeStandardModulatorGroup<1>(outOfRangeManager);
+    synth::StandardModulators<1> outOfRangeBundle(outOfRangeGroup);
+    outOfRangeBundle.Config().constantIndex = 99;
+    outOfRangeBundle.Register();
+    REQUIRE_TRUE(outOfRangeBundle.IsRegistered());
+    REQUIRE_TRUE(!outOfRangeGroup.GetModulators().Metadata(11).connected);
+}
+
+TEST_CASE(standard_modulators_rejects_double_registration_without_mutation) {
+    synth::ParameterManager manager;
+    auto& group = MakeStandardModulatorGroup<2>(manager);
+    synth::StandardModulators<2> bundle(group);
+    bundle.Register();
+    const auto metadataBefore = group.GetModulators().Metadata(0);
+
+    RequireThrows<std::logic_error>([&] { bundle.Register(); });
+
+    REQUIRE_TRUE(bundle.IsRegistered());
+    const auto& metadataAfter = group.GetModulators().Metadata(0);
+    REQUIRE_TRUE(metadataAfter.name == metadataBefore.name);
+    REQUIRE_TRUE(metadataAfter.shortName == metadataBefore.shortName);
+    REQUIRE_TRUE(metadataAfter.sourceColor == metadataBefore.sourceColor);
+    REQUIRE_TRUE(metadataAfter.visualizer == metadataBefore.visualizer);
+    REQUIRE_TRUE(metadataAfter.connected == metadataBefore.connected);
+}
 
 TEST_CASE(smartgrid_dsp_public_headers_are_dependency_clean) {
     #ifdef JUCE_MAJOR_VERSION
