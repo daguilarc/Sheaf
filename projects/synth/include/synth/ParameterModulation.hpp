@@ -188,6 +188,8 @@ struct ParameterStorageBatch {
     std::vector<float> targetMaxValueArena;
     std::vector<float> currentDepthArena;
     std::vector<float> targetDepthArena;
+    std::vector<std::size_t> routeSourceIndexArena;
+    std::vector<std::size_t> sourceRoutePositionArena;
     std::vector<float> currentKnobValueArena;
     std::vector<float> uiDisplayCenterArena;
     std::vector<float> uiDisplaySpreadEnergyArena;
@@ -232,6 +234,8 @@ public:
     float& Value(std::size_t voiceIx, std::size_t modIx);
     float Value(std::size_t voiceIx, std::size_t modIx) const;
     float Apply(std::size_t voiceIx, std::span<const float> depths) const;
+    float ApplyActive(std::size_t voiceIx, std::span<const float> activeDepths,
+                      std::span<const std::size_t> sourceIndices) const;
     // Source pointers are caller-owned and must remain address-stable while registered.
     void SetModulationSource(std::size_t modIx, std::span<float* const> sourcePointers,
                              ModulatorMetadata metadata);
@@ -345,6 +349,8 @@ private:
     std::vector<float> targetMaxValueArena_;
     std::vector<float> currentDepthArena_;
     std::vector<float> targetDepthArena_;
+    std::vector<std::size_t> routeSourceIndexArena_;
+    std::vector<std::size_t> sourceRoutePositionArena_;
     std::vector<float> currentKnobValueArena_;
     std::vector<float> uiDisplayCenterArena_;
     std::vector<float> uiDisplaySpreadEnergyArena_;
@@ -438,10 +444,18 @@ public:
     bool GestureActive(std::size_t sceneIx, std::size_t gestureIx) const;
     GestureMask GesturesAffectingMask() const;
 
-    std::span<float> CurrentDepths(std::size_t voiceIx);
-    std::span<const float> CurrentDepths(std::size_t voiceIx) const;
-    std::span<float> TargetDepths(std::size_t voiceIx);
-    std::span<const float> TargetDepths(std::size_t voiceIx) const;
+    std::span<float> CurrentDepthSlots(std::size_t voiceIx);
+    std::span<const float> CurrentDepthSlots(std::size_t voiceIx) const;
+    std::span<float> TargetDepthSlots(std::size_t voiceIx);
+    std::span<const float> TargetDepthSlots(std::size_t voiceIx) const;
+    float CurrentDepthForSource(std::size_t voiceIx, std::size_t sourceIx) const;
+    float TargetDepthForSource(std::size_t voiceIx, std::size_t sourceIx) const;
+    std::size_t ActiveRouteCount() const { return activeRouteCount_; }
+    std::span<const std::size_t> ActiveRouteSourceIndices() const {
+        return routeSourceIndices_.first(activeRouteCount_);
+    }
+    std::size_t RouteSourceIndex(std::size_t slot) const;
+    std::size_t RoutePositionForSource(std::size_t sourceIx) const;
 
     float CurrentCenter() const { return currentCenter_; }
     float TargetCenter() const { return targetCenter_; }
@@ -456,7 +470,6 @@ public:
 private:
     friend class ParameterManager;
 
-    std::size_t VoiceModIndex(std::size_t voiceIx, std::size_t modIx) const;
     std::size_t SceneGestureIndex(std::size_t sceneIx, std::size_t gestureIx) const;
     void ValidateSceneEndpoints(const SceneState& scene) const;
     float EffectiveGestureWeight(const SceneState& scene, std::size_t gestureIx, float blend) const;
@@ -469,6 +482,12 @@ private:
     bool WouldCreateCycle(const Parameter* candidate) const;
     ParameterConfig ModulationDepthConfig(std::size_t modIx) const;
     float TargetValue(std::size_t voiceIx) const;
+    std::size_t VoiceRouteIndex(std::size_t voiceIx, std::size_t routeSlot) const;
+    void EnsureRouteActive(std::size_t sourceIx);
+    void RemoveActiveRoute(std::size_t routeSlot);
+    bool RouteNeutralAcrossVoices(std::size_t routeSlot) const;
+    void PruneNeutralActiveRoutes();
+    void AssertRouteBijection() const;
     std::uint32_t ModulatorsAffectingMask() const;
     bool HasNonDefaultState() const;
     bool HasNonZeroState() const;
@@ -490,6 +509,9 @@ private:
     std::span<float> targetMaxValues_;
     std::span<float> currentDepths_;
     std::span<float> targetDepths_;
+    std::span<std::size_t> routeSourceIndices_;
+    std::span<std::size_t> sourceRoutePositions_;
+    std::size_t activeRouteCount_ = 0;
     std::span<float> currentKnobValues_;
     std::span<float> uiDisplayCenters_;
     std::span<float> uiDisplaySpreadEnergies_;

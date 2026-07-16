@@ -1474,6 +1474,8 @@ TEST_CASE(demo_modulation_process_parameters_applies_direct_vco_modulation) {
         .maxParameters = 4,
         .processLiteAlpha = 1.0f,
     });
+    synth::ParameterProcessingObserver work;
+    group.SetProcessingObserverForTests(&work);
     auto& phase = manager.CreateParameter(group, {.name = "Phase", .defaultValue = 0.0f});
     auto& directDepth = manager.CreateParameter(group, {
         .name = "Phase Direct Depth",
@@ -1488,12 +1490,16 @@ TEST_CASE(demo_modulation_process_parameters_applies_direct_vco_modulation) {
     synth_miniapp::ProcessParameters(group, /*sampleIndex=*/0);
     REQUIRE_NEAR(phase.GetRaw(0), 0.0f, tolerance);
     REQUIRE_NEAR(phase.GetRaw(1), 1.0f, tolerance);
+    REQUIRE_TRUE(phase.ActiveRouteCount() == 1);
+    REQUIRE_TRUE(phase.ActiveRouteSourceIndices()[0] == 0);
+    REQUIRE_TRUE(work.activeRouteVisits == 2);
 
     group.GetModulators().Value(0, 0) = 1.0f;
     group.GetModulators().Value(1, 0) = 0.0f;
     synth_miniapp::ProcessParameters(group, /*sampleIndex=*/1);
     REQUIRE_NEAR(phase.GetRaw(0), 1.0f, tolerance);
     REQUIRE_NEAR(phase.GetRaw(1), 0.0f, tolerance);
+    REQUIRE_TRUE(work.activeRouteVisits == 4);
 }
 
 int main() {
