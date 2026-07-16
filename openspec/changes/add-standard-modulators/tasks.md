@@ -20,10 +20,10 @@
 
 ## 4. Braid4 Adoption
 
-- [ ] 4.1 Update Braid4 system tests first for fifteen modulators in every group, independent `<2>/<4>/<1>` bundles, standard sources and visualizers, the mono constant gap, application sources at `4/5`, complete fifteen-cell views, and distinct lifetime addresses.
-- [ ] 4.2 Recalculate Braid4 group capacities for existing top-level parameters plus a complete fifteen-cell view, construct and register all three retained standard bundles, and move stereo, quad, and mono application-specific source pairs from `0/1` to `4/5`.
-- [ ] 4.3 Prepare the Braid4 bundles at the four-times-host internal rate, process them once before each internal modulation-value update, publish all three once per host block, and retain the documented one-internal-sample delay for matrix/VCO-derived application sources.
-- [ ] 4.4 Update Braid4 portable UI tests so standard depth cells render wrapper-owned visualizers, indexes `4/5` remain encoder-only, mono index `11` stays null/disconnected, and no visualizer aliases across sources or groups.
+- [x] 4.1 Update Braid4 system tests first for fifteen modulators in every group, independent `<2>/<4>/<1>` bundles, standard sources and visualizers, the mono constant gap, application sources at `4/5`, complete fifteen-cell views, and distinct lifetime addresses.
+- [x] 4.2 Recalculate Braid4 group capacities for existing top-level parameters plus a complete fifteen-cell view, construct and register all three retained standard bundles, and move stereo, quad, and mono application-specific source pairs from `0/1` to `4/5`.
+- [x] 4.3 Prepare the Braid4 bundles at the four-times-host internal rate, process them once before each internal modulation-value update, publish all three once per host block, and retain the documented one-internal-sample delay for matrix/VCO-derived application sources.
+- [x] 4.4 Update Braid4 portable UI tests so standard depth cells render wrapper-owned visualizers, indexes `4/5` remain encoder-only, mono index `11` stays null/disconnected, and no visualizer aliases across sources or groups.
 
 ## 5. Regression, Performance, and Documentation
 
