@@ -692,6 +692,242 @@ TEST_CASE(standard_modulators_rejects_double_registration_without_mutation) {
     REQUIRE_TRUE(metadataAfter.connected == metadataBefore.connected);
 }
 
+TEST_CASE(standard_modulators_lifecycle_requires_registration_and_finite_preparation) {
+    synth::ParameterManager manager;
+    auto& group = MakeStandardModulatorGroup<2>(manager);
+    synth::StandardModulators<2> bundle(group);
+
+    REQUIRE_TRUE(!bundle.IsPrepared());
+    RequireThrows<std::logic_error>([&] { bundle.Prepare(48000.0); });
+    REQUIRE_TRUE(!bundle.IsPrepared());
+    for (std::size_t random = 0; random < 4; ++random) {
+        REQUIRE_TRUE(bundle.RandomProcessor(random).SampleRate() == 0.0);
+    }
+
+    bundle.Register();
+    RequireThrows<std::logic_error>([&] { bundle.Process(); });
+    for (std::size_t random = 0; random < 4; ++random) {
+        REQUIRE_TRUE(bundle.RandomProcessor(random).RoundElapsedSamples() == 0.0);
+    }
+    for (std::size_t voice = 0; voice < 2; ++voice) {
+        REQUIRE_TRUE(bundle.NoiseProcessor().Output(voice) == 0.0f);
+    }
+
+    for (const double invalidRate : std::array<double, 4>{
+             0.0,
+             -1.0,
+             std::numeric_limits<double>::infinity(),
+             std::numeric_limits<double>::quiet_NaN(),
+         }) {
+        RequireThrows<std::invalid_argument>([&] { bundle.Prepare(invalidRate); });
+        REQUIRE_TRUE(!bundle.IsPrepared());
+    }
+
+    bundle.Prepare(48000.0);
+    REQUIRE_TRUE(bundle.IsPrepared());
+    for (std::size_t random = 0; random < 4; ++random) {
+        REQUIRE_TRUE(bundle.RandomProcessor(random).SampleRate() == 48000.0);
+    }
+
+    bundle.Prepare(96000.0);
+    REQUIRE_TRUE(bundle.IsPrepared());
+    for (std::size_t random = 0; random < 4; ++random) {
+        REQUIRE_TRUE(bundle.RandomProcessor(random).SampleRate() == 96000.0);
+    }
+    RequireThrows<std::invalid_argument>([&] { bundle.Prepare(-96000.0); });
+    REQUIRE_TRUE(bundle.IsPrepared());
+    for (std::size_t random = 0; random < 4; ++random) {
+        REQUIRE_TRUE(bundle.RandomProcessor(random).SampleRate() == 96000.0);
+    }
+}
+
+TEST_CASE(standard_modulators_process_advances_dynamic_sources_once_and_copies_voice_order) {
+    synth::ParameterManager manager;
+    auto& group = MakeStandardModulatorGroup<4>(manager);
+    synth::StandardModulators<4> bundle(group);
+    for (auto& input : bundle.Config().randomInputs) {
+        input.waiting = {.muSeconds = 0.01, .sigmaSeconds = 0.0, .internalSigmaHz = 0.0};
+        input.moving = {.muSeconds = 0.01, .sigmaSeconds = 0.0, .internalSigmaHz = 0.0};
+        input.targetInternalSigma = 0.25f;
+    }
+    bundle.Register();
+    bundle.Prepare(100.0);
+
+    std::array<std::array<const float*, 4>, 4> randomPointers{};
+    std::array<float, 4> constantValues{};
+    std::array<float*, 4> constantPointers{};
+    for (std::size_t random = 0; random < 4; ++random) {
+        bundle.RandomProcessor(random).Process(std::as_const(bundle).RandomInput(random));
+        REQUIRE_TRUE(bundle.RandomProcessor(random).RoundElapsedSamples() == 0.0);
+        for (std::size_t voice = 0; voice < 4; ++voice) {
+            REQUIRE_TRUE(bundle.RandomProcessor(random).Voices()[voice].GetState() ==
+                         synth::GangedRandomLfoVoice::State::Waiting);
+            bundle.RandomOutputRow(random)[voice] = -1.0f;
+            randomPointers[random][voice] = bundle.RandomPointerRow(random)[voice];
+        }
+    }
+    for (std::size_t voice = 0; voice < 4; ++voice) {
+        constantValues[voice] = bundle.ConstantProcessor().Output(voice);
+        constantPointers[voice] = bundle.ConstantProcessor().SourcePointers()[voice];
+        REQUIRE_TRUE(bundle.NoiseProcessor().Output(voice) == 0.0f);
+    }
+
+    bundle.Process();
+
+    for (std::size_t random = 0; random < 4; ++random) {
+        REQUIRE_TRUE(bundle.RandomProcessor(random).RoundElapsedSamples() == 1.0);
+        for (std::size_t voice = 0; voice < 4; ++voice) {
+            REQUIRE_TRUE(bundle.RandomProcessor(random).Voices()[voice].GetState() ==
+                         synth::GangedRandomLfoVoice::State::Moving);
+            REQUIRE_TRUE(bundle.RandomOutputRow(random)[voice] ==
+                         bundle.RandomProcessor(random).Output(voice));
+            REQUIRE_TRUE(bundle.RandomPointerRow(random)[voice] == randomPointers[random][voice]);
+            REQUIRE_TRUE(bundle.RandomPointerRow(random)[voice] ==
+                         &bundle.RandomOutputRow(random)[voice]);
+        }
+    }
+    for (std::size_t voice = 0; voice < 4; ++voice) {
+        REQUIRE_TRUE(bundle.NoiseProcessor().Output(voice) > 0.0f);
+        REQUIRE_TRUE(bundle.NoiseProcessor().Output(voice) < 1.0f);
+        REQUIRE_TRUE(bundle.ConstantProcessor().Output(voice) == constantValues[voice]);
+        REQUIRE_TRUE(bundle.ConstantProcessor().SourcePointers()[voice] == constantPointers[voice]);
+    }
+}
+
+TEST_CASE(standard_modulators_group_updates_and_ui_publication_remain_explicit) {
+    synth::ParameterManager manager;
+    auto& group = MakeStandardModulatorGroup<4>(manager);
+    synth::StandardModulators<4> bundle(group);
+    bundle.Register();
+    bundle.Prepare(48000.0);
+
+    std::array<const float*, 4> outputAddresses{};
+    std::array<std::array<float*, 4>, 4> pointerRows{};
+    std::array<const synth::ui::Visualizer*, 4> visualizerAddresses{};
+    std::array<synth::GangedRandomLfoSnapshot<4>, 4> publishedBefore{};
+    for (std::size_t random = 0; random < 4; ++random) {
+        outputAddresses[random] = bundle.RandomOutputRow(random).data();
+        pointerRows[random] = bundle.RandomPointerRow(random);
+        visualizerAddresses[random] = &bundle.RandomVisualizer(random);
+        REQUIRE_TRUE(group.GetModulators().Metadata(random).visualizer == visualizerAddresses[random]);
+    }
+    const float* noiseOutputs = bundle.NoiseProcessor().Outputs().data();
+    float* const* noisePointers = bundle.NoiseProcessor().SourcePointers().data();
+    const float* constantOutputs = bundle.ConstantProcessor().Outputs().data();
+    float* const* constantPointers = bundle.ConstantProcessor().SourcePointers().data();
+    const auto* noiseVisualizer = &bundle.NoiseVisualizer();
+    const auto* constantVisualizer = &bundle.ConstantVisualizer();
+
+    bundle.PublishUiState();
+    for (std::size_t random = 0; random < 4; ++random) {
+        REQUIRE_TRUE(bundle.RandomProcessor(random).ReadSnapshot(publishedBefore[random]));
+        REQUIRE_TRUE(publishedBefore[random].sampleRate == 48000.0);
+        REQUIRE_TRUE(publishedBefore[random].voices[0].state ==
+                     synth::GangedRandomLfoVoice::State::Done);
+    }
+
+    bundle.Process();
+    bundle.Process();
+    for (std::size_t voice = 0; voice < 4; ++voice) {
+        for (const std::size_t modulator : std::array<std::size_t, 6>{0, 1, 2, 3, 11, 14}) {
+            REQUIRE_TRUE(group.GetModulators().Value(voice, modulator) == 0.0f);
+        }
+    }
+    for (std::size_t random = 0; random < 4; ++random) {
+        synth::GangedRandomLfoSnapshot<4> stillPublished{};
+        REQUIRE_TRUE(bundle.RandomProcessor(random).ReadSnapshot(stillPublished));
+        REQUIRE_TRUE(stillPublished.roundElapsedSamples ==
+                     publishedBefore[random].roundElapsedSamples);
+        REQUIRE_TRUE(stillPublished.voices[0].state == publishedBefore[random].voices[0].state);
+        REQUIRE_TRUE(stillPublished.voices[0].currentStateProgress ==
+                     publishedBefore[random].voices[0].currentStateProgress);
+    }
+
+    group.UpdateModValues();
+    for (std::size_t random = 0; random < 4; ++random) {
+        for (std::size_t voice = 0; voice < 4; ++voice) {
+            REQUIRE_TRUE(group.GetModulators().Value(voice, random) ==
+                         bundle.RandomOutputRow(random)[voice]);
+        }
+    }
+    for (std::size_t voice = 0; voice < 4; ++voice) {
+        REQUIRE_TRUE(group.GetModulators().Value(voice, 11) ==
+                     bundle.ConstantProcessor().Output(voice));
+        REQUIRE_TRUE(group.GetModulators().Value(voice, 14) ==
+                     bundle.NoiseProcessor().Output(voice));
+    }
+
+    bundle.PublishUiState();
+    for (std::size_t random = 0; random < 4; ++random) {
+        synth::GangedRandomLfoSnapshot<4> publishedAfter{};
+        REQUIRE_TRUE(bundle.RandomProcessor(random).ReadSnapshot(publishedAfter));
+        REQUIRE_TRUE(publishedAfter.roundElapsedSamples == 1.0);
+        REQUIRE_TRUE(publishedAfter.voices[0].state ==
+                     synth::GangedRandomLfoVoice::State::Waiting);
+        REQUIRE_TRUE(bundle.RandomOutputRow(random).data() == outputAddresses[random]);
+        REQUIRE_TRUE(bundle.RandomPointerRow(random) == pointerRows[random]);
+        REQUIRE_TRUE(&bundle.RandomVisualizer(random) == visualizerAddresses[random]);
+        REQUIRE_TRUE(group.GetModulators().Metadata(random).visualizer == visualizerAddresses[random]);
+    }
+    REQUIRE_TRUE(bundle.NoiseProcessor().Outputs().data() == noiseOutputs);
+    REQUIRE_TRUE(bundle.NoiseProcessor().SourcePointers().data() == noisePointers);
+    REQUIRE_TRUE(bundle.ConstantProcessor().Outputs().data() == constantOutputs);
+    REQUIRE_TRUE(bundle.ConstantProcessor().SourcePointers().data() == constantPointers);
+    REQUIRE_TRUE(&bundle.NoiseVisualizer() == noiseVisualizer);
+    REQUIRE_TRUE(&bundle.ConstantVisualizer() == constantVisualizer);
+    REQUIRE_TRUE(group.GetModulators().Metadata(14).visualizer == noiseVisualizer);
+    REQUIRE_TRUE(group.GetModulators().Metadata(11).visualizer == constantVisualizer);
+
+    synth::ParameterManager monoManager;
+    auto& monoGroup = MakeStandardModulatorGroup<1>(monoManager);
+    synth::StandardModulators<1> mono(monoGroup);
+    mono.Register();
+    mono.Prepare(48000.0);
+    mono.Process();
+    monoGroup.UpdateModValues();
+    REQUIRE_TRUE(!monoGroup.GetModulators().Metadata(11).connected);
+    REQUIRE_TRUE(monoGroup.GetModulators().Metadata(11).visualizer == nullptr);
+    REQUIRE_TRUE(monoGroup.GetModulators().Value(0, 11) == 0.0f);
+}
+
+TEST_CASE(standard_modulators_random_inspection_is_bounds_checked) {
+    synth::ParameterManager manager;
+    auto& group = MakeStandardModulatorGroup<2>(manager);
+    synth::StandardModulators<2> bundle(group);
+    const auto& constBundle = std::as_const(bundle);
+
+    RequireThrows<std::out_of_range>([&] { (void)bundle.RandomProcessor(4); });
+    RequireThrows<std::out_of_range>([&] { (void)constBundle.RandomProcessor(4); });
+    RequireThrows<std::out_of_range>([&] { (void)bundle.RandomInput(4); });
+    RequireThrows<std::out_of_range>([&] { (void)constBundle.RandomInput(4); });
+    RequireThrows<std::out_of_range>([&] { (void)bundle.RandomOutputRow(4); });
+    RequireThrows<std::out_of_range>([&] { (void)constBundle.RandomOutputRow(4); });
+    RequireThrows<std::out_of_range>([&] { (void)bundle.RandomPointerRow(4); });
+    RequireThrows<std::out_of_range>([&] { (void)constBundle.RandomPointerRow(4); });
+    RequireThrows<std::out_of_range>([&] { (void)bundle.RandomVisualizer(4); });
+    RequireThrows<std::out_of_range>([&] { (void)constBundle.RandomVisualizer(4); });
+}
+
+TEST_CASE(standard_modulators_metadata_color_overrides_reach_owned_visualizers) {
+    synth::ParameterManager manager;
+    auto& group = MakeStandardModulatorGroup<2>(manager);
+    synth::StandardModulators<2> bundle(group);
+    bundle.Config().constantMetadata.sourceColor = synth::Color::Indigo;
+    bundle.Config().noiseMetadata.sourceColor = synth::Color::Orange;
+    bundle.Register();
+
+    bundle.ConstantVisualizer().SetBounds({0.0f, 0.0f, 20.0f, 20.0f});
+    bundle.NoiseVisualizer().SetBounds({0.0f, 0.0f, 20.0f, 20.0f});
+    const auto constantCommands = bundle.ConstantVisualizer().Draw();
+    const auto noiseCommands = bundle.NoiseVisualizer().Draw();
+    REQUIRE_TRUE(constantCommands.size() == 2);
+    for (const auto& command : constantCommands) {
+        REQUIRE_TRUE(command.color == synth::Color::Indigo);
+    }
+    REQUIRE_TRUE(noiseCommands.size() == 1);
+    REQUIRE_TRUE(noiseCommands[0].color == synth::Color::Orange);
+}
+
 TEST_CASE(smartgrid_dsp_public_headers_are_dependency_clean) {
     #ifdef JUCE_MAJOR_VERSION
     throw std::runtime_error("DSP headers must not include JUCE");

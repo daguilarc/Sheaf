@@ -19,6 +19,8 @@ public:
     NoiseWaveformVisualizer(Color color, std::uint64_t seed)
         : color_(color), random_(seed) {}
 
+    void SetColor(Color color) noexcept { color_ = color; }
+
 protected:
     std::vector<DrawCommand> DrawVisible() const override {
         const Bounds bounds = GetBounds();

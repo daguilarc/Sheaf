@@ -17,6 +17,7 @@ public:
         Color color = Color::White) noexcept
         : values_(values), color_(color) {}
 
+    void SetColor(Color color) noexcept { color_ = color; }
     bool WantsEncoderFrame() const noexcept override { return false; }
 
 protected:

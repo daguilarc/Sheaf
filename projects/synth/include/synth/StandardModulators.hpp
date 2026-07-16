@@ -12,7 +12,6 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
-#include <span>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -72,6 +71,39 @@ public:
     const Configuration& Config() const noexcept { return config_; }
 
     bool IsRegistered() const noexcept { return registered_; }
+    bool IsPrepared() const noexcept { return prepared_; }
+
+    void Prepare(double sampleRate) {
+        if (!registered_) {
+            throw std::logic_error("standard modulators must be registered before preparation");
+        }
+        if (!std::isfinite(sampleRate) || sampleRate <= 0.0) {
+            throw std::invalid_argument("standard modulator sample rate must be finite and positive");
+        }
+        for (std::size_t random = 0; random < kRandomCount; ++random) {
+            randomProcessors_[random].Prepare(sampleRate);
+        }
+        prepared_ = true;
+    }
+
+    void Process() {
+        if (!prepared_) {
+            throw std::logic_error("standard modulators must be prepared before processing");
+        }
+        for (std::size_t random = 0; random < kRandomCount; ++random) {
+            randomProcessors_[random].Process(config_.randomInputs[random]);
+            for (std::size_t voice = 0; voice < VoiceCount; ++voice) {
+                randomOutputRows_[random][voice] = randomProcessors_[random].Output(voice);
+            }
+        }
+        noiseProcessor_.Process();
+    }
+
+    void PublishUiState() {
+        for (std::size_t random = 0; random < kRandomCount; ++random) {
+            randomProcessors_[random].PublishUiState();
+        }
+    }
 
     void Register() {
         if (registered_) {
@@ -96,6 +128,8 @@ public:
                 randomProcessors_[random].SetVoiceColor(voice, config_.randomVoiceColors[voice]);
             }
         }
+        noiseVisualizer_.SetColor(config_.noiseMetadata.sourceColor);
+        constantVisualizer_.SetColor(config_.constantMetadata.sourceColor);
         for (std::size_t random = 0; random < kRandomCount; ++random) {
             group_->SetModulationSource(
                 config_.randomIndexes[random],
@@ -295,6 +329,7 @@ private:
     ui::NoiseWaveformVisualizer noiseVisualizer_;
     ui::ConstantBarVisualizer constantVisualizer_;
     bool registered_ = false;
+    bool prepared_ = false;
 };
 
 } // namespace synth
