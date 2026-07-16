@@ -42,7 +42,6 @@ public:
     using VcoModule = synth::WavetableVcoModule<kVoiceCount>;
     using FilterModule = synth::ClassicSvfModule<kVoiceCount>;
     using LfoModule = synth::BasicLfoModule<kVoiceCount>;
-    using GangedRandomLfo = synth::GangedRandomLfoProcessor<kVoiceCount>;
     using VcoUiLayerState = synth::DefaultWavetableVco::UIState;
     using LfoUiLayerState = synth::BasicLFOProcessor::UIState;
 
@@ -254,10 +253,7 @@ public:
     const synth::StandardModulators<kVoiceCount>& StandardModulatorsInstance() const {
         return *standardModulators_;
     }
-    GangedRandomLfo& GangedRandomLfoInstance() { return standardModulators_->RandomProcessor(0); }
-    const GangedRandomLfo& GangedRandomLfoInstance() const {
-        return standardModulators_->RandomProcessor(0);
-    }
+
 private:
     synth::AppContext* context_ = nullptr;
     synth::ParameterGroup* group_ = nullptr;

@@ -35,10 +35,10 @@ Last audit: standard modulators, fifteen-source application adoption, and sparse
 | `sdsp-40` | covered | `miniapp_registers_constant_at_standard_index_eleven_without_sample_work`, `miniapp_registers_standard_fifteen_source_topology_without_changing_performer_topology`, and `TestStandardModulatorVisualizersRemainPortable` |
 | `ssm-1` | covered | `standard_modulators_owns_address_stable_source_and_visualizer_storage` plus compile-time copy/move assertions in `dsp_tests` |
 | `ssm-2` | covered | `standard_modulators_defaults_match_min16_contract`, `standard_modulators_pre_registration_overrides_are_registered`, and `standard_modulators_configuration_freezes_after_registration` |
-| `ssm-3` | covered | `standard_modulators_defaults_match_min16_contract` checks every exact derived timing field for all four sources |
+| `ssm-3` | covered | `standard_modulators_defaults_match_min16_contract` checks all four sources use unchanged means/target sigmas, tripled waiting/moving external sigmas, and doubled waiting/moving internal sigmas |
 | `ssm-4` | covered | the `standard_modulators_rejects_*` atomic-validation cases and `standard_modulators_mono_omits_constant_and_ignores_constant_collision` |
 | `ssm-5` | covered | `standard_modulators_lifecycle_requires_registration_and_finite_preparation`, `standard_modulators_process_advances_dynamic_sources_once_and_copies_voice_order`, and `standard_modulators_group_updates_and_ui_publication_remain_explicit` |
-| `spm-71` | covered | `miniapp_registers_standard_fifteen_source_topology_without_changing_performer_topology`, `miniapp_processes_and_publishes_ganged_random_lfo_at_audio_block_boundaries`, and `miniapp_loads_old_six_index_depth_data_without_alias_or_translation` |
+| `spm-71` | covered | MiniApp topology/system coverage plus two-scope main-screen and complete 4x4 encoder-grid parity across portable trees, browser serialization, shared geometry, and JUCE |
 | `d4-1` | covered | `initializes_parameter_groups_banks_slot_and_scene_endpoints`, `braid4_standard_bundles_register_exact_independent_sources`, and `braid4_groups_fit_sparse_fifteen_position_modulation_views` |
 | `d4-3` | covered | `prepares_four_x_internal_rate_and_sequences_internal_subframes`, `matrix_feedback_uses_current_vco_outputs_and_delays_only_modulator_consumption_one_internal_sample`, and `braid4_deadline_tests` |
 | `d4-8` | covered | `parallel_lfo_topology_banks_colors_and_modulator_slots`, `audio_and_lfo_outputs_publish_normalized_stereo_mono_and_quad_modulators`, and the matrix-delay case named for `d4-3` |
@@ -293,8 +293,9 @@ Last audit: standard modulators, fifteen-source application adoption, and sparse
 
 - [`dsp_tests.cpp`](../tests/dsp_tests.cpp):
   `standard_modulators_defaults_match_min16_contract` checks waiting means
-  `0.5/2/6/16`, target sigmas `0.1/0.3/0.2/0.1`, and every waiting/moving sigma
-  and reciprocal internal sigma derived from those means.
+  `0.5/2/6/16`, target sigmas `0.1/0.3/0.2/0.1`, waiting external sigmas
+  `0.3W`, moving external sigmas `0.15W`, waiting internal sigmas `0.2/W`,
+  and moving internal sigmas `0.4/W` for each waiting mean `W`.
 
 ### `ssm-4` - Atomic Fifteen-Source Registration
 
@@ -330,16 +331,23 @@ Last audit: standard modulators, fifteen-source application adoption, and sparse
   topology.
 - `miniapp_processes_and_publishes_ganged_random_lfo_at_audio_block_boundaries`
   checks host-rate preparation, per-sample process-before-update ordering, voice
-  order, and block-boundary publication; `miniapp_main_waveform_row_draws_three_distinct_bounded_panels`
-  checks the VCO/LFO/standard-random-0 row.
+  order, and block-boundary publication;
+  `miniapp_main_layout_draws_bounded_scope_stack_and_complete_encoder_grid`
+  checks the stacked VCO/LFO scopes, all sixteen bounded encoder cells at both
+  default and compact sizes, absence of a separate main-screen ganged-random
+  panel, and retained modulation-depth underlays.
 - `miniapp_loads_old_six_index_depth_data_without_alias_or_translation` proves
   old saved depth numbers load literally while the live fifteen-source metadata
   remains authoritative. `miniapp_rig_patch_save_perturb_load_round_trip`
   covers current parameter persistence.
-- [`MiniAppJuceBackendParityTests.cpp`](../juce/MiniAppJuceBackendParityTests.cpp)
-  and `TestMiniAppThreePanelCommandsUseExistingBrowserSchema` in
+- `TestMiniAppTwoScopeCommandsUseExistingBrowserSchema` in
   [`browser_command_buffer_tests.cpp`](../tests/browser_command_buffer_tests.cpp)
-  cover the portable three-panel commands in both production backends.
+  covers unchanged-version, diagnostic-free VCO/LFO command serialization;
+  [`PortableDrawGeometryTests.cpp`](../juce/PortableDrawGeometryTests.cpp)
+  checks the exact four grid corners; and
+  [`MiniAppJuceBackendParityTests.cpp`](../juce/MiniAppJuceBackendParityTests.cpp)
+  covers two-scope paint output, all sixteen hosted encoder nodes, and position
+  `15` push routing through the production JUCE backend.
 
 ### `sdsp-33` - MiniApp Scope Visualizers At `4/5/6`
 
