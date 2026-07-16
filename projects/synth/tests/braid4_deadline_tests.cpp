@@ -62,7 +62,30 @@ void RequireNear(double actual, double expected, double tolerance, const char* e
 
 #define REQUIRE_NEAR(actual, expected, tolerance) RequireNear((actual), (expected), (tolerance), #actual)
 
+enum class DeadlineScenario {
+    Baseline,
+    SparseActive,
+};
+
+const char* DeadlineScenarioName(DeadlineScenario scenario) {
+    return scenario == DeadlineScenario::Baseline ? "baseline" : "sparse-active";
+}
+
+void ConfigureDeadlineScenario(synth::Engine<synth_braid4::Braid4Core>& engine,
+                               DeadlineScenario scenario) {
+    if (scenario != DeadlineScenario::SparseActive) {
+        return;
+    }
+    synth::Parameter& parameter = engine.Manager().ParameterById(0);
+    synth::Parameter* depth = parameter.EnsureModulationDepth(0);
+    REQUIRE_TRUE(depth != nullptr);
+    depth->SceneCenter(0) = 0.75f;
+    depth->SceneCenter(1) = 0.75f;
+    engine.Manager().ComputeAllParameters();
+}
+
 struct DeadlineStats {
+    DeadlineScenario scenario = DeadlineScenario::Baseline;
     double sampleRate = 0.0;
     double averageSeconds = 0.0;
     double p99Seconds = 0.0;
@@ -89,11 +112,14 @@ void AssertFiniteStereo(const std::array<std::vector<float>, 2>& channels) {
     REQUIRE_TRUE(heardSignal);
 }
 
-std::array<std::vector<float>, 2> RunSegments(double sampleRate, const std::vector<std::size_t>& segmentFrames) {
+std::array<std::vector<float>, 2> RunSegments(double sampleRate,
+                                              const std::vector<std::size_t>& segmentFrames,
+                                              DeadlineScenario scenario) {
     std::uint64_t timestamp = 0;
     synth::Engine<synth_braid4::Braid4Core> engine([&timestamp] { return timestamp++; });
     engine.Initialize();
     engine.Prepare(sampleRate, 256);
+    ConfigureDeadlineScenario(engine, scenario);
 
     std::array<std::vector<float>, 2> captured;
     for (const std::size_t frames : segmentFrames) {
@@ -115,7 +141,7 @@ std::array<std::vector<float>, 2> RunSegments(double sampleRate, const std::vect
     return captured;
 }
 
-DeadlineStats MeasureDeadline(double sampleRate) {
+DeadlineStats MeasureDeadline(double sampleRate, DeadlineScenario scenario) {
     constexpr std::size_t kBlockFrames = 256;
     constexpr std::size_t kWarmupBlocks = 64;
     constexpr std::size_t kMeasuredBlocks = 512;
@@ -124,6 +150,7 @@ DeadlineStats MeasureDeadline(double sampleRate) {
     synth::Engine<synth_braid4::Braid4Core> engine([&timestamp] { return timestamp++; });
     engine.Initialize();
     engine.Prepare(sampleRate, static_cast<int>(kBlockFrames));
+    ConfigureDeadlineScenario(engine, scenario);
 
     std::array<std::vector<float>, 2> blockStorage{{
         std::vector<float>(kBlockFrames, 0.0f),
@@ -154,12 +181,13 @@ DeadlineStats MeasureDeadline(double sampleRate) {
     const std::size_t p99Index = static_cast<std::size_t>(
         std::ceil(static_cast<double>(sorted.size()) * 0.99)) - 1;
 
-    const auto contiguous = RunSegments(sampleRate, {kBlockFrames * 2});
-    const auto split = RunSegments(sampleRate, {kBlockFrames, kBlockFrames});
+    const auto contiguous = RunSegments(sampleRate, {kBlockFrames * 2}, scenario);
+    const auto split = RunSegments(sampleRate, {kBlockFrames, kBlockFrames}, scenario);
     AssertFiniteStereo(contiguous);
     AssertFiniteStereo(split);
 
     return {
+        .scenario = scenario,
         .sampleRate = sampleRate,
         .averageSeconds = std::accumulate(durations.begin(), durations.end(), 0.0) /
                           static_cast<double>(durations.size()),
@@ -173,8 +201,9 @@ DeadlineStats MeasureDeadline(double sampleRate) {
     };
 }
 
-void AssertDeadlineAndContinuity(double sampleRate) {
-    const DeadlineStats stats = MeasureDeadline(sampleRate);
+void AssertDeadlineAndContinuity(double sampleRate,
+                                 DeadlineScenario scenario = DeadlineScenario::Baseline) {
+    const DeadlineStats stats = MeasureDeadline(sampleRate, scenario);
 
     constexpr std::size_t kBlockFrames = 256;
     constexpr std::size_t kMeasuredBlocks = 512;
@@ -196,7 +225,8 @@ void AssertDeadlineAndContinuity(double sampleRate) {
     REQUIRE_TRUE(stats.averageSeconds <= stats.blockSeconds * 0.60);
     REQUIRE_TRUE(stats.p99Seconds <= stats.blockSeconds * 0.80);
 
-    std::cout << "[deadline] " << stats.sampleRate << "Hz avg="
+    std::cout << "[deadline] " << DeadlineScenarioName(stats.scenario) << " "
+              << stats.sampleRate << "Hz/" << (stats.sampleRate * 4.0) << "Hz-internal avg="
               << (stats.averageSeconds * 1000.0) << "ms p99="
               << (stats.p99Seconds * 1000.0) << "ms block="
               << (stats.blockSeconds * 1000.0) << "ms\n";
@@ -214,6 +244,14 @@ TEST_CASE(braid4_meets_48000hz_256_frame_deadline_and_continuity) {
 
 TEST_CASE(braid4_meets_96000hz_256_frame_deadline_and_continuity) {
     AssertDeadlineAndContinuity(96000.0);
+}
+
+TEST_CASE(braid4_sparse_modulation_meets_48000hz_256_frame_deadline) {
+    AssertDeadlineAndContinuity(48000.0, DeadlineScenario::SparseActive);
+}
+
+TEST_CASE(braid4_sparse_modulation_meets_96000hz_256_frame_deadline) {
+    AssertDeadlineAndContinuity(96000.0, DeadlineScenario::SparseActive);
 }
 
 int main() {

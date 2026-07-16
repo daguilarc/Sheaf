@@ -106,6 +106,112 @@ struct EngineRunResult {
     synth_braid4::Braid4Core::DebugCounterState counters;
 };
 
+enum class Braid4WorkScenario {
+    Baseline,
+    MaterializedNeutral,
+    SparseActive,
+    Inactive64Gestures,
+};
+
+struct Braid4WorkResult {
+    std::size_t topLevelProcessLiteCalls = 0;
+    std::size_t activeRouteVisits = 0;
+    std::size_t activeGestureVisits = 0;
+    std::size_t internalSubframesProcessed = 0;
+    std::size_t materializedLocalCount = 0;
+    std::size_t remainingMaterializableSlots = 0;
+    std::size_t denseConfiguredRouteVisits = 0;
+};
+
+Braid4WorkResult MeasureBraid4Work(Braid4WorkScenario scenario) {
+    constexpr std::size_t kHostFrames = 32;
+    std::uint64_t timestamp = 0;
+    synth::Engine<synth_braid4::Braid4Core> engine([&timestamp] { return timestamp++; });
+    if (scenario == Braid4WorkScenario::Inactive64Gestures) {
+        REQUIRE_TRUE(engine.Manager().SetGestureCount(64));
+    }
+    engine.SetRuntimeDataPaths(UseScratchRuntimeDataPaths("braid4_sparse_work_counters"));
+    engine.Initialize();
+    engine.Prepare(48000.0, static_cast<int>(kHostFrames));
+
+    auto& core = engine.Application();
+    synth::ParameterManager& manager = engine.Manager();
+    const std::array<synth::ParameterGroup*, 3> groups{
+        core.StereoGroup(),
+        core.QuadGroup(),
+        core.MonoGroup(),
+    };
+
+    Braid4WorkResult result;
+    if (scenario == Braid4WorkScenario::MaterializedNeutral) {
+        for (synth::ParameterGroup* group : groups) {
+            const std::size_t availableBefore = group->AvailableParameterSlots();
+            std::size_t materialized = 0;
+            std::vector<synth::Parameter*> frontier;
+            for (std::size_t parameterIx = 0; parameterIx < manager.ParameterCount(); ++parameterIx) {
+                synth::Parameter& parameter = manager.ParameterById(static_cast<synth::ParameterId>(parameterIx));
+                if (&parameter.Group() == group) {
+                    frontier.push_back(&parameter);
+                }
+            }
+            for (std::size_t parameterIx = 0;
+                 parameterIx < frontier.size() && group->AvailableParameterSlots() != 0;
+                 ++parameterIx) {
+                for (std::size_t sourceIx = 0;
+                     sourceIx < group->Config().numModulators && group->AvailableParameterSlots() != 0;
+                     ++sourceIx) {
+                    synth::Parameter* depth = frontier[parameterIx]->EnsureModulationDepth(sourceIx);
+                    REQUIRE_TRUE(depth != nullptr);
+                    frontier.push_back(depth);
+                    ++materialized;
+                }
+            }
+            REQUIRE_TRUE(materialized == availableBefore);
+            result.materializedLocalCount += materialized;
+            result.remainingMaterializableSlots += group->AvailableParameterSlots();
+        }
+    } else if (scenario == Braid4WorkScenario::SparseActive) {
+        synth::Parameter& parameter = manager.ParameterById(0);
+        synth::Parameter* depth = parameter.EnsureModulationDepth(0);
+        REQUIRE_TRUE(depth != nullptr);
+        depth->SceneCenter(0) = 0.75f;
+        depth->SceneCenter(1) = 0.75f;
+        manager.ComputeAllParameters();
+    }
+
+    std::array<synth::ParameterProcessingObserver, 3> work{};
+    for (std::size_t groupIx = 0; groupIx < groups.size(); ++groupIx) {
+        groups[groupIx]->SetProcessingObserverForTests(&work[groupIx]);
+    }
+
+    std::array<std::vector<float>, 2> blockStorage{{
+        std::vector<float>(kHostFrames, 0.0f),
+        std::vector<float>(kHostFrames, 0.0f),
+    }};
+    std::vector<float*> outputs{blockStorage[0].data(), blockStorage[1].data()};
+    synth::AudioBlock block{
+        .outputs = outputs.data(),
+        .numOutputChannels = 2,
+        .numFrames = kHostFrames,
+    };
+    engine.ProcessBlock(block, timestamp++);
+
+    result.internalSubframesProcessed = core.DebugCounters().internalSubframesProcessed;
+    for (const synth::ParameterProcessingObserver& observer : work) {
+        result.topLevelProcessLiteCalls += observer.topLevelProcessLiteCalls;
+        result.activeRouteVisits += observer.activeRouteVisits;
+        result.activeGestureVisits += observer.activeGestureVisits;
+    }
+    std::size_t denseVisitsPerSubframe = 0;
+    for (std::size_t parameterIx = 0; parameterIx < manager.ParameterCount(); ++parameterIx) {
+        const synth::Parameter& parameter = manager.ParameterById(static_cast<synth::ParameterId>(parameterIx));
+        denseVisitsPerSubframe += parameter.Group().Config().numVoices *
+                                  parameter.Group().Config().numModulators;
+    }
+    result.denseConfiguredRouteVisits = result.internalSubframesProcessed * denseVisitsPerSubframe;
+    return result;
+}
+
 EngineRunResult RunFreshEngineSegments(int outputChannels, const std::vector<std::size_t>& segmentFrames) {
     std::uint64_t timestamp = 0;
     synth::Engine<synth_braid4::Braid4Core> engine([&timestamp] { return timestamp++; });
@@ -469,6 +575,26 @@ TEST_CASE(braid4_parameter_processing_ignores_materialized_local_depths) {
                                 work[1].topLevelProcessLiteCalls +
                                 work[2].topLevelProcessLiteCalls;
     REQUIRE_TRUE(visited == rootCount);
+}
+
+TEST_CASE(braid4_sparse_work_counters_bound_inactive_capacity) {
+    const Braid4WorkResult baseline = MeasureBraid4Work(Braid4WorkScenario::Baseline);
+    const Braid4WorkResult neutral = MeasureBraid4Work(Braid4WorkScenario::MaterializedNeutral);
+    const Braid4WorkResult sparse = MeasureBraid4Work(Braid4WorkScenario::SparseActive);
+    const Braid4WorkResult inactive64 = MeasureBraid4Work(Braid4WorkScenario::Inactive64Gestures);
+
+    REQUIRE_TRUE(neutral.topLevelProcessLiteCalls == baseline.topLevelProcessLiteCalls);
+    REQUIRE_TRUE(sparse.topLevelProcessLiteCalls == baseline.topLevelProcessLiteCalls);
+    REQUIRE_TRUE(inactive64.topLevelProcessLiteCalls == baseline.topLevelProcessLiteCalls);
+    REQUIRE_TRUE(neutral.internalSubframesProcessed == baseline.internalSubframesProcessed);
+    REQUIRE_TRUE(sparse.internalSubframesProcessed == baseline.internalSubframesProcessed);
+    REQUIRE_TRUE(inactive64.internalSubframesProcessed == baseline.internalSubframesProcessed);
+    REQUIRE_TRUE(neutral.materializedLocalCount > 0);
+    REQUIRE_TRUE(neutral.remainingMaterializableSlots == 0);
+    REQUIRE_TRUE(neutral.activeRouteVisits == 0);
+    REQUIRE_TRUE(inactive64.activeGestureVisits == 0);
+    REQUIRE_TRUE(sparse.activeRouteVisits > 0);
+    REQUIRE_TRUE(sparse.activeRouteVisits < sparse.denseConfiguredRouteVisits);
 }
 
 TEST_CASE(braid_palette_roles_propagate_from_literal_configuration) {

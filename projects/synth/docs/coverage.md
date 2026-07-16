@@ -1,6 +1,6 @@
 # Spec Coverage
 
-Last audit: ganged random LFO, noise modulator, and constant modulator, 2026-07-15
+Last audit: ganged random LFO, noise and constant modulators, and sparse modulation processing, 2026-07-15
 
 | Requirement | Status | Primary exact coverage |
 |---|---|---|
@@ -35,6 +35,11 @@ Last audit: ganged random LFO, noise modulator, and constant modulator, 2026-07-
 | `sdsp-40` | covered | `projects/synth/tests/miniapp_system_tests.cpp` combined six-slot topology, yellow constant at index 5, retained visualizer, fixed `(0, 1)` values, stable pointers, and no constant sample-path recomputation |
 | `spm-71` | covered | `miniapp_system_tests` source registration/configuration, audio-block processing/publishing, retained address-stable visualizer, and three-panel/underlay UI topology; JUCE/browser parity tests cover the same portable draw commands |
 | `d4-9` | covered | `projects/synth/tests/braid4_system_tests.cpp` all Braid 4 modulator visualizers are null and modulation view is encoder-only |
+| `spm-20` (modified) | covered | `parameter_ui_snapshot_owns_parameter_source_and_gesture_colors`, `ui_state_reports_affecting_masks_through_gesture_index_63`, `randomized_message_bus_ui_state_simulation`, and portable encoder snapshot/render assertions through bit 63 |
+| `spm-25` (modified) | covered | `randomized_message_bus_ui_state_simulation` plus `message_bus_sparse_lifecycle_model_tracks_pins_collection_reuse_and_patch_load` validate 64-bit UI masks and sparse lifecycle state against deterministic manager-owned oracles |
+| `spm-72` | covered | `group_process_sample_visits_only_registered_roots`, `recursive_local_compute_seeds_display_without_audio_rate_processing`, active-route full-scan cases, and `braid4_sparse_work_counters_bound_inactive_capacity` |
+| `spm-73` | covered | 0--64 gesture boundary/sparse-mask tests, `ControllerGesture63SelectsAndEditsManagerGestureWhileBankMaskRemains32Bit`, portable bit-63 badge rendering, and randomized UI-state coverage |
+| `spm-74` | covered | neutral-leaf guard, bottom-up collapse, pin, settling/detach, bounded-reuse, patch-load, semantic-JSON, and randomized lifecycle cases in `parameter_modulation_tests` |
 
 ## Requirement Mappings
 
@@ -275,6 +280,102 @@ Last audit: ganged random LFO, noise modulator, and constant modulator, 2026-07-
   `TestMiniAppThreePanelCommandsUseExistingBrowserSchema` in
   [`browser_command_buffer_tests.cpp`](../tests/browser_command_buffer_tests.cpp)
   cover the three-panel commands in both production backends.
+
+### `spm-20` (modified) - 64-Bit Parameter UI Snapshots
+
+- [`parameter_modulation_tests.cpp`](../tests/parameter_modulation_tests.cpp):
+  `parameter_ui_snapshot_owns_parameter_source_and_gesture_colors`,
+  `ui_state_reports_affecting_masks_through_gesture_index_63`, and
+  `randomized_message_bus_ui_state_simulation` cover atomic parameter snapshots,
+  source/gesture colors, visible cells, signed and unipolar ranges, and 64-bit
+  gesture-affecting masks through index 63.
+- [`portable_ui_tests.cpp`](../tests/portable_ui_tests.cpp): the exact
+  `encoder snapshot preserves gesture bit 63` and
+  `encoder renders gesture 63 as badge 64` assertions pass a real
+  `Parameter::UIState` through `EncoderDrawStateFromParameter` and the portable
+  renderer.
+
+### `spm-25` (modified) - Message-Driven Randomized UI State
+
+- [`parameter_modulation_tests.cpp`](../tests/parameter_modulation_tests.cpp):
+  `randomized_message_bus_ui_state_simulation` is the deterministic
+  manager-owned gesture/UI oracle, including 64-bit masks, stable route source
+  identities, inverse positions, current/target values, selected bank/view
+  state, and reproducible seed/step/action/sample diagnostics.
+- `message_bus_sparse_lifecycle_model_tracks_pins_collection_reuse_and_patch_load`
+  covers message-driven bank open/close, reset, collection, compatible slot
+  reuse under a distinct parent, and patch-load boundaries.
+
+### `spm-72` - Sparse Top-Level And Active-Route Traversal
+
+- [`parameter_modulation_tests.cpp`](../tests/parameter_modulation_tests.cpp):
+  `group_process_sample_visits_only_registered_roots` and
+  `recursive_local_compute_seeds_display_without_audio_rate_processing` cover
+  the top-level `ProcessLite` boundary and recursive local-state refresh.
+  `modulators_apply_active_uses_explicit_stable_source_indices`,
+  `active_modulation_routes_preserve_identity_and_settling_tail`,
+  `active_modulation_route_union_keeps_source_with_only_voice_one_nonzero`, and
+  `active_modulation_routes_randomized_full_scan_oracle_and_work_bound` cover
+  compact application, stable source identity, swap/removal, across-voice
+  route union, settling tails, and sample-by-sample full-scan equivalence.
+- [`braid4_system_tests.cpp`](../tests/braid4_system_tests.cpp):
+  `braid4_parameter_processing_ignores_materialized_local_depths` and
+  `braid4_sparse_work_counters_bound_inactive_capacity` compare equal internal
+  subframe counts across baseline, all materializable neutral locals, sparse
+  active routes, and 64 configured inactive gestures. Observer visit counts are
+  the authoritative complexity contract.
+
+### `spm-73` - Sparse 64-Bit Gestures
+
+- [`parameter_modulation_tests.cpp`](../tests/parameter_modulation_tests.cpp):
+  `manager_gesture_count_supports_zero_through_64_and_rejects_65_without_mutation`,
+  `gesture_masks_visit_only_active_bits_through_index_63`,
+  `ui_state_reports_affecting_masks_through_gesture_index_63`, and
+  `message_bus_and_patch_round_trip_gesture_indices_32_and_63` cover counts 0,
+  1, 32, 33, and 64, rejected 65, sparse set-bit evaluation, UI masks,
+  messaging, and persistence.
+- [`instrument_tests.cpp`](../tests/instrument_tests.cpp):
+  `MessageInJsonRoundTripsHighGestureIndex` and
+  `ControllerGesture63SelectsAndEditsManagerGestureWhileBankMaskRemains32Bit`
+  cover controller index 63 while preserving the separate 32-bit bank selector.
+- [`portable_ui_tests.cpp`](../tests/portable_ui_tests.cpp): exact badge assertions
+  retain legacy labels through gesture 15 and distinguish gestures 16--63 with
+  one-based labels 17--64.
+
+### `spm-74` - Neutral Local-Node Reclamation
+
+- [`parameter_modulation_tests.cpp`](../tests/parameter_modulation_tests.cpp):
+  `neutral_local_collection_reclaims_leaf_and_preserves_high_water_accounting`,
+  `neutral_local_collection_retains_non_default_scene_state`,
+  `neutral_local_collection_retains_inactive_latent_gesture_value`,
+  `neutral_local_collection_retains_active_gesture_at_default_value`,
+  `neutral_local_collection_retains_unsnapped_runtime_state`, and
+  `neutral_local_collection_retains_nonzero_normalization_state` cover the
+  complete neutral/default eligibility guards and high-water accounting.
+- `neutral_local_collection_retains_parent_with_non_collectible_child`,
+  `neutral_local_collection_collapses_recursive_subtree_bottom_up`,
+  `neutral_local_collection_detaches_child_while_parent_route_finishes_settling`,
+  and `modulation_view_pins_visible_locals_until_deselect_boundary` cover
+  bottom-up ownership, detach ordering, settling, and live-view pinning.
+- `neutral_local_reuse_stays_bounded_beyond_configured_capacity`,
+  `randomized_neutral_local_collection_reuses_slots_without_stale_topology`,
+  `patch_load_collection_preserves_high_gesture_nested_state_and_collects_default_omissions`,
+  `eligible_collection_preserves_semantic_parameter_json`, and
+  `message_bus_sparse_lifecycle_model_tracks_pins_collection_reuse_and_patch_load`
+  cover bounded reuse, complete reset, persistence, semantic JSON, and
+  lifecycle integration.
+
+### Sparse-Modulation Timing Evidence
+
+- [`braid4_deadline_tests.cpp`](../tests/braid4_deadline_tests.cpp):
+  `braid4_meets_48000hz_256_frame_deadline_and_continuity`,
+  `braid4_meets_96000hz_256_frame_deadline_and_continuity`,
+  `braid4_sparse_modulation_meets_48000hz_256_frame_deadline`, and
+  `braid4_sparse_modulation_meets_96000hz_256_frame_deadline` print baseline and
+  sparse-active average/p99 measurements at 48 kHz host/192 kHz internal and
+  96 kHz host/384 kHz internal. These generous deadline ceilings are
+  platform-sensitive smoke evidence; they do not assert a speedup ratio and do
+  not replace the deterministic work-count contract above.
 
 ## Known Gaps
 
