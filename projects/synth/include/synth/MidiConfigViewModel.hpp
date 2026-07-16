@@ -202,10 +202,9 @@ const std::vector<UISystemMessageChoice>& UISystemMessageCatalog();
 // MessageArg is a separate numeric field.
 bool FieldIsInteger(MidiMappingRowVM::Field field);
 
-// Display names for the relative EncoderMode choices currently editable here
-// (index 0 == EncoderMode::Signed7Bit, index 1 ==
-// EncoderMode::DirectionOnly). ApplyMappingEdit and RowFieldValue use these
-// catalog indices for the two relative choices.
+// Display names for every EncoderMode, in declaration order (index 0 ==
+// Signed7Bit, index 1 == DirectionOnly, index 2 == Absolute).
+// ApplyMappingEdit and RowFieldValue use these catalog indices.
 const std::vector<std::string>& EncoderModeCatalog();
 
 // Short column-header label for a single field ("Ch", "CC", "Slot", "Pos",

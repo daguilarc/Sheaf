@@ -1830,12 +1830,15 @@ TEST_CASE(FieldIsIntegerFalseForTurnStepAndNonNumericEditorFields) {
     REQUIRE_TRUE(!FieldIsInteger(Field::MessageKind));
 }
 
-TEST_CASE(EncoderModeCatalogExposesTheRenamedRelativeChoices) {
+TEST_CASE(EncoderModeCatalogExposesAllChoicesInDeclarationOrder) {
     const std::vector<std::string>& catalog = EncoderModeCatalog();
-    REQUIRE_TRUE(catalog.size() == 2);
+    REQUIRE_TRUE(catalog.size() == 3);
     REQUIRE_TRUE(!catalog[0].empty());
     REQUIRE_TRUE(!catalog[1].empty());
+    REQUIRE_TRUE(!catalog[2].empty());
     REQUIRE_TRUE(catalog[0] != catalog[1]);
+    REQUIRE_TRUE(catalog[0] != catalog[2]);
+    REQUIRE_TRUE(catalog[1] != catalog[2]);
 }
 
 TEST_CASE(EncoderModeIndexRoundTripsThroughApplyMappingEditAndRowFieldValue) {
@@ -1868,6 +1871,32 @@ TEST_CASE(EncoderModeIndexRoundTripsThroughApplyMappingEditAndRowFieldValue) {
     REQUIRE_TRUE(out2.controllers[0].config.encoderInput->mode == EncoderMode::Signed7Bit);
 }
 
+TEST_CASE(AbsoluteEncoderModeHasItsOwnCatalogIndexAndRowValue) {
+    MidiInstrumentConfig instrument = MakeFourKindInstrument();
+    instrument.controllers[0].config.encoderInput->mode = EncoderMode::Absolute;
+
+    MidiConfigViewModel vm;
+    vm.Rebuild(instrument, MakeFourKindConnection());
+
+    const std::vector<std::string>& catalog = EncoderModeCatalog();
+    REQUIRE_TRUE(catalog.size() == 3);
+    REQUIRE_TRUE(!catalog[2].empty());
+
+    const auto rows = vm.SectionRows(0, MidiConfigSection::Encoders);
+    const std::size_t encoderModeRowIx = rows.size() - 2;
+
+    MidiInstrumentConfig edited;
+    std::string reason;
+    REQUIRE_TRUE(vm.ApplyMappingEdit(0, MidiConfigSection::Encoders, encoderModeRowIx,
+                                     MidiMappingRowVM::Field::EncoderMode, 2.0, edited, &reason));
+    REQUIRE_TRUE(edited.controllers[0].config.encoderInput->mode == EncoderMode::Absolute);
+
+    double value = -1.0;
+    REQUIRE_TRUE(vm.RowFieldValue(0, MidiConfigSection::Encoders, encoderModeRowIx,
+                                  MidiMappingRowVM::Field::EncoderMode, value));
+    REQUIRE_TRUE(value == 2.0);
+}
+
 TEST_CASE(EncoderModeIndexOutOfRangeIsRefused) {
     MidiConfigViewModel vm;
     MidiInstrumentConfig instrument = MakeFourKindInstrument();
@@ -1879,7 +1908,7 @@ TEST_CASE(EncoderModeIndexOutOfRangeIsRefused) {
     MidiInstrumentConfig out;
     std::string reason;
     const bool ok = vm.ApplyMappingEdit(0, MidiConfigSection::Encoders, encoderModeRowIx,
-                                        MidiMappingRowVM::Field::EncoderMode, 2.0, out, &reason);
+                                        MidiMappingRowVM::Field::EncoderMode, 3.0, out, &reason);
     REQUIRE_TRUE(!ok);
     REQUIRE_TRUE(!reason.empty());
 }

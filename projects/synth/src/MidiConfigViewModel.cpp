@@ -267,11 +267,9 @@ bool FieldIsInteger(MidiMappingRowVM::Field field) {
 }
 
 const std::vector<std::string>& EncoderModeCatalog() {
-    // Relative EncoderMode choices, in declaration order (MidiController.hpp):
-    // 0 = Signed7Bit, 1 = DirectionOnly. ApplyMappingEdit's Field::EncoderMode
-    // case and RowFieldValue's Field::EncoderMode case use these indices for
-    // the existing relative choices.
-    static const std::vector<std::string> catalog = {"Signed 7-bit", "Direction only"};
+    // All EncoderMode choices, in declaration order (MidiController.hpp):
+    // 0 = Signed7Bit, 1 = DirectionOnly, 2 = Absolute.
+    static const std::vector<std::string> catalog = {"Signed 7-bit", "Direction only", "Absolute"};
     return catalog;
 }
 
@@ -1168,7 +1166,14 @@ bool MidiConfigViewModel::RowFieldValue(std::size_t controllerIx, MidiConfigSect
     if (presentationRow.kind == RowKind::ConfigLevel) {
         if (presentationRow.group == RowGroup::EncoderMode && field == Field::EncoderMode) {
             const auto* data = std::get_if<EncoderModeRow>(&presentationRow.data);
-            out = data != nullptr && data->mode == EncoderMode::DirectionOnly ? 1.0 : 0.0;
+            if (data == nullptr) {
+                return false;
+            }
+            const auto index = static_cast<std::size_t>(data->mode);
+            if (index >= EncoderModeCatalog().size()) {
+                return false;
+            }
+            out = static_cast<double>(index);
             return true;
         }
         if (presentationRow.group == RowGroup::EncoderStep && field == Field::TurnStep) {
@@ -1797,16 +1802,15 @@ bool MidiConfigViewModel::ApplyMappingEdit(std::size_t controllerIx, MidiConfigS
     } else if (presentationRow.kind == RowKind::ConfigLevel) {
         if (presentationRow.group == RowGroup::EncoderMode && field == Field::EncoderMode) {
             // Index-based: `value` selects EncoderModeCatalog() by position
-            // (0 = Signed7Bit, 1 = DirectionOnly -- EncoderMode's
-            // declaration order), not a raw enum value, so a JUCE combo box
-            // can drive this directly off its selected index.
+            // in EncoderMode's declaration order, not a raw unvalidated enum
+            // value, so a JUCE combo box can drive this directly off its
+            // selected index.
             const std::vector<std::string>& catalog = EncoderModeCatalog();
             if (!IsIntegerInRange(value, 0.0, static_cast<double>(catalog.size() - 1))) {
                 validationError = "encoder mode index out of range";
             } else {
                 const auto index = static_cast<std::size_t>(value);
-                presentationRow.data =
-                    EncoderModeRow{.mode = index == 1 ? EncoderMode::DirectionOnly : EncoderMode::Signed7Bit};
+                presentationRow.data = EncoderModeRow{.mode = static_cast<EncoderMode>(index)};
                 fieldValid = true;
             }
         } else if (presentationRow.group == RowGroup::EncoderStep && field == Field::TurnStep) {
