@@ -145,6 +145,7 @@ git commit -m "feat(synth): broaden standard random timing variance"
 - Modify: `projects/synth/apps/miniapp/MiniAppUiModel.hpp`
 - Modify: `projects/synth/apps/miniapp/MiniAppUI.hpp`
 - Modify: `projects/synth/juce/PortableDrawGeometryTests.cpp`
+- Modify: `projects/synth/juce/MiniAppJuceBackendParityTests.cpp`
 
 **Step 1: Write failing portable layout and routing tests**
 
@@ -159,6 +160,8 @@ Replace `miniapp_main_waveform_row_draws_three_distinct_bounded_panels` with a t
 
 Extend the action-routing test to dispatch encoder position `15` and assert a `ParamPush` for slot `0`, position `15`. Rewrite `miniapp_ui_model_exposes_layout_scene_labels_and_dispatch` and `PortableDrawGeometryTests.cpp` to assert dynamic 4x4 geometry for indices `0`, `3`, `12`, and `15` rather than the old fixed seven-cell geometry.
 
+In `MiniAppJuceBackendParityTests.cpp`, write the matching failing parity assertions before changing production code: encoder nodes `0` and `15` must exist in the portable tree and JUCE component host; only VCO and LFO main scope nodes exist and paint through `PaintDrawCommand`; the scopes stack vertically left of the encoder grid; index `15` matches `EncoderGridLayout::BoundsForIndex` and routes a position-15 push; and the literal removed main-panel ID is absent.
+
 **Step 2: Run the focused tests to prove RED**
 
 ```bash
@@ -167,6 +170,9 @@ projects/synth/build/miniapp_system_tests
 make -C projects/synth/apps/miniapp \
   "$(pwd)/projects/synth/apps/miniapp/build/portable_draw_geometry_tests"
 projects/synth/apps/miniapp/build/portable_draw_geometry_tests
+make -C projects/synth/apps/miniapp \
+  "$(pwd)/projects/synth/apps/miniapp/build/miniapp_juce_backend_parity_tests"
+projects/synth/apps/miniapp/build/miniapp_juce_backend_parity_tests
 ```
 
 Expected: the 16-node/layout assertions fail against the seven-node/three-panel implementation.
@@ -181,7 +187,7 @@ In `MiniAppUiModel.hpp`:
 - clamp computed widths/heights with `std::max(0.0f, ...)` so both target sizes stay bounded;
 - remove `MiniAppNodeIds::kGangedRandomLfoRound` and the MiniApp-only main-panel snapshot/build helpers if no remaining production caller uses them.
 
-In `MiniAppUI.hpp`, build only the VCO and LFO draw nodes in the left stack and build all sixteen encoder nodes in the right grid. Preserve row-major position mapping and the existing disconnected-cell builder behavior. Keep the test-only `MiniAppDraw.hpp` wrapper until Task 4 removes it together with its remaining portable/browser callers, so every task commit remains buildable.
+In `MiniAppUI.hpp`, build only the VCO and LFO draw nodes in the left stack and build all sixteen encoder nodes in the right grid. Preserve row-major position mapping and the existing disconnected-cell builder behavior. Keep the now-unused `MiniAppDraw.hpp` wrapper until Task 4 removes it together with the portable/browser test cleanup, so every task commit remains buildable.
 
 **Step 4: Run the focused tests to prove GREEN**
 
@@ -191,9 +197,12 @@ projects/synth/build/miniapp_system_tests
 make -C projects/synth/apps/miniapp \
   "$(pwd)/projects/synth/apps/miniapp/build/portable_draw_geometry_tests"
 projects/synth/apps/miniapp/build/portable_draw_geometry_tests
+make -C projects/synth/apps/miniapp \
+  "$(pwd)/projects/synth/apps/miniapp/build/miniapp_juce_backend_parity_tests"
+projects/synth/apps/miniapp/build/miniapp_juce_backend_parity_tests
 ```
 
-Expected: both pass at the new layout contract.
+Expected: all three pass at the new layout contract.
 
 **Step 5: Commit the portable layout**
 
@@ -201,7 +210,8 @@ Expected: both pass at the new layout contract.
 git add projects/synth/apps/miniapp/MiniAppUiModel.hpp \
   projects/synth/apps/miniapp/MiniAppUI.hpp \
   projects/synth/tests/miniapp_system_tests.cpp \
-  projects/synth/juce/PortableDrawGeometryTests.cpp
+  projects/synth/juce/PortableDrawGeometryTests.cpp \
+  projects/synth/juce/MiniAppJuceBackendParityTests.cpp
 git commit -m "feat(synth): show miniapp full encoder grid"
 ```
 
@@ -211,7 +221,6 @@ git commit -m "feat(synth): show miniapp full encoder grid"
 - Modify: `projects/synth/apps/miniapp/MiniAppDraw.hpp`
 - Modify: `projects/synth/tests/browser_command_buffer_tests.cpp`
 - Modify: `projects/synth/tests/portable_ui_tests.cpp`
-- Modify: `projects/synth/juce/MiniAppJuceBackendParityTests.cpp`
 - Modify: `projects/synth/docs/coverage.md`
 - Modify: `openspec/changes/add-standard-modulators/tasks.md`
 
@@ -223,13 +232,7 @@ Remove the MiniApp-only `BuildGangedRandomLfoPanelCommands` wrapper assertions f
 
 Now delete the unused MiniApp-only `BuildGangedRandomLfoPanelCommands` wrapper from `MiniAppDraw.hpp`; generic standard-modulator visualizer code remains unchanged.
 
-In `MiniAppJuceBackendParityTests.cpp`, assert:
-
-- encoder nodes `0` and `15` exist in the portable tree and JUCE component host;
-- only VCO and LFO main scope nodes exist and paint through `PaintDrawCommand`;
-- the scope nodes are stacked vertically left of the encoder grid;
-- index `15` matches `EncoderGridLayout::BoundsForIndex` and can route a position-15 push;
-- no MiniApp main-screen ganged-random node exists.
+Keep the Task 3 JUCE parity assertions unchanged; this task reruns that binary as a regression alongside the browser and portable cleanup.
 
 **Step 2: Run browser, portable, and JUCE parity tests**
 
@@ -269,7 +272,6 @@ Then mark the OpenSpec final verification item complete and rerun strict validat
 git add projects/synth/tests/browser_command_buffer_tests.cpp \
   projects/synth/apps/miniapp/MiniAppDraw.hpp \
   projects/synth/tests/portable_ui_tests.cpp \
-  projects/synth/juce/MiniAppJuceBackendParityTests.cpp \
   projects/synth/docs/coverage.md \
   openspec/changes/add-standard-modulators/tasks.md
 git commit -m "test(synth): cover miniapp full-grid parity"
