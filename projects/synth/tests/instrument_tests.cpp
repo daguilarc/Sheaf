@@ -8,6 +8,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 namespace {
@@ -127,6 +128,52 @@ TEST_CASE(MessageInJsonRoundTripsHighGestureIndex) {
     REQUIRE_TRUE(target.gestureIx == 63);
     REQUIRE_TRUE(target.boolValue);
     REQUIRE_TRUE(target.hasBoolValue);
+}
+
+TEST_CASE(ControllerGesture63SelectsAndEditsManagerGestureWhileBankMaskRemains32Bit) {
+    synth::ParameterManager manager;
+    REQUIRE_TRUE(manager.SetGestureCount(64));
+    auto& group = manager.CreateGroup({.numVoices = 1, .numScenes = 1, .maxParameters = 1});
+    auto& parameter = manager.CreateParameter(group, {.name = "High Gesture", .defaultValue = 0.25f});
+    auto& bank = manager.CreateBank();
+    bank.AddMapping(77, parameter);
+    auto& slot = manager.CreateBankSlot();
+    slot.AddPhysicalEncoder(77);
+    slot.SelectBank(&bank);
+
+    synth::MessageInBus bus(&manager, 16);
+    synth::SystemButtonMidiInConfig buttonConfig;
+    buttonConfig.associations.push_back({
+        .control = synth::MidiControlAddress{.channel = 2, .cc = 9},
+        .press = synth::MessageIn::SetGestureSelect(0, 63, true),
+        .release = synth::MessageIn::SetGestureSelect(0, 63, false),
+    });
+    synth::SystemButtonMidiInProcessor buttons(buttonConfig, &bus);
+    buttons.SetTimestampProvider([] { return 41; });
+    buttons.Process(synth::BasicMidi::CC(0, 2, 9, 127));
+    bus.Process(41);
+    REQUIRE_TRUE(manager.GestureSelected(63));
+
+    synth::AnalogMidiInConfig analogConfig;
+    analogConfig.gestures.push_back({.control = {.channel = 2, .cc = 10}, .gestureIx = 63});
+    synth::AnalogMidiInProcessor analog(analogConfig, &bus);
+    analog.SetTimestampProvider([] { return 42; });
+    analog.Process(synth::BasicMidi::CC(0, 2, 10, 127));
+    bus.Process(42);
+    REQUIRE_TRUE(manager.GestureValue(63) == 1.0f);
+
+    REQUIRE_TRUE(bus.Push(synth::MessageIn::ParamIncDec(43, 0, 0, 0.1f)));
+    bus.Process(43); // first turn arms the selected gesture
+    REQUIRE_TRUE(parameter.GestureActive(0, 63));
+    REQUIRE_TRUE(bus.Push(synth::MessageIn::ParamIncDec(44, 0, 0, 0.1f)));
+    bus.Process(44); // second turn edits that same active manager gesture
+    REQUIRE_TRUE(parameter.GestureValue(0, 63) > 0.25f);
+
+    auto ui = manager.CreateUIState();
+    manager.PopulateUIState(*ui);
+    static_assert(std::is_same_v<decltype(ui->gestures.bankAffectingMask[0].load()), std::uint32_t>);
+    REQUIRE_TRUE(ui->gestures.bankAffectingMask[63].load() == 1u);
+    REQUIRE_TRUE(ui->gestures.bankAffectingCount[63].load() == 1);
 }
 
 TEST_CASE(KindNameFromUnknownRejected) {

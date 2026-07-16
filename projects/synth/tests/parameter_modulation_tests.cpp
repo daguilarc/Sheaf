@@ -6182,7 +6182,7 @@ namespace {
 constexpr std::size_t kSimParams = 3;
 constexpr std::size_t kSimVoices = 4;
 constexpr std::size_t kSimMods = 3;
-constexpr std::size_t kSimGestures = 2;
+constexpr std::size_t kSimGestures = 64;
 constexpr std::size_t kSimScenes = 3;
 constexpr std::array<synth::PhysicalEncoderId, 5> kSimSlotEncoders{10, 11, 12, 20, 21};
 
@@ -6203,8 +6203,11 @@ struct SimParam {
     std::size_t switchValues = 0;
     std::array<float, kSimScenes> sceneCenter{};
     std::array<std::array<float, kSimGestures>, kSimScenes> gestureValue{};
-    std::array<std::array<bool, kSimGestures>, kSimScenes> gestureActive{};
+    std::array<synth::GestureMask, kSimScenes> gestureActiveMasks{};
     std::array<int, kSimMods> route{};
+    std::array<std::size_t, kSimMods> routeSourceIndices{};
+    std::array<std::size_t, kSimMods> sourceRoutePositions{};
+    std::size_t activeRouteCount = 0;
     float currentCenter = 0.0f;
     float targetCenter = 0.0f;
     std::array<float, kSimVoices> currentCenterScale{};
@@ -6222,6 +6225,15 @@ struct SimParam {
     std::array<float, kSimVoices> uiDisplaySpreadEnergy{};
 };
 
+struct SimLocalSlot {
+    std::size_t storageIdentity = 0;
+    int parentParameter = -1;
+    std::size_t sourceIx = 0;
+    bool live = false;
+    bool free = false;
+    bool pinned = false;
+};
+
 struct SimOracle {
     synth::SceneState scene{.leftScene = 0, .rightScene = 1, .blend = 0.25f};
     std::optional<synth::PageOrdinal> activePage = 0;
@@ -6231,9 +6243,12 @@ struct SimOracle {
     bool randomModHeld = false;
     std::array<SimBank, 2> banks;
     std::array<float, kSimGestures> gestureWeight{};
-    std::array<bool, kSimGestures> gestureSelected{};
+    synth::GestureMask gestureSelectedMask = 0;
     std::array<std::array<float, kSimMods>, kSimVoices> modulatorValue{};
     std::array<SimParam, kSimParams> params;
+    std::array<SimLocalSlot, kSimMods> localSlots{};
+    std::size_t liveLocalCount = 0;
+    std::size_t freeLocalCount = 0;
 };
 
 struct SimRandomSamples {
@@ -6284,7 +6299,88 @@ struct SimRandomSamples {
             throw std::runtime_error(oss.str());
         }
     }
+
+    std::string ConsumptionSummary() const {
+        std::ostringstream oss;
+        oss << "values=" << valueIx << "/" << values.size()
+            << ",coins=" << coinIx << "/" << coins.size()
+            << ",indices=" << indexIx << "/" << indices.size();
+        return oss.str();
+    }
 };
+
+bool SimGestureActive(const SimParam& parameter, std::size_t sceneIx, std::size_t gestureIx) {
+    return (parameter.gestureActiveMasks[sceneIx] & (synth::GestureMask{1} << gestureIx)) != 0;
+}
+
+void SimSetGestureActive(SimParam& parameter, std::size_t sceneIx, std::size_t gestureIx, bool active) {
+    const synth::GestureMask bit = synth::GestureMask{1} << gestureIx;
+    if (active) {
+        parameter.gestureActiveMasks[sceneIx] |= bit;
+    } else {
+        parameter.gestureActiveMasks[sceneIx] &= ~bit;
+    }
+}
+
+bool SimGestureSelected(const SimOracle& oracle, std::size_t gestureIx) {
+    return (oracle.gestureSelectedMask & (synth::GestureMask{1} << gestureIx)) != 0;
+}
+
+void SimSetGestureSelected(SimOracle& oracle, std::size_t gestureIx, bool selected) {
+    const synth::GestureMask bit = synth::GestureMask{1} << gestureIx;
+    if (selected) {
+        oracle.gestureSelectedMask |= bit;
+    } else {
+        oracle.gestureSelectedMask &= ~bit;
+    }
+}
+
+void SimEnsureRouteActive(SimParam& parameter, std::size_t sourceIx) {
+    const std::size_t routeSlot = parameter.sourceRoutePositions[sourceIx];
+    if (routeSlot < parameter.activeRouteCount) {
+        return;
+    }
+    const std::size_t destination = parameter.activeRouteCount;
+    if (routeSlot != destination) {
+        const std::size_t displacedSource = parameter.routeSourceIndices[destination];
+        std::swap(parameter.routeSourceIndices[routeSlot], parameter.routeSourceIndices[destination]);
+        parameter.sourceRoutePositions[sourceIx] = destination;
+        parameter.sourceRoutePositions[displacedSource] = routeSlot;
+    }
+    ++parameter.activeRouteCount;
+}
+
+void SimRemoveActiveRoute(SimParam& parameter, std::size_t routeSlot) {
+    const std::size_t lastActive = parameter.activeRouteCount - 1;
+    if (routeSlot != lastActive) {
+        const std::size_t removedSource = parameter.routeSourceIndices[routeSlot];
+        const std::size_t movedSource = parameter.routeSourceIndices[lastActive];
+        std::swap(parameter.routeSourceIndices[routeSlot], parameter.routeSourceIndices[lastActive]);
+        parameter.sourceRoutePositions[movedSource] = routeSlot;
+        parameter.sourceRoutePositions[removedSource] = lastActive;
+    }
+    --parameter.activeRouteCount;
+}
+
+bool SimRouteNeutralAcrossVoices(const SimParam& parameter, std::size_t sourceIx) {
+    constexpr float tolerance = 0.000001f;
+    for (std::size_t voiceIx = 0; voiceIx < kSimVoices; ++voiceIx) {
+        if (std::fabs(parameter.currentDepth[voiceIx][sourceIx]) > tolerance ||
+            std::fabs(parameter.targetDepth[voiceIx][sourceIx]) > tolerance) {
+            return false;
+        }
+    }
+    return true;
+}
+
+void SimPruneNeutralActiveRoutes(SimParam& parameter) {
+    for (std::size_t routeSlot = parameter.activeRouteCount; routeSlot-- > 0;) {
+        const std::size_t sourceIx = parameter.routeSourceIndices[routeSlot];
+        if (SimRouteNeutralAcrossVoices(parameter, sourceIx)) {
+            SimRemoveActiveRoute(parameter, routeSlot);
+        }
+    }
+}
 
 synth::Modifier SimCurrentModifier(const SimOracle& oracle) {
     if (oracle.randomModHeld) {
@@ -6397,10 +6493,12 @@ const SimCell* SimFindCell(const SimBank& bank, synth::PhysicalEncoderId encoder
 float SimEffectiveGestureWeight(const SimOracle& oracle, const SimParam& parameter, std::size_t gestureIx) {
     const float blend = std::clamp(oracle.scene.blend, 0.0f, 1.0f);
     const float leftWeight =
-        parameter.gestureActive[oracle.scene.leftScene][gestureIx] ? oracle.gestureWeight[gestureIx] * (1.0f - blend)
-                                                                   : 0.0f;
+        SimGestureActive(parameter, oracle.scene.leftScene, gestureIx)
+            ? oracle.gestureWeight[gestureIx] * (1.0f - blend)
+            : 0.0f;
     const float rightWeight =
-        parameter.gestureActive[oracle.scene.rightScene][gestureIx] ? oracle.gestureWeight[gestureIx] * blend : 0.0f;
+        SimGestureActive(parameter, oracle.scene.rightScene, gestureIx) ? oracle.gestureWeight[gestureIx] * blend
+                                                                        : 0.0f;
     return leftWeight + rightWeight;
 }
 
@@ -6470,11 +6568,9 @@ bool SimHasNonNeutralDepthState(const SimOracle& oracle, const SimParam& paramet
             return true;
         }
     }
-    for (const auto& row : parameter.gestureActive) {
-        for (const bool active : row) {
-            if (active) {
-                return true;
-            }
+    for (const synth::GestureMask mask : parameter.gestureActiveMasks) {
+        if (mask != 0) {
+            return true;
         }
     }
     for (const auto& row : parameter.currentDepth) {
@@ -6513,15 +6609,15 @@ std::uint32_t SimModulatorsAffectingMask(const SimOracle& oracle, const SimParam
 synth::GestureMask SimGesturesAffectingMask(const SimOracle& oracle, const SimParam& parameter) {
     synth::GestureMask mask = 0;
     const float blend = std::clamp(oracle.scene.blend, 0.0f, 1.0f);
-    for (std::size_t gestureIx = 0; gestureIx < std::min<std::size_t>(kSimGestures, 32); ++gestureIx) {
+    for (std::size_t gestureIx = 0; gestureIx < kSimGestures; ++gestureIx) {
         bool active = false;
         if (blend <= 0.0f) {
-            active = parameter.gestureActive[oracle.scene.leftScene][gestureIx];
+            active = SimGestureActive(parameter, oracle.scene.leftScene, gestureIx);
         } else if (blend >= 1.0f) {
-            active = parameter.gestureActive[oracle.scene.rightScene][gestureIx];
+            active = SimGestureActive(parameter, oracle.scene.rightScene, gestureIx);
         } else {
-            active = parameter.gestureActive[oracle.scene.leftScene][gestureIx] ||
-                     parameter.gestureActive[oracle.scene.rightScene][gestureIx];
+            active = SimGestureActive(parameter, oracle.scene.leftScene, gestureIx) ||
+                     SimGestureActive(parameter, oracle.scene.rightScene, gestureIx);
         }
         if (active) {
             mask |= (synth::GestureMask{1} << gestureIx);
@@ -6539,6 +6635,33 @@ void SimComputeAtDepth(SimOracle& oracle, std::size_t paramIx, std::size_t recur
     for (const int route : parameter.route) {
         if (route >= 0) {
             SimComputeAtDepth(oracle, static_cast<std::size_t>(route), recursionDepth + 1);
+        }
+    }
+
+    constexpr float neutralTolerance = 0.000001f;
+    for (std::size_t sourceIx = 0; sourceIx < kSimMods; ++sourceIx) {
+        const int route = parameter.route[sourceIx];
+        bool targetNonNeutral = false;
+        if (route >= 0) {
+            for (std::size_t voiceIx = 0; voiceIx < kSimVoices; ++voiceIx) {
+                if (std::fabs(synth::ModulationDepthTargetFromKnob(
+                                  SimGetRaw(oracle, static_cast<std::size_t>(route), voiceIx))) > neutralTolerance) {
+                    targetNonNeutral = true;
+                    break;
+                }
+            }
+        }
+        bool currentNonNeutral = false;
+        if (parameter.sourceRoutePositions[sourceIx] < parameter.activeRouteCount) {
+            for (std::size_t voiceIx = 0; voiceIx < kSimVoices; ++voiceIx) {
+                if (std::fabs(parameter.currentDepth[voiceIx][sourceIx]) > neutralTolerance) {
+                    currentNonNeutral = true;
+                    break;
+                }
+            }
+        }
+        if (targetNonNeutral || currentNonNeutral) {
+            SimEnsureRouteActive(parameter, sourceIx);
         }
     }
 
@@ -6595,6 +6718,7 @@ void SimComputeAtDepth(SimOracle& oracle, std::size_t paramIx, std::size_t recur
         parameter.currentDepth = parameter.targetDepth;
         SimSeedDisplayState(oracle, paramIx);
     }
+    SimPruneNeutralActiveRoutes(parameter);
 }
 
 void SimComputeAll(SimOracle& oracle) {
@@ -6632,6 +6756,7 @@ void SimSnapParameterToTarget(SimOracle& oracle, SimParam& parameter) {
     parameter.currentMinValue = parameter.targetMinValue;
     parameter.currentMaxValue = parameter.targetMaxValue;
     parameter.currentDepth = parameter.targetDepth;
+    SimPruneNeutralActiveRoutes(parameter);
     SimSeedDisplayState(oracle, parameter);
     for (const int route : parameter.route) {
         if (route >= 0) {
@@ -6700,17 +6825,17 @@ void SimOpenModulationView(SimOracle& oracle, SimBank& bank, int paramIx) {
 void SimHandleIncDec(SimOracle& oracle, SimParam& parameter, float delta) {
     const float blend = std::clamp(oracle.scene.blend, 0.0f, 1.0f);
     auto armSelectedGesture = [&](std::size_t sceneIx, std::size_t gestureIx) {
-        if (parameter.gestureActive[sceneIx][gestureIx]) {
+        if (SimGestureActive(parameter, sceneIx, gestureIx)) {
             return false;
         }
         parameter.gestureValue[sceneIx][gestureIx] = parameter.sceneCenter[sceneIx];
-        parameter.gestureActive[sceneIx][gestureIx] = true;
+        SimSetGestureActive(parameter, sceneIx, gestureIx, true);
         return true;
     };
 
     bool armedGesture = false;
     for (std::size_t gestureIx = 0; gestureIx < kSimGestures; ++gestureIx) {
-        if (!oracle.gestureSelected[gestureIx]) {
+        if (!SimGestureSelected(oracle, gestureIx)) {
             continue;
         }
         if (blend <= 0.0f) {
@@ -6816,11 +6941,12 @@ void SimResetDepthToNeutral(SimOracle& oracle, SimParam& parameter) {
     for (auto& row : parameter.targetDepth) {
         row.fill(0.0f);
     }
+    parameter.activeRouteCount = 0;
 
     const float blend = std::clamp(oracle.scene.blend, 0.0f, 1.0f);
     auto resetScene = [&](std::size_t sceneIx) {
         parameter.sceneCenter[sceneIx] = 0.5f;
-        parameter.gestureActive[sceneIx].fill(false);
+        parameter.gestureActiveMasks[sceneIx] = 0;
     };
 
     if (blend <= 0.0f) {
@@ -6860,12 +6986,13 @@ void SimRevertToDefault(SimOracle& oracle, SimParam& parameter) {
     for (auto& row : parameter.targetDepth) {
         row.fill(0.0f);
     }
+    parameter.activeRouteCount = 0;
 
     const float defaultValue = SimClamp(parameter.defaultValue, parameter.range);
     const float blend = std::clamp(oracle.scene.blend, 0.0f, 1.0f);
     auto resetScene = [&](std::size_t sceneIx) {
         parameter.sceneCenter[sceneIx] = defaultValue;
-        parameter.gestureActive[sceneIx].fill(false);
+        parameter.gestureActiveMasks[sceneIx] = 0;
     };
 
     if (blend <= 0.0f) {
@@ -7073,10 +7200,10 @@ void SimCheck(const SimOracle& oracle, const std::array<synth::Parameter*, kSimP
         SimFailBool(seed, step, action, "manager current modifier");
     }
     for (std::size_t gestureIx = 0; gestureIx < kSimGestures; ++gestureIx) {
-        if (group.GestureSelected(gestureIx) != oracle.gestureSelected[gestureIx]) {
+        if (group.GestureSelected(gestureIx) != SimGestureSelected(oracle, gestureIx)) {
             std::ostringstream oss;
             oss << "seed " << seed << " step " << step << " action " << action << " group gestureIx=" << gestureIx
-                << " selected expected " << oracle.gestureSelected[gestureIx] << " got "
+                << " selected expected " << SimGestureSelected(oracle, gestureIx) << " got "
                 << group.GestureSelected(gestureIx);
             throw std::runtime_error(oss.str());
         }
@@ -7100,7 +7227,7 @@ void SimCheck(const SimOracle& oracle, const std::array<synth::Parameter*, kSimP
                 SimCheckNear(seed, step, action, SimParamField(actual, paramIx, gestureField + " value"),
                              expected.gestureValue[sceneIx][gestureIx],
                              actual.GestureValue(sceneIx, gestureIx));
-                if (expected.gestureActive[sceneIx][gestureIx] != actual.GestureActive(sceneIx, gestureIx)) {
+                if (SimGestureActive(expected, sceneIx, gestureIx) != actual.GestureActive(sceneIx, gestureIx)) {
                     SimFailBool(seed, step, action, SimParamField(actual, paramIx, gestureField + " active"));
                 }
             }
@@ -7118,28 +7245,28 @@ void SimCheck(const SimOracle& oracle, const std::array<synth::Parameter*, kSimP
         SimCheckNear(seed, step, action, SimParamField(actual, paramIx, "current center"), expected.currentCenter,
                      actual.CurrentCenter());
         RequireRouteBijection(actual, kSimMods);
-        std::array<bool, kSimMods> expectedActiveRoutes{};
-        std::size_t expectedActiveRouteCount = 0;
-        for (std::size_t modIx = 0; modIx < kSimMods; ++modIx) {
-            for (std::size_t voiceIx = 0; voiceIx < kSimVoices; ++voiceIx) {
-                if (std::fabs(expected.targetDepth[voiceIx][modIx]) > 0.000001f ||
-                    std::fabs(expected.currentDepth[voiceIx][modIx]) > 0.000001f) {
-                    expectedActiveRoutes[modIx] = true;
-                    break;
-                }
-            }
-            expectedActiveRouteCount += expectedActiveRoutes[modIx] ? 1 : 0;
-        }
-        if (actual.ActiveRouteCount() != expectedActiveRouteCount) {
+        if (actual.ActiveRouteCount() != expected.activeRouteCount) {
             SimFail(seed, step, action, SimParamField(actual, paramIx, "active route count"),
-                    static_cast<float>(expectedActiveRouteCount), static_cast<float>(actual.ActiveRouteCount()));
+                    static_cast<float>(expected.activeRouteCount), static_cast<float>(actual.ActiveRouteCount()));
         }
-        for (std::size_t routeSlot = 0; routeSlot < actual.ActiveRouteCount(); ++routeSlot) {
-            const std::size_t sourceIx = actual.RouteSourceIndex(routeSlot);
-            if (!expectedActiveRoutes[sourceIx]) {
+        for (std::size_t routeSlot = 0; routeSlot < kSimMods; ++routeSlot) {
+            const std::size_t expectedSourceIx = expected.routeSourceIndices[routeSlot];
+            const std::size_t actualSourceIx = actual.RouteSourceIndex(routeSlot);
+            if (actualSourceIx != expectedSourceIx) {
                 SimFailBool(seed, step, action,
                             SimParamField(actual, paramIx,
-                                          "active route prefix sourceIx=" + std::to_string(sourceIx)));
+                                          "routeSlot=" + std::to_string(routeSlot) +
+                                              " expected stable source=" + std::to_string(expectedSourceIx) +
+                                              " actual stable source=" + std::to_string(actualSourceIx)));
+            }
+            const std::size_t actualRouteSlot = actual.RoutePositionForSource(expectedSourceIx);
+            if (actualRouteSlot != expected.sourceRoutePositions[expectedSourceIx]) {
+                SimFailBool(seed, step, action,
+                            SimParamField(actual, paramIx,
+                                          "stable source=" + std::to_string(expectedSourceIx) +
+                                              " expected route slot=" +
+                                              std::to_string(expected.sourceRoutePositions[expectedSourceIx]) +
+                                              " actual route slot=" + std::to_string(actualRouteSlot)));
             }
         }
         for (std::size_t voiceIx = 0; voiceIx < kSimVoices; ++voiceIx) {
@@ -7218,6 +7345,16 @@ void SimCheckUIState(const SimOracle& oracle, const synth::ParameterManager::UIS
     }
 
     const SimBank& bank = oracle.banks[static_cast<std::size_t>(oracle.selectedBank)];
+    if (!ui.slots[0].connected.load() ||
+        ui.slots[0].showingModulationView.load() != (bank.selectedParameter >= 0)) {
+        SimFailBool(seed, step, action, "ui selected bank/view state");
+    }
+    for (std::size_t bankIx = 0; bankIx < ui.bankCapacity; ++bankIx) {
+        if (!ui.banks[bankIx].connected.load() ||
+            ui.banks[bankIx].selected.load() != (bankIx == static_cast<std::size_t>(oracle.selectedBank))) {
+            SimFailBool(seed, step, action, "ui bankIx=" + std::to_string(bankIx) + " selected state");
+        }
+    }
     const std::array<synth::Color, 4> defaultIndicators{
         synth::Color::Grey, synth::Color::Grey, synth::Color::Grey, synth::Color::Grey};
     for (std::size_t position = 0; position < kSimSlotEncoders.size(); ++position) {
@@ -7253,6 +7390,23 @@ void SimCheckUIState(const SimOracle& oracle, const synth::ParameterManager::UIS
             }
             if (actual.gesturesAffectingMask.load() != expectedGestureMask) {
                 SimFailBool(seed, step, action, "ui position=" + std::to_string(position) + " gesture mask");
+            }
+            if (actual.modulatorColorCount.load() != kSimMods || actual.gestureColorCount.load() != kSimGestures) {
+                SimFailBool(seed, step, action, "ui position=" + std::to_string(position) + " color counts");
+            }
+            for (std::size_t sourceIx = 0; sourceIx < kSimMods; ++sourceIx) {
+                if (actual.modulatorSourceColors[sourceIx].Load() != synth::Color::Off) {
+                    SimFailBool(seed, step, action,
+                                "ui position=" + std::to_string(position) +
+                                    " source color=" + std::to_string(sourceIx));
+                }
+            }
+            for (std::size_t gestureIx = 0; gestureIx < kSimGestures; ++gestureIx) {
+                if (actual.gestureColors[gestureIx].Load() != synth::Color::Off) {
+                    SimFailBool(seed, step, action,
+                                "ui position=" + std::to_string(position) +
+                                    " gesture color=" + std::to_string(gestureIx));
+                }
             }
             for (std::size_t voiceIx = 0; voiceIx < kSimVoices; ++voiceIx) {
                 SimCheckNear(seed, step, action,
@@ -7292,7 +7446,7 @@ void SimCheckUIState(const SimOracle& oracle, const synth::ParameterManager::UIS
         SimFailBool(seed, step, action, "ui gesture capacity");
     }
     for (std::size_t gestureIx = 0; gestureIx < kSimGestures; ++gestureIx) {
-        if (ui.gestures.selected[gestureIx].load() != oracle.gestureSelected[gestureIx]) {
+        if (ui.gestures.selected[gestureIx].load() != SimGestureSelected(oracle, gestureIx)) {
             SimFailBool(seed, step, action, "ui gesture selected");
         }
         SimCheckNear(seed, step, action, "ui gesture value", oracle.gestureWeight[gestureIx],
@@ -7323,10 +7477,13 @@ void SimInitializeOracle(SimOracle& oracle) {
         for (auto& row : parameter.gestureValue) {
             row.fill(defaultValue);
         }
-        for (auto& row : parameter.gestureActive) {
-            row.fill(false);
-        }
+        parameter.gestureActiveMasks.fill(0);
         parameter.route.fill(-1);
+        for (std::size_t sourceIx = 0; sourceIx < kSimMods; ++sourceIx) {
+            parameter.routeSourceIndices[sourceIx] = sourceIx;
+            parameter.sourceRoutePositions[sourceIx] = sourceIx;
+        }
+        parameter.activeRouteCount = 0;
         parameter.currentCenter = defaultValue;
         parameter.targetCenter = defaultValue;
         parameter.currentCenterScale.fill(1.0f);
@@ -7401,7 +7558,7 @@ void SimApplyPatchSnapshot(SimOracle& oracle, const SimPatchSnapshot& snapshot) 
         const SimParam& saved = snapshot.params[paramIx];
         target.sceneCenter = saved.sceneCenter;
         target.gestureValue = saved.gestureValue;
-        target.gestureActive = saved.gestureActive;
+        target.gestureActiveMasks = saved.gestureActiveMasks;
     }
     SimComputeAllAndSnap(oracle);
 }
@@ -7417,7 +7574,7 @@ void SimApplyNewPatch(SimOracle& oracle) {
     oracle.scene = {.leftScene = 0, .rightScene = 1, .blend = 0.25f};
     oracle.activePage = 0;
     oracle.gestureWeight.fill(0.0f);
-    oracle.gestureSelected.fill(false);
+    oracle.gestureSelectedMask = 0;
     SimComputeAllAndSnap(oracle);
 }
 
@@ -7441,7 +7598,7 @@ TEST_CASE(randomized_parameter_modulation_simulation) {
 
     for (const unsigned seed : seeds) {
         synth::ParameterManager manager;
-        manager.SetGestureCount(2);
+        manager.SetGestureCount(kSimGestures);
         auto& group = manager.CreateGroup({
             .numVoices = kSimVoices,
             .numModulators = kSimMods,
@@ -7627,14 +7784,14 @@ TEST_CASE(randomized_parameter_modulation_simulation) {
                 const std::size_t gestureIx = rng() % kSimGestures;
                 action = "select gesture " + std::to_string(gestureIx);
                 manager.SelectGesture(gestureIx);
-                oracle.gestureSelected[gestureIx] = true;
+                SimSetGestureSelected(oracle, gestureIx, true);
                 break;
             }
             case 9: {
                 const std::size_t gestureIx = rng() % kSimGestures;
                 action = "deselect gesture " + std::to_string(gestureIx);
                 manager.DeselectGesture(gestureIx);
-                oracle.gestureSelected[gestureIx] = false;
+                SimSetGestureSelected(oracle, gestureIx, false);
                 break;
             }
             case 10: {
@@ -7714,13 +7871,13 @@ TEST_CASE(randomized_parameter_modulation_simulation) {
                 const float blend = std::clamp(oracle.scene.blend, 0.0f, 1.0f);
                 for (auto& parameter : oracle.params) {
                     if (blend <= 0.0f) {
-                        parameter.gestureActive[oracle.scene.leftScene][gestureIx] = false;
+                        SimSetGestureActive(parameter, oracle.scene.leftScene, gestureIx, false);
                     } else if (blend >= 1.0f) {
-                        parameter.gestureActive[oracle.scene.rightScene][gestureIx] = false;
+                        SimSetGestureActive(parameter, oracle.scene.rightScene, gestureIx, false);
                     } else {
-                        parameter.gestureActive[oracle.scene.leftScene][gestureIx] = false;
+                        SimSetGestureActive(parameter, oracle.scene.leftScene, gestureIx, false);
                         if (oracle.scene.rightScene != oracle.scene.leftScene) {
-                            parameter.gestureActive[oracle.scene.rightScene][gestureIx] = false;
+                            SimSetGestureActive(parameter, oracle.scene.rightScene, gestureIx, false);
                         }
                     }
                 }
@@ -7817,8 +7974,28 @@ TEST_CASE(randomized_message_bus_ui_state_simulation) {
         manager.PopulateUIState(*ui);
         SimCheckUIState(oracle, *ui, seed, -1, "initial bus ui");
 
+        REQUIRE_TRUE(bus.Push(synth::MessageIn::SetGestureSelect(timestamp, 32, true)));
+        REQUIRE_TRUE(bus.Push(synth::MessageIn::SetGestureValue(timestamp, 32, 0.4f)));
+        REQUIRE_TRUE(bus.Push(synth::MessageIn::SetGestureSelect(timestamp, 63, true)));
+        REQUIRE_TRUE(bus.Push(synth::MessageIn::SetGestureValue(timestamp, 63, 0.8f)));
+        REQUIRE_TRUE(bus.Push(synth::MessageIn::ParamIncDec(timestamp, 0, 0, 0.05f)));
+        bus.Process(timestamp++);
+        SimSetGestureSelected(oracle, 32, true);
+        oracle.gestureWeight[32] = 0.4f;
+        SimSetGestureSelected(oracle, 63, true);
+        oracle.gestureWeight[63] = 0.8f;
+        SimHandleTick(oracle, encoders[0], 0.05f);
+        SimCheck(oracle, params, banks, group, slot, manager, seed, -1,
+                 "deterministic gestures=32,63 random-consumption(values=0/0,coins=0/0,indices=0/0)");
+        manager.PopulateUIState(*ui);
+        SimCheckUIState(oracle, *ui, seed, -1,
+                        "deterministic gestures=32,63 ui random-consumption(values=0/0,coins=0/0,indices=0/0)");
+        REQUIRE_TRUE((ui->slots[0].cells[0].gesturesAffectingMask.load() & (synth::GestureMask{1} << 32)) != 0);
+        REQUIRE_TRUE((ui->slots[0].cells[0].gesturesAffectingMask.load() & (synth::GestureMask{1} << 63)) != 0);
+
         for (int step = 0; step < steps; ++step) {
             std::string action;
+            randomSamples.Clear();
             auto modifierName = [](synth::Modifier modifier) {
                 switch (modifier) {
                 case synth::Modifier::None:
@@ -7980,7 +8157,7 @@ TEST_CASE(randomized_message_bus_ui_state_simulation) {
                 action = "bus toggle gesture " + std::to_string(gestureIx);
                 REQUIRE_TRUE(bus.Push(synth::MessageIn::ToggleGestureSelect(timestamp, gestureIx)));
                 bus.Process(timestamp);
-                oracle.gestureSelected[gestureIx] = !oracle.gestureSelected[gestureIx];
+                SimSetGestureSelected(oracle, gestureIx, !SimGestureSelected(oracle, gestureIx));
                 break;
             }
             case 12: {
@@ -8068,6 +8245,7 @@ TEST_CASE(randomized_message_bus_ui_state_simulation) {
             }
             }
             ++timestamp;
+            action += " random-consumption(" + randomSamples.ConsumptionSummary() + ")";
             SimCheck(oracle, params, banks, group, slot, manager, seed, step, action);
             if (step % 11 == 0) {
                 manager.PopulateUIState(*ui);
@@ -8075,6 +8253,156 @@ TEST_CASE(randomized_message_bus_ui_state_simulation) {
             }
         }
     }
+}
+
+TEST_CASE(message_bus_sparse_lifecycle_model_tracks_pins_collection_reuse_and_patch_load) {
+    constexpr unsigned seed = 0x5A17C0DEu;
+    synth::ParameterManager manager;
+    REQUIRE_TRUE(manager.SetGestureCount(64));
+    auto& group = manager.CreateGroup({.numVoices = 1,
+                                       .numModulators = 2,
+                                       .numScenes = 2,
+                                       .maxParameters = 2,
+                                       .targetCenterAlpha = 1.0f});
+    auto& first = manager.CreateParameter(group, {.name = "First", .defaultValue = 0.25f});
+    auto& second = manager.CreateParameter(group, {.name = "Second", .defaultValue = 0.75f});
+    group.AddParameterStorageBatch(synth::MakeParameterStorageBatch(group.Config(), group.GestureCount(), 2));
+    REQUIRE_TRUE(manager.SetSceneEndpoints(0, 1));
+    manager.SetSceneBlend(0.25f);
+
+    auto& bank = manager.CreateBank();
+    bank.AddMapping(10, first);
+    bank.AddMapping(20, second);
+    auto& slot = manager.CreateBankSlot();
+    for (const synth::PhysicalEncoderId encoder : {10u, 11u, 12u, 20u}) {
+        slot.AddPhysicalEncoder(encoder);
+    }
+    slot.SelectBank(&bank);
+    synth::MessageInBus bus(&manager, 64);
+
+    SimOracle oracle;
+    auto fail = [&](int step, const std::string& action, const std::string& field,
+                    std::size_t expected, std::size_t actual) {
+        std::ostringstream oss;
+        oss << "seed " << seed << " step " << step << " action " << action
+            << " random-consumption(values=0/0,coins=0/0,indices=0/0) " << field
+            << " expected " << expected << " got " << actual;
+        throw std::runtime_error(oss.str());
+    };
+    auto checkCounts = [&](int step, const std::string& action) {
+        if (group.LiveLocalParameterCount() != oracle.liveLocalCount) {
+            fail(step, action, "live local count", oracle.liveLocalCount, group.LiveLocalParameterCount());
+        }
+        if (group.FreeLocalParameterSlotCount() != oracle.freeLocalCount) {
+            fail(step, action, "free local count", oracle.freeLocalCount, group.FreeLocalParameterSlotCount());
+        }
+    };
+    std::uint64_t timestamp = 1;
+    auto push = [&](const synth::MessageIn& message) {
+        REQUIRE_TRUE(bus.Push(message));
+        bus.Process(timestamp);
+        ++timestamp;
+    };
+
+    push(synth::MessageIn::ParamPush(timestamp, 0, 0)); // open First
+    oracle.liveLocalCount = 2;
+    for (std::size_t sourceIx = 0; sourceIx < 2; ++sourceIx) {
+        oracle.localSlots[sourceIx] = {
+            .storageIdentity = 2 + sourceIx,
+            .parentParameter = 0,
+            .sourceIx = sourceIx,
+            .live = true,
+            .free = false,
+            .pinned = true,
+        };
+    }
+    checkCounts(0, "open first modulation view");
+    REQUIRE_TRUE(bank.ShowingModulation());
+    synth::Parameter* firstSource0 = bank.VisibleParameter(10);
+    synth::Parameter* firstSource1 = bank.VisibleParameter(11);
+    REQUIRE_TRUE(firstSource0 == &group.ParameterByLocalIndex(oracle.localSlots[0].storageIdentity));
+    REQUIRE_TRUE(firstSource1 == &group.ParameterByLocalIndex(oracle.localSlots[1].storageIdentity));
+
+    push(synth::MessageIn::SetReset(timestamp, true));
+    push(synth::MessageIn::ParamPush(timestamp, 0, 0)); // reset visible local through the bus
+    push(synth::MessageIn::SetReset(timestamp, false));
+    REQUIRE_TRUE(group.CollectNeutralLocalParameters() == 0); // the model's pinned guard is observable
+    checkCounts(1, "reset pinned local and collect");
+
+    push(synth::MessageIn::ParamPush(timestamp, 0, 3)); // close First view
+    oracle.liveLocalCount = 0;
+    oracle.freeLocalCount = 2;
+    for (SimLocalSlot& local : oracle.localSlots) {
+        local.live = false;
+        local.free = true;
+        local.pinned = false;
+        local.parentParameter = -1;
+    }
+    checkCounts(2, "close first view and collect neutral locals");
+    REQUIRE_TRUE(!bank.ShowingModulation());
+
+    push(synth::MessageIn::ParamPush(timestamp, 0, 3)); // open Second using recycled slots
+    oracle.liveLocalCount = 2;
+    oracle.freeLocalCount = 0;
+    oracle.localSlots[1].parentParameter = 1;
+    oracle.localSlots[1].sourceIx = 0;
+    oracle.localSlots[1].live = true;
+    oracle.localSlots[1].free = false;
+    oracle.localSlots[1].pinned = true;
+    oracle.localSlots[0].parentParameter = 1;
+    oracle.localSlots[0].sourceIx = 1;
+    oracle.localSlots[0].live = true;
+    oracle.localSlots[0].free = false;
+    oracle.localSlots[0].pinned = true;
+    checkCounts(3, "open second view with distinct-parent reuse");
+    REQUIRE_TRUE(bank.VisibleParameter(10) == firstSource1);
+    REQUIRE_TRUE(bank.VisibleParameter(11) == firstSource0);
+
+    push(synth::MessageIn::SetGestureSelect(timestamp, 63, true));
+    push(synth::MessageIn::SetGestureValue(timestamp, 63, 1.0f));
+    push(synth::MessageIn::ParamIncDec(timestamp, 0, 0, 0.1f)); // arm gesture 63
+    push(synth::MessageIn::ParamIncDec(timestamp, 0, 0, 0.1f)); // edit the armed gesture
+    synth::Parameter* retained = bank.VisibleParameter(10);
+    REQUIRE_TRUE(retained != nullptr);
+    REQUIRE_TRUE(retained->GestureActive(0, 63));
+    REQUIRE_TRUE(retained->GestureActive(1, 63));
+    REQUIRE_TRUE(retained->GestureValue(0, 63) != 0.5f || retained->GestureValue(1, 63) != 0.5f);
+    const float savedGesture0 = retained->GestureValue(0, 63);
+    const float savedGesture1 = retained->GestureValue(1, 63);
+
+    push(synth::MessageIn::ParamPush(timestamp, 0, 3)); // close Second view
+    oracle.liveLocalCount = 1;
+    oracle.freeLocalCount = 1;
+    oracle.localSlots[1].pinned = false;
+    oracle.localSlots[0].live = false;
+    oracle.localSlots[0].free = true;
+    oracle.localSlots[0].pinned = false;
+    oracle.localSlots[0].parentParameter = -1;
+    checkCounts(4, "close second view and retain non-default gesture route");
+    REQUIRE_TRUE(second.ModulationDepthParameter(0) == retained);
+    REQUIRE_TRUE(second.ModulationDepthParameter(1) == nullptr);
+
+    synth::JsonArena patchArena(262144);
+    synth::MidiInstrumentConfig instrument;
+    synth::AudioDeviceState audio;
+    const synth::JSON patch = synth::BuildPatchJSON(patchArena, "Lifecycle", manager, instrument, audio);
+    REQUIRE_TRUE(!patchArena.Failed());
+    manager.RevertAllToDefaults();
+    oracle.liveLocalCount = 0;
+    oracle.freeLocalCount = 2;
+    checkCounts(5, "revert all and collect");
+    REQUIRE_TRUE(second.ModulationDepthParameter(0) == nullptr);
+
+    REQUIRE_TRUE(synth::LoadPatchJSON(patch, manager, instrument, &audio));
+    oracle.liveLocalCount = 1;
+    oracle.freeLocalCount = 1;
+    checkCounts(6, "patch load rematerializes retained route and collects omissions");
+    synth::Parameter* loaded = second.ModulationDepthParameter(0);
+    REQUIRE_TRUE(loaded != nullptr);
+    REQUIRE_TRUE(loaded->GestureActive(0, 63));
+    REQUIRE_TRUE(loaded->GestureActive(1, 63));
+    REQUIRE_NEAR(loaded->GestureValue(0, 63), savedGesture0, 0.000001f);
+    REQUIRE_NEAR(loaded->GestureValue(1, 63), savedGesture1, 0.000001f);
 }
 
 TEST_CASE(randomized_patch_lifecycle_simulation) {
@@ -8259,14 +8587,14 @@ TEST_CASE(randomized_patch_lifecycle_simulation) {
                 const std::size_t gestureIx = rng() % kSimGestures;
                 action = "patch select gesture " + std::to_string(gestureIx);
                 manager.SelectGesture(gestureIx);
-                oracle.gestureSelected[gestureIx] = true;
+                SimSetGestureSelected(oracle, gestureIx, true);
                 break;
             }
             case 6: {
                 const std::size_t gestureIx = rng() % kSimGestures;
                 action = "patch deselect gesture " + std::to_string(gestureIx);
                 manager.DeselectGesture(gestureIx);
-                oracle.gestureSelected[gestureIx] = false;
+                SimSetGestureSelected(oracle, gestureIx, false);
                 break;
             }
             case 7: {
@@ -8328,13 +8656,13 @@ TEST_CASE(randomized_patch_lifecycle_simulation) {
                 const float blend = std::clamp(oracle.scene.blend, 0.0f, 1.0f);
                 for (auto& parameter : oracle.params) {
                     if (blend <= 0.0f) {
-                        parameter.gestureActive[oracle.scene.leftScene][gestureIx] = false;
+                        SimSetGestureActive(parameter, oracle.scene.leftScene, gestureIx, false);
                     } else if (blend >= 1.0f) {
-                        parameter.gestureActive[oracle.scene.rightScene][gestureIx] = false;
+                        SimSetGestureActive(parameter, oracle.scene.rightScene, gestureIx, false);
                     } else {
-                        parameter.gestureActive[oracle.scene.leftScene][gestureIx] = false;
+                        SimSetGestureActive(parameter, oracle.scene.leftScene, gestureIx, false);
                         if (oracle.scene.rightScene != oracle.scene.leftScene) {
-                            parameter.gestureActive[oracle.scene.rightScene][gestureIx] = false;
+                            SimSetGestureActive(parameter, oracle.scene.rightScene, gestureIx, false);
                         }
                     }
                 }

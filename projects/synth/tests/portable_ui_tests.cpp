@@ -441,10 +441,18 @@ int main()
     Require(synth::ui::EncoderGeometry::BadgeText(false, 16) == "17", "gesture 16 badge is one-based");
     Require(synth::ui::EncoderGeometry::BadgeText(false, 62) == "63", "gesture 62 badge is one-based");
     Require(synth::ui::EncoderGeometry::BadgeText(false, 63) == "64", "gesture 63 badge is one-based");
-    synth::ui::EncoderDrawState highGestureEncoder;
-    highGestureEncoder.connected = true;
-    highGestureEncoder.gesturesAffectingMask = std::uint64_t{1} << 63;
-    highGestureEncoder.gestureColors.resize(64, synth::Color::Orange);
+    synth::Parameter::UIState highGestureState(1, 0, 64);
+    highGestureState.connected.store(true);
+    highGestureState.voiceCount.store(1);
+    highGestureState.gesturesAffectingMask.store(std::uint64_t{1} << 63);
+    highGestureState.gestureColorCount.store(64);
+    for (std::size_t gestureIx = 0; gestureIx < 64; ++gestureIx) {
+        highGestureState.gestureColors[gestureIx].Store(synth::Color::Orange);
+    }
+    const synth::ui::EncoderDrawState highGestureEncoder =
+        synth::ui::EncoderDrawStateFromParameter(highGestureState);
+    Require(highGestureEncoder.gesturesAffectingMask == (std::uint64_t{1} << 63),
+            "encoder snapshot preserves gesture bit 63");
     const auto highGestureCommands = synth::ui::BuildEncoderDrawCommands(
         highGestureEncoder, {0.0f, 0.0f, 128.0f, 128.0f});
     Require(std::any_of(highGestureCommands.begin(), highGestureCommands.end(), [](const auto& command) {
