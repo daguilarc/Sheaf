@@ -36,4 +36,4 @@
 
 - [x] 6.1 Add failing generic parameter-modulation tests proving disconnected indexes remain null/disconnected, ignore encoder and modifier input, do not consume capacity, hide explicitly assigned depths, and are excluded from Random Mod including the all-disconnected case.
 - [x] 6.2 Update generic bank modulation-view materialization, missing-depth preflight, and Random Mod selection so only connected source indexes create or expose depth parameters while every configured index retains its physical position.
-- [ ] 6.3 Update MiniApp and Braid4 system/portable UI assertions for sparse connected depths, run focused and full synth verification plus strict OpenSpec validation, and review the implementation with spec-compliance then code-quality gates.
+- [x] 6.3 Update MiniApp and Braid4 system/portable UI assertions for sparse connected depths, run focused and full synth verification plus strict OpenSpec validation, and review the implementation with spec-compliance then code-quality gates.
