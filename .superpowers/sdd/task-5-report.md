@@ -1,121 +1,90 @@
-# Task 5 Report: Dresden 4 Core Graph
+# Task 5 Report: Absolute Encoder Mode Controllers Integration
 
 ## Status
 
-Implemented and locally verified.
+DONE — implemented, committed, and locally verified.
 
-## Summary
+## Commit
 
-- Added the JUCE-free Dresden 4 app core under `projects/synth/apps/dresden-4`.
-- Added `Dresden4Core` and the minimal `Dresden4` wrapper satisfying the synth application core concept.
-- Built the core graph from:
-  - `synth::Dresden4VcoModule`,
-  - `synth::BipolarMatrixMixerModule<4>`,
-  - `synth::FirDecimator<4, 2, synth::kDresden4DecimatorTaps>`,
-  - `synth::OversampledOutputStage<4, 2, Decimator>`.
-- Initialized exactly three parameter groups:
-  - stereo, two voices, two scenes,
-  - quad, four voices, one modulator, two scenes,
-  - mono, one voice, two scenes, 24 params shared by Dresden oscillator-detail params and the matrix.
-- Created two banks and one 16-encoder slot:
-  - Dresden bank maps positions `0`, `1`, and `4..15`, leaving `2` and `3` blank,
-  - matrix bank maps all 16 row-major cells.
-- Wired matrix raw outputs through the app-level clamp/normalize adapter into quad modulator 0 for all four voices.
-- Implemented 4× host-rate preparation and processing:
-  - positive finite host-rate validation,
-  - internal rate = `4 * hostRate`,
-  - parameter timing conversion from 48 kHz defaults to the internal rate,
-  - Dresden VCO sample rate set to the internal rate,
-  - four internal subframes per host frame,
-  - current-subframe VCO outputs into the matrix,
-  - one-internal-sample delayed matrix modulator consumption,
-  - final 4:1 FIR decimation at the stereo output boundary.
-- Implemented the output channel policy:
-  - zero channels: no writes,
-  - mono: `0.5 * (left + right)`,
-  - stereo: left/right,
-  - channels above stereo: silenced.
-- Added app-local README documenting the current core-only state and 4× oversampled/downsampled signal path.
-- Restored the reusable bipolar matrix mixer default color to grey and added a pre-registration color override so Dresden’s matrix bank can be red without globally recoloring the generic module.
-- Adjusted the RED system tests for current engine API names:
-  - `Engine::Application()` rather than `App()`,
-  - `Engine::ProcessBlock(...)` with timestamp rather than `Process(...)`,
-  - `Parameter::ParamColor()` rather than `GetColor()`.
+- `22c58e48` — `feat(synth): edit absolute encoder mode in controllers`
 
-## Files changed
+## Scope
 
-- `projects/synth/apps/dresden-4/Dresden4Core.hpp`
-- `projects/synth/apps/dresden-4/Dresden4.hpp`
-- `projects/synth/apps/dresden-4/README.md`
-- `projects/synth/include/synth/Modules.hpp`
-- `projects/synth/tests/dresden4_system_tests.cpp`
-- `projects/synth/tests/module_tests.cpp`
+- Added focused view-model coverage for an open encoder edit session that commits `EncoderMode::Absolute`, retains its non-default `turnStep`, survives `Rebuild()` without row replacement/reordering, reconstructs an absolute processor from the committed instrument config, and switches back to signed relative mode with the stored step restored.
+- Added checked-index coverage proving a fractional encoder-mode catalog index is rejected without mutating the caller's output instrument.
+- Added portable Controllers surface coverage for the exact three declaration-order choices, non-deletable mode/step rows, absolute selection and persistence, stable row identity/order and selected combo state after the live-edit rebuild, absolute processor reconstruction, and restored relative decoding.
+- Labeled `turnStep` as `relative modes only` in both the view-model row label and the portable Controllers group header while keeping the row visible and editable in absolute mode.
+- Corrected two stale public comments from “relative mode” to “encoder mode.”
+- Did not add a second session or alter section coalescing.
 
-## Commit hashes
+## RED Evidence
 
-- RED tests: `1bd2ca0c9fc416e6666f46a2018ba86fdcac45cd` (`test: add Dresden 4 core red tests`)
-- RED report: `cf12956e` (`docs: record Dresden 4 core red test report`)
-- Implementation: `97b509828e3b606fb9e92d90d41856c84510d7f2` (`feat: add Dresden 4 core graph`)
-- Review fix: `b90fe556c97dca68f1b5226ab8077fd62142b006` (`fix: tighten Dresden core graph contracts`)
+Command:
 
-## Review findings and fixes
+```sh
+make -C projects/synth build/viewmodel_tests build/controllers_page_ui_tests build/portable_ui_tests && \
+projects/synth/build/viewmodel_tests && \
+projects/synth/build/controllers_page_ui_tests && \
+projects/synth/build/portable_ui_tests
+```
 
-- Review verdict: `REVISE`.
-- Critical finding: matrix feedback delay was effectively two internal samples. The initial implementation fed the matrix from a delayed oscillator-output buffer and then published matrix-derived modulators for the next frame.
-  - Fix: each internal subframe now processes parameters/consumes the previous normalized matrix publication, processes the Dresden VCOs, feeds the matrix with the current subframe’s post-gain oscillator outputs, processes the matrix, then publishes clamped/normalized matrix outputs for the next internal subframe.
-  - Test: `matrix_feedback_uses_current_vco_outputs_and_delays_only_modulator_consumption_one_internal_sample` verifies through the real `ProcessBlock` path that the last matrix inputs came from the current internal sample and the consumed matrix publication came from exactly `lastInternalSampleIndex - 1`.
-- Important finding: the generic `BipolarMatrixMixerModule` default color was changed globally from grey to red.
-  - Fix: restored grey as the generic default, added `SetColor(Color)` before registration, and uses that override from Dresden 4 before registering matrix parameters.
-  - Tests: module tests assert the generic default remains grey and a pre-registration override makes all matrix params red; Dresden system tests assert matrix bank params are red.
-- Important finding: system-test coverage was missing required Task 5 contracts.
-  - Fix: added focused coverage for zero/mono/stereo/extra-channel output policy, split-block decimator continuity at the Dresden app level, and representative patch save/perturb/load round-trip across stereo, quad, mono oscillator-detail, and matrix params.
-  - Cleanup: removed the misleading `.startSample = 100` assignment from the Engine-driven timing test because `Engine::ProcessBlock` owns `block.startSample`.
+Result: exit `1`, after all three binaries compiled. The new end-to-end view-model test reached the absolute commit/rebuild and processor path, then failed on the missing product behavior:
 
-## RED command/result
+```text
+[FAIL] AbsoluteEncoderModeCommitKeepsOpenRowsAndRestoresStoredRelativeStep:
+tests/viewmodel_tests.cpp:1943 requirement failed:
+after[stepRowIx].label.find("relative modes only") != std::string::npos
+```
 
-- Command:
-  - `make -C projects/synth build/dresden4_system_tests && projects/synth/build/dresden4_system_tests`
-- Result: failed as expected before app files existed.
-- Relevant output:
-  - `tests/dresden4_system_tests.cpp:1:10: fatal error: 'Dresden4.hpp' file not found`
+This was the intended RED: the existing three-entry catalog was truthful after the Task 1 review fix, but the required relative-only step cue was not yet present.
 
-## GREEN commands/results
+## GREEN Evidence
 
-- Command:
-  - `make -C projects/synth build/dresden4_system_tests && projects/synth/build/dresden4_system_tests`
-- Result: pass.
-- Final output:
-  - `Dresden 4 system tests passed`
-- Fix-pass coverage now includes:
-  - exact one-internal-sample matrix modulator delay,
-  - current-subframe VCO-to-matrix input,
-  - zero/mono/stereo/extra-channel output policy,
-  - split-block decimator continuity,
-  - patch save/perturb/load round-trip.
+Command:
 
-- Command:
-  - `make -C projects/synth build/module_tests build/dsp_tests && projects/synth/build/module_tests && projects/synth/build/dsp_tests`
-- Result: pass.
-- Final sections included all module and DSP tests passing, including the Dresden VCO, bipolar matrix, FIR decimator, and oversampled output-stage coverage.
+```sh
+make -C projects/synth build/viewmodel_tests build/controllers_page_ui_tests \
+  build/portable_ui_tests build/parameter_modulation_tests && \
+projects/synth/build/viewmodel_tests && \
+projects/synth/build/controllers_page_ui_tests && \
+projects/synth/build/portable_ui_tests && \
+projects/synth/build/parameter_modulation_tests
+```
 
-- Command:
-  - `git diff --check -- projects/synth/apps/dresden-4/Dresden4Core.hpp projects/synth/apps/dresden-4/Dresden4.hpp projects/synth/apps/dresden-4/README.md projects/synth/tests/dresden4_system_tests.cpp projects/synth/Makefile projects/synth/include/synth/Modules.hpp projects/synth/tests/module_tests.cpp`
-- Result: pass; no output.
+Result: exit `0`.
 
-- Command:
-  - `rg -n "TODO|FIXME|NEEDS_CONTEXT|BLOCKED" projects/synth/apps/dresden-4 projects/synth/tests/dresden4_system_tests.cpp`
-- Result: no matches.
+- `viewmodel_tests`: all cases passed, including:
+  - `AbsoluteEncoderModeCommitKeepsOpenRowsAndRestoresStoredRelativeStep`
+  - `EncoderModeIndexMustBeIntegralAndLeavesOutputUntouched`
+- `controllers_page_ui_tests`: `controllers_page_ui_tests passed`.
+- `portable_ui_tests`: exit `0`.
+- `parameter_modulation_tests`: all 252 cases passed, including the absolute decoder and message/parameter routing suites.
+
+Additional verification:
+
+```sh
+git diff --cached --check
+```
+
+Result before commit: exit `0`, no output. The staged scope contained exactly five Task 5 source/test files.
+
+## Files Changed
+
+- `projects/synth/include/synth/ControllersPageUI.hpp`
+- `projects/synth/include/synth/MidiConfigViewModel.hpp`
+- `projects/synth/src/MidiConfigViewModel.cpp`
+- `projects/synth/tests/controllers_page_ui_tests.cpp`
+- `projects/synth/tests/viewmodel_tests.cpp`
 
 ## Self-review
 
-- Scope stayed limited to Task 5 core graph work: no portable UI, Sheaf Patch launcher integration, runtime registration, or standalone entry point was added.
-- The core is app-local and JUCE-free.
-- Matrix-to-quad modulation uses the specified app-level clamp/normalize adapter while preserving the matrix module’s raw unclamped outputs for inspection and tests.
-- The matrix path now feeds the matrix from current-subframe post-gain oscillator outputs and delays only the normalized modulator publication until the next internal subframe’s parameter/modulator update.
-- Parameter timing uses the new reusable timing helpers against the 4× internal rate, so the one-sample modulation delay is in the oversampled clock.
-- The final downsampling filter is explicit through the shared Dresden 4 Kaiser FIR coefficients and `OversampledOutputStage`.
-- The current system tests exercise initialization, bank topology, matrix source normalization, 4× timing counters, exact matrix delay ordering, output-channel policy, split-block decimator continuity, patch round-trip persistence, and finite/non-silent decimated stereo output.
+- The portable test drives the same `runtime.controllers.mapping_field_commit` action used by the real Controllers surface and inspects the committed `MidiInstrumentConfig`, rather than bypassing the edit path.
+- Processor reconstruction uses `CreateMidiControllerProfile` on that committed config and verifies emitted `ParamSetAbsolute`; switching back reconstructs again and verifies `ParamIncDec` uses the retained `0.25` step.
+- Open-session stability is asserted by row count, kind, group, index-derived node identity, and selected combo state before and after the surface refresh/Rebuild cycle.
+- The mode and step rows remain present and non-deletable in absolute mode.
+- Catalog conversion remains declaration-order and checked through the existing integral/range validator; malformed input leaves `out` untouched.
+- No files under the user's untracked `projects/synth/miniapp/` were read or changed.
 
 ## Concerns
 
-- Patch round-trip coverage writes representative scene-center values directly through the parameter manager rather than exercising physical encoder gesture paths. That is intentional for persistence coverage, but UI/controller edit paths will be covered by later app integration tasks.
+None. Task 1 already supplied the underlying three-entry catalog and enum conversion; this task intentionally builds on it and adds the missing presentation cue plus end-to-end edit-session/runtime proof.

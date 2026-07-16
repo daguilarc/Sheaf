@@ -1,45 +1,85 @@
-# Task 3 Report
+# Task 3 Report — Absolute Message Serialization and Routing
 
 ## Status
 
-Task 3 completed. The focused parameter modulation test command passed, and the OpenSpec task checklist was updated exactly as requested.
+DONE. Implemented OpenSpec tasks 3.1 and 3.2 in commit `a3de4ecc` (`feat(synth): route absolute parameter messages`). The OpenSpec checklist itself was intentionally not edited; the orchestrator will update it only after external spec and quality review.
 
-## Test Evidence
+## Scope Implemented
+
+- Added `MessageIn::Type::ParamSetAbsolute` adjacent to `ParamIncDec`, with the static constructor payload `(timestamp, slotIx, position, normalizedValue)`.
+- Added exact JSON name `paramSetAbsolute`, parsing, round-trip preservation, and controller system-association preservation.
+- Added parallel `HandleSetAbsolute` routing through `ParameterManager`, `BankSlot`, and `Bank`, for both physical encoder IDs and `(slotIx, position)` addresses.
+- Routed the selected bank's currently visible cell using the owning manager scene, including a visible modulation-depth parameter without changing its hidden parent.
+- Added the same effective-modifier gate as `ParamIncDec` and preserved no-op behavior for absent slots, out-of-range positions, disconnected slots, and empty mapped cells.
+- Updated declaration-order sort metadata, exhaustive switches, system-message output classification, the view-model system-message catalog, and its argument/edit handling.
+
+## TDD Evidence
+
+### RED
 
 Command:
 
 ```bash
-make -C projects/synth build/parameter_modulation_tests && projects/synth/build/parameter_modulation_tests
+make -C projects/synth build/parameter_modulation_tests build/blocks_tests build/viewmodel_tests
 ```
 
-Result: exit code `0`.
+Result: exit `2`, expected compile failure before production changes. Representative diagnostics:
 
-The test binary reported `[PASS]` for all focused tests, including:
+```text
+error: no member named 'ParamSetAbsolute' in 'synth::MessageIn'
+error: no member named 'ParamSetAbsolute' in 'synth::MessageIn::Type'
+error: no member named 'HandleSetAbsolute' in 'synth::ParameterManager'
+13 errors generated.
+make: *** [build/parameter_modulation_tests] Error 1
+```
 
-- `group_config_validation`
-- `top_level_compute_slews_target_center_with_group_alpha`
-- `target_center_alpha_one_preserves_direct_top_level_assignment`
-- `recursive_modulation_depth_compute_ignores_target_center_smoothing_for_parent_reads`
-- `parameter_process_sample_slews_target_center_before_process_lite`
+This RED directly proved the new message and routing APIs did not exist.
 
-The full focused test executable completed without failures.
+### GREEN
 
-## OpenSpec Checklist
+Command, rerun after the commit:
 
-Marked complete:
+```bash
+make -C projects/synth build/parameter_modulation_tests build/blocks_tests build/viewmodel_tests && \
+projects/synth/build/parameter_modulation_tests && \
+projects/synth/build/blocks_tests && \
+projects/synth/build/viewmodel_tests
+```
 
-- Tasks `1.1` through `1.5`
-- Tasks `2.1` through `2.5`
-- Task `3.1`
+Result: exit `0`. All three binaries passed, including the new tests:
 
-Left unchecked as required:
+- `param_set_absolute_message_constructs_and_round_trips_exact_payload`
+- `param_set_absolute_survives_controller_system_association_round_trip`
+- `param_set_absolute_routes_by_selected_bank_slot_position_and_physical_encoder`
+- `param_set_absolute_edits_visible_modulation_depth_not_hidden_parent`
+- `param_set_absolute_is_blocked_by_every_effective_modifier`
+- `param_set_absolute_unmapped_boundaries_are_no_ops`
+- `SortKeyIncludesAbsolutePayloadAddressAdjacentToRelativeTurns`
+- `UISystemMessageCatalogExpansionCoversPressAndReleaseSemantics`
 
-- Task `3.2`
-- Task `3.3`
+`git diff --check` also exited `0` after the commit.
 
-## Files Changed
+## Changed Files
 
-- `openspec/changes/add-target-center-alpha/tasks.md`
-- `.superpowers/sdd/task-3-report.md`
+- `projects/synth/include/synth/ParameterModulation.hpp`
+- `projects/synth/src/ParameterModulation.cpp`
+- `projects/synth/src/MidiController.cpp`
+- `projects/synth/include/synth/MidiConfigBlocks.hpp`
+- `projects/synth/src/MidiConfigBlocks.cpp`
+- `projects/synth/include/synth/MidiConfigViewModel.hpp`
+- `projects/synth/src/MidiConfigViewModel.cpp`
+- `projects/synth/tests/parameter_modulation_tests.cpp`
+- `projects/synth/tests/blocks_tests.cpp`
+- `projects/synth/tests/viewmodel_tests.cpp`
 
-No production code or test fixture changes were needed. Existing legacy fixture reconciliation from commits `029e9200` and `7323d8a7` was preserved.
+## Self-Review
+
+- The bus checks `GetCurrentModifier() == Modifier::None` before dispatch, exactly matching relative turns.
+- The route resolves the slot position to a physical encoder, checks selected-bank ownership, then looks up the bank's visible cell; this makes modulation views authoritative and preserves every existing no-op boundary.
+- The manager supplies its own `scene_`; callers cannot accidentally provide a foreign scene through the message path.
+- Existing `ParamIncDec` logic and message payload behavior were not changed.
+- Only task-scoped synth source/tests were committed. Existing report/progress/OpenSpec/plan changes and `projects/synth/miniapp/` remain uncommitted and untouched by this task.
+
+## Concerns
+
+None blocking. `ParamSetAbsolute` is intentionally exposed in the generic system-message catalog because Task 3 requires catalog/exhaustive handling; its feedback evaluation is intentionally empty, like other parameter-edit messages.

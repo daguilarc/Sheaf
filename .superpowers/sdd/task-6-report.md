@@ -2,12 +2,13 @@
 
 ## Status
 
-DONE — implemented, committed, and locally verified. OpenSpec tasks 6.1–6.3 remain
-unchecked for the orchestrator to mark only after external spec and quality review.
+DONE — implemented, committed, locally verified, and accepted by external spec
+and quality review. OpenSpec tasks 6.1–6.3 are checked.
 
 ## Commit
 
 - `d9bc2f5c` — `test(synth): verify absolute encoder invariants`
+- `daa421d1` — `fix(synth): make absolute edits audio-safe`
 
 ## Scope
 
@@ -28,11 +29,12 @@ unchecked for the orchestrator to mark only after external spec and quality revi
   across two fresh identical executions.
 - Updated coverage mappings for `spm-31`, `spm-52`, `spm-75`, `spm-76`, and
   `sru-26` with exact test names and the oracle's independence boundary.
-- Resolved the Task 2 minor cleanup: documented why post-arming invariant throws
-  are nontransactional but unreachable under the proof-backed owned-storage
-  invariants; removed the redundant post-throw `assert`; renamed the focused
-  bipolar handler test to state that handler storage is normalized, while the
-  pure helper's real `[-1, 1]` bipolar-range coverage remains intact.
+- In `d9bc2f5c`, resolved the Task 2 minor cleanup by documenting the then-present
+  post-arming invariant throw, removing the redundant post-throw `assert`, and
+  renaming the focused bipolar handler test to state that handler storage is
+  normalized while the pure helper's real `[-1, 1]` bipolar-range coverage
+  remains intact. Final-review fix `daa421d1` then eliminated that throw path
+  entirely through preflight, staged projection, and rollback.
 
 ## RED / Characterization Evidence
 
@@ -116,6 +118,7 @@ the untracked plan/proposal, and the user's untracked `projects/synth/miniapp/`.
 ## Files Changed
 
 - `projects/synth/tests/parameter_modulation_tests.cpp`
+- `projects/synth/include/synth/ParameterModulation.hpp`
 - `projects/synth/src/ParameterModulation.cpp`
 - `projects/synth/docs/coverage.md`
 
@@ -174,6 +177,10 @@ git diff --check
 All three exited `0`; the complete synth suite rebuilt the shared library and
 all dependent test binaries before running them.
 
+Focused xagent Claude Opus re-review of the final-review fix returned SPEC
+COMPLIANCE PASS, CODE QUALITY PASS, and APPROVE with no Critical or Important
+findings.
+
 ## Self-review
 
 - Coefficient aliasing is keyed by the oracle's logical latent-storage index;
@@ -190,7 +197,8 @@ all dependent test binaries before running them.
 - The production raw-center observation uses `targetCenterAlpha = 1`, explicitly
   distinguishing it from ordinary slew; the independent weighted reconstruction
   is also asserted directly against the target.
-- No OpenSpec checkbox was modified or committed. No file under
+- Neither implementation commit modified an OpenSpec checkbox. The orchestrator
+  checked tasks 6.1–6.3 only after external approval. No file under
   `projects/synth/miniapp/` was read or changed.
 
 ## Concerns
