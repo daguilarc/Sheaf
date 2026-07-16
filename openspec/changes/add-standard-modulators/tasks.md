@@ -1,9 +1,9 @@
 ## 1. Standard Bundle Contracts
 
-- [ ] 1.1 Add focused JUCE-free tests for `StandardModulators<1>`, `<2>`, and `<4>` covering non-copy/move traits, address-stable ownership, exact default indexes, names, short names, colors, voice palettes, and all four derived timing configurations.
-- [ ] 1.2 Add failing tests for pre-registration overrides, post-registration configuration freeze, duplicate/out-of-range active indexes, invalid metadata/timing, group voice/modulator shape mismatch, mono constant-index collision exclusion, atomic registration failure, and double registration.
-- [ ] 1.3 Implement the reusable configuration and non-movable `StandardModulators<VoiceCount>` ownership structure with four random processors/inputs/output-pointer rows, runtime noise and constant processors, and all six retained portable visualizers.
-- [ ] 1.4 Implement validated one-time registration into an exactly fifteen-modulator group, including connected metadata/visualizers, stable pointers, configured voice colors, and complete constant omission for `VoiceCount == 1`.
+- [x] 1.1 Add focused JUCE-free tests for `StandardModulators<1>`, `<2>`, and `<4>` covering non-copy/move traits, address-stable ownership, exact default indexes, names, short names, colors, voice palettes, and all four derived timing configurations.
+- [x] 1.2 Add failing tests for pre-registration overrides, post-registration configuration freeze, duplicate/out-of-range active indexes, invalid metadata/timing, group voice/modulator shape mismatch, mono constant-index collision exclusion, atomic registration failure, and double registration.
+- [x] 1.3 Implement the reusable configuration and non-movable `StandardModulators<VoiceCount>` ownership structure with four random processors/inputs/output-pointer rows, runtime noise and constant processors, and all six retained portable visualizers.
+- [x] 1.4 Implement validated one-time registration into an exactly fifteen-modulator group, including connected metadata/visualizers, stable pointers, configured voice colors, and complete constant omission for `VoiceCount == 1`.
 
 ## 2. Standard Bundle Processing
 
