@@ -1557,6 +1557,79 @@ TEST_CASE(curved_modulation_depth_targets_keep_modulator_dot_product_linear) {
     REQUIRE_NEAR(carrier.GetRaw(0), 0.2f, 0.0001f);
 }
 
+TEST_CASE(noncontiguous_materialized_depths_preserve_dense_modulation_behavior) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 2,
+        .numModulators = 15,
+        .numScenes = 1,
+        .maxParameters = 3,
+        .processLiteAlpha = 1.0f,
+        .targetCenterAlpha = 1.0f,
+    });
+    auto& carrier = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.5f});
+    synth::Parameter* depth14 = carrier.EnsureModulationDepth(14);
+    synth::Parameter* depth2 = carrier.EnsureModulationDepth(2);
+    REQUIRE_TRUE(depth14 != nullptr);
+    REQUIRE_TRUE(depth2 != nullptr);
+    depth2->SceneCenter(0) = 0.75f;
+    depth14->SceneCenter(0) = 0.25f;
+
+    group.GetModulators().Value(0, 2) = 1.0f;
+    group.GetModulators().Value(0, 14) = 0.0f;
+    group.GetModulators().Value(1, 2) = 0.0f;
+    group.GetModulators().Value(1, 14) = 1.0f;
+    carrier.Compute({.leftScene = 0, .rightScene = 0, .blend = 0.0f});
+    carrier.ProcessLite();
+
+    REQUIRE_NEAR(carrier.CurrentDepths(0)[2], 0.25f, 0.0001f);
+    REQUIRE_NEAR(carrier.CurrentDepths(0)[14], -0.25f, 0.0001f);
+    REQUIRE_NEAR(carrier.CurrentDepths(1)[2], 0.25f, 0.0001f);
+    REQUIRE_NEAR(carrier.CurrentDepths(1)[14], -0.25f, 0.0001f);
+    for (std::size_t modIx = 0; modIx < 15; ++modIx) {
+        if (modIx != 2 && modIx != 14) {
+            REQUIRE_NEAR(carrier.CurrentDepths(0)[modIx], 0.0f, 0.0001f);
+            REQUIRE_NEAR(carrier.CurrentDepths(1)[modIx], 0.0f, 0.0001f);
+        }
+    }
+    REQUIRE_NEAR(carrier.GetRaw(0), 0.75f, 0.0001f);
+    REQUIRE_NEAR(carrier.GetRaw(1), 0.25f, 0.0001f);
+}
+
+TEST_CASE(cleared_and_reassigned_depths_keep_smoothing_the_ever_materialized_lane) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 15,
+        .numScenes = 1,
+        .maxParameters = 2,
+        .processLiteAlpha = 0.5f,
+        .targetCenterAlpha = 1.0f,
+    });
+    auto& carrier = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.0f});
+    synth::Parameter* depth = carrier.EnsureModulationDepth(14);
+    REQUIRE_TRUE(depth != nullptr);
+    depth->SceneCenter(0) = 0.75f;
+    group.GetModulators().Value(0, 14) = 1.0f;
+
+    carrier.Compute({.leftScene = 0, .rightScene = 0, .blend = 0.0f});
+    carrier.ProcessLite();
+    REQUIRE_NEAR(carrier.CurrentDepths(0)[14], 0.125f, 0.0001f);
+    REQUIRE_NEAR(carrier.GetRaw(0), 0.125f, 0.0001f);
+
+    carrier.ClearModulationDepths();
+    carrier.Compute({.leftScene = 0, .rightScene = 0, .blend = 0.0f});
+    carrier.ProcessLite();
+    REQUIRE_NEAR(carrier.CurrentDepths(0)[14], 0.0625f, 0.0001f);
+    REQUIRE_NEAR(carrier.GetRaw(0), 0.0625f, 0.0001f);
+
+    REQUIRE_TRUE(carrier.AssignModulationDepth(14, depth));
+    carrier.Compute({.leftScene = 0, .rightScene = 0, .blend = 0.0f});
+    carrier.ProcessLite();
+    REQUIRE_NEAR(carrier.CurrentDepths(0)[14], 0.15625f, 0.0001f);
+    REQUIRE_NEAR(carrier.GetRaw(0), 0.15625f, 0.0001f);
+}
+
 TEST_CASE(parameter_get_raw_includes_normalization_offset) {
     synth::ParameterManager manager;
     synth::ParameterGroupConfig config{

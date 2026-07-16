@@ -213,6 +213,12 @@ void AssertDeadlineAndContinuity(double sampleRate,
     REQUIRE_TRUE(stats.counters.hostFramesProcessed == expectedProcessedHostFrames);
     REQUIRE_TRUE(stats.counters.internalSubframesProcessed == expectedProcessedHostFrames * 4);
     REQUIRE_TRUE(stats.counters.lastInternalSampleIndex == expectedProcessedHostFrames * 4 - 1);
+    REQUIRE_TRUE(stats.counters.stereoStandardProcessCalls == stats.counters.internalSubframesProcessed);
+    REQUIRE_TRUE(stats.counters.quadStandardProcessCalls == stats.counters.internalSubframesProcessed);
+    REQUIRE_TRUE(stats.counters.monoStandardProcessCalls == stats.counters.internalSubframesProcessed);
+    REQUIRE_TRUE(stats.counters.stereoStandardUiPublications == kWarmupBlocks + kMeasuredBlocks);
+    REQUIRE_TRUE(stats.counters.quadStandardUiPublications == kWarmupBlocks + kMeasuredBlocks);
+    REQUIRE_TRUE(stats.counters.monoStandardUiPublications == kWarmupBlocks + kMeasuredBlocks);
     REQUIRE_TRUE(stats.contiguousLeft.size() == kBlockFrames * 2);
     REQUIRE_TRUE(stats.splitLeft.size() == stats.contiguousLeft.size());
     REQUIRE_TRUE(stats.splitRight.size() == stats.contiguousRight.size());
@@ -230,6 +236,9 @@ void AssertDeadlineAndContinuity(double sampleRate,
               << (stats.averageSeconds * 1000.0) << "ms p99="
               << (stats.p99Seconds * 1000.0) << "ms block="
               << (stats.blockSeconds * 1000.0) << "ms\n";
+
+    REQUIRE_TRUE(stats.averageSeconds <= stats.blockSeconds * 0.60);
+    REQUIRE_TRUE(stats.p99Seconds <= stats.blockSeconds * 0.80);
 }
 
 } // namespace

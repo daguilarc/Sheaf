@@ -10,6 +10,7 @@
 #include "synth/DspScope.hpp"
 #include "synth/Modules.hpp"
 #include "synth/ParameterModulation.hpp"
+#include "synth/StandardModulators.hpp"
 
 #include <algorithm>
 #include <array>
@@ -17,6 +18,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <memory>
 #include <stdexcept>
 
 namespace synth_braid4 {
@@ -36,6 +38,12 @@ public:
     struct DebugCounterState {
         std::size_t hostFramesProcessed = 0;
         std::size_t internalSubframesProcessed = 0;
+        std::size_t stereoStandardProcessCalls = 0;
+        std::size_t quadStandardProcessCalls = 0;
+        std::size_t monoStandardProcessCalls = 0;
+        std::size_t stereoStandardUiPublications = 0;
+        std::size_t quadStandardUiPublications = 0;
+        std::size_t monoStandardUiPublications = 0;
         std::uint64_t firstInternalSampleIndex = 0;
         std::uint64_t lastInternalSampleIndex = 0;
         std::uint64_t lastHostStartSample = 0;
@@ -91,22 +99,29 @@ public:
 
         stereoGroup_ = &manager.CreateGroup({
             .numVoices = 2,
-            .numModulators = 2,
+            .numModulators = 15,
             .numScenes = 2,
-            .maxParameters = 8,
+            .maxParameters = 19,
         });
         quadGroup_ = &manager.CreateGroup({
             .numVoices = 4,
-            .numModulators = 2,
+            .numModulators = 15,
             .numScenes = 2,
             .maxParameters = 32,
         });
         monoGroup_ = &manager.CreateGroup({
             .numVoices = 1,
-            .numModulators = 2,
+            .numModulators = 15,
             .numScenes = 2,
             .maxParameters = 80,
         });
+
+        stereoStandardModulators_ = std::make_unique<synth::StandardModulators<2>>(*stereoGroup_);
+        quadStandardModulators_ = std::make_unique<synth::StandardModulators<4>>(*quadGroup_);
+        monoStandardModulators_ = std::make_unique<synth::StandardModulators<1>>(*monoGroup_);
+        stereoStandardModulators_->Register();
+        quadStandardModulators_->Register();
+        monoStandardModulators_->Register();
 
         synth::Braid4VcoModule::Options braidOptions;
         braidOptions.parameterBaseColor = synth::Color::Red;
@@ -182,6 +197,10 @@ public:
         quadGroup_->ConfigureProcessingTiming(timing);
         monoGroup_->ConfigureProcessingTiming(timing);
 
+        stereoStandardModulators_->Prepare(internalSampleRate_);
+        quadStandardModulators_->Prepare(internalSampleRate_);
+        monoStandardModulators_->Prepare(internalSampleRate_);
+
         braidModule_.SetSampleRate(static_cast<float>(internalSampleRate_));
         lfoModule_.SetSampleRate(static_cast<float>(internalSampleRate_));
         outputStage_.Reset();
@@ -207,12 +226,30 @@ public:
         scopeWriter_.Publish();
         braidModule_.PopulateUIState(vcoUiState_);
         lfoModule_.PopulateUIState(lfoUiState_);
+        stereoStandardModulators_->PublishUiState();
+        ++debugCounters_.stereoStandardUiPublications;
+        quadStandardModulators_->PublishUiState();
+        ++debugCounters_.quadStandardUiPublications;
+        monoStandardModulators_->PublishUiState();
+        ++debugCounters_.monoStandardUiPublications;
     }
 
     synth::AppContext* Context() const { return context_; }
     synth::ParameterGroup* StereoGroup() const { return stereoGroup_; }
     synth::ParameterGroup* QuadGroup() const { return quadGroup_; }
     synth::ParameterGroup* MonoGroup() const { return monoGroup_; }
+    synth::StandardModulators<2>& StereoStandardModulatorsInstance() { return *stereoStandardModulators_; }
+    const synth::StandardModulators<2>& StereoStandardModulatorsInstance() const {
+        return *stereoStandardModulators_;
+    }
+    synth::StandardModulators<4>& QuadStandardModulatorsInstance() { return *quadStandardModulators_; }
+    const synth::StandardModulators<4>& QuadStandardModulatorsInstance() const {
+        return *quadStandardModulators_;
+    }
+    synth::StandardModulators<1>& MonoStandardModulatorsInstance() { return *monoStandardModulators_; }
+    const synth::StandardModulators<1>& MonoStandardModulatorsInstance() const {
+        return *monoStandardModulators_;
+    }
     synth::Bank* BraidBank() const { return braidBank_; }
     synth::Bank* MatrixBank() const { return matrixBank_; }
     synth::Bank* LfoBank() const { return lfoBank_; }
@@ -285,37 +322,37 @@ private:
             lfoMatrixPointers[voiceIx] = &normalizedLfoMatrixSources_[voiceIx];
         }
 
-        stereoGroup_->SetModulationSource(0, audioStereoPointers, {
+        stereoGroup_->SetModulationSource(4, audioStereoPointers, {
                                                                    .name = "Audio XY",
                                                                    .shortName = "Aud",
                                                                    .sourceColor = synth::Color::Red,
                                                                    .connected = true,
                                                                });
-        stereoGroup_->SetModulationSource(1, lfoStereoPointers, {
+        stereoGroup_->SetModulationSource(5, lfoStereoPointers, {
                                                                  .name = "LFO XY",
                                                                  .shortName = "LFO",
                                                                  .sourceColor = synth::Color::Green,
                                                                  .connected = true,
                                                              });
-        quadGroup_->SetModulationSource(0, matrixPointers, {
+        quadGroup_->SetModulationSource(4, matrixPointers, {
                                                             .name = "Matrix",
                                                             .shortName = "Mtx",
                                                             .sourceColor = synth::Color::Orange,
                                                             .connected = true,
                                                         });
-        quadGroup_->SetModulationSource(1, lfoMatrixPointers, {
+        quadGroup_->SetModulationSource(5, lfoMatrixPointers, {
                                                                .name = "LFO Matrix",
                                                                .shortName = "LMx",
                                                                .sourceColor = synth::Color::Yellow,
                                                                .connected = true,
                                                            });
-        monoGroup_->SetModulationSource(0, audioMonoPointer, {
+        monoGroup_->SetModulationSource(4, audioMonoPointer, {
                                                             .name = "Audio Mid",
                                                             .shortName = "Aud",
                                                             .sourceColor = synth::Color::Red,
                                                             .connected = true,
                                                         });
-        monoGroup_->SetModulationSource(1, lfoMonoPointer, {
+        monoGroup_->SetModulationSource(5, lfoMonoPointer, {
                                                           .name = "LFO Mid",
                                                           .shortName = "LFO",
                                                           .sourceColor = synth::Color::Green,
@@ -360,6 +397,12 @@ private:
         debugCounters_.lastMatrixModulatorConsumptionInternalIndex = internalIndex;
         debugCounters_.lastConsumedMatrixOutputPublicationInternalIndex = matrixOutputPublicationInternalIndex_;
         debugCounters_.lastConsumedMatrixSources = normalizedMatrixSources_;
+        stereoStandardModulators_->Process();
+        ++debugCounters_.stereoStandardProcessCalls;
+        quadStandardModulators_->Process();
+        ++debugCounters_.quadStandardProcessCalls;
+        monoStandardModulators_->Process();
+        ++debugCounters_.monoStandardProcessCalls;
         stereoGroup_->UpdateModValues();
         quadGroup_->UpdateModValues();
         monoGroup_->UpdateModValues();
@@ -433,6 +476,9 @@ private:
     synth::ParameterGroup* stereoGroup_ = nullptr;
     synth::ParameterGroup* quadGroup_ = nullptr;
     synth::ParameterGroup* monoGroup_ = nullptr;
+    std::unique_ptr<synth::StandardModulators<2>> stereoStandardModulators_;
+    std::unique_ptr<synth::StandardModulators<4>> quadStandardModulators_;
+    std::unique_ptr<synth::StandardModulators<1>> monoStandardModulators_;
     synth::Bank* braidBank_ = nullptr;
     synth::Bank* matrixBank_ = nullptr;
     synth::Bank* lfoBank_ = nullptr;

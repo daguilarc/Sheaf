@@ -5,6 +5,7 @@
 #include "synth/AppConcepts.hpp"
 #include "synth/Modules.hpp"
 #include "synth/ParameterModulation.hpp"
+#include "synth/StandardModulators.hpp"
 
 #ifdef JUCE_MAJOR_VERSION
 #error "Braid 4 system tests must not see JUCE headers -- Braid4Core must stay JUCE-free"
@@ -305,6 +306,83 @@ bool PairwiseDistinct(const std::array<synth::Color, N>& colors) {
     return true;
 }
 
+void RequirePairwiseDistinctAddresses(const std::vector<const void*>& addresses) {
+    for (std::size_t left = 0; left < addresses.size(); ++left) {
+        REQUIRE_TRUE(addresses[left] != nullptr);
+        for (std::size_t right = left + 1; right < addresses.size(); ++right) {
+            REQUIRE_TRUE(addresses[left] != addresses[right]);
+        }
+    }
+}
+
+template <std::size_t VoiceCount>
+void AppendStandardBundleAddresses(
+    synth::StandardModulators<VoiceCount>& standard,
+    std::vector<const void*>& processors,
+    std::vector<const void*>& outputs,
+    std::vector<const void*>& pointerRows,
+    std::vector<const void*>& randomStates,
+    std::vector<const void*>& visualizers,
+    std::vector<const void*>& sourceValues) {
+    for (std::size_t random = 0; random < synth::StandardModulators<VoiceCount>::kRandomCount; ++random) {
+        processors.push_back(&standard.RandomProcessor(random));
+        outputs.push_back(standard.RandomOutputRow(random).data());
+        pointerRows.push_back(standard.RandomPointerRow(random).data());
+        randomStates.push_back(&standard.RandomProcessor(random).UiState());
+        visualizers.push_back(&standard.RandomVisualizer(random));
+        for (std::size_t voice = 0; voice < VoiceCount; ++voice) {
+            REQUIRE_TRUE(standard.RandomPointerRow(random)[voice] == &standard.RandomOutputRow(random)[voice]);
+            sourceValues.push_back(standard.RandomPointerRow(random)[voice]);
+        }
+    }
+    processors.push_back(&standard.NoiseProcessor());
+    processors.push_back(&standard.ConstantProcessor());
+    visualizers.push_back(&standard.NoiseVisualizer());
+    visualizers.push_back(&standard.ConstantVisualizer());
+    for (float* pointer : standard.NoiseProcessor().SourcePointers()) {
+        sourceValues.push_back(pointer);
+    }
+    for (float* pointer : standard.ConstantProcessor().SourcePointers()) {
+        sourceValues.push_back(pointer);
+    }
+}
+
+template <std::size_t VoiceCount>
+void RequireStandardMetadata(synth::StandardModulators<VoiceCount>& standard, synth::ParameterGroup& group) {
+    const std::array<const char*, 4> names{
+        "Random 500 ms", "Random 2 s", "Random 6 s", "Random 16 s"};
+    const std::array<const char*, 4> shortNames{"Rnd .5", "Rnd 2", "Rnd 6", "Rnd 16"};
+    const std::array<synth::Color, 4> colors{
+        synth::Color::Cyan, synth::Color::Blue, synth::Color::Indigo, synth::Color::Orange};
+    for (std::size_t random = 0; random < 4; ++random) {
+        const auto& metadata = group.GetModulators().Metadata(random);
+        REQUIRE_TRUE(metadata.name == names[random]);
+        REQUIRE_TRUE(metadata.shortName == shortNames[random]);
+        REQUIRE_TRUE(metadata.sourceColor == colors[random]);
+        REQUIRE_TRUE(metadata.connected);
+        REQUIRE_TRUE(metadata.visualizer == &standard.RandomVisualizer(random));
+    }
+
+    const auto& noise = group.GetModulators().Metadata(14);
+    REQUIRE_TRUE(noise.name == "Noise");
+    REQUIRE_TRUE(noise.shortName == "Noise");
+    REQUIRE_TRUE(noise.sourceColor == synth::Color::White);
+    REQUIRE_TRUE(noise.connected);
+    REQUIRE_TRUE(noise.visualizer == &standard.NoiseVisualizer());
+
+    const auto& constant = group.GetModulators().Metadata(11);
+    if constexpr (VoiceCount > 1) {
+        REQUIRE_TRUE(constant.name == "Constant");
+        REQUIRE_TRUE(constant.shortName == "Const");
+        REQUIRE_TRUE(constant.sourceColor == synth::Color::Yellow);
+        REQUIRE_TRUE(constant.connected);
+        REQUIRE_TRUE(constant.visualizer == &standard.ConstantVisualizer());
+    } else {
+        REQUIRE_TRUE(!constant.connected);
+        REQUIRE_TRUE(constant.visualizer == nullptr);
+    }
+}
+
 bool IsRedFamily(synth::Color color) {
     return color.r > color.g && color.r > color.b;
 }
@@ -344,10 +422,26 @@ void RequireModulePalette(const synth::ParameterManager& manager,
 
 void RequireBadgePalette(const synth::ui::EncoderDrawState& encoder,
                          synth::Color first,
-                         synth::Color second) {
-    REQUIRE_TRUE(encoder.modulatorColors.size() == 2);
-    REQUIRE_TRUE(encoder.modulatorColors[0] == first);
-    REQUIRE_TRUE(encoder.modulatorColors[1] == second);
+                         synth::Color second,
+                         bool hasConstant) {
+    std::vector<synth::Color> expected{
+        synth::Color::Cyan,
+        synth::Color::Blue,
+        synth::Color::Indigo,
+        synth::Color::Orange,
+        first,
+        second,
+        synth::Color::Off,
+        synth::Color::Off,
+        synth::Color::Off,
+        synth::Color::Off,
+        synth::Color::Off,
+        hasConstant ? synth::Color::Yellow : synth::Color::Off,
+        synth::Color::Off,
+        synth::Color::Off,
+        synth::Color::White,
+    };
+    REQUIRE_TRUE(encoder.modulatorColors == expected);
 }
 
 void RequireSnapshotVcoPalette(
@@ -457,9 +551,9 @@ TEST_CASE(parallel_lfo_topology_banks_colors_and_modulator_slots) {
     auto& core = rig.Engine().Application();
 
     REQUIRE_TRUE(rig.Engine().Manager().NumGroups() == 3);
-    REQUIRE_TRUE(core.StereoGroup()->Config().numModulators == 2);
-    REQUIRE_TRUE(core.QuadGroup()->Config().numModulators == 2);
-    REQUIRE_TRUE(core.MonoGroup()->Config().numModulators == 2);
+    REQUIRE_TRUE(core.StereoGroup()->Config().numModulators == 15);
+    REQUIRE_TRUE(core.QuadGroup()->Config().numModulators == 15);
+    REQUIRE_TRUE(core.MonoGroup()->Config().numModulators == 15);
     REQUIRE_TRUE(core.MonoGroup()->ParameterCount() == 48);
 
     REQUIRE_TRUE(core.BraidBank() == rig.Engine().Manager().BankAt(0));
@@ -515,7 +609,7 @@ TEST_CASE(braid_and_matrix_banks_expose_required_encoder_cells) {
     auto& slot = *core.BankSlot();
 
     REQUIRE_TRUE(core.MonoGroup()->ParameterCount() == 48);
-    REQUIRE_TRUE(core.QuadGroup()->Config().numModulators == 2);
+    REQUIRE_TRUE(core.QuadGroup()->Config().numModulators == 15);
 
     for (std::size_t position = 0; position < 16; ++position) {
         const auto encoderId = SlotPositionToEncoderId(slot, position);
@@ -666,12 +760,12 @@ TEST_CASE(braid_palette_roles_propagate_from_literal_configuration) {
     REQUIRE_TRUE(app.MatrixBank()->BankColor() == synth::Color::Rgb(255, 128, 0));
     REQUIRE_TRUE(app.LfoBank()->BankColor() == synth::Color::Rgb(0, 200, 80));
     REQUIRE_TRUE(app.LfoMatrixBank()->BankColor() == synth::Color::Rgb(255, 220, 0));
-    REQUIRE_TRUE(app.StereoGroup()->GetModulators().Metadata()[0].sourceColor == synth::Color::Rgb(255, 0, 0));
-    REQUIRE_TRUE(app.StereoGroup()->GetModulators().Metadata()[1].sourceColor == synth::Color::Rgb(0, 200, 80));
-    REQUIRE_TRUE(app.QuadGroup()->GetModulators().Metadata()[0].sourceColor == synth::Color::Rgb(255, 128, 0));
-    REQUIRE_TRUE(app.QuadGroup()->GetModulators().Metadata()[1].sourceColor == synth::Color::Rgb(255, 220, 0));
-    REQUIRE_TRUE(app.MonoGroup()->GetModulators().Metadata()[0].sourceColor == synth::Color::Rgb(255, 0, 0));
-    REQUIRE_TRUE(app.MonoGroup()->GetModulators().Metadata()[1].sourceColor == synth::Color::Rgb(0, 200, 80));
+    REQUIRE_TRUE(app.StereoGroup()->GetModulators().Metadata()[4].sourceColor == synth::Color::Rgb(255, 0, 0));
+    REQUIRE_TRUE(app.StereoGroup()->GetModulators().Metadata()[5].sourceColor == synth::Color::Rgb(0, 200, 80));
+    REQUIRE_TRUE(app.QuadGroup()->GetModulators().Metadata()[4].sourceColor == synth::Color::Rgb(255, 128, 0));
+    REQUIRE_TRUE(app.QuadGroup()->GetModulators().Metadata()[5].sourceColor == synth::Color::Rgb(255, 220, 0));
+    REQUIRE_TRUE(app.MonoGroup()->GetModulators().Metadata()[4].sourceColor == synth::Color::Rgb(255, 0, 0));
+    REQUIRE_TRUE(app.MonoGroup()->GetModulators().Metadata()[5].sourceColor == synth::Color::Rgb(0, 200, 80));
 
     app.BraidModule().PopulateUIState(app.VcoUiState());
     app.LfoModule().PopulateUIState(app.LfoUiState());
@@ -686,27 +780,27 @@ TEST_CASE(braid_palette_roles_propagate_from_literal_configuration) {
 
     const auto braidSnapshot = synth_braid4::SnapshotUiState(&context);
     RequireSnapshotVcoPalette(braidSnapshot, synth::Color::Red, expectedRedShades);
-    RequireBadgePalette(braidSnapshot.encoders[0], synth::Color::Red, synth::Color::Green);
-    RequireBadgePalette(braidSnapshot.encoders[4], synth::Color::Orange, synth::Color::Yellow);
-    RequireBadgePalette(braidSnapshot.encoders[8], synth::Color::Red, synth::Color::Green);
+    RequireBadgePalette(braidSnapshot.encoders[0], synth::Color::Red, synth::Color::Green, true);
+    RequireBadgePalette(braidSnapshot.encoders[4], synth::Color::Orange, synth::Color::Yellow, true);
+    RequireBadgePalette(braidSnapshot.encoders[8], synth::Color::Red, synth::Color::Green, false);
 
     app.BankSlot()->SelectBank(app.MatrixBank());
     manager.PopulateUIState(*context.uiState);
     const auto matrixSnapshot = synth_braid4::SnapshotUiState(&context);
-    RequireBadgePalette(matrixSnapshot.encoders[0], synth::Color::Red, synth::Color::Green);
+    RequireBadgePalette(matrixSnapshot.encoders[0], synth::Color::Red, synth::Color::Green, false);
 
     app.BankSlot()->SelectBank(app.LfoBank());
     manager.PopulateUIState(*context.uiState);
     const auto lfoSnapshot = synth_braid4::SnapshotUiState(&context);
     RequireSnapshotVcoPalette(lfoSnapshot, kFullGreen, expectedGreenShades);
-    RequireBadgePalette(lfoSnapshot.encoders[0], synth::Color::Red, synth::Color::Green);
-    RequireBadgePalette(lfoSnapshot.encoders[4], synth::Color::Orange, synth::Color::Yellow);
-    RequireBadgePalette(lfoSnapshot.encoders[8], synth::Color::Red, synth::Color::Green);
+    RequireBadgePalette(lfoSnapshot.encoders[0], synth::Color::Red, synth::Color::Green, true);
+    RequireBadgePalette(lfoSnapshot.encoders[4], synth::Color::Orange, synth::Color::Yellow, true);
+    RequireBadgePalette(lfoSnapshot.encoders[8], synth::Color::Red, synth::Color::Green, false);
 
     app.BankSlot()->SelectBank(app.LfoMatrixBank());
     manager.PopulateUIState(*context.uiState);
     const auto lfoMatrixSnapshot = synth_braid4::SnapshotUiState(&context);
-    RequireBadgePalette(lfoMatrixSnapshot.encoders[0], synth::Color::Red, synth::Color::Green);
+    RequireBadgePalette(lfoMatrixSnapshot.encoders[0], synth::Color::Red, synth::Color::Green, false);
 
     app.BankSlot()->SelectBank(app.BraidBank());
     manager.PopulateUIState(*context.uiState);
@@ -919,10 +1013,10 @@ TEST_CASE(portable_surface_exposes_braid_main_screen_and_routes_actions) {
     REQUIRE_TRUE(lfoMatrixSnapshot.encoders[1].voices[0].indicatorColor == lfoMatrixSnapshot.encoders[1].baseColor);
 }
 
-TEST_CASE(braid4_modulation_view_remains_encoder_only_without_visualizers) {
+TEST_CASE(braid4_standard_modulation_view_renders_underlay_and_app_sources_remain_encoder_only) {
     synth_rig::SynthRig<synth_braid4::Braid4Core> rig(
         64,
-        UseScratchRuntimeDataPaths("braid4_modulation_view_remains_encoder_only_without_visualizers"));
+        UseScratchRuntimeDataPaths("braid4_standard_modulation_view_renders_underlay_and_app_sources_remain_encoder_only"));
     rig.RunBlocks(4);
     rig.Press(0, 0);
     rig.RunBlocks(1);
@@ -936,26 +1030,101 @@ TEST_CASE(braid4_modulation_view_remains_encoder_only_without_visualizers) {
     synth_braid4::Braid4UiSurface surface;
     surface.Attach(&context, &rig.Engine().Application());
     const synth::ui::NodeTree tree = surface.BuildTree();
-    const std::string encoderId = synth_braid4::Braid4NodeIds::Encoder(0);
-    REQUIRE_TRUE(FindNodeById(tree, encoderId) != nullptr);
-    REQUIRE_TRUE(FindNodeById(tree, encoderId + ".visualizer") == nullptr);
+    for (const std::size_t standardIndex : {0u, 1u, 2u, 3u, 11u, 14u}) {
+        const std::string encoderId = synth_braid4::Braid4NodeIds::Encoder(standardIndex);
+        REQUIRE_TRUE(FindNodeById(tree, encoderId) != nullptr);
+        REQUIRE_TRUE(FindNodeById(tree, encoderId + ".visualizer") != nullptr);
+    }
+    for (const std::size_t appIndex : {4u, 5u}) {
+        const std::string encoderId = synth_braid4::Braid4NodeIds::Encoder(appIndex);
+        REQUIRE_TRUE(FindNodeById(tree, encoderId) != nullptr);
+        REQUIRE_TRUE(FindNodeById(tree, encoderId + ".visualizer") == nullptr);
+    }
 }
 
-TEST_CASE(braid4_modulator_visualizer_pointers_remain_null) {
+TEST_CASE(braid4_standard_bundles_register_exact_independent_sources) {
     synth_rig::SynthRig<synth_braid4::Braid4Core> rig(
         64,
-        UseScratchRuntimeDataPaths("braid4_modulator_visualizer_pointers_remain_null"));
-    const synth::ParameterGroup* groups[] = {
-        rig.Engine().Application().StereoGroup(),
-        rig.Engine().Application().QuadGroup(),
-        rig.Engine().Application().MonoGroup(),
-    };
-    for (const synth::ParameterGroup* group : groups) {
-        REQUIRE_TRUE(group != nullptr);
-        REQUIRE_TRUE(group->Config().numModulators == 2);
-        REQUIRE_TRUE(group->GetModulators().Metadata(0).visualizer == nullptr);
-        REQUIRE_TRUE(group->GetModulators().Metadata(1).visualizer == nullptr);
+        UseScratchRuntimeDataPaths("braid4_standard_bundles_register_exact_independent_sources"));
+    auto& core = rig.Engine().Application();
+    auto& stereo = core.StereoStandardModulatorsInstance();
+    auto& quad = core.QuadStandardModulatorsInstance();
+    auto& mono = core.MonoStandardModulatorsInstance();
+
+    REQUIRE_TRUE(&stereo.TargetGroup() == core.StereoGroup());
+    REQUIRE_TRUE(&quad.TargetGroup() == core.QuadGroup());
+    REQUIRE_TRUE(&mono.TargetGroup() == core.MonoGroup());
+    RequireStandardMetadata(stereo, *core.StereoGroup());
+    RequireStandardMetadata(quad, *core.QuadGroup());
+    RequireStandardMetadata(mono, *core.MonoGroup());
+
+    const std::array<const char*, 3> source0Names{"Audio XY", "Matrix", "Audio Mid"};
+    const std::array<const char*, 3> source1Names{"LFO XY", "LFO Matrix", "LFO Mid"};
+    const std::array<synth::ParameterGroup*, 3> groups{
+        core.StereoGroup(), core.QuadGroup(), core.MonoGroup()};
+    for (std::size_t groupIndex = 0; groupIndex < groups.size(); ++groupIndex) {
+        auto& modulators = groups[groupIndex]->GetModulators();
+        REQUIRE_TRUE(groups[groupIndex]->Config().numModulators == 15);
+        REQUIRE_TRUE(modulators.Metadata(4).name == source0Names[groupIndex]);
+        REQUIRE_TRUE(modulators.Metadata(5).name == source1Names[groupIndex]);
+        REQUIRE_TRUE(modulators.Metadata(4).connected);
+        REQUIRE_TRUE(modulators.Metadata(5).connected);
+        REQUIRE_TRUE(modulators.Metadata(4).visualizer == nullptr);
+        REQUIRE_TRUE(modulators.Metadata(5).visualizer == nullptr);
+        for (const std::size_t gap : {6u, 7u, 8u, 9u, 10u, 12u, 13u}) {
+            REQUIRE_TRUE(!modulators.Metadata(gap).connected);
+            REQUIRE_TRUE(modulators.Metadata(gap).visualizer == nullptr);
+        }
     }
+
+    std::vector<const void*> processors;
+    std::vector<const void*> outputs;
+    std::vector<const void*> pointerRows;
+    std::vector<const void*> randomStates;
+    std::vector<const void*> visualizers;
+    std::vector<const void*> sourceValues;
+    AppendStandardBundleAddresses(stereo, processors, outputs, pointerRows, randomStates, visualizers, sourceValues);
+    AppendStandardBundleAddresses(quad, processors, outputs, pointerRows, randomStates, visualizers, sourceValues);
+    AppendStandardBundleAddresses(mono, processors, outputs, pointerRows, randomStates, visualizers, sourceValues);
+    RequirePairwiseDistinctAddresses(processors);
+    RequirePairwiseDistinctAddresses(outputs);
+    RequirePairwiseDistinctAddresses(pointerRows);
+    RequirePairwiseDistinctAddresses(randomStates);
+    RequirePairwiseDistinctAddresses(visualizers);
+    RequirePairwiseDistinctAddresses(sourceValues);
+    for (const void* source : sourceValues) {
+        REQUIRE_TRUE(std::find(visualizers.begin(), visualizers.end(), source) == visualizers.end());
+    }
+}
+
+TEST_CASE(braid4_groups_fit_complete_fifteen_cell_modulation_views) {
+    synth_rig::SynthRig<synth_braid4::Braid4Core> rig(
+        64,
+        UseScratchRuntimeDataPaths("braid4_groups_fit_complete_fifteen_cell_modulation_views"));
+    auto& core = rig.Engine().Application();
+    REQUIRE_TRUE(core.StereoGroup()->Config().maxParameters >= 19);
+    REQUIRE_TRUE(core.QuadGroup()->Config().maxParameters >= 23);
+    REQUIRE_TRUE(core.MonoGroup()->Config().maxParameters >= 63);
+    REQUIRE_TRUE(core.StereoGroup()->AvailableParameterSlots() >= 15);
+    REQUIRE_TRUE(core.QuadGroup()->AvailableParameterSlots() >= 15);
+    REQUIRE_TRUE(core.MonoGroup()->AvailableParameterSlots() >= 15);
+
+    auto& slot = *core.BankSlot();
+    slot.SelectBank(core.BraidBank());
+    slot.HandlePress(0);
+    REQUIRE_TRUE(core.BraidBank()->ShowingModulation());
+    REQUIRE_TRUE(core.BraidBank()->VisibleMappingCount() == 16);
+    REQUIRE_TRUE(core.StereoGroup()->ParameterCount() == 4 + 15);
+    core.BraidBank()->Deselect();
+    slot.HandlePress(4);
+    REQUIRE_TRUE(core.BraidBank()->ShowingModulation());
+    REQUIRE_TRUE(core.BraidBank()->VisibleMappingCount() == 16);
+    REQUIRE_TRUE(core.QuadGroup()->ParameterCount() == 8 + 15);
+    slot.SelectBank(core.MatrixBank());
+    slot.HandlePress(0);
+    REQUIRE_TRUE(core.MatrixBank()->ShowingModulation());
+    REQUIRE_TRUE(core.MatrixBank()->VisibleMappingCount() == 16);
+    REQUIRE_TRUE(core.MonoGroup()->ParameterCount() == 48 + 15);
 }
 
 TEST_CASE(matrix_sources_materialize_quad_modulator_values_for_four_voices) {
@@ -976,10 +1145,10 @@ TEST_CASE(matrix_sources_materialize_quad_modulator_values_for_four_voices) {
     REQUIRE_NEAR(core.NormalizedMatrixSource(3), 1.0, 0.000001);
 
     core.QuadGroup()->UpdateModValues();
-    REQUIRE_NEAR(core.QuadGroup()->GetModulators().Value(0, 0), 0.0, 0.000001);
-    REQUIRE_NEAR(core.QuadGroup()->GetModulators().Value(1, 0), 0.0, 0.000001);
-    REQUIRE_NEAR(core.QuadGroup()->GetModulators().Value(2, 0), 0.5, 0.000001);
-    REQUIRE_NEAR(core.QuadGroup()->GetModulators().Value(3, 0), 1.0, 0.000001);
+    REQUIRE_NEAR(core.QuadGroup()->GetModulators().Value(0, 4), 0.0, 0.000001);
+    REQUIRE_NEAR(core.QuadGroup()->GetModulators().Value(1, 4), 0.0, 0.000001);
+    REQUIRE_NEAR(core.QuadGroup()->GetModulators().Value(2, 4), 0.5, 0.000001);
+    REQUIRE_NEAR(core.QuadGroup()->GetModulators().Value(3, 4), 1.0, 0.000001);
 }
 
 TEST_CASE(audio_and_lfo_outputs_publish_normalized_stereo_mono_and_quad_modulators) {
@@ -1004,22 +1173,22 @@ TEST_CASE(audio_and_lfo_outputs_publish_normalized_stereo_mono_and_quad_modulato
     core.MonoGroup()->UpdateModValues();
     core.QuadGroup()->UpdateModValues();
 
-    REQUIRE_NEAR(core.StereoGroup()->GetModulators().Value(0, 0), 0.0, 0.000001);
-    REQUIRE_NEAR(core.StereoGroup()->GetModulators().Value(1, 0), 0.75, 0.000001);
-    REQUIRE_NEAR(core.StereoGroup()->GetModulators().Value(0, 1), 0.25, 0.000001);
-    REQUIRE_NEAR(core.StereoGroup()->GetModulators().Value(1, 1), 1.0, 0.000001);
+    REQUIRE_NEAR(core.StereoGroup()->GetModulators().Value(0, 4), 0.0, 0.000001);
+    REQUIRE_NEAR(core.StereoGroup()->GetModulators().Value(1, 4), 0.75, 0.000001);
+    REQUIRE_NEAR(core.StereoGroup()->GetModulators().Value(0, 5), 0.25, 0.000001);
+    REQUIRE_NEAR(core.StereoGroup()->GetModulators().Value(1, 5), 1.0, 0.000001);
 
-    REQUIRE_NEAR(core.MonoGroup()->GetModulators().Value(0, 0), 0.125, 0.000001);
-    REQUIRE_NEAR(core.MonoGroup()->GetModulators().Value(0, 1), 0.875, 0.000001);
+    REQUIRE_NEAR(core.MonoGroup()->GetModulators().Value(0, 4), 0.125, 0.000001);
+    REQUIRE_NEAR(core.MonoGroup()->GetModulators().Value(0, 5), 0.875, 0.000001);
 
-    REQUIRE_NEAR(core.QuadGroup()->GetModulators().Value(0, 0), 0.0, 0.000001);
-    REQUIRE_NEAR(core.QuadGroup()->GetModulators().Value(1, 0), 0.0, 0.000001);
-    REQUIRE_NEAR(core.QuadGroup()->GetModulators().Value(2, 0), 0.5, 0.000001);
-    REQUIRE_NEAR(core.QuadGroup()->GetModulators().Value(3, 0), 1.0, 0.000001);
-    REQUIRE_NEAR(core.QuadGroup()->GetModulators().Value(0, 1), 0.0, 0.000001);
-    REQUIRE_NEAR(core.QuadGroup()->GetModulators().Value(1, 1), 0.5, 0.000001);
-    REQUIRE_NEAR(core.QuadGroup()->GetModulators().Value(2, 1), 1.0, 0.000001);
-    REQUIRE_NEAR(core.QuadGroup()->GetModulators().Value(3, 1), 1.0, 0.000001);
+    REQUIRE_NEAR(core.QuadGroup()->GetModulators().Value(0, 4), 0.0, 0.000001);
+    REQUIRE_NEAR(core.QuadGroup()->GetModulators().Value(1, 4), 0.0, 0.000001);
+    REQUIRE_NEAR(core.QuadGroup()->GetModulators().Value(2, 4), 0.5, 0.000001);
+    REQUIRE_NEAR(core.QuadGroup()->GetModulators().Value(3, 4), 1.0, 0.000001);
+    REQUIRE_NEAR(core.QuadGroup()->GetModulators().Value(0, 5), 0.0, 0.000001);
+    REQUIRE_NEAR(core.QuadGroup()->GetModulators().Value(1, 5), 0.5, 0.000001);
+    REQUIRE_NEAR(core.QuadGroup()->GetModulators().Value(2, 5), 1.0, 0.000001);
+    REQUIRE_NEAR(core.QuadGroup()->GetModulators().Value(3, 5), 1.0, 0.000001);
 }
 
 TEST_CASE(prepares_four_x_internal_rate_and_sequences_internal_subframes) {
@@ -1027,13 +1196,18 @@ TEST_CASE(prepares_four_x_internal_rate_and_sequences_internal_subframes) {
     std::uint64_t timestamp = 0;
     synth::Engine<synth_braid4::Braid4Core> engine([&timestamp] { return timestamp++; });
     engine.Initialize();
+    auto& core = engine.Application();
 
     for (const double hostRate : {44100.0, 48000.0, 96000.0}) {
         engine.Prepare(hostRate, config.preferredBlockSize);
-        auto& core = engine.Application();
         REQUIRE_NEAR(core.HostSampleRate(), hostRate, 0.000001);
         REQUIRE_NEAR(core.InternalSampleRate(), hostRate * 4.0, 0.000001);
         REQUIRE_TRUE(core.BraidModule().SampleRate() == static_cast<float>(hostRate * 4.0));
+        for (std::size_t random = 0; random < 4; ++random) {
+            REQUIRE_NEAR(core.StereoStandardModulatorsInstance().RandomProcessor(random).SampleRate(), hostRate * 4.0, 0.000001);
+            REQUIRE_NEAR(core.QuadStandardModulatorsInstance().RandomProcessor(random).SampleRate(), hostRate * 4.0, 0.000001);
+            REQUIRE_NEAR(core.MonoStandardModulatorsInstance().RandomProcessor(random).SampleRate(), hostRate * 4.0, 0.000001);
+        }
     }
 
     std::array<float, 8> left{};
@@ -1051,6 +1225,24 @@ TEST_CASE(prepares_four_x_internal_rate_and_sequences_internal_subframes) {
     REQUIRE_TRUE(counters.internalSubframesProcessed == left.size() * 4);
     REQUIRE_TRUE(counters.firstInternalSampleIndex == 0);
     REQUIRE_TRUE(counters.lastInternalSampleIndex == 31);
+    REQUIRE_TRUE(counters.stereoStandardProcessCalls == counters.internalSubframesProcessed);
+    REQUIRE_TRUE(counters.quadStandardProcessCalls == counters.internalSubframesProcessed);
+    REQUIRE_TRUE(counters.monoStandardProcessCalls == counters.internalSubframesProcessed);
+    REQUIRE_TRUE(counters.stereoStandardUiPublications == 1);
+    REQUIRE_TRUE(counters.quadStandardUiPublications == 1);
+    REQUIRE_TRUE(counters.monoStandardUiPublications == 1);
+    for (std::size_t random = 0; random < 4; ++random) {
+        for (std::size_t voice = 0; voice < 2; ++voice) {
+            REQUIRE_NEAR(core.StereoGroup()->GetModulators().Value(voice, random),
+                         core.StereoStandardModulatorsInstance().RandomOutputRow(random)[voice], 0.000001);
+        }
+        for (std::size_t voice = 0; voice < 4; ++voice) {
+            REQUIRE_NEAR(core.QuadGroup()->GetModulators().Value(voice, random),
+                         core.QuadStandardModulatorsInstance().RandomOutputRow(random)[voice], 0.000001);
+        }
+        REQUIRE_NEAR(core.MonoGroup()->GetModulators().Value(0, random),
+                     core.MonoStandardModulatorsInstance().RandomOutputRow(random)[0], 0.000001);
+    }
 }
 
 TEST_CASE(matrix_feedback_uses_current_vco_outputs_and_delays_only_modulator_consumption_one_internal_sample) {
@@ -1062,7 +1254,7 @@ TEST_CASE(matrix_feedback_uses_current_vco_outputs_and_delays_only_modulator_con
     synth::Parameter& shape = manager.ParameterById(core.BraidModule().Parameters().quad.shape);
     shape.SceneCenter(0) = 0.0f;
     shape.SceneCenter(1) = 0.0f;
-    synth::Parameter* shapeMatrixDepth = shape.EnsureModulationDepth(0);
+    synth::Parameter* shapeMatrixDepth = shape.EnsureModulationDepth(4);
     REQUIRE_TRUE(shapeMatrixDepth != nullptr);
     shapeMatrixDepth->SceneCenter(0) = 1.0f;
     shapeMatrixDepth->SceneCenter(1) = 1.0f;
@@ -1088,7 +1280,7 @@ TEST_CASE(matrix_feedback_uses_current_vco_outputs_and_delays_only_modulator_con
     REQUIRE_TRUE(counters.lastConsumedMatrixOutputPublicationInternalIndex == counters.lastInternalSampleIndex - 1);
     for (std::size_t oscIx = 0; oscIx < synth_braid4::Braid4Core::kOscillatorCount; ++oscIx) {
         REQUIRE_NEAR(counters.lastMatrixInputs[oscIx], core.BraidModule().OscillatorOutput(oscIx), 0.000001);
-        REQUIRE_NEAR(core.QuadGroup()->GetModulators().Value(oscIx, 0),
+        REQUIRE_NEAR(core.QuadGroup()->GetModulators().Value(oscIx, 4),
                      counters.lastConsumedMatrixSources[oscIx],
                      0.000001);
         REQUIRE_NEAR(shape.CachedKnobValue(oscIx), shape.GetRaw(oscIx), 0.000001);

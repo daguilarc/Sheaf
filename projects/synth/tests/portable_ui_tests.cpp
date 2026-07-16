@@ -24,6 +24,7 @@
 #include <type_traits>
 
 #include "../apps/braid-4/Braid4Draw.hpp"
+#include "../apps/braid-4/Braid4UI.hpp"
 #include "../apps/braid-4/Braid4UiModel.hpp"
 #include "../apps/miniapp/MiniAppDraw.hpp"
 
@@ -446,12 +447,61 @@ void TestStandardModulatorVisualizersRemainPortable()
             "standard noise metadata retains portable underlay");
 }
 
+void TestBraid4StandardModulationViewsRemainPortable()
+{
+    synth::ParameterManager manager;
+    synth::MessageInBus uiBus(&manager);
+    synth::MidiInstrumentConfig instrument;
+    synth::RuntimeConfig config = synth_braid4::Braid4Core::Config();
+    synth::AppContext context;
+    context.parameterManager = &manager;
+    context.uiBus = &uiBus;
+    context.instrument = &instrument;
+    context.config = &config;
+
+    synth_braid4::Braid4Core core;
+    core.Init(&context);
+    core.PrepareToPlay(48000.0, 64);
+    auto uiState = manager.CreateUIState();
+    context.uiState = uiState.get();
+    synth_braid4::Braid4UiSurface surface;
+    surface.Attach(&context, &core);
+
+    core.BankSlot()->HandlePress(4);
+    manager.PopulateUIState(*uiState);
+    const synth::ui::NodeTree quadTree = surface.BuildTree();
+    Require(FindNodeById(quadTree, "braid4.encoder.0.visualizer") != nullptr,
+            "Braid4 quad standard source has a portable underlay");
+    Require(FindNodeById(quadTree, "braid4.encoder.4") != nullptr,
+            "Braid4 quad application source 4 keeps its encoder");
+    Require(FindNodeById(quadTree, "braid4.encoder.4.visualizer") == nullptr,
+            "Braid4 quad application source 4 remains encoder-only");
+    Require(FindNodeById(quadTree, "braid4.encoder.5.visualizer") == nullptr,
+            "Braid4 quad application source 5 remains encoder-only");
+
+    core.BankSlot()->SelectBank(core.MatrixBank());
+    core.BankSlot()->HandlePress(0);
+    manager.PopulateUIState(*uiState);
+    const synth::ui::NodeTree monoTree = surface.BuildTree();
+    Require(FindNodeById(monoTree, "braid4.encoder.0.visualizer") != nullptr,
+            "Braid4 mono standard random source has a portable underlay");
+    Require(FindNodeById(monoTree, "braid4.encoder.11") != nullptr,
+            "Braid4 mono disconnected constant position keeps its encoder cell");
+    Require(FindNodeById(monoTree, "braid4.encoder.11.visualizer") == nullptr,
+            "Braid4 mono disconnected constant position remains encoder-only");
+    Require(!core.MonoGroup()->GetModulators().Metadata(11).connected,
+            "Braid4 mono constant source stays disconnected");
+    Require(core.MonoGroup()->GetModulators().Metadata(11).visualizer == nullptr,
+            "Braid4 mono constant source has no alias visualizer");
+}
+
 }  // namespace
 
 int main()
 {
     TestGangedRandomLfoVisualizer();
     TestStandardModulatorVisualizersRemainPortable();
+    TestBraid4StandardModulationViewsRemainPortable();
     synth::Parameter::UIState parameterState(1, 1, 1);
     parameterState.connected.store(true);
     parameterState.voiceCount.store(1);

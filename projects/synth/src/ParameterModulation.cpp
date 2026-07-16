@@ -1374,6 +1374,13 @@ bool Parameter::AssignModulationDepth(std::size_t modIx, Parameter* parameter) {
     }
 
     modulationDepths_[modIx] = parameter;
+    if (parameter != nullptr) {
+        const auto insertion = std::lower_bound(
+            materializedModulationIndexes_.begin(), materializedModulationIndexes_.end(), modIx);
+        if (insertion == materializedModulationIndexes_.end() || *insertion != modIx) {
+            materializedModulationIndexes_.insert(insertion, modIx);
+        }
+    }
     return true;
 }
 
@@ -1889,6 +1896,14 @@ void Parameter::SeedCachedKnobAndUiDisplayState() {
         uiDisplayCenters_[voiceIx] = currentKnobValues_[voiceIx];
         uiDisplaySpreadEnergies_[voiceIx] = 0.0f;
     }
+}
+
+float Parameter::ApplyMaterializedModulation(std::size_t voiceIx, std::span<const float> depths) const {
+    float result = 0.0f;
+    for (const std::size_t modIx : materializedModulationIndexes_) {
+        result += group_.GetModulators().Value(voiceIx, modIx) * depths[modIx];
+    }
+    return result;
 }
 
 bool Parameter::WouldCreateCycle(const Parameter* candidate) const {

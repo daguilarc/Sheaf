@@ -497,6 +497,7 @@ private:
     void ComputeAtDepth(const SceneState& scene, std::size_t recursionDepth, bool smoothTargetCenter);
     void SnapCurrentToTarget();
     void SeedCachedKnobAndUiDisplayState();
+    float ApplyMaterializedModulation(std::size_t voiceIx, std::span<const float> depths) const;
     bool WouldCreateCycle(const Parameter* candidate) const;
     ParameterConfig ModulationDepthConfig(std::size_t modIx) const;
     float TargetValue(std::size_t voiceIx) const;
@@ -542,6 +543,7 @@ private:
     std::span<float> uiDisplayCenters_;
     std::span<float> uiDisplaySpreadEnergies_;
     std::span<Parameter*> modulationDepths_;
+    std::vector<std::size_t> materializedModulationIndexes_;
     std::span<float> sceneCenters_;
     std::span<float> gestureValues_;
     std::span<GestureMask> gestureActiveMasks_;
