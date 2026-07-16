@@ -1021,9 +1021,24 @@ TEST_CASE(braid4_standard_modulation_view_renders_underlay_and_app_sources_remai
     rig.Press(0, 0);
     rig.RunBlocks(1);
 
+    auto& core = rig.Engine().Application();
     auto& manager = rig.Engine().Manager();
     auto ui = manager.CreateUIState();
     manager.PopulateUIState(*ui);
+
+    synth::Parameter* const stereoParameter = core.BraidBank()->TargetParameter();
+    REQUIRE_TRUE(stereoParameter != nullptr);
+    for (const std::size_t connected : {0u, 1u, 2u, 3u, 4u, 5u, 11u, 14u}) {
+        synth::Parameter* const depth = stereoParameter->ModulationDepthParameter(connected);
+        REQUIRE_TRUE(depth != nullptr);
+        REQUIRE_TRUE(core.BraidBank()->VisibleParameter(connected) == depth);
+        REQUIRE_TRUE(ui->slots[0].cells[connected].connected.load());
+    }
+    for (const std::size_t gap : {6u, 7u, 8u, 9u, 10u, 12u, 13u}) {
+        REQUIRE_TRUE(stereoParameter->ModulationDepthParameter(gap) == nullptr);
+        REQUIRE_TRUE(core.BraidBank()->VisibleParameter(gap) == nullptr);
+        REQUIRE_TRUE(!ui->slots[0].cells[gap].connected.load());
+    }
 
     synth::AppContext context = rig.Engine().Context();
     context.uiState = ui.get();
@@ -1040,6 +1055,24 @@ TEST_CASE(braid4_standard_modulation_view_renders_underlay_and_app_sources_remai
         REQUIRE_TRUE(FindNodeById(tree, encoderId) != nullptr);
         REQUIRE_TRUE(FindNodeById(tree, encoderId + ".visualizer") == nullptr);
     }
+
+    core.BankSlot()->SelectBank(core.MatrixBank());
+    core.BankSlot()->HandlePress(0);
+    manager.PopulateUIState(*ui);
+    synth::Parameter* const monoParameter = core.MatrixBank()->TargetParameter();
+    REQUIRE_TRUE(monoParameter != nullptr);
+    for (const std::size_t connected : {0u, 1u, 2u, 3u, 4u, 5u, 14u}) {
+        synth::Parameter* const depth = monoParameter->ModulationDepthParameter(connected);
+        REQUIRE_TRUE(depth != nullptr);
+        REQUIRE_TRUE(core.MatrixBank()->VisibleParameter(connected) == depth);
+        REQUIRE_TRUE(ui->slots[0].cells[connected].connected.load());
+    }
+    for (const std::size_t gap : {6u, 7u, 8u, 9u, 10u, 11u, 12u, 13u}) {
+        REQUIRE_TRUE(monoParameter->ModulationDepthParameter(gap) == nullptr);
+        REQUIRE_TRUE(core.MatrixBank()->VisibleParameter(gap) == nullptr);
+        REQUIRE_TRUE(!ui->slots[0].cells[gap].connected.load());
+    }
+    REQUIRE_TRUE(monoParameter->ModulationDepthParameter(11) == nullptr);
 }
 
 TEST_CASE(braid4_standard_bundles_register_exact_independent_sources) {
@@ -1097,10 +1130,10 @@ TEST_CASE(braid4_standard_bundles_register_exact_independent_sources) {
     }
 }
 
-TEST_CASE(braid4_groups_fit_complete_fifteen_cell_modulation_views) {
+TEST_CASE(braid4_groups_fit_sparse_fifteen_position_modulation_views) {
     synth_rig::SynthRig<synth_braid4::Braid4Core> rig(
         64,
-        UseScratchRuntimeDataPaths("braid4_groups_fit_complete_fifteen_cell_modulation_views"));
+        UseScratchRuntimeDataPaths("braid4_groups_fit_sparse_fifteen_position_modulation_views"));
     auto& core = rig.Engine().Application();
     REQUIRE_TRUE(core.StereoGroup()->Config().maxParameters >= 19);
     REQUIRE_TRUE(core.QuadGroup()->Config().maxParameters >= 23);
@@ -1114,17 +1147,17 @@ TEST_CASE(braid4_groups_fit_complete_fifteen_cell_modulation_views) {
     slot.HandlePress(0);
     REQUIRE_TRUE(core.BraidBank()->ShowingModulation());
     REQUIRE_TRUE(core.BraidBank()->VisibleMappingCount() == 16);
-    REQUIRE_TRUE(core.StereoGroup()->ParameterCount() == 4 + 15);
+    REQUIRE_TRUE(core.StereoGroup()->ParameterCount() == 4 + 8);
     core.BraidBank()->Deselect();
     slot.HandlePress(4);
     REQUIRE_TRUE(core.BraidBank()->ShowingModulation());
     REQUIRE_TRUE(core.BraidBank()->VisibleMappingCount() == 16);
-    REQUIRE_TRUE(core.QuadGroup()->ParameterCount() == 8 + 15);
+    REQUIRE_TRUE(core.QuadGroup()->ParameterCount() == 8 + 8);
     slot.SelectBank(core.MatrixBank());
     slot.HandlePress(0);
     REQUIRE_TRUE(core.MatrixBank()->ShowingModulation());
     REQUIRE_TRUE(core.MatrixBank()->VisibleMappingCount() == 16);
-    REQUIRE_TRUE(core.MonoGroup()->ParameterCount() == 48 + 15);
+    REQUIRE_TRUE(core.MonoGroup()->ParameterCount() == 48 + 7);
 }
 
 TEST_CASE(matrix_sources_materialize_quad_modulator_values_for_four_voices) {

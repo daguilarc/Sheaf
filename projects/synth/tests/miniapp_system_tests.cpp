@@ -902,12 +902,18 @@ TEST_CASE(miniapp_registers_standard_fifteen_source_topology_without_changing_pe
     rig.Press(kSlotIx, kTunePosition);
     rig.RunBlocks(1);
     const synth::ParameterManager::UIState& uiState = rig.UIState();
-    REQUIRE_TRUE(group.ParameterCount() == 27);
+    REQUIRE_TRUE(group.ParameterCount() == 21);
     REQUIRE_TRUE(uiState.slots[0].showingModulationView.load());
-    for (std::size_t modIx = 0; modIx < 15; ++modIx) {
-        REQUIRE_TRUE(core.Parameters()[0]->ModulationDepthParameter(modIx) != nullptr);
-        REQUIRE_TRUE(core.VcoBank()->VisibleParameter(10 + modIx) ==
-                     core.Parameters()[0]->ModulationDepthParameter(modIx));
+    for (const std::size_t connected : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 11u, 14u}) {
+        synth::Parameter* const depth = core.Parameters()[0]->ModulationDepthParameter(connected);
+        REQUIRE_TRUE(depth != nullptr);
+        REQUIRE_TRUE(core.VcoBank()->VisibleParameter(10 + connected) == depth);
+        REQUIRE_TRUE(uiState.slots[0].cells[connected].connected.load());
+    }
+    for (const std::size_t gap : {7u, 8u, 9u, 10u, 12u, 13u}) {
+        REQUIRE_TRUE(core.Parameters()[0]->ModulationDepthParameter(gap) == nullptr);
+        REQUIRE_TRUE(core.VcoBank()->VisibleParameter(10 + gap) == nullptr);
+        REQUIRE_TRUE(!uiState.slots[0].cells[gap].connected.load());
     }
     REQUIRE_TRUE(core.VcoBank()->VisibleParameter(25) == core.Parameters()[0]);
     REQUIRE_TRUE(uiState.slots[0].cells[0].visualizer.load(std::memory_order_relaxed) ==

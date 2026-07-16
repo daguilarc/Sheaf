@@ -55,10 +55,17 @@ public:
 
         const Braid4UiSnapshot snapshot = SnapshotUiState(context_);
         const synth::ui::Bounds encoderArea = Braid4PageLayout::EncoderArea(content);
+        const bool showingModulationView =
+            context_ != nullptr && context_->uiState != nullptr && context_->uiState->slotCapacity > 0 &&
+            context_->uiState->slots[0].showingModulationView.load(std::memory_order_relaxed);
         for (std::size_t ix = 0; ix < Braid4EncoderGridLayout::kEncoderCount; ++ix)
         {
             synth::ui::EncoderDrawState state =
                 ix < snapshot.encoders.size() ? snapshot.encoders[ix] : synth::ui::EncoderDrawState{};
+            if (showingModulationView && !state.connected)
+            {
+                continue;
+            }
             const synth::ui::Bounds encoderBounds = Braid4EncoderGridLayout::BoundsForIndex(encoderArea, ix);
             synth::ui::Visualizer* visualizer = nullptr;
             if (context_ != nullptr && context_->uiState != nullptr && context_->uiState->slotCapacity > 0)

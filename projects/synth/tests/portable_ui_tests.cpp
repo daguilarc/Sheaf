@@ -485,10 +485,10 @@ void TestBraid4StandardModulationViewsRemainPortable()
     const synth::ui::NodeTree monoTree = surface.BuildTree();
     Require(FindNodeById(monoTree, "braid4.encoder.0.visualizer") != nullptr,
             "Braid4 mono standard random source has a portable underlay");
-    Require(FindNodeById(monoTree, "braid4.encoder.11") != nullptr,
-            "Braid4 mono disconnected constant position keeps its encoder cell");
+    Require(FindNodeById(monoTree, "braid4.encoder.11") == nullptr,
+            "Braid4 mono disconnected constant position has no encoder cell");
     Require(FindNodeById(monoTree, "braid4.encoder.11.visualizer") == nullptr,
-            "Braid4 mono disconnected constant position remains encoder-only");
+            "Braid4 mono disconnected constant position has no visualizer");
     Require(!core.MonoGroup()->GetModulators().Metadata(11).connected,
             "Braid4 mono constant source stays disconnected");
     Require(core.MonoGroup()->GetModulators().Metadata(11).visualizer == nullptr,

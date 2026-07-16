@@ -39,7 +39,7 @@ Last audit: standard modulators, fifteen-source application adoption, and sparse
 | `ssm-4` | covered | the `standard_modulators_rejects_*` atomic-validation cases and `standard_modulators_mono_omits_constant_and_ignores_constant_collision` |
 | `ssm-5` | covered | `standard_modulators_lifecycle_requires_registration_and_finite_preparation`, `standard_modulators_process_advances_dynamic_sources_once_and_copies_voice_order`, and `standard_modulators_group_updates_and_ui_publication_remain_explicit` |
 | `spm-71` | covered | `miniapp_registers_standard_fifteen_source_topology_without_changing_performer_topology`, `miniapp_processes_and_publishes_ganged_random_lfo_at_audio_block_boundaries`, and `miniapp_loads_old_six_index_depth_data_without_alias_or_translation` |
-| `d4-1` | covered | `initializes_parameter_groups_banks_slot_and_scene_endpoints`, `braid4_standard_bundles_register_exact_independent_sources`, and `braid4_groups_fit_complete_fifteen_cell_modulation_views` |
+| `d4-1` | covered | `initializes_parameter_groups_banks_slot_and_scene_endpoints`, `braid4_standard_bundles_register_exact_independent_sources`, and `braid4_groups_fit_sparse_fifteen_position_modulation_views` |
 | `d4-3` | covered | `prepares_four_x_internal_rate_and_sequences_internal_subframes`, `matrix_feedback_uses_current_vco_outputs_and_delays_only_modulator_consumption_one_internal_sample`, and `braid4_deadline_tests` |
 | `d4-8` | covered | `parallel_lfo_topology_banks_colors_and_modulator_slots`, `audio_and_lfo_outputs_publish_normalized_stereo_mono_and_quad_modulators`, and the matrix-delay case named for `d4-3` |
 | `d4-9` | covered | `braid4_standard_modulation_view_renders_underlay_and_app_sources_remain_encoder_only`, `braid4_standard_bundles_register_exact_independent_sources`, and `TestBraid4StandardModulationViewsRemainPortable` |
@@ -48,6 +48,7 @@ Last audit: standard modulators, fifteen-source application adoption, and sparse
 | `spm-72` | covered | `group_process_sample_visits_only_registered_roots`, `recursive_local_compute_seeds_display_without_audio_rate_processing`, active-route full-scan cases, and `braid4_sparse_work_counters_bound_inactive_capacity` |
 | `spm-73` | covered | 0--64 gesture boundary/sparse-mask tests, `ControllerGesture63SelectsAndEditsManagerGestureWhileBankMaskRemains32Bit`, portable bit-63 badge rendering, and randomized UI-state coverage |
 | `spm-74` | covered | neutral-leaf guard, bottom-up collapse, pin, settling/detach, bounded-reuse, patch-load, semantic-JSON, and randomized lifecycle cases in `parameter_modulation_tests` |
+| `spm-75` | covered | connected-only modulation-view materialization/capacity/randomization cases in `parameter_modulation_tests`, MiniApp and Braid4 sparse-position system assertions, and `TestBraid4StandardModulationViewsRemainPortable` |
 
 ## Requirement Mappings
 
@@ -377,8 +378,8 @@ Last audit: standard modulators, fifteen-source application adoption, and sparse
   heterogeneous groups and shared sixteen-position slot;
   `braid4_standard_bundles_register_exact_independent_sources` checks retained
   independent `<2>/<4>/<1>` bundles and addresses; and
-  `braid4_groups_fit_complete_fifteen_cell_modulation_views` checks capacities
-  and full materialization in each group.
+  `braid4_groups_fit_sparse_fifteen_position_modulation_views` checks capacities
+  and connected-only sparse materialization in each group.
 
 ### `d4-3` - Braid4 Internal-Sample Signal Ordering
 
@@ -497,6 +498,29 @@ Last audit: standard modulators, fifteen-source application adoption, and sparse
   `message_bus_sparse_lifecycle_model_tracks_pins_collection_reuse_and_patch_load`
   cover bounded reuse, complete reset, persistence, semantic JSON, and
   lifecycle integration.
+
+### `spm-75` - Disconnected Sources Are Empty Modulation-View Positions
+
+- [`parameter_modulation_tests.cpp`](../tests/parameter_modulation_tests.cpp):
+  `modulation_view_leaves_disconnected_sources_empty_and_hides_explicit_depths`,
+  `modulation_view_capacity_counts_only_connected_missing_depths`,
+  `random_mod_maps_connected_ordinals_and_skips_disconnected_sources`, and
+  `random_mod_with_no_connected_sources_is_a_noop` cover the generic Bank
+  contract for sparse materialization, visible null cells, capacity, and
+  connected-only randomization.
+- [`miniapp_system_tests.cpp`](../tests/miniapp_system_tests.cpp):
+  `miniapp_registers_standard_fifteen_source_topology_without_changing_performer_topology`
+  proves nine connected depths, six disconnected physical gaps, and the
+  unchanged return-cell position.
+- [`braid4_system_tests.cpp`](../tests/braid4_system_tests.cpp):
+  `braid4_standard_modulation_view_renders_underlay_and_app_sources_remain_encoder_only`
+  proves the distinct polyphonic and monophonic sparse views, including the
+  monophonic constant gap, while
+  `braid4_groups_fit_sparse_fifteen_position_modulation_views` checks the
+  connected-only materialization counts.
+- [`portable_ui_tests.cpp`](../tests/portable_ui_tests.cpp):
+  `TestBraid4StandardModulationViewsRemainPortable` proves a disconnected
+  modulation position has neither an encoder cell nor a visualizer node.
 
 ### Sparse-Modulation Timing Evidence
 
