@@ -369,6 +369,107 @@ int main()
     }
     Require(sawSystemMessageKindCombo, "system message kind combo uses argument-free labels");
 
+    if (!surface.ViewModel().SectionExpanded(0, synth::MidiConfigSection::Encoders))
+    {
+        surface.ViewModel().ToggleSection(0, synth::MidiConfigSection::Encoders);
+    }
+    surface.MarkDirty();
+    surface.RefreshOnTick();
+    const std::vector<synth::MidiMappingRowVM> rowsBeforeAbsolute =
+        surface.ViewModel().SectionRows(0, synth::MidiConfigSection::Encoders);
+    std::optional<std::size_t> modeRowIx;
+    std::optional<std::size_t> retainedStepRowIx;
+    for (std::size_t ix = 0; ix < rowsBeforeAbsolute.size(); ++ix)
+    {
+        if (rowsBeforeAbsolute[ix].group == synth::MidiMappingRowVM::RowGroup::EncoderMode)
+        {
+            modeRowIx = ix;
+        }
+        if (rowsBeforeAbsolute[ix].group == synth::MidiMappingRowVM::RowGroup::EncoderStep)
+        {
+            retainedStepRowIx = ix;
+        }
+    }
+    Require(modeRowIx.has_value() && retainedStepRowIx.has_value(), "mode and step rows remain present");
+    Require(!rowsBeforeAbsolute[*modeRowIx].deletable && !rowsBeforeAbsolute[*retainedStepRowIx].deletable,
+            "mode and step rows remain non-deletable");
+
+    const synth::ui::NodeTree beforeAbsoluteTree = surface.BuildTree();
+    const synth::ui::Node* modeFieldBefore = FindNodeById(
+        beforeAbsoluteTree,
+        synth::runtime_ui::NodeIds::MappingField(
+            0, synth::MidiConfigSection::Encoders, *modeRowIx, synth::MidiMappingRowVM::Field::EncoderMode));
+    Require(modeFieldBefore != nullptr && modeFieldBefore->options.size() == 3,
+            "portable mode combo exposes three declaration-order choices");
+    Require(modeFieldBefore->options[0].label == "Signed 7-bit" &&
+                modeFieldBefore->options[1].label == "Direction only" &&
+                modeFieldBefore->options[2].label == "Absolute",
+            "portable mode combo labels all modes in declaration order");
+    Require(modeFieldBefore->selectedOption == "0", "portable mode combo starts signed 7-bit");
+    bool sawRelativeOnlyCue = false;
+    for (const synth::ui::Node& node : beforeAbsoluteTree.nodes)
+    {
+        sawRelativeOnlyCue = sawRelativeOnlyCue || node.label.find("relative modes only") != std::string::npos;
+    }
+    Require(sawRelativeOnlyCue, "portable turn-step row identifies relative-only behavior");
+
+    const std::string absoluteValue =
+        "0:encoders:" + std::to_string(*modeRowIx) + ":" +
+        std::to_string(static_cast<int>(synth::MidiMappingRowVM::Field::EncoderMode)) + ":2";
+    surface.DispatchAction(
+        synth::ui::Action::WithValue(synth::runtime_ui::Actions::kMappingFieldCommit, absoluteValue));
+    Require(harness.commits == 10, "absolute mode edit commits through Controllers surface");
+    Require(harness.instrument.controllers[0].config.encoderInput->mode == synth::EncoderMode::Absolute,
+            "Controllers commit persists absolute mode");
+    Require(harness.instrument.controllers[0].config.encoderInput->turnStep == 0.25f,
+            "absolute mode commit retains stored relative turn step");
+
+    surface.MarkDirty();
+    surface.RefreshOnTick();
+    const std::vector<synth::MidiMappingRowVM> rowsAfterAbsolute =
+        surface.ViewModel().SectionRows(0, synth::MidiConfigSection::Encoders);
+    Require(rowsAfterAbsolute.size() == rowsBeforeAbsolute.size(), "absolute rebuild keeps open row count");
+    for (std::size_t ix = 0; ix < rowsBeforeAbsolute.size(); ++ix)
+    {
+        Require(rowsAfterAbsolute[ix].kind == rowsBeforeAbsolute[ix].kind &&
+                    rowsAfterAbsolute[ix].group == rowsBeforeAbsolute[ix].group,
+                "absolute rebuild keeps open row identity and order");
+    }
+    const synth::ui::NodeTree afterAbsoluteTree = surface.BuildTree();
+    const synth::ui::Node* modeFieldAfter = FindNodeById(
+        afterAbsoluteTree,
+        synth::runtime_ui::NodeIds::MappingField(
+            0, synth::MidiConfigSection::Encoders, *modeRowIx, synth::MidiMappingRowVM::Field::EncoderMode));
+    Require(modeFieldAfter != nullptr && modeFieldAfter->selectedOption == "2",
+            "open portable mode row survives rebuild with absolute selected");
+
+    synth::MessageInBus absoluteBus(nullptr, 16);
+    auto absoluteProfile = synth::CreateMidiControllerProfile(
+        harness.instrument.controllers[0].config, &absoluteBus, nullptr, nullptr, [] { return 701; });
+    Require(absoluteProfile.input != nullptr, "committed config rebuilds live input processor");
+    const auto turn = harness.instrument.controllers[0].config.encoderInput->turns.front();
+    absoluteProfile.input->Process(synth::BasicMidi::CC(1, turn.control.channel, turn.control.cc, 127));
+    synth::MessageIn message;
+    Require(absoluteBus.Pop(message, 701) && message.type == synth::MessageIn::Type::ParamSetAbsolute &&
+                message.value == 1.0f,
+            "rebuilt processor applies committed absolute mode");
+
+    const std::string relativeValue =
+        "0:encoders:" + std::to_string(*modeRowIx) + ":" +
+        std::to_string(static_cast<int>(synth::MidiMappingRowVM::Field::EncoderMode)) + ":0";
+    surface.DispatchAction(
+        synth::ui::Action::WithValue(synth::runtime_ui::Actions::kMappingFieldCommit, relativeValue));
+    Require(harness.commits == 11, "switching back to signed mode commits");
+    Require(harness.instrument.controllers[0].config.encoderInput->turnStep == 0.25f,
+            "switching back restores stored relative step");
+    synth::MessageInBus relativeBus(nullptr, 16);
+    auto relativeProfile = synth::CreateMidiControllerProfile(
+        harness.instrument.controllers[0].config, &relativeBus, nullptr, nullptr, [] { return 702; });
+    relativeProfile.input->Process(synth::BasicMidi::CC(1, turn.control.channel, turn.control.cc, 65));
+    Require(relativeBus.Pop(message, 702) && message.type == synth::MessageIn::Type::ParamIncDec &&
+                message.delta == 0.25f,
+            "rebuilt relative processor uses the retained step");
+
     std::cout << "controllers_page_ui_tests passed\n";
     return 0;
 }

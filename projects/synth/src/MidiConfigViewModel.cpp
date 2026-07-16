@@ -498,7 +498,7 @@ std::string EncoderModeLabel(EncoderMode mode) {
 
 std::string TurnStepLabel(float step) {
     std::ostringstream oss;
-    oss << "turn step: " << step;
+    oss << "turn step (relative modes only): " << step;
     return oss.str();
 }
 

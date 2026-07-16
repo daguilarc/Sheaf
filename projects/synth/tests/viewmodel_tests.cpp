@@ -1897,6 +1897,96 @@ TEST_CASE(AbsoluteEncoderModeHasItsOwnCatalogIndexAndRowValue) {
     REQUIRE_TRUE(value == 2.0);
 }
 
+TEST_CASE(AbsoluteEncoderModeCommitKeepsOpenRowsAndRestoresStoredRelativeStep) {
+    MidiInstrumentConfig instrument = MakeFourKindInstrument();
+    auto& encoderInput = *instrument.controllers[0].config.encoderInput;
+    encoderInput.turnStep = 0.03125f;
+
+    MidiConfigViewModel vm;
+    const MidiConnectionState connection = MakeFourKindConnection();
+    vm.Rebuild(instrument, connection);
+    vm.ToggleConfig(0);
+    vm.ToggleSection(0, MidiConfigSection::Encoders);
+
+    const std::vector<MidiMappingRowVM> before = vm.SectionRows(0, MidiConfigSection::Encoders);
+    REQUIRE_TRUE(before.size() >= 2);
+    const std::size_t modeRowIx = before.size() - 2;
+    const std::size_t stepRowIx = before.size() - 1;
+    REQUIRE_TRUE(before[modeRowIx].group == MidiMappingRowVM::RowGroup::EncoderMode);
+    REQUIRE_TRUE(before[stepRowIx].group == MidiMappingRowVM::RowGroup::EncoderStep);
+    REQUIRE_TRUE(!before[modeRowIx].deletable);
+    REQUIRE_TRUE(!before[stepRowIx].deletable);
+
+    MidiInstrumentConfig absolute;
+    std::string reason;
+    REQUIRE_TRUE(vm.ApplyMappingEdit(0, MidiConfigSection::Encoders, modeRowIx,
+                                     MidiMappingRowVM::Field::EncoderMode, 2.0, absolute, &reason));
+    REQUIRE_TRUE(absolute.controllers[0].config.encoderInput->mode == EncoderMode::Absolute);
+    REQUIRE_TRUE(absolute.controllers[0].config.encoderInput->turnStep == 0.03125f);
+
+    vm.Rebuild(absolute, connection);
+    REQUIRE_TRUE(vm.SectionExpanded(0, MidiConfigSection::Encoders));
+    const std::vector<MidiMappingRowVM> after = vm.SectionRows(0, MidiConfigSection::Encoders);
+    REQUIRE_TRUE(after.size() == before.size());
+    for (std::size_t ix = 0; ix < before.size(); ++ix) {
+        REQUIRE_TRUE(after[ix].kind == before[ix].kind);
+        REQUIRE_TRUE(after[ix].group == before[ix].group);
+    }
+    double modeIndex = -1.0;
+    REQUIRE_TRUE(vm.RowFieldValue(0, MidiConfigSection::Encoders, modeRowIx,
+                                  MidiMappingRowVM::Field::EncoderMode, modeIndex));
+    REQUIRE_TRUE(modeIndex == 2.0);
+    double storedStep = 0.0;
+    REQUIRE_TRUE(vm.RowFieldValue(0, MidiConfigSection::Encoders, stepRowIx,
+                                  MidiMappingRowVM::Field::TurnStep, storedStep));
+    REQUIRE_TRUE(storedStep == 0.03125);
+    REQUIRE_TRUE(after[stepRowIx].label.find("relative modes only") != std::string::npos);
+
+    synth::MessageInBus absoluteBus(nullptr, 16);
+    auto absoluteProfile = synth::CreateMidiControllerProfile(
+        absolute.controllers[0].config, &absoluteBus, nullptr, nullptr, [] { return 601; });
+    REQUIRE_TRUE(absoluteProfile.input != nullptr);
+    const auto& turn = absolute.controllers[0].config.encoderInput->turns.front();
+    absoluteProfile.input->Process(
+        synth::BasicMidi::CC(1, turn.control.channel, turn.control.cc, 127));
+    synth::MessageIn message;
+    REQUIRE_TRUE(absoluteBus.Pop(message, 601));
+    REQUIRE_TRUE(message.type == synth::MessageIn::Type::ParamSetAbsolute);
+    REQUIRE_TRUE(message.value == 1.0f);
+
+    MidiInstrumentConfig relative;
+    REQUIRE_TRUE(vm.ApplyMappingEdit(0, MidiConfigSection::Encoders, modeRowIx,
+                                     MidiMappingRowVM::Field::EncoderMode, 0.0, relative, &reason));
+    REQUIRE_TRUE(relative.controllers[0].config.encoderInput->mode == EncoderMode::Signed7Bit);
+    REQUIRE_TRUE(relative.controllers[0].config.encoderInput->turnStep == 0.03125f);
+
+    synth::MessageInBus relativeBus(nullptr, 16);
+    auto relativeProfile = synth::CreateMidiControllerProfile(
+        relative.controllers[0].config, &relativeBus, nullptr, nullptr, [] { return 602; });
+    REQUIRE_TRUE(relativeProfile.input != nullptr);
+    relativeProfile.input->Process(
+        synth::BasicMidi::CC(1, turn.control.channel, turn.control.cc, 65));
+    REQUIRE_TRUE(relativeBus.Pop(message, 602));
+    REQUIRE_TRUE(message.type == synth::MessageIn::Type::ParamIncDec);
+    REQUIRE_TRUE(message.delta == 0.03125f);
+}
+
+TEST_CASE(EncoderModeIndexMustBeIntegralAndLeavesOutputUntouched) {
+    MidiConfigViewModel vm;
+    MidiInstrumentConfig instrument = MakeFourKindInstrument();
+    vm.Rebuild(instrument, MakeFourKindConnection());
+    const std::size_t modeRowIx = vm.SectionRows(0, MidiConfigSection::Encoders).size() - 2;
+
+    MidiInstrumentConfig out = MakeFourKindInstrument();
+    out.controllers[0].name = "sentinel";
+    const std::string before = DumpInstrument(out);
+    std::string reason;
+    REQUIRE_TRUE(!vm.ApplyMappingEdit(0, MidiConfigSection::Encoders, modeRowIx,
+                                      MidiMappingRowVM::Field::EncoderMode, 1.5, out, &reason));
+    REQUIRE_TRUE(!reason.empty());
+    REQUIRE_TRUE(DumpInstrument(out) == before);
+}
+
 TEST_CASE(EncoderModeIndexOutOfRangeIsRefused) {
     MidiConfigViewModel vm;
     MidiInstrumentConfig instrument = MakeFourKindInstrument();

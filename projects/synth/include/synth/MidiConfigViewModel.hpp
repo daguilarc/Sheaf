@@ -74,7 +74,7 @@ private:
 //                  MidiConfigBlocks.hpp); editableFields exposes the BLOCK's
 //                  own fields (BlockStartCc/BlockEndCc/... below), not the
 //                  individual cells'.
-//   ConfigLevel -- relative mode, turn step, or scene blend: exactly as
+//   ConfigLevel -- encoder mode, turn step, or scene blend: exactly as
 //                  before, never deletable, never part of a block.
 // `deletable` is the renderer's single source of truth for whether to show a
 // delete ("x") affordance -- true for Individual and Block rows, false for
@@ -389,7 +389,7 @@ public:
 
     // True iff the row at (controllerIx, section, rowIx) may be deleted --
     // Individual and Block rows (MidiMappingRowVM::Kind), never ConfigLevel
-    // (relative mode/turn step/scene blend, sru-11's "config-level rows are
+    // (encoder mode/turn step/scene blend, sru-11's "config-level rows are
     // not deletable"). Mirrors (and is the single source of truth behind)
     // each SectionRows() row's own cached `deletable` field -- exposed
     // separately so the renderer can query it without re-deriving the whole

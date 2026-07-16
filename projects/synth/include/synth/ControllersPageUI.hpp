@@ -256,7 +256,7 @@ inline const char* RowGroupCaption(MidiMappingRowVM::RowGroup group)
         case MidiMappingRowVM::RowGroup::EncoderMode:
             return "Mode";
         case MidiMappingRowVM::RowGroup::EncoderStep:
-            return "Step";
+            return "Step (relative modes only)";
         case MidiMappingRowVM::RowGroup::AnalogGesture:
             return "Gestures";
         case MidiMappingRowVM::RowGroup::AnalogSceneBlend:
