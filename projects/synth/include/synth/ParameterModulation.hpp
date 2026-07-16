@@ -1,11 +1,13 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <cmath>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <random>
@@ -65,6 +67,30 @@ struct AbsoluteEditLocation {
     float* storage = nullptr;
     double coefficient = 0.0;
 };
+
+constexpr std::size_t kAbsoluteMaxGestureContributions =
+    std::numeric_limits<GestureMask>::digits;
+// Each endpoint contributes one base location plus one location per gesture.
+// Aliasing can only reduce this 2 + 2G upper bound.
+constexpr std::size_t kAbsoluteMaxEditLocations =
+    2 + 2 * kAbsoluteMaxGestureContributions;
+
+// Fixed-capacity location and solver scratch for the audio-thread message path.
+struct AbsoluteEditWorkspace {
+    std::array<AbsoluteEditLocation, kAbsoluteMaxEditLocations> locations{};
+    std::array<double, kAbsoluteMaxEditLocations> projected{};
+    std::array<bool, kAbsoluteMaxEditLocations> fixed{};
+    std::array<float, kAbsoluteMaxEditLocations> rounded{};
+    std::size_t locationCount = 0;
+};
+
+bool TryBuildAbsoluteEditLocations(
+    float& leftBaseStorage, float& rightBaseStorage, double sceneBlend,
+    std::span<const AbsoluteGestureContribution> gestures,
+    AbsoluteEditWorkspace& workspace) noexcept;
+
+bool ProjectAbsoluteTarget(AbsoluteEditWorkspace& workspace,
+                           double minimum, double maximum, double target) noexcept;
 
 std::vector<AbsoluteEditLocation> BuildAbsoluteEditLocations(
     float& leftBaseStorage, float& rightBaseStorage, double sceneBlend,
@@ -463,7 +489,7 @@ public:
     void ProcessLite();
     void ProcessSample(std::uint64_t sampleIndex);
     void HandleIncDec(const SceneState& scene, float delta);
-    void HandleSetAbsolute(const SceneState& scene, float normalizedTarget);
+    void HandleSetAbsolute(const SceneState& scene, float normalizedTarget) noexcept;
     void RandomizeVisibleValue(const SceneState& scene, float normalized);
     void RevertToDefault(const SceneState& scene);
     void RevertAllToDefault();

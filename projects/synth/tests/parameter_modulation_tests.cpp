@@ -31,6 +31,8 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <type_traits>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -220,6 +222,36 @@ TEST_CASE(absolute_edit_locations_form_the_independently_computed_convex_system)
         coefficientSum += found->coefficient;
     }
     REQUIRE_TRUE(std::fabs(coefficientSum - 1.0) <= 1e-12);
+}
+
+TEST_CASE(absolute_runtime_workspace_has_fixed_capacity_and_noexcept_helpers) {
+    using synth::detail::AbsoluteEditWorkspace;
+    static_assert(synth::detail::kAbsoluteMaxEditLocations ==
+                  2 + 2 * std::numeric_limits<synth::GestureMask>::digits);
+    static_assert(std::is_trivially_destructible_v<AbsoluteEditWorkspace>);
+    static_assert(noexcept(std::declval<synth::Parameter&>().HandleSetAbsolute(
+        std::declval<const synth::SceneState&>(), 0.5f)));
+
+    float left = 0.2f;
+    float right = 0.8f;
+    AbsoluteEditWorkspace workspace;
+    const std::span<const synth::detail::AbsoluteGestureContribution> noGestures;
+    static_assert(noexcept(synth::detail::TryBuildAbsoluteEditLocations(
+        left, right, 0.5, noGestures, workspace)));
+    static_assert(noexcept(synth::detail::ProjectAbsoluteTarget(workspace, 0.0, 1.0, 0.6)));
+
+    REQUIRE_TRUE(workspace.locations.size() == synth::detail::kAbsoluteMaxEditLocations);
+    REQUIRE_TRUE(synth::detail::TryBuildAbsoluteEditLocations(
+        left, right, 0.5, noGestures, workspace));
+    REQUIRE_TRUE(workspace.locationCount == 2);
+    REQUIRE_TRUE(synth::detail::ProjectAbsoluteTarget(workspace, 0.0, 1.0, 0.6));
+
+    std::array<synth::detail::AbsoluteGestureContribution,
+               synth::detail::kAbsoluteMaxGestureContributions + 1>
+        tooManyGestures{};
+    REQUIRE_TRUE(!synth::detail::TryBuildAbsoluteEditLocations(
+        left, right, 0.5, tooManyGestures, workspace));
+    REQUIRE_TRUE(workspace.locationCount == 0);
 }
 
 TEST_CASE(absolute_edit_locations_cover_endpoints_no_gestures_and_aliased_storage) {
@@ -434,6 +466,61 @@ TEST_CASE(handle_set_absolute_clamps_input_keeps_normalized_bipolar_storage_and_
     parameter.HandleSetAbsolute(scene, std::numeric_limits<float>::quiet_NaN());
     REQUIRE_NEAR(parameter.SceneCenter(0), 0.4f, 0.0f);
     REQUIRE_NEAR(parameter.GestureValue(0, 0), 0.9f, 0.0f);
+    REQUIRE_TRUE(!parameter.GestureActive(0, 0));
+}
+
+TEST_CASE(handle_set_absolute_rejects_malformed_latent_storage_without_throwing_or_arming) {
+    synth::ParameterManager manager;
+    manager.SetGestureCount(2);
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 0,
+        .numScenes = 1,
+        .maxParameters = 1,
+        .targetCenterAlpha = 1.0f,
+    });
+    auto& parameter = manager.CreateParameter(group, {.name = "Malformed", .defaultValue = 0.4f});
+    parameter.SceneCenter(0) = 0.4f;
+    parameter.GestureValue(0, 0) = 1.25f;  // Simulate malformed persisted latent storage.
+    parameter.SetGestureActive(0, 0, true);
+    manager.SetGestureValue(0, 0.5f);
+    parameter.GestureValue(0, 1) = 0.8f;
+    manager.SetGestureValue(1, 0.5f);
+    manager.SelectGesture(1);
+    const synth::SceneState scene{.leftScene = 0, .rightScene = 0, .blend = 0.0f};
+
+    parameter.HandleSetAbsolute(scene, 0.6f);
+
+    REQUIRE_NEAR(parameter.SceneCenter(0), 0.4f, 0.0f);
+    REQUIRE_NEAR(parameter.GestureValue(0, 0), 1.25f, 0.0f);
+    REQUIRE_NEAR(parameter.GestureValue(0, 1), 0.8f, 0.0f);
+    REQUIRE_TRUE(parameter.GestureActive(0, 0));
+    REQUIRE_TRUE(!parameter.GestureActive(0, 1));
+}
+
+TEST_CASE(handle_set_absolute_rejects_nonfinite_control_state_and_invalid_scene_without_mutation) {
+    synth::ParameterManager manager;
+    manager.SetGestureCount(1);
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 0,
+        .numScenes = 1,
+        .maxParameters = 1,
+        .targetCenterAlpha = 1.0f,
+    });
+    auto& parameter = manager.CreateParameter(group, {.name = "Invalid", .defaultValue = 0.4f});
+    parameter.SceneCenter(0) = 0.4f;
+    parameter.GestureValue(0, 0) = 0.8f;
+    manager.SetGestureValue(0, std::numeric_limits<float>::quiet_NaN());
+    manager.SelectGesture(0);
+
+    const synth::SceneState validScene{.leftScene = 0, .rightScene = 0, .blend = 0.0f};
+    parameter.HandleSetAbsolute(validScene, 0.6f);
+    const synth::SceneState invalidScene{.leftScene = 0, .rightScene = 4, .blend = 0.5f};
+    parameter.HandleSetAbsolute(invalidScene, 0.7f);
+
+    REQUIRE_NEAR(parameter.SceneCenter(0), 0.4f, 0.0f);
+    REQUIRE_NEAR(parameter.GestureValue(0, 0), 0.8f, 0.0f);
     REQUIRE_TRUE(!parameter.GestureActive(0, 0));
 }
 
