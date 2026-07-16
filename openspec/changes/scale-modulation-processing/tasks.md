@@ -36,7 +36,7 @@
 
 ## 6. Performance Regression and Verification
 
-- [ ] 6.1 Extend the Braid4 rig/deadline tests with structural work assertions for baseline, materialized-neutral, sparse-active, and 64-inactive-gesture configurations.
-- [ ] 6.2 Run Braid4 deadline smoke measurements at 48 kHz host/192 kHz internal and 96 kHz host/384 kHz internal with generous platform-appropriate ceilings, recording before/after average and p99 results.
-- [ ] 6.3 Run parameter modulation, module, persistence, portable UI, browser command-buffer, MIDI/controller, Braid4 system, Braid4 deadline, randomized oracle, and full synth test targets.
-- [ ] 6.4 Add `spm-20`, `spm-72`, `spm-73`, `spm-74`, and modified `spm-25` rows/scenarios to `projects/synth/docs/coverage.md`, including deterministic complexity guards, 64-bit randomized UI-mask coverage, and timing-test limitations.
+- [x] 6.1 Extend the Braid4 rig/deadline tests with structural work assertions for baseline, materialized-neutral, sparse-active, and 64-inactive-gesture configurations.
+- [x] 6.2 Run Braid4 deadline smoke measurements at 48 kHz host/192 kHz internal and 96 kHz host/384 kHz internal with generous platform-appropriate ceilings, recording before/after average and p99 results.
+- [x] 6.3 Run parameter modulation, module, persistence, portable UI, browser command-buffer, MIDI/controller, Braid4 system, Braid4 deadline, randomized oracle, and full synth test targets.
+- [x] 6.4 Add `spm-20`, `spm-72`, `spm-73`, `spm-74`, and modified `spm-25` rows/scenarios to `projects/synth/docs/coverage.md`, including deterministic complexity guards, 64-bit randomized UI-mask coverage, and timing-test limitations.
