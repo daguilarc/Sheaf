@@ -142,6 +142,13 @@ struct ParameterProcessingTiming {
     float uiDisplaySpreadAlpha;
 };
 
+struct ParameterProcessingObserver {
+    std::size_t topLevelProcessLiteCalls = 0;
+    std::size_t localRecursiveComputeCalls = 0;
+    std::size_t activeRouteVisits = 0;
+    std::size_t activeGestureVisits = 0;
+};
+
 struct ParameterGroupConfig {
     std::size_t numVoices = 0;
     std::size_t numModulators = 0;
@@ -301,6 +308,7 @@ public:
     void ClearGestureActiveFlagsForActiveSceneSelection(const SceneState& scene, std::size_t gestureIx);
     void ConfigureProcessingTiming(const ParameterProcessingTiming& timing);
     void ProcessSample(std::uint64_t sampleIndex);
+    void SetProcessingObserverForTests(ParameterProcessingObserver* observer) { processingObserver_ = observer; }
 
 private:
     friend class Parameter;
@@ -308,6 +316,7 @@ private:
     friend class Bank;
 
     Parameter& CreateLocalParameter(ParameterConfig config, ParameterId id);
+    void RegisterTopLevelParameter(Parameter& parameter);
     void RequestParameterStorageBatch(std::size_t minimumAdditionalParameters);
     void RequestParameterStorageBatchIfLow();
 
@@ -319,6 +328,8 @@ private:
     std::size_t gestureCount_ = 0;
     Modulators modulators_;
     std::size_t parameterCount_ = 0;
+    std::vector<Parameter*> topLevelParameters_;
+    ParameterProcessingObserver* processingObserver_ = nullptr;
     std::vector<std::unique_ptr<Parameter>> parameters_;
     std::vector<std::unique_ptr<ParameterStorageBatch>> extraStorageBatches_;
     bool storageRequestPending_ = false;

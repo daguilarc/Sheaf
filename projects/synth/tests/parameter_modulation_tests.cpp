@@ -1703,6 +1703,54 @@ TEST_CASE(parameter_group_process_sample_covers_top_level_and_modulation_depth_t
     REQUIRE_NEAR(carrier.CurrentDepths(0)[0], 0.25f, 0.0001f);
 }
 
+TEST_CASE(group_process_sample_visits_only_registered_roots) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 2,
+        .numScenes = 1,
+        .maxParameters = 8,
+        .targetComputeIntervalSamples = 16,
+    });
+    auto& carrier = manager.CreateParameter(group, {.name = "Carrier"});
+    (void)manager.CreateParameter(group, {.name = "Tone"});
+    auto& depth = carrier.EnsureModulationDepth(0, {.name = "Carrier M1", .defaultValue = 0.5f});
+    (void)depth.EnsureModulationDepth(1, {.name = "Carrier M1 M2", .defaultValue = 0.5f});
+    synth::ParameterProcessingObserver work{};
+    group.SetProcessingObserverForTests(&work);
+
+    group.ProcessSample(1);
+    REQUIRE_TRUE(work.topLevelProcessLiteCalls == 2);
+    REQUIRE_TRUE(work.localRecursiveComputeCalls == 0);
+
+    group.ProcessSample(16);
+    REQUIRE_TRUE(work.topLevelProcessLiteCalls == 4);
+    REQUIRE_TRUE(work.localRecursiveComputeCalls == 2);
+}
+
+TEST_CASE(recursive_local_compute_seeds_display_without_audio_rate_processing) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 1,
+        .numScenes = 1,
+        .maxParameters = 4,
+        .targetComputeIntervalSamples = 16,
+    });
+    auto& carrier = manager.CreateParameter(group, {.name = "Carrier"});
+    auto& depth = carrier.EnsureModulationDepth(0, {.name = "Carrier M1", .defaultValue = 0.5f});
+    depth.SceneCenter(0) = 0.75f;
+    synth::ParameterProcessingObserver work{};
+    group.SetProcessingObserverForTests(&work);
+
+    group.ProcessSample(16);
+
+    REQUIRE_TRUE(work.topLevelProcessLiteCalls == 1);
+    REQUIRE_TRUE(work.localRecursiveComputeCalls == 1);
+    REQUIRE_NEAR(depth.UIDisplayCenter(0), depth.GetRaw(0), 0.000001f);
+    REQUIRE_NEAR(depth.UIDisplaySpread(0), 0.0f, 0.000001f);
+}
+
 TEST_CASE(mapping_helpers_use_cached_process_lite_knob_value) {
     synth::ParameterManager manager;
     synth::ParameterGroupConfig config{

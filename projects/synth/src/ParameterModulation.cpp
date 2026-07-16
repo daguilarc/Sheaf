@@ -375,6 +375,7 @@ ParameterGroup::ParameterGroup(ParameterGroupConfig config, ParameterManager& ma
       modulators_(config.numVoices, config.numModulators),
       parameterCount_(0) {
     parameters_.reserve(config_.maxParameters);
+    topLevelParameters_.reserve(config_.maxParameters);
     currentCenterScaleArena_.resize(config_.maxParameters * config_.numVoices);
     targetCenterScaleArena_.resize(config_.maxParameters * config_.numVoices);
     currentNormalizationOffsetArena_.resize(config_.maxParameters * config_.numVoices);
@@ -450,6 +451,10 @@ Parameter& ParameterGroup::CreateLocalParameter(ParameterConfig config, Paramete
     throw std::length_error("parameter group capacity exhausted");
 }
 
+void ParameterGroup::RegisterTopLevelParameter(Parameter& parameter) {
+    topLevelParameters_.push_back(&parameter);
+}
+
 Parameter& ParameterGroup::ParameterByLocalIndex(std::size_t localIx) {
     if (localIx < parameters_.size()) {
         return *parameters_.at(localIx);
@@ -516,8 +521,11 @@ void ParameterGroup::ConfigureProcessingTiming(const ParameterProcessingTiming& 
 }
 
 void ParameterGroup::ProcessSample(std::uint64_t sampleIndex) {
-    for (std::size_t localIx = 0; localIx < parameterCount_; ++localIx) {
-        ParameterByLocalIndex(localIx).ProcessSample(sampleIndex);
+    for (Parameter* parameter : topLevelParameters_) {
+        parameter->ProcessSample(sampleIndex);
+        if (processingObserver_ != nullptr) {
+            ++processingObserver_->topLevelProcessLiteCalls;
+        }
     }
 }
 
@@ -1403,6 +1411,9 @@ float Parameter::ComputeRawCenter(const SceneState& scene) const {
 
 void Parameter::ComputeAtDepth(const SceneState& scene, std::size_t recursionDepth, bool smoothTargetCenter) {
     recursionDepth_ = recursionDepth;
+    if (recursionDepth > 0 && group_.processingObserver_ != nullptr) {
+        ++group_.processingObserver_->localRecursiveComputeCalls;
+    }
     const float rawCenter = ClampToRange(ComputeRawCenter(scene), config_.range);
     if (smoothTargetCenter && recursionDepth == 0) {
         const float alpha = group_.Config().targetCenterAlpha;
@@ -2173,6 +2184,7 @@ ParameterId ParameterManager::RegisterParameter(ParameterGroup& group, Parameter
     Parameter* result = &created;
     parameters_.push_back(result);
     parameterNames_.push_back(name);
+    group.RegisterTopLevelParameter(created);
     return id;
 }
 

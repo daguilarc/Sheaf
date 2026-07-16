@@ -440,6 +440,37 @@ TEST_CASE(braid_and_matrix_banks_expose_required_encoder_cells) {
     REQUIRE_TRUE(core.LfoMatrixModule().Parameters()[15] == core.MonoGroup()->ParameterByLocalIndex(47).Id());
 }
 
+TEST_CASE(braid4_parameter_processing_ignores_materialized_local_depths) {
+    synth_rig::SynthRig<synth_braid4::Braid4Core> rig(
+        64,
+        UseScratchRuntimeDataPaths("braid4_parameter_processing_ignores_materialized_local_depths"));
+    auto& core = rig.Engine().Application();
+    const std::array<synth::ParameterGroup*, 3> groups{
+        core.StereoGroup(),
+        core.QuadGroup(),
+        core.MonoGroup(),
+    };
+
+    std::size_t rootCount = 0;
+    std::array<synth::ParameterProcessingObserver, 3> work{};
+    for (std::size_t groupIx = 0; groupIx < groups.size(); ++groupIx) {
+        synth::ParameterGroup& group = *groups[groupIx];
+        rootCount += group.ParameterCount();
+        REQUIRE_TRUE(group.ParameterByLocalIndex(0).EnsureModulationDepth(0) != nullptr);
+        group.SetProcessingObserverForTests(&work[groupIx]);
+    }
+
+    REQUIRE_TRUE(rootCount == rig.Engine().Manager().ParameterCount());
+    for (synth::ParameterGroup* group : groups) {
+        group->ProcessSample(1);
+    }
+
+    const std::size_t visited = work[0].topLevelProcessLiteCalls +
+                                work[1].topLevelProcessLiteCalls +
+                                work[2].topLevelProcessLiteCalls;
+    REQUIRE_TRUE(visited == rootCount);
+}
+
 TEST_CASE(braid_palette_roles_propagate_from_literal_configuration) {
     synth::ParameterManager manager;
     synth::MessageInBus uiBus(&manager);
