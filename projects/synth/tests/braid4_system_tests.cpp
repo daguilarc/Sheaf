@@ -120,7 +120,9 @@ struct Braid4WorkResult {
     std::size_t internalSubframesProcessed = 0;
     std::size_t materializedLocalCount = 0;
     std::size_t remainingMaterializableSlots = 0;
-    std::size_t denseConfiguredRouteVisits = 0;
+    // This is the dense upper bound for the currently materialized top-level Braid4 topology,
+    // not the group's full maxParameters capacity.
+    std::size_t materializedTopLevelDenseRouteVisitUpperBound = 0;
 };
 
 Braid4WorkResult MeasureBraid4Work(Braid4WorkScenario scenario) {
@@ -208,7 +210,8 @@ Braid4WorkResult MeasureBraid4Work(Braid4WorkScenario scenario) {
         denseVisitsPerSubframe += parameter.Group().Config().numVoices *
                                   parameter.Group().Config().numModulators;
     }
-    result.denseConfiguredRouteVisits = result.internalSubframesProcessed * denseVisitsPerSubframe;
+    result.materializedTopLevelDenseRouteVisitUpperBound =
+        result.internalSubframesProcessed * denseVisitsPerSubframe;
     return result;
 }
 
@@ -561,8 +564,9 @@ TEST_CASE(braid4_parameter_processing_ignores_materialized_local_depths) {
     std::array<synth::ParameterProcessingObserver, 3> work{};
     for (std::size_t groupIx = 0; groupIx < groups.size(); ++groupIx) {
         synth::ParameterGroup& group = *groups[groupIx];
-        rootCount += group.ParameterCount();
+        rootCount += group.TopLevelParameterCount();
         REQUIRE_TRUE(group.ParameterByLocalIndex(0).EnsureModulationDepth(0) != nullptr);
+        REQUIRE_TRUE(group.TopLevelParameterCount() < group.ParameterCount());
         group.SetProcessingObserverForTests(&work[groupIx]);
     }
 
@@ -594,7 +598,7 @@ TEST_CASE(braid4_sparse_work_counters_bound_inactive_capacity) {
     REQUIRE_TRUE(neutral.activeRouteVisits == 0);
     REQUIRE_TRUE(inactive64.activeGestureVisits == 0);
     REQUIRE_TRUE(sparse.activeRouteVisits > 0);
-    REQUIRE_TRUE(sparse.activeRouteVisits < sparse.denseConfiguredRouteVisits);
+    REQUIRE_TRUE(sparse.activeRouteVisits < sparse.materializedTopLevelDenseRouteVisitUpperBound);
 }
 
 TEST_CASE(braid_palette_roles_propagate_from_literal_configuration) {

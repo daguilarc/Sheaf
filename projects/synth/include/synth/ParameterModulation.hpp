@@ -1,9 +1,9 @@
 #pragma once
 
 #include <algorithm>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
-#include <atomic>
 #include <cmath>
 #include <functional>
 #include <memory>
@@ -149,6 +149,7 @@ struct ParameterProcessingObserver {
     std::size_t localRecursiveComputeCalls = 0;
     std::size_t activeRouteVisits = 0;
     std::size_t activeGestureVisits = 0;
+    std::size_t neutralCollectionPasses = 0;
 };
 
 struct ParameterGroupConfig {
@@ -301,6 +302,7 @@ public:
     std::size_t AvailableParameterSlots() const;
     void AddParameterStorageBatch(std::unique_ptr<ParameterStorageBatch> batch);
     std::size_t ParameterCount() const { return parameterCount_; }
+    std::size_t TopLevelParameterCount() const { return topLevelParameters_.size(); }
     std::size_t LiveLocalParameterCount() const { return liveLocalParameterCount_; }
     std::size_t FreeLocalParameterSlotCount() const { return recycledLocalSlots_.size(); }
     std::size_t CollectNeutralLocalParameters();
@@ -486,6 +488,7 @@ private:
     friend class Bank;
 
     std::size_t SceneGestureIndex(std::size_t sceneIx, std::size_t gestureIx) const;
+    void ValidateSceneGestureIndices(std::size_t sceneIx, std::size_t gestureIx) const;
     void ValidateSceneEndpoints(const SceneState& scene) const;
     float EffectiveGestureWeight(const SceneState& scene, std::size_t gestureIx, float blend) const;
     void ResetSceneToDefault(std::size_t sceneIx, float defaultValue);

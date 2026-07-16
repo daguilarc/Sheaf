@@ -16,6 +16,9 @@ namespace {
 
 // Local modulation-depth controls are intentionally not addressable through ParameterManager::ParameterById.
 constexpr ParameterId kLocalParameterId = std::numeric_limits<ParameterId>::max();
+constexpr float kModulationNeutralTolerance = 0.000001f;
+// A local depth is a normalized bipolar control, so its standard zero-depth value is the knob center.
+constexpr float kNeutralModulationDepthCenter = 0.5f;
 
 GestureMask GestureCountMask(std::size_t count) {
     if (count >= std::numeric_limits<GestureMask>::digits) {
@@ -545,6 +548,9 @@ void ParameterGroup::RecycleLocalParameter(Parameter& parameter) {
 }
 
 std::size_t ParameterGroup::CollectNeutralLocalParameters() {
+    if (processingObserver_ != nullptr) {
+        ++processingObserver_->neutralCollectionPasses;
+    }
     std::size_t collected = 0;
     for (Parameter* root : topLevelParameters_) {
         collected += root->CollectNeutralChildren();
@@ -811,7 +817,6 @@ void Parameter::UnpinLocalForView() {
 }
 
 bool Parameter::CanRecycleLocal() const {
-    constexpr float tolerance = 0.000001f;
     if (id_ != kLocalParameterId || localViewPinCount_ != 0 || activeRouteCount_ != 0 ||
         HasNonDefaultState() || HasNonZeroState()) {
         return false;
@@ -824,7 +829,7 @@ bool Parameter::CanRecycleLocal() const {
     const float defaultValue = ClampToRange(config_.defaultValue, config_.range);
     const auto allNear = [&](std::span<const float> values, float expected) {
         return std::all_of(values.begin(), values.end(), [&](float value) {
-            return std::fabs(value - expected) <= tolerance;
+            return std::fabs(value - expected) <= kModulationNeutralTolerance;
         });
     };
     return allNear(currentMinValues_, defaultValue) && allNear(targetMinValues_, defaultValue) &&
@@ -1423,7 +1428,7 @@ ParameterConfig Parameter::ModulationDepthConfig(std::size_t modIx) const {
                     ? Name() + " Mod Depth " + std::to_string(modIx + 1)
                     : Name() + " " + modulator.name,
         .shortName = modulator.shortName.empty() ? ShortName() : modulator.shortName,
-        .defaultValue = 0.5f,
+        .defaultValue = kNeutralModulationDepthCenter,
         .range = RangeKind::Bipolar,
         .baseColor = modulator.sourceColor,
         .visualizer = modulator.visualizer,
@@ -1454,7 +1459,7 @@ float Parameter::GestureValue(std::size_t sceneIx, std::size_t gestureIx) const 
 }
 
 void Parameter::SetGestureActive(std::size_t sceneIx, std::size_t gestureIx, bool active) {
-    (void)SceneGestureIndex(sceneIx, gestureIx);
+    ValidateSceneGestureIndices(sceneIx, gestureIx);
     const GestureMask bit = GestureMask{1} << gestureIx;
     if (active) {
         gestureActiveMasks_[sceneIx] |= bit;
@@ -1464,7 +1469,7 @@ void Parameter::SetGestureActive(std::size_t sceneIx, std::size_t gestureIx, boo
 }
 
 bool Parameter::GestureActive(std::size_t sceneIx, std::size_t gestureIx) const {
-    (void)SceneGestureIndex(sceneIx, gestureIx);
+    ValidateSceneGestureIndices(sceneIx, gestureIx);
     return (gestureActiveMasks_[sceneIx] & (GestureMask{1} << gestureIx)) != 0;
 }
 
@@ -1631,10 +1636,9 @@ void Parameter::RemoveActiveRoute(std::size_t routeSlot) {
 }
 
 bool Parameter::RouteNeutralAcrossVoices(std::size_t routeSlot) const {
-    constexpr float tolerance = 0.000001f;
     for (std::size_t voiceIx = 0; voiceIx < group_.Config().numVoices; ++voiceIx) {
-        if (std::fabs(currentDepths_[VoiceRouteIndex(voiceIx, routeSlot)]) > tolerance ||
-            std::fabs(targetDepths_[VoiceRouteIndex(voiceIx, routeSlot)]) > tolerance) {
+        if (std::fabs(currentDepths_[VoiceRouteIndex(voiceIx, routeSlot)]) > kModulationNeutralTolerance ||
+            std::fabs(targetDepths_[VoiceRouteIndex(voiceIx, routeSlot)]) > kModulationNeutralTolerance) {
             return false;
         }
     }
@@ -1655,13 +1659,17 @@ void Parameter::PruneNeutralActiveRoutes() {
 }
 
 std::size_t Parameter::SceneGestureIndex(std::size_t sceneIx, std::size_t gestureIx) const {
+    ValidateSceneGestureIndices(sceneIx, gestureIx);
+    return sceneIx * group_.GestureCount() + gestureIx;
+}
+
+void Parameter::ValidateSceneGestureIndices(std::size_t sceneIx, std::size_t gestureIx) const {
     if (sceneIx >= group_.Config().numScenes) {
         throw std::out_of_range("parameter scene index out of range");
     }
     if (gestureIx >= group_.GestureCount()) {
         throw std::out_of_range("parameter gesture index out of range");
     }
-    return sceneIx * group_.GestureCount() + gestureIx;
 }
 
 void Parameter::ValidateSceneEndpoints(const SceneState& scene) const {
@@ -1691,29 +1699,28 @@ void Parameter::ResetModulationDepthToNeutral(const SceneState& scene) {
         }
     }
 
-    constexpr float neutralDepth = 0.5f;
     const float blend = std::clamp(scene.blend, 0.0f, 1.0f);
     if (blend <= 0.0f) {
-        ResetSceneToDefault(scene.leftScene, neutralDepth);
+        ResetSceneToDefault(scene.leftScene, kNeutralModulationDepthCenter);
     } else if (blend >= 1.0f) {
-        ResetSceneToDefault(scene.rightScene, neutralDepth);
+        ResetSceneToDefault(scene.rightScene, kNeutralModulationDepthCenter);
     } else {
-        ResetSceneToDefault(scene.leftScene, neutralDepth);
+        ResetSceneToDefault(scene.leftScene, kNeutralModulationDepthCenter);
         if (scene.rightScene != scene.leftScene) {
-            ResetSceneToDefault(scene.rightScene, neutralDepth);
+            ResetSceneToDefault(scene.rightScene, kNeutralModulationDepthCenter);
         }
     }
 
-    currentCenter_ = neutralDepth;
-    targetCenter_ = neutralDepth;
+    currentCenter_ = kNeutralModulationDepthCenter;
+    targetCenter_ = kNeutralModulationDepthCenter;
     std::fill(currentCenterScales_.begin(), currentCenterScales_.end(), 1.0f);
     std::fill(targetCenterScales_.begin(), targetCenterScales_.end(), 1.0f);
     std::fill(currentNormalizationOffsets_.begin(), currentNormalizationOffsets_.end(), 0.0f);
     std::fill(targetNormalizationOffsets_.begin(), targetNormalizationOffsets_.end(), 0.0f);
-    std::fill(currentMinValues_.begin(), currentMinValues_.end(), neutralDepth);
-    std::fill(targetMinValues_.begin(), targetMinValues_.end(), neutralDepth);
-    std::fill(currentMaxValues_.begin(), currentMaxValues_.end(), neutralDepth);
-    std::fill(targetMaxValues_.begin(), targetMaxValues_.end(), neutralDepth);
+    std::fill(currentMinValues_.begin(), currentMinValues_.end(), kNeutralModulationDepthCenter);
+    std::fill(targetMinValues_.begin(), targetMinValues_.end(), kNeutralModulationDepthCenter);
+    std::fill(currentMaxValues_.begin(), currentMaxValues_.end(), kNeutralModulationDepthCenter);
+    std::fill(targetMaxValues_.begin(), targetMaxValues_.end(), kNeutralModulationDepthCenter);
     std::fill(currentDepths_.begin(), currentDepths_.end(), 0.0f);
     std::fill(targetDepths_.begin(), targetDepths_.end(), 0.0f);
     activeRouteCount_ = 0;
@@ -1773,14 +1780,13 @@ void Parameter::ComputeAtDepth(const SceneState& scene, std::size_t recursionDep
         }
     }
 
-    constexpr float neutralTolerance = 0.000001f;
     for (std::size_t sourceIx = 0; sourceIx < group_.Config().numModulators; ++sourceIx) {
         const Parameter* depthParameter = modulationDepths_[sourceIx];
         bool targetNonNeutral = false;
         if (depthParameter != nullptr) {
             for (std::size_t voiceIx = 0; voiceIx < group_.Config().numVoices; ++voiceIx) {
                 if (std::fabs(ModulationDepthTargetFromKnob(depthParameter->GetRaw(voiceIx))) >
-                    neutralTolerance) {
+                    kModulationNeutralTolerance) {
                     targetNonNeutral = true;
                     break;
                 }
@@ -1791,7 +1797,8 @@ void Parameter::ComputeAtDepth(const SceneState& scene, std::size_t recursionDep
         bool currentNonNeutral = false;
         if (oldRouteSlot < activeRouteCount_) {
             for (std::size_t voiceIx = 0; voiceIx < group_.Config().numVoices; ++voiceIx) {
-                if (std::fabs(currentDepths_[VoiceRouteIndex(voiceIx, oldRouteSlot)]) > neutralTolerance) {
+                if (std::fabs(currentDepths_[VoiceRouteIndex(voiceIx, oldRouteSlot)]) >
+                    kModulationNeutralTolerance) {
                     currentNonNeutral = true;
                     break;
                 }
@@ -1920,15 +1927,12 @@ std::uint32_t Parameter::ModulatorsAffectingMask() const {
 }
 
 bool Parameter::HasNonZeroState() const {
-    constexpr float tolerance = 0.000001f;
-    constexpr float neutralDepthCenter = 0.5f;
-
-    if (std::fabs(currentCenter_ - neutralDepthCenter) > tolerance ||
-        std::fabs(targetCenter_ - neutralDepthCenter) > tolerance) {
+    if (std::fabs(currentCenter_ - kNeutralModulationDepthCenter) > kModulationNeutralTolerance ||
+        std::fabs(targetCenter_ - kNeutralModulationDepthCenter) > kModulationNeutralTolerance) {
         return true;
     }
     for (const float center : sceneCenters_) {
-        if (std::fabs(center - neutralDepthCenter) > tolerance) {
+        if (std::fabs(center - kNeutralModulationDepthCenter) > kModulationNeutralTolerance) {
             return true;
         }
     }
@@ -1938,22 +1942,22 @@ bool Parameter::HasNonZeroState() const {
         }
     }
     for (const float depth : currentDepths_) {
-        if (std::fabs(depth) > tolerance) {
+        if (std::fabs(depth) > kModulationNeutralTolerance) {
             return true;
         }
     }
     for (const float depth : targetDepths_) {
-        if (std::fabs(depth) > tolerance) {
+        if (std::fabs(depth) > kModulationNeutralTolerance) {
             return true;
         }
     }
     for (const float offset : currentNormalizationOffsets_) {
-        if (std::fabs(offset) > tolerance) {
+        if (std::fabs(offset) > kModulationNeutralTolerance) {
             return true;
         }
     }
     for (const float offset : targetNormalizationOffsets_) {
-        if (std::fabs(offset) > tolerance) {
+        if (std::fabs(offset) > kModulationNeutralTolerance) {
             return true;
         }
     }
@@ -1966,20 +1970,19 @@ bool Parameter::HasNonZeroState() const {
 }
 
 bool Parameter::HasNonDefaultState() const {
-    constexpr float tolerance = 0.000001f;
     const float defaultValue = ClampToRange(config_.defaultValue, config_.range);
 
-    if (std::fabs(currentCenter_ - defaultValue) > tolerance ||
-        std::fabs(targetCenter_ - defaultValue) > tolerance) {
+    if (std::fabs(currentCenter_ - defaultValue) > kModulationNeutralTolerance ||
+        std::fabs(targetCenter_ - defaultValue) > kModulationNeutralTolerance) {
         return true;
     }
     for (const float center : sceneCenters_) {
-        if (std::fabs(center - defaultValue) > tolerance) {
+        if (std::fabs(center - defaultValue) > kModulationNeutralTolerance) {
             return true;
         }
     }
     for (const float value : gestureValues_) {
-        if (std::fabs(value - defaultValue) > tolerance) {
+        if (std::fabs(value - defaultValue) > kModulationNeutralTolerance) {
             return true;
         }
     }
@@ -1989,32 +1992,32 @@ bool Parameter::HasNonDefaultState() const {
         }
     }
     for (const float depth : currentDepths_) {
-        if (std::fabs(depth) > tolerance) {
+        if (std::fabs(depth) > kModulationNeutralTolerance) {
             return true;
         }
     }
     for (const float depth : targetDepths_) {
-        if (std::fabs(depth) > tolerance) {
+        if (std::fabs(depth) > kModulationNeutralTolerance) {
             return true;
         }
     }
     for (const float scale : currentCenterScales_) {
-        if (std::fabs(scale - 1.0f) > tolerance) {
+        if (std::fabs(scale - 1.0f) > kModulationNeutralTolerance) {
             return true;
         }
     }
     for (const float scale : targetCenterScales_) {
-        if (std::fabs(scale - 1.0f) > tolerance) {
+        if (std::fabs(scale - 1.0f) > kModulationNeutralTolerance) {
             return true;
         }
     }
     for (const float offset : currentNormalizationOffsets_) {
-        if (std::fabs(offset) > tolerance) {
+        if (std::fabs(offset) > kModulationNeutralTolerance) {
             return true;
         }
     }
     for (const float offset : targetNormalizationOffsets_) {
-        if (std::fabs(offset) > tolerance) {
+        if (std::fabs(offset) > kModulationNeutralTolerance) {
             return true;
         }
     }
@@ -2193,6 +2196,9 @@ void Bank::HandlePress(PhysicalEncoderId encoderId, std::span<const PhysicalEnco
     if (modifier != Modifier::None) {
         if (cell->parameter != nullptr) {
             ApplyModifierToParameter(*cell->parameter, modifier, manager_->Scene());
+            if (modifier == Modifier::Reset) {
+                cell->parameter->Group().CollectNeutralLocalParameters();
+            }
         }
         return;
     }
@@ -2216,6 +2222,8 @@ void Bank::HandleTick(PhysicalEncoderId encoderId, const SceneState& scene, floa
 void Bank::ApplyModifierToTopLevel(Modifier modifier, const SceneState& scene) {
     std::vector<Parameter*> visited;
     visited.reserve(topLevel_.size());
+    std::vector<ParameterGroup*> affectedGroups;
+    affectedGroups.reserve(topLevel_.size());
     for (Cell& cell : topLevel_) {
         if (cell.parameter == nullptr) {
             continue;
@@ -2225,6 +2233,14 @@ void Bank::ApplyModifierToTopLevel(Modifier modifier, const SceneState& scene) {
         }
         visited.push_back(cell.parameter);
         ApplyModifierToParameter(*cell.parameter, modifier, scene);
+        if (modifier == Modifier::Reset &&
+            std::find(affectedGroups.begin(), affectedGroups.end(), &cell.parameter->Group()) ==
+                affectedGroups.end()) {
+            affectedGroups.push_back(&cell.parameter->Group());
+        }
+    }
+    for (ParameterGroup* group : affectedGroups) {
+        group->CollectNeutralLocalParameters();
     }
 }
 
@@ -2397,7 +2413,6 @@ void Bank::ApplyModifierToParameter(Parameter& parameter, Modifier modifier, con
         return;
     }
 
-    ParameterGroup* affectedGroup = &parameter.Group();
     switch (modifier) {
     case Modifier::None:
         break;
@@ -2410,9 +2425,6 @@ void Bank::ApplyModifierToParameter(Parameter& parameter, Modifier modifier, con
     case Modifier::RandomMod:
         RandomizeModulationDepths(parameter, scene);
         break;
-    }
-    if (modifier == Modifier::Reset) {
-        affectedGroup->CollectNeutralLocalParameters();
     }
 }
 

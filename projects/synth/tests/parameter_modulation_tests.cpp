@@ -3959,6 +3959,36 @@ TEST_CASE(modified_bank_selection_applies_modifier_to_target_bank_without_switch
     REQUIRE_NEAR(randomModDepth->SceneCenter(0), 0.5f, 0.0001f);
 }
 
+TEST_CASE(reset_modifier_collects_each_affected_group_once_after_resetting_the_bank) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 1,
+        .numScenes = 1,
+        .maxParameters = 6,
+    });
+    auto& first = manager.CreateParameter(group, {.name = "First", .defaultValue = 0.1f});
+    auto& second = manager.CreateParameter(group, {.name = "Second", .defaultValue = 0.2f});
+    auto& third = manager.CreateParameter(group, {.name = "Third", .defaultValue = 0.3f});
+    first.SceneCenter(0) = 0.9f;
+    second.SceneCenter(0) = 0.8f;
+    third.SceneCenter(0) = 0.7f;
+
+    auto& bank = manager.CreateBank();
+    bank.AddMapping(10, first);
+    bank.AddMapping(11, second);
+    bank.AddMapping(12, third);
+    synth::ParameterProcessingObserver work{};
+    group.SetProcessingObserverForTests(&work);
+
+    bank.ApplyModifierToTopLevel(synth::Modifier::Reset, manager.Scene());
+
+    REQUIRE_NEAR(first.SceneCenter(0), 0.1f, 0.000001f);
+    REQUIRE_NEAR(second.SceneCenter(0), 0.2f, 0.000001f);
+    REQUIRE_NEAR(third.SceneCenter(0), 0.3f, 0.000001f);
+    REQUIRE_TRUE(work.neutralCollectionPasses == 1);
+}
+
 TEST_CASE(message_bus_param_inc_dec_ignores_ticks_while_any_modifier_is_active) {
     synth::ParameterManager manager;
     auto& group = manager.CreateGroup({.numVoices = 1, .numScenes = 1, .maxParameters = 1});
@@ -11657,6 +11687,45 @@ TEST_CASE(modulation_view_pins_visible_locals_until_deselect_boundary) {
     REQUIRE_TRUE(carrier.ModulationDepthParameter(0) == nullptr);
     REQUIRE_TRUE(carrier.ModulationDepthParameter(1) == nullptr);
     REQUIRE_TRUE(group.LiveLocalParameterCount() == 0);
+    REQUIRE_TRUE(group.FreeLocalParameterSlotCount() == 2);
+}
+
+TEST_CASE(multi_level_modulation_view_balances_pins_and_reuses_the_collapsed_subtree) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({.numVoices = 1, .numModulators = 1, .numScenes = 1, .maxParameters = 6});
+    auto& carrier = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.4f});
+    auto& other = manager.CreateParameter(group, {.name = "Other", .defaultValue = 0.6f});
+    auto& bank = manager.CreateBank();
+    bank.AddMapping(10, carrier);
+    auto& slot = manager.CreateBankSlot();
+    slot.AddPhysicalEncoder(10);
+    slot.AddPhysicalEncoder(11);
+    slot.SelectBank(&bank);
+
+    slot.HandlePress(10);
+    synth::Parameter* first = carrier.ModulationDepthParameter(0);
+    REQUIRE_TRUE(first != nullptr);
+    slot.HandlePress(10);
+    synth::Parameter* second = first->ModulationDepthParameter(0);
+    REQUIRE_TRUE(second != nullptr);
+    slot.HandlePress(10);
+    synth::Parameter* third = second->ModulationDepthParameter(0);
+    REQUIRE_TRUE(third != nullptr);
+    REQUIRE_TRUE(bank.SelectedParameter() == second);
+    REQUIRE_TRUE(bank.VisibleParameter(10) == third);
+    REQUIRE_TRUE(group.LiveLocalParameterCount() == 3);
+    REQUIRE_TRUE(group.CollectNeutralLocalParameters() == 0);
+    const std::size_t highWater = group.ParameterCount();
+
+    bank.Deselect();
+
+    REQUIRE_TRUE(carrier.ModulationDepthParameter(0) == nullptr);
+    REQUIRE_TRUE(group.LiveLocalParameterCount() == 0);
+    REQUIRE_TRUE(group.FreeLocalParameterSlotCount() == 3);
+    synth::Parameter* reused = other.EnsureModulationDepth(0);
+    REQUIRE_TRUE(reused == first || reused == second || reused == third);
+    REQUIRE_TRUE(group.ParameterCount() == highWater);
+    REQUIRE_TRUE(group.LiveLocalParameterCount() == 1);
     REQUIRE_TRUE(group.FreeLocalParameterSlotCount() == 2);
 }
 
