@@ -2335,6 +2335,9 @@ void Bank::AssociateSlot(BankSlot& slot) {
 }
 
 Parameter* Bank::EnsureModulationDepthParameter(Parameter& parameter, std::size_t modIx) {
+    if (!parameter.Group().GetModulators().Metadata(modIx).connected) {
+        return nullptr;
+    }
     Parameter* depthParameter = parameter.ModulationDepthParameter(modIx);
     if (depthParameter != nullptr || manager_ == nullptr) {
         return depthParameter;
@@ -2353,7 +2356,8 @@ bool Bank::CanOpenModulationView(const Parameter& parameter) const {
 std::size_t Bank::MissingModulationDepthCount(const Parameter& parameter) const {
     std::size_t missing = 0;
     for (std::size_t modIx = 0; modIx < parameter.Group().Config().numModulators; ++modIx) {
-        if (parameter.ModulationDepthParameter(modIx) == nullptr) {
+        if (parameter.Group().GetModulators().Metadata(modIx).connected &&
+            parameter.ModulationDepthParameter(modIx) == nullptr) {
             ++missing;
         }
     }
@@ -2433,13 +2437,26 @@ void Bank::RandomizeModulationDepths(Parameter& parameter, const SceneState& sce
         return;
     }
 
-    const std::size_t modulatorCount = parameter.Group().Config().numModulators;
-    if (modulatorCount == 0) {
+    const auto metadata = parameter.Group().GetModulators().Metadata();
+    const std::size_t connectedCount = static_cast<std::size_t>(
+        std::count_if(metadata.begin(), metadata.end(),
+                      [](const ModulatorMetadata& source) { return source.connected; }));
+    if (connectedCount == 0) {
         return;
     }
 
     while (manager_->NextRandomCoin() < 0.5f) {
-        const std::size_t modIx = manager_->NextRandomIndex(modulatorCount);
+        std::size_t ordinal = manager_->NextRandomIndex(connectedCount);
+        std::size_t modIx = 0;
+        for (; modIx < metadata.size(); ++modIx) {
+            if (!metadata[modIx].connected) {
+                continue;
+            }
+            if (ordinal == 0) {
+                break;
+            }
+            --ordinal;
+        }
         Parameter* depthParameter = EnsureModulationDepthParameter(parameter, modIx);
         if (depthParameter == nullptr) {
             return;

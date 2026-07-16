@@ -141,6 +141,12 @@ bool JsonSemanticallyEqual(synth::JSON left, synth::JSON right) {
 
 void RequireRouteBijection(const synth::Parameter& parameter, std::size_t sourceCount);
 
+void MarkAllModulatorsConnectedForUi(synth::ParameterGroup& group) {
+    for (synth::ModulatorMetadata& metadata : group.GetModulators().Metadata()) {
+        metadata.connected = true;
+    }
+}
+
 // Wraps a single WrldBldr-kind MidiControllerProfileConfig (as produced by
 // WrldBldrDefaultProfileConfig, whose system-message associations always
 // carry both a control address and a wrldBldrPosition -- see
@@ -3354,6 +3360,7 @@ TEST_CASE(press_opens_modulation_view_and_target_cell_closes_it) {
         .numScenes = 1,
         .maxParameters = 3,
     });
+    MarkAllModulatorsConnectedForUi(group);
     auto& parameter = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.5f});
     auto& depthA = manager.CreateParameter(group, {.name = "DepthA", .defaultValue = 0.1f});
     auto& depthB = manager.CreateParameter(group, {.name = "DepthB", .defaultValue = 0.2f});
@@ -3389,6 +3396,7 @@ TEST_CASE(modulation_view_return_cell_uses_final_compact_fallback_position) {
         .numScenes = 1,
         .maxParameters = 3,
     });
+    MarkAllModulatorsConnectedForUi(group);
     auto& parameter = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.4f});
     auto& depthA = manager.CreateParameter(group, {.name = "DepthA", .defaultValue = 0.1f});
     auto& depthB = manager.CreateParameter(group, {.name = "DepthB", .defaultValue = 0.2f});
@@ -3432,6 +3440,7 @@ TEST_CASE(modulation_view_places_return_at_final_slot_position) {
         .numScenes = 1,
         .maxParameters = 2,
     });
+    MarkAllModulatorsConnectedForUi(group);
     auto& parameter = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.4f});
     auto& depth = manager.CreateParameter(group, {.name = "Depth", .defaultValue = 0.0f});
     REQUIRE_TRUE(parameter.AssignModulationDepth(0, &depth));
@@ -3468,6 +3477,7 @@ TEST_CASE(modulation_view_rejects_more_modulators_than_slot_depth_positions) {
         .numScenes = 1,
         .maxParameters = 4,
     });
+    MarkAllModulatorsConnectedForUi(group);
     auto& parameter = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.4f});
     auto& bank = manager.CreateBank();
     bank.AddMapping(10, parameter);
@@ -3497,6 +3507,7 @@ TEST_CASE(modulation_view_open_is_noop_when_capacity_cannot_fill_all_modulators)
         .numScenes = 1,
         .maxParameters = 3,
     });
+    MarkAllModulatorsConnectedForUi(group);
     auto& carrier = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.5f});
     auto& filler = manager.CreateParameter(group, {.name = "Filler", .defaultValue = 0.25f});
     group.GetModulators().Metadata(0).name = "Filter Env";
@@ -3533,6 +3544,7 @@ TEST_CASE(modulation_view_requests_storage_batch_and_succeeds_after_reinforcemen
         .numScenes = 1,
         .maxParameters = 2,
     });
+    MarkAllModulatorsConnectedForUi(group);
     auto& carrier = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.5f});
     auto& filler = manager.CreateParameter(group, {.name = "Filler", .defaultValue = 0.25f});
     auto& bank = manager.CreateBank();
@@ -3577,6 +3589,7 @@ TEST_CASE(modulation_view_materializes_all_missing_depth_parameters_when_capacit
         .numScenes = 1,
         .maxParameters = 4,
     });
+    MarkAllModulatorsConnectedForUi(group);
     auto& carrier = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.5f});
     auto& filler = manager.CreateParameter(group, {.name = "Filler", .defaultValue = 0.25f});
     group.GetModulators().Metadata(0).name = "Filter Env";
@@ -3614,6 +3627,119 @@ TEST_CASE(modulation_view_materializes_all_missing_depth_parameters_when_capacit
     REQUIRE_NEAR(depth->SceneCenter(0), 0.7f, 0.0001f);
 }
 
+TEST_CASE(modulation_view_leaves_disconnected_sources_empty_and_hides_explicit_depths) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 3,
+        .numScenes = 1,
+        .maxParameters = 4,
+    });
+    group.GetModulators().Metadata(0).connected = true;
+    group.GetModulators().Metadata(2).connected = true;
+    auto& carrier = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.4f});
+    auto& hiddenDepth = manager.CreateParameter(group, {
+        .name = "Hidden Depth",
+        .defaultValue = 0.2f,
+        .range = synth::RangeKind::Bipolar,
+    });
+    REQUIRE_TRUE(carrier.AssignModulationDepth(1, &hiddenDepth));
+    hiddenDepth.SceneCenter(0) = 0.8f;
+
+    auto& bank = manager.CreateBank();
+    bank.AddMapping(10, carrier);
+    auto& slot = manager.CreateBankSlot();
+    slot.AddPhysicalEncoder(10);
+    slot.AddPhysicalEncoder(11);
+    slot.AddPhysicalEncoder(12);
+    slot.AddPhysicalEncoder(13);
+    slot.SelectBank(&bank);
+
+    std::size_t valueCalls = 0;
+    std::size_t coinCalls = 0;
+    std::size_t indexCalls = 0;
+    manager.SetRandomSource(
+        [&valueCalls]() {
+            ++valueCalls;
+            return 0.1f;
+        },
+        [&coinCalls]() {
+            ++coinCalls;
+            return 0.1f;
+        },
+        [&indexCalls](std::size_t) {
+            ++indexCalls;
+            return std::size_t{0};
+        });
+
+    slot.HandlePress(10);
+    auto ui = manager.CreateUIState();
+    manager.PopulateUIState(*ui);
+
+    REQUIRE_TRUE(carrier.ModulationDepthParameter(0) != nullptr);
+    REQUIRE_TRUE(carrier.ModulationDepthParameter(1) == &hiddenDepth);
+    REQUIRE_TRUE(carrier.ModulationDepthParameter(2) != nullptr);
+    REQUIRE_TRUE(bank.VisibleParameter(10) == carrier.ModulationDepthParameter(0));
+    REQUIRE_TRUE(bank.VisibleParameter(11) == nullptr);
+    REQUIRE_TRUE(bank.VisibleParameter(12) == carrier.ModulationDepthParameter(2));
+    REQUIRE_TRUE(bank.VisibleParameter(13) == &carrier);
+    REQUIRE_TRUE(!ui->slots[0].cells[1].connected.load());
+
+    const float hiddenValue = hiddenDepth.SceneCenter(0);
+    synth::Parameter* const selectedTarget = bank.TargetParameter();
+    const std::size_t parameterCount = group.ParameterCount();
+    manager.HandleTick(11, 0.2f);
+    manager.HandlePress(11);
+    manager.SetResetHeld(true);
+    manager.HandlePress(11);
+    manager.SetResetHeld(false);
+    manager.SetRandomHeld(true);
+    manager.HandlePress(11);
+    manager.SetRandomHeld(false);
+    manager.SetRandomModHeld(true);
+    manager.HandlePress(11);
+    manager.SetRandomModHeld(false);
+
+    REQUIRE_NEAR(hiddenDepth.SceneCenter(0), hiddenValue, 0.0001f);
+    REQUIRE_TRUE(bank.TargetParameter() == selectedTarget);
+    REQUIRE_TRUE(group.ParameterCount() == parameterCount);
+    REQUIRE_TRUE(valueCalls == 0);
+    REQUIRE_TRUE(coinCalls == 0);
+    REQUIRE_TRUE(indexCalls == 0);
+}
+
+TEST_CASE(modulation_view_capacity_counts_only_connected_missing_depths) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 3,
+        .numScenes = 1,
+        .maxParameters = 2,
+    });
+    group.GetModulators().Metadata(2).connected = true;
+    auto& carrier = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.4f});
+    auto& bank = manager.CreateBank();
+    bank.AddMapping(10, carrier);
+    auto& slot = manager.CreateBankSlot();
+    slot.AddPhysicalEncoder(10);
+    slot.AddPhysicalEncoder(11);
+    slot.AddPhysicalEncoder(12);
+    slot.AddPhysicalEncoder(13);
+    slot.SelectBank(&bank);
+
+    slot.HandlePress(10);
+
+    REQUIRE_TRUE(bank.ShowingModulation());
+    REQUIRE_TRUE(carrier.ModulationDepthParameter(0) == nullptr);
+    REQUIRE_TRUE(carrier.ModulationDepthParameter(1) == nullptr);
+    REQUIRE_TRUE(carrier.ModulationDepthParameter(2) != nullptr);
+    REQUIRE_TRUE(group.ParameterCount() == 2);
+    REQUIRE_TRUE(bank.VisibleParameter(10) == nullptr);
+    REQUIRE_TRUE(bank.VisibleParameter(11) == nullptr);
+    REQUIRE_TRUE(bank.VisibleParameter(12) == carrier.ModulationDepthParameter(2));
+    REQUIRE_TRUE(bank.VisibleParameter(13) == &carrier);
+}
+
 TEST_CASE(modulation_view_keeps_owned_depth_parameter_after_reset) {
     synth::ParameterManager manager;
     auto& group = manager.CreateGroup({
@@ -3622,6 +3748,7 @@ TEST_CASE(modulation_view_keeps_owned_depth_parameter_after_reset) {
         .numScenes = 1,
         .maxParameters = 3,
     });
+    MarkAllModulatorsConnectedForUi(group);
     group.GetModulators().Metadata(0).name = "VCO Direct";
     group.GetModulators().Metadata(0).shortName = "VCO";
     group.GetModulators().Metadata(0).sourceColor = synth::Color::Cyan;
@@ -3669,6 +3796,7 @@ TEST_CASE(modulation_view_lazy_depth_names_include_target_parameter_for_duplicat
         .numScenes = 1,
         .maxParameters = 4,
     });
+    MarkAllModulatorsConnectedForUi(group);
     auto& first = manager.CreateParameter(group, {.name = "Carrier A", .defaultValue = 0.25f});
     auto& second = manager.CreateParameter(group, {.name = "Carrier B", .defaultValue = 0.75f});
     group.GetModulators().Metadata(0).name = "Filter Env";
@@ -3714,6 +3842,7 @@ TEST_CASE(pressing_modulation_cell_opens_nested_modulation_view) {
         .numScenes = 1,
         .maxParameters = 3,
     });
+    MarkAllModulatorsConnectedForUi(group);
     auto& carrier = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.5f});
     auto& depth = manager.CreateParameter(group, {.name = "Depth", .defaultValue = 0.2f});
     auto& nested = manager.CreateParameter(group, {.name = "Nested", .defaultValue = 0.1f});
@@ -3742,6 +3871,7 @@ TEST_CASE(slot_bank_switch_deselects_prior_modulation_view) {
         .numScenes = 1,
         .maxParameters = 3,
     });
+    MarkAllModulatorsConnectedForUi(group);
     auto& carrier = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.5f});
     auto& depth = manager.CreateParameter(group, {.name = "Depth", .defaultValue = 0.1f});
     auto& other = manager.CreateParameter(group, {.name = "Other", .defaultValue = 0.2f});
@@ -3851,6 +3981,7 @@ TEST_CASE(random_mod_modifier_press_uses_geometric_slot_loop_with_replacement_an
         .maxParameters = 3,
         .targetCenterAlpha = 1.0f,
     });
+    MarkAllModulatorsConnectedForUi(group);
     group.GetModulators().Metadata(0).name = "LFO";
     group.GetModulators().Metadata(1).name = "Env";
     group.GetModulators().Metadata(2).name = "Vel";
@@ -3889,6 +4020,101 @@ TEST_CASE(random_mod_modifier_press_uses_geometric_slot_loop_with_replacement_an
     REQUIRE_TRUE(!bank.ShowingModulation());
 }
 
+TEST_CASE(random_mod_maps_connected_ordinals_and_skips_disconnected_sources) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 5,
+        .numScenes = 1,
+        .maxParameters = 2,
+        .targetCenterAlpha = 1.0f,
+    });
+    group.GetModulators().Metadata(0).connected = true;
+    group.GetModulators().Metadata(4).connected = true;
+    auto& carrier = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.25f});
+    auto& bank = manager.CreateBank();
+    bank.AddMapping(10, carrier);
+    auto& slot = manager.CreateBankSlot();
+    slot.AddPhysicalEncoder(10);
+    slot.SelectBank(&bank);
+
+    std::array<float, 2> coins{0.1f, 0.7f};
+    std::size_t coinIx = 0;
+    std::size_t indexCalls = 0;
+    std::size_t valueCalls = 0;
+    manager.SetRandomSource(
+        [&valueCalls]() {
+            ++valueCalls;
+            return 0.8f;
+        },
+        [&coins, &coinIx]() { return coins.at(coinIx++); },
+        [&indexCalls](std::size_t exclusiveMax) {
+            ++indexCalls;
+            REQUIRE_TRUE(exclusiveMax == 2);
+            return std::size_t{1};
+        });
+    manager.SetRandomModHeld(true);
+
+    manager.HandlePress(10);
+
+    REQUIRE_TRUE(carrier.ModulationDepthParameter(0) == nullptr);
+    REQUIRE_TRUE(carrier.ModulationDepthParameter(1) == nullptr);
+    REQUIRE_TRUE(carrier.ModulationDepthParameter(2) == nullptr);
+    REQUIRE_TRUE(carrier.ModulationDepthParameter(3) == nullptr);
+    synth::Parameter* depth = carrier.ModulationDepthParameter(4);
+    REQUIRE_TRUE(depth != nullptr);
+    REQUIRE_NEAR(depth->SceneCenter(0), 0.8f, 0.0001f);
+    REQUIRE_TRUE(coinIx == 2);
+    REQUIRE_TRUE(indexCalls == 1);
+    REQUIRE_TRUE(valueCalls == 1);
+    REQUIRE_TRUE(!bank.ShowingModulation());
+}
+
+TEST_CASE(random_mod_with_no_connected_sources_is_a_noop) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 3,
+        .numScenes = 1,
+        .maxParameters = 4,
+    });
+    auto& carrier = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.25f});
+    auto& bank = manager.CreateBank();
+    bank.AddMapping(10, carrier);
+    auto& slot = manager.CreateBankSlot();
+    slot.AddPhysicalEncoder(10);
+    slot.SelectBank(&bank);
+
+    std::size_t valueCalls = 0;
+    std::size_t coinCalls = 0;
+    std::size_t indexCalls = 0;
+    manager.SetRandomSource(
+        [&valueCalls]() {
+            ++valueCalls;
+            return 0.8f;
+        },
+        [&coinCalls]() {
+            ++coinCalls;
+            return 0.7f;
+        },
+        [&indexCalls](std::size_t) {
+            ++indexCalls;
+            return std::size_t{0};
+        });
+    manager.SetRandomModHeld(true);
+
+    manager.HandlePress(10);
+
+    REQUIRE_TRUE(valueCalls == 0);
+    REQUIRE_TRUE(coinCalls == 0);
+    REQUIRE_TRUE(indexCalls == 0);
+    REQUIRE_TRUE(carrier.ModulationDepthParameter(0) == nullptr);
+    REQUIRE_TRUE(carrier.ModulationDepthParameter(1) == nullptr);
+    REQUIRE_TRUE(carrier.ModulationDepthParameter(2) == nullptr);
+    REQUIRE_TRUE(group.ParameterCount() == 1);
+    REQUIRE_TRUE(!bank.ShowingModulation());
+}
+
 TEST_CASE(modified_bank_selection_applies_modifier_to_target_bank_without_switching_selected_bank) {
     synth::ParameterManager manager;
     auto& group = manager.CreateGroup({
@@ -3897,6 +4123,7 @@ TEST_CASE(modified_bank_selection_applies_modifier_to_target_bank_without_switch
         .numScenes = 1,
         .maxParameters = 7,
     });
+    MarkAllModulatorsConnectedForUi(group);
     auto& selectedParam = manager.CreateParameter(group, {.name = "Selected", .defaultValue = 0.1f});
     auto& resetTarget = manager.CreateParameter(group, {.name = "Reset Target", .defaultValue = 0.25f});
     auto& randomTarget = manager.CreateParameter(group, {.name = "Random Target", .defaultValue = 0.35f});
@@ -4442,6 +4669,7 @@ TEST_CASE(message_bus_routes_modulation_target_position_to_visible_parameter) {
         .numScenes = 1,
         .maxParameters = 2,
     });
+    MarkAllModulatorsConnectedForUi(group);
     auto& carrier = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.4f});
     auto& bank = manager.CreateBank();
     bank.AddMapping(10, carrier);
@@ -4481,6 +4709,7 @@ TEST_CASE(message_bus_bank_select_deselects_prior_modulation_view) {
         .numScenes = 1,
         .maxParameters = 2,
     });
+    MarkAllModulatorsConnectedForUi(group);
     auto& parameter = manager.CreateParameter(group, {.name = "Cutoff", .defaultValue = 0.25f});
     auto& bankA = manager.CreateBank();
     bankA.AddMapping(10, parameter);
@@ -7637,6 +7866,7 @@ TEST_CASE(randomized_parameter_modulation_simulation) {
             .processLiteAlpha = 0.25f,
             .targetCenterAlpha = 1.0f,
         });
+        MarkAllModulatorsConnectedForUi(group);
         auto& carrier = manager.CreateParameter(group, {
             .name = "Carrier",
             .defaultValue = 0.35f,
@@ -7935,6 +8165,7 @@ TEST_CASE(randomized_message_bus_ui_state_simulation) {
             .processLiteAlpha = 0.25f,
             .targetCenterAlpha = 1.0f,
         });
+        MarkAllModulatorsConnectedForUi(group);
         auto& carrier = manager.CreateParameter(group, {
             .name = "Carrier",
             .defaultValue = 0.35f,
@@ -8294,6 +8525,7 @@ TEST_CASE(message_bus_sparse_lifecycle_model_tracks_pins_collection_reuse_and_pa
                                        .numScenes = 2,
                                        .maxParameters = 2,
                                        .targetCenterAlpha = 1.0f});
+    MarkAllModulatorsConnectedForUi(group);
     auto& first = manager.CreateParameter(group, {.name = "First", .defaultValue = 0.25f});
     auto& second = manager.CreateParameter(group, {.name = "Second", .defaultValue = 0.75f});
     group.AddParameterStorageBatch(synth::MakeParameterStorageBatch(group.Config(), group.GestureCount(), 2));
@@ -8455,6 +8687,7 @@ TEST_CASE(randomized_patch_lifecycle_simulation) {
             .processLiteAlpha = 0.25f,
             .targetCenterAlpha = 1.0f,
         });
+        MarkAllModulatorsConnectedForUi(group);
         auto& carrier = manager.CreateParameter(group, {
             .name = "Carrier",
             .defaultValue = 0.35f,
@@ -8835,6 +9068,7 @@ TEST_CASE(randomized_patch_lifecycle_preserves_recursive_local_modulation_depths
             .processLiteAlpha = 0.25f,
             .targetCenterAlpha = 1.0f,
         });
+        MarkAllModulatorsConnectedForUi(group);
         auto& cutoff = manager.CreateParameter(group, {.name = "Cutoff", .defaultValue = 0.35f});
         auto& resonance = manager.CreateParameter(
             group, {.name = "Resonance", .defaultValue = 0.55f, .range = synth::RangeKind::Bipolar});
@@ -11666,6 +11900,7 @@ TEST_CASE(neutral_local_collection_detaches_child_while_parent_route_finishes_se
 TEST_CASE(modulation_view_pins_visible_locals_until_deselect_boundary) {
     synth::ParameterManager manager;
     auto& group = manager.CreateGroup({.numVoices = 1, .numModulators = 2, .numScenes = 1, .maxParameters = 3});
+    MarkAllModulatorsConnectedForUi(group);
     auto& carrier = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.4f});
     auto& bank = manager.CreateBank();
     bank.AddMapping(10, carrier);
@@ -11693,6 +11928,7 @@ TEST_CASE(modulation_view_pins_visible_locals_until_deselect_boundary) {
 TEST_CASE(multi_level_modulation_view_balances_pins_and_reuses_the_collapsed_subtree) {
     synth::ParameterManager manager;
     auto& group = manager.CreateGroup({.numVoices = 1, .numModulators = 1, .numScenes = 1, .maxParameters = 6});
+    MarkAllModulatorsConnectedForUi(group);
     auto& carrier = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.4f});
     auto& other = manager.CreateParameter(group, {.name = "Other", .defaultValue = 0.6f});
     auto& bank = manager.CreateBank();

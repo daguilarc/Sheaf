@@ -973,6 +973,9 @@ TEST_CASE(engine_tick_replies_to_storage_batch_requests) {
             context = ctx;
             group = &ctx->parameterManager->CreateGroup(
                 {.numVoices = 1, .numModulators = 2, .numScenes = 1, .maxParameters = 2});
+            for (synth::ModulatorMetadata& metadata : group->GetModulators().Metadata()) {
+                metadata.connected = true;
+            }
             carrier = &ctx->parameterManager->CreateParameter(*group, {.name = "Carrier", .defaultValue = 0.5f});
             auto& filler = ctx->parameterManager->CreateParameter(*group, {.name = "Filler", .defaultValue = 0.25f});
             (void)filler;
