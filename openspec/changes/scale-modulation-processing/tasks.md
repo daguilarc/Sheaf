@@ -1,7 +1,7 @@
 ## 1. Establish Sparse-Work Test Infrastructure
 
 - [x] 1.1 Add test-only processing counters or observers for top-level `ProcessLite` calls, local recursive computes, active route visits, and active gesture visits without adding production audio-thread allocation.
-- [ ] 1.2 Add a deliberately source-indexed full-scan modulation/gesture oracle that can be compared sample-by-sample with the future sparse implementation.
+- [x] 1.2 Add a deliberately source-indexed full-scan modulation/gesture oracle that can be compared sample-by-sample with the future sparse implementation.
 - [x] 1.3 Add failing regression tests proving that materializing local modulation-depth nodes must not increase group-level `ProcessLite` call count and that nested local targets still recompute on cadence.
 
 ## 2. Implement 64-Bit Sparse Gestures
@@ -19,11 +19,11 @@
 
 ## 4. Implement Active Modulation Route Prefixes
 
-- [ ] 4.1 Add fixed-capacity route permutation, inverse-position, source-index, and active-count storage with debug/test invariants proving a valid stable-source bijection.
-- [ ] 4.2 Update recursive target compute to activate/reorder each parameter's across-voice route union and maintain contiguous current/target depth state while preserving indexed editing, metadata, masks, and JSON keys.
-- [ ] 4.3 Add an explicit `Modulators::ApplyActive(voiceIx, activeDepths, sourceIndices)` compact/source-index API and update `ProcessLite`, `GetRaw`, and production modulation application to visit only the active prefix, retaining routes whose current depth is still settling on any voice and removing them only after neutral snap at a control boundary.
-- [ ] 4.4 Add zero/sparse/dense, swap-removal, scene-change, nested-route, and return-to-zero tests that compare every step with the full-scan oracle.
-- [ ] 4.5 Extend the randomized parameter oracle with active permutations and assert source identity, inverse-map integrity, current/target depths, cached values, and UI masks after every action.
+- [x] 4.1 Add fixed-capacity route permutation, inverse-position, source-index, and active-count storage with debug/test invariants proving a valid stable-source bijection.
+- [x] 4.2 Update recursive target compute to activate/reorder each parameter's across-voice route union and maintain contiguous current/target depth state while preserving indexed editing, metadata, masks, and JSON keys.
+- [x] 4.3 Add an explicit `Modulators::ApplyActive(voiceIx, activeDepths, sourceIndices)` compact/source-index API and update `ProcessLite`, `GetRaw`, and production modulation application to visit only the active prefix, retaining routes whose current depth is still settling on any voice and removing them only after neutral snap at a control boundary.
+- [x] 4.4 Add zero/sparse/dense, swap-removal, scene-change, nested-route, and return-to-zero tests that compare every step with the full-scan oracle.
+- [x] 4.5 Extend the randomized parameter oracle with active permutations and assert source identity, inverse-map integrity, current/target depths, cached values, and UI masks after every action.
 
 ## 5. Recycle Neutral Local Modulation Nodes
 
