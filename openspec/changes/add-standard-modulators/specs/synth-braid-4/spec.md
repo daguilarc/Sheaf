@@ -30,7 +30,8 @@ WHEN the Braid 4 application initializes, THE application SHALL create exactly o
 
 #### Scenario: Groups reserve a complete modulation view
 - **WHEN** the user opens a modulation view in any Braid group
-- **THEN** all fifteen modulation-depth controls can materialize without exhausting that group's initial parameter storage
+- **THEN** every connected modulation-depth control can materialize in its fixed fifteen-position layout without exhausting that group's initial parameter storage
+- **AND** disconnected positions remain empty and consume no parameter storage
 - **AND** subsequently materialized controls can use the existing compatible storage-batch expansion path
 
 #### Scenario: Standard bundles are independent
@@ -124,6 +125,7 @@ WHEN Braid 4 initializes its stereo, quad, and mono modulation sources, THE appl
 - **WHEN** Braid 4 initialization completes
 - **THEN** mono indexes `0..3` and `14` publish non-null standard visualizers
 - **AND** mono index `11` remains disconnected with a null visualizer
+- **AND** opening a mono modulation view does not materialize a depth parameter at index `11`
 
 #### Scenario: Braid-specific sources remain encoder-only
 - **WHEN** a Braid 4 modulation-depth view exposes application-specific index `4` or `5`

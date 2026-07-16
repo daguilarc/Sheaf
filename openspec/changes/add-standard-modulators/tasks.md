@@ -15,7 +15,7 @@
 
 - [x] 3.1 Update MiniApp system tests first for fifteen modulators, sixteen physical slot positions, capacity `192`, standard sources at `0..3/11/14`, direct/swapped VCO and ordinary LFO at `4/5/6`, disconnected gaps, and no saved-index migration.
 - [x] 3.2 Replace MiniApp's directly owned random/noise/constant processors, inputs, adapter storage, visualizers, registration helpers, and sample-loop calls with one retained `StandardModulators<2>` and its lifecycle operations.
-- [x] 3.3 Move MiniApp's three scope-backed source registrations and visualizer metadata to `4/5/6`, expand the slot using the existing physical-ID convention, and verify all fifteen depth cells plus the return cell materialize and route correctly.
+- [x] 3.3 Move MiniApp's three scope-backed source registrations and visualizer metadata to `4/5/6`, expand the slot using the existing physical-ID convention, and verify all fifteen source positions plus the return cell route correctly while connected depths materialize and disconnected gaps remain empty.
 - [x] 3.4 Rewire MiniApp's main random panel and UI/test accessors to standard random source `0`; update portable and browser command-buffer tests while preserving the three-panel layout and modulation-underlay behavior.
 
 ## 4. Braid4 Adoption
@@ -31,3 +31,9 @@
 - [x] 5.2 Run the JUCE-free DSP, parameter modulation, module, portable UI, browser command-buffer, MiniApp system, and Braid4 system test targets and fix regressions without weakening existing assertions.
 - [x] 5.3 Run MiniApp's app/browser smoke coverage and Braid4's representative-rate/deadline benchmarks; confirm four additional random processors plus noise per Braid group remain inside the existing release callback budget.
 - [x] 5.4 Verify patch loading follows live fifteen-source topology without migration, run strict OpenSpec validation, and perform a final placeholder, contradiction, ambiguity, and changed-file scope review.
+
+## 6. Disconnected Modulation-View Positions
+
+- [ ] 6.1 Add failing generic parameter-modulation tests proving disconnected indexes remain null/disconnected, ignore encoder and modifier input, do not consume capacity, hide explicitly assigned depths, and are excluded from Random Mod including the all-disconnected case.
+- [ ] 6.2 Update generic bank modulation-view materialization, missing-depth preflight, and Random Mod selection so only connected source indexes create or expose depth parameters while every configured index retains its physical position.
+- [ ] 6.3 Update MiniApp and Braid4 system/portable UI assertions for sparse connected depths, run focused and full synth verification plus strict OpenSpec validation, and review the implementation with spec-compliance then code-quality gates.

@@ -27,9 +27,10 @@ WHEN MiniApp initializes its modulation topology, THE application SHALL configur
 
 #### Scenario: Fifteen modulation cells fit the MIN-16 slot
 - **WHEN** the user opens a MiniApp modulation view
-- **THEN** physical positions `0..14` expose the fifteen modulation-depth cells in index order
+- **THEN** physical positions `0..14` preserve all fifteen modulator indexes in order
+- **AND** connected indexes expose modulation-depth cells while disconnected indexes expose empty disconnected cells
 - **AND** physical position `15` is the return cell
-- **AND** group capacity accommodates all fifteen depth cells without invalidating existing top-level parameter, page, bank, scene, or gesture topology
+- **AND** group capacity accommodates every connected depth without invalidating existing top-level parameter, page, bank, scene, or gesture topology
 
 #### Scenario: Standard visualizers are address stable
 - **WHEN** MiniApp materializes depth cells for standard random, constant, or noise sources
@@ -50,3 +51,32 @@ WHEN MiniApp initializes its modulation topology, THE application SHALL configur
 - **WHEN** MiniApp loads saved values created with its former six-modulator topology
 - **THEN** the live code-defined fifteen-source topology remains authoritative
 - **AND** no compatibility alias or index translation is applied
+
+## ADDED Requirements
+
+### Requirement: spm-75 — Disconnected sources are empty modulation-view positions
+WHEN a bank opens a parameter's modulation view, THE parameter-modulation system SHALL preserve one physical position for every configured modulator index; SHALL expose and materialize a depth parameter only for indexes whose `ModulatorMetadata.connected` is true; SHALL represent every disconnected index with a null bank cell that publishes disconnected UI state and ignores encoder and modifier input; SHALL count only connected missing depths during capacity preflight; and SHALL limit Random Mod selection to connected source indexes.
+
+#### Scenario: Disconnected index stays empty
+- **WHEN** a modulation view opens for a group with a disconnected source index
+- **THEN** that physical position has no visible parameter and publishes `connected=false`
+- **AND** opening the view does not allocate or assign a modulation-depth parameter for that index
+
+#### Scenario: Disconnected position ignores UI input
+- **WHEN** the user turns or presses the disconnected position with no modifier, Reset, or Random held
+- **THEN** no parameter value, selection, storage request, or topology changes
+
+#### Scenario: Capacity preflight counts connected depths only
+- **WHEN** a modulation view has connected and disconnected indexes without existing depth parameters
+- **THEN** opening the view requires storage only for the connected missing depths
+- **AND** disconnected positions do not prevent the view from opening
+
+#### Scenario: Random Mod excludes disconnected indexes
+- **WHEN** Random Mod applies to a parameter whose group contains disconnected source indexes
+- **THEN** it can create or change depths only at connected indexes
+- **AND** if no source index is connected, it is a no-op without a storage request
+
+#### Scenario: Explicit disconnected depth remains hidden
+- **WHEN** programmatic or legacy code has assigned a depth parameter at an index whose source metadata is disconnected
+- **THEN** the modulation view still exposes that index as an empty disconnected position
+- **AND** the explicit parameter API and stored depth object are otherwise unchanged

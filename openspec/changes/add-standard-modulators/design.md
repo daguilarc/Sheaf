@@ -78,7 +78,15 @@ MiniApp prepares at the host processing rate, calls the standard bundle once per
 
 MiniApp changes its group to fifteen modulators and expands its bank slot to all sixteen physical positions using the app's existing physical-ID convention. Its twelve top-level parameters reserve `12 * (1 + 15) = 192` initial modulation-aware parameter slots. One `StandardModulators<2>` replaces direct random/noise/constant ownership and registration. Direct VCO, swapped VCO, and ordinary LFO move to indexes `4`, `5`, and `6`; their existing scope visualizers move with them. The waveform row continues rendering its third panel from standard random source `0`, while modulation-depth cells use wrapper-owned visualizers.
 
-Braid4 changes the stereo, quad, and mono groups to fifteen modulators. It owns `StandardModulators<2>`, `<4>`, and `<1>` respectively. Each group's audible source moves to `4` and its parallel LFO source to `5`; therefore the quad matrix feedback contract and stereo/mono normalized source contracts retain their signal behavior but change indexes. Group capacities must fit existing top-level registration plus at least one complete fifteen-cell modulation view: stereo at least 19, quad at least 23, and mono at least 63 slots; larger existing capacities may remain. Additional persistent lazy depth controls continue using the existing storage-batch mechanism.
+Braid4 changes the stereo, quad, and mono groups to fifteen modulators. It owns `StandardModulators<2>`, `<4>`, and `<1>` respectively. Each group's audible source moves to `4` and its parallel LFO source to `5`; therefore the quad matrix feedback contract and stereo/mono normalized source contracts retain their signal behavior but change indexes. Group capacities must fit existing top-level registration plus every connected depth in one complete fifteen-position modulation view: stereo at least 19, quad at least 23, and mono at least 63 slots; larger existing capacities may remain. Additional persistent lazy depth controls continue using the existing storage-batch mechanism.
+
+### 6. Represent disconnected sources as empty modulation-view positions
+
+Opening a modulation view preserves one physical position for every configured modulator index, but materializes a depth parameter only when that index's `ModulatorMetadata.connected` is true. A disconnected index receives a bank cell with the correct encoder ID and a null parameter, reusing the existing empty-top-level-position behavior: UI state is disconnected and press, turn, Reset, and Random actions do nothing.
+
+The bank's UI materialization helper checks source metadata before returning an existing depth or creating a new one. Explicit programmatic and legacy depth APIs remain unchanged, but the UI does not expose a depth attached to a disconnected source. Capacity preflight counts only connected missing depths.
+
+Random Mod chooses only among connected source indexes. If a group has no connected sources, Random Mod is a no-op and does not request or create parameter storage. Source reconnection and saved-data migration are out of scope; disconnected indexes are fixed empty positions for this topology.
 
 ## Risks / Trade-offs
 
@@ -86,7 +94,7 @@ Braid4 changes the stereo, quad, and mono groups to fifteen modulators. It owns 
 - [Registered raw pointers could dangle if the wrapper moves] → Delete copy/move operations and require app-owned address-stable retention through teardown.
 - [Public defaults could be changed after pointers are registered] → Gate mutable configuration access on the pre-registration lifecycle state and validate everything before mutation.
 - [Mono constant index could appear connected accidentally] → Exclude it from registration entirely and test null metadata/visualizer publication at index `11`.
-- [Fifteen lazy depth controls can exhaust an undersized initial arena] → Recalculate application capacities for a complete view and retain the existing asynchronous storage-batch expansion for additional materialized controls.
+- [Connected lazy depth controls can exhaust an undersized initial arena] → Recalculate application capacities for a complete fifteen-position view and retain the existing asynchronous storage-batch expansion for additional materialized controls.
 - [Moving source indexes changes loaded modulation depths] → Treat the topology as intentionally breaking and add no migration, as requested.
 
 ## Migration Plan
