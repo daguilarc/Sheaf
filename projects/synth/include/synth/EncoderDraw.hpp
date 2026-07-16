@@ -217,7 +217,7 @@ inline void AppendArcWithSwitchGaps(std::vector<DrawCommand>& commands,
     }
 }
 
-inline std::size_t CountMaskBits(std::uint32_t mask)
+inline std::size_t CountMaskBits(std::uint64_t mask)
 {
     std::size_t count = 0;
     while (mask != 0)
@@ -239,7 +239,11 @@ inline std::string BadgeText(bool modulator, std::size_t index)
         return std::to_string(index + 1);
     }
     static constexpr const char* x_Symbols[] = {"U", "R", "D", "L", "UU", "RR", "DD", "LL"};
-    return x_Symbols[std::min<std::size_t>(index - 8, 7)];
+    if (index < 16)
+    {
+        return x_Symbols[index - 8];
+    }
+    return std::to_string(index + 1);
 }
 
 inline void GetBadgePosition(float centerX,
@@ -290,7 +294,7 @@ struct EncoderDrawState
     bool bipolar = false;
     std::size_t switchValues = 0;
     std::uint32_t modulatorsAffectingMask = 0;
-    std::uint32_t gesturesAffectingMask = 0;
+    synth::GestureMask gesturesAffectingMask = 0;
     synth::Color baseColor = synth::Color::Off;
     std::string shortLabel;
     std::size_t voiceCount = 0;
@@ -690,18 +694,18 @@ inline std::vector<DrawCommand> BuildEncoderDrawCommands(const EncoderDrawState&
             1.0f));
     }
 
-    const auto drawBadges = [&](std::uint32_t mask, bool upper, bool modulator) {
+    const auto drawBadges = [&](std::uint64_t mask, bool upper, bool modulator) {
         const std::vector<synth::Color>& colors = modulator ? state.modulatorColors : state.gestureColors;
-        const std::uint32_t validMask = colors.size() >= 32
-                                            ? std::numeric_limits<std::uint32_t>::max()
-                                            : (colors.empty() ? 0u : (std::uint32_t{1} << colors.size()) - 1u);
+        const std::uint64_t validMask = colors.size() >= 64
+                                            ? std::numeric_limits<std::uint64_t>::max()
+                                            : (colors.empty() ? 0u : (std::uint64_t{1} << colors.size()) - 1u);
         assert((mask & ~validMask) == 0u && "badge mask index exceeds published color count");
         mask &= validMask;
         const std::size_t total = EncoderGeometry::CountMaskBits(mask);
         std::size_t badgeIndex = 0;
         for (std::size_t bit = 0; bit < colors.size() && badgeIndex < total; ++bit)
         {
-            if ((mask & (1u << bit)) == 0)
+            if ((mask & (std::uint64_t{1} << bit)) == 0)
             {
                 continue;
             }

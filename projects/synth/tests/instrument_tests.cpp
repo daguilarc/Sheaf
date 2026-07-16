@@ -117,6 +117,18 @@ TEST_CASE(KindNameRoundTrip) {
     REQUIRE_TRUE(kind == MidiProfileKind::Generic);
 }
 
+TEST_CASE(MessageInJsonRoundTripsHighGestureIndex) {
+    synth::JsonArena arena(4096);
+    const synth::MessageIn source = synth::MessageIn::SetGestureSelect(17, 63, true);
+    const synth::JSON json = synth::ToJSON(arena, source);
+    synth::MessageIn target;
+    REQUIRE_TRUE(synth::FromJSON(json, target));
+    REQUIRE_TRUE(target.type == synth::MessageIn::Type::SetGestureSelect);
+    REQUIRE_TRUE(target.gestureIx == 63);
+    REQUIRE_TRUE(target.boolValue);
+    REQUIRE_TRUE(target.hasBoolValue);
+}
+
 TEST_CASE(KindNameFromUnknownRejected) {
     MidiProfileKind kind = MidiProfileKind::Generic;
     REQUIRE_TRUE(!synth::MidiProfileKindFromName("bogus", kind));

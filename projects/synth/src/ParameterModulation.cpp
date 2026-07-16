@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <charconv>
 #include <cmath>
 #include <limits>
@@ -14,6 +15,22 @@ namespace {
 
 // Local modulation-depth controls are intentionally not addressable through ParameterManager::ParameterById.
 constexpr ParameterId kLocalParameterId = std::numeric_limits<ParameterId>::max();
+
+GestureMask GestureCountMask(std::size_t count) {
+    if (count >= std::numeric_limits<GestureMask>::digits) {
+        return std::numeric_limits<GestureMask>::max();
+    }
+    return count == 0 ? GestureMask{0} : (GestureMask{1} << count) - GestureMask{1};
+}
+
+template <class Fn>
+void ForEachGestureBit(GestureMask mask, Fn&& fn) {
+    while (mask != 0) {
+        const std::size_t gestureIx = std::countr_zero(mask);
+        mask &= mask - 1;
+        fn(gestureIx);
+    }
+}
 
 void ValidateProcessingRates(double referenceRate, double processingRate) {
     if (!(std::isfinite(referenceRate) && referenceRate > 0.0 && std::isfinite(processingRate) &&
@@ -223,7 +240,7 @@ ParameterStorageBatch::ParameterStorageBatch(const ParameterGroupConfig& config,
       modulationDepthArena(capacity * config.numModulators, nullptr),
       sceneCenterArena(capacity * config.numScenes),
       gestureValueArena(capacity * config.numScenes * gestureCount),
-      gestureActiveArena(capacity * config.numScenes * gestureCount, 0) {
+      gestureActiveMaskArena(capacity * config.numScenes, 0) {
     parameters.reserve(capacity);
 }
 
@@ -325,8 +342,11 @@ std::size_t Modulators::Index(std::size_t voiceIx, std::size_t modIx) const {
 
 Gestures::Gestures(std::size_t gestures)
     : values_(gestures, 0.0f),
-      selected_(gestures, false),
-      metadata_(gestures) {}
+      metadata_(gestures) {
+    if (gestures > std::numeric_limits<GestureMask>::digits) {
+        throw std::invalid_argument("gesture count exceeds 64-bit selector capacity");
+    }
+}
 
 float& Gestures::Value(std::size_t gestureIx) {
     CheckIndex(gestureIx);
@@ -340,16 +360,21 @@ float Gestures::Value(std::size_t gestureIx) const {
 
 void Gestures::Select(std::size_t gestureIx, bool selected) {
     CheckIndex(gestureIx);
-    selected_[gestureIx] = selected;
+    const GestureMask bit = GestureMask{1} << gestureIx;
+    if (selected) {
+        selectedMask_ |= bit;
+    } else {
+        selectedMask_ &= ~bit;
+    }
 }
 
 bool Gestures::Selected(std::size_t gestureIx) const {
     CheckIndex(gestureIx);
-    return selected_[gestureIx];
+    return (selectedMask_ & (GestureMask{1} << gestureIx)) != 0;
 }
 
 void Gestures::ClearSelection() {
-    std::fill(selected_.begin(), selected_.end(), false);
+    selectedMask_ = 0;
 }
 
 GestureMetadata& Gestures::Metadata(std::size_t gestureIx) {
@@ -392,7 +417,7 @@ ParameterGroup::ParameterGroup(ParameterGroupConfig config, ParameterManager& ma
     modulationDepthArena_.resize(config_.maxParameters * config_.numModulators, nullptr);
     sceneCenterArena_.resize(config_.maxParameters * config_.numScenes);
     gestureValueArena_.resize(config_.maxParameters * config_.numScenes * gestureCount_);
-    gestureActiveArena_.resize(config_.maxParameters * config_.numScenes * gestureCount_, 0);
+    gestureActiveMaskArena_.resize(config_.maxParameters * config_.numScenes, 0);
 }
 
 ParameterGroup::~ParameterGroup() = default;
@@ -578,9 +603,9 @@ Parameter::Parameter(ParameterId id, ParameterGroup& group, ParameterConfig conf
       gestureValues_(ArenaSlice(group_.gestureValueArena_,
                                 slotIx_ * group_.Config().numScenes * group_.GestureCount(),
                                 group_.Config().numScenes * group_.GestureCount())),
-      gestureActive_(ArenaSlice(group_.gestureActiveArena_,
-                                slotIx_ * group_.Config().numScenes * group_.GestureCount(),
-                                group_.Config().numScenes * group_.GestureCount())) {
+      gestureActiveMasks_(ArenaSlice(group_.gestureActiveMaskArena_,
+                                     slotIx_ * group_.Config().numScenes,
+                                     group_.Config().numScenes)) {
     std::fill(currentCenterScales_.begin(), currentCenterScales_.end(), 1.0f);
     std::fill(targetCenterScales_.begin(), targetCenterScales_.end(), 1.0f);
     std::fill(currentNormalizationOffsets_.begin(), currentNormalizationOffsets_.end(), 0.0f);
@@ -594,7 +619,7 @@ Parameter::Parameter(ParameterId id, ParameterGroup& group, ParameterConfig conf
     std::fill(modulationDepths_.begin(), modulationDepths_.end(), nullptr);
     std::fill(sceneCenters_.begin(), sceneCenters_.end(), currentCenter_);
     std::fill(gestureValues_.begin(), gestureValues_.end(), currentCenter_);
-    std::fill(gestureActive_.begin(), gestureActive_.end(), 0);
+    std::fill(gestureActiveMasks_.begin(), gestureActiveMasks_.end(), 0);
     SeedCachedKnobAndUiDisplayState();
 }
 
@@ -648,9 +673,9 @@ Parameter::Parameter(ParameterId id, ParameterGroup& group, ParameterConfig conf
       gestureValues_(ArenaSlice(storageBatch.gestureValueArena,
                                 slotIx_ * group_.Config().numScenes * group_.GestureCount(),
                                 group_.Config().numScenes * group_.GestureCount())),
-      gestureActive_(ArenaSlice(storageBatch.gestureActiveArena,
-                                slotIx_ * group_.Config().numScenes * group_.GestureCount(),
-                                group_.Config().numScenes * group_.GestureCount())) {
+      gestureActiveMasks_(ArenaSlice(storageBatch.gestureActiveMaskArena,
+                                     slotIx_ * group_.Config().numScenes,
+                                     group_.Config().numScenes)) {
     std::fill(currentCenterScales_.begin(), currentCenterScales_.end(), 1.0f);
     std::fill(targetCenterScales_.begin(), targetCenterScales_.end(), 1.0f);
     std::fill(currentNormalizationOffsets_.begin(), currentNormalizationOffsets_.end(), 0.0f);
@@ -664,7 +689,7 @@ Parameter::Parameter(ParameterId id, ParameterGroup& group, ParameterConfig conf
     std::fill(modulationDepths_.begin(), modulationDepths_.end(), nullptr);
     std::fill(sceneCenters_.begin(), sceneCenters_.end(), currentCenter_);
     std::fill(gestureValues_.begin(), gestureValues_.end(), currentCenter_);
-    std::fill(gestureActive_.begin(), gestureActive_.end(), 0);
+    std::fill(gestureActiveMasks_.begin(), gestureActiveMasks_.end(), 0);
     SeedCachedKnobAndUiDisplayState();
 }
 
@@ -999,11 +1024,8 @@ void Parameter::HandleIncDec(const SceneState& scene, float delta) {
     };
 
     bool armedGesture = false;
-    for (std::size_t gestureIx = 0; gestureIx < group_.GestureCount(); ++gestureIx) {
-        if (!group_.Manager().GestureSelected(gestureIx)) {
-            continue;
-        }
-
+    ForEachGestureBit(group_.Manager().gestures_.SelectedMask() & GestureCountMask(group_.GestureCount()),
+                      [&](std::size_t gestureIx) {
         if (blend <= 0.0f) {
             armedGesture = armSelectedGesture(scene.leftScene, gestureIx) || armedGesture;
         } else if (blend >= 1.0f) {
@@ -1014,7 +1036,7 @@ void Parameter::HandleIncDec(const SceneState& scene, float delta) {
                 armedGesture = armSelectedGesture(scene.rightScene, gestureIx) || armedGesture;
             }
         }
-    }
+    });
 
     if (armedGesture) {
         return;
@@ -1022,14 +1044,17 @@ void Parameter::HandleIncDec(const SceneState& scene, float delta) {
 
     float activeEffectiveWeightSum = 0.0f;
     float baseShareNumerator = 0.0f;
-    for (std::size_t gestureIx = 0; gestureIx < group_.GestureCount(); ++gestureIx) {
+    const GestureMask activeGestures =
+        (gestureActiveMasks_[scene.leftScene] | gestureActiveMasks_[scene.rightScene]) &
+        GestureCountMask(group_.GestureCount());
+    ForEachGestureBit(activeGestures, [&](std::size_t gestureIx) {
         const float effectiveWeight = EffectiveGestureWeight(scene, gestureIx, blend);
         if (effectiveWeight == 0.0f) {
-            continue;
+            return;
         }
         activeEffectiveWeightSum += effectiveWeight;
         baseShareNumerator += effectiveWeight * (1.0f - effectiveWeight);
-    }
+    });
 
     if (activeEffectiveWeightSum == 0.0f) {
         ApplySceneDistribution(SceneCenter(scene.leftScene), SceneCenter(scene.rightScene), blend, delta, config_.range);
@@ -1039,16 +1064,16 @@ void Parameter::HandleIncDec(const SceneState& scene, float delta) {
     ApplySceneDistribution(SceneCenter(scene.leftScene), SceneCenter(scene.rightScene), blend,
                            delta * (baseShareNumerator / activeEffectiveWeightSum), config_.range);
 
-    for (std::size_t gestureIx = 0; gestureIx < group_.GestureCount(); ++gestureIx) {
+    ForEachGestureBit(activeGestures, [&](std::size_t gestureIx) {
         const float effectiveWeight = EffectiveGestureWeight(scene, gestureIx, blend);
         if (effectiveWeight == 0.0f) {
-            continue;
+            return;
         }
 
         const float gestureDelta = delta * ((effectiveWeight * effectiveWeight) / activeEffectiveWeightSum);
         ApplySceneDistribution(GestureValue(scene.leftScene, gestureIx), GestureValue(scene.rightScene, gestureIx),
                                blend, gestureDelta, config_.range);
-    }
+    });
 }
 
 void Parameter::RandomizeVisibleValue(const SceneState& scene, float normalized) {
@@ -1226,11 +1251,18 @@ float Parameter::GestureValue(std::size_t sceneIx, std::size_t gestureIx) const 
 }
 
 void Parameter::SetGestureActive(std::size_t sceneIx, std::size_t gestureIx, bool active) {
-    gestureActive_[SceneGestureIndex(sceneIx, gestureIx)] = active ? 1 : 0;
+    (void)SceneGestureIndex(sceneIx, gestureIx);
+    const GestureMask bit = GestureMask{1} << gestureIx;
+    if (active) {
+        gestureActiveMasks_[sceneIx] |= bit;
+    } else {
+        gestureActiveMasks_[sceneIx] &= ~bit;
+    }
 }
 
 bool Parameter::GestureActive(std::size_t sceneIx, std::size_t gestureIx) const {
-    return gestureActive_[SceneGestureIndex(sceneIx, gestureIx)] != 0;
+    (void)SceneGestureIndex(sceneIx, gestureIx);
+    return (gestureActiveMasks_[sceneIx] & (GestureMask{1} << gestureIx)) != 0;
 }
 
 std::span<float> Parameter::CurrentDepths(std::size_t voiceIx) {
@@ -1341,9 +1373,7 @@ float Parameter::EffectiveGestureWeight(const SceneState& scene, std::size_t ges
 
 void Parameter::ResetSceneToDefault(std::size_t sceneIx, float defaultValue) {
     SceneCenter(sceneIx) = defaultValue;
-    for (std::size_t gestureIx = 0; gestureIx < group_.GestureCount(); ++gestureIx) {
-        SetGestureActive(sceneIx, gestureIx, false);
-    }
+    gestureActiveMasks_[sceneIx] = 0;
 }
 
 void Parameter::ResetModulationDepthToNeutral(const SceneState& scene) {
@@ -1390,10 +1420,16 @@ float Parameter::ComputeRawCenter(const SceneState& scene) const {
 
     float weightedMixSum = 0.0f;
     float activeWeightSum = 0.0f;
-    for (std::size_t gestureIx = 0; gestureIx < group_.GestureCount(); ++gestureIx) {
+    const GestureMask activeGestures =
+        (gestureActiveMasks_[scene.leftScene] | gestureActiveMasks_[scene.rightScene]) &
+        GestureCountMask(group_.GestureCount());
+    ForEachGestureBit(activeGestures, [&](std::size_t gestureIx) {
+        if (group_.processingObserver_ != nullptr) {
+            ++group_.processingObserver_->activeGestureVisits;
+        }
         const float effectiveWeight = EffectiveGestureWeight(scene, gestureIx, blend);
         if (effectiveWeight == 0.0f) {
-            continue;
+            return;
         }
 
         const float gestureValue = GestureValue(scene.leftScene, gestureIx) * inverseBlend +
@@ -1401,7 +1437,7 @@ float Parameter::ComputeRawCenter(const SceneState& scene) const {
         const float mix = base * (1.0f - effectiveWeight) + gestureValue * effectiveWeight;
         weightedMixSum += effectiveWeight * mix;
         activeWeightSum += effectiveWeight;
-    }
+    });
 
     if (activeWeightSum == 0.0f) {
         return base;
@@ -1552,8 +1588,8 @@ bool Parameter::HasNonZeroState() const {
             return true;
         }
     }
-    for (const std::uint8_t active : gestureActive_) {
-        if (active != 0) {
+    for (const GestureMask activeMask : gestureActiveMasks_) {
+        if (activeMask != 0) {
             return true;
         }
     }
@@ -1603,8 +1639,8 @@ bool Parameter::HasNonDefaultState() const {
             return true;
         }
     }
-    for (const std::uint8_t active : gestureActive_) {
-        if (active != 0) {
+    for (const GestureMask activeMask : gestureActiveMasks_) {
+        if (activeMask != 0) {
             return true;
         }
     }
@@ -1646,28 +1682,20 @@ bool Parameter::HasNonDefaultState() const {
     return false;
 }
 
-std::uint32_t Parameter::GesturesAffectingMask() const {
-    std::uint32_t mask = 0;
+GestureMask Parameter::GesturesAffectingMask() const {
     const SceneState& scene = group_.Manager().Scene();
     const float blend = std::clamp(scene.blend, 0.0f, 1.0f);
-    const std::size_t count = std::min<std::size_t>(group_.GestureCount(), 32);
     const bool leftSceneValid = scene.leftScene < group_.Config().numScenes;
     const bool rightSceneValid = scene.rightScene < group_.Config().numScenes;
-    for (std::size_t gestureIx = 0; gestureIx < count; ++gestureIx) {
-        bool active = false;
-        if (blend <= 0.0f) {
-            active = leftSceneValid && GestureActive(scene.leftScene, gestureIx);
-        } else if (blend >= 1.0f) {
-            active = rightSceneValid && GestureActive(scene.rightScene, gestureIx);
-        } else {
-            active = (leftSceneValid && GestureActive(scene.leftScene, gestureIx)) ||
-                     (rightSceneValid && GestureActive(scene.rightScene, gestureIx));
-        }
-        if (active) {
-            mask |= (std::uint32_t{1} << gestureIx);
-        }
+    if (blend <= 0.0f) {
+        return leftSceneValid ? gestureActiveMasks_[scene.leftScene] & GestureCountMask(group_.GestureCount()) : 0;
     }
-    return mask;
+    if (blend >= 1.0f) {
+        return rightSceneValid ? gestureActiveMasks_[scene.rightScene] & GestureCountMask(group_.GestureCount()) : 0;
+    }
+    const GestureMask leftMask = leftSceneValid ? gestureActiveMasks_[scene.leftScene] : 0;
+    const GestureMask rightMask = rightSceneValid ? gestureActiveMasks_[scene.rightScene] : 0;
+    return (leftMask | rightMask) & GestureCountMask(group_.GestureCount());
 }
 
 void ParameterGroup::SelectGesture(std::size_t gestureIx) {
@@ -1888,8 +1916,8 @@ Parameter* Bank::TargetParameter() const {
     return ShowingModulation() ? selected_ : nullptr;
 }
 
-std::uint32_t Bank::GesturesAffectingMask() const {
-    std::uint32_t mask = 0;
+GestureMask Bank::GesturesAffectingMask() const {
+    GestureMask mask = 0;
     for (const Cell& cell : topLevel_) {
         if (cell.parameter != nullptr) {
             mask |= cell.parameter->GesturesAffectingMask();
@@ -2146,7 +2174,7 @@ bool ParameterMessageOutBus::Pop(ParameterMessageOut& message) {
 }
 
 bool ParameterManager::SetGestureCount(std::size_t count) {
-    if (!groups_.empty()) {
+    if (count > std::numeric_limits<GestureMask>::digits || !groups_.empty()) {
         return false;
     }
     gestures_ = Gestures(count);
@@ -2789,11 +2817,11 @@ void ParameterManager::PopulateUIState(UIState& state) const {
     }
     const std::size_t compactBankCount = std::min<std::size_t>({state.bankCapacity, banks_.size(), 32});
     for (std::size_t bankIx = 0; bankIx < compactBankCount; ++bankIx) {
-        const std::uint32_t affecting = banks_[bankIx]->GesturesAffectingMask();
+        const GestureMask affecting = banks_[bankIx]->GesturesAffectingMask();
         for (std::size_t gestureIx = 0;
-             gestureIx < std::min<std::size_t>(state.gestures.gestureCapacity, 32);
+             gestureIx < std::min<std::size_t>(state.gestures.gestureCapacity, 64);
              ++gestureIx) {
-            if ((affecting & (std::uint32_t{1} << gestureIx)) == 0) {
+            if ((affecting & (GestureMask{1} << gestureIx)) == 0) {
                 continue;
             }
             std::uint32_t mask = state.gestures.bankAffectingMask[gestureIx].load(std::memory_order_relaxed);

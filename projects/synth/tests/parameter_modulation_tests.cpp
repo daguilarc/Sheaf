@@ -466,6 +466,62 @@ TEST_CASE(manager_gesture_count_is_fixed_before_groups) {
     REQUIRE_TRUE(!manager.SetGestureCount(3));
 }
 
+TEST_CASE(manager_gesture_count_supports_zero_through_64_and_rejects_65_without_mutation) {
+    for (const std::size_t count : {std::size_t{0}, std::size_t{1}, std::size_t{32},
+                                    std::size_t{33}, std::size_t{64}}) {
+        synth::ParameterManager manager;
+        REQUIRE_TRUE(manager.SetGestureCount(count));
+        REQUIRE_TRUE(manager.GestureCount() == count);
+        if (count != 0) {
+            manager.SelectGesture(count - 1);
+            REQUIRE_TRUE(manager.GestureSelected(count - 1));
+        }
+    }
+
+    synth::ParameterManager manager;
+    REQUIRE_TRUE(manager.SetGestureCount(64));
+    manager.SelectGesture(63);
+    REQUIRE_TRUE(manager.GestureSelected(63));
+    REQUIRE_TRUE(!manager.SetGestureCount(65));
+    REQUIRE_TRUE(manager.GestureCount() == 64);
+    REQUIRE_TRUE(manager.GestureSelected(63));
+
+    bool threw = false;
+    try {
+        (void)synth::Gestures(65);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    REQUIRE_TRUE(threw);
+}
+
+TEST_CASE(gesture_masks_visit_only_active_bits_through_index_63) {
+    synth::ParameterManager manager;
+    REQUIRE_TRUE(manager.SetGestureCount(64));
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numScenes = 2,
+        .maxParameters = 1,
+        .processLiteAlpha = 1.0f,
+        .targetCenterAlpha = 1.0f,
+    });
+    auto& parameter = manager.CreateParameter(group, {.name = "Gesture sparse", .defaultValue = 0.25f});
+    synth::ParameterProcessingObserver work{};
+    group.SetProcessingObserverForTests(&work);
+
+    parameter.Compute(manager.Scene());
+    REQUIRE_TRUE(work.activeGestureVisits == 0);
+
+    parameter.SetGestureActive(0, 63, true);
+    parameter.GestureValue(0, 63) = 0.75f;
+    manager.SetGestureValue(63, 1.0f);
+    parameter.Compute(manager.Scene());
+    REQUIRE_TRUE(work.activeGestureVisits == 1);
+    REQUIRE_TRUE((parameter.GesturesAffectingMask() & (std::uint64_t{1} << 63)) != 0);
+    parameter.ProcessLite();
+    REQUIRE_NEAR(parameter.GetRaw(0), 0.75f, 0.000001f);
+}
+
 TEST_CASE(validated_scene_endpoint_setter_preserves_state_on_reject) {
     synth::ParameterManager manager;
     manager.SetGestureCount(1);
@@ -2077,9 +2133,9 @@ TEST_CASE(parameter_ui_state_clears_semantic_colors_when_disconnected) {
     REQUIRE_TRUE(state.gestureColors[0].Load() == synth::Color::Off);
 }
 
-TEST_CASE(ui_state_reports_affecting_masks_for_first_32_indices) {
+TEST_CASE(ui_state_reports_affecting_masks_through_gesture_index_63) {
     synth::ParameterManager manager;
-    manager.SetGestureCount(33);
+    manager.SetGestureCount(64);
     auto& group = manager.CreateGroup({
         .numVoices = 1,
         .numModulators = 33,
@@ -2096,8 +2152,10 @@ TEST_CASE(ui_state_reports_affecting_masks_for_first_32_indices) {
     parameter.SetGestureActive(0, 0, true);
     parameter.SetGestureActive(0, 31, true);
     parameter.SetGestureActive(0, 32, true);
+    parameter.SetGestureActive(0, 63, true);
     parameter.SetGestureActive(1, 1, true);
     parameter.SetGestureActive(1, 31, true);
+    parameter.SetGestureActive(1, 32, true);
 
     synth::Parameter::UIState ui(1);
     REQUIRE_TRUE(manager.SetSceneEndpoints(0, 1));
@@ -2105,15 +2163,22 @@ TEST_CASE(ui_state_reports_affecting_masks_for_first_32_indices) {
     manager.SetSceneBlend(0.0f);
     parameter.PopulateUIState(ui);
     REQUIRE_TRUE(ui.modulatorsAffectingMask.load() == (1u << 31));
-    REQUIRE_TRUE(ui.gesturesAffectingMask.load() == ((1u << 0) | (1u << 31)));
+    REQUIRE_TRUE(ui.gesturesAffectingMask.load() ==
+                 ((std::uint64_t{1} << 0) | (std::uint64_t{1} << 31) |
+                  (std::uint64_t{1} << 32) | (std::uint64_t{1} << 63)));
 
     manager.SetSceneBlend(1.0f);
     parameter.PopulateUIState(ui);
-    REQUIRE_TRUE(ui.gesturesAffectingMask.load() == ((1u << 1) | (1u << 31)));
+    REQUIRE_TRUE(ui.gesturesAffectingMask.load() ==
+                 ((std::uint64_t{1} << 1) | (std::uint64_t{1} << 31) |
+                  (std::uint64_t{1} << 32)));
 
     manager.SetSceneBlend(0.5f);
     parameter.PopulateUIState(ui);
-    REQUIRE_TRUE(ui.gesturesAffectingMask.load() == ((1u << 0) | (1u << 1) | (1u << 31)));
+    REQUIRE_TRUE(ui.gesturesAffectingMask.load() ==
+                 ((std::uint64_t{1} << 0) | (std::uint64_t{1} << 1) |
+                  (std::uint64_t{1} << 31) | (std::uint64_t{1} << 32) |
+                  (std::uint64_t{1} << 63)));
 }
 
 TEST_CASE(ui_state_ignores_inactive_depth_gesture_values_for_modulator_mask) {
@@ -2645,7 +2710,7 @@ TEST_CASE(handle_inc_dec_saturation_solve_matches_smart_grid) {
 
 TEST_CASE(selected_gesture_activation_snapshots_parent_value) {
     synth::ParameterManager manager;
-    manager.SetGestureCount(2);
+    manager.SetGestureCount(64);
     auto& group = manager.CreateGroup({
         .numVoices = 1,
         .numModulators = 0,
@@ -2656,16 +2721,16 @@ TEST_CASE(selected_gesture_activation_snapshots_parent_value) {
     auto& parameter = manager.CreateParameter(group, {.name = "Gesture", .defaultValue = 0.1f});
     parameter.SceneCenter(0) = 0.25f;
     parameter.SceneCenter(1) = 0.75f;
-    parameter.GestureValue(0, 0) = 0.9f;
-    parameter.GestureValue(1, 0) = 0.9f;
-    manager.SelectGesture(0);
+    parameter.GestureValue(0, 63) = 0.9f;
+    parameter.GestureValue(1, 63) = 0.9f;
+    manager.SelectGesture(63);
 
     parameter.HandleIncDec({.leftScene = 0, .rightScene = 1, .blend = 0.0f}, 0.0f);
 
-    REQUIRE_TRUE(parameter.GestureActive(0, 0));
-    REQUIRE_TRUE(!parameter.GestureActive(1, 0));
-    REQUIRE_NEAR(parameter.GestureValue(0, 0), 0.25f, 0.0001f);
-    REQUIRE_NEAR(parameter.GestureValue(1, 0), 0.9f, 0.0001f);
+    REQUIRE_TRUE(parameter.GestureActive(0, 63));
+    REQUIRE_TRUE(!parameter.GestureActive(1, 63));
+    REQUIRE_NEAR(parameter.GestureValue(0, 63), 0.25f, 0.0001f);
+    REQUIRE_NEAR(parameter.GestureValue(1, 63), 0.9f, 0.0001f);
 }
 
 TEST_CASE(selected_inactive_gesture_first_turn_arms_without_applying_delta) {
@@ -2716,7 +2781,7 @@ TEST_CASE(selected_zero_weight_gesture_first_turn_arms_without_applying_delta) {
 
 TEST_CASE(active_high_gesture_distributes_after_deselection) {
     synth::ParameterManager manager;
-    manager.SetGestureCount(1);
+    manager.SetGestureCount(64);
     auto& group = manager.CreateGroup({
         .numVoices = 1,
         .numModulators = 0,
@@ -2725,18 +2790,18 @@ TEST_CASE(active_high_gesture_distributes_after_deselection) {
     });
     auto& parameter = manager.CreateParameter(group, {.name = "Gesture", .defaultValue = 0.25f});
     parameter.SceneCenter(0) = 0.25f;
-    parameter.GestureValue(0, 0) = 0.9f;
-    parameter.SetGestureActive(0, 0, true);
-    manager.SetGestureValue(0, 1.0f);
-    manager.DeselectGesture(0);
+    parameter.GestureValue(0, 63) = 0.9f;
+    parameter.SetGestureActive(0, 63, true);
+    manager.SetGestureValue(63, 1.0f);
+    manager.DeselectGesture(63);
 
     const synth::SceneState scene{.leftScene = 0, .rightScene = 0, .blend = 0.0f};
     parameter.HandleIncDec(scene, 0.2f);
 
-    REQUIRE_TRUE(parameter.GestureActive(0, 0));
-    REQUIRE_TRUE(!manager.GestureSelected(0));
+    REQUIRE_TRUE(parameter.GestureActive(0, 63));
+    REQUIRE_TRUE(!manager.GestureSelected(63));
     REQUIRE_NEAR(parameter.SceneCenter(0), 0.25f, 0.0001f);
-    REQUIRE_NEAR(parameter.GestureValue(0, 0), 1.0f, 0.0001f);
+    REQUIRE_NEAR(parameter.GestureValue(0, 63), 1.0f, 0.0001f);
 }
 
 TEST_CASE(selected_gesture_weight_one_edits_gesture_without_moving_base) {
@@ -4091,6 +4156,48 @@ TEST_CASE(message_bus_set_reset_and_set_gesture_select_are_idempotent) {
     REQUIRE_TRUE(!manager.GestureSelected(1));
 }
 
+TEST_CASE(message_bus_and_patch_round_trip_gesture_indices_32_and_63) {
+    synth::ParameterManager source;
+    REQUIRE_TRUE(source.SetGestureCount(64));
+    auto& sourceGroup = source.CreateGroup({
+        .numVoices = 1,
+        .numScenes = 1,
+        .maxParameters = 1,
+        .targetCenterAlpha = 1.0f,
+    });
+    auto& sourceParameter = source.CreateParameter(sourceGroup, {.name = "High gestures", .defaultValue = 0.25f});
+    synth::MessageInBus bus(&source, 8);
+    REQUIRE_TRUE(bus.Push(synth::MessageIn::SetGestureSelect(0, 32, true)));
+    REQUIRE_TRUE(bus.Push(synth::MessageIn::SetGestureSelect(0, 63, true)));
+    REQUIRE_TRUE(bus.Push(synth::MessageIn::SetGestureValue(0, 32, 0.4f)));
+    REQUIRE_TRUE(bus.Push(synth::MessageIn::SetGestureValue(0, 63, 0.8f)));
+    bus.Process(0);
+    REQUIRE_TRUE(source.GestureSelected(32));
+    REQUIRE_TRUE(source.GestureSelected(63));
+
+    sourceParameter.GestureValue(0, 32) = 0.45f;
+    sourceParameter.GestureValue(0, 63) = 0.85f;
+    sourceParameter.SetGestureActive(0, 32, true);
+    sourceParameter.SetGestureActive(0, 63, true);
+
+    synth::JsonArena arena(65536);
+    const synth::JSON saved = source.ParameterValuesToJSON(arena);
+    synth::ParameterManager target;
+    REQUIRE_TRUE(target.SetGestureCount(64));
+    auto& targetGroup = target.CreateGroup({
+        .numVoices = 1,
+        .numScenes = 1,
+        .maxParameters = 1,
+        .targetCenterAlpha = 1.0f,
+    });
+    auto& targetParameter = target.CreateParameter(targetGroup, {.name = "High gestures", .defaultValue = 0.25f});
+    REQUIRE_TRUE(target.LoadParameterValuesFromJSON(saved));
+    REQUIRE_NEAR(targetParameter.GestureValue(0, 32), 0.45f, 0.000001f);
+    REQUIRE_NEAR(targetParameter.GestureValue(0, 63), 0.85f, 0.000001f);
+    REQUIRE_TRUE(targetParameter.GestureActive(0, 32));
+    REQUIRE_TRUE(targetParameter.GestureActive(0, 63));
+}
+
 TEST_CASE(manager_tracks_reset_random_and_random_mod_precedence) {
     synth::ParameterManager manager;
     REQUIRE_TRUE(manager.GetCurrentModifier() == synth::Modifier::None);
@@ -4168,7 +4275,7 @@ TEST_CASE(manager_random_source_hooks_are_deterministic_and_bounded) {
 
 TEST_CASE(manager_ui_state_reports_bank_colors_selection_and_gesture_affecting) {
     synth::ParameterManager manager;
-    manager.SetGestureCount(4);
+    manager.SetGestureCount(64);
     auto& group = manager.CreateGroup({
         .numVoices = 1,
         .numScenes = 2,
@@ -4178,6 +4285,7 @@ TEST_CASE(manager_ui_state_reports_bank_colors_selection_and_gesture_affecting) 
     auto& unaffected = manager.CreateParameter(group, {.name = "B", .defaultValue = 0.5f});
     auto& drillHidden = manager.CreateParameter(group, {.name = "C", .defaultValue = 0.75f});
     affected.SetGestureActive(0, 0, true);
+    affected.SetGestureActive(0, 63, true);
     unaffected.SetGestureActive(0, 1, true);
     drillHidden.SetGestureActive(0, 2, true);
 
@@ -4200,7 +4308,7 @@ TEST_CASE(manager_ui_state_reports_bank_colors_selection_and_gesture_affecting) 
     REQUIRE_TRUE(bankA.ShowingModulation());
 
     synth::ParameterManager::UIState ui;
-    ui.Configure(1, 2, 1, 0, 4, 4);
+    ui.Configure(1, 2, 1, 0, 64, 4);
     manager.PopulateUIState(ui);
 
     REQUIRE_TRUE(ui.bankCapacity == 4);
@@ -4224,6 +4332,8 @@ TEST_CASE(manager_ui_state_reports_bank_colors_selection_and_gesture_affecting) 
     REQUIRE_TRUE(ui.gestures.bankAffectingMask[2].load() == (1u << 0u));
     REQUIRE_TRUE(ui.gestures.bankAffectingCount[3].load() == 0);
     REQUIRE_TRUE(ui.gestures.bankAffectingMask[3].load() == 0);
+    REQUIRE_TRUE(ui.gestures.bankAffectingCount[63].load() == 2);
+    REQUIRE_TRUE(ui.gestures.bankAffectingMask[63].load() == ((1u << 0u) | (1u << 2u)));
 }
 
 TEST_CASE(message_bus_routes_modulation_target_position_to_visible_parameter) {
@@ -6333,8 +6443,8 @@ std::uint32_t SimModulatorsAffectingMask(const SimOracle& oracle, const SimParam
     return mask;
 }
 
-std::uint32_t SimGesturesAffectingMask(const SimOracle& oracle, const SimParam& parameter) {
-    std::uint32_t mask = 0;
+synth::GestureMask SimGesturesAffectingMask(const SimOracle& oracle, const SimParam& parameter) {
+    synth::GestureMask mask = 0;
     const float blend = std::clamp(oracle.scene.blend, 0.0f, 1.0f);
     for (std::size_t gestureIx = 0; gestureIx < std::min<std::size_t>(kSimGestures, 32); ++gestureIx) {
         bool active = false;
@@ -6347,7 +6457,7 @@ std::uint32_t SimGesturesAffectingMask(const SimOracle& oracle, const SimParam& 
                      parameter.gestureActive[oracle.scene.rightScene][gestureIx];
         }
         if (active) {
-            mask |= (std::uint32_t{1} << gestureIx);
+            mask |= (synth::GestureMask{1} << gestureIx);
         }
     }
     return mask;
@@ -7042,7 +7152,7 @@ void SimCheckUIState(const SimOracle& oracle, const synth::ParameterManager::UIS
             }
             const std::size_t expectedSwitchValues = expected.switchValues;
             const std::uint32_t expectedModulatorMask = SimModulatorsAffectingMask(oracle, expected);
-            const std::uint32_t expectedGestureMask = SimGesturesAffectingMask(oracle, expected);
+            const synth::GestureMask expectedGestureMask = SimGesturesAffectingMask(oracle, expected);
             if (actual.switchValues.load() != expectedSwitchValues) {
                 SimFailBool(seed, step, action, "ui position=" + std::to_string(position) + " switch values");
             }

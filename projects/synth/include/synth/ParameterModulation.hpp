@@ -27,6 +27,7 @@ namespace synth {
 using ParameterId = std::uint32_t;
 using PhysicalEncoderId = std::uint32_t;
 using PageOrdinal = std::uint32_t;
+using GestureMask = std::uint64_t;
 
 struct AtomicColor {
     AtomicColor() = default;
@@ -193,7 +194,7 @@ struct ParameterStorageBatch {
     std::vector<Parameter*> modulationDepthArena;
     std::vector<float> sceneCenterArena;
     std::vector<float> gestureValueArena;
-    std::vector<std::uint8_t> gestureActiveArena;
+    std::vector<GestureMask> gestureActiveMaskArena;
 };
 
 std::unique_ptr<ParameterStorageBatch> MakeParameterStorageBatch(const ParameterGroupConfig& config,
@@ -262,6 +263,7 @@ public:
     float Value(std::size_t gestureIx) const;
     void Select(std::size_t gestureIx, bool selected);
     bool Selected(std::size_t gestureIx) const;
+    GestureMask SelectedMask() const { return selectedMask_; }
     void ClearSelection();
 
     std::size_t NumGestures() const { return values_.size(); }
@@ -275,7 +277,7 @@ private:
     void CheckIndex(std::size_t gestureIx) const;
 
     std::vector<float> values_;
-    std::vector<bool> selected_;
+    GestureMask selectedMask_ = 0;
     std::vector<GestureMetadata> metadata_;
 };
 
@@ -349,7 +351,7 @@ private:
     std::vector<Parameter*> modulationDepthArena_;
     std::vector<float> sceneCenterArena_;
     std::vector<float> gestureValueArena_;
-    std::vector<std::uint8_t> gestureActiveArena_;
+    std::vector<GestureMask> gestureActiveMaskArena_;
 };
 
 class Parameter {
@@ -376,7 +378,7 @@ public:
         std::atomic<bool> bipolar{false};
         std::atomic<std::size_t> switchValues{0};
         std::atomic<std::uint32_t> modulatorsAffectingMask{0};
-        std::atomic<std::uint32_t> gesturesAffectingMask{0};
+        std::atomic<GestureMask> gesturesAffectingMask{0};
         AtomicColor baseColor;
         std::atomic<synth::ui::Visualizer*> visualizer{nullptr};
         std::atomic<const char*> shortName{nullptr};
@@ -434,7 +436,7 @@ public:
     float GestureValue(std::size_t sceneIx, std::size_t gestureIx) const;
     void SetGestureActive(std::size_t sceneIx, std::size_t gestureIx, bool active);
     bool GestureActive(std::size_t sceneIx, std::size_t gestureIx) const;
-    std::uint32_t GesturesAffectingMask() const;
+    GestureMask GesturesAffectingMask() const;
 
     std::span<float> CurrentDepths(std::size_t voiceIx);
     std::span<const float> CurrentDepths(std::size_t voiceIx) const;
@@ -494,7 +496,7 @@ private:
     std::span<Parameter*> modulationDepths_;
     std::span<float> sceneCenters_;
     std::span<float> gestureValues_;
-    std::span<std::uint8_t> gestureActive_;
+    std::span<GestureMask> gestureActiveMasks_;
 };
 
 class Bank {
@@ -526,7 +528,7 @@ public:
     VisibleCell VisibleCellFor(PhysicalEncoderId encoderId) const;
     Parameter* SelectedParameter() const { return selected_; }
     Parameter* TargetParameter() const;
-    std::uint32_t GesturesAffectingMask() const;
+    GestureMask GesturesAffectingMask() const;
 
 private:
     friend class BankSlot;
@@ -770,6 +772,8 @@ public:
     bool RequestParameterStorageBatch(ParameterGroup& group, std::size_t minimumAdditionalParameters);
 
 private:
+    friend class Parameter;
+
     Page* FindPage(PageOrdinal ordinal);
     const Page* FindPage(PageOrdinal ordinal) const;
     bool SceneEndpointsValid(std::size_t leftScene, std::size_t rightScene) const;

@@ -438,6 +438,20 @@ int main()
     Require(snapshotEncoder.gestureColors == std::vector<synth::Color>{synth::Color::Orange},
             "encoder uses snapshot gesture badge colors");
 
+    Require(synth::ui::EncoderGeometry::BadgeText(false, 16) == "17", "gesture 16 badge is one-based");
+    Require(synth::ui::EncoderGeometry::BadgeText(false, 62) == "63", "gesture 62 badge is one-based");
+    Require(synth::ui::EncoderGeometry::BadgeText(false, 63) == "64", "gesture 63 badge is one-based");
+    synth::ui::EncoderDrawState highGestureEncoder;
+    highGestureEncoder.connected = true;
+    highGestureEncoder.gesturesAffectingMask = std::uint64_t{1} << 63;
+    highGestureEncoder.gestureColors.resize(64, synth::Color::Orange);
+    const auto highGestureCommands = synth::ui::BuildEncoderDrawCommands(
+        highGestureEncoder, {0.0f, 0.0f, 128.0f, 128.0f});
+    Require(std::any_of(highGestureCommands.begin(), highGestureCommands.end(), [](const auto& command) {
+                return command.kind == synth::ui::DrawCommand::Kind::Text && command.text == "64";
+            }),
+            "encoder renders gesture 63 as badge 64");
+
     static_assert(synth::SynthApplication<TestApp>);
     static_assert(!synth::ui::kPortableUiUsesJuce);
     static_assert(std::is_same_v<decltype(synth::ui::WaveformLayerDrawState::scope), const synth::ScopeWriter*>);
