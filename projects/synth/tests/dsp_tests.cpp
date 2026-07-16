@@ -305,11 +305,11 @@ TEST_CASE(standard_modulators_defaults_match_min16_contract) {
         const double waitingMean = waitingMeans[random];
         const auto& input = config.randomInputs[random];
         REQUIRE_NEAR(input.waiting.muSeconds, waitingMean, 1.0e-12);
-        REQUIRE_NEAR(input.waiting.sigmaSeconds, 0.1 * waitingMean, 1.0e-12);
-        REQUIRE_NEAR(input.waiting.internalSigmaHz, 0.1 / waitingMean, 1.0e-12);
+        REQUIRE_NEAR(input.waiting.sigmaSeconds, 0.3 * waitingMean, 1.0e-12);
+        REQUIRE_NEAR(input.waiting.internalSigmaHz, 0.2 / waitingMean, 1.0e-12);
         REQUIRE_NEAR(input.moving.muSeconds, waitingMean / 2.0, 1.0e-12);
-        REQUIRE_NEAR(input.moving.sigmaSeconds, 0.05 * waitingMean, 1.0e-12);
-        REQUIRE_NEAR(input.moving.internalSigmaHz, 0.2 / waitingMean, 1.0e-12);
+        REQUIRE_NEAR(input.moving.sigmaSeconds, 0.15 * waitingMean, 1.0e-12);
+        REQUIRE_NEAR(input.moving.internalSigmaHz, 0.4 / waitingMean, 1.0e-12);
         REQUIRE_NEAR(input.targetInternalSigma, targetSigmas[random], 1.0e-7);
     }
 

@@ -872,11 +872,11 @@ TEST_CASE(miniapp_registers_standard_fifteen_source_topology_without_changing_pe
     auto& standard = core.StandardModulatorsInstance();
     const auto& input = static_cast<const synth::StandardModulators<2>&>(standard).RandomInput(0);
     REQUIRE_TRUE(input.waiting.muSeconds == 0.5);
-    REQUIRE_TRUE(input.waiting.sigmaSeconds == 0.05);
-    REQUIRE_TRUE(input.waiting.internalSigmaHz == 0.2);
+    REQUIRE_TRUE(input.waiting.sigmaSeconds == 0.15);
+    REQUIRE_TRUE(input.waiting.internalSigmaHz == 0.4);
     REQUIRE_TRUE(input.moving.muSeconds == 0.25);
-    REQUIRE_TRUE(input.moving.sigmaSeconds == 0.025);
-    REQUIRE_TRUE(input.moving.internalSigmaHz == 0.4);
+    REQUIRE_TRUE(input.moving.sigmaSeconds == 0.075);
+    REQUIRE_TRUE(input.moving.internalSigmaHz == 0.8);
     REQUIRE_TRUE(input.targetInternalSigma == 0.1f);
     REQUIRE_TRUE(standard.RandomProcessor(0).VoiceColor(0) == synth::Color::Cyan);
     REQUIRE_TRUE(standard.RandomProcessor(0).VoiceColor(1) == synth::Color::Orange);

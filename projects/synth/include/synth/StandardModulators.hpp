@@ -216,13 +216,13 @@ private:
         return {
             .waiting = {
                 .muSeconds = waitingMean,
-                .sigmaSeconds = 0.1 * waitingMean,
-                .internalSigmaHz = 0.1 / waitingMean,
+                .sigmaSeconds = 0.3 * waitingMean,
+                .internalSigmaHz = 0.2 / waitingMean,
             },
             .moving = {
                 .muSeconds = waitingMean / 2.0,
-                .sigmaSeconds = 0.05 * waitingMean,
-                .internalSigmaHz = 0.2 / waitingMean,
+                .sigmaSeconds = 0.15 * waitingMean,
+                .internalSigmaHz = 0.4 / waitingMean,
             },
             .targetInternalSigma = targetSigma,
         };
