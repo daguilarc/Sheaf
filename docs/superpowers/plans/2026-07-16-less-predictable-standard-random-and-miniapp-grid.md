@@ -144,7 +144,6 @@ git commit -m "feat(synth): broaden standard random timing variance"
 - Modify: `projects/synth/tests/miniapp_system_tests.cpp`
 - Modify: `projects/synth/apps/miniapp/MiniAppUiModel.hpp`
 - Modify: `projects/synth/apps/miniapp/MiniAppUI.hpp`
-- Modify: `projects/synth/apps/miniapp/MiniAppDraw.hpp`
 - Modify: `projects/synth/juce/PortableDrawGeometryTests.cpp`
 
 **Step 1: Write failing portable layout and routing tests**
@@ -182,7 +181,7 @@ In `MiniAppUiModel.hpp`:
 - clamp computed widths/heights with `std::max(0.0f, ...)` so both target sizes stay bounded;
 - remove `MiniAppNodeIds::kGangedRandomLfoRound` and the MiniApp-only main-panel snapshot/build helpers if no remaining production caller uses them.
 
-In `MiniAppUI.hpp`, build only the VCO and LFO draw nodes in the left stack and build all sixteen encoder nodes in the right grid. Preserve row-major position mapping and the existing disconnected-cell builder behavior. In `MiniAppDraw.hpp`, delete only the now-unused MiniApp main-panel wrapper; keep shared standard-modulator visualizer support intact.
+In `MiniAppUI.hpp`, build only the VCO and LFO draw nodes in the left stack and build all sixteen encoder nodes in the right grid. Preserve row-major position mapping and the existing disconnected-cell builder behavior. Keep the test-only `MiniAppDraw.hpp` wrapper until Task 4 removes it together with its remaining portable/browser callers, so every task commit remains buildable.
 
 **Step 4: Run the focused tests to prove GREEN**
 
@@ -201,7 +200,6 @@ Expected: both pass at the new layout contract.
 ```bash
 git add projects/synth/apps/miniapp/MiniAppUiModel.hpp \
   projects/synth/apps/miniapp/MiniAppUI.hpp \
-  projects/synth/apps/miniapp/MiniAppDraw.hpp \
   projects/synth/tests/miniapp_system_tests.cpp \
   projects/synth/juce/PortableDrawGeometryTests.cpp
 git commit -m "feat(synth): show miniapp full encoder grid"
@@ -210,6 +208,7 @@ git commit -m "feat(synth): show miniapp full encoder grid"
 ### Task 4: Update browser/JUCE parity and coverage, then run the complete gate
 
 **Files:**
+- Modify: `projects/synth/apps/miniapp/MiniAppDraw.hpp`
 - Modify: `projects/synth/tests/browser_command_buffer_tests.cpp`
 - Modify: `projects/synth/tests/portable_ui_tests.cpp`
 - Modify: `projects/synth/juce/MiniAppJuceBackendParityTests.cpp`
@@ -221,6 +220,8 @@ git commit -m "feat(synth): show miniapp full encoder grid"
 Replace `TestMiniAppThreePanelCommandsUseExistingBrowserSchema` with a two-scope MiniApp command-tree test that verifies VCO and LFO commands serialize at the unchanged command-buffer version with no diagnostics. Keep `TestPredictiveGangedLfoUsesExistingDrawSchema` and standard-modulator underlay tests unchanged because they cover the retained generic visualizer path.
 
 Remove the MiniApp-only `BuildGangedRandomLfoPanelCommands` wrapper assertions from `portable_ui_tests.cpp`; retain all generic `BuildGangedRandomLfoCommands`, snapshot, fail-closed, and modulation-underlay coverage.
+
+Now delete the unused MiniApp-only `BuildGangedRandomLfoPanelCommands` wrapper from `MiniAppDraw.hpp`; generic standard-modulator visualizer code remains unchanged.
 
 In `MiniAppJuceBackendParityTests.cpp`, assert:
 
@@ -266,6 +267,7 @@ Then mark the OpenSpec final verification item complete and rerun strict validat
 
 ```bash
 git add projects/synth/tests/browser_command_buffer_tests.cpp \
+  projects/synth/apps/miniapp/MiniAppDraw.hpp \
   projects/synth/tests/portable_ui_tests.cpp \
   projects/synth/juce/MiniAppJuceBackendParityTests.cpp \
   projects/synth/docs/coverage.md \
