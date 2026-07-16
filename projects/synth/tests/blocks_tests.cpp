@@ -95,6 +95,8 @@ bool MessageInFullyEquivalent(const MessageIn& a, const MessageIn& b) {
     switch (a.type) {
         case MessageIn::Type::ParamIncDec:
             return a.slotIx == b.slotIx && a.position == b.position && a.delta == b.delta;
+        case MessageIn::Type::ParamSetAbsolute:
+            return a.slotIx == b.slotIx && a.position == b.position && a.value == b.value;
         case MessageIn::Type::ParamPush:
             return a.slotIx == b.slotIx && a.position == b.position;
         case MessageIn::Type::ToggleReset:
@@ -220,9 +222,27 @@ TEST_CASE(SortKeyOrdersByMessageTypeDeclarationOrder) {
 
     const auto sceneKey = ComputeSystemMessageSortKey(sceneAssoc, MidiProfileKind::Generic);
     const auto bankKey = ComputeSystemMessageSortKey(bankAssoc, MidiProfileKind::Generic);
-    // SelectParamBank (7) precedes SceneSelect (12) in MessageIn::Type's
+    // SelectParamBank (8) precedes SceneSelect (13) in MessageIn::Type's
     // declaration order.
     REQUIRE_TRUE(bankKey < sceneKey);
+}
+
+TEST_CASE(SortKeyIncludesAbsolutePayloadAddressAdjacentToRelativeTurns) {
+    MidiControllerSystemMessageAssociation relative;
+    relative.control = MidiControlAddress{.channel = 0, .cc = 0};
+    relative.press = MessageIn::ParamIncDec(0, 2, 3, 0.1f);
+    relative.feedback = relative.press;
+
+    MidiControllerSystemMessageAssociation absolute;
+    absolute.control = MidiControlAddress{.channel = 0, .cc = 0};
+    absolute.press = MessageIn::ParamSetAbsolute(0, 2, 3, 0.75f);
+    absolute.feedback = absolute.press;
+
+    const auto relativeKey = ComputeSystemMessageSortKey(relative, MidiProfileKind::Generic);
+    const auto absoluteKey = ComputeSystemMessageSortKey(absolute, MidiProfileKind::Generic);
+    REQUIRE_TRUE(relativeKey < absoluteKey);
+    REQUIRE_TRUE(absoluteKey.arg1 == 2);
+    REQUIRE_TRUE(absoluteKey.arg2 == 3);
 }
 
 TEST_CASE(SortKeyOrdersSceneSelectByArgument) {

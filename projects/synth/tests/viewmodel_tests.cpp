@@ -3642,6 +3642,8 @@ TEST_CASE(UISystemMessageCatalogExpansionCoversPressAndReleaseSemantics) {
     const Expected expected[] = {
         {UISystemMessage::ParamIncDec, synth::MessageIn::Type::ParamIncDec, false, false,
          synth::MessageIn::Type::Clock, false, true},
+        {UISystemMessage::ParamSetAbsolute, synth::MessageIn::Type::ParamSetAbsolute, false, false,
+         synth::MessageIn::Type::Clock, false, true},
         {UISystemMessage::ParamPush, synth::MessageIn::Type::ParamPush, false, false,
          synth::MessageIn::Type::Clock, false, true},
         {UISystemMessage::ToggleReset, synth::MessageIn::Type::ToggleReset, false, false,

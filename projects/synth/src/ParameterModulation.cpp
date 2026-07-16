@@ -2478,6 +2478,14 @@ void Bank::HandleTick(PhysicalEncoderId encoderId, const SceneState& scene, floa
     cell->parameter->HandleIncDec(scene, delta);
 }
 
+void Bank::HandleSetAbsolute(PhysicalEncoderId encoderId, const SceneState& scene, float normalizedTarget) {
+    Cell* cell = FindVisibleCell(encoderId);
+    if (cell == nullptr || cell->parameter == nullptr) {
+        return;
+    }
+    cell->parameter->HandleSetAbsolute(scene, normalizedTarget);
+}
+
 void Bank::ApplyModifierToTopLevel(Modifier modifier, const SceneState& scene) {
     std::vector<Parameter*> visited;
     visited.reserve(topLevel_.size());
@@ -2764,6 +2772,12 @@ void BankSlot::HandlePress(PhysicalEncoderId encoderId) {
 void BankSlot::HandleTick(PhysicalEncoderId encoderId, const SceneState& scene, float delta) {
     if (Owns(encoderId)) {
         selectedBank_->HandleTick(encoderId, scene, delta);
+    }
+}
+
+void BankSlot::HandleSetAbsolute(PhysicalEncoderId encoderId, const SceneState& scene, float normalizedTarget) {
+    if (Owns(encoderId)) {
+        selectedBank_->HandleSetAbsolute(encoderId, scene, normalizedTarget);
     }
 }
 
@@ -3240,6 +3254,15 @@ void ParameterManager::HandleTick(PhysicalEncoderId encoderId, float delta) {
     }
 }
 
+void ParameterManager::HandleSetAbsolute(PhysicalEncoderId encoderId, float normalizedTarget) {
+    for (const auto& slot : slots_) {
+        if (slot->Owns(encoderId)) {
+            slot->HandleSetAbsolute(encoderId, scene_, normalizedTarget);
+            return;
+        }
+    }
+}
+
 void ParameterManager::HandlePress(std::size_t slotIx, std::size_t position) {
     BankSlot* slot = BankSlotAt(slotIx);
     PhysicalEncoderId encoderId = 0;
@@ -3253,6 +3276,14 @@ void ParameterManager::HandleTick(std::size_t slotIx, std::size_t position, floa
     PhysicalEncoderId encoderId = 0;
     if (slot != nullptr && slot->ResolvePosition(position, encoderId)) {
         slot->HandleTick(encoderId, scene_, delta);
+    }
+}
+
+void ParameterManager::HandleSetAbsolute(std::size_t slotIx, std::size_t position, float normalizedTarget) {
+    BankSlot* slot = BankSlotAt(slotIx);
+    PhysicalEncoderId encoderId = 0;
+    if (slot != nullptr && slot->ResolvePosition(position, encoderId)) {
+        slot->HandleSetAbsolute(encoderId, scene_, normalizedTarget);
     }
 }
 
@@ -3523,6 +3554,17 @@ MessageIn MessageIn::ParamIncDec(std::uint64_t timestamp, std::size_t slotIx, st
     return message;
 }
 
+MessageIn MessageIn::ParamSetAbsolute(std::uint64_t timestamp, std::size_t slotIx, std::size_t position,
+                                      float normalizedValue) {
+    MessageIn message;
+    message.timestamp = timestamp;
+    message.type = Type::ParamSetAbsolute;
+    message.slotIx = slotIx;
+    message.position = position;
+    message.value = normalizedValue;
+    return message;
+}
+
 MessageIn MessageIn::ParamPush(std::uint64_t timestamp, std::size_t slotIx, std::size_t position) {
     MessageIn message;
     message.timestamp = timestamp;
@@ -3684,6 +3726,11 @@ void MessageInBus::Apply(const MessageIn& message) {
     case MessageIn::Type::ParamIncDec:
         if (manager_->GetCurrentModifier() == Modifier::None) {
             manager_->HandleTick(message.slotIx, message.position, message.delta);
+        }
+        break;
+    case MessageIn::Type::ParamSetAbsolute:
+        if (manager_->GetCurrentModifier() == Modifier::None) {
+            manager_->HandleSetAbsolute(message.slotIx, message.position, message.value);
         }
         break;
     case MessageIn::Type::ParamPush:

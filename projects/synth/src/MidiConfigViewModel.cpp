@@ -15,6 +15,7 @@ using Field = MidiMappingRowVM::Field;
 std::optional<std::size_t> PrimaryMessageArg(const MessageIn& message) {
     switch (message.type) {
         case MessageIn::Type::ParamIncDec:
+        case MessageIn::Type::ParamSetAbsolute:
         case MessageIn::Type::ParamPush:
             return message.position;
         case MessageIn::Type::ToggleGestureSelect:
@@ -40,6 +41,7 @@ std::optional<std::size_t> PrimaryMessageArg(const MessageIn& message) {
 bool SetPrimaryMessageArg(MessageIn& message, std::size_t arg) {
     switch (message.type) {
         case MessageIn::Type::ParamIncDec:
+        case MessageIn::Type::ParamSetAbsolute:
         case MessageIn::Type::ParamPush:
             message.position = arg;
             return true;
@@ -69,6 +71,7 @@ bool SetPrimaryMessageArg(MessageIn& message, std::size_t arg) {
 bool UISystemMessageHasArg(UISystemMessage message) {
     switch (message) {
         case UISystemMessage::ParamIncDec:
+        case UISystemMessage::ParamSetAbsolute:
         case UISystemMessage::ParamPush:
         case UISystemMessage::ToggleGestureSelect:
         case UISystemMessage::HoldGestureSelect:
@@ -108,6 +111,8 @@ UISystemMessage UISystemMessageForAssociation(const MidiControllerSystemMessageA
     switch (press.type) {
         case MessageIn::Type::ParamIncDec:
             return UISystemMessage::ParamIncDec;
+        case MessageIn::Type::ParamSetAbsolute:
+            return UISystemMessage::ParamSetAbsolute;
         case MessageIn::Type::ParamPush:
             return UISystemMessage::ParamPush;
         case MessageIn::Type::ToggleReset:
@@ -143,6 +148,8 @@ MessageIn PressForUISystemMessage(UISystemMessage message, const MidiControllerS
     switch (message) {
         case UISystemMessage::ParamIncDec:
             return MessageIn::ParamIncDec(0, previous.press.slotIx, arg, previous.press.delta);
+        case UISystemMessage::ParamSetAbsolute:
+            return MessageIn::ParamSetAbsolute(0, previous.press.slotIx, arg, previous.press.value);
         case UISystemMessage::ParamPush:
             return MessageIn::ParamPush(0, previous.press.slotIx, arg);
         case UISystemMessage::ToggleReset:
@@ -190,6 +197,7 @@ std::optional<MessageIn> ReleaseForUISystemMessage(UISystemMessage message, cons
         case UISystemMessage::HoldGestureSelect:
             return MessageIn::SetGestureSelect(0, press.gestureIx, false);
         case UISystemMessage::ParamIncDec:
+        case UISystemMessage::ParamSetAbsolute:
         case UISystemMessage::ParamPush:
         case UISystemMessage::ToggleReset:
         case UISystemMessage::ToggleRandom:
@@ -348,6 +356,7 @@ const char* FieldShortLabel(MidiMappingRowVM::Field field) {
 const std::vector<UISystemMessageChoice>& UISystemMessageCatalog() {
     static const std::vector<UISystemMessageChoice> catalog = {
         {"Param Inc/Dec", UISystemMessage::ParamIncDec},
+        {"Param Set Absolute", UISystemMessage::ParamSetAbsolute},
         {"Param Push", UISystemMessage::ParamPush},
         {"Toggle Reset", UISystemMessage::ToggleReset},
         {"Hold Reset", UISystemMessage::HoldReset},
@@ -412,6 +421,10 @@ std::string DescribeMessage(const MessageIn& message) {
         case MessageIn::Type::ParamIncDec:
             oss << "param inc/dec slot " << message.slotIx << " pos " << message.position << " delta "
                 << message.delta;
+            break;
+        case MessageIn::Type::ParamSetAbsolute:
+            oss << "param set absolute slot " << message.slotIx << " pos " << message.position << " value "
+                << message.value;
             break;
         case MessageIn::Type::ParamPush:
             oss << "param push slot " << message.slotIx << " pos " << message.position;

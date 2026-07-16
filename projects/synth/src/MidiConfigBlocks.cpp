@@ -73,6 +73,7 @@ SystemMessageSortKey ComputeSystemMessageSortKey(const MidiControllerSystemMessa
             key.boolValue = message.boolValue;
             break;
         case MessageIn::Type::ParamIncDec:
+        case MessageIn::Type::ParamSetAbsolute:
         case MessageIn::Type::ParamPush:
             key.arg1 = message.slotIx;
             key.arg2 = message.position;

@@ -71,14 +71,14 @@ std::vector<SystemAddressField> SystemAddressSchema(MidiProfileKind kind);
 // (NormalizeMidiProfileConfig uses std::stable_sort for exactly this
 // reason).
 struct SystemMessageSortKey {
-    // MessageIn::Type's declaration order (ParamIncDec=0 .. SetSceneBlend=13).
+    // MessageIn::Type's declaration order (ParamIncDec=0 .. SetSceneBlend=14).
     int typeOrder = 0;
     // Per-type semantic arguments (see the table in design.md D2):
     //   SceneSelect:                   arg1 = sceneIx
     //   SelectParamBank:                arg1 = slotIx,   arg2 = bankIx
     //   ToggleGestureSelect/SetGestureSelect: arg1 = gestureIx
     //   ToggleReset/Random/RandomMod:   (no positional args)
-    //   ParamIncDec/ParamPush:          arg1 = slotIx,   arg2 = position
+    //   ParamIncDec/ParamSetAbsolute/ParamPush: arg1 = slotIx, arg2 = position
     //   SetGestureValue:                arg1 = gestureIx
     //   SetSceneBlend/Start/Stop/Clock: (no positional args)
     std::size_t arg1 = 0;

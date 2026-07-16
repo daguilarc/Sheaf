@@ -170,6 +170,7 @@ enum class MidiConfigSection { Encoders, SystemMessages, Analogs };
 
 enum class UISystemMessage {
     ParamIncDec,
+    ParamSetAbsolute,
     ParamPush,
     ToggleReset,
     HoldReset,

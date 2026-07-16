@@ -4503,6 +4503,166 @@ TEST_CASE(message_bus_param_inc_dec_ignores_ticks_while_any_modifier_is_active) 
     REQUIRE_NEAR(parameter.SceneCenter(0), 0.5f, 0.0001f);
 }
 
+TEST_CASE(param_set_absolute_message_constructs_and_round_trips_exact_payload) {
+    const synth::MessageIn source = synth::MessageIn::ParamSetAbsolute(42, 3, 5, 0.625f);
+    REQUIRE_TRUE(source.timestamp == 42);
+    REQUIRE_TRUE(source.type == synth::MessageIn::Type::ParamSetAbsolute);
+    REQUIRE_TRUE(source.slotIx == 3);
+    REQUIRE_TRUE(source.position == 5);
+    REQUIRE_NEAR(source.value, 0.625f, 0.0f);
+
+    synth::JsonArena arena(4096);
+    const synth::JSON json = synth::ToJSON(arena, source);
+    REQUIRE_TRUE(!arena.Failed());
+    REQUIRE_TRUE(std::string_view(json.Get("type").StringValue()) == "paramSetAbsolute");
+    REQUIRE_TRUE(json.Get("slotIx").IntegerValue() == 3);
+    REQUIRE_TRUE(json.Get("position").IntegerValue() == 5);
+    REQUIRE_NEAR(static_cast<float>(json.Get("value").NumberValue()), 0.625f, 0.0f);
+
+    synth::MessageIn loaded;
+    REQUIRE_TRUE(synth::FromJSON(json, loaded));
+    REQUIRE_TRUE(loaded.type == synth::MessageIn::Type::ParamSetAbsolute);
+    REQUIRE_TRUE(loaded.slotIx == 3);
+    REQUIRE_TRUE(loaded.position == 5);
+    REQUIRE_NEAR(loaded.value, 0.625f, 0.0f);
+}
+
+TEST_CASE(param_set_absolute_survives_controller_system_association_round_trip) {
+    synth::MidiControllerProfileConfig profile;
+    synth::MidiControllerSystemMessageAssociation association;
+    association.control = synth::MidiControlAddress{.channel = 2, .cc = 17};
+    association.press = synth::MessageIn::ParamSetAbsolute(0, 4, 6, 0.375f);
+    association.feedback = association.press;
+    association.outputFeedback = false;
+    profile.systemMessages.push_back(association);
+
+    synth::JsonArena arena(16384);
+    const synth::JSON json = synth::ToJSON(arena, profile);
+    REQUIRE_TRUE(!arena.Failed());
+    REQUIRE_TRUE(std::string_view(json.Get("systemMessages").GetAt(0).Get("press").Get("type").StringValue()) ==
+                 "paramSetAbsolute");
+
+    synth::MidiControllerProfileConfig loaded;
+    REQUIRE_TRUE(synth::FromJSON(json, loaded));
+    REQUIRE_TRUE(loaded.systemMessages.size() == 1);
+    const synth::MessageIn& message = loaded.systemMessages[0].press;
+    REQUIRE_TRUE(message.type == synth::MessageIn::Type::ParamSetAbsolute);
+    REQUIRE_TRUE(message.slotIx == 4);
+    REQUIRE_TRUE(message.position == 6);
+    REQUIRE_NEAR(message.value, 0.375f, 0.0f);
+}
+
+TEST_CASE(param_set_absolute_routes_by_selected_bank_slot_position_and_physical_encoder) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numScenes = 2,
+        .maxParameters = 2,
+        .targetCenterAlpha = 1.0f,
+    });
+    auto& hidden = manager.CreateParameter(group, {.name = "Hidden", .defaultValue = 0.1f});
+    auto& visible = manager.CreateParameter(group, {.name = "Visible", .defaultValue = 0.2f});
+    auto& hiddenBank = manager.CreateBank();
+    hiddenBank.AddMapping(73, hidden);
+    auto& visibleBank = manager.CreateBank();
+    visibleBank.AddMapping(73, visible);
+    auto& slot = manager.CreateBankSlot();
+    slot.AddPhysicalEncoder(73);
+    slot.SelectBank(&visibleBank);
+    REQUIRE_TRUE(manager.SetSceneEndpoints(1, 1));
+
+    synth::MessageInBus bus(&manager, 4);
+    bus.Apply(synth::MessageIn::ParamSetAbsolute(0, 0, 0, 0.75f));
+    REQUIRE_NEAR(visible.SceneCenter(1), 0.75f, 0.00001f);
+    REQUIRE_NEAR(visible.SceneCenter(0), 0.2f, 0.00001f);
+    REQUIRE_NEAR(hidden.SceneCenter(1), 0.1f, 0.00001f);
+
+    manager.HandleSetAbsolute(synth::PhysicalEncoderId{73}, 0.4f);
+    REQUIRE_NEAR(visible.SceneCenter(1), 0.4f, 0.00001f);
+    REQUIRE_TRUE(slot.SelectedBank() == &visibleBank);
+}
+
+TEST_CASE(param_set_absolute_edits_visible_modulation_depth_not_hidden_parent) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 1,
+        .numScenes = 1,
+        .maxParameters = 3,
+        .targetCenterAlpha = 1.0f,
+    });
+    auto& parent = manager.CreateParameter(group, {.name = "Parent", .defaultValue = 0.2f});
+    auto& depth = manager.CreateParameter(group, {.name = "Depth", .defaultValue = 0.3f});
+    REQUIRE_TRUE(parent.AssignModulationDepth(0, &depth));
+    auto& bank = manager.CreateBank();
+    bank.AddMapping(10, parent);
+    auto& slot = manager.CreateBankSlot();
+    slot.AddPhysicalEncoder(10);
+    slot.AddPhysicalEncoder(11);
+    slot.SelectBank(&bank);
+    manager.HandlePress(0, 0);
+    REQUIRE_TRUE(bank.ShowingModulation());
+
+    synth::MessageInBus bus(&manager, 4);
+    bus.Apply(synth::MessageIn::ParamSetAbsolute(0, 0, 0, 0.8f));
+
+    REQUIRE_NEAR(depth.SceneCenter(0), 0.8f, 0.00001f);
+    REQUIRE_NEAR(parent.SceneCenter(0), 0.2f, 0.00001f);
+}
+
+TEST_CASE(param_set_absolute_is_blocked_by_every_effective_modifier) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({.numVoices = 1, .numScenes = 1, .maxParameters = 1});
+    auto& parameter = manager.CreateParameter(group, {.name = "Stable absolute", .defaultValue = 0.25f});
+    auto& bank = manager.CreateBank();
+    bank.AddMapping(10, parameter);
+    auto& slot = manager.CreateBankSlot();
+    slot.AddPhysicalEncoder(10);
+    slot.SelectBank(&bank);
+    synth::MessageInBus bus(&manager, 4);
+    const synth::MessageIn edit = synth::MessageIn::ParamSetAbsolute(0, 0, 0, 0.9f);
+
+    manager.SetResetHeld(true);
+    bus.Apply(edit);
+    manager.SetResetHeld(false);
+    manager.SetRandomHeld(true);
+    bus.Apply(edit);
+    manager.SetRandomHeld(false);
+    manager.SetRandomModHeld(true);
+    bus.Apply(edit);
+    manager.SetRandomModHeld(false);
+
+    REQUIRE_NEAR(parameter.SceneCenter(0), 0.25f, 0.00001f);
+    bus.Apply(edit);
+    REQUIRE_NEAR(parameter.SceneCenter(0), 0.9f, 0.00001f);
+}
+
+TEST_CASE(param_set_absolute_unmapped_boundaries_are_no_ops) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({.numVoices = 1, .numScenes = 1, .maxParameters = 1});
+    auto& parameter = manager.CreateParameter(group, {.name = "Unmapped absolute", .defaultValue = 0.25f});
+    auto& mappedBank = manager.CreateBank();
+    mappedBank.AddMapping(10, parameter);
+    auto& emptyBank = manager.CreateBank();
+
+    auto& mappedSlot = manager.CreateBankSlot();
+    mappedSlot.AddPhysicalEncoder(10);
+    mappedSlot.SelectBank(&mappedBank);
+    auto& disconnectedSlot = manager.CreateBankSlot();
+    disconnectedSlot.AddPhysicalEncoder(20);
+    auto& emptySlot = manager.CreateBankSlot();
+    emptySlot.AddPhysicalEncoder(30);
+    emptySlot.SelectBank(&emptyBank);
+
+    synth::MessageInBus bus(&manager, 8);
+    bus.Apply(synth::MessageIn::ParamSetAbsolute(0, 99, 0, 0.9f));
+    bus.Apply(synth::MessageIn::ParamSetAbsolute(0, 0, 99, 0.9f));
+    bus.Apply(synth::MessageIn::ParamSetAbsolute(0, 1, 0, 0.9f));
+    bus.Apply(synth::MessageIn::ParamSetAbsolute(0, 2, 0, 0.9f));
+
+    REQUIRE_NEAR(parameter.SceneCenter(0), 0.25f, 0.00001f);
+}
+
 TEST_CASE(unmapped_encoder_ignored) {
     synth::ParameterManager manager;
     manager.SetGestureCount(2);

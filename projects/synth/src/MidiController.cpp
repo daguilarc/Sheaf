@@ -146,6 +146,8 @@ const char* MessageTypeName(MessageIn::Type type) {
     switch (type) {
     case MessageIn::Type::ParamIncDec:
         return "paramIncDec";
+    case MessageIn::Type::ParamSetAbsolute:
+        return "paramSetAbsolute";
     case MessageIn::Type::ParamPush:
         return "paramPush";
     case MessageIn::Type::ToggleReset:
@@ -179,6 +181,8 @@ const char* MessageTypeName(MessageIn::Type type) {
 bool ParseMessageType(std::string_view value, MessageIn::Type& type) {
     if (value == "paramIncDec") {
         type = MessageIn::Type::ParamIncDec;
+    } else if (value == "paramSetAbsolute") {
+        type = MessageIn::Type::ParamSetAbsolute;
     } else if (value == "paramPush") {
         type = MessageIn::Type::ParamPush;
     } else if (value == "toggleReset" || value == "toggleShift" || value == "setReset" || value == "setShift") {
@@ -930,6 +934,7 @@ SystemMessageOutputState SystemMessageOutputInfo::Evaluate(const MessageIn& mess
         return {.color = GestureColor(message.gestureIx), .isOn = false};
     }
     case MessageIn::Type::ParamIncDec:
+    case MessageIn::Type::ParamSetAbsolute:
     case MessageIn::Type::ParamPush:
     case MessageIn::Type::Start:
     case MessageIn::Type::Stop:

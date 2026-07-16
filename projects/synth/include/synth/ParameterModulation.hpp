@@ -588,6 +588,7 @@ public:
     void HandlePress(PhysicalEncoderId encoderId);
     void HandlePress(PhysicalEncoderId encoderId, std::span<const PhysicalEncoderId> physicalLayout);
     void HandleTick(PhysicalEncoderId encoderId, const SceneState& scene, float delta);
+    void HandleSetAbsolute(PhysicalEncoderId encoderId, const SceneState& scene, float normalizedTarget);
     void ApplyModifierToTopLevel(Modifier modifier, const SceneState& scene);
     void Deselect();
     bool ShowingModulation() const;
@@ -652,6 +653,7 @@ public:
     void AddPhysicalEncoder(PhysicalEncoderId encoderId);
     void HandlePress(PhysicalEncoderId encoderId);
     void HandleTick(PhysicalEncoderId encoderId, const SceneState& scene, float delta);
+    void HandleSetAbsolute(PhysicalEncoderId encoderId, const SceneState& scene, float normalizedTarget);
     Bank* SelectedBank() const { return selectedBank_; }
     std::span<const PhysicalEncoderId> PhysicalEncoders() const { return physicalEncoders_; }
     bool ResolvePosition(std::size_t position, PhysicalEncoderId& encoderId) const;
@@ -804,8 +806,10 @@ public:
     const BankSlot* BankSlotAt(std::size_t slotIx) const;
     void HandlePress(PhysicalEncoderId encoderId);
     void HandleTick(PhysicalEncoderId encoderId, float delta);
+    void HandleSetAbsolute(PhysicalEncoderId encoderId, float normalizedTarget);
     void HandlePress(std::size_t slotIx, std::size_t position);
     void HandleTick(std::size_t slotIx, std::size_t position, float delta);
+    void HandleSetAbsolute(std::size_t slotIx, std::size_t position, float normalizedTarget);
     bool SelectBankForSlot(std::size_t slotIx, std::size_t bankIx);
 
     Modifier GetCurrentModifier() const;
@@ -887,6 +891,7 @@ private:
 struct MessageIn {
     enum class Type {
         ParamIncDec,
+        ParamSetAbsolute,
         ParamPush,
         ToggleReset,
         ToggleRandom,
@@ -915,6 +920,8 @@ struct MessageIn {
     bool hasBoolValue = false;
 
     static MessageIn ParamIncDec(std::uint64_t timestamp, std::size_t slotIx, std::size_t position, float delta);
+    static MessageIn ParamSetAbsolute(std::uint64_t timestamp, std::size_t slotIx, std::size_t position,
+                                      float normalizedValue);
     static MessageIn ParamPush(std::uint64_t timestamp, std::size_t slotIx, std::size_t position);
     static MessageIn ToggleReset(std::uint64_t timestamp);
     static MessageIn SetReset(std::uint64_t timestamp, bool held);
