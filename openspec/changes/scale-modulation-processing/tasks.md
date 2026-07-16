@@ -27,12 +27,12 @@
 
 ## 5. Recycle Neutral Local Modulation Nodes
 
-- [ ] 5.1 Define and test the local-node collection boundary/pinning API so open modulation views and active control operations cannot retain recycled pointers.
-- [ ] 5.2 Implement bottom-up eligibility checks covering all scenes, latent/default gesture state, active gestures, current/target/normalization state, child routes, and visibility pins.
-- [ ] 5.3 Add a group-owned free list keyed by backing store and slot index, include recycled slots in `AvailableParameterSlots`/`CanAllocate`, and centralize full in-place local reinitialization; make local creation reuse a compatible recycled slot before requesting another asynchronous storage batch while retaining high-water `parameterCount_`/storage-index semantics.
-- [ ] 5.4 Invoke collection after safe view-close/deselect, reset/revert, and patch-load boundaries without adding allocation, deallocation, locking, or collection traversal to the per-sample path.
-- [ ] 5.5 Add lifecycle tests for retained non-neutral/child/visible nodes, recursive neutral-subtree collapse, parent detachment with route settling, distinct-parent slot reuse, and bounded capacity across repeated edit/collect cycles.
-- [ ] 5.6 Add semantic JSON comparisons before/after collection and patch round trips proving that non-default nested topology is preserved and eligible neutral nodes remain omitted.
+- [x] 5.1 Define and test the local-node collection boundary/pinning API so open modulation views and active control operations cannot retain recycled pointers.
+- [x] 5.2 Implement bottom-up eligibility checks covering all scenes, latent/default gesture state, active gestures, current/target/normalization state, child routes, and visibility pins.
+- [x] 5.3 Add a group-owned free list keyed by backing store and slot index, include recycled slots in `AvailableParameterSlots`/`CanAllocate`, and centralize full in-place local reinitialization; make local creation reuse a compatible recycled slot before requesting another asynchronous storage batch while retaining high-water `parameterCount_`/storage-index semantics.
+- [x] 5.4 Invoke collection after safe view-close/deselect, reset/revert, and patch-load boundaries without adding allocation, deallocation, locking, or collection traversal to the per-sample path.
+- [x] 5.5 Add lifecycle tests for retained non-neutral/child/visible nodes, recursive neutral-subtree collapse, parent detachment with route settling, distinct-parent slot reuse, and bounded capacity across repeated edit/collect cycles.
+- [x] 5.6 Add semantic JSON comparisons before/after collection and patch round trips proving that non-default nested topology is preserved and eligible neutral nodes remain omitted.
 
 ## 6. Performance Regression and Verification
 
