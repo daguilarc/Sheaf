@@ -13,10 +13,10 @@
 
 ## 3. MiniApp Adoption
 
-- [ ] 3.1 Update MiniApp system tests first for fifteen modulators, sixteen physical slot positions, capacity `192`, standard sources at `0..3/11/14`, direct/swapped VCO and ordinary LFO at `4/5/6`, disconnected gaps, and no saved-index migration.
-- [ ] 3.2 Replace MiniApp's directly owned random/noise/constant processors, inputs, adapter storage, visualizers, registration helpers, and sample-loop calls with one retained `StandardModulators<2>` and its lifecycle operations.
-- [ ] 3.3 Move MiniApp's three scope-backed source registrations and visualizer metadata to `4/5/6`, expand the slot using the existing physical-ID convention, and verify all fifteen depth cells plus the return cell materialize and route correctly.
-- [ ] 3.4 Rewire MiniApp's main random panel and UI/test accessors to standard random source `0`; update portable and browser command-buffer tests while preserving the three-panel layout and modulation-underlay behavior.
+- [x] 3.1 Update MiniApp system tests first for fifteen modulators, sixteen physical slot positions, capacity `192`, standard sources at `0..3/11/14`, direct/swapped VCO and ordinary LFO at `4/5/6`, disconnected gaps, and no saved-index migration.
+- [x] 3.2 Replace MiniApp's directly owned random/noise/constant processors, inputs, adapter storage, visualizers, registration helpers, and sample-loop calls with one retained `StandardModulators<2>` and its lifecycle operations.
+- [x] 3.3 Move MiniApp's three scope-backed source registrations and visualizer metadata to `4/5/6`, expand the slot using the existing physical-ID convention, and verify all fifteen depth cells plus the return cell materialize and route correctly.
+- [x] 3.4 Rewire MiniApp's main random panel and UI/test accessors to standard random source `0`; update portable and browser command-buffer tests while preserving the three-panel layout and modulation-underlay behavior.
 
 ## 4. Braid4 Adoption
 
