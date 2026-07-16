@@ -7,9 +7,9 @@
 
 ## 2. Standard Bundle Processing
 
-- [ ] 2.1 Add deterministic tests for register/prepare/process/publish lifecycle ordering, one-step advancement of four independent random processors and noise, immutable constant behavior, voice-order output copies, coherent UI publication, and the absence of implicit `UpdateModValues()`.
-- [ ] 2.2 Implement `Prepare`, allocation-free `Process`, and block-controlled `PublishUiState`, with explicit lifecycle errors and bounded inspection access for processors, inputs, outputs, and visualizers.
-- [ ] 2.3 Add direct parameter-group integration tests proving latest standard values appear only after caller-owned `UpdateModValues()`, polyphonic constant publishes correctly, mono index `11` stays disconnected, and all registered pointers remain stable across processing/publication.
+- [x] 2.1 Add deterministic tests for register/prepare/process/publish lifecycle ordering, one-step advancement of four independent random processors and noise, immutable constant behavior, voice-order output copies, coherent UI publication, and the absence of implicit `UpdateModValues()`.
+- [x] 2.2 Implement `Prepare`, allocation-free `Process`, and block-controlled `PublishUiState`, with explicit lifecycle errors and bounded inspection access for processors, inputs, outputs, and visualizers.
+- [x] 2.3 Add direct parameter-group integration tests proving latest standard values appear only after caller-owned `UpdateModValues()`, polyphonic constant publishes correctly, mono index `11` stays disconnected, and all registered pointers remain stable across processing/publication.
 
 ## 3. MiniApp Adoption
 
