@@ -146,15 +146,18 @@ int main() {
                     synth::ui::waveform_detail::x_NumPoints - 1, 10, 10.0),
                 "full-span transfer does not split path");
 
-    const synth::ui::Bounds encoderArea{16.0f, 48.0f, 968.0f, synth_miniapp::EncoderGridLayout::kTotalHeight};
+    // MiniApp derives all four rows and columns from the available encoder area.
+    RequireTrue(synth_miniapp::EncoderGridLayout::kEncoderCount == 16,
+                "MiniApp encoder grid exposes sixteen cells");
+    const synth::ui::Bounds encoderArea{10.0f, 20.0f, 410.0f, 330.0f};
     RequireBounds(synth_miniapp::EncoderGridLayout::BoundsForIndex(encoderArea, 0),
-                  synth::ui::Bounds{26.0f, 58.0f, 112.0f, 130.0f}, "encoder zero bounds");
+                  synth::ui::Bounds{10.0f, 20.0f, 96.5f, 76.5f}, "encoder zero bounds");
     RequireBounds(synth_miniapp::EncoderGridLayout::BoundsForIndex(encoderArea, 3),
-                  synth::ui::Bounds{422.0f, 58.0f, 112.0f, 130.0f}, "encoder three bounds");
-    RequireBounds(synth_miniapp::EncoderGridLayout::BoundsForIndex(encoderArea, 4),
-                  synth::ui::Bounds{26.0f, 208.0f, 112.0f, 130.0f}, "encoder four bounds");
-    RequireBounds(synth_miniapp::EncoderGridLayout::BoundsForIndex(encoderArea, 6),
-                  synth::ui::Bounds{290.0f, 208.0f, 112.0f, 130.0f}, "encoder six bounds");
+                  synth::ui::Bounds{323.5f, 20.0f, 96.5f, 76.5f}, "encoder three bounds");
+    RequireBounds(synth_miniapp::EncoderGridLayout::BoundsForIndex(encoderArea, 12),
+                  synth::ui::Bounds{10.0f, 273.5f, 96.5f, 76.5f}, "encoder twelve bounds");
+    RequireBounds(synth_miniapp::EncoderGridLayout::BoundsForIndex(encoderArea, 15),
+                  synth::ui::Bounds{323.5f, 273.5f, 96.5f, 76.5f}, "encoder fifteen bounds");
 
     synth::ui::EncoderDrawState encoderState;
     encoderState.connected = true;

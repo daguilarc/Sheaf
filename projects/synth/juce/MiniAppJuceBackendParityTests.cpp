@@ -95,24 +95,31 @@ int main()
     component.setSize(config.uiWidth, config.uiHeight);
     component.RefreshFromSurface();
 
+    // The JUCE host must mirror the complete portable MiniApp node tree.
     const synth::ui::NodeTree tree = surface.BuildTree();
     Require(FindNodeById(tree, synth_miniapp::MiniAppNodeIds::kRoot) != nullptr, "miniapp root node exists");
     Require(FindNodeById(tree, synth_miniapp::MiniAppNodeIds::Encoder(0).c_str()) != nullptr,
-            "encoder draw node exists");
+            "encoder zero draw node exists");
+    Require(FindNodeById(tree, synth_miniapp::MiniAppNodeIds::Encoder(15).c_str()) != nullptr,
+            "encoder fifteen draw node exists");
+    Require(component.FindByNodeId(synth_miniapp::MiniAppNodeIds::Encoder(0)) != nullptr,
+            "encoder zero is hosted");
+    Require(component.FindByNodeId(synth_miniapp::MiniAppNodeIds::Encoder(15)) != nullptr,
+            "encoder fifteen is hosted");
     Require(component.FindByNodeId(synth_miniapp::MiniAppNodeIds::kStart) != nullptr, "start control is hosted");
     const synth::ui::Node* vcoPanel = FindNodeById(tree, synth_miniapp::MiniAppNodeIds::kVcoScope);
     const synth::ui::Node* lfoPanel = FindNodeById(tree, synth_miniapp::MiniAppNodeIds::kLfoScope);
-    const synth::ui::Node* gangPanel = FindNodeById(tree, synth_miniapp::MiniAppNodeIds::kGangedRandomLfoRound);
-    Require(vcoPanel != nullptr && lfoPanel != nullptr && gangPanel != nullptr,
-            "JUCE receives all three MiniApp waveform panels");
-    Require(vcoPanel->bounds.x + vcoPanel->bounds.width <= lfoPanel->bounds.x &&
-                lfoPanel->bounds.x + lfoPanel->bounds.width <= gangPanel->bounds.x,
-            "JUCE tree preserves bounded three-panel ordering");
+    Require(vcoPanel != nullptr && lfoPanel != nullptr,
+            "JUCE receives both MiniApp waveform panels");
+    Require(FindNodeById(tree, "miniapp.ganged_random_lfo.round") == nullptr,
+            "removed MiniApp main panel is absent");
+    Require(vcoPanel->bounds.y + vcoPanel->bounds.height <= lfoPanel->bounds.y,
+            "JUCE tree preserves vertical scope ordering");
     juce::Image panelImage(juce::Image::ARGB, config.uiWidth, config.uiHeight, true);
     juce::Graphics panelGraphics(panelImage);
-    for (const synth::ui::Node* panel : {vcoPanel, lfoPanel, gangPanel})
+    for (const synth::ui::Node* panel : {vcoPanel, lfoPanel})
     {
-        Require(!panel->drawCommands.empty(), "each MiniApp panel supplies portable draw commands");
+        Require(!panel->drawCommands.empty(), "each MiniApp scope supplies portable draw commands");
         for (const auto& command : panel->drawCommands)
         {
             synth_juce::PaintDrawCommand(
@@ -126,7 +133,13 @@ int main()
     const synth::ui::Bounds encoderArea =
         synth_miniapp::MiniAppPageLayout::EncoderArea(synth_miniapp::MiniAppPageLayout::ContentArea(rootBounds));
     const synth::ui::Node* encoderNode = FindNodeById(tree, synth_miniapp::MiniAppNodeIds::Encoder(0).c_str());
+    const synth::ui::Node* encoderFifteenNode =
+        FindNodeById(tree, synth_miniapp::MiniAppNodeIds::Encoder(15).c_str());
     Require(encoderNode != nullptr, "encoder node for layout parity");
+    Require(encoderFifteenNode != nullptr, "encoder fifteen node for layout parity");
+    Require(vcoPanel->bounds.x + vcoPanel->bounds.width <= encoderNode->bounds.x &&
+                lfoPanel->bounds.x + lfoPanel->bounds.width <= encoderFifteenNode->bounds.x,
+            "scope stack remains left of encoder grid");
     RequireNear(encoderNode->bounds.x,
                 synth_miniapp::EncoderGridLayout::BoundsForIndex(encoderArea, 0).x,
                 0.0001f,
@@ -135,6 +148,24 @@ int main()
                 synth_miniapp::EncoderGridLayout::BoundsForIndex(encoderArea, 0).y,
                 0.0001f,
                 "encoder zero y through backend tree");
+    const synth::ui::Bounds expectedEncoderFifteen =
+        synth_miniapp::EncoderGridLayout::BoundsForIndex(encoderArea, 15);
+    RequireNear(encoderFifteenNode->bounds.x,
+                expectedEncoderFifteen.x,
+                0.0001f,
+                "encoder fifteen x through backend tree");
+    RequireNear(encoderFifteenNode->bounds.y,
+                expectedEncoderFifteen.y,
+                0.0001f,
+                "encoder fifteen y through backend tree");
+    RequireNear(encoderFifteenNode->bounds.width,
+                expectedEncoderFifteen.width,
+                0.0001f,
+                "encoder fifteen width through backend tree");
+    RequireNear(encoderFifteenNode->bounds.height,
+                expectedEncoderFifteen.height,
+                0.0001f,
+                "encoder fifteen height through backend tree");
 
     auto* startButton = dynamic_cast<juce::TextButton*>(component.FindByNodeId(synth_miniapp::MiniAppNodeIds::kStart));
     Require(startButton != nullptr, "start node is a TextButton");
@@ -211,6 +242,32 @@ int main()
     Require(message.slotIx == 0, "encoder push slot");
     Require(message.position == 0, "encoder push position");
     Require(message.timestamp == 504, "encoder push uses timestamp provider");
+
+    auto* encoderFifteen = component.FindByNodeId(synth_miniapp::MiniAppNodeIds::Encoder(15));
+    Require(encoderFifteen != nullptr, "encoder fifteen interactive overlay is hosted");
+    juce::MouseEvent encoderFifteenDownEvent(mouseSource,
+                                             downPoint,
+                                             juce::ModifierKeys::leftButtonModifier,
+                                             1.0f,
+                                             1.0f,
+                                             1.0f,
+                                             1.0f,
+                                             1.0f,
+                                             encoderFifteen,
+                                             encoderFifteen,
+                                             juce::Time::getCurrentTime(),
+                                             downPoint,
+                                             juce::Time::getCurrentTime(),
+                                             1,
+                                             false);
+    encoderFifteen->mouseDoubleClick(encoderFifteenDownEvent);
+    Require(uiBus.Pop(message, std::numeric_limits<std::uint64_t>::max()),
+            "encoder fifteen push message is queued");
+    Require(message.type == synth::MessageIn::Type::ParamPush,
+            "encoder fifteen double-click routes push");
+    Require(message.slotIx == 0, "encoder fifteen push slot");
+    Require(message.position == 15, "encoder fifteen push position");
+    Require(message.timestamp == 505, "encoder fifteen push uses timestamp provider");
 
     std::cout << "MiniApp JUCE backend parity tests passed\n";
     return 0;

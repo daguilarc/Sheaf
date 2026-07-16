@@ -36,7 +36,6 @@ inline std::string Encoder(std::size_t index)
 
 inline constexpr const char* kVcoScope = "miniapp.vco.scope";
 inline constexpr const char* kLfoScope = "miniapp.lfo.scope";
-inline constexpr const char* kGangedRandomLfoRound = "miniapp.ganged_random_lfo.round";
 
 inline constexpr const char* kBankVco = "miniapp.bank.vco";
 inline constexpr const char* kBankLfo = "miniapp.bank.lfo";
@@ -76,37 +75,31 @@ inline constexpr const char* kEncoderPush = "miniapp.encoder.push";
 
 struct EncoderGridLayout
 {
-    static constexpr std::size_t kEncoderCount = 7;
-    static constexpr std::size_t kFirstRowCount = 4;
-    static constexpr float kColumnWidth = 132.0f;
-    static constexpr float kRowHeight = 150.0f;
-    static constexpr float kTotalHeight = kRowHeight * 2.0f;
-    static constexpr float kInset = 10.0f;
+    static constexpr std::size_t kEncoderCount = 16;
+    static constexpr float kGap = 8.0f;
 
     static synth::ui::Bounds BoundsForIndex(synth::ui::Bounds area, std::size_t index)
     {
-        const std::size_t row = index < kFirstRowCount ? 0 : 1;
-        const std::size_t column = row == 0 ? index : index - kFirstRowCount;
-        synth::ui::Bounds bounds{
-            area.x + static_cast<float>(column) * kColumnWidth,
-            area.y + static_cast<float>(row) * kRowHeight,
-            kColumnWidth,
-            kRowHeight
+        const std::size_t row = index / 4;
+        const std::size_t column = index % 4;
+        const float cellWidth = std::max(0.0f, (area.width - kGap * 3.0f) * 0.25f);
+        const float cellHeight = std::max(0.0f, (area.height - kGap * 3.0f) * 0.25f);
+        return {
+            area.x + static_cast<float>(column) * (cellWidth + kGap),
+            area.y + static_cast<float>(row) * (cellHeight + kGap),
+            cellWidth,
+            cellHeight,
         };
-        bounds.x += kInset;
-        bounds.y += kInset;
-        bounds.width -= kInset * 2.0f;
-        bounds.height -= kInset * 2.0f;
-        return bounds;
     }
 };
 
 struct MiniAppPageLayout
 {
     static constexpr float kContentMargin = 16.0f;
-    static constexpr float kTitleOffset = 32.0f;
-    static constexpr float kWaveformRowHeight = 130.0f;
-    static constexpr float kWaveformInset = 8.0f;
+    static constexpr float kTitleHeight = 30.0f;
+    static constexpr float kGap = 14.0f;
+    static constexpr float kScopeStackWidth = 390.0f;
+    static constexpr float kEncoderGridWidth = 462.0f;
     static constexpr float kDefaultWidth = 900.0f;
     static constexpr float kDefaultHeight = 560.0f;
 
@@ -126,44 +119,47 @@ struct MiniAppPageLayout
         return {
             kContentMargin,
             kContentMargin,
-            rootBounds.width - kContentMargin * 2.0f,
-            rootBounds.height - kContentMargin * 2.0f
+            std::max(0.0f, rootBounds.width - kContentMargin * 2.0f),
+            std::max(0.0f, rootBounds.height - kContentMargin * 2.0f)
         };
+    }
+
+    static synth::ui::Bounds ScopeStackArea(synth::ui::Bounds content)
+    {
+        return {
+            content.x,
+            content.y + kTitleHeight + kGap,
+            std::max(0.0f, std::min(kScopeStackWidth, content.width * 0.46f)),
+            std::max(0.0f, content.height - kTitleHeight - kGap),
+        };
+    }
+
+    static synth::ui::Bounds VcoScopeBounds(synth::ui::Bounds content)
+    {
+        const synth::ui::Bounds stack = ScopeStackArea(content);
+        return {
+            stack.x,
+            stack.y,
+            stack.width,
+            std::max(0.0f, (stack.height - kGap) * 0.5f),
+        };
+    }
+
+    static synth::ui::Bounds LfoScopeBounds(synth::ui::Bounds content)
+    {
+        const synth::ui::Bounds vco = VcoScopeBounds(content);
+        return {vco.x, vco.y + vco.height + kGap, vco.width, vco.height};
     }
 
     static synth::ui::Bounds EncoderArea(synth::ui::Bounds content)
     {
-        synth::ui::Bounds encoderArea = content;
-        encoderArea.y += kTitleOffset;
-        encoderArea.height = EncoderGridLayout::kTotalHeight;
-        return encoderArea;
-    }
-
-    static void WaveformScopeBounds(synth::ui::Bounds waveformRow,
-                                    synth::ui::Bounds& vcoScope,
-                                    synth::ui::Bounds& lfoScope,
-                                    synth::ui::Bounds& gangedRandomLfoRound)
-    {
-        const float panelWidth = waveformRow.width / 3.0f;
-        const float contentWidth = std::max(0.0f, panelWidth - kWaveformInset * 2.0f);
-        const float contentHeight = std::max(0.0f, waveformRow.height - kWaveformInset * 2.0f);
-        vcoScope = {
-            waveformRow.x + kWaveformInset,
-            waveformRow.y + kWaveformInset,
-            contentWidth,
-            contentHeight
-        };
-        lfoScope = {
-            waveformRow.x + panelWidth + kWaveformInset,
-            waveformRow.y + kWaveformInset,
-            contentWidth,
-            contentHeight
-        };
-        gangedRandomLfoRound = {
-            waveformRow.x + panelWidth * 2.0f + kWaveformInset,
-            waveformRow.y + kWaveformInset,
-            contentWidth,
-            contentHeight
+        const synth::ui::Bounds scopeStack = ScopeStackArea(content);
+        const float x = scopeStack.x + scopeStack.width + kGap;
+        return {
+            x,
+            scopeStack.y,
+            std::max(0.0f, std::min(kEncoderGridWidth, content.x + content.width - x)),
+            scopeStack.height,
         };
     }
 };
@@ -261,27 +257,6 @@ inline LfoWaveformDrawState LfoWaveformDrawStateFromCore(const MiniAppCore& core
         state.layers.push_back(layer);
     }
     return state;
-}
-
-inline bool ReadGangedRandomLfoSnapshotFromCore(
-    const MiniAppCore& core,
-    MiniAppGangedRandomLfoSnapshot& snapshot,
-    unsigned maxRetries = 4)
-{
-    return core.GangedRandomLfoInstance().ReadSnapshot(snapshot, maxRetries);
-}
-
-inline std::vector<synth::ui::DrawCommand> BuildGangedRandomLfoPanelCommandsFromCore(
-    const MiniAppCore& core,
-    synth::ui::Bounds nodeBounds,
-    unsigned maxRetries = 4)
-{
-    MiniAppGangedRandomLfoSnapshot snapshot;
-    if (!ReadGangedRandomLfoSnapshotFromCore(core, snapshot, maxRetries))
-    {
-        snapshot.sampleRate = 0.0;
-    }
-    return BuildGangedRandomLfoPanelCommands(snapshot, nodeBounds);
 }
 
 inline void AppendMiniAppControls(synth::ui::Builder& builder, const MiniAppUiSnapshot& snapshot)

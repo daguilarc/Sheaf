@@ -280,26 +280,6 @@ bool BoundsInside(synth::ui::Bounds inner, synth::ui::Bounds outer) {
            inner.y + inner.height <= outer.y + outer.height;
 }
 
-bool CommandGeometryInside(const synth::ui::DrawCommand& command, synth::ui::Bounds bounds) {
-    if (command.kind == synth::ui::DrawCommand::Kind::Polyline) {
-        return std::all_of(command.points.begin(), command.points.end(), [bounds](const auto point) {
-            return point.x >= bounds.x && point.x <= bounds.x + bounds.width &&
-                   point.y >= bounds.y && point.y <= bounds.y + bounds.height;
-        });
-    }
-    if (command.kind == synth::ui::DrawCommand::Kind::Fill ||
-        command.kind == synth::ui::DrawCommand::Kind::FillEllipse) {
-        return BoundsInside(command.bounds, bounds);
-    }
-    if (command.kind == synth::ui::DrawCommand::Kind::Line) {
-        return command.from.x >= bounds.x && command.from.x <= bounds.x + bounds.width &&
-               command.from.y >= bounds.y && command.from.y <= bounds.y + bounds.height &&
-               command.to.x >= bounds.x && command.to.x <= bounds.x + bounds.width &&
-               command.to.y >= bounds.y && command.to.y <= bounds.y + bounds.height;
-    }
-    return true;
-}
-
 struct TestVisualizer final : synth::ui::Visualizer
 {
     std::vector<synth::ui::DrawCommand> DrawVisible() const override
@@ -363,10 +343,10 @@ TEST_CASE(miniapp_portable_surface_exposes_stable_ids_and_routes_actions) {
     RequireNodeId(tree, "miniapp.root");
     RequireNodeId(tree, "miniapp.title");
     RequireNodeId(tree, "miniapp.encoder.0");
-    RequireNodeId(tree, "miniapp.encoder.6");
+    RequireNodeId(tree, "miniapp.encoder.15");
     RequireNodeId(tree, "miniapp.vco.scope");
     RequireNodeId(tree, "miniapp.lfo.scope");
-    RequireNodeId(tree, "miniapp.ganged_random_lfo.round");
+    REQUIRE_TRUE(FindNodeById(tree, "miniapp.ganged_random_lfo.round") == nullptr);
     RequireNodeId(tree, "miniapp.bank.vco");
     RequireNodeId(tree, "miniapp.bank.lfo");
     RequireNodeId(tree, "miniapp.gesture.toggle");
@@ -477,16 +457,25 @@ TEST_CASE(miniapp_portable_surface_exposes_stable_ids_and_routes_actions) {
     REQUIRE_TRUE(message.position == 3);
     REQUIRE_TRUE(message.timestamp == 1011);
 
+    surface.DispatchAction(synth::ui::Action::WithValue(
+        synth_miniapp::MiniAppActions::kEncoderPush,
+        synth_miniapp::FormatEncoderGestureValue(0, 15, 0.0f)));
+    REQUIRE_TRUE(PopNextMessage(uiBus, message));
+    REQUIRE_TRUE(message.type == synth::MessageIn::Type::ParamPush);
+    REQUIRE_TRUE(message.slotIx == 0);
+    REQUIRE_TRUE(message.position == 15);
+    REQUIRE_TRUE(message.timestamp == 1012);
+
     static_assert(synth::SynthApplication<synth_miniapp::MiniApp>);
 }
 
-TEST_CASE(miniapp_main_waveform_row_draws_three_distinct_bounded_panels) {
+TEST_CASE(miniapp_main_layout_draws_bounded_scope_stack_and_complete_encoder_grid) {
     synth_rig::SynthRig<synth_miniapp::MiniAppCore> rig(
         64,
-        UseScratchRuntimeDataPaths("main_waveform_row_draws_three_distinct_bounded_panels"));
+        UseScratchRuntimeDataPaths("main_layout_draws_bounded_scope_stack_and_complete_encoder_grid"));
     rig.RunBlocks(2);
 
-    const auto requireThreePanels = [&](int width, int height) {
+    const auto requireCompleteLayout = [&](int width, int height) {
         rig.UIState();
         synth::RuntimeConfig sizedConfig = *rig.Engine().Context().config;
         sizedConfig.uiWidth = width;
@@ -498,71 +487,46 @@ TEST_CASE(miniapp_main_waveform_row_draws_three_distinct_bounded_panels) {
         const synth::ui::NodeTree tree = surface.BuildTree();
 
         const synth::ui::Bounds root = synth_miniapp::MiniAppPageLayout::RootBounds(&context);
+        std::array<const synth::ui::Node*, 16> encoders{};
+        for (std::size_t ix = 0; ix < encoders.size(); ++ix) {
+            encoders[ix] = FindNodeById(tree, synth_miniapp::MiniAppNodeIds::Encoder(ix));
+            REQUIRE_TRUE(encoders[ix] != nullptr);
+            REQUIRE_TRUE(BoundsInside(encoders[ix]->bounds, root));
+        }
+        REQUIRE_TRUE(encoders[0]->bounds.y == encoders[3]->bounds.y);
+        REQUIRE_TRUE(encoders[0]->bounds.x < encoders[3]->bounds.x);
+        REQUIRE_TRUE(encoders[0]->bounds.x == encoders[12]->bounds.x);
+        REQUIRE_TRUE(encoders[0]->bounds.y < encoders[12]->bounds.y);
+        REQUIRE_TRUE(encoders[3]->bounds.x == encoders[15]->bounds.x);
+        REQUIRE_TRUE(encoders[12]->bounds.y == encoders[15]->bounds.y);
+
         const synth::ui::Node* vco = FindNodeById(tree, synth_miniapp::MiniAppNodeIds::kVcoScope);
         const synth::ui::Node* lfo = FindNodeById(tree, synth_miniapp::MiniAppNodeIds::kLfoScope);
-        const synth::ui::Node* gang = FindNodeById(tree, synth_miniapp::MiniAppNodeIds::kGangedRandomLfoRound);
         REQUIRE_TRUE(vco != nullptr);
         REQUIRE_TRUE(lfo != nullptr);
-        REQUIRE_TRUE(gang != nullptr);
         REQUIRE_TRUE(BoundsInside(vco->bounds, root));
         REQUIRE_TRUE(BoundsInside(lfo->bounds, root));
-        REQUIRE_TRUE(BoundsInside(gang->bounds, root));
-        REQUIRE_TRUE(vco->bounds.x + vco->bounds.width <= lfo->bounds.x);
-        REQUIRE_TRUE(lfo->bounds.x + lfo->bounds.width <= gang->bounds.x);
-        REQUIRE_TRUE(!gang->drawCommands.empty());
-        REQUIRE_TRUE(std::all_of(gang->drawCommands.begin(), gang->drawCommands.end(),
-                                 [gang](const auto& command) {
-                                     return CommandGeometryInside(command, gang->bounds);
-                                 }));
-        for (const synth::Color color : {synth::Color::Cyan, synth::Color::Orange}) {
-            REQUIRE_TRUE(std::any_of(gang->drawCommands.begin(), gang->drawCommands.end(),
-                                     [color](const auto& command) {
-                                         return command.kind == synth::ui::DrawCommand::Kind::Polyline &&
-                                                command.color == color;
-                                     }));
-            REQUIRE_TRUE(std::any_of(gang->drawCommands.begin(), gang->drawCommands.end(),
-                                     [color](const auto& command) {
-                                         return command.kind == synth::ui::DrawCommand::Kind::FillEllipse &&
-                                                command.color == color;
-                                     }));
-        }
+        REQUIRE_TRUE(vco->bounds.y + vco->bounds.height <= lfo->bounds.y);
+        REQUIRE_TRUE(vco->bounds.x + vco->bounds.width <= encoders[0]->bounds.x);
+        REQUIRE_TRUE(lfo->bounds.x + lfo->bounds.width <= encoders[12]->bounds.x);
+        REQUIRE_TRUE(FindNodeById(tree, "miniapp.ganged_random_lfo.round") == nullptr);
     };
 
-    requireThreePanels(synth_miniapp::MiniAppCore::Config().uiWidth,
-                       synth_miniapp::MiniAppCore::Config().uiHeight);
-    requireThreePanels(640, 480);
+    requireCompleteLayout(synth_miniapp::MiniAppCore::Config().uiWidth,
+                          synth_miniapp::MiniAppCore::Config().uiHeight);
+    requireCompleteLayout(640, 480);
 
     rig.Press(kSlotIx, kTunePosition);
     rig.RunBlocks(1);
     const synth::ui::NodeTree modulationTree = BuildMiniAppTree(rig);
     const std::string underlayId = synth_miniapp::MiniAppNodeIds::Encoder(0) + ".visualizer";
     const synth::ui::Node* underlay = FindNodeById(modulationTree, underlayId);
-    const synth::ui::Node* gang = FindNodeById(
-        modulationTree, synth_miniapp::MiniAppNodeIds::kGangedRandomLfoRound);
     REQUIRE_TRUE(underlay != nullptr);
-    REQUIRE_TRUE(gang != nullptr);
-    REQUIRE_TRUE(underlay->bounds.x != gang->bounds.x || underlay->bounds.y != gang->bounds.y ||
-                 underlay->bounds.width != gang->bounds.width || underlay->bounds.height != gang->bounds.height);
     const auto& retained = rig.Application().StandardModulatorsInstance().RandomVisualizer(0);
     REQUIRE_TRUE(retained.GetBounds().x == underlay->bounds.x);
     REQUIRE_TRUE(retained.GetBounds().y == underlay->bounds.y);
     REQUIRE_TRUE(retained.GetBounds().width == underlay->bounds.width);
     REQUIRE_TRUE(retained.GetBounds().height == underlay->bounds.height);
-}
-
-TEST_CASE(miniapp_main_ganged_random_lfo_panel_fails_closed_when_snapshot_read_exhausts_retries) {
-    synth_rig::SynthRig<synth_miniapp::MiniAppCore> rig(
-        64,
-        UseScratchRuntimeDataPaths(
-            "main_ganged_random_lfo_panel_fails_closed_when_snapshot_read_exhausts_retries"));
-    rig.RunBlocks(1);
-
-    const synth::ui::Bounds bounds{10.0f, 20.0f, 180.0f, 90.0f};
-    const auto commands = synth_miniapp::BuildGangedRandomLfoPanelCommandsFromCore(
-        rig.Application(), bounds, 0);
-    REQUIRE_TRUE(commands.size() == 2);
-    REQUIRE_TRUE(commands[0].kind == synth::ui::DrawCommand::Kind::Fill);
-    REQUIRE_TRUE(commands[1].kind == synth::ui::DrawCommand::Kind::Line);
 }
 
 TEST_CASE(miniapp_ui_model_exposes_layout_scene_labels_and_dispatch) {
@@ -575,12 +539,23 @@ TEST_CASE(miniapp_ui_model_exposes_layout_scene_labels_and_dispatch) {
     REQUIRE_TRUE(synth_miniapp::SceneButtonLabel(1, 0, 1) == std::string("S2 R"));
     REQUIRE_TRUE(synth_miniapp::SceneButtonLabel(2, 2, 2) == std::string("S3 L R"));
 
-    const synth::ui::Bounds encoderArea{16.0f, 48.0f, 968.0f, synth_miniapp::EncoderGridLayout::kTotalHeight};
-    const synth::ui::Bounds encoderZero = synth_miniapp::EncoderGridLayout::BoundsForIndex(encoderArea, 0);
-    RequireNear(encoderZero.x, 26.0f, 0.0001f, "encoder zero x");
-    RequireNear(encoderZero.y, 58.0f, 0.0001f, "encoder zero y");
-    RequireNear(encoderZero.width, 112.0f, 0.0001f, "encoder zero width");
-    RequireNear(encoderZero.height, 130.0f, 0.0001f, "encoder zero height");
+    REQUIRE_TRUE(synth_miniapp::EncoderGridLayout::kEncoderCount == 16);
+    const synth::ui::Bounds encoderArea{10.0f, 20.0f, 410.0f, 330.0f};
+    const std::array<std::size_t, 4> cornerIndexes{0, 3, 12, 15};
+    const std::array<synth::ui::Bounds, 4> expectedCorners{{
+        {10.0f, 20.0f, 96.5f, 76.5f},
+        {323.5f, 20.0f, 96.5f, 76.5f},
+        {10.0f, 273.5f, 96.5f, 76.5f},
+        {323.5f, 273.5f, 96.5f, 76.5f},
+    }};
+    for (std::size_t ix = 0; ix < cornerIndexes.size(); ++ix) {
+        const synth::ui::Bounds actual =
+            synth_miniapp::EncoderGridLayout::BoundsForIndex(encoderArea, cornerIndexes[ix]);
+        RequireNear(actual.x, expectedCorners[ix].x, 0.0001f, "encoder corner x");
+        RequireNear(actual.y, expectedCorners[ix].y, 0.0001f, "encoder corner y");
+        RequireNear(actual.width, expectedCorners[ix].width, 0.0001f, "encoder corner width");
+        RequireNear(actual.height, expectedCorners[ix].height, 0.0001f, "encoder corner height");
+    }
 
     synth::ParameterManager manager;
     synth::MessageInBus uiBus(&manager);
@@ -1632,9 +1607,8 @@ TEST_CASE(miniapp_rig_default_instrument_has_single_wrldbldr_controller) {
     REQUIRE_TRUE(slot.name == "wrldbldr");
     REQUIRE_TRUE(slot.kind == synth::MidiProfileKind::WrldBldr);
 
-    // The default WRLD.Bldr profile maps all 16 physical encoders even though
-    // the app only realizes 4 on-screen (positions 4..15 are input-ignored and
-    // output-blanked).
+    // The default WRLD.Bldr profile maps all 16 physical encoders presented by
+    // the MiniApp surface.
     constexpr std::size_t kVisibleEncoderCount = 16;
     synth::WrldBldrDefaultProfileOptions expectedOptions;
     const synth::MidiControllerProfileConfig expectedConfig = synth::WrldBldrDefaultProfileConfig(expectedOptions);

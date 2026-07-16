@@ -81,17 +81,8 @@ public:
                     FormatEncoderGestureValue(0, ix, 0.0f)));
         }
 
-        synth::ui::Bounds belowEncoders = content;
-        belowEncoders.y = encoderArea.y + encoderArea.height;
-        belowEncoders.height = content.height - (belowEncoders.y - content.y);
-
-        synth::ui::Bounds waveformRow = belowEncoders;
-        waveformRow.height = MiniAppPageLayout::kWaveformRowHeight;
-        synth::ui::Bounds vcoScopeBounds;
-        synth::ui::Bounds lfoScopeBounds;
-        synth::ui::Bounds gangedRandomLfoRoundBounds;
-        MiniAppPageLayout::WaveformScopeBounds(
-            waveformRow, vcoScopeBounds, lfoScopeBounds, gangedRandomLfoRoundBounds);
+        const synth::ui::Bounds vcoScopeBounds = MiniAppPageLayout::VcoScopeBounds(content);
+        const synth::ui::Bounds lfoScopeBounds = MiniAppPageLayout::LfoScopeBounds(content);
 
         if (core_ != nullptr)
         {
@@ -101,18 +92,11 @@ public:
             builder.Draw(MiniAppNodeIds::kLfoScope,
                          lfoScopeBounds,
                          BuildLfoWaveformCommands(LfoWaveformDrawStateFromCore(*core_), lfoScopeBounds));
-            builder.Draw(
-                MiniAppNodeIds::kGangedRandomLfoRound,
-                gangedRandomLfoRoundBounds,
-                BuildGangedRandomLfoPanelCommandsFromCore(
-                    *core_, gangedRandomLfoRoundBounds));
         }
         else
         {
             builder.Draw(MiniAppNodeIds::kVcoScope, vcoScopeBounds, {});
             builder.Draw(MiniAppNodeIds::kLfoScope, lfoScopeBounds, {});
-            builder.Draw(
-                MiniAppNodeIds::kGangedRandomLfoRound, gangedRandomLfoRoundBounds, {});
         }
 
         const MiniAppUiSnapshot snapshot = SnapshotUiState(context_);
