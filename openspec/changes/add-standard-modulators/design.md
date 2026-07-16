@@ -28,7 +28,7 @@ MiniApp currently owns and registers one random gang, noise, and constant at ind
 
 Add a focused reusable synth header containing a non-copyable, non-movable `StandardModulators<VoiceCount>`. Construct it with `ParameterGroup&` and retain that group as a non-owning pointer. Applications create it after their groups exist and retain it at an address-stable lifetime, for example through `std::unique_ptr` owned by the application core.
 
-The wrapper owns four `GangedRandomLfoProcessor<VoiceCount>` objects, four `GangedRandomLfoInput` records, four `std::array<float, VoiceCount>` output rows and matching pointer rows, one `NoiseModulatorProcessor(VoiceCount)`, one `ConstantModulatorProcessor(VoiceCount)`, four predictive ganged-random visualizers, one noise waveform visualizer, and one constant bar visualizer. It exposes bounded inspection access needed by tests and by MiniApp's retained main-screen random panel.
+The wrapper owns four `GangedRandomLfoProcessor<VoiceCount>` objects, four `GangedRandomLfoInput` records, four `std::array<float, VoiceCount>` output rows and matching pointer rows, one `NoiseModulatorProcessor(VoiceCount)`, one `ConstantModulatorProcessor(VoiceCount)`, four predictive ganged-random visualizers, one noise waveform visualizer, and one constant bar visualizer. It exposes bounded inspection access needed by tests and applications while retaining the visualizers used by modulation-depth underlays.
 
 This retains the existing compile-time storage and behavior of the random processor. A runtime-sized wrapper would require redesigning that processor and introduce unrelated allocation/storage work. Making `ParameterGroup` own the bundle would couple the generic parameter system to an opt-in selection of DSP sources and visualizers.
 
@@ -49,16 +49,16 @@ Default source metadata is:
 
 Random visualizers use the stable voice-identity palette Cyan, Orange, Green, Yellow, truncated to `VoiceCount`; if future use exceeds four voices, registration requires an explicitly supplied palette of exactly `VoiceCount` colors. All connected metadata is installed with `connected=true` and the wrapper-owned visualizer pointer.
 
-The four default random inputs are derived rather than independently approximated. For waiting mean `W` and target sigma `T`, waiting is `(muSeconds=W, sigmaSeconds=0.1W, internalSigmaHz=0.1/W)`, moving is `(muSeconds=W/2, sigmaSeconds=0.05W, internalSigmaHz=0.2/W)`, and `targetInternalSigma=T`:
+The four default random inputs are derived rather than independently approximated. For waiting mean `W` and target sigma `T`, waiting is `(muSeconds=W, sigmaSeconds=0.3 * W, internalSigmaHz=0.2 / W)`, moving is `(muSeconds=W / 2, sigmaSeconds=0.3 * (W / 2), internalSigmaHz=0.2 / (W / 2))`, and `targetInternalSigma=T`:
 
-| Random | `W` | `T` |
-|---:|---:|---:|
-| 0 | 0.5 s | 0.1 |
-| 1 | 2 s | 0.3 |
-| 2 | 6 s | 0.2 |
-| 3 | 16 s | 0.1 |
+| Random | `W` | Waiting `(mu, sigma, internal)` | Moving `(mu, sigma, internal)` | `T` |
+|---:|---:|---|---|---:|
+| 0 | 0.5 s | `(0.5, 0.15, 0.4)` | `(0.25, 0.075, 0.8)` | 0.1 |
+| 1 | 2 s | `(2, 0.6, 0.1)` | `(1, 0.3, 0.2)` | 0.3 |
+| 2 | 6 s | `(6, 1.8, 1/30)` | `(3, 0.9, 1/15)` | 0.2 |
+| 3 | 16 s | `(16, 4.8, 0.0125)` | `(8, 2.4, 0.025)` | 0.1 |
 
-`internalSigmaHz = 0.1 / muSeconds` already has inverse-second units, so it is not squared.
+The internal sigmas have inverse-second units and use the reciprocal of each phase mean.
 
 ### 3. Validate and register the complete lifetime bundle once
 
@@ -76,7 +76,11 @@ MiniApp prepares at the host processing rate, calls the standard bundle once per
 
 ### 5. Adopt a fifteen-source MIN-16 topology in both applications
 
-MiniApp changes its group to fifteen modulators and expands its bank slot to all sixteen physical positions using the app's existing physical-ID convention. Its twelve top-level parameters reserve `12 * (1 + 15) = 192` initial modulation-aware parameter slots. One `StandardModulators<2>` replaces direct random/noise/constant ownership and registration. Direct VCO, swapped VCO, and ordinary LFO move to indexes `4`, `5`, and `6`; their existing scope visualizers move with them. The waveform row continues rendering its third panel from standard random source `0`, while modulation-depth cells use wrapper-owned visualizers.
+MiniApp changes its group to fifteen modulators and expands its bank slot to all sixteen physical positions using the app's existing row-major physical-ID convention: position `0` is upper-left and position `15` is lower-right. Its twelve top-level parameters reserve `12 * (1 + 15) = 192` initial modulation-aware parameter slots. One `StandardModulators<2>` replaces direct random/noise/constant ownership and registration. Direct VCO, swapped VCO, and ordinary LFO move to indexes `4`, `5`, and `6`; their existing scope visualizers move with them.
+
+At both the default `900x560` size and the supported `640x480` size, MiniApp stacks the VCO and ordinary-LFO scopes inside a bounded left region and lays out all sixteen encoder positions in a bounded right-side `4x4` grid whose cell dimensions derive from the available encoder area. Empty top-level positions remain disconnected placeholders. Modulation views continue mapping sources `0..14` to positions `0..14` and return to position `15`, including disconnected source gaps.
+
+MiniApp removes the separate main-screen ganged-random panel and any MiniApp-only panel code or identifiers made unused by that removal. The standard bundle continues retaining random, constant, and noise visualizers so connected modulation-depth cells can render them as encoder underlays. Browser and JUCE backends continue consuming the same portable MiniApp node tree; the layout introduces no new rendering protocol.
 
 Braid4 changes the stereo, quad, and mono groups to fifteen modulators. It owns `StandardModulators<2>`, `<4>`, and `<1>` respectively. Each group's audible source moves to `4` and its parallel LFO source to `5`; therefore the quad matrix feedback contract and stereo/mono normalized source contracts retain their signal behavior but change indexes. Group capacities must fit existing top-level registration plus every connected depth in one complete fifteen-position modulation view: stereo at least 19, quad at least 23, and mono at least 63 slots; larger existing capacities may remain. Additional persistent lazy depth controls continue using the existing storage-batch mechanism.
 

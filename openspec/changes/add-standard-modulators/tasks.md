@@ -16,7 +16,7 @@
 - [x] 3.1 Update MiniApp system tests first for fifteen modulators, sixteen physical slot positions, capacity `192`, standard sources at `0..3/11/14`, direct/swapped VCO and ordinary LFO at `4/5/6`, disconnected gaps, and no saved-index migration.
 - [x] 3.2 Replace MiniApp's directly owned random/noise/constant processors, inputs, adapter storage, visualizers, registration helpers, and sample-loop calls with one retained `StandardModulators<2>` and its lifecycle operations.
 - [x] 3.3 Move MiniApp's three scope-backed source registrations and visualizer metadata to `4/5/6`, expand the slot using the existing physical-ID convention, and verify all fifteen source positions plus the return cell route correctly while connected depths materialize and disconnected gaps remain empty.
-- [x] 3.4 Rewire MiniApp's main random panel and UI/test accessors to standard random source `0`; update portable and browser command-buffer tests while preserving the three-panel layout and modulation-underlay behavior.
+- [x] 3.4 Rewire MiniApp's standard-source UI/test accessors to the retained bundle and update portable and browser command-buffer tests while preserving modulation-underlay behavior.
 
 ## 4. Braid4 Adoption
 
@@ -37,3 +37,11 @@
 - [x] 6.1 Add failing generic parameter-modulation tests proving disconnected indexes remain null/disconnected, ignore encoder and modifier input, do not consume capacity, hide explicitly assigned depths, and are excluded from Random Mod including the all-disconnected case.
 - [x] 6.2 Update generic bank modulation-view materialization, missing-depth preflight, and Random Mod selection so only connected source indexes create or expose depth parameters while every configured index retains its physical position.
 - [x] 6.3 Update MiniApp and Braid4 system/portable UI assertions for sparse connected depths, run focused and full synth verification plus strict OpenSpec validation, and review the implementation with spec-compliance then code-quality gates.
+
+## 7. Less-Predictable Random Timing and MiniApp 4x4 Grid Follow-up
+
+- [ ] 7.1 Update focused standard-modulator tests for all four exact waiting and moving mean, external-sigma, and internal-sigma cases while proving target sigmas and pre-registration overrides remain unchanged.
+- [ ] 7.2 Change the standard random defaults to waiting sigma `0.3 * W`, waiting internal sigma `0.2 / W`, moving sigma `0.3 * (W / 2)`, and moving internal sigma `0.2 / (W / 2)`.
+- [ ] 7.3 Update MiniApp system and portable UI tests for bounded stacked VCO/LFO scopes, all sixteen row-major `4x4` encoder positions, corner mapping, disconnected top-level placeholders, modulation sources `0..14` plus return at `15`, and absence of the separate main-screen random panel at `900x560` and `640x480`.
+- [ ] 7.4 Implement the responsive MiniApp left-scope/right-grid layout, remove the obsolete main-screen ganged-random node and unused MiniApp-only panel identifiers, and verify browser and JUCE backends continue consuming the portable node tree while modulation-depth visualizer underlays remain available.
+- [ ] 7.5 Run focused DSP, MiniApp system, portable UI, browser command-buffer, JUCE parity, full synth, and strict OpenSpec verification; then perform spec-compliance and code-quality reviews plus a final placeholder, contradiction, and changed-file scope audit.

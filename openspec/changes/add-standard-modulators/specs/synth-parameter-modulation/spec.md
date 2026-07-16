@@ -6,7 +6,7 @@
 ## MODIFIED Requirements
 
 ### Requirement: spm-71 — MiniApp: standard modulation topology
-WHEN MiniApp initializes its modulation topology, THE application SHALL configure its two-voice group for exactly fifteen modulators and its bank slot for all sixteen physical positions; SHALL retain one `StandardModulators<2>` that registers four two-voice ganged random LFOs at indexes `0..3`, constant at `11`, and noise at `14`; SHALL register direct VCO, swapped VCO, and ordinary LFO sources at indexes `4`, `5`, and `6`; SHALL retain and publish the standard bundle's UI states and address-stable visualizers; and SHALL render a separate main-screen panel from standard random source `0` beside the existing VCO and ordinary LFO scopes without adding performer parameters for any standard source.
+WHEN MiniApp initializes its modulation topology, THE application SHALL configure its two-voice group for exactly fifteen modulators and its bank slot for all sixteen physical positions; SHALL retain one `StandardModulators<2>` that registers four two-voice ganged random LFOs at indexes `0..3`, constant at `11`, and noise at `14`; SHALL register direct VCO, swapped VCO, and ordinary LFO sources at indexes `4`, `5`, and `6`; SHALL retain and publish the standard bundle's UI states and address-stable visualizers; SHALL render the VCO and ordinary-LFO scopes stacked in a bounded left region and all sixteen physical encoder positions in a row-major `4x4` right grid at the default and `640x480` surface sizes; and SHALL omit a separate main-screen ganged-random panel without adding performer parameters for any standard source.
 
 #### Scenario: MiniApp uses standard random defaults
 - **WHEN** MiniApp constructs its standard bundle without overriding random timing
@@ -37,10 +37,21 @@ WHEN MiniApp initializes its modulation topology, THE application SHALL configur
 - **THEN** each published visualizer pointer refers to the retained standard bundle's corresponding visualizer
 - **AND** no processor, adapter row, UI state, or visualizer is reconstructed during audio or UI refresh
 
-#### Scenario: Main screen retains the random panel
-- **WHEN** the MiniApp surface builds at its default size
-- **THEN** the waveform row contains bounded VCO, ordinary LFO, and standard-random-0 panels
-- **AND** the random panel displays source `0`'s current complete round with the two configured voice colors and present dots
+#### Scenario: Main screen uses bounded scopes and a complete encoder grid
+- **WHEN** the MiniApp surface builds at its default `900x560` size or at `640x480`
+- **THEN** the VCO and ordinary-LFO scopes are stacked without overlap inside a bounded left region
+- **AND** all sixteen physical encoder positions occupy a bounded row-major `4x4` right grid
+- **AND** position `0` is the upper-left cell and position `15` is the lower-right cell
+
+#### Scenario: Empty positions and modulation views preserve physical mapping
+- **WHEN** MiniApp publishes a top-level bank or a modulation view in the `4x4` grid
+- **THEN** empty top-level positions remain disconnected placeholders
+- **AND** a modulation view presents sources `0..14` in physical positions `0..14` and the return cell at position `15`
+
+#### Scenario: Main screen omits the separate random panel
+- **WHEN** the MiniApp main surface builds
+- **THEN** no separate main-screen ganged-random panel is constructed or rendered
+- **AND** standard random, constant, and noise modulation-depth visualizer underlays remain available through their retained visualizers
 
 #### Scenario: Standard metaparameters are not performer state
 - **WHEN** MiniApp publishes its pages, banks, encoder mappings, and patch state

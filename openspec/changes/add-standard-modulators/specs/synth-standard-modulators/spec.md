@@ -44,26 +44,26 @@ WHEN a standard bundle is constructed but not yet registered, THE synth standard
 - **AND** registered pointers and metadata remain unchanged
 
 ### Requirement: ssm-3 — Random defaults: four derived time scales
-WHEN the standard random inputs use their defaults, THE synth standard-modulator system SHALL use waiting means `W=[0.5, 2, 6, 16]` seconds and target internal sigmas `[0.1, 0.3, 0.2, 0.1]`; SHALL set each waiting sigma to `0.1W` seconds and waiting internal sigma to `0.1/W` hertz; and SHALL set each moving mean to `W/2`, moving sigma to `0.1 * (W/2)` seconds, and moving internal sigma to `0.1/(W/2)` hertz.
+WHEN the standard random inputs use their defaults, THE synth standard-modulator system SHALL use waiting means `W=[0.5, 2, 6, 16]` seconds and target internal sigmas `[0.1, 0.3, 0.2, 0.1]`; SHALL set `waiting.muSeconds=W`, `waiting.sigmaSeconds=0.3 * W`, and `waiting.internalSigmaHz=0.2 / W`; and SHALL set `moving.muSeconds=W / 2`, `moving.sigmaSeconds=0.3 * (W / 2)`, and `moving.internalSigmaHz=0.2 / (W / 2)`.
 
 #### Scenario: 500-millisecond source has derived values
 - **WHEN** random source `0` uses its defaults
-- **THEN** waiting is `(0.5 s, 0.05 s, 0.2 Hz)` and moving is `(0.25 s, 0.025 s, 0.4 Hz)`
+- **THEN** waiting `(mu, sigma, internal)` is `(0.5, 0.15, 0.4)` and moving `(mu, sigma, internal)` is `(0.25, 0.075, 0.8)`
 - **AND** target internal sigma is `0.1`
 
 #### Scenario: Two-second source has derived values
 - **WHEN** random source `1` uses its defaults
-- **THEN** waiting is `(2 s, 0.2 s, 0.05 Hz)` and moving is `(1 s, 0.1 s, 0.1 Hz)`
+- **THEN** waiting `(mu, sigma, internal)` is `(2, 0.6, 0.1)` and moving `(mu, sigma, internal)` is `(1, 0.3, 0.2)`
 - **AND** target internal sigma is `0.3`
 
 #### Scenario: Six-second source has derived values
 - **WHEN** random source `2` uses its defaults
-- **THEN** waiting is `(6 s, 0.6 s, 1/60 Hz)` and moving is `(3 s, 0.3 s, 1/30 Hz)`
+- **THEN** waiting `(mu, sigma, internal)` is `(6, 1.8, 1/30)` and moving `(mu, sigma, internal)` is `(3, 0.9, 1/15)`
 - **AND** target internal sigma is `0.2`
 
 #### Scenario: Sixteen-second source has derived values
 - **WHEN** random source `3` uses its defaults
-- **THEN** waiting is `(16 s, 1.6 s, 0.00625 Hz)` and moving is `(8 s, 0.8 s, 0.0125 Hz)`
+- **THEN** waiting `(mu, sigma, internal)` is `(16, 4.8, 0.0125)` and moving `(mu, sigma, internal)` is `(8, 2.4, 0.025)`
 - **AND** target internal sigma is `0.1`
 
 ### Requirement: ssm-4 — Registration: validated fifteen-source topology
