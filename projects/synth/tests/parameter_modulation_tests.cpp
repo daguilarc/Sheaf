@@ -5278,6 +5278,78 @@ TEST_CASE(midi_encoder_input_direction_only_zero_and_thru_behavior) {
     REQUIRE_TRUE(thru.last.GetCC() == 9);
 }
 
+TEST_CASE(midi_encoder_input_absolute_maps_raw_positions_independent_of_turn_step) {
+    constexpr std::array rawValues{std::uint8_t{0}, std::uint8_t{64}, std::uint8_t{127}};
+    constexpr std::array normalizedValues{0.0f, 64.0f / 127.0f, 1.0f};
+
+    for (const float turnStep : {0.01f, 0.75f}) {
+        synth::MessageInBus bus(nullptr, 16);
+        synth::EncoderMidiInConfig config;
+        config.mode = synth::EncoderMode::Absolute;
+        config.turnStep = turnStep;
+        config.turns.push_back({.control = {.channel = 3, .cc = 7}, .slotIx = 4, .position = 6});
+        synth::EncoderMidiInProcessor processor(config, &bus);
+        std::uint64_t nextTimestamp = 101;
+        processor.SetTimestampProvider([&nextTimestamp] { return nextTimestamp++; });
+
+        for (std::size_t ix = 0; ix < rawValues.size(); ++ix) {
+            processor.Process(synth::BasicMidi::CC(9999, 3, 7, rawValues[ix]));
+
+            synth::MessageIn message;
+            REQUIRE_TRUE(bus.Pop(message, 103));
+            REQUIRE_TRUE(message.type == synth::MessageIn::Type::ParamSetAbsolute);
+            REQUIRE_TRUE(message.timestamp == 101 + ix);
+            REQUIRE_TRUE(message.slotIx == 4);
+            REQUIRE_TRUE(message.position == 6);
+            REQUIRE_NEAR(message.value, normalizedValues[ix], 0.000001f);
+        }
+
+        synth::MessageIn extra;
+        REQUIRE_TRUE(!bus.Pop(extra, 103));
+    }
+}
+
+TEST_CASE(midi_encoder_input_absolute_preserves_mapped_push_and_thru_boundaries) {
+    synth::MessageInBus bus(nullptr, 16);
+    synth::EncoderMidiInConfig config;
+    config.mode = synth::EncoderMode::Absolute;
+    config.turns.push_back({.control = {.channel = 0, .cc = 1}, .slotIx = 2, .position = 3});
+    config.pushes.push_back({.control = {.channel = 1, .cc = 1}, .slotIx = 2, .position = 3});
+    synth::EncoderMidiInProcessor processor(config, &bus);
+    processor.SetTimestampProvider([] { return 77; });
+    CountingMidiInProcessor thru;
+    processor.SetThru(&thru);
+
+    processor.Process(synth::BasicMidi::CC(1, 0, 1, 0));
+    synth::MessageIn message;
+    REQUIRE_TRUE(bus.Pop(message, 77));
+    REQUIRE_TRUE(message.type == synth::MessageIn::Type::ParamSetAbsolute);
+    REQUIRE_TRUE(message.timestamp == 77);
+    REQUIRE_TRUE(message.slotIx == 2);
+    REQUIRE_TRUE(message.position == 3);
+    REQUIRE_NEAR(message.value, 0.0f, 0.000001f);
+    REQUIRE_TRUE(thru.count == 0);
+
+    processor.Process(synth::BasicMidi::CC(1, 1, 1, 127));
+    REQUIRE_TRUE(bus.Pop(message, 77));
+    REQUIRE_TRUE(message.type == synth::MessageIn::Type::ParamPush);
+    REQUIRE_TRUE(message.timestamp == 77);
+    REQUIRE_TRUE(message.slotIx == 2);
+    REQUIRE_TRUE(message.position == 3);
+    REQUIRE_TRUE(thru.count == 0);
+
+    processor.Process(synth::BasicMidi::CC(1, 1, 1, 0));
+    REQUIRE_TRUE(!bus.Pop(message, 77));
+    REQUIRE_TRUE(thru.count == 0);
+
+    processor.Process(synth::BasicMidi::CC(1, 9, 9, 64));
+    REQUIRE_TRUE(!bus.Pop(message, 77));
+    REQUIRE_TRUE(thru.count == 1);
+    REQUIRE_TRUE(thru.last.Channel() == 9);
+    REQUIRE_TRUE(thru.last.GetCC() == 9);
+    REQUIRE_TRUE(thru.last.GetValue() == 64);
+}
+
 TEST_CASE(midi_analog_input_maps_gestures_scene_blend_timestamps_and_thru) {
     synth::MessageInBus bus(nullptr, 16);
     synth::AnalogMidiInConfig config;

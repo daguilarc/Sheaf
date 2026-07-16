@@ -410,6 +410,11 @@ void EncoderMidiInProcessor::Process(const BasicMidi& midi) {
     }
 
     if (const EncoderMidiMapping* mapping = FindTurn(midi)) {
+        if (config_.mode == EncoderMode::Absolute) {
+            Push(MessageIn::ParamSetAbsolute(NextTimestamp(), mapping->slotIx, mapping->position,
+                                             static_cast<float>(midi.GetValue()) / 127.0f));
+            return;
+        }
         if (const std::optional<float> delta = DecodeDelta(midi.GetValue())) {
             Push(MessageIn::ParamIncDec(NextTimestamp(), mapping->slotIx, mapping->position, *delta));
         }
