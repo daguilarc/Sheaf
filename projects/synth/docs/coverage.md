@@ -1,6 +1,6 @@
 # Spec Coverage
 
-Last audit: ganged random LFO, noise and constant modulators, and sparse modulation processing, 2026-07-15
+Last audit: standard modulators, fifteen-source application adoption, and sparse modulation processing, 2026-07-16
 
 | Requirement | Status | Primary exact coverage |
 |---|---|---|
@@ -19,22 +19,30 @@ Last audit: ganged random LFO, noise and constant modulators, and sparse modulat
 | `spv-4` | covered | `projects/synth/tests/portable_ui_tests.cpp` `Builder::Visualizer` emits visible node and omits hidden node |
 | `spv-5` | covered | `projects/synth/tests/portable_ui_tests.cpp` scope visualizer snapshots connected/color/scope/channel fields and keeps waveform geometry in bounds |
 | `spv-6` | covered | `portable_ui_tests` predictive round geometry and invalid-snapshot fallback; `miniapp_juce_backend_parity_tests` and `browser_command_buffer_tests` existing-backend command parity |
-| `spv-7` | covered | `projects/synth/tests/portable_ui_tests.cpp` fresh visible-draw noise path; `projects/synth/tests/miniapp_system_tests.cpp` six-slot topology and retained index-4 noise visualizer distinct from the three scope visualizers, index-3 ganged random LFO visualizer, and index-5 constant visualizer |
+| `spv-7` | covered | `TestNoiseWaveformVisualizer` in `portable_ui_tests`; `TestStandardModulatorVisualizersRemainPortable` and `miniapp_registers_noise_at_standard_index_fourteen` cover the retained standard noise visualizer at index `14` |
 | `spm-70` | covered | `projects/synth/tests/parameter_modulation_tests.cpp` visualizer topology flows metadata -> depth config -> UI state, clears on disconnect, and stays out of JSON |
 | `sru-24` | covered | `projects/synth/tests/miniapp_system_tests.cpp` visualizer node shares encoder bounds, precedes encoder, and encoder actions remain; top-level/bank-transition no-visualizer regressions; null/hidden paths in portable/Braid tests |
 | `sru-25` | covered | `projects/synth/tests/portable_ui_tests.cpp` shared encoder underlay body alpha and preserved non-body commands; `projects/synth/tests/miniapp_system_tests.cpp` visible and hidden visualizer underlay wiring |
-| `sdsp-13` (modified) | covered | `projects/synth/tests/dsp_tests.cpp` deterministic seeded noise, strict open interval, one advance per voice, distribution sanity, stable pointers, and direct `ParameterGroup` publication; `projects/synth/tests/miniapp_system_tests.cpp` combined six-slot/capacity topology preserves noise at index 4 |
-| `sdsp-33` (modified) | covered | `projects/synth/tests/miniapp_system_tests.cpp` exactly three distinct retained scope-backed MiniApp visualizers at indexes 0, 1, and 2, separately from ganged, noise, and constant visualizers |
+| `sdsp-13` (modified) | covered | `projects/synth/tests/dsp_tests.cpp` deterministic seeded noise, strict open interval, one advance per voice, distribution sanity, stable pointers, and direct `ParameterGroup` publication; `miniapp_registers_noise_at_standard_index_fourteen` covers application adoption |
+| `sdsp-33` (modified) | covered | `miniapp_registers_distinct_scope_visualizers_for_modulators` proves three distinct retained scope visualizers at application indexes `4/5/6`; `miniapp_registers_standard_fifteen_source_topology_without_changing_performer_topology` separates standard visualizers at `0..3/11/14` |
 | `sdsp-34` | covered | `dsp_tests` shaped interpolation, reciprocal-time correlated increments, Hz-domain voice spread, validation, precision, and one-hour increment floor cases |
 | `sdsp-35` | covered | `dsp_tests` deterministic voice wait/move/done transitions, exact and overshot boundaries, reset semantics, and double progress cases |
 | `sdsp-36` | covered | `dsp_tests` canonical random draw order, correlated gang turnover, fixed storage/seed, bounded coherent snapshots, complete live fields, and assigned voice colors |
 | `sdsp-37` | covered | `projects/synth/tests/dsp_tests.cpp` positive runtime voice count, zero rejection, non-copyable/non-movable lifetime, bounds-checked access, stable source pointers, and allocation-free/noexcept processing contract |
-| `sdsp-38` | covered | `projects/synth/tests/miniapp_system_tests.cpp` combined six-slot topology, ganged random LFO at index 3, connected noise at index 4, retained distinct visualizers, and per-sample noise publication before modulation update |
+| `sdsp-38` | covered | `miniapp_registers_noise_at_standard_index_fourteen`, `miniapp_publishes_new_noise_values_before_each_modulation_update`, and `TestStandardModulatorVisualizersRemainPortable` |
 | `spv-8` | covered | `projects/synth/tests/portable_ui_tests.cpp` ordered centered half-width constant bars, exact zero/top framing, invalid bounds, immutable redraw, constant-only frame preference, and builder composition; `projects/synth/tests/miniapp_system_tests.cpp` constant-frame suppression with default-frame preservation; existing JUCE/browser fill-command parity |
 | `sdsp-39` | covered | `projects/synth/tests/dsp_tests.cpp` zero/one voice construction, exact even/odd greedy assignments, normalized rank coverage, maximal cyclic distance, immutable stable pointers, and direct `ParameterGroup` publication |
-| `sdsp-40` | covered | `projects/synth/tests/miniapp_system_tests.cpp` combined six-slot topology, yellow constant at index 5, retained visualizer, fixed `(0, 1)` values, stable pointers, and no constant sample-path recomputation |
-| `spm-71` | covered | `miniapp_system_tests` source registration/configuration, audio-block processing/publishing, retained address-stable visualizer, and three-panel/underlay UI topology; JUCE/browser parity tests cover the same portable draw commands |
-| `d4-9` | covered | `projects/synth/tests/braid4_system_tests.cpp` all Braid 4 modulator visualizers are null and modulation view is encoder-only |
+| `sdsp-40` | covered | `miniapp_registers_constant_at_standard_index_eleven_without_sample_work`, `miniapp_registers_standard_fifteen_source_topology_without_changing_performer_topology`, and `TestStandardModulatorVisualizersRemainPortable` |
+| `ssm-1` | covered | `standard_modulators_owns_address_stable_source_and_visualizer_storage` plus compile-time copy/move assertions in `dsp_tests` |
+| `ssm-2` | covered | `standard_modulators_defaults_match_min16_contract`, `standard_modulators_pre_registration_overrides_are_registered`, and `standard_modulators_configuration_freezes_after_registration` |
+| `ssm-3` | covered | `standard_modulators_defaults_match_min16_contract` checks every exact derived timing field for all four sources |
+| `ssm-4` | covered | the `standard_modulators_rejects_*` atomic-validation cases and `standard_modulators_mono_omits_constant_and_ignores_constant_collision` |
+| `ssm-5` | covered | `standard_modulators_lifecycle_requires_registration_and_finite_preparation`, `standard_modulators_process_advances_dynamic_sources_once_and_copies_voice_order`, and `standard_modulators_group_updates_and_ui_publication_remain_explicit` |
+| `spm-71` | covered | `miniapp_registers_standard_fifteen_source_topology_without_changing_performer_topology`, `miniapp_processes_and_publishes_ganged_random_lfo_at_audio_block_boundaries`, and `miniapp_loads_old_six_index_depth_data_without_alias_or_translation` |
+| `d4-1` | covered | `initializes_parameter_groups_banks_slot_and_scene_endpoints`, `braid4_standard_bundles_register_exact_independent_sources`, and `braid4_groups_fit_complete_fifteen_cell_modulation_views` |
+| `d4-3` | covered | `prepares_four_x_internal_rate_and_sequences_internal_subframes`, `matrix_feedback_uses_current_vco_outputs_and_delays_only_modulator_consumption_one_internal_sample`, and `braid4_deadline_tests` |
+| `d4-8` | covered | `parallel_lfo_topology_banks_colors_and_modulator_slots`, `audio_and_lfo_outputs_publish_normalized_stereo_mono_and_quad_modulators`, and the matrix-delay case named for `d4-3` |
+| `d4-9` | covered | `braid4_standard_modulation_view_renders_underlay_and_app_sources_remain_encoder_only`, `braid4_standard_bundles_register_exact_independent_sources`, and `TestBraid4StandardModulationViewsRemainPortable` |
 | `spm-20` (modified) | covered | `parameter_ui_snapshot_owns_parameter_source_and_gesture_colors`, `ui_state_reports_affecting_masks_through_gesture_index_63`, `randomized_message_bus_ui_state_simulation`, and portable encoder snapshot/render assertions through bit 63 |
 | `spm-25` (modified) | covered | `randomized_message_bus_ui_state_simulation` plus `message_bus_sparse_lifecycle_model_tracks_pins_collection_reuse_and_patch_load` validate 64-bit UI masks and sparse lifecycle state against deterministic manager-owned oracles |
 | `spm-72` | covered | `group_process_sample_visits_only_registered_roots`, `recursive_local_compute_seeds_display_without_audio_rate_processing`, active-route full-scan cases, and `braid4_sparse_work_counters_bound_inactive_capacity` |
@@ -261,25 +269,150 @@ Last audit: ganged random LFO, noise and constant modulators, and sparse modulat
   `TestPredictiveGangedLfoUsesExistingDrawSchema` proves the browser consumes the
   same commands without a protocol-version change or diagnostic.
 
-### `spm-71` - MiniApp Ganged Random Modulation
+### `ssm-1` - Opt-In Owned Standard Bundle
+
+- [`dsp_tests.cpp`](../tests/dsp_tests.cpp):
+  `standard_modulators_owns_address_stable_source_and_visualizer_storage`
+  checks the retained target group, all processors, stable output and pointer
+  rows, and distinct visualizers for `<1>`, `<2>`, and `<4>` specializations.
+  Adjacent compile-time assertions reject copy and move construction and
+  assignment for every specialization.
+
+### `ssm-2` - Editable MIN-16 Configuration
+
+- [`dsp_tests.cpp`](../tests/dsp_tests.cpp):
+  `standard_modulators_defaults_match_min16_contract` checks exact indexes,
+  names, short names, source colors, and voice palettes;
+  `standard_modulators_pre_registration_overrides_are_registered` exercises
+  every configurable family; and
+  `standard_modulators_configuration_freezes_after_registration` proves the
+  mutable accessor closes without changing registered addresses or metadata.
+
+### `ssm-3` - Four Derived Random Time Scales
+
+- [`dsp_tests.cpp`](../tests/dsp_tests.cpp):
+  `standard_modulators_defaults_match_min16_contract` checks waiting means
+  `0.5/2/6/16`, target sigmas `0.1/0.3/0.2/0.1`, and every waiting/moving sigma
+  and reciprocal internal sigma derived from those means.
+
+### `ssm-4` - Atomic Fifteen-Source Registration
+
+- [`dsp_tests.cpp`](../tests/dsp_tests.cpp): the exact
+  `standard_modulators_rejects_each_out_of_range_active_index_atomically`,
+  `standard_modulators_rejects_each_duplicate_active_index_atomically`,
+  `standard_modulators_rejects_invalid_random_timing_atomically`,
+  `standard_modulators_rejects_empty_active_metadata_atomically`,
+  `standard_modulators_rejects_wrong_voice_palette_size_atomically`,
+  `standard_modulators_rejects_mismatched_group_shape_atomically`, and
+  `standard_modulators_rejects_double_registration_without_mutation` cases
+  cover validation and no partial mutation.
+- `standard_modulators_mono_omits_constant_and_ignores_constant_collision`
+  covers complete mono omission and inactive constant-index collision handling.
+
+### `ssm-5` - Explicit Standard-Modulator Lifecycle
+
+- [`dsp_tests.cpp`](../tests/dsp_tests.cpp):
+  `standard_modulators_lifecycle_requires_registration_and_finite_preparation`,
+  `standard_modulators_process_advances_dynamic_sources_once_and_copies_voice_order`,
+  and `standard_modulators_group_updates_and_ui_publication_remain_explicit`
+  cover preparation/re-preparation, one-step random/noise advancement, immutable
+  constant storage, stable addresses, caller-owned group updates, and
+  block-controlled random snapshot publication.
+
+### `spm-71` - MiniApp Standard Modulation Topology
 
 - [`miniapp_system_tests.cpp`](../tests/miniapp_system_tests.cpp):
-  `miniapp_registers_ganged_random_lfo_without_changing_performer_topology` and
-  `miniapp_processes_and_publishes_ganged_random_lfo_at_audio_block_boundaries`
-  cover source index 3, preserved sources 0--2, two-second/0.5-second/0.125-Hz
-  configuration, target sigma 0.1, cyan/orange voices, per-sample processing
-  before modulation update, negotiated sample rate, and block-boundary snapshot
-  publication.
-- `miniapp_main_waveform_row_draws_three_distinct_bounded_panels`,
-  `miniapp_modulation_view_draws_visualizer_beneath_encoder`, and the top-level,
-  hidden, and bank-transition visualizer cases in that executable cover three
-  distinct waveform panels, a separate retained address-stable modulator
-  underlay, and unchanged performer controls, parameters, banks, and persistence.
-- [`MiniAppJuceBackendParityTests.cpp`](../juce/MiniAppJuceBackendParityTests.cpp):
-  `miniapp_juce_backend_parity_tests` and
-  `TestMiniAppThreePanelCommandsUseExistingBrowserSchema` in
+  `miniapp_registers_standard_fifteen_source_topology_without_changing_performer_topology`
+  checks fifteen modulators, capacity `192`, all sixteen physical positions,
+  standard sources at `0..3/11/14`, application sources at `4/5/6`, disconnected
+  gaps, all depth cells plus return, stable visualizers, and unchanged performer
+  topology.
+- `miniapp_processes_and_publishes_ganged_random_lfo_at_audio_block_boundaries`
+  checks host-rate preparation, per-sample process-before-update ordering, voice
+  order, and block-boundary publication; `miniapp_main_waveform_row_draws_three_distinct_bounded_panels`
+  checks the VCO/LFO/standard-random-0 row.
+- `miniapp_loads_old_six_index_depth_data_without_alias_or_translation` proves
+  old saved depth numbers load literally while the live fifteen-source metadata
+  remains authoritative. `miniapp_rig_patch_save_perturb_load_round_trip`
+  covers current parameter persistence.
+- [`MiniAppJuceBackendParityTests.cpp`](../juce/MiniAppJuceBackendParityTests.cpp)
+  and `TestMiniAppThreePanelCommandsUseExistingBrowserSchema` in
   [`browser_command_buffer_tests.cpp`](../tests/browser_command_buffer_tests.cpp)
-  cover the three-panel commands in both production backends.
+  cover the portable three-panel commands in both production backends.
+
+### `sdsp-33` - MiniApp Scope Visualizers At `4/5/6`
+
+- [`miniapp_system_tests.cpp`](../tests/miniapp_system_tests.cpp):
+  `miniapp_registers_distinct_scope_visualizers_for_modulators` checks distinct
+  retained VCO/VCO/LFO scope instances at `4`, `5`, and `6`;
+  `miniapp_registers_standard_fifteen_source_topology_without_changing_performer_topology`
+  distinguishes those from bundle-owned standard visualizers.
+
+### `sdsp-38` - MiniApp Standard Noise
+
+- [`miniapp_system_tests.cpp`](../tests/miniapp_system_tests.cpp):
+  `miniapp_registers_noise_at_standard_index_fourteen` and
+  `miniapp_publishes_new_noise_values_before_each_modulation_update` check index
+  `14`, two stable voice pointers, bundle ownership, and process-before-update.
+- `TestStandardModulatorVisualizersRemainPortable` in
+  [`portable_ui_tests.cpp`](../tests/portable_ui_tests.cpp) and
+  `TestStandardModulatorUnderlaysUseExistingBrowserSchema` in
+  [`browser_command_buffer_tests.cpp`](../tests/browser_command_buffer_tests.cpp)
+  cover portable and browser noise-underlay rendering.
+
+### `sdsp-40` - MiniApp Standard Constant
+
+- [`miniapp_system_tests.cpp`](../tests/miniapp_system_tests.cpp):
+  `miniapp_registers_constant_at_standard_index_eleven_without_sample_work`
+  checks yellow `Constant`/`Const` metadata at `11`, stable values `(0, 1)`,
+  stable pointers, and unchanged values across processing blocks.
+- `TestStandardModulatorVisualizersRemainPortable` and
+  `TestStandardModulatorUnderlaysUseExistingBrowserSchema` cover retained
+  constant-underlay drawing without a sample-path copy.
+
+### `d4-1` - Three Fifteen-Modulator Braid4 Groups
+
+- [`braid4_system_tests.cpp`](../tests/braid4_system_tests.cpp):
+  `initializes_parameter_groups_banks_slot_and_scene_endpoints` checks the three
+  heterogeneous groups and shared sixteen-position slot;
+  `braid4_standard_bundles_register_exact_independent_sources` checks retained
+  independent `<2>/<4>/<1>` bundles and addresses; and
+  `braid4_groups_fit_complete_fifteen_cell_modulation_views` checks capacities
+  and full materialization in each group.
+
+### `d4-3` - Braid4 Internal-Sample Signal Ordering
+
+- [`braid4_system_tests.cpp`](../tests/braid4_system_tests.cpp):
+  `prepares_four_x_internal_rate_and_sequences_internal_subframes` checks all
+  three bundles at four-times-host rate, exact process/update cadence, and one
+  publication per block.
+- `matrix_feedback_uses_current_vco_outputs_and_delays_only_modulator_consumption_one_internal_sample`
+  checks current post-gain matrix inputs, the existing one-internal-sample
+  application-source delay at index `4`, and current standard-source visibility.
+- [`braid4_deadline_tests.cpp`](../tests/braid4_deadline_tests.cpp) checks release
+  callback budgets at `44.1`, `48`, and `96` kHz.
+
+### `d4-8` - Parallel Braid4 LFO Sources At `4/5`
+
+- [`braid4_system_tests.cpp`](../tests/braid4_system_tests.cpp):
+  `parallel_lfo_topology_banks_colors_and_modulator_slots` checks the parallel
+  module, shifted frequency ranges, bank layout, and application slots `4/5`;
+  `audio_and_lfo_outputs_publish_normalized_stereo_mono_and_quad_modulators`
+  checks every normalized application source in all three groups.
+- `matrix_feedback_uses_current_vco_outputs_and_delays_only_modulator_consumption_one_internal_sample`
+  and `runs_finite_non_silent_stereo_audio_after_decimation` pin application
+  source timing and audible-path isolation.
+
+### `d4-9` - Braid4 Standard Visualizers
+
+- [`braid4_system_tests.cpp`](../tests/braid4_system_tests.cpp):
+  `braid4_standard_modulation_view_renders_underlay_and_app_sources_remain_encoder_only`
+  checks standard underlays and encoder-only application cells;
+  `braid4_standard_bundles_register_exact_independent_sources` checks every
+  visualizer pointer, mono index `11`, and cross-group non-aliasing.
+- `TestBraid4StandardModulationViewsRemainPortable` in
+  [`portable_ui_tests.cpp`](../tests/portable_ui_tests.cpp) checks quad and mono
+  node trees, including the disconnected mono constant cell.
 
 ### `spm-20` (modified) - 64-Bit Parameter UI Snapshots
 

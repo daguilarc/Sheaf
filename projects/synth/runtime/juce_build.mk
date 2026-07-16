@@ -36,6 +36,11 @@ SYNTH_HEADERS := $(SYNTH_ROOT)/include/synth/ParameterModulation.hpp $(SYNTH_ROO
 	$(SYNTH_ROOT)/include/synth/DspMath.hpp \
 	$(SYNTH_ROOT)/include/synth/DspRandomLfo.hpp \
 	$(SYNTH_ROOT)/include/synth/GangedRandomLfoVisualizer.hpp \
+	$(SYNTH_ROOT)/include/synth/StandardModulators.hpp \
+	$(SYNTH_ROOT)/include/synth/DspConstant.hpp \
+	$(SYNTH_ROOT)/include/synth/DspNoise.hpp \
+	$(SYNTH_ROOT)/include/synth/ConstantBarVisualizer.hpp \
+	$(SYNTH_ROOT)/include/synth/NoiseWaveformVisualizer.hpp \
 	$(SYNTH_ROOT)/include/synth/DspNumbers.hpp \
 	$(SYNTH_ROOT)/include/synth/DspTransferFunction.hpp \
 	$(SYNTH_ROOT)/include/synth/DspFilters.hpp \

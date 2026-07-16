@@ -27,7 +27,7 @@
 
 ## 5. Regression, Performance, and Documentation
 
-- [ ] 5.1 Update synth coverage documentation and any source-topology comments to map `ssm-1..5`, revised `spm-71`, `sdsp-33/38/40`, and `d4-1/3/8/9` to their focused tests.
-- [ ] 5.2 Run the JUCE-free DSP, parameter modulation, module, portable UI, browser command-buffer, MiniApp system, and Braid4 system test targets and fix regressions without weakening existing assertions.
-- [ ] 5.3 Run MiniApp's app/browser smoke coverage and Braid4's representative-rate/deadline benchmarks; confirm four additional random processors plus noise per Braid group remain inside the existing release callback budget.
-- [ ] 5.4 Verify patch loading follows live fifteen-source topology without migration, run strict OpenSpec validation, and perform a final placeholder, contradiction, ambiguity, and changed-file scope review.
+- [x] 5.1 Update synth coverage documentation and any source-topology comments to map `ssm-1..5`, revised `spm-71`, `sdsp-33/38/40`, and `d4-1/3/8/9` to their focused tests.
+- [x] 5.2 Run the JUCE-free DSP, parameter modulation, module, portable UI, browser command-buffer, MiniApp system, and Braid4 system test targets and fix regressions without weakening existing assertions.
+- [x] 5.3 Run MiniApp's app/browser smoke coverage and Braid4's representative-rate/deadline benchmarks; confirm four additional random processors plus noise per Braid group remain inside the existing release callback budget.
+- [x] 5.4 Verify patch loading follows live fifteen-source topology without migration, run strict OpenSpec validation, and perform a final placeholder, contradiction, ambiguity, and changed-file scope review.
