@@ -6,10 +6,10 @@
 
 ## 2. Implement 64-Bit Sparse Gestures
 
-- [ ] 2.1 Add boundary tests for gesture counts 0, 1, 32, 33, 64, and rejected 65, including indices 0, 31, 32, and 63.
-- [ ] 2.2 Replace manager gesture selection and per-parameter/per-scene gesture-active byte scans with `std::uint64_t` selectors and set-bit iteration while preserving selection-versus-activation and scene-blend semantics.
-- [ ] 2.3 Widen parameter snapshots, encoder/portable draw state, and controller gesture-affecting selectors to 64 bits; give gestures 16–63 distinct one-based numeric badge labels and add bit-63 snapshot/render tests. Browser command buffers need no layout/version work because they contain rendered commands, not masks.
-- [ ] 2.4 Extend gesture edit-distribution, message-bus, UI snapshot, and patch round-trip tests through gesture 63, including deterministic assertions that inactive configured gestures are not visited.
+- [x] 2.1 Add boundary tests for gesture counts 0, 1, 32, 33, 64, and rejected 65, including indices 0, 31, 32, and 63.
+- [x] 2.2 Replace manager gesture selection and per-parameter/per-scene gesture-active byte scans with `std::uint64_t` selectors and set-bit iteration while preserving selection-versus-activation and scene-blend semantics.
+- [x] 2.3 Widen parameter snapshots, encoder/portable draw state, and controller gesture-affecting selectors to 64 bits; give gestures 16–63 distinct one-based numeric badge labels and add bit-63 snapshot/render tests. Browser command buffers need no layout/version work because they contain rendered commands, not masks.
+- [x] 2.4 Extend gesture edit-distribution, message-bus, UI snapshot, and patch round-trip tests through gesture 63, including deterministic assertions that inactive configured gestures are not visited.
 
 ## 3. Restore the Top-Level Audio Processing Boundary
 
