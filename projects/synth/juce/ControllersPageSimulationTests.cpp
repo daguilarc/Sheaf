@@ -1,5 +1,5 @@
 #include "ControllersPageHarness.hpp"
-#include "ControllersPageJuce.hpp"
+#include "PortableJuceBackend.hpp"
 
 #include "synth/ControllersPageUI.hpp"
 
@@ -67,7 +67,7 @@ std::string Describe(const synth::ui::Action& action)
 }
 
 void VerifyTreeAndRenderer(const synth::ui::NodeTree& tree,
-                           synth_runtime::ControllersTreeRenderer& renderer,
+                           synth_juce::PortableComponent& renderer,
                            const synth_runtime::test::ControllersHarnessFixture& fixture,
                            int step,
                            const std::string& actionDescription)
@@ -125,7 +125,11 @@ void VerifyTreeAndRenderer(const synth::ui::NodeTree& tree,
                 "step " + std::to_string(step) + " missing parent component " + parentNode->id.value);
         Require(component->getParentComponent() == parentComponent,
                 "step " + std::to_string(step) + " wrong parent for " + node.id.value);
-        Require(synth_runtime::test::ComponentInsideParent(*component, *parentComponent),
+        const juce::Rectangle<int> bounds =
+            renderer.getLocalArea(component, component->getLocalBounds());
+        const juce::Rectangle<int> parentBounds =
+            renderer.getLocalArea(parentComponent, parentComponent->getLocalBounds());
+        Require(parentBounds.contains(bounds),
                 "step " + std::to_string(step) + " clipped child " + node.id.value + " after " +
                     actionDescription);
     }
@@ -196,7 +200,7 @@ int main()
     surface.MarkDirty();
     surface.RefreshOnTick();
 
-    synth_runtime::ControllersTreeRenderer renderer(surface);
+    synth_juce::PortableComponent renderer(surface);
     renderer.setSize(980, 720);
     renderer.RefreshFromSurface();
 

@@ -1,5 +1,5 @@
 #include "ControllersPageHarness.hpp"
-#include "ControllersPageJuce.hpp"
+#include "PortableJuceBackend.hpp"
 
 #include <juce_gui_extra/juce_gui_extra.h>
 
@@ -104,7 +104,7 @@ private:
 
     synth_runtime::test::ControllersHarnessFixture fixture_;
     synth::runtime_ui::ControllersPageSurface surface_;
-    synth_runtime::ControllersTreeRenderer renderer_;
+    synth_juce::PortableComponent renderer_;
     juce::TextButton resetButton_;
     juce::TextButton addButton_;
     juce::TextButton expandButton_;

@@ -4,6 +4,8 @@
 #include "Shell.hpp"
 
 #include "synth/AppContext.hpp"
+#include "synth/ControllersPageUI.hpp"
+#include "synth/MidiConfigViewModel.hpp"
 #include "synth/PortableUIBuilders.hpp"
 #include "synth/RuntimePages.hpp"
 #include "synth/ThreadId.hpp"
@@ -33,6 +35,35 @@ void CollectPortableComponents(juce::Component& parent,
         }
         CollectPortableComponents(*child, components);
     }
+}
+
+juce::Rectangle<int> SurfaceBoundsOf(const juce::Component& surface,
+                                     const juce::Component& child) {
+    return surface.getLocalArea(&child, child.getLocalBounds());
+}
+
+juce::Viewport* FindViewport(juce::Component& parent) {
+    for (int index = 0; index < parent.getNumChildComponents(); ++index) {
+        juce::Component* child = parent.getChildComponent(index);
+        if (auto* viewport = dynamic_cast<juce::Viewport*>(child); viewport != nullptr) {
+            return viewport;
+        }
+        if (juce::Viewport* viewport = FindViewport(*child); viewport != nullptr) {
+            return viewport;
+        }
+    }
+    return nullptr;
+}
+
+bool IsEnabledEditableControl(juce::Component& component) {
+    if (!component.isEnabled()) {
+        return false;
+    }
+    if (auto* editor = dynamic_cast<juce::TextEditor*>(&component); editor != nullptr) {
+        return !editor->isReadOnly();
+    }
+    return dynamic_cast<juce::ComboBox*>(&component) != nullptr
+           || dynamic_cast<juce::ToggleButton*>(&component) != nullptr;
 }
 
 struct WideDrawSurface final : synth::ui::Surface {
@@ -144,6 +175,84 @@ int main() {
             "back synchronously restores app controls in the shared renderer");
     Require(&session.GetRuntime().AppSurface() == appSurface,
             "the app surface and its state survive runtime-page navigation");
+
+    session.GetRuntime().GetEngine().EditInstrument([](synth::MidiInstrumentConfig& instrument) {
+        instrument.AddController(synth::WrldBldrDefaultControllerSlot("second"));
+    });
+    auto* shell = dynamic_cast<synth_runtime::ShellComponent<synth_miniapp::MiniApp>*>(
+        &session.Component());
+    Require(shell != nullptr, "runtime session exposes its typed shell for refresh");
+    shell->RepaintAll();
+    auto* controllersButton = dynamic_cast<juce::TextButton*>(
+        renderer.FindByNodeId(synth::runtime_ui::NodeIds::kSidebarControllers));
+    Require(controllersButton != nullptr, "controllers sidebar control is a button");
+    controllersButton->onClick();
+
+    Require(renderer.FindByNodeId(synth::runtime_ui::NodeIds::kBack) != nullptr,
+            "controllers back renders through the shared renderer");
+    Require(renderer.FindByNodeId(synth::runtime_ui::NodeIds::ControllerRow(0)) != nullptr
+                && renderer.FindByNodeId(synth::runtime_ui::NodeIds::ControllerRow(1)) != nullptr,
+            "controller rows render through the shared renderer");
+    Require(renderer.FindByNodeId(synth::runtime_ui::NodeIds::kAddRow) != nullptr,
+            "controllers add row renders through the shared renderer");
+    Require(renderer.FindByNodeId(synth::runtime_ui::NodeIds::kStatus) != nullptr,
+            "controllers status renders through the shared renderer");
+    juce::Component* controllersScroll =
+        renderer.FindByNodeId(synth::runtime_ui::NodeIds::kScroll);
+    Require(controllersScroll != nullptr,
+            "controllers scroll renders through the shared renderer");
+
+    const juce::Rectangle<int> controllersBackBounds =
+        renderer.SurfaceBoundsForNode(synth::runtime_ui::NodeIds::kBack);
+    const juce::Rectangle<int> controllersScrollBounds =
+        renderer.SurfaceBoundsForNode(synth::runtime_ui::NodeIds::kScroll);
+    const juce::Rectangle<int> firstControllerBounds =
+        renderer.SurfaceBoundsForNode(synth::runtime_ui::NodeIds::ControllerRow(0));
+    const juce::Rectangle<int> secondControllerBounds =
+        renderer.SurfaceBoundsForNode(synth::runtime_ui::NodeIds::ControllerRow(1));
+    Require(controllersBackBounds.getBottom() <= controllersScrollBounds.getY(),
+            "controllers header controls end above the scroll viewport");
+    Require(firstControllerBounds.getY() != secondControllerBounds.getY(),
+            "controller rows resolve to distinct surface positions");
+
+    auto* disclosure = dynamic_cast<juce::TextButton*>(
+        renderer.FindByNodeId(synth::runtime_ui::NodeIds::ControllerDisclosure(0)));
+    Require(disclosure != nullptr, "first controller disclosure renders");
+    disclosure->onClick();
+    auto* systemSection = dynamic_cast<juce::TextButton*>(renderer.FindByNodeId(
+        synth::runtime_ui::NodeIds::SectionToggle(0, synth::MidiConfigSection::SystemMessages)));
+    Require(systemSection != nullptr, "system messages section renders after disclosure");
+    systemSection->onClick();
+
+    controllersScroll = renderer.FindByNodeId(synth::runtime_ui::NodeIds::kScroll);
+    Require(controllersScroll != nullptr, "controllers scroll survives section expansion");
+    juce::Viewport* viewport = FindViewport(*controllersScroll);
+    Require(viewport != nullptr && viewport->getViewedComponent() != nullptr,
+            "generic controllers scroll owns a JUCE viewport and content component");
+    Require(viewport->getViewedComponent()->getHeight() > viewport->getHeight(),
+            "expanded controllers content is taller than its viewport");
+
+    synth::MidiConfigViewModel controllersModel;
+    controllersModel.Rebuild(session.GetRuntime().GetEngine().InstrumentSnapshot(),
+                             session.GetRuntime().MidiConnections().State());
+    const std::vector<synth::MidiMappingRowVM> systemRows =
+        controllersModel.SectionRows(0, synth::MidiConfigSection::SystemMessages);
+    Require(!systemRows.empty() && !systemRows.back().editableFields.empty(),
+            "runtime controller has editable system-message mappings");
+    const std::size_t finalRowIndex = systemRows.size() - 1;
+    const synth::MidiMappingRowVM::Field finalField = systemRows.back().editableFields.back();
+    const std::string finalMappingId = synth::runtime_ui::NodeIds::MappingField(
+        0, synth::MidiConfigSection::SystemMessages, finalRowIndex, finalField);
+    juce::Component* finalMappingControl = renderer.FindByNodeId(finalMappingId);
+    Require(finalMappingControl != nullptr, "final system-message mapping control renders");
+
+    viewport->setViewPosition(viewport->getViewPositionX(),
+                              viewport->getViewedComponent()->getHeight() - viewport->getHeight());
+    Require(SurfaceBoundsOf(renderer, *viewport).intersects(
+                SurfaceBoundsOf(renderer, *finalMappingControl)),
+            "final mapping control is reachable at the maximum vertical scroll position");
+    Require(IsEnabledEditableControl(*finalMappingControl),
+            "final mapping control remains enabled and editable after scrolling");
 
     const std::filesystem::path wideRoot = root / "wide";
     synth_runtime::RuntimeShellSession<WideDrawApp> wideSession(

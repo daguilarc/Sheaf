@@ -1,6 +1,6 @@
 # Spec Coverage
 
-Last audit: standard modulators, fifteen-source application adoption, sparse modulation processing, absolute encoder mode, exact parameter projection, and causal absolute encoder feedback synchronization, 2026-07-16
+Last audit: standard modulators, fifteen-source application adoption, sparse modulation processing, absolute encoder mode, exact parameter projection, causal absolute encoder feedback synchronization, and generic JUCE hierarchy, scrolling, and production Controllers migration, 2026-07-16
 
 | Requirement | Status | Primary exact coverage |
 |---|---|---|
@@ -11,6 +11,9 @@ Last audit: standard modulators, fifteen-source application adoption, sparse mod
 | `sprs-5` | covered | browser isolated rounded-arc test, encoder geometry executable, real-miniapp Canvas/screenshots |
 | `sprs-6` | covered | browser resolved-layout tests plus fake-app and miniapp desktop/narrow Playwright |
 | `sprs-7` | covered | C++, JUCE, TypeScript/Chromium, real-WASM audio/MIDI/gesture/static-site acceptance |
+| `sprs-9` | covered | generic JUCE semantic hierarchy, nested-root geometry, retained editor/reparent, and nested draw cases |
+| `sprs-10` | covered | generic JUCE viewport/content extent, two-axis reachability, retained position, and clamp cases |
+| `sprs-11` | covered | real runtime-shell Controllers navigation/reachability plus seeded generic Controllers simulation and harness build |
 | `sru-1` (modified) | covered | shared component navigation, JUCE shared renderer, browser page replacement/restore and narrow layout |
 | `sar-10` (modified) | covered | shared host routing/refresh tests, JUCE shell session, browser worker/static typed-entry acceptance |
 | `spv-1` | covered | `projects/synth/tests/portable_ui_tests.cpp` visualizer contract checks: bounds, default visible, hide/show, non-copyable/non-movable, JUCE-free compile |
@@ -128,7 +131,7 @@ Last audit: standard modulators, fifteen-source application adoption, sparse mod
   `TestLatestDeviceListMatchesSubmittedEndpoints`.
 - [`RuntimeShellSessionTests.cpp`](../juce/RuntimeShellSessionTests.cpp),
   [`RuntimePagesJuceTests.cpp`](../juce/RuntimePagesJuceTests.cpp),
-  [`ControllersPageJuceTests.cpp`](../juce/ControllersPageJuceTests.cpp), and
+  [`ControllersPageSimulationTests.cpp`](../juce/ControllersPageSimulationTests.cpp), and
   [`FilePageSimulationTests.cpp`](../juce/FilePageSimulationTests.cpp): retained
   JUCE services/page behavior.
 - [`fake-app.e2e.spec.ts`](../browser/tests/fake-app.e2e.spec.ts):
@@ -206,6 +209,52 @@ Last audit: standard modulators, fifteen-source application adoption, sparse mod
   `real miniapp WASM keeps two Web MIDI controller slots independent through reconnect`.
 - UI and visuals: the exact fake-app and miniapp gesture, page, desktop, and
   narrow tests listed under `sprs-1`, `sprs-2`, `sprs-4`, `sprs-5`, and `sprs-6`.
+
+### `sprs-9` - Hierarchical Generic JUCE Backend
+
+- [`PortableJuceBackendTests.cpp`](../juce/PortableJuceBackendTests.cpp): the
+  `portable_juce_backend_tests` cases named by the exact assertions
+  `row A is hosted by its semantic section`,
+  `parent-local row fields occupy distinct surface rows`,
+  `absolute sidebar offset is applied exactly once`,
+  `root-flow bounds survive translation into the semantic host`,
+  `draw node is hosted by its semantic row`, and
+  `focused text field is retained after moving semantic parents` cover retained
+  semantic hosts, parent-local resolution, nested roots, nested drawing, and
+  stable editor reparenting.
+
+### `sprs-10` - Real Generic JUCE Scroll Areas
+
+- [`PortableJuceBackendTests.cpp`](../juce/PortableJuceBackendTests.cpp): the
+  `portable_juce_backend_tests` cases named by the exact assertions
+  `scroll area owns a JUCE viewport`,
+  `scroll rows are hosted by the viewed content component`,
+  `scroll content uses declared two-axis extent`,
+  `viewport scrolls on both axes`,
+  `final button is reachable after scrolling`,
+  `viewport position survives refresh for a stable scroll node`, and
+  `viewport position is clamped when content shrinks` cover the viewport,
+  content extent, reachability, retained position, and extent-shrink contract.
+
+### `sprs-11` - Production Generic Controllers Coverage
+
+- [`RuntimeShellSessionTests.cpp`](../juce/RuntimeShellSessionTests.cpp): the
+  `runtime_shell_session_tests` Controllers cases named by the exact assertions
+  `controllers back renders through the shared renderer`,
+  `controller rows render through the shared renderer`,
+  `controllers header controls end above the scroll viewport`,
+  `controller rows resolve to distinct surface positions`,
+  `expanded controllers content is taller than its viewport`,
+  `final mapping control is reachable at the maximum vertical scroll position`,
+  and `final mapping control remains enabled and editable after scrolling`.
+- [`ControllersPageSimulationTests.cpp`](../juce/ControllersPageSimulationTests.cpp):
+  `ControllersPageSimulationTests passed seed=0x5eaf2026` retains the 250-step
+  action/commit simulation while rendering the real `ControllersPageSurface`
+  through `synth_juce::PortableComponent` and comparing containment in common
+  surface coordinates.
+- [`ControllersHarnessApp.cpp`](../juce/ControllersHarnessApp.cpp): the
+  standalone visual harness uses `synth_juce::PortableComponent` over the same
+  production `ControllersPageSurface` path.
 
 ### `sru-1` (modified) - Main Pane, Sidebar, And Content Host
 

@@ -24,9 +24,9 @@
 // midiConnections_->StartupReconcile() once after Initialize() (which starts
 // the background device-list poller). As of Task 4 of Plan 4, Runtime owns
 // no MIDI UI component at all -- MidiConnections() exposes midiConnections_
-// directly so ControllersPage (runtime/ControllersPage.hpp) can read
+// directly so the shared ControllersPageSurface can read
 // EnumerateNow()/State() to populate its combos/status dots, the same way
-// AudioConfigPage reads DeviceManager() directly. ControllersPage never
+// AudioConfigPage reads DeviceManager() directly. ControllersPageSurface never
 // calls into midiConnections_ to open/close a device itself, though (Task 4
 // review, Important finding 3): every device combo change writes through
 // synth::MidiConfigViewModel::SetEndpointRef and commits via

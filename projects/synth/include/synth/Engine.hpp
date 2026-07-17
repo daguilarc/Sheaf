@@ -432,9 +432,9 @@ public:
     // running-state counterpart of LiveInstrument() -- use this (not
     // LiveInstrument()) from any message-thread path that can run while audio
     // is live and does not already hold audioDeviceStateMutex_ (e.g.
-    // ControllersPage's per-tick RefreshOnTick(), which rebuilds
-    // synth::MidiConfigViewModel from a fresh snapshot -- see
-    // runtime/ControllersPage.hpp). Mirrors AudioDeviceSnapshot()'s pattern
+    // ControllersPageSurface's per-tick RefreshOnTick(), which rebuilds
+    // synth::MidiConfigViewModel from a fresh snapshot). Mirrors
+    // AudioDeviceSnapshot()'s pattern
     // for audioDeviceState_.
     MidiInstrumentConfig InstrumentSnapshot() const {
         const std::lock_guard<std::mutex> lock(audioDeviceStateMutex_);
@@ -540,8 +540,8 @@ public:
 
     // Public host API: rebuild midiProcessors_ from the current
     // instrumentConfig_ on demand (e.g. after a host mutates it via
-    // EditInstrument, such as ControllersPage adding/editing a controller —
-    // see runtime/ControllersPage.hpp). Runs midiProcessorsWillRebuildCallback_ (if set)
+    // EditInstrument, such as ControllersPageSurface adding/editing a
+    // controller). Runs midiProcessorsWillRebuildCallback_ (if set)
     // synchronously, BEFORE the current midiProcessors_ chains are
     // destroyed/replaced, then constructs one fresh chain per controller slot
     // via CreateMidiControllerProfile against midiBus_/uiState_ (uiState_ may

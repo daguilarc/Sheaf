@@ -178,10 +178,10 @@ Form-style runtime pages use semantic control nodes (`Label`, `Button`,
 or other backend can map them to DOM controls without pulling in JUCE.
 
 The desktop implementation of that contract lives under `projects/synth/juce`.
-`PortableJuceBackend.hpp` hosts generic portable surfaces, while
-`RuntimePagesJuce.hpp` and `ControllersPageJuce.hpp` render runtime-owned
-semantic pages. Those files are allowed to include JUCE and translate portable
-geometry, draw commands, focus, and actions into JUCE components.
+`PortableJuceBackend.hpp` renders application and runtime-owned semantic
+surfaces through the same generic `PortableComponent`. Desktop backend files
+are allowed to include JUCE and translate portable geometry, draw commands,
+focus, and actions into JUCE components.
 
 Portable producers must stay under `projects/synth/include/synth` or app code
 and must not include JUCE headers or expose `juce::` types. The root Makefile's
@@ -266,9 +266,10 @@ dispatching: with no current patch it falls through to the in-app Save As
 browser instead of sending a `SavePatch()` doomed to return `NeedsSaveAsPath`
 (that status is still logged as a backstop if it ever occurs).
 
-`ControllersPage` (`projects/synth/runtime/ControllersPage.hpp`) hosts MIDI
-device selection and controller/mapping configuration, per controller slot.
-Page edits commit through `engine.EditInstrument` plus a
+The shared `ControllersPageSurface` hosts MIDI device selection and
+controller/mapping configuration per controller slot, and the desktop renders
+it through the generic `synth_juce::PortableComponent`. Page edits commit
+through `engine.EditInstrument` plus a
 `MidiConnectionManager` reconcile pass — the page never mutates config or
 device handlers directly.
 

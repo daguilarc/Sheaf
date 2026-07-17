@@ -135,6 +135,11 @@ async function settleVisuals(page: Page): Promise<void> {
   await page.waitForTimeout(100);
 }
 
+const miniappEncoderCanvasSelector = Array.from(
+  { length: 7 },
+  (_, index) => `[data-synth-node-id="miniapp.encoder.${index}"] canvas`,
+).join(", ");
+
 test("miniapp smoke wiring keeps the generic fake-app gate first", async () => {
   const { readFile } = await (new Function("return import('node:fs/promises')")() as Promise<{
     readFile(path: URL, encoding: "utf8"): Promise<string>;
@@ -151,7 +156,7 @@ test("real miniapp WASM renders the complete shared shell and portable pages", a
   await expect(page.locator('[data-synth-node-id="runtime.main.root"]')).toHaveCount(1);
   await expect(page.locator('[data-synth-node-id="miniapp.root"]')).toBeVisible();
   await expect(page.locator('[data-synth-node-id="runtime.sidebar.root"]')).toBeVisible();
-  await expect(page.locator('[data-synth-node-id^="miniapp.encoder."] canvas')).toHaveCount(7);
+  await expect(page.locator(miniappEncoderCanvasSelector)).toHaveCount(7);
   await expect(page.locator('[data-synth-node-id="miniapp.vco.scope"] canvas')).toBeVisible();
   await expect(page.locator('[data-synth-node-id="miniapp.lfo.scope"] canvas')).toBeVisible();
   await expect(page.locator('[data-synth-node-id="miniapp.bank.vco"]')).toBeVisible();
@@ -315,8 +320,13 @@ test("real miniapp shared shell scales as one non-overlapping narrow surface", a
   await expect(page.locator('[data-synth-node-id="miniapp.root"]')).toBeVisible();
   const encoderRendering = await page.evaluate(() => {
     const frame = ((window as any).__task5Miniapp.observations.frames as FrameObservation[]).at(-1)!;
-    const drawCounts = frame.nodes.filter((node) => node.id.startsWith("miniapp.encoder.")).map((node) => node.drawCount ?? 0);
-    const canvases = [...document.querySelectorAll<HTMLCanvasElement>('[data-synth-node-id^="miniapp.encoder."] canvas')];
+    const encoderNodeIds = Array.from({ length: 7 }, (_, index) => `miniapp.encoder.${index}`);
+    const drawCounts = encoderNodeIds.map(
+      (id) => frame.nodes.find((node) => node.id === id)?.drawCount ?? 0,
+    );
+    const canvases = encoderNodeIds.flatMap((id) => [
+      ...document.querySelectorAll<HTMLCanvasElement>(`[data-synth-node-id="${id}"] canvas`),
+    ]);
     return {
       drawCounts,
       canvases: canvases.map((canvas) => {

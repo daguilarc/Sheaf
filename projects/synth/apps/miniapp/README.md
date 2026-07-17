@@ -32,10 +32,10 @@ selection UI. Those are owned by the runtime shell:
   (`synth_runtime::FilePage`, `projects/synth/runtime/FilePage.hpp`), hosted
   by the shell's `synth_runtime::MainPane`
   (`projects/synth/runtime/MainPane.hpp`).
-- Per-controller MIDI device combo boxes, status dots, and mapping editors
-  live on the Controllers page (`synth_runtime::ControllersPage`,
-  `projects/synth/runtime/ControllersPage.hpp`), a thin renderer over the
-  JUCE-free `synth::MidiConfigViewModel`
+- Per-controller MIDI device combo boxes, status dots, and mapping editors are
+  produced by the shared JUCE-free `ControllersPageSurface` and rendered by
+  the generic desktop `synth_juce::PortableComponent`, over
+  `synth::MidiConfigViewModel`
   (`projects/synth/include/synth/MidiConfigViewModel.hpp`).
 
 The File page's patch-name label shows the current patch directory's name
