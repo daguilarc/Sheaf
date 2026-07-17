@@ -352,6 +352,39 @@ int main()
     }
 
     {
+        RecordingSurface visibleFloorSurface;
+        visibleFloorSurface.tree.nodes = {
+            {.id = synth::ui::NodeId("root"),
+             .kind = synth::ui::NodeKind::Root,
+             .bounds = {0.0f, 0.0f, 320.0f, 240.0f},
+             .children = {synth::ui::NodeId("scroll")}},
+            {.id = synth::ui::NodeId("scroll"),
+             .kind = synth::ui::NodeKind::ScrollArea,
+             .bounds = {20.0f, 30.0f, 180.0f, 90.0f},
+             .scrollContentWidth = 40.0f,
+             .scrollContentHeight = 30.0f},
+        };
+
+        synth_juce::PortableComponent component(visibleFloorSurface);
+        component.setSize(320, 240);
+        component.RefreshFromSurface();
+
+        auto* scroll = component.FindByNodeId("scroll");
+        Require(scroll != nullptr, "visible-floor scroll node is retained");
+        auto* viewport = dynamic_cast<juce::Viewport*>(scroll->getChildComponent(0));
+        Require(viewport != nullptr && viewport->getViewedComponent() != nullptr,
+                "visible-floor scroll area owns viewed content");
+        Require(viewport->getViewedComponent()->getWidth() == 180
+                    && viewport->getViewedComponent()->getHeight() == 90,
+                "first refresh floors undersized declared content at visible bounds");
+
+        scroll->setSize(240, 150);
+        Require(viewport->getViewedComponent()->getWidth() == 240
+                    && viewport->getViewedComponent()->getHeight() == 150,
+                "pure scroll host resize recomputes the visible content floor");
+    }
+
+    {
         RecordingSurface dragSurface;
         synth::ui::Builder dragBuilder;
         dragBuilder.Root("root", synth::ui::Bounds{0.0f, 0.0f, 320.0f, 240.0f})

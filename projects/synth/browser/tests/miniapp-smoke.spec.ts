@@ -137,7 +137,7 @@ async function settleVisuals(page: Page): Promise<void> {
 
 const miniappEncoderCanvasSelector = Array.from(
   { length: 7 },
-  (_, index) => `[data-synth-node-id="miniapp.encoder.${index}"] canvas`,
+  (_, index) => `[data-synth-node-id="miniapp.encoder.${index}"] > canvas`,
 ).join(", ");
 
 test("miniapp smoke wiring keeps the generic fake-app gate first", async () => {
@@ -325,7 +325,7 @@ test("real miniapp shared shell scales as one non-overlapping narrow surface", a
       (id) => frame.nodes.find((node) => node.id === id)?.drawCount ?? 0,
     );
     const canvases = encoderNodeIds.flatMap((id) => [
-      ...document.querySelectorAll<HTMLCanvasElement>(`[data-synth-node-id="${id}"] canvas`),
+      ...document.querySelectorAll<HTMLCanvasElement>(`[data-synth-node-id="${id}"] > canvas`),
     ]);
     return {
       drawCounts,

@@ -107,10 +107,4 @@ inline void PumpJuceMessages(int milliseconds = 25)
     juce::Thread::sleep(milliseconds);
 }
 
-inline bool ComponentInsideParent(const juce::Component& child, const juce::Component& parent)
-{
-    return child.getX() >= 0 && child.getY() >= 0 &&
-           child.getRight() <= parent.getWidth() && child.getBottom() <= parent.getHeight();
-}
-
 }  // namespace synth_runtime::test

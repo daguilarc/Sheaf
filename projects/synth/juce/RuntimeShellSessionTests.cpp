@@ -254,6 +254,13 @@ int main() {
     Require(IsEnabledEditableControl(*finalMappingControl),
             "final mapping control remains enabled and editable after scrolling");
 
+    auto* controllersBackButton = dynamic_cast<juce::TextButton*>(
+        renderer.FindByNodeId(synth::runtime_ui::NodeIds::kBack));
+    Require(controllersBackButton != nullptr, "controllers back control remains available");
+    controllersBackButton->onClick();
+    Require(renderer.FindByNodeId(synth_miniapp::MiniAppNodeIds::Encoder(0)) != nullptr,
+            "controllers back restores the app before later session checks");
+
     const std::filesystem::path wideRoot = root / "wide";
     synth_runtime::RuntimeShellSession<WideDrawApp> wideSession(
         synth::RuntimeDataPaths::FromRoots(

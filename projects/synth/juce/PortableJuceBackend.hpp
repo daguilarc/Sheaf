@@ -349,20 +349,31 @@ private:
 
         void SetContentExtent(int width, int height)
         {
-            const juce::Point<int> viewPosition = viewport_.getViewPosition();
-            viewport_.setViewPosition(0, 0);
-            content_.setSize(std::max(getWidth(), width), std::max(getHeight(), height));
-            viewport_.setViewPosition(viewPosition);
+            declaredContentWidth_ = width;
+            declaredContentHeight_ = height;
+            UpdateContentSize();
         }
 
         void resized() override
         {
             viewport_.setBounds(getLocalBounds());
+            UpdateContentSize();
         }
 
     private:
+        void UpdateContentSize()
+        {
+            const juce::Point<int> viewPosition = viewport_.getViewPosition();
+            viewport_.setViewPosition(0, 0);
+            content_.setSize(std::max(getWidth(), declaredContentWidth_),
+                             std::max(getHeight(), declaredContentHeight_));
+            viewport_.setViewPosition(viewPosition);
+        }
+
         SemanticPanelComponent content_;
         juce::Viewport viewport_;
+        int declaredContentWidth_ = 0;
+        int declaredContentHeight_ = 0;
     };
 
     class SemanticTextButton final : public juce::TextButton
