@@ -8,8 +8,8 @@
 
 ## 2. Controllers Page Editing
 
-- [ ] 2.1 Add block/coalescing tests proving message type participates in ordering, equality, expansion, and mixed-type block boundaries.
-- [ ] 2.2 Carry message type through encoder-push and Generic system-message row and block models without changing CC-only row schemas.
+- [x] 2.1 Add block/coalescing tests proving message type participates in ordering, equality, expansion, and mixed-type block boundaries.
+- [x] 2.2 Carry message type through encoder-push and Generic system-message row and block models without changing CC-only row schemas.
 - [ ] 2.3 Add view-model tests and expose a distinctly named address-type Note/CC selector plus numeric channel and number fields for the affected rows.
 - [ ] 2.4 Wire the portable/JUCE Controllers page controls to display and commit the new field through the existing edit-session path.
 
