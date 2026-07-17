@@ -14,5 +14,5 @@
 
 ## 4. Integration and Verification
 
-- [ ] 4.1 Wire coordinator lifetime through engine/profile rebuilds and add integration coverage for pending rebuilds, rapid input, shared-cell controllers, bank/modulation-view changes, unstable snapshots, modulation-free absolute feedback, and unchanged modulation-aware relative feedback.
+- [x] 4.1 Wire coordinator lifetime through engine/profile rebuilds and add integration coverage for pending rebuilds, rapid input, shared-cell controllers, bank/modulation-view changes, unstable snapshots, modulation-free absolute feedback, and unchanged modulation-aware relative feedback.
 - [ ] 4.2 Run focused and full synth tests, validate the OpenSpec change, and complete cross-provider spec/code review with all blocking findings resolved.
