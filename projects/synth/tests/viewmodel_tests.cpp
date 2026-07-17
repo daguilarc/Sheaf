@@ -1652,6 +1652,8 @@ double SafeValueFor(MidiMappingRowVM::Field field) {
             return 1.0;
         case Field::BlockMessageType:
             return 0.0;
+        case Field::AddressType:
+            return 0.0;
     }
     return 0.0;
 }
@@ -4402,6 +4404,231 @@ TEST_CASE(SystemMessagePipelineSharesMessageFieldsAcrossKinds) {
             REQUIRE_TRUE(std::find(fields.begin(), fields.end(), addressField) != fields.end());
         }
     }
+}
+
+bool HasField(const MidiMappingRowVM& row, MidiMappingRowVM::Field field) {
+    return std::find(row.editableFields.begin(), row.editableFields.end(), field) != row.editableFields.end();
+}
+
+MidiControllerSystemMessageAssociation MakeGenericSceneSelect(std::uint8_t cc, std::size_t sceneIx) {
+    MidiControllerSystemMessageAssociation association;
+    association.control = MidiControlAddress{.channel = 2, .cc = cc};
+    association.press = synth::MessageIn::SceneSelect(0, sceneIx);
+    association.feedback = association.press;
+    return association;
+}
+
+MidiInstrumentConfig MakeAddressTypeViewModelInstrument() {
+    MidiInstrumentConfig instrument = MakeFourKindInstrument();
+    MidiControllerSlot& generic = instrument.controllers[3];
+
+    synth::EncoderMidiInConfig encoders;
+    encoders.turns.push_back({.control = {.channel = 1, .cc = 10}, .slotIx = 0, .position = 0});
+    encoders.pushes.push_back({.control = {.channel = 1, .cc = 60}, .slotIx = 0, .position = 0});
+    encoders.pushes.push_back({.control = {.channel = 1, .cc = 61}, .slotIx = 0, .position = 1});
+    encoders.pushes.push_back({.control = {.channel = 1, .cc = 90}, .slotIx = 0, .position = 9});
+    generic.config.encoderInput = std::move(encoders);
+
+    synth::AnalogMidiInConfig analogs;
+    analogs.gestures.push_back({.control = {.channel = 3, .cc = 20}, .gestureIx = 0});
+    generic.config.analogInput = std::move(analogs);
+
+    generic.config.systemMessages = {
+        MakeGenericSceneSelect(40, 0),
+        MakeGenericSceneSelect(41, 1),
+        MakeGenericSceneSelect(90, 9),
+    };
+    return instrument;
+}
+
+TEST_CASE(ControlAddressTypeCatalogAndFieldMetadataAreDistinct) {
+    const std::vector<std::string>& catalog = synth::ControlAddressTypeCatalog();
+    REQUIRE_TRUE(catalog.size() == 2);
+    REQUIRE_TRUE(catalog[0] == "CC");
+    REQUIRE_TRUE(catalog[1] == "Note");
+    REQUIRE_TRUE(!FieldIsInteger(MidiMappingRowVM::Field::AddressType));
+    REQUIRE_TRUE(std::string(FieldShortLabel(MidiMappingRowVM::Field::AddressType)) == "Type");
+    REQUIRE_TRUE(MidiMappingRowVM::Field::AddressType != MidiMappingRowVM::Field::MessageKind);
+    REQUIRE_TRUE(MidiMappingRowVM::Field::AddressType != MidiMappingRowVM::Field::BlockMessageType);
+}
+
+TEST_CASE(AddressTypeFieldAppearsOnlyOnPushAndGenericSystemRowsAndBlocks) {
+    MidiConfigViewModel vm;
+    vm.Rebuild(MakeAddressTypeViewModelInstrument(), MakeFourKindConnection());
+
+    bool sawPushIndividual = false;
+    bool sawPushBlock = false;
+    for (std::size_t controllerIx = 0; controllerIx < 4; ++controllerIx) {
+        for (const MidiMappingRowVM& row : vm.SectionRows(controllerIx, MidiConfigSection::Encoders)) {
+            const bool hasAddressType = HasField(row, MidiMappingRowVM::Field::AddressType);
+            if (row.group == MidiMappingRowVM::RowGroup::EncoderPush) {
+                REQUIRE_TRUE(hasAddressType);
+                sawPushIndividual = sawPushIndividual || row.kind == MidiMappingRowVM::Kind::Individual;
+                sawPushBlock = sawPushBlock || row.kind == MidiMappingRowVM::Kind::Block;
+            } else {
+                REQUIRE_TRUE(!hasAddressType);
+            }
+        }
+        for (const MidiMappingRowVM& row : vm.SectionRows(controllerIx, MidiConfigSection::Analogs)) {
+            REQUIRE_TRUE(!HasField(row, MidiMappingRowVM::Field::AddressType));
+        }
+    }
+    REQUIRE_TRUE(sawPushIndividual);
+    REQUIRE_TRUE(sawPushBlock);
+
+    for (std::size_t controllerIx = 0; controllerIx < 4; ++controllerIx) {
+        bool sawGenericIndividual = false;
+        bool sawGenericBlock = false;
+        for (const MidiMappingRowVM& row : vm.SectionRows(controllerIx, MidiConfigSection::SystemMessages)) {
+            const bool hasAddressType = HasField(row, MidiMappingRowVM::Field::AddressType);
+            REQUIRE_TRUE(hasAddressType == (controllerIx == 3));
+            sawGenericIndividual = sawGenericIndividual ||
+                                   (controllerIx == 3 && row.kind == MidiMappingRowVM::Kind::Individual);
+            sawGenericBlock = sawGenericBlock || (controllerIx == 3 && row.kind == MidiMappingRowVM::Kind::Block);
+        }
+        if (controllerIx == 3) {
+            REQUIRE_TRUE(sawGenericIndividual);
+            REQUIRE_TRUE(sawGenericBlock);
+        }
+    }
+}
+
+TEST_CASE(AddressTypeIndividualEditRoundTripsAndRejectedIndicesPreserveSession) {
+    MidiInstrumentConfig instrument = MakeAddressTypeViewModelInstrument();
+    MidiConfigViewModel vm;
+    vm.Rebuild(instrument, MakeFourKindConnection());
+
+    const std::vector<MidiMappingRowVM> rows = vm.SectionRows(3, MidiConfigSection::Encoders);
+    std::size_t pushIx = SIZE_MAX;
+    for (std::size_t ix = 0; ix < rows.size(); ++ix) {
+        if (rows[ix].group == MidiMappingRowVM::RowGroup::EncoderPush &&
+            rows[ix].kind == MidiMappingRowVM::Kind::Individual) {
+            pushIx = ix;
+            break;
+        }
+    }
+    REQUIRE_TRUE(pushIx != SIZE_MAX);
+
+    double value = -1.0;
+    REQUIRE_TRUE(vm.RowFieldValue(3, MidiConfigSection::Encoders, pushIx,
+                                  MidiMappingRowVM::Field::AddressType, value));
+    REQUIRE_TRUE(value == 0.0);
+
+    MidiInstrumentConfig noteOut;
+    std::string reason;
+    REQUIRE_TRUE(vm.ApplyMappingEdit(3, MidiConfigSection::Encoders, pushIx,
+                                     MidiMappingRowVM::Field::AddressType, 1.0, noteOut, &reason));
+    REQUIRE_TRUE(noteOut.controllers[3].config.encoderInput->pushes.back().control.type ==
+                 synth::MidiControlType::Note);
+    vm.Rebuild(noteOut, MakeFourKindConnection());
+    REQUIRE_TRUE(vm.RowFieldValue(3, MidiConfigSection::Encoders, pushIx,
+                                  MidiMappingRowVM::Field::AddressType, value));
+    REQUIRE_TRUE(value == 1.0);
+
+    MidiInstrumentConfig sentinel;
+    sentinel.controllers.push_back(MakeGenericSlot("sentinel"));
+    for (double invalid : {-1.0, 0.5, 2.0}) {
+        bool presentationChanged = true;
+        REQUIRE_TRUE(!vm.ApplyMappingEdit(3, MidiConfigSection::Encoders, pushIx,
+                                          MidiMappingRowVM::Field::AddressType, invalid, sentinel, &reason,
+                                          &presentationChanged));
+        REQUIRE_TRUE(!presentationChanged);
+        REQUIRE_TRUE(sentinel.controllers.size() == 1);
+        REQUIRE_TRUE(sentinel.controllers[0].name == "sentinel");
+        REQUIRE_TRUE(vm.RowFieldValue(3, MidiConfigSection::Encoders, pushIx,
+                                      MidiMappingRowVM::Field::AddressType, value));
+        REQUIRE_TRUE(value == 1.0);
+    }
+
+    MidiInstrumentConfig ccOut;
+    REQUIRE_TRUE(vm.ApplyMappingEdit(3, MidiConfigSection::Encoders, pushIx,
+                                     MidiMappingRowVM::Field::AddressType, 0.0, ccOut, &reason));
+    vm.Rebuild(ccOut, MakeFourKindConnection());
+    REQUIRE_TRUE(vm.RowFieldValue(3, MidiConfigSection::Encoders, pushIx,
+                                  MidiMappingRowVM::Field::AddressType, value));
+    REQUIRE_TRUE(value == 0.0);
+
+    const std::vector<MidiMappingRowVM> systemRows = vm.SectionRows(3, MidiConfigSection::SystemMessages);
+    std::size_t systemIndividualIx = SIZE_MAX;
+    for (std::size_t ix = 0; ix < systemRows.size(); ++ix) {
+        if (systemRows[ix].kind == MidiMappingRowVM::Kind::Individual) {
+            systemIndividualIx = ix;
+            break;
+        }
+    }
+    REQUIRE_TRUE(systemIndividualIx != SIZE_MAX);
+    REQUIRE_TRUE(vm.RowFieldValue(3, MidiConfigSection::SystemMessages, systemIndividualIx,
+                                  MidiMappingRowVM::Field::AddressType, value));
+    REQUIRE_TRUE(value == 0.0);
+
+    MidiInstrumentConfig systemNoteOut;
+    REQUIRE_TRUE(vm.ApplyMappingEdit(3, MidiConfigSection::SystemMessages, systemIndividualIx,
+                                     MidiMappingRowVM::Field::AddressType, 1.0, systemNoteOut, &reason));
+    vm.Rebuild(systemNoteOut, MakeFourKindConnection());
+    REQUIRE_TRUE(vm.RowFieldValue(3, MidiConfigSection::SystemMessages, systemIndividualIx,
+                                  MidiMappingRowVM::Field::AddressType, value));
+    REQUIRE_TRUE(value == 1.0);
+
+    MidiInstrumentConfig systemCcOut;
+    REQUIRE_TRUE(vm.ApplyMappingEdit(3, MidiConfigSection::SystemMessages, systemIndividualIx,
+                                     MidiMappingRowVM::Field::AddressType, 0.0, systemCcOut, &reason));
+    vm.Rebuild(systemCcOut, MakeFourKindConnection());
+    REQUIRE_TRUE(vm.RowFieldValue(3, MidiConfigSection::SystemMessages, systemIndividualIx,
+                                  MidiMappingRowVM::Field::AddressType, value));
+    REQUIRE_TRUE(value == 0.0);
+}
+
+TEST_CASE(AddressTypeBlockEditsExpandToNoteMappings) {
+    MidiConfigViewModel vm;
+    vm.Rebuild(MakeAddressTypeViewModelInstrument(), MakeFourKindConnection());
+
+    const std::vector<MidiMappingRowVM> encoderRows = vm.SectionRows(3, MidiConfigSection::Encoders);
+    std::size_t pushBlockIx = SIZE_MAX;
+    for (std::size_t ix = 0; ix < encoderRows.size(); ++ix) {
+        if (encoderRows[ix].group == MidiMappingRowVM::RowGroup::EncoderPush &&
+            encoderRows[ix].kind == MidiMappingRowVM::Kind::Block) {
+            pushBlockIx = ix;
+            break;
+        }
+    }
+    REQUIRE_TRUE(pushBlockIx != SIZE_MAX);
+
+    MidiInstrumentConfig encoderOut;
+    std::string reason;
+    REQUIRE_TRUE(vm.ApplyMappingEdit(3, MidiConfigSection::Encoders, pushBlockIx,
+                                     MidiMappingRowVM::Field::AddressType, 1.0, encoderOut, &reason));
+    std::size_t notePushes = 0;
+    for (const synth::EncoderMidiMapping& mapping : encoderOut.controllers[3].config.encoderInput->pushes) {
+        notePushes += mapping.control.type == synth::MidiControlType::Note ? 1 : 0;
+    }
+    REQUIRE_TRUE(notePushes == 2);
+
+    vm.Rebuild(encoderOut, MakeFourKindConnection());
+    double value = -1.0;
+    REQUIRE_TRUE(vm.RowFieldValue(3, MidiConfigSection::Encoders, pushBlockIx,
+                                  MidiMappingRowVM::Field::AddressType, value));
+    REQUIRE_TRUE(value == 1.0);
+
+    const std::vector<MidiMappingRowVM> systemRows = vm.SectionRows(3, MidiConfigSection::SystemMessages);
+    std::size_t systemBlockIx = SIZE_MAX;
+    for (std::size_t ix = 0; ix < systemRows.size(); ++ix) {
+        if (systemRows[ix].kind == MidiMappingRowVM::Kind::Block) {
+            systemBlockIx = ix;
+            break;
+        }
+    }
+    REQUIRE_TRUE(systemBlockIx != SIZE_MAX);
+
+    MidiInstrumentConfig systemOut;
+    REQUIRE_TRUE(vm.ApplyMappingEdit(3, MidiConfigSection::SystemMessages, systemBlockIx,
+                                     MidiMappingRowVM::Field::AddressType, 1.0, systemOut, &reason));
+    std::size_t noteSystems = 0;
+    for (const MidiControllerSystemMessageAssociation& association : systemOut.controllers[3].config.systemMessages) {
+        noteSystems += association.control.has_value() && association.control->type == synth::MidiControlType::Note
+                           ? 1
+                           : 0;
+    }
+    REQUIRE_TRUE(noteSystems == 2);
 }
 
 int Main() {

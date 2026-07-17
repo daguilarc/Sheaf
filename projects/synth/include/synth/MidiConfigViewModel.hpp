@@ -135,6 +135,9 @@ struct MidiMappingRowVM {
         BlockRowMajor,        // 0/1 toggle (SystemBlock::rowMajor)
         BlockOutputFeedback,  // 0/1 toggle (SystemBlock::outputFeedback)
         BlockMessageType,     // index into BlockableMessageCatalog() (3 entries)
+        // CC/Note selector for encoder pushes and Generic system-message
+        // controls. Distinct from both system message-kind fields above.
+        AddressType,
     };
 
     // Groups rows into contiguous runs of the same on-screen schema, so the
@@ -199,14 +202,19 @@ const std::vector<UISystemMessageChoice>& UISystemMessageCatalog();
 // True for every field the renderer formats as a plain integer (no decimal
 // places -- Channel, Cc, SlotIx, Position, GestureIx, LaunchpadX/Y,
 // WrldBldrX/Y). False for TurnStep (a decimal float) and for the
-// non-numeric-editor fields (EncoderMode, MessageKind, BlockMessageType).
-// MessageArg is a separate numeric field.
+// non-numeric-editor fields (EncoderMode, AddressType, MessageKind,
+// BlockMessageType). MessageArg is a separate numeric field.
 bool FieldIsInteger(MidiMappingRowVM::Field field);
 
 // Display names for every EncoderMode, in declaration order (index 0 ==
 // Signed7Bit, index 1 == DirectionOnly, index 2 == Absolute).
 // ApplyMappingEdit and RowFieldValue use these catalog indices.
 const std::vector<std::string>& EncoderModeCatalog();
+
+// Display names for MidiControlType in declaration order (0 = Cc,
+// 1 = Note). RowFieldValue()/ApplyMappingEdit use these catalog indices for
+// Field::AddressType.
+const std::vector<std::string>& ControlAddressTypeCatalog();
 
 // Short column-header label for a single field ("Ch", "CC", "Slot", "Pos",
 // "Gesture", "X", "Y", "Step", "Mode", "Message") -- the single
@@ -362,8 +370,8 @@ public:
     //
     // Numeric domains are enforced here: Channel 0-15, Cc 0-127,
     // SlotIx/Position/GestureIx and message arguments non-negative integers,
-    // TurnStep a positive finite float, EncoderMode/System message kind
-    // indexes valid catalog positions, LaunchpadX/Y valid for the row's
+    // TurnStep a positive finite float, EncoderMode/AddressType/System
+    // message-kind indexes valid catalog positions, LaunchpadX/Y valid for the row's
     // current Launchpad variant, and WrldBldrX/Y in the 0-7 grid.
     bool ApplyMappingEdit(std::size_t controllerIx, MidiConfigSection section, std::size_t rowIx,
                           MidiMappingRowVM::Field field, double value, MidiInstrumentConfig& out,

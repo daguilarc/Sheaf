@@ -470,6 +470,184 @@ int main()
                 message.delta == 0.25f,
             "rebuilt relative processor uses the retained step");
 
+    TestHarness typedHarness;
+    synth::MidiControllerSlot& generic = typedHarness.instrument.controllers[2];
+    synth::EncoderMidiInConfig typedEncoders;
+    typedEncoders.turns.push_back({.control = {.channel = 1, .cc = 10}, .slotIx = 0, .position = 0});
+    typedEncoders.pushes.push_back(
+        {.control = {.channel = 1, .cc = 60, .type = synth::MidiControlType::Note}, .slotIx = 0, .position = 0});
+    typedEncoders.pushes.push_back(
+        {.control = {.channel = 1, .cc = 61, .type = synth::MidiControlType::Note}, .slotIx = 0, .position = 1});
+    typedEncoders.pushes.push_back({.control = {.channel = 1, .cc = 90}, .slotIx = 0, .position = 9});
+    generic.config.encoderInput = std::move(typedEncoders);
+
+    auto makeGenericScene = [](std::uint8_t cc, std::size_t sceneIx, synth::MidiControlType type) {
+        synth::MidiControllerSystemMessageAssociation association;
+        association.control = synth::MidiControlAddress{.channel = 2, .cc = cc, .type = type};
+        association.press = synth::MessageIn::SceneSelect(0, sceneIx);
+        association.feedback = association.press;
+        return association;
+    };
+    generic.config.systemMessages = {
+        makeGenericScene(40, 0, synth::MidiControlType::Note),
+        makeGenericScene(41, 1, synth::MidiControlType::Note),
+        makeGenericScene(90, 9, synth::MidiControlType::Cc),
+    };
+
+    synth::runtime_ui::ControllersPageSurface typedSurface = typedHarness.MakeSurface();
+    typedSurface.SetEnumerateDevices(typedHarness.devices);
+    typedSurface.SetContentBounds({0.0f, 0.0f, 1000.0f, 800.0f});
+    typedSurface.MarkDirty();
+    typedSurface.RefreshOnTick();
+    typedSurface.ViewModel().ToggleConfig(2);
+    typedSurface.ViewModel().ToggleSection(2, synth::MidiConfigSection::Encoders);
+    typedSurface.ViewModel().ToggleSection(2, synth::MidiConfigSection::SystemMessages);
+    typedSurface.ViewModel().ToggleConfig(0);
+    typedSurface.ViewModel().ToggleSection(0, synth::MidiConfigSection::SystemMessages);
+    typedSurface.MarkDirty();
+    typedSurface.RefreshOnTick();
+
+    const std::vector<synth::MidiMappingRowVM> typedEncoderRows =
+        typedSurface.ViewModel().SectionRows(2, synth::MidiConfigSection::Encoders);
+    std::optional<std::size_t> pushBlockIx;
+    std::optional<std::size_t> pushIndividualIx;
+    std::optional<std::size_t> turnIx;
+    for (std::size_t ix = 0; ix < typedEncoderRows.size(); ++ix)
+    {
+        if (typedEncoderRows[ix].group == synth::MidiMappingRowVM::RowGroup::EncoderTurn)
+        {
+            turnIx = ix;
+        }
+        else if (typedEncoderRows[ix].group == synth::MidiMappingRowVM::RowGroup::EncoderPush &&
+                 typedEncoderRows[ix].kind == synth::MidiMappingRowVM::Kind::Block)
+        {
+            pushBlockIx = ix;
+        }
+        else if (typedEncoderRows[ix].group == synth::MidiMappingRowVM::RowGroup::EncoderPush &&
+                 typedEncoderRows[ix].kind == synth::MidiMappingRowVM::Kind::Individual)
+        {
+            pushIndividualIx = ix;
+        }
+    }
+    Require(pushBlockIx.has_value() && pushIndividualIx.has_value() && turnIx.has_value(),
+            "typed encoder fixture has turn, push block, and push individual rows");
+
+    const std::vector<synth::MidiMappingRowVM> typedSystemRows =
+        typedSurface.ViewModel().SectionRows(2, synth::MidiConfigSection::SystemMessages);
+    std::optional<std::size_t> systemBlockIx;
+    std::optional<std::size_t> systemIndividualIx;
+    for (std::size_t ix = 0; ix < typedSystemRows.size(); ++ix)
+    {
+        if (typedSystemRows[ix].kind == synth::MidiMappingRowVM::Kind::Block)
+        {
+            systemBlockIx = ix;
+        }
+        else if (typedSystemRows[ix].kind == synth::MidiMappingRowVM::Kind::Individual)
+        {
+            systemIndividualIx = ix;
+        }
+    }
+    Require(systemBlockIx.has_value() && systemIndividualIx.has_value(),
+            "typed system fixture has block and individual rows");
+
+    const synth::ui::NodeTree typedTree = typedSurface.BuildTree();
+    auto requireTypeCombo = [&](synth::MidiConfigSection section, std::size_t rowIx,
+                                const std::string& selected) -> const synth::ui::Node* {
+        const synth::ui::Node* node = FindNodeById(
+            typedTree,
+            synth::runtime_ui::NodeIds::MappingField(
+                2, section, rowIx, synth::MidiMappingRowVM::Field::AddressType));
+        Require(node != nullptr && node->kind == synth::ui::NodeKind::ComboBox,
+                "address type renders as combo box");
+        Require(node->options.size() == 2 && node->options[0].id == "0" && node->options[0].label == "CC" &&
+                    node->options[1].id == "1" && node->options[1].label == "Note",
+                "address type combo exposes CC and Note in enum order");
+        Require(node->selectedOption == selected, "address type combo selection follows model");
+        return node;
+    };
+    requireTypeCombo(synth::MidiConfigSection::Encoders, *pushBlockIx, "1");
+    const synth::ui::Node* pushIndividualType =
+        requireTypeCombo(synth::MidiConfigSection::Encoders, *pushIndividualIx, "0");
+    requireTypeCombo(synth::MidiConfigSection::SystemMessages, *systemBlockIx, "1");
+    requireTypeCombo(synth::MidiConfigSection::SystemMessages, *systemIndividualIx, "0");
+
+    const synth::ui::Node* numericAddress = FindNodeById(
+        typedTree,
+        synth::runtime_ui::NodeIds::MappingField(
+            2, synth::MidiConfigSection::Encoders, *pushIndividualIx, synth::MidiMappingRowVM::Field::Cc));
+    const synth::ui::Node* numericChannel = FindNodeById(
+        typedTree,
+        synth::runtime_ui::NodeIds::MappingField(
+            2, synth::MidiConfigSection::Encoders, *pushIndividualIx, synth::MidiMappingRowVM::Field::Channel));
+    Require(numericAddress != nullptr && numericAddress->kind == synth::ui::NodeKind::TextField &&
+                numericAddress->text == "90",
+            "note-capable row keeps numeric message number as decimal text field");
+    Require(numericChannel != nullptr && numericChannel->kind == synth::ui::NodeKind::TextField &&
+                numericChannel->text == "1",
+            "note-capable row keeps channel as decimal text field");
+    Require(FindNodeById(
+                typedTree,
+                synth::runtime_ui::NodeIds::MappingField(
+                    2, synth::MidiConfigSection::Encoders, *turnIx,
+                    synth::MidiMappingRowVM::Field::AddressType)) == nullptr,
+            "encoder turn has no address type node");
+    const std::vector<synth::MidiMappingRowVM> wrldSystemRows =
+        typedSurface.ViewModel().SectionRows(0, synth::MidiConfigSection::SystemMessages);
+    for (std::size_t ix = 0; ix < wrldSystemRows.size(); ++ix)
+    {
+        Require(FindNodeById(
+                    typedTree,
+                    synth::runtime_ui::NodeIds::MappingField(
+                        0, synth::MidiConfigSection::SystemMessages, ix,
+                        synth::MidiMappingRowVM::Field::AddressType)) == nullptr,
+                "controller-specific system row has no address type node");
+    }
+
+    Require(pushIndividualType->action.has_value() &&
+                pushIndividualType->action->name == synth::runtime_ui::Actions::kMappingFieldCommit,
+            "address type combo uses existing mapping commit action");
+    typedSurface.DispatchAction(synth::ui::Action::WithValue(
+        synth::runtime_ui::Actions::kMappingFieldCommit, pushIndividualType->action->value + ":1"));
+    Require(typedHarness.commits == 1, "address type combo commits through Controllers surface");
+    bool committedNote90 = false;
+    for (const synth::EncoderMidiMapping& mapping : typedHarness.instrument.controllers[2].config.encoderInput->pushes)
+    {
+        committedNote90 = committedNote90 ||
+                          (mapping.control.cc == 90 && mapping.control.type == synth::MidiControlType::Note);
+    }
+    Require(committedNote90, "address type combo commit persists Note without changing number");
+
+    typedSurface.MarkDirty();
+    typedSurface.RefreshOnTick();
+    const synth::ui::NodeTree committedTypedTree = typedSurface.BuildTree();
+    const synth::ui::Node* committedType = FindNodeById(
+        committedTypedTree,
+        synth::runtime_ui::NodeIds::MappingField(
+            2, synth::MidiConfigSection::Encoders, *pushIndividualIx,
+            synth::MidiMappingRowVM::Field::AddressType));
+    Require(committedType != nullptr && committedType->selectedOption == "1",
+            "committed Note selection survives open-session rebuild");
+
+    const synth::ui::Node* systemIndividualType = FindNodeById(
+        committedTypedTree,
+        synth::runtime_ui::NodeIds::MappingField(
+            2, synth::MidiConfigSection::SystemMessages, *systemIndividualIx,
+            synth::MidiMappingRowVM::Field::AddressType));
+    Require(systemIndividualType != nullptr && systemIndividualType->action.has_value(),
+            "Generic system address type combo remains dispatchable");
+    typedSurface.DispatchAction(synth::ui::Action::WithValue(
+        synth::runtime_ui::Actions::kMappingFieldCommit, systemIndividualType->action->value + ":1"));
+    Require(typedHarness.commits == 2, "Generic system address type combo commits");
+    bool committedSystemNote90 = false;
+    for (const synth::MidiControllerSystemMessageAssociation& association :
+         typedHarness.instrument.controllers[2].config.systemMessages)
+    {
+        committedSystemNote90 = committedSystemNote90 ||
+                                (association.control.has_value() && association.control->cc == 90 &&
+                                 association.control->type == synth::MidiControlType::Note);
+    }
+    Require(committedSystemNote90, "Generic system combo persists Note without changing number");
+
     std::cout << "controllers_page_ui_tests passed\n";
     return 0;
 }

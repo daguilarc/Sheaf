@@ -185,6 +185,8 @@ inline int FieldEditorWidth(MidiMappingRowVM::Field field)
         case Field::EncoderMode:
         case Field::BlockMessageType:
             return 132;
+        case Field::AddressType:
+            return 90;
         case Field::TurnStep:
             return 74;
         case Field::Channel:
@@ -1302,6 +1304,26 @@ private:
                             if (vm.RowFieldValue(controllerIx, section, mappingRowIx, field, current))
                             {
                                 fieldNode.selectedOption = std::to_string(static_cast<int>(current));
+                            }
+                        }
+                        else if (field == MidiMappingRowVM::Field::AddressType)
+                        {
+                            fieldNode.kind = ui::NodeKind::ComboBox;
+                            const auto& catalog = ControlAddressTypeCatalog();
+                            for (int ix = 0; ix < static_cast<int>(catalog.size()); ++ix)
+                            {
+                                fieldNode.options.push_back(
+                                    {std::to_string(ix), catalog[static_cast<std::size_t>(ix)]});
+                            }
+                            double current = 0.0;
+                            if (vm.RowFieldValue(controllerIx, section, mappingRowIx, field, current))
+                            {
+                                const int currentIx = static_cast<int>(current);
+                                if (current == static_cast<double>(currentIx) && currentIx >= 0 &&
+                                    currentIx < static_cast<int>(catalog.size()))
+                                {
+                                    fieldNode.selectedOption = std::to_string(currentIx);
+                                }
                             }
                         }
                         else if (field == MidiMappingRowVM::Field::BlockMessageType)

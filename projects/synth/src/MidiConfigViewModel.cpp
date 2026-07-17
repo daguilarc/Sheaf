@@ -267,6 +267,7 @@ bool FieldIsInteger(MidiMappingRowVM::Field field) {
             return true;
         case Field::TurnStep:
         case Field::EncoderMode:
+        case Field::AddressType:
         case Field::MessageKind:
         case Field::BlockMessageType:
             return false;
@@ -278,6 +279,11 @@ const std::vector<std::string>& EncoderModeCatalog() {
     // All EncoderMode choices, in declaration order (MidiController.hpp):
     // 0 = Signed7Bit, 1 = DirectionOnly, 2 = Absolute.
     static const std::vector<std::string> catalog = {"Signed 7-bit", "Direction only", "Absolute"};
+    return catalog;
+}
+
+const std::vector<std::string>& ControlAddressTypeCatalog() {
+    static const std::vector<std::string> catalog = {"CC", "Note"};
     return catalog;
 }
 
@@ -348,6 +354,8 @@ const char* FieldShortLabel(MidiMappingRowVM::Field field) {
         case Field::BlockOutputFeedback:
             return "Feedback";
         case Field::BlockMessageType:
+            return "Type";
+        case Field::AddressType:
             return "Type";
     }
     return "";
@@ -725,19 +733,33 @@ namespace {
 std::vector<Field> SystemRowEditableFields(MidiProfileKind kind,
                                            const MidiControllerSystemMessageAssociation& association) {
     std::vector<Field> fields;
-    switch (kind) {
-        case MidiProfileKind::Launchpad:
-            fields = {Field::LaunchpadX, Field::LaunchpadY};
-            break;
-        case MidiProfileKind::WrldBldr:
-            fields = {Field::Channel, Field::WrldBldrX, Field::WrldBldrY};
-            break;
-        case MidiProfileKind::MfTwister:
-            fields = {Field::Button};
-            break;
-        case MidiProfileKind::Generic:
-            fields = {Field::Channel, Field::Cc};
-            break;
+    for (SystemAddressField addressField : SystemAddressSchema(kind)) {
+        switch (addressField) {
+            case SystemAddressField::AddressType:
+                fields.push_back(Field::AddressType);
+                break;
+            case SystemAddressField::Channel:
+                fields.push_back(Field::Channel);
+                break;
+            case SystemAddressField::WrldBldrX:
+                fields.push_back(Field::WrldBldrX);
+                break;
+            case SystemAddressField::WrldBldrY:
+                fields.push_back(Field::WrldBldrY);
+                break;
+            case SystemAddressField::LaunchpadX:
+                fields.push_back(Field::LaunchpadX);
+                break;
+            case SystemAddressField::LaunchpadY:
+                fields.push_back(Field::LaunchpadY);
+                break;
+            case SystemAddressField::Button:
+                fields.push_back(Field::Button);
+                break;
+            case SystemAddressField::Cc:
+                fields.push_back(Field::Cc);
+                break;
+        }
     }
     fields.push_back(Field::MessageKind);
     if (UISystemMessageHasArg(UISystemMessageForAssociation(association))) {
@@ -756,6 +778,11 @@ std::vector<Field> AnalogBlockEditableFields() {
 }
 std::vector<Field> SystemBlockEditableFields(const SystemBlock& block) {
     std::vector<Field> fields = {Field::BlockMessageType};
+    const std::vector<SystemAddressField> addressSchema = SystemAddressSchema(block.kind);
+    if (std::find(addressSchema.begin(), addressSchema.end(), SystemAddressField::AddressType) !=
+        addressSchema.end()) {
+        fields.push_back(Field::AddressType);
+    }
     if (block.kind == MidiProfileKind::WrldBldr) {
         fields.push_back(Field::Channel);
     }
@@ -1018,6 +1045,9 @@ std::vector<MidiMappingRowVM> MidiConfigViewModel::BuildSectionRows(std::size_t 
         } else if (presentationRow.kind == RowKind::Block) {
             if (const auto* encoderBlock = std::get_if<EncoderBlock>(&presentationRow.block)) {
                 row.editableFields = EncoderBlockEditableFields();
+                if (encoderBlock->isPush) {
+                    row.editableFields.insert(row.editableFields.begin(), Field::AddressType);
+                }
                 row.label = EncoderBlockLabel(*encoderBlock);
             } else if (const auto* analogBlock = std::get_if<AnalogBlock>(&presentationRow.block)) {
                 row.editableFields = AnalogBlockEditableFields();
@@ -1029,6 +1059,9 @@ std::vector<MidiMappingRowVM> MidiConfigViewModel::BuildSectionRows(std::size_t 
         } else {
             if (const auto* mapping = std::get_if<EncoderMidiMapping>(&presentationRow.data)) {
                 row.editableFields = {Field::Channel, Field::Cc, Field::SlotIx, Field::Position};
+                if (presentationRow.group == RowGroup::EncoderPush) {
+                    row.editableFields.insert(row.editableFields.begin(), Field::AddressType);
+                }
                 row.label = presentationRow.group == RowGroup::EncoderPush ? EncoderPushLabel(*mapping)
                                                                             : EncoderTurnLabel(*mapping);
             } else if (const auto* mapping = std::get_if<AnalogMidiMapping>(&presentationRow.data)) {
@@ -1064,6 +1097,9 @@ bool BlockFieldValue(const std::variant<std::monostate, EncoderBlock, AnalogBloc
                     double& out) {
     if (const auto* encoderBlock = std::get_if<EncoderBlock>(&block)) {
         switch (field) {
+            case Field::AddressType:
+                out = static_cast<double>(encoderBlock->controlType);
+                return true;
             case Field::Channel:
                 out = static_cast<double>(encoderBlock->channel);
                 return true;
@@ -1103,6 +1139,9 @@ bool BlockFieldValue(const std::variant<std::monostate, EncoderBlock, AnalogBloc
     }
     if (const auto* systemBlock = std::get_if<SystemBlock>(&block)) {
         switch (field) {
+            case Field::AddressType:
+                out = static_cast<double>(systemBlock->controlType);
+                return true;
             case Field::BlockMessageType:
                 out = static_cast<double>(systemBlock->message);
                 return true;
@@ -1224,6 +1263,9 @@ bool MidiConfigViewModel::RowFieldValue(std::size_t controllerIx, MidiConfigSect
 
     if (const auto* mapping = std::get_if<EncoderMidiMapping>(&presentationRow.data)) {
         switch (field) {
+            case Field::AddressType:
+                out = static_cast<double>(mapping->control.type);
+                return true;
             case Field::Channel:
                 out = static_cast<double>(mapping->control.channel);
                 return true;
@@ -1257,6 +1299,12 @@ bool MidiConfigViewModel::RowFieldValue(std::size_t controllerIx, MidiConfigSect
     }
     if (const auto* association = std::get_if<MidiControllerSystemMessageAssociation>(&presentationRow.data)) {
         switch (field) {
+            case Field::AddressType:
+                if (!association->control.has_value()) {
+                    return false;
+                }
+                out = static_cast<double>(association->control->type);
+                return true;
             case Field::Channel:
                 if (!association->control.has_value()) {
                     return false;
@@ -1402,6 +1450,13 @@ namespace {
 // "all-or-nothing").
 bool ApplyEncoderBlockField(EncoderBlock& block, Field field, double value, std::string& validationError) {
     switch (field) {
+        case Field::AddressType:
+            if (!IsIntegerInRange(value, 0.0, static_cast<double>(ControlAddressTypeCatalog().size() - 1))) {
+                validationError = "address type index out of range";
+                return false;
+            }
+            block.controlType = static_cast<MidiControlType>(static_cast<int>(value));
+            return true;
         case Field::Channel:
             if (!IsIntegerInRange(value, 0.0, 15.0)) {
                 validationError = "channel must be an integer 0-15";
@@ -1479,6 +1534,13 @@ bool ApplyAnalogBlockField(AnalogBlock& block, Field field, double value, std::s
 
 bool ApplySystemBlockField(SystemBlock& block, Field field, double value, std::string& validationError) {
     switch (field) {
+        case Field::AddressType:
+            if (!IsIntegerInRange(value, 0.0, static_cast<double>(ControlAddressTypeCatalog().size() - 1))) {
+                validationError = "address type index out of range";
+                return false;
+            }
+            block.controlType = static_cast<MidiControlType>(static_cast<int>(value));
+            return true;
         case Field::BlockMessageType:
             if (!IsIntegerInRange(value, 0.0, static_cast<double>(BlockableMessageCatalog().size() - 1))) {
                 validationError = "message type index out of range";
@@ -1848,6 +1910,15 @@ bool MidiConfigViewModel::ApplyMappingEdit(std::size_t controllerIx, MidiConfigS
     } else {
         if (auto* mapping = std::get_if<EncoderMidiMapping>(&presentationRow.data)) {
             switch (field) {
+                case Field::AddressType:
+                    if (!IsIntegerInRange(value, 0.0,
+                                          static_cast<double>(ControlAddressTypeCatalog().size() - 1))) {
+                        validationError = "address type index out of range";
+                        break;
+                    }
+                    mapping->control.type = static_cast<MidiControlType>(static_cast<int>(value));
+                    fieldValid = true;
+                    break;
                 case Field::Channel:
                     if (!IsIntegerInRange(value, 0.0, 15.0)) {
                         validationError = "channel must be an integer 0-15";
@@ -1914,6 +1985,18 @@ bool MidiConfigViewModel::ApplyMappingEdit(std::size_t controllerIx, MidiConfigS
             }
         } else if (auto* association = std::get_if<MidiControllerSystemMessageAssociation>(&presentationRow.data)) {
             switch (field) {
+                case Field::AddressType:
+                    if (!association->control.has_value()) {
+                        break;
+                    }
+                    if (!IsIntegerInRange(value, 0.0,
+                                          static_cast<double>(ControlAddressTypeCatalog().size() - 1))) {
+                        validationError = "address type index out of range";
+                        break;
+                    }
+                    association->control->type = static_cast<MidiControlType>(static_cast<int>(value));
+                    fieldValid = true;
+                    break;
                 case Field::Channel:
                     if (!association->control.has_value()) {
                         break;
@@ -2770,6 +2853,9 @@ std::vector<MidiMappingRowVM::Field> MidiConfigViewModel::GroupColumnFields(std:
     // "what would a fresh INDIVIDUAL row show," per its header doc comment).
     if (section == MidiConfigSection::Encoders &&
         (group == RowGroup::EncoderTurn || group == RowGroup::EncoderPush)) {
+        if (group == RowGroup::EncoderPush) {
+            return {Field::AddressType, Field::Channel, Field::Cc, Field::SlotIx, Field::Position};
+        }
         return {Field::Channel, Field::Cc, Field::SlotIx, Field::Position};
     }
     if (section == MidiConfigSection::Analogs && group == RowGroup::AnalogGesture) {
