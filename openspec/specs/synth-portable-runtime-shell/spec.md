@@ -129,7 +129,7 @@ WHEN the browser backend renders a composite frame, THE backend SHALL treat reso
 #### Scenario: Nested DOM preserves absolute portable bounds
 - **WHEN** a sidebar root and its descendants have absolute x coordinates beginning at the app width
 - **THEN** DOM nesting subtracts the resolved parent origin exactly once
-- **AND** the descendants render in the same surface positions as the flat JUCE backend
+- **AND** the descendants render in the same surface positions as the generic JUCE backend
 
 ### Requirement: sprs-7 — Verification: cross-backend and Playwright coverage
 WHEN the shared main component change is verified, THE synth project SHALL include JUCE-free component/service tests, retained JUCE backend tests, TypeScript backend tests, and Playwright Chromium tests that exercise the static website, shared sidebar/pages, app rendering, audio flow, bidirectional SysEx MIDI with multiple devices and reconnect polling, mouse gestures, and desktop/narrow visual layout.
@@ -160,3 +160,85 @@ WHEN the Chrome static site starts audio for any conforming browser-hosted appli
 #### Scenario: Browser callback verification
 - **WHEN** Chromium can be launched with the required host permissions
 - **THEN** Playwright verifies the built miniapp WASM starts the runtime-owned AudioWorklet callback and observes multiple non-silent processed blocks from callback diagnostics
+
+### Requirement: sprs-9 — JUCE layout: hierarchical generic portable backend
+WHEN the generic JUCE backend renders a portable node tree, THE backend SHALL retain semantic `Row`, `Section`, and `ScrollArea` parentage; SHALL resolve parent-local explicit bounds exactly once while preserving surface-absolute bounds and nested-root coordinate spaces; SHALL resolve unbounded controls within their nearest root before translating them into their resolved semantic host; and SHALL render labels, controls, panels, and draw commands in the resolved location and clipping hierarchy without application-specific node IDs or page branches. Both generic backends SHALL apply one portable draw-coordinate rule per draw node: when every explicit bound and point in the node's complete command buffer fits within the draw node, the buffer is node-local; otherwise the complete buffer is surface-space. Commands without explicit geometry SHALL NOT determine that classification, and containment SHALL use the portable floating-point node dimensions before backend pixel rounding. Either representation SHALL be normalized into the hosted draw component exactly once.
+
+#### Scenario: Parent-local rows do not overlap
+- **WHEN** two rows have different bounds in a scroll area's content coordinates and each row contains controls at local y zero
+- **THEN** the controls render inside their owning rows at distinct surface y positions
+- **AND** neither row obscures controls that precede the scroll area
+
+#### Scenario: Nested absolute root translates exactly once
+- **WHEN** a composite tree contains an application root at x zero and a sidebar root whose descendants already begin at the application width
+- **THEN** the generic JUCE backend preserves the sidebar descendants' surface positions
+- **AND** it neither drops nor doubles the sidebar offset
+
+#### Scenario: Unbounded semantic child retains root flow
+- **WHEN** an unbounded control is a descendant of a bounded row but participates in its nearest root's auto-flow
+- **THEN** its surface position is resolved by the root flow cursor
+- **AND** its JUCE bounds are translated into the owning row without changing that surface position
+
+#### Scenario: Nested drawing follows its container
+- **WHEN** a draw node is inside a row, section, or scrolling content subtree
+- **THEN** its painting and interactive pointer target use the same resolved bounds and clipping as sibling controls
+
+#### Scenario: Surface-space application drawing is not double-translated
+- **WHEN** an application supplies draw-node bounds and draw commands in established surface-space coordinates
+- **THEN** the JUCE backend positions the hosted draw component at the resolved node bounds
+- **AND** normalizes the commands into that component without applying the node origin twice
+- **AND** the application's scopes and complete encoder grid retain their pre-change surface positions
+
+#### Scenario: A draw node does not mix coordinate spaces internally
+- **WHEN** one endpoint of a surface-space line could also be interpreted as node-local but the other endpoint cannot
+- **THEN** the browser and JUCE backends treat both endpoints as surface-space
+- **AND** the line retains its intended geometry
+
+#### Scenario: Separate paths in one node use the same coordinate space
+- **WHEN** one surface-space path happens to fit within the draw node but another path in the same command buffer does not
+- **THEN** the browser and JUCE backends treat the complete buffer as surface-space
+- **AND** the paths retain their relative geometry
+
+#### Scenario: Browser and JUCE main pages remain unchanged
+- **WHEN** the generic hierarchy and scrolling implementation is applied
+- **THEN** the existing browser application page remains behaviorally and visually unchanged
+- **AND** the existing JUCE application page retains the same resolved geometry and rendered output as before the change
+
+#### Scenario: Refresh preserves live controls
+- **WHEN** a stable node ID and kind survive a surface refresh while its text editor is focused or contains an uncommitted draft
+- **THEN** the backend retains that JUCE component, focus, and draft while updating its current semantic properties and action
+
+#### Scenario: Reparent preserves a live editor
+- **WHEN** a stable text-editor node keeps its ID and kind while its semantic parent changes across refresh
+- **THEN** the backend reparents the retained JUCE component without discarding its focus or uncommitted draft
+
+### Requirement: sprs-10 — JUCE scrolling: real portable scroll areas
+WHEN the generic JUCE backend renders a `ScrollArea`, THE backend SHALL present its declared bounds as a JUCE viewport, SHALL size one content component to at least `scrollContentWidth` by `scrollContentHeight`, SHALL parent the scroll area's descendants into that content component, and SHALL provide horizontal and vertical scrolling when content exceeds the visible bounds so clipped descendants remain reachable and interactive.
+
+#### Scenario: Content extent is distinct from viewport
+- **WHEN** a scroll area declares visible bounds smaller than its content extent
+- **THEN** the viewport remains at the visible bounds
+- **AND** its content component uses the declared content extent without enlarging the viewport
+
+#### Scenario: Final mapping row is reachable
+- **WHEN** the shared Controllers page expands a mapping section whose final row lies below the visible viewport
+- **THEN** a user can scroll to the final row
+- **AND** the final row remains visible, editable, and clipped to the viewport during scrolling
+
+#### Scenario: Wide controller content scrolls horizontally
+- **WHEN** a Controllers row or mapping editor requires more width than the page viewport
+- **THEN** the generic JUCE backend exposes horizontal scrolling to the declared content width
+- **AND** it does not compress or overlap the row's controls
+
+### Requirement: sprs-11 — Verification: production generic JUCE page coverage
+WHEN the generic JUCE backend change is verified, THE synth project SHALL exercise hierarchy, nested roots, stable refresh, nested drawing, and scroll extents in backend tests; SHALL open the real shared Controllers page through the desktop runtime shell and verify non-overlap plus final-row reachability; and SHALL keep the standalone Controllers harness on the same generic backend path used by the desktop application, without retaining a Controllers-specific production renderer as an alternate implementation.
+
+#### Scenario: Desktop shell exercises the production renderer
+- **WHEN** the JUCE runtime-shell integration test opens Controllers from the shared sidebar
+- **THEN** the Back control, controller rows, Add row, status line, and scroll viewport have non-overlapping resolved bounds
+- **AND** the test reaches content beyond the initial viewport through the generic backend
+
+#### Scenario: Harness cannot hide generic regressions
+- **WHEN** the standalone Controllers harness renders its fixtures
+- **THEN** it uses `PortableComponent` over the production `ControllersPageSurface`
+- **AND** it does not instantiate or test a separate Controllers tree renderer
