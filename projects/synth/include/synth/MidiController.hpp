@@ -853,7 +853,9 @@ MidiControllerProfileResult CreateMidiControllerProfile(
 MidiControllerProfileResult CreateMidiControllerProfile(
     const MidiControllerProfileConfig& config, MessageInBus* bus, MidiSender* sender,
     std::nullptr_t uiState, MidiInProcessor::TimestampProvider timestampProvider = {},
-    std::size_t sinkIx = 0);
+    std::size_t sinkIx = 0, AbsoluteFeedbackCoordinator* absoluteFeedback = nullptr,
+    std::size_t controllerSlot = 0,
+    std::optional<MidiProfileKind> profileKind = std::nullopt);
 
 struct WrldBldrDefaultProfileOptions {
     std::size_t slotIx = 0;

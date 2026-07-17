@@ -2458,10 +2458,12 @@ MidiControllerProfileResult CreateMidiControllerProfile(
 MidiControllerProfileResult CreateMidiControllerProfile(
     const MidiControllerProfileConfig& config, MessageInBus* bus, MidiSender* sender,
     std::nullptr_t, MidiInProcessor::TimestampProvider timestampProvider,
-    std::size_t sinkIx) {
+    std::size_t sinkIx, AbsoluteFeedbackCoordinator* absoluteFeedback,
+    std::size_t controllerSlot, std::optional<MidiProfileKind> profileKind) {
     return CreateMidiControllerProfile(config, bus, sender,
                                        static_cast<RuntimeUIState*>(nullptr),
-                                       std::move(timestampProvider), sinkIx);
+                                       std::move(timestampProvider), sinkIx,
+                                       absoluteFeedback, controllerSlot, profileKind);
 }
 
 MidiControllerProfileConfig WrldBldrDefaultProfileConfig(WrldBldrDefaultProfileOptions options) {
