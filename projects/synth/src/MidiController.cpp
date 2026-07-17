@@ -2,6 +2,7 @@
 #include "synth/ThreadId.hpp"
 
 #include <algorithm>
+#include <cassert>
 #include <cmath>
 #include <limits>
 #include <string_view>
@@ -395,12 +396,158 @@ void EncoderMidiInConfig::KeepFirstPositions(std::size_t count) {
     std::erase_if(pushes, [count](const EncoderMidiMapping& mapping) { return !MappingIsFirstPosition(mapping, count); });
 }
 
-EncoderMidiInProcessor::EncoderMidiInProcessor(EncoderMidiInConfig config, MessageInBus* bus)
+std::size_t AbsoluteFeedbackCoordinator::RouteHash(RouteKey key) {
+    std::size_t hash = key.controllerSlot;
+    hash ^= key.parameterSlot + 0x9e3779b9U + (hash << 6U) + (hash >> 2U);
+    hash ^= key.position + 0x9e3779b9U + (hash << 6U) + (hash >> 2U);
+    return hash;
+}
+
+AbsoluteFeedbackCoordinator::RouteReservation AbsoluteFeedbackCoordinator::ReserveRoute(RouteKey key) {
+    while (reservationGuard_.test_and_set(std::memory_order_acquire)) {
+        std::this_thread::yield();
+    }
+
+    const std::size_t start = RouteHash(key) % kMaxRoutes;
+    for (std::size_t probe = 0; probe < kMaxRoutes; ++probe) {
+        const std::size_t index = (start + probe) % kMaxRoutes;
+        RouteRecord& record = routes_[index];
+        if (record.occupied && record.key == key) {
+            reservationGuard_.clear(std::memory_order_release);
+            return RouteReservation(index);
+        }
+        if (!record.occupied) {
+            record.key = key;
+            record.occupied = true;
+            reservationGuard_.clear(std::memory_order_release);
+            return RouteReservation(index);
+        }
+    }
+
+    reservationGuard_.clear(std::memory_order_release);
+    return RouteReservation(kMaxRoutes);
+}
+
+std::uint64_t AbsoluteFeedbackCoordinator::AllocateEpoch() {
+    const std::uint64_t epoch = nextEpoch_.fetch_add(1, std::memory_order_relaxed);
+    assert(epoch != 0 && epoch != std::numeric_limits<std::uint64_t>::max());
+    return epoch;
+}
+
+AbsoluteFeedbackCoordinator::RouteGuard::RouteGuard(RouteRecord* record)
+    : record_(record) {
+    if (record_ != nullptr) {
+        while (record_->guard.test_and_set(std::memory_order_acquire)) {
+            std::this_thread::yield();
+        }
+    }
+}
+
+AbsoluteFeedbackCoordinator::RouteGuard::~RouteGuard() {
+    if (record_ != nullptr) {
+        record_->guard.clear(std::memory_order_release);
+    }
+}
+
+AbsoluteFeedbackCoordinator::Expectation AbsoluteFeedbackCoordinator::RouteGuard::Snapshot() const {
+    return record_ == nullptr ? Expectation{} : record_->expectation;
+}
+
+void AbsoluteFeedbackCoordinator::RouteGuard::Publish(std::uint64_t epoch, std::uint8_t receivedValue) {
+    assert(record_ != nullptr && epoch != 0);
+    record_->expectation = {.epoch = epoch, .receivedValue = receivedValue, .pending = true};
+}
+
+void AbsoluteFeedbackCoordinator::RouteGuard::Restore(const Expectation& expectation) {
+    assert(record_ != nullptr);
+    record_->expectation = expectation;
+}
+
+bool AbsoluteFeedbackCoordinator::RouteGuard::Resolve(std::uint64_t expectedEpoch) {
+    if (record_ == nullptr || !record_->expectation.pending || record_->expectation.epoch != expectedEpoch) {
+        return false;
+    }
+    record_->expectation.pending = false;
+    return true;
+}
+
+AbsoluteFeedbackCoordinator::RouteGuard
+AbsoluteFeedbackCoordinator::GuardRoute(RouteReservation route) {
+    if (!route.IsTracked() || !routes_[route.index_].occupied) {
+        return RouteGuard(nullptr);
+    }
+    return RouteGuard(&routes_[route.index_]);
+}
+
+AbsoluteFeedbackCoordinator::InputAlert
+AbsoluteFeedbackCoordinator::BeginInput(RouteReservation route, std::uint8_t receivedValue) {
+    InputAlert alert;
+    if (!route.IsTracked()) {
+        return alert;
+    }
+
+    const std::uint64_t epoch = AllocateEpoch();
+    auto guard = GuardRoute(route);
+    if (!guard.IsTracked()) {
+        return alert;
+    }
+    alert.route_ = route;
+    alert.previous_ = guard.Snapshot();
+    alert.epoch_ = epoch;
+    alert.published_ = true;
+    guard.Publish(epoch, receivedValue);
+    return alert;
+}
+
+bool AbsoluteFeedbackCoordinator::Rollback(const InputAlert& alert) {
+    if (!alert.IsPublished()) {
+        return false;
+    }
+    auto guard = GuardRoute(alert.route_);
+    if (!guard.IsTracked() || guard.Snapshot().epoch != alert.epoch_) {
+        return false;
+    }
+    guard.Restore(alert.previous_);
+    return true;
+}
+
+std::optional<AbsoluteFeedbackCoordinator::Expectation>
+AbsoluteFeedbackCoordinator::Snapshot(RouteReservation route) {
+    auto guard = GuardRoute(route);
+    if (!guard.IsTracked()) {
+        return std::nullopt;
+    }
+    return guard.Snapshot();
+}
+
+EncoderMidiInProcessor::EncoderMidiInProcessor(EncoderMidiInConfig config, MessageInBus* bus,
+                                               AbsoluteFeedbackCoordinator* absoluteFeedback,
+                                               std::size_t controllerSlot)
     : MidiInProcessor(bus),
-      config_(std::move(config)) {}
+      config_(std::move(config)),
+      absoluteFeedback_(absoluteFeedback),
+      controllerSlot_(controllerSlot) {
+    ReserveAbsoluteRoutes();
+}
 
 void EncoderMidiInProcessor::SetConfig(EncoderMidiInConfig config) {
     config_ = std::move(config);
+    ReserveAbsoluteRoutes();
+}
+
+void EncoderMidiInProcessor::ReserveAbsoluteRoutes() {
+    absoluteTurnRoutes_.clear();
+    if (config_.mode != EncoderMode::Absolute || absoluteFeedback_ == nullptr) {
+        return;
+    }
+    absoluteTurnRoutes_.reserve(config_.turns.size());
+    for (const EncoderMidiMapping& mapping : config_.turns) {
+        absoluteTurnRoutes_.push_back(absoluteFeedback_->ReserveRoute({
+            .controllerSlot = controllerSlot_,
+            .parameterSlot = mapping.slotIx,
+            .position = mapping.position,
+        }));
+    }
 }
 
 void EncoderMidiInProcessor::Process(const BasicMidi& midi) {
@@ -411,8 +558,24 @@ void EncoderMidiInProcessor::Process(const BasicMidi& midi) {
 
     if (const EncoderMidiMapping* mapping = FindTurn(midi)) {
         if (config_.mode == EncoderMode::Absolute) {
-            Push(MessageIn::ParamSetAbsolute(NextTimestamp(), mapping->slotIx, mapping->position,
-                                             static_cast<float>(midi.GetValue()) / 127.0f));
+            if (absoluteFeedback_ == nullptr) {
+                Push(MessageIn::ParamSetAbsolute(NextTimestamp(), mapping->slotIx, mapping->position,
+                                                 static_cast<float>(midi.GetValue()) / 127.0f));
+                return;
+            }
+            const std::size_t mappingIx = static_cast<std::size_t>(mapping - config_.turns.data());
+            const auto route = absoluteTurnRoutes_[mappingIx];
+            if (!route.IsTracked()) {
+                return;
+            }
+            const auto alert = absoluteFeedback_->BeginInput(route, midi.GetValue());
+            assert(alert.IsPublished());
+            const bool pushed = Push(MessageIn::ParamSetAbsolute(
+                NextTimestamp(), mapping->slotIx, mapping->position,
+                static_cast<float>(midi.GetValue()) / 127.0f, alert.Epoch()));
+            if (!pushed) {
+                absoluteFeedback_->Rollback(alert);
+            }
             return;
         }
         if (const std::optional<float> delta = DecodeDelta(midi.GetValue())) {

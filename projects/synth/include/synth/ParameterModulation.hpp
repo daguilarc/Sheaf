@@ -940,6 +940,7 @@ struct MessageIn {
     std::size_t gestureIx = 0;
     std::size_t bankIx = 0;
     std::size_t sceneIx = 0;
+    std::uint64_t absoluteEpoch = 0;
     float value = 0.0f;
     float delta = 0.0f;
     bool boolValue = false;
@@ -947,7 +948,7 @@ struct MessageIn {
 
     static MessageIn ParamIncDec(std::uint64_t timestamp, std::size_t slotIx, std::size_t position, float delta);
     static MessageIn ParamSetAbsolute(std::uint64_t timestamp, std::size_t slotIx, std::size_t position,
-                                      float normalizedValue);
+                                      float normalizedValue, std::uint64_t absoluteEpoch = 0);
     static MessageIn ParamPush(std::uint64_t timestamp, std::size_t slotIx, std::size_t position);
     static MessageIn ToggleReset(std::uint64_t timestamp);
     static MessageIn SetReset(std::uint64_t timestamp, bool held);

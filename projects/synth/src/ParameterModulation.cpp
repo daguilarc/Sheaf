@@ -3686,13 +3686,14 @@ MessageIn MessageIn::ParamIncDec(std::uint64_t timestamp, std::size_t slotIx, st
 }
 
 MessageIn MessageIn::ParamSetAbsolute(std::uint64_t timestamp, std::size_t slotIx, std::size_t position,
-                                      float normalizedValue) {
+                                      float normalizedValue, std::uint64_t absoluteEpoch) {
     MessageIn message;
     message.timestamp = timestamp;
     message.type = Type::ParamSetAbsolute;
     message.slotIx = slotIx;
     message.position = position;
     message.value = normalizedValue;
+    message.absoluteEpoch = absoluteEpoch;
     return message;
 }
 

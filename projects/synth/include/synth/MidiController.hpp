@@ -3,6 +3,7 @@
 #include "synth/ParameterModulation.hpp"
 
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstddef>
@@ -90,6 +91,97 @@ enum class EncoderMode {
     Absolute,
 };
 
+class AbsoluteFeedbackCoordinator {
+private:
+    struct RouteRecord;
+
+public:
+    static constexpr std::size_t kMaxRoutes = 4096;
+
+    struct RouteKey {
+        std::size_t controllerSlot = 0;
+        std::size_t parameterSlot = 0;
+        std::size_t position = 0;
+
+        bool operator==(const RouteKey& other) const = default;
+    };
+
+    class RouteReservation {
+    public:
+        RouteReservation() = default;
+        bool IsTracked() const { return index_ < kMaxRoutes; }
+        bool operator==(const RouteReservation& other) const = default;
+
+    private:
+        friend class AbsoluteFeedbackCoordinator;
+        explicit RouteReservation(std::size_t index)
+            : index_(index) {}
+
+        std::size_t index_ = kMaxRoutes;
+    };
+
+    struct Expectation {
+        std::uint64_t epoch = 0;
+        std::uint8_t receivedValue = 0;
+        bool pending = false;
+
+        bool operator==(const Expectation& other) const = default;
+    };
+
+    class InputAlert {
+    public:
+        bool IsPublished() const { return published_; }
+        std::uint64_t Epoch() const { return published_ ? epoch_ : 0; }
+
+    private:
+        friend class AbsoluteFeedbackCoordinator;
+        RouteReservation route_;
+        Expectation previous_;
+        std::uint64_t epoch_ = 0;
+        bool published_ = false;
+    };
+
+    class RouteGuard {
+    public:
+        RouteGuard(const RouteGuard&) = delete;
+        RouteGuard& operator=(const RouteGuard&) = delete;
+        ~RouteGuard();
+
+        bool IsTracked() const { return record_ != nullptr; }
+        Expectation Snapshot() const;
+        bool Resolve(std::uint64_t expectedEpoch);
+
+    private:
+        friend class AbsoluteFeedbackCoordinator;
+        explicit RouteGuard(RouteRecord* record);
+        void Publish(std::uint64_t epoch, std::uint8_t receivedValue);
+        void Restore(const Expectation& expectation);
+
+        RouteRecord* record_ = nullptr;
+    };
+
+    RouteReservation ReserveRoute(RouteKey key);
+    InputAlert BeginInput(RouteReservation route, std::uint8_t receivedValue);
+    bool Rollback(const InputAlert& alert);
+    std::optional<Expectation> Snapshot(RouteReservation route);
+    RouteGuard GuardRoute(RouteReservation route);
+
+private:
+    struct RouteRecord {
+        std::atomic_flag guard = ATOMIC_FLAG_INIT;
+        RouteKey key;
+        Expectation expectation;
+        bool occupied = false;
+    };
+
+    static std::size_t RouteHash(RouteKey key);
+    std::uint64_t AllocateEpoch();
+
+    std::array<RouteRecord, kMaxRoutes> routes_{};
+    std::atomic_flag reservationGuard_ = ATOMIC_FLAG_INIT;
+    std::atomic<std::uint64_t> nextEpoch_{1};
+};
+
 struct MidiControlAddress {
     std::uint8_t channel = 0;
     std::uint8_t cc = 0;
@@ -116,7 +208,9 @@ struct EncoderMidiInConfig {
 
 class EncoderMidiInProcessor final : public MidiInProcessor {
 public:
-    EncoderMidiInProcessor(EncoderMidiInConfig config, MessageInBus* bus = nullptr);
+    EncoderMidiInProcessor(EncoderMidiInConfig config, MessageInBus* bus = nullptr,
+                           AbsoluteFeedbackCoordinator* absoluteFeedback = nullptr,
+                           std::size_t controllerSlot = 0);
 
     void SetConfig(EncoderMidiInConfig config);
     const EncoderMidiInConfig& Config() const { return config_; }
@@ -126,8 +220,12 @@ private:
     const EncoderMidiMapping* FindTurn(const BasicMidi& midi) const;
     const EncoderMidiMapping* FindPush(const BasicMidi& midi) const;
     std::optional<float> DecodeDelta(std::uint8_t value) const;
+    void ReserveAbsoluteRoutes();
 
     EncoderMidiInConfig config_;
+    AbsoluteFeedbackCoordinator* absoluteFeedback_ = nullptr;
+    std::size_t controllerSlot_ = 0;
+    std::vector<AbsoluteFeedbackCoordinator::RouteReservation> absoluteTurnRoutes_;
 };
 
 struct AnalogMidiMapping {

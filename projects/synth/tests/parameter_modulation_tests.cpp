@@ -5731,6 +5731,171 @@ TEST_CASE(midi_encoder_input_direction_only_zero_and_thru_behavior) {
     REQUIRE_TRUE(thru.last.GetCC() == 9);
 }
 
+TEST_CASE(absolute_feedback_coordinator_tracks_latest_expectations_per_controller_route) {
+    static_assert(synth::AbsoluteFeedbackCoordinator::kMaxRoutes == 4096);
+
+    synth::AbsoluteFeedbackCoordinator coordinator;
+    const auto firstController = coordinator.ReserveRoute({.controllerSlot = 1, .parameterSlot = 4, .position = 6});
+    const auto secondController = coordinator.ReserveRoute({.controllerSlot = 2, .parameterSlot = 4, .position = 6});
+    REQUIRE_TRUE(firstController.IsTracked());
+    REQUIRE_TRUE(secondController.IsTracked());
+
+    const auto first = coordinator.BeginInput(firstController, 17);
+    const auto second = coordinator.BeginInput(secondController, 41);
+    const auto replacement = coordinator.BeginInput(firstController, 93);
+    REQUIRE_TRUE(first.IsPublished());
+    REQUIRE_TRUE(first.Epoch() != 0);
+    REQUIRE_TRUE(first.Epoch() < second.Epoch());
+    REQUIRE_TRUE(second.Epoch() < replacement.Epoch());
+
+    const auto firstState = coordinator.Snapshot(firstController);
+    const auto secondState = coordinator.Snapshot(secondController);
+    REQUIRE_TRUE(firstState.has_value());
+    REQUIRE_TRUE(firstState->pending);
+    REQUIRE_TRUE(firstState->epoch == replacement.Epoch());
+    REQUIRE_TRUE(firstState->receivedValue == 93);
+    REQUIRE_TRUE(secondState.has_value());
+    REQUIRE_TRUE(secondState->pending);
+    REQUIRE_TRUE(secondState->epoch == second.Epoch());
+    REQUIRE_TRUE(secondState->receivedValue == 41);
+}
+
+TEST_CASE(absolute_feedback_coordinator_guard_resolves_only_the_expected_epoch) {
+    synth::AbsoluteFeedbackCoordinator coordinator;
+    const auto route = coordinator.ReserveRoute({.controllerSlot = 3, .parameterSlot = 2, .position = 7});
+    const auto alert = coordinator.BeginInput(route, 64);
+
+    {
+        auto guard = coordinator.GuardRoute(route);
+        REQUIRE_TRUE(guard.IsTracked());
+        const auto guardedState = guard.Snapshot();
+        REQUIRE_TRUE(guardedState.pending);
+        REQUIRE_TRUE(guardedState.epoch == alert.Epoch());
+        REQUIRE_TRUE(guardedState.receivedValue == 64);
+        REQUIRE_TRUE(!guard.Resolve(alert.Epoch() - 1));
+        REQUIRE_TRUE(guard.Resolve(alert.Epoch()));
+    }
+
+    const auto resolved = coordinator.Snapshot(route);
+    REQUIRE_TRUE(resolved.has_value());
+    REQUIRE_TRUE(!resolved->pending);
+    REQUIRE_TRUE(resolved->epoch == alert.Epoch());
+}
+
+TEST_CASE(absolute_feedback_coordinator_conditionally_rolls_back_failed_input) {
+    synth::AbsoluteFeedbackCoordinator coordinator;
+    const auto route = coordinator.ReserveRoute({.controllerSlot = 0, .parameterSlot = 1, .position = 2});
+    const auto prior = coordinator.BeginInput(route, 12);
+    const auto failed = coordinator.BeginInput(route, 34);
+    REQUIRE_TRUE(coordinator.Rollback(failed));
+
+    auto state = coordinator.Snapshot(route);
+    REQUIRE_TRUE(state.has_value());
+    REQUIRE_TRUE(state->pending);
+    REQUIRE_TRUE(state->epoch == prior.Epoch());
+    REQUIRE_TRUE(state->receivedValue == 12);
+
+    const auto supersededFailure = coordinator.BeginInput(route, 56);
+    const auto newer = coordinator.BeginInput(route, 78);
+    REQUIRE_TRUE(!coordinator.Rollback(supersededFailure));
+    state = coordinator.Snapshot(route);
+    REQUIRE_TRUE(state.has_value());
+    REQUIRE_TRUE(state->pending);
+    REQUIRE_TRUE(state->epoch == newer.Epoch());
+    REQUIRE_TRUE(state->receivedValue == 78);
+}
+
+TEST_CASE(absolute_feedback_coordinator_capacity_exhaustion_fails_closed) {
+    synth::AbsoluteFeedbackCoordinator coordinator;
+    for (std::size_t ix = 0; ix < synth::AbsoluteFeedbackCoordinator::kMaxRoutes; ++ix) {
+        const auto route = coordinator.ReserveRoute({.controllerSlot = 0, .parameterSlot = ix, .position = 0});
+        REQUIRE_TRUE(route.IsTracked());
+    }
+
+    const auto firstRoute = coordinator.ReserveRoute({.controllerSlot = 0, .parameterSlot = 0, .position = 0});
+    const auto firstBefore = coordinator.Snapshot(firstRoute);
+    const auto unreservable = coordinator.ReserveRoute({.controllerSlot = 7, .parameterSlot = 9999, .position = 3});
+    REQUIRE_TRUE(!unreservable.IsTracked());
+    REQUIRE_TRUE(!coordinator.BeginInput(unreservable, 99).IsPublished());
+
+    synth::MessageInBus bus(nullptr, 4);
+    synth::EncoderMidiInConfig config;
+    config.mode = synth::EncoderMode::Absolute;
+    config.turns.push_back({.control = {.channel = 1, .cc = 9}, .slotIx = 9999, .position = 3});
+    synth::EncoderMidiInProcessor processor(config, &bus, &coordinator, 7);
+    CountingMidiInProcessor thru;
+    processor.SetThru(&thru);
+    processor.Process(synth::BasicMidi::CC(1, 1, 9, 99));
+
+    synth::MessageIn message;
+    REQUIRE_TRUE(!bus.Pop(message, 1));
+    REQUIRE_TRUE(thru.count == 0);
+    const auto firstAfter = coordinator.Snapshot(firstRoute);
+    REQUIRE_TRUE(firstAfter == firstBefore);
+}
+
+TEST_CASE(midi_encoder_input_absolute_publishes_matching_epoch_and_rolls_back_rejected_push) {
+    synth::AbsoluteFeedbackCoordinator coordinator;
+    const auto route = coordinator.ReserveRoute({.controllerSlot = 5, .parameterSlot = 4, .position = 6});
+    const auto prior = coordinator.BeginInput(route, 22);
+    synth::MessageInBus bus(nullptr, 1);
+    REQUIRE_TRUE(bus.Push(synth::MessageIn::Clock(0)));
+
+    synth::EncoderMidiInConfig config;
+    config.mode = synth::EncoderMode::Absolute;
+    config.turns.push_back({.control = {.channel = 3, .cc = 7}, .slotIx = 4, .position = 6});
+    synth::EncoderMidiInProcessor processor(config, &bus, &coordinator, 5);
+    processor.SetTimestampProvider([] { return 101; });
+    processor.Process(synth::BasicMidi::CC(9999, 3, 7, 64));
+
+    auto state = coordinator.Snapshot(route);
+    REQUIRE_TRUE(state.has_value());
+    REQUIRE_TRUE(state->epoch == prior.Epoch());
+    REQUIRE_TRUE(state->receivedValue == 22);
+    synth::MessageIn message;
+    REQUIRE_TRUE(bus.Pop(message, 101));
+    REQUIRE_TRUE(message.type == synth::MessageIn::Type::Clock);
+
+    processor.Process(synth::BasicMidi::CC(9999, 3, 7, 64));
+    REQUIRE_TRUE(bus.Pop(message, 101));
+    REQUIRE_TRUE(message.type == synth::MessageIn::Type::ParamSetAbsolute);
+    REQUIRE_TRUE(message.absoluteEpoch != 0);
+    REQUIRE_NEAR(message.value, 64.0f / 127.0f, 0.000001f);
+    state = coordinator.Snapshot(route);
+    REQUIRE_TRUE(state.has_value());
+    REQUIRE_TRUE(state->pending);
+    REQUIRE_TRUE(state->epoch == message.absoluteEpoch);
+    REQUIRE_TRUE(state->receivedValue == 64);
+}
+
+TEST_CASE(midi_encoder_input_relative_modes_do_not_allocate_or_change_absolute_state) {
+    synth::AbsoluteFeedbackCoordinator coordinator;
+    const auto route = coordinator.ReserveRoute({.controllerSlot = 6, .parameterSlot = 2, .position = 3});
+    const auto prior = coordinator.BeginInput(route, 11);
+
+    for (const auto mode : {synth::EncoderMode::Signed7Bit, synth::EncoderMode::DirectionOnly}) {
+        synth::MessageInBus bus(nullptr, 2);
+        synth::EncoderMidiInConfig config;
+        config.mode = mode;
+        config.turns.push_back({.control = {.channel = 0, .cc = 1}, .slotIx = 2, .position = 3});
+        synth::EncoderMidiInProcessor processor(config, &bus, &coordinator, 6);
+        processor.Process(synth::BasicMidi::CC(1, 0, 1, 127));
+
+        synth::MessageIn message;
+        REQUIRE_TRUE(bus.Pop(message, 1));
+        REQUIRE_TRUE(message.type == synth::MessageIn::Type::ParamIncDec);
+        REQUIRE_TRUE(message.absoluteEpoch == 0);
+        const auto state = coordinator.Snapshot(route);
+        REQUIRE_TRUE(state.has_value());
+        REQUIRE_TRUE(state->pending);
+        REQUIRE_TRUE(state->epoch == prior.Epoch());
+        REQUIRE_TRUE(state->receivedValue == 11);
+    }
+
+    const auto next = coordinator.BeginInput(route, 12);
+    REQUIRE_TRUE(next.Epoch() == prior.Epoch() + 1);
+}
+
 TEST_CASE(midi_encoder_input_absolute_maps_raw_positions_independent_of_turn_step) {
     constexpr std::array rawValues{std::uint8_t{0}, std::uint8_t{64}, std::uint8_t{127}};
     constexpr std::array normalizedValues{0.0f, 64.0f / 127.0f, 1.0f};
