@@ -5005,6 +5005,242 @@ TEST_CASE(param_set_absolute_survives_controller_system_association_round_trip) 
     REQUIRE_NEAR(message.value, 0.375f, 0.0f);
 }
 
+TEST_CASE(param_set_absolute_runtime_epoch_survives_queue_but_is_not_persisted) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({.numVoices = 1, .numScenes = 1, .maxParameters = 1});
+    auto& parameter = manager.CreateParameter(group, {.name = "Epoch", .defaultValue = 0.25f});
+    auto& bank = manager.CreateBank();
+    bank.AddMapping(10, parameter);
+    auto& slot = manager.CreateBankSlot();
+    slot.AddPhysicalEncoder(10);
+    slot.SelectBank(&bank);
+
+    synth::MessageInBus bus(&manager, 4);
+    const synth::MessageIn source = synth::MessageIn::ParamSetAbsolute(42, 0, 0, 0.625f, 77);
+    REQUIRE_TRUE(bus.Push(source));
+    synth::MessageIn popped;
+    REQUIRE_TRUE(bus.Pop(popped, 42));
+    REQUIRE_TRUE(popped.absoluteEpoch == 77);
+    bus.Apply(popped);
+    auto ui = manager.CreateUIState();
+    manager.PopulateUIState(*ui);
+    REQUIRE_TRUE(ui->slots[0].cells[0].processedAbsoluteEpoch.load() == 77);
+
+    synth::JsonArena arena(4096);
+    const synth::JSON json = synth::ToJSON(arena, source);
+    REQUIRE_TRUE(!arena.Failed());
+    REQUIRE_TRUE(json.Get("absoluteEpoch").IsNull());
+    synth::MessageIn loaded;
+    REQUIRE_TRUE(synth::FromJSON(json, loaded));
+    REQUIRE_TRUE(loaded.absoluteEpoch == 0);
+
+    bus.Apply(loaded);
+    manager.PopulateUIState(*ui);
+    REQUIRE_NEAR(parameter.SceneCenter(0), 0.625f, 0.00001f);
+    REQUIRE_TRUE(ui->slots[0].cells[0].processedAbsoluteEpoch.load() == 77);
+}
+
+TEST_CASE(param_set_absolute_acknowledges_apply_modifier_rejection_and_disconnected_routes_monotonically) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 1,
+        .numScenes = 1,
+        .maxParameters = 2,
+        .targetCenterAlpha = 1.0f,
+    });
+    auto& parameter = manager.CreateParameter(group, {.name = "Acknowledged", .defaultValue = 0.25f});
+    auto& bank = manager.CreateBank();
+    bank.AddMapping(10, parameter);
+    auto& connectedSlot = manager.CreateBankSlot();
+    connectedSlot.AddPhysicalEncoder(10);
+    connectedSlot.SelectBank(&bank);
+    auto& disconnectedSlot = manager.CreateBankSlot();
+    disconnectedSlot.AddPhysicalEncoder(20);
+
+    synth::MessageInBus bus(&manager, 16);
+    auto ui = manager.CreateUIState();
+    bus.Apply(synth::MessageIn::ParamSetAbsolute(0, 0, 0, 0.75f, 10));
+    manager.PopulateUIState(*ui);
+    REQUIRE_NEAR(parameter.SceneCenter(0), 0.75f, 0.00001f);
+    REQUIRE_TRUE(ui->slots[0].cells[0].processedAbsoluteEpoch.load() == 10);
+
+    manager.SetResetHeld(true);
+    bus.Apply(synth::MessageIn::ParamSetAbsolute(0, 0, 0, 0.1f, 11));
+    manager.SetResetHeld(false);
+    manager.SetRandomHeld(true);
+    bus.Apply(synth::MessageIn::ParamSetAbsolute(0, 0, 0, 0.2f, 12));
+    manager.SetRandomHeld(false);
+    manager.SetRandomModHeld(true);
+    bus.Apply(synth::MessageIn::ParamSetAbsolute(0, 0, 0, 0.3f, 13));
+    manager.SetRandomModHeld(false);
+    manager.PopulateUIState(*ui);
+    REQUIRE_NEAR(parameter.SceneCenter(0), 0.75f, 0.00001f);
+    REQUIRE_TRUE(ui->slots[0].cells[0].processedAbsoluteEpoch.load() == 13);
+
+    bus.Apply(synth::MessageIn::ParamSetAbsolute(0, 0, 0, 0.5f, 9));
+    bus.Apply(synth::MessageIn::ParamSetAbsolute(0, 0, 0, 0.625f, 0));
+    bus.Apply(synth::MessageIn::ParamSetAbsolute(0, 1, 0, 0.9f, 14));
+    manager.PopulateUIState(*ui);
+    REQUIRE_NEAR(parameter.SceneCenter(0), 0.625f, 0.00001f);
+    REQUIRE_TRUE(ui->slots[0].cells[0].processedAbsoluteEpoch.load() == 13);
+    REQUIRE_TRUE(!ui->slots[1].cells[0].connected.load());
+    REQUIRE_NEAR(ui->slots[1].cells[0].rawKnobValue.load(), 0.0f, 0.0f);
+    REQUIRE_TRUE(ui->slots[1].cells[0].processedAbsoluteEpoch.load() == 14);
+}
+
+TEST_CASE(processed_absolute_epoch_follows_slot_position_across_bank_and_modulation_view_changes) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 1,
+        .numScenes = 1,
+        .maxParameters = 4,
+        .targetCenterAlpha = 1.0f,
+    });
+    auto& first = manager.CreateParameter(group, {.name = "First", .defaultValue = 0.2f});
+    auto& second = manager.CreateParameter(group, {.name = "Second", .defaultValue = 0.6f});
+    auto& depth = manager.CreateParameter(group, {.name = "Depth", .defaultValue = 0.4f});
+    REQUIRE_TRUE(second.AssignModulationDepth(0, &depth));
+    auto& firstBank = manager.CreateBank();
+    firstBank.AddMapping(10, first);
+    auto& secondBank = manager.CreateBank();
+    secondBank.AddMapping(10, second);
+    auto& slot = manager.CreateBankSlot();
+    slot.AddPhysicalEncoder(10);
+    slot.AddPhysicalEncoder(11);
+    slot.SelectBank(&firstBank);
+
+    synth::MessageInBus bus(&manager, 8);
+    bus.Apply(synth::MessageIn::ParamSetAbsolute(0, 0, 0, 0.3f, 21));
+    slot.SelectBank(&secondBank);
+    auto ui = manager.CreateUIState();
+    manager.PopulateUIState(*ui);
+    REQUIRE_NEAR(ui->slots[0].cells[0].rawKnobValue.load(), 0.6f, 0.00001f);
+    REQUIRE_TRUE(ui->slots[0].cells[0].processedAbsoluteEpoch.load() == 21);
+
+    bus.Apply(synth::MessageIn::ParamSetAbsolute(0, 0, 0, 0.7f, 22));
+    manager.HandlePress(0, 0);
+    REQUIRE_TRUE(secondBank.ShowingModulation());
+    manager.PopulateUIState(*ui);
+    REQUIRE_TRUE(ui->slots[0].cells[0].processedAbsoluteEpoch.load() == 22);
+    REQUIRE_NEAR(ui->slots[0].cells[0].rawKnobValue.load(), 0.4f, 0.00001f);
+}
+
+TEST_CASE(ui_state_publishes_normalized_raw_center_before_modulation_smoothing_and_presentation) {
+    synth::ParameterManager manager;
+    manager.SetGestureCount(1);
+    auto& group = manager.CreateGroup({
+        .numVoices = 2,
+        .numModulators = 1,
+        .numScenes = 2,
+        .maxParameters = 4,
+        .processLiteAlpha = 1.0f,
+        .targetCenterAlpha = 0.5f,
+        .uiDisplayCenterAlpha = 1.0f,
+    });
+    auto& unipolar = manager.CreateParameter(group, {
+        .name = "Raw",
+        .shortName = "Raw",
+        .defaultValue = 0.1f,
+        .baseColor = synth::Color::Green,
+        .indicatorColors = {synth::Color::Cyan, synth::Color::Orange},
+        .switchValues = 5,
+    });
+    auto& bipolar = manager.CreateParameter(group, {
+        .name = "Bipolar raw",
+        .defaultValue = 0.25f,
+        .range = synth::RangeKind::Bipolar,
+    });
+    auto& depth = manager.CreateParameter(group, {.name = "Depth", .defaultValue = 1.0f});
+    REQUIRE_TRUE(unipolar.AssignModulationDepth(0, &depth));
+    auto& bank = manager.CreateBank();
+    bank.AddMapping(10, unipolar);
+    bank.AddMapping(11, bipolar);
+    auto& slot = manager.CreateBankSlot();
+    slot.AddPhysicalEncoder(10);
+    slot.AddPhysicalEncoder(11);
+    slot.SelectBank(&bank);
+    unipolar.SceneCenter(0) = 0.2f;
+    unipolar.SceneCenter(1) = 0.8f;
+    bipolar.SceneCenter(0) = 0.25f;
+    bipolar.SceneCenter(1) = 0.75f;
+    REQUIRE_TRUE(manager.SetSceneEndpoints(0, 1));
+
+    auto ui = manager.CreateUIState();
+    manager.SetSceneBlend(0.0f);
+    manager.ComputeAllTargets();
+    manager.PopulateUIState(*ui);
+    REQUIRE_NEAR(ui->slots[0].cells[0].rawKnobValue.load(), 0.2f, 0.00001f);
+    manager.SetSceneBlend(1.0f);
+    manager.ComputeAllTargets();
+    manager.PopulateUIState(*ui);
+    REQUIRE_NEAR(ui->slots[0].cells[0].rawKnobValue.load(), 0.8f, 0.00001f);
+
+    manager.SetSceneBlend(0.25f);
+    group.GetModulators().Value(0, 0) = 0.0f;
+    group.GetModulators().Value(1, 0) = 1.0f;
+    manager.ComputeAllTargets();
+    unipolar.ProcessLite();
+    bipolar.ProcessLite();
+    manager.PopulateUIState(*ui);
+    const auto& rawCell = ui->slots[0].cells[0];
+    REQUIRE_NEAR(rawCell.rawKnobValue.load(), 0.35f, 0.00001f);
+    REQUIRE_TRUE(std::fabs(rawCell.values[0].load() - rawCell.rawKnobValue.load()) > 0.01f);
+    REQUIRE_TRUE(rawCell.switchValues.load() == 5);
+    REQUIRE_TRUE(rawCell.baseColor.Load() == synth::Color::Green);
+    REQUIRE_TRUE(rawCell.indicatorColors[0].Load() == synth::Color::Cyan);
+    REQUIRE_TRUE(rawCell.indicatorColors[1].Load() == synth::Color::Orange);
+    REQUIRE_NEAR(rawCell.minValues[0].load(), 0.0f, 0.00001f);
+    REQUIRE_NEAR(rawCell.maxValues[0].load(), 1.0f, 0.00001f);
+    REQUIRE_NEAR(ui->slots[0].cells[1].rawKnobValue.load(), 0.375f, 0.00001f);
+    REQUIRE_TRUE(ui->slots[0].cells[1].bipolar.load());
+    REQUIRE_NEAR(ui->slots[0].cells[1].minValues[0].load(), -0.125f, 0.00001f);
+    REQUIRE_NEAR(ui->slots[0].cells[1].maxValues[0].load(), -0.125f, 0.00001f);
+
+    unipolar.GestureValue(0, 0) = 0.6f;
+    unipolar.GestureValue(1, 0) = 0.6f;
+    unipolar.SetGestureActive(0, 0, true);
+    unipolar.SetGestureActive(1, 0, true);
+    manager.SetGestureValue(0, 1.0f);
+    manager.ComputeAllTargets();
+    manager.PopulateUIState(*ui);
+    REQUIRE_NEAR(rawCell.rawKnobValue.load(), 0.6f, 0.00001f);
+}
+
+TEST_CASE(raw_center_and_processed_epoch_require_one_stable_revision) {
+    synth::Parameter::UIState cell(1);
+    cell.revision.store(2, std::memory_order_relaxed);
+    cell.rawKnobValue.store(0.25f, std::memory_order_relaxed);
+    cell.processedAbsoluteEpoch.store(31, std::memory_order_relaxed);
+
+    auto readStable = [](synth::Parameter::UIState& state, float& raw, std::uint64_t& epoch,
+                         bool forceRevisionChange = false) {
+        const std::uint32_t before = state.revision.load(std::memory_order_acquire);
+        if ((before & 1u) != 0) {
+            return false;
+        }
+        raw = state.rawKnobValue.load(std::memory_order_relaxed);
+        epoch = state.processedAbsoluteEpoch.load(std::memory_order_relaxed);
+        if (forceRevisionChange) {
+            state.rawKnobValue.store(0.75f, std::memory_order_relaxed);
+            state.processedAbsoluteEpoch.store(32, std::memory_order_relaxed);
+            state.revision.store(before + 2, std::memory_order_release);
+        }
+        const std::uint32_t after = state.revision.load(std::memory_order_acquire);
+        return before == after && (after & 1u) == 0;
+    };
+
+    float raw = 0.0f;
+    std::uint64_t epoch = 0;
+    REQUIRE_TRUE(readStable(cell, raw, epoch));
+    REQUIRE_NEAR(raw, 0.25f, 0.0f);
+    REQUIRE_TRUE(epoch == 31);
+    REQUIRE_TRUE(!readStable(cell, raw, epoch, true));
+    cell.revision.store(5, std::memory_order_release);
+    REQUIRE_TRUE(!readStable(cell, raw, epoch));
+}
+
 TEST_CASE(param_set_absolute_routes_by_selected_bank_slot_position_and_physical_encoder) {
     synth::ParameterManager manager;
     auto& group = manager.CreateGroup({

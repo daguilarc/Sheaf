@@ -440,7 +440,7 @@ public:
 
         void Configure(std::size_t voiceCapacity, std::size_t modulatorColorCapacity = 0,
                        std::size_t gestureColorCapacity = 0);
-        void SetDisconnected();
+        void SetDisconnected(std::uint64_t processedEpoch = 0);
 
         std::atomic<std::uint32_t> revision{0};
         std::atomic<bool> connected{false};
@@ -448,6 +448,8 @@ public:
         std::atomic<std::size_t> switchValues{0};
         std::atomic<std::uint32_t> modulatorsAffectingMask{0};
         std::atomic<GestureMask> gesturesAffectingMask{0};
+        std::atomic<float> rawKnobValue{0.0f};
+        std::atomic<std::uint64_t> processedAbsoluteEpoch{0};
         AtomicColor baseColor;
         std::atomic<synth::ui::Visualizer*> visualizer{nullptr};
         std::atomic<const char*> shortName{nullptr};
@@ -484,6 +486,7 @@ public:
     float UIDisplaySpread(std::size_t voiceIx) const;
     std::size_t GetSwitchVal(std::size_t voiceIx) const;
     void PopulateUIState(UIState& state) const;
+    void PopulateUIState(UIState& state, const SceneState& scene, std::uint64_t processedAbsoluteEpoch) const;
     void Compute(const SceneState& scene);
     // Audio-rate helper: no graph traversal or allocation.
     void ProcessLite();
@@ -683,12 +686,16 @@ public:
     Bank* SelectedBank() const { return selectedBank_; }
     std::span<const PhysicalEncoderId> PhysicalEncoders() const { return physicalEncoders_; }
     bool ResolvePosition(std::size_t position, PhysicalEncoderId& encoderId) const;
-    void PopulateUIState(UIState& state) const;
+    void PopulateUIState(UIState& state, const SceneState& scene) const;
 
 private:
+    friend class ParameterManager;
+
     bool OwnsPhysicalEncoder(PhysicalEncoderId encoderId) const;
+    void RecordProcessedAbsoluteEpoch(std::size_t position, std::uint64_t epoch) noexcept;
 
     std::vector<PhysicalEncoderId> physicalEncoders_;
+    std::vector<std::uint64_t> processedAbsoluteEpochs_;
     Bank* selectedBank_ = nullptr;
 };
 
@@ -835,7 +842,8 @@ public:
     void HandleSetAbsolute(PhysicalEncoderId encoderId, float normalizedTarget);
     void HandlePress(std::size_t slotIx, std::size_t position);
     void HandleTick(std::size_t slotIx, std::size_t position, float delta);
-    void HandleSetAbsolute(std::size_t slotIx, std::size_t position, float normalizedTarget);
+    void HandleSetAbsolute(std::size_t slotIx, std::size_t position, float normalizedTarget,
+                           std::uint64_t absoluteEpoch = 0);
     bool SelectBankForSlot(std::size_t slotIx, std::size_t bankIx);
 
     Modifier GetCurrentModifier() const;

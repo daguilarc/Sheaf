@@ -1144,13 +1144,15 @@ void Parameter::UIState::Configure(std::size_t newVoiceCapacity, std::size_t new
     SetDisconnected();
 }
 
-void Parameter::UIState::SetDisconnected() {
+void Parameter::UIState::SetDisconnected(std::uint64_t processedEpoch) {
     revision.fetch_add(1, std::memory_order_acq_rel);
     connected.store(false, std::memory_order_relaxed);
     bipolar.store(false, std::memory_order_relaxed);
     switchValues.store(0, std::memory_order_relaxed);
     modulatorsAffectingMask.store(0, std::memory_order_relaxed);
     gesturesAffectingMask.store(0, std::memory_order_relaxed);
+    rawKnobValue.store(0.0f, std::memory_order_relaxed);
+    processedAbsoluteEpoch.store(processedEpoch, std::memory_order_relaxed);
     baseColor.Store(Color::Off);
     visualizer.store(nullptr, std::memory_order_relaxed);
     shortName.store(nullptr, std::memory_order_relaxed);
@@ -1237,12 +1239,19 @@ std::size_t Parameter::GetSwitchVal(std::size_t voiceIx) const {
 }
 
 void Parameter::PopulateUIState(UIState& state) const {
+    PopulateUIState(state, group_.Manager().Scene(), 0);
+}
+
+void Parameter::PopulateUIState(UIState& state, const SceneState& scene,
+                                std::uint64_t processedAbsoluteEpoch) const {
     const std::size_t voices = std::min(state.voiceCapacity, group_.Config().numVoices);
     state.revision.fetch_add(1, std::memory_order_acq_rel);
     state.bipolar.store(config_.range == RangeKind::Bipolar, std::memory_order_relaxed);
     state.switchValues.store(config_.switchValues, std::memory_order_relaxed);
     state.modulatorsAffectingMask.store(ModulatorsAffectingMask(), std::memory_order_relaxed);
     state.gesturesAffectingMask.store(GesturesAffectingMask(), std::memory_order_relaxed);
+    state.rawKnobValue.store(ClampToRange(ComputeRawCenter(scene), config_.range), std::memory_order_relaxed);
+    state.processedAbsoluteEpoch.store(processedAbsoluteEpoch, std::memory_order_relaxed);
     state.baseColor.Store(config_.baseColor);
     state.visualizer.store(config_.visualizer, std::memory_order_relaxed);
     state.shortName.store(config_.shortName.c_str(), std::memory_order_relaxed);
@@ -2891,7 +2900,13 @@ void BankSlot::AddPhysicalEncoder(PhysicalEncoderId encoderId) {
     if (OwnsPhysicalEncoder(encoderId)) {
         throw std::logic_error("duplicate physical encoder in bank slot");
     }
-    physicalEncoders_.push_back(encoderId);
+    processedAbsoluteEpochs_.push_back(0);
+    try {
+        physicalEncoders_.push_back(encoderId);
+    } catch (...) {
+        processedAbsoluteEpochs_.pop_back();
+        throw;
+    }
 }
 
 void BankSlot::HandlePress(PhysicalEncoderId encoderId) {
@@ -2920,21 +2935,30 @@ bool BankSlot::ResolvePosition(std::size_t position, PhysicalEncoderId& encoderI
     return true;
 }
 
-void BankSlot::PopulateUIState(UIState& state) const {
+void BankSlot::RecordProcessedAbsoluteEpoch(std::size_t position, std::uint64_t epoch) noexcept {
+    if (epoch == 0 || position >= processedAbsoluteEpochs_.size()) {
+        return;
+    }
+    processedAbsoluteEpochs_[position] = std::max(processedAbsoluteEpochs_[position], epoch);
+}
+
+void BankSlot::PopulateUIState(UIState& state, const SceneState& scene) const {
     state.connected.store(selectedBank_ != nullptr, std::memory_order_relaxed);
     state.showingModulationView.store(selectedBank_ != nullptr && selectedBank_->ShowingModulation(),
                                       std::memory_order_relaxed);
     for (std::size_t cellIx = 0; cellIx < state.cellCapacity; ++cellIx) {
+        const std::uint64_t processedEpoch =
+            cellIx < processedAbsoluteEpochs_.size() ? processedAbsoluteEpochs_[cellIx] : 0;
         if (cellIx >= physicalEncoders_.size() || selectedBank_ == nullptr) {
-            state.cells[cellIx].SetDisconnected();
+            state.cells[cellIx].SetDisconnected(processedEpoch);
             continue;
         }
         const Bank::VisibleCell cell = selectedBank_->VisibleCellFor(physicalEncoders_[cellIx]);
         if (cell.parameter == nullptr) {
-            state.cells[cellIx].SetDisconnected();
+            state.cells[cellIx].SetDisconnected(processedEpoch);
             continue;
         }
-        cell.parameter->PopulateUIState(state.cells[cellIx]);
+        cell.parameter->PopulateUIState(state.cells[cellIx], scene, processedEpoch);
     }
 }
 
@@ -3410,11 +3434,15 @@ void ParameterManager::HandleTick(std::size_t slotIx, std::size_t position, floa
     }
 }
 
-void ParameterManager::HandleSetAbsolute(std::size_t slotIx, std::size_t position, float normalizedTarget) {
+void ParameterManager::HandleSetAbsolute(std::size_t slotIx, std::size_t position, float normalizedTarget,
+                                         std::uint64_t absoluteEpoch) {
     BankSlot* slot = BankSlotAt(slotIx);
     PhysicalEncoderId encoderId = 0;
     if (slot != nullptr && slot->ResolvePosition(position, encoderId)) {
-        slot->HandleSetAbsolute(encoderId, scene_, normalizedTarget);
+        if (GetCurrentModifier() == Modifier::None) {
+            slot->HandleSetAbsolute(encoderId, scene_, normalizedTarget);
+        }
+        slot->RecordProcessedAbsoluteEpoch(position, absoluteEpoch);
     }
 }
 
@@ -3606,7 +3634,7 @@ void ParameterManager::PopulateUIState(UIState& state) const {
     state.sceneCapacity = SceneCapacity();
     for (std::size_t slotIx = 0; slotIx < state.slotCapacity; ++slotIx) {
         if (slotIx < slots_.size()) {
-            slots_[slotIx]->PopulateUIState(state.slots[slotIx]);
+            slots_[slotIx]->PopulateUIState(state.slots[slotIx], scene_);
         } else {
             state.slots[slotIx].connected.store(false, std::memory_order_relaxed);
             state.slots[slotIx].showingModulationView.store(false, std::memory_order_relaxed);
@@ -3861,9 +3889,7 @@ void MessageInBus::Apply(const MessageIn& message) {
         }
         break;
     case MessageIn::Type::ParamSetAbsolute:
-        if (manager_->GetCurrentModifier() == Modifier::None) {
-            manager_->HandleSetAbsolute(message.slotIx, message.position, message.value);
-        }
+        manager_->HandleSetAbsolute(message.slotIx, message.position, message.value, message.absoluteEpoch);
         break;
     case MessageIn::Type::ParamPush:
         manager_->HandlePress(message.slotIx, message.position);
