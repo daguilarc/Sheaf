@@ -375,6 +375,19 @@ synth::MidiControllerProfileConfig EncoderFeedbackProfile(synth::EncoderMode mod
     return config;
 }
 
+synth::MidiControllerProfileConfig GenericEncoderFeedbackProfile(synth::EncoderMode mode) {
+    synth::MidiControllerProfileConfig config;
+    config.encoderInput = synth::EncoderMidiInConfig{
+        .mode = mode,
+        .turnStep = 1.0f / 128.0f,
+        .turns = {
+            {.control = {.channel = 7, .cc = 74}, .slotIx = 0, .position = 0},
+            {.control = {.channel = 12, .cc = 3}, .slotIx = 0, .position = 1},
+        },
+    };
+    return config;
+}
+
 synth::MidiInstrumentConfig TwoAbsoluteControllersOneCellInstrument() {
     synth::MidiInstrumentConfig instrument;
     for (std::size_t ix = 0; ix < 2; ++ix) {
@@ -468,6 +481,55 @@ TEST_CASE(rig_absolute_feedback_follows_real_acknowledgement_and_ignores_modulat
     const auto corrections = PositionValues(sink);
     REQUIRE_TRUE(corrections.size() == 1);
     REQUIRE_TRUE(corrections.front() == 96);
+}
+
+TEST_CASE(rig_generic_absolute_feedback_round_trips_same_address_without_auxiliary_traffic) {
+    synth_rig::SynthRig<RigTestApp> rig;
+    rig.InstallInstrumentForTest(
+        SingleControllerInstrument(GenericEncoderFeedbackProfile(synth::EncoderMode::Absolute)));
+
+    FakeSink sink;
+    synth::MidiSender* sender = rig.Engine().Context().midiSender;
+    REQUIRE_TRUE(sender != nullptr);
+    sender->SetSink(0, &sink);
+    sender->Start();
+    rig.RunBlocks(64);
+    REQUIRE_TRUE(sender->FlushForTests(std::chrono::milliseconds(500)));
+    REQUIRE_TRUE(!sink.received.empty());
+    bool sawFirstAddress = false;
+    bool sawSecondAddress = false;
+    for (const synth::BasicMidi& midi : sink.received) {
+        REQUIRE_TRUE(midi.IsCC());
+        const bool firstAddress = midi.Channel() == 7 && midi.GetCC() == 74;
+        const bool secondAddress = midi.Channel() == 12 && midi.GetCC() == 3;
+        REQUIRE_TRUE(firstAddress || secondAddress);
+        sawFirstAddress = sawFirstAddress || firstAddress;
+        sawSecondAddress = sawSecondAddress || secondAddress;
+    }
+    REQUIRE_TRUE(sawFirstAddress);
+    REQUIRE_TRUE(sawSecondAddress);
+    sink.received.clear();
+
+    rig.SendMidi(0, synth::BasicMidi::CC(0, 7, 74, 96));
+    rig.Engine().MessageThreadTick();
+    REQUIRE_TRUE(sender->FlushForTests(std::chrono::milliseconds(500)));
+    REQUIRE_TRUE(sink.received.empty());
+
+    rig.RunBlocks(64);
+    REQUIRE_TRUE(sender->FlushForTests(std::chrono::milliseconds(500)));
+    REQUIRE_TRUE(sink.received.empty());
+    REQUIRE_NEAR(rig.ParameterValue(rig.Application().levelId), 96.0f / 127.0f, 0.00001f);
+
+    rig.SetReset(true);
+    rig.SendMidi(0, synth::BasicMidi::CC(0, 7, 74, 20));
+    rig.RunBlocks(64);
+    REQUIRE_TRUE(sender->FlushForTests(std::chrono::milliseconds(500)));
+    sender->Stop();
+    REQUIRE_TRUE(sink.received.size() == 1);
+    REQUIRE_TRUE(sink.received[0].IsCC());
+    REQUIRE_TRUE(sink.received[0].Channel() == 7);
+    REQUIRE_TRUE(sink.received[0].GetCC() == 74);
+    REQUIRE_TRUE(sink.received[0].GetValue() == 96);
 }
 
 TEST_CASE(rig_absolute_feedback_resolves_only_latest_same_route_rapid_input) {

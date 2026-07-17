@@ -511,16 +511,6 @@ struct EngineFakeMidiSink final : synth::IMidiOutputSink {
     void Send(const synth::BasicMidi& midi) override { received.push_back(midi); }
 };
 
-std::vector<std::uint8_t> EnginePositionValues(const EngineFakeMidiSink& sink) {
-    std::vector<std::uint8_t> values;
-    for (const synth::BasicMidi& midi : sink.received) {
-        if (midi.IsCC() && midi.Channel() == 0) {
-            values.push_back(midi.GetValue());
-        }
-    }
-    return values;
-}
-
 }  // namespace
 
 TEST_CASE(sheaf_patch_runtime_configuration_saves_shared_config_without_patch_values) {
@@ -1871,11 +1861,7 @@ TEST_CASE(engine_rebuild_retains_pending_absolute_feedback_across_bank_route_cha
     synth::MidiControllerProfileConfig profile;
     profile.encoderInput = synth::EncoderMidiInConfig{
         .mode = synth::EncoderMode::Absolute,
-        .turns = {{.control = {.channel = 0, .cc = 0}, .slotIx = 0, .position = 0}},
-    };
-    profile.encoderOutput = synth::EncoderMidiOutConfig{
-        .protocol = synth::EncoderMidiOutProtocol::Twister,
-        .mappings = {{.slotIx = 0, .position = 0, .cc = 0}},
+        .turns = {{.control = {.channel = 7, .cc = 74}, .slotIx = 0, .position = 0}},
     };
     synth::MidiControllerSlot slot;
     slot.name = "absolute";
@@ -1901,7 +1887,7 @@ TEST_CASE(engine_rebuild_retains_pending_absolute_feedback_across_bank_route_cha
 
     synth::MidiInProcessor* input = engine.MidiInputProcessor(0);
     REQUIRE_TRUE(input != nullptr);
-    input->Process(synth::BasicMidi::CC(0, 0, 0, 96));
+    input->Process(synth::BasicMidi::CC(0, 7, 74, 96));
     engine.RebuildMidiProcessors();
     REQUIRE_TRUE(engine.Application().emptyBank != nullptr);
     engine.Application().probeSlot->SelectBank(engine.Application().emptyBank);
@@ -1910,7 +1896,7 @@ TEST_CASE(engine_rebuild_retains_pending_absolute_feedback_across_bank_route_cha
     // remain gated before the audio thread consumes and publishes it.
     engine.MessageThreadTick();
     REQUIRE_TRUE(sender->FlushForTests(std::chrono::milliseconds(500)));
-    REQUIRE_TRUE(EnginePositionValues(sink).empty());
+    REQUIRE_TRUE(sink.received.empty());
 
     {
         synth::AudioBlock block = buffers.Block(4);
@@ -1920,9 +1906,11 @@ TEST_CASE(engine_rebuild_retains_pending_absolute_feedback_across_bank_route_cha
     REQUIRE_TRUE(sender->FlushForTests(std::chrono::milliseconds(500)));
     sender->Stop();
 
-    const auto positions = EnginePositionValues(sink);
-    REQUIRE_TRUE(positions.size() == 1);
-    REQUIRE_TRUE(positions.front() == 0);
+    REQUIRE_TRUE(sink.received.size() == 1);
+    REQUIRE_TRUE(sink.received.front().IsCC());
+    REQUIRE_TRUE(sink.received.front().Channel() == 7);
+    REQUIRE_TRUE(sink.received.front().GetCC() == 74);
+    REQUIRE_TRUE(sink.received.front().GetValue() == 0);
 }
 
 TEST_CASE(engine_instrument_snapshot_is_deep_copy_equal_to_live_instrument) {

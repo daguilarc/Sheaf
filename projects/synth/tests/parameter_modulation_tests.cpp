@@ -5864,11 +5864,12 @@ struct FakeMidiSink : synth::IMidiOutputSink {
     }
 };
 
-void PublishEncoderCell(synth::ParameterManager::UIState& ui, float displayValue, float rawValue,
-                        std::uint64_t processedEpoch, bool connected = true,
-                        synth::Color baseColor = synth::Color::Green,
-                        synth::Color indicatorColor = synth::Color::Cyan) {
-    auto& cell = ui.slots[0].cells[0];
+void PublishEncoderCellAt(synth::ParameterManager::UIState& ui, std::size_t slotIx,
+                          std::size_t position, float displayValue, float rawValue,
+                          std::uint64_t processedEpoch, bool connected = true,
+                          synth::Color baseColor = synth::Color::Green,
+                          synth::Color indicatorColor = synth::Color::Cyan) {
+    auto& cell = ui.slots[slotIx].cells[position];
     const std::uint32_t revision = cell.revision.load(std::memory_order_relaxed);
     cell.revision.store(revision | 1u, std::memory_order_release);
     cell.connected.store(connected, std::memory_order_relaxed);
@@ -5880,6 +5881,14 @@ void PublishEncoderCell(synth::ParameterManager::UIState& ui, float displayValue
     cell.baseColor.Store(baseColor, std::memory_order_relaxed);
     cell.indicatorColors[0].Store(indicatorColor, std::memory_order_relaxed);
     cell.revision.store((revision | 1u) + 1u, std::memory_order_release);
+}
+
+void PublishEncoderCell(synth::ParameterManager::UIState& ui, float displayValue, float rawValue,
+                        std::uint64_t processedEpoch, bool connected = true,
+                        synth::Color baseColor = synth::Color::Green,
+                        synth::Color indicatorColor = synth::Color::Cyan) {
+    PublishEncoderCellAt(ui, 0, 0, displayValue, rawValue, processedEpoch,
+                         connected, baseColor, indicatorColor);
 }
 
 std::unique_ptr<synth::MidiOutputProcessor> MakeEncoderOutput(
@@ -6981,6 +6990,244 @@ TEST_CASE(midi_controller_profile_keeps_relative_and_output_only_feedback_uncoor
     outputOnlySender.Stop();
     REQUIRE_TRUE(LastPositionValue(outputOnlySink).has_value());
     REQUIRE_TRUE(*LastPositionValue(outputOnlySink) == 95);
+}
+
+TEST_CASE(generic_controller_profile_derives_same_address_position_only_output_and_honors_overrides) {
+    synth::MidiControllerProfileConfig inputOnly;
+    inputOnly.encoderInput = synth::EncoderMidiInConfig{
+        .mode = synth::EncoderMode::Signed7Bit,
+        .turns = {
+            {.control = {.channel = 7, .cc = 74}, .slotIx = 0, .position = 0},
+            {.control = {.channel = 12, .cc = 3}, .slotIx = 0, .position = 1},
+        },
+    };
+
+    struct FactoryCase {
+        const char* name;
+        synth::MidiControllerProfileConfig config;
+        std::optional<synth::MidiProfileKind> kind;
+        bool expectGeneric;
+    };
+    synth::MidiControllerProfileConfig noInput;
+    synth::MidiControllerProfileConfig explicitTwister = inputOnly;
+    explicitTwister.encoderOutput = synth::EncoderMidiOutConfig{
+        .protocol = synth::EncoderMidiOutProtocol::Twister,
+        .mappings = {{.slotIx = 0, .position = 0, .cc = 74}},
+    };
+    const std::array cases{
+        FactoryCase{"engine Generic", inputOnly, synth::MidiProfileKind::Generic, true},
+        FactoryCase{"legacy omitted kind", inputOnly, std::nullopt, false},
+        FactoryCase{"non-Generic kind", inputOnly, synth::MidiProfileKind::WrldBldr, false},
+        FactoryCase{"missing encoder input", noInput, synth::MidiProfileKind::Generic, false},
+        FactoryCase{"explicit specialized output", explicitTwister, synth::MidiProfileKind::Generic, false},
+    };
+    for (const FactoryCase& testCase : cases) {
+        auto profile = synth::CreateMidiControllerProfile(
+            testCase.config, nullptr, nullptr, nullptr, {}, 0, nullptr, 0, testCase.kind);
+        const bool hasGeneric = profile.outputs.size() == 1 &&
+            dynamic_cast<synth::GenericMidiOutProcessor*>(profile.outputs.front().get()) != nullptr;
+        REQUIRE_TRUE(hasGeneric == testCase.expectGeneric);
+        if (testCase.config.encoderOutput.has_value()) {
+            REQUIRE_TRUE(profile.outputs.size() == 1);
+            REQUIRE_TRUE(dynamic_cast<synth::TwisterMidiOutProcessor*>(profile.outputs.front().get()) != nullptr);
+        } else if (!testCase.expectGeneric) {
+            REQUIRE_TRUE(profile.outputs.empty());
+        }
+    }
+
+    synth::ParameterManager::UIState ui;
+    ui.Configure(1, 2, 1, 0, 0, 0);
+    PublishEncoderCellAt(ui, 0, 0, 0.25f, 0.9f, 0);
+    PublishEncoderCellAt(ui, 0, 1, 0.75f, 0.1f, 0);
+    FakeMidiSink sink;
+    synth::MidiSender sender;
+    sender.SetSink(0, &sink);
+    sender.Start();
+    auto derived = synth::CreateMidiControllerProfile(
+        inputOnly, nullptr, &sender, &ui, {}, 0, nullptr, 0, synth::MidiProfileKind::Generic);
+    REQUIRE_TRUE(derived.outputs.size() == 1);
+    derived.outputs.front()->Process();
+    REQUIRE_TRUE(sender.FlushForTests(std::chrono::milliseconds(500)));
+    REQUIRE_TRUE(sink.sent.size() == 2);
+    REQUIRE_TRUE(sink.sent[0].Channel() == 7 && sink.sent[0].GetCC() == 74);
+    REQUIRE_TRUE(sink.sent[1].Channel() == 12 && sink.sent[1].GetCC() == 3);
+    REQUIRE_TRUE(std::all_of(sink.sent.begin(), sink.sent.end(),
+        [](const synth::BasicMidi& midi) { return midi.IsCC(); }));
+    const std::size_t afterInitial = sink.sent.size();
+    derived.outputs.front()->Process();
+    REQUIRE_TRUE(sender.FlushForTests(std::chrono::milliseconds(500)));
+    REQUIRE_TRUE(sink.sent.size() == afterInitial);
+    sender.Stop();
+
+    FakeMidiSink explicitSink;
+    synth::MidiSender explicitSender;
+    explicitSender.SetSink(0, &explicitSink);
+    explicitSender.Start();
+    auto explicitProfile = synth::CreateMidiControllerProfile(
+        explicitTwister, nullptr, &explicitSender, &ui, {}, 0, nullptr, 0,
+        synth::MidiProfileKind::Generic);
+    explicitProfile.outputs.front()->Process();
+    REQUIRE_TRUE(explicitSender.FlushForTests(std::chrono::milliseconds(500)));
+    explicitSender.Stop();
+    REQUIRE_TRUE(explicitSink.sent.size() == 4);
+    REQUIRE_TRUE(explicitSink.sent[0].Channel() == 1);
+    REQUIRE_TRUE(explicitSink.sent[1].Channel() == 2);
+    REQUIRE_TRUE(explicitSink.sent[2].Channel() == 5);
+    REQUIRE_TRUE(explicitSink.sent[3].Channel() == 0);
+    REQUIRE_TRUE(std::none_of(explicitSink.sent.begin(), explicitSink.sent.end(),
+        [](const synth::BasicMidi& midi) { return midi.Channel() == 7 && midi.GetCC() == 74; }));
+}
+
+TEST_CASE(generic_absolute_encoder_output_uses_same_address_causal_acknowledgement) {
+    synth::EncoderMidiInConfig input{
+        .mode = synth::EncoderMode::Absolute,
+        .turns = {{.control = {.channel = 7, .cc = 74}, .slotIx = 0, .position = 0}},
+    };
+    synth::ParameterManager::UIState ui;
+    ui.Configure(1, 1, 1, 0, 0, 0);
+    PublishEncoderCell(ui, 0.9f, 64.0f / 127.0f, 0);
+    synth::AbsoluteFeedbackCoordinator coordinator;
+    const auto route = coordinator.ReserveRoute({.controllerSlot = 2, .parameterSlot = 0, .position = 0});
+    const auto exact = coordinator.BeginInput(route, 64);
+    FakeMidiSink sink;
+    synth::MidiSender sender;
+    sender.SetSink(0, &sink);
+    sender.Start();
+    synth::GenericMidiOutProcessor processor(input, &sender, &ui, 0, &coordinator, 2);
+
+    processor.Process();
+    REQUIRE_TRUE(sender.FlushForTests(std::chrono::milliseconds(500)));
+    REQUIRE_TRUE(sink.sent.empty());
+    REQUIRE_TRUE(coordinator.Snapshot(route)->pending);
+
+    PublishEncoderCell(ui, 0.9f, 64.0f / 127.0f, exact.Epoch());
+    processor.Process();
+    REQUIRE_TRUE(sender.FlushForTests(std::chrono::milliseconds(500)));
+    REQUIRE_TRUE(sink.sent.empty());
+    REQUIRE_TRUE(!coordinator.Snapshot(route)->pending);
+    processor.Process();
+    REQUIRE_TRUE(sender.FlushForTests(std::chrono::milliseconds(500)));
+    REQUIRE_TRUE(sink.sent.empty());
+
+    const auto rejected = coordinator.BeginInput(route, 96);
+    PublishEncoderCell(ui, 0.9f, 0.25f, rejected.Epoch());
+    processor.Process();
+    REQUIRE_TRUE(sender.FlushForTests(std::chrono::milliseconds(500)));
+    REQUIRE_TRUE(sink.sent.size() == 1);
+    REQUIRE_TRUE(sink.sent[0].IsCC());
+    REQUIRE_TRUE(sink.sent[0].Channel() == 7);
+    REQUIRE_TRUE(sink.sent[0].GetCC() == 74);
+    REQUIRE_TRUE(sink.sent[0].GetValue() == 32);
+    REQUIRE_TRUE(!coordinator.Snapshot(route)->pending);
+
+    const auto disconnected = coordinator.BeginInput(route, 80);
+    PublishEncoderCell(ui, 0.9f, 0.0f, disconnected.Epoch(), false);
+    processor.Process();
+    REQUIRE_TRUE(sender.FlushForTests(std::chrono::milliseconds(500)));
+    sender.Stop();
+    REQUIRE_TRUE(sink.sent.size() == 2);
+    REQUIRE_TRUE(sink.sent[1].Channel() == 7 && sink.sent[1].GetCC() == 74);
+    REQUIRE_TRUE(sink.sent[1].GetValue() == 0);
+    REQUIRE_TRUE(!coordinator.Snapshot(route)->pending);
+}
+
+TEST_CASE(generic_absolute_encoder_output_retries_failed_correction_without_state_mutation) {
+    synth::EncoderMidiInConfig input{
+        .mode = synth::EncoderMode::Absolute,
+        .turns = {{.control = {.channel = 12, .cc = 3}, .slotIx = 0, .position = 0}},
+    };
+    synth::ParameterManager::UIState ui;
+    ui.Configure(1, 1, 1, 0, 0, 0);
+    synth::AbsoluteFeedbackCoordinator coordinator;
+    const auto route = coordinator.ReserveRoute({.controllerSlot = 7, .parameterSlot = 0, .position = 0});
+    const auto alert = coordinator.BeginInput(route, 96);
+    PublishEncoderCell(ui, 0.9f, 0.25f, alert.Epoch());
+    FakeMidiSink sink;
+    synth::MidiSender sender(1);
+    sender.SetSink(0, &sink);
+    REQUIRE_TRUE(sender.Enqueue(0, synth::BasicMidi::CC(0, 9, 9, 9)));
+    synth::GenericMidiOutProcessor processor(input, &sender, &ui, 0, &coordinator, 7);
+
+    processor.Process();
+    REQUIRE_TRUE(coordinator.Snapshot(route)->pending);
+    sender.Start();
+    REQUIRE_TRUE(sender.FlushForTests(std::chrono::milliseconds(500)));
+    const std::size_t beforeRetry = sink.sent.size();
+    processor.Process();
+    REQUIRE_TRUE(sender.FlushForTests(std::chrono::milliseconds(500)));
+    sender.Stop();
+    REQUIRE_TRUE(sink.sent.size() == beforeRetry + 1);
+    REQUIRE_TRUE(sink.sent.back().Channel() == 12 && sink.sent.back().GetCC() == 3);
+    REQUIRE_TRUE(sink.sent.back().GetValue() == 32);
+    REQUIRE_TRUE(!coordinator.Snapshot(route)->pending);
+}
+
+TEST_CASE(generic_relative_encoder_output_uses_display_value_without_epoch_coordination) {
+    for (const synth::EncoderMode mode : {
+             synth::EncoderMode::Signed7Bit,
+             synth::EncoderMode::DirectionOnly,
+         }) {
+        synth::EncoderMidiInConfig input{
+            .mode = mode,
+            .turns = {{.control = {.channel = 12, .cc = 3}, .slotIx = 0, .position = 0}},
+        };
+        synth::ParameterManager::UIState ui;
+        ui.Configure(1, 1, 1, 0, 0, 0);
+        PublishEncoderCell(ui, 0.25f, 0.9f, 0);
+        synth::AbsoluteFeedbackCoordinator coordinator;
+        const auto route = coordinator.ReserveRoute({.controllerSlot = 6, .parameterSlot = 0, .position = 0});
+        const auto alert = coordinator.BeginInput(route, 100);
+        FakeMidiSink sink;
+        synth::MidiSender sender;
+        sender.SetSink(0, &sink);
+        sender.Start();
+        synth::GenericMidiOutProcessor processor(input, &sender, &ui, 0, &coordinator, 6);
+
+        processor.Process();
+        REQUIRE_TRUE(sender.FlushForTests(std::chrono::milliseconds(500)));
+        REQUIRE_TRUE(sink.sent.size() == 1);
+        REQUIRE_TRUE(sink.sent.back().Channel() == 12 && sink.sent.back().GetCC() == 3);
+        REQUIRE_TRUE(sink.sent.back().GetValue() == 32);
+        PublishEncoderCell(ui, 0.75f, 0.9f, alert.Epoch());
+        processor.Process();
+        REQUIRE_TRUE(sender.FlushForTests(std::chrono::milliseconds(500)));
+        sender.Stop();
+        REQUIRE_TRUE(sink.sent.size() == 2);
+        REQUIRE_TRUE(sink.sent.back().Channel() == 12 && sink.sent.back().GetCC() == 3);
+        REQUIRE_TRUE(sink.sent.back().GetValue() == 95);
+        const auto untouched = coordinator.Snapshot(route);
+        REQUIRE_TRUE(untouched.has_value() && untouched->pending);
+        REQUIRE_TRUE(untouched->epoch == alert.Epoch());
+        REQUIRE_TRUE(untouched->receivedValue == 100);
+    }
+}
+
+TEST_CASE(generic_untracked_absolute_encoder_output_uses_raw_center_fallback) {
+    synth::AbsoluteFeedbackCoordinator coordinator;
+    for (std::size_t ix = 0; ix < synth::AbsoluteFeedbackCoordinator::kMaxRoutes; ++ix) {
+        REQUIRE_TRUE(coordinator.ReserveRoute({.controllerSlot = 0, .parameterSlot = ix, .position = 0}).IsTracked());
+    }
+    synth::EncoderMidiInConfig input{
+        .mode = synth::EncoderMode::Absolute,
+        .turns = {{.control = {.channel = 7, .cc = 74}, .slotIx = 0, .position = 0}},
+    };
+    synth::ParameterManager::UIState ui;
+    ui.Configure(1, 1, 1, 0, 0, 0);
+    PublishEncoderCell(ui, 0.9f, 0.25f, 0);
+    FakeMidiSink sink;
+    synth::MidiSender sender;
+    sender.SetSink(0, &sink);
+    sender.Start();
+    synth::GenericMidiOutProcessor processor(input, &sender, &ui, 0, &coordinator, 7);
+    processor.Process();
+    REQUIRE_TRUE(sender.FlushForTests(std::chrono::milliseconds(500)));
+    REQUIRE_TRUE(sink.sent.size() == 1);
+    REQUIRE_TRUE(sink.sent[0].Channel() == 7 && sink.sent[0].GetCC() == 74);
+    REQUIRE_TRUE(sink.sent[0].GetValue() == 32);
+    processor.Process();
+    REQUIRE_TRUE(sender.FlushForTests(std::chrono::milliseconds(500)));
+    sender.Stop();
+    REQUIRE_TRUE(sink.sent.size() == 1);
 }
 
 TEST_CASE(midi_controller_profile_routes_launchpad_only_system_associations) {

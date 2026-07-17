@@ -605,7 +605,8 @@ public:
             // both arguments explicit even while their values are equal.
             rebuilt.push_back(CreateMidiControllerProfile(controllers[ix].config, &midiBus_, &midiSender_,
                                                            uiState_.get(), timestampProvider_, ix,
-                                                           &absoluteFeedbackCoordinator_, ix));
+                                                           &absoluteFeedbackCoordinator_, ix,
+                                                           controllers[ix].kind));
         }
         midiProcessors_ = std::move(rebuilt);
     }

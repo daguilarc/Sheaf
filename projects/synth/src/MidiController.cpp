@@ -981,7 +981,7 @@ void MidiOutProcessor::ReserveAbsoluteRoutes() {
 }
 
 void MidiOutProcessor::ProcessPosition(std::size_t mappingIx,
-                                       const EncoderMidiOutMapping& mapping,
+                                       MidiControlAddress outputAddress,
                                        const CellSnapshot& snapshot, bool blank,
                                        bool& cacheValid, std::uint8_t& cachedValue) {
     const std::uint8_t value = feedbackMode_ == EncoderMode::Absolute
@@ -1000,7 +1000,7 @@ void MidiOutProcessor::ProcessPosition(std::size_t mappingIx,
                 return;
             }
             if (value != expectation.receivedValue &&
-                !Enqueue(BasicMidi::CC(0, kPrimaryPositionChannel, mapping.cc, value))) {
+                !Enqueue(BasicMidi::CC(0, outputAddress.channel, outputAddress.cc, value))) {
                 return;
             }
             if (guard.Resolve(expectation.epoch)) {
@@ -1010,7 +1010,7 @@ void MidiOutProcessor::ProcessPosition(std::size_t mappingIx,
             return;
         }
         if (!cacheValid || cachedValue != value) {
-            if (Enqueue(BasicMidi::CC(0, kPrimaryPositionChannel, mapping.cc, value))) {
+            if (Enqueue(BasicMidi::CC(0, outputAddress.channel, outputAddress.cc, value))) {
                 cachedValue = value;
                 cacheValid = true;
             }
@@ -1019,7 +1019,7 @@ void MidiOutProcessor::ProcessPosition(std::size_t mappingIx,
     }
 
     if (!cacheValid || cachedValue != value) {
-        const bool enqueued = Enqueue(BasicMidi::CC(0, kPrimaryPositionChannel, mapping.cc, value));
+        const bool enqueued = Enqueue(BasicMidi::CC(0, outputAddress.channel, outputAddress.cc, value));
         if (feedbackMode_ != EncoderMode::Absolute || enqueued) {
             cachedValue = value;
             cacheValid = true;
@@ -1034,6 +1034,62 @@ bool MidiOutProcessor::Enqueue(const BasicMidi& midi) {
 float MidiOutProcessor::NormalizeForDisplay(float value, bool bipolar) {
     const float normalized = bipolar ? (value + 1.0f) * 0.5f : value;
     return std::clamp(normalized, 0.0f, 1.0f);
+}
+
+GenericMidiOutProcessor::Projection GenericMidiOutProcessor::ProjectInput(
+    const EncoderMidiInConfig& input) {
+    Projection projection;
+    projection.mode = input.mode;
+    projection.config.mappings.reserve(input.turns.size());
+    projection.outputAddresses.reserve(input.turns.size());
+    for (const EncoderMidiMapping& mapping : input.turns) {
+        projection.config.mappings.push_back({
+            .slotIx = mapping.slotIx,
+            .position = mapping.position,
+            .cc = mapping.control.cc,
+        });
+        projection.outputAddresses.push_back(mapping.control);
+    }
+    return projection;
+}
+
+GenericMidiOutProcessor::GenericMidiOutProcessor(
+    const EncoderMidiInConfig& input, MidiSender* sender,
+    ParameterManager::UIState* uiState, std::size_t sinkIx,
+    AbsoluteFeedbackCoordinator* absoluteFeedback, std::size_t controllerSlot)
+    : GenericMidiOutProcessor(ProjectInput(input), sender, uiState, sinkIx,
+                              absoluteFeedback, controllerSlot) {}
+
+GenericMidiOutProcessor::GenericMidiOutProcessor(
+    Projection projection, MidiSender* sender, ParameterManager::UIState* uiState,
+    std::size_t sinkIx, AbsoluteFeedbackCoordinator* absoluteFeedback,
+    std::size_t controllerSlot)
+    : MidiOutProcessor(std::move(projection.config), sender, uiState, sinkIx,
+                       projection.mode, absoluteFeedback, controllerSlot),
+      outputAddresses_(std::move(projection.outputAddresses)) {
+    assert(config_.mappings.size() == outputAddresses_.size());
+}
+
+void GenericMidiOutProcessor::Reset() {
+    cache_.clear();
+}
+
+void GenericMidiOutProcessor::Process() {
+    assert(config_.mappings.size() == outputAddresses_.size());
+    if (CacheNeedsResize(cache_.size(), config_.mappings.size())) {
+        cache_.assign(config_.mappings.size(), {});
+    }
+    for (std::size_t ix = 0; ix < config_.mappings.size(); ++ix) {
+        const EncoderMidiOutMapping& mapping = config_.mappings[ix];
+        const std::optional<CellSnapshot> snapshot = LoadCellSnapshot(mapping);
+        if (!snapshot.has_value()) {
+            continue;
+        }
+        const bool blank = !snapshot->connected || snapshot->voiceCount == 0;
+        CacheEntry& cache = cache_[ix];
+        ProcessPosition(ix, outputAddresses_[ix], *snapshot, blank,
+                        cache.valid, cache.value);
+    }
 }
 
 void TwisterMidiOutProcessor::Reset() {
@@ -1068,7 +1124,7 @@ void TwisterMidiOutProcessor::Process() {
         cache.rgbColor = rgbColor;
         cache.rgbBrightness = rgbBrightness;
         cache.ringBrightness = ringBrightness;
-        ProcessPosition(ix, mapping, *snapshot, blank,
+        ProcessPosition(ix, {kPrimaryPositionChannel, mapping.cc}, *snapshot, blank,
                         cache.encoderRingValueValid, cache.encoderRingValue);
     }
 }
@@ -1095,7 +1151,8 @@ void WrldBldrMidiOutProcessor::Process() {
         const Color buttonColor = blank ? Color::Off : snapshot->baseColor;
         const Color indicatorColor = blank ? Color::Off : snapshot->indicatorColor;
         CacheEntry& cache = cache_[ix];
-        ProcessPosition(ix, mapping, *snapshot, blank, cache.valueValid, cache.value);
+        ProcessPosition(ix, {kPrimaryPositionChannel, mapping.cc}, *snapshot, blank,
+                        cache.valueValid, cache.value);
         if (!cache.valid || cache.buttonColor != buttonColor) {
             cache.buttonColor = buttonColor;
             cache.pendingButtonColor = true;
@@ -1882,7 +1939,8 @@ bool FromJSON(JSON json, MidiInstrumentConfig& out) {
 MidiControllerProfileResult CreateMidiControllerProfile(
     const MidiControllerProfileConfig& config, MessageInBus* bus, MidiSender* sender,
     ParameterManager::UIState* uiState, MidiInProcessor::TimestampProvider timestampProvider,
-    std::size_t sinkIx, AbsoluteFeedbackCoordinator* absoluteFeedback, std::size_t controllerSlot) {
+    std::size_t sinkIx, AbsoluteFeedbackCoordinator* absoluteFeedback,
+    std::size_t controllerSlot, std::optional<MidiProfileKind> profileKind) {
     MidiControllerProfileResult result;
     const EncoderMode feedbackMode =
         config.encoderInput.has_value() ? config.encoderInput->mode : EncoderMode::Signed7Bit;
@@ -1936,6 +1994,10 @@ MidiControllerProfileResult CreateMidiControllerProfile(
                 activeAbsoluteFeedback, controllerSlot));
             break;
         }
+    } else if (profileKind == MidiProfileKind::Generic && config.encoderInput.has_value()) {
+        result.outputs.push_back(std::make_unique<GenericMidiOutProcessor>(
+            *config.encoderInput, sender, uiState, sinkIx, activeAbsoluteFeedback,
+            controllerSlot));
     }
 
     SystemCcMidiOutConfig ccOutput;

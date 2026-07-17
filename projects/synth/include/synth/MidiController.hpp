@@ -455,7 +455,7 @@ protected:
     };
 
     std::optional<CellSnapshot> LoadCellSnapshot(const EncoderMidiOutMapping& mapping) const;
-    void ProcessPosition(std::size_t mappingIx, const EncoderMidiOutMapping& mapping,
+    void ProcessPosition(std::size_t mappingIx, MidiControlAddress outputAddress,
                          const CellSnapshot& snapshot, bool blank,
                          bool& cacheValid, std::uint8_t& cachedValue);
     bool Enqueue(const BasicMidi& midi);
@@ -475,6 +475,46 @@ protected:
     AbsoluteFeedbackCoordinator* absoluteFeedback_ = nullptr;
     std::size_t controllerSlot_ = 0;
     std::vector<AbsoluteFeedbackCoordinator::RouteReservation> absoluteRoutes_;
+};
+
+class GenericMidiOutProcessor final : public MidiOutProcessor {
+public:
+    GenericMidiOutProcessor(const EncoderMidiInConfig& input,
+                            MidiSender* sender,
+                            ParameterManager::UIState* uiState,
+                            std::size_t sinkIx = 0,
+                            AbsoluteFeedbackCoordinator* absoluteFeedback = nullptr,
+                            std::size_t controllerSlot = 0);
+
+    void Reset() override;
+    void Process() override;
+
+private:
+    struct Projection {
+        EncoderMidiOutConfig config;
+        std::vector<MidiControlAddress> outputAddresses;
+        EncoderMode mode = EncoderMode::Signed7Bit;
+    };
+
+    struct CacheEntry {
+        bool valid = false;
+        std::uint8_t value = 0;
+    };
+
+    GenericMidiOutProcessor(Projection projection,
+                            MidiSender* sender,
+                            ParameterManager::UIState* uiState,
+                            std::size_t sinkIx,
+                            AbsoluteFeedbackCoordinator* absoluteFeedback,
+                            std::size_t controllerSlot);
+    static Projection ProjectInput(const EncoderMidiInConfig& input);
+    // The projected mappings and full MIDI addresses are one immutable
+    // construction-time unit; exposing the base reconfiguration API here
+    // could let their indexes diverge.
+    using MidiOutProcessor::SetConfig;
+
+    std::vector<MidiControlAddress> outputAddresses_;
+    std::vector<CacheEntry> cache_;
 };
 
 class TwisterMidiOutProcessor final : public MidiOutProcessor {
@@ -725,12 +765,15 @@ struct MidiInstrumentConfig {
 // controller-slot-specific index. The optional coordinator/controllerSlot
 // pair is likewise supplied by Engine: it is active only when encoderInput
 // explicitly selects Absolute mode. Relative and output-only profiles keep
-// their source-compatible, post-modulation feedback behavior.
+// their source-compatible, post-modulation feedback behavior. Engine also
+// supplies profileKind so Generic input-only profiles can derive same-address
+// position output; direct callers that omit it retain legacy behavior.
 MidiControllerProfileResult CreateMidiControllerProfile(
     const MidiControllerProfileConfig& config, MessageInBus* bus, MidiSender* sender,
     ParameterManager::UIState* uiState, MidiInProcessor::TimestampProvider timestampProvider = {},
     std::size_t sinkIx = 0, AbsoluteFeedbackCoordinator* absoluteFeedback = nullptr,
-    std::size_t controllerSlot = 0);
+    std::size_t controllerSlot = 0,
+    std::optional<MidiProfileKind> profileKind = std::nullopt);
 
 struct WrldBldrDefaultProfileOptions {
     std::size_t slotIx = 0;
