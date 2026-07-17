@@ -23,7 +23,9 @@ namespace synth {
 struct BasicMidi {
     static constexpr std::uint8_t kStatusNoteOff = 0x80;
     static constexpr std::uint8_t kStatusNote = 0x90;
+    static constexpr std::uint8_t kStatusPolyPressure = 0xA0;
     static constexpr std::uint8_t kStatusCC = 0xB0;
+    static constexpr std::uint8_t kStatusChannelPressure = 0xD0;
     static constexpr std::uint8_t kStatusPitchBend = 0xE0;
     static constexpr std::uint8_t kStatusClock = 0xF8;
     static constexpr std::uint8_t kStatusTransportStart = 0xFA;
@@ -40,6 +42,8 @@ struct BasicMidi {
     static BasicMidi CC(std::uint64_t timestamp, std::uint8_t channel, std::uint8_t cc, std::uint8_t value);
     static BasicMidi Note(std::uint64_t timestamp, std::uint8_t channel, std::uint8_t note, std::uint8_t velocity);
     static BasicMidi NoteOff(std::uint64_t timestamp, std::uint8_t channel, std::uint8_t note);
+    static BasicMidi PolyPressure(std::uint64_t timestamp, std::uint8_t channel,
+                                  std::uint8_t note, std::uint8_t pressure);
     static BasicMidi PitchBend(std::uint64_t timestamp, std::uint8_t channel, std::uint16_t value);
     static BasicMidi Realtime(std::uint64_t timestamp, std::uint8_t status);
     static BasicMidi Clock(std::uint64_t timestamp);
@@ -53,10 +57,12 @@ struct BasicMidi {
     std::uint8_t Channel() const;
     std::uint8_t GetCC() const;
     std::uint8_t GetNote() const;
+    std::uint8_t GetPressure() const;
     std::uint8_t GetValue() const;
     std::uint16_t GetPitchBend() const;
     std::size_t Size() const { return raw.size(); }
     bool IsCC() const { return Status() == kStatusCC && raw.size() >= 3; }
+    bool IsPolyPressure() const { return Status() == kStatusPolyPressure && raw.size() >= 3; }
     bool IsSysEx() const { return raw.size() >= 2 && raw.front() == 0xF0 && raw.back() == 0xF7; }
 };
 
@@ -257,6 +263,44 @@ private:
     const AnalogMidiMapping* FindGesture(const BasicMidi& midi) const;
 
     AnalogMidiInConfig config_;
+};
+
+inline bool operator==(const MessageIn& lhs, const MessageIn& rhs) {
+    return lhs.timestamp == rhs.timestamp && lhs.type == rhs.type && lhs.slotIx == rhs.slotIx &&
+           lhs.position == rhs.position && lhs.gestureIx == rhs.gestureIx && lhs.bankIx == rhs.bankIx &&
+           lhs.sceneIx == rhs.sceneIx && lhs.value == rhs.value && lhs.delta == rhs.delta &&
+           lhs.boolValue == rhs.boolValue && lhs.hasBoolValue == rhs.hasBoolValue &&
+           lhs.gridSlotIx == rhs.gridSlotIx && lhs.gridIx == rhs.gridIx && lhs.gridX == rhs.gridX &&
+           lhs.gridY == rhs.gridY && lhs.velocity == rhs.velocity;
+}
+
+struct MidiNoteAddress {
+    std::uint8_t channel = 0;
+    std::uint8_t note = 0;
+    bool operator==(const MidiNoteAddress&) const = default;
+};
+
+struct PolyphonicPressureMapping {
+    MidiNoteAddress address;
+    MessageIn pressure;
+    bool operator==(const PolyphonicPressureMapping&) const = default;
+};
+
+struct PolyphonicPressureMidiInConfig {
+    std::vector<PolyphonicPressureMapping> mappings;
+};
+
+class PolyphonicPressureMidiInProcessor final : public MidiInProcessor {
+public:
+    PolyphonicPressureMidiInProcessor(PolyphonicPressureMidiInConfig config = {},
+                                      MessageInBus* bus = nullptr);
+
+    bool SetConfig(PolyphonicPressureMidiInConfig config);
+    const PolyphonicPressureMidiInConfig& Config() const { return config_; }
+    void Process(const BasicMidi& midi) override;
+
+private:
+    PolyphonicPressureMidiInConfig config_;
 };
 
 enum class LaunchpadController {
@@ -732,6 +776,7 @@ struct MidiControllerProfileConfig {
     std::optional<EncoderMidiInConfig> encoderInput;
     std::optional<EncoderMidiOutConfig> encoderOutput;
     std::optional<AnalogMidiInConfig> analogInput;
+    std::optional<PolyphonicPressureMidiInConfig> pressureInput;
     std::vector<MidiControllerSystemMessageAssociation> systemMessages;
 };
 
@@ -855,6 +900,12 @@ JSON ToJSON(JsonArena& arena, EncoderMode value);
 bool FromJSON(JSON json, EncoderMode& value);
 JSON ToJSON(JsonArena& arena, const MidiControlAddress& value);
 bool FromJSON(JSON json, MidiControlAddress& value);
+JSON ToJSON(JsonArena& arena, const MidiNoteAddress& value);
+bool FromJSON(JSON json, MidiNoteAddress& value);
+JSON ToJSON(JsonArena& arena, const PolyphonicPressureMapping& value);
+bool FromJSON(JSON json, PolyphonicPressureMapping& value);
+JSON ToJSON(JsonArena& arena, const PolyphonicPressureMidiInConfig& value);
+bool FromJSON(JSON json, PolyphonicPressureMidiInConfig& value);
 JSON ToJSON(JsonArena& arena, const EncoderMidiMapping& value);
 bool FromJSON(JSON json, EncoderMidiMapping& value);
 JSON ToJSON(JsonArena& arena, const EncoderMidiInConfig& value);
@@ -879,6 +930,8 @@ JSON ToJSON(JsonArena& arena, const LaunchpadGridPosition& value);
 bool FromJSON(JSON json, LaunchpadGridPosition& value);
 JSON ToJSON(JsonArena& arena, const MidiControllerSystemMessageAssociation& value);
 bool FromJSON(JSON json, MidiControllerSystemMessageAssociation& value);
+inline constexpr const char* kMidiControllerProfileSchema = "synth.midiControllerProfileConfig";
+inline constexpr int kMidiControllerProfileSchemaVersion = 2;
 JSON ToJSON(JsonArena& arena, const MidiControllerProfileConfig& value);
 bool FromJSON(JSON json, MidiControllerProfileConfig& value);
 

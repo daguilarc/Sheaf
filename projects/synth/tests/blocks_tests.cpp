@@ -62,6 +62,7 @@ using synth::MidiControllerSystemMessageAssociation;
 using synth::MidiProfileKind;
 using synth::NormalizeMidiProfileConfig;
 using synth::MidiControllerProfileConfig;
+using synth::PolyphonicPressureMapping;
 using synth::ReconstructAnalogBlocks;
 using synth::ReconstructedAnalogRow;
 using synth::ReconstructedEncoderRow;
@@ -444,6 +445,68 @@ TEST_CASE(NormalizeIsStableForExactDuplicates) {
     // Stable sort: original relative order preserved among exact duplicates.
     REQUIRE_TRUE(config.systemMessages[0].control->cc == 3);
     REQUIRE_TRUE(config.systemMessages[1].control->cc == 3);
+}
+
+TEST_CASE(NormalizeSortsPressureMappingsByLogicalTargetThenPhysicalAddress) {
+    auto mapping = [](std::uint8_t channel, std::uint8_t note, std::size_t slot,
+                      int x, int y, std::uint64_t timestamp = 0) {
+        return PolyphonicPressureMapping{
+            .address = {.channel = channel, .note = note},
+            .pressure = MessageIn::GridPressureChange(timestamp, slot, x, y, 0),
+        };
+    };
+
+    MidiControllerProfileConfig config;
+    config.pressureInput = synth::PolyphonicPressureMidiInConfig{{
+        mapping(0, 1, 1, -4, 0),
+        mapping(2, 9, 0, 2, -1),
+        mapping(2, 7, 0, 2, -1),
+        mapping(1, 9, 0, 2, -1),
+        mapping(7, 7, 0, -2, 4),
+        mapping(1, 1, 0, -2, -3),
+    }};
+
+    NormalizeMidiProfileConfig(config, MidiProfileKind::Generic);
+    const auto& sorted = config.pressureInput->mappings;
+    REQUIRE_TRUE(sorted.size() == 6);
+    REQUIRE_TRUE(sorted[0] == mapping(1, 1, 0, -2, -3));
+    REQUIRE_TRUE(sorted[1] == mapping(7, 7, 0, -2, 4));
+    REQUIRE_TRUE(sorted[2] == mapping(1, 9, 0, 2, -1));
+    REQUIRE_TRUE(sorted[3] == mapping(2, 7, 0, 2, -1));
+    REQUIRE_TRUE(sorted[4] == mapping(2, 9, 0, 2, -1));
+    REQUIRE_TRUE(sorted[5] == mapping(0, 1, 1, -4, 0));
+}
+
+TEST_CASE(NormalizePressureOrderingConvergesAndKeepsEqualKeysStable) {
+    auto mapping = [](std::uint8_t channel, std::uint8_t note, std::size_t slot,
+                      int x, int y, std::uint64_t timestamp = 0, std::uint8_t pressure = 0) {
+        return PolyphonicPressureMapping{
+            .address = {.channel = channel, .note = note},
+            .pressure = MessageIn::GridPressureChange(timestamp, slot, x, y, pressure),
+        };
+    };
+
+    const PolyphonicPressureMapping a = mapping(3, 42, 0, -1, 7);
+    const PolyphonicPressureMapping b = mapping(2, 41, 0, -1, 7);
+    const PolyphonicPressureMapping c = mapping(0, 3, 2, 4, -5);
+    MidiControllerProfileConfig first;
+    first.pressureInput = synth::PolyphonicPressureMidiInConfig{{c, a, b}};
+    MidiControllerProfileConfig second;
+    second.pressureInput = synth::PolyphonicPressureMidiInConfig{{b, c, a}};
+    NormalizeMidiProfileConfig(first, MidiProfileKind::WrldBldr);
+    NormalizeMidiProfileConfig(second, MidiProfileKind::WrldBldr);
+    REQUIRE_TRUE(first.pressureInput->mappings == second.pressureInput->mappings);
+
+    MidiControllerProfileConfig duplicates;
+    duplicates.pressureInput = synth::PolyphonicPressureMidiInConfig{{
+        mapping(3, 42, 0, -1, 7, 10, 1),
+        mapping(3, 42, 0, -1, 7, 20, 2),
+    }};
+    NormalizeMidiProfileConfig(duplicates, MidiProfileKind::Launchpad);
+    REQUIRE_TRUE(duplicates.pressureInput->mappings[0].pressure.timestamp == 10);
+    REQUIRE_TRUE(duplicates.pressureInput->mappings[0].pressure.velocity == 1);
+    REQUIRE_TRUE(duplicates.pressureInput->mappings[1].pressure.timestamp == 20);
+    REQUIRE_TRUE(duplicates.pressureInput->mappings[1].pressure.velocity == 2);
 }
 
 // --- D3: ExpandEncoderBlock --------------------------------------------

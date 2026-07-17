@@ -418,6 +418,64 @@ std::vector<std::uint8_t> PositionValues(const FakeSink& sink) {
     return values;
 }
 
+TEST_CASE(rig_runtime_config_round_trips_nested_pressure_profile_without_changing_envelopes) {
+    synth::MidiControllerProfileConfig profile;
+    profile.pressureInput = synth::PolyphonicPressureMidiInConfig{{
+        {
+            .address = {.channel = 3, .note = 42},
+            .pressure = synth::MessageIn::GridPressureChange(0, 1, -1, 7, 0),
+        },
+    }};
+    synth::MidiInstrumentConfig instrument = SingleControllerInstrument(profile);
+    synth::AudioDeviceState audio{
+        .outputDeviceName = "Pressure Out",
+        .inputDeviceName = "Pressure In",
+    };
+
+    synth::JsonArena arena(1024 * 1024);
+    const synth::JSON json = synth::BuildRuntimeConfigJSON(arena, instrument, audio);
+    REQUIRE_TRUE(json.Get("schema").StringValue() == std::string_view(synth::kRuntimeConfigSchema));
+    REQUIRE_TRUE(json.Get("schemaVersion").IntegerValue() == synth::kRuntimeConfigSchemaVersion);
+    const synth::JSON nestedInstrument = json.Get("midiInstrument");
+    REQUIRE_TRUE(nestedInstrument.Get("schemaVersion").IntegerValue() == synth::kMidiInstrumentSchemaVersion);
+    const synth::JSON nestedProfile = nestedInstrument.Get("controllers").GetAt(0).Get("profile");
+    REQUIRE_TRUE(nestedProfile.Get("schemaVersion").IntegerValue() ==
+                 synth::kMidiControllerProfileSchemaVersion);
+
+    synth::MidiInstrumentConfig loadedInstrument;
+    synth::AudioDeviceState loadedAudio;
+    REQUIRE_TRUE(synth::LoadRuntimeConfigJSON(json, loadedInstrument, loadedAudio));
+    REQUIRE_TRUE(loadedAudio == audio);
+    REQUIRE_TRUE(loadedInstrument.controllers.size() == 1);
+    REQUIRE_TRUE(loadedInstrument.controllers[0].config.pressureInput.has_value());
+    REQUIRE_TRUE(loadedInstrument.controllers[0].config.pressureInput->mappings ==
+                 profile.pressureInput->mappings);
+
+    synth::ParameterManager manager;
+    synth::JsonArena patchArena(1024 * 1024);
+    const synth::JSON patch = synth::BuildPatchJSON(patchArena, "pressure", manager, instrument, audio);
+    REQUIRE_TRUE(patch.Get("midiInstrument").IsNull());
+    REQUIRE_TRUE(patch.Get("audioDevice").IsNull());
+}
+
+TEST_CASE(rig_installs_pressure_only_profile_and_processes_poly_pressure) {
+    synth::MidiControllerProfileConfig profile;
+    profile.pressureInput = synth::PolyphonicPressureMidiInConfig{{
+        {
+            .address = {.channel = 3, .note = 42},
+            .pressure = synth::MessageIn::GridPressureChange(0, 1, -1, 7, 0),
+        },
+    }};
+
+    synth_rig::SynthRig<RigTestApp> rig;
+    rig.InstallInstrumentForTest(SingleControllerInstrument(profile));
+    REQUIRE_TRUE(dynamic_cast<synth::PolyphonicPressureMidiInProcessor*>(
+                     rig.Engine().MidiInputProcessor(0)) != nullptr);
+    rig.SendMidi(0, synth::BasicMidi::PolyPressure(0, 3, 42, 88));
+    rig.RunBlocks(1);
+    REQUIRE_TRUE(!rig.SawNaN());
+}
+
 // MIDI CC -> profile -> parameter: install the default WrldBldr profile
 // (encoder turns on channel 0, CC 0..15 -> slot 0 positions 0..15, see
 // EncoderMidiInConfig::WrldBldrDefault / RowMajorInputDefault), then send a

@@ -6,6 +6,7 @@
 #endif
 
 #include <iostream>
+#include <limits>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -102,6 +103,22 @@ MidiControllerSlot MakeGenericSlot(const char* name) {
     return slot;
 }
 
+class RecordingMidiInProcessor final : public synth::MidiInProcessor {
+public:
+    void Process(const synth::BasicMidi& midi) override { received.push_back(midi); }
+
+    std::vector<synth::BasicMidi> received;
+};
+
+synth::PolyphonicPressureMapping MakePressureMapping(
+    std::uint8_t channel = 3, std::uint8_t note = 42,
+    synth::MessageIn pressure = synth::MessageIn::GridPressureChange(0, 1, -1, 7, 0)) {
+    return {
+        .address = {.channel = channel, .note = note},
+        .pressure = pressure,
+    };
+}
+
 TEST_CASE(KindNameRoundTrip) {
     REQUIRE_TRUE(std::string(synth::MidiProfileKindName(MidiProfileKind::WrldBldr)) == "wrldbldr");
     REQUIRE_TRUE(std::string(synth::MidiProfileKindName(MidiProfileKind::MfTwister)) == "twister");
@@ -129,6 +146,157 @@ TEST_CASE(MessageInJsonRoundTripsHighGestureIndex) {
     REQUIRE_TRUE(target.gestureIx == 63);
     REQUIRE_TRUE(target.boolValue);
     REQUIRE_TRUE(target.hasBoolValue);
+}
+
+TEST_CASE(BasicMidiPolyPressureRecognizesOnlyCompletePolyphonicAftertouch) {
+    const synth::BasicMidi midi = synth::BasicMidi::PolyPressure(9, 3, 42, 88);
+    REQUIRE_TRUE(midi.timestamp == 9);
+    REQUIRE_TRUE(midi.IsPolyPressure());
+    REQUIRE_TRUE(midi.Channel() == 3);
+    REQUIRE_TRUE(midi.GetNote() == 42);
+    REQUIRE_TRUE(midi.GetPressure() == 88);
+
+    REQUIRE_TRUE(!synth::BasicMidi(0, std::vector<std::uint8_t>{0xA3}).IsPolyPressure());
+    REQUIRE_TRUE(!synth::BasicMidi(0, std::vector<std::uint8_t>{0xA3, 42}).IsPolyPressure());
+    REQUIRE_TRUE(!synth::BasicMidi(0, std::vector<std::uint8_t>{0xD3, 88}).IsPolyPressure());
+    REQUIRE_TRUE(!synth::BasicMidi::Note(0, 3, 42, 88).IsPolyPressure());
+    REQUIRE_TRUE(!synth::BasicMidi::CC(0, 3, 42, 88).IsPolyPressure());
+    REQUIRE_TRUE(!synth::BasicMidi::PitchBend(0, 3, 8192).IsPolyPressure());
+    REQUIRE_TRUE(!synth::BasicMidi::Clock(0).IsPolyPressure());
+}
+
+TEST_CASE(PolyPressureProcessorStampsMappedPressureAndConsumesExactMatch) {
+    synth::MessageInBus bus(nullptr, 8);
+    synth::PolyphonicPressureMidiInConfig config;
+    config.mappings.push_back(MakePressureMapping());
+    synth::PolyphonicPressureMidiInProcessor processor(config, &bus);
+    processor.SetTimestampProvider([] { return 1234; });
+    RecordingMidiInProcessor thru;
+    processor.SetThru(&thru);
+
+    processor.Process(synth::BasicMidi::PolyPressure(9, 3, 42, 88));
+    REQUIRE_TRUE(bus.Size() == 1);
+    REQUIRE_TRUE(thru.received.empty());
+
+    synth::MessageIn mapped;
+    REQUIRE_TRUE(bus.Pop(mapped, std::numeric_limits<std::uint64_t>::max()));
+    REQUIRE_TRUE(mapped.type == synth::MessageIn::Type::GridPressureChange);
+    REQUIRE_TRUE(mapped.timestamp == 1234);
+    REQUIRE_TRUE(mapped.gridSlotIx == 1);
+    REQUIRE_TRUE(mapped.gridX == -1);
+    REQUIRE_TRUE(mapped.gridY == 7);
+    REQUIRE_TRUE(mapped.velocity == 88);
+}
+
+TEST_CASE(PolyPressureProcessorPassesUnmatchedAndNonPressureToThruExactlyOnce) {
+    synth::MessageInBus bus(nullptr, 8);
+    synth::PolyphonicPressureMidiInConfig config;
+    config.mappings.push_back(MakePressureMapping());
+    synth::PolyphonicPressureMidiInProcessor processor(config, &bus);
+    RecordingMidiInProcessor thru;
+    processor.SetThru(&thru);
+
+    const std::vector<synth::BasicMidi> passthrough = {
+        synth::BasicMidi::PolyPressure(0, 2, 42, 88),
+        synth::BasicMidi::PolyPressure(0, 3, 41, 88),
+        synth::BasicMidi::Note(0, 3, 42, 88),
+        synth::BasicMidi::NoteOff(0, 3, 42),
+        synth::BasicMidi::CC(0, 3, 42, 88),
+        synth::BasicMidi(0, std::vector<std::uint8_t>{0xD3, 88}),
+        synth::BasicMidi::PitchBend(0, 3, 8192),
+        synth::BasicMidi::Clock(0),
+    };
+    for (const synth::BasicMidi& midi : passthrough) {
+        processor.Process(midi);
+    }
+    REQUIRE_TRUE(bus.Size() == 0);
+    REQUIRE_TRUE(thru.received.size() == passthrough.size());
+    for (std::size_t ix = 0; ix < passthrough.size(); ++ix) {
+        REQUIRE_TRUE(thru.received[ix].raw == passthrough[ix].raw);
+    }
+
+    synth::PolyphonicPressureMidiInProcessor noThru(config, &bus);
+    noThru.SetTimestampProvider([] { return 99; });
+    noThru.Process(synth::BasicMidi::PolyPressure(0, 3, 42, 12));
+    noThru.Process(synth::BasicMidi::PolyPressure(0, 9, 9, 9));
+    noThru.Process(synth::BasicMidi::CC(0, 9, 9, 9));
+    REQUIRE_TRUE(bus.Size() == 1);
+    synth::MessageIn noThruMapped;
+    REQUIRE_TRUE(bus.Pop(noThruMapped, std::numeric_limits<std::uint64_t>::max()));
+    REQUIRE_TRUE(noThruMapped.timestamp == 99);
+    REQUIRE_TRUE(noThruMapped.velocity == 12);
+}
+
+TEST_CASE(PolyPressureProcessorRejectsInvalidConfigWithoutReplacingPriorConfig) {
+    synth::PolyphonicPressureMidiInConfig valid;
+    valid.mappings.push_back(MakePressureMapping());
+    synth::PolyphonicPressureMidiInProcessor processor({}, nullptr);
+    REQUIRE_TRUE(processor.SetConfig(valid));
+    REQUIRE_TRUE(processor.Config().mappings == valid.mappings);
+
+    synth::PolyphonicPressureMidiInConfig duplicate = valid;
+    duplicate.mappings.push_back(MakePressureMapping(
+        3, 42, synth::MessageIn::GridPressureChange(0, 9, 2, 3, 0)));
+    REQUIRE_TRUE(!processor.SetConfig(duplicate));
+    REQUIRE_TRUE(processor.Config().mappings == valid.mappings);
+
+    synth::PolyphonicPressureMidiInConfig wrongTarget = valid;
+    wrongTarget.mappings[0].pressure = synth::MessageIn::GridPress(0, 1, -1, 7, 0);
+    REQUIRE_TRUE(!processor.SetConfig(wrongTarget));
+    REQUIRE_TRUE(processor.Config().mappings == valid.mappings);
+
+    synth::PolyphonicPressureMidiInConfig outOfRange = valid;
+    outOfRange.mappings[0].address = {.channel = 16, .note = 128};
+    REQUIRE_TRUE(!processor.SetConfig(outOfRange));
+    REQUIRE_TRUE(processor.Config().mappings == valid.mappings);
+}
+
+TEST_CASE(CreateMidiControllerProfileBuildsPressureOnlyAndSharedMixedThruChains) {
+    synth::MessageInBus bus(nullptr, 16);
+    MidiControllerProfileConfig pressureOnly;
+    pressureOnly.pressureInput = synth::PolyphonicPressureMidiInConfig{{MakePressureMapping()}};
+    auto only = synth::CreateMidiControllerProfile(
+        pressureOnly, &bus, nullptr, static_cast<synth::ParameterManager::UIState*>(nullptr), [] { return 77; });
+    REQUIRE_TRUE(dynamic_cast<synth::PolyphonicPressureMidiInProcessor*>(only.input.get()) != nullptr);
+    REQUIRE_TRUE(only.inputThru.empty());
+    REQUIRE_TRUE(only.input->Bus() == &bus);
+
+    MidiControllerProfileConfig mixed;
+    mixed.encoderInput = synth::EncoderMidiInConfig{};
+    mixed.encoderInput->turns.push_back({.control = {.channel = 0, .cc = 1}, .slotIx = 0, .position = 0});
+    mixed.analogInput = synth::AnalogMidiInConfig{};
+    mixed.analogInput->gestures.push_back({.control = {.channel = 0, .cc = 2}, .gestureIx = 0});
+    mixed.systemMessages.push_back({
+        .control = synth::MidiControlAddress{.channel = 0, .cc = 3},
+        .press = synth::MessageIn::ToggleReset(0),
+        .feedback = synth::MessageIn::ToggleReset(0),
+    });
+    mixed.pressureInput = synth::PolyphonicPressureMidiInConfig{{MakePressureMapping()}};
+
+    auto chain = synth::CreateMidiControllerProfile(
+        mixed, &bus, nullptr, static_cast<synth::ParameterManager::UIState*>(nullptr), [] { return 77; });
+    REQUIRE_TRUE(dynamic_cast<synth::EncoderMidiInProcessor*>(chain.input.get()) != nullptr);
+    REQUIRE_TRUE(chain.inputThru.size() == 3);
+    REQUIRE_TRUE(dynamic_cast<synth::AnalogMidiInProcessor*>(chain.inputThru[0].get()) != nullptr);
+    REQUIRE_TRUE(dynamic_cast<synth::SystemButtonMidiInProcessor*>(chain.inputThru[1].get()) != nullptr);
+    REQUIRE_TRUE(dynamic_cast<synth::PolyphonicPressureMidiInProcessor*>(chain.inputThru[2].get()) != nullptr);
+    REQUIRE_TRUE(chain.input->Bus() == &bus);
+    REQUIRE_TRUE(chain.inputThru[0]->Bus() == &bus);
+    REQUIRE_TRUE(chain.inputThru[1]->Bus() == &bus);
+    REQUIRE_TRUE(chain.inputThru[2]->Bus() == &bus);
+
+    RecordingMidiInProcessor end;
+    chain.inputThru.back()->SetThru(&end);
+    chain.input->Process(synth::BasicMidi::PolyPressure(0, 3, 42, 91));
+    REQUIRE_TRUE(end.received.empty());
+    synth::MessageIn mapped;
+    REQUIRE_TRUE(bus.Pop(mapped, std::numeric_limits<std::uint64_t>::max()));
+    REQUIRE_TRUE(mapped.timestamp == 77);
+    REQUIRE_TRUE(mapped.velocity == 91);
+
+    chain.input->Process(synth::BasicMidi::PolyPressure(0, 3, 41, 91));
+    chain.input->Process(synth::BasicMidi(0, std::vector<std::uint8_t>{0xD3, 91}));
+    REQUIRE_TRUE(end.received.size() == 2);
 }
 
 TEST_CASE(GridMessageInFactoriesCarryFlatSemanticFields) {
@@ -759,6 +927,178 @@ MidiControllerSlot MakeLaunchpadSlot(const char* name) {
     // Endpoint refs intentionally left unconfigured (empty identifier + name)
     // to cover the "unconfigured endpoint round-trips" case.
     return slot;
+}
+
+TEST_CASE(ControllerProfileJsonWritesSchemaTwoAndRoundTripsPressureInput) {
+    MidiControllerProfileConfig source;
+    source.encoderInput = synth::EncoderMidiInConfig::WrldBldrDefault(2);
+    source.analogInput = synth::AnalogMidiInConfig{};
+    source.analogInput->sceneBlend = synth::MidiControlAddress{.channel = 1, .cc = 7};
+    source.systemMessages.push_back(MakeControlOnlyAssociation());
+    source.pressureInput = synth::PolyphonicPressureMidiInConfig{{
+        MakePressureMapping(3, 42, synth::MessageIn::GridPressureChange(0, 1, -1, 7, 0)),
+        MakePressureMapping(4, 43, synth::MessageIn::GridPressureChange(0, 2, 8, -2, 0)),
+    }};
+
+    synth::JsonArena arena(1024 * 1024);
+    const synth::JSON json = synth::ToJSON(arena, source);
+    REQUIRE_TRUE(json.Get("schema").StringValue() == std::string_view(synth::kMidiControllerProfileSchema));
+    REQUIRE_TRUE(json.Get("schemaVersion").IntegerValue() == synth::kMidiControllerProfileSchemaVersion);
+    REQUIRE_TRUE(!json.Get("pressureInput").IsNull());
+    REQUIRE_TRUE(json.Get("pressureInput").Get("mappings").Size() == 2);
+
+    MidiControllerProfileConfig loaded;
+    REQUIRE_TRUE(synth::FromJSON(json, loaded));
+    REQUIRE_TRUE(loaded.encoderInput.has_value());
+    REQUIRE_TRUE(loaded.encoderInput->turns.size() == source.encoderInput->turns.size());
+    REQUIRE_TRUE(loaded.analogInput.has_value());
+    REQUIRE_TRUE(loaded.analogInput->sceneBlend == source.analogInput->sceneBlend);
+    REQUIRE_TRUE(loaded.systemMessages.size() == 1);
+    REQUIRE_TRUE(loaded.pressureInput.has_value());
+    REQUIRE_TRUE(loaded.pressureInput->mappings == source.pressureInput->mappings);
+
+    const synth::PolyphonicPressureMapping& mapping = loaded.pressureInput->mappings[0];
+    REQUIRE_TRUE(mapping.address.channel == 3);
+    REQUIRE_TRUE(mapping.address.note == 42);
+    REQUIRE_TRUE(mapping.pressure.type == synth::MessageIn::Type::GridPressureChange);
+    REQUIRE_TRUE(mapping.pressure.gridSlotIx == 1);
+    REQUIRE_TRUE(mapping.pressure.gridX == -1);
+    REQUIRE_TRUE(mapping.pressure.gridY == 7);
+}
+
+TEST_CASE(ControllerProfileJsonReadsVersionOneWithoutPressureAndPreservesLegacyData) {
+    MidiControllerProfileConfig source;
+    source.encoderInput = synth::EncoderMidiInConfig::WrldBldrDefault(3);
+    source.analogInput = synth::AnalogMidiInConfig{};
+    source.analogInput->sceneBlend = synth::MidiControlAddress{.channel = 2, .cc = 11};
+    source.systemMessages.push_back(MakeControlOnlyAssociation());
+
+    synth::JsonArena arena(1024 * 1024);
+    const synth::JSON versionTwo = synth::ToJSON(arena, source);
+    MidiControllerProfileConfig loadedVersionTwo;
+    REQUIRE_TRUE(synth::FromJSON(versionTwo, loadedVersionTwo));
+    REQUIRE_TRUE(!loadedVersionTwo.pressureInput.has_value());
+
+    synth::JSON versionOne = arena.Object();
+    versionOne.SetNew("schema", arena.String(synth::kMidiControllerProfileSchema));
+    versionOne.SetNew("schemaVersion", arena.Integer(1));
+    versionOne.SetNew("encoderInput", versionTwo.Get("encoderInput"));
+    versionOne.SetNew("encoderOutput", versionTwo.Get("encoderOutput"));
+    versionOne.SetNew("analogInput", versionTwo.Get("analogInput"));
+    versionOne.SetNew("systemMessages", versionTwo.Get("systemMessages"));
+
+    MidiControllerProfileConfig loaded;
+    loaded.pressureInput = synth::PolyphonicPressureMidiInConfig{{MakePressureMapping()}};
+    REQUIRE_TRUE(synth::FromJSON(versionOne, loaded));
+    REQUIRE_TRUE(loaded.encoderInput.has_value());
+    REQUIRE_TRUE(loaded.encoderInput->turns.size() == source.encoderInput->turns.size());
+    REQUIRE_TRUE(loaded.analogInput.has_value());
+    REQUIRE_TRUE(loaded.analogInput->sceneBlend == source.analogInput->sceneBlend);
+    REQUIRE_TRUE(loaded.systemMessages.size() == 1);
+    REQUIRE_TRUE(!loaded.pressureInput.has_value());
+}
+
+TEST_CASE(ControllerProfileJsonRejectsInvalidPressureShapesAtomically) {
+    auto makeProfile = [](synth::JsonArena& arena, synth::JSON pressureInput) {
+        synth::JSON profile = arena.Object();
+        profile.SetNew("schema", arena.String(synth::kMidiControllerProfileSchema));
+        profile.SetNew("schemaVersion", arena.Integer(synth::kMidiControllerProfileSchemaVersion));
+        profile.SetNew("encoderInput", arena.Null());
+        profile.SetNew("encoderOutput", arena.Null());
+        profile.SetNew("analogInput", arena.Null());
+        profile.SetNew("systemMessages", arena.Array());
+        profile.SetNew("pressureInput", pressureInput);
+        return profile;
+    };
+    auto makeMapping = [](synth::JsonArena& arena, std::int64_t channel, std::int64_t note,
+                          const synth::MessageIn& target) {
+        synth::JSON address = arena.Object();
+        address.SetNew("channel", arena.Integer(channel));
+        address.SetNew("note", arena.Integer(note));
+        synth::JSON mapping = arena.Object();
+        mapping.SetNew("address", address);
+        mapping.SetNew("pressure", synth::ToJSON(arena, target));
+        return mapping;
+    };
+    auto makeConfig = [](synth::JsonArena& arena, const std::vector<synth::JSON>& mappings) {
+        synth::JSON array = arena.Array();
+        for (synth::JSON mapping : mappings) {
+            array.AppendNew(mapping);
+        }
+        synth::JSON config = arena.Object();
+        config.SetNew("mappings", array);
+        return config;
+    };
+
+    MidiControllerProfileConfig target;
+    target.encoderInput = synth::EncoderMidiInConfig{};
+    auto requireRejected = [&](synth::JSON profile) {
+        REQUIRE_TRUE(!synth::FromJSON(profile, target));
+        REQUIRE_TRUE(target.encoderInput.has_value());
+        REQUIRE_TRUE(!target.pressureInput.has_value());
+    };
+
+    synth::JsonArena wrongTypeArena(4096);
+    requireRejected(makeProfile(wrongTypeArena, wrongTypeArena.String("bad")));
+
+    synth::JsonArena channelArena(4096);
+    requireRejected(makeProfile(
+        channelArena,
+        makeConfig(channelArena, {makeMapping(channelArena, 16, 42,
+                                               synth::MessageIn::GridPressureChange(0, 1, -1, 7, 0))})));
+
+    synth::JsonArena noteArena(4096);
+    requireRejected(makeProfile(
+        noteArena,
+        makeConfig(noteArena, {makeMapping(noteArena, 3, 128,
+                                           synth::MessageIn::GridPressureChange(0, 1, -1, 7, 0))})));
+
+    synth::JsonArena targetArena(4096);
+    requireRejected(makeProfile(
+        targetArena,
+        makeConfig(targetArena, {makeMapping(targetArena, 3, 42, synth::MessageIn::SceneSelect(0, 1))})));
+
+    synth::JsonArena duplicateArena(8192);
+    synth::JSON first = makeMapping(duplicateArena, 3, 42,
+                                    synth::MessageIn::GridPressureChange(0, 1, -1, 7, 0));
+    synth::JSON second = makeMapping(duplicateArena, 3, 42,
+                                     synth::MessageIn::GridPressureChange(0, 2, 4, 5, 0));
+    requireRejected(makeProfile(duplicateArena, makeConfig(duplicateArena, {first, second})));
+}
+
+TEST_CASE(SlotValidForKindValidatesPressureMappingsWithoutExposingANewKindSection) {
+    MidiControllerSlot slot = MakeGenericSlot("pressure");
+    slot.config.pressureInput = synth::PolyphonicPressureMidiInConfig{{MakePressureMapping()}};
+    std::string reason;
+    REQUIRE_TRUE(synth::SlotValidForKind(slot, &reason));
+
+    slot.config.pressureInput->mappings.push_back(MakePressureMapping());
+    REQUIRE_TRUE(!synth::SlotValidForKind(slot, &reason));
+    REQUIRE_TRUE(!reason.empty());
+
+    slot.config.pressureInput->mappings.pop_back();
+    slot.config.pressureInput->mappings[0].pressure = synth::MessageIn::GridPress(0, 1, -1, 7, 0);
+    REQUIRE_TRUE(!synth::SlotValidForKind(slot, &reason));
+    REQUIRE_TRUE(!reason.empty());
+}
+
+TEST_CASE(InstrumentJsonKeepsEnvelopeSchemaAndDelegatesPressureProfileVersion) {
+    MidiControllerSlot slot = MakeGenericSlot("pressure");
+    slot.config.pressureInput = synth::PolyphonicPressureMidiInConfig{{MakePressureMapping()}};
+    MidiInstrumentConfig source;
+    REQUIRE_TRUE(source.AddController(slot));
+
+    synth::JsonArena arena(1024 * 1024);
+    const synth::JSON json = synth::ToJSON(arena, source);
+    REQUIRE_TRUE(json.Get("schemaVersion").IntegerValue() == synth::kMidiInstrumentSchemaVersion);
+    const synth::JSON nestedProfile = json.Get("controllers").GetAt(0).Get("profile");
+    REQUIRE_TRUE(nestedProfile.Get("schemaVersion").IntegerValue() == synth::kMidiControllerProfileSchemaVersion);
+
+    MidiInstrumentConfig loaded;
+    REQUIRE_TRUE(synth::FromJSON(json, loaded));
+    REQUIRE_TRUE(loaded.controllers.size() == 1);
+    REQUIRE_TRUE(loaded.controllers[0].config.pressureInput.has_value());
+    REQUIRE_TRUE(loaded.controllers[0].config.pressureInput->mappings == slot.config.pressureInput->mappings);
 }
 
 TEST_CASE(InstrumentJsonRoundTripsControllersInOrder) {

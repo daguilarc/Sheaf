@@ -121,7 +121,8 @@ SystemMessageSortKey ComputeSystemMessageSortKey(const MidiControllerSystemMessa
 
 // Sorts, in place: encoderInput->turns and ->pushes by (slotIx, position);
 // systemMessages by SystemMessageSortKey (stable, so exact duplicates retain
-// their original relative order); analogInput->gestures by gestureIx.
+// their original relative order); analogInput->gestures by gestureIx; and
+// pressureInput->mappings by logical grid target then physical MIDI address.
 // analogInput->sceneBlend (at most one) is untouched (nothing to order).
 // Does not change the JSON persistence *shape* -- only vector element order.
 // `kind` selects the address schema used for the systemMessages tie-break.

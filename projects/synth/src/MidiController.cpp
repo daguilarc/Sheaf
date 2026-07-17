@@ -340,6 +340,12 @@ BasicMidi BasicMidi::NoteOff(std::uint64_t timestamp, std::uint8_t channel, std:
     return BasicMidi(timestamp, static_cast<std::uint8_t>(kStatusNoteOff | (channel & 0x0F)), note & 0x7F, 0);
 }
 
+BasicMidi BasicMidi::PolyPressure(std::uint64_t timestamp, std::uint8_t channel,
+                                  std::uint8_t note, std::uint8_t pressure) {
+    return BasicMidi(timestamp, static_cast<std::uint8_t>(kStatusPolyPressure | (channel & 0x0F)),
+                     note & 0x7F, pressure & 0x7F);
+}
+
 BasicMidi BasicMidi::PitchBend(std::uint64_t timestamp, std::uint8_t channel, std::uint16_t value) {
     const std::uint16_t clamped = std::min<std::uint16_t>(value, 0x3FFF);
     return BasicMidi(timestamp, static_cast<std::uint8_t>(kStatusPitchBend | (channel & 0x0F)),
@@ -405,6 +411,10 @@ std::uint8_t BasicMidi::GetCC() const {
 
 std::uint8_t BasicMidi::GetNote() const {
     return raw.size() > 1 ? raw[1] : 0;
+}
+
+std::uint8_t BasicMidi::GetPressure() const {
+    return raw.size() > 2 ? raw[2] : 0;
 }
 
 std::uint8_t BasicMidi::GetValue() const {
@@ -732,6 +742,64 @@ const AnalogMidiMapping* AnalogMidiInProcessor::FindGesture(const BasicMidi& mid
     const auto itr = std::find_if(config_.gestures.begin(), config_.gestures.end(),
                                   [address](const AnalogMidiMapping& mapping) { return mapping.control == address; });
     return itr == config_.gestures.end() ? nullptr : &*itr;
+}
+
+namespace {
+
+const char* PolyphonicPressureConfigError(const PolyphonicPressureMidiInConfig& config) {
+    for (std::size_t ix = 0; ix < config.mappings.size(); ++ix) {
+        const PolyphonicPressureMapping& mapping = config.mappings[ix];
+        if (mapping.address.channel > 0x0F || mapping.address.note > 0x7F) {
+            return "polyphonic-pressure addresses must use channel 0-15 and note 0-127";
+        }
+        if (mapping.pressure.type != MessageIn::Type::GridPressureChange) {
+            return "polyphonic-pressure targets must be grid pressure-change messages";
+        }
+        for (std::size_t prior = 0; prior < ix; ++prior) {
+            if (config.mappings[prior].address == mapping.address) {
+                return "polyphonic-pressure addresses must be unique";
+            }
+        }
+    }
+    return nullptr;
+}
+
+} // namespace
+
+PolyphonicPressureMidiInProcessor::PolyphonicPressureMidiInProcessor(
+    PolyphonicPressureMidiInConfig config, MessageInBus* bus)
+    : MidiInProcessor(bus) {
+    SetConfig(std::move(config));
+}
+
+bool PolyphonicPressureMidiInProcessor::SetConfig(PolyphonicPressureMidiInConfig config) {
+    if (PolyphonicPressureConfigError(config) != nullptr) {
+        return false;
+    }
+    config_ = std::move(config);
+    return true;
+}
+
+void PolyphonicPressureMidiInProcessor::Process(const BasicMidi& midi) {
+    if (!midi.IsPolyPressure()) {
+        PassToThru(midi);
+        return;
+    }
+
+    const MidiNoteAddress address{.channel = midi.Channel(), .note = midi.GetNote()};
+    const auto itr = std::find_if(config_.mappings.begin(), config_.mappings.end(),
+                                  [address](const PolyphonicPressureMapping& mapping) {
+                                      return mapping.address == address;
+                                  });
+    if (itr == config_.mappings.end()) {
+        PassToThru(midi);
+        return;
+    }
+
+    MessageIn pressure = itr->pressure;
+    pressure.timestamp = NextTimestamp();
+    pressure.velocity = midi.GetPressure();
+    Push(pressure);
 }
 
 SystemButtonMidiInProcessor::SystemButtonMidiInProcessor(SystemButtonMidiInConfig config, MessageInBus* bus)
@@ -1559,6 +1627,66 @@ bool FromJSON(JSON json, MidiControlAddress& value) {
     return true;
 }
 
+JSON ToJSON(JsonArena& arena, const MidiNoteAddress& value) {
+    JSON json = arena.Object();
+    json.SetNew("channel", arena.Integer(value.channel));
+    json.SetNew("note", arena.Integer(value.note));
+    return json;
+}
+
+bool FromJSON(JSON json, MidiNoteAddress& value) {
+    if (!IsObject(json)) {
+        return false;
+    }
+    MidiNoteAddress parsed;
+    if (!ReadU8(json.Get("channel"), parsed.channel, 0x0F) ||
+        !ReadU8(json.Get("note"), parsed.note)) {
+        return false;
+    }
+    value = parsed;
+    return true;
+}
+
+JSON ToJSON(JsonArena& arena, const PolyphonicPressureMapping& value) {
+    JSON json = arena.Object();
+    json.SetNew("address", ToJSON(arena, value.address));
+    json.SetNew("pressure", ToJSON(arena, value.pressure));
+    return json;
+}
+
+bool FromJSON(JSON json, PolyphonicPressureMapping& value) {
+    if (!IsObject(json)) {
+        return false;
+    }
+    PolyphonicPressureMapping parsed;
+    if (!FromJSON(json.Get("address"), parsed.address) ||
+        !FromJSON(json.Get("pressure"), parsed.pressure) ||
+        parsed.pressure.type != MessageIn::Type::GridPressureChange) {
+        return false;
+    }
+    value = std::move(parsed);
+    return true;
+}
+
+JSON ToJSON(JsonArena& arena, const PolyphonicPressureMidiInConfig& value) {
+    JSON json = arena.Object();
+    json.SetNew("mappings", VectorToJSON(arena, value.mappings));
+    return json;
+}
+
+bool FromJSON(JSON json, PolyphonicPressureMidiInConfig& value) {
+    if (!IsObject(json)) {
+        return false;
+    }
+    PolyphonicPressureMidiInConfig parsed;
+    if (!VectorFromJSON(json.Get("mappings"), parsed.mappings) ||
+        PolyphonicPressureConfigError(parsed) != nullptr) {
+        return false;
+    }
+    value = std::move(parsed);
+    return true;
+}
+
 JSON ToJSON(JsonArena& arena, const EncoderMidiMapping& value) {
     JSON json = arena.Object();
     json.SetNew("control", ToJSON(arena, value.control));
@@ -1963,8 +2091,8 @@ bool FromJSON(JSON json, MidiControllerSystemMessageAssociation& value) {
 
 JSON ToJSON(JsonArena& arena, const MidiControllerProfileConfig& value) {
     JSON json = arena.Object();
-    json.SetNew("schema", arena.String("synth.midiControllerProfileConfig"));
-    json.SetNew("schemaVersion", arena.Integer(1));
+    json.SetNew("schema", arena.String(kMidiControllerProfileSchema));
+    json.SetNew("schemaVersion", arena.Integer(kMidiControllerProfileSchemaVersion));
     if (value.encoderInput.has_value()) {
         json.SetNew("encoderInput", ToJSON(arena, *value.encoderInput));
     } else {
@@ -1980,6 +2108,9 @@ JSON ToJSON(JsonArena& arena, const MidiControllerProfileConfig& value) {
     } else {
         json.SetNew("analogInput", arena.Null());
     }
+    if (value.pressureInput.has_value()) {
+        json.SetNew("pressureInput", ToJSON(arena, *value.pressureInput));
+    }
     json.SetNew("systemMessages", VectorToJSON(arena, value.systemMessages));
     return json;
 }
@@ -1989,11 +2120,12 @@ bool FromJSON(JSON json, MidiControllerProfileConfig& value) {
         return false;
     }
     const JSON schema = json.Get("schema");
-    if (!IsString(schema) || std::string_view(schema.StringValue()) != "synth.midiControllerProfileConfig") {
+    if (!IsString(schema) || std::string_view(schema.StringValue()) != kMidiControllerProfileSchema) {
         return false;
     }
     const JSON version = json.Get("schemaVersion");
-    if (!IsInteger(version) || version.IntegerValue() != 1) {
+    if (!IsInteger(version) || (version.IntegerValue() != 1 &&
+                                version.IntegerValue() != kMidiControllerProfileSchemaVersion)) {
         return false;
     }
 
@@ -2021,6 +2153,16 @@ bool FromJSON(JSON json, MidiControllerProfileConfig& value) {
             return false;
         }
         parsed.analogInput = std::move(config);
+    }
+    if (version.IntegerValue() == kMidiControllerProfileSchemaVersion) {
+        const JSON pressureInput = json.Get("pressureInput");
+        if (!pressureInput.IsNull()) {
+            PolyphonicPressureMidiInConfig config;
+            if (!FromJSON(pressureInput, config)) {
+                return false;
+            }
+            parsed.pressureInput = std::move(config);
+        }
     }
     const JSON systemMessages = json.Get("systemMessages");
     if (!systemMessages.IsNull() && !VectorFromJSON(systemMessages, parsed.systemMessages)) {
@@ -2179,6 +2321,9 @@ MidiControllerProfileResult CreateMidiControllerProfileImpl(
             });
         }
         appendInput(std::make_unique<SystemButtonMidiInProcessor>(std::move(systemInput), bus));
+    }
+    if (config.pressureInput.has_value()) {
+        appendInput(std::make_unique<PolyphonicPressureMidiInProcessor>(*config.pressureInput, bus));
     }
 
     if (config.encoderOutput.has_value()) {
@@ -2553,6 +2698,11 @@ bool SlotValidForKind(const MidiControllerSlot& slot, std::string* reason) {
     }
     if (!support.systemMessages && !slot.config.systemMessages.empty()) {
         return Fail(reason, "system messages not supported by this controller kind");
+    }
+    if (slot.config.pressureInput.has_value()) {
+        if (const char* error = PolyphonicPressureConfigError(*slot.config.pressureInput)) {
+            return Fail(reason, error);
+        }
     }
 
     if (slot.config.encoderInput.has_value()) {

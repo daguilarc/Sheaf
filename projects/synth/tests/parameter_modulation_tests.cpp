@@ -13053,7 +13053,7 @@ TEST_CASE(midi_profile_config_json_rejects_invalid_values_without_mutating_targe
 
     synth::JSON wrongVersion = arena.Object();
     wrongVersion.SetNew("schema", arena.String("synth.midiControllerProfileConfig"));
-    wrongVersion.SetNew("schemaVersion", arena.Integer(2));
+    wrongVersion.SetNew("schemaVersion", arena.Integer(3));
     wrongVersion.SetNew("systemMessages", arena.Array());
     REQUIRE_TRUE(!synth::FromJSON(wrongVersion, target));
     REQUIRE_TRUE(target.systemMessages.size() == originalSystemMessageCount);

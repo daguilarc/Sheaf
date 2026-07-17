@@ -160,6 +160,15 @@ void NormalizeMidiProfileConfig(MidiControllerProfileConfig& config, MidiProfile
                              return a.gestureIx < b.gestureIx;
                          });
     }
+    if (config.pressureInput.has_value()) {
+        std::stable_sort(config.pressureInput->mappings.begin(), config.pressureInput->mappings.end(),
+                         [](const PolyphonicPressureMapping& a, const PolyphonicPressureMapping& b) {
+                             return std::tie(a.pressure.gridSlotIx, a.pressure.gridX, a.pressure.gridY,
+                                             a.address.channel, a.address.note) <
+                                    std::tie(b.pressure.gridSlotIx, b.pressure.gridX, b.pressure.gridY,
+                                             b.address.channel, b.address.note);
+                         });
+    }
     std::stable_sort(config.systemMessages.begin(), config.systemMessages.end(),
                      [kind](const MidiControllerSystemMessageAssociation& a,
                             const MidiControllerSystemMessageAssociation& b) {
