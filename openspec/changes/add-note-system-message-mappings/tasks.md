@@ -1,10 +1,10 @@
 ## 1. Typed Button Addresses
 
-- [ ] 1.1 Add focused tests for CC/note address matching, raw `0x90` zero-velocity note-on, nonzero-velocity note-off, press/release classification, and message-type mismatches.
-- [ ] 1.2 Extend the MIDI control address and encoder/system input processors to support note-addressed pushes and Generic system messages, classifying note-off by status, while leaving turns and analogs CC-only.
-- [ ] 1.3 Add JSON round-trip and legacy-load tests, then persist the address message type with missing values defaulted to CC.
-- [ ] 1.4 Add instrument profile address-type validation tests and rules so note addresses are accepted only for encoder pushes and Generic system-message controls.
-- [ ] 1.5 Add output-construction tests and suppress CC output feedback for note-addressed Generic system-message associations.
+- [x] 1.1 Add focused tests for CC/note address matching, raw `0x90` zero-velocity note-on, nonzero-velocity note-off, press/release classification, and message-type mismatches.
+- [x] 1.2 Extend the MIDI control address and encoder/system input processors to support note-addressed pushes and Generic system messages, classifying note-off by status, while leaving turns and analogs CC-only.
+- [x] 1.3 Add JSON round-trip and legacy-load tests, then persist the address message type with missing values defaulted to CC.
+- [x] 1.4 Add instrument profile address-type validation tests and rules so note addresses are accepted only for encoder pushes and Generic system-message controls.
+- [x] 1.5 Add output-construction tests and suppress CC output feedback for note-addressed Generic system-message associations.
 
 ## 2. Controllers Page Editing
 
