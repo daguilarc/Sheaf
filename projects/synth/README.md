@@ -159,6 +159,59 @@ rejects endpoints that are invalid for any existing group and leaves prior
 scene state unchanged. `SetSceneBlend(blend)` clamps and updates blend
 independently.
 
+## Runtime Button Grids
+
+`ButtonGrid.hpp` defines a JUCE-free grid subsystem beside parameter
+modulation. A `GridManager` owns runtime-sized grids and grid slots in their
+own index namespaces: grid slot `0` and parameter bank slot `0` never alias.
+Every `GridRange` is a signed half-open rectangle
+`[xmin, xmax) x [ymin, ymax)`, and grid selection requires exact range
+equality. Dense cells receive explicit press, release, and pressure-change
+callbacks; `StateCell` supplies toggle, momentary, set-only, and show-only
+state behavior with optional flash palettes. These contracts are exercised by
+`build/button_grid_tests` and the mixed-namespace cases in
+`build/parameter_modulation_tests`.
+
+`GridManager::CreateUIState()` is the topology-finalization boundary. Grid and
+cell storage is allocated before that call; creating grids, slots, or cells
+after it is a coding error. Selecting existing grids, routing events, querying
+cells, and publishing snapshots then reuse fixed capacities and storage
+addresses. Cell callbacks and state queries run on the control/audio path and
+must themselves remain nonblocking and allocation-free. Each published cell
+is one atomic packed color: RGB is preserved and the final byte is overwritten
+with exactly `1` for on or `0` for off, including explicit zero for empty and
+disconnected cells. `build/button_grid_tests` covers finalization, stable
+capacities/pointers, signed lookup, and packed publication.
+
+The existing bounded `MessageInBus` remains the single ordered SPSC input
+queue. Its four grid variants are `GridPress`, `GridRelease`,
+`GridPressureChange`, and `SelectGrid`; the bus dispatches parameter and grid
+messages only to their respective managers while retaining timestamp/FIFO
+ordering. `build/instrument_tests` covers the message/JSON shapes and
+`build/parameter_modulation_tests` covers interleaved routing, invalid-target
+no-ops, and namespace isolation.
+
+`Engine` owns one `GridManager` beside `ParameterManager`, attaches both UI and
+MIDI buses to both managers, and publishes both snapshots through an internal
+stable `RuntimeUIState` facade. MIDI encoder output reads its parameter member;
+grid feedback reads only its immutable grid member. `AppContext::uiState`
+remains a `ParameterManager::UIState*`: applications do not create, expose, or
+render grids in this capability. This application-level grid surface is
+intentionally out of scope, as covered by `build/engine_tests`,
+`build/rig_tests`, and `build/miniapp_system_tests`.
+
+Controller-profile JSON readers accept schema 1 without pressure data and
+writers emit schema 2 with separate polyphonic-pressure mappings. Status
+`0xA0` mappings derive `GridPressureChange` input while press, release, and
+feedback remain ordinary system-message associations. Controllers reconstructs
+only exact system/pressure pairs into momentary `Grid Button` or `Grid Block`
+rows, expands edits back into all paired entries atomically, and preserves
+unmatched pressure mappings invisibly and losslessly. Existing WRLD.Bldr,
+Launchpad, and monochrome output wire protocols, caches, resets, and budgets
+are unchanged; only feedback state lookup gained grid support. Coverage lives
+in `build/instrument_tests`, `build/blocks_tests`, `build/viewmodel_tests`,
+`build/controllers_page_ui_tests`, and the miniapp Controllers JUCE harness.
+
 ## Portable UI Contract
 
 Headers under `projects/synth/include/synth/PortableUI.hpp` and

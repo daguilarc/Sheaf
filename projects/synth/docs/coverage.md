@@ -1,6 +1,6 @@
 # Spec Coverage
 
-Last audit: standard modulators, fifteen-source application adoption, sparse modulation processing, absolute encoder mode, exact parameter projection, causal absolute encoder feedback synchronization, and generic JUCE hierarchy, scrolling, and production Controllers migration, 2026-07-16
+Last audit: standard modulators, fifteen-source application adoption, sparse modulation processing, absolute encoder mode, exact parameter projection, causal absolute encoder feedback synchronization, generic JUCE hierarchy/scrolling/production Controllers migration, and runtime button grids, 2026-07-16
 
 | Requirement | Status | Primary exact coverage |
 |---|---|---|
@@ -54,18 +54,25 @@ Last audit: standard modulators, fifteen-source application adoption, sparse mod
 | `spm-35` (modified) | covered | `twister_output_debounces_reset_and_uses_channels`, `twister_output_uses_full_brightness_for_connected_cells`, `twister_color_helper_matches_smart_grid_hue_shape`, and `absolute_encoder_output_gates_until_acknowledged_and_suppresses_exact_echo_for_both_protocols` |
 | `spm-62` (modified) | covered | `mf_twister_default_profile_maps_encoders_and_input_only_side_buttons`, `midi_controller_profile_threads_absolute_route_identity_and_mode`, and `midi_controller_profile_keeps_relative_and_output_only_feedback_uncoordinated` |
 | `spm-68` (modified) | covered | `twister_output_blanks_disconnected_mapped_cells_with_brightness_off_values_once`, `twister_output_blanks_mapped_encoder_beyond_visible_cell_capacity_with_brightness_off_values_once`, `twister_output_ignores_unmapped_encoder_without_blanking`, and `tracked_absolute_output_beyond_visible_capacity_stays_safely_gated_while_pending` |
-| `spm-78` | covered | `midi_encoder_input_absolute_publishes_matching_epoch_and_rolls_back_rejected_push`, `param_set_absolute_acknowledges_apply_modifier_rejection_and_disconnected_routes_monotonically`, `absolute_encoder_output_gates_until_acknowledged_and_suppresses_exact_echo_for_both_protocols`, `absolute_encoder_output_forces_rejection_correction_even_when_actual_matches_old_cache`, `absolute_encoder_output_retries_failed_correction_without_resolving_or_caching`, `relative_encoder_output_modes_ignore_absolute_raw_epochs_and_continue_post_modulation_feedback`, `rig_absolute_feedback_resolves_only_latest_same_route_rapid_input`, `rig_two_absolute_controllers_share_cell_with_independent_pending_feedback`, and `engine_rebuild_retains_pending_absolute_feedback_across_bank_route_change` |
+| `spm-78` | covered | `midi_encoder_input_absolute_publishes_matching_epoch_and_rolls_back_rejected_push`, `param_set_absolute_acknowledges_apply_modifier_rejection_and_disconnected_routes_monotonically`, absolute encoder acknowledgement/output cases, snapshot-only grid lookup, and existing output-byte/cache/reset/color/budget regressions |
 | `spm-79` | covered | `generic_controller_profile_derives_same_address_position_only_output_and_honors_overrides`, `generic_absolute_encoder_output_uses_same_address_causal_acknowledgement`, `generic_absolute_encoder_output_retries_failed_correction_without_state_mutation`, `generic_relative_encoder_output_uses_display_value_without_epoch_coordination`, `generic_untracked_absolute_encoder_output_uses_raw_center_fallback`, `rig_generic_absolute_feedback_round_trips_same_address_without_auxiliary_traffic`, and `engine_rebuild_retains_pending_absolute_feedback_across_bank_route_change` |
 | `spm-25` (modified) | covered | `randomized_message_bus_ui_state_simulation` plus `message_bus_sparse_lifecycle_model_tracks_pins_collection_reuse_and_patch_load` validate 64-bit UI masks and sparse lifecycle state against deterministic manager-owned oracles |
 | `spm-72` | covered | `group_process_sample_visits_only_registered_roots`, `recursive_local_compute_seeds_display_without_audio_rate_processing`, active-route full-scan cases, and `braid4_sparse_work_counters_bound_inactive_capacity` |
 | `spm-73` | covered | 0--64 gesture boundary/sparse-mask tests, `ControllerGesture63SelectsAndEditsManagerGestureWhileBankMaskRemains32Bit`, portable bit-63 badge rendering, and randomized UI-state coverage |
 | `spm-74` | covered | neutral-leaf guard, bottom-up collapse, pin, settling/detach, bounded-reuse, patch-load, semantic-JSON, and randomized lifecycle cases in `parameter_modulation_tests` |
-| `spm-75` | covered | connected-only modulation-view materialization/capacity/randomization cases in `parameter_modulation_tests`, MiniApp and Braid4 sparse-position system assertions, and `TestBraid4StandardModulationViewsRemainPortable` |
+| `spm-75` | covered | connected-only modulation-view materialization/capacity/randomization cases in `parameter_modulation_tests`, MiniApp and Braid4 sparse-position system assertions, `TestBraid4StandardModulationViewsRemainPortable`, plus grid message factories/JSON validation and mixed FIFO routing/namespace isolation |
 | `spm-31` (modified) | covered | relative decoder regressions plus `midi_encoder_input_absolute_maps_raw_positions_independent_of_turn_step` and absolute mapped/push/thru boundaries |
 | `spm-52` (modified) | covered | encoder-mode contract/migration JSON tests, `ParamSetAbsolute` message/association round trips, and existing profile/factory coverage |
-| `spm-76` | covered | pure coefficient/projection tests, focused handler cases, and `handle_set_absolute_seeded_property_matches_independent_post_arming_model` |
-| `spm-77` | covered | six `param_set_absolute_*` construction, association, visible-cell routing, modifier, and no-op boundary tests |
-| `sru-26` | covered | `EncoderModeCatalogExposesAllChoicesInDeclarationOrder`, absolute edit-session/live-rebuild tests, and portable Controllers action coverage |
+| `spm-76` | covered | pure coefficient/projection tests, focused handler cases, `handle_set_absolute_seeded_property_matches_independent_post_arming_model`, and exact polyphonic-pressure recognition/thru-once behavior |
+| `spm-77` | covered | six `param_set_absolute_*` construction, association, visible-cell routing, modifier, and no-op boundary tests, plus schema-1 reads, schema-2 writes, and signed grid round trips |
+| `sru-26` | covered | `EncoderModeCatalogExposesAllChoicesInDeclarationOrder`, absolute edit-session/live-rebuild tests, portable Controllers action coverage, and paired grid expansion/reconstruction with atomic hidden-orphan sessions |
+| `bgr-1` | covered | `button_grid_tests` checked signed half-open geometry, row-major flattening, independent equal-range slots; `parameter_modulation_tests` parameter/grid namespace isolation |
+| `bgr-2` | covered | `button_grid_tests` exact-range selection, atomic mismatch, duplicate registration, ordered callbacks, and invalid/empty/disconnected no-ops |
+| `bgr-3` | covered | `button_grid_tests` all `StateCell` modes, flash policies, pressure no-op, and non-owned state lifetime |
+| `bgr-4` | covered | `button_grid_tests` atomic `(r,g,b,0|1)` publication, empty/disconnected clearing, negative lookup, and stale clearing after grid switch |
+| `bgr-5` | covered | `button_grid_tests` topology freeze plus unchanged capacities, storage addresses, and stable grid/slot pointers across runtime operations |
+| `sar-24` | covered | `engine_tests` manager/facade lifetime, pre-processor finalization, dual-bus pump, and publication; `rig_tests` and `miniapp_system_tests` unchanged app contract without grids |
+| `sru-27` | covered | JUCE-free block/view-model/portable binaries plus generic-JUCE portable backend/runtime-shell coverage and `controllers_page_simulation_tests` independent seeded oracle |
 
 ## Requirement Mappings
 
@@ -698,6 +705,105 @@ Last audit: standard modulators, fifteen-source application adoption, sparse mod
   96 kHz host/384 kHz internal. These generous deadline ceilings are
   platform-sensitive smoke evidence; they do not assert a speedup ratio and do
   not replace the deterministic work-count contract above.
+
+## Runtime Button-Grid Requirement Mappings
+
+### `bgr-1` through `bgr-5` - Grid Core And Realtime Lifecycle
+
+- [`button_grid_tests.cpp`](../tests/button_grid_tests.cpp):
+  `grid_range_is_checked_signed_half_open_and_row_major`,
+  `equal_range_slots_keep_selection_and_routing_independent`, and
+  `grid_routing_calls_each_callback_and_ignores_invalid_targets` cover checked
+  signed geometry, distinct equal-range slots, exact selection, callback order,
+  duplicate rejection, and invalid/empty/disconnected no-ops.
+- The same binary's
+  `state_cell_modes_follow_toggle_momentary_set_only_and_show_only_contracts`,
+  `state_cell_flash_policies_choose_palette_without_changing_on_off`, and
+  `state_cell_observes_but_does_not_own_stack_state` cover every reusable cell
+  and ownership scenario.
+- `ui_publication_packs_on_off_and_clears_empty_disconnected_and_stale_cells`
+  covers signed snapshot lookup, packed on/off bytes, and stale clearing.
+  `finalization_rejects_late_topology_and_runtime_operations_keep_storage_stable`
+  covers loud topology freeze and proves post-finalization reuse with unchanged
+  vector capacities, backing-storage addresses, and `Grid*`/`GridSlot*`
+  addresses. The framework therefore needs no parameter-style arena or runtime
+  storage-growth message.
+- [`parameter_modulation_tests.cpp`](../tests/parameter_modulation_tests.cpp)
+  `message_bus_routes_parameter_and_grid_families_without_namespace_aliasing`
+  covers the separate parameter and grid slot number spaces.
+
+### `spm-75` through `spm-78` - Messages, Profiles, Pressure, And Feedback
+
+- [`instrument_tests.cpp`](../tests/instrument_tests.cpp):
+  `GridMessageInFactoriesCarryFlatSemanticFields`,
+  `GridMessageInJsonUsesFlatPerVariantShapeAndRoundTrips`, and
+  `GridMessageInJsonRejectsVelocityOutsideByteRangeWithoutMutation` cover all
+  four grid variants, signed coordinates, byte values, selection indices, and
+  JSON round trips. The mixed-family message-bus test above covers FIFO,
+  namespace isolation, missing managers, and invalid targets.
+- `BasicMidiPolyPressureRecognizesOnlyCompletePolyphonicAftertouch`,
+  `PolyPressureProcessorStampsMappedPressureAndConsumesExactMatch`,
+  `PolyPressureProcessorPassesUnmatchedAndNonPressureToThruExactlyOnce`,
+  `PolyPressureProcessorRejectsInvalidConfigWithoutReplacingPriorConfig`, and
+  `CreateMidiControllerProfileBuildsPressureOnlyAndSharedMixedThruChains` cover
+  status `0xA0`, mapped pressure/timestamp stamping, all pass-through cases,
+  atomic config validation, and the shared processor chain.
+- `ControllerProfileJsonWritesSchemaTwoAndRoundTripsPressureInput`,
+  `ControllerProfileJsonReadsVersionOneWithoutPressureAndPreservesLegacyData`,
+  `ControllerProfileJsonRejectsInvalidPressureShapesAtomically`, and
+  `InstrumentJsonKeepsEnvelopeSchemaAndDelegatesPressureProfileVersion`, plus
+  [`blocks_tests.cpp`](../tests/blocks_tests.cpp)
+  `NormalizeSortsPressureMappingsByLogicalTargetThenPhysicalAddress` and
+  [`rig_tests.cpp`](../tests/rig_tests.cpp)
+  `rig_runtime_config_round_trips_nested_pressure_profile_without_changing_envelopes`,
+  cover backward reads, schema-2 writes, signed/canonical persistence, nested
+  envelopes, and unchanged patch persistence.
+- `GridFeedbackReadsOnlyTheImmutableRuntimeSnapshot` covers RGB/on-off lookup,
+  negative and missing targets, and the no-live-tree boundary. Existing golden
+  assertions in [`parameter_modulation_tests.cpp`](../tests/parameter_modulation_tests.cpp)
+  (`system_output_processors_debounce_reset_and_render_cc_and_wrld_bldr`,
+  `launchpad_color_sysex_uses_controller_product_and_rgb_note`,
+  `launchpad_output_processor_debounces_reset_and_uses_system_info`, and the
+  WRLD.Bldr/Twister output cases) retain the prior MIDI bytes, caches, reset
+  behavior, brightness/color budgets, and non-grid feedback.
+
+### `sar-24` - Runtime Ownership Without Application Exposure
+
+- [`engine_tests.cpp`](../tests/engine_tests.cpp)
+  `engine_owns_stable_runtime_grid_state_and_routes_both_buses` covers one
+  runtime-owned manager, initialization/finalization order, stable
+  `RuntimeUIState`, both buses, pre-app pumping, publication, and shutdown
+  lifetime.
+- [`rig_tests.cpp`](../tests/rig_tests.cpp)
+  `rig_existing_app_keeps_parameter_ui_contract_with_empty_grid_snapshot` and
+  [`miniapp_system_tests.cpp`](../tests/miniapp_system_tests.cpp)
+  `miniapp_existing_surface_keeps_parameter_ui_contract_without_grid_integration`
+  cover unchanged application initialization, parameter UI access, processing,
+  and visible surfaces. Application grid creation, exposure, and rendering are
+  intentionally out of scope, not deferred incomplete behavior.
+
+### `sru-26` and `sru-27` - Controllers Derived Grid Presentation
+
+- [`blocks_tests.cpp`](../tests/blocks_tests.cpp)
+  `ExpandGridButtonProducesAtomicMomentarySystemAndPressurePair`,
+  `ExpandGridBlockTraversesSignedExclusiveRangeXFastAndPairsEveryCell`,
+  `ExpandGridBlockFailureLeavesBothOutputVectorsUntouched`, and the
+  `ReconstructGridMappings*` cases cover JUCE-free exact pairing, physical to
+  logical coordinate identity, signed exclusive rectangles, maximal blocks,
+  atomic validation, canonical reconstruction, and orphan preservation.
+- [`viewmodel_tests.cpp`](../tests/viewmodel_tests.cpp)
+  `GridPresentationReconstructsWrldBldrBlockAndLaunchpadButtonWithoutPressureRows`,
+  `GridOpenSessionOwnsPairsAndPreservesHiddenOrphanAcrossEditDeleteAndReopen`,
+  `GridInvalidRectangleAndDuplicatePairEditsRefuseAtomically`, and
+  `GridAddSkipsPhysicalAddressesOwnedByHiddenOrphans` cover stable edit
+  sessions, add/edit/delete, momentary-only pairs, and lossless hidden data.
+- `controllers_page_ui_tests` covers the portable Grid Button/Grid Block labels,
+  signed fields, generic actions, stable node IDs, and absence of aftertouch,
+  pressure, status, and standalone note controls. The generic JUCE portable
+  backend and runtime-shell coverage render the same semantic Controls tree;
+  `controllers_page_simulation_tests` runs the independent
+  seed `0x6a1d2026` across 320 operations, including JSON reload, invalid
+  atomic edits, row identity, hidden-orphan equality, and scroll reachability.
 
 ## Known Gaps
 
