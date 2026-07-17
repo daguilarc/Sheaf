@@ -15,5 +15,5 @@
 
 ## 3. Verification
 
-- [ ] 3.1 Run the focused processor, persistence, instrument, block, view-model, and Controllers page test suites.
-- [ ] 3.2 Run the full synth test target and update synth capability coverage documentation for `spm-80`, `smi-9`, and `sru-27`.
+- [x] 3.1 Run the focused processor, persistence, instrument, block, view-model, and Controllers page test suites.
+- [x] 3.2 Run the full synth test target and update synth capability coverage documentation for `spm-80`, `smi-9`, and `sru-27`.
