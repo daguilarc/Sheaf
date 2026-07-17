@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Repair the duplicate live `spm-*` requirement identifiers and prevent future live-spec collisions.
+**Goal:** Repair duplicate requirement identifiers within live OpenSpec capability files and prevent future collisions.
 
-**Architecture:** A repository-level unittest scans `spm-*` headings in the live `synth-parameter-modulation` spec and reports every duplicated ID with source locations. The live spec and current coverage references are renumbered minimally; archived OpenSpec deltas remain immutable.
+**Architecture:** A repository-level unittest scans requirement headings in every live capability spec and reports IDs repeated within the same file. Live requirements are renumbered minimally according to introduction provenance; archived OpenSpec deltas remain immutable.
 
 **Tech Stack:** Python 3 standard-library `unittest`, GNU Make, Markdown/OpenSpec.
 
@@ -13,7 +13,8 @@
 - Keep the first live use of `spm-69` and `spm-70` unchanged.
 - Rename the later uses to `spm-80` and `spm-81` respectively.
 - Do not edit `openspec/changes/archive/`.
-- Scan only the live `openspec/specs/synth-parameter-modulation/spec.md` capability.
+- Enforce uniqueness within each live `openspec/specs/**/spec.md` file, not globally across capability files.
+- Preserve the requirement that acquired a collided ID first and assign the later-introduced requirement the capability's next unused ID.
 
 ---
 
@@ -100,9 +101,39 @@ Confirm the diff contains only the planned files and leaves the existing
 untracked `projects/synth/browser/package-lock.json` and
 `projects/synth/miniapp/` untouched.
 
-- [ ] **Step 3: Commit and land linearly**
+- [x] **Step 3: Commit and land linearly**
 
 Commit the focused change, rebase it onto current `main`, fast-forward `main`,
 push `main`, and preserve the harness-owned worktree. No service rebuild or
 redeploy is required because only specifications, documentation, tests, and a
 Makefile validation target change.
+
+### Task 4: Generalize the guard and repair remaining live collisions
+
+**Files:**
+- Modify: `tests/openspec_requirement_ids_test.py`
+- Modify: `openspec/specs/agents-skill-distribution/spec.md`
+- Modify: `openspec/specs/sheaf-chat-agent-review-mode/spec.md`
+- Modify: `openspec/specs/synth-app-runtime/spec.md`
+
+**Interfaces:**
+- Consumes: Requirement headings shaped as `### Requirement: <id> ...` in live capability specs.
+- Produces: Per-file uniqueness diagnostics with source locations.
+
+- [ ] **Step 1: Generalize the test and verify the red state**
+
+Scan every live capability spec, group IDs by file, and run the focused test.
+Expected: failure listing only `asd-20`, `arm-12`, and `sar-18`.
+
+- [ ] **Step 2: Apply provenance-preserving renumbering**
+
+Rename xagent `asd-20` to `asd-23`, logging `arm-12` to `arm-34`, and portable
+UI `sar-18` to `sar-24`. Update live references if present; do not edit archive
+artifacts.
+
+- [ ] **Step 3: Verify and land**
+
+Run `make openspec-check`, `openspec validate --all --json`, the full root test
+suite, and Git diff checks. Commit, rebase onto current `main`, fast-forward
+`main`, push, and remove the temporary branch while preserving the managed
+worktree and user-owned untracked files.
