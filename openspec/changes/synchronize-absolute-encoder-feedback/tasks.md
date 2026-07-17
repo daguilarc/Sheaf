@@ -1,6 +1,6 @@
 ## 1. Absolute Event Coordination
 
-- [ ] 1.1 Add focused failing tests, then implement the fixed-capacity engine-owned `AbsoluteFeedbackCoordinator`, global nonzero epoch allocation, guarded per-controller-route expectations, and queue-failure rollback without changing relative input.
+- [x] 1.1 Add focused failing tests, then implement the fixed-capacity engine-owned `AbsoluteFeedbackCoordinator`, global nonzero epoch allocation, guarded per-controller-route expectations, and queue-failure rollback without changing relative input.
 - [ ] 1.2 Carry epochs through `ParamSetAbsolute` routing and make each addressed slot position record every processed apply-or-reject decision, including modifiers, disconnected cells, and routing/view changes.
 
 ## 2. Coherent DSP Publication
