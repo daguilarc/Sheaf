@@ -17,6 +17,7 @@
 #include <string_view>
 #include <vector>
 
+#include "synth/AtomicColor.hpp"
 #include "synth/Color.hpp"
 #include "synth/Json.hpp"
 
@@ -30,23 +31,6 @@ using ParameterId = std::uint32_t;
 using PhysicalEncoderId = std::uint32_t;
 using PageOrdinal = std::uint32_t;
 using GestureMask = std::uint64_t;
-
-struct AtomicColor {
-    AtomicColor() = default;
-    explicit AtomicColor(Color color) { Store(color); }
-    AtomicColor(const AtomicColor&) = delete;
-    AtomicColor& operator=(const AtomicColor&) = delete;
-
-    void Store(Color color, std::memory_order order = std::memory_order_relaxed) {
-        value.store(color.Packed(), order);
-    }
-    Color Load(std::memory_order order = std::memory_order_relaxed) const {
-        return Color::FromPacked(value.load(order));
-    }
-    bool IsLockFree() const { return value.is_lock_free(); }
-
-    std::atomic<std::uint32_t> value{0};
-};
 
 enum class RangeKind {
     Unipolar,

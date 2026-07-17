@@ -7,7 +7,7 @@ CXXFLAGS ?= -std=c++20 -O2
 CPPFLAGS := -I../include -I../apps/miniapp -Icpp
 BROWSER_BUILD_DIR := dist/wasm
 EM_CACHE ?= $(abspath $(BROWSER_BUILD_DIR)/emscripten-cache)
-CORE_SOURCES := ../src/ParameterModulation.cpp ../src/MidiController.cpp ../src/PatchPersistence.cpp ../src/DspWavetable.cpp ../src/Modules.cpp ../src/MidiReconcile.cpp ../src/MidiDevicePoller.cpp ../src/MidiConfigViewModel.cpp ../src/MidiConfigBlocks.cpp
+CORE_SOURCES := ../src/ParameterModulation.cpp ../src/ButtonGrid.cpp ../src/MidiController.cpp ../src/PatchPersistence.cpp ../src/DspWavetable.cpp ../src/Modules.cpp ../src/MidiReconcile.cpp ../src/MidiDevicePoller.cpp ../src/MidiConfigViewModel.cpp ../src/MidiConfigBlocks.cpp
 MINIAPP_HEADERS := ../apps/miniapp/MiniApp.hpp ../apps/miniapp/MiniAppRegistration.hpp ../apps/miniapp/MiniAppUI.hpp ../apps/miniapp/MiniAppUiModel.hpp ../apps/miniapp/MiniAppDraw.hpp ../apps/miniapp/MiniAppCore.hpp ../apps/miniapp/DemoModulation.hpp
 RANDOM_LFO_HEADERS := ../include/synth/DspMath.hpp ../include/synth/DspRandomLfo.hpp ../include/synth/GangedRandomLfoVisualizer.hpp
 STANDARD_MODULATOR_HEADERS := ../include/synth/StandardModulators.hpp ../include/synth/ParameterModulation.hpp ../include/synth/ConstantBarVisualizer.hpp ../include/synth/NoiseWaveformVisualizer.hpp ../include/synth/DspConstant.hpp ../include/synth/DspNoise.hpp $(RANDOM_LFO_HEADERS)
