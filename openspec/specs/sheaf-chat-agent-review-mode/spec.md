@@ -258,7 +258,7 @@ WHEN the user creates a hunk comment or rejected-hunk marker in Agent Review Mod
 - **WHEN** Sheaf Chat stores a review entry
 - **THEN** the entry includes hunk identity, patch hash, hunk header, file path, and patch text
 
-### Requirement: arm-12 — Logging: Agent Review command and frame errors
+### Requirement: arm-34 — Logging: Agent Review command and frame errors
 
 WHEN Agent Review Mode rejects or fails a client command or frame, THE Sheaf Chat service SHALL emit a server log entry that identifies Agent Review as the feature area and includes the action when available, command id when available, repo id, workspace id, client id, stale-state flag when applicable, and the failure message.
 

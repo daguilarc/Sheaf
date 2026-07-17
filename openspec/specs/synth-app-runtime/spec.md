@@ -350,7 +350,7 @@ WHEN a runtime-hosted synth application starts, THE runtime SHALL resolve a pers
 - **WHEN** a headless rig or unit test constructs a runtime/engine host with explicit data paths
 - **THEN** the host uses those scratch paths instead of the production OS data directory
 
-### Requirement: sar-18 — UI: portable application surface
+### Requirement: sar-24 — UI: portable application surface
 WHEN a synth application exposes user interface content to a host runtime, THE application SHALL expose that content through a JUCE-free synth-owned portable UI contract rather than returning or naming `juce::` component, graphics, event, string, colour, or geometry types from application-facing headers; the JUCE desktop runtime SHALL adapt that portable UI surface to JUCE components behind a JUCE-owned backend, and the existing engine, audio, MIDI, patch, and message-bus semantics SHALL remain unchanged.
 
 #### Scenario: Application UI headers compile without JUCE

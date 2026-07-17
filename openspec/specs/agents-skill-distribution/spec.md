@@ -278,7 +278,7 @@ WHEN OpenSpec and Superpowers are both used to plan and implement changes, THE a
 - **WHEN** `projects/agents/scripts/install.py install --scope global` runs after the skill is added
 - **THEN** the `openspec-superpowers-workflow` skill is rendered into each supported user-global skill destination selected by its targets
 
-### Requirement: asd-20 — Shared skill: xagent-subagents
+### Requirement: asd-23 — Shared skill: xagent-subagents
 
 WHEN Codex review or subagent work benefits from cross-provider opinions, THE agents project SHALL provide a global Codex-only `xagent-subagents` skill under `projects/agents/global/skills/xagent-subagents/` with metadata and source instructions that guide Codex through using packaged `xagent` to launch external review and worker subagents without assuming that `xagent` is on `PATH` or built inside the active repository.
 

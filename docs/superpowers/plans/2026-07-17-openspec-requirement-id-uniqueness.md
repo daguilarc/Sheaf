@@ -120,18 +120,18 @@ Makefile validation target change.
 - Consumes: Requirement headings shaped as `### Requirement: <id> ...` in live capability specs.
 - Produces: Per-file uniqueness diagnostics with source locations.
 
-- [ ] **Step 1: Generalize the test and verify the red state**
+- [x] **Step 1: Generalize the test and verify the red state**
 
 Scan every live capability spec, group IDs by file, and run the focused test.
 Expected: failure listing only `asd-20`, `arm-12`, and `sar-18`.
 
-- [ ] **Step 2: Apply provenance-preserving renumbering**
+- [x] **Step 2: Apply provenance-preserving renumbering**
 
 Rename xagent `asd-20` to `asd-23`, logging `arm-12` to `arm-34`, and portable
 UI `sar-18` to `sar-24`. Update live references if present; do not edit archive
 artifacts.
 
-- [ ] **Step 3: Verify and land**
+- [x] **Step 3: Verify and land**
 
 Run `make openspec-check`, `openspec validate --all --json`, the full root test
 suite, and Git diff checks. Commit, rebase onto current `main`, fast-forward
