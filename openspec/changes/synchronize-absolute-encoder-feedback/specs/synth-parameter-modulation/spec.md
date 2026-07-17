@@ -261,3 +261,34 @@ WHEN an absolute encoder input mapping accepts a raw 7-bit position, THE synth p
 - **WHEN** an acknowledged actual byte differs from the received byte but the MIDI sender rejects the correction enqueue
 - **THEN** output leaves the expectation unresolved and the position cache unchanged
 - **AND** a later process pass retries the correction
+
+### Requirement: spm-78 — MIDI output: Generic encoder position feedback
+WHEN a Generic controller profile contains encoder-turn input mappings and no explicit encoder output, THE synth parameter modulation system SHALL automatically create position feedback from those turn mappings; for each mapping it SHALL emit at most one debounced MIDI CC using exactly the mapping's input channel and CC and the mapped encoder position byte, SHALL emit no color, brightness, animation, SysEx, or auxiliary feedback, SHALL use the causal absolute acknowledgement protocol when the encoder input mode is Absolute, and SHALL use the existing post-modulation display position without epoch coordination in either relative mode; an explicit Twister or WRLD.Bldr encoder output SHALL override automatic Generic feedback.
+
+#### Scenario: Generic output mirrors the full input address
+- **WHEN** a Generic turn mapping uses zero-based channel `C` and CC `N`
+- **AND** its mapped position requires feedback byte `V`
+- **THEN** automatic Generic output emits exactly one CC `(C, N, V)`
+- **AND** emits no other MIDI message for that mapping
+
+#### Scenario: Generic absolute output uses causal acknowledgement
+- **WHEN** a Generic controller in Absolute mode receives byte `B` on one of its turn mappings
+- **THEN** its automatically derived output waits for the mapping's processed epoch
+- **AND** suppresses output when the acknowledged raw-center byte equals `B`
+- **AND** emits one correction on the same channel and CC when the acknowledged raw-center byte differs
+- **AND** retains the pending expectation and cache for retry when correction enqueue fails
+
+#### Scenario: Generic relative output remains modulation-aware
+- **WHEN** a Generic controller uses either relative encoder mode
+- **AND** modulation changes the mapped post-modulation display position
+- **THEN** automatic Generic output emits the changed position on the turn mapping's same channel and CC
+- **AND** allocates, waits for, and resolves no absolute epoch
+
+#### Scenario: Explicit specialized output overrides Generic derivation
+- **WHEN** a Generic profile contains encoder input and an explicit Twister or WRLD.Bldr encoder output
+- **THEN** profile construction creates only the explicit specialized output
+- **AND** does not also create automatic Generic CC feedback
+
+#### Scenario: Generic profile without encoder input has no derived output
+- **WHEN** a Generic profile has no encoder input
+- **THEN** profile construction creates no automatic Generic encoder output

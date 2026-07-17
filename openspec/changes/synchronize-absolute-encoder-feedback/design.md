@@ -18,6 +18,7 @@ This design builds on the implemented `add-absolute-encoder-mode` change, specif
 - Acknowledge applied and deliberately rejected absolute messages so modifier rejection and routing changes cannot strand feedback.
 - Preserve pending coordination across live profile processor rebuilds and support multiple controllers mapped to the same cell.
 - Correct Twister primary-ring output without creating a separate cleanup project.
+- Make Generic encoder feedback automatic and protocol-minimal: one position CC on the same channel and CC as each turn input mapping.
 
 **Non-Goals:**
 
@@ -26,6 +27,7 @@ This design builds on the implemented `add-absolute-encoder-mode` change, specif
 - Adding Twister shifted-encoder support. This change stops writing the shifted channel unless such support is designed separately.
 - Changing the exact-target scene/gesture projection specified by `add-absolute-encoder-mode`.
 - Providing durable epochs across process restarts; epochs are runtime-local causal tokens.
+- Adding Generic color, brightness, animation, SysEx, or a separately configured Generic output mapping schema.
 
 ## Decisions
 
@@ -137,6 +139,20 @@ The implementation maintains these invariants:
 
 **Proof for rapid and multi-controller input.** Epochs are globally increasing and each route retains only its latest unresolved expectation. If several events arrive before publication, a snapshot with `A` below the latest `E` remains gated; a snapshot with `A >= E` contains a processed prefix including that event and resolves against the latest received byte. For two controllers sharing one cell, each has independent `(E,B,P)` state but compares against the cell's global processed epoch and actual center. The controller that supplied the final actual value suppresses its echo; any other controller whose asserted byte differs receives a correction. Therefore overwriting older expectations cannot release stale feedback or leave either device at a knowingly incorrect acknowledged position.
 
+### 8. Generic profiles derive one plain CC output from each turn mapping
+
+The Generic profile kind already permits encoder input but the Controllers UI does not create a separate `encoderOutput`. When a Generic profile has `encoderInput` and no explicit encoder output, profile construction creates a `GenericMidiOutProcessor` directly from `encoderInput.turns`. Each mapping retains its logical `(slotIx, position)` route and its complete input `MidiControlAddress`. On a position decision the processor sends exactly:
+
+`CC(mapping.control.channel, mapping.control.cc, V)`
+
+where `V` is the same position byte chosen by the existing absolute-or-relative position state machine. The Generic processor has only a per-mapping position cache and contains no appearance or protocol-specific send path. Thus one changed mapping produces at most one MIDI message, and that message cannot use a different address or carry color/brightness traffic.
+
+Engine assembly passes the controller's `MidiProfileKind` to `CreateMidiControllerProfile` through a trailing source-compatible argument. Automatic Generic output is created only when the supplied kind is `Generic`, encoder input exists, and `encoderOutput` is absent. An explicit Twister or WRLD.Bldr encoder output remains authoritative and suppresses automatic Generic construction. Direct/legacy factory callers that omit the kind retain their prior behavior.
+
+In Absolute mode, Generic input and output receive the same coordinator pointer and controller-slot identity. The processor reserves the same `(controllerSlot, parameterSlot, position)` records and invokes the existing guarded position decision, so invariants 1–6 and their proofs apply unchanged; only the final MIDI address is supplied by the input mapping instead of a protocol constant. In relative modes it invokes the same post-modulation position path without an active coordinator.
+
+**Generic address/purity invariant.** For every automatically derived Generic output mapping, every emitted position message uses exactly the corresponding turn input's channel and CC, and the processor emits no non-position message. This follows structurally because the only enqueue site accepts that stored input address and the processor has no color, brightness, SysEx, or auxiliary branches.
+
 ## Risks / Trade-offs
 
 - **[A short per-route guard can briefly delay a MIDI callback]** → Keep the section fixed-size and allocation-free, perform only nonblocking enqueue work inside it, and stress concurrent input/output in tests.
@@ -145,10 +161,11 @@ The implementation maintains these invariants:
 - **[A rejected event can cause a visible correction rather than silence]** → This is intentional: acknowledgement means the DSP decision is final, and the hardware must be restored to the actual center.
 - **[Raw-center quantization may expose floating error]** → Use the same normalized range mapping as absolute input and `round(127*x)`; the exact-target tolerance is far inside the half-step proof bound.
 - **[Removing channel `4` changes existing Twister output traffic]** → The removed traffic targeted the shifted encoder/ring contrary to the manual; tests pin the four correct channels and explicitly forbid primary position on channel `4`.
+- **[Automatic Generic feedback could duplicate an explicitly configured specialized output]** → Treat any explicit `encoderOutput` as an override and construct at most one encoder-output family per profile.
 
 ## Migration Plan
 
-No persisted profile schema changes are required. Existing Twister profiles retain their mappings; after deployment they stop receiving the erroneous shifted-ring CC. Runtime construction adds the coordinator and rebuild wiring in one release. Rollback restores the former feedback implementation without data migration.
+No persisted profile schema changes are required. Existing Twister profiles retain their mappings; after deployment they stop receiving the erroneous shifted-ring CC. Existing Generic profiles with explicit specialized output retain it, while ordinary Generic encoder-input profiles gain derived same-address CC feedback at runtime. Runtime construction adds the coordinator and rebuild wiring in one release. Rollback restores the former feedback implementation without data migration.
 
 ## Open Questions
 

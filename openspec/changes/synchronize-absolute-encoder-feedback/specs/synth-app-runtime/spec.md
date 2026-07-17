@@ -27,3 +27,9 @@ WHILE audio is running, THE runtime SHALL treat the audio thread as the sole con
 - **WHEN** live configuration rebuilds input and output processors while an absolute epoch is awaiting DSP acknowledgement
 - **THEN** the old processors may be replaced without destroying the engine-owned expectation
 - **AND** the new output processor observes the pending epoch before sending position feedback
+
+#### Scenario: Engine assembly identifies Generic profiles for derived output
+- **WHEN** the engine builds processors for a Generic controller with encoder input and no explicit encoder output
+- **THEN** it supplies the controller kind, stable controller-slot identity, and shared coordinator to profile construction
+- **AND** the resulting Generic output uses each turn mapping's input channel and CC
+- **AND** rebuilding processors preserves pending absolute expectations exactly as for explicit encoder outputs
