@@ -356,7 +356,7 @@ const char* FieldShortLabel(MidiMappingRowVM::Field field) {
         case Field::BlockMessageType:
             return "Type";
         case Field::AddressType:
-            return "Type";
+            return "Addr";
     }
     return "";
 }

@@ -551,6 +551,19 @@ int main()
             "typed system fixture has block and individual rows");
 
     const synth::ui::NodeTree typedTree = typedSurface.BuildTree();
+    const synth::ui::Node* blockMessageTypeHeader = FindNodeById(
+        typedTree,
+        synth::runtime_ui::NodeIds::GroupColumnLabel(
+            2, synth::MidiConfigSection::SystemMessages, 0, 0));
+    const synth::ui::Node* blockAddressTypeHeader = FindNodeById(
+        typedTree,
+        synth::runtime_ui::NodeIds::GroupColumnLabel(
+            2, synth::MidiConfigSection::SystemMessages, 0, 1));
+    Require(blockMessageTypeHeader != nullptr && blockMessageTypeHeader->text == "Type",
+            "Generic system block message-type header remains Type");
+    Require(blockAddressTypeHeader != nullptr && blockAddressTypeHeader->text == "Addr",
+            "Generic system block address-type header is distinct");
+
     auto requireTypeCombo = [&](synth::MidiConfigSection section, std::size_t rowIx,
                                 const std::string& selected) -> const synth::ui::Node* {
         const synth::ui::Node* node = FindNodeById(

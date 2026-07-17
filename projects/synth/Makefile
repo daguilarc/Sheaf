@@ -72,7 +72,7 @@ $(BUILD_DIR)/MidiReconcile.o: src/MidiReconcile.cpp include/synth/MidiReconcile.
 $(BUILD_DIR)/MidiDevicePoller.o: src/MidiDevicePoller.cpp include/synth/MidiDevicePoller.hpp include/synth/MidiReconcile.hpp include/synth/ThreadId.hpp include/synth/AsyncLogger.hpp | $(BUILD_SENTINEL)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/MidiConfigViewModel.o: src/MidiConfigViewModel.cpp include/synth/MidiConfigViewModel.hpp include/synth/MidiController.hpp include/synth/MidiReconcile.hpp | $(BUILD_SENTINEL)
+$(BUILD_DIR)/MidiConfigViewModel.o: src/MidiConfigViewModel.cpp include/synth/MidiConfigViewModel.hpp include/synth/MidiConfigBlocks.hpp include/synth/MidiController.hpp include/synth/MidiReconcile.hpp | $(BUILD_SENTINEL)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/MidiConfigBlocks.o: src/MidiConfigBlocks.cpp include/synth/MidiConfigBlocks.hpp include/synth/MidiController.hpp | $(BUILD_SENTINEL)
@@ -133,13 +133,13 @@ $(POLLER_TEST_BIN): tests/poller_tests.cpp $(LIB) include/synth/MidiDevicePoller
 $(MIDI_SENDER_TEST_BIN): tests/midi_sender_tests.cpp $(LIB) include/synth/MidiController.hpp include/synth/ParameterModulation.hpp
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< $(LIB) -o $@
 
-$(VIEWMODEL_TEST_BIN): tests/viewmodel_tests.cpp $(LIB) include/synth/MidiConfigViewModel.hpp include/synth/MidiController.hpp include/synth/MidiReconcile.hpp
+$(VIEWMODEL_TEST_BIN): tests/viewmodel_tests.cpp $(LIB) include/synth/MidiConfigViewModel.hpp include/synth/MidiConfigBlocks.hpp include/synth/MidiController.hpp include/synth/MidiReconcile.hpp
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< $(LIB) -o $@
 
 $(BLOCKS_TEST_BIN): tests/blocks_tests.cpp $(LIB) include/synth/MidiConfigBlocks.hpp include/synth/MidiController.hpp
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< $(LIB) -o $@
 
-$(PORTABLE_UI_TEST_BIN): tests/portable_ui_tests.cpp apps/miniapp/MiniAppDraw.hpp apps/braid-4/Braid4Draw.hpp apps/braid-4/Braid4UiModel.hpp apps/braid-4/Braid4Core.hpp include/synth/EncoderDraw.hpp include/synth/PortableUI.hpp include/synth/PortableUIBuilders.hpp include/synth/ConstantBarVisualizer.hpp include/synth/NoiseWaveformVisualizer.hpp include/synth/DspConstant.hpp include/synth/DspNoise.hpp include/synth/RuntimePages.hpp include/synth/ControllersPageUI.hpp include/synth/AppConcepts.hpp $(STANDARD_MODULATOR_HEADERS) $(LIB)
+$(PORTABLE_UI_TEST_BIN): tests/portable_ui_tests.cpp apps/miniapp/MiniAppDraw.hpp apps/braid-4/Braid4Draw.hpp apps/braid-4/Braid4UiModel.hpp apps/braid-4/Braid4Core.hpp include/synth/EncoderDraw.hpp include/synth/PortableUI.hpp include/synth/PortableUIBuilders.hpp include/synth/ConstantBarVisualizer.hpp include/synth/NoiseWaveformVisualizer.hpp include/synth/DspConstant.hpp include/synth/DspNoise.hpp include/synth/RuntimePages.hpp include/synth/ControllersPageUI.hpp include/synth/MidiConfigBlocks.hpp include/synth/AppConcepts.hpp $(STANDARD_MODULATOR_HEADERS) $(LIB)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< $(LIB) -o $@
 
 $(RUNTIME_MAIN_COMPONENT_TEST_BIN): tests/runtime_main_component_tests.cpp include/synth/RuntimeMainComponent.hpp include/synth/AppConcepts.hpp include/synth/ControllersPageUI.hpp include/synth/MidiConfigViewModel.hpp include/synth/RuntimePages.hpp include/synth/RuntimePagePolicy.hpp $(LIB)
@@ -148,7 +148,7 @@ $(RUNTIME_MAIN_COMPONENT_TEST_BIN): tests/runtime_main_component_tests.cpp inclu
 $(RUNTIME_FILE_SERVICE_TEST_BIN): tests/runtime_file_service_tests.cpp include/synth/RuntimeFileService.hpp include/synth/RuntimePages.hpp $(LIB)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< $(LIB) -o $@
 
-$(CONTROLLERS_PAGE_UI_TEST_BIN): tests/controllers_page_ui_tests.cpp include/synth/ControllersPageUI.hpp include/synth/MidiConfigViewModel.hpp $(LIB)
+$(CONTROLLERS_PAGE_UI_TEST_BIN): tests/controllers_page_ui_tests.cpp include/synth/ControllersPageUI.hpp include/synth/MidiConfigViewModel.hpp include/synth/MidiConfigBlocks.hpp $(LIB)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< $(LIB) -o $@
 
 $(BROWSER_CONTRACT_TEST_BIN): tests/browser_runtime_contract_tests.cpp include/synth/browser/BrowserAppEntry.hpp include/synth/browser/BrowserRuntime.hpp include/synth/browser/BrowserRuntimeMainServices.hpp include/synth/browser/BrowserAudioDevices.hpp include/synth/browser/BrowserMidiBridge.hpp include/synth/browser/BrowserCommandBuffer.hpp include/synth/RuntimeMainComponent.hpp include/synth/RuntimeFileService.hpp include/synth/AppConcepts.hpp include/synth/AppContext.hpp include/synth/Engine.hpp include/synth/PortableUI.hpp $(LIB)

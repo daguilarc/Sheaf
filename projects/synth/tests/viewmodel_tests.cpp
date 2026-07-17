@@ -4447,7 +4447,9 @@ TEST_CASE(ControlAddressTypeCatalogAndFieldMetadataAreDistinct) {
     REQUIRE_TRUE(catalog[0] == "CC");
     REQUIRE_TRUE(catalog[1] == "Note");
     REQUIRE_TRUE(!FieldIsInteger(MidiMappingRowVM::Field::AddressType));
-    REQUIRE_TRUE(std::string(FieldShortLabel(MidiMappingRowVM::Field::AddressType)) == "Type");
+    REQUIRE_TRUE(std::string(FieldShortLabel(MidiMappingRowVM::Field::AddressType)) == "Addr");
+    REQUIRE_TRUE(std::string(FieldShortLabel(MidiMappingRowVM::Field::AddressType)) !=
+                 FieldShortLabel(MidiMappingRowVM::Field::BlockMessageType));
     REQUIRE_TRUE(MidiMappingRowVM::Field::AddressType != MidiMappingRowVM::Field::MessageKind);
     REQUIRE_TRUE(MidiMappingRowVM::Field::AddressType != MidiMappingRowVM::Field::BlockMessageType);
 }
@@ -4629,6 +4631,57 @@ TEST_CASE(AddressTypeBlockEditsExpandToNoteMappings) {
                            : 0;
     }
     REQUIRE_TRUE(noteSystems == 2);
+}
+
+TEST_CASE(AddressTypeBlockInvalidIndicesLeaveOutputAndPresentationUnchanged) {
+    MidiInstrumentConfig instrument = MakeAddressTypeViewModelInstrument();
+    MidiConfigViewModel vm;
+    vm.Rebuild(instrument, MakeFourKindConnection());
+
+    struct BlockCase {
+        MidiConfigSection section;
+        MidiMappingRowVM::RowGroup group;
+    };
+    const BlockCase cases[] = {
+        {MidiConfigSection::Encoders, MidiMappingRowVM::RowGroup::EncoderPush},
+        {MidiConfigSection::SystemMessages, MidiMappingRowVM::RowGroup::System},
+    };
+
+    for (const BlockCase& blockCase : cases) {
+        const std::vector<MidiMappingRowVM> rows = vm.SectionRows(3, blockCase.section);
+        std::size_t blockIx = SIZE_MAX;
+        for (std::size_t ix = 0; ix < rows.size(); ++ix) {
+            if (rows[ix].group == blockCase.group && rows[ix].kind == MidiMappingRowVM::Kind::Block) {
+                blockIx = ix;
+                break;
+            }
+        }
+        REQUIRE_TRUE(blockIx != SIZE_MAX);
+
+        double beforeValue = -1.0;
+        REQUIRE_TRUE(vm.RowFieldValue(3, blockCase.section, blockIx,
+                                      MidiMappingRowVM::Field::AddressType, beforeValue));
+        REQUIRE_TRUE(beforeValue == 0.0);
+
+        for (double invalid : {-1.0, 0.5, 2.0}) {
+            MidiInstrumentConfig out;
+            out.controllers.push_back(MakeGenericSlot("sentinel"));
+            const std::string beforeOut = DumpInstrument(out);
+            std::string reason;
+            bool presentationChanged = true;
+            REQUIRE_TRUE(!vm.ApplyMappingEdit(3, blockCase.section, blockIx,
+                                              MidiMappingRowVM::Field::AddressType, invalid, out, &reason,
+                                              &presentationChanged));
+            REQUIRE_TRUE(!presentationChanged);
+            REQUIRE_TRUE(!reason.empty());
+            REQUIRE_TRUE(DumpInstrument(out) == beforeOut);
+
+            double afterValue = -1.0;
+            REQUIRE_TRUE(vm.RowFieldValue(3, blockCase.section, blockIx,
+                                          MidiMappingRowVM::Field::AddressType, afterValue));
+            REQUIRE_TRUE(afterValue == beforeValue);
+        }
+    }
 }
 
 int Main() {
