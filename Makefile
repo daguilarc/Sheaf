@@ -2,7 +2,7 @@ MAKEFLAGS += --warn-undefined-variables
 
 PROJECTS := conductor web quest-runner dictator realtime-agent sheaf-chat agents xagent synth
 
-.PHONY: all clean test help
+.PHONY: all clean test help openspec-check
 .PHONY: $(PROJECTS)
 .PHONY: conductor-build conductor-test conductor-run conductor-clean
 .PHONY: web-build web-test web-clean
@@ -34,7 +34,11 @@ test:
 	for project in $(PROJECTS); do \
 		$(MAKE) -C projects/$$project test || status=$$?; \
 	done; \
+	$(MAKE) openspec-check || status=$$?; \
 	exit $$status
+
+openspec-check:
+	python3 -m unittest tests/openspec_requirement_ids_test.py
 
 conductor-build:
 	$(MAKE) -C projects/conductor build

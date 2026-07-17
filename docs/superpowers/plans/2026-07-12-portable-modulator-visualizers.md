@@ -39,7 +39,7 @@
 - Modify `projects/synth/tests/parameter_modulation_tests.cpp`: metadata/config/UI-state/persistence/null/disconnected tests.
 - Modify `projects/synth/tests/miniapp_system_tests.cpp`: MiniApp topology and visualizer-under-encoder tests.
 - Modify `projects/synth/tests/braid4_system_tests.cpp`: Braid 4 null visualizer and encoder-only tree tests.
-- Modify `projects/synth/docs/coverage.md`: map `spv-1` through `spv-5`, `spm-70`, `sru-24`, `sdsp-33`, and `d4-9`.
+- Modify `projects/synth/docs/coverage.md`: map `spv-1` through `spv-5`, `spm-81`, `sru-24`, `sdsp-33`, and `d4-9`.
 - Modify `openspec/changes/add-portable-modulator-visualizers/tasks.md`: mark checkboxes only after matching implementation, review, and verification pass.
 
 ---
@@ -776,7 +776,7 @@ Add rows in `projects/synth/docs/coverage.md` for:
 | `spv-3` | covered | `projects/synth/tests/portable_ui_tests.cpp` scope visualizer reads updated atomic model state without reconstruction; MiniApp retains app-owned instances |
 | `spv-4` | covered | `projects/synth/tests/portable_ui_tests.cpp` `Builder::Visualizer` emits visible node and omits hidden node |
 | `spv-5` | covered | `projects/synth/tests/portable_ui_tests.cpp` scope visualizer snapshots connected/color/scope/channel fields and keeps waveform geometry in bounds |
-| `spm-70` | covered | `projects/synth/tests/parameter_modulation_tests.cpp` visualizer topology flows metadata -> depth config -> UI state, clears on disconnect, and stays out of JSON |
+| `spm-81` | covered | `projects/synth/tests/parameter_modulation_tests.cpp` visualizer topology flows metadata -> depth config -> UI state, clears on disconnect, and stays out of JSON |
 | `sru-24` | covered | `projects/synth/tests/miniapp_system_tests.cpp` visualizer node shares encoder bounds, precedes encoder, and encoder actions remain; null/hidden paths in portable/Braid tests |
 | `sdsp-33` | covered | `projects/synth/tests/miniapp_system_tests.cpp` MiniApp constructs visible distinct VCO visualizers and one LFO visualizer |
 | `d4-9` | covered | `projects/synth/tests/braid4_system_tests.cpp` all Braid 4 modulator visualizers are null and modulation view is encoder-only |

@@ -4,7 +4,7 @@
 
 **Goal:** Repair the duplicate live `spm-*` requirement identifiers and prevent future live-spec collisions.
 
-**Architecture:** A repository-level unittest scans only `openspec/specs/**/spec.md` headings and reports every duplicated conventional requirement ID with source locations. The live spec and current coverage references are renumbered minimally; archived OpenSpec deltas remain immutable.
+**Architecture:** A repository-level unittest scans `spm-*` headings in the live `synth-parameter-modulation` spec and reports every duplicated ID with source locations. The live spec and current coverage references are renumbered minimally; archived OpenSpec deltas remain immutable.
 
 **Tech Stack:** Python 3 standard-library `unittest`, GNU Make, Markdown/OpenSpec.
 
@@ -13,7 +13,7 @@
 - Keep the first live use of `spm-69` and `spm-70` unchanged.
 - Rename the later uses to `spm-80` and `spm-81` respectively.
 - Do not edit `openspec/changes/archive/`.
-- Scan only live specifications under `openspec/specs/`.
+- Scan only the live `openspec/specs/synth-parameter-modulation/spec.md` capability.
 
 ---
 
@@ -24,22 +24,23 @@
 - Modify: `Makefile`
 
 **Interfaces:**
-- Consumes: Markdown headings shaped as `### Requirement: <prefix>-<number> ...`.
+- Consumes: Markdown headings shaped as `### Requirement: spm-<number> ...`.
 - Produces: `make openspec-check`, returning nonzero with all duplicate IDs and locations.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
-Create a unittest that recursively scans `openspec/specs/`, records matching
-heading IDs and line numbers, and asserts that no ID has multiple occurrences.
+Create a unittest that scans the live `synth-parameter-modulation` spec,
+records matching `spm-*` heading IDs and line numbers, and asserts that no ID
+has multiple occurrences.
 
-- [ ] **Step 2: Run the focused test to verify it fails**
+- [x] **Step 2: Run the focused test to verify it fails**
 
 Run: `python3 -m unittest tests/openspec_requirement_ids_test.py`
 
 Expected: failure listing both `spm-69` and `spm-70` with their two live source
 locations.
 
-- [ ] **Step 3: Wire the check into Make**
+- [x] **Step 3: Wire the check into Make**
 
 Add an `openspec-check` target that runs the focused unittest. Invoke that
 target from the root `test` recipe while preserving the existing behavior of
@@ -56,18 +57,18 @@ running every project test even when one project fails.
 - Consumes: Existing human-readable `spm-*` references.
 - Produces: Unique live IDs with visualizer references consistently using `spm-81`.
 
-- [ ] **Step 1: Apply the minimal renumbering**
+- [x] **Step 1: Apply the minimal renumbering**
 
 Rename only `Parameter appearance registration` from `spm-69` to `spm-80`
 and `UI topology: optional modulator visualizer publication` from `spm-70` to
 `spm-81`.
 
-- [ ] **Step 2: Update current references**
+- [x] **Step 2: Update current references**
 
 Change the live coverage row and portable-visualizer implementation-plan
 references from `spm-70` to `spm-81`. Do not update archived change artifacts.
 
-- [ ] **Step 3: Run focused verification**
+- [x] **Step 3: Run focused verification**
 
 Run: `make openspec-check`
 
@@ -82,7 +83,7 @@ Expected: one passing test.
 - Consumes: Root repository validation and Git landing workflow.
 - Produces: A linear commit landed on and pushed from `main`.
 
-- [ ] **Step 1: Validate OpenSpec and references**
+- [x] **Step 1: Validate OpenSpec and references**
 
 Run: `openspec validate --all --json`
 
@@ -93,7 +94,7 @@ Run a live-heading duplicate scan and repository reference search.
 Expected: no duplicate live `spm-*` headings; only historical archived files
 retain the former IDs for the renamed requirements.
 
-- [ ] **Step 2: Review the diff and user-owned files**
+- [x] **Step 2: Review the diff and user-owned files**
 
 Confirm the diff contains only the planned files and leaves the existing
 untracked `projects/synth/browser/package-lock.json` and

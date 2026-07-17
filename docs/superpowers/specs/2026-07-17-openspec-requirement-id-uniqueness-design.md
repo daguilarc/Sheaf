@@ -27,10 +27,11 @@ used when those changes were created. Do not reuse removed `spm-53`.
 
 ## Regression Guard
 
-Add a repository-level unittest that scans requirement headings beneath
-`openspec/specs/` and fails when a conventional `<prefix>-<number>` identifier
-appears more than once. Scope the scan to live specs so archived deltas and
-active change overlays do not produce false positives. Expose the check through
+Add a repository-level unittest that scans `spm-*` requirement headings in the
+live `synth-parameter-modulation` specification and fails when an identifier
+appears more than once. Scope the scan to that live capability so archived
+deltas, active change overlays, and intentionally reused generic prefixes in
+other capability files do not produce false positives. Expose the check through
 the root Makefile and include it in the root `test` target.
 
 ## Verification

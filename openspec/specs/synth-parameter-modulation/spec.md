@@ -2189,14 +2189,14 @@ WHEN a parameter group is processed at a sample rate different from its referenc
 - **WHEN** valid timing is installed while audio is stopped
 - **THEN** the operation performs no heap allocation and does not rebuild parameter storage
 
-### Requirement: spm-69 — Parameter appearance registration
+### Requirement: spm-80 — Parameter appearance registration
 WHEN `ParameterManager` registers a parameter, THE manager SHALL resolve `ParameterConfig::indicatorColors` against the owning group's voice count by broadcasting the base color for an empty palette, broadcasting one explicit color, accepting exactly one color per voice, and rejecting any other nonzero cardinality atomically; modulation-depth parameters SHALL use their modulation source color as base and inherit their target parameter's resolved indicator colors.
 
 #### Scenario: Invalid indicator cardinality preserves registration state
 - **WHEN** a four-voice registration supplies two indicator colors
 - **THEN** registration throws before parameter count, group allocation count, name registry, or bank mappings change
 
-### Requirement: spm-70 — UI topology: optional modulator visualizer publication
+### Requirement: spm-81 — UI topology: optional modulator visualizer publication
 WHEN a modulation source is registered, THE synth parameter modulation system SHALL allow its `ModulatorMetadata` to carry a nullable non-owning portable `Visualizer*`; SHALL copy that association into the corresponding materialized modulation-depth parameter configuration; SHALL publish it atomically through that parameter's `Parameter::UIState` within the existing snapshot transaction; and SHALL publish null for disconnected cells, ordinary parameters, and modulators configured without a visualizer.
 
 #### Scenario: Modulation-depth cell publishes its source visualizer
