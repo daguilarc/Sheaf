@@ -277,6 +277,81 @@ int main()
     }
 
     {
+        RecordingSurface scrollSurface;
+        scrollSurface.tree.nodes = {
+            {.id = synth::ui::NodeId("root"),
+             .kind = synth::ui::NodeKind::Root,
+             .bounds = {0.0f, 0.0f, 640.0f, 480.0f},
+             .children = {synth::ui::NodeId("scroll")}},
+            {.id = synth::ui::NodeId("scroll"),
+             .kind = synth::ui::NodeKind::ScrollArea,
+             .bounds = {20.0f, 30.0f, 180.0f, 90.0f},
+             .scrollContentWidth = 420.0f,
+             .scrollContentHeight = 360.0f,
+             .children = {synth::ui::NodeId("row.a"),
+                          synth::ui::NodeId("row.b"),
+                          synth::ui::NodeId("final")}},
+            {.id = synth::ui::NodeId("row.a"),
+             .kind = synth::ui::NodeKind::Row,
+             .bounds = {0.0f, 0.0f, 420.0f, 60.0f}},
+            {.id = synth::ui::NodeId("row.b"),
+             .kind = synth::ui::NodeKind::Row,
+             .bounds = {0.0f, 80.0f, 420.0f, 60.0f}},
+            {.id = synth::ui::NodeId("final"),
+             .kind = synth::ui::NodeKind::Button,
+             .bounds = {330.0f, 300.0f, 72.0f, 28.0f},
+             .label = "Final",
+             .action = synth::ui::Action::Named("final")},
+        };
+
+        synth_juce::PortableComponent component(scrollSurface);
+        component.setSize(640, 480);
+        component.RefreshFromSurface();
+
+        auto* scroll = component.FindByNodeId("scroll");
+        auto* rowA = component.FindByNodeId("row.a");
+        auto* rowB = component.FindByNodeId("row.b");
+        auto* finalButton = component.FindByNodeId("final");
+        Require(scroll != nullptr && rowA != nullptr && rowB != nullptr && finalButton != nullptr,
+                "scroll fixture nodes are all retained");
+        auto* viewport = dynamic_cast<juce::Viewport*>(scroll->getChildComponent(0));
+        Require(viewport != nullptr, "scroll area owns a JUCE viewport");
+        Require(rowA->getParentComponent() == viewport->getViewedComponent()
+                    && rowB->getParentComponent() == viewport->getViewedComponent(),
+                "scroll rows are hosted by the viewed content component");
+        Require(SurfaceBoundsOf(component, *scroll) == juce::Rectangle<int>(20, 30, 180, 90),
+                "viewport keeps declared visible bounds");
+        Require(viewport->getViewedComponent()->getWidth() == 420
+                    && viewport->getViewedComponent()->getHeight() == 360,
+                "scroll content uses declared two-axis extent");
+        Require(!SurfaceBoundsOf(component, *viewport).intersects(
+                    SurfaceBoundsOf(component, *finalButton)),
+                "final button begins outside the visible viewport");
+        viewport->setViewPosition(240, 270);
+        Require(viewport->getViewPositionX() > 0 && viewport->getViewPositionY() > 0,
+                "viewport scrolls on both axes");
+        Require(SurfaceBoundsOf(component, *viewport).intersects(
+                    SurfaceBoundsOf(component, *finalButton)),
+                "final button is reachable after scrolling");
+
+        const int retainedViewX = viewport->getViewPositionX();
+        const int retainedViewY = viewport->getViewPositionY();
+        component.RefreshFromSurface();
+        Require(viewport->getViewPositionX() == retainedViewX
+                    && viewport->getViewPositionY() == retainedViewY,
+                "viewport position survives refresh for a stable scroll node");
+        Require(SurfaceBoundsOf(component, *viewport).intersects(
+                    SurfaceBoundsOf(component, *finalButton)),
+                "scrolled descendant remains reachable after refresh");
+
+        scrollSurface.tree.nodes[1].scrollContentWidth = 180.0f;
+        scrollSurface.tree.nodes[1].scrollContentHeight = 90.0f;
+        component.RefreshFromSurface();
+        Require(viewport->getViewPositionX() == 0 && viewport->getViewPositionY() == 0,
+                "viewport position is clamped when content shrinks");
+    }
+
+    {
         RecordingSurface dragSurface;
         synth::ui::Builder dragBuilder;
         dragBuilder.Root("root", synth::ui::Bounds{0.0f, 0.0f, 320.0f, 240.0f})

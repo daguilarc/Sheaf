@@ -322,6 +322,49 @@ private:
         bool selected_ = false;
     };
 
+    class PortableScrollAreaComponent final : public juce::Component
+    {
+    public:
+        PortableScrollAreaComponent()
+        {
+            viewport_.setViewedComponent(&content_, false);
+            viewport_.setScrollBarsShown(true, true);
+            addAndMakeVisible(viewport_);
+        }
+
+        juce::Component& ContentComponent() noexcept
+        {
+            return content_;
+        }
+
+        juce::Viewport& Viewport() noexcept
+        {
+            return viewport_;
+        }
+
+        void SetSemantics(std::string variant, bool selected)
+        {
+            content_.SetSemantics(std::move(variant), selected);
+        }
+
+        void SetContentExtent(int width, int height)
+        {
+            const juce::Point<int> viewPosition = viewport_.getViewPosition();
+            viewport_.setViewPosition(0, 0);
+            content_.setSize(std::max(getWidth(), width), std::max(getHeight(), height));
+            viewport_.setViewPosition(viewPosition);
+        }
+
+        void resized() override
+        {
+            viewport_.setBounds(getLocalBounds());
+        }
+
+    private:
+        SemanticPanelComponent content_;
+        juce::Viewport viewport_;
+    };
+
     class SemanticTextButton final : public juce::TextButton
     {
     public:
@@ -707,7 +750,13 @@ private:
             if (control != m_controlIndexById.end()
                 && IsSemanticHostKind(m_controls[control->second].kind))
             {
-                return m_controls[control->second].component.get();
+                juce::Component* host = m_controls[control->second].component.get();
+                if (m_controls[control->second].kind == synth::ui::NodeKind::ScrollArea)
+                {
+                    auto& scroll = static_cast<PortableScrollAreaComponent&>(*host);
+                    return &scroll.ContentComponent();
+                }
+                return host;
             }
             const auto parentResolved = m_resolvedByNodeId.find(parentId->value);
             parentId = parentResolved != m_resolvedByNodeId.end()
@@ -726,7 +775,16 @@ private:
     juce::Rectangle<int> HostLocalBounds(const ResolvedNode& resolved,
                                          const juce::Component& host) const
     {
-        return host.getLocalArea(this, resolved.surfaceBounds);
+        juce::Rectangle<int> bounds = host.getLocalArea(this, resolved.surfaceBounds);
+        for (const juce::Component* ancestor = &host; ancestor != nullptr;
+             ancestor = ancestor->getParentComponent())
+        {
+            if (const auto* viewport = dynamic_cast<const juce::Viewport*>(ancestor))
+            {
+                bounds.translate(-viewport->getViewPositionX(), -viewport->getViewPositionY());
+            }
+        }
+        return bounds;
     }
 
     void DispatchBackendAction(const synth::ui::Action& action)
@@ -1020,9 +1078,12 @@ private:
             }
             case synth::ui::NodeKind::Row:
             case synth::ui::NodeKind::Section:
-            case synth::ui::NodeKind::ScrollArea:
             {
                 return std::make_unique<SemanticPanelComponent>();
+            }
+            case synth::ui::NodeKind::ScrollArea:
+            {
+                return std::make_unique<PortableScrollAreaComponent>();
             }
             case synth::ui::NodeKind::Button:
             {
@@ -1155,10 +1216,17 @@ private:
         {
             case synth::ui::NodeKind::Row:
             case synth::ui::NodeKind::Section:
-            case synth::ui::NodeKind::ScrollArea:
             {
                 auto& panel = static_cast<SemanticPanelComponent&>(component);
                 panel.SetSemantics(node.variant, node.selected);
+                break;
+            }
+            case synth::ui::NodeKind::ScrollArea:
+            {
+                auto& scroll = static_cast<PortableScrollAreaComponent&>(component);
+                scroll.SetSemantics(node.variant, node.selected);
+                scroll.SetContentExtent(static_cast<int>(std::lround(node.scrollContentWidth)),
+                                        static_cast<int>(std::lround(node.scrollContentHeight)));
                 break;
             }
             case synth::ui::NodeKind::Label:
