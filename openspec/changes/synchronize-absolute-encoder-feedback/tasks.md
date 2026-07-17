@@ -9,8 +9,8 @@
 
 ## 3. Absolute Output and Twister Protocol
 
-- [ ] 3.1 Add causal-output tests, then implement pending-epoch gating, stable-snapshot resolution, exact received-byte suppression, forced rejection correction, enqueue retry, and normal debounce resumption for absolute routes only.
-- [ ] 3.2 Correct Twister output in the same processor change: make channel `0` the sole primary encoder/ring position path, remove channel `4` position output and cache state, retain channels `1`, `2`, and `5`, introduce clear protocol names/constants, and update blank/reset expectations from five messages to four.
+- [x] 3.1 Add causal-output tests, then implement pending-epoch gating, stable-snapshot resolution, exact received-byte suppression, forced rejection correction, enqueue retry, and normal debounce resumption for absolute routes only.
+- [x] 3.2 Correct Twister output in the same processor change: make channel `0` the sole primary encoder/ring position path, remove channel `4` position output and cache state, retain channels `1`, `2`, and `5`, introduce clear protocol names/constants, and update blank/reset expectations from five messages to four.
 
 ## 4. Integration and Verification
 
