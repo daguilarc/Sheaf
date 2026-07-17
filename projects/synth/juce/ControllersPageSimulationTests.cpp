@@ -9,6 +9,7 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include <algorithm>
 
 namespace {
 
@@ -184,6 +185,304 @@ std::vector<synth::ui::Action> CollectActions(const synth::ui::NodeTree& tree, i
     return actions;
 }
 
+struct GridOracleSeed
+{
+    synth::MidiControllerSystemMessageAssociation legacy;
+    std::vector<synth::PolyphonicPressureMapping> hidden;
+};
+
+GridOracleSeed SeedGridSimulation(synth_runtime::test::ControllersHarnessFixture& fixture)
+{
+    auto& slot = fixture.state.instrument.controllers[1];
+    slot.config.systemMessages.clear();
+    slot.config.pressureInput = synth::PolyphonicPressureMidiInConfig{};
+
+    synth::GridBlock block;
+    block.kind = synth::MidiProfileKind::Launchpad;
+    block.startX = 0;
+    block.startY = -1;
+    block.endX = 2;
+    block.endY = 0;
+    block.gridSlotIx = 7;
+    synth::GridMappingExpansion expansion;
+    Require(synth::ExpandGridBlock(block, expansion), "grid simulation seed expansion");
+    slot.config.systemMessages = expansion.systemMessages;
+    slot.config.pressureInput->mappings = expansion.pressureMappings;
+
+    GridOracleSeed seed;
+    seed.legacy.launchpadPosition = synth::LaunchpadGridPosition{
+        .controller = synth::LaunchpadController::LaunchpadX, .x = 7, .y = 7};
+    seed.legacy.press = synth::MessageIn::SceneSelect(0, 19);
+    seed.legacy.feedback = seed.legacy.press;
+    seed.legacy.outputFeedback = true;
+    slot.config.systemMessages.push_back(seed.legacy);
+
+    for (int ix = 0; ix < 2; ++ix)
+    {
+        synth::PolyphonicPressureMapping orphan;
+        orphan.address = synth::MidiNoteAddress{.channel = static_cast<std::uint8_t>(14 + ix),
+                                                .note = static_cast<std::uint8_t>(126 + ix)};
+        orphan.pressure = synth::MessageIn::GridPressureChange(
+            0, 90 + static_cast<std::size_t>(ix), -20 - ix, 30 + ix,
+            static_cast<std::uint8_t>(40 + ix));
+        seed.hidden.push_back(orphan);
+        slot.config.pressureInput->mappings.push_back(orphan);
+    }
+    synth::NormalizeMidiProfileConfig(slot.config, slot.kind);
+    return seed;
+}
+
+std::optional<synth::MidiNoteAddress> PhysicalAddress(
+    const synth::MidiControllerSystemMessageAssociation& association)
+{
+    if (association.launchpadPosition.has_value())
+    {
+        const auto& position = *association.launchpadPosition;
+        const auto note = synth::LaunchpadPositionToNote(position.controller, position.x, position.y);
+        if (note.has_value())
+        {
+            return synth::MidiNoteAddress{.channel = 0, .note = *note};
+        }
+    }
+    if (association.control.has_value())
+    {
+        return synth::MidiNoteAddress{.channel = association.control->channel, .note = association.control->cc};
+    }
+    return std::nullopt;
+}
+
+void VerifyGridProfileIndependent(const synth::MidiControllerSlot& slot, const GridOracleSeed& seed, int step)
+{
+    Require(slot.config.pressureInput.has_value(), "grid oracle pressure container missing step " +
+                                                      std::to_string(step));
+    const auto& pressure = slot.config.pressureInput->mappings;
+    std::size_t visibleCells = 0;
+    std::size_t legacyCount = 0;
+    for (const auto& association : slot.config.systemMessages)
+    {
+        if (association.press.type != synth::MessageIn::Type::GridPress)
+        {
+            const bool sameLaunchpad = association.launchpadPosition.has_value() &&
+                                       seed.legacy.launchpadPosition.has_value() &&
+                                       association.launchpadPosition->controller ==
+                                           seed.legacy.launchpadPosition->controller &&
+                                       association.launchpadPosition->x == seed.legacy.launchpadPosition->x &&
+                                       association.launchpadPosition->y == seed.legacy.launchpadPosition->y;
+            legacyCount += !association.control.has_value() && !association.wrldBldrPosition.has_value() &&
+                                   sameLaunchpad &&
+                                   association.press == seed.legacy.press &&
+                                   association.release == seed.legacy.release &&
+                                   association.feedback == seed.legacy.feedback &&
+                                   association.outputFeedback == seed.legacy.outputFeedback
+                               ? 1
+                               : 0;
+            continue;
+        }
+        ++visibleCells;
+        Require(association.release.has_value() &&
+                    association.release->type == synth::MessageIn::Type::GridRelease &&
+                    association.release->gridSlotIx == association.press.gridSlotIx &&
+                    association.release->gridX == association.press.gridX &&
+                    association.release->gridY == association.press.gridY,
+                "grid oracle release mismatch step " + std::to_string(step));
+        Require(association.feedback.type == synth::MessageIn::Type::GridPress &&
+                    association.feedback.gridSlotIx == association.press.gridSlotIx &&
+                    association.feedback.gridX == association.press.gridX &&
+                    association.feedback.gridY == association.press.gridY,
+                "grid oracle feedback mismatch step " + std::to_string(step));
+        const auto physical = PhysicalAddress(association);
+        Require(physical.has_value(), "grid oracle physical address missing step " + std::to_string(step));
+        std::size_t exactPressure = 0;
+        for (const auto& mapping : pressure)
+        {
+            exactPressure += mapping.address == *physical &&
+                                     mapping.pressure.type == synth::MessageIn::Type::GridPressureChange &&
+                                     mapping.pressure.gridSlotIx == association.press.gridSlotIx &&
+                                     mapping.pressure.gridX == association.press.gridX &&
+                                     mapping.pressure.gridY == association.press.gridY
+                                 ? 1
+                                 : 0;
+        }
+        Require(exactPressure == 1,
+                "grid oracle expected one exact pressure pair step " + std::to_string(step));
+    }
+    Require(legacyCount == 1, "grid oracle legacy row changed step " + std::to_string(step));
+    Require(pressure.size() == visibleCells + seed.hidden.size(),
+            "grid oracle unexpected pressure count step " + std::to_string(step));
+    for (const auto& orphan : seed.hidden)
+    {
+        Require(std::count(pressure.begin(), pressure.end(), orphan) == 1,
+                "grid oracle hidden orphan bytes changed step " + std::to_string(step));
+    }
+}
+
+std::vector<std::size_t> GridRows(const synth::runtime_ui::ControllersPageSurface& surface,
+                                  synth::MidiMappingRowVM::Kind kind)
+{
+    std::vector<std::size_t> result;
+    const auto rows = surface.ViewModel().SectionRows(1, synth::MidiConfigSection::SystemMessages);
+    for (std::size_t ix = 0; ix < rows.size(); ++ix)
+    {
+        if (rows[ix].group == synth::MidiMappingRowVM::RowGroup::Grid && rows[ix].kind == kind)
+        {
+            result.push_back(ix);
+        }
+    }
+    return result;
+}
+
+void RunGridSimulation()
+{
+    constexpr std::uint32_t kGridSeed = 0x6A1D2026;
+    constexpr int kOperations = 320;
+    std::mt19937 rng(kGridSeed);
+    synth_runtime::test::ControllersHarnessFixture fixture;
+    const GridOracleSeed oracle = SeedGridSimulation(fixture);
+    synth::runtime_ui::ControllersPageSurface surface = fixture.MakeSurface();
+    surface.SetContentBounds({0.0f, 0.0f, 980.0f, 300.0f});
+    surface.MarkDirty();
+    surface.RefreshOnTick();
+
+    // Malformed integer text must not be interpreted as zero and committed.
+    const std::size_t seededBlock = GridRows(surface, synth::MidiMappingRowVM::Kind::Block).front();
+    const int commitsBeforeMalformed = fixture.state.commits;
+    surface.DispatchAction(synth::ui::Action::WithValue(
+        synth::runtime_ui::Actions::kMappingFieldCommit,
+        "1:system_messages:" + std::to_string(seededBlock) + ":" +
+            synth::runtime_ui::ControllersLayout::FieldToken(synth::MidiMappingRowVM::Field::GridSlotIx) +
+            ":not-an-integer"));
+    Require(fixture.state.commits == commitsBeforeMalformed, "malformed grid integer committed");
+
+    surface.DispatchAction(synth::ui::Action::WithValue(synth::runtime_ui::Actions::kToggleConfig, "1"));
+    surface.DispatchAction(synth::ui::Action::WithValue(synth::runtime_ui::Actions::kToggleSection,
+                                                        "1:system_messages"));
+    synth_runtime::ControllersTreeRenderer renderer(surface);
+    renderer.setSize(980, 300);
+    int accepted = 0;
+
+    for (int step = 0; step < kOperations; ++step)
+    {
+        const int commitsBefore = fixture.state.commits;
+        const int action = step % 8;
+        if (action == 0)
+        {
+            surface.DispatchAction(synth::ui::Action::WithValue(
+                synth::runtime_ui::Actions::kAddSingle, "1:system_messages:grid"));
+        }
+        else if (action == 1)
+        {
+            surface.DispatchAction(synth::ui::Action::WithValue(
+                synth::runtime_ui::Actions::kAddBlock, "1:system_messages:grid"));
+        }
+        else if (action == 2)
+        {
+            const auto rows = GridRows(surface, synth::MidiMappingRowVM::Kind::Individual);
+            if (!rows.empty())
+            {
+                const std::size_t rowIx = rows[rng() % rows.size()];
+                surface.DispatchAction(synth::ui::Action::WithValue(
+                    synth::runtime_ui::Actions::kMappingFieldCommit,
+                    "1:system_messages:" + std::to_string(rowIx) + ":" +
+                        synth::runtime_ui::ControllersLayout::FieldToken(
+                            synth::MidiMappingRowVM::Field::GridSlotIx) +
+                        ":" + std::to_string(rng() % 8)));
+            }
+        }
+        else if (action == 3)
+        {
+            auto rows = GridRows(surface, synth::MidiMappingRowVM::Kind::Individual);
+            const auto blocks = GridRows(surface, synth::MidiMappingRowVM::Kind::Block);
+            rows.insert(rows.end(), blocks.begin(), blocks.end());
+            if (rows.size() > 1)
+            {
+                const std::size_t rowIx = rows[rng() % rows.size()];
+                surface.DispatchAction(synth::ui::Action::WithValue(
+                    synth::runtime_ui::Actions::kDeleteRow,
+                    "1:system_messages:" + std::to_string(rowIx)));
+            }
+        }
+        else if (action == 4)
+        {
+            const auto blocks = GridRows(surface, synth::MidiMappingRowVM::Kind::Block);
+            if (!blocks.empty())
+            {
+                const std::size_t rowIx = blocks[rng() % blocks.size()];
+                double xMin = 0.0;
+                double xMax = 0.0;
+                Require(surface.ViewModel().RowFieldValue(1, synth::MidiConfigSection::SystemMessages, rowIx,
+                                                           synth::MidiMappingRowVM::Field::GridXMin, xMin),
+                        "grid simulation reads x min");
+                Require(surface.ViewModel().RowFieldValue(1, synth::MidiConfigSection::SystemMessages, rowIx,
+                                                           synth::MidiMappingRowVM::Field::GridXMax, xMax),
+                        "grid simulation reads x max");
+                const int beforeInvalid = fixture.state.commits;
+                const std::string prefix = "1:system_messages:" + std::to_string(rowIx) + ":" +
+                                           synth::runtime_ui::ControllersLayout::FieldToken(
+                                               synth::MidiMappingRowVM::Field::GridXMax) +
+                                           ":";
+                surface.DispatchAction(synth::ui::Action::WithValue(
+                    synth::runtime_ui::Actions::kMappingFieldCommit,
+                    prefix + std::to_string(static_cast<int>(xMin))));
+                Require(fixture.state.commits == beforeInvalid, "invalid grid rectangle committed");
+                surface.DispatchAction(synth::ui::Action::WithValue(
+                    synth::runtime_ui::Actions::kMappingFieldCommit,
+                    prefix + std::to_string(static_cast<int>(xMax))));
+            }
+        }
+        else if (action == 5)
+        {
+            surface.DispatchAction(synth::ui::Action::WithValue(
+                synth::runtime_ui::Actions::kToggleSection, "1:system_messages"));
+            surface.DispatchAction(synth::ui::Action::WithValue(
+                synth::runtime_ui::Actions::kToggleSection, "1:system_messages"));
+        }
+        else if (action == 6)
+        {
+            surface.DispatchAction(synth::ui::Action::WithValue(
+                synth::runtime_ui::Actions::kToggleSection, "1:system_messages"));
+            synth::JsonArena arena(1024 * 1024);
+            const synth::JSON json = synth::ToJSON(arena, fixture.state.instrument);
+            synth::MidiInstrumentConfig loaded;
+            Require(synth::FromJSON(json, loaded), "grid simulation JSON reload");
+            fixture.state.instrument = std::move(loaded);
+            surface.MarkDirty();
+            surface.RefreshOnTick();
+            surface.DispatchAction(synth::ui::Action::WithValue(
+                synth::runtime_ui::Actions::kToggleSection, "1:system_messages"));
+        }
+        else
+        {
+            const auto rows = GridRows(surface, synth::MidiMappingRowVM::Kind::Block);
+            if (!rows.empty())
+            {
+                const std::string stableId = synth::runtime_ui::NodeIds::MappingField(
+                    1, synth::MidiConfigSection::SystemMessages, rows.front(),
+                    synth::MidiMappingRowVM::Field::GridYMin);
+                surface.MarkDirty();
+                surface.RefreshOnTick();
+                renderer.RefreshFromSurface();
+                Require(renderer.FindByNodeId(stableId) != nullptr, "grid simulation stable rendered row id");
+            }
+        }
+
+        if (fixture.state.commits != commitsBefore)
+        {
+            ++accepted;
+            surface.RefreshOnTick();
+        }
+        renderer.RefreshFromSurface();
+        renderer.setSize(980, 300);
+        VerifyGridProfileIndependent(fixture.state.instrument.controllers[1], oracle, step);
+    }
+
+    const synth::ui::NodeTree finalTree = surface.BuildTree();
+    const synth::ui::Node* scroll = FindNode(finalTree, synth::runtime_ui::NodeIds::kScroll);
+    Require(scroll != nullptr && scroll->scrollContentHeight > scroll->bounds.height,
+            "grid simulation scroll reaches expanded content");
+    std::cout << "GridControllersSimulation passed seed=0x" << std::hex << kGridSeed << std::dec
+              << " operations=" << kOperations << " accepted=" << accepted << "\n";
+}
+
 }  // namespace
 
 int main()
@@ -253,6 +552,8 @@ int main()
         renderer.setSize(980, 720);
         VerifyTreeAndRenderer(surface.BuildTree(), renderer, fixture, step, lastAction);
     }
+
+    RunGridSimulation();
 
     std::cout << "ControllersPageSimulationTests passed seed=0x" << std::hex << kSeed << "\n";
     return 0;

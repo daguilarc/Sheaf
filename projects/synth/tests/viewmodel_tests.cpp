@@ -1653,6 +1653,11 @@ double SafeValueFor(MidiMappingRowVM::Field field) {
         case Field::BlockMessageType:
             return 0.0;
         case Field::AddressType:
+        case Field::GridSlotIx:
+        case Field::GridXMin:
+        case Field::GridXMax:
+        case Field::GridYMin:
+        case Field::GridYMax:
             return 0.0;
     }
     return 0.0;
@@ -3311,13 +3316,14 @@ TEST_CASE(AddableGroupsListsAnalogGestureOnlyForAnalogsSection) {
     REQUIRE_TRUE(groups[0] == MidiMappingRowVM::RowGroup::AnalogGesture);
 }
 
-TEST_CASE(AddableGroupsListsSystemOnlyForSystemMessagesSection) {
+TEST_CASE(AddableGroupsListsSystemThenGridForSupportedSystemMessagesSection) {
     MidiConfigViewModel vm;
     vm.Rebuild(MakeFourKindInstrument(), MakeFourKindConnection());  // wrld=0
 
     const auto groups = vm.AddableGroups(0, MidiConfigSection::SystemMessages);
-    REQUIRE_TRUE(groups.size() == 1);
+    REQUIRE_TRUE(groups.size() == 2);
     REQUIRE_TRUE(groups[0] == MidiMappingRowVM::RowGroup::System);
+    REQUIRE_TRUE(groups[1] == MidiMappingRowVM::RowGroup::Grid);
 }
 
 TEST_CASE(AddableGroupsNeverListsConfigLevelGroups) {
@@ -3341,7 +3347,8 @@ TEST_CASE(AddableGroupsEmptyForOutOfRangeControllerIx) {
 }
 
 // AddableGroups mirrors GroupSupportsAdd's own doc-commented contract: it is
-// dispatch-level (section/group only), NOT dependent on controller kind --
+// mostly dispatch-level, except the Grid group is intentionally restricted
+// to the two controller kinds with two-dimensional address forms.
 // so, matching GroupSupportsAdd(0/1/2/3, Encoders, EncoderTurn) all being
 // true regardless of kind (GroupSupportsAddAndBlocksMatchesAddSingleAddBlock
 // Dispatch's own "today's dispatch does not vary by kind" doc comment),
@@ -3360,7 +3367,14 @@ TEST_CASE(AddableGroupsIsDispatchLevelNotKindFiltered) {
     REQUIRE_TRUE(encoderGroups.size() == 2);
     const auto analogGroups = vm.AddableGroups(2, MidiConfigSection::Analogs);
     REQUIRE_TRUE(analogGroups.size() == 1);
-    REQUIRE_TRUE(vm.AddableGroups(2, MidiConfigSection::SystemMessages).size() == 1);
+    const auto launchpadSystemGroups = vm.AddableGroups(2, MidiConfigSection::SystemMessages);
+    REQUIRE_TRUE(launchpadSystemGroups.size() == 2);
+    REQUIRE_TRUE(launchpadSystemGroups[0] == MidiMappingRowVM::RowGroup::System);
+    REQUIRE_TRUE(launchpadSystemGroups[1] == MidiMappingRowVM::RowGroup::Grid);
+    REQUIRE_TRUE(vm.AddableGroups(1, MidiConfigSection::SystemMessages) ==
+                 std::vector<MidiMappingRowVM::RowGroup>{MidiMappingRowVM::RowGroup::System});
+    REQUIRE_TRUE(vm.AddableGroups(3, MidiConfigSection::SystemMessages) ==
+                 std::vector<MidiMappingRowVM::RowGroup>{MidiMappingRowVM::RowGroup::System});
 }
 
 // GroupColumnFields must match exactly what BuildSectionRows() gives a real
@@ -4715,6 +4729,264 @@ TEST_CASE(AddressTypeBlockInvalidIndicesLeaveOutputAndPresentationUnchanged) {
             REQUIRE_TRUE(vm.RowFieldValue(3, blockCase.section, blockIx,
                                           MidiMappingRowVM::Field::AddressType, afterValue));
             REQUIRE_TRUE(afterValue == beforeValue);
+        }
+    }
+}
+
+MidiInstrumentConfig MakeGridPresentationInstrument(MidiProfileKind kind, bool asBlock,
+                                                     synth::PolyphonicPressureMapping* orphanOut = nullptr) {
+    MidiControllerSlot slot = kind == MidiProfileKind::WrldBldr ? MakeWrldBldrSlot("grid")
+                                                                : MakeLaunchpadSlot("grid");
+    slot.config.systemMessages.clear();
+    slot.config.pressureInput = synth::PolyphonicPressureMidiInConfig{};
+
+    synth::GridMappingExpansion expansion;
+    if (asBlock) {
+        synth::GridBlock block;
+        block.kind = kind;
+        block.channel = 5;
+        block.startX = 0;
+        block.startY = kind == MidiProfileKind::Launchpad ? -1 : 0;
+        block.endX = 2;
+        block.endY = block.startY + 1;
+        block.gridSlotIx = 3;
+        REQUIRE_TRUE(synth::ExpandGridBlock(block, expansion));
+    } else {
+        synth::GridButton button;
+        button.kind = kind;
+        button.channel = 5;
+        button.x = 1;
+        button.y = 1;
+        button.gridSlotIx = 4;
+        REQUIRE_TRUE(synth::ExpandGridButton(button, expansion));
+    }
+    slot.config.systemMessages = expansion.systemMessages;
+    slot.config.pressureInput->mappings = expansion.pressureMappings;
+
+    synth::PolyphonicPressureMapping orphan;
+    orphan.address = synth::MidiNoteAddress{.channel = 15, .note = 127};
+    orphan.pressure = synth::MessageIn::GridPressureChange(91, 99, -17, 23, 41);
+    slot.config.pressureInput->mappings.push_back(orphan);
+    if (orphanOut != nullptr) {
+        *orphanOut = orphan;
+    }
+
+    MidiInstrumentConfig instrument;
+    REQUIRE_TRUE(instrument.AddController(slot));
+    return instrument;
+}
+
+std::size_t FindGridRow(const MidiConfigViewModel& vm, MidiMappingRowVM::Kind kind) {
+    const auto rows = vm.SectionRows(0, MidiConfigSection::SystemMessages);
+    for (std::size_t ix = 0; ix < rows.size(); ++ix) {
+        if (rows[ix].group == MidiMappingRowVM::RowGroup::Grid && rows[ix].kind == kind) {
+            return ix;
+        }
+    }
+    throw std::runtime_error("grid row not found");
+}
+
+TEST_CASE(GridPresentationReconstructsWrldBldrBlockAndLaunchpadButtonWithoutPressureRows) {
+    struct Case {
+        MidiProfileKind kind;
+        bool block;
+    };
+    for (const Case testCase : {Case{MidiProfileKind::WrldBldr, true},
+                                Case{MidiProfileKind::Launchpad, false}}) {
+        MidiConfigViewModel vm;
+        const MidiInstrumentConfig instrument = MakeGridPresentationInstrument(testCase.kind, testCase.block);
+        MidiConnectionState connection;
+        connection.controllers.push_back({});
+        vm.Rebuild(instrument, connection);
+        vm.ToggleSection(0, MidiConfigSection::SystemMessages);
+
+        const auto rows = vm.SectionRows(0, MidiConfigSection::SystemMessages);
+        REQUIRE_TRUE(rows.size() == 1);
+        REQUIRE_TRUE(rows[0].group == MidiMappingRowVM::RowGroup::Grid);
+        REQUIRE_TRUE(rows[0].kind == (testCase.block ? MidiMappingRowVM::Kind::Block
+                                                     : MidiMappingRowVM::Kind::Individual));
+        REQUIRE_TRUE(rows[0].label.find(testCase.block ? "Grid Block" : "Grid Button") != std::string::npos);
+        REQUIRE_TRUE(std::find(rows[0].editableFields.begin(), rows[0].editableFields.end(),
+                               MidiMappingRowVM::Field::GridSlotIx) != rows[0].editableFields.end());
+        REQUIRE_TRUE(std::find(rows[0].editableFields.begin(), rows[0].editableFields.end(),
+                               MidiMappingRowVM::Field::GridXMin) != rows[0].editableFields.end());
+        REQUIRE_TRUE(std::find(rows[0].editableFields.begin(), rows[0].editableFields.end(),
+                               MidiMappingRowVM::Field::GridYMin) != rows[0].editableFields.end());
+        REQUIRE_TRUE(rows[0].label.find("pressure") == std::string::npos);
+        REQUIRE_TRUE(rows[0].label.find("aftertouch") == std::string::npos);
+        if (testCase.block) {
+            REQUIRE_TRUE(std::find(rows[0].editableFields.begin(), rows[0].editableFields.end(),
+                                   MidiMappingRowVM::Field::GridXMax) != rows[0].editableFields.end());
+            REQUIRE_TRUE(std::find(rows[0].editableFields.begin(), rows[0].editableFields.end(),
+                                   MidiMappingRowVM::Field::GridYMax) != rows[0].editableFields.end());
+        }
+    }
+}
+
+TEST_CASE(GridOpenSessionOwnsPairsAndPreservesHiddenOrphanAcrossEditDeleteAndReopen) {
+    synth::PolyphonicPressureMapping orphan;
+    MidiInstrumentConfig instrument =
+        MakeGridPresentationInstrument(MidiProfileKind::Launchpad, true, &orphan);
+    MidiConnectionState connection;
+    connection.controllers.push_back({});
+    MidiConfigViewModel vm;
+    vm.Rebuild(instrument, connection);
+    vm.ToggleSection(0, MidiConfigSection::SystemMessages);
+
+    const std::size_t rowIx = FindGridRow(vm, MidiMappingRowVM::Kind::Block);
+    double yMin = 0.0;
+    REQUIRE_TRUE(vm.RowFieldValue(0, MidiConfigSection::SystemMessages, rowIx,
+                                  MidiMappingRowVM::Field::GridYMin, yMin));
+    REQUIRE_TRUE(yMin == -1.0);
+
+    // An open session keeps row identity and values even if persisted truth is
+    // rebuilt in a different shape underneath it.
+    MidiInstrumentConfig changedTruth = instrument;
+    changedTruth.controllers[0].config.systemMessages.clear();
+    vm.Rebuild(changedTruth, connection);
+    REQUIRE_TRUE(FindGridRow(vm, MidiMappingRowVM::Kind::Block) == rowIx);
+
+    MidiInstrumentConfig out;
+    std::string reason;
+    REQUIRE_TRUE(vm.ApplyMappingEdit(0, MidiConfigSection::SystemMessages, rowIx,
+                                     MidiMappingRowVM::Field::GridSlotIx, 7.0, out, &reason));
+    REQUIRE_TRUE(out.controllers[0].config.systemMessages.size() == 2);
+    REQUIRE_TRUE(out.controllers[0].config.pressureInput.has_value());
+    REQUIRE_TRUE(out.controllers[0].config.pressureInput->mappings.size() == 3);
+    REQUIRE_TRUE(std::find(out.controllers[0].config.pressureInput->mappings.begin(),
+                           out.controllers[0].config.pressureInput->mappings.end(), orphan) !=
+                 out.controllers[0].config.pressureInput->mappings.end());
+    for (const auto& association : out.controllers[0].config.systemMessages) {
+        REQUIRE_TRUE(association.press.gridSlotIx == 7);
+    }
+
+    instrument = out;
+    vm.Rebuild(instrument, connection);
+    REQUIRE_TRUE(FindGridRow(vm, MidiMappingRowVM::Kind::Block) == rowIx);
+    REQUIRE_TRUE(vm.DeleteRow(0, MidiConfigSection::SystemMessages, rowIx, out, &reason));
+    REQUIRE_TRUE(out.controllers[0].config.systemMessages.empty());
+    REQUIRE_TRUE(out.controllers[0].config.pressureInput.has_value());
+    REQUIRE_TRUE(out.controllers[0].config.pressureInput->mappings ==
+                 std::vector<synth::PolyphonicPressureMapping>{orphan});
+
+    instrument = out;
+    vm.Rebuild(instrument, connection);
+    vm.ToggleSection(0, MidiConfigSection::SystemMessages);
+    vm.ToggleSection(0, MidiConfigSection::SystemMessages);
+    REQUIRE_TRUE(vm.SectionRows(0, MidiConfigSection::SystemMessages).empty());
+    REQUIRE_TRUE(vm.AddSingle(0, MidiConfigSection::SystemMessages, MidiMappingRowVM::RowGroup::Grid,
+                              out, &reason));
+    REQUIRE_TRUE(out.controllers[0].config.systemMessages.size() == 1);
+    REQUIRE_TRUE(out.controllers[0].config.pressureInput->mappings.size() == 2);
+    instrument = out;
+    vm.Rebuild(instrument, connection);
+    REQUIRE_TRUE(vm.AddBlock(0, MidiConfigSection::SystemMessages, MidiMappingRowVM::RowGroup::Grid,
+                             out, &reason));
+    REQUIRE_TRUE(out.controllers[0].config.systemMessages.size() == 3);
+    REQUIRE_TRUE(out.controllers[0].config.pressureInput->mappings.size() == 4);
+}
+
+TEST_CASE(GridInvalidRectangleAndDuplicatePairEditsRefuseAtomically) {
+    MidiInstrumentConfig instrument = MakeGridPresentationInstrument(MidiProfileKind::WrldBldr, true);
+    MidiConnectionState connection;
+    connection.controllers.push_back({});
+    MidiConfigViewModel vm;
+    vm.Rebuild(instrument, connection);
+    vm.ToggleSection(0, MidiConfigSection::SystemMessages);
+    const std::size_t rowIx = FindGridRow(vm, MidiMappingRowVM::Kind::Block);
+    const std::string before = DumpInstrument(instrument);
+
+    MidiInstrumentConfig out = MakeFourKindInstrument();
+    const std::string untouched = DumpInstrument(out);
+    std::string reason;
+    bool presentationChanged = false;
+    REQUIRE_TRUE(!vm.ApplyMappingEdit(0, MidiConfigSection::SystemMessages, rowIx,
+                                      MidiMappingRowVM::Field::GridXMax, 0.0, out, &reason,
+                                      &presentationChanged));
+    REQUIRE_TRUE(presentationChanged);
+    REQUIRE_TRUE(!reason.empty());
+    REQUIRE_TRUE(DumpInstrument(out) == untouched);
+    REQUIRE_TRUE(DumpInstrument(instrument) == before);
+
+    // Repair the open rectangle, then add a distinct cell and prove moving it
+    // onto the block's physical address cannot commit half a system/pressure pair.
+    REQUIRE_TRUE(vm.ApplyMappingEdit(0, MidiConfigSection::SystemMessages, rowIx,
+                                     MidiMappingRowVM::Field::GridXMax, 2.0, out, &reason));
+    instrument = out;
+    vm.Rebuild(instrument, connection);
+    REQUIRE_TRUE(vm.AddSingle(0, MidiConfigSection::SystemMessages, MidiMappingRowVM::RowGroup::Grid,
+                              out, &reason));
+    instrument = out;
+    vm.Rebuild(instrument, connection);
+    const std::size_t buttonIx = FindGridRow(vm, MidiMappingRowVM::Kind::Individual);
+    const std::string beforeDuplicate = DumpInstrument(instrument);
+    out = MakeFourKindInstrument();
+    const std::string duplicateUntouched = DumpInstrument(out);
+    REQUIRE_TRUE(!vm.ApplyMappingEdit(0, MidiConfigSection::SystemMessages, buttonIx,
+                                      MidiMappingRowVM::Field::GridXMin, 0.0, out, &reason));
+    REQUIRE_TRUE(DumpInstrument(out) == duplicateUntouched);
+    REQUIRE_TRUE(DumpInstrument(instrument) == beforeDuplicate);
+}
+
+TEST_CASE(GridAddSkipsPhysicalAddressesOwnedByHiddenOrphans) {
+    {
+        MidiControllerSlot slot = MakeWrldBldrSlot("wrld-hidden-pressure");
+        slot.config.systemMessages.clear();
+        synth::PolyphonicPressureMapping orphan;
+        orphan.address = synth::MidiNoteAddress{
+            .channel = 5, .note = synth::WrldBldrPositionToCC(0, 0)};
+        orphan.pressure = synth::MessageIn::GridPressureChange(0, 99, -7, 11, 23);
+        slot.config.pressureInput = synth::PolyphonicPressureMidiInConfig{{orphan}};
+        MidiInstrumentConfig instrument;
+        REQUIRE_TRUE(instrument.AddController(slot));
+        MidiConnectionState connection;
+        connection.controllers.push_back({});
+        MidiConfigViewModel vm;
+        vm.Rebuild(instrument, connection);
+        vm.ToggleSection(0, MidiConfigSection::SystemMessages);
+
+        MidiInstrumentConfig out;
+        std::string reason;
+        REQUIRE_TRUE(vm.AddSingle(0, MidiConfigSection::SystemMessages,
+                                  MidiMappingRowVM::RowGroup::Grid, out, &reason));
+        REQUIRE_TRUE(out.controllers[0].config.systemMessages.size() == 1);
+        REQUIRE_TRUE(out.controllers[0].config.pressureInput->mappings.size() == 2);
+        REQUIRE_TRUE(std::count(out.controllers[0].config.pressureInput->mappings.begin(),
+                                out.controllers[0].config.pressureInput->mappings.end(), orphan) == 1);
+        REQUIRE_TRUE(out.controllers[0].config.systemMessages[0].control.has_value());
+        REQUIRE_TRUE(out.controllers[0].config.systemMessages[0].control->cc != orphan.address.note);
+    }
+
+    {
+        MidiControllerSlot slot = MakeLaunchpadSlot("launchpad-hidden-pressure");
+        slot.config.systemMessages.clear();
+        const auto firstNote = synth::LaunchpadPositionToNote(
+            synth::LaunchpadController::LaunchpadX, 0, -1);
+        REQUIRE_TRUE(firstNote.has_value());
+        synth::PolyphonicPressureMapping orphan;
+        orphan.address = synth::MidiNoteAddress{.channel = 0, .note = *firstNote};
+        orphan.pressure = synth::MessageIn::GridPressureChange(0, 101, -8, 13, 29);
+        slot.config.pressureInput = synth::PolyphonicPressureMidiInConfig{{orphan}};
+        MidiInstrumentConfig instrument;
+        REQUIRE_TRUE(instrument.AddController(slot));
+        MidiConnectionState connection;
+        connection.controllers.push_back({});
+        MidiConfigViewModel vm;
+        vm.Rebuild(instrument, connection);
+        vm.ToggleSection(0, MidiConfigSection::SystemMessages);
+
+        MidiInstrumentConfig out;
+        std::string reason;
+        REQUIRE_TRUE(vm.AddBlock(0, MidiConfigSection::SystemMessages,
+                                 MidiMappingRowVM::RowGroup::Grid, out, &reason));
+        REQUIRE_TRUE(out.controllers[0].config.systemMessages.size() == 2);
+        REQUIRE_TRUE(out.controllers[0].config.pressureInput->mappings.size() == 3);
+        REQUIRE_TRUE(std::count(out.controllers[0].config.pressureInput->mappings.begin(),
+                                out.controllers[0].config.pressureInput->mappings.end(), orphan) == 1);
+        for (const auto& mapping : out.controllers[0].config.pressureInput->mappings) {
+            if (!(mapping == orphan)) {
+                REQUIRE_TRUE(!(mapping.address == orphan.address));
+            }
         }
     }
 }

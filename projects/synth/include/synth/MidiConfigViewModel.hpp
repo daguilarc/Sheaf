@@ -138,6 +138,15 @@ struct MidiMappingRowVM {
         // CC/Note selector for encoder pushes and Generic system-message
         // controls. Distinct from both system message-kind fields above.
         AddressType,
+        // Grid rows use signed physical/logical coordinates. A Grid Button
+        // exposes the minima as its one cell; Grid Block adds exclusive
+        // maxima. Grid mappings intentionally have no message/status/note,
+        // pressure, feedback, or toggle editor.
+        GridSlotIx,
+        GridXMin,
+        GridXMax,
+        GridYMin,
+        GridYMax,
     };
 
     // Groups rows into contiguous runs of the same on-screen schema, so the
@@ -154,6 +163,7 @@ struct MidiMappingRowVM {
         AnalogGesture,
         AnalogSceneBlend,
         System,
+        Grid,
     };
 
     enum class Kind { Individual, Block, ConfigLevel };
@@ -282,7 +292,7 @@ struct AnalogSceneBlendRow {
 
 using PresentationRowData =
     std::variant<std::monostate, EncoderMidiMapping, AnalogMidiMapping, MidiControllerSystemMessageAssociation,
-                 EncoderModeRow, EncoderStepRow, AnalogSceneBlendRow>;
+                 GridButton, EncoderModeRow, EncoderStepRow, AnalogSceneBlendRow>;
 
 struct PresentationRow {
     MidiMappingRowVM::Kind kind = MidiMappingRowVM::Kind::Individual;
@@ -291,11 +301,15 @@ struct PresentationRow {
     // `block`, because their UI representation is the block itself rather
     // than each expanded cell.
     PresentationRowData data;
-    std::variant<std::monostate, EncoderBlock, AnalogBlock, SystemBlock> block;
+    std::variant<std::monostate, EncoderBlock, AnalogBlock, SystemBlock, GridBlock> block;
 };
 
 struct SectionPresentation {
     std::vector<PresentationRow> rows;
+    // Pressure entries not claimed by an exact visible grid pair. They are
+    // never rendered or edited, and every System Messages flush appends them
+    // verbatim before profile normalization/validation.
+    std::vector<PolyphonicPressureMapping> hiddenPressureMappings;
 };
 
 }  // namespace detail

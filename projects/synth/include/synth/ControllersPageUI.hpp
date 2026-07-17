@@ -207,6 +207,11 @@ inline int FieldEditorWidth(MidiMappingRowVM::Field field)
         case Field::BlockStartY:
         case Field::BlockEndX:
         case Field::BlockEndY:
+        case Field::GridSlotIx:
+        case Field::GridXMin:
+        case Field::GridXMax:
+        case Field::GridYMin:
+        case Field::GridYMax:
             return 58;
         case Field::GestureIx:
             return 72;
@@ -247,7 +252,8 @@ inline const char* SectionName(MidiConfigSection section)
     return "";
 }
 
-inline const char* RowGroupCaption(MidiMappingRowVM::RowGroup group)
+inline const char* RowGroupCaption(MidiMappingRowVM::RowGroup group,
+                                   MidiMappingRowVM::Kind kind = MidiMappingRowVM::Kind::Individual)
 {
     switch (group)
     {
@@ -265,6 +271,8 @@ inline const char* RowGroupCaption(MidiMappingRowVM::RowGroup group)
             return "Scene blend";
         case MidiMappingRowVM::RowGroup::System:
             return "System";
+        case MidiMappingRowVM::RowGroup::Grid:
+            return kind == MidiMappingRowVM::Kind::Block ? "Grid Block" : "Grid Button";
     }
     return "";
 }
@@ -287,6 +295,8 @@ inline std::string RowGroupToken(MidiMappingRowVM::RowGroup group)
             return "analog_scene_blend";
         case MidiMappingRowVM::RowGroup::System:
             return "system";
+        case MidiMappingRowVM::RowGroup::Grid:
+            return "grid";
     }
     return "unknown";
 }
@@ -320,6 +330,10 @@ inline std::optional<MidiMappingRowVM::RowGroup> ParseRowGroupToken(const std::s
     if (token == "system")
     {
         return MidiMappingRowVM::RowGroup::System;
+    }
+    if (token == "grid")
+    {
+        return MidiMappingRowVM::RowGroup::Grid;
     }
     return std::nullopt;
 }
@@ -875,16 +889,22 @@ private:
             rawValue += parts[ix];
         }
 
-        const double numericValue = [&rawValue]() {
-            try
+        double numericValue = 0.0;
+        try
+        {
+            std::size_t consumed = 0;
+            numericValue = std::stod(rawValue, &consumed);
+            if (consumed != rawValue.size() || !std::isfinite(numericValue))
             {
-                return std::stod(rawValue);
+                SetStatus("Refused: value must be a finite number");
+                return;
             }
-            catch (...)
-            {
-                return 0.0;
-            }
-        }();
+        }
+        catch (...)
+        {
+            SetStatus("Refused: value must be a finite number");
+            return;
+        }
         MidiInstrumentConfig out;
         std::string reason;
         bool presentationChanged = false;
@@ -1210,11 +1230,12 @@ private:
 
                 auto appendGroupHeader = [&](MidiMappingRowVM::RowGroup group,
                                              const std::vector<MidiMappingRowVM::Field>& fields,
-                                             bool isFirstHeaderForGroup) {
+                                             bool isFirstHeaderForGroup,
+                                             MidiMappingRowVM::Kind kind) {
                     ui::Node header;
                     header.id = ui::NodeId(NodeIds::GroupHeader(controllerIx, section, headerIx));
                     header.kind = ui::NodeKind::Row;
-                    header.label = ControllersLayout::RowGroupCaption(group);
+                    header.label = ControllersLayout::RowGroupCaption(group, kind);
                     header.bounds = {0.0f, sectionHeight, sectionWidth, ControllersLayout::kGroupHeaderHeight};
                     float labelX = 0.0f;
                     const bool showColumnLabels = fields.size() > 1;
@@ -1394,7 +1415,8 @@ private:
                         *previousFields != rows[rowIx].editableFields)
                     {
                         const bool isFirstHeaderForGroup = seenGroups.insert(group).second;
-                        appendGroupHeader(group, rows[rowIx].editableFields, isFirstHeaderForGroup);
+                        appendGroupHeader(group, rows[rowIx].editableFields, isFirstHeaderForGroup,
+                                          rows[rowIx].kind);
                         previousGroup = group;
                         previousFields = rows[rowIx].editableFields;
                     }
@@ -1407,7 +1429,8 @@ private:
                     {
                         continue;
                     }
-                    appendGroupHeader(group, vm.GroupColumnFields(controllerIx, section, group), true);
+                    appendGroupHeader(group, vm.GroupColumnFields(controllerIx, section, group), true,
+                                      MidiMappingRowVM::Kind::Individual);
                 }
 
                 sectionBody.bounds = {ControllersLayout::kSectionPadding, scrollY, sectionWidth, sectionHeight};

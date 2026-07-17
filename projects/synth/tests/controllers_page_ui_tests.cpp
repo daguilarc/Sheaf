@@ -5,6 +5,8 @@
 #endif
 
 #include <iostream>
+#include <algorithm>
+#include <cctype>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -115,6 +117,72 @@ struct TestHarness
         return synth::runtime_ui::ControllersPageSurface(std::move(callbacks));
     }
 };
+
+void SeedGridPresentation(TestHarness& harness)
+{
+    for (std::size_t controllerIx : {std::size_t{0}, std::size_t{1}})
+    {
+        auto& slot = harness.instrument.controllers[controllerIx];
+        slot.config.systemMessages.clear();
+        slot.config.pressureInput = synth::PolyphonicPressureMidiInConfig{};
+    }
+
+    synth::GridMappingExpansion wrld;
+    synth::GridBlock wrldBlock;
+    wrldBlock.kind = synth::MidiProfileKind::WrldBldr;
+    wrldBlock.channel = 5;
+    wrldBlock.startX = 0;
+    wrldBlock.startY = 0;
+    wrldBlock.endX = 2;
+    wrldBlock.endY = 1;
+    wrldBlock.gridSlotIx = 3;
+    Require(synth::ExpandGridBlock(wrldBlock, wrld), "expand wrld grid block");
+    synth::GridButton wrldButton;
+    wrldButton.kind = synth::MidiProfileKind::WrldBldr;
+    wrldButton.channel = 5;
+    wrldButton.x = 3;
+    wrldButton.y = 3;
+    wrldButton.gridSlotIx = 4;
+    Require(synth::ExpandGridButton(wrldButton, wrld), "expand wrld grid button");
+    harness.instrument.controllers[0].config.systemMessages = wrld.systemMessages;
+    harness.instrument.controllers[0].config.pressureInput->mappings = wrld.pressureMappings;
+
+    synth::GridMappingExpansion launchpad;
+    synth::GridBlock launchpadBlock;
+    launchpadBlock.kind = synth::MidiProfileKind::Launchpad;
+    launchpadBlock.startX = 0;
+    launchpadBlock.startY = -1;
+    launchpadBlock.endX = 2;
+    launchpadBlock.endY = 0;
+    launchpadBlock.gridSlotIx = 7;
+    Require(synth::ExpandGridBlock(launchpadBlock, launchpad), "expand launchpad grid block");
+    harness.instrument.controllers[1].config.systemMessages = launchpad.systemMessages;
+    harness.instrument.controllers[1].config.pressureInput->mappings = launchpad.pressureMappings;
+    synth::PolyphonicPressureMapping orphan;
+    orphan.address = synth::MidiNoteAddress{.channel = 15, .note = 127};
+    orphan.pressure = synth::MessageIn::GridPressureChange(17, 88, -9, 12, 33);
+    harness.instrument.controllers[1].config.pressureInput->mappings.push_back(orphan);
+}
+
+std::string VisibleTextLower(const synth::ui::NodeTree& tree)
+{
+    std::string text;
+    for (const synth::ui::Node& node : tree.nodes)
+    {
+        text += node.label;
+        text += ' ';
+        text += node.text;
+        text += ' ';
+        for (const synth::ui::ControlOption& option : node.options)
+        {
+            text += option.label;
+            text += ' ';
+        }
+    }
+    std::transform(text.begin(), text.end(), text.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return text;
+}
 
 }  // namespace
 
@@ -660,6 +728,70 @@ int main()
                                  association.control->type == synth::MidiControlType::Note);
     }
     Require(committedSystemNote90, "Generic system combo persists Note without changing number");
+    TestHarness gridHarness;
+    SeedGridPresentation(gridHarness);
+    synth::runtime_ui::ControllersPageSurface gridSurface = gridHarness.MakeSurface();
+    gridSurface.SetContentBounds({0.0f, 0.0f, 900.0f, 260.0f});
+    gridSurface.MarkDirty();
+    gridSurface.RefreshOnTick();
+    gridSurface.DispatchAction(
+        synth::ui::Action::WithValue(synth::runtime_ui::Actions::kToggleConfig, "0"));
+    gridSurface.DispatchAction(
+        synth::ui::Action::WithValue(synth::runtime_ui::Actions::kToggleSection, "0:system_messages"));
+    gridSurface.DispatchAction(
+        synth::ui::Action::WithValue(synth::runtime_ui::Actions::kToggleConfig, "1"));
+    gridSurface.DispatchAction(
+        synth::ui::Action::WithValue(synth::runtime_ui::Actions::kToggleSection, "1:system_messages"));
+
+    const synth::ui::NodeTree gridTree = gridSurface.BuildTree();
+    const std::string visible = VisibleTextLower(gridTree);
+    Require(visible.find("grid button") != std::string::npos, "portable tree shows Grid Button");
+    Require(visible.find("grid block") != std::string::npos, "portable tree shows Grid Block");
+    for (const char* label : {"grid slot", "x min", "x max", "y min", "y max"})
+    {
+        Require(visible.find(label) != std::string::npos, "portable tree shows exact grid field label");
+    }
+    Require(visible.find("aftertouch") == std::string::npos, "portable tree hides aftertouch");
+    Require(visible.find("polyphonic pressure") == std::string::npos,
+            "portable tree hides polyphonic pressure");
+    Require(visible.find("midi status") == std::string::npos, "portable tree hides MIDI status");
+    Require(visible.find("note number") == std::string::npos, "portable tree hides standalone note field");
+
+    bool sawNegativeSignedEditor = false;
+    bool sawGridAdd = false;
+    std::string stableGridFieldId;
+    for (const synth::ui::Node& node : gridTree.nodes)
+    {
+        sawNegativeSignedEditor = sawNegativeSignedEditor ||
+                                  (node.kind == synth::ui::NodeKind::TextField && node.text == "-1");
+        if (node.action.has_value() && node.action->name == synth::runtime_ui::Actions::kAddSingle &&
+            node.action->value == "0:system_messages:grid")
+        {
+            sawGridAdd = true;
+        }
+        if (stableGridFieldId.empty() && node.id.value.find(".mapping.") != std::string::npos &&
+            node.kind == synth::ui::NodeKind::TextField && node.text == "3")
+        {
+            stableGridFieldId = node.id.value;
+        }
+    }
+    Require(sawNegativeSignedEditor, "portable tree renders negative signed grid coordinate");
+    Require(sawGridAdd, "portable tree routes Grid add action token");
+    Require(!stableGridFieldId.empty(), "portable tree exposes stable grid field id");
+
+    gridSurface.MarkDirty();
+    gridSurface.RefreshOnTick();
+    Require(FindNodeById(gridSurface.BuildTree(), stableGridFieldId) != nullptr,
+            "grid field node id survives rebuild");
+    const int commitsBeforeGridAdd = gridHarness.commits;
+    gridSurface.DispatchAction(synth::ui::Action::WithValue(
+        synth::runtime_ui::Actions::kAddSingle, "0:system_messages:grid"));
+    Require(gridHarness.commits == commitsBeforeGridAdd + 1, "portable Grid add action commits pair");
+    Require(gridHarness.instrument.controllers[0].config.pressureInput.has_value(),
+            "portable Grid add preserves pressure container");
+    Require(gridHarness.instrument.controllers[0].config.pressureInput->mappings.size() ==
+                gridHarness.instrument.controllers[0].config.systemMessages.size(),
+            "portable Grid add commits one pressure mapping per visible cell");
 
     std::cout << "controllers_page_ui_tests passed\n";
     return 0;
