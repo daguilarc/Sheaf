@@ -485,13 +485,26 @@ WHEN external UI state or message-thread rendering needs colors from the synth p
 - **THEN** color storage is represented as a lock-free atomic 32-bit value or equivalent
 
 ### Requirement: spm-20 — UI State: parameter and visible-cell snapshots
-WHEN a parameter or visible-cell UI snapshot is populated, THE synth parameter modulation system SHALL write a `Parameter::UIState` whose scalar fields are individually atomic and which contains the parameter base color and resolved per-voice indicator colors from `ParameterConfig`, connected state, bipolar flag, short name pointer or stable short name view, per-voice display center values, per-voice display spread values, per-voice minimum values, per-voice maximum values, per-voice switch bucket values, switch cardinality, a synth-native modulator affecting bitmask, a 64-bit synth-native gesture affecting bitmask, source colors for the parameter's owning-group modulators, and manager-owned gesture colors; every color and count SHALL be inside the existing snapshot revision transaction; disconnected visible cells SHALL use `connected=false` with neutral values, zero spread, zero color counts, and off colors instead of a separate page/navigation role; bipolar parameter UI values and min/max values SHALL be reported in `[-1, 1]`, while unipolar parameter UI values and min/max values SHALL be reported in `[0, 1]`.
+WHEN a parameter or visible-cell UI snapshot is populated, THE synth parameter modulation system SHALL write a `Parameter::UIState` whose scalar fields are individually atomic and which contains the parameter base color and resolved per-voice indicator colors from `ParameterConfig`, connected state, bipolar flag, short name pointer or stable short name view, per-voice display center values, per-voice display spread values, per-voice minimum values, per-voice maximum values, per-voice switch bucket values, switch cardinality, a normalized single control-center `rawKnobValue` before modulation and display smoothing, the slot position's latest processed absolute-input epoch, a synth-native modulator affecting bitmask, a 64-bit synth-native gesture affecting bitmask, source colors for the parameter's owning-group modulators, and manager-owned gesture colors; every field SHALL be inside the existing snapshot revision transaction; disconnected visible cells SHALL use `connected=false` with neutral values, zero spread, zero color counts, and off colors while preserving the slot position's processed absolute-input epoch instead of a separate page/navigation role; `rawKnobValue` SHALL remain normalized in `[0, 1]` for every parameter range kind, bipolar parameter UI display values and min/max values SHALL be reported in `[-1, 1]`, and unipolar parameter UI display values and min/max values SHALL be reported in `[0, 1]`.
 
 #### Scenario: Parameter UI state reports smoothed per-voice display values
 - **WHEN** a parameter has two voices with different cached knob values
 - **AND** `Parameter::PopulateUIState` is called after compute/process work
 - **THEN** the UI state exposes the parameter's per-voice smoothed display center values
 - **AND** it does not expose unsmoothed audio-rate cached knob values as the encoder indicator center
+
+#### Scenario: Parameter UI state reports normalized raw control center
+- **WHEN** a parameter's scene and gesture composition has normalized center `0.25`
+- **AND** audio-rate modulation or display smoothing makes voice-0 display value differ from `0.25`
+- **AND** `Parameter::PopulateUIState` is called
+- **THEN** `rawKnobValue` is `0.25` within numeric tolerance
+- **AND** it is neither modulation-adjusted nor converted to bipolar presentation
+
+#### Scenario: Processed epoch and raw center are coherent
+- **WHEN** absolute epoch `E` has been processed for a slot position and its resulting visible raw center is `X`
+- **AND** that visible-cell UI state is populated
+- **THEN** a stable revision read returns both processed epoch `E` and raw center `X` from the same publication transaction
+- **AND** a torn read is rejected by the existing revision protocol
 
 #### Scenario: Parameter UI state reports display spread
 - **WHEN** audio-rate modulation causes a voice's cached knob value to vary around its smoothed display center
@@ -1084,11 +1097,13 @@ WHEN synth code mirrors parameter UI state to MIDI hardware, THE synth parameter
 - **AND** repeated process calls without state changes emit no duplicate blank feedback
 
 ### Requirement: spm-35 — MIDI output: Twister encoder feedback
-WHEN Twister encoder MIDI output is processed, THE synth parameter modulation system SHALL provide a Twister output processor that maps configured slot positions to controller CCs and emits separate CC feedback for encoder value, parameter color, RGB brightness, voice-0 indicator position, and indicator brightness using the MIDI Fighter Twister manual and Smart Grid Twister channel conventions.
+WHEN Twister encoder MIDI output is processed, THE synth parameter modulation system SHALL provide a Twister output processor that maps configured slot positions to controller CCs and emits separate CC feedback for the primary encoder value and LED-ring position on zero-based channel `0`, parameter color on channel `1`, RGB brightness on channel `2`, and primary LED-ring brightness on channel `5` using the MIDI Fighter Twister manual conventions; THE processor SHALL NOT mirror primary position to channel `4`, which is reserved by the controller for shifted encoders and shifted LED rings.
 
-#### Scenario: Twister value feedback uses channel 0
-- **WHEN** a mapped connected cell has voice-0 normalized value `0.5`
-- **THEN** the Twister output processor emits a channel `0` CC for that cell with a value near `64`
+#### Scenario: Twister value and primary ring feedback share channel 0
+- **WHEN** a mapped connected relative-feedback cell has voice-0 normalized display value `0.5`
+- **THEN** the Twister output processor emits one channel `0` CC for that cell with a value near `64`
+- **AND** that CC is both the encoder value and primary LED-ring position feedback
+- **AND** it emits no mirrored position message on channel `4`
 
 #### Scenario: Twister color feedback uses channel 1
 - **WHEN** a mapped connected cell's parameter-level color changes
@@ -1104,15 +1119,11 @@ WHEN Twister encoder MIDI output is processed, THE synth parameter modulation sy
 
 #### Scenario: Twister disconnected cell blanks brightness
 - **WHEN** a mapped cell is disconnected
-- **THEN** the Twister output processor emits RGB brightness-off value `17` and indicator brightness-off value `65` for that cell rather than applying visible brightness
-
-#### Scenario: Twister indicator position uses voice-0 value
-- **WHEN** a mapped connected cell has voice-0 normalized value `0.25`
-- **THEN** the Twister output processor emits ring or indicator position feedback for that cell with a value near `32`
+- **THEN** the Twister output processor emits RGB brightness-off value `17` and primary ring brightness-off value `65` for that cell rather than applying visible brightness
 
 #### Scenario: Twister indicator brightness follows UI state
 - **WHEN** a mapped connected cell has UI-state brightness `0.5`
-- **THEN** the Twister output processor emits indicator brightness value derived from `65 + 0.5 * 30`
+- **THEN** the Twister output processor emits primary ring brightness value derived from `65 + 0.5 * 30`
 
 #### Scenario: Twister color helper uses full hue range
 - **WHEN** a saturated synth color is converted to an MF Twister color code
@@ -1896,7 +1907,8 @@ WHEN the default MF Twister MIDI controller profile is requested, THE synth para
 - **THEN** encoder turn input uses zero-based channel `0`
 - **AND** encoder pushbutton input uses zero-based channel `1`
 - **AND** CCs `0..15` map to slot positions `0..15` in row-major order
-- **AND** encoder output maps the same positions for value, color, RGB brightness, indicator position, and indicator brightness feedback
+- **AND** encoder output maps the same positions for primary encoder/ring value, RGB color, RGB brightness, and primary ring brightness feedback
+- **AND** encoder output does not use zero-based channel `4` as primary indicator-position feedback
 
 #### Scenario: Default MF Twister profile exposes six side-button slots
 - **WHEN** the default MF Twister profile is created
@@ -1906,7 +1918,7 @@ WHEN the default MF Twister MIDI controller profile is requested, THE synth para
 #### Scenario: Profile factory builds MF Twister processors
 - **WHEN** a profile config contains MF Twister encoder mappings and side-button system-message associations
 - **THEN** the profile factory includes encoder input and system-button input in the input chain
-- **AND** creates Twister encoder output for encoder value, color, RGB brightness, indicator position, and indicator brightness feedback
+- **AND** creates Twister encoder output for primary encoder/ring value, RGB color, RGB brightness, and primary ring brightness feedback
 - **AND** creates no side-button output processor for MF Twister side-button associations
 - **AND** callers can invoke each output processor independently without an output chain
 
@@ -2096,20 +2108,22 @@ WHEN `Parameter::Compute()` calculates per-voice modulation depths from recursiv
 - **AND** no exponential mapping is applied to the modulator value itself
 
 ### Requirement: spm-68 — MIDI output: Twister unbacked encoder brightness
-WHEN MF Twister encoder MIDI output is processed, THE synth parameter modulation system SHALL process only configured Twister output mappings, SHALL emit live feedback for mapped encoders whose target slot/position has a connected visible UI cell, SHALL emit MF Twister brightness-off animation values plus blank value, color, and indicator position feedback for mapped encoders whose target slot/position has no connected visible UI cell, and SHALL ignore physical encoders that have no configured output mapping.
+WHEN MF Twister encoder MIDI output is processed, THE synth parameter modulation system SHALL process only configured Twister output mappings, SHALL emit live feedback for mapped encoders whose target slot/position has a connected visible UI cell, SHALL emit MF Twister brightness-off animation values plus blank primary encoder/ring value and RGB color feedback for mapped encoders whose target slot/position has no connected visible UI cell, SHALL emit no primary position feedback on zero-based channel `4`, and SHALL ignore physical encoders that have no configured output mapping.
 
 #### Scenario: Unused slot position blanks Twister brightness
 - **WHEN** a Twister output mapping targets a realized slot position whose visible cell is disconnected or empty
 - **THEN** the Twister output processor emits channel `2` RGB brightness-off value `17` for that encoder
-- **AND** it emits channel `5` indicator brightness-off value `65` for that encoder
-- **AND** it emits the controller-specific blank value, color, and indicator position feedback for that encoder
+- **AND** it emits channel `5` primary ring brightness-off value `65` for that encoder
+- **AND** it emits blank RGB color and one blank primary encoder/ring value on channel `0`
+- **AND** it emits no channel `4` position value
 
 #### Scenario: Mapping beyond visible-cell capacity blanks Twister brightness
 - **WHEN** a Twister output mapping targets a slot or position outside the current `ParameterManager::UIState` slot/cell capacity
 - **THEN** the Twister output processor treats that mapped hardware encoder as having blank feedback state instead of skipping it as an unstable UI-state read
 - **AND** it emits channel `2` RGB brightness-off value `17` for that encoder
-- **AND** it emits channel `5` indicator brightness-off value `65` for that encoder
-- **AND** it emits the controller-specific blank value, color, and indicator position feedback for that encoder
+- **AND** it emits channel `5` primary ring brightness-off value `65` for that encoder
+- **AND** it emits blank RGB color and one blank primary encoder/ring value on channel `0`
+- **AND** it emits no channel `4` position value
 
 #### Scenario: Unmapped Twister encoder is ignored
 - **WHEN** a Twister physical encoder has no configured output mapping
@@ -2364,3 +2378,118 @@ WHEN a bank opens a parameter's modulation view, THE parameter-modulation system
 - **WHEN** programmatic or legacy code has assigned a depth parameter at an index whose source metadata is disconnected
 - **THEN** the modulation view still exposes that index as an empty disconnected position
 - **AND** the explicit parameter API and stored depth object are otherwise unchanged
+
+### Requirement: spm-78 — MIDI absolute feedback: causal acknowledgement and debounce
+WHEN an absolute encoder input mapping accepts a raw 7-bit position, THE synth parameter modulation system SHALL allocate a globally monotonically increasing nonzero runtime epoch, publish that epoch and received byte as the matching controller route's unresolved output expectation before the epoch-bearing `ParamSetAbsolute` becomes visible to `MessageInBus`, process the parameter edit or rejection on the audio thread, record the epoch as processed for the addressed slot position, and publish that processed epoch coherently with the position's normalized pre-modulation scene/gesture raw center; WHILE the published processed epoch precedes the latest expected epoch, absolute output SHALL emit no position feedback and SHALL NOT mutate its position debounce cache; WHEN the processed epoch reaches or passes the expectation, absolute output SHALL quantize the raw center with `round(127 * clamp(rawCenter, 0, 1))`, suppress output exactly when that byte equals the received byte, otherwise emit that actual byte once as a correction, and then resume ordinary debounce; relative encoder input and output SHALL remain outside this protocol and retain post-modulation display feedback.
+
+#### Scenario: Applied absolute input does not echo
+- **WHEN** absolute input receives byte `B`, queues epoch `E`, and DSP applies the exact normalized target `B / 127`
+- **AND** UI state publishes processed epoch at least `E` with that raw center
+- **THEN** absolute output emits no position message for `B`
+- **AND** records the acknowledged value for subsequent debounce
+
+#### Scenario: Output waits for DSP acknowledgement
+- **WHEN** absolute input has published expected epoch `E`
+- **AND** the latest stable UI snapshot for the route has processed epoch less than `E`
+- **THEN** absolute output emits no position message for that route
+- **AND** leaves the route's position cache unchanged
+- **AND** may continue independent color and brightness feedback
+
+#### Scenario: Rejected absolute input is corrected
+- **WHEN** absolute byte `B` with epoch `E` is rejected because a modifier is active or the routed edit cannot apply
+- **THEN** the slot position still publishes processed epoch at least `E`
+- **AND** if the actual raw-center byte differs from `B`, output emits the actual byte once even when it equals the pre-input cached value
+- **AND** if the actual raw-center byte equals `B`, output emits no unnecessary correction
+
+#### Scenario: Disconnected pending route resolves as blank
+- **WHEN** an absolute route becomes disconnected after receiving byte `B` with epoch `E`
+- **AND** the disconnected cell publishes processed epoch at least `E` with neutral raw center `0`
+- **THEN** resolution leaves the controller's primary encoder/ring at blank byte `0`
+- **AND** it suppresses output if `B` was already `0`, otherwise emits one channel-0 blank correction
+
+#### Scenario: Queue failure restores the prior expectation
+- **WHEN** an absolute input publishes a tentative expectation and the bounded MIDI input bus rejects its message
+- **THEN** the coordinator conditionally restores the route's preceding expectation when no newer input superseded it
+- **AND** the failed event does not persistently alter output debounce state
+- **AND** output never emits a value derived from treating the failed event as processed
+
+#### Scenario: Rapid input resolves only the latest expectation
+- **WHEN** a route receives increasing epochs `E1`, `E2`, and `E3` before UI publication catches up
+- **THEN** output remains gated until a stable snapshot has processed epoch at least `E3`
+- **AND** resolves against the received byte for `E3` and the actual raw center after that processed prefix
+- **AND** does not echo or correct the superseded expectations separately
+
+#### Scenario: Multiple controllers share one cell
+- **WHEN** two absolute controllers have independent expected epochs and received bytes for the same slot position
+- **AND** the cell publishes a processed epoch and actual raw center covering both events
+- **THEN** each controller resolves its own expectation against that common actual center
+- **AND** the controller whose received byte equals the actual byte suppresses its echo
+- **AND** any other controller receives a correction when its byte differs
+
+#### Scenario: Bank or modulation-view change cannot strand acknowledgement
+- **WHEN** an absolute message addresses a slot position and the selected bank or modulation-depth view changes before the next output poll
+- **THEN** processed-epoch acknowledgement remains associated with the slot position rather than the former parameter object
+- **AND** the currently visible cell publishes that acknowledgement with its actual raw center
+
+#### Scenario: Profile rebuild preserves pending coordination
+- **WHEN** controller processors rebuild after an absolute expectation is published but before it is resolved
+- **THEN** the engine-owned coordinator retains that expectation
+- **AND** the rebuilt absolute output processor remains gated until acknowledgement and performs the same suppression-or-correction decision
+
+#### Scenario: Relative feedback remains modulation-aware
+- **WHEN** a controller uses either relative encoder mode
+- **AND** modulation changes the existing voice-0 display value without moving the scene/gesture center
+- **THEN** its encoder output continues to follow the existing post-modulation display value
+- **AND** it neither allocates an absolute epoch nor waits for one
+
+#### Scenario: Epoch zero remains untracked
+- **WHEN** a `ParamSetAbsolute` message is created outside the epoch-allocating absolute-encoder path with epoch `0`
+- **THEN** it retains the existing absolute apply-or-reject routing behavior
+- **AND** it creates no output expectation and does not advance a slot's processed absolute epoch
+
+#### Scenario: Coordinator capacity exhaustion fails closed
+- **WHEN** profile construction cannot reserve one of the coordinator's 4096 runtime-lifetime route records for a newly configured absolute mapping
+- **THEN** a matching hardware turn remains consumed as a mapped controller message but does not queue `ParamSetAbsolute`
+- **AND** output for that untracked mapping uses ordinary raw-center debounce without creating or waiting for an expectation
+- **AND** no untracked absolute input is applied in a way that can be overwritten by stale feedback
+
+#### Scenario: Unstable snapshot cannot resolve expectation
+- **WHEN** output cannot obtain one stable revision containing both processed epoch and raw center
+- **THEN** it emits no absolute position feedback from that read
+- **AND** leaves the pending expectation and position cache unchanged for retry
+
+#### Scenario: Correction enqueue failure retries
+- **WHEN** an acknowledged actual byte differs from the received byte but the MIDI sender rejects the correction enqueue
+- **THEN** output leaves the expectation unresolved and the position cache unchanged
+- **AND** a later process pass retries the correction
+
+### Requirement: spm-79 — MIDI output: Generic encoder position feedback
+WHEN a Generic controller profile contains encoder-turn input mappings and no explicit encoder output, THE synth parameter modulation system SHALL automatically create position feedback from those turn mappings; for each mapping it SHALL emit at most one debounced MIDI CC using exactly the mapping's input channel and CC and the mapped encoder position byte, SHALL emit no color, brightness, animation, SysEx, or auxiliary feedback, SHALL use the causal absolute acknowledgement protocol when the encoder input mode is Absolute, and SHALL use the existing post-modulation display position without epoch coordination in either relative mode; an explicit Twister or WRLD.Bldr encoder output SHALL override automatic Generic feedback.
+
+#### Scenario: Generic output mirrors the full input address
+- **WHEN** a Generic turn mapping uses zero-based channel `C` and CC `N`
+- **AND** its mapped position requires feedback byte `V`
+- **THEN** automatic Generic output emits exactly one CC `(C, N, V)`
+- **AND** emits no other MIDI message for that mapping
+
+#### Scenario: Generic absolute output uses causal acknowledgement
+- **WHEN** a Generic controller in Absolute mode receives byte `B` on one of its turn mappings
+- **THEN** its automatically derived output waits for the mapping's processed epoch
+- **AND** suppresses output when the acknowledged raw-center byte equals `B`
+- **AND** emits one correction on the same channel and CC when the acknowledged raw-center byte differs
+- **AND** retains the pending expectation and cache for retry when correction enqueue fails
+
+#### Scenario: Generic relative output remains modulation-aware
+- **WHEN** a Generic controller uses either relative encoder mode
+- **AND** modulation changes the mapped post-modulation display position
+- **THEN** automatic Generic output emits the changed position on the turn mapping's same channel and CC
+- **AND** allocates, waits for, and resolves no absolute epoch
+
+#### Scenario: Explicit specialized output overrides Generic derivation
+- **WHEN** a Generic profile contains encoder input and an explicit Twister or WRLD.Bldr encoder output
+- **THEN** profile construction creates only the explicit specialized output
+- **AND** does not also create automatic Generic CC feedback
+
+#### Scenario: Generic profile without encoder input has no derived output
+- **WHEN** a Generic profile has no encoder input
+- **THEN** profile construction creates no automatic Generic encoder output

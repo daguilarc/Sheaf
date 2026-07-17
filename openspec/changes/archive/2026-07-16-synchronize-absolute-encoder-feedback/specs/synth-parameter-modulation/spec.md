@@ -178,7 +178,7 @@ WHEN MF Twister encoder MIDI output is processed, THE synth parameter modulation
 
 ## ADDED Requirements
 
-### Requirement: spm-77 — MIDI absolute feedback: causal acknowledgement and debounce
+### Requirement: spm-78 — MIDI absolute feedback: causal acknowledgement and debounce
 WHEN an absolute encoder input mapping accepts a raw 7-bit position, THE synth parameter modulation system SHALL allocate a globally monotonically increasing nonzero runtime epoch, publish that epoch and received byte as the matching controller route's unresolved output expectation before the epoch-bearing `ParamSetAbsolute` becomes visible to `MessageInBus`, process the parameter edit or rejection on the audio thread, record the epoch as processed for the addressed slot position, and publish that processed epoch coherently with the position's normalized pre-modulation scene/gesture raw center; WHILE the published processed epoch precedes the latest expected epoch, absolute output SHALL emit no position feedback and SHALL NOT mutate its position debounce cache; WHEN the processed epoch reaches or passes the expectation, absolute output SHALL quantize the raw center with `round(127 * clamp(rawCenter, 0, 1))`, suppress output exactly when that byte equals the received byte, otherwise emit that actual byte once as a correction, and then resume ordinary debounce; relative encoder input and output SHALL remain outside this protocol and retain post-modulation display feedback.
 
 #### Scenario: Applied absolute input does not echo
@@ -262,7 +262,7 @@ WHEN an absolute encoder input mapping accepts a raw 7-bit position, THE synth p
 - **THEN** output leaves the expectation unresolved and the position cache unchanged
 - **AND** a later process pass retries the correction
 
-### Requirement: spm-78 — MIDI output: Generic encoder position feedback
+### Requirement: spm-79 — MIDI output: Generic encoder position feedback
 WHEN a Generic controller profile contains encoder-turn input mappings and no explicit encoder output, THE synth parameter modulation system SHALL automatically create position feedback from those turn mappings; for each mapping it SHALL emit at most one debounced MIDI CC using exactly the mapping's input channel and CC and the mapped encoder position byte, SHALL emit no color, brightness, animation, SysEx, or auxiliary feedback, SHALL use the causal absolute acknowledgement protocol when the encoder input mode is Absolute, and SHALL use the existing post-modulation display position without epoch coordination in either relative mode; an explicit Twister or WRLD.Bldr encoder output SHALL override automatic Generic feedback.
 
 #### Scenario: Generic output mirrors the full input address
