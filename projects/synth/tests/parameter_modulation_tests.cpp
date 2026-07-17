@@ -6029,6 +6029,55 @@ TEST_CASE(midi_encoder_input_direction_only_zero_and_thru_behavior) {
     REQUIRE_TRUE(thru.last.GetCC() == 9);
 }
 
+TEST_CASE(midi_encoder_input_matches_typed_note_pushes_and_consumes_both_note_releases) {
+    synth::MessageInBus bus(nullptr, 16);
+    synth::EncoderMidiInConfig config;
+    config.pushes.push_back({
+        .control = {.channel = 1, .cc = 60, .type = synth::MidiControlType::Note},
+        .slotIx = 2,
+        .position = 3,
+    });
+    config.pushes.push_back({
+        .control = {.channel = 1, .cc = 61},
+        .slotIx = 4,
+        .position = 5,
+    });
+    synth::EncoderMidiInProcessor processor(config, &bus);
+    processor.SetTimestampProvider([] { return 77; });
+    CountingMidiInProcessor thru;
+    processor.SetThru(&thru);
+
+    processor.Process(synth::BasicMidi::Note(1, 1, 60, 100));
+    synth::MessageIn message;
+    REQUIRE_TRUE(bus.Pop(message, 77));
+    REQUIRE_TRUE(message.type == synth::MessageIn::Type::ParamPush);
+    REQUIRE_TRUE(message.slotIx == 2);
+    REQUIRE_TRUE(message.position == 3);
+
+    const synth::BasicMidi zeroVelocityNoteOn(
+        1, std::vector<std::uint8_t>{static_cast<std::uint8_t>(synth::BasicMidi::kStatusNote | 1), 60, 0});
+    processor.Process(zeroVelocityNoteOn);
+    REQUIRE_TRUE(!bus.Pop(message, 77));
+    REQUIRE_TRUE(thru.count == 0);
+
+    const synth::BasicMidi nonzeroVelocityNoteOff(
+        2,
+        std::vector<std::uint8_t>{static_cast<std::uint8_t>(synth::BasicMidi::kStatusNoteOff | 1), 60, 77});
+    processor.Process(nonzeroVelocityNoteOff);
+    REQUIRE_TRUE(!bus.Pop(message, 77));
+    REQUIRE_TRUE(thru.count == 0);
+
+    processor.Process(synth::BasicMidi::CC(3, 1, 60, 127));
+    REQUIRE_TRUE(!bus.Pop(message, 77));
+    REQUIRE_TRUE(thru.count == 1);
+    REQUIRE_TRUE(thru.last.IsCC());
+
+    processor.Process(synth::BasicMidi::Note(4, 1, 61, 127));
+    REQUIRE_TRUE(!bus.Pop(message, 77));
+    REQUIRE_TRUE(thru.count == 2);
+    REQUIRE_TRUE(thru.last.Status() == synth::BasicMidi::kStatusNote);
+}
+
 TEST_CASE(absolute_feedback_coordinator_tracks_latest_expectations_per_controller_route) {
     static_assert(synth::AbsoluteFeedbackCoordinator::kMaxRoutes == 4096);
 
@@ -6366,6 +6415,53 @@ TEST_CASE(midi_system_button_input_maps_press_release_timestamps_and_thru) {
     processor.Process(synth::BasicMidi::Clock(999));
     REQUIRE_TRUE(thru.count == 2);
     REQUIRE_TRUE(thru.last.Status() == synth::BasicMidi::kStatusClock);
+}
+
+TEST_CASE(midi_system_button_input_matches_typed_note_press_and_both_release_forms) {
+    synth::MessageInBus bus(nullptr, 16);
+    synth::SystemButtonMidiInConfig config;
+    config.associations.push_back({
+        .control = synth::MidiControlAddress{
+            .channel = 1,
+            .cc = 60,
+            .type = synth::MidiControlType::Note,
+        },
+        .press = synth::MessageIn::SetReset(0, true),
+        .release = synth::MessageIn::SetReset(0, false),
+    });
+    synth::SystemButtonMidiInProcessor processor(config, &bus);
+    processor.SetTimestampProvider([] { return 88; });
+    CountingMidiInProcessor thru;
+    processor.SetThru(&thru);
+
+    processor.Process(synth::BasicMidi::Note(1, 1, 60, 100));
+    synth::MessageIn message;
+    REQUIRE_TRUE(bus.Pop(message, 88));
+    REQUIRE_TRUE(message.type == synth::MessageIn::Type::ToggleReset);
+    REQUIRE_TRUE(message.hasBoolValue);
+    REQUIRE_TRUE(message.boolValue);
+
+    const synth::BasicMidi zeroVelocityNoteOn(
+        1, std::vector<std::uint8_t>{static_cast<std::uint8_t>(synth::BasicMidi::kStatusNote | 1), 60, 0});
+    processor.Process(zeroVelocityNoteOn);
+    REQUIRE_TRUE(bus.Pop(message, 88));
+    REQUIRE_TRUE(message.type == synth::MessageIn::Type::ToggleReset);
+    REQUIRE_TRUE(message.hasBoolValue);
+    REQUIRE_TRUE(!message.boolValue);
+
+    const synth::BasicMidi nonzeroVelocityNoteOff(
+        2,
+        std::vector<std::uint8_t>{static_cast<std::uint8_t>(synth::BasicMidi::kStatusNoteOff | 1), 60, 77});
+    processor.Process(nonzeroVelocityNoteOff);
+    REQUIRE_TRUE(bus.Pop(message, 88));
+    REQUIRE_TRUE(message.type == synth::MessageIn::Type::ToggleReset);
+    REQUIRE_TRUE(message.hasBoolValue);
+    REQUIRE_TRUE(!message.boolValue);
+
+    processor.Process(synth::BasicMidi::CC(3, 1, 60, 127));
+    REQUIRE_TRUE(!bus.Pop(message, 88));
+    REQUIRE_TRUE(thru.count == 1);
+    REQUIRE_TRUE(thru.last.IsCC());
 }
 
 TEST_CASE(midi_system_button_input_matches_launchpad_positions_generically) {
@@ -12221,6 +12317,93 @@ TEST_CASE(midi_profile_config_json_round_trips_wrld_bldr_defaults_and_rebuilds_p
     REQUIRE_TRUE(dynamic_cast<synth::WrldBldrMidiOutProcessor*>(result.outputs[0].get()) != nullptr);
     REQUIRE_TRUE(dynamic_cast<synth::SystemCcMidiOutProcessor*>(result.outputs[1].get()) != nullptr);
     REQUIRE_TRUE(dynamic_cast<synth::WrldBldrSystemMidiOutProcessor*>(result.outputs[2].get()) != nullptr);
+}
+
+TEST_CASE(midi_control_address_type_round_trips_and_legacy_profiles_default_to_cc) {
+    synth::MidiControllerProfileConfig source;
+    source.encoderInput = synth::EncoderMidiInConfig{};
+    source.encoderInput->pushes.push_back({
+        .control = {.channel = 1, .cc = 60, .type = synth::MidiControlType::Note},
+        .slotIx = 2,
+        .position = 3,
+    });
+
+    synth::JsonArena arena(16384);
+    const synth::JSON json = synth::ToJSON(arena, source);
+    const synth::JSON serializedControl =
+        json.Get("encoderInput").Get("pushes").GetAt(0).Get("control");
+    REQUIRE_TRUE(!serializedControl.Get("type").IsNull());
+    REQUIRE_TRUE(std::string_view(serializedControl.Get("type").StringValue()) == "note");
+
+    synth::MidiControllerProfileConfig roundTripped;
+    REQUIRE_TRUE(synth::FromJSON(json, roundTripped));
+    REQUIRE_TRUE(roundTripped.encoderInput.has_value());
+    REQUIRE_TRUE(roundTripped.encoderInput->pushes.front().control.type == synth::MidiControlType::Note);
+
+    synth::JsonArena legacyArena(16384);
+    synth::JSON legacyRoot = legacyArena.Object();
+    legacyRoot.SetNew("schema", legacyArena.String("synth.midiControllerProfileConfig"));
+    legacyRoot.SetNew("schemaVersion", legacyArena.Integer(1));
+    synth::JSON legacyEncoderInput = legacyArena.Object();
+    legacyEncoderInput.SetNew("mode", legacyArena.String("signed7Bit"));
+    legacyEncoderInput.SetNew("turnStep", legacyArena.Real(1.0 / 128.0));
+    legacyEncoderInput.SetNew("turns", legacyArena.Array());
+    synth::JSON legacyPushes = legacyArena.Array();
+    synth::JSON legacyPush = legacyArena.Object();
+    synth::JSON legacyControl = legacyArena.Object();
+    legacyControl.SetNew("channel", legacyArena.Integer(1));
+    legacyControl.SetNew("cc", legacyArena.Integer(60));
+    legacyPush.SetNew("control", legacyControl);
+    legacyPush.SetNew("slotIx", legacyArena.Integer(2));
+    legacyPush.SetNew("position", legacyArena.Integer(3));
+    legacyPushes.AppendNew(legacyPush);
+    legacyEncoderInput.SetNew("pushes", legacyPushes);
+    legacyRoot.SetNew("encoderInput", legacyEncoderInput);
+    legacyRoot.SetNew("encoderOutput", legacyArena.Null());
+    legacyRoot.SetNew("analogInput", legacyArena.Null());
+    legacyRoot.SetNew("systemMessages", legacyArena.Array());
+
+    synth::MidiControllerProfileConfig legacyLoaded;
+    REQUIRE_TRUE(synth::FromJSON(legacyRoot, legacyLoaded));
+    REQUIRE_TRUE(legacyLoaded.encoderInput.has_value());
+    REQUIRE_TRUE(legacyLoaded.encoderInput->pushes.front().control.type == synth::MidiControlType::Cc);
+}
+
+TEST_CASE(midi_control_address_json_rejects_unknown_type_without_mutating_target) {
+    synth::JsonArena arena(4096);
+    synth::JSON json = arena.Object();
+    json.SetNew("channel", arena.Integer(3));
+    json.SetNew("cc", arena.Integer(9));
+    json.SetNew("type", arena.String("pitch"));
+
+    synth::MidiControlAddress target{
+        .channel = 7,
+        .cc = 74,
+        .type = synth::MidiControlType::Note,
+    };
+    const synth::MidiControlAddress unchanged = target;
+    REQUIRE_TRUE(!synth::FromJSON(json, target));
+    REQUIRE_TRUE(target == unchanged);
+}
+
+TEST_CASE(generic_note_system_control_does_not_create_cc_feedback_output) {
+    synth::MidiControllerProfileConfig config;
+    config.systemMessages.push_back({
+        .control = synth::MidiControlAddress{
+            .channel = 1,
+            .cc = 60,
+            .type = synth::MidiControlType::Note,
+        },
+        .press = synth::MessageIn::SetReset(0, true),
+        .release = synth::MessageIn::SetReset(0, false),
+        .feedback = synth::MessageIn::SetReset(0, true),
+        .outputFeedback = true,
+    });
+
+    synth::MidiControllerProfileResult result = synth::CreateMidiControllerProfile(
+        config, nullptr, nullptr, nullptr, {}, 0, nullptr, 0, synth::MidiProfileKind::Generic);
+    REQUIRE_TRUE(dynamic_cast<synth::SystemButtonMidiInProcessor*>(result.input.get()) != nullptr);
+    REQUIRE_TRUE(result.outputs.empty());
 }
 
 static_assert(static_cast<int>(synth::EncoderMode::Signed7Bit) == 0);

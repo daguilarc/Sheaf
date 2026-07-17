@@ -64,6 +64,25 @@ bool CacheNeedsResize(std::size_t size, std::size_t targetSize) {
     return size != targetSize;
 }
 
+std::optional<MidiControlAddress> MidiAddress(const BasicMidi& midi) {
+    if (midi.IsCC()) {
+        return MidiControlAddress{
+            .channel = midi.Channel(),
+            .cc = midi.GetCC(),
+            .type = MidiControlType::Cc,
+        };
+    }
+    if (midi.Size() >= 3 &&
+        (midi.Status() == BasicMidi::kStatusNote || midi.Status() == BasicMidi::kStatusNoteOff)) {
+        return MidiControlAddress{
+            .channel = midi.Channel(),
+            .cc = midi.GetNote(),
+            .type = MidiControlType::Note,
+        };
+    }
+    return std::nullopt;
+}
+
 bool IsObject(JSON json) {
     return json.m_node != nullptr && json.m_node->m_type == JsonType::Object;
 }
@@ -563,45 +582,44 @@ void EncoderMidiInProcessor::ReserveAbsoluteRoutes() {
 }
 
 void EncoderMidiInProcessor::Process(const BasicMidi& midi) {
-    if (!midi.IsCC()) {
-        PassToThru(midi);
-        return;
-    }
-
-    if (const EncoderMidiMapping* mapping = FindTurn(midi)) {
-        if (config_.mode == EncoderMode::Absolute) {
-            if (absoluteFeedback_ == nullptr) {
-                Push(MessageIn::ParamSetAbsolute(NextTimestamp(), mapping->slotIx, mapping->position,
-                                                 static_cast<float>(midi.GetValue()) / 127.0f));
+    if (midi.IsCC()) {
+        if (const EncoderMidiMapping* mapping = FindTurn(midi)) {
+            if (config_.mode == EncoderMode::Absolute) {
+                if (absoluteFeedback_ == nullptr) {
+                    Push(MessageIn::ParamSetAbsolute(NextTimestamp(), mapping->slotIx, mapping->position,
+                                                     static_cast<float>(midi.GetValue()) / 127.0f));
+                    return;
+                }
+                const std::size_t mappingIx = static_cast<std::size_t>(mapping - config_.turns.data());
+                const auto route = absoluteTurnRoutes_[mappingIx];
+                if (!route.IsTracked()) {
+                    return;
+                }
+                const auto alert = absoluteFeedback_->BeginInput(route, midi.GetValue());
+                if (!alert.IsPublished()) {
+                    // A tracked absolute turn must never become visible to DSP
+                    // without its matching output expectation.
+                    return;
+                }
+                const bool pushed = Push(MessageIn::ParamSetAbsolute(
+                    NextTimestamp(), mapping->slotIx, mapping->position,
+                    static_cast<float>(midi.GetValue()) / 127.0f, alert.Epoch()));
+                if (!pushed) {
+                    absoluteFeedback_->Rollback(alert);
+                }
                 return;
             }
-            const std::size_t mappingIx = static_cast<std::size_t>(mapping - config_.turns.data());
-            const auto route = absoluteTurnRoutes_[mappingIx];
-            if (!route.IsTracked()) {
-                return;
-            }
-            const auto alert = absoluteFeedback_->BeginInput(route, midi.GetValue());
-            if (!alert.IsPublished()) {
-                // A tracked absolute turn must never become visible to DSP
-                // without its matching output expectation.
-                return;
-            }
-            const bool pushed = Push(MessageIn::ParamSetAbsolute(
-                NextTimestamp(), mapping->slotIx, mapping->position,
-                static_cast<float>(midi.GetValue()) / 127.0f, alert.Epoch()));
-            if (!pushed) {
-                absoluteFeedback_->Rollback(alert);
+            if (const std::optional<float> delta = DecodeDelta(midi.GetValue())) {
+                Push(MessageIn::ParamIncDec(NextTimestamp(), mapping->slotIx, mapping->position, *delta));
             }
             return;
         }
-        if (const std::optional<float> delta = DecodeDelta(midi.GetValue())) {
-            Push(MessageIn::ParamIncDec(NextTimestamp(), mapping->slotIx, mapping->position, *delta));
-        }
-        return;
     }
 
     if (const EncoderMidiMapping* mapping = FindPush(midi)) {
-        if (midi.GetValue() != 0) {
+        const bool isPress = midi.IsCC() ? midi.GetValue() != 0
+                                        : midi.Status() == BasicMidi::kStatusNote && midi.GetValue() > 0;
+        if (isPress) {
             Push(MessageIn::ParamPush(NextTimestamp(), mapping->slotIx, mapping->position));
         }
         return;
@@ -611,16 +629,22 @@ void EncoderMidiInProcessor::Process(const BasicMidi& midi) {
 }
 
 const EncoderMidiMapping* EncoderMidiInProcessor::FindTurn(const BasicMidi& midi) const {
-    const MidiControlAddress address{.channel = midi.Channel(), .cc = midi.GetCC()};
+    const std::optional<MidiControlAddress> address = MidiAddress(midi);
+    if (!address.has_value()) {
+        return nullptr;
+    }
     const auto itr = std::find_if(config_.turns.begin(), config_.turns.end(),
-                                  [address](const EncoderMidiMapping& mapping) { return mapping.control == address; });
+                                  [address](const EncoderMidiMapping& mapping) { return mapping.control == *address; });
     return itr == config_.turns.end() ? nullptr : &*itr;
 }
 
 const EncoderMidiMapping* EncoderMidiInProcessor::FindPush(const BasicMidi& midi) const {
-    const MidiControlAddress address{.channel = midi.Channel(), .cc = midi.GetCC()};
+    const std::optional<MidiControlAddress> address = MidiAddress(midi);
+    if (!address.has_value()) {
+        return nullptr;
+    }
     const auto itr = std::find_if(config_.pushes.begin(), config_.pushes.end(),
-                                  [address](const EncoderMidiMapping& mapping) { return mapping.control == address; });
+                                  [address](const EncoderMidiMapping& mapping) { return mapping.control == *address; });
     return itr == config_.pushes.end() ? nullptr : &*itr;
 }
 
@@ -691,9 +715,8 @@ void SystemButtonMidiInProcessor::SetConfig(SystemButtonMidiInConfig config) {
 }
 
 void SystemButtonMidiInProcessor::Process(const BasicMidi& midi) {
-    const bool isNote = midi.Status() == BasicMidi::kStatusNote && midi.Size() >= 3;
-    const bool isNoteOff = midi.Status() == BasicMidi::kStatusNoteOff && midi.Size() >= 3;
-    if (!midi.IsCC() && !isNote && !isNoteOff) {
+    const std::optional<MidiControlAddress> address = MidiAddress(midi);
+    if (!address.has_value()) {
         PassToThru(midi);
         return;
     }
@@ -704,7 +727,9 @@ void SystemButtonMidiInProcessor::Process(const BasicMidi& midi) {
         return;
     }
 
-    if (!isNoteOff && midi.GetValue() > 0) {
+    const bool isPress = midi.IsCC() ? midi.GetValue() > 0
+                                    : midi.Status() == BasicMidi::kStatusNote && midi.GetValue() > 0;
+    if (isPress) {
         PushStamped(association->press);
         return;
     }
@@ -715,23 +740,17 @@ void SystemButtonMidiInProcessor::Process(const BasicMidi& midi) {
 }
 
 const SystemButtonMidiAssociation* SystemButtonMidiInProcessor::FindAssociation(const BasicMidi& midi) const {
-    const bool canMatchLaunchpad = midi.IsCC() ||
-                                   (midi.Status() == BasicMidi::kStatusNote && midi.Size() >= 3) ||
-                                   (midi.Status() == BasicMidi::kStatusNoteOff && midi.Size() >= 3);
-    const std::uint8_t launchpadNote = midi.IsCC() ? midi.GetCC() : midi.GetNote();
-    const std::optional<MidiControlAddress> address =
-        midi.IsCC() ? std::optional<MidiControlAddress>(MidiControlAddress{.channel = midi.Channel(), .cc = midi.GetCC()})
-                    : std::nullopt;
+    const std::optional<MidiControlAddress> address = MidiAddress(midi);
 
     for (const SystemButtonMidiAssociation& association : config_.associations) {
         if (address.has_value() && association.control.has_value() && *association.control == *address) {
             return &association;
         }
-        if (canMatchLaunchpad && association.launchpadPosition.has_value()) {
+        if (address.has_value() && association.launchpadPosition.has_value()) {
             const LaunchpadGridPosition& position = *association.launchpadPosition;
             const std::optional<std::uint8_t> mapped =
                 LaunchpadPositionToNote(position.controller, position.x, position.y);
-            if (mapped.has_value() && *mapped == launchpadNote) {
+            if (mapped.has_value() && *mapped == address->cc) {
                 return &association;
             }
         }
@@ -1421,6 +1440,7 @@ JSON ToJSON(JsonArena& arena, const MidiControlAddress& value) {
     JSON json = arena.Object();
     json.SetNew("channel", arena.Integer(value.channel));
     json.SetNew("cc", arena.Integer(value.cc));
+    json.SetNew("type", arena.String(value.type == MidiControlType::Note ? "note" : "cc"));
     return json;
 }
 
@@ -1431,6 +1451,20 @@ bool FromJSON(JSON json, MidiControlAddress& value) {
     MidiControlAddress parsed;
     if (!ReadU8(json.Get("channel"), parsed.channel, 0x0F) || !ReadU8(json.Get("cc"), parsed.cc)) {
         return false;
+    }
+    const JSON type = json.Get("type");
+    if (!type.IsNull()) {
+        if (!IsString(type)) {
+            return false;
+        }
+        const std::string_view name(type.StringValue());
+        if (name == "cc") {
+            parsed.type = MidiControlType::Cc;
+        } else if (name == "note") {
+            parsed.type = MidiControlType::Note;
+        } else {
+            return false;
+        }
     }
     value = parsed;
     return true;
@@ -2018,7 +2052,8 @@ MidiControllerProfileResult CreateMidiControllerProfile(
     };
     for (const MidiControllerSystemMessageAssociation& association : config.systemMessages) {
         // MF Twister side buttons are CC input-only; position-based controllers still use their own output paths.
-        if (association.control.has_value() && association.outputFeedback) {
+        if (association.control.has_value() && association.control->type == MidiControlType::Cc &&
+            association.outputFeedback) {
             ccOutput.associations.push_back({
                 .control = *association.control,
                 .message = association.feedback,
@@ -2297,7 +2332,30 @@ bool SlotValidForKind(const MidiControllerSlot& slot, std::string* reason) {
         return Fail(reason, "system messages not supported by this controller kind");
     }
 
+    if (slot.config.encoderInput.has_value()) {
+        for (const EncoderMidiMapping& mapping : slot.config.encoderInput->turns) {
+            if (mapping.control.type != MidiControlType::Cc) {
+                return Fail(reason, "encoder turns must use CC control addresses");
+            }
+        }
+    }
+    if (slot.config.analogInput.has_value()) {
+        if (slot.config.analogInput->sceneBlend.has_value() &&
+            slot.config.analogInput->sceneBlend->type != MidiControlType::Cc) {
+            return Fail(reason, "scene blend must use a CC control address");
+        }
+        for (const AnalogMidiMapping& mapping : slot.config.analogInput->gestures) {
+            if (mapping.control.type != MidiControlType::Cc) {
+                return Fail(reason, "analog gestures must use CC control addresses");
+            }
+        }
+    }
+
     for (const MidiControllerSystemMessageAssociation& association : slot.config.systemMessages) {
+        if (slot.kind != MidiProfileKind::Generic && association.control.has_value() &&
+            association.control->type != MidiControlType::Cc) {
+            return Fail(reason, "this controller kind requires CC system-message control addresses");
+        }
         if (slot.kind == MidiProfileKind::Launchpad) {
             if (!association.launchpadPosition.has_value()) {
                 return Fail(reason, "launchpad system-message entries must carry a launchpad position");

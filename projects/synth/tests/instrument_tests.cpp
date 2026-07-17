@@ -294,6 +294,81 @@ TEST_CASE(SlotValidForKindAcceptsTwisterSideButtonCcAssociation) {
     REQUIRE_TRUE(synth::SlotValidForKind(slot, &reason));
 }
 
+TEST_CASE(SlotValidForKindRejectsNoteEncoderTurns) {
+    MidiControllerSlot slot = MakeGenericSlot("gen");
+    slot.config.encoderInput = synth::EncoderMidiInConfig{};
+    slot.config.encoderInput->turns.push_back({
+        .control = {.channel = 1, .cc = 60, .type = synth::MidiControlType::Note},
+        .slotIx = 0,
+        .position = 0,
+    });
+
+    std::string reason;
+    REQUIRE_TRUE(!synth::SlotValidForKind(slot, &reason));
+    REQUIRE_TRUE(!reason.empty());
+}
+
+TEST_CASE(SlotValidForKindRejectsNoteAnalogAddresses) {
+    MidiControllerSlot gestureSlot = MakeGenericSlot("gesture");
+    gestureSlot.config.analogInput = synth::AnalogMidiInConfig{};
+    gestureSlot.config.analogInput->gestures.push_back({
+        .control = {.channel = 1, .cc = 60, .type = synth::MidiControlType::Note},
+        .gestureIx = 0,
+    });
+
+    std::string reason;
+    REQUIRE_TRUE(!synth::SlotValidForKind(gestureSlot, &reason));
+    REQUIRE_TRUE(!reason.empty());
+
+    MidiControllerSlot sceneBlendSlot = MakeGenericSlot("scene-blend");
+    sceneBlendSlot.config.analogInput = synth::AnalogMidiInConfig{};
+    sceneBlendSlot.config.analogInput->sceneBlend = MidiControlAddress{
+        .channel = 1,
+        .cc = 61,
+        .type = synth::MidiControlType::Note,
+    };
+    reason.clear();
+    REQUIRE_TRUE(!synth::SlotValidForKind(sceneBlendSlot, &reason));
+    REQUIRE_TRUE(!reason.empty());
+}
+
+TEST_CASE(SlotValidForKindAcceptsGenericNotePushesAndSystemControls) {
+    MidiControllerSlot slot = MakeGenericSlot("gen");
+    slot.config.encoderInput = synth::EncoderMidiInConfig{};
+    slot.config.encoderInput->pushes.push_back({
+        .control = {.channel = 1, .cc = 60, .type = synth::MidiControlType::Note},
+        .slotIx = 0,
+        .position = 0,
+    });
+    MidiControllerSystemMessageAssociation association = MakeControlOnlyAssociation();
+    association.control->type = synth::MidiControlType::Note;
+    slot.config.systemMessages.push_back(association);
+
+    std::string reason;
+    REQUIRE_TRUE(synth::SlotValidForKind(slot, &reason));
+}
+
+TEST_CASE(SlotValidForKindRejectsNoteSystemControlsForWrldBldrAndTwister) {
+    MidiControllerSlot wrld = MakeGenericSlot("wrld");
+    wrld.kind = MidiProfileKind::WrldBldr;
+    MidiControllerSystemMessageAssociation wrldAssociation = MakeWrldBldrAssociation();
+    wrldAssociation.control->type = synth::MidiControlType::Note;
+    wrld.config.systemMessages.push_back(wrldAssociation);
+
+    std::string reason;
+    REQUIRE_TRUE(!synth::SlotValidForKind(wrld, &reason));
+    REQUIRE_TRUE(!reason.empty());
+
+    MidiControllerSlot twister = MakeGenericSlot("twister");
+    twister.kind = MidiProfileKind::MfTwister;
+    MidiControllerSystemMessageAssociation twisterAssociation = MakeControlOnlyAssociation();
+    twisterAssociation.control->type = synth::MidiControlType::Note;
+    twister.config.systemMessages.push_back(twisterAssociation);
+    reason.clear();
+    REQUIRE_TRUE(!synth::SlotValidForKind(twister, &reason));
+    REQUIRE_TRUE(!reason.empty());
+}
+
 TEST_CASE(SlotValidForKindRejectsTwisterAssociationWithWrongChannel) {
     // Finding 5: MfTwister system associations must carry the fixed
     // hardware channel 3 -- SlotValidForKind previously accepted any

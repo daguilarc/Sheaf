@@ -185,9 +185,12 @@ private:
     std::atomic<std::uint64_t> nextEpoch_{1};
 };
 
+enum class MidiControlType { Cc, Note };
+
 struct MidiControlAddress {
     std::uint8_t channel = 0;
     std::uint8_t cc = 0;
+    MidiControlType type = MidiControlType::Cc;
 
     bool operator==(const MidiControlAddress& other) const = default;
 };
