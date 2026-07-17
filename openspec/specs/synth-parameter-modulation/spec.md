@@ -2178,41 +2178,63 @@ WHEN a modulation source is registered, THE synth parameter modulation system SH
 - **WHEN** parameter values are saved and loaded
 - **THEN** no visualizer pointer, visibility flag, bounds, or model address is serialized or restored
 
-### Requirement: spm-71 — MiniApp: ganged random LFO modulation source
-WHEN MiniApp initializes its modulation topology, THE application SHALL create one two-voice ganged random LFO, register its unipolar voice outputs as modulation source index `3`, configure cyan and orange voice colors, retain and publish its UI state, own one address-stable ganged-random-LFO visualizer for modulation-depth cells, and add a separate main-screen rendering of the same snapshot beside the existing VCO and ordinary LFO scopes without adding a parameter, page, bank, encoder, or performer control for the new source.
+### Requirement: spm-71 — MiniApp: standard modulation topology
+WHEN MiniApp initializes its modulation topology, THE application SHALL configure its two-voice group for exactly fifteen modulators and its bank slot for all sixteen physical positions; SHALL retain one `StandardModulators<2>` that registers four two-voice ganged random LFOs at indexes `0..3`, constant at `11`, and noise at `14`; SHALL register direct VCO, swapped VCO, and ordinary LFO sources at indexes `4`, `5`, and `6`; SHALL retain and publish the standard bundle's UI states and address-stable visualizers; SHALL render the VCO and ordinary-LFO scopes stacked in a bounded left region and all sixteen physical encoder positions in a row-major `4x4` right grid at the default and `640x480` surface sizes; and SHALL omit a separate main-screen ganged-random panel without adding performer parameters for any standard source.
 
-#### Scenario: MiniApp uses the requested fixed metaparameters
-- **WHEN** MiniApp configures the ganged random LFO
-- **THEN** waiting uses center-time mean `2.0` seconds, center-time sigma `0.5` seconds, and internal increment sigma `0.125` hertz
-- **AND** moving uses center-time mean `2.0` seconds, center-time sigma `0.5` seconds, and internal increment sigma `0.125` hertz
-- **AND** target internal sigma is `0.1`
+#### Scenario: MiniApp uses standard random defaults
+- **WHEN** MiniApp constructs its standard bundle without overriding random timing
+- **THEN** its four random inputs use the waiting means, derived waiting/moving sigmas and internal sigmas, and target sigmas defined by `ssm-3`
+- **AND** source `0` uses the 500-millisecond waiting mean and target sigma `0.1`
 
-#### Scenario: MiniApp processes the source at audio rate
+#### Scenario: MiniApp processes standard sources at audio rate
 - **WHEN** MiniApp prepares and processes audio
-- **THEN** it supplies the negotiated processing sample rate to the gang
-- **AND** processes the gang once per audio sample before updating group modulation values
-- **AND** modulator `3` receives the gang's two current outputs in voice order
+- **THEN** it prepares the standard bundle at the negotiated processing sample rate
+- **AND** processes the bundle once per audio sample before the existing group modulation-value update
+- **AND** each standard source publishes outputs in MiniApp voice order
 
-#### Scenario: Existing sources retain their indexes
-- **WHEN** the fourth source is registered
-- **THEN** the existing direct VCO, swapped VCO, and ordinary LFO sources remain at indexes `0`, `1`, and `2`
-- **AND** group capacity accommodates the fourth source and its materialized depth controls without invalidating existing parameter, page, bank, scene, or gesture topology
+#### Scenario: Application-specific sources move after random sources
+- **WHEN** MiniApp registration completes
+- **THEN** standard random sources occupy `0..3`, direct VCO occupies `4`, swapped VCO occupies `5`, and ordinary LFO occupies `6`
+- **AND** constant occupies `11` and noise occupies `14`
+- **AND** all other indexes remain disconnected
 
-#### Scenario: Ganged source visualizer is address stable
-- **WHEN** MiniApp materializes a modulation-depth cell for source `3`
-- **THEN** its published visualizer pointer refers to the retained ganged-random-LFO visualizer
-- **AND** the visualizer reads the retained gang UI-state address
-- **AND** no object is reconstructed during audio or UI refresh
+#### Scenario: Fifteen modulation cells fit the MIN-16 slot
+- **WHEN** the user opens a MiniApp modulation view
+- **THEN** physical positions `0..14` preserve all fifteen modulator indexes in order
+- **AND** connected indexes expose modulation-depth cells while disconnected indexes expose empty disconnected cells
+- **AND** physical position `15` is the return cell
+- **AND** group capacity accommodates every connected depth without invalidating existing top-level parameter, page, bank, scene, or gesture topology
 
-#### Scenario: Main screen displays all three signal families
-- **WHEN** the MiniApp surface builds at its default size
-- **THEN** the waveform row contains bounded VCO, ordinary LFO, and ganged-random-LFO panels
-- **AND** the ganged panel displays the current complete round with cyan and orange paths and present dots
+#### Scenario: Standard visualizers are address stable
+- **WHEN** MiniApp materializes depth cells for standard random, constant, or noise sources
+- **THEN** each published visualizer pointer refers to the retained standard bundle's corresponding visualizer
+- **AND** no processor, adapter row, UI state, or visualizer is reconstructed during audio or UI refresh
 
-#### Scenario: No performer controls are added
+#### Scenario: Main screen uses bounded scopes and a complete encoder grid
+- **WHEN** the MiniApp surface builds at its default `900x560` size or at `640x480`
+- **THEN** the VCO and ordinary-LFO scopes are stacked without overlap inside a bounded left region
+- **AND** all sixteen physical encoder positions occupy a bounded row-major `4x4` right grid
+- **AND** position `0` is the upper-left cell and position `15` is the lower-right cell
+
+#### Scenario: Empty positions and modulation views preserve physical mapping
+- **WHEN** MiniApp publishes a top-level bank or a modulation view in the `4x4` grid
+- **THEN** empty top-level positions remain disconnected placeholders
+- **AND** a modulation view presents sources `0..14` in physical positions `0..14` and the return cell at position `15`
+
+#### Scenario: Main screen omits the separate random panel
+- **WHEN** the MiniApp main surface builds
+- **THEN** no separate main-screen ganged-random panel is constructed or rendered
+- **AND** standard random, constant, and noise modulation-depth visualizer underlays remain available through their retained visualizers
+
+#### Scenario: Standard metaparameters are not performer state
 - **WHEN** MiniApp publishes its pages, banks, encoder mappings, and patch state
-- **THEN** the ganged random LFO metaparameters are absent from performer controls and serialized parameter state
-- **AND** the existing VCO and LFO bank mappings remain unchanged
+- **THEN** standard source timing, indexes, random state, noise state, constant values, and visualizer state are absent from performer controls and serialized parameter values
+- **AND** the existing top-level VCO and LFO bank parameter mappings remain unchanged while the slot gains the previously unused physical positions
+
+#### Scenario: Old modulation indexes are not migrated
+- **WHEN** MiniApp loads saved values created with its former six-modulator topology
+- **THEN** the live code-defined fifteen-source topology remains authoritative
+- **AND** no compatibility alias or index translation is applied
 
 ### Requirement: spm-72 — Processing: sparse top-level and modulation-route traversal
 WHEN a parameter group performs per-sample processing, THE synth parameter modulation system SHALL run `ProcessLite()` only for manager-registered top-level parameters, SHALL update materialized local modulation-depth parameters only through the recursive control-rate compute rooted at those top-level parameters, and SHALL maintain a stable-source active-route permutation whose contiguous active prefix contains every route with non-zero target depth or non-zero current depth still settling toward zero so per-sample depth slew and modulation application do not visit inactive routes.
@@ -2315,3 +2337,30 @@ WHEN local modulation-depth storage is maintained at a safe control boundary, TH
 - **WHEN** a parameter graph is serialized before and after reclaiming only eligible neutral local nodes
 - **THEN** both value JSON documents are semantically identical
 - **AND** loading either document reconstructs the same non-default modulation graph and parameter outputs
+
+### Requirement: spm-75 — Disconnected sources are empty modulation-view positions
+WHEN a bank opens a parameter's modulation view, THE parameter-modulation system SHALL preserve one physical position for every configured modulator index; SHALL expose and materialize a depth parameter only for indexes whose `ModulatorMetadata.connected` is true; SHALL represent every disconnected index with a null bank cell that publishes disconnected UI state and ignores encoder and modifier input; SHALL count only connected missing depths during capacity preflight; and SHALL limit Random Mod selection to connected source indexes.
+
+#### Scenario: Disconnected index stays empty
+- **WHEN** a modulation view opens for a group with a disconnected source index
+- **THEN** that physical position has no visible parameter and publishes `connected=false`
+- **AND** opening the view does not allocate or assign a modulation-depth parameter for that index
+
+#### Scenario: Disconnected position ignores UI input
+- **WHEN** the user turns or presses the disconnected position with no modifier, Reset, or Random held
+- **THEN** no parameter value, selection, storage request, or topology changes
+
+#### Scenario: Capacity preflight counts connected depths only
+- **WHEN** a modulation view has connected and disconnected indexes without existing depth parameters
+- **THEN** opening the view requires storage only for the connected missing depths
+- **AND** disconnected positions do not prevent the view from opening
+
+#### Scenario: Random Mod excludes disconnected indexes
+- **WHEN** Random Mod applies to a parameter whose group contains disconnected source indexes
+- **THEN** it can create or change depths only at connected indexes
+- **AND** if no source index is connected, it is a no-op without a storage request
+
+#### Scenario: Explicit disconnected depth remains hidden
+- **WHEN** programmatic or legacy code has assigned a depth parameter at an index whose source metadata is disconnected
+- **THEN** the modulation view still exposes that index as an empty disconnected position
+- **AND** the explicit parameter API and stored depth object are otherwise unchanged

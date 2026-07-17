@@ -690,15 +690,15 @@ WHEN a generated synth graph needs to run at a fixed integer multiple of the hos
 - **THEN** both can use the same output-stage template without the DSP library depending on either application's modules or parameters
 
 ### Requirement: sdsp-33 — MiniApp: per-modulator scope visualizer instances
-WHEN MiniApp initializes its three scope-backed modulation sources at indexes `0`, `1`, and `2`, THE application SHALL construct three visible, address-stable portable scope visualizer instances; SHALL assign distinct VCO visualizer instances to modulators `0` and `1`; SHALL assign one LFO visualizer instance to modulator `2`; SHALL bind the two VCO visualizers to the stable app-owned VCO module UI state and the LFO visualizer to the stable app-owned LFO module UI state; SHALL retain all visualizers and referenced UI state through application teardown; and SHALL keep non-scope modulation-source visualizers outside this three-instance scope contract.
+WHEN MiniApp initializes its three scope-backed application-specific modulation sources at indexes `4`, `5`, and `6`, THE application SHALL construct three visible, address-stable portable scope visualizer instances; SHALL assign distinct VCO visualizer instances to modulators `4` and `5`; SHALL assign one LFO visualizer instance to modulator `6`; SHALL bind the two VCO visualizers to the stable app-owned VCO module UI state and the LFO visualizer to the stable app-owned LFO module UI state; SHALL retain all visualizers and referenced UI state through application teardown; and SHALL keep standard non-scope modulation-source visualizers outside this three-instance scope contract.
 
 #### Scenario: VCO modulators do not alias component identity
 - **WHEN** MiniApp initialization completes
-- **THEN** modulator `0` and modulator `1` have non-null visualizer pointers with different addresses
+- **THEN** modulator `4` and modulator `5` have non-null visualizer pointers with different addresses
 - **AND** both visualizers render from the MiniApp VCO UI-state collection
 
 #### Scenario: LFO modulator uses LFO state
-- **WHEN** MiniApp opens a modulation view containing modulator `2`
+- **WHEN** MiniApp opens a modulation view containing modulator `6`
 - **THEN** its depth encoder has an LFO scope visualizer beneath it
 - **AND** the visualizer reads the MiniApp LFO module's published UI state
 
@@ -706,10 +706,10 @@ WHEN MiniApp initializes its three scope-backed modulation sources at indexes `0
 - **WHEN** MiniApp visualizer initialization and drawing are compiled in the JUCE-free synth test targets
 - **THEN** they require no backend header or backend-specific component implementation
 
-#### Scenario: Non-scope visualizers have separate contracts
-- **WHEN** MiniApp attaches model-free or immutable-data visualizers to modulators `3`, `4`, and `5`
+#### Scenario: Standard visualizers have a separate contract
+- **WHEN** MiniApp attaches standard random, constant, and noise visualizers to modulators `0..3`, `11`, and `14`
 - **THEN** those visualizers are not counted among the three scope visualizer instances
-- **AND** the ganged random LFO is governed by `sdsp-36` and `spv-6`, noise by `sdsp-38` and `spv-7`, and the constant visualizer by `sdsp-40` and `spv-8`
+- **AND** their ownership and publication are governed by `synth-standard-modulators`, with drawing behavior governed by `spv-6`, `spv-7`, and `spv-8`
 
 ### Requirement: sdsp-34 — Random modulation: shaped interpolation and correlated increments
 WHEN shaped random modulation timing is computed, THE synth DSP system SHALL provide a pure `ShapedInterpolate` helper that accepts double interpolation time, clamps shape and time to `[0,1]`, keeps the clamped time double until narrowing it at the float output-evaluation boundary, computes cosine-smoothed time with the float `DefaultDspMath::Cos2Pi` path, crossfades between linear and smoothed time by shape, and linearly interpolates float source to target; and SHALL provide a correlated-increment helper that samples one reflected normal center time in seconds, floors it at one sample period, takes its reciprocal as a center rate in hertz, samples reflected normal per-voice rates around that center using an internal sigma in hertz, and converts those rates to positive double cycles-per-sample increments.
@@ -872,28 +872,27 @@ WHEN applications need audio-rate white-noise modulation, THE synth DSP system S
 - **THEN** subsequent modulation-value updates dereference the processor's latest per-voice outputs
 - **AND** the processor does not depend on parameter IDs, banks, pages, controller layout, or modulator index selection
 
-### Requirement: sdsp-38 — MiniApp: fifth-slot noise modulator
-WHEN MiniApp publishes its simple noise modulation source, THE application SHALL configure its two-voice group with five modulator slots, retain one two-voice `NoiseModulatorProcessor`, register that processor's stable outputs as the connected `Noise` source at modulator index `4`, process it once per audio sample before updating group modulation values, attach one retained portable noise waveform visualizer to index `4`, and SHALL NOT claim modulator index `3` as part of this change.
+### Requirement: sdsp-38 — MiniApp: standard noise modulator
+WHEN MiniApp publishes its simple noise modulation source, THE application SHALL retain one `StandardModulators<2>` that owns a two-voice `NoiseModulatorProcessor`, register that processor's stable outputs as connected `Noise` source index `14` in the fifteen-modulator group, process it once per audio sample through the standard bundle before updating group modulation values, and attach the bundle's retained portable noise waveform visualizer to index `14`.
 
-#### Scenario: Noise occupies the fifth modulator slot
+#### Scenario: Noise occupies the last modulation cell
 - **WHEN** MiniApp initialization completes
-- **THEN** the parameter group reports five modulator slots
-- **AND** modulator index `4` is connected with noise metadata and two source pointers
+- **THEN** the parameter group reports fifteen modulator slots
+- **AND** modulator index `14` is connected with white noise metadata, two source pointers, and a non-null wrapper-owned visualizer
 
 #### Scenario: Noise values update at audio rate
 - **WHEN** MiniApp processes an audio sample
-- **THEN** it processes the two-voice noise modulator before calling the group's modulation-value update
-- **AND** modulator index `4` publishes the newly generated value for each corresponding voice
+- **THEN** its standard bundle processes the two-voice noise processor before the group's modulation-value update
+- **AND** modulator index `14` publishes the newly generated value for each corresponding voice
 
-#### Scenario: Noise visualizer is retained independently
-- **WHEN** MiniApp opens a modulation view containing modulator index `4`
-- **THEN** its depth encoder has a non-null portable noise waveform visualizer beneath it
+#### Scenario: Noise visualizer is retained by the standard bundle
+- **WHEN** MiniApp opens a modulation view containing modulator index `14`
+- **THEN** its depth encoder has the retained portable noise waveform visualizer beneath it
 - **AND** that visualizer does not read MiniApp noise output, scope state, or polyphonic UI state
 
-#### Scenario: Fourth-slot integration boundary remains available
-- **WHEN** this change configures and registers the MiniApp noise source
-- **THEN** it performs no source registration, metadata assignment, or visualizer assignment for modulator index `3`
-- **AND** parallel fourth-modulator work can occupy index `3` while noise remains at index `4`
+#### Scenario: MiniApp has no direct noise plumbing
+- **WHEN** MiniApp's generic source ownership is inspected
+- **THEN** its core does not separately own a noise processor, noise source-pointer adapter, or noise visualizer outside `StandardModulators<2>`
 
 ### Requirement: sdsp-39 — Constant: runtime-sized immutable modulation processor
 WHEN applications need fixed per-voice modulation spread, THE synth DSP system SHALL provide a runtime-sized `ConstantModulatorProcessor` that is constructed with a positive voice count, computes exactly one normalized value for every voice during construction using the greedy maximum-cyclic-distance permutation, owns address-stable output storage and source pointers for those values, and exposes no operation that recomputes or changes them after construction.
@@ -932,25 +931,29 @@ WHEN applications need fixed per-voice modulation spread, THE synth DSP system S
 - **THEN** modulation-value updates dereference the processor's corresponding fixed per-voice values
 - **AND** the processor does not depend on parameter IDs, banks, pages, controller layout, UI state, or modulator index selection
 
-### Requirement: sdsp-40 — MiniApp: sixth-slot constant modulator
-WHEN MiniApp publishes its fixed voice-spread modulation source, THE application SHALL configure its two-voice group with six modulator slots, retain one two-voice `ConstantModulatorProcessor`, register that processor's stable outputs as the connected `Constant` source at modulator index `5`, attach one retained yellow portable constant bar visualizer to index `5`, and perform no per-sample constant-source recomputation.
+### Requirement: sdsp-40 — MiniApp: standard constant modulator
+WHEN MiniApp publishes its fixed voice-spread modulation source, THE application SHALL retain one `StandardModulators<2>` that owns a two-voice `ConstantModulatorProcessor`, register that processor's stable outputs as connected `Constant` source index `11` in the fifteen-modulator group, attach the bundle's retained yellow portable constant bar visualizer to index `11`, and perform no per-sample constant-source recomputation or copy.
 
-#### Scenario: Constant occupies the sixth modulator slot
+#### Scenario: Constant occupies standard index eleven
 - **WHEN** MiniApp initialization completes
-- **THEN** the parameter group reports six modulator slots and capacity for 84 modulation-aware values
-- **AND** modulator index `5` is connected with constant metadata, yellow source color, and two source pointers
-- **AND** modulators `0` through `4` preserve their existing registrations
+- **THEN** the parameter group reports fifteen modulator slots and capacity for its complete fifteen-cell modulation view
+- **AND** modulator index `11` is connected with constant metadata, yellow source color, two source pointers, and a non-null wrapper-owned visualizer
+- **AND** standard random sources remain at `0..3`, application-specific sources remain at `4..6`, and noise remains at `14`
 
 #### Scenario: MiniApp two-voice assignment spans the range
-- **WHEN** MiniApp registers its two-voice constant processor
+- **WHEN** MiniApp registers its standard bundle's two-voice constant processor
 - **THEN** voice `0` publishes `0` and voice `1` publishes `1`
 
 #### Scenario: Constant values do not enter the sample loop
 - **WHEN** MiniApp processes any number of audio samples and updates group modulation values
-- **THEN** modulator index `5` continues to publish the construction-time value for each corresponding voice
-- **AND** MiniApp performs no processor call or output copy for the constant source in its per-sample path
+- **THEN** modulator index `11` continues to publish the construction-time value for each corresponding voice
+- **AND** neither MiniApp nor the standard bundle performs a constant processor call or output copy in the per-sample path
 
-#### Scenario: Constant visualizer is retained independently
-- **WHEN** MiniApp opens a modulation view containing modulator index `5`
+#### Scenario: Constant visualizer is retained by the standard bundle
+- **WHEN** MiniApp opens a modulation view containing modulator index `11`
 - **THEN** its depth encoder has the retained portable constant bar visualizer beneath it
 - **AND** that visualizer reads only the processor's immutable value span and requires no scope or UI-state publication
+
+#### Scenario: MiniApp has no direct constant plumbing
+- **WHEN** MiniApp's generic source ownership is inspected
+- **THEN** its core does not separately own a constant processor, constant source-pointer adapter, or constant visualizer outside `StandardModulators<2>`
