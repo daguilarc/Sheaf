@@ -52,7 +52,12 @@ using synth::EncoderBlock;
 using synth::EncoderMidiMapping;
 using synth::ExpandAnalogBlock;
 using synth::ExpandEncoderBlock;
+using synth::ExpandGridBlock;
+using synth::ExpandGridButton;
 using synth::ExpandSystemBlock;
+using synth::GridBlock;
+using synth::GridButton;
+using synth::GridMappingExpansion;
 using synth::LaunchpadController;
 using synth::LaunchpadShapeSupports;
 using synth::MessageIn;
@@ -68,6 +73,7 @@ using synth::ReconstructedAnalogRow;
 using synth::ReconstructedEncoderRow;
 using synth::ReconstructedSystemRow;
 using synth::ReconstructEncoderBlocks;
+using synth::ReconstructGridMappings;
 using synth::ReconstructSystemBlocks;
 using synth::SystemAddressField;
 using synth::SystemAddressSchema;
@@ -75,6 +81,9 @@ using synth::SystemBlock;
 using synth::SystemMessageSortKey;
 using synth::WrldBldrPositionToCC;
 using synth::WrldBldrSystemPosition;
+
+template <typename T>
+concept HasToggleField = requires(T value) { value.toggle; };
 
 // --- Finding 6: full structural equality helper for round-trip tests -------
 //
@@ -507,6 +516,330 @@ TEST_CASE(NormalizePressureOrderingConvergesAndKeepsEqualKeysStable) {
     REQUIRE_TRUE(duplicates.pressureInput->mappings[0].pressure.velocity == 1);
     REQUIRE_TRUE(duplicates.pressureInput->mappings[1].pressure.timestamp == 20);
     REQUIRE_TRUE(duplicates.pressureInput->mappings[1].pressure.velocity == 2);
+}
+
+// --- Runtime button-grid expansion ---------------------------------------
+
+TEST_CASE(ExpandGridButtonProducesAtomicMomentarySystemAndPressurePair) {
+    static_assert(!HasToggleField<GridButton>);
+
+    GridButton button;
+    button.kind = MidiProfileKind::WrldBldr;
+    button.channel = 5;
+    button.x = 3;
+    button.y = 6;
+    button.gridSlotIx = 2;
+    button.outputFeedback = false;
+
+    GridMappingExpansion out;
+    std::string reason;
+    REQUIRE_TRUE(ExpandGridButton(button, out, &reason));
+    REQUIRE_TRUE(out.systemMessages.size() == 1);
+    REQUIRE_TRUE(out.pressureMappings.size() == 1);
+
+    const auto& system = out.systemMessages[0];
+    REQUIRE_TRUE(system.control == std::optional<MidiControlAddress>(
+                                       MidiControlAddress{.channel = 5, .cc = WrldBldrPositionToCC(3, 6)}));
+    REQUIRE_TRUE(system.wrldBldrPosition.has_value());
+    REQUIRE_TRUE(system.wrldBldrPosition->channel == 5);
+    REQUIRE_TRUE(system.wrldBldrPosition->x == 3);
+    REQUIRE_TRUE(system.wrldBldrPosition->y == 6);
+    REQUIRE_TRUE(system.press.type == MessageIn::Type::GridPress);
+    REQUIRE_TRUE(system.press.gridSlotIx == 2);
+    REQUIRE_TRUE(system.press.gridX == 3);
+    REQUIRE_TRUE(system.press.gridY == 6);
+    REQUIRE_TRUE(system.release.has_value());
+    REQUIRE_TRUE(system.release->type == MessageIn::Type::GridRelease);
+    REQUIRE_TRUE(system.release->gridSlotIx == 2);
+    REQUIRE_TRUE(system.release->gridX == 3);
+    REQUIRE_TRUE(system.release->gridY == 6);
+    REQUIRE_TRUE(system.feedback.type == MessageIn::Type::GridPress);
+    REQUIRE_TRUE(system.feedback.gridSlotIx == 2);
+    REQUIRE_TRUE(system.feedback.gridX == 3);
+    REQUIRE_TRUE(system.feedback.gridY == 6);
+    REQUIRE_TRUE(system.feedback.velocity == 0);
+    REQUIRE_TRUE(!system.outputFeedback);
+
+    const auto& pressure = out.pressureMappings[0];
+    REQUIRE_TRUE(pressure.address.channel == 5);
+    REQUIRE_TRUE(pressure.address.note == WrldBldrPositionToCC(3, 6));
+    REQUIRE_TRUE(pressure.pressure.type == MessageIn::Type::GridPressureChange);
+    REQUIRE_TRUE(pressure.pressure.gridSlotIx == 2);
+    REQUIRE_TRUE(pressure.pressure.gridX == 3);
+    REQUIRE_TRUE(pressure.pressure.gridY == 6);
+    REQUIRE_TRUE(pressure.pressure.velocity == 0);
+}
+
+TEST_CASE(ExpandGridBlockTraversesSignedExclusiveRangeXFastAndPairsEveryCell) {
+    static_assert(!HasToggleField<GridBlock>);
+
+    GridBlock block;
+    block.kind = MidiProfileKind::Launchpad;
+    block.launchpadController = LaunchpadController::LaunchpadX;
+    block.startX = 0;
+    block.endX = 8;
+    block.startY = -1;
+    block.endY = 7;
+    block.gridSlotIx = 1;
+    block.outputFeedback = true;
+
+    GridMappingExpansion out;
+    std::string reason;
+    REQUIRE_TRUE(ExpandGridBlock(block, out, &reason));
+    REQUIRE_TRUE(out.systemMessages.size() == 64);
+    REQUIRE_TRUE(out.pressureMappings.size() == 64);
+
+    for (std::size_t ix = 0; ix < 64; ++ix) {
+        const int expectedX = static_cast<int>(ix % 8);
+        const int expectedY = -1 + static_cast<int>(ix / 8);
+        const auto& system = out.systemMessages[ix];
+        const auto& pressure = out.pressureMappings[ix];
+        REQUIRE_TRUE(system.launchpadPosition == std::optional<synth::LaunchpadGridPosition>(
+                                                    synth::LaunchpadGridPosition{
+                                                        .controller = LaunchpadController::LaunchpadX,
+                                                        .x = expectedX,
+                                                        .y = expectedY,
+                                                    }));
+        REQUIRE_TRUE(system.press.type == MessageIn::Type::GridPress);
+        REQUIRE_TRUE(system.press.gridSlotIx == 1);
+        REQUIRE_TRUE(system.press.gridX == expectedX);
+        REQUIRE_TRUE(system.press.gridY == expectedY);
+        REQUIRE_TRUE(system.release.has_value());
+        REQUIRE_TRUE(system.release->type == MessageIn::Type::GridRelease);
+        REQUIRE_TRUE(system.release->gridSlotIx == 1);
+        REQUIRE_TRUE(system.release->gridX == expectedX);
+        REQUIRE_TRUE(system.release->gridY == expectedY);
+        REQUIRE_TRUE(system.feedback.type == MessageIn::Type::GridPress);
+        REQUIRE_TRUE(system.feedback.gridX == expectedX);
+        REQUIRE_TRUE(system.feedback.gridY == expectedY);
+        REQUIRE_TRUE(system.feedback.velocity == 0);
+        REQUIRE_TRUE(system.outputFeedback);
+
+        const auto expectedNote = synth::LaunchpadPositionToNote(
+            LaunchpadController::LaunchpadX, expectedX, expectedY);
+        REQUIRE_TRUE(expectedNote.has_value());
+        REQUIRE_TRUE(pressure.address.channel == 0);
+        REQUIRE_TRUE(pressure.address.note == *expectedNote);
+        REQUIRE_TRUE(pressure.pressure.type == MessageIn::Type::GridPressureChange);
+        REQUIRE_TRUE(pressure.pressure.gridSlotIx == 1);
+        REQUIRE_TRUE(pressure.pressure.gridX == expectedX);
+        REQUIRE_TRUE(pressure.pressure.gridY == expectedY);
+        REQUIRE_TRUE(pressure.pressure.velocity == 0);
+    }
+}
+
+TEST_CASE(ExpandGridBlockFailureLeavesBothOutputVectorsUntouched) {
+    GridMappingExpansion out;
+    MidiControllerSystemMessageAssociation sentinelSystem;
+    sentinelSystem.press = MessageIn::Clock(91);
+    sentinelSystem.feedback = sentinelSystem.press;
+    const PolyphonicPressureMapping sentinelPressure{
+        .address = {.channel = 9, .note = 99},
+        .pressure = MessageIn::GridPressureChange(92, 8, -7, 6, 5),
+    };
+    out.systemMessages.push_back(sentinelSystem);
+    out.pressureMappings.push_back(sentinelPressure);
+
+    GridBlock block;
+    block.kind = MidiProfileKind::Launchpad;
+    block.launchpadController = LaunchpadController::LaunchpadX;
+    block.startX = 0;
+    block.endX = 10;
+    block.startY = -1;
+    block.endY = 8;  // includes unsupported x=9 cells
+
+    std::string reason;
+    REQUIRE_TRUE(!ExpandGridBlock(block, out, &reason));
+    REQUIRE_TRUE(!reason.empty());
+    REQUIRE_TRUE(out.systemMessages.size() == 1);
+    REQUIRE_TRUE(out.pressureMappings.size() == 1);
+    REQUIRE_TRUE(MessageInFullyEquivalent(out.systemMessages[0].press, sentinelSystem.press));
+    REQUIRE_TRUE(out.pressureMappings[0] == sentinelPressure);
+}
+
+TEST_CASE(ExpandGridBlockRejectsImpossibleHugeRangeBeforeAllocating) {
+    GridBlock block;
+    block.kind = MidiProfileKind::Launchpad;
+    block.startX = std::numeric_limits<int>::min();
+    block.endX = std::numeric_limits<int>::max();
+    block.startY = std::numeric_limits<int>::max();
+    block.endY = std::numeric_limits<int>::min();
+    GridMappingExpansion out;
+    std::string reason;
+    bool returned = false;
+    try {
+        returned = !ExpandGridBlock(block, out, &reason);
+    } catch (...) {
+        returned = false;
+    }
+    REQUIRE_TRUE(returned);
+    REQUIRE_TRUE(!reason.empty());
+    REQUIRE_TRUE(out.systemMessages.empty());
+    REQUIRE_TRUE(out.pressureMappings.empty());
+}
+
+TEST_CASE(ExpandGridButtonRejectsPhysicalAddressAlreadyPresentInOutput) {
+    GridButton button;
+    button.kind = MidiProfileKind::WrldBldr;
+    button.channel = 5;
+    button.x = 1;
+    button.y = 2;
+    GridMappingExpansion out;
+    REQUIRE_TRUE(ExpandGridButton(button, out));
+    const GridMappingExpansion before = out;
+    std::string reason;
+    REQUIRE_TRUE(!ExpandGridButton(button, out, &reason));
+    REQUIRE_TRUE(!reason.empty());
+    RequireAssociationsEqual(out.systemMessages, before.systemMessages);
+    REQUIRE_TRUE(out.pressureMappings == before.pressureMappings);
+}
+
+TEST_CASE(ReconstructGridMappingsRecognizesOnlyExactPairAndPreservesOrphanBytes) {
+    GridButton button;
+    button.kind = MidiProfileKind::WrldBldr;
+    button.channel = 5;
+    button.x = 2;
+    button.y = 4;
+    button.gridSlotIx = 3;
+    button.outputFeedback = false;
+    GridMappingExpansion expanded;
+    REQUIRE_TRUE(ExpandGridButton(button, expanded));
+
+    const PolyphonicPressureMapping orphan{
+        .address = {.channel = 13, .note = 117},
+        .pressure = MessageIn::GridPressureChange(0x123456789ULL, 9, -12, 34, 87),
+    };
+    expanded.pressureMappings.push_back(orphan);
+
+    const auto reconstructed = ReconstructGridMappings(
+        expanded.systemMessages, expanded.pressureMappings, MidiProfileKind::WrldBldr);
+    REQUIRE_TRUE(reconstructed.rows.size() == 1);
+    REQUIRE_TRUE(!reconstructed.rows[0].isBlock);
+    REQUIRE_TRUE(reconstructed.rows[0].button.kind == button.kind);
+    REQUIRE_TRUE(reconstructed.rows[0].button.channel == button.channel);
+    REQUIRE_TRUE(reconstructed.rows[0].button.x == button.x);
+    REQUIRE_TRUE(reconstructed.rows[0].button.y == button.y);
+    REQUIRE_TRUE(reconstructed.rows[0].button.gridSlotIx == button.gridSlotIx);
+    REQUIRE_TRUE(reconstructed.rows[0].button.outputFeedback == button.outputFeedback);
+    REQUIRE_TRUE(reconstructed.remainingSystemMessages.empty());
+    REQUIRE_TRUE(reconstructed.orphanPressureMappings.size() == 1);
+    REQUIRE_TRUE(reconstructed.orphanPressureMappings[0] == orphan);
+}
+
+TEST_CASE(ReconstructGridMappingsCoalescesShuffledExactPairsIntoMaximalRectangle) {
+    GridBlock block;
+    block.kind = MidiProfileKind::Launchpad;
+    block.launchpadController = LaunchpadController::LaunchpadProMk3;
+    block.startX = -1;
+    block.endX = 2;
+    block.startY = -1;
+    block.endY = 1;
+    block.gridSlotIx = 4;
+    block.outputFeedback = true;
+    GridMappingExpansion expanded;
+    REQUIRE_TRUE(ExpandGridBlock(block, expanded));
+    std::reverse(expanded.systemMessages.begin(), expanded.systemMessages.end());
+    std::rotate(expanded.pressureMappings.begin(), expanded.pressureMappings.begin() + 2,
+                expanded.pressureMappings.end());
+
+    const auto reconstructed = ReconstructGridMappings(
+        expanded.systemMessages, expanded.pressureMappings, MidiProfileKind::Launchpad);
+    REQUIRE_TRUE(reconstructed.rows.size() == 1);
+    REQUIRE_TRUE(reconstructed.rows[0].isBlock);
+    const GridBlock& actual = reconstructed.rows[0].block;
+    REQUIRE_TRUE(actual.kind == MidiProfileKind::Launchpad);
+    REQUIRE_TRUE(actual.launchpadController == LaunchpadController::LaunchpadProMk3);
+    REQUIRE_TRUE(actual.startX == -1);
+    REQUIRE_TRUE(actual.endX == 2);
+    REQUIRE_TRUE(actual.startY == -1);
+    REQUIRE_TRUE(actual.endY == 1);
+    REQUIRE_TRUE(actual.gridSlotIx == 4);
+    REQUIRE_TRUE(actual.outputFeedback);
+    REQUIRE_TRUE(reconstructed.rows[0].systemIndices.size() == 6);
+    REQUIRE_TRUE(reconstructed.rows[0].pressureIndices.size() == 6);
+    REQUIRE_TRUE(reconstructed.remainingSystemMessages.empty());
+    REQUIRE_TRUE(reconstructed.orphanPressureMappings.empty());
+}
+
+TEST_CASE(ReconstructGridMappingsSplitsBrokenRectangleWithoutInventingMissingCell) {
+    GridMappingExpansion input;
+    for (const std::pair<int, int> coordinate :
+         std::vector<std::pair<int, int>>{{0, -1}, {1, -1}, {2, -1}, {0, 0}, {2, 0}}) {
+        GridButton button;
+        button.kind = MidiProfileKind::Launchpad;
+        button.x = coordinate.first;
+        button.y = coordinate.second;
+        button.gridSlotIx = 1;
+        REQUIRE_TRUE(ExpandGridButton(button, input));
+    }
+
+    const auto reconstructed = ReconstructGridMappings(
+        input.systemMessages, input.pressureMappings, MidiProfileKind::Launchpad);
+    REQUIRE_TRUE(reconstructed.rows.size() == 3);
+    std::size_t covered = 0;
+    for (const auto& row : reconstructed.rows) {
+        covered += row.systemIndices.size();
+        GridMappingExpansion roundTrip;
+        if (row.isBlock) {
+            REQUIRE_TRUE(ExpandGridBlock(row.block, roundTrip));
+        } else {
+            REQUIRE_TRUE(ExpandGridButton(row.button, roundTrip));
+        }
+        for (const auto& association : roundTrip.systemMessages) {
+            REQUIRE_TRUE(!(association.press.gridX == 1 && association.press.gridY == 0));
+        }
+    }
+    REQUIRE_TRUE(covered == 5);
+}
+
+TEST_CASE(ReconstructGridMappingsLeavesDuplicatePhysicalSystemsAndPressureUnconsumed) {
+    GridButton button;
+    button.kind = MidiProfileKind::WrldBldr;
+    button.channel = 5;
+    button.x = 7;
+    button.y = 6;
+    GridMappingExpansion expanded;
+    REQUIRE_TRUE(ExpandGridButton(button, expanded));
+    expanded.systemMessages.push_back(expanded.systemMessages.front());
+    expanded.pressureMappings.push_back(expanded.pressureMappings.front());
+
+    const auto reconstructed = ReconstructGridMappings(
+        expanded.systemMessages, expanded.pressureMappings, MidiProfileKind::WrldBldr);
+    REQUIRE_TRUE(reconstructed.rows.empty());
+    REQUIRE_TRUE(reconstructed.remainingSystemMessages.size() == 2);
+    REQUIRE_TRUE(reconstructed.orphanPressureMappings == expanded.pressureMappings);
+}
+
+TEST_CASE(ReconstructGridMappingsDescendingExpansionRoundTripsCanonicalMeaning) {
+    GridBlock descending;
+    descending.kind = MidiProfileKind::WrldBldr;
+    descending.channel = 5;
+    descending.startX = 1;
+    descending.endX = 4;
+    descending.startY = 3;
+    descending.endY = 0;
+    descending.gridSlotIx = 2;
+    descending.outputFeedback = false;
+    GridMappingExpansion input;
+    REQUIRE_TRUE(ExpandGridBlock(descending, input));
+
+    const auto reconstructed = ReconstructGridMappings(
+        input.systemMessages, input.pressureMappings, MidiProfileKind::WrldBldr);
+    REQUIRE_TRUE(reconstructed.rows.size() == 1);
+    REQUIRE_TRUE(reconstructed.rows[0].isBlock);
+    GridMappingExpansion output;
+    REQUIRE_TRUE(ExpandGridBlock(reconstructed.rows[0].block, output));
+
+    MidiControllerProfileConfig expected;
+    expected.systemMessages = input.systemMessages;
+    expected.pressureInput = synth::PolyphonicPressureMidiInConfig{input.pressureMappings};
+    NormalizeMidiProfileConfig(expected, MidiProfileKind::WrldBldr);
+    MidiControllerProfileConfig actual;
+    actual.systemMessages = output.systemMessages;
+    actual.pressureInput = synth::PolyphonicPressureMidiInConfig{output.pressureMappings};
+    NormalizeMidiProfileConfig(actual, MidiProfileKind::WrldBldr);
+    RequireAssociationsEqual(actual.systemMessages, expected.systemMessages);
+    REQUIRE_TRUE(actual.pressureInput->mappings == expected.pressureInput->mappings);
 }
 
 // --- D3: ExpandEncoderBlock --------------------------------------------

@@ -66,7 +66,7 @@ private:
 // One editable row rendered inside a section's mapping list.
 //
 // Presentation (midi-config-blocks change, task group 2 / design.md D5): a
-// row is one of three kinds (see `kind` below) --
+// row is one of five kinds (see `kind` below) --
 //   Individual  -- one config element (an encoder turn/push mapping, an
 //                  analog gesture mapping, or a system-message association).
 //   Block       -- a run of >=2 config elements presented/edited as a single
@@ -76,6 +76,8 @@ private:
 //                  individual cells'.
 //   ConfigLevel -- encoder mode, turn step, or scene blend: exactly as
 //                  before, never deletable, never part of a block.
+//   GridButton  -- one exact momentary grid system+pressure pair.
+//   GridBlock   -- a maximal rectangle of exact grid pairs.
 // `deletable` is the renderer's single source of truth for whether to show a
 // delete ("x") affordance -- true for Individual and Block rows, false for
 // ConfigLevel (sru-11's "config-level rows are not deletable").
@@ -102,7 +104,8 @@ struct MidiMappingRowVM {
         // else) so its 0..5 validation domain and "Btn" label can't be
         // confused with a generic Cc editor.
         Button,
-        // --- Block-row fields (kind == Block only; task group 2 / D3/D6) ---
+        GridSlotIx,
+        // --- Block-row fields (kind == Block/GridBlock; task group 2 / D3/D6) ---
         // A block row's editableFields is drawn from this subset, per its
         // form (EncoderBlock/AnalogBlock/SystemBlock 1-D generic/2-D
         // wrldbldr-launchpad):
@@ -156,7 +159,7 @@ struct MidiMappingRowVM {
         System,
     };
 
-    enum class Kind { Individual, Block, ConfigLevel };
+    enum class Kind { Individual, Block, ConfigLevel, GridButton, GridBlock };
 
     std::string label;  // e.g. "turn ch0 cc12 -> slot 0 pos 3", or a block summary
     // Fields this row exposes for editing, in display order. ApplyMappingEdit
@@ -282,7 +285,7 @@ struct AnalogSceneBlendRow {
 
 using PresentationRowData =
     std::variant<std::monostate, EncoderMidiMapping, AnalogMidiMapping, MidiControllerSystemMessageAssociation,
-                 EncoderModeRow, EncoderStepRow, AnalogSceneBlendRow>;
+                 GridButton, EncoderModeRow, EncoderStepRow, AnalogSceneBlendRow>;
 
 struct PresentationRow {
     MidiMappingRowVM::Kind kind = MidiMappingRowVM::Kind::Individual;
@@ -291,11 +294,14 @@ struct PresentationRow {
     // `block`, because their UI representation is the block itself rather
     // than each expanded cell.
     PresentationRowData data;
-    std::variant<std::monostate, EncoderBlock, AnalogBlock, SystemBlock> block;
+    std::variant<std::monostate, EncoderBlock, AnalogBlock, SystemBlock, GridBlock> block;
 };
 
 struct SectionPresentation {
     std::vector<PresentationRow> rows;
+    // Pressure mappings not consumed by an exact visible grid row. They have
+    // no renderer row and are re-emitted unchanged by every section flush.
+    std::vector<PolyphonicPressureMapping> orphanPressureMappings;
 };
 
 }  // namespace detail
@@ -441,6 +447,14 @@ public:
     // exists in the group's domain).
     bool AddBlock(std::size_t controllerIx, MidiConfigSection section, MidiMappingRowVM::RowGroup group,
                  MidiInstrumentConfig& out, std::string* reason = nullptr) const;
+
+    // Grid-specific add entry points used by the Controllers action layer.
+    // Both commit system press/release/feedback and derived pressure in one
+    // flush; unsupported controller kinds are refused atomically.
+    bool AddGridButton(std::size_t controllerIx, MidiInstrumentConfig& out,
+                       std::string* reason = nullptr) const;
+    bool AddGridBlock(std::size_t controllerIx, MidiInstrumentConfig& out,
+                      std::string* reason = nullptr) const;
 
     // Whether AddSingle(controllerIx, section, group, ...) could possibly
     // succeed for this (section, group) pair -- i.e. the group/section

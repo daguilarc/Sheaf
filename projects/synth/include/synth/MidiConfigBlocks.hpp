@@ -189,6 +189,59 @@ struct SystemBlock {
     std::size_t CellCount() const;
 };
 
+// A user-visible grid button has one shared physical/logical coordinate:
+// controller position (x,y) maps directly to grid target (x,y). Only the
+// two controller kinds with two-dimensional address forms are supported.
+// Grid mappings are intrinsically momentary; there is deliberately no
+// toggle field.
+struct GridButton {
+    MidiProfileKind kind = MidiProfileKind::WrldBldr;
+    std::uint8_t channel = 0;  // WRLD.Bldr only
+    int x = 0;
+    int y = 0;
+    LaunchpadController launchpadController = LaunchpadController::LaunchpadX;
+    std::size_t gridSlotIx = 0;
+    bool outputFeedback = true;
+};
+
+// Signed half-open rectangle with x traversing ascending fastest and y
+// traversing from startY toward (but excluding) endY. A descending y range
+// therefore uses endY < startY, matching SystemBlock's existing address form.
+struct GridBlock {
+    MidiProfileKind kind = MidiProfileKind::WrldBldr;
+    std::uint8_t channel = 0;  // WRLD.Bldr only
+    int startX = 0;
+    int startY = 0;
+    int endX = 0;
+    int endY = 0;
+    LaunchpadController launchpadController = LaunchpadController::LaunchpadX;
+    std::size_t gridSlotIx = 0;
+    bool outputFeedback = true;
+};
+
+struct GridMappingExpansion {
+    std::vector<MidiControllerSystemMessageAssociation> systemMessages;
+    std::vector<PolyphonicPressureMapping> pressureMappings;
+};
+
+struct ReconstructedGridRow {
+    bool isBlock = false;
+    GridButton button;
+    GridBlock block;
+    // Indices refer to the caller's original vectors. They make exact
+    // ownership explicit for view-model/session code and tests.
+    std::vector<std::size_t> systemIndices;
+    std::vector<std::size_t> pressureIndices;
+};
+
+struct GridMappingReconstruction {
+    std::vector<ReconstructedGridRow> rows;
+    // Canonically ordered system associations that were not exact grid pairs.
+    std::vector<MidiControllerSystemMessageAssociation> remainingSystemMessages;
+    // Unmatched pressure data stays in caller order and is never rewritten.
+    std::vector<PolyphonicPressureMapping> orphanPressureMappings;
+};
+
 // --- D3: expansion (block -> exact individual configs) ---------------------
 //
 // All Expand* functions validate every cell before returning any result:
@@ -203,6 +256,11 @@ bool ExpandEncoderBlock(const EncoderBlock& block, std::vector<EncoderMidiMappin
 bool ExpandAnalogBlock(const AnalogBlock& block, std::vector<AnalogMidiMapping>& out, std::string* reason = nullptr);
 bool ExpandSystemBlock(const SystemBlock& block, std::vector<MidiControllerSystemMessageAssociation>& out,
                        std::string* reason = nullptr);
+bool ExpandGridButton(const GridButton& button, GridMappingExpansion& out, std::string* reason = nullptr);
+bool ExpandGridBlock(const GridBlock& block, GridMappingExpansion& out, std::string* reason = nullptr);
+GridMappingReconstruction ReconstructGridMappings(
+    const std::vector<MidiControllerSystemMessageAssociation>& systemMessages,
+    const std::vector<PolyphonicPressureMapping>& pressureMappings, MidiProfileKind kind);
 
 // --- D4: reconstruction (sorted config -> minimal block presentation) ------
 //

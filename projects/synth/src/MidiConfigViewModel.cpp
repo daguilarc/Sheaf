@@ -265,6 +265,7 @@ bool FieldIsInteger(MidiMappingRowVM::Field field) {
         case Field::WrldBldrY:
         case Field::SceneBlend:
         case Field::Button:
+        case Field::GridSlotIx:
         case Field::BlockStartCc:
         case Field::BlockEndCc:
         case Field::BlockStartPos:
@@ -322,6 +323,8 @@ const char* FieldShortLabel(MidiMappingRowVM::Field field) {
             return "CC";
         case Field::SlotIx:
             return "Slot";
+        case Field::GridSlotIx:
+            return "Grid Slot";
         case Field::Position:
             return "Pos";
         case Field::EncoderMode:
@@ -828,6 +831,28 @@ std::vector<Field> SystemBlockEditableFields(const SystemBlock& block) {
     return fields;
 }
 
+std::vector<Field> GridButtonEditableFields(const GridButton& button) {
+    std::vector<Field> fields;
+    if (button.kind == MidiProfileKind::WrldBldr) {
+        fields = {Field::Channel, Field::WrldBldrX, Field::WrldBldrY};
+    } else {
+        fields = {Field::LaunchpadX, Field::LaunchpadY};
+    }
+    fields.push_back(Field::GridSlotIx);
+    fields.push_back(Field::BlockOutputFeedback);
+    return fields;
+}
+
+std::vector<Field> GridBlockEditableFields(const GridBlock& block) {
+    std::vector<Field> fields;
+    if (block.kind == MidiProfileKind::WrldBldr) {
+        fields.push_back(Field::Channel);
+    }
+    fields.insert(fields.end(), {Field::BlockStartX, Field::BlockStartY, Field::BlockEndX, Field::BlockEndY,
+                                 Field::GridSlotIx, Field::BlockOutputFeedback});
+    return fields;
+}
+
 std::string EncoderBlockLabel(const EncoderBlock& block) {
     std::ostringstream oss;
     oss << (block.isPush ? "push block ch" : "turn block ch") << static_cast<int>(block.channel) << " cc"
@@ -865,6 +890,19 @@ std::string SystemBlockLabel(const SystemBlock& block) {
             << static_cast<int>(block.endCc);
     }
     oss << " -> arg " << block.startArg << "..";
+    return oss.str();
+}
+
+std::string GridButtonLabel(const GridButton& button) {
+    std::ostringstream oss;
+    oss << "grid button (" << button.x << "," << button.y << ") -> grid slot " << button.gridSlotIx;
+    return oss.str();
+}
+
+std::string GridBlockLabel(const GridBlock& block) {
+    std::ostringstream oss;
+    oss << "grid block (" << block.startX << "," << block.startY << ")..(" << block.endX << ","
+        << block.endY << ") -> grid slot " << block.gridSlotIx;
     return oss.str();
 }
 
@@ -956,11 +994,14 @@ SectionPresentation BuildFreshPresentation(const MidiControllerProfileConfig& co
             break;
         }
         case MidiConfigSection::SystemMessages: {
-            MidiControllerProfileConfig scratch;
-            scratch.systemMessages = config.systemMessages;
-            NormalizeMidiProfileConfig(scratch, kind);
-            const std::vector<MidiControllerSystemMessageAssociation>& sorted = scratch.systemMessages;
-            for (const ReconstructedSystemRow& reconstructed : ReconstructSystemBlocks(sorted, kind)) {
+            const std::vector<PolyphonicPressureMapping> pressureMappings =
+                config.pressureInput.has_value() ? config.pressureInput->mappings
+                                                 : std::vector<PolyphonicPressureMapping>{};
+            GridMappingReconstruction grids =
+                ReconstructGridMappings(config.systemMessages, pressureMappings, kind);
+            presentation.orphanPressureMappings = std::move(grids.orphanPressureMappings);
+            const std::vector<MidiControllerSystemMessageAssociation>& remaining = grids.remainingSystemMessages;
+            for (const ReconstructedSystemRow& reconstructed : ReconstructSystemBlocks(remaining, kind)) {
                 PresentationRow row;
                 row.group = RowGroup::System;
                 if (reconstructed.isBlock) {
@@ -969,7 +1010,19 @@ SectionPresentation BuildFreshPresentation(const MidiControllerProfileConfig& co
                 } else {
                     row.kind = RowKind::Individual;
                     const std::size_t sortedIx = reconstructed.indices.front();
-                    row.data = sorted[sortedIx];
+                    row.data = remaining[sortedIx];
+                }
+                presentation.rows.push_back(std::move(row));
+            }
+            for (const ReconstructedGridRow& reconstructed : grids.rows) {
+                PresentationRow row;
+                row.group = RowGroup::System;
+                if (reconstructed.isBlock) {
+                    row.kind = RowKind::GridBlock;
+                    row.block = reconstructed.block;
+                } else {
+                    row.kind = RowKind::GridButton;
+                    row.data = reconstructed.button;
                 }
                 presentation.rows.push_back(std::move(row));
             }
@@ -1070,6 +1123,11 @@ std::vector<MidiMappingRowVM> MidiConfigViewModel::BuildSectionRows(std::size_t 
                 row.editableFields = {Field::SceneBlend};
                 row.label = SceneBlendLabel(data != nullptr ? data->sceneBlend : std::optional<MidiControlAddress>{});
             }
+        } else if (presentationRow.kind == RowKind::GridBlock) {
+            if (const auto* gridBlock = std::get_if<GridBlock>(&presentationRow.block)) {
+                row.editableFields = GridBlockEditableFields(*gridBlock);
+                row.label = GridBlockLabel(*gridBlock);
+            }
         } else if (presentationRow.kind == RowKind::Block) {
             if (const auto* encoderBlock = std::get_if<EncoderBlock>(&presentationRow.block)) {
                 row.editableFields = EncoderBlockEditableFields();
@@ -1083,6 +1141,11 @@ std::vector<MidiMappingRowVM> MidiConfigViewModel::BuildSectionRows(std::size_t 
             } else if (const auto* systemBlock = std::get_if<SystemBlock>(&presentationRow.block)) {
                 row.editableFields = SystemBlockEditableFields(*systemBlock);
                 row.label = SystemBlockLabel(*systemBlock);
+            }
+        } else if (presentationRow.kind == RowKind::GridButton) {
+            if (const auto* gridButton = std::get_if<GridButton>(&presentationRow.data)) {
+                row.editableFields = GridButtonEditableFields(*gridButton);
+                row.label = GridButtonLabel(*gridButton);
             }
         } else {
             if (const auto* mapping = std::get_if<EncoderMidiMapping>(&presentationRow.data)) {
@@ -1121,8 +1184,8 @@ namespace {
 // to this block's variant/form (caller has already gated against
 // editableFields, so this is a belt-and-suspenders internal consistency
 // check, not a user-facing refusal path).
-bool BlockFieldValue(const std::variant<std::monostate, EncoderBlock, AnalogBlock, SystemBlock>& block, Field field,
-                    double& out) {
+bool BlockFieldValue(const std::variant<std::monostate, EncoderBlock, AnalogBlock, SystemBlock, GridBlock>& block,
+                     Field field, double& out) {
     if (const auto* encoderBlock = std::get_if<EncoderBlock>(&block)) {
         switch (field) {
             case Field::AddressType:
@@ -1210,6 +1273,33 @@ bool BlockFieldValue(const std::variant<std::monostate, EncoderBlock, AnalogBloc
                 return false;
         }
     }
+    if (const auto* gridBlock = std::get_if<GridBlock>(&block)) {
+        switch (field) {
+            case Field::Channel:
+                out = static_cast<double>(gridBlock->channel);
+                return true;
+            case Field::BlockStartX:
+                out = static_cast<double>(gridBlock->startX);
+                return true;
+            case Field::BlockStartY:
+                out = static_cast<double>(gridBlock->startY);
+                return true;
+            case Field::BlockEndX:
+                out = static_cast<double>(gridBlock->endX);
+                return true;
+            case Field::BlockEndY:
+                out = static_cast<double>(gridBlock->endY);
+                return true;
+            case Field::GridSlotIx:
+                out = static_cast<double>(gridBlock->gridSlotIx);
+                return true;
+            case Field::BlockOutputFeedback:
+                out = gridBlock->outputFeedback ? 1.0 : 0.0;
+                return true;
+            default:
+                return false;
+        }
+    }
     return false;
 }
 
@@ -1240,7 +1330,7 @@ bool MidiConfigViewModel::RowFieldValue(std::size_t controllerIx, MidiConfigSect
     const SectionPresentation& presentation = PresentationFor(controllerIx, section);
     const PresentationRow& presentationRow = presentation.rows[rowIx];
 
-    if (presentationRow.kind == RowKind::Block) {
+    if (presentationRow.kind == RowKind::Block || presentationRow.kind == RowKind::GridBlock) {
         return BlockFieldValue(presentationRow.block, field, out);
     }
     if (presentationRow.kind == RowKind::ConfigLevel) {
@@ -1383,6 +1473,29 @@ bool MidiConfigViewModel::RowFieldValue(std::size_t controllerIx, MidiConfigSect
                 out = static_cast<double>(AssociationPrimaryArg(*association));
                 return true;
             }
+            default:
+                return false;
+        }
+    }
+    if (const auto* button = std::get_if<GridButton>(&presentationRow.data)) {
+        switch (field) {
+            case Field::Channel:
+                out = static_cast<double>(button->channel);
+                return true;
+            case Field::LaunchpadX:
+            case Field::WrldBldrX:
+                out = static_cast<double>(button->x);
+                return true;
+            case Field::LaunchpadY:
+            case Field::WrldBldrY:
+                out = static_cast<double>(button->y);
+                return true;
+            case Field::GridSlotIx:
+                out = static_cast<double>(button->gridSlotIx);
+                return true;
+            case Field::BlockOutputFeedback:
+                out = button->outputFeedback ? 1.0 : 0.0;
+                return true;
             default:
                 return false;
         }
@@ -1662,6 +1775,95 @@ bool ApplySystemBlockField(SystemBlock& block, Field field, double value, std::s
     }
 }
 
+bool ApplyGridButtonField(GridButton& button, Field field, double value, std::string& validationError) {
+    switch (field) {
+        case Field::Channel:
+            if (!IsIntegerInRange(value, 0.0, 15.0)) {
+                validationError = "channel must be an integer 0-15";
+                return false;
+            }
+            button.channel = static_cast<std::uint8_t>(value);
+            return true;
+        case Field::LaunchpadX:
+        case Field::LaunchpadY:
+        case Field::WrldBldrX:
+        case Field::WrldBldrY: {
+            if (!IsIntegerInRange(value, static_cast<double>(std::numeric_limits<int>::min()),
+                                  static_cast<double>(std::numeric_limits<int>::max()))) {
+                validationError = "grid coordinate must be an integer";
+                return false;
+            }
+            const int coordinate = static_cast<int>(value);
+            if (field == Field::LaunchpadX || field == Field::WrldBldrX) {
+                button.x = coordinate;
+            } else {
+                button.y = coordinate;
+            }
+            return true;
+        }
+        case Field::GridSlotIx:
+            if (!IsNonNegativeInteger(value)) {
+                validationError = "grid slot index must be a non-negative integer";
+                return false;
+            }
+            button.gridSlotIx = static_cast<std::size_t>(value);
+            return true;
+        case Field::BlockOutputFeedback:
+            if (!IsIntegerInRange(value, 0.0, 1.0)) {
+                validationError = "output feedback must be 0 or 1";
+                return false;
+            }
+            button.outputFeedback = value != 0.0;
+            return true;
+        default:
+            return false;
+    }
+}
+
+bool ApplyGridBlockField(GridBlock& block, Field field, double value, std::string& validationError) {
+    switch (field) {
+        case Field::Channel:
+            if (!IsIntegerInRange(value, 0.0, 15.0)) {
+                validationError = "channel must be an integer 0-15";
+                return false;
+            }
+            block.channel = static_cast<std::uint8_t>(value);
+            return true;
+        case Field::BlockStartX:
+        case Field::BlockStartY:
+        case Field::BlockEndX:
+        case Field::BlockEndY: {
+            if (!IsIntegerInRange(value, static_cast<double>(std::numeric_limits<int>::min()),
+                                  static_cast<double>(std::numeric_limits<int>::max()))) {
+                validationError = "grid block coordinate must be an integer";
+                return false;
+            }
+            const int coordinate = static_cast<int>(value);
+            if (field == Field::BlockStartX) block.startX = coordinate;
+            if (field == Field::BlockStartY) block.startY = coordinate;
+            if (field == Field::BlockEndX) block.endX = coordinate;
+            if (field == Field::BlockEndY) block.endY = coordinate;
+            return true;
+        }
+        case Field::GridSlotIx:
+            if (!IsNonNegativeInteger(value)) {
+                validationError = "grid slot index must be a non-negative integer";
+                return false;
+            }
+            block.gridSlotIx = static_cast<std::size_t>(value);
+            return true;
+        case Field::BlockOutputFeedback:
+            if (!IsIntegerInRange(value, 0.0, 1.0)) {
+                validationError = "output feedback must be 0 or 1";
+                return false;
+            }
+            block.outputFeedback = value != 0.0;
+            return true;
+        default:
+            return false;
+    }
+}
+
 // The section flush is the single commit path for every presentation edit:
 // individual rows, block rows, adds, deletes, and Launchpad variant rewrites
 // all serialize the open presentation into one candidate section and validate
@@ -1815,8 +2017,35 @@ bool FlushSectionPresentationToSlot(const SectionPresentation& presentation, Mid
         }
         case MidiConfigSection::SystemMessages: {
             std::vector<MidiControllerSystemMessageAssociation> next;
+            std::vector<PolyphonicPressureMapping> nextPressure = presentation.orphanPressureMappings;
             for (const PresentationRow& row : presentation.rows) {
-                if (row.kind == RowKind::Individual) {
+                if (row.kind == RowKind::GridButton) {
+                    const auto* button = std::get_if<GridButton>(&row.data);
+                    if (button == nullptr) {
+                        if (reason != nullptr) *reason = "grid button row has no button data";
+                        return false;
+                    }
+                    GridMappingExpansion expansion;
+                    if (!ExpandGridButton(*button, expansion, reason)) {
+                        return false;
+                    }
+                    next.insert(next.end(), expansion.systemMessages.begin(), expansion.systemMessages.end());
+                    nextPressure.insert(nextPressure.end(), expansion.pressureMappings.begin(),
+                                        expansion.pressureMappings.end());
+                } else if (row.kind == RowKind::GridBlock) {
+                    const auto* block = std::get_if<GridBlock>(&row.block);
+                    if (block == nullptr) {
+                        if (reason != nullptr) *reason = "grid block row has no block data";
+                        return false;
+                    }
+                    GridMappingExpansion expansion;
+                    if (!ExpandGridBlock(*block, expansion, reason)) {
+                        return false;
+                    }
+                    next.insert(next.end(), expansion.systemMessages.begin(), expansion.systemMessages.end());
+                    nextPressure.insert(nextPressure.end(), expansion.pressureMappings.begin(),
+                                        expansion.pressureMappings.end());
+                } else if (row.kind == RowKind::Individual) {
                     const auto* association = std::get_if<MidiControllerSystemMessageAssociation>(&row.data);
                     if (association == nullptr) {
                         if (reason != nullptr) {
@@ -1845,6 +2074,11 @@ bool FlushSectionPresentationToSlot(const SectionPresentation& presentation, Mid
                 return false;
             }
             slot.config.systemMessages = std::move(next);
+            if (nextPressure.empty()) {
+                slot.config.pressureInput = std::nullopt;
+            } else {
+                slot.config.pressureInput = PolyphonicPressureMidiInConfig{std::move(nextPressure)};
+            }
             break;
         }
     }
@@ -1884,6 +2118,9 @@ bool MidiConfigViewModel::ApplyMappingEdit(std::size_t controllerIx, MidiConfigS
 
     SectionPresentation& presentation = PresentationFor(controllerIx, section);
     PresentationRow& presentationRow = presentation.rows[rowIx];
+    const PresentationRow rollbackRow = presentationRow;
+    const bool atomicGridRow = presentationRow.kind == RowKind::GridButton ||
+                               presentationRow.kind == RowKind::GridBlock;
 
     MidiInstrumentConfig scratch = instrument_;
     MidiControllerSlot& slot = scratch.controllers[controllerIx];
@@ -1894,7 +2131,11 @@ bool MidiConfigViewModel::ApplyMappingEdit(std::size_t controllerIx, MidiConfigS
     // reason instead of the generic "field is not editable" one.
     std::string validationError;
 
-    if (presentationRow.kind == RowKind::Block) {
+    if (presentationRow.kind == RowKind::GridBlock) {
+        if (auto* gridBlock = std::get_if<GridBlock>(&presentationRow.block)) {
+            fieldValid = ApplyGridBlockField(*gridBlock, field, value, validationError);
+        }
+    } else if (presentationRow.kind == RowKind::Block) {
         if (auto* encoderBlock = std::get_if<EncoderBlock>(&presentationRow.block)) {
             fieldValid = ApplyEncoderBlockField(*encoderBlock, field, value, validationError);
         } else if (auto* analogBlock = std::get_if<AnalogBlock>(&presentationRow.block)) {
@@ -1934,6 +2175,10 @@ bool MidiConfigViewModel::ApplyMappingEdit(std::size_t controllerIx, MidiConfigS
                 presentationRow.data = AnalogSceneBlendRow{.sceneBlend = address};
                 fieldValid = true;
             }
+        }
+    } else if (presentationRow.kind == RowKind::GridButton) {
+        if (auto* gridButton = std::get_if<GridButton>(&presentationRow.data)) {
+            fieldValid = ApplyGridButtonField(*gridButton, field, value, validationError);
         }
     } else {
         if (auto* mapping = std::get_if<EncoderMidiMapping>(&presentationRow.data)) {
@@ -2147,6 +2392,9 @@ bool MidiConfigViewModel::ApplyMappingEdit(std::size_t controllerIx, MidiConfigS
     }
 
     if (!fieldValid) {
+        if (atomicGridRow) {
+            presentationRow = rollbackRow;
+        }
         if (reason != nullptr) {
             *reason = !validationError.empty() ? validationError : "field is not editable on this row";
         }
@@ -2158,6 +2406,12 @@ bool MidiConfigViewModel::ApplyMappingEdit(std::size_t controllerIx, MidiConfigS
     }
 
     if (!FlushSectionPresentationToSlot(presentation, slot, section, reason)) {
+        if (atomicGridRow) {
+            presentationRow = rollbackRow;
+            if (presentationChanged != nullptr) {
+                *presentationChanged = false;
+            }
+        }
         return false;
     }
 
@@ -2460,6 +2714,16 @@ std::optional<LaunchpadController> CurrentLaunchpadVariant(const SectionPresenta
                 return block->launchpadController;
             }
         }
+        if (const auto* button = std::get_if<GridButton>(&row.data)) {
+            if (button->kind == MidiProfileKind::Launchpad) {
+                return button->launchpadController;
+            }
+        }
+        if (const auto* block = std::get_if<GridBlock>(&row.block)) {
+            if (block->kind == MidiProfileKind::Launchpad) {
+                return block->launchpadController;
+            }
+        }
     }
     return std::nullopt;
 }
@@ -2495,6 +2759,32 @@ bool RewritePresentationLaunchpadVariant(SectionPresentation& presentation, Laun
             candidate.launchpadController = newController;
             std::vector<MidiControllerSystemMessageAssociation> expansion;
             if (!ExpandSystemBlock(candidate, expansion, reason)) {
+                return false;
+            }
+            *block = candidate;
+            continue;
+        }
+        if (auto* button = std::get_if<GridButton>(&row.data)) {
+            if (button->kind != MidiProfileKind::Launchpad) {
+                continue;
+            }
+            GridButton candidate = *button;
+            candidate.launchpadController = newController;
+            GridMappingExpansion expansion;
+            if (!ExpandGridButton(candidate, expansion, reason)) {
+                return false;
+            }
+            *button = candidate;
+            continue;
+        }
+        if (auto* block = std::get_if<GridBlock>(&row.block)) {
+            if (block->kind != MidiProfileKind::Launchpad) {
+                continue;
+            }
+            GridBlock candidate = *block;
+            candidate.launchpadController = newController;
+            GridMappingExpansion expansion;
+            if (!ExpandGridBlock(candidate, expansion, reason)) {
                 return false;
             }
             *block = candidate;
@@ -2787,6 +3077,134 @@ bool MidiConfigViewModel::AddBlock(std::size_t controllerIx, MidiConfigSection s
     MidiInstrumentConfig scratch = instrument_;
     MidiControllerSlot& slot = scratch.controllers[controllerIx];
     if (!FlushSectionPresentationToSlot(presentation, slot, section, reason)) {
+        presentation = rollback;
+        return false;
+    }
+    out = std::move(scratch);
+    return true;
+}
+
+bool MidiConfigViewModel::AddGridButton(std::size_t controllerIx, MidiInstrumentConfig& out,
+                                        std::string* reason) const {
+    if (controllerIx >= instrument_.controllers.size()) {
+        if (reason != nullptr) *reason = "controller index out of range";
+        return false;
+    }
+    const MidiControllerSlot& current = instrument_.controllers[controllerIx];
+    if (current.kind != MidiProfileKind::WrldBldr && current.kind != MidiProfileKind::Launchpad) {
+        if (reason != nullptr) *reason = "grid buttons require a WRLD.Bldr or Launchpad controller";
+        return false;
+    }
+    SectionPresentation& presentation = PresentationFor(controllerIx, MidiConfigSection::SystemMessages);
+    MidiControllerSlot visible = current;
+    if (!FlushSectionPresentationToSlot(presentation, visible, MidiConfigSection::SystemMessages, reason)) {
+        return false;
+    }
+
+    GridButton button;
+    button.kind = current.kind;
+    button.outputFeedback = true;
+    if (current.kind == MidiProfileKind::WrldBldr) {
+        const auto position = NextFreeWrldBldrPosition(visible.config.systemMessages);
+        if (!position.has_value()) {
+            if (reason != nullptr) *reason = "no free WRLD.Bldr grid position";
+            return false;
+        }
+        button.channel = 5;
+        button.x = position->first;
+        button.y = position->second;
+    } else {
+        button.launchpadController = CurrentLaunchpadVariant(visible.config.systemMessages);
+        const auto position = NextFreeLaunchpadPosition(visible.config.systemMessages, button.launchpadController);
+        if (!position.has_value()) {
+            if (reason != nullptr) *reason = "no free Launchpad grid position";
+            return false;
+        }
+        button.x = position->x;
+        button.y = position->y;
+    }
+    GridMappingExpansion validation;
+    if (!ExpandGridButton(button, validation, reason)) {
+        return false;
+    }
+
+    const SectionPresentation rollback = presentation;
+    PresentationRow row;
+    row.kind = RowKind::GridButton;
+    row.group = RowGroup::System;
+    row.data = button;
+    presentation.rows.insert(presentation.rows.begin() + static_cast<std::ptrdiff_t>(
+                                 InsertionIndexForGroup(presentation, RowGroup::System)),
+                             std::move(row));
+    MidiInstrumentConfig scratch = instrument_;
+    if (!FlushSectionPresentationToSlot(presentation, scratch.controllers[controllerIx],
+                                        MidiConfigSection::SystemMessages, reason)) {
+        presentation = rollback;
+        return false;
+    }
+    out = std::move(scratch);
+    return true;
+}
+
+bool MidiConfigViewModel::AddGridBlock(std::size_t controllerIx, MidiInstrumentConfig& out,
+                                       std::string* reason) const {
+    if (controllerIx >= instrument_.controllers.size()) {
+        if (reason != nullptr) *reason = "controller index out of range";
+        return false;
+    }
+    const MidiControllerSlot& current = instrument_.controllers[controllerIx];
+    if (current.kind != MidiProfileKind::WrldBldr && current.kind != MidiProfileKind::Launchpad) {
+        if (reason != nullptr) *reason = "grid blocks require a WRLD.Bldr or Launchpad controller";
+        return false;
+    }
+    SectionPresentation& presentation = PresentationFor(controllerIx, MidiConfigSection::SystemMessages);
+    MidiControllerSlot visible = current;
+    if (!FlushSectionPresentationToSlot(presentation, visible, MidiConfigSection::SystemMessages, reason)) {
+        return false;
+    }
+
+    GridBlock block;
+    block.kind = current.kind;
+    block.outputFeedback = true;
+    if (current.kind == MidiProfileKind::WrldBldr) {
+        const auto position = NextFreeWrldBldrPosition(visible.config.systemMessages);
+        if (!position.has_value()) {
+            if (reason != nullptr) *reason = "no free WRLD.Bldr grid position";
+            return false;
+        }
+        block.channel = 5;
+        block.startX = position->first;
+        block.startY = position->second;
+        block.endX = block.startX + 2;
+        block.endY = block.startY + 1;
+    } else {
+        block.launchpadController = CurrentLaunchpadVariant(visible.config.systemMessages);
+        const auto position = NextFreeLaunchpadPosition(visible.config.systemMessages, block.launchpadController);
+        if (!position.has_value()) {
+            if (reason != nullptr) *reason = "no free Launchpad grid position";
+            return false;
+        }
+        block.startX = position->x;
+        block.startY = position->y;
+        block.endX = block.startX + 2;
+        block.endY = block.startY + 1;
+    }
+    GridMappingExpansion validation;
+    if (!ExpandGridBlock(block, validation, reason)) {
+        return false;
+    }
+
+    const SectionPresentation rollback = presentation;
+    PresentationRow row;
+    row.kind = RowKind::GridBlock;
+    row.group = RowGroup::System;
+    row.block = block;
+    presentation.rows.insert(presentation.rows.begin() + static_cast<std::ptrdiff_t>(
+                                 InsertionIndexForGroup(presentation, RowGroup::System)),
+                             std::move(row));
+    MidiInstrumentConfig scratch = instrument_;
+    if (!FlushSectionPresentationToSlot(presentation, scratch.controllers[controllerIx],
+                                        MidiConfigSection::SystemMessages, reason)) {
         presentation = rollback;
         return false;
     }

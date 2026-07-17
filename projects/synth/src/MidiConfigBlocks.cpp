@@ -513,6 +513,382 @@ bool ExpandSystemBlock(const SystemBlock& block, std::vector<MidiControllerSyste
     return true;
 }
 
+namespace {
+
+bool BuildGridCell(const GridButton& button, MidiControllerSystemMessageAssociation& system,
+                   PolyphonicPressureMapping& pressure, std::string* reason) {
+    if (button.kind != MidiProfileKind::WrldBldr && button.kind != MidiProfileKind::Launchpad) {
+        SetReason(reason, "grid mappings require a WRLD.Bldr or Launchpad address form");
+        return false;
+    }
+
+    MidiNoteAddress noteAddress;
+    if (button.kind == MidiProfileKind::WrldBldr) {
+        if (!ChannelValid(button.channel)) {
+            SetReason(reason, "grid button channel must be an integer 0-15");
+            return false;
+        }
+        if (button.x < 0 || button.x > 7 || button.y < 0 || button.y > 7) {
+            SetReason(reason, "wrldbldr grid coordinate is outside the 0-7 grid");
+            return false;
+        }
+        const auto x = static_cast<std::uint8_t>(button.x);
+        const auto y = static_cast<std::uint8_t>(button.y);
+        const std::uint8_t cc = WrldBldrPositionToCC(x, y);
+        system.control = MidiControlAddress{.channel = button.channel, .cc = cc};
+        system.wrldBldrPosition = WrldBldrSystemPosition{.channel = button.channel, .x = x, .y = y};
+        noteAddress = MidiNoteAddress{.channel = button.channel, .note = cc};
+    } else {
+        const std::optional<std::uint8_t> note =
+            LaunchpadPositionToNote(button.launchpadController, button.x, button.y);
+        if (!note.has_value()) {
+            SetReason(reason, "launchpad grid coordinate is outside this controller's grid");
+            return false;
+        }
+        system.launchpadPosition = LaunchpadGridPosition{
+            .controller = button.launchpadController,
+            .x = button.x,
+            .y = button.y,
+        };
+        // Launchpad system input is channel-agnostic, while poly pressure has
+        // an explicit MIDI address. Launchpad devices use channel zero for
+        // their note/pressure grid stream.
+        noteAddress = MidiNoteAddress{.channel = 0, .note = *note};
+    }
+
+    system.press = MessageIn::GridPress(0, button.gridSlotIx, button.x, button.y, 0);
+    system.release = MessageIn::GridRelease(0, button.gridSlotIx, button.x, button.y);
+    system.feedback = MessageIn::GridPress(0, button.gridSlotIx, button.x, button.y, 0);
+    system.outputFeedback = button.outputFeedback;
+    pressure.address = noteAddress;
+    pressure.pressure = MessageIn::GridPressureChange(0, button.gridSlotIx, button.x, button.y, 0);
+    return true;
+}
+
+bool AppendGridExpansion(GridMappingExpansion scratch, GridMappingExpansion& out, std::string* reason) {
+    for (std::size_t ix = 0; ix < scratch.pressureMappings.size(); ++ix) {
+        for (std::size_t jx = ix + 1; jx < scratch.pressureMappings.size(); ++jx) {
+            if (scratch.pressureMappings[ix].address == scratch.pressureMappings[jx].address) {
+                SetReason(reason, "grid mapping would produce duplicate physical addresses");
+                return false;
+            }
+        }
+    }
+    for (const PolyphonicPressureMapping& incoming : scratch.pressureMappings) {
+        for (const PolyphonicPressureMapping& existing : out.pressureMappings) {
+            if (incoming.address == existing.address) {
+                SetReason(reason, "grid mapping would duplicate an existing physical address");
+                return false;
+            }
+        }
+    }
+    if (scratch.systemMessages.size() > out.systemMessages.max_size() - out.systemMessages.size() ||
+        scratch.pressureMappings.size() > out.pressureMappings.max_size() - out.pressureMappings.size()) {
+        SetReason(reason, "grid mapping expansion is too large");
+        return false;
+    }
+
+    // Build complete replacement vectors before changing either destination,
+    // so validation and allocation failure cannot publish only half the pair.
+    GridMappingExpansion next = out;
+    next.systemMessages.reserve(next.systemMessages.size() + scratch.systemMessages.size());
+    next.pressureMappings.reserve(next.pressureMappings.size() + scratch.pressureMappings.size());
+    next.systemMessages.insert(next.systemMessages.end(), scratch.systemMessages.begin(), scratch.systemMessages.end());
+    next.pressureMappings.insert(next.pressureMappings.end(), scratch.pressureMappings.begin(),
+                                 scratch.pressureMappings.end());
+    out = std::move(next);
+    return true;
+}
+
+}  // namespace
+
+bool ExpandGridButton(const GridButton& button, GridMappingExpansion& out, std::string* reason) {
+    GridMappingExpansion scratch;
+    scratch.systemMessages.emplace_back();
+    scratch.pressureMappings.emplace_back();
+    if (!BuildGridCell(button, scratch.systemMessages.back(), scratch.pressureMappings.back(), reason)) {
+        return false;
+    }
+    return AppendGridExpansion(std::move(scratch), out, reason);
+}
+
+bool ExpandGridBlock(const GridBlock& block, GridMappingExpansion& out, std::string* reason) {
+    if (block.endX <= block.startX || block.endY == block.startY) {
+        SetReason(reason, "grid block rectangle must have non-empty exclusive ranges");
+        return false;
+    }
+    const std::uint64_t width = static_cast<std::uint64_t>(
+        static_cast<std::int64_t>(block.endX) - static_cast<std::int64_t>(block.startX));
+    const std::int64_t signedHeight =
+        static_cast<std::int64_t>(block.endY) - static_cast<std::int64_t>(block.startY);
+    const std::uint64_t height = static_cast<std::uint64_t>(signedHeight < 0 ? -signedHeight : signedHeight);
+    if (height != 0 && width > std::numeric_limits<std::size_t>::max() / height) {
+        SetReason(reason, "grid block cell count overflows size_t");
+        return false;
+    }
+    const std::size_t count = static_cast<std::size_t>(width * height);
+
+    GridMappingExpansion scratch;
+    if (count > scratch.systemMessages.max_size() || count > scratch.pressureMappings.max_size()) {
+        SetReason(reason, "grid block expansion is too large");
+        return false;
+    }
+    scratch.systemMessages.reserve(count);
+    scratch.pressureMappings.reserve(count);
+    const int yDirection = block.endY > block.startY ? 1 : -1;
+    for (std::uint64_t row = 0; row < height; ++row) {
+        const int y = static_cast<int>(static_cast<std::int64_t>(block.startY) +
+                                       static_cast<std::int64_t>(row) * yDirection);
+        for (std::uint64_t column = 0; column < width; ++column) {
+            const int x = static_cast<int>(static_cast<std::int64_t>(block.startX) +
+                                           static_cast<std::int64_t>(column));
+            GridButton button;
+            button.kind = block.kind;
+            button.channel = block.channel;
+            button.x = x;
+            button.y = y;
+            button.launchpadController = block.launchpadController;
+            button.gridSlotIx = block.gridSlotIx;
+            button.outputFeedback = block.outputFeedback;
+            scratch.systemMessages.emplace_back();
+            scratch.pressureMappings.emplace_back();
+            if (!BuildGridCell(button, scratch.systemMessages.back(), scratch.pressureMappings.back(), reason)) {
+                return false;
+            }
+        }
+    }
+    return AppendGridExpansion(std::move(scratch), out, reason);
+}
+
+namespace {
+
+struct GridCellCandidate {
+    GridButton button;
+    MidiNoteAddress physicalAddress;
+    std::size_t systemIndex = 0;
+    std::size_t pressureIndex = 0;
+};
+
+std::optional<GridCellCandidate> ExactGridSystemCandidate(
+    const MidiControllerSystemMessageAssociation& association, MidiProfileKind kind, std::size_t systemIndex) {
+    if (kind != MidiProfileKind::WrldBldr && kind != MidiProfileKind::Launchpad) {
+        return std::nullopt;
+    }
+
+    GridCellCandidate candidate;
+    candidate.systemIndex = systemIndex;
+    candidate.button.kind = kind;
+    candidate.button.gridSlotIx = association.press.gridSlotIx;
+    candidate.button.x = association.press.gridX;
+    candidate.button.y = association.press.gridY;
+    candidate.button.outputFeedback = association.outputFeedback;
+
+    const MessageIn expectedPress = MessageIn::GridPress(
+        0, candidate.button.gridSlotIx, candidate.button.x, candidate.button.y, 0);
+    const MessageIn expectedRelease = MessageIn::GridRelease(
+        0, candidate.button.gridSlotIx, candidate.button.x, candidate.button.y);
+    if (!(association.press == expectedPress) || !association.release.has_value() ||
+        !(*association.release == expectedRelease) || !(association.feedback == expectedPress)) {
+        return std::nullopt;
+    }
+
+    if (kind == MidiProfileKind::WrldBldr) {
+        if (!association.control.has_value() || !association.wrldBldrPosition.has_value() ||
+            association.launchpadPosition.has_value()) {
+            return std::nullopt;
+        }
+        const WrldBldrSystemPosition& position = *association.wrldBldrPosition;
+        if (position.channel != association.control->channel || position.x != candidate.button.x ||
+            position.y != candidate.button.y || association.control->cc != WrldBldrPositionToCC(position.x, position.y)) {
+            return std::nullopt;
+        }
+        candidate.button.channel = position.channel;
+        candidate.physicalAddress = MidiNoteAddress{
+            .channel = position.channel,
+            .note = association.control->cc,
+        };
+    } else {
+        if (association.control.has_value() || association.wrldBldrPosition.has_value() ||
+            !association.launchpadPosition.has_value()) {
+            return std::nullopt;
+        }
+        const LaunchpadGridPosition& position = *association.launchpadPosition;
+        if (position.x != candidate.button.x || position.y != candidate.button.y) {
+            return std::nullopt;
+        }
+        const std::optional<std::uint8_t> note =
+            LaunchpadPositionToNote(position.controller, position.x, position.y);
+        if (!note.has_value()) {
+            return std::nullopt;
+        }
+        candidate.button.launchpadController = position.controller;
+        candidate.physicalAddress = MidiNoteAddress{.channel = 0, .note = *note};
+    }
+    return candidate;
+}
+
+bool SameGridShape(const GridButton& a, const GridButton& b) {
+    return a.kind == b.kind && a.channel == b.channel &&
+           a.launchpadController == b.launchpadController && a.gridSlotIx == b.gridSlotIx &&
+           a.outputFeedback == b.outputFeedback;
+}
+
+}  // namespace
+
+GridMappingReconstruction ReconstructGridMappings(
+    const std::vector<MidiControllerSystemMessageAssociation>& systemMessages,
+    const std::vector<PolyphonicPressureMapping>& pressureMappings, MidiProfileKind kind) {
+    GridMappingReconstruction result;
+
+    struct IndexedSystem {
+        std::size_t originalIndex = 0;
+        const MidiControllerSystemMessageAssociation* association = nullptr;
+    };
+    std::vector<IndexedSystem> sortedSystems;
+    sortedSystems.reserve(systemMessages.size());
+    for (std::size_t ix = 0; ix < systemMessages.size(); ++ix) {
+        sortedSystems.push_back({ix, &systemMessages[ix]});
+    }
+    std::stable_sort(sortedSystems.begin(), sortedSystems.end(), [kind](const IndexedSystem& a,
+                                                                        const IndexedSystem& b) {
+        return ComputeSystemMessageSortKey(*a.association, kind) <
+               ComputeSystemMessageSortKey(*b.association, kind);
+    });
+
+    std::vector<std::optional<GridCellCandidate>> candidates(systemMessages.size());
+    for (std::size_t ix = 0; ix < systemMessages.size(); ++ix) {
+        candidates[ix] = ExactGridSystemCandidate(systemMessages[ix], kind, ix);
+    }
+
+    // Ambiguous duplicate physical systems remain ordinary system mappings;
+    // no pressure entry is consumed on their behalf.
+    std::vector<bool> duplicateSystem(systemMessages.size(), false);
+    for (std::size_t ix = 0; ix < candidates.size(); ++ix) {
+        if (!candidates[ix].has_value()) {
+            continue;
+        }
+        for (std::size_t jx = ix + 1; jx < candidates.size(); ++jx) {
+            if (candidates[jx].has_value() &&
+                candidates[ix]->physicalAddress == candidates[jx]->physicalAddress) {
+                duplicateSystem[ix] = true;
+                duplicateSystem[jx] = true;
+            }
+        }
+    }
+
+    std::vector<bool> consumedSystem(systemMessages.size(), false);
+    std::vector<bool> consumedPressure(pressureMappings.size(), false);
+    std::vector<GridCellCandidate> pairedCells;
+    for (const IndexedSystem& indexed : sortedSystems) {
+        const std::size_t systemIx = indexed.originalIndex;
+        if (!candidates[systemIx].has_value() || duplicateSystem[systemIx]) {
+            continue;
+        }
+        GridCellCandidate candidate = *candidates[systemIx];
+        const MessageIn expectedPressure = MessageIn::GridPressureChange(
+            0, candidate.button.gridSlotIx, candidate.button.x, candidate.button.y, 0);
+        for (std::size_t pressureIx = 0; pressureIx < pressureMappings.size(); ++pressureIx) {
+            if (!consumedPressure[pressureIx] &&
+                pressureMappings[pressureIx].address == candidate.physicalAddress &&
+                pressureMappings[pressureIx].pressure == expectedPressure) {
+                candidate.pressureIndex = pressureIx;
+                consumedSystem[systemIx] = true;
+                consumedPressure[pressureIx] = true;
+                pairedCells.push_back(candidate);
+                break;
+            }
+        }
+    }
+
+    for (const IndexedSystem& indexed : sortedSystems) {
+        if (!consumedSystem[indexed.originalIndex]) {
+            result.remainingSystemMessages.push_back(*indexed.association);
+        }
+    }
+    for (std::size_t ix = 0; ix < pressureMappings.size(); ++ix) {
+        if (!consumedPressure[ix]) {
+            result.orphanPressureMappings.push_back(pressureMappings[ix]);
+        }
+    }
+
+    // Canonical row-major fitting is independent of authoring array order.
+    std::stable_sort(pairedCells.begin(), pairedCells.end(), [](const GridCellCandidate& a,
+                                                                const GridCellCandidate& b) {
+        return std::tie(a.button.gridSlotIx, a.button.kind, a.button.channel,
+                        a.button.launchpadController, a.button.outputFeedback,
+                        a.button.y, a.button.x, a.physicalAddress.channel, a.physicalAddress.note) <
+               std::tie(b.button.gridSlotIx, b.button.kind, b.button.channel,
+                        b.button.launchpadController, b.button.outputFeedback,
+                        b.button.y, b.button.x, b.physicalAddress.channel, b.physicalAddress.note);
+    });
+
+    std::vector<bool> fitted(pairedCells.size(), false);
+    auto findCell = [&](const GridButton& shape, int x, int y) -> std::optional<std::size_t> {
+        for (std::size_t ix = 0; ix < pairedCells.size(); ++ix) {
+            if (!fitted[ix] && SameGridShape(shape, pairedCells[ix].button) &&
+                pairedCells[ix].button.x == x && pairedCells[ix].button.y == y) {
+                return ix;
+            }
+        }
+        return std::nullopt;
+    };
+
+    for (std::size_t seedIx = 0; seedIx < pairedCells.size(); ++seedIx) {
+        if (fitted[seedIx]) {
+            continue;
+        }
+        const GridButton seed = pairedCells[seedIx].button;
+        std::size_t width = 1;
+        while (seed.x <= std::numeric_limits<int>::max() - static_cast<int>(width) &&
+               findCell(seed, seed.x + static_cast<int>(width), seed.y).has_value()) {
+            ++width;
+        }
+        std::size_t height = 1;
+        while (seed.y <= std::numeric_limits<int>::max() - static_cast<int>(height)) {
+            const int y = seed.y + static_cast<int>(height);
+            bool completeRow = true;
+            for (std::size_t column = 0; column < width; ++column) {
+                if (!findCell(seed, seed.x + static_cast<int>(column), y).has_value()) {
+                    completeRow = false;
+                    break;
+                }
+            }
+            if (!completeRow) {
+                break;
+            }
+            ++height;
+        }
+
+        ReconstructedGridRow row;
+        row.isBlock = width * height >= 2;
+        row.button = seed;
+        row.block.kind = seed.kind;
+        row.block.channel = seed.channel;
+        row.block.startX = seed.x;
+        row.block.startY = seed.y;
+        row.block.endX = seed.x + static_cast<int>(width);
+        row.block.endY = seed.y + static_cast<int>(height);
+        row.block.launchpadController = seed.launchpadController;
+        row.block.gridSlotIx = seed.gridSlotIx;
+        row.block.outputFeedback = seed.outputFeedback;
+        for (std::size_t r = 0; r < height; ++r) {
+            for (std::size_t c = 0; c < width; ++c) {
+                const std::optional<std::size_t> cellIx =
+                    findCell(seed, seed.x + static_cast<int>(c), seed.y + static_cast<int>(r));
+                if (!cellIx.has_value()) {
+                    continue;
+                }
+                fitted[*cellIx] = true;
+                row.systemIndices.push_back(pairedCells[*cellIx].systemIndex);
+                row.pressureIndices.push_back(pairedCells[*cellIx].pressureIndex);
+            }
+        }
+        result.rows.push_back(std::move(row));
+    }
+
+    return result;
+}
+
 std::vector<ReconstructedEncoderRow> ReconstructEncoderBlocks(const std::vector<EncoderMidiMapping>& mappings,
                                                                bool isPush) {
     std::vector<ReconstructedEncoderRow> rows;
