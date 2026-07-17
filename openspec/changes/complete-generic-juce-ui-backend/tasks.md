@@ -5,8 +5,8 @@
 
 ## 2. Generic JUCE scroll areas
 
-- [ ] 2.1 Add failing generic-backend tests that distinguish viewport bounds from content extent and prove vertical/horizontal scrolling keeps a final nested control reachable, clipped, and interactive.
-- [ ] 2.2 Implement the reusable `ScrollArea` viewport/content host with stable scroll position and declared content sizing, then pass the generic backend tests.
+- [x] 2.1 Add failing generic-backend tests that distinguish viewport bounds from content extent and prove vertical/horizontal scrolling keeps a final nested control reachable, clipped, and interactive.
+- [x] 2.2 Implement the reusable `ScrollArea` viewport/content host with stable scroll position and declared content sizing, then pass the generic backend tests.
 
 ## 3. Production migration and verification
 
