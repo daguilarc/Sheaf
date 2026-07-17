@@ -1,7 +1,7 @@
 ## 1. Hierarchical generic JUCE rendering
 
-- [ ] 1.1 Add failing `PortableJuceBackendTests` coverage for parent-local row/section bounds, an unbounded semantic child resolved through nearest-root flow, nested absolute roots, node-local nested draw painting/interaction, and focused text-editor identity/draft retention across stable hosting and reparenting; reconstruct surface-space positions with a shared parent-walk helper when asserting host-local JUCE bounds.
-- [ ] 1.2 Implement resolved parent maps, semantic JUCE hosting/reparenting, and reusable hosted draw components in `PortableComponent` until the hierarchy and refresh tests pass without page-specific branches.
+- [x] 1.1 Add failing `PortableJuceBackendTests` coverage for parent-local row/section bounds, an unbounded semantic child resolved through nearest-root flow, nested absolute roots, node-local nested draw painting/interaction, and focused text-editor identity/draft retention across stable hosting and reparenting; reconstruct surface-space positions with a shared parent-walk helper when asserting host-local JUCE bounds.
+- [x] 1.2 Implement resolved parent maps, semantic JUCE hosting/reparenting, and reusable hosted draw components in `PortableComponent` until the hierarchy and refresh tests pass without page-specific branches.
 
 ## 2. Generic JUCE scroll areas
 
