@@ -6207,7 +6207,7 @@ TEST_CASE(midi_encoder_input_absolute_publishes_matching_epoch_and_rolls_back_re
     REQUIRE_TRUE(bus.Pop(message, 101));
     REQUIRE_TRUE(message.type == synth::MessageIn::Type::ParamSetAbsolute);
     REQUIRE_TRUE(message.absoluteEpoch != 0);
-    REQUIRE_NEAR(message.value, 64.0f / 127.0f, 0.000001f);
+    REQUIRE_NEAR(message.value, 0.5f, 0.000001f);
     state = coordinator.Snapshot(route);
     REQUIRE_TRUE(state.has_value());
     REQUIRE_TRUE(state->pending);
@@ -6245,7 +6245,7 @@ TEST_CASE(midi_encoder_input_relative_modes_do_not_allocate_or_change_absolute_s
 
 TEST_CASE(midi_encoder_input_absolute_maps_raw_positions_independent_of_turn_step) {
     constexpr std::array rawValues{std::uint8_t{0}, std::uint8_t{64}, std::uint8_t{127}};
-    constexpr std::array normalizedValues{0.0f, 64.0f / 127.0f, 1.0f};
+    constexpr std::array normalizedValues{0.0f, 0.5f, 1.0f};
 
     for (const float turnStep : {0.01f, 0.75f}) {
         synth::MessageInBus bus(nullptr, 16);
@@ -6272,6 +6272,65 @@ TEST_CASE(midi_encoder_input_absolute_maps_raw_positions_independent_of_turn_ste
         synth::MessageIn extra;
         REQUIRE_TRUE(!bus.Pop(extra, 103));
     }
+}
+
+TEST_CASE(absolute_encoder_curve_round_trips_every_midi_byte_through_real_processors) {
+    synth::MessageInBus bus(nullptr, 128);
+    synth::EncoderMidiInConfig input;
+    input.mode = synth::EncoderMode::Absolute;
+    input.turns.push_back({.control = {.channel = 3, .cc = 7}, .slotIx = 0, .position = 0});
+    synth::EncoderMidiInProcessor inputProcessor(input, &bus);
+
+    synth::ParameterManager::UIState ui;
+    ui.Configure(1, 1, 1, 0, 0);
+    FakeMidiSink sink;
+    synth::MidiSender sender;
+    sender.SetSink(0, &sink);
+    sender.Start();
+    auto outputProcessor = MakeEncoderOutput(
+        synth::EncoderMidiOutProtocol::Twister, synth::EncoderMode::Absolute, &sender, &ui);
+
+    for (int raw = 0; raw <= 127; ++raw) {
+        inputProcessor.Process(synth::BasicMidi::CC(0, 3, 7, static_cast<std::uint8_t>(raw)));
+        synth::MessageIn message;
+        REQUIRE_TRUE(bus.Pop(message, 0));
+        REQUIRE_TRUE(message.type == synth::MessageIn::Type::ParamSetAbsolute);
+        if (raw == 64) {
+            REQUIRE_NEAR(message.value, 0.5f, 0.000001f);
+        }
+
+        PublishEncoderCell(ui, 0.0f, message.value, 0);
+        const std::size_t beforeOutput = sink.sent.size();
+        outputProcessor->Process();
+        REQUIRE_TRUE(sender.FlushForTests(std::chrono::milliseconds(500)));
+        REQUIRE_TRUE(CountPositionMessages(sink, beforeOutput) == 1);
+        REQUIRE_TRUE(LastPositionValue(sink, beforeOutput) == raw);
+    }
+
+    sender.Stop();
+}
+
+TEST_CASE(absolute_encoder_output_uses_inverse_curve_before_midi_byte_debounce) {
+    synth::ParameterManager::UIState ui;
+    ui.Configure(1, 1, 1, 0, 0);
+    PublishEncoderCell(ui, 0.0f, 0.6f, 0);
+    FakeMidiSink sink;
+    synth::MidiSender sender;
+    sender.SetSink(0, &sink);
+    sender.Start();
+    auto processor = MakeEncoderOutput(
+        synth::EncoderMidiOutProtocol::Twister, synth::EncoderMode::Absolute, &sender, &ui);
+
+    processor->Process();
+    REQUIRE_TRUE(sender.FlushForTests(std::chrono::milliseconds(500)));
+    REQUIRE_TRUE(LastPositionValue(sink) == 77);
+    const std::size_t afterFirst = sink.sent.size();
+
+    PublishEncoderCell(ui, 0.0f, 0.6005f, 0);
+    processor->Process();
+    REQUIRE_TRUE(sender.FlushForTests(std::chrono::milliseconds(500)));
+    REQUIRE_TRUE(sink.sent.size() == afterFirst);
+    sender.Stop();
 }
 
 TEST_CASE(midi_encoder_input_absolute_preserves_mapped_push_and_thru_boundaries) {
@@ -7183,7 +7242,7 @@ TEST_CASE(generic_absolute_encoder_output_uses_same_address_causal_acknowledgeme
     };
     synth::ParameterManager::UIState ui;
     ui.Configure(1, 1, 1, 0, 0, 0);
-    PublishEncoderCell(ui, 0.9f, 64.0f / 127.0f, 0);
+    PublishEncoderCell(ui, 0.9f, 0.5f, 0);
     synth::AbsoluteFeedbackCoordinator coordinator;
     const auto route = coordinator.ReserveRoute({.controllerSlot = 2, .parameterSlot = 0, .position = 0});
     const auto exact = coordinator.BeginInput(route, 64);
@@ -7198,7 +7257,7 @@ TEST_CASE(generic_absolute_encoder_output_uses_same_address_causal_acknowledgeme
     REQUIRE_TRUE(sink.sent.empty());
     REQUIRE_TRUE(coordinator.Snapshot(route)->pending);
 
-    PublishEncoderCell(ui, 0.9f, 64.0f / 127.0f, exact.Epoch());
+    PublishEncoderCell(ui, 0.9f, 0.5f, exact.Epoch());
     processor.Process();
     REQUIRE_TRUE(sender.FlushForTests(std::chrono::milliseconds(500)));
     REQUIRE_TRUE(sink.sent.empty());
@@ -8234,7 +8293,7 @@ TEST_CASE(absolute_encoder_output_gates_until_acknowledged_and_suppresses_exact_
          }) {
         synth::ParameterManager::UIState ui;
         ui.Configure(1, 1, 1, 0, 0);
-        PublishEncoderCell(ui, 0.9f, 64.0f / 127.0f, 0);
+        PublishEncoderCell(ui, 0.9f, 0.5f, 0);
 
         synth::AbsoluteFeedbackCoordinator coordinator;
         const auto route = coordinator.ReserveRoute({.controllerSlot = 2, .parameterSlot = 0, .position = 0});
@@ -8252,7 +8311,7 @@ TEST_CASE(absolute_encoder_output_gates_until_acknowledged_and_suppresses_exact_
         const auto pending = coordinator.Snapshot(route);
         REQUIRE_TRUE(pending.has_value() && pending->pending);
 
-        PublishEncoderCell(ui, 0.9f, 64.0f / 127.0f, alert.Epoch() + 1);
+        PublishEncoderCell(ui, 0.9f, 0.5f, alert.Epoch() + 1);
         processor->Process();
         REQUIRE_TRUE(sender.FlushForTests(std::chrono::milliseconds(500)));
         REQUIRE_TRUE(CountPositionMessages(sink) == 0);
@@ -8327,13 +8386,15 @@ TEST_CASE(absolute_encoder_output_resolves_only_latest_rapid_expectation_and_dis
         sender.Start();
         auto processor = MakeEncoderOutput(protocol, synth::EncoderMode::Absolute, &sender, &ui, &coordinator, 4);
 
-        PublishEncoderCell(ui, 0.75f, 80.0f / 127.0f, second.Epoch());
+        const float byte80Target = std::pow(80.0f / 127.0f,
+                                            std::log(0.5f) / std::log(64.0f / 127.0f));
+        PublishEncoderCell(ui, 0.75f, byte80Target, second.Epoch());
         processor->Process();
         REQUIRE_TRUE(sender.FlushForTests(std::chrono::milliseconds(500)));
         REQUIRE_TRUE(CountPositionMessages(sink) == 0);
         REQUIRE_TRUE(coordinator.Snapshot(route)->pending);
 
-        PublishEncoderCell(ui, 0.75f, 80.0f / 127.0f, latest.Epoch());
+        PublishEncoderCell(ui, 0.75f, byte80Target, latest.Epoch());
         processor->Process();
         REQUIRE_TRUE(sender.FlushForTests(std::chrono::milliseconds(500)));
         REQUIRE_TRUE(CountPositionMessages(sink) == 0);
@@ -8384,7 +8445,7 @@ TEST_CASE(absolute_encoder_output_rejects_unstable_revision_without_resolving_or
         processor->Process();
         REQUIRE_TRUE(sender.FlushForTests(std::chrono::milliseconds(500)));
         REQUIRE_TRUE(CountPositionMessages(sink, afterInitial) == 1);
-        REQUIRE_TRUE(LastPositionValue(sink, afterInitial) == 76);
+        REQUIRE_TRUE(LastPositionValue(sink, afterInitial) == 77);
         REQUIRE_TRUE(!coordinator.Snapshot(route)->pending);
         sender.Stop();
     }
@@ -8533,7 +8594,7 @@ TEST_CASE(concurrent_absolute_alert_and_position_output_linearize_before_alert_o
     processor->Process();
     REQUIRE_TRUE(sender.FlushForTests(std::chrono::milliseconds(500)));
     REQUIRE_TRUE(CountPositionMessages(sink, afterBeforeAlertEnqueue) == 1);
-    REQUIRE_TRUE(LastPositionValue(sink, afterBeforeAlertEnqueue) == 76);
+    REQUIRE_TRUE(LastPositionValue(sink, afterBeforeAlertEnqueue) == 77);
     REQUIRE_TRUE(!coordinator.Snapshot(route)->pending);
     sender.Stop();
 }

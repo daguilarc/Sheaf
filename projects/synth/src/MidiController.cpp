@@ -20,6 +20,18 @@ std::uint8_t FloatTo7Bit(float value) {
     return Clamp7Bit(static_cast<int>(std::lround(std::clamp(value, 0.0f, 1.0f) * 127.0f)));
 }
 
+constexpr double kAbsoluteEncoderCurveExponent = 1.011444814893185;
+constexpr double kAbsoluteEncoderInverseCurveExponent = 1.0 / kAbsoluteEncoderCurveExponent;
+
+float AbsoluteEncoderByteToNormalized(std::uint8_t value) {
+    return static_cast<float>(std::pow(static_cast<double>(value) / 127.0, kAbsoluteEncoderCurveExponent));
+}
+
+std::uint8_t NormalizedToAbsoluteEncoderByte(float value) {
+    return FloatTo7Bit(static_cast<float>(std::pow(std::clamp(value, 0.0f, 1.0f),
+                                                    kAbsoluteEncoderInverseCurveExponent)));
+}
+
 std::uint8_t TwisterRgbBrightnessValue(float brightness) {
     return Clamp7Bit(static_cast<int>(std::lround(17.0f + std::clamp(brightness, 0.0f, 1.0f) * 30.0f)));
 }
@@ -587,7 +599,7 @@ void EncoderMidiInProcessor::Process(const BasicMidi& midi) {
             if (config_.mode == EncoderMode::Absolute) {
                 if (absoluteFeedback_ == nullptr) {
                     Push(MessageIn::ParamSetAbsolute(NextTimestamp(), mapping->slotIx, mapping->position,
-                                                     static_cast<float>(midi.GetValue()) / 127.0f));
+                                                     AbsoluteEncoderByteToNormalized(midi.GetValue())));
                     return;
                 }
                 const std::size_t mappingIx = static_cast<std::size_t>(mapping - config_.turns.data());
@@ -603,7 +615,7 @@ void EncoderMidiInProcessor::Process(const BasicMidi& midi) {
                 }
                 const bool pushed = Push(MessageIn::ParamSetAbsolute(
                     NextTimestamp(), mapping->slotIx, mapping->position,
-                    static_cast<float>(midi.GetValue()) / 127.0f, alert.Epoch()));
+                    AbsoluteEncoderByteToNormalized(midi.GetValue()), alert.Epoch()));
                 if (!pushed) {
                     absoluteFeedback_->Rollback(alert);
                 }
@@ -1004,7 +1016,7 @@ void MidiOutProcessor::ProcessPosition(std::size_t mappingIx,
                                        const CellSnapshot& snapshot, bool blank,
                                        bool& cacheValid, std::uint8_t& cachedValue) {
     const std::uint8_t value = feedbackMode_ == EncoderMode::Absolute
-                                   ? (blank ? 0 : FloatTo7Bit(snapshot.rawKnobValue))
+                                   ? (blank ? 0 : NormalizedToAbsoluteEncoderByte(snapshot.rawKnobValue))
                                    : (blank ? 0 : FloatTo7Bit(NormalizeForDisplay(snapshot.value, snapshot.bipolar)));
     if (feedbackMode_ == EncoderMode::Absolute && absoluteFeedback_ != nullptr &&
         mappingIx < absoluteRoutes_.size() && absoluteRoutes_[mappingIx].IsTracked()) {

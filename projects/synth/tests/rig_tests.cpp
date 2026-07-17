@@ -459,7 +459,7 @@ TEST_CASE(rig_absolute_feedback_follows_real_acknowledgement_and_ignores_modulat
     rig.RunBlocks(64);
     REQUIRE_TRUE(sender->FlushForTests(std::chrono::milliseconds(500)));
     REQUIRE_TRUE(PositionValues(sink).empty());
-    REQUIRE_NEAR(rig.ParameterValue(rig.Application().levelId), 96.0f / 127.0f, 0.00001f);
+    REQUIRE_NEAR(rig.ParameterValue(rig.Application().levelId), 0.753488443f, 0.00001f);
 
     // Modulation changes the published display value, but absolute feedback
     // remains debounced at the modulation-free raw center.
@@ -518,7 +518,7 @@ TEST_CASE(rig_generic_absolute_feedback_round_trips_same_address_without_auxilia
     rig.RunBlocks(64);
     REQUIRE_TRUE(sender->FlushForTests(std::chrono::milliseconds(500)));
     REQUIRE_TRUE(sink.received.empty());
-    REQUIRE_NEAR(rig.ParameterValue(rig.Application().levelId), 96.0f / 127.0f, 0.00001f);
+    REQUIRE_NEAR(rig.ParameterValue(rig.Application().levelId), 0.753488443f, 0.00001f);
 
     rig.SetReset(true);
     rig.SendMidi(0, synth::BasicMidi::CC(0, 7, 74, 20));
@@ -559,7 +559,7 @@ TEST_CASE(rig_absolute_feedback_resolves_only_latest_same_route_rapid_input) {
     REQUIRE_TRUE(sender->FlushForTests(std::chrono::milliseconds(500)));
     sender->Stop();
     REQUIRE_TRUE(PositionValues(sink).empty());
-    REQUIRE_NEAR(rig.ParameterValue(rig.Application().levelId), 80.0f / 127.0f, 0.00001f);
+    REQUIRE_NEAR(rig.ParameterValue(rig.Application().levelId), 0.626598188f, 0.00001f);
 }
 
 TEST_CASE(rig_relative_feedback_stays_modulation_aware_through_real_engine_path) {
@@ -616,7 +616,7 @@ TEST_CASE(rig_two_absolute_controllers_share_cell_with_independent_pending_feedb
     REQUIRE_TRUE(controller0.size() == 1);
     REQUIRE_TRUE(controller0.front() == 96);
     REQUIRE_TRUE(controller1.empty());
-    REQUIRE_NEAR(rig.ParameterValue(rig.Application().levelId), 96.0f / 127.0f, 0.00001f);
+    REQUIRE_NEAR(rig.ParameterValue(rig.Application().levelId), 0.753488443f, 0.00001f);
 }
 
 // Determinism: two rigs driven through an identical script (turns, scene

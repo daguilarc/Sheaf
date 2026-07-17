@@ -1,0 +1,3 @@
+## 1. Absolute Encoder Midpoint Curve
+
+- [x] 1.1 Implement the absolute encoder conversion as one cohesive change: keep `ParamSetAbsolute` carrying a normalized `[0, 1]` float target; apply `(B / 127)^a` with `a = log(0.5) / log(64 / 127)` in the absolute input processor; apply `x^(1/a)` in the absolute output processor before existing nearest-7-bit quantization; retain acknowledgement and debounce comparisons/caches on the resulting MIDI bytes; and add focused synth tests for endpoints, byte `64 -> 0.5`, all-byte forward/inverse round trips, correction, and unchanged 7-bit debounce before running the synth test suite.
