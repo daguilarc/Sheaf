@@ -270,6 +270,14 @@ synth::MidiInstrumentConfig TwoControllerInstrument() {
 
 }  // namespace
 
+TEST_CASE(rig_existing_app_keeps_parameter_ui_contract_with_empty_grid_snapshot) {
+    synth_rig::SynthRig<RigTestApp> rig;
+    REQUIRE_TRUE(rig.Engine().Context().uiState == rig.Engine().RuntimeUIStateForTest().parameters);
+    REQUIRE_TRUE(rig.Engine().RuntimeUIStateForTest().grids != nullptr);
+    REQUIRE_TRUE(rig.Engine().RuntimeUIStateForTest().grids->slots.empty());
+    REQUIRE_TRUE(rig.Engine().GridManagerForTest().Finalized());
+}
+
 TEST_CASE(rig_runs_blocks_and_captures_output) {
     synth_rig::SynthRig<RigTestApp> rig;
     rig.RunBlocks(4);

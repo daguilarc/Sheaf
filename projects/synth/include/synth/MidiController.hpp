@@ -1,6 +1,7 @@
 #pragma once
 
 #include "synth/ParameterModulation.hpp"
+#include "synth/RuntimeUIState.hpp"
 
 #include <array>
 #include <atomic>
@@ -568,15 +569,27 @@ struct SystemMessageOutputState {
 
 class SystemMessageOutputInfo {
 public:
-    explicit SystemMessageOutputInfo(ParameterManager::UIState* uiState = nullptr);
+    SystemMessageOutputInfo() = default;
+    explicit SystemMessageOutputInfo(RuntimeUIState* uiState);
+    explicit SystemMessageOutputInfo(ParameterManager::UIState* uiState);
 
-    void SetUIState(ParameterManager::UIState* uiState) { uiState_ = uiState; }
-    ParameterManager::UIState* UIState() const { return uiState_; }
+    void SetRuntimeUIState(RuntimeUIState* uiState) {
+        uiState_ = uiState;
+        compatibilityUIState_ = nullptr;
+    }
+    void SetUIState(ParameterManager::UIState* uiState) {
+        uiState_ = nullptr;
+        compatibilityUIState_ = uiState;
+    }
+    ParameterManager::UIState* UIState() const {
+        return uiState_ != nullptr ? uiState_->parameters : compatibilityUIState_;
+    }
     SystemMessageOutputState Evaluate(const MessageIn& message) const;
 
 private:
     Color GestureColor(std::size_t gestureIx) const;
-    ParameterManager::UIState* uiState_ = nullptr;
+    RuntimeUIState* uiState_ = nullptr;
+    ParameterManager::UIState* compatibilityUIState_ = nullptr;
 };
 
 struct SystemCcMidiOutAssociation {
@@ -590,10 +603,13 @@ struct SystemCcMidiOutConfig {
 
 class SystemCcMidiOutProcessor final : public MidiOutputProcessor {
 public:
+    SystemCcMidiOutProcessor(SystemCcMidiOutConfig config, MidiSender* sender, RuntimeUIState* uiState,
+                             std::size_t sinkIx = 0);
     SystemCcMidiOutProcessor(SystemCcMidiOutConfig config, MidiSender* sender, ParameterManager::UIState* uiState,
                              std::size_t sinkIx = 0);
 
     void SetSender(MidiSender* sender) { sender_ = sender; }
+    void SetRuntimeUIState(RuntimeUIState* uiState) { info_.SetRuntimeUIState(uiState); }
     void SetUIState(ParameterManager::UIState* uiState) { info_.SetUIState(uiState); }
     void SetSinkIx(std::size_t sinkIx) { sinkIx_ = sinkIx; }
     void SetConfig(SystemCcMidiOutConfig config);
@@ -634,9 +650,12 @@ struct WrldBldrSystemMidiOutConfig {
 class WrldBldrSystemMidiOutProcessor final : public MidiOutputProcessor {
 public:
     WrldBldrSystemMidiOutProcessor(WrldBldrSystemMidiOutConfig config, MidiSender* sender,
+                                   RuntimeUIState* uiState, std::size_t sinkIx = 0);
+    WrldBldrSystemMidiOutProcessor(WrldBldrSystemMidiOutConfig config, MidiSender* sender,
                                    ParameterManager::UIState* uiState, std::size_t sinkIx = 0);
 
     void SetSender(MidiSender* sender) { sender_ = sender; }
+    void SetRuntimeUIState(RuntimeUIState* uiState) { info_.SetRuntimeUIState(uiState); }
     void SetUIState(ParameterManager::UIState* uiState) { info_.SetUIState(uiState); }
     void SetSinkIx(std::size_t sinkIx) { sinkIx_ = sinkIx; }
     void SetConfig(WrldBldrSystemMidiOutConfig config);
@@ -671,9 +690,12 @@ struct LaunchpadGridMidiOutConfig {
 class LaunchpadGridMidiOutProcessor final : public MidiOutputProcessor {
 public:
     LaunchpadGridMidiOutProcessor(LaunchpadGridMidiOutConfig config, MidiSender* sender,
+                                  RuntimeUIState* uiState, std::size_t sinkIx = 0);
+    LaunchpadGridMidiOutProcessor(LaunchpadGridMidiOutConfig config, MidiSender* sender,
                                   ParameterManager::UIState* uiState, std::size_t sinkIx = 0);
 
     void SetSender(MidiSender* sender) { sender_ = sender; }
+    void SetRuntimeUIState(RuntimeUIState* uiState) { info_.SetRuntimeUIState(uiState); }
     void SetUIState(ParameterManager::UIState* uiState) { info_.SetUIState(uiState); }
     void SetSinkIx(std::size_t sinkIx) { sinkIx_ = sinkIx; }
     void SetConfig(LaunchpadGridMidiOutConfig config);
@@ -773,10 +795,20 @@ struct MidiInstrumentConfig {
 // position output; direct callers that omit it retain legacy behavior.
 MidiControllerProfileResult CreateMidiControllerProfile(
     const MidiControllerProfileConfig& config, MessageInBus* bus, MidiSender* sender,
+    RuntimeUIState* uiState, MidiInProcessor::TimestampProvider timestampProvider = {},
+    std::size_t sinkIx = 0, AbsoluteFeedbackCoordinator* absoluteFeedback = nullptr,
+    std::size_t controllerSlot = 0,
+    std::optional<MidiProfileKind> profileKind = std::nullopt);
+MidiControllerProfileResult CreateMidiControllerProfile(
+    const MidiControllerProfileConfig& config, MessageInBus* bus, MidiSender* sender,
     ParameterManager::UIState* uiState, MidiInProcessor::TimestampProvider timestampProvider = {},
     std::size_t sinkIx = 0, AbsoluteFeedbackCoordinator* absoluteFeedback = nullptr,
     std::size_t controllerSlot = 0,
     std::optional<MidiProfileKind> profileKind = std::nullopt);
+MidiControllerProfileResult CreateMidiControllerProfile(
+    const MidiControllerProfileConfig& config, MessageInBus* bus, MidiSender* sender,
+    std::nullptr_t uiState, MidiInProcessor::TimestampProvider timestampProvider = {},
+    std::size_t sinkIx = 0);
 
 struct WrldBldrDefaultProfileOptions {
     std::size_t slotIx = 0;

@@ -17,6 +17,7 @@
 #include "synth/MidiController.hpp"
 #include "synth/ParameterModulation.hpp"
 #include "synth/PatchPersistence.hpp"
+#include "synth/RuntimeUIState.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -41,6 +42,7 @@ public:
 
     explicit Engine(TimestampProvider timestampProvider, std::size_t initialArenaCapacity = 256 * 1024)
         : manager_()
+        , gridManager_()
         , uiBus_(&manager_)
         , midiBus_(&manager_)
         , parameterMessageOutBus_()
@@ -60,12 +62,16 @@ public:
         , context_()
         , app_()
         , uiState_()
+        , gridUIState_()
+        , runtimeUIState_()
         , midiProcessors_()
         , timestampProvider_(std::move(timestampProvider))
         , sampleCounter_(0)
         , midiProcessorsRebuiltCallback_()
         , midiProcessorsWillRebuildCallback_() {
         manager_.SetParameterMessageOutBus(&parameterMessageOutBus_);
+        uiBus_.SetGridManager(&gridManager_);
+        midiBus_.SetGridManager(&gridManager_);
         patchManager_.SetBuses(&patchInputBus_, &patchOutputBus_);
         serializationContext_.arena = &serializationArena_;
         serializationContext_.initialArenaCapacity = initialArenaCapacity;
@@ -105,8 +111,11 @@ public:
     //       before MIDI processors or host startup reconciliation exist;
     //       missing/invalid config preserves the app defaults above.
     //   5. manager_.CaptureDefaultControlState()
-    //   6. uiState_ = manager_.CreateUIState(); context_.uiState = uiState_.get()
-    //   7. RebuildMidiProcessors() (silent: this first, pre-startup-patch
+    //   6. allocate parameter/grid UI state, publish initial grid state, bind
+    //      the stable RuntimeUIState facade, and expose only its parameter
+    //      member through context_.uiState
+    //   7. RebuildMidiProcessors() with the stable facade (silent: this first,
+    //      pre-startup-patch
     //      rebuild never invokes midiProcessorsRebuiltCallback_, since there
     //      is nothing new for a host to react to yet)
     //   8. startup patch: find LatestPatchDirectory(dataPaths_.patchesRoot); if
@@ -154,7 +163,11 @@ public:
 
         manager_.CaptureDefaultControlState();
         uiState_ = manager_.CreateUIState();
-        context_.uiState = uiState_.get();
+        gridUIState_ = gridManager_.CreateUIState();
+        gridManager_.PopulateUIState(*gridUIState_);
+        runtimeUIState_.parameters = uiState_.get();
+        runtimeUIState_.grids = gridUIState_.get();
+        context_.uiState = runtimeUIState_.parameters;
 
         RebuildMidiProcessors();
 
@@ -276,6 +289,9 @@ public:
             if (uiState_ != nullptr) {
                 manager_.PopulateUIState(*uiState_);
             }
+            if (gridUIState_ != nullptr) {
+                gridManager_.PopulateUIState(*gridUIState_);
+            }
         }
     }
 
@@ -337,6 +353,8 @@ public:
     App& Application() { return app_; }
     AppContext& Context() { return context_; }
     ParameterManager& Manager() { return manager_; }
+    GridManager& GridManagerForTest() { return gridManager_; }
+    const RuntimeUIState& RuntimeUIStateForTest() const { return runtimeUIState_; }
     MessageInBus& UiBus() { return uiBus_; }
     MessageInBus& MidiBus() { return midiBus_; }
     PatchManager& Patches() { return patchManager_; }
@@ -544,11 +562,9 @@ public:
     // controller). Runs midiProcessorsWillRebuildCallback_ (if set)
     // synchronously, BEFORE the current midiProcessors_ chains are
     // destroyed/replaced, then constructs one fresh chain per controller slot
-    // via CreateMidiControllerProfile against midiBus_/uiState_ (uiState_ may
-    // still be null the first time this runs, during Initialize(), before
-    // uiState_ is populated is not the case here, since Initialize() calls
-    // this after uiState_ is populated; the function tolerates a null
-    // UIState* regardless since CreateMidiControllerProfile does). This is
+    // via CreateMidiControllerProfile against midiBus_/runtimeUIState_.
+    // Initialize() binds both snapshot pointers before this first rebuild;
+    // the profile factory still tolerates null facade members. This is
     // the single call site for the midiProcessors_ assignment, so it covers
     // every rebuild: Initialize()'s silent first rebuild and any host-initiated
     // rebuild (e.g. adding a controller). Does NOT itself invoke
@@ -604,7 +620,7 @@ public:
             // MidiSender uses the same slot ordinal as its sink index. Keep
             // both arguments explicit even while their values are equal.
             rebuilt.push_back(CreateMidiControllerProfile(controllers[ix].config, &midiBus_, &midiSender_,
-                                                           uiState_.get(), timestampProvider_, ix,
+                                                           &runtimeUIState_, timestampProvider_, ix,
                                                            &absoluteFeedbackCoordinator_, ix,
                                                            controllers[ix].kind));
         }
@@ -780,9 +796,10 @@ private:
         }
     }
 
-    // Members are declared in dependency order: buses reference the manager,
-    // PatchManager references the buses.
+    // Members are declared in dependency order: buses reference both managers,
+    // and PatchManager references the patch buses.
     ParameterManager manager_;
+    GridManager gridManager_;
     MessageInBus uiBus_;
     MessageInBus midiBus_;
     ParameterMessageOutBus parameterMessageOutBus_;
@@ -847,6 +864,8 @@ private:
     AppContext context_;
     App app_;
     std::unique_ptr<ParameterManager::UIState> uiState_;
+    std::unique_ptr<GridManager::UIState> gridUIState_;
+    RuntimeUIState runtimeUIState_;
     // One MidiControllerProfileResult per controller slot, index-for-index
     // with instrumentConfig_.controllers as of the last RebuildMidiProcessors()
     // call (see that method's doc comment for the per-controller sink-routing

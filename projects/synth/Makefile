@@ -58,7 +58,7 @@ $(BUILD_DIR)/ParameterModulation.o: src/ParameterModulation.cpp include/synth/Pa
 $(BUILD_DIR)/ButtonGrid.o: src/ButtonGrid.cpp include/synth/ButtonGrid.hpp include/synth/AtomicColor.hpp include/synth/Color.hpp | $(BUILD_SENTINEL)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/MidiController.o: src/MidiController.cpp include/synth/MidiController.hpp include/synth/ParameterModulation.hpp | $(BUILD_SENTINEL)
+$(BUILD_DIR)/MidiController.o: src/MidiController.cpp include/synth/MidiController.hpp include/synth/ParameterModulation.hpp include/synth/RuntimeUIState.hpp include/synth/ButtonGrid.hpp | $(BUILD_SENTINEL)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/PatchPersistence.o: src/PatchPersistence.cpp include/synth/PatchPersistence.hpp include/synth/MidiController.hpp include/synth/ParameterModulation.hpp include/synth/Json.hpp | $(BUILD_SENTINEL)
@@ -100,7 +100,7 @@ $(DSP_TEST_BIN): tests/dsp_tests.cpp $(LIB) $(DSP_HEADERS) $(STANDARD_MODULATOR_
 $(MODULE_TEST_BIN): tests/module_tests.cpp apps/miniapp/DemoModulation.hpp $(LIB) include/synth/Modules.hpp include/synth/ParameterModulation.hpp
 	$(CXX) $(CPPFLAGS) -Iapps/miniapp $(CXXFLAGS) $< $(LIB) -o $@
 
-$(INSTRUMENT_TEST_BIN): tests/instrument_tests.cpp $(LIB) include/synth/MidiController.hpp include/synth/ParameterModulation.hpp
+$(INSTRUMENT_TEST_BIN): tests/instrument_tests.cpp $(LIB) include/synth/MidiController.hpp include/synth/ParameterModulation.hpp include/synth/RuntimeUIState.hpp include/synth/ButtonGrid.hpp
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< $(LIB) -o $@
 
 $(CONTRACT_TEST_BIN): tests/contract_tests.cpp $(LIB) include/synth/AppContext.hpp include/synth/AppConcepts.hpp include/synth/AppRegistry.hpp include/synth/PatchBrowser.hpp include/synth/RuntimePagePolicy.hpp
@@ -109,17 +109,17 @@ $(CONTRACT_TEST_BIN): tests/contract_tests.cpp $(LIB) include/synth/AppContext.h
 $(LOGGING_TEST_BIN): tests/logging_tests.cpp $(LIB) include/synth/AsyncLogger.hpp include/synth/CircularQueue.hpp include/synth/ThreadId.hpp
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< $(LIB) -o $@
 
-$(ENGINE_TEST_BIN): tests/engine_tests.cpp $(LIB) include/synth/Engine.hpp include/synth/AppContext.hpp include/synth/AppConcepts.hpp include/synth/AppRegistry.hpp include/synth/AsyncLogger.hpp include/synth/MidiController.hpp include/synth/ParameterModulation.hpp include/synth/PatchPersistence.hpp include/synth/RuntimePagePolicy.hpp include/synth/Json.hpp
+$(ENGINE_TEST_BIN): tests/engine_tests.cpp $(LIB) include/synth/Engine.hpp include/synth/AppContext.hpp include/synth/AppConcepts.hpp include/synth/AppRegistry.hpp include/synth/AsyncLogger.hpp include/synth/MidiController.hpp include/synth/ParameterModulation.hpp include/synth/RuntimeUIState.hpp include/synth/ButtonGrid.hpp include/synth/PatchPersistence.hpp include/synth/RuntimePagePolicy.hpp include/synth/Json.hpp
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< $(LIB) -o $@
 
-$(RIG_TEST_BIN): tests/rig_tests.cpp tests/support/SynthRig.hpp $(LIB) include/synth/Engine.hpp include/synth/AppContext.hpp include/synth/AppConcepts.hpp include/synth/AsyncLogger.hpp include/synth/MidiController.hpp include/synth/ParameterModulation.hpp include/synth/PatchPersistence.hpp include/synth/Json.hpp
+$(RIG_TEST_BIN): tests/rig_tests.cpp tests/support/SynthRig.hpp $(LIB) include/synth/Engine.hpp include/synth/AppContext.hpp include/synth/AppConcepts.hpp include/synth/AsyncLogger.hpp include/synth/MidiController.hpp include/synth/ParameterModulation.hpp include/synth/RuntimeUIState.hpp include/synth/ButtonGrid.hpp include/synth/PatchPersistence.hpp include/synth/Json.hpp
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< $(LIB) -o $@
 
 # -Iapps/miniapp is added for this rule only: MiniAppCore.hpp/DemoModulation.hpp
 # live under apps/miniapp/ (JUCE-free), and this is the one JUCE-free test
 # binary that includes them across directories. Building this target proves
 # MiniAppCore compiles and links with no JUCE include paths at all.
-$(MINIAPP_SYSTEM_TEST_BIN): tests/miniapp_system_tests.cpp tests/support/SynthRig.hpp apps/miniapp/MiniApp.hpp apps/miniapp/MiniAppRegistration.hpp apps/miniapp/MiniAppUI.hpp apps/miniapp/MiniAppUiModel.hpp apps/miniapp/MiniAppDraw.hpp apps/miniapp/MiniAppCore.hpp apps/miniapp/DemoModulation.hpp include/synth/EncoderDraw.hpp include/synth/PortableUI.hpp include/synth/PortableUIBuilders.hpp include/synth/ConstantBarVisualizer.hpp $(STANDARD_MODULATOR_HEADERS) $(LIB) include/synth/Engine.hpp include/synth/AppContext.hpp include/synth/AppConcepts.hpp include/synth/AppRegistry.hpp include/synth/AsyncLogger.hpp include/synth/MidiController.hpp include/synth/Modules.hpp include/synth/ParameterModulation.hpp include/synth/PatchPersistence.hpp include/synth/PatchBrowser.hpp include/synth/DspScope.hpp include/synth/DspConstant.hpp include/synth/DspNoise.hpp include/synth/NoiseWaveformVisualizer.hpp include/synth/Json.hpp
+$(MINIAPP_SYSTEM_TEST_BIN): tests/miniapp_system_tests.cpp tests/support/SynthRig.hpp apps/miniapp/MiniApp.hpp apps/miniapp/MiniAppRegistration.hpp apps/miniapp/MiniAppUI.hpp apps/miniapp/MiniAppUiModel.hpp apps/miniapp/MiniAppDraw.hpp apps/miniapp/MiniAppCore.hpp apps/miniapp/DemoModulation.hpp include/synth/EncoderDraw.hpp include/synth/PortableUI.hpp include/synth/PortableUIBuilders.hpp include/synth/ConstantBarVisualizer.hpp $(STANDARD_MODULATOR_HEADERS) $(LIB) include/synth/Engine.hpp include/synth/AppContext.hpp include/synth/AppConcepts.hpp include/synth/AppRegistry.hpp include/synth/AsyncLogger.hpp include/synth/MidiController.hpp include/synth/Modules.hpp include/synth/ParameterModulation.hpp include/synth/RuntimeUIState.hpp include/synth/ButtonGrid.hpp include/synth/PatchPersistence.hpp include/synth/PatchBrowser.hpp include/synth/DspScope.hpp include/synth/DspConstant.hpp include/synth/DspNoise.hpp include/synth/NoiseWaveformVisualizer.hpp include/synth/Json.hpp
 	$(CXX) $(CPPFLAGS) -Iapps/miniapp $(CXXFLAGS) $< $(LIB) -o $@
 
 $(BRAID4_SYSTEM_TEST_BIN): tests/braid4_system_tests.cpp tests/support/SynthRig.hpp apps/braid-4/Braid4.hpp apps/braid-4/Braid4UI.hpp apps/braid-4/Braid4UiModel.hpp apps/braid-4/Braid4Draw.hpp apps/braid-4/Braid4Core.hpp $(STANDARD_MODULATOR_HEADERS) $(LIB) include/synth/Engine.hpp include/synth/AppContext.hpp include/synth/AppConcepts.hpp include/synth/Modules.hpp include/synth/ParameterModulation.hpp include/synth/PatchPersistence.hpp include/synth/EncoderDraw.hpp include/synth/PortableUI.hpp include/synth/PortableUIBuilders.hpp include/synth/DspBuffers.hpp include/synth/DspScope.hpp include/synth/Json.hpp

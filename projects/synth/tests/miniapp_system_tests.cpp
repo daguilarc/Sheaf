@@ -298,6 +298,16 @@ synth::ui::NodeTree BuildMiniAppTree(synth_rig::SynthRig<synth_miniapp::MiniAppC
 
 }  // namespace
 
+TEST_CASE(miniapp_existing_surface_keeps_parameter_ui_contract_without_grid_integration) {
+    synth_rig::SynthRig<synth_miniapp::MiniApp> rig(
+        64, UseScratchRuntimeDataPaths("runtime-ui-facade-no-grid"));
+    REQUIRE_TRUE(rig.Engine().Context().uiState == rig.Engine().RuntimeUIStateForTest().parameters);
+    REQUIRE_TRUE(rig.Engine().RuntimeUIStateForTest().grids != nullptr);
+    REQUIRE_TRUE(rig.Engine().RuntimeUIStateForTest().grids->slots.empty());
+    REQUIRE_TRUE(rig.Engine().GridManagerForTest().Finalized());
+    REQUIRE_TRUE(rig.Application().Context()->uiState == rig.Engine().Context().uiState);
+}
+
 TEST_CASE(miniapp_registration_declares_launcher_metadata_and_launch_callable) {
     bool launched = false;
     synth::RuntimeDataPaths launchedPaths;

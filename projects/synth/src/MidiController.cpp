@@ -1223,20 +1223,22 @@ void WrldBldrMidiOutProcessor::Process() {
     }
 }
 
-SystemMessageOutputInfo::SystemMessageOutputInfo(ParameterManager::UIState* uiState)
+SystemMessageOutputInfo::SystemMessageOutputInfo(RuntimeUIState* uiState)
     : uiState_(uiState) {}
 
+SystemMessageOutputInfo::SystemMessageOutputInfo(ParameterManager::UIState* uiState) {
+    SetUIState(uiState);
+}
+
 SystemMessageOutputState SystemMessageOutputInfo::Evaluate(const MessageIn& message) const {
-    if (uiState_ == nullptr) {
-        return {};
-    }
+    ParameterManager::UIState* const parameters = UIState();
 
     switch (message.type) {
     case MessageIn::Type::SelectParamBank: {
-        if (message.bankIx >= uiState_->bankCapacity) {
+        if (parameters == nullptr || message.bankIx >= parameters->bankCapacity) {
             return {};
         }
-        const ParameterManager::BankUIState& bank = uiState_->banks[message.bankIx];
+        const ParameterManager::BankUIState& bank = parameters->banks[message.bankIx];
         if (!bank.connected.load(std::memory_order_relaxed)) {
             return {};
         }
@@ -1245,24 +1247,34 @@ SystemMessageOutputState SystemMessageOutputInfo::Evaluate(const MessageIn& mess
         return {.color = selected ? color : color.AdjustBrightness(0.35f), .isOn = selected};
     }
     case MessageIn::Type::ToggleReset: {
-        const bool held = uiState_->resetHeld.load(std::memory_order_relaxed);
+        if (parameters == nullptr) {
+            return {};
+        }
+        const bool held = parameters->resetHeld.load(std::memory_order_relaxed);
         return {.color = held ? Color::White : Color::Grey, .isOn = held};
     }
     case MessageIn::Type::ToggleRandom: {
-        const bool held = uiState_->randomHeld.load(std::memory_order_relaxed);
+        if (parameters == nullptr) {
+            return {};
+        }
+        const bool held = parameters->randomHeld.load(std::memory_order_relaxed);
         return {.color = held ? Color::White : Color::Grey, .isOn = held};
     }
     case MessageIn::Type::ToggleRandomMod: {
-        const bool held = uiState_->randomModHeld.load(std::memory_order_relaxed);
+        if (parameters == nullptr) {
+            return {};
+        }
+        const bool held = parameters->randomModHeld.load(std::memory_order_relaxed);
         return {.color = held ? Color::White : Color::Grey, .isOn = held};
     }
     case MessageIn::Type::SceneSelect: {
-        if (message.sceneIx >= uiState_->sceneCapacity) {
+        if (parameters == nullptr || message.sceneIx >= parameters->sceneCapacity) {
             return {};
         }
-        const std::size_t leftScene = uiState_->leftScene.load(std::memory_order_relaxed);
-        const std::size_t rightScene = uiState_->rightScene.load(std::memory_order_relaxed);
-        const float blend = std::clamp(uiState_->sceneBlend.load(std::memory_order_relaxed), 0.0f, 1.0f);
+        const std::size_t leftScene = parameters->leftScene.load(std::memory_order_relaxed);
+        const std::size_t rightScene = parameters->rightScene.load(std::memory_order_relaxed);
+        const float blend =
+            std::clamp(parameters->sceneBlend.load(std::memory_order_relaxed), 0.0f, 1.0f);
         if (message.sceneIx == leftScene) {
             return {.color = Color::Orange.AdjustBrightness(0.5f + 0.5f * (1.0f - blend)), .isOn = true};
         }
@@ -1273,11 +1285,12 @@ SystemMessageOutputState SystemMessageOutputInfo::Evaluate(const MessageIn& mess
     }
     case MessageIn::Type::ToggleGestureSelect:
     case MessageIn::Type::SetGestureSelect: {
-        if (message.gestureIx >= uiState_->gestures.gestureCapacity ||
-            !uiState_->gestures.connected[message.gestureIx].load(std::memory_order_relaxed)) {
+        if (parameters == nullptr || message.gestureIx >= parameters->gestures.gestureCapacity ||
+            !parameters->gestures.connected[message.gestureIx].load(std::memory_order_relaxed)) {
             return {};
         }
-        const bool selected = uiState_->gestures.selected[message.gestureIx].load(std::memory_order_relaxed);
+        const bool selected =
+            parameters->gestures.selected[message.gestureIx].load(std::memory_order_relaxed);
         if (selected) {
             return {.color = Color::White, .isOn = true};
         }
@@ -1291,17 +1304,35 @@ SystemMessageOutputState SystemMessageOutputInfo::Evaluate(const MessageIn& mess
     case MessageIn::Type::Clock:
     case MessageIn::Type::SetGestureValue:
     case MessageIn::Type::SetSceneBlend:
-    case MessageIn::Type::GridPress:
-    case MessageIn::Type::GridRelease:
-    case MessageIn::Type::GridPressureChange:
     case MessageIn::Type::SelectGrid:
         return {};
+    case MessageIn::Type::GridPress:
+    case MessageIn::Type::GridRelease:
+    case MessageIn::Type::GridPressureChange: {
+        if (uiState_ == nullptr || uiState_->grids == nullptr ||
+            message.gridSlotIx >= uiState_->grids->slots.size()) {
+            return {};
+        }
+        const std::unique_ptr<Grid::UIState>& slot =
+            uiState_->grids->slots[message.gridSlotIx];
+        if (slot == nullptr) {
+            return {};
+        }
+        const std::optional<std::size_t> cellIx = slot->range.IndexOf(message.gridX, message.gridY);
+        if (!cellIx.has_value() || *cellIx >= slot->colors.size()) {
+            return {};
+        }
+        const Color packed = slot->colors[*cellIx].Load(std::memory_order_relaxed);
+        return {.color = Color::Rgb(packed.r, packed.g, packed.b), .isOn = packed.a != 0};
+    }
     }
     return {};
 }
 
 Color SystemMessageOutputInfo::GestureColor(std::size_t gestureIx) const {
-    const std::size_t count = uiState_->gestures.bankAffectingCount[gestureIx].load(std::memory_order_relaxed);
+    ParameterManager::UIState* const parameters = UIState();
+    const std::size_t count =
+        parameters->gestures.bankAffectingCount[gestureIx].load(std::memory_order_relaxed);
     if (count == 0) {
         return Color::Grey.AdjustBrightness(0.5f);
     }
@@ -1309,25 +1340,33 @@ Color SystemMessageOutputInfo::GestureColor(std::size_t gestureIx) const {
         return Color::White;
     }
 
-    const std::uint32_t mask = uiState_->gestures.bankAffectingMask[gestureIx].load(std::memory_order_relaxed);
-    const std::size_t bankCount = std::min<std::size_t>(uiState_->bankCapacity, 32);
+    const std::uint32_t mask =
+        parameters->gestures.bankAffectingMask[gestureIx].load(std::memory_order_relaxed);
+    const std::size_t bankCount = std::min<std::size_t>(parameters->bankCapacity, 32);
     for (std::size_t bankIx = 0; bankIx < bankCount; ++bankIx) {
         if ((mask & (std::uint32_t{1} << bankIx)) == 0) {
             continue;
         }
-        if (uiState_->banks[bankIx].connected.load(std::memory_order_relaxed)) {
-            return uiState_->banks[bankIx].bankColor.Load(std::memory_order_relaxed);
+        if (parameters->banks[bankIx].connected.load(std::memory_order_relaxed)) {
+            return parameters->banks[bankIx].bankColor.Load(std::memory_order_relaxed);
         }
     }
     return Color::Grey.AdjustBrightness(0.5f);
 }
 
 SystemCcMidiOutProcessor::SystemCcMidiOutProcessor(SystemCcMidiOutConfig config, MidiSender* sender,
-                                                   ParameterManager::UIState* uiState, std::size_t sinkIx)
+                                                   RuntimeUIState* uiState, std::size_t sinkIx)
     : config_(std::move(config)),
       sender_(sender),
       info_(uiState),
       sinkIx_(sinkIx) {}
+
+SystemCcMidiOutProcessor::SystemCcMidiOutProcessor(SystemCcMidiOutConfig config, MidiSender* sender,
+                                                   ParameterManager::UIState* uiState, std::size_t sinkIx)
+    : SystemCcMidiOutProcessor(std::move(config), sender,
+                               static_cast<RuntimeUIState*>(nullptr), sinkIx) {
+    info_.SetUIState(uiState);
+}
 
 void SystemCcMidiOutProcessor::SetConfig(SystemCcMidiOutConfig config) {
     config_ = std::move(config);
@@ -1360,12 +1399,21 @@ bool SystemCcMidiOutProcessor::Enqueue(const BasicMidi& midi) {
 
 WrldBldrSystemMidiOutProcessor::WrldBldrSystemMidiOutProcessor(WrldBldrSystemMidiOutConfig config,
                                                                MidiSender* sender,
-                                                               ParameterManager::UIState* uiState,
+                                                               RuntimeUIState* uiState,
                                                                std::size_t sinkIx)
     : config_(std::move(config)),
       sender_(sender),
       info_(uiState),
       sinkIx_(sinkIx) {}
+
+WrldBldrSystemMidiOutProcessor::WrldBldrSystemMidiOutProcessor(WrldBldrSystemMidiOutConfig config,
+                                                               MidiSender* sender,
+                                                               ParameterManager::UIState* uiState,
+                                                               std::size_t sinkIx)
+    : WrldBldrSystemMidiOutProcessor(std::move(config), sender,
+                                     static_cast<RuntimeUIState*>(nullptr), sinkIx) {
+    info_.SetUIState(uiState);
+}
 
 void WrldBldrSystemMidiOutProcessor::SetConfig(WrldBldrSystemMidiOutConfig config) {
     config_ = std::move(config);
@@ -1399,12 +1447,21 @@ bool WrldBldrSystemMidiOutProcessor::Enqueue(const BasicMidi& midi) {
 
 LaunchpadGridMidiOutProcessor::LaunchpadGridMidiOutProcessor(LaunchpadGridMidiOutConfig config,
                                                              MidiSender* sender,
-                                                             ParameterManager::UIState* uiState,
+                                                             RuntimeUIState* uiState,
                                                              std::size_t sinkIx)
     : config_(std::move(config)),
       sender_(sender),
       info_(uiState),
       sinkIx_(sinkIx) {}
+
+LaunchpadGridMidiOutProcessor::LaunchpadGridMidiOutProcessor(LaunchpadGridMidiOutConfig config,
+                                                             MidiSender* sender,
+                                                             ParameterManager::UIState* uiState,
+                                                             std::size_t sinkIx)
+    : LaunchpadGridMidiOutProcessor(std::move(config), sender,
+                                    static_cast<RuntimeUIState*>(nullptr), sinkIx) {
+    info_.SetUIState(uiState);
+}
 
 void LaunchpadGridMidiOutProcessor::SetConfig(LaunchpadGridMidiOutConfig config) {
     config_ = std::move(config);
@@ -1666,6 +1723,7 @@ JSON ToJSON(JsonArena& arena, const MessageIn& value) {
         json.SetNew("grid", arena.Integer(static_cast<int64_t>(value.gridIx)));
         return json;
     case MessageIn::Type::ParamIncDec:
+    case MessageIn::Type::ParamSetAbsolute:
     case MessageIn::Type::ParamPush:
     case MessageIn::Type::ToggleReset:
     case MessageIn::Type::ToggleRandom:
@@ -1725,6 +1783,7 @@ bool FromJSON(JSON json, MessageIn& value) {
         value = parsed;
         return true;
     case MessageIn::Type::ParamIncDec:
+    case MessageIn::Type::ParamSetAbsolute:
     case MessageIn::Type::ParamPush:
     case MessageIn::Type::ToggleReset:
     case MessageIn::Type::ToggleRandom:
@@ -2074,11 +2133,14 @@ bool FromJSON(JSON json, MidiInstrumentConfig& out) {
     return true;
 }
 
-MidiControllerProfileResult CreateMidiControllerProfile(
+namespace {
+
+MidiControllerProfileResult CreateMidiControllerProfileImpl(
     const MidiControllerProfileConfig& config, MessageInBus* bus, MidiSender* sender,
-    ParameterManager::UIState* uiState, MidiInProcessor::TimestampProvider timestampProvider,
-    std::size_t sinkIx, AbsoluteFeedbackCoordinator* absoluteFeedback,
-    std::size_t controllerSlot, std::optional<MidiProfileKind> profileKind) {
+    ParameterManager::UIState* parameterUIState, RuntimeUIState* runtimeUIState,
+    MidiInProcessor::TimestampProvider timestampProvider, std::size_t sinkIx,
+    AbsoluteFeedbackCoordinator* absoluteFeedback, std::size_t controllerSlot,
+    std::optional<MidiProfileKind> profileKind) {
     MidiControllerProfileResult result;
     const EncoderMode feedbackMode =
         config.encoderInput.has_value() ? config.encoderInput->mode : EncoderMode::Signed7Bit;
@@ -2123,18 +2185,18 @@ MidiControllerProfileResult CreateMidiControllerProfile(
         switch (config.encoderOutput->protocol) {
         case EncoderMidiOutProtocol::WrldBldr:
             result.outputs.push_back(std::make_unique<WrldBldrMidiOutProcessor>(
-                *config.encoderOutput, sender, uiState, sinkIx, feedbackMode,
+                *config.encoderOutput, sender, parameterUIState, sinkIx, feedbackMode,
                 activeAbsoluteFeedback, controllerSlot));
             break;
         case EncoderMidiOutProtocol::Twister:
             result.outputs.push_back(std::make_unique<TwisterMidiOutProcessor>(
-                *config.encoderOutput, sender, uiState, sinkIx, feedbackMode,
+                *config.encoderOutput, sender, parameterUIState, sinkIx, feedbackMode,
                 activeAbsoluteFeedback, controllerSlot));
             break;
         }
     } else if (profileKind == MidiProfileKind::Generic && config.encoderInput.has_value()) {
         result.outputs.push_back(std::make_unique<GenericMidiOutProcessor>(
-            *config.encoderInput, sender, uiState, sinkIx, activeAbsoluteFeedback,
+            *config.encoderInput, sender, parameterUIState, sinkIx, activeAbsoluteFeedback,
             controllerSlot));
     }
 
@@ -2177,27 +2239,84 @@ MidiControllerProfileResult CreateMidiControllerProfile(
         }
     }
     if (!ccOutput.associations.empty()) {
-        result.outputs.push_back(
-            std::make_unique<SystemCcMidiOutProcessor>(std::move(ccOutput), sender, uiState, sinkIx));
+        if (runtimeUIState != nullptr) {
+            result.outputs.push_back(std::make_unique<SystemCcMidiOutProcessor>(
+                std::move(ccOutput), sender, runtimeUIState, sinkIx));
+        } else {
+            result.outputs.push_back(std::make_unique<SystemCcMidiOutProcessor>(
+                std::move(ccOutput), sender, parameterUIState, sinkIx));
+        }
     }
     if (!wrldOutput.associations.empty()) {
-        result.outputs.push_back(
-            std::make_unique<WrldBldrSystemMidiOutProcessor>(std::move(wrldOutput), sender, uiState, sinkIx));
+        if (runtimeUIState != nullptr) {
+            result.outputs.push_back(std::make_unique<WrldBldrSystemMidiOutProcessor>(
+                std::move(wrldOutput), sender, runtimeUIState, sinkIx));
+        } else {
+            result.outputs.push_back(std::make_unique<WrldBldrSystemMidiOutProcessor>(
+                std::move(wrldOutput), sender, parameterUIState, sinkIx));
+        }
     }
     if (!launchpadXOutput.associations.empty()) {
-        result.outputs.push_back(
-            std::make_unique<LaunchpadGridMidiOutProcessor>(std::move(launchpadXOutput), sender, uiState, sinkIx));
+        if (runtimeUIState != nullptr) {
+            result.outputs.push_back(std::make_unique<LaunchpadGridMidiOutProcessor>(
+                std::move(launchpadXOutput), sender, runtimeUIState, sinkIx));
+        } else {
+            result.outputs.push_back(std::make_unique<LaunchpadGridMidiOutProcessor>(
+                std::move(launchpadXOutput), sender, parameterUIState, sinkIx));
+        }
     }
     if (!launchpadProOutput.associations.empty()) {
-        result.outputs.push_back(
-            std::make_unique<LaunchpadGridMidiOutProcessor>(std::move(launchpadProOutput), sender, uiState, sinkIx));
+        if (runtimeUIState != nullptr) {
+            result.outputs.push_back(std::make_unique<LaunchpadGridMidiOutProcessor>(
+                std::move(launchpadProOutput), sender, runtimeUIState, sinkIx));
+        } else {
+            result.outputs.push_back(std::make_unique<LaunchpadGridMidiOutProcessor>(
+                std::move(launchpadProOutput), sender, parameterUIState, sinkIx));
+        }
     }
     if (!launchpadMiniOutput.associations.empty()) {
-        result.outputs.push_back(
-            std::make_unique<LaunchpadGridMidiOutProcessor>(std::move(launchpadMiniOutput), sender, uiState, sinkIx));
+        if (runtimeUIState != nullptr) {
+            result.outputs.push_back(std::make_unique<LaunchpadGridMidiOutProcessor>(
+                std::move(launchpadMiniOutput), sender, runtimeUIState, sinkIx));
+        } else {
+            result.outputs.push_back(std::make_unique<LaunchpadGridMidiOutProcessor>(
+                std::move(launchpadMiniOutput), sender, parameterUIState, sinkIx));
+        }
     }
 
     return result;
+}
+
+}  // namespace
+
+MidiControllerProfileResult CreateMidiControllerProfile(
+    const MidiControllerProfileConfig& config, MessageInBus* bus, MidiSender* sender,
+    RuntimeUIState* uiState, MidiInProcessor::TimestampProvider timestampProvider,
+    std::size_t sinkIx, AbsoluteFeedbackCoordinator* absoluteFeedback,
+    std::size_t controllerSlot, std::optional<MidiProfileKind> profileKind) {
+    return CreateMidiControllerProfileImpl(config, bus, sender,
+                                           uiState != nullptr ? uiState->parameters : nullptr,
+                                           uiState, std::move(timestampProvider), sinkIx,
+                                           absoluteFeedback, controllerSlot, profileKind);
+}
+
+MidiControllerProfileResult CreateMidiControllerProfile(
+    const MidiControllerProfileConfig& config, MessageInBus* bus, MidiSender* sender,
+    ParameterManager::UIState* uiState, MidiInProcessor::TimestampProvider timestampProvider,
+    std::size_t sinkIx, AbsoluteFeedbackCoordinator* absoluteFeedback,
+    std::size_t controllerSlot, std::optional<MidiProfileKind> profileKind) {
+    return CreateMidiControllerProfileImpl(config, bus, sender, uiState, nullptr,
+                                           std::move(timestampProvider), sinkIx,
+                                           absoluteFeedback, controllerSlot, profileKind);
+}
+
+MidiControllerProfileResult CreateMidiControllerProfile(
+    const MidiControllerProfileConfig& config, MessageInBus* bus, MidiSender* sender,
+    std::nullptr_t, MidiInProcessor::TimestampProvider timestampProvider,
+    std::size_t sinkIx) {
+    return CreateMidiControllerProfile(config, bus, sender,
+                                       static_cast<RuntimeUIState*>(nullptr),
+                                       std::move(timestampProvider), sinkIx);
 }
 
 MidiControllerProfileConfig WrldBldrDefaultProfileConfig(WrldBldrDefaultProfileOptions options) {

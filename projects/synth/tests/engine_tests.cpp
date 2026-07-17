@@ -14,6 +14,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <memory>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -512,6 +513,108 @@ struct EngineFakeMidiSink final : synth::IMidiOutputSink {
 };
 
 }  // namespace
+
+namespace {
+
+struct EngineGridProbe {
+    int presses = 0;
+    int releases = 0;
+    int pressureChanges = 0;
+    int destructions = 0;
+    std::uint8_t lastVelocity = 0;
+    std::uint8_t lastPressure = 0;
+};
+
+class EngineGridProbeCell final : public synth::Cell {
+public:
+    explicit EngineGridProbeCell(EngineGridProbe* probe) : probe_(probe) {}
+    ~EngineGridProbeCell() override { ++probe_->destructions; }
+
+    void OnPress(std::uint8_t velocity) override {
+        ++probe_->presses;
+        probe_->lastVelocity = velocity;
+    }
+    void OnRelease() override { ++probe_->releases; }
+    void OnPressureChange(std::uint8_t pressure) override {
+        ++probe_->pressureChanges;
+        probe_->lastPressure = pressure;
+    }
+    synth::Color GetColor() const override { return synth::Color::Rgb(10, 20, 30); }
+    bool GetOnOff() const override { return true; }
+
+private:
+    EngineGridProbe* probe_;
+};
+
+}  // namespace
+
+TEST_CASE(engine_owns_stable_runtime_grid_state_and_routes_both_buses) {
+    EngineTestApp::wantEncoderMidiInput = true;
+    EngineGridProbe probe;
+    const synth::RuntimeUIState* facadeAddress = nullptr;
+    synth::ParameterManager::UIState* parameterStateAddress = nullptr;
+    synth::GridManager::UIState* gridStateAddress = nullptr;
+
+    {
+        synth::Engine<EngineTestApp> engine([] { return std::uint64_t{0}; });
+        const auto range = synth::GridRange::Create(-1, 1, 0, 1);
+        REQUIRE_TRUE(range.has_value());
+        auto& grids = engine.GridManagerForTest();
+        const auto gridIx = grids.CreateGrid(*range);
+        const auto slotIx = grids.CreateSlot(*range);
+        REQUIRE_TRUE(gridIx.has_value());
+        REQUIRE_TRUE(slotIx.has_value());
+        REQUIRE_TRUE(grids.GridAt(*gridIx)->RegisterCell(
+            -1, 0, std::make_unique<EngineGridProbeCell>(&probe)));
+        REQUIRE_TRUE(grids.SelectGridForSlot(*slotIx, *gridIx));
+
+        engine.Initialize();
+        engine.Prepare(48000.0, 256);
+
+        const synth::RuntimeUIState& state = engine.RuntimeUIStateForTest();
+        facadeAddress = &state;
+        parameterStateAddress = state.parameters;
+        gridStateAddress = state.grids;
+        REQUIRE_TRUE(grids.Finalized());
+        REQUIRE_TRUE(state.parameters != nullptr);
+        REQUIRE_TRUE(state.grids != nullptr);
+        REQUIRE_TRUE(engine.Context().uiState == state.parameters);
+        REQUIRE_TRUE(engine.MidiControllerCount() == 1);
+        REQUIRE_TRUE(engine.MidiInputProcessor(0) != nullptr);
+        REQUIRE_TRUE(state.grids->slots[*slotIx]->colors[0].Load() ==
+                     synth::Color::Rgba(10, 20, 30, 1));
+
+        REQUIRE_TRUE(engine.UiBus().Push(synth::MessageIn::GridPress(0, *slotIx, -1, 0, 101)));
+        REQUIRE_TRUE(engine.MidiBus().Push(
+            synth::MessageIn::GridPressureChange(0, *slotIx, -1, 0, 63)));
+        REQUIRE_TRUE(engine.MidiBus().Push(synth::MessageIn::GridRelease(0, *slotIx, -1, 0)));
+        TestBlockBuffers buffers(2, 4);
+        for (int blockIx = 0; blockIx < 6; ++blockIx) {
+            synth::AudioBlock block = buffers.Block(4);
+            engine.ProcessBlock(block, 0);
+        }
+
+        REQUIRE_TRUE(probe.presses == 1);
+        REQUIRE_TRUE(probe.lastVelocity == 101);
+        REQUIRE_TRUE(probe.pressureChanges == 1);
+        REQUIRE_TRUE(probe.lastPressure == 63);
+        REQUIRE_TRUE(probe.releases == 1);
+        REQUIRE_TRUE(state.grids->slots[*slotIx]->colors[0].Load() ==
+                     synth::Color::Rgba(10, 20, 30, 1));
+
+        engine.RebuildMidiProcessorsForTest();
+        REQUIRE_TRUE(&engine.RuntimeUIStateForTest() == facadeAddress);
+        REQUIRE_TRUE(engine.RuntimeUIStateForTest().parameters == parameterStateAddress);
+        REQUIRE_TRUE(engine.RuntimeUIStateForTest().grids == gridStateAddress);
+        REQUIRE_TRUE(probe.destructions == 0);
+    }
+
+    REQUIRE_TRUE(probe.destructions == 1);
+    REQUIRE_TRUE(probe.presses == 1);
+    REQUIRE_TRUE(probe.pressureChanges == 1);
+    REQUIRE_TRUE(probe.releases == 1);
+    EngineTestApp::wantEncoderMidiInput = false;
+}
 
 TEST_CASE(sheaf_patch_runtime_configuration_saves_shared_config_without_patch_values) {
     const std::filesystem::path dataRoot =

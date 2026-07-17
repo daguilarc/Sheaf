@@ -1,4 +1,5 @@
 #include "synth/MidiController.hpp"
+#include "synth/RuntimeUIState.hpp"
 
 #ifdef JUCE_MAJOR_VERSION
 #error "synth module tests must not see JUCE headers"
@@ -204,6 +205,62 @@ TEST_CASE(GridMessageInJsonUsesFlatPerVariantShapeAndRoundTrips) {
                 REQUIRE_TRUE(target.velocity == source.velocity);
             }
         }
+    }
+}
+
+TEST_CASE(GridFeedbackReadsOnlyTheImmutableRuntimeSnapshot) {
+    std::unique_ptr<synth::GridManager::UIState> gridState;
+    bool on = true;
+    bool off = false;
+    {
+        synth::GridManager manager;
+        const auto range = synth::GridRange::Create(-2, 0, -1, 1);
+        REQUIRE_TRUE(range.has_value());
+        const auto gridIx = manager.CreateGrid(*range);
+        const auto connectedSlotIx = manager.CreateSlot(*range);
+        const auto disconnectedSlotIx = manager.CreateSlot(*range);
+        REQUIRE_TRUE(gridIx.has_value());
+        REQUIRE_TRUE(connectedSlotIx.has_value());
+        REQUIRE_TRUE(disconnectedSlotIx.has_value());
+
+        using Cell = synth::StateCell<bool>;
+        REQUIRE_TRUE(manager.GridAt(*gridIx)->RegisterCell(
+            -1, -1, std::make_unique<Cell>(synth::Color::Off, synth::Color::Rgb(10, 20, 30),
+                                           &on, true, false, Cell::Mode::ShowOnly)));
+        REQUIRE_TRUE(manager.GridAt(*gridIx)->RegisterCell(
+            -2, 0, std::make_unique<Cell>(synth::Color::Rgb(40, 50, 60), synth::Color::White,
+                                          &off, true, false, Cell::Mode::ShowOnly)));
+        REQUIRE_TRUE(manager.SelectGridForSlot(*connectedSlotIx, *gridIx));
+        gridState = manager.CreateUIState();
+        manager.PopulateUIState(*gridState);
+    }
+
+    synth::ParameterManager::UIState parameters;
+    parameters.Configure(0, 0, 0, 0, 0, 0);
+    synth::RuntimeUIState runtimeState{.parameters = &parameters, .grids = gridState.get()};
+    synth::SystemMessageOutputInfo info(&runtimeState);
+
+    auto state = info.Evaluate(synth::MessageIn::GridPress(0, 0, -1, -1, 127));
+    REQUIRE_TRUE(state.color == synth::Color::Rgb(10, 20, 30));
+    REQUIRE_TRUE(state.isOn);
+
+    state = info.Evaluate(synth::MessageIn::GridRelease(0, 0, -2, 0));
+    REQUIRE_TRUE(state.color == synth::Color::Rgb(40, 50, 60));
+    REQUIRE_TRUE(!state.isOn);
+
+    state = info.Evaluate(synth::MessageIn::GridPressureChange(0, 0, -1, -1, 64));
+    REQUIRE_TRUE(state.color == synth::Color::Rgb(10, 20, 30));
+    REQUIRE_TRUE(state.isOn);
+
+    for (const synth::MessageIn& missing : {
+             synth::MessageIn::GridPress(0, 0, 0, -1, 127),
+             synth::MessageIn::GridPress(0, 0, -1, 1, 127),
+             synth::MessageIn::GridPress(0, 1, -1, -1, 127),
+             synth::MessageIn::GridPress(0, 99, -1, -1, 127),
+         }) {
+        state = info.Evaluate(missing);
+        REQUIRE_TRUE(state.color == synth::Color::Off);
+        REQUIRE_TRUE(!state.isOn);
     }
 }
 
