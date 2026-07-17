@@ -835,6 +835,8 @@ JSON ToJSON(JsonArena& arena, const EncoderMidiOutMapping& value);
 bool FromJSON(JSON json, EncoderMidiOutMapping& value);
 JSON ToJSON(JsonArena& arena, const EncoderMidiOutConfig& value);
 bool FromJSON(JSON json, EncoderMidiOutConfig& value);
+// Legacy MessageIn variants retain their established full object shape.
+// Grid variants use flat gridSlot/grid/x/y/velocity keys per event semantics.
 JSON ToJSON(JsonArena& arena, const MessageIn& value);
 bool FromJSON(JSON json, MessageIn& value);
 JSON ToJSON(JsonArena& arena, const WrldBldrSystemPosition& value);

@@ -33,6 +33,10 @@ std::optional<std::size_t> PrimaryMessageArg(const MessageIn& message) {
         case MessageIn::Type::Stop:
         case MessageIn::Type::Clock:
         case MessageIn::Type::SetSceneBlend:
+        case MessageIn::Type::GridPress:
+        case MessageIn::Type::GridRelease:
+        case MessageIn::Type::GridPressureChange:
+        case MessageIn::Type::SelectGrid:
             return std::nullopt;
     }
     return std::nullopt;
@@ -63,6 +67,10 @@ bool SetPrimaryMessageArg(MessageIn& message, std::size_t arg) {
         case MessageIn::Type::Stop:
         case MessageIn::Type::Clock:
         case MessageIn::Type::SetSceneBlend:
+        case MessageIn::Type::GridPress:
+        case MessageIn::Type::GridRelease:
+        case MessageIn::Type::GridPressureChange:
+        case MessageIn::Type::SelectGrid:
             return false;
     }
     return false;
@@ -139,6 +147,11 @@ UISystemMessage UISystemMessageForAssociation(const MidiControllerSystemMessageA
             return UISystemMessage::SceneSelect;
         case MessageIn::Type::SetSceneBlend:
             return UISystemMessage::SetSceneBlend;
+        case MessageIn::Type::GridPress:
+        case MessageIn::Type::GridRelease:
+        case MessageIn::Type::GridPressureChange:
+        case MessageIn::Type::SelectGrid:
+            return UISystemMessage::Clock;
     }
     return UISystemMessage::Clock;
 }
@@ -473,6 +486,21 @@ std::string DescribeMessage(const MessageIn& message) {
             break;
         case MessageIn::Type::SetSceneBlend:
             oss << "scene blend " << message.value;
+            break;
+        case MessageIn::Type::GridPress:
+            oss << "grid press slot " << message.gridSlotIx << " (" << message.gridX << "," << message.gridY
+                << ") velocity " << static_cast<int>(message.velocity);
+            break;
+        case MessageIn::Type::GridRelease:
+            oss << "grid release slot " << message.gridSlotIx << " (" << message.gridX << "," << message.gridY
+                << ")";
+            break;
+        case MessageIn::Type::GridPressureChange:
+            oss << "grid pressure slot " << message.gridSlotIx << " (" << message.gridX << "," << message.gridY
+                << ") pressure " << static_cast<int>(message.velocity);
+            break;
+        case MessageIn::Type::SelectGrid:
+            oss << "select grid " << message.gridIx << " (slot " << message.gridSlotIx << ")";
             break;
     }
     return oss.str();

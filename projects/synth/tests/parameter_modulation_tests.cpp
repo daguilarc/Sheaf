@@ -1,4 +1,5 @@
 #include "synth/DspFilters.hpp"
+#include "synth/ButtonGrid.hpp"
 #include "synth/EncoderDraw.hpp"
 #include "synth/MidiController.hpp"
 #include "synth/Json.hpp"
@@ -79,6 +80,26 @@ void RequireNear(float actual, float expected, float tolerance, const char* expr
 
 struct TestVisualizer final : synth::ui::Visualizer {
     std::vector<synth::ui::DrawCommand> DrawVisible() const override { return {}; }
+};
+
+struct RecordingGridCell final : synth::Cell {
+    RecordingGridCell(std::vector<std::string>* events, int gridIx)
+        : events(events), gridIx(gridIx) {}
+
+    void OnPress(std::uint8_t velocity) override {
+        events->push_back("press:" + std::to_string(gridIx) + ":" + std::to_string(velocity));
+    }
+    void OnRelease() override {
+        events->push_back("release:" + std::to_string(gridIx));
+    }
+    void OnPressureChange(std::uint8_t pressure) override {
+        events->push_back("pressure:" + std::to_string(gridIx) + ":" + std::to_string(pressure));
+    }
+    synth::Color GetColor() const override { return synth::Color::Off; }
+    bool GetOnOff() const override { return false; }
+
+    std::vector<std::string>* events;
+    int gridIx;
 };
 
 std::string JsonToString(synth::JSON json) {
@@ -5575,6 +5596,76 @@ TEST_CASE(message_bus_ignores_out_of_bounds_targets) {
     REQUIRE_NEAR(parameter.SceneCenter(0), 0.25f, 0.0001f);
 }
 
+TEST_CASE(message_bus_routes_parameter_and_grid_families_without_namespace_aliasing) {
+    synth::ParameterManager parameters;
+    auto& group = parameters.CreateGroup({.numVoices = 1, .numScenes = 1, .maxParameters = 1});
+    auto& parameter = parameters.CreateParameter(group, {.name = "Shared zero", .defaultValue = 0.25f});
+    auto& bankA = parameters.CreateBank();
+    bankA.AddMapping(10, parameter);
+    auto& bankB = parameters.CreateBank();
+    bankB.AddMapping(10, parameter);
+    auto& parameterSlot = parameters.CreateBankSlot();
+    parameterSlot.AddPhysicalEncoder(10);
+    parameterSlot.SelectBank(&bankA);
+
+    const auto range = synth::GridRange::Create(-2, 1, 6, 9);
+    REQUIRE_TRUE(range.has_value());
+    synth::GridManager grids;
+    const std::size_t gridA = *grids.CreateGrid(*range);
+    const std::size_t gridB = *grids.CreateGrid(*range);
+    const std::size_t gridSlot = *grids.CreateSlot(*range);
+    std::vector<std::string> events;
+    REQUIRE_TRUE(grids.GridAt(gridA)->RegisterCell(-1, 7, std::make_unique<RecordingGridCell>(&events, 0)));
+    REQUIRE_TRUE(grids.GridAt(gridB)->RegisterCell(-1, 7, std::make_unique<RecordingGridCell>(&events, 1)));
+    REQUIRE_TRUE(grids.SelectGridForSlot(gridSlot, gridA));
+
+    synth::MessageInBus bus(&parameters, 16);
+    bus.SetGridManager(&grids);
+    REQUIRE_TRUE(bus.Push(synth::MessageIn::SelectGrid(10, 0, 1)));
+    REQUIRE_TRUE(bus.Push(synth::MessageIn::GridPress(11, 0, -1, 7, 100)));
+    REQUIRE_TRUE(bus.Push(synth::MessageIn::SelectParamBank(12, 0, 1)));
+    REQUIRE_TRUE(bus.Push(synth::MessageIn::GridPressureChange(12, 0, -1, 7, 64)));
+    REQUIRE_TRUE(bus.Push(synth::MessageIn::GridRelease(13, 0, -1, 7)));
+
+    bus.Process(9);
+    REQUIRE_TRUE(grids.SlotAt(0)->SelectedGrid() == grids.GridAt(0));
+    REQUIRE_TRUE(parameterSlot.SelectedBank() == &bankA);
+    REQUIRE_TRUE(events.empty());
+
+    bus.Process(10);
+    REQUIRE_TRUE(grids.SlotAt(0)->SelectedGrid() == grids.GridAt(1));
+    REQUIRE_TRUE(parameterSlot.SelectedBank() == &bankA);
+    bus.Process(11);
+    REQUIRE_TRUE((events == std::vector<std::string>{"press:1:100"}));
+    bus.Process(12);
+    REQUIRE_TRUE(parameterSlot.SelectedBank() == &bankB);
+    REQUIRE_TRUE(grids.SlotAt(0)->SelectedGrid() == grids.GridAt(1));
+    REQUIRE_TRUE((events == std::vector<std::string>{"press:1:100", "pressure:1:64"}));
+    bus.Process(13);
+    REQUIRE_TRUE((events == std::vector<std::string>{"press:1:100", "pressure:1:64", "release:1"}));
+
+    const std::size_t eventCount = events.size();
+    REQUIRE_TRUE(bus.Push(synth::MessageIn::SelectGrid(14, 99, 0)));
+    REQUIRE_TRUE(bus.Push(synth::MessageIn::SelectGrid(14, 0, 99)));
+    REQUIRE_TRUE(bus.Push(synth::MessageIn::GridPress(14, 99, -1, 7, 127)));
+    REQUIRE_TRUE(bus.Push(synth::MessageIn::GridPress(14, 0, -100, 7, 127)));
+    REQUIRE_TRUE(bus.Push(synth::MessageIn::GridPressureChange(14, 0, -1, 100, 127)));
+    bus.Process(14);
+    REQUIRE_TRUE(grids.SlotAt(0)->SelectedGrid() == grids.GridAt(1));
+    REQUIRE_TRUE(events.size() == eventCount);
+
+    synth::MessageInBus parameterOnly(&parameters, 4);
+    REQUIRE_TRUE(parameterOnly.Push(synth::MessageIn::GridPress(15, 0, -1, 7, 1)));
+    parameterOnly.Process(15);
+    REQUIRE_TRUE(events.size() == eventCount);
+
+    synth::MessageInBus gridOnly(nullptr, 4);
+    gridOnly.SetGridManager(&grids);
+    REQUIRE_TRUE(gridOnly.Push(synth::MessageIn::SelectParamBank(15, 0, 0)));
+    gridOnly.Process(15);
+    REQUIRE_TRUE(parameterSlot.SelectedBank() == &bankB);
+}
+
 TEST_CASE(message_bus_set_reset_and_set_gesture_select_are_idempotent) {
     synth::ParameterManager manager;
     manager.SetGestureCount(2);
@@ -10510,7 +10601,22 @@ TEST_CASE(randomized_message_bus_ui_state_simulation) {
         }
         slot.SelectBank(&bankA);
 
+        const auto gridRange = synth::GridRange::Create(-2, 1, 6, 9);
+        REQUIRE_TRUE(gridRange.has_value());
+        synth::GridManager gridManager;
+        const std::size_t gridA = *gridManager.CreateGrid(*gridRange);
+        const std::size_t gridB = *gridManager.CreateGrid(*gridRange);
+        const std::size_t gridSlot = *gridManager.CreateSlot(*gridRange);
+        std::vector<std::string> gridEvents;
+        REQUIRE_TRUE(gridManager.GridAt(gridA)->RegisterCell(
+            -1, 7, std::make_unique<RecordingGridCell>(&gridEvents, 0)));
+        REQUIRE_TRUE(gridManager.GridAt(gridB)->RegisterCell(
+            -1, 7, std::make_unique<RecordingGridCell>(&gridEvents, 1)));
+        int selectedGridOracle = -1;
+        std::vector<std::string> gridEventsOracle;
+
         synth::MessageInBus bus(&manager, 256);
+        bus.SetGridManager(&gridManager);
         auto ui = manager.CreateUIState();
         SimOracle oracle;
         SimInitializeOracle(oracle);
@@ -10639,7 +10745,7 @@ TEST_CASE(randomized_message_bus_ui_state_simulation) {
                 randomSamples.RequireDrained(seed, step, action);
                 setOracleHeld(modifier, false);
             };
-            switch (rng() % 22) {
+            switch (rng() % 29) {
             case 0: {
                 const std::size_t position = rng() % encoders.size();
                 const float delta = deltaDist(rng);
@@ -10791,7 +10897,7 @@ TEST_CASE(randomized_message_bus_ui_state_simulation) {
                 bus.Process(timestamp);
                 break;
             }
-            default: {
+            case 20: {
                 action = "bus invalid scene";
                 const std::size_t previousLeft = manager.Scene().leftScene;
                 const std::size_t previousRight = manager.Scene().rightScene;
@@ -10801,10 +10907,91 @@ TEST_CASE(randomized_message_bus_ui_state_simulation) {
                 REQUIRE_TRUE(manager.Scene().rightScene == previousRight);
                 break;
             }
+            case 21: {
+                selectedGridOracle = static_cast<int>(rng() % 2);
+                action = "bus select grid " + std::to_string(selectedGridOracle);
+                REQUIRE_TRUE(bus.Push(synth::MessageIn::SelectGrid(
+                    timestamp, gridSlot, static_cast<std::size_t>(selectedGridOracle))));
+                bus.Process(timestamp);
+                break;
+            }
+            case 22: {
+                const std::uint8_t velocity = static_cast<std::uint8_t>(rng() % 256);
+                action = "bus grid press";
+                REQUIRE_TRUE(bus.Push(synth::MessageIn::GridPress(timestamp, gridSlot, -1, 7, velocity)));
+                bus.Process(timestamp);
+                if (selectedGridOracle >= 0) {
+                    gridEventsOracle.push_back("press:" + std::to_string(selectedGridOracle) + ":" +
+                                               std::to_string(velocity));
+                }
+                break;
+            }
+            case 23: {
+                action = "bus grid release";
+                REQUIRE_TRUE(bus.Push(synth::MessageIn::GridRelease(timestamp, gridSlot, -1, 7)));
+                bus.Process(timestamp);
+                if (selectedGridOracle >= 0) {
+                    gridEventsOracle.push_back("release:" + std::to_string(selectedGridOracle));
+                }
+                break;
+            }
+            case 24: {
+                const std::uint8_t pressure = static_cast<std::uint8_t>(rng() % 256);
+                action = "bus grid pressure";
+                REQUIRE_TRUE(bus.Push(
+                    synth::MessageIn::GridPressureChange(timestamp, gridSlot, -1, 7, pressure)));
+                bus.Process(timestamp);
+                if (selectedGridOracle >= 0) {
+                    gridEventsOracle.push_back("pressure:" + std::to_string(selectedGridOracle) + ":" +
+                                               std::to_string(pressure));
+                }
+                break;
+            }
+            case 25: {
+                const bool missingSlot = (rng() % 2) == 0;
+                action = missingSlot ? "bus select missing grid slot" : "bus select missing grid";
+                REQUIRE_TRUE(bus.Push(synth::MessageIn::SelectGrid(
+                    timestamp, missingSlot ? 99 : gridSlot, missingSlot ? gridA : 99)));
+                bus.Process(timestamp);
+                break;
+            }
+            case 26: {
+                action = "bus grid event missing slot";
+                REQUIRE_TRUE(bus.Push(synth::MessageIn::GridPress(timestamp, 99, -1, 7, 127)));
+                bus.Process(timestamp);
+                break;
+            }
+            case 27: {
+                const int x = (rng() % 2) == 0 ? -100 : 100;
+                action = "bus grid event signed out-of-range coordinate";
+                REQUIRE_TRUE(bus.Push(synth::MessageIn::GridPressureChange(timestamp, gridSlot, x, 7, 127)));
+                bus.Process(timestamp);
+                break;
+            }
+            default: {
+                const std::uint8_t pressure = static_cast<std::uint8_t>(rng() % 256);
+                const float blend = unipolarDist(rng);
+                action = "bus interleaved parameter and grid messages";
+                REQUIRE_TRUE(bus.Push(synth::MessageIn::SetSceneBlend(timestamp, blend)));
+                REQUIRE_TRUE(bus.Push(
+                    synth::MessageIn::GridPressureChange(timestamp, gridSlot, -1, 7, pressure)));
+                bus.Process(timestamp);
+                oracle.scene.blend = blend;
+                if (selectedGridOracle >= 0) {
+                    gridEventsOracle.push_back("pressure:" + std::to_string(selectedGridOracle) + ":" +
+                                               std::to_string(pressure));
+                }
+                break;
+            }
             }
             ++timestamp;
             action += " random-consumption(" + randomSamples.ConsumptionSummary() + ")";
             SimCheck(oracle, params, banks, group, slot, manager, seed, step, action);
+            const synth::Grid* expectedGrid = selectedGridOracle < 0
+                                                  ? nullptr
+                                                  : gridManager.GridAt(static_cast<std::size_t>(selectedGridOracle));
+            REQUIRE_TRUE(gridManager.SlotAt(gridSlot)->SelectedGrid() == expectedGrid);
+            REQUIRE_TRUE(gridEvents == gridEventsOracle);
             if (step % 11 == 0) {
                 manager.PopulateUIState(*ui);
                 SimCheckUIState(oracle, *ui, seed, step, action);

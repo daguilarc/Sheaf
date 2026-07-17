@@ -130,6 +130,113 @@ TEST_CASE(MessageInJsonRoundTripsHighGestureIndex) {
     REQUIRE_TRUE(target.hasBoolValue);
 }
 
+TEST_CASE(GridMessageInFactoriesCarryFlatSemanticFields) {
+    const synth::MessageIn press = synth::MessageIn::GridPress(11, 1, -1, 7, 100);
+    REQUIRE_TRUE(press.timestamp == 11);
+    REQUIRE_TRUE(press.type == synth::MessageIn::Type::GridPress);
+    REQUIRE_TRUE(press.gridSlotIx == 1);
+    REQUIRE_TRUE(press.gridX == -1);
+    REQUIRE_TRUE(press.gridY == 7);
+    REQUIRE_TRUE(press.velocity == 100);
+
+    const synth::MessageIn release = synth::MessageIn::GridRelease(12, 1, -1, 7);
+    REQUIRE_TRUE(release.timestamp == 12);
+    REQUIRE_TRUE(release.type == synth::MessageIn::Type::GridRelease);
+    REQUIRE_TRUE(release.gridSlotIx == 1);
+    REQUIRE_TRUE(release.gridX == -1);
+    REQUIRE_TRUE(release.gridY == 7);
+
+    const synth::MessageIn pressure = synth::MessageIn::GridPressureChange(13, 1, -1, 7, 64);
+    REQUIRE_TRUE(pressure.timestamp == 13);
+    REQUIRE_TRUE(pressure.type == synth::MessageIn::Type::GridPressureChange);
+    REQUIRE_TRUE(pressure.gridSlotIx == 1);
+    REQUIRE_TRUE(pressure.gridX == -1);
+    REQUIRE_TRUE(pressure.gridY == 7);
+    REQUIRE_TRUE(pressure.velocity == 64);
+
+    const synth::MessageIn select = synth::MessageIn::SelectGrid(14, 2, 5);
+    REQUIRE_TRUE(select.timestamp == 14);
+    REQUIRE_TRUE(select.type == synth::MessageIn::Type::SelectGrid);
+    REQUIRE_TRUE(select.gridSlotIx == 2);
+    REQUIRE_TRUE(select.gridIx == 5);
+}
+
+TEST_CASE(GridMessageInJsonUsesFlatPerVariantShapeAndRoundTrips) {
+    synth::JsonArena arena(4096);
+    const synth::MessageIn messages[] = {
+        synth::MessageIn::GridPress(11, 1, -1, 7, 100),
+        synth::MessageIn::GridRelease(12, 1, -1, 7),
+        synth::MessageIn::GridPressureChange(13, 1, -1, 7, 64),
+        synth::MessageIn::SelectGrid(14, 2, 5),
+    };
+
+    for (const synth::MessageIn& source : messages) {
+        const synth::JSON json = synth::ToJSON(arena, source);
+        REQUIRE_TRUE(json.Get("gridSlot").IntegerValue() == static_cast<std::int64_t>(source.gridSlotIx));
+        REQUIRE_TRUE(json.Get("slotIx").IsNull());
+
+        synth::MessageIn target;
+        REQUIRE_TRUE(synth::FromJSON(json, target));
+        REQUIRE_TRUE(target.type == source.type);
+        REQUIRE_TRUE(target.gridSlotIx == source.gridSlotIx);
+        if (source.type == synth::MessageIn::Type::SelectGrid) {
+            REQUIRE_TRUE(json.Get("type").StringValue() == std::string_view("selectGrid"));
+            REQUIRE_TRUE(json.Get("grid").IntegerValue() == 5);
+            REQUIRE_TRUE(json.Get("x").IsNull());
+            REQUIRE_TRUE(json.Get("y").IsNull());
+            REQUIRE_TRUE(json.Get("velocity").IsNull());
+            REQUIRE_TRUE(target.gridIx == source.gridIx);
+        } else {
+            REQUIRE_TRUE(json.Get("grid").IsNull());
+            REQUIRE_TRUE(json.Get("x").IntegerValue() == -1);
+            REQUIRE_TRUE(json.Get("y").IntegerValue() == 7);
+            REQUIRE_TRUE(target.gridX == source.gridX);
+            REQUIRE_TRUE(target.gridY == source.gridY);
+            if (source.type == synth::MessageIn::Type::GridRelease) {
+                REQUIRE_TRUE(json.Get("type").StringValue() == std::string_view("gridRelease"));
+                REQUIRE_TRUE(json.Get("velocity").IsNull());
+            } else {
+                const std::string_view expectedType = source.type == synth::MessageIn::Type::GridPress
+                                                          ? "gridPress"
+                                                          : "gridPressureChange";
+                REQUIRE_TRUE(json.Get("type").StringValue() == expectedType);
+                REQUIRE_TRUE(json.Get("velocity").IntegerValue() == source.velocity);
+                REQUIRE_TRUE(target.velocity == source.velocity);
+            }
+        }
+    }
+}
+
+TEST_CASE(GridMessageInJsonRejectsVelocityOutsideByteRangeWithoutMutation) {
+    auto makeMessage = [](synth::JsonArena& arena, std::int64_t velocity) {
+        synth::JSON json = arena.Object();
+        json.SetNew("type", arena.String("gridPress"));
+        json.SetNew("gridSlot", arena.Integer(1));
+        json.SetNew("x", arena.Integer(-1));
+        json.SetNew("y", arena.Integer(7));
+        json.SetNew("velocity", arena.Integer(velocity));
+        return json;
+    };
+
+    synth::MessageIn target = synth::MessageIn::SceneSelect(99, 3);
+    synth::JsonArena negativeArena(1024);
+    REQUIRE_TRUE(!synth::FromJSON(makeMessage(negativeArena, -1), target));
+    REQUIRE_TRUE(target.type == synth::MessageIn::Type::SceneSelect);
+    REQUIRE_TRUE(target.sceneIx == 3);
+
+    synth::JsonArena overflowArena(1024);
+    REQUIRE_TRUE(!synth::FromJSON(makeMessage(overflowArena, 256), target));
+    REQUIRE_TRUE(target.type == synth::MessageIn::Type::SceneSelect);
+    REQUIRE_TRUE(target.sceneIx == 3);
+}
+
+TEST_CASE(MessageInBusCapacityConstructorRemainsSourceCompatibleWithLiteralZero) {
+    synth::ParameterManager manager;
+    synth::MessageInBus bus(&manager, 0);
+    REQUIRE_TRUE(bus.Capacity() == 1);
+    bus.SetParameterManager(&manager);
+}
+
 TEST_CASE(ControllerGesture63SelectsAndEditsManagerGestureWhileBankMaskRemains32Bit) {
     synth::ParameterManager manager;
     REQUIRE_TRUE(manager.SetGestureCount(64));

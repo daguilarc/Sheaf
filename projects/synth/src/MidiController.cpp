@@ -211,6 +211,14 @@ const char* MessageTypeName(MessageIn::Type type) {
         return "sceneSelect";
     case MessageIn::Type::SetSceneBlend:
         return "setSceneBlend";
+    case MessageIn::Type::GridPress:
+        return "gridPress";
+    case MessageIn::Type::GridRelease:
+        return "gridRelease";
+    case MessageIn::Type::GridPressureChange:
+        return "gridPressureChange";
+    case MessageIn::Type::SelectGrid:
+        return "selectGrid";
     }
     return "clock";
 }
@@ -246,6 +254,14 @@ bool ParseMessageType(std::string_view value, MessageIn::Type& type) {
         type = MessageIn::Type::SceneSelect;
     } else if (value == "setSceneBlend") {
         type = MessageIn::Type::SetSceneBlend;
+    } else if (value == "gridPress") {
+        type = MessageIn::Type::GridPress;
+    } else if (value == "gridRelease") {
+        type = MessageIn::Type::GridRelease;
+    } else if (value == "gridPressureChange") {
+        type = MessageIn::Type::GridPressureChange;
+    } else if (value == "selectGrid") {
+        type = MessageIn::Type::SelectGrid;
     } else {
         return false;
     }
@@ -1275,6 +1291,10 @@ SystemMessageOutputState SystemMessageOutputInfo::Evaluate(const MessageIn& mess
     case MessageIn::Type::Clock:
     case MessageIn::Type::SetGestureValue:
     case MessageIn::Type::SetSceneBlend:
+    case MessageIn::Type::GridPress:
+    case MessageIn::Type::GridRelease:
+    case MessageIn::Type::GridPressureChange:
+    case MessageIn::Type::SelectGrid:
         return {};
     }
     return {};
@@ -1628,6 +1648,39 @@ bool FromJSON(JSON json, EncoderMidiOutConfig& value) {
 JSON ToJSON(JsonArena& arena, const MessageIn& value) {
     JSON json = arena.Object();
     json.SetNew("type", arena.String(MessageTypeName(value.type)));
+    switch (value.type) {
+    case MessageIn::Type::GridPress:
+    case MessageIn::Type::GridPressureChange:
+        json.SetNew("gridSlot", arena.Integer(static_cast<int64_t>(value.gridSlotIx)));
+        json.SetNew("x", arena.Integer(value.gridX));
+        json.SetNew("y", arena.Integer(value.gridY));
+        json.SetNew("velocity", arena.Integer(value.velocity));
+        return json;
+    case MessageIn::Type::GridRelease:
+        json.SetNew("gridSlot", arena.Integer(static_cast<int64_t>(value.gridSlotIx)));
+        json.SetNew("x", arena.Integer(value.gridX));
+        json.SetNew("y", arena.Integer(value.gridY));
+        return json;
+    case MessageIn::Type::SelectGrid:
+        json.SetNew("gridSlot", arena.Integer(static_cast<int64_t>(value.gridSlotIx)));
+        json.SetNew("grid", arena.Integer(static_cast<int64_t>(value.gridIx)));
+        return json;
+    case MessageIn::Type::ParamIncDec:
+    case MessageIn::Type::ParamPush:
+    case MessageIn::Type::ToggleReset:
+    case MessageIn::Type::ToggleRandom:
+    case MessageIn::Type::ToggleRandomMod:
+    case MessageIn::Type::ToggleGestureSelect:
+    case MessageIn::Type::SetGestureSelect:
+    case MessageIn::Type::SelectParamBank:
+    case MessageIn::Type::Start:
+    case MessageIn::Type::Stop:
+    case MessageIn::Type::Clock:
+    case MessageIn::Type::SetGestureValue:
+    case MessageIn::Type::SceneSelect:
+    case MessageIn::Type::SetSceneBlend:
+        break;
+    }
     json.SetNew("slotIx", arena.Integer(static_cast<int64_t>(value.slotIx)));
     json.SetNew("position", arena.Integer(static_cast<int64_t>(value.position)));
     json.SetNew("gestureIx", arena.Integer(static_cast<int64_t>(value.gestureIx)));
@@ -1647,6 +1700,45 @@ bool FromJSON(JSON json, MessageIn& value) {
     MessageIn parsed;
     if (!ParseMessageType(json.Get("type").StringValue(), parsed.type)) {
         return false;
+    }
+    switch (parsed.type) {
+    case MessageIn::Type::GridPress:
+    case MessageIn::Type::GridPressureChange:
+        if (!ReadSize(json.Get("gridSlot"), parsed.gridSlotIx) || !ReadInt(json.Get("x"), parsed.gridX) ||
+            !ReadInt(json.Get("y"), parsed.gridY) ||
+            !ReadU8(json.Get("velocity"), parsed.velocity, std::numeric_limits<std::uint8_t>::max())) {
+            return false;
+        }
+        value = parsed;
+        return true;
+    case MessageIn::Type::GridRelease:
+        if (!ReadSize(json.Get("gridSlot"), parsed.gridSlotIx) || !ReadInt(json.Get("x"), parsed.gridX) ||
+            !ReadInt(json.Get("y"), parsed.gridY)) {
+            return false;
+        }
+        value = parsed;
+        return true;
+    case MessageIn::Type::SelectGrid:
+        if (!ReadSize(json.Get("gridSlot"), parsed.gridSlotIx) || !ReadSize(json.Get("grid"), parsed.gridIx)) {
+            return false;
+        }
+        value = parsed;
+        return true;
+    case MessageIn::Type::ParamIncDec:
+    case MessageIn::Type::ParamPush:
+    case MessageIn::Type::ToggleReset:
+    case MessageIn::Type::ToggleRandom:
+    case MessageIn::Type::ToggleRandomMod:
+    case MessageIn::Type::ToggleGestureSelect:
+    case MessageIn::Type::SetGestureSelect:
+    case MessageIn::Type::SelectParamBank:
+    case MessageIn::Type::Start:
+    case MessageIn::Type::Stop:
+    case MessageIn::Type::Clock:
+    case MessageIn::Type::SetGestureValue:
+    case MessageIn::Type::SceneSelect:
+    case MessageIn::Type::SetSceneBlend:
+        break;
     }
     if (!ReadSize(json.Get("slotIx"), parsed.slotIx) || !ReadSize(json.Get("position"), parsed.position) ||
         !ReadSize(json.Get("gestureIx"), parsed.gestureIx) ||

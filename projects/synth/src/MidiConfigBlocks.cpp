@@ -23,7 +23,7 @@ std::vector<SystemAddressField> SystemAddressSchema(MidiProfileKind kind) {
 
 namespace {
 
-// MessageIn::Type's declaration order (ParamIncDec .. SetSceneBlend) IS the
+// MessageIn::Type's declaration order (ParamIncDec .. SelectGrid) IS the
 // type ordering component of SystemMessageSortKey -- static_cast the enum
 // directly rather than maintaining a parallel table that could drift.
 int TypeOrder(MessageIn::Type type) {
@@ -31,8 +31,9 @@ int TypeOrder(MessageIn::Type type) {
 }
 
 auto SortKeyTuple(const SystemMessageSortKey& key) {
-    return std::tie(key.typeOrder, key.arg1, key.arg2, key.hasBoolValue, key.boolValue, key.addrType,
-                    key.addrChannel, key.addrX, key.addrY, key.addrCc);
+    return std::tie(key.typeOrder, key.arg1, key.arg2, key.signedArg1, key.signedArg2, key.byteArg,
+                    key.hasBoolValue, key.boolValue, key.addrType, key.addrChannel, key.addrX, key.addrY,
+                    key.addrCc);
 }
 
 }  // namespace
@@ -88,6 +89,22 @@ SystemMessageSortKey ComputeSystemMessageSortKey(const MidiControllerSystemMessa
         case MessageIn::Type::Start:
         case MessageIn::Type::Stop:
         case MessageIn::Type::Clock:
+            break;
+        case MessageIn::Type::GridPress:
+        case MessageIn::Type::GridPressureChange:
+            key.arg1 = message.gridSlotIx;
+            key.signedArg1 = message.gridX;
+            key.signedArg2 = message.gridY;
+            key.byteArg = message.velocity;
+            break;
+        case MessageIn::Type::GridRelease:
+            key.arg1 = message.gridSlotIx;
+            key.signedArg1 = message.gridX;
+            key.signedArg2 = message.gridY;
+            break;
+        case MessageIn::Type::SelectGrid:
+            key.arg1 = message.gridSlotIx;
+            key.arg2 = message.gridIx;
             break;
     }
 

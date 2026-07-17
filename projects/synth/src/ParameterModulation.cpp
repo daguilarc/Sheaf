@@ -1,5 +1,7 @@
 #include "synth/ParameterModulation.hpp"
 
+#include "synth/ButtonGrid.hpp"
+
 #include <algorithm>
 #include <array>
 #include <cassert>
@@ -3849,6 +3851,46 @@ MessageIn MessageIn::SetSceneBlend(std::uint64_t timestamp, float blend) {
     return message;
 }
 
+MessageIn MessageIn::GridPress(std::uint64_t timestamp, std::size_t gridSlotIx,
+                               int gridX, int gridY, std::uint8_t velocity) {
+    MessageIn message;
+    message.timestamp = timestamp;
+    message.type = Type::GridPress;
+    message.gridSlotIx = gridSlotIx;
+    message.gridX = gridX;
+    message.gridY = gridY;
+    message.velocity = velocity;
+    return message;
+}
+
+MessageIn MessageIn::GridRelease(std::uint64_t timestamp, std::size_t gridSlotIx,
+                                 int gridX, int gridY) {
+    MessageIn message;
+    message.timestamp = timestamp;
+    message.type = Type::GridRelease;
+    message.gridSlotIx = gridSlotIx;
+    message.gridX = gridX;
+    message.gridY = gridY;
+    return message;
+}
+
+MessageIn MessageIn::GridPressureChange(std::uint64_t timestamp, std::size_t gridSlotIx,
+                                        int gridX, int gridY, std::uint8_t pressure) {
+    MessageIn message = GridPress(timestamp, gridSlotIx, gridX, gridY, pressure);
+    message.type = Type::GridPressureChange;
+    return message;
+}
+
+MessageIn MessageIn::SelectGrid(std::uint64_t timestamp, std::size_t gridSlotIx,
+                                std::size_t gridIx) {
+    MessageIn message;
+    message.timestamp = timestamp;
+    message.type = Type::SelectGrid;
+    message.gridSlotIx = gridSlotIx;
+    message.gridIx = gridIx;
+    return message;
+}
+
 MessageInBus::MessageInBus(ParameterManager* manager, std::size_t capacity)
     : manager_(manager),
       queue_(capacity == 0 ? 1 : capacity) {}
@@ -3881,12 +3923,9 @@ bool MessageInBus::Pop(MessageIn& message, std::uint64_t timestamp) {
 }
 
 void MessageInBus::Apply(const MessageIn& message) {
-    if (manager_ == nullptr) {
-        return;
-    }
     switch (message.type) {
     case MessageIn::Type::ParamIncDec:
-        if (manager_->GetCurrentModifier() == Modifier::None) {
+        if (manager_ != nullptr && manager_->GetCurrentModifier() == Modifier::None) {
             manager_->HandleTick(message.slotIx, message.position, message.delta);
         }
         break;
@@ -3897,36 +3936,44 @@ void MessageInBus::Apply(const MessageIn& message) {
         manager_->HandleSetAbsolute(message.slotIx, message.position, message.value, message.absoluteEpoch);
         break;
     case MessageIn::Type::ParamPush:
-        manager_->HandlePress(message.slotIx, message.position);
+        if (manager_ != nullptr) {
+            manager_->HandlePress(message.slotIx, message.position);
+        }
         break;
     case MessageIn::Type::ToggleReset:
-        if (message.hasBoolValue) {
+        if (manager_ == nullptr) {
+            break;
+        } else if (message.hasBoolValue) {
             manager_->SetResetHeld(message.boolValue);
         } else {
             manager_->ToggleResetHeld();
         }
         break;
     case MessageIn::Type::ToggleRandom:
-        if (message.hasBoolValue) {
+        if (manager_ == nullptr) {
+            break;
+        } else if (message.hasBoolValue) {
             manager_->SetRandomHeld(message.boolValue);
         } else {
             manager_->ToggleRandomHeld();
         }
         break;
     case MessageIn::Type::ToggleRandomMod:
-        if (message.hasBoolValue) {
+        if (manager_ == nullptr) {
+            break;
+        } else if (message.hasBoolValue) {
             manager_->SetRandomModHeld(message.boolValue);
         } else {
             manager_->ToggleRandomModHeld();
         }
         break;
     case MessageIn::Type::ToggleGestureSelect:
-        if (message.gestureIx < manager_->GestureCount()) {
+        if (manager_ != nullptr && message.gestureIx < manager_->GestureCount()) {
             manager_->ToggleGestureSelected(message.gestureIx);
         }
         break;
     case MessageIn::Type::SetGestureSelect:
-        if (message.gestureIx < manager_->GestureCount()) {
+        if (manager_ != nullptr && message.gestureIx < manager_->GestureCount()) {
             if (message.boolValue) {
                 manager_->SelectGesture(message.gestureIx);
             } else {
@@ -3935,22 +3982,49 @@ void MessageInBus::Apply(const MessageIn& message) {
         }
         break;
     case MessageIn::Type::SelectParamBank:
-        manager_->SelectBankForSlot(message.slotIx, message.bankIx);
+        if (manager_ != nullptr) {
+            manager_->SelectBankForSlot(message.slotIx, message.bankIx);
+        }
         break;
     case MessageIn::Type::SetGestureValue:
-        if (message.gestureIx < manager_->GestureCount()) {
+        if (manager_ != nullptr && message.gestureIx < manager_->GestureCount()) {
             manager_->SetGestureValue(message.gestureIx, message.value);
         }
         break;
     case MessageIn::Type::SceneSelect:
-        manager_->SetLessSelectedScene(message.sceneIx);
+        if (manager_ != nullptr) {
+            manager_->SetLessSelectedScene(message.sceneIx);
+        }
         break;
     case MessageIn::Type::SetSceneBlend:
-        manager_->SetSceneBlend(message.value);
+        if (manager_ != nullptr) {
+            manager_->SetSceneBlend(message.value);
+        }
         break;
     case MessageIn::Type::Start:
     case MessageIn::Type::Stop:
     case MessageIn::Type::Clock:
+        break;
+    case MessageIn::Type::GridPress:
+        if (gridManager_ != nullptr) {
+            gridManager_->HandlePress(message.gridSlotIx, message.gridX, message.gridY, message.velocity);
+        }
+        break;
+    case MessageIn::Type::GridRelease:
+        if (gridManager_ != nullptr) {
+            gridManager_->HandleRelease(message.gridSlotIx, message.gridX, message.gridY);
+        }
+        break;
+    case MessageIn::Type::GridPressureChange:
+        if (gridManager_ != nullptr) {
+            gridManager_->HandlePressureChange(message.gridSlotIx, message.gridX, message.gridY,
+                                               message.velocity);
+        }
+        break;
+    case MessageIn::Type::SelectGrid:
+        if (gridManager_ != nullptr) {
+            gridManager_->SelectGridForSlot(message.gridSlotIx, message.gridIx);
+        }
         break;
     }
 }

@@ -27,6 +27,8 @@ class Visualizer;
 
 namespace synth {
 
+class GridManager;
+
 using ParameterId = std::uint32_t;
 using PhysicalEncoderId = std::uint32_t;
 using PageOrdinal = std::uint32_t;
@@ -923,6 +925,10 @@ struct MessageIn {
         SetGestureValue,
         SceneSelect,
         SetSceneBlend,
+        GridPress,
+        GridRelease,
+        GridPressureChange,
+        SelectGrid,
     };
 
     std::uint64_t timestamp = 0;
@@ -937,6 +943,11 @@ struct MessageIn {
     float delta = 0.0f;
     bool boolValue = false;
     bool hasBoolValue = false;
+    std::size_t gridSlotIx = 0;
+    std::size_t gridIx = 0;
+    int gridX = 0;
+    int gridY = 0;
+    std::uint8_t velocity = 0;
 
     static MessageIn ParamIncDec(std::uint64_t timestamp, std::size_t slotIx, std::size_t position, float delta);
     static MessageIn ParamSetAbsolute(std::uint64_t timestamp, std::size_t slotIx, std::size_t position,
@@ -957,13 +968,23 @@ struct MessageIn {
     static MessageIn SetGestureValue(std::uint64_t timestamp, std::size_t gestureIx, float value);
     static MessageIn SceneSelect(std::uint64_t timestamp, std::size_t sceneIx);
     static MessageIn SetSceneBlend(std::uint64_t timestamp, float blend);
+    static MessageIn GridPress(std::uint64_t timestamp, std::size_t gridSlotIx,
+                               int gridX, int gridY, std::uint8_t velocity);
+    static MessageIn GridRelease(std::uint64_t timestamp, std::size_t gridSlotIx,
+                                 int gridX, int gridY);
+    static MessageIn GridPressureChange(std::uint64_t timestamp, std::size_t gridSlotIx,
+                                        int gridX, int gridY, std::uint8_t pressure);
+    static MessageIn SelectGrid(std::uint64_t timestamp, std::size_t gridSlotIx,
+                                std::size_t gridIx);
 };
 
 class MessageInBus {
 public:
     explicit MessageInBus(ParameterManager* manager = nullptr, std::size_t capacity = 16384);
 
-    void SetManager(ParameterManager* manager) { manager_ = manager; }
+    void SetParameterManager(ParameterManager* manager) { manager_ = manager; }
+    void SetGridManager(GridManager* manager) { gridManager_ = manager; }
+    void SetManager(ParameterManager* manager) { SetParameterManager(manager); }
     bool Push(const MessageIn& message);
     bool Pop(MessageIn& message, std::uint64_t timestamp);
     void Apply(const MessageIn& message);
@@ -973,6 +994,7 @@ public:
 
 private:
     ParameterManager* manager_ = nullptr;
+    GridManager* gridManager_ = nullptr;
     std::vector<MessageIn> queue_;
     std::atomic<std::size_t> head_{0};
     std::atomic<std::size_t> tail_{0};

@@ -121,6 +121,14 @@ bool MessageInFullyEquivalent(const MessageIn& a, const MessageIn& b) {
             return a.sceneIx == b.sceneIx;
         case MessageIn::Type::SetSceneBlend:
             return a.value == b.value;
+        case MessageIn::Type::GridPress:
+        case MessageIn::Type::GridPressureChange:
+            return a.gridSlotIx == b.gridSlotIx && a.gridX == b.gridX && a.gridY == b.gridY &&
+                   a.velocity == b.velocity;
+        case MessageIn::Type::GridRelease:
+            return a.gridSlotIx == b.gridSlotIx && a.gridX == b.gridX && a.gridY == b.gridY;
+        case MessageIn::Type::SelectGrid:
+            return a.gridSlotIx == b.gridSlotIx && a.gridIx == b.gridIx;
     }
     return false;
 }
@@ -326,6 +334,46 @@ TEST_CASE(SortKeyDistinguishesGenericCcAndNoteAddresses) {
     const auto noteKey = ComputeSystemMessageSortKey(note, MidiProfileKind::Generic);
     REQUIRE_TRUE(!(ccKey == noteKey));
     REQUIRE_TRUE(ccKey < noteKey);
+}
+
+TEST_CASE(SortKeyOrdersGridMessagesByEverySemanticFieldBeforeAddress) {
+    auto associationFor = [](const MessageIn& message, std::uint8_t cc) {
+        MidiControllerSystemMessageAssociation association;
+        association.control = MidiControlAddress{.channel = 0, .cc = cc};
+        association.press = message;
+        association.feedback = message;
+        return association;
+    };
+
+    const auto slotOne = ComputeSystemMessageSortKey(
+        associationFor(MessageIn::GridPress(0, 1, -1, 7, 100), 0), MidiProfileKind::Generic);
+    const auto slotTwo = ComputeSystemMessageSortKey(
+        associationFor(MessageIn::GridPress(0, 2, -5, 0, 0), 0), MidiProfileKind::Generic);
+    REQUIRE_TRUE(slotOne < slotTwo);
+
+    const auto xNegative = ComputeSystemMessageSortKey(
+        associationFor(MessageIn::GridPress(0, 1, -2, 7, 100), 127), MidiProfileKind::Generic);
+    const auto xPositive = ComputeSystemMessageSortKey(
+        associationFor(MessageIn::GridPress(0, 1, 1, -9, 0), 0), MidiProfileKind::Generic);
+    REQUIRE_TRUE(xNegative < xPositive);
+
+    const auto yLow = ComputeSystemMessageSortKey(
+        associationFor(MessageIn::GridPressureChange(0, 1, -1, -3, 200), 127), MidiProfileKind::Generic);
+    const auto yHigh = ComputeSystemMessageSortKey(
+        associationFor(MessageIn::GridPressureChange(0, 1, -1, 4, 0), 0), MidiProfileKind::Generic);
+    REQUIRE_TRUE(yLow < yHigh);
+
+    const auto velocityLow = ComputeSystemMessageSortKey(
+        associationFor(MessageIn::GridPress(0, 1, -1, 7, 3), 127), MidiProfileKind::Generic);
+    const auto velocityHigh = ComputeSystemMessageSortKey(
+        associationFor(MessageIn::GridPress(0, 1, -1, 7, 200), 0), MidiProfileKind::Generic);
+    REQUIRE_TRUE(velocityLow < velocityHigh);
+
+    const auto gridOne = ComputeSystemMessageSortKey(
+        associationFor(MessageIn::SelectGrid(0, 2, 1), 127), MidiProfileKind::Generic);
+    const auto gridFive = ComputeSystemMessageSortKey(
+        associationFor(MessageIn::SelectGrid(0, 2, 5), 0), MidiProfileKind::Generic);
+    REQUIRE_TRUE(gridOne < gridFive);
 }
 
 TEST_CASE(NormalizeSortsEncoderTurnsAndPushesBySlotThenPosition) {

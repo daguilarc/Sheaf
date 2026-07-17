@@ -72,7 +72,7 @@ std::vector<SystemAddressField> SystemAddressSchema(MidiProfileKind kind);
 // (NormalizeMidiProfileConfig uses std::stable_sort for exactly this
 // reason).
 struct SystemMessageSortKey {
-    // MessageIn::Type's declaration order (ParamIncDec=0 .. SetSceneBlend=14).
+    // MessageIn::Type's declaration order (ParamIncDec=0 .. SelectGrid=17).
     int typeOrder = 0;
     // Per-type semantic arguments (see the table in design.md D2):
     //   SceneSelect:                   arg1 = sceneIx
@@ -82,8 +82,15 @@ struct SystemMessageSortKey {
     //   ParamIncDec/ParamSetAbsolute/ParamPush: arg1 = slotIx, arg2 = position
     //   SetGestureValue:                arg1 = gestureIx
     //   SetSceneBlend/Start/Stop/Clock: (no positional args)
+    //   GridPress/GridRelease/GridPressureChange:
+    //       arg1 = gridSlotIx, signedArg1 = gridX, signedArg2 = gridY,
+    //       byteArg = velocity/pressure (zero for release)
+    //   SelectGrid:                    arg1 = gridSlotIx, arg2 = gridIx
     std::size_t arg1 = 0;
     std::size_t arg2 = 0;
+    int signedArg1 = 0;
+    int signedArg2 = 0;
+    std::uint8_t byteArg = 0;
     // Held-flag tuple for the modifier set/release variants (SetReset/
     // SetRandom/SetRandomMod carry hasBoolValue+boolValue on a ToggleX type;
     // SetGestureSelect always has a bool). Absent (hasBoolValue=false) sorts

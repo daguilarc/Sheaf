@@ -3667,6 +3667,41 @@ TEST_CASE(SystemMessageRowsExposeKindAndArgumentSeparately) {
     REQUIRE_TRUE(sawKindAndArg);
 }
 
+TEST_CASE(SystemMessageRowsDescribeGridMessageSemantics) {
+    MidiConfigViewModel vm;
+    MidiInstrumentConfig instrument;
+    MidiControllerSlot slot = MakeGenericSlot("generic");
+    slot.config.systemMessages.clear();
+
+    const synth::MessageIn messages[] = {
+        synth::MessageIn::GridPress(0, 1, -1, 7, 100),
+        synth::MessageIn::GridRelease(0, 1, -1, 7),
+        synth::MessageIn::GridPressureChange(0, 1, -1, 7, 64),
+        synth::MessageIn::SelectGrid(0, 2, 5),
+    };
+    for (std::size_t ix = 0; ix < 4; ++ix) {
+        MidiControllerSystemMessageAssociation association;
+        association.control = MidiControlAddress{.channel = 0, .cc = static_cast<std::uint8_t>(10 + ix)};
+        association.press = messages[ix];
+        association.feedback = messages[ix];
+        slot.config.systemMessages.push_back(association);
+    }
+    REQUIRE_TRUE(instrument.AddController(slot));
+
+    MidiConnectionState connection;
+    connection.controllers.push_back(MidiControllerConnection{});
+    vm.Rebuild(instrument, connection);
+    vm.ToggleConfig(0);
+    vm.ToggleSection(0, MidiConfigSection::SystemMessages);
+
+    const std::vector<MidiMappingRowVM> rows = vm.SectionRows(0, MidiConfigSection::SystemMessages);
+    REQUIRE_TRUE(rows.size() == 4);
+    REQUIRE_TRUE(rows[0].label.find("grid press slot 1 (-1,7) velocity 100") != std::string::npos);
+    REQUIRE_TRUE(rows[1].label.find("grid release slot 1 (-1,7)") != std::string::npos);
+    REQUIRE_TRUE(rows[2].label.find("grid pressure slot 1 (-1,7) pressure 64") != std::string::npos);
+    REQUIRE_TRUE(rows[3].label.find("select grid 5 (slot 2)") != std::string::npos);
+}
+
 TEST_CASE(UISystemMessageIndexAndArgumentFieldsRoundTrip) {
     MidiInstrumentConfig instrument;
     MidiControllerSlot slot = MakeGenericSlot("generic");
