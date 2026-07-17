@@ -10,7 +10,9 @@ An explicit Twister or WRLD.Bldr `encoderOutput` remains an override, preserving
 
 Add a small `GenericMidiOutProcessor` that owns a copy of the encoder turn mappings. It projects each mapping's `(slotIx, position)` into the existing position-feedback machinery and supplies the mapping's full input `MidiControlAddress` when enqueueing. It maintains only one validity/value cache entry per mapping.
 
-`CreateMidiControllerProfile` receives the controller kind from engine assembly through a trailing source-compatible argument. When the kind is Generic, `encoderInput` exists, and `encoderOutput` does not, the factory creates the Generic processor. Existing explicit encoder-output construction is unchanged and takes precedence.
+`CreateMidiControllerProfile` receives the controller kind from engine assembly through a trailing `std::optional<MidiProfileKind>` argument. The omitted sentinel preserves legacy/direct call behavior; it must not default to `MidiProfileKind::Generic`. When the supplied kind is Generic, `encoderInput` exists, and `encoderOutput` does not, the factory creates the Generic processor. Existing explicit encoder-output construction is unchanged and takes precedence.
+
+The shared position decision is refactored to accept the final `MidiControlAddress` at its enqueue boundary. Twister and WRLD.Bldr continue supplying their fixed primary channel `0` plus configured CC; Generic supplies the stored input mapping address. The state machine and cache rules remain shared.
 
 ## Absolute and Relative Data Flow
 
