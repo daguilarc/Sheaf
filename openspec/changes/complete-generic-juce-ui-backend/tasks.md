@@ -10,5 +10,5 @@
 
 ## 3. Production migration and verification
 
-- [ ] 3.1 Add desktop runtime-shell coverage that opens the real shared Controllers page and verifies non-overlap plus final-row reachability; move the standalone Controllers harness/simulation onto `PortableComponent`, updating overlap assertions to compare surface-space bounds through a shared parent-walk conversion helper; remove the obsolete Controllers-specific renderer, host alias, and dead renderer tests.
-- [ ] 3.2 Run the complete synth JUCE suite, JUCE-free synth suite, Controllers simulation/harness build, and browser TypeScript/backend tests; confirm the generic boundary contains no application-specific node IDs or branches and record coverage for `sprs-9` through `sprs-11`.
+- [x] 3.1 Add desktop runtime-shell coverage that opens the real shared Controllers page and verifies non-overlap plus final-row reachability; move the standalone Controllers harness/simulation onto `PortableComponent`, updating overlap assertions to compare surface-space bounds through a shared parent-walk conversion helper; remove the obsolete Controllers-specific renderer, host alias, and dead renderer tests.
+- [x] 3.2 Run the complete synth JUCE suite, JUCE-free synth suite, Controllers simulation/harness build, and browser TypeScript/backend tests; confirm the generic boundary contains no application-specific node IDs or branches and record coverage for `sprs-9` through `sprs-11`.
