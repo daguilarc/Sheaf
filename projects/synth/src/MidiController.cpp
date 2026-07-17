@@ -28,7 +28,7 @@ std::uint8_t TwisterRingBrightnessValue(float brightness) {
     return Clamp7Bit(static_cast<int>(std::lround(65.0f + std::clamp(brightness, 0.0f, 1.0f) * 30.0f)));
 }
 
-constexpr std::uint8_t kTwisterEncoderRingChannel = 0;
+constexpr std::uint8_t kPrimaryPositionChannel = 0;
 constexpr std::uint8_t kTwisterRgbColorChannel = 1;
 constexpr std::uint8_t kTwisterRgbBrightnessChannel = 2;
 constexpr std::uint8_t kTwisterRingBrightnessChannel = 5;
@@ -496,11 +496,13 @@ AbsoluteFeedbackCoordinator::BeginInput(RouteReservation route, std::uint8_t rec
         return alert;
     }
 
-    const std::uint64_t epoch = AllocateEpoch();
     auto guard = GuardRoute(route);
     if (!guard.IsTracked()) {
         return alert;
     }
+    // Epoch allocation is part of the per-route linearization point. This
+    // prevents two same-route callbacks from publishing epochs out of order.
+    const std::uint64_t epoch = AllocateEpoch();
     alert.route_ = route;
     alert.previous_ = guard.Snapshot();
     alert.epoch_ = epoch;
@@ -579,7 +581,11 @@ void EncoderMidiInProcessor::Process(const BasicMidi& midi) {
                 return;
             }
             const auto alert = absoluteFeedback_->BeginInput(route, midi.GetValue());
-            assert(alert.IsPublished());
+            if (!alert.IsPublished()) {
+                // A tracked absolute turn must never become visible to DSP
+                // without its matching output expectation.
+                return;
+            }
             const bool pushed = Push(MessageIn::ParamSetAbsolute(
                 NextTimestamp(), mapping->slotIx, mapping->position,
                 static_cast<float>(midi.GetValue()) / 127.0f, alert.Epoch()));
@@ -986,11 +992,15 @@ void MidiOutProcessor::ProcessPosition(std::size_t mappingIx,
         auto guard = absoluteFeedback_->GuardRoute(absoluteRoutes_[mappingIx]);
         const AbsoluteFeedbackCoordinator::Expectation expectation = guard.Snapshot();
         if (expectation.pending) {
+            // A mapped route outside the current visible-cell capacity has a
+            // synthetic blank snapshot with epoch zero. If it somehow has a
+            // tracked pending input, keep it conservatively gated: no real
+            // cell can acknowledge that event, and blank is not an ack.
             if (snapshot.processedAbsoluteEpoch < expectation.epoch) {
                 return;
             }
             if (value != expectation.receivedValue &&
-                !Enqueue(BasicMidi::CC(0, kTwisterEncoderRingChannel, mapping.cc, value))) {
+                !Enqueue(BasicMidi::CC(0, kPrimaryPositionChannel, mapping.cc, value))) {
                 return;
             }
             if (guard.Resolve(expectation.epoch)) {
@@ -1000,7 +1010,7 @@ void MidiOutProcessor::ProcessPosition(std::size_t mappingIx,
             return;
         }
         if (!cacheValid || cachedValue != value) {
-            if (Enqueue(BasicMidi::CC(0, kTwisterEncoderRingChannel, mapping.cc, value))) {
+            if (Enqueue(BasicMidi::CC(0, kPrimaryPositionChannel, mapping.cc, value))) {
                 cachedValue = value;
                 cacheValid = true;
             }
@@ -1009,7 +1019,7 @@ void MidiOutProcessor::ProcessPosition(std::size_t mappingIx,
     }
 
     if (!cacheValid || cachedValue != value) {
-        const bool enqueued = Enqueue(BasicMidi::CC(0, kTwisterEncoderRingChannel, mapping.cc, value));
+        const bool enqueued = Enqueue(BasicMidi::CC(0, kPrimaryPositionChannel, mapping.cc, value));
         if (feedbackMode_ != EncoderMode::Absolute || enqueued) {
             cachedValue = value;
             cacheValid = true;

@@ -470,6 +470,36 @@ TEST_CASE(rig_absolute_feedback_follows_real_acknowledgement_and_ignores_modulat
     REQUIRE_TRUE(corrections.front() == 96);
 }
 
+TEST_CASE(rig_absolute_feedback_resolves_only_latest_same_route_rapid_input) {
+    synth_rig::SynthRig<RigTestApp> rig;
+    rig.InstallInstrumentForTest(
+        SingleControllerInstrument(EncoderFeedbackProfile(synth::EncoderMode::Absolute)));
+
+    FakeSink sink;
+    synth::MidiSender* sender = rig.Engine().Context().midiSender;
+    REQUIRE_TRUE(sender != nullptr);
+    sender->SetSink(0, &sink);
+    sender->Start();
+    rig.RunBlocks(64);
+    REQUIRE_TRUE(sender->FlushForTests(std::chrono::milliseconds(500)));
+    sink.received.clear();
+
+    // All three alerts become visible before either DSP processing or UI
+    // publication. The coordinator must retain only the final expectation.
+    rig.SendMidi(0, synth::BasicMidi::CC(0, 0, 0, 16));
+    rig.SendMidi(0, synth::BasicMidi::CC(0, 0, 0, 48));
+    rig.SendMidi(0, synth::BasicMidi::CC(0, 0, 0, 80));
+    rig.Engine().MessageThreadTick();
+    REQUIRE_TRUE(sender->FlushForTests(std::chrono::milliseconds(500)));
+    REQUIRE_TRUE(PositionValues(sink).empty());
+
+    rig.RunBlocks(64);
+    REQUIRE_TRUE(sender->FlushForTests(std::chrono::milliseconds(500)));
+    sender->Stop();
+    REQUIRE_TRUE(PositionValues(sink).empty());
+    REQUIRE_NEAR(rig.ParameterValue(rig.Application().levelId), 80.0f / 127.0f, 0.00001f);
+}
+
 TEST_CASE(rig_relative_feedback_stays_modulation_aware_through_real_engine_path) {
     synth_rig::SynthRig<RigTestApp> rig;
     rig.InstallInstrumentForTest(

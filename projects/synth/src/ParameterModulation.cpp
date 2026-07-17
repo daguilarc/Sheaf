@@ -3409,6 +3409,8 @@ void ParameterManager::HandleTick(PhysicalEncoderId encoderId, float delta) {
     }
 }
 
+// Legacy physical-ID callers have no controller route/slot-position epoch.
+// They remain intentionally untracked, equivalent to absolute epoch zero.
 void ParameterManager::HandleSetAbsolute(PhysicalEncoderId encoderId, float normalizedTarget) {
     for (const auto& slot : slots_) {
         if (slot->Owns(encoderId)) {
@@ -3889,6 +3891,9 @@ void MessageInBus::Apply(const MessageIn& message) {
         }
         break;
     case MessageIn::Type::ParamSetAbsolute:
+        // Modifier gating and processed-epoch acknowledgement deliberately
+        // occur downstream in the slot-position handler, after the final
+        // apply-or-reject decision for this absolute event.
         manager_->HandleSetAbsolute(message.slotIx, message.position, message.value, message.absoluteEpoch);
         break;
     case MessageIn::Type::ParamPush:

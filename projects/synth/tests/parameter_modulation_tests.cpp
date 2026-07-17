@@ -8219,6 +8219,45 @@ TEST_CASE(untracked_absolute_encoder_output_uses_ordinary_raw_center_debounce) {
     sender.Stop();
 }
 
+TEST_CASE(tracked_absolute_output_beyond_visible_capacity_stays_safely_gated_while_pending) {
+    synth::AbsoluteFeedbackCoordinator coordinator;
+    const auto route =
+        coordinator.ReserveRoute({.controllerSlot = 2, .parameterSlot = 0, .position = 9});
+    const auto alert = coordinator.BeginInput(route, 64);
+    REQUIRE_TRUE(alert.IsPublished());
+
+    synth::ParameterManager::UIState ui;
+    ui.Configure(1, 1, 1, 0, 0);
+    synth::EncoderMidiOutConfig config{
+        .protocol = synth::EncoderMidiOutProtocol::Twister,
+        .mappings = {{.slotIx = 0, .position = 9, .cc = 9}},
+    };
+    FakeMidiSink sink;
+    synth::MidiSender sender;
+    sender.SetSink(0, &sink);
+    sender.Start();
+    synth::TwisterMidiOutProcessor processor(
+        config, &sender, &ui, 0, synth::EncoderMode::Absolute, &coordinator, 2);
+
+    // There is no cell capable of publishing the epoch. Conservatively keep
+    // the pending route gated instead of treating a synthetic blank snapshot
+    // as an acknowledgement and emitting stale position feedback.
+    processor.Process();
+    REQUIRE_TRUE(sender.FlushForTests(std::chrono::milliseconds(500)));
+    REQUIRE_TRUE(CountPositionMessages(sink) == 0);
+    REQUIRE_TRUE(coordinator.Snapshot(route)->pending);
+
+    // Rolling back the unprocessed alert reveals the ordinary blank value.
+    // Its first send proves the gated passes did not mutate position debounce.
+    REQUIRE_TRUE(coordinator.Rollback(alert));
+    const std::size_t beforeBlank = sink.sent.size();
+    processor.Process();
+    REQUIRE_TRUE(sender.FlushForTests(std::chrono::milliseconds(500)));
+    REQUIRE_TRUE(CountPositionMessages(sink, beforeBlank) == 1);
+    REQUIRE_TRUE(LastPositionValue(sink, beforeBlank) == 0);
+    sender.Stop();
+}
+
 TEST_CASE(message_bus_single_producer_single_consumer_threaded_order) {
     constexpr std::size_t kMessages = 1000;
     synth::MessageInBus bus(nullptr, 64);

@@ -600,6 +600,9 @@ public:
         std::vector<MidiControllerProfileResult> rebuilt;
         rebuilt.reserve(controllers.size());
         for (std::size_t ix = 0; ix < controllers.size(); ++ix) {
+            // Instrument controller slots are stable route identities, and
+            // MidiSender uses the same slot ordinal as its sink index. Keep
+            // both arguments explicit even while their values are equal.
             rebuilt.push_back(CreateMidiControllerProfile(controllers[ix].config, &midiBus_, &midiSender_,
                                                            uiState_.get(), timestampProvider_, ix,
                                                            &absoluteFeedbackCoordinator_, ix));
